@@ -1,0 +1,10 @@
+.env
+.git
+.kis-cache
+.kis_token_cache*.json
+.uv-cache
+.venv
+__pycache__
+*.pyc
+*.pyo
+.DS_Store

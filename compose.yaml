@@ -1,0 +1,17 @@
+services:
+  kis-trader:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: gops-kis-trader:py3.12
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      KIS_TOKEN_CACHE_PATH: /kis-cache/kis_token_cache.json
+    volumes:
+      - kis-token-cache:/kis-cache
+    command: ["--help"]
+
+volumes:
+  kis-token-cache:
