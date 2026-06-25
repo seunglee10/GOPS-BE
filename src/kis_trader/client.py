@@ -8,7 +8,7 @@ import requests
 from .auth import KisAuthClient
 from .config import KisConfig
 from .market import ccnl_side_code, default_currency, normalize_exchange, resolve_order_tr_id
-from .models import OverseasOrderRequest
+from .models import DomesticOrderRequest, OverseasOrderRequest
 
 
 class KisApiError(RuntimeError):
@@ -33,6 +33,14 @@ class KisOverseasClient:
         )
         return self._post("/uapi/overseas-stock/v1/trading/order", tr_id=tr_id, body=body)
 
+    def domestic_order(self, order_request: DomesticOrderRequest) -> dict[str, Any]:
+        tr_id = self._resolve_domestic_order_tr_id(order_request.side)
+        body = order_request.to_api_body(
+            account_no=self.config.account_no,
+            product_code=self.config.product_code,
+        )
+        return self._post("/uapi/domestic-stock/v1/trading/order-cash", tr_id=tr_id, body=body)
+
     def balance(self, *, exchange: str | None = None, currency: str | None = None) -> dict[str, Any]:
         selected_exchange = normalize_exchange(exchange or self.config.default_exchange)
         selected_currency = (currency or default_currency(selected_exchange)).strip().upper()
@@ -46,6 +54,40 @@ class KisOverseasClient:
         }
         tr_id = "VTTS3012R" if self.config.env == "demo" else "TTTS3012R"
         return self._get("/uapi/overseas-stock/v1/trading/inquire-balance", tr_id=tr_id, params=params)
+
+    def domestic_balance(
+        self,
+        *,
+        afhr_flpr_yn: str = "N",
+        inqr_dvsn: str = "02",
+        unpr_dvsn: str = "01",
+        fund_sttl_icld_yn: str = "N",
+        fncg_amt_auto_rdpt_yn: str = "N",
+        prcs_dvsn: str = "00",
+        ctx_area_fk100: str = "",
+        ctx_area_nk100: str = "",
+        tr_cont: str = "",
+    ) -> dict[str, Any]:
+        params = {
+            "CANO": self.config.account_no,
+            "ACNT_PRDT_CD": self.config.product_code,
+            "AFHR_FLPR_YN": afhr_flpr_yn,
+            "OFL_YN": "",
+            "INQR_DVSN": inqr_dvsn,
+            "UNPR_DVSN": unpr_dvsn,
+            "FUND_STTL_ICLD_YN": fund_sttl_icld_yn,
+            "FNCG_AMT_AUTO_RDPT_YN": fncg_amt_auto_rdpt_yn,
+            "PRCS_DVSN": prcs_dvsn,
+            "CTX_AREA_FK100": ctx_area_fk100,
+            "CTX_AREA_NK100": ctx_area_nk100,
+        }
+        tr_id = "VTTC8434R" if self.config.env == "demo" else "TTTC8434R"
+        return self._get(
+            "/uapi/domestic-stock/v1/trading/inquire-balance",
+            tr_id=tr_id,
+            params=params,
+            tr_cont=tr_cont,
+        )
 
     def order_history(
         self,
@@ -101,6 +143,24 @@ class KisOverseasClient:
                 order_server_code=self.config.order_server_code,
             ),
         }
+
+    def preview_domestic_order(self, order_request: DomesticOrderRequest) -> dict[str, Any]:
+        return {
+            "env": self.config.env,
+            "tr_id": self._resolve_domestic_order_tr_id(order_request.side),
+            "path": "/uapi/domestic-stock/v1/trading/order-cash",
+            "body": order_request.to_api_body(
+                account_no=self.config.account_no,
+                product_code=self.config.product_code,
+            ),
+        }
+
+    def _resolve_domestic_order_tr_id(self, side: str) -> str:
+        if self.config.env == "demo":
+            return "VTTC0012U" if side == "buy" else "VTTC0011U"
+        if self.config.env == "real":
+            return "TTTC0012U" if side == "buy" else "TTTC0011U"
+        raise ValueError("env must be either 'demo' or 'real'.")
 
     def _get(self, path: str, *, tr_id: str, params: dict[str, str], tr_cont: str = "") -> dict[str, Any]:
         try:

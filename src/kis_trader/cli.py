@@ -9,7 +9,7 @@ from .auth import KisAuthError
 from .client import KisApiError, KisOverseasClient
 from .config import ConfigError, load_config
 from .market import default_currency
-from .models import OverseasOrderRequest
+from .models import DomesticOrderRequest, OverseasOrderRequest
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -29,7 +29,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="KIS overseas stock trading skeleton")
+    parser = argparse.ArgumentParser(description="KIS stock trading skeleton")
     parser.add_argument("--env", choices=["demo", "real"], default=None, help="Trading environment")
     parser.add_argument("--env-file", default=None, help="Path to .env file")
 
@@ -40,6 +40,62 @@ def build_parser() -> argparse.ArgumentParser:
     balance.add_argument("--exchange", default=None, help="Exchange code, e.g. NASD")
     balance.add_argument("--currency", default=None, help="Currency code, e.g. USD")
     balance.set_defaults(handler=handle_balance)
+
+    domestic_balance = subparsers.add_parser("domestic-balance", help="Query domestic stock balance")
+    add_env_args(domestic_balance)
+    domestic_balance.add_argument(
+        "--afhr-flpr-yn",
+        default="N",
+        choices=["N", "Y", "X"],
+        help="N: regular, Y: after-hours single price, X: NXT",
+    )
+    domestic_balance.add_argument(
+        "--inqr-dvsn",
+        default="02",
+        choices=["01", "02"],
+        help="01: by loan date, 02: by stock",
+    )
+    domestic_balance.add_argument("--unpr-dvsn", default="01", help="Unit price division")
+    domestic_balance.add_argument(
+        "--fund-sttl-icld-yn",
+        default="N",
+        choices=["N", "Y"],
+        help="Include fund settlement amount",
+    )
+    domestic_balance.add_argument(
+        "--fncg-amt-auto-rdpt-yn",
+        default="N",
+        choices=["N", "Y"],
+        help="Auto-redeem financing amount",
+    )
+    domestic_balance.add_argument(
+        "--prcs-dvsn",
+        default="00",
+        choices=["00", "01"],
+        help="00: include previous day trades, 01: exclude previous day trades",
+    )
+    domestic_balance.add_argument("--ctx-area-fk100", default="", help="Continuation search condition")
+    domestic_balance.add_argument("--ctx-area-nk100", default="", help="Continuation key")
+    domestic_balance.add_argument("--tr-cont", default="", help="Continuation header value")
+    domestic_balance.set_defaults(handler=handle_domestic_balance)
+
+    domestic_order = subparsers.add_parser("domestic-order", help="Preview or submit a domestic stock order")
+    add_env_args(domestic_order)
+    domestic_order.add_argument("--symbol", required=True, help="Domestic stock code, e.g. 005930")
+    domestic_order.add_argument("--side", choices=["buy", "sell"], default="buy")
+    domestic_order.add_argument("--qty", required=True, help="Order quantity")
+    domestic_order.add_argument("--price", required=True, help="Limit price. Use 0 only for supported market orders.")
+    domestic_order.add_argument("--exchange", default="KRX", help="Exchange ID division code. Defaults to KRX.")
+    domestic_order.add_argument("--ord-dvsn", default="00", help="Order division. 00 means limit order.")
+    domestic_order.add_argument("--sll-type", default="", help="Sell type for sell orders, e.g. 01 for normal sell.")
+    domestic_order.add_argument("--cndt-pric", default="", help="Condition price for supported conditional orders.")
+    domestic_order.add_argument("--submit", action="store_true", help="Actually send the order API request")
+    domestic_order.add_argument(
+        "--confirm-real-order",
+        default="",
+        help="Required literal REAL_ORDER when --env real and --submit are used",
+    )
+    domestic_order.set_defaults(handler=handle_domestic_order)
 
     order = subparsers.add_parser("order", help="Preview or submit an overseas stock order")
     add_env_args(order)
@@ -80,6 +136,45 @@ def handle_balance(args: argparse.Namespace, client: KisOverseasClient) -> dict[
     exchange = args.exchange or client.config.default_exchange
     currency = args.currency or default_currency(exchange)
     return client.balance(exchange=exchange, currency=currency)
+
+
+def handle_domestic_balance(args: argparse.Namespace, client: KisOverseasClient) -> dict[str, Any]:
+    return client.domestic_balance(
+        afhr_flpr_yn=args.afhr_flpr_yn,
+        inqr_dvsn=args.inqr_dvsn,
+        unpr_dvsn=args.unpr_dvsn,
+        fund_sttl_icld_yn=args.fund_sttl_icld_yn,
+        fncg_amt_auto_rdpt_yn=args.fncg_amt_auto_rdpt_yn,
+        prcs_dvsn=args.prcs_dvsn,
+        ctx_area_fk100=args.ctx_area_fk100,
+        ctx_area_nk100=args.ctx_area_nk100,
+        tr_cont=args.tr_cont,
+    )
+
+
+def handle_domestic_order(args: argparse.Namespace, client: KisOverseasClient) -> dict[str, Any]:
+    order_request = DomesticOrderRequest.from_strings(
+        symbol=args.symbol,
+        side=args.side,
+        qty=args.qty,
+        price=args.price,
+        exchange=args.exchange,
+        order_division=args.ord_dvsn,
+        sell_type=args.sll_type,
+        condition_price=args.cndt_pric,
+    )
+
+    if not args.submit:
+        return {
+            "dry_run": True,
+            "message": "Order was not submitted. Add --submit to send it.",
+            "preview": client.preview_domestic_order(order_request),
+        }
+
+    if client.config.env == "real" and args.confirm_real_order != "REAL_ORDER":
+        raise ValueError("--env real --submit requires --confirm-real-order REAL_ORDER.")
+
+    return {"order": client.domestic_order(order_request)}
 
 
 def handle_order(args: argparse.Namespace, client: KisOverseasClient) -> dict[str, Any]:
