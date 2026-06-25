@@ -28,6 +28,9 @@ class KisConfig:
     default_exchange: str
     default_currency: str
     timeout_seconds: float
+    kafka_bootstrap_servers: str
+    kafka_order_commands_topic: str
+    kafka_account_alias: str
 
 
 def load_config(env: str | None = None, env_file: str | Path | None = None) -> KisConfig:
@@ -85,4 +88,10 @@ def load_config(env: str | None = None, env_file: str | Path | None = None) -> K
         default_exchange=os.getenv("KIS_DEFAULT_EXCHANGE", "NASD").strip().upper() or "NASD",
         default_currency=os.getenv("KIS_DEFAULT_CURRENCY", "USD").strip().upper() or "USD",
         timeout_seconds=timeout_seconds,
+        kafka_bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:29092").strip()
+        or "localhost:29092",
+        kafka_order_commands_topic=os.getenv("KAFKA_ORDER_COMMANDS_TOPIC", "orders.commands.v1").strip()
+        or "orders.commands.v1",
+        kafka_account_alias=os.getenv("KAFKA_ACCOUNT_ALIAS", f"{selected_env}-account").strip()
+        or f"{selected_env}-account",
     )

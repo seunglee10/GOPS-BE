@@ -8,6 +8,7 @@ from typing import Any
 from .auth import KisAuthError
 from .client import KisApiError, KisOverseasClient
 from .config import ConfigError, load_config
+from .kafka_producer import KafkaPublishError, publish_domestic_order_command, publish_overseas_order_command
 from .market import default_currency
 from .models import DomesticOrderRequest, OverseasOrderRequest
 
@@ -20,7 +21,7 @@ def main(argv: list[str] | None = None) -> int:
         config = load_config(env=args.env, env_file=args.env_file)
         client = KisOverseasClient(config)
         payload = args.handler(args, client)
-    except (ConfigError, KisApiError, KisAuthError, ValueError) as exc:
+    except (ConfigError, KisApiError, KisAuthError, KafkaPublishError, ValueError) as exc:
         parser.exit(2, f"error: {exc}\n")
 
     if payload is not None:
@@ -174,7 +175,7 @@ def handle_domestic_order(args: argparse.Namespace, client: KisOverseasClient) -
     if client.config.env == "real" and args.confirm_real_order != "REAL_ORDER":
         raise ValueError("--env real --submit requires --confirm-real-order REAL_ORDER.")
 
-    return {"order": client.domestic_order(order_request)}
+    return publish_domestic_order_command(client.config, order_request).to_dict()
 
 
 def handle_order(args: argparse.Namespace, client: KisOverseasClient) -> dict[str, Any]:
@@ -198,17 +199,10 @@ def handle_order(args: argparse.Namespace, client: KisOverseasClient) -> dict[st
     if client.config.env == "real" and args.confirm_real_order != "REAL_ORDER":
         raise ValueError("--env real --submit requires --confirm-real-order REAL_ORDER.")
 
-    result: dict[str, Any] = {"order": client.order(order_request)}
     if args.poll_ccnl:
-        today = date.today()
-        result["ccnl"] = client.order_history(
-            start_date=today,
-            end_date=today,
-            symbol=order_request.symbol,
-            side=order_request.side,
-            exchange=order_request.exchange,
-        )
-    return result
+        raise ValueError("--poll-ccnl cannot be used because --submit now publishes to Kafka.")
+
+    return publish_overseas_order_command(client.config, order_request).to_dict()
 
 
 def handle_ccnl(args: argparse.Namespace, client: KisOverseasClient) -> dict[str, Any]:
