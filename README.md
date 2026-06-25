@@ -198,21 +198,22 @@ docker compose run --rm kis-trader order --env demo --symbol AAPL --side buy --q
 
 ## 9. 해외주식: 모의투자 주문 보내기
 
-`--submit`을 붙이면 실제로 모의투자 주문 API를 호출합니다.
+`--submit`을 붙이면 주문 명령을 Kafka `orders.commands.v1`에 기록합니다. 실제 KIS 주문 API 호출은 별도 `broker-adapter` 프로세스가 담당합니다.
 
 ```bash
 docker compose run --rm kis-trader order --env demo --symbol AAPL --side buy --qty 1 --price 145.00 --submit
 ```
 
-`--submit`은 실제 주문 API를 호출합니다. 지정가 주문은 가격 조건이 맞아야 체결됩니다.
-
-주문 후 바로 주문체결내역까지 조회하려면:
+주문 처리 worker를 실행하려면 PostgreSQL schema를 먼저 만들고 broker adapter를 실행합니다.
 
 ```bash
-docker compose run --rm kis-trader order --env demo --symbol AAPL --side buy --qty 1 --price 145.00 --submit --poll-ccnl
+docker compose up -d broker postgres
+docker compose run --rm kis-trader db-init --env demo
+docker compose run --rm kis-trader broker-adapter --env demo --max-messages 1
+docker compose run --rm kis-trader outbox-publish --env demo
 ```
 
-`--poll-ccnl`은 주문 후 해외주식 주문/체결내역을 이어서 조회합니다.
+`--poll-ccnl`은 Kafka submit 모드에서는 사용할 수 없습니다. 주문 제출 후 상태 확인은 `poll-order-events` 또는 기존 `ccnl` 조회를 사용합니다.
 
 ## 10. 해외주식: 주문체결내역 조회
 
@@ -226,6 +227,52 @@ docker compose run --rm kis-trader ccnl --env demo
 
 ```bash
 docker compose run --rm kis-trader ccnl --env demo --start-date 20260624 --end-date 20260624
+```
+
+Kafka/DB 파이프라인으로 주문/체결내역을 조회하고 내부 상태를 대사하려면:
+
+```bash
+docker compose run --rm kis-trader poll-order-events --env demo --market overseas
+docker compose run --rm kis-trader outbox-publish --env demo
+```
+
+## 11. Kafka/DB 파이프라인 안전 smoke test
+
+실제 KIS 주문을 내지 않고 Kafka, PostgreSQL, Adapter, Outbox 경로만 확인하려면 fake KIS 모드를 사용합니다.
+
+```bash
+docker compose up -d broker postgres
+uv run kis-overseas db-init
+uv run kis-overseas emit-sample-command --market overseas --symbol AAPL --qty 1 --price 145.00
+uv run kis-overseas broker-adapter --fake-kis success --max-messages 1
+uv run kis-overseas outbox-publish
+uv run kis-overseas ops-metrics
+```
+
+timeout 후 대사 흐름은 fake timeout과 fake 주문/체결내역 조회로 확인합니다.
+
+```bash
+uv run kis-overseas emit-sample-command --market overseas --symbol AAPL --qty 1 --price 145.00
+uv run kis-overseas broker-adapter --fake-kis timeout --max-messages 1
+uv run kis-overseas poll-order-events --market overseas --fake-kis
+uv run kis-overseas outbox-publish
+```
+
+consumer crash/restart 흐름은 smoke 전용 crash 옵션으로 확인합니다.
+
+```bash
+uv run kis-overseas emit-sample-command --market overseas --symbol AAPL --qty 1 --price 145.00
+uv run kis-overseas broker-adapter --fake-kis success --max-messages 1 --crash-after-process
+uv run kis-overseas broker-adapter --fake-kis success --max-messages 1
+uv run kis-overseas outbox-publish
+```
+
+DLQ에 들어간 주문 command를 고쳐 재처리하려면:
+
+```bash
+uv run kis-overseas dlq-reprocess --latest --set-market overseas
+uv run kis-overseas broker-adapter --fake-kis success --max-messages 1
+uv run kis-overseas outbox-publish
 ```
 
 ## 자주 바꾸는 옵션
@@ -263,5 +310,7 @@ uv run kis-overseas balance --env demo --exchange NASD --currency USD
 - `--submit`이 없으면 주문을 보내지 않습니다.
 - 기본 환경은 모의투자 `demo`입니다.
 - 실전 주문은 `--env real --submit --confirm-real-order REAL_ORDER`를 모두 입력해야만 전송됩니다.
+- `--submit`은 Kafka에 주문 명령을 기록하고, KIS API 제출은 `broker-adapter`가 수행합니다.
+- KIS timeout 후 같은 주문을 즉시 재전송하지 않고 대사 상태로 기록합니다.
 - `.env`는 Docker 이미지에 복사되지 않습니다.
 - 토큰 캐시는 Docker volume인 `kis-token-cache`에 저장됩니다.

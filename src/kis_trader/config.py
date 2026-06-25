@@ -28,12 +28,23 @@ class KisConfig:
     default_exchange: str
     default_currency: str
     timeout_seconds: float
+    database_url: str
     kafka_bootstrap_servers: str
     kafka_order_commands_topic: str
+    kafka_submit_results_topic: str
+    kafka_order_events_topic: str
+    kafka_reconciled_topic: str
+    kafka_dlq_topic: str
+    kafka_broker_adapter_group_id: str
     kafka_account_alias: str
 
 
-def load_config(env: str | None = None, env_file: str | Path | None = None) -> KisConfig:
+def load_config(
+    env: str | None = None,
+    env_file: str | Path | None = None,
+    *,
+    require_kis_credentials: bool = True,
+) -> KisConfig:
     if env_file is not None:
         load_dotenv(env_file)
     else:
@@ -52,7 +63,7 @@ def load_config(env: str | None = None, env_file: str | Path | None = None) -> K
         f"{prefix}_ACCOUNT_NO": os.getenv(f"{prefix}_ACCOUNT_NO", "").strip(),
     }
     missing = [key for key, value in required.items() if not value]
-    if missing:
+    if require_kis_credentials and missing:
         raise ConfigError("Missing required environment variables: " + ", ".join(missing))
 
     timeout = os.getenv("KIS_TIMEOUT_SECONDS", "10").strip()
@@ -88,10 +99,24 @@ def load_config(env: str | None = None, env_file: str | Path | None = None) -> K
         default_exchange=os.getenv("KIS_DEFAULT_EXCHANGE", "NASD").strip().upper() or "NASD",
         default_currency=os.getenv("KIS_DEFAULT_CURRENCY", "USD").strip().upper() or "USD",
         timeout_seconds=timeout_seconds,
+        database_url=os.getenv(
+            "DATABASE_URL",
+            "postgresql://gops:gops_dev_password@localhost:5433/gops",
+        ).strip()
+        or "postgresql://gops:gops_dev_password@localhost:5433/gops",
         kafka_bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:29092").strip()
         or "localhost:29092",
         kafka_order_commands_topic=os.getenv("KAFKA_ORDER_COMMANDS_TOPIC", "orders.commands.v1").strip()
         or "orders.commands.v1",
+        kafka_submit_results_topic=os.getenv("KAFKA_SUBMIT_RESULTS_TOPIC", "broker.submit-results.v1").strip()
+        or "broker.submit-results.v1",
+        kafka_order_events_topic=os.getenv("KAFKA_ORDER_EVENTS_TOPIC", "broker.order-events.v1").strip()
+        or "broker.order-events.v1",
+        kafka_reconciled_topic=os.getenv("KAFKA_RECONCILED_TOPIC", "orders.reconciled.v1").strip()
+        or "orders.reconciled.v1",
+        kafka_dlq_topic=os.getenv("KAFKA_DLQ_TOPIC", "orders.dlq.v1").strip() or "orders.dlq.v1",
+        kafka_broker_adapter_group_id=os.getenv("KAFKA_BROKER_ADAPTER_GROUP_ID", "kis-broker-adapter").strip()
+        or "kis-broker-adapter",
         kafka_account_alias=os.getenv("KAFKA_ACCOUNT_ALIAS", f"{selected_env}-account").strip()
         or f"{selected_env}-account",
     )

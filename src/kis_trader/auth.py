@@ -88,6 +88,15 @@ class KisAuthClient:
         self._access_token = issued
         return issued.token
 
+    def invalidate_access_token(self) -> None:
+        self._access_token = None
+        try:
+            self.cache.path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+
     def _issue_token(self) -> AccessToken:
         try:
             response = requests.post(

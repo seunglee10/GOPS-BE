@@ -65,7 +65,23 @@ def publish_overseas_order_command(config: KisConfig, order_request: OverseasOrd
     return _publish_order_command(config, payload=payload, symbol=order_request.symbol)
 
 
-def _publish_order_command(config: KisConfig, *, payload: dict[str, Any], symbol: str) -> KafkaPublishResult:
+def publish_order_command_payload(
+    config: KisConfig,
+    *,
+    payload: dict[str, Any],
+    symbol: str,
+    producer_name: str = "kis-trader-cli",
+) -> KafkaPublishResult:
+    return _publish_order_command(config, payload=payload, symbol=symbol, producer_name=producer_name)
+
+
+def _publish_order_command(
+    config: KisConfig,
+    *,
+    payload: dict[str, Any],
+    symbol: str,
+    producer_name: str = "kis-trader-cli",
+) -> KafkaPublishResult:
     topic = config.kafka_order_commands_topic
     key = f"{config.kafka_account_alias}:{symbol}"
     event_id = str(uuid4())
@@ -76,13 +92,13 @@ def _publish_order_command(config: KisConfig, *, payload: dict[str, Any], symbol
         "event_id": event_id,
         "request_id": request_id,
         "occurred_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-        "producer": "kis-trader-cli",
+        "producer": producer_name,
         "env": config.env,
         "account_alias": config.kafka_account_alias,
         "payload": payload,
     }
 
-    partition, offset = _produce_json(
+    partition, offset = produce_json(
         bootstrap_servers=config.kafka_bootstrap_servers,
         topic=topic,
         key=key,
@@ -99,7 +115,7 @@ def _publish_order_command(config: KisConfig, *, payload: dict[str, Any], symbol
     )
 
 
-def _produce_json(
+def produce_json(
     *,
     bootstrap_servers: str,
     topic: str,

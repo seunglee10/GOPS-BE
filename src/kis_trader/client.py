@@ -12,9 +12,16 @@ from .models import DomesticOrderRequest, OverseasOrderRequest
 
 
 class KisApiError(RuntimeError):
-    def __init__(self, message: str, *, response: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        response: dict[str, Any] | None = None,
+        status_code: int | None = None,
+    ) -> None:
         super().__init__(message)
         self.response = response or {}
+        self.status_code = status_code
 
 
 class KisOverseasClient:
@@ -130,6 +137,42 @@ class KisOverseasClient:
         tr_id = "VTTS3035R" if self.config.env == "demo" else "TTTS3035R"
         return self._get("/uapi/overseas-stock/v1/trading/inquire-ccnl", tr_id=tr_id, params=params)
 
+    def domestic_order_history(
+        self,
+        *,
+        start_date: date,
+        end_date: date,
+        symbol: str | None = None,
+        side: str | None = None,
+        fill_status: str = "00",
+        ctx_area_fk100: str = "",
+        ctx_area_nk100: str = "",
+        tr_cont: str = "",
+    ) -> dict[str, Any]:
+        params = {
+            "CANO": self.config.account_no,
+            "ACNT_PRDT_CD": self.config.product_code,
+            "INQR_STRT_DT": start_date.strftime("%Y%m%d"),
+            "INQR_END_DT": end_date.strftime("%Y%m%d"),
+            "SLL_BUY_DVSN_CD": self._domestic_side_code(side),
+            "INQR_DVSN": "00",
+            "PDNO": (symbol or "").strip().upper(),
+            "CCLD_DVSN": fill_status,
+            "ORD_GNO_BRNO": "",
+            "ODNO": "",
+            "INQR_DVSN_3": "00",
+            "INQR_DVSN_1": "",
+            "CTX_AREA_FK100": ctx_area_fk100,
+            "CTX_AREA_NK100": ctx_area_nk100,
+        }
+        tr_id = "VTTC8001R" if self.config.env == "demo" else "TTTC8001R"
+        return self._get(
+            "/uapi/domestic-stock/v1/trading/inquire-daily-ccld",
+            tr_id=tr_id,
+            params=params,
+            tr_cont=tr_cont,
+        )
+
     def preview_order(self, order_request: OverseasOrderRequest) -> dict[str, Any]:
         return {
             "env": self.config.env,
@@ -162,6 +205,12 @@ class KisOverseasClient:
             return "TTTC0012U" if side == "buy" else "TTTC0011U"
         raise ValueError("env must be either 'demo' or 'real'.")
 
+    @staticmethod
+    def _domestic_side_code(side: str | None) -> str:
+        if side is None:
+            return "00"
+        return "02" if side == "buy" else "01"
+
     def _get(self, path: str, *, tr_id: str, params: dict[str, str], tr_cont: str = "") -> dict[str, Any]:
         try:
             response = requests.get(
@@ -191,15 +240,22 @@ class KisOverseasClient:
         try:
             payload = response.json()
         except ValueError as exc:
-            raise KisApiError(f"Response is not JSON: HTTP {response.status_code} {response.text}") from exc
+            raise KisApiError(
+                f"Response is not JSON: HTTP {response.status_code} {response.text}",
+                status_code=response.status_code,
+            ) from exc
 
         if response.status_code != 200:
-            raise KisApiError(f"KIS request failed: HTTP {response.status_code} {payload}", response=payload)
+            raise KisApiError(
+                f"KIS request failed: HTTP {response.status_code} {payload}",
+                response=payload,
+                status_code=response.status_code,
+            )
 
         if isinstance(payload, dict) and payload.get("rt_cd") not in (None, "0"):
             msg_cd = payload.get("msg_cd", "")
             msg = payload.get("msg1", payload)
-            raise KisApiError(f"KIS API rejected request: {msg_cd} {msg}", response=payload)
+            raise KisApiError(f"KIS API rejected request: {msg_cd} {msg}", response=payload, status_code=200)
 
         if not isinstance(payload, dict):
             raise KisApiError(f"Unexpected response JSON type: {payload!r}")

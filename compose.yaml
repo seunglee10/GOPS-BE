@@ -10,11 +10,13 @@ services:
     environment:
       KIS_TOKEN_CACHE_PATH: /kis-cache/kis_token_cache.json
       KAFKA_BOOTSTRAP_SERVERS: broker:19092
+      DATABASE_URL: postgresql://gops:gops_dev_password@postgres:5432/gops
     volumes:
       - kis-token-cache:/kis-cache
     command: ["--help"]
     depends_on:
       - broker
+      - postgres
 
   broker:
     image: apache/kafka:latest
@@ -35,5 +37,22 @@ services:
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_NUM_PARTITIONS: 3
 
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: gops
+      POSTGRES_USER: gops
+      POSTGRES_PASSWORD: gops_dev_password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gops -d gops"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 volumes:
   kis-token-cache:
+  postgres-data:
