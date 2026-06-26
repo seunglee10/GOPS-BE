@@ -14,3 +14,7 @@
 12. Mermaid 다이어그램은 닫힌 코드블록으로 작성한다.
 13. 테스트나 검증 명령을 실행했다면 최종 응답에 결과를 요약한다.
 14. 기존 사용자 변경사항은 되돌리지 않는다.
+15. `docs/gops-integrated-spec.md`는 통합 기준 문서로 보고, 주문 담당 문서는 이 기준을 반복하지 않고 주문 신뢰성/보안 관점으로 구체화한다.
+16. 주문 문서가 통합 기준과 충돌하면 `docs/gops-integrated-spec.md`의 상태, topic, MVP 범위, 보안 원칙을 우선한다.
+17. 주문 상태는 `RECEIVED`, `PUBLISHED`, `REJECTED`, `RISK_REJECTED`, `SUBMITTING`, `SUBMITTED`, `SUBMIT_FAILED_UNKNOWN`, `PARTIALLY_FILLED`, `FILLED`, `CANCELED`, `RECONCILIATION_REQUIRED`, `FAILED`를 기준으로 작성한다.
+18. 주문 결과 topic은 `broker.submit-results.v1`, `broker.order-events.v1` 중심으로 작성하고, 별도 확정 topic을 추가하려면 통합 스펙 변경이 먼저 필요하다.
