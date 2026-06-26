@@ -16,14 +16,18 @@
 
 ## 2. 통합 제품 범위
 
-GOPS는 실시간 금융 데이터를 수집하고, 차트로 렌더링하며, 사용자가 직접 편집하거나 LLM이 제안한 차트 변경을 전역 auto toggle 정책에 따라 검토 또는 적용할 수 있는 분석/거래 보조 시스템이다. 주문 기능은 차트 MVP와 분리된 별도 주문 경로로 다루며, 서버 멱등성, Kafka 기반 비동기 처리, KIS API 제출, 체결 대사를 통해 중복 주문과 주문 유실을 방지한다.
+GOPS는 실시간 금융 데이터를 수집하고, 차트로 렌더링하며, 사용자가 직접 편집하거나 LLM이 제안한 차트 변경을 전역 auto toggle 정책에 따라 검토 또는 적용할 수 있는 분석/거래 보조 시스템이다. 단, drawing/comparison 제안은 auto toggle과 무관하게 preview-first로 표시하고 사용자가 차트 패널에서 적용해야 editable object가 된다. 주문 기능은 차트 MVP와 분리된 별도 주문 경로로 다루며, 서버 멱등성, Kafka 기반 비동기 처리, KIS API 제출, 체결 대사를 통해 중복 주문과 주문 유실을 방지한다.
+
+현재 프론트엔드 MVP 기준은 desktop Bento Grid workspace다. 모바일 전용 화면, 모바일 viewport 레이아웃, 하단 rail/overlay 전환은 아직 고려하지 않는다.
+
+현재 차트 도구 구현 상태명은 `Chart Tool Runtime V1 core implementation baseline + validation hardening backlog`로 고정한다. 이는 차트 도구 core baseline이 동작한다는 뜻이며 Playwright/browser regression, multi-chart browser scenario, `/ref/references` behavior comparison, real provider 전환 정책은 아직 hardening backlog다.
 
 통합 MVP는 다음 세 흐름으로 나눈다.
 
 | 흐름 | 포함 범위 | 1차 기준 |
 | --- | --- | --- |
 | 시장 데이터/차트 | Alpaca 실시간/과거 데이터 수집, Kafka/Flink 처리, Redis/ClickHouse/S3 저장, Chart API/WebSocket, Chart Engine 렌더링 | 미국 주식 `1m`, `5m`, `10m` 캔들, 거래량, 이동평균선 |
-| LLM 차트 제안 | 현재 차트 context와 market summary를 backend로 보내고, OpenAI API 응답을 검증한 뒤 전역 auto toggle 정책에 따라 proposal 대기 또는 grouped apply 처리 | auto off는 승인 필요, auto on은 검증 후 즉시 적용 |
+| LLM 차트 제안 | 현재 차트 context와 market summary를 backend로 보내고, OpenAI API 응답을 검증한 뒤 전역 auto toggle 정책과 preview-first 정책에 따라 proposal 대기, preview 또는 grouped apply 처리 | auto off는 승인 필요, auto on은 즉시 적용 가능 command만 검증 후 적용. drawing/comparison은 항상 preview-first |
 | 주문 신뢰성/보안 | 주문 접수, 멱등성, Kafka command, KIS Broker Adapter, append-only 원장, 체결 대사, 운영 가드레일 | MVP에서 KIS 모의투자 주문 가능. 실전 주문은 후속 단계 |
 
 차트 문서에서 제외한 주문, 인증, 배포, 영속 저장소는 차트 엔진의 제외 범위로 해석한다. 전체 GOPS 플랫폼 관점에서는 주문, 인증, 배포, 저장소가 별도 명세의 포함 범위다.
@@ -170,6 +174,8 @@ Chart Engine은 위 메시지를 정규화된 snapshot/live update contract로 �
 - 하나라도 실패하면 전체 proposal 적용을 취소한다.
 - chart capability manifest는 LLM에 노출 가능한 chart command와 tool의 목적, payload schema, 요구 market context, preview 가능 여부, auto 적용 가능 여부, undo scope, 충돌/권장 조합 정보를 함께 제공한다.
 - LLM은 명시적 사용자 요청뿐 아니라 market summary와 visible chart context를 바탕으로 여러 chart command를 조합할 수 있지만, 조합은 capability manifest와 command validation을 통과해야 하며 rationale을 포함해야 한다.
+- shared canonical chart command schema는 runtime이 이해하는 전체 command set이고, backend OpenAI generation schema는 LLM이 직접 생성할 수 있는 안전 subset이다.
+- 현재 scaffold에서는 Agent 01만 chart command chat/proposal 권한을 가진다. Agent 02~04와 multi-agent orchestration은 후속 권한 모델이 정해질 때까지 chart command 입력을 비활성으로 둔다.
 
 ### 5.7 차트 렌더링과 계산
 
@@ -199,7 +205,9 @@ LLM 제안 적용 정책은 top app bar의 전역 auto toggle을 기준으로 �
 | Mode | 동작 |
 | --- | --- |
 | auto off | LLM 차트 제안을 pending proposal로 보여주고 사용자가 승인해야 적용한다. |
-| auto on | 검증된 LLM 차트 제안을 grouped command로 즉시 적용한다. |
+| auto on | 검증된 LLM 차트 제안 중 즉시 적용 가능한 command를 grouped command로 적용한다. |
+
+drawing/comparison 제안은 예외적으로 auto toggle과 무관하게 preview-first로 표시한다. preview는 차트 문서를 변경하지 않으며, 사용자가 chart panel에서 apply preview를 누를 때만 editable drawing/comparison object로 적용된다. hidden preview는 pending 상태로 남지만 apply할 수 없고, 다시 표시한 뒤 적용한다.
 
 chart panel의 `layoutPinned`는 위치와 크기를 고정하는 레이아웃 정책이며, chart 내부 symbol, timeframe, viewport, layer 변경 정책이 아니다.
 

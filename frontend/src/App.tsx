@@ -1,8 +1,23 @@
-import { useMemo, useReducer, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import { MarketTicker } from "./components/MarketTicker";
 import { TopAppBar } from "./components/TopAppBar";
 import { initialAgentOptions, type AgentOption, type SystemMenuTab, type SystemMode } from "./components/SystemArea";
 import { WorkspaceGrid } from "./components/WorkspaceGrid";
+import { makeChartCommand } from "./chart/commands";
+import {
+  chartRuntimeReducer,
+  createInitialChartRuntimeState,
+  getChartDocumentForPanel,
+  type ChartRuntimeAction
+} from "./chart/runtime";
+import {
+  SUPPORTED_SYMBOLS,
+  defaultWatchlistSymbols,
+  normalizeSupportedSymbol,
+  normalizeWatchlistPayload,
+  type SupportedSymbol,
+  type WatchlistSymbol
+} from "./chart/symbols";
 import {
   createInitialRuntimeState,
   executeCommand,
@@ -19,18 +34,99 @@ function runtimeReducer(state: LayoutRuntimeState, action: RuntimeAction): Layou
 
 export default function App() {
   const [state, dispatch] = useReducer(runtimeReducer, undefined, createInitialRuntimeState);
+  const [chartRuntime, chartDispatch] = useReducer(chartRuntimeReducer, undefined, createInitialChartRuntimeState);
   const [activeSystemMode, setActiveSystemMode] = useState<SystemMode>("watchlist");
   const [selectedAgentIds, setSelectedAgentIds] = useState<string[]>([]);
   const [settingsTab, setSettingsTab] = useState<SystemMenuTab>("layouts");
   const [agents, setAgents] = useState<AgentOption[]>(initialAgentOptions);
   const [editingAgentId, setEditingAgentId] = useState<string | undefined>();
+  const [activeSymbol, setActiveSymbol] = useState<SupportedSymbol>("AAPL");
+  const [symbolSearchError, setSymbolSearchError] = useState<string | undefined>();
+  const [watchlistSymbols, setWatchlistSymbols] = useState<WatchlistSymbol[]>(defaultWatchlistSymbols);
 
   const selectedPanel = useMemo(
     () => state.layout.panels.find((panel) => panel.id === state.layout.selectedPanelId),
     [state.layout.panels, state.layout.selectedPanelId]
   );
 
-  const runCommand = (command: LayoutCommand) => dispatch({ kind: "command", command });
+  const runCommand = useCallback((command: LayoutCommand) => dispatch({ kind: "command", command }), []);
+  const runChartAction = useCallback((action: ChartRuntimeAction) => chartDispatch(action), []);
+
+  useEffect(() => {
+    chartDispatch({ kind: "chart.ensureDocuments", panels: state.layout.panels });
+  }, [state.layout.panels]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetch("/api/charts/symbols")
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error(`Symbol API returned ${response.status}`);
+        }
+        return response.json() as Promise<unknown>;
+      })
+      .then((payload) => {
+        if (!cancelled) {
+          setWatchlistSymbols(normalizeWatchlistPayload(payload));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setWatchlistSymbols(defaultWatchlistSymbols());
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const activeChartPanel = useMemo(
+    () => state.layout.panels.find((panel) => panel.type === "chart" && panel.id === state.layout.selectedPanelId) ??
+      state.layout.panels.find((panel) => panel.type === "chart"),
+    [state.layout.panels, state.layout.selectedPanelId]
+  );
+
+  const activeChartDocument = useMemo(
+    () => activeChartPanel ? getChartDocumentForPanel(chartRuntime, activeChartPanel) : null,
+    [activeChartPanel, chartRuntime]
+  );
+
+  useEffect(() => {
+    const normalized = activeChartDocument ? normalizeSupportedSymbol(activeChartDocument.symbol) : null;
+    if (normalized && normalized !== activeSymbol) {
+      setActiveSymbol(normalized);
+    }
+  }, [activeChartDocument?.symbol, activeSymbol]);
+
+  const selectSymbol = useCallback((value: string): boolean => {
+    const symbol = normalizeSupportedSymbol(value);
+    if (!symbol) {
+      setSymbolSearchError(`Supported symbols: ${SUPPORTED_SYMBOLS.join(", ")}`);
+      return false;
+    }
+
+    setActiveSymbol(symbol);
+    setSymbolSearchError(undefined);
+
+    const chartPanel = state.layout.panels.find((panel) => panel.type === "chart" && panel.id === state.layout.selectedPanelId) ??
+      state.layout.panels.find((panel) => panel.type === "chart");
+    if (!chartPanel) {
+      return true;
+    }
+
+    const chartDocument = getChartDocumentForPanel(chartRuntime, chartPanel);
+    chartDispatch({ kind: "chart.ensureDocuments", panels: state.layout.panels });
+    chartDispatch({
+      kind: "chart.command",
+      command: makeChartCommand("chart.symbol.set", "user", {
+        panelId: chartPanel.id,
+        chartDocumentId: chartDocument.id
+      }, { symbol }, undefined, "external")
+    });
+    return true;
+  }, [chartRuntime, state.layout.panels, state.layout.selectedPanelId]);
 
   const closeSystemPanel = () => {
     setSelectedAgentIds([]);
@@ -110,6 +206,9 @@ export default function App() {
         selectedAgentIds={selectedAgentIds}
         settingsActive={activeSystemMode === "settings"}
         notificationsActive={activeSystemMode === "notifications"}
+        activeSymbol={activeSymbol}
+        supportedSymbols={SUPPORTED_SYMBOLS}
+        symbolSearchError={symbolSearchError}
         onToggleAuto={() =>
           runCommand(
             makeCommand("layout.autoApply.set", "user", {
@@ -120,6 +219,7 @@ export default function App() {
         onToggleNotifications={toggleNotifications}
         onToggleAgent={toggleAgent}
         onToggleSettings={toggleSettings}
+        onSymbolSearch={selectSymbol}
         onCommand={runCommand}
       />
 
@@ -135,13 +235,19 @@ export default function App() {
           selectedAgentIds={selectedAgentIds}
           editingAgentId={editingAgentId}
           savedLayouts={state.savedLayouts}
+          activeSymbol={activeSymbol}
+          watchlistSymbols={watchlistSymbols}
+          chartRuntime={chartRuntime}
+          chartAutoApplyEnabled={state.layout.settings.llmLayoutAutoApply}
           onSettingsTabChange={setSettingsTab}
           onEditAgent={setEditingAgentId}
           onUpdateAgent={updateAgent}
           onAddAgent={addAgent}
           onDeleteAgent={deleteAgent}
           onCloseSystemPanel={closeSystemPanel}
+          onSelectSymbol={selectSymbol}
           onCommand={runCommand}
+          onChartAction={runChartAction}
         />
       </section>
     </main>

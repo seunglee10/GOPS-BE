@@ -1,5 +1,17 @@
 # GOPS Chart Rendering Milestones
 
+## 현재 기준선 상태
+
+현재 구현 상태는 다음 이름으로 다룬다.
+
+```text
+Chart Tool Runtime V1 core implementation baseline + validation hardening backlog
+```
+
+이 표현은 기존 M1-M5 chart rendering runtime이 V1 chart tool runtime의 core baseline 안으로 흡수됐다는 뜻이다. Playwright/browser screenshot regression, multi-chart browser scenario, `/ref/references` behavior comparison, real provider 전환 정책까지 완료된 “검증 완결판”이라는 뜻은 아니다.
+
+다음 구현은 [chart-tool-runtime-v1.md](/Users/helixho/Desktop/JUNGLE/22 NaManMu/02 POC/Chart/chart_plz/docs/planning/chart-tool-runtime-v1.md)와 [chart-tool-runtime-milestones.md](/Users/helixho/Desktop/JUNGLE/22 NaManMu/02 POC/Chart/chart_plz/docs/planning/chart-tool-runtime-milestones.md)를 기준으로 진행한다. 본 문서의 기존 M1-M5 항목은 현재 V1 baseline의 렌더링 하위 이력으로 참고한다.
+
 ## 목적
 
 이 문서는 GOPS chart rendering runtime을 Goal 모드에서 안정적으로 구현하기 위한 마일스톤이다. 각 마일스톤은 이전 단계의 구조를 유지하면서 다음 기능을 얹는 방식으로 진행한다.
@@ -20,7 +32,8 @@
 - backend가 포함된 마일스톤은 `python -m compileall backend/app`을 통과한다.
 - Playwright 또는 동등한 브라우저 검증으로 chart panel을 실제로 렌더링한다.
 - Canvas가 nonblank인지 확인하고, candle/volume/MA/axis/crosshair가 기대 위치와 draw order로 보이는지 확인한다.
-- desktop/mobile viewport와 compact/standard/wide/large panel 크기에서 겹침, 흐림, 잘림, 비정상 scaling이 없는지 확인한다.
+- desktop viewport와 compact/standard/wide/large panel 크기에서 겹침, 흐림, 잘림, 비정상 scaling이 없는지 확인한다.
+- 모바일 전용 viewport와 모바일 UI 레이아웃은 현재 마일스톤 범위에서 제외한다.
 - 필요한 경우 `/ref/references`의 `lightweight-charts`, `klinecharts`, `uplot`, `technicalindicators`를 읽고 scale, pane, interaction, indicator behavior를 비교한다.
 - 검증 실패 시 보완 후 같은 검증을 다시 수행한다. 한 번 확인하고 끝내지 않는다.
 
@@ -53,7 +66,7 @@
 - `npm run build`
 - `python -m compileall backend/app`
 - dummy candle API response shape 확인
-- desktop/mobile 또는 작은/큰 panel viewport에서 Canvas nonblank 확인
+- desktop browser의 작은/큰 panel viewport에서 Canvas nonblank 확인
 - screenshot 또는 canvas pixel check로 candle, volume, MA, axis가 실제로 그려졌는지 확인
 - `/ref/references`의 financial chart 구현을 참고해 candle width, wick, y-scale, volume scale의 기본 동작을 비교
 
@@ -189,6 +202,6 @@
 
 ## 후속 단계
 
-M5 이후에는 indicator registry, comparison series, horizontal line drawing, proposal preview layer, Workspace-level grouped history, server-side chart document persistence를 별도 마일스톤으로 분리한다.
+M5 이후 항목 중 comparison series, P0 drawing, proposal preview layer는 현재 `Chart Tool Runtime V1 core implementation baseline`에 포함됐다. Indicator registry 고도화, advanced drawing suite, Workspace-level grouped history, server-side chart document persistence는 별도 hardening 또는 후속 마일스톤으로 분리한다.
 
 특히 layout command와 chart command가 한 proposal에 함께 들어가는 복합 적용은 chart panel-local history만으로는 충분하지 않으므로, Workspace-level grouped history가 준비된 뒤 구현한다.

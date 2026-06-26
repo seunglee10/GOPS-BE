@@ -135,6 +135,12 @@ function readBoolean(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
 }
 
+function readRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? { ...(value as Record<string, unknown>) }
+    : {};
+}
+
 function readFavoriteSlot(value: unknown): FavoriteLayoutSlot | null {
   return value === 1 || value === 2 || value === 3 || value === 4 ? value : null;
 }
@@ -169,6 +175,9 @@ function panelSnapshot(panel: PanelInstance) {
     type: panel.type,
     title: panel.title,
     placement: panel.placement,
+    props: panel.props,
+    resourceRefs: panel.resourceRefs,
+    chartDocumentId: panel.chartDocumentId,
     layoutPinned: Boolean(panel.layoutPinned)
   };
 }
@@ -204,7 +213,8 @@ function applyAdd(state: LayoutRuntimeState, command: LayoutCommand): LayoutRunt
 
   const definition = getPanelDefinition(panelType);
   const placement = (command.payload.placement as PanelPlacement | undefined) ?? definition.defaultPlacement;
-  const panel = createPanelInstance(panelType, placement, command.actor, {}, `panel-${panelType}-${crypto.randomUUID()}`);
+  const props = readRecord(command.payload.props);
+  const panel = createPanelInstance(panelType, placement, command.actor, props, `panel-${panelType}-${crypto.randomUUID()}`);
   const validation = validatePlacement(state.layout, panel, placement);
   if (validation) {
     return fail(state, command, validation);
@@ -307,7 +317,16 @@ function applyReplace(state: LayoutRuntimeState, command: LayoutCommand): Layout
     return fail(state, command, "Unknown replacement panel type.");
   }
 
-  const replacement = createPanelInstance(nextType, panel.placement, command.actor, {}, panel.id);
+  if (panel.layoutPinned) {
+    return fail(state, command, "Pinned panels cannot be replaced.");
+  }
+
+  if (panel.type === nextType) {
+    return state;
+  }
+
+  const props = readRecord(command.payload.props);
+  const replacement = createPanelInstance(nextType, panel.placement, command.actor, props, panel.id);
   const validation = validatePlacement(state.layout, replacement);
   if (validation) {
     return fail(state, command, validation);
@@ -329,6 +348,22 @@ function applyPin(state: LayoutRuntimeState, command: LayoutCommand, value: bool
 }
 
 function applySelect(state: LayoutRuntimeState, command: LayoutCommand): LayoutRuntimeState {
+  if (command.payload.clear === true) {
+    if (!state.layout.selectedPanelId) {
+      return state;
+    }
+
+    return addJournal(
+      {
+        ...state,
+        layout: { ...state.layout, selectedPanelId: undefined }
+      },
+      command,
+      "applied",
+      "Panel selection cleared."
+    );
+  }
+
   const panel = findPanel(state.layout, command.target?.panelId ?? command.payload.panelId);
   if (!panel) {
     return fail(state, command, "Panel not found.");

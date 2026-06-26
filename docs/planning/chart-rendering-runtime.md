@@ -8,6 +8,14 @@
 
 차트는 전역 singleton 화면이 아니라 여러 패널 중 하나다. 같은 화면에 chart panel이 여러 개 존재할 수 있으며, 각 chart panel instance는 독립적인 `chartDocumentId`를 통해 자신의 `ChartDocument`를 참조한다.
 
+현재 구현 상태명은 다음으로 고정한다.
+
+```text
+Chart Tool Runtime V1 core implementation baseline + validation hardening backlog
+```
+
+이 이름은 Custom Canvas candle/volume/MA 렌더링, viewport/crosshair/live update, panel-local chart command/history, data-coordinate drawing, comparison overlay, preview-first LLM proposal, Agent 01 chart chat scaffold가 핵심 기준선으로 구현됐다는 뜻이다. Playwright/browser regression, multi-chart browser scenario, `/ref/references` behavior comparison, real provider 전환 정책은 아직 hardening backlog다.
+
 ## `/ref` 참고 원칙
 
 `/ref` 폴더는 절대 참고 전용이다.
@@ -42,6 +50,12 @@ Chart Rendering Runtime이 책임지지 않는 것:
 - 주문 접수, 체결, 계좌, KIS adapter, 주문 멱등성
 - Bento Grid panel 위치/크기 reflow
 - `/ref` 코드의 보존 또는 유지보수
+
+서비스 경계 기준은 [../architecture/service-boundaries.md](/Users/helixho/Desktop/JUNGLE/22 NaManMu/02 POC/Chart/chart_plz/docs/architecture/service-boundaries.md)를 따른다. `ChartCommand`, `ChartProposal`, capability manifest는 client-only 구현 세부가 아니라 사용자 UI와 LLM Agent가 공유하는 contract이며, 현재 기준 위치는 `shared/chart-contract/`다.
+
+조작 가능한 drawing, comparison, LLM preview-first 정책은 [chart-tool-runtime-v1.md](/Users/helixho/Desktop/JUNGLE/22 NaManMu/02 POC/Chart/chart_plz/docs/planning/chart-tool-runtime-v1.md)를 따른다. 현재 차트 렌더링 구현은 해당 V1 구현의 참고 baseline이다.
+
+현재 프론트엔드/차트 렌더링 기준은 desktop Bento Grid workspace다. 모바일 전용 viewport, 모바일 app bar, 하단 rail, overlay 전환 같은 모바일 화면은 아직 고려하지 않는다. 검증은 desktop browser viewport와 panel resize/variant 변경을 우선한다.
 
 ## 데이터 입력 계약
 
@@ -84,7 +98,7 @@ MarketDataAdapter -> CandleStore -> ChartDocument -> RenderScene -> CanvasLayerR
 - `CandleStore`: `symbol + timeframe` 기준 candle 배열을 보관하고 snapshot/live/corrected update를 적용한다.
 - `ChartDocument`: chart panel이 참조하는 상태 문서다. symbol, timeframe, viewport, panes, layers, style, interaction state, history pointer를 가진다.
 - `RenderScene`: document와 data에서 파생되는 순수 렌더링 입력이다. renderer가 document/data를 수정하지 않도록 경계를 만든다.
-- `CanvasLayerRenderer`: grid, candles, volume, moving average, crosshair, drawing preview 같은 layer를 정해진 draw order로 그린다.
+- `CanvasLayerRenderer`: grid, candles, volume, moving average, comparison, drawing, preview, crosshair 같은 layer를 정해진 draw order로 그린다.
 
 ## ChartDocument 요구사항
 
@@ -119,16 +133,27 @@ MVP 우선 command:
 - `chart.undo`
 - `chart.redo`
 
-후속 command:
+V1 chart tool command:
+
+- `chart.comparison.add`
+- `chart.comparison.remove`
+- `chart.comparison.update`
+- `chart.drawing.add`
+- `chart.drawing.update`
+- `chart.drawing.remove`
+- `chart.drawing.select`
+- `chart.drawing.clearSelection`
+- `chart.preview.set`
+- `chart.preview.toggle`
+- `chart.preview.apply`
+- `chart.preview.clear`
+- `chart.measurement.add`
+
+후속 indicator command:
 
 - `chart.indicator.add`
 - `chart.indicator.update`
 - `chart.indicator.remove`
-- `chart.comparison.add`
-- `chart.comparison.remove`
-- `chart.drawing.add`
-- `chart.drawing.update`
-- `chart.drawing.remove`
 
 모든 chart command는 `panelId`와 `chartDocumentId`를 명확히 target으로 가진다. 잘못된 target, 지원하지 않는 command type, 잘못된 payload, no-op command는 chart document를 변경하지 않는다.
 
@@ -168,10 +193,13 @@ LLM은 사용자의 명시적 요청뿐 아니라 market summary, visible chart 
 
 Top app bar의 전역 auto toggle은 layout command와 chart command의 LLM 적용 정책을 함께 제어한다.
 
-- auto off: LLM chart command는 pending `ChartProposal`로 저장하고 사용자가 승인해야 적용한다.
-- auto on: LLM chart proposal은 validation을 통과한 뒤 즉시 grouped apply된다.
+- auto off: LLM chart command는 pending `ChartProposal` 또는 pending preview로 저장하고 사용자가 승인해야 적용한다.
+- auto on: viewport/layer 같은 즉시 적용 가능한 LLM chart proposal은 validation을 통과한 뒤 grouped apply된다.
+- drawing/comparison proposal은 auto toggle과 무관하게 preview-first로 들어간다. preview는 chart document를 바꾸지 않고, 사용자가 chart panel의 apply preview 버튼을 눌렀을 때만 editable object로 적용된다.
+- hidden preview는 pending 상태를 유지하지만 apply할 수 없다. 다시 표시한 뒤 적용한다.
 - LLM이 만든 proposal 하나는 chart history에서 하나의 undo/redo 단위로 기록한다.
 - LLM 응답은 `ChartDocument`를 직접 변경하지 않는다. 항상 chart command 또는 proposal로만 들어온다.
+- 현재 scaffold에서는 Agent 01만 chart command chat/proposal 권한을 가진다. backend OpenAI generation schema는 shared canonical chart command 전체가 아니라 LLM이 직접 생성할 수 있는 안전 subset이다.
 
 전역 auto toggle은 layout/chart 분석 UI command에만 적용한다. 주문 생성, 주문 취소, 주문 정정, 계좌/잔고/체결 변경 같은 거래 command에는 절대 적용하지 않는다.
 
@@ -194,13 +222,17 @@ MVP 렌더링 대상:
 - crosshair
 - loading, empty, error state
 
-MVP 이후 렌더링 대상:
+V1 chart tool 렌더링 대상:
 
-- indicator pane
 - comparison line
-- horizontal line drawing
+- horizontal line, trend line, vertical marker, text label, point marker, arrow, range box, measurement drawing
 - proposal preview layer
 - selected/hovered layer affordance
+
+후속 렌더링 대상:
+
+- indicator pane
+- advanced drawing suite
 
 Canvas는 `ResizeObserver`와 device pixel ratio를 반영한다. chart panel 크기가 Bento Grid 조작으로 바뀌어도 candle, volume, axis, crosshair가 비정상적으로 늘어나거나 흐려지지 않아야 한다.
 
@@ -218,7 +250,7 @@ Custom Canvas 구현은 “빌드 통과” 또는 “캔버스가 비어 있지
 - 상승/하락 색상, volume bar, MA line, axis label, crosshair가 의도한 draw order로 보인다.
 - `devicePixelRatio`가 1이 아닌 화면에서도 선과 텍스트가 흐릿하거나 어긋나지 않는다.
 - compact, standard, wide, large panel에서 텍스트와 chart가 겹치지 않는다.
-- desktop/mobile viewport, 작은 panel/큰 panel, resize 직후에도 Canvas가 nonblank이며 비율이 깨지지 않는다.
+- desktop viewport의 작은 panel/큰 panel, resize 직후에도 Canvas가 nonblank이며 비율이 깨지지 않는다.
 - pan/zoom/crosshair 같은 interaction 이후 data state와 chart document가 의도 없이 바뀌지 않는다.
 - 필요한 경우 `/ref/references`의 `lightweight-charts`, `klinecharts`, `uplot` 동작을 읽고 time scale, value scale, pane, cursor 정책을 비교한다.
 

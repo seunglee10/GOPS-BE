@@ -14,14 +14,19 @@ GOPS 차트 기능은 외부에서 수신한 실시간 시장 데이터를 차�
 
 ## 현재 구현 결정
 
+- 현재 구현 상태명은 `Chart Tool Runtime V1 core implementation baseline + validation hardening backlog`로 고정한다. 이는 차트 도구 핵심 기준선이 동작한다는 뜻이며, 검증 완결판이나 실데이터 provider 전환 완료를 뜻하지 않는다.
 - 차트 렌더링은 Custom Canvas 우선으로 진행한다. `/ref`는 참고 전용이며, 코드를 직접 복사하거나 이식하지 않는다.
 - 첫 구현은 FastAPI dummy candle API를 사용하되, 시장 데이터 스펙의 `/api/charts/candles` 응답과 WebSocket message shape에 맞춘다.
 - chart panel은 전역 singleton이 아니라 여러 panel 중 하나다. 각 chart panel instance는 독립적인 `chartDocumentId`를 통해 `ChartDocument`를 참조한다.
 - top app bar의 전역 auto toggle은 layout command와 chart command의 LLM 적용 정책을 함께 제어한다.
 - chart panel 내부에는 chart state 전용 undo/redo를 둔다. top app bar의 undo/redo는 layout history 전용이다.
-- LLM chart proposal 하나는 chart history에서 하나의 undo/redo 단위로 기록한다.
+- LLM chart proposal 하나는 적용될 때 chart history에서 하나의 undo/redo 단위로 기록한다.
+- LLM drawing/comparison proposal은 auto toggle과 무관하게 preview-first로 표시한다. preview를 적용하기 전까지 `ChartDocument.drawings`와 `comparisons`를 변경하지 않는다.
+- hidden preview는 pending 상태로 남지만 apply할 수 없다. 사용자가 다시 표시한 뒤 적용한다.
+- Agent 01만 현재 chart command chat/proposal 권한을 가진다. Agent 02~04와 multi-agent orchestration은 UI scaffold로 남기고 chart command 입력은 비활성으로 둔다.
 - chart capability manifest는 단순 allowlist가 아니라 LLM의 도구 조합 판단을 위한 metadata로 정의한다.
 - 전역 auto toggle은 layout/chart 분석 UI command에만 적용하며, 주문 생성/취소/정정 같은 거래 command에는 절대 적용하지 않는다.
+- 현재 UI 기준은 desktop Bento Grid workspace다. 모바일 전용 viewport, 모바일 레이아웃, 하단 rail/overlay 같은 모바일 화면은 아직 고려하지 않는다.
 
 ## 구현 순서
 
@@ -88,7 +93,9 @@ GOPS 차트 기능은 외부에서 수신한 실시간 시장 데이터를 차�
 - chart panel별 target chart 지정
 - panel layout pin 상태는 frontend layout runtime이 관리하고, chart panel runtime은 이를 chart 내부 상태와 분리해 참조
 - chart tool mode 관리
-- crosshair, select, horizontal line drawing mode 지원
+- crosshair, select, pan, drawing mode 지원
+- horizontal line, trend line, vertical marker, text label, point marker, arrow, range box, measurement drawing 지원
+- `horizontalLine`은 timestamp 없이 price-only anchor를 가질 수 있음
 - panel-local command dispatch
 - panel-local chart undo/redo
 
@@ -114,7 +121,8 @@ GOPS 차트 기능은 외부에서 수신한 실시간 시장 데이터를 차�
 - LLM chart command 적용 여부는 top app bar의 전역 auto toggle로 처리
 - indicator 추가, 입력값 수정, 삭제
 - comparison symbol 추가, 삭제
-- horizontal line 추가, 가격/라벨/색상/표시 여부 수정, 삭제
+- horizontal line, trend line, vertical marker, text label, point marker, arrow, range box, measurement 추가와 최소 편집
+- drawing 선택, 이동, anchor 편집, label/style 수정, 삭제, 전체 삭제
 - layer 표시/숨김
 - 제거 가능한 layer 삭제
 - chart undo/redo
@@ -175,8 +183,9 @@ GOPS 차트 기능은 외부에서 수신한 실시간 시장 데이터를 차�
 - volume 렌더링
 - indicator 렌더링
 - comparison line 렌더링
-- horizontal line 렌더링
+- horizontal line, trend line, vertical marker, text label, point marker, arrow, range box, measurement 렌더링
 - proposal preview 렌더링
+- selected/hovered drawing affordance 렌더링
 - crosshair와 axis label
 - device pixel ratio 대응
 - hidden layer 렌더링 제외
@@ -227,9 +236,12 @@ GOPS 차트 기능은 외부에서 수신한 실시간 시장 데이터를 차�
 - 기본 응답 형식 검증
 - 사용자용 message와 insights 반환
 - chart proposal 반환
+- 현재 구현 기준에서는 Agent 01만 chart operator로 OpenAI chat/proposal scaffold를 사용한다.
+- shared canonical chart command schema는 runtime이 이해하는 전체 command set이며, backend OpenAI generation schema는 LLM이 직접 생성할 수 있는 안전 subset으로 제한한다.
 - LLM이 명시적 사용자 요청뿐 아니라 market summary와 visible chart context를 바탕으로 여러 chart command를 조합할 수 있음
 - LLM proposal은 조합 rationale을 포함
 - 전역 auto toggle 기준으로 pending 또는 즉시 grouped apply 처리
+- drawing/comparison proposal은 auto on 상태에서도 preview-first로 처리
 - invalid proposal 또는 command 거부
 - OpenAI API key 누락 시 명확한 `503` 반환
 
@@ -245,16 +257,18 @@ GOPS 차트 기능은 외부에서 수신한 실시간 시장 데이터를 차�
 목표:
 
 - 사용자는 auto off 상태에서 LLM 제안을 적용하기 전에 차트상에서 미리 확인할 수 있다.
-- auto on 상태에서는 검증된 LLM proposal을 즉시 적용하되, 하나의 grouped chart history entry로 기록한다.
+- auto on 상태에서는 검증된 LLM proposal 중 즉시 적용 가능한 command를 적용하되, 하나의 grouped chart history entry로 기록한다.
 
 기능:
 
 - pending proposal 목록 표시
 - proposal title, rationale, summary, command count 표시
 - render 가능한 proposal preview layer 생성
-- accept/reject action 제공
-- accept 시 grouped command 적용
-- auto on 시 grouped command 즉시 적용
+- preview toggle과 apply preview action 제공
+- preview hidden 상태에서는 apply disabled
+- apply preview 시 grouped command 적용
+- auto on 시에도 drawing/comparison proposal은 preview-first 유지
+- viewport/layer처럼 preview가 필요 없는 command만 auto on에서 grouped command 즉시 적용
 - reject 시 preview 제거
 - failed accept 시 document 변경 없음
 - proposal 단위 chart undo/redo
@@ -263,7 +277,7 @@ GOPS 차트 기능은 외부에서 수신한 실시간 시장 데이터를 차�
 
 - auto off proposal은 승인 전 `ChartDocument`를 변경하지 않는다.
 - auto off에서는 accept 후에만 실제 layer, indicator, drawing, viewport 변경이 반영된다.
-- auto on에서는 validation을 통과한 proposal만 즉시 반영된다.
+- auto on에서는 validation을 통과한 즉시 적용 가능 proposal만 반영된다. drawing/comparison은 preview로 남긴다.
 - reject 또는 validation 실패 후 preview가 남지 않는다.
 - proposal 적용은 한 번의 chart undo로 되돌릴 수 있다.
 
@@ -358,7 +372,7 @@ npm run backend:test
 - 배포
 - ChartDocument 영속 저장소
 - WebGL 렌더러
-- full drawing suite
+- advanced drawing suite
 - layout command와 chart command가 섞인 복합 proposal의 Workspace-level grouped history
 
 KIS 모의투자 주문은 차트 엔진이 아니라 별도 주문 시스템 MVP 범위에서 다룬다.

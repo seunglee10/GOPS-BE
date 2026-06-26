@@ -13,6 +13,7 @@
 - panel zone 자유도는 당분간 유지한다. workspace panel은 현재 구현처럼 `main`, `context`, `mainContext` 사이를 비교적 자유롭게 오갈 수 있으며, 타입별 zone 제약은 필요해질 때 registry에서 다시 좁힌다.
 - top app bar의 전역 auto toggle은 LLM layout command와 LLM chart command의 적용 정책을 함께 제어한다. 단, 이 문서의 구현 범위는 layout command에 한정한다.
 - top app bar undo/redo는 layout history 전용이다. chart panel 내부 undo/redo는 chart rendering runtime에서 별도로 관리한다.
+- 현재 차트 도구 구현 상태명은 `Chart Tool Runtime V1 core implementation baseline + validation hardening backlog`로 고정한다.
 
 ## 전체 UI 구조
 
@@ -55,6 +56,20 @@ Bento Grid는 겉으로는 5열처럼 보이더라도 실제 column width가 대
 - `agentRail` 또는 오른쪽 system area와 `workspace` 사이의 span은 금지한다.
 
 agent 아이콘은 `assets/agent-icons`의 자산을 사용한다. 현재 구현은 `frontend/public/assets/agent-icons`로 복사한 SVG를 agent config에서 참조한다. 초기 UI는 agent 4명까지 지원하며, 오른쪽 system shortcut rail은 `4 agents + 1 spacer + notification + menu`의 7칸 구조를 사용한다.
+
+현재 오른쪽 `system area`는 다음 mode를 가진다.
+
+- `watchlist`: 기본 mode. 지원 symbol 목록을 보여주고 클릭 시 active symbol과 현재 chart panel을 변경한다.
+- `agents`: agent shortcut 선택 시 표시되는 agent chat surface다. Agent 01 단독 선택에서만 chart command chat/proposal 입력을 활성화한다.
+- `notifications`: notification shortcut 선택 시 표시되는 알림/설정 surface다.
+- `settings`: menu shortcut 선택 시 표시되는 settings surface다. layout 저장/불러오기와 agent 설정 UI를 포함한다.
+
+Agent chat 현재 기준:
+
+- Agent 01은 chart operator scaffold다. 사용자 요청을 backend-only OpenAI 경로로 보내고, 검증된 chart proposal을 chart runtime에 전달한다.
+- Agent 02~04와 multi-agent orchestration 상태는 UI에 표시될 수 있지만 chart command 입력은 비활성이다.
+- composer의 reference token은 현재 symbol 하나만 표시한다. news, candle, drawing, comparison token은 후속 Agent/Context contract에서 정의한다.
+- agent chat signal light는 Agent/LLM 요청 상태만 표현한다. chart data stream 상태는 chart panel 내부 stream/status UI에서 표현한다.
 
 ## Panel Layout Data Model 초안
 
@@ -165,7 +180,7 @@ type PanelDefinition = {
 
 ## Size Variant 규칙
 
-같은 panel type도 아이폰 위젯처럼 크기에 따라 다른 UI variant를 가진다. variant는 panel type별 registry에서 정의하고, layout runtime은 placement 크기와 현재 viewport를 기준으로 추천 variant를 계산한다.
+같은 panel type도 패널 크기에 따라 다른 UI variant를 가진다. variant는 panel type별 registry에서 정의하고, layout runtime은 placement 크기와 desktop workspace density를 기준으로 추천 variant를 계산한다. 모바일 viewport별 UI 변형은 현재 범위에서 고려하지 않는다.
 
 - `micro`: agent rail 1칸, 작은 상태 표시, 아이콘 중심 UI.
 - `compact`: 1x1 또는 좁은 영역. 핵심 수치와 짧은 액션 중심.
@@ -173,7 +188,7 @@ type PanelDefinition = {
 - `wide`: 가로 span이 넓은 형태. chart, 비교 목록, timeline에 적합.
 - `large`: 많은 행/열을 차지하는 상세 작업 형태. 주 차트와 복합 분석 패널에 적합.
 
-variant 선택은 placement 변경 후 registry의 `resolveVariant(panel, placement, viewport)` 같은 순수 함수로 계산한다. layout auto reflow로 패널 크기가 바뀌면 variant도 함께 재계산한다.
+variant 선택은 placement 변경 후 registry의 `resolveVariant(panel, placement, workspaceContext)` 같은 순수 함수로 계산한다. layout auto reflow로 패널 크기가 바뀌면 variant도 함께 재계산한다.
 
 ## Layout Control Policy
 
@@ -240,6 +255,8 @@ type LayoutCommand = {
 ```
 
 MVP에서는 한 proposal이 하나의 history scope만 변경한다. layout proposal은 layout history만, chart proposal은 chart panel 내부 chart history만 변경한다. layout command와 chart command가 섞인 복합 proposal은 후속 `Workspace-level grouped history`가 준비된 뒤 허용한다.
+
+LLM drawing/comparison proposal은 chart auto toggle과 무관하게 preview-first 정책을 따른다. layout runtime은 이 preview를 직접 적용하지 않고, chart panel 내부 preview/apply command가 chart history를 관리한다.
 
 ## MVP Command 목록
 
@@ -319,6 +336,7 @@ MVP에서도 자동 밀어내기, swap, chunk swap을 허용한다. 현재 구�
 - 주문 시스템, 체결 상태, 계좌 보안
 - GraphRAG, 외부 문서 검색, 장기 memory
 - 화면배치 Agent의 실제 구현
+- 모바일 전용 viewport, 하단 rail, overlay, 접힘 app bar 같은 모바일 UI
 - 서버 기반 layout persistence와 계정 간 동기화
 - 권한/협업 편집
 
@@ -338,6 +356,7 @@ FastAPI backend는 health check 같은 최소 scaffold를 둘 수 있지만, lay
 10. top app bar의 auto toggle, layout undo/redo, favorite layout load UI와 settings panel의 save/load UI를 command에 연결한다.
 11. top app bar 오른쪽 shortcut rail에 `assets/agent-icons`를 사용한 agent 버튼, notification 버튼, menu 버튼을 배치한다.
 12. command debug view 또는 test fixture로 user/llm/system actor command가 같은 경로를 타는지 검증한다.
+13. 오른쪽 system area에서 Agent 01 단독 chart chat만 활성화되고, Agent 02~04/multi-agent는 비활성 composer로 남는지 확인한다.
 
 ## 검증 기준
 
@@ -354,6 +373,7 @@ FastAPI backend는 health check 같은 최소 scaffold를 둘 수 있지만, lay
 - LLM layout command는 top app bar auto toggle 상태에 따라 즉시 적용 또는 proposal 대기로 나뉜다.
 - top app bar undo/redo는 user와 LLM이 만든 layout 변경을 모두 대상으로 한다.
 - chart panel 내부 undo/redo는 chart rendering runtime의 chart history를 대상으로 한다.
+- Agent chat signal light는 Agent/LLM 요청 상태 전용이며 chart stream status와 결합하지 않는다.
 - saved layout을 저장하고 불러오는 최소 모델이 존재한다.
 - collision 발생 시 chunk swap 또는 push reflow를 시도한다.
 - 같은 command 처리 경로를 user, LLM, system actor가 공유한다.
@@ -365,4 +385,3 @@ FastAPI backend는 health check 같은 최소 scaffold를 둘 수 있지만, lay
 - reflow 알고리즘이 복잡해지면 layout engine을 독립 모듈로 분리한다.
 - 화면배치 Agent는 layout engine이 만든 후보를 대체하는 것이 아니라, 검증 가능한 `layout.*` command proposal을 생성하는 방식으로 붙인다.
 - 서버 기반 saved layout, 사용자별 layout sync, layout migration은 backend 설계 시 별도 문서로 분리한다.
-- 모바일 viewport에서는 오른쪽 system area와 top app bar shortcut rail을 접힘, 하단 rail, overlay 중 하나로 바꿔야 한다.

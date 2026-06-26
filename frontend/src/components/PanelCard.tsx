@@ -1,6 +1,10 @@
-import { Pin, PinOff, Trash2 } from "lucide-react";
+import { Pin, Trash2 } from "lucide-react";
 import { useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
+import { ChartPanel } from "./ChartPanel";
+import { getCandlesForDocument, getChartDocumentForPanel, getStreamStatusForDocument, type ChartRuntimeAction, type ChartRuntimeState } from "../chart/runtime";
+import { getSymbolMeta } from "../chart/symbols";
+import type { ChartDocument } from "../chart/types";
 import { makeCommand } from "../layout/commands";
 import { workspaceColumnCount, workspaceColumnStarts, workspaceRowCount, workspaceRowStarts } from "../layout/gridGeometry";
 import { applyPanelMoveWithPacking } from "../layout/reflow";
@@ -13,9 +17,47 @@ type PanelCardProps = {
   style: CSSProperties;
   onCommand: (command: LayoutCommand) => void;
   onPreviewChange: (preview: LayoutPreviewItem[]) => void;
+  chartRuntime: ChartRuntimeState;
+  chartAutoApplyEnabled: boolean;
+  onChartAction: (action: ChartRuntimeAction) => void;
 };
 
-function PanelBody({ panel }: { panel: PanelInstance }) {
+type PanelHeaderPresentation = {
+  title: string;
+  description: string;
+  market?: string;
+  kind?: "chart" | "panel";
+  marketMetrics?: PanelMarketMetrics;
+};
+
+type PanelMarketMetrics = {
+  price: string;
+  change: string;
+  direction: "up" | "down" | "flat" | "offline";
+};
+
+function PanelBody({
+  panel,
+  chartRuntime,
+  chartAutoApplyEnabled,
+  onChartAction
+}: {
+  panel: PanelInstance;
+  chartRuntime: ChartRuntimeState;
+  chartAutoApplyEnabled: boolean;
+  onChartAction: (action: ChartRuntimeAction) => void;
+}) {
+  if (panel.type === "chart") {
+    return (
+      <ChartPanel
+        panel={panel}
+        runtime={chartRuntime}
+        autoApplyEnabled={chartAutoApplyEnabled}
+        onChartAction={onChartAction}
+      />
+    );
+  }
+
   return (
     <div className="panel-dummy">
       <span>{panel.title ?? panel.type}</span>
@@ -64,9 +106,68 @@ function changedPanelPreview(current: WorkspaceLayout, next: WorkspaceLayout): L
   });
 }
 
-export function PanelCard({ layout, panel, selected, style, onCommand, onPreviewChange }: PanelCardProps) {
+function resolvePanelHeaderPresentation(panel: PanelInstance, chartRuntime: ChartRuntimeState): PanelHeaderPresentation {
+  if (panel.type === "chart") {
+    const chartDocument = getChartDocumentForPanel(chartRuntime, panel);
+    const symbolMeta = getSymbolMeta(chartDocument.symbol);
+    return {
+      title: symbolMeta.symbol,
+      description: symbolMeta.name,
+      market: symbolMeta.market,
+      kind: "chart",
+      marketMetrics: resolveChartHeaderMetrics(chartRuntime, chartDocument)
+    };
+  }
+
+  return {
+    title: panel.title ?? panel.type,
+    description: `${panel.variant} / ${panel.placement.zone}`
+  };
+}
+
+function resolveChartHeaderMetrics(chartRuntime: ChartRuntimeState, chartDocument: ChartDocument): PanelMarketMetrics {
+  const streamStatus = getStreamStatusForDocument(chartRuntime, chartDocument);
+  const offlineMetrics: PanelMarketMetrics = {
+    price: "-",
+    change: "-",
+    direction: "offline"
+  };
+  if (streamStatus !== "live") {
+    return offlineMetrics;
+  }
+
+  const candles = getCandlesForDocument(chartRuntime, chartDocument);
+  const visibleEnd = Math.max(0, candles.length - Math.max(0, chartDocument.viewport.rightOffset));
+  const visibleStart = Math.max(0, visibleEnd - Math.max(1, chartDocument.viewport.visibleCount));
+  const visibleCandles = candles.slice(visibleStart, visibleEnd);
+  const first = visibleCandles[0];
+  const last = visibleCandles[visibleCandles.length - 1];
+  if (!first || !last) {
+    return offlineMetrics;
+  }
+
+  const changePercent = ((last.close - first.open) / Math.max(0.0001, first.open)) * 100;
+  return {
+    price: last.close.toFixed(2),
+    change: `${changePercent >= 0 ? "+" : ""}${changePercent.toFixed(2)}%`,
+    direction: changePercent > 0 ? "up" : changePercent < 0 ? "down" : "flat"
+  };
+}
+
+export function PanelCard({
+  layout,
+  panel,
+  selected,
+  style,
+  onCommand,
+  onPreviewChange,
+  chartRuntime,
+  chartAutoApplyEnabled,
+  onChartAction
+}: PanelCardProps) {
   const [dragging, setDragging] = useState(false);
   const commandTarget = { panelId: panel.id, group: panel.placement.group, zone: panel.placement.zone };
+  const panelHeader = resolvePanelHeaderPresentation(panel, chartRuntime);
 
   const runPanelCommand = (type: LayoutCommand["type"], payload: Record<string, unknown> = {}) => {
     onCommand(makeCommand(type, "user", { panelId: panel.id, ...payload }, commandTarget));
@@ -173,25 +274,38 @@ export function PanelCard({ layout, panel, selected, style, onCommand, onPreview
   return (
     <article
       className={`panel-card ${selected ? "selected" : ""} ${dragging ? "dragging" : ""} ${panel.layoutPinned ? "pinned" : ""}`}
+      data-panel-id={panel.id}
       style={style}
       onClick={() => runPanelCommand("layout.panel.select")}
     >
       <header className="panel-header" onPointerDown={beginDrag}>
-        <div className="panel-title-block">
-          <strong>{panel.title}</strong>
-          <span>
-            {panel.variant} / {panel.placement.zone}
-          </span>
+        <div className={panelHeader.kind === "chart" ? "panel-title-block chart-title-block" : "panel-title-block"}>
+          <strong>{panelHeader.title}</strong>
+          {panelHeader.kind === "chart" ? (
+            <div className="panel-chart-meta">
+              <span>{panelHeader.description}</span>
+              <em>{panelHeader.market}</em>
+            </div>
+          ) : (
+            <span>{panelHeader.description}</span>
+          )}
         </div>
         <div className="panel-actions" onPointerDown={(event) => event.stopPropagation()}>
+          {panelHeader.marketMetrics && (
+            <div className={`panel-market-metrics ${panelHeader.marketMetrics.direction}`}>
+              <strong>{panelHeader.marketMetrics.price}</strong>
+              <span>{panelHeader.marketMetrics.change}</span>
+            </div>
+          )}
           <button
             title={panel.layoutPinned ? "Unpin" : "Pin"}
+            aria-pressed={Boolean(panel.layoutPinned)}
             onClick={(event) => {
               event.stopPropagation();
               runPanelCommand(panel.layoutPinned ? "layout.panel.unpin" : "layout.panel.pin");
             }}
           >
-            {panel.layoutPinned ? <PinOff size={14} /> : <Pin size={14} />}
+            <Pin size={14} fill={panel.layoutPinned ? "currentColor" : "none"} />
           </button>
           <button
             title="Remove"
@@ -205,7 +319,12 @@ export function PanelCard({ layout, panel, selected, style, onCommand, onPreview
         </div>
       </header>
 
-      <PanelBody panel={panel} />
+      <PanelBody
+        panel={panel}
+        chartRuntime={chartRuntime}
+        chartAutoApplyEnabled={chartAutoApplyEnabled}
+        onChartAction={onChartAction}
+      />
     </article>
   );
 }
