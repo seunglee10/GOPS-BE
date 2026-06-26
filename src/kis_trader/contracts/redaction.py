@@ -4,15 +4,21 @@ from typing import Any
 
 
 REDACTED = "[REDACTED]"
+
 SENSITIVE_KEYS = {
-    "acnt_prdt_cd",
     "access_token",
+    "account_no",
+    "account_number",
+    "acnt_prdt_cd",
     "appkey",
     "appsecret",
     "authorization",
     "cano",
+    "idempotency-key",
     "kis_account_no",
-    "password",
+    "kis_demo_account_no",
+    "kis_real_account_no",
+    "raw_idempotency_key",
     "token",
 }
 

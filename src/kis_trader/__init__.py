@@ -1,4 +1,4 @@
-"""Minimal Korea Investment overseas stock trading client."""
+"""GOPS minimal order reliability package."""
 
 __all__ = ["__version__"]
 

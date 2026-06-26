@@ -18,6 +18,35 @@ services:
       - broker
       - postgres
 
+  kis-trader-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: gops-kis-trader:py3.12
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      KIS_ENV: demo
+      KIS_TOKEN_CACHE_PATH: /kis-cache/kis_token_cache.json
+      KAFKA_BOOTSTRAP_SERVERS: broker:19092
+      DATABASE_URL: postgresql://gops:gops_dev_password@postgres:5432/gops
+      KAFKA_ORDER_COMMANDS_TOPIC: orders.commands.v1
+      KAFKA_SUBMIT_RESULTS_TOPIC: broker.submit-results.v1
+      KAFKA_ORDER_EVENTS_TOPIC: broker.order-events.v1
+      KAFKA_DLQ_TOPIC: orders.dlq.v1
+      KAFKA_ACCOUNT_ALIAS: docker-test-account
+      IDEMPOTENCY_HASH_SECRET: docker-test-idempotency-secret
+      PYTHONPATH: /app/src
+    volumes:
+      - .:/app
+      - kis-token-cache:/kis-cache
+    entrypoint: ["python", "-m", "pytest"]
+    command: ["-q"]
+    depends_on:
+      - broker
+      - postgres
+
   broker:
     image: apache/kafka:latest
     ports:
