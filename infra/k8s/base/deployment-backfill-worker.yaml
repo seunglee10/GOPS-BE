@@ -27,3 +27,6 @@ spec:
             - secretRef:
                 name: alfaka-clickhouse-secret
                 optional: true
+            - secretRef:
+                name: alfaka-alpaca-secret
+                optional: true

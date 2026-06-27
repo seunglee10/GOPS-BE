@@ -6,6 +6,7 @@ from fastapi import HTTPException
 
 from app.market_data.backfill.service import get_backfill_service
 from app.services.alfaka_market_data import get_market_data_provider, normalize_market_symbol, requested_ma_from_csv
+from alfaka.serving.intervals import resolve_candle_limit
 
 
 class MarketDataQueryService:
@@ -13,16 +14,26 @@ class MarketDataQueryService:
         self.provider = provider or get_market_data_provider()
         self.backfill_service = backfill_service or get_backfill_service(self.provider)
 
-    def candle_snapshot(self, symbol: str, interval: str, ma: str, limit: int) -> dict[str, Any]:
+    def candle_snapshot(
+        self,
+        symbol: str,
+        interval: str,
+        ma: str,
+        limit: int | None,
+        before: str | None = None,
+        from_time: str | None = None,
+        to_time: str | None = None,
+    ) -> dict[str, Any]:
         symbol = normalize_market_symbol(symbol)
         requested_ma = requested_ma_from_csv(ma)
+        resolved_limit = resolve_candle_limit(interval, limit)
         try:
-            payload = self.provider.candle_snapshot(symbol, interval, limit)
+            payload = self.provider.candle_snapshot(symbol, interval, resolved_limit, before=before, from_time=from_time, to_time=to_time)
         except Exception as exc:
             raise HTTPException(status_code=503, detail=f"Market data provider failed: {exc}") from exc
         payload["indicators"] = {"ma": requested_ma, "volume": True}
         payload["isSynthetic"] = False
-        payload.update(self.backfill_service.snapshot_metadata(symbol, interval, bool(payload.get("candles"))))
+        payload.update(self.backfill_service.snapshot_metadata(symbol, interval, payload))
         return payload
 
     def request_backfill(self, symbol: str, interval: str, start: str | None = None, end: str | None = None, mode: str = "default") -> dict[str, Any]:

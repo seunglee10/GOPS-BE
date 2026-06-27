@@ -28,6 +28,9 @@ spec:
             - secretRef:
                 name: alfaka-clickhouse-secret
                 optional: true
+            - secretRef:
+                name: alfaka-openai-secret
+                optional: true
           readinessProbe:
             httpGet:
               path: /health

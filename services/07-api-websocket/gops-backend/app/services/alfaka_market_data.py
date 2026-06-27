@@ -36,6 +36,7 @@ def _add_alfaka_package_path() -> None:
 _add_alfaka_package_path()
 
 from alfaka.alpaca.subscription import load_request_config  # noqa: E402
+from alfaka.serving.intervals import candle_count_for_24h  # noqa: E402
 from alfaka.serving.provider import MarketDataProvider  # noqa: E402
 
 
@@ -77,21 +78,23 @@ def get_market_data_provider() -> MarketDataProvider:
 
 def symbol_summaries() -> list[dict[str, Any]]:
     # 프론트의 관심종목/티커 영역이 읽는 요약 데이터입니다.
-    # Redis에 최신 가격이 없으면 심볼만 보여주고 가격은 비워둡니다.
+    # Redis에 최신 가격이 없으면 ClickHouse serving projection의 최신 1m candle로 보완합니다.
     return [build_symbol_summary(symbol) for symbol in configured_symbols()]
 
 
 def build_symbol_summary(symbol: str) -> dict[str, Any]:
     provider = get_market_data_provider()
     symbol = normalize_market_symbol(symbol)
-    latest_price = provider.redis_provider.latest_price(symbol)
-    candles = provider.redis_provider.recent_candles(symbol, "1m", 30)
+    latest_price = _safe_latest_price(provider, symbol)
+    candles = _safe_recent_candles(provider, symbol, 30)
+    if not candles:
+        candles = _safe_clickhouse_candles(provider, symbol, candle_count_for_24h("1m"))
     last_candle = candles[-1] if candles else {}
     first_candle = candles[0] if candles else {}
     last_price = _read_float(latest_price.get("price")) or _read_float(last_candle.get("close"))
     first_price = _read_float(first_candle.get("open")) or last_price
 
-    change_percent = 0.0
+    change_percent = None
     if last_price is not None and first_price not in (None, 0):
         change_percent = round(((last_price - first_price) / first_price) * 100, 2)
 
@@ -103,6 +106,27 @@ def build_symbol_summary(symbol: str) -> dict[str, Any]:
         "changePercent": change_percent,
         "volume": _read_float(last_candle.get("volume")),
     }
+
+
+def _safe_latest_price(provider: MarketDataProvider, symbol: str) -> dict[str, Any]:
+    try:
+        return provider.redis_provider.latest_price(symbol) or {}
+    except Exception:
+        return {}
+
+
+def _safe_recent_candles(provider: MarketDataProvider, symbol: str, limit: int) -> list[dict[str, Any]]:
+    try:
+        return provider.redis_provider.recent_candles(symbol, "1m", limit)
+    except Exception:
+        return []
+
+
+def _safe_clickhouse_candles(provider: MarketDataProvider, symbol: str, limit: int) -> list[dict[str, Any]]:
+    try:
+        return provider.clickhouse_provider.candles(symbol, "1m", limit)
+    except Exception:
+        return []
 
 
 def _read_float(value: Any) -> float | None:

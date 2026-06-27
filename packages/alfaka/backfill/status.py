@@ -12,6 +12,7 @@ from alfaka.common.redis_keys import RedisKeyBuilder
 
 TERMINAL_STATUSES = {"succeeded", "failed", "unavailable"}
 ACTIVE_STATUSES = {"queued", "running"}
+DEFAULT_BACKFILL_LOOKBACK_HOURS = 24 * 365
 
 
 @dataclass(frozen=True)
@@ -25,7 +26,7 @@ def default_backfill_range(now=None, lookback_hours=None):
     if isinstance(resolved_now, str):
         resolved_now = parse_time(resolved_now)
     resolved_now = resolved_now.replace(second=0, microsecond=0)
-    hours = int(lookback_hours or os.getenv("BACKFILL_DEFAULT_LOOKBACK_HOURS", "24"))
+    hours = int(lookback_hours or os.getenv("BACKFILL_DEFAULT_LOOKBACK_HOURS", str(DEFAULT_BACKFILL_LOOKBACK_HOURS)))
     start = resolved_now - timedelta(hours=hours)
     return BackfillRange(to_iso(start), to_iso(resolved_now))
 

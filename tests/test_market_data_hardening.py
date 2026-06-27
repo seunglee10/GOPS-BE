@@ -12,11 +12,12 @@ sys.modules.setdefault("redis", types.SimpleNamespace(from_url=lambda *args, **k
 from alfaka.alpaca.assets import asset_to_symbol_metadata
 from alfaka.common.market_messages import build_raw_envelope, raw_topic_name, source_event_id
 from alfaka.common.redis_keys import RedisKeyBuilder
-from alfaka.backfill.runner import build_sample_raw_bars, raw_bar_to_processed_candle
+from alfaka.backfill.runner import build_sample_raw_bars, raw_bar_to_processed_candle, raw_bars_to_processed_candles
 from alfaka.backfill.status import RedisBackfillStore, default_backfill_range
 from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
 from alfaka.serving.cursors import timestamp_from_cursor
 from alfaka.serving.dto import cursor_for, market_status_event, snapshot, websocket_event
+from alfaka.serving.intervals import candle_count_for_1y, candle_count_for_24h, resolve_candle_limit
 from alfaka.serving.provider import MarketDataProvider
 from alfaka.serving.symbol_registry import SymbolRegistry
 from alfaka.storage.clickhouse_loader import candle_to_clickhouse_row, status_to_clickhouse_row, symbol_to_clickhouse_row
@@ -57,11 +58,20 @@ class FakeClickHouseProvider:
         self._candles = candles or []
         self._symbols = symbols or {}
 
-    def candles(self, symbol, interval, limit):
-        return []
+    def candles(self, symbol, interval, limit, before=None, from_time=None, to_time=None):
+        return list(self._candles)[-limit:]
 
     def candles_since(self, symbol, interval, timestamp, limit=500):
         return list(self._candles)[:limit]
+
+    def candle_coverage(self, symbol, interval):
+        if not self._candles:
+            return {"rowCount": 0, "availableFrom": None, "availableTo": None}
+        return {
+            "rowCount": len(self._candles),
+            "availableFrom": self._candles[0].get("timestamp"),
+            "availableTo": self._candles[-1].get("timestamp"),
+        }
 
     def search_symbols(self, query, limit):
         return []
@@ -75,6 +85,9 @@ class FailingClickHouseProvider(FakeClickHouseProvider):
         raise RuntimeError("clickhouse down")
 
     def volume_profile_bins(self, symbol, from_time, to_time, price_bin_size=None):
+        raise RuntimeError("clickhouse down")
+
+    def candle_coverage(self, symbol, interval):
         raise RuntimeError("clickhouse down")
 
 
@@ -300,8 +313,18 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         second = default_backfill_range(now="2026-06-25T14:30:59.999Z")
 
         self.assertEqual(first, second)
-        self.assertEqual(first.start, "2026-06-24T14:30:00.000Z")
+        self.assertEqual(first.start, "2025-06-25T14:30:00.000Z")
         self.assertEqual(first.end, "2026-06-25T14:30:00.000Z")
+
+    def test_chart_candle_limit_defaults_to_twenty_four_hours(self):
+        self.assertEqual(candle_count_for_24h("1m"), 1440)
+        self.assertEqual(candle_count_for_24h("5m"), 288)
+        self.assertEqual(candle_count_for_24h("10m"), 144)
+        self.assertEqual(candle_count_for_24h("1d"), 1)
+        self.assertEqual(candle_count_for_1y("1m"), 525600)
+        self.assertEqual(resolve_candle_limit("1m", None), 1440)
+        self.assertEqual(resolve_candle_limit("1m", 9999), 9999)
+        self.assertEqual(resolve_candle_limit("1m", 999999), 525600)
 
     def test_clickhouse_provider_uses_database_override(self):
         provider = ClickHouseMarketDataProvider(database="custom_market_data")
@@ -526,6 +549,28 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(payload["backfillStatus"], "not_requested")
         self.assertFalse(payload["canBackfill"])
 
+    def test_provider_fills_missing_snapshot_moving_averages(self):
+        candles = [
+            {
+                "timestamp": f"2026-06-25T10:0{minute}:00.000Z",
+                "open": 10 + minute,
+                "high": 11 + minute,
+                "low": 9 + minute,
+                "close": 10 + minute,
+                "volume": 100,
+                "isClosed": True,
+            }
+            for minute in range(5)
+        ]
+        provider = MarketDataProvider(
+            redis_provider=FakeRedisProvider(),
+            clickhouse_provider=FakeClickHouseProvider(candles=candles),
+        )
+
+        payload = provider.candle_snapshot("AAPL", "1m", 5)
+
+        self.assertEqual(payload["candles"][-1]["ma5"], 12.0)
+
     def test_empty_cursor_does_not_trigger_clickhouse_timestamp_query(self):
         provider = MarketDataProvider(
             redis_provider=FakeRedisProvider(),
@@ -550,6 +595,14 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn("sourceEventId", candle)
         self.assertEqual(row["symbol"], "INTC")
         self.assertEqual(row["interval"], "1m")
+
+    def test_backfill_processed_candles_include_moving_averages(self):
+        raw_bars = build_sample_raw_bars("INTC", "2026-06-25T13:30:00.000Z", "2026-06-25T13:35:00.000Z", count=5)
+        candles = raw_bars_to_processed_candles("INTC", raw_bars, feed="sip")
+        row = candle_to_clickhouse_row(candles[-1])
+
+        self.assertIn("ma5", candles[-1])
+        self.assertIsNotNone(row["ma5"])
 
     def test_s3_materializer_normalizes_rows_and_records_load_audit(self):
         client = RecordingClickHouseClient()

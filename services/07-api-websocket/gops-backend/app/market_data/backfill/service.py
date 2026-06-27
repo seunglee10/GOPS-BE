@@ -8,6 +8,7 @@ from fastapi import HTTPException
 
 from alfaka.backfill.runner import BackfillRunner
 from alfaka.backfill.status import ACTIVE_STATUSES, RedisBackfillStore
+from alfaka.serving.intervals import candle_count_for_1y
 
 
 logger = logging.getLogger(__name__)
@@ -19,17 +20,56 @@ class BackfillService:
         self.store = store or RedisBackfillStore(redis_client=getattr(getattr(provider, "redis_provider", None), "redis", None))
         self.runner_factory = runner_factory or (lambda: BackfillRunner(store=self.store))
 
-    def snapshot_metadata(self, symbol: str, interval: str, has_candles: bool) -> dict[str, Any]:
-        if has_candles:
+    def snapshot_metadata(self, symbol: str, interval: str, payload_or_has_candles: Any) -> dict[str, Any]:
+        if isinstance(payload_or_has_candles, dict):
+            returned_count = int(payload_or_has_candles.get("returnedCount") or len(payload_or_has_candles.get("candles") or []))
+            requested_limit = int(payload_or_has_candles.get("requestedLimit") or returned_count)
+            stored_count = int(payload_or_has_candles.get("storedCandleCount") or returned_count)
+            target_stored_count = int(payload_or_has_candles.get("targetStoredCount") or candle_count_for_1y(interval))
+            available_from = payload_or_has_candles.get("availableFrom")
+            target_range_from = payload_or_has_candles.get("targetRangeFrom")
+        else:
+            returned_count = 1 if payload_or_has_candles else 0
+            requested_limit = returned_count
+            stored_count = returned_count
+            target_stored_count = returned_count
+            available_from = None
+            target_range_from = None
+
+        latest = self._latest_status(symbol, interval)
+        backfill_status = latest.get("status") if latest else "not_requested"
+        latest_range = latest.get("range") if latest else None
+        latest_range_start = latest_range.get("start") if isinstance(latest_range, dict) else None
+        latest_success_covers_target = bool(
+            backfill_status == "succeeded" and
+            target_range_from and
+            latest_range_start and
+            str(latest_range_start) <= str(target_range_from)
+        )
+        can_backfill = backfill_status not in ACTIVE_STATUSES and backfill_status != "unavailable" and not latest_success_covers_target
+
+        has_one_year_coverage = bool(available_from and target_range_from and str(available_from) <= str(target_range_from))
+        has_count_coverage = stored_count >= target_stored_count
+        if returned_count > 0 and (has_one_year_coverage or has_count_coverage or latest_success_covers_target):
             return {
                 "dataStatus": "ready",
-                "backfillStatus": "not_requested",
+                "backfillStatus": backfill_status,
                 "canBackfill": False,
                 "message": None,
             }
-        latest = self._latest_status(symbol, interval)
-        backfill_status = latest.get("status") if latest else "not_requested"
-        can_backfill = backfill_status not in ACTIVE_STATUSES and backfill_status != "unavailable"
+
+        if returned_count > 0:
+            partial_message = latest.get("error") if latest and latest.get("status") in {"failed", "unavailable"} else None
+            return {
+                "dataStatus": "partial",
+                "backfillStatus": backfill_status,
+                "canBackfill": can_backfill,
+                "message": partial_message or (
+                    f"Loaded {returned_count} requested candles, but the stored one-year range is not complete yet. "
+                    f"Historical backfill is required."
+                ),
+            }
+
         message = latest.get("error") if latest and latest.get("status") in {"failed", "unavailable"} else None
         return {
             "dataStatus": "empty",
