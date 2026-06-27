@@ -1,14 +1,9 @@
 # 주문 신뢰성/보안 상세 스펙
 
 작성일: 2026-06-25 KST
+최종 수정: 2026-06-27 KST
 
-이 문서는 `docs/gops-integrated-spec.md`의 주문 시스템 기준을 바탕으로 주문 신뢰성/보안 담당자가 구현해야 할 상세 계약을 정의한다. 통합 스펙은 제품과 전체 아키텍처의 기준이고, 이 문서는 주문 접수부터 KIS 제출, 체결 대사, 상태 push, 감사/운영 가드레일까지의 세부 동작을 다룬다.
-
-관련 문서:
-
-- [GOPS 통합 명세](./gops-integrated-spec.md)
-- [주문 경로 아키텍처](./architecture.md)
-- [주문 경로 보안/신뢰성 마일스톤](./security-reliability-milestones.md)
+이 문서는 [GOPS 통합 명세](./gops-integrated-spec.md)의 주문 시스템 기준을 바탕으로 주문 접수부터 KIS 제출, 체결 대사, Kafka 결과 이벤트, read model, 감사/운영 가드레일까지의 구현 계약을 정의한다. 흐름과 장애 sequence는 [주문 신뢰성/보안 아키텍처](./architecture.md), 구현 순서는 [주문 경로 보안/신뢰성 마일스톤](./security-reliability-milestones.md)을 따른다.
 
 ## 1. 범위와 원칙
 
@@ -17,13 +12,14 @@ MVP 주문 범위는 KIS 모의투자 주문을 실제로 수행할 수 있는 �
 주문 경로의 핵심 원칙은 다음과 같다.
 
 - 주문 중복 방지는 frontend 버튼 비활성화가 아니라 backend idempotency, DB unique constraint, Kafka 재처리 멱등성, KIS 주문/체결내역 대사의 조합으로 보장한다.
+- Kafka는 주문 command와 결과 이벤트의 서비스 간 event spine이다.
+- PostgreSQL은 단일 주문의 transaction guard, append-only 원장, transactional outbox, projection을 담당한다.
 - Backend API는 KIS 주문 API를 직접 호출하지 않는다.
 - KIS 주문 POST는 KIS Broker Adapter만 수행한다.
 - KIS timeout, connection reset, 불명확한 5xx는 실패 확정이 아니므로 같은 주문을 즉시 재POST하지 않는다.
 - API 응답은 최종 체결 결과가 아니라 주문 접수 또는 처리 상태다.
 - `SUBMITTED`는 KIS 주문 접수 성공이지 체결 완료가 아니다.
 - Frontend는 `FILLED` 확정 전까지 `체결 완료`를 표시하지 않는다.
-- 주문/체결의 정합성 기준 저장소는 PostgreSQL의 append-only 원장과 최신 projection이다.
 
 ## 2. 식별자와 멱등성
 
@@ -102,8 +98,8 @@ RECONCILIATION_REQUIRED -> CANCELED
 | Topic | Producer | Consumer | Key | Retention 기준 | 목적 |
 | --- | --- | --- | --- | --- | --- |
 | `orders.commands.v1` | Backend Outbox Publisher | KIS Broker Adapter | `account_alias:symbol` | 90일 | 주문/취소/정정 command |
-| `broker.submit-results.v1` | KIS Adapter Outbox Publisher | API/Audit/WebSocket writer | `account_alias:symbol` | 90일 | KIS 제출 성공/거부/불명 결과 |
-| `broker.order-events.v1` | Poller/Reconciler | API/Audit/WebSocket writer | `account_alias:symbol` | 90일 | KIS 주문/체결내역 조회 결과 |
+| `broker.submit-results.v1` | KIS Adapter Outbox Publisher | API/Audit/WebSocket writer, read model projector | `account_alias:symbol` | 90일 | KIS 제출 성공/거부/불명 결과 |
+| `broker.order-events.v1` | Broker Event Listener/Reconciler | API/Audit/WebSocket writer, read model projector | `account_alias:symbol` | 90일 | broker 주문/체결 event와 제한된 대사 결과 |
 | `orders.dlq.v1` | Adapter/API/consumer | 운영자 재처리 도구 | 원본 message key | 180일 | schema 오류, 권한 불일치, 재시도 초과 |
 
 모든 Kafka 메시지는 envelope을 사용한다.
@@ -169,9 +165,9 @@ Consumer 규칙:
 - 재전달은 `event_id`, `request_id`, `client_order_id`, 상태 전이 검사로 멱등 처리한다.
 - schema 불일치, 파싱 불가, 재시도 초과는 `orders.dlq.v1`로 보낸다.
 
-## 5. PostgreSQL 원장과 Outbox
+## 5. PostgreSQL 원장, Projection, Outbox
 
-PostgreSQL은 주문/체결 정합성의 기준 저장소다.
+PostgreSQL은 Kafka를 대체하는 서비스 간 이벤트 로그가 아니다. PostgreSQL은 단일 주문의 transaction boundary, idempotency 판정, append-only 원장, transactional outbox, 최신 projection을 담당한다. Transactional outbox는 Kafka-first와 충돌하지 않는다. API/KIS Adapter가 DB commit과 Kafka publish를 하나의 원자 작업처럼 다룰 수 없기 때문에, outbox row를 transaction에 포함하고 별도 publisher가 Kafka topic으로 내보내는 방식으로 Kafka event spine의 유실을 막는다.
 
 | Table | 역할 | 핵심 제약 |
 | --- | --- | --- |
@@ -196,7 +192,15 @@ KIS Adapter 제출 결과 transaction은 최소한 다음을 함께 commit한다
 3. `broker_submissions` append
 4. `outbox_events`에 `broker.submit-results.v1` 발행 대상 저장
 
-Outbox publisher는 `outbox_events`를 읽어 Kafka에 발행하고 성공한 row에 `published_at`을 기록한다. publisher가 죽어도 미발행 row가 남아 재발행 가능해야 한다.
+Broker Event Listener/Reconciler transaction은 최소한 다음을 함께 commit한다.
+
+1. `orders` 최신 상태 보정 또는 `RECONCILIATION_REQUIRED` 기록
+2. `order_events` append
+3. `executions` append 또는 update
+4. `reconciliation_runs` append
+5. `outbox_events`에 `broker.order-events.v1` 발행 대상 저장
+
+Outbox publisher는 `outbox_events`를 읽어 Kafka에 발행하고 성공한 row에 `published_at`을 기록한다. publisher가 죽어도 미발행 row가 남아 재발행 가능해야 한다. Kafka에 발행된 뒤에는 해당 topic이 서비스 간 공식 계약이며, DB outbox는 발행 보증과 재발행 추적을 위한 내부 구현 세부사항이다.
 
 ## 6. KIS Adapter와 Retry 정책
 
@@ -227,34 +231,37 @@ KIS 응답 분류:
 
 주문 API retry budget과 조회 API retry budget은 분리한다. KIS 조회 API 실패가 주문 POST 재시도로 이어지면 안 된다.
 
-## 7. 대사와 상태 수렴
+## 7. Broker Event와 상태 수렴
 
-Poller/Reconciler는 KIS 주문/체결내역을 주기적으로 조회해 내부 상태와 비교한다.
+Broker Event Listener/Reconciler는 broker가 제공하는 주문/체결 event를 primary path로 반영한다. KIS 주문/체결내역 조회는 event 누락, timeout, open/unknown 상태 보정을 위한 bounded fallback이다.
 
 - 해외 주문은 KIS 해외 주문/체결내역 조회를 사용한다.
 - 국내 주문은 국내 주문/체결내역 조회 adapter를 별도 구현한다.
-- 조회 결과는 `broker.order-events.v1`로 발행한다.
+- broker event와 제한된 조회 결과는 `broker.order-events.v1`로 발행한다.
 - `SUBMIT_FAILED_UNKNOWN` 주문이 KIS 조회에서 발견되면 실제 상태에 맞게 `SUBMITTED`, `PARTIALLY_FILLED`, `FILLED`, `CANCELED`로 보정한다.
 - KIS에는 있는데 내부에 없는 주문은 운영 알림 대상으로 올린다.
 - 내부 주문과 KIS 조회 결과의 수량, 가격, 상태가 충돌하면 `RECONCILIATION_REQUIRED`로 올린다.
 - 같은 KIS 결과를 반복 조회해도 `execution_id`, broker order reference, 상태 전이 검사로 중복 이벤트를 막는다.
 
-## 8. 보안과 권한
+Bounded reconciliation 규칙:
 
-- KIS secret은 KIS Broker Adapter만 접근한다.
-- Backend, Frontend, Chart Engine은 KIS secret을 알면 안 된다.
-- API response, Kafka payload, frontend state, 로그에는 KIS appkey, KIS appsecret, access token, 전체 계좌번호, raw idempotency key를 남기지 않는다.
-- `account_alias`는 사용자와 운영자가 추적 가능한 안전한 계좌 식별자로 사용한다.
-- JWT role은 `user`, `trader`, `admin`으로 둔다.
-- `user`는 조회 권한만 가진다.
-- `trader`는 조회, 모의투자 주문, 허용된 실전 주문 권한을 가진다.
-- `admin`은 운영/관리 권한을 가진다.
-- 실전 주문은 `trader` role만으로 허용하지 않고 계좌별/사용자별 trading permission, kill switch, rate limit을 추가로 통과해야 한다.
-- DLQ 재처리 권한은 주문 생성 권한과 분리한다.
+- 조회 대상은 `SUBMIT_FAILED_UNKNOWN`, `RECONCILIATION_REQUIRED`, open order, 장기 미종결 주문으로 제한한다.
+- `FILLED`, `CANCELED`, `REJECTED`, `FAILED` 확정 주문은 조회 대상에서 제외한다.
+- 가능하면 주문별 조회가 아니라 계좌별 주문/체결내역 window 조회로 묶는다.
+- 계좌별, adapter별, 환경별 rate budget을 둔다.
+- 반복 실패는 adaptive backoff와 jitter를 적용하고, rate limit 초과가 반복되면 circuit breaker를 연다.
+- 조회 API retry budget은 주문 POST retry budget과 분리한다.
 
-## 9. Frontend 상태 반영
+## 8. Read Model과 Frontend 상태 반영
 
 Frontend는 `order_id` 기준으로 WebSocket 상태 변경을 수신한다. 새로고침 후에도 같은 `order_id`로 최신 상태를 조회할 수 있어야 한다.
+
+Read model 반영 기준:
+
+- `broker.submit-results.v1`는 제출 성공, 명시적 거부, 제출 여부 불명 상태를 반영한다.
+- `broker.order-events.v1`는 일부 체결, 전량 체결, 취소, 대사 불일치를 반영한다.
+- Projector가 중단되면 Kafka offset 기준으로 재시작해 누락 없이 따라잡아야 한다.
+- WebSocket push는 read model 반영 이후 또는 같은 transactionally safe boundary 이후 수행한다.
 
 사용자 표시 기준:
 
@@ -270,6 +277,19 @@ Frontend는 `order_id` 기준으로 WebSocket 상태 변경을 수신한다. 새
 
 `SUBMITTED` 화면에서는 체결 수량, 잔량, 평균 체결가를 최종값처럼 표시하지 않는다. 체결 관련 값은 KIS 주문/체결내역 대사 결과가 들어온 뒤 갱신한다.
 
+## 9. 보안과 권한
+
+- KIS secret은 KIS Broker Adapter만 접근한다.
+- Backend, Frontend, Chart Engine은 KIS secret을 알면 안 된다.
+- API response, Kafka payload, frontend state, 로그에는 KIS appkey, KIS appsecret, access token, 전체 계좌번호, raw idempotency key를 남기지 않는다.
+- `account_alias`는 사용자와 운영자가 추적 가능한 안전한 계좌 식별자로 사용한다.
+- JWT role은 `user`, `trader`, `admin`으로 둔다.
+- `user`는 조회 권한만 가진다.
+- `trader`는 조회, 모의투자 주문, 허용된 실전 주문 권한을 가진다.
+- `admin`은 운영/관리 권한을 가진다.
+- 실전 주문은 `trader` role만으로 허용하지 않고 계좌별/사용자별 trading permission, kill switch, rate limit을 추가로 통과해야 한다.
+- DLQ 재처리 권한은 주문 생성 권한과 분리한다.
+
 ## 10. Acceptance Criteria
 
 - 같은 주문 요청을 100회 재시도해도 DB 주문 row와 KIS 제출이 중복되지 않는다.
@@ -277,6 +297,7 @@ Frontend는 `order_id` 기준으로 WebSocket 상태 변경을 수신한다. 새
 - KIS 제출 성공, 명시적 거부, timeout이 각각 `SUBMITTED`, `REJECTED`, `SUBMIT_FAILED_UNKNOWN`으로 기록된다.
 - timeout 이후 같은 주문을 즉시 재POST하지 않는다.
 - DB commit 후 Kafka offset commit 전 프로세스가 죽어도 재처리 시 중복 KIS 제출이 발생하지 않는다.
+- `broker.submit-results.v1`, `broker.order-events.v1` replay로 주문 read model을 복구할 수 있다.
 - KIS 주문/체결내역 조회 결과로 `SUBMIT_FAILED_UNKNOWN`을 해소할 수 있다.
 - Kafka 메시지, DB 예시, 로그 예시에 secret, token, 계좌번호 원문, raw idempotency key가 없다.
 - Frontend는 `SUBMITTED`를 `FILLED`처럼 표시하지 않는다.
