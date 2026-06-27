@@ -1,0 +1,9 @@
+# 역할: AWS MSK/Kafka에 만들어야 하는 topic canonical 목록입니다.
+# 사용: scripts/aws/create-msk-topics.sh가 이 목록을 읽어 topic을 생성합니다.
+# 주의: partition/retention은 운영 부하에 맞춰 조정합니다.
+market.raw.bars
+market.raw.updated-bars
+market.raw.trades
+market.ticks.v1
+market.candles.live.1m.v1
+market.candles.closed.v1

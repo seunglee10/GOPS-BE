@@ -1,0 +1,29 @@
+# 역할: Flink 팀/배포자가 맞춰야 하는 입력/출력 데이터 계약입니다.
+# 사용: Python local-stream-processor를 실제 Flink Job으로 바꿀 때 기준으로 씁니다.
+# 출력: Kafka topic, Redis key, S3 path 계약을 한 파일에 둡니다.
+jobName: market-data-normalizer
+inputTopics:
+  - market.raw.bars
+  - market.raw.updated-bars
+  - market.raw.trades
+outputTopics:
+  ticks: market.ticks.v1
+  liveCandle1m: market.candles.live.1m.v1
+  closedCandles: market.candles.closed.v1
+redisKeys:
+  latestPrice: price:{symbol}:latest
+  liveCandle1m: candle:{symbol}:1m:live
+  latestClosedCandle: candle:{symbol}:{interval}:latest
+  recentCandles: candles:{symbol}:{interval}
+s3Paths:
+  processedCandles: market-data/processed/candles/interval={interval}/symbol={symbol}/year={yyyy}/month={mm}/day={dd}/
+  processedTrades: market-data/processed/trades/symbol={symbol}/year={yyyy}/month={mm}/day={dd}/hour={hh}/
+calculations:
+  intervals:
+    - 1m
+    - 5m
+    - 10m
+  movingAverages:
+    - ma5
+    - ma20
+    - ma60

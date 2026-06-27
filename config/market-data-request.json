@@ -1,0 +1,22 @@
+{
+  "defaultSymbols": ["AAPL", "TSLA", "NVDA"],
+  "defaultChannels": ["bars", "updatedBars", "trades"],
+  "validChannels": ["bars", "updatedBars", "trades"],
+  "symbolPattern": "^[A-Z][A-Z0-9]{0,9}(\\.[A-Z])?$",
+  "companyToSymbol": {
+    "apple": "AAPL",
+    "애플": "AAPL",
+    "tesla": "TSLA",
+    "테슬라": "TSLA",
+    "nvidia": "NVDA",
+    "엔비디아": "NVDA",
+    "microsoft": "MSFT",
+    "마이크로소프트": "MSFT",
+    "amazon": "AMZN",
+    "아마존": "AMZN",
+    "google": "GOOGL",
+    "구글": "GOOGL",
+    "meta": "META",
+    "메타": "META"
+  }
+}

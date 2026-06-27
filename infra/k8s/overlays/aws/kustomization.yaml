@@ -1,0 +1,21 @@
+# 역할: AWS/EKS에 적용할 Kubernetes manifest 조합입니다.
+# 사용: PLACEHOLDER를 실제 AWS 값으로 바꾼 뒤 kubectl apply -k로 적용합니다.
+# 주의: local-stream-processor는 운영 Flink가 아니므로 포함하지 않습니다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base/namespace.yaml
+  - ../../base/configmap.yaml
+  - ../../base/serviceaccount-irsa.example.yaml
+  - ../../base/deployment-alpaca-ingestor.yaml
+  - ../../base/deployment-s3-sink.yaml
+
+patches:
+  - path: configmap-aws-patch.yaml
+  - path: serviceaccount-irsa-aws-patch.yaml
+
+images:
+  - name: YOUR_ECR_REPOSITORY/alfaka-market-data
+    newName: YOUR_ACCOUNT_ID.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-market-data-worker
+    newTag: latest

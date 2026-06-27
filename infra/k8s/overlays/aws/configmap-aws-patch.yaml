@@ -1,0 +1,26 @@
+# 역할: AWS MSK/Redis/S3/Secret 연결값을 Kubernetes ConfigMap에 꽂습니다.
+# 사용: YOUR_* 값을 Terraform/MSK/Redis 출력값으로 바꿉니다.
+# 주의: 비밀값은 ConfigMap이 아니라 Secrets Manager 또는 Secret에 둡니다.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alfaka-market-data-config
+  namespace: alfaka-market-data
+data:
+  AWS_REGION: ap-northeast-2
+  AWS_EC2_METADATA_DISABLED: "false"
+  ALPACA_FEED: sip
+  ALPACA_SYMBOLS: AAPL,TSLA,NVDA
+  ALPACA_CHANNELS: bars,updatedBars,trades
+  ALPACA_SECRET_NAME: alfaka/alpaca/api
+  KAFKA_BOOTSTRAP_SERVERS: YOUR_MSK_BOOTSTRAP_SERVERS
+  KAFKA_RAW_TOPIC_PREFIX: market.raw
+  KAFKA_TICKS_TOPIC: market.ticks.v1
+  KAFKA_LIVE_CANDLE_TOPIC: market.candles.live.1m.v1
+  KAFKA_CLOSED_CANDLE_TOPIC: market.candles.closed.v1
+  PROCESSOR_LOG_EVERY_N: "500"
+  KAFKA_PROCESSED_TOPICS: market.ticks.v1,market.candles.closed.v1
+  REDIS_URL: redis://YOUR_REDIS_ENDPOINT:6379/0
+  S3_BUCKET: YOUR_S3_BUCKET
+  S3_PROCESSED_PREFIX: market-data/processed
+  S3_FLUSH_COUNT: "500"

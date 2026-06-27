@@ -1,0 +1,51 @@
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.contracts.chart import AgentChatMessage, AgentChatRequest, ChartProposalRequest
+from app.core.config import CORS_ORIGINS, read_dotenv_value
+from app.routes.charts import chart_candles, chart_symbols, router as charts_router
+from app.routes.health import health, router as health_router
+from app.routes.llm import agent_chat, chart_proposal, router as llm_router
+from app.routes.streams import chart_stream, router as streams_router
+from app.services.ai_agents import fallback_agent_chat, fallback_chart_proposal, openai_agent_chat, openai_chart_proposal
+from app.services.alfaka_market_data import configured_symbols, get_market_data_provider, symbol_summaries
+
+
+def create_app() -> FastAPI:
+    app = FastAPI(title="GOPS Backend Scaffold", version="0.1.0")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=CORS_ORIGINS,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    app.include_router(health_router)
+    app.include_router(charts_router)
+    app.include_router(llm_router)
+    app.include_router(streams_router)
+    return app
+
+
+app = create_app()
+
+__all__ = [
+    "AgentChatMessage",
+    "AgentChatRequest",
+    "ChartProposalRequest",
+    "agent_chat",
+    "app",
+    "chart_candles",
+    "chart_proposal",
+    "chart_stream",
+    "chart_symbols",
+    "configured_symbols",
+    "create_app",
+    "fallback_agent_chat",
+    "fallback_chart_proposal",
+    "get_market_data_provider",
+    "health",
+    "openai_agent_chat",
+    "openai_chart_proposal",
+    "read_dotenv_value",
+    "symbol_summaries",
+]
