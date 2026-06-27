@@ -3,6 +3,10 @@ import { createChartDocument } from "./chartDocuments";
 import {
   executeChartCommand,
   executeChartCommandGroup,
+  normalizeComparisonFromCommand,
+  normalizeComparisonSeries,
+  normalizeDrawingFromCommand,
+  normalizeDrawingEntity,
   validateChartProposal
 } from "./commands";
 import type { PanelInstance } from "../layout/types";
@@ -378,7 +382,7 @@ function applyProposal(state: ChartRuntimeState, proposal: ChartProposal, status
 function applyPreviewCommand(state: ChartRuntimeState, command: ChartCommand): ChartRuntimeState {
   switch (command.type) {
     case "chart.preview.set": {
-      const preview = normalizePreviewPayload(command.payload.preview, command.target.chartDocumentId, command.proposalId);
+      const preview = normalizePreviewPayload(command.payload.preview, command.target.chartDocumentId, command.actor, command.proposalId);
       if (!preview) {
         return fail(state, "Invalid chart preview payload.", command.target.chartDocumentId);
       }
@@ -486,22 +490,13 @@ function setPendingPreviewFromProposal(state: ChartRuntimeState, proposal: Chart
 
 function buildPreviewFromProposal(proposal: ChartProposal): ChartPendingPreview | null {
   const drawings = proposal.commands.flatMap((command) => {
-    if (command.type !== "chart.drawing.add" && command.type !== "chart.measurement.add") {
-      return [];
-    }
-    const drawing = command.payload.drawing ?? {
-      id: command.payload.drawingId,
-      type: command.type === "chart.measurement.add" ? "measurement" : command.payload.drawingType,
-      anchors: command.payload.anchors,
-      style: command.payload.style,
-      label: command.payload.label,
-      visible: true,
-      createdBy: "llm",
-      sourceProposalId: proposal.id
-    };
-    return [drawing];
+    const drawing = normalizeDrawingFromCommand(command);
+    return drawing ? [drawing] : [];
   });
-  const comparisons = proposal.commands.flatMap((command) => command.type === "chart.comparison.add" && command.payload.comparison ? [command.payload.comparison] : []);
+  const comparisons = proposal.commands.flatMap((command) => {
+    const comparison = normalizeComparisonFromCommand(command);
+    return comparison ? [comparison] : [];
+  });
   const preview = normalizePreviewPayload({
     id: `preview-${proposal.id}`,
     sourceProposalId: proposal.id,
@@ -509,21 +504,30 @@ function buildPreviewFromProposal(proposal: ChartProposal): ChartPendingPreview 
     comparisons,
     rationale: proposal.rationale,
     confidence: 0.72
-  }, proposal.target.chartDocumentId, proposal.id);
+  }, proposal.target.chartDocumentId, "llm", proposal.id);
   return preview && (preview.drawings.length > 0 || preview.comparisons.length > 0) ? preview : null;
 }
 
-function normalizePreviewPayload(value: unknown, chartDocumentId: string, proposalId?: string): ChartPendingPreview | null {
+function normalizePreviewPayload(
+  value: unknown,
+  chartDocumentId: string,
+  actor: ChartCommand["actor"],
+  proposalId?: string
+): ChartPendingPreview | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
   }
   const source = value as Record<string, unknown>;
   const nowTime = now();
   const drawings = Array.isArray(source.drawings)
-    ? source.drawings.filter((item): item is ChartPendingPreview["drawings"][number] => Boolean(item && typeof item === "object"))
+    ? source.drawings
+      .map((item) => normalizeDrawingEntity(item, actor, proposalId))
+      .filter((item): item is ChartPendingPreview["drawings"][number] => Boolean(item))
     : [];
   const comparisons = Array.isArray(source.comparisons)
-    ? source.comparisons.filter((item): item is ChartPendingPreview["comparisons"][number] => Boolean(item && typeof item === "object"))
+    ? source.comparisons
+      .map(normalizeComparisonSeries)
+      .filter((item): item is ChartPendingPreview["comparisons"][number] => Boolean(item))
     : [];
   return {
     id: typeof source.id === "string" && source.id.trim() ? source.id : `chart-preview-${chartDocumentId}-${crypto.randomUUID()}`,

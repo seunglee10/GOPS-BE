@@ -53,7 +53,7 @@ export function createPanelInstance(
   return { ...panel, variant: resolvePanelVariant(panel) };
 }
 
-function createWorkspaceLayout(panels: PanelInstance[], selectedPanelId = panels[0]?.id): WorkspaceLayout {
+function createWorkspaceLayout(panels: PanelInstance[], selectedPanelId?: string): WorkspaceLayout {
   return {
     version: 1,
     zones: layoutZones,
@@ -112,8 +112,7 @@ export function createPresetLayout(key: DefaultLayoutKey): WorkspaceLayout {
           { summary: "LLM summary placeholder" },
           "panel-ai-summary"
         )
-      ],
-      "panel-news-primary"
+      ]
     );
   }
 
@@ -169,8 +168,7 @@ export function createPresetLayout(key: DefaultLayoutKey): WorkspaceLayout {
           { summary: "LLM summary placeholder" },
           "panel-ai-summary"
         )
-      ],
-      "panel-chart-primary"
+      ]
     );
   }
 
@@ -226,8 +224,7 @@ export function createPresetLayout(key: DefaultLayoutKey): WorkspaceLayout {
           { symbols: ["AAPL", "MSFT", "NVDA"] },
           "panel-watchlist"
         )
-      ],
-      "panel-chart-primary"
+      ]
     );
   }
 
@@ -283,7 +280,7 @@ export function createPresetLayout(key: DefaultLayoutKey): WorkspaceLayout {
     )
   ];
 
-  return createWorkspaceLayout(panels, "panel-chart-primary");
+  return createWorkspaceLayout(panels);
 }
 
 export function createSeedLayout(): WorkspaceLayout {

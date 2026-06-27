@@ -30,6 +30,26 @@ type PanelDropCommandInput = {
   targetPanelId?: string | null;
 };
 
+export type PanelDropPreview =
+  | {
+    kind: "add";
+    panelType: PanelType;
+    placement: PanelPlacement;
+  }
+  | {
+    kind: "replace";
+    panelType: PanelType;
+    panelId: string;
+    placement: PanelPlacement;
+  }
+  | {
+    kind: "blocked";
+    panelType: PanelType;
+    panelId?: string;
+    placement?: PanelPlacement;
+    reason: string;
+  };
+
 export function getWorkspaceDropCell(
   frameRect: FrameRectLike,
   clientX: number,
@@ -120,20 +140,57 @@ export function createPanelDropCommand({
   cell,
   targetPanelId
 }: PanelDropCommandInput): LayoutCommand | null {
+  const preview = createPanelDropPreview({ layout, panelType, activeSymbol, cell, targetPanelId });
+  if (!preview || preview.kind === "blocked") {
+    return null;
+  }
+  const props = panelType === "chart" ? { symbol: activeSymbol } : {};
+
+  if (preview.kind === "replace") {
+    return makeCommand(
+      "layout.panel.replace",
+      "user",
+      { panelId: preview.panelId, panelType, props },
+      { panelId: preview.panelId, group: preview.placement.group, zone: preview.placement.zone }
+    );
+  }
+
+  return makeCommand(
+    "layout.panel.add",
+    "user",
+    { panelType, placement: preview.placement, props },
+    { group: preview.placement.group, zone: preview.placement.zone }
+  );
+}
+
+export function createPanelDropPreview({
+  layout,
+  panelType,
+  cell,
+  targetPanelId
+}: PanelDropCommandInput): PanelDropPreview | null {
   if (!PANEL_CATALOG_TYPES.includes(panelType)) {
     return null;
   }
 
-  const props = panelType === "chart" ? { symbol: activeSymbol } : {};
   const targetPanel = findWorkspacePanelById(layout, targetPanelId) ?? (cell ? findWorkspacePanelAtCell(layout, cell) : null);
-
   if (targetPanel) {
-    return makeCommand(
-      "layout.panel.replace",
-      "user",
-      { panelId: targetPanel.id, panelType, props },
-      { panelId: targetPanel.id, group: targetPanel.placement.group, zone: targetPanel.placement.zone }
-    );
+    if (targetPanel.layoutPinned) {
+      return {
+        kind: "blocked",
+        panelType,
+        panelId: targetPanel.id,
+        placement: targetPanel.placement,
+        reason: "Pinned panels cannot be replaced."
+      };
+    }
+
+    return {
+      kind: "replace",
+      panelType,
+      panelId: targetPanel.id,
+      placement: targetPanel.placement
+    };
   }
 
   if (!cell) {
@@ -142,15 +199,18 @@ export function createPanelDropCommand({
 
   const placement = findMaxEmptyWorkspaceRect(layout, cell);
   if (!placement) {
-    return null;
+    return {
+      kind: "blocked",
+      panelType,
+      reason: "No available workspace cell."
+    };
   }
 
-  return makeCommand(
-    "layout.panel.add",
-    "user",
-    { panelType, placement, props },
-    { group: placement.group, zone: placement.zone }
-  );
+  return {
+    kind: "add",
+    panelType,
+    placement
+  };
 }
 
 function findWorkspacePanelById(layout: WorkspaceLayout, panelId?: string | null): PanelInstance | null {

@@ -22,13 +22,14 @@ def chart_command_payload_schema(supported_symbols: list[str]) -> dict[str, Any]
     style_schema = {
         "type": ["object", "null"],
         "additionalProperties": False,
-        "required": ["color", "fillColor", "lineWidth", "textColor", "lineDash"],
+        "required": ["color", "fillColor", "lineWidth", "textColor", "lineDash", "extension"],
         "properties": {
             "color": {"type": ["string", "null"]},
             "fillColor": {"type": ["string", "null"]},
             "lineWidth": {"type": ["number", "null"]},
             "textColor": {"type": ["string", "null"]},
             "lineDash": {"type": ["array", "null"], "items": {"type": "number"}},
+            "extension": {"type": ["string", "null"], "enum": ["segment", "ray", "line", None]},
         },
     }
     comparison_base_schema = {

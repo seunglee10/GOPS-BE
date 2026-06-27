@@ -146,6 +146,7 @@ export type ChartDocument = {
   };
   interactionState: {
     mode: ChartToolMode;
+    trendLineExtension: ChartLineExtension;
   };
   drawings: DrawingEntity[];
   comparisons: ComparisonSeries[];
@@ -252,6 +253,8 @@ export type DrawingAnchor = {
   value?: number;
 };
 
+export type ChartLineExtension = "segment" | "ray" | "line";
+
 export type DrawingStyle = {
   color?: string;
   lineWidth?: number;
@@ -260,6 +263,7 @@ export type DrawingStyle = {
   textColor?: string;
   fontSize?: number;
   opacity?: number;
+  extension?: ChartLineExtension;
 };
 
 export type DrawingEntity = {

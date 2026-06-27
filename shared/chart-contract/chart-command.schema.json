@@ -132,7 +132,8 @@
         "fillColor": { "type": "string" },
         "textColor": { "type": "string" },
         "fontSize": { "type": "number", "minimum": 8 },
-        "opacity": { "type": "number", "minimum": 0, "maximum": 1 }
+        "opacity": { "type": "number", "minimum": 0, "maximum": 1 },
+        "extension": { "type": "string", "enum": ["segment", "ray", "line"] }
       }
     },
     "drawingEntity": {

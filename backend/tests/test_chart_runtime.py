@@ -1,4 +1,8 @@
+import io
+import json
+import urllib.error
 import unittest
+from pathlib import Path
 
 from fastapi import HTTPException
 
@@ -104,18 +108,143 @@ class ChartRuntimeBackendTests(unittest.TestCase):
         finally:
             ai_agents.read_dotenv_value = original
 
-    def test_fallback_agent_chat_returns_chart_commands(self) -> None:
+    def test_agent_chat_missing_key_returns_503_even_when_mock_env_is_set(self) -> None:
+        original = ai_agents.read_dotenv_value
+
+        def without_key(name: str) -> str | None:
+            if name == "OPENAI_API_KEY":
+                return None
+            if name == "GOPS_USE_MOCK_LLM":
+                return "1"
+            return original(name)
+
+        ai_agents.read_dotenv_value = without_key
         request = main.AgentChatRequest(
             agentIds=["agent-01"],
-            messages=[main.AgentChatMessage(role="user", content="NVDA 5m로 바꾸고 확대해줘")],
+            messages=[main.AgentChatMessage(role="user", content="차트를 분석해줘")],
             context={},
         )
-        payload = main.fallback_agent_chat(request)
+        try:
+            with self.assertRaises(HTTPException) as context:
+                main.agent_chat(request)
+            self.assertEqual(context.exception.status_code, 503)
+            self.assertEqual(context.exception.detail, "OpenAI API key is not configured.")
+        finally:
+            ai_agents.read_dotenv_value = original
 
-        self.assertIn("reply", payload)
-        self.assertGreaterEqual(len(payload["commands"]), 2)
-        self.assertIn("chart.symbol.set", [command["type"] for command in payload["commands"]])
-        self.assertIn("chart.timeframe.set", [command["type"] for command in payload["commands"]])
+    def test_openai_agent_chat_analysis_uses_multi_timeframe_context_and_requires_command(self) -> None:
+        original_key_reader = ai_agents.read_dotenv_value
+        original_request = ai_agents.request_openai_response
+        captured_payloads = []
+
+        def fake_key_reader(name: str) -> str | None:
+            if name == "OPENAI_API_KEY":
+                return "test-key"
+            if name == "OPENAI_MODEL":
+                return "test-model"
+            return original_key_reader(name)
+
+        def fake_request(payload: dict) -> str:
+            captured_payloads.append(payload)
+            return json.dumps({
+                "reply": "분석 응답",
+                "title": "분석",
+                "summary": "요약",
+                "rationale": "근거",
+                "commands": [],
+                "insights": [],
+            })
+
+        ai_agents.read_dotenv_value = fake_key_reader
+        ai_agents.request_openai_response = fake_request
+        request = main.AgentChatRequest(
+            agentIds=["agent-01"],
+            messages=[main.AgentChatMessage(role="user", content="차트를 분석해줘")],
+            context={
+                "chartDocument": {
+                    "id": "doc-a",
+                    "symbol": "AAPL",
+                    "timeframe": "1m",
+                    "viewport": {"visibleCount": 80, "rightOffset": 0},
+                    "layers": {"ma5": True, "ma20": True, "ma60": True},
+                },
+                "visibleSummary": {"lastPrice": "138.16"},
+            },
+        )
+        try:
+            main.openai_agent_chat(request)
+        finally:
+            ai_agents.read_dotenv_value = original_key_reader
+            ai_agents.request_openai_response = original_request
+
+        payload = captured_payloads[0]
+        commands_schema = payload["text"]["format"]["schema"]["properties"]["commands"]
+        self.assertEqual(commands_schema["minItems"], 1)
+
+        user_payload = json.loads(payload["input"][1]["content"])
+        self.assertTrue(user_payload["isChartAnalysisRequest"])
+        context = user_payload["marketAnalysisContext"]
+        self.assertEqual(context["symbol"], "AAPL")
+        self.assertEqual(set(context["timeframes"].keys()), {"1m", "5m", "10m"})
+        self.assertIn("activeView", context)
+        self.assertGreaterEqual(len(context["suggestedAnchors"]), 9)
+        self.assertNotIn("AAPL", context["comparisonCandidates"])
+
+    def test_openai_agent_chat_non_analysis_allows_empty_commands(self) -> None:
+        original_key_reader = ai_agents.read_dotenv_value
+        original_request = ai_agents.request_openai_response
+        captured_payloads = []
+
+        def fake_key_reader(name: str) -> str | None:
+            if name == "OPENAI_API_KEY":
+                return "test-key"
+            return original_key_reader(name)
+
+        def fake_request(payload: dict) -> str:
+            captured_payloads.append(payload)
+            return json.dumps({
+                "reply": "안녕하세요",
+                "title": "대화",
+                "summary": "명령 없음",
+                "rationale": "차트 조작 요청이 아님",
+                "commands": [],
+                "insights": [],
+            })
+
+        ai_agents.read_dotenv_value = fake_key_reader
+        ai_agents.request_openai_response = fake_request
+        try:
+            main.openai_agent_chat(main.AgentChatRequest(
+                agentIds=["agent-01"],
+                messages=[main.AgentChatMessage(role="user", content="안녕")],
+                context={"chartDocument": {"symbol": "AAPL"}},
+            ))
+        finally:
+            ai_agents.read_dotenv_value = original_key_reader
+            ai_agents.request_openai_response = original_request
+
+        commands_schema = captured_payloads[0]["text"]["format"]["schema"]["properties"]["commands"]
+        self.assertEqual(commands_schema["minItems"], 0)
+
+    def test_openai_error_detail_is_preserved(self) -> None:
+        error = urllib.error.HTTPError(
+            "https://api.openai.com/v1/responses",
+            400,
+            "Bad Request",
+            {},
+            io.BytesIO(json.dumps({"error": {"message": "Invalid schema detail"}}).encode("utf-8")),
+        )
+
+        self.assertEqual(ai_agents.extract_openai_error_detail(error), "Invalid schema detail")
+
+    def test_backend_llm_fallback_strings_are_removed(self) -> None:
+        service_code = Path(ai_agents.__file__).read_text(encoding="utf-8")
+        routes_code = Path(main.agent_chat.__code__.co_filename).read_text(encoding="utf-8")
+
+        self.assertNotIn("fallback_agent_chat", service_code)
+        self.assertNotIn("fallback_chart_proposal", service_code)
+        self.assertNotIn("요청을 반영해", service_code)
+        self.assertNotIn("fallback_agent_chat", routes_code)
 
 
 if __name__ == "__main__":

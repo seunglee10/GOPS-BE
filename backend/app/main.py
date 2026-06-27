@@ -7,7 +7,7 @@ from backend.app.routes.charts import chart_candles, chart_symbols, router as ch
 from backend.app.routes.health import health, router as health_router
 from backend.app.routes.llm import agent_chat, chart_proposal, router as llm_router
 from backend.app.routes.streams import chart_stream, router as streams_router
-from backend.app.services.ai_agents import fallback_agent_chat, fallback_chart_proposal, openai_agent_chat, openai_chart_proposal
+from backend.app.services.ai_agents import openai_agent_chat, openai_chart_proposal
 from backend.app.services.market_data import build_dummy_candles, build_live_candle, build_symbol_summary, supported_dummy_symbols
 
 
@@ -42,8 +42,6 @@ __all__ = [
     "chart_stream",
     "chart_symbols",
     "create_app",
-    "fallback_agent_chat",
-    "fallback_chart_proposal",
     "health",
     "openai_agent_chat",
     "openai_chart_proposal",

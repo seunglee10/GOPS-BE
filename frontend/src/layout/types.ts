@@ -57,6 +57,8 @@ export type PanelInstance = {
 export type LayoutPreviewItem = {
   panelId: string;
   placement: PanelPlacement;
+  state?: "valid" | "replace" | "blocked";
+  label?: string;
 };
 
 export type PanelVariantDefinition = {

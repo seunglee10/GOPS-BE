@@ -2,11 +2,16 @@ import { Bell, LoaderCircle, Menu, Plus, RotateCcw, SendHorizontal, Star, Trash2
 import { useEffect, useMemo, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { getChartAgentAccess } from "../chart/agentAccess";
 import { createChatMessage, normalizeAgentChatResponse, type AgentChatMessage } from "../chart/agentChat";
+import {
+  DEFAULT_AGENT_DRAFT_SEED,
+  resolveAgentChartReference,
+  resolveAgentSendContent,
+  type AgentChartReference
+} from "../chart/agentReference";
 import { buildChartAgentContext } from "../chart/proposals";
 import type { SupportedSymbol, WatchlistSymbol } from "../chart/symbols";
 import {
   getCandlesForDocument,
-  getChartDocumentForPanel,
   getStreamStatusForDocument,
   type ChartRuntimeAction,
   type ChartRuntimeState
@@ -32,6 +37,8 @@ export type AgentOption = {
   iconUrl: string;
 };
 
+export type AgentUpdatePatch = Partial<Pick<AgentOption, "label" | "description" | "iconUrl">>;
+
 export const initialAgentOptions: AgentOption[] = [
   { id: "agent-01", label: "Chart Agent", description: "LLM chart operator. It explains intent and sends chart commands.", iconUrl: "/assets/agent-icons/agent-01.svg" },
   { id: "agent-02", label: "Agent 02", description: "News and context assistant.", iconUrl: "/assets/agent-icons/agent-02.svg" },
@@ -54,13 +61,14 @@ type SystemAreaProps = {
   chartAutoApplyEnabled: boolean;
   agents: AgentOption[];
   selectedAgentIds: string[];
+  referencedChartTarget?: AgentChartReference;
   editingAgentId?: string;
   savedLayouts: SavedLayoutRecord[];
   activeSymbol: SupportedSymbol;
   watchlistSymbols: WatchlistSymbol[];
   onSettingsTabChange: (tab: SystemMenuTab) => void;
   onEditAgent: (agentId?: string) => void;
-  onUpdateAgent: (agentId: string, patch: Partial<Pick<AgentOption, "label" | "description">>) => void;
+  onUpdateAgent: (agentId: string, patch: AgentUpdatePatch) => void;
   onAddAgent: () => void;
   onDeleteAgent: (agentId: string) => void;
   onCloseSystemPanel: () => void;
@@ -78,7 +86,7 @@ type SettingsPanelProps = {
   savedLayouts: SavedLayoutRecord[];
   onSettingsTabChange: (tab: SystemMenuTab) => void;
   onEditAgent: (agentId?: string) => void;
-  onUpdateAgent: (agentId: string, patch: Partial<Pick<AgentOption, "label" | "description">>) => void;
+  onUpdateAgent: (agentId: string, patch: AgentUpdatePatch) => void;
   onAddAgent: () => void;
   onDeleteAgent: (agentId: string) => void;
   onCommand: (command: LayoutCommand) => void;
@@ -92,6 +100,7 @@ export function SystemArea({
   chartAutoApplyEnabled,
   agents,
   selectedAgentIds,
+  referencedChartTarget,
   editingAgentId,
   savedLayouts,
   activeSymbol,
@@ -154,6 +163,7 @@ export function SystemArea({
             selectedAgents={selectedAgents}
             activeAgents={activeAgents}
             chartAgentAccess={chartAgentAccess}
+            referencedChartTarget={referencedChartTarget}
             onChartAction={onChartAction}
           />
         </div>
@@ -211,6 +221,7 @@ function AgentChatPanel({
   selectedAgents,
   activeAgents,
   chartAgentAccess,
+  referencedChartTarget,
   onChartAction
 }: {
   layout: WorkspaceLayout;
@@ -219,14 +230,15 @@ function AgentChatPanel({
   selectedAgents: AgentOption[];
   activeAgents: AgentOption[];
   chartAgentAccess: ReturnType<typeof getChartAgentAccess>;
+  referencedChartTarget?: AgentChartReference;
   onChartAction: (action: ChartRuntimeAction) => void;
 }) {
-  const chartPanel = useMemo(
-    () => layout.panels.find((panel) => panel.type === "chart" && panel.id === layout.selectedPanelId) ??
-      layout.panels.find((panel) => panel.type === "chart"),
-    [layout.panels, layout.selectedPanelId]
+  const resolvedReference = useMemo(
+    () => resolveAgentChartReference(layout.panels, chartRuntime, referencedChartTarget),
+    [chartRuntime, layout.panels, referencedChartTarget]
   );
-  const chartDocument = chartPanel ? getChartDocumentForPanel(chartRuntime, chartPanel) : null;
+  const chartPanel = resolvedReference?.panel ?? null;
+  const chartDocument = resolvedReference?.document ?? null;
   const candles = chartDocument ? getCandlesForDocument(chartRuntime, chartDocument) : [];
   const streamStatus = chartDocument ? getStreamStatusForDocument(chartRuntime, chartDocument) : "stale";
   const [messages, setMessages] = useState<AgentChatMessage[]>([]);
@@ -234,6 +246,8 @@ function AgentChatPanel({
   const [sending, setSending] = useState(false);
   const [agentError, setAgentError] = useState(false);
   const selectedAgentKey = selectedAgents.map((agent) => agent.id).join("|");
+  const referencedChartKey = referencedChartTarget ? `${referencedChartTarget.panelId}:${referencedChartTarget.chartDocumentId}` : "";
+  const draftSeed = referencedChartTarget?.draftSeed ?? DEFAULT_AGENT_DRAFT_SEED;
   const introAgent = activeAgents[0] ?? selectedAgents[0] ?? orchestratorAgent;
   const introDescription = selectedAgents.length > 1
     ? selectedAgents.map((agent) => agent.label).join(" / ")
@@ -242,19 +256,21 @@ function AgentChatPanel({
   const signalState = sending ? "thinking" : agentError ? "error" : "waiting";
   const signalLabel = signalState === "thinking" ? "생각 중" : signalState === "error" ? "오류" : "대기 중";
   const disabledMessage = chartAgentAccess.reason === "orchestration"
-    ? "멀티에이전트 모드에서는 차트 채팅을 비활성화합니다. 차트 수정은 Agent 01 단독 선택에서만 가능합니다."
-    : "이 에이전트는 현재 차트 수정 권한이 없습니다. 소개만 표시됩니다.";
-  const sendDisabled = !target || !draft.trim() || sending;
+    ? "멀티에이전트 모드에서는 아직 차트 요청을 보낼 수 없습니다."
+    : chartAgentAccess.reason === "no-chart-agent"
+      ? "이 에이전트는 아직 차트 요청 권한이 없습니다."
+      : "차트 패널에서 Ask Agent를 눌러 분석할 차트를 지정하세요.";
+  const sendDisabled = !target || !resolveAgentSendContent(draft, draftSeed).trim() || sending;
 
   useEffect(() => {
     setMessages([]);
     setDraft("");
     setSending(false);
     setAgentError(false);
-  }, [selectedAgentKey]);
+  }, [selectedAgentKey, referencedChartKey]);
 
   const sendMessage = () => {
-    const content = draft.trim();
+    const content = resolveAgentSendContent(draft, draftSeed);
     if (!content || !target || !chartPanel || !chartDocument || sending) {
       return;
     }
@@ -280,9 +296,9 @@ function AgentChatPanel({
         })
       })
     })
-      .then((response) => {
+      .then(async (response) => {
         if (!response.ok) {
-          throw new Error(`Agent chat API returned ${response.status}`);
+          throw new Error(await readApiErrorMessage(response, "Agent chat API"));
         }
         return response.json() as Promise<unknown>;
       })
@@ -291,12 +307,7 @@ function AgentChatPanel({
         const nextMessages = [createChatMessage("assistant", result.reply)];
         if (result.proposal) {
           onChartAction({ kind: "chart.proposal.received", proposal: result.proposal, autoApply: autoApplyEnabled });
-          nextMessages.push(createChatMessage(
-            "system",
-            autoApplyEnabled
-              ? "Chart commands were applied through the chart runtime."
-              : "Chart proposal is waiting for review in the chart panel."
-          ));
+          nextMessages.push(createChatMessage("system", chartProposalStatusMessage(result.proposal, autoApplyEnabled)));
         }
         setMessages((current) => [...current, ...nextMessages]);
       })
@@ -337,7 +348,7 @@ function AgentChatPanel({
         <div className="agent-chat-input-row">
           <textarea
             value={draft}
-            placeholder={target ? "Ask Agent 01 to change the chart" : disabledMessage}
+            placeholder={target ? draftSeed : disabledMessage}
             disabled={!target || sending}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
@@ -354,6 +365,25 @@ function AgentChatPanel({
       </div>
     </div>
   );
+}
+
+function chartProposalStatusMessage(
+  proposal: ReturnType<typeof normalizeAgentChatResponse>["proposal"],
+  autoApplyEnabled: boolean
+): string {
+  const hasPreviewCommands = proposal?.commands.some((command) =>
+    command.type.startsWith("chart.drawing.") ||
+    command.type.startsWith("chart.comparison.") ||
+    command.type === "chart.measurement.add"
+  );
+
+  if (hasPreviewCommands) {
+    return "Chart preview is ready. Use Preview and Apply in the chart panel.";
+  }
+
+  return autoApplyEnabled
+    ? "Chart command sent to the chart runtime."
+    : "Chart command proposal is waiting in the chart panel.";
 }
 
 export function SystemOrbRail({
@@ -435,7 +465,7 @@ function SettingsPanel({
           Panels
         </button>
         <button className={settingsTab === "agent" ? "active" : ""} onClick={() => onSettingsTabChange("agent")}>
-          Agent
+          Agents
         </button>
         <button className={settingsTab === "menu" ? "active" : ""} onClick={() => onSettingsTabChange("menu")}>
           Menu
@@ -585,23 +615,23 @@ function PanelCatalogItem({
 function catalogDescription(panelType: PanelType): string {
   switch (panelType) {
     case "chart":
-      return "Active ticker chart document.";
+      return "Chart workspace";
     case "newsFeed":
-      return "Market headlines and context.";
+      return "Market news";
     case "symbolSummary":
-      return "Focused symbol snapshot.";
+      return "Symbol snapshot";
     case "aiSummary":
-      return "LLM analysis surface.";
+      return "AI summary";
     case "watchlist":
-      return "Ticker list panel.";
+      return "Ticker list";
     case "indicatorCompare":
-      return "Indicator comparison panel.";
+      return "Indicator compare";
     case "proposalReview":
-      return "Pending proposal review.";
+      return "Proposal review";
     case "notifications":
-      return "Alert and event feed.";
+      return "Alerts";
     default:
-      return "Workspace panel.";
+      return "Workspace panel";
   }
 }
 
@@ -743,40 +773,86 @@ function AgentSettings({
   agents: AgentOption[];
   editingAgentId?: string;
   onEditAgent: (agentId?: string) => void;
-  onUpdateAgent: (agentId: string, patch: Partial<Pick<AgentOption, "label" | "description">>) => void;
+  onUpdateAgent: (agentId: string, patch: AgentUpdatePatch) => void;
   onAddAgent: () => void;
   onDeleteAgent: (agentId: string) => void;
 }) {
   return (
     <div className="agent-settings-list">
-      {agents.map((agent) => (
-        <div key={agent.id} className="agent-settings-row">
-          <button className="agent-settings-summary" onClick={() => onEditAgent(editingAgentId === agent.id ? undefined : agent.id)}>
-            <img src={agent.iconUrl} alt="" />
-            <span>{agent.label}</span>
-          </button>
-          {editingAgentId === agent.id && (
-            <div className="agent-edit-form">
-              <input
-                value={agent.label}
-                onChange={(event) => onUpdateAgent(agent.id, { label: event.target.value })}
-                aria-label={`${agent.label} name`}
-              />
-              <textarea
-                value={agent.description}
-                onChange={(event) => onUpdateAgent(agent.id, { description: event.target.value })}
-                aria-label={`${agent.label} description`}
-              />
-              <button onClick={() => onDeleteAgent(agent.id)} disabled={agents.length <= 1}>
-                Delete
+      {agents.map((agent) => {
+        const editing = editingAgentId === agent.id;
+
+        return (
+          <div key={agent.id} className={editing ? "agent-settings-row editing" : "agent-settings-row"}>
+            {!editing && (
+              <button className="agent-settings-summary" onClick={() => onEditAgent(agent.id)}>
+                <img src={agent.iconUrl} alt="" />
+                <span className="agent-settings-name">{agent.label}</span>
               </button>
-            </div>
-          )}
-        </div>
-      ))}
+            )}
+            {editing && (
+              <div className="agent-settings-editor">
+                <button
+                  className="agent-icon-edit-button"
+                  title="Change agent icon"
+                  aria-label={`${agent.label} icon`}
+                  onClick={() => onUpdateAgent(agent.id, { iconUrl: getNextAgentIconUrl(agent.iconUrl) })}
+                >
+                  <img src={agent.iconUrl} alt="" />
+                </button>
+                <input
+                  className="agent-name-input"
+                  value={agent.label}
+                  onChange={(event) => onUpdateAgent(agent.id, { label: event.target.value })}
+                  aria-label={`${agent.label} name`}
+                />
+                <button className="agent-delete-button" onClick={() => onDeleteAgent(agent.id)} disabled={agents.length <= 1}>
+                  Delete
+                </button>
+                <textarea
+                  className="agent-description-input"
+                  value={agent.description}
+                  onChange={(event) => onUpdateAgent(agent.id, { description: event.target.value })}
+                  aria-label={`${agent.label} description`}
+                />
+              </div>
+            )}
+          </div>
+        );
+      })}
       <button className="add-layout-button" onClick={onAddAgent} disabled={agents.length >= 4}>
         <Plus size={15} /> Add agent
       </button>
     </div>
   );
+}
+
+const agentIconOptions = Array.from(
+  { length: 12 },
+  (_, index) => `/assets/agent-icons/agent-${String(index + 1).padStart(2, "0")}.svg`
+);
+
+function getNextAgentIconUrl(currentIconUrl: string): string {
+  const currentIndex = agentIconOptions.indexOf(currentIconUrl);
+  return agentIconOptions[(currentIndex + 1) % agentIconOptions.length] ?? agentIconOptions[0];
+}
+
+async function readApiErrorMessage(response: Response, label: string): Promise<string> {
+  let detail = "";
+
+  try {
+    const body = await response.text();
+    if (body.trim()) {
+      try {
+        const parsed = JSON.parse(body) as { detail?: unknown };
+        detail = typeof parsed.detail === "string" ? parsed.detail : body;
+      } catch {
+        detail = body;
+      }
+    }
+  } catch {
+    detail = "";
+  }
+
+  return detail.trim() ? `${label} returned ${response.status}: ${detail}` : `${label} returned ${response.status}`;
 }

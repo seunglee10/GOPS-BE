@@ -1,4 +1,5 @@
 import { createCoordinateTransform } from "./scales";
+import { normalizeLineExtension, projectTrendLine } from "./drawingGeometry";
 import type { CandleData, DrawingEntity, RenderScene } from "./types";
 
 export function drawChartScene(
@@ -145,8 +146,10 @@ function drawComparisons(ctx: CanvasRenderingContext2D, scene: RenderScene) {
       return;
     }
     ctx.save();
+    ctx.globalAlpha = series.comparison.style.opacity ?? 1;
     ctx.strokeStyle = series.comparison.style.color ?? "#111111";
     ctx.lineWidth = series.comparison.style.lineWidth ?? 1.4;
+    ctx.setLineDash(series.comparison.style.lineDash ?? []);
     ctx.beginPath();
     series.points.forEach((point, index) => {
       if (index === 0) {
@@ -186,12 +189,13 @@ function drawDrawings(ctx: CanvasRenderingContext2D, scene: RenderScene, drawing
   const transform = createCoordinateTransform(scene);
   drawings.filter((drawing) => drawing.visible !== false).forEach((drawing) => {
     const selected = !preview && scene.document.selectedDrawingId === drawing.id;
+    const style = drawing.style ?? {};
     ctx.save();
-    ctx.globalAlpha = preview ? 0.58 : drawing.style.opacity ?? 1;
-    ctx.strokeStyle = drawing.style.color ?? (preview ? "#2563eb" : "#111111");
-    ctx.fillStyle = drawing.style.fillColor ?? (preview ? "rgba(37, 99, 235, 0.08)" : "rgba(17, 17, 17, 0.08)");
-    ctx.lineWidth = selected ? Math.max(2.2, drawing.style.lineWidth ?? 1.5) : drawing.style.lineWidth ?? 1.5;
-    ctx.setLineDash(preview ? [6, 4] : drawing.style.lineDash ?? []);
+    ctx.globalAlpha = preview ? 0.58 : style.opacity ?? 1;
+    ctx.strokeStyle = style.color ?? (preview ? "#2563eb" : "#111111");
+    ctx.fillStyle = style.fillColor ?? (preview ? "rgba(37, 99, 235, 0.08)" : "rgba(17, 17, 17, 0.08)");
+    ctx.lineWidth = selected ? Math.max(2.2, style.lineWidth ?? 1.5) : style.lineWidth ?? 1.5;
+    ctx.setLineDash(preview ? [6, 4] : style.lineDash ?? []);
     const points = drawing.anchors.map((anchor) => transform.anchorToPoint(anchor)).filter((point): point is { x: number; y: number } => Boolean(point));
 
     if (drawing.type === "horizontalLine" && points[0]) {
@@ -201,11 +205,14 @@ function drawDrawings(ctx: CanvasRenderingContext2D, scene: RenderScene, drawing
       line(ctx, points[0].x, scene.plot.top, points[0].x, scene.plot.priceBottom);
       drawDrawingLabel(ctx, drawing.label, points[0].x + 5, scene.plot.top + 12, drawing);
     } else if ((drawing.type === "trendLine" || drawing.type === "arrow" || drawing.type === "measurement") && points.length >= 2) {
-      line(ctx, points[0].x, points[0].y, points[1].x, points[1].y);
+      const [start, end] = drawing.type === "trendLine"
+        ? projectTrendLine(points[0], points[1], scene.plot, normalizeLineExtension(style.extension))
+        : [points[0], points[1]];
+      line(ctx, start.x, start.y, end.x, end.y);
       if (drawing.type === "arrow") {
-        drawArrowHead(ctx, points[0], points[1]);
+        drawArrowHead(ctx, start, end);
       }
-      drawDrawingLabel(ctx, drawing.label ?? measurementLabel(drawing, scene), (points[0].x + points[1].x) / 2, (points[0].y + points[1].y) / 2 - 8, drawing);
+      drawDrawingLabel(ctx, drawing.label ?? measurementLabel(drawing, scene), (start.x + end.x) / 2, (start.y + end.y) / 2 - 8, drawing);
     } else if (drawing.type === "rangeBox" && points.length >= 2) {
       const x = Math.min(points[0].x, points[1].x);
       const y = Math.min(points[0].y, points[1].y);
@@ -238,8 +245,9 @@ function drawDrawingLabel(ctx: CanvasRenderingContext2D, label: string | undefin
   if (!label) {
     return;
   }
-  ctx.fillStyle = drawing.style.textColor ?? drawing.style.color ?? "#111111";
-  ctx.font = `${drawing.style.fontSize ?? 12}px Inter, system-ui, sans-serif`;
+  const style = drawing.style ?? {};
+  ctx.fillStyle = style.textColor ?? style.color ?? "#111111";
+  ctx.font = `${style.fontSize ?? 12}px Inter, system-ui, sans-serif`;
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
   ctx.fillText(label, x, y);

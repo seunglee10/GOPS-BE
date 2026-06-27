@@ -1,7 +1,7 @@
 import { Redo2, Search, Undo2, WandSparkles } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { SupportedSymbol } from "../chart/symbols";
-import { layoutSnapshotsEqual, makeCommand } from "../layout/commands";
+import { layoutPresentationSnapshotsEqual, makeCommand } from "../layout/commands";
 import type { LayoutCommand, SavedLayoutRecord, WorkspaceLayout } from "../layout/types";
 import { SystemOrbRail, type AgentOption } from "./SystemArea";
 
@@ -96,7 +96,7 @@ export function TopAppBar({
         {favoriteLayouts.map((layoutRecord, index) => (
           <button
             key={index + 1}
-            className={layoutRecord && layoutSnapshotsEqual(layout, layoutRecord.layout)
+            className={layoutRecord && layoutPresentationSnapshotsEqual(layout, layoutRecord.layout)
               ? "favorite-layout-button filled active"
               : layoutRecord
                 ? "favorite-layout-button filled"

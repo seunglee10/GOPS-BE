@@ -1,5 +1,6 @@
 import { createPercentScale, createTimeScale } from "./scales";
 import type { CandleData, ChartCrosshair, ChartDocument, ChartLoadState, ChartPendingPreview, RenderScene, StreamStatus } from "./types";
+import { resolveViewportVisibleCount } from "./viewport";
 
 export function buildRenderScene({
   state,
@@ -35,7 +36,7 @@ export function buildRenderScene({
   const priceBottom = Math.max(top + 40, bottom - volumeHeight - 12);
   const volumeTop = priceBottom + 12;
   const plotWidth = Math.max(1, right - left);
-  const visibleCount = resolveVisibleCount(plotWidth, document.viewport.visibleCount);
+  const visibleCount = resolveViewportVisibleCount(plotWidth, document.viewport.visibleCount);
   const rightOffset = Math.min(Math.max(0, document.viewport.rightOffset), Math.max(0, candles.length - 1));
   const visibleEnd = Math.max(0, candles.length - rightOffset);
   const visibleStart = Math.max(0, visibleEnd - visibleCount);
@@ -60,6 +61,7 @@ export function buildRenderScene({
   const maxVolume = Math.max(1, ...visibleCandles.map((candle) => candle.volume));
   const comparisonSeries = buildComparisonSeries({
     document,
+    pendingPreview,
     comparisonCandlesBySymbol,
     visibleCandles,
     timeScale,
@@ -130,6 +132,7 @@ export function buildRenderScene({
 
 function buildComparisonSeries({
   document,
+  pendingPreview,
   comparisonCandlesBySymbol,
   visibleCandles,
   timeScale,
@@ -137,6 +140,7 @@ function buildComparisonSeries({
   priceBottom
 }: {
   document: ChartDocument;
+  pendingPreview?: ChartPendingPreview;
   comparisonCandlesBySymbol: Record<string, CandleData[]>;
   visibleCandles: CandleData[];
   timeScale: ReturnType<typeof createTimeScale>;
@@ -145,7 +149,20 @@ function buildComparisonSeries({
 }): RenderScene["comparisonSeries"] {
   void top;
   void priceBottom;
-  return document.comparisons.map((comparison) => {
+  const previewComparisons = pendingPreview?.visible
+    ? pendingPreview.comparisons
+      .filter((comparison) => !document.comparisons.some((existing) => existing.symbol === comparison.symbol))
+      .map((comparison) => ({
+        ...comparison,
+        label: comparison.label ?? `${comparison.symbol} preview`,
+        style: {
+          ...(comparison.style ?? {}),
+          lineDash: comparison.style?.lineDash ?? [6, 4],
+          opacity: comparison.style?.opacity ?? 0.62
+        }
+      }))
+    : [];
+  return [...document.comparisons, ...previewComparisons].map((comparison) => {
     const candles = comparisonCandlesBySymbol[comparison.symbol] ?? [];
     const visibleTimestampSet = new Set(visibleCandles.map((candle) => candle.timestamp));
     const aligned = candles.filter((candle) => visibleTimestampSet.has(candle.timestamp));
@@ -166,12 +183,6 @@ function buildComparisonSeries({
 
     return { comparison, candles: aligned, points };
   });
-}
-
-function resolveVisibleCount(plotWidth: number, requestedVisibleCount: number): number {
-  const minimumReadableSlotWidth = 8;
-  const widthBoundCount = Math.max(12, Math.floor(plotWidth / minimumReadableSlotWidth));
-  return Math.max(1, Math.min(requestedVisibleCount, widthBoundCount));
 }
 
 export function resolveChartSizeVariant(width: number, height: number): RenderScene["variant"] {

@@ -32,7 +32,8 @@ export function createChartDocument(id: string, symbol = "AAPL", timeframe = "1m
       volume: "#9ca3af"
     },
     interactionState: {
-      mode: "pan"
+      mode: "pan",
+      trendLineExtension: "segment"
     },
     drawings: [],
     comparisons: [],

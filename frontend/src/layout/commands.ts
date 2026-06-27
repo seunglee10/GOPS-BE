@@ -45,6 +45,10 @@ function withCurrentRuntimeSettings(layout: WorkspaceLayout, current: WorkspaceL
   };
 }
 
+function clearLayoutSelection(layout: WorkspaceLayout): WorkspaceLayout {
+  return layout.selectedPanelId ? { ...layout, selectedPanelId: undefined } : layout;
+}
+
 function addJournal(
   state: LayoutRuntimeState,
   command: LayoutCommand,
@@ -187,6 +191,24 @@ export function layoutSnapshotsEqual(a: WorkspaceLayout, b: WorkspaceLayout): bo
   const bPanels = [...b.panels].map(panelSnapshot).sort((left, right) => left.id.localeCompare(right.id));
   return JSON.stringify({ panels: aPanels, selectedPanelId: a.selectedPanelId }) ===
     JSON.stringify({ panels: bPanels, selectedPanelId: b.selectedPanelId });
+}
+
+function panelPresentationSnapshot(panel: PanelInstance) {
+  return {
+    id: panel.id,
+    type: panel.type,
+    title: panel.title,
+    placement: panel.placement,
+    props: panel.props,
+    layoutPinned: Boolean(panel.layoutPinned),
+    layoutWeight: panel.layoutWeight
+  };
+}
+
+export function layoutPresentationSnapshotsEqual(a: WorkspaceLayout, b: WorkspaceLayout): boolean {
+  const aPanels = [...a.panels].map(panelPresentationSnapshot).sort((left, right) => left.id.localeCompare(right.id));
+  const bPanels = [...b.panels].map(panelPresentationSnapshot).sort((left, right) => left.id.localeCompare(right.id));
+  return JSON.stringify({ panels: aPanels }) === JSON.stringify({ panels: bPanels });
 }
 
 function mergeDefaultAndStoredLayouts(stored: SavedLayoutRecord[]): SavedLayoutRecord[] {
@@ -536,7 +558,7 @@ function applyLoad(state: LayoutRuntimeState, command: LayoutCommand): LayoutRun
     return fail(state, command, "Saved layout not found.");
   }
 
-  const nextLayout = withCurrentRuntimeSettings(record.layout, state.layout);
+  const nextLayout = clearLayoutSelection(withCurrentRuntimeSettings(record.layout, state.layout));
   const validation = validateWholeLayout(nextLayout);
   if (validation) {
     return fail(state, command, `Invalid saved layout: ${validation}`);
@@ -546,7 +568,7 @@ function applyLoad(state: LayoutRuntimeState, command: LayoutCommand): LayoutRun
 }
 
 function applyReset(state: LayoutRuntimeState, command: LayoutCommand): LayoutRuntimeState {
-  return withLayoutHistory(state, command, withCurrentRuntimeSettings(createSeedLayout(), state.layout), "Seed layout restored.");
+  return withLayoutHistory(state, command, clearLayoutSelection(withCurrentRuntimeSettings(createSeedLayout(), state.layout)), "Seed layout restored.");
 }
 
 function applyDefaultRestore(state: LayoutRuntimeState, command: LayoutCommand): LayoutRuntimeState {
@@ -555,7 +577,7 @@ function applyDefaultRestore(state: LayoutRuntimeState, command: LayoutCommand):
     return fail(state, command, "Default layout key is missing.");
   }
 
-  const restoredLayout = createPresetLayout(defaultKey);
+  const restoredLayout = clearLayoutSelection(createPresetLayout(defaultKey));
   const savedLayouts = state.savedLayouts.map((record) =>
     record.kind === "default" && record.defaultKey === defaultKey
       ? { ...record, layout: restoredLayout, savedAt: now() }

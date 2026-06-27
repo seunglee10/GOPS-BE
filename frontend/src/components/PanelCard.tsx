@@ -1,4 +1,4 @@
-import { Pin, Trash2 } from "lucide-react";
+import { Pin, X } from "lucide-react";
 import { useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { ChartPanel } from "./ChartPanel";
@@ -20,6 +20,7 @@ type PanelCardProps = {
   chartRuntime: ChartRuntimeState;
   chartAutoApplyEnabled: boolean;
   onChartAction: (action: ChartRuntimeAction) => void;
+  onAskAgentFromChart: (panelId: string, chartDocumentId: string) => void;
 };
 
 type PanelHeaderPresentation = {
@@ -40,12 +41,14 @@ function PanelBody({
   panel,
   chartRuntime,
   chartAutoApplyEnabled,
-  onChartAction
+  onChartAction,
+  onAskAgentFromChart
 }: {
   panel: PanelInstance;
   chartRuntime: ChartRuntimeState;
   chartAutoApplyEnabled: boolean;
   onChartAction: (action: ChartRuntimeAction) => void;
+  onAskAgentFromChart: (panelId: string, chartDocumentId: string) => void;
 }) {
   if (panel.type === "chart") {
     return (
@@ -54,6 +57,7 @@ function PanelBody({
         runtime={chartRuntime}
         autoApplyEnabled={chartAutoApplyEnabled}
         onChartAction={onChartAction}
+        onAskAgent={onAskAgentFromChart}
       />
     );
   }
@@ -121,8 +125,33 @@ function resolvePanelHeaderPresentation(panel: PanelInstance, chartRuntime: Char
 
   return {
     title: panel.title ?? panel.type,
-    description: `${panel.variant} / ${panel.placement.zone}`
+    description: panelHeaderSubtitle(panel.type)
   };
+}
+
+function panelHeaderSubtitle(panelType: PanelInstance["type"]): string {
+  switch (panelType) {
+    case "watchlist":
+      return "Tracked symbols";
+    case "newsFeed":
+      return "Market news";
+    case "proposalReview":
+      return "Agent proposals";
+    case "symbolSummary":
+      return "Symbol snapshot";
+    case "indicatorCompare":
+      return "Indicator compare";
+    case "aiSummary":
+      return "AI notes";
+    case "notifications":
+      return "Alerts";
+    case "agentStatus":
+      return "Agent status";
+    case "agentChat":
+      return "Agent chat";
+    default:
+      return "Workspace panel";
+  }
 }
 
 function resolveChartHeaderMetrics(chartRuntime: ChartRuntimeState, chartDocument: ChartDocument): PanelMarketMetrics {
@@ -163,7 +192,8 @@ export function PanelCard({
   onPreviewChange,
   chartRuntime,
   chartAutoApplyEnabled,
-  onChartAction
+  onChartAction,
+  onAskAgentFromChart
 }: PanelCardProps) {
   const [dragging, setDragging] = useState(false);
   const commandTarget = { panelId: panel.id, group: panel.placement.group, zone: panel.placement.zone };
@@ -314,7 +344,7 @@ export function PanelCard({
               runPanelCommand("layout.panel.remove");
             }}
           >
-            <Trash2 size={14} />
+            <X size={15} />
           </button>
         </div>
       </header>
@@ -324,6 +354,7 @@ export function PanelCard({
         chartRuntime={chartRuntime}
         chartAutoApplyEnabled={chartAutoApplyEnabled}
         onChartAction={onChartAction}
+        onAskAgentFromChart={onAskAgentFromChart}
       />
     </article>
   );

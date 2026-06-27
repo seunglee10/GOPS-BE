@@ -1,17 +1,19 @@
 import { useState, type DragEvent } from "react";
 import type { LayoutCommand, LayoutPreviewItem, PanelPlacement, PanelType, SavedLayoutRecord, WorkspaceLayout } from "../layout/types";
 import type { ChartRuntimeAction, ChartRuntimeState } from "../chart/runtime";
+import type { AgentChartReference } from "../chart/agentReference";
 import type { SupportedSymbol, WatchlistSymbol } from "../chart/symbols";
 import { makeCommand } from "../layout/commands";
 import {
   createPanelDropCommand,
+  createPanelDropPreview,
   getWorkspaceDropCell,
   PANEL_CATALOG_MIME,
   PANEL_CATALOG_TYPES
 } from "../layout/panelCatalogDrop";
 import { BoundaryResizeOverlay } from "./BoundaryResizeOverlay";
 import { PanelCard } from "./PanelCard";
-import { SystemArea, type AgentOption, type SystemMenuTab, type SystemMode } from "./SystemArea";
+import { SystemArea, type AgentOption, type AgentUpdatePatch, type SystemMenuTab, type SystemMode } from "./SystemArea";
 
 type WorkspaceGridProps = {
   layout: WorkspaceLayout;
@@ -20,6 +22,7 @@ type WorkspaceGridProps = {
   settingsTab: SystemMenuTab;
   agents: AgentOption[];
   selectedAgentIds: string[];
+  referencedChartTarget?: AgentChartReference;
   editingAgentId?: string;
   savedLayouts: SavedLayoutRecord[];
   activeSymbol: SupportedSymbol;
@@ -28,13 +31,14 @@ type WorkspaceGridProps = {
   chartAutoApplyEnabled: boolean;
   onSettingsTabChange: (tab: SystemMenuTab) => void;
   onEditAgent: (agentId?: string) => void;
-  onUpdateAgent: (agentId: string, patch: Partial<Pick<AgentOption, "label" | "description">>) => void;
+  onUpdateAgent: (agentId: string, patch: AgentUpdatePatch) => void;
   onAddAgent: () => void;
   onDeleteAgent: (agentId: string) => void;
   onCloseSystemPanel: () => void;
   onSelectSymbol: (symbol: string) => boolean;
   onCommand: (command: LayoutCommand) => void;
   onChartAction: (action: ChartRuntimeAction) => void;
+  onAskAgentFromChart: (panelId: string, chartDocumentId: string) => void;
 };
 
 function placementStyle(placement: PanelPlacement) {
@@ -59,6 +63,26 @@ function findDropTargetPanelId(target: EventTarget | null): string | null {
   return element?.closest<HTMLElement>("[data-panel-id]")?.dataset.panelId ?? null;
 }
 
+function previewItemsForPanelDrop(
+  layout: WorkspaceLayout,
+  panelType: PanelType,
+  activeSymbol: SupportedSymbol,
+  cell: ReturnType<typeof getWorkspaceDropCell>,
+  targetPanelId: string | null
+): LayoutPreviewItem[] {
+  const preview = createPanelDropPreview({ layout, panelType, activeSymbol, cell, targetPanelId });
+  if (!preview?.placement) {
+    return [];
+  }
+
+  return [{
+    panelId: preview.kind === "replace" || preview.kind === "blocked" ? preview.panelId ?? "catalog-drop-preview" : "catalog-drop-preview",
+    placement: preview.placement,
+    state: preview.kind === "blocked" ? "blocked" : preview.kind === "replace" ? "replace" : "valid",
+    label: preview.kind === "blocked" ? preview.reason : preview.kind === "replace" ? "Replace panel" : "Add panel"
+  }];
+}
+
 export function WorkspaceGrid({
   layout,
   selectedPanelId,
@@ -66,6 +90,7 @@ export function WorkspaceGrid({
   settingsTab,
   agents,
   selectedAgentIds,
+  referencedChartTarget,
   editingAgentId,
   savedLayouts,
   activeSymbol,
@@ -80,7 +105,8 @@ export function WorkspaceGrid({
   onCloseSystemPanel,
   onSelectSymbol,
   onCommand,
-  onChartAction
+  onChartAction,
+  onAskAgentFromChart
 }: WorkspaceGridProps) {
   const [layoutPreview, setLayoutPreview] = useState<LayoutPreviewItem[]>([]);
   const workspacePanels = layout.panels.filter((panel) => panel.placement.group === "workspace");
@@ -90,7 +116,18 @@ export function WorkspaceGrid({
     }
 
     event.preventDefault();
-    event.dataTransfer.dropEffect = "copy";
+    const panelType = readCatalogPanelType(event.dataTransfer);
+    if (!panelType) {
+      setLayoutPreview([]);
+      event.dataTransfer.dropEffect = "none";
+      return;
+    }
+
+    const cell = getWorkspaceDropCell(event.currentTarget.getBoundingClientRect(), event.clientX, event.clientY);
+    const targetPanelId = findDropTargetPanelId(event.target);
+    const preview = createPanelDropPreview({ layout, panelType, activeSymbol, cell, targetPanelId });
+    event.dataTransfer.dropEffect = preview?.kind === "blocked" ? "none" : "copy";
+    setLayoutPreview(previewItemsForPanelDrop(layout, panelType, activeSymbol, cell, targetPanelId));
   };
 
   const handlePanelCatalogDrop = (event: DragEvent<HTMLDivElement>) => {
@@ -100,6 +137,7 @@ export function WorkspaceGrid({
 
     event.preventDefault();
     event.stopPropagation();
+    setLayoutPreview([]);
 
     const panelType = readCatalogPanelType(event.dataTransfer);
     if (!panelType) {
@@ -126,6 +164,13 @@ export function WorkspaceGrid({
       className="layout-frame"
       onDragOver={handlePanelCatalogDragOver}
       onDrop={handlePanelCatalogDrop}
+      onDragLeave={(event) => {
+        const relatedTarget = event.relatedTarget;
+        if (relatedTarget instanceof Node && event.currentTarget.contains(relatedTarget)) {
+          return;
+        }
+        setLayoutPreview([]);
+      }}
       onClick={(event) => {
         if (event.target === event.currentTarget) {
           onCommand(makeCommand("layout.panel.select", "user", { clear: true }));
@@ -144,14 +189,16 @@ export function WorkspaceGrid({
           chartRuntime={chartRuntime}
           chartAutoApplyEnabled={chartAutoApplyEnabled}
           onChartAction={onChartAction}
+          onAskAgentFromChart={onAskAgentFromChart}
         />
       ))}
 
       {layoutPreview.map((preview) => (
         <div
           key={preview.panelId}
-          className="layout-preview-card"
+          className={`layout-preview-card ${preview.state ?? "valid"}`}
           style={placementStyle(preview.placement)}
+          title={preview.label}
           aria-hidden="true"
         />
       ))}
@@ -166,6 +213,7 @@ export function WorkspaceGrid({
         chartAutoApplyEnabled={chartAutoApplyEnabled}
         agents={agents}
         selectedAgentIds={selectedAgentIds}
+        referencedChartTarget={referencedChartTarget}
         editingAgentId={editingAgentId}
         savedLayouts={savedLayouts}
         activeSymbol={activeSymbol}

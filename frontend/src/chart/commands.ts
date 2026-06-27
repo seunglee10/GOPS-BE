@@ -9,6 +9,7 @@ import type {
   ChartDocument,
   ChartDocumentSnapshot,
   ChartHistoryEntry,
+  ChartLineExtension,
   ChartLayerKey,
   ChartProposal,
   ComparisonSeries,
@@ -209,6 +210,34 @@ export function validateChartProposal(proposal: ChartProposal): string | null {
   return null;
 }
 
+export function normalizeDrawingFromCommand(command: ChartCommand): DrawingEntity | null {
+  if (command.type !== "chart.drawing.add" && command.type !== "chart.measurement.add") {
+    return null;
+  }
+
+  const drawing = normalizeDrawingEntity(command.payload.drawing, command.actor, command.proposalId) ??
+    makeDrawingFromPayload(command.payload, command.actor, command.proposalId, command.type === "chart.measurement.add" ? "measurement" : undefined);
+
+  return drawing && isSupportedDrawing(drawing) ? drawing : null;
+}
+
+export function normalizeComparisonFromCommand(command: ChartCommand): ComparisonSeries | null {
+  if (command.type !== "chart.comparison.add") {
+    return null;
+  }
+
+  return normalizeComparisonSeries(command.payload.comparison);
+}
+
+export function normalizeDrawingEntity(value: unknown, actor: ChartCommandActor, proposalId?: string): DrawingEntity | null {
+  const drawing = readDrawing(value, actor, proposalId);
+  return drawing && isSupportedDrawing(drawing) ? drawing : null;
+}
+
+export function normalizeComparisonSeries(value: unknown): ComparisonSeries | null {
+  return readComparison(value);
+}
+
 function applyDocumentMutation(document: ChartDocument, command: ChartCommand): string | null {
   switch (command.type) {
     case "chart.symbol.set": {
@@ -302,6 +331,9 @@ function applyDocumentMutation(document: ChartDocument, command: ChartCommand): 
       document.selectedDrawingId = undefined;
       if (isToolMode(command.payload.mode)) {
         document.interactionState = { ...document.interactionState, mode: command.payload.mode };
+      }
+      if (isLineExtension(command.payload.trendLineExtension)) {
+        document.interactionState = { ...document.interactionState, trendLineExtension: command.payload.trendLineExtension };
       }
       return null;
     case "chart.comparison.add": {
@@ -507,6 +539,10 @@ function isToolMode(value: unknown): value is ChartDocument["interactionState"][
     value === "draw-measurement";
 }
 
+function isLineExtension(value: unknown): value is ChartLineExtension {
+  return value === "segment" || value === "ray" || value === "line";
+}
+
 function readDrawingType(value: unknown): DrawingType | null {
   return typeof value === "string" && drawingRegistry[value as DrawingType] ? value as DrawingType : null;
 }
@@ -558,7 +594,8 @@ function readStyle(value: unknown): DrawingStyle {
     fillColor: readString(source.fillColor) ?? "rgba(17, 17, 17, 0.08)",
     textColor: readString(source.textColor) ?? readString(source.color) ?? "#111111",
     fontSize: readNumber(source.fontSize) ?? 12,
-    opacity: readNumber(source.opacity) ?? 1
+    opacity: readNumber(source.opacity) ?? 1,
+    extension: isLineExtension(source.extension) ? source.extension : undefined
   };
 }
 

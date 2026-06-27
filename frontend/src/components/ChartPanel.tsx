@@ -22,7 +22,6 @@ import {
   Square,
   TextCursor,
   Trash2,
-  TrendingUp,
   Type,
   ZoomIn,
   ZoomOut
@@ -32,12 +31,12 @@ import type { PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent }
 import { createPortal } from "react-dom";
 import { drawChartScene } from "../chart/canvasRenderer";
 import { makeChartCommand } from "../chart/commands";
+import { normalizeLineExtension, projectTrendLine } from "../chart/drawingGeometry";
 import { chartToolRegistry, drawingNeedsTwoAnchors } from "../chart/registries";
 import { normalizeCandleEvent, normalizeCandleSnapshot } from "../chart/marketDataAdapter";
-import { buildChartProposalRequest, normalizeChartProposal } from "../chart/proposals";
 import { buildRenderScene } from "../chart/renderScene";
 import { createCoordinateTransform } from "../chart/scales";
-import { clampRightOffset, dragDeltaToRightOffset } from "../chart/viewport";
+import { clampRightOffset, dragDeltaToRightOffset, normalizeViewport, zoomViewport } from "../chart/viewport";
 import {
   getCandlesForDocument,
   getChartDocumentForPanel,
@@ -48,7 +47,7 @@ import {
 } from "../chart/runtime";
 import { candleKey } from "../chart/candleStore";
 import { SUPPORTED_SYMBOLS, normalizeSupportedSymbol, type SupportedSymbol } from "../chart/symbols";
-import type { ChartLayerKey, ChartToolMode, DrawingAnchor, DrawingEntity, DrawingType, ChartViewport, RenderScene } from "../chart/types";
+import type { ChartLayerKey, ChartLineExtension, ChartToolMode, DrawingAnchor, DrawingEntity, DrawingType, ChartViewport, RenderScene } from "../chart/types";
 import { useElementSize } from "../chart/useElementSize";
 import type { PanelInstance } from "../layout/types";
 
@@ -68,6 +67,7 @@ type ChartPanelProps = {
   runtime: ChartRuntimeState;
   autoApplyEnabled: boolean;
   onChartAction: (action: ChartRuntimeAction) => void;
+  onAskAgent: (panelId: string, chartDocumentId: string) => void;
 };
 
 type DragAnchor = {
@@ -92,6 +92,12 @@ type TooltipAttributes = {
   "data-tooltip": string;
 };
 
+const trendLineExtensionOptions: Array<{ value: ChartLineExtension; label: string }> = [
+  { value: "segment", label: "Segment (two endpoints)" },
+  { value: "ray", label: "Ray (extends one way)" },
+  { value: "line", label: "Line (extends both ways)" }
+];
+
 type FloatingMenuPosition = {
   top: number;
   left: number;
@@ -109,7 +115,7 @@ function tooltipAttributes(label: string): TooltipAttributes {
   };
 }
 
-export function ChartPanel({ panel, runtime, autoApplyEnabled, onChartAction }: ChartPanelProps) {
+export function ChartPanel({ panel, runtime, onChartAction, onAskAgent }: ChartPanelProps) {
   const panelRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const sceneRef = useRef<RenderScene | null>(null);
@@ -127,7 +133,6 @@ export function ChartPanel({ panel, runtime, autoApplyEnabled, onChartAction }: 
   const [transientViewport, setTransientViewport] = useState<ChartViewport | null>(null);
   const [transientDrawings, setTransientDrawings] = useState<DrawingEntity[] | null>(null);
   const [drawingDraft, setDrawingDraft] = useState<DrawingDraft | null>(null);
-  const [proposalBusy, setProposalBusy] = useState(false);
   const [previewPulseKey, setPreviewPulseKey] = useState<string | null>(null);
   const [labelEditorOpen, setLabelEditorOpen] = useState(false);
   const [labelDraft, setLabelDraft] = useState("");
@@ -140,9 +145,13 @@ export function ChartPanel({ panel, runtime, autoApplyEnabled, onChartAction }: 
   const pendingPreviewKey = pendingPreview ? `${pendingPreview.id}:${pendingPreview.createdAt}` : null;
   const supportedComparisonSymbols = SUPPORTED_SYMBOLS.filter((symbol) => symbol !== document.symbol);
   const comparisonMatches = supportedComparisonSymbols.filter((symbol) => symbol.includes(comparisonDraft.trim().toUpperCase()));
-  const comparisonSymbolsKey = document.comparisons.map((comparison) => comparison.symbol).join("|");
-  const comparisonAvailabilityKey = document.comparisons.map((comparison) => {
-    const key = candleKey(comparison.symbol, document.timeframe);
+  const comparisonSymbols = Array.from(new Set([
+    ...document.comparisons.map((comparison) => comparison.symbol),
+    ...(pendingPreview?.comparisons ?? []).map((comparison) => comparison.symbol)
+  ]));
+  const comparisonSymbolsKey = comparisonSymbols.join("|");
+  const comparisonAvailabilityKey = comparisonSymbols.map((symbol) => {
+    const key = candleKey(symbol, document.timeframe);
     return `${key}:${runtime.candlesByKey[key]?.length ? "ready" : "missing"}`;
   }).join("|");
   const hasActiveMovingAverage = movingAverageLayers.some(({ layer }) => document.layers[layer]);
@@ -321,16 +330,16 @@ export function ChartPanel({ panel, runtime, autoApplyEnabled, onChartAction }: 
       crosshair: crosshairPoint,
       streamStatus,
       comparisonCandlesBySymbol: Object.fromEntries(
-        document.comparisons.map((comparison) => [
-          comparison.symbol,
-          runtime.candlesByKey[candleKey(comparison.symbol, document.timeframe)] ?? []
+        comparisonSymbols.map((symbol) => [
+          symbol,
+          runtime.candlesByKey[candleKey(symbol, document.timeframe)] ?? []
         ])
       ),
       pendingPreview
     });
     sceneRef.current = nextScene;
     return nextScene;
-  }, [candles, crosshairPoint, dataStatus.message, dataStatus.state, document.comparisons, pendingPreview, runtime.candlesByKey, sceneDocument, size.height, size.width, streamStatus]);
+  }, [candles, comparisonSymbols, crosshairPoint, dataStatus.message, dataStatus.state, document.timeframe, pendingPreview, runtime.candlesByKey, sceneDocument, size.height, size.width, streamStatus]);
 
   useEffect(() => {
     const controllers: AbortController[] = [];
@@ -434,8 +443,26 @@ export function ChartPanel({ panel, runtime, autoApplyEnabled, onChartAction }: 
     onChartAction({ kind: "chart.command", command: makeChartCommand(type, "user", target, payload, undefined, "chartPanel") });
   };
 
-  const setDocumentToolMode = (mode: ChartToolMode) => {
-    onChartAction({ kind: "chart.command", command: makeChartCommand("chart.drawing.clearSelection", "system", target, { mode }, undefined, "chartPanel") });
+  const setDocumentToolMode = (
+    mode: ChartToolMode,
+    trendLineExtension = document.interactionState.trendLineExtension,
+    options: { preserveDraft?: boolean } = {}
+  ) => {
+    if (!options.preserveDraft) {
+      setDrawingDraft(null);
+      setTransientDrawings(null);
+    }
+    onChartAction({
+      kind: "chart.command",
+      command: makeChartCommand(
+        "chart.drawing.clearSelection",
+        "system",
+        target,
+        { mode, trendLineExtension },
+        undefined,
+        "chartPanel"
+      )
+    });
   };
 
   const saveSelectedDrawingLabel = () => {
@@ -525,58 +552,43 @@ export function ChartPanel({ panel, runtime, autoApplyEnabled, onChartAction }: 
     }
   };
 
-  const requestProposal = () => {
-    if (proposalBusy) {
-      return;
-    }
-    setProposalBusy(true);
-    const context = buildChartProposalRequest({
-      panelId: panel.id,
-      document,
-      scene: sceneRef.current ?? scene,
-      streamStatus
-    });
-
-    fetch("/api/llm/chart-proposal", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ context })
-    })
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error(`Chart proposal API returned ${response.status}`);
-        }
-        return response.json() as Promise<unknown>;
-      })
-      .then((payload) => {
-        const proposal = normalizeChartProposal(payload, target);
-        onChartAction({ kind: "chart.proposal.received", proposal, autoApply: autoApplyEnabled });
-      })
-      .catch((error: unknown) => {
-        onChartAction({
-          kind: "chart.error",
-          chartDocumentId: document.id,
-          message: error instanceof Error ? error.message : "Could not request chart proposal"
-        });
-      })
-      .finally(() => setProposalBusy(false));
+  const getPlotWidth = () => {
+    const currentScene = sceneRef.current;
+    return currentScene ? currentScene.plot.right - currentScene.plot.left : undefined;
   };
 
+  const normalizePanelViewport = (viewport: ChartViewport) => (
+    normalizeViewport(viewport, candles.length, getPlotWidth())
+  );
+
   const setViewport = (visibleCount: number, rightOffset = document.viewport.rightOffset) => {
-    runCommand("chart.viewport.set", {
-      visibleCount,
-      rightOffset: clampRightOffset(rightOffset, visibleCount, candles.length)
-    });
+    const nextViewport = normalizePanelViewport({ visibleCount, rightOffset });
+    runCommand("chart.viewport.set", nextViewport);
+  };
+
+  const applyViewport = (nextViewport: ChartViewport) => {
+    if (
+      nextViewport.visibleCount === document.viewport.visibleCount &&
+      nextViewport.rightOffset === document.viewport.rightOffset
+    ) {
+      return;
+    }
+    runCommand("chart.viewport.set", nextViewport);
+  };
+
+  const zoomBy = (delta: number) => {
+    applyViewport(zoomViewport(document.viewport, delta, candles.length, getPlotWidth()));
   };
 
   const panViewport = (delta: number) => {
+    const currentViewport = normalizePanelViewport(document.viewport);
     const nextRightOffset = clampRightOffset(
-      document.viewport.rightOffset + delta,
-      document.viewport.visibleCount,
+      currentViewport.rightOffset + delta,
+      currentViewport.visibleCount,
       candles.length
     );
-    runCommand("chart.viewport.set", {
-      visibleCount: document.viewport.visibleCount,
+    applyViewport({
+      visibleCount: currentViewport.visibleCount,
       rightOffset: nextRightOffset
     });
   };
@@ -591,10 +603,7 @@ export function ChartPanel({ panel, runtime, autoApplyEnabled, onChartAction }: 
   const handleWheel = (event: ReactWheelEvent<HTMLCanvasElement>) => {
     event.preventDefault();
     const delta = event.deltaY > 0 ? 8 : -8;
-    runCommand("chart.viewport.set", {
-      visibleCount: document.viewport.visibleCount + delta,
-      rightOffset: document.viewport.rightOffset
-    });
+    zoomBy(delta);
   };
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLCanvasElement>) => {
@@ -628,7 +637,12 @@ export function ChartPanel({ panel, runtime, autoApplyEnabled, onChartAction }: 
 
       const drawingType = document.interactionState.mode.replace("draw-", "") as DrawingType;
       if (!drawingNeedsTwoAnchors(drawingType)) {
-        runCommand("chart.drawing.add", { drawingType, anchors: [anchor], label: defaultDrawingLabel(drawingType), style: defaultDrawingStyle(drawingType) });
+        runCommand("chart.drawing.add", {
+          drawingType,
+          anchors: [anchor],
+          label: defaultDrawingLabel(drawingType),
+          style: defaultDrawingStyle(drawingType, document.interactionState.trendLineExtension)
+        });
         return;
       }
       if (drawingDraft?.type === drawingType) {
@@ -636,22 +650,25 @@ export function ChartPanel({ panel, runtime, autoApplyEnabled, onChartAction }: 
           drawingType,
           anchors: [drawingDraft.first, anchor],
           label: defaultDrawingLabel(drawingType),
-          style: defaultDrawingStyle(drawingType)
+          style: defaultDrawingStyle(drawingType, document.interactionState.trendLineExtension)
         });
         setDrawingDraft(null);
+        setTransientDrawings(null);
       } else {
         setDrawingDraft({ type: drawingType, first: anchor });
+        setTransientDrawings(null);
       }
       return;
     }
 
+    const currentViewport = normalizePanelViewport(document.viewport);
     dragAnchorRef.current = {
       x: event.clientX,
-      rightOffset: document.viewport.rightOffset,
-      visibleCount: document.viewport.visibleCount
+      rightOffset: currentViewport.rightOffset,
+      visibleCount: currentViewport.visibleCount
     };
-    transientViewportRef.current = document.viewport;
-    setTransientViewport(document.viewport);
+    transientViewportRef.current = currentViewport;
+    setTransientViewport(currentViewport);
   };
 
   const previewViewport = (viewport: ChartViewport) => {
@@ -679,6 +696,19 @@ export function ChartPanel({ panel, runtime, autoApplyEnabled, onChartAction }: 
       setTransientDrawings(document.drawings.map((drawing) => (
         drawing.id === drawingDrag.drawing.id ? { ...drawing, anchors } : drawing
       )));
+      return;
+    }
+
+    if (drawingDraft && document.interactionState.mode === `draw-${drawingDraft.type}`) {
+      const anchor = createCoordinateTransform(currentScene).pointToAnchor(event.clientX - rect.left, event.clientY - rect.top, document.symbol);
+      if (!anchor) {
+        setTransientDrawings(null);
+        return;
+      }
+      setTransientDrawings([
+        ...document.drawings,
+        buildDraftPreviewDrawing(drawingDraft, anchor, document.interactionState.trendLineExtension)
+      ]);
       return;
     }
 
@@ -852,6 +882,11 @@ export function ChartPanel({ panel, runtime, autoApplyEnabled, onChartAction }: 
       ref={panelRef}
       className="chart-panel"
       data-chart-document-id={document.id}
+      data-chart-visible-count={document.viewport.visibleCount}
+      data-chart-right-offset={document.viewport.rightOffset}
+      data-chart-candle-count={candles.length}
+      data-chart-comparison-series-count={scene.comparisonSeries.length}
+      data-chart-preview-comparison-count={pendingPreview?.comparisons.length ?? 0}
       onPointerMove={updateHoverTooltip}
       onPointerLeave={() => setHoverTooltip(null)}
       onPointerDown={() => setHoverTooltip(null)}
@@ -874,10 +909,10 @@ export function ChartPanel({ panel, runtime, autoApplyEnabled, onChartAction }: 
         </div>
 
         <div className="chart-tool-group" aria-label="Viewport tools">
-          <button {...tooltipAttributes("Zoom in")} onClick={() => setViewport(document.viewport.visibleCount - 12)}>
+          <button {...tooltipAttributes("Zoom in")} onClick={() => zoomBy(-12)}>
             <ZoomIn size={14} />
           </button>
-          <button {...tooltipAttributes("Zoom out")} onClick={() => setViewport(document.viewport.visibleCount + 12)}>
+          <button {...tooltipAttributes("Zoom out")} onClick={() => zoomBy(12)}>
             <ZoomOut size={14} />
           </button>
           <button {...tooltipAttributes("Pan left")} onClick={() => panViewport(12)}>
@@ -938,18 +973,18 @@ export function ChartPanel({ panel, runtime, autoApplyEnabled, onChartAction }: 
             <Palette size={14} />
           </button>
           <button
-            {...tooltipAttributes("Delete selected drawing")}
+            {...tooltipAttributes("Erase selected drawing")}
             disabled={!selectedDrawing}
             onClick={removeSelectedDrawing}
           >
-            <Trash2 size={14} />
+            <Eraser size={14} />
           </button>
           <button
-            {...tooltipAttributes("Clear all drawings")}
+            {...tooltipAttributes("Delete all drawings")}
             disabled={document.drawings.length === 0}
             onClick={clearAllDrawings}
           >
-            <Eraser size={14} />
+            <Trash2 size={14} />
           </button>
         </div>
 
@@ -979,7 +1014,13 @@ export function ChartPanel({ panel, runtime, autoApplyEnabled, onChartAction }: 
               <RotateCw size={14} />
             </button>
           </div>
-          <button {...tooltipAttributes("Ask Agent 01 for chart proposal")} disabled={proposalBusy} onClick={requestProposal}>
+          <button
+            {...tooltipAttributes("Ask Agent 01")}
+            onClick={(event) => {
+              event.stopPropagation();
+              onAskAgent(panel.id, document.id);
+            }}
+          >
             <Bot size={14} />
           </button>
           <div className="chart-tool-group chart-preview-actions" aria-label="Preview actions">
@@ -1010,14 +1051,29 @@ export function ChartPanel({ panel, runtime, autoApplyEnabled, onChartAction }: 
       <div className="chart-body">
         <div className="chart-drawing-rail" aria-label="Drawing tools">
           {chartToolRegistry.map((tool) => (
-            <button
-              key={tool.id}
-              className={document.interactionState.mode === tool.id ? "active" : ""}
-              {...tooltipAttributes(tool.label)}
-              onClick={() => setDocumentToolMode(tool.id)}
-            >
-              <DrawingToolIcon toolId={tool.id} />
-            </button>
+            <div className="chart-tool-slot" key={tool.id}>
+              <button
+                className={document.interactionState.mode === tool.id ? "active" : ""}
+                {...tooltipAttributes(tool.label)}
+                onClick={() => setDocumentToolMode(tool.id)}
+              >
+                <DrawingToolIcon toolId={tool.id} />
+              </button>
+              {tool.id === "draw-trendLine" && document.interactionState.mode === "draw-trendLine" && (
+                <div className="chart-trend-extension-menu" aria-label="Trend line mode">
+                  {trendLineExtensionOptions.map((option) => (
+                    <button
+                      key={option.value}
+                      className={document.interactionState.trendLineExtension === option.value ? "active" : ""}
+                      {...tooltipAttributes(option.label)}
+                      onClick={() => setDocumentToolMode("draw-trendLine", option.value, { preserveDraft: true })}
+                    >
+                      <TrendExtensionIcon extension={option.value} />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           ))}
         </div>
 
@@ -1032,9 +1088,13 @@ export function ChartPanel({ panel, runtime, autoApplyEnabled, onChartAction }: 
               if (!dragAnchorRef.current) {
                 setCrosshairPoint(undefined);
               }
+              if (!dragAnchorRef.current && !drawingDragRef.current) {
+                setTransientDrawings(null);
+              }
             }}
             onPointerUp={handlePointerUp}
             onPointerCancel={cancelDrag}
+            onLostPointerCapture={cancelDrag}
           />
         </div>
       </div>
@@ -1095,7 +1155,7 @@ function DrawingToolIcon({ toolId }: { toolId: ChartToolMode }) {
     case "draw-horizontalLine":
       return <Minus size={14} />;
     case "draw-trendLine":
-      return <TrendingUp size={14} />;
+      return <TrendToolIcon />;
     case "draw-verticalMarker":
       return <span className="chart-marker-line-icon" aria-hidden="true" />;
     case "draw-textLabel":
@@ -1113,9 +1173,68 @@ function DrawingToolIcon({ toolId }: { toolId: ChartToolMode }) {
   }
 }
 
-function defaultDrawingStyle(type: DrawingType) {
+function TrendToolIcon() {
+  return (
+    <svg className="chart-trend-line-icon" viewBox="0 0 16 16" aria-hidden="true">
+      <path d="M3 12 L13 4" />
+    </svg>
+  );
+}
+
+function TrendExtensionIcon({ extension }: { extension: ChartLineExtension }) {
+  if (extension === "segment") {
+    return (
+      <svg className="chart-trend-extension-svg" viewBox="0 0 18 18" aria-hidden="true">
+        <path d="M4 14 L14 4" />
+        <circle cx="4" cy="14" r="1.8" />
+        <circle cx="14" cy="4" r="1.8" />
+      </svg>
+    );
+  }
+
+  if (extension === "ray") {
+    return (
+      <svg className="chart-trend-extension-svg" viewBox="0 0 18 18" aria-hidden="true">
+        <path d="M4 14 L14 4" />
+        <circle cx="4" cy="14" r="1.8" />
+        <path d="M10.6 4.1 L14 4 L13.9 7.4" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg className="chart-trend-extension-svg" viewBox="0 0 18 18" aria-hidden="true">
+      <path d="M3 15 L15 3" />
+      <path d="M6.3 14.8 L3 15 L3.2 11.7" />
+      <path d="M11.7 3.2 L15 3 L14.8 6.3" />
+    </svg>
+  );
+}
+
+function buildDraftPreviewDrawing(
+  draft: DrawingDraft,
+  anchor: DrawingAnchor,
+  trendLineExtension: ChartLineExtension
+): DrawingEntity {
+  return {
+    id: "drawing-draft-preview",
+    type: draft.type,
+    anchors: [draft.first, anchor],
+    style: { ...defaultDrawingStyle(draft.type, trendLineExtension), opacity: 0.58, lineDash: [6, 4] },
+    label: defaultDrawingLabel(draft.type),
+    visible: true,
+    createdBy: "user",
+    createdAt: "draft",
+    updatedAt: "draft"
+  };
+}
+
+function defaultDrawingStyle(type: DrawingType, trendLineExtension: ChartLineExtension = "segment") {
   if (type === "rangeBox") {
     return { color: "#2563eb", fillColor: "rgba(37, 99, 235, 0.12)", lineWidth: 1.4 };
+  }
+  if (type === "trendLine") {
+    return { color: "#111111", lineWidth: 1.5, extension: trendLineExtension };
   }
   if (type === "measurement") {
     return { color: "#7c3aed", textColor: "#4c1d95", lineWidth: 1.4 };
@@ -1196,8 +1315,13 @@ function hitTestDrawing(scene: RenderScene, x: number, y: number): { drawing: Dr
     if (drawing.type === "verticalMarker" && points[0] && Math.abs(points[0].x - x) <= 6 && y >= scene.plot.top && y <= scene.plot.priceBottom) {
       return { drawing, anchorIndex: null };
     }
-    if ((drawing.type === "trendLine" || drawing.type === "arrow" || drawing.type === "measurement") && points.length >= 2 && distanceToSegment(x, y, points[0], points[1]) <= 7) {
-      return { drawing, anchorIndex: null };
+    if ((drawing.type === "trendLine" || drawing.type === "arrow" || drawing.type === "measurement") && points.length >= 2) {
+      const [start, end] = drawing.type === "trendLine"
+        ? projectTrendLine(points[0], points[1], scene.plot, normalizeLineExtension(drawing.style.extension))
+        : [points[0], points[1]];
+      if (distanceToSegment(x, y, start, end) <= 7) {
+        return { drawing, anchorIndex: null };
+      }
     }
     if (drawing.type === "rangeBox" && points.length >= 2) {
       const left = Math.min(points[0].x, points[1].x);
