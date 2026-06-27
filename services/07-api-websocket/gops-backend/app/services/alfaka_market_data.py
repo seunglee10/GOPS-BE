@@ -1,6 +1,6 @@
 # 역할: GOPS backend가 alfaka Redis/ClickHouse provider를 읽게 연결합니다.
 # 사용: 과거 캔들은 ClickHouse, 최신/실시간 캔들은 Redis에서 가져옵니다.
-# 설정: ALPACA_SYMBOLS, REDIS_URL, CLICKHOUSE_* 값을 .env 또는 Docker env에 넣습니다.
+# 설정: ALPACA_UNIVERSE, ALPACA_SYMBOLS, REDIS_URL, CLICKHOUSE_* 값을 .env 또는 Docker env에 넣습니다.
 from __future__ import annotations
 
 import os
@@ -14,7 +14,6 @@ from fastapi import HTTPException
 
 
 SYMBOL_PATTERN = re.compile(r"^[A-Z][A-Z0-9]{0,9}(?:\.[A-Z])?$")
-DEFAULT_SYMBOLS = ["AAPL", "TSLA", "NVDA"]
 
 
 def _add_alfaka_package_path() -> None:
@@ -35,17 +34,28 @@ def _add_alfaka_package_path() -> None:
 
 _add_alfaka_package_path()
 
-from alfaka.alpaca.subscription import load_request_config  # noqa: E402
+from alfaka.alpaca.subscription import (  # noqa: E402
+    configured_seed_symbols,
+    configured_universe_symbols as load_configured_universe_symbols,
+)
 from alfaka.serving.provider import MarketDataProvider  # noqa: E402
 
 
 def configured_symbols() -> list[str]:
-    # 사용자가 실제로 Alpaca에서 받을 종목은 ALPACA_SYMBOLS에 넣습니다.
-    # 값이 없으면 config/market-data-request.json의 semiconductor-100 universe를 씁니다.
-    config = load_request_config()
-    raw_symbols = os.getenv("ALPACA_SYMBOLS", ",".join(config.get("defaultSymbols") or DEFAULT_SYMBOLS))
-    symbols = [normalize_market_symbol(item) for item in raw_symbols.split(",") if item.strip()]
-    return symbols or DEFAULT_SYMBOLS
+    # 기본 수집/watch list seed는 ALPACA_SYMBOLS만 따릅니다.
+    # ALPACA_UNIVERSE 전체를 자동 구독하거나 watch list로 확장하지 않습니다.
+    try:
+        return [normalize_market_symbol(symbol) for symbol in configured_seed_symbols()]
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+def configured_universe_symbols() -> list[str]:
+    # 검색/검증 후보군은 ALPACA_UNIVERSE를 따릅니다.
+    try:
+        return [normalize_market_symbol(symbol) for symbol in load_configured_universe_symbols()]
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 def normalize_market_symbol(symbol: str) -> str:
@@ -84,6 +94,7 @@ def symbol_summaries() -> list[dict[str, Any]]:
 def build_symbol_summary(symbol: str) -> dict[str, Any]:
     provider = get_market_data_provider()
     symbol = normalize_market_symbol(symbol)
+    metadata = _symbol_metadata(provider, symbol)
     latest_price = provider.redis_provider.latest_price(symbol)
     candles = provider.redis_provider.recent_candles(symbol, "1m", 30)
     last_candle = candles[-1] if candles else {}
@@ -97,12 +108,19 @@ def build_symbol_summary(symbol: str) -> dict[str, Any]:
 
     return {
         "symbol": symbol,
-        "name": symbol,
-        "market": "US",
+        "name": metadata.get("name") or symbol,
+        "market": metadata.get("market") or metadata.get("exchange") or "US",
         "lastPrice": last_price,
         "changePercent": change_percent,
         "volume": _read_float(last_candle.get("volume")),
     }
+
+
+def _symbol_metadata(provider: MarketDataProvider, symbol: str) -> dict[str, Any]:
+    try:
+        return provider.symbol_detail(symbol)
+    except Exception:
+        return {}
 
 
 def _read_float(value: Any) -> float | None:

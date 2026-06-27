@@ -9,6 +9,13 @@ sys.modules.setdefault("botocore", types.SimpleNamespace())
 sys.modules.setdefault("botocore.config", types.SimpleNamespace(Config=lambda **kwargs: kwargs))
 sys.modules.setdefault("redis", types.SimpleNamespace(from_url=lambda *args, **kwargs: None))
 
+from alfaka.alpaca.subscription import (
+    configured_seed_symbols,
+    configured_universe_symbols,
+    load_request_config,
+    load_symbols_and_channels,
+    resolve_request_config_path,
+)
 from alfaka.alpaca.assets import asset_to_symbol_metadata
 from alfaka.common.market_messages import build_raw_envelope, raw_topic_name, source_event_id
 from alfaka.common.redis_keys import RedisKeyBuilder
@@ -460,17 +467,66 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         with self.assertRaises(LookupError):
             registry.detail("ZZZZ")
 
-    def test_symbol_registry_uses_alpaca_symbols_env_for_configured_fallback(self):
+    def test_alpaca_universe_and_symbols_env_are_separated(self):
+        previous_universe = os.environ.get("ALPACA_UNIVERSE")
         previous = os.environ.get("ALPACA_SYMBOLS")
-        os.environ["ALPACA_SYMBOLS"] = "AAPL,TSLA,NVDA"
+        os.environ["ALPACA_UNIVERSE"] = "semiconductor-100"
+        os.environ["ALPACA_SYMBOLS"] = "NVDA,AMD,AVGO,TSM,ASML,AMAT,MU"
         try:
+            self.assertEqual(configured_seed_symbols(), ["NVDA", "AMD", "AVGO", "TSM", "ASML", "AMAT", "MU"])
+            universe = configured_universe_symbols()
+            self.assertIn("INTC", universe)
+            self.assertIn("ASML", universe)
+            self.assertIn("AMAT", universe)
+
             registry = SymbolRegistry(
                 clickhouse_provider=FakeClickHouseProvider(symbols={}),
                 redis_provider=FakeRedisProvider(symbol_metadata={}),
             )
 
-            self.assertEqual(registry.detail("AAPL")["symbol"], "AAPL")
-            self.assertEqual([item["symbol"] for item in registry.search("aa", 5)], ["AAPL"])
+            intc_detail = registry.detail("INTC")
+            self.assertEqual(intc_detail["symbol"], "INTC")
+            self.assertEqual(intc_detail["name"], "Intel Corporation")
+            self.assertEqual(intc_detail["market"], "NASDAQ")
+            asml_results = registry.search("asml", 5)
+            self.assertEqual([item["symbol"] for item in asml_results], ["ASML"])
+            self.assertEqual(asml_results[0]["market"], "NASDAQ")
+            empty_results = registry.search("", 5)
+            self.assertEqual([item["symbol"] for item in empty_results], ["NVDA", "AMD", "AVGO", "INTC", "QCOM"])
+        finally:
+            if previous_universe is None:
+                os.environ.pop("ALPACA_UNIVERSE", None)
+            else:
+                os.environ["ALPACA_UNIVERSE"] = previous_universe
+            if previous is None:
+                os.environ.pop("ALPACA_SYMBOLS", None)
+            else:
+                os.environ["ALPACA_SYMBOLS"] = previous
+
+    def test_request_config_path_resolves_repo_relative_env(self):
+        previous_config = os.environ.get("ALFAKA_REQUEST_CONFIG")
+        previous_cwd = Path.cwd()
+        repo_root = Path(__file__).resolve().parents[1]
+        os.environ["ALFAKA_REQUEST_CONFIG"] = "config/market-data-request.json"
+        try:
+            os.chdir(repo_root / "services" / "07-api-websocket" / "gops-backend")
+            self.assertTrue(resolve_request_config_path().exists())
+            config = load_request_config()
+            self.assertEqual(config["defaultUniverse"], "semiconductor-100")
+            self.assertIn("INTC", config["defaultSymbols"])
+        finally:
+            os.chdir(previous_cwd)
+            if previous_config is None:
+                os.environ.pop("ALFAKA_REQUEST_CONFIG", None)
+            else:
+                os.environ["ALFAKA_REQUEST_CONFIG"] = previous_config
+
+    def test_alpaca_symbols_rejects_universe_name(self):
+        previous = os.environ.get("ALPACA_SYMBOLS")
+        os.environ["ALPACA_SYMBOLS"] = "semiconductor-100"
+        try:
+            with self.assertRaises(ValueError):
+                load_symbols_and_channels()
         finally:
             if previous is None:
                 os.environ.pop("ALPACA_SYMBOLS", None)

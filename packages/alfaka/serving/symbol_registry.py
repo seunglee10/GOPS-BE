@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import logging
-import os
 from datetime import UTC, datetime
 from typing import Any
 
-from alfaka.alpaca.subscription import load_request_config, validate_symbol
+from alfaka.alpaca.subscription import configured_universe_symbols, load_request_config, validate_symbol
 
 
 logger = logging.getLogger(__name__)
@@ -27,8 +26,8 @@ class SymbolRegistry:
                 logger.warning("ClickHouse symbol search failed; falling back to configured symbols.", exc_info=True)
                 results.extend([])
 
-        results.extend(self._configured_matches(normalized_query))
-        if self._is_configured_symbol(normalized_query):
+        results.extend(self._universe_matches(normalized_query))
+        if self._is_universe_symbol(normalized_query):
             results.append(self._metadata_for_symbol(normalized_query))
 
         deduped = {}
@@ -57,35 +56,39 @@ class SymbolRegistry:
             except Exception:
                 logger.warning("Redis symbol detail failed; trying config fallback.", exc_info=True)
                 pass
-        if self._is_configured_symbol(normalized):
+        if self._is_universe_symbol(normalized):
             return self._metadata_for_symbol(normalized)
         raise LookupError(f"Unknown market symbol: {normalized}")
 
-    def _configured_matches(self, query: str) -> list[dict[str, Any]]:
-        if not query:
-            return []
+    def _universe_matches(self, query: str) -> list[dict[str, Any]]:
         matches = []
-        for symbol in self._configured_symbols():
+        for symbol in self._universe_symbols():
             metadata = self._metadata_for_symbol(symbol)
+            if not query:
+                matches.append(metadata)
+                continue
             haystack = f"{metadata['symbol']} {metadata['name']}".upper()
             if query in haystack:
                 matches.append(metadata)
         return matches
 
     def _metadata_for_symbol(self, symbol: str) -> dict[str, Any]:
+        configured_metadata = (self.config.get("symbolMetadata") or {}).get(symbol) or {}
         names = {
             value.upper(): key.title()
             for key, value in (self.config.get("companyToSymbol") or {}).items()
         }
+        exchange = configured_metadata.get("exchange")
+        market = configured_metadata.get("market") or exchange or "US"
         return {
             "symbol": symbol,
-            "name": names.get(symbol, symbol),
-            "exchange": None,
-            "market": "US",
-            "assetClass": "us_equity",
-            "tradable": True,
-            "status": "unknown",
-            "source": "alpaca",
+            "name": configured_metadata.get("name") or names.get(symbol, symbol),
+            "exchange": exchange,
+            "market": market,
+            "assetClass": configured_metadata.get("assetClass") or "us_equity",
+            "tradable": configured_metadata.get("tradable", True),
+            "status": configured_metadata.get("status") or "unknown",
+            "source": configured_metadata.get("source") or "alpaca",
             "updatedAt": datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
         }
 
@@ -96,16 +99,12 @@ class SymbolRegistry:
         except ValueError:
             return False
 
-    def _is_configured_symbol(self, symbol: str) -> bool:
-        return symbol in self._configured_symbols()
+    def _is_universe_symbol(self, symbol: str) -> bool:
+        return symbol in self._universe_symbols()
 
-    def _configured_symbols(self) -> set[str]:
-        raw_symbols = os.getenv("ALPACA_SYMBOLS")
-        values = [*self.config.get("defaultSymbols", [])]
-        if raw_symbols:
-            values.extend(raw_symbols.split(","))
-        return {
-            symbol.strip().upper()
-            for symbol in values
-            if isinstance(symbol, str) and symbol.strip() and self._is_valid_symbol(symbol.strip().upper())
-        }
+    def _universe_symbols(self) -> list[str]:
+        return [
+            symbol
+            for symbol in configured_universe_symbols(self.config)
+            if self._is_valid_symbol(symbol)
+        ]

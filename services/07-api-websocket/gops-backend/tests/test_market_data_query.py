@@ -55,6 +55,7 @@ from app.market_data.query.service import MarketDataQueryService  # noqa: E402
 from app.market_data.backfill.service import resolve_execution_mode  # noqa: E402
 from app.market_data.query import routes as query_routes  # noqa: E402
 from app.routes import charts as chart_routes  # noqa: E402
+from app.services.alfaka_market_data import configured_symbols  # noqa: E402
 
 
 class FakeProvider:
@@ -210,6 +211,17 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(payload["backfillStatus"], "not_requested")
         self.assertTrue(payload["canBackfill"])
         self.assertIn("No candle data", payload["message"])
+
+    def test_configured_symbols_uses_alpaca_symbols_watchlist_seed(self):
+        previous = os.environ.get("ALPACA_SYMBOLS")
+        os.environ["ALPACA_SYMBOLS"] = "NVDA,AMD,AVGO,TSM,ASML,AMAT,MU"
+        try:
+            self.assertEqual(configured_symbols(), ["NVDA", "AMD", "AVGO", "TSM", "ASML", "AMAT", "MU"])
+        finally:
+            if previous is None:
+                os.environ.pop("ALPACA_SYMBOLS", None)
+            else:
+                os.environ["ALPACA_SYMBOLS"] = previous
 
     def test_backfill_routes_delegate_to_query_service(self):
         previous = chart_routes.get_query_service

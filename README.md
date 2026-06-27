@@ -85,7 +85,8 @@ APCA_API_KEY_ID=...
 APCA_API_SECRET_KEY=...
 ALPACA_FEED=sip
 HISTORICAL_FEED=sip
-ALPACA_SYMBOLS=AAPL,TSLA,NVDA
+ALPACA_UNIVERSE=semiconductor-100
+ALPACA_SYMBOLS=NVDA,AMD,AVGO,TSM,ASML,AMAT,MU
 ```
 
 Start the core stack:
@@ -169,7 +170,10 @@ bash scripts/local/smoke-backfill-missing-data.sh INTC
 
 ## Operational Notes
 
-- `config/market-data-request.json` defines the default semiconductor universe. `ALPACA_SYMBOLS` can narrow or extend live subscription symbols.
+- `config/market-data-request.json` defines named market universes and the default semiconductor universe.
+- `ALPACA_UNIVERSE` selects search/validation candidates. Currently `semiconductor-100` is the supported named universe.
+- `ALPACA_SYMBOLS` selects always-on Alpaca subscriptions and the default frontend Watch List seed. It must be a CSV ticker list; universe names are not accepted.
+- An empty `ALPACA_SYMBOLS` never auto-subscribes the whole universe.
 - `infra/aws/msk/topics.txt` is the topic creation input used by `scripts/aws/create-msk-topics.sh`.
 - Kubernetes base includes `alpaca-ingestor`, `s3-sink`, `clickhouse-loader`, `backfill-worker`, backend, frontend, and a symbol registry sync job.
 - AWS overlay renders locally; actual `terraform apply`, ECR push, and `kubectl apply` should only be run by the deployment owner.

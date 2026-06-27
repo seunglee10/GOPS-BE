@@ -1,6 +1,7 @@
 {
   "description": "Default market-data universe and Alpaca subscription policy.",
   "defaultUniverse": "semiconductor-100",
+  "defaultSeedSymbols": ["NVDA", "AMD", "AVGO", "TSM", "ASML", "AMAT", "MU"],
   "defaultSymbols": [
     "NVDA", "AMD", "AVGO", "INTC", "QCOM", "TXN", "MU", "ADI", "MRVL", "MCHP",
     "MPWR", "ON", "NXPI", "SWKS", "QRVO", "LSCC", "ALGM", "DIOD", "CRUS", "POWI",
@@ -13,6 +14,16 @@
     "ASYS", "INTT", "AXTI", "WDC", "STX", "KEYS", "OSIS", "NVEC", "OLED", "FN",
     "FLEX", "SANM", "JBL", "CLS", "VSH", "VICR", "BELFB", "CTS", "MEI", "ARW"
   ],
+  "symbolMetadata": {
+    "NVDA": {"name": "NVIDIA Corporation", "exchange": "NASDAQ", "market": "NASDAQ"},
+    "AMD": {"name": "Advanced Micro Devices, Inc.", "exchange": "NASDAQ", "market": "NASDAQ"},
+    "AVGO": {"name": "Broadcom Inc.", "exchange": "NASDAQ", "market": "NASDAQ"},
+    "TSM": {"name": "Taiwan Semiconductor Manufacturing Company Limited", "exchange": "NYSE", "market": "NYSE"},
+    "ASML": {"name": "ASML Holding N.V.", "exchange": "NASDAQ", "market": "NASDAQ"},
+    "AMAT": {"name": "Applied Materials, Inc.", "exchange": "NASDAQ", "market": "NASDAQ"},
+    "MU": {"name": "Micron Technology, Inc.", "exchange": "NASDAQ", "market": "NASDAQ"},
+    "INTC": {"name": "Intel Corporation", "exchange": "NASDAQ", "market": "NASDAQ"}
+  },
   "defaultChannels": ["bars", "updatedBars", "dailyBars", "statuses"],
   "activeChartChannels": ["trades"],
   "optionalActiveChannels": ["quotes"],
