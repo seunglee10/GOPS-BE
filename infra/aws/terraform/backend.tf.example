@@ -1,0 +1,12 @@
+# 역할: Terraform state를 S3/DynamoDB backend에 저장하는 예시입니다.
+# 사용: backend.tf로 복사한 뒤 버킷/테이블 값을 실제 값으로 바꿉니다.
+# 주의: 처음 적용 전 backend용 S3/DynamoDB는 별도로 준비해야 합니다.
+terraform {
+  backend "s3" {
+    bucket         = "YOUR_TERRAFORM_STATE_BUCKET"
+    key            = "alfaka/market-data/dev/terraform.tfstate"
+    region         = "ap-northeast-2"
+    dynamodb_table = "YOUR_TERRAFORM_LOCK_TABLE"
+    encrypt        = true
+  }
+}

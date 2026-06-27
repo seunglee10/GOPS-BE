@@ -1,0 +1,18 @@
+# 역할: AWS Terraform 입력값 예시입니다.
+# 사용: terraform.tfvars로 복사한 뒤 YOUR_* 값을 실제 값으로 바꿉니다.
+# 주의: 이 파일에는 실제 비밀키를 넣지 않습니다.
+project_name = "alfaka"
+environment  = "dev"
+aws_region   = "ap-northeast-2"
+
+s3_bucket_name = "YOUR_UNIQUE_S3_BUCKET_NAME"
+alpaca_secret_name = "alfaka/alpaca/api"
+
+eks_oidc_provider_arn = "arn:aws:iam::YOUR_ACCOUNT_ID:oidc-provider/oidc.eks.ap-northeast-2.amazonaws.com/id/YOUR_OIDC_ID"
+eks_oidc_provider_url = "oidc.eks.ap-northeast-2.amazonaws.com/id/YOUR_OIDC_ID"
+
+kubernetes_namespace       = "alfaka-market-data"
+kubernetes_service_account = "alfaka-market-data-sa"
+
+msk_bootstrap_servers = "b-1.YOUR_MSK.amazonaws.com:9098,b-2.YOUR_MSK.amazonaws.com:9098"
+redis_endpoint        = "YOUR_REDIS_ENDPOINT.cache.amazonaws.com"

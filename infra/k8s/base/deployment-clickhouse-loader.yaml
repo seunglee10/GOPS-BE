@@ -1,0 +1,29 @@
+# 역할: Kafka closed candle topic을 ClickHouse 조회 테이블에 적재합니다.
+# 사용: GOPS backend가 과거/최근 1분봉을 ClickHouse에서 읽을 수 있게 합니다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alfaka-clickhouse-loader
+  namespace: alfaka-market-data
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alfaka-clickhouse-loader
+  template:
+    metadata:
+      labels:
+        app: alfaka-clickhouse-loader
+    spec:
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: clickhouse-loader
+          image: YOUR_ECR_REPOSITORY/alfaka-market-data:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "services/05-clickhouse-store/processed_loader.py"]
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-clickhouse-secret
+                optional: true

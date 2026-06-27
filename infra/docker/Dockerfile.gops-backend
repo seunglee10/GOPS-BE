@@ -1,0 +1,23 @@
+# 역할: GOPS backend를 로컬 Docker 서버로 실행합니다.
+# 연결: 같은 compose 안의 Redis/ClickHouse와 alfaka packages를 읽습니다.
+# 실행: uvicorn backend app을 0.0.0.0:8000으로 엽니다.
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app/packages:/app/services/07-api-websocket/gops-backend \
+    ALFAKA_PACKAGES_PATH=/app/packages
+
+WORKDIR /app
+
+COPY requirements.txt /tmp/alfaka-requirements.txt
+COPY services/07-api-websocket/gops-backend/requirements.txt /tmp/gops-backend-requirements.txt
+RUN pip install --no-cache-dir -r /tmp/alfaka-requirements.txt -r /tmp/gops-backend-requirements.txt
+
+COPY packages ./packages
+COPY config ./config
+COPY services/07-api-websocket/gops-backend ./services/07-api-websocket/gops-backend
+
+WORKDIR /app/services/07-api-websocket/gops-backend
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

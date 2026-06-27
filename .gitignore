@@ -1,18 +1,36 @@
-node_modules/
-dist/
-.venv/
-__pycache__/
-*.py[cod]
-.DS_Store
-*.tsbuildinfo
 .env
 .env.*
 !.env.example
+.venv/
+__pycache__/
+*.py[cod]
+*.pyc
+.local/
+.DS_Store
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.tmp/
+**/.tmp/
+*.tsbuildinfo
 
-# Local Codex/workflow and implementation reference material.
-AGENTS.md
-.ignore
-docs/
-ref/
-assets/
-ref/references/vendor-src/*/
+# Local planning/reference artifacts. Keep the root README.md tracked for teammates.
+/docs/
+/market-data-architecture-request.md
+/README-*.md
+/services/**/README.md
+/flink-jobs/**/README.md
+/infra/aws/README-ko.md
+/infra/aws/msk/topic-settings.md
+/infra/k8s/base/flink-production-options.md
+/infra/k8s/overlays/aws/README.md
+/.agents/
+/.codex/
+/AGENTS.md
+/.ignore
+
+# Local reference material.
+/ref/
+/assets/
+/ref/references/vendor-src/*/

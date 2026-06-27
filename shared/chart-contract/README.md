@@ -6,9 +6,9 @@
 
 Current mirrors:
 
-- `frontend/src/chart/types.ts`
-- `frontend/src/chart/capabilities.ts`
-- `backend/app/contracts/chart.py`
+- `apps/chart-engine/src/types.ts`
+- `apps/chart-engine/src/capabilities.ts`
+- `services/07-api-websocket/gops-backend/app/contracts/chart.py`
 
 Contract rules:
 

@@ -1,0 +1,15 @@
+.git
+.venv
+.local
+legacy
+__pycache__
+*.pyc
+.env
+.DS_Store
+node_modules
+**/node_modules
+dist
+**/dist
+.tmp
+**/.tmp
+*.tsbuildinfo

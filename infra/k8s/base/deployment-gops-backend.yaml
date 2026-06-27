@@ -1,0 +1,36 @@
+# 역할: GOPS chart REST API와 WebSocket API를 EKS에 배포합니다.
+# 사용: Redis 최신/live 데이터와 ClickHouse candle 데이터를 프론트에 제공합니다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gops-backend
+  namespace: alfaka-market-data
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: gops-backend
+  template:
+    metadata:
+      labels:
+        app: gops-backend
+    spec:
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: gops-backend
+          image: YOUR_ECR_REPOSITORY/gops-backend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-clickhouse-secret
+                optional: true
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
