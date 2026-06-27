@@ -8,4 +8,11 @@ __pycache__/
 .env
 .env.*
 !.env.example
+
+# Local Codex/workflow and implementation reference material.
+AGENTS.md
+.ignore
+docs/
+ref/
+assets/
 ref/references/vendor-src/*/
