@@ -5,7 +5,8 @@
 set -euo pipefail
 
 IMAGE_TAG="${IMAGE_TAG:-latest}"
+DOCKER_PLATFORM="${DOCKER_PLATFORM:-linux/amd64}"
 ECR_WORKER_REPO="${ECR_WORKER_REPO:?ECR_WORKER_REPO를 넣어주세요}"
 
-docker build -f infra/docker/Dockerfile.worker -t "${ECR_WORKER_REPO}:${IMAGE_TAG}" .
+docker buildx build --platform "${DOCKER_PLATFORM}" --load -f infra/docker/Dockerfile.worker -t "${ECR_WORKER_REPO}:${IMAGE_TAG}" .
 docker push "${ECR_WORKER_REPO}:${IMAGE_TAG}"

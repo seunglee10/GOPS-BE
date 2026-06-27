@@ -26,11 +26,15 @@ def floor_interval(value, minutes):
 
 def normalize_bar(envelope, correction_type="NONE"):
     raw = envelope["raw"]
-    source = "alpaca.updatedBars" if envelope["channel"] == "updatedBars" else "alpaca.bars"
+    interval = "1d" if envelope["channel"] == "dailyBars" else "1m"
+    source = {
+        "updatedBars": "alpaca.updatedBars",
+        "dailyBars": "alpaca.dailyBars",
+    }.get(envelope["channel"], "alpaca.bars")
     return {
         "eventType": "CANDLE",
         "symbol": envelope["symbol"],
-        "interval": "1m",
+        "interval": interval,
         "timestamp": raw.get("t"),
         "open": raw.get("o"),
         "high": raw.get("h"),
@@ -44,6 +48,7 @@ def normalize_bar(envelope, correction_type="NONE"):
         "correctionType": correction_type,
         "source": source,
         "feed": envelope.get("feed"),
+        "sourceEventId": envelope.get("sourceEventId"),
         "createdAt": envelope.get("receivedAt"),
     }
 
@@ -62,7 +67,26 @@ def normalize_trade(envelope):
         "timestamp": raw.get("t"),
         "source": "alpaca",
         "feed": envelope.get("feed"),
+        "sourceEventId": envelope.get("sourceEventId"),
         "receivedAt": envelope.get("receivedAt"),
+    }
+
+
+def normalize_status(envelope):
+    raw = envelope.get("raw") or {}
+    status = raw.get("sc") or raw.get("status") or raw.get("msg") or raw.get("T") or "unknown"
+    status_type = raw.get("st") or raw.get("statusType") or raw.get("T") or "market"
+    return {
+        "eventType": "MARKET_STATUS",
+        "eventTime": envelope.get("eventTime") or envelope.get("receivedAt"),
+        "symbol": envelope.get("symbol") or "_MARKET",
+        "statusType": status_type,
+        "status": status,
+        "reason": raw.get("r") or raw.get("reason"),
+        "source": "alpaca",
+        "feed": envelope.get("feed"),
+        "sourceEventId": envelope.get("sourceEventId"),
+        "raw": raw,
     }
 
 
@@ -90,6 +114,7 @@ class LiveCandleBuilder:
                 "volume": size,
                 "isClosed": False,
                 "source": "alpaca.trades",
+                "sourceEventId": trade.get("sourceEventId"),
                 "updatedAt": trade.get("receivedAt"),
             }
         else:
@@ -97,6 +122,7 @@ class LiveCandleBuilder:
             candle["low"] = min(candle["low"], price)
             candle["close"] = price
             candle["volume"] += size
+            candle["sourceEventId"] = trade.get("sourceEventId")
             candle["updatedAt"] = trade.get("receivedAt")
 
         self.candles[key] = candle
@@ -152,5 +178,63 @@ class CandleAggregator:
             "correctionType": candle_1m.get("correctionType", "NONE"),
             "source": "stream-processor",
             "feed": candle_1m.get("feed"),
+            "sourceEventId": candle_1m.get("sourceEventId"),
             "createdAt": candle_1m.get("createdAt"),
         }
+
+
+class SourceEventDeduper:
+    def __init__(self, max_seen=10000):
+        self.max_seen = max_seen
+        self.seen = set()
+        self.order = []
+
+    def is_duplicate(self, source_event_id):
+        if not source_event_id:
+            return False
+        if source_event_id in self.seen:
+            return True
+        self.seen.add(source_event_id)
+        self.order.append(source_event_id)
+        if len(self.order) > self.max_seen:
+            oldest = self.order.pop(0)
+            self.seen.discard(oldest)
+        return False
+
+
+class VolumeProfileBinBuilder:
+    def __init__(self, price_bin_size=0.05):
+        self.price_bin_size = price_bin_size
+        self.bins = {}
+
+    def update(self, trade):
+        minute = to_iso(floor_minute(trade["timestamp"]))
+        price = float(trade["price"])
+        size = int(trade.get("size") or 0)
+        price_bin = round(round(price / self.price_bin_size) * self.price_bin_size, 6)
+        key = (trade["symbol"], minute, price_bin)
+        current = self.bins.get(key)
+        if current is None:
+            current = {
+                "eventType": "VOLUME_PROFILE_BIN",
+                "eventMinute": minute,
+                "symbol": trade["symbol"],
+                "priceBin": price_bin,
+                "priceBinSize": self.price_bin_size,
+                "volume": 0,
+                "tradeCount": 0,
+                "notional": 0.0,
+                "vwap": None,
+                "source": "alpaca",
+                "feed": trade.get("feed"),
+                "sourceEventId": trade.get("sourceEventId"),
+                "updatedAt": trade.get("receivedAt"),
+            }
+        current["volume"] += size
+        current["tradeCount"] += 1
+        current["notional"] += price * size
+        current["vwap"] = current["notional"] / current["volume"] if current["volume"] else price
+        current["sourceEventId"] = trade.get("sourceEventId")
+        current["updatedAt"] = trade.get("receivedAt")
+        self.bins[key] = current
+        return {key: value for key, value in current.items() if key != "notional"}

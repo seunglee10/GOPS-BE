@@ -13,9 +13,10 @@
     "ASYS", "INTT", "AXTI", "WDC", "STX", "KEYS", "OSIS", "NVEC", "OLED", "FN",
     "FLEX", "SANM", "JBL", "CLS", "VSH", "VICR", "BELFB", "CTS", "MEI", "ARW"
   ],
-  "defaultChannels": ["bars", "updatedBars"],
+  "defaultChannels": ["bars", "updatedBars", "dailyBars", "statuses"],
   "activeChartChannels": ["trades"],
-  "validChannels": ["bars", "updatedBars", "trades"],
+  "optionalActiveChannels": ["quotes"],
+  "validChannels": ["bars", "updatedBars", "trades", "dailyBars", "statuses", "quotes", "corrections", "cancelErrors"],
   "symbolPattern": "^[A-Z][A-Z0-9]{0,9}(\\.[A-Z])?$",
   "dataPolicy": {
     "s3FinalThrough": "previous-trading-day",
@@ -36,14 +37,28 @@
       "database": "market_data",
       "primaryQueryTable": "chart_candles",
       "optionalTickTable": "trade_ticks",
+      "symbolTable": "symbols",
+      "statusTable": "market_status_events",
+      "volumeProfileTable": "volume_profile_bins_1m",
       "loadTradesByDefault": false
     },
     "redis": {
+      "keyPrefixEnv": "REDIS_KEY_PREFIX",
       "latestPriceKey": "price:{symbol}:latest",
       "liveCandleKey": "candle:{symbol}:1m:live",
       "recentCandleKey": "candles:{symbol}:{interval}",
       "activeChartSetKey": "active:charts:symbols",
-      "activeChartSymbolKey": "active:charts:{symbol}"
+      "activeChartSymbolKey": "active:charts:{symbol}",
+      "marketStatusKey": "market:status:latest",
+      "symbolStatusKey": "market:status:{symbol}:latest",
+      "symbolMetadataKey": "symbols:metadata:{symbol}",
+      "volumeProfileLiveKey": "volume-profile:{symbol}:1m:live"
+    },
+    "symbolRegistry": {
+      "syncCommand": "python -m alfaka.tools.sync_symbol_registry",
+      "assetClass": "us_equity",
+      "status": "active",
+      "redisCache": true
     }
   },
   "companyToSymbol": {

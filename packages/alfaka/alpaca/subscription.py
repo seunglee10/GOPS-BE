@@ -11,9 +11,9 @@ from alfaka.common.env import load_dotenv, parse_csv
 
 DEFAULT_REQUEST_CONFIG = {
     "defaultSymbols": ["AAPL", "TSLA", "NVDA"],
-    "defaultChannels": ["bars", "updatedBars"],
+    "defaultChannels": ["bars", "updatedBars", "dailyBars", "statuses"],
     "activeChartChannels": ["trades"],
-    "validChannels": ["bars", "updatedBars", "trades"],
+    "validChannels": ["bars", "updatedBars", "trades", "dailyBars", "statuses", "quotes", "corrections", "cancelErrors"],
     "symbolPattern": r"^[A-Z][A-Z0-9]{0,9}(\.[A-Z])?$",
     "companyToSymbol": {},
 }

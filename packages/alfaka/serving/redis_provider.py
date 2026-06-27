@@ -7,6 +7,7 @@ import os
 import redis
 
 from alfaka.common.env import load_dotenv
+from alfaka.common.redis_keys import RedisKeyBuilder
 from alfaka.serving.dto import snapshot, websocket_event
 
 
@@ -14,16 +15,17 @@ class RedisMarketDataProvider:
     def __init__(self, redis_url=None):
         load_dotenv()
         self.redis = redis.from_url(redis_url or os.getenv("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True)
+        self.keys = RedisKeyBuilder()
 
     def latest_price(self, symbol):
-        return self.redis.hgetall(f"price:{symbol}:latest")
+        return self.redis.hgetall(self.keys.price_latest(symbol))
 
     def live_candle(self, symbol):
-        value = self.redis.get(f"candle:{symbol}:1m:live")
+        value = self.redis.get(self.keys.live_candle(symbol))
         return json.loads(value) if value else None
 
     def recent_candles(self, symbol, interval, limit=160):
-        rows = self.redis.zrevrange(f"candles:{symbol}:{interval}", 0, max(0, limit - 1))
+        rows = self.redis.zrevrange(self.keys.recent_candles(symbol, interval), 0, max(0, limit - 1))
         candles = [json.loads(row) for row in reversed(rows)]
         return candles
 
@@ -38,9 +40,22 @@ class RedisMarketDataProvider:
         return websocket_event("LIVE_CANDLE_UPDATE", symbol, "1m", candle)
 
     def closed_event(self, symbol, interval):
-        value = self.redis.get(f"candle:{symbol}:{interval}:latest")
+        value = self.redis.get(self.keys.latest_candle(symbol, interval))
         if not value:
             return None
         candle = json.loads(value)
         event_type = "CANDLE_CORRECTED" if candle.get("correctionType") == "UPDATED" else "CANDLE_CLOSED"
         return websocket_event(event_type, symbol, interval, candle)
+
+    def latest_status(self, symbol=None):
+        key = self.keys.market_status_symbol_latest(symbol) if symbol else self.keys.market_status_latest()
+        value = self.redis.get(key)
+        return json.loads(value) if value else None
+
+    def volume_profile_bins(self, symbol, from_score="-inf", to_score="+inf", limit=5000):
+        rows = self.redis.zrangebyscore(self.keys.volume_profile_live(symbol), from_score, to_score, start=0, num=limit)
+        return [json.loads(row) for row in rows]
+
+    def symbol_metadata(self, symbol):
+        value = self.redis.get(self.keys.symbol_metadata(symbol))
+        return json.loads(value) if value else None

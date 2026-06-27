@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS market_data.trade_ticks
     tape Nullable(String),
     source LowCardinality(String),
     feed LowCardinality(String),
+    source_event_id Nullable(String),
     received_at Nullable(DateTime64(3, 'UTC')),
     inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
 )
@@ -42,12 +43,66 @@ CREATE TABLE IF NOT EXISTS market_data.chart_candles
     correction_type LowCardinality(String),
     source LowCardinality(String),
     feed LowCardinality(String),
+    source_event_id Nullable(String),
     created_at Nullable(DateTime64(3, 'UTC')),
     inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
 )
 ENGINE = ReplacingMergeTree(inserted_at)
 PARTITION BY toYYYYMM(event_time)
 ORDER BY (symbol, interval, event_time);
+
+CREATE TABLE IF NOT EXISTS market_data.volume_profile_bins_1m
+(
+    event_minute DateTime64(3, 'UTC'),
+    symbol LowCardinality(String),
+    price_bin Float64,
+    price_bin_size Float64,
+    volume UInt64,
+    trade_count UInt64,
+    vwap Nullable(Float64),
+    source LowCardinality(String),
+    feed LowCardinality(String),
+    source_event_id Nullable(String),
+    updated_at Nullable(DateTime64(3, 'UTC')),
+    inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(inserted_at)
+PARTITION BY toYYYYMM(event_minute)
+ORDER BY (symbol, event_minute, price_bin_size, price_bin);
+
+CREATE TABLE IF NOT EXISTS market_data.market_status_events
+(
+    event_time DateTime64(3, 'UTC'),
+    symbol Nullable(String),
+    status_type LowCardinality(String),
+    status String,
+    reason Nullable(String),
+    source LowCardinality(String),
+    feed LowCardinality(String),
+    source_event_id Nullable(String),
+    raw String,
+    inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(inserted_at)
+PARTITION BY toYYYYMM(event_time)
+ORDER BY (coalesce(symbol, '_MARKET'), status_type, event_time);
+
+CREATE TABLE IF NOT EXISTS market_data.symbols
+(
+    symbol String,
+    name String,
+    exchange Nullable(String),
+    market LowCardinality(String),
+    asset_class LowCardinality(String),
+    tradable Bool,
+    status LowCardinality(String),
+    source LowCardinality(String),
+    updated_at DateTime64(3, 'UTC'),
+    raw Nullable(String),
+    inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(inserted_at)
+ORDER BY symbol;
 
 CREATE TABLE IF NOT EXISTS market_data.load_audit
 (
@@ -60,3 +115,11 @@ CREATE TABLE IF NOT EXISTS market_data.load_audit
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(loaded_at)
 ORDER BY (loaded_at, source_name);
+
+-- Existing local/production volumes may have been initialized before source_event_id
+-- and hardening tables existed. Keep these migrations idempotent.
+ALTER TABLE market_data.chart_candles
+    ADD COLUMN IF NOT EXISTS source_event_id Nullable(String) AFTER feed;
+
+ALTER TABLE market_data.trade_ticks
+    ADD COLUMN IF NOT EXISTS source_event_id Nullable(String) AFTER feed;

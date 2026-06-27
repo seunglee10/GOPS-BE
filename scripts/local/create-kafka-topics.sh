@@ -8,9 +8,16 @@ for topic in \
   market.raw.bars \
   market.raw.updated-bars \
   market.raw.trades \
+  market.raw.daily-bars \
+  market.raw.statuses \
+  market.raw.quotes \
+  market.raw.corrections \
+  market.raw.cancel-errors \
   market.ticks.v1 \
   market.candles.live.1m.v1 \
-  market.candles.closed.v1; do
+  market.candles.closed.v1 \
+  market.status.v1 \
+  market.volume-profile-bins.1m.v1; do
   docker exec alfaka-kafka /opt/kafka/bin/kafka-topics.sh \
     --bootstrap-server localhost:9092 \
     --create \

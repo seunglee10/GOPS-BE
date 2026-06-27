@@ -1,6 +1,6 @@
 # 역할: Alpaca 없이도 Kafka Raw Topic에 샘플 시장 데이터를 넣습니다.
 # 사용: 로컬 Docker 파이프라인의 Kafka->Redis->S3 흐름을 검증합니다.
-# 출력: market.raw.trades, market.raw.bars, market.raw.updated-bars.
+# 출력: market.raw.trades, market.raw.bars, market.raw.updated-bars, market.raw.daily-bars, market.raw.statuses.
 import argparse
 import os
 from datetime import datetime, timedelta, timezone
@@ -44,6 +44,8 @@ def main():
         send(producer, raw_prefix, feed, {"T": "b", "S": symbol, "t": iso(base + timedelta(minutes=i)), "o": open_price, "h": round(open_price + 0.18, 2), "l": round(open_price - 0.12, 2), "c": close_price, "v": 1000 + i * 25, "n": 100 + i, "vw": round((open_price + close_price) / 2, 2)})
 
     send(producer, raw_prefix, feed, {"T": "u", "S": symbol, "t": iso(base + timedelta(minutes=2)), "o": 194.66, "h": 194.95, "l": 194.50, "c": 194.83, "v": 1200, "n": 130, "vw": 194.74})
+    send(producer, raw_prefix, feed, {"T": "d", "S": symbol, "t": iso(base.replace(hour=0, minute=0)), "o": 193.50, "h": 196.10, "l": 192.80, "c": 195.40, "v": 850000, "n": 45210, "vw": 194.80})
+    send(producer, raw_prefix, feed, {"T": "s", "S": symbol, "t": iso(base), "sc": "active", "st": "trading"})
     producer.flush(10)
     print("샘플 데이터 전송 완료", flush=True)
 

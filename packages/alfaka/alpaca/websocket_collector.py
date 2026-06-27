@@ -14,6 +14,7 @@ from alfaka.alpaca.subscription import build_subscription_request, load_request_
 from alfaka.common.env import load_dotenv, parse_csv
 from alfaka.common.kafka_io import create_json_producer
 from alfaka.common.market_messages import CONTROL_MESSAGE_TYPES, build_raw_envelope, raw_topic_name
+from alfaka.common.redis_keys import RedisKeyBuilder
 from alfaka.common.secrets import load_alpaca_credentials
 
 
@@ -41,8 +42,8 @@ async def main():
     producer = create_json_producer(kafka_servers, kafka_client_id)
     subscribe_request = build_subscription_request(symbols, channels)
     redis_client = create_active_subscription_redis()
-    active_subscribed_symbols = set()
-    last_active_sync = 0.0
+    reconnect_backoff = parse_positive_float(os.getenv("ALPACA_RECONNECT_BACKOFF_SECONDS", "2"), default=2.0)
+    reconnect_backoff_max = parse_positive_float(os.getenv("ALPACA_RECONNECT_BACKOFF_MAX_SECONDS", "60"), default=60.0)
 
     print(f"Alpaca 연결: {alpaca_url}", flush=True)
     print(f"요청 종목: {symbols}", flush=True)
@@ -50,6 +51,45 @@ async def main():
     print(f"활성 차트 tick 채널: {active_channels or 'disabled'}", flush=True)
     print(f"Kafka Raw Topic Prefix: {raw_topic_prefix}", flush=True)
 
+    delay = reconnect_backoff
+    while True:
+        try:
+            await run_stream_session(
+                alpaca_url=alpaca_url,
+                alpaca_key=alpaca_key,
+                alpaca_secret=alpaca_secret,
+                alpaca_feed=alpaca_feed,
+                producer=producer,
+                subscribe_request=subscribe_request,
+                redis_client=redis_client,
+                active_channels=active_channels,
+                active_poll_seconds=active_poll_seconds,
+                raw_topic_prefix=raw_topic_prefix,
+            )
+            delay = reconnect_backoff
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(f"Alpaca 연결 재시도 예정: error={exc}, delay={delay}s", file=sys.stderr, flush=True)
+            await asyncio.sleep(delay)
+            delay = min(reconnect_backoff_max, delay * 2)
+
+
+async def run_stream_session(
+    *,
+    alpaca_url,
+    alpaca_key,
+    alpaca_secret,
+    alpaca_feed,
+    producer,
+    subscribe_request,
+    redis_client,
+    active_channels,
+    active_poll_seconds,
+    raw_topic_prefix,
+):
+    active_subscribed_symbols = set()
+    last_active_sync = 0.0
     async with websockets.connect(alpaca_url, ping_interval=20, ping_timeout=20) as ws:
         await ws.send(json.dumps({"action": "auth", "key": alpaca_key, "secret": alpaca_secret}))
 
@@ -76,6 +116,13 @@ async def main():
                     if message.get("msg") == "authenticated":
                         print("구독 요청:", subscribe_request, flush=True)
                         await ws.send(json.dumps(subscribe_request))
+                        active_subscribed_symbols = await sync_active_chart_subscriptions(
+                            ws,
+                            redis_client,
+                            active_channels,
+                            set(),
+                        )
+                        last_active_sync = time.monotonic()
                     continue
 
                 if message_type == "subscription":
@@ -144,9 +191,10 @@ async def sync_active_chart_subscriptions(ws, redis_client, channels, subscribed
 
 
 def read_active_chart_symbols(redis_client):
+    keys = RedisKeyBuilder()
     symbols = set()
-    for symbol in redis_client.smembers("active:charts:symbols"):
-        if redis_client.exists(f"active:charts:{symbol}"):
+    for symbol in redis_client.smembers(keys.active_symbols()):
+        if redis_client.exists(keys.active_symbol(symbol)):
             symbols.add(symbol)
     return symbols
 

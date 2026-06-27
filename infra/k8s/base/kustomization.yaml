@@ -6,9 +6,11 @@ resources:
   - namespace.yaml
   - configmap.yaml
   - serviceaccount-irsa.example.yaml
+  - job-symbol-registry-sync.yaml
   - deployment-alpaca-ingestor.yaml
   - deployment-s3-sink.yaml
   - deployment-clickhouse-loader.yaml
+  - deployment-backfill-worker.yaml
   - deployment-gops-backend.yaml
   - deployment-gops-frontend.yaml
   - service-gops-backend.yaml

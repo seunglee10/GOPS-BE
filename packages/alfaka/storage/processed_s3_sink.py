@@ -11,7 +11,6 @@ from zoneinfo import ZoneInfo
 
 from alfaka.common.env import load_dotenv, parse_csv
 from alfaka.common.kafka_io import create_json_consumer
-from alfaka.common.s3_client import create_s3_client
 
 
 def main():
@@ -35,9 +34,13 @@ def main():
         os.getenv("KAFKA_TICKS_TOPIC", "market.ticks.v1"),
         os.getenv("KAFKA_LIVE_CANDLE_TOPIC", "market.candles.live.1m.v1"),
         os.getenv("KAFKA_CLOSED_CANDLE_TOPIC", "market.candles.closed.v1"),
+        os.getenv("KAFKA_STATUS_TOPIC", "market.status.v1"),
+        os.getenv("KAFKA_VOLUME_PROFILE_BINS_TOPIC", "market.volume-profile-bins.1m.v1"),
     ])))
 
     consumer = create_json_consumer(topics, kafka_servers, group_id, "alfaka-processed-s3-consumer")
+    from alfaka.common.s3_client import create_s3_client
+
     s3 = create_s3_client()
     buffers = defaultdict(list)
 
@@ -56,14 +59,20 @@ def main():
 
 
 def s3_partition_key(final_prefix, live_prefix, payload):
-    event_time = parse_event_time(payload.get("timestamp"))
-    symbol = payload.get("symbol", "UNKNOWN")
     event_type = payload.get("eventType")
+    event_time = parse_event_time(payload.get("timestamp") or payload.get("eventTime") or payload.get("eventMinute"))
+    symbol = payload.get("symbol", "UNKNOWN")
 
     if event_type in {"CANDLE", "LIVE_CANDLE"}:
         interval = payload.get("interval", "unknown")
         prefix = final_prefix if event_type == "CANDLE" and is_before_current_market_day(event_time) else live_prefix
         return f"{prefix}/candles/interval={interval}/symbol={symbol}/year={event_time:%Y}/month={event_time:%m}/day={event_time:%d}"
+
+    if event_type == "VOLUME_PROFILE_BIN":
+        return f"{final_prefix}/volume-profile-bins/timeBucket=1m/symbol={symbol}/year={event_time:%Y}/month={event_time:%m}/day={event_time:%d}"
+
+    if event_type == "MARKET_STATUS":
+        return f"{final_prefix}/status/symbol={symbol or '_MARKET'}/year={event_time:%Y}/month={event_time:%m}/day={event_time:%d}"
 
     return f"{live_prefix}/trades/symbol={symbol}/year={event_time:%Y}/month={event_time:%m}/day={event_time:%d}/hour={event_time:%H}"
 
@@ -82,6 +91,7 @@ def flush_buffer(s3, bucket, partition_key, rows, output_format):
 
     s3.put_object(Bucket=bucket, Key=object_key, Body=body, ContentType=content_type)
     print(f"S3 업로드: s3://{bucket}/{object_key} rows={len(rows)}", flush=True)
+    return object_key
 
 
 def normalize_storage_row(row):
@@ -97,6 +107,8 @@ def normalize_storage_row(row):
     normalized.setdefault("ma5", None)
     normalized.setdefault("ma20", None)
     normalized.setdefault("ma60", None)
+    if "raw" in normalized and not isinstance(normalized["raw"], (str, type(None))):
+        normalized["raw"] = json.dumps(normalized["raw"], ensure_ascii=False, separators=(",", ":"))
     return normalized
 
 

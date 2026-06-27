@@ -4,3 +4,23 @@ __pycache__/
 *.pyc
 .local/
 .DS_Store
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.tmp/
+**/.tmp/
+*.tsbuildinfo
+
+# Local planning/reference artifacts. Keep the root README.md tracked for teammates.
+/docs/
+/market-data-architecture-request.md
+/README-*.md
+/services/**/README.md
+/flink-jobs/**/README.md
+/infra/aws/README-ko.md
+/infra/aws/msk/topic-settings.md
+/infra/k8s/base/flink-production-options.md
+/infra/k8s/overlays/aws/README.md
+/.agents/
+/.codex/

@@ -43,7 +43,7 @@ services:
       - /bin/bash
       - -ec
       - |
-        for topic in market.raw.bars market.raw.updated-bars market.raw.trades market.ticks.v1 market.candles.live.1m.v1 market.candles.closed.v1; do
+        for topic in market.raw.bars market.raw.updated-bars market.raw.trades market.raw.daily-bars market.raw.statuses market.raw.quotes market.raw.corrections market.raw.cancel-errors market.ticks.v1 market.candles.live.1m.v1 market.candles.closed.v1 market.status.v1 market.volume-profile-bins.1m.v1; do
           /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic "$${topic}" --partitions 3 --replication-factor 1
         done
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --list
@@ -136,16 +136,20 @@ services:
     depends_on:
       kafka-init:
         condition: service_completed_successfully
+      redis:
+        condition: service_healthy
     environment:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
       REDIS_URL: "redis://redis:6379/0"
-      ALPACA_CHANNELS: "bars,updatedBars"
+      REDIS_KEY_PREFIX: ""
+      ALPACA_CHANNELS: "bars,updatedBars,dailyBars,statuses"
       ALPACA_ACTIVE_CHANNELS: "trades"
       ALPACA_ACTIVE_TICK_SUBSCRIPTION: "true"
     command: ["python", "-u", "services/01-alpaca-connector/market_stream.py"]
     restart: unless-stopped
     networks:
       - app_net
+      - data_net
       - streaming_net
 
   local-stream-processor:
@@ -164,9 +168,13 @@ services:
       KAFKA_TICKS_TOPIC: "market.ticks.v1"
       KAFKA_LIVE_CANDLE_TOPIC: "market.candles.live.1m.v1"
       KAFKA_CLOSED_CANDLE_TOPIC: "market.candles.closed.v1"
+      KAFKA_STATUS_TOPIC: "market.status.v1"
+      KAFKA_VOLUME_PROFILE_BINS_TOPIC: "market.volume-profile-bins.1m.v1"
       KAFKA_FLINK_GROUP_ID: "alfaka-local-stream-processor"
+      VOLUME_PROFILE_PRICE_BIN_SIZE: "0.05"
       PROCESSOR_LOG_EVERY_N: "500"
       REDIS_URL: "redis://redis:6379/0"
+      REDIS_KEY_PREFIX: ""
     command: ["python", "-u", "services/03-flink-stream-processor/local_main.py"]
     restart: unless-stopped
     networks:
@@ -187,7 +195,7 @@ services:
     environment:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
       KAFKA_S3_GROUP_ID: "alfaka-processed-s3-sink"
-      KAFKA_PROCESSED_TOPICS: "market.ticks.v1,market.candles.live.1m.v1,market.candles.closed.v1"
+      KAFKA_PROCESSED_TOPICS: "market.ticks.v1,market.candles.live.1m.v1,market.candles.closed.v1,market.status.v1,market.volume-profile-bins.1m.v1"
       AWS_REGION: "ap-northeast-2"
       AWS_DEFAULT_REGION: "ap-northeast-2"
       AWS_EC2_METADATA_DISABLED: "true"
@@ -219,7 +227,7 @@ services:
     environment:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
       KAFKA_CLICKHOUSE_GROUP_ID: "alfaka-clickhouse-loader"
-      KAFKA_CLICKHOUSE_TOPICS: "market.candles.closed.v1"
+      KAFKA_CLICKHOUSE_TOPICS: "market.candles.closed.v1,market.status.v1,market.volume-profile-bins.1m.v1"
       CLICKHOUSE_LOAD_TRADES: "false"
       CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
       CLICKHOUSE_DATABASE: "market_data"
@@ -232,17 +240,45 @@ services:
       - streaming_net
       - data_net
 
+  symbol-registry-sync:
+    profiles: ["registry", "alpaca"]
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.worker
+    container_name: alfaka-symbol-registry-sync
+    env_file: .env
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
+      CLICKHOUSE_DATABASE: "market_data"
+      CLICKHOUSE_USER: "alfaka"
+      CLICKHOUSE_PASSWORD: "alfaka"
+      REDIS_URL: "redis://redis:6379/0"
+      REDIS_KEY_PREFIX: ""
+      SYMBOL_REGISTRY_ASSET_CLASS: "us_equity"
+      SYMBOL_REGISTRY_STATUS: "active"
+      SYMBOL_REGISTRY_REDIS_CACHE: "true"
+    command: ["python", "-u", "-m", "alfaka.tools.sync_symbol_registry"]
+    restart: "no"
+    networks:
+      - app_net
+      - data_net
+
   gops-backend:
     build:
       context: .
       dockerfile: infra/docker/Dockerfile.gops-backend
     container_name: alfaka-gops-backend
+    env_file: .env
     depends_on:
       redis:
         condition: service_healthy
       clickhouse:
         condition: service_healthy
-    env_file: .env
     environment:
       REDIS_URL: "redis://redis:6379/0"
       CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
@@ -250,8 +286,58 @@ services:
       CLICKHOUSE_USER: "alfaka"
       CLICKHOUSE_PASSWORD: "alfaka"
       ALFAKA_PACKAGES_PATH: "/app/packages"
+      REDIS_KEY_PREFIX: ""
+      BACKFILL_EXECUTION_MODE: "queue"
+      BACKFILL_STATUS_TTL_SECONDS: "86400"
+      AWS_REGION: "ap-northeast-2"
+      AWS_DEFAULT_REGION: "ap-northeast-2"
+      AWS_EC2_METADATA_DISABLED: "true"
+      AWS_ACCESS_KEY_ID: "minioadmin"
+      AWS_SECRET_ACCESS_KEY: "minioadmin"
+      S3_ENDPOINT_URL: "http://minio:9000"
+      S3_BUCKET: "alfaka-market-data"
+      S3_RAW_PREFIX: "market-data/raw/alpaca"
+      S3_FINAL_PREFIX: "market-data/final"
+      S3_PROCESSED_FORMAT: "jsonl"
     ports:
       - "8000:8000"
+    restart: unless-stopped
+    networks:
+      - app_net
+      - data_net
+
+  backfill-worker:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.worker
+    container_name: alfaka-backfill-worker
+    env_file: .env
+    depends_on:
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      REDIS_URL: "redis://redis:6379/0"
+      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
+      CLICKHOUSE_DATABASE: "market_data"
+      CLICKHOUSE_USER: "alfaka"
+      CLICKHOUSE_PASSWORD: "alfaka"
+      BACKFILL_EXECUTION_MODE: "queue"
+      BACKFILL_WORKER_POLL_SECONDS: "5"
+      AWS_REGION: "ap-northeast-2"
+      AWS_DEFAULT_REGION: "ap-northeast-2"
+      AWS_EC2_METADATA_DISABLED: "true"
+      AWS_ACCESS_KEY_ID: "minioadmin"
+      AWS_SECRET_ACCESS_KEY: "minioadmin"
+      S3_ENDPOINT_URL: "http://minio:9000"
+      S3_BUCKET: "alfaka-market-data"
+      S3_RAW_PREFIX: "market-data/raw/alpaca"
+      S3_FINAL_PREFIX: "market-data/final"
+      S3_PROCESSED_FORMAT: "jsonl"
+    command: ["python", "-u", "-m", "alfaka.backfill.worker"]
     restart: unless-stopped
     networks:
       - app_net
@@ -271,33 +357,6 @@ services:
     restart: unless-stopped
     networks:
       - app_net
-
-  historical-backfill:
-    profiles: ["backfill"]
-    build:
-      context: .
-      dockerfile: infra/docker/Dockerfile.worker
-    container_name: alfaka-historical-backfill
-    env_file: .env
-    depends_on:
-      minio-init:
-        condition: service_completed_successfully
-    environment:
-      AWS_REGION: "ap-northeast-2"
-      AWS_DEFAULT_REGION: "ap-northeast-2"
-      AWS_EC2_METADATA_DISABLED: "true"
-      AWS_ACCESS_KEY_ID: "minioadmin"
-      AWS_SECRET_ACCESS_KEY: "minioadmin"
-      S3_ENDPOINT_URL: "http://minio:9000"
-      S3_BUCKET: "alfaka-market-data"
-      S3_RAW_PREFIX: "market-data/raw/alpaca"
-      HISTORICAL_DATA_KIND: "bars"
-      HISTORICAL_TIMEFRAME: "1Min"
-    command: ["python", "-u", "services/01-alpaca-connector/historical_backfill.py"]
-    restart: "no"
-    networks:
-      - app_net
-      - data_net
 
 volumes:
   redis_data:

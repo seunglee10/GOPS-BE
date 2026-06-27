@@ -3,10 +3,9 @@
 # 입력: 기본은 market.candles.closed.v1만 적재합니다. tick 적재는 옵션입니다.
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
-
-import requests
 
 from alfaka.common.env import load_dotenv, parse_csv
 from alfaka.common.kafka_io import create_json_consumer
@@ -19,6 +18,8 @@ def main():
     group_id = os.getenv("KAFKA_CLICKHOUSE_GROUP_ID", "alfaka-clickhouse-loader")
     topics = parse_csv(os.getenv("KAFKA_CLICKHOUSE_TOPICS", ",".join([
         os.getenv("KAFKA_CLOSED_CANDLE_TOPIC", "market.candles.closed.v1"),
+        os.getenv("KAFKA_STATUS_TOPIC", "market.status.v1"),
+        os.getenv("KAFKA_VOLUME_PROFILE_BINS_TOPIC", "market.volume-profile-bins.1m.v1"),
     ])))
     load_trades = os.getenv("CLICKHOUSE_LOAD_TRADES", "false").lower() in {"1", "true", "yes"}
 
@@ -52,6 +53,24 @@ def load_payload(client, payload, load_trades=False):
         print(f"ClickHouse trade 적재: symbol={row['symbol']} time={row['event_time']}", flush=True)
         return
 
+    if event_type == "MARKET_STATUS":
+        row = status_to_clickhouse_row(payload)
+        client.insert_json_each_row("market_status_events", [row])
+        print(f"ClickHouse status 적재: symbol={row['symbol']} status={row['status']} time={row['event_time']}", flush=True)
+        return
+
+    if event_type == "VOLUME_PROFILE_BIN":
+        row = volume_profile_bin_to_clickhouse_row(payload)
+        client.insert_json_each_row("volume_profile_bins_1m", [row])
+        print(f"ClickHouse volume profile 적재: symbol={row['symbol']} minute={row['event_minute']}", flush=True)
+        return
+
+    if event_type == "SYMBOL_METADATA":
+        row = symbol_to_clickhouse_row(payload)
+        client.insert_json_each_row("symbols", [row])
+        print(f"ClickHouse symbol 적재: symbol={row['symbol']}", flush=True)
+        return
+
     if event_type == "CANDLE" and payload.get("isClosed", True):
         row = candle_to_clickhouse_row(payload)
         client.insert_json_each_row("chart_candles", [row])
@@ -73,6 +92,7 @@ def trade_to_clickhouse_row(payload):
         "tape": payload.get("tape"),
         "source": payload.get("source", "alpaca"),
         "feed": payload.get("feed") or "unknown",
+        "source_event_id": payload.get("sourceEventId"),
         "received_at": clickhouse_time_or_none(payload.get("receivedAt")),
     }
 
@@ -90,14 +110,61 @@ def candle_to_clickhouse_row(payload):
         "volume": int_or_zero(payload.get("volume")),
         "trade_count": int_or_none(payload.get("tradeCount")),
         "vwap": float_or_none(payload.get("vwap")),
-        "ma5": float_or_none(ma.get("ma5")),
-        "ma20": float_or_none(ma.get("ma20")),
-        "ma60": float_or_none(ma.get("ma60")),
+        "ma5": float_or_none(ma.get("ma5", payload.get("ma5"))),
+        "ma20": float_or_none(ma.get("ma20", payload.get("ma20"))),
+        "ma60": float_or_none(ma.get("ma60", payload.get("ma60"))),
         "is_closed": bool(payload.get("isClosed", True)),
         "correction_type": payload.get("correctionType", "NONE"),
         "source": payload.get("source", "stream-processor"),
         "feed": payload.get("feed") or "unknown",
+        "source_event_id": payload.get("sourceEventId"),
         "created_at": clickhouse_time_or_none(payload.get("createdAt") or payload.get("updatedAt")),
+    }
+
+
+def status_to_clickhouse_row(payload):
+    symbol = payload.get("symbol")
+    return {
+        "event_time": clickhouse_time(payload.get("eventTime")),
+        "symbol": None if symbol == "_MARKET" else symbol,
+        "status_type": payload.get("statusType", "market"),
+        "status": str(payload.get("status", "unknown")),
+        "reason": payload.get("reason"),
+        "source": payload.get("source", "alpaca"),
+        "feed": payload.get("feed") or "unknown",
+        "source_event_id": payload.get("sourceEventId"),
+        "raw": json.dumps(payload.get("raw") or {}, ensure_ascii=False, separators=(",", ":")),
+    }
+
+
+def volume_profile_bin_to_clickhouse_row(payload):
+    return {
+        "event_minute": clickhouse_time(payload.get("eventMinute")),
+        "symbol": payload.get("symbol", "UNKNOWN"),
+        "price_bin": float_or_zero(payload.get("priceBin")),
+        "price_bin_size": float_or_zero(payload.get("priceBinSize")),
+        "volume": int_or_zero(payload.get("volume")),
+        "trade_count": int_or_zero(payload.get("tradeCount")),
+        "vwap": float_or_none(payload.get("vwap")),
+        "source": payload.get("source", "alpaca"),
+        "feed": payload.get("feed") or "unknown",
+        "source_event_id": payload.get("sourceEventId"),
+        "updated_at": clickhouse_time_or_none(payload.get("updatedAt")),
+    }
+
+
+def symbol_to_clickhouse_row(payload):
+    return {
+        "symbol": payload.get("symbol", "UNKNOWN"),
+        "name": payload.get("name") or payload.get("symbol", "UNKNOWN"),
+        "exchange": payload.get("exchange") or payload.get("market"),
+        "market": payload.get("market", "US"),
+        "asset_class": payload.get("assetClass", "us_equity"),
+        "tradable": bool(payload.get("tradable", True)),
+        "status": payload.get("status", "unknown"),
+        "source": payload.get("source", "alpaca"),
+        "updated_at": clickhouse_time(payload.get("updatedAt")),
+        "raw": json.dumps(payload.get("raw"), ensure_ascii=False, separators=(",", ":")) if payload.get("raw") is not None else None,
     }
 
 
@@ -134,7 +201,7 @@ def float_or_none(value):
 class ClickHouseHttpClient:
     def __init__(self, url, database, user, password):
         self.url = url.rstrip("/")
-        self.database = database
+        self.database = clickhouse_identifier(database)
         self.user = user
         self.password = password
 
@@ -142,7 +209,9 @@ class ClickHouseHttpClient:
         if not rows:
             return
 
-        query = f"INSERT INTO {self.database}.{table} FORMAT JSONEachRow"
+        import requests
+
+        query = f"INSERT INTO {self.database}.{clickhouse_identifier(table)} FORMAT JSONEachRow"
         body = "\n".join(json.dumps(row, ensure_ascii=False, separators=(",", ":")) for row in rows) + "\n"
         response = requests.post(
             self.url,
@@ -152,3 +221,9 @@ class ClickHouseHttpClient:
         )
         if response.status_code >= 400:
             raise RuntimeError(f"status={response.status_code}, body={response.text}")
+
+
+def clickhouse_identifier(value):
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(value)):
+        raise ValueError(f"Invalid ClickHouse identifier: {value}")
+    return str(value)

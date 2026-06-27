@@ -4,12 +4,12 @@
 import json
 import os
 
-from kafka import KafkaConsumer, KafkaProducer
-
 from alfaka.common.env import parse_csv
 
 
 def create_json_producer(bootstrap_servers, client_id):
+    from kafka import KafkaProducer
+
     return KafkaProducer(
         bootstrap_servers=parse_csv(bootstrap_servers),
         client_id=client_id,
@@ -19,6 +19,8 @@ def create_json_producer(bootstrap_servers, client_id):
 
 
 def create_json_consumer(topics, bootstrap_servers, group_id, client_id):
+    from kafka import KafkaConsumer
+
     return KafkaConsumer(
         *topics,
         bootstrap_servers=parse_csv(bootstrap_servers),
