@@ -49,20 +49,38 @@ except Exception:
     TestClient = None
 
 
+try:
+    import pydantic  # noqa: F401
+except Exception:
+    class BaseModel:
+        def __init__(self, **kwargs):
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+
+        def model_dump(self):
+            return dict(self.__dict__)
+
+    sys.modules["pydantic"] = types.SimpleNamespace(BaseModel=BaseModel)
+
+
 sys.modules.setdefault("redis", types.SimpleNamespace(from_url=lambda *args, **kwargs: None))
 
 from app.market_data.query.service import MarketDataQueryService  # noqa: E402
 from app.market_data.backfill.service import resolve_execution_mode  # noqa: E402
 from app.market_data.query import routes as query_routes  # noqa: E402
+from app.contracts.chart import AgentChatMessage, AgentChatRequest  # noqa: E402
 from app.routes import charts as chart_routes  # noqa: E402
 from app.services.alfaka_market_data import configured_symbols  # noqa: E402
+from app.services.ai_agents import fallback_agent_chat  # noqa: E402
 
 
 class FakeProvider:
     def __init__(self, fail_snapshot=False):
         self.fail_snapshot = fail_snapshot
+        self.last_limit = None
 
-    def candle_snapshot(self, symbol, interval, limit):
+    def candle_snapshot(self, symbol, interval, limit, before=None, from_time=None, to_time=None):
+        self.last_limit = limit
         if self.fail_snapshot:
             raise RuntimeError("clickhouse unavailable")
         return {
@@ -98,7 +116,7 @@ class FakeProvider:
 
 
 class EmptyFakeProvider(FakeProvider):
-    def candle_snapshot(self, symbol, interval, limit):
+    def candle_snapshot(self, symbol, interval, limit, before=None, from_time=None, to_time=None):
         return {
             "symbol": symbol,
             "interval": interval,
@@ -110,7 +128,8 @@ class EmptyFakeProvider(FakeProvider):
 
 
 class FakeBackfillService:
-    def snapshot_metadata(self, symbol, interval, has_candles):
+    def snapshot_metadata(self, symbol, interval, payload_or_has_candles):
+        has_candles = bool((payload_or_has_candles.get("candles") if isinstance(payload_or_has_candles, dict) else payload_or_has_candles))
         if has_candles:
             return {
                 "dataStatus": "ready",
@@ -172,11 +191,13 @@ class FakeQueryService:
 
 class MarketDataQueryServiceTest(unittest.TestCase):
     def test_candle_snapshot_adds_requested_indicators_and_normalizes_symbol(self):
-        service = MarketDataQueryService(FakeProvider(), backfill_service=FakeBackfillService())
+        provider = FakeProvider()
+        service = MarketDataQueryService(provider, backfill_service=FakeBackfillService())
 
-        payload = service.candle_snapshot("aapl", "1m", "5,60,999", 30)
+        payload = service.candle_snapshot("aapl", "1m", "5,60,999", None)
 
         self.assertEqual(payload["symbol"], "AAPL")
+        self.assertEqual(provider.last_limit, 1440)
         self.assertEqual(payload["indicators"], {"ma": [5, 60], "volume": True})
         self.assertFalse(payload["isSynthetic"])
 
@@ -199,6 +220,21 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(service.volume_profile_bins("aapl", "from", "to", "auto")["symbol"], "AAPL")
         context = service.agent_chart_context("aapl", "1m", "from", "to", "status,volumeProfile")
         self.assertEqual(context["include"], ["status", "volumeProfile"])
+
+    def test_fallback_agent_analysis_request_returns_chart_command(self):
+        request = AgentChatRequest(
+            agentIds=["agent-01"],
+            messages=[AgentChatMessage(role="user", content="이 차트를 분석해줘")],
+            context={
+                "chartDocument": {"symbol": "AAPL", "timeframe": "1m"},
+                "visibleSummary": {"lastPrice": "123.45"},
+            },
+        )
+
+        payload = fallback_agent_chat(request)
+
+        self.assertTrue(payload["commands"])
+        self.assertEqual(payload["commands"][0]["type"], "chart.drawing.add")
 
     def test_empty_candle_snapshot_includes_backfill_metadata(self):
         service = MarketDataQueryService(EmptyFakeProvider(), backfill_service=FakeBackfillService())

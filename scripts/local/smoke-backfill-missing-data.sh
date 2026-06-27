@@ -54,7 +54,7 @@ backend_health() {
 
 snapshot_empty_or_ready() {
   curl -fsS "http://localhost:8000/api/charts/candles?symbol=${SYMBOL}&interval=1m&limit=30" \
-    | python -c 'import json,sys; p=json.load(sys.stdin); assert p["symbol"]; assert p["dataStatus"] in {"empty","ready"}'
+    | python -c 'import json,sys; p=json.load(sys.stdin); assert p["symbol"]; assert p["dataStatus"] in {"empty","partial","ready"}'
 }
 
 request_backfill() {
@@ -71,7 +71,7 @@ status_succeeded() {
 
 rest_ready() {
   curl -fsS "http://localhost:8000/api/charts/candles?symbol=${SYMBOL}&interval=1m&limit=30" \
-    | python -c 'import json,sys; p=json.load(sys.stdin); assert p["dataStatus"] == "ready", p; assert len(p["candles"]) > 0, p'
+    | python -c 'import json,sys; p=json.load(sys.stdin); assert p["dataStatus"] in {"partial","ready"}, p; assert len(p["candles"]) > 0, p'
 }
 
 clickhouse_has_materialized_candles() {

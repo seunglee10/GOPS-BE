@@ -5,6 +5,7 @@ from datetime import timedelta
 from alfaka.common.env import load_dotenv, utc_now_iso
 from alfaka.common.market_messages import source_event_id
 from alfaka.backfill.status import parse_time, to_iso
+from alfaka.serving.moving_average import attach_moving_averages
 from alfaka.storage.clickhouse_loader import ClickHouseHttpClient
 from alfaka.storage.processed_s3_sink import flush_buffer
 from alfaka.storage.s3_materializer import materialize_s3_processed_objects
@@ -74,7 +75,7 @@ class BackfillRunner:
         output_format = os.getenv("S3_PROCESSED_FORMAT", "jsonl").lower()
 
         raw_count = upload_raw_bars_to_s3(self.s3, bucket, raw_prefix, "bars", feed, start, end, 1, {symbol: raw_bars})
-        processed = [raw_bar_to_processed_candle(symbol, row, feed=feed) for row in raw_bars]
+        processed = raw_bars_to_processed_candles(symbol, raw_bars, feed=feed)
         partition_key = f"{final_prefix}/candles/interval={interval}/symbol={symbol}/backfill_request={record['requestId'].replace(':', '_')}"
         processed_key = flush_buffer(self.s3, bucket, partition_key, processed, output_format)
         materialized = materialize_s3_processed_objects(self.clickhouse_client, self.s3, bucket, [processed_key], source_name="backfill-worker")
@@ -168,6 +169,10 @@ def raw_bar_to_processed_candle(symbol, raw_bar, feed="sip", received_at=None):
     candle = normalize_bar(envelope)
     candle["source"] = "alpaca.bars"
     return candle
+
+
+def raw_bars_to_processed_candles(symbol, raw_bars, feed="sip"):
+    return attach_moving_averages([raw_bar_to_processed_candle(symbol, row, feed=feed) for row in raw_bars])
 
 
 def main():

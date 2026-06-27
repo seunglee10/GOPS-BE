@@ -2,10 +2,13 @@
 # 사용: 먼저 Redis 최근 캔들을 보고, 부족하면 ClickHouse 과거 캔들을 조회합니다.
 # 결과: GOPS CandleSnapshot 형식으로 반환합니다.
 import logging
+from datetime import datetime, timedelta, timezone
 
 from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
 from alfaka.serving.cursors import timestamp_from_cursor
 from alfaka.serving.dto import cursor_for, snapshot
+from alfaka.serving.intervals import candle_count_for_1y, resolve_candle_limit
+from alfaka.serving.moving_average import attach_moving_averages
 from alfaka.serving.redis_provider import RedisMarketDataProvider
 from alfaka.serving.symbol_registry import SymbolRegistry
 
@@ -19,14 +22,28 @@ class MarketDataProvider:
         self.clickhouse_provider = clickhouse_provider or ClickHouseMarketDataProvider()
         self.symbol_registry = SymbolRegistry(self.clickhouse_provider, self.redis_provider)
 
-    def candle_snapshot(self, symbol, interval, limit=160):
-        redis_candles = self.redis_provider.recent_candles(symbol, interval, limit)
+    def candle_snapshot(self, symbol, interval, limit=None, before=None, from_time=None, to_time=None):
+        limit = resolve_candle_limit(interval, limit)
+        range_query = bool(before or from_time or to_time)
+        redis_candles = [] if range_query else self.redis_provider.recent_candles(symbol, interval, limit)
         if len(redis_candles) >= limit:
-            return snapshot(symbol=symbol, interval=interval, candles=redis_candles[-limit:])
+            payload = snapshot(symbol=symbol, interval=interval, candles=attach_moving_averages(redis_candles[-limit:]))
+            return with_coverage_metadata(payload, self._coverage(symbol, interval), limit)
 
-        clickhouse_candles = self.clickhouse_provider.candles(symbol, interval, limit)
+        clickhouse_candles = self.clickhouse_provider.candles(
+            symbol,
+            interval,
+            limit,
+            before=before,
+            from_time=from_time,
+            to_time=to_time,
+        )
         merged = merge_candles(clickhouse_candles, redis_candles)
-        return snapshot(symbol=symbol, interval=interval, candles=merged[-limit:])
+        candles = attach_moving_averages(merged[-limit:])
+        feed = first_value(candles, "feed", "sip")
+        source = first_value(candles, "source", "alpaca")
+        payload = snapshot(symbol=symbol, interval=interval, candles=candles, source=source, feed=feed)
+        return with_coverage_metadata(payload, self._coverage(symbol, interval, candles), limit)
 
     def candles_since_cursor(self, symbol, interval, cursor, limit=500):
         timestamp = timestamp_from_cursor(cursor)
@@ -52,6 +69,20 @@ class MarketDataProvider:
             return self.clickhouse_provider.candles_since(symbol, interval, timestamp, limit, include_from=True)
         except TypeError:
             return self.clickhouse_provider.candles_since(symbol, interval, timestamp, limit)
+
+    def _coverage(self, symbol, interval, fallback_candles=None):
+        try:
+            return self.clickhouse_provider.candle_coverage(symbol, interval)
+        except Exception:
+            logger.warning("ClickHouse candle coverage failed; falling back to loaded candles.", exc_info=True)
+            candles = fallback_candles or []
+            if not candles:
+                return {"rowCount": 0, "availableFrom": None, "availableTo": None}
+            return {
+                "rowCount": len(candles),
+                "availableFrom": candles[0].get("timestamp"),
+                "availableTo": candles[-1].get("timestamp"),
+            }
 
     def search_symbols(self, query, limit=20):
         return self.symbol_registry.search(query, limit)
@@ -106,6 +137,47 @@ def merge_candles(*groups):
             if timestamp:
                 by_timestamp[timestamp] = candle
     return [by_timestamp[key] for key in sorted(by_timestamp)]
+
+
+def with_coverage_metadata(payload, coverage, requested_limit):
+    candles = payload.get("candles") or []
+    oldest = candles[0].get("timestamp") if candles else None
+    newest = candles[-1].get("timestamp") if candles else None
+    available_from = coverage.get("availableFrom") if coverage else None
+    available_to = coverage.get("availableTo") if coverage else None
+    row_count = coverage.get("rowCount") if coverage else None
+    stored_count = int(row_count) if row_count is not None else len(candles)
+    target_stored_count = candle_count_for_1y(payload.get("interval"))
+    target_range_from = one_year_target_from()
+    payload.update({
+        "requestedLimit": requested_limit,
+        "returnedCount": len(candles),
+        "targetStoredCount": target_stored_count,
+        "targetRangeFrom": target_range_from,
+        "availableFrom": available_from,
+        "availableTo": available_to,
+        "oldestTimestamp": oldest,
+        "newestTimestamp": newest,
+        "hasMoreBefore": bool(oldest and available_from and available_from < oldest),
+        "hasMoreAfter": bool(newest and available_to and available_to > newest),
+        "storedCandleCount": stored_count,
+    })
+    return payload
+
+
+def one_year_target_from(reference_timestamp=None):
+    reference = parse_iso_time(reference_timestamp) or datetime.now(timezone.utc)
+    target = reference - timedelta(days=365)
+    return target.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+def parse_iso_time(value):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(timezone.utc)
+    except ValueError:
+        return None
 
 
 def candle_after_cursor(symbol, interval, candle, cursor, cursor_timestamp=None):

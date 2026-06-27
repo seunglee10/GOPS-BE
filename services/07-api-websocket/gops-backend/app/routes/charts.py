@@ -16,6 +16,7 @@ from app.market_data.query.service import get_query_service
 from app.services.alfaka_market_data import (
     symbol_summaries,
 )
+from alfaka.serving.intervals import MAX_CHART_CANDLE_LIMIT
 
 router = APIRouter()
 
@@ -33,10 +34,13 @@ def chart_candles(
     symbol: str = Query(default="AAPL", min_length=1, max_length=12),
     interval: str = Query(default="1m", pattern="^(1m|5m|10m|1d)$"),
     ma: str = Query(default="5,20,60"),
-    limit: int = Query(default=96, ge=30, le=240),
+    limit: int | None = Query(default=None, ge=1, le=MAX_CHART_CANDLE_LIMIT),
+    before: str | None = Query(default=None),
+    from_time: str | None = Query(default=None, alias="from"),
+    to_time: str | None = Query(default=None, alias="to"),
 ) -> dict[str, Any]:
     try:
-        return get_query_service().candle_snapshot(symbol, interval, ma, limit)
+        return get_query_service().candle_snapshot(symbol, interval, ma, limit, before=before, from_time=from_time, to_time=to_time)
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Market data provider failed: {exc}") from exc
 

@@ -7,6 +7,8 @@ import re
 
 from alfaka.common.env import load_dotenv
 from alfaka.serving.dto import snapshot
+from alfaka.serving.intervals import resolve_candle_limit
+from alfaka.serving.moving_average import attach_moving_averages
 
 
 class ClickHouseMarketDataProvider:
@@ -17,7 +19,22 @@ class ClickHouseMarketDataProvider:
         self.user = user or os.getenv("CLICKHOUSE_USER", "alfaka")
         self.password = password or os.getenv("CLICKHOUSE_PASSWORD", "alfaka")
 
-    def candles(self, symbol, interval, limit=160):
+    def candles(self, symbol, interval, limit=None, before=None, from_time=None, to_time=None):
+        limit = resolve_candle_limit(interval, limit)
+        if interval in {"5m", "10m"}:
+            return self.aggregated_minute_candles(symbol, interval, limit, before=before, from_time=from_time, to_time=to_time)
+        time_filter = ""
+        params = {"symbol": symbol, "interval": interval, "limit": int(limit)}
+        if from_time:
+            time_filter += "\n          AND event_time >= parseDateTime64BestEffort({fromTime:String})"
+            params["fromTime"] = from_time
+        if to_time:
+            time_filter += "\n          AND event_time <= parseDateTime64BestEffort({toTime:String})"
+            params["toTime"] = to_time
+        if before:
+            time_filter += "\n          AND event_time < parseDateTime64BestEffort({before:String})"
+            params["before"] = before
+
         query = f"""
         SELECT
           formatDateTime(event_time, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS timestamp,
@@ -37,11 +54,67 @@ class ClickHouseMarketDataProvider:
         FROM {self.table('chart_candles')}
         WHERE symbol = {{symbol:String}}
           AND interval = {{interval:String}}
+          {time_filter}
         ORDER BY event_time DESC
         LIMIT {{limit:UInt32}}
         FORMAT JSONEachRow
         """
-        rows = self.query_json_each_row(query, {"symbol": symbol, "interval": interval, "limit": int(limit)})
+        rows = self.query_json_each_row(query, params)
+        return list(reversed(rows))
+
+    def aggregated_minute_candles(self, symbol, interval, limit=None, before=None, from_time=None, to_time=None):
+        limit = resolve_candle_limit(interval, limit)
+        bucket_minutes = {"5m": 5, "10m": 10}[interval]
+        time_filter = ""
+        params = {"symbol": symbol, "limit": int(limit)}
+        if from_time:
+            time_filter += "\n          AND event_time >= parseDateTime64BestEffort({fromTime:String})"
+            params["fromTime"] = from_time
+        if to_time:
+            time_filter += "\n          AND event_time <= parseDateTime64BestEffort({toTime:String})"
+            params["toTime"] = to_time
+        if before:
+            time_filter += "\n          AND event_time < parseDateTime64BestEffort({before:String})"
+            params["before"] = before
+
+        query = f"""
+        SELECT
+          formatDateTime(bucket, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS timestamp,
+          argMin(open, event_time) AS open,
+          max(high) AS high,
+          min(low) AS low,
+          argMax(close, event_time) AS close,
+          sum(volume) AS volume,
+          1 AS isClosed,
+          'NONE' AS correctionType,
+          anyLast(source) AS source,
+          anyLast(feed) AS feed,
+          concat('agg/{interval}/', symbol, '/', formatDateTime(bucket, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC')) AS sourceEventId
+        FROM (
+          SELECT
+            toStartOfInterval(event_time, INTERVAL {bucket_minutes} minute) AS bucket,
+            event_time,
+            symbol,
+            open,
+            high,
+            low,
+            close,
+            volume,
+            source,
+            feed
+          FROM {self.table('chart_candles')}
+          WHERE symbol = {{symbol:String}}
+            AND interval = '1m'
+            {time_filter}
+        )
+        GROUP BY symbol, bucket
+        ORDER BY bucket DESC
+        LIMIT {{limit:UInt32}}
+        FORMAT JSONEachRow
+        """
+        rows = self.query_json_each_row(query, params)
+        for row in rows:
+            row["interval"] = interval
         return list(reversed(rows))
 
     def candles_since(self, symbol, interval, timestamp, limit=500, include_from=False):
@@ -72,11 +145,34 @@ class ClickHouseMarketDataProvider:
         """
         return self.query_json_each_row(query, {"symbol": symbol, "interval": interval, "timestamp": timestamp, "limit": int(limit)})
 
-    def candle_snapshot(self, symbol, interval, limit=160):
-        candles = self.candles(symbol, interval, limit)
+    def candle_snapshot(self, symbol, interval, limit=None):
+        candles = attach_moving_averages(self.candles(symbol, interval, limit))
         feed = first_value(candles, "feed", "sip")
         source = first_value(candles, "source", "alpaca")
         return snapshot(symbol=symbol, interval=interval, candles=candles, source=source, feed=feed)
+
+    def candle_coverage(self, symbol, interval):
+        stored_interval = "1m" if interval in {"5m", "10m"} else interval
+        query = f"""
+        SELECT
+          count() AS rowCount,
+          formatDateTime(min(event_time), '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS availableFrom,
+          formatDateTime(max(event_time), '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS availableTo
+        FROM {self.table('chart_candles')}
+        WHERE symbol = {{symbol:String}}
+          AND interval = {{interval:String}}
+        FORMAT JSONEachRow
+        """
+        rows = self.query_json_each_row(query, {"symbol": symbol, "interval": stored_interval})
+        row = rows[0] if rows else {}
+        count = int(row.get("rowCount") or 0)
+        if count <= 0:
+            return {"rowCount": 0, "availableFrom": None, "availableTo": None}
+        return {
+            "rowCount": count,
+            "availableFrom": row.get("availableFrom"),
+            "availableTo": row.get("availableTo"),
+        }
 
     def latest_status(self, symbol=None):
         where = "WHERE symbol = {symbol:String}" if symbol else "WHERE symbol IS NULL"
