@@ -2,23 +2,31 @@
 
 역할: 과거 캔들 조회와 분석용 저장소입니다.
 
-현재 schema:
+Schema:
 
 ```text
 infra/clickhouse/initdb/01-market-data.sql
 ```
 
-현재 loader:
+Loader:
 
 ```text
-processed_loader.py                         Kafka Processed -> ClickHouse 실행 entrypoint
+processed_loader.py                          Kafka Processed -> ClickHouse 실행 entrypoint
 packages/alfaka/storage/clickhouse_loader.py ClickHouse 적재 logic
 ```
 
-ClickHouse는 Redis보다 긴 기간의 조회를 담당합니다. 로컬에서는 Processed Kafka Topic을 직접 읽어 `trade_ticks`, `chart_candles`에 넣고, 운영에서는 Flink sink 또는 S3 Parquet 적재 job으로 교체할 수 있습니다.
-
-읽기 후보:
+기본 정책:
 
 ```text
-services/07-api-websocket/chart-api/
+market_data.chart_candles를 기본 조회 테이블로 사용한다.
+KAFKA_CLICKHOUSE_TOPICS 기본값은 market.candles.closed.v1이다.
+market_data.trade_ticks는 옵션 테이블이다.
+CLICKHOUSE_LOAD_TRADES=false이면 TRADE event는 적재하지 않는다.
+```
+
+읽기 위치:
+
+```text
+packages/alfaka/serving/clickhouse_provider.py
+services/07-api-websocket/gops-backend/app/services/alfaka_market_data.py
 ```

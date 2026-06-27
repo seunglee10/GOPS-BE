@@ -1,5 +1,5 @@
 # 역할: 사용자가 설정한 종목/채널을 Alpaca WebSocket 구독 요청 JSON으로 만듭니다.
-# 기준: config/market-data-request.json을 기준으로 MVP 구독 채널을 고정합니다.
+# 기준: config/market-data-request.json을 기본 universe와 구독 정책의 기준으로 씁니다.
 # 우선순위: .env의 ALPACA_SYMBOLS/ALPACA_CHANNELS가 있으면 .env 값을 먼저 씁니다.
 import json
 import os
@@ -11,7 +11,8 @@ from alfaka.common.env import load_dotenv, parse_csv
 
 DEFAULT_REQUEST_CONFIG = {
     "defaultSymbols": ["AAPL", "TSLA", "NVDA"],
-    "defaultChannels": ["bars", "updatedBars", "trades"],
+    "defaultChannels": ["bars", "updatedBars"],
+    "activeChartChannels": ["trades"],
     "validChannels": ["bars", "updatedBars", "trades"],
     "symbolPattern": r"^[A-Z][A-Z0-9]{0,9}(\.[A-Z])?$",
     "companyToSymbol": {},
@@ -35,6 +36,7 @@ def load_request_config():
         **loaded_config,
         "companyToSymbol": loaded_config.get("companyToSymbol") or {},
         "defaultChannels": loaded_config.get("defaultChannels") or DEFAULT_REQUEST_CONFIG["defaultChannels"],
+        "activeChartChannels": loaded_config.get("activeChartChannels") or DEFAULT_REQUEST_CONFIG["activeChartChannels"],
         "defaultSymbols": loaded_config.get("defaultSymbols") or DEFAULT_REQUEST_CONFIG["defaultSymbols"],
     }
 

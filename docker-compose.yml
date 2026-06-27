@@ -138,6 +138,10 @@ services:
         condition: service_completed_successfully
     environment:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      REDIS_URL: "redis://redis:6379/0"
+      ALPACA_CHANNELS: "bars,updatedBars"
+      ALPACA_ACTIVE_CHANNELS: "trades"
+      ALPACA_ACTIVE_TICK_SUBSCRIPTION: "true"
     command: ["python", "-u", "services/01-alpaca-connector/market_stream.py"]
     restart: unless-stopped
     networks:
@@ -183,7 +187,7 @@ services:
     environment:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
       KAFKA_S3_GROUP_ID: "alfaka-processed-s3-sink"
-      KAFKA_PROCESSED_TOPICS: "market.ticks.v1,market.candles.closed.v1"
+      KAFKA_PROCESSED_TOPICS: "market.ticks.v1,market.candles.live.1m.v1,market.candles.closed.v1"
       AWS_REGION: "ap-northeast-2"
       AWS_DEFAULT_REGION: "ap-northeast-2"
       AWS_EC2_METADATA_DISABLED: "true"
@@ -191,7 +195,8 @@ services:
       AWS_SECRET_ACCESS_KEY: "minioadmin"
       S3_ENDPOINT_URL: "http://minio:9000"
       S3_BUCKET: "alfaka-market-data"
-      S3_PROCESSED_PREFIX: "market-data/processed"
+      S3_FINAL_PREFIX: "market-data/final"
+      S3_LIVE_PREFIX: "market-data/live"
       S3_PROCESSED_FORMAT: "parquet"
       S3_FLUSH_COUNT: "1000"
     command: ["python", "-u", "services/06-s3-store/processed_sink.py"]
@@ -214,7 +219,8 @@ services:
     environment:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
       KAFKA_CLICKHOUSE_GROUP_ID: "alfaka-clickhouse-loader"
-      KAFKA_CLICKHOUSE_TOPICS: "market.ticks.v1,market.candles.closed.v1"
+      KAFKA_CLICKHOUSE_TOPICS: "market.candles.closed.v1"
+      CLICKHOUSE_LOAD_TRADES: "false"
       CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
       CLICKHOUSE_DATABASE: "market_data"
       CLICKHOUSE_USER: "alfaka"
@@ -284,7 +290,9 @@ services:
       AWS_SECRET_ACCESS_KEY: "minioadmin"
       S3_ENDPOINT_URL: "http://minio:9000"
       S3_BUCKET: "alfaka-market-data"
-      S3_PREFIX: "market-data/raw"
+      S3_RAW_PREFIX: "market-data/raw/alpaca"
+      HISTORICAL_DATA_KIND: "bars"
+      HISTORICAL_TIMEFRAME: "1Min"
     command: ["python", "-u", "services/01-alpaca-connector/historical_backfill.py"]
     restart: "no"
     networks:

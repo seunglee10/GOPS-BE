@@ -13,7 +13,7 @@ from typing import Any
 from fastapi import HTTPException
 
 
-SYMBOL_PATTERN = re.compile(r"^[A-Z][A-Z0-9]{0,5}(?:\.[A-Z])?$")
+SYMBOL_PATTERN = re.compile(r"^[A-Z][A-Z0-9]{0,9}(?:\.[A-Z])?$")
 DEFAULT_SYMBOLS = ["AAPL", "TSLA", "NVDA"]
 
 
@@ -35,13 +35,15 @@ def _add_alfaka_package_path() -> None:
 
 _add_alfaka_package_path()
 
+from alfaka.alpaca.subscription import load_request_config  # noqa: E402
 from alfaka.serving.provider import MarketDataProvider  # noqa: E402
 
 
 def configured_symbols() -> list[str]:
     # 사용자가 실제로 Alpaca에서 받을 종목은 ALPACA_SYMBOLS에 넣습니다.
-    # 예: ALPACA_SYMBOLS=AAPL,TSLA,NVDA
-    raw_symbols = os.getenv("ALPACA_SYMBOLS", ",".join(DEFAULT_SYMBOLS))
+    # 값이 없으면 config/market-data-request.json의 semiconductor-100 universe를 씁니다.
+    config = load_request_config()
+    raw_symbols = os.getenv("ALPACA_SYMBOLS", ",".join(config.get("defaultSymbols") or DEFAULT_SYMBOLS))
     symbols = [normalize_market_symbol(item) for item in raw_symbols.split(",") if item.strip()]
     return symbols or DEFAULT_SYMBOLS
 

@@ -1,6 +1,6 @@
 # 역할: Alpaca Historical REST API에서 과거 데이터를 받아 S3/MinIO에 저장합니다.
 # 사용: Redis에 없는 이전 구간을 백필하거나 AWS 적재 전 로컬 MinIO로 확인합니다.
-# 출력: S3_PREFIX 아래 JSONL 파일.
+# 출력: S3_RAW_PREFIX 아래 JSONL 파일.
 import json
 import os
 import sys
@@ -18,7 +18,7 @@ def main():
     load_dotenv()
     alpaca_key, alpaca_secret = load_alpaca_credentials()
 
-    data_kind = os.getenv("HISTORICAL_DATA_KIND", "trades")
+    data_kind = os.getenv("HISTORICAL_DATA_KIND", "bars")
     symbols = parse_csv(os.getenv("HISTORICAL_SYMBOLS", os.getenv("ALPACA_SYMBOLS", "")))
     start = os.getenv("HISTORICAL_START")
     end = os.getenv("HISTORICAL_END")
@@ -27,7 +27,7 @@ def main():
     limit = os.getenv("HISTORICAL_LIMIT", "10000")
 
     s3_bucket = os.getenv("S3_BUCKET")
-    s3_prefix = os.getenv("S3_PREFIX", "market-data/raw")
+    s3_prefix = os.getenv("S3_RAW_PREFIX", os.getenv("S3_PREFIX", "market-data/raw/alpaca"))
 
     if not alpaca_key or not alpaca_secret:
         print("Alpaca 키가 없습니다. .env 또는 AWS Secrets Manager 설정을 넣어주세요.", file=sys.stderr)

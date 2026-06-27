@@ -1,6 +1,6 @@
 # 역할: Kafka Processed Topic을 읽어 ClickHouse 조회 테이블에 적재합니다.
 # 사용: GOPS API Server가 과거 캔들을 ClickHouse에서 읽을 수 있게 만드는 연결 job입니다.
-# 입력: market.ticks.v1, market.candles.closed.v1.
+# 입력: 기본은 market.candles.closed.v1만 적재합니다. tick 적재는 옵션입니다.
 import json
 import os
 import sys
@@ -18,9 +18,9 @@ def main():
     kafka_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
     group_id = os.getenv("KAFKA_CLICKHOUSE_GROUP_ID", "alfaka-clickhouse-loader")
     topics = parse_csv(os.getenv("KAFKA_CLICKHOUSE_TOPICS", ",".join([
-        os.getenv("KAFKA_TICKS_TOPIC", "market.ticks.v1"),
         os.getenv("KAFKA_CLOSED_CANDLE_TOPIC", "market.candles.closed.v1"),
     ])))
+    load_trades = os.getenv("CLICKHOUSE_LOAD_TRADES", "false").lower() in {"1", "true", "yes"}
 
     client = ClickHouseHttpClient(
         url=os.getenv("CLICKHOUSE_HTTP_URL", "http://localhost:8123"),
@@ -36,14 +36,17 @@ def main():
     for record in consumer:
         payload = record.value
         try:
-            load_payload(client, payload)
+            load_payload(client, payload, load_trades=load_trades)
         except Exception as exc:
             print(f"ClickHouse 적재 실패: {exc}; payload={json.dumps(payload, ensure_ascii=False)}", file=sys.stderr, flush=True)
 
 
-def load_payload(client, payload):
+def load_payload(client, payload, load_trades=False):
     event_type = payload.get("eventType")
     if event_type == "TRADE":
+        if not load_trades:
+            print(f"ClickHouse trade 적재 제외: symbol={payload.get('symbol', 'UNKNOWN')}", flush=True)
+            return
         row = trade_to_clickhouse_row(payload)
         client.insert_json_each_row("trade_ticks", [row])
         print(f"ClickHouse trade 적재: symbol={row['symbol']} time={row['event_time']}", flush=True)

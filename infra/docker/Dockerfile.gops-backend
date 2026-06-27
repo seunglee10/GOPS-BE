@@ -15,6 +15,7 @@ COPY services/07-api-websocket/gops-backend/requirements.txt /tmp/gops-backend-r
 RUN pip install --no-cache-dir -r /tmp/alfaka-requirements.txt -r /tmp/gops-backend-requirements.txt
 
 COPY packages ./packages
+COPY config ./config
 COPY services/07-api-websocket/gops-backend ./services/07-api-websocket/gops-backend
 
 WORKDIR /app/services/07-api-websocket/gops-backend

@@ -12,3 +12,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY packages ./packages
 COPY services ./services
+COPY config ./config

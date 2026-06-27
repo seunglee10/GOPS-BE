@@ -5,11 +5,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
-  - ../../base/namespace.yaml
-  - ../../base/configmap.yaml
-  - ../../base/serviceaccount-irsa.example.yaml
-  - ../../base/deployment-alpaca-ingestor.yaml
-  - ../../base/deployment-s3-sink.yaml
+  - ../../base
 
 patches:
   - path: configmap-aws-patch.yaml
@@ -18,4 +14,10 @@ patches:
 images:
   - name: YOUR_ECR_REPOSITORY/alfaka-market-data
     newName: YOUR_ACCOUNT_ID.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-market-data-worker
+    newTag: latest
+  - name: YOUR_ECR_REPOSITORY/gops-backend
+    newName: YOUR_ACCOUNT_ID.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-backend
+    newTag: latest
+  - name: YOUR_ECR_REPOSITORY/gops-frontend
+    newName: YOUR_ACCOUNT_ID.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-frontend
     newTag: latest

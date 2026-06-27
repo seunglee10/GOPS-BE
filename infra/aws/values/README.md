@@ -13,5 +13,5 @@ Worker image             infra/k8s/overlays/aws/kustomization.yaml
 IRSA role ARN            infra/k8s/overlays/aws/serviceaccount-irsa-aws-patch.yaml
 ```
 
-로컬 개발에서는 repo 밖에 공개하지 않는 `/Users/heejunkim/Desktop/alfaka/.env`를
+로컬 개발에서는 repo 밖에 공개하지 않는 `/Users/heejunkim/Documents/alfaka/gops/.env`를
 `docker-compose.yml`의 `env_file: .env`로 붙입니다.

@@ -1,5 +1,7 @@
 import asyncio
 import json
+import os
+import time
 
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
 
@@ -29,10 +31,16 @@ async def chart_stream(
     pubsub = redis_client.pubsub(ignore_subscribe_messages=True)
     pubsub.subscribe(f"market.events:{symbol}", "market.events")
     last_sent_marker: str | None = None
+    active_refresh_at = 0.0
 
     await websocket.accept()
     try:
         while True:
+            now = time.monotonic()
+            if now >= active_refresh_at:
+                _mark_active_chart_symbol(redis_client, symbol)
+                active_refresh_at = now + 5.0
+
             message = await asyncio.to_thread(pubsub.get_message, timeout=1.0)
             event = _parse_pubsub_event(message)
             if event and event.get("symbol") == symbol and event.get("interval") == interval:
@@ -85,3 +93,12 @@ def _event_marker(event: dict | None) -> str | None:
             data.get("volume"),
         )
     )
+
+
+def _mark_active_chart_symbol(redis_client, symbol: str) -> None:
+    try:
+        ttl_seconds = int(os.getenv("ACTIVE_CHART_TTL_SECONDS", "45"))
+    except ValueError:
+        ttl_seconds = 45
+    redis_client.sadd("active:charts:symbols", symbol)
+    redis_client.setex(f"active:charts:{symbol}", ttl_seconds, "1")
