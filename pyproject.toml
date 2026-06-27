@@ -24,3 +24,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/kis_trader"]
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
+pythonpath = ["src", "."]
