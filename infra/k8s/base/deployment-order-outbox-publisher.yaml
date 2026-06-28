@@ -1,0 +1,36 @@
+# 역할: 주문 outbox 테이블의 미발행 이벤트를 Kafka/MSK 토픽으로 발행합니다.
+# 사용: API 서버와 KIS broker adapter 사이의 신뢰성 있는 중개 레이어입니다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-outbox-publisher
+  namespace: alfaka-market-data
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: order-outbox-publisher
+  template:
+    metadata:
+      labels:
+        app: order-outbox-publisher
+    spec:
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: order-outbox-publisher
+          image: YOUR_ECR_REPOSITORY/gops-worker:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              while true; do
+                python -u -m kis_trader.cli outbox-publish --limit 100
+                sleep 2
+              done
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-order-db-secret
+                optional: true

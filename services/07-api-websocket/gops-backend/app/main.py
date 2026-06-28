@@ -7,6 +7,7 @@ from app.market_data.query.routes import router as market_query_router
 from app.routes.charts import chart_candles, chart_symbols, router as charts_router
 from app.routes.health import health, router as health_router
 from app.routes.llm import agent_chat, chart_proposal, router as llm_router
+from app.routes.orders import order_contract, router as orders_router
 from app.routes.streams import chart_stream, router as streams_router
 from app.services.ai_agents import openai_agent_chat, openai_chart_proposal
 from app.services.alfaka_market_data import configured_symbols, get_market_data_provider, symbol_summaries
@@ -24,6 +25,7 @@ def create_app() -> FastAPI:
     app.include_router(charts_router)
     app.include_router(market_query_router)
     app.include_router(llm_router)
+    app.include_router(orders_router)
     app.include_router(streams_router)
     return app
 
@@ -46,6 +48,7 @@ __all__ = [
     "health",
     "openai_agent_chat",
     "openai_chart_proposal",
+    "order_contract",
     "read_dotenv_value",
     "symbol_summaries",
 ]

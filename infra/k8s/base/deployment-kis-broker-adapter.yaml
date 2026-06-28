@@ -1,0 +1,35 @@
+# 역할: 주문 command 토픽을 소비해 KIS demo API에 주문을 제출합니다.
+# 사용: KIS 키는 env가 아니라 KIS_SECRET_NAME(dev/kis)을 Secrets Manager에서 조회합니다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kis-broker-adapter
+  namespace: alfaka-market-data
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kis-broker-adapter
+  template:
+    metadata:
+      labels:
+        app: kis-broker-adapter
+    spec:
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: kis-broker-adapter
+          image: YOUR_ECR_REPOSITORY/gops-worker:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "-m", "kis_trader.cli", "broker-adapter", "--timeout-seconds", "1.0"]
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-order-db-secret
+                optional: true
+          volumeMounts:
+            - name: kis-token-cache
+              mountPath: /kis-cache
+      volumes:
+        - name: kis-token-cache
+          emptyDir: {}

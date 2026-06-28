@@ -43,7 +43,7 @@ services:
       - /bin/bash
       - -ec
       - |
-        for topic in market.raw.bars market.raw.updated-bars market.raw.trades market.raw.daily-bars market.raw.statuses market.raw.quotes market.raw.corrections market.raw.cancel-errors market.ticks.v1 market.candles.live.1m.v1 market.candles.closed.v1 market.status.v1 market.volume-profile-bins.1m.v1; do
+        for topic in market.raw.bars market.raw.updated-bars market.raw.trades market.raw.daily-bars market.raw.statuses market.raw.quotes market.raw.corrections market.raw.cancel-errors market.ticks.v1 market.candles.live.1m.v1 market.candles.closed.v1 market.status.v1 market.volume-profile-bins.1m.v1 orders.commands.v1 broker.submit-results.v1 broker.order-events.v1 orders.dlq.v1; do
           /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic "$${topic}" --partitions 3 --replication-factor 1
         done
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --list
@@ -61,6 +61,25 @@ services:
     command: ["redis-server", "--appendonly", "yes"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - data_net
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: alfaka-postgres
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: "gops"
+      POSTGRES_USER: "gops"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-gops_dev_password}"
+    volumes:
+      - postgres_order_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gops -d gops >/dev/null 2>&1"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -283,8 +302,17 @@ services:
         condition: service_healthy
       clickhouse:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
+      order-migrations:
+        condition: service_completed_successfully
     environment:
       REDIS_URL: "redis://redis:6379/0"
+      DATABASE_URL: "postgresql://gops:${POSTGRES_PASSWORD:-gops_dev_password}@postgres:5432/gops"
+      ORDER_REPOSITORY: "postgres"
+      KIS_ENV: "${KIS_ENV:-demo}"
+      KAFKA_ACCOUNT_ALIAS: "${KAFKA_ACCOUNT_ALIAS:-demo-account}"
+      IDEMPOTENCY_HASH_SECRET: "${IDEMPOTENCY_HASH_SECRET:-local-dev-idempotency-secret}"
       CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
       CLICKHOUSE_DATABASE: "market_data"
       CLICKHOUSE_USER: "alfaka"
@@ -312,6 +340,86 @@ services:
     networks:
       - app_net
       - data_net
+
+  order-migrations:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.worker
+    container_name: alfaka-order-migrations
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "postgresql://gops:${POSTGRES_PASSWORD:-gops_dev_password}@postgres:5432/gops"
+    command: ["python", "-u", "-m", "kis_trader.cli", "migrate"]
+    restart: "no"
+    networks:
+      - data_net
+
+  order-outbox-publisher:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.worker
+    container_name: alfaka-order-outbox-publisher
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      order-migrations:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: "postgresql://gops:${POSTGRES_PASSWORD:-gops_dev_password}@postgres:5432/gops"
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      KAFKA_ACCOUNT_ALIAS: "${KAFKA_ACCOUNT_ALIAS:-demo-account}"
+      IDEMPOTENCY_HASH_SECRET: "${IDEMPOTENCY_HASH_SECRET:-local-dev-idempotency-secret}"
+    command:
+      - /bin/sh
+      - -c
+      - |
+        while true; do
+          python -u -m kis_trader.cli outbox-publish --limit 100
+          sleep 2
+        done
+    restart: unless-stopped
+    networks:
+      - data_net
+      - streaming_net
+
+  kis-broker-adapter:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.worker
+    container_name: alfaka-kis-broker-adapter
+    env_file: .env
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      order-migrations:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: "postgresql://gops:${POSTGRES_PASSWORD:-gops_dev_password}@postgres:5432/gops"
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      KIS_ENV: "${KIS_ENV:-demo}"
+      KIS_SECRET_NAME: "${KIS_SECRET_NAME:-dev/kis}"
+      KIS_DEMO_APP_KEY: "${KIS_DEMO_APP_KEY:-}"
+      KIS_DEMO_APP_SECRET: "${KIS_DEMO_APP_SECRET:-}"
+      KIS_DEMO_ACCOUNT_NO: "${KIS_DEMO_ACCOUNT_NO:-}"
+      KIS_ACCOUNT_PRODUCT_CODE: "${KIS_ACCOUNT_PRODUCT_CODE:-01}"
+      KIS_TOKEN_CACHE_PATH: "/kis-cache/demo-token.json"
+      KIS_TIMEOUT_SECONDS: "${KIS_TIMEOUT_SECONDS:-5}"
+    command:
+      - /bin/sh
+      - -c
+      - python -u -m kis_trader.cli broker-adapter --timeout-seconds 1.0 $${KIS_BROKER_ADAPTER_ARGS:---fake-kis success}
+    restart: unless-stopped
+    volumes:
+      - kis_token_cache:/kis-cache
+    networks:
+      - data_net
+      - streaming_net
 
   backfill-worker:
     build:
@@ -370,6 +478,8 @@ volumes:
   redis_data:
   minio_data:
   clickhouse_data:
+  postgres_order_data:
+  kis_token_cache:
 
 networks:
   app_net:
