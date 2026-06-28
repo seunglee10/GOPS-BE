@@ -18,9 +18,9 @@ spec:
       serviceAccountName: alfaka-market-data-sa
       containers:
         - name: alpaca-ingestor
-          image: YOUR_ECR_REPOSITORY/alfaka-market-data:latest
+          image: YOUR_ECR_REPOSITORY/gops-market-ingestor:latest
           imagePullPolicy: IfNotPresent
-          command: ["python", "-u", "services/01-alpaca-connector/market_stream.py"]
+          command: ["python", "-u", "systems/market-data/pods/market-ingestor/market_stream.py"]
           envFrom:
             - configMapRef:
                 name: alfaka-market-data-config

@@ -1,15 +1,17 @@
-# 역할: Python worker 공통 이미지를 빌드합니다.
-# 사용: alpaca-ingestor, stream-processor, s3-sink, backfill-worker가 같은 이미지를 씁니다.
-# 설정: PYTHONPATH=/app/packages로 alfaka 패키지를 import합니다.
+# 역할: 호환용 Python worker 이미지를 빌드합니다.
+# 사용: 목표 이미지 분리 전/후 공통 worker 실험에만 사용합니다.
+# 설정: systems shared 경로로 alfaka/kis_trader 패키지를 import합니다.
 FROM python:3.12-slim
 
-ENV PYTHONUNBUFFERED=1     PYTHONDONTWRITEBYTECODE=1     PYTHONPATH=/app/packages
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app/systems/market-data/shared:/app/systems/order/shared
 
 WORKDIR /app
 
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY packages ./packages
-COPY services ./services
-COPY config ./config
+COPY systems/market-data ./systems/market-data
+COPY systems/order ./systems/order
+COPY systems/market-data/config ./config

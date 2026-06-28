@@ -10,10 +10,21 @@ locals {
     Environment = var.environment
     ManagedBy   = "terraform"
   }
+  custom_image_repositories = {
+    frontend         = "gops-frontend"
+    api_server       = "gops-api-server"
+    market_ingestor  = "gops-market-ingestor"
+    market_processor = "gops-market-processor"
+    market_storage   = "gops-market-storage"
+    backfill_worker  = "gops-backfill-worker"
+    order_worker     = "gops-order-worker"
+    kis_adapter      = "gops-kis-adapter"
+  }
 }
 
-resource "aws_ecr_repository" "worker" {
-  name                 = "${local.name_prefix}-market-data-worker"
+resource "aws_ecr_repository" "custom_images" {
+  for_each             = local.custom_image_repositories
+  name                 = "${local.name_prefix}-${each.value}"
   image_tag_mutability = "MUTABLE"
   force_delete         = false
 
@@ -21,31 +32,9 @@ resource "aws_ecr_repository" "worker" {
     scan_on_push = true
   }
 
-  tags = local.common_tags
-}
-
-resource "aws_ecr_repository" "gops_backend" {
-  name                 = "${local.name_prefix}-gops-backend"
-  image_tag_mutability = "MUTABLE"
-  force_delete         = false
-
-  image_scanning_configuration {
-    scan_on_push = true
-  }
-
-  tags = local.common_tags
-}
-
-resource "aws_ecr_repository" "gops_frontend" {
-  name                 = "${local.name_prefix}-gops-frontend"
-  image_tag_mutability = "MUTABLE"
-  force_delete         = false
-
-  image_scanning_configuration {
-    scan_on_push = true
-  }
-
-  tags = local.common_tags
+  tags = merge(local.common_tags, {
+    Image = each.value
+  })
 }
 
 data "aws_s3_bucket" "market_data" {

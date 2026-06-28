@@ -1,6 +1,6 @@
 # 역할: Alpaca에 보낼 구독 요청 JSON을 미리 출력합니다.
 # 사용: 실제 WebSocket 연결 전 종목/채널 신청 내용을 확인합니다.
-# 실행: PYTHONPATH=packages python scripts/local/preview-subscription.py 애플
+# 실행: PYTHONPATH=systems/market-data/shared python scripts/local/preview-subscription.py 애플
 import argparse
 import sys
 

@@ -1,31 +1,70 @@
 # GOPS Agent Instructions
 
-## Before Work
+These rules are for Codex and future contributors.
 
-- Read the current code and `DesignConcept.md` before changing behavior.
-- Treat `docs/spec/` as reference specs from the wider team, not as hard constraints.
-- If an implementation direction differs from `docs/spec/`, do not block automatically. Report the difference, why it matters, and the reason for the chosen direction.
-- Do not reference `ref/`; the old reference folder has been removed.
+## Read First
 
-## DesignConcept Log
+- `docs/PRODUCT_CONTEXT.md` for product direction.
+- `docs/STRUCTURE_GUIDE.md` before adding a feature, pod, job, image, platform dependency, or new folder.
+- `docs/ARCHITECTURE.md`, `docs/IMAGE_STRATEGY.md`, and `docs/ENVIRONMENT.md` before changing runtime, Docker, compose, k8s, env, or AWS assets.
+- Current code before changing paths or imports.
+Use current code, this file, and the docs in `docs/` as the source of truth. If an older conversation or copied prompt conflicts with them, report the conflict before reshaping the project.
 
-- Every implementation change must append a short log entry to `DesignConcept.md`.
-- Use this format:
-  - `### YYYY-MM-DD: Title`
-  - `- 변경:`
-  - `- 판단:`
-  - `- 유지할 계약:`
-  - `- 검증:`
-- Keep entries concise, factual, and useful for future Cho Hyunho / Kim Heejun merge decisions.
+## Structure Rules
 
-## Project Rules
+- Keep feature code under `systems/<system>`.
+- Keep UI code under `apps/`.
+- Keep external/runtime dependency contracts under `platform/`.
+- Keep Docker, compose, k8s, Terraform, and AWS deployment assets under `infra/`.
+- Use root `shared/` only for stable cross-system contracts.
+- Preserve Python namespaces:
+  - `alfaka.*` from `systems/market-data/shared`.
+  - `kis_trader.*` from `systems/order/shared`.
 
-- Preserve the current `apps/`, `packages/`, `services/`, and `infra/` structure unless the user asks for restructuring.
-- Preserve the market-data chart contracts:
-  - REST `/api/charts/candles` owns historical snapshot and range loading.
-  - WebSocket owns live updates, reconnect gap-fill/control, and live delta behavior.
-  - Chart API reads Redis and ClickHouse for serving data.
-  - ClickHouse `chart_candles` is the serving projection.
-  - S3 is durable storage and replay/rematerialization basis.
-- Do not stage credentials, local artifacts, generated outputs, `.env`, `.venv`, `node_modules`, or build output.
-- Do not push unless the user explicitly asks.
+## Behavior Rules
+
+- Do not change API behavior, order behavior, chart behavior, KIS adapter behavior, Kafka message contracts, or DB schema during structure-only work.
+- Import/path edits are allowed only when required by file movement.
+- Do not generate fake market candles in local runtime.
+- Do not push unless the user asks.
+
+## API Rules
+
+Preserve these routes unless the user explicitly changes the API contract:
+
+```text
+GET  /api/charts/candles
+POST /api/charts/backfill
+GET  /api/charts/backfill/status
+GET  /api/charts/symbols
+WS   /ws/charts
+GET  /api/order-contract
+POST /api/orders
+GET  /api/orders/{order_id}
+GET  /api/orders/{order_id}/events
+WS   /ws/orders/{order_id}
+```
+
+`POST /api/orders` must require `Idempotency-Key`.
+`KIS_ENV=real` remains disabled for v1.
+
+## Secret Rules
+
+Never commit:
+
+```text
+.env
+access key CSV files
+KIS token caches
+node_modules/
+dist/
+local caches
+real credentials
+```
+
+## Documentation Rules
+
+- Keep durable docs short and current.
+- Prefer one clear README at each system or platform boundary.
+- Update README, structure, image, env, compose, and k8s docs in the same change when runtime boundaries change.
+- Product-context docs guide direction; they are not permission to implement missing features without a task.

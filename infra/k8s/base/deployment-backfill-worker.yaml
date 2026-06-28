@@ -18,9 +18,9 @@ spec:
       serviceAccountName: alfaka-market-data-sa
       containers:
         - name: backfill-worker
-          image: YOUR_ECR_REPOSITORY/alfaka-market-data:latest
+          image: YOUR_ECR_REPOSITORY/gops-backfill-worker:latest
           imagePullPolicy: IfNotPresent
-          command: ["python", "-u", "-m", "alfaka.backfill.worker"]
+          command: ["python", "-u", "systems/market-data/pods/backfill-worker/main.py"]
           envFrom:
             - configMapRef:
                 name: alfaka-market-data-config

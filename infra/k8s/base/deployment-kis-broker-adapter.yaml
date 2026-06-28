@@ -18,9 +18,9 @@ spec:
       serviceAccountName: alfaka-market-data-sa
       containers:
         - name: kis-broker-adapter
-          image: YOUR_ECR_REPOSITORY/gops-worker:latest
+          image: YOUR_ECR_REPOSITORY/gops-kis-adapter:latest
           imagePullPolicy: IfNotPresent
-          command: ["python", "-u", "-m", "kis_trader.cli", "broker-adapter", "--timeout-seconds", "1.0"]
+          command: ["python", "-u", "systems/order/pods/kis-adapter/main.py"]
           envFrom:
             - configMapRef:
                 name: alfaka-market-data-config

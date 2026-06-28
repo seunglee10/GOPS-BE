@@ -1,17 +1,19 @@
 # AWS Runtime Values
 
-이 폴더는 실제 `.env` 파일을 보관하지 않습니다.
+Do not store real `.env` files or secret values here.
 
-런타임 값은 아래 위치에 직접 붙입니다.
+Put runtime values in these places:
 
 ```text
-Alpaca API key/secret    AWS Secrets Manager
-Kafka bootstrap servers  infra/k8s/overlays/aws/configmap-aws-patch.yaml
-Redis URL                infra/k8s/overlays/aws/configmap-aws-patch.yaml
-S3 bucket/prefix         infra/k8s/overlays/aws/configmap-aws-patch.yaml
-Worker image             infra/k8s/overlays/aws/kustomization.yaml
-IRSA role ARN            infra/k8s/overlays/aws/serviceaccount-irsa-aws-patch.yaml
+Alpaca API key/secret       AWS Secrets Manager dev/alpaca
+KIS demo credentials        AWS Secrets Manager dev/kis
+Kafka bootstrap servers     infra/k8s/overlays/aws config patch
+Redis URL                   infra/k8s/overlays/aws config patch
+Postgres connection values  Kubernetes Secret or external secret
+ClickHouse connection       infra/k8s/overlays/aws config/secret patch
+S3 bucket and prefixes      infra/k8s/overlays/aws config patch
+Custom image repositories   infra/k8s/overlays/aws/kustomization.yaml
+IRSA role ARN               infra/k8s/overlays/aws/serviceaccount patch
 ```
 
-로컬 개발에서는 repo 밖에 공개하지 않는 `/Users/heejunkim/Documents/alfaka/gops/.env`를
-`docker-compose.yml`의 `env_file: .env`로 붙입니다.
+Local development uses repo-local `.env`, which must stay ignored and uncommitted.

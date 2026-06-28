@@ -1,225 +1,179 @@
-# GOPS Alfaka Market Data
+# GOPS
 
-GOPS chart UI가 Alpaca market data를 REST snapshot과 WebSocket stream으로 읽을 수 있게 하는 로컬/운영 공통 코드베이스입니다.
+GOPS is a real-time market-data, chart, and order-control platform.
 
-현재 기준 원칙은 단순합니다.
+Product direction: **종목을 찾는 사람에게 기준을, 시장을 읽는 사람에게 방향을.**
+See `docs/PRODUCT_CONTEXT.md` for the product vision. Future-facing product ideas are context, not implemented guarantees.
 
-- Alpaca historical backfill은 실제 Alpaca Historical REST를 호출한다.
-- 기본 Docker/운영 경로에서 더미 candle을 만들지 않는다.
-- 과거 candle 초기 로딩은 `GET /api/charts/candles`가 담당한다.
-- WebSocket `/ws/charts`는 live update, reconnect gap-fill, control event 전용이다.
-- Chart API는 S3를 직접 읽지 않는다. Redis와 ClickHouse만 serving source로 쓴다.
-- S3는 raw archive와 processed/final replay source이고, ClickHouse `chart_candles`는 serving projection이다.
-- 로컬 smoke script도 실제 Alpaca historical data를 사용한다. credentials가 없으면 candle을 생성하지 않고 실패한다.
+## Current Scope
+
+The repository currently includes:
+
+- React frontend and shared chart engine.
+- FastAPI chart/order/WebSocket API server.
+- Alpaca market-data ingest and historical backfill.
+- Kafka-compatible stream processing.
+- Redis, ClickHouse, and S3 market-data serving/storage.
+- KIS demo order API, Postgres persistence, outbox, broker adapter, migrations, and reconciliation.
+- Local Docker Compose and early AWS/EKS deployment assets.
+
+## Read First
+
+| File | Use |
+| --- | --- |
+| `docs/README.md` | Index for project reference docs. |
+| `docs/PRODUCT_CONTEXT.md` | Product intent and future direction. |
+| `docs/STRUCTURE_GUIDE.md` | Where new code, pods, jobs, images, and platform contracts belong. |
+| `docs/ARCHITECTURE.md` | Current runtime architecture and system boundaries. |
+| `docs/IMAGE_STRATEGY.md` | Docker image boundaries. |
+| `docs/ENVIRONMENT.md` | Env, secret, and platform contracts. |
+| `AGENTS.md` | Rules for Codex and future contributors. |
 
 ## Repository Map
 
 ```text
+apps/gops-frontend/                React frontend
 apps/chart-engine/                 chart document/runtime/canvas engine
-apps/gops-frontend/                GOPS React frontend
-packages/alfaka/alpaca/            Alpaca websocket/assets/subscription helpers
-packages/alfaka/backfill/          historical backfill queue/status/runner/worker
-packages/alfaka/common/            env, Kafka, Redis key, S3, secret helpers
-packages/alfaka/serving/           Redis + ClickHouse provider and DTOs
-packages/alfaka/storage/           ClickHouse loader, S3 sink, S3 materializer
-packages/alfaka/streaming/         raw -> processed transform/local processor
-services/01-alpaca-connector/      Alpaca live ingestor entrypoint
-services/03-flink-stream-processor/local_main.py
-services/05-clickhouse-store/      processed topic -> ClickHouse entrypoint
-services/06-s3-store/              processed topic -> S3 entrypoint
-services/07-api-websocket/         GOPS backend REST/WebSocket service
-infra/clickhouse/                  local ClickHouse schema
+
+systems/api-server/                FastAPI chart/order/WebSocket gateway
+systems/market-data/               config, ingest, processing, storage, serving helpers, backfill
+systems/order/                     KIS demo order domain, outbox, adapter, jobs
+
+platform/kafka/topics.txt          market/order Kafka topic contract
+platform/*/README.md               local -> pod -> managed-service transition notes
+
 infra/docker/                      Dockerfiles
 infra/k8s/                         Kubernetes base and AWS overlay
 infra/aws/terraform/               ECR/S3/Secrets/IRSA foundation
+infra/clickhouse/initdb/           local ClickHouse schema
+
 scripts/local/                     local smoke and inspection scripts
 scripts/aws/                       AWS image/topic/apply helpers
-tests/                             Python contract/regression tests
+shared/chart-contract/             cross-system chart command contract notes
+docs/                              project reference docs
 ```
 
-## Data Flow
+## Runtime Flow
 
-Live path:
+```mermaid
+flowchart LR
+  FE["gops-frontend"] --> API["api-server"]
+  API --> Redis["Redis"]
+  API --> CH["ClickHouse"]
+  API --> PG["Postgres"]
 
-```text
-Alpaca WebSocket
-  -> Kafka raw topics
-  -> local processor or Flink-compatible processor
-  -> Kafka processed topics
-  -> Redis hot/recent cache
-  -> ClickHouse chart_candles serving projection
-  -> S3 processed/final/live artifacts
-  -> GOPS REST/WebSocket
-```
+  Alpaca["Alpaca"] --> Ingestor["market-ingestor"]
+  Ingestor --> Kafka["Kafka"]
+  Kafka --> Processor["market-processor"]
+  Processor --> Redis
+  Processor --> S3Sink["s3-sink"] --> S3["S3"]
+  Processor --> CHLoader["clickhouse-loader"] --> CH
 
-Historical/backfill path:
-
-```text
-POST /api/charts/backfill
-  -> Redis queue/status/lock
-  -> backfill-worker
-  -> Alpaca Historical REST
-  -> S3 raw archive
-  -> normalized processed candle contract
-  -> S3 processed/final
-  -> S3 materializer
-  -> ClickHouse chart_candles
-  -> GET /api/charts/candles ready snapshot
-```
-
-Recovery/rematerialization path:
-
-```text
-S3 processed/final
-  -> packages/alfaka/storage/s3_materializer.py
-  -> ClickHouse chart_candles
-  -> load_audit
+  API --> PG
+  PG --> Outbox["order-outbox"]
+  Outbox --> Kafka
+  Kafka --> KISAdapter["kis-adapter"]
+  KISAdapter --> KIS["KIS demo API"]
+  KISAdapter --> PG
+  Reconciler["order reconciler job"] --> PG
+  Reconciler --> KIS
 ```
 
 ## Local Setup
 
-Create `.env` from `.env.example`. For AWS/EKS, keep Alpaca key values empty and use Secrets Manager:
+Create `.env` from `.env.example`.
 
-```sh
-APCA_API_KEY_ID=
-APCA_API_SECRET_KEY=
+For AWS-backed local work, leave `S3_ENDPOINT_URL` and `DOCKER_S3_ENDPOINT_URL` empty and use:
+
+```text
 ALPACA_SECRET_NAME=dev/alpaca
 S3_BUCKET=gops-market-data-<aws-account-id>-ap-northeast-2-an
-ALPACA_FEED=sip
-HISTORICAL_FEED=sip
-ALPACA_UNIVERSE=semiconductor-100
-ALPACA_SYMBOLS=NVDA,AMD,AVGO,TSM,ASML,AMAT,MU
+AWS_REGION=ap-northeast-2
+AWS_ACCESS_KEY_ID=<local restricted key if needed>
+AWS_SECRET_ACCESS_KEY=<local restricted secret if needed>
+AWS_SESSION_TOKEN=
 ```
 
-The `dev/alpaca` secret must contain either `APCA_API_KEY_ID` and
-`APCA_API_SECRET_KEY`, or `key` and `secret`.
-
-Local Docker now defaults to real AWS S3. Keep `S3_ENDPOINT_URL=` and
-`DOCKER_S3_ENDPOINT_URL=` empty. For long-running local Docker, put a restricted
-IAM access key in local `.env` as `AWS_ACCESS_KEY_ID` and
-`AWS_SECRET_ACCESS_KEY`, and leave `AWS_SESSION_TOKEN=` empty.
-
-For local MinIO experiments, set `S3_ENDPOINT_URL=http://localhost:9000`,
-`DOCKER_S3_ENDPOINT_URL=http://minio:9000`, `AWS_ACCESS_KEY_ID=minioadmin`, and
-`AWS_SECRET_ACCESS_KEY=minioadmin`, then run with `--profile local-s3`.
-
-Start the core stack:
+Start the local stack:
 
 ```sh
 docker compose --env-file .env up -d --build
 ```
-
-This starts Redis, Kafka, MinIO, ClickHouse, local processor, ClickHouse loader, S3 sink, GOPS backend, GOPS frontend, and the historical backfill worker.
 
 Open:
 
 ```text
 Frontend: http://localhost:5173
 Backend:  http://localhost:8000/health
-Candles:  http://localhost:8000/api/charts/candles?symbol=AAPL&interval=1m&limit=160
 Symbols:  http://localhost:8000/api/charts/symbols
+Candles:  http://localhost:8000/api/charts/candles?symbol=AAPL&interval=1m&limit=160
 ```
 
-Start real Alpaca live ingestion:
+Start live Alpaca ingestion only when needed:
 
 ```sh
 docker compose --profile alpaca up -d --build alpaca-ingestor
 ```
 
-The live ingestor is profile-gated so local UI/backend work does not automatically open Alpaca WebSocket sessions.
+The live ingestor is profile-gated so normal UI/backend work does not automatically open Alpaca WebSocket sessions.
 
-## Backfill Usage
+## API Contract
 
-The frontend automatically requests backfill when a selected symbol/interval exists in the watchlist or registry but has no Redis/ClickHouse candles.
+Chart API:
 
-Manual request:
-
-```sh
-curl -fsS \
-  -H "Content-Type: application/json" \
-  -d '{"symbol":"AAPL","interval":"1m"}' \
-  http://localhost:8000/api/charts/backfill
+```text
+GET  /api/charts/candles
+POST /api/charts/backfill
+GET  /api/charts/backfill/status
+GET  /api/charts/symbols
+WS   /ws/charts
 ```
 
-Status:
+Order API:
 
-```sh
-curl -fsS "http://localhost:8000/api/charts/backfill/status?symbol=AAPL&interval=1m"
+```text
+GET  /api/order-contract
+POST /api/orders
+GET  /api/orders/{order_id}
+GET  /api/orders/{order_id}/events
+WS   /ws/orders/{order_id}
 ```
 
-Snapshot after completion:
+Order rules:
 
-```sh
-curl -fsS "http://localhost:8000/api/charts/candles?symbol=AAPL&interval=1m&limit=160"
-```
+- `POST /api/orders` requires the `Idempotency-Key` header.
+- `KIS_ENV=real` is disabled for v1. Use demo/fake local flow unless the release policy changes.
 
-The local smoke script uses the real Alpaca historical path. If Alpaca credentials or upstream data are unavailable, it should fail or show an empty state instead of generating candles:
+## Operating Rules
 
-```sh
-bash scripts/local/smoke-backfill-missing-data.sh INTC
-```
-
-## Main API Contract
-
-`GET /api/charts/candles`
-
-- Reads Redis recent candles first, then ClickHouse historical candles.
-- Returns `dataStatus`, `backfillStatus`, `canBackfill`, `message`, and `coverage`.
-- `coverage` is the detailed readiness diagnostic. Backfill job success alone must not mark data as ready unless stored candle coverage is sufficient.
-- Does not start long-running backfill by itself.
-
-`POST /api/charts/backfill`
-
-- Validates symbol against the configured universe, symbol registry, Redis metadata, or ClickHouse symbols.
-- Queues a Redis-backed backfill request.
-- Uses Redis lock/status keys to deduplicate identical symbol/interval/range work.
-
-`GET /api/charts/backfill/status`
-
-- Returns current request status for REST polling.
-
-`WS /ws/charts`
-
-- Sends live candle events and reconnect gap-fill from Redis/ClickHouse.
-- Does not bulk-load historical candles.
-
-## Operational Notes
-
-- `config/market-data-request.json` defines named market universes and the default semiconductor universe.
-- `ALPACA_UNIVERSE` selects search/validation candidates. Currently `semiconductor-100` is the supported named universe.
-- `ALPACA_SYMBOLS` selects always-on Alpaca subscriptions and the default frontend Watch List seed. It must be a CSV ticker list; universe names are not accepted.
-- An empty `ALPACA_SYMBOLS` never auto-subscribes the whole universe.
-- `infra/aws/msk/topics.txt` is the topic creation input used by `scripts/aws/create-msk-topics.sh`.
-- Kubernetes base includes `alpaca-ingestor`, `s3-sink`, `clickhouse-loader`, `backfill-worker`, backend, frontend, and a symbol registry sync job.
-- AWS overlay renders locally; actual `terraform apply`, ECR push, and `kubectl apply` should only be run by the deployment owner.
-- Alpaca keys belong in Secrets Manager for AWS/EKS. Local `.env` key values are only for intentional standalone experiments.
-- If a local Redis/ClickHouse/MinIO volume already contains rows from older development runs, reset those local volumes before validating data trust. The current runtime no longer marks or creates development-generated candles, so old rows cannot be reliably distinguished after materialization.
+- Chart API serves from Redis and ClickHouse, not directly from S3.
+- S3 is durable replay/rematerialization storage.
+- ClickHouse `chart_candles` is the serving projection.
+- Local runtime must not invent fake market candles.
+- `.env`, access-key CSV files, KIS token caches, `node_modules`, `dist`, and local caches must not be committed.
 
 ## Verification
 
-Run these before sharing or deploying changes:
+Run the relevant checks before sharing changes:
 
 ```sh
-env PYTHONPATH=packages python -m compileall -q packages services/07-api-websocket/gops-backend/app tests
-env PYTHONPATH=packages python -m unittest discover tests
-env PYTHONPATH=packages:services/07-api-websocket/gops-backend python -m unittest discover services/07-api-websocket/gops-backend/tests
+env PYTHONPATH=systems/market-data/shared:systems/order/shared:systems/order:systems/api-server/pods/api-server/gops-backend python -m compileall -q systems
+env PYTHONPATH=systems/market-data/shared:systems/order/shared:systems/order:systems/api-server/pods/api-server/gops-backend python -m unittest discover systems/market-data/tests
+env PYTHONPATH=systems/market-data/shared:systems/order/shared:systems/order:systems/api-server/pods/api-server/gops-backend python -m unittest discover systems/api-server/tests
+env PYTHONPATH=systems/market-data/shared:systems/order/shared:systems/order:systems/api-server/pods/api-server/gops-backend python -m pytest systems/order/tests/kis_trader
 npm run test:chart --prefix apps/gops-frontend
 npm run build --prefix apps/gops-frontend
 docker compose config --quiet
-kubectl kustomize infra/k8s/base >/tmp/alfaka-k8s-base.yaml
-kubectl kustomize infra/k8s/overlays/aws >/tmp/alfaka-k8s-aws.yaml
+kubectl kustomize infra/k8s/base >/tmp/gops-k8s-base.yaml
+kubectl kustomize infra/k8s/overlays/aws >/tmp/gops-k8s-aws.yaml
 git diff --check
 ```
 
 Runtime smoke:
 
 ```sh
-docker compose --profile alpaca up -d --build alpaca-ingestor
-bash scripts/local/smoke-backfill-missing-data.sh INTC
+curl -fsS http://localhost:8000/health
+curl -fsS http://localhost:8000/api/charts/symbols
+curl -fsS 'http://localhost:8000/api/charts/candles?symbol=NVDA&interval=1m&limit=2'
+curl -fsS http://localhost:8000/api/order-contract
 ```
-
-The local runtime no longer publishes generated market events. If a chart has no Alpaca-backed Redis/ClickHouse data, the UI must show loading, empty, or backfill status honestly instead of drawing generated candles.
-
-## Removed Legacy Docs
-
-Earlier Goal planning documents and redirect READMEs were removed to avoid conflicting instructions. This `README.md` is the team-facing project guide; code, tests, compose files, and Kubernetes manifests are the current source of truth.

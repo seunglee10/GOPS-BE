@@ -1,0 +1,17 @@
+# 역할: kis-adapter pod 이미지를 빌드합니다.
+# 실행: Kafka order command를 소비하고 KIS demo API 제출 결과를 반영합니다.
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app/systems/order/shared
+
+WORKDIR /app
+
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY systems/order/shared ./systems/order/shared
+COPY systems/order/pods/kis-adapter ./systems/order/pods/kis-adapter
+
+CMD ["python", "-u", "systems/order/pods/kis-adapter/main.py"]

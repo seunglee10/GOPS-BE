@@ -151,9 +151,10 @@ services:
 
   alpaca-ingestor:
     profiles: ["alpaca"]
+    image: gops-market-ingestor
     build:
       context: .
-      dockerfile: infra/docker/Dockerfile.worker
+      dockerfile: infra/docker/Dockerfile.gops-market-ingestor
     container_name: alfaka-alpaca-ingestor
     env_file: .env
     depends_on:
@@ -168,7 +169,7 @@ services:
       ALPACA_CHANNELS: "bars,updatedBars,dailyBars,statuses"
       ALPACA_ACTIVE_CHANNELS: "trades"
       ALPACA_ACTIVE_TICK_SUBSCRIPTION: "true"
-    command: ["python", "-u", "services/01-alpaca-connector/market_stream.py"]
+    command: ["python", "-u", "systems/market-data/pods/market-ingestor/market_stream.py"]
     restart: unless-stopped
     networks:
       - app_net
@@ -176,9 +177,10 @@ services:
       - streaming_net
 
   local-stream-processor:
+    image: gops-market-processor
     build:
       context: .
-      dockerfile: infra/docker/Dockerfile.worker
+      dockerfile: infra/docker/Dockerfile.gops-market-processor
     container_name: alfaka-local-stream-processor
     depends_on:
       kafka-init:
@@ -198,7 +200,7 @@ services:
       PROCESSOR_LOG_EVERY_N: "500"
       REDIS_URL: "redis://redis:6379/0"
       REDIS_KEY_PREFIX: ""
-    command: ["python", "-u", "services/03-flink-stream-processor/local_main.py"]
+    command: ["python", "-u", "systems/market-data/pods/market-processor/local_main.py"]
     restart: unless-stopped
     networks:
       - app_net
@@ -206,9 +208,10 @@ services:
       - data_net
 
   s3-sink:
+    image: gops-market-storage
     build:
       context: .
-      dockerfile: infra/docker/Dockerfile.worker
+      dockerfile: infra/docker/Dockerfile.gops-market-storage
     container_name: alfaka-s3-sink
     env_file: .env
     depends_on:
@@ -230,7 +233,7 @@ services:
       S3_LIVE_PREFIX: "${S3_LIVE_PREFIX:-market-data/live}"
       S3_PROCESSED_FORMAT: "${S3_PROCESSED_FORMAT:-parquet}"
       S3_FLUSH_COUNT: "${S3_FLUSH_COUNT:-1000}"
-    command: ["python", "-u", "services/06-s3-store/processed_sink.py"]
+    command: ["python", "-u", "systems/market-data/pods/s3-sink/processed_sink.py"]
     restart: unless-stopped
     networks:
       - app_net
@@ -238,9 +241,10 @@ services:
       - data_net
 
   clickhouse-loader:
+    image: gops-market-storage
     build:
       context: .
-      dockerfile: infra/docker/Dockerfile.worker
+      dockerfile: infra/docker/Dockerfile.gops-market-storage
     container_name: alfaka-clickhouse-loader
     depends_on:
       kafka-init:
@@ -256,7 +260,7 @@ services:
       CLICKHOUSE_DATABASE: "market_data"
       CLICKHOUSE_USER: "alfaka"
       CLICKHOUSE_PASSWORD: "alfaka"
-    command: ["python", "-u", "services/05-clickhouse-store/processed_loader.py"]
+    command: ["python", "-u", "systems/market-data/pods/clickhouse-loader/processed_loader.py"]
     restart: unless-stopped
     networks:
       - app_net
@@ -265,9 +269,10 @@ services:
 
   symbol-registry-sync:
     profiles: ["registry", "alpaca"]
+    image: gops-market-processor
     build:
       context: .
-      dockerfile: infra/docker/Dockerfile.worker
+      dockerfile: infra/docker/Dockerfile.gops-market-processor
     container_name: alfaka-symbol-registry-sync
     env_file: .env
     depends_on:
@@ -285,13 +290,14 @@ services:
       SYMBOL_REGISTRY_ASSET_CLASS: "us_equity"
       SYMBOL_REGISTRY_STATUS: "active"
       SYMBOL_REGISTRY_REDIS_CACHE: "true"
-    command: ["python", "-u", "-m", "alfaka.tools.sync_symbol_registry"]
+    command: ["python", "-u", "systems/market-data/jobs/symbol-registry-sync/main.py"]
     restart: "no"
     networks:
       - app_net
       - data_net
 
   gops-backend:
+    image: gops-api-server
     build:
       context: .
       dockerfile: infra/docker/Dockerfile.gops-backend
@@ -317,7 +323,7 @@ services:
       CLICKHOUSE_DATABASE: "market_data"
       CLICKHOUSE_USER: "alfaka"
       CLICKHOUSE_PASSWORD: "alfaka"
-      ALFAKA_PACKAGES_PATH: "/app/packages"
+      ALFAKA_PACKAGES_PATH: "/app/systems/market-data/shared"
       REDIS_KEY_PREFIX: ""
       BACKFILL_EXECUTION_MODE: "queue"
       BACKFILL_STATUS_TTL_SECONDS: "86400"
@@ -342,24 +348,26 @@ services:
       - data_net
 
   order-migrations:
+    image: gops-order-worker
     build:
       context: .
-      dockerfile: infra/docker/Dockerfile.worker
+      dockerfile: infra/docker/Dockerfile.gops-order-worker
     container_name: alfaka-order-migrations
     depends_on:
       postgres:
         condition: service_healthy
     environment:
       DATABASE_URL: "postgresql://gops:${POSTGRES_PASSWORD:-gops_dev_password}@postgres:5432/gops"
-    command: ["python", "-u", "-m", "kis_trader.cli", "migrate"]
+    command: ["python", "-u", "systems/order/jobs/migrations/main.py"]
     restart: "no"
     networks:
       - data_net
 
   order-outbox-publisher:
+    image: gops-order-worker
     build:
       context: .
-      dockerfile: infra/docker/Dockerfile.worker
+      dockerfile: infra/docker/Dockerfile.gops-order-worker
     container_name: alfaka-order-outbox-publisher
     depends_on:
       kafka-init:
@@ -373,23 +381,17 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
       KAFKA_ACCOUNT_ALIAS: "${KAFKA_ACCOUNT_ALIAS:-demo-account}"
       IDEMPOTENCY_HASH_SECRET: "${IDEMPOTENCY_HASH_SECRET:-local-dev-idempotency-secret}"
-    command:
-      - /bin/sh
-      - -c
-      - |
-        while true; do
-          python -u -m kis_trader.cli outbox-publish --limit 100
-          sleep 2
-        done
+    command: ["python", "-u", "systems/order/pods/order-outbox/main.py"]
     restart: unless-stopped
     networks:
       - data_net
       - streaming_net
 
   kis-broker-adapter:
+    image: gops-kis-adapter
     build:
       context: .
-      dockerfile: infra/docker/Dockerfile.worker
+      dockerfile: infra/docker/Dockerfile.gops-kis-adapter
     container_name: alfaka-kis-broker-adapter
     env_file: .env
     depends_on:
@@ -410,10 +412,7 @@ services:
       KIS_ACCOUNT_PRODUCT_CODE: "${KIS_ACCOUNT_PRODUCT_CODE:-01}"
       KIS_TOKEN_CACHE_PATH: "/kis-cache/demo-token.json"
       KIS_TIMEOUT_SECONDS: "${KIS_TIMEOUT_SECONDS:-5}"
-    command:
-      - /bin/sh
-      - -c
-      - python -u -m kis_trader.cli broker-adapter --timeout-seconds 1.0 $${KIS_BROKER_ADAPTER_ARGS:---fake-kis success}
+    command: ["python", "-u", "systems/order/pods/kis-adapter/main.py"]
     restart: unless-stopped
     volumes:
       - kis_token_cache:/kis-cache
@@ -421,10 +420,37 @@ services:
       - data_net
       - streaming_net
 
-  backfill-worker:
+  order-reconciler:
+    profiles: ["reconciliation"]
+    image: gops-order-worker
     build:
       context: .
-      dockerfile: infra/docker/Dockerfile.worker
+      dockerfile: infra/docker/Dockerfile.gops-order-worker
+    container_name: alfaka-order-reconciler
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      order-migrations:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: "postgresql://gops:${POSTGRES_PASSWORD:-gops_dev_password}@postgres:5432/gops"
+      KIS_ENV: "${KIS_ENV:-demo}"
+      KIS_SECRET_NAME: "${KIS_SECRET_NAME:-dev/kis}"
+      KIS_TOKEN_CACHE_PATH: "/kis-cache/demo-token.json"
+      KIS_TIMEOUT_SECONDS: "${KIS_TIMEOUT_SECONDS:-5}"
+    command: ["python", "-u", "systems/order/jobs/reconciler/main.py"]
+    restart: "no"
+    volumes:
+      - kis_token_cache:/kis-cache
+    networks:
+      - data_net
+
+  backfill-worker:
+    image: gops-backfill-worker
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-backfill-worker
     container_name: alfaka-backfill-worker
     env_file: .env
     depends_on:
@@ -453,13 +479,14 @@ services:
       S3_RAW_PREFIX: "${S3_RAW_PREFIX:-market-data/raw/alpaca}"
       S3_FINAL_PREFIX: "${S3_FINAL_PREFIX:-market-data/final}"
       S3_PROCESSED_FORMAT: "${S3_PROCESSED_FORMAT:-jsonl}"
-    command: ["python", "-u", "-m", "alfaka.backfill.worker"]
+    command: ["python", "-u", "systems/market-data/pods/backfill-worker/main.py"]
     restart: unless-stopped
     networks:
       - app_net
       - data_net
 
   gops-frontend:
+    image: gops-frontend
     build:
       context: .
       dockerfile: infra/docker/Dockerfile.gops-frontend

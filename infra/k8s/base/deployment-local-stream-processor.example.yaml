@@ -18,9 +18,9 @@ spec:
       serviceAccountName: alfaka-market-data-sa
       containers:
         - name: local-stream-processor
-          image: YOUR_ECR_REPOSITORY/alfaka-market-data:latest
+          image: YOUR_ECR_REPOSITORY/gops-market-processor:latest
           imagePullPolicy: IfNotPresent
-          command: ["python", "-u", "services/03-flink-stream-processor/local_main.py"]
+          command: ["python", "-u", "systems/market-data/pods/market-processor/local_main.py"]
           envFrom:
             - configMapRef:
                 name: alfaka-market-data-config

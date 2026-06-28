@@ -5,7 +5,7 @@
 ## 만드는 것
 
 ```text
-ECR worker/backend/frontend repositories
+ECR repositories for GOPS custom images
 S3 market data bucket reference
 Secrets Manager Alpaca secret reference
 IRSA IAM role/policy
@@ -34,6 +34,32 @@ terraform apply
 ```
 
 적용 후 `terraform output` 값을 `infra/k8s/overlays/aws`의 placeholder에 넣습니다.
+
+Target custom image repositories:
+
+```text
+gops-frontend
+gops-api-server
+gops-market-ingestor
+gops-market-processor
+gops-market-storage
+gops-backfill-worker
+gops-order-worker
+gops-kis-adapter
+```
+
+Build script variable mapping:
+
+| Terraform output | `scripts/aws/build-and-push-images.sh` env |
+| --- | --- |
+| `frontend_ecr_repository_url` | `ECR_FRONTEND_REPO` |
+| `api_server_ecr_repository_url` | `ECR_API_SERVER_REPO` |
+| `market_ingestor_ecr_repository_url` | `ECR_MARKET_INGESTOR_REPO` |
+| `market_processor_ecr_repository_url` | `ECR_MARKET_PROCESSOR_REPO` |
+| `market_storage_ecr_repository_url` | `ECR_MARKET_STORAGE_REPO` |
+| `backfill_worker_ecr_repository_url` | `ECR_BACKFILL_WORKER_REPO` |
+| `order_worker_ecr_repository_url` | `ECR_ORDER_WORKER_REPO` |
+| `kis_adapter_ecr_repository_url` | `ECR_KIS_ADAPTER_REPO` |
 
 ## Secrets Manager
 

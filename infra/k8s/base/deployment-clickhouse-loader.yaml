@@ -18,9 +18,9 @@ spec:
       serviceAccountName: alfaka-market-data-sa
       containers:
         - name: clickhouse-loader
-          image: YOUR_ECR_REPOSITORY/alfaka-market-data:latest
+          image: YOUR_ECR_REPOSITORY/gops-market-storage:latest
           imagePullPolicy: IfNotPresent
-          command: ["python", "-u", "services/05-clickhouse-store/processed_loader.py"]
+          command: ["python", "-u", "systems/market-data/pods/clickhouse-loader/processed_loader.py"]
           envFrom:
             - configMapRef:
                 name: alfaka-market-data-config

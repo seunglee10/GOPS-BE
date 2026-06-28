@@ -1,0 +1,21 @@
+# 역할: AWS MSK/Kafka에 만들어야 하는 topic canonical 목록입니다.
+# 기준: README.md의 topic contract와 현재 Kafka processor/loader 설정
+# 사용: scripts/aws/create-msk-topics.sh가 이 목록을 읽어 topic을 생성합니다.
+# 주의: partition/retention은 운영 부하에 맞춰 조정합니다.
+market.raw.bars
+market.raw.updated-bars
+market.raw.trades
+market.raw.daily-bars
+market.raw.statuses
+market.raw.quotes
+market.raw.corrections
+market.raw.cancel-errors
+market.ticks.v1
+market.candles.live.1m.v1
+market.candles.closed.v1
+market.status.v1
+market.volume-profile-bins.1m.v1
+orders.commands.v1
+broker.submit-results.v1
+broker.order-events.v1
+orders.dlq.v1

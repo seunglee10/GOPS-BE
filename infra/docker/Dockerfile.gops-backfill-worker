@@ -1,0 +1,18 @@
+# 역할: backfill-worker pod 이미지를 빌드합니다.
+# 실행: Redis queue의 backfill 요청을 처리합니다.
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app/systems/market-data/shared
+
+WORKDIR /app
+
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY systems/market-data/config ./config
+COPY systems/market-data/shared ./systems/market-data/shared
+COPY systems/market-data/pods/backfill-worker ./systems/market-data/pods/backfill-worker
+
+CMD ["python", "-u", "systems/market-data/pods/backfill-worker/main.py"]

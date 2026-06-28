@@ -1,0 +1,17 @@
+# 역할: market storage worker 이미지를 빌드합니다.
+# 사용: s3-sink와 clickhouse-loader pod가 공유합니다.
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app/systems/market-data/shared
+
+WORKDIR /app
+
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY systems/market-data/config ./config
+COPY systems/market-data/shared ./systems/market-data/shared
+COPY systems/market-data/pods/s3-sink ./systems/market-data/pods/s3-sink
+COPY systems/market-data/pods/clickhouse-loader ./systems/market-data/pods/clickhouse-loader

@@ -18,9 +18,9 @@ spec:
       serviceAccountName: alfaka-market-data-sa
       containers:
         - name: s3-sink
-          image: YOUR_ECR_REPOSITORY/alfaka-market-data:latest
+          image: YOUR_ECR_REPOSITORY/gops-market-storage:latest
           imagePullPolicy: IfNotPresent
-          command: ["python", "-u", "services/06-s3-store/processed_sink.py"]
+          command: ["python", "-u", "systems/market-data/pods/s3-sink/processed_sink.py"]
           envFrom:
             - configMapRef:
                 name: alfaka-market-data-config

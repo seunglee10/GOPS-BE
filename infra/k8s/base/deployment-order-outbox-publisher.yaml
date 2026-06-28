@@ -18,16 +18,9 @@ spec:
       serviceAccountName: alfaka-market-data-sa
       containers:
         - name: order-outbox-publisher
-          image: YOUR_ECR_REPOSITORY/gops-worker:latest
+          image: YOUR_ECR_REPOSITORY/gops-order-worker:latest
           imagePullPolicy: IfNotPresent
-          command:
-            - /bin/sh
-            - -c
-            - |
-              while true; do
-                python -u -m kis_trader.cli outbox-publish --limit 100
-                sleep 2
-              done
+          command: ["python", "-u", "systems/order/pods/order-outbox/main.py"]
           envFrom:
             - configMapRef:
                 name: alfaka-market-data-config

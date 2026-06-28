@@ -16,9 +16,9 @@ spec:
       serviceAccountName: alfaka-market-data-sa
       containers:
         - name: order-migrations
-          image: YOUR_ECR_REPOSITORY/gops-worker:latest
+          image: YOUR_ECR_REPOSITORY/gops-order-worker:latest
           imagePullPolicy: IfNotPresent
-          command: ["python", "-u", "-m", "kis_trader.cli", "migrate"]
+          command: ["python", "-u", "systems/order/jobs/migrations/main.py"]
           envFrom:
             - configMapRef:
                 name: alfaka-market-data-config

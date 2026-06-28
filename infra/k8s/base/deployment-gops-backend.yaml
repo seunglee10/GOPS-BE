@@ -18,7 +18,7 @@ spec:
       serviceAccountName: alfaka-market-data-sa
       containers:
         - name: gops-backend
-          image: YOUR_ECR_REPOSITORY/gops-backend:latest
+          image: YOUR_ECR_REPOSITORY/gops-api-server:latest
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000

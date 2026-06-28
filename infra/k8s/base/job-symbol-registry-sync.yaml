@@ -16,9 +16,9 @@ spec:
       serviceAccountName: alfaka-market-data-sa
       containers:
         - name: symbol-registry-sync
-          image: YOUR_ECR_REPOSITORY/alfaka-market-data:latest
+          image: YOUR_ECR_REPOSITORY/gops-market-processor:latest
           imagePullPolicy: IfNotPresent
-          command: ["python", "-u", "-m", "alfaka.tools.sync_symbol_registry"]
+          command: ["python", "-u", "systems/market-data/jobs/symbol-registry-sync/main.py"]
           envFrom:
             - configMapRef:
                 name: alfaka-market-data-config

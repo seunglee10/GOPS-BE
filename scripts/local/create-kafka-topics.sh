@@ -17,7 +17,11 @@ for topic in \
   market.candles.live.1m.v1 \
   market.candles.closed.v1 \
   market.status.v1 \
-  market.volume-profile-bins.1m.v1; do
+  market.volume-profile-bins.1m.v1 \
+  orders.commands.v1 \
+  broker.submit-results.v1 \
+  broker.order-events.v1 \
+  orders.dlq.v1; do
   docker exec alfaka-kafka /opt/kafka/bin/kafka-topics.sh \
     --bootstrap-server localhost:9092 \
     --create \
