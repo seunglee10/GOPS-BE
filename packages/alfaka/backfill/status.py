@@ -8,33 +8,31 @@ import redis
 
 from alfaka.common.env import load_dotenv, utc_now_iso
 from alfaka.common.redis_keys import RedisKeyBuilder
+from alfaka.serving.intervals import backfill_target_days, normalize_chart_interval
 
 
 TERMINAL_STATUSES = {"succeeded", "failed", "unavailable"}
 ACTIVE_STATUSES = {"queued", "running"}
-DEFAULT_BACKFILL_LOOKBACK_HOURS = 24 * 365
-
-
 @dataclass(frozen=True)
 class BackfillRange:
     start: str
     end: str
 
 
-def default_backfill_range(now=None, lookback_hours=None):
+def default_backfill_range(now=None, lookback_hours=None, interval="1m"):
     resolved_now = now or datetime.now(timezone.utc)
     if isinstance(resolved_now, str):
         resolved_now = parse_time(resolved_now)
     resolved_now = resolved_now.replace(second=0, microsecond=0)
-    hours = int(lookback_hours or os.getenv("BACKFILL_DEFAULT_LOOKBACK_HOURS", str(DEFAULT_BACKFILL_LOOKBACK_HOURS)))
+    hours = int(lookback_hours) if lookback_hours else backfill_target_days(interval) * 24
     start = resolved_now - timedelta(hours=hours)
     return BackfillRange(to_iso(start), to_iso(resolved_now))
 
 
-def resolve_backfill_range(start=None, end=None):
+def resolve_backfill_range(start=None, end=None, interval="1m"):
     if start and end:
         return BackfillRange(to_iso(parse_time(start)), to_iso(parse_time(end)))
-    return default_backfill_range()
+    return default_backfill_range(interval=interval)
 
 
 def range_digest(symbol, interval, start, end):
@@ -54,13 +52,18 @@ class RedisBackfillStore:
         self.keys = keys or RedisKeyBuilder()
         self.ttl_seconds = int(ttl_seconds or os.getenv("BACKFILL_STATUS_TTL_SECONDS", "86400"))
 
-    def create_request(self, symbol, interval, start=None, end=None, mode="default", source="api"):
-        backfill_range = resolve_backfill_range(start, end)
+    def create_request(self, symbol, interval, start=None, end=None, mode="default", source="api", force=False):
+        interval = normalize_chart_interval(interval)
+        backfill_range = resolve_backfill_range(start, end, interval)
         digest = range_digest(symbol, interval, backfill_range.start, backfill_range.end)
-        request_id = request_id_for(symbol, interval, backfill_range.start, backfill_range.end)
+        base_request_id = request_id_for(symbol, interval, backfill_range.start, backfill_range.end)
+        request_id = base_request_id
+        if force:
+            force_digest = hashlib.sha1(utc_now_iso().encode("utf-8")).hexdigest()[:8]
+            request_id = f"{base_request_id}:force:{force_digest}"
         lock_key = self.keys.backfill_lock(symbol, interval, digest)
         latest_key = self.keys.backfill_latest(symbol, interval)
-        locked = self.redis.set(lock_key, request_id, nx=True, ex=self.ttl_seconds)
+        locked = self.redis.set(lock_key, request_id, nx=not force, ex=self.ttl_seconds)
 
         if not locked:
             existing_id = self.redis.get(lock_key) or self.redis.get(latest_key) or request_id
@@ -81,6 +84,7 @@ class RedisBackfillStore:
             "startedAt": None,
             "finishedAt": None,
             "error": None,
+            "force": bool(force),
         }
         self.set_status(record)
         self.redis.set(latest_key, request_id, ex=self.ttl_seconds)

@@ -18,21 +18,24 @@ from app.services.alfaka_market_data import (
 )
 from alfaka.serving.intervals import MAX_CHART_CANDLE_LIMIT
 
+CHART_INTERVAL_PATTERN = "^(1m|5m|10m|1D|1W|1M|1d|1w|1mo|1MO|1month)$"
+
 router = APIRouter()
 
 
 class BackfillRequestBody(BaseModel):
     symbol: str = Field(min_length=1, max_length=12)
-    interval: str = Field(default="1m", pattern="^(1m|5m|10m|1d)$")
+    interval: str = Field(default="1m", pattern=CHART_INTERVAL_PATTERN)
     start: str | None = None
     end: str | None = None
     mode: str = "default"
+    force: bool = False
 
 
 @router.get("/api/charts/candles")
 def chart_candles(
     symbol: str = Query(default="AAPL", min_length=1, max_length=12),
-    interval: str = Query(default="1m", pattern="^(1m|5m|10m|1d)$"),
+    interval: str = Query(default="1m", pattern=CHART_INTERVAL_PATTERN),
     ma: str = Query(default="5,20,60"),
     limit: int | None = Query(default=None, ge=1, le=MAX_CHART_CANDLE_LIMIT),
     before: str | None = Query(default=None),
@@ -47,13 +50,13 @@ def chart_candles(
 
 @router.post("/api/charts/backfill")
 def chart_backfill(body: BackfillRequestBody) -> dict[str, Any]:
-    return get_query_service().request_backfill(body.symbol, body.interval, start=body.start, end=body.end, mode=body.mode)
+    return get_query_service().request_backfill(body.symbol, body.interval, start=body.start, end=body.end, mode=body.mode, force=body.force)
 
 
 @router.get("/api/charts/backfill/status")
 def chart_backfill_status(
     symbol: str = Query(min_length=1, max_length=12),
-    interval: str = Query(default="1m", pattern="^(1m|5m|10m|1d)$"),
+    interval: str = Query(default="1m", pattern=CHART_INTERVAL_PATTERN),
     request_id: str | None = Query(default=None, alias="requestId"),
 ) -> dict[str, Any]:
     return get_query_service().backfill_status(symbol, interval, request_id=request_id)
@@ -66,6 +69,5 @@ def chart_symbols() -> dict[str, Any]:
     return {
         "source": "alpaca",
         "feed": "configured-market-feed",
-        "isSynthetic": False,
         "symbols": symbol_summaries(),
     }

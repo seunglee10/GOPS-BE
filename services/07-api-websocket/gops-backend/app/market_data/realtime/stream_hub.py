@@ -97,14 +97,14 @@ class SymbolStreamHub:
                 if event:
                     await self._broadcast(symbol, event)
                     continue
-                await self._broadcast_live_fallback(symbol)
+                await self._broadcast_latest_redis_live_event(symbol)
                 await asyncio.sleep(0.25)
         except asyncio.CancelledError:
             return
         finally:
             pubsub.close()
 
-    async def _broadcast_live_fallback(self, symbol: str) -> None:
+    async def _broadcast_latest_redis_live_event(self, symbol: str) -> None:
         live_event = self.provider.redis_provider.live_event(symbol)
         if not live_event:
             return

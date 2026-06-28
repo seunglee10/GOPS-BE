@@ -24,7 +24,7 @@ cat > "${OVERRIDE_FILE}" <<'YAML'
 services:
   gops-backend:
     environment:
-      BACKFILL_EXECUTION_MODE: "sample-dev"
+      BACKFILL_EXECUTION_MODE: "sync-dev"
       BACKFILL_ALLOW_REQUESTED_MODE: "false"
       S3_RAW_PREFIX: "market-data/smoke/raw/alpaca"
       S3_FINAL_PREFIX: "market-data/smoke/final"

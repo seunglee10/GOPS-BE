@@ -10,7 +10,7 @@ GOPS chart UI가 Alpaca market data를 REST snapshot과 WebSocket stream으로 �
 - WebSocket `/ws/charts`는 live update, reconnect gap-fill, control event 전용이다.
 - Chart API는 S3를 직접 읽지 않는다. Redis와 ClickHouse만 serving source로 쓴다.
 - S3는 raw archive와 processed/final replay source이고, ClickHouse `chart_candles`는 serving projection이다.
-- `sample-dev`는 로컬 smoke script의 명시 override에서만 쓴다. 일반 API 요청자가 `mode=sample-dev`를 강제할 수 없다.
+- 로컬 smoke script도 실제 Alpaca historical data를 사용한다. credentials가 없으면 candle을 생성하지 않고 실패한다.
 
 ## Repository Map
 
@@ -139,7 +139,7 @@ Snapshot after completion:
 curl -fsS "http://localhost:8000/api/charts/candles?symbol=AAPL&interval=1m&limit=160"
 ```
 
-`sample-dev` is not a production or normal development default. It is reserved for the local smoke script when Alpaca credentials are unavailable:
+The local smoke script uses the real Alpaca historical path. If Alpaca credentials or upstream data are unavailable, it should fail or show an empty state instead of generating candles:
 
 ```sh
 bash scripts/local/smoke-backfill-missing-data.sh INTC
@@ -150,7 +150,8 @@ bash scripts/local/smoke-backfill-missing-data.sh INTC
 `GET /api/charts/candles`
 
 - Reads Redis recent candles first, then ClickHouse historical candles.
-- Returns `dataStatus`, `backfillStatus`, `canBackfill`, and `message`.
+- Returns `dataStatus`, `backfillStatus`, `canBackfill`, `message`, and `coverage`.
+- `coverage` is the detailed readiness diagnostic. Backfill job success alone must not mark data as ready unless stored candle coverage is sufficient.
 - Does not start long-running backfill by itself.
 
 `POST /api/charts/backfill`
@@ -178,6 +179,7 @@ bash scripts/local/smoke-backfill-missing-data.sh INTC
 - Kubernetes base includes `alpaca-ingestor`, `s3-sink`, `clickhouse-loader`, `backfill-worker`, backend, frontend, and a symbol registry sync job.
 - AWS overlay renders locally; actual `terraform apply`, ECR push, and `kubectl apply` should only be run by the deployment owner.
 - Alpaca keys belong in `.env` locally and Secrets Manager/Kubernetes Secret in AWS.
+- If a local Redis/ClickHouse/MinIO volume already contains rows from older development runs, reset those local volumes before validating data trust. The current runtime no longer marks or creates development-generated candles, so old rows cannot be reliably distinguished after materialization.
 
 ## Verification
 
@@ -198,11 +200,11 @@ git diff --check
 Runtime smoke:
 
 ```sh
-bash scripts/local/smoke-market-data.sh AAPL
+docker compose --profile alpaca up -d --build alpaca-ingestor
 bash scripts/local/smoke-backfill-missing-data.sh INTC
 ```
 
-`smoke-market-data.sh` intentionally publishes local sample Kafka events. It is a pipeline smoke, not a source of production-like market data. Use `docker compose --profile alpaca up -d --build alpaca-ingestor` for real live Alpaca data.
+The local runtime no longer publishes generated market events. If a chart has no Alpaca-backed Redis/ClickHouse data, the UI must show loading, empty, or backfill status honestly instead of drawing generated candles.
 
 ## Removed Legacy Docs
 

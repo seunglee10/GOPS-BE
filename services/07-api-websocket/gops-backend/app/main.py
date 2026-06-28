@@ -8,7 +8,7 @@ from app.routes.charts import chart_candles, chart_symbols, router as charts_rou
 from app.routes.health import health, router as health_router
 from app.routes.llm import agent_chat, chart_proposal, router as llm_router
 from app.routes.streams import chart_stream, router as streams_router
-from app.services.ai_agents import fallback_agent_chat, fallback_chart_proposal, openai_agent_chat, openai_chart_proposal
+from app.services.ai_agents import openai_agent_chat, openai_chart_proposal
 from app.services.alfaka_market_data import configured_symbols, get_market_data_provider, symbol_summaries
 
 
@@ -42,8 +42,6 @@ __all__ = [
     "chart_symbols",
     "configured_symbols",
     "create_app",
-    "fallback_agent_chat",
-    "fallback_chart_proposal",
     "get_market_data_provider",
     "health",
     "openai_agent_chat",

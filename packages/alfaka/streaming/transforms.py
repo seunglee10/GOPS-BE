@@ -26,7 +26,7 @@ def floor_interval(value, minutes):
 
 def normalize_bar(envelope, correction_type="NONE"):
     raw = envelope["raw"]
-    interval = "1d" if envelope["channel"] == "dailyBars" else "1m"
+    interval = "1D" if envelope["channel"] == "dailyBars" else "1m"
     source = {
         "updatedBars": "alpaca.updatedBars",
         "dailyBars": "alpaca.dailyBars",

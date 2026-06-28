@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Query
 from app.market_data.query.service import get_query_service
 
 router = APIRouter()
+CHART_INTERVAL_PATTERN = "^(1m|5m|10m|1D|1W|1M|1d|1w|1mo|1MO|1month)$"
 
 
 @router.get("/api/market/symbols/search")
@@ -48,7 +49,7 @@ def market_symbol_status(symbol: str) -> dict[str, Any]:
 @router.get("/api/agent/context/chart")
 def agent_chart_context(
     symbol: str = Query(default="AAPL", min_length=1, max_length=12),
-    interval: str = Query(default="1m", pattern="^(1m|5m|10m|1d)$"),
+    interval: str = Query(default="1m", pattern=CHART_INTERVAL_PATTERN),
     from_time: str = Query(alias="from"),
     to_time: str = Query(alias="to"),
     include: str = Query(default="volumeProfile,status,daily"),

@@ -4,6 +4,7 @@ import os
 
 from alfaka.common.env import load_dotenv
 from alfaka.storage.clickhouse_loader import ClickHouseHttpClient, candle_to_clickhouse_row
+from alfaka.storage.candle_validation import invalid_candle_reason
 
 
 def main():
@@ -85,10 +86,15 @@ def materialize_s3_processed_objects(client, s3, bucket, keys, source_name="s3-p
 
 def materialize_processed_rows(client, object_path, rows, source_name="s3-processed-final"):
     normalized = []
+    skipped_invalid = 0
     for row in rows:
         if (row.get("eventType") or "CANDLE") != "CANDLE":
             continue
-        normalized.append(normalize_processed_candle_row(row))
+        candle = normalize_processed_candle_row(row)
+        if invalid_candle_reason(candle):
+            skipped_invalid += 1
+            continue
+        normalized.append(candle)
 
     deduped = dedupe_candles(normalized)
     clickhouse_rows = [candle_to_clickhouse_row(row) for row in deduped]
@@ -99,9 +105,9 @@ def materialize_processed_rows(client, object_path, rows, source_name="s3-proces
         "source_name": source_name,
         "object_path": object_path,
         "row_count": len(clickhouse_rows),
-        "note": "S3 processed/final chart candle materialization",
+        "note": f"S3 processed/final chart candle materialization; skipped_invalid={skipped_invalid}",
     }])
-    return {"objectPath": object_path, "rowCount": len(clickhouse_rows)}
+    return {"objectPath": object_path, "rowCount": len(clickhouse_rows), "skippedInvalidRowCount": skipped_invalid}
 
 
 def normalize_processed_candle_row(row):

@@ -48,7 +48,7 @@
       "additionalProperties": true,
       "properties": {
         "symbol": { "type": "string" },
-        "timeframe": { "type": "string", "enum": ["1m", "5m", "10m"] },
+        "timeframe": { "type": "string", "enum": ["1m", "5m", "10m", "1D", "1W", "1M"] },
         "visibleCount": { "type": "number", "minimum": 12, "maximum": 180 },
         "rightOffset": { "type": "number", "minimum": 0 },
         "layer": { "type": "string", "enum": ["candles", "volume", "ma5", "ma20", "ma60"] },

@@ -22,7 +22,7 @@ def pretty(value):
 def main():
     parser = argparse.ArgumentParser(description="Redis 최신 시장 데이터를 확인합니다.")
     parser.add_argument("symbol", nargs="?", default="AAPL", help="확인할 심볼입니다. 예: AAPL")
-    parser.add_argument("--interval", default="1m", choices=["1m", "5m", "10m"], help="확인할 캔들 주기입니다.")
+    parser.add_argument("--interval", default="1m", choices=["1m", "5m", "10m", "1D", "1W", "1M"], help="확인할 캔들 주기입니다.")
     args = parser.parse_args()
 
     load_dotenv()

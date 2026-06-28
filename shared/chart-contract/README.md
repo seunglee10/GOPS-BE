@@ -16,6 +16,8 @@ Contract rules:
 - 사용자 UI와 LLM Agent는 같은 `ChartCommand` type을 사용한다.
 - command payload는 JSON-serializable이어야 한다.
 - command validation을 통과하지 못하면 chart state를 변경하지 않는다.
+- chart interval canonical 값은 `1m`, `5m`, `10m`, `1D`, `1W`, `1M`이다. 외부 입력의 legacy `1d`는 boundary에서 `1D`로 정규화하지만 shared command에는 canonical 값만 기록한다.
+- Candle snapshot readiness uses both top-level `dataStatus` and detailed `coverage`. A backfill request status can be `succeeded` while `coverage.state` remains `partial` or `empty`; stored candle coverage is the source of truth.
 - proposal 하나는 chart-local history에서 하나의 undo/redo 단위가 된다.
 - layout+chart mixed proposal은 Workspace-level grouped history가 준비되기 전까지 제외한다.
 - Drawing/annotation command는 pixel coordinate가 아니라 data-coordinate anchor를 사용한다.

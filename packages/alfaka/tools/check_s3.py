@@ -23,7 +23,7 @@ def print_objects(s3, bucket, prefix):
 def main():
     parser = argparse.ArgumentParser(description="S3 시장 데이터 저장 위치를 확인합니다.")
     parser.add_argument("symbol", nargs="?", default="AAPL", help="확인할 심볼입니다. 예: AAPL")
-    parser.add_argument("--interval", default="1m", choices=["1m", "5m", "10m"], help="Candle 주기입니다.")
+    parser.add_argument("--interval", default="1m", choices=["1m", "5m", "10m", "1D", "1W", "1M"], help="Candle 주기입니다.")
     args = parser.parse_args()
 
     load_dotenv()

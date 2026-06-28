@@ -1,10 +1,9 @@
 import json
 import os
-from datetime import timedelta
 
 from alfaka.common.env import load_dotenv, utc_now_iso
 from alfaka.common.market_messages import source_event_id
-from alfaka.backfill.status import parse_time, to_iso
+from alfaka.serving.intervals import is_derived_interval, normalize_chart_interval, source_interval_for
 from alfaka.serving.moving_average import attach_moving_averages
 from alfaka.storage.clickhouse_loader import ClickHouseHttpClient
 from alfaka.storage.processed_s3_sink import flush_buffer
@@ -57,25 +56,32 @@ class BackfillRunner:
             raise BackfillUnavailable("S3_BUCKET is required for backfill.")
 
         symbol = record["symbol"]
-        interval = record["interval"]
+        interval = normalize_chart_interval(record["interval"])
         start = record["range"]["start"]
         end = record["range"]["end"]
         mode = record.get("mode") or os.getenv("BACKFILL_EXECUTION_MODE", "queue")
         feed = os.getenv("HISTORICAL_FEED", os.getenv("ALPACA_FEED", "sip"))
 
-        if interval != "1m":
-            raise BackfillUnavailable("Backfill v1 supports 1m historical bars.")
+        if is_derived_interval(interval):
+            source_interval = source_interval_for(interval)
+            raise BackfillUnavailable(
+                f"Backfill for {interval} is derived from {source_interval}; request {source_interval} backfill first."
+            )
+        if interval not in {"1m", "1D"}:
+            raise BackfillUnavailable("Backfill v1 supports direct 1m and 1D historical bars.")
 
-        raw_bars = build_sample_raw_bars(symbol, start, end) if mode == "sample-dev" else fetch_alpaca_bars(symbol, start, end, feed)
+        timeframe = "1Day" if interval == "1D" else "1Min"
+        raw_bars = fetch_alpaca_bars(symbol, start, end, feed, timeframe)
         if not raw_bars:
             raise BackfillUnavailable("Historical provider returned no bars.")
 
         raw_prefix = os.getenv("S3_RAW_PREFIX", os.getenv("S3_PREFIX", "market-data/raw/alpaca"))
         final_prefix = os.getenv("S3_FINAL_PREFIX", os.getenv("S3_PROCESSED_PREFIX", "market-data/final"))
         output_format = os.getenv("S3_PROCESSED_FORMAT", "jsonl").lower()
+        raw_kind = "daily-bars" if interval == "1D" else "bars"
 
-        raw_count = upload_raw_bars_to_s3(self.s3, bucket, raw_prefix, "bars", feed, start, end, 1, {symbol: raw_bars})
-        processed = raw_bars_to_processed_candles(symbol, raw_bars, feed=feed)
+        raw_count = upload_raw_bars_to_s3(self.s3, bucket, raw_prefix, raw_kind, feed, start, end, 1, {symbol: raw_bars})
+        processed = raw_bars_to_processed_candles(symbol, raw_bars, feed=feed, interval=interval)
         partition_key = f"{final_prefix}/candles/interval={interval}/symbol={symbol}/backfill_request={record['requestId'].replace(':', '_')}"
         processed_key = flush_buffer(self.s3, bucket, partition_key, processed, output_format)
         materialized = materialize_s3_processed_objects(self.clickhouse_client, self.s3, bucket, [processed_key], source_name="backfill-worker")
@@ -88,7 +94,7 @@ class BackfillRunner:
         }
 
 
-def fetch_alpaca_bars(symbol, start, end, feed):
+def fetch_alpaca_bars(symbol, start, end, feed, timeframe="1Min"):
     import requests
     from alfaka.common.secrets import load_alpaca_credentials
 
@@ -103,7 +109,7 @@ def fetch_alpaca_bars(symbol, start, end, feed):
         "start": start,
         "end": end,
         "feed": feed,
-        "timeframe": os.getenv("HISTORICAL_TIMEFRAME", "1Min"),
+        "timeframe": timeframe,
         "limit": os.getenv("HISTORICAL_LIMIT", "10000"),
         "sort": "asc",
     }
@@ -120,46 +126,23 @@ def fetch_alpaca_bars(symbol, start, end, feed):
         params["page_token"] = page_token
 
 
-def build_sample_raw_bars(symbol, start, end, count=12):
-    start_dt = parse_time(start)
-    end_dt = parse_time(end)
-    total_seconds = max(60, int((end_dt - start_dt).total_seconds()))
-    step_seconds = max(60, total_seconds // max(1, count))
-    rows = []
-    base = 100 + (sum(ord(char) for char in symbol) % 40)
-    for index in range(count):
-        timestamp = start_dt + timedelta(seconds=step_seconds * index)
-        if timestamp > end_dt:
-            break
-        open_price = round(base + index * 0.25, 4)
-        close_price = round(open_price + 0.12, 4)
-        rows.append({
-            "t": to_iso(timestamp),
-            "o": open_price,
-            "h": round(close_price + 0.18, 4),
-            "l": round(open_price - 0.14, 4),
-            "c": close_price,
-            "v": 1000 + index * 17,
-            "n": 10 + index,
-            "vw": round((open_price + close_price) / 2, 4),
-        })
-    return rows
-
-
 def upload_raw_bars_to_s3(s3, bucket, prefix, data_kind, feed, start, end, page_number, rows_by_symbol):
     from alfaka.storage.raw_s3_archive import upload_raw_page_to_s3
 
     return upload_raw_page_to_s3(s3, bucket, prefix, data_kind, feed, start, end, page_number, rows_by_symbol)
 
 
-def raw_bar_to_processed_candle(symbol, raw_bar, feed="sip", received_at=None):
+def raw_bar_to_processed_candle(symbol, raw_bar, feed="sip", received_at=None, interval="1m"):
+    interval = normalize_chart_interval(interval)
     received_at = received_at or utc_now_iso()
-    message = {"T": "b", "S": symbol, **raw_bar}
-    event_id = source_event_id(message, feed, "bars", symbol, received_at)
+    channel = "dailyBars" if interval == "1D" else "bars"
+    message_type = "d" if interval == "1D" else "b"
+    message = {"T": message_type, "S": symbol, **raw_bar}
+    event_id = source_event_id(message, feed, channel, symbol, received_at)
     envelope = {
         "source": "alpaca",
         "feed": feed,
-        "channel": "bars",
+        "channel": channel,
         "symbol": symbol,
         "eventTime": raw_bar.get("t"),
         "receivedAt": received_at,
@@ -167,12 +150,12 @@ def raw_bar_to_processed_candle(symbol, raw_bar, feed="sip", received_at=None):
         "raw": raw_bar,
     }
     candle = normalize_bar(envelope)
-    candle["source"] = "alpaca.bars"
+    candle["interval"] = interval
     return candle
 
 
-def raw_bars_to_processed_candles(symbol, raw_bars, feed="sip"):
-    return attach_moving_averages([raw_bar_to_processed_candle(symbol, row, feed=feed) for row in raw_bars])
+def raw_bars_to_processed_candles(symbol, raw_bars, feed="sip", interval="1m"):
+    return attach_moving_averages([raw_bar_to_processed_candle(symbol, row, feed=feed, interval=interval) for row in raw_bars])
 
 
 def main():

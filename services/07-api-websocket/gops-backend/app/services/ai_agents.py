@@ -1,68 +1,17 @@
 import json
 import urllib.error
 import urllib.request
-from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import HTTPException
 
-from app.contracts.chart import AgentChatRequest, chart_command_schema, filled_command_payload
+from app.contracts.chart import AgentChatRequest, chart_command_schema
 from app.core.config import read_dotenv_value
 from app.services.alfaka_market_data import configured_symbols
+from alfaka.serving.intervals import CHART_INTERVALS, normalize_chart_interval
 
 ANALYSIS_KEYWORDS = ("analyze", "analysis", "inspect", "분석", "해석", "살펴")
-ANALYSIS_TIMEFRAMES = ("1m", "5m", "10m")
-
-
-def fallback_chart_proposal(context: dict[str, Any]) -> dict[str, Any]:
-    chart_document = context.get("chartDocument") if isinstance(context.get("chartDocument"), dict) else {}
-    visible_summary = context.get("visibleSummary") if isinstance(context.get("visibleSummary"), dict) else {}
-    symbol = chart_document.get("symbol") if isinstance(chart_document.get("symbol"), str) else "AAPL"
-    comparison_symbol = default_comparison_symbol(symbol)
-    last_price = _read_float(visible_summary.get("lastPrice")) or _read_float(visible_summary.get("high")) or 100.0
-    anchor = {
-        "timestamp": "2026-06-25T15:30:00Z",
-        "price": last_price,
-        "paneId": "price",
-        "symbol": symbol,
-        "logicalIndex": 120,
-    }
-
-    return {
-        "id": f"chart-proposal-{datetime.now(UTC).timestamp():.0f}",
-        "title": "Agent 01 chart analysis preview",
-        "summary": f"Preview a key price level and {comparison_symbol} comparison.",
-        "rationale": "Drawing/comparison suggestions stay preview-first while ordinary viewport and MA commands can remain chart commands.",
-        "createdByAgentId": "agent-01",
-        "insights": [
-            "Uses data-coordinate drawing anchors only.",
-            "Keeps layout and trading state untouched.",
-        ],
-        "commands": [
-            {
-                "type": "chart.drawing.add",
-                "payload": {
-                    "drawingType": "horizontalLine",
-                    "anchors": [anchor],
-                    "style": {"color": "#2563eb", "lineWidth": 1.5},
-                    "label": "Agent level",
-                },
-            },
-            {
-                "type": "chart.comparison.add",
-                "payload": {
-                    "comparison": {
-                        "id": f"comparison-{comparison_symbol.lower()}-agent-preview",
-                        "symbol": comparison_symbol,
-                        "label": comparison_symbol,
-                        "scaleMode": "percent",
-                        "base": {"mode": "visibleRangeStart"},
-                        "style": {"color": comparison_color(comparison_symbol), "lineWidth": 1.5},
-                    },
-                },
-            },
-        ],
-    }
+ANALYSIS_TIMEFRAMES = CHART_INTERVALS
 
 
 def _read_float(value: Any) -> float | None:
@@ -72,157 +21,16 @@ def _read_float(value: Any) -> float | None:
         return None
 
 
-def normalize_requested_symbol(text: str, current_symbol: str | None = None) -> str | None:
-    upper = text.upper()
-    current = current_symbol.upper() if isinstance(current_symbol, str) else None
-    for symbol in configured_symbols():
-        if symbol in upper and symbol != current:
-            return symbol
-    return None
-
-
-def default_comparison_symbol(current_symbol: str | None) -> str:
-    current = current_symbol.upper() if isinstance(current_symbol, str) else ""
-    configured = configured_symbols()
-    for symbol in configured:
-        if symbol != current:
-            return symbol
-    return configured[0]
-
-
-def comparison_color(symbol: str) -> str:
-    return {
-        "AAPL": "#2563eb",
-        "MSFT": "#7c3aed",
-        "NVDA": "#16a34a",
-        "TSLA": "#dc2626",
-        "SPY": "#0f766e",
-    }.get(symbol, "#111111")
-
-
-def fallback_agent_chat(request: AgentChatRequest) -> dict[str, Any]:
-    latest = request.messages[-1].content if request.messages else ""
-    upper = latest.upper()
-    analysis_request = is_chart_analysis_request(request)
-    wants_comparison = any(word in latest.lower() for word in ["compare", "비교", "spy", "겹쳐", "오버레이"])
-    commands: list[dict[str, Any]] = []
-    reply_bits: list[str] = []
-
-    if not wants_comparison:
-        for symbol in configured_symbols():
-            if symbol in upper:
-                commands.append({
-                    "type": "chart.symbol.set",
-                    "payload": filled_command_payload(symbol=symbol),
-                })
-                reply_bits.append(f"symbol을 {symbol}로 전환")
-                break
-
-    for timeframe in ["10m", "5m", "1m"]:
-        if timeframe in latest:
-            commands.append({
-                "type": "chart.timeframe.set",
-                "payload": filled_command_payload(timeframe=timeframe),
-            })
-            reply_bits.append(f"timeframe을 {timeframe}로 변경")
-            break
-
-    if any(word in latest.lower() for word in ["zoom", "확대", "크게", "focus"]):
-        commands.append({
-            "type": "chart.viewport.set",
-            "payload": filled_command_payload(visible_count=48, right_offset=0),
-        })
-        reply_bits.append("최근 구간을 확대")
-    elif any(word in latest.lower() for word in ["wide", "전체", "축소"]):
-        commands.append({
-            "type": "chart.viewport.set",
-            "payload": filled_command_payload(visible_count=120, right_offset=0),
-        })
-        reply_bits.append("더 넓은 구간 표시")
-
-    if "MA20" in upper or "20" in latest:
-        commands.append({
-            "type": "chart.layer.visibility.set",
-            "payload": filled_command_payload(layer="ma20", visible=True),
-        })
-        reply_bits.append("MA20 표시")
-
-    chart_context = request.context.get("chartDocument") if isinstance(request.context.get("chartDocument"), dict) else {}
-    visible_summary = request.context.get("visibleSummary") if isinstance(request.context.get("visibleSummary"), dict) else {}
-    symbol = chart_context.get("symbol") if isinstance(chart_context.get("symbol"), str) else "AAPL"
-    last_price = _read_float(visible_summary.get("lastPrice")) or _read_float(visible_summary.get("high")) or 100.0
-    anchor = {
-        "timestamp": "2026-06-25T15:30:00Z",
-        "price": last_price,
-        "paneId": "price",
-        "symbol": symbol,
-        "logicalIndex": 120,
-    }
-
-    if any(word in latest.lower() for word in ["line", "선", "지지", "저항", "level"]):
-        commands.append({
-            "type": "chart.drawing.add",
-            "payload": {
-                "drawingType": "horizontalLine",
-                "anchors": [anchor],
-                "style": {"color": "#2563eb", "lineWidth": 1.5},
-                "label": "Agent level",
-            },
-        })
-        reply_bits.append("수평 가격선 preview")
-
-    if analysis_request and not commands:
-        commands.append({
-            "type": "chart.drawing.add",
-            "payload": {
-                "drawingType": "horizontalLine",
-                "anchors": [anchor],
-                "style": {"color": "#2563eb", "lineWidth": 1.5},
-                "label": "Analysis reference",
-            },
-        })
-        reply_bits.append("분석 기준선 preview")
-
-    if wants_comparison:
-        comparison_symbol = normalize_requested_symbol(latest, symbol) or default_comparison_symbol(symbol)
-        commands.append({
-            "type": "chart.comparison.add",
-            "payload": {
-                "comparison": {
-                    "id": f"comparison-{comparison_symbol.lower()}-chat-preview",
-                    "symbol": comparison_symbol,
-                    "label": comparison_symbol,
-                    "scaleMode": "percent",
-                    "base": {"mode": "visibleRangeStart"},
-                    "style": {"color": comparison_color(comparison_symbol), "lineWidth": 1.5},
-                },
-            },
-        })
-        reply_bits.append(f"{comparison_symbol} comparison preview")
-
-    reply = "요청을 차트 명령으로 해석했습니다."
-    if reply_bits:
-        reply = "요청을 반영해 " + ", ".join(reply_bits) + " 명령을 준비했습니다."
-
-    return {
-        "reply": reply,
-        "title": "Agent 01 chart action",
-        "summary": reply,
-        "rationale": "Agent 01 maps natural-language chart requests to the same chart command runtime used by UI controls.",
-        "createdByAgentId": "agent-01",
-        "insights": ["Commands are chart-scoped.", "Layout and trading state are untouched."],
-        "commands": commands,
-    }
-
-
 def openai_agent_chat(request: AgentChatRequest) -> dict[str, Any]:
     if not read_dotenv_value("OPENAI_API_KEY"):
         raise HTTPException(status_code=503, detail="OpenAI API key is not configured.")
 
     model = read_dotenv_value("OPENAI_MODEL") or "gpt-5.2"
     analysis_request = is_chart_analysis_request(request)
+    include_live_status = is_live_feed_status_request(request)
+    chart_context = chart_context_for_agent_prompt(request.context, include_live_status=include_live_status)
     command_min_items = 1 if analysis_request else 0
-    market_analysis_context = build_agent_market_analysis_context(request.context)
+    market_analysis_context = build_agent_market_analysis_context(chart_context)
     schema = {
         "type": "object",
         "additionalProperties": False,
@@ -249,6 +57,10 @@ def openai_agent_chat(request: AgentChatRequest) -> dict[str, Any]:
                     "chart.viewport.set or chart.layer.visibility.set command and explain why. "
                     "When your answer mentions a price level, high, low, trend, comparison, moving average, or area to watch, "
                     "include a matching chart command using data-coordinate anchors from suggestedAnchors where possible. "
+                    "Treat chartContext.dataStatus as historical chart-data readiness and chartContext.streamStatus as live-feed health only. "
+                    "If chartContext.dataStatus.candleCount is greater than zero or chartContext.dataStatus.state is ready/partial, "
+                    "do not say the chart cannot be analyzed just because streamStatus is stale or error. "
+                    "Mention live-feed problems only when the user asks about live streaming or when no chart candles are available. "
                     "Do not invent market data, pixel coordinates, unsupported symbols, or unsupported commands. "
                     f"Comparison symbols must be one of: {', '.join(configured_symbols())}. "
                     "Do not include trading, account, order, or layout commands."
@@ -259,7 +71,7 @@ def openai_agent_chat(request: AgentChatRequest) -> dict[str, Any]:
             "content": json.dumps({
                 "agentIds": request.agentIds,
                 "isChartAnalysisRequest": analysis_request,
-                "chartContext": request.context,
+                "chartContext": chart_context,
                 "marketAnalysisContext": market_analysis_context,
                 "conversation": [message.model_dump() for message in request.messages[-8:]],
             }, ensure_ascii=True),
@@ -377,17 +189,47 @@ def is_chart_analysis_request(request: AgentChatRequest) -> bool:
     return any(keyword in normalized for keyword in ANALYSIS_KEYWORDS)
 
 
+def is_live_feed_status_request(request: AgentChatRequest) -> bool:
+    latest = request.messages[-1].content if request.messages else ""
+    normalized = latest.lower()
+    return any(keyword in normalized for keyword in ("stream", "websocket", "live feed", "실시간", "스트림", "웹소켓", "라이브", "연결 상태"))
+
+
+def chart_context_for_agent_prompt(context: dict[str, Any], *, include_live_status: bool) -> dict[str, Any]:
+    if include_live_status:
+        return context
+    sanitized = dict(context)
+    sanitized.pop("streamStatus", None)
+    return sanitized
+
+
 def build_agent_market_analysis_context(context: dict[str, Any]) -> dict[str, Any]:
     chart_document = context.get("chartDocument") if isinstance(context.get("chartDocument"), dict) else {}
     visible_summary = context.get("visibleSummary") if isinstance(context.get("visibleSummary"), dict) else {}
+    data_status = context.get("dataStatus") if isinstance(context.get("dataStatus"), dict) else {}
     raw_symbol = chart_document.get("symbol") if isinstance(chart_document.get("symbol"), str) else "AAPL"
     symbols = configured_symbols()
     symbol = raw_symbol.upper() if raw_symbol.upper() in symbols else symbols[0]
-    active_timeframe = chart_document.get("timeframe") if isinstance(chart_document.get("timeframe"), str) else "1m"
+    try:
+        active_timeframe = normalize_chart_interval(chart_document.get("timeframe") if isinstance(chart_document.get("timeframe"), str) else "1m")
+    except ValueError:
+        active_timeframe = "1m"
     last_price = _read_float(visible_summary.get("lastPrice")) or _read_float(visible_summary.get("high"))
+    candle_count = data_status.get("candleCount") if isinstance(data_status.get("candleCount"), int) else 0
+    data_state = data_status.get("state") if isinstance(data_status.get("state"), str) else "unknown"
+    stream_status = context.get("streamStatus") if isinstance(context.get("streamStatus"), str) else None
+    data_readiness = {
+        "state": data_state,
+        "candleCount": candle_count,
+        "hasUsableCandles": candle_count > 0 or data_state in {"ready", "partial"},
+        "backfillStatus": data_status.get("backfillStatus") if isinstance(data_status.get("backfillStatus"), str) else None,
+    }
+    if stream_status:
+        data_readiness["liveFeedStatus"] = stream_status
 
     return {
         "symbol": symbol,
+        "dataReadiness": data_readiness,
         "activeView": {
             "timeframe": active_timeframe,
             "viewport": chart_document.get("viewport") if isinstance(chart_document.get("viewport"), dict) else {},

@@ -7,7 +7,7 @@ import re
 
 from alfaka.common.env import load_dotenv
 from alfaka.serving.dto import snapshot
-from alfaka.serving.intervals import resolve_candle_limit
+from alfaka.serving.intervals import normalize_chart_interval, resolve_candle_limit
 from alfaka.serving.moving_average import attach_moving_averages
 
 
@@ -20,11 +20,19 @@ class ClickHouseMarketDataProvider:
         self.password = password or os.getenv("CLICKHOUSE_PASSWORD", "alfaka")
 
     def candles(self, symbol, interval, limit=None, before=None, from_time=None, to_time=None):
+        interval = normalize_chart_interval(interval)
         limit = resolve_candle_limit(interval, limit)
         if interval in {"5m", "10m"}:
             return self.aggregated_minute_candles(symbol, interval, limit, before=before, from_time=from_time, to_time=to_time)
+        if interval == "1D":
+            return self.daily_candles(symbol, interval, limit, before=before, from_time=from_time, to_time=to_time)
+        if interval in {"1W", "1M"}:
+            return self.aggregated_daily_candles(symbol, interval, limit, before=before, from_time=from_time, to_time=to_time)
         time_filter = ""
-        params = {"symbol": symbol, "interval": interval, "limit": int(limit)}
+        params = {"symbol": symbol, "limit": int(limit)}
+        interval_filter = "interval IN ('1D', '1d')" if interval == "1D" else "interval = {interval:String}"
+        if interval != "1D":
+            params["interval"] = interval
         if from_time:
             time_filter += "\n          AND event_time >= parseDateTime64BestEffort({fromTime:String})"
             params["fromTime"] = from_time
@@ -53,7 +61,8 @@ class ClickHouseMarketDataProvider:
           source_event_id AS sourceEventId
         FROM {self.table('chart_candles')}
         WHERE symbol = {{symbol:String}}
-          AND interval = {{interval:String}}
+          AND {interval_filter}
+          AND toDayOfWeek(event_time) BETWEEN 1 AND 5
           {time_filter}
         ORDER BY event_time DESC
         LIMIT {{limit:UInt32}}
@@ -62,7 +71,65 @@ class ClickHouseMarketDataProvider:
         rows = self.query_json_each_row(query, params)
         return list(reversed(rows))
 
+    def daily_candles(self, symbol, interval="1D", limit=None, before=None, from_time=None, to_time=None):
+        interval = normalize_chart_interval(interval)
+        limit = resolve_candle_limit(interval, limit)
+        time_filter = ""
+        params = {"symbol": symbol, "limit": int(limit)}
+        if from_time:
+            time_filter += "\n          AND event_time >= parseDateTime64BestEffort({fromTime:String})"
+            params["fromTime"] = from_time
+        if to_time:
+            time_filter += "\n          AND event_time <= parseDateTime64BestEffort({toTime:String})"
+            params["toTime"] = to_time
+        if before:
+            time_filter += "\n          AND event_time < parseDateTime64BestEffort({before:String})"
+            params["before"] = before
+
+        query = f"""
+        SELECT
+          formatDateTime(bucket, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS timestamp,
+          argMin(open, event_time) AS open,
+          max(high) AS high,
+          min(low) AS low,
+          argMax(close, event_time) AS close,
+          sum(volume) AS volume,
+          min(is_closed) AS isClosed,
+          'NONE' AS correctionType,
+          anyLast(source) AS source,
+          anyLast(feed) AS feed,
+          concat('agg/1D/', symbol, '/', formatDateTime(bucket, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC')) AS sourceEventId
+        FROM (
+          SELECT
+            toStartOfDay(event_time) AS bucket,
+            event_time,
+            symbol,
+            open,
+            high,
+            low,
+            close,
+            volume,
+            is_closed,
+            source,
+            feed
+          FROM {self.table('chart_candles')}
+          WHERE symbol = {{symbol:String}}
+            AND interval IN ('1D', '1d')
+            AND toDayOfWeek(event_time) BETWEEN 1 AND 5
+            {time_filter}
+        )
+        GROUP BY symbol, bucket
+        ORDER BY bucket DESC
+        LIMIT {{limit:UInt32}}
+        FORMAT JSONEachRow
+        """
+        rows = self.query_json_each_row(query, params)
+        for row in rows:
+            row["interval"] = "1D"
+        return attach_moving_averages(list(reversed(rows)))
+
     def aggregated_minute_candles(self, symbol, interval, limit=None, before=None, from_time=None, to_time=None):
+        interval = normalize_chart_interval(interval)
         limit = resolve_candle_limit(interval, limit)
         bucket_minutes = {"5m": 5, "10m": 10}[interval]
         time_filter = ""
@@ -105,6 +172,7 @@ class ClickHouseMarketDataProvider:
           FROM {self.table('chart_candles')}
           WHERE symbol = {{symbol:String}}
             AND interval = '1m'
+            AND toDayOfWeek(event_time) BETWEEN 1 AND 5
             {time_filter}
         )
         GROUP BY symbol, bucket
@@ -115,10 +183,76 @@ class ClickHouseMarketDataProvider:
         rows = self.query_json_each_row(query, params)
         for row in rows:
             row["interval"] = interval
-        return list(reversed(rows))
+        return attach_moving_averages(list(reversed(rows)))
+
+    def aggregated_daily_candles(self, symbol, interval, limit=None, before=None, from_time=None, to_time=None):
+        # V1 serves higher timeframes as query-time aggregation from stored daily candles.
+        # The long-term contract is to materialize these interval candles into chart_candles.
+        interval = normalize_chart_interval(interval)
+        limit = resolve_candle_limit(interval, limit)
+        bucket_expr = "toMonday(event_time)" if interval == "1W" else "toStartOfMonth(event_time)"
+        time_filter = ""
+        params = {"symbol": symbol, "limit": int(limit)}
+        if from_time:
+            time_filter += "\n          AND event_time >= parseDateTime64BestEffort({fromTime:String})"
+            params["fromTime"] = from_time
+        if to_time:
+            time_filter += "\n          AND event_time <= parseDateTime64BestEffort({toTime:String})"
+            params["toTime"] = to_time
+        if before:
+            time_filter += "\n          AND event_time < parseDateTime64BestEffort({before:String})"
+            params["before"] = before
+
+        query = f"""
+        SELECT
+          formatDateTime(bucket, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS timestamp,
+          argMin(open, event_time) AS open,
+          max(high) AS high,
+          min(low) AS low,
+          argMax(close, event_time) AS close,
+          sum(volume) AS volume,
+          1 AS isClosed,
+          'NONE' AS correctionType,
+          anyLast(source) AS source,
+          anyLast(feed) AS feed,
+          concat('agg/{interval}/', symbol, '/', formatDateTime(bucket, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC')) AS sourceEventId
+        FROM (
+          SELECT
+            {bucket_expr} AS bucket,
+            event_time,
+            symbol,
+            open,
+            high,
+            low,
+            close,
+            volume,
+            source,
+            feed
+          FROM {self.table('chart_candles')}
+          WHERE symbol = {{symbol:String}}
+            AND interval IN ('1D', '1d')
+            AND toDayOfWeek(event_time) BETWEEN 1 AND 5
+            {time_filter}
+        )
+        GROUP BY symbol, bucket
+        ORDER BY bucket DESC
+        LIMIT {{limit:UInt32}}
+        FORMAT JSONEachRow
+        """
+        rows = self.query_json_each_row(query, params)
+        for row in rows:
+            row["interval"] = interval
+        return attach_moving_averages(list(reversed(rows)))
 
     def candles_since(self, symbol, interval, timestamp, limit=500, include_from=False):
+        interval = normalize_chart_interval(interval)
+        if interval in {"5m", "10m", "1W", "1M"}:
+            return self.candles(symbol, interval, limit, from_time=timestamp)
         operator = ">=" if include_from else ">"
+        interval_filter = "interval IN ('1D', '1d')" if interval == "1D" else "interval = {interval:String}"
+        params = {"symbol": symbol, "timestamp": timestamp, "limit": int(limit)}
+        if interval != "1D":
+            params["interval"] = interval
         query = f"""
         SELECT
           formatDateTime(event_time, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS timestamp,
@@ -137,39 +271,53 @@ class ClickHouseMarketDataProvider:
           source_event_id AS sourceEventId
         FROM {self.table('chart_candles')}
         WHERE symbol = {{symbol:String}}
-          AND interval = {{interval:String}}
+          AND {interval_filter}
+          AND toDayOfWeek(event_time) BETWEEN 1 AND 5
           AND event_time {operator} parseDateTime64BestEffort({{timestamp:String}})
         ORDER BY event_time ASC, source_event_id ASC
         LIMIT {{limit:UInt32}}
         FORMAT JSONEachRow
         """
-        return self.query_json_each_row(query, {"symbol": symbol, "interval": interval, "timestamp": timestamp, "limit": int(limit)})
+        return self.query_json_each_row(query, params)
 
     def candle_snapshot(self, symbol, interval, limit=None):
+        interval = normalize_chart_interval(interval)
         candles = attach_moving_averages(self.candles(symbol, interval, limit))
         feed = first_value(candles, "feed", "sip")
         source = first_value(candles, "source", "alpaca")
         return snapshot(symbol=symbol, interval=interval, candles=candles, source=source, feed=feed)
 
     def candle_coverage(self, symbol, interval):
-        stored_interval = "1m" if interval in {"5m", "10m"} else interval
+        interval = normalize_chart_interval(interval)
+        stored_interval = "1m" if interval in {"5m", "10m"} else "1D" if interval in {"1W", "1M"} else interval
+        interval_filter = "interval IN ('1D', '1d')" if stored_interval == "1D" else "interval = {interval:String}"
+        params = {"symbol": symbol}
+        if stored_interval != "1D":
+            params["interval"] = stored_interval
+        if stored_interval == "1D":
+            row_count_expr = "uniqExactIf(toDate(event_time), toDayOfWeek(event_time) BETWEEN 1 AND 5)"
+        else:
+            row_count_expr = "countIf(toDayOfWeek(event_time) BETWEEN 1 AND 5)"
+
         query = f"""
         SELECT
-          count() AS rowCount,
-          formatDateTime(min(event_time), '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS availableFrom,
-          formatDateTime(max(event_time), '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS availableTo
+          {row_count_expr} AS rowCount,
+          countIf(toDayOfWeek(event_time) NOT BETWEEN 1 AND 5) AS invalidRowCount,
+          formatDateTime(minIf(event_time, toDayOfWeek(event_time) BETWEEN 1 AND 5), '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS availableFrom,
+          formatDateTime(maxIf(event_time, toDayOfWeek(event_time) BETWEEN 1 AND 5), '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS availableTo
         FROM {self.table('chart_candles')}
         WHERE symbol = {{symbol:String}}
-          AND interval = {{interval:String}}
+          AND {interval_filter}
         FORMAT JSONEachRow
         """
-        rows = self.query_json_each_row(query, {"symbol": symbol, "interval": stored_interval})
+        rows = self.query_json_each_row(query, params)
         row = rows[0] if rows else {}
         count = int(row.get("rowCount") or 0)
         if count <= 0:
-            return {"rowCount": 0, "availableFrom": None, "availableTo": None}
+            return {"rowCount": 0, "invalidRowCount": int(row.get("invalidRowCount") or 0), "availableFrom": None, "availableTo": None}
         return {
             "rowCount": count,
+            "invalidRowCount": int(row.get("invalidRowCount") or 0),
             "availableFrom": row.get("availableFrom"),
             "availableTo": row.get("availableTo"),
         }

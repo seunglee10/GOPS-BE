@@ -45,7 +45,6 @@ def snapshot(
         "interval": interval,
         "source": source,
         "feed": feed,
-        "isSynthetic": False,
         "snapshotCursor": cursor_for(symbol, interval, last_candle) if candles else None,
         "dataStatus": resolved_data_status,
         "backfillStatus": backfill_status,
@@ -66,7 +65,6 @@ def websocket_event(event_type, symbol, interval, candle, source="alpaca", feed=
         "interval": interval,
         "source": source,
         "feed": feed,
-        "isSynthetic": False,
         "data": candle_to_gops(candle),
     }
 
@@ -83,7 +81,6 @@ def market_status_event(status):
         "interval": interval,
         "source": status.get("source", "alpaca"),
         "feed": status.get("feed") or "unknown",
-        "isSynthetic": False,
         "data": status,
     }
 
@@ -99,7 +96,6 @@ def volume_profile_event(symbol, profile_bin):
         "interval": interval,
         "source": profile_bin.get("source", "alpaca"),
         "feed": profile_bin.get("feed") or "unknown",
-        "isSynthetic": False,
         "data": profile_bin,
     }
 

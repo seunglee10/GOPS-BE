@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 
 from alfaka.common.env import load_dotenv, parse_csv
 from alfaka.common.kafka_io import create_json_consumer
+from alfaka.storage.candle_validation import invalid_candle_reason
 
 
 def main():
@@ -72,6 +73,14 @@ def load_payload(client, payload, load_trades=False):
         return
 
     if event_type == "CANDLE" and payload.get("isClosed", True):
+        reason = invalid_candle_reason(payload)
+        if reason:
+            print(
+                f"ClickHouse candle 적재 제외: symbol={payload.get('symbol', 'UNKNOWN')} "
+                f"interval={payload.get('interval', 'unknown')} reason={reason}",
+                flush=True,
+            )
+            return
         row = candle_to_clickhouse_row(payload)
         client.insert_json_each_row("chart_candles", [row])
         print(f"ClickHouse candle 적재: symbol={row['symbol']} interval={row['interval']} time={row['event_time']}", flush=True)

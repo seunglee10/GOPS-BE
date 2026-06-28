@@ -9,7 +9,7 @@ import redis
 from alfaka.common.env import load_dotenv
 from alfaka.common.redis_keys import RedisKeyBuilder
 from alfaka.serving.dto import snapshot, websocket_event
-from alfaka.serving.intervals import resolve_candle_limit
+from alfaka.serving.intervals import normalize_chart_interval, resolve_candle_limit
 from alfaka.serving.moving_average import attach_moving_averages
 
 
@@ -27,12 +27,14 @@ class RedisMarketDataProvider:
         return json.loads(value) if value else None
 
     def recent_candles(self, symbol, interval, limit=None):
+        interval = normalize_chart_interval(interval)
         limit = resolve_candle_limit(interval, limit)
         rows = self.redis.zrevrange(self.keys.recent_candles(symbol, interval), 0, max(0, limit - 1))
         candles = [json.loads(row) for row in reversed(rows)]
         return candles
 
     def candle_snapshot(self, symbol, interval, limit=None):
+        interval = normalize_chart_interval(interval)
         candles = attach_moving_averages(self.recent_candles(symbol, interval, limit))
         return snapshot(symbol=symbol, interval=interval, candles=candles)
 
@@ -43,6 +45,7 @@ class RedisMarketDataProvider:
         return websocket_event("LIVE_CANDLE_UPDATE", symbol, "1m", candle)
 
     def closed_event(self, symbol, interval):
+        interval = normalize_chart_interval(interval)
         value = self.redis.get(self.keys.latest_candle(symbol, interval))
         if not value:
             return None
