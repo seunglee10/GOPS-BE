@@ -1,4 +1,4 @@
-# 역할: AWS에 바로 붙는 공통 리소스 ECR/S3/Secret/IRSA를 만듭니다.
+# 역할: AWS에 바로 붙는 공통 리소스 ECR/S3/Secret/IRSA를 준비합니다.
 # 사용: EKS, MSK, Redis가 준비된 뒤 이 foundation을 적용합니다.
 # 주의: MSK/Flink/Redis 서버 자체 생성은 별도 네트워크/운영 모듈에서 다룹니다.
 data "aws_caller_identity" "current" {}
@@ -24,13 +24,44 @@ resource "aws_ecr_repository" "worker" {
   tags = local.common_tags
 }
 
+resource "aws_ecr_repository" "gops_backend" {
+  name                 = "${local.name_prefix}-gops-backend"
+  image_tag_mutability = "MUTABLE"
+  force_delete         = false
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+
+  tags = local.common_tags
+}
+
+resource "aws_ecr_repository" "gops_frontend" {
+  name                 = "${local.name_prefix}-gops-frontend"
+  image_tag_mutability = "MUTABLE"
+  force_delete         = false
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+
+  tags = local.common_tags
+}
+
+data "aws_s3_bucket" "market_data" {
+  count  = var.create_s3_bucket ? 0 : 1
+  bucket = var.s3_bucket_name
+}
+
 resource "aws_s3_bucket" "market_data" {
+  count  = var.create_s3_bucket ? 1 : 0
   bucket = var.s3_bucket_name
   tags   = local.common_tags
 }
 
 resource "aws_s3_bucket_versioning" "market_data" {
-  bucket = aws_s3_bucket.market_data.id
+  count  = var.create_s3_bucket ? 1 : 0
+  bucket = aws_s3_bucket.market_data[0].id
 
   versioning_configuration {
     status = "Enabled"
@@ -38,7 +69,8 @@ resource "aws_s3_bucket_versioning" "market_data" {
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "market_data" {
-  bucket = aws_s3_bucket.market_data.id
+  count  = var.create_s3_bucket ? 1 : 0
+  bucket = aws_s3_bucket.market_data[0].id
 
   rule {
     apply_server_side_encryption_by_default {
@@ -47,10 +79,35 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "market_data" {
   }
 }
 
+data "aws_secretsmanager_secret" "alpaca_api" {
+  count = var.create_alpaca_secret ? 0 : 1
+  name  = var.alpaca_secret_name
+}
+
 resource "aws_secretsmanager_secret" "alpaca_api" {
+  count       = var.create_alpaca_secret ? 1 : 0
   name        = var.alpaca_secret_name
   description = "Alpaca Market Data API key for ${local.name_prefix}"
   tags        = local.common_tags
+}
+
+locals {
+  market_data_bucket_name = one(concat(
+    aws_s3_bucket.market_data[*].bucket,
+    data.aws_s3_bucket.market_data[*].bucket
+  ))
+  market_data_bucket_arn = one(concat(
+    aws_s3_bucket.market_data[*].arn,
+    data.aws_s3_bucket.market_data[*].arn
+  ))
+  alpaca_secret_arn = one(concat(
+    aws_secretsmanager_secret.alpaca_api[*].arn,
+    data.aws_secretsmanager_secret.alpaca_api[*].arn
+  ))
+  alpaca_secret_name = one(concat(
+    aws_secretsmanager_secret.alpaca_api[*].name,
+    data.aws_secretsmanager_secret.alpaca_api[*].name
+  ))
 }
 
 resource "aws_iam_policy" "market_data_pod_policy" {
@@ -66,7 +123,7 @@ resource "aws_iam_policy" "market_data_pod_policy" {
           "secretsmanager:GetSecretValue",
           "secretsmanager:DescribeSecret"
         ]
-        Resource = aws_secretsmanager_secret.alpaca_api.arn
+        Resource = local.alpaca_secret_arn
       },
       {
         Effect = "Allow"
@@ -76,8 +133,8 @@ resource "aws_iam_policy" "market_data_pod_policy" {
           "s3:ListBucket"
         ]
         Resource = [
-          aws_s3_bucket.market_data.arn,
-          "${aws_s3_bucket.market_data.arn}/*"
+          local.market_data_bucket_arn,
+          "${local.market_data_bucket_arn}/*"
         ]
       }
     ]

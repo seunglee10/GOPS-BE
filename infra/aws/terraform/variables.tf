@@ -21,9 +21,21 @@ variable "s3_bucket_name" {
   description = "시장 데이터 장기 저장 S3 버킷 이름입니다. 전역 고유해야 합니다."
 }
 
+variable "create_s3_bucket" {
+  type        = bool
+  default     = false
+  description = "true면 S3 bucket을 만들고, false면 기존 s3_bucket_name bucket을 참조합니다."
+}
+
 variable "alpaca_secret_name" {
   type    = string
-  default = "alfaka/alpaca/api"
+  default = "dev/alpaca"
+}
+
+variable "create_alpaca_secret" {
+  type        = bool
+  default     = false
+  description = "true면 Secrets Manager secret shell을 만들고, false면 기존 alpaca_secret_name secret을 참조합니다."
 }
 
 variable "eks_oidc_provider_arn" {

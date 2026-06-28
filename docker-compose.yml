@@ -68,6 +68,7 @@ services:
       - data_net
 
   minio:
+    profiles: ["local-s3"]
     image: minio/minio:latest
     container_name: alfaka-minio
     ports:
@@ -88,8 +89,11 @@ services:
       - data_net
 
   minio-init:
+    profiles: ["local-s3"]
     image: minio/mc:latest
     container_name: alfaka-minio-init
+    environment:
+      S3_BUCKET: "${S3_BUCKET:-gops-market-data-<aws-account-id>-ap-northeast-2-an}"
     depends_on:
       minio:
         condition: service_healthy
@@ -98,7 +102,7 @@ services:
       - -c
       - |
         mc alias set local http://minio:9000 minioadmin minioadmin
-        mc mb -p local/alfaka-market-data || true
+        mc mb -p "local/$${S3_BUCKET}" || true
         mc ls local
     restart: "no"
     networks:
@@ -187,26 +191,26 @@ services:
       context: .
       dockerfile: infra/docker/Dockerfile.worker
     container_name: alfaka-s3-sink
+    env_file: .env
     depends_on:
       kafka-init:
-        condition: service_completed_successfully
-      minio-init:
         condition: service_completed_successfully
     environment:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
       KAFKA_S3_GROUP_ID: "alfaka-processed-s3-sink"
       KAFKA_PROCESSED_TOPICS: "market.ticks.v1,market.candles.live.1m.v1,market.candles.closed.v1,market.status.v1,market.volume-profile-bins.1m.v1"
-      AWS_REGION: "ap-northeast-2"
-      AWS_DEFAULT_REGION: "ap-northeast-2"
-      AWS_EC2_METADATA_DISABLED: "true"
-      AWS_ACCESS_KEY_ID: "minioadmin"
-      AWS_SECRET_ACCESS_KEY: "minioadmin"
-      S3_ENDPOINT_URL: "http://minio:9000"
-      S3_BUCKET: "alfaka-market-data"
-      S3_FINAL_PREFIX: "market-data/final"
-      S3_LIVE_PREFIX: "market-data/live"
-      S3_PROCESSED_FORMAT: "parquet"
-      S3_FLUSH_COUNT: "1000"
+      AWS_REGION: "${AWS_REGION:-ap-northeast-2}"
+      AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-ap-northeast-2}"
+      AWS_EC2_METADATA_DISABLED: "${AWS_EC2_METADATA_DISABLED:-true}"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
+      AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
+      S3_ENDPOINT_URL: "${DOCKER_S3_ENDPOINT_URL:-}"
+      S3_BUCKET: "${S3_BUCKET:-gops-market-data-<aws-account-id>-ap-northeast-2-an}"
+      S3_FINAL_PREFIX: "${S3_FINAL_PREFIX:-market-data/final}"
+      S3_LIVE_PREFIX: "${S3_LIVE_PREFIX:-market-data/live}"
+      S3_PROCESSED_FORMAT: "${S3_PROCESSED_FORMAT:-parquet}"
+      S3_FLUSH_COUNT: "${S3_FLUSH_COUNT:-1000}"
     command: ["python", "-u", "services/06-s3-store/processed_sink.py"]
     restart: unless-stopped
     networks:
@@ -290,16 +294,18 @@ services:
       BACKFILL_EXECUTION_MODE: "queue"
       BACKFILL_STATUS_TTL_SECONDS: "86400"
       BACKFILL_DEFAULT_LOOKBACK_HOURS: "8760"
-      AWS_REGION: "ap-northeast-2"
-      AWS_DEFAULT_REGION: "ap-northeast-2"
-      AWS_EC2_METADATA_DISABLED: "true"
-      AWS_ACCESS_KEY_ID: "minioadmin"
-      AWS_SECRET_ACCESS_KEY: "minioadmin"
-      S3_ENDPOINT_URL: "http://minio:9000"
-      S3_BUCKET: "alfaka-market-data"
-      S3_RAW_PREFIX: "market-data/raw/alpaca"
-      S3_FINAL_PREFIX: "market-data/final"
-      S3_PROCESSED_FORMAT: "jsonl"
+      AWS_REGION: "${AWS_REGION:-ap-northeast-2}"
+      AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-ap-northeast-2}"
+      AWS_EC2_METADATA_DISABLED: "${AWS_EC2_METADATA_DISABLED:-true}"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
+      AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
+      ALPACA_SECRET_NAME: "${ALPACA_SECRET_NAME:-dev/alpaca}"
+      S3_ENDPOINT_URL: "${DOCKER_S3_ENDPOINT_URL:-}"
+      S3_BUCKET: "${S3_BUCKET:-gops-market-data-<aws-account-id>-ap-northeast-2-an}"
+      S3_RAW_PREFIX: "${S3_RAW_PREFIX:-market-data/raw/alpaca}"
+      S3_FINAL_PREFIX: "${S3_FINAL_PREFIX:-market-data/final}"
+      S3_PROCESSED_FORMAT: "${S3_PROCESSED_FORMAT:-jsonl}"
     ports:
       - "8000:8000"
     restart: unless-stopped
@@ -318,8 +324,6 @@ services:
         condition: service_healthy
       clickhouse:
         condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
     environment:
       REDIS_URL: "redis://redis:6379/0"
       CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
@@ -329,16 +333,18 @@ services:
       BACKFILL_EXECUTION_MODE: "queue"
       BACKFILL_WORKER_POLL_SECONDS: "5"
       BACKFILL_DEFAULT_LOOKBACK_HOURS: "8760"
-      AWS_REGION: "ap-northeast-2"
-      AWS_DEFAULT_REGION: "ap-northeast-2"
-      AWS_EC2_METADATA_DISABLED: "true"
-      AWS_ACCESS_KEY_ID: "minioadmin"
-      AWS_SECRET_ACCESS_KEY: "minioadmin"
-      S3_ENDPOINT_URL: "http://minio:9000"
-      S3_BUCKET: "alfaka-market-data"
-      S3_RAW_PREFIX: "market-data/raw/alpaca"
-      S3_FINAL_PREFIX: "market-data/final"
-      S3_PROCESSED_FORMAT: "jsonl"
+      AWS_REGION: "${AWS_REGION:-ap-northeast-2}"
+      AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-ap-northeast-2}"
+      AWS_EC2_METADATA_DISABLED: "${AWS_EC2_METADATA_DISABLED:-true}"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
+      AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
+      ALPACA_SECRET_NAME: "${ALPACA_SECRET_NAME:-dev/alpaca}"
+      S3_ENDPOINT_URL: "${DOCKER_S3_ENDPOINT_URL:-}"
+      S3_BUCKET: "${S3_BUCKET:-gops-market-data-<aws-account-id>-ap-northeast-2-an}"
+      S3_RAW_PREFIX: "${S3_RAW_PREFIX:-market-data/raw/alpaca}"
+      S3_FINAL_PREFIX: "${S3_FINAL_PREFIX:-market-data/final}"
+      S3_PROCESSED_FORMAT: "${S3_PROCESSED_FORMAT:-jsonl}"
     command: ["python", "-u", "-m", "alfaka.backfill.worker"]
     restart: unless-stopped
     networks:

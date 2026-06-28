@@ -5,11 +5,13 @@ project_name = "alfaka"
 environment  = "dev"
 aws_region   = "ap-northeast-2"
 
-s3_bucket_name = "YOUR_UNIQUE_S3_BUCKET_NAME"
-alpaca_secret_name = "alfaka/alpaca/api"
+s3_bucket_name = "gops-market-data-<aws-account-id>-ap-northeast-2-an"
+create_s3_bucket = false
+alpaca_secret_name = "dev/alpaca"
+create_alpaca_secret = false
 
-eks_oidc_provider_arn = "arn:aws:iam::YOUR_ACCOUNT_ID:oidc-provider/oidc.eks.ap-northeast-2.amazonaws.com/id/YOUR_OIDC_ID"
-eks_oidc_provider_url = "oidc.eks.ap-northeast-2.amazonaws.com/id/YOUR_OIDC_ID"
+eks_oidc_provider_arn = "arn:aws:iam::<aws-account-id>:oidc-provider/oidc.eks.ap-northeast-2.amazonaws.com/id/CBF812F3CD9E9F92E09BA4C33C1A1DB1"
+eks_oidc_provider_url = "oidc.eks.ap-northeast-2.amazonaws.com/id/CBF812F3CD9E9F92E09BA4C33C1A1DB1"
 
 kubernetes_namespace       = "alfaka-market-data"
 kubernetes_service_account = "alfaka-market-data-sa"

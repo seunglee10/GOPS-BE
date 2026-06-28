@@ -35,7 +35,7 @@ data:
   CLICKHOUSE_USER: alfaka
   CLICKHOUSE_LOAD_TRADES: "false"
   REDIS_URL: redis://YOUR_REDIS_ENDPOINT:6379/0
-  S3_BUCKET: YOUR_S3_BUCKET
+  S3_BUCKET: gops-market-data-<aws-account-id>-ap-northeast-2-an
   S3_RAW_PREFIX: market-data/raw/alpaca
   S3_FINAL_PREFIX: market-data/final
   S3_LIVE_PREFIX: market-data/live
@@ -46,4 +46,4 @@ data:
   BACKFILL_STATUS_TTL_SECONDS: "86400"
   BACKFILL_WORKER_POLL_SECONDS: "5"
   BACKFILL_DEFAULT_LOOKBACK_HOURS: "8760"
-  ALPACA_SECRET_NAME: alfaka/alpaca/api
+  ALPACA_SECRET_NAME: dev/alpaca

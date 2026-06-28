@@ -1,6 +1,7 @@
 .env
 .env.*
 !.env.example
+*accessKeys*.csv
 .venv/
 __pycache__/
 *.py[cod]

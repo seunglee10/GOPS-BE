@@ -78,21 +78,35 @@ S3 processed/final
 
 ## Local Setup
 
-Create `.env` with Alpaca keys:
+Create `.env` from `.env.example`. For AWS/EKS, keep Alpaca key values empty and use Secrets Manager:
 
 ```sh
-APCA_API_KEY_ID=...
-APCA_API_SECRET_KEY=...
+APCA_API_KEY_ID=
+APCA_API_SECRET_KEY=
+ALPACA_SECRET_NAME=dev/alpaca
+S3_BUCKET=gops-market-data-<aws-account-id>-ap-northeast-2-an
 ALPACA_FEED=sip
 HISTORICAL_FEED=sip
 ALPACA_UNIVERSE=semiconductor-100
 ALPACA_SYMBOLS=NVDA,AMD,AVGO,TSM,ASML,AMAT,MU
 ```
 
+The `dev/alpaca` secret must contain either `APCA_API_KEY_ID` and
+`APCA_API_SECRET_KEY`, or `key` and `secret`.
+
+Local Docker now defaults to real AWS S3. Keep `S3_ENDPOINT_URL=` and
+`DOCKER_S3_ENDPOINT_URL=` empty. For long-running local Docker, put a restricted
+IAM access key in local `.env` as `AWS_ACCESS_KEY_ID` and
+`AWS_SECRET_ACCESS_KEY`, and leave `AWS_SESSION_TOKEN=` empty.
+
+For local MinIO experiments, set `S3_ENDPOINT_URL=http://localhost:9000`,
+`DOCKER_S3_ENDPOINT_URL=http://minio:9000`, `AWS_ACCESS_KEY_ID=minioadmin`, and
+`AWS_SECRET_ACCESS_KEY=minioadmin`, then run with `--profile local-s3`.
+
 Start the core stack:
 
 ```sh
-docker compose up -d --build
+docker compose --env-file .env up -d --build
 ```
 
 This starts Redis, Kafka, MinIO, ClickHouse, local processor, ClickHouse loader, S3 sink, GOPS backend, GOPS frontend, and the historical backfill worker.
@@ -178,7 +192,7 @@ bash scripts/local/smoke-backfill-missing-data.sh INTC
 - `infra/aws/msk/topics.txt` is the topic creation input used by `scripts/aws/create-msk-topics.sh`.
 - Kubernetes base includes `alpaca-ingestor`, `s3-sink`, `clickhouse-loader`, `backfill-worker`, backend, frontend, and a symbol registry sync job.
 - AWS overlay renders locally; actual `terraform apply`, ECR push, and `kubectl apply` should only be run by the deployment owner.
-- Alpaca keys belong in `.env` locally and Secrets Manager/Kubernetes Secret in AWS.
+- Alpaca keys belong in Secrets Manager for AWS/EKS. Local `.env` key values are only for intentional standalone experiments.
 - If a local Redis/ClickHouse/MinIO volume already contains rows from older development runs, reset those local volumes before validating data trust. The current runtime no longer marks or creates development-generated candles, so old rows cannot be reliably distinguished after materialization.
 
 ## Verification

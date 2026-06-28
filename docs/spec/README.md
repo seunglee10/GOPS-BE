@@ -20,6 +20,7 @@
 | [30-orders/order-system-reliability-security-spec.md](/Users/helixho/Desktop/JUNGLE/22 NaManMu/02 POC/Chart/chart_plz/docs/spec/30-orders/order-system-reliability-security-spec.md) | 주문 시스템 신뢰성, 멱등성, KIS Adapter, 보안 기능명세 |
 | [30-orders/order-security-reliability-milestones.md](/Users/helixho/Desktop/JUNGLE/22 NaManMu/02 POC/Chart/chart_plz/docs/spec/30-orders/order-security-reliability-milestones.md) | 주문 경로 보안/신뢰성 마일스톤 |
 | [40-infrastructure/devops-architecture-spec.md](/Users/helixho/Desktop/JUNGLE/22 NaManMu/02 POC/Chart/chart_plz/docs/spec/40-infrastructure/devops-architecture-spec.md) | AWS, EKS, 네트워크, 데이터 계층, 운영, 배포 명세 |
+| [40-infrastructure/aws-docker-handoff-spec.md](40-infrastructure/aws-docker-handoff-spec.md) | AWS 담당자와 공유할 Docker 이미지/컨테이너/AWS 리소스 handoff 명세 |
 
 ## 이전 경로에서 변경된 경로
 
@@ -40,6 +41,7 @@
 4. 데이터 입력과 저장 경계가 필요하면 [20-market-data/market-data-pipeline-spec.md](/Users/helixho/Desktop/JUNGLE/22 NaManMu/02 POC/Chart/chart_plz/docs/spec/20-market-data/market-data-pipeline-spec.md)를 확인한다.
 5. 거래 연결, 주문 상태, 보안 제약이 필요하면 [30-orders](/Users/helixho/Desktop/JUNGLE/22 NaManMu/02 POC/Chart/chart_plz/docs/spec/30-orders)를 확인한다.
 6. 배포, 운영, 인프라 제약은 [40-infrastructure/devops-architecture-spec.md](/Users/helixho/Desktop/JUNGLE/22 NaManMu/02 POC/Chart/chart_plz/docs/spec/40-infrastructure/devops-architecture-spec.md)를 확인한다.
+7. AWS 담당자와 로컬 Docker/EKS 전환 값을 맞출 때는 [40-infrastructure/aws-docker-handoff-spec.md](40-infrastructure/aws-docker-handoff-spec.md)를 확인한다.
 
 ## 주의
 

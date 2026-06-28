@@ -9,12 +9,24 @@ output "worker_ecr_repository_url" {
   value = aws_ecr_repository.worker.repository_url
 }
 
+output "backend_ecr_repository_url" {
+  value = aws_ecr_repository.gops_backend.repository_url
+}
+
+output "frontend_ecr_repository_url" {
+  value = aws_ecr_repository.gops_frontend.repository_url
+}
+
 output "s3_bucket_name" {
-  value = aws_s3_bucket.market_data.bucket
+  value = local.market_data_bucket_name
 }
 
 output "alpaca_secret_name" {
-  value = aws_secretsmanager_secret.alpaca_api.name
+  value = local.alpaca_secret_name
+}
+
+output "alpaca_secret_arn" {
+  value = local.alpaca_secret_arn
 }
 
 output "market_data_irsa_role_arn" {

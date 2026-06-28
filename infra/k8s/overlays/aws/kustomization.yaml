@@ -13,11 +13,11 @@ patches:
 
 images:
   - name: YOUR_ECR_REPOSITORY/alfaka-market-data
-    newName: YOUR_ACCOUNT_ID.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-market-data-worker
+    newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-market-data-worker
     newTag: latest
   - name: YOUR_ECR_REPOSITORY/gops-backend
-    newName: YOUR_ACCOUNT_ID.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-backend
+    newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-backend
     newTag: latest
   - name: YOUR_ECR_REPOSITORY/gops-frontend
-    newName: YOUR_ACCOUNT_ID.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-frontend
+    newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-frontend
     newTag: latest
