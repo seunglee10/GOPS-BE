@@ -15,6 +15,7 @@ The repository currently includes:
 - Kafka-compatible stream processing.
 - Redis, ClickHouse, and S3 market-data serving/storage.
 - KIS demo order API, Postgres persistence, outbox, broker adapter, migrations, and reconciliation.
+- Agent-orchestration v1 with role-agent skeletons, market-event detection, and notification publishing.
 - Local Docker Compose and early AWS/EKS deployment assets.
 
 ## Read First
@@ -38,6 +39,7 @@ apps/chart-engine/                 chart document/runtime/canvas engine
 systems/api-server/                FastAPI chart/order/WebSocket gateway
 systems/market-data/               config, ingest, processing, storage, serving helpers, backfill
 systems/order/                     KIS demo order domain, outbox, adapter, jobs
+systems/agent-orchestration/       role agents, event detector, notification publisher
 
 platform/kafka/topics.txt          market/order Kafka topic contract
 platform/*/README.md               local -> pod -> managed-service transition notes
@@ -61,10 +63,14 @@ flowchart LR
   API --> Redis["Redis"]
   API --> CH["ClickHouse"]
   API --> PG["Postgres"]
+  API --> AgentOrch["agent-orchestrator"]
 
   Alpaca["Alpaca"] --> Ingestor["market-ingestor"]
   Ingestor --> Kafka["Kafka"]
   Kafka --> Processor["market-processor"]
+  Kafka --> EventDetector["agent-event-detector"]
+  EventDetector --> Kafka
+  Kafka --> AlertPublisher["agent-notification-publisher"] --> Redis
   Processor --> Redis
   Processor --> S3Sink["s3-sink"] --> S3["S3"]
   Processor --> CHLoader["clickhouse-loader"] --> CH
@@ -119,6 +125,7 @@ Open:
 ```text
 Frontend: http://localhost:5173
 Backend:  http://localhost:8000/health
+Agents:   http://localhost:8100/health
 Symbols:  http://localhost:8000/api/charts/symbols
 Candles:  http://localhost:8000/api/charts/candles?symbol=AAPL&interval=1m&limit=160
 ```
@@ -143,6 +150,14 @@ GET  /api/charts/symbols
 WS   /ws/charts
 ```
 
+Agent API:
+
+```text
+POST /api/agents/analyze
+GET  /api/agents/reports/{analysisId}
+WS   /ws/agent-alerts
+```
+
 Order API:
 
 ```text
@@ -164,6 +179,7 @@ Order rules:
 - S3 is durable replay/rematerialization storage.
 - ClickHouse `chart_candles` is the serving projection.
 - Local runtime must not invent fake market candles.
+- Agent-orchestration v1 must not execute orders or choose real news/macro/ontology providers.
 - `.env`, access-key CSV files, KIS token caches, `node_modules`, `dist`, and local caches must not be committed.
 
 ## Verification

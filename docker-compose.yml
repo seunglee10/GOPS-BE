@@ -43,7 +43,7 @@ services:
       - /bin/bash
       - -ec
       - |
-        for topic in market.raw.bars market.raw.updated-bars market.raw.trades market.raw.daily-bars market.raw.statuses market.raw.quotes market.raw.corrections market.raw.cancel-errors market.ticks.v1 market.candles.live.1m.v1 market.candles.closed.v1 market.status.v1 market.volume-profile-bins.1m.v1 orders.commands.v1 broker.submit-results.v1 broker.order-events.v1 orders.dlq.v1; do
+        for topic in market.raw.bars market.raw.updated-bars market.raw.trades market.raw.daily-bars market.raw.statuses market.raw.quotes market.raw.corrections market.raw.cancel-errors market.ticks.v1 market.candles.live.1m.v1 market.candles.closed.v1 market.status.v1 market.volume-profile-bins.1m.v1 orders.commands.v1 broker.submit-results.v1 broker.order-events.v1 orders.dlq.v1 agents.market-events.v1 agents.analysis-requests.v1 agents.analysis-results.v1 agents.notification-decisions.v1 agents.dlq.v1; do
           /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic "$${topic}" --partitions 3 --replication-factor 1
         done
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --list
@@ -321,6 +321,74 @@ services:
       - app_net
       - data_net
 
+  agent-orchestrator:
+    image: gops-agent-orchestrator
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
+    container_name: alfaka-agent-orchestrator
+    env_file: .env
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      REDIS_URL: "redis://redis:6379/0"
+      AGENT_MARKET_EVENTS_TOPIC: "agents.market-events.v1"
+      AGENT_ANALYSIS_REQUESTS_TOPIC: "agents.analysis-requests.v1"
+      AGENT_ANALYSIS_RESULTS_TOPIC: "agents.analysis-results.v1"
+      AGENT_NOTIFICATION_DECISIONS_TOPIC: "agents.notification-decisions.v1"
+      AGENT_DLQ_TOPIC: "agents.dlq.v1"
+      AGENT_PUBLISH_TO_KAFKA: "true"
+    ports:
+      - "8100:8100"
+    restart: unless-stopped
+    networks:
+      - app_net
+      - data_net
+      - streaming_net
+
+  agent-event-detector:
+    image: gops-agent-orchestrator
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
+    container_name: alfaka-agent-event-detector
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      AGENT_EVENT_INPUT_TOPICS: "market.ticks.v1,market.candles.live.1m.v1,market.candles.closed.v1"
+      AGENT_MARKET_EVENTS_TOPIC: "agents.market-events.v1"
+    command: ["python", "-u", "systems/agent-orchestration/pods/event-detector/main.py"]
+    restart: unless-stopped
+    networks:
+      - streaming_net
+
+  agent-notification-publisher:
+    image: gops-agent-orchestrator
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
+    container_name: alfaka-agent-notification-publisher
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      REDIS_URL: "redis://redis:6379/0"
+      AGENT_NOTIFICATION_DECISIONS_TOPIC: "agents.notification-decisions.v1"
+    command: ["python", "-u", "systems/agent-orchestration/pods/notification-publisher/main.py"]
+    restart: unless-stopped
+    networks:
+      - data_net
+      - streaming_net
+
   gops-backend:
     image: gops-api-server
     build:
@@ -337,9 +405,12 @@ services:
         condition: service_healthy
       order-migrations:
         condition: service_completed_successfully
+      agent-orchestrator:
+        condition: service_started
     environment:
       REDIS_URL: "redis://redis:6379/0"
       DATABASE_URL: "postgresql://gops:${POSTGRES_PASSWORD:-gops_dev_password}@postgres:5432/gops"
+      AGENT_ORCHESTRATOR_URL: "http://agent-orchestrator:8100"
       ORDER_REPOSITORY: "postgres"
       KIS_ENV: "${KIS_ENV:-demo}"
       KAFKA_ACCOUNT_ALIAS: "${KAFKA_ACCOUNT_ALIAS:-demo-account}"

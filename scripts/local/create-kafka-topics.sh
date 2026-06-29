@@ -21,7 +21,12 @@ for topic in \
   orders.commands.v1 \
   broker.submit-results.v1 \
   broker.order-events.v1 \
-  orders.dlq.v1; do
+  orders.dlq.v1 \
+  agents.market-events.v1 \
+  agents.analysis-requests.v1 \
+  agents.analysis-results.v1 \
+  agents.notification-decisions.v1 \
+  agents.dlq.v1; do
   docker exec alfaka-kafka /opt/kafka/bin/kafka-topics.sh \
     --bootstrap-server localhost:9092 \
     --create \

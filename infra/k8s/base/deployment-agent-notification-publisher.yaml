@@ -1,0 +1,25 @@
+# 역할: agents.notification-decisions.v1을 Redis/WebSocket용 알림 이벤트로 발행합니다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-notification-publisher
+  namespace: alfaka-market-data
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-notification-publisher
+  template:
+    metadata:
+      labels:
+        app: agent-notification-publisher
+    spec:
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: agent-notification-publisher
+          image: YOUR_ECR_REPOSITORY/gops-agent-orchestrator:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "systems/agent-orchestration/pods/notification-publisher/main.py"]
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config

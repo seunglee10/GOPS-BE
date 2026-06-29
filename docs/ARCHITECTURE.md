@@ -19,6 +19,7 @@ systems/
     shared/
     tests/
   order/
+  agent-orchestration/
 
 platform/
   kafka/
@@ -49,6 +50,13 @@ flowchart LR
 
   subgraph Api["systems/api-server"]
     ApiServer["pod: api-server<br/>FastAPI chart/order/WebSocket"]
+  end
+
+  subgraph Agents["systems/agent-orchestration"]
+    AgentOrch["pod: agent-orchestrator<br/>role agents"]
+    EventDetector["pod: agent-event-detector"]
+    AlertPublisher["pod: agent-notification-publisher"]
+    AgentShared["shared: gops_agents.*"]
   end
 
   subgraph Market["systems/market-data"]
@@ -87,6 +95,7 @@ flowchart LR
   ApiServer --> Redis
   ApiServer --> ClickHouse
   ApiServer --> Postgres
+  ApiServer --> AgentOrch
   ApiServer --> MarketShared
   ApiServer --> OrderShared
 
@@ -94,10 +103,15 @@ flowchart LR
   Ingestor --> Secrets
   Ingestor --> MarketShared
   Kafka --> Processor
+  Kafka --> EventDetector
   Processor --> Redis
   Processor --> S3Sink
   Processor --> CHLoader
   Processor --> MarketShared
+  EventDetector --> Kafka
+  AgentOrch --> AgentShared
+  Kafka --> AlertPublisher
+  AlertPublisher --> Redis
   S3Sink --> S3
   CHLoader --> ClickHouse
   Backfill --> Redis
@@ -136,7 +150,6 @@ Future product areas may become systems later:
 
 ```text
 systems/ontology/
-systems/agent-orchestration/
 systems/ui-composition/
 systems/news-intelligence/
 systems/user-context/
