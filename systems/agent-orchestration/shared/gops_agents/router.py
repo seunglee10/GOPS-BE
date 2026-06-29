@@ -69,7 +69,7 @@ def route_intent(intent: str, agent_ids: Any = None, router_mode: str = "hybrid"
             reason="No strong intent keyword matched; using selected agent hints.",
         )
 
-    if router_mode in {"strict-llm", "llm"} or os.getenv("AGENT_ROUTER_PROVIDER") == "openai":
+    if router_mode in {"strict-llm", "llm"} or os.getenv("AGENT_ROUTER_PROVIDER") == "openai" or os.getenv("OPENAI_API_KEY"):
         llm_route = route_with_openai(text)
         if llm_route:
             return llm_route

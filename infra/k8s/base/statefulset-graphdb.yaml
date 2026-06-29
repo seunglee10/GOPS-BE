@@ -1,0 +1,48 @@
+# 역할: Ontology Agent가 조회할 Nasdaq FIBO GraphDB 런타임입니다.
+# 주의: GraphDB 데이터/라이선스 volume은 별도 복원 절차로 채우고, repo에는 커밋하지 않습니다.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: graphdb
+  namespace: alfaka-market-data
+spec:
+  serviceName: graphdb
+  replicas: 1
+  selector:
+    matchLabels:
+      app: graphdb
+  template:
+    metadata:
+      labels:
+        app: graphdb
+    spec:
+      containers:
+        - name: graphdb
+          image: ontotext/graphdb:11.4.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 7200
+          env:
+            - name: GDB_HEAP_SIZE
+              value: "4g"
+          volumeMounts:
+            - name: graphdb-data
+              mountPath: /opt/graphdb/home
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 7200
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 12
+  volumeClaimTemplates:
+    - metadata:
+        name: graphdb-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 30Gi

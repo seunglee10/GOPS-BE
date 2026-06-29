@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from .agents import (
@@ -14,9 +15,15 @@ from .agents import (
     UnusualEventExplainerAgent,
     VerificationGuardrailAgent,
 )
-from .contracts import AnalysisReport, EvidenceItem, MarketEvent, stable_id, utc_now_iso
+from .contracts import AgentFinding, AnalysisReport, EvidenceItem, MarketEvent, stable_id, utc_now_iso
 from .router import route_intent
 from .synthesizer import FinalAnswerSynthesizer
+
+try:
+    from langgraph.graph import END, StateGraph
+except Exception:
+    END = None
+    StateGraph = None
 
 
 class InMemoryReportStore:
@@ -44,8 +51,61 @@ class AgentOrchestrator:
         self.notifier = NotificationDecisionAgent()
         self.layout_agent = LayoutAgent()
         self.synthesizer = FinalAnswerSynthesizer()
+        self.workflow = self._build_workflow()
 
     def analyze(self, request: dict[str, Any]) -> AnalysisReport:
+        if self.workflow:
+            try:
+                state = self.workflow.invoke({"request": request})
+            except Exception:
+                state = self._run_sequential_workflow(request)
+        else:
+            state = self._run_sequential_workflow(request)
+        return self.store.save(state["report"])
+
+    def get_report(self, analysis_id: str) -> AnalysisReport | None:
+        return self.store.get(analysis_id)
+
+    def _build_workflow(self):
+        if StateGraph is None or END is None:
+            return None
+        try:
+            graph = StateGraph(dict)
+            graph.add_node("normalize_request", self._normalize_request)
+            graph.add_node("route_intent", self._route_intent)
+            graph.add_node("run_selected_role_agents", self._run_selected_role_agents)
+            graph.add_node("verify", self._verify)
+            graph.add_node("synthesize_final_answer", self._synthesize_final_answer)
+            graph.add_node("decide_notification", self._decide_notification)
+            graph.add_node("propose_layout", self._propose_layout)
+            graph.set_entry_point("normalize_request")
+            graph.add_edge("normalize_request", "route_intent")
+            graph.add_edge("route_intent", "run_selected_role_agents")
+            graph.add_edge("run_selected_role_agents", "verify")
+            graph.add_edge("verify", "synthesize_final_answer")
+            graph.add_edge("synthesize_final_answer", "decide_notification")
+            graph.add_edge("decide_notification", "propose_layout")
+            graph.add_edge("propose_layout", END)
+            return graph.compile()
+        except Exception:
+            return None
+
+    def _run_sequential_workflow(self, request: dict[str, Any]) -> dict[str, Any]:
+        state: dict[str, Any] = {"request": request}
+        for node in [
+            self._normalize_request,
+            self._route_intent,
+            self._run_selected_role_agents,
+            self._verify,
+            self._synthesize_final_answer,
+            self._decide_notification,
+            self._propose_layout,
+        ]:
+            state = node(state)
+        return state
+
+    def _normalize_request(self, state: dict[str, Any]) -> dict[str, Any]:
+        request = state["request"]
         symbol = normalize_symbol(request.get("symbol") or read_symbol_from_chart_context(request.get("chartContext")) or "AAPL")
         intent = str(request.get("intent") or request.get("prompt") or latest_message(request.get("messages")) or "analysis")
         events = [
@@ -60,24 +120,96 @@ class AgentOrchestrator:
             chartContext=request.get("chartContext") if isinstance(request.get("chartContext"), dict) else {},
             marketEvents=events,
         )
+        return {
+            **state,
+            "symbol": symbol,
+            "intent": intent,
+            "events": events,
+            "context": context,
+            "role_findings": [],
+        }
+
+    def _route_intent(self, state: dict[str, Any]) -> dict[str, Any]:
+        request = state["request"]
+        intent = state["intent"]
         route = route_intent(intent, request.get("agentIds"), str(request.get("routerMode") or "hybrid"))
-        selected_roles = set(route.selectedRoles) or resolve_requested_roles(request.get("agentIds"))
-        visible_agents = [
-            ("chart", self.chart_agent),
-            ("news", self.news_agent),
-            ("macro", self.macro_agent),
-            ("ontology", self.ontology_agent),
+        selected_roles = list(route.selectedRoles)
+        if not selected_roles:
+            requested_roles = resolve_requested_roles(request.get("agentIds"))
+            selected_roles = [role for role in ["chart", "news", "macro", "ontology"] if role in requested_roles]
+        return {**state, "route": route, "selected_roles": selected_roles}
+
+    def _run_chart(self, state: dict[str, Any]) -> dict[str, Any]:
+        return self._run_role_agent(state, "chart", self.chart_agent)
+
+    def _run_news(self, state: dict[str, Any]) -> dict[str, Any]:
+        return self._run_role_agent(state, "news", self.news_agent)
+
+    def _run_macro(self, state: dict[str, Any]) -> dict[str, Any]:
+        return self._run_role_agent(state, "macro", self.macro_agent)
+
+    def _run_ontology(self, state: dict[str, Any]) -> dict[str, Any]:
+        return self._run_role_agent(state, "ontology", self.ontology_agent)
+
+    def _run_selected_role_agents(self, state: dict[str, Any]) -> dict[str, Any]:
+        selected_roles = [
+            role
+            for role in ["chart", "news", "macro", "ontology"]
+            if role in state.get("selected_roles", [])
         ]
-        role_findings = [
-            agent.analyze(context)
-            for role, agent in visible_agents
-            if role in selected_roles
-        ]
+        agents = {
+            "chart": self.chart_agent,
+            "news": self.news_agent,
+            "macro": self.macro_agent,
+            "ontology": self.ontology_agent,
+        }
+        if not selected_roles:
+            return {**state, "role_findings": []}
+        if len(selected_roles) == 1:
+            role = selected_roles[0]
+            return {**state, "role_findings": [self._safe_analyze_role(role, agents[role], state["context"])]}
+
+        findings_by_role = {}
+        with ThreadPoolExecutor(max_workers=len(selected_roles)) as executor:
+            futures = {
+                executor.submit(self._safe_analyze_role, role, agents[role], state["context"]): role
+                for role in selected_roles
+            }
+            for future in as_completed(futures):
+                findings_by_role[futures[future]] = future.result()
+        role_findings = [findings_by_role[role] for role in selected_roles if role in findings_by_role]
+        return {**state, "role_findings": role_findings}
+
+    def _safe_analyze_role(self, role: str, agent, context: AgentContext):
+        try:
+            return agent.analyze(context)
+        except Exception as exc:
+            return role_agent_error_finding(role, context.symbol, exc)
+
+    def _run_role_agent(self, state: dict[str, Any], role: str, agent) -> dict[str, Any]:
+        role_findings = list(state.get("role_findings", []))
+        if role in state.get("selected_roles", []):
+            role_findings.append(self._safe_analyze_role(role, agent, state["context"]))
+        return {**state, "role_findings": role_findings}
+
+    def _verify(self, state: dict[str, Any]) -> dict[str, Any]:
+        context = state["context"]
+        role_findings = list(state.get("role_findings", []))
         role_findings.append(self.event_explainer.analyze(context))
         role_findings.append(self.market_summary.analyze(context, role_findings))
         role_findings.append(self.verifier.analyze(context, role_findings))
         provider_evidence = collect_provider_evidence(role_findings)
         context.providerEvidence = provider_evidence
+        return {**state, "role_findings": role_findings, "provider_evidence": provider_evidence}
+
+    def _synthesize_final_answer(self, state: dict[str, Any]) -> dict[str, Any]:
+        request = state["request"]
+        symbol = state["symbol"]
+        intent = state["intent"]
+        events = state["events"]
+        role_findings = state["role_findings"]
+        provider_evidence = state["provider_evidence"]
+        route = state["route"]
         analysis_id = stable_id(
             "analysis",
             {
@@ -87,8 +219,6 @@ class AgentOrchestrator:
                 "createdAt": request.get("createdAt") or utc_now_iso(),
             },
         )
-        notification = self.notifier.decide(analysis_id, context)
-        layout = self.layout_agent.propose(context)
         final_answer = self.synthesizer.synthesize(
             symbol=symbol,
             intent=intent,
@@ -97,34 +227,89 @@ class AgentOrchestrator:
             provider_evidence=provider_evidence,
         )
         summary = final_answer.summary or build_summary(symbol, role_findings, events)
+        return {
+            **state,
+            "analysis_id": analysis_id,
+            "final_answer": final_answer,
+            "summary": summary,
+        }
+
+    def _decide_notification(self, state: dict[str, Any]) -> dict[str, Any]:
+        notification = self.notifier.decide(state["analysis_id"], state["context"])
+        return {**state, "notification": notification}
+
+    def _propose_layout(self, state: dict[str, Any]) -> dict[str, Any]:
+        request = state["request"]
+        context = state["context"]
+        layout = self.layout_agent.propose(context)
         report = AnalysisReport(
-            analysisId=analysis_id,
-            symbol=symbol,
-            intent=intent,
+            analysisId=state["analysis_id"],
+            symbol=state["symbol"],
+            intent=state["intent"],
             status="completed",
             createdAt=utc_now_iso(),
-            summary=summary,
+            summary=state["summary"],
             rationale="The conductor routed the request to role agents, composed provider evidence, then generated a final user-facing answer.",
-            findings=role_findings,
-            marketEvents=events,
-            providerEvidence=provider_evidence,
-            route=route,
-            finalAnswer=final_answer,
-            notificationDecision=notification,
+            findings=state["role_findings"],
+            marketEvents=state["events"],
+            providerEvidence=state["provider_evidence"],
+            route=state["route"],
+            finalAnswer=state["final_answer"],
+            notificationDecision=state["notification"],
             layoutProposal=layout,
             chartProposal=request.get("chartProposal") if isinstance(request.get("chartProposal"), dict) else None,
         )
-        return self.store.save(report)
-
-    def get_report(self, analysis_id: str) -> AnalysisReport | None:
-        return self.store.get(analysis_id)
+        return {**state, "layout": layout, "report": report}
 
 
 def collect_provider_evidence(findings) -> list[EvidenceItem]:
     evidence: list[EvidenceItem] = []
     for finding in findings:
         evidence.extend(item for item in finding.evidence if item.provider in {"news", "macro", "ontology"})
-    return evidence
+    return dedupe_provider_evidence(evidence)
+
+
+def dedupe_provider_evidence(items: list[EvidenceItem]) -> list[EvidenceItem]:
+    seen = set()
+    deduped = []
+    for item in items:
+        key = (item.provider, item.status, item.title, item.summary, item.url)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
+
+
+def role_agent_error_finding(role: str, symbol: str, exc: Exception):
+    role_to_provider = {
+        "news": "news",
+        "macro": "macro",
+        "ontology": "ontology",
+        "chart": "chart",
+    }
+    provider = role_to_provider.get(role, role)
+    return AgentFinding(
+        agentId=f"{role}-agent",
+        role={
+            "chart": "chart-analysis",
+            "news": "news-analysis",
+            "macro": "macro-analysis",
+            "ontology": "company-relationship-analysis",
+        }.get(role, role),
+        summary=f"{symbol} {role} 분석 중 오류가 발생했습니다.",
+        rationale=f"{exc.__class__.__name__}: role agent execution failed.",
+        confidence=0.1,
+        evidence=[
+            EvidenceItem(
+                provider=provider,
+                status="no-data",
+                title=f"{role} agent unavailable",
+                summary=f"{role} agent 실행 중 오류가 발생했습니다: {exc.__class__.__name__}",
+            )
+        ],
+        tags=[role, "agent-error"],
+    )
 
 
 def resolve_requested_roles(agent_ids: Any) -> set[str]:
