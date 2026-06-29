@@ -36,6 +36,7 @@ from alfaka.storage.s3_materializer import (
     normalize_processed_candle_row,
 )
 from alfaka.storage.processed_s3_sink import normalize_storage_row, s3_partition_key
+from alfaka.storage.raw_s3_archive import raw_partition_key, upload_raw_page_to_s3
 from alfaka.streaming.transforms import (
     CandleAggregator,
     VolumeProfileBinBuilder,
@@ -170,6 +171,14 @@ class FakeS3WithPaginator:
         ]
 
 
+class RecordingS3:
+    def __init__(self):
+        self.objects = []
+
+    def put_object(self, Bucket, Key, Body, ContentType):
+        self.objects.append({"Bucket": Bucket, "Key": Key, "Body": Body, "ContentType": ContentType})
+
+
 class MarketDataHardeningContractTest(unittest.TestCase):
     def test_raw_envelope_has_source_event_id_and_topic(self):
         message = {"T": "t", "S": "AAPL", "i": 123, "p": 195.2, "s": 10, "t": "2026-06-25T10:15:20.100Z"}
@@ -196,6 +205,39 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         for message_type, topic in expected_topics.items():
             with self.subTest(message_type=message_type):
                 self.assertEqual(raw_topic_name("market.raw", message_type), topic)
+
+    def test_raw_archive_batches_historical_bars_by_day(self):
+        s3 = RecordingS3()
+        rows = [
+            alpaca_raw_bar("2026-06-25T13:30:00.000Z", index=0),
+            alpaca_raw_bar("2026-06-25T14:30:00.000Z", index=1),
+            alpaca_raw_bar("2026-06-26T13:30:00.000Z", index=2),
+        ]
+
+        count = upload_raw_page_to_s3(
+            s3,
+            "bucket",
+            "market-data/raw/alpaca",
+            "bars",
+            "sip",
+            "2026-06-25T00:00:00.000Z",
+            "2026-06-26T23:59:00.000Z",
+            1,
+            {"AAPL": rows},
+        )
+
+        self.assertEqual(count, 3)
+        self.assertEqual(len(s3.objects), 2)
+        keys = [obj["Key"] for obj in s3.objects]
+        self.assertIn("market-data/raw/alpaca/source=alpaca/channel=bars/symbol=AAPL/year=2026/month=06/day=25/part-000001.jsonl", keys)
+        self.assertIn("market-data/raw/alpaca/source=alpaca/channel=bars/symbol=AAPL/year=2026/month=06/day=26/part-000001.jsonl", keys)
+        self.assertNotIn("/hour=", "\n".join(keys))
+
+    def test_raw_partition_key_does_not_split_historical_pages_by_hour(self):
+        self.assertEqual(
+            raw_partition_key("market-data/raw/alpaca", "bars", "AAPL", "2026-06-25T13:30:00.000Z"),
+            "market-data/raw/alpaca/source=alpaca/channel=bars/symbol=AAPL/year=2026/month=06/day=25",
+        )
 
     def test_daily_bar_normalizes_to_canonical_1d_candle(self):
         envelope = build_raw_envelope(
@@ -366,6 +408,33 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertNotEqual(first["requestId"], second["requestId"])
         self.assertTrue(second["force"])
         self.assertEqual(store.latest_status("INTC", "1D")["requestId"], second["requestId"])
+
+    def test_backfill_store_requeues_retryable_terminal_status(self):
+        store = RedisBackfillStore(redis_client=MemoryRedis(), ttl_seconds=60)
+
+        first, first_deduped = store.create_request(
+            "NVDA",
+            "1D",
+            start="2021-06-25T00:00:00.000Z",
+            end="2026-06-25T00:00:00.000Z",
+            mode="queue",
+        )
+        store.update_status(first, "unavailable", error="Alpaca credentials are not configured.")
+        second, second_deduped = store.create_request(
+            "NVDA",
+            "1D",
+            start="2021-06-25T00:00:00.000Z",
+            end="2026-06-25T00:00:00.000Z",
+            mode="queue",
+        )
+
+        self.assertFalse(first_deduped)
+        self.assertFalse(second_deduped)
+        self.assertNotEqual(first["requestId"], second["requestId"])
+        self.assertIn(":retry:", second["requestId"])
+        self.assertEqual(store.latest_status("NVDA", "1D")["requestId"], second["requestId"])
+        self.assertEqual(store.pop_queued_request_id(), first["requestId"])
+        self.assertEqual(store.pop_queued_request_id(), second["requestId"])
 
     def test_default_backfill_range_is_minute_stable_for_auto_requests(self):
         with mock.patch.dict(os.environ, {"BACKFILL_DEFAULT_LOOKBACK_HOURS": "24"}):

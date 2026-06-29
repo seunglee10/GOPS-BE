@@ -13,6 +13,9 @@ from alfaka.serving.intervals import backfill_target_days, normalize_chart_inter
 
 TERMINAL_STATUSES = {"succeeded", "failed", "unavailable"}
 ACTIVE_STATUSES = {"queued", "running"}
+RETRYABLE_TERMINAL_STATUSES = {"failed", "unavailable"}
+
+
 @dataclass(frozen=True)
 class BackfillRange:
     start: str
@@ -68,8 +71,11 @@ class RedisBackfillStore:
         if not locked:
             existing_id = self.redis.get(lock_key) or self.redis.get(latest_key) or request_id
             existing = self.get_status(existing_id)
-            if existing:
+            if existing and existing.get("status") not in RETRYABLE_TERMINAL_STATUSES:
                 return existing, True
+            retry_digest = hashlib.sha1(utc_now_iso().encode("utf-8")).hexdigest()[:8]
+            request_id = f"{base_request_id}:retry:{retry_digest}"
+            self.redis.set(lock_key, request_id, ex=self.ttl_seconds)
 
         record = {
             "requestId": request_id,

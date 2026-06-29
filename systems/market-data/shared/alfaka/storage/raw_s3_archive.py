@@ -37,4 +37,4 @@ def upload_raw_page_to_s3(s3, bucket, prefix, data_kind, feed, start, end, page_
 
 def raw_partition_key(prefix, channel, symbol, event_time):
     parsed = datetime.fromisoformat(event_time.replace("Z", "+00:00"))
-    return f"{prefix}/source=alpaca/channel={channel}/symbol={symbol}/year={parsed:%Y}/month={parsed:%m}/day={parsed:%d}/hour={parsed:%H}"
+    return f"{prefix}/source=alpaca/channel={channel}/symbol={symbol}/year={parsed:%Y}/month={parsed:%m}/day={parsed:%d}"

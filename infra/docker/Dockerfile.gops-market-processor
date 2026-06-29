@@ -15,5 +15,6 @@ COPY systems/market-data/config ./config
 COPY systems/market-data/shared ./systems/market-data/shared
 COPY systems/market-data/pods/market-processor ./systems/market-data/pods/market-processor
 COPY systems/market-data/jobs/symbol-registry-sync ./systems/market-data/jobs/symbol-registry-sync
+COPY systems/market-data/jobs/coverage-repair ./systems/market-data/jobs/coverage-repair
 
 CMD ["python", "-u", "systems/market-data/pods/market-processor/local_main.py"]

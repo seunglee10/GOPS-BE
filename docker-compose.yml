@@ -26,7 +26,7 @@ services:
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       KAFKA_LOG_DIRS: "/tmp/kraft-combined-logs"
     healthcheck:
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:29092 --list >/dev/null 2>&1"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -291,6 +291,31 @@ services:
       SYMBOL_REGISTRY_STATUS: "active"
       SYMBOL_REGISTRY_REDIS_CACHE: "true"
     command: ["python", "-u", "systems/market-data/jobs/symbol-registry-sync/main.py"]
+    restart: "no"
+    networks:
+      - app_net
+      - data_net
+
+  coverage-repair:
+    profiles: ["repair"]
+    image: gops-market-processor
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-market-processor
+    container_name: alfaka-coverage-repair
+    env_file: .env
+    depends_on:
+      gops-backend:
+        condition: service_started
+      backfill-worker:
+        condition: service_started
+    environment:
+      GOPS_API_BASE_URL: "http://gops-backend:8000"
+      COVERAGE_REPAIR_SYMBOLS: "${COVERAGE_REPAIR_SYMBOLS:-NVDA,AMD,AVGO,TSM,ASML,AMAT,MU}"
+      COVERAGE_REPAIR_INTERVALS: "${COVERAGE_REPAIR_INTERVALS:-1m,5m,10m,1D,1W,1M}"
+      COVERAGE_REPAIR_DRY_RUN: "${COVERAGE_REPAIR_DRY_RUN:-true}"
+      COVERAGE_REPAIR_FORCE: "${COVERAGE_REPAIR_FORCE:-false}"
+    command: ["python", "-u", "systems/market-data/jobs/coverage-repair/main.py"]
     restart: "no"
     networks:
       - app_net

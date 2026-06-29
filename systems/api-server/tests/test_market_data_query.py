@@ -72,6 +72,7 @@ from app.market_data.backfill.service import BackfillService, resolve_execution_
 from app.market_data.query import routes as query_routes  # noqa: E402
 from app.contracts.chart import AgentChatMessage, AgentChatRequest  # noqa: E402
 from app.routes import charts as chart_routes  # noqa: E402
+from app.routes.health import runtime_config  # noqa: E402
 from app.services.alfaka_market_data import configured_symbols  # noqa: E402
 from app.services.ai_agents import build_agent_market_analysis_context, chart_context_for_agent_prompt, is_live_feed_status_request, openai_agent_chat  # noqa: E402
 
@@ -482,12 +483,43 @@ class MarketDataQueryServiceTest(unittest.TestCase):
 
         self.assertEqual(partial["dataStatus"], "partial")
         self.assertEqual(partial["backfillStatus"], "succeeded")
-        self.assertFalse(partial["canBackfill"])
+        self.assertTrue(partial["canBackfill"])
         self.assertEqual(partial["coverage"]["reasonCode"], "insufficient_source_bars")
         self.assertFalse(partial["coverage"]["renderable"])
         self.assertEqual(empty["dataStatus"], "empty")
+        self.assertTrue(empty["canBackfill"])
         self.assertEqual(empty["coverage"]["reasonCode"], "backfill_succeeded_without_complete_coverage")
         self.assertIn("Backfill completed", empty["message"])
+
+    def test_unavailable_backfill_without_stored_coverage_can_retry(self):
+        store = RecordingBackfillStore()
+        service = BackfillService(store=store)
+        record, _ = store.create_request(
+            "NVDA",
+            "1D",
+            start="2021-06-25T00:00:00.000Z",
+            end="2026-06-25T00:00:00.000Z",
+        )
+        store.latest[("NVDA", "1D")] = {
+            **record,
+            "status": "unavailable",
+            "error": "Alpaca credentials are not configured.",
+            "finishedAt": "2026-06-25T00:01:00.000Z",
+        }
+
+        metadata = service.snapshot_metadata("NVDA", "1W", {
+            "candles": [],
+            "returnedCount": 0,
+            "requestedLimit": 260,
+            "storedCandleCount": 0,
+            "targetStoredCount": 260,
+        })
+
+        self.assertEqual(metadata["dataStatus"], "empty")
+        self.assertEqual(metadata["backfillStatus"], "unavailable")
+        self.assertTrue(metadata["canBackfill"])
+        self.assertEqual(metadata["sourceInterval"], "1D")
+        self.assertEqual(metadata["coverage"]["reasonCode"], "backfill_unavailable")
 
     def test_sparse_daily_coverage_is_not_renderable_ready_for_higher_timeframes(self):
         store = RecordingBackfillStore()
@@ -588,6 +620,31 @@ class MarketDataQueryServiceTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["symbols"][0]["symbol"], "AAPL")
+
+    def test_runtime_config_reports_safe_aws_s3_presence_only(self):
+        with mock.patch.dict(os.environ, {
+            "AWS_REGION": "ap-northeast-2",
+            "AWS_ACCESS_KEY_ID": "AKIA_SHOULD_NOT_LEAK",
+            "AWS_SECRET_ACCESS_KEY": "SECRET_SHOULD_NOT_LEAK",
+            "AWS_SESSION_TOKEN": "",
+            "S3_BUCKET": "gops-market-data-<aws-account-id>-ap-northeast-2-an",
+            "S3_ENDPOINT_URL": "",
+            "ALPACA_SECRET_NAME": "dev/alpaca",
+            "APCA_API_KEY_ID": "",
+            "APCA_API_SECRET_KEY": "",
+        }, clear=False):
+            payload = runtime_config()
+
+        self.assertEqual(payload["s3"]["endpointMode"], "real-aws")
+        self.assertEqual(payload["s3"]["endpoint"], "EMPTY")
+        self.assertEqual(payload["s3"]["bucket"], "gops-market-data-<aws-account-id>-ap-northeast-2-an")
+        self.assertEqual(payload["aws"]["accessKeyId"], "SET")
+        self.assertEqual(payload["aws"]["secretAccessKey"], "SET")
+        self.assertEqual(payload["aws"]["sessionToken"], "EMPTY")
+        self.assertEqual(payload["alpaca"]["credentialSource"], "aws-secrets-manager")
+        rendered = str(payload)
+        self.assertNotIn("AKIA_SHOULD_NOT_LEAK", rendered)
+        self.assertNotIn("SECRET_SHOULD_NOT_LEAK", rendered)
 
 
 if __name__ == "__main__":

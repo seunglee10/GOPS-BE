@@ -9,6 +9,7 @@ resources:
   - job-order-migrations.yaml
   - job-order-reconciler.yaml
   - job-symbol-registry-sync.yaml
+  - job-coverage-repair.yaml
   - deployment-alpaca-ingestor.yaml
   - deployment-s3-sink.yaml
   - deployment-clickhouse-loader.yaml

@@ -27,6 +27,9 @@ Use current code, this file, and the docs in `docs/` as the source of truth. If 
 - Import/path edits are allowed only when required by file movement.
 - Do not generate fake market candles in local runtime.
 - Do not push unless the user asks.
+- Use the repository-root `.venv` as the only official local Python virtualenv.
+- Do not create duplicate project virtualenvs under `/tmp` or other ad hoc paths.
+- Use Python 3.12 for local Python checks, matching the Docker images.
 
 ## API Rules
 

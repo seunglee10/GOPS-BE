@@ -54,7 +54,6 @@ class BackfillService:
 
         latest = self._latest_status(symbol, source_interval)
         backfill_status = latest.get("status") if latest else "not_requested"
-        can_backfill = backfill_status not in ACTIVE_STATUSES and backfill_status not in {"unavailable", "succeeded"}
 
         renderability = renderability_payload(interval, source_interval, candles, returned_count, stored_count)
         complete = complete_coverage(
@@ -67,6 +66,7 @@ class BackfillService:
             backfill_status=backfill_status,
             renderability=renderability,
         )
+        can_backfill = can_request_backfill(backfill_status, complete)
         if complete:
             coverage = coverage_payload(
                 state="complete",
@@ -139,7 +139,7 @@ class BackfillService:
                 message = f"Backfill completed, but no stored {source_interval} candles were found for {symbol}."
             else:
                 message = f"No stored {source_interval} candles were found for {symbol}."
-        data_status = "error" if backfill_status in {"failed", "unavailable"} else "empty"
+        data_status = "empty" if can_backfill else "error" if backfill_status in {"failed", "unavailable"} else "empty"
         coverage = coverage_payload(
             state="unavailable" if backfill_status in {"failed", "unavailable"} else "empty",
             reason_code=coverage_reason(backfill_status, "no_stored_candles"),
@@ -260,6 +260,10 @@ def coverage_reason(backfill_status: str, default: str) -> str:
     if backfill_status == "succeeded":
         return "backfill_succeeded_without_complete_coverage"
     return default
+
+
+def can_request_backfill(backfill_status: str, complete: bool) -> bool:
+    return not complete and backfill_status not in ACTIVE_STATUSES
 
 
 def coverage_payload(

@@ -9,7 +9,7 @@ This file defines current custom Docker image boundaries.
 | `gops-frontend` | `infra/docker/Dockerfile.gops-frontend` | `apps/gops-frontend`, `apps/chart-engine` | frontend pod |
 | `gops-api-server` | `infra/docker/Dockerfile.gops-backend` | `systems/api-server`, market/order shared packages | api-server pod |
 | `gops-market-ingestor` | `infra/docker/Dockerfile.gops-market-ingestor` | `systems/market-data/pods/market-ingestor`, `systems/market-data/shared` | market-ingestor pod |
-| `gops-market-processor` | `infra/docker/Dockerfile.gops-market-processor` | `systems/market-data/pods/market-processor`, `systems/market-data/jobs/symbol-registry-sync`, `systems/market-data/shared` | market-processor pod, symbol-registry-sync job |
+| `gops-market-processor` | `infra/docker/Dockerfile.gops-market-processor` | `systems/market-data/pods/market-processor`, `systems/market-data/jobs/symbol-registry-sync`, `systems/market-data/jobs/coverage-repair`, `systems/market-data/shared` | market-processor pod, symbol-registry-sync job, coverage-repair job |
 | `gops-market-storage` | `infra/docker/Dockerfile.gops-market-storage` | `s3-sink`, `clickhouse-loader`, market shared code | s3-sink and clickhouse-loader pods |
 | `gops-backfill-worker` | `infra/docker/Dockerfile.gops-backfill-worker` | `systems/market-data/pods/backfill-worker`, market shared code | backfill-worker pod |
 | `gops-order-worker` | `infra/docker/Dockerfile.gops-order-worker` | `systems/order/pods/order-outbox`, `systems/order/jobs`, order shared code | order-outbox pod and order jobs |

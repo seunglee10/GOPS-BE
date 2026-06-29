@@ -58,6 +58,7 @@ flowchart LR
     CHLoader["pod: clickhouse-loader"]
     Backfill["pod: backfill-worker"]
     Registry["job: symbol-registry-sync"]
+    CoverageRepair["job: coverage-repair"]
     MarketShared["shared: alfaka.*"]
   end
 

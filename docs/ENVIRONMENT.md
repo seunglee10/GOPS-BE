@@ -143,6 +143,20 @@ S3_ENDPOINT_URL
 
 Leave `S3_ENDPOINT_URL` empty for real AWS S3.
 
+## Coverage Repair
+
+The manual repair job audits chart API coverage and can queue missing source interval backfills.
+
+```text
+COVERAGE_REPAIR_SYMBOLS
+COVERAGE_REPAIR_INTERVALS
+COVERAGE_REPAIR_DRY_RUN
+COVERAGE_REPAIR_FORCE
+GOPS_API_BASE_URL
+```
+
+Keep `COVERAGE_REPAIR_DRY_RUN=true` for audits. Set it to `false` only when intentionally queuing backfills.
+
 ## Secrets
 
 AWS Secrets Manager names:

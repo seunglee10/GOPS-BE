@@ -1,0 +1,4 @@
+-r requirements.txt
+-r systems/api-server/pods/api-server/gops-backend/requirements.txt
+
+pytest>=9.0.0
