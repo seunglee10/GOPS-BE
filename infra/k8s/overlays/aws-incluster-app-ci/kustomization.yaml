@@ -8,6 +8,30 @@ resources:
 
 patches:
   - target:
+      group: external-secrets.io
+      version: v1beta1
+      kind: SecretStore
+      name: aws-secrets-manager
+    patch: |-
+      apiVersion: external-secrets.io/v1beta1
+      kind: SecretStore
+      metadata:
+        name: aws-secrets-manager
+        namespace: alfaka-market-data
+      $patch: delete
+  - target:
+      group: external-secrets.io
+      version: v1beta1
+      kind: ExternalSecret
+      name: alfaka-openai-secret
+    patch: |-
+      apiVersion: external-secrets.io/v1beta1
+      kind: ExternalSecret
+      metadata:
+        name: alfaka-openai-secret
+        namespace: alfaka-market-data
+      $patch: delete
+  - target:
       group: batch
       version: v1
       kind: Job
