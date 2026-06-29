@@ -61,6 +61,16 @@ Build script variable mapping:
 | `order_worker_ecr_repository_url` | `ECR_ORDER_WORKER_REPO` |
 | `kis_adapter_ecr_repository_url` | `ECR_KIS_ADAPTER_REPO` |
 
+이미지를 전부 다시 빌드하지 않고 변경된 서비스만 빌드/푸시할 수 있습니다.
+
+```sh
+AWS_ACCOUNT_ID=<aws-account-id> scripts/aws/build-and-push-images.sh frontend
+AWS_ACCOUNT_ID=<aws-account-id> scripts/aws/build-and-push-images.sh backend market-storage
+AWS_ACCOUNT_ID=<aws-account-id> SERVICES=frontend,backend scripts/aws/build-and-push-images.sh
+```
+
+서비스 이름은 `scripts/aws/build-and-push-images.sh --help`로 확인합니다.
+
 ## Secrets Manager
 
 기본값은 이미 만들어진 `dev/alpaca` secret을 참조합니다.
