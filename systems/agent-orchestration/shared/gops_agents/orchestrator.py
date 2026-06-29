@@ -57,13 +57,19 @@ class AgentOrchestrator:
             chartContext=request.get("chartContext") if isinstance(request.get("chartContext"), dict) else {},
             marketEvents=events,
         )
-        role_findings = [
-            self.chart_agent.analyze(context),
-            self.news_agent.analyze(context),
-            self.macro_agent.analyze(context),
-            self.ontology_agent.analyze(context),
-            self.event_explainer.analyze(context),
+        selected_roles = resolve_requested_roles(request.get("agentIds"))
+        visible_agents = [
+            ("chart", self.chart_agent),
+            ("news", self.news_agent),
+            ("macro", self.macro_agent),
+            ("ontology", self.ontology_agent),
         ]
+        role_findings = [
+            agent.analyze(context)
+            for role, agent in visible_agents
+            if role in selected_roles
+        ]
+        role_findings.append(self.event_explainer.analyze(context))
         role_findings.append(self.market_summary.analyze(context, role_findings))
         role_findings.append(self.verifier.analyze(context, role_findings))
         provider_evidence = collect_provider_evidence(role_findings)
@@ -105,6 +111,31 @@ def collect_provider_evidence(findings) -> list[EvidenceItem]:
     for finding in findings:
         evidence.extend(item for item in finding.evidence if item.provider in {"news", "macro", "ontology"})
     return evidence
+
+
+def resolve_requested_roles(agent_ids: Any) -> set[str]:
+    all_roles = {"chart", "news", "macro", "ontology"}
+    if not isinstance(agent_ids, list) or not agent_ids:
+        return all_roles
+
+    id_to_role = {
+        "agent-01": "chart",
+        "agent-02": "news",
+        "agent-03": "macro",
+        "agent-04": "ontology",
+        "chart-agent": "chart",
+        "news-agent": "news",
+        "macro-agent": "macro",
+        "ontology-agent": "ontology",
+    }
+    roles = {
+        role
+        for item in agent_ids
+        if isinstance(item, str)
+        for role in [id_to_role.get(item)]
+        if role
+    }
+    return roles or all_roles
 
 
 def build_summary(symbol: str, findings, events: list[MarketEvent]) -> str:

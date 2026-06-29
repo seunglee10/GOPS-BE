@@ -27,6 +27,27 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertTrue(any(item.provider == "news" and item.status == "no-data" for item in report.providerEvidence))
         self.assertEqual(report.notificationDecision.level, "none")
 
+    def test_orchestrator_runs_only_requested_visible_agents_before_internal_steps(self):
+        report = AgentOrchestrator().analyze({
+            "symbol": "NVDA",
+            "intent": "analyze news with chart",
+            "agentIds": ["agent-01", "agent-02"],
+            "chartContext": {
+                "chartDocument": {"symbol": "NVDA", "timeframe": "1m"},
+                "visibleSummary": {"lastPrice": "120.00", "change": "+2.10%"},
+                "dataStatus": {"candleCount": 10, "state": "ready"},
+            },
+        })
+
+        roles = {finding.role for finding in report.findings}
+        providers = {item.provider for item in report.providerEvidence}
+        self.assertIn("chart-analysis", roles)
+        self.assertIn("news-analysis", roles)
+        self.assertIn("verification-guardrail", roles)
+        self.assertNotIn("macro-analysis", roles)
+        self.assertNotIn("company-relationship-analysis", roles)
+        self.assertEqual(providers, {"news"})
+
     def test_event_detector_detects_price_surge_and_volume_spike(self):
         detector = MarketEventDetector(MarketEventThresholds(price_change_percent=3.0, volume_spike_multiplier=2.0))
         self.assertEqual(detector.detect({"symbol": "NVDA", "price": 100, "volume": 100}, "market.ticks.v1"), [])
