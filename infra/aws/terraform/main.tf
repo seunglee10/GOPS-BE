@@ -73,6 +73,10 @@ data "aws_secretsmanager_secret" "alpaca_api" {
   name  = var.alpaca_secret_name
 }
 
+data "aws_secretsmanager_secret" "kis_api" {
+  name = var.kis_secret_name
+}
+
 resource "aws_secretsmanager_secret" "alpaca_api" {
   count       = var.create_alpaca_secret ? 1 : 0
   name        = var.alpaca_secret_name
@@ -97,6 +101,11 @@ locals {
     aws_secretsmanager_secret.alpaca_api[*].name,
     data.aws_secretsmanager_secret.alpaca_api[*].name
   ))
+  kis_secret_arn = data.aws_secretsmanager_secret.kis_api.arn
+  pod_secret_arns = [
+    local.alpaca_secret_arn,
+    local.kis_secret_arn
+  ]
 }
 
 resource "aws_iam_policy" "market_data_pod_policy" {
@@ -112,7 +121,7 @@ resource "aws_iam_policy" "market_data_pod_policy" {
           "secretsmanager:GetSecretValue",
           "secretsmanager:DescribeSecret"
         ]
-        Resource = local.alpaca_secret_arn
+        Resource = local.pod_secret_arns
       },
       {
         Effect = "Allow"

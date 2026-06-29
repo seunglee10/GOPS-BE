@@ -49,6 +49,14 @@ output "alpaca_secret_arn" {
   value = local.alpaca_secret_arn
 }
 
+output "kis_secret_name" {
+  value = var.kis_secret_name
+}
+
+output "kis_secret_arn" {
+  value = local.kis_secret_arn
+}
+
 output "market_data_irsa_role_arn" {
   value = aws_iam_role.market_data_irsa.arn
 }

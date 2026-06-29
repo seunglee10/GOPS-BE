@@ -32,6 +32,12 @@ variable "alpaca_secret_name" {
   default = "dev/alpaca"
 }
 
+variable "kis_secret_name" {
+  type        = string
+  default     = "tead/gops/kis"
+  description = "KIS credential secret name read by the broker adapter."
+}
+
 variable "create_alpaca_secret" {
   type        = bool
   default     = false
