@@ -4,10 +4,18 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request, Response, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, WebSocket, WebSocketDisconnect, status
 from fastapi.encoders import jsonable_encoder
 from starlette.websockets import WebSocketState
 
+from app.auth.dependencies import (
+    auth_is_enabled,
+    require_current_user,
+    require_websocket_user,
+    WebSocketAuthRequired,
+    WebSocketAuthUnavailable,
+)
+from app.auth.models import AuthenticatedUser
 from kis_trader.domain.commands import validate_order_request_payload
 from kis_trader.domain.envelope import build_order_command_envelope, validate_order_envelope
 from kis_trader.domain.status import CANONICAL_STATUSES, OrderContractError
@@ -58,13 +66,23 @@ def order_contract() -> dict[str, Any]:
 
 
 @router.post("/api/orders", status_code=status.HTTP_202_ACCEPTED)
-async def create_order(request: Request, response: Response) -> dict[str, Any]:
+async def create_order(
+    request: Request,
+    response: Response,
+    current_user: AuthenticatedUser = Depends(require_current_user),
+) -> dict[str, Any]:
     idempotency_key = request.headers.get("Idempotency-Key")
     if not idempotency_key or not idempotency_key.strip():
         raise HTTPException(status_code=400, detail="Idempotency-Key header is required")
 
     payload = await _json_body(request)
     _validate_no_forbidden_fields(payload)
+    if auth_is_enabled():
+        payload = {
+            **payload,
+            "actor_id": current_user.email,
+            "role": payload.get("role") or "trader",
+        }
     order_request = _validate_order_request(payload)
     envelope = build_order_command_envelope(
         order_request,
@@ -76,7 +94,7 @@ async def create_order(request: Request, response: Response) -> dict[str, Any]:
     repository = _repository_from_app(request.app)
     try:
         result = repository.create_received_order(
-            idempotency_key_hash=hash_idempotency_key(idempotency_key.strip()),
+            idempotency_key_hash=hash_idempotency_key(_scoped_idempotency_key(idempotency_key.strip(), current_user)),
             body_hash=stable_body_hash(payload),
             command=command,
         )
@@ -89,7 +107,11 @@ async def create_order(request: Request, response: Response) -> dict[str, Any]:
 
 
 @router.get("/api/orders/{order_id}")
-def get_order(order_id: str, request: Request) -> dict[str, Any]:
+def get_order(
+    order_id: str,
+    request: Request,
+    _user: AuthenticatedUser = Depends(require_current_user),
+) -> dict[str, Any]:
     repository = _repository_from_app(request.app)
     order = repository.get_order(order_id)
     if order is None:
@@ -98,7 +120,11 @@ def get_order(order_id: str, request: Request) -> dict[str, Any]:
 
 
 @router.get("/api/orders/{order_id}/events")
-def get_order_events(order_id: str, request: Request) -> dict[str, Any]:
+def get_order_events(
+    order_id: str,
+    request: Request,
+    _user: AuthenticatedUser = Depends(require_current_user),
+) -> dict[str, Any]:
     repository = _repository_from_app(request.app)
     if repository.get_order(order_id) is None:
         raise HTTPException(status_code=404, detail="order not found")
@@ -107,6 +133,19 @@ def get_order_events(order_id: str, request: Request) -> dict[str, Any]:
 
 @router.websocket("/ws/orders/{order_id}")
 async def order_events_socket(websocket: WebSocket, order_id: str) -> None:
+    try:
+        require_websocket_user(websocket)
+    except WebSocketAuthRequired as exc:
+        await websocket.accept()
+        await websocket.send_json({"type": "error", "detail": str(exc)})
+        await websocket.close(code=1008)
+        return
+    except WebSocketAuthUnavailable as exc:
+        await websocket.accept()
+        await websocket.send_json({"type": "error", "detail": str(exc)})
+        await websocket.close(code=1011)
+        return
+
     await websocket.accept()
     try:
         repository = _repository_from_app(websocket.app)
@@ -195,3 +234,9 @@ def _repository_from_app(app: Any) -> OrderRepository:
         repository = PostgresOrderRepository.from_env()
     app.state.order_repository = repository
     return repository
+
+
+def _scoped_idempotency_key(idempotency_key: str, user: AuthenticatedUser) -> str:
+    if not auth_is_enabled():
+        return idempotency_key
+    return f"{user.sub}:{idempotency_key}"

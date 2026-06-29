@@ -20,6 +20,15 @@ docker:  infra/docker/Dockerfile.gops-backend
 command: uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
+## Auth
+
+Google OAuth login is owned by this API server. When `AUTH_ENABLED=true`, the
+server protects `/api/orders`, `/ws/orders/{order_id}`, and `/api/llm/*`.
+Chart and market-data endpoints remain public.
+
+Sessions are stored in Redis under `AUTH_REDIS_KEY_PREFIX` and the browser only
+receives an HttpOnly session id cookie.
+
 ## Imports
 
 The backend imports shared packages by namespace:

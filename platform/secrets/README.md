@@ -16,3 +16,13 @@ dev/kis
 ```
 
 `dev/kis` must contain KIS demo credentials.
+
+GOPS Google login uses these environment secrets on the `gops-backend` pod:
+
+```text
+GOOGLE_OAUTH_CLIENT_ID
+GOOGLE_OAUTH_CLIENT_SECRET
+AUTH_SESSION_SECRET
+```
+
+Do not commit OAuth client secrets or session secrets.

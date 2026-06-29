@@ -339,6 +339,17 @@ services:
         condition: service_completed_successfully
     environment:
       REDIS_URL: "redis://redis:6379/0"
+      AUTH_ENABLED: "${AUTH_ENABLED:-false}"
+      AUTH_PUBLIC_BASE_URL: "${AUTH_PUBLIC_BASE_URL:-http://localhost:5173}"
+      AUTH_SESSION_SECRET: "${AUTH_SESSION_SECRET:-}"
+      AUTH_SESSION_TTL_SECONDS: "${AUTH_SESSION_TTL_SECONDS:-28800}"
+      AUTH_OAUTH_STATE_TTL_SECONDS: "${AUTH_OAUTH_STATE_TTL_SECONDS:-300}"
+      AUTH_REDIS_URL: "${AUTH_REDIS_URL:-redis://redis:6379/0}"
+      AUTH_REDIS_KEY_PREFIX: "${AUTH_REDIS_KEY_PREFIX:-gops:auth}"
+      AUTH_COOKIE_SECURE: "${AUTH_COOKIE_SECURE:-false}"
+      AUTH_COOKIE_SAMESITE: "${AUTH_COOKIE_SAMESITE:-lax}"
+      GOOGLE_OAUTH_CLIENT_ID: "${GOOGLE_OAUTH_CLIENT_ID:-}"
+      GOOGLE_OAUTH_CLIENT_SECRET: "${GOOGLE_OAUTH_CLIENT_SECRET:-}"
       DATABASE_URL: "postgresql://gops:${POSTGRES_PASSWORD:-gops_dev_password}@postgres:5432/gops"
       ORDER_REPOSITORY: "postgres"
       KIS_ENV: "${KIS_ENV:-demo}"

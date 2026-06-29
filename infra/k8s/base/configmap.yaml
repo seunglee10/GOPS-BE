@@ -35,6 +35,13 @@ data:
   CLICKHOUSE_USER: alfaka
   CLICKHOUSE_LOAD_TRADES: "false"
   REDIS_URL: redis://YOUR_REDIS_ENDPOINT:6379/0
+  AUTH_ENABLED: "false"
+  AUTH_PUBLIC_BASE_URL: https://YOUR_GOPS_PUBLIC_HOST
+  AUTH_SESSION_TTL_SECONDS: "28800"
+  AUTH_OAUTH_STATE_TTL_SECONDS: "300"
+  AUTH_REDIS_KEY_PREFIX: gops:auth
+  AUTH_COOKIE_SECURE: "true"
+  AUTH_COOKIE_SAMESITE: lax
   S3_BUCKET: gops-market-data-<aws-account-id>-ap-northeast-2-an
   S3_RAW_PREFIX: market-data/raw/alpaca
   S3_FINAL_PREFIX: market-data/final

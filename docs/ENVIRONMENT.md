@@ -81,6 +81,18 @@ REDIS_KEY_PREFIX=
 
 AWS/EKS may later point `REDIS_URL` at ElastiCache, Valkey, or another Redis-compatible endpoint.
 
+GOPS login sessions reuse Redis by default:
+
+```text
+AUTH_ENABLED=false
+AUTH_REDIS_URL=
+AUTH_REDIS_KEY_PREFIX=gops:auth
+AUTH_SESSION_TTL_SECONDS=28800
+AUTH_OAUTH_STATE_TTL_SECONDS=300
+```
+
+When `AUTH_REDIS_URL` is empty, the API server uses `REDIS_URL`.
+
 ## Postgres
 
 Current local stage:
@@ -179,6 +191,20 @@ dev/kis
 ```
 
 Do not commit `.env`, access-key CSV files, token caches, or secret values.
+
+Google OAuth and session secrets are injected as environment secrets for the
+`gops-backend` pod:
+
+```text
+GOOGLE_OAUTH_CLIENT_ID
+GOOGLE_OAUTH_CLIENT_SECRET
+AUTH_SESSION_SECRET
+AUTH_PUBLIC_BASE_URL
+AUTH_COOKIE_SECURE
+```
+
+`AUTH_PUBLIC_BASE_URL` must match the public origin registered in Google OAuth
+redirect URIs for `/api/auth/google/callback`.
 
 ## ECR Images
 

@@ -158,6 +158,12 @@ Order rules:
 - `POST /api/orders` requires the `Idempotency-Key` header.
 - `KIS_ENV=real` is disabled for v1. Use demo/fake local flow unless the release policy changes.
 
+Auth rules:
+
+- Set `AUTH_ENABLED=true` to require Google login for `/api/orders`, `/ws/orders/{order_id}`, and `/api/llm/*`.
+- Chart and market-data APIs remain public in v1.
+- Sessions are stored in Redis and scoped by `AUTH_REDIS_KEY_PREFIX`.
+
 ## Operating Rules
 
 - Chart API serves from Redis and ClickHouse, not directly from S3.
