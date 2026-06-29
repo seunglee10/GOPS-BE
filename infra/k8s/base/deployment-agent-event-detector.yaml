@@ -1,4 +1,4 @@
-# 역할: Kafka market topic을 감시하고 agents.market-events.v1 이벤트를 발행합니다.
+# Watches Kafka market topics and publishes agents.market-events.v1 events.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -19,7 +19,7 @@ spec:
         - name: agent-event-detector
           image: YOUR_ECR_REPOSITORY/gops-agent-orchestrator:latest
           imagePullPolicy: IfNotPresent
-          command: ["python", "-u", "systems/agent-orchestration/pods/event-detector/main.py"]
+          command: ["python", "-u", "/app/systems/agent-orchestration/pods/event-detector/main.py"]
           envFrom:
             - configMapRef:
                 name: alfaka-market-data-config
