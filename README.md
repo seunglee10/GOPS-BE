@@ -178,6 +178,7 @@ Auth rules:
 - Set `AUTH_ENABLED=true` to require Google login for `/api/orders`, `/ws/orders/{order_id}`, and `/api/llm/*`.
 - Chart and market-data APIs remain public in v1.
 - Sessions are stored in Redis and scoped by `AUTH_REDIS_KEY_PREFIX`.
+- Google OAuth env values are read directly first; when they are empty, set `GOOGLE_OAUTH_SECRET_NAME` to read them from AWS Secrets Manager.
 
 ## Operating Rules
 

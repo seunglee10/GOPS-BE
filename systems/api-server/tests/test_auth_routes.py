@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 import types
@@ -24,12 +25,13 @@ sys.modules.setdefault(
     ),
 )
 
+from app.auth.config import AuthConfig, _load_auth_secret_values
+from app.auth.models import AuthenticatedUser
+from app.auth.session_store import MemorySessionStore
+
 try:
     from fastapi.testclient import TestClient
 
-    from app.auth.config import AuthConfig
-    from app.auth.models import AuthenticatedUser
-    from app.auth.session_store import MemorySessionStore
     from app.main import create_app
     from kis_trader.persistence.memory import InMemoryOrderRepository
     from tests.kis_trader.fixtures.orders import sample_order_request
@@ -50,6 +52,73 @@ class FakeGoogleOAuthClient:
             email_verified=True,
             name="Example User",
         )
+
+
+class AuthConfigSecretManagerTest(unittest.TestCase):
+    ENV_KEYS = (
+        "AUTH_ENABLED",
+        "AUTH_SESSION_SECRET",
+        "GOOGLE_OAUTH_CLIENT_ID",
+        "GOOGLE_OAUTH_CLIENT_SECRET",
+        "GOOGLE_OAUTH_SECRET_NAME",
+        "AUTH_SECRET_NAME",
+        "AWS_REGION",
+        "AWS_DEFAULT_REGION",
+    )
+
+    def setUp(self):
+        self.original_env = {key: os.environ.get(key) for key in self.ENV_KEYS}
+        self.had_boto3_module = "boto3" in sys.modules
+        self.original_boto3_module = sys.modules.get("boto3")
+        for key in self.ENV_KEYS:
+            os.environ.pop(key, None)
+        _load_auth_secret_values.cache_clear()
+
+    def tearDown(self):
+        for key, value in self.original_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        if self.had_boto3_module:
+            sys.modules["boto3"] = self.original_boto3_module
+        else:
+            sys.modules.pop("boto3", None)
+        _load_auth_secret_values.cache_clear()
+
+    def test_loads_google_oauth_settings_from_secret_manager(self):
+        os.environ["AUTH_ENABLED"] = "true"
+        os.environ["GOOGLE_OAUTH_SECRET_NAME"] = "dev/google-oauth"
+        os.environ["AWS_REGION"] = "ap-northeast-2"
+
+        class FakeSecretsManagerClient:
+            def get_secret_value(self, SecretId: str) -> dict[str, str]:
+                assert SecretId == "dev/google-oauth"
+                return {
+                    "SecretString": json.dumps(
+                        {
+                            "web": {
+                                "client_id": "secret-client-id",
+                                "client_secret": "secret-client-secret",
+                            },
+                            "AUTH_SESSION_SECRET": "secret-session",
+                        }
+                    )
+                }
+
+        def fake_client(service_name: str, region_name: str):
+            assert service_name == "secretsmanager"
+            assert region_name == "ap-northeast-2"
+            return FakeSecretsManagerClient()
+
+        sys.modules["boto3"] = types.SimpleNamespace(client=fake_client)
+
+        config = AuthConfig.from_env()
+
+        self.assertEqual(config.google_client_id, "secret-client-id")
+        self.assertEqual(config.google_client_secret, "secret-client-secret")
+        self.assertEqual(config.session_secret, "secret-session")
+        config.require_oauth_settings()
 
 
 @unittest.skipUnless(FASTAPI_TESTCLIENT_AVAILABLE, "FastAPI TestClient is not available")

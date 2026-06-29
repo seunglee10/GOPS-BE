@@ -223,15 +223,25 @@ dev/kis
 
 Do not commit `.env`, access-key CSV files, token caches, or secret values.
 
-Google OAuth and session secrets are injected as environment secrets for the
-`gops-backend` pod:
+Google OAuth and session settings are configured on the `gops-backend` pod:
 
 ```text
 GOOGLE_OAUTH_CLIENT_ID
 GOOGLE_OAUTH_CLIENT_SECRET
 AUTH_SESSION_SECRET
+GOOGLE_OAUTH_SECRET_NAME
 AUTH_PUBLIC_BASE_URL
 AUTH_COOKIE_SECURE
+```
+
+When `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, or
+`AUTH_SESSION_SECRET` is empty and `AUTH_ENABLED=true`, the API server can read
+the missing values from AWS Secrets Manager using `GOOGLE_OAUTH_SECRET_NAME`.
+The secret JSON may use the env var names directly, or Google's downloaded
+OAuth shape:
+
+```json
+{"web":{"client_id":"...","client_secret":"..."},"AUTH_SESSION_SECRET":"..."}
 ```
 
 `AUTH_PUBLIC_BASE_URL` must match the public origin registered in Google OAuth

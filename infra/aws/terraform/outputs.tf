@@ -57,6 +57,14 @@ output "kis_secret_arn" {
   value = local.kis_secret_arn
 }
 
+output "google_oauth_secret_name" {
+  value = var.google_oauth_secret_name
+}
+
+output "google_oauth_secret_arns" {
+  value = local.google_oauth_secret_arns
+}
+
 output "market_data_irsa_role_arn" {
   value = aws_iam_role.market_data_irsa.arn
 }

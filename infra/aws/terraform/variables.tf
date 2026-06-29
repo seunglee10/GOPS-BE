@@ -38,6 +38,12 @@ variable "kis_secret_name" {
   description = "KIS credential secret name read by the broker adapter."
 }
 
+variable "google_oauth_secret_name" {
+  type        = string
+  default     = ""
+  description = "Optional Google OAuth/session secret name read by gops-backend."
+}
+
 variable "create_alpaca_secret" {
   type        = bool
   default     = false

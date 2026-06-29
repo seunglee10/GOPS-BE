@@ -153,7 +153,9 @@ def session_store_from_app(app: Any, config: AuthConfig | None = None) -> Any:
     existing = getattr(app.state, "auth_session_store", None)
     if existing is not None:
         return existing
-    store = RedisSessionStore.from_env(config or AuthConfig.from_env())
+    resolved_config = config or AuthConfig.from_env()
+    if resolved_config.enabled:
+        resolved_config.require_session_settings()
+    store = RedisSessionStore.from_env(resolved_config)
     app.state.auth_session_store = store
     return store
-

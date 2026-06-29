@@ -448,6 +448,7 @@ services:
       AUTH_COOKIE_SAMESITE: "${AUTH_COOKIE_SAMESITE:-lax}"
       GOOGLE_OAUTH_CLIENT_ID: "${GOOGLE_OAUTH_CLIENT_ID:-}"
       GOOGLE_OAUTH_CLIENT_SECRET: "${GOOGLE_OAUTH_CLIENT_SECRET:-}"
+      GOOGLE_OAUTH_SECRET_NAME: "${GOOGLE_OAUTH_SECRET_NAME:-}"
       DATABASE_URL: "postgresql://gops:${POSTGRES_PASSWORD:-gops_dev_password}@postgres:5432/gops"
       AGENT_ORCHESTRATOR_URL: "http://agent-orchestrator:8100"
       ORDER_REPOSITORY: "postgres"

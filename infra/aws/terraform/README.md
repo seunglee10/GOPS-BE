@@ -79,6 +79,15 @@ secret 값은 아래 JSON key 중 하나의 형태여야 합니다.
 기존 secret이 없고 Terraform으로 빈 secret shell을 만들고 싶을 때만
 `create_alpaca_secret = true`로 바꿉니다.
 
+`google_oauth_secret_name`을 비워두면 IRSA 정책에 Google OAuth secret을
+추가하지 않습니다. Google login secret을 Secrets Manager에서 읽을 때는
+아래처럼 값을 넣으면 gops-backend가 해당 secret을 읽을 수 있도록 같은 pod
+policy에 ARN이 포함됩니다.
+
+```hcl
+google_oauth_secret_name = "dev/google-oauth"
+```
+
 ## S3 Bucket
 
 기본값은 이미 만들어진 `gops-market-data-<aws-account-id>-ap-northeast-2-an`
