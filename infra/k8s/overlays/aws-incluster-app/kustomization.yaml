@@ -1,0 +1,81 @@
+# Applies GOPS app workloads wired to the in-cluster platform services.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  - ../../base/stream-processor
+  - ingress.yaml
+
+patches:
+  - path: configmap-incluster-patch.yaml
+  - path: serviceaccount-irsa-patch.yaml
+  - target:
+      kind: Service
+      name: gops-backend
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          alb.ingress.kubernetes.io/healthcheck-path: /health
+          alb.ingress.kubernetes.io/success-codes: "200-399"
+  - target:
+      kind: Service
+      name: gops-frontend
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          alb.ingress.kubernetes.io/healthcheck-path: /
+          alb.ingress.kubernetes.io/success-codes: "200-399"
+  - target:
+      kind: Deployment
+    patch: |-
+      - op: add
+        path: /spec/template/metadata/annotations
+        value:
+          cloudwatch.aws.amazon.com/auto-annotate-dotnet: "false"
+          cloudwatch.aws.amazon.com/auto-annotate-java: "false"
+          cloudwatch.aws.amazon.com/auto-annotate-nodejs: "false"
+          cloudwatch.aws.amazon.com/auto-annotate-python: "false"
+          instrumentation.opentelemetry.io/inject-dotnet: "false"
+          instrumentation.opentelemetry.io/inject-java: "false"
+          instrumentation.opentelemetry.io/inject-nodejs: "false"
+          instrumentation.opentelemetry.io/inject-python: "false"
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value:
+          kubernetes.io/arch: amd64
+  - target:
+      kind: Job
+    patch: |-
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value:
+          kubernetes.io/arch: amd64
+
+images:
+  - name: YOUR_ECR_REPOSITORY/gops-market-ingestor
+    newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-ingestor
+    newTag: 324661e
+  - name: YOUR_ECR_REPOSITORY/gops-market-processor
+    newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-processor
+    newTag: 324661e
+  - name: YOUR_ECR_REPOSITORY/gops-market-storage
+    newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-storage
+    newTag: 324661e
+  - name: YOUR_ECR_REPOSITORY/gops-backfill-worker
+    newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-backfill-worker
+    newTag: 324661e
+  - name: YOUR_ECR_REPOSITORY/gops-api-server
+    newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-api-server
+    newTag: 324661e
+  - name: YOUR_ECR_REPOSITORY/gops-frontend
+    newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-frontend
+    newTag: 324661e-stargops
+  - name: YOUR_ECR_REPOSITORY/gops-order-worker
+    newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-order-worker
+    newTag: 324661e
+  - name: YOUR_ECR_REPOSITORY/gops-kis-adapter
+    newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-kis-adapter
+    newTag: 324661e
