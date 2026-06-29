@@ -82,6 +82,7 @@ data:
   AGENT_NOTIFICATION_DECISIONS_TOPIC: agents.notification-decisions.v1
   AGENT_DLQ_TOPIC: agents.dlq.v1
   AGENT_PUBLISH_TO_KAFKA: "true"
+  OPENAI_MODEL: gpt-5.2
   GRAPHDB_SPARQL_URL: http://graphdb:7200/repositories/nasdaq-fibo
   GRAPHDB_REPOSITORY: nasdaq-fibo
   AGENT_ONTOLOGY_LIMIT: "20"

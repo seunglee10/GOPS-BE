@@ -207,6 +207,7 @@ AWS Secrets Manager names:
 ```text
 dev/alpaca
 dev/kis
+/gops/prod/agent-orchestrator/openai/api-key
 ```
 
 `dev/alpaca` JSON:
@@ -220,6 +221,15 @@ dev/kis
 ```json
 {"KIS_DEMO_APP_KEY":"...","KIS_DEMO_APP_SECRET":"...","KIS_DEMO_ACCOUNT_NO":"..."}
 ```
+
+`/gops/prod/agent-orchestrator/openai/api-key` SecretString:
+
+```text
+sk-...
+```
+
+AWS/EKS overlays sync this value into Kubernetes Secret
+`alfaka-openai-secret` key `OPENAI_API_KEY` through External Secrets.
 
 Do not commit `.env`, access-key CSV files, token caches, or secret values.
 

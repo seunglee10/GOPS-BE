@@ -44,6 +44,12 @@ variable "google_oauth_secret_name" {
   description = "Optional Google OAuth/session secret name read by gops-backend."
 }
 
+variable "openai_secret_name" {
+  type        = string
+  default     = "/gops/prod/agent-orchestrator/openai/api-key"
+  description = "OpenAI API key secret name read by agent-orchestrator through External Secrets/IRSA."
+}
+
 variable "create_alpaca_secret" {
   type        = bool
   default     = false

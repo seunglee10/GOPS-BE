@@ -5,6 +5,8 @@ kind: Kustomization
 resources:
   - ../../base
   - ../../base/stream-processor
+  - secretstore-aws-secrets-manager.yaml
+  - externalsecret-openai.yaml
   - ingress.yaml
 
 patches:

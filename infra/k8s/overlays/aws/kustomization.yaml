@@ -6,6 +6,8 @@ kind: Kustomization
 
 resources:
   - ../../base
+  - secretstore-aws-secrets-manager.yaml
+  - externalsecret-openai.yaml
 
 patches:
   - path: configmap-aws-patch.yaml

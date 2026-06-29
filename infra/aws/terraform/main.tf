@@ -82,6 +82,10 @@ data "aws_secretsmanager_secret" "google_oauth" {
   name  = var.google_oauth_secret_name
 }
 
+data "aws_secretsmanager_secret" "openai_api_key" {
+  name = var.openai_secret_name
+}
+
 resource "aws_secretsmanager_secret" "alpaca_api" {
   count       = var.create_alpaca_secret ? 1 : 0
   name        = var.alpaca_secret_name
@@ -107,11 +111,13 @@ locals {
     data.aws_secretsmanager_secret.alpaca_api[*].name
   ))
   kis_secret_arn = data.aws_secretsmanager_secret.kis_api.arn
+  openai_secret_arn = data.aws_secretsmanager_secret.openai_api_key.arn
   google_oauth_secret_arns = data.aws_secretsmanager_secret.google_oauth[*].arn
   pod_secret_arns = concat(
     [
       local.alpaca_secret_arn,
-      local.kis_secret_arn
+      local.kis_secret_arn,
+      local.openai_secret_arn
     ],
     local.google_oauth_secret_arns
   )

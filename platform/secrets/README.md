@@ -8,6 +8,7 @@ AWS Secrets Manager names:
 dev/alpaca
 dev/kis
 dev/google-oauth
+/gops/prod/agent-orchestrator/openai/api-key
 ```
 
 `dev/alpaca` must contain:
@@ -40,3 +41,15 @@ It may also keep Google's downloaded OAuth client shape:
 ```
 
 Do not commit OAuth client secrets or session secrets.
+
+`/gops/prod/agent-orchestrator/openai/api-key` is read by the AWS/EKS
+ExternalSecret manifests and becomes Kubernetes Secret
+`alfaka-openai-secret` key `OPENAI_API_KEY`.
+
+Expected SecretString shape:
+
+```text
+sk-...
+```
+
+Do not commit OpenAI API keys.
