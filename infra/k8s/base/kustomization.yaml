@@ -14,6 +14,7 @@ resources:
   - deployment-agent-event-detector.yaml
   - deployment-agent-notification-publisher.yaml
   - deployment-alpaca-ingestor.yaml
+  - deployment-alpaca-news-ingestor.yaml
   - deployment-s3-sink.yaml
   - deployment-clickhouse-loader.yaml
   - deployment-backfill-worker.yaml

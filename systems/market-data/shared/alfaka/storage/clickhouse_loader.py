@@ -21,6 +21,7 @@ def main():
         os.getenv("KAFKA_CLOSED_CANDLE_TOPIC", "market.candles.closed.v1"),
         os.getenv("KAFKA_STATUS_TOPIC", "market.status.v1"),
         os.getenv("KAFKA_VOLUME_PROFILE_BINS_TOPIC", "market.volume-profile-bins.1m.v1"),
+        os.getenv("KAFKA_NEWS_TOPIC", "market.news.alpaca.v1"),
     ])))
     load_trades = os.getenv("CLICKHOUSE_LOAD_TRADES", "false").lower() in {"1", "true", "yes"}
 
@@ -70,6 +71,12 @@ def load_payload(client, payload, load_trades=False):
         row = symbol_to_clickhouse_row(payload)
         client.insert_json_each_row("symbols", [row])
         print(f"ClickHouse symbol 적재: symbol={row['symbol']}", flush=True)
+        return
+
+    if event_type == "NEWS_ARTICLE":
+        row = news_to_clickhouse_row(payload)
+        client.insert_json_each_row("news_articles", [row])
+        print(f"ClickHouse news 적재: symbol={row['symbol']} article={row['article_id']}", flush=True)
         return
 
     if event_type == "CANDLE" and payload.get("isClosed", True):
@@ -174,6 +181,23 @@ def symbol_to_clickhouse_row(payload):
         "source": payload.get("source", "alpaca"),
         "updated_at": clickhouse_time(payload.get("updatedAt")),
         "raw": json.dumps(payload.get("raw"), ensure_ascii=False, separators=(",", ":")) if payload.get("raw") is not None else None,
+    }
+
+
+def news_to_clickhouse_row(payload):
+    return {
+        "published_at": clickhouse_time(payload.get("publishedAt") or payload.get("createdAt") or payload.get("timestamp")),
+        "symbol": payload.get("symbol", "UNKNOWN"),
+        "article_id": str(payload.get("articleId") or payload.get("sourceEventId") or ""),
+        "headline": payload.get("headline") or "Untitled news",
+        "summary": payload.get("summary"),
+        "content": payload.get("content"),
+        "url": payload.get("url"),
+        "source": payload.get("source") or "alpaca",
+        "author": payload.get("author"),
+        "updated_at": clickhouse_time_or_none(payload.get("updatedAt")),
+        "received_at": clickhouse_time_or_none(payload.get("receivedAt")),
+        "raw": json.dumps(payload.get("raw") or payload, ensure_ascii=False, separators=(",", ":")),
     }
 
 

@@ -24,6 +24,8 @@ class AgentOrchestrationTests(unittest.TestCase):
 
         self.assertEqual(report.symbol, "NVDA")
         self.assertEqual(report.status, "completed")
+        self.assertEqual(report.route.intentType, "general-analysis")
+        self.assertIsNotNone(report.finalAnswer)
         self.assertTrue(any(item.provider == "news" and item.status == "no-data" for item in report.providerEvidence))
         self.assertEqual(report.notificationDecision.level, "none")
 
@@ -47,6 +49,25 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertNotIn("macro-analysis", roles)
         self.assertNotIn("company-relationship-analysis", roles)
         self.assertEqual(providers, {"news"})
+        self.assertEqual(report.route.selectedRoles, ["chart", "news"])
+        self.assertTrue(report.finalAnswer.summary)
+
+    def test_conductor_routes_news_intent_even_when_chart_agent_is_selected(self):
+        report = AgentOrchestrator().analyze({
+            "symbol": "NVDA",
+            "intent": "뉴스 보여줘",
+            "agentIds": ["agent-01"],
+            "chartContext": {
+                "chartDocument": {"symbol": "NVDA", "timeframe": "1m"},
+                "dataStatus": {"candleCount": 10, "state": "ready"},
+            },
+        })
+
+        roles = {finding.role for finding in report.findings}
+        self.assertEqual(report.route.intentType, "news")
+        self.assertEqual(report.route.selectedRoles, ["news"])
+        self.assertIn("news-analysis", roles)
+        self.assertNotIn("chart-analysis", roles)
 
     def test_event_detector_detects_price_surge_and_volume_spike(self):
         detector = MarketEventDetector(MarketEventThresholds(price_change_percent=3.0, volume_spike_multiplier=2.0))

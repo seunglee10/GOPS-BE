@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .contracts import AgentFinding, EvidenceItem, LayoutProposal, MarketEvent, NotificationDecision, stable_id, utc_now_iso
-from .providers import EmptyMacroProvider, EmptyNewsProvider, EmptyOntologyProvider, ProviderRequest
+from .providers import ClickHouseNewsProvider, EmptyMacroProvider, EmptyOntologyProvider, ProviderRequest
 
 
 @dataclass
@@ -67,11 +67,17 @@ class ProviderBackedAgent:
     def analyze(self, context: AgentContext) -> AgentFinding:
         evidence = self.provider.fetch(ProviderRequest(context.symbol, context.intent))
         has_data = any(item.status == "available" for item in evidence)
+        if has_data:
+            summary = f"{self.provider_name} evidence available for {context.symbol}."
+        elif evidence:
+            summary = f"{self.provider_name} evidence unavailable for {context.symbol}: {evidence[0].summary}"
+        else:
+            summary = f"{self.provider_name} evidence unavailable for {context.symbol}."
         return AgentFinding(
             agentId=self.agent_id,
             role=self.role,
-            summary=f"{self.provider_name} evidence {'available' if has_data else 'not configured'} for {context.symbol}.",
-            rationale="v1 keeps the provider adapter contract stable while real external data sources remain unset.",
+            summary=summary,
+            rationale="Provider-backed agents expose source availability while the conductor keeps no-data evidence transparent.",
             confidence=0.35 if not has_data else 0.65,
             evidence=evidence,
             tags=[self.provider_name, "provider-adapter"],
@@ -84,7 +90,7 @@ class NewsAgent(ProviderBackedAgent):
     provider_name = "news"
 
     def __init__(self, provider=None):
-        super().__init__(provider or EmptyNewsProvider())
+        super().__init__(provider or ClickHouseNewsProvider())
 
 
 class MacroAgent(ProviderBackedAgent):

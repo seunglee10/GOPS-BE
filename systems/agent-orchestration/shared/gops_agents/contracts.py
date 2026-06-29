@@ -52,6 +52,53 @@ class AgentFinding:
 
 
 @dataclass
+class IntentRoute:
+    source: str
+    intentType: str
+    selectedRoles: list[str]
+    confidence: float
+    reason: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class FinalAnswerCitation:
+    provider: str
+    title: str
+    url: str | None = None
+    publishedAt: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class FinalAnswerSection:
+    title: str
+    bullets: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class FinalAnswer:
+    title: str
+    summary: str
+    sections: list[FinalAnswerSection] = field(default_factory=list)
+    citations: list[FinalAnswerCitation] = field(default_factory=list)
+    limitations: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        data["sections"] = [item.to_dict() for item in self.sections]
+        data["citations"] = [item.to_dict() for item in self.citations]
+        return data
+
+
+@dataclass
 class MarketEvent:
     eventId: str
     symbol: str
@@ -174,6 +221,8 @@ class AnalysisReport:
     findings: list[AgentFinding] = field(default_factory=list)
     marketEvents: list[MarketEvent] = field(default_factory=list)
     providerEvidence: list[EvidenceItem] = field(default_factory=list)
+    route: IntentRoute | None = None
+    finalAnswer: FinalAnswer | None = None
     notificationDecision: NotificationDecision | None = None
     layoutProposal: LayoutProposal | None = None
     chartProposal: dict[str, Any] | None = None
@@ -183,6 +232,8 @@ class AnalysisReport:
         data["findings"] = [item.to_dict() for item in self.findings]
         data["marketEvents"] = [item.to_dict() for item in self.marketEvents]
         data["providerEvidence"] = [item.to_dict() for item in self.providerEvidence]
+        data["route"] = self.route.to_dict() if self.route else None
+        data["finalAnswer"] = self.finalAnswer.to_dict() if self.finalAnswer else None
         data["notificationDecision"] = self.notificationDecision.to_dict() if self.notificationDecision else None
         data["layoutProposal"] = self.layoutProposal.to_dict() if self.layoutProposal else None
         return data

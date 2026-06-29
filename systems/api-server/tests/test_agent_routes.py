@@ -44,6 +44,7 @@ class AgentRoutesTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), expected)
         self.assertEqual(gateway.call_args.args[0]["symbol"], "NVDA")
+        self.assertEqual(gateway.call_args.args[0]["routerMode"], "hybrid")
 
     def test_agent_report_delegates_to_gateway(self):
         expected = {"analysisId": "analysis-1", "status": "completed"}
