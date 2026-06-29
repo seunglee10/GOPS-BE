@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
 # 역할: EKS가 쓰는 GOPS custom 이미지를 모두 ECR로 push합니다.
-# 사용: Terraform output의 각 ECR repository URL을 ECR_*_REPO 변수로 넣습니다.
+# 규칙: infra/docker/Dockerfile.gops-foo -> alfaka-dev-gops-foo
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/aws/lib-gops-images.sh
+source "${SCRIPT_DIR}/lib-gops-images.sh"
 
 IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short HEAD)}"
 DOCKER_PLATFORM="${DOCKER_PLATFORM:-linux/amd64}"
-ECR_FRONTEND_REPO="${ECR_FRONTEND_REPO:?ECR_FRONTEND_REPO를 넣어주세요}"
-ECR_API_SERVER_REPO="${ECR_API_SERVER_REPO:?ECR_API_SERVER_REPO를 넣어주세요}"
-ECR_MARKET_INGESTOR_REPO="${ECR_MARKET_INGESTOR_REPO:?ECR_MARKET_INGESTOR_REPO를 넣어주세요}"
-ECR_MARKET_PROCESSOR_REPO="${ECR_MARKET_PROCESSOR_REPO:?ECR_MARKET_PROCESSOR_REPO를 넣어주세요}"
-ECR_MARKET_STORAGE_REPO="${ECR_MARKET_STORAGE_REPO:?ECR_MARKET_STORAGE_REPO를 넣어주세요}"
-ECR_BACKFILL_WORKER_REPO="${ECR_BACKFILL_WORKER_REPO:?ECR_BACKFILL_WORKER_REPO를 넣어주세요}"
-ECR_ORDER_WORKER_REPO="${ECR_ORDER_WORKER_REPO:?ECR_ORDER_WORKER_REPO를 넣어주세요}"
-ECR_KIS_ADAPTER_REPO="${ECR_KIS_ADAPTER_REPO:?ECR_KIS_ADAPTER_REPO를 넣어주세요}"
-ECR_AGENT_ORCHESTRATOR_REPO="${ECR_AGENT_ORCHESTRATOR_REPO:?ECR_AGENT_ORCHESTRATOR_REPO를 넣어주세요}"
+AWS_REGION="${AWS_REGION:-ap-northeast-2}"
+AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:?AWS_ACCOUNT_ID를 넣어주세요}"
+PROJECT_NAME="${PROJECT_NAME:-alfaka}"
+ENVIRONMENT="${ENVIRONMENT:-dev}"
+NAME_PREFIX="${PROJECT_NAME}-${ENVIRONMENT}"
+ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 
 build_image() {
   local dockerfile="$1"
@@ -26,22 +27,25 @@ build_image() {
   fi
 }
 
-build_image infra/docker/Dockerfile.gops-frontend "${ECR_FRONTEND_REPO}"
-build_image infra/docker/Dockerfile.gops-backend "${ECR_API_SERVER_REPO}"
-build_image infra/docker/Dockerfile.gops-market-ingestor "${ECR_MARKET_INGESTOR_REPO}"
-build_image infra/docker/Dockerfile.gops-market-processor "${ECR_MARKET_PROCESSOR_REPO}"
-build_image infra/docker/Dockerfile.gops-market-storage "${ECR_MARKET_STORAGE_REPO}"
-build_image infra/docker/Dockerfile.gops-backfill-worker "${ECR_BACKFILL_WORKER_REPO}"
-build_image infra/docker/Dockerfile.gops-order-worker "${ECR_ORDER_WORKER_REPO}"
-build_image infra/docker/Dockerfile.gops-kis-adapter "${ECR_KIS_ADAPTER_REPO}"
-build_image infra/docker/Dockerfile.gops-agent-orchestrator "${ECR_AGENT_ORCHESTRATOR_REPO}"
+resolve_image_url() {
+  local repository="$1"
+  local env_var="$2"
+  local image="${ECR_REGISTRY}/${NAME_PREFIX}-${repository}"
 
-docker push "${ECR_FRONTEND_REPO}:${IMAGE_TAG}"
-docker push "${ECR_API_SERVER_REPO}:${IMAGE_TAG}"
-docker push "${ECR_MARKET_INGESTOR_REPO}:${IMAGE_TAG}"
-docker push "${ECR_MARKET_PROCESSOR_REPO}:${IMAGE_TAG}"
-docker push "${ECR_MARKET_STORAGE_REPO}:${IMAGE_TAG}"
-docker push "${ECR_BACKFILL_WORKER_REPO}:${IMAGE_TAG}"
-docker push "${ECR_ORDER_WORKER_REPO}:${IMAGE_TAG}"
-docker push "${ECR_KIS_ADAPTER_REPO}:${IMAGE_TAG}"
-docker push "${ECR_AGENT_ORCHESTRATOR_REPO}:${IMAGE_TAG}"
+  if [[ -n "${!env_var:-}" ]]; then
+    image="${!env_var}"
+  fi
+
+  echo "${image}"
+}
+
+images=()
+while IFS=$'\t' read -r _key repository env_var dockerfile; do
+  image="$(resolve_image_url "${repository}" "${env_var}")"
+  build_image "${dockerfile}" "${image}"
+  images+=("${image}")
+done < <(gops_image_entries)
+
+for image in "${images[@]}"; do
+  docker push "${image}:${IMAGE_TAG}"
+done

@@ -46,6 +46,9 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Ensure Amazon ECR repositories
+        run: ./scripts/aws/ensure-ecr-repositories.sh
+
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
@@ -81,7 +84,11 @@ jobs:
       - name: Verify rollout
         run: |
           deployments=(
+            agent-event-detector
+            agent-notification-publisher
+            agent-orchestrator
             alfaka-alpaca-ingestor
+            alfaka-alpaca-news-ingestor
             alfaka-backfill-worker
             alfaka-clickhouse-loader
             alfaka-local-stream-processor
@@ -102,4 +109,3 @@ jobs:
         run: |
           curl -fsS https://stargops.com/ >/dev/null
           curl -fsS https://stargops.com/api/charts/symbols >/dev/null
-

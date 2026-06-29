@@ -79,3 +79,6 @@ images:
   - name: YOUR_ECR_REPOSITORY/gops-kis-adapter
     newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-kis-adapter
     newTag: 324661e
+  - name: YOUR_ECR_REPOSITORY/gops-agent-orchestrator
+    newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-agent-orchestrator
+    newTag: 324661e
