@@ -224,12 +224,14 @@ dev/kis
 
 `/gops/prod/agent-orchestrator/openai/api-key` SecretString:
 
-```text
-sk-...
+```json
+{"OPENAI_API_KEY":"sk-..."}
 ```
 
 AWS/EKS overlays sync this value into Kubernetes Secret
 `alfaka-openai-secret` key `OPENAI_API_KEY` through External Secrets.
+EKS must have External Secrets Operator installed before applying overlays that
+include `ExternalSecret` and `SecretStore` resources.
 
 Do not commit `.env`, access-key CSV files, token caches, or secret values.
 

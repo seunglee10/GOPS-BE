@@ -98,6 +98,22 @@ policy에 ARN이 포함됩니다.
 google_oauth_secret_name = "oauth/google"
 ```
 
+OpenAI API key를 External Secrets로 동기화할 때는 `openai_secret_name` secret
+ARN도 pod policy에 포함됩니다.
+
+```hcl
+openai_secret_name = "/gops/prod/agent-orchestrator/openai/api-key"
+```
+
+Terraform 대신 dev helper script로 IRSA를 갱신할 때도 같은 secret 이름을
+넘겨야 합니다.
+
+```bash
+GOOGLE_OAUTH_SECRET_NAME=oauth/google \
+OPENAI_SECRET_NAME=/gops/prod/agent-orchestrator/openai/api-key \
+./scripts/aws/create-irsa.sh
+```
+
 ## S3 Bucket
 
 기본값은 이미 만들어진 `gops-market-data-<aws-account-id>-ap-northeast-2-an`

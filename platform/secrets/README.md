@@ -45,11 +45,13 @@ Do not commit OAuth client secrets or session secrets.
 `/gops/prod/agent-orchestrator/openai/api-key` is read by the AWS/EKS
 ExternalSecret manifests and becomes Kubernetes Secret
 `alfaka-openai-secret` key `OPENAI_API_KEY`.
+The EKS cluster must run External Secrets Operator before applying these
+manifests.
 
 Expected SecretString shape:
 
-```text
-sk-...
+```json
+{"OPENAI_API_KEY":"sk-..."}
 ```
 
 Do not commit OpenAI API keys.

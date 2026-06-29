@@ -12,6 +12,7 @@ S3_BUCKET="${S3_BUCKET:-gops-market-data-<aws-account-id>-ap-northeast-2-an}"
 ALPACA_SECRET_NAME="${ALPACA_SECRET_NAME:-dev/alpaca}"
 KIS_SECRET_NAME="${KIS_SECRET_NAME:-tead/gops/kis}"
 GOOGLE_OAUTH_SECRET_NAME="${GOOGLE_OAUTH_SECRET_NAME:-}"
+OPENAI_SECRET_NAME="${OPENAI_SECRET_NAME:-}"
 
 ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
 ISSUER_URL="$(aws eks describe-cluster --region "${AWS_REGION}" --name "${CLUSTER_NAME}" --query 'cluster.identity.oidc.issuer' --output text)"
@@ -28,6 +29,11 @@ if [[ -n "${GOOGLE_OAUTH_SECRET_NAME}" ]]; then
   GOOGLE_OAUTH_SECRET_ARN="$(aws secretsmanager describe-secret --region "${AWS_REGION}" --secret-id "${GOOGLE_OAUTH_SECRET_NAME}" --query ARN --output text)"
   SECRET_RESOURCE_LINES="${SECRET_RESOURCE_LINES},
         \"${GOOGLE_OAUTH_SECRET_ARN}\""
+fi
+if [[ -n "${OPENAI_SECRET_NAME}" ]]; then
+  OPENAI_SECRET_ARN="$(aws secretsmanager describe-secret --region "${AWS_REGION}" --secret-id "${OPENAI_SECRET_NAME}" --query ARN --output text)"
+  SECRET_RESOURCE_LINES="${SECRET_RESOURCE_LINES},
+        \"${OPENAI_SECRET_ARN}\""
 fi
 
 ensure_oidc_provider() {
