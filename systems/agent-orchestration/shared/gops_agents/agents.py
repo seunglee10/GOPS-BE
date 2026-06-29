@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .contracts import AgentFinding, EvidenceItem, LayoutProposal, MarketEvent, NotificationDecision, stable_id, utc_now_iso
-from .providers import ClickHouseNewsProvider, EmptyMacroProvider, EmptyOntologyProvider, ProviderRequest
+from .providers import ClickHouseNewsProvider, EmptyMacroProvider, GraphDBOntologyProvider, ProviderRequest
 
 
 @dataclass
@@ -108,7 +108,7 @@ class OntologyAgent(ProviderBackedAgent):
     provider_name = "ontology"
 
     def __init__(self, provider=None):
-        super().__init__(provider or EmptyOntologyProvider())
+        super().__init__(provider or GraphDBOntologyProvider())
 
 
 class UnusualEventExplainerAgent:

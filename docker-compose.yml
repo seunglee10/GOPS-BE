@@ -149,6 +149,20 @@ services:
     networks:
       - data_net
 
+  graphdb:
+    profiles: ["graphdb"]
+    image: ontotext/graphdb:11.4.0
+    container_name: alfaka-graphdb
+    ports:
+      - "7200:7200"
+    environment:
+      GDB_HEAP_SIZE: "${GRAPHDB_HEAP_SIZE:-4g}"
+    volumes:
+      - graphdb_data:/opt/graphdb/home
+    restart: unless-stopped
+    networks:
+      - data_net
+
   alpaca-ingestor:
     profiles: ["alpaca"]
     image: gops-market-ingestor
@@ -370,6 +384,9 @@ services:
       CLICKHOUSE_DATABASE: "market_data"
       CLICKHOUSE_USER: "alfaka"
       CLICKHOUSE_PASSWORD: "alfaka"
+      GRAPHDB_SPARQL_URL: "${GRAPHDB_SPARQL_URL:-http://graphdb:7200/repositories/nasdaq-fibo}"
+      GRAPHDB_REPOSITORY: "${GRAPHDB_REPOSITORY:-nasdaq-fibo}"
+      AGENT_ONTOLOGY_LIMIT: "${AGENT_ONTOLOGY_LIMIT:-20}"
     ports:
       - "8100:8100"
     restart: unless-stopped
@@ -629,6 +646,9 @@ volumes:
   redis_data:
   minio_data:
   clickhouse_data:
+  graphdb_data:
+    name: nasdaq_fibo_graphdb_data
+    external: true
   postgres_order_data:
   kis_token_cache:
 
