@@ -7,7 +7,7 @@ AWS Secrets Manager names:
 ```text
 dev/alpaca
 dev/kis
-dev/google-oauth
+oauth/google
 /gops/prod/agent-orchestrator/openai/api-key
 ```
 

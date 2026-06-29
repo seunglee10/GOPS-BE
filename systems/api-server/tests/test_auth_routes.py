@@ -88,12 +88,12 @@ class AuthConfigSecretManagerTest(unittest.TestCase):
 
     def test_loads_google_oauth_settings_from_secret_manager(self):
         os.environ["AUTH_ENABLED"] = "true"
-        os.environ["GOOGLE_OAUTH_SECRET_NAME"] = "dev/google-oauth"
+        os.environ["GOOGLE_OAUTH_SECRET_NAME"] = "oauth/google"
         os.environ["AWS_REGION"] = "ap-northeast-2"
 
         class FakeSecretsManagerClient:
             def get_secret_value(self, SecretId: str) -> dict[str, str]:
-                assert SecretId == "dev/google-oauth"
+                assert SecretId == "oauth/google"
                 return {
                     "SecretString": json.dumps(
                         {

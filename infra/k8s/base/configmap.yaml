@@ -46,7 +46,7 @@ data:
   AUTH_REDIS_KEY_PREFIX: gops:auth
   AUTH_COOKIE_SECURE: "true"
   AUTH_COOKIE_SAMESITE: lax
-  GOOGLE_OAUTH_SECRET_NAME: dev/google-oauth
+  GOOGLE_OAUTH_SECRET_NAME: oauth/google
   S3_BUCKET: gops-market-data-<aws-account-id>-ap-northeast-2-an
   S3_RAW_PREFIX: market-data/raw/alpaca
   S3_FINAL_PREFIX: market-data/final

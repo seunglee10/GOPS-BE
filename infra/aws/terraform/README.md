@@ -95,7 +95,7 @@ secret 값은 아래 JSON key 중 하나의 형태여야 합니다.
 policy에 ARN이 포함됩니다.
 
 ```hcl
-google_oauth_secret_name = "dev/google-oauth"
+google_oauth_secret_name = "oauth/google"
 ```
 
 ## S3 Bucket
