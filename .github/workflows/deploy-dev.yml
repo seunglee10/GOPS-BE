@@ -1,0 +1,105 @@
+name: Deploy dev to EKS
+
+on:
+  push:
+    branches:
+      - dev
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
+env:
+  AWS_ACCOUNT_ID: "<aws-account-id>"
+  AWS_REGION: ap-northeast-2
+  DOCKER_PLATFORM: linux/amd64
+  EKS_CLUSTER_NAME: gops-eks-cluster
+  K8S_NAMESPACE: alfaka-market-data
+  KUSTOMIZE_OVERLAY: infra/k8s/overlays/aws-incluster-app-ci
+  ECR_FRONTEND_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-frontend
+  ECR_API_SERVER_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-api-server
+  ECR_MARKET_INGESTOR_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-ingestor
+  ECR_MARKET_PROCESSOR_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-processor
+  ECR_MARKET_STORAGE_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-storage
+  ECR_BACKFILL_WORKER_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-backfill-worker
+  ECR_ORDER_WORKER_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-order-worker
+  ECR_KIS_ADAPTER_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-kis-adapter
+
+jobs:
+  deploy:
+    name: Build images and deploy app workloads
+    runs-on: ubuntu-latest
+    environment: dev
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.1.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set image tag
+        run: echo "IMAGE_TAG=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
+      - name: Build and push images
+        run: ./scripts/aws/build-and-push-images.sh
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Configure kubeconfig
+        run: aws eks update-kubeconfig --name "$EKS_CLUSTER_NAME" --region "$AWS_REGION"
+
+      - name: Point CI overlay at this commit image tag
+        run: |
+          sed -i "s/ci-placeholder/${IMAGE_TAG}/g" "$KUSTOMIZE_OVERLAY/kustomization.yaml"
+          if grep -R "ci-placeholder" "$KUSTOMIZE_OVERLAY"; then
+            echo "Image tag placeholder still remains in $KUSTOMIZE_OVERLAY" >&2
+            exit 1
+          fi
+
+      - name: Server-side dry run
+        run: kubectl apply -k "$KUSTOMIZE_OVERLAY" --dry-run=server
+
+      - name: Deploy app workloads
+        run: kubectl apply -k "$KUSTOMIZE_OVERLAY"
+
+      - name: Verify rollout
+        run: |
+          deployments=(
+            alfaka-alpaca-ingestor
+            alfaka-backfill-worker
+            alfaka-clickhouse-loader
+            alfaka-local-stream-processor
+            alfaka-s3-sink
+            gops-backend
+            gops-frontend
+            kis-broker-adapter
+            order-outbox-publisher
+          )
+
+          for deployment in "${deployments[@]}"; do
+            kubectl rollout status "deployment/${deployment}" \
+              -n "$K8S_NAMESPACE" \
+              --timeout=300s
+          done
+
+      - name: Smoke test public endpoints
+        run: |
+          curl -fsS https://stargops.com/ >/dev/null
+          curl -fsS https://stargops.com/api/charts/symbols >/dev/null
+
