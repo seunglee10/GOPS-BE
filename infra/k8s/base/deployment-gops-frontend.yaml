@@ -1,5 +1,5 @@
 # 역할: GOPS React frontend를 EKS에 배포합니다.
-# 사용: /api, /ws 요청은 Vite proxy 또는 ingress 규칙으로 gops-backend에 연결합니다.
+# 사용: /api, /ws 요청은 nginx proxy 또는 ingress 규칙으로 gops-backend에 연결합니다.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -21,12 +21,26 @@ spec:
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 5173
-          env:
-            - name: VITE_BACKEND_TARGET
-              value: http://gops-backend:8000
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 5173
+            failureThreshold: 24
+            periodSeconds: 5
+            timeoutSeconds: 5
           readinessProbe:
             httpGet:
-              path: /
+              path: /healthz
               port: 5173
             initialDelaySeconds: 10
             periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 5173
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3

@@ -6,7 +6,7 @@ This file defines current custom Docker image boundaries.
 
 | Image | Dockerfile | Main folders | Runtime |
 | --- | --- | --- | --- |
-| `gops-frontend` | `infra/docker/Dockerfile.gops-frontend` | `apps/gops-frontend`, `apps/chart-engine` | frontend pod |
+| `gops-frontend` | `infra/docker/Dockerfile.gops-frontend` | `apps/gops-frontend`, `apps/chart-engine` | frontend pod serving built React assets with nginx |
 | `gops-api-server` | `infra/docker/Dockerfile.gops-backend` | `systems/api-server`, market/order shared packages | api-server pod |
 | `gops-market-ingestor` | `infra/docker/Dockerfile.gops-market-ingestor` | `systems/market-data/pods/market-ingestor`, `systems/market-data/shared` | market-ingestor pod |
 | `gops-market-processor` | `infra/docker/Dockerfile.gops-market-processor` | `systems/market-data/pods/market-processor`, `systems/market-data/jobs/symbol-registry-sync`, `systems/market-data/jobs/coverage-repair`, `systems/market-data/shared` | market-processor pod, symbol-registry-sync job, coverage-repair job |
@@ -22,6 +22,7 @@ This file defines current custom Docker image boundaries.
 - `gops-market-storage` groups S3 sink and ClickHouse loader because both are market storage workers.
 - `gops-order-worker` groups DB-centered order operations.
 - `gops-agent-orchestrator` is separate because role agents, LLM credentials, event detection, and notification publishing scale differently from the API gateway.
+- `gops-frontend` builds static React assets and serves them with nginx. It should not run the Vite dev server behind ALB.
 - Avoid one generic worker image for unrelated market, order, ontology, agent, and UI-composition runtimes.
 
 ## COPY Rule

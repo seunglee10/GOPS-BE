@@ -102,7 +102,7 @@ jobs:
           for deployment in "${deployments[@]}"; do
             kubectl rollout status "deployment/${deployment}" \
               -n "$K8S_NAMESPACE" \
-              --timeout=300s
+              --timeout=600s
           done
 
       - name: Smoke test public endpoints

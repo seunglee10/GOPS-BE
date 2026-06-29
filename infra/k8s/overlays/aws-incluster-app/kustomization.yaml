@@ -26,7 +26,7 @@ patches:
       - op: add
         path: /metadata/annotations
         value:
-          alb.ingress.kubernetes.io/healthcheck-path: /
+          alb.ingress.kubernetes.io/healthcheck-path: /healthz
           alb.ingress.kubernetes.io/success-codes: "200-399"
   - target:
       kind: Deployment
