@@ -14,12 +14,14 @@ This file defines current custom Docker image boundaries.
 | `gops-backfill-worker` | `infra/docker/Dockerfile.gops-backfill-worker` | `systems/market-data/pods/backfill-worker`, market shared code | backfill-worker pod |
 | `gops-order-worker` | `infra/docker/Dockerfile.gops-order-worker` | `systems/order/pods/order-outbox`, `systems/order/jobs`, order shared code | order-outbox pod and order jobs |
 | `gops-kis-adapter` | `infra/docker/Dockerfile.gops-kis-adapter` | `systems/order/pods/kis-adapter`, order shared code | kis-adapter pod |
+| `gops-agent-orchestrator` | `infra/docker/Dockerfile.gops-agent-orchestrator` | `systems/agent-orchestration`, market shared code | agent-orchestrator, agent-event-detector, and agent-notification-publisher pods |
 
 ## Why These Boundaries
 
 - `gops-kis-adapter` is separate because it touches KIS, secrets, and broker submission risk.
 - `gops-market-storage` groups S3 sink and ClickHouse loader because both are market storage workers.
 - `gops-order-worker` groups DB-centered order operations.
+- `gops-agent-orchestrator` is separate because role agents, LLM credentials, event detection, and notification publishing scale differently from the API gateway.
 - Avoid one generic worker image for unrelated market, order, ontology, agent, and UI-composition runtimes.
 
 ## COPY Rule
@@ -36,6 +38,7 @@ Narrow COPY paths later only for proven image-size, dependency, or security reas
 Runtime `PYTHONPATH` should include shared folders:
 
 ```text
+systems/agent-orchestration/shared
 systems/market-data/shared
 systems/order/shared
 ```

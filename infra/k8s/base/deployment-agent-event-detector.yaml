@@ -1,0 +1,25 @@
+# Watches Kafka market topics and publishes agents.market-events.v1 events.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-event-detector
+  namespace: alfaka-market-data
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-event-detector
+  template:
+    metadata:
+      labels:
+        app: agent-event-detector
+    spec:
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: agent-event-detector
+          image: YOUR_ECR_REPOSITORY/gops-agent-orchestrator:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "/app/systems/agent-orchestration/pods/event-detector/main.py"]
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config

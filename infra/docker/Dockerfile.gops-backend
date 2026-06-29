@@ -5,7 +5,7 @@ FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONPATH=/app/systems/market-data/shared:/app/systems/order/shared:/app/systems/api-server/pods/api-server/gops-backend \
+    PYTHONPATH=/app/systems/agent-orchestration/shared:/app/systems/market-data/shared:/app/systems/order/shared:/app/systems/api-server/pods/api-server/gops-backend \
     ALFAKA_PACKAGES_PATH=/app/systems/market-data/shared
 
 WORKDIR /app
@@ -17,6 +17,7 @@ RUN pip install --no-cache-dir -r /tmp/alfaka-requirements.txt -r /tmp/gops-back
 COPY systems/market-data/config ./config
 COPY systems/market-data/shared ./systems/market-data/shared
 COPY systems/order/shared ./systems/order/shared
+COPY systems/agent-orchestration/shared ./systems/agent-orchestration/shared
 COPY systems/api-server/pods/api-server/gops-backend ./systems/api-server/pods/api-server/gops-backend
 
 WORKDIR /app/systems/api-server/pods/api-server/gops-backend

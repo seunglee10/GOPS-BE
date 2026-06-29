@@ -20,4 +20,4 @@ Main env:
 KAFKA_BOOTSTRAP_SERVERS
 ```
 
-`platform/kafka/topics.txt` is the canonical market/order topic list for local creation and future MSK creation.
+`platform/kafka/topics.txt` is the canonical market/order/agent topic list for local creation and future MSK creation.

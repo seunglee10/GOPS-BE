@@ -13,6 +13,7 @@ ECR_MARKET_STORAGE_REPO="${ECR_MARKET_STORAGE_REPO:?ECR_MARKET_STORAGE_REPO를 �
 ECR_BACKFILL_WORKER_REPO="${ECR_BACKFILL_WORKER_REPO:?ECR_BACKFILL_WORKER_REPO를 넣어주세요}"
 ECR_ORDER_WORKER_REPO="${ECR_ORDER_WORKER_REPO:?ECR_ORDER_WORKER_REPO를 넣어주세요}"
 ECR_KIS_ADAPTER_REPO="${ECR_KIS_ADAPTER_REPO:?ECR_KIS_ADAPTER_REPO를 넣어주세요}"
+ECR_AGENT_ORCHESTRATOR_REPO="${ECR_AGENT_ORCHESTRATOR_REPO:?ECR_AGENT_ORCHESTRATOR_REPO를 넣어주세요}"
 
 build_image() {
   local dockerfile="$1"
@@ -33,6 +34,7 @@ build_image infra/docker/Dockerfile.gops-market-storage "${ECR_MARKET_STORAGE_RE
 build_image infra/docker/Dockerfile.gops-backfill-worker "${ECR_BACKFILL_WORKER_REPO}"
 build_image infra/docker/Dockerfile.gops-order-worker "${ECR_ORDER_WORKER_REPO}"
 build_image infra/docker/Dockerfile.gops-kis-adapter "${ECR_KIS_ADAPTER_REPO}"
+build_image infra/docker/Dockerfile.gops-agent-orchestrator "${ECR_AGENT_ORCHESTRATOR_REPO}"
 
 docker push "${ECR_FRONTEND_REPO}:${IMAGE_TAG}"
 docker push "${ECR_API_SERVER_REPO}:${IMAGE_TAG}"
@@ -42,3 +44,4 @@ docker push "${ECR_MARKET_STORAGE_REPO}:${IMAGE_TAG}"
 docker push "${ECR_BACKFILL_WORKER_REPO}:${IMAGE_TAG}"
 docker push "${ECR_ORDER_WORKER_REPO}:${IMAGE_TAG}"
 docker push "${ECR_KIS_ADAPTER_REPO}:${IMAGE_TAG}"
+docker push "${ECR_AGENT_ORCHESTRATOR_REPO}:${IMAGE_TAG}"

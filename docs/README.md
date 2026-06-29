@@ -10,6 +10,7 @@ The root `README.md` stays short; repo-wide Codex rules live in root `AGENTS.md`
 | `ARCHITECTURE.md` | Current system, pod/job, and platform relationships. |
 | `IMAGE_STRATEGY.md` | Docker image boundaries and naming rules. |
 | `ENVIRONMENT.md` | Env, secret, and platform contracts. |
+| `AGENT_ORCHESTRATION_IMPLEMENTATION.md` | Summary of the role-based multi-agent implementation and Docker validation. |
 | `../AGENTS.md` | Codex/contributor rules for this repo. |
 
 Old long-form specs were removed to avoid stale, conflicting guidance.

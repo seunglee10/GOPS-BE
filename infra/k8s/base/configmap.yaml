@@ -12,6 +12,9 @@ data:
   ALPACA_ACTIVE_CHANNELS: trades
   ALPACA_ACTIVE_TICK_SUBSCRIPTION: "true"
   ALPACA_ACTIVE_POLL_SECONDS: "5"
+  ALPACA_NEWS_POLL_SECONDS: "300"
+  ALPACA_NEWS_LIMIT: "50"
+  ALPACA_NEWS_INCLUDE_CONTENT: "false"
   ACTIVE_CHART_TTL_SECONDS: "45"
   REDIS_KEY_PREFIX: ""
   ALPACA_TRADING_BASE_URL: https://paper-api.alpaca.markets
@@ -26,10 +29,11 @@ data:
   KAFKA_CLOSED_CANDLE_TOPIC: market.candles.closed.v1
   KAFKA_STATUS_TOPIC: market.status.v1
   KAFKA_VOLUME_PROFILE_BINS_TOPIC: market.volume-profile-bins.1m.v1
+  KAFKA_NEWS_TOPIC: market.news.alpaca.v1
   VOLUME_PROFILE_PRICE_BIN_SIZE: "0.05"
   PROCESSOR_LOG_EVERY_N: "500"
   KAFKA_PROCESSED_TOPICS: market.ticks.v1,market.candles.live.1m.v1,market.candles.closed.v1,market.status.v1,market.volume-profile-bins.1m.v1
-  KAFKA_CLICKHOUSE_TOPICS: market.candles.closed.v1,market.status.v1,market.volume-profile-bins.1m.v1
+  KAFKA_CLICKHOUSE_TOPICS: market.candles.closed.v1,market.status.v1,market.volume-profile-bins.1m.v1,market.news.alpaca.v1
   CLICKHOUSE_HTTP_URL: http://YOUR_CLICKHOUSE_ENDPOINT:8123
   CLICKHOUSE_DATABASE: market_data
   CLICKHOUSE_USER: alfaka
@@ -69,3 +73,11 @@ data:
   KAFKA_SUBMIT_RESULTS_TOPIC: broker.submit-results.v1
   KAFKA_ORDER_EVENTS_TOPIC: broker.order-events.v1
   KAFKA_DLQ_TOPIC: orders.dlq.v1
+  AGENT_ORCHESTRATOR_URL: http://agent-orchestrator:8100
+  AGENT_EVENT_INPUT_TOPICS: market.ticks.v1,market.candles.live.1m.v1,market.candles.closed.v1
+  AGENT_MARKET_EVENTS_TOPIC: agents.market-events.v1
+  AGENT_ANALYSIS_REQUESTS_TOPIC: agents.analysis-requests.v1
+  AGENT_ANALYSIS_RESULTS_TOPIC: agents.analysis-results.v1
+  AGENT_NOTIFICATION_DECISIONS_TOPIC: agents.notification-decisions.v1
+  AGENT_DLQ_TOPIC: agents.dlq.v1
+  AGENT_PUBLISH_TO_KAFKA: "true"

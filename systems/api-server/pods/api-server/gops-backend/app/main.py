@@ -5,6 +5,7 @@ from app.contracts.chart import AgentChatMessage, AgentChatRequest, ChartProposa
 from app.core.config import CORS_ORIGINS, read_dotenv_value
 from app.market_data.query.routes import router as market_query_router
 from app.routes.auth import router as auth_router
+from app.routes.agents import agent_alerts, agent_report, analyze_agents, router as agents_router
 from app.routes.charts import chart_candles, chart_symbols, router as charts_router
 from app.routes.health import health, log_runtime_config, router as health_router
 from app.routes.llm import agent_chat, chart_proposal, router as llm_router
@@ -27,6 +28,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_router)
     app.include_router(charts_router)
     app.include_router(market_query_router)
+    app.include_router(agents_router)
     app.include_router(llm_router)
     app.include_router(orders_router)
     app.include_router(streams_router)
@@ -40,7 +42,10 @@ __all__ = [
     "AgentChatMessage",
     "AgentChatRequest",
     "ChartProposalRequest",
+    "agent_alerts",
     "agent_chat",
+    "agent_report",
+    "analyze_agents",
     "app",
     "chart_candles",
     "chart_proposal",

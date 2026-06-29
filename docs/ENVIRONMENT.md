@@ -47,6 +47,11 @@ orders.commands.v1
 broker.submit-results.v1
 broker.order-events.v1
 orders.dlq.v1
+agents.market-events.v1
+agents.analysis-requests.v1
+agents.analysis-results.v1
+agents.notification-decisions.v1
+agents.dlq.v1
 ```
 
 Do not force MSK as the next step. The staged path is:
@@ -169,6 +174,32 @@ GOPS_API_BASE_URL
 
 Keep `COVERAGE_REPAIR_DRY_RUN=true` for audits. Set it to `false` only when intentionally queuing backfills.
 
+## Agent Orchestration
+
+Current local stage:
+
+```text
+docker-compose agent-orchestrator
+docker-compose agent-event-detector
+docker-compose agent-notification-publisher
+```
+
+Common env:
+
+```text
+AGENT_ORCHESTRATOR_URL
+AGENT_EVENT_INPUT_TOPICS
+AGENT_MARKET_EVENTS_TOPIC
+AGENT_ANALYSIS_REQUESTS_TOPIC
+AGENT_ANALYSIS_RESULTS_TOPIC
+AGENT_NOTIFICATION_DECISIONS_TOPIC
+AGENT_DLQ_TOPIC
+AGENT_PUBLISH_TO_KAFKA
+```
+
+News, macro, and ontology providers are empty adapters in v1. Do not choose or
+commit external API credentials until a data-provider decision is made.
+
 ## Secrets
 
 AWS Secrets Manager names:
@@ -219,10 +250,11 @@ gops-market-storage
 gops-backfill-worker
 gops-order-worker
 gops-kis-adapter
+gops-agent-orchestrator
 ```
 
 ## Future Dependencies
 
-Future ontology, GraphRAG, multi-agent analysis, news/context ingestion, or UI composition may add GraphDB, vector indexes, LLM provider secrets, vendor APIs, trace storage, or schedulers.
+Future ontology, GraphRAG, news/context ingestion, or UI composition may add GraphDB, vector indexes, vendor APIs, trace storage, or schedulers.
 
-Do not add env vars, compose services, k8s manifests, or Terraform resources for future dependencies until implementation starts.
+Do not add provider-specific secrets or managed service resources until implementation starts for that provider.
