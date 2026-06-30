@@ -37,12 +37,14 @@ def route_ui_intent(intent: str, layout_context: dict[str, Any], router_mode: st
     panels = compact_layout_panels(layout_context)
     if not text:
         return non_ui_intent("Empty user intent.")
+    if is_content_request_without_ui_operation(text):
+        return non_ui_intent("Content request did not include an explicit UI operation.")
 
     llm_intent = route_ui_intent_with_openai(text, panels, router_mode)
     if llm_intent:
-        return resolve_ui_target(llm_intent, panels)
+        return resolve_ui_target(llm_intent, panels, text)
 
-    return resolve_ui_target(infer_ui_intent_fallback(text, panels), panels)
+    return resolve_ui_target(infer_ui_intent_fallback(text, panels), panels, text)
 
 
 def route_ui_intent_with_openai(intent: str, panels: list[dict[str, Any]], router_mode: str) -> UIIntent | None:
@@ -157,7 +159,7 @@ def normalize_ui_intent(parsed: dict[str, Any], source: str) -> UIIntent | None:
     )
 
 
-def resolve_ui_target(ui_intent: UIIntent, panels: list[dict[str, Any]]) -> UIIntent:
+def resolve_ui_target(ui_intent: UIIntent, panels: list[dict[str, Any]], intent: str = "") -> UIIntent:
     panel_by_id = {panel["id"]: panel for panel in panels}
     target_id = ui_intent.targetPanelId if ui_intent.targetPanelId in panel_by_id else None
     target_type = ui_intent.targetPanelType
@@ -175,6 +177,8 @@ def resolve_ui_target(ui_intent: UIIntent, panels: list[dict[str, Any]]) -> UIIn
         and ui_intent.confidence >= float(os.getenv("AGENT_UI_ROUTER_MIN_CONFIDENCE", "0.65"))
         and (target_type is not None or ui_intent.action == "open")
         and ui_intent.action != "unknown"
+        and has_explicit_ui_operation(intent)
+        and not is_content_request_without_ui_operation(intent)
     )
     return UIIntent(
         isUiIntent=is_ui,
@@ -212,12 +216,106 @@ def infer_ui_intent_fallback(intent: str, panels: list[dict[str, Any]]) -> UIInt
 
 
 def is_confident_fallback_ui_action(text: str, size_intent: str | None) -> bool:
-    surface_terms = ("패널", "창", "화면", "레이아웃", "ui", "panel", "window", "layout")
-    strong_layout_terms = (
-        "앞", "메인", "중심", "위로", "아래", "밑", "상단", "하단", "왼쪽", "오른쪽", "좌측", "우측",
-        "재배치", "바꿔", "변경", "크게", "키워", "확대", "작게", "줄여", "축소",
+    return bool(size_intent or has_explicit_ui_operation(text))
+
+
+def is_content_request_without_ui_operation(intent: str) -> bool:
+    text = normalize_text(intent)
+    if not text:
+        return False
+    content_terms = (
+        "뉴스",
+        "기사",
+        "보도",
+        "헤드라인",
+        "속보",
+        "최신뉴스",
+        "관련뉴스",
+        "뉴스요약",
+        "기사요약",
+        "news",
+        "headline",
+        "headlines",
+        "article",
+        "articles",
+        "latestnews",
+        "relatednews",
     )
-    return bool(size_intent or any(term in text for term in surface_terms) or any(term in text for term in strong_layout_terms))
+    has_content_term = any(term in text for term in content_terms)
+    return has_content_term and not has_explicit_ui_operation(text)
+
+
+def has_explicit_ui_operation(intent: str) -> bool:
+    text = normalize_text(intent)
+    if not text:
+        return False
+    operation_terms = (
+        "제일크",
+        "젤크",
+        "최대",
+        "가득",
+        "크게",
+        "키워",
+        "확대",
+        "넓게",
+        "작게",
+        "줄여",
+        "축소",
+        "최소",
+        "오른쪽",
+        "우측",
+        "왼쪽",
+        "좌측",
+        "위로",
+        "상단",
+        "아래",
+        "밑",
+        "하단",
+        "옆",
+        "옆에",
+        "가운데",
+        "중앙",
+        "나란히",
+        "같이보이",
+        "동시에보이",
+        "재배치",
+        "배치",
+        "정렬",
+        "옮겨",
+        "이동",
+        "띄워",
+        "바꿔",
+        "변경",
+        "조정",
+        "full",
+        "max",
+        "maximum",
+        "large",
+        "big",
+        "small",
+        "min",
+        "right",
+        "left",
+        "top",
+        "bottom",
+        "center",
+        "middle",
+        "side",
+        "beside",
+        "nextto",
+        "arrange",
+        "move",
+        "resize",
+    )
+    surface_terms = ("패널", "창", "화면", "레이아웃", "영역", "탭", "ui", "panel", "window", "layout", "view", "screen")
+    surface_action_terms = ("열어", "닫아", "숨겨", "띄워", "추가", "제거", "없애", "켜", "꺼", "open", "close", "hide", "add", "remove")
+    return (
+        any(term in text for term in operation_terms)
+        or (
+            any(term in text for term in surface_terms)
+            and any(term in text for term in surface_action_terms)
+        )
+    )
 
 
 def non_ui_intent(reason: str) -> UIIntent:
@@ -282,7 +380,7 @@ def infer_action_size_and_position(text: str) -> tuple[str, str | None, str | No
         return "resize", "min", position_intent
     if position_intent:
         return "move", None, position_intent
-    if any(token in text for token in ("앞", "메인", "중심", "위로", "보여", "가져", "바꿔", "변경", "재배치", "ui", "layout", "focus", "front")):
+    if any(token in text for token in ("위로", "보여", "바꿔", "변경", "재배치", "배치", "정렬", "조정", "나란히", "ui", "layout", "focus")):
         return "focus", None, position_intent
     if any(token in text for token in ("열어", "추가", "띄워", "open", "add")):
         return "open", None, position_intent
@@ -300,7 +398,7 @@ def infer_position(text: str) -> str | None:
         return "left"
     if any(token in text for token in ("오른쪽", "우측", "right")):
         return "right"
-    if any(token in text for token in ("가운데", "중앙", "중심", "center", "middle")):
+    if any(token in text for token in ("가운데", "중앙", "center", "middle")):
         return "center"
     return None
 

@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .contracts import AgentFinding, EvidenceItem, LayoutProposal, MarketEvent, NotificationDecision, stable_id, utc_now_iso
+from .news_localization import NewsLocalizationService
 from .providers import ClickHouseNewsProvider, EmptyMacroProvider, GraphDBOntologyProvider, ProviderRequest
 from .router import parse_openai_text_json
 from .ui_intent import UIIntent
@@ -96,11 +97,13 @@ class NewsAgent(ProviderBackedAgent):
     role = "news-analysis"
     provider_name = "news"
 
-    def __init__(self, provider=None):
+    def __init__(self, provider=None, localizer=None):
         super().__init__(provider or ClickHouseNewsProvider())
+        self.localizer = localizer or NewsLocalizationService()
 
     def analyze(self, context: AgentContext) -> AgentFinding:
         evidence = self.provider.fetch(ProviderRequest(context.symbol, context.intent))
+        evidence = self.localizer.localize(symbol=context.symbol, intent=context.intent, evidence=evidence)
         analysis = analyze_news_evidence(context, evidence)
         openai_analysis = role_analysis_with_openai(
             role="news",
@@ -275,16 +278,20 @@ class LayoutAgent:
     def propose(self, context: AgentContext, route=None) -> LayoutProposal:
         panels = normalize_layout_panels(context.layoutContext)
         if not panels:
+            news_panel_props = build_news_panel_props(context.symbol, context.providerEvidence)
             return LayoutProposal(
                 title="Agent analysis workspace",
-                rationale="No layout context was supplied, so the layout agent did not propose panel movement.",
-                commands=[],
+                rationale="No layout context was supplied, so the layout agent only proposed display panels with available evidence.",
+                commands=[news_panel_add_command(news_panel_props)] if news_panel_props else [],
                 panelPriorities=[],
             )
 
         primary_type = primary_panel_type_for_route(route, context)
         priorities = panel_priorities_for_route(panels, primary_type, route, context)
         commands = priority_commands(priorities)
+        news_panel_props = build_news_panel_props(context.symbol, context.providerEvidence)
+        if news_panel_props:
+            commands.append(news_panel_props_command(panels, news_panel_props))
         primary_panel = first_panel_of_type(panels, primary_type)
         if primary_panel and primary_panel["type"] != "orderTicket":
             move_command = primary_panel_move_command(panels, primary_panel)
@@ -841,7 +848,7 @@ def analyze_news_evidence(context: AgentContext, evidence: list[EvidenceItem]) -
     events = Counter(news_raw_value(item, "eventType", "other") for item in available)
     dominant_direction = dominant_label(directions, fallback="unknown")
     dominant_event = dominant_label(events, fallback="other")
-    top_titles = [item.title for item in available[:3]]
+    top_titles = [display_news_title(item) for item in available[:3]]
     summary = (
         f"{context.symbol} 뉴스 {len(available)}건을 확인했습니다. "
         f"주요 이벤트는 {event_type_label(dominant_event)}이고, "
@@ -997,11 +1004,13 @@ def compact_role_evidence(items: list[EvidenceItem]) -> list[dict[str, Any]]:
     compacted = []
     for item in items[:12]:
         raw = item.raw if isinstance(item.raw, dict) else {}
+        title = display_news_title(item) if item.provider == "news" else item.title
+        summary = display_news_summary(item) if item.provider == "news" else item.summary
         compacted.append({
             "provider": item.provider,
             "status": item.status,
-            "title": item.title,
-            "summary": item.summary,
+            "title": title,
+            "summary": summary,
             "url": item.url,
             "raw": {
                 key: raw.get(key)
@@ -1009,8 +1018,15 @@ def compact_role_evidence(items: list[EvidenceItem]) -> list[dict[str, Any]]:
                     "impactDirection",
                     "eventType",
                     "relevanceScore",
+                    "importanceScore",
                     "publishedAt",
                     "source",
+                    "symbol",
+                    "symbols",
+                    "originalTitle",
+                    "originalSummary",
+                    "localizedTitle",
+                    "localizedSummary",
                     "relationType",
                     "themeName",
                     "controlledName",
@@ -1022,6 +1038,110 @@ def compact_role_evidence(items: list[EvidenceItem]) -> list[dict[str, Any]]:
             },
         })
     return compacted
+
+
+def build_news_panel_props(symbol: str, evidence: list[EvidenceItem]) -> dict[str, Any] | None:
+    news_items = [item for item in evidence if item.provider == "news" and item.status == "available"]
+    if not news_items:
+        return None
+    latest = sorted(news_items, key=lambda item: parse_panel_time(item), reverse=True)
+    major = sorted(
+        news_items,
+        key=lambda item: (
+            panel_raw_number(item, "importanceScore"),
+            panel_raw_number(item, "relevanceScore"),
+            parse_panel_time(item),
+        ),
+        reverse=True,
+    )
+    return {
+        "symbol": symbol,
+        "updatedAt": utc_now_iso(),
+        "latestNews": [news_panel_item(item, symbol) for item in latest[:12]],
+        "majorNews": [news_panel_item(item, symbol) for item in major[:8]],
+    }
+
+
+def news_panel_add_command(props: dict[str, Any]) -> dict[str, Any]:
+    return layout_command(
+        "layout.panel.add",
+        {
+            "panelType": "newsFeed",
+            "props": props,
+        },
+    )
+
+
+def news_panel_props_command(panels: list[dict[str, Any]], props: dict[str, Any]) -> dict[str, Any]:
+    panel = first_panel_of_type(panels, "newsFeed")
+    if not panel:
+        return news_panel_add_command(props)
+    return layout_command(
+        "layout.panel.props.update",
+        {
+            "panelId": panel["id"],
+            "props": props,
+        },
+        {"panelId": panel["id"]},
+    )
+
+
+def news_panel_item(item: EvidenceItem, symbol: str) -> dict[str, Any]:
+    raw = item.raw if isinstance(item.raw, dict) else {}
+    symbols = raw.get("symbols") if isinstance(raw.get("symbols"), list) else [raw.get("symbol") or symbol]
+    return {
+        "title": display_news_title(item),
+        "summary": display_news_summary(item),
+        "localizedTitle": news_raw_optional(item, "localizedTitle"),
+        "localizedSummary": news_raw_optional(item, "localizedSummary"),
+        "originalTitle": news_raw_optional(item, "originalTitle") or item.title,
+        "originalSummary": news_raw_optional(item, "originalSummary") or item.summary,
+        "url": item.url,
+        "source": raw.get("source") or item.provider,
+        "publishedAt": raw.get("publishedAt") or item.observedAt,
+        "symbol": raw.get("symbol") or symbol,
+        "symbols": [str(value) for value in symbols if value],
+        "eventType": raw.get("eventType") or "other",
+        "impactDirection": raw.get("impactDirection") or "unknown",
+        "relevanceScore": panel_raw_number(item, "relevanceScore"),
+        "importanceScore": panel_raw_number(item, "importanceScore"),
+    }
+
+
+def panel_raw_number(item: EvidenceItem, key: str) -> float:
+    raw = item.raw if isinstance(item.raw, dict) else {}
+    value = raw.get(key)
+    return float(value) if isinstance(value, (int, float)) else 0.0
+
+
+def display_news_title(item: EvidenceItem) -> str:
+    return news_raw_optional(item, "localizedTitle") or item.title
+
+
+def display_news_summary(item: EvidenceItem) -> str:
+    return news_raw_optional(item, "localizedSummary") or item.summary
+
+
+def news_raw_optional(item: EvidenceItem, key: str) -> str | None:
+    raw = item.raw if isinstance(item.raw, dict) else {}
+    value = raw.get(key)
+    text = str(value).strip() if value is not None else ""
+    return text or None
+
+
+def parse_panel_time(item: EvidenceItem) -> float:
+    raw = item.raw if isinstance(item.raw, dict) else {}
+    text = str(raw.get("publishedAt") or raw.get("receivedAt") or item.observedAt or "")
+    try:
+        return datetime_from_iso(text)
+    except Exception:
+        return 0.0
+
+
+def datetime_from_iso(value: str) -> float:
+    from datetime import datetime
+
+    return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
 
 
 def detect_cross_agent_conflicts(findings: list[AgentFinding]) -> list[str]:
