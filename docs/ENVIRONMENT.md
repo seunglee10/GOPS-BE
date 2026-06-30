@@ -232,6 +232,14 @@ local archive. GraphDB pods explicitly disable
 CloudWatch/OpenTelemetry auto-instrumentation annotations so this database
 runtime does not receive unwanted telemetry injection.
 
+## AWS Observability
+
+Cost-sensitive EKS environments should not install the managed
+`amazon-cloudwatch-observability` or `aws-network-flow-monitoring-agent` add-ons
+by default. If Container Insights log groups already exist, keep a short
+retention period such as 3 days unless the team explicitly needs longer
+operational history.
+
 ## Secrets
 
 AWS Secrets Manager names:
