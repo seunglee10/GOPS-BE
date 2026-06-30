@@ -197,8 +197,40 @@ AGENT_DLQ_TOPIC
 AGENT_PUBLISH_TO_KAFKA
 ```
 
-News, macro, and ontology providers are empty adapters in v1. Do not choose or
-commit external API credentials until a data-provider decision is made.
+News and macro providers are staged adapters in v1. The ontology provider can
+query a GraphDB repository when the GraphDB runtime is restored and reachable.
+
+GraphDB ontology env:
+
+```text
+GRAPHDB_SPARQL_URL
+GRAPHDB_REPOSITORY
+AGENT_ONTOLOGY_LIMIT
+GRAPHDB_TIMEOUT_SECONDS
+```
+
+Local GraphDB restore artifact:
+
+```text
+.local-artifacts/graphdb/graphdb-volume.tgz
+```
+
+`graphdb-volume.tgz` is a local restore artifact and must not be committed. To
+restore it into the EKS PVC, place the file at the path above and run:
+
+```sh
+scripts/aws/restore-graphdb-pvc.sh --replace-pending-pvc
+```
+
+Use `--replace-pending-pvc` only for the initial broken PVC case where
+`graphdb-data-graphdb-0` is `Pending` and has no `storageClassName`. In that
+case the script also recreates the `graphdb` StatefulSet, because Kubernetes
+does not allow in-place updates to `volumeClaimTemplates.storageClassName`. If
+GraphDB has already started once on the new PVC, it may create empty runtime
+files; pass `--force` only after confirming those files can be replaced by the
+local archive. GraphDB pods explicitly disable
+CloudWatch/OpenTelemetry auto-instrumentation annotations so this database
+runtime does not receive unwanted telemetry injection.
 
 ## Secrets
 

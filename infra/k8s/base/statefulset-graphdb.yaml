@@ -13,6 +13,15 @@ spec:
       app: graphdb
   template:
     metadata:
+      annotations:
+        cloudwatch.aws.amazon.com/auto-annotate-dotnet: "false"
+        cloudwatch.aws.amazon.com/auto-annotate-java: "false"
+        cloudwatch.aws.amazon.com/auto-annotate-nodejs: "false"
+        cloudwatch.aws.amazon.com/auto-annotate-python: "false"
+        instrumentation.opentelemetry.io/inject-dotnet: "false"
+        instrumentation.opentelemetry.io/inject-java: "false"
+        instrumentation.opentelemetry.io/inject-nodejs: "false"
+        instrumentation.opentelemetry.io/inject-python: "false"
       labels:
         app: graphdb
     spec:
@@ -31,18 +40,19 @@ spec:
               mountPath: /opt/graphdb/home
           readinessProbe:
             httpGet:
-              path: /
+              path: /repositories/nasdaq-fibo/size
               port: 7200
-            initialDelaySeconds: 30
+            initialDelaySeconds: 60
             periodSeconds: 15
-            timeoutSeconds: 5
-            failureThreshold: 12
+            timeoutSeconds: 10
+            failureThreshold: 30
   volumeClaimTemplates:
     - metadata:
         name: graphdb-data
       spec:
         accessModes:
           - ReadWriteOnce
+        storageClassName: eks-auto-ebs
         resources:
           requests:
             storage: 30Gi

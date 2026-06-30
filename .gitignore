@@ -43,6 +43,10 @@ kubeconfig
 *.kubeconfig
 awscliv2.zip
 
+# Local GraphDB restore artifacts. These may contain DB data or license material.
+.local-artifacts/graphdb/
+graphdb-volume.tgz
+
 # Local Codex/app artifacts.
 /.agents/
 /.codex/
