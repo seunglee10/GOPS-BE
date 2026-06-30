@@ -114,10 +114,10 @@ def runtime_config_warnings() -> list[str]:
     if os.getenv("BACKFILL_INITIAL_LOAD_1M_MIN_START") not in {None, "", "2023-07-01T00:00:00Z"}:
         warnings.append("1m_preload_floor_not_3y")
     profiles = set(configured_feed_profiles())
-    allowed_profiles = {"sip", "iex", "boats", "overnight", "test"}
+    allowed_profiles = {"sip", "boats", "overnight", "test"}
     if any(profile not in allowed_profiles for profile in profiles):
         warnings.append("invalid_alpaca_feed_profile")
-    expected_profiles = {"sip", "iex", "boats"}
+    expected_profiles = {"sip", "boats"}
     if profiles and not expected_profiles.issubset(profiles):
         warnings.append("alpaca_feed_profiles_missing_24_5_profile")
     if configured_alpaca_credential_source() == "invalid":
@@ -173,12 +173,13 @@ def pipeline_component_health() -> dict[str, object]:
 
         client = redis.Redis.from_url(redis_url, decode_responses=True, socket_connect_timeout=0.2, socket_timeout=0.2)
         keys = RedisKeyBuilder()
-        names = [
-            "market-ingestor-sip",
-            "market-ingestor-iex",
-            "market-ingestor-boats",
-            "market-processor",
-        ]
+        ingestor_names = []
+        for profile in configured_feed_profiles():
+            component_profile = "boats" if profile == "overnight" else profile
+            name = f"market-ingestor-{component_profile}"
+            if name not in ingestor_names:
+                ingestor_names.append(name)
+        names = [*ingestor_names, "market-processor"]
         return {
             "available": True,
             "items": {
@@ -207,6 +208,7 @@ def redact_component_health(payload):
         "lastSymbol",
         "lastEventTime",
         "lastMarketSession",
+        "currentMarketSession",
         "lastSourceEventId",
         "lastFeed",
         "lastFeedProfile",

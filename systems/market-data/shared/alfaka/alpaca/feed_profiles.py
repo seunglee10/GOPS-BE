@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from datetime import time
+from datetime import datetime, time, timezone as datetime_timezone
 from zoneinfo import ZoneInfo
 
 from alfaka.common.env import parse_csv
@@ -22,6 +22,7 @@ class FeedProfile:
     feed: str
     sessions: tuple[str, ...]
     description: str
+    websocket_path: str | None = None
 
     @property
     def websocket_feed(self) -> str:
@@ -29,6 +30,8 @@ class FeedProfile:
 
     @property
     def websocket_url(self) -> str:
+        if self.websocket_path:
+            return f"wss://stream.data.alpaca.markets/{self.websocket_path.lstrip('/')}"
         feed = self.websocket_feed
         return "wss://stream.data.alpaca.markets/v2/test" if feed == "test" else f"wss://stream.data.alpaca.markets/v2/{feed}"
 
@@ -40,23 +43,19 @@ PROFILE_DEFINITIONS: dict[str, FeedProfile] = {
         sessions=("pre", "regular", "after"),
         description="SIP daytime US equities feed for pre-market, regular, and after-hours sessions.",
     ),
-    "iex": FeedProfile(
-        profile_id="iex",
-        feed="iex",
-        sessions=("pre", "regular", "after"),
-        description="IEX daytime US equities feed for pre-market, regular, and after-hours sessions.",
-    ),
     "boats": FeedProfile(
         profile_id="boats",
         feed="boats",
-        sessions=("overnight", "pre", "regular", "after"),
-        description="BOATS/overnight-capable US equities feed for 24/5 coverage.",
+        sessions=("overnight",),
+        description="BOATS overnight US equities feed for the 20:00-04:00 ET session.",
+        websocket_path="v1beta1/boats",
     ),
     "overnight": FeedProfile(
         profile_id="overnight",
         feed="boats",
-        sessions=("overnight", "pre", "regular", "after"),
-        description="Alias for the BOATS/overnight-capable 24/5 feed profile.",
+        sessions=("overnight",),
+        description="Alias for Alpaca's overnight-capable feed profile.",
+        websocket_path="v1beta1/overnight",
     ),
     "test": FeedProfile(
         profile_id="test",
@@ -97,7 +96,13 @@ def market_session_for_timestamp(timestamp: str | None, timezone=MARKET_TIMEZONE
     parsed = parse_utc_time(timestamp)
     if not parsed:
         return "unknown"
-    local = parsed.astimezone(timezone)
+    return market_session_for_datetime(parsed, timezone=timezone)
+
+
+def market_session_for_datetime(value: datetime, timezone=MARKET_TIMEZONE) -> str:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=datetime_timezone.utc)
+    local = value.astimezone(timezone)
     weekday = local.weekday()
     local_time = local.time()
     if weekday >= 5:
@@ -111,6 +116,14 @@ def market_session_for_timestamp(timestamp: str | None, timezone=MARKET_TIMEZONE
     if weekday < 5:
         return "overnight"
     return "closed"
+
+
+def market_session_for_now(now: datetime | None = None, timezone=MARKET_TIMEZONE) -> str:
+    return market_session_for_datetime(now or datetime.now(datetime_timezone.utc), timezone=timezone)
+
+
+def feed_profile_active_for_session(feed_profile: FeedProfile, session: str | None) -> bool:
+    return str(session or "").strip().lower() in feed_profile.sessions
 
 
 def is_24_5_market_session(session: str | None) -> bool:

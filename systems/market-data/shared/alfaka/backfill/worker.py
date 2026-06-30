@@ -6,7 +6,7 @@ import time
 import redis
 
 from alfaka.backfill.runner import BackfillRunner
-from alfaka.backfill.status import RedisBackfillStore
+from alfaka.backfill.status import RedisBackfillStore, TERMINAL_STATUSES
 from alfaka.common.env import load_dotenv
 
 
@@ -40,6 +40,9 @@ def main():
             continue
         record = store.get_status(item.request_id)
         if not record:
+            store.ack_queue_item(item)
+            continue
+        if record.get("status") in TERMINAL_STATUSES:
             store.ack_queue_item(item)
             continue
         if int(item.delivery_count or 1) > max_attempts:

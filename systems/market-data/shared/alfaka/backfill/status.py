@@ -21,6 +21,8 @@ from alfaka.serving.intervals import (
 TERMINAL_STATUSES = {"succeeded", "failed", "unavailable"}
 ACTIVE_STATUSES = {"queued", "running"}
 RETRYABLE_TERMINAL_STATUSES = {"failed", "unavailable"}
+DEFAULT_ACTIVE_STALE_SECONDS = 30 * 60
+DEFAULT_MAX_1M_GAPFILL_HOURS = 14 * 24
 
 
 @dataclass(frozen=True)
@@ -100,6 +102,7 @@ class RedisBackfillStore:
     ):
         interval = normalize_chart_interval(interval)
         backfill_range = resolve_backfill_range(start, end, interval)
+        validate_backfill_request_range(interval, backfill_range, force=force, job_type=job_type)
         digest = range_digest(symbol, interval, backfill_range.start, backfill_range.end)
         base_request_id = request_id_for(symbol, interval, backfill_range.start, backfill_range.end)
         request_id = base_request_id
@@ -265,11 +268,23 @@ class RedisBackfillStore:
         if not request_id:
             return None
         value = self.redis.get(self.keys.backfill_status(request_id))
-        return json.loads(value) if value else None
+        if not value:
+            return None
+        record = json.loads(value)
+        return self.refresh_stale_status(record)
 
     def latest_status(self, symbol, interval):
         request_id = self.redis.get(self.keys.backfill_latest(symbol, interval))
         return self.get_status(request_id) if request_id else None
+
+    def refresh_stale_status(self, record):
+        if not is_stale_active_record(record):
+            return record
+        return self.update_status(
+            record,
+            "failed",
+            error="Backfill marked stale after missing heartbeat; retry with a bounded range.",
+        )
 
     def set_status(self, record):
         record = {**record, "updatedAt": utc_now_iso()}
@@ -356,8 +371,9 @@ class RedisBackfillStore:
             delivery_count = pending_entry_delivery_count(entry)
             if idle_ms is not None and idle_ms < min_idle_ms:
                 continue
-            record = self._record_for_stream_id(entry_id)
-            request_id = pending_entry_request_id(entry) or (record or {}).get("requestId")
+            request_id = pending_entry_request_id(entry) or self._request_id_for_stream_id(entry_id)
+            record = self.get_status(request_id) if request_id else self._record_for_stream_id(entry_id)
+            request_id = request_id or (record or {}).get("requestId")
             if not request_id:
                 continue
             item = BackfillQueueItem(request_id=request_id, stream_id=entry_id, delivery_count=delivery_count)
@@ -515,13 +531,34 @@ class RedisBackfillStore:
         if not messages:
             return None
         stream_id, fields = messages[0]
-        request_id = fields.get("requestId") or (self._record_for_stream_id(stream_id) or {}).get("requestId")
+        request_id = fields.get("requestId") or self._request_id_for_stream_id(stream_id) or (self._record_for_stream_id(stream_id) or {}).get("requestId")
         delivery_count = int(fields.get("deliveryCount") or fields.get("delivery_count") or 2)
         return BackfillQueueItem(request_id=request_id, stream_id=stream_id, delivery_count=delivery_count)
+
+    def _request_id_for_stream_id(self, stream_id):
+        fields = self._stream_fields_for_stream_id(stream_id)
+        return fields.get("requestId") if fields else None
+
+    def _stream_fields_for_stream_id(self, stream_id):
+        if not stream_id:
+            return {}
+        try:
+            rows = self.redis.xrange(self.keys.backfill_stream(), min=stream_id, max=stream_id, count=1)
+        except Exception:
+            return {}
+        if not rows:
+            return {}
+        _row_id, fields = rows[0]
+        return fields or {}
 
     def _record_for_stream_id(self, stream_id):
         if not stream_id:
             return None
+        request_id = self._request_id_for_stream_id(stream_id)
+        if request_id:
+            record = self.get_status(request_id)
+            if record:
+                return record
         # Redis Streams do not provide an efficient reverse lookup by stream ID.
         # Status records store streamId so tests and low-volume recovery can find
         # the matching request; production workers should carry requestId in the
@@ -552,6 +589,47 @@ def normalize_job_type(value):
     job_type = (value or "gapfill").strip().lower().replace("-", "_")
     allowed = {"initial_load", "gapfill", "replay_repair", "correction_replay"}
     return job_type if job_type in allowed else "gapfill"
+
+
+def validate_backfill_request_range(interval, backfill_range, *, force=False, job_type="gapfill"):
+    if normalize_job_type(job_type) != "gapfill":
+        return
+    source_interval = source_interval_for(interval)
+    if source_interval != "1m":
+        return
+    start = parse_time(backfill_range.start)
+    end = parse_time(backfill_range.end)
+    if end <= start:
+        raise ValueError("Backfill range end must be after start.")
+    max_hours = float(os.getenv("BACKFILL_MAX_GAPFILL_1M_RANGE_HOURS", str(DEFAULT_MAX_1M_GAPFILL_HOURS)))
+    if max_hours <= 0:
+        return
+    duration_hours = (end - start).total_seconds() / 3600
+    if duration_hours > max_hours:
+        force_suffix = " force=true" if force else ""
+        raise ValueError(
+            f"Rejected oversized 1m gapfill{force_suffix}: requested {duration_hours:.1f}h, "
+            f"max {max_hours:.1f}h. Use initial-load or S3 materialize jobs for bulk rebuilds."
+        )
+
+
+def is_stale_active_record(record):
+    if not record or record.get("status") not in ACTIVE_STATUSES:
+        return False
+    if normalize_job_type(record.get("jobType")) != "gapfill":
+        return False
+    stale_seconds = float(os.getenv("BACKFILL_ACTIVE_STALE_SECONDS", str(DEFAULT_ACTIVE_STALE_SECONDS)))
+    if stale_seconds <= 0:
+        return False
+    reference = record.get("heartbeatAt") or record.get("updatedAt") or record.get("startedAt") or record.get("requestedAt")
+    if not reference:
+        return False
+    try:
+        reference_time = parse_time(reference)
+    except ValueError:
+        return False
+    age = datetime.now(timezone.utc) - reference_time
+    return age.total_seconds() > stale_seconds
 
 
 def should_skip_existing_initial_load(record):

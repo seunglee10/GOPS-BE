@@ -12,7 +12,7 @@ Git push는 reset을 자동 실행하지 않는다. AWS reset은 운영자가 ku
 - Redis chart/live/backfill keyspace는 로컬 reset 후 상태와 AWS reset 후 상태가 같은 의미를 가져야 한다. Redis는 durable historical source가 아니라 realtime/latest/recent/cache/queue state다.
 - Kafka chart topics와 consumer group 상태는 로컬과 AWS가 같은 message contract를 사용해야 한다. 단, local broker 주소와 AWS in-cluster broker 주소는 달라도 된다.
 - endpoint, password, Secret 이름처럼 환경별 값은 달라도 되지만, market-data behavior는 같아야 한다.
-- AWS apply-only 배포에서 과거 `alfaka-alpaca-ingestor` Deployment가 남아 있으면 안 된다. 현재 계약의 active ingestor는 `alfaka-alpaca-ingestor-sip`, `alfaka-alpaca-ingestor-iex`, `alfaka-alpaca-ingestor-boats`이며, legacy `alfaka-alpaca-ingestor`는 `replicas=0`이어야 한다.
+- AWS apply-only 배포에서 과거 `alfaka-alpaca-ingestor` Deployment가 남아 있으면 안 된다. 현재 active ingestor는 `alfaka-alpaca-ingestor-sip`와 `alfaka-alpaca-ingestor-boats`뿐이어야 한다. Legacy `alfaka-alpaca-ingestor`와 과거 `alfaka-alpaca-ingestor-iex` Deployment는 absent 또는 `replicas=0`이어야 한다.
 - Redis는 chart/live/backfill runtime state이며, S3/ClickHouse가 durable historical source다. Redis background snapshot 실패가 backfill/status writes를 막지 않도록 compose와 in-cluster Redis는 `--appendonly yes --save "" --stop-writes-on-bgsave-error no` 계약을 사용한다.
 - S3 raw/live/final prefixes must keep their roles separate. Raw/live append objects are evidence and replay inputs; they are not direct chart-serving truth. ClickHouse serving should be rebuilt from final canonical parquet/manifest or from bounded materialization/compaction that dedupes by logical candle identity.
 
@@ -21,6 +21,9 @@ AWS runtime must use these market-data contract values:
 ```text
 ALPACA_UNIVERSE=gops20
 ALPACA_UNIVERSE_REGISTRY_PATH=
+ALPACA_FEED_PROFILES=sip,boats
+ALPACA_ENFORCE_FEED_SESSION_WINDOW=true
+ALPACA_SESSION_IDLE_POLL_SECONDS=60
 HOT_TIER_SIZE=10
 HOT_TIER_FALLBACK_SCAN_LIMIT=20
 S3_PROCESSED_FORMAT=parquet
@@ -115,11 +118,12 @@ auth/session/order/agent Redis key deletion
    - `/health/config` redacted response
    - sampled running pod env
    - `alfaka-alpaca-ingestor` legacy Deployment is absent or has `replicas=0`
-   - active ingestor Deployments are only `alfaka-alpaca-ingestor-sip`, `alfaka-alpaca-ingestor-iex`, and `alfaka-alpaca-ingestor-boats`
+   - active ingestor Deployments are only `alfaka-alpaca-ingestor-sip` and `alfaka-alpaca-ingestor-boats`
+   - stale `alfaka-alpaca-ingestor-iex` is absent or has `replicas=0`
 3. Scale down market-data writers/workers:
    - `alfaka-alpaca-ingestor-sip`
-   - `alfaka-alpaca-ingestor-iex`
    - `alfaka-alpaca-ingestor-boats`
+   - stale `alfaka-alpaca-ingestor-iex`, only if it is still present and not already `replicas=0`
    - legacy `alfaka-alpaca-ingestor`, only if it is still present and not already `replicas=0`
    - market processor
    - processed S3 sink
@@ -136,8 +140,9 @@ auth/session/order/agent Redis key deletion
 11. Materialize S3 canonical parquet into ClickHouse first.
 12. Use Alpaca initial-load/backfill only for target-range data that is missing from S3.
 13. For regular-session sparse chart gaps, queue only the API-reported `coverage.gapRanges`; do not enqueue a full-range forced backfill from the browser.
-14. Scale market-data writers/workers back up.
-15. Recheck ClickHouse, Redis, Kafka, API, and browser smoke.
+14. Confirm `BACKFILL_ACTIVE_STALE_SECONDS` and `BACKFILL_MAX_GAPFILL_1M_RANGE_HOURS` are present in the running ConfigMap.
+15. Scale market-data writers/workers back up.
+16. Recheck ClickHouse, Redis, Kafka, API, and browser smoke.
 
 ## 4. Post-Reset Verification
 

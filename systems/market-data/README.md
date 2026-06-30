@@ -57,7 +57,7 @@ Keep `alfaka.*` imports stable. Docker, compose, k8s, tests, and local scripts s
 
 ## Feed Profiles And Sessions
 
-Live Alpaca ingest is profile-scoped. The supported v1 profiles are `sip`, `iex`, and `boats`; `overnight` is an alias for the BOATS profile where needed. Compose and k8s run separate ingestor runtimes per profile with distinct client IDs instead of switching feeds inside one process.
+Live Alpaca ingest is profile-scoped. The default v1 runtime uses `sip` for `04:00-20:00 ET` (`pre`, `regular`, `after`) and `boats` for `20:00-04:00 ET` (`overnight`). `overnight` remains an alias for Alpaca's overnight feed where needed. Compose and k8s run separate ingestor runtimes per active profile with distinct client IDs instead of switching feeds inside one process.
 
 Raw envelopes, normalized streaming events, Redis latest/live state, ClickHouse rows, API candles, and chart snapshots carry `feedProfile` and `marketSession`. The session model is `pre`, `regular`, `after`, and `overnight`; daily/weekly/monthly candle serving falls back to `regular` when historical rows lack stored session metadata. Existing ClickHouse volumes can add the columns in place, but true multi-feed row preservation requires a table rebuild using the feed/session-aware `ORDER BY` from `infra/clickhouse/initdb/01-market-data.sql`.
 
@@ -122,7 +122,7 @@ COVERAGE_REPAIR_DRY_RUN=false docker compose --profile repair run --rm coverage-
 ```
 
 The job talks to the API server rather than Redis or ClickHouse directly, so derived intervals keep the same source-interval rules as the frontend: `5m/10m` repair through `1m`, and `1W/1M` repair through `1D`.
-Backfill API requests are queued in Redis Streams by default, with consumer-group claim/ack/reclaim semantics and dead-letter handling after the configured max attempts.
+Backfill API requests are queued in Redis Streams by default, with consumer-group claim/ack/reclaim semantics and dead-letter handling after the configured max attempts. Stale queued/running gapfill records fail after `BACKFILL_ACTIVE_STALE_SECONDS`, and oversized `1m` gapfill windows are rejected by `BACKFILL_MAX_GAPFILL_1M_RANGE_HOURS`; broad intraday rebuilds belong to Initial Load or explicit S3 materialize jobs.
 
 ## Initial Load
 
@@ -139,7 +139,7 @@ For local AWS-contract runs, market-data Docker services pin `ALPACA_CREDENTIAL_
 
 Intraday chart renderability only treats sparse gaps as blocking when both neighboring candles are inside the configured regular market session. Sparse after-hours 1m bars are allowed to render because Alpaca may not emit a bar for inactive extended-hours minutes.
 
-Drag-left chart history uses the candles API first. If the returned older range is partial but repairable, the frontend queues a bounded backfill request with an explicit `start`/`end`, polls `/api/charts/backfill/status`, and refetches the same range after completion. The chart request path must still serve from Redis/ClickHouse; it must not list S3 or call Alpaca synchronously.
+Drag-left chart history uses the candles API first. If the returned older range is partial but repairable, the frontend queues a bounded backfill request with an explicit `start`/`end`, polls `/api/charts/backfill/status`, and refetches the same range after completion. The chart request path must still serve from Redis/ClickHouse; it must not list S3 or call Alpaca synchronously. Do not convert a sparse chart window into a full-range `force=true` `1m` backfill.
 
 ```bash
 INITIAL_LOAD_START=2023-06-30T00:00:00Z INITIAL_LOAD_END=2026-06-30T00:00:00Z docker compose --profile repair run --rm initial-load

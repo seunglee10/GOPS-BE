@@ -24,7 +24,7 @@ from alfaka.alpaca.subscription import (
     load_symbols_and_channels,
     resolve_request_config_path,
 )
-from alfaka.alpaca.feed_profiles import market_session_for_timestamp, resolve_feed_profile
+from alfaka.alpaca.feed_profiles import feed_profile_active_for_session, market_session_for_timestamp, resolve_feed_profile
 from alfaka.alpaca.trade_tiers import resolve_trade_subscription_plan
 from alfaka.alpaca.websocket_collector import read_trade_subscription_symbols
 from alfaka.alpaca.assets import asset_to_symbol_metadata
@@ -636,10 +636,23 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(envelope["sourceEventId"], "alpaca/sip/trades/AAPL/123/2026-06-25T10:15:20.100Z")
 
     def test_feed_profiles_and_market_session_contract(self):
-        self.assertEqual(resolve_feed_profile({"ALPACA_FEED": "iex"}).profile_id, "iex")
+        sip = resolve_feed_profile({"ALPACA_FEED_PROFILE": "sip"})
+        self.assertEqual(sip.websocket_url, "wss://stream.data.alpaca.markets/v2/sip")
+        self.assertEqual(sip.sessions, ("pre", "regular", "after"))
+        self.assertTrue(feed_profile_active_for_session(sip, "regular"))
+        self.assertFalse(feed_profile_active_for_session(sip, "overnight"))
+
+        with self.assertRaises(ValueError):
+            resolve_feed_profile({"ALPACA_FEED": "iex"})
+
         boats = resolve_feed_profile({"ALPACA_FEED_PROFILE": "overnight"})
         self.assertEqual(boats.feed, "boats")
-        self.assertIn("overnight", boats.sessions)
+        self.assertEqual(boats.sessions, ("overnight",))
+        self.assertEqual(boats.websocket_url, "wss://stream.data.alpaca.markets/v1beta1/overnight")
+        boats_primary = resolve_feed_profile({"ALPACA_FEED_PROFILE": "boats"})
+        self.assertEqual(boats_primary.websocket_url, "wss://stream.data.alpaca.markets/v1beta1/boats")
+        self.assertTrue(feed_profile_active_for_session(boats_primary, "overnight"))
+        self.assertFalse(feed_profile_active_for_session(boats_primary, "regular"))
         self.assertEqual(market_session_for_timestamp("2026-06-29T08:30:00.000Z"), "pre")
         self.assertEqual(market_session_for_timestamp("2026-06-29T14:00:00.000Z"), "regular")
         self.assertEqual(market_session_for_timestamp("2026-06-29T21:00:00.000Z"), "after")
@@ -1475,6 +1488,55 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(store.pop_queued_request_id(), first["requestId"])
         self.assertIsNone(store.pop_queued_request_id())
 
+    def test_backfill_store_rejects_oversized_1m_gapfill(self):
+        store = RedisBackfillStore(redis_client=MemoryRedis(), ttl_seconds=60)
+
+        with mock.patch.dict(os.environ, {"BACKFILL_MAX_GAPFILL_1M_RANGE_HOURS": "336"}):
+            with self.assertRaisesRegex(ValueError, "Rejected oversized 1m gapfill"):
+                store.create_request(
+                    "AAPL",
+                    "1m",
+                    start="2023-07-01T00:00:00.000Z",
+                    end="2026-06-30T00:00:00.000Z",
+                    mode="queue",
+                    force=True,
+                )
+
+        self.assertEqual(store.queue_metrics()["stream"]["retainedLength"], 0)
+
+    def test_backfill_store_marks_stale_gapfill_failed_and_allows_retry(self):
+        redis_client = MemoryRedis()
+        store = RedisBackfillStore(redis_client=redis_client, ttl_seconds=60)
+        record, _deduped = store.create_request(
+            "AAPL",
+            "1m",
+            start="2026-06-25T13:30:00.000Z",
+            end="2026-06-25T14:30:00.000Z",
+            mode="queue",
+        )
+        stale = {
+            **record,
+            "status": "running",
+            "heartbeatAt": "2026-06-25T13:30:00.000Z",
+            "startedAt": "2026-06-25T13:30:00.000Z",
+        }
+        redis_client.set(store.keys.backfill_status(record["requestId"]), json.dumps(stale, separators=(",", ":")))
+
+        with mock.patch.dict(os.environ, {"BACKFILL_ACTIVE_STALE_SECONDS": "60"}):
+            status = store.latest_status("AAPL", "1m")
+            retry, deduped = store.create_request(
+                "AAPL",
+                "1m",
+                start="2026-06-25T13:30:00.000Z",
+                end="2026-06-25T14:30:00.000Z",
+                mode="queue",
+            )
+
+        self.assertEqual(status["status"], "failed")
+        self.assertIn("marked stale", status["error"])
+        self.assertFalse(deduped)
+        self.assertIn(":retry:", retry["requestId"])
+
     def test_backfill_store_stream_claim_ack_and_job_contract(self):
         redis_client = MemoryRedis()
         store = RedisBackfillStore(redis_client=redis_client, ttl_seconds=60)
@@ -1523,6 +1585,32 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(second_item.delivery_count, 2)
         self.assertEqual(claimed["claimedBy"], "worker-b")
         self.assertEqual(claimed["attempt"], 2)
+
+    def test_backfill_store_reclaims_real_redis_pending_without_request_id_in_xpending(self):
+        class RealisticPendingRedis(MemoryRedis):
+            def xpending_range(self, key, group, min="-", max="+", count=10):
+                rows = super().xpending_range(key, group, min=min, max=max, count=count)
+                return [
+                    {field: value for field, value in row.items() if field != "requestId"}
+                    for row in rows
+                ]
+
+        redis_client = RealisticPendingRedis()
+        store = RedisBackfillStore(redis_client=redis_client, ttl_seconds=60)
+        record, _deduped = store.create_request(
+            "NVDA",
+            "1m",
+            start="2026-06-25T13:30:00.000Z",
+            end="2026-06-25T14:30:00.000Z",
+            mode="queue",
+        )
+
+        first_item = store.read_next_queue_item(consumer_name="worker-a", timeout=0)
+        second_item = store.read_next_queue_item(consumer_name="worker-b", timeout=0, reclaim_idle_ms=0, max_attempts=3)
+
+        self.assertEqual(first_item.request_id, record["requestId"])
+        self.assertEqual(second_item.request_id, record["requestId"])
+        self.assertEqual(second_item.stream_id, first_item.stream_id)
 
     def test_backfill_store_dead_letters_after_retry_limit(self):
         redis_client = MemoryRedis()

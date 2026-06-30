@@ -221,6 +221,8 @@ class BackfillService:
         execution_mode = resolve_execution_mode(mode)
         try:
             record, deduplicated = self.store.create_request(symbol, source_interval, start=start, end=end, mode=execution_mode, force=force)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=503, detail=f"Backfill status store failed: {exc}") from exc
 

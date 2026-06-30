@@ -33,43 +33,8 @@ spec:
             - name: KAFKA_CLIENT_ID
               value: alfaka-alpaca-ingestor-sip
 ---
-# 역할: Alpaca IEX WebSocket 수집기를 EKS에 배포합니다.
-# 사용: SIP와 병렬로 daytime feed 권한/장애를 분리해 관측합니다.
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: alfaka-alpaca-ingestor-iex
-  namespace: alfaka-market-data
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: alfaka-alpaca-ingestor-iex
-  template:
-    metadata:
-      labels:
-        app: alfaka-alpaca-ingestor-iex
-    spec:
-      serviceAccountName: alfaka-market-data-sa
-      containers:
-        - name: alpaca-ingestor
-          image: YOUR_ECR_REPOSITORY/gops-market-ingestor:latest
-          imagePullPolicy: IfNotPresent
-          command: ["python", "-u", "systems/market-data/pods/market-ingestor/market_stream.py"]
-          envFrom:
-            - configMapRef:
-                name: alfaka-market-data-config
-            - secretRef:
-                name: alfaka-alpaca-secret
-                optional: true
-          env:
-            - name: ALPACA_FEED_PROFILE
-              value: iex
-            - name: KAFKA_CLIENT_ID
-              value: alfaka-alpaca-ingestor-iex
----
 # 역할: Alpaca BOATS/overnight WebSocket 수집기를 EKS에 배포합니다.
-# 사용: overnight 포함 24/5 feed 권한/장애를 SIP/IEX와 분리해 관측합니다.
+# 사용: 20:00-04:00 ET overnight feed를 SIP daytime feed와 분리해 관측합니다.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

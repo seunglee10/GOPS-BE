@@ -30,7 +30,9 @@ ALPACA_CHANNELS=bars,updatedBars,dailyBars,statuses
 ALPACA_ACTIVE_CHANNELS=trades
 ALPACA_MAX_TRADE_SYMBOLS=
 ALPACA_FEED_PROFILE=sip
-ALPACA_FEED_PROFILES=sip,iex,boats
+ALPACA_FEED_PROFILES=sip,boats
+ALPACA_ENFORCE_FEED_SESSION_WINDOW=true
+ALPACA_SESSION_IDLE_POLL_SECONDS=60
 ALPACA_CREDENTIAL_SOURCE=aws-secrets-manager
 ALPACA_SECRET_NAME=dev/alpaca
 HOT_TIER_SIZE=10
@@ -40,7 +42,7 @@ HOT_TIER_FALLBACK_SCAN_LIMIT=20
 The v1 rebuild universe is the 20-symbol `gops20` set in `systems/market-data/config/market-data-request.json`. Full-universe collection covers bars/status channels for those 20 symbols. Trade subscriptions are resolved dynamically from active chart symbols, user Watch List symbols synced to Redis through `/api/charts/watchlist`, and Hot Top10 symbols inside the same 20-symbol universe. `ALPACA_SYMBOLS` is a legacy/local smoke seed and should not be treated as the frontend Watch List source of truth or the full collection universe.
 Set `ALPACA_MAX_TRADE_SYMBOLS` only when an Alpaca subscription cap requires an operational limit; active chart symbols are prioritized before watchlist and hot symbols.
 
-`ALPACA_FEED_PROFILE` selects one ingestor runtime feed (`sip`, `iex`, or `boats`). Local compose and k8s can run one ingestor per profile, and `/health/config` reports the expected profile set from `ALPACA_FEED_PROFILES`. Market-data envelopes, Redis live state, ClickHouse candle rows, API candles, and chart snapshots preserve `feedProfile` and `marketSession` so daytime and BOATS/overnight data are diagnosable instead of collapsing into an anonymous stream.
+`ALPACA_FEED_PROFILE` selects one ingestor runtime feed (`sip` or `boats`). The live contract is session-routed: SIP is primary for `04:00-20:00 ET` (`pre`, `regular`, `after`) and BOATS is primary for `20:00-04:00 ET` (`overnight`). Local compose and k8s run one ingestor per active profile, and `/health/config` reports the expected profile set from `ALPACA_FEED_PROFILES`. Market-data envelopes, Redis live state, ClickHouse candle rows, API candles, and chart snapshots preserve `feedProfile` and `marketSession` so daytime and BOATS/overnight data are diagnosable instead of collapsing into an anonymous stream.
 
 `ALPACA_CREDENTIAL_SOURCE` accepts `auto`, `aws-secrets-manager`, or `local-env`. Local AWS-contract and Docker Compose market-data services pin `aws-secrets-manager` so stale local `APCA_*` values cannot override Secrets Manager credentials. Use `local-env` only for an explicit local smoke outside the AWS-contract flow.
 
@@ -335,6 +337,8 @@ BACKFILL_STREAM_GROUP
 BACKFILL_STREAM_RECLAIM_IDLE_MS
 BACKFILL_STREAM_MAXLEN
 BACKFILL_MAX_ATTEMPTS
+BACKFILL_ACTIVE_STALE_SECONDS
+BACKFILL_MAX_GAPFILL_1M_RANGE_HOURS
 BACKFILL_GAPFILL_DETECT_INTERNAL
 BACKFILL_GAPFILL_MAX_DETECT_DAYS
 BACKFILL_GAPFILL_TIMESTAMP_LIMIT
@@ -356,7 +360,7 @@ DAILY_BAR_1M_REPAIR_ENABLED
 DAILY_BAR_1M_REPAIR_RATIO
 ```
 
-Canonical Alpaca historical backfill uses `adjustment=split` and writes `priceAdjustment=split`, `canonicalVersion=v2`. A stale `HISTORICAL_ADJUSTMENT=raw` does not override this unless `ALLOW_NON_CANONICAL_HISTORICAL_ADJUSTMENT=true` is explicitly set for a non-serving diagnostic job. Keep `S3_REQUIRE_CANONICAL_PROCESSED_CANDLES=true` so S3-first backfill ignores legacy processed/raw candle manifests that lack split/v2 metadata. `DAILY_BAR_1M_REPAIR_ENABLED=true` lets `1D` backfill validate suspicious split-day dailyBars high/low values against same-day split-adjusted `1m` bars; only the outlier high/low is repaired, while daily open/close/volume remain from dailyBars. `HISTORICAL_1M_MINUTES_PER_TRADING_DAY=960` keeps 1m preload dry-run estimates conservative for Alpaca extended-hours bars. Retry settings are used for transient Alpaca historical API failures such as rate limits and 5xx responses.
+Canonical Alpaca historical backfill uses `adjustment=split` and writes `priceAdjustment=split`, `canonicalVersion=v2`. A stale `HISTORICAL_ADJUSTMENT=raw` does not override this unless `ALLOW_NON_CANONICAL_HISTORICAL_ADJUSTMENT=true` is explicitly set for a non-serving diagnostic job. Keep `S3_REQUIRE_CANONICAL_PROCESSED_CANDLES=true` so S3-first backfill ignores legacy processed/raw candle manifests that lack split/v2 metadata. `BACKFILL_ACTIVE_STALE_SECONDS` fails old queued/running gapfill status records so stale Redis state cannot block new bounded repairs. `BACKFILL_MAX_GAPFILL_1M_RANGE_HOURS` rejects oversized `1m` gapfill requests from the chart/API path; broad intraday rebuilds must use Initial Load chunks or explicit S3 materialize jobs. `DAILY_BAR_1M_REPAIR_ENABLED=true` lets `1D` backfill validate suspicious split-day dailyBars high/low values against same-day split-adjusted `1m` bars; only the outlier high/low is repaired, while daily open/close/volume remain from dailyBars. `HISTORICAL_1M_MINUTES_PER_TRADING_DAY=960` keeps 1m preload dry-run estimates conservative for Alpaca extended-hours bars. Retry settings are used for transient Alpaca historical API failures such as rate limits and 5xx responses.
 
 ## Market Calendar
 

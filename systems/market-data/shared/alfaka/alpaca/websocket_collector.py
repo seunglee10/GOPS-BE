@@ -10,7 +10,7 @@ import time
 import redis
 import websockets
 
-from alfaka.alpaca.feed_profiles import resolve_feed_profile
+from alfaka.alpaca.feed_profiles import feed_profile_active_for_session, market_session_for_now, resolve_feed_profile
 from alfaka.alpaca.subscription import build_subscription_request, configured_collection_symbols, load_request_config, load_symbols_and_channels, validate_channels
 from alfaka.alpaca.trade_tiers import resolve_trade_subscription_plan
 from alfaka.common.env import load_dotenv, parse_csv
@@ -34,6 +34,8 @@ async def main():
     validate_channels(active_channels, request_config)
     active_channels = [channel for channel in active_channels if channel not in channels]
     active_poll_seconds = parse_positive_float(os.getenv("ALPACA_ACTIVE_POLL_SECONDS", "5"), default=5.0)
+    enforce_session_window = parse_bool(os.getenv("ALPACA_ENFORCE_FEED_SESSION_WINDOW", "true"), default=True)
+    session_idle_poll_seconds = parse_positive_float(os.getenv("ALPACA_SESSION_IDLE_POLL_SECONDS", "60"), default=60.0)
 
     kafka_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
     kafka_client_id = os.getenv("KAFKA_CLIENT_ID", "alfaka-alpaca-ingestor")
@@ -73,6 +75,24 @@ async def main():
 
     delay = reconnect_backoff
     while True:
+        current_session = market_session_for_now()
+        if enforce_session_window and not feed_profile_active_for_session(feed_profile, current_session):
+            write_ingestor_health(
+                redis_client,
+                feed_profile,
+                status="idle",
+                alpacaFeed=alpaca_feed,
+                websocketUrl=alpaca_url,
+                currentMarketSession=current_session,
+            )
+            print(
+                f"Alpaca profile {feed_profile.profile_id} idle: "
+                f"currentSession={current_session}, supportedSessions={','.join(feed_profile.sessions)}",
+                flush=True,
+            )
+            await asyncio.sleep(session_idle_poll_seconds)
+            continue
+
         try:
             await run_stream_session(
                 alpaca_url=alpaca_url,
@@ -86,6 +106,7 @@ async def main():
                 active_channels=active_channels,
                 active_poll_seconds=active_poll_seconds,
                 raw_topic_prefix=raw_topic_prefix,
+                enforce_session_window=enforce_session_window,
             )
             delay = reconnect_backoff
         except asyncio.CancelledError:
@@ -117,6 +138,7 @@ async def run_stream_session(
     active_channels,
     active_poll_seconds,
     raw_topic_prefix,
+    enforce_session_window,
 ):
     active_subscribed_symbols = set()
     last_active_sync = 0.0
@@ -124,6 +146,23 @@ async def run_stream_session(
         await ws.send(json.dumps({"action": "auth", "key": alpaca_key, "secret": alpaca_secret}))
 
         while True:
+            current_session = market_session_for_now()
+            if enforce_session_window and not feed_profile_active_for_session(feed_profile, current_session):
+                write_ingestor_health(
+                    redis_client,
+                    feed_profile,
+                    status="idle",
+                    alpacaFeed=alpaca_feed,
+                    websocketUrl=alpaca_url,
+                    currentMarketSession=current_session,
+                )
+                print(
+                    f"Alpaca profile {feed_profile.profile_id} leaving stream: "
+                    f"currentSession={current_session}, supportedSessions={','.join(feed_profile.sessions)}",
+                    flush=True,
+                )
+                return
+
             try:
                 raw_frame = await asyncio.wait_for(ws.recv(), timeout=max(1.0, active_poll_seconds))
             except asyncio.TimeoutError:
@@ -318,6 +357,12 @@ def parse_positive_float(value, default):
     except (TypeError, ValueError):
         return default
     return parsed if parsed > 0 else default
+
+
+def parse_bool(value, default):
+    if value is None or value == "":
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def write_ingestor_health(redis_client, feed_profile, **fields):

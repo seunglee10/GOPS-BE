@@ -635,6 +635,25 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             else:
                 os.environ["BACKFILL_ALLOW_REQUESTED_MODE"] = previous_allow
 
+    def test_oversized_backfill_request_returns_bad_request(self):
+        class RejectingBackfillStore:
+            def create_request(self, *args, **kwargs):
+                raise ValueError("Rejected oversized 1m gapfill")
+
+        service = BackfillService(store=RejectingBackfillStore())
+
+        with self.assertRaises(HTTPException) as raised:
+            service.request_backfill(
+                "AAPL",
+                "1m",
+                start="2023-07-01T00:00:00.000Z",
+                end="2026-06-30T00:00:00.000Z",
+                force=True,
+            )
+
+        self.assertEqual(raised.exception.status_code, 400)
+        self.assertIn("Rejected oversized", str(raised.exception.detail))
+
     def test_derived_interval_backfill_queues_source_interval(self):
         store = RecordingBackfillStore()
         service = BackfillService(store=store)
@@ -1041,7 +1060,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             "ALFAKA_REQUEST_CONFIG": "systems/market-data/config/market-data-request.json",
             "ALPACA_UNIVERSE": "gops20",
             "ALPACA_CHANNELS": "bars,updatedBars,dailyBars,statuses",
-            "ALPACA_FEED_PROFILES": "sip,iex,boats",
+            "ALPACA_FEED_PROFILES": "sip,boats",
             "BACKFILL_INITIAL_LOAD_1M_MIN_START": "2023-07-01T00:00:00Z",
             "ALPACA_CREDENTIAL_SOURCE": "aws-secrets-manager",
             "ALPACA_SECRET_NAME": "dev/alpaca",

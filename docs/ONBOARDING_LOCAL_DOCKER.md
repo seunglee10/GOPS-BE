@@ -81,12 +81,11 @@ Config:   http://localhost:8000/health/config
 | `local-s3` | MinIO experiments only. Not the default path. |
 | `reconciliation` | Manual order reconciliation job. |
 
-Start live Alpaca ingestion only when real-time charts are needed. The IEX
-profile is the safest local default because it avoids requiring a SIP market
-data subscription:
+Start live Alpaca ingestion only when real-time charts are needed. The default
+contract uses SIP for `04:00-20:00 ET` and BOATS for `20:00-04:00 ET`:
 
 ```sh
-docker compose --profile alpaca up -d --build alpaca-ingestor-iex
+docker compose --profile alpaca up -d --build alpaca-ingestor alpaca-ingestor-boats
 ```
 
 Audit chart coverage:
