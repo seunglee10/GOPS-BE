@@ -40,11 +40,11 @@ data:
   DATABASE_NAME: gops
   DATABASE_USER: gops
   S3_BUCKET: gops-market-data-<aws-account-id>-ap-northeast-2-an
-  S3_RAW_PREFIX: market-data/raw/alpaca
-  S3_FINAL_PREFIX: market-data/final
-  S3_LIVE_PREFIX: market-data/live
-  S3_MANIFEST_PREFIX: market-data/manifest
-  S3_MATERIALIZE_PREFIX: market-data/final
+  S3_RAW_PREFIX: market-data/rebuild-20260701/raw/alpaca
+  S3_FINAL_PREFIX: market-data/rebuild-20260701/final
+  S3_LIVE_PREFIX: market-data/rebuild-20260701/live
+  S3_MANIFEST_PREFIX: market-data/rebuild-20260701/manifest
+  S3_MATERIALIZE_PREFIX: market-data/rebuild-20260701/final
   S3_PROCESSED_FORMAT: parquet
   S3_HISTORICAL_RAW_PARTITION_MODE: chunk
   S3_HISTORICAL_PROCESSED_MANIFEST_LAYOUT: compact

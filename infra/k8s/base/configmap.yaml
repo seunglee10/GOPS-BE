@@ -65,10 +65,10 @@ data:
   AUTH_COOKIE_SAMESITE: lax
   GOOGLE_OAUTH_SECRET_NAME: oauth/google
   S3_BUCKET: gops-market-data-<aws-account-id>-ap-northeast-2-an
-  S3_RAW_PREFIX: market-data/raw/alpaca
-  S3_FINAL_PREFIX: market-data/final
-  S3_LIVE_PREFIX: market-data/live
-  S3_MANIFEST_PREFIX: market-data/manifest
+  S3_RAW_PREFIX: market-data/rebuild-20260701/raw/alpaca
+  S3_FINAL_PREFIX: market-data/rebuild-20260701/final
+  S3_LIVE_PREFIX: market-data/rebuild-20260701/live
+  S3_MANIFEST_PREFIX: market-data/rebuild-20260701/manifest
   S3_PROCESSED_FORMAT: parquet
   S3_HISTORICAL_RAW_PARTITION_MODE: chunk
   S3_HISTORICAL_PROCESSED_MANIFEST_LAYOUT: compact
@@ -78,7 +78,7 @@ data:
   S3_RAW_FLUSH_INTERVAL_SECONDS: "60"
   S3_PUT_MAX_ATTEMPTS: "3"
   S3_PUT_RETRY_SLEEP_SECONDS: "1"
-  S3_MATERIALIZE_PREFIX: market-data/final
+  S3_MATERIALIZE_PREFIX: market-data/rebuild-20260701/final
   S3_MATERIALIZE_KEYS: ""
   S3_MATERIALIZE_MAX_OBJECTS: ""
   HISTORICAL_ADJUSTMENT: split

@@ -271,6 +271,22 @@ S3_MATERIALIZE_MANIFEST_PREFIX
 
 Leave `S3_ENDPOINT_URL` empty for real AWS S3.
 
+Current local/AWS rebuild prefix contract:
+
+```text
+S3_RAW_PREFIX=market-data/rebuild-20260701/raw/alpaca
+S3_FINAL_PREFIX=market-data/rebuild-20260701/final
+S3_LIVE_PREFIX=market-data/rebuild-20260701/live
+S3_MANIFEST_PREFIX=market-data/rebuild-20260701/manifest
+S3_MATERIALIZE_PREFIX=market-data/rebuild-20260701/final
+```
+
+Keep these prefixes aligned between local Docker Compose and AWS overlays while
+the 20-symbol canonical rebuild is active. Pointing AWS at older
+`market-data/final` and `market-data/manifest` prefixes mixes legacy per-day
+objects with canonical compact objects and can leave Hot Ranking or chart
+serving with partial `v2 + split` coverage.
+
 Local Docker services that read AWS Secrets Manager or S3 can authenticate with
 direct `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` values, but the preferred
 local path is `AWS_PROFILE` plus the read-only host `~/.aws` mount configured in

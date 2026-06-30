@@ -3502,9 +3502,20 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         query = provider.queries[0][0]
         self.assertIn("row_number() OVER", query)
         self.assertIn("AND interval = '1m'", query)
+        self.assertIn("price_adjustment IN ('split', 'live')", query)
         self.assertIn("latest_session_date", query)
         self.assertIn("event_time >= subtractDays(now(), {lookbackDays:UInt32})", query)
         self.assertEqual(provider.queries[0][1]["lookbackDays"], 14)
+
+    def test_clickhouse_daily_hot_fallback_keeps_historical_canonical_filter(self):
+        provider = RecordingClickHouseProviderForAggregation([])
+
+        provider._hot_symbols_by_interval_dollar_volume(["AAPL", "MSFT"], interval="1D")
+
+        query = provider.queries[0][0]
+        self.assertIn("AND interval IN ('1D', '1d')", query)
+        self.assertIn("price_adjustment IN ('split')", query)
+        self.assertNotIn("'live'", query)
 
     def test_clickhouse_rows_preserve_candle_status_contract(self):
         candle_row = candle_to_clickhouse_row({

@@ -6,7 +6,7 @@ import os
 import re
 
 from alfaka.common.env import load_dotenv
-from alfaka.common.canonical import CANONICAL_VERSION, HISTORICAL_SERVING_PRICE_ADJUSTMENTS
+from alfaka.common.canonical import CANONICAL_VERSION, HISTORICAL_SERVING_PRICE_ADJUSTMENTS, SERVING_PRICE_ADJUSTMENTS
 from alfaka.serving.dto import snapshot
 from alfaka.serving.intervals import normalize_chart_interval, resolve_candle_limit
 from alfaka.serving.moving_average import attach_moving_averages
@@ -441,7 +441,7 @@ class ClickHouseMarketDataProvider:
         FROM {self.table('chart_candles')}
         WHERE symbol IN {{symbols:Array(String)}}
           AND {interval_filter}
-          AND {self.canonical_candle_filter_sql()}
+          AND {self.canonical_candle_filter_sql(include_live=normalized_interval == "1m")}
           AND event_time >= subtractDays(now(), {{lookbackDays:UInt32}})
           AND toDayOfWeek(event_time) BETWEEN 1 AND 5
         """
@@ -451,7 +451,7 @@ class ClickHouseMarketDataProvider:
             AND event_time >= subtractDays(now(), {{lookbackDays:UInt32}})
             AND toDate(event_time) = latest_session_date
             AND toDayOfWeek(event_time) BETWEEN 1 AND 5
-        """)
+        """, include_live=normalized_interval == "1m")
         query = f"""
         WITH (
           SELECT max(toDate(event_time))
@@ -485,7 +485,7 @@ class ClickHouseMarketDataProvider:
         """
         return self.query_json_each_row(query, {"symbols": symbols, "limit": int(limit), "lookbackDays": lookback_days})
 
-    def latest_chart_candles_source(self, where_sql):
+    def latest_chart_candles_source(self, where_sql, *, include_live=False):
         return f"""
         SELECT
           event_time,
@@ -539,7 +539,7 @@ class ClickHouseMarketDataProvider:
             ) AS rn
           FROM {self.table('chart_candles')}
           WHERE {where_sql}
-            AND {self.canonical_candle_filter_sql()}
+            AND {self.canonical_candle_filter_sql(include_live=include_live)}
         )
         WHERE rn = 1
         """
@@ -585,10 +585,11 @@ class ClickHouseMarketDataProvider:
             "ADD COLUMN IF NOT EXISTS canonical_version LowCardinality(String) DEFAULT 'legacy' AFTER price_adjustment"
         )
 
-    def canonical_candle_filter_sql(self):
+    def canonical_candle_filter_sql(self, *, include_live=False):
         if os.getenv("CLICKHOUSE_REQUIRE_CANONICAL_CANDLES", "true").lower() not in {"1", "true", "yes"}:
             return "1 = 1"
-        adjustments = ", ".join(clickhouse_string_literal(value) for value in HISTORICAL_SERVING_PRICE_ADJUSTMENTS)
+        allowed_adjustments = SERVING_PRICE_ADJUSTMENTS if include_live else HISTORICAL_SERVING_PRICE_ADJUSTMENTS
+        adjustments = ", ".join(clickhouse_string_literal(value) for value in allowed_adjustments)
         return f"canonical_version = {clickhouse_string_literal(CANONICAL_VERSION)} AND price_adjustment IN ({adjustments})"
 
     def search_symbols(self, query_text, limit=20):
