@@ -79,6 +79,18 @@ patches:
         name: alfaka-symbol-registry-sync
         namespace: alfaka-market-data
       $patch: delete
+  - target:
+      group: batch
+      version: v1
+      kind: Job
+      name: alfaka-initial-load
+    patch: |-
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: alfaka-initial-load
+        namespace: alfaka-market-data
+      $patch: delete
 
 images:
   - name: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-ingestor

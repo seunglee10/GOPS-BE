@@ -13,7 +13,14 @@ from kis_trader.domain.commands import OrderCommand
 from .auth import KisAuthClient, KisAuthError
 from .config import KisConfig, load_kis_config
 from .fake import KisConnectionReset, KisExplicitReject, KisHttpError, KisTimeout, KisTokenExpired
-from .market import ccnl_side_code, default_currency, resolve_overseas_order_tr_id
+from .holdings import normalize_account_holdings
+from .market import (
+    ccnl_side_code,
+    default_currency,
+    resolve_domestic_balance_tr_id,
+    resolve_overseas_balance_tr_id,
+    resolve_overseas_order_tr_id,
+)
 
 
 class DemoKisHttpClient:
@@ -117,6 +124,54 @@ class DemoKisHttpClient:
             "msg_cd": payload.get("msg_cd"),
             "msg1": payload.get("msg1"),
         }
+
+    def fetch_holdings(self, *, market: str = "overseas", currency: str = "USD", exchange: str = "") -> dict[str, Any]:
+        if self.config.env != "demo":
+            raise KisExplicitReject("only KIS demo holdings are implemented")
+        normalized_market = market.strip().lower()
+        if normalized_market == "overseas":
+            return self.fetch_overseas_holdings(currency=currency, exchange=exchange)
+        if normalized_market == "domestic":
+            return self.fetch_domestic_holdings()
+        raise KisExplicitReject(f"unsupported holdings market: {market}")
+
+    def fetch_overseas_holdings(self, *, currency: str = "USD", exchange: str = "") -> dict[str, Any]:
+        tr_currency = currency.strip().upper() or "USD"
+        params = {
+            "CANO": self.config.account_no,
+            "ACNT_PRDT_CD": self.config.product_code,
+            "OVRS_EXCG_CD": exchange.strip().upper(),
+            "TR_CRCY_CD": tr_currency,
+            "CTX_AREA_FK200": "",
+            "CTX_AREA_NK200": "",
+        }
+        payload = self._get(
+            "/uapi/overseas-stock/v1/trading/inquire-balance",
+            tr_id=resolve_overseas_balance_tr_id(self.config.env),
+            params=params,
+        )
+        return normalize_account_holdings(payload, market="overseas", currency=tr_currency)
+
+    def fetch_domestic_holdings(self) -> dict[str, Any]:
+        params = {
+            "CANO": self.config.account_no,
+            "ACNT_PRDT_CD": self.config.product_code,
+            "AFHR_FLPR_YN": "N",
+            "OFL_YN": "",
+            "INQR_DVSN": "02",
+            "UNPR_DVSN": "01",
+            "FUND_STTL_ICLD_YN": "N",
+            "FNCG_AMT_AUTO_RDPT_YN": "N",
+            "PRCS_DVSN": "00",
+            "CTX_AREA_FK100": "",
+            "CTX_AREA_NK100": "",
+        }
+        payload = self._get(
+            "/uapi/domestic-stock/v1/trading/inquire-balance",
+            tr_id=resolve_domestic_balance_tr_id(self.config.env),
+            params=params,
+        )
+        return normalize_account_holdings(payload, market="domestic", currency="KRW")
 
     def _post_overseas_order(self, command: OrderCommand) -> dict[str, Any]:
         tr_id = resolve_overseas_order_tr_id(command.side, command.exchange, self.config.env)

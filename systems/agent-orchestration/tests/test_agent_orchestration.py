@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT / "shared"))
 sys.path.insert(0, str(REPO_ROOT / "systems" / "market-data" / "shared"))
 sys.modules.setdefault("boto3", types.SimpleNamespace(client=lambda *args, **kwargs: None))
 
-from gops_agents.agents import AgentContext, NewsAgent, VerificationGuardrailAgent
+from gops_agents.agents import AgentContext, NewsAgent, OntologyAgent, VerificationGuardrailAgent
 from gops_agents.contracts import AgentFinding, EvidenceItem, IntentRoute, utc_now_iso
 from gops_agents.event_detector import MarketEventDetector, MarketEventThresholds
 from gops_agents.news_localization import NewsLocalizationService
@@ -61,6 +61,14 @@ class FakeClickHouseProvider:
         self.calls += 1
         self.requested_symbols.append(symbol)
         return self.rows
+
+
+class FakeOntologyProvider:
+    def __init__(self, evidence):
+        self.evidence = evidence
+
+    def fetch(self, request):
+        return self.evidence
 
 
 def layout_context(*, pinned_news=False):
@@ -126,11 +134,23 @@ def news_panel_props_command(report):
 
 class AgentOrchestrationTests(unittest.TestCase):
     def setUp(self):
-        self._openai_api_key = os.environ.pop("OPENAI_API_KEY", None)
+        self._env_backup = {
+            name: os.environ.pop(name, None)
+            for name in [
+                "OPENAI_API_KEY",
+                "AGENT_ONTOLOGY_ROLE_ANALYSIS_PROVIDER",
+                "AGENT_ONTOLOGY_FINAL_ANSWER_PROVIDER",
+                "AGENT_ROLE_ANALYSIS_PROVIDER",
+                "AGENT_FINAL_ANSWER_PROVIDER",
+            ]
+        }
 
     def tearDown(self):
-        if self._openai_api_key is not None:
-            os.environ["OPENAI_API_KEY"] = self._openai_api_key
+        for name, value in self._env_backup.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
     def test_orchestrator_returns_report_with_empty_provider_evidence(self):
         report = AgentOrchestrator().analyze({
@@ -750,6 +770,33 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(error_evidence[0].status, "no-data")
         self.assertEqual(error_evidence[0].raw["relationType"], "graphdb-unavailable")
 
+    def test_ontology_agent_defaults_to_graphdb_evidence_analysis_even_with_openai_key(self):
+        evidence = [
+            EvidenceItem(
+                provider="ontology",
+                status="available",
+                title="NVDA 테마 관계",
+                summary="NVIDIA Corp는 AI/반도체/데이터센터 테마에 매핑되어 있습니다.",
+                raw={"relationType": "theme", "themeName": "AI/반도체/데이터센터"},
+            )
+        ]
+        response = {
+            "output_text": json.dumps({
+                "summary": "GraphDB에 없는 CUDA 공급망 관계를 추가했습니다.",
+                "rationale": "없는 근거",
+                "confidence": 0.99,
+                "tags": ["ontology", "openai"],
+            })
+        }
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False):
+            with patch("urllib.request.urlopen", return_value=FakeOpenAIResponse(response)) as openai:
+                finding = OntologyAgent(FakeOntologyProvider(evidence)).analyze(AgentContext(symbol="NVDA", intent="관계 분석"))
+
+        self.assertEqual(openai.call_count, 0)
+        self.assertIn("GraphDB 기준", finding.summary)
+        self.assertNotIn("CUDA 공급망", finding.summary)
+
     def test_ontology_agent_selection_routes_to_ontology_role(self):
         report = AgentOrchestrator().analyze({
             "symbol": "NVDA",
@@ -915,6 +962,40 @@ class AgentOrchestrationTests(unittest.TestCase):
         )
         self.assertEqual(chart_placement["row"], 3)
 
+    def test_ontology_final_answer_defaults_to_deterministic_even_with_openai_key(self):
+        response = {
+            "output_text": json.dumps({
+                "title": "NVDA 관계 분석",
+                "summary": "GraphDB에 없는 CUDA 공급망 관계를 추가했습니다.",
+                "sections": [{"title": "근거", "bullets": ["없는 관계입니다."]}],
+                "citations": [],
+                "limitations": [],
+            })
+        }
+        evidence = [
+            EvidenceItem(
+                provider="ontology",
+                status="available",
+                title="NVDA 테마 관계",
+                summary="NVIDIA Corp는 AI/반도체/데이터센터 테마에 매핑되어 있습니다.",
+                raw={"relationType": "theme", "themeName": "AI/반도체/데이터센터"},
+            )
+        ]
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False):
+            with patch("urllib.request.urlopen", return_value=FakeOpenAIResponse(response)) as openai:
+                answer = FinalAnswerSynthesizer().synthesize(
+                    symbol="NVDA",
+                    intent="관계 분석",
+                    route=IntentRoute("rule", "ontology", ["ontology"], 0.9, "test"),
+                    findings=[],
+                    provider_evidence=evidence,
+                )
+
+        self.assertEqual(openai.call_count, 0)
+        self.assertIn("GraphDB 기준", answer.summary)
+        self.assertNotIn("CUDA 공급망", answer.summary)
+
     def test_openai_synthesizer_accepts_strict_json_response(self):
         response = {
             "output_text": json.dumps({
@@ -941,7 +1022,11 @@ class AgentOrchestrationTests(unittest.TestCase):
                 url="https://www.sec.gov/example",
             )
         ]
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False):
+        with patch.dict(
+            os.environ,
+            {"OPENAI_API_KEY": "test-key", "AGENT_ONTOLOGY_FINAL_ANSWER_PROVIDER": "openai"},
+            clear=False,
+        ):
             with patch("urllib.request.urlopen", return_value=FakeOpenAIResponse(response)):
                 answer = FinalAnswerSynthesizer().synthesize(
                     symbol="NVDA",
@@ -965,7 +1050,11 @@ class AgentOrchestrationTests(unittest.TestCase):
                 summary="NVIDIA Corp is mapped to theme AI/반도체/데이터센터.",
             )
         ]
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False):
+        with patch.dict(
+            os.environ,
+            {"OPENAI_API_KEY": "test-key", "AGENT_ONTOLOGY_FINAL_ANSWER_PROVIDER": "openai"},
+            clear=False,
+        ):
             with patch("urllib.request.urlopen", return_value=FakeOpenAIResponse({"output_text": "{invalid"})):
                 answer = FinalAnswerSynthesizer().synthesize(
                     symbol="NVDA",

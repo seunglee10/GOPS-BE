@@ -17,13 +17,16 @@ cp .env.example .env
 ```
 
 For the default local Docker flow, GOPS uses real AWS S3 and AWS Secrets Manager.
-Keep these values aligned:
+Compose mounts the host `~/.aws` directory read-only into the API, backfill,
+and optional Alpaca live-ingestion services, so a working local AWS profile is
+enough in most cases. Keep these values aligned:
 
 ```text
 AWS_REGION=ap-northeast-2
 AWS_DEFAULT_REGION=ap-northeast-2
-AWS_ACCESS_KEY_ID=<your restricted local key>
-AWS_SECRET_ACCESS_KEY=<your restricted local secret>
+AWS_PROFILE=default
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
 AWS_SESSION_TOKEN=
 
 ALPACA_SECRET_NAME=dev/alpaca
@@ -78,10 +81,12 @@ Config:   http://localhost:8000/health/config
 | `local-s3` | MinIO experiments only. Not the default path. |
 | `reconciliation` | Manual order reconciliation job. |
 
-Start live Alpaca ingestion only when needed:
+Start live Alpaca ingestion only when real-time charts are needed. The IEX
+profile is the safest local default because it avoids requiring a SIP market
+data subscription:
 
 ```sh
-docker compose --profile alpaca up -d --build alpaca-ingestor
+docker compose --profile alpaca up -d --build alpaca-ingestor-iex
 ```
 
 Audit chart coverage:
