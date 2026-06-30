@@ -104,6 +104,7 @@ curl -fsS http://localhost:8000/health/config
 curl -fsS http://localhost:8000/api/charts/symbols
 curl -fsS 'http://localhost:8000/api/charts/candles?symbol=NVDA&interval=1m&limit=2'
 curl -fsS http://localhost:8000/api/order-contract
+curl -fsS 'http://localhost:8000/api/orders/balance?symbol=NVDA&exchange=NASD&price=1.00'
 docker compose --profile repair run --rm coverage-repair
 ```
 
@@ -119,6 +120,6 @@ It must never print secret values.
 | S3 write/read fails | Check bucket name, region, IAM permission, and that S3 endpoint values are empty for real AWS. |
 | Chart has no candles | Run the `repair` profile dry-run, then queue missing backfills if needed. |
 | Live stream shows idle | This can mean WebSocket is connected but no current market data is arriving yet. Stored candles should still render. |
-| Order submit path fails locally | Keep `KIS_ENV=demo` and provide KIS demo credentials. Use `KIS_BROKER_ADAPTER_ARGS=--fake-kis success` only for explicit fake smoke runs. |
+| Order submit path fails locally | Keep `KIS_ENV=demo`, `KIS_CREDENTIAL_SOURCE=aws-secrets-manager`, and check the `tead/gops/kis` secret JSON shape. Use `KIS_BROKER_ADAPTER_ARGS=--fake-kis success` only for explicit fake smoke runs. |
 
 If a local access-key CSV exists in the repo root, remove it after copying values into `.env`.

@@ -117,7 +117,8 @@ data:
   DATABASE_NAME: gops
   DATABASE_USER: gops
   KIS_ENV: demo
-  KIS_SECRET_NAME: dev/kis
+  KIS_CREDENTIAL_SOURCE: aws-secrets-manager
+  KIS_SECRET_NAME: tead/gops/kis
   KIS_TOKEN_CACHE_PATH: /kis-cache/demo-token.json
   KIS_ACCOUNT_PRODUCT_CODE: "01"
   KIS_TIMEOUT_SECONDS: "5"

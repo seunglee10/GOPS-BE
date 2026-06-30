@@ -1,6 +1,6 @@
 # Order System
 
-Owns the KIS demo order domain, outbox publishing, broker adapter, migrations, and reconciliation.
+Owns the KIS overseas demo order domain, outbox publishing, broker adapter, migrations, and reconciliation.
 
 ## Folders
 
@@ -27,6 +27,9 @@ jobs/reconciler/main.py      wraps kis_trader.cli reconcile --rows-json []
 `kis-adapter` uses the real KIS demo HTTP client by default. Set
 `KIS_BROKER_ADAPTER_ARGS=--fake-kis success` only when running an explicit local
 fake smoke.
+v1 accepts overseas demo limit orders only, exposes KIS overseas orderable cash
+for the order ticket, and reads KIS credentials from AWS Secrets Manager
+`tead/gops/kis` by default.
 
 ## Images
 

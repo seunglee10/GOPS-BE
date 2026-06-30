@@ -2,6 +2,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[3]
 MARKET_SHARED = ROOT / "systems" / "market-data" / "shared"
@@ -45,7 +46,11 @@ class IntegratedOrderRoutesTest(unittest.TestCase):
         response = self.client.get("/api/order-contract")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["submit"]["path"], "/api/orders")
+        contract = response.json()
+        self.assertEqual(contract["submit"]["path"], "/api/orders")
+        self.assertEqual(contract["submit"]["accepted_values"]["market"], ["overseas"])
+        self.assertEqual(contract["submit"]["accepted_values"]["order_division"], ["00"])
+        self.assertEqual(contract["balance"], "GET /api/orders/balance")
 
     def test_submit_order_requires_idempotency_key(self):
         response = self.client.post("/api/orders", json=sample_order_request())
@@ -87,6 +92,55 @@ class IntegratedOrderRoutesTest(unittest.TestCase):
         self.assertEqual(response.status_code, 422)
         self.assertEqual(self.repository.orders, {})
         self.assertEqual(self.repository.outbox_events, {})
+
+    def test_submit_order_rejects_non_overseas_market(self):
+        payload = sample_order_request(market="domestic", symbol="005930", exchange="KRX", price="70000")
+
+        response = self.client.post("/api/orders", json=payload, headers=HEADERS)
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("market", response.json()["detail"])
+        self.assertEqual(self.repository.orders, {})
+
+    def test_submit_order_rejects_non_limit_order_division(self):
+        payload = sample_order_request(order_division="01")
+
+        response = self.client.post("/api/orders", json=payload, headers=HEADERS)
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("order_division", response.json()["detail"])
+        self.assertEqual(self.repository.orders, {})
+
+    def test_submit_order_rejects_fractional_quantity(self):
+        payload = sample_order_request(qty="1.5")
+
+        response = self.client.post("/api/orders", json=payload, headers=HEADERS)
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("whole-share", response.json()["detail"])
+        self.assertEqual(self.repository.orders, {})
+
+    def test_order_balance_returns_kis_demo_orderable_cash(self):
+        class FakeKisClient:
+            def fetch_orderable_cash(self, *, symbol: str, exchange: str, price: str):
+                return {
+                    "env": "demo",
+                    "market": "overseas",
+                    "symbol": symbol.upper(),
+                    "exchange": exchange.upper(),
+                    "currency": "USD",
+                    "orderable_cash": "12345.67",
+                    "orderable_qty": "12",
+                }
+
+        with patch("app.routes.orders.DemoKisHttpClient.from_env", return_value=FakeKisClient()):
+            response = self.client.get("/api/orders/balance?symbol=nvda&exchange=nasd&price=1.00")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["symbol"], "NVDA")
+        self.assertEqual(payload["exchange"], "NASD")
+        self.assertEqual(payload["orderable_cash"], "12345.67")
 
     def test_order_read_and_events_endpoints(self):
         created = self.client.post("/api/orders", json=sample_order_request(), headers=HEADERS).json()

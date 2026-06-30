@@ -20,6 +20,8 @@ from kis_trader.domain.commands import validate_order_request_payload
 from kis_trader.domain.envelope import build_order_command_envelope, validate_order_envelope
 from kis_trader.domain.status import CANONICAL_STATUSES, OrderContractError
 from kis_trader.domain.topics import CANONICAL_ORDER_TOPICS
+from kis_trader.kis.client import DemoKisHttpClient
+from kis_trader.kis.fake import KisConnectionReset, KisExplicitReject, KisHttpError, KisTimeout, KisTokenExpired
 from kis_trader.persistence.memory import InMemoryOrderRepository
 from kis_trader.persistence.postgres import PostgresOrderRepository
 from kis_trader.persistence.repository import IdempotencyConflictError, OrderRepository
@@ -42,12 +44,11 @@ ORDER_CONTRACT = {
             "order_division",
             "actor_id",
             "role",
-            "sell_type",
-            "condition_price",
         ],
         "accepted_values": {
-            "market": ["domestic", "overseas"],
+            "market": ["overseas"],
             "side": ["buy", "sell"],
+            "order_division": ["00"],
         },
     },
     "statuses": list(CANONICAL_STATUSES),
@@ -56,6 +57,7 @@ ORDER_CONTRACT = {
         "history": "GET /api/orders/{order_id}/events",
         "websocket": "/ws/orders/{order_id}",
     },
+    "balance": "GET /api/orders/balance",
     "forbidden_fields": sorted(FORBIDDEN_FIELD_NAMES),
 }
 
@@ -104,6 +106,26 @@ async def create_order(
     if result.idempotent_replay:
         response.headers["X-Idempotent-Replay"] = "true"
     return jsonable_encoder(result.response)
+
+
+@router.get("/api/orders/balance")
+def get_order_balance(
+    symbol: str = "AAPL",
+    exchange: str = "NASD",
+    price: str = "0",
+    _user: AuthenticatedUser = Depends(require_current_user),
+) -> dict[str, Any]:
+    try:
+        balance = DemoKisHttpClient.from_env().fetch_orderable_cash(
+            symbol=symbol,
+            exchange=exchange,
+            price=price,
+        )
+    except KisExplicitReject as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except (KisTimeout, KisConnectionReset, KisTokenExpired, KisHttpError) as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return jsonable_encoder(balance)
 
 
 @router.get("/api/orders/{order_id}")

@@ -162,6 +162,7 @@ Order API:
 
 ```text
 GET  /api/order-contract
+GET  /api/orders/balance
 POST /api/orders
 GET  /api/orders/{order_id}
 GET  /api/orders/{order_id}/events
@@ -171,7 +172,10 @@ WS   /ws/orders/{order_id}
 Order rules:
 
 - `POST /api/orders` requires the `Idempotency-Key` header.
-- `KIS_ENV=real` is disabled for v1. Use demo/fake local flow unless the release policy changes.
+- `GET /api/orders/balance` queries KIS demo overseas orderable cash for the selected symbol/exchange.
+- `KIS_ENV=real` is disabled for v1.
+- v1 order submit supports KIS overseas demo limit orders only.
+- KIS demo credentials are read from AWS Secrets Manager `tead/gops/kis` by default.
 
 Auth rules:
 
@@ -213,4 +217,5 @@ curl -fsS http://localhost:8000/health
 curl -fsS http://localhost:8000/api/charts/symbols
 curl -fsS 'http://localhost:8000/api/charts/candles?symbol=NVDA&interval=1m&limit=2'
 curl -fsS http://localhost:8000/api/order-contract
+curl -fsS 'http://localhost:8000/api/orders/balance?symbol=NVDA&exchange=NASD&price=1.00'
 ```

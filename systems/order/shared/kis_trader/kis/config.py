@@ -11,6 +11,10 @@ from typing import Any
 
 from dotenv import load_dotenv
 
+DEFAULT_KIS_CREDENTIAL_SOURCE = "aws-secrets-manager"
+DEFAULT_KIS_SECRET_NAME = "tead/gops/kis"
+KIS_CREDENTIAL_SOURCES = {"aws-secrets-manager", "local-env", "auto"}
+
 
 class KisConfigError(RuntimeError):
     """Raised when KIS configuration is missing or unsafe."""
@@ -42,15 +46,26 @@ def load_kis_config(env: str | None = None, env_file: str | Path | None = None) 
     if selected_env != "demo":
         raise KisConfigError("Only KIS demo trading is implemented. KIS_ENV=real is not allowed.")
 
-    required = {
+    env_values = {
         "KIS_DEMO_APP_KEY": os.getenv("KIS_DEMO_APP_KEY", "").strip(),
         "KIS_DEMO_APP_SECRET": os.getenv("KIS_DEMO_APP_SECRET", "").strip(),
         "KIS_DEMO_ACCOUNT_NO": os.getenv("KIS_DEMO_ACCOUNT_NO", "").strip(),
     }
-    if any(not value for value in required.values()):
-        secret_values = _load_kis_secret_values()
-        for key in required:
-            required[key] = required[key] or str(secret_values.get(key, "")).strip()
+    credential_source = (os.getenv("KIS_CREDENTIAL_SOURCE", DEFAULT_KIS_CREDENTIAL_SOURCE).strip().lower() or DEFAULT_KIS_CREDENTIAL_SOURCE)
+    if credential_source not in KIS_CREDENTIAL_SOURCES:
+        raise KisConfigError("KIS_CREDENTIAL_SOURCE must be one of: " + ", ".join(sorted(KIS_CREDENTIAL_SOURCES)))
+
+    if credential_source == "aws-secrets-manager":
+        secret_values = _load_kis_secret_values(required=True)
+        required = {key: str(secret_values.get(key, "")).strip() for key in env_values}
+    elif credential_source == "local-env":
+        required = env_values
+    else:
+        required = dict(env_values)
+        if any(not value for value in required.values()):
+            secret_values = _load_kis_secret_values(required=False)
+            for key in required:
+                required[key] = required[key] or str(secret_values.get(key, "")).strip()
 
     missing = [key for key, value in required.items() if not value]
     if missing:
@@ -80,9 +95,11 @@ def load_kis_config(env: str | None = None, env_file: str | Path | None = None) 
     )
 
 
-def _load_kis_secret_values() -> dict[str, Any]:
-    secret_name = os.getenv("KIS_SECRET_NAME", "").strip()
+def _load_kis_secret_values(*, required: bool) -> dict[str, Any]:
+    secret_name = os.getenv("KIS_SECRET_NAME", DEFAULT_KIS_SECRET_NAME).strip() or DEFAULT_KIS_SECRET_NAME
     if not secret_name:
+        if required:
+            raise KisConfigError("KIS_SECRET_NAME is required when KIS_CREDENTIAL_SOURCE=aws-secrets-manager")
         return {}
 
     region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "ap-northeast-2"

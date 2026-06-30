@@ -179,7 +179,8 @@ KIS order runtime stays on mock-investment demo trading in v1:
 
 ```text
 KIS_ENV=demo
-KIS_SECRET_NAME=dev/kis
+KIS_CREDENTIAL_SOURCE=aws-secrets-manager
+KIS_SECRET_NAME=tead/gops/kis
 KIS_DEMO_APP_KEY
 KIS_DEMO_APP_SECRET
 KIS_DEMO_ACCOUNT_NO
@@ -192,6 +193,8 @@ KIS_BROKER_ADAPTER_ARGS
 `kis-adapter` calls the KIS demo API by default. Set
 `KIS_BROKER_ADAPTER_ARGS=--fake-kis success` only for an explicit local fake
 smoke run. `KIS_ENV=real` remains disabled for v1.
+`KIS_CREDENTIAL_SOURCE=aws-secrets-manager` reads `tead/gops/kis` by default.
+Use `KIS_CREDENTIAL_SOURCE=local-env` only for an explicit direct-env smoke.
 
 ## ClickHouse
 
@@ -412,7 +415,7 @@ AWS Secrets Manager names:
 
 ```text
 dev/alpaca
-dev/kis
+tead/gops/kis
 /gops/prod/agent-orchestrator/openai/api-key
 ```
 
@@ -422,7 +425,7 @@ dev/kis
 {"APCA_API_KEY_ID":"...","APCA_API_SECRET_KEY":"..."}
 ```
 
-`dev/kis` JSON:
+`tead/gops/kis` JSON:
 
 ```json
 {"KIS_DEMO_APP_KEY":"...","KIS_DEMO_APP_SECRET":"...","KIS_DEMO_ACCOUNT_NO":"..."}

@@ -1,6 +1,6 @@
 # API Server System
 
-Owns the single FastAPI server that brokers chart API, order API, and WebSocket traffic.
+Owns the single FastAPI server that brokers chart API, order API, orderable cash lookup, and WebSocket traffic.
 
 ## Folders
 
