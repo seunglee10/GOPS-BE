@@ -2,6 +2,8 @@ import json
 import os
 import time
 
+import redis
+
 from alfaka.backfill.runner import BackfillRunner
 from alfaka.backfill.status import RedisBackfillStore
 from alfaka.common.env import load_dotenv
@@ -15,7 +17,14 @@ def main():
     poll_seconds = int(os.getenv("BACKFILL_WORKER_POLL_SECONDS", "5"))
 
     while True:
-        request_id = store.pop_queued_request_id(timeout=poll_seconds)
+        try:
+            request_id = store.pop_queued_request_id(timeout=poll_seconds)
+        except redis.exceptions.RedisError as exc:
+            if run_once:
+                raise
+            print(f"Backfill worker waiting for Redis: {exc}", flush=True)
+            time.sleep(poll_seconds)
+            continue
         if not request_id:
             if run_once:
                 return
