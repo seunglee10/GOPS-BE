@@ -52,6 +52,56 @@ class FakeClickHouseProvider:
         return self.rows
 
 
+def layout_context(*, pinned_news=False):
+    return {
+        "version": 1,
+        "selectedPanelId": "panel-chart-primary",
+        "panels": [
+            {
+                "id": "panel-chart-primary",
+                "type": "chart",
+                "placement": {"group": "workspace", "zone": "mainContext", "col": 1, "row": 1, "colSpan": 3, "rowSpan": 3},
+                "layoutPinned": False,
+                "layoutWeight": 9,
+            },
+            {
+                "id": "panel-news",
+                "type": "newsFeed",
+                "placement": {"group": "workspace", "zone": "main", "col": 3, "row": 4, "colSpan": 1, "rowSpan": 2},
+                "layoutPinned": pinned_news,
+                "layoutWeight": 5,
+            },
+            {
+                "id": "panel-ontology",
+                "type": "ontologyGraph",
+                "placement": {"group": "workspace", "zone": "context", "col": 4, "row": 1, "colSpan": 1, "rowSpan": 2},
+                "layoutPinned": False,
+                "layoutWeight": 6,
+            },
+            {
+                "id": "panel-order",
+                "type": "orderTicket",
+                "placement": {"group": "workspace", "zone": "context", "col": 4, "row": 4, "colSpan": 1, "rowSpan": 2},
+                "layoutPinned": False,
+                "layoutWeight": 7,
+            },
+        ],
+    }
+
+
+def placements_overlap(left, right):
+    left_col_end = left["col"] + left["colSpan"] - 1
+    right_col_end = right["col"] + right["colSpan"] - 1
+    left_row_end = left["row"] + left["rowSpan"] - 1
+    right_row_end = right["row"] + right["rowSpan"] - 1
+    return not (
+        left_col_end < right["col"] or
+        right_col_end < left["col"] or
+        left_row_end < right["row"] or
+        right_row_end < left["row"]
+    )
+
+
 class AgentOrchestrationTests(unittest.TestCase):
     def setUp(self):
         self._openai_api_key = os.environ.pop("OPENAI_API_KEY", None)
@@ -106,6 +156,7 @@ class AgentOrchestrationTests(unittest.TestCase):
             "symbol": "NVDA",
             "intent": "뉴스 보여줘",
             "agentIds": ["agent-01"],
+            "layoutContext": layout_context(),
             "chartContext": {
                 "chartDocument": {"symbol": "NVDA", "timeframe": "1m"},
                 "dataStatus": {"candleCount": 10, "state": "ready"},
@@ -117,6 +168,27 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(report.route.selectedRoles, ["news"])
         self.assertIn("news-analysis", roles)
         self.assertNotIn("chart-analysis", roles)
+        self.assertTrue(any(item["panelId"] == "panel-news" and item["layoutWeight"] == 100 for item in report.layoutProposal.panelPriorities))
+        self.assertTrue(any(command["type"] == "layout.panel.move" and command["payload"]["panelId"] == "panel-news" for command in report.layoutProposal.commands))
+
+    def test_layout_agent_skips_commands_without_layout_context(self):
+        report = AgentOrchestrator().analyze({
+            "symbol": "NVDA",
+            "intent": "뉴스 보여줘",
+        })
+
+        self.assertEqual(report.layoutProposal.commands, [])
+        self.assertEqual(report.layoutProposal.panelPriorities, [])
+
+    def test_layout_agent_does_not_move_pinned_primary_panel(self):
+        report = AgentOrchestrator().analyze({
+            "symbol": "NVDA",
+            "intent": "뉴스 보여줘",
+            "layoutContext": layout_context(pinned_news=True),
+        })
+
+        self.assertTrue(any(item["panelId"] == "panel-news" and item["layoutWeight"] == 100 for item in report.layoutProposal.panelPriorities))
+        self.assertFalse(any(command["type"] == "layout.panel.move" for command in report.layoutProposal.commands))
 
     def test_conductor_routes_market_move_to_all_visible_roles(self):
         report = AgentOrchestrator().analyze({
@@ -280,6 +352,114 @@ class AgentOrchestrationTests(unittest.TestCase):
 
         self.assertEqual(report.route.selectedRoles, ["ontology"])
         self.assertEqual(report.route.intentType, "ontology")
+
+    def test_korean_ontology_ui_prompt_routes_to_ontology_layout(self):
+        report = AgentOrchestrator().analyze({
+            "symbol": "NVDA",
+            "intent": "UI 바꿔줘 온톨로지 기반으로",
+            "layoutContext": layout_context(),
+        })
+
+        self.assertEqual(report.route.selectedRoles, [])
+        self.assertEqual(report.route.intentType, "ui-layout")
+        self.assertEqual(report.findings, [])
+        self.assertTrue(any(item["panelId"] == "panel-ontology" and item["layoutWeight"] == 100 for item in report.layoutProposal.panelPriorities))
+        self.assertTrue(any(command["type"] == "layout.panels.arrange" for command in report.layoutProposal.commands))
+
+    def test_llm_ui_router_sends_order_panel_resize_only_to_ui_agent(self):
+        response = {
+            "output_text": json.dumps({
+                "isUiIntent": True,
+                "intentKind": "layout",
+                "targetPanelType": "orderTicket",
+                "targetPanelId": "panel-order",
+                "action": "resize",
+                "sizeIntent": "max",
+                "confidence": 0.94,
+                "reason": "The user asked to maximize the order entry panel.",
+            })
+        }
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False):
+            with patch("urllib.request.urlopen", return_value=FakeOpenAIResponse(response)) as openai:
+                report = AgentOrchestrator().analyze({
+                    "symbol": "NVDA",
+                    "intent": "주문 입력 패널 제일 크게 만들어줘",
+                    "agentIds": ["agent-01"],
+                    "layoutContext": layout_context(),
+                })
+
+        self.assertEqual(openai.call_count, 1)
+        self.assertEqual(report.route.source, "ui-llm")
+        self.assertEqual(report.route.intentType, "ui-layout")
+        self.assertEqual(report.route.selectedRoles, [])
+        self.assertEqual(report.findings, [])
+        self.assertEqual(report.providerEvidence, [])
+        self.assertEqual(
+            [command["type"] for command in report.layoutProposal.commands],
+            ["layout.panel.priority.set", "layout.panels.arrange", "layout.panel.move", "layout.reflow"],
+        )
+        arrange_command = next(command for command in report.layoutProposal.commands if command["type"] == "layout.panels.arrange")
+        order_placement = next(
+            item["placement"]
+            for item in arrange_command["payload"]["placements"]
+            if item["panelId"] == "panel-order"
+        )
+        self.assertEqual(order_placement["col"], 1)
+        self.assertEqual(order_placement["row"], 1)
+        self.assertEqual(order_placement["colSpan"], 3)
+        self.assertEqual(order_placement["rowSpan"], 5)
+
+    def test_ui_fallback_handles_informal_order_panel_resize_when_llm_unavailable(self):
+        report = AgentOrchestrator().analyze({
+            "symbol": "NVDA",
+            "intent": "주문창좀 젤 크게",
+            "agentIds": ["agent-01"],
+            "layoutContext": layout_context(),
+        })
+
+        self.assertEqual(report.route.source, "ui-fallback")
+        self.assertEqual(report.route.intentType, "ui-layout")
+        self.assertEqual(report.route.selectedRoles, [])
+        self.assertEqual(report.findings, [])
+        self.assertTrue(any(command["type"] == "layout.panels.arrange" for command in report.layoutProposal.commands))
+
+    def test_ui_agent_preserves_pinned_panels_and_uses_largest_available_slot(self):
+        context = layout_context()
+        context["panels"][0]["layoutPinned"] = True
+
+        report = AgentOrchestrator().analyze({
+            "symbol": "NVDA",
+            "intent": "뉴스 패널 제일 크게 만들어줘",
+            "layoutContext": context,
+        })
+
+        arrange_command = next(command for command in report.layoutProposal.commands if command["type"] == "layout.panels.arrange")
+        news_placement = next(
+            item["placement"]
+            for item in arrange_command["payload"]["placements"]
+            if item["panelId"] == "panel-news"
+        )
+        pinned_chart_placement = context["panels"][0]["placement"]
+        self.assertFalse(placements_overlap(news_placement, pinned_chart_placement))
+        self.assertGreater(news_placement["colSpan"] * news_placement["rowSpan"], 2)
+        self.assertEqual(report.layoutProposal.autoApply, True)
+
+    def test_ui_fallback_moves_chart_to_bottom(self):
+        report = AgentOrchestrator().analyze({
+            "symbol": "NVDA",
+            "intent": "차트를 아래로 옮겨줘",
+            "layoutContext": layout_context(),
+        })
+
+        self.assertEqual(report.route.intentType, "ui-layout")
+        arrange_command = next(command for command in report.layoutProposal.commands if command["type"] == "layout.panels.arrange")
+        chart_placement = next(
+            item["placement"]
+            for item in arrange_command["payload"]["placements"]
+            if item["panelId"] == "panel-chart-primary"
+        )
+        self.assertEqual(chart_placement["row"], 3)
 
     def test_openai_synthesizer_accepts_strict_json_response(self):
         response = {

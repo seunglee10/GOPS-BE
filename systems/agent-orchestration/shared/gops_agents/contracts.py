@@ -185,6 +185,10 @@ class LayoutProposal:
     title: str
     rationale: str
     commands: list[dict[str, Any]] = field(default_factory=list)
+    autoApply: bool = True
+    panelPriorities: list[dict[str, Any]] = field(default_factory=list)
+    createdAt: str = field(default_factory=utc_now_iso)
+    id: str = field(default_factory=lambda: stable_id("layout-proposal", {"createdAt": utc_now_iso()}))
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

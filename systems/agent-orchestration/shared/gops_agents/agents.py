@@ -10,6 +10,7 @@ from typing import Any
 from .contracts import AgentFinding, EvidenceItem, LayoutProposal, MarketEvent, NotificationDecision, stable_id, utc_now_iso
 from .providers import ClickHouseNewsProvider, EmptyMacroProvider, GraphDBOntologyProvider, ProviderRequest
 from .router import parse_openai_text_json
+from .ui_intent import UIIntent
 
 
 @dataclass
@@ -18,6 +19,7 @@ class AgentContext:
     intent: str
     messages: list[dict[str, Any]] = field(default_factory=list)
     chartContext: dict[str, Any] = field(default_factory=dict)
+    layoutContext: dict[str, Any] = field(default_factory=dict)
     marketEvents: list[MarketEvent] = field(default_factory=list)
     providerEvidence: list[EvidenceItem] = field(default_factory=list)
 
@@ -268,21 +270,545 @@ class NotificationDecisionAgent:
 
 
 class LayoutAgent:
-    def propose(self, context: AgentContext) -> LayoutProposal:
-        commands: list[dict[str, Any]] = []
-        if context.marketEvents:
-            commands.append({
-                "type": "layout.panel.add",
-                "payload": {
-                    "panelType": "notifications",
-                    "props": {"symbol": context.symbol},
-                },
-            })
+    def propose(self, context: AgentContext, route=None) -> LayoutProposal:
+        panels = normalize_layout_panels(context.layoutContext)
+        if not panels:
+            return LayoutProposal(
+                title="Agent analysis workspace",
+                rationale="No layout context was supplied, so the layout agent did not propose panel movement.",
+                commands=[],
+                panelPriorities=[],
+            )
+
+        primary_type = primary_panel_type_for_route(route, context)
+        priorities = panel_priorities_for_route(panels, primary_type, route, context)
+        commands = priority_commands(priorities)
+        primary_panel = first_panel_of_type(panels, primary_type)
+        if primary_panel and primary_panel["type"] != "orderTicket":
+            move_command = primary_panel_move_command(panels, primary_panel)
+            if move_command:
+                commands.append(move_command)
+        if commands:
+            commands.append(layout_command("layout.reflow", {"reason": "agent-layout-priority"}))
+
         return LayoutProposal(
             title="Agent analysis workspace",
-            rationale="Show notifications when unusual events are present; leave layout commands in proposal review.",
+            rationale=f"Prioritized {primary_type} for the current user intent and preserved pinned panel boundaries.",
             commands=commands,
+            panelPriorities=priorities,
         )
+
+
+class UIAgent:
+    def propose(self, context: AgentContext, ui_intent: UIIntent) -> LayoutProposal:
+        panels = normalize_layout_panels(context.layoutContext)
+        if not ui_intent.isUiIntent:
+            return LayoutProposal(
+                title="UI layout request",
+                rationale="The request was not classified as a UI layout action.",
+                commands=[],
+                autoApply=False,
+                panelPriorities=[],
+            )
+
+        target_panel = resolve_ui_target_panel(panels, ui_intent)
+        if not target_panel:
+            add_command = ui_add_command(ui_intent)
+            return LayoutProposal(
+                title="UI layout request",
+                rationale=(
+                    f"Prepared to open a {ui_intent.targetPanelType} panel."
+                    if add_command
+                    else "The UI agent could not identify a visible target panel for this request."
+                ),
+                commands=[add_command] if add_command else [],
+                autoApply=bool(add_command),
+                panelPriorities=[],
+            )
+
+        if target_panel.get("layoutPinned"):
+            return LayoutProposal(
+                title="UI layout request",
+                rationale=f"{target_panel.get('title') or target_panel['id']} is pinned, so the UI agent did not move it.",
+                commands=[],
+                autoApply=False,
+                panelPriorities=ui_panel_priorities(panels, target_panel["id"]),
+            )
+
+        if ui_intent.action == "close":
+            return LayoutProposal(
+                title="UI layout request",
+                rationale="Closing or removing panels is not auto-applied by the UI agent.",
+                commands=[],
+                autoApply=False,
+                panelPriorities=ui_panel_priorities(panels, target_panel["id"]),
+            )
+
+        placements = arrange_ui_panels(panels, target_panel, ui_intent)
+        if not placements:
+            return LayoutProposal(
+                title="UI layout request",
+                rationale="The UI agent could not find a valid panel arrangement for the requested layout.",
+                commands=[],
+                autoApply=False,
+                panelPriorities=ui_panel_priorities(panels, target_panel["id"]),
+            )
+
+        return LayoutProposal(
+            title="UI layout request",
+            rationale=f"UIAgent arranged {target_panel.get('title') or target_panel['type']} for the requested UI action.",
+            commands=[
+                layout_command(
+                    "layout.panel.priority.set",
+                    {"panelId": target_panel["id"], "layoutWeight": 100},
+                    {"panelId": target_panel["id"]},
+                ),
+                layout_command(
+                    "layout.panels.arrange",
+                    {
+                        "reason": "ui-agent-layout-intent",
+                        "placements": placements,
+                    },
+                    {"panelId": target_panel["id"]},
+                ),
+                layout_command(
+                    "layout.panel.move",
+                    {"panelId": target_panel["id"], "placement": placements[0]["placement"]},
+                    {"panelId": target_panel["id"]},
+                ),
+                layout_command("layout.reflow", {"reason": "ui-agent-layout-intent"}),
+            ],
+            autoApply=True,
+            panelPriorities=ui_panel_priorities(panels, target_panel["id"]),
+        )
+
+
+def normalize_layout_panels(layout_context: dict[str, Any]) -> list[dict[str, Any]]:
+    panels = layout_context.get("panels") if isinstance(layout_context, dict) else None
+    if not isinstance(panels, list):
+        return []
+
+    normalized = []
+    for item in panels:
+        if not isinstance(item, dict):
+            continue
+        panel_id = str(item.get("id") or "").strip()
+        panel_type = str(item.get("type") or "").strip()
+        placement = item.get("placement") if isinstance(item.get("placement"), dict) else {}
+        if not panel_id or not panel_type:
+            continue
+        normalized.append({
+            "id": panel_id,
+            "type": panel_type,
+            "title": str(item.get("title") or default_panel_title(panel_type)),
+            "placement": {
+                "group": str(placement.get("group") or "workspace"),
+                "zone": str(placement.get("zone") or "main"),
+                "col": read_int(placement.get("col"), 1),
+                "row": read_int(placement.get("row"), 1),
+                "colSpan": read_int(placement.get("colSpan"), 1),
+                "rowSpan": read_int(placement.get("rowSpan"), 1),
+            },
+            "layoutPinned": bool(item.get("layoutPinned")),
+            "layoutWeight": read_float(item.get("layoutWeight"), 0.0),
+            "minSpan": read_span(item.get("minSpan"), default_min_span(panel_type)),
+            "maxSpan": read_span(item.get("maxSpan"), default_max_span(panel_type)),
+        })
+    return normalized
+
+
+def resolve_ui_target_panel(panels: list[dict[str, Any]], ui_intent: UIIntent) -> dict[str, Any] | None:
+    if ui_intent.targetPanelId:
+        panel = next((item for item in panels if item["id"] == ui_intent.targetPanelId), None)
+        if panel:
+            return panel
+    if ui_intent.targetPanelType:
+        return first_panel_of_type(panels, ui_intent.targetPanelType)
+    return None
+
+
+def ui_add_command(ui_intent: UIIntent) -> dict[str, Any] | None:
+    if ui_intent.action != "open" or not ui_intent.targetPanelType:
+        return None
+    return layout_command(
+        "layout.panel.add",
+        {
+            "panelType": ui_intent.targetPanelType,
+            "placement": default_panel_placement(ui_intent.targetPanelType),
+        },
+    )
+
+
+def ui_panel_priorities(panels: list[dict[str, Any]], target_panel_id: str) -> list[dict[str, Any]]:
+    priorities = []
+    for panel in panels:
+        is_target = panel["id"] == target_panel_id
+        priorities.append({
+            "panelId": panel["id"],
+            "panelType": panel["type"],
+            "layoutWeight": 100 if is_target else max(20, min(60, int(panel.get("layoutWeight") or 20))),
+            "reason": "Target panel for the UI request." if is_target else "Supporting panel preserved by the UI agent.",
+        })
+    return sorted(priorities, key=lambda item: (-item["layoutWeight"], item["panelId"]))
+
+
+def arrange_ui_panels(
+    panels: list[dict[str, Any]],
+    target_panel: dict[str, Any],
+    ui_intent: UIIntent,
+) -> list[dict[str, Any]] | None:
+    pinned_panels = [
+        panel
+        for panel in panels
+        if panel["id"] != target_panel["id"] and panel.get("layoutPinned")
+    ]
+
+    movable = [
+        panel
+        for panel in panels
+        if panel["id"] != target_panel["id"] and not panel.get("layoutPinned")
+    ]
+    movable.sort(key=supporting_panel_sort_key)
+
+    for target_placement in target_ui_placement_candidates(target_panel, ui_intent):
+        if any(overlaps(target_placement, panel["placement"]) for panel in pinned_panels):
+            continue
+
+        occupied = occupied_cells([panel["placement"] for panel in pinned_panels] + [target_placement])
+        placements = [{
+            "panelId": target_panel["id"],
+            "placement": target_placement,
+            "layoutWeight": 100,
+        }]
+        packed = True
+
+        for panel in movable:
+            placement = compact_supporting_placement(occupied, panel)
+            if not placement:
+                packed = False
+                break
+            occupied.update(cells_for_placement(placement))
+            placements.append({
+                "panelId": panel["id"],
+                "placement": placement,
+                "layoutWeight": max(20, min(60, int(panel.get("layoutWeight") or 20))),
+            })
+
+        if packed:
+            return placements
+
+    return None
+
+
+def target_ui_placement_candidates(panel: dict[str, Any], ui_intent: UIIntent) -> list[dict[str, Any]]:
+    min_span = panel.get("minSpan") if isinstance(panel.get("minSpan"), dict) else default_min_span(panel["type"])
+    max_span = panel.get("maxSpan") if isinstance(panel.get("maxSpan"), dict) else default_max_span(panel["type"])
+    min_cols = read_int(min_span.get("colSpan"), 1)
+    min_rows = read_int(min_span.get("rowSpan"), 1)
+    max_cols = read_int(max_span.get("colSpan"), 4)
+    max_rows = read_int(max_span.get("rowSpan"), 5)
+
+    current = panel["placement"]
+    if ui_intent.sizeIntent == "max":
+        desired_cols = min(max_cols, max(min_cols, 3))
+        desired_rows = min(max_rows, max(min_rows, 5))
+    elif ui_intent.sizeIntent == "large" or ui_intent.action in {"focus", "open"}:
+        desired_cols = min(max_cols, max(3, min_cols))
+        desired_rows = min(max_rows, max(3, min_rows))
+    elif ui_intent.sizeIntent in {"small", "min"}:
+        desired_cols = min_cols
+        desired_rows = min_rows
+    else:
+        desired_cols = min(max_cols, max(min_cols, read_int(current.get("colSpan"), min_cols)))
+        desired_rows = min(max_rows, max(min_rows, read_int(current.get("rowSpan"), min_rows)))
+
+    spans: list[tuple[int, int]] = []
+    for col_span in range(desired_cols, min_cols - 1, -1):
+        for row_span in range(desired_rows, min_rows - 1, -1):
+            spans.append((col_span, row_span))
+    spans = sorted(set(spans), key=lambda span: (-span[0] * span[1], abs(span[0] - desired_cols) + abs(span[1] - desired_rows), -span[0]))
+
+    candidates: list[dict[str, Any]] = []
+    seen: set[tuple[int, int, int, int]] = set()
+    for col_span, row_span in spans:
+        for col, row in workspace_positions(col_span, row_span, ui_intent.positionIntent):
+            key = (col, row, col_span, row_span)
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append(workspace_placement(col, row, col_span, row_span))
+    return candidates
+
+
+def workspace_positions(col_span: int, row_span: int, position_intent: str | None) -> list[tuple[int, int]]:
+    positions = [
+        (col, row)
+        for row in range(1, 5 - row_span + 2)
+        for col in range(1, 4 - col_span + 2)
+    ]
+    if position_intent == "bottom":
+        return sorted(positions, key=lambda item: (-item[1], item[0]))
+    if position_intent == "right":
+        return sorted(positions, key=lambda item: (-item[0], item[1]))
+    if position_intent == "left":
+        return sorted(positions, key=lambda item: (item[0], item[1]))
+    if position_intent == "center":
+        return sorted(positions, key=lambda item: (abs((item[0] + (col_span - 1) / 2) - 2.5) + abs((item[1] + (row_span - 1) / 2) - 3), item[1], item[0]))
+    return sorted(positions, key=lambda item: (item[1], item[0]))
+
+
+def compact_supporting_placement(occupied: set[tuple[int, int]], panel: dict[str, Any]) -> dict[str, Any] | None:
+    span = panel.get("minSpan") if isinstance(panel.get("minSpan"), dict) else default_min_span(panel["type"])
+    col_span = read_int(span.get("colSpan"), 1)
+    row_span = read_int(span.get("rowSpan"), 1)
+    return first_available_placement(occupied, col_span, row_span)
+
+
+def supporting_panel_sort_key(panel: dict[str, Any]) -> tuple[int, int, str]:
+    type_rank = {
+        "chart": 0,
+        "orderTicket": 1,
+        "ontologyGraph": 2,
+        "indicatorCompare": 3,
+        "newsFeed": 4,
+        "aiSummary": 5,
+    }.get(panel["type"], 9)
+    return (-int(read_float(panel.get("layoutWeight"), 0.0)), type_rank, panel["id"])
+
+
+def first_available_placement(occupied: set[tuple[int, int]], col_span: int, row_span: int) -> dict[str, Any] | None:
+    for row in range(1, 6 - row_span + 1):
+        for col in range(1, 5 - col_span + 1):
+            placement = workspace_placement(col, row, col_span, row_span)
+            cells = cells_for_placement(placement)
+            if not cells.intersection(occupied):
+                return placement
+    return None
+
+
+def occupied_cells(placements: list[dict[str, Any]]) -> set[tuple[int, int]]:
+    cells: set[tuple[int, int]] = set()
+    for placement in placements:
+        cells.update(cells_for_placement(placement))
+    return cells
+
+
+def cells_for_placement(placement: dict[str, Any]) -> set[tuple[int, int]]:
+    if placement.get("group") != "workspace":
+        return set()
+    col = read_int(placement.get("col"), 1)
+    row = read_int(placement.get("row"), 1)
+    col_span = read_int(placement.get("colSpan"), 1)
+    row_span = read_int(placement.get("rowSpan"), 1)
+    return {
+        (cell_col, cell_row)
+        for cell_col in range(col, col + col_span)
+        for cell_row in range(row, row + row_span)
+        if 1 <= cell_col <= 4 and 1 <= cell_row <= 5
+    }
+
+
+def workspace_placement(col: int, row: int, col_span: int, row_span: int) -> dict[str, Any]:
+    return {
+        "group": "workspace",
+        "zone": workspace_zone(col, col_span),
+        "col": col,
+        "row": row,
+        "colSpan": col_span,
+        "rowSpan": row_span,
+    }
+
+
+def workspace_zone(col: int, col_span: int) -> str:
+    if col == 4 and col_span == 1:
+        return "context"
+    if col + col_span - 1 <= 3:
+        return "main"
+    return "mainContext"
+
+
+def default_panel_title(panel_type: str) -> str:
+    return {
+        "chart": "차트",
+        "newsFeed": "시장 뉴스",
+        "indicatorCompare": "지표 비교",
+        "orderTicket": "주문",
+        "aiSummary": "AI 요약",
+        "ontologyGraph": "온톨로지",
+    }.get(panel_type, panel_type)
+
+
+def default_min_span(panel_type: str) -> dict[str, int]:
+    return {"colSpan": 1, "rowSpan": 2 if panel_type == "orderTicket" else 1}
+
+
+def default_max_span(panel_type: str) -> dict[str, int]:
+    return {"colSpan": 4, "rowSpan": 5}
+
+
+def default_panel_placement(panel_type: str) -> dict[str, Any]:
+    if panel_type == "chart":
+        return workspace_placement(1, 1, 3, 3)
+    if panel_type == "ontologyGraph":
+        return workspace_placement(4, 1, 1, 2)
+    if panel_type == "orderTicket":
+        return workspace_placement(4, 4, 1, 2)
+    return workspace_placement(4, 1, 1, 1)
+
+
+def read_span(value: Any, fallback: dict[str, int]) -> dict[str, int]:
+    if not isinstance(value, dict):
+        return dict(fallback)
+    return {
+        "colSpan": read_int(value.get("colSpan"), fallback["colSpan"]),
+        "rowSpan": read_int(value.get("rowSpan"), fallback["rowSpan"]),
+    }
+
+
+def primary_panel_type_for_route(route, context: AgentContext) -> str:
+    intent_type = str(getattr(route, "intentType", "") or "").lower()
+    selected_roles = [str(role).lower() for role in getattr(route, "selectedRoles", []) or []]
+    intent_text = context.intent.lower()
+    if "market-move" in intent_type or context.marketEvents:
+        return "chart"
+    if "news" in intent_type or "news" in selected_roles or any(token in intent_text for token in ("news", "headline", "뉴스", "기사", "보도")):
+        return "newsFeed"
+    if "ontology" in intent_type or "ontology" in selected_roles or any(token in intent_text for token in ("relationship", "supply", "관계", "온톨로지", "공급망", "경쟁사", "섹터")):
+        return "ontologyGraph"
+    if "macro" in intent_type or "macro" in selected_roles or any(token in intent_text for token in ("macro", "rate", "inflation", "거시", "금리")):
+        return "indicatorCompare"
+    return "chart"
+
+
+def panel_priorities_for_route(
+    panels: list[dict[str, Any]],
+    primary_type: str,
+    route,
+    context: AgentContext,
+) -> list[dict[str, Any]]:
+    role_types = {
+        "chart": "chart",
+        "news": "newsFeed",
+        "macro": "indicatorCompare",
+        "ontology": "ontologyGraph",
+    }
+    selected_panel_types = [
+        role_types[role]
+        for role in getattr(route, "selectedRoles", []) or []
+        if role in role_types
+    ]
+    weights = {
+        "chart": 60,
+        "newsFeed": 52,
+        "indicatorCompare": 48,
+        "ontologyGraph": 48,
+        "aiSummary": 50,
+        "orderTicket": 5,
+    }
+    weights[primary_type] = 100
+    for index, panel_type in enumerate(selected_panel_types):
+        weights[panel_type] = max(weights.get(panel_type, 0), 86 - index * 8)
+    if context.marketEvents:
+        weights["aiSummary"] = max(weights.get("aiSummary", 0), 82)
+        weights["newsFeed"] = max(weights.get("newsFeed", 0), 76)
+
+    priorities = []
+    for panel in panels:
+        panel_type = panel["type"]
+        weight = weights.get(panel_type, 25)
+        priorities.append({
+            "panelId": panel["id"],
+            "panelType": panel_type,
+            "layoutWeight": weight,
+            "reason": priority_reason(panel_type, primary_type),
+        })
+    return sorted(priorities, key=lambda item: (-item["layoutWeight"], item["panelId"]))
+
+
+def priority_reason(panel_type: str, primary_type: str) -> str:
+    if panel_type == primary_type:
+        return "Primary panel for the current user intent."
+    if panel_type == "orderTicket":
+        return "Order entry stays low priority during analysis-only layout changes."
+    return "Supporting panel for the current user intent."
+
+
+def priority_commands(priorities: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        layout_command(
+            "layout.panel.priority.set",
+            {"panelId": item["panelId"], "layoutWeight": item["layoutWeight"]},
+            {"panelId": item["panelId"]},
+        )
+        for item in priorities
+    ]
+
+
+def first_panel_of_type(panels: list[dict[str, Any]], panel_type: str) -> dict[str, Any] | None:
+    return next((panel for panel in panels if panel["type"] == panel_type), None)
+
+
+def primary_panel_move_command(panels: list[dict[str, Any]], panel: dict[str, Any]) -> dict[str, Any] | None:
+    if panel.get("layoutPinned"):
+        return None
+    placement = panel["placement"]
+    if placement.get("group") != "workspace":
+        return None
+    target = {
+        **placement,
+        "group": "workspace",
+        "zone": "main",
+        "col": 1,
+        "row": 1,
+    }
+    if placement.get("col") == target["col"] and placement.get("row") == target["row"]:
+        return None
+    if any(overlaps(target, other["placement"]) and other.get("layoutPinned") for other in panels if other["id"] != panel["id"]):
+        return None
+    return layout_command("layout.panel.move", {"panelId": panel["id"], "placement": target}, {"panelId": panel["id"]})
+
+
+def overlaps(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    if left.get("group") != right.get("group"):
+        return False
+    left_col_end = int(left.get("col", 1)) + int(left.get("colSpan", 1)) - 1
+    right_col_end = int(right.get("col", 1)) + int(right.get("colSpan", 1)) - 1
+    left_row_end = int(left.get("row", 1)) + int(left.get("rowSpan", 1)) - 1
+    right_row_end = int(right.get("row", 1)) + int(right.get("rowSpan", 1)) - 1
+    return not (
+        left_col_end < int(right.get("col", 1)) or
+        right_col_end < int(left.get("col", 1)) or
+        left_row_end < int(right.get("row", 1)) or
+        right_row_end < int(left.get("row", 1))
+    )
+
+
+def layout_command(command_type: str, payload: dict[str, Any], target: dict[str, Any] | None = None) -> dict[str, Any]:
+    created_at = utc_now_iso()
+    command = {
+        "id": stable_id("layout-command", {"type": command_type, "payload": payload, "target": target, "createdAt": created_at}),
+        "type": command_type,
+        "actor": "llm",
+        "payload": payload,
+        "createdAt": created_at,
+    }
+    if target:
+        command["target"] = target
+    return command
+
+
+def read_int(value: Any, fallback: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def read_float(value: Any, fallback: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return fallback
 
 
 def severity_rank(value: str) -> int:

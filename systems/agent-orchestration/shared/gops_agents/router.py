@@ -24,7 +24,7 @@ KEYWORD_ROUTES = [
     (("뉴스", "기사", "보도", "헤드라인", "news", "headline", "article"), ["news"], "news"),
     (("차트", "캔들", "가격", "추세", "chart", "candle", "price", "trend"), ["chart"], "chart"),
     (("거시", "금리", "cpi", "fomc", "macro", "rate", "inflation"), ["macro"], "macro"),
-    (("관계", "공급망", "경쟁사", "섹터", "ontology", "relationship", "supply"), ["ontology"], "ontology"),
+    (("관계", "온톨로지", "공급망", "경쟁사", "섹터", "ontology", "relationship", "supply"), ["ontology"], "ontology"),
 ]
 
 

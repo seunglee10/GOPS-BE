@@ -12,12 +12,14 @@ from .agents import (
     NewsAgent,
     NotificationDecisionAgent,
     OntologyAgent,
+    UIAgent,
     UnusualEventExplainerAgent,
     VerificationGuardrailAgent,
 )
-from .contracts import AgentFinding, AnalysisReport, EvidenceItem, MarketEvent, stable_id, utc_now_iso
+from .contracts import AgentFinding, AnalysisReport, EvidenceItem, FinalAnswer, IntentRoute, MarketEvent, stable_id, utc_now_iso
 from .router import route_intent
 from .synthesizer import FinalAnswerSynthesizer
+from .ui_intent import route_ui_intent
 
 try:
     from langgraph.graph import END, StateGraph
@@ -50,6 +52,7 @@ class AgentOrchestrator:
         self.verifier = VerificationGuardrailAgent()
         self.notifier = NotificationDecisionAgent()
         self.layout_agent = LayoutAgent()
+        self.ui_agent = UIAgent()
         self.synthesizer = FinalAnswerSynthesizer()
         self.workflow = self._build_workflow()
 
@@ -118,6 +121,7 @@ class AgentOrchestrator:
             intent=intent,
             messages=[item for item in request.get("messages", []) if isinstance(item, dict)],
             chartContext=request.get("chartContext") if isinstance(request.get("chartContext"), dict) else {},
+            layoutContext=request.get("layoutContext") if isinstance(request.get("layoutContext"), dict) else {},
             marketEvents=events,
         )
         return {
@@ -132,12 +136,24 @@ class AgentOrchestrator:
     def _route_intent(self, state: dict[str, Any]) -> dict[str, Any]:
         request = state["request"]
         intent = state["intent"]
-        route = route_intent(intent, request.get("agentIds"), str(request.get("routerMode") or "hybrid"))
+        router_mode = str(request.get("routerMode") or "hybrid")
+        ui_intent = route_ui_intent(intent, state["context"].layoutContext, router_mode)
+        if ui_intent.isUiIntent:
+            route = IntentRoute(
+                source=ui_intent.source,
+                intentType="ui-layout",
+                selectedRoles=[],
+                confidence=ui_intent.confidence,
+                reason=ui_intent.reason,
+            )
+            return {**state, "route": route, "selected_roles": [], "ui_intent": ui_intent}
+
+        route = route_intent(intent, request.get("agentIds"), router_mode)
         selected_roles = list(route.selectedRoles)
         if not selected_roles:
             requested_roles = resolve_requested_roles(request.get("agentIds"))
             selected_roles = [role for role in ["chart", "news", "macro", "ontology"] if role in requested_roles]
-        return {**state, "route": route, "selected_roles": selected_roles}
+        return {**state, "route": route, "selected_roles": selected_roles, "ui_intent": None}
 
     def _run_chart(self, state: dict[str, Any]) -> dict[str, Any]:
         return self._run_role_agent(state, "chart", self.chart_agent)
@@ -193,6 +209,10 @@ class AgentOrchestrator:
         return {**state, "role_findings": role_findings}
 
     def _verify(self, state: dict[str, Any]) -> dict[str, Any]:
+        if is_ui_layout_state(state):
+            state["context"].providerEvidence = []
+            return {**state, "role_findings": [], "provider_evidence": []}
+
         context = state["context"]
         role_findings = list(state.get("role_findings", []))
         role_findings.append(self.event_explainer.analyze(context))
@@ -219,13 +239,22 @@ class AgentOrchestrator:
                 "createdAt": request.get("createdAt") or utc_now_iso(),
             },
         )
-        final_answer = self.synthesizer.synthesize(
-            symbol=symbol,
-            intent=intent,
-            route=route,
-            findings=role_findings,
-            provider_evidence=provider_evidence,
-        )
+        if is_ui_layout_state(state):
+            final_answer = FinalAnswer(
+                title="UI 레이아웃 조정",
+                summary="요청한 UI 레이아웃 변경을 준비했습니다.",
+                sections=[],
+                citations=[],
+                limitations=[],
+            )
+        else:
+            final_answer = self.synthesizer.synthesize(
+                symbol=symbol,
+                intent=intent,
+                route=route,
+                findings=role_findings,
+                provider_evidence=provider_evidence,
+            )
         summary = final_answer.summary or build_summary(symbol, role_findings, events)
         return {
             **state,
@@ -241,7 +270,12 @@ class AgentOrchestrator:
     def _propose_layout(self, state: dict[str, Any]) -> dict[str, Any]:
         request = state["request"]
         context = state["context"]
-        layout = self.layout_agent.propose(context)
+        if is_ui_layout_state(state):
+            layout = self.ui_agent.propose(context, state["ui_intent"])
+            if state.get("final_answer"):
+                state["final_answer"].summary = layout.rationale
+        else:
+            layout = self.layout_agent.propose(context, state.get("route"))
         report = AnalysisReport(
             analysisId=state["analysis_id"],
             symbol=state["symbol"],
@@ -249,7 +283,11 @@ class AgentOrchestrator:
             status="completed",
             createdAt=utc_now_iso(),
             summary=state["summary"],
-            rationale="The conductor routed the request to role agents, composed provider evidence, then generated a final user-facing answer.",
+            rationale=(
+                "The conductor routed the request to UIAgent for layout-only handling."
+                if is_ui_layout_state(state)
+                else "The conductor routed the request to role agents, composed provider evidence, then generated a final user-facing answer."
+            ),
             findings=state["role_findings"],
             marketEvents=state["events"],
             providerEvidence=state["provider_evidence"],
@@ -279,6 +317,11 @@ def dedupe_provider_evidence(items: list[EvidenceItem]) -> list[EvidenceItem]:
         seen.add(key)
         deduped.append(item)
     return deduped
+
+
+def is_ui_layout_state(state: dict[str, Any]) -> bool:
+    ui_intent = state.get("ui_intent")
+    return bool(ui_intent and getattr(ui_intent, "isUiIntent", False))
 
 
 def role_agent_error_finding(role: str, symbol: str, exc: Exception):
