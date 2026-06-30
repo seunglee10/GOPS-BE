@@ -7,6 +7,8 @@
 
 20개 데모 종목에 대해 S3, ClickHouse, Redis, API, chart runtime을 깨끗한 canonical 기준으로 다시 맞춘다.
 
+AWS 배포에서도 로컬과 같은 market-data 계약을 사용한다. 즉 로컬에서 검증한 ClickHouse serving data, S3 canonical parquet/manifest, Redis chart/live/backfill keyspace, Kafka chart topic contract가 AWS/EKS 실제 환경에서도 같은 의미와 범위를 가져야 한다. S3는 같은 저장소를 사용한다고 가정하되, 배포 전 object/manifest audit로 확인한다.
+
 최종 구조:
 
 ```text
@@ -212,6 +214,25 @@ Live rules:
 - 정규장 종료 상태에서는 실제 live-market 성공을 주장하지 않는다. controlled replay/local trace로 검증하고 market-hours smoke를 별도 운영 gate로 남긴다.
 
 ## 7. Milestones
+
+### M-1. Local To AWS Runtime Parity
+
+Goal:
+
+- 로컬 검증 상태와 AWS/EKS 실제 ClickHouse, S3, Redis, Kafka 차트 데이터 계약이 같은지 확인한다.
+
+Checks:
+
+- AWS ConfigMap, Secret reference, running pod env, `/health/config`가 로컬 market-data 계약과 일치한다.
+- `gops20`, Hot Top10, `v2 + split`, parquet S3, canonical-only serving guard가 AWS active runtime에 들어가 있다.
+- S3 bucket/prefix는 로컬에서 적재한 canonical parquet/manifest와 같은 저장소를 바라본다.
+- AWS ClickHouse는 reset 후 S3 canonical data에서 재구축 가능하다.
+- AWS Redis는 chart/live/backfill keyspace만 reset 가능하고 auth/order/agent key를 건드리지 않는다.
+- AWS Kafka chart topics와 consumer groups는 같은 message contract를 사용하며 stale lag가 없는지 확인한다.
+
+Runbook:
+
+- `alpaca-data-pipeline-plan/aws-market-data-reset-runbook.md`를 따른다.
 
 ### M0. Current-State And Config Audit
 
