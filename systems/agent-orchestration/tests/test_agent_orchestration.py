@@ -113,6 +113,17 @@ def placements_overlap(left, right):
     )
 
 
+def news_panel_props_command(report):
+    return next(
+        command for command in report.layoutProposal.commands
+        if command.get("type") in {"layout.panel.add", "layout.panel.props.update"}
+        and (
+            command.get("payload", {}).get("panelType") == "newsFeed"
+            or command.get("payload", {}).get("panelId") == "panel-news"
+        )
+    )
+
+
 class AgentOrchestrationTests(unittest.TestCase):
     def setUp(self):
         self._openai_api_key = os.environ.pop("OPENAI_API_KEY", None)
@@ -336,14 +347,43 @@ class AgentOrchestrationTests(unittest.TestCase):
 
         report = orchestrator.analyze({"symbol": "NVDA", "intent": "뉴스 보여줘", "agentIds": ["agent-02"]})
 
-        news_command = next(
-            command for command in report.layoutProposal.commands
-            if command.get("payload", {}).get("panelType") == "newsFeed"
-        )
+        news_command = news_panel_props_command(report)
         props = news_command["payload"]["props"]
         self.assertEqual(props["symbol"], "NVDA")
         self.assertEqual(props["latestNews"][0]["title"], "NVDA shares rise after strong earnings")
         self.assertEqual(props["majorNews"][0]["importanceScore"], props["latestNews"][0]["importanceScore"])
+
+    def test_orchestrator_updates_existing_news_panel_layout_payload(self):
+        provider = ClickHouseNewsProvider(
+            clickhouse_provider=FakeClickHouseProvider([
+                {
+                    "articleId": "panel-existing-1",
+                    "headline": "NVDA shares rise after strong earnings",
+                    "summary": "NVDA revenue beat expectations.",
+                    "publishedAt": utc_now_iso(),
+                    "url": "https://example.com/panel-existing",
+                    "symbols": ["NVDA"],
+                    "source": "alpaca",
+                }
+            ]),
+            publish_fallback=False,
+        )
+        orchestrator = AgentOrchestrator()
+        orchestrator.news_agent = NewsAgent(provider)
+
+        report = orchestrator.analyze({
+            "symbol": "NVDA",
+            "intent": "뉴스 보여줘",
+            "agentIds": ["agent-02"],
+            "layoutContext": layout_context(),
+        })
+
+        news_command = news_panel_props_command(report)
+        self.assertEqual(news_command["type"], "layout.panel.props.update")
+        self.assertEqual(news_command["payload"]["panelId"], "panel-news")
+        self.assertEqual(news_command["target"]["panelId"], "panel-news")
+        self.assertEqual(news_command["payload"]["props"]["latestNews"][0]["title"], "NVDA shares rise after strong earnings")
+        self.assertFalse(any(command["type"] == "layout.panel.add" for command in report.layoutProposal.commands))
 
     def test_news_content_request_does_not_route_to_ui_agent_when_ui_router_is_available(self):
         provider = ClickHouseNewsProvider(
@@ -433,7 +473,9 @@ class AgentOrchestrationTests(unittest.TestCase):
 
                 self.assertEqual(report.route.intentType, "news")
                 self.assertEqual(report.route.selectedRoles, ["news"])
-                self.assertTrue(any(command.get("payload", {}).get("panelType") == "newsFeed" for command in report.layoutProposal.commands))
+                news_command = news_panel_props_command(report)
+                self.assertEqual(news_command["type"], "layout.panel.props.update")
+                self.assertEqual(news_command["payload"]["panelId"], "panel-news")
 
     def test_news_localization_success_updates_panel_payload_and_preserves_originals(self):
         provider = ClickHouseNewsProvider(
@@ -479,10 +521,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(evidence.raw["localizedTitle"], "엔비디아, 실적 호조에 주가 상승")
         self.assertEqual(evidence.raw["localizedSummary"], "엔비디아 매출이 기대치를 웃돌며 투자심리가 개선됐습니다.")
         self.assertEqual(evidence.url, "https://example.com/panel-ko")
-        news_command = next(
-            command for command in report.layoutProposal.commands
-            if command.get("payload", {}).get("panelType") == "newsFeed"
-        )
+        news_command = news_panel_props_command(report)
         item = news_command["payload"]["props"]["latestNews"][0]
         self.assertEqual(item["title"], "엔비디아, 실적 호조에 주가 상승")
         self.assertEqual(item["summary"], "엔비디아 매출이 기대치를 웃돌며 투자심리가 개선됐습니다.")
@@ -517,10 +556,7 @@ class AgentOrchestrationTests(unittest.TestCase):
 
         evidence = report.providerEvidence[0]
         self.assertNotIn("localizedTitle", evidence.raw)
-        news_command = next(
-            command for command in report.layoutProposal.commands
-            if command.get("payload", {}).get("panelType") == "newsFeed"
-        )
+        news_command = news_panel_props_command(report)
         item = news_command["payload"]["props"]["latestNews"][0]
         self.assertEqual(item["title"], "NVDA shares rise after strong earnings")
         self.assertEqual(item["summary"], "NVDA revenue beat expectations.")
@@ -630,10 +666,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(report.symbol, "XLV")
         self.assertEqual(clickhouse.requested_symbols, ["XLV"])
         self.assertIn("XLV", report.finalAnswer.title)
-        news_command = next(
-            command for command in report.layoutProposal.commands
-            if command.get("payload", {}).get("panelType") == "newsFeed"
-        )
+        news_command = news_panel_props_command(report)
         self.assertEqual(news_command["payload"]["props"]["symbol"], "XLV")
         self.assertEqual(news_command["payload"]["props"]["latestNews"][0]["symbol"], "XLV")
 

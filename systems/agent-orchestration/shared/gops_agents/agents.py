@@ -289,7 +289,7 @@ class LayoutAgent:
         commands = priority_commands(priorities)
         news_panel_props = build_news_panel_props(context.symbol, context.providerEvidence)
         if news_panel_props:
-            commands.append(news_panel_add_command(news_panel_props))
+            commands.append(news_panel_props_command(panels, news_panel_props))
         primary_panel = first_panel_of_type(panels, primary_type)
         if primary_panel and primary_panel["type"] != "orderTicket":
             move_command = primary_panel_move_command(panels, primary_panel)
@@ -1060,6 +1060,20 @@ def news_panel_add_command(props: dict[str, Any]) -> dict[str, Any]:
             "panelType": "newsFeed",
             "props": props,
         },
+    )
+
+
+def news_panel_props_command(panels: list[dict[str, Any]], props: dict[str, Any]) -> dict[str, Any]:
+    panel = first_panel_of_type(panels, "newsFeed")
+    if not panel:
+        return news_panel_add_command(props)
+    return layout_command(
+        "layout.panel.props.update",
+        {
+            "panelId": panel["id"],
+            "props": props,
+        },
+        {"panelId": panel["id"]},
     )
 
 
