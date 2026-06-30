@@ -71,6 +71,15 @@ from alfaka.streaming.transforms import (
 from alfaka.tools import live_path_trace
 
 
+def load_news_retention_module():
+    path = Path(__file__).resolve().parents[1] / "jobs" / "news-retention" / "main.py"
+    spec = importlib.util.spec_from_file_location("news_retention_job", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(module)
+    return module
+
+
 class FakeRedisProvider:
     def __init__(self, candles=None, symbol_metadata=None, profile_bins=None, live_candle=None):
         self._candles = candles or []
@@ -3699,6 +3708,16 @@ class MarketDataHardeningContractTest(unittest.TestCase):
 
         self.assertEqual(client.inserts[0][0], "news_articles")
         self.assertEqual(client.inserts[0][1][0]["article_id"], "news-1")
+
+    def test_news_retention_job_deletes_only_rows_older_than_retention_days(self):
+        module = load_news_retention_module()
+
+        query = module.build_delete_query("market_data", "news_articles", 30)
+
+        self.assertIn("ALTER TABLE `market_data`.`news_articles` DELETE", query)
+        self.assertIn("published_at < now64(3) - INTERVAL 30 DAY", query)
+        with self.assertRaises(ValueError):
+            module.build_delete_query("market_data", "news_articles", 0)
 
     def test_storage_boundaries_skip_invalid_weekend_stock_candles(self):
         client = RecordingClickHouseClient()

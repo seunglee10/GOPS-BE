@@ -1,4 +1,5 @@
 import json
+import os
 import urllib.error
 import urllib.request
 from typing import Any
@@ -9,7 +10,15 @@ from app.core.config import read_dotenv_value
 
 
 def orchestrator_base_url() -> str:
-    return (read_dotenv_value("AGENT_ORCHESTRATOR_URL") or "http://agent-orchestrator:8100").rstrip("/")
+    return (os.getenv("AGENT_ORCHESTRATOR_URL") or read_dotenv_value("AGENT_ORCHESTRATOR_URL") or "http://agent-orchestrator:8100").rstrip("/")
+
+
+def orchestrator_timeout_seconds() -> float:
+    value = os.getenv("AGENT_ORCHESTRATOR_TIMEOUT_SECONDS") or read_dotenv_value("AGENT_ORCHESTRATOR_TIMEOUT_SECONDS") or "60"
+    try:
+        return float(value)
+    except ValueError:
+        return 60.0
 
 
 def request_agent_analysis(payload: dict[str, Any]) -> dict[str, Any]:
@@ -30,7 +39,7 @@ def request_orchestrator_json(method: str, path: str, payload: dict[str, Any] | 
         method=method,
     )
     try:
-        with urllib.request.urlopen(request, timeout=25) as response:
+        with urllib.request.urlopen(request, timeout=orchestrator_timeout_seconds()) as response:
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         raise HTTPException(status_code=exc.code, detail=read_error_detail(exc)) from exc
