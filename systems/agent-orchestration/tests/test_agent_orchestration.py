@@ -1,20 +1,27 @@
 import json
 import os
 import sys
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "shared"))
+sys.path.insert(0, str(REPO_ROOT / "systems" / "market-data" / "shared"))
+sys.modules.setdefault("boto3", types.SimpleNamespace(client=lambda *args, **kwargs: None))
 
 from gops_agents.agents import AgentContext, NewsAgent, VerificationGuardrailAgent
-from gops_agents.contracts import AgentFinding, EvidenceItem, IntentRoute
+from gops_agents.contracts import AgentFinding, EvidenceItem, IntentRoute, utc_now_iso
 from gops_agents.event_detector import MarketEventDetector, MarketEventThresholds
+from gops_agents.news_localization import NewsLocalizationService
 from gops_agents.orchestrator import AgentOrchestrator
 from gops_agents.publisher import notification_payload
 from gops_agents.providers import ClickHouseNewsProvider, GraphDBOntologyProvider, ProviderRequest
 from gops_agents.synthesizer import FinalAnswerSynthesizer
+import alfaka.alpaca.news  # noqa: F401
+import alfaka.common.secrets  # noqa: F401
 
 
 class FakeSparqlClient:
@@ -47,8 +54,12 @@ class FakeOpenAIResponse:
 class FakeClickHouseProvider:
     def __init__(self, rows):
         self.rows = rows
+        self.calls = 0
+        self.requested_symbols = []
 
     def news_articles(self, symbol, limit, days):
+        self.calls += 1
+        self.requested_symbols.append(symbol)
         return self.rows
 
 
@@ -251,6 +262,280 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(evidence[0].raw["eventType"], "earnings")
         self.assertEqual(evidence[0].raw["impactDirection"], "positive")
         self.assertGreater(evidence[0].raw["relevanceScore"], evidence[1].raw["relevanceScore"])
+        self.assertGreater(evidence[0].raw["importanceScore"], 0)
+
+    def test_news_provider_uses_alpaca_fallback_when_clickhouse_is_empty(self):
+        clickhouse = FakeClickHouseProvider([])
+        provider = ClickHouseNewsProvider(clickhouse_provider=clickhouse, limit=5, publish_fallback=False)
+        article = {
+            "id": "fallback-1",
+            "headline": "NVDA shares rise after new AI chip launch",
+            "summary": "NVIDIA announced a new data center GPU.",
+            "url": "https://example.com/fallback",
+            "source": "alpaca",
+            "created_at": "2026-06-30T01:02:03Z",
+            "symbols": ["NVDA"],
+        }
+
+        with patch("alfaka.common.secrets.load_alpaca_credentials", return_value=("key", "secret")):
+            with patch("alfaka.alpaca.news.fetch_alpaca_news", return_value=[article]) as fetch:
+                evidence = provider.fetch(ProviderRequest("NVDA", "뉴스 보여줘"))
+
+        fetch.assert_called_once()
+        self.assertEqual(clickhouse.calls, 1)
+        self.assertEqual(evidence[0].status, "available")
+        self.assertEqual(evidence[0].raw["dataSource"], "alpaca-direct")
+        self.assertGreaterEqual(evidence[0].raw["importanceScore"], 0.8)
+
+    def test_news_provider_does_not_fallback_when_clickhouse_news_is_fresh(self):
+        clickhouse = FakeClickHouseProvider([
+            {
+                "articleId": "fresh-1",
+                "headline": "NVDA shares rise after strong earnings",
+                "summary": "NVDA revenue beat expectations.",
+                "publishedAt": utc_now_iso(),
+                "url": "https://example.com/fresh",
+                "symbols": ["NVDA"],
+            }
+        ])
+        provider = ClickHouseNewsProvider(clickhouse_provider=clickhouse, limit=5, publish_fallback=False)
+
+        with patch("alfaka.alpaca.news.fetch_alpaca_news") as fetch:
+            evidence = provider.fetch(ProviderRequest("NVDA", "뉴스 보여줘"))
+
+        fetch.assert_not_called()
+        self.assertEqual(evidence[0].raw["dataSource"], "clickhouse")
+
+    def test_orchestrator_adds_news_panel_layout_payload(self):
+        provider = ClickHouseNewsProvider(
+            clickhouse_provider=FakeClickHouseProvider([
+                {
+                    "articleId": "panel-1",
+                    "headline": "NVDA shares rise after strong earnings",
+                    "summary": "NVDA revenue beat expectations.",
+                    "publishedAt": utc_now_iso(),
+                    "url": "https://example.com/panel",
+                    "symbols": ["NVDA"],
+                    "source": "alpaca",
+                }
+            ]),
+            publish_fallback=False,
+        )
+        orchestrator = AgentOrchestrator()
+        orchestrator.news_agent = NewsAgent(provider)
+
+        report = orchestrator.analyze({"symbol": "NVDA", "intent": "뉴스 보여줘", "agentIds": ["agent-02"]})
+
+        news_command = next(
+            command for command in report.layoutProposal.commands
+            if command.get("payload", {}).get("panelType") == "newsFeed"
+        )
+        props = news_command["payload"]["props"]
+        self.assertEqual(props["symbol"], "NVDA")
+        self.assertEqual(props["latestNews"][0]["title"], "NVDA shares rise after strong earnings")
+        self.assertEqual(props["majorNews"][0]["importanceScore"], props["latestNews"][0]["importanceScore"])
+
+    def test_news_localization_success_updates_panel_payload_and_preserves_originals(self):
+        provider = ClickHouseNewsProvider(
+            clickhouse_provider=FakeClickHouseProvider([
+                {
+                    "articleId": "panel-ko-1",
+                    "headline": "NVDA shares rise after strong earnings",
+                    "summary": "NVDA revenue beat expectations.",
+                    "publishedAt": utc_now_iso(),
+                    "url": "https://example.com/panel-ko",
+                    "symbols": ["NVDA"],
+                    "source": "alpaca",
+                }
+            ]),
+            publish_fallback=False,
+        )
+        response = {
+            "output_text": json.dumps({
+                "items": [
+                    {
+                        "key": "article:panel-ko-1",
+                        "localizedTitle": "엔비디아, 실적 호조에 주가 상승",
+                        "localizedSummary": "엔비디아 매출이 기대치를 웃돌며 투자심리가 개선됐습니다.",
+                    }
+                ]
+            })
+        }
+        orchestrator = AgentOrchestrator()
+        orchestrator.news_agent = NewsAgent(provider, localizer=NewsLocalizationService())
+
+        with patch.dict(os.environ, {
+            "OPENAI_API_KEY": "test-key",
+            "AGENT_NEWS_LOCALIZATION_PROVIDER": "openai",
+            "AGENT_ROLE_ANALYSIS_PROVIDER": "deterministic",
+            "AGENT_FINAL_ANSWER_PROVIDER": "deterministic",
+        }, clear=False):
+            with patch("urllib.request.urlopen", return_value=FakeOpenAIResponse(response)):
+                report = orchestrator.analyze({"symbol": "NVDA", "intent": "뉴스 보여줘", "agentIds": ["agent-02"]})
+
+        evidence = report.providerEvidence[0]
+        self.assertEqual(evidence.raw["originalTitle"], "NVDA shares rise after strong earnings")
+        self.assertEqual(evidence.raw["originalSummary"], "NVDA revenue beat expectations.")
+        self.assertEqual(evidence.raw["localizedTitle"], "엔비디아, 실적 호조에 주가 상승")
+        self.assertEqual(evidence.raw["localizedSummary"], "엔비디아 매출이 기대치를 웃돌며 투자심리가 개선됐습니다.")
+        self.assertEqual(evidence.url, "https://example.com/panel-ko")
+        news_command = next(
+            command for command in report.layoutProposal.commands
+            if command.get("payload", {}).get("panelType") == "newsFeed"
+        )
+        item = news_command["payload"]["props"]["latestNews"][0]
+        self.assertEqual(item["title"], "엔비디아, 실적 호조에 주가 상승")
+        self.assertEqual(item["summary"], "엔비디아 매출이 기대치를 웃돌며 투자심리가 개선됐습니다.")
+        self.assertEqual(item["originalTitle"], "NVDA shares rise after strong earnings")
+        self.assertEqual(item["originalSummary"], "NVDA revenue beat expectations.")
+
+    def test_news_localization_failure_falls_back_to_original_text(self):
+        provider = ClickHouseNewsProvider(
+            clickhouse_provider=FakeClickHouseProvider([
+                {
+                    "articleId": "panel-fallback-1",
+                    "headline": "NVDA shares rise after strong earnings",
+                    "summary": "NVDA revenue beat expectations.",
+                    "publishedAt": utc_now_iso(),
+                    "url": "https://example.com/panel-fallback",
+                    "symbols": ["NVDA"],
+                }
+            ]),
+            publish_fallback=False,
+        )
+        orchestrator = AgentOrchestrator()
+        orchestrator.news_agent = NewsAgent(provider, localizer=NewsLocalizationService())
+
+        with patch.dict(os.environ, {
+            "OPENAI_API_KEY": "test-key",
+            "AGENT_NEWS_LOCALIZATION_PROVIDER": "openai",
+            "AGENT_ROLE_ANALYSIS_PROVIDER": "deterministic",
+            "AGENT_FINAL_ANSWER_PROVIDER": "deterministic",
+        }, clear=False):
+            with patch("urllib.request.urlopen", return_value=FakeOpenAIResponse({"output_text": "{invalid"})):
+                report = orchestrator.analyze({"symbol": "NVDA", "intent": "뉴스 보여줘", "agentIds": ["agent-02"]})
+
+        evidence = report.providerEvidence[0]
+        self.assertNotIn("localizedTitle", evidence.raw)
+        news_command = next(
+            command for command in report.layoutProposal.commands
+            if command.get("payload", {}).get("panelType") == "newsFeed"
+        )
+        item = news_command["payload"]["props"]["latestNews"][0]
+        self.assertEqual(item["title"], "NVDA shares rise after strong earnings")
+        self.assertEqual(item["summary"], "NVDA revenue beat expectations.")
+
+    def test_news_localization_cache_avoids_repeated_openai_calls(self):
+        provider = ClickHouseNewsProvider(
+            clickhouse_provider=FakeClickHouseProvider([
+                {
+                    "articleId": "cache-1",
+                    "headline": "NVDA shares rise after strong earnings",
+                    "summary": "NVDA revenue beat expectations.",
+                    "publishedAt": utc_now_iso(),
+                    "url": "https://example.com/cache",
+                    "symbols": ["NVDA"],
+                }
+            ]),
+            publish_fallback=False,
+        )
+        localizer = NewsLocalizationService(cache_ttl_seconds=3600)
+        agent = NewsAgent(provider, localizer=localizer)
+        context = AgentContext(symbol="NVDA", intent="뉴스 보여줘")
+        response = {
+            "output_text": json.dumps({
+                "items": [
+                    {
+                        "key": "article:cache-1",
+                        "localizedTitle": "엔비디아 실적 호조",
+                        "localizedSummary": "엔비디아 매출이 기대치를 웃돌았습니다.",
+                    }
+                ]
+            })
+        }
+
+        with patch.dict(os.environ, {
+            "OPENAI_API_KEY": "test-key",
+            "AGENT_NEWS_LOCALIZATION_PROVIDER": "openai",
+            "AGENT_ROLE_ANALYSIS_PROVIDER": "deterministic",
+        }, clear=False):
+            with patch("urllib.request.urlopen", return_value=FakeOpenAIResponse(response)) as urlopen:
+                first = agent.analyze(context)
+                second = agent.analyze(context)
+
+        self.assertEqual(urlopen.call_count, 1)
+        self.assertEqual(first.evidence[0].raw["localizedTitle"], "엔비디아 실적 호조")
+        self.assertEqual(second.evidence[0].raw["localizedTitle"], "엔비디아 실적 호조")
+
+    def test_news_final_answer_prefers_localized_text(self):
+        evidence = [
+            EvidenceItem(
+                provider="news",
+                status="available",
+                title="NVDA shares rise after strong earnings",
+                summary="NVDA revenue beat expectations.",
+                url="https://example.com/localized-answer",
+                raw={
+                    "articleId": "answer-1",
+                    "publishedAt": utc_now_iso(),
+                    "impactDirection": "positive",
+                    "eventType": "earnings",
+                    "importanceScore": 0.9,
+                    "relevanceScore": 0.9,
+                    "originalTitle": "NVDA shares rise after strong earnings",
+                    "originalSummary": "NVDA revenue beat expectations.",
+                    "localizedTitle": "엔비디아, 실적 호조에 상승",
+                    "localizedSummary": "엔비디아 매출이 기대치를 웃돌며 긍정적으로 분류됐습니다.",
+                },
+            )
+        ]
+        answer = FinalAnswerSynthesizer().synthesize(
+            symbol="NVDA",
+            intent="뉴스 보여줘",
+            route=IntentRoute("rule", "news", ["news"], 0.9, "test"),
+            findings=[],
+            provider_evidence=evidence,
+        )
+
+        self.assertIn("엔비디아, 실적 호조에 상승", answer.sections[0].bullets[0])
+        self.assertIn("엔비디아 매출이 기대치를 웃돌며", answer.sections[0].bullets[0])
+        self.assertEqual(answer.citations[0].title, "엔비디아, 실적 호조에 상승")
+
+    def test_explicit_ticker_in_intent_overrides_current_chart_symbol_for_news(self):
+        clickhouse = FakeClickHouseProvider([
+            {
+                "articleId": "xlv-1",
+                "headline": "XLV rises as healthcare stocks gain",
+                "summary": "Healthcare sector ETF moved higher.",
+                "publishedAt": utc_now_iso(),
+                "url": "https://example.com/xlv",
+                "symbols": ["XLV"],
+                "source": "alpaca",
+            }
+        ])
+        provider = ClickHouseNewsProvider(clickhouse_provider=clickhouse, publish_fallback=False)
+        orchestrator = AgentOrchestrator()
+        orchestrator.news_agent = NewsAgent(provider)
+
+        report = orchestrator.analyze({
+            "symbol": "NVDA",
+            "intent": "XLV 헬스케어 뉴스 보여줘",
+            "agentIds": ["agent-02"],
+            "chartContext": {
+                "chartDocument": {"symbol": "NVDA", "timeframe": "1m"},
+                "dataStatus": {"candleCount": 10, "state": "ready"},
+            },
+        })
+
+        self.assertEqual(report.symbol, "XLV")
+        self.assertEqual(clickhouse.requested_symbols, ["XLV"])
+        self.assertIn("XLV", report.finalAnswer.title)
+        news_command = next(
+            command for command in report.layoutProposal.commands
+            if command.get("payload", {}).get("panelType") == "newsFeed"
+        )
+        self.assertEqual(news_command["payload"]["props"]["symbol"], "XLV")
+        self.assertEqual(news_command["payload"]["props"]["latestNews"][0]["symbol"], "XLV")
 
     def test_news_agent_openai_success_and_fallback_keep_shape(self):
         provider = ClickHouseNewsProvider(
@@ -274,7 +559,7 @@ class AgentOrchestrationTests(unittest.TestCase):
             })
         }
 
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False):
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key", "AGENT_NEWS_LOCALIZATION_PROVIDER": "deterministic"}, clear=False):
             with patch("urllib.request.urlopen", return_value=FakeOpenAIResponse(response)):
                 openai_finding = NewsAgent(provider).analyze(context)
             with patch("urllib.request.urlopen", return_value=FakeOpenAIResponse({"output_text": "{invalid"})):
