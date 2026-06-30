@@ -1,4 +1,5 @@
 import json
+import asyncio
 import io
 import os
 import sys
@@ -597,6 +598,34 @@ class RecordingKafkaConsumer:
         RecordingKafkaConsumer.calls.append({"topics": topics, "kwargs": kwargs})
 
 
+class FakeWebSocket:
+    def __init__(self, frames):
+        self.frames = list(frames)
+        self.sent = []
+
+    async def send(self, payload):
+        self.sent.append(json.loads(payload))
+
+    async def recv(self):
+        frame = self.frames.pop(0)
+        if frame == "timeout":
+            raise asyncio.TimeoutError()
+        if frame == "stop":
+            raise RuntimeError("stop")
+        return json.dumps([frame])
+
+
+class FakeWebSocketConnect:
+    def __init__(self, websocket):
+        self.websocket = websocket
+
+    async def __aenter__(self):
+        return self.websocket
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
 class QueueMetricsUnavailableStore:
     def queue_metrics(self):
         raise RuntimeError("redis unavailable")
@@ -658,6 +687,42 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(market_session_for_timestamp("2026-06-29T21:00:00.000Z"), "after")
         self.assertEqual(market_session_for_timestamp("2026-06-30T02:00:00.000Z"), "overnight")
         self.assertEqual(market_session_for_timestamp("2026-06-28T14:00:00.000Z"), "closed")
+
+    def test_active_trade_subscription_waits_for_authenticated(self):
+        import asyncio
+        from alfaka.alpaca import websocket_collector
+
+        profile = resolve_feed_profile({"ALPACA_FEED_PROFILE": "sip"})
+        websocket = FakeWebSocket([
+            {"T": "success", "msg": "connected"},
+            "timeout",
+            {"T": "success", "msg": "authenticated"},
+            "stop",
+        ])
+
+        with (
+            mock.patch.object(websocket_collector.websockets, "connect", return_value=FakeWebSocketConnect(websocket)),
+            mock.patch.object(websocket_collector, "read_trade_subscription_symbols", return_value={"AAPL"}),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "stop"):
+                asyncio.run(websocket_collector.run_stream_session(
+                    alpaca_url=profile.websocket_url,
+                    alpaca_key="key",
+                    alpaca_secret="secret",
+                    alpaca_feed=profile.feed,
+                    feed_profile=profile,
+                    producer=RecordingProducer(),
+                    subscribe_request={"action": "subscribe", "bars": ["AAPL"]},
+                    redis_client=object(),
+                    active_channels=["trades"],
+                    active_poll_seconds=0.01,
+                    raw_topic_prefix="market.raw",
+                    enforce_session_window=False,
+                ))
+
+        self.assertEqual(websocket.sent[0]["action"], "auth")
+        self.assertEqual(websocket.sent[1], {"action": "subscribe", "bars": ["AAPL"]})
+        self.assertEqual(websocket.sent[2], {"action": "subscribe", "trades": ["AAPL"]})
 
     def test_raw_envelope_and_rows_preserve_feed_profile_and_session(self):
         payload = {"T": "t", "S": "AAPL", "t": "2026-06-30T02:00:00.000Z", "p": 200.5, "s": 10, "i": 42}

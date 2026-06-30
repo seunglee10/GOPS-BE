@@ -142,6 +142,7 @@ async def run_stream_session(
 ):
     active_subscribed_symbols = set()
     last_active_sync = 0.0
+    authenticated = False
     async with websockets.connect(alpaca_url, ping_interval=20, ping_timeout=20) as ws:
         await ws.send(json.dumps({"action": "auth", "key": alpaca_key, "secret": alpaca_secret}))
 
@@ -166,13 +167,14 @@ async def run_stream_session(
             try:
                 raw_frame = await asyncio.wait_for(ws.recv(), timeout=max(1.0, active_poll_seconds))
             except asyncio.TimeoutError:
-                active_subscribed_symbols = await sync_active_chart_subscriptions(
-                    ws,
-                    redis_client,
-                    active_channels,
-                    active_subscribed_symbols,
-                )
-                last_active_sync = time.monotonic()
+                if authenticated:
+                    active_subscribed_symbols = await sync_active_chart_subscriptions(
+                        ws,
+                        redis_client,
+                        active_channels,
+                        active_subscribed_symbols,
+                    )
+                    last_active_sync = time.monotonic()
                 continue
 
             messages = json.loads(raw_frame)
@@ -183,6 +185,7 @@ async def run_stream_session(
                 if message_type == "success":
                     print(message, flush=True)
                     if message.get("msg") == "authenticated":
+                        authenticated = True
                         write_ingestor_health(
                             redis_client,
                             feed_profile,
@@ -247,7 +250,7 @@ async def run_stream_session(
                 )
                 print(f"Kafka Raw 전송: topic={kafka_topic}, key={kafka_key}, channel={envelope['channel']}", flush=True)
 
-            if time.monotonic() - last_active_sync >= active_poll_seconds:
+            if authenticated and time.monotonic() - last_active_sync >= active_poll_seconds:
                 active_subscribed_symbols = await sync_active_chart_subscriptions(
                     ws,
                     redis_client,
