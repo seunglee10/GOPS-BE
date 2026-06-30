@@ -50,7 +50,7 @@ class AgentOrchestrator:
         self.verifier = VerificationGuardrailAgent()
         self.notifier = NotificationDecisionAgent()
         self.layout_agent = LayoutAgent()
-        self.synthesizer = FinalAnswerSynthesizer()
+        self.answer_composer = FinalAnswerSynthesizer()
         self.workflow = self._build_workflow()
 
     def analyze(self, request: dict[str, Any]) -> AnalysisReport:
@@ -73,18 +73,14 @@ class AgentOrchestrator:
             graph = StateGraph(dict)
             graph.add_node("normalize_request", self._normalize_request)
             graph.add_node("route_intent", self._route_intent)
-            graph.add_node("run_selected_role_agents", self._run_selected_role_agents)
-            graph.add_node("verify", self._verify)
-            graph.add_node("synthesize_final_answer", self._synthesize_final_answer)
-            graph.add_node("decide_notification", self._decide_notification)
+            graph.add_node("run_analysis_agents", self._run_analysis_agents)
+            graph.add_node("compose_answer", self._compose_answer)
             graph.add_node("propose_layout", self._propose_layout)
             graph.set_entry_point("normalize_request")
             graph.add_edge("normalize_request", "route_intent")
-            graph.add_edge("route_intent", "run_selected_role_agents")
-            graph.add_edge("run_selected_role_agents", "verify")
-            graph.add_edge("verify", "synthesize_final_answer")
-            graph.add_edge("synthesize_final_answer", "decide_notification")
-            graph.add_edge("decide_notification", "propose_layout")
+            graph.add_edge("route_intent", "run_analysis_agents")
+            graph.add_edge("run_analysis_agents", "compose_answer")
+            graph.add_edge("compose_answer", "propose_layout")
             graph.add_edge("propose_layout", END)
             return graph.compile()
         except Exception:
@@ -95,10 +91,8 @@ class AgentOrchestrator:
         for node in [
             self._normalize_request,
             self._route_intent,
-            self._run_selected_role_agents,
-            self._verify,
-            self._synthesize_final_answer,
-            self._decide_notification,
+            self._run_analysis_agents,
+            self._compose_answer,
             self._propose_layout,
         ]:
             state = node(state)
@@ -136,7 +130,7 @@ class AgentOrchestrator:
         selected_roles = list(route.selectedRoles)
         if not selected_roles:
             requested_roles = resolve_requested_roles(request.get("agentIds"))
-            selected_roles = [role for role in ["chart", "news", "macro", "ontology"] if role in requested_roles]
+            selected_roles = [role for role in MVP_ANALYSIS_ROLES if role in requested_roles]
         return {**state, "route": route, "selected_roles": selected_roles}
 
     def _run_chart(self, state: dict[str, Any]) -> dict[str, Any]:
@@ -145,29 +139,28 @@ class AgentOrchestrator:
     def _run_news(self, state: dict[str, Any]) -> dict[str, Any]:
         return self._run_role_agent(state, "news", self.news_agent)
 
-    def _run_macro(self, state: dict[str, Any]) -> dict[str, Any]:
-        return self._run_role_agent(state, "macro", self.macro_agent)
-
     def _run_ontology(self, state: dict[str, Any]) -> dict[str, Any]:
         return self._run_role_agent(state, "ontology", self.ontology_agent)
 
-    def _run_selected_role_agents(self, state: dict[str, Any]) -> dict[str, Any]:
+    def _run_analysis_agents(self, state: dict[str, Any]) -> dict[str, Any]:
         selected_roles = [
             role
-            for role in ["chart", "news", "macro", "ontology"]
+            for role in MVP_ANALYSIS_ROLES
             if role in state.get("selected_roles", [])
         ]
         agents = {
             "chart": self.chart_agent,
             "news": self.news_agent,
-            "macro": self.macro_agent,
             "ontology": self.ontology_agent,
         }
         if not selected_roles:
-            return {**state, "role_findings": []}
+            selected_roles = list(MVP_ANALYSIS_ROLES)
         if len(selected_roles) == 1:
             role = selected_roles[0]
-            return {**state, "role_findings": [self._safe_analyze_role(role, agents[role], state["context"])]}
+            role_findings = [self._safe_analyze_role(role, agents[role], state["context"])]
+            provider_evidence = collect_provider_evidence(role_findings)
+            state["context"].providerEvidence = provider_evidence
+            return {**state, "selected_roles": selected_roles, "role_findings": role_findings, "provider_evidence": provider_evidence}
 
         findings_by_role = {}
         with ThreadPoolExecutor(max_workers=len(selected_roles)) as executor:
@@ -178,7 +171,9 @@ class AgentOrchestrator:
             for future in as_completed(futures):
                 findings_by_role[futures[future]] = future.result()
         role_findings = [findings_by_role[role] for role in selected_roles if role in findings_by_role]
-        return {**state, "role_findings": role_findings}
+        provider_evidence = collect_provider_evidence(role_findings)
+        state["context"].providerEvidence = provider_evidence
+        return {**state, "selected_roles": selected_roles, "role_findings": role_findings, "provider_evidence": provider_evidence}
 
     def _safe_analyze_role(self, role: str, agent, context: AgentContext):
         try:
@@ -192,17 +187,7 @@ class AgentOrchestrator:
             role_findings.append(self._safe_analyze_role(role, agent, state["context"]))
         return {**state, "role_findings": role_findings}
 
-    def _verify(self, state: dict[str, Any]) -> dict[str, Any]:
-        context = state["context"]
-        role_findings = list(state.get("role_findings", []))
-        role_findings.append(self.event_explainer.analyze(context))
-        role_findings.append(self.market_summary.analyze(context, role_findings))
-        role_findings.append(self.verifier.analyze(context, role_findings))
-        provider_evidence = collect_provider_evidence(role_findings)
-        context.providerEvidence = provider_evidence
-        return {**state, "role_findings": role_findings, "provider_evidence": provider_evidence}
-
-    def _synthesize_final_answer(self, state: dict[str, Any]) -> dict[str, Any]:
+    def _compose_answer(self, state: dict[str, Any]) -> dict[str, Any]:
         request = state["request"]
         symbol = state["symbol"]
         intent = state["intent"]
@@ -219,7 +204,7 @@ class AgentOrchestrator:
                 "createdAt": request.get("createdAt") or utc_now_iso(),
             },
         )
-        final_answer = self.synthesizer.synthesize(
+        final_answer = self.answer_composer.synthesize(
             symbol=symbol,
             intent=intent,
             route=route,
@@ -234,14 +219,15 @@ class AgentOrchestrator:
             "summary": summary,
         }
 
-    def _decide_notification(self, state: dict[str, Any]) -> dict[str, Any]:
-        notification = self.notifier.decide(state["analysis_id"], state["context"])
-        return {**state, "notification": notification}
-
     def _propose_layout(self, state: dict[str, Any]) -> dict[str, Any]:
         request = state["request"]
         context = state["context"]
-        layout = self.layout_agent.propose(context)
+        layout = self.layout_agent.propose(
+            context,
+            selected_roles=state.get("selected_roles", []),
+            final_answer=state.get("final_answer"),
+            provider_evidence=state.get("provider_evidence", []),
+        )
         report = AnalysisReport(
             analysisId=state["analysis_id"],
             symbol=state["symbol"],
@@ -255,7 +241,7 @@ class AgentOrchestrator:
             providerEvidence=state["provider_evidence"],
             route=state["route"],
             finalAnswer=state["final_answer"],
-            notificationDecision=state["notification"],
+            notificationDecision=None,
             layoutProposal=layout,
             chartProposal=request.get("chartProposal") if isinstance(request.get("chartProposal"), dict) else None,
         )
@@ -265,7 +251,7 @@ class AgentOrchestrator:
 def collect_provider_evidence(findings) -> list[EvidenceItem]:
     evidence: list[EvidenceItem] = []
     for finding in findings:
-        evidence.extend(item for item in finding.evidence if item.provider in {"news", "macro", "ontology"})
+        evidence.extend(item for item in finding.evidence if item.provider in {"news", "ontology"})
     return dedupe_provider_evidence(evidence)
 
 
@@ -313,18 +299,16 @@ def role_agent_error_finding(role: str, symbol: str, exc: Exception):
 
 
 def resolve_requested_roles(agent_ids: Any) -> set[str]:
-    all_roles = {"chart", "news", "macro", "ontology"}
+    all_roles = set(MVP_ANALYSIS_ROLES)
     if not isinstance(agent_ids, list) or not agent_ids:
         return all_roles
 
     id_to_role = {
         "agent-01": "chart",
         "agent-02": "news",
-        "agent-03": "macro",
         "agent-04": "ontology",
         "chart-agent": "chart",
         "news-agent": "news",
-        "macro-agent": "macro",
         "ontology-agent": "ontology",
     }
     roles = {
@@ -342,6 +326,9 @@ def build_summary(symbol: str, findings, events: list[MarketEvent]) -> str:
         strongest = max(events, key=lambda event: {"info": 1, "watch": 2, "alert": 3, "critical": 4}.get(event.severity, 1))
         return f"{symbol} has a {strongest.severity} {strongest.eventType} signal."
     return f"{symbol} multi-agent analysis completed."
+
+
+MVP_ANALYSIS_ROLES = ("chart", "news", "ontology")
 
 
 def read_symbol_from_chart_context(context: Any) -> str | None:

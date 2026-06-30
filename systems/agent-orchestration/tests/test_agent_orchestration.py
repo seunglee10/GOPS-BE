@@ -74,14 +74,16 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(report.symbol, "NVDA")
         self.assertEqual(report.status, "completed")
         self.assertEqual(report.route.intentType, "general-analysis")
+        self.assertEqual(report.route.selectedRoles, ["chart", "news", "ontology"])
         self.assertIsNotNone(report.finalAnswer)
+        self.assertEqual({finding.role for finding in report.findings}, {"chart-analysis", "news-analysis", "company-relationship-analysis"})
         self.assertTrue(any(item.provider == "news" and item.status == "no-data" for item in report.providerEvidence))
-        self.assertEqual(report.notificationDecision.level, "none")
+        self.assertIsNone(report.notificationDecision)
 
-    def test_orchestrator_runs_only_requested_visible_agents_before_internal_steps(self):
+    def test_orchestrator_runs_only_requested_mvp_agents(self):
         report = AgentOrchestrator().analyze({
             "symbol": "NVDA",
-            "intent": "analyze news with chart",
+            "intent": "selected context",
             "agentIds": ["agent-01", "agent-02"],
             "chartContext": {
                 "chartDocument": {"symbol": "NVDA", "timeframe": "1m"},
@@ -94,7 +96,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         providers = {item.provider for item in report.providerEvidence}
         self.assertIn("chart-analysis", roles)
         self.assertIn("news-analysis", roles)
-        self.assertIn("verification-guardrail", roles)
+        self.assertNotIn("verification-guardrail", roles)
         self.assertNotIn("macro-analysis", roles)
         self.assertNotIn("company-relationship-analysis", roles)
         self.assertEqual(providers, {"news"})
@@ -129,7 +131,32 @@ class AgentOrchestrationTests(unittest.TestCase):
         })
 
         self.assertEqual(report.route.intentType, "market-move")
-        self.assertEqual(report.route.selectedRoles, ["chart", "news", "macro", "ontology"])
+        self.assertEqual(report.route.selectedRoles, ["chart", "news", "ontology"])
+        self.assertNotIn("macro-analysis", {finding.role for finding in report.findings})
+
+    def test_conductor_routes_chart_intent_to_chart_role(self):
+        report = AgentOrchestrator().analyze({
+            "symbol": "NVDA",
+            "intent": "차트 분석해줘",
+            "chartContext": {
+                "chartDocument": {"symbol": "NVDA", "timeframe": "1m"},
+                "dataStatus": {"candleCount": 10, "state": "ready"},
+            },
+        })
+
+        self.assertEqual(report.route.intentType, "chart")
+        self.assertEqual(report.route.selectedRoles, ["chart"])
+        self.assertEqual({finding.role for finding in report.findings}, {"chart-analysis"})
+
+    def test_agent_03_selection_does_not_activate_macro_role(self):
+        report = AgentOrchestrator().analyze({
+            "symbol": "NVDA",
+            "intent": "selected context",
+            "agentIds": ["agent-03"],
+        })
+
+        self.assertNotIn("macro", report.route.selectedRoles)
+        self.assertNotIn("macro-analysis", {finding.role for finding in report.findings})
 
     def test_event_detector_detects_price_surge_and_volume_spike(self):
         detector = MarketEventDetector(MarketEventThresholds(price_change_percent=3.0, volume_spike_multiplier=2.0))
@@ -281,6 +308,24 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(report.route.selectedRoles, ["ontology"])
         self.assertEqual(report.route.intentType, "ontology")
 
+    def test_answer_composer_combines_mvp_agent_sections_and_layout(self):
+        report = AgentOrchestrator().analyze({
+            "symbol": "NVDA",
+            "intent": "NVDA 왜 올랐어?",
+            "chartContext": {
+                "chartDocument": {"symbol": "NVDA", "timeframe": "1m"},
+                "visibleSummary": {"lastPrice": "120.00", "change": "+2.10%"},
+                "dataStatus": {"candleCount": 10, "state": "ready"},
+            },
+        })
+
+        section_titles = [section.title for section in report.finalAnswer.sections]
+        self.assertIn("차트 근거", section_titles)
+        self.assertIn("뉴스 근거", section_titles)
+        self.assertIn("기업 관계 근거", section_titles)
+        panel_types = [command.get("payload", {}).get("panelType") for command in report.layoutProposal.commands]
+        self.assertEqual(panel_types, ["chart", "newsFeed", "aiSummary"])
+
     def test_openai_synthesizer_accepts_strict_json_response(self):
         response = {
             "output_text": json.dumps({
@@ -343,7 +388,7 @@ class AgentOrchestrationTests(unittest.TestCase):
 
         self.assertIn("GraphDB 기준", answer.summary)
 
-    def test_verification_conflict_is_reflected_in_market_move_answer(self):
+    def test_legacy_verification_conflict_detector_still_flags_conflict(self):
         context = AgentContext(symbol="NVDA", intent="NVDA 왜 올랐어?")
         chart_finding = AgentFinding(
             agentId="chart-agent",
@@ -376,17 +421,8 @@ class AgentOrchestrationTests(unittest.TestCase):
         )
 
         verification = VerificationGuardrailAgent().analyze(context, [chart_finding, news_finding])
-        answer = FinalAnswerSynthesizer().synthesize(
-            symbol="NVDA",
-            intent="NVDA 왜 올랐어?",
-            route=IntentRoute("rule", "market-move", ["chart", "news", "macro", "ontology"], 0.9, "test"),
-            findings=[chart_finding, news_finding, verification],
-            provider_evidence=[news_evidence],
-        )
 
         self.assertIn("불일치", verification.summary)
-        self.assertTrue(any("불일치" in bullet for section in answer.sections for bullet in section.bullets))
-        self.assertTrue(any("불일치" in limitation for limitation in answer.limitations))
 
 
 if __name__ == "__main__":

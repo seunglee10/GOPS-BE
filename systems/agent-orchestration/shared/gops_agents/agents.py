@@ -268,21 +268,61 @@ class NotificationDecisionAgent:
 
 
 class LayoutAgent:
-    def propose(self, context: AgentContext) -> LayoutProposal:
+    def propose(
+        self,
+        context: AgentContext,
+        *,
+        selected_roles: list[str] | tuple[str, ...] | None = None,
+        final_answer: Any | None = None,
+        provider_evidence: list[EvidenceItem] | None = None,
+    ) -> LayoutProposal:
+        roles = list(selected_roles or [])
+        evidence = provider_evidence or context.providerEvidence
         commands: list[dict[str, Any]] = []
-        if context.marketEvents:
-            commands.append({
-                "type": "layout.panel.add",
-                "payload": {
-                    "panelType": "notifications",
-                    "props": {"symbol": context.symbol},
+        if "chart" in roles:
+            commands.append(layout_panel_command("chart", context.symbol, {"symbol": context.symbol}))
+        if "news" in roles or any(item.provider == "news" for item in evidence):
+            commands.append(layout_panel_command("newsFeed", context.symbol, {"symbol": context.symbol, "source": "agent-news"}))
+        if "ontology" in roles or final_answer is not None:
+            commands.append(layout_panel_command(
+                "aiSummary",
+                context.symbol,
+                {
+                    "symbol": context.symbol,
+                    "source": "agent-composer",
+                    "title": getattr(final_answer, "title", None),
+                    "summary": getattr(final_answer, "summary", None),
                 },
-            })
+            ))
         return LayoutProposal(
-            title="Agent analysis workspace",
-            rationale="Show notifications when unusual events are present; leave layout commands in proposal review.",
-            commands=commands,
+            title="MVP Agent layout proposal",
+            rationale="차트, 뉴스, 온톨로지 분석 역할에 맞춰 기존 패널만 제안합니다. 자동 적용은 하지 않습니다.",
+            commands=dedupe_layout_commands(commands),
         )
+
+
+def layout_panel_command(panel_type: str, symbol: str, props: dict[str, Any]) -> dict[str, Any]:
+    clean_props = {key: value for key, value in props.items() if value is not None}
+    return {
+        "type": "layout.panel.add",
+        "payload": {
+            "panelType": panel_type,
+            "props": {"symbol": symbol, **clean_props},
+        },
+    }
+
+
+def dedupe_layout_commands(commands: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen = set()
+    result = []
+    for command in commands:
+        payload = command.get("payload") if isinstance(command, dict) else None
+        panel_type = payload.get("panelType") if isinstance(payload, dict) else None
+        if not isinstance(panel_type, str) or panel_type in seen:
+            continue
+        seen.add(panel_type)
+        result.append(command)
+    return result
 
 
 def severity_rank(value: str) -> int:

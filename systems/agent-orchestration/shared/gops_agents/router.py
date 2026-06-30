@@ -8,22 +8,20 @@ from typing import Any
 from .contracts import IntentRoute
 
 
-ROLE_ORDER = ["chart", "news", "macro", "ontology"]
+ROLE_ORDER = ["chart", "news", "ontology"]
 AGENT_ID_TO_ROLE = {
     "agent-01": "chart",
     "agent-02": "news",
-    "agent-03": "macro",
     "agent-04": "ontology",
     "chart-agent": "chart",
     "news-agent": "news",
-    "macro-agent": "macro",
     "ontology-agent": "ontology",
 }
 KEYWORD_ROUTES = [
     (("급등", "급락", "극락", "이상", "변동", "원인", "왜", "surge", "spike", "move", "why"), ROLE_ORDER, "market-move"),
     (("뉴스", "기사", "보도", "헤드라인", "news", "headline", "article"), ["news"], "news"),
     (("차트", "캔들", "가격", "추세", "chart", "candle", "price", "trend"), ["chart"], "chart"),
-    (("거시", "금리", "cpi", "fomc", "macro", "rate", "inflation"), ["macro"], "macro"),
+    (("거시", "금리", "cpi", "fomc", "macro", "rate", "inflation"), ROLE_ORDER, "macro-out-of-scope"),
     (("관계", "공급망", "경쟁사", "섹터", "ontology", "relationship", "supply"), ["ontology"], "ontology"),
 ]
 
@@ -106,7 +104,7 @@ def route_with_openai(intent: str) -> IntentRoute | None:
             "input": [
                 {
                     "role": "system",
-                    "content": "Route a stock analysis request to chart, news, macro, ontology roles. Return strict JSON only.",
+                    "content": "Route a stock analysis request to chart, news, ontology roles. Return strict JSON only.",
                 },
                 {"role": "user", "content": intent},
             ],

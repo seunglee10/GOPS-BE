@@ -19,6 +19,12 @@ from .router import parse_openai_text_json
 
 
 class FinalAnswerSynthesizer:
+    """Answer Composer for the MVP agent flow.
+
+    It combines Chart, News, and Ontology agent findings into one user-facing
+    report while preserving the existing FinalAnswer response contract.
+    """
+
     def synthesize(
         self,
         *,
@@ -58,8 +64,8 @@ class FinalAnswerSynthesizer:
             return build_news_final_answer(symbol, findings, provider_evidence)
         if route.intentType == "ontology" or route.selectedRoles == ["ontology"]:
             return build_ontology_final_answer(symbol, findings, provider_evidence)
-        if route.intentType == "market-move":
-            return build_market_move_final_answer(symbol, findings, provider_evidence)
+        if route.intentType in {"market-move", "macro-out-of-scope"}:
+            return build_composed_final_answer(symbol, route, findings, provider_evidence)
         return build_general_final_answer(symbol, route, findings, provider_evidence)
 
     def _synthesize_with_openai(
@@ -83,6 +89,7 @@ class FinalAnswerSynthesizer:
                         "content": (
                             "You generate stock-analysis answers from retrieved evidence only. "
                             "Do not invent facts, prices, news, macro data, relationships, citations, or recommendations. "
+                            "Act as the Answer Composer for Chart, News, and Ontology agents. "
                             "Write Korean report-style prose. Hide internal route, provider, and guardrail diagnostics from users. "
                             "Never mention JSON field names such as providerEvidence, findings, route, selectedRoles, or guardrail. "
                             "If evidence is missing, put it in limitations. Return strict JSON only."
@@ -397,32 +404,54 @@ def build_ontology_final_answer(symbol: str, findings: list[AgentFinding], provi
     )
 
 
-def build_market_move_final_answer(symbol: str, findings: list[AgentFinding], provider_evidence: list[EvidenceItem]) -> FinalAnswer:
-    visible_findings = visible_role_findings(findings)
-    available = [item for item in provider_evidence if item.status == "available"]
+def build_composed_final_answer(
+    symbol: str,
+    route: IntentRoute,
+    findings: list[AgentFinding],
+    provider_evidence: list[EvidenceItem],
+) -> FinalAnswer:
+    chart_finding = first_role_finding(findings, "chart-analysis")
+    news_finding = first_role_finding(findings, "news-analysis")
+    ontology_finding = first_role_finding(findings, "company-relationship-analysis")
+    news_items = evidence_by_provider(provider_evidence, "news")
+    ontology_items = evidence_by_provider(provider_evidence, "ontology")
     no_data = [item for item in provider_evidence if item.status == "no-data"]
-    warnings = verification_warnings(findings)
     sections = [
         FinalAnswerSection(
-            title="주가 변동 원인",
-            bullets=[finding.summary for finding in visible_findings[:4]] or ["현재 확인 가능한 역할별 근거가 충분하지 않습니다."],
-        )
+            title="요약",
+            bullets=[f"{symbol}에 대해 차트, 뉴스, 기업 관계 근거를 MVP 에이전트 흐름으로 합성했습니다."],
+        ),
+        FinalAnswerSection(
+            title="차트 근거",
+            bullets=[chart_finding.summary] if chart_finding else ["차트 에이전트 근거가 충분하지 않습니다."],
+        ),
+        FinalAnswerSection(
+            title="뉴스 근거",
+            bullets=evidence_bullets(news_items, fallback=news_finding.summary if news_finding else "뉴스 근거가 충분하지 않습니다."),
+        ),
+        FinalAnswerSection(
+            title="기업 관계 근거",
+            bullets=evidence_bullets(
+                ontology_items,
+                fallback=ontology_finding.summary if ontology_finding else "온톨로지 근거가 충분하지 않습니다.",
+            ),
+        ),
+        FinalAnswerSection(
+            title="종합 판단",
+            bullets=[composer_judgement(chart_finding, news_finding, ontology_finding)],
+        ),
     ]
-    if available:
-        sections.append(FinalAnswerSection(
-            title="핵심 근거",
-            bullets=[f"{item.title}: {item.summary}" for item in available[:6]],
-        ))
-    if warnings:
-        sections.append(FinalAnswerSection(title="반대 근거 또는 불일치", bullets=warnings[:3]))
-    limitations = [*warnings, *[item.summary for item in no_data[:6]]]
+    limitations = [item.summary for item in no_data[:6]]
+    if route.intentType == "macro-out-of-scope":
+        limitations.append("거시 전용 에이전트는 현재 MVP 흐름에서 제외되어 차트, 뉴스, 기업 관계 기준으로만 답변했습니다.")
     if not limitations:
-        limitations = ["차트, 뉴스, 거시, 기업 관계 provider에 현재 조회된 근거 기준으로 분석했습니다."]
+        limitations = ["현재 답변은 차트, 뉴스, 기업 관계 에이전트가 반환한 근거 안에서만 합성했습니다."]
+    sections.append(FinalAnswerSection(title="데이터 한계", bullets=limitations[:5]))
     return FinalAnswer(
-        title=f"{symbol} 주가 변동 원인 분석",
-        summary=f"차트, 뉴스, 거시, 기업 관계 근거를 종합해 {symbol}의 변동 원인을 정리했습니다.",
+        title=f"{symbol} MVP 에이전트 종합 분석",
+        summary=f"차트, 뉴스, 기업 관계 에이전트 결과를 Answer Composer가 하나의 판단으로 합쳤습니다.",
         sections=sections,
-        citations=citations_from_evidence(available),
+        citations=citations_from_evidence([*news_items, *ontology_items]),
         limitations=limitations,
     )
 
@@ -433,38 +462,47 @@ def build_general_final_answer(
     findings: list[AgentFinding],
     provider_evidence: list[EvidenceItem],
 ) -> FinalAnswer:
-    available = [item for item in provider_evidence if item.status == "available"]
-    no_data = [item for item in provider_evidence if item.status == "no-data"]
-    visible_findings = visible_role_findings(findings)
-    sections = []
-    if visible_findings:
-        sections.append(FinalAnswerSection(
-            title="분석 요약",
-            bullets=[finding.summary for finding in visible_findings[:4]],
-        ))
-    if available:
-        sections.append(FinalAnswerSection(
-            title="확인된 근거",
-            bullets=[f"{item.title}: {item.summary}" for item in available[:5]],
-        ))
-    limitations = [item.summary for item in no_data[:5]]
-    if not available and not limitations:
-        limitations.append("외부 데이터 근거가 아직 충분하지 않습니다.")
-    return FinalAnswer(
-        title=f"{symbol} {route.intentType} 분석",
-        summary=build_summary(symbol, route, visible_findings, available),
-        sections=sections,
-        citations=citations_from_evidence(available),
-        limitations=limitations,
-    )
+    return build_composed_final_answer(symbol, route, findings, provider_evidence)
 
 
 def visible_role_findings(findings: list[AgentFinding]) -> list[AgentFinding]:
     return [
         item
         for item in findings
-        if item.role in {"chart-analysis", "news-analysis", "macro-analysis", "company-relationship-analysis"}
+        if item.role in {"chart-analysis", "news-analysis", "company-relationship-analysis"}
     ]
+
+
+def first_role_finding(findings: list[AgentFinding], role: str) -> AgentFinding | None:
+    return next((item for item in findings if item.role == role), None)
+
+
+def evidence_by_provider(items: list[EvidenceItem], provider: str) -> list[EvidenceItem]:
+    return [item for item in items if item.provider == provider and item.status == "available"]
+
+
+def evidence_bullets(items: list[EvidenceItem], *, fallback: str) -> list[str]:
+    bullets = [f"{item.title}: {item.summary}" for item in items[:5]]
+    return bullets or [fallback]
+
+
+def composer_judgement(
+    chart_finding: AgentFinding | None,
+    news_finding: AgentFinding | None,
+    ontology_finding: AgentFinding | None,
+) -> str:
+    available_roles = [
+        label
+        for label, finding in [
+            ("차트", chart_finding),
+            ("뉴스", news_finding),
+            ("기업 관계", ontology_finding),
+        ]
+        if finding is not None
+    ]
+    if not available_roles:
+        return "현재 합성할 에이전트 근거가 충분하지 않습니다."
+    return f"{', '.join(available_roles)} 근거를 함께 보되, 투자 판단은 데이터 한계를 확인한 뒤 별도로 검토해야 합니다."
 
 
 def verification_warnings(findings: list[AgentFinding]) -> list[str]:
