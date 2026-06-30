@@ -32,6 +32,15 @@ def route_intent(intent: str, agent_ids: Any = None, router_mode: str = "hybrid"
     text = str(intent or "").strip()
     lowered = text.lower()
     market_move_keywords, market_move_roles, market_move_type = KEYWORD_ROUTES[0]
+    if is_news_scoped_market_question(lowered):
+        return IntentRoute(
+            source="rule",
+            intentType="news",
+            selectedRoles=["news"],
+            confidence=0.9,
+            reason="Matched explicit news-basis wording before market-move routing.",
+        )
+
     if any(keyword in lowered for keyword in market_move_keywords):
         return IntentRoute(
             source="rule",
@@ -81,6 +90,32 @@ def route_intent(intent: str, agent_ids: Any = None, router_mode: str = "hybrid"
         confidence=0.5,
         reason="No keyword or selected agent hint matched; using all visible analysis roles.",
     )
+
+
+def is_news_scoped_market_question(lowered_intent: str) -> bool:
+    if not any(keyword in lowered_intent for keyword in KEYWORD_ROUTES[1][0]):
+        return False
+    compacted = "".join(lowered_intent.split())
+    news_basis_terms = (
+        "뉴스기반",
+        "뉴스를기반",
+        "뉴스에기반",
+        "뉴스바탕",
+        "뉴스를바탕",
+        "뉴스근거",
+        "뉴스로왜",
+        "기사기반",
+        "기사를기반",
+        "기사에기반",
+        "기사바탕",
+        "기사근거",
+        "기사로왜",
+        "basedonnews",
+        "newsbased",
+        "basedonarticles",
+        "articlebased",
+    )
+    return any(term in compacted for term in news_basis_terms)
 
 
 def roles_from_agent_ids(agent_ids: Any) -> list[str]:

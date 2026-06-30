@@ -214,6 +214,16 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(report.route.intentType, "market-move")
         self.assertEqual(report.route.selectedRoles, ["chart", "news", "macro", "ontology"])
 
+    def test_conductor_routes_news_based_market_question_to_news_role(self):
+        report = AgentOrchestrator().analyze({
+            "symbol": "NVDA",
+            "intent": "NVDA 뉴스 기반으로 왜 올랐는지 알려줘",
+            "layoutContext": layout_context(),
+        })
+
+        self.assertEqual(report.route.intentType, "news")
+        self.assertEqual(report.route.selectedRoles, ["news"])
+
     def test_event_detector_detects_price_surge_and_volume_spike(self):
         detector = MarketEventDetector(MarketEventThresholds(price_change_percent=3.0, volume_spike_multiplier=2.0))
         self.assertEqual(detector.detect({"symbol": "NVDA", "price": 100, "volume": 100}, "market.ticks.v1"), [])
@@ -334,6 +344,96 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(props["symbol"], "NVDA")
         self.assertEqual(props["latestNews"][0]["title"], "NVDA shares rise after strong earnings")
         self.assertEqual(props["majorNews"][0]["importanceScore"], props["latestNews"][0]["importanceScore"])
+
+    def test_news_content_request_does_not_route_to_ui_agent_when_ui_router_is_available(self):
+        provider = ClickHouseNewsProvider(
+            clickhouse_provider=FakeClickHouseProvider([
+                {
+                    "articleId": "orcl-news-1",
+                    "headline": "Oracle shares rise on cloud demand",
+                    "summary": "ORCL cloud demand lifted sentiment.",
+                    "publishedAt": utc_now_iso(),
+                    "url": "https://example.com/orcl-news",
+                    "symbols": ["ORCL"],
+                    "source": "alpaca",
+                }
+            ]),
+            publish_fallback=False,
+        )
+        orchestrator = AgentOrchestrator()
+        orchestrator.news_agent = NewsAgent(provider)
+        ui_router_response = {
+            "output_text": json.dumps({
+                "isUiIntent": True,
+                "intentKind": "layout",
+                "targetPanelType": "newsFeed",
+                "targetPanelId": "panel-news",
+                "action": "focus",
+                "sizeIntent": None,
+                "positionIntent": None,
+                "confidence": 0.94,
+                "reason": "Incorrectly treated latest-news lookup as a news panel focus request.",
+            })
+        }
+
+        with patch.dict(os.environ, {
+            "OPENAI_API_KEY": "test-key",
+            "AGENT_FINAL_ANSWER_PROVIDER": "deterministic",
+            "AGENT_NEWS_LOCALIZATION_PROVIDER": "deterministic",
+            "AGENT_ROLE_ANALYSIS_PROVIDER": "deterministic",
+        }, clear=False):
+            with patch("urllib.request.urlopen", return_value=FakeOpenAIResponse(ui_router_response)) as openai:
+                report = orchestrator.analyze({
+                    "symbol": "ORCL",
+                    "intent": "ORCL 최신뉴스 보여줘",
+                    "agentIds": ["agent-02"],
+                    "layoutContext": layout_context(),
+                })
+
+        openai.assert_not_called()
+        self.assertEqual(report.route.intentType, "news")
+        self.assertEqual(report.route.selectedRoles, ["news"])
+        finding_roles = {finding.role for finding in report.findings}
+        self.assertIn("news-analysis", finding_roles)
+        self.assertIn("verification-guardrail", finding_roles)
+        self.assertEqual(report.providerEvidence[0].provider, "news")
+        self.assertNotEqual(report.finalAnswer.summary, "UIAgent arranged 시장 뉴스 for the requested UI action.")
+
+    def test_news_content_request_variants_default_to_news_agent(self):
+        provider = ClickHouseNewsProvider(
+            clickhouse_provider=FakeClickHouseProvider([
+                {
+                    "articleId": "orcl-article-1",
+                    "headline": "Oracle announces database update",
+                    "summary": "The article describes a database cloud update.",
+                    "publishedAt": utc_now_iso(),
+                    "url": "https://example.com/orcl-article",
+                    "symbols": ["ORCL"],
+                    "source": "alpaca",
+                }
+            ]),
+            publish_fallback=False,
+        )
+        orchestrator = AgentOrchestrator()
+        orchestrator.news_agent = NewsAgent(provider)
+
+        for intent in (
+            "관련 뉴스 보여줘",
+            "오늘 기사 요약해줘",
+            "NVDA 뉴스 기반으로 왜 올랐는지 알려줘",
+            "뉴스 중심으로 분석해줘",
+        ):
+            with self.subTest(intent=intent):
+                report = orchestrator.analyze({
+                    "symbol": "NVDA",
+                    "intent": intent,
+                    "agentIds": ["agent-02"],
+                    "layoutContext": layout_context(),
+                })
+
+                self.assertEqual(report.route.intentType, "news")
+                self.assertEqual(report.route.selectedRoles, ["news"])
+                self.assertTrue(any(command.get("payload", {}).get("panelType") == "newsFeed" for command in report.layoutProposal.commands))
 
     def test_news_localization_success_updates_panel_payload_and_preserves_originals(self):
         provider = ClickHouseNewsProvider(
@@ -729,6 +829,42 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertFalse(placements_overlap(news_placement, pinned_chart_placement))
         self.assertGreater(news_placement["colSpan"] * news_placement["rowSpan"], 2)
         self.assertEqual(report.layoutProposal.autoApply, True)
+
+    def test_ui_fallback_keeps_explicit_news_panel_placement_request(self):
+        report = AgentOrchestrator().analyze({
+            "symbol": "NVDA",
+            "intent": "뉴스를 오른쪽에 띄워줘",
+            "layoutContext": layout_context(),
+        })
+
+        self.assertEqual(report.route.source, "ui-fallback")
+        self.assertEqual(report.route.intentType, "ui-layout")
+        self.assertEqual(report.findings, [])
+        self.assertTrue(any(command["type"] == "layout.panels.arrange" for command in report.layoutProposal.commands))
+
+    def test_ui_fallback_keeps_side_by_side_chart_news_request(self):
+        report = AgentOrchestrator().analyze({
+            "symbol": "NVDA",
+            "intent": "차트랑 뉴스 나란히 보여줘",
+            "layoutContext": layout_context(),
+        })
+
+        self.assertEqual(report.route.source, "ui-fallback")
+        self.assertEqual(report.route.intentType, "ui-layout")
+        self.assertEqual(report.findings, [])
+        self.assertTrue(any(command["type"] == "layout.panels.arrange" for command in report.layoutProposal.commands))
+
+    def test_surface_action_keeps_close_request_in_ui_agent(self):
+        report = AgentOrchestrator().analyze({
+            "symbol": "NVDA",
+            "intent": "주문창 닫아줘",
+            "layoutContext": layout_context(),
+        })
+
+        self.assertEqual(report.route.source, "ui-fallback")
+        self.assertEqual(report.route.intentType, "ui-layout")
+        self.assertEqual(report.route.selectedRoles, [])
+        self.assertEqual(report.findings, [])
 
     def test_ui_fallback_moves_chart_to_bottom(self):
         report = AgentOrchestrator().analyze({
