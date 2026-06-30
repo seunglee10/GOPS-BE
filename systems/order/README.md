@@ -24,6 +24,10 @@ jobs/migrations/main.py      wraps kis_trader.cli migrate
 jobs/reconciler/main.py      wraps kis_trader.cli reconcile --rows-json []
 ```
 
+`kis-adapter` uses the real KIS demo HTTP client by default. Set
+`KIS_BROKER_ADAPTER_ARGS=--fake-kis success` only when running an explicit local
+fake smoke.
+
 ## Images
 
 ```text

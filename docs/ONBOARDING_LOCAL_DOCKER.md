@@ -119,6 +119,6 @@ It must never print secret values.
 | S3 write/read fails | Check bucket name, region, IAM permission, and that S3 endpoint values are empty for real AWS. |
 | Chart has no candles | Run the `repair` profile dry-run, then queue missing backfills if needed. |
 | Live stream shows idle | This can mean WebSocket is connected but no current market data is arriving yet. Stored candles should still render. |
-| Order submit path fails locally | Keep `KIS_ENV=demo` and the default fake KIS adapter args unless intentionally testing KIS demo. |
+| Order submit path fails locally | Keep `KIS_ENV=demo` and provide KIS demo credentials. Use `KIS_BROKER_ADAPTER_ARGS=--fake-kis success` only for explicit fake smoke runs. |
 
 If a local access-key CSV exists in the repo root, remove it after copying values into `.env`.

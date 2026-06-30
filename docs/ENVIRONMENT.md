@@ -173,6 +173,26 @@ IDEMPOTENCY_HASH_SECRET
 
 AWS/EKS likely uses RDS.
 
+## KIS Demo Orders
+
+KIS order runtime stays on mock-investment demo trading in v1:
+
+```text
+KIS_ENV=demo
+KIS_SECRET_NAME=dev/kis
+KIS_DEMO_APP_KEY
+KIS_DEMO_APP_SECRET
+KIS_DEMO_ACCOUNT_NO
+KIS_ACCOUNT_PRODUCT_CODE=01
+KIS_TOKEN_CACHE_PATH
+KIS_TIMEOUT_SECONDS
+KIS_BROKER_ADAPTER_ARGS
+```
+
+`kis-adapter` calls the KIS demo API by default. Set
+`KIS_BROKER_ADAPTER_ARGS=--fake-kis success` only for an explicit local fake
+smoke run. `KIS_ENV=real` remains disabled for v1.
+
 ## ClickHouse
 
 Current local stage:
