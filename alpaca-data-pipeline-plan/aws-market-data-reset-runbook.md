@@ -14,6 +14,7 @@ Git push는 reset을 자동 실행하지 않는다. AWS reset은 운영자가 ku
 - endpoint, password, Secret 이름처럼 환경별 값은 달라도 되지만, market-data behavior는 같아야 한다.
 - AWS apply-only 배포에서 과거 `alfaka-alpaca-ingestor` Deployment가 남아 있으면 안 된다. 현재 계약의 active ingestor는 `alfaka-alpaca-ingestor-sip`, `alfaka-alpaca-ingestor-iex`, `alfaka-alpaca-ingestor-boats`이며, legacy `alfaka-alpaca-ingestor`는 `replicas=0`이어야 한다.
 - Redis는 chart/live/backfill runtime state이며, S3/ClickHouse가 durable historical source다. Redis background snapshot 실패가 backfill/status writes를 막지 않도록 compose와 in-cluster Redis는 `--appendonly yes --save "" --stop-writes-on-bgsave-error no` 계약을 사용한다.
+- S3 raw/live/final prefixes must keep their roles separate. Raw/live append objects are evidence and replay inputs; they are not direct chart-serving truth. ClickHouse serving should be rebuilt from final canonical parquet/manifest or from bounded materialization/compaction that dedupes by logical candle identity.
 
 AWS runtime must use these market-data contract values:
 
@@ -134,8 +135,9 @@ auth/session/order/agent Redis key deletion
 10. Deploy or confirm the code version that contains the current market-data contract.
 11. Materialize S3 canonical parquet into ClickHouse first.
 12. Use Alpaca initial-load/backfill only for target-range data that is missing from S3.
-13. Scale market-data writers/workers back up.
-14. Recheck ClickHouse, Redis, Kafka, API, and browser smoke.
+13. For regular-session sparse chart gaps, queue only the API-reported `coverage.gapRanges`; do not enqueue a full-range forced backfill from the browser.
+14. Scale market-data writers/workers back up.
+15. Recheck ClickHouse, Redis, Kafka, API, and browser smoke.
 
 ## 4. Post-Reset Verification
 

@@ -295,6 +295,21 @@ services. This keeps copied AWS keys out of `.env`.
 
 The processed S3 sink writes processed Kafka topics under `S3_FINAL_PREFIX` and `S3_LIVE_PREFIX`. The raw S3 archive sink writes raw Kafka topics under `S3_RAW_PREFIX` with manifest entries under `S3_MANIFEST_PREFIX`.
 
+S3 prefixes have different serving roles:
+
+```text
+S3_RAW_PREFIX   raw Alpaca/Kafka evidence and replay source
+S3_LIVE_PREFIX  append-style live/today evidence, not direct chart serving truth
+S3_FINAL_PREFIX deterministic canonical parquet/manifest used for ClickHouse rebuild
+```
+
+`S3_LIVE_PREFIX` and `S3_RAW_PREFIX` may contain multiple unordered `part-*`
+objects for the same symbol/day. Consumers must sort by event time and dedupe by
+logical candle identity before serving. Chart serving should read ClickHouse
+canonical rows plus Redis live/provisional state, not raw/live S3 objects
+directly. S3 data becomes chart-serving data only after a bounded
+materialization or compaction step writes canonical rows into ClickHouse.
+
 For broad historical preload, keep `S3_HISTORICAL_RAW_PARTITION_MODE=chunk` and `S3_HISTORICAL_PROCESSED_MANIFEST_LAYOUT=compact`. This stores one raw object and one processed manifest entry per chunk instead of creating a small S3 object per trading day.
 
 Broad preload and normal market-data runtime use `S3_PROCESSED_FORMAT=parquet`. Docker Compose pins this value for market-data storage/backfill services so an old root `.env` cannot silently switch runtime output back to `jsonl`.
@@ -302,6 +317,10 @@ Broad preload and normal market-data runtime use `S3_PROCESSED_FORMAT=parquet`. 
 Use time-based flush values so low-volume symbols and status events do not remain only in process memory. Keep retry settings conservative; duplicate delivery must remain safe through deterministic replay/materialization.
 
 For S3-to-ClickHouse smoke tests, prefer `S3_MATERIALIZE_KEYS` with one or a few explicit processed candle object keys. For cold ClickHouse bootstrap from existing S3 evidence, leave `S3_MATERIALIZE_KEYS` empty and set `S3_MATERIALIZE_SYMBOL`, `S3_MATERIALIZE_INTERVAL`, `S3_MATERIALIZE_START`, and `S3_MATERIALIZE_END` so the materializer selects processed objects from the compact manifest. Leave both explicit keys and range values empty only for intentional prefix-wide materialization through `S3_MATERIALIZE_PREFIX`. Canonical bootstrap materialization supports `1m` and `1D`; `1m` range starts before `BACKFILL_INITIAL_LOAD_1M_MIN_START` are rejected.
+
+Sparse chart windows report bounded `coverage.gapRanges`. UI and operators
+should request backfill for those small ranges first. Do not turn a visible
+regular-session gap into an automatic full-range `force=true` backfill.
 
 ## Backfill Queue
 

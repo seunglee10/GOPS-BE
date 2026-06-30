@@ -2151,7 +2151,12 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             coverage_provider=StaticCoverageProvider(coverage),
         )
 
-        with mock.patch.dict(os.environ, {"S3_BUCKET": "bucket", "S3_PROCESSED_FORMAT": "jsonl"}):
+        with mock.patch.dict(os.environ, {
+            "S3_BUCKET": "bucket",
+            "S3_RAW_PREFIX": "market-data/raw/alpaca",
+            "S3_FINAL_PREFIX": "market-data/final",
+            "S3_PROCESSED_FORMAT": "jsonl",
+        }):
             with mock.patch("alfaka.backfill.runner.fetch_alpaca_bars", return_value=[
                 alpaca_raw_bar("2026-06-25T00:00:00.000Z", open_price=10)
             ]) as fetch:

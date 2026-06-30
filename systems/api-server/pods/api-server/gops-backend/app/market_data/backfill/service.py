@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -413,6 +413,7 @@ def renderability_payload(
     minimum_source_bars = minimum_renderable_source_bars(source_interval)
     span_seconds = returned_span_seconds(candles)
     max_span_seconds = max_renderable_span_seconds(interval, returned_count)
+    gap_ranges = gap_ranges_for_returned_window(interval, source_interval, candles)
     sparse_window = sparse_returned_window(interval, candles, returned_count, span_seconds, max_span_seconds)
     renderable = (
         returned_count >= minimum_returned_count and
@@ -435,6 +436,7 @@ def renderability_payload(
         "returnedSpanSeconds": span_seconds,
         "maxRenderableSpanSeconds": max_span_seconds,
         "renderabilityReasonCode": reason_code,
+        "gapRanges": gap_ranges,
     }
 
 
@@ -504,22 +506,75 @@ def sparse_returned_window(
 
 
 def has_intraday_sparse_gap(interval: str, candles: list[dict[str, Any]]) -> bool:
+    return bool(intraday_gap_ranges(interval, candles))
+
+
+def gap_ranges_for_returned_window(interval: str, source_interval: str, candles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if interval in {"1m", "5m", "10m"}:
+        return intraday_gap_ranges(interval, candles)
+    if source_interval == "1D" and interval == "1D":
+        return daily_gap_ranges(candles)
+    return []
+
+
+def intraday_gap_ranges(interval: str, candles: list[dict[str, Any]]) -> list[dict[str, Any]]:
     timestamps = sorted(
         timestamp for timestamp in (parse_time(candle.get("timestamp")) for candle in candles if candle.get("timestamp"))
         if timestamp is not None
     )
     if len(timestamps) < 2:
-        return False
+        return []
     allowed_gap = interval_seconds(interval) * 3
+    bucket_delta = timedelta(seconds=interval_seconds(interval))
     calendar = TradingCalendar.from_environment()
     market_timezone = calendar.timezone
+    ranges = []
     for previous, current in zip(timestamps, timestamps[1:]):
         gap_seconds = (current - previous).total_seconds()
         if gap_seconds <= allowed_gap:
             continue
         if same_regular_market_session_gap(previous, current, calendar, market_timezone):
-            return True
-    return False
+            missing_start = previous + bucket_delta
+            missing_count = max(1, int(gap_seconds // interval_seconds(interval)) - 1)
+            ranges.append({
+                "start": to_iso(missing_start),
+                "end": to_iso(current),
+                "missingCount": missing_count,
+            })
+    return ranges
+
+
+def daily_gap_ranges(candles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    timestamps = sorted(
+        timestamp for timestamp in (parse_time(candle.get("timestamp")) for candle in candles if candle.get("timestamp"))
+        if timestamp is not None
+    )
+    if len(timestamps) < 2:
+        return []
+    calendar = TradingCalendar.from_environment()
+    ranges = []
+    for previous, current in zip(timestamps, timestamps[1:]):
+        missing = missing_daily_sessions(previous, current, calendar)
+        if not missing:
+            continue
+        ranges.append({
+            "start": to_iso(missing[0]),
+            "end": to_iso(missing[-1] + timedelta(days=1)),
+            "missingCount": len(missing),
+        })
+    return ranges
+
+
+def missing_daily_sessions(previous: datetime, current: datetime, calendar: TradingCalendar) -> list[datetime]:
+    zone = calendar.timezone
+    session_date = previous.astimezone(zone).date() + timedelta(days=1)
+    end_date = current.astimezone(zone).date()
+    missing = []
+    while session_date < end_date:
+        if calendar.is_session_date(session_date):
+            missing.append(datetime.combine(session_date, datetime.min.time(), zone).astimezone(timezone.utc))
+        session_date += timedelta(days=1)
+    return missing
 
 
 def same_regular_market_session_gap(
@@ -567,6 +622,10 @@ def parse_time(value: Any) -> datetime | None:
         return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(timezone.utc)
     except ValueError:
         return None
+
+
+def to_iso(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def get_backfill_service(provider=None) -> BackfillService:

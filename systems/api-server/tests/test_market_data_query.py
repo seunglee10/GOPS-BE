@@ -876,6 +876,11 @@ class MarketDataQueryServiceTest(unittest.TestCase):
 
         self.assertFalse(metadata["coverage"]["renderable"])
         self.assertEqual(metadata["coverage"]["renderabilityReasonCode"], "returned_window_sparse")
+        self.assertEqual(metadata["coverage"]["gapRanges"], [{
+            "start": "2026-06-25T13:40:00.000Z",
+            "end": "2026-06-25T18:00:00.000Z",
+            "missingCount": 260,
+        }])
 
     def test_intraday_renderability_allows_after_hours_sparse_bars(self):
         store = RecordingBackfillStore()
@@ -912,6 +917,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(metadata["repairStatus"], "none")
         self.assertTrue(metadata["coverage"]["renderable"])
         self.assertIsNone(metadata["coverage"]["renderabilityReasonCode"])
+        self.assertEqual(metadata["coverage"]["gapRanges"], [])
 
     def test_dense_completed_daily_backfill_allows_trading_calendar_tolerance(self):
         store = RecordingBackfillStore()

@@ -41,13 +41,18 @@
 ## S3 Contract
 
 - S3는 canonical historical preload, evidence, replay, materialization source다.
+- Raw archive, live processed sink, final canonical data는 서로 다른 역할을 가진다.
+  - `raw`: Alpaca/Kafka 원본 증거와 replay source.
+  - `live`: append-style 오늘/live 증거. object 순서와 중복을 chart serving 기준으로 믿지 않는다.
+  - `final`: deterministic canonical parquet/manifest. ClickHouse rebuild source.
 - Canonical S3 object는 logical chunk 기준 deterministic key를 사용한다.
 - 같은 symbol/interval/range/canonical/adjustment chunk를 다시 실행해도 duplicate object가 생기면 안 된다.
 - `force=false`는 기존 valid manifest/object를 재사용한다.
 - `force=true`는 명확한 revision 또는 replace 정책을 따른다.
 - Manifest는 row count, min/max timestamp, symbol, interval, adjustment, canonical version, source evidence를 포함한다.
 - S3에 있는 데이터를 무시하고 Alpaca를 먼저 호출하면 안 된다.
-- Raw/live/trade S3 data는 canonical historical source로 섞지 않는다.
+- Raw/live/trade S3 data는 canonical historical source로 직접 섞지 않는다.
+- S3 live/raw data를 serving에 쓰려면 먼저 event time 정렬, logical key dedup, canonical final/ClickHouse materialize 단계를 거친다.
 
 ## Serving And Backfill
 
@@ -62,6 +67,8 @@
   5. Alpaca historical API
 - S3 present + ClickHouse empty 상황에서는 S3 -> ClickHouse materialize가 우선이다.
 - S3 missing + target allowed 상황에서만 Alpaca fallback을 사용하고, 결과는 canonical S3 evidence로 남긴다.
+- Sparse regular-session gap은 `coverage.gapRanges`로 내려보내고, UI/worker는 해당 작은 범위만 gapfill한다.
+- 화면 진입만으로 `force=true` full backfill을 만들면 안 된다.
 - Left-pan pagination은 `before` cursor를 사용하고, 기존 candle 왼쪽에 append하며 timestamp/date 중복을 제거한다.
 - Backfill 중에도 renderable chart는 빈 화면으로 바뀌면 안 된다.
 
@@ -72,6 +79,7 @@
 - `trades`는 active chart, user watchlist, Hot Top10 tier 안에서만 구독한다.
 - Trades는 current price, provisional/live candle, tick chart 계열에 사용한다.
 - Closed canonical `1m`/`1D` row와 provisional/live row가 같은 timestamp에서 보일 때 serving 결과는 deterministic해야 한다.
+- Redis live/provisional, ClickHouse historical/final, gapfill result를 합칠 때는 timestamp 기준으로 정렬하고 같은 timestamp는 canonical priority로 하나만 남긴다.
 
 ## API And Frontend Contract
 
@@ -97,6 +105,7 @@ Candle response metadata must remain consistent:
 - `hasMoreBefore`
 - `feedProfile`
 - `marketSession`
+- `coverage.gapRanges`
 
 Previous close/change percent는 전일 종가 기준이다. Intraday open fallback으로 대체하지 않는다.
 

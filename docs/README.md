@@ -11,7 +11,6 @@ The root `README.md` stays short; repo-wide Codex rules live in root `AGENTS.md`
 | `IMAGE_STRATEGY.md` | Docker image boundaries and naming rules. |
 | `ENVIRONMENT.md` | Env, secret, and platform contracts. |
 | `AGENT_ORCHESTRATION_IMPLEMENTATION.md` | Summary of the role-based multi-agent implementation and Docker validation. |
-| `MERGE_HANDOFF_REPORT_2026-06-30.md` | Handoff notes for the `origin/dev` merge, frontend ownership boundaries, and reusable chart/data contracts. |
 | `../AGENTS.md` | Codex/contributor rules for this repo. |
 
 Old long-form specs were removed to avoid stale, conflicting guidance.

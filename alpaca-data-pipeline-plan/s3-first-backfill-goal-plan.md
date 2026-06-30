@@ -123,6 +123,10 @@ S3는 canonical historical evidence와 ClickHouse rebuild source다.
 
 Rules:
 
+- Prefix roles are fixed:
+  - `raw`: append archive for Alpaca/Kafka evidence and replay.
+  - `live`: append evidence for today/live processed events, not direct serving truth.
+  - `final`: deterministic canonical parquet/manifest used for ClickHouse rebuild.
 - 새 rebuild는 fresh prefix 또는 명시적으로 초기화된 prefix에서만 시작한다.
 - canonical object identity는 `symbol + interval + rangeStart + rangeEnd + canonical_version + price_adjustment`다.
 - 같은 logical chunk는 같은 deterministic key를 사용한다.
@@ -131,7 +135,8 @@ Rules:
 - wall-clock upload timestamp가 logical identity가 되면 안 된다.
 - manifest는 row count, min/max timestamp, symbol, interval, version, adjustment, source evidence를 포함한다.
 - S3 existence/manifest validation을 Alpaca fetch보다 먼저 수행한다.
-- raw/live/trade S3는 canonical historical source로 섞지 않는다.
+- raw/live/trade S3는 canonical historical source로 직접 섞지 않는다.
+- raw/live S3를 serving에 반영하려면 event time 정렬, logical key dedup, canonical final/ClickHouse materialize 단계를 거친다.
 
 ### ClickHouse
 
@@ -171,6 +176,8 @@ Chart request path:
 - `/api/charts/candles`는 Redis/ClickHouse만 직접 조회한다.
 - 사용자 요청 중 S3를 직접 scan하거나 Alpaca를 동기 호출하지 않는다.
 - missing window는 bounded job으로 처리한다.
+- regular-session sparse gap은 `coverage.gapRanges`로 내려보내고, UI는 그 작은 range만 backfill한다.
+- 화면 진입이나 terminal backfill status만으로 `force=true` full-range backfill을 자동 생성하지 않는다.
 
 Required behavior:
 
