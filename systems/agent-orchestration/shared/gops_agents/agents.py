@@ -278,9 +278,18 @@ class LayoutAgent:
                     "props": {"symbol": context.symbol},
                 },
             })
+        news_panel_props = build_news_panel_props(context.symbol, context.providerEvidence)
+        if news_panel_props:
+            commands.append({
+                "type": "layout.panel.add",
+                "payload": {
+                    "panelType": "newsFeed",
+                    "props": news_panel_props,
+                },
+            })
         return LayoutProposal(
             title="Agent analysis workspace",
-            rationale="Show notifications when unusual events are present; leave layout commands in proposal review.",
+            rationale="Show notifications and news panels when role agents return displayable evidence.",
             commands=commands,
         )
 
@@ -474,8 +483,11 @@ def compact_role_evidence(items: list[EvidenceItem]) -> list[dict[str, Any]]:
                     "impactDirection",
                     "eventType",
                     "relevanceScore",
+                    "importanceScore",
                     "publishedAt",
                     "source",
+                    "symbol",
+                    "symbols",
                     "relationType",
                     "themeName",
                     "controlledName",
@@ -487,6 +499,67 @@ def compact_role_evidence(items: list[EvidenceItem]) -> list[dict[str, Any]]:
             },
         })
     return compacted
+
+
+def build_news_panel_props(symbol: str, evidence: list[EvidenceItem]) -> dict[str, Any] | None:
+    news_items = [item for item in evidence if item.provider == "news" and item.status == "available"]
+    if not news_items:
+        return None
+    latest = sorted(news_items, key=lambda item: parse_panel_time(item), reverse=True)
+    major = sorted(
+        news_items,
+        key=lambda item: (
+            panel_raw_number(item, "importanceScore"),
+            panel_raw_number(item, "relevanceScore"),
+            parse_panel_time(item),
+        ),
+        reverse=True,
+    )
+    return {
+        "symbol": symbol,
+        "updatedAt": utc_now_iso(),
+        "latestNews": [news_panel_item(item, symbol) for item in latest[:12]],
+        "majorNews": [news_panel_item(item, symbol) for item in major[:8]],
+    }
+
+
+def news_panel_item(item: EvidenceItem, symbol: str) -> dict[str, Any]:
+    raw = item.raw if isinstance(item.raw, dict) else {}
+    symbols = raw.get("symbols") if isinstance(raw.get("symbols"), list) else [raw.get("symbol") or symbol]
+    return {
+        "title": item.title,
+        "summary": item.summary,
+        "url": item.url,
+        "source": raw.get("source") or item.provider,
+        "publishedAt": raw.get("publishedAt") or item.observedAt,
+        "symbol": raw.get("symbol") or symbol,
+        "symbols": [str(value) for value in symbols if value],
+        "eventType": raw.get("eventType") or "other",
+        "impactDirection": raw.get("impactDirection") or "unknown",
+        "relevanceScore": panel_raw_number(item, "relevanceScore"),
+        "importanceScore": panel_raw_number(item, "importanceScore"),
+    }
+
+
+def panel_raw_number(item: EvidenceItem, key: str) -> float:
+    raw = item.raw if isinstance(item.raw, dict) else {}
+    value = raw.get(key)
+    return float(value) if isinstance(value, (int, float)) else 0.0
+
+
+def parse_panel_time(item: EvidenceItem) -> float:
+    raw = item.raw if isinstance(item.raw, dict) else {}
+    text = str(raw.get("publishedAt") or raw.get("receivedAt") or item.observedAt or "")
+    try:
+        return datetime_from_iso(text)
+    except Exception:
+        return 0.0
+
+
+def datetime_from_iso(value: str) -> float:
+    from datetime import datetime
+
+    return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
 
 
 def detect_cross_agent_conflicts(findings: list[AgentFinding]) -> list[str]:

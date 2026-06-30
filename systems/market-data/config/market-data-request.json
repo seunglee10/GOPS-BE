@@ -1,7 +1,15 @@
 {
   "description": "Default market-data universe and Alpaca subscription policy.",
   "defaultUniverse": "semiconductor-100",
-  "defaultSeedSymbols": ["NVDA", "AMD", "AVGO", "TSM", "ASML", "AMAT", "MU"],
+  "defaultSeedSymbols": [
+    "AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "GOOG", "TSLA", "AVGO", "BRK.B",
+    "JPM", "BAC", "GS", "MS", "V", "MA", "UNH", "LLY", "NVO", "JNJ",
+    "MRK", "ABBV", "XOM", "CVX", "COP", "SLB", "COST", "WMT", "HD", "MCD",
+    "NKE", "SBUX", "BA", "CAT", "GE", "RTX", "LMT", "NFLX", "UBER", "DASH",
+    "ORCL", "CRM", "ADBE", "NOW", "SNOW", "DDOG", "AMD", "TSM", "ASML", "AMAT",
+    "MU", "INTC", "QCOM", "ARM", "SMCI", "PLTR", "COIN", "SPY", "QQQ", "DIA",
+    "IWM", "SMH", "SOXX", "XLK", "XLF", "XLE", "XLV"
+  ],
   "defaultSymbols": [
     "NVDA", "AMD", "AVGO", "INTC", "QCOM", "TXN", "MU", "ADI", "MRVL", "MCHP",
     "MPWR", "ON", "NXPI", "SWKS", "QRVO", "LSCC", "ALGM", "DIOD", "CRUS", "POWI",

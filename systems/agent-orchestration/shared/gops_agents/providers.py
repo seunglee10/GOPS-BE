@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from .contracts import EvidenceItem, utc_now_iso
@@ -42,24 +42,49 @@ class EmptyNewsProvider(NewsProvider):
 
 
 class ClickHouseNewsProvider(NewsProvider):
-    def __init__(self, clickhouse_provider=None, limit=None, days=None):
+    def __init__(
+        self,
+        clickhouse_provider=None,
+        limit=None,
+        days=None,
+        direct_fallback: bool | None = None,
+        stale_after_seconds: int | None = None,
+        publish_fallback: bool | None = None,
+    ):
         self.clickhouse_provider = clickhouse_provider
-        self.limit = int(limit or os.getenv("AGENT_NEWS_LIMIT", "8"))
+        self.limit = int(limit or os.getenv("AGENT_NEWS_LIMIT", "12"))
         self.days = int(days or os.getenv("AGENT_NEWS_LOOKBACK_DAYS", "7"))
+        self.direct_fallback = bool_env("AGENT_NEWS_DIRECT_FALLBACK", True) if direct_fallback is None else direct_fallback
+        self.stale_after_seconds = int(stale_after_seconds or os.getenv("AGENT_NEWS_STALE_AFTER_SECONDS", "21600"))
+        self.publish_fallback = bool_env("AGENT_NEWS_FALLBACK_PUBLISH_TO_KAFKA", True) if publish_fallback is None else publish_fallback
 
     def fetch(self, request: ProviderRequest) -> list[EvidenceItem]:
+        clickhouse_error: Exception | None = None
+        rows = []
         try:
             provider = self.clickhouse_provider or self._default_provider()
             rows = provider.news_articles(request.symbol, limit=self.limit, days=self.days)
         except Exception as exc:
+            clickhouse_error = exc
+
+        evidence = normalize_news_evidence([self._row_to_evidence(row, request.symbol, source="clickhouse") for row in rows])[: self.limit]
+        should_fallback = self.direct_fallback and (not evidence or self._is_stale(evidence[0]))
+        if should_fallback:
+            fallback = self._fetch_alpaca_fallback(request)
+            if any(item.status == "available" for item in fallback):
+                return normalize_news_evidence([*fallback, *evidence])[: self.limit]
+            if not evidence:
+                return fallback
+
+        if clickhouse_error is not None and not evidence:
             return [
                 EvidenceItem.no_data(
                     "news",
                     "News provider not available",
-                    f"뉴스 ClickHouse provider 미연결 또는 조회 실패: {exc}",
+                    f"뉴스 ClickHouse provider 미연결 또는 조회 실패: {clickhouse_error}",
                 )
             ]
-        if not rows:
+        if not evidence:
             return [
                 EvidenceItem.no_data(
                     "news",
@@ -67,15 +92,27 @@ class ClickHouseNewsProvider(NewsProvider):
                     f"{request.symbol} 관련 Alpaca 뉴스가 아직 저장되어 있지 않습니다.",
                 )
             ]
-        return normalize_news_evidence([self._row_to_evidence(row, request.symbol) for row in rows])[: self.limit]
+        return evidence
 
-    def _row_to_evidence(self, row: dict, symbol: str) -> EvidenceItem:
+    def _row_to_evidence(self, row: dict, symbol: str, *, source: str) -> EvidenceItem:
         title = str(row.get("headline") or row.get("title") or "Untitled news")
         summary = str(row.get("summary") or row.get("content") or row.get("headline") or row.get("title") or "뉴스 요약이 없습니다.")
         published_at = row.get("publishedAt") or row.get("published_at")
         received_at = row.get("receivedAt") or row.get("received_at")
         event_type = classify_news_event_type(f"{title} {summary}")
         impact_direction = classify_news_impact_direction(f"{title} {summary}")
+        relevance_score = score_news_relevance(symbol, title, summary, row.get("symbols"))
+        importance_score = score_news_importance(
+            symbol=symbol,
+            title=title,
+            summary=summary,
+            source=str(row.get("source") or ""),
+            published_at=published_at,
+            event_type=event_type,
+            impact_direction=impact_direction,
+            relevance_score=relevance_score,
+            symbols=row.get("symbols"),
+        )
         return EvidenceItem(
             provider="news",
             status="available",
@@ -88,13 +125,73 @@ class ClickHouseNewsProvider(NewsProvider):
                 "source": row.get("source"),
                 "author": row.get("author"),
                 "headline": title,
+                "symbol": row.get("symbol") or symbol,
+                "symbols": row.get("symbols") if isinstance(row.get("symbols"), list) else [symbol],
                 "publishedAt": published_at,
                 "receivedAt": received_at,
                 "impactDirection": impact_direction,
                 "eventType": event_type,
-                "relevanceScore": score_news_relevance(symbol, title, summary),
+                "relevanceScore": relevance_score,
+                "importanceScore": importance_score,
+                "dataSource": source,
             },
         )
+
+    def _fetch_alpaca_fallback(self, request: ProviderRequest) -> list[EvidenceItem]:
+        try:
+            from alfaka.alpaca.news import build_news_events, fetch_alpaca_news
+            from alfaka.common.secrets import load_alpaca_credentials
+        except Exception as exc:
+            return [EvidenceItem.no_data("news", "Alpaca fallback unavailable", f"Alpaca 뉴스 fallback 모듈을 불러오지 못했습니다: {exc.__class__.__name__}")]
+
+        key_id, secret_key = load_alpaca_credentials()
+        if not key_id or not secret_key:
+            return [EvidenceItem.no_data("news", "Alpaca fallback credentials missing", "Alpaca 뉴스 fallback에 사용할 API 키가 설정되어 있지 않습니다.")]
+
+        try:
+            include_content = bool_env("ALPACA_NEWS_INCLUDE_CONTENT", False)
+            articles = fetch_alpaca_news(
+                key_id,
+                secret_key,
+                symbols=[request.symbol],
+                limit=int(os.getenv("AGENT_NEWS_FALLBACK_LIMIT", str(self.limit))),
+                include_content=include_content,
+            )
+            events = [
+                event
+                for article in articles
+                if isinstance(article, dict)
+                for event in build_news_events(article, requested_symbols=[request.symbol])
+            ]
+            if self.publish_fallback:
+                self._publish_fallback_events(events)
+            return normalize_news_evidence([self._row_to_evidence(event, request.symbol, source="alpaca-direct") for event in events])[: self.limit]
+        except Exception as exc:
+            return [EvidenceItem.no_data("news", "Alpaca fallback failed", f"Alpaca 뉴스 fallback 조회에 실패했습니다: {exc.__class__.__name__}")]
+
+    def _publish_fallback_events(self, events: list[dict[str, Any]]) -> None:
+        if not events:
+            return
+        try:
+            from alfaka.common.kafka_io import create_json_producer
+
+            topic = os.getenv("KAFKA_NEWS_TOPIC", "market.news.alpaca.v1")
+            producer = create_json_producer(os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"), "gops-agent-news-fallback")
+            for event in events:
+                producer.send(topic, key=str(event.get("symbol") or "UNKNOWN"), value=event)
+            producer.flush(timeout=float(os.getenv("AGENT_NEWS_FALLBACK_KAFKA_FLUSH_SECONDS", "3")))
+            producer.close(timeout=1)
+        except Exception:
+            return
+
+    def _is_stale(self, item: EvidenceItem) -> bool:
+        if self.stale_after_seconds <= 0:
+            return False
+        observed = parse_time_value(item.raw.get("publishedAt") if isinstance(item.raw, dict) else item.observedAt)
+        if observed <= 0:
+            return True
+        now = datetime.now(timezone.utc).timestamp()
+        return now - observed > self.stale_after_seconds
 
     def _default_provider(self):
         from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
@@ -142,8 +239,14 @@ def normalize_news_evidence(items: list[EvidenceItem]) -> list[EvidenceItem]:
 def news_sort_key(item: EvidenceItem) -> tuple[float, float]:
     raw = item.raw if isinstance(item.raw, dict) else {}
     relevance = raw.get("relevanceScore")
+    importance = raw.get("importanceScore")
     relevance_score = float(relevance) if isinstance(relevance, (int, float)) else 0.0
-    return (parse_time_value(raw.get("publishedAt") or raw.get("receivedAt") or item.observedAt), relevance_score)
+    importance_score = float(importance) if isinstance(importance, (int, float)) else 0.0
+    return (
+        importance_score,
+        parse_time_value(raw.get("publishedAt") or raw.get("receivedAt") or item.observedAt),
+        relevance_score,
+    )
 
 
 def parse_time_value(value: Any) -> float:
@@ -218,15 +321,75 @@ def classify_news_impact_direction(text: str) -> str:
     return "unknown"
 
 
-def score_news_relevance(symbol: str, title: str, summary: str) -> float:
+def score_news_relevance(symbol: str, title: str, summary: str, symbols: Any = None) -> float:
     text_upper = f"{title} {summary}".upper()
     text_lower = f"{title} {summary}".lower()
+    article_symbols = normalize_symbol_values(symbols)
     score = 0.35
-    if symbol and symbol.upper() in text_upper:
+    if symbol and symbol.upper() in article_symbols:
+        score += 0.5
+    elif symbol and symbol.upper() in text_upper:
         score += 0.45
     if any(term in text_lower for term in ("stock", "shares", "earnings", "revenue", "주가", "실적", "매출")):
         score += 0.15
     return round(min(1.0, score), 2)
+
+
+def score_news_importance(
+    *,
+    symbol: str,
+    title: str,
+    summary: str,
+    source: str,
+    published_at: Any,
+    event_type: str,
+    impact_direction: str,
+    relevance_score: float,
+    symbols: Any,
+) -> float:
+    score = 0.2 + (max(0.0, min(1.0, float(relevance_score))) * 0.35)
+    if event_type in {"earnings", "guidance", "regulation", "mna", "legal"}:
+        score += 0.18
+    elif event_type in {"analyst", "product", "partnership", "macro"}:
+        score += 0.12
+    if impact_direction in {"positive", "negative", "mixed"}:
+        score += 0.08
+    if source.lower() in {"reuters", "bloomberg", "dow jones", "wsj", "cnbc", "marketwatch", "alpaca"}:
+        score += 0.07
+    article_symbols = normalize_symbol_values(symbols)
+    if symbol and symbol.upper() in article_symbols:
+        score += 0.08
+    if len(article_symbols) >= 3:
+        score += 0.04
+    observed = parse_time_value(published_at)
+    if observed:
+        age_hours = max(0.0, (datetime.now(timezone.utc).timestamp() - observed) / 3600)
+        if age_hours <= 6:
+            score += 0.12
+        elif age_hours <= 24:
+            score += 0.08
+        elif age_hours <= 72:
+            score += 0.04
+    if any(term in f"{title} {summary}".lower() for term in ("breaking", "exclusive", "속보", "단독")):
+        score += 0.06
+    return round(min(1.0, score), 2)
+
+
+def normalize_symbol_values(value: Any) -> set[str]:
+    if isinstance(value, str):
+        values = re.split(r"[,\\s]+", value)
+    elif isinstance(value, list):
+        values = value
+    else:
+        values = []
+    return {str(item).strip().upper() for item in values if str(item).strip()}
+
+
+def bool_env(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 GRAPHDB_THEME_NAMES = (

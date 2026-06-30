@@ -200,6 +200,7 @@ def compact_evidence(items: list[EvidenceItem]) -> list[dict[str, Any]]:
                     "impactDirection",
                     "eventType",
                     "relevanceScore",
+                    "importanceScore",
                     "themeName",
                     "themeCategory",
                     "controlledName",
@@ -307,10 +308,19 @@ def build_news_final_answer(symbol: str, findings: list[AgentFinding], provider_
 
     directions = Counter(raw_text(item, "impactDirection", "unknown") for item in news_items)
     dominant_direction = dominant_label(directions, "unknown")
+    major_items = sorted(
+        news_items,
+        key=lambda item: (
+            raw_number(item, "importanceScore"),
+            raw_number(item, "relevanceScore"),
+            raw_text(item, "publishedAt", ""),
+        ),
+        reverse=True,
+    )
     sections = [
         FinalAnswerSection(
             title="핵심 뉴스",
-            bullets=[f"{item.title}: {item.summary}" for item in news_items[:5]],
+            bullets=[f"{item.title}: {item.summary}" for item in major_items[:5]],
         ),
         FinalAnswerSection(
             title="주가 영향 방향",
@@ -495,6 +505,12 @@ def raw_text(item: EvidenceItem, key: str, fallback: str) -> str:
     raw = item.raw if isinstance(item.raw, dict) else {}
     value = raw.get(key)
     return str(value) if value else fallback
+
+
+def raw_number(item: EvidenceItem, key: str) -> float:
+    raw = item.raw if isinstance(item.raw, dict) else {}
+    value = raw.get(key)
+    return float(value) if isinstance(value, (int, float)) else 0.0
 
 
 def dominant_label(counter: Counter, fallback: str) -> str:

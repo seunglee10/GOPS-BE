@@ -1,20 +1,26 @@
 import json
 import os
 import sys
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "shared"))
+sys.path.insert(0, str(REPO_ROOT / "systems" / "market-data" / "shared"))
+sys.modules.setdefault("boto3", types.SimpleNamespace(client=lambda *args, **kwargs: None))
 
 from gops_agents.agents import AgentContext, NewsAgent, VerificationGuardrailAgent
-from gops_agents.contracts import AgentFinding, EvidenceItem, IntentRoute
+from gops_agents.contracts import AgentFinding, EvidenceItem, IntentRoute, utc_now_iso
 from gops_agents.event_detector import MarketEventDetector, MarketEventThresholds
 from gops_agents.orchestrator import AgentOrchestrator
 from gops_agents.publisher import notification_payload
 from gops_agents.providers import ClickHouseNewsProvider, GraphDBOntologyProvider, ProviderRequest
 from gops_agents.synthesizer import FinalAnswerSynthesizer
+import alfaka.alpaca.news  # noqa: F401
+import alfaka.common.secrets  # noqa: F401
 
 
 class FakeSparqlClient:
@@ -47,8 +53,10 @@ class FakeOpenAIResponse:
 class FakeClickHouseProvider:
     def __init__(self, rows):
         self.rows = rows
+        self.calls = 0
 
     def news_articles(self, symbol, limit, days):
+        self.calls += 1
         return self.rows
 
 
@@ -179,6 +187,78 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(evidence[0].raw["eventType"], "earnings")
         self.assertEqual(evidence[0].raw["impactDirection"], "positive")
         self.assertGreater(evidence[0].raw["relevanceScore"], evidence[1].raw["relevanceScore"])
+        self.assertGreater(evidence[0].raw["importanceScore"], 0)
+
+    def test_news_provider_uses_alpaca_fallback_when_clickhouse_is_empty(self):
+        clickhouse = FakeClickHouseProvider([])
+        provider = ClickHouseNewsProvider(clickhouse_provider=clickhouse, limit=5, publish_fallback=False)
+        article = {
+            "id": "fallback-1",
+            "headline": "NVDA shares rise after new AI chip launch",
+            "summary": "NVIDIA announced a new data center GPU.",
+            "url": "https://example.com/fallback",
+            "source": "alpaca",
+            "created_at": "2026-06-30T01:02:03Z",
+            "symbols": ["NVDA"],
+        }
+
+        with patch("alfaka.common.secrets.load_alpaca_credentials", return_value=("key", "secret")):
+            with patch("alfaka.alpaca.news.fetch_alpaca_news", return_value=[article]) as fetch:
+                evidence = provider.fetch(ProviderRequest("NVDA", "뉴스 보여줘"))
+
+        fetch.assert_called_once()
+        self.assertEqual(clickhouse.calls, 1)
+        self.assertEqual(evidence[0].status, "available")
+        self.assertEqual(evidence[0].raw["dataSource"], "alpaca-direct")
+        self.assertGreaterEqual(evidence[0].raw["importanceScore"], 0.8)
+
+    def test_news_provider_does_not_fallback_when_clickhouse_news_is_fresh(self):
+        clickhouse = FakeClickHouseProvider([
+            {
+                "articleId": "fresh-1",
+                "headline": "NVDA shares rise after strong earnings",
+                "summary": "NVDA revenue beat expectations.",
+                "publishedAt": utc_now_iso(),
+                "url": "https://example.com/fresh",
+                "symbols": ["NVDA"],
+            }
+        ])
+        provider = ClickHouseNewsProvider(clickhouse_provider=clickhouse, limit=5, publish_fallback=False)
+
+        with patch("alfaka.alpaca.news.fetch_alpaca_news") as fetch:
+            evidence = provider.fetch(ProviderRequest("NVDA", "뉴스 보여줘"))
+
+        fetch.assert_not_called()
+        self.assertEqual(evidence[0].raw["dataSource"], "clickhouse")
+
+    def test_orchestrator_adds_news_panel_layout_payload(self):
+        provider = ClickHouseNewsProvider(
+            clickhouse_provider=FakeClickHouseProvider([
+                {
+                    "articleId": "panel-1",
+                    "headline": "NVDA shares rise after strong earnings",
+                    "summary": "NVDA revenue beat expectations.",
+                    "publishedAt": utc_now_iso(),
+                    "url": "https://example.com/panel",
+                    "symbols": ["NVDA"],
+                    "source": "alpaca",
+                }
+            ]),
+            publish_fallback=False,
+        )
+        orchestrator = AgentOrchestrator()
+        orchestrator.news_agent = NewsAgent(provider)
+
+        report = orchestrator.analyze({"symbol": "NVDA", "intent": "뉴스 보여줘", "agentIds": ["agent-02"]})
+
+        news_command = next(
+            command for command in report.layoutProposal.commands
+            if command.get("payload", {}).get("panelType") == "newsFeed"
+        )
+        props = news_command["payload"]["props"]
+        self.assertEqual(props["symbol"], "NVDA")
+        self.assertEqual(props["latestNews"][0]["title"], "NVDA shares rise after strong earnings")
+        self.assertEqual(props["majorNews"][0]["importanceScore"], props["latestNews"][0]["importanceScore"])
 
     def test_news_agent_openai_success_and_fallback_keep_shape(self):
         provider = ClickHouseNewsProvider(
