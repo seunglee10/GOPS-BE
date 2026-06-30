@@ -19,6 +19,18 @@ def resolve_domestic_order_tr_id(side: str, env: str = "demo") -> str:
     return "VTTC0012U" if side.lower() == "buy" else "VTTC0011U"
 
 
+def resolve_overseas_balance_tr_id(env: str = "demo") -> str:
+    if env != "demo":
+        raise ValueError("real overseas balance TR IDs are not implemented")
+    return "VTTS3012R"
+
+
+def resolve_domestic_balance_tr_id(env: str = "demo") -> str:
+    if env != "demo":
+        raise ValueError("real domestic balance TR IDs are not implemented")
+    return "VTTC8434R"
+
+
 def ccnl_side_code(side: str | None) -> str:
     if side is None:
         return "00"

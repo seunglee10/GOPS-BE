@@ -258,7 +258,7 @@ flowchart TD
     Q4["theme_control_relationships_query<br/>intent에 theme 이름 포함 시"]
     MAP["row_to_ontology_evidence"]
     DET_SUM["analyze_ontology_evidence"]
-    OAI["role_analysis_with_openai<br/>optional strict JSON"]
+    OAI["role_analysis_with_openai<br/>ontology opt-in strict JSON"]
     FINDING["AgentFinding<br/>role=company-relationship-analysis"]
 
     ONTO_AGENT --> PROVIDER
@@ -305,8 +305,9 @@ flowchart TD
 
 6. 역할별 분석 문장 생성
    - `analyze_ontology_evidence()`가 관계 유형별로 한국어 summary/rationale/tags를 만든다.
-   - OpenAI 사용 가능 시 `role_analysis_with_openai(role="ontology")`가 GraphDB evidence만 기반으로 strict JSON 분석을 시도한다.
-   - 실패하면 deterministic summary로 fallback한다.
+   - 기본값은 GraphDB evidence 기반 deterministic summary다.
+   - `AGENT_ONTOLOGY_ROLE_ANALYSIS_PROVIDER=openai`가 명시된 경우에만 `role_analysis_with_openai(role="ontology")`가 strict JSON 분석을 시도한다.
+   - OpenAI 실패 또는 미설정이면 deterministic summary를 그대로 사용한다.
 
 ### Ontology evidence raw 필드
 
@@ -352,6 +353,8 @@ flowchart LR
 | 라우팅 보조 | `route_with_openai()` | `OPENAI_API_KEY`, `AGENT_ROUTER_MODEL` | rule/selection/fallback 라우팅 |
 | 역할별 분석 | `role_analysis_with_openai()` | `OPENAI_API_KEY`, `AGENT_ROLE_ANALYSIS_MODEL` | `analyze_news_evidence()`, `analyze_ontology_evidence()` |
 | 최종 답변 합성 | `FinalAnswerSynthesizer._synthesize_with_openai()` | `OPENAI_API_KEY`, `AGENT_SYNTHESIZER_MODEL` | deterministic final answer |
+
+온톨로지 전용 분석은 GraphDB에 없는 내용을 덧붙이지 않도록 기본적으로 deterministic 경로를 사용한다. 온톨로지 역할별 OpenAI 분석은 `AGENT_ONTOLOGY_ROLE_ANALYSIS_PROVIDER=openai`, 온톨로지 전용 최종 답변 OpenAI 합성은 `AGENT_ONTOLOGY_FINAL_ANSWER_PROVIDER=openai`를 명시해야만 켜진다.
 
 OpenAI prompt의 핵심 제약:
 

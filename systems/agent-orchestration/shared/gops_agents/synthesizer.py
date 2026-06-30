@@ -28,6 +28,14 @@ class FinalAnswerSynthesizer:
         findings: list[AgentFinding],
         provider_evidence: list[EvidenceItem],
     ) -> FinalAnswer:
+        if is_ontology_route(route) and os.getenv("AGENT_ONTOLOGY_FINAL_ANSWER_PROVIDER") != "openai":
+            return self._synthesize_deterministic(
+                symbol=symbol,
+                intent=intent,
+                route=route,
+                findings=findings,
+                provider_evidence=provider_evidence,
+            )
         openai_answer = self._synthesize_with_openai(
             symbol=symbol,
             intent=intent,
@@ -157,6 +165,10 @@ class FinalAnswerSynthesizer:
             return final_answer_from_openai_json(parse_openai_text_json(data))
         except Exception:
             return None
+
+
+def is_ontology_route(route: IntentRoute) -> bool:
+    return route.intentType == "ontology" or route.selectedRoles == ["ontology"]
 
 
 def build_summary(symbol: str, route: IntentRoute, findings: list[AgentFinding], evidence: list[EvidenceItem]) -> str:

@@ -1,6 +1,6 @@
 # Order System
 
-Owns the KIS demo order domain, outbox publishing, broker adapter, migrations, and reconciliation.
+Owns the KIS demo order domain, account holdings lookup, outbox publishing, broker adapter, migrations, and reconciliation.
 
 ## Folders
 
@@ -43,3 +43,5 @@ KIS demo API
 Keep `kis_trader.*` imports stable. Docker, compose, k8s, tests, and local scripts should place `systems/order/shared` on `PYTHONPATH`.
 
 `KIS_ENV=real` remains disabled for v1.
+
+The frontend-facing account holdings view uses `GET /api/account/holdings`, which calls KIS demo balance APIs through `kis_trader.kis.client.DemoKisHttpClient` and reuses the existing `dev/kis` Secrets Manager contract.

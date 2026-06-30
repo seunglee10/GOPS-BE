@@ -141,13 +141,15 @@ class OntologyAgent(ProviderBackedAgent):
     def analyze(self, context: AgentContext) -> AgentFinding:
         evidence = self.provider.fetch(ProviderRequest(context.symbol, context.intent))
         analysis = analyze_ontology_evidence(context, evidence)
-        openai_analysis = role_analysis_with_openai(
-            role="ontology",
-            context=context,
-            evidence=evidence,
-            fallback=analysis,
-            schema_name="ontology_agent_analysis",
-        )
+        openai_analysis = None
+        if os.getenv("AGENT_ONTOLOGY_ROLE_ANALYSIS_PROVIDER") == "openai":
+            openai_analysis = role_analysis_with_openai(
+                role="ontology",
+                context=context,
+                evidence=evidence,
+                fallback=analysis,
+                schema_name="ontology_agent_analysis",
+            )
         analysis = openai_analysis or analysis
         return AgentFinding(
             agentId=self.agent_id,
@@ -568,10 +570,11 @@ def supporting_panel_sort_key(panel: dict[str, Any]) -> tuple[int, int, str]:
     type_rank = {
         "chart": 0,
         "orderTicket": 1,
-        "ontologyGraph": 2,
-        "indicatorCompare": 3,
-        "newsFeed": 4,
-        "aiSummary": 5,
+        "portfolioHoldings": 2,
+        "ontologyGraph": 3,
+        "indicatorCompare": 4,
+        "newsFeed": 5,
+        "aiSummary": 6,
     }.get(panel["type"], 9)
     return (-int(read_float(panel.get("layoutWeight"), 0.0)), type_rank, panel["id"])
 
@@ -633,13 +636,14 @@ def default_panel_title(panel_type: str) -> str:
         "newsFeed": "시장 뉴스",
         "indicatorCompare": "지표 비교",
         "orderTicket": "주문",
+        "portfolioHoldings": "내 투자",
         "aiSummary": "AI 요약",
         "ontologyGraph": "온톨로지",
     }.get(panel_type, panel_type)
 
 
 def default_min_span(panel_type: str) -> dict[str, int]:
-    return {"colSpan": 1, "rowSpan": 2 if panel_type == "orderTicket" else 1}
+    return {"colSpan": 1, "rowSpan": 2 if panel_type in {"orderTicket", "portfolioHoldings"} else 1}
 
 
 def default_max_span(panel_type: str) -> dict[str, int]:
@@ -653,6 +657,8 @@ def default_panel_placement(panel_type: str) -> dict[str, Any]:
         return workspace_placement(4, 1, 1, 2)
     if panel_type == "orderTicket":
         return workspace_placement(4, 4, 1, 2)
+    if panel_type == "portfolioHoldings":
+        return workspace_placement(1, 4, 1, 2)
     return workspace_placement(4, 1, 1, 1)
 
 
@@ -675,6 +681,8 @@ def primary_panel_type_for_route(route, context: AgentContext) -> str:
         return "newsFeed"
     if "ontology" in intent_type or "ontology" in selected_roles or any(token in intent_text for token in ("relationship", "supply", "관계", "온톨로지", "공급망", "경쟁사", "섹터")):
         return "ontologyGraph"
+    if any(token in intent_text for token in ("portfolio", "holdings", "balance", "보유종목", "잔고", "내 투자", "계좌")):
+        return "portfolioHoldings"
     if "macro" in intent_type or "macro" in selected_roles or any(token in intent_text for token in ("macro", "rate", "inflation", "거시", "금리")):
         return "indicatorCompare"
     return "chart"
@@ -702,6 +710,7 @@ def panel_priorities_for_route(
         "newsFeed": 52,
         "indicatorCompare": 48,
         "ontologyGraph": 48,
+        "portfolioHoldings": 44,
         "aiSummary": 50,
         "orderTicket": 5,
     }

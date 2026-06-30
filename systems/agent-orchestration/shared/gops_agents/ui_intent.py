@@ -9,7 +9,7 @@ from typing import Any
 from .router import parse_openai_text_json
 
 
-PANEL_TYPES = ("chart", "newsFeed", "indicatorCompare", "orderTicket", "aiSummary", "ontologyGraph")
+PANEL_TYPES = ("chart", "newsFeed", "indicatorCompare", "orderTicket", "portfolioHoldings", "aiSummary", "ontologyGraph")
 UI_ACTIONS = ("focus", "resize", "move", "open", "close", "unknown")
 UI_SIZE_INTENTS = ("max", "large", "small", "min")
 UI_POSITION_INTENTS = ("top", "bottom", "left", "right", "center")
@@ -327,6 +327,7 @@ def default_panel_title(panel_type: str) -> str:
         "newsFeed": "시장 뉴스",
         "indicatorCompare": "지표 비교",
         "orderTicket": "주문",
+        "portfolioHoldings": "내 투자",
         "aiSummary": "AI 요약",
         "ontologyGraph": "온톨로지",
     }.get(panel_type, panel_type)
@@ -338,6 +339,7 @@ def panel_aliases(panel_type: str, supplied: Any = None) -> list[str]:
         "newsFeed": ["뉴스", "시장 뉴스", "기사", "헤드라인", "news", "headline"],
         "indicatorCompare": ["지표", "지표 비교", "인디케이터", "거시", "indicator", "macro"],
         "orderTicket": ["주문", "주문 입력", "주문창", "매수창", "매도창", "오더", "order", "ticket"],
+        "portfolioHoldings": ["내 투자", "보유종목", "잔고", "계좌", "포트폴리오", "portfolio", "holdings", "balance"],
         "aiSummary": ["AI 요약", "요약", "AI 어시스턴트", "assistant", "summary"],
         "ontologyGraph": ["온톨로지", "관계 그래프", "기업 관계", "ontology", "relationship"],
     }.get(panel_type, [panel_type])

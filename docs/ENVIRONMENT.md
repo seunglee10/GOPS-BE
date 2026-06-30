@@ -229,6 +229,12 @@ S3_MATERIALIZE_MAX_OBJECTS
 
 Leave `S3_ENDPOINT_URL` empty for real AWS S3.
 
+Local Docker services that read AWS Secrets Manager or S3 can authenticate with
+direct `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` values, but the preferred
+local path is `AWS_PROFILE` plus the read-only host `~/.aws` mount configured in
+`docker-compose.yml` for the API, backfill, and optional Alpaca ingestion
+services. This keeps copied AWS keys out of `.env`.
+
 The processed S3 sink writes processed Kafka topics under `S3_FINAL_PREFIX` and `S3_LIVE_PREFIX`. The raw S3 archive sink writes raw Kafka topics under `S3_RAW_PREFIX` with manifest entries under `S3_MANIFEST_PREFIX`.
 
 For broad historical preload, keep `S3_HISTORICAL_RAW_PARTITION_MODE=chunk` and `S3_HISTORICAL_PROCESSED_MANIFEST_LAYOUT=compact`. This stores one raw object and one processed manifest entry per chunk instead of creating a small S3 object per trading day.
@@ -353,7 +359,14 @@ GRAPHDB_SPARQL_URL
 GRAPHDB_REPOSITORY
 AGENT_ONTOLOGY_LIMIT
 GRAPHDB_TIMEOUT_SECONDS
+AGENT_ONTOLOGY_ROLE_ANALYSIS_PROVIDER
+AGENT_ONTOLOGY_FINAL_ANSWER_PROVIDER
 ```
+
+Ontology-only analysis and final answers use deterministic GraphDB evidence by
+default. Set `AGENT_ONTOLOGY_ROLE_ANALYSIS_PROVIDER=openai` or
+`AGENT_ONTOLOGY_FINAL_ANSWER_PROVIDER=openai` only when the team explicitly
+accepts model synthesis for ontology output.
 
 Local GraphDB restore artifact:
 

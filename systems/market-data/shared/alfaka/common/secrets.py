@@ -5,8 +5,6 @@ import json
 import os
 import sys
 
-import boto3
-
 
 ALPACA_CREDENTIAL_SOURCE_ENV = "ALPACA_CREDENTIAL_SOURCE"
 ALPACA_CREDENTIAL_SOURCE_AUTO = "auto"
@@ -64,6 +62,8 @@ def load_alpaca_credentials(source=None):
         return None, None
 
     try:
+        import boto3
+
         client = boto3.client("secretsmanager", region_name=aws_region)
         response = client.get_secret_value(SecretId=secret_name)
         secret_text = response.get("SecretString")

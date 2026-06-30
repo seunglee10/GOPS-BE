@@ -136,6 +136,59 @@ def test_demo_order_history_uses_ccnl_endpoint(monkeypatch, tmp_path):
     assert get_calls[0]["params"]["ORD_STRT_DT"] == "20260627"
 
 
+def test_demo_overseas_holdings_uses_balance_endpoint_and_normalizes_positions(monkeypatch, tmp_path):
+    set_demo_env(monkeypatch, tmp_path)
+    get_calls = []
+
+    def fake_post(url: str, **_kwargs: Any) -> FakeResponse:
+        return FakeResponse(200, valid_token_payload())
+
+    def fake_get(url: str, **kwargs: Any) -> FakeResponse:
+        get_calls.append({"url": url, **kwargs})
+        return FakeResponse(
+            200,
+            {
+                "rt_cd": "0",
+                "output1": [
+                    {
+                        "ovrs_pdno": "MU",
+                        "ovrs_item_name": "Micron Technology",
+                        "ovrs_cblc_qty": "10",
+                        "pchs_avg_pric": "72.10",
+                        "now_pric2": "185.30",
+                        "frcr_evlu_amt2": "1853.00",
+                        "frcr_evlu_pfls_amt": "1132.00",
+                        "evlu_pfls_rt": "157.00",
+                        "tr_crcy_cd": "USD",
+                    }
+                ],
+                "output2": {
+                    "frcr_use_psbl_amt": "1199.00",
+                    "frcr_evlu_tota": "3052.00",
+                    "ovrs_tot_pfls": "1132.00",
+                    "tot_pftrt": "104.6",
+                },
+            },
+        )
+
+    monkeypatch.setattr("requests.post", fake_post)
+    monkeypatch.setattr("requests.get", fake_get)
+
+    payload = DemoKisHttpClient.from_env().fetch_holdings(market="overseas", currency="USD")
+
+    assert payload["status"] == "ok"
+    assert payload["source"] == "kis-demo"
+    assert payload["account"]["cashForeign"] == 1199.0
+    assert payload["account"]["unrealizedPnlRate"] == 104.6
+    assert payload["positions"][0]["symbol"] == "MU"
+    assert payload["positions"][0]["quantity"] == 10.0
+    assert payload["positions"][0]["marketValueForeign"] == 1853.0
+    assert get_calls[0]["url"] == "https://openapivts.example.test:29443/uapi/overseas-stock/v1/trading/inquire-balance"
+    assert get_calls[0]["headers"]["tr_id"] == "VTTS3012R"
+    assert get_calls[0]["params"]["CANO"] == "12345678"
+    assert get_calls[0]["params"]["TR_CRCY_CD"] == "USD"
+
+
 def test_real_env_is_rejected_at_config_load(monkeypatch, tmp_path):
     monkeypatch.setenv("KIS_ENV", "real")
     monkeypatch.setenv("KIS_TOKEN_CACHE_PATH", str(tmp_path / "kis-token.json"))

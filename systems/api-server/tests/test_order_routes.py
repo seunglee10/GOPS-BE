@@ -47,6 +47,43 @@ class IntegratedOrderRoutesTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["submit"]["path"], "/api/orders")
 
+    def test_account_holdings_returns_kis_demo_positions(self):
+        class FakeKisClient:
+            def fetch_holdings(self, *, market: str, currency: str, exchange: str):
+                self.request = {"market": market, "currency": currency, "exchange": exchange}
+                return {
+                    "status": "ok",
+                    "source": "kis-demo",
+                    "account": {
+                        "alias": "모의투자",
+                        "market": market,
+                        "currency": currency,
+                        "cashForeign": 1199,
+                        "totalValueKrw": 20164899,
+                    },
+                    "positions": [
+                        {
+                            "symbol": "MU",
+                            "name": "Micron Technology",
+                            "quantity": 10,
+                            "marketValueKrw": 17573254,
+                            "unrealizedPnlRate": 141.6,
+                        }
+                    ],
+                    "limitations": [],
+                }
+
+        fake_client = FakeKisClient()
+        self.app.state.kis_client = fake_client
+
+        response = self.client.get("/api/account/holdings?market=overseas&currency=USD")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["source"], "kis-demo")
+        self.assertEqual(payload["positions"][0]["symbol"], "MU")
+        self.assertEqual(fake_client.request, {"market": "overseas", "currency": "USD", "exchange": ""})
+
     def test_submit_order_requires_idempotency_key(self):
         response = self.client.post("/api/orders", json=sample_order_request())
 
