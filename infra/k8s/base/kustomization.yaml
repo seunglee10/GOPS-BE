@@ -10,6 +10,7 @@ resources:
   - job-order-reconciler.yaml
   - job-symbol-registry-sync.yaml
   - job-coverage-repair.yaml
+  - cronjob-news-retention.yaml
   - statefulset-graphdb.yaml
   - deployment-agent-orchestrator.yaml
   - deployment-agent-event-detector.yaml

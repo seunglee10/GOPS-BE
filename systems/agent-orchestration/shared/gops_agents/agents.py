@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .contracts import AgentFinding, EvidenceItem, LayoutProposal, MarketEvent, NotificationDecision, stable_id, utc_now_iso
+from .news_localization import NewsLocalizationService
 from .providers import ClickHouseNewsProvider, EmptyMacroProvider, GraphDBOntologyProvider, ProviderRequest
 from .router import parse_openai_text_json
 
@@ -94,11 +95,13 @@ class NewsAgent(ProviderBackedAgent):
     role = "news-analysis"
     provider_name = "news"
 
-    def __init__(self, provider=None):
+    def __init__(self, provider=None, localizer=None):
         super().__init__(provider or ClickHouseNewsProvider())
+        self.localizer = localizer or NewsLocalizationService()
 
     def analyze(self, context: AgentContext) -> AgentFinding:
         evidence = self.provider.fetch(ProviderRequest(context.symbol, context.intent))
+        evidence = self.localizer.localize(symbol=context.symbol, intent=context.intent, evidence=evidence)
         analysis = analyze_news_evidence(context, evidence)
         openai_analysis = role_analysis_with_openai(
             role="news",
@@ -315,7 +318,7 @@ def analyze_news_evidence(context: AgentContext, evidence: list[EvidenceItem]) -
     events = Counter(news_raw_value(item, "eventType", "other") for item in available)
     dominant_direction = dominant_label(directions, fallback="unknown")
     dominant_event = dominant_label(events, fallback="other")
-    top_titles = [item.title for item in available[:3]]
+    top_titles = [display_news_title(item) for item in available[:3]]
     summary = (
         f"{context.symbol} 뉴스 {len(available)}건을 확인했습니다. "
         f"주요 이벤트는 {event_type_label(dominant_event)}이고, "
@@ -471,11 +474,13 @@ def compact_role_evidence(items: list[EvidenceItem]) -> list[dict[str, Any]]:
     compacted = []
     for item in items[:12]:
         raw = item.raw if isinstance(item.raw, dict) else {}
+        title = display_news_title(item) if item.provider == "news" else item.title
+        summary = display_news_summary(item) if item.provider == "news" else item.summary
         compacted.append({
             "provider": item.provider,
             "status": item.status,
-            "title": item.title,
-            "summary": item.summary,
+            "title": title,
+            "summary": summary,
             "url": item.url,
             "raw": {
                 key: raw.get(key)
@@ -488,6 +493,10 @@ def compact_role_evidence(items: list[EvidenceItem]) -> list[dict[str, Any]]:
                     "source",
                     "symbol",
                     "symbols",
+                    "originalTitle",
+                    "originalSummary",
+                    "localizedTitle",
+                    "localizedSummary",
                     "relationType",
                     "themeName",
                     "controlledName",
@@ -527,8 +536,12 @@ def news_panel_item(item: EvidenceItem, symbol: str) -> dict[str, Any]:
     raw = item.raw if isinstance(item.raw, dict) else {}
     symbols = raw.get("symbols") if isinstance(raw.get("symbols"), list) else [raw.get("symbol") or symbol]
     return {
-        "title": item.title,
-        "summary": item.summary,
+        "title": display_news_title(item),
+        "summary": display_news_summary(item),
+        "localizedTitle": news_raw_optional(item, "localizedTitle"),
+        "localizedSummary": news_raw_optional(item, "localizedSummary"),
+        "originalTitle": news_raw_optional(item, "originalTitle") or item.title,
+        "originalSummary": news_raw_optional(item, "originalSummary") or item.summary,
         "url": item.url,
         "source": raw.get("source") or item.provider,
         "publishedAt": raw.get("publishedAt") or item.observedAt,
@@ -545,6 +558,21 @@ def panel_raw_number(item: EvidenceItem, key: str) -> float:
     raw = item.raw if isinstance(item.raw, dict) else {}
     value = raw.get(key)
     return float(value) if isinstance(value, (int, float)) else 0.0
+
+
+def display_news_title(item: EvidenceItem) -> str:
+    return news_raw_optional(item, "localizedTitle") or item.title
+
+
+def display_news_summary(item: EvidenceItem) -> str:
+    return news_raw_optional(item, "localizedSummary") or item.summary
+
+
+def news_raw_optional(item: EvidenceItem, key: str) -> str | None:
+    raw = item.raw if isinstance(item.raw, dict) else {}
+    value = raw.get(key)
+    text = str(value).strip() if value is not None else ""
+    return text or None
 
 
 def parse_panel_time(item: EvidenceItem) -> float:

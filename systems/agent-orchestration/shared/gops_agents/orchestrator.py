@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import re
 from typing import Any
 
 from .agents import (
@@ -106,8 +107,12 @@ class AgentOrchestrator:
 
     def _normalize_request(self, state: dict[str, Any]) -> dict[str, Any]:
         request = state["request"]
-        symbol = normalize_symbol(request.get("symbol") or read_symbol_from_chart_context(request.get("chartContext")) or "AAPL")
         intent = str(request.get("intent") or request.get("prompt") or latest_message(request.get("messages")) or "analysis")
+        explicit_symbol = extract_symbol_from_intent(intent)
+        symbol = normalize_symbol(
+            explicit_symbol or request.get("symbol") or read_symbol_from_chart_context(request.get("chartContext")) or "AAPL"
+        )
+        chart_context = sanitize_chart_context_for_symbol(request.get("chartContext"), symbol, bool(explicit_symbol))
         events = [
             item if isinstance(item, MarketEvent) else MarketEvent.from_dict(item)
             for item in request.get("marketEvents", [])
@@ -117,7 +122,7 @@ class AgentOrchestrator:
             symbol=symbol,
             intent=intent,
             messages=[item for item in request.get("messages", []) if isinstance(item, dict)],
-            chartContext=request.get("chartContext") if isinstance(request.get("chartContext"), dict) else {},
+            chartContext=chart_context,
             marketEvents=events,
         )
         return {
@@ -353,6 +358,17 @@ def read_symbol_from_chart_context(context: Any) -> str | None:
     return None
 
 
+def sanitize_chart_context_for_symbol(context: Any, symbol: str, symbol_from_intent: bool) -> dict[str, Any]:
+    if not isinstance(context, dict):
+        return {}
+    if not symbol_from_intent:
+        return context
+    chart_symbol = read_symbol_from_chart_context(context)
+    if chart_symbol and normalize_symbol(chart_symbol) != symbol:
+        return {}
+    return context
+
+
 def latest_message(messages: Any) -> str | None:
     if not isinstance(messages, list) or not messages:
         return None
@@ -365,3 +381,26 @@ def latest_message(messages: Any) -> str | None:
 def normalize_symbol(value: str) -> str:
     normalized = value.strip().upper()
     return normalized or "AAPL"
+
+
+def extract_symbol_from_intent(intent: str) -> str | None:
+    excluded_tokens = {
+        "AI",
+        "API",
+        "CEO",
+        "CFO",
+        "ETF",
+        "GDP",
+        "KST",
+        "MVP",
+        "PER",
+        "PBR",
+        "RAG",
+        "ROI",
+        "USD",
+    }
+    for match in re.finditer(r"(?<![A-Za-z0-9.])([A-Z][A-Z0-9]{0,4}(?:\.[A-Z])?)(?![A-Za-z0-9.])", str(intent or "")):
+        token = match.group(1).upper()
+        if token not in excluded_tokens:
+            return token
+    return None

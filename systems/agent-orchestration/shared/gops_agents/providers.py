@@ -125,6 +125,8 @@ class ClickHouseNewsProvider(NewsProvider):
                 "source": row.get("source"),
                 "author": row.get("author"),
                 "headline": title,
+                "originalTitle": title,
+                "originalSummary": summary,
                 "symbol": row.get("symbol") or symbol,
                 "symbols": row.get("symbols") if isinstance(row.get("symbols"), list) else [symbol],
                 "publishedAt": published_at,
