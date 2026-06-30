@@ -11,10 +11,11 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY systems/market-data/config ./config
+COPY systems/market-data/config ./systems/market-data/config
 COPY systems/market-data/shared ./systems/market-data/shared
 COPY systems/market-data/pods/market-processor ./systems/market-data/pods/market-processor
 COPY systems/market-data/jobs/symbol-registry-sync ./systems/market-data/jobs/symbol-registry-sync
 COPY systems/market-data/jobs/coverage-repair ./systems/market-data/jobs/coverage-repair
+COPY systems/market-data/jobs/initial-load ./systems/market-data/jobs/initial-load
 
 CMD ["python", "-u", "systems/market-data/pods/market-processor/local_main.py"]

@@ -146,6 +146,46 @@ class RealtimeBoundaryTest(unittest.TestCase):
 
         asyncio.run(run())
 
+    def test_redis_live_fallback_reads_each_subscribed_interval(self):
+        async def run():
+            class FakeRedisProvider:
+                redis = None
+
+                def live_event(self, symbol, interval="1m"):
+                    if symbol == "AAPL" and interval == "5m":
+                        return {
+                            "type": "LIVE_CANDLE_UPDATE",
+                            "eventId": "live-5m",
+                            "cursor": "cursor-5m",
+                            "symbol": "AAPL",
+                            "interval": "5m",
+                            "data": {
+                                "timestamp": "2026-06-25T10:15:00.000Z",
+                                "open": 100,
+                                "high": 101,
+                                "low": 99,
+                                "close": 100.5,
+                                "volume": 10,
+                                "isClosed": False,
+                            },
+                        }
+                    return None
+
+            provider = types.SimpleNamespace(redis_provider=FakeRedisProvider())
+            hub = TestableHub(redis_client=None, provider=provider)
+            aapl_1m = StreamSession("AAPL", "1m")
+            aapl_5m = StreamSession("AAPL", "5m")
+            hub.sessions_by_symbol["AAPL"] = {aapl_1m, aapl_5m}
+
+            await hub._broadcast_latest_redis_live_event("AAPL")
+
+            self.assertEqual(aapl_1m.queue.qsize(), 0)
+            self.assertEqual(aapl_5m.queue.qsize(), 1)
+            event = await aapl_5m.queue.get()
+            self.assertEqual(event["interval"], "5m")
+
+        asyncio.run(run())
+
     def test_market_status_delivers_to_symbol_session_without_interval_match(self):
         async def run():
             hub = TestableHub(redis_client=None, provider=None)

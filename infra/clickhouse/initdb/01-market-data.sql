@@ -16,13 +16,15 @@ CREATE TABLE IF NOT EXISTS market_data.trade_ticks
     tape Nullable(String),
     source LowCardinality(String),
     feed LowCardinality(String),
+    feed_profile LowCardinality(String) DEFAULT feed,
+    market_session LowCardinality(String) DEFAULT 'unknown',
     source_event_id Nullable(String),
     received_at Nullable(DateTime64(3, 'UTC')),
     inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(event_time)
-ORDER BY (symbol, event_time, trade_id);
+ORDER BY (symbol, event_time, feed_profile, trade_id);
 
 CREATE TABLE IF NOT EXISTS market_data.chart_candles
 (
@@ -43,13 +45,15 @@ CREATE TABLE IF NOT EXISTS market_data.chart_candles
     correction_type LowCardinality(String),
     source LowCardinality(String),
     feed LowCardinality(String),
+    feed_profile LowCardinality(String) DEFAULT feed,
+    market_session LowCardinality(String) DEFAULT 'unknown',
     source_event_id Nullable(String),
     created_at Nullable(DateTime64(3, 'UTC')),
     inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
 )
 ENGINE = ReplacingMergeTree(inserted_at)
 PARTITION BY toYYYYMM(event_time)
-ORDER BY (symbol, interval, event_time);
+ORDER BY (symbol, interval, event_time, feed_profile, market_session);
 
 CREATE TABLE IF NOT EXISTS market_data.volume_profile_bins_1m
 (
@@ -62,13 +66,15 @@ CREATE TABLE IF NOT EXISTS market_data.volume_profile_bins_1m
     vwap Nullable(Float64),
     source LowCardinality(String),
     feed LowCardinality(String),
+    feed_profile LowCardinality(String) DEFAULT feed,
+    market_session LowCardinality(String) DEFAULT 'unknown',
     source_event_id Nullable(String),
     updated_at Nullable(DateTime64(3, 'UTC')),
     inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
 )
 ENGINE = ReplacingMergeTree(inserted_at)
 PARTITION BY toYYYYMM(event_minute)
-ORDER BY (symbol, event_minute, price_bin_size, price_bin);
+ORDER BY (symbol, event_minute, feed_profile, price_bin_size, price_bin);
 
 CREATE TABLE IF NOT EXISTS market_data.market_status_events
 (
@@ -79,13 +85,15 @@ CREATE TABLE IF NOT EXISTS market_data.market_status_events
     reason Nullable(String),
     source LowCardinality(String),
     feed LowCardinality(String),
+    feed_profile LowCardinality(String) DEFAULT feed,
+    market_session LowCardinality(String) DEFAULT 'unknown',
     source_event_id Nullable(String),
     raw String,
     inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
 )
 ENGINE = ReplacingMergeTree(inserted_at)
 PARTITION BY toYYYYMM(event_time)
-ORDER BY (coalesce(symbol, '_MARKET'), status_type, event_time);
+ORDER BY (coalesce(symbol, '_MARKET'), status_type, event_time, feed_profile, market_session);
 
 CREATE TABLE IF NOT EXISTS market_data.symbols
 (
@@ -123,3 +131,19 @@ ALTER TABLE market_data.chart_candles
 
 ALTER TABLE market_data.trade_ticks
     ADD COLUMN IF NOT EXISTS source_event_id Nullable(String) AFTER feed;
+
+ALTER TABLE market_data.chart_candles
+    ADD COLUMN IF NOT EXISTS feed_profile LowCardinality(String) DEFAULT feed AFTER feed,
+    ADD COLUMN IF NOT EXISTS market_session LowCardinality(String) DEFAULT 'unknown' AFTER feed_profile;
+
+ALTER TABLE market_data.trade_ticks
+    ADD COLUMN IF NOT EXISTS feed_profile LowCardinality(String) DEFAULT feed AFTER feed,
+    ADD COLUMN IF NOT EXISTS market_session LowCardinality(String) DEFAULT 'unknown' AFTER feed_profile;
+
+ALTER TABLE market_data.volume_profile_bins_1m
+    ADD COLUMN IF NOT EXISTS feed_profile LowCardinality(String) DEFAULT feed AFTER feed,
+    ADD COLUMN IF NOT EXISTS market_session LowCardinality(String) DEFAULT 'unknown' AFTER feed_profile;
+
+ALTER TABLE market_data.market_status_events
+    ADD COLUMN IF NOT EXISTS feed_profile LowCardinality(String) DEFAULT feed AFTER feed,
+    ADD COLUMN IF NOT EXISTS market_session LowCardinality(String) DEFAULT 'unknown' AFTER feed_profile;

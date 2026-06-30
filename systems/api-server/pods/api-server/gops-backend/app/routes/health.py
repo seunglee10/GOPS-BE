@@ -2,6 +2,13 @@ import json
 import os
 
 from fastapi import APIRouter
+from alfaka.common.secrets import (
+    ALPACA_CREDENTIAL_SOURCE_AUTO,
+    ALPACA_CREDENTIAL_SOURCE_AWS,
+    ALPACA_CREDENTIAL_SOURCE_LOCAL,
+    local_alpaca_credentials,
+    resolve_alpaca_credential_source,
+)
 
 router = APIRouter()
 _runtime_config_logged = False
@@ -31,8 +38,15 @@ def runtime_config() -> dict[str, object]:
             "localKeyId": presence(os.getenv("APCA_API_KEY_ID")),
             "localSecretKey": presence(os.getenv("APCA_API_SECRET_KEY")),
             "secretName": presence(os.getenv("ALPACA_SECRET_NAME")),
+            "configuredCredentialSource": configured_alpaca_credential_source(),
             "credentialSource": alpaca_credential_source(),
+            "feedProfile": os.getenv("ALPACA_FEED_PROFILE") or os.getenv("ALPACA_FEED") or "sip",
+            "feedProfiles": configured_feed_profiles(),
         },
+        "pipeline": {
+            "components": pipeline_component_health(),
+        },
+        "warnings": runtime_config_warnings(),
     }
 
 
@@ -49,10 +63,120 @@ def presence(value: str | None) -> str:
 
 
 def alpaca_credential_source() -> str:
-    local_key = os.getenv("APCA_API_KEY_ID")
-    local_secret = os.getenv("APCA_API_SECRET_KEY")
-    if local_key and local_secret and local_key != "your_key_id" and local_secret != "your_secret_key":
+    try:
+        configured = resolve_alpaca_credential_source()
+    except ValueError:
+        return "invalid"
+    if configured == ALPACA_CREDENTIAL_SOURCE_LOCAL:
+        return "local-env" if all(local_alpaca_credentials()) else "missing"
+    if configured == ALPACA_CREDENTIAL_SOURCE_AWS:
+        return "aws-secrets-manager" if os.getenv("ALPACA_SECRET_NAME") else "missing"
+    if configured == ALPACA_CREDENTIAL_SOURCE_AUTO and all(local_alpaca_credentials()):
         return "local-env"
     if os.getenv("ALPACA_SECRET_NAME"):
         return "aws-secrets-manager"
     return "missing"
+
+
+def configured_alpaca_credential_source() -> str:
+    try:
+        return resolve_alpaca_credential_source()
+    except ValueError:
+        return "invalid"
+
+
+def runtime_config_warnings() -> list[str]:
+    warnings = []
+    if os.getenv("ALFAKA_REQUEST_CONFIG") not in {None, "", "systems/market-data/config/market-data-request.json"}:
+        warnings.append("stale_request_config_path")
+    if os.getenv("ALPACA_UNIVERSE") not in {None, "", "sp500"}:
+        warnings.append("alpaca_universe_not_sp500")
+    channels = {item.strip() for item in (os.getenv("ALPACA_CHANNELS") or "").split(",") if item.strip()}
+    if channels and "dailyBars" not in channels:
+        warnings.append("alpaca_channels_missing_dailyBars")
+    if channels and "statuses" not in channels:
+        warnings.append("alpaca_channels_missing_statuses")
+    if os.getenv("S3_PROCESSED_FORMAT") not in {None, "", "parquet"}:
+        warnings.append("s3_processed_format_not_parquet")
+    if os.getenv("BACKFILL_INITIAL_LOAD_1M_MIN_START") not in {None, "", "2025-04-01T00:00:00Z"}:
+        warnings.append("1m_preload_cutoff_not_2025_04")
+    profiles = set(configured_feed_profiles())
+    allowed_profiles = {"sip", "iex", "boats", "overnight", "test"}
+    if any(profile not in allowed_profiles for profile in profiles):
+        warnings.append("invalid_alpaca_feed_profile")
+    expected_profiles = {"sip", "iex", "boats"}
+    if profiles and not expected_profiles.issubset(profiles):
+        warnings.append("alpaca_feed_profiles_missing_24_5_profile")
+    if configured_alpaca_credential_source() == "invalid":
+        warnings.append("invalid_alpaca_credential_source")
+    return warnings
+
+
+def configured_feed_profiles() -> list[str]:
+    profiles = csv_values(os.getenv("ALPACA_FEED_PROFILES"))
+    if profiles:
+        return profiles
+    return [os.getenv("ALPACA_FEED_PROFILE") or os.getenv("ALPACA_FEED") or "sip"]
+
+
+def csv_values(value: str | None) -> list[str]:
+    return [item.strip() for item in (value or "").split(",") if item.strip()]
+
+
+def pipeline_component_health() -> dict[str, object]:
+    redis_url = os.getenv("REDIS_URL")
+    if not redis_url:
+        return {"available": False, "reason": "redis_url_not_configured"}
+    try:
+        import redis
+        from alfaka.common.redis_keys import RedisKeyBuilder
+        from alfaka.common.runtime_health import read_component_health
+
+        client = redis.Redis.from_url(redis_url, decode_responses=True, socket_connect_timeout=0.2, socket_timeout=0.2)
+        keys = RedisKeyBuilder()
+        names = [
+            "market-ingestor-sip",
+            "market-ingestor-iex",
+            "market-ingestor-boats",
+            "market-processor",
+        ]
+        return {
+            "available": True,
+            "items": {
+                name: redact_component_health(read_component_health(client, keys, name))
+                for name in names
+            },
+        }
+    except Exception:
+        return {"available": False, "reason": "redis_health_probe_failed"}
+
+
+def redact_component_health(payload):
+    if not payload:
+        return None
+    allowed = {
+        "component",
+        "status",
+        "updatedAt",
+        "feedProfile",
+        "alpacaFeed",
+        "websocketUrl",
+        "supportedSessions",
+        "channels",
+        "symbolCount",
+        "lastChannel",
+        "lastSymbol",
+        "lastEventTime",
+        "lastMarketSession",
+        "lastSourceEventId",
+        "lastFeed",
+        "lastFeedProfile",
+        "lastResult",
+        "alpacaError",
+        "error",
+    }
+    result = {key: payload.get(key) for key in allowed if key in payload}
+    for key in ("alpacaError", "error"):
+        if result.get(key):
+            result[key] = str(result[key])[:300]
+    return result

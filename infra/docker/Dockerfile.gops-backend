@@ -14,7 +14,7 @@ COPY requirements.txt /tmp/alfaka-requirements.txt
 COPY systems/api-server/pods/api-server/gops-backend/requirements.txt /tmp/gops-backend-requirements.txt
 RUN pip install --no-cache-dir -r /tmp/alfaka-requirements.txt -r /tmp/gops-backend-requirements.txt
 
-COPY systems/market-data/config ./config
+COPY systems/market-data/config ./systems/market-data/config
 COPY systems/market-data/shared ./systems/market-data/shared
 COPY systems/order/shared ./systems/order/shared
 COPY systems/api-server/pods/api-server/gops-backend ./systems/api-server/pods/api-server/gops-backend

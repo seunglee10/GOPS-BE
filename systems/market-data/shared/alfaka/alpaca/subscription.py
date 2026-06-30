@@ -10,9 +10,11 @@ from alfaka.common.env import load_dotenv, parse_csv
 
 
 DEFAULT_REQUEST_CONFIG = {
-    "defaultUniverse": "semiconductor-100",
-    "defaultSymbols": ["AAPL", "TSLA", "NVDA"],
-    "defaultSeedSymbols": ["NVDA", "AMD", "AVGO", "TSM", "ASML", "AMAT", "MU"],
+    "defaultUniverse": "sp500",
+    "universeRegistryPath": "systems/market-data/config/sp500-universe.json",
+    "collectionSymbolSource": "universe",
+    "defaultSymbols": ["AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "TSLA"],
+    "defaultSeedSymbols": ["AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "TSLA"],
     "defaultChannels": ["bars", "updatedBars", "dailyBars", "statuses"],
     "activeChartChannels": ["trades"],
     "validChannels": ["bars", "updatedBars", "trades", "dailyBars", "statuses", "quotes", "corrections", "cancelErrors"],
@@ -62,6 +64,8 @@ def load_request_config():
         "companyToSymbol": loaded_config.get("companyToSymbol") or {},
         "symbolMetadata": loaded_config.get("symbolMetadata") or {},
         "defaultUniverse": loaded_config.get("defaultUniverse") or DEFAULT_REQUEST_CONFIG["defaultUniverse"],
+        "universeRegistryPath": loaded_config.get("universeRegistryPath") or DEFAULT_REQUEST_CONFIG["universeRegistryPath"],
+        "collectionSymbolSource": loaded_config.get("collectionSymbolSource") or DEFAULT_REQUEST_CONFIG["collectionSymbolSource"],
         "defaultChannels": loaded_config.get("defaultChannels") or DEFAULT_REQUEST_CONFIG["defaultChannels"],
         "activeChartChannels": loaded_config.get("activeChartChannels") or DEFAULT_REQUEST_CONFIG["activeChartChannels"],
         "defaultSymbols": loaded_config.get("defaultSymbols") or DEFAULT_REQUEST_CONFIG["defaultSymbols"],
@@ -100,10 +104,61 @@ def configured_universe_name(config=None):
 
 def configured_universe_symbols(config=None):
     config = config or load_request_config()
-    universe_name = configured_universe_name(config)
-    if universe_name != "semiconductor-100":
-        raise ValueError(f"지원하지 않는 ALPACA_UNIVERSE입니다: {universe_name}")
-    return _validated_symbol_list(config.get("defaultSymbols") or [], config, "ALPACA_UNIVERSE")
+    universe_name = configured_universe_name(config).lower()
+    if universe_name in {"sp500", "s&p500", "s-and-p-500", "snp500"}:
+        return _validated_symbol_list(load_universe_registry_symbols(config), config, "ALPACA_UNIVERSE")
+    configured_universes = config.get("universes") or {}
+    if universe_name in configured_universes:
+        return _validated_symbol_list(configured_universes[universe_name], config, f"ALPACA_UNIVERSE:{universe_name}")
+    raise ValueError(f"지원하지 않는 ALPACA_UNIVERSE입니다: {universe_name}")
+
+
+def load_universe_registry_symbols(config=None):
+    config = config or load_request_config()
+    registry = load_universe_registry(config)
+    values = registry.get("symbols") if isinstance(registry, dict) else None
+    return values or config.get("defaultSymbols") or []
+
+
+def load_universe_registry(config=None):
+    config = config or load_request_config()
+    registry_path = resolve_universe_registry_path(config)
+    if not registry_path or not registry_path.exists():
+        return {"symbols": config.get("defaultSymbols") or []}
+    with registry_path.open("r", encoding="utf-8") as registry_file:
+        return json.load(registry_file)
+
+
+def resolve_universe_registry_path(config=None):
+    config = config or load_request_config()
+    raw_path = os.getenv("ALPACA_UNIVERSE_REGISTRY_PATH") or config.get("universeRegistryPath")
+    if not raw_path:
+        return None
+    registry_path = Path(raw_path)
+    if registry_path.exists() or registry_path.is_absolute():
+        return registry_path
+    request_config_path = resolve_request_config_path()
+    for parent in (request_config_path.parent, *request_config_path.parents):
+        candidate = parent / registry_path
+        if candidate.exists():
+            return candidate
+    return registry_path
+
+
+def configured_collection_symbols(config=None):
+    config = config or load_request_config()
+    raw_symbols = os.getenv("ALPACA_COLLECTION_SYMBOLS")
+    if raw_symbols is not None:
+        return _validated_symbol_list(parse_csv(raw_symbols), config, "ALPACA_COLLECTION_SYMBOLS")
+
+    source = (os.getenv("ALPACA_COLLECTION_SYMBOL_SOURCE") or config.get("collectionSymbolSource") or "seed").strip().lower()
+    if source == "universe":
+        return configured_universe_symbols(config)
+    if source == "seed":
+        return configured_seed_symbols(config)
+    if source == "defaultsymbols":
+        return _validated_symbol_list(config.get("defaultSymbols") or [], config, "defaultSymbols")
+    raise ValueError(f"지원하지 않는 ALPACA_COLLECTION_SYMBOL_SOURCE입니다: {source}")
 
 
 def configured_seed_symbols(config=None):
@@ -144,7 +199,7 @@ def load_symbols_and_channels(company_or_symbol=None):
     if requested_symbol:
         symbols = [requested_symbol]
     else:
-        symbols = configured_seed_symbols(config)
+        symbols = configured_collection_symbols(config)
 
     channels = parse_csv(os.getenv("ALPACA_CHANNELS", ",".join(config["defaultChannels"])))
     validate_channels(channels, config)

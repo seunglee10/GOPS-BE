@@ -29,16 +29,25 @@ def main() -> None:
             status = fetch_snapshot_status(base_url, symbol, interval)
             should_repair = not is_renderable(status)
             action = "ok"
-            backfill = None
+            backfills = []
+            repair_ranges = recommended_repair_ranges(status)
             if should_repair and status["canBackfill"]:
                 action = "would_queue" if dry_run else "queued"
                 if not dry_run:
-                    backfill = request_backfill(base_url, symbol, interval, force=force)
-                    queued += 1
+                    for repair_range in repair_ranges:
+                        backfills.append(request_backfill(
+                            base_url,
+                            symbol,
+                            interval,
+                            force=force,
+                            start=repair_range.get("start"),
+                            end=repair_range.get("end"),
+                        ))
+                    queued += len(backfills)
             elif should_repair:
                 action = "needs_attention"
                 failures += 1
-            report.append({**status, "action": action, "backfill": backfill})
+            report.append({**status, "action": action, "repairRanges": repair_ranges, "backfills": backfills})
 
     print(json.dumps({"queued": queued, "failures": failures, "items": report}, ensure_ascii=False, indent=2), flush=True)
     if failures:
@@ -59,11 +68,20 @@ def fetch_snapshot_status(base_url: str, symbol: str, interval: str) -> dict[str
         "coverageState": (payload.get("coverage") or {}).get("state"),
         "coverageReason": (payload.get("coverage") or {}).get("reasonCode"),
         "coverageRenderable": (payload.get("coverage") or {}).get("renderable"),
+        "repairStatus": payload.get("repairStatus"),
+        "targetRangeFrom": (payload.get("coverage") or {}).get("targetRangeFrom") or payload.get("targetRangeFrom"),
+        "availableFrom": (payload.get("coverage") or {}).get("availableFrom") or payload.get("availableFrom"),
+        "availableTo": (payload.get("coverage") or {}).get("availableTo") or payload.get("availableTo"),
     }
 
 
-def request_backfill(base_url: str, symbol: str, interval: str, *, force: bool) -> dict[str, object]:
-    body = json.dumps({"symbol": symbol, "interval": interval, "force": force}).encode("utf-8")
+def request_backfill(base_url: str, symbol: str, interval: str, *, force: bool, start: str | None = None, end: str | None = None) -> dict[str, object]:
+    payload = {"symbol": symbol, "interval": interval, "force": force}
+    if start:
+        payload["start"] = start
+    if end:
+        payload["end"] = end
+    body = json.dumps(payload).encode("utf-8")
     return request_json("POST", f"{base_url}/api/charts/backfill", body=body)
 
 
@@ -93,6 +111,16 @@ def is_renderable(status: dict[str, object]) -> bool:
     if status["dataStatus"] == "ready":
         return True
     return status["dataStatus"] == "partial" and status.get("coverageRenderable") is not False
+
+
+def recommended_repair_ranges(status: dict[str, object]) -> list[dict[str, str | None]]:
+    target_from = status.get("targetRangeFrom")
+    available_from = status.get("availableFrom")
+    if isinstance(target_from, str) and isinstance(available_from, str) and target_from < available_from:
+        return [{"start": target_from, "end": available_from}]
+    if isinstance(target_from, str) and not available_from:
+        return [{"start": target_from, "end": None}]
+    return [{"start": None, "end": None}]
 
 
 if __name__ == "__main__":

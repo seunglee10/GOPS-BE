@@ -22,8 +22,9 @@ class RedisMarketDataProvider:
     def latest_price(self, symbol):
         return self.redis.hgetall(self.keys.price_latest(symbol))
 
-    def live_candle(self, symbol):
-        value = self.redis.get(self.keys.live_candle(symbol))
+    def live_candle(self, symbol, interval="1m"):
+        interval = normalize_chart_interval(interval)
+        value = self.redis.get(self.keys.live_candle(symbol, interval))
         return json.loads(value) if value else None
 
     def recent_candles(self, symbol, interval, limit=None):
@@ -38,11 +39,12 @@ class RedisMarketDataProvider:
         candles = attach_moving_averages(self.recent_candles(symbol, interval, limit))
         return snapshot(symbol=symbol, interval=interval, candles=candles)
 
-    def live_event(self, symbol):
-        candle = self.live_candle(symbol)
+    def live_event(self, symbol, interval="1m"):
+        interval = normalize_chart_interval(interval)
+        candle = self.live_candle(symbol, interval)
         if not candle:
             return None
-        return websocket_event("LIVE_CANDLE_UPDATE", symbol, "1m", candle)
+        return websocket_event("LIVE_CANDLE_UPDATE", symbol, interval, candle)
 
     def closed_event(self, symbol, interval):
         interval = normalize_chart_interval(interval)
@@ -64,4 +66,8 @@ class RedisMarketDataProvider:
 
     def symbol_metadata(self, symbol):
         value = self.redis.get(self.keys.symbol_metadata(symbol))
+        return json.loads(value) if value else None
+
+    def hot_symbols_snapshot(self):
+        value = self.redis.get(self.keys.hot_symbols_snapshot())
         return json.loads(value) if value else None

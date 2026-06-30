@@ -3,11 +3,15 @@
 # 주의: 프론트는 ma5/ma20/ma60 flat field를 기대합니다.
 import hashlib
 
+from alfaka.alpaca.feed_profiles import market_session_for_timestamp
+from alfaka.serving.time_utils import canonical_utc_timestamp
+
 
 def candle_to_gops(candle):
     ma = candle.get("ma") or {}
+    timestamp = canonical_utc_timestamp(candle.get("timestamp"))
     result = {
-        "timestamp": candle.get("timestamp"),
+        "timestamp": timestamp,
         "open": number_or_zero(candle.get("open")),
         "high": number_or_zero(candle.get("high")),
         "low": number_or_zero(candle.get("low")),
@@ -20,6 +24,12 @@ def candle_to_gops(candle):
         value = candle.get(key, ma.get(key))
         if value is not None:
             result[key] = number_or_zero(value)
+    for key in ("sourceInterval", "updatedAt", "feedProfile", "marketSession"):
+        value = candle.get(key)
+        if value is not None:
+            result[key] = value
+    if not result.get("marketSession") or result.get("marketSession") == "unknown":
+        result["marketSession"] = fallback_market_session(candle, timestamp)
     return result
 
 
@@ -40,7 +50,8 @@ def snapshot(
     resolved_message = message
     if resolved_message is None and resolved_data_status == "empty":
         resolved_message = "No candle data is available for this symbol and interval."
-    return {
+    converted_candles = [candle_to_gops(candle) for candle in candles]
+    payload = {
         "symbol": symbol,
         "interval": interval,
         "source": source,
@@ -51,22 +62,38 @@ def snapshot(
         "canBackfill": bool(can_backfill),
         "message": resolved_message,
         "indicators": indicators or {"ma": [5, 20, 60], "volume": True},
-        "candles": [candle_to_gops(candle) for candle in candles],
+        "candles": converted_candles,
     }
+    if last_candle.get("feedProfile"):
+        payload["feedProfile"] = last_candle["feedProfile"]
+    if last_candle.get("marketSession") and last_candle.get("marketSession") != "unknown":
+        payload["marketSession"] = last_candle["marketSession"]
+    elif converted_candles:
+        payload["marketSession"] = converted_candles[-1].get("marketSession")
+    return payload
 
 
-def websocket_event(event_type, symbol, interval, candle, source="alpaca", feed="sip"):
+def websocket_event(event_type, symbol, interval, candle, source=None, feed=None):
     cursor = cursor_for(symbol, interval, candle)
-    return {
+    event = {
         "type": event_type,
         "eventId": f"delta/{event_type}/{symbol}/{interval}/{cursor}",
         "cursor": cursor,
         "symbol": symbol,
         "interval": interval,
-        "source": source,
-        "feed": feed,
+        "source": source or candle.get("source") or "alpaca",
+        "feed": feed or candle.get("feed") or "sip",
         "data": candle_to_gops(candle),
     }
+    if candle.get("feedProfile"):
+        event["feedProfile"] = candle["feedProfile"]
+    if candle.get("marketSession") and candle.get("marketSession") != "unknown":
+        event["marketSession"] = candle["marketSession"]
+    elif event["data"].get("marketSession"):
+        event["marketSession"] = event["data"]["marketSession"]
+    if candle.get("sourceInterval"):
+        event["sourceInterval"] = candle["sourceInterval"]
+    return event
 
 
 def market_status_event(status):
@@ -100,10 +127,18 @@ def volume_profile_event(symbol, profile_bin):
     }
 
 
+def fallback_market_session(candle, timestamp):
+    interval = str(candle.get("interval") or "")
+    if interval in {"1D", "1d", "1W", "1M"}:
+        return "regular"
+    return market_session_for_timestamp(timestamp)
+
+
 def cursor_for(symbol, interval, payload, time_field="timestamp"):
     if not payload:
         return f"v1:{symbol}:{interval}:empty:00000000"
-    event_time = payload.get(time_field) or payload.get("timestamp") or payload.get("eventTime") or payload.get("updatedAt") or payload.get("createdAt") or "unknown"
+    raw_event_time = payload.get(time_field) or payload.get("timestamp") or payload.get("eventTime") or payload.get("updatedAt") or payload.get("createdAt") or "unknown"
+    event_time = canonical_utc_timestamp(raw_event_time) or raw_event_time
     source_event_id = payload.get("sourceEventId") or f"{symbol}/{interval}/{event_time}"
     digest = hashlib.sha1(str(source_event_id).encode("utf-8")).hexdigest()[:10]
     return f"v1:{symbol}:{interval}:{event_time}:{digest}"

@@ -51,7 +51,10 @@ class WebSocketSessionManager:
         candles = self.provider.candles_since_cursor(symbol, interval, cursor)
         from alfaka.serving.dto import websocket_event
         for candle in candles:
-            event_type = "CANDLE_CORRECTED" if candle.get("correctionType") == "UPDATED" else "CANDLE_CLOSED"
+            if not bool(candle.get("isClosed", candle.get("is_closed", True))):
+                event_type = "LIVE_CANDLE_UPDATE"
+            else:
+                event_type = "CANDLE_CORRECTED" if candle.get("correctionType") == "UPDATED" else "CANDLE_CLOSED"
             await websocket.send_json(websocket_event(event_type, symbol, interval, candle, feed=candle.get("feed") or "unknown"))
 
 

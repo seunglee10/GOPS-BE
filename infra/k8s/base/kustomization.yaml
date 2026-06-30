@@ -10,8 +10,11 @@ resources:
   - job-order-reconciler.yaml
   - job-symbol-registry-sync.yaml
   - job-coverage-repair.yaml
+  - job-initial-load.yaml
   - deployment-alpaca-ingestor.yaml
+  - deployment-market-processor.yaml
   - deployment-s3-sink.yaml
+  - deployment-raw-s3-archive.yaml
   - deployment-clickhouse-loader.yaml
   - deployment-backfill-worker.yaml
   - deployment-order-outbox-publisher.yaml

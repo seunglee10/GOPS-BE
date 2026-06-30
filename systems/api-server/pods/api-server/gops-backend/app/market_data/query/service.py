@@ -62,6 +62,9 @@ class MarketDataQueryService:
         interval = normalize_chart_interval(interval)
         return self.backfill_service.get_status(symbol, interval, request_id=request_id)
 
+    def backfill_queue_metrics(self) -> dict[str, Any]:
+        return self.backfill_service.queue_metrics()
+
     def symbol_search(self, query: str, limit: int) -> dict[str, Any]:
         return {
             "source": "alpaca",

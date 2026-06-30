@@ -54,7 +54,8 @@ flowchart LR
   subgraph Market["systems/market-data"]
     Ingestor["pod: market-ingestor"]
     Processor["pod: market-processor"]
-    S3Sink["pod: s3-sink"]
+    S3Sink["pod: processed-s3-sink"]
+    RawS3Archive["pod: raw-s3-archive"]
     CHLoader["pod: clickhouse-loader"]
     Backfill["pod: backfill-worker"]
     Registry["job: symbol-registry-sync"]
@@ -93,6 +94,8 @@ flowchart LR
   Ingestor --> Kafka
   Ingestor --> Secrets
   Ingestor --> MarketShared
+  Kafka --> RawS3Archive
+  RawS3Archive --> S3
   Kafka --> Processor
   Processor --> Redis
   Processor --> S3Sink

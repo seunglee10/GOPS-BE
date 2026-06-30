@@ -14,7 +14,10 @@ except Exception:
 
 from app.market_data.query.service import get_query_service
 from app.services.alfaka_market_data import (
+    hot_symbol_summaries,
+    replace_watchlist_symbols,
     symbol_summaries,
+    watchlist_summaries,
 )
 from alfaka.serving.intervals import MAX_CHART_CANDLE_LIMIT
 
@@ -30,6 +33,10 @@ class BackfillRequestBody(BaseModel):
     end: str | None = None
     mode: str = "default"
     force: bool = False
+
+
+class WatchlistRequestBody(BaseModel):
+    symbols: list[str] = []
 
 
 @router.get("/api/charts/candles")
@@ -62,6 +69,11 @@ def chart_backfill_status(
     return get_query_service().backfill_status(symbol, interval, request_id=request_id)
 
 
+@router.get("/api/charts/backfill/queue")
+def chart_backfill_queue() -> dict[str, Any]:
+    return get_query_service().backfill_queue_metrics()
+
+
 @router.get("/api/charts/symbols")
 def chart_symbols() -> dict[str, Any]:
     # 프론트의 심볼 목록/요약 영역이 호출합니다.
@@ -71,3 +83,23 @@ def chart_symbols() -> dict[str, Any]:
         "feed": "configured-market-feed",
         "symbols": symbol_summaries(),
     }
+
+
+@router.get("/api/charts/watchlist")
+def chart_watchlist(
+    symbols: str | None = Query(default=None, max_length=2000),
+) -> dict[str, Any]:
+    requested_symbols = [item.strip() for item in symbols.split(",") if item.strip()] if symbols is not None else None
+    return watchlist_summaries(requested_symbols)
+
+
+@router.put("/api/charts/watchlist")
+def update_chart_watchlist(body: WatchlistRequestBody) -> dict[str, Any]:
+    return replace_watchlist_symbols(body.symbols or [])
+
+
+@router.get("/api/charts/hot-symbols")
+def chart_hot_symbols(
+    limit: int = Query(default=20, ge=1, le=100),
+) -> dict[str, Any]:
+    return hot_symbol_summaries(limit=limit)

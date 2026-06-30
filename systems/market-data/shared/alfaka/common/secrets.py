@@ -8,12 +8,54 @@ import sys
 import boto3
 
 
-def load_alpaca_credentials():
-    local_key = os.getenv("APCA_API_KEY_ID")
-    local_secret = os.getenv("APCA_API_SECRET_KEY")
+ALPACA_CREDENTIAL_SOURCE_ENV = "ALPACA_CREDENTIAL_SOURCE"
+ALPACA_CREDENTIAL_SOURCE_AUTO = "auto"
+ALPACA_CREDENTIAL_SOURCE_LOCAL = "local-env"
+ALPACA_CREDENTIAL_SOURCE_AWS = "aws-secrets-manager"
+ALPACA_CREDENTIAL_SOURCES = {
+    ALPACA_CREDENTIAL_SOURCE_AUTO,
+    ALPACA_CREDENTIAL_SOURCE_LOCAL,
+    ALPACA_CREDENTIAL_SOURCE_AWS,
+}
 
+
+def resolve_alpaca_credential_source(environ=None):
+    environ = environ or os.environ
+    raw = (environ.get(ALPACA_CREDENTIAL_SOURCE_ENV) or ALPACA_CREDENTIAL_SOURCE_AUTO).strip().lower()
+    aliases = {
+        "aws": ALPACA_CREDENTIAL_SOURCE_AWS,
+        "secrets-manager": ALPACA_CREDENTIAL_SOURCE_AWS,
+        "secret-manager": ALPACA_CREDENTIAL_SOURCE_AWS,
+        "local": ALPACA_CREDENTIAL_SOURCE_LOCAL,
+        "env": ALPACA_CREDENTIAL_SOURCE_LOCAL,
+    }
+    source = aliases.get(raw, raw)
+    if source not in ALPACA_CREDENTIAL_SOURCES:
+        raise ValueError(
+            f"{ALPACA_CREDENTIAL_SOURCE_ENV} must be one of "
+            f"{', '.join(sorted(ALPACA_CREDENTIAL_SOURCES))}; got {raw!r}"
+        )
+    return source
+
+
+def local_alpaca_credentials(environ=None):
+    environ = environ or os.environ
+    local_key = environ.get("APCA_API_KEY_ID")
+    local_secret = environ.get("APCA_API_SECRET_KEY")
     if local_key and local_secret and local_key != "your_key_id" and local_secret != "your_secret_key":
         return local_key, local_secret
+    return None, None
+
+
+def load_alpaca_credentials(source=None):
+    source = source or resolve_alpaca_credential_source()
+    if source == ALPACA_CREDENTIAL_SOURCE_LOCAL:
+        return local_alpaca_credentials()
+
+    if source == ALPACA_CREDENTIAL_SOURCE_AUTO:
+        local = local_alpaca_credentials()
+        if all(local):
+            return local
 
     secret_name = os.getenv("ALPACA_SECRET_NAME")
     aws_region = os.getenv("AWS_REGION", "ap-northeast-2")

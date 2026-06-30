@@ -7,10 +7,18 @@ from datetime import datetime, timedelta, timezone
 from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
 from alfaka.serving.cursors import timestamp_from_cursor
 from alfaka.serving.dto import cursor_for, snapshot
-from alfaka.serving.intervals import backfill_target_days, candle_count_for_1y, normalize_chart_interval, resolve_candle_limit, source_interval_for
-from alfaka.serving.moving_average import attach_moving_averages
+from alfaka.serving.intervals import (
+    backfill_target_days,
+    historical_target_bars,
+    intraday_preload_min_start_iso,
+    normalize_chart_interval,
+    resolve_candle_limit,
+    source_interval_for,
+)
+from alfaka.serving.moving_average import MA_WINDOWS, attach_moving_averages
 from alfaka.serving.redis_provider import RedisMarketDataProvider
 from alfaka.serving.symbol_registry import SymbolRegistry
+from alfaka.serving.time_utils import canonical_utc_timestamp, parse_utc_time
 
 
 logger = logging.getLogger(__name__)
@@ -25,26 +33,34 @@ class MarketDataProvider:
     def candle_snapshot(self, symbol, interval, limit=None, before=None, from_time=None, to_time=None):
         interval = normalize_chart_interval(interval)
         limit = resolve_candle_limit(interval, limit)
+        query_limit = moving_average_query_limit(interval, limit)
+        clickhouse_from_time = target_floor_from_time(interval, from_time)
         range_query = bool(before or from_time or to_time)
-        redis_candles = [] if range_query else filter_stock_weekdays(self.redis_provider.recent_candles(symbol, interval, limit))
-        if len(redis_candles) >= limit:
-            payload = snapshot(symbol=symbol, interval=interval, candles=attach_moving_averages(redis_candles[-limit:]))
-            return with_coverage_metadata(payload, self._coverage(symbol, interval), limit)
+        redis_candles = [] if range_query else filter_stock_weekdays(self.redis_provider.recent_candles(symbol, interval, query_limit))
+        live_candle = None if range_query else self._live_candle(symbol, interval)
+        coverage = None
+        if len(redis_candles) >= query_limit:
+            merged_redis = merge_candles(redis_candles, [live_candle] if live_candle else [])
+            coverage = self._coverage(symbol, interval)
+            if not candles_are_behind_coverage(merged_redis, coverage):
+                payload = snapshot(symbol=symbol, interval=interval, candles=attach_moving_averages(merged_redis)[-limit:])
+                return with_coverage_metadata(payload, coverage, limit)
 
         clickhouse_candles = filter_stock_weekdays(self.clickhouse_provider.candles(
             symbol,
             interval,
-            limit,
+            query_limit,
             before=before,
-            from_time=from_time,
+            from_time=clickhouse_from_time,
             to_time=to_time,
         ))
-        merged = merge_candles(clickhouse_candles, redis_candles)
-        candles = attach_moving_averages(merged[-limit:])
+        live_group = [live_candle] if live_candle else []
+        merged = merge_candles(clickhouse_candles, redis_candles, live_group)
+        candles = attach_moving_averages(merged)[-limit:]
         feed = first_value(candles, "feed", "sip")
         source = first_value(candles, "source", "alpaca")
         payload = snapshot(symbol=symbol, interval=interval, candles=candles, source=source, feed=feed)
-        return with_coverage_metadata(payload, self._coverage(symbol, interval, candles), limit)
+        return with_coverage_metadata(payload, coverage or self._coverage(symbol, interval, candles), limit)
 
     def candles_since_cursor(self, symbol, interval, cursor, limit=500):
         interval = normalize_chart_interval(interval)
@@ -54,6 +70,8 @@ class MarketDataProvider:
             if candle_after_cursor(symbol, interval, candle, cursor, timestamp)
         ]
         redis_candles = filter_stock_weekdays(redis_candles)
+        live_candle = self._live_candle(symbol, interval)
+        live_candles = [live_candle] if live_candle and candle_after_cursor(symbol, interval, live_candle, cursor, timestamp) else []
         try:
             clickhouse_candles = self._clickhouse_candles_since_cursor(symbol, interval, timestamp, limit)
         except Exception:
@@ -63,7 +81,7 @@ class MarketDataProvider:
             candle for candle in clickhouse_candles
             if candle_after_cursor(symbol, interval, candle, cursor, timestamp)
         ])
-        return merge_candles(filtered_clickhouse, redis_candles)[-limit:]
+        return merge_candles(filtered_clickhouse, redis_candles, live_candles)[-limit:]
 
     def _clickhouse_candles_since_cursor(self, symbol, interval, timestamp, limit):
         if not timestamp:
@@ -87,6 +105,16 @@ class MarketDataProvider:
                 "availableFrom": candles[0].get("timestamp"),
                 "availableTo": candles[-1].get("timestamp"),
             }
+
+    def _live_candle(self, symbol, interval):
+        method = getattr(self.redis_provider, "live_candle", None)
+        if not callable(method):
+            return None
+        try:
+            return method(symbol, interval)
+        except Exception:
+            logger.warning("Redis live candle lookup failed for %s %s.", symbol, interval, exc_info=True)
+            return None
 
     def search_symbols(self, query, limit=20):
         return self.symbol_registry.search(query, limit)
@@ -138,9 +166,11 @@ def merge_candles(*groups):
     by_timestamp = {}
     for group in groups:
         for candle in group:
-            timestamp = candle.get("timestamp")
+            if not candle:
+                continue
+            timestamp = canonical_utc_timestamp(candle.get("timestamp"))
             if timestamp:
-                by_timestamp[timestamp] = candle
+                by_timestamp[timestamp] = {**candle, "timestamp": timestamp}
     return [by_timestamp[key] for key in sorted(by_timestamp)]
 
 
@@ -155,7 +185,7 @@ def with_coverage_metadata(payload, coverage, requested_limit):
     row_count = coverage.get("rowCount") if coverage else None
     invalid_row_count = coverage.get("invalidRowCount") if coverage else None
     stored_count = int(row_count) if row_count is not None else len(candles)
-    target_stored_count = candle_count_for_1y(source_interval)
+    target_stored_count = historical_target_bars(source_interval)
     target_range_from = target_range_from_for_interval(source_interval)
     payload.update({
         "requestedLimit": requested_limit,
@@ -167,7 +197,7 @@ def with_coverage_metadata(payload, coverage, requested_limit):
         "availableTo": available_to,
         "oldestTimestamp": oldest,
         "newestTimestamp": newest,
-        "hasMoreBefore": bool(oldest and available_from and available_from < oldest),
+        "hasMoreBefore": has_more_before_target(oldest, available_from, target_range_from),
         "hasMoreAfter": bool(newest and available_to and available_to > newest),
         "storedCandleCount": stored_count,
         "invalidRowCount": int(invalid_row_count or 0),
@@ -175,23 +205,59 @@ def with_coverage_metadata(payload, coverage, requested_limit):
     return payload
 
 
+def has_more_before_target(oldest, available_from, target_range_from):
+    oldest_time = parse_iso_time(oldest)
+    if not oldest_time:
+        return False
+    effective_start = None
+    for value in (available_from, target_range_from):
+        parsed = parse_iso_time(value)
+        if parsed and (effective_start is None or parsed > effective_start):
+            effective_start = parsed
+    return bool(effective_start and effective_start < oldest_time)
+
+
+def candles_are_behind_coverage(candles, coverage):
+    if not candles or not coverage:
+        return False
+    available_to = parse_iso_time(coverage.get("availableTo"))
+    if not available_to:
+        return False
+    newest = None
+    for candle in reversed(candles):
+        newest = parse_iso_time(candle.get("timestamp"))
+        if newest:
+            break
+    return bool(newest and available_to > newest)
+
+
 def one_year_target_from(reference_timestamp=None):
     return target_range_from_for_interval("1m", reference_timestamp)
+
+
+def target_floor_from_time(interval, from_time=None):
+    target_floor = target_range_from_for_interval(source_interval_for(interval))
+    if not from_time:
+        return target_floor
+    requested = parse_iso_time(from_time)
+    floor = parse_iso_time(target_floor)
+    if requested and floor and requested > floor:
+        return from_time
+    return target_floor
 
 
 def target_range_from_for_interval(interval, reference_timestamp=None):
     reference = parse_iso_time(reference_timestamp) or datetime.now(timezone.utc)
     target = reference - timedelta(days=backfill_target_days(interval))
+    if source_interval_for(interval) == "1m":
+        min_start = parse_iso_time(intraday_preload_min_start_iso())
+        if min_start and target < min_start:
+            target = min_start
     return target.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
 def parse_iso_time(value):
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(timezone.utc)
-    except ValueError:
-        return None
+    return parse_utc_time(value)
 
 
 def candle_after_cursor(symbol, interval, candle, cursor, cursor_timestamp=None):
@@ -201,6 +267,8 @@ def candle_after_cursor(symbol, interval, candle, cursor, cursor_timestamp=None)
     candle_timestamp = candle.get("timestamp") or candle.get("eventTime")
     if not candle_timestamp or not cursor_timestamp:
         return True
+    candle_timestamp = canonical_utc_timestamp(candle_timestamp) or candle_timestamp
+    cursor_timestamp = canonical_utc_timestamp(cursor_timestamp) or cursor_timestamp
     if candle_timestamp > cursor_timestamp:
         return True
     if candle_timestamp < cursor_timestamp:
@@ -232,3 +300,8 @@ def is_stock_weekday_candle(candle):
     if not parsed:
         return True
     return parsed.weekday() < 5
+
+
+def moving_average_query_limit(interval, requested_limit):
+    lookback = max(MA_WINDOWS)
+    return resolve_candle_limit(interval, int(requested_limit) + lookback)

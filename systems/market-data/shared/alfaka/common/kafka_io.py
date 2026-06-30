@@ -18,8 +18,11 @@ def create_json_producer(bootstrap_servers, client_id):
     )
 
 
-def create_json_consumer(topics, bootstrap_servers, group_id, client_id):
+def create_json_consumer(topics, bootstrap_servers, group_id, client_id, enable_auto_commit=None):
     from kafka import KafkaConsumer
+
+    if enable_auto_commit is None:
+        enable_auto_commit = os.getenv("KAFKA_ENABLE_AUTO_COMMIT", "true").lower() in {"1", "true", "yes"}
 
     return KafkaConsumer(
         *topics,
@@ -27,7 +30,7 @@ def create_json_consumer(topics, bootstrap_servers, group_id, client_id):
         group_id=group_id,
         client_id=client_id,
         auto_offset_reset=os.getenv("KAFKA_AUTO_OFFSET_RESET", "latest"),
-        enable_auto_commit=True,
+        enable_auto_commit=enable_auto_commit,
         key_deserializer=lambda value: value.decode("utf-8") if value else None,
         value_deserializer=lambda value: json.loads(value.decode("utf-8")),
     )

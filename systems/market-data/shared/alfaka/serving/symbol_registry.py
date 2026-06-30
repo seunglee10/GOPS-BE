@@ -18,15 +18,19 @@ class SymbolRegistry:
 
     def search(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
         normalized_query = query.strip().upper()
-        results = []
+        results = self._universe_matches(normalized_query)
+        universe_symbols = set(self._universe_symbols())
         if self.clickhouse_provider:
             try:
-                results.extend(self.clickhouse_provider.search_symbols(normalized_query, limit))
+                results.extend([
+                    item
+                    for item in self.clickhouse_provider.search_symbols(normalized_query, max(limit, 40))
+                    if isinstance(item, dict) and item.get("symbol") in universe_symbols
+                ])
             except Exception:
                 logger.warning("ClickHouse symbol search failed; falling back to configured symbols.", exc_info=True)
                 results.extend([])
 
-        results.extend(self._universe_matches(normalized_query))
         if self._is_universe_symbol(normalized_query):
             results.append(self._metadata_for_symbol(normalized_query))
 
@@ -62,15 +66,36 @@ class SymbolRegistry:
 
     def _universe_matches(self, query: str) -> list[dict[str, Any]]:
         matches = []
-        for symbol in self._universe_symbols():
+        for index, symbol in enumerate(self._universe_symbols()):
             metadata = self._metadata_for_symbol(symbol)
             if not query:
                 matches.append(metadata)
                 continue
             haystack = f"{metadata['symbol']} {metadata['name']}".upper()
             if query in haystack:
-                matches.append(metadata)
-        return matches
+                matches.append({**metadata, "_matchScore": self._match_score(metadata, query), "_universeOrder": index})
+        if not query:
+            return matches
+        matches.sort(key=lambda item: (item.get("_matchScore", 99), item.get("_universeOrder", 999999), item["symbol"]))
+        return [
+            {key: value for key, value in item.items() if not key.startswith("_")}
+            for item in matches
+        ]
+
+    def _match_score(self, metadata: dict[str, Any], query: str) -> int:
+        symbol = metadata["symbol"].upper()
+        name = metadata["name"].upper()
+        if symbol == query:
+            return 0
+        if symbol.startswith(query):
+            return 1
+        if name.startswith(query):
+            return 2
+        if query in symbol:
+            return 3
+        if query in name:
+            return 4
+        return 5
 
     def _metadata_for_symbol(self, symbol: str) -> dict[str, Any]:
         configured_metadata = (self.config.get("symbolMetadata") or {}).get(symbol) or {}

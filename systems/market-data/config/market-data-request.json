@@ -1,28 +1,28 @@
 {
   "description": "Default market-data universe and Alpaca subscription policy.",
-  "defaultUniverse": "semiconductor-100",
-  "defaultSeedSymbols": ["NVDA", "AMD", "AVGO", "TSM", "ASML", "AMAT", "MU"],
+  "defaultUniverse": "sp500",
+  "universeRegistryPath": "systems/market-data/config/sp500-universe.json",
+  "collectionSymbolSource": "universe",
+  "defaultSeedSymbols": ["AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "TSLA"],
   "defaultSymbols": [
-    "NVDA", "AMD", "AVGO", "INTC", "QCOM", "TXN", "MU", "ADI", "MRVL", "MCHP",
-    "MPWR", "ON", "NXPI", "SWKS", "QRVO", "LSCC", "ALGM", "DIOD", "CRUS", "POWI",
-    "SLAB", "SIMO", "HIMX", "AMBA", "CEVA", "RMBS", "MTSI", "AOSL", "MXL", "SYNA",
-    "SMTC", "SGH", "SITM", "PI", "LASR", "IPGP", "COHR", "LITE", "WOLF", "NVTS",
-    "CRDO", "ALAB", "MRAM", "GSIT", "ATOM", "QUIK", "PXLW", "INDI", "SKYT", "TSM",
-    "UMC", "GFS", "ASX", "STM", "ARM", "ASML", "AMAT", "LRCX", "KLAC", "TER",
-    "ONTO", "MKSI", "ENTG", "UCTT", "ICHR", "VECO", "ACMR", "NVMI", "CAMT", "COHU",
-    "FORM", "KLIC", "AEHR", "ACLS", "AMKR", "PLAB", "TSEM", "IMOS", "SNPS", "CDNS",
-    "ASYS", "INTT", "AXTI", "WDC", "STX", "KEYS", "OSIS", "NVEC", "OLED", "FN",
-    "FLEX", "SANM", "JBL", "CLS", "VSH", "VICR", "BELFB", "CTS", "MEI", "ARW"
+    "AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "TSLA"
   ],
   "symbolMetadata": {
+    "AAPL": {"name": "Apple Inc.", "exchange": "NASDAQ", "market": "NASDAQ"},
+    "MSFT": {"name": "Microsoft Corporation", "exchange": "NASDAQ", "market": "NASDAQ"},
     "NVDA": {"name": "NVIDIA Corporation", "exchange": "NASDAQ", "market": "NASDAQ"},
+    "AMZN": {"name": "Amazon.com, Inc.", "exchange": "NASDAQ", "market": "NASDAQ"},
+    "META": {"name": "Meta Platforms, Inc.", "exchange": "NASDAQ", "market": "NASDAQ"},
+    "GOOGL": {"name": "Alphabet Inc. Class A", "exchange": "NASDAQ", "market": "NASDAQ"},
+    "TSLA": {"name": "Tesla, Inc.", "exchange": "NASDAQ", "market": "NASDAQ"},
     "AMD": {"name": "Advanced Micro Devices, Inc.", "exchange": "NASDAQ", "market": "NASDAQ"},
     "AVGO": {"name": "Broadcom Inc.", "exchange": "NASDAQ", "market": "NASDAQ"},
-    "TSM": {"name": "Taiwan Semiconductor Manufacturing Company Limited", "exchange": "NYSE", "market": "NYSE"},
-    "ASML": {"name": "ASML Holding N.V.", "exchange": "NASDAQ", "market": "NASDAQ"},
     "AMAT": {"name": "Applied Materials, Inc.", "exchange": "NASDAQ", "market": "NASDAQ"},
     "MU": {"name": "Micron Technology, Inc.", "exchange": "NASDAQ", "market": "NASDAQ"},
-    "INTC": {"name": "Intel Corporation", "exchange": "NASDAQ", "market": "NASDAQ"}
+    "INTC": {"name": "Intel Corporation", "exchange": "NASDAQ", "market": "NASDAQ"},
+    "BRK.B": {"name": "Berkshire Hathaway Inc. Class B", "exchange": "NYSE", "market": "NYSE"},
+    "JPM": {"name": "JPMorgan Chase & Co.", "exchange": "NYSE", "market": "NYSE"},
+    "UNH": {"name": "UnitedHealth Group Incorporated", "exchange": "NYSE", "market": "NYSE"}
   },
   "defaultChannels": ["bars", "updatedBars", "dailyBars", "statuses"],
   "activeChartChannels": ["trades"],
@@ -34,11 +34,12 @@
     "initialChartLoad": "today-1m-bars-plus-recent-clickhouse-history",
     "avoidInitialTodayTickReplay": true,
     "activeChartRealtime": "subscribe-trades-while-chart-websocket-is-open",
+    "tradeSubscriptionPlan": "active-chart + watchlist + hot-top20",
     "todayTickStorage": "market-data/live/trades compacted after market close"
   },
   "storage": {
     "s3": {
-      "rawPrefix": "market-data/raw",
+      "rawPrefix": "market-data/raw/alpaca",
       "finalPrefix": "market-data/final",
       "livePrefix": "market-data/live",
       "format": "parquet",
@@ -60,6 +61,9 @@
       "recentCandleKey": "candles:{symbol}:{interval}",
       "activeChartSetKey": "active:charts:symbols",
       "activeChartSymbolKey": "active:charts:{symbol}",
+      "watchlistSetKey": "watchlist:symbols",
+      "hotSetKey": "hot:symbols",
+      "hotSnapshotKey": "hot:symbols:snapshot",
       "marketStatusKey": "market:status:latest",
       "symbolStatusKey": "market:status:{symbol}:latest",
       "symbolMetadataKey": "symbols:metadata:{symbol}",

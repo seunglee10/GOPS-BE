@@ -1,5 +1,5 @@
 # 역할: Flink 팀/배포자가 맞춰야 하는 입력/출력 데이터 계약입니다.
-# 사용: Python local-stream-processor를 실제 Flink Job으로 바꿀 때 기준으로 씁니다.
+# 사용: 현재 Python market-processor pod를 실제 Flink Job으로 바꿀 때 기준으로 씁니다.
 # 출력: Kafka topic, Redis key, S3 path 계약을 한 파일에 둡니다.
 jobName: market-data-normalizer
 inputTopics:

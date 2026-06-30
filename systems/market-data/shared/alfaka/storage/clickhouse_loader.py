@@ -7,8 +7,10 @@ import re
 import sys
 from datetime import datetime, timezone
 
+from alfaka.alpaca.feed_profiles import market_session_for_timestamp
 from alfaka.common.env import load_dotenv, parse_csv
 from alfaka.common.kafka_io import create_json_consumer
+from alfaka.common.runtime_config import validate_required_values
 from alfaka.storage.candle_validation import invalid_candle_reason
 
 
@@ -23,6 +25,14 @@ def main():
         os.getenv("KAFKA_VOLUME_PROFILE_BINS_TOPIC", "market.volume-profile-bins.1m.v1"),
     ])))
     load_trades = os.getenv("CLICKHOUSE_LOAD_TRADES", "false").lower() in {"1", "true", "yes"}
+    enable_auto_commit = os.getenv("KAFKA_CLICKHOUSE_ENABLE_AUTO_COMMIT", "false").lower() in {"1", "true", "yes"}
+    validate_required_values("clickhouse loader", {
+        "kafka_servers": kafka_servers,
+        "clickhouse_topics": topics,
+        "clickhouse_url": os.getenv("CLICKHOUSE_HTTP_URL", "http://localhost:8123"),
+        "clickhouse_database": os.getenv("CLICKHOUSE_DATABASE", "market_data"),
+        "clickhouse_user": os.getenv("CLICKHOUSE_USER", "alfaka"),
+    })
 
     client = ClickHouseHttpClient(
         url=os.getenv("CLICKHOUSE_HTTP_URL", "http://localhost:8123"),
@@ -30,8 +40,15 @@ def main():
         user=os.getenv("CLICKHOUSE_USER", "alfaka"),
         password=os.getenv("CLICKHOUSE_PASSWORD", "alfaka"),
     )
+    client.ensure_market_data_schema()
 
-    consumer = create_json_consumer(topics, kafka_servers, group_id, "alfaka-clickhouse-consumer")
+    consumer = create_json_consumer(
+        topics,
+        kafka_servers,
+        group_id,
+        "alfaka-clickhouse-consumer",
+        enable_auto_commit=enable_auto_commit,
+    )
     print(f"ClickHouse loader 시작: topics={topics}", flush=True)
     print(f"ClickHouse 연결: {client.url}/{client.database}", flush=True)
 
@@ -39,6 +56,8 @@ def main():
         payload = record.value
         try:
             load_payload(client, payload, load_trades=load_trades)
+            if not enable_auto_commit:
+                consumer.commit()
         except Exception as exc:
             print(f"ClickHouse 적재 실패: {exc}; payload={json.dumps(payload, ensure_ascii=False)}", file=sys.stderr, flush=True)
 
@@ -101,6 +120,8 @@ def trade_to_clickhouse_row(payload):
         "tape": payload.get("tape"),
         "source": payload.get("source", "alpaca"),
         "feed": payload.get("feed") or "unknown",
+        "feed_profile": payload.get("feedProfile") or payload.get("feed") or "unknown",
+        "market_session": payload.get("marketSession") or market_session_for_timestamp(payload.get("timestamp")),
         "source_event_id": payload.get("sourceEventId"),
         "received_at": clickhouse_time_or_none(payload.get("receivedAt")),
     }
@@ -126,6 +147,8 @@ def candle_to_clickhouse_row(payload):
         "correction_type": payload.get("correctionType", "NONE"),
         "source": payload.get("source", "stream-processor"),
         "feed": payload.get("feed") or "unknown",
+        "feed_profile": payload.get("feedProfile") or payload.get("feed") or "unknown",
+        "market_session": payload.get("marketSession") or market_session_for_timestamp(payload.get("timestamp")),
         "source_event_id": payload.get("sourceEventId"),
         "created_at": clickhouse_time_or_none(payload.get("createdAt") or payload.get("updatedAt")),
     }
@@ -141,6 +164,8 @@ def status_to_clickhouse_row(payload):
         "reason": payload.get("reason"),
         "source": payload.get("source", "alpaca"),
         "feed": payload.get("feed") or "unknown",
+        "feed_profile": payload.get("feedProfile") or payload.get("feed") or "unknown",
+        "market_session": payload.get("marketSession") or market_session_for_timestamp(payload.get("eventTime")),
         "source_event_id": payload.get("sourceEventId"),
         "raw": json.dumps(payload.get("raw") or {}, ensure_ascii=False, separators=(",", ":")),
     }
@@ -157,6 +182,8 @@ def volume_profile_bin_to_clickhouse_row(payload):
         "vwap": float_or_none(payload.get("vwap")),
         "source": payload.get("source", "alpaca"),
         "feed": payload.get("feed") or "unknown",
+        "feed_profile": payload.get("feedProfile") or payload.get("feed") or "unknown",
+        "market_session": payload.get("marketSession") or market_session_for_timestamp(payload.get("eventMinute")),
         "source_event_id": payload.get("sourceEventId"),
         "updated_at": clickhouse_time_or_none(payload.get("updatedAt")),
     }
@@ -230,6 +257,33 @@ class ClickHouseHttpClient:
         )
         if response.status_code >= 400:
             raise RuntimeError(f"status={response.status_code}, body={response.text}")
+
+    def execute(self, query):
+        import requests
+
+        response = requests.post(
+            self.url,
+            params={"user": self.user, "password": self.password, "database": self.database, "query": query},
+            timeout=10,
+        )
+        if response.status_code >= 400:
+            raise RuntimeError(f"status={response.status_code}, body={response.text}")
+
+    def ensure_market_data_schema(self):
+        if os.getenv("CLICKHOUSE_ENSURE_SESSION_COLUMNS", "true").lower() not in {"1", "true", "yes"}:
+            return
+        for table, after_column in (
+            ("trade_ticks", "feed"),
+            ("chart_candles", "feed"),
+            ("volume_profile_bins_1m", "feed"),
+            ("market_status_events", "feed"),
+        ):
+            table_name = f"{self.database}.{clickhouse_identifier(table)}"
+            self.execute(
+                f"ALTER TABLE {table_name} "
+                f"ADD COLUMN IF NOT EXISTS feed_profile LowCardinality(String) DEFAULT feed AFTER {after_column}, "
+                "ADD COLUMN IF NOT EXISTS market_session LowCardinality(String) DEFAULT 'unknown' AFTER feed_profile"
+            )
 
 
 def clickhouse_identifier(value):

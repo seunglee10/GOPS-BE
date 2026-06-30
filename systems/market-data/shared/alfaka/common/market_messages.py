@@ -5,6 +5,7 @@ import hashlib
 import json
 
 from alfaka.common.env import utc_now_iso
+from alfaka.alpaca.feed_profiles import market_session_for_timestamp
 
 
 MESSAGE_TYPE_TO_CHANNEL = {
@@ -34,18 +35,22 @@ MESSAGE_TYPE_TO_RAW_TOPIC_SUFFIX = {
 CONTROL_MESSAGE_TYPES = {"success", "subscription", "error"}
 
 
-def build_raw_envelope(message, feed):
+def build_raw_envelope(message, feed, feed_profile=None, market_session=None):
     message_type = message.get("T")
     channel = MESSAGE_TYPE_TO_CHANNEL.get(message_type, "unknown")
     received_at = utc_now_iso()
     symbol = message.get("S") or "_MARKET"
+    event_time = message.get("t")
+    resolved_session = market_session or ("regular" if channel == "dailyBars" else market_session_for_timestamp(event_time or received_at))
 
     return {
         "source": "alpaca",
         "feed": feed,
+        "feedProfile": feed_profile or feed,
+        "marketSession": resolved_session,
         "channel": channel,
         "symbol": symbol,
-        "eventTime": message.get("t"),
+        "eventTime": event_time,
         "receivedAt": received_at,
         "sourceEventId": source_event_id(message, feed, channel, symbol, received_at),
         "raw": message,

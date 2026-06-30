@@ -2,6 +2,7 @@ import io
 import json
 import os
 
+from alfaka.alpaca.feed_profiles import market_session_for_timestamp
 from alfaka.common.env import load_dotenv
 from alfaka.storage.clickhouse_loader import ClickHouseHttpClient, candle_to_clickhouse_row
 from alfaka.storage.candle_validation import invalid_candle_reason
@@ -22,9 +23,25 @@ def main():
         user=os.getenv("CLICKHOUSE_USER", "alfaka"),
         password=os.getenv("CLICKHOUSE_PASSWORD", "alfaka"),
     )
-    keys = list_s3_objects(s3, bucket, prefix)
+    client.ensure_market_data_schema()
+    keys = materialize_keys_from_env(s3, bucket, prefix)
     result = materialize_s3_processed_objects(client, s3, bucket, keys)
     print(json.dumps(result, ensure_ascii=False), flush=True)
+
+
+def materialize_keys_from_env(s3, bucket, prefix):
+    explicit_keys = parse_csv(os.getenv("S3_MATERIALIZE_KEYS"))
+    if explicit_keys:
+        return explicit_keys
+    keys = list_s3_objects(s3, bucket, prefix)
+    max_objects = os.getenv("S3_MATERIALIZE_MAX_OBJECTS")
+    if max_objects not in {None, ""}:
+        keys = keys[: int(max_objects)]
+    return keys
+
+
+def parse_csv(value):
+    return [item.strip() for item in (value or "").split(",") if item.strip()]
 
 
 def list_s3_objects(s3, bucket, prefix):
@@ -138,6 +155,8 @@ def normalize_processed_candle_row(row):
         "correctionType": row.get("correctionType", row.get("correction_type", "NONE")),
         "source": row.get("source", "backfill"),
         "feed": row.get("feed") or "unknown",
+        "feedProfile": row.get("feedProfile") or row.get("feed_profile") or row.get("feed") or "unknown",
+        "marketSession": row.get("marketSession") or row.get("market_session") or market_session_for_timestamp(row.get("timestamp")),
         "sourceEventId": row.get("sourceEventId") or row.get("source_event_id"),
         "createdAt": row.get("createdAt") or row.get("created_at") or row.get("updatedAt"),
     }

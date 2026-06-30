@@ -12,8 +12,8 @@ class RedisKeyBuilder:
     def price_latest(self, symbol):
         return self.key(f"price:{symbol}:latest")
 
-    def live_candle(self, symbol):
-        return self.key(f"candle:{symbol}:1m:live")
+    def live_candle(self, symbol, interval="1m"):
+        return self.key(f"candle:{symbol}:{interval}:live")
 
     def latest_candle(self, symbol, interval):
         return self.key(f"candle:{symbol}:{interval}:latest")
@@ -27,11 +27,23 @@ class RedisKeyBuilder:
     def market_events_symbol(self, symbol):
         return self.key(f"market.events:{symbol}")
 
+    def component_health(self, component):
+        return self.key(f"pipeline:health:{component}")
+
     def active_symbols(self):
         return self.key("active:charts:symbols")
 
     def active_symbol(self, symbol):
         return self.key(f"active:charts:{symbol}")
+
+    def watchlist_symbols(self):
+        return self.key("watchlist:symbols")
+
+    def hot_symbols(self):
+        return self.key("hot:symbols")
+
+    def hot_symbols_snapshot(self):
+        return self.key("hot:symbols:snapshot")
 
     def market_status_latest(self):
         return self.key("market:status:latest")
@@ -59,3 +71,9 @@ class RedisKeyBuilder:
 
     def backfill_queue(self):
         return self.key("backfill:queue")
+
+    def backfill_stream(self):
+        return self.key("backfill:stream")
+
+    def backfill_dead_letter_stream(self):
+        return self.key("backfill:dead-letter")

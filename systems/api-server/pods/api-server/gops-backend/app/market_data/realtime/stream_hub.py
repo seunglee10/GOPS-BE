@@ -105,15 +105,17 @@ class SymbolStreamHub:
             pubsub.close()
 
     async def _broadcast_latest_redis_live_event(self, symbol: str) -> None:
-        live_event = self.provider.redis_provider.live_event(symbol)
-        if not live_event:
-            return
-        marker = event_marker(live_event)
-        marker_key = (symbol, live_event.get("interval", "1m"))
-        if marker and marker == self.last_markers.get(marker_key):
-            return
-        self.last_markers[marker_key] = marker
-        await self._broadcast(symbol, live_event)
+        intervals = sorted({session.interval for session in self.sessions_by_symbol.get(symbol, set())})
+        for interval in intervals:
+            live_event = self.provider.redis_provider.live_event(symbol, interval)
+            if not live_event:
+                continue
+            marker = event_marker(live_event)
+            marker_key = (symbol, live_event.get("interval", interval))
+            if marker and marker == self.last_markers.get(marker_key):
+                continue
+            self.last_markers[marker_key] = marker
+            await self._broadcast(symbol, live_event)
 
     async def _broadcast(self, symbol: str, event: dict[str, Any]) -> None:
         marker = event_marker(event)
