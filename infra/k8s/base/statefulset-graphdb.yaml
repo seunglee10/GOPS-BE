@@ -35,6 +35,13 @@ spec:
           env:
             - name: GDB_HEAP_SIZE
               value: "4g"
+          resources:
+            requests:
+              cpu: 500m
+              memory: 6Gi
+            limits:
+              cpu: "2"
+              memory: 7Gi
           volumeMounts:
             - name: graphdb-data
               mountPath: /opt/graphdb/home
