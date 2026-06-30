@@ -65,6 +65,18 @@ class FakeClickHouseProvider:
         return self.rows
 
 
+class ThemeClickHouseProvider:
+    def __init__(self, rows_by_symbol):
+        self.rows_by_symbol = rows_by_symbol
+        self.calls = 0
+        self.requested_symbols = []
+
+    def news_articles(self, symbol, limit, days):
+        self.calls += 1
+        self.requested_symbols.append(symbol)
+        return self.rows_by_symbol.get(symbol, [])
+
+
 class FakeOntologyProvider:
     def __init__(self, evidence):
         self.evidence = evidence
@@ -1002,6 +1014,56 @@ class AgentOrchestrationTests(unittest.TestCase):
         news_command = news_panel_props_command(report)
         self.assertEqual(news_command["payload"]["props"]["symbol"], "AAPL")
         self.assertEqual(news_command["payload"]["props"]["latestNews"][0]["symbol"], "AAPL")
+
+    def test_topic_news_intent_uses_theme_basket_instead_of_current_chart_symbol(self):
+        clickhouse = ThemeClickHouseProvider({
+            "AMD": [
+                {
+                    "articleId": "semi-amd-1",
+                    "headline": "AMD shares rise on AI chip demand",
+                    "summary": "Semiconductor demand lifted AMD shares.",
+                    "publishedAt": utc_now_iso(),
+                    "url": "https://example.com/amd-semi",
+                    "symbols": ["AMD"],
+                    "source": "alpaca",
+                }
+            ],
+            "MU": [
+                {
+                    "articleId": "semi-mu-1",
+                    "headline": "Micron gains as memory chip demand improves",
+                    "summary": "HBM and memory demand supported Micron.",
+                    "publishedAt": utc_now_iso(),
+                    "url": "https://example.com/mu-semi",
+                    "symbols": ["MU"],
+                    "source": "alpaca",
+                }
+            ],
+        })
+        provider = ClickHouseNewsProvider(clickhouse_provider=clickhouse, publish_fallback=False)
+        orchestrator = AgentOrchestrator()
+        orchestrator.news_agent = NewsAgent(provider)
+
+        report = orchestrator.analyze({
+            "symbol": "NVDA",
+            "intent": "반도체 관련 뉴스 보여줘",
+            "agentIds": ["agent-02"],
+            "layoutContext": layout_context(),
+            "chartContext": {
+                "chartDocument": {"symbol": "NVDA", "timeframe": "1m"},
+                "dataStatus": {"candleCount": 10, "state": "ready"},
+            },
+        })
+
+        self.assertEqual(report.symbol, "반도체")
+        self.assertIn("AMD", clickhouse.requested_symbols)
+        self.assertIn("MU", clickhouse.requested_symbols)
+        self.assertNotEqual(clickhouse.requested_symbols, ["NVDA"])
+        self.assertIn("반도체", report.finalAnswer.title)
+        news_command = news_panel_props_command(report)
+        props = news_command["payload"]["props"]
+        self.assertEqual(props["symbol"], "반도체")
+        self.assertTrue({"AMD", "MU"}.issubset({item["symbol"] for item in props["latestNews"]}))
 
     def test_news_agent_openai_success_and_fallback_keep_shape(self):
         provider = ClickHouseNewsProvider(

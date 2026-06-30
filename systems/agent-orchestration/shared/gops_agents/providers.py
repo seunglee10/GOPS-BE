@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
@@ -14,6 +14,7 @@ from .news_cache import NewsEvidenceCache, build_news_cache_from_env
 class ProviderRequest:
     symbol: str
     intent: str
+    symbols: tuple[str, ...] = field(default_factory=tuple)
 
 
 class NewsProvider:
@@ -70,13 +71,15 @@ class ClickHouseNewsProvider(NewsProvider):
 
         clickhouse_error: Exception | None = None
         rows = []
+        requested_symbols = self._request_symbols(request)
         try:
             provider = self.clickhouse_provider or self._default_provider()
-            rows = provider.news_articles(request.symbol, limit=self.limit, days=self.days)
+            for symbol in requested_symbols:
+                rows.extend(provider.news_articles(symbol, limit=self.limit, days=self.days))
         except Exception as exc:
             clickhouse_error = exc
 
-        evidence = normalize_news_evidence([self._row_to_evidence(row, request.symbol, source="clickhouse") for row in rows])[: self.limit]
+        evidence = normalize_news_evidence([self._row_to_evidence(row, request, source="clickhouse") for row in rows])[: self.limit]
         should_fallback = self.direct_fallback and (not evidence or self._is_stale(evidence[0]))
         if should_fallback:
             fallback = self._fetch_alpaca_fallback(request)
@@ -103,7 +106,19 @@ class ClickHouseNewsProvider(NewsProvider):
             ])
         return self._cache_set(request, evidence)
 
-    def _row_to_evidence(self, row: dict, symbol: str, *, source: str) -> EvidenceItem:
+    def _request_symbols(self, request: ProviderRequest) -> list[str]:
+        raw_symbols = request.symbols or (request.symbol,)
+        symbols = []
+        for value in raw_symbols:
+            symbol = str(value or "").strip().upper()
+            if not re.fullmatch(r"[A-Z][A-Z0-9]{0,9}(?:\.[A-Z])?", symbol):
+                continue
+            if symbol not in symbols:
+                symbols.append(symbol)
+        return symbols or [str(request.symbol or "AAPL").strip().upper() or "AAPL"]
+
+    def _row_to_evidence(self, row: dict, request: ProviderRequest, *, source: str) -> EvidenceItem:
+        symbol = str(row.get("symbol") or (row.get("symbols")[0] if isinstance(row.get("symbols"), list) and row.get("symbols") else "") or request.symbol).strip().upper()
         title = str(row.get("headline") or row.get("title") or "Untitled news")
         summary = str(row.get("summary") or row.get("content") or row.get("headline") or row.get("title") or "뉴스 요약이 없습니다.")
         published_at = row.get("publishedAt") or row.get("published_at")
@@ -138,6 +153,7 @@ class ClickHouseNewsProvider(NewsProvider):
                 "originalSummary": summary,
                 "symbol": row.get("symbol") or symbol,
                 "symbols": row.get("symbols") if isinstance(row.get("symbols"), list) else [symbol],
+                "topic": request.symbol if request.symbol != symbol else None,
                 "publishedAt": published_at,
                 "receivedAt": received_at,
                 "impactDirection": impact_direction,
@@ -161,10 +177,11 @@ class ClickHouseNewsProvider(NewsProvider):
 
         try:
             include_content = bool_env("ALPACA_NEWS_INCLUDE_CONTENT", False)
+            requested_symbols = self._request_symbols(request)
             articles = fetch_alpaca_news(
                 key_id,
                 secret_key,
-                symbols=[request.symbol],
+                symbols=requested_symbols,
                 limit=int(os.getenv("AGENT_NEWS_FALLBACK_LIMIT", str(self.limit))),
                 include_content=include_content,
             )
@@ -172,11 +189,11 @@ class ClickHouseNewsProvider(NewsProvider):
                 event
                 for article in articles
                 if isinstance(article, dict)
-                for event in build_news_events(article, requested_symbols=[request.symbol])
+                for event in build_news_events(article, requested_symbols=requested_symbols)
             ]
             if self.publish_fallback:
                 self._publish_fallback_events(events)
-            return normalize_news_evidence([self._row_to_evidence(event, request.symbol, source="alpaca-direct") for event in events])[: self.limit]
+            return normalize_news_evidence([self._row_to_evidence(event, request, source="alpaca-direct") for event in events])[: self.limit]
         except Exception as exc:
             return [EvidenceItem.no_data("news", "Alpaca fallback failed", f"Alpaca 뉴스 fallback 조회에 실패했습니다: {exc.__class__.__name__}")]
 
@@ -213,7 +230,7 @@ class ClickHouseNewsProvider(NewsProvider):
     def _cache_get(self, request: ProviderRequest) -> list[EvidenceItem] | None:
         try:
             return self.cache.get(
-                symbol=request.symbol,
+                symbol=self._cache_symbol(request),
                 limit=self.limit,
                 days=self.days,
                 fallback_enabled=self.direct_fallback,
@@ -225,7 +242,7 @@ class ClickHouseNewsProvider(NewsProvider):
         ttl_seconds = self.cache_ttl_seconds if any(item.status == "available" for item in items) else self.no_data_cache_ttl_seconds
         try:
             self.cache.set(
-                symbol=request.symbol,
+                symbol=self._cache_symbol(request),
                 limit=self.limit,
                 days=self.days,
                 fallback_enabled=self.direct_fallback,
@@ -235,6 +252,12 @@ class ClickHouseNewsProvider(NewsProvider):
         except Exception:
             return items
         return items
+
+    def _cache_symbol(self, request: ProviderRequest) -> str:
+        symbols = self._request_symbols(request)
+        if request.symbols:
+            return f"{request.symbol}:{','.join(symbols)}"
+        return request.symbol
 
 
 class EmptyMacroProvider(MacroProvider):

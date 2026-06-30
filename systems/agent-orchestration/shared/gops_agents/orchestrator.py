@@ -120,10 +120,15 @@ class AgentOrchestrator:
         timing = empty_timing()
         intent = str(request.get("intent") or request.get("prompt") or latest_message(request.get("messages")) or "analysis")
         explicit_symbol = extract_symbol_from_intent(intent)
+        news_topic = None if explicit_symbol else extract_news_topic_from_intent(intent)
         symbol = normalize_symbol(
-            explicit_symbol or request.get("symbol") or read_symbol_from_chart_context(request.get("chartContext")) or "AAPL"
+            explicit_symbol
+            or (news_topic["label"] if news_topic else None)
+            or request.get("symbol")
+            or read_symbol_from_chart_context(request.get("chartContext"))
+            or "AAPL"
         )
-        chart_context = sanitize_chart_context_for_symbol(request.get("chartContext"), symbol, bool(explicit_symbol))
+        chart_context = sanitize_chart_context_for_symbol(request.get("chartContext"), symbol, bool(explicit_symbol or news_topic))
         events = [
             item if isinstance(item, MarketEvent) else MarketEvent.from_dict(item)
             for item in request.get("marketEvents", [])
@@ -137,6 +142,8 @@ class AgentOrchestrator:
             layoutContext=request.get("layoutContext") if isinstance(request.get("layoutContext"), dict) else {},
             marketEvents=events,
             timing=timing,
+            newsSymbols=list(news_topic["symbols"]) if news_topic else [],
+            newsTopic=str(news_topic["label"]) if news_topic else None,
         )
         return {
             **state,
@@ -147,6 +154,8 @@ class AgentOrchestrator:
             "role_findings": [],
             "timing": timing,
             "timing_started_at": time.perf_counter(),
+            "news_topic": news_topic,
+            "news_symbols": list(news_topic["symbols"]) if news_topic else [],
         }
 
     def _route_intent(self, state: dict[str, Any]) -> dict[str, Any]:
@@ -465,6 +474,7 @@ def analysis_cache_key_for_state(state: dict[str, Any]) -> str | None:
         },
         "events": [event.eventId for event in state.get("events", [])],
         "chartContext": chart_context_cache_payload(state["context"].chartContext, selected_roles),
+        "newsSymbols": list(state.get("news_symbols", [])),
     }
     return analysis_cache_key(symbol=state["symbol"], payload=payload)
 
@@ -704,17 +714,73 @@ COMPANY_SYMBOL_ALIASES: tuple[tuple[str, str], ...] = (
 )
 
 
+NEWS_TOPIC_BASKETS: tuple[dict[str, Any], ...] = (
+    {
+        "label": "반도체",
+        "aliases": (
+            "반도체",
+            "반도체주",
+            "반도체 섹터",
+            "반도체 관련",
+            "semiconductor",
+            "semiconductors",
+            "chip",
+            "chips",
+            "ai chip",
+            "gpu",
+            "memory chip",
+            "hbm",
+            "메모리",
+        ),
+        "symbols": ("NVDA", "AMD", "AVGO", "TSM", "ASML", "MU", "INTC", "QCOM", "TXN", "ADI", "MRVL", "AMAT", "LRCX", "KLAC"),
+    },
+    {
+        "label": "AI",
+        "aliases": ("ai 테마", "ai 관련", "인공지능", "생성형 ai", "artificial intelligence"),
+        "symbols": ("NVDA", "MSFT", "GOOGL", "META", "AMZN", "AMD", "AVGO", "PLTR", "ARM"),
+    },
+    {
+        "label": "클라우드",
+        "aliases": ("클라우드", "cloud", "saas", "소프트웨어"),
+        "symbols": ("MSFT", "AMZN", "GOOGL", "ORCL", "CRM", "DDOG", "SNOW", "NET"),
+    },
+)
+
+
+def extract_news_topic_from_intent(intent: str) -> dict[str, Any] | None:
+    normalized = normalize_cache_intent(intent)
+    compacted = "".join(normalized.split())
+    if not is_topic_news_request(normalized, compacted):
+        return None
+    for topic in NEWS_TOPIC_BASKETS:
+        for alias in topic["aliases"]:
+            if intent_contains_alias(normalized, compacted, str(alias)):
+                return {"label": topic["label"], "symbols": tuple(topic["symbols"])}
+    return None
+
+
+def is_topic_news_request(normalized: str, compacted: str) -> bool:
+    news_terms = ("뉴스", "기사", "헤드라인", "news", "article", "headline")
+    topic_terms = ("관련", "섹터", "테마", "업종", "industry", "sector", "theme")
+    return any(term in compacted for term in news_terms) and (
+        any(term in compacted for term in topic_terms)
+        or any(intent_contains_alias(normalized, compacted, str(alias)) for topic in NEWS_TOPIC_BASKETS for alias in topic["aliases"])
+    )
+
+
+def intent_contains_alias(normalized: str, compacted: str, alias: str) -> bool:
+    normalized_alias = normalize_cache_intent(alias)
+    if re.fullmatch(r"[a-z0-9 .&-]+", normalized_alias):
+        pattern = re.escape(normalized_alias).replace(r"\ ", r"\s+")
+        return bool(re.search(rf"(?<![a-z0-9]){pattern}(?![a-z0-9])", normalized))
+    return "".join(normalized_alias.split()) in compacted
+
+
 def extract_symbol_alias_from_intent(intent: str) -> str | None:
     normalized = normalize_cache_intent(intent)
     compacted = "".join(normalized.split())
     for alias, symbol in COMPANY_SYMBOL_ALIASES:
-        normalized_alias = normalize_cache_intent(alias)
-        if re.fullmatch(r"[a-z0-9 .&-]+", normalized_alias):
-            pattern = re.escape(normalized_alias).replace(r"\ ", r"\s+")
-            if re.search(rf"(?<![a-z0-9]){pattern}(?![a-z0-9])", normalized):
-                return symbol
-            continue
-        if "".join(normalized_alias.split()) in compacted:
+        if intent_contains_alias(normalized, compacted, alias):
             return symbol
     return None
 

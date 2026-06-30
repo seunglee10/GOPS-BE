@@ -25,6 +25,8 @@ class AgentContext:
     marketEvents: list[MarketEvent] = field(default_factory=list)
     providerEvidence: list[EvidenceItem] = field(default_factory=list)
     timing: dict[str, Any] = field(default_factory=dict)
+    newsSymbols: list[str] = field(default_factory=list)
+    newsTopic: str | None = None
 
 
 class ChartAgent:
@@ -106,7 +108,7 @@ class NewsAgent(ProviderBackedAgent):
     def analyze(self, context: AgentContext) -> AgentFinding:
         started_at = time.perf_counter()
         try:
-            evidence = self.provider.fetch(ProviderRequest(context.symbol, context.intent))
+            evidence = self.provider.fetch(ProviderRequest(context.symbol, context.intent, symbols=tuple(context.newsSymbols)))
         finally:
             add_context_timing_ms(context, "newsFetchMs", (time.perf_counter() - started_at) * 1000)
         evidence = self.localizer.localize(symbol=context.symbol, intent=context.intent, evidence=evidence)
