@@ -1,0 +1,25 @@
+# Publishes agents.notification-decisions.v1 as Redis/WebSocket alert events.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-notification-publisher
+  namespace: alfaka-market-data
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-notification-publisher
+  template:
+    metadata:
+      labels:
+        app: agent-notification-publisher
+    spec:
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: agent-notification-publisher
+          image: YOUR_ECR_REPOSITORY/gops-agent-orchestrator:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "/app/systems/agent-orchestration/pods/notification-publisher/main.py"]
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config

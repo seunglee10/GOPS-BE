@@ -14,5 +14,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY systems/market-data/config ./systems/market-data/config
 COPY systems/market-data/shared ./systems/market-data/shared
 COPY systems/market-data/pods/market-ingestor ./systems/market-data/pods/market-ingestor
+COPY systems/market-data/pods/news-ingestor ./systems/market-data/pods/news-ingestor
 
 CMD ["python", "-u", "systems/market-data/pods/market-ingestor/market_stream.py"]

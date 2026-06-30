@@ -6,6 +6,8 @@ kind: Kustomization
 
 resources:
   - ../../base
+  - secretstore-aws-secrets-manager.yaml
+  - externalsecret-openai.yaml
 
 patches:
   - path: configmap-aws-patch.yaml
@@ -35,4 +37,7 @@ images:
     newTag: latest
   - name: YOUR_ECR_REPOSITORY/gops-kis-adapter
     newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-kis-adapter
+    newTag: latest
+  - name: YOUR_ECR_REPOSITORY/gops-agent-orchestrator
+    newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-agent-orchestrator
     newTag: latest

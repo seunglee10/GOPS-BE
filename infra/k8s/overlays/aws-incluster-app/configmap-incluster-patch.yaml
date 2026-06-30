@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alfaka-market-data-config
+  namespace: alfaka-market-data
+data:
+  AWS_REGION: ap-northeast-2
+  AWS_EC2_METADATA_DISABLED: "false"
+  S3_ENDPOINT_URL: ""
+  ALPACA_SECRET_NAME: dev/alpaca
+  KIS_SECRET_NAME: tead/gops/kis
+  GOOGLE_OAUTH_SECRET_NAME: oauth/google
+  KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+  REDIS_URL: redis://redis:6379/0
+  CLICKHOUSE_HTTP_URL: http://clickhouse:8123
+  CLICKHOUSE_DATABASE: market_data
+  CLICKHOUSE_USER: alfaka
+  CLICKHOUSE_LOAD_TRADES: "false"
+  DATABASE_HOST: postgres
+  DATABASE_PORT: "5432"
+  DATABASE_NAME: gops
+  DATABASE_USER: gops
+  S3_BUCKET: gops-market-data-<aws-account-id>-ap-northeast-2-an
+  S3_RAW_PREFIX: market-data/raw/alpaca
+  S3_FINAL_PREFIX: market-data/final
+  S3_LIVE_PREFIX: market-data/live
+  S3_MATERIALIZE_PREFIX: market-data/final
+  S3_PROCESSED_FORMAT: parquet
+  S3_FLUSH_COUNT: "500"
+  BACKFILL_EXECUTION_MODE: queue
+  BACKFILL_STATUS_TTL_SECONDS: "86400"
+  BACKFILL_WORKER_POLL_SECONDS: "5"
+  BACKFILL_DEFAULT_LOOKBACK_HOURS: "8760"
+  AUTH_ENABLED: "true"
+  AUTH_PUBLIC_BASE_URL: https://stargops.com

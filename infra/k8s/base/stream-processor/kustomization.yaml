@@ -1,0 +1,6 @@
+# Optional Python stream processor base used by in-cluster dev/test overlays.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - deployment-local-stream-processor.yaml

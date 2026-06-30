@@ -21,6 +21,9 @@ data:
   ALPACA_ACTIVE_POLL_SECONDS: "5"
   HOT_TIER_SIZE: "20"
   HOT_TIER_FALLBACK_SCAN_LIMIT: "503"
+  ALPACA_NEWS_POLL_SECONDS: "300"
+  ALPACA_NEWS_LIMIT: "50"
+  ALPACA_NEWS_INCLUDE_CONTENT: "false"
   ACTIVE_CHART_TTL_SECONDS: "45"
   REDIS_KEY_PREFIX: ""
   ALPACA_TRADING_BASE_URL: https://paper-api.alpaca.markets
@@ -37,6 +40,7 @@ data:
   KAFKA_CLOSED_CANDLE_TOPIC: market.candles.closed.v1
   KAFKA_STATUS_TOPIC: market.status.v1
   KAFKA_VOLUME_PROFILE_BINS_TOPIC: market.volume-profile-bins.1m.v1
+  KAFKA_NEWS_TOPIC: market.news.alpaca.v1
   VOLUME_PROFILE_PRICE_BIN_SIZE: "0.05"
   PROCESSOR_LOG_EVERY_N: "500"
   PROCESSOR_RECOVERY_SYMBOLS: ""
@@ -44,7 +48,7 @@ data:
   COMPONENT_HEALTH_TTL_SECONDS: "300"
   KAFKA_PROCESSED_TOPICS: market.ticks.v1,market.candles.live.1m.v1,market.candles.closed.v1,market.status.v1,market.volume-profile-bins.1m.v1
   KAFKA_CLICKHOUSE_ENABLE_AUTO_COMMIT: "false"
-  KAFKA_CLICKHOUSE_TOPICS: market.candles.closed.v1,market.status.v1,market.volume-profile-bins.1m.v1
+  KAFKA_CLICKHOUSE_TOPICS: market.candles.closed.v1,market.status.v1,market.volume-profile-bins.1m.v1,market.news.alpaca.v1
   CLICKHOUSE_HTTP_URL: http://YOUR_CLICKHOUSE_ENDPOINT:8123
   CLICKHOUSE_DATABASE: market_data
   CLICKHOUSE_USER: alfaka
@@ -52,6 +56,14 @@ data:
   CLICKHOUSE_PROVIDER_ENSURE_SESSION_COLUMNS: "true"
   CLICKHOUSE_ENSURE_SESSION_COLUMNS: "true"
   REDIS_URL: redis://YOUR_REDIS_ENDPOINT:6379/0
+  AUTH_ENABLED: "false"
+  AUTH_PUBLIC_BASE_URL: https://YOUR_GOPS_PUBLIC_HOST
+  AUTH_SESSION_TTL_SECONDS: "28800"
+  AUTH_OAUTH_STATE_TTL_SECONDS: "300"
+  AUTH_REDIS_KEY_PREFIX: gops:auth
+  AUTH_COOKIE_SECURE: "true"
+  AUTH_COOKIE_SAMESITE: lax
+  GOOGLE_OAUTH_SECRET_NAME: oauth/google
   S3_BUCKET: gops-market-data-<aws-account-id>-ap-northeast-2-an
   S3_RAW_PREFIX: market-data/raw/alpaca
   S3_FINAL_PREFIX: market-data/final
@@ -114,3 +126,15 @@ data:
   KAFKA_SUBMIT_RESULTS_TOPIC: broker.submit-results.v1
   KAFKA_ORDER_EVENTS_TOPIC: broker.order-events.v1
   KAFKA_DLQ_TOPIC: orders.dlq.v1
+  AGENT_ORCHESTRATOR_URL: http://agent-orchestrator:8100
+  AGENT_EVENT_INPUT_TOPICS: market.ticks.v1,market.candles.live.1m.v1,market.candles.closed.v1
+  AGENT_MARKET_EVENTS_TOPIC: agents.market-events.v1
+  AGENT_ANALYSIS_REQUESTS_TOPIC: agents.analysis-requests.v1
+  AGENT_ANALYSIS_RESULTS_TOPIC: agents.analysis-results.v1
+  AGENT_NOTIFICATION_DECISIONS_TOPIC: agents.notification-decisions.v1
+  AGENT_DLQ_TOPIC: agents.dlq.v1
+  AGENT_PUBLISH_TO_KAFKA: "true"
+  OPENAI_MODEL: gpt-5.2
+  GRAPHDB_SPARQL_URL: http://graphdb:7200/repositories/nasdaq-fibo
+  GRAPHDB_REPOSITORY: nasdaq-fibo
+  AGENT_ONTOLOGY_LIMIT: "20"

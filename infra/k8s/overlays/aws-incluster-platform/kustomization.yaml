@@ -1,0 +1,6 @@
+# Applies Kafka/Redis/Postgres/ClickHouse inside EKS for dev/test.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base/platform

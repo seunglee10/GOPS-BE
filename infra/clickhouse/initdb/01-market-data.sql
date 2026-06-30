@@ -112,6 +112,26 @@ CREATE TABLE IF NOT EXISTS market_data.symbols
 ENGINE = ReplacingMergeTree(inserted_at)
 ORDER BY symbol;
 
+CREATE TABLE IF NOT EXISTS market_data.news_articles
+(
+    published_at DateTime64(3, 'UTC'),
+    symbol LowCardinality(String),
+    article_id String,
+    headline String,
+    summary Nullable(String),
+    content Nullable(String),
+    url Nullable(String),
+    source Nullable(String),
+    author Nullable(String),
+    updated_at Nullable(DateTime64(3, 'UTC')),
+    received_at Nullable(DateTime64(3, 'UTC')),
+    raw String,
+    inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(inserted_at)
+PARTITION BY toYYYYMM(published_at)
+ORDER BY (symbol, published_at, article_id);
+
 CREATE TABLE IF NOT EXISTS market_data.load_audit
 (
     loaded_at DateTime64(3, 'UTC') DEFAULT now64(3),

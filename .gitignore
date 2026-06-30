@@ -2,12 +2,19 @@
 .env.*
 !.env.example
 *accessKeys*.csv
+*AccessKeys*.csv
+*access_keys*.csv
+*credentials*.csv
+.kis_token_cache.json
+*kis*token*cache*.json
 .venv/
 __pycache__/
 *.py[cod]
 *.pyc
 .local/
 .DS_Store
+.idea/
+.vscode/
 node_modules/
 **/node_modules/
 dist/
@@ -15,6 +22,30 @@ dist/
 .tmp/
 **/.tmp/
 *.tsbuildinfo
+
+# Terraform local state and secret inputs.
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+*.tfplan
+tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Local Kubernetes/AWS artifacts.
+kubeconfig
+*.kubeconfig
+awscliv2.zip
+
+# Local GraphDB restore artifacts. These may contain DB data or license material.
+.local-artifacts/graphdb/
+graphdb-volume.tgz
 
 # Local Codex/app artifacts.
 /.agents/

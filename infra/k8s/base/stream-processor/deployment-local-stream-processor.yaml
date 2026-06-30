@@ -1,0 +1,25 @@
+# Runs the current Python stream processor in place of a real Flink cluster.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alfaka-local-stream-processor
+  namespace: alfaka-market-data
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alfaka-local-stream-processor
+  template:
+    metadata:
+      labels:
+        app: alfaka-local-stream-processor
+    spec:
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: local-stream-processor
+          image: YOUR_ECR_REPOSITORY/gops-market-processor:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "systems/market-data/pods/market-processor/local_main.py"]
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config

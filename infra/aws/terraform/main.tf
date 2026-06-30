@@ -73,6 +73,19 @@ data "aws_secretsmanager_secret" "alpaca_api" {
   name  = var.alpaca_secret_name
 }
 
+data "aws_secretsmanager_secret" "kis_api" {
+  name = var.kis_secret_name
+}
+
+data "aws_secretsmanager_secret" "google_oauth" {
+  count = var.google_oauth_secret_name == "" ? 0 : 1
+  name  = var.google_oauth_secret_name
+}
+
+data "aws_secretsmanager_secret" "openai_api_key" {
+  name = var.openai_secret_name
+}
+
 resource "aws_secretsmanager_secret" "alpaca_api" {
   count       = var.create_alpaca_secret ? 1 : 0
   name        = var.alpaca_secret_name
@@ -97,6 +110,17 @@ locals {
     aws_secretsmanager_secret.alpaca_api[*].name,
     data.aws_secretsmanager_secret.alpaca_api[*].name
   ))
+  kis_secret_arn = data.aws_secretsmanager_secret.kis_api.arn
+  openai_secret_arn = data.aws_secretsmanager_secret.openai_api_key.arn
+  google_oauth_secret_arns = data.aws_secretsmanager_secret.google_oauth[*].arn
+  pod_secret_arns = concat(
+    [
+      local.alpaca_secret_arn,
+      local.kis_secret_arn,
+      local.openai_secret_arn
+    ],
+    local.google_oauth_secret_arns
+  )
 }
 
 resource "aws_iam_policy" "market_data_pod_policy" {
@@ -112,7 +136,7 @@ resource "aws_iam_policy" "market_data_pod_policy" {
           "secretsmanager:GetSecretValue",
           "secretsmanager:DescribeSecret"
         ]
-        Resource = local.alpaca_secret_arn
+        Resource = local.pod_secret_arns
       },
       {
         Effect = "Allow"

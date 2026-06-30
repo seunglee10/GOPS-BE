@@ -74,6 +74,11 @@ orders.commands.v1
 broker.submit-results.v1
 broker.order-events.v1
 orders.dlq.v1
+agents.market-events.v1
+agents.analysis-requests.v1
+agents.analysis-results.v1
+agents.notification-decisions.v1
+agents.dlq.v1
 ```
 
 Do not force MSK as the next step. The staged path is:
@@ -132,6 +137,18 @@ REDIS_KEY_PREFIX=
 ```
 
 AWS/EKS may later point `REDIS_URL` at ElastiCache, Valkey, or another Redis-compatible endpoint.
+
+GOPS login sessions reuse Redis by default:
+
+```text
+AUTH_ENABLED=false
+AUTH_REDIS_URL=
+AUTH_REDIS_KEY_PREFIX=gops:auth
+AUTH_SESSION_TTL_SECONDS=28800
+AUTH_OAUTH_STATE_TTL_SECONDS=300
+```
+
+When `AUTH_REDIS_URL` is empty, the API server uses `REDIS_URL`.
 
 ## Postgres
 
@@ -303,6 +320,72 @@ INITIAL_LOAD_MAX_ENQUEUE
 INITIAL_LOAD_MAX_BACKLOG
 ```
 
+## Agent Orchestration
+
+Current local stage:
+
+```text
+docker-compose agent-orchestrator
+docker-compose agent-event-detector
+docker-compose agent-notification-publisher
+```
+
+Common env:
+
+```text
+AGENT_ORCHESTRATOR_URL
+AGENT_EVENT_INPUT_TOPICS
+AGENT_MARKET_EVENTS_TOPIC
+AGENT_ANALYSIS_REQUESTS_TOPIC
+AGENT_ANALYSIS_RESULTS_TOPIC
+AGENT_NOTIFICATION_DECISIONS_TOPIC
+AGENT_DLQ_TOPIC
+AGENT_PUBLISH_TO_KAFKA
+```
+
+News and macro providers are staged adapters in v1. The ontology provider can
+query a GraphDB repository when the GraphDB runtime is restored and reachable.
+
+GraphDB ontology env:
+
+```text
+GRAPHDB_SPARQL_URL
+GRAPHDB_REPOSITORY
+AGENT_ONTOLOGY_LIMIT
+GRAPHDB_TIMEOUT_SECONDS
+```
+
+Local GraphDB restore artifact:
+
+```text
+.local-artifacts/graphdb/graphdb-volume.tgz
+```
+
+`graphdb-volume.tgz` is a local restore artifact and must not be committed. To
+restore it into the EKS PVC, place the file at the path above and run:
+
+```sh
+scripts/aws/restore-graphdb-pvc.sh --replace-pending-pvc
+```
+
+Use `--replace-pending-pvc` only for the initial broken PVC case where
+`graphdb-data-graphdb-0` is `Pending` and has no `storageClassName`. In that
+case the script also recreates the `graphdb` StatefulSet, because Kubernetes
+does not allow in-place updates to `volumeClaimTemplates.storageClassName`. If
+GraphDB has already started once on the new PVC, it may create empty runtime
+files; pass `--force` only after confirming those files can be replaced by the
+local archive. GraphDB pods explicitly disable
+CloudWatch/OpenTelemetry auto-instrumentation annotations so this database
+runtime does not receive unwanted telemetry injection.
+
+## AWS Observability
+
+Cost-sensitive EKS environments should not install the managed
+`amazon-cloudwatch-observability` or `aws-network-flow-monitoring-agent` add-ons
+by default. If Container Insights log groups already exist, keep a short
+retention period such as 3 days unless the team explicitly needs longer
+operational history.
+
 ## Secrets
 
 AWS Secrets Manager names:
@@ -310,6 +393,7 @@ AWS Secrets Manager names:
 ```text
 dev/alpaca
 dev/kis
+/gops/prod/agent-orchestrator/openai/api-key
 ```
 
 `dev/alpaca` JSON:
@@ -324,7 +408,42 @@ dev/kis
 {"KIS_DEMO_APP_KEY":"...","KIS_DEMO_APP_SECRET":"...","KIS_DEMO_ACCOUNT_NO":"..."}
 ```
 
+`/gops/prod/agent-orchestrator/openai/api-key` SecretString:
+
+```json
+{"OPENAI_API_KEY":"sk-..."}
+```
+
+AWS/EKS overlays sync this value into Kubernetes Secret
+`alfaka-openai-secret` key `OPENAI_API_KEY` through External Secrets.
+EKS must have External Secrets Operator installed before applying overlays that
+include `ExternalSecret` and `SecretStore` resources.
+
 Do not commit `.env`, access-key CSV files, token caches, or secret values.
+
+Google OAuth and session settings are configured on the `gops-backend` pod:
+
+```text
+GOOGLE_OAUTH_CLIENT_ID
+GOOGLE_OAUTH_CLIENT_SECRET
+AUTH_SESSION_SECRET
+GOOGLE_OAUTH_SECRET_NAME
+AUTH_PUBLIC_BASE_URL
+AUTH_COOKIE_SECURE
+```
+
+When `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, or
+`AUTH_SESSION_SECRET` is empty and `AUTH_ENABLED=true`, the API server can read
+the missing values from AWS Secrets Manager using `GOOGLE_OAUTH_SECRET_NAME`.
+The secret JSON may use the env var names directly, or Google's downloaded
+OAuth shape:
+
+```json
+{"web":{"client_id":"...","client_secret":"..."},"AUTH_SESSION_SECRET":"..."}
+```
+
+`AUTH_PUBLIC_BASE_URL` must match the public origin registered in Google OAuth
+redirect URIs for `/api/auth/google/callback`.
 
 ## ECR Images
 
@@ -339,10 +458,11 @@ gops-market-storage
 gops-backfill-worker
 gops-order-worker
 gops-kis-adapter
+gops-agent-orchestrator
 ```
 
 ## Future Dependencies
 
-Future ontology, GraphRAG, multi-agent analysis, news/context ingestion, or UI composition may add GraphDB, vector indexes, LLM provider secrets, vendor APIs, trace storage, or schedulers.
+Future ontology, GraphRAG, news/context ingestion, or UI composition may add GraphDB, vector indexes, vendor APIs, trace storage, or schedulers.
 
-Do not add env vars, compose services, k8s manifests, or Terraform resources for future dependencies until implementation starts.
+Do not add provider-specific secrets or managed service resources until implementation starts for that provider.

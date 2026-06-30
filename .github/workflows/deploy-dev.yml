@@ -1,0 +1,153 @@
+name: Deploy dev to EKS
+
+on:
+  push:
+    branches:
+      - dev
+  workflow_dispatch:
+    inputs:
+      services:
+        description: "Optional service keys to deploy, e.g. frontend,backend"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
+env:
+  AWS_ACCOUNT_ID: "<aws-account-id>"
+  AWS_REGION: ap-northeast-2
+  DOCKER_PLATFORM: linux/amd64
+  EKS_CLUSTER_NAME: gops-eks-cluster
+  K8S_NAMESPACE: alfaka-market-data
+  KUSTOMIZE_OVERLAY: infra/k8s/overlays/aws-incluster-app-ci
+  ECR_FRONTEND_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-frontend
+  ECR_API_SERVER_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-api-server
+  ECR_MARKET_INGESTOR_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-ingestor
+  ECR_MARKET_PROCESSOR_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-processor
+  ECR_MARKET_STORAGE_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-storage
+  ECR_BACKFILL_WORKER_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-backfill-worker
+  ECR_ORDER_WORKER_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-order-worker
+  ECR_KIS_ADAPTER_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-kis-adapter
+
+jobs:
+  deploy:
+    name: Build images and deploy app workloads
+    runs-on: ubuntu-latest
+    environment: dev
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed app services
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.before || '' }}
+          HEAD_SHA: ${{ github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          REQUESTED_SERVICES: ${{ github.event.inputs.services || '' }}
+        run: ./scripts/aws/detect-changed-services.sh
+
+      - name: Skip app deploy
+        if: steps.changes.outputs.has_services != 'true'
+        run: echo "No app service changes detected; skipping EKS app deploy."
+
+      - name: Configure AWS credentials
+        if: steps.changes.outputs.has_services == 'true'
+        uses: aws-actions/configure-aws-credentials@v6.1.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Ensure Amazon ECR repositories
+        if: steps.changes.outputs.has_services == 'true'
+        run: ./scripts/aws/ensure-ecr-repositories.sh
+
+      - name: Login to Amazon ECR
+        if: steps.changes.outputs.has_services == 'true'
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        if: steps.changes.outputs.has_services == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set image tag
+        if: steps.changes.outputs.has_services == 'true'
+        run: echo "IMAGE_TAG=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
+      - name: Build and push images
+        if: steps.changes.outputs.has_services == 'true'
+        env:
+          SERVICES: ${{ steps.changes.outputs.services }}
+        run: ./scripts/aws/build-and-push-images.sh
+
+      - name: Set up kubectl
+        if: steps.changes.outputs.has_services == 'true'
+        uses: azure/setup-kubectl@v4
+
+      - name: Configure kubeconfig
+        if: steps.changes.outputs.has_services == 'true'
+        run: aws eks update-kubeconfig --name "$EKS_CLUSTER_NAME" --region "$AWS_REGION"
+
+      - name: Point selected CI images at this commit image tag
+        if: steps.changes.outputs.has_services == 'true'
+        env:
+          SERVICES: ${{ steps.changes.outputs.services }}
+        run: ./scripts/aws/update-ci-image-tags.sh
+
+      - name: Server-side dry run
+        if: steps.changes.outputs.has_services == 'true'
+        run: kubectl apply -k "$KUSTOMIZE_OVERLAY" --dry-run=server
+
+      - name: Deploy app workloads
+        if: steps.changes.outputs.has_services == 'true'
+        run: kubectl apply -k "$KUSTOMIZE_OVERLAY"
+
+      - name: Verify rollout
+        if: steps.changes.outputs.has_services == 'true'
+        env:
+          DEPLOYMENTS: ${{ steps.changes.outputs.deployments }}
+        run: |
+          for deployment in ${DEPLOYMENTS}; do
+            if ! kubectl rollout status "deployment/${deployment}" \
+              -n "$K8S_NAMESPACE" \
+              --timeout=600s; then
+              ./scripts/aws/print-rollout-diagnostics.sh "${deployment}"
+              exit 1
+            fi
+          done
+
+      - name: Smoke test public endpoints
+        if: steps.changes.outputs.has_services == 'true'
+        env:
+          SMOKE_FRONTEND: ${{ steps.changes.outputs.smoke_frontend }}
+          SMOKE_BACKEND: ${{ steps.changes.outputs.smoke_backend }}
+        run: |
+          smoke_url() {
+            local url="$1"
+            local attempt
+            for attempt in 1 2 3 4 5; do
+              if curl -fsS "$url" >/dev/null; then
+                echo "Smoke passed: $url"
+                return 0
+              fi
+              echo "Smoke retry ${attempt}/5: $url"
+              sleep 12
+            done
+            curl -fsS "$url" >/dev/null
+          }
+
+          if [[ "$SMOKE_FRONTEND" == "true" ]]; then
+            smoke_url https://stargops.com/
+          fi
+          if [[ "$SMOKE_BACKEND" == "true" ]]; then
+            smoke_url https://stargops.com/api/charts/symbols
+          fi

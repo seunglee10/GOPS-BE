@@ -612,6 +612,29 @@ class ClickHouseMarketDataProvider:
         rows = self.query_json_each_row(query, {"symbol": symbol})
         return rows[0] if rows else None
 
+    def news_articles(self, symbol, limit=10, days=7):
+        query = f"""
+        SELECT
+          formatDateTime(published_at, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS publishedAt,
+          symbol,
+          article_id AS articleId,
+          headline,
+          summary,
+          content,
+          url,
+          source,
+          author,
+          formatDateTime(updated_at, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS updatedAt,
+          formatDateTime(received_at, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS receivedAt
+        FROM {self.table('news_articles')}
+        WHERE symbol = {{symbol:String}}
+          AND published_at >= now64(3) - INTERVAL {{days:UInt32}} DAY
+        ORDER BY published_at DESC, inserted_at DESC
+        LIMIT {{limit:UInt32}}
+        FORMAT JSONEachRow
+        """
+        return self.query_json_each_row(query, {"symbol": symbol, "limit": int(limit), "days": int(days)})
+
     def table(self, name):
         return f"{clickhouse_identifier(self.database)}.{clickhouse_identifier(name)}"
 

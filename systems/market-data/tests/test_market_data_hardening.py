@@ -28,6 +28,7 @@ from alfaka.alpaca.feed_profiles import market_session_for_timestamp, resolve_fe
 from alfaka.alpaca.trade_tiers import resolve_trade_subscription_plan
 from alfaka.alpaca.websocket_collector import read_trade_subscription_symbols
 from alfaka.alpaca.assets import asset_to_symbol_metadata
+from alfaka.alpaca.news import build_news_events
 from alfaka.common.kafka_io import create_json_consumer
 from alfaka.common.market_messages import build_raw_envelope, raw_topic_name, source_event_id
 from alfaka.common.redis_keys import RedisKeyBuilder
@@ -45,7 +46,7 @@ from alfaka.serving.intervals import candle_count_for_1y, candle_count_for_24h, 
 from alfaka.serving.provider import MarketDataProvider, has_more_before_target
 from alfaka.serving.redis_provider import RedisMarketDataProvider
 from alfaka.serving.symbol_registry import SymbolRegistry
-from alfaka.storage.clickhouse_loader import candle_to_clickhouse_row, load_payload, status_to_clickhouse_row, symbol_to_clickhouse_row, trade_to_clickhouse_row
+from alfaka.storage.clickhouse_loader import candle_to_clickhouse_row, load_payload, news_to_clickhouse_row, status_to_clickhouse_row, symbol_to_clickhouse_row, trade_to_clickhouse_row
 from alfaka.storage.s3_materializer import (
     detect_s3_object_format,
     list_s3_objects,
@@ -1356,6 +1357,31 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(row["symbol"], "NVDA")
         self.assertEqual(row["asset_class"], "us_equity")
         self.assertEqual(row["source"], "alpaca")
+
+    def test_alpaca_news_article_maps_to_processed_event_and_clickhouse_row(self):
+        article = {
+            "id": 123,
+            "headline": "NVIDIA announces new AI chip",
+            "summary": "NVIDIA shares moved after a product announcement.",
+            "url": "https://example.com/nvda-news",
+            "source": "ExampleWire",
+            "author": "Reporter",
+            "created_at": "2026-06-29T01:02:03Z",
+            "updated_at": "2026-06-29T02:03:04Z",
+            "symbols": ["NVDA", "AAPL"],
+        }
+
+        events = build_news_events(article, requested_symbols=["NVDA"], received_at="2026-06-29T03:04:05Z")
+        row = news_to_clickhouse_row(events[0])
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["eventType"], "NEWS_ARTICLE")
+        self.assertEqual(events[0]["symbol"], "NVDA")
+        self.assertEqual(events[0]["sourceEventId"], "alpaca/news/NVDA/123")
+        self.assertEqual(row["symbol"], "NVDA")
+        self.assertEqual(row["article_id"], "123")
+        self.assertEqual(row["headline"], "NVIDIA announces new AI chip")
+        self.assertEqual(row["published_at"], "2026-06-29 01:02:03.000")
 
     def test_candle_aggregator_builds_5m_contract(self):
         aggregator = CandleAggregator()
@@ -3657,6 +3683,22 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(candle_inserts[1][0]["source_event_id"], "event-1")
         self.assertEqual(len(audit_inserts), 1)
         self.assertEqual(audit_inserts[0][0]["object_path"], object_path)
+
+    def test_clickhouse_loader_routes_news_articles_to_news_table(self):
+        client = RecordingClickHouseClient()
+        load_payload(client, {
+            "eventType": "NEWS_ARTICLE",
+            "symbol": "NVDA",
+            "articleId": "news-1",
+            "headline": "NVIDIA news",
+            "summary": "News summary",
+            "publishedAt": "2026-06-29T01:02:03.000Z",
+            "source": "alpaca",
+            "raw": {"id": "news-1"},
+        })
+
+        self.assertEqual(client.inserts[0][0], "news_articles")
+        self.assertEqual(client.inserts[0][1][0]["article_id"], "news-1")
 
     def test_storage_boundaries_skip_invalid_weekend_stock_candles(self):
         client = RecordingClickHouseClient()

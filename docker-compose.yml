@@ -43,7 +43,7 @@ services:
       - /bin/bash
       - -ec
       - |
-        for topic in market.raw.bars market.raw.updated-bars market.raw.trades market.raw.daily-bars market.raw.statuses market.raw.quotes market.raw.corrections market.raw.cancel-errors market.ticks.v1 market.candles.live.1m.v1 market.candles.closed.v1 market.status.v1 market.volume-profile-bins.1m.v1 orders.commands.v1 broker.submit-results.v1 broker.order-events.v1 orders.dlq.v1; do
+        for topic in market.raw.bars market.raw.updated-bars market.raw.trades market.raw.daily-bars market.raw.statuses market.raw.quotes market.raw.corrections market.raw.cancel-errors market.ticks.v1 market.candles.live.1m.v1 market.candles.closed.v1 market.status.v1 market.volume-profile-bins.1m.v1 market.news.alpaca.v1 orders.commands.v1 broker.submit-results.v1 broker.order-events.v1 orders.dlq.v1 agents.market-events.v1 agents.analysis-requests.v1 agents.analysis-results.v1 agents.notification-decisions.v1 agents.dlq.v1; do
           /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic "$${topic}" --partitions 3 --replication-factor 1
         done
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --list
@@ -146,6 +146,20 @@ services:
       interval: 10s
       timeout: 5s
       retries: 20
+    networks:
+      - data_net
+
+  graphdb:
+    profiles: ["graphdb"]
+    image: ontotext/graphdb:11.4.0
+    container_name: alfaka-graphdb
+    ports:
+      - "7200:7200"
+    environment:
+      GDB_HEAP_SIZE: "${GRAPHDB_HEAP_SIZE:-4g}"
+    volumes:
+      - graphdb_data:/opt/graphdb/home
+    restart: unless-stopped
     networks:
       - data_net
 
@@ -269,6 +283,29 @@ services:
       - data_net
       - streaming_net
 
+  alpaca-news-ingestor:
+    profiles: ["alpaca"]
+    image: gops-market-ingestor
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-market-ingestor
+    container_name: alfaka-alpaca-news-ingestor
+    env_file: .env
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      KAFKA_NEWS_TOPIC: "market.news.alpaca.v1"
+      ALPACA_NEWS_POLL_SECONDS: "${ALPACA_NEWS_POLL_SECONDS:-300}"
+      ALPACA_NEWS_LIMIT: "${ALPACA_NEWS_LIMIT:-50}"
+      ALPACA_NEWS_INCLUDE_CONTENT: "${ALPACA_NEWS_INCLUDE_CONTENT:-false}"
+    command: ["python", "-u", "systems/market-data/pods/news-ingestor/main.py"]
+    restart: unless-stopped
+    networks:
+      - app_net
+      - streaming_net
+
   local-stream-processor:
     image: gops-market-processor
     build:
@@ -387,7 +424,8 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
       KAFKA_CLICKHOUSE_GROUP_ID: "alfaka-clickhouse-loader"
       KAFKA_CLICKHOUSE_ENABLE_AUTO_COMMIT: "false"
-      KAFKA_CLICKHOUSE_TOPICS: "market.candles.closed.v1,market.status.v1,market.volume-profile-bins.1m.v1"
+      KAFKA_CLICKHOUSE_TOPICS: "market.candles.closed.v1,market.status.v1,market.volume-profile-bins.1m.v1,market.news.alpaca.v1"
+      KAFKA_NEWS_TOPIC: "market.news.alpaca.v1"
       CLICKHOUSE_LOAD_TRADES: "false"
       CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
       CLICKHOUSE_DATABASE: "market_data"
@@ -501,6 +539,81 @@ services:
       - app_net
       - data_net
 
+  agent-orchestrator:
+    image: gops-agent-orchestrator
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
+    container_name: alfaka-agent-orchestrator
+    env_file: .env
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      REDIS_URL: "redis://redis:6379/0"
+      AGENT_MARKET_EVENTS_TOPIC: "agents.market-events.v1"
+      AGENT_ANALYSIS_REQUESTS_TOPIC: "agents.analysis-requests.v1"
+      AGENT_ANALYSIS_RESULTS_TOPIC: "agents.analysis-results.v1"
+      AGENT_NOTIFICATION_DECISIONS_TOPIC: "agents.notification-decisions.v1"
+      AGENT_DLQ_TOPIC: "agents.dlq.v1"
+      AGENT_PUBLISH_TO_KAFKA: "true"
+      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
+      CLICKHOUSE_DATABASE: "market_data"
+      CLICKHOUSE_USER: "alfaka"
+      CLICKHOUSE_PASSWORD: "alfaka"
+      GRAPHDB_SPARQL_URL: "${GRAPHDB_SPARQL_URL:-http://graphdb:7200/repositories/nasdaq-fibo}"
+      GRAPHDB_REPOSITORY: "${GRAPHDB_REPOSITORY:-nasdaq-fibo}"
+      AGENT_ONTOLOGY_LIMIT: "${AGENT_ONTOLOGY_LIMIT:-20}"
+    ports:
+      - "8100:8100"
+    restart: unless-stopped
+    networks:
+      - app_net
+      - data_net
+      - streaming_net
+
+  agent-event-detector:
+    image: gops-agent-orchestrator
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
+    container_name: alfaka-agent-event-detector
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      AGENT_EVENT_INPUT_TOPICS: "market.ticks.v1,market.candles.live.1m.v1,market.candles.closed.v1"
+      AGENT_MARKET_EVENTS_TOPIC: "agents.market-events.v1"
+    command: ["python", "-u", "/app/systems/agent-orchestration/pods/event-detector/main.py"]
+    restart: unless-stopped
+    networks:
+      - streaming_net
+
+  agent-notification-publisher:
+    image: gops-agent-orchestrator
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
+    container_name: alfaka-agent-notification-publisher
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      REDIS_URL: "redis://redis:6379/0"
+      AGENT_NOTIFICATION_DECISIONS_TOPIC: "agents.notification-decisions.v1"
+    command: ["python", "-u", "/app/systems/agent-orchestration/pods/notification-publisher/main.py"]
+    restart: unless-stopped
+    networks:
+      - data_net
+      - streaming_net
+
   gops-backend:
     image: gops-api-server
     build:
@@ -516,9 +629,24 @@ services:
         condition: service_healthy
       order-migrations:
         condition: service_completed_successfully
+      agent-orchestrator:
+        condition: service_started
     environment:
       REDIS_URL: "redis://redis:6379/0"
+      AUTH_ENABLED: "${AUTH_ENABLED:-false}"
+      AUTH_PUBLIC_BASE_URL: "${AUTH_PUBLIC_BASE_URL:-http://localhost:5173}"
+      AUTH_SESSION_SECRET: "${AUTH_SESSION_SECRET:-}"
+      AUTH_SESSION_TTL_SECONDS: "${AUTH_SESSION_TTL_SECONDS:-28800}"
+      AUTH_OAUTH_STATE_TTL_SECONDS: "${AUTH_OAUTH_STATE_TTL_SECONDS:-300}"
+      AUTH_REDIS_URL: "${AUTH_REDIS_URL:-redis://redis:6379/0}"
+      AUTH_REDIS_KEY_PREFIX: "${AUTH_REDIS_KEY_PREFIX:-gops:auth}"
+      AUTH_COOKIE_SECURE: "${AUTH_COOKIE_SECURE:-false}"
+      AUTH_COOKIE_SAMESITE: "${AUTH_COOKIE_SAMESITE:-lax}"
+      GOOGLE_OAUTH_CLIENT_ID: "${GOOGLE_OAUTH_CLIENT_ID:-}"
+      GOOGLE_OAUTH_CLIENT_SECRET: "${GOOGLE_OAUTH_CLIENT_SECRET:-}"
+      GOOGLE_OAUTH_SECRET_NAME: "${GOOGLE_OAUTH_SECRET_NAME:-}"
       DATABASE_URL: "postgresql://gops:${POSTGRES_PASSWORD:-gops_dev_password}@postgres:5432/gops"
+      AGENT_ORCHESTRATOR_URL: "http://agent-orchestrator:8100"
       ORDER_REPOSITORY: "postgres"
       KIS_ENV: "${KIS_ENV:-demo}"
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
@@ -762,10 +890,13 @@ services:
     container_name: alfaka-gops-frontend
     depends_on:
       - gops-backend
-    environment:
-      VITE_BACKEND_TARGET: "http://gops-backend:8000"
     ports:
       - "5173:5173"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5173/healthz >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
     restart: unless-stopped
     networks:
       - app_net
@@ -774,6 +905,9 @@ volumes:
   redis_data:
   minio_data:
   clickhouse_data:
+  graphdb_data:
+    name: nasdaq_fibo_graphdb_data
+    external: true
   postgres_order_data:
   kis_token_cache:
 

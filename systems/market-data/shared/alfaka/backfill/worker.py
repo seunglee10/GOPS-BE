@@ -3,6 +3,8 @@ import os
 import socket
 import time
 
+import redis
+
 from alfaka.backfill.runner import BackfillRunner
 from alfaka.backfill.status import RedisBackfillStore
 from alfaka.common.env import load_dotenv
@@ -19,12 +21,19 @@ def main():
     max_attempts = int(os.getenv("BACKFILL_MAX_ATTEMPTS", "3"))
 
     while True:
-        item = store.read_next_queue_item(
-            consumer_name=consumer_name,
-            timeout=poll_seconds,
-            reclaim_idle_ms=reclaim_idle_ms,
-            max_attempts=max_attempts,
-        )
+        try:
+            item = store.read_next_queue_item(
+                consumer_name=consumer_name,
+                timeout=poll_seconds,
+                reclaim_idle_ms=reclaim_idle_ms,
+                max_attempts=max_attempts,
+            )
+        except redis.exceptions.RedisError as exc:
+            if run_once:
+                raise
+            print(f"Backfill worker waiting for Redis: {exc}", flush=True)
+            time.sleep(poll_seconds)
+            continue
         if not item:
             if run_once:
                 return

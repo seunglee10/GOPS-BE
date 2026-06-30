@@ -1,0 +1,18 @@
+# Canonical Kafka topics for GOPS in-cluster dev/test deployments.
+market.raw.bars
+market.raw.updated-bars
+market.raw.trades
+market.raw.daily-bars
+market.raw.statuses
+market.raw.quotes
+market.raw.corrections
+market.raw.cancel-errors
+market.ticks.v1
+market.candles.live.1m.v1
+market.candles.closed.v1
+market.status.v1
+market.volume-profile-bins.1m.v1
+orders.commands.v1
+broker.submit-results.v1
+broker.order-events.v1
+orders.dlq.v1

@@ -11,7 +11,12 @@ resources:
   - job-symbol-registry-sync.yaml
   - job-coverage-repair.yaml
   - job-initial-load.yaml
+  - statefulset-graphdb.yaml
+  - deployment-agent-orchestrator.yaml
+  - deployment-agent-event-detector.yaml
+  - deployment-agent-notification-publisher.yaml
   - deployment-alpaca-ingestor.yaml
+  - deployment-alpaca-news-ingestor.yaml
   - deployment-market-processor.yaml
   - deployment-s3-sink.yaml
   - deployment-raw-s3-archive.yaml
@@ -21,5 +26,7 @@ resources:
   - deployment-kis-broker-adapter.yaml
   - deployment-gops-backend.yaml
   - deployment-gops-frontend.yaml
+  - service-agent-orchestrator.yaml
+  - service-graphdb.yaml
   - service-gops-backend.yaml
   - service-gops-frontend.yaml

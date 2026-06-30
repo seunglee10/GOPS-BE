@@ -1,0 +1,21 @@
+# Builds the shared Python image for GOPS agent-orchestration pods.
+# Runtime command selects agent-orchestrator, event-detector, or notification-publisher.
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app/systems/agent-orchestration/shared:/app/systems/market-data/shared:/app/systems/api-server/pods/api-server/gops-backend
+
+WORKDIR /app
+
+COPY requirements.txt /tmp/alfaka-requirements.txt
+COPY systems/api-server/pods/api-server/gops-backend/requirements.txt /tmp/gops-backend-requirements.txt
+RUN pip install --no-cache-dir -r /tmp/alfaka-requirements.txt -r /tmp/gops-backend-requirements.txt
+
+COPY systems/agent-orchestration ./systems/agent-orchestration
+COPY systems/market-data/shared ./systems/market-data/shared
+COPY systems/api-server/pods/api-server/gops-backend/app/contracts ./systems/api-server/pods/api-server/gops-backend/app/contracts
+
+WORKDIR /app/systems/agent-orchestration/pods/agent-orchestrator
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8100"]

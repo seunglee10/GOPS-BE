@@ -32,6 +32,7 @@ HEADERS = {"Idempotency-Key": "idem-1"}
 @unittest.skipUnless(FASTAPI_TESTCLIENT_AVAILABLE, "FastAPI TestClient is not available")
 class IntegratedOrderRoutesTest(unittest.TestCase):
     def setUp(self):
+        os.environ["AUTH_ENABLED"] = "false"
         os.environ["KIS_ENV"] = "demo"
         os.environ["KAFKA_ACCOUNT_ALIAS"] = "demo-account"
         os.environ["IDEMPOTENCY_HASH_SECRET"] = "test-secret"

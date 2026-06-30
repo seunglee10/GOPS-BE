@@ -32,6 +32,24 @@ variable "alpaca_secret_name" {
   default = "dev/alpaca"
 }
 
+variable "kis_secret_name" {
+  type        = string
+  default     = "tead/gops/kis"
+  description = "KIS credential secret name read by the broker adapter."
+}
+
+variable "google_oauth_secret_name" {
+  type        = string
+  default     = ""
+  description = "Optional Google OAuth/session secret name read by gops-backend."
+}
+
+variable "openai_secret_name" {
+  type        = string
+  default     = "/gops/prod/agent-orchestrator/openai/api-key"
+  description = "OpenAI API key secret name read by agent-orchestrator through External Secrets/IRSA."
+}
+
 variable "create_alpaca_secret" {
   type        = bool
   default     = false

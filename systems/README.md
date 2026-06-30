@@ -7,6 +7,7 @@ Each system owns its runtime entrypoints, shared code, tests, and README.
 api-server/    FastAPI chart/order/WebSocket gateway
 market-data/   Alpaca ingest, stream processing, storage, backfill
 order/         KIS demo order domain, outbox, adapter, jobs
+agent-orchestration/ Role-based agents, event detection, notifications
 ```
 
 Before adding backend code, choose the owning system.
