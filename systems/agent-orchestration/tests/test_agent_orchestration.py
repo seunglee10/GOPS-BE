@@ -13,11 +13,13 @@ sys.path.insert(0, str(REPO_ROOT / "systems" / "market-data" / "shared"))
 sys.modules.setdefault("boto3", types.SimpleNamespace(client=lambda *args, **kwargs: None))
 
 from gops_agents.agents import AgentContext, NewsAgent, OntologyAgent, VerificationGuardrailAgent
-from gops_agents.contracts import AgentFinding, EvidenceItem, IntentRoute, utc_now_iso
+from gops_agents.analysis_cache import MemoryAgentAnalysisCache, RedisAgentAnalysisCache
+from gops_agents.contracts import AgentFinding, EvidenceItem, FinalAnswer, IntentRoute, utc_now_iso
 from gops_agents.event_detector import MarketEventDetector, MarketEventThresholds
 from gops_agents.news_localization import NewsLocalizationService
-from gops_agents.orchestrator import AgentOrchestrator
+from gops_agents.orchestrator import AgentOrchestrator, canonical_analysis_intent, extract_symbol_from_intent
 from gops_agents.publisher import notification_payload
+from gops_agents.news_cache import MemoryNewsEvidenceCache, RedisNewsEvidenceCache
 from gops_agents.providers import ClickHouseNewsProvider, GraphDBOntologyProvider, ProviderRequest
 from gops_agents.synthesizer import FinalAnswerSynthesizer
 import alfaka.alpaca.news  # noqa: F401
@@ -69,6 +71,40 @@ class FakeOntologyProvider:
 
     def fetch(self, request):
         return self.evidence
+
+
+class BrokenRedisClient:
+    def get(self, key):
+        raise RuntimeError("redis unavailable")
+
+    def setex(self, key, ttl, value):
+        raise RuntimeError("redis unavailable")
+
+
+class CountingNewsAgent(NewsAgent):
+    def __init__(self, provider=None, localizer=None):
+        super().__init__(provider=provider, localizer=localizer)
+        self.calls = 0
+
+    def analyze(self, context):
+        self.calls += 1
+        return super().analyze(context)
+
+
+class CountingSynthesizer:
+    def __init__(self):
+        self.calls = 0
+
+    def synthesize(self, **kwargs):
+        self.calls += 1
+        symbol = kwargs["symbol"]
+        return FinalAnswer(
+            title=f"{symbol} 뉴스 분석",
+            summary=f"{symbol} 뉴스 근거를 정리했습니다.",
+            sections=[],
+            citations=[],
+            limitations=[],
+        )
 
 
 def layout_context(*, pinned_news=False):
@@ -328,6 +364,124 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(evidence[0].raw["dataSource"], "alpaca-direct")
         self.assertGreaterEqual(evidence[0].raw["importanceScore"], 0.8)
 
+    def test_news_provider_caches_clickhouse_evidence(self):
+        clickhouse = FakeClickHouseProvider([
+            {
+                "articleId": "cache-1",
+                "headline": "NVDA shares rise after strong earnings",
+                "summary": "NVDA revenue beat expectations.",
+                "publishedAt": utc_now_iso(),
+                "url": "https://example.com/cache",
+                "symbols": ["NVDA"],
+            }
+        ])
+        provider = ClickHouseNewsProvider(
+            clickhouse_provider=clickhouse,
+            limit=5,
+            publish_fallback=False,
+            cache=MemoryNewsEvidenceCache(),
+        )
+
+        first = provider.fetch(ProviderRequest("NVDA", "뉴스 보여줘"))
+        second = provider.fetch(ProviderRequest("NVDA", "뉴스 다시 보여줘"))
+
+        self.assertEqual(clickhouse.calls, 1)
+        self.assertEqual(first[0].raw["articleId"], "cache-1")
+        self.assertEqual(second[0].raw["articleId"], "cache-1")
+
+    def test_news_provider_caches_no_data_with_short_ttl(self):
+        now = [1000.0]
+        clickhouse = FakeClickHouseProvider([])
+        provider = ClickHouseNewsProvider(
+            clickhouse_provider=clickhouse,
+            limit=5,
+            direct_fallback=False,
+            cache=MemoryNewsEvidenceCache(now_fn=lambda: now[0]),
+        )
+        provider.no_data_cache_ttl_seconds = 60
+
+        first = provider.fetch(ProviderRequest("NVDA", "뉴스 보여줘"))
+        second = provider.fetch(ProviderRequest("NVDA", "뉴스 다시 보여줘"))
+        now[0] += 61
+        third = provider.fetch(ProviderRequest("NVDA", "뉴스 다시 보여줘"))
+
+        self.assertEqual(clickhouse.calls, 2)
+        self.assertEqual(first[0].status, "no-data")
+        self.assertEqual(second[0].status, "no-data")
+        self.assertEqual(third[0].status, "no-data")
+
+    def test_news_provider_ignores_redis_cache_failures(self):
+        clickhouse = FakeClickHouseProvider([
+            {
+                "articleId": "redis-fail-1",
+                "headline": "NVDA shares rise after strong earnings",
+                "summary": "NVDA revenue beat expectations.",
+                "publishedAt": utc_now_iso(),
+                "url": "https://example.com/redis-fail",
+                "symbols": ["NVDA"],
+            }
+        ])
+        provider = ClickHouseNewsProvider(
+            clickhouse_provider=clickhouse,
+            limit=5,
+            publish_fallback=False,
+            cache=RedisNewsEvidenceCache(BrokenRedisClient()),
+        )
+
+        evidence = provider.fetch(ProviderRequest("NVDA", "뉴스 보여줘"))
+
+        self.assertEqual(clickhouse.calls, 1)
+        self.assertEqual(evidence[0].status, "available")
+        self.assertEqual(evidence[0].raw["articleId"], "redis-fail-1")
+
+    def test_news_provider_caches_alpaca_fallback_success(self):
+        clickhouse = FakeClickHouseProvider([])
+        provider = ClickHouseNewsProvider(
+            clickhouse_provider=clickhouse,
+            limit=5,
+            publish_fallback=False,
+            cache=MemoryNewsEvidenceCache(),
+        )
+        article = {
+            "id": "fallback-cache-1",
+            "headline": "NVDA shares rise after new AI chip launch",
+            "summary": "NVIDIA announced a new data center GPU.",
+            "url": "https://example.com/fallback-cache",
+            "source": "alpaca",
+            "created_at": "2026-06-30T01:02:03Z",
+            "symbols": ["NVDA"],
+        }
+
+        with patch("alfaka.common.secrets.load_alpaca_credentials", return_value=("key", "secret")):
+            with patch("alfaka.alpaca.news.fetch_alpaca_news", return_value=[article]) as fetch:
+                first = provider.fetch(ProviderRequest("NVDA", "뉴스 보여줘"))
+                second = provider.fetch(ProviderRequest("NVDA", "뉴스 다시 보여줘"))
+
+        fetch.assert_called_once()
+        self.assertEqual(clickhouse.calls, 1)
+        self.assertEqual(first[0].raw["articleId"], "fallback-cache-1")
+        self.assertEqual(second[0].raw["articleId"], "fallback-cache-1")
+
+    def test_news_evidence_cache_round_trip_preserves_article_fields(self):
+        cache = MemoryNewsEvidenceCache()
+        item = EvidenceItem(
+            provider="news",
+            status="available",
+            title="NVDA shares rise",
+            summary="NVIDIA news summary",
+            url="https://example.com/round-trip",
+            raw={"articleId": "round-trip-1"},
+        )
+
+        cache.set(symbol="NVDA", limit=5, days=30, fallback_enabled=True, items=[item], ttl_seconds=60)
+        cached = cache.get(symbol="NVDA", limit=5, days=30, fallback_enabled=True)
+
+        self.assertIsNotNone(cached)
+        self.assertEqual(cached[0].title, "NVDA shares rise")
+        self.assertEqual(cached[0].summary, "NVIDIA news summary")
+        self.assertEqual(cached[0].url, "https://example.com/round-trip")
+        self.assertEqual(cached[0].raw["articleId"], "round-trip-1")
+
     def test_news_provider_does_not_fallback_when_clickhouse_news_is_fresh(self):
         clickhouse = FakeClickHouseProvider([
             {
@@ -404,6 +558,128 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(news_command["target"]["panelId"], "panel-news")
         self.assertEqual(news_command["payload"]["props"]["latestNews"][0]["title"], "NVDA shares rise after strong earnings")
         self.assertFalse(any(command["type"] == "layout.panel.add" for command in report.layoutProposal.commands))
+
+    def test_orchestrator_analysis_cache_reuses_final_answer_but_rebuilds_layout(self):
+        provider = ClickHouseNewsProvider(
+            clickhouse_provider=FakeClickHouseProvider([
+                {
+                    "articleId": "analysis-cache-1",
+                    "headline": "NVDA shares rise after strong earnings",
+                    "summary": "NVDA revenue beat expectations.",
+                    "publishedAt": utc_now_iso(),
+                    "url": "https://example.com/analysis-cache",
+                    "symbols": ["NVDA"],
+                    "source": "alpaca",
+                }
+            ]),
+            publish_fallback=False,
+        )
+        news_agent = CountingNewsAgent(provider)
+        synthesizer = CountingSynthesizer()
+        orchestrator = AgentOrchestrator(analysis_cache=MemoryAgentAnalysisCache())
+        orchestrator.news_agent = news_agent
+        orchestrator.synthesizer = synthesizer
+
+        first = orchestrator.analyze({
+            "symbol": "NVDA",
+            "intent": "뉴스 보여줘",
+            "agentIds": ["agent-02"],
+            "layoutContext": layout_context(),
+        })
+        second = orchestrator.analyze({
+            "symbol": "NVDA",
+            "intent": "뉴스 보여줘",
+            "agentIds": ["agent-02"],
+            "layoutContext": layout_context(pinned_news=True),
+        })
+
+        self.assertFalse(first.timing["cacheHit"])
+        self.assertTrue(second.timing["cacheHit"])
+        self.assertEqual(second.timing["cacheLayer"], "analysis")
+        self.assertEqual(news_agent.calls, 1)
+        self.assertEqual(synthesizer.calls, 1)
+        self.assertEqual(first.finalAnswer.summary, second.finalAnswer.summary)
+        self.assertTrue(any(command["type"] == "layout.panel.move" for command in first.layoutProposal.commands))
+        self.assertFalse(any(command["type"] == "layout.panel.move" for command in second.layoutProposal.commands))
+
+    def test_news_paraphrases_share_overview_analysis_cache(self):
+        provider = ClickHouseNewsProvider(
+            clickhouse_provider=FakeClickHouseProvider([
+                {
+                    "articleId": "paraphrase-cache-1",
+                    "headline": "Datadog shares rise after cloud software demand improves",
+                    "summary": "DDOG cloud software demand improved.",
+                    "publishedAt": utc_now_iso(),
+                    "url": "https://example.com/paraphrase-cache",
+                    "symbols": ["DDOG"],
+                    "source": "alpaca",
+                }
+            ]),
+            publish_fallback=False,
+        )
+        news_agent = CountingNewsAgent(provider)
+        synthesizer = CountingSynthesizer()
+        orchestrator = AgentOrchestrator(analysis_cache=MemoryAgentAnalysisCache())
+        orchestrator.news_agent = news_agent
+        orchestrator.synthesizer = synthesizer
+
+        first = orchestrator.analyze({"symbol": "DDOG", "intent": "DDOG 뉴스 알려줘", "agentIds": ["agent-02"], "layoutContext": layout_context()})
+        second = orchestrator.analyze({"symbol": "DDOG", "intent": "DDOG 핵심 뉴스 찾아줘", "agentIds": ["agent-02"], "layoutContext": layout_context()})
+        third = orchestrator.analyze({"symbol": "DDOG", "intent": "DDOG 최신뉴스 보여줘", "agentIds": ["agent-02"], "layoutContext": layout_context()})
+        fourth = orchestrator.analyze({"symbol": "DDOG", "intent": "DDOG 관련 기사 요약해줘", "agentIds": ["agent-02"], "layoutContext": layout_context()})
+
+        self.assertFalse(first.timing["cacheHit"])
+        self.assertTrue(second.timing["cacheHit"])
+        self.assertTrue(third.timing["cacheHit"])
+        self.assertTrue(fourth.timing["cacheHit"])
+        self.assertEqual(news_agent.calls, 1)
+        self.assertEqual(synthesizer.calls, 1)
+
+    def test_news_canonical_intent_separates_filtered_news_requests(self):
+        route = IntentRoute(source="rule", intentType="news", selectedRoles=["news"], confidence=0.9, reason="test")
+
+        self.assertEqual(canonical_analysis_intent("DDOG 뉴스 알려줘", route, ["news"]), "news-overview")
+        self.assertEqual(canonical_analysis_intent("DDOG 핵심 뉴스 찾아줘", route, ["news"]), "news-overview")
+        self.assertEqual(canonical_analysis_intent("DDOG 최신뉴스 보여줘", route, ["news"]), "news-overview")
+        self.assertEqual(canonical_analysis_intent("DDOG 관련 기사 요약해줘", route, ["news"]), "news-overview")
+        self.assertEqual(canonical_analysis_intent("DDOG 악재 뉴스만 찾아줘", route, ["news"]), "news-negative")
+        self.assertEqual(canonical_analysis_intent("DDOG 호재 뉴스만 찾아줘", route, ["news"]), "news-positive")
+        self.assertEqual(canonical_analysis_intent("DDOG 실적 뉴스 알려줘", route, ["news"]), "news-earnings")
+        self.assertEqual(canonical_analysis_intent("DDOG 애널리스트 목표가 뉴스", route, ["news"]), "news-analyst")
+
+        chart_route = IntentRoute(source="rule", intentType="chart", selectedRoles=["chart"], confidence=0.9, reason="test")
+        self.assertEqual(canonical_analysis_intent("DDOG 뉴스 알려줘", chart_route, ["chart"]), "ddog 뉴스 알려줘")
+
+    def test_orchestrator_analysis_cache_fail_open_when_redis_fails(self):
+        provider = ClickHouseNewsProvider(
+            clickhouse_provider=FakeClickHouseProvider([
+                {
+                    "articleId": "analysis-cache-fail-open-1",
+                    "headline": "NVDA shares rise after strong earnings",
+                    "summary": "NVDA revenue beat expectations.",
+                    "publishedAt": utc_now_iso(),
+                    "url": "https://example.com/analysis-cache-fail-open",
+                    "symbols": ["NVDA"],
+                    "source": "alpaca",
+                }
+            ]),
+            publish_fallback=False,
+        )
+        news_agent = CountingNewsAgent(provider)
+        orchestrator = AgentOrchestrator(analysis_cache=RedisAgentAnalysisCache(BrokenRedisClient()))
+        orchestrator.news_agent = news_agent
+        orchestrator.synthesizer = CountingSynthesizer()
+
+        report = orchestrator.analyze({
+            "symbol": "NVDA",
+            "intent": "뉴스 보여줘",
+            "agentIds": ["agent-02"],
+            "layoutContext": layout_context(),
+        })
+
+        self.assertFalse(report.timing["cacheHit"])
+        self.assertEqual(news_agent.calls, 1)
+        self.assertTrue(report.finalAnswer.summary)
 
     def test_news_content_request_does_not_route_to_ui_agent_when_ui_router_is_available(self):
         provider = ClickHouseNewsProvider(
@@ -689,6 +965,43 @@ class AgentOrchestrationTests(unittest.TestCase):
         news_command = news_panel_props_command(report)
         self.assertEqual(news_command["payload"]["props"]["symbol"], "XLV")
         self.assertEqual(news_command["payload"]["props"]["latestNews"][0]["symbol"], "XLV")
+
+    def test_company_name_alias_in_intent_overrides_current_chart_symbol_for_news(self):
+        self.assertEqual(extract_symbol_from_intent("애플 뉴스 찾아줘"), "AAPL")
+        self.assertEqual(extract_symbol_from_intent("Apple latest news"), "AAPL")
+        self.assertEqual(extract_symbol_from_intent("엔비디아 관련 뉴스"), "NVDA")
+
+        clickhouse = FakeClickHouseProvider([
+            {
+                "articleId": "aapl-1",
+                "headline": "Apple shares rise after services growth improves",
+                "summary": "Apple services revenue improved investor sentiment.",
+                "publishedAt": utc_now_iso(),
+                "url": "https://example.com/aapl",
+                "symbols": ["AAPL"],
+                "source": "alpaca",
+            }
+        ])
+        provider = ClickHouseNewsProvider(clickhouse_provider=clickhouse, publish_fallback=False)
+        orchestrator = AgentOrchestrator()
+        orchestrator.news_agent = NewsAgent(provider)
+
+        report = orchestrator.analyze({
+            "symbol": "NVDA",
+            "intent": "애플 뉴스 찾아줘",
+            "agentIds": ["agent-02"],
+            "chartContext": {
+                "chartDocument": {"symbol": "NVDA", "timeframe": "1m"},
+                "dataStatus": {"candleCount": 10, "state": "ready"},
+            },
+        })
+
+        self.assertEqual(report.symbol, "AAPL")
+        self.assertEqual(clickhouse.requested_symbols, ["AAPL"])
+        self.assertIn("AAPL", report.finalAnswer.title)
+        news_command = news_panel_props_command(report)
+        self.assertEqual(news_command["payload"]["props"]["symbol"], "AAPL")
+        self.assertEqual(news_command["payload"]["props"]["latestNews"][0]["symbol"], "AAPL")
 
     def test_news_agent_openai_success_and_fallback_keep_shape(self):
         provider = ClickHouseNewsProvider(

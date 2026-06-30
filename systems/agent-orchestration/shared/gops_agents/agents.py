@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import urllib.request
 from collections import Counter
 from dataclasses import dataclass, field
@@ -23,6 +24,7 @@ class AgentContext:
     layoutContext: dict[str, Any] = field(default_factory=dict)
     marketEvents: list[MarketEvent] = field(default_factory=list)
     providerEvidence: list[EvidenceItem] = field(default_factory=list)
+    timing: dict[str, Any] = field(default_factory=dict)
 
 
 class ChartAgent:
@@ -102,7 +104,11 @@ class NewsAgent(ProviderBackedAgent):
         self.localizer = localizer or NewsLocalizationService()
 
     def analyze(self, context: AgentContext) -> AgentFinding:
-        evidence = self.provider.fetch(ProviderRequest(context.symbol, context.intent))
+        started_at = time.perf_counter()
+        try:
+            evidence = self.provider.fetch(ProviderRequest(context.symbol, context.intent))
+        finally:
+            add_context_timing_ms(context, "newsFetchMs", (time.perf_counter() - started_at) * 1000)
         evidence = self.localizer.localize(symbol=context.symbol, intent=context.intent, evidence=evidence)
         analysis = analyze_news_evidence(context, evidence)
         openai_analysis = role_analysis_with_openai(
@@ -122,6 +128,11 @@ class NewsAgent(ProviderBackedAgent):
             evidence=evidence,
             tags=[str(item) for item in analysis["tags"]],
         )
+
+
+def add_context_timing_ms(context: AgentContext, key: str, elapsed_ms: float) -> None:
+    current = context.timing.get(key)
+    context.timing[key] = (float(current) if isinstance(current, (int, float)) else 0.0) + elapsed_ms
 
 
 class MacroAgent(ProviderBackedAgent):

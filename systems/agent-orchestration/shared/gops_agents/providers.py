@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .contracts import EvidenceItem, utc_now_iso
+from .news_cache import NewsEvidenceCache, build_news_cache_from_env
 
 
 @dataclass
@@ -50,6 +51,7 @@ class ClickHouseNewsProvider(NewsProvider):
         direct_fallback: bool | None = None,
         stale_after_seconds: int | None = None,
         publish_fallback: bool | None = None,
+        cache: NewsEvidenceCache | None = None,
     ):
         self.clickhouse_provider = clickhouse_provider
         self.limit = int(limit or os.getenv("AGENT_NEWS_LIMIT", "12"))
@@ -57,8 +59,15 @@ class ClickHouseNewsProvider(NewsProvider):
         self.direct_fallback = bool_env("AGENT_NEWS_DIRECT_FALLBACK", True) if direct_fallback is None else direct_fallback
         self.stale_after_seconds = int(stale_after_seconds or os.getenv("AGENT_NEWS_STALE_AFTER_SECONDS", "21600"))
         self.publish_fallback = bool_env("AGENT_NEWS_FALLBACK_PUBLISH_TO_KAFKA", True) if publish_fallback is None else publish_fallback
+        self.cache = cache if cache is not None else build_news_cache_from_env()
+        self.cache_ttl_seconds = int(os.getenv("AGENT_NEWS_CACHE_TTL_SECONDS", "300"))
+        self.no_data_cache_ttl_seconds = int(os.getenv("AGENT_NEWS_NO_DATA_CACHE_TTL_SECONDS", "60"))
 
     def fetch(self, request: ProviderRequest) -> list[EvidenceItem]:
+        cached = self._cache_get(request)
+        if cached is not None:
+            return cached
+
         clickhouse_error: Exception | None = None
         rows = []
         try:
@@ -72,27 +81,27 @@ class ClickHouseNewsProvider(NewsProvider):
         if should_fallback:
             fallback = self._fetch_alpaca_fallback(request)
             if any(item.status == "available" for item in fallback):
-                return normalize_news_evidence([*fallback, *evidence])[: self.limit]
+                return self._cache_set(request, normalize_news_evidence([*fallback, *evidence])[: self.limit])
             if not evidence:
-                return fallback
+                return self._cache_set(request, fallback)
 
         if clickhouse_error is not None and not evidence:
-            return [
+            return self._cache_set(request, [
                 EvidenceItem.no_data(
                     "news",
                     "News provider not available",
                     f"뉴스 ClickHouse provider 미연결 또는 조회 실패: {clickhouse_error}",
                 )
-            ]
+            ])
         if not evidence:
-            return [
+            return self._cache_set(request, [
                 EvidenceItem.no_data(
                     "news",
                     "No news articles",
                     f"{request.symbol} 관련 Alpaca 뉴스가 아직 저장되어 있지 않습니다.",
                 )
-            ]
-        return evidence
+            ])
+        return self._cache_set(request, evidence)
 
     def _row_to_evidence(self, row: dict, symbol: str, *, source: str) -> EvidenceItem:
         title = str(row.get("headline") or row.get("title") or "Untitled news")
@@ -200,6 +209,32 @@ class ClickHouseNewsProvider(NewsProvider):
 
         self.clickhouse_provider = ClickHouseMarketDataProvider()
         return self.clickhouse_provider
+
+    def _cache_get(self, request: ProviderRequest) -> list[EvidenceItem] | None:
+        try:
+            return self.cache.get(
+                symbol=request.symbol,
+                limit=self.limit,
+                days=self.days,
+                fallback_enabled=self.direct_fallback,
+            )
+        except Exception:
+            return None
+
+    def _cache_set(self, request: ProviderRequest, items: list[EvidenceItem]) -> list[EvidenceItem]:
+        ttl_seconds = self.cache_ttl_seconds if any(item.status == "available" for item in items) else self.no_data_cache_ttl_seconds
+        try:
+            self.cache.set(
+                symbol=request.symbol,
+                limit=self.limit,
+                days=self.days,
+                fallback_enabled=self.direct_fallback,
+                items=items,
+                ttl_seconds=ttl_seconds,
+            )
+        except Exception:
+            return items
+        return items
 
 
 class EmptyMacroProvider(MacroProvider):

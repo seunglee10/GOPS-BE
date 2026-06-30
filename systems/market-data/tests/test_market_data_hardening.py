@@ -9,12 +9,27 @@ from unittest import mock
 from pathlib import Path
 from datetime import datetime, timedelta, time, timezone
 
+
+class RequestException(Exception):
+    pass
+
+
+def missing_http_client(*args, **kwargs):
+    raise RequestException("requests is not installed in this test runtime")
+
+
 sys.modules.setdefault("boto3", types.SimpleNamespace(client=lambda *args, **kwargs: None))
 sys.modules.setdefault("botocore", types.SimpleNamespace())
 sys.modules.setdefault("botocore.config", types.SimpleNamespace(Config=lambda **kwargs: kwargs))
 sys.modules.setdefault("redis", types.SimpleNamespace(from_url=lambda *args, **kwargs: None))
+sys.modules.setdefault("websockets", types.SimpleNamespace(connect=lambda *args, **kwargs: None))
+sys.modules.setdefault(
+    "requests",
+    types.SimpleNamespace(get=missing_http_client, post=missing_http_client, RequestException=RequestException),
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(REPO_ROOT / "systems" / "market-data" / "shared"))
 
 from alfaka.alpaca.subscription import (
     configured_collection_symbols,
@@ -2052,7 +2067,11 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             coverage_provider=StaticCoverageProvider(coverage),
         )
 
-        with mock.patch.dict(os.environ, {"S3_BUCKET": "bucket", "S3_PROCESSED_FORMAT": "jsonl"}):
+        with mock.patch.dict(os.environ, {
+            "S3_BUCKET": "bucket",
+            "S3_PROCESSED_FORMAT": "jsonl",
+            "S3_RAW_PREFIX": "market-data/raw/alpaca",
+        }):
             with mock.patch("alfaka.backfill.runner.fetch_alpaca_bars", return_value=[
                 alpaca_raw_bar("2026-06-25T00:00:00.000Z", open_price=10)
             ]) as fetch:
@@ -3700,6 +3719,12 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(client.inserts[0][0], "news_articles")
         self.assertEqual(client.inserts[0][1][0]["article_id"], "news-1")
 
+    def test_clickhouse_news_articles_table_has_30_day_ttl(self):
+        schema = (REPO_ROOT / "infra" / "clickhouse" / "initdb" / "01-market-data.sql").read_text(encoding="utf-8")
+
+        self.assertIn("CREATE TABLE IF NOT EXISTS market_data.news_articles", schema)
+        self.assertIn("TTL published_at + INTERVAL 30 DAY DELETE", schema)
+
     def test_storage_boundaries_skip_invalid_weekend_stock_candles(self):
         client = RecordingClickHouseClient()
         weekend_row = {
@@ -3775,6 +3800,8 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(keys, ["market-data/final/candles/part-b.jsonl"])
 
     def test_s3_materializer_reads_parquet_processed_candle_objects(self):
+        if importlib.util.find_spec("pyarrow") is None:
+            self.skipTest("pyarrow is not installed in this test runtime")
         s3 = S3ObjectStore()
         client = RecordingClickHouseClient()
         row = {
