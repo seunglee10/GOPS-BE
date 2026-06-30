@@ -31,6 +31,10 @@ spec:
             - redis-server
             - --appendonly
             - "yes"
+            - --save
+            - ""
+            - --stop-writes-on-bgsave-error
+            - "no"
           ports:
             - name: redis
               containerPort: 6379

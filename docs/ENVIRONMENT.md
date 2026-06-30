@@ -138,6 +138,19 @@ REDIS_KEY_PREFIX=
 
 AWS/EKS may later point `REDIS_URL` at ElastiCache, Valkey, or another Redis-compatible endpoint.
 
+For local compose and the in-cluster Redis StatefulSet, Redis is runtime
+chart/live/backfill state. Durable historical candles live in S3 and ClickHouse.
+Run Redis with append-only persistence, RDB snapshots disabled, and write blocking
+disabled for background save failures:
+
+```text
+redis-server --appendonly yes --save "" --stop-writes-on-bgsave-error no
+```
+
+This keeps backfill queues, live price keys, and component health writable even
+if an in-cluster disk snapshot fails. Chart resets must still use scan-delete for
+the documented market-data key patterns, not `FLUSHALL`.
+
 GOPS login sessions reuse Redis by default:
 
 ```text

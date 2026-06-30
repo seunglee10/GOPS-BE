@@ -1,0 +1,29 @@
+# Keeps the pre-feed-profile ingestor from producing duplicate raw market data
+# after clusters that used the old Deployment are updated with apply-only deploys.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alfaka-alpaca-ingestor
+  namespace: alfaka-market-data
+  labels:
+    app.kubernetes.io/component: retired-market-ingestor
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: alfaka-alpaca-ingestor
+  template:
+    metadata:
+      labels:
+        app: alfaka-alpaca-ingestor
+        app.kubernetes.io/component: retired-market-ingestor
+    spec:
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: alpaca-ingestor
+          image: YOUR_ECR_REPOSITORY/gops-market-ingestor:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -c
+            - import time; time.sleep(3600)

@@ -12,6 +12,8 @@ Git push는 reset을 자동 실행하지 않는다. AWS reset은 운영자가 ku
 - Redis chart/live/backfill keyspace는 로컬 reset 후 상태와 AWS reset 후 상태가 같은 의미를 가져야 한다. Redis는 durable historical source가 아니라 realtime/latest/recent/cache/queue state다.
 - Kafka chart topics와 consumer group 상태는 로컬과 AWS가 같은 message contract를 사용해야 한다. 단, local broker 주소와 AWS in-cluster broker 주소는 달라도 된다.
 - endpoint, password, Secret 이름처럼 환경별 값은 달라도 되지만, market-data behavior는 같아야 한다.
+- AWS apply-only 배포에서 과거 `alfaka-alpaca-ingestor` Deployment가 남아 있으면 안 된다. 현재 계약의 active ingestor는 `alfaka-alpaca-ingestor-sip`, `alfaka-alpaca-ingestor-iex`, `alfaka-alpaca-ingestor-boats`이며, legacy `alfaka-alpaca-ingestor`는 `replicas=0`이어야 한다.
+- Redis는 chart/live/backfill runtime state이며, S3/ClickHouse가 durable historical source다. Redis background snapshot 실패가 backfill/status writes를 막지 않도록 compose와 in-cluster Redis는 `--appendonly yes --save "" --stop-writes-on-bgsave-error no` 계약을 사용한다.
 
 AWS runtime must use these market-data contract values:
 
@@ -106,8 +108,13 @@ auth/session/order/agent Redis key deletion
    - ConfigMap `alfaka-market-data-config`
    - `/health/config` redacted response
    - sampled running pod env
+   - `alfaka-alpaca-ingestor` legacy Deployment is absent or has `replicas=0`
+   - active ingestor Deployments are only `alfaka-alpaca-ingestor-sip`, `alfaka-alpaca-ingestor-iex`, and `alfaka-alpaca-ingestor-boats`
 3. Scale down market-data writers/workers:
-   - market ingestor
+   - `alfaka-alpaca-ingestor-sip`
+   - `alfaka-alpaca-ingestor-iex`
+   - `alfaka-alpaca-ingestor-boats`
+   - legacy `alfaka-alpaca-ingestor`, only if it is still present and not already `replicas=0`
    - market processor
    - processed S3 sink
    - raw S3 archive
@@ -131,7 +138,9 @@ Required checks:
 
 - ClickHouse chart reset tables are empty immediately after reset.
 - Redis chart/market-data key count is zero or the expected minimal post-reset state.
+- Redis accepts writes after reset. If Redis reports `MISCONF stop-writes-on-bgsave-error`, fix the Redis runtime config before running backfill.
 - Kafka chart topic contracts exist and no stale consumer group blocks live processing.
+- No legacy `alfaka-alpaca-ingestor` pod is producing raw Alpaca messages.
 - S3 canonical final object and manifest audits pass.
 - S3 -> ClickHouse materialize succeeds and is idempotent.
 - `/health/config` has no stale market-data warnings.
@@ -150,6 +159,10 @@ GET /api/charts/hot-symbols?limit=10
 GET /api/charts/watchlist
 GET /api/charts/symbols?query=brk
 ```
+
+On `stargops.com`, the public Ingress routes `/api` and `/ws` to the backend.
+Use a backend pod/service port-forward or an internal cluster request for
+`/health/config` unless the Ingress is explicitly changed to expose `/health`.
 
 ## 5. Push And Operations Rule
 

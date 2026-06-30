@@ -8,6 +8,7 @@ resources:
   - secretstore-aws-secrets-manager.yaml
   - externalsecret-openai.yaml
   - ingress.yaml
+  - retired-alpaca-ingestor.yaml
 
 patches:
   - path: configmap-incluster-patch.yaml
