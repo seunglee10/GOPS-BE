@@ -22,6 +22,167 @@ gops_image_env_var_for_repository() {
   echo "ECR_${suffix}_REPO"
 }
 
+gops_normalize_service_key() {
+  local service="$1"
+
+  case "${service}" in
+    gops-frontend)
+      echo "frontend"
+      ;;
+    api-server | backend | gops-api-server | gops-backend)
+      echo "backend"
+      ;;
+    ingestor | market-ingestor | gops-market-ingestor)
+      echo "market-ingestor"
+      ;;
+    processor | market-processor | gops-market-processor)
+      echo "market-processor"
+      ;;
+    storage | market-storage | gops-market-storage)
+      echo "market-storage"
+      ;;
+    backfill | backfill-worker | gops-backfill-worker)
+      echo "backfill-worker"
+      ;;
+    order | order-worker | gops-order-worker)
+      echo "order-worker"
+      ;;
+    kis | kis-adapter | gops-kis-adapter)
+      echo "kis-adapter"
+      ;;
+    agent | agent-orchestrator | gops-agent-orchestrator)
+      echo "agent-orchestrator"
+      ;;
+    *)
+      echo "${service}"
+      ;;
+  esac
+}
+
+gops_service_exists() {
+  local expected_key="$1"
+  local key
+
+  while IFS=$'\t' read -r key _repository _env_var _dockerfile; do
+    if [[ "${key}" == "${expected_key}" ]]; then
+      return 0
+    fi
+  done < <(gops_image_entries)
+
+  return 1
+}
+
+gops_image_url_for_key() {
+  local expected_key="$1"
+  local aws_account_id="${AWS_ACCOUNT_ID:-}"
+  local aws_region="${AWS_REGION:-ap-northeast-2}"
+  local project_name="${PROJECT_NAME:-alfaka}"
+  local environment="${ENVIRONMENT:-dev}"
+  local name_prefix="${project_name}-${environment}"
+  local ecr_registry
+  local key
+  local repository
+  local env_var
+
+  if [[ -z "${aws_account_id}" ]]; then
+    printf 'AWS_ACCOUNT_ID를 넣어주세요.\n' >&2
+    return 1
+  fi
+
+  ecr_registry="${aws_account_id}.dkr.ecr.${aws_region}.amazonaws.com"
+  while IFS=$'\t' read -r key repository env_var _dockerfile; do
+    if [[ "${key}" != "${expected_key}" ]]; then
+      continue
+    fi
+
+    if [[ -n "${!env_var:-}" ]]; then
+      echo "${!env_var}"
+    else
+      echo "${ecr_registry}/${name_prefix}-${repository}"
+    fi
+    return 0
+  done < <(gops_image_entries)
+
+  printf 'Unknown service: %s\n' "${expected_key}" >&2
+  return 1
+}
+
+gops_deployments_for_service() {
+  local key="$1"
+
+  case "${key}" in
+    agent-orchestrator)
+      printf '%s\n' agent-event-detector agent-notification-publisher agent-orchestrator
+      ;;
+    backfill-worker)
+      printf '%s\n' alfaka-backfill-worker
+      ;;
+    backend)
+      printf '%s\n' gops-backend
+      ;;
+    frontend)
+      printf '%s\n' gops-frontend
+      ;;
+    kis-adapter)
+      printf '%s\n' kis-broker-adapter
+      ;;
+    market-ingestor)
+      printf '%s\n' alfaka-alpaca-ingestor alfaka-alpaca-news-ingestor
+      ;;
+    market-processor)
+      printf '%s\n' alfaka-local-stream-processor
+      ;;
+    market-storage)
+      printf '%s\n' alfaka-clickhouse-loader alfaka-s3-sink
+      ;;
+    order-worker)
+      printf '%s\n' order-outbox-publisher
+      ;;
+    *)
+      printf 'Unknown service: %s\n' "${key}" >&2
+      return 1
+      ;;
+  esac
+}
+
+gops_primary_deployment_for_service() {
+  local key="$1"
+
+  case "${key}" in
+    agent-orchestrator)
+      echo "agent-orchestrator"
+      ;;
+    backfill-worker)
+      echo "alfaka-backfill-worker"
+      ;;
+    backend)
+      echo "gops-backend"
+      ;;
+    frontend)
+      echo "gops-frontend"
+      ;;
+    kis-adapter)
+      echo "kis-broker-adapter"
+      ;;
+    market-ingestor)
+      echo "alfaka-alpaca-ingestor"
+      ;;
+    market-processor)
+      echo "alfaka-local-stream-processor"
+      ;;
+    market-storage)
+      echo "alfaka-s3-sink"
+      ;;
+    order-worker)
+      echo "order-outbox-publisher"
+      ;;
+    *)
+      printf 'Unknown service: %s\n' "${key}" >&2
+      return 1
+      ;;
+  esac
+}
+
 gops_image_entries() {
   local dockerfile
   local key

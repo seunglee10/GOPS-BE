@@ -5,6 +5,11 @@ on:
     branches:
       - dev
   workflow_dispatch:
+    inputs:
+      services:
+        description: "Optional service keys to deploy, e.g. frontend,backend"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -39,73 +44,110 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed app services
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.before || '' }}
+          HEAD_SHA: ${{ github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          REQUESTED_SERVICES: ${{ github.event.inputs.services || '' }}
+        run: ./scripts/aws/detect-changed-services.sh
+
+      - name: Skip app deploy
+        if: steps.changes.outputs.has_services != 'true'
+        run: echo "No app service changes detected; skipping EKS app deploy."
 
       - name: Configure AWS credentials
+        if: steps.changes.outputs.has_services == 'true'
         uses: aws-actions/configure-aws-credentials@v6.1.0
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Ensure Amazon ECR repositories
+        if: steps.changes.outputs.has_services == 'true'
         run: ./scripts/aws/ensure-ecr-repositories.sh
 
       - name: Login to Amazon ECR
+        if: steps.changes.outputs.has_services == 'true'
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Set up Docker Buildx
+        if: steps.changes.outputs.has_services == 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Set image tag
+        if: steps.changes.outputs.has_services == 'true'
         run: echo "IMAGE_TAG=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
 
       - name: Build and push images
+        if: steps.changes.outputs.has_services == 'true'
+        env:
+          SERVICES: ${{ steps.changes.outputs.services }}
         run: ./scripts/aws/build-and-push-images.sh
 
       - name: Set up kubectl
+        if: steps.changes.outputs.has_services == 'true'
         uses: azure/setup-kubectl@v4
 
       - name: Configure kubeconfig
+        if: steps.changes.outputs.has_services == 'true'
         run: aws eks update-kubeconfig --name "$EKS_CLUSTER_NAME" --region "$AWS_REGION"
 
-      - name: Point CI overlay at this commit image tag
-        run: |
-          sed -i "s/ci-placeholder/${IMAGE_TAG}/g" "$KUSTOMIZE_OVERLAY/kustomization.yaml"
-          if grep -R "ci-placeholder" "$KUSTOMIZE_OVERLAY"; then
-            echo "Image tag placeholder still remains in $KUSTOMIZE_OVERLAY" >&2
-            exit 1
-          fi
+      - name: Point selected CI images at this commit image tag
+        if: steps.changes.outputs.has_services == 'true'
+        env:
+          SERVICES: ${{ steps.changes.outputs.services }}
+        run: ./scripts/aws/update-ci-image-tags.sh
 
       - name: Server-side dry run
+        if: steps.changes.outputs.has_services == 'true'
         run: kubectl apply -k "$KUSTOMIZE_OVERLAY" --dry-run=server
 
       - name: Deploy app workloads
+        if: steps.changes.outputs.has_services == 'true'
         run: kubectl apply -k "$KUSTOMIZE_OVERLAY"
 
       - name: Verify rollout
+        if: steps.changes.outputs.has_services == 'true'
+        env:
+          DEPLOYMENTS: ${{ steps.changes.outputs.deployments }}
         run: |
-          deployments=(
-            agent-event-detector
-            agent-notification-publisher
-            agent-orchestrator
-            alfaka-alpaca-ingestor
-            alfaka-alpaca-news-ingestor
-            alfaka-backfill-worker
-            alfaka-clickhouse-loader
-            alfaka-local-stream-processor
-            alfaka-s3-sink
-            gops-backend
-            gops-frontend
-            kis-broker-adapter
-            order-outbox-publisher
-          )
-
-          for deployment in "${deployments[@]}"; do
-            kubectl rollout status "deployment/${deployment}" \
+          for deployment in ${DEPLOYMENTS}; do
+            if ! kubectl rollout status "deployment/${deployment}" \
               -n "$K8S_NAMESPACE" \
-              --timeout=600s
+              --timeout=600s; then
+              ./scripts/aws/print-rollout-diagnostics.sh "${deployment}"
+              exit 1
+            fi
           done
 
       - name: Smoke test public endpoints
+        if: steps.changes.outputs.has_services == 'true'
+        env:
+          SMOKE_FRONTEND: ${{ steps.changes.outputs.smoke_frontend }}
+          SMOKE_BACKEND: ${{ steps.changes.outputs.smoke_backend }}
         run: |
-          curl -fsS https://stargops.com/ >/dev/null
-          curl -fsS https://stargops.com/api/charts/symbols >/dev/null
+          smoke_url() {
+            local url="$1"
+            local attempt
+            for attempt in 1 2 3 4 5; do
+              if curl -fsS "$url" >/dev/null; then
+                echo "Smoke passed: $url"
+                return 0
+              fi
+              echo "Smoke retry ${attempt}/5: $url"
+              sleep 12
+            done
+            curl -fsS "$url" >/dev/null
+          }
+
+          if [[ "$SMOKE_FRONTEND" == "true" ]]; then
+            smoke_url https://stargops.com/
+          fi
+          if [[ "$SMOKE_BACKEND" == "true" ]]; then
+            smoke_url https://stargops.com/api/charts/symbols
+          fi
