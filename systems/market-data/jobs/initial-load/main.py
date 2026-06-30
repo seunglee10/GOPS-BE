@@ -144,9 +144,24 @@ def parse_symbols(value: str | None) -> list[str]:
 
 def resolve_initial_load_symbols(value: str | None) -> tuple[list[str], str]:
     raw_value = (value or "").strip()
-    if not raw_value or raw_value.lower() in {"universe", "sp500", "all", "*"}:
-        return configured_collection_symbols(), "configured_collection"
-    return parse_symbols(raw_value), "explicit"
+    allowed_symbols = configured_collection_symbols()
+    allowed = set(allowed_symbols)
+    if not raw_value or raw_value.lower() in {"universe", "gops20", "all", "*"}:
+        return allowed_symbols, "configured_collection"
+    symbols = []
+    outside = []
+    seen = set()
+    for symbol in parse_symbols(raw_value):
+        if symbol not in allowed:
+            outside.append(symbol)
+            continue
+        if symbol in seen:
+            continue
+        symbols.append(symbol)
+        seen.add(symbol)
+    if outside:
+        raise ValueError(f"INITIAL_LOAD_SYMBOLS includes symbols outside configured universe: {', '.join(sorted(set(outside)))}")
+    return symbols, "explicit"
 
 
 def optional_int(value: str | None) -> int | None:

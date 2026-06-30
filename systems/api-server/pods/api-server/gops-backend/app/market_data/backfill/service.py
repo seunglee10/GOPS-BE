@@ -43,6 +43,7 @@ class BackfillService:
             target_range_from = payload_or_has_candles.get("targetRangeFrom")
             invalid_row_count = int(payload_or_has_candles.get("invalidRowCount") or 0)
             candles = payload_or_has_candles.get("candles") or []
+            has_more_before = payload_or_has_candles.get("hasMoreBefore")
         else:
             returned_count = 1 if payload_or_has_candles else 0
             requested_limit = returned_count
@@ -53,6 +54,7 @@ class BackfillService:
             target_range_from = None
             invalid_row_count = 0
             candles = []
+            has_more_before = None
 
         latest = self._latest_status(symbol, source_interval)
         backfill_status = latest.get("status") if latest else "not_requested"
@@ -69,6 +71,11 @@ class BackfillService:
             renderability=renderability,
         )
         can_backfill = can_request_backfill(backfill_status, complete)
+        target_boundary = target_boundary_reached(
+            has_more_before=has_more_before,
+            returned_count=returned_count,
+            renderability=renderability,
+        )
         if complete:
             repair_status = "none"
             coverage = coverage_payload(
@@ -103,6 +110,8 @@ class BackfillService:
             reason_code = coverage_reason(backfill_status, "stored_range_incomplete")
             if not renderability["renderable"]:
                 reason_code = renderability["renderabilityReasonCode"] or "not_renderable"
+            if target_boundary:
+                reason_code = "target_boundary"
             repair_status = repair_status_for(
                 complete=complete,
                 backfill_status=backfill_status,
@@ -110,15 +119,24 @@ class BackfillService:
                 returned_count=returned_count,
                 renderability=renderability,
             )
+            if target_boundary:
+                repair_status = "none"
             data_status = "ready" if renderability["renderable"] and returned_count >= requested_limit else "partial"
-            message = partial_message or partial_coverage_message(
-                symbol=symbol,
-                interval=interval,
-                source_interval=source_interval,
-                returned_count=returned_count,
-                renderability=renderability,
-                invalid_row_count=invalid_row_count,
-            )
+            if target_boundary:
+                message = partial_message or target_boundary_message(
+                    symbol=symbol,
+                    interval=interval,
+                    source_interval=source_interval,
+                )
+            else:
+                message = partial_message or partial_coverage_message(
+                    symbol=symbol,
+                    interval=interval,
+                    source_interval=source_interval,
+                    returned_count=returned_count,
+                    renderability=renderability,
+                    invalid_row_count=invalid_row_count,
+                )
             coverage = coverage_payload(
                 state="partial",
                 reason_code=reason_code,
@@ -140,7 +158,7 @@ class BackfillService:
                 "dataStatus": data_status,
                 "backfillStatus": backfill_status,
                 "repairStatus": repair_status,
-                "canBackfill": can_backfill,
+                "canBackfill": False if target_boundary else can_backfill,
                 "sourceInterval": source_interval,
                 "message": message,
                 "coverage": coverage,
@@ -369,7 +387,7 @@ def complete_coverage(
     has_range_coverage = bool(available_from and target_range_from and str(available_from) <= str(target_range_from))
     has_count_coverage = stored_count >= target_stored_count
     if has_range_coverage and has_count_coverage:
-        return True
+        return bool(renderability.get("renderable"))
 
     # Historical stock bars skip weekends/holidays and may begin at the next
     # trading session after the requested calendar boundary. Treat a dense,
@@ -449,6 +467,17 @@ def partial_coverage_message(
     return (
         f"Loaded {returned_count} requested candles, but the stored {source_interval} target range is not complete yet. "
         "Historical backfill is required."
+    )
+
+
+def target_boundary_reached(*, has_more_before: Any, returned_count: int, renderability: dict[str, Any]) -> bool:
+    return has_more_before is False and returned_count > 0 and not renderability.get("renderable")
+
+
+def target_boundary_message(*, symbol: str, interval: str, source_interval: str) -> str:
+    return (
+        f"Reached the configured historical target boundary for {symbol} {interval}. "
+        f"No earlier {source_interval} candles are in scope for backfill."
     )
 
 

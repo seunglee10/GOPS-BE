@@ -10,11 +10,16 @@ from alfaka.common.env import load_dotenv, parse_csv
 
 
 DEFAULT_REQUEST_CONFIG = {
-    "defaultUniverse": "sp500",
-    "universeRegistryPath": "systems/market-data/config/sp500-universe.json",
+    "defaultUniverse": "gops20",
+    "universeRegistryPath": "",
     "collectionSymbolSource": "universe",
-    "defaultSymbols": ["AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "TSLA"],
-    "defaultSeedSymbols": ["AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "TSLA"],
+    "defaultSymbols": [
+        "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "BRK.B", "JPM", "UNH",
+        "V", "XOM", "MA", "AVGO", "PG", "COST", "HD", "JNJ", "NFLX", "AMD",
+    ],
+    "defaultSeedSymbols": [
+        "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "BRK.B", "JPM", "UNH",
+    ],
     "defaultChannels": ["bars", "updatedBars", "dailyBars", "statuses"],
     "activeChartChannels": ["trades"],
     "validChannels": ["bars", "updatedBars", "trades", "dailyBars", "statuses", "quotes", "corrections", "cancelErrors"],
@@ -64,7 +69,7 @@ def load_request_config():
         "companyToSymbol": loaded_config.get("companyToSymbol") or {},
         "symbolMetadata": loaded_config.get("symbolMetadata") or {},
         "defaultUniverse": loaded_config.get("defaultUniverse") or DEFAULT_REQUEST_CONFIG["defaultUniverse"],
-        "universeRegistryPath": loaded_config.get("universeRegistryPath") or DEFAULT_REQUEST_CONFIG["universeRegistryPath"],
+        "universeRegistryPath": loaded_config["universeRegistryPath"] if "universeRegistryPath" in loaded_config else DEFAULT_REQUEST_CONFIG["universeRegistryPath"],
         "collectionSymbolSource": loaded_config.get("collectionSymbolSource") or DEFAULT_REQUEST_CONFIG["collectionSymbolSource"],
         "defaultChannels": loaded_config.get("defaultChannels") or DEFAULT_REQUEST_CONFIG["defaultChannels"],
         "activeChartChannels": loaded_config.get("activeChartChannels") or DEFAULT_REQUEST_CONFIG["activeChartChannels"],
@@ -105,8 +110,6 @@ def configured_universe_name(config=None):
 def configured_universe_symbols(config=None):
     config = config or load_request_config()
     universe_name = configured_universe_name(config).lower()
-    if universe_name in {"sp500", "s&p500", "s-and-p-500", "snp500"}:
-        return _validated_symbol_list(load_universe_registry_symbols(config), config, "ALPACA_UNIVERSE")
     configured_universes = config.get("universes") or {}
     if universe_name in configured_universes:
         return _validated_symbol_list(configured_universes[universe_name], config, f"ALPACA_UNIVERSE:{universe_name}")

@@ -6,6 +6,7 @@ import json
 
 from alfaka.common.env import utc_now_iso
 from alfaka.alpaca.feed_profiles import market_session_for_timestamp
+from alfaka.common.canonical import LIVE_PRICE_ADJUSTMENT, candle_metadata
 
 
 MESSAGE_TYPE_TO_CHANNEL = {
@@ -43,7 +44,7 @@ def build_raw_envelope(message, feed, feed_profile=None, market_session=None):
     event_time = message.get("t")
     resolved_session = market_session or ("regular" if channel == "dailyBars" else market_session_for_timestamp(event_time or received_at))
 
-    return {
+    envelope = {
         "source": "alpaca",
         "feed": feed,
         "feedProfile": feed_profile or feed,
@@ -55,6 +56,9 @@ def build_raw_envelope(message, feed, feed_profile=None, market_session=None):
         "sourceEventId": source_event_id(message, feed, channel, symbol, received_at),
         "raw": message,
     }
+    if channel in {"bars", "updatedBars", "dailyBars"}:
+        envelope.update(candle_metadata(LIVE_PRICE_ADJUSTMENT))
+    return envelope
 
 
 def raw_topic_name(prefix, message_type):

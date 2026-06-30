@@ -184,7 +184,7 @@ def raw_archive_row(envelope, now_fn=None):
     raw = envelope.get("raw") or {}
     received_at = envelope.get("receivedAt") or to_iso(now_fn())
     event_time = envelope.get("eventTime") or raw.get("t") or received_at
-    return {
+    row = {
         "source": envelope.get("source") or "alpaca",
         "feed": envelope.get("feed") or "unknown",
         "feedProfile": envelope.get("feedProfile") or envelope.get("feed") or "unknown",
@@ -196,6 +196,10 @@ def raw_archive_row(envelope, now_fn=None):
         "sourceEventId": envelope.get("sourceEventId"),
         "raw": raw,
     }
+    if envelope.get("priceAdjustment") or envelope.get("canonicalVersion"):
+        row["priceAdjustment"] = envelope.get("priceAdjustment")
+        row["canonicalVersion"] = envelope.get("canonicalVersion")
+    return row
 
 
 def raw_envelope_partition_key(prefix, archive_row):

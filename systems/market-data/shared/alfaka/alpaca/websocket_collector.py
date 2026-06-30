@@ -11,7 +11,7 @@ import redis
 import websockets
 
 from alfaka.alpaca.feed_profiles import resolve_feed_profile
-from alfaka.alpaca.subscription import build_subscription_request, load_request_config, load_symbols_and_channels, validate_channels
+from alfaka.alpaca.subscription import build_subscription_request, configured_collection_symbols, load_request_config, load_symbols_and_channels, validate_channels
 from alfaka.alpaca.trade_tiers import resolve_trade_subscription_plan
 from alfaka.common.env import load_dotenv, parse_csv
 from alfaka.common.kafka_io import create_json_producer
@@ -120,7 +120,6 @@ async def run_stream_session(
 ):
     active_subscribed_symbols = set()
     last_active_sync = 0.0
-    authenticated = False
     async with websockets.connect(alpaca_url, ping_interval=20, ping_timeout=20) as ws:
         await ws.send(json.dumps({"action": "auth", "key": alpaca_key, "secret": alpaca_secret}))
 
@@ -128,14 +127,13 @@ async def run_stream_session(
             try:
                 raw_frame = await asyncio.wait_for(ws.recv(), timeout=max(1.0, active_poll_seconds))
             except asyncio.TimeoutError:
-                if authenticated:
-                    active_subscribed_symbols = await sync_active_chart_subscriptions(
-                        ws,
-                        redis_client,
-                        active_channels,
-                        active_subscribed_symbols,
-                    )
-                    last_active_sync = time.monotonic()
+                active_subscribed_symbols = await sync_active_chart_subscriptions(
+                    ws,
+                    redis_client,
+                    active_channels,
+                    active_subscribed_symbols,
+                )
+                last_active_sync = time.monotonic()
                 continue
 
             messages = json.loads(raw_frame)
@@ -146,7 +144,6 @@ async def run_stream_session(
                 if message_type == "success":
                     print(message, flush=True)
                     if message.get("msg") == "authenticated":
-                        authenticated = True
                         write_ingestor_health(
                             redis_client,
                             feed_profile,
@@ -177,8 +174,6 @@ async def run_stream_session(
                     continue
 
                 if message_type == "error":
-                    if message.get("code") in {401, 406}:
-                        authenticated = False
                     write_ingestor_health(
                         redis_client,
                         feed_profile,
@@ -213,7 +208,7 @@ async def run_stream_session(
                 )
                 print(f"Kafka Raw 전송: topic={kafka_topic}, key={kafka_key}, channel={envelope['channel']}", flush=True)
 
-            if authenticated and time.monotonic() - last_active_sync >= active_poll_seconds:
+            if time.monotonic() - last_active_sync >= active_poll_seconds:
                 active_subscribed_symbols = await sync_active_chart_subscriptions(
                     ws,
                     redis_client,
@@ -263,11 +258,17 @@ async def sync_active_chart_subscriptions(ws, redis_client, channels, subscribed
 
 
 def read_trade_subscription_symbols(redis_client):
+    try:
+        allowed_symbols = configured_collection_symbols()
+    except Exception as exc:
+        print(f"활성 차트 구독 universe 제한을 적용하지 못했습니다: {exc}", flush=True)
+        allowed_symbols = None
     plan = resolve_trade_subscription_plan(
         active_symbols=read_active_chart_symbols(redis_client),
         watchlist_symbols=read_watchlist_symbols(redis_client),
         hot_symbols=read_hot_symbols(redis_client),
         max_symbols=os.getenv("ALPACA_MAX_TRADE_SYMBOLS"),
+        allowed_symbols=allowed_symbols,
     )
     return set(plan["symbols"])
 

@@ -31,7 +31,7 @@
 - `systems/market-data/jobs/`
   - initial-load, coverage-repair, smoke/operational entrypoints.
 - `systems/market-data/config/`
-  - S&P 500 universe registry and market-data request config.
+  - `gops20` universe request config for the current 20-symbol rebuild.
 - `systems/market-data/tests/`
   - hardening, realtime boundary, GapFill, materialize, queue tests.
 
@@ -53,7 +53,7 @@
 - `GET /api/charts/watchlist`.
 - `PUT /api/charts/watchlist`.
 - previous close/change percent calculation.
-- S&P 500 symbol search and filtering.
+- 20-symbol `gops20` symbol search and filtering for the current rebuild.
 
 ### Platform And Runtime
 
@@ -109,9 +109,9 @@
 - Watch List는 사용자 편집 가능해야 한다.
 - 기본 Watch List는 첫 사용자 seed로만 사용한다.
 - Watch List row는 전일 종가 대비 등락률과 현재가를 보여준다.
-- Hot Ranking은 거래대금 Top 20이며 별도 패널 분류로 존재한다.
+- Hot Ranking은 20개 universe 안의 거래대금 Top10이며 별도 패널 분류로 존재한다.
 - Hot Ranking row 선택은 active chart symbol을 바꾼다.
-- search dropdown은 S&P 500 registry를 기준으로 검색된다.
+- search dropdown은 현재 `gops20` 20개 universe를 기준으로 검색된다.
 - chart loading 중 오래 걸리는 backfill이 renderable chart 표시를 막지 않는다.
 
 팀원 브랜치에 새로운 패널 시스템이나 에이전트 UI가 있다면 그 구조를 살리고, 위 API/runtime 호출부만 연결한다.
@@ -136,7 +136,7 @@
 | Panel layout/design | 팀원 브랜치 | 팀원이 더 최신 UI를 진행 중 |
 | Chart data loading/runtime | 시장데이터 안정화 계약 | 빈 차트, 중복 봉, backfill 지연 재발 방지 |
 | Watch/Hot visual styling | 팀원 브랜치 | 표시 방식은 UI 소유 |
-| Watch/Hot price/change/ranking logic | 시장데이터 안정화 계약 | 전일종가 기준, 거래대금 Top 20 계약 |
+| Watch/Hot price/change/ranking logic | 시장데이터 안정화 계약 | 전일종가 기준, 거래대금 Top10 계약 |
 | API response schema | 시장데이터 안정화 계약 | frontend/backend가 함께 의존 |
 | S3/ClickHouse/Redis schema | 시장데이터 안정화 계약 | 부분 적용 시 runtime 장애 가능 |
 | Env/secrets precedence | 시장데이터 안정화 계약 | AWS/local 충돌 방지 |
@@ -178,7 +178,7 @@ Browser smoke:
 - `5m`, `10m`, `1D`, `1W`, `1M` 전환이 정상인지 확인한다.
 - drag-left 후 candle count가 증가하고 spinner가 멈추는지 확인한다.
 - Watch List row의 현재가/등락률이 전일 종가 기준인지 확인한다.
-- Hot Ranking Top 20이 거래대금 기준으로 표시되고 row 선택이 active chart를 바꾸는지 확인한다.
+- Hot Ranking Top10이 거래대금 기준으로 표시되고 row 선택이 active chart를 바꾸는지 확인한다.
 - browser console warning/error가 없는지 확인한다.
 
 ## 병합 중 열어둘 위험
@@ -186,5 +186,6 @@ Browser smoke:
 - Alpaca feed/account connection cap 때문에 live path가 배선 문제처럼 보일 수 있다.
 - 정규장 종료 시간에는 실제 live candle update가 멈추는 것이 정상일 수 있다.
 - 기존 ClickHouse volume은 새 `ORDER BY`를 자동 반영하지 않는다.
-- S3에 오래된 `1m` 데이터가 남아 있어도 새 preload target은 `2025-04` 이후만 허용해야 한다.
+- S3 default prefix에 오래된 데이터가 남아 있으면 새 rebuild prefix와 섞이지 않도록 확인해야 한다.
+- `1m` preload target은 현재 3년이며, 최근 3개월 -> 최근 1년 -> 전체 3년 순서로 확장한다.
 - team frontend가 chart runtime을 크게 바꿨다면, 데이터 merge/de-dup/backfill trigger 테스트를 반드시 추가로 본다.

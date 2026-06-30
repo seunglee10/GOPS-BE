@@ -22,6 +22,7 @@ from alfaka.serving.time_utils import canonical_utc_timestamp, parse_utc_time
 
 
 logger = logging.getLogger(__name__)
+TARGET_FLOOR_TOLERANCE = timedelta(days=3)
 
 
 class MarketDataProvider:
@@ -209,12 +210,12 @@ def has_more_before_target(oldest, available_from, target_range_from):
     oldest_time = parse_iso_time(oldest)
     if not oldest_time:
         return False
-    effective_start = None
-    for value in (available_from, target_range_from):
-        parsed = parse_iso_time(value)
-        if parsed and (effective_start is None or parsed > effective_start):
-            effective_start = parsed
-    return bool(effective_start and effective_start < oldest_time)
+    target_start = parse_iso_time(target_range_from)
+    available_start = parse_iso_time(available_from)
+    effective_start = target_start or available_start
+    if not effective_start:
+        return False
+    return oldest_time - effective_start > TARGET_FLOOR_TOLERANCE
 
 
 def candles_are_behind_coverage(candles, coverage):
@@ -247,12 +248,12 @@ def target_floor_from_time(interval, from_time=None):
 
 
 def target_range_from_for_interval(interval, reference_timestamp=None):
-    reference = parse_iso_time(reference_timestamp) or datetime.now(timezone.utc)
-    target = reference - timedelta(days=backfill_target_days(interval))
     if source_interval_for(interval) == "1m":
         min_start = parse_iso_time(intraday_preload_min_start_iso())
-        if min_start and target < min_start:
-            target = min_start
+        if min_start:
+            return min_start.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    reference = parse_iso_time(reference_timestamp) or datetime.now(timezone.utc)
+    target = reference - timedelta(days=backfill_target_days(interval))
     return target.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 

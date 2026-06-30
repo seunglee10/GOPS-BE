@@ -39,6 +39,10 @@ CREATE TABLE IF NOT EXISTS market_data.chart_candles
     correction_type LowCardinality(String),
     source LowCardinality(String),
     feed LowCardinality(String),
+    feed_profile LowCardinality(String) DEFAULT feed,
+    market_session LowCardinality(String) DEFAULT 'unknown',
+    price_adjustment LowCardinality(String) DEFAULT 'unknown',
+    canonical_version LowCardinality(String) DEFAULT 'legacy',
     source_event_id Nullable(String),
     created_at Nullable(DateTime64(3, 'UTC')),
     inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
@@ -117,3 +121,9 @@ ALTER TABLE market_data.chart_candles
 
 ALTER TABLE market_data.trade_ticks
     ADD COLUMN IF NOT EXISTS source_event_id Nullable(String) AFTER feed;
+
+ALTER TABLE market_data.chart_candles
+    ADD COLUMN IF NOT EXISTS feed_profile LowCardinality(String) DEFAULT feed AFTER feed,
+    ADD COLUMN IF NOT EXISTS market_session LowCardinality(String) DEFAULT 'unknown' AFTER feed_profile,
+    ADD COLUMN IF NOT EXISTS price_adjustment LowCardinality(String) DEFAULT 'unknown' AFTER market_session,
+    ADD COLUMN IF NOT EXISTS canonical_version LowCardinality(String) DEFAULT 'legacy' AFTER price_adjustment;

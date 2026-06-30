@@ -4,6 +4,8 @@
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
+from alfaka.common.canonical import candle_metadata
+
 
 def parse_time(value):
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -46,6 +48,7 @@ def normalize_bar(envelope, correction_type="NONE"):
         "updatedBars": "alpaca.updatedBars",
         "dailyBars": "alpaca.dailyBars",
     }.get(envelope["channel"], "alpaca.bars")
+    metadata = candle_metadata(envelope.get("priceAdjustment") or envelope.get("price_adjustment"), envelope.get("canonicalVersion") or envelope.get("canonical_version"))
     return {
         "eventType": "CANDLE",
         "symbol": envelope["symbol"],
@@ -67,6 +70,7 @@ def normalize_bar(envelope, correction_type="NONE"):
         "marketSession": envelope.get("marketSession"),
         "sourceEventId": envelope.get("sourceEventId"),
         "createdAt": envelope.get("receivedAt"),
+        **metadata,
     }
 
 
@@ -151,6 +155,7 @@ class LiveCandleBuilder:
                 "marketSession": trade.get("marketSession"),
                 "sourceEventId": trade.get("sourceEventId"),
                 "updatedAt": trade.get("receivedAt"),
+                **candle_metadata("live"),
             }
         else:
             candle["high"] = max(candle["high"], price)
@@ -285,6 +290,7 @@ def build_provisional_candle(symbol, interval, bucket, rows, source_interval):
         "marketSession": latest.get("marketSession"),
         "sourceEventId": latest.get("sourceEventId"),
         "updatedAt": latest.get("updatedAt") or latest.get("createdAt"),
+        **candle_metadata(latest.get("priceAdjustment"), latest.get("canonicalVersion")),
     }
 
 
@@ -341,6 +347,7 @@ class CandleAggregator:
             "marketSession": candle_1m.get("marketSession"),
             "sourceEventId": candle_1m.get("sourceEventId"),
             "createdAt": candle_1m.get("createdAt"),
+            **candle_metadata(candle_1m.get("priceAdjustment"), candle_1m.get("canonicalVersion")),
         }
 
 

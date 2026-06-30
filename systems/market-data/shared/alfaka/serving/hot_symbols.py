@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 
-DEFAULT_HOT_LIMIT = 20
+DEFAULT_HOT_LIMIT = 10
 HOT_RANKING_METHOD = "current_session_dollar_volume"
 
 
@@ -24,7 +24,7 @@ def build_hot_symbols_payload(records: list[dict[str, Any]], limit: int = DEFAUL
     return {
         "ranking": {
             "method": HOT_RANKING_METHOD,
-            "universe": "sp500",
+            "universe": "gops20",
             "limit": limit,
             "asOf": as_of,
             "refreshSeconds": 60,

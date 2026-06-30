@@ -1,7 +1,9 @@
 import hashlib
 import json
+import os
 from datetime import datetime, timedelta, timezone
 
+from alfaka.common.canonical import is_historical_canonical
 from alfaka.common.env import utc_now_iso
 from alfaka.storage.s3_materializer import list_s3_objects
 
@@ -48,12 +50,22 @@ def build_processed_candle_manifest(object_key, rows):
     timestamps = sorted(row.get("timestamp") for row in candle_rows if row.get("timestamp"))
     if len(symbols) != 1 or len(intervals) != 1 or not timestamps:
         return None
+    price_adjustments = sorted({
+        str(row.get("priceAdjustment") or row.get("price_adjustment") or "unknown").strip().lower()
+        for row in candle_rows
+    })
+    canonical_versions = sorted({
+        str(row.get("canonicalVersion") or row.get("canonical_version") or "legacy").strip().lower()
+        for row in candle_rows
+    })
     bucket_date = parse_time(timestamps[0]).date().isoformat()
     return {
         "schemaVersion": 1,
         "dataset": "candles",
         "symbol": symbols[0],
         "interval": intervals[0],
+        "priceAdjustment": single_or_mixed(price_adjustments, "unknown"),
+        "canonicalVersion": single_or_mixed(canonical_versions, "legacy"),
         "bucketDate": bucket_date,
         "objectKey": object_key,
         "rowCount": len(candle_rows),
@@ -73,6 +85,14 @@ def build_raw_manifest(object_key, rows):
     timestamps = sorted((row.get("eventTime") or (row.get("raw") or {}).get("t")) for row in raw_rows if row.get("eventTime") or (row.get("raw") or {}).get("t"))
     if len(symbols) != 1 or len(channels) != 1 or not timestamps:
         return None
+    price_adjustments = sorted({
+        str(row.get("priceAdjustment") or row.get("price_adjustment") or "unknown").strip().lower()
+        for row in raw_rows
+    })
+    canonical_versions = sorted({
+        str(row.get("canonicalVersion") or row.get("canonical_version") or "legacy").strip().lower()
+        for row in raw_rows
+    })
     bucket_date = parse_time(timestamps[0]).date().isoformat()
     return {
         "schemaVersion": 1,
@@ -80,6 +100,8 @@ def build_raw_manifest(object_key, rows):
         "source": "alpaca",
         "channel": channels[0],
         "symbol": symbols[0],
+        "priceAdjustment": single_or_mixed(price_adjustments, "unknown"),
+        "canonicalVersion": single_or_mixed(canonical_versions, "legacy"),
         "bucketDate": bucket_date,
         "objectKey": object_key,
         "rowCount": len(raw_rows),
@@ -137,7 +159,7 @@ def processed_candle_manifest_entries(s3, bucket, manifest_prefix, symbol, inter
             entry = read_manifest_entry(s3, bucket, key)
             if entry_matches_range(entry, symbol, interval, start, end):
                 entries.append(entry)
-    return sort_unique_manifest_entries(entries)
+    return select_preferred_manifest_entries(sort_unique_manifest_entries(entries), start, end)
 
 
 def raw_manifest_entries(s3, bucket, manifest_prefix, symbol, channels, start, end):
@@ -228,6 +250,8 @@ def entry_matches_range(entry, symbol, interval, start, end):
         return False
     if entry.get("symbol") != symbol or entry.get("interval") != interval:
         return False
+    if require_canonical_processed_manifest() and not is_historical_canonical(entry.get("priceAdjustment"), entry.get("canonicalVersion")):
+        return False
     available_from = entry.get("availableFrom")
     available_to = entry.get("availableTo")
     if not available_from or not available_to:
@@ -238,7 +262,14 @@ def entry_matches_range(entry, symbol, interval, start, end):
 def raw_entry_matches_range(entry, symbol, channel, start, end):
     if not entry:
         return False
-    if entry.get("symbol") != symbol or normalize_raw_channel(entry.get("channel")) != normalize_raw_channel(channel):
+    normalized_channel = normalize_raw_channel(channel)
+    if entry.get("symbol") != symbol or normalize_raw_channel(entry.get("channel")) != normalized_channel:
+        return False
+    if (
+        normalized_channel in {"bars", "updated-bars", "daily-bars"}
+        and require_canonical_processed_manifest()
+        and not is_historical_canonical(entry.get("priceAdjustment"), entry.get("canonicalVersion"))
+    ):
         return False
     available_from = entry.get("availableFrom")
     available_to = entry.get("availableTo")
@@ -294,6 +325,81 @@ def sort_unique_manifest_entries(entries):
     return unique
 
 
+def select_preferred_manifest_entries(entries, start, end):
+    _ = (start, end)
+    selected = []
+    for entry in sorted(entries, key=manifest_entry_priority_key):
+        if any(entry_range_covers(existing, entry) for existing in selected):
+            continue
+        selected.append(entry)
+    return sorted(selected, key=lambda item: (item.get("availableFrom") or "", item.get("objectKey") or ""))
+
+
+def manifest_entry_priority_key(entry):
+    object_key = entry.get("objectKey") or ""
+    start = entry.get("availableFrom") or ""
+    end = entry.get("availableTo") or ""
+    duration = manifest_entry_duration_seconds(entry)
+    return (
+        0 if is_historical_canonical(entry.get("priceAdjustment"), entry.get("canonicalVersion")) else 1,
+        manifest_object_priority(object_key, entry.get("objectFormat")),
+        start,
+        -duration,
+        end,
+        object_key,
+    )
+
+
+def manifest_object_priority(object_key, object_format=None):
+    key = str(object_key or "")
+    fmt = str(object_format or object_format_from_key(key))
+    if "/live/" in key:
+        return 5
+    if "/backfill_request=" in key and fmt == "parquet":
+        return 0
+    if "/backfill_request=" in key:
+        return 1
+    if fmt == "parquet":
+        return 2
+    if fmt == "jsonl":
+        return 3
+    return 4
+
+
+def manifest_entry_duration_seconds(entry):
+    start = entry.get("availableFrom")
+    end = entry.get("availableTo")
+    if not start or not end:
+        return 0
+    try:
+        return int((parse_time(end) - parse_time(start)).total_seconds())
+    except Exception:
+        return 0
+
+
+def entry_range_covers(covering, candidate):
+    covering_from = covering.get("availableFrom")
+    covering_to = covering.get("availableTo")
+    candidate_from = candidate.get("availableFrom")
+    candidate_to = candidate.get("availableTo")
+    if not covering_from or not covering_to or not candidate_from or not candidate_to:
+        return False
+    return str(covering_from) <= str(candidate_from) and str(covering_to) >= str(candidate_to)
+
+
 def normalize_manifest_layout(layout):
     value = str(layout or "daily").strip().lower()
     return "compact" if value == "compact" else "daily"
+
+
+def single_or_mixed(values, default):
+    clean_values = [value for value in values if value]
+    if not clean_values:
+        return default
+    if len(clean_values) == 1:
+        return clean_values[0]
+    return "mixed"
+
+
+def require_canonical_processed_manifest():
+    return os.getenv("S3_REQUIRE_CANONICAL_PROCESSED_CANDLES", "true").lower() in {"1", "true", "yes"}

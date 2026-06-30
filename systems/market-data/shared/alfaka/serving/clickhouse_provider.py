@@ -6,6 +6,7 @@ import os
 import re
 
 from alfaka.common.env import load_dotenv
+from alfaka.common.canonical import CANONICAL_VERSION, HISTORICAL_SERVING_PRICE_ADJUSTMENTS
 from alfaka.serving.dto import snapshot
 from alfaka.serving.intervals import normalize_chart_interval, resolve_candle_limit
 from alfaka.serving.moving_average import attach_moving_averages
@@ -440,6 +441,7 @@ class ClickHouseMarketDataProvider:
         FROM {self.table('chart_candles')}
         WHERE symbol IN {{symbols:Array(String)}}
           AND {interval_filter}
+          AND {self.canonical_candle_filter_sql()}
           AND event_time >= subtractDays(now(), {{lookbackDays:UInt32}})
           AND toDayOfWeek(event_time) BETWEEN 1 AND 5
         """
@@ -503,6 +505,8 @@ class ClickHouseMarketDataProvider:
           feed,
           feed_profile,
           market_session,
+          price_adjustment,
+          canonical_version,
           source_event_id
         FROM (
           SELECT
@@ -523,13 +527,19 @@ class ClickHouseMarketDataProvider:
             feed,
             feed_profile,
             market_session,
+            price_adjustment,
+            canonical_version,
             source_event_id,
             row_number() OVER (
               PARTITION BY symbol, if(interval = '1d', '1D', interval), event_time
-              ORDER BY inserted_at DESC, ifNull(source_event_id, '') DESC
+              ORDER BY
+                multiIf(price_adjustment = 'split', 1, 0) DESC,
+                inserted_at DESC,
+                ifNull(source_event_id, '') DESC
             ) AS rn
           FROM {self.table('chart_candles')}
           WHERE {where_sql}
+            AND {self.canonical_candle_filter_sql()}
         )
         WHERE rn = 1
         """
@@ -569,6 +579,17 @@ class ClickHouseMarketDataProvider:
                 "ADD COLUMN IF NOT EXISTS feed_profile LowCardinality(String) DEFAULT feed AFTER feed, "
                 "ADD COLUMN IF NOT EXISTS market_session LowCardinality(String) DEFAULT 'unknown' AFTER feed_profile"
             )
+        self.execute(
+            f"ALTER TABLE {self.table('chart_candles')} "
+            "ADD COLUMN IF NOT EXISTS price_adjustment LowCardinality(String) DEFAULT 'unknown' AFTER market_session, "
+            "ADD COLUMN IF NOT EXISTS canonical_version LowCardinality(String) DEFAULT 'legacy' AFTER price_adjustment"
+        )
+
+    def canonical_candle_filter_sql(self):
+        if os.getenv("CLICKHOUSE_REQUIRE_CANONICAL_CANDLES", "true").lower() not in {"1", "true", "yes"}:
+            return "1 = 1"
+        adjustments = ", ".join(clickhouse_string_literal(value) for value in HISTORICAL_SERVING_PRICE_ADJUSTMENTS)
+        return f"canonical_version = {clickhouse_string_literal(CANONICAL_VERSION)} AND price_adjustment IN ({adjustments})"
 
     def search_symbols(self, query_text, limit=20):
         query = f"""

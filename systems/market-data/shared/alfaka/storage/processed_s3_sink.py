@@ -10,6 +10,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
+from alfaka.common.canonical import CANONICAL_VERSION, is_historical_canonical
 from alfaka.common.env import load_dotenv, parse_csv
 from alfaka.common.kafka_io import create_json_consumer
 from alfaka.common.runtime_config import validate_required_values
@@ -181,17 +182,35 @@ def flush_buffer(
     max_attempts=3,
     retry_sleep_seconds=1,
     manifest_layout="daily",
+    force=False,
 ):
     now = datetime.now(timezone.utc)
     storage_rows = [normalize_storage_row(row) for row in rows]
+    object_key = s3_object_key(partition_key, storage_rows, output_format, now=now, force=force)
+    content_type = content_type_for_format(output_format)
+    if is_deterministic_canonical_object_key(object_key) and not force and s3_object_exists(s3, bucket, object_key):
+        if manifest_prefix and is_processed_candle_partition(partition_key, rows):
+            write_processed_candle_manifest(
+                s3,
+                bucket,
+                manifest_prefix,
+                object_key,
+                storage_rows,
+                layout=manifest_layout,
+                put_object=lambda **kwargs: put_object_with_retry(
+                    s3,
+                    kwargs,
+                    max_attempts=max_attempts,
+                    retry_sleep_seconds=retry_sleep_seconds,
+                ),
+            )
+        print(f"S3 canonical 중복 업로드 skip: s3://{bucket}/{object_key} rows={len(rows)}", flush=True)
+        return object_key
+
     if output_format == "parquet":
         body = rows_to_parquet(storage_rows)
-        object_key = f"{partition_key}/part-{now:%Y%m%dT%H%M%S%f}.parquet"
-        content_type = "application/vnd.apache.parquet"
     else:
         body = ("\n".join(json.dumps(row, ensure_ascii=False, separators=(",", ":")) for row in storage_rows) + "\n").encode("utf-8")
-        object_key = f"{partition_key}/part-{now:%Y%m%dT%H%M%S%f}.jsonl"
-        content_type = "application/x-ndjson"
 
     put_object_with_retry(
         s3,
@@ -216,6 +235,77 @@ def flush_buffer(
         )
     print(f"S3 업로드: s3://{bucket}/{object_key} rows={len(rows)}", flush=True)
     return object_key
+
+
+def s3_object_key(partition_key, rows, output_format, now=None, force=False):
+    now = now or datetime.now(timezone.utc)
+    ext = "parquet" if output_format == "parquet" else "jsonl"
+    deterministic_key = deterministic_canonical_candle_object_key(partition_key, rows, ext, now=now, force=force)
+    if deterministic_key:
+        return deterministic_key
+    return f"{partition_key}/part-{now:%Y%m%dT%H%M%S%f}.{ext}"
+
+
+def deterministic_canonical_candle_object_key(partition_key, rows, ext, now=None, force=False):
+    if os.getenv("S3_CANONICAL_DETERMINISTIC_KEYS", "true").lower() not in {"1", "true", "yes"}:
+        return None
+    if "/backfill_request=" not in partition_key:
+        return None
+    candle_rows = [
+        row for row in rows
+        if (row.get("eventType") or "CANDLE") == "CANDLE"
+        and row.get("isClosed", row.get("is_closed", True))
+    ]
+    if not candle_rows or len(candle_rows) != len(rows):
+        return None
+    if not all(is_historical_canonical(row.get("priceAdjustment"), row.get("canonicalVersion")) for row in candle_rows):
+        return None
+    symbols = sorted({row.get("symbol") for row in candle_rows if row.get("symbol")})
+    intervals = sorted({row.get("interval") for row in candle_rows if row.get("interval")})
+    adjustments = sorted({str(row.get("priceAdjustment") or row.get("price_adjustment") or "unknown").lower() for row in candle_rows})
+    timestamps = sorted(row.get("timestamp") for row in candle_rows if row.get("timestamp"))
+    if len(symbols) != 1 or len(intervals) != 1 or len(adjustments) != 1 or not timestamps:
+        return None
+    base_partition = partition_key.split("/backfill_request=", 1)[0].rstrip("/")
+    range_key = f"{compact_timestamp(timestamps[0])}_{compact_timestamp(timestamps[-1])}"
+    base_key = (
+        f"{base_partition}/range={range_key}"
+        f"/adjustment={adjustments[0]}/canonical={CANONICAL_VERSION}.{ext}"
+    )
+    if not force:
+        return base_key
+    now = now or datetime.now(timezone.utc)
+    return (
+        f"{base_partition}/range={range_key}/adjustment={adjustments[0]}"
+        f"/revisions/revision={now:%Y%m%dT%H%M%S%f}/canonical={CANONICAL_VERSION}.{ext}"
+    )
+
+
+def compact_timestamp(value):
+    return parse_event_time(value).strftime("%Y%m%dT%H%M%SZ")
+
+
+def content_type_for_format(output_format):
+    return "application/vnd.apache.parquet" if output_format == "parquet" else "application/x-ndjson"
+
+
+def is_deterministic_canonical_object_key(object_key):
+    return "/range=" in object_key and f"/canonical={CANONICAL_VERSION}." in object_key
+
+
+def s3_object_exists(s3, bucket, key):
+    head_object = getattr(s3, "head_object", None)
+    if callable(head_object):
+        try:
+            head_object(Bucket=bucket, Key=key)
+            return True
+        except Exception:
+            return False
+    try:
+        s3.get_object(Bucket=bucket, Key=key)
+        return True
+    except Exception:
+        return False
 
 
 def flush_due_buffers(buffers, last_updated_at, flush_fn, flush_interval_seconds, now):

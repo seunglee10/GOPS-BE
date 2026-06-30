@@ -595,8 +595,8 @@ def validate_initial_load_range(interval, start, end):
     if start_dt < min_start_dt:
         raise ValueError(
             f"Initial Load 1m start {to_iso(start_dt)} is before "
-            f"{guard['env']}={guard['minStart']}; 1m preload before 2025-04 is disabled. "
-            "Keep 1D on the 3-year bootstrap contract instead."
+            f"{guard['env']}={guard['minStart']}; 1m preload before the configured 3-year floor is disabled. "
+            "Load 1D first, then expand 1m in reviewed phases."
         )
 
 

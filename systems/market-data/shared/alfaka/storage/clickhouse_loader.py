@@ -8,6 +8,7 @@ import sys
 from datetime import datetime, timezone
 
 from alfaka.alpaca.feed_profiles import market_session_for_timestamp
+from alfaka.common.canonical import candle_metadata
 from alfaka.common.env import load_dotenv, parse_csv
 from alfaka.common.kafka_io import create_json_consumer
 from alfaka.common.runtime_config import validate_required_values
@@ -136,6 +137,7 @@ def trade_to_clickhouse_row(payload):
 
 def candle_to_clickhouse_row(payload):
     ma = payload.get("ma") or {}
+    metadata = candle_metadata(payload.get("priceAdjustment") or payload.get("price_adjustment"), payload.get("canonicalVersion") or payload.get("canonical_version"))
     return {
         "event_time": clickhouse_time(payload.get("timestamp")),
         "symbol": payload.get("symbol", "UNKNOWN"),
@@ -156,6 +158,8 @@ def candle_to_clickhouse_row(payload):
         "feed": payload.get("feed") or "unknown",
         "feed_profile": payload.get("feedProfile") or payload.get("feed") or "unknown",
         "market_session": payload.get("marketSession") or market_session_for_timestamp(payload.get("timestamp")),
+        "price_adjustment": metadata["priceAdjustment"],
+        "canonical_version": metadata["canonicalVersion"],
         "source_event_id": payload.get("sourceEventId"),
         "created_at": clickhouse_time_or_none(payload.get("createdAt") or payload.get("updatedAt")),
     }
@@ -293,6 +297,26 @@ class ClickHouseHttpClient:
         if response.status_code >= 400:
             raise RuntimeError(f"status={response.status_code}, body={response.text}")
 
+    def query_json_each_row(self, query):
+        import requests
+
+        response = requests.post(
+            self.url,
+            params={"user": self.user, "password": self.password, "database": self.database, "query": query},
+            timeout=10,
+        )
+        if response.status_code >= 400:
+            raise RuntimeError(f"status={response.status_code}, body={response.text}")
+        return [json.loads(line) for line in response.text.splitlines() if line.strip()]
+
+    def s3_object_already_materialized(self, object_path):
+        query = (
+            f"SELECT 1 AS found FROM {self.database}.load_audit "
+            f"WHERE object_path = {clickhouse_string_literal(object_path)} AND row_count > 0 "
+            "LIMIT 1 FORMAT JSONEachRow"
+        )
+        return bool(self.query_json_each_row(query))
+
     def ensure_market_data_schema(self):
         if os.getenv("CLICKHOUSE_ENSURE_SESSION_COLUMNS", "true").lower() not in {"1", "true", "yes"}:
             return
@@ -308,9 +332,19 @@ class ClickHouseHttpClient:
                 f"ADD COLUMN IF NOT EXISTS feed_profile LowCardinality(String) DEFAULT feed AFTER {after_column}, "
                 "ADD COLUMN IF NOT EXISTS market_session LowCardinality(String) DEFAULT 'unknown' AFTER feed_profile"
             )
+        chart_candles = f"{self.database}.chart_candles"
+        self.execute(
+            f"ALTER TABLE {chart_candles} "
+            "ADD COLUMN IF NOT EXISTS price_adjustment LowCardinality(String) DEFAULT 'unknown' AFTER market_session, "
+            "ADD COLUMN IF NOT EXISTS canonical_version LowCardinality(String) DEFAULT 'legacy' AFTER price_adjustment"
+        )
 
 
 def clickhouse_identifier(value):
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(value)):
         raise ValueError(f"Invalid ClickHouse identifier: {value}")
     return str(value)
+
+
+def clickhouse_string_literal(value):
+    return "'" + str(value).replace("\\", "\\\\").replace("'", "\\'") + "'"

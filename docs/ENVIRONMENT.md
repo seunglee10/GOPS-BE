@@ -23,8 +23,8 @@ Current v1 universe contract:
 
 ```text
 ALFAKA_REQUEST_CONFIG=systems/market-data/config/market-data-request.json
-ALPACA_UNIVERSE=sp500
-ALPACA_UNIVERSE_REGISTRY_PATH=systems/market-data/config/sp500-universe.json
+ALPACA_UNIVERSE=gops20
+ALPACA_UNIVERSE_REGISTRY_PATH=
 ALPACA_COLLECTION_SYMBOL_SOURCE=universe
 ALPACA_CHANNELS=bars,updatedBars,dailyBars,statuses
 ALPACA_ACTIVE_CHANNELS=trades
@@ -33,11 +33,11 @@ ALPACA_FEED_PROFILE=sip
 ALPACA_FEED_PROFILES=sip,iex,boats
 ALPACA_CREDENTIAL_SOURCE=aws-secrets-manager
 ALPACA_SECRET_NAME=dev/alpaca
-HOT_TIER_SIZE=20
-HOT_TIER_FALLBACK_SCAN_LIMIT=503
+HOT_TIER_SIZE=10
+HOT_TIER_FALLBACK_SCAN_LIMIT=20
 ```
 
-Full-universe collection covers bars/status channels. Trade subscriptions are resolved dynamically from active chart symbols, user Watch List symbols synced to Redis through `/api/charts/watchlist`, and hot symbols. `ALPACA_SYMBOLS` is a legacy/local smoke seed and should not be treated as the frontend Watch List source of truth or the full collection universe.
+The v1 rebuild universe is the 20-symbol `gops20` set in `systems/market-data/config/market-data-request.json`. Full-universe collection covers bars/status channels for those 20 symbols. Trade subscriptions are resolved dynamically from active chart symbols, user Watch List symbols synced to Redis through `/api/charts/watchlist`, and Hot Top10 symbols inside the same 20-symbol universe. `ALPACA_SYMBOLS` is a legacy/local smoke seed and should not be treated as the frontend Watch List source of truth or the full collection universe.
 Set `ALPACA_MAX_TRADE_SYMBOLS` only when an Alpaca subscription cap requires an operational limit; active chart symbols are prioritized before watchlist and hot symbols.
 
 `ALPACA_FEED_PROFILE` selects one ingestor runtime feed (`sip`, `iex`, or `boats`). Local compose and k8s can run one ingestor per profile, and `/health/config` reports the expected profile set from `ALPACA_FEED_PROFILES`. Market-data envelopes, Redis live state, ClickHouse candle rows, API candles, and chart snapshots preserve `feedProfile` and `marketSession` so daytime and BOATS/overnight data are diagnosable instead of collapsing into an anonymous stream.
@@ -214,9 +214,10 @@ CLICKHOUSE_USER
 CLICKHOUSE_PASSWORD
 CLICKHOUSE_PROVIDER_ENSURE_SESSION_COLUMNS
 CLICKHOUSE_ENSURE_SESSION_COLUMNS
+CLICKHOUSE_REQUIRE_CANONICAL_CANDLES
 ```
 
-Set `CLICKHOUSE_PROVIDER_ENSURE_SESSION_COLUMNS=true` for API serving pods and `CLICKHOUSE_ENSURE_SESSION_COLUMNS=true` for storage/backfill jobs during the transition to feed/session-aware rows. New deployments create `feed_profile` and `market_session` in the primary schema. Existing ClickHouse volumes can add the columns idempotently, but preserving multiple feed/session rows after merges requires rebuilding old tables with the new `ORDER BY` definition.
+Set `CLICKHOUSE_PROVIDER_ENSURE_SESSION_COLUMNS=true` for API serving pods and `CLICKHOUSE_ENSURE_SESSION_COLUMNS=true` for storage/backfill jobs during the transition to feed/session/canonical-aware rows. New deployments create `feed_profile`, `market_session`, `price_adjustment`, and `canonical_version` in the primary schema. Existing ClickHouse volumes can add the columns idempotently, but preserving multiple feed/session rows after merges requires rebuilding old tables with the new `ORDER BY` definition. Keep `CLICKHOUSE_REQUIRE_CANONICAL_CANDLES=true` so chart serving excludes legacy/raw/unknown candles.
 
 ## S3
 
@@ -248,6 +249,11 @@ S3_ENDPOINT_URL
 S3_MATERIALIZE_PREFIX
 S3_MATERIALIZE_KEYS
 S3_MATERIALIZE_MAX_OBJECTS
+S3_MATERIALIZE_SYMBOL
+S3_MATERIALIZE_INTERVAL
+S3_MATERIALIZE_START
+S3_MATERIALIZE_END
+S3_MATERIALIZE_MANIFEST_PREFIX
 ```
 
 Leave `S3_ENDPOINT_URL` empty for real AWS S3.
@@ -266,7 +272,7 @@ Broad preload and normal market-data runtime use `S3_PROCESSED_FORMAT=parquet`. 
 
 Use time-based flush values so low-volume symbols and status events do not remain only in process memory. Keep retry settings conservative; duplicate delivery must remain safe through deterministic replay/materialization.
 
-For S3-to-ClickHouse smoke tests, prefer `S3_MATERIALIZE_KEYS` with one or a few explicit processed candle object keys. Leave it empty only for intentional prefix-wide materialization through `S3_MATERIALIZE_PREFIX`.
+For S3-to-ClickHouse smoke tests, prefer `S3_MATERIALIZE_KEYS` with one or a few explicit processed candle object keys. For cold ClickHouse bootstrap from existing S3 evidence, leave `S3_MATERIALIZE_KEYS` empty and set `S3_MATERIALIZE_SYMBOL`, `S3_MATERIALIZE_INTERVAL`, `S3_MATERIALIZE_START`, and `S3_MATERIALIZE_END` so the materializer selects processed objects from the compact manifest. Leave both explicit keys and range values empty only for intentional prefix-wide materialization through `S3_MATERIALIZE_PREFIX`. Canonical bootstrap materialization supports `1m` and `1D`; `1m` range starts before `BACKFILL_INITIAL_LOAD_1M_MIN_START` are rejected.
 
 ## Backfill Queue
 
@@ -292,13 +298,17 @@ BACKFILL_INITIAL_LOAD_MAX_BACKLOG
 BACKFILL_WORKER_POLL_SECONDS
 BACKFILL_WORKER_ONCE
 HISTORICAL_ADJUSTMENT
+ALLOW_NON_CANONICAL_HISTORICAL_ADJUSTMENT
 HISTORICAL_1M_MINUTES_PER_TRADING_DAY
 HISTORICAL_MAX_RETRIES
 HISTORICAL_RETRY_SLEEP_SECONDS
 HISTORICAL_RETRY_MAX_SLEEP_SECONDS
+S3_REQUIRE_CANONICAL_PROCESSED_CANDLES
+DAILY_BAR_1M_REPAIR_ENABLED
+DAILY_BAR_1M_REPAIR_RATIO
 ```
 
-Use `HISTORICAL_ADJUSTMENT=raw` for canonical Alpaca historical backfill unless the live/backfill adjustment policy is explicitly changed. `HISTORICAL_1M_MINUTES_PER_TRADING_DAY=960` keeps 1m preload dry-run estimates conservative for Alpaca extended-hours bars. Retry settings are used for transient Alpaca historical API failures such as rate limits and 5xx responses.
+Canonical Alpaca historical backfill uses `adjustment=split` and writes `priceAdjustment=split`, `canonicalVersion=v2`. A stale `HISTORICAL_ADJUSTMENT=raw` does not override this unless `ALLOW_NON_CANONICAL_HISTORICAL_ADJUSTMENT=true` is explicitly set for a non-serving diagnostic job. Keep `S3_REQUIRE_CANONICAL_PROCESSED_CANDLES=true` so S3-first backfill ignores legacy processed/raw candle manifests that lack split/v2 metadata. `DAILY_BAR_1M_REPAIR_ENABLED=true` lets `1D` backfill validate suspicious split-day dailyBars high/low values against same-day split-adjusted `1m` bars; only the outlier high/low is repaired, while daily open/close/volume remain from dailyBars. `HISTORICAL_1M_MINUTES_PER_TRADING_DAY=960` keeps 1m preload dry-run estimates conservative for Alpaca extended-hours bars. Retry settings are used for transient Alpaca historical API failures such as rate limits and 5xx responses.
 
 ## Market Calendar
 
@@ -329,13 +339,13 @@ Keep `COVERAGE_REPAIR_DRY_RUN=true` for audits. Set it to `false` only when inte
 
 ## Initial Load
 
-The initial-load job plans or queues chunked `initial_load` Redis Streams jobs for canonical `1m` and `1D` history. It is dry-run by default; set `INITIAL_LOAD_DRY_RUN=false` only after reviewing the plan. Use `INITIAL_LOAD_SYMBOLS=universe` to resolve the configured S&P 500 collection registry.
+The initial-load job plans or queues chunked `initial_load` Redis Streams jobs for canonical `1m` and `1D` history. It is dry-run by default; set `INITIAL_LOAD_DRY_RUN=false` only after reviewing the plan. Use an explicit 20-symbol `INITIAL_LOAD_SYMBOLS` list for the clean rebuild.
 
-For the S&P 500 bootstrap, preload `1D` for the 3-year range first, then run `1m` as repeated dry-run/review/enqueue windows. The v1 `1m` initial-load lower bound is `BACKFILL_INITIAL_LOAD_1M_MIN_START=2025-04-01T00:00:00Z`; `1m` ranges starting before April 2025 are rejected so Goal/deploy runs do not accidentally fetch the old 3-year intraday plan. The operational default for `INITIAL_LOAD_INTERVALS` is `1D`; pass `INITIAL_LOAD_INTERVALS=1m` explicitly for intraday preload windows. Processed candle output should use `S3_PROCESSED_FORMAT=parquet` for broad preload, with historical raw chunks and processed compact manifests enabled. Existing queued/running/succeeded chunks are skipped during resume and do not consume `INITIAL_LOAD_MAX_ENQUEUE` capacity.
+For the 20-symbol bootstrap, preload `1D` for the 3-year range first, then run `1m` as repeated dry-run/review/enqueue windows: recent 3 months, recent 1 year, then full 3 years. The v1 `1m` initial-load lower bound is `BACKFILL_INITIAL_LOAD_1M_MIN_START=2023-07-01T00:00:00Z`. The operational default for `INITIAL_LOAD_INTERVALS` is `1D`; pass `INITIAL_LOAD_INTERVALS=1m` explicitly for intraday preload windows. Processed candle output should use `S3_PROCESSED_FORMAT=parquet`, with historical raw chunks and processed compact manifests enabled. Existing queued/running/succeeded chunks are skipped during resume and do not consume `INITIAL_LOAD_MAX_ENQUEUE` capacity.
 
 Initial Load is a bootstrap job, not a normal chart GapFill. It should create S3 raw/processed evidence even when ClickHouse already has the requested rows; ClickHouse coverage alone is not enough to prove the S3 preload objective.
 
-If Alpaca returns no bars for an Initial Load chunk, the worker writes an empty marker under `S3_MANIFEST_PREFIX/empty/candles/...` and completes the chunk as `alpaca-empty`. This is expected for current S&P 500 symbols that did not trade during older parts of a requested preload window.
+If Alpaca returns no bars for an Initial Load chunk, the worker writes an empty marker under `S3_MANIFEST_PREFIX/empty/candles/...` and completes the chunk as `alpaca-empty`. This is expected for configured symbols that did not trade during older parts of a requested preload window.
 
 ```text
 INITIAL_LOAD_SYMBOLS

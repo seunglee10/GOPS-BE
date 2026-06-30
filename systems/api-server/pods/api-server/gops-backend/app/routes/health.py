@@ -33,7 +33,12 @@ def runtime_config() -> dict[str, object]:
             "bucket": os.getenv("S3_BUCKET") or "",
             "endpoint": presence(os.getenv("S3_ENDPOINT_URL")),
             "endpointMode": "real-aws" if not os.getenv("S3_ENDPOINT_URL") else "custom-endpoint",
+            "rawPrefix": os.getenv("S3_RAW_PREFIX") or "",
+            "finalPrefix": os.getenv("S3_FINAL_PREFIX") or "",
+            "livePrefix": os.getenv("S3_LIVE_PREFIX") or "",
+            "manifestPrefix": os.getenv("S3_MANIFEST_PREFIX") or "",
         },
+        "canonical": canonical_config(),
         "alpaca": {
             "localKeyId": presence(os.getenv("APCA_API_KEY_ID")),
             "localSecretKey": presence(os.getenv("APCA_API_SECRET_KEY")),
@@ -89,8 +94,8 @@ def runtime_config_warnings() -> list[str]:
     warnings = []
     if os.getenv("ALFAKA_REQUEST_CONFIG") not in {None, "", "systems/market-data/config/market-data-request.json"}:
         warnings.append("stale_request_config_path")
-    if os.getenv("ALPACA_UNIVERSE") not in {None, "", "sp500"}:
-        warnings.append("alpaca_universe_not_sp500")
+    if os.getenv("ALPACA_UNIVERSE") not in {None, "", "gops20"}:
+        warnings.append("alpaca_universe_not_gops20")
     channels = {item.strip() for item in (os.getenv("ALPACA_CHANNELS") or "").split(",") if item.strip()}
     if channels and "dailyBars" not in channels:
         warnings.append("alpaca_channels_missing_dailyBars")
@@ -98,8 +103,16 @@ def runtime_config_warnings() -> list[str]:
         warnings.append("alpaca_channels_missing_statuses")
     if os.getenv("S3_PROCESSED_FORMAT") not in {None, "", "parquet"}:
         warnings.append("s3_processed_format_not_parquet")
-    if os.getenv("BACKFILL_INITIAL_LOAD_1M_MIN_START") not in {None, "", "2025-04-01T00:00:00Z"}:
-        warnings.append("1m_preload_cutoff_not_2025_04")
+    if (os.getenv("HISTORICAL_ADJUSTMENT") or "split").lower() != "split":
+        warnings.append("historical_adjustment_not_split")
+    if env_bool("ALLOW_NON_CANONICAL_HISTORICAL_ADJUSTMENT", default=False):
+        warnings.append("noncanonical_historical_adjustment_allowed")
+    if not env_bool("CLICKHOUSE_REQUIRE_CANONICAL_CANDLES", default=True):
+        warnings.append("clickhouse_canonical_filter_disabled")
+    if not env_bool("S3_REQUIRE_CANONICAL_PROCESSED_CANDLES", default=True):
+        warnings.append("s3_canonical_manifest_filter_disabled")
+    if os.getenv("BACKFILL_INITIAL_LOAD_1M_MIN_START") not in {None, "", "2023-07-01T00:00:00Z"}:
+        warnings.append("1m_preload_floor_not_3y")
     profiles = set(configured_feed_profiles())
     allowed_profiles = {"sip", "iex", "boats", "overnight", "test"}
     if any(profile not in allowed_profiles for profile in profiles):
@@ -110,6 +123,32 @@ def runtime_config_warnings() -> list[str]:
     if configured_alpaca_credential_source() == "invalid":
         warnings.append("invalid_alpaca_credential_source")
     return warnings
+
+
+def canonical_config() -> dict[str, object]:
+    return {
+        "historicalAdjustment": os.getenv("HISTORICAL_ADJUSTMENT") or "split",
+        "allowNonCanonicalHistoricalAdjustment": env_bool(
+            "ALLOW_NON_CANONICAL_HISTORICAL_ADJUSTMENT",
+            default=False,
+        ),
+        "clickhouseRequireCanonicalCandles": env_bool(
+            "CLICKHOUSE_REQUIRE_CANONICAL_CANDLES",
+            default=True,
+        ),
+        "s3RequireCanonicalProcessedCandles": env_bool(
+            "S3_REQUIRE_CANONICAL_PROCESSED_CANDLES",
+            default=True,
+        ),
+        "s3ProcessedFormat": os.getenv("S3_PROCESSED_FORMAT") or "parquet",
+    }
+
+
+def env_bool(name: str, *, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None or value == "":
+        return default
+    return value.lower() in {"1", "true", "yes"}
 
 
 def configured_feed_profiles() -> list[str]:

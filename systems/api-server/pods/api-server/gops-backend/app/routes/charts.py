@@ -16,6 +16,7 @@ from app.market_data.query.service import get_query_service
 from app.services.alfaka_market_data import (
     hot_symbol_summaries,
     replace_watchlist_symbols,
+    search_symbol_summaries,
     symbol_summaries,
     watchlist_summaries,
 )
@@ -75,13 +76,16 @@ def chart_backfill_queue() -> dict[str, Any]:
 
 
 @router.get("/api/charts/symbols")
-def chart_symbols() -> dict[str, Any]:
+def chart_symbols(
+    query: str | None = Query(default=None, max_length=120),
+    limit: int = Query(default=20, ge=1, le=100),
+) -> dict[str, Any]:
     # 프론트의 심볼 목록/요약 영역이 호출합니다.
-    # 심볼 목록은 ALPACA_SYMBOLS 기준이며, 최신 가격은 Redis에 있으면 같이 내려갑니다.
+    # 검색 후보는 현재 universe 기준이며, 최신 가격은 Redis/ClickHouse에서 보완합니다.
     return {
         "source": "alpaca",
         "feed": "configured-market-feed",
-        "symbols": symbol_summaries(),
+        "symbols": search_symbol_summaries(query, limit) if query is not None else symbol_summaries(),
     }
 
 

@@ -4,7 +4,8 @@ import re
 SYMBOL_PATTERN = re.compile(r"^[A-Z][A-Z0-9]{0,9}(\.[A-Z])?$")
 
 
-def resolve_trade_subscription_plan(active_symbols=None, watchlist_symbols=None, hot_symbols=None, max_symbols=None):
+def resolve_trade_subscription_plan(active_symbols=None, watchlist_symbols=None, hot_symbols=None, max_symbols=None, allowed_symbols=None):
+    allowed = set(normalize_symbols(allowed_symbols)) if allowed_symbols is not None else None
     active = normalize_symbols(active_symbols)
     watchlist = normalize_symbols(watchlist_symbols)
     hot = normalize_symbols(hot_symbols)
@@ -13,6 +14,8 @@ def resolve_trade_subscription_plan(active_symbols=None, watchlist_symbols=None,
     tiers_by_symbol = {}
     for tier, symbols in (("active", active), ("watchlist", watchlist), ("hot", hot)):
         for symbol in symbols:
+            if allowed is not None and symbol not in allowed:
+                continue
             if symbol not in ordered:
                 ordered.append(symbol)
             tiers_by_symbol.setdefault(symbol, []).append(tier)
@@ -30,6 +33,7 @@ def resolve_trade_subscription_plan(active_symbols=None, watchlist_symbols=None,
             "watchlist": len(watchlist),
             "hot": len(hot),
             "resolved": len(ordered),
+            "allowed": len(allowed) if allowed is not None else None,
         },
     }
 

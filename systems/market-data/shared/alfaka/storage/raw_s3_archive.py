@@ -7,6 +7,7 @@ from collections import defaultdict
 from datetime import datetime
 
 from alfaka.alpaca.feed_profiles import market_session_for_timestamp
+from alfaka.common.canonical import candle_metadata
 from alfaka.common.env import utc_now_iso
 from alfaka.storage.s3_manifest import normalize_raw_channel, write_raw_manifest
 
@@ -24,6 +25,8 @@ def upload_raw_page_to_s3(
     manifest_prefix=None,
     object_id=None,
     partition_mode="daily",
+    price_adjustment=None,
+    canonical_version=None,
 ):
     total_rows = 0
     object_suffix = raw_object_suffix(data_kind, feed, start, end, page_number, object_id=object_id)
@@ -34,7 +37,7 @@ def upload_raw_page_to_s3(
         for row in rows:
             event_time = row.get("t") or start or end
             partition_key = raw_chunk_partition_key(prefix, data_kind, symbol, object_suffix) if normalize_partition_mode(partition_mode) == "chunk" else raw_partition_key(prefix, data_kind, symbol, event_time)
-            rows_by_partition[partition_key].append({
+            archive_row = {
                 "source": "alpaca",
                 "feed": feed,
                 "feedProfile": feed,
@@ -44,7 +47,10 @@ def upload_raw_page_to_s3(
                 "eventTime": event_time,
                 "receivedAt": utc_now_iso(),
                 "raw": row,
-            })
+            }
+            if normalize_raw_channel(data_kind) in {"bars", "updated-bars", "daily-bars"}:
+                archive_row.update(candle_metadata(price_adjustment, canonical_version))
+            rows_by_partition[partition_key].append(archive_row)
 
         for partition_key, partition_rows in rows_by_partition.items():
             body = "\n".join(json.dumps(row, ensure_ascii=False, separators=(",", ":")) for row in partition_rows) + "\n"

@@ -46,7 +46,8 @@ from alfaka.serving.provider import MarketDataProvider  # noqa: E402
 from alfaka.serving.time_utils import parse_utc_time  # noqa: E402
 
 
-MAX_WATCHLIST_SYMBOLS = 100
+MAX_WATCHLIST_SYMBOLS = 10
+MAX_HOT_SYMBOLS = 10
 DEFAULT_MARKET_TIMEZONE = "America/New_York"
 
 
@@ -100,22 +101,57 @@ def symbol_summaries() -> list[dict[str, Any]]:
     return symbol_summaries_for(configured_symbols())
 
 
-def symbol_summaries_for(symbols: list[str]) -> list[dict[str, Any]]:
-    return [build_symbol_summary(symbol) for symbol in normalize_symbol_list(symbols, max_items=MAX_WATCHLIST_SYMBOLS)]
+def search_symbol_summaries(query: str | None = None, limit: int | None = None) -> list[dict[str, Any]]:
+    requested_limit = min(_read_positive_int(limit) or MAX_WATCHLIST_SYMBOLS, len(configured_universe_symbols()))
+    query_text = (query or "").strip()
+    if not query_text:
+        return symbol_summaries_for(configured_symbols()[:requested_limit])
+
+    provider = get_market_data_provider()
+    allowed = set(configured_universe_symbols())
+    matches: list[str] = []
+    try:
+        records = provider.search_symbols(query_text, requested_limit)
+    except Exception:
+        records = []
+    for record in records or []:
+        symbol_value = record.get("symbol") if isinstance(record, dict) else None
+        if not isinstance(symbol_value, str):
+            continue
+        symbol = normalize_market_symbol(symbol_value)
+        if symbol not in allowed or symbol in matches:
+            continue
+        matches.append(symbol)
+        if len(matches) >= requested_limit:
+            break
+    if not matches:
+        matches = _configured_symbol_search(query_text, requested_limit)
+    return symbol_summaries_for(matches, max_items=requested_limit)
+
+
+def symbol_summaries_for(symbols: list[str], max_items: int | None = MAX_WATCHLIST_SYMBOLS) -> list[dict[str, Any]]:
+    return [build_symbol_summary(symbol) for symbol in normalize_symbol_list(symbols, max_items=max_items)]
 
 
 def watchlist_summaries(symbols: list[str] | None = None) -> dict[str, Any]:
-    requested_symbols = normalize_symbol_list(symbols, max_items=MAX_WATCHLIST_SYMBOLS) if symbols is not None else read_watchlist_symbols()
+    persisted = False
+    if symbols is not None:
+        requested_symbols = normalize_watchlist_symbol_list(symbols)
+    else:
+        requested_symbols = read_watchlist_symbols()
+        persisted = bool(requested_symbols)
+        if not requested_symbols:
+            requested_symbols = default_watchlist_symbols()
     return {
         "source": "alpaca",
         "feed": "configured-market-feed",
-        "persisted": symbols is None and bool(requested_symbols),
+        "persisted": persisted,
         "symbols": symbol_summaries_for(requested_symbols),
     }
 
 
 def replace_watchlist_symbols(symbols: list[str]) -> dict[str, Any]:
-    requested_symbols = normalize_symbol_list(symbols, max_items=MAX_WATCHLIST_SYMBOLS)
+    requested_symbols = normalize_watchlist_symbol_list(symbols)
     provider = get_market_data_provider()
     key = RedisKeyBuilder().watchlist_symbols()
     try:
@@ -144,7 +180,7 @@ def read_watchlist_symbols() -> list[str]:
         values = provider.redis_provider.redis.smembers(key)
     except Exception:
         values = []
-    return normalize_symbol_list(sorted(values), max_items=MAX_WATCHLIST_SYMBOLS)
+    return normalize_watchlist_symbol_list(sorted(values), reject_outside=False)
 
 
 def normalize_symbol_list(symbols: list[str], max_items: int | None = None) -> list[str]:
@@ -163,8 +199,49 @@ def normalize_symbol_list(symbols: list[str], max_items: int | None = None) -> l
     return normalized_symbols
 
 
+def normalize_watchlist_symbol_list(symbols: list[str], reject_outside: bool = True) -> list[str]:
+    allowed = set(configured_universe_symbols())
+    normalized = []
+    seen = set()
+    outside = []
+    for value in symbols or []:
+        if not isinstance(value, str):
+            continue
+        symbol = normalize_market_symbol(value)
+        if symbol not in allowed:
+            outside.append(symbol)
+            continue
+        if symbol in seen:
+            continue
+        normalized.append(symbol)
+        seen.add(symbol)
+        if len(normalized) >= MAX_WATCHLIST_SYMBOLS:
+            break
+    if outside and reject_outside:
+        raise HTTPException(status_code=400, detail=f"Symbols outside configured universe: {', '.join(sorted(set(outside)))}")
+    return normalized
+
+
+def default_watchlist_symbols() -> list[str]:
+    return normalize_watchlist_symbol_list(configured_symbols(), reject_outside=False)
+
+
+def _configured_symbol_search(query: str, limit: int) -> list[str]:
+    normalized_query = query.strip().upper()
+    matches: list[str] = []
+    provider = get_market_data_provider()
+    for symbol in configured_universe_symbols():
+        metadata = _symbol_metadata(provider, symbol)
+        haystack = f"{symbol} {metadata.get('name') or ''}".upper()
+        if normalized_query in haystack:
+            matches.append(symbol)
+        if len(matches) >= limit:
+            break
+    return matches
+
+
 def hot_symbol_summaries(limit: int | None = None) -> dict[str, Any]:
-    requested_limit = _read_positive_int(limit) or _read_positive_int(os.getenv("HOT_TIER_SIZE")) or DEFAULT_HOT_LIMIT
+    requested_limit = min(_read_positive_int(limit) or _read_positive_int(os.getenv("HOT_TIER_SIZE")) or DEFAULT_HOT_LIMIT, MAX_HOT_SYMBOLS)
     provider = get_market_data_provider()
     snapshot = _safe_hot_snapshot(provider)
     if snapshot:
@@ -175,7 +252,7 @@ def hot_symbol_summaries(limit: int | None = None) -> dict[str, Any]:
     if clickhouse_records:
         return build_hot_symbols_payload(_enrich_hot_symbol_records(provider, clickhouse_records), limit=requested_limit)
 
-    scan_limit = _read_positive_int(os.getenv("HOT_TIER_FALLBACK_SCAN_LIMIT")) or 600
+    scan_limit = _read_positive_int(os.getenv("HOT_TIER_FALLBACK_SCAN_LIMIT")) or 20
     records = []
     for symbol in universe[:scan_limit]:
         records.append(build_hot_symbol_record(provider, symbol))
@@ -286,7 +363,11 @@ def _safe_hot_snapshot(provider: MarketDataProvider) -> dict[str, Any] | None:
 def _limit_hot_snapshot(provider: MarketDataProvider, snapshot: dict[str, Any], limit: int) -> dict[str, Any]:
     ranking = dict(snapshot.get("ranking") or {})
     ranking["limit"] = limit
-    rows = list(snapshot.get("symbols") or [])[:limit]
+    allowed = set(configured_universe_symbols())
+    rows = [
+        row for row in list(snapshot.get("symbols") or [])
+        if isinstance(row, dict) and isinstance(row.get("symbol"), str) and normalize_market_symbol(row["symbol"]) in allowed
+    ][:limit]
     return {
         **snapshot,
         "ranking": ranking,

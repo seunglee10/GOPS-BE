@@ -1,28 +1,40 @@
 {
   "description": "Default market-data universe and Alpaca subscription policy.",
-  "defaultUniverse": "sp500",
-  "universeRegistryPath": "systems/market-data/config/sp500-universe.json",
+  "defaultUniverse": "gops20",
+  "universeRegistryPath": "",
   "collectionSymbolSource": "universe",
-  "defaultSeedSymbols": ["AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "TSLA"],
+  "defaultSeedSymbols": ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "BRK.B", "JPM", "UNH"],
   "defaultSymbols": [
-    "AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "TSLA"
+    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "BRK.B", "JPM", "UNH",
+    "V", "XOM", "MA", "AVGO", "PG", "COST", "HD", "JNJ", "NFLX", "AMD"
   ],
+  "universes": {
+    "gops20": [
+      "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "BRK.B", "JPM", "UNH",
+      "V", "XOM", "MA", "AVGO", "PG", "COST", "HD", "JNJ", "NFLX", "AMD"
+    ]
+  },
   "symbolMetadata": {
     "AAPL": {"name": "Apple Inc.", "exchange": "NASDAQ", "market": "NASDAQ"},
     "MSFT": {"name": "Microsoft Corporation", "exchange": "NASDAQ", "market": "NASDAQ"},
     "NVDA": {"name": "NVIDIA Corporation", "exchange": "NASDAQ", "market": "NASDAQ"},
     "AMZN": {"name": "Amazon.com, Inc.", "exchange": "NASDAQ", "market": "NASDAQ"},
-    "META": {"name": "Meta Platforms, Inc.", "exchange": "NASDAQ", "market": "NASDAQ"},
     "GOOGL": {"name": "Alphabet Inc. Class A", "exchange": "NASDAQ", "market": "NASDAQ"},
+    "META": {"name": "Meta Platforms, Inc.", "exchange": "NASDAQ", "market": "NASDAQ"},
     "TSLA": {"name": "Tesla, Inc.", "exchange": "NASDAQ", "market": "NASDAQ"},
-    "AMD": {"name": "Advanced Micro Devices, Inc.", "exchange": "NASDAQ", "market": "NASDAQ"},
-    "AVGO": {"name": "Broadcom Inc.", "exchange": "NASDAQ", "market": "NASDAQ"},
-    "AMAT": {"name": "Applied Materials, Inc.", "exchange": "NASDAQ", "market": "NASDAQ"},
-    "MU": {"name": "Micron Technology, Inc.", "exchange": "NASDAQ", "market": "NASDAQ"},
-    "INTC": {"name": "Intel Corporation", "exchange": "NASDAQ", "market": "NASDAQ"},
     "BRK.B": {"name": "Berkshire Hathaway Inc. Class B", "exchange": "NYSE", "market": "NYSE"},
     "JPM": {"name": "JPMorgan Chase & Co.", "exchange": "NYSE", "market": "NYSE"},
-    "UNH": {"name": "UnitedHealth Group Incorporated", "exchange": "NYSE", "market": "NYSE"}
+    "UNH": {"name": "UnitedHealth Group Incorporated", "exchange": "NYSE", "market": "NYSE"},
+    "V": {"name": "Visa Inc. Class A", "exchange": "NYSE", "market": "NYSE"},
+    "XOM": {"name": "Exxon Mobil Corporation", "exchange": "NYSE", "market": "NYSE"},
+    "MA": {"name": "Mastercard Incorporated Class A", "exchange": "NYSE", "market": "NYSE"},
+    "AVGO": {"name": "Broadcom Inc.", "exchange": "NASDAQ", "market": "NASDAQ"},
+    "PG": {"name": "Procter & Gamble Company", "exchange": "NYSE", "market": "NYSE"},
+    "COST": {"name": "Costco Wholesale Corporation", "exchange": "NASDAQ", "market": "NASDAQ"},
+    "HD": {"name": "Home Depot, Inc.", "exchange": "NYSE", "market": "NYSE"},
+    "JNJ": {"name": "Johnson & Johnson", "exchange": "NYSE", "market": "NYSE"},
+    "NFLX": {"name": "Netflix, Inc.", "exchange": "NASDAQ", "market": "NASDAQ"},
+    "AMD": {"name": "Advanced Micro Devices, Inc.", "exchange": "NASDAQ", "market": "NASDAQ"}
   },
   "defaultChannels": ["bars", "updatedBars", "dailyBars", "statuses"],
   "activeChartChannels": ["trades"],
@@ -34,8 +46,8 @@
     "initialChartLoad": "today-1m-bars-plus-recent-clickhouse-history",
     "avoidInitialTodayTickReplay": true,
     "activeChartRealtime": "subscribe-trades-while-chart-websocket-is-open",
-    "tradeSubscriptionPlan": "active-chart + watchlist + hot-top20",
-    "todayTickStorage": "market-data/live/trades compacted after market close"
+    "tradeSubscriptionPlan": "active-chart + watchlist + hot-top10 within gops20",
+      "todayTickStorage": "disabled for canonical rebuild; Redis/Kafka live path only unless explicitly enabled"
   },
   "storage": {
     "s3": {
@@ -87,17 +99,16 @@
     "meta": "META",
     "amd": "AMD",
     "broadcom": "AVGO",
-    "intel": "INTC",
-    "qualcomm": "QCOM",
-    "texas instruments": "TXN",
-    "micron": "MU",
-    "analog devices": "ADI",
-    "marvell": "MRVL",
-    "microchip": "MCHP",
-    "asml": "ASML",
-    "applied materials": "AMAT",
-    "lam research": "LRCX",
-    "kla": "KLAC",
-    "tsmc": "TSM"
+    "berkshire": "BRK.B",
+    "jpmorgan": "JPM",
+    "unitedhealth": "UNH",
+    "visa": "V",
+    "exxon": "XOM",
+    "mastercard": "MA",
+    "procter": "PG",
+    "costco": "COST",
+    "home depot": "HD",
+    "johnson": "JNJ",
+    "netflix": "NFLX"
   }
 }
