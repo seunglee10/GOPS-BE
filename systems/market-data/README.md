@@ -131,7 +131,7 @@ Use the initial-load job to plan or queue broad canonical history loads as bound
 Before deleting or quarantining suspect ClickHouse candle rows, run `python -m alfaka.tools.canonical_candle_audit` with optional `CANONICAL_AUDIT_SYMBOL`, `CANONICAL_AUDIT_INTERVAL`, and `CANONICAL_AUDIT_LIMIT` to get duplicate/non-canonical/invalid OHLC row counts.
 `force=true` backfill bypasses existing canonical S3 processed objects and fetches Alpaca again. This is required when a previously materialized canonical object is known to contain bad values. For `1D`, suspicious split-day high/low outliers are validated against same-day split-adjusted `1m` bars; only the outlier high/low is repaired, while daily open/close/volume remain from dailyBars.
 
-For the 20-symbol bootstrap, run the 3-year `1D` range first, then run `1m` in reviewed windows: recent 3 months, recent 1 year, then full 3 years. The v1 `1m` preload lower bound is fixed at `BACKFILL_INITIAL_LOAD_1M_MIN_START=2023-07-01T00:00:00Z`. Use `S3_PROCESSED_FORMAT=parquet`, `S3_HISTORICAL_RAW_PARTITION_MODE=chunk`, and `S3_HISTORICAL_PROCESSED_MANIFEST_LAYOUT=compact` for broad preload. Re-running the same plan is safe: existing queued/running/succeeded chunk requests are skipped and do not consume enqueue capacity.
+For the 20-symbol bootstrap, warm daily/reference data first, then fetch `1m` in reviewed bounded windows only when active charts or left-pan pagination need it. The v1 `1m` lazy lower bound is fixed at `BACKFILL_INITIAL_LOAD_1M_MIN_START=2020-07-01T00:00:00Z`, matching the six-year product target as of the 2026-07-01 stabilization. Use `S3_PROCESSED_FORMAT=parquet`, `S3_HISTORICAL_RAW_PARTITION_MODE=chunk`, and `S3_HISTORICAL_PROCESSED_MANIFEST_LAYOUT=compact` for broad warm-cache jobs. Re-running the same plan is safe: existing queued/running/succeeded chunk requests are skipped and do not consume enqueue capacity.
 Unlike GapFill, Initial Load does not treat ClickHouse coverage alone as success. It still creates S3 raw/processed evidence unless the exact chunk request already exists or the operator explicitly runs an S3-only replay mode.
 Chunks with no Alpaca bars complete as `alpaca-empty` and write an empty marker under `S3_MANIFEST_PREFIX/empty/candles/...`, allowing resume to avoid repeated calls for pre-listing or inactive historical ranges.
 
@@ -151,7 +151,7 @@ To enqueue jobs after reviewing the dry-run output:
 INITIAL_LOAD_DRY_RUN=false INITIAL_LOAD_START=2023-06-30T00:00:00Z INITIAL_LOAD_END=2026-06-30T00:00:00Z docker compose --profile repair run --rm initial-load
 ```
 
-For `1m`, always pass the interval explicitly and prefer month-sized reviewed windows. Do not run `1m` windows earlier than `2023-07-01T00:00:00Z`. Dry-run row estimates use `HISTORICAL_1M_MINUTES_PER_TRADING_DAY=960` by default because Alpaca historical 1m bars may include extended-hours data:
+For `1m`, always pass the interval explicitly and prefer month-sized reviewed windows. Do not run `1m` windows earlier than `2020-07-01T00:00:00Z`. Dry-run row estimates use `HISTORICAL_1M_MINUTES_PER_TRADING_DAY=960` by default because Alpaca historical 1m bars may include extended-hours data:
 
 ```bash
 INITIAL_LOAD_INTERVALS=1m INITIAL_LOAD_START=2026-05-01T00:00:00Z INITIAL_LOAD_END=2026-06-01T00:00:00Z docker compose --profile repair run --rm initial-load

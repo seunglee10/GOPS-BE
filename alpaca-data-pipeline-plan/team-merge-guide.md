@@ -187,5 +187,5 @@ Browser smoke:
 - 정규장 종료 시간에는 실제 live candle update가 멈추는 것이 정상일 수 있다.
 - 기존 ClickHouse volume은 새 `ORDER BY`를 자동 반영하지 않는다.
 - S3 default prefix에 오래된 데이터가 남아 있으면 새 rebuild prefix와 섞이지 않도록 확인해야 한다.
-- `1m` preload target은 현재 3년이며, 최근 3개월 -> 최근 1년 -> 전체 3년 순서로 확장한다.
+- `1m` historical target은 최대 6년 lazy browsing이며, 최초 진입 때 전체를 preload하지 않는다. 필요한 과거 구간은 left-pan page/gap backfill로 S3-first, Alpaca-last 순서로 채운다.
 - team frontend가 chart runtime을 크게 바꿨다면, 데이터 merge/de-dup/backfill trigger 테스트를 반드시 추가로 본다.

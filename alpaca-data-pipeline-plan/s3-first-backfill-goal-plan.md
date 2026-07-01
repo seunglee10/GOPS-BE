@@ -1,4 +1,4 @@
-# 20-Symbol Canonical Market Data Rebuild Plan
+# 20-Symbol Lazy Backfill And HTS-Style Chart Plan
 
 이 문서는 Goal 모드에서 그대로 실행할 시장데이터/차트 리빌드 계획이다.
 구현 로그가 아니라 현재 합의된 기능 계약과 검증 순서만 담는다.
@@ -31,7 +31,8 @@ Alpaca live stream
 - ClickHouse는 canonical S3에서 재구축할 수 있다.
 - Redis는 realtime/latest/recent cache로만 쓴다.
 - ClickHouse에 없으면 S3를 먼저 보고, S3에도 없을 때만 Alpaca를 호출한다.
-- 차트 최초 로딩은 빠르게 하고, 왼쪽 이동 시 bounded page 단위로 과거 데이터를 확장한다.
+- 6년치 데이터를 미리 전부 받지 않고, 차트 왼쪽 이동 시 bounded page 단위로 필요한 과거만 채운다.
+- Toss/HTS처럼 sparse extended-hours/overnight 구간은 차트 표시 계층에서 자연스럽게 이어 보이게 한다.
 - 기존 S3/ClickHouse/Redis에 남아 있던 legacy 데이터는 새 serving 계약에 섞지 않는다.
 
 ## 2. Scope
@@ -101,19 +102,21 @@ Derived intervals:
 
 Legacy/raw/unknown-adjustment row는 chart API에 반환하지 않는다.
 
-### Historical Range
+### Historical Lazy Target
 
-- `1D`: 3년
-- `1m`: 3년 목표
+- `1D`: 최대 6년 lazy target
+- `1m`: 최대 6년 lazy target
+- `5m`, `10m`: `1m` source coverage를 따라 최대 6년까지 lazy 확장
+- `1W`, `1M`: `1D` source coverage를 따라 최대 6년까지 lazy 확장
 
-`1m`은 비용, 시간, rate limit 리스크가 크므로 단계적으로 진행한다.
+6년 target은 "처음부터 모두 preload"한다는 뜻이 아니다. 차트 최초 진입은 visible window만 빠르게 보여주고, 사용자가 과거로 이동할 때마다 small page/gap range 단위로 채운다. `backfillTargetBars`는 최대 탐색 범위이고, `maxRequestBars`는 한 번에 요청/렌더링하는 page cap이다.
 
-1. recent 3 months
-2. recent 1 year
-3. full 3 years
+Warm preload는 제품 체감과 기준값을 위한 최소 캐시다.
 
-데모 안정화 gate는 `1D` 3년 + `1m` 최근 3개월을 최소 기준으로 삼는다.
-full rebuild gate는 `1m` 3년까지 완료해야 한다.
+- `1D`: Watch List, Hot Top10, active chart 후보 위주로 먼저 채울 수 있다.
+- `1m`: active chart visible/recent page만 우선 채운다.
+- full 6-year preload는 기본 목표가 아니며, 운영자가 명시적으로 선택한 배치 작업일 때만 수행한다.
+- target floor에 도달하기 전에는 candle 수 제한만으로 `hasMoreBefore=false`를 반환하지 않는다.
 
 ## 4. Storage Contracts
 
@@ -161,7 +164,7 @@ Rules:
 - stale recent/live key가 ClickHouse canonical coverage를 가리면 안 된다.
 - Watch List 사용자 편집 상태와 live tier control state는 명확히 구분한다.
 
-## 5. Backfill And Pagination Contract
+## 5. Backfill, Pagination, And HTS-Style Continuity Contract
 
 Backfill source priority:
 
@@ -178,6 +181,10 @@ Chart request path:
 - missing window는 bounded job으로 처리한다.
 - regular-session sparse gap은 `coverage.gapRanges`로 내려보내고, UI는 그 작은 range만 backfill한다.
 - 화면 진입이나 terminal backfill status만으로 `force=true` full-range backfill을 자동 생성하지 않는다.
+- 최초 진입은 visible window만 요청한다. 6년 target 전체를 한 번에 요청하거나 backfill하지 않는다.
+- 왼쪽 이동은 `before` cursor와 page limit으로만 과거를 확장한다.
+- `maxRequestBars`를 6년 target과 동일하게 키우지 않는다. 큰 target은 product coverage 목표이고, API 요청은 bounded page로 유지한다.
+- page/gap job은 ClickHouse 조회 -> S3 materialize -> Alpaca fetch 순서로 처리하고, 결과를 canonical S3와 ClickHouse에 저장한 뒤 같은 API path로 재조회한다.
 
 Required behavior:
 
@@ -191,11 +198,23 @@ Required behavior:
 - left-pan은 bounded page 단위로 동작한다.
 - left-pan이나 repair 중에도 기존 renderable chart를 빈 화면으로 만들지 않는다.
 - `1m` full-range force backfill을 화면 진입 시 자동 실행하지 않는다.
+- backfill 중에는 기존 candle을 유지하고, 완료 후 timestamp/date 기준 dedupe/sort된 candle만 append/replace한다.
+
+HTS-style continuity:
+
+- 저장소 canonical data는 실제 Alpaca closed bar/daily bar만 보존한다.
+- display continuity candle은 ClickHouse/S3 canonical row로 저장하지 않는다.
+- extended-hours/overnight에서 거래가 없는 minute는 chart display 계층에서 끊겨 보이지 않게 처리한다.
+- display-only candle은 이전 close를 이어받고 volume은 `0`으로 둔다.
+- display-only candle은 내부적으로 `synthetic/displayOnly`로 취급하고, 공식 `bars`/`updatedBars` 또는 backfill 결과가 도착하면 즉시 교체한다.
+- 정규장 내부 sparse gap은 숨기지 않고 `gapRanges`를 만든 뒤 bounded gapfill 대상으로 둔다.
+- `coverage.renderable=false`가 최신 live/provisional candle 표시 자체를 막으면 안 된다.
 
 Derived interval behavior:
 
 - `5m/10m`의 missing coverage는 `1m` source를 채운 뒤 파생한다.
 - `1W/1M`의 missing coverage는 `1D` source를 채운 뒤 파생한다.
+- derived interval도 최초 진입은 visible window만 그리고, 왼쪽 이동 시 source interval page/gap backfill을 먼저 수행한다.
 
 ## 6. Live Data Contract
 
@@ -314,11 +333,11 @@ Tests:
 - `force=true` follows documented replace/revision policy
 - S3 keys do not use upload-time as logical identity
 
-### M3. Historical Preload Phase A: `1D` 3 Years
+### M3. Historical Warm Baseline: Daily/Reference Data
 
 Goal:
 
-- 20개 전체의 3년 일봉을 먼저 채운다.
+- Watch List, Hot Top10, active chart 후보의 일봉 기준값을 먼저 채운다.
 
 Why first:
 
@@ -339,29 +358,31 @@ Checks:
 
 Do not continue if failed chunks are unresolved.
 
-### M4. Historical Preload Phase B: `1m` Recent 3 Months
+### M4. Lazy Page Backfill Foundation
 
 Goal:
 
-- active chart와 데모 browser 검증에 필요한 intraday base를 채운다.
+- 6년치 전체 preload 없이, 모든 interval에서 visible page와 left-pan page backfill이 동작하게 한다.
 
 Rules:
 
-- explicit 20-symbol `INITIAL_LOAD_SYMBOLS`
-- explicit `INITIAL_LOAD_INTERVALS=1m`
-- dry-run first
-- bounded enqueue
-- no full 3-year force backfill from frontend
+- chart initial request는 visible page만 가져온다.
+- left-pan request는 `before` cursor를 반드시 포함한다.
+- page size는 interval별 bounded limit 안에서만 사용한다.
+- ClickHouse miss는 S3 materialize job을 먼저 만든다.
+- S3 miss는 Alpaca gapfill job을 small range로 만든다.
+- `1m` 6-year force backfill은 frontend에서 생성할 수 없다.
+- completed job은 같은 API window 재조회로 검증한다.
 
 Checks:
 
-- planned chunks and estimated rows
-- backlog before enqueue
-- completed/skipped/failed/dead-letter count
-- S3 object/manifest count
-- ClickHouse row count
-- per-symbol min/max timestamp
-- duplicate canonical timestamp count
+- `/api/charts/candles?before=...` returns older candles only
+- page boundary candle is not duplicated
+- ClickHouse empty + S3 present -> materialize
+- S3 missing + target allowed -> Alpaca gapfill
+- target floor before 6 years/listing date returns `hasMoreBefore=true`
+- target floor reached returns `hasMoreBefore=false`
+- no synchronous S3 scan or Alpaca call in the chart request
 
 This is the minimum local demo intraday gate.
 
@@ -389,7 +410,7 @@ Required scenarios:
 
 Goal:
 
-- 차트가 빠르게 뜨고, 왼쪽 이동으로 과거가 안정적으로 확장된다.
+- 차트가 빠르게 뜨고, 왼쪽 이동으로 최대 6년 target까지 과거가 안정적으로 확장된다.
 
 Checks:
 
@@ -409,6 +430,9 @@ Checks:
 - partial but renderable chart remains visible during backfill
 - real non-renderable gap creates bounded repair/backfill state
 - single live candle does not make the chart falsely ready
+- sparse extended-hours/overnight candles remain displayable
+- display-only continuity candles are not persisted as canonical data
+- official closed candles replace display-only/provisional candles at the same timestamp
 
 Representative symbols:
 
@@ -455,7 +479,7 @@ If market is closed:
 
 Goal:
 
-- 실제 브라우저에서 차트 제품처럼 동작하는지 확인한다.
+- 실제 브라우저에서 Toss/HTS처럼 끊기지 않는 차트 제품처럼 동작하는지 확인한다.
 
 Browser checks:
 
@@ -466,6 +490,8 @@ Browser checks:
 - no duplicate candle
 - no time reversal
 - no scale collapse
+- overnight/extended sparse 1m candles do not visually break the chart
+- regular-session missing ranges trigger bounded gapfill instead of display-only hiding
 - no single-candle fake-ready chart
 - no infinite spinner
 - renderable chart is not replaced by empty backfill message
@@ -476,11 +502,11 @@ Browser checks:
 - search dropdown finds only the 20-symbol universe
 - browser console has no chart/backfill errors
 
-### M9. Optional Expansion: `1m` Recent 1 Year
+### M9. Optional Warm Cache Expansion
 
 Goal:
 
-- 3개월 demo gate 이후 intraday history를 1년까지 확장한다.
+- 운영자가 선택한 경우에만 frequently viewed symbols/ranges를 미리 데워 chart latency를 줄인다.
 
 Rules:
 
@@ -488,18 +514,21 @@ Rules:
 - enqueue bounded batches
 - do not advance with unresolved failures
 - record remaining chunks if stopped
+- S3/ClickHouse에 이미 있는 logical chunk는 skip한다.
+- warm cache는 lazy 6-year target의 보조 수단이지 필수 gate가 아니다.
 
-### M10. Optional Expansion: `1m` Full 3 Years
+### M10. Optional Full Historical Preload
 
 Goal:
 
-- full rebuild gate를 만족한다.
+- 운영자가 비용/시간/rate limit을 승인한 경우에만 full historical preload를 수행한다.
 
 Rules:
 
 - same validation as M4/M9
 - monitor Alpaca rate limits, S3 object counts, ClickHouse row counts, duplicate counts, queue lag
 - stop and report exact remaining chunks if rate/cost/time risk becomes too high
+- this is not required for normal chart browsing because lazy backfill can reach the 6-year target on demand
 
 ### M11. Team Handoff
 
@@ -559,7 +588,9 @@ GET /api/charts/symbols?query=brk
 
 ## 9. Known Risks To Keep Open
 
-- Alpaca rate limits may slow or stop full `1m` 3-year preload.
+- Alpaca rate limits may slow or stop large optional historical preload jobs.
+- Lazy 6-year backfill may expose provider rate limits if many users drag deep history at the same time.
+- Display-only continuity can hide natural no-trade minutes visually, so it must be clearly separated from canonical data and excluded from storage/analytics.
 - S3 object exists but manifest is stale or incompatible.
 - ClickHouse table schema/ORDER BY may not match new canonical/feed/session requirements on existing volumes.
 - Redis stale latest/live keys may hide canonical ClickHouse coverage.
@@ -570,9 +601,9 @@ GET /api/charts/symbols?query=brk
 - Market closed local verification cannot prove actual live freshness.
 - Team frontend changes may have replaced chart runtime assumptions; port data-contract hunk by hunk.
 
-## 10. Current Local Evidence
+## 10. Prior Local Evidence
 
-Recorded on 2026-07-01 KST. Re-measure before making completion claims.
+Recorded on 2026-07-01 KST for the previous local demo gate. Re-measure before making completion claims. This evidence proves the earlier 20-symbol canonical rebuild state, but it is not by itself proof of the new lazy 6-year browsing gate.
 
 - Active S3 rebuild prefixes:
   - `S3_FINAL_PREFIX=market-data/rebuild-20260701/final`
@@ -645,7 +676,9 @@ Recorded on 2026-07-01 KST. Re-measure before making completion claims.
 
 Do not enqueue Phase 3 or Phase 4 automatically without operator confirmation because they are large Alpaca/S3 jobs.
 
-## 11. Completion Audit
+## 11. Prior Demo Gate Audit
+
+This audit belongs to the previous local demo objective. Keep it as evidence, but do not use it to claim the lazy 6-year product gate.
 
 Objective completion criteria from `/Users/heejunkim/.codex/attachments/90c4d2c4-8adb-4177-b18b-55cf7b7df224/goal-objective.md`:
 
@@ -674,27 +707,34 @@ This gate is enough for a stable local demo.
 - Redis market-data state reset for rebuild.
 - S3 target prefix fresh or explicitly isolated.
 - S3 duplicate smoke passes.
-- `1D` 3 years loaded for all 20.
-- `1m` recent 3 months loaded for all 20.
+- Initial chart render uses bounded visible windows only.
+- Representative visible windows can be served from Redis/ClickHouse or filled by bounded S3-first jobs.
+- Left-pan lazy backfill works for `1m`, `5m`, `10m`, `1D`, `1W`, and `1M`.
+- Extended-hours/overnight sparse candles render continuously without storing display-only candles as canonical data.
 - S3 -> ClickHouse materialize smoke passes.
 - API smoke passes for representative symbols and intervals.
 - Browser smoke passes for rendering, left-pan, Watch List, Hot Ranking, and search.
 - Automated tests pass.
 
-### Full Rebuild Gate
+### Lazy 6-Year Product Gate
 
-This gate is required before claiming full 3-year intraday completion.
+This gate is required before claiming Toss/HTS-style 6-year browsing behavior.
 
 - Minimum Local Demo Gate passed.
-- `1m` recent 1 year loaded for all 20.
-- `1m` full 3 years loaded for all 20.
+- Initial chart render never requests a full 6-year range.
+- Left-pan can keep requesting older bounded pages until the 6-year/listing target floor.
+- `1m`, `5m`, `10m`, `1D`, `1W`, and `1M` all use source-interval lazy backfill.
+- ClickHouse miss uses S3 materialize before Alpaca.
+- S3 miss uses Alpaca only for bounded page/gap ranges.
+- Extended-hours/overnight sparse candles render continuously without polluting canonical storage.
+- Regular-session missing data still triggers bounded gapfill.
 - No duplicate canonical S3 logical chunks.
 - ClickHouse duplicate timestamp/date checks are zero.
 - Backfill uses S3 before Alpaca.
 - Alpaca is called only for missing target-range data not present in S3.
 - Browser checks pass again after full load.
 
-Close this Goal against the objective file's explicit Completion Criteria once the local demo gate is proven and recorded. Do not claim the full rebuild gate until Phase 3 and Phase 4 are also completed and re-verified.
+Close this Goal once the selected gate is proven and recorded. Do not claim full historical preload unless an operator explicitly selects and verifies it.
 
 ## 13. Goal Mode Prompt
 
@@ -716,8 +756,11 @@ Hard requirements:
 - Check S3 before Alpaca for every historical gap.
 - Materialize S3 into ClickHouse before serving.
 - Chart API reads Redis/ClickHouse only; it must not synchronously scan S3 or call Alpaca.
-- Load `1D` 3 years for all 20.
-- Load `1m` in phases: recent 3 months, recent 1 year, full 3 years.
+- Do not load 6 years of data at chart initial render.
+- Support lazy 6-year browsing for `1m`, `5m`, `10m`, `1D`, `1W`, and `1M`.
+- Left-pan uses `before` cursor and bounded page/gap jobs.
+- ClickHouse miss uses S3 materialize first; only S3 miss uses Alpaca.
+- Keep extended-hours/overnight sparse charts visually continuous without storing synthetic candles as canonical data.
 - Do not trigger full-range `1m` backfill from chart initial render.
 - Keep Watch List default 10 and Hot Ranking Top10 inside the 20-symbol universe.
 - Verify day-market/live path with controlled replay if the market is closed.

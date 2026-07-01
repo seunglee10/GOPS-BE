@@ -24,12 +24,15 @@
 
 ## Data Range
 
-- `1D`: 3년 historical target.
-- `1m`: 3년 historical target.
-- 시간이 부족하면 `1m`은 최근 3개월, 최근 1년, 전체 3년 순서로 확장한다.
+- `1D`: 최대 6년 lazy target.
+- `1m`: 최대 6년 lazy target.
+- `5m/10m`은 `1m` source coverage를 따라 최대 6년까지 확장한다.
+- `1W/1M`은 `1D` source coverage를 따라 최대 6년까지 확장한다.
+- 6년 target은 최초 진입 때 전체 preload를 수행한다는 뜻이 아니다.
+- 최초 차트 요청은 visible window만 반환하고, 왼쪽 이동 시 bounded page/gap backfill로 필요한 만큼만 채운다.
 - Target floor에 도달한 경우에만 `hasMoreBefore=false` 또는 target-boundary 상태가 허용된다.
-- 최소 데모 gate는 `1D` 3년 + `1m` 최근 3개월이다.
-- full rebuild gate는 `1m` 3년까지 완료해야 한다.
+- Warm preload는 Watch List, Hot Top10, active chart 후보의 체감 속도를 위한 선택적 최적화다.
+- Full 6-year preload는 운영자가 명시적으로 선택한 배치 작업일 때만 수행한다.
 
 ## Rebuild Boundary
 
@@ -71,6 +74,18 @@
 - 화면 진입만으로 `force=true` full backfill을 만들면 안 된다.
 - Left-pan pagination은 `before` cursor를 사용하고, 기존 candle 왼쪽에 append하며 timestamp/date 중복을 제거한다.
 - Backfill 중에도 renderable chart는 빈 화면으로 바뀌면 안 된다.
+- Backfill 완료 후에는 canonical priority로 dedupe/sort된 candle만 append/replace한다.
+- `1m`, `5m`, `10m`, `1D`, `1W`, `1M` 모두 같은 lazy browsing 계약을 따른다.
+
+## HTS-Style Chart Continuity
+
+- 저장소 canonical data는 실제 Alpaca `bars`, `updatedBars`, `dailyBars`만 보존한다.
+- 거래가 없는 extended-hours/overnight minute를 ClickHouse/S3에 가짜 canonical candle로 저장하지 않는다.
+- 차트 표시 계층은 sparse extended-hours/overnight 구간을 끊긴 오류처럼 보이지 않게 처리한다.
+- 표시용 continuity candle은 이전 close를 이어받고 volume은 `0`이며, 내부적으로 `displayOnly` 또는 `synthetic`으로 취급한다.
+- 공식 closed bar 또는 backfill 결과가 같은 timestamp에 도착하면 표시용 candle은 즉시 교체된다.
+- 정규장 내부 누락은 display-only로 숨기지 않고 `gapRanges`를 만든 뒤 S3-first/Alpaca-last gapfill 대상으로 둔다.
+- `coverage.renderable=false`가 최신 live/provisional candle 표시 자체를 막으면 안 된다.
 
 ## Redis And Realtime
 

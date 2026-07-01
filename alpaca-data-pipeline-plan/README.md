@@ -5,8 +5,8 @@
 ## 팀이 먼저 읽을 문서
 
 1. [`s3-first-backfill-goal-plan.md`](s3-first-backfill-goal-plan.md)
-   - 다음 Goal 모드에서 그대로 실행할 20개 종목 canonical rebuild 계획입니다.
-   - S3 prefix 격리/초기화, ClickHouse/Redis reset, `v2 + split`, 3년 범위, 중복 방지, S3-first backfill 계약을 담습니다.
+   - 다음 Goal 모드에서 그대로 실행할 20개 종목 lazy backfill/HTS-style chart 계획입니다.
+   - S3 prefix 격리/초기화, ClickHouse/Redis reset, `v2 + split`, 최대 6년 lazy target, 중복 방지, S3-first backfill, display-only continuity 계약을 담습니다.
 
 2. [`aws-market-data-reset-runbook.md`](aws-market-data-reset-runbook.md)
    - AWS/EKS 실제 ClickHouse, S3, Redis, Kafka 차트 데이터를 로컬에서 검증한 market-data 계약과 맞추기 위한 운영 runbook입니다.
@@ -40,4 +40,5 @@
 - 프론트엔드 파일 충돌이 생기면 화면 구조를 통째로 덮어쓰지 말고, 차트 데이터 로딩, 실시간 상태, backfill 트리거, Watch/Hot 데이터 계약에 필요한 로직만 옮깁니다.
 - S3/ClickHouse/Redis/API/차트 런타임 계약은 한쪽만 부분 적용하면 깨지기 쉬우므로 `team-merge-guide.md`의 순서대로 병합합니다.
 - AWS 배포 전에는 `aws-market-data-reset-runbook.md` 기준으로 로컬 검증 상태와 AWS ClickHouse/S3/Redis/Kafka 차트 데이터 계약이 같은지 확인합니다.
-- 오래된 S&P500 전체, Hot Top20, `1m 2025-04 cutoff` 전제는 이번 20개 종목 canonical rebuild 계획보다 우선하지 않습니다.
+- 오래된 S&P500 전체, Hot Top20, `1m 2025-04 cutoff` 전제는 이번 20개 종목 lazy backfill/HTS-style chart 계획보다 우선하지 않습니다.
+- 오래된 "1m 전체 preload 필수" 전제는 이번 lazy 6-year target 계획보다 우선하지 않습니다.

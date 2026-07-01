@@ -1561,7 +1561,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
                 store.create_request(
                     "AAPL",
                     "1m",
-                    start="2023-07-01T00:00:00.000Z",
+                    start="2020-07-01T00:00:00.000Z",
                     end="2026-06-30T00:00:00.000Z",
                     mode="queue",
                     force=True,
@@ -1839,13 +1839,13 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         module = load_initial_load_job_module()
         store = RedisBackfillStore(redis_client=MemoryRedis(), ttl_seconds=60)
 
-        with mock.patch.dict(os.environ, {"BACKFILL_INITIAL_LOAD_1M_MIN_START": "2023-07-01T00:00:00Z"}):
+        with mock.patch.dict(os.environ, {"BACKFILL_INITIAL_LOAD_1M_MIN_START": "2020-07-01T00:00:00Z"}):
             with self.assertRaisesRegex(ValueError, "before BACKFILL_INITIAL_LOAD_1M_MIN_START"):
                 store.create_initial_load_requests(
                     ["AAPL"],
                     "1m",
-                    "2023-06-01T00:00:00.000Z",
-                    "2023-07-01T00:00:00.000Z",
+                    "2020-06-01T00:00:00.000Z",
+                    "2020-07-01T00:00:00.000Z",
                     max_enqueued=1,
                     max_backlog=10,
                 )
@@ -1854,15 +1854,15 @@ class MarketDataHardeningContractTest(unittest.TestCase):
                 store,
                 symbols=["AAPL"],
                 intervals=["1m"],
-                start="2023-06-01T00:00:00.000Z",
-                end="2023-07-01T00:00:00.000Z",
+                start="2020-06-01T00:00:00.000Z",
+                end="2020-07-01T00:00:00.000Z",
                 dry_run=True,
             )
 
             allowed_1m = store.create_initial_load_requests(
                 ["AAPL"],
                 "1m",
-                "2023-07-01T00:00:00.000Z",
+                "2020-07-01T00:00:00.000Z",
                 "2023-07-06T00:00:00.000Z",
                 max_enqueued=1,
                 max_backlog=10,
@@ -1877,7 +1877,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             )
 
         self.assertEqual(dry_run["failures"], 1)
-        self.assertIn("2023-07-01T00:00:00.000Z", dry_run["items"][0]["error"])
+        self.assertIn("2020-07-01T00:00:00.000Z", dry_run["items"][0]["error"])
         self.assertEqual(allowed_1m["createdCount"], 1)
         self.assertEqual(allowed_1d["createdCount"], 1)
 
@@ -3325,7 +3325,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             second = default_backfill_range(now="2026-06-25T14:30:59.999Z")
 
         self.assertEqual(first, second)
-        self.assertEqual(first.start, "2023-07-01T00:00:00.000Z")
+        self.assertEqual(first.start, "2020-07-01T00:00:00.000Z")
         self.assertEqual(first.end, "2026-06-25T14:30:00.000Z")
 
     def test_default_backfill_range_uses_interval_groups(self):
@@ -3333,9 +3333,9 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         derived_intraday = default_backfill_range(now="2026-06-25T14:30:11.123Z", interval="5m")
         daily = default_backfill_range(now="2026-06-25T14:30:11.123Z", interval="1D")
 
-        self.assertEqual(intraday.start, "2023-07-01T00:00:00.000Z")
-        self.assertEqual(derived_intraday.start, "2023-07-01T00:00:00.000Z")
-        self.assertEqual(daily.start, "2023-06-26T14:30:00.000Z")
+        self.assertEqual(intraday.start, "2020-07-01T00:00:00.000Z")
+        self.assertEqual(derived_intraday.start, "2020-07-01T00:00:00.000Z")
+        self.assertEqual(daily.start, "2020-06-26T14:30:00.000Z")
 
     def test_explicit_backfill_lookback_hours_is_still_supported_for_direct_calls(self):
         value = default_backfill_range(now="2026-06-25T14:30:11.123Z", interval="1D", lookback_hours=24)
@@ -3349,20 +3349,20 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(candle_count_for_24h("1d"), 250)
         self.assertEqual(candle_count_for_24h("1W"), 260)
         self.assertEqual(candle_count_for_24h("1M"), 120)
-        self.assertEqual(historical_target_bars("1m"), 294840)
-        self.assertEqual(historical_target_bars("1D"), 756)
-        self.assertEqual(historical_target_bars("1M"), 36)
-        self.assertEqual(candle_count_for_1y("1m"), 294840)
+        self.assertEqual(historical_target_bars("1m"), 589680)
+        self.assertEqual(historical_target_bars("1D"), 1512)
+        self.assertEqual(historical_target_bars("1M"), 72)
+        self.assertEqual(candle_count_for_1y("1m"), 589680)
         self.assertEqual(resolve_candle_limit("1m", None), 390)
         self.assertEqual(resolve_candle_limit("1m", 9999), 9999)
-        self.assertEqual(resolve_candle_limit("1m", 999999), 294840)
+        self.assertEqual(resolve_candle_limit("1m", 999999), 589680)
         self.assertEqual(resolve_candle_limit("1M", 999999), 120)
         self.assertEqual(redis_closed_candle_cap("1m"), 780)
         self.assertEqual(redis_closed_candle_cap("5m"), 156)
         self.assertEqual(redis_closed_candle_cap("10m"), 78)
-        self.assertEqual(redis_closed_candle_cap("1D"), 756)
-        self.assertEqual(redis_closed_candle_cap("1W"), 156)
-        self.assertEqual(redis_closed_candle_cap("1M"), 36)
+        self.assertEqual(redis_closed_candle_cap("1D"), 1512)
+        self.assertEqual(redis_closed_candle_cap("1W"), 312)
+        self.assertEqual(redis_closed_candle_cap("1M"), 72)
 
     def test_clickhouse_provider_uses_database_override(self):
         provider = ClickHouseMarketDataProvider(database="custom_market_data")
@@ -3533,11 +3533,12 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             clickhouse_provider=clickhouse,
         )
 
-        with mock.patch("alfaka.serving.provider.target_range_from_for_interval", return_value="2023-07-01T00:00:00.000Z"):
+        with mock.patch("alfaka.serving.provider.target_range_from_for_interval", return_value="2020-07-01T00:00:00.000Z"):
             payload = provider.candle_snapshot("AAPL", "1M", 80)
 
-        self.assertEqual(clickhouse.calls[-1]["from_time"], "2023-07-01T00:00:00.000Z")
+        self.assertEqual(clickhouse.calls[-1]["from_time"], "2020-07-01T00:00:00.000Z")
         self.assertEqual([candle["timestamp"] for candle in payload["candles"]], [
+            "2022-01-01T00:00:00.000Z",
             "2024-01-01T00:00:00.000Z",
             "2026-06-01T00:00:00.000Z",
         ])
@@ -3571,7 +3572,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             clickhouse_provider=clickhouse,
         )
 
-        with mock.patch("alfaka.serving.provider.target_range_from_for_interval", return_value="2023-07-01T00:00:00.000Z"):
+        with mock.patch("alfaka.serving.provider.target_range_from_for_interval", return_value="2020-07-01T00:00:00.000Z"):
             payload = provider.candle_snapshot(
                 "AAPL",
                 "1M",
@@ -3580,51 +3581,53 @@ class MarketDataHardeningContractTest(unittest.TestCase):
                 from_time="2020-01-01T00:00:00.000Z",
             )
 
-        self.assertEqual(clickhouse.calls[-1]["from_time"], "2023-07-01T00:00:00.000Z")
-        self.assertEqual(payload["candles"], [])
+        self.assertEqual(clickhouse.calls[-1]["from_time"], "2020-07-01T00:00:00.000Z")
+        self.assertEqual([candle["timestamp"] for candle in payload["candles"]], [
+            "2022-01-01T00:00:00.000Z",
+        ])
 
     def test_has_more_before_uses_target_floor_not_old_storage(self):
         self.assertFalse(has_more_before_target(
-            "2023-07-01T00:00:00.000Z",
+            "2020-07-01T00:00:00.000Z",
             "2021-06-01T00:00:00.000Z",
-            "2023-07-01T05:00:00.000Z",
+            "2020-07-01T05:00:00.000Z",
         ))
         self.assertTrue(has_more_before_target(
             "2023-08-01T00:00:00.000Z",
             "2021-06-01T00:00:00.000Z",
-            "2023-07-01T05:00:00.000Z",
+            "2020-07-01T05:00:00.000Z",
         ))
 
     def test_has_more_before_treats_target_boundary_gap_as_terminal(self):
         self.assertFalse(has_more_before_target(
-            "2023-07-03T13:30:00.000Z",
+            "2020-07-03T13:30:00.000Z",
             "2021-06-01T00:00:00.000Z",
-            "2023-07-01T00:00:00.000Z",
+            "2020-07-01T00:00:00.000Z",
         ))
 
     def test_has_more_before_keeps_real_old_history_gap_repairable(self):
         self.assertTrue(has_more_before_target(
-            "2023-07-07T13:30:00.000Z",
+            "2020-07-07T13:30:00.000Z",
             "2021-06-01T00:00:00.000Z",
-            "2023-07-01T00:00:00.000Z",
+            "2020-07-01T00:00:00.000Z",
         ))
 
     def test_has_more_before_keeps_late_available_source_repairable(self):
         self.assertTrue(has_more_before_target(
             "2024-06-03T00:00:00.000Z",
             "2024-06-03T04:00:00.000Z",
-            "2023-07-01T00:00:00.000Z",
+            "2020-07-01T00:00:00.000Z",
         ))
 
     def test_intraday_target_floor_uses_fixed_preload_cutoff(self):
-        with mock.patch.dict(os.environ, {"BACKFILL_INITIAL_LOAD_1M_MIN_START": "2023-07-01T00:00:00Z"}):
+        with mock.patch.dict(os.environ, {"BACKFILL_INITIAL_LOAD_1M_MIN_START": "2020-07-01T00:00:00Z"}):
             self.assertEqual(
                 target_range_from_for_interval("1m", "2026-06-30T11:15:09.000Z"),
-                "2023-07-01T00:00:00.000Z",
+                "2020-07-01T00:00:00.000Z",
             )
             self.assertEqual(
                 target_range_from_for_interval("5m", "2026-06-30T11:15:09.000Z"),
-                "2023-07-01T00:00:00.000Z",
+                "2020-07-01T00:00:00.000Z",
             )
 
     def test_clickhouse_daily_snapshot_groups_daily_source_by_calendar_day(self):
@@ -4516,9 +4519,9 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {
             "S3_MATERIALIZE_SYMBOL": "AAPL",
             "S3_MATERIALIZE_INTERVAL": "1m",
-            "S3_MATERIALIZE_START": "2023-06-01T00:00:00.000Z",
-            "S3_MATERIALIZE_END": "2023-07-01T00:00:00.000Z",
-            "BACKFILL_INITIAL_LOAD_1M_MIN_START": "2023-07-01T00:00:00Z",
+            "S3_MATERIALIZE_START": "2020-06-01T00:00:00.000Z",
+            "S3_MATERIALIZE_END": "2020-07-01T00:00:00.000Z",
+            "BACKFILL_INITIAL_LOAD_1M_MIN_START": "2020-07-01T00:00:00Z",
             "S3_MANIFEST_PREFIX": "market-data/manifest",
         }, clear=True):
             with self.assertRaisesRegex(ValueError, "BACKFILL_INITIAL_LOAD_1M_MIN_START"):
