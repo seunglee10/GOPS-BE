@@ -192,10 +192,11 @@ services:
       ALPACA_FEED_PROFILE: "sip"
       ALPACA_UNIVERSE: "sp500"
       ALPACA_UNIVERSE_REGISTRY_PATH: "systems/market-data/config/sp500-universe.json"
-      ALPACA_COLLECTION_SYMBOL_SOURCE: "universe"
       ALPACA_CHANNELS: "bars,updatedBars,dailyBars,statuses"
       ALPACA_ACTIVE_CHANNELS: "trades"
-      ALPACA_ACTIVE_TICK_SUBSCRIPTION: "true"
+      ALPACA_MAX_WATCHLIST_TRADE_SYMBOLS: "40"
+      ALPACA_MAX_HOT_TRADE_SYMBOLS: "10"
+      ALPACA_ACTIVE_POLL_SECONDS: "1"
     command: ["python", "-u", "systems/market-data/pods/market-ingestor/market_stream.py"]
     restart: unless-stopped
     networks:
@@ -204,7 +205,7 @@ services:
       - streaming_net
 
   alpaca-ingestor-iex:
-    profiles: ["alpaca"]
+    profiles: ["alpaca-iex"]
     image: gops-market-ingestor
     build:
       context: .
@@ -232,10 +233,11 @@ services:
       ALPACA_FEED_PROFILE: "iex"
       ALPACA_UNIVERSE: "sp500"
       ALPACA_UNIVERSE_REGISTRY_PATH: "systems/market-data/config/sp500-universe.json"
-      ALPACA_COLLECTION_SYMBOL_SOURCE: "universe"
       ALPACA_CHANNELS: "bars,updatedBars,dailyBars,statuses"
       ALPACA_ACTIVE_CHANNELS: "trades"
-      ALPACA_ACTIVE_TICK_SUBSCRIPTION: "true"
+      ALPACA_MAX_WATCHLIST_TRADE_SYMBOLS: "40"
+      ALPACA_MAX_HOT_TRADE_SYMBOLS: "10"
+      ALPACA_ACTIVE_POLL_SECONDS: "1"
     command: ["python", "-u", "systems/market-data/pods/market-ingestor/market_stream.py"]
     restart: unless-stopped
     networks:
@@ -244,7 +246,7 @@ services:
       - streaming_net
 
   alpaca-ingestor-boats:
-    profiles: ["alpaca"]
+    profiles: ["alpaca-boats"]
     image: gops-market-ingestor
     build:
       context: .
@@ -272,10 +274,11 @@ services:
       ALPACA_FEED_PROFILE: "boats"
       ALPACA_UNIVERSE: "sp500"
       ALPACA_UNIVERSE_REGISTRY_PATH: "systems/market-data/config/sp500-universe.json"
-      ALPACA_COLLECTION_SYMBOL_SOURCE: "universe"
       ALPACA_CHANNELS: "bars,updatedBars,dailyBars,statuses"
       ALPACA_ACTIVE_CHANNELS: "trades"
-      ALPACA_ACTIVE_TICK_SUBSCRIPTION: "true"
+      ALPACA_MAX_WATCHLIST_TRADE_SYMBOLS: "40"
+      ALPACA_MAX_HOT_TRADE_SYMBOLS: "10"
+      ALPACA_ACTIVE_POLL_SECONDS: "1"
     command: ["python", "-u", "systems/market-data/pods/market-ingestor/market_stream.py"]
     restart: unless-stopped
     networks:
@@ -327,82 +330,13 @@ services:
       KAFKA_STATUS_TOPIC: "market.status.v1"
       KAFKA_VOLUME_PROFILE_BINS_TOPIC: "market.volume-profile-bins.1m.v1"
       KAFKA_FLINK_GROUP_ID: "alfaka-local-stream-processor"
+      KAFKA_PROCESSOR_ENABLE_AUTO_COMMIT: "false"
       VOLUME_PROFILE_PRICE_BIN_SIZE: "0.05"
       PROCESSOR_LOG_EVERY_N: "500"
       COMPONENT_HEALTH_TTL_SECONDS: "300"
       REDIS_URL: "redis://redis:6379/0"
       REDIS_KEY_PREFIX: ""
     command: ["python", "-u", "systems/market-data/pods/market-processor/local_main.py"]
-    restart: unless-stopped
-    networks:
-      - app_net
-      - streaming_net
-      - data_net
-
-  s3-sink:
-    image: gops-market-storage
-    build:
-      context: .
-      dockerfile: infra/docker/Dockerfile.gops-market-storage
-    container_name: alfaka-s3-sink
-    depends_on:
-      kafka-init:
-        condition: service_completed_successfully
-    environment:
-      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
-      KAFKA_S3_GROUP_ID: "alfaka-processed-s3-sink"
-      KAFKA_PROCESSED_TOPICS: "market.ticks.v1,market.candles.live.1m.v1,market.candles.closed.v1,market.status.v1,market.volume-profile-bins.1m.v1"
-      AWS_REGION: "${AWS_REGION:-ap-northeast-2}"
-      AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-ap-northeast-2}"
-      AWS_EC2_METADATA_DISABLED: "${AWS_EC2_METADATA_DISABLED:-true}"
-      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
-      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
-      AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
-      S3_ENDPOINT_URL: "${DOCKER_S3_ENDPOINT_URL:-}"
-      S3_BUCKET: "${S3_BUCKET:-gops-market-data-<aws-account-id>-ap-northeast-2-an}"
-      S3_FINAL_PREFIX: "${S3_FINAL_PREFIX:-market-data/final}"
-      S3_LIVE_PREFIX: "${S3_LIVE_PREFIX:-market-data/live}"
-      S3_MANIFEST_PREFIX: "${S3_MANIFEST_PREFIX:-market-data/manifest}"
-      S3_PROCESSED_FORMAT: "parquet"
-      S3_FLUSH_COUNT: "1000"
-      S3_FLUSH_INTERVAL_SECONDS: "60"
-      S3_PUT_MAX_ATTEMPTS: "${S3_PUT_MAX_ATTEMPTS:-3}"
-      S3_PUT_RETRY_SLEEP_SECONDS: "${S3_PUT_RETRY_SLEEP_SECONDS:-1}"
-    command: ["python", "-u", "systems/market-data/pods/s3-sink/processed_sink.py"]
-    restart: unless-stopped
-    networks:
-      - app_net
-      - streaming_net
-      - data_net
-
-  raw-s3-archive:
-    image: gops-market-storage
-    build:
-      context: .
-      dockerfile: infra/docker/Dockerfile.gops-market-storage
-    container_name: alfaka-raw-s3-archive
-    depends_on:
-      kafka-init:
-        condition: service_completed_successfully
-    environment:
-      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
-      KAFKA_RAW_TOPIC_PREFIX: "market.raw"
-      KAFKA_RAW_S3_GROUP_ID: "alfaka-raw-s3-archive"
-      AWS_REGION: "${AWS_REGION:-ap-northeast-2}"
-      AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-ap-northeast-2}"
-      AWS_EC2_METADATA_DISABLED: "${AWS_EC2_METADATA_DISABLED:-true}"
-      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
-      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
-      AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
-      S3_ENDPOINT_URL: "${DOCKER_S3_ENDPOINT_URL:-}"
-      S3_BUCKET: "${S3_BUCKET:-gops-market-data-<aws-account-id>-ap-northeast-2-an}"
-      S3_RAW_PREFIX: "${S3_RAW_PREFIX:-market-data/raw/alpaca}"
-      S3_MANIFEST_PREFIX: "${S3_MANIFEST_PREFIX:-market-data/manifest}"
-      S3_RAW_FLUSH_COUNT: "1000"
-      S3_RAW_FLUSH_INTERVAL_SECONDS: "60"
-      S3_PUT_MAX_ATTEMPTS: "${S3_PUT_MAX_ATTEMPTS:-3}"
-      S3_PUT_RETRY_SLEEP_SECONDS: "${S3_PUT_RETRY_SLEEP_SECONDS:-1}"
-    command: ["python", "-u", "systems/market-data/pods/s3-sink/raw_archive_sink.py"]
     restart: unless-stopped
     networks:
       - app_net
@@ -426,12 +360,29 @@ services:
       KAFKA_CLICKHOUSE_ENABLE_AUTO_COMMIT: "false"
       KAFKA_CLICKHOUSE_TOPICS: "market.candles.closed.v1,market.status.v1,market.volume-profile-bins.1m.v1,market.news.alpaca.v1"
       KAFKA_NEWS_TOPIC: "market.news.alpaca.v1"
-      CLICKHOUSE_LOAD_TRADES: "false"
       CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
       CLICKHOUSE_DATABASE: "market_data"
       CLICKHOUSE_USER: "alfaka"
       CLICKHOUSE_PASSWORD: "alfaka"
       CLICKHOUSE_ENSURE_SESSION_COLUMNS: "true"
+      AWS_REGION: "${AWS_REGION:-ap-northeast-2}"
+      AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-ap-northeast-2}"
+      AWS_EC2_METADATA_DISABLED: "${AWS_EC2_METADATA_DISABLED:-true}"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
+      AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
+      S3_ENDPOINT_URL: "${DOCKER_S3_ENDPOINT_URL:-}"
+      S3_BUCKET: "${S3_BUCKET:-}"
+      S3_ARCHIVE_ROOT_PREFIX: "${S3_ARCHIVE_ROOT_PREFIX:-market-data/dev/helixho}"
+      S3_FINAL_PREFIX: "${S3_FINAL_PREFIX:-market-data/dev/helixho/final}"
+      S3_MANIFEST_PREFIX: "${S3_MANIFEST_PREFIX:-market-data/dev/helixho/manifest}"
+      S3_PROCESSED_FORMAT: "${S3_PROCESSED_FORMAT:-parquet}"
+      CLICKHOUSE_LOADER_S3_ARCHIVE_ENABLED: "${CLICKHOUSE_LOADER_S3_ARCHIVE_ENABLED:-true}"
+      S3_CLICKHOUSE_ARCHIVE_FLUSH_ROWS: "${S3_CLICKHOUSE_ARCHIVE_FLUSH_ROWS:-1000}"
+      S3_CLICKHOUSE_ARCHIVE_FLUSH_SECONDS: "${S3_CLICKHOUSE_ARCHIVE_FLUSH_SECONDS:-60}"
+      S3_CLICKHOUSE_ARCHIVE_ROWS_PER_OBJECT: "${S3_CLICKHOUSE_ARCHIVE_ROWS_PER_OBJECT:-10000}"
+      S3_PUT_MAX_ATTEMPTS: "${S3_PUT_MAX_ATTEMPTS:-3}"
+      S3_PUT_RETRY_SLEEP_SECONDS: "${S3_PUT_RETRY_SLEEP_SECONDS:-1}"
     command: ["python", "-u", "systems/market-data/pods/clickhouse-loader/processed_loader.py"]
     restart: unless-stopped
     networks:
@@ -474,66 +425,6 @@ services:
       SYMBOL_REGISTRY_STATUS: "active"
       SYMBOL_REGISTRY_REDIS_CACHE: "true"
     command: ["python", "-u", "systems/market-data/jobs/symbol-registry-sync/main.py"]
-    restart: "no"
-    networks:
-      - app_net
-      - data_net
-
-  coverage-repair:
-    profiles: ["repair"]
-    image: gops-market-processor
-    build:
-      context: .
-      dockerfile: infra/docker/Dockerfile.gops-market-processor
-    container_name: alfaka-coverage-repair
-    depends_on:
-      gops-backend:
-        condition: service_started
-      backfill-worker:
-        condition: service_started
-    environment:
-      GOPS_API_BASE_URL: "http://gops-backend:8000"
-      COVERAGE_REPAIR_SYMBOLS: "${COVERAGE_REPAIR_SYMBOLS:-AAPL,MSFT,NVDA,AMZN,META,GOOGL,TSLA}"
-      COVERAGE_REPAIR_INTERVALS: "${COVERAGE_REPAIR_INTERVALS:-1m,5m,10m,1D,1W,1M}"
-      COVERAGE_REPAIR_DRY_RUN: "${COVERAGE_REPAIR_DRY_RUN:-true}"
-      COVERAGE_REPAIR_FORCE: "${COVERAGE_REPAIR_FORCE:-false}"
-    command: ["python", "-u", "systems/market-data/jobs/coverage-repair/main.py"]
-    restart: "no"
-    networks:
-      - app_net
-      - data_net
-
-  initial-load:
-    profiles: ["repair"]
-    image: gops-market-processor
-    build:
-      context: .
-      dockerfile: infra/docker/Dockerfile.gops-market-processor
-    container_name: alfaka-initial-load
-    depends_on:
-      redis:
-        condition: service_healthy
-      backfill-worker:
-        condition: service_started
-    environment:
-      REDIS_URL: "redis://redis:6379/0"
-      ALFAKA_REQUEST_CONFIG: "systems/market-data/config/market-data-request.json"
-      ALPACA_UNIVERSE: "sp500"
-      ALPACA_UNIVERSE_REGISTRY_PATH: "systems/market-data/config/sp500-universe.json"
-      INITIAL_LOAD_SYMBOLS: "${INITIAL_LOAD_SYMBOLS:-universe}"
-      INITIAL_LOAD_INTERVALS: "${INITIAL_LOAD_INTERVALS:-1D}"
-      INITIAL_LOAD_START: "${INITIAL_LOAD_START:-}"
-      INITIAL_LOAD_END: "${INITIAL_LOAD_END:-}"
-      INITIAL_LOAD_DRY_RUN: "${INITIAL_LOAD_DRY_RUN:-true}"
-      INITIAL_LOAD_FORCE: "${INITIAL_LOAD_FORCE:-false}"
-      INITIAL_LOAD_SOURCE_PREFERENCE: "${INITIAL_LOAD_SOURCE_PREFERENCE:-coverage-first}"
-      INITIAL_LOAD_MAX_ENQUEUE: "${INITIAL_LOAD_MAX_ENQUEUE:-100}"
-      INITIAL_LOAD_MAX_BACKLOG: "${INITIAL_LOAD_MAX_BACKLOG:-1000}"
-      HISTORICAL_1M_MINUTES_PER_TRADING_DAY: "${HISTORICAL_1M_MINUTES_PER_TRADING_DAY:-960}"
-      BACKFILL_INITIAL_LOAD_1M_MIN_START: "${BACKFILL_INITIAL_LOAD_1M_MIN_START:-2025-04-01T00:00:00Z}"
-      S3_HISTORICAL_RAW_PARTITION_MODE: "${S3_HISTORICAL_RAW_PARTITION_MODE:-chunk}"
-      S3_HISTORICAL_PROCESSED_MANIFEST_LAYOUT: "${S3_HISTORICAL_PROCESSED_MANIFEST_LAYOUT:-compact}"
-    command: ["python", "-u", "systems/market-data/jobs/initial-load/main.py"]
     restart: "no"
     networks:
       - app_net
@@ -662,10 +553,15 @@ services:
       ALFAKA_PACKAGES_PATH: "/app/systems/market-data/shared"
       REDIS_KEY_PREFIX: ""
       ALFAKA_REQUEST_CONFIG: "systems/market-data/config/market-data-request.json"
-      ALPACA_FEED_PROFILES: "sip,iex,boats"
+      ALPACA_FEED_PROFILES: "${ALPACA_FEED_PROFILES:-sip}"
+      PIPELINE_REQUIRED_COMPONENTS: "${PIPELINE_REQUIRED_COMPONENTS:-market-processor}"
+      MARKET_FEED_PROFILE_PRIORITY: "sip,iex,boats,overnight,unknown"
+      MARKET_OVERNIGHT_FEED_PROFILE_PRIORITY: "boats,overnight,sip,iex,unknown"
       ALPACA_UNIVERSE: "sp500"
       ALPACA_UNIVERSE_REGISTRY_PATH: "systems/market-data/config/sp500-universe.json"
-      BACKFILL_EXECUTION_MODE: "queue"
+      HOT_TIER_SIZE: "10"
+      HOT_TIER_FALLBACK_SCAN_LIMIT: "503"
+      HOT_TIER_PREVIOUS_CLOSE_MAX_AGE_DAYS: "10"
       BACKFILL_STATUS_TTL_SECONDS: "604800"
       BACKFILL_QUEUE_BACKEND: "streams"
       BACKFILL_STREAM_GROUP: "backfill-workers"
@@ -673,36 +569,29 @@ services:
       BACKFILL_STREAM_MAXLEN: "100000"
       BACKFILL_MAX_ATTEMPTS: "3"
       BACKFILL_GAPFILL_DETECT_INTERNAL: "true"
-      BACKFILL_GAPFILL_MAX_DETECT_DAYS: "7"
+      BACKFILL_GAPFILL_MAX_DETECT_DAYS_INTRADAY: "7"
+      BACKFILL_GAPFILL_MAX_DETECT_DAYS_DAILY: "1500"
       BACKFILL_GAPFILL_TIMESTAMP_LIMIT: "200000"
-      BACKFILL_INITIAL_LOAD_1M_CHUNK_DAYS: "5"
-      BACKFILL_INITIAL_LOAD_1D_CHUNK_DAYS: "370"
-      BACKFILL_INITIAL_LOAD_1M_MIN_START: "2025-04-01T00:00:00Z"
-      BACKFILL_INITIAL_LOAD_MAX_ENQUEUE: "100"
-      BACKFILL_INITIAL_LOAD_MAX_BACKLOG: "1000"
-      BACKFILL_DEFAULT_LOOKBACK_HOURS: "8760"
+      BACKFILL_DAILY_FETCH_MAX_DAYS: "1500"
+      BACKFILL_INTRADAY_FETCH_MAX_DAYS: "30"
       MARKET_CALENDAR_PROVIDER: "configured-nyse"
       MARKET_TIMEZONE: "America/New_York"
       MARKET_OPEN_TIME: "09:30"
       MARKET_CLOSE_TIME: "16:00"
       MARKET_CLOSED_DATES: ""
       MARKET_EARLY_CLOSES: ""
+      MARKET_DATA_MAX_HISTORY_YEARS: "6"
+      HISTORICAL_ADJUSTMENT: "split"
       AWS_REGION: "${AWS_REGION:-ap-northeast-2}"
       AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-ap-northeast-2}"
       AWS_EC2_METADATA_DISABLED: "${AWS_EC2_METADATA_DISABLED:-true}"
       AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
       AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
       AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
+      S3_ENDPOINT_URL: "${DOCKER_S3_ENDPOINT_URL:-}"
+      S3_BUCKET: "${S3_BUCKET:-}"
       ALPACA_CREDENTIAL_SOURCE: "aws-secrets-manager"
       ALPACA_SECRET_NAME: "${ALPACA_SECRET_NAME:-dev/alpaca}"
-      S3_ENDPOINT_URL: "${DOCKER_S3_ENDPOINT_URL:-}"
-      S3_BUCKET: "${S3_BUCKET:-gops-market-data-<aws-account-id>-ap-northeast-2-an}"
-      S3_RAW_PREFIX: "${S3_RAW_PREFIX:-market-data/raw/alpaca}"
-      S3_FINAL_PREFIX: "${S3_FINAL_PREFIX:-market-data/final}"
-      S3_MANIFEST_PREFIX: "${S3_MANIFEST_PREFIX:-market-data/manifest}"
-      S3_PROCESSED_FORMAT: "parquet"
-      S3_HISTORICAL_RAW_PARTITION_MODE: "${S3_HISTORICAL_RAW_PARTITION_MODE:-chunk}"
-      S3_HISTORICAL_PROCESSED_MANIFEST_LAYOUT: "${S3_HISTORICAL_PROCESSED_MANIFEST_LAYOUT:-compact}"
     ports:
       - "8000:8000"
     restart: unless-stopped
@@ -837,7 +726,6 @@ services:
       CLICKHOUSE_USER: "alfaka"
       CLICKHOUSE_PASSWORD: "alfaka"
       CLICKHOUSE_ENSURE_SESSION_COLUMNS: "true"
-      BACKFILL_EXECUTION_MODE: "queue"
       BACKFILL_STATUS_TTL_SECONDS: "604800"
       BACKFILL_QUEUE_BACKEND: "streams"
       BACKFILL_STREAM_GROUP: "backfill-workers"
@@ -845,37 +733,42 @@ services:
       BACKFILL_STREAM_MAXLEN: "100000"
       BACKFILL_MAX_ATTEMPTS: "3"
       BACKFILL_GAPFILL_DETECT_INTERNAL: "true"
-      BACKFILL_GAPFILL_MAX_DETECT_DAYS: "7"
+      BACKFILL_GAPFILL_MAX_DETECT_DAYS_INTRADAY: "7"
+      BACKFILL_GAPFILL_MAX_DETECT_DAYS_DAILY: "1500"
       BACKFILL_GAPFILL_TIMESTAMP_LIMIT: "200000"
-      BACKFILL_INITIAL_LOAD_1M_CHUNK_DAYS: "5"
-      BACKFILL_INITIAL_LOAD_1D_CHUNK_DAYS: "370"
-      BACKFILL_INITIAL_LOAD_1M_MIN_START: "2025-04-01T00:00:00Z"
-      BACKFILL_INITIAL_LOAD_MAX_ENQUEUE: "100"
-      BACKFILL_INITIAL_LOAD_MAX_BACKLOG: "1000"
+      BACKFILL_DAILY_FETCH_MAX_DAYS: "1500"
+      BACKFILL_INTRADAY_FETCH_MAX_DAYS: "30"
       BACKFILL_WORKER_POLL_SECONDS: "5"
-      BACKFILL_DEFAULT_LOOKBACK_HOURS: "8760"
+      MARKET_FEED_PROFILE_PRIORITY: "sip,iex,boats,overnight,unknown"
+      MARKET_OVERNIGHT_FEED_PROFILE_PRIORITY: "boats,overnight,sip,iex,unknown"
       MARKET_CALENDAR_PROVIDER: "configured-nyse"
       MARKET_TIMEZONE: "America/New_York"
       MARKET_OPEN_TIME: "09:30"
       MARKET_CLOSE_TIME: "16:00"
       MARKET_CLOSED_DATES: ""
       MARKET_EARLY_CLOSES: ""
+      MARKET_DATA_MAX_HISTORY_YEARS: "6"
+      HISTORICAL_ADJUSTMENT: "split"
       AWS_REGION: "${AWS_REGION:-ap-northeast-2}"
       AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-ap-northeast-2}"
       AWS_EC2_METADATA_DISABLED: "${AWS_EC2_METADATA_DISABLED:-true}"
       AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
       AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
       AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
-      ALPACA_CREDENTIAL_SOURCE: "aws-secrets-manager"
-      ALPACA_SECRET_NAME: "${ALPACA_SECRET_NAME:-dev/alpaca}"
       S3_ENDPOINT_URL: "${DOCKER_S3_ENDPOINT_URL:-}"
       S3_BUCKET: "${S3_BUCKET:-gops-market-data-<aws-account-id>-ap-northeast-2-an}"
-      S3_RAW_PREFIX: "${S3_RAW_PREFIX:-market-data/raw/alpaca}"
-      S3_FINAL_PREFIX: "${S3_FINAL_PREFIX:-market-data/final}"
-      S3_MANIFEST_PREFIX: "${S3_MANIFEST_PREFIX:-market-data/manifest}"
-      S3_PROCESSED_FORMAT: "parquet"
-      S3_HISTORICAL_RAW_PARTITION_MODE: "${S3_HISTORICAL_RAW_PARTITION_MODE:-chunk}"
-      S3_HISTORICAL_PROCESSED_MANIFEST_LAYOUT: "${S3_HISTORICAL_PROCESSED_MANIFEST_LAYOUT:-compact}"
+      S3_ARCHIVE_ROOT_PREFIX: "${S3_ARCHIVE_ROOT_PREFIX:-market-data/dev/helixho}"
+      S3_BACKFILL_PROCESSED_PREFIX: "${S3_BACKFILL_PROCESSED_PREFIX:-market-data/dev/helixho/backfill/processed}"
+      S3_BACKFILL_MANIFEST_PREFIX: "${S3_BACKFILL_MANIFEST_PREFIX:-market-data/dev/helixho/manifest}"
+      S3_BACKFILL_PROCESSED_FORMAT: "${S3_BACKFILL_PROCESSED_FORMAT:-jsonl}"
+      S3_BACKFILL_PROCESSED_MANIFEST_LAYOUT: "${S3_BACKFILL_PROCESSED_MANIFEST_LAYOUT:-compact}"
+      S3_BACKFILL_ARCHIVE_ROWS_PER_OBJECT: "${S3_BACKFILL_ARCHIVE_ROWS_PER_OBJECT:-10000}"
+      BACKFILL_S3_ARCHIVE_ENABLED: "${BACKFILL_S3_ARCHIVE_ENABLED:-true}"
+      S3_MANIFEST_PREFIX: "${S3_MANIFEST_PREFIX:-market-data/dev/helixho/manifest}"
+      S3_PUT_MAX_ATTEMPTS: "${S3_PUT_MAX_ATTEMPTS:-3}"
+      S3_PUT_RETRY_SLEEP_SECONDS: "${S3_PUT_RETRY_SLEEP_SECONDS:-1}"
+      ALPACA_CREDENTIAL_SOURCE: "aws-secrets-manager"
+      ALPACA_SECRET_NAME: "${ALPACA_SECRET_NAME:-dev/alpaca}"
     command: ["python", "-u", "systems/market-data/pods/backfill-worker/main.py"]
     restart: unless-stopped
     networks:

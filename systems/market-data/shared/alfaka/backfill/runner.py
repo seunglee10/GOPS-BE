@@ -1,26 +1,19 @@
-import json
 import os
-import re
 import time
 from datetime import timedelta
 
-from alfaka.backfill.gapfill import detect_gapfill_ranges, parse_time
+from alfaka.backfill.gapfill import canonical_daily_timestamp, detect_gapfill_ranges, expected_bucket_starts, parse_time, to_iso
 from alfaka.common.env import load_dotenv, utc_now_iso
 from alfaka.common.market_messages import source_event_id
 from alfaka.alpaca.feed_profiles import market_session_for_timestamp
 from alfaka.serving.intervals import is_derived_interval, normalize_chart_interval, source_interval_for
 from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
+from alfaka.serving.history_window import clamp_range_start, range_ends_before_history
 from alfaka.serving.moving_average import attach_moving_averages
 from alfaka.storage.clickhouse_loader import ClickHouseHttpClient
-from alfaka.storage.processed_s3_sink import flush_buffer
-from alfaka.storage.s3_manifest import (
-    DEFAULT_MANIFEST_PREFIX,
-    bounded_raw_partition_keys,
-    bounded_processed_candle_partition_keys,
-    processed_candle_keys_from_manifest,
-    raw_keys_from_manifest,
-)
-from alfaka.storage.s3_materializer import materialize_processed_rows, materialize_s3_processed_objects, read_s3_rows
+from alfaka.storage.clickhouse_materializer import materialize_prepared_processed_rows, prepare_processed_candle_rows
+from alfaka.storage.processed_s3_archive import archive_processed_candles_to_s3
+from alfaka.storage.s3_prefixes import default_s3_archive_prefix, first_configured_prefix
 from alfaka.streaming.transforms import normalize_bar
 
 
@@ -29,14 +22,10 @@ class BackfillUnavailable(RuntimeError):
 
 
 class BackfillRunner:
-    def __init__(self, store=None, s3=None, clickhouse_client=None, coverage_provider=None):
+    def __init__(self, store=None, clickhouse_client=None, coverage_provider=None, s3_client=None):
         load_dotenv()
-        if s3 is None:
-            from alfaka.common.s3_client import create_s3_client
-
-            s3 = create_s3_client()
         self.store = store
-        self.s3 = s3
+        self.s3_client = s3_client
         self.clickhouse_client = clickhouse_client or ClickHouseHttpClient(
             url=os.getenv("CLICKHOUSE_HTTP_URL", "http://localhost:8123"),
             database=os.getenv("CLICKHOUSE_DATABASE", "market_data"),
@@ -72,20 +61,16 @@ class BackfillRunner:
         return {**current, "status": "succeeded", "result": result}
 
     def _run(self, record):
-        bucket = os.getenv("S3_BUCKET")
-        if not bucket:
-            raise BackfillUnavailable("S3_BUCKET is required for backfill.")
-
         symbol = record["symbol"]
         interval = normalize_chart_interval(record["interval"])
         start = record["range"]["start"]
         end = record["range"]["end"]
-        mode = record.get("mode") or os.getenv("BACKFILL_EXECUTION_MODE", "queue")
         job_type = (record.get("jobType") or "gapfill").strip().lower()
         source_preference = normalize_source_preference(record.get("sourcePreference", "coverage-first"))
+        force = bool(record.get("force"))
         feed = os.getenv("HISTORICAL_FEED", os.getenv("ALPACA_FEED", "sip"))
 
-        if job_type not in {"initial_load", "gapfill", "replay_repair", "correction_replay"}:
+        if job_type != "gapfill":
             raise BackfillUnavailable(f"Unsupported backfill job type: {job_type}.")
         if is_derived_interval(interval):
             source_interval = source_interval_for(interval)
@@ -94,13 +79,54 @@ class BackfillRunner:
             )
         if interval not in {"1m", "1D"}:
             raise BackfillUnavailable("Backfill v1 supports direct 1m and 1D historical bars.")
-        if job_type in {"replay_repair", "correction_replay"}:
-            return self._run_replay_job(bucket, symbol, interval, start, end, job_type, source_preference)
+
+        if range_ends_before_history(end, interval):
+            history_floor = clamp_range_start(start, interval)[2]
+            no_data_before = history_floor
+            if self.store and hasattr(self.store, "record_no_data_before"):
+                no_data_before = self.store.record_no_data_before(symbol, interval, history_floor)
+            return {
+                "rawRowCount": 0,
+                "processedRowCount": 0,
+                "materializedRowCount": 0,
+                "jobType": job_type,
+                "sourcePreference": source_preference,
+                "source": "history-window",
+                "emptyRange": True,
+                "noDataBefore": no_data_before,
+                "reason": "requested range is older than the configured Alpaca historical window",
+                "clickhouseCoveredBeforeLoad": False,
+                "gapRanges": [],
+                "fetchRanges": [],
+            }
+
+        start, history_clamped, history_floor = clamp_range_start(start, interval)
+        history_no_data_before = None
+        if history_clamped and history_floor:
+            history_no_data_before = history_floor
+            if self.store and hasattr(self.store, "record_no_data_before"):
+                history_no_data_before = self.store.record_no_data_before(symbol, interval, history_floor)
+
+        if range_has_no_expected_buckets(start, end, interval):
+            return {
+                "rawRowCount": 0,
+                "processedRowCount": 0,
+                "materializedRowCount": 0,
+                "jobType": job_type,
+                "sourcePreference": source_preference,
+                "source": "calendar-empty",
+                "emptyRange": True,
+                "reason": "requested range contains no expected market-data buckets",
+                "noDataBefore": history_no_data_before,
+                "clickhouseCoveredBeforeLoad": False,
+                "gapRanges": [],
+                "fetchRanges": [],
+            }
 
         coverage = None
         repair_ranges = [{"start": start, "end": end, "missingCount": None}]
         clickhouse_covered = False
-        if source_preference == "coverage-first":
+        if source_preference == "coverage-first" and not force:
             coverage = self.coverage_provider.candle_coverage(symbol, interval)
             detected_ranges = self.detect_missing_ranges(symbol, interval, start, end, job_type)
             if detected_ranges is not None:
@@ -114,186 +140,159 @@ class BackfillRunner:
                         "coverage": coverage,
                     }
                 repair_ranges = detected_ranges
-            elif range_is_covered_by_clickhouse(coverage, start, end):
+            elif range_is_covered_by_clickhouse(coverage, start, end, interval):
                 clickhouse_covered = True
-                if job_type != "initial_load":
-                    return {
-                        "jobType": job_type,
-                        "sourcePreference": source_preference,
-                        "source": "clickhouse",
-                        "skipped": True,
-                        "reason": "requested range is already covered in ClickHouse",
-                        "coverage": coverage,
-                    }
-
-        if source_preference in {"coverage-first", "s3-only"} and (job_type != "initial_load" or source_preference == "s3-only"):
-            final_prefix = os.getenv("S3_FINAL_PREFIX", os.getenv("S3_PROCESSED_PREFIX", "market-data/final"))
-            processed_keys = []
-            for repair_range in repair_ranges:
-                processed_keys.extend(find_processed_candle_objects(
-                    self.s3,
-                    bucket,
-                    final_prefix,
-                    symbol,
-                    interval,
-                    repair_range["start"],
-                    repair_range["end"],
-                ))
-            processed_keys = unique_ordered(processed_keys)
-            if processed_keys:
-                materialized = materialize_s3_processed_objects(self.clickhouse_client, self.s3, bucket, processed_keys, source_name="backfill-worker-s3-processed")
                 return {
                     "jobType": job_type,
                     "sourcePreference": source_preference,
-                    "source": "s3-processed",
-                    "gapRanges": repair_ranges,
-                    "processedObjects": [f"s3://{bucket}/{key}" for key in processed_keys],
-                    "materializedRowCount": materialized["rowCount"],
+                    "source": "clickhouse",
+                    "skipped": True,
+                    "reason": "requested range is already covered in ClickHouse",
+                    "coverage": coverage,
                 }
-            if source_preference == "s3-only":
-                raise BackfillUnavailable("No processed S3 candle objects are available for the requested symbol and interval.")
 
         timeframe = "1Day" if interval == "1D" else "1Min"
+        fetch_ranges = alpaca_fetch_ranges(interval, repair_ranges)
         raw_bars = []
-        for repair_range in repair_ranges:
-            raw_bars.extend(fetch_alpaca_bars(symbol, repair_range["start"], repair_range["end"], feed, timeframe))
+        for fetch_range in fetch_ranges:
+            raw_bars.extend(fetch_alpaca_bars(symbol, fetch_range["start"], fetch_range["end"], feed, timeframe))
+        leading_missing_edge = leading_missing_edge_start(start, repair_ranges, interval)
         if not raw_bars:
-            if job_type == "initial_load":
-                manifest_prefix = os.getenv("S3_MANIFEST_PREFIX", DEFAULT_MANIFEST_PREFIX)
-                marker_key = write_empty_initial_load_marker(
-                    self.s3,
-                    bucket,
-                    manifest_prefix,
-                    symbol,
-                    interval,
-                    start,
-                    end,
-                    record["requestId"],
-                    reason="historical provider returned no bars",
-                )
+            if range_has_no_expected_buckets(start, end, interval):
                 return {
                     "rawRowCount": 0,
                     "processedRowCount": 0,
                     "materializedRowCount": 0,
                     "jobType": job_type,
                     "sourcePreference": source_preference,
-                    "source": "alpaca-empty",
+                    "source": "calendar-empty",
                     "emptyRange": True,
-                    "emptyMarker": f"s3://{bucket}/{marker_key}",
+                    "reason": "requested range contains no expected market-data buckets",
                     "clickhouseCoveredBeforeLoad": clickhouse_covered,
                     "gapRanges": repair_ranges,
-                    "processedObjects": [],
+                    "fetchRanges": fetch_ranges,
                 }
-            raise BackfillUnavailable("Historical provider returned no bars.")
+            no_data_before = None
+            if leading_missing_edge:
+                no_data_before = end
+                if self.store and hasattr(self.store, "record_no_data_before"):
+                    no_data_before = self.store.record_no_data_before(symbol, interval, end)
+            return {
+                "rawRowCount": 0,
+                "processedRowCount": 0,
+                "materializedRowCount": 0,
+                "jobType": job_type,
+                "sourcePreference": source_preference,
+                "source": "alpaca-empty",
+                "emptyRange": True,
+                "noDataBefore": history_no_data_before or no_data_before,
+                "leadingMissingEdge": leading_missing_edge,
+                "clickhouseCoveredBeforeLoad": clickhouse_covered,
+                "gapRanges": repair_ranges,
+                "fetchRanges": fetch_ranges,
+            }
 
-        raw_prefix = os.getenv("S3_RAW_PREFIX", os.getenv("S3_PREFIX", "market-data/raw/alpaca"))
-        final_prefix = os.getenv("S3_FINAL_PREFIX", os.getenv("S3_PROCESSED_PREFIX", "market-data/final"))
-        output_format = os.getenv("S3_PROCESSED_FORMAT", "parquet").lower()
-        raw_kind = "daily-bars" if interval == "1D" else "bars"
-
-        raw_count = upload_raw_bars_to_s3(
-            self.s3,
-            bucket,
-            raw_prefix,
-            raw_kind,
-            feed,
-            start,
-            end,
-            1,
-            {symbol: raw_bars},
-            object_id=record["requestId"],
-            partition_mode=os.getenv("S3_HISTORICAL_RAW_PARTITION_MODE", "chunk"),
+        partial_boundary = partial_history_boundary(
+            symbol,
+            interval,
+            leading_missing_edge,
+            raw_bars,
+            self.store,
         )
         processed = raw_bars_to_processed_candles(symbol, raw_bars, feed=feed, interval=interval)
-        partition_key = f"{final_prefix}/candles/interval={interval}/symbol={symbol}/backfill_request={record['requestId'].replace(':', '_')}"
-        processed_key = flush_buffer(
-            self.s3,
-            bucket,
-            partition_key,
-            processed,
-            output_format,
-            manifest_prefix=os.getenv("S3_MANIFEST_PREFIX", DEFAULT_MANIFEST_PREFIX),
-            manifest_layout=os.getenv("S3_HISTORICAL_PROCESSED_MANIFEST_LAYOUT", "compact"),
+        source_path = f"alpaca://{symbol}/{interval}/{record['requestId']}"
+        prepared = prepare_processed_candle_rows(processed)
+        materialized = materialize_prepared_processed_rows(
+            self.clickhouse_client,
+            source_path,
+            prepared["rows"],
+            source_name="backfill-worker-alpaca",
+            skipped_invalid=prepared["skippedInvalidRowCount"],
         )
-        materialized = materialize_s3_processed_objects(self.clickhouse_client, self.s3, bucket, [processed_key], source_name="backfill-worker")
+        archive = self.archive_processed_candles(prepared["rows"])
 
         return {
-            "rawRowCount": raw_count,
+            "rawRowCount": len(raw_bars),
             "processedRowCount": len(processed),
             "materializedRowCount": materialized["rowCount"],
+            "skippedInvalidRowCount": materialized.get("skippedInvalidRowCount", 0),
+            **archive,
             "jobType": job_type,
             "sourcePreference": source_preference,
+            "force": force,
             "source": "alpaca",
             "clickhouseCoveredBeforeLoad": clickhouse_covered,
+            **with_history_boundary(partial_boundary, history_no_data_before),
             "gapRanges": repair_ranges,
-            "processedObjects": [f"s3://{bucket}/{processed_key}"],
+            "fetchRanges": fetch_ranges,
+            "materializedSource": materialized["objectPath"],
         }
+
+    def archive_processed_candles(self, rows):
+        if not rows:
+            return {"archiveStatus": "skipped", "archiveReason": "no valid rows"}
+        if os.getenv("BACKFILL_S3_ARCHIVE_ENABLED", "true").lower() not in {"1", "true", "yes", "y", "on"}:
+            return {"archiveStatus": "skipped", "archiveReason": "disabled"}
+        bucket = os.getenv("S3_BUCKET")
+        if not bucket:
+            return {"archiveStatus": "skipped", "archiveReason": "S3_BUCKET not configured"}
+
+        try:
+            s3 = self.s3_client
+            if s3 is None:
+                from alfaka.common.s3_client import create_s3_client
+                s3 = create_s3_client()
+            result = archive_processed_candles_to_s3(
+                s3,
+                bucket,
+                first_configured_prefix(
+                    ["S3_BACKFILL_PROCESSED_PREFIX"],
+                    default_s3_archive_prefix("backfill_processed"),
+                ),
+                rows,
+                output_format=os.getenv("S3_BACKFILL_PROCESSED_FORMAT", "jsonl").strip().lower(),
+                manifest_prefix=first_configured_prefix(
+                    ["S3_BACKFILL_MANIFEST_PREFIX", "S3_MANIFEST_PREFIX"],
+                    default_s3_archive_prefix("manifest"),
+                ),
+                manifest_layout=os.getenv("S3_BACKFILL_PROCESSED_MANIFEST_LAYOUT", "compact"),
+                max_attempts=max(1, int(os.getenv("S3_PUT_MAX_ATTEMPTS", "3"))),
+                retry_sleep_seconds=max(0.0, float(os.getenv("S3_PUT_RETRY_SLEEP_SECONDS", "1"))),
+                rows_per_object=positive_int_env("S3_BACKFILL_ARCHIVE_ROWS_PER_OBJECT", 10000),
+            )
+            return {
+                "archiveStatus": "archived",
+                "archiveRowCount": result["rowCount"],
+                "archiveObjectCount": result["objectCount"],
+                "archiveObjects": result["objectKeys"],
+            }
+        except Exception as exc:
+            return {
+                "archiveStatus": "failed",
+                "archiveRowCount": 0,
+                "archiveObjectCount": 0,
+                "archiveError": str(exc),
+            }
 
     def detect_missing_ranges(self, symbol, interval, start, end, job_type):
         if job_type != "gapfill" or os.getenv("BACKFILL_GAPFILL_DETECT_INTERNAL", "true").lower() not in {"1", "true", "yes"}:
             return None
         if not hasattr(self.coverage_provider, "candle_timestamps"):
             return None
-        if not internal_gap_detection_allowed(interval, start, end):
-            return None
-        actual_timestamps = self.coverage_provider.candle_timestamps(
-            symbol,
-            interval,
-            start,
-            end,
-            limit=int(os.getenv("BACKFILL_GAPFILL_TIMESTAMP_LIMIT", "200000")),
-        )
-        return [
-            {"start": gap.start, "end": gap.end, "missingCount": gap.missingCount}
-            for gap in detect_gapfill_ranges(start, end, interval, actual_timestamps)
-        ]
-
-    def _run_replay_job(self, bucket, symbol, interval, start, end, job_type, source_preference):
-        if source_preference == "alpaca-only":
-            raise BackfillUnavailable(f"{job_type} cannot use sourcePreference=alpaca-only.")
-        final_prefix = os.getenv("S3_FINAL_PREFIX", os.getenv("S3_PROCESSED_PREFIX", "market-data/final"))
-        processed_keys = find_processed_candle_objects(self.s3, bucket, final_prefix, symbol, interval, start, end)
-        if processed_keys:
-            materialized = materialize_s3_processed_objects(
-                self.clickhouse_client,
-                self.s3,
-                bucket,
-                processed_keys,
-                source_name=f"backfill-worker-{job_type}-processed",
+        ranges = []
+        for chunk_start, chunk_end in internal_gap_detection_chunks(interval, start, end):
+            actual_timestamps = self.coverage_provider.candle_timestamps(
+                symbol,
+                interval,
+                chunk_start,
+                chunk_end,
+                limit=int(os.getenv("BACKFILL_GAPFILL_TIMESTAMP_LIMIT", "200000")),
             )
-            return {
-                "jobType": job_type,
-                "sourcePreference": source_preference,
-                "source": "s3-processed-replay",
-                "processedObjects": [f"s3://{bucket}/{key}" for key in processed_keys],
-                "materializedRowCount": materialized["rowCount"],
-            }
-
-        raw_prefix = os.getenv("S3_RAW_PREFIX", os.getenv("S3_PREFIX", "market-data/raw/alpaca"))
-        raw_keys = find_raw_candle_objects(self.s3, bucket, raw_prefix, symbol, interval, start, end, job_type)
-        if not raw_keys:
-            raise BackfillUnavailable(f"No S3 processed or raw candle objects are available for {job_type}.")
-
-        raw_rows = []
-        for key in raw_keys:
-            raw_rows.extend(read_s3_rows(self.s3, bucket, key))
-        processed = raw_archive_rows_to_processed_candles(raw_rows, interval)
-        if not processed:
-            raise BackfillUnavailable(f"S3 raw objects did not contain replayable {interval} candle rows.")
-        result = materialize_processed_rows(
-            self.clickhouse_client,
-            f"s3://{bucket}/{raw_keys[0]}..{len(raw_keys)}-raw-objects",
-            processed,
-            source_name=f"backfill-worker-{job_type}-raw",
-        )
-        return {
-            "jobType": job_type,
-            "sourcePreference": source_preference,
-            "source": "s3-raw-replay",
-            "rawObjects": [f"s3://{bucket}/{key}" for key in raw_keys],
-            "processedRowCount": len(processed),
-            "materializedRowCount": result["rowCount"],
-        }
+            ranges.extend(
+                {"start": gap.start, "end": gap.end, "missingCount": gap.missingCount}
+                for gap in detect_gapfill_ranges(chunk_start, chunk_end, interval, actual_timestamps)
+            )
+        return ranges
 
 
 def fetch_alpaca_bars(symbol, start, end, feed, timeframe="1Min"):
@@ -315,7 +314,7 @@ def fetch_alpaca_bars(symbol, start, end, feed, timeframe="1Min"):
         "limit": os.getenv("HISTORICAL_LIMIT", "10000"),
         "sort": "asc",
     }
-    adjustment = os.getenv("HISTORICAL_ADJUSTMENT", "raw").strip()
+    adjustment = os.getenv("HISTORICAL_ADJUSTMENT", "split").strip()
     if adjustment:
         params["adjustment"] = adjustment
     max_attempts = max(1, int(os.getenv("HISTORICAL_MAX_RETRIES", "5")))
@@ -362,13 +361,81 @@ def historical_retry_delay(response, attempt, base_seconds, max_seconds):
 
 def normalize_source_preference(value):
     normalized = (value or "coverage-first").strip().lower().replace("_", "-")
-    allowed = {"coverage-first", "alpaca-only", "s3-only"}
+    allowed = {"coverage-first", "alpaca-only"}
     if normalized not in allowed:
         raise BackfillUnavailable(f"Unsupported backfill sourcePreference: {value}.")
     return normalized
 
 
-def range_is_covered_by_clickhouse(coverage, start, end):
+def alpaca_fetch_ranges(interval, repair_ranges):
+    interval = normalize_chart_interval(interval)
+    normalized = normalize_repair_ranges(repair_ranges)
+    if not normalized:
+        return []
+    if interval == "1D":
+        return coalesce_daily_fetch_ranges(normalized)
+    if interval == "1m":
+        return coalesce_intraday_fetch_ranges(normalized)
+    return normalized
+
+
+def normalize_repair_ranges(repair_ranges):
+    normalized = []
+    for item in repair_ranges or []:
+        start = item.get("start") if isinstance(item, dict) else None
+        end = item.get("end") if isinstance(item, dict) else None
+        if not start or not end:
+            continue
+        normalized.append({"start": to_iso(parse_time(start)), "end": to_iso(parse_time(end))})
+    return sorted(normalized, key=lambda item: item["start"])
+
+
+def coalesce_daily_fetch_ranges(ranges):
+    max_days = positive_int_env("BACKFILL_DAILY_FETCH_MAX_DAYS", 1500)
+    max_delta = timedelta(days=max(1, max_days))
+    return coalesce_fetch_ranges_by_delta(ranges, max_delta)
+
+
+def coalesce_intraday_fetch_ranges(ranges):
+    max_days = positive_int_env("BACKFILL_INTRADAY_FETCH_MAX_DAYS", 30)
+    max_delta = timedelta(days=max(1, max_days))
+    return coalesce_fetch_ranges_by_delta(ranges, max_delta)
+
+
+def coalesce_fetch_ranges_by_delta(ranges, max_delta):
+    coalesced = []
+    current = None
+    for item in ranges:
+        start_dt = parse_time(item["start"])
+        end_dt = parse_time(item["end"])
+        if current is None:
+            current = {"start": start_dt, "end": end_dt}
+            continue
+        proposed_end = max(current["end"], end_dt)
+        if proposed_end - current["start"] <= max_delta:
+            current["end"] = proposed_end
+            continue
+        coalesced.append({"start": to_iso(current["start"]), "end": to_iso(current["end"])})
+        current = {"start": start_dt, "end": end_dt}
+    if current is not None:
+        coalesced.append({"start": to_iso(current["start"]), "end": to_iso(current["end"])})
+    return split_fetch_ranges(coalesced, max_delta)
+
+
+def split_fetch_ranges(ranges, max_delta):
+    chunks = []
+    for item in ranges:
+        start = parse_time(item["start"])
+        end = parse_time(item["end"])
+        cursor = start
+        while cursor < end:
+            chunk_end = min(cursor + max_delta, end)
+            chunks.append({"start": to_iso(cursor), "end": to_iso(chunk_end)})
+            cursor = chunk_end
+    return chunks
+
+
+def range_is_covered_by_clickhouse(coverage, start, end, interval):
     if not coverage:
         return False
     available_from = coverage.get("availableFrom")
@@ -376,140 +443,109 @@ def range_is_covered_by_clickhouse(coverage, start, end):
     row_count = int(coverage.get("rowCount") or 0)
     if not available_from or not available_to or row_count <= 0:
         return False
-    return str(available_from) <= str(start) and str(available_to) >= str(end)
+    try:
+        expected = expected_bucket_starts(start, end, interval)
+        if not expected:
+            return True
+        available_from_dt = parse_time(available_from)
+        available_to_dt = parse_time(available_to)
+    except (TypeError, ValueError):
+        return False
+    return available_from_dt <= expected[0] and available_to_dt >= expected[-1]
 
 
-def find_processed_candle_objects(s3, bucket, final_prefix, symbol, interval, start, end):
-    manifest_prefix = os.getenv("S3_MANIFEST_PREFIX", DEFAULT_MANIFEST_PREFIX)
-    manifest_keys = processed_candle_keys_from_manifest(s3, bucket, manifest_prefix, symbol, interval, start, end)
-    if manifest_keys:
-        return manifest_keys
-    return bounded_processed_candle_partition_keys(s3, bucket, final_prefix, symbol, interval, start, end)
-
-
-def find_raw_candle_objects(s3, bucket, raw_prefix, symbol, interval, start, end, job_type="replay_repair"):
-    manifest_prefix = os.getenv("S3_MANIFEST_PREFIX", DEFAULT_MANIFEST_PREFIX)
-    channels = raw_channels_for_interval(interval, job_type)
-    manifest_keys = raw_keys_from_manifest(s3, bucket, manifest_prefix, symbol, channels, start, end)
-    if manifest_keys:
-        return manifest_keys
-    return bounded_raw_partition_keys(s3, bucket, raw_prefix, symbol, channels, start, end)
-
-
-def raw_channels_for_interval(interval, job_type="replay_repair"):
-    interval = normalize_chart_interval(interval)
-    if interval == "1D":
-        return ["daily-bars"]
-    if job_type == "correction_replay":
-        return ["updated-bars", "bars"]
-    return ["bars"]
-
-
-def internal_gap_detection_allowed(interval, start, end):
+def internal_gap_detection_chunks(interval, start, end):
     interval = normalize_chart_interval(interval)
     start_dt = parse_time(start)
     end_dt = parse_time(end)
-    max_days = int(os.getenv(
-        "BACKFILL_GAPFILL_MAX_DETECT_DAYS",
-        "7" if interval == "1m" else "1500",
-    ))
-    return end_dt - start_dt <= timedelta(days=max_days)
+    max_days = gapfill_max_detect_days(interval)
+    max_delta = timedelta(days=max(1, max_days))
+    cursor = start_dt
+    while cursor < end_dt:
+        chunk_end = min(cursor + max_delta, end_dt)
+        yield to_iso(cursor), to_iso(chunk_end)
+        cursor = chunk_end
 
 
-def unique_ordered(values):
-    seen = set()
-    result = []
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        result.append(value)
+def gapfill_max_detect_days(interval):
+    interval = normalize_chart_interval(interval)
+    if interval == "1D":
+        return positive_int_env("BACKFILL_GAPFILL_MAX_DETECT_DAYS_DAILY", 1500)
+    return positive_int_env("BACKFILL_GAPFILL_MAX_DETECT_DAYS_INTRADAY", 7)
+
+
+def positive_int_env(name, default):
+    try:
+        value = int(os.getenv(name, ""))
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+def range_has_no_expected_buckets(start, end, interval):
+    return not expected_bucket_starts(start, end, interval)
+
+
+def leading_missing_edge_start(start, repair_ranges, interval):
+    normalized = normalize_repair_ranges(repair_ranges)
+    if not normalized:
+        return None
+    first_missing_start = normalized[0]["start"]
+    try:
+        expected_before_first_missing = expected_bucket_starts(start, first_missing_start, interval)
+    except (TypeError, ValueError):
+        return None
+    return first_missing_start if not expected_before_first_missing else None
+
+
+def partial_history_boundary(symbol, interval, leading_missing_edge, raw_bars, store=None):
+    if not leading_missing_edge:
+        return {}
+    earliest_returned = earliest_returned_bucket(raw_bars, interval)
+    if not earliest_returned or parse_time(earliest_returned) <= parse_time(leading_missing_edge):
+        return {}
+    missing_before = expected_bucket_starts(leading_missing_edge, earliest_returned, interval)
+    if not missing_before:
+        return {}
+    no_data_before = earliest_returned
+    if store and hasattr(store, "record_no_data_before"):
+        no_data_before = store.record_no_data_before(symbol, interval, earliest_returned)
+    return {
+        "partialHistoryBoundary": True,
+        "noDataBefore": no_data_before,
+        "leadingMissingEdge": leading_missing_edge,
+        "earliestReturned": earliest_returned,
+        "missingBeforeCount": len(missing_before),
+    }
+
+
+def with_history_boundary(result, history_no_data_before):
+    if not history_no_data_before:
+        return result
+    if not result:
+        return {"partialHistoryBoundary": True, "noDataBefore": history_no_data_before}
+    no_data_before = result.get("noDataBefore")
+    if not no_data_before or parse_time(history_no_data_before) > parse_time(no_data_before):
+        return {**result, "noDataBefore": history_no_data_before}
     return result
 
 
-def upload_raw_bars_to_s3(s3, bucket, prefix, data_kind, feed, start, end, page_number, rows_by_symbol, object_id=None, partition_mode="chunk"):
-    from alfaka.storage.raw_s3_archive import upload_raw_page_to_s3
-
-    return upload_raw_page_to_s3(
-        s3,
-        bucket,
-        prefix,
-        data_kind,
-        feed,
-        start,
-        end,
-        page_number,
-        rows_by_symbol,
-        manifest_prefix=os.getenv("S3_MANIFEST_PREFIX", DEFAULT_MANIFEST_PREFIX),
-        object_id=object_id,
-        partition_mode=partition_mode,
-    )
+def earliest_returned_bucket(raw_bars, interval):
+    buckets = []
+    for row in raw_bars or []:
+        timestamp = row.get("t") if isinstance(row, dict) else None
+        if not timestamp:
+            continue
+        buckets.append(returned_bucket_start(timestamp, interval))
+    return min(buckets) if buckets else None
 
 
-def write_empty_initial_load_marker(s3, bucket, manifest_prefix, symbol, interval, start, end, request_id, reason):
-    safe_request_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(request_id)).strip("._-")[:120]
-    key = (
-        f"{manifest_prefix.strip('/')}/empty/candles/interval={interval}/symbol={symbol}"
-        f"/request={safe_request_id}.json"
-    )
-    body = json.dumps(
-        {
-            "schemaVersion": 1,
-            "dataset": "candles",
-            "symbol": symbol,
-            "interval": interval,
-            "range": {"start": start, "end": end},
-            "requestId": request_id,
-            "emptyRange": True,
-            "reason": reason,
-            "createdAt": utc_now_iso(),
-        },
-        ensure_ascii=False,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    s3.put_object(Bucket=bucket, Key=key, Body=body, ContentType="application/json")
-    return key
-
-
-def raw_archive_rows_to_processed_candles(rows, interval):
+def returned_bucket_start(timestamp, interval):
     interval = normalize_chart_interval(interval)
-    candles = []
-    for row in sorted(rows, key=lambda item: item.get("eventTime") or (item.get("raw") or {}).get("t") or ""):
-        channel = raw_archive_channel_to_envelope_channel(row.get("channel"))
-        if interval == "1D" and channel != "dailyBars":
-            continue
-        if interval == "1m" and channel not in {"bars", "updatedBars"}:
-            continue
-        raw = row.get("raw") or {}
-        feed = row.get("feed") or "unknown"
-        feed_profile = row.get("feedProfile") or row.get("feed_profile") or feed
-        market_session = row.get("marketSession") or row.get("market_session") or market_session_for_timestamp(row.get("eventTime") or raw.get("t"))
-        symbol = row.get("symbol") or raw.get("S")
-        received_at = row.get("receivedAt") or utc_now_iso()
-        envelope = {
-            "source": row.get("source", "alpaca"),
-            "feed": feed,
-            "feedProfile": feed_profile,
-            "marketSession": market_session,
-            "channel": channel,
-            "symbol": symbol,
-            "eventTime": row.get("eventTime") or raw.get("t"),
-            "receivedAt": received_at,
-            "sourceEventId": row.get("sourceEventId") or source_event_id(raw, feed, channel, symbol, received_at),
-            "raw": raw,
-        }
-        candle = normalize_bar(envelope, correction_type="UPDATED" if channel == "updatedBars" else "NONE")
-        candle["interval"] = interval
-        candles.append(candle)
-    return attach_moving_averages(candles)
-
-
-def raw_archive_channel_to_envelope_channel(channel):
-    value = str(channel or "")
-    return {
-        "daily-bars": "dailyBars",
-        "updated-bars": "updatedBars",
-    }.get(value, value)
+    if interval == "1D":
+        return canonical_daily_timestamp(timestamp)
+    parsed = parse_time(timestamp)
+    return to_iso(parsed.replace(second=0, microsecond=0))
 
 
 def raw_bar_to_processed_candle(symbol, raw_bar, feed="sip", received_at=None, interval="1m"):
@@ -523,7 +559,7 @@ def raw_bar_to_processed_candle(symbol, raw_bar, feed="sip", received_at=None, i
         "source": "alpaca",
         "feed": feed,
         "feedProfile": feed,
-        "marketSession": market_session_for_timestamp(raw_bar.get("t")),
+        "marketSession": "regular" if interval == "1D" else market_session_for_timestamp(raw_bar.get("t")),
         "channel": channel,
         "symbol": symbol,
         "eventTime": raw_bar.get("t"),
@@ -533,25 +569,10 @@ def raw_bar_to_processed_candle(symbol, raw_bar, feed="sip", received_at=None, i
     }
     candle = normalize_bar(envelope)
     candle["interval"] = interval
+    if interval == "1D":
+        candle["timestamp"] = canonical_daily_timestamp(raw_bar.get("t"))
     return candle
 
 
 def raw_bars_to_processed_candles(symbol, raw_bars, feed="sip", interval="1m"):
     return attach_moving_averages([raw_bar_to_processed_candle(symbol, row, feed=feed, interval=interval) for row in raw_bars])
-
-
-def main():
-    from alfaka.backfill.status import RedisBackfillStore
-
-    load_dotenv()
-    request_json = os.getenv("BACKFILL_REQUEST_JSON")
-    if not request_json:
-        raise SystemExit("BACKFILL_REQUEST_JSON is required.")
-    store = RedisBackfillStore()
-    record = json.loads(request_json)
-    result = BackfillRunner(store=store).run(record)
-    print(json.dumps(result, ensure_ascii=False), flush=True)
-
-
-if __name__ == "__main__":
-    main()

@@ -1,16 +1,14 @@
 # 역할: GOPS Chart API가 Redis와 ClickHouse를 함께 읽을 수 있게 묶는 provider입니다.
-# 사용: 먼저 Redis 최근 캔들을 보고, 부족하면 ClickHouse 과거 캔들을 조회합니다.
+# 사용: 최신 snapshot은 Redis 최근 캔들을 보강하고, 명시적 범위 요청은 ClickHouse를 조회합니다.
 # 결과: GOPS CandleSnapshot 형식으로 반환합니다.
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 
 from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
 from alfaka.serving.cursors import timestamp_from_cursor
 from alfaka.serving.dto import cursor_for, snapshot
+from alfaka.serving.history_window import history_floor_iso, later_iso
 from alfaka.serving.intervals import (
-    backfill_target_days,
-    historical_target_bars,
-    intraday_preload_min_start_iso,
     normalize_chart_interval,
     resolve_candle_limit,
     source_interval_for,
@@ -34,24 +32,30 @@ class MarketDataProvider:
         interval = normalize_chart_interval(interval)
         limit = resolve_candle_limit(interval, limit)
         query_limit = moving_average_query_limit(interval, limit)
-        clickhouse_from_time = target_floor_from_time(interval, from_time)
         range_query = bool(before or from_time or to_time)
         redis_candles = [] if range_query else filter_stock_weekdays(self.redis_provider.recent_candles(symbol, interval, query_limit))
         live_candle = None if range_query else self._live_candle(symbol, interval)
         coverage = None
+        requested_range = requested_range_payload(before=before, from_time=from_time, to_time=to_time)
         if len(redis_candles) >= query_limit:
             merged_redis = merge_candles(redis_candles, [live_candle] if live_candle else [])
             coverage = self._coverage(symbol, interval)
             if not candles_are_behind_coverage(merged_redis, coverage):
                 payload = snapshot(symbol=symbol, interval=interval, candles=attach_moving_averages(merged_redis)[-limit:])
-                return with_coverage_metadata(payload, coverage, limit)
+                return with_coverage_metadata(
+                    payload,
+                    coverage,
+                    limit,
+                    requested_range=requested_range,
+                    no_data_before=self._no_data_before(symbol, interval),
+                )
 
         clickhouse_candles = filter_stock_weekdays(self.clickhouse_provider.candles(
             symbol,
             interval,
             query_limit,
             before=before,
-            from_time=clickhouse_from_time,
+            from_time=from_time,
             to_time=to_time,
         ))
         live_group = [live_candle] if live_candle else []
@@ -60,7 +64,13 @@ class MarketDataProvider:
         feed = first_value(candles, "feed", "sip")
         source = first_value(candles, "source", "alpaca")
         payload = snapshot(symbol=symbol, interval=interval, candles=candles, source=source, feed=feed)
-        return with_coverage_metadata(payload, coverage or self._coverage(symbol, interval, candles), limit)
+        return with_coverage_metadata(
+            payload,
+            coverage or self._coverage(symbol, interval, candles),
+            limit,
+            requested_range=requested_range,
+            no_data_before=self._no_data_before(symbol, interval),
+        )
 
     def candles_since_cursor(self, symbol, interval, cursor, limit=500):
         interval = normalize_chart_interval(interval)
@@ -116,6 +126,17 @@ class MarketDataProvider:
             logger.warning("Redis live candle lookup failed for %s %s.", symbol, interval, exc_info=True)
             return None
 
+    def _no_data_before(self, symbol, interval):
+        history_floor = history_floor_iso(interval)
+        method = getattr(self.redis_provider, "backfill_no_data_before", None)
+        if not callable(method):
+            return history_floor
+        try:
+            return later_iso(method(symbol, source_interval_for(interval)), history_floor)
+        except Exception:
+            logger.warning("Redis no-data boundary lookup failed for %s %s.", symbol, interval, exc_info=True)
+            return history_floor
+
     def search_symbols(self, query, limit=20):
         return self.symbol_registry.search(query, limit)
 
@@ -164,17 +185,56 @@ class MarketDataProvider:
 
 def merge_candles(*groups):
     by_timestamp = {}
+    priority_by_timestamp = {}
+    sequence = 0
     for group in groups:
         for candle in group:
             if not candle:
                 continue
-            timestamp = canonical_utc_timestamp(candle.get("timestamp"))
+            timestamp = canonical_candle_timestamp(candle)
             if timestamp:
-                by_timestamp[timestamp] = {**candle, "timestamp": timestamp}
+                priority = candle_merge_priority(candle, timestamp, sequence)
+                if timestamp not in by_timestamp or priority >= priority_by_timestamp[timestamp]:
+                    by_timestamp[timestamp] = {**candle, "timestamp": timestamp}
+                    priority_by_timestamp[timestamp] = priority
+            sequence += 1
     return [by_timestamp[key] for key in sorted(by_timestamp)]
 
 
-def with_coverage_metadata(payload, coverage, requested_limit):
+def candle_merge_priority(candle, canonical_timestamp, sequence):
+    original_timestamp = canonical_utc_timestamp(candle.get("timestamp") or candle.get("eventTime"))
+    exact_bucket_timestamp = 1 if original_timestamp == canonical_timestamp else 0
+    observed_at = (
+        parse_utc_time(candle.get("createdAt"))
+        or parse_utc_time(candle.get("receivedAt"))
+        or parse_utc_time(candle.get("updatedAt"))
+    )
+    observed_at_ms = int(observed_at.timestamp() * 1000) if observed_at else 0
+    return exact_bucket_timestamp, observed_at_ms, sequence
+
+
+def canonical_candle_timestamp(candle):
+    timestamp = candle.get("timestamp")
+    interval = normalize_chart_interval(candle.get("interval", "1m"))
+    parsed = parse_utc_time(timestamp)
+    if not parsed:
+        return canonical_utc_timestamp(timestamp)
+    if interval == "1D":
+        return utc_bucket_iso(datetime.combine(parsed.date(), time(0, 0), timezone.utc))
+    if interval == "1W":
+        bucket = parsed.date() - timedelta(days=parsed.weekday())
+        return utc_bucket_iso(datetime.combine(bucket, time(0, 0), timezone.utc))
+    if interval == "1M":
+        bucket = parsed.date().replace(day=1)
+        return utc_bucket_iso(datetime.combine(bucket, time(0, 0), timezone.utc))
+    return canonical_utc_timestamp(timestamp)
+
+
+def utc_bucket_iso(value):
+    return value.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def with_coverage_metadata(payload, coverage, requested_limit, *, requested_range=None, no_data_before=None):
     interval = normalize_chart_interval(payload.get("interval"))
     source_interval = source_interval_for(interval)
     candles = payload.get("candles") or []
@@ -185,36 +245,67 @@ def with_coverage_metadata(payload, coverage, requested_limit):
     row_count = coverage.get("rowCount") if coverage else None
     invalid_row_count = coverage.get("invalidRowCount") if coverage else None
     stored_count = int(row_count) if row_count is not None else len(candles)
-    target_stored_count = historical_target_bars(source_interval)
-    target_range_from = target_range_from_for_interval(source_interval)
     payload.update({
         "requestedLimit": requested_limit,
         "returnedCount": len(candles),
-        "targetStoredCount": target_stored_count,
-        "targetRangeFrom": target_range_from,
+        "requestedRange": requested_range or {},
         "sourceInterval": source_interval,
         "availableFrom": available_from,
         "availableTo": available_to,
         "oldestTimestamp": oldest,
         "newestTimestamp": newest,
-        "hasMoreBefore": has_more_before_target(oldest, available_from, target_range_from),
+        "hasMoreBefore": has_more_before(
+            oldest,
+            no_data_before,
+            requested_range=requested_range,
+            available_from=available_from,
+        ),
         "hasMoreAfter": bool(newest and available_to and available_to > newest),
         "storedCandleCount": stored_count,
         "invalidRowCount": int(invalid_row_count or 0),
+        "noDataBefore": no_data_before,
     })
     return payload
 
 
-def has_more_before_target(oldest, available_from, target_range_from):
+def requested_range_payload(*, before=None, from_time=None, to_time=None):
+    payload = {}
+    if before:
+        payload["before"] = before
+    if from_time:
+        payload["from"] = from_time
+    if to_time:
+        payload["to"] = to_time
+    return payload
+
+
+def has_more_before(oldest, no_data_before=None, *, requested_range=None, available_from=None):
     oldest_time = parse_iso_time(oldest)
     if not oldest_time:
+        range_probe = requested_range_probe(requested_range)
+        available_from_time = parse_iso_time(available_from)
+        if not range_probe or not available_from_time or range_probe > available_from_time:
+            return False
+        boundary = parse_iso_time(no_data_before)
+        if boundary and range_probe <= boundary:
+            return False
+        return True
+    boundary = parse_iso_time(no_data_before)
+    if boundary and oldest_time <= boundary:
         return False
-    effective_start = None
-    for value in (available_from, target_range_from):
-        parsed = parse_iso_time(value)
-        if parsed and (effective_start is None or parsed > effective_start):
-            effective_start = parsed
-    return bool(effective_start and effective_start < oldest_time)
+    return True
+
+
+def requested_range_probe(requested_range):
+    if not requested_range:
+        return None
+    before = parse_iso_time(requested_range.get("before"))
+    if before:
+        return before
+    to_time = parse_iso_time(requested_range.get("to"))
+    if to_time:
+        return to_time
+    return parse_iso_time(requested_range.get("from"))
 
 
 def candles_are_behind_coverage(candles, coverage):
@@ -229,31 +320,6 @@ def candles_are_behind_coverage(candles, coverage):
         if newest:
             break
     return bool(newest and available_to > newest)
-
-
-def one_year_target_from(reference_timestamp=None):
-    return target_range_from_for_interval("1m", reference_timestamp)
-
-
-def target_floor_from_time(interval, from_time=None):
-    target_floor = target_range_from_for_interval(source_interval_for(interval))
-    if not from_time:
-        return target_floor
-    requested = parse_iso_time(from_time)
-    floor = parse_iso_time(target_floor)
-    if requested and floor and requested > floor:
-        return from_time
-    return target_floor
-
-
-def target_range_from_for_interval(interval, reference_timestamp=None):
-    reference = parse_iso_time(reference_timestamp) or datetime.now(timezone.utc)
-    target = reference - timedelta(days=backfill_target_days(interval))
-    if source_interval_for(interval) == "1m":
-        min_start = parse_iso_time(intraday_preload_min_start_iso())
-        if min_start and target < min_start:
-            target = min_start
-    return target.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
 def parse_iso_time(value):

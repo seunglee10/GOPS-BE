@@ -3,6 +3,8 @@
 # 출력: market.ticks.v1, market.candles.live.1m.v1, market.candles.closed.v1.
 import json
 import os
+import threading
+import time
 from collections import defaultdict
 
 import redis
@@ -12,7 +14,7 @@ from alfaka.common.env import load_dotenv
 from alfaka.common.env import parse_csv
 from alfaka.common.kafka_io import create_json_consumer, create_json_producer
 from alfaka.common.redis_keys import RedisKeyBuilder
-from alfaka.common.runtime_health import write_component_health
+from alfaka.common.runtime_health import read_component_health, write_component_health
 from alfaka.common.runtime_config import validate_required_values
 from alfaka.serving.dto import market_status_event, websocket_event
 from alfaka.serving.intervals import redis_closed_candle_cap
@@ -47,10 +49,18 @@ def main():
     price_bin_size = config["price_bin_size"]
     raw_topics = config["raw_topics"]
 
-    consumer = create_json_consumer(raw_topics, kafka_servers, group_id, "alfaka-stream-processor")
+    enable_auto_commit = config["enable_auto_commit"]
+    consumer = create_json_consumer(
+        raw_topics,
+        kafka_servers,
+        group_id,
+        "alfaka-stream-processor",
+        enable_auto_commit=enable_auto_commit,
+    )
     producer = create_json_producer(kafka_servers, "alfaka-processed-producer")
     redis_client = redis.from_url(redis_url, decode_responses=True)
     redis_keys = RedisKeyBuilder()
+    start_processor_idle_heartbeat(redis_client, redis_keys)
 
     state = ProcessorState(price_bin_size=price_bin_size)
     recover_processor_state_from_redis(redis_client, redis_keys, state, config["recovery_symbols"])
@@ -69,7 +79,17 @@ def main():
     print(f"Redis: {redis_url}", flush=True)
 
     for record in consumer:
-        process_raw_envelope(record.value, producer, redis_client, redis_keys, state, topics, log_every_n=log_every_n)
+        try:
+            process_raw_envelope(record.value, producer, redis_client, redis_keys, state, topics, log_every_n=log_every_n)
+            producer.flush(timeout=10)
+            if not enable_auto_commit:
+                consumer.commit()
+        except Exception as exc:
+            if write_processor_dead_letter(redis_client, redis_keys, record, exc):
+                if not enable_auto_commit:
+                    consumer.commit()
+                continue
+            raise
 
 
 def processor_runtime_config(environ=None):
@@ -91,6 +111,7 @@ def processor_runtime_config(environ=None):
         "price_bin_size": parse_positive_float(environ.get("VOLUME_PROFILE_PRICE_BIN_SIZE", "0.05"), default=0.05),
         "recovery_symbols": processor_recovery_symbols(environ),
         "clickhouse_recovery_enabled": parse_bool(environ.get("PROCESSOR_RECOVERY_CLICKHOUSE_ENABLED", "false")),
+        "enable_auto_commit": parse_bool(environ.get("KAFKA_PROCESSOR_ENABLE_AUTO_COMMIT", "false")),
     }
     config["raw_topics"] = [
         f"{raw_prefix}.bars",
@@ -269,14 +290,18 @@ def process_raw_envelope(envelope, producer, redis_client, redis_keys, state, to
         state.provisional_state.record_closed(candle_1m)
 
         if candle_1m["interval"] == "1m":
-            if event_type == "CANDLE_CLOSED":
-                for interval_minutes in (5, 10):
-                    aggregated = state.aggregator.update(candle_1m, interval_minutes)
-                    if aggregated:
-                        aggregated = state.ma_state.attach_ma(aggregated)
-                        publish_processed(producer, topics["closed_candle"], aggregated, log_every_n)
-                        write_closed_candle_to_redis(redis_client, redis_keys, aggregated)
-                        publish_chart_event(redis_client, redis_keys, websocket_event("CANDLE_CLOSED", aggregated["symbol"], aggregated["interval"], aggregated, feed=aggregated.get("feed") or "unknown"))
+            for interval_minutes in (5, 10):
+                aggregated = state.aggregator.update(candle_1m, interval_minutes)
+                if aggregated:
+                    aggregated = state.ma_state.attach_ma(aggregated)
+                    aggregate_event_type = "CANDLE_CORRECTED" if aggregated.get("correctionType") == "UPDATED" else "CANDLE_CLOSED"
+                    publish_processed(producer, topics["closed_candle"], aggregated, log_every_n)
+                    write_closed_candle_to_redis(redis_client, redis_keys, aggregated)
+                    publish_chart_event(
+                        redis_client,
+                        redis_keys,
+                        websocket_event(aggregate_event_type, aggregated["symbol"], aggregated["interval"], aggregated, feed=aggregated.get("feed") or "unknown"),
+                    )
             publish_derived_live_candles(redis_client, redis_keys, state, candle_1m["symbol"], anchor_1m_timestamp=candle_1m["timestamp"])
         elif candle_1m["interval"] == "1D":
             publish_daily_derived_live_candles(redis_client, redis_keys, state, candle_1m["symbol"], anchor_1d_timestamp=candle_1m["timestamp"])
@@ -290,6 +315,12 @@ def process_raw_envelope(envelope, producer, redis_client, redis_keys, state, to
         publish_chart_event(redis_client, redis_keys, market_status_event(status))
         write_processor_health(redis_client, redis_keys, envelope, result="statuses")
         return "statuses"
+
+    if channel in {"quotes", "corrections", "cancelErrors"}:
+        result = f"unsupported:{channel}"
+        print(f"Raw channel은 현재 차트 상태에 반영하지 않습니다: channel={channel}", flush=True)
+        write_processor_health(redis_client, redis_keys, envelope, result=result)
+        return result
 
     print(f"처리하지 않는 Raw channel입니다: {channel}", flush=True)
     write_processor_health(redis_client, redis_keys, envelope, result="ignored")
@@ -412,6 +443,39 @@ def publish_chart_event(redis_client, redis_keys, event):
     redis_client.publish(redis_keys.market_events(), event_json)
 
 
+def write_processor_dead_letter(redis_client, redis_keys, record, exc):
+    try:
+        payload = record.value
+        redis_client.xadd(
+            redis_keys.processor_dead_letter_stream(),
+            {
+                "topic": getattr(record, "topic", ""),
+                "partition": str(getattr(record, "partition", "")),
+                "offset": str(getattr(record, "offset", "")),
+                "error": str(exc),
+                "payload": json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+            },
+            maxlen=10000,
+            approximate=True,
+        )
+        write_component_health(
+            redis_client,
+            redis_keys,
+            "market-processor",
+            status="error",
+            lastResult="dead-letter",
+            lastError=str(exc),
+            lastChannel=(payload or {}).get("channel"),
+            lastSymbol=(payload or {}).get("symbol") or ((payload or {}).get("raw") or {}).get("S"),
+            lastSourceEventId=(payload or {}).get("sourceEventId"),
+        )
+        print(f"Processor dead-letter 기록: error={exc}", flush=True)
+        return True
+    except Exception as dead_letter_exc:
+        print(f"Processor dead-letter 기록 실패: error={dead_letter_exc}; original={exc}", flush=True)
+        return False
+
+
 def write_processor_health(redis_client, redis_keys, envelope, result):
     try:
         write_component_health(
@@ -430,6 +494,51 @@ def write_processor_health(redis_client, redis_keys, envelope, result):
         )
     except Exception as exc:
         print(f"Processor health heartbeat write skipped: error={exc}", flush=True)
+
+
+def start_processor_idle_heartbeat(redis_client, redis_keys):
+    interval_seconds = parse_positive_float(os.getenv("PROCESSOR_HEARTBEAT_SECONDS", "30"), default=30)
+
+    def heartbeat_loop():
+        while True:
+            try:
+                write_processor_idle_health(redis_client, redis_keys)
+            except Exception as exc:
+                print(f"Processor idle health heartbeat skipped: error={exc}", flush=True)
+            time.sleep(interval_seconds)
+
+    thread = threading.Thread(target=heartbeat_loop, name="processor-idle-health", daemon=True)
+    thread.start()
+    return thread
+
+
+def write_processor_idle_health(redis_client, redis_keys):
+    existing = read_component_health(redis_client, redis_keys, "market-processor")
+    if existing:
+        fields = dict(existing)
+        status = fields.pop("status", "ok")
+        previous_updated_at = fields.pop("updatedAt", None)
+        fields.pop("component", None)
+        if fields.get("lastResult") != "idle" and previous_updated_at and not fields.get("lastEventAt"):
+            fields["lastEventAt"] = previous_updated_at
+        fields["heartbeatResult"] = "idle"
+        write_component_health(
+            redis_client,
+            redis_keys,
+            "market-processor",
+            status=status,
+            **fields,
+        )
+        return "refreshed"
+    write_component_health(
+        redis_client,
+        redis_keys,
+        "market-processor",
+        status="ok",
+        lastResult="idle",
+        heartbeatResult="idle",
+    )
+    return "created"
 
 
 def timestamp_score(timestamp):

@@ -40,6 +40,6 @@ Secrets Manager / KIS demo credentials
 KIS demo API
 ```
 
-Keep `kis_trader.*` imports stable. Docker, compose, k8s, tests, and local scripts should place `systems/order/shared` on `PYTHONPATH`.
+Keep `kis_trader.*` imports stable. Docker, compose, and k8s should place `systems/order/shared` on `PYTHONPATH`; local pytest runs use the repository-level `pytest.ini`.
 
 `KIS_ENV=real` remains disabled for v1.

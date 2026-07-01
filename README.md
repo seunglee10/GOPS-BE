@@ -13,7 +13,7 @@ The repository currently includes:
 - FastAPI chart/order/WebSocket API server.
 - Alpaca market-data ingest and historical backfill.
 - Kafka-compatible stream processing.
-- Redis, ClickHouse, and S3 market-data serving/storage.
+- Redis and ClickHouse market-data serving/storage.
 - KIS demo order API, Postgres persistence, outbox, broker adapter, migrations, and reconciliation.
 - Agent-orchestration v1 with role-agent skeletons, market-event detection, and notification publishing.
 - Local Docker Compose and early AWS/EKS deployment assets.
@@ -28,7 +28,7 @@ The repository currently includes:
 | `docs/ARCHITECTURE.md` | Current runtime architecture and system boundaries. |
 | `docs/IMAGE_STRATEGY.md` | Docker image boundaries. |
 | `docs/ENVIRONMENT.md` | Env, secret, and platform contracts. |
-| `AGENTS.md` | Rules for Codex and future contributors. |
+| `AGENTS.md` | Rules for AI coding agents and future contributors. |
 
 ## Repository Map
 
@@ -65,15 +65,23 @@ flowchart LR
   API --> PG["Postgres"]
   API --> AgentOrch["agent-orchestrator"]
 
-  Alpaca["Alpaca"] --> Ingestor["market-ingestor"]
+  Alpaca["Alpaca"] --> Ingestor["market-ingestor-sip<br/>default"]
+  Alpaca -.-> ExtraFeeds["optional IEX/BOATS<br/>explicit only"]
   Ingestor --> Kafka["Kafka"]
+  ExtraFeeds -.-> Kafka
   Kafka --> Processor["market-processor"]
   Kafka --> EventDetector["agent-event-detector"]
   EventDetector --> Kafka
   Kafka --> AlertPublisher["agent-notification-publisher"] --> Redis
   Processor --> Redis
-  Processor --> S3Sink["s3-sink"] --> S3["S3"]
-  Processor --> CHLoader["clickhouse-loader"] --> CH
+  Processor --> Kafka
+  Kafka --> CHLoader["clickhouse-loader"] --> CH
+  CHLoader -.->|post-insert archive| S3["S3 optional processed archive"]
+  API --> Backfill["backfill-worker"]
+  Backfill --> Redis
+  Backfill --> Alpaca
+  Backfill --> CH
+  Backfill -.->|post-insert archive| S3
 
   API --> PG
   PG --> Outbox["order-outbox"]
@@ -103,11 +111,10 @@ python --version
 
 The expected local Python version is `3.12.x`. Do not create duplicate project virtualenvs under `/tmp` or other ad hoc paths.
 
-For AWS-backed local work, leave `S3_ENDPOINT_URL` and `DOCKER_S3_ENDPOINT_URL` empty and use:
+For AWS-backed local work, configure Alpaca credentials through AWS Secrets Manager:
 
 ```text
 ALPACA_SECRET_NAME=dev/alpaca
-S3_BUCKET=gops-market-data-<aws-account-id>-ap-northeast-2-an
 AWS_REGION=ap-northeast-2
 AWS_ACCESS_KEY_ID=<local restricted key if needed>
 AWS_SECRET_ACCESS_KEY=<local restricted secret if needed>
@@ -148,6 +155,7 @@ POST /api/charts/backfill
 GET  /api/charts/backfill/status
 GET  /api/charts/symbols
 WS   /ws/charts
+WS   /ws/quotes
 ```
 
 Agent API:
@@ -183,8 +191,15 @@ Auth rules:
 ## Operating Rules
 
 - Chart API serves from Redis and ClickHouse, not directly from S3.
-- S3 is durable replay/rematerialization storage.
+- Pan/zoom chart history reads use half-open `from`/`to` ranges for the visible window plus buffer, then refetch the same range after repair.
+- Online backfill/gapfill fetches Alpaca historical data, materializes it directly into ClickHouse, then best-effort archives processed candles to S3.
+- Backfill writes to ClickHouse in `chart_candles` monthly partition chunks so long daily ranges do not exceed ClickHouse single-INSERT partition limits.
+- Historical Alpaca backfill defaults to split-adjusted bars and is clamped by `MARKET_DATA_MAX_HISTORY_YEARS` before serving or fetching older chart data.
+- `force=true` backfill bypasses coverage skips and refetches the whole clamped range, which is useful for vendor corrections or adjustment-mode repairs.
+- Intraday chart backfill windows are calculated in regular-session market minutes, not raw wall-clock minutes.
+- Watch List and Hot Ranking quotes are batched through `/ws/quotes` at `maxHz=1` by default. `/ws/quotes` is read-only; Watch List persistence, Hot Ranking recomputation, and active chart WebSocket sessions feed the capped Redis trade tiers for realtime Alpaca trade subscriptions.
 - ClickHouse `chart_candles` is the serving projection.
+- S3 archive prefixes default to `market-data/dev/helixho/...` so teammate experiments do not share object namespaces.
 - Local runtime must not invent fake market candles.
 - Agent-orchestration v1 must not execute orders or choose real news/macro/ontology providers.
 - `.env`, access-key CSV files, KIS token caches, `node_modules`, `dist`, and local caches must not be committed.
@@ -197,7 +212,7 @@ Run the relevant checks before sharing changes:
 PYTHONPATH=systems/market-data/shared:systems/order/shared:systems/order:systems/api-server/pods/api-server/gops-backend python -m compileall -q systems
 PYTHONPATH=systems/market-data/shared:systems/order/shared:systems/order:systems/api-server/pods/api-server/gops-backend python -m unittest discover systems/market-data/tests
 PYTHONPATH=systems/market-data/shared:systems/order/shared:systems/order:systems/api-server/pods/api-server/gops-backend python -m unittest discover systems/api-server/tests
-PYTHONPATH=systems/market-data/shared:systems/order/shared:systems/order:systems/api-server/pods/api-server/gops-backend python -m pytest systems/order/tests/kis_trader
+python -m pytest systems/order/tests
 npm run test:chart --prefix apps/gops-frontend
 npm run build --prefix apps/gops-frontend
 docker compose config --quiet
@@ -211,6 +226,8 @@ Runtime smoke:
 ```sh
 curl -fsS http://localhost:8000/health
 curl -fsS http://localhost:8000/api/charts/symbols
-curl -fsS 'http://localhost:8000/api/charts/candles?symbol=NVDA&interval=1m&limit=2'
+curl -fsS 'http://localhost:8000/api/charts/candles?symbol=AAPL&interval=1m&limit=2'
+SMOKE_BUILD=0 bash scripts/local/smoke-backfill-missing-data.sh AAPL 1m
+SMOKE_BUILD=0 bash scripts/local/smoke-backfill-missing-data.sh AAPL 1D
 curl -fsS http://localhost:8000/api/order-contract
 ```

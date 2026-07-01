@@ -1,7 +1,7 @@
 # GOPS Docs
 
 Reference docs for future implementation.
-The root `README.md` stays short; repo-wide Codex rules live in root `AGENTS.md`; deeper project docs live here.
+The root `README.md` stays short; repo-wide agent/contributor rules live in root `AGENTS.md`; deeper project docs live here.
 
 | File | Purpose |
 | --- | --- |
@@ -10,9 +10,8 @@ The root `README.md` stays short; repo-wide Codex rules live in root `AGENTS.md`
 | `ARCHITECTURE.md` | Current system, pod/job, and platform relationships. |
 | `IMAGE_STRATEGY.md` | Docker image boundaries and naming rules. |
 | `ENVIRONMENT.md` | Env, secret, and platform contracts. |
-| `AGENT_ORCHESTRATION_IMPLEMENTATION.md` | Summary of the role-based multi-agent implementation and Docker validation. |
-| `MERGE_HANDOFF_REPORT_2026-06-30.md` | Handoff notes for the `origin/dev` merge, frontend ownership boundaries, and reusable chart/data contracts. |
-| `../AGENTS.md` | Codex/contributor rules for this repo. |
+| `AGENT_ORCHESTRATION_IMPLEMENTATION.md` | Current role-agent runtime contract. |
+| `MULTI_AGENT_NEWS_ONTOLOGY_STRUCTURE.md` | Current News/Ontology agent data and response flow. |
+| `../AGENTS.md` | Agent/contributor rules for this repo. |
 
-Old long-form specs were removed to avoid stale, conflicting guidance.
-If a future long-form spec is needed, add it under `docs/` with a clear owner and date.
+Long-form specs should stay current, scoped, and owned. If a new long-form spec is needed, add it under `docs/` with a clear owner and date.

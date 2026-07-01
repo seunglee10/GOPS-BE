@@ -21,6 +21,7 @@ def health() -> dict[str, str]:
 
 @router.get("/health/config")
 def runtime_config() -> dict[str, object]:
+    components = pipeline_component_health()
     return {
         "status": "ok",
         "aws": {
@@ -44,9 +45,9 @@ def runtime_config() -> dict[str, object]:
             "feedProfiles": configured_feed_profiles(),
         },
         "pipeline": {
-            "components": pipeline_component_health(),
+            "components": components,
         },
-        "warnings": runtime_config_warnings(),
+        "warnings": runtime_config_warnings(components),
     }
 
 
@@ -85,7 +86,7 @@ def configured_alpaca_credential_source() -> str:
         return "invalid"
 
 
-def runtime_config_warnings() -> list[str]:
+def runtime_config_warnings(pipeline_components: dict[str, object] | None = None) -> list[str]:
     warnings = []
     if os.getenv("ALFAKA_REQUEST_CONFIG") not in {None, "", "systems/market-data/config/market-data-request.json"}:
         warnings.append("stale_request_config_path")
@@ -98,17 +99,20 @@ def runtime_config_warnings() -> list[str]:
         warnings.append("alpaca_channels_missing_statuses")
     if os.getenv("S3_PROCESSED_FORMAT") not in {None, "", "parquet"}:
         warnings.append("s3_processed_format_not_parquet")
-    if os.getenv("BACKFILL_INITIAL_LOAD_1M_MIN_START") not in {None, "", "2025-04-01T00:00:00Z"}:
-        warnings.append("1m_preload_cutoff_not_2025_04")
     profiles = set(configured_feed_profiles())
     allowed_profiles = {"sip", "iex", "boats", "overnight", "test"}
     if any(profile not in allowed_profiles for profile in profiles):
         warnings.append("invalid_alpaca_feed_profile")
-    expected_profiles = {"sip", "iex", "boats"}
-    if profiles and not expected_profiles.issubset(profiles):
-        warnings.append("alpaca_feed_profiles_missing_24_5_profile")
+    active_profile = os.getenv("ALPACA_FEED_PROFILE") or os.getenv("ALPACA_FEED") or "sip"
+    if profiles and active_profile not in profiles:
+        warnings.append("alpaca_feed_profile_not_listed")
     if configured_alpaca_credential_source() == "invalid":
         warnings.append("invalid_alpaca_credential_source")
+    if pipeline_components and pipeline_components.get("available") is True:
+        if pipeline_components.get("missing"):
+            warnings.append("pipeline_component_missing")
+        if pipeline_components.get("unhealthy"):
+            warnings.append("pipeline_component_unhealthy")
     return warnings
 
 
@@ -134,21 +138,53 @@ def pipeline_component_health() -> dict[str, object]:
 
         client = redis.Redis.from_url(redis_url, decode_responses=True, socket_connect_timeout=0.2, socket_timeout=0.2)
         keys = RedisKeyBuilder()
-        names = [
-            "market-ingestor-sip",
-            "market-ingestor-iex",
-            "market-ingestor-boats",
-            "market-processor",
-        ]
+        names = pipeline_required_component_names()
+        items = {
+            name: redact_component_health(read_component_health(client, keys, name))
+            for name in names
+        }
         return {
             "available": True,
-            "items": {
-                name: redact_component_health(read_component_health(client, keys, name))
-                for name in names
-            },
+            "required": names,
+            "items": items,
+            **pipeline_component_summary(items),
         }
     except Exception:
         return {"available": False, "reason": "redis_health_probe_failed"}
+
+
+def pipeline_required_component_names() -> list[str]:
+    configured = unique_values(csv_values(os.getenv("PIPELINE_REQUIRED_COMPONENTS")))
+    if configured:
+        return configured
+    return unique_values([
+        *(f"market-ingestor-{profile}" for profile in configured_feed_profiles()),
+        "market-processor",
+    ])
+
+
+def unique_values(values: list[str]) -> list[str]:
+    result = []
+    seen = set()
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
+
+
+def pipeline_component_summary(items: dict[str, object]) -> dict[str, object]:
+    missing = sorted(name for name, payload in items.items() if not payload)
+    unhealthy = sorted(
+        name for name, payload in items.items()
+        if isinstance(payload, dict) and payload.get("status") not in {None, "ok"}
+    )
+    return {
+        "healthy": not missing and not unhealthy,
+        "missing": missing,
+        "unhealthy": unhealthy,
+    }
 
 
 def redact_component_health(payload):
@@ -172,11 +208,14 @@ def redact_component_health(payload):
         "lastFeed",
         "lastFeedProfile",
         "lastResult",
+        "lastEventAt",
+        "heartbeatResult",
+        "lastError",
         "alpacaError",
         "error",
     }
     result = {key: payload.get(key) for key in allowed if key in payload}
-    for key in ("alpacaError", "error"):
+    for key in ("alpacaError", "error", "lastError"):
         if result.get(key):
             result[key] = str(result[key])[:300]
     return result

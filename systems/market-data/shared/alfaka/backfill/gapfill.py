@@ -37,7 +37,11 @@ class TradingCalendar:
         return early_closes.get(session_date.isoformat(), self.close_time)
 
     def is_session_date(self, session_date: date) -> bool:
-        return session_date.weekday() < 5 and session_date.isoformat() not in self.closed_dates
+        if session_date.weekday() >= 5 or session_date.isoformat() in self.closed_dates:
+            return False
+        if self.provider in {"configured-nyse", "nyse"} and is_default_nyse_holiday(session_date):
+            return False
+        return True
 
 
 @dataclass(frozen=True)
@@ -56,8 +60,9 @@ def detect_gapfill_ranges(start, end, interval, actual_timestamps, calendar=None
     return coalesce_bucket_ranges(missing, bucket_delta(interval))
 
 
-def expected_bucket_starts(start, end, interval, calendar):
+def expected_bucket_starts(start, end, interval, calendar=None):
     interval = normalize_chart_interval(interval)
+    calendar = calendar or TradingCalendar.from_environment()
     start_dt = parse_time(start)
     end_dt = parse_time(end)
     if start_dt >= end_dt:
@@ -95,11 +100,26 @@ def expected_daily_buckets(start_dt, end_dt, calendar):
     values = []
     while session_date <= end_date:
         if calendar.is_session_date(session_date):
-            bucket = datetime.combine(session_date, time(0, 0), zone).astimezone(timezone.utc)
+            bucket = daily_bucket_for_session_date(session_date)
             if start_dt <= bucket < end_dt:
                 values.append(bucket)
         session_date += timedelta(days=1)
     return values
+
+
+def daily_bucket_for_session_date(session_date):
+    if isinstance(session_date, datetime):
+        session_date = session_date.date()
+    return datetime.combine(session_date, time(0, 0), timezone.utc)
+
+
+def canonical_daily_bucket_start(value):
+    parsed = parse_time(value)
+    return datetime.combine(parsed.date(), time(0, 0), timezone.utc)
+
+
+def canonical_daily_timestamp(value):
+    return to_iso(canonical_daily_bucket_start(value))
 
 
 def coalesce_bucket_ranges(missing_buckets, delta):
@@ -136,8 +156,7 @@ def to_bucket_start(value, interval, calendar):
     if interval == "1m":
         return round_down_minute(parsed)
     if interval == "1D":
-        local = parsed.astimezone(calendar.timezone)
-        return datetime.combine(local.date(), time(0, 0), calendar.timezone).astimezone(timezone.utc)
+        return canonical_daily_bucket_start(parsed)
     raise ValueError(f"Unsupported source interval for GapFill: {interval}")
 
 
@@ -184,3 +203,64 @@ def parse_early_closes(value):
         date.fromisoformat(session)
         closes[session] = parse_market_clock_time(close_time, time(16, 0))
     return closes
+
+
+def is_default_nyse_holiday(session_date):
+    year = session_date.year
+    holidays = {
+        observed_fixed_holiday(year, 1, 1),
+        nth_weekday(year, 1, 0, 3),
+        nth_weekday(year, 2, 0, 3),
+        easter_sunday(year) - timedelta(days=2),
+        last_weekday(year, 5, 0),
+        observed_fixed_holiday(year, 7, 4),
+        nth_weekday(year, 9, 0, 1),
+        nth_weekday(year, 11, 3, 4),
+        observed_fixed_holiday(year, 12, 25),
+        observed_fixed_holiday(year + 1, 1, 1),
+    }
+    if year >= 2022:
+        holidays.add(observed_fixed_holiday(year, 6, 19))
+    return session_date in holidays
+
+
+def observed_fixed_holiday(year, month, day):
+    value = date(year, month, day)
+    if value.weekday() == 5:
+        return value - timedelta(days=1)
+    if value.weekday() == 6:
+        return value + timedelta(days=1)
+    return value
+
+
+def nth_weekday(year, month, weekday, occurrence):
+    value = date(year, month, 1)
+    offset = (weekday - value.weekday()) % 7
+    return value + timedelta(days=offset + (occurrence - 1) * 7)
+
+
+def last_weekday(year, month, weekday):
+    if month == 12:
+        value = date(year + 1, 1, 1) - timedelta(days=1)
+    else:
+        value = date(year, month + 1, 1) - timedelta(days=1)
+    return value - timedelta(days=(value.weekday() - weekday) % 7)
+
+
+def easter_sunday(year):
+    # Anonymous Gregorian algorithm.
+    a = year % 19
+    b = year // 100
+    c = year % 100
+    d = b // 4
+    e = b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i = c // 4
+    k = c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month = (h + l - 7 * m + 114) // 31
+    day = ((h + l - 7 * m + 114) % 31) + 1
+    return date(year, month, day)

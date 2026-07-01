@@ -25,22 +25,31 @@ Current v1 universe contract:
 ALFAKA_REQUEST_CONFIG=systems/market-data/config/market-data-request.json
 ALPACA_UNIVERSE=sp500
 ALPACA_UNIVERSE_REGISTRY_PATH=systems/market-data/config/sp500-universe.json
-ALPACA_COLLECTION_SYMBOL_SOURCE=universe
 ALPACA_CHANNELS=bars,updatedBars,dailyBars,statuses
 ALPACA_ACTIVE_CHANNELS=trades
 ALPACA_MAX_TRADE_SYMBOLS=
+ALPACA_MAX_WATCHLIST_TRADE_SYMBOLS=40
+ALPACA_MAX_HOT_TRADE_SYMBOLS=10
+ALPACA_ACTIVE_POLL_SECONDS=1
 ALPACA_FEED_PROFILE=sip
-ALPACA_FEED_PROFILES=sip,iex,boats
+ALPACA_FEED_PROFILES=sip
+PIPELINE_REQUIRED_COMPONENTS=market-ingestor-sip,market-processor
+MARKET_FEED_PROFILE_PRIORITY=sip,iex,boats,overnight,unknown
+MARKET_OVERNIGHT_FEED_PROFILE_PRIORITY=boats,overnight,sip,iex,unknown
 ALPACA_CREDENTIAL_SOURCE=aws-secrets-manager
 ALPACA_SECRET_NAME=dev/alpaca
-HOT_TIER_SIZE=20
+HOT_TIER_SIZE=10
 HOT_TIER_FALLBACK_SCAN_LIMIT=503
+HOT_TIER_PREVIOUS_CLOSE_MAX_AGE_DAYS=10
 ```
 
-Full-universe collection covers bars/status channels. Trade subscriptions are resolved dynamically from active chart symbols, user Watch List symbols synced to Redis through `/api/charts/watchlist`, and hot symbols. `ALPACA_SYMBOLS` is a legacy/local smoke seed and should not be treated as the frontend Watch List source of truth or the full collection universe.
-Set `ALPACA_MAX_TRADE_SYMBOLS` only when an Alpaca subscription cap requires an operational limit; active chart symbols are prioritized before watchlist and hot symbols.
+Full-universe collection covers bars/status channels. Trade subscriptions are resolved dynamically from active chart symbols, user Watch List symbols synced to Redis through `/api/charts/watchlist`, and hot symbols. Active chart symbols are always prioritized, while Watch List and Hot Ranking trade tiers are capped by `ALPACA_MAX_WATCHLIST_TRADE_SYMBOLS` and `ALPACA_MAX_HOT_TRADE_SYMBOLS`. The dynamic trade subscription loop polls Redis every `ALPACA_ACTIVE_POLL_SECONDS` seconds and sends only WebSocket subscribe/unsubscribe diffs. Set either tier cap to `0` to disable that tier's trade subscription. Set `ALPACA_MAX_TRADE_SYMBOLS` only when an Alpaca account-level subscription cap requires one final emergency limit after tier ordering.
 
-`ALPACA_FEED_PROFILE` selects one ingestor runtime feed (`sip`, `iex`, or `boats`). Local compose and k8s can run one ingestor per profile, and `/health/config` reports the expected profile set from `ALPACA_FEED_PROFILES`. Market-data envelopes, Redis live state, ClickHouse candle rows, API candles, and chart snapshots preserve `feedProfile` and `marketSession` so daytime and BOATS/overnight data are diagnosable instead of collapsing into an anonymous stream.
+`HOT_TIER_PREVIOUS_CLOSE_MAX_AGE_DAYS` prevents stale historical daily candles from being used as the Hot Ranking `changePercent` baseline. If no recent previous daily or intraday close exists, the API returns `changePercent: null` rather than a misleading multi-year percentage move.
+
+`ALPACA_FEED_PROFILE` selects one ingestor runtime feed (`sip`, `iex`, or `boats`). The default local compose and k8s runtime starts only the SIP ingestor to avoid Alpaca account-level WebSocket connection limits. Enable IEX or BOATS only through their explicit optional compose profiles or the optional k8s manifest at `infra/k8s/optional/deployment-alpaca-ingestor-extra-feeds.yaml`, and then add those profile names to `ALPACA_FEED_PROFILES` so `/health/config` reports them. Market-data envelopes, Redis live state, ClickHouse candle rows, API candles, and chart snapshots preserve `feedProfile` and `marketSession`. Chart reads choose a canonical series with `MARKET_FEED_PROFILE_PRIORITY`; overnight rows use `MARKET_OVERNIGHT_FEED_PROFILE_PRIORITY`.
+
+`PIPELINE_REQUIRED_COMPONENTS` controls which Redis component heartbeats make `/health/config` warn. Deployed runtimes require `market-ingestor-sip,market-processor`. Local compose defaults to `market-processor` because Alpaca ingestors are opt-in profile services; set `PIPELINE_REQUIRED_COMPONENTS=market-ingestor-sip,market-processor` when running `docker compose --profile alpaca up`.
 
 `ALPACA_CREDENTIAL_SOURCE` accepts `auto`, `aws-secrets-manager`, or `local-env`. Local AWS-contract and Docker Compose market-data services pin `aws-secrets-manager` so stale local `APCA_*` values cannot override Secrets Manager credentials. Use `local-env` only for an explicit local smoke outside the AWS-contract flow.
 
@@ -113,6 +122,7 @@ REDIS_URL
 PROCESSOR_RECOVERY_SYMBOLS
 PROCESSOR_RECOVERY_CLICKHOUSE_ENABLED
 COMPONENT_HEALTH_TTL_SECONDS
+PIPELINE_REQUIRED_COMPONENTS
 ```
 
 `PROCESSOR_RECOVERY_SYMBOLS` is optional. When empty, the Python market processor tries the configured Alpaca collection universe for live/provisional state recovery at startup. Set it to a CSV list to restrict recovery during local smoke tests or incident repair.
@@ -120,6 +130,8 @@ COMPONENT_HEALTH_TTL_SECONDS
 `PROCESSOR_RECOVERY_CLICKHOUSE_ENABLED=false` by default. Keep Redis-first recovery on by default; enable ClickHouse recovery only when the processor should rebuild missing startup state from deterministic canonical `1m`/`1D` rows and ClickHouse is known healthy.
 
 `COMPONENT_HEALTH_TTL_SECONDS` controls how long Redis keeps lightweight component freshness heartbeats such as `pipeline:health:market-processor`.
+
+`PIPELINE_REQUIRED_COMPONENTS` is a comma-separated list of heartbeat component names that `/health/config` treats as required.
 
 Critical storage consumers may disable Kafka auto commit and commit after successful side effects:
 
@@ -193,11 +205,13 @@ CLICKHOUSE_PROVIDER_ENSURE_SESSION_COLUMNS
 CLICKHOUSE_ENSURE_SESSION_COLUMNS
 ```
 
-Set `CLICKHOUSE_PROVIDER_ENSURE_SESSION_COLUMNS=true` for API serving pods and `CLICKHOUSE_ENSURE_SESSION_COLUMNS=true` for storage/backfill jobs during the transition to feed/session-aware rows. New deployments create `feed_profile` and `market_session` in the primary schema. Existing ClickHouse volumes can add the columns idempotently, but preserving multiple feed/session rows after merges requires rebuilding old tables with the new `ORDER BY` definition.
+Set `CLICKHOUSE_PROVIDER_ENSURE_SESSION_COLUMNS=true` for API serving pods and `CLICKHOUSE_ENSURE_SESSION_COLUMNS=true` for storage/backfill jobs. New deployments create `feed_profile` and `market_session` in the primary schema. Existing ClickHouse volumes can add the columns idempotently, but preserving multiple feed/session rows after merges requires rebuilding tables with the feed/session-aware `ORDER BY` definition.
 
-## S3
+## S3 Archive Utilities
 
-Current AWS bucket:
+S3 archive utilities are not part of chart serving or online backfill/gapfill reads. The chart path serves Redis/ClickHouse, and backfill/gapfill fetches missing Alpaca ranges, materializes them directly into ClickHouse, then best-effort archives processed candles to S3 when archive env is present.
+
+Current optional AWS bucket:
 
 ```text
 gops-market-data-<aws-account-id>-ap-northeast-2-an
@@ -207,37 +221,36 @@ Common env:
 
 ```text
 S3_BUCKET
-KAFKA_RAW_S3_GROUP_ID
-S3_RAW_PREFIX
+S3_ARCHIVE_ROOT_PREFIX
 S3_FINAL_PREFIX
-S3_LIVE_PREFIX
 S3_MANIFEST_PREFIX
+S3_BACKFILL_PROCESSED_PREFIX
+S3_BACKFILL_MANIFEST_PREFIX
+S3_BACKFILL_PROCESSED_FORMAT
+S3_BACKFILL_PROCESSED_MANIFEST_LAYOUT
+S3_BACKFILL_ARCHIVE_ROWS_PER_OBJECT
+BACKFILL_S3_ARCHIVE_ENABLED
 S3_PROCESSED_FORMAT
-S3_HISTORICAL_RAW_PARTITION_MODE
-S3_HISTORICAL_PROCESSED_MANIFEST_LAYOUT
-S3_FLUSH_COUNT
-S3_FLUSH_INTERVAL_SECONDS
-S3_RAW_FLUSH_COUNT
-S3_RAW_FLUSH_INTERVAL_SECONDS
+CLICKHOUSE_LOADER_S3_ARCHIVE_ENABLED
+S3_CLICKHOUSE_ARCHIVE_FLUSH_ROWS
+S3_CLICKHOUSE_ARCHIVE_FLUSH_SECONDS
+S3_CLICKHOUSE_ARCHIVE_ROWS_PER_OBJECT
 S3_PUT_MAX_ATTEMPTS
 S3_PUT_RETRY_SLEEP_SECONDS
 S3_ENDPOINT_URL
-S3_MATERIALIZE_PREFIX
-S3_MATERIALIZE_KEYS
-S3_MATERIALIZE_MAX_OBJECTS
 ```
 
 Leave `S3_ENDPOINT_URL` empty for real AWS S3.
 
-The processed S3 sink writes processed Kafka topics under `S3_FINAL_PREFIX` and `S3_LIVE_PREFIX`. The raw S3 archive sink writes raw Kafka topics under `S3_RAW_PREFIX` with manifest entries under `S3_MANIFEST_PREFIX`.
+Default development prefixes are isolated under `market-data/dev/helixho/...`. Use `S3_ARCHIVE_ROOT_PREFIX` or the specific processed/backfill prefix envs to move the namespace intentionally.
 
-For broad historical preload, keep `S3_HISTORICAL_RAW_PARTITION_MODE=chunk` and `S3_HISTORICAL_PROCESSED_MANIFEST_LAYOUT=compact`. This stores one raw object and one processed manifest entry per chunk instead of creating a small S3 object per trading day.
+The ClickHouse loader can best-effort archive closed candles under `S3_FINAL_PREFIX` after the ClickHouse insert succeeds. Backfill workers similarly archive accepted historical candles under `S3_BACKFILL_PROCESSED_PREFIX`. Raw Alpaca Kafka topics are not archived by default; trade ticks remain realtime-only and are not persisted.
 
-Broad preload and normal market-data runtime use `S3_PROCESSED_FORMAT=parquet`. Docker Compose pins this value for market-data storage/backfill services so an old root `.env` cannot silently switch runtime output back to `jsonl`.
+Backfill workers do not require `S3_BUCKET` and never read S3 candle data as an input. `BACKFILL_S3_ARCHIVE_ENABLED=false` disables the optional post-write archive without changing ClickHouse materialization. When `S3_BUCKET` is configured and archive is enabled, they archive only the processed candles that were already accepted for ClickHouse under `S3_BACKFILL_PROCESSED_PREFIX`; S3 archive failures are recorded in the backfill result but do not fail ClickHouse materialization or chart rendering. `S3_BACKFILL_MANIFEST_PREFIX` overrides the common manifest prefix for backfill archive manifests. `S3_BACKFILL_ARCHIVE_ROWS_PER_OBJECT` keeps large historical backfills in page-sized archive objects instead of one S3 object per candle.
 
-Use time-based flush values so low-volume symbols and status events do not remain only in process memory. Keep retry settings conservative; duplicate delivery must remain safe through deterministic replay/materialization.
+ClickHouse-loader post-insert archive is controlled by `CLICKHOUSE_LOADER_S3_ARCHIVE_ENABLED` and uses `S3_PROCESSED_FORMAT=parquet` by default. It buffers accepted candles with `S3_CLICKHOUSE_ARCHIVE_FLUSH_ROWS` / `S3_CLICKHOUSE_ARCHIVE_FLUSH_SECONDS` so S&P 500 realtime bars do not create one S3 object per candle. Backfill post-write archive defaults to `S3_BACKFILL_PROCESSED_FORMAT=jsonl` so the backfill worker does not require a parquet runtime. There is no Kafka-to-S3 runtime worker; archive writes happen only after ClickHouse accepts rows.
 
-For S3-to-ClickHouse smoke tests, prefer `S3_MATERIALIZE_KEYS` with one or a few explicit processed candle object keys. Leave it empty only for intentional prefix-wide materialization through `S3_MATERIALIZE_PREFIX`.
+Keep retry settings conservative; duplicate delivery must remain safe through deterministic replay/materialization.
 
 ## Backfill Queue
 
@@ -245,7 +258,6 @@ Backfill requests are stored in Redis status keys and queued through Redis Strea
 Workers consume the `backfill-workers` group, reclaim idle pending jobs, and move exhausted jobs to a dead-letter stream.
 
 ```text
-BACKFILL_EXECUTION_MODE
 BACKFILL_STATUS_TTL_SECONDS
 BACKFILL_QUEUE_BACKEND
 BACKFILL_STREAM_GROUP
@@ -253,23 +265,25 @@ BACKFILL_STREAM_RECLAIM_IDLE_MS
 BACKFILL_STREAM_MAXLEN
 BACKFILL_MAX_ATTEMPTS
 BACKFILL_GAPFILL_DETECT_INTERNAL
-BACKFILL_GAPFILL_MAX_DETECT_DAYS
+BACKFILL_GAPFILL_MAX_DETECT_DAYS_INTRADAY
+BACKFILL_GAPFILL_MAX_DETECT_DAYS_DAILY
 BACKFILL_GAPFILL_TIMESTAMP_LIMIT
-BACKFILL_INITIAL_LOAD_1M_CHUNK_DAYS
-BACKFILL_INITIAL_LOAD_1D_CHUNK_DAYS
-BACKFILL_INITIAL_LOAD_1M_MIN_START
-BACKFILL_INITIAL_LOAD_MAX_ENQUEUE
-BACKFILL_INITIAL_LOAD_MAX_BACKLOG
+BACKFILL_DAILY_FETCH_MAX_DAYS
+BACKFILL_INTRADAY_FETCH_MAX_DAYS
 BACKFILL_WORKER_POLL_SECONDS
-BACKFILL_WORKER_ONCE
+HISTORICAL_LIMIT
 HISTORICAL_ADJUSTMENT
-HISTORICAL_1M_MINUTES_PER_TRADING_DAY
+MARKET_DATA_MAX_HISTORY_YEARS
 HISTORICAL_MAX_RETRIES
 HISTORICAL_RETRY_SLEEP_SECONDS
 HISTORICAL_RETRY_MAX_SLEEP_SECONDS
 ```
 
-Use `HISTORICAL_ADJUSTMENT=raw` for canonical Alpaca historical backfill unless the live/backfill adjustment policy is explicitly changed. `HISTORICAL_1M_MINUTES_PER_TRADING_DAY=960` keeps 1m preload dry-run estimates conservative for Alpaca extended-hours bars. Retry settings are used for transient Alpaca historical API failures such as rate limits and 5xx responses.
+Use `HISTORICAL_ADJUSTMENT=split` for canonical Alpaca historical backfill so split events do not create discontinuous higher-timeframe candles. `MARKET_DATA_MAX_HISTORY_YEARS` defaults to `6`; the API serving path ignores older stored candles and the backfill worker clamps Alpaca fetches to that window. A `force=true` backfill still respects that window, but bypasses ClickHouse coverage skips and refetches the whole clamped range. Retry settings are used for transient Alpaca historical API failures such as rate limits and 5xx responses.
+
+`HISTORICAL_LIMIT` defaults to `10000`, the Alpaca historical bars page size used by bounded backfill jobs. The worker follows `next_page_token` until the requested range is exhausted. Keep online backfill jobs symbol-scoped; do not satisfy a user chart range by issuing one oversized S&P 500 historical request, because Alpaca paginates by response data points and that can starve later symbols.
+
+`BACKFILL_GAPFILL_MAX_DETECT_DAYS_INTRADAY` bounds each ClickHouse timestamp scan for minute-derived intervals. `BACKFILL_GAPFILL_MAX_DETECT_DAYS_DAILY` is intentionally much larger because `1D` is the stored source for daily, weekly, and monthly chart backfill. `BACKFILL_DAILY_FETCH_MAX_DAYS` controls how broadly daily Alpaca repair ranges are merged before fetching; `BACKFILL_INTRADAY_FETCH_MAX_DAYS` does the same for intraday Alpaca fetch ranges and defaults to a page-sized 30 calendar days. Both fetch settings are separate from ClickHouse gap scan chunking.
 
 ## Market Calendar
 
@@ -284,41 +298,9 @@ MARKET_CLOSED_DATES
 MARKET_EARLY_CLOSES
 ```
 
-## Coverage Repair
+`configured-nyse` includes standard NYSE holidays; `MARKET_CLOSED_DATES` and `MARKET_EARLY_CLOSES` are for one-off closures or overrides. Chart backfill is range-driven. The frontend requests the visible range plus an interval-specific buffer, using regular-session market minutes and the default NYSE holiday calendar for intraday intervals so pan/zoom across overnight, weekend, or holiday gaps still reaches the prior tradable candles. `1m`, `5m`, `10m`, and `1D` use a larger buffer than higher timeframes to reduce pan jitter while still staying tied to the user's visible range. A small source-bucket floor prevents tiny zoomed-in requests, but it must stay near the default visible chart size rather than becoming a hidden preload window. The candles API uses half-open `from`/`to` bounds for these buffered history reads; if the range is missing, the backfill API queues that exact half-open `start`/`end` range (`[start, end)`), and the worker fetches only missing ClickHouse buckets from Alpaca. Daily source candles are stored and compared at canonical UTC date midnight (`YYYY-MM-DDT00:00:00.000Z`); weekly and monthly charts derive from that `1D` source. Weekly and monthly reads filter returned rows by the derived bucket timestamp, not by slicing daily source rows directly, so callers do not see partial higher-timeframe candles when `from` or `to` is inside a week or month. Chart reads, coverage checks, and gap detection all use the same half-open boundary contract. If Alpaca returns no bars, or only returns a later leading-edge partial history for a range that should contain market buckets, the worker records a no-data boundary so the chart stops retrying that unavailable range.
 
-The manual repair job audits chart API coverage and can queue missing source interval backfills.
-
-```text
-COVERAGE_REPAIR_SYMBOLS
-COVERAGE_REPAIR_INTERVALS
-COVERAGE_REPAIR_DRY_RUN
-COVERAGE_REPAIR_FORCE
-GOPS_API_BASE_URL
-```
-
-Keep `COVERAGE_REPAIR_DRY_RUN=true` for audits. Set it to `false` only when intentionally queuing backfills.
-
-## Initial Load
-
-The initial-load job plans or queues chunked `initial_load` Redis Streams jobs for canonical `1m` and `1D` history. It is dry-run by default; set `INITIAL_LOAD_DRY_RUN=false` only after reviewing the plan. Use `INITIAL_LOAD_SYMBOLS=universe` to resolve the configured S&P 500 collection registry.
-
-For the S&P 500 bootstrap, preload `1D` for the 3-year range first, then run `1m` as repeated dry-run/review/enqueue windows. The v1 `1m` initial-load lower bound is `BACKFILL_INITIAL_LOAD_1M_MIN_START=2025-04-01T00:00:00Z`; `1m` ranges starting before April 2025 are rejected so Goal/deploy runs do not accidentally fetch the old 3-year intraday plan. The operational default for `INITIAL_LOAD_INTERVALS` is `1D`; pass `INITIAL_LOAD_INTERVALS=1m` explicitly for intraday preload windows. Processed candle output should use `S3_PROCESSED_FORMAT=parquet` for broad preload, with historical raw chunks and processed compact manifests enabled. Existing queued/running/succeeded chunks are skipped during resume and do not consume `INITIAL_LOAD_MAX_ENQUEUE` capacity.
-
-Initial Load is a bootstrap job, not a normal chart GapFill. It should create S3 raw/processed evidence even when ClickHouse already has the requested rows; ClickHouse coverage alone is not enough to prove the S3 preload objective.
-
-If Alpaca returns no bars for an Initial Load chunk, the worker writes an empty marker under `S3_MANIFEST_PREFIX/empty/candles/...` and completes the chunk as `alpaca-empty`. This is expected for current S&P 500 symbols that did not trade during older parts of a requested preload window.
-
-```text
-INITIAL_LOAD_SYMBOLS
-INITIAL_LOAD_INTERVALS
-INITIAL_LOAD_START
-INITIAL_LOAD_END
-INITIAL_LOAD_DRY_RUN
-INITIAL_LOAD_FORCE
-INITIAL_LOAD_SOURCE_PREFERENCE
-INITIAL_LOAD_MAX_ENQUEUE
-INITIAL_LOAD_MAX_BACKLOG
-```
+If an existing ClickHouse volume still contains legacy daily rows at `04:00` or `05:00` UTC, run `PYTHONPATH=systems/market-data/shared python -m alfaka.tools.repair_daily_candle_timestamps` for a dry-run summary. Add `--apply --wait` only when the reported rows should be rewritten to canonical UTC-midnight daily candles.
 
 ## Agent Orchestration
 

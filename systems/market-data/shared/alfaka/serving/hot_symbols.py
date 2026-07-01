@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 
-DEFAULT_HOT_LIMIT = 20
+DEFAULT_HOT_LIMIT = 10
 HOT_RANKING_METHOD = "current_session_dollar_volume"
 
 

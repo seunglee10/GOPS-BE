@@ -4,27 +4,37 @@ import types
 import unittest
 from pathlib import Path
 
-class TestWebSocketDisconnect(Exception):
+
+try:
+    from fastapi import WebSocketDisconnect as BaseWebSocketDisconnect
+except Exception:
+    BaseWebSocketDisconnect = Exception
+    sys.modules.setdefault(
+        "fastapi",
+        types.SimpleNamespace(
+            HTTPException=Exception,
+            WebSocket=object,
+            WebSocketDisconnect=BaseWebSocketDisconnect,
+        ),
+    )
+
+
+class TestWebSocketDisconnect(BaseWebSocketDisconnect):
     def __init__(self, code=None):
         super().__init__(code)
         self.code = code
 
 
-sys.modules.setdefault(
-    "fastapi",
-    types.SimpleNamespace(
-        HTTPException=Exception,
-        WebSocket=object,
-        WebSocketDisconnect=TestWebSocketDisconnect,
-    ),
-)
+if BaseWebSocketDisconnect is Exception:
+    sys.modules["fastapi"].WebSocketDisconnect = TestWebSocketDisconnect
+
 sys.modules.setdefault("redis", types.SimpleNamespace(from_url=lambda *args, **kwargs: None))
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "systems" / "market-data" / "shared"))
 sys.path.insert(0, str(ROOT / "systems" / "api-server" / "pods" / "api-server" / "gops-backend"))
 
-from app.market_data.realtime.session_manager import WebSocketSessionManager  # noqa: E402
+from app.market_data.realtime.session_manager import WebSocketSessionManager, quote_stream_period_seconds  # noqa: E402
 from app.market_data.realtime.stream_hub import StreamSession, SymbolStreamHub  # noqa: E402
 from alfaka.serving.cursors import timestamp_from_cursor  # noqa: E402
 
@@ -41,7 +51,14 @@ class TestableHub(SymbolStreamHub):
 
 
 class FakeActiveSymbols:
+    def __init__(self):
+        self.refreshed = []
+        self.on_refresh = None
+
     def refresh(self, symbol):
+        self.refreshed.append(symbol)
+        if self.on_refresh:
+            self.on_refresh(symbol)
         return None
 
 
@@ -106,6 +123,63 @@ class RaceWebSocket:
             return
         if event.get("type") == "LIVE_CANDLE_UPDATE":
             raise WebSocketDisconnect(code=1000)
+
+
+class QuoteRedisProvider:
+    redis = None
+
+    def __init__(self):
+        self.loop_count = 0
+        self.live_calls = []
+        self.events = {
+            "AAPL": {
+                "type": "LIVE_CANDLE_UPDATE",
+                "eventId": "quote-aapl-1",
+                "cursor": "cursor-aapl-1",
+                "symbol": "AAPL",
+                "interval": "1m",
+                "data": {
+                    "timestamp": "2026-06-25T10:15:00.000Z",
+                    "close": 100.0,
+                    "volume": 10,
+                },
+            },
+            "MSFT": {
+                "type": "LIVE_CANDLE_UPDATE",
+                "eventId": "quote-msft-1",
+                "cursor": "cursor-msft-1",
+                "symbol": "MSFT",
+                "interval": "1m",
+                "data": {
+                    "timestamp": "2026-06-25T10:15:00.000Z",
+                    "close": 200.0,
+                    "volume": 20,
+                },
+            },
+        }
+
+    def live_event(self, symbol, interval):
+        self.live_calls.append((symbol, interval))
+        if symbol == "AAPL":
+            self.loop_count += 1
+            if self.loop_count > 2:
+                raise WebSocketDisconnect(code=1000)
+        return self.events.get(symbol)
+
+    def closed_event(self, symbol, interval):
+        return None
+
+
+class QuoteWebSocket:
+    def __init__(self):
+        self.accepted = False
+        self.sent = []
+
+    async def accept(self):
+        self.accepted = True
+
+    async def send_json(self, event):
+        self.sent.append(event)
 
 
 class RealtimeBoundaryTest(unittest.TestCase):
@@ -238,9 +312,19 @@ class RealtimeBoundaryTest(unittest.TestCase):
             hub = RaceHub()
             manager = WebSocketSessionManager(provider=FakeProvider())
             manager.hub = hub
-            manager.active_symbols = FakeActiveSymbols()
+            active_symbols = FakeActiveSymbols()
+            ordering = []
+            active_symbols.on_refresh = lambda symbol: ordering.append(("refresh", symbol))
+            manager.active_symbols = active_symbols
             manager.heartbeat_seconds = 999
             websocket = RaceWebSocket(hub)
+            original_send_gap_fill = manager._send_gap_fill
+
+            async def send_gap_fill_with_marker(*args, **kwargs):
+                ordering.append(("gap-fill", args[1]))
+                await original_send_gap_fill(*args, **kwargs)
+
+            manager._send_gap_fill = send_gap_fill_with_marker
 
             try:
                 await asyncio.wait_for(
@@ -254,10 +338,44 @@ class RealtimeBoundaryTest(unittest.TestCase):
             self.assertTrue(websocket.accepted)
             self.assertTrue(hub.broadcast_attempted)
             self.assertTrue(hub.unsubscribed)
+            self.assertEqual(ordering[:2], [("refresh", "AAPL"), ("gap-fill", "AAPL")])
             self.assertIn("CANDLE_CLOSED", event_types)
             self.assertIn("LIVE_CANDLE_UPDATE", event_types)
 
         asyncio.run(run())
+
+    def test_quote_stream_batches_symbols_and_dedupes_unchanged_events(self):
+        async def run():
+            redis_provider = QuoteRedisProvider()
+            provider = types.SimpleNamespace(redis_provider=redis_provider)
+            active_symbols = FakeActiveSymbols()
+            manager = WebSocketSessionManager(provider=provider)
+            manager.active_symbols = active_symbols
+            manager.heartbeat_seconds = 10**12
+            websocket = QuoteWebSocket()
+
+            await asyncio.wait_for(
+                manager.serve_quotes(websocket, ["AAPL", "MSFT"], "1m", max_hz=4.0),
+                timeout=1.0,
+            )
+
+            self.assertTrue(websocket.accepted)
+            self.assertEqual(
+                [(event["symbol"], event["interval"], event["eventId"]) for event in websocket.sent],
+                [("AAPL", "1m", "quote-aapl-1"), ("MSFT", "1m", "quote-msft-1")],
+            )
+            self.assertEqual(active_symbols.refreshed, [])
+            self.assertGreaterEqual(redis_provider.live_calls.count(("AAPL", "1m")), 2)
+            self.assertGreaterEqual(redis_provider.live_calls.count(("MSFT", "1m")), 2)
+
+        asyncio.run(run())
+
+    def test_quote_stream_period_defaults_to_one_hz_and_clamps_edges(self):
+        self.assertEqual(quote_stream_period_seconds(1.0), 1.0)
+        self.assertEqual(quote_stream_period_seconds(None), 1.0)
+        self.assertEqual(quote_stream_period_seconds(0), 1.0)
+        self.assertEqual(quote_stream_period_seconds(10), 0.25)
+        self.assertEqual(quote_stream_period_seconds(0.05), 5.0)
 
 
 if __name__ == "__main__":

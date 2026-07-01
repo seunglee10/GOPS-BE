@@ -1,0 +1,67 @@
+# 역할: Alpaca IEX/BOATS WebSocket 수집기를 선택적으로 배포합니다.
+# 사용: 기본 배포는 SIP 하나만 띄웁니다. Alpaca 계정 연결 한도를 확인한 뒤 필요한 feed만 수동 적용합니다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alfaka-alpaca-ingestor-iex
+  namespace: alfaka-market-data
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alfaka-alpaca-ingestor-iex
+  template:
+    metadata:
+      labels:
+        app: alfaka-alpaca-ingestor-iex
+    spec:
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: alpaca-ingestor
+          image: YOUR_ECR_REPOSITORY/gops-market-ingestor:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "systems/market-data/pods/market-ingestor/market_stream.py"]
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-alpaca-secret
+                optional: true
+          env:
+            - name: ALPACA_FEED_PROFILE
+              value: iex
+            - name: KAFKA_CLIENT_ID
+              value: alfaka-alpaca-ingestor-iex
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alfaka-alpaca-ingestor-boats
+  namespace: alfaka-market-data
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alfaka-alpaca-ingestor-boats
+  template:
+    metadata:
+      labels:
+        app: alfaka-alpaca-ingestor-boats
+    spec:
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: alpaca-ingestor
+          image: YOUR_ECR_REPOSITORY/gops-market-ingestor:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "systems/market-data/pods/market-ingestor/market_stream.py"]
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-alpaca-secret
+                optional: true
+          env:
+            - name: ALPACA_FEED_PROFILE
+              value: boats
+            - name: KAFKA_CLIENT_ID
+              value: alfaka-alpaca-ingestor-boats

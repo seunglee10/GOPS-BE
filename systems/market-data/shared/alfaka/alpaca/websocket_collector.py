@@ -22,6 +22,10 @@ from alfaka.common.runtime_config import validate_required_values
 from alfaka.common.secrets import load_alpaca_credentials
 
 
+class AlpacaConnectionLimitError(RuntimeError):
+    pass
+
+
 async def main():
     load_dotenv()
 
@@ -33,7 +37,7 @@ async def main():
     active_channels = parse_csv(os.getenv("ALPACA_ACTIVE_CHANNELS", ",".join(request_config.get("activeChartChannels", ["trades"]))))
     validate_channels(active_channels, request_config)
     active_channels = [channel for channel in active_channels if channel not in channels]
-    active_poll_seconds = parse_positive_float(os.getenv("ALPACA_ACTIVE_POLL_SECONDS", "5"), default=5.0)
+    active_poll_seconds = parse_positive_float(os.getenv("ALPACA_ACTIVE_POLL_SECONDS", "1"), default=1.0)
 
     kafka_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
     kafka_client_id = os.getenv("KAFKA_CLIENT_ID", "alfaka-alpaca-ingestor")
@@ -90,6 +94,19 @@ async def main():
             delay = reconnect_backoff
         except asyncio.CancelledError:
             raise
+        except AlpacaConnectionLimitError as exc:
+            delay = reconnect_backoff_max
+            write_ingestor_health(
+                redis_client,
+                feed_profile,
+                status="connection_limited",
+                alpacaFeed=alpaca_feed,
+                websocketUrl=alpaca_url,
+                error=str(exc),
+                retryDelaySeconds=delay,
+            )
+            print(f"Alpaca 연결 제한: error={exc}, delay={delay}s", file=sys.stderr, flush=True)
+            await asyncio.sleep(delay)
         except Exception as exc:
             write_ingestor_health(
                 redis_client,
@@ -182,6 +199,8 @@ async def run_stream_session(
                         alpacaError=message,
                     )
                     print("Alpaca 에러:", message, file=sys.stderr, flush=True)
+                    if message.get("code") == 406 and "connection limit" in str(message.get("msg", "")).lower():
+                        raise AlpacaConnectionLimitError(message.get("msg", "connection limit exceeded"))
                     continue
 
                 if message_type in CONTROL_MESSAGE_TYPES:
@@ -227,8 +246,7 @@ def run():
 
 def create_active_subscription_redis():
     redis_url = os.getenv("ALPACA_ACTIVE_REDIS_URL", os.getenv("REDIS_URL"))
-    enabled = os.getenv("ALPACA_ACTIVE_TICK_SUBSCRIPTION", "true").lower() not in {"0", "false", "no"}
-    if not redis_url or not enabled:
+    if not redis_url:
         return None
     validate_required_values("alpaca active subscription redis", {"redis_url": redis_url})
     return redis.from_url(redis_url, decode_responses=True)
@@ -263,6 +281,8 @@ def read_trade_subscription_symbols(redis_client):
         watchlist_symbols=read_watchlist_symbols(redis_client),
         hot_symbols=read_hot_symbols(redis_client),
         max_symbols=os.getenv("ALPACA_MAX_TRADE_SYMBOLS"),
+        max_watchlist_symbols=os.getenv("ALPACA_MAX_WATCHLIST_TRADE_SYMBOLS", "40"),
+        max_hot_symbols=os.getenv("ALPACA_MAX_HOT_TRADE_SYMBOLS", "10"),
     )
     return set(plan["symbols"])
 
@@ -285,18 +305,28 @@ def read_hot_symbols(redis_client):
     symbols = read_symbol_set(redis_client, keys.hot_symbols())
     snapshot_value = redis_client.get(keys.hot_symbols_snapshot())
     if not snapshot_value:
-        return symbols
+        return sorted(symbols)
     try:
         snapshot = json.loads(snapshot_value)
     except json.JSONDecodeError:
-        return symbols
+        return sorted(symbols)
     rows = snapshot.get("symbols") if isinstance(snapshot, dict) else None
     if not isinstance(rows, list):
-        return symbols
+        return sorted(symbols)
+    ordered = []
+    seen = set()
     for row in rows:
         if isinstance(row, dict) and isinstance(row.get("symbol"), str):
-            symbols.add(row["symbol"])
-    return symbols
+            symbol = row["symbol"].strip().upper()
+            if symbol and symbol not in seen:
+                ordered.append(symbol)
+                seen.add(symbol)
+    for symbol in sorted(symbols):
+        normalized = symbol.strip().upper()
+        if normalized and normalized not in seen:
+            ordered.append(normalized)
+            seen.add(normalized)
+    return ordered
 
 
 def read_symbol_set(redis_client, key):

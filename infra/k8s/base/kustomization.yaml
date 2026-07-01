@@ -9,8 +9,6 @@ resources:
   - job-order-migrations.yaml
   - job-order-reconciler.yaml
   - job-symbol-registry-sync.yaml
-  - job-coverage-repair.yaml
-  - job-initial-load.yaml
   - statefulset-graphdb.yaml
   - deployment-agent-orchestrator.yaml
   - deployment-agent-event-detector.yaml
@@ -18,8 +16,6 @@ resources:
   - deployment-alpaca-ingestor.yaml
   - deployment-alpaca-news-ingestor.yaml
   - deployment-market-processor.yaml
-  - deployment-s3-sink.yaml
-  - deployment-raw-s3-archive.yaml
   - deployment-clickhouse-loader.yaml
   - deployment-backfill-worker.yaml
   - deployment-order-outbox-publisher.yaml

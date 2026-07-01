@@ -3,24 +3,19 @@ import json
 import os
 import socket
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import redis
 
 from alfaka.common.env import load_dotenv, utc_now_iso
 from alfaka.common.redis_keys import RedisKeyBuilder
-from alfaka.serving.intervals import (
-    INTRADAY_PRELOAD_MIN_START_ENV,
-    backfill_target_days,
-    intraday_preload_min_start_iso,
-    normalize_chart_interval,
-    source_interval_for,
-)
+from alfaka.serving.intervals import normalize_chart_interval
 
 
 TERMINAL_STATUSES = {"succeeded", "failed", "unavailable"}
 ACTIVE_STATUSES = {"queued", "running"}
 RETRYABLE_TERMINAL_STATUSES = {"failed", "unavailable"}
+BACKFILL_STATUS_SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -36,24 +31,15 @@ class BackfillQueueItem:
     delivery_count: int = 1
 
 
-def default_backfill_range(now=None, lookback_hours=None, interval="1m"):
-    interval = normalize_chart_interval(interval)
-    resolved_now = now or datetime.now(timezone.utc)
-    if isinstance(resolved_now, str):
-        resolved_now = parse_time(resolved_now)
-    resolved_now = resolved_now.replace(second=0, microsecond=0)
-    hours = int(lookback_hours) if lookback_hours else backfill_target_days(interval) * 24
-    start = resolved_now - timedelta(hours=hours)
-    if source_interval_for(interval) == "1m":
-        guard = initial_load_range_guard("1m")
-        start = max(start, parse_time(guard["minStart"]))
-    return BackfillRange(to_iso(start), to_iso(resolved_now))
-
-
 def resolve_backfill_range(start=None, end=None, interval="1m"):
-    if start and end:
-        return BackfillRange(to_iso(parse_time(start)), to_iso(parse_time(end)))
-    return default_backfill_range(interval=interval)
+    _ = normalize_chart_interval(interval)
+    if not start or not end:
+        raise ValueError("Backfill range requires explicit start and end timestamps.")
+    start_dt = parse_time(start)
+    end_dt = parse_time(end)
+    if end_dt <= start_dt:
+        raise ValueError("Backfill range end must be after start.")
+    return BackfillRange(to_iso(start_dt), to_iso(end_dt))
 
 
 def range_digest(symbol, interval, start, end):
@@ -91,7 +77,6 @@ class RedisBackfillStore:
         interval,
         start=None,
         end=None,
-        mode="default",
         source="api",
         force=False,
         job_type="gapfill",
@@ -120,12 +105,12 @@ class RedisBackfillStore:
             self.redis.set(lock_key, request_id, ex=self.ttl_seconds)
 
         record = {
+            "schemaVersion": BACKFILL_STATUS_SCHEMA_VERSION,
             "requestId": request_id,
             "symbol": symbol,
             "interval": interval,
             "range": {"start": backfill_range.start, "end": backfill_range.end},
             "status": "queued",
-            "mode": mode,
             "source": source,
             "jobType": normalize_job_type(job_type),
             "sourcePreference": source_preference,
@@ -150,117 +135,6 @@ class RedisBackfillStore:
         record = self.enqueue_request(record)
         return record, False
 
-    def create_initial_load_requests(
-        self,
-        symbols,
-        interval,
-        start,
-        end,
-        chunk_days=None,
-        max_enqueued=None,
-        max_backlog=None,
-        source_preference="coverage-first",
-        priority="bulk",
-        force=False,
-    ):
-        interval = normalize_chart_interval(interval)
-        if interval not in {"1m", "1D"}:
-            raise ValueError("Initial Load v1 supports canonical source intervals 1m and 1D only.")
-        validate_initial_load_range(interval, start, end)
-        symbol_list = [str(symbol).strip().upper() for symbol in symbols or [] if str(symbol).strip()]
-        chunks = chunk_backfill_range(start, end, interval, chunk_days=chunk_days)
-        max_enqueued = int(max_enqueued if max_enqueued is not None else os.getenv("BACKFILL_INITIAL_LOAD_MAX_ENQUEUE", "100"))
-        max_backlog = int(max_backlog if max_backlog is not None else os.getenv("BACKFILL_INITIAL_LOAD_MAX_BACKLOG", "1000"))
-        backlog_before = queue_backlog_count(self.queue_metrics())
-        if backlog_before >= max_backlog:
-            return {
-                "jobType": "initial_load",
-                "interval": interval,
-                "symbolCount": len(symbol_list),
-                "chunkCount": len(chunks) * len(symbol_list),
-                "createdCount": 0,
-                "skippedExistingCount": 0,
-                "remainingCount": len(chunks) * len(symbol_list),
-                "backlogBefore": backlog_before,
-                "maxBacklog": max_backlog,
-                "throttled": True,
-                "requests": [],
-                "skippedExisting": [],
-            }
-
-        capacity = max(0, min(max_enqueued, max_backlog - backlog_before))
-        created = []
-        skipped_existing = []
-        for symbol in symbol_list:
-            for chunk in chunks:
-                if len(created) >= capacity:
-                    break
-                existing = self.find_existing_initial_load_status(symbol, interval, chunk)
-                repair_existing_without_evidence = False
-                if existing and not force and should_skip_existing_initial_load(existing):
-                    skipped_existing.append({
-                        "requestId": existing["requestId"],
-                        "symbol": symbol,
-                        "interval": interval,
-                        "range": existing.get("range"),
-                        "status": existing.get("status"),
-                    })
-                    continue
-                if existing and not force and existing.get("status") == "succeeded":
-                    repair_existing_without_evidence = True
-                record, deduplicated = self.create_request(
-                    symbol,
-                    interval,
-                    start=chunk.start,
-                    end=chunk.end,
-                    mode="queue",
-                    source="initial-load",
-                    force=force or repair_existing_without_evidence,
-                    job_type="initial_load",
-                    source_preference=source_preference,
-                    priority=priority,
-                )
-                created.append({
-                    "requestId": record["requestId"],
-                    "symbol": symbol,
-                    "interval": interval,
-                    "range": record.get("range"),
-                    "deduplicated": deduplicated,
-                })
-            if len(created) >= capacity:
-                break
-
-        total_chunks = len(chunks) * len(symbol_list)
-        remaining_count = total_chunks - len(skipped_existing)
-        return {
-            "jobType": "initial_load",
-            "interval": interval,
-            "symbolCount": len(symbol_list),
-            "chunkCount": total_chunks,
-            "createdCount": len(created),
-            "skippedExistingCount": len(skipped_existing),
-            "remainingCount": remaining_count,
-            "backlogBefore": backlog_before,
-            "maxBacklog": max_backlog,
-            "throttled": len(created) < remaining_count,
-            "requests": created,
-            "skippedExisting": skipped_existing[:10],
-        }
-
-    def find_existing_initial_load_status(self, symbol, interval, chunk):
-        base_request_id = request_id_for(symbol, interval, chunk.start, chunk.end)
-        existing = self.get_status(base_request_id)
-        digest = range_digest(symbol, interval, chunk.start, chunk.end)
-        lock_id = self.redis.get(self.keys.backfill_lock(symbol, interval, digest))
-        if lock_id and lock_id != base_request_id:
-            locked = self.get_status(lock_id)
-            if locked and locked.get("idempotencyKey") == base_request_id:
-                if should_skip_existing_initial_load(locked):
-                    return locked
-                if not existing or existing.get("status") in RETRYABLE_TERMINAL_STATUSES:
-                    return locked
-        return existing
-
     def get_status(self, request_id):
         if not request_id:
             return None
@@ -284,6 +158,16 @@ class RedisBackfillStore:
         if status in TERMINAL_STATUSES and not next_record.get("finishedAt"):
             next_record["finishedAt"] = utc_now_iso()
         return self.set_status(next_record)
+
+    def record_no_data_before(self, symbol, interval, boundary):
+        interval = normalize_chart_interval(interval)
+        value = to_iso(parse_time(boundary))
+        key = self.keys.backfill_no_data_before(symbol, interval)
+        current = self.redis.get(key)
+        if current and parse_time(current) >= parse_time(value):
+            return current
+        self.redis.set(key, value, ex=self.ttl_seconds)
+        return value
 
     def enqueue_request(self, record):
         if self.queue_backend == "list":
@@ -520,21 +404,6 @@ class RedisBackfillStore:
         return BackfillQueueItem(request_id=request_id, stream_id=stream_id, delivery_count=delivery_count)
 
     def _record_for_stream_id(self, stream_id):
-        if not stream_id:
-            return None
-        # Redis Streams do not provide an efficient reverse lookup by stream ID.
-        # Status records store streamId so tests and low-volume recovery can find
-        # the matching request; production workers should carry requestId in the
-        # pending message fields.
-        for key, value in getattr(self.redis, "values", {}).items():
-            if ":backfill:status:" not in key and not key.startswith("backfill:status:"):
-                continue
-            try:
-                record = json.loads(value)
-            except Exception:
-                continue
-            if record.get("streamId") == stream_id:
-                return record
         return None
 
 
@@ -550,84 +419,12 @@ def to_iso(value):
 
 def normalize_job_type(value):
     job_type = (value or "gapfill").strip().lower().replace("-", "_")
-    allowed = {"initial_load", "gapfill", "replay_repair", "correction_replay"}
+    allowed = {"gapfill"}
     return job_type if job_type in allowed else "gapfill"
-
-
-def should_skip_existing_initial_load(record):
-    status = record.get("status")
-    if status in ACTIVE_STATUSES:
-        return True
-    if status == "succeeded":
-        return initial_load_has_s3_evidence(record)
-    return status not in RETRYABLE_TERMINAL_STATUSES
-
-
-def initial_load_has_s3_evidence(record):
-    result = record.get("result") or {}
-    if result.get("emptyRange") and result.get("emptyMarker"):
-        return True
-    processed_objects = result.get("processedObjects") or record.get("processedObjects") or []
-    if processed_objects:
-        return True
-    source = result.get("source") or record.get("source")
-    return source in {"alpaca", "s3-processed", "s3-processed-replay"} and bool(result.get("materializedRowCount"))
-
-
-def initial_load_range_guard(interval):
-    interval = normalize_chart_interval(interval)
-    if interval != "1m":
-        return None
-    raw_start = intraday_preload_min_start_iso()
-    return {
-        "env": INTRADAY_PRELOAD_MIN_START_ENV,
-        "minStart": to_iso(parse_time(raw_start)),
-        "reason": "1m_initial_load_preload_scope",
-    }
-
-
-def validate_initial_load_range(interval, start, end):
-    guard = initial_load_range_guard(interval)
-    if not guard:
-        return
-    start_dt = parse_time(start)
-    min_start_dt = parse_time(guard["minStart"])
-    if start_dt < min_start_dt:
-        raise ValueError(
-            f"Initial Load 1m start {to_iso(start_dt)} is before "
-            f"{guard['env']}={guard['minStart']}; 1m preload before 2025-04 is disabled. "
-            "Keep 1D on the 3-year bootstrap contract instead."
-        )
 
 
 def default_consumer_name():
     return os.getenv("BACKFILL_WORKER_ID") or f"{socket.gethostname()}:{os.getpid()}"
-
-
-def initial_load_chunk_days(interval, chunk_days=None):
-    if chunk_days is not None:
-        return int(chunk_days)
-    interval = normalize_chart_interval(interval)
-    if interval == "1D":
-        return int(os.getenv("BACKFILL_INITIAL_LOAD_1D_CHUNK_DAYS", "370"))
-    return int(os.getenv("BACKFILL_INITIAL_LOAD_1M_CHUNK_DAYS", "5"))
-
-
-def chunk_backfill_range(start, end, interval, chunk_days=None):
-    start_dt = parse_time(start)
-    end_dt = parse_time(end)
-    if end_dt <= start_dt:
-        raise ValueError("Backfill chunk end must be after start.")
-    days = initial_load_chunk_days(interval, chunk_days=chunk_days)
-    if days <= 0:
-        raise ValueError("Backfill chunk days must be positive.")
-    chunks = []
-    cursor = start_dt
-    while cursor < end_dt:
-        chunk_end = min(cursor + timedelta(days=days), end_dt)
-        chunks.append(BackfillRange(to_iso(cursor), to_iso(chunk_end)))
-        cursor = chunk_end
-    return chunks
 
 
 def queue_backlog_count(metrics):

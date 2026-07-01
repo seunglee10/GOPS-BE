@@ -42,7 +42,6 @@ class MarketDataQueryService:
         interval: str,
         start: str | None = None,
         end: str | None = None,
-        mode: str = "default",
         force: bool = False,
     ) -> dict[str, Any]:
         symbol = normalize_market_symbol(symbol)
@@ -55,7 +54,7 @@ class MarketDataQueryService:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=503, detail=f"Symbol registry failed: {exc}") from exc
-        return self.backfill_service.request_backfill(symbol, interval, start=start, end=end, mode=mode, force=force)
+        return self.backfill_service.request_backfill(symbol, interval, start=start, end=end, force=force)
 
     def backfill_status(self, symbol: str, interval: str, request_id: str | None = None) -> dict[str, Any]:
         symbol = normalize_market_symbol(symbol)

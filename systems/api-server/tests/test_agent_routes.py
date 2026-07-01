@@ -37,13 +37,13 @@ class AgentRoutesTest(unittest.TestCase):
         self.client = TestClient(create_app())
 
     def test_analyze_agents_delegates_to_orchestrator_gateway(self):
-        expected = {"analysisId": "analysis-1", "symbol": "NVDA", "status": "completed"}
+        expected = {"analysisId": "analysis-1", "symbol": "MSFT", "status": "completed"}
         with patch("app.routes.agents.request_agent_analysis", return_value=expected) as gateway:
-            response = self.client.post("/api/agents/analyze", json={"symbol": "NVDA", "intent": "analysis"})
+            response = self.client.post("/api/agents/analyze", json={"symbol": "MSFT", "intent": "analysis"})
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), expected)
-        self.assertEqual(gateway.call_args.args[0]["symbol"], "NVDA")
+        self.assertEqual(gateway.call_args.args[0]["symbol"], "MSFT")
         self.assertEqual(gateway.call_args.args[0]["routerMode"], "hybrid")
 
     def test_agent_report_delegates_to_gateway(self):

@@ -69,6 +69,9 @@ class RedisKeyBuilder:
     def backfill_latest(self, symbol, interval):
         return self.key(f"backfill:latest:{symbol}:{interval}")
 
+    def backfill_no_data_before(self, symbol, interval):
+        return self.key(f"backfill:no-data-before:{symbol}:{interval}")
+
     def backfill_queue(self):
         return self.key("backfill:queue")
 
@@ -77,3 +80,6 @@ class RedisKeyBuilder:
 
     def backfill_dead_letter_stream(self):
         return self.key("backfill:dead-letter")
+
+    def processor_dead_letter_stream(self):
+        return self.key("market-processor:dead-letter")

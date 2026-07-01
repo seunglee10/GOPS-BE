@@ -1,10 +1,11 @@
 # 역할: Kafka Processed Topic을 읽어 ClickHouse 조회 테이블에 적재합니다.
 # 사용: GOPS API Server가 과거 캔들을 ClickHouse에서 읽을 수 있게 만드는 연결 job입니다.
-# 입력: 기본은 market.candles.closed.v1만 적재합니다. tick 적재는 옵션입니다.
+# 입력: 기본은 closed candles/status/volume profile/news를 적재합니다.
 import json
 import os
 import re
 import sys
+from collections import defaultdict
 from datetime import datetime, timezone
 
 from alfaka.alpaca.feed_profiles import market_session_for_timestamp
@@ -12,6 +13,8 @@ from alfaka.common.env import load_dotenv, parse_csv
 from alfaka.common.kafka_io import create_json_consumer
 from alfaka.common.runtime_config import validate_required_values
 from alfaka.storage.candle_validation import invalid_candle_reason
+from alfaka.storage.processed_s3_archive import archive_processed_candles_to_s3
+from alfaka.storage.s3_prefixes import default_s3_archive_prefix, first_configured_prefix
 
 
 def main():
@@ -25,7 +28,6 @@ def main():
         os.getenv("KAFKA_VOLUME_PROFILE_BINS_TOPIC", "market.volume-profile-bins.1m.v1"),
         os.getenv("KAFKA_NEWS_TOPIC", "market.news.alpaca.v1"),
     ])))
-    load_trades = os.getenv("CLICKHOUSE_LOAD_TRADES", "false").lower() in {"1", "true", "yes"}
     enable_auto_commit = os.getenv("KAFKA_CLICKHOUSE_ENABLE_AUTO_COMMIT", "false").lower() in {"1", "true", "yes"}
     validate_required_values("clickhouse loader", {
         "kafka_servers": kafka_servers,
@@ -42,6 +44,7 @@ def main():
         password=os.getenv("CLICKHOUSE_PASSWORD", "alfaka"),
     )
     client.ensure_market_data_schema()
+    archive = PostClickHouseCandleArchive.from_env()
 
     consumer = create_json_consumer(
         topics,
@@ -53,25 +56,24 @@ def main():
     print(f"ClickHouse loader 시작: topics={topics}", flush=True)
     print(f"ClickHouse 연결: {client.url}/{client.database}", flush=True)
 
-    for record in consumer:
-        payload = record.value
-        try:
-            load_payload(client, payload, load_trades=load_trades)
-            if not enable_auto_commit:
-                consumer.commit()
-        except Exception as exc:
-            print(f"ClickHouse 적재 실패: {exc}; payload={json.dumps(payload, ensure_ascii=False)}", file=sys.stderr, flush=True)
+    try:
+        for record in consumer:
+            payload = record.value
+            try:
+                load_payload(client, payload, archive=archive)
+                if not enable_auto_commit:
+                    consumer.commit()
+                flush_archive_due(archive)
+            except Exception as exc:
+                print(f"ClickHouse 적재 실패: {exc}; payload={json.dumps(payload, ensure_ascii=False)}", file=sys.stderr, flush=True)
+    finally:
+        flush_archive(archive)
 
 
-def load_payload(client, payload, load_trades=False):
+def load_payload(client, payload, archive=None):
     event_type = payload.get("eventType")
     if event_type == "TRADE":
-        if not load_trades:
-            print(f"ClickHouse trade 적재 제외: symbol={payload.get('symbol', 'UNKNOWN')}", flush=True)
-            return
-        row = trade_to_clickhouse_row(payload)
-        client.insert_json_each_row("trade_ticks", [row])
-        print(f"ClickHouse trade 적재: symbol={row['symbol']} time={row['event_time']}", flush=True)
+        print(f"ClickHouse trade 적재 제외: symbol={payload.get('symbol', 'UNKNOWN')} realtime-only", flush=True)
         return
 
     if event_type == "MARKET_STATUS":
@@ -99,6 +101,7 @@ def load_payload(client, payload, load_trades=False):
         return
 
     if event_type == "CANDLE" and payload.get("isClosed", True):
+        payload = canonicalize_candle_payload(payload)
         reason = invalid_candle_reason(payload)
         if reason:
             print(
@@ -110,34 +113,49 @@ def load_payload(client, payload, load_trades=False):
         row = candle_to_clickhouse_row(payload)
         client.insert_json_each_row("chart_candles", [row])
         print(f"ClickHouse candle 적재: symbol={row['symbol']} interval={row['interval']} time={row['event_time']}", flush=True)
+        archive_loaded_candle(archive, payload)
         return
 
     print(f"ClickHouse 적재 제외 eventType={event_type}", flush=True)
 
 
-def trade_to_clickhouse_row(payload):
-    return {
-        "event_time": clickhouse_time(payload.get("timestamp")),
-        "symbol": payload.get("symbol", "UNKNOWN"),
-        "trade_id": int_or_zero(payload.get("tradeId")),
-        "price": float_or_zero(payload.get("price")),
-        "size": int_or_none(payload.get("size")),
-        "exchange": payload.get("exchange"),
-        "conditions": payload.get("conditions") or [],
-        "tape": payload.get("tape"),
-        "source": payload.get("source", "alpaca"),
-        "feed": payload.get("feed") or "unknown",
-        "feed_profile": payload.get("feedProfile") or payload.get("feed") or "unknown",
-        "market_session": payload.get("marketSession") or market_session_for_timestamp(payload.get("timestamp")),
-        "source_event_id": payload.get("sourceEventId"),
-        "received_at": clickhouse_time_or_none(payload.get("receivedAt")),
-    }
+def archive_loaded_candle(archive, payload):
+    if archive is None:
+        return
+    try:
+        archive.archive_candle_payload(payload)
+    except Exception as exc:
+        print(
+            f"ClickHouse post-insert S3 archive 실패: "
+            f"symbol={payload.get('symbol', 'UNKNOWN')} interval={payload.get('interval', 'unknown')} error={exc}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
+def flush_archive_due(archive):
+    if archive is None:
+        return
+    try:
+        archive.flush_due()
+    except Exception as exc:
+        print(f"ClickHouse post-insert S3 archive flush 실패: error={exc}", file=sys.stderr, flush=True)
+
+
+def flush_archive(archive):
+    if archive is None:
+        return
+    try:
+        archive.flush()
+    except Exception as exc:
+        print(f"ClickHouse post-insert S3 archive final flush 실패: error={exc}", file=sys.stderr, flush=True)
 
 
 def candle_to_clickhouse_row(payload):
     ma = payload.get("ma") or {}
+    timestamp = canonical_candle_timestamp(payload)
     return {
-        "event_time": clickhouse_time(payload.get("timestamp")),
+        "event_time": clickhouse_time(timestamp),
         "symbol": payload.get("symbol", "UNKNOWN"),
         "interval": payload.get("interval", "1m"),
         "open": float_or_zero(payload.get("open")),
@@ -155,10 +173,35 @@ def candle_to_clickhouse_row(payload):
         "source": payload.get("source", "stream-processor"),
         "feed": payload.get("feed") or "unknown",
         "feed_profile": payload.get("feedProfile") or payload.get("feed") or "unknown",
-        "market_session": payload.get("marketSession") or market_session_for_timestamp(payload.get("timestamp")),
+        "market_session": payload.get("marketSession") or candle_market_session(payload, timestamp),
         "source_event_id": payload.get("sourceEventId"),
         "created_at": clickhouse_time_or_none(payload.get("createdAt") or payload.get("updatedAt")),
     }
+
+
+def canonicalize_candle_payload(payload):
+    timestamp = canonical_candle_timestamp(payload)
+    if timestamp == payload.get("timestamp"):
+        return payload
+    normalized = dict(payload)
+    normalized["timestamp"] = timestamp
+    return normalized
+
+
+def canonical_candle_timestamp(payload):
+    timestamp = payload.get("timestamp")
+    if not timestamp:
+        return timestamp
+    if str(payload.get("interval", "1m")).upper() != "1D":
+        return timestamp
+    parsed = parse_time(timestamp).astimezone(timezone.utc)
+    return parsed.replace(hour=0, minute=0, second=0, microsecond=0).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def candle_market_session(payload, timestamp):
+    if str(payload.get("interval", "1m")).upper() == "1D":
+        return "regular"
+    return market_session_for_timestamp(timestamp)
 
 
 def status_to_clickhouse_row(payload):
@@ -297,7 +340,6 @@ class ClickHouseHttpClient:
         if os.getenv("CLICKHOUSE_ENSURE_SESSION_COLUMNS", "true").lower() not in {"1", "true", "yes"}:
             return
         for table, after_column in (
-            ("trade_ticks", "feed"),
             ("chart_candles", "feed"),
             ("volume_profile_bins_1m", "feed"),
             ("market_status_events", "feed"),
@@ -314,3 +356,132 @@ def clickhouse_identifier(value):
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(value)):
         raise ValueError(f"Invalid ClickHouse identifier: {value}")
     return str(value)
+
+
+class PostClickHouseCandleArchive:
+    def __init__(
+        self,
+        *,
+        bucket,
+        prefix,
+        output_format,
+        manifest_prefix,
+        manifest_layout,
+        max_attempts,
+        retry_sleep_seconds,
+        rows_per_object,
+        flush_rows,
+        flush_interval_seconds,
+        s3=None,
+    ):
+        self.s3 = s3
+        self.bucket = bucket
+        self.prefix = prefix
+        self.output_format = output_format
+        self.manifest_prefix = manifest_prefix
+        self.manifest_layout = manifest_layout
+        self.max_attempts = max_attempts
+        self.retry_sleep_seconds = retry_sleep_seconds
+        self.rows_per_object = rows_per_object
+        self.flush_rows = flush_rows
+        self.flush_interval_seconds = flush_interval_seconds
+        self.buffered_rows = []
+        self.buffer_started_at = None
+
+    @classmethod
+    def from_env(cls, environ=None):
+        environ = environ or os.environ
+        if str(environ.get("CLICKHOUSE_LOADER_S3_ARCHIVE_ENABLED", "true")).strip().lower() not in {"1", "true", "yes", "y", "on"}:
+            print("ClickHouse post-insert S3 archive 비활성화: CLICKHOUSE_LOADER_S3_ARCHIVE_ENABLED=false", flush=True)
+            return None
+        bucket = environ.get("S3_BUCKET")
+        if not bucket:
+            print("ClickHouse post-insert S3 archive 비활성화: S3_BUCKET not configured", flush=True)
+            return None
+        return cls(
+            bucket=bucket,
+            prefix=first_configured_prefix(["S3_FINAL_PREFIX"], default_s3_archive_prefix("final", environ), environ),
+            output_format=str(environ.get("S3_PROCESSED_FORMAT", "parquet")).strip().lower(),
+            manifest_prefix=first_configured_prefix(["S3_MANIFEST_PREFIX"], default_s3_archive_prefix("manifest", environ), environ),
+            manifest_layout=str(environ.get("S3_PROCESSED_MANIFEST_LAYOUT", "daily")).strip() or "daily",
+            max_attempts=parse_positive_int(environ.get("S3_PUT_MAX_ATTEMPTS", "3"), 3),
+            retry_sleep_seconds=parse_non_negative_float(environ.get("S3_PUT_RETRY_SLEEP_SECONDS", "1"), 1),
+            rows_per_object=parse_positive_int(environ.get("S3_CLICKHOUSE_ARCHIVE_ROWS_PER_OBJECT", "10000"), 10000),
+            flush_rows=parse_positive_int(environ.get("S3_CLICKHOUSE_ARCHIVE_FLUSH_ROWS", "1000"), 1000),
+            flush_interval_seconds=parse_non_negative_float(environ.get("S3_CLICKHOUSE_ARCHIVE_FLUSH_SECONDS", "60"), 60),
+        )
+
+    def archive_candle_payload(self, payload):
+        if not self.buffered_rows:
+            self.buffer_started_at = datetime.now(timezone.utc)
+        self.buffered_rows.append(dict(payload))
+        if len(self.buffered_rows) >= self.flush_rows:
+            return self.flush()
+        return {"archiveStatus": "buffered", "archiveBufferedRowCount": len(self.buffered_rows)}
+
+    def flush_due(self, now=None):
+        if not self.buffered_rows or self.flush_interval_seconds <= 0:
+            return {"archiveStatus": "skipped", "archiveReason": "not due"}
+        now = now or datetime.now(timezone.utc)
+        started_at = self.buffer_started_at or now
+        if (now - started_at).total_seconds() < self.flush_interval_seconds:
+            return {"archiveStatus": "skipped", "archiveReason": "not due"}
+        return self.flush()
+
+    def flush(self):
+        if not self.buffered_rows:
+            return {"archiveStatus": "skipped", "archiveReason": "empty buffer"}
+        if self.s3 is None:
+            from alfaka.common.s3_client import create_s3_client
+            self.s3 = create_s3_client()
+        rows = self.buffered_rows
+        self.buffered_rows = []
+        self.buffer_started_at = None
+        result = archive_processed_candles_to_s3(
+            self.s3,
+            self.bucket,
+            self.prefix,
+            rows,
+            output_format=self.output_format,
+            manifest_prefix=self.manifest_prefix,
+            manifest_layout=self.manifest_layout,
+            max_attempts=self.max_attempts,
+            retry_sleep_seconds=self.retry_sleep_seconds,
+            rows_per_object=self.rows_per_object,
+        )
+        summary = summarize_archive_rows(rows)
+        print(
+            f"ClickHouse post-insert S3 archive: "
+            f"rows={result['rowCount']} objects={result['objectCount']} groups={summary}",
+            flush=True,
+        )
+        return result
+
+
+def summarize_archive_rows(rows, max_groups=8):
+    groups = defaultdict(int)
+    for row in rows:
+        groups[(row.get("symbol", "UNKNOWN"), row.get("interval", "unknown"))] += 1
+    items = sorted(groups.items())
+    visible = items[:max_groups]
+    summary = ",".join(f"{symbol}:{interval}:{count}" for (symbol, interval), count in visible)
+    remaining = len(items) - len(visible)
+    if remaining > 0:
+        summary = f"{summary},+{remaining} groups"
+    return summary
+
+
+def parse_positive_int(value, default):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+def parse_non_negative_float(value, default):
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed >= 0 else default

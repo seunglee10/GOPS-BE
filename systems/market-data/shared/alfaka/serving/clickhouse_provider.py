@@ -4,11 +4,14 @@
 import json
 import os
 import re
+from datetime import datetime, time, timedelta, timezone
 
-from alfaka.common.env import load_dotenv
+from alfaka.common.env import load_dotenv, parse_csv
 from alfaka.serving.dto import snapshot
+from alfaka.serving.history_window import history_floor_iso
 from alfaka.serving.intervals import normalize_chart_interval, resolve_candle_limit
 from alfaka.serving.moving_average import attach_moving_averages
+from alfaka.serving.time_utils import parse_utc_time
 
 
 class ClickHouseMarketDataProvider:
@@ -18,6 +21,15 @@ class ClickHouseMarketDataProvider:
         self.database = database or os.getenv("CLICKHOUSE_DATABASE", "market_data")
         self.user = user or os.getenv("CLICKHOUSE_USER", "alfaka")
         self.password = password or os.getenv("CLICKHOUSE_PASSWORD", "alfaka")
+        self.market_timezone = os.getenv("MARKET_TIMEZONE", "America/New_York")
+        self.feed_profile_priority = feed_profile_priority(
+            os.getenv("MARKET_FEED_PROFILE_PRIORITY"),
+            "sip,iex,boats,overnight,unknown",
+        )
+        self.overnight_feed_profile_priority = feed_profile_priority(
+            os.getenv("MARKET_OVERNIGHT_FEED_PROFILE_PRIORITY"),
+            "boats,overnight,sip,iex,unknown",
+        )
         if os.getenv("CLICKHOUSE_PROVIDER_ENSURE_SESSION_COLUMNS", "false").lower() in {"1", "true", "yes"}:
             self.ensure_market_data_schema()
 
@@ -30,8 +42,8 @@ class ClickHouseMarketDataProvider:
             return self.daily_candles(symbol, interval, limit, before=before, from_time=from_time, to_time=to_time)
         if interval in {"1W", "1M"}:
             return self.aggregated_daily_candles(symbol, interval, limit, before=before, from_time=from_time, to_time=to_time)
-        time_filter = ""
         params = {"symbol": symbol, "limit": int(limit)}
+        time_filter = history_time_filter(interval, params)
         interval_filter = "interval IN ('1D', '1d')" if interval == "1D" else "interval = {interval:String}"
         if interval != "1D":
             params["interval"] = interval
@@ -39,7 +51,7 @@ class ClickHouseMarketDataProvider:
             time_filter += "\n          AND event_time >= parseDateTime64BestEffort({fromTime:String})"
             params["fromTime"] = from_time
         if to_time:
-            time_filter += "\n          AND event_time <= parseDateTime64BestEffort({toTime:String})"
+            time_filter += "\n          AND event_time < parseDateTime64BestEffort({toTime:String})"
             params["toTime"] = to_time
         if before:
             time_filter += "\n          AND event_time < parseDateTime64BestEffort({before:String})"
@@ -58,6 +70,7 @@ class ClickHouseMarketDataProvider:
           high,
           low,
           close,
+          vwap,
           volume,
           is_closed AS isClosed,
           ma5,
@@ -82,13 +95,13 @@ class ClickHouseMarketDataProvider:
     def daily_candles(self, symbol, interval="1D", limit=None, before=None, from_time=None, to_time=None):
         interval = normalize_chart_interval(interval)
         limit = resolve_candle_limit(interval, limit)
-        time_filter = ""
         params = {"symbol": symbol, "limit": int(limit)}
+        time_filter = history_time_filter(interval, params)
         if from_time:
             time_filter += "\n          AND event_time >= parseDateTime64BestEffort({fromTime:String})"
             params["fromTime"] = from_time
         if to_time:
-            time_filter += "\n          AND event_time <= parseDateTime64BestEffort({toTime:String})"
+            time_filter += "\n          AND event_time < parseDateTime64BestEffort({toTime:String})"
             params["toTime"] = to_time
         if before:
             time_filter += "\n          AND event_time < parseDateTime64BestEffort({before:String})"
@@ -102,7 +115,7 @@ class ClickHouseMarketDataProvider:
         """)
         query = f"""
         SELECT
-          formatDateTime(bucket, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS timestamp,
+          concat(toString(bucket_date), 'T00:00:00.000Z') AS timestamp,
           argMin(open, event_time) AS open,
           max(high) AS high,
           min(low) AS low,
@@ -113,17 +126,18 @@ class ClickHouseMarketDataProvider:
           anyLast(source) AS source,
           anyLast(feed) AS feed,
           anyLast(feed_profile) AS feedProfile,
-          anyLast(market_session) AS marketSession,
-          concat('agg/1D/', symbol, '/', formatDateTime(bucket, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC')) AS sourceEventId
+          'regular' AS marketSession,
+          concat('agg/1D/', symbol, '/', toString(bucket_date)) AS sourceEventId
         FROM (
           SELECT
-            toStartOfDay(event_time) AS bucket,
+            toDate(event_time) AS bucket_date,
             event_time,
             symbol,
             open,
             high,
             low,
             close,
+            vwap,
             volume,
             is_closed,
             source,
@@ -134,8 +148,8 @@ class ClickHouseMarketDataProvider:
             {source_query}
           )
         )
-        GROUP BY symbol, bucket
-        ORDER BY bucket DESC
+        GROUP BY symbol, bucket_date
+        ORDER BY bucket_date DESC
         LIMIT {{limit:UInt32}}
         FORMAT JSONEachRow
         """
@@ -148,13 +162,13 @@ class ClickHouseMarketDataProvider:
         interval = normalize_chart_interval(interval)
         limit = resolve_candle_limit(interval, limit)
         bucket_minutes = {"5m": 5, "10m": 10}[interval]
-        time_filter = ""
         params = {"symbol": symbol, "limit": int(limit)}
+        time_filter = history_time_filter(interval, params)
         if from_time:
             time_filter += "\n          AND event_time >= parseDateTime64BestEffort({fromTime:String})"
             params["fromTime"] = from_time
         if to_time:
-            time_filter += "\n          AND event_time <= parseDateTime64BestEffort({toTime:String})"
+            time_filter += "\n          AND event_time < parseDateTime64BestEffort({toTime:String})"
             params["toTime"] = to_time
         if before:
             time_filter += "\n          AND event_time < parseDateTime64BestEffort({before:String})"
@@ -214,28 +228,22 @@ class ClickHouseMarketDataProvider:
         # The long-term contract is to materialize these interval candles into chart_candles.
         interval = normalize_chart_interval(interval)
         limit = resolve_candle_limit(interval, limit)
-        bucket_expr = "toMonday(event_time)" if interval == "1W" else "toStartOfMonth(event_time)"
-        time_filter = ""
+        bucket_expr = "toMonday(toDate(event_time))" if interval == "1W" else "toStartOfMonth(toDate(event_time))"
         params = {"symbol": symbol, "limit": int(limit)}
-        if from_time:
-            time_filter += "\n          AND event_time >= parseDateTime64BestEffort({fromTime:String})"
-            params["fromTime"] = from_time
-        if to_time:
-            time_filter += "\n          AND event_time <= parseDateTime64BestEffort({toTime:String})"
-            params["toTime"] = to_time
-        if before:
-            time_filter += "\n          AND event_time < parseDateTime64BestEffort({before:String})"
-            params["before"] = before
+        time_filter = history_time_filter(interval, params)
+        source_time_filter = aggregated_source_time_filter(interval, from_time, to_time, before, params)
+        bucket_time_filter = aggregated_bucket_time_filter(from_time, to_time, before, params)
 
         source_query = self.latest_chart_candles_source(f"""
             symbol = {{symbol:String}}
             AND interval IN ('1D', '1d')
             AND toDayOfWeek(event_time) BETWEEN 1 AND 5
             {time_filter}
+            {source_time_filter}
         """)
         query = f"""
         SELECT
-          formatDateTime(bucket, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS timestamp,
+          concat(toString(bucket_date), 'T00:00:00.000Z') AS timestamp,
           argMin(open, event_time) AS open,
           max(high) AS high,
           min(low) AS low,
@@ -246,11 +254,12 @@ class ClickHouseMarketDataProvider:
           anyLast(source) AS source,
           anyLast(feed) AS feed,
           anyLast(feed_profile) AS feedProfile,
-          anyLast(market_session) AS marketSession,
-          concat('agg/{interval}/', symbol, '/', formatDateTime(bucket, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC')) AS sourceEventId
+          'regular' AS marketSession,
+          concat('agg/{interval}/', symbol, '/', toString(bucket_date)) AS sourceEventId
         FROM (
           SELECT
-            {bucket_expr} AS bucket,
+            {bucket_expr} AS bucket_date,
+            toDateTime64({bucket_expr}, 3, 'UTC') AS bucket_timestamp,
             event_time,
             symbol,
             open,
@@ -266,8 +275,9 @@ class ClickHouseMarketDataProvider:
             {source_query}
           )
         )
-        GROUP BY symbol, bucket
-        ORDER BY bucket DESC
+        {bucket_time_filter}
+        GROUP BY symbol, bucket_date
+        ORDER BY bucket_date DESC
         LIMIT {{limit:UInt32}}
         FORMAT JSONEachRow
         """
@@ -283,6 +293,7 @@ class ClickHouseMarketDataProvider:
         operator = ">=" if include_from else ">"
         interval_filter = "interval IN ('1D', '1d')" if interval == "1D" else "interval = {interval:String}"
         params = {"symbol": symbol, "timestamp": timestamp, "limit": int(limit)}
+        time_filter = history_time_filter(interval, params)
         if interval != "1D":
             params["interval"] = interval
         source_query = self.latest_chart_candles_source(f"""
@@ -290,6 +301,7 @@ class ClickHouseMarketDataProvider:
             AND {interval_filter}
             AND toDayOfWeek(event_time) BETWEEN 1 AND 5
             AND event_time {operator} parseDateTime64BestEffort({{timestamp:String}})
+            {time_filter}
         """)
         query = f"""
         SELECT
@@ -330,23 +342,29 @@ class ClickHouseMarketDataProvider:
         stored_interval = "1m" if interval in {"5m", "10m"} else "1D" if interval in {"1W", "1M"} else interval
         interval_filter = "interval IN ('1D', '1d')" if stored_interval == "1D" else "interval = {interval:String}"
         params = {"symbol": symbol}
+        time_filter = history_time_filter(interval, params)
         if stored_interval != "1D":
             params["interval"] = stored_interval
         if stored_interval == "1D":
             row_count_expr = "uniqExactIf(toDate(event_time), toDayOfWeek(event_time) BETWEEN 1 AND 5)"
+            available_from_expr = "concat(toString(minIf(toDate(event_time), toDayOfWeek(event_time) BETWEEN 1 AND 5)), 'T00:00:00.000Z')"
+            available_to_expr = "concat(toString(maxIf(toDate(event_time), toDayOfWeek(event_time) BETWEEN 1 AND 5)), 'T00:00:00.000Z')"
         else:
             row_count_expr = "countIf(toDayOfWeek(event_time) BETWEEN 1 AND 5)"
+            available_from_expr = "formatDateTime(minIf(event_time, toDayOfWeek(event_time) BETWEEN 1 AND 5), '%Y-%m-%dT%H:%i:%S.000Z', 'UTC')"
+            available_to_expr = "formatDateTime(maxIf(event_time, toDayOfWeek(event_time) BETWEEN 1 AND 5), '%Y-%m-%dT%H:%i:%S.000Z', 'UTC')"
 
         source_query = self.latest_chart_candles_source(f"""
             symbol = {{symbol:String}}
             AND {interval_filter}
+            {time_filter}
         """)
         query = f"""
         SELECT
           {row_count_expr} AS rowCount,
           countIf(toDayOfWeek(event_time) NOT BETWEEN 1 AND 5) AS invalidRowCount,
-          formatDateTime(minIf(event_time, toDayOfWeek(event_time) BETWEEN 1 AND 5), '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS availableFrom,
-          formatDateTime(maxIf(event_time, toDayOfWeek(event_time) BETWEEN 1 AND 5), '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS availableTo
+          {available_from_expr} AS availableFrom,
+          {available_to_expr} AS availableTo
         FROM (
           {source_query}
         )
@@ -374,6 +392,7 @@ class ClickHouseMarketDataProvider:
             "to": to_time,
             "limit": int(limit),
         }
+        time_filter = history_time_filter(interval, params)
         if stored_interval != "1D":
             params["interval"] = stored_interval
         source_query = self.latest_chart_candles_source(f"""
@@ -381,15 +400,22 @@ class ClickHouseMarketDataProvider:
             AND {interval_filter}
             AND event_time >= parseDateTimeBestEffort({{from:String}})
             AND event_time < parseDateTimeBestEffort({{to:String}})
+            {time_filter}
         """)
+        timestamp_expr = (
+            "concat(toString(toDate(event_time)), 'T00:00:00.000Z')"
+            if stored_interval == "1D"
+            else "formatDateTime(event_time, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC')"
+        )
+        distinct_clause = "DISTINCT " if stored_interval == "1D" else ""
         query = f"""
         SELECT
-          formatDateTime(event_time, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS timestamp
+          {distinct_clause}{timestamp_expr} AS timestamp
         FROM (
           {source_query}
         )
         WHERE toDayOfWeek(event_time) BETWEEN 1 AND 5
-        ORDER BY event_time ASC
+        ORDER BY timestamp ASC
         LIMIT {{limit:UInt32}}
         FORMAT JSONEachRow
         """
@@ -419,7 +445,7 @@ class ClickHouseMarketDataProvider:
         rows = self.query_json_each_row(query, params)
         return rows[0] if rows else None
 
-    def hot_symbols_by_dollar_volume(self, symbols, limit=20):
+    def hot_symbols_by_dollar_volume(self, symbols, limit=10):
         symbols = [symbol for symbol in symbols if isinstance(symbol, str) and symbol.strip()]
         if not symbols:
             return []
@@ -428,7 +454,7 @@ class ClickHouseMarketDataProvider:
             return rows
         return self._hot_symbols_by_interval_dollar_volume(symbols, limit=limit, interval="1D")
 
-    def _hot_symbols_by_interval_dollar_volume(self, symbols, limit=20, interval="1m"):
+    def _hot_symbols_by_interval_dollar_volume(self, symbols, limit=10, interval="1m"):
         normalized_interval = "1D" if interval in {"1D", "1d"} else "1m"
         interval_filter = "interval IN ('1D', '1d')" if normalized_interval == "1D" else "interval = '1m'"
         try:
@@ -459,7 +485,7 @@ class ClickHouseMarketDataProvider:
           symbol,
           argMax(close, event_time) AS lastPrice,
           if(argMin(open, event_time) = 0, NULL, round(((argMax(close, event_time) - argMin(open, event_time)) / argMin(open, event_time)) * 100, 2)) AS changePercent,
-          sum(toFloat64(row_volume) * close) AS sessionDollarVolume,
+          sum(toFloat64(row_volume) * coalesce(vwap, close)) AS sessionDollarVolume,
           sum(row_volume) AS volume,
           formatDateTime(max(event_time), '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS sourceUpdatedAt,
           {clickhouse_string_literal('current_session' if normalized_interval == '1m' else 'latest_daily_session')} AS rankingWindow,
@@ -470,6 +496,7 @@ class ClickHouseMarketDataProvider:
             event_time,
             open,
             close,
+            vwap,
             volume AS row_volume
           FROM (
             {session_source_query}
@@ -493,6 +520,7 @@ class ClickHouseMarketDataProvider:
           high,
           low,
           close,
+          vwap,
           volume,
           is_closed,
           ma5,
@@ -513,6 +541,7 @@ class ClickHouseMarketDataProvider:
             high,
             low,
             close,
+            vwap,
             volume,
             is_closed,
             ma5,
@@ -526,13 +555,18 @@ class ClickHouseMarketDataProvider:
             source_event_id,
             row_number() OVER (
               PARTITION BY symbol, if(interval = '1d', '1D', interval), event_time
-              ORDER BY inserted_at DESC, ifNull(source_event_id, '') DESC
+              ORDER BY {self.feed_profile_rank_expression()} ASC, inserted_at DESC, ifNull(source_event_id, '') DESC
             ) AS rn
           FROM {self.table('chart_candles')}
           WHERE {where_sql}
         )
         WHERE rn = 1
         """
+
+    def feed_profile_rank_expression(self):
+        day_rank = feed_profile_rank_sql("feed_profile", self.feed_profile_priority)
+        overnight_rank = feed_profile_rank_sql("feed_profile", self.overnight_feed_profile_priority)
+        return f"if(market_session = 'overnight', {overnight_rank}, {day_rank})"
 
     def volume_profile_bins(self, symbol, from_time, to_time, price_bin_size=None, limit=10000):
         size_filter = "AND price_bin_size = {priceBinSize:Float64}" if price_bin_size else ""
@@ -563,7 +597,7 @@ class ClickHouseMarketDataProvider:
         return self.query_json_each_row(query, params)
 
     def ensure_market_data_schema(self):
-        for table in ("trade_ticks", "chart_candles", "volume_profile_bins_1m", "market_status_events"):
+        for table in ("chart_candles", "volume_profile_bins_1m", "market_status_events"):
             self.execute(
                 f"ALTER TABLE {self.table(table)} "
                 "ADD COLUMN IF NOT EXISTS feed_profile LowCardinality(String) DEFAULT feed AFTER feed, "
@@ -675,6 +709,82 @@ def first_value(rows, key, fallback):
     return fallback
 
 
+def history_time_filter(interval, params):
+    floor = history_floor_iso(interval)
+    if not floor:
+        return ""
+    params["historyFromTime"] = floor
+    return "\n          AND event_time >= parseDateTime64BestEffort({historyFromTime:String})"
+
+
+def aggregated_source_time_filter(interval, from_time, to_time, before, params):
+    clauses = []
+    if from_time:
+        params["sourceFromTime"] = bucket_floor_iso(from_time, interval)
+        clauses.append("AND event_time >= parseDateTime64BestEffort({sourceFromTime:String})")
+    upper_bound = earliest_time(to_time, before)
+    if upper_bound:
+        params["sourceToTime"] = bucket_ceil_iso(upper_bound, interval)
+        clauses.append("AND event_time < parseDateTime64BestEffort({sourceToTime:String})")
+    return "\n          " + "\n          ".join(clauses) if clauses else ""
+
+
+def aggregated_bucket_time_filter(from_time, to_time, before, params):
+    clauses = []
+    if from_time:
+        params["bucketFromTime"] = from_time
+        clauses.append("bucket_timestamp >= parseDateTime64BestEffort({bucketFromTime:String})")
+    if to_time:
+        params["bucketToTime"] = to_time
+        clauses.append("bucket_timestamp < parseDateTime64BestEffort({bucketToTime:String})")
+    if before:
+        params["bucketBeforeTime"] = before
+        clauses.append("bucket_timestamp < parseDateTime64BestEffort({bucketBeforeTime:String})")
+    return "WHERE " + "\n          AND ".join(clauses) if clauses else ""
+
+
+def earliest_time(*values):
+    parsed_values = [parse_utc_time(value) for value in values if value]
+    parsed_values = [value for value in parsed_values if value]
+    if not parsed_values:
+        return None
+    return canonical_query_timestamp(min(parsed_values))
+
+
+def bucket_floor_iso(value, interval):
+    parsed = parse_utc_time(value)
+    if not parsed:
+        return value
+    interval = normalize_chart_interval(interval)
+    if interval == "1W":
+        bucket_date = parsed.date() - timedelta(days=parsed.weekday())
+        return canonical_query_timestamp(datetime.combine(bucket_date, time(0, 0), timezone.utc))
+    if interval == "1M":
+        return canonical_query_timestamp(datetime(parsed.year, parsed.month, 1, tzinfo=timezone.utc))
+    return canonical_query_timestamp(parsed)
+
+
+def bucket_ceil_iso(value, interval):
+    parsed = parse_utc_time(value)
+    if not parsed:
+        return value
+    floor = parse_utc_time(bucket_floor_iso(value, interval))
+    if not floor or parsed == floor:
+        return canonical_query_timestamp(parsed)
+    interval = normalize_chart_interval(interval)
+    if interval == "1W":
+        return canonical_query_timestamp(floor + timedelta(days=7))
+    if interval == "1M":
+        year = floor.year + (1 if floor.month == 12 else 0)
+        month = 1 if floor.month == 12 else floor.month + 1
+        return canonical_query_timestamp(datetime(year, month, 1, tzinfo=timezone.utc))
+    return canonical_query_timestamp(parsed)
+
+
+def canonical_query_timestamp(value):
+    return value.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
 def clickhouse_identifier(value):
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(value)):
         raise ValueError(f"Invalid ClickHouse identifier: {value}")
@@ -685,6 +795,28 @@ def clickhouse_param_value(value):
     if isinstance(value, (list, tuple)):
         return "[" + ",".join(clickhouse_string_literal(item) for item in value) + "]"
     return value
+
+
+def feed_profile_priority(value, default_value):
+    priority = []
+    seen = set()
+    for profile in parse_csv(value or default_value):
+        normalized = profile.strip().lower()
+        if not normalized or normalized in seen:
+            continue
+        priority.append(normalized)
+        seen.add(normalized)
+    if "unknown" not in seen:
+        priority.append("unknown")
+    return priority
+
+
+def feed_profile_rank_sql(column, priority):
+    clauses = []
+    for rank, profile in enumerate(priority):
+        clauses.extend([f"{column} = {clickhouse_string_literal(profile)}", str(rank)])
+    clauses.append(str(len(priority) + 100))
+    return f"multiIf({', '.join(clauses)})"
 
 
 def clickhouse_string_literal(value):

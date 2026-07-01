@@ -112,16 +112,16 @@ class AgentOrchestrationTests(unittest.TestCase):
 
     def test_orchestrator_returns_report_with_empty_provider_evidence(self):
         report = AgentOrchestrator().analyze({
-            "symbol": "NVDA",
+            "symbol": "MSFT",
             "intent": "analyze",
             "chartContext": {
-                "chartDocument": {"symbol": "NVDA", "timeframe": "1m"},
+                "chartDocument": {"symbol": "MSFT", "timeframe": "1m"},
                 "visibleSummary": {"lastPrice": "120.00", "change": "+2.10%"},
                 "dataStatus": {"candleCount": 10, "state": "ready"},
             },
         })
 
-        self.assertEqual(report.symbol, "NVDA")
+        self.assertEqual(report.symbol, "MSFT")
         self.assertEqual(report.status, "completed")
         self.assertEqual(report.route.intentType, "general-analysis")
         self.assertIsNotNone(report.finalAnswer)
@@ -130,11 +130,11 @@ class AgentOrchestrationTests(unittest.TestCase):
 
     def test_orchestrator_runs_only_requested_visible_agents_before_internal_steps(self):
         report = AgentOrchestrator().analyze({
-            "symbol": "NVDA",
+            "symbol": "MSFT",
             "intent": "analyze news with chart",
             "agentIds": ["agent-01", "agent-02"],
             "chartContext": {
-                "chartDocument": {"symbol": "NVDA", "timeframe": "1m"},
+                "chartDocument": {"symbol": "MSFT", "timeframe": "1m"},
                 "visibleSummary": {"lastPrice": "120.00", "change": "+2.10%"},
                 "dataStatus": {"candleCount": 10, "state": "ready"},
             },
@@ -153,12 +153,12 @@ class AgentOrchestrationTests(unittest.TestCase):
 
     def test_conductor_routes_news_intent_even_when_chart_agent_is_selected(self):
         report = AgentOrchestrator().analyze({
-            "symbol": "NVDA",
+            "symbol": "MSFT",
             "intent": "뉴스 보여줘",
             "agentIds": ["agent-01"],
             "layoutContext": layout_context(),
             "chartContext": {
-                "chartDocument": {"symbol": "NVDA", "timeframe": "1m"},
+                "chartDocument": {"symbol": "MSFT", "timeframe": "1m"},
                 "dataStatus": {"candleCount": 10, "state": "ready"},
             },
         })
@@ -173,7 +173,7 @@ class AgentOrchestrationTests(unittest.TestCase):
 
     def test_layout_agent_skips_commands_without_layout_context(self):
         report = AgentOrchestrator().analyze({
-            "symbol": "NVDA",
+            "symbol": "MSFT",
             "intent": "뉴스 보여줘",
         })
 
@@ -182,7 +182,7 @@ class AgentOrchestrationTests(unittest.TestCase):
 
     def test_layout_agent_does_not_move_pinned_primary_panel(self):
         report = AgentOrchestrator().analyze({
-            "symbol": "NVDA",
+            "symbol": "MSFT",
             "intent": "뉴스 보여줘",
             "layoutContext": layout_context(pinned_news=True),
         })
@@ -192,10 +192,10 @@ class AgentOrchestrationTests(unittest.TestCase):
 
     def test_conductor_routes_market_move_to_all_visible_roles(self):
         report = AgentOrchestrator().analyze({
-            "symbol": "NVDA",
-            "intent": "NVDA 왜 올랐어?",
+            "symbol": "MSFT",
+            "intent": "MSFT 왜 올랐어?",
             "chartContext": {
-                "chartDocument": {"symbol": "NVDA", "timeframe": "1m"},
+                "chartDocument": {"symbol": "MSFT", "timeframe": "1m"},
                 "dataStatus": {"candleCount": 10, "state": "ready"},
             },
         })
@@ -205,16 +205,16 @@ class AgentOrchestrationTests(unittest.TestCase):
 
     def test_event_detector_detects_price_surge_and_volume_spike(self):
         detector = MarketEventDetector(MarketEventThresholds(price_change_percent=3.0, volume_spike_multiplier=2.0))
-        self.assertEqual(detector.detect({"symbol": "NVDA", "price": 100, "volume": 100}, "market.ticks.v1"), [])
+        self.assertEqual(detector.detect({"symbol": "MSFT", "price": 100, "volume": 100}, "market.ticks.v1"), [])
 
-        events = detector.detect({"symbol": "NVDA", "price": 105, "volume": 250}, "market.ticks.v1")
+        events = detector.detect({"symbol": "MSFT", "price": 105, "volume": 250}, "market.ticks.v1")
 
         event_types = {event.eventType for event in events}
         self.assertIn("price_surge", event_types)
         self.assertIn("volume_spike", event_types)
 
     def test_notification_payload_preserves_decision(self):
-        payload = notification_payload({"symbol": "NVDA", "level": "alert", "showToast": True})
+        payload = notification_payload({"symbol": "MSFT", "level": "alert", "showToast": True})
 
         self.assertEqual(payload["type"], "AGENT_ALERT")
         self.assertTrue(payload["showToast"])
@@ -223,15 +223,15 @@ class AgentOrchestrationTests(unittest.TestCase):
         rows = [
             {
                 "articleId": "a-1",
-                "headline": "NVDA shares rise after strong earnings",
-                "summary": "NVDA revenue beat expectations.",
+                "headline": "MSFT shares rise after strong earnings",
+                "summary": "MSFT revenue beat expectations.",
                 "publishedAt": "2026-06-28T00:00:00Z",
                 "url": "https://example.com/old",
             },
             {
                 "articleId": "a-1",
-                "headline": "NVDA shares rise after strong earnings",
-                "summary": "NVDA revenue beat expectations.",
+                "headline": "MSFT shares rise after strong earnings",
+                "summary": "MSFT revenue beat expectations.",
                 "publishedAt": "2026-06-29T00:00:00Z",
                 "url": "https://example.com/new",
             },
@@ -244,7 +244,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         ]
         provider = ClickHouseNewsProvider(clickhouse_provider=FakeClickHouseProvider(rows), limit=10)
 
-        evidence = provider.fetch(ProviderRequest("NVDA", "뉴스 보여줘"))
+        evidence = provider.fetch(ProviderRequest("MSFT", "뉴스 보여줘"))
 
         self.assertEqual(len(evidence), 2)
         self.assertEqual(evidence[0].url, "https://example.com/new")
@@ -257,14 +257,14 @@ class AgentOrchestrationTests(unittest.TestCase):
             clickhouse_provider=FakeClickHouseProvider([
                 {
                     "articleId": "a-1",
-                    "headline": "NVDA shares rise after strong earnings",
-                    "summary": "NVDA revenue beat expectations.",
+                    "headline": "MSFT shares rise after strong earnings",
+                    "summary": "MSFT revenue beat expectations.",
                     "publishedAt": "2026-06-29T00:00:00Z",
                 }
             ]),
             limit=10,
         )
-        context = AgentContext(symbol="NVDA", intent="뉴스 보여줘")
+        context = AgentContext(symbol="MSFT", intent="뉴스 보여줘")
         response = {
             "output_text": json.dumps({
                 "summary": "OpenAI가 뉴스 1건을 근거로 요약했습니다.",
@@ -283,7 +283,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(openai_finding.role, "news-analysis")
         self.assertEqual(openai_finding.summary, "OpenAI가 뉴스 1건을 근거로 요약했습니다.")
         self.assertEqual(fallback_finding.role, "news-analysis")
-        self.assertIn("NVDA 뉴스 1건", fallback_finding.summary)
+        self.assertIn("MSFT 뉴스 1건", fallback_finding.summary)
         self.assertTrue(fallback_finding.evidence[0].raw["impactDirection"])
 
     def test_graphdb_provider_maps_sparql_rows_to_ontology_evidence(self):
@@ -291,11 +291,11 @@ class AgentOrchestrationTests(unittest.TestCase):
             "results": {
                 "bindings": [
                     {
-                        "ticker": {"value": "NVDA"},
-                        "companyName": {"value": "NVIDIA Corp"},
-                        "themeName": {"value": "AI/반도체/데이터센터"},
+                        "ticker": {"value": "MSFT"},
+                        "companyName": {"value": "Microsoft Corp"},
+                        "themeName": {"value": "클라우드/AI/인프라"},
                         "themeCategory": {"value": "growth"},
-                        "controlledName": {"value": "Mellanox Technologies"},
+                        "controlledName": {"value": "LinkedIn Corporation"},
                         "confidence": {"value": "0.94"},
                         "accession": {"value": "0001045810-24-000001"},
                         "sourceUrl": {"value": "https://www.sec.gov/example"},
@@ -305,24 +305,24 @@ class AgentOrchestrationTests(unittest.TestCase):
         }
         provider = GraphDBOntologyProvider(sparql_client=FakeSparqlClient(payload), limit=3)
 
-        evidence = provider.fetch(ProviderRequest("NVDA", "AI/반도체/데이터센터 관계 분석"))
+        evidence = provider.fetch(ProviderRequest("MSFT", "클라우드/AI/인프라 관계 분석"))
 
         self.assertTrue(evidence)
         self.assertEqual(evidence[0].provider, "ontology")
         self.assertEqual(evidence[0].status, "available")
         self.assertEqual(evidence[0].raw["relationType"], "theme")
-        self.assertEqual(evidence[0].raw["themeName"], "AI/반도체/데이터센터")
-        self.assertEqual(evidence[0].raw["controlledName"], "Mellanox Technologies")
+        self.assertEqual(evidence[0].raw["themeName"], "클라우드/AI/인프라")
+        self.assertEqual(evidence[0].raw["controlledName"], "LinkedIn Corporation")
         self.assertEqual(evidence[0].raw["accession"], "0001045810-24-000001")
         self.assertEqual(evidence[0].url, "https://www.sec.gov/example")
         self.assertTrue(any(item.raw.get("relationType") == "control" for item in evidence))
 
     def test_graphdb_provider_returns_no_data_on_empty_or_error(self):
         empty_provider = GraphDBOntologyProvider(sparql_client=FakeSparqlClient(), limit=3)
-        empty_evidence = empty_provider.fetch(ProviderRequest("NVDA", "관계 분석"))
+        empty_evidence = empty_provider.fetch(ProviderRequest("MSFT", "관계 분석"))
 
         error_provider = GraphDBOntologyProvider(sparql_client=FakeSparqlClient(error=TimeoutError()), limit=3)
-        error_evidence = error_provider.fetch(ProviderRequest("NVDA", "관계 분석"))
+        error_evidence = error_provider.fetch(ProviderRequest("MSFT", "관계 분석"))
 
         self.assertEqual(empty_evidence[0].provider, "ontology")
         self.assertEqual(empty_evidence[0].status, "no-data")
@@ -334,7 +334,7 @@ class AgentOrchestrationTests(unittest.TestCase):
 
     def test_ontology_agent_selection_routes_to_ontology_role(self):
         report = AgentOrchestrator().analyze({
-            "symbol": "NVDA",
+            "symbol": "MSFT",
             "intent": "analyze",
             "agentIds": ["agent-04"],
         })
@@ -346,8 +346,8 @@ class AgentOrchestrationTests(unittest.TestCase):
 
     def test_ontology_keyword_routes_to_ontology_role(self):
         report = AgentOrchestrator().analyze({
-            "symbol": "NVDA",
-            "intent": "NVDA 관계 분석해줘",
+            "symbol": "MSFT",
+            "intent": "MSFT 관계 분석해줘",
         })
 
         self.assertEqual(report.route.selectedRoles, ["ontology"])
@@ -355,7 +355,7 @@ class AgentOrchestrationTests(unittest.TestCase):
 
     def test_korean_ontology_ui_prompt_routes_to_ontology_layout(self):
         report = AgentOrchestrator().analyze({
-            "symbol": "NVDA",
+            "symbol": "MSFT",
             "intent": "UI 바꿔줘 온톨로지 기반으로",
             "layoutContext": layout_context(),
         })
@@ -383,7 +383,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False):
             with patch("urllib.request.urlopen", return_value=FakeOpenAIResponse(response)) as openai:
                 report = AgentOrchestrator().analyze({
-                    "symbol": "NVDA",
+                    "symbol": "MSFT",
                     "intent": "주문 입력 패널 제일 크게 만들어줘",
                     "agentIds": ["agent-01"],
                     "layoutContext": layout_context(),
@@ -412,7 +412,7 @@ class AgentOrchestrationTests(unittest.TestCase):
 
     def test_ui_fallback_handles_informal_order_panel_resize_when_llm_unavailable(self):
         report = AgentOrchestrator().analyze({
-            "symbol": "NVDA",
+            "symbol": "MSFT",
             "intent": "주문창좀 젤 크게",
             "agentIds": ["agent-01"],
             "layoutContext": layout_context(),
@@ -429,7 +429,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         context["panels"][0]["layoutPinned"] = True
 
         report = AgentOrchestrator().analyze({
-            "symbol": "NVDA",
+            "symbol": "MSFT",
             "intent": "뉴스 패널 제일 크게 만들어줘",
             "layoutContext": context,
         })
@@ -447,7 +447,7 @@ class AgentOrchestrationTests(unittest.TestCase):
 
     def test_ui_fallback_moves_chart_to_bottom(self):
         report = AgentOrchestrator().analyze({
-            "symbol": "NVDA",
+            "symbol": "MSFT",
             "intent": "차트를 아래로 옮겨줘",
             "layoutContext": layout_context(),
         })
@@ -464,13 +464,13 @@ class AgentOrchestrationTests(unittest.TestCase):
     def test_openai_synthesizer_accepts_strict_json_response(self):
         response = {
             "output_text": json.dumps({
-                "title": "NVDA 관계 분석",
+                "title": "MSFT 관계 분석",
                 "summary": "providerEvidence 1건을 바탕으로 요약했습니다.",
-                "sections": [{"title": "근거", "bullets": ["NVIDIA Corp 관계 근거가 있습니다."]}],
+                "sections": [{"title": "근거", "bullets": ["Microsoft Corp 관계 근거가 있습니다."]}],
                 "citations": [
                     {
                         "provider": "ontology",
-                        "title": "NVDA control relationship",
+                        "title": "MSFT control relationship",
                         "url": "https://www.sec.gov/example",
                         "publishedAt": None,
                     }
@@ -482,22 +482,22 @@ class AgentOrchestrationTests(unittest.TestCase):
             EvidenceItem(
                 provider="ontology",
                 status="available",
-                title="NVDA control relationship",
-                summary="NVIDIA Corp has a derived relationship.",
+                title="MSFT control relationship",
+                summary="Microsoft Corp has a derived relationship.",
                 url="https://www.sec.gov/example",
             )
         ]
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False):
             with patch("urllib.request.urlopen", return_value=FakeOpenAIResponse(response)):
                 answer = FinalAnswerSynthesizer().synthesize(
-                    symbol="NVDA",
+                    symbol="MSFT",
                     intent="관계 분석",
                     route=IntentRoute("rule", "ontology", ["ontology"], 0.9, "test"),
                     findings=[],
                     provider_evidence=evidence,
                 )
 
-        self.assertEqual(answer.title, "NVDA 관계 분석")
+        self.assertEqual(answer.title, "MSFT 관계 분석")
         self.assertNotIn("providerEvidence", answer.summary)
         self.assertIn("근거", answer.summary)
         self.assertEqual(answer.citations[0].provider, "ontology")
@@ -507,14 +507,14 @@ class AgentOrchestrationTests(unittest.TestCase):
             EvidenceItem(
                 provider="ontology",
                 status="available",
-                title="NVDA ontology theme",
-                summary="NVIDIA Corp is mapped to theme AI/반도체/데이터센터.",
+                title="MSFT ontology theme",
+                summary="Microsoft Corp is mapped to theme 클라우드/AI/인프라.",
             )
         ]
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False):
             with patch("urllib.request.urlopen", return_value=FakeOpenAIResponse({"output_text": "{invalid"})):
                 answer = FinalAnswerSynthesizer().synthesize(
-                    symbol="NVDA",
+                    symbol="MSFT",
                     intent="관계 분석",
                     route=IntentRoute("rule", "ontology", ["ontology"], 0.9, "test"),
                     findings=[],
@@ -524,11 +524,11 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertIn("GraphDB 기준", answer.summary)
 
     def test_verification_conflict_is_reflected_in_market_move_answer(self):
-        context = AgentContext(symbol="NVDA", intent="NVDA 왜 올랐어?")
+        context = AgentContext(symbol="MSFT", intent="MSFT 왜 올랐어?")
         chart_finding = AgentFinding(
             agentId="chart-agent",
             role="chart-analysis",
-            summary="NVDA chart shows visible change -2.10%.",
+            summary="MSFT chart shows visible change -2.10%.",
             rationale="Chart context.",
             evidence=[
                 EvidenceItem(
@@ -543,22 +543,22 @@ class AgentOrchestrationTests(unittest.TestCase):
         news_evidence = EvidenceItem(
             provider="news",
             status="available",
-            title="NVDA shares rise after strong earnings",
-            summary="NVDA revenue beat expectations.",
+            title="MSFT shares rise after strong earnings",
+            summary="MSFT revenue beat expectations.",
             raw={"impactDirection": "positive", "eventType": "earnings"},
         )
         news_finding = AgentFinding(
             agentId="news-agent",
             role="news-analysis",
-            summary="NVDA 뉴스 1건을 확인했습니다.",
+            summary="MSFT 뉴스 1건을 확인했습니다.",
             rationale="핵심 뉴스.",
             evidence=[news_evidence],
         )
 
         verification = VerificationGuardrailAgent().analyze(context, [chart_finding, news_finding])
         answer = FinalAnswerSynthesizer().synthesize(
-            symbol="NVDA",
-            intent="NVDA 왜 올랐어?",
+            symbol="MSFT",
+            intent="MSFT 왜 올랐어?",
             route=IntentRoute("rule", "market-move", ["chart", "news", "macro", "ontology"], 0.9, "test"),
             findings=[chart_finding, news_finding, verification],
             provider_evidence=[news_evidence],

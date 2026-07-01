@@ -1,18 +1,16 @@
 from __future__ import annotations
 
 import logging
-import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 
-from alfaka.backfill.gapfill import TradingCalendar
+from alfaka.backfill.gapfill import TradingCalendar, expected_bucket_starts
 from alfaka.backfill.runner import BackfillRunner
-from alfaka.backfill.status import ACTIVE_STATUSES, RedisBackfillStore
+from alfaka.backfill.status import ACTIVE_STATUSES, RedisBackfillStore, parse_time as parse_backfill_time
 from alfaka.serving.intervals import (
-    historical_target_bars,
     interval_seconds,
     minimum_renderable_returned_bars,
     minimum_renderable_source_bars,
@@ -37,43 +35,47 @@ class BackfillService:
             returned_count = int(payload_or_has_candles.get("returnedCount") or len(payload_or_has_candles.get("candles") or []))
             requested_limit = int(payload_or_has_candles.get("requestedLimit") or returned_count)
             stored_count = int(payload_or_has_candles.get("storedCandleCount") or returned_count)
-            target_stored_count = int(payload_or_has_candles.get("targetStoredCount") or historical_target_bars(source_interval))
             available_from = payload_or_has_candles.get("availableFrom")
             available_to = payload_or_has_candles.get("availableTo")
-            target_range_from = payload_or_has_candles.get("targetRangeFrom")
+            no_data_before = payload_or_has_candles.get("noDataBefore")
+            requested_range = payload_or_has_candles.get("requestedRange") or {}
             invalid_row_count = int(payload_or_has_candles.get("invalidRowCount") or 0)
             candles = payload_or_has_candles.get("candles") or []
         else:
             returned_count = 1 if payload_or_has_candles else 0
             requested_limit = returned_count
             stored_count = returned_count
-            target_stored_count = returned_count
             available_from = None
             available_to = None
-            target_range_from = None
+            no_data_before = None
+            requested_range = {}
             invalid_row_count = 0
             candles = []
 
         latest = self._latest_status(symbol, source_interval)
         backfill_status = latest.get("status") if latest else "not_requested"
+        no_data_boundary_reached = requested_range_reached_no_data_boundary(requested_range, no_data_before)
 
-        renderability = renderability_payload(interval, source_interval, candles, returned_count, stored_count)
-        complete = complete_coverage(
-            returned_count=returned_count,
-            invalid_row_count=invalid_row_count,
-            available_from=available_from,
-            target_range_from=target_range_from,
-            stored_count=stored_count,
-            target_stored_count=target_stored_count,
+        renderability = renderability_payload(
+            interval,
+            source_interval,
+            candles,
+            returned_count,
+            stored_count,
+            requested_range,
+            requested_limit,
+        )
+        renderable = renderability["renderable"] and invalid_row_count <= 0
+        repair_status = "none" if no_data_boundary_reached else repair_status_for(
             backfill_status=backfill_status,
             renderability=renderability,
         )
-        can_backfill = can_request_backfill(backfill_status, complete)
-        if complete:
-            repair_status = "none"
+        can_backfill = can_request_backfill(backfill_status) and not no_data_boundary_reached
+        if returned_count > 0 and renderable:
+            reason_code = renderability["renderabilityReasonCode"] or "requested_range_renderable"
             coverage = coverage_payload(
-                state="complete",
-                reason_code="coverage_complete",
+                state="complete" if repair_status == "none" else "partial",
+                reason_code=reason_code,
                 message=None,
                 repair_status=repair_status,
                 source_interval=source_interval,
@@ -81,10 +83,10 @@ class BackfillService:
                 requested_limit=requested_limit,
                 returned_count=returned_count,
                 stored_count=stored_count,
-                target_stored_count=target_stored_count,
-                target_range_from=target_range_from,
                 available_from=available_from,
                 available_to=available_to,
+                no_data_before=no_data_before,
+                requested_range=requested_range,
                 invalid_row_count=invalid_row_count,
                 renderability=renderability,
             )
@@ -92,7 +94,7 @@ class BackfillService:
                 "dataStatus": "ready",
                 "backfillStatus": backfill_status,
                 "repairStatus": repair_status,
-                "canBackfill": False,
+                "canBackfill": can_backfill,
                 "sourceInterval": source_interval,
                 "message": None,
                 "coverage": coverage,
@@ -100,17 +102,8 @@ class BackfillService:
 
         if returned_count > 0:
             partial_message = latest.get("error") if latest and latest.get("status") in {"failed", "unavailable"} else None
-            reason_code = coverage_reason(backfill_status, "stored_range_incomplete")
-            if not renderability["renderable"]:
-                reason_code = renderability["renderabilityReasonCode"] or "not_renderable"
-            repair_status = repair_status_for(
-                complete=complete,
-                backfill_status=backfill_status,
-                requested_limit=requested_limit,
-                returned_count=returned_count,
-                renderability=renderability,
-            )
-            data_status = "ready" if renderability["renderable"] and returned_count >= requested_limit else "partial"
+            reason_code = renderability["renderabilityReasonCode"] or coverage_reason(backfill_status, "requested_range_incomplete")
+            data_status = "partial"
             message = partial_message or partial_coverage_message(
                 symbol=symbol,
                 interval=interval,
@@ -129,10 +122,10 @@ class BackfillService:
                 requested_limit=requested_limit,
                 returned_count=returned_count,
                 stored_count=stored_count,
-                target_stored_count=target_stored_count,
-                target_range_from=target_range_from,
                 available_from=available_from,
                 available_to=available_to,
+                no_data_before=no_data_before,
+                requested_range=requested_range,
                 invalid_row_count=invalid_row_count,
                 renderability=renderability,
             )
@@ -148,23 +141,18 @@ class BackfillService:
 
         message = latest.get("error") if latest and latest.get("status") in {"failed", "unavailable"} else None
         if not message:
-            if backfill_status in ACTIVE_STATUSES:
+            if no_data_boundary_reached:
+                message = f"No Alpaca {source_interval} candle data is available before {no_data_before} for {symbol}."
+            elif backfill_status in ACTIVE_STATUSES:
                 message = f"Preparing {source_interval} candle data for {symbol}."
             elif backfill_status == "succeeded":
                 message = f"Backfill completed, but no stored {source_interval} candles were found for {symbol}."
             else:
                 message = f"No stored {source_interval} candles were found for {symbol}."
         data_status = "empty" if can_backfill else "error" if backfill_status in {"failed", "unavailable"} else "empty"
-        repair_status = repair_status_for(
-            complete=complete,
-            backfill_status=backfill_status,
-            requested_limit=requested_limit,
-            returned_count=returned_count,
-            renderability=renderability,
-        )
         coverage = coverage_payload(
             state="unavailable" if backfill_status in {"failed", "unavailable"} else "empty",
-            reason_code=coverage_reason(backfill_status, "no_stored_candles"),
+            reason_code="no_data_boundary_reached" if no_data_boundary_reached else coverage_reason(backfill_status, "no_stored_candles"),
             message=message,
             repair_status=repair_status,
             source_interval=source_interval,
@@ -172,10 +160,10 @@ class BackfillService:
             requested_limit=requested_limit,
             returned_count=returned_count,
             stored_count=stored_count,
-            target_stored_count=target_stored_count,
-            target_range_from=target_range_from,
             available_from=available_from,
             available_to=available_to,
+            no_data_before=no_data_before,
+            requested_range=requested_range,
             invalid_row_count=invalid_row_count,
             renderability=renderability,
         )
@@ -195,19 +183,18 @@ class BackfillService:
         interval: str,
         start: str | None = None,
         end: str | None = None,
-        mode: str = "default",
         force: bool = False,
     ) -> dict[str, Any]:
         interval = normalize_chart_interval(interval)
         source_interval = source_interval_for(interval)
-        execution_mode = resolve_execution_mode(mode)
         try:
-            record, deduplicated = self.store.create_request(symbol, source_interval, start=start, end=end, mode=execution_mode, force=force)
+            validate_requested_range(start, end)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        try:
+            record, deduplicated = self.store.create_request(symbol, source_interval, start=start, end=end, force=force)
         except Exception as exc:
             raise HTTPException(status_code=503, detail=f"Backfill status store failed: {exc}") from exc
-
-        if not deduplicated and execution_mode == "sync-dev":
-            record = self.runner_factory().run(record)
 
         return summarize_status(record, deduplicated=deduplicated, requested_interval=interval, source_interval=source_interval)
 
@@ -244,14 +231,13 @@ class BackfillService:
             return None
 
 
-def resolve_execution_mode(mode: str | None) -> str:
-    requested = (mode or "default").strip()
-    allow_requested_mode = os.getenv("BACKFILL_ALLOW_REQUESTED_MODE", "false").lower() in {"1", "true", "yes"}
-    allowed_modes = {"queue", "sync-dev"}
-    if allow_requested_mode and requested in allowed_modes:
-        return requested
-    configured = os.getenv("BACKFILL_EXECUTION_MODE", "queue")
-    return configured if configured in allowed_modes else "queue"
+def validate_requested_range(start: str | None, end: str | None) -> None:
+    if not start or not end:
+        raise ValueError("Range backfill requires explicit start and end timestamps.")
+    start_dt = parse_backfill_time(start)
+    end_dt = parse_backfill_time(end)
+    if end_dt <= start_dt:
+        raise ValueError("Range backfill end must be after start.")
 
 
 def summarize_status(
@@ -288,30 +274,39 @@ def coverage_reason(backfill_status: str, default: str) -> str:
     if backfill_status == "unavailable":
         return "backfill_unavailable"
     if backfill_status == "succeeded":
-        return "backfill_succeeded_without_complete_coverage"
+        return "backfill_succeeded_range_still_missing"
     return default
 
 
-def can_request_backfill(backfill_status: str, complete: bool) -> bool:
-    return not complete and backfill_status not in ACTIVE_STATUSES
+def can_request_backfill(backfill_status: str) -> bool:
+    return backfill_status not in ACTIVE_STATUSES
+
+
+def requested_range_reached_no_data_boundary(
+    requested_range: dict[str, Any] | None,
+    no_data_before: str | None,
+) -> bool:
+    boundary = parse_time(no_data_before)
+    if not boundary or not requested_range:
+        return False
+    before = parse_time(requested_range.get("before"))
+    if before:
+        return before <= boundary
+    to_time = parse_time(requested_range.get("to"))
+    return bool(to_time and to_time <= boundary)
 
 
 def repair_status_for(
     *,
-    complete: bool,
     backfill_status: str,
-    requested_limit: int,
-    returned_count: int,
     renderability: dict[str, Any],
 ) -> str:
-    if complete:
-        return "none"
     if backfill_status in ACTIVE_STATUSES:
         return "gapfill_active"
     if backfill_status in {"failed", "unavailable"}:
         return "gapfill_failed"
-    if renderability.get("renderable") and returned_count >= requested_limit:
-        return "history_preload_required"
+    if not renderability.get("renderabilityReasonCode"):
+        return "none"
     return "gapfill_required"
 
 
@@ -326,10 +321,10 @@ def coverage_payload(
     requested_limit: int,
     returned_count: int,
     stored_count: int,
-    target_stored_count: int,
-    target_range_from: str | None,
     available_from: str | None,
     available_to: str | None,
+    no_data_before: str | None,
+    requested_range: dict[str, Any],
     invalid_row_count: int,
     renderability: dict[str, Any],
 ) -> dict[str, Any]:
@@ -343,45 +338,13 @@ def coverage_payload(
         "requestedLimit": requested_limit,
         "returnedCount": returned_count,
         "storedCandleCount": stored_count,
-        "targetStoredCount": target_stored_count,
-        "targetRangeFrom": target_range_from,
         "availableFrom": available_from,
         "availableTo": available_to,
+        "noDataBefore": no_data_before,
+        "requestedRange": requested_range,
         "invalidRowCount": invalid_row_count,
         **renderability,
     }
-
-
-def complete_coverage(
-    *,
-    returned_count: int,
-    invalid_row_count: int,
-    available_from: str | None,
-    target_range_from: str | None,
-    stored_count: int,
-    target_stored_count: int,
-    backfill_status: str,
-    renderability: dict[str, Any],
-) -> bool:
-    if returned_count <= 0 or invalid_row_count > 0:
-        return False
-
-    has_range_coverage = bool(available_from and target_range_from and str(available_from) <= str(target_range_from))
-    has_count_coverage = stored_count >= target_stored_count
-    if has_range_coverage and has_count_coverage:
-        return True
-
-    # Historical stock bars skip weekends/holidays and may begin at the next
-    # trading session after the requested calendar boundary. Treat a dense,
-    # renderable completed backfill as complete when it is only slightly short
-    # of the naive calendar target.
-    if backfill_status != "succeeded" or not renderability.get("renderable"):
-        return False
-    if stored_count < int(target_stored_count * 0.98):
-        return False
-    if not within_start_tolerance(available_from, target_range_from):
-        return False
-    return True
 
 
 def renderability_payload(
@@ -390,23 +353,24 @@ def renderability_payload(
     candles: list[dict[str, Any]],
     returned_count: int,
     stored_count: int,
+    requested_range: dict[str, Any] | None = None,
+    requested_limit: int | None = None,
 ) -> dict[str, Any]:
-    minimum_returned_count = minimum_renderable_returned_bars(interval)
+    configured_minimum_returned_count = minimum_renderable_returned_bars(interval)
+    minimum_returned_count = effective_minimum_returned_count(configured_minimum_returned_count, requested_limit)
     minimum_source_bars = minimum_renderable_source_bars(source_interval)
     span_seconds = returned_span_seconds(candles)
     max_span_seconds = max_renderable_span_seconds(interval, returned_count)
     sparse_window = sparse_returned_window(interval, candles, returned_count, span_seconds, max_span_seconds)
-    renderable = (
-        returned_count >= minimum_returned_count and
-        stored_count >= minimum_source_bars and
-        not sparse_window
-    )
+    expected_range_bars = expected_chart_bars_for_requested_range(interval, source_interval, requested_range)
+    requested_range_complete = expected_range_bars is not None and expected_range_bars > 0 and returned_count >= expected_range_bars
+    renderable = returned_count > 0 and not sparse_window
     reason_code = None
     if returned_count <= 0:
         reason_code = "no_stored_candles"
-    elif stored_count < minimum_source_bars:
+    elif stored_count < minimum_source_bars and not requested_range_complete:
         reason_code = "insufficient_source_bars"
-    elif returned_count < minimum_returned_count:
+    elif returned_count < minimum_returned_count and not requested_range_complete:
         reason_code = "insufficient_returned_bars"
     elif sparse_window:
         reason_code = "returned_window_sparse"
@@ -414,10 +378,65 @@ def renderability_payload(
         "renderable": renderable,
         "minimumReturnedCount": minimum_returned_count,
         "minimumRenderableSourceBars": minimum_source_bars,
+        "expectedRequestedRangeBars": expected_range_bars,
         "returnedSpanSeconds": span_seconds,
         "maxRenderableSpanSeconds": max_span_seconds,
         "renderabilityReasonCode": reason_code,
     }
+
+
+def effective_minimum_returned_count(configured_minimum: int, requested_limit: int | None) -> int:
+    if requested_limit is None:
+        return configured_minimum
+    try:
+        limit = max(1, int(requested_limit))
+    except (TypeError, ValueError):
+        return configured_minimum
+    return min(configured_minimum, limit)
+
+
+def expected_chart_bars_for_requested_range(
+    interval: str,
+    source_interval: str,
+    requested_range: dict[str, Any] | None,
+) -> int | None:
+    if not requested_range:
+        return None
+    start = requested_range.get("from")
+    end = requested_range.get("to")
+    if not start or not end:
+        return None
+    try:
+        source_buckets = expected_bucket_starts(start, end, source_interval)
+    except (TypeError, ValueError):
+        return None
+    if not source_buckets:
+        return 0
+    if interval == source_interval:
+        return len(source_buckets)
+    if interval in {"5m", "10m"}:
+        bucket_minutes = 5 if interval == "5m" else 10
+        return len({minute_bucket_start(bucket, bucket_minutes) for bucket in source_buckets})
+    if interval == "1W":
+        return len({week_bucket_start(bucket) for bucket in source_buckets})
+    if interval == "1M":
+        return len({month_bucket_start(bucket) for bucket in source_buckets})
+    return None
+
+
+def minute_bucket_start(value: datetime, bucket_minutes: int) -> datetime:
+    value = value.astimezone(timezone.utc)
+    return value.replace(minute=(value.minute // bucket_minutes) * bucket_minutes, second=0, microsecond=0)
+
+
+def week_bucket_start(value: datetime) -> datetime:
+    bucket_date = value.astimezone(timezone.utc).date() - timedelta(days=value.weekday())
+    return datetime.combine(bucket_date, datetime.min.time(), timezone.utc)
+
+
+def month_bucket_start(value: datetime) -> datetime:
+    date_value = value.astimezone(timezone.utc).date()
+    return datetime.combine(date_value.replace(day=1), datetime.min.time(), timezone.utc)
 
 
 def partial_coverage_message(
@@ -439,7 +458,7 @@ def partial_coverage_message(
     if reason == "insufficient_returned_bars":
         return (
             f"Only {returned_count} {interval} candles are available for {symbol}. "
-            "More historical candles are required before this interval can be rendered."
+            "Additional historical candles will be requested to extend this range."
         )
     if reason == "returned_window_sparse":
         return (
@@ -447,8 +466,7 @@ def partial_coverage_message(
             "Historical backfill or local data repair is required."
         )
     return (
-        f"Loaded {returned_count} requested candles, but the stored {source_interval} target range is not complete yet. "
-        "Historical backfill is required."
+        f"Loaded {returned_count} {interval} candles for {symbol}, but the requested range still needs gapfill."
     )
 
 
@@ -521,14 +539,6 @@ def max_renderable_span_seconds(interval: str, returned_count: int) -> int | Non
         return None
     factor = 3 if interval in {"1m", "5m", "10m"} else 2
     return int(interval_seconds(interval) * max(1, returned_count - 1) * factor)
-
-
-def within_start_tolerance(available_from: str | None, target_range_from: str | None) -> bool:
-    available = parse_time(available_from)
-    target = parse_time(target_range_from)
-    if not available or not target:
-        return False
-    return (available - target).total_seconds() <= 7 * 24 * 60 * 60
 
 
 def parse_time(value: Any) -> datetime | None:

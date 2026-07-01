@@ -1,5 +1,5 @@
-# 역할: 명시적 chart backfill 요청을 Redis queue에서 읽어 S3 raw/processed와 ClickHouse materialization을 수행합니다.
-# 사용: IRSA service account로 S3 Get/List/Put 권한을 사용하고, ClickHouse serving projection을 채웁니다.
+# 역할: 명시적 chart backfill 요청을 Redis queue에서 읽어 Alpaca 데이터를 ClickHouse serving projection에 직접 적재합니다.
+# 사용: Alpaca/ClickHouse가 필수이며, S3는 ClickHouse 성공 이후 optional processed archive로만 사용합니다.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

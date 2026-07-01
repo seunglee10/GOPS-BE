@@ -10,7 +10,7 @@ ROLE_NAME="${ROLE_NAME:-alfaka-dev-market-data-irsa}"
 POLICY_NAME="${POLICY_NAME:-alfaka-dev-market-data-pod-policy}"
 S3_BUCKET="${S3_BUCKET:-gops-market-data-<aws-account-id>-ap-northeast-2-an}"
 ALPACA_SECRET_NAME="${ALPACA_SECRET_NAME:-dev/alpaca}"
-KIS_SECRET_NAME="${KIS_SECRET_NAME:-tead/gops/kis}"
+KIS_SECRET_NAME="${KIS_SECRET_NAME:-dev/kis}"
 GOOGLE_OAUTH_SECRET_NAME="${GOOGLE_OAUTH_SECRET_NAME:-}"
 OPENAI_SECRET_NAME="${OPENAI_SECRET_NAME:-}"
 

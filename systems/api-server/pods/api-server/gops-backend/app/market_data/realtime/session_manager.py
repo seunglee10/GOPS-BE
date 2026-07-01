@@ -7,8 +7,13 @@ import time
 from fastapi import WebSocket, WebSocketDisconnect
 
 from app.market_data.realtime.active_symbols import ActiveSymbolManager
-from app.market_data.realtime.stream_hub import StreamSession, get_stream_hub
+from app.market_data.realtime.stream_hub import StreamSession, event_marker, get_stream_hub
 from app.services.alfaka_market_data import get_market_data_provider
+
+
+DEFAULT_QUOTE_STREAM_HZ = 1.0
+MIN_QUOTE_STREAM_HZ = 0.2
+MAX_QUOTE_STREAM_HZ = 4.0
 
 
 class WebSocketSessionManager:
@@ -26,6 +31,7 @@ class WebSocketSessionManager:
         await self.hub.subscribe(session)
         last_heartbeat = 0.0
         try:
+            self.active_symbols.refresh(symbol)
             await self._send_gap_fill(websocket, symbol, interval, cursor)
             while True:
                 self.active_symbols.refresh(symbol)
@@ -45,6 +51,35 @@ class WebSocketSessionManager:
         finally:
             await self.hub.unsubscribe(session)
 
+    async def serve_quotes(self, websocket: WebSocket, symbols: list[str], interval: str = "1m", max_hz: float = DEFAULT_QUOTE_STREAM_HZ) -> None:
+        await websocket.accept()
+        period_seconds = quote_stream_period_seconds(max_hz)
+        last_markers: dict[str, str] = {}
+        last_heartbeat = 0.0
+        try:
+            while True:
+                for symbol in symbols:
+                    event = self.provider.redis_provider.live_event(symbol, interval)
+                    if not event:
+                        event = self.provider.redis_provider.closed_event(symbol, interval)
+                    if not event:
+                        continue
+                    marker = event_marker(event)
+                    marker_key = f"{symbol}:{interval}"
+                    if marker and marker == last_markers.get(marker_key):
+                        continue
+                    if marker:
+                        last_markers[marker_key] = marker
+                    await websocket.send_json(event)
+
+                now = time.monotonic()
+                if now - last_heartbeat >= self.heartbeat_seconds:
+                    await websocket.send_json({"type": "HEARTBEAT", "symbols": symbols, "interval": interval})
+                    last_heartbeat = now
+                await asyncio.sleep(period_seconds)
+        except WebSocketDisconnect:
+            return
+
     async def _send_gap_fill(self, websocket: WebSocket, symbol: str, interval: str, cursor: str | None) -> None:
         if not cursor:
             return
@@ -63,3 +98,13 @@ def parse_int(value, default):
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def quote_stream_period_seconds(max_hz):
+    try:
+        parsed = float(max_hz)
+    except (TypeError, ValueError):
+        parsed = DEFAULT_QUOTE_STREAM_HZ
+    if parsed <= 0:
+        parsed = DEFAULT_QUOTE_STREAM_HZ
+    return 1.0 / max(MIN_QUOTE_STREAM_HZ, min(parsed, MAX_QUOTE_STREAM_HZ))

@@ -1,30 +1,8 @@
--- 역할: 로컬 ClickHouse에 시장 데이터 조회용 기본 테이블을 만듭니다.
--- 사용: Docker Compose가 ClickHouse를 처음 띄울 때 자동 실행됩니다.
--- 주의: 운영 적재 방식은 이후 S3/Parquet 또는 Flink sink로 교체할 수 있습니다.
+-- 역할: ClickHouse에 시장 데이터 조회용 기본 테이블을 만듭니다.
+-- 사용: ClickHouse 초기화 때 자동 실행됩니다.
+-- 주의: 차트 조회의 serving projection은 이 테이블입니다. S3는 archive 용도이며 serving prerequisite이 아닙니다.
 
 CREATE DATABASE IF NOT EXISTS market_data;
-
-CREATE TABLE IF NOT EXISTS market_data.trade_ticks
-(
-    event_time DateTime64(3, 'UTC'),
-    symbol LowCardinality(String),
-    trade_id UInt64 DEFAULT 0,
-    price Float64,
-    size Nullable(UInt64),
-    exchange Nullable(String),
-    conditions Array(String),
-    tape Nullable(String),
-    source LowCardinality(String),
-    feed LowCardinality(String),
-    feed_profile LowCardinality(String) DEFAULT feed,
-    market_session LowCardinality(String) DEFAULT 'unknown',
-    source_event_id Nullable(String),
-    received_at Nullable(DateTime64(3, 'UTC')),
-    inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
-)
-ENGINE = MergeTree
-PARTITION BY toYYYYMM(event_time)
-ORDER BY (symbol, event_time, feed_profile, trade_id);
 
 CREATE TABLE IF NOT EXISTS market_data.chart_candles
 (
@@ -149,14 +127,7 @@ ORDER BY (loaded_at, source_name);
 ALTER TABLE market_data.chart_candles
     ADD COLUMN IF NOT EXISTS source_event_id Nullable(String) AFTER feed;
 
-ALTER TABLE market_data.trade_ticks
-    ADD COLUMN IF NOT EXISTS source_event_id Nullable(String) AFTER feed;
-
 ALTER TABLE market_data.chart_candles
-    ADD COLUMN IF NOT EXISTS feed_profile LowCardinality(String) DEFAULT feed AFTER feed,
-    ADD COLUMN IF NOT EXISTS market_session LowCardinality(String) DEFAULT 'unknown' AFTER feed_profile;
-
-ALTER TABLE market_data.trade_ticks
     ADD COLUMN IF NOT EXISTS feed_profile LowCardinality(String) DEFAULT feed AFTER feed,
     ADD COLUMN IF NOT EXISTS market_session LowCardinality(String) DEFAULT 'unknown' AFTER feed_profile;
 

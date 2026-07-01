@@ -1,6 +1,6 @@
 # GOPS Product Context
 
-This file gives product direction for future Codex sessions and team members.
+This file gives product direction for future contributors and AI agent sessions.
 It is not a claim that every feature is already implemented.
 
 ## Product Sentence
@@ -19,7 +19,7 @@ The current repository contains:
 - FastAPI REST/WebSocket API server.
 - Alpaca market-data ingestion and historical backfill.
 - Kafka-compatible stream processing.
-- Redis, ClickHouse, and S3 market-data storage/serving.
+- Redis and ClickHouse market-data cache/storage/serving, with S3 as optional archive evidence.
 - KIS demo order flow with API, outbox, adapter, migrations, and reconciliation pieces.
 - Local Docker Compose and early AWS/EKS deployment assets.
 
@@ -39,11 +39,11 @@ Expected future areas:
 - React, FastAPI, and WebSocket for real-time web interaction.
 - Kafka/Flink-compatible streaming for market data.
 - ClickHouse and Redis for time-series serving and low-latency cache.
-- S3 for durable source data, replay, and evidence.
+- S3 for optional archive, recovery evidence, and teammate-isolated experiments.
 - GraphDB/GraphRAG for future relationship reasoning.
 - Idempotent and ordered order/execution handling.
 
-## Codex Guidance
+## Contributor Guidance
 
 - Use this file for intent and naming.
 - Do not implement future-facing features unless explicitly asked.

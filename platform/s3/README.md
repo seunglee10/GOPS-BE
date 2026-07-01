@@ -6,19 +6,24 @@ Current AWS bucket:
 gops-market-data-<aws-account-id>-ap-northeast-2-an
 ```
 
-S3 stores raw archives, processed/final market data, live artifacts, and replay/evidence material.
+S3 stores optional archive artifacts. It is not the chart serving source and is not a prerequisite for backfill/gapfill.
+
+Default development namespace:
+
+```text
+market-data/dev/helixho/...
+```
 
 Runtime writers:
 
-- raw S3 archive sink: raw Kafka topics under `S3_RAW_PREFIX`
-- processed S3 sink: processed Kafka topics under `S3_FINAL_PREFIX` and `S3_LIVE_PREFIX`
-- backfill workers: historical raw/archive and canonical processed materialization inputs
+- clickhouse-loader: closed candle archive under `S3_FINAL_PREFIX` after ClickHouse insertion succeeds
+- backfill workers: processed candle archive under `S3_BACKFILL_PROCESSED_PREFIX` after ClickHouse materialization succeeds
 
-Historical raw backfill objects include a range/job-derived suffix in the object name so repeated or overlapping preload windows do not overwrite each other. Broad historical preload should use `S3_HISTORICAL_RAW_PARTITION_MODE=chunk` and `S3_HISTORICAL_PROCESSED_MANIFEST_LAYOUT=compact`; this keeps S3 evidence reusable without producing one tiny raw object per trading day. The v1 S&P 500 preload keeps `1D` on the 3-year range but caps `1m` initial-load at `BACKFILL_INITIAL_LOAD_1M_MIN_START=2025-04-01T00:00:00Z`, so March 2025 or older `1m` history is not fetched by Goal/deploy runs.
+Runtime writers write to ClickHouse first. S3 archive is best-effort evidence/recovery material, so S3 write failure must not block chart rendering when ClickHouse materialization succeeds.
 
-For S3-to-ClickHouse smoke tests, set `S3_MATERIALIZE_KEYS` to one or more explicit processed candle object keys. Use prefix-wide `S3_MATERIALIZE_PREFIX` only for intentional broad materialization.
+The ClickHouse loader buffers post-insert candle archive writes by row count/time so the archive does not create one object per realtime candle. Disable this optional archive with `CLICKHOUSE_LOADER_S3_ARCHIVE_ENABLED=false` when testing ClickHouse-only runtime behavior.
 
-Keep time-based flush enabled so low-volume raw/status partitions do not remain only in worker memory.
+There is no Kafka-to-S3 worker in the runtime path. New archive writers must preserve the same post-ClickHouse-success contract.
 
 Leave `S3_ENDPOINT_URL` empty for real AWS S3.
 Use the compose `local-s3` profile only for MinIO experiments.

@@ -71,3 +71,7 @@ class RedisMarketDataProvider:
     def hot_symbols_snapshot(self):
         value = self.redis.get(self.keys.hot_symbols_snapshot())
         return json.loads(value) if value else None
+
+    def backfill_no_data_before(self, symbol, interval):
+        interval = normalize_chart_interval(interval)
+        return self.redis.get(self.keys.backfill_no_data_before(symbol, interval))

@@ -16,9 +16,8 @@ redisKeys:
   latestClosedCandle: candle:{symbol}:{interval}:latest
   recentCandles: candles:{symbol}:{interval}
 s3Paths:
-  finalCandles: market-data/final/candles/interval={interval}/symbol={symbol}/year={yyyy}/month={mm}/day={dd}/
-  liveCandles: market-data/live/candles/interval=1m/symbol={symbol}/year={yyyy}/month={mm}/day={dd}/
-  liveTrades: market-data/live/trades/symbol={symbol}/year={yyyy}/month={mm}/day={dd}/hour={hh}/
+  finalCandles: market-data/dev/helixho/final/candles/interval={interval}/symbol={symbol}/year={yyyy}/month={mm}/day={dd}/
+  liveCandles: market-data/dev/helixho/live/candles/interval=1m/symbol={symbol}/year={yyyy}/month={mm}/day={dd}/
 calculations:
   intervals:
     - 1m

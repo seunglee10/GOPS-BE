@@ -31,7 +31,6 @@ class BackfillRequestBody(BaseModel):
     interval: str = Field(default="1m", pattern=CHART_INTERVAL_PATTERN)
     start: str | None = None
     end: str | None = None
-    mode: str = "default"
     force: bool = False
 
 
@@ -57,7 +56,7 @@ def chart_candles(
 
 @router.post("/api/charts/backfill")
 def chart_backfill(body: BackfillRequestBody) -> dict[str, Any]:
-    return get_query_service().request_backfill(body.symbol, body.interval, start=body.start, end=body.end, mode=body.mode, force=body.force)
+    return get_query_service().request_backfill(body.symbol, body.interval, start=body.start, end=body.end, force=body.force)
 
 
 @router.get("/api/charts/backfill/status")
@@ -77,7 +76,7 @@ def chart_backfill_queue() -> dict[str, Any]:
 @router.get("/api/charts/symbols")
 def chart_symbols() -> dict[str, Any]:
     # 프론트의 심볼 목록/요약 영역이 호출합니다.
-    # 심볼 목록은 ALPACA_SYMBOLS 기준이며, 최신 가격은 Redis에 있으면 같이 내려갑니다.
+    # 심볼 목록은 configured S&P500 universe 기준이며, 최신 가격은 Redis에 있으면 같이 내려갑니다.
     return {
         "source": "alpaca",
         "feed": "configured-market-feed",
@@ -100,6 +99,6 @@ def update_chart_watchlist(body: WatchlistRequestBody) -> dict[str, Any]:
 
 @router.get("/api/charts/hot-symbols")
 def chart_hot_symbols(
-    limit: int = Query(default=20, ge=1, le=100),
+    limit: int = Query(default=10, ge=1, le=100),
 ) -> dict[str, Any]:
     return hot_symbol_summaries(limit=limit)

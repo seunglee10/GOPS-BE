@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # 역할: AWS/EKS 안에서 한 종목 live market-data path를 read-only로 추적합니다.
-# 사용: scripts/aws/check-live-path.sh NVDA
+# 사용: scripts/aws/check-live-path.sh AAPL
 set -euo pipefail
 
-SYMBOL="${1:-NVDA}"
+SYMBOL="${1:-AAPL}"
 INTERVAL="${INTERVAL:-1m}"
 NAMESPACE="${NAMESPACE:-alfaka-market-data}"
 TARGET="${TRACE_TARGET:-deploy/alfaka-market-processor}"

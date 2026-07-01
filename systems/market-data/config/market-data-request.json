@@ -2,27 +2,9 @@
   "description": "Default market-data universe and Alpaca subscription policy.",
   "defaultUniverse": "sp500",
   "universeRegistryPath": "systems/market-data/config/sp500-universe.json",
-  "collectionSymbolSource": "universe",
-  "defaultSeedSymbols": ["AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "TSLA"],
-  "defaultSymbols": [
-    "AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "TSLA"
-  ],
+  "defaultSymbols": ["AAPL"],
   "symbolMetadata": {
-    "AAPL": {"name": "Apple Inc.", "exchange": "NASDAQ", "market": "NASDAQ"},
-    "MSFT": {"name": "Microsoft Corporation", "exchange": "NASDAQ", "market": "NASDAQ"},
-    "NVDA": {"name": "NVIDIA Corporation", "exchange": "NASDAQ", "market": "NASDAQ"},
-    "AMZN": {"name": "Amazon.com, Inc.", "exchange": "NASDAQ", "market": "NASDAQ"},
-    "META": {"name": "Meta Platforms, Inc.", "exchange": "NASDAQ", "market": "NASDAQ"},
-    "GOOGL": {"name": "Alphabet Inc. Class A", "exchange": "NASDAQ", "market": "NASDAQ"},
-    "TSLA": {"name": "Tesla, Inc.", "exchange": "NASDAQ", "market": "NASDAQ"},
-    "AMD": {"name": "Advanced Micro Devices, Inc.", "exchange": "NASDAQ", "market": "NASDAQ"},
-    "AVGO": {"name": "Broadcom Inc.", "exchange": "NASDAQ", "market": "NASDAQ"},
-    "AMAT": {"name": "Applied Materials, Inc.", "exchange": "NASDAQ", "market": "NASDAQ"},
-    "MU": {"name": "Micron Technology, Inc.", "exchange": "NASDAQ", "market": "NASDAQ"},
-    "INTC": {"name": "Intel Corporation", "exchange": "NASDAQ", "market": "NASDAQ"},
-    "BRK.B": {"name": "Berkshire Hathaway Inc. Class B", "exchange": "NYSE", "market": "NYSE"},
-    "JPM": {"name": "JPMorgan Chase & Co.", "exchange": "NYSE", "market": "NYSE"},
-    "UNH": {"name": "UnitedHealth Group Incorporated", "exchange": "NYSE", "market": "NYSE"}
+    "AAPL": {"name": "Apple Inc.", "exchange": "NASDAQ", "market": "NASDAQ"}
   },
   "defaultChannels": ["bars", "updatedBars", "dailyBars", "statuses"],
   "activeChartChannels": ["trades"],
@@ -30,29 +12,32 @@
   "validChannels": ["bars", "updatedBars", "trades", "dailyBars", "statuses", "quotes", "corrections", "cancelErrors"],
   "symbolPattern": "^[A-Z][A-Z0-9]{0,9}(\\.[A-Z])?$",
   "dataPolicy": {
-    "s3FinalThrough": "previous-trading-day",
-    "initialChartLoad": "today-1m-bars-plus-recent-clickhouse-history",
+    "s3Archive": "optional-post-write-only; never a chart-serving source or ClickHouse preload input",
+    "initialChartLoad": "latest-snapshot; range loads use visible-range-plus-configured-buffer",
     "avoidInitialTodayTickReplay": true,
     "activeChartRealtime": "subscribe-trades-while-chart-websocket-is-open",
-    "tradeSubscriptionPlan": "active-chart + watchlist + hot-top20",
-    "todayTickStorage": "market-data/live/trades compacted after market close"
+    "tradeSubscriptionPlan": "active-chart + capped-watchlist + capped-hot-top",
+    "defaultWatchlistTradeCap": 40,
+    "defaultHotTradeCap": 10,
+    "quoteUiFanout": "Redis live/closed candles are sent to /ws/quotes at maxHz=1 by default.",
+    "tradeTickRetention": "realtime-only; not persisted"
   },
   "storage": {
     "s3": {
-      "rawPrefix": "market-data/raw/alpaca",
-      "finalPrefix": "market-data/final",
-      "livePrefix": "market-data/live",
-      "format": "parquet",
+      "rootPrefix": "market-data/dev/helixho",
+      "finalPrefix": "market-data/dev/helixho/final",
+      "manifestPrefix": "market-data/dev/helixho/manifest",
+      "backfillProcessedPrefix": "market-data/dev/helixho/backfill/processed",
+      "clickhouseArchiveFormat": "parquet",
+      "backfillProcessedFormat": "jsonl",
       "partitionKeys": ["dataset", "interval", "symbol", "year", "month", "day", "hour"]
     },
     "clickhouse": {
       "database": "market_data",
       "primaryQueryTable": "chart_candles",
-      "optionalTickTable": "trade_ticks",
       "symbolTable": "symbols",
       "statusTable": "market_status_events",
-      "volumeProfileTable": "volume_profile_bins_1m",
-      "loadTradesByDefault": false
+      "volumeProfileTable": "volume_profile_bins_1m"
     },
     "redis": {
       "keyPrefixEnv": "REDIS_KEY_PREFIX",
@@ -78,26 +63,11 @@
   },
   "companyToSymbol": {
     "apple": "AAPL",
-    "tesla": "TSLA",
-    "nvidia": "NVDA",
     "microsoft": "MSFT",
     "amazon": "AMZN",
     "google": "GOOGL",
     "alphabet": "GOOGL",
     "meta": "META",
-    "amd": "AMD",
-    "broadcom": "AVGO",
-    "intel": "INTC",
-    "qualcomm": "QCOM",
-    "texas instruments": "TXN",
-    "micron": "MU",
-    "analog devices": "ADI",
-    "marvell": "MRVL",
-    "microchip": "MCHP",
-    "asml": "ASML",
-    "applied materials": "AMAT",
-    "lam research": "LRCX",
-    "kla": "KLAC",
-    "tsmc": "TSM"
+    "tesla": "TSLA"
   }
 }

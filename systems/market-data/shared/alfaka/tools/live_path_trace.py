@@ -261,7 +261,7 @@ def render_human(trace):
 
 def main():
     parser = argparse.ArgumentParser(description="한 종목 기준 live market-data path를 read-only로 추적합니다.")
-    parser.add_argument("symbol", nargs="?", default="NVDA", help="확인할 심볼입니다. 예: NVDA")
+    parser.add_argument("symbol", nargs="?", default="AAPL", help="확인할 심볼입니다. 예: AAPL")
     parser.add_argument("--interval", default=DEFAULT_INTERVAL, choices=["1m", "5m", "10m", "1D", "1W", "1M"])
     parser.add_argument("--api-base-url", default=None)
     parser.add_argument("--redis-url", default=None)

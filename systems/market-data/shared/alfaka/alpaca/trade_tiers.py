@@ -4,10 +4,17 @@ import re
 SYMBOL_PATTERN = re.compile(r"^[A-Z][A-Z0-9]{0,9}(\.[A-Z])?$")
 
 
-def resolve_trade_subscription_plan(active_symbols=None, watchlist_symbols=None, hot_symbols=None, max_symbols=None):
+def resolve_trade_subscription_plan(
+    active_symbols=None,
+    watchlist_symbols=None,
+    hot_symbols=None,
+    max_symbols=None,
+    max_watchlist_symbols=None,
+    max_hot_symbols=None,
+):
     active = normalize_symbols(active_symbols)
-    watchlist = normalize_symbols(watchlist_symbols)
-    hot = normalize_symbols(hot_symbols)
+    watchlist = limit_symbols(normalize_symbols(watchlist_symbols), max_watchlist_symbols)
+    hot = limit_symbols(normalize_symbols(hot_symbols), max_hot_symbols)
 
     ordered = []
     tiers_by_symbol = {}
@@ -46,6 +53,23 @@ def normalize_symbols(values):
         normalized.append(symbol)
         seen.add(symbol)
     return normalized
+
+
+def limit_symbols(symbols, max_symbols):
+    cap = parse_non_negative_int(max_symbols)
+    if cap is None:
+        return symbols
+    return symbols[:cap]
+
+
+def parse_non_negative_int(value):
+    if value in (None, ""):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 0 else None
 
 
 def parse_positive_int(value):

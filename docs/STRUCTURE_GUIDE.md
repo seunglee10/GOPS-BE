@@ -54,6 +54,7 @@ systems/<system>/
 systems/api-server/   FastAPI chart/order/WebSocket gateway
 systems/market-data/  Alpaca ingest, processing, storage, backfill, serving helpers
 systems/order/        KIS demo order domain, outbox, adapter, jobs
+systems/agent-orchestration/ Role-based agents, event detection, notifications
 ```
 
 Create a new system only when it has clear ownership, runtime units, data contracts, or failure modes that do not belong to the existing systems.
@@ -62,7 +63,6 @@ Candidate future systems:
 
 ```text
 systems/ontology/
-systems/agent-orchestration/
 systems/ui-composition/
 systems/news-intelligence/
 systems/user-context/
@@ -107,7 +107,7 @@ When platform contracts change, update:
 - `.env.example`
 - compose service or endpoint notes
 - k8s ConfigMap/Secret references
-- Terraform/AWS handoff notes when AWS owns the resource
+- Terraform/AWS docs when AWS owns the resource
 
 Kafka and stream processing stay staged:
 

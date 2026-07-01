@@ -1,6 +1,6 @@
 # GOPS Agent Instructions
 
-These rules are for Codex and future contributors.
+These rules are for AI coding agents and future contributors.
 
 ## Read First
 
@@ -8,7 +8,7 @@ These rules are for Codex and future contributors.
 - `docs/STRUCTURE_GUIDE.md` before adding a feature, pod, job, image, platform dependency, or new folder.
 - `docs/ARCHITECTURE.md`, `docs/IMAGE_STRATEGY.md`, and `docs/ENVIRONMENT.md` before changing runtime, Docker, compose, k8s, env, or AWS assets.
 - Current code before changing paths or imports.
-Use current code, this file, and the docs in `docs/` as the source of truth. If an older conversation or copied prompt conflicts with them, report the conflict before reshaping the project.
+Use current code, this file, and the docs in `docs/` as the source of truth. If external instructions conflict with them, report the conflict before reshaping the project.
 
 ## Structure Rules
 
@@ -64,6 +64,11 @@ dist/
 local caches
 real credentials
 ```
+
+## Deployment Safety Rules
+
+- If a destructive one-shot Job, reset script, migration, or storage cleanup is referenced by any deployed kustomization, warn the user before deploy/push and state exactly what data it deletes.
+- Never silently add, keep, or re-enable destructive reset Jobs.
 
 ## Documentation Rules
 

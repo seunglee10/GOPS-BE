@@ -1,12 +1,13 @@
 # 역할: GOPS backend가 alfaka Redis/ClickHouse provider를 읽게 연결합니다.
-# 사용: 과거 캔들은 ClickHouse, 최신/실시간 캔들은 Redis에서 가져옵니다.
-# 설정: ALPACA_UNIVERSE, ALPACA_SYMBOLS, REDIS_URL, CLICKHOUSE_* 값을 .env 또는 Docker env에 넣습니다.
+# 사용: 과거/범위 캔들은 ClickHouse, 최신/실시간 보강은 Redis에서 가져옵니다.
+# 설정: ALPACA_UNIVERSE, REDIS_URL, CLICKHOUSE_* 값을 .env 또는 Docker env에 넣습니다.
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
-from datetime import date
+from datetime import date, datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -36,7 +37,6 @@ def _add_alfaka_package_path() -> None:
 _add_alfaka_package_path()
 
 from alfaka.alpaca.subscription import (  # noqa: E402
-    configured_seed_symbols,
     configured_universe_symbols as load_configured_universe_symbols,
 )
 from alfaka.common.redis_keys import RedisKeyBuilder  # noqa: E402
@@ -48,15 +48,11 @@ from alfaka.serving.time_utils import parse_utc_time  # noqa: E402
 
 MAX_WATCHLIST_SYMBOLS = 100
 DEFAULT_MARKET_TIMEZONE = "America/New_York"
+DEFAULT_PREVIOUS_CLOSE_MAX_AGE_DAYS = 10
 
 
 def configured_symbols() -> list[str]:
-    # Legacy/local smoke seed입니다. 프론트 Watch List의 진실은 /api/charts/watchlist입니다.
-    # ALPACA_UNIVERSE 전체를 자동 UI Watch List로 확장하지 않습니다.
-    try:
-        return [normalize_market_symbol(symbol) for symbol in configured_seed_symbols()]
-    except ValueError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return configured_universe_symbols()
 
 
 def configured_universe_symbols() -> list[str]:
@@ -167,19 +163,42 @@ def hot_symbol_summaries(limit: int | None = None) -> dict[str, Any]:
     requested_limit = _read_positive_int(limit) or _read_positive_int(os.getenv("HOT_TIER_SIZE")) or DEFAULT_HOT_LIMIT
     provider = get_market_data_provider()
     snapshot = _safe_hot_snapshot(provider)
-    if snapshot:
-        return _limit_hot_snapshot(provider, snapshot, requested_limit)
+    if snapshot and _hot_snapshot_can_satisfy(snapshot, requested_limit):
+        payload = _limit_hot_snapshot(provider, snapshot, requested_limit)
+        persist_hot_symbols_payload(provider, payload)
+        return payload
 
     universe = configured_universe_symbols()
-    clickhouse_records = _safe_clickhouse_hot_symbols(provider, universe, requested_limit)
-    if clickhouse_records:
-        return build_hot_symbols_payload(_enrich_hot_symbol_records(provider, clickhouse_records), limit=requested_limit)
+    records = _enrich_hot_symbol_records(
+        provider,
+        _safe_clickhouse_hot_symbols(provider, universe, requested_limit),
+    )
+    if len(records) < requested_limit:
+        records = _append_hot_symbol_fallback_records(provider, universe, records)
 
-    scan_limit = _read_positive_int(os.getenv("HOT_TIER_FALLBACK_SCAN_LIMIT")) or 600
-    records = []
-    for symbol in universe[:scan_limit]:
-        records.append(build_hot_symbol_record(provider, symbol))
-    return build_hot_symbols_payload(records, limit=requested_limit)
+    payload = build_hot_symbols_payload(records, limit=requested_limit)
+    persist_hot_symbols_payload(provider, payload)
+    return payload
+
+
+def persist_hot_symbols_payload(provider: MarketDataProvider, payload: dict[str, Any]) -> None:
+    rows = payload.get("symbols") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        return
+    symbols = normalize_symbol_list(
+        [row.get("symbol") for row in rows if isinstance(row, dict)],
+        max_items=_read_positive_int(os.getenv("HOT_TIER_SIZE")) or DEFAULT_HOT_LIMIT,
+    )
+    if not symbols:
+        return
+    keys = RedisKeyBuilder()
+    try:
+        redis_client = provider.redis_provider.redis
+        redis_client.delete(keys.hot_symbols())
+        redis_client.sadd(keys.hot_symbols(), *symbols)
+        redis_client.set(keys.hot_symbols_snapshot(), json.dumps(payload, ensure_ascii=False))
+    except Exception:
+        return
 
 
 def build_hot_symbol_record(provider: MarketDataProvider, symbol: str) -> dict[str, Any]:
@@ -283,6 +302,21 @@ def _safe_hot_snapshot(provider: MarketDataProvider) -> dict[str, Any] | None:
     return None
 
 
+def _hot_snapshot_can_satisfy(snapshot: dict[str, Any], limit: int) -> bool:
+    rows = snapshot.get("symbols") if isinstance(snapshot, dict) else None
+    if not isinstance(rows, list) or len(rows) < limit:
+        return False
+    ranking = snapshot.get("ranking") if isinstance(snapshot.get("ranking"), dict) else {}
+    refresh_seconds = _read_positive_int(ranking.get("refreshSeconds"))
+    if not refresh_seconds:
+        return True
+    source_updated_at = parse_utc_time(ranking.get("sourceUpdatedAt") or ranking.get("asOf"))
+    if not source_updated_at:
+        return True
+    age_seconds = (datetime.now(timezone.utc) - source_updated_at).total_seconds()
+    return age_seconds <= refresh_seconds
+
+
 def _limit_hot_snapshot(provider: MarketDataProvider, snapshot: dict[str, Any], limit: int) -> dict[str, Any]:
     ranking = dict(snapshot.get("ranking") or {})
     ranking["limit"] = limit
@@ -312,6 +346,27 @@ def _enrich_hot_symbol_records(provider: MarketDataProvider, records: list[dict[
         if enriched_record:
             enriched.append(enriched_record)
     return enriched
+
+
+def _append_hot_symbol_fallback_records(
+    provider: MarketDataProvider,
+    universe: list[str],
+    records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    scan_limit = _read_positive_int(os.getenv("HOT_TIER_FALLBACK_SCAN_LIMIT")) or 600
+    merged = list(records)
+    seen = set()
+    for record in merged:
+        symbol = record.get("symbol") if isinstance(record, dict) else None
+        if isinstance(symbol, str):
+            seen.add(symbol.strip().upper())
+    for symbol in universe[:scan_limit]:
+        normalized_symbol = normalize_market_symbol(symbol)
+        if normalized_symbol in seen:
+            continue
+        merged.append(build_hot_symbol_record(provider, normalized_symbol))
+        seen.add(normalized_symbol)
+    return merged
 
 
 def _enrich_quote_record(provider: MarketDataProvider, record: dict[str, Any]) -> dict[str, Any] | None:
@@ -362,6 +417,7 @@ def _previous_close_baseline(
     anchor_timestamp: Any = None,
 ) -> float | None:
     session_date = _market_session_date(anchor_timestamp) or _latest_intraday_session_date(candles)
+    max_age_days = _previous_close_max_age_days()
     daily_candles = _safe_clickhouse_candles(provider, symbol, 4, interval="1D")
     daily_closes_by_date = {}
     for daily_date, close in (_daily_close_entry(candle) for candle in daily_candles):
@@ -369,24 +425,33 @@ def _previous_close_baseline(
             daily_closes_by_date[daily_date] = close
     daily_closes = sorted(daily_closes_by_date.items())
     if session_date:
-        previous = [close for daily_date, close in daily_closes if daily_date and daily_date < session_date]
+        previous = [(daily_date, close) for daily_date, close in daily_closes if daily_date and daily_date < session_date]
         if previous:
-            return previous[-1]
-        return _previous_intraday_close_baseline(provider, symbol, session_date)
+            daily_date, close = previous[-1]
+            if (session_date - daily_date).days <= max_age_days:
+                return close
+        return _previous_intraday_close_baseline(provider, symbol, session_date, max_age_days=max_age_days)
     if len(daily_closes) >= 2:
-        return daily_closes[-2][1]
+        latest_date = daily_closes[-1][0]
+        previous_date, previous_close = daily_closes[-2]
+        if (latest_date - previous_date).days <= max_age_days:
+            return previous_close
     return None
 
 
-def _previous_intraday_close_baseline(provider: MarketDataProvider, symbol: str, session_date: date) -> float | None:
+def _previous_intraday_close_baseline(provider: MarketDataProvider, symbol: str, session_date: date, max_age_days: int) -> float | None:
     lookback_limit = candle_count_for_24h("1m") * 5
     candles = _safe_clickhouse_candles(provider, symbol, lookback_limit, interval="1m")
     previous_close = None
     for candle in candles:
         candle_date = _market_session_date(candle.get("timestamp"))
-        if candle_date and candle_date < session_date:
+        if candle_date and candle_date < session_date and (session_date - candle_date).days <= max_age_days:
             previous_close = _read_float(candle.get("close"))
     return previous_close
+
+
+def _previous_close_max_age_days() -> int:
+    return _read_positive_int(os.getenv("HOT_TIER_PREVIOUS_CLOSE_MAX_AGE_DAYS")) or DEFAULT_PREVIOUS_CLOSE_MAX_AGE_DAYS
 
 
 def _daily_close_entry(candle: dict[str, Any]) -> tuple[date | None, float | None]:

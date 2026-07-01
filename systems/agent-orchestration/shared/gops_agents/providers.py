@@ -161,7 +161,7 @@ def classify_news_event_type(text: str) -> str:
     keyword_groups = [
         ("earnings", ("earnings", "eps", "revenue", "profit", "실적", "매출", "순이익")),
         ("guidance", ("guidance", "forecast", "outlook", "전망", "가이던스")),
-        ("product", ("launch", "product", "chip", "gpu", "ai", "제품", "출시")),
+        ("product", ("launch", "product", "platform", "cloud", "ai", "제품", "출시")),
         ("regulation", ("regulation", "regulator", "sec", "probe", "export control", "규제", "조사")),
         ("analyst", ("analyst", "upgrade", "downgrade", "price target", "투자의견", "목표가")),
         ("macro", ("fed", "rate", "inflation", "cpi", "fomc", "금리", "물가", "연준")),
@@ -230,7 +230,7 @@ def score_news_relevance(symbol: str, title: str, summary: str) -> float:
 
 
 GRAPHDB_THEME_NAMES = (
-    "AI/반도체/데이터센터",
+    "AI/데이터센터/인프라",
     "클라우드/소프트웨어/사이버보안",
     "인터넷 플랫폼/미디어/광고",
     "소비/리테일/여행",

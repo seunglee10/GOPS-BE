@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 역할: 호환용 Python worker 이미지를 빌드해서 ECR로 push합니다.
-# 사용: 구조 전환 중 임시 worker_ecr_repository_url 값을 ECR_WORKER_REPO에 넣습니다.
+# 사용: Terraform 또는 ECR 출력의 worker repository URL을 ECR_WORKER_REPO에 넣습니다.
 # 출력: systems/* worker 호환 이미지가 ECR에 올라갑니다.
 set -euo pipefail
 
