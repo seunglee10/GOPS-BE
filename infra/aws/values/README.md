@@ -6,7 +6,7 @@ Put runtime values in these places:
 
 ```text
 Alpaca API key/secret       AWS Secrets Manager dev/alpaca
-KIS demo credentials        AWS Secrets Manager dev/kis
+KIS demo credentials        AWS Secrets Manager tead/gops/kis
 OpenAI API key              AWS Secrets Manager /gops/prod/agent-orchestrator/openai/api-key
 Kafka bootstrap servers     infra/k8s/overlays/aws config patch
 Redis URL                   infra/k8s/overlays/aws config patch

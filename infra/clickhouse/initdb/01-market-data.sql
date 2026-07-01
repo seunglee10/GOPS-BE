@@ -108,7 +108,8 @@ CREATE TABLE IF NOT EXISTS market_data.news_articles
 )
 ENGINE = ReplacingMergeTree(inserted_at)
 PARTITION BY toYYYYMM(published_at)
-ORDER BY (symbol, published_at, article_id);
+ORDER BY (symbol, published_at, article_id)
+TTL published_at + INTERVAL 30 DAY DELETE;
 
 CREATE TABLE IF NOT EXISTS market_data.load_audit
 (

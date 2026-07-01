@@ -6,7 +6,7 @@ AWS Secrets Manager names:
 
 ```text
 dev/alpaca
-dev/kis
+tead/gops/kis
 oauth/google
 /gops/prod/agent-orchestrator/openai/api-key
 ```
@@ -17,7 +17,7 @@ oauth/google
 {"APCA_API_KEY_ID":"...","APCA_API_SECRET_KEY":"..."}
 ```
 
-`dev/kis` must contain KIS demo credentials.
+`tead/gops/kis` must contain KIS demo credentials.
 
 GOPS Google login can use direct environment secrets on the `gops-backend` pod:
 

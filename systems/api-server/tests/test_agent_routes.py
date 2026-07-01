@@ -1,5 +1,7 @@
+import json
 import sys
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
@@ -14,10 +16,12 @@ for path in (str(MARKET_SHARED), str(ORDER_SHARED), str(AGENT_SHARED), str(BACKE
 
 try:
     from app.services.agent_alert_payloads import parse_pubsub_payload
+    from app.services import agent_gateway
 
     AGENT_ROUTE_HELPERS_AVAILABLE = True
 except Exception:
     parse_pubsub_payload = None
+    agent_gateway = None
     AGENT_ROUTE_HELPERS_AVAILABLE = False
 
 try:
@@ -64,6 +68,45 @@ class AgentRouteHelperTest(unittest.TestCase):
         payload = parse_pubsub_payload("not-json")
         self.assertEqual(payload["type"], "AGENT_ALERT")
         self.assertEqual(payload["raw"], "not-json")
+
+    @unittest.skipUnless(AGENT_ROUTE_HELPERS_AVAILABLE, "agent gateway module is not importable")
+    def test_agent_gateway_uses_configured_orchestrator_timeout(self):
+        with patch(
+            "app.services.agent_gateway.read_dotenv_value",
+            side_effect=lambda name: {
+                "AGENT_ORCHESTRATOR_URL": "http://agent-orchestrator:8100",
+                "AGENT_ORCHESTRATOR_TIMEOUT_SECONDS": "45",
+            }.get(name),
+        ):
+            with patch("urllib.request.urlopen", return_value=FakeJsonResponse({"status": "ok"})) as urlopen:
+                response = agent_gateway.request_orchestrator_json("POST", "/analyze", {"symbol": "DDOG"})
+
+        self.assertEqual(response, {"status": "ok"})
+        self.assertEqual(urlopen.call_args.kwargs["timeout"], 45.0)
+
+    @unittest.skipUnless(AGENT_ROUTE_HELPERS_AVAILABLE, "agent gateway module is not importable")
+    def test_agent_gateway_maps_upstream_timeout_to_504(self):
+        with patch("app.services.agent_gateway.read_dotenv_value", return_value=None):
+            with patch("urllib.request.urlopen", side_effect=urllib.error.URLError(TimeoutError("timed out"))):
+                with self.assertRaises(Exception) as raised:
+                    agent_gateway.request_orchestrator_json("POST", "/analyze", {"symbol": "DDOG"})
+
+        self.assertEqual(getattr(raised.exception, "status_code", None), 504)
+        self.assertEqual(getattr(raised.exception, "detail", None), "Agent orchestrator request timed out.")
+
+
+class FakeJsonResponse:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+    def read(self):
+        return json.dumps(self.payload).encode("utf-8")
 
 
 if __name__ == "__main__":

@@ -28,6 +28,14 @@ class FinalAnswerSynthesizer:
         findings: list[AgentFinding],
         provider_evidence: list[EvidenceItem],
     ) -> FinalAnswer:
+        if is_ontology_route(route) and os.getenv("AGENT_ONTOLOGY_FINAL_ANSWER_PROVIDER") != "openai":
+            return self._synthesize_deterministic(
+                symbol=symbol,
+                intent=intent,
+                route=route,
+                findings=findings,
+                provider_evidence=provider_evidence,
+            )
         openai_answer = self._synthesize_with_openai(
             symbol=symbol,
             intent=intent,
@@ -159,6 +167,10 @@ class FinalAnswerSynthesizer:
             return None
 
 
+def is_ontology_route(route: IntentRoute) -> bool:
+    return route.intentType == "ontology" or route.selectedRoles == ["ontology"]
+
+
 def build_summary(symbol: str, route: IntentRoute, findings: list[AgentFinding], evidence: list[EvidenceItem]) -> str:
     if evidence:
         return f"{symbol} 분석에 사용할 외부 근거를 확인했습니다."
@@ -185,11 +197,13 @@ def compact_evidence(items: list[EvidenceItem]) -> list[dict[str, Any]]:
     compacted = []
     for item in items[:20]:
         raw = item.raw if isinstance(item.raw, dict) else {}
+        title = display_title(item)
+        summary = display_summary(item)
         compacted.append({
             "provider": item.provider,
             "status": item.status,
-            "title": item.title,
-            "summary": item.summary,
+            "title": title,
+            "summary": summary,
             "observedAt": item.observedAt,
             "url": item.url,
             "raw": {
@@ -200,6 +214,11 @@ def compact_evidence(items: list[EvidenceItem]) -> list[dict[str, Any]]:
                     "impactDirection",
                     "eventType",
                     "relevanceScore",
+                    "importanceScore",
+                    "originalTitle",
+                    "originalSummary",
+                    "localizedTitle",
+                    "localizedSummary",
                     "themeName",
                     "themeCategory",
                     "controlledName",
@@ -307,10 +326,19 @@ def build_news_final_answer(symbol: str, findings: list[AgentFinding], provider_
 
     directions = Counter(raw_text(item, "impactDirection", "unknown") for item in news_items)
     dominant_direction = dominant_label(directions, "unknown")
+    major_items = sorted(
+        news_items,
+        key=lambda item: (
+            raw_number(item, "importanceScore"),
+            raw_number(item, "relevanceScore"),
+            raw_text(item, "publishedAt", ""),
+        ),
+        reverse=True,
+    )
     sections = [
         FinalAnswerSection(
             title="핵심 뉴스",
-            bullets=[f"{item.title}: {item.summary}" for item in news_items[:5]],
+            bullets=[f"{display_title(item)}: {display_summary(item)}" for item in major_items[:5]],
         ),
         FinalAnswerSection(
             title="주가 영향 방향",
@@ -411,7 +439,7 @@ def build_market_move_final_answer(symbol: str, findings: list[AgentFinding], pr
     if available:
         sections.append(FinalAnswerSection(
             title="핵심 근거",
-            bullets=[f"{item.title}: {item.summary}" for item in available[:6]],
+            bullets=[f"{display_title(item)}: {display_summary(item)}" for item in available[:6]],
         ))
     if warnings:
         sections.append(FinalAnswerSection(title="반대 근거 또는 불일치", bullets=warnings[:3]))
@@ -445,7 +473,7 @@ def build_general_final_answer(
     if available:
         sections.append(FinalAnswerSection(
             title="확인된 근거",
-            bullets=[f"{item.title}: {item.summary}" for item in available[:5]],
+            bullets=[f"{display_title(item)}: {display_summary(item)}" for item in available[:5]],
         ))
     limitations = [item.summary for item in no_data[:5]]
     if not available and not limitations:
@@ -482,7 +510,7 @@ def citations_from_evidence(items: list[EvidenceItem]) -> list[FinalAnswerCitati
     return [
         FinalAnswerCitation(
             provider=item.provider,
-            title=item.title,
+            title=display_title(item),
             url=item.url,
             publishedAt=item.raw.get("publishedAt") if isinstance(item.raw, dict) else None,
         )
@@ -495,6 +523,24 @@ def raw_text(item: EvidenceItem, key: str, fallback: str) -> str:
     raw = item.raw if isinstance(item.raw, dict) else {}
     value = raw.get(key)
     return str(value) if value else fallback
+
+
+def display_title(item: EvidenceItem) -> str:
+    if item.provider == "news":
+        return raw_text(item, "localizedTitle", item.title)
+    return item.title
+
+
+def display_summary(item: EvidenceItem) -> str:
+    if item.provider == "news":
+        return raw_text(item, "localizedSummary", item.summary)
+    return item.summary
+
+
+def raw_number(item: EvidenceItem, key: str) -> float:
+    raw = item.raw if isinstance(item.raw, dict) else {}
+    value = raw.get(key)
+    return float(value) if isinstance(value, (int, float)) else 0.0
 
 
 def dominant_label(counter: Counter, fallback: str) -> str:

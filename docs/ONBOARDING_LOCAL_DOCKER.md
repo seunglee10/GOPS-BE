@@ -17,13 +17,16 @@ cp .env.example .env
 ```
 
 For the default local Docker flow, GOPS uses real AWS S3 and AWS Secrets Manager.
-Keep these values aligned:
+Compose mounts the host `~/.aws` directory read-only into the API, backfill,
+and optional Alpaca live-ingestion services, so a working local AWS profile is
+enough in most cases. Keep these values aligned:
 
 ```text
 AWS_REGION=ap-northeast-2
 AWS_DEFAULT_REGION=ap-northeast-2
-AWS_ACCESS_KEY_ID=<your restricted local key>
-AWS_SECRET_ACCESS_KEY=<your restricted local secret>
+AWS_PROFILE=default
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
 AWS_SESSION_TOKEN=
 
 ALPACA_SECRET_NAME=dev/alpaca
@@ -82,7 +85,7 @@ Config:   http://localhost:8000/health/config
 | `local-s3` | MinIO experiments only. Not the default path. |
 | `reconciliation` | Manual order reconciliation job. |
 
-Start live Alpaca ingestion only when needed:
+Start live Alpaca ingestion only when real-time charts are needed:
 
 ```sh
 docker compose --profile alpaca up -d --build \
@@ -104,6 +107,7 @@ curl -fsS http://localhost:8000/health/config
 curl -fsS http://localhost:8000/api/charts/symbols
 curl -fsS 'http://localhost:8000/api/charts/candles?symbol=AAPL&interval=1m&limit=2'
 curl -fsS http://localhost:8000/api/order-contract
+curl -fsS 'http://localhost:8000/api/orders/balance?symbol=NVDA&exchange=NASD&price=1.00'
 ```
 
 `/health/config` must show only safe `SET`/`EMPTY` values for credentials.
@@ -118,6 +122,6 @@ It must never print secret values.
 | S3 archive write fails | Check bucket name, region, IAM permission, endpoint values, and `S3_ARCHIVE_ROOT_PREFIX`. Chart rendering should still use Redis/ClickHouse. |
 | Chart has no candles | Open the requested chart range and let range backfill queue the missing ClickHouse buckets. |
 | Live stream shows idle | This can mean WebSocket is connected but no current market data is arriving yet. Stored candles should still render. |
-| Order submit path fails locally | Keep `KIS_ENV=demo` and the default fake KIS adapter args unless intentionally testing KIS demo. |
+| Order submit path fails locally | Keep `KIS_ENV=demo`, `KIS_CREDENTIAL_SOURCE=aws-secrets-manager`, and check the `tead/gops/kis` secret JSON shape. Use `KIS_BROKER_ADAPTER_ARGS=--fake-kis success` only for explicit fake smoke runs. |
 
 If a local access-key CSV exists in the repo root, remove it after copying values into `.env`.

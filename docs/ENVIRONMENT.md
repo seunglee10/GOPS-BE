@@ -185,6 +185,29 @@ IDEMPOTENCY_HASH_SECRET
 
 AWS/EKS likely uses RDS.
 
+## KIS Demo Orders
+
+KIS order runtime stays on mock-investment demo trading in v1:
+
+```text
+KIS_ENV=demo
+KIS_CREDENTIAL_SOURCE=aws-secrets-manager
+KIS_SECRET_NAME=tead/gops/kis
+KIS_DEMO_APP_KEY
+KIS_DEMO_APP_SECRET
+KIS_DEMO_ACCOUNT_NO
+KIS_ACCOUNT_PRODUCT_CODE=01
+KIS_TOKEN_CACHE_PATH
+KIS_TIMEOUT_SECONDS
+KIS_BROKER_ADAPTER_ARGS
+```
+
+`kis-adapter` calls the KIS demo API by default. Set
+`KIS_BROKER_ADAPTER_ARGS=--fake-kis success` only for an explicit local fake
+smoke run. `KIS_ENV=real` remains disabled for v1.
+`KIS_CREDENTIAL_SOURCE=aws-secrets-manager` reads `tead/gops/kis` by default.
+Use `KIS_CREDENTIAL_SOURCE=local-env` only for an explicit direct-env smoke.
+
 ## ClickHouse
 
 Current local stage:
@@ -243,6 +266,12 @@ S3_ENDPOINT_URL
 Leave `S3_ENDPOINT_URL` empty for real AWS S3.
 
 Default development prefixes are isolated under `market-data/dev/helixho/...`. Use `S3_ARCHIVE_ROOT_PREFIX` or the specific processed/backfill prefix envs to move the namespace intentionally.
+
+Local Docker services that read AWS Secrets Manager or S3 can authenticate with
+direct `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` values, but the preferred
+local path is `AWS_PROFILE` plus the read-only host `~/.aws` mount configured in
+`docker-compose.yml` for the API, backfill, and optional Alpaca ingestion
+services. This keeps copied AWS keys out of `.env`.
 
 The ClickHouse loader can best-effort archive closed candles under `S3_FINAL_PREFIX` after the ClickHouse insert succeeds. Backfill workers similarly archive accepted historical candles under `S3_BACKFILL_PROCESSED_PREFIX`. Raw Alpaca Kafka topics are not archived by default; trade ticks remain realtime-only and are not persisted.
 
@@ -335,7 +364,14 @@ GRAPHDB_SPARQL_URL
 GRAPHDB_REPOSITORY
 AGENT_ONTOLOGY_LIMIT
 GRAPHDB_TIMEOUT_SECONDS
+AGENT_ONTOLOGY_ROLE_ANALYSIS_PROVIDER
+AGENT_ONTOLOGY_FINAL_ANSWER_PROVIDER
 ```
+
+Ontology-only analysis and final answers use deterministic GraphDB evidence by
+default. Set `AGENT_ONTOLOGY_ROLE_ANALYSIS_PROVIDER=openai` or
+`AGENT_ONTOLOGY_FINAL_ANSWER_PROVIDER=openai` only when the team explicitly
+accepts model synthesis for ontology output.
 
 Local GraphDB restore artifact:
 
@@ -374,7 +410,7 @@ AWS Secrets Manager names:
 
 ```text
 dev/alpaca
-dev/kis
+tead/gops/kis
 /gops/prod/agent-orchestrator/openai/api-key
 ```
 
@@ -384,7 +420,7 @@ dev/kis
 {"APCA_API_KEY_ID":"...","APCA_API_SECRET_KEY":"..."}
 ```
 
-`dev/kis` JSON:
+`tead/gops/kis` JSON:
 
 ```json
 {"KIS_DEMO_APP_KEY":"...","KIS_DEMO_APP_SECRET":"...","KIS_DEMO_ACCOUNT_NO":"..."}

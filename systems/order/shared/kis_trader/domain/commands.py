@@ -9,6 +9,10 @@ from typing import Any
 
 from .status import OrderContractError
 
+SUPPORTED_ORDER_MARKETS = frozenset({"overseas"})
+SUPPORTED_ORDER_DIVISIONS = frozenset({"00"})
+SUPPORTED_OVERSEAS_EXCHANGES = frozenset({"NASD", "NYSE", "AMEX", "SEHK", "SHAA", "SZAA", "TKSE", "HASE", "VNSE"})
+
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -100,13 +104,17 @@ def validate_order_request_payload(payload: dict[str, Any], *, default_account_a
         raise OrderContractError("order request must be a JSON object")
 
     account_alias = _non_empty(payload.get("account_alias") or default_account_alias, "account_alias")
-    market = _one_of(payload.get("market"), {"domestic", "overseas"}, "market")
+    market = _one_of(payload.get("market"), set(SUPPORTED_ORDER_MARKETS), "market")
     side = _one_of(payload.get("side"), {"buy", "sell"}, "side")
-    qty = _positive_decimal(payload.get("qty"), "qty")
+    qty = _positive_integer_decimal(payload.get("qty"), "qty")
     price = _positive_decimal(payload.get("price"), "price")
     symbol = _non_empty(payload.get("symbol"), "symbol").upper()
     exchange = _non_empty(payload.get("exchange"), "exchange").upper()
     order_division = _non_empty(payload.get("order_division", "00"), "order_division")
+    if exchange not in SUPPORTED_OVERSEAS_EXCHANGES:
+        raise OrderContractError(f"exchange must be one of {sorted(SUPPORTED_OVERSEAS_EXCHANGES)}")
+    if order_division not in SUPPORTED_ORDER_DIVISIONS:
+        raise OrderContractError("order_division must be '00' for KIS overseas demo limit orders")
 
     return OrderRequest(
         account_alias=account_alias,
@@ -202,6 +210,14 @@ def _positive_decimal(value: Any, field: str) -> Decimal:
     if parsed <= 0:
         raise OrderContractError(f"{field} must be positive")
     return parsed
+
+
+def _positive_integer_decimal(value: Any, field: str) -> Decimal:
+    parsed = _positive_decimal(value, field)
+    integral = parsed.to_integral_value()
+    if parsed != integral:
+        raise OrderContractError(f"{field} must be a whole-share quantity")
+    return integral
 
 
 def _json_ready(value: Any) -> Any:

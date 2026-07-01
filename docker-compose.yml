@@ -186,6 +186,8 @@ services:
       AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
       AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
       AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
+      AWS_PROFILE: "${AWS_PROFILE:-default}"
+      AWS_SDK_LOAD_CONFIG: "${AWS_SDK_LOAD_CONFIG:-1}"
       ALPACA_CREDENTIAL_SOURCE: "aws-secrets-manager"
       ALPACA_SECRET_NAME: "${ALPACA_SECRET_NAME:-dev/alpaca}"
       ALFAKA_REQUEST_CONFIG: "systems/market-data/config/market-data-request.json"
@@ -199,6 +201,8 @@ services:
       ALPACA_ACTIVE_POLL_SECONDS: "1"
     command: ["python", "-u", "systems/market-data/pods/market-ingestor/market_stream.py"]
     restart: unless-stopped
+    volumes:
+      - ${HOME}/.aws:/root/.aws:ro
     networks:
       - app_net
       - data_net
@@ -227,6 +231,8 @@ services:
       AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
       AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
       AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
+      AWS_PROFILE: "${AWS_PROFILE:-default}"
+      AWS_SDK_LOAD_CONFIG: "${AWS_SDK_LOAD_CONFIG:-1}"
       ALPACA_CREDENTIAL_SOURCE: "aws-secrets-manager"
       ALPACA_SECRET_NAME: "${ALPACA_SECRET_NAME:-dev/alpaca}"
       ALFAKA_REQUEST_CONFIG: "systems/market-data/config/market-data-request.json"
@@ -240,6 +246,8 @@ services:
       ALPACA_ACTIVE_POLL_SECONDS: "1"
     command: ["python", "-u", "systems/market-data/pods/market-ingestor/market_stream.py"]
     restart: unless-stopped
+    volumes:
+      - ${HOME}/.aws:/root/.aws:ro
     networks:
       - app_net
       - data_net
@@ -268,6 +276,8 @@ services:
       AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
       AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
       AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
+      AWS_PROFILE: "${AWS_PROFILE:-default}"
+      AWS_SDK_LOAD_CONFIG: "${AWS_SDK_LOAD_CONFIG:-1}"
       ALPACA_CREDENTIAL_SOURCE: "aws-secrets-manager"
       ALPACA_SECRET_NAME: "${ALPACA_SECRET_NAME:-dev/alpaca}"
       ALFAKA_REQUEST_CONFIG: "systems/market-data/config/market-data-request.json"
@@ -281,6 +291,8 @@ services:
       ALPACA_ACTIVE_POLL_SECONDS: "1"
     command: ["python", "-u", "systems/market-data/pods/market-ingestor/market_stream.py"]
     restart: unless-stopped
+    volumes:
+      - ${HOME}/.aws:/root/.aws:ro
     networks:
       - app_net
       - data_net
@@ -300,11 +312,15 @@ services:
     environment:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
       KAFKA_NEWS_TOPIC: "market.news.alpaca.v1"
+      AWS_PROFILE: "${AWS_PROFILE:-default}"
+      AWS_SDK_LOAD_CONFIG: "${AWS_SDK_LOAD_CONFIG:-1}"
       ALPACA_NEWS_POLL_SECONDS: "${ALPACA_NEWS_POLL_SECONDS:-300}"
       ALPACA_NEWS_LIMIT: "${ALPACA_NEWS_LIMIT:-50}"
       ALPACA_NEWS_INCLUDE_CONTENT: "${ALPACA_NEWS_INCLUDE_CONTENT:-false}"
     command: ["python", "-u", "systems/market-data/pods/news-ingestor/main.py"]
     restart: unless-stopped
+    volumes:
+      - ${HOME}/.aws:/root/.aws:ro
     networks:
       - app_net
       - streaming_net
@@ -455,6 +471,14 @@ services:
       CLICKHOUSE_DATABASE: "market_data"
       CLICKHOUSE_USER: "alfaka"
       CLICKHOUSE_PASSWORD: "alfaka"
+      AGENT_NEWS_CACHE_BACKEND: "auto"
+      AGENT_NEWS_CACHE_TTL_SECONDS: "300"
+      AGENT_NEWS_NO_DATA_CACHE_TTL_SECONDS: "60"
+      AGENT_NEWS_LOOKBACK_DAYS: "30"
+      AGENT_ANALYSIS_CACHE_BACKEND: "auto"
+      AGENT_ANALYSIS_CACHE_TTL_SECONDS: "180"
+      AGENT_ANALYSIS_NO_DATA_CACHE_TTL_SECONDS: "60"
+      AGENT_ANALYSIS_CACHE_KEY_PREFIX: "gops:agent:analysis"
       GRAPHDB_SPARQL_URL: "${GRAPHDB_SPARQL_URL:-http://graphdb:7200/repositories/nasdaq-fibo}"
       GRAPHDB_REPOSITORY: "${GRAPHDB_REPOSITORY:-nasdaq-fibo}"
       AGENT_ONTOLOGY_LIMIT: "${AGENT_ONTOLOGY_LIMIT:-20}"
@@ -540,6 +564,13 @@ services:
       AGENT_ORCHESTRATOR_URL: "http://agent-orchestrator:8100"
       ORDER_REPOSITORY: "postgres"
       KIS_ENV: "${KIS_ENV:-demo}"
+      KIS_SECRET_NAME: "${KIS_SECRET_NAME:-dev/kis}"
+      KIS_DEMO_APP_KEY: "${KIS_DEMO_APP_KEY:-}"
+      KIS_DEMO_APP_SECRET: "${KIS_DEMO_APP_SECRET:-}"
+      KIS_DEMO_ACCOUNT_NO: "${KIS_DEMO_ACCOUNT_NO:-}"
+      KIS_ACCOUNT_PRODUCT_CODE: "${KIS_ACCOUNT_PRODUCT_CODE:-01}"
+      KIS_TOKEN_CACHE_PATH: "/kis-cache/demo-token.json"
+      KIS_TIMEOUT_SECONDS: "${KIS_TIMEOUT_SECONDS:-5}"
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       OPENAI_MODEL: "${OPENAI_MODEL:-gpt-5.2}"
       OPENAI_TIMEOUT_SECONDS: "${OPENAI_TIMEOUT_SECONDS:-20}"
@@ -588,12 +619,17 @@ services:
       AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
       AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
       AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
+      AWS_PROFILE: "${AWS_PROFILE:-default}"
+      AWS_SDK_LOAD_CONFIG: "${AWS_SDK_LOAD_CONFIG:-1}"
       S3_ENDPOINT_URL: "${DOCKER_S3_ENDPOINT_URL:-}"
       S3_BUCKET: "${S3_BUCKET:-}"
       ALPACA_CREDENTIAL_SOURCE: "aws-secrets-manager"
       ALPACA_SECRET_NAME: "${ALPACA_SECRET_NAME:-dev/alpaca}"
     ports:
       - "8000:8000"
+    volumes:
+      - ${HOME}/.aws:/root/.aws:ro
+      - kis_token_cache:/kis-cache
     restart: unless-stopped
     networks:
       - app_net
@@ -656,13 +692,15 @@ services:
       DATABASE_URL: "postgresql://gops:${POSTGRES_PASSWORD:-gops_dev_password}@postgres:5432/gops"
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
       KIS_ENV: "${KIS_ENV:-demo}"
-      KIS_SECRET_NAME: "${KIS_SECRET_NAME:-dev/kis}"
+      KIS_CREDENTIAL_SOURCE: "${KIS_CREDENTIAL_SOURCE:-aws-secrets-manager}"
+      KIS_SECRET_NAME: "${KIS_SECRET_NAME:-tead/gops/kis}"
       KIS_DEMO_APP_KEY: "${KIS_DEMO_APP_KEY:-}"
       KIS_DEMO_APP_SECRET: "${KIS_DEMO_APP_SECRET:-}"
       KIS_DEMO_ACCOUNT_NO: "${KIS_DEMO_ACCOUNT_NO:-}"
       KIS_ACCOUNT_PRODUCT_CODE: "${KIS_ACCOUNT_PRODUCT_CODE:-01}"
       KIS_TOKEN_CACHE_PATH: "/kis-cache/demo-token.json"
       KIS_TIMEOUT_SECONDS: "${KIS_TIMEOUT_SECONDS:-5}"
+      KIS_BROKER_ADAPTER_ARGS: "${KIS_BROKER_ADAPTER_ARGS:-}"
       AWS_REGION: "${AWS_REGION:-ap-northeast-2}"
       AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-ap-northeast-2}"
       AWS_EC2_METADATA_DISABLED: "${AWS_EC2_METADATA_DISABLED:-true}"
@@ -692,7 +730,8 @@ services:
     environment:
       DATABASE_URL: "postgresql://gops:${POSTGRES_PASSWORD:-gops_dev_password}@postgres:5432/gops"
       KIS_ENV: "${KIS_ENV:-demo}"
-      KIS_SECRET_NAME: "${KIS_SECRET_NAME:-dev/kis}"
+      KIS_CREDENTIAL_SOURCE: "${KIS_CREDENTIAL_SOURCE:-aws-secrets-manager}"
+      KIS_SECRET_NAME: "${KIS_SECRET_NAME:-tead/gops/kis}"
       KIS_TOKEN_CACHE_PATH: "/kis-cache/demo-token.json"
       KIS_TIMEOUT_SECONDS: "${KIS_TIMEOUT_SECONDS:-5}"
       AWS_REGION: "${AWS_REGION:-ap-northeast-2}"
@@ -755,6 +794,10 @@ services:
       AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
       AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
       AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
+      AWS_PROFILE: "${AWS_PROFILE:-default}"
+      AWS_SDK_LOAD_CONFIG: "${AWS_SDK_LOAD_CONFIG:-1}"
+      ALPACA_CREDENTIAL_SOURCE: "aws-secrets-manager"
+      ALPACA_SECRET_NAME: "${ALPACA_SECRET_NAME:-dev/alpaca}"
       S3_ENDPOINT_URL: "${DOCKER_S3_ENDPOINT_URL:-}"
       S3_BUCKET: "${S3_BUCKET:-gops-market-data-<aws-account-id>-ap-northeast-2-an}"
       S3_ARCHIVE_ROOT_PREFIX: "${S3_ARCHIVE_ROOT_PREFIX:-market-data/dev/helixho}"
@@ -767,10 +810,10 @@ services:
       S3_MANIFEST_PREFIX: "${S3_MANIFEST_PREFIX:-market-data/dev/helixho/manifest}"
       S3_PUT_MAX_ATTEMPTS: "${S3_PUT_MAX_ATTEMPTS:-3}"
       S3_PUT_RETRY_SLEEP_SECONDS: "${S3_PUT_RETRY_SLEEP_SECONDS:-1}"
-      ALPACA_CREDENTIAL_SOURCE: "aws-secrets-manager"
-      ALPACA_SECRET_NAME: "${ALPACA_SECRET_NAME:-dev/alpaca}"
     command: ["python", "-u", "systems/market-data/pods/backfill-worker/main.py"]
     restart: unless-stopped
+    volumes:
+      - ${HOME}/.aws:/root/.aws:ro
     networks:
       - app_net
       - data_net

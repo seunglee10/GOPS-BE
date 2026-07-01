@@ -34,6 +34,13 @@ class FakeKisClient:
         self.submit_calls = 0
         self.refresh_calls = 0
         self.history_rows: list[dict[str, Any]] = []
+        self.holdings_payload: dict[str, Any] = {
+            "status": "empty",
+            "source": "kis-demo",
+            "account": {"alias": "모의투자", "market": "overseas", "currency": "USD"},
+            "positions": [],
+            "limitations": [],
+        }
 
     def refresh_token(self) -> None:
         self.refresh_calls += 1
@@ -59,3 +66,6 @@ class FakeKisClient:
 
     def fetch_order_history(self, **_kwargs: Any) -> list[dict[str, Any]]:
         return list(self.history_rows)
+
+    def fetch_holdings(self, **_kwargs: Any) -> dict[str, Any]:
+        return dict(self.holdings_payload)
