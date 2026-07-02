@@ -1,0 +1,32 @@
+# 역할: 대표 agent query set으로 stage latency p50/p95 baseline을 측정합니다.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: retrieval-latency-benchmark
+  namespace: alfaka-market-data
+spec:
+  template:
+    metadata:
+      labels:
+        app: retrieval-latency-benchmark
+    spec:
+      restartPolicy: Never
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: retrieval-latency-benchmark
+          image: YOUR_ECR_REPOSITORY/gops-agent-orchestrator:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -u
+            - /app/systems/agent-orchestration/jobs/retrieval-latency-benchmark/main.py
+          env:
+            - name: AGENT_PUBLISH_TO_KAFKA
+              value: "false"
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-clickhouse-secret
+                optional: true
+  backoffLimit: 1

@@ -112,6 +112,17 @@ CREATE TABLE IF NOT EXISTS market_data.symbols
 ENGINE = ReplacingMergeTree(inserted_at)
 ORDER BY symbol;
 
+CREATE TABLE IF NOT EXISTS market_data.agent_graph_expansions
+(
+    symbol String,
+    relation_version LowCardinality(String),
+    generated_at DateTime64(3, 'UTC'),
+    payload String,
+    inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(inserted_at)
+ORDER BY (symbol, relation_version, generated_at);
+
 CREATE TABLE IF NOT EXISTS market_data.news_articles
 (
     published_at DateTime64(3, 'UTC'),

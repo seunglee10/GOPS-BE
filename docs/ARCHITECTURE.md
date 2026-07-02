@@ -54,6 +54,11 @@ flowchart LR
 
   subgraph Agents["systems/agent-orchestration"]
     AgentOrch["pod: agent-orchestrator<br/>snapshot orchestration"]
+    AgentWorker["pod: agent-analysis-worker<br/>queued hot analysis"]
+    DeepWorker["pod: deep-analysis-worker<br/>opt-in deep analysis"]
+    DeliveryGateway["pod: agent-delivery-gateway<br/>report delivery fanout"]
+    GraphRefresh["job: graph-expansion-refresh"]
+    AgentEval["jobs: latency/fanout/quality eval"]
     EventDetector["pod: agent-event-detector"]
     AlertPublisher["pod: agent-notification-publisher"]
     AgentShared["shared: gops_agents.*"]
@@ -97,6 +102,16 @@ flowchart LR
   ApiServer --> ClickHouse
   ApiServer --> Postgres
   ApiServer --> AgentOrch
+  ApiServer --> Kafka
+  Kafka --> AgentWorker
+  Kafka --> DeepWorker
+  AgentWorker --> Redis
+  AgentWorker --> Kafka
+  AgentWorker --> AgentShared
+  Kafka --> DeliveryGateway
+  DeliveryGateway --> Redis
+  GraphRefresh --> Redis
+  GraphRefresh --> ClickHouse
   ApiServer --> MarketShared
   ApiServer --> OrderShared
 

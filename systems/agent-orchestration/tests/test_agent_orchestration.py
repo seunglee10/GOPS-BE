@@ -13,11 +13,9 @@ sys.path.insert(0, str(ROOT / "shared"))
 sys.path.insert(0, str(REPO_ROOT / "systems" / "market-data" / "shared"))
 sys.modules.setdefault("boto3", types.SimpleNamespace(client=lambda *args, **kwargs: None))
 
-from gops_agents.agents import AgentContext, NewsAgent, OntologyAgent, VerificationGuardrailAgent
-from gops_agents.analysis_cache import MemoryAgentAnalysisCache, RedisAgentAnalysisCache
 from gops_agents.contracts import AgentFinding, DataSnapshot, EvidenceItem, FinalAnswer, IntentRoute, SynthesisInput, utc_now_iso
-from gops_agents.event_detector import MarketEventDetector, MarketEventThresholds
-from gops_agents.news_localization import NewsLocalizationService
+from gops_agents.events.detector import MarketEventDetector, MarketEventThresholds
+from gops_agents.events.publisher import notification_payload
 from gops_agents.orchestrator import (
     AgentOrchestrator,
     canonical_analysis_intent,
@@ -25,13 +23,31 @@ from gops_agents.orchestrator import (
     extract_symbol_from_intent,
     relationship_symbols_for_context,
 )
-from gops_agents.publisher import notification_payload
-from gops_agents.graph_path_cache import MemoryGraphPathCache
-from gops_agents.news_cache import MemoryNewsEvidenceCache, RedisNewsEvidenceCache
 from gops_agents.providers import ClickHouseNewsProvider, GraphDBOntologyProvider, ProviderRequest
-from gops_agents.report_store import InMemoryReportStore, RedisReportStore
-from gops_agents.router import route_intent
-from gops_agents.synthesizer import FinalAnswerSynthesizer
+from gops_agents.providers.graph_path_cache import MemoryGraphPathCache
+from gops_agents.providers.news_cache import MemoryNewsEvidenceCache, RedisNewsEvidenceCache
+from gops_agents.providers.news_localization import NewsLocalizationService
+from gops_agents.query_understanding import EntityAliasRecord, EntityResolution, KoreanEntityResolver
+from gops_agents.query_understanding.alias_index import EntityAliasIndex
+from gops_agents.retrieval import provider_bulkhead
+from gops_agents.retrieval.context import GraphExpansion, RelatedSymbol
+from gops_agents.retrieval.graph_expansion import (
+    GraphExpansionCache,
+    GraphExpansionWriter,
+    build_graph_expansion_from_evidence,
+    graph_expansion_cache_key,
+)
+from gops_agents.retrieval.snapshots import trim_cross_signals
+from gops_agents.roles import AgentContext, NewsAgent, OntologyAgent, VerificationGuardrailAgent
+from gops_agents.runtime.admission import AdmissionPolicy, admit_analysis_request
+from gops_agents.runtime.analysis_cache import MemoryAgentAnalysisCache, RedisAgentAnalysisCache
+from gops_agents.runtime.delivery_gateway import AgentDeliveryGateway
+from gops_agents.runtime.envelope import build_request_envelope
+from gops_agents.runtime.queues import AnalysisQueueMetrics
+from gops_agents.runtime.report_store import InMemoryReportStore, RedisReportStore
+from gops_agents.runtime.workers import AgentAnalysisWorker
+from gops_agents.orchestration.routing import route_intent
+from gops_agents.synthesis import FinalAnswerSynthesizer
 import alfaka.alpaca.news  # noqa: F401
 import alfaka.common.secrets  # noqa: F401
 from alfaka.news.relevance import classify_subject_relevance
@@ -161,6 +177,31 @@ class FakeRedisClient:
         self.items[key] = (ttl, value)
 
 
+class FakePublishRedisClient(FakeRedisClient):
+    def __init__(self):
+        super().__init__()
+        self.publish_calls = []
+
+    def publish(self, channel, payload):
+        self.publish_calls.append((channel, payload))
+
+
+class FakeAnalysisQueue:
+    def __init__(self):
+        self.envelopes = []
+
+    def submit(self, envelope):
+        self.envelopes.append(envelope)
+
+
+class FakeClickHouseInsertClient:
+    def __init__(self):
+        self.insert_calls = []
+
+    def insert_json_each_row(self, table, rows):
+        self.insert_calls.append((table, rows))
+
+
 class CountingNewsAgent(NewsAgent):
     def __init__(self, provider=None, localizer=None):
         super().__init__(provider=provider, localizer=localizer)
@@ -185,6 +226,17 @@ class CountingSynthesizer:
             citations=[],
             limitations=[],
         )
+
+
+class InspectingDeepOrchestrator:
+    def __init__(self, store):
+        self.store = store
+        self.seen_report = None
+        self.delegate = AgentOrchestrator(store=store)
+
+    def analyze(self, payload):
+        self.seen_report = self.store.get(payload["requestId"])
+        return self.delegate.analyze(payload)
 
 
 class SlowNewsProvider:
@@ -315,9 +367,16 @@ class AgentOrchestrationTests(unittest.TestCase):
                 "AGENT_MAX_REALTIME_LLM_CALLS",
                 "AGENT_NEWS_LOCALIZATION_PROVIDER",
                 "AGENT_NEWS_ROLE_ANALYSIS_PROVIDER",
+                "AGENT_GRAPH_EXPANSION_CACHE_ENABLED",
+                "AGENT_CROSS_SIGNAL_ENABLED",
                 "AGENT_REPORT_TTL_SECONDS",
                 "AGENT_ROUTER_PROVIDER",
                 "AGENT_SNAPSHOT_TIMEOUT_MS",
+                "AGENT_EXPANDED_RETRIEVAL_ENABLED",
+                "AGENT_MAX_RELATED_SYMBOLS",
+                "AGENT_MAX_RELATED_THEMES",
+                "AGENT_MAX_NEWS_ITEMS_TOTAL",
+                "AGENT_MAX_MARKET_PEERS",
                 "AGENT_UI_ROUTER_PROVIDER",
                 "AGENT_USE_SNAPSHOT_HOT_PATH",
             ]
@@ -329,6 +388,15 @@ class AgentOrchestrationTests(unittest.TestCase):
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = value
+
+    def test_gops_agents_top_level_keeps_only_package_boundaries(self):
+        allowed = {"__init__.py", "orchestrator.py"}
+        top_level_files = {
+            path.name
+            for path in (ROOT / "shared" / "gops_agents").iterdir()
+            if path.is_file() and path.suffix == ".py"
+        }
+        self.assertEqual(top_level_files, allowed)
 
     def test_orchestrator_returns_report_with_empty_provider_evidence(self):
         report = AgentOrchestrator().analyze({
@@ -382,7 +450,359 @@ class AgentOrchestrationTests(unittest.TestCase):
         saved = store.save(report)
 
         self.assertEqual(saved.analysisId, report.analysisId)
+        self.assertIn("reportStoreWriteFailed", saved.agentTrace)
         self.assertIsNone(store.get(report.analysisId))
+
+    def test_report_store_idempotency_mapping_round_trip(self):
+        store = InMemoryReportStore()
+
+        store.save_idempotency_mapping("user-1", "idem-1", "agent-request-1")
+
+        self.assertEqual(store.get_idempotency_request_id("user-1", "idem-1"), "agent-request-1")
+
+    def test_admission_rejects_when_queue_depth_crosses_policy(self):
+        envelope = build_request_envelope({"symbol": "NVDA", "intent": "analysis"}, request_id="agent-admission")
+
+        decision = admit_analysis_request(
+            envelope,
+            AnalysisQueueMetrics(backend="test", queue_depth=10),
+            policy=AdmissionPolicy(max_queue_depth=10),
+        )
+
+        self.assertFalse(decision.accepted)
+        self.assertEqual(decision.reason, "analysis_queue_backpressure")
+        self.assertEqual(decision.status_code, 429)
+
+    def test_admission_degrades_stream_delivery_to_poll_under_backlog(self):
+        envelope = build_request_envelope(
+            {"symbol": "NVDA", "intent": "analysis", "responseMode": "stream"},
+            request_id="agent-admission-degrade",
+        )
+
+        decision = admit_analysis_request(
+            envelope,
+            AnalysisQueueMetrics(backend="test", queue_depth=1),
+            policy=AdmissionPolicy(max_queue_depth=10, degrade_stream_to_poll=True),
+        )
+
+        self.assertTrue(decision.accepted)
+        self.assertTrue(decision.degraded)
+        self.assertEqual(envelope.delivery.response_mode, "poll")
+
+    def test_orchestrator_uses_request_id_and_records_retrieval_context(self):
+        report = AgentOrchestrator().analyze({
+            "symbol": "NVDA",
+            "intent": "뉴스 보여줘",
+            "requestId": "agent-request-test",
+        })
+
+        self.assertEqual(report.analysisId, "agent-request-test")
+        self.assertIn("retrievalContext", report.agentTrace)
+        self.assertEqual(report.agentTrace["retrievalContext"]["primary_symbol"], "NVDA")
+        self.assertEqual(report.timing["relatedSymbolsUsed"], 0)
+
+    def test_analysis_worker_processes_envelope_to_shared_store(self):
+        store = InMemoryReportStore()
+        envelope = build_request_envelope(
+            {"symbol": "NVDA", "intent": "뉴스 보여줘"},
+            request_id="agent-request-worker",
+            user_id="user-1",
+            idempotency_key="idem-1",
+        )
+        worker = AgentAnalysisWorker(store=store, orchestrator=AgentOrchestrator(store=store))
+
+        with patch("gops_agents.runtime.workers.publish_agent_outputs"):
+            report = worker.process_envelope(envelope)
+
+        self.assertEqual(report.analysisId, "agent-request-worker")
+        self.assertEqual(report.status, "completed")
+        self.assertIn("queueWaitMs", report.timing)
+        self.assertEqual(report.timing["workerMode"], "hot")
+        self.assertEqual(report.timing["providerBulkheadRejected"], 0)
+        self.assertEqual(store.get("agent-request-worker").status, "completed")
+        self.assertEqual(store.get_idempotency_request_id("user-1", "idem-1"), "agent-request-worker")
+
+    def test_analysis_worker_queues_deep_update_and_marks_hot_report_pending(self):
+        store = InMemoryReportStore()
+        deep_queue = FakeAnalysisQueue()
+        envelope = build_request_envelope(
+            {"symbol": "NVDA", "intent": "뉴스 보여줘"},
+            request_id="agent-request-deep-pending",
+            user_id="user-1",
+        )
+        worker = AgentAnalysisWorker(
+            store=store,
+            orchestrator=AgentOrchestrator(store=store),
+            deep_queue=deep_queue,
+        )
+
+        with patch.dict(os.environ, {"AGENT_DEEP_ANALYSIS_ENABLED": "true"}):
+            with patch("gops_agents.runtime.workers.publish_agent_outputs"):
+                report = worker.process_envelope(envelope)
+
+        self.assertEqual(report.status, "deep_pending")
+        self.assertEqual(store.get("agent-request-deep-pending").status, "deep_pending")
+        self.assertEqual(len(deep_queue.envelopes), 1)
+        self.assertEqual(deep_queue.envelopes[0].mode, "deep")
+        self.assertEqual(deep_queue.envelopes[0].request_id, "agent-request-deep-pending")
+
+    def test_deep_analysis_worker_marks_follow_up_completed_without_requeue(self):
+        store = InMemoryReportStore()
+        deep_queue = FakeAnalysisQueue()
+        envelope = build_request_envelope(
+            {"symbol": "NVDA", "intent": "뉴스 보여줘", "mode": "deep"},
+            request_id="agent-request-deep-completed",
+            user_id="user-1",
+        )
+        worker = AgentAnalysisWorker(
+            store=store,
+            orchestrator=AgentOrchestrator(store=store),
+            deep_queue=deep_queue,
+        )
+
+        with patch.dict(os.environ, {"AGENT_DEEP_ANALYSIS_ENABLED": "true"}):
+            with patch("gops_agents.runtime.workers.publish_agent_outputs"):
+                report = worker.process_envelope(envelope)
+
+        self.assertEqual(report.status, "deep_completed")
+        self.assertEqual(store.get("agent-request-deep-completed").status, "deep_completed")
+        self.assertEqual(len(deep_queue.envelopes), 0)
+        self.assertEqual(report.agentTrace["deepAnalysis"]["status"], "deep_completed")
+
+    def test_deep_analysis_worker_preserves_hot_report_while_running(self):
+        store = InMemoryReportStore()
+        hot_report = AgentOrchestrator(store=store).analyze({
+            "symbol": "NVDA",
+            "intent": "뉴스 보여줘",
+            "requestId": "agent-request-deep-preserve",
+        })
+        hot_report.status = "deep_pending"
+        store.save(hot_report)
+        orchestrator = InspectingDeepOrchestrator(store)
+        envelope = build_request_envelope(
+            {"symbol": "NVDA", "intent": "뉴스 보여줘", "mode": "deep"},
+            request_id="agent-request-deep-preserve",
+            user_id="user-1",
+        )
+        worker = AgentAnalysisWorker(store=store, orchestrator=orchestrator, deep_queue=FakeAnalysisQueue())
+
+        with patch("gops_agents.runtime.workers.publish_agent_outputs"):
+            report = worker.process_envelope(envelope)
+
+        self.assertIsNotNone(orchestrator.seen_report.finalAnswer)
+        self.assertEqual(orchestrator.seen_report.status, "deep_pending")
+        self.assertEqual(orchestrator.seen_report.agentTrace["deepAnalysis"]["status"], "running")
+        self.assertEqual(report.status, "deep_completed")
+
+    def test_delivery_gateway_stores_report_and_publishes_updates(self):
+        source_report = AgentOrchestrator().analyze({
+            "symbol": "NVDA",
+            "intent": "뉴스 보여줘",
+            "requestId": "agent-delivery-test",
+        })
+        store = InMemoryReportStore()
+        redis = FakePublishRedisClient()
+        gateway = AgentDeliveryGateway(store=store, redis_client=redis)
+
+        result = gateway.process_report_payload(source_report.to_dict())
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(store.get("agent-delivery-test").status, "completed")
+        self.assertEqual([call[0] for call in redis.publish_calls], ["agent.reports", "agent.reports:agent-delivery-test"])
+
+    def test_graph_expansion_cache_reads_redis_payload(self):
+        redis = FakeRedisClient()
+        redis.setex(
+            graph_expansion_cache_key("NVDA"),
+            3600,
+            json.dumps({
+                "generated_at": "2026-01-01T00:00:00Z",
+                "relation_version": "v1",
+                "related_symbols": [
+                    {"symbol": "AMD", "relation_type": "competitor", "score": 0.91, "reason": "GPU peer"}
+                ],
+                "themes": [{"name": "AI accelerators", "score": 0.8}],
+                "keywords": ["GPU"],
+            }),
+        )
+
+        expansion = GraphExpansionCache(redis_client=redis).load("nvda")
+
+        self.assertEqual(expansion.source, "redis")
+        self.assertTrue(expansion.cache_hit)
+        self.assertEqual(expansion.related_symbols[0].symbol, "AMD")
+        self.assertEqual(expansion.themes[0].name, "AI accelerators")
+
+    def test_graph_expansion_builder_and_writer_store_payload(self):
+        redis = FakeRedisClient()
+        clickhouse = FakeClickHouseInsertClient()
+        evidence = [
+            EvidenceItem(
+                provider="ontology",
+                status="available",
+                title="AMD related company",
+                summary="AMD는 AI accelerators 테마에 포함된 기업입니다.",
+                raw={
+                    "relationType": "theme-company",
+                    "ticker": "AMD",
+                    "themeName": "AI accelerators",
+                    "themeCategory": "semiconductors",
+                    "sourceUrl": "https://example.test/source",
+                },
+            )
+        ]
+
+        expansion = build_graph_expansion_from_evidence("NVDA", evidence, relation_version="test-v1")
+        GraphExpansionWriter(redis_client=redis, clickhouse_client=clickhouse).save("NVDA", expansion, ttl_seconds=60)
+
+        self.assertEqual(expansion.related_symbols[0].symbol, "AMD")
+        self.assertEqual(expansion.related_symbols[0].relation_type, "same-theme")
+        self.assertEqual(expansion.themes[0].name, "AI accelerators")
+        self.assertIn("semiconductors", expansion.keywords)
+        self.assertEqual(redis.setex_calls[0][0], graph_expansion_cache_key("NVDA"))
+        self.assertEqual(clickhouse.insert_calls[0][0], "agent_graph_expansions")
+        self.assertEqual(clickhouse.insert_calls[0][1][0]["relation_version"], "test-v1")
+
+    def test_graph_expansion_hint_feeds_bounded_news_symbols_when_enabled(self):
+        rows_by_symbol = {
+            "AMD": [{
+                "symbol": "AMD",
+                "title": "AMD GPU demand rises",
+                "summary": "AMD reports stronger AI accelerator demand.",
+                "publishedAt": utc_now_iso(),
+                "symbols": ["AMD"],
+            }]
+        }
+        provider = ThemeClickHouseProvider(rows_by_symbol)
+        orchestrator = AgentOrchestrator()
+        orchestrator.news_agent = NewsAgent(ClickHouseNewsProvider(clickhouse_provider=provider, cache=MemoryNewsEvidenceCache()), localizer=NewsLocalizationService())
+        graph_expansion = GraphExpansion(
+            source="redis",
+            cache_hit=True,
+            related_symbols=[
+                RelatedSymbol(symbol="AMD", relation_type="competitor", score=0.91, reason="GPU peer"),
+                RelatedSymbol(symbol="TSM", relation_type="supplier", score=0.8, reason="Foundry"),
+            ],
+        )
+
+        with patch.dict(os.environ, {
+            "AGENT_GRAPH_EXPANSION_CACHE_ENABLED": "true",
+            "AGENT_EXPANDED_RETRIEVAL_ENABLED": "true",
+            "AGENT_MAX_RELATED_SYMBOLS": "1",
+        }):
+            with patch("gops_agents.retrieval.graph_expansion.load_graph_expansion", return_value=graph_expansion):
+                report = orchestrator.analyze({"symbol": "NVDA", "intent": "뉴스 보여줘", "agentIds": ["agent-02"]})
+
+        self.assertEqual(report.timing["graphExpansionCacheHit"], True)
+        self.assertEqual(report.timing["relatedSymbolsRequested"], 2)
+        self.assertEqual(report.timing["relatedSymbolsUsed"], 1)
+        self.assertEqual(provider.requested_symbols, ["NVDA", "AMD"])
+
+    def test_graph_expansion_hint_feeds_market_peer_snapshot_when_data_present(self):
+        orchestrator = AgentOrchestrator()
+        graph_expansion = GraphExpansion(
+            source="redis",
+            cache_hit=True,
+            related_symbols=[RelatedSymbol(symbol="AMD", relation_type="competitor", score=0.91, reason="GPU peer")],
+        )
+
+        with patch.dict(os.environ, {
+            "AGENT_GRAPH_EXPANSION_CACHE_ENABLED": "true",
+            "AGENT_EXPANDED_RETRIEVAL_ENABLED": "true",
+            "AGENT_MAX_MARKET_PEERS": "1",
+        }):
+            with patch("gops_agents.retrieval.graph_expansion.load_graph_expansion", return_value=graph_expansion):
+                report = orchestrator.analyze({
+                    "symbol": "NVDA",
+                    "intent": "NVDA 시장 요약",
+                    "agentIds": ["agent-01"],
+                    "chartContext": {
+                        "chartDocument": {"symbol": "NVDA", "timeframe": "1m"},
+                        "visibleSummary": {"lastPrice": "120.00", "change": "+2.10%"},
+                        "dataStatus": {"candleCount": 10, "state": "ready"},
+                        "peerSummaries": [{"symbol": "AMD", "change": "+1.20%"}],
+                    },
+                })
+
+        market_snapshot = next(item for item in report.snapshots if item.snapshot_type == "market_snapshot")
+        self.assertEqual(report.timing["marketPeersRequested"], 1)
+        self.assertEqual(report.timing["marketPeersFetched"], 1)
+        self.assertTrue(any(item.raw.get("peerSymbol") == "AMD" for item in market_snapshot.evidence))
+
+    def test_provider_bulkhead_rejection_is_recorded_in_timing(self):
+        with patch.dict(os.environ, {
+            "AGENT_PROVIDER_BULKHEAD_NEWS_MAX_CONCURRENCY": "1",
+            "AGENT_PROVIDER_BULKHEAD_ACQUIRE_TIMEOUT_MS": "1",
+        }):
+            with provider_bulkhead("news"):
+                report = AgentOrchestrator().analyze({"symbol": "NVDA", "intent": "뉴스 보여줘", "agentIds": ["agent-02"]})
+
+        self.assertEqual(report.timing["providerBulkheadRejected"], 1)
+        news_snapshot = next(item for item in report.snapshots if item.snapshot_type == "news_snapshot")
+        self.assertEqual(news_snapshot.status, "failed")
+
+    def test_cross_signal_join_records_single_name_news_signal_when_enabled(self):
+        provider = FakeClickHouseProvider([{
+            "symbol": "NVDA",
+            "title": "NVDA shares rise",
+            "summary": "NVDA demand stayed strong.",
+            "publishedAt": utc_now_iso(),
+            "symbols": ["NVDA"],
+            "articleId": "article-nvda-1",
+        }])
+        orchestrator = AgentOrchestrator()
+        orchestrator.news_agent = NewsAgent(ClickHouseNewsProvider(clickhouse_provider=provider, cache=MemoryNewsEvidenceCache()), localizer=NewsLocalizationService())
+
+        with patch.dict(os.environ, {"AGENT_CROSS_SIGNAL_ENABLED": "true"}):
+            report = orchestrator.analyze({"symbol": "NVDA", "intent": "뉴스 보여줘", "agentIds": ["agent-02"]})
+
+        self.assertEqual(report.timing["crossSignals"], 1)
+        self.assertEqual(report.agentTrace["crossSignals"][0]["signal_type"], "single-name")
+        self.assertEqual(report.synthesisInput.crossSignals[0]["evidence_refs"], ["news:article-nvda-1"])
+
+    def test_cross_signal_join_records_related_symbol_signal_when_enabled(self):
+        provider = ThemeClickHouseProvider({
+            "AMD": [{
+                "symbol": "AMD",
+                "title": "AMD GPU demand rises",
+                "summary": "AMD reports stronger AI accelerator demand.",
+                "publishedAt": utc_now_iso(),
+                "symbols": ["AMD"],
+                "articleId": "article-amd-1",
+            }]
+        })
+        orchestrator = AgentOrchestrator()
+        orchestrator.news_agent = NewsAgent(ClickHouseNewsProvider(clickhouse_provider=provider, cache=MemoryNewsEvidenceCache()), localizer=NewsLocalizationService())
+        graph_expansion = GraphExpansion(
+            source="redis",
+            cache_hit=True,
+            related_symbols=[RelatedSymbol(symbol="AMD", relation_type="competitor", score=0.91, reason="GPU peer")],
+        )
+
+        with patch.dict(os.environ, {
+            "AGENT_GRAPH_EXPANSION_CACHE_ENABLED": "true",
+            "AGENT_EXPANDED_RETRIEVAL_ENABLED": "true",
+            "AGENT_CROSS_SIGNAL_ENABLED": "true",
+        }):
+            with patch("gops_agents.retrieval.graph_expansion.load_graph_expansion", return_value=graph_expansion):
+                report = orchestrator.analyze({"symbol": "NVDA", "intent": "뉴스 보여줘", "agentIds": ["agent-02"]})
+
+        signal = report.agentTrace["crossSignals"][0]
+        self.assertEqual(signal["signal_type"], "peer-confirmed")
+        self.assertEqual(signal["related_symbol"], "AMD")
+        self.assertEqual(report.synthesisInput.crossSignals[0]["evidence_refs"], ["news:article-amd-1"])
+
+    def test_cross_signal_trim_drops_low_confidence_items_first(self):
+        signals = [
+            {"target_symbol": "NVDA", "signal_type": "single-name", "confidence": 0.2, "explanation": "x" * 200},
+            {"target_symbol": "NVDA", "signal_type": "peer-confirmed", "confidence": 0.9, "explanation": "strong"},
+            {"target_symbol": "NVDA", "signal_type": "theme-wide", "confidence": 0.6, "explanation": "medium"},
+        ]
+
+        with patch.dict(os.environ, {"AGENT_MAX_SYNTHESIS_CROSS_SIGNAL_CHARS": "220", "AGENT_MAX_SYNTHESIS_CROSS_SIGNALS": "3"}):
+            trimmed = trim_cross_signals(signals)
+
+        self.assertEqual([item["confidence"] for item in trimmed], [0.9, 0.6])
 
     def test_orchestrator_runs_only_requested_visible_agents_before_internal_steps(self):
         report = AgentOrchestrator().analyze({
@@ -1635,6 +2055,217 @@ class AgentOrchestrationTests(unittest.TestCase):
         news_command = news_panel_props_command(report)
         self.assertEqual(news_command["payload"]["props"]["symbol"], "AAPL")
         self.assertEqual(news_command["payload"]["props"]["latestNews"][0]["symbol"], "AAPL")
+
+    def test_korean_entity_resolver_handles_compact_typos_and_choseong(self):
+        cases = {
+            "애플뉴스알려줘": "AAPL",
+            "apple뉴스알려줘": "AAPL",
+            "얘플 뉴스": "AAPL",
+            "애플ㄹ 뉴스": "AAPL",
+            "엔비댜 왜 오름": "NVDA",
+            "테슬랴 급등 이유": "TSLA",
+            "ㅇㅂㄷㅇ 왜오름": "NVDA",
+            "ㅌㅅㄹ 뉴스": "TSLA",
+            "마소 실적 어때": "MSFT",
+        }
+        for intent, symbol in cases.items():
+            with self.subTest(intent=intent):
+                self.assertEqual(extract_symbol_from_intent(intent), symbol)
+
+        self.assertIsNone(extract_symbol_from_intent("ㅇㅍ 뉴스"))
+        self.assertIsNone(extract_symbol_from_intent("ㅁㅌ 뉴스"))
+        self.assertIsNone(extract_symbol_from_intent("사과 뉴스"))
+
+    def test_dynamic_entity_index_resolves_non_seed_company_alias(self):
+        records = [
+            EntityAliasRecord(
+                alias="샘플전자",
+                entity_id="company:ZZZZ",
+                entity_type="company",
+                symbol="ZZZZ",
+                canonical_name="Sample Electronics Inc.",
+                source="test-catalog",
+                confidence=0.99,
+                priority=0.99,
+            ),
+            EntityAliasRecord(
+                alias="sample electronics",
+                entity_id="company:ZZZZ",
+                entity_type="company",
+                symbol="ZZZZ",
+                canonical_name="Sample Electronics Inc.",
+                source="test-catalog",
+                confidence=0.99,
+                priority=0.99,
+            ),
+        ]
+        resolver = KoreanEntityResolver(index=EntityAliasIndex.from_records(records, known_symbols=["ZZZZ"]))
+
+        resolution = resolver.resolve("샘플전자 뉴스 알려줘")
+
+        self.assertEqual(resolution.status, "confirmed")
+        self.assertEqual(resolution.symbol, "ZZZZ")
+        self.assertEqual(resolution.entity_type, "company")
+        self.assertEqual(resolution.catalog_source, "test-catalog")
+        self.assertEqual(resolver.resolve("zzzz 뉴스").symbol, "ZZZZ")
+
+    def test_dynamic_entity_index_handles_large_symbol_catalog(self):
+        records = []
+        symbols = []
+        for index in range(6000):
+            symbol = f"Z{index:04d}"
+            symbols.append(symbol)
+            records.extend([
+                EntityAliasRecord(
+                    alias=f"테스트기업{index}",
+                    entity_id=f"company:{symbol}",
+                    entity_type="company",
+                    symbol=symbol,
+                    canonical_name=f"Test Company {index}",
+                    source="large-test-catalog",
+                    confidence=0.99,
+                    priority=0.99,
+                ),
+                EntityAliasRecord(
+                    alias=f"test company {index}",
+                    entity_id=f"company:{symbol}",
+                    entity_type="company",
+                    symbol=symbol,
+                    canonical_name=f"Test Company {index}",
+                    source="large-test-catalog",
+                    confidence=0.99,
+                    priority=0.99,
+                ),
+                EntityAliasRecord(
+                    alias=f"테기{index}",
+                    entity_id=f"company:{symbol}",
+                    entity_type="company",
+                    symbol=symbol,
+                    canonical_name=f"Test Company {index}",
+                    source="large-test-catalog",
+                    confidence=0.99,
+                    priority=0.99,
+                ),
+            ])
+        resolver = KoreanEntityResolver(index=EntityAliasIndex.from_records(records, known_symbols=symbols))
+
+        resolution = resolver.resolve("테스트기업5999 뉴스")
+
+        self.assertEqual(resolution.status, "confirmed")
+        self.assertEqual(resolution.symbol, "Z5999")
+        self.assertEqual(resolution.catalog_source, "large-test-catalog")
+
+    def test_dynamic_theme_entity_resolution_returns_theme_symbols(self):
+        records = [
+            EntityAliasRecord(
+                alias="헬스케어",
+                entity_id="theme:healthcare",
+                entity_type="theme",
+                canonical_name="헬스케어",
+                source="test-graphdb",
+                confidence=0.98,
+                priority=0.98,
+                theme_name="헬스케어",
+                theme_symbols=("UNH", "PFE", "MRK"),
+                theme_category="sector",
+            )
+        ]
+        resolver = KoreanEntityResolver(index=EntityAliasIndex.from_records(records, known_symbols=["UNH", "PFE", "MRK"]))
+
+        resolution = resolver.resolve("헬스케어 주 뉴스")
+
+        self.assertEqual(resolution.status, "confirmed")
+        self.assertEqual(resolution.entity_type, "theme")
+        self.assertIsNone(resolution.symbol)
+        self.assertEqual(resolution.theme_name, "헬스케어")
+        self.assertEqual(resolution.theme_symbols, ("UNH", "PFE", "MRK"))
+
+    def test_theme_entity_resolution_feeds_news_symbol_fanout(self):
+        clickhouse = ThemeClickHouseProvider({
+            "UNH": [
+                {
+                    "articleId": "unh-1",
+                    "headline": "UnitedHealth rises with healthcare peers",
+                    "summary": "Healthcare stocks gained.",
+                    "publishedAt": utc_now_iso(),
+                    "url": "https://example.com/unh",
+                    "symbols": ["UNH"],
+                    "source": "alpaca",
+                }
+            ],
+            "PFE": [
+                {
+                    "articleId": "pfe-1",
+                    "headline": "Pfizer shares move after sector update",
+                    "summary": "Healthcare sector news lifted pharma shares.",
+                    "publishedAt": utc_now_iso(),
+                    "url": "https://example.com/pfe",
+                    "symbols": ["PFE"],
+                    "source": "alpaca",
+                }
+            ],
+        })
+        provider = ClickHouseNewsProvider(clickhouse_provider=clickhouse, publish_fallback=False)
+        orchestrator = AgentOrchestrator()
+        orchestrator.news_agent = NewsAgent(provider)
+        resolution = EntityResolution(
+            status="confirmed",
+            canonical_name="헬스케어",
+            confidence=0.98,
+            match_type="alias_exact",
+            matched_text="헬스케어",
+            matched_alias="헬스케어",
+            entity_type="theme",
+            entity_id="theme:healthcare",
+            catalog_source="test-graphdb",
+            theme_name="헬스케어",
+            theme_symbols=("UNH", "PFE"),
+        )
+
+        with patch("gops_agents.orchestration.request.resolve_entity", return_value=resolution):
+            report = orchestrator.analyze({
+                "symbol": "NVDA",
+                "intent": "헬스케어 주 뉴스",
+                "agentIds": ["agent-02"],
+                "layoutContext": layout_context(),
+            })
+
+        self.assertEqual(report.symbol, "헬스케어")
+        self.assertEqual(clickhouse.requested_symbols, ["UNH", "PFE"])
+        self.assertEqual(report.agentTrace["entityResolution"]["entityType"], "theme")
+        self.assertEqual(report.agentTrace["entityResolution"]["themeSymbols"], ["UNH", "PFE"])
+
+    def test_korean_entity_resolution_trace_is_reported(self):
+        clickhouse = FakeClickHouseProvider([
+            {
+                "articleId": "aapl-typo-1",
+                "headline": "Apple shares rise after services growth improves",
+                "summary": "Apple services revenue improved investor sentiment.",
+                "publishedAt": utc_now_iso(),
+                "url": "https://example.com/aapl-typo",
+                "symbols": ["AAPL"],
+                "source": "alpaca",
+            }
+        ])
+        provider = ClickHouseNewsProvider(clickhouse_provider=clickhouse, publish_fallback=False)
+        orchestrator = AgentOrchestrator()
+        orchestrator.news_agent = NewsAgent(provider)
+
+        report = orchestrator.analyze({
+            "symbol": "NVDA",
+            "intent": "얘플 뉴스 찾아줘",
+            "agentIds": ["agent-02"],
+            "chartContext": {
+                "chartDocument": {"symbol": "NVDA", "timeframe": "1m"},
+                "dataStatus": {"candleCount": 10, "state": "ready"},
+            },
+        })
+
+        self.assertEqual(report.symbol, "AAPL")
+        self.assertEqual(clickhouse.requested_symbols, ["AAPL"])
+        self.assertEqual(report.agentTrace["entityResolution"]["status"], "confirmed")
+        self.assertEqual(report.agentTrace["entityResolution"]["symbol"], "AAPL")
+        self.assertEqual(report.resolvedEntities[0].aliases, ["애플"])
 
     def test_news_only_request_skips_runtime_openai_and_uses_fast_deterministic_answer(self):
         clickhouse = FakeClickHouseProvider([

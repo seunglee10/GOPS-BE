@@ -785,8 +785,16 @@ LLM guardrail이 필요한 경우:
 | News provider | ClickHouse/Redis/Kafka fallback 계층을 따르는 cached news provider를 사용한다. |
 | Relationship provider | `RelationshipSnapshotProvider`와 `GraphDBOntologyProvider`가 존재하지만 path scoring/cache는 GraphDB 담당자 TODO다. |
 | Synthesis and guardrail | `SynthesisInput`에서 `FinalResponse`로 변환하고 rule-based guardrail을 적용한다. |
-| Report store | `ReportStore`, memory store, Redis latest-report store 코드가 있다. Redis TTL 기본값은 12시간이며 pod wiring과 Postgres 장기 저장은 후속 runtime/storage 변경으로 분리한다. |
+| Report store | `ReportStore`, memory store, Redis latest-report store와 idempotency mapping이 있다. Async runtime은 Redis shared report store를 사용하고 Postgres 장기 저장은 후속 storage 변경으로 분리한다. |
+| Async request boundary | API async submit, `AgentAnalysisRequestEnvelope`, Kafka request topic, `agent-analysis-worker`가 있다. 기존 HTTP orchestrator는 compatibility path로 남긴다. |
+| Admission/backpressure | `shared/gops_agents/runtime/admission.py`가 queue metrics, deep-mode flag, stream-to-poll degradation, 429 rejection policy를 담당한다. |
+| Provider bulkheads | Snapshot providers are wrapped by global provider semaphores with env-tunable concurrency limits and `providerBulkheadRejected` diagnostics. |
+| Retrieval context | `RetrievalContext`가 route와 snapshot 사이에 들어갔다. Graph expansion cache는 Redis/ClickHouse fallback을 지원하고, expanded retrieval flag가 켜지면 news snapshot에 primary + top related symbols를 넘긴다. |
+| CrossSignal join | `AGENT_CROSS_SIGNAL_ENABLED=true`에서 news/relationship/market snapshots와 retrieval context를 rule-based로 결합해 `crossSignals`를 trace와 `SynthesisInput`에 넣는다. |
+| Jobs/workers | `deep-analysis-worker`, `agent-delivery-gateway`, graph refresh/smoke jobs, latency/fanout benchmark jobs, retrieval-quality/answer-grounding eval jobs가 있다. |
+| Delivery stream | API report SSE는 Redis report update channel을 우선 구독하고, Redis가 없거나 update가 없으면 shared report store polling으로 fallback한다. |
 | Runtime safety | snapshot timeout과 request 단위 LLM budget을 적용해 timeout/예산 초과를 trace와 warning에 남긴다. |
+| Deep follow-up | `AGENT_DEEP_ANALYSIS_ENABLED=true`에서 hot worker가 같은 request id를 deep queue에 넣고 report를 `deep_pending`으로 전환하며, deep worker가 `deep_completed` update를 쓴다. |
 
 남은 구현 우선순위:
 
@@ -796,9 +804,8 @@ LLM guardrail이 필요한 경우:
 4. relationship warning taxonomy 정리
 5. prompt prefix caching이 가능하도록 고정 instruction/schema/few-shot 분리
 6. `LatencyTrace`와 token usage logging 강화
-7. Redis latest report activation과 Postgres 장기 저장 schema를 별도 storage 문서에서 확정
-8. cache hit/miss, freshness, partial data logging 강화
-9. degraded path 분리
+7. CrossSignal scoring 고도화와 grounded synthesis input 축소
+8. Postgres 장기 저장 schema를 별도 storage 문서에서 확정
 
 성공 기준은 분석 품질 완성보다 다음을 먼저 만족하는 것이다.
 
