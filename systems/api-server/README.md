@@ -44,3 +44,16 @@ kis_trader.*  from systems/order/shared
 ```
 
 Do not move route behavior or API contracts during structure-only work.
+
+## Chart Rebuild Notes
+
+The planned chart-data rebuild is documented in
+`../../docs/CHART_DATA_REBUILD_PLAN.md`.
+
+API-server responsibilities for that rebuild:
+
+- preserve the existing chart routes listed in root `AGENTS.md`;
+- serve chart reads through Redis and ClickHouse, never synchronous S3/Alpaca calls;
+- queue missing ranges through `/api/charts/backfill`;
+- expose monitor-only JSON endpoints for Redis, S3, ClickHouse, backfill, and duplicate audits;
+- keep the frontend from connecting directly to Redis, S3, or ClickHouse.

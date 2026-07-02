@@ -25,3 +25,16 @@ chart/market-data key patterns so auth, order, and agent state can be preserved.
 The API server also stores Google login sessions in Redis when `AUTH_ENABLED=true`.
 Session keys use `AUTH_REDIS_KEY_PREFIX` (`gops:auth` by default) and TTLs, so no
 separate Redis deployment is required for auth.
+
+## Planned Chart Rebuild Keys
+
+The upcoming chart-data rebuild is specified in
+`../../docs/CHART_DATA_REBUILD_PLAN.md`. Its Redis contract is intentionally
+bounded:
+
+- `gops:market:on-demand:v1:cache:candles:{symbol}:{interval}` keeps only the newest 120 candles;
+- `live:candle`, `latest:closed:candle`, `state:candle-window`, and `pending:replace` hold realtime/replacement state;
+- `backfill:*` keys hold Redis Streams queue, locks, status, and dead-letter state;
+- `feed:*` keys coordinate exclusive SIP/BOATS writer ownership.
+
+Do not treat Redis as a historical chart database.

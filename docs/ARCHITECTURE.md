@@ -39,6 +39,11 @@ infra/
 
 ## Runtime Architecture
 
+This diagram describes the current repository/runtime shape. The planned
+chart/market-data rebuild is intentionally documented separately in
+`CHART_DATA_REBUILD_PLAN.md` so the large upcoming change does not blur the
+current implementation contract.
+
 ```mermaid
 flowchart LR
   User["User"]

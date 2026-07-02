@@ -1,44 +1,22 @@
-# Alpaca Market Data Stabilization Handoff
+# Deprecated Alpaca Data Pipeline Plans
 
-이 폴더의 루트 문서는 팀 공유와 병합 판단을 위한 문서입니다. Goal 진행 중 작성된 긴 실행 로그와 마일스톤 기록은 `archive/`에 보존하되, 병합 기준으로 사용하지 않습니다.
+This folder is no longer the source of truth for chart work.
+It is retained only so older links do not break.
 
-## 팀이 먼저 읽을 문서
+Do not use previous revisions of files in this folder for chart work.
 
-1. [`s3-first-backfill-goal-plan.md`](s3-first-backfill-goal-plan.md)
-   - 다음 Goal 모드에서 그대로 실행할 20개 종목 lazy backfill/HTS-style chart 계획입니다.
-   - S3 prefix 격리/초기화, ClickHouse/Redis reset, `v2 + split`, 최대 6년 lazy target, 중복 방지, S3-first backfill, display-only continuity 계약을 담습니다.
+Use this document instead:
 
-2. [`aws-market-data-reset-runbook.md`](aws-market-data-reset-runbook.md)
-   - AWS/EKS 실제 ClickHouse, S3, Redis, Kafka 차트 데이터를 로컬에서 검증한 market-data 계약과 맞추기 위한 운영 runbook입니다.
-   - S3 canonical data 보존, ClickHouse chart table reset, Redis chart key scan-delete, Kafka lag 확인, S3-first rebuild 절차를 담습니다.
+```text
+../docs/CHART_DATA_REBUILD_PLAN.md
+```
 
-3. [`market-data-stabilization-share.md`](market-data-stabilization-share.md)
-   - 이번 안정화에서 확정된 기능 계약, 데이터 흐름, 검증 기준입니다.
-   - 시장데이터 백엔드, API, 차트 런타임이 지켜야 할 동작만 담습니다.
+Current chart direction:
 
-4. [`team-merge-guide.md`](team-merge-guide.md)
-   - 팀원들이 이미 진행한 프론트엔드/에이전트 작업과 병합할 때의 기준입니다.
-   - UI/에이전트 구조는 팀원 브랜치를 우선하고, 이번 작업의 시장데이터 기능 계약만 필요한 단위로 포팅합니다.
-
-## 아카이브
-
-`archive/`에는 Goal 수행 과정에서 작성된 상세 계획, 마일스톤, 검증 로그가 있습니다.
-
-- `archive/stabilization-plan.md`
-- `archive/milestone-0-baseline.md`
-- `archive/milestone-1-live-path.md`
-- `archive/milestone-2-universe-hot-ranking.md`
-- `archive/milestone-3-serving-readiness.md`
-- `archive/milestone-4-backfill-gapfill.md`
-
-아카이브 문서는 이력과 근거 확인용입니다. 팀 병합이나 구현 방향을 결정할 때는 루트의 공유용 문서를 기준으로 삼습니다.
-
-## 공유 원칙
-
-- 팀원 브랜치에 이미 구현된 에이전트, 레이아웃, 패널, 프론트엔드 구조 변경은 기본적으로 유지합니다.
-- 이번 Goal에서 보존해야 하는 것은 시장데이터의 기능 계약입니다.
-- 프론트엔드 파일 충돌이 생기면 화면 구조를 통째로 덮어쓰지 말고, 차트 데이터 로딩, 실시간 상태, backfill 트리거, Watch/Hot 데이터 계약에 필요한 로직만 옮깁니다.
-- S3/ClickHouse/Redis/API/차트 런타임 계약은 한쪽만 부분 적용하면 깨지기 쉬우므로 `team-merge-guide.md`의 순서대로 병합합니다.
-- AWS 배포 전에는 `aws-market-data-reset-runbook.md` 기준으로 로컬 검증 상태와 AWS ClickHouse/S3/Redis/Kafka 차트 데이터 계약이 같은지 확인합니다.
-- 오래된 S&P500 전체, Hot Top20, `1m 2025-04 cutoff` 전제는 이번 20개 종목 lazy backfill/HTS-style chart 계획보다 우선하지 않습니다.
-- 오래된 "1m 전체 preload 필수" 전제는 이번 lazy 6-year target 계획보다 우선하지 않습니다.
+- empty chart-data start;
+- no universe preload;
+- on-demand chart backfill only;
+- Redis latest 120 candles per timeframe;
+- ClickHouse older confirmed history;
+- S3 durable evidence;
+- exclusive SIP/BOATS feed ownership.

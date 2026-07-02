@@ -8,6 +8,7 @@ The root `README.md` stays short; repo-wide Codex rules live in root `AGENTS.md`
 | `PRODUCT_CONTEXT.md` | Product direction and current/future scope boundary. |
 | `STRUCTURE_GUIDE.md` | Folder placement rules for future code. |
 | `ARCHITECTURE.md` | Current system, pod/job, and platform relationships. |
+| `CHART_DATA_REBUILD_PLAN.md` | Planned chart/market-data rebuild contract: empty start, on-demand backfill, Redis 120-bar state, SIP/BOATS exclusivity, and monitoring workbench. |
 | `IMAGE_STRATEGY.md` | Docker image boundaries and naming rules. |
 | `ENVIRONMENT.md` | Env, secret, and platform contracts. |
 | `AGENT_ORCHESTRATION_IMPLEMENTATION.md` | Summary of the role-based multi-agent implementation and Docker validation. |

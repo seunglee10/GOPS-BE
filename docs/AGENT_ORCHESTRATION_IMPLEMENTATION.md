@@ -36,7 +36,7 @@ flowchart LR
 
   Kafka["Kafka"]
   Redis["Redis"]
-  MarketTopics["market.ticks.v1<br/>market.candles.live.1m.v1<br/>market.candles.closed.v1"]
+  MarketTopics["market.layer.trades.v1<br/>market.layer.candles.live.v1<br/>market.layer.candles.closed.v1<br/>market.layer.events.v1"]
   AgentTopics["agents.market-events.v1<br/>agents.analysis-results.v1<br/>agents.notification-decisions.v1"]
 
   Frontend --> Backend
@@ -178,7 +178,7 @@ sequenceDiagram
   participant BE as gops-backend WebSocket
   participant FE as gops-frontend
 
-  M->>K: market.ticks/candles events
+  M->>K: market.layer trades/candles/events
   K->>ED: consume market topics
   ED->>K: publish agents.market-events.v1
   AO->>K: publish agents.notification-decisions.v1

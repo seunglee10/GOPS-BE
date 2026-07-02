@@ -19,6 +19,10 @@ Rules:
 - Canonical intervals are `1m`, `5m`, `10m`, `1D`, `1W`, `1M`.
 - Candle readiness uses both `dataStatus` and detailed `coverage`.
 - Backfill success does not mean a chart is renderable unless stored candle coverage is sufficient.
+- The planned chart-data rebuild starts from empty storage and may return empty/partial coverage while bounded backfill is queued.
+- Redis is only the newest 120-candle cache and realtime/replacement state; older confirmed candles come from ClickHouse.
+- Live candle events may be provisional first and then be replaced by confirmed `bars`, `updatedBars`, or `dailyBars` for the same timestamp.
+- Chart payloads must preserve `feedProfile`, `marketSession`, and planned `feedEpoch` metadata so SIP/BOATS overlap can be rejected.
 - One accepted proposal should become one undo/redo unit.
 - Drawing proposals are preview-first; applying a preview turns it into an editable drawing.
 
