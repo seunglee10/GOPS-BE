@@ -32,6 +32,7 @@ data:
   ALPACA_CREDENTIAL_SOURCE: aws-secrets-manager
   ALPACA_SECRET_NAME: dev/alpaca
   GOOGLE_OAUTH_SECRET_NAME: oauth/google
+  AUTH_PUBLIC_BASE_URL: https://stargops.com
   SYMBOL_REGISTRY_ASSET_CLASS: us_equity
   SYMBOL_REGISTRY_STATUS: active
   SYMBOL_REGISTRY_REDIS_CACHE: "true"
