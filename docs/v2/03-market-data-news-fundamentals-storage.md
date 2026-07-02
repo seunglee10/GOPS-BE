@@ -77,13 +77,21 @@ SEC EDGAR는 미국 증권거래위원회가 제공하는 기업 공시 데이�
 - `29.4 Pod And Job Map`
 - `29.5 Platform Contracts To Add Or Keep Current`
 
+상세 재설계 문서:
+
+- `docs/v2/market-data-tick-candle-architecture.md`
+
 ## Pipeline Responsibilities
 
 ### Market Data
 
 - Alpaca REST API 또는 streaming API에서 trades, quotes, bars를 수집한다.
 - 외부 payload를 내부 event shape으로 정규화한다.
-- Kafka topic에 발행한다.
+- raw Kafka topic과 processed Kafka topic을 분리해 발행한다.
+- 정규화된 tick을 `market.ticks.v1`에 발행한다.
+- tick을 event-time 기준 `1m` window로 집계해 `market.candles.closed.v1`에 closed candle을 발행한다.
+- `5m`, `10m`, `1D`, `1W`, `1M` 상위 interval은 closed lower interval candle에서 rollup한다.
+- 전역 live candle Kafka topic은 v2 초기 설계의 기본 경로로 사용하지 않는다.
 - 중복 제거, pagination, retry/backoff를 처리한다.
 - exchange code, condition code reference data를 갱신한다.
 
@@ -92,7 +100,7 @@ SEC EDGAR는 미국 증권거래위원회가 제공하는 기업 공시 데이�
 - 관심 종목별 Alpaca news를 수집한다.
 - 뉴스 원문 payload를 S3 raw bucket/prefix에 저장한다.
 - 정규화된 `NewsEvent`를 만든다.
-- `news.alpaca` topic에 발행한다.
+- `market.news.alpaca.v1` topic에 발행한다.
 - Redis 최신 뉴스 summary warm cache를 갱신한다.
 
 ### Fundamentals
@@ -124,23 +132,42 @@ Redis는 메모리 기반 key-value 저장소다. 최신 quote, live candle, ses
 
 ## Kafka Topics
 
-초기 topic 범위:
+v2 market-data topic 범위:
 
-- `market.alpaca.trades`
-- `market.alpaca.quotes`
-- `market.alpaca.bars`
-- `news.alpaca`
-- `fundamentals.sec`
-- `market.ticks.v1`
-- `market.candles.live.1m.v1`
-- `market.candles.closed.v1`
-- `market.status.v1`
-- `market.volume-profile-bins.1m.v1`
+- Raw topics:
+  - `market.raw.trades`
+  - `market.raw.quotes`
+  - `market.raw.bars`
+  - `market.raw.updated-bars`
+  - `market.raw.daily-bars`
+  - `market.raw.statuses`
+  - `market.raw.corrections`
+  - `market.raw.cancel-errors`
+- Processed topics:
+  - `market.ticks.v1`
+  - `market.candles.closed.v1`
+  - `market.status.v1`
+  - `market.volume-profile-bins.1m.v1`
+  - `market.news.alpaca.v1`
+Retired topic:
+
+- `market.candles.live.1m.v1`은 v1 legacy topic이다. v2 code/config contract에서는 제거하고, MSK에 남아 있으면 운영에서 lag/consumer가 0인지 확인한 뒤 수동 삭제한다.
+
+Tick-to-candle 처리:
+
+- `market.raw.trades`를 소비해 정규화된 `market.ticks.v1`을 만든다.
+- `market.ticks.v1`을 symbol별 event-time `1m` window로 모아 하나의 closed `1m` candle을 만든다.
+- closed candle은 모두 `market.candles.closed.v1`에 발행하고, `interval`로 `1m`, `5m`, `10m`, `1D`, `1W`, `1M`을 구분한다.
+- 상위 interval candle은 raw tick을 다시 훑는 대신 closed lower interval candle에서 rollup한다.
+- 늦게 도착한 tick이나 correction은 closed candle을 조용히 덮어쓰지 않고 revision/DLQ 정책을 따른다.
+
+기존 문서나 runtime에 남아 있는 `market.alpaca.*`, `news.alpaca`, `fundamentals.sec` 이름은 구현 단계에서 현재 platform topic contract와 함께 정리한다.
 
 처리 규칙:
 
 - at-least-once 처리를 전제로 한다.
 - 중복은 `eventId` 또는 natural key로 제거한다.
+- critical consumer는 downstream produce/storage write가 성공한 뒤 offset을 commit한다.
 - schemaVersion 변경은 backward-compatible을 우선한다.
 - 처리 실패 이벤트는 DLQ로 보낸다.
 
