@@ -14,10 +14,10 @@ for topic in \
   market.raw.corrections \
   market.raw.cancel-errors \
   market.ticks.v1 \
-  market.candles.live.1m.v1 \
   market.candles.closed.v1 \
   market.status.v1 \
   market.volume-profile-bins.1m.v1 \
+  market.news.alpaca.v1 \
   orders.commands.v1 \
   broker.submit-results.v1 \
   broker.order-events.v1 \
