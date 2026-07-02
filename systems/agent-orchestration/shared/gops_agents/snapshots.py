@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError, as_completed
 from datetime import datetime, timezone
 from typing import Any
 
@@ -42,6 +42,10 @@ def runtime_policy_from_env() -> RuntimePolicy:
     return RuntimePolicy(
         max_realtime_llm_calls=int(os.getenv("AGENT_MAX_REALTIME_LLM_CALLS", "1")),
         route_llm_fallback_threshold=float(os.getenv("AGENT_ROUTE_LLM_FALLBACK_THRESHOLD", "0.75")),
+        total_timeout_ms=int(os.getenv("AGENT_TOTAL_TIMEOUT_MS", "3000")),
+        snapshot_timeout_ms=int(os.getenv("AGENT_SNAPSHOT_TIMEOUT_MS", "700")),
+        synthesis_timeout_ms=int(os.getenv("AGENT_SYNTHESIS_TIMEOUT_MS", "1700")),
+        graphdb_timeout_ms=int(os.getenv("AGENT_GRAPHDB_TIMEOUT_MS", "500")),
         max_items_per_snapshot=int(os.getenv("AGENT_MAX_ITEMS_PER_SNAPSHOT", "5")),
         max_total_synthesis_evidence_items=int(os.getenv("AGENT_MAX_SYNTHESIS_EVIDENCE_ITEMS", "15")),
         max_synthesis_output_tokens=int(os.getenv("AGENT_MAX_SYNTHESIS_OUTPUT_TOKENS", "350")),
@@ -125,17 +129,37 @@ class SnapshotExecutor:
         bundle = [item for item in route_plan.snapshot_bundle if item in providers]
         snapshots_by_type: dict[str, DataSnapshot] = {}
         if bundle:
-            with ThreadPoolExecutor(max_workers=len(bundle)) as executor:
-                futures = {
-                    executor.submit(providers[snapshot_type].fetch, context, run_id, policy.max_items_per_snapshot): snapshot_type
-                    for snapshot_type in bundle
-                }
-                for future in as_completed(futures):
+            started_at = time.perf_counter()
+            timeout_seconds = max(0.001, policy.snapshot_timeout_ms / 1000)
+            executor = ThreadPoolExecutor(max_workers=len(bundle))
+            futures = {
+                executor.submit(providers[snapshot_type].fetch, context, run_id, policy.max_items_per_snapshot): snapshot_type
+                for snapshot_type in bundle
+            }
+            try:
+                for future in as_completed(futures, timeout=timeout_seconds):
                     snapshot_type = futures[future]
                     try:
                         snapshots_by_type[snapshot_type] = future.result()
                     except Exception as exc:
                         snapshots_by_type[snapshot_type] = error_snapshot(run_id, snapshot_type, exc)
+                    if elapsed_ms(started_at) >= policy.snapshot_timeout_ms:
+                        break
+            except FutureTimeoutError:
+                pass
+            finally:
+                for future, snapshot_type in futures.items():
+                    if snapshot_type in snapshots_by_type:
+                        continue
+                    if future.done():
+                        try:
+                            snapshots_by_type[snapshot_type] = future.result()
+                        except Exception as exc:
+                            snapshots_by_type[snapshot_type] = error_snapshot(run_id, snapshot_type, exc)
+                    else:
+                        future.cancel()
+                        snapshots_by_type[snapshot_type] = timeout_snapshot(run_id, snapshot_type, policy.snapshot_timeout_ms)
+                executor.shutdown(wait=False, cancel_futures=True)
 
         ordered = [snapshots_by_type[item] for item in bundle if item in snapshots_by_type]
         if "risk_policy_snapshot" in route_plan.snapshot_bundle:
@@ -157,7 +181,6 @@ class NewsSnapshotProvider:
             evidence = provider.fetch(request)
             if hasattr(provider, "fetch_daily_summaries"):
                 daily_summaries = list(provider.fetch_daily_summaries(request))
-                context.newsDailySummaries = daily_summaries
             evidence = localizer.localize(
                 symbol=str(context.symbol),
                 intent=str(context.intent),
@@ -173,7 +196,7 @@ class NewsSnapshotProvider:
         source = news_snapshot_source(available)
         items = available[:max_items] if available else evidence[:max_items]
         summary = news_snapshot_summary(context, available, daily_summaries)
-        return DataSnapshot(
+        snapshot = DataSnapshot(
             snapshot_id=stable_id("snapshot", {"runId": run_id, "type": "news_snapshot", "symbol": context.symbol}),
             run_id=run_id,
             snapshot_type="news_snapshot",
@@ -189,6 +212,8 @@ class NewsSnapshotProvider:
             latency_ms=elapsed_ms(started_at),
             warnings=warnings,
         )
+        snapshot.daily_summaries = daily_summaries
+        return snapshot
 
 
 class MarketSnapshotProvider:
@@ -345,7 +370,12 @@ def final_response_from_answer(
             bearish.extend(bullets)
         else:
             key_points.extend(bullets)
-    warnings = unique_strings(warning for snapshot in snapshots for warning in snapshot.warnings)
+    warnings = unique_strings(
+        [
+            *(warning for snapshot in snapshots for warning in snapshot.warnings),
+            *(["llm_call_budget_exceeded"] if int(timing.get("llmBudgetBlocked") or 0) > 0 else []),
+        ]
+    )
     data_warnings = [warning for warning in warnings if "stale" in warning or "no_" in warning or "unavailable" in warning]
     return FinalResponse(
         run_id=run_id,
@@ -411,11 +441,21 @@ def apply_rule_guardrail(response: FinalResponse, route_plan: RoutePlan, snapsho
 
 def latency_trace_from_timing(run_id: str, timing: dict[str, Any], snapshots: list[DataSnapshot]) -> LatencyTrace:
     snapshot_latency = max((snapshot.latency_ms for snapshot in snapshots), default=0.0)
+    snapshot_status = "success"
+    if any("timeout" in snapshot.warnings for snapshot in snapshots):
+        snapshot_status = "timeout"
+    elif any(snapshot.status == "failed" for snapshot in snapshots):
+        snapshot_status = "failed"
+    elif any(snapshot.status == "partial" for snapshot in snapshots):
+        snapshot_status = "partial"
+    synthesis_status = "skipped" if float(timing.get("finalAnswerMs") or 0.0) == 0.0 else "success"
+    if int(timing.get("llmBudgetBlocked") or 0) > 0:
+        synthesis_status = "partial"
     stages = [
         LatencyStage("route_and_plan", float(timing.get("routeAndPlanMs") or 0.0), "success"),
         LatencyStage("entity_resolve", float(timing.get("entityResolveMs") or 0.0), "success"),
-        LatencyStage("snapshot_fetch", snapshot_latency, "partial" if any(snapshot.status == "partial" for snapshot in snapshots) else "success", any(snapshot.cache_hit for snapshot in snapshots)),
-        LatencyStage("synthesis_llm", float(timing.get("finalAnswerMs") or 0.0), "success"),
+        LatencyStage("snapshot_fetch", snapshot_latency, snapshot_status, any(snapshot.cache_hit for snapshot in snapshots)),
+        LatencyStage("synthesis_llm", float(timing.get("finalAnswerMs") or 0.0), synthesis_status),
         LatencyStage("guardrail", float(timing.get("guardrailMs") or 0.0), "success"),
     ]
     return LatencyTrace(
@@ -690,6 +730,23 @@ def error_snapshot(run_id: str, snapshot_type: str, exc: Exception) -> DataSnaps
         confidence=0.1,
         latency_ms=0.0,
         warnings=[f"{snapshot_type}_failed"],
+    )
+
+
+def timeout_snapshot(run_id: str, snapshot_type: str, timeout_ms: int) -> DataSnapshot:
+    return DataSnapshot(
+        snapshot_id=stable_id("snapshot", {"runId": run_id, "type": snapshot_type, "timeoutMs": timeout_ms}),
+        run_id=run_id,
+        snapshot_type=snapshot_type,
+        status="failed",
+        source="computed",
+        cache_hit=False,
+        freshness={"generated_at": utc_now_iso(), "stale": True},
+        summary=f"{snapshot_type} 조회가 {timeout_ms}ms timeout을 초과했습니다.",
+        data_quality="low",
+        confidence=0.1,
+        latency_ms=float(timeout_ms),
+        warnings=[f"{snapshot_type}_timeout", "timeout"],
     )
 
 

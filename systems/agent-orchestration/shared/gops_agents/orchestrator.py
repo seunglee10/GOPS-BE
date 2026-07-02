@@ -24,7 +24,9 @@ from .agents import (
     record_news_relevance_counts,
 )
 from .contracts import AgentFinding, AnalysisReport, EvidenceItem, FinalAnswer, IntentRoute, MarketEvent, stable_id, utc_now_iso
+from .report_store import InMemoryReportStore, ReportStore
 from .router import route_intent
+from .runtime import RuntimeRunContext
 from .snapshots import (
     SnapshotExecutor,
     apply_rule_guardrail,
@@ -47,20 +49,8 @@ except Exception:
     StateGraph = None
 
 
-class InMemoryReportStore:
-    def __init__(self):
-        self._reports: dict[str, AnalysisReport] = {}
-
-    def save(self, report: AnalysisReport) -> AnalysisReport:
-        self._reports[report.analysisId] = report
-        return report
-
-    def get(self, analysis_id: str) -> AnalysisReport | None:
-        return self._reports.get(analysis_id)
-
-
 class AgentOrchestrator:
-    def __init__(self, store: InMemoryReportStore | None = None, analysis_cache: AgentAnalysisCache | None = None):
+    def __init__(self, store: ReportStore | None = None, analysis_cache: AgentAnalysisCache | None = None):
         self.store = store or InMemoryReportStore()
         self.analysis_cache = analysis_cache if analysis_cache is not None else build_analysis_cache_from_env()
         self.analysis_cache_ttl_seconds = int(os.getenv("AGENT_ANALYSIS_CACHE_TTL_SECONDS", "180"))
@@ -140,6 +130,8 @@ class AgentOrchestrator:
     def _normalize_request(self, state: dict[str, Any]) -> dict[str, Any]:
         request = state["request"]
         timing = empty_timing()
+        runtime_policy = runtime_policy_from_env()
+        runtime_context = RuntimeRunContext(policy=runtime_policy, timing=timing)
         intent = str(request.get("intent") or request.get("prompt") or latest_message(request.get("messages")) or "analysis")
         explicit_symbol = extract_symbol_from_intent(intent)
         news_topic = None if explicit_symbol else extract_news_topic_from_intent(intent)
@@ -164,6 +156,7 @@ class AgentOrchestrator:
             layoutContext=request.get("layoutContext") if isinstance(request.get("layoutContext"), dict) else {},
             marketEvents=events,
             timing=timing,
+            runtimeContext=runtime_context,
             newsSymbols=list(news_topic["symbols"]) if news_topic else [],
             newsTopic=str(news_topic["label"]) if news_topic else None,
         )
@@ -184,6 +177,7 @@ class AgentOrchestrator:
             "context": context,
             "role_findings": [],
             "timing": timing,
+            "runtime_context": runtime_context,
             "timing_started_at": time.perf_counter(),
             "news_topic": news_topic,
             "news_symbols": list(news_topic["symbols"]) if news_topic else [],
@@ -193,7 +187,7 @@ class AgentOrchestrator:
         request = state["request"]
         intent = state["intent"]
         router_mode = str(request.get("routerMode") or "hybrid")
-        ui_intent = route_ui_intent(intent, state["context"].layoutContext, router_mode)
+        ui_intent = route_ui_intent(intent, state["context"].layoutContext, router_mode, runtime_context=state.get("runtime_context"))
         if ui_intent.isUiIntent:
             route = IntentRoute(
                 source=ui_intent.source,
@@ -204,7 +198,7 @@ class AgentOrchestrator:
             )
             return {**state, "route": route, "selected_roles": [], "ui_intent": ui_intent, "analysis_cacheable": False, "analysis_cache_hit": False}
 
-        route = route_intent(intent, request.get("agentIds"), router_mode)
+        route = route_intent(intent, request.get("agentIds"), router_mode, runtime_context=state.get("runtime_context"))
         selected_roles = list(route.selectedRoles)
         if not selected_roles:
             requested_roles = resolve_requested_roles(request.get("agentIds"))
@@ -218,6 +212,9 @@ class AgentOrchestrator:
             return {**state, "runtime_policy": self.runtime_policy, "route_plan": None, "resolved_entities": []}
         started_at = time.perf_counter()
         policy = runtime_policy_from_env()
+        runtime_context = state.get("runtime_context")
+        if isinstance(runtime_context, RuntimeRunContext):
+            runtime_context.refresh_policy(policy)
         route_plan = build_route_plan(state["run_id"], state["route"], state["context"], policy)
         add_timing_ms(state, "routeAndPlanMs", (time.perf_counter() - started_at) * 1000)
 
@@ -255,6 +252,9 @@ class AgentOrchestrator:
         add_timing_ms(state, "snapshotFetchMs", (time.perf_counter() - started_at) * 1000)
         for snapshot in snapshots:
             if snapshot.snapshot_type == "news_snapshot":
+                daily_summaries = getattr(snapshot, "daily_summaries", None)
+                if isinstance(daily_summaries, list):
+                    state["context"].newsDailySummaries = [item for item in daily_summaries if isinstance(item, dict)]
                 record_news_relevance_counts(state["context"], snapshot.evidence)
         return {**state, "snapshots": snapshots}
 
@@ -386,6 +386,7 @@ class AgentOrchestrator:
 
         context = state["context"]
         role_findings = list(state.get("role_findings", []))
+        apply_role_context_updates(context, role_findings)
         role_findings.append(self.event_explainer.analyze(context))
         role_findings.append(self.market_summary.analyze(context, role_findings))
         role_findings.append(self.verifier.analyze(context, role_findings))
@@ -443,6 +444,7 @@ class AgentOrchestrator:
                     timing=state.get("timing"),
                     daily_summaries=list(state["context"].newsDailySummaries),
                     synthesis_input=synthesis_input,
+                    runtime_context=state.get("runtime_context"),
                 )
             finally:
                 add_timing_ms(state, "finalAnswerMs", (time.perf_counter() - started_at) * 1000)
@@ -556,6 +558,13 @@ def collect_provider_evidence(findings) -> list[EvidenceItem]:
     return dedupe_provider_evidence(evidence)
 
 
+def apply_role_context_updates(context: AgentContext, findings) -> None:
+    for finding in findings:
+        daily_summaries = getattr(finding, "daily_summaries", None)
+        if isinstance(daily_summaries, list):
+            context.newsDailySummaries = [item for item in daily_summaries if isinstance(item, dict)]
+
+
 def dedupe_provider_evidence(items: list[EvidenceItem]) -> list[EvidenceItem]:
     seen = set()
     deduped = []
@@ -581,6 +590,7 @@ def empty_timing() -> dict[str, Any]:
         "finalAnswerMs": 0.0,
         "guardrailMs": 0.0,
         "llmCalls": 0,
+        "llmBudgetBlocked": 0,
         "directNewsCount": 0,
         "mentionNewsCount": 0,
     }
@@ -602,9 +612,11 @@ def finalize_timing(state: dict[str, Any]) -> dict[str, Any]:
     for key in ["totalMs", "newsFetchMs", "roleAnalysisMs", "finalAnswerMs", "routeAndPlanMs", "entityResolveMs", "snapshotFetchMs", "guardrailMs"]:
         value = timing.get(key)
         timing[key] = round(float(value) if isinstance(value, (int, float)) else 0.0, 3)
-    for key in ["llmCalls", "directNewsCount", "mentionNewsCount"]:
+    for key in ["llmCalls", "llmBudgetBlocked", "directNewsCount", "mentionNewsCount"]:
         value = timing.get(key)
         timing[key] = int(value) if isinstance(value, (int, float)) else 0
+    labels = timing.get("llmCallLabels")
+    timing["llmCallLabels"] = [str(item) for item in labels] if isinstance(labels, list) else []
     timing["cacheHit"] = bool(timing.get("cacheHit"))
     timing["cacheLayer"] = str(timing.get("cacheLayer") or "none")
     return timing

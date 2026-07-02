@@ -32,7 +32,7 @@ class UIIntent:
         return asdict(self)
 
 
-def route_ui_intent(intent: str, layout_context: dict[str, Any], router_mode: str = "hybrid") -> UIIntent:
+def route_ui_intent(intent: str, layout_context: dict[str, Any], router_mode: str = "hybrid", runtime_context: Any | None = None) -> UIIntent:
     text = str(intent or "").strip()
     panels = compact_layout_panels(layout_context)
     if not text:
@@ -40,17 +40,25 @@ def route_ui_intent(intent: str, layout_context: dict[str, Any], router_mode: st
     if is_content_request_without_ui_operation(text):
         return non_ui_intent("Content request did not include an explicit UI operation.")
 
-    llm_intent = route_ui_intent_with_openai(text, panels, router_mode)
+    llm_intent = route_ui_intent_with_openai(text, panels, router_mode, runtime_context=runtime_context)
     if llm_intent:
         return resolve_ui_target(llm_intent, panels, text)
 
     return resolve_ui_target(infer_ui_intent_fallback(text, panels), panels, text)
 
 
-def route_ui_intent_with_openai(intent: str, panels: list[dict[str, Any]], router_mode: str) -> UIIntent | None:
+def route_ui_intent_with_openai(
+    intent: str,
+    panels: list[dict[str, Any]],
+    router_mode: str,
+    runtime_context: Any | None = None,
+) -> UIIntent | None:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key or os.getenv("AGENT_UI_ROUTER_PROVIDER") == "deterministic" or router_mode == "rules":
         return None
+    if runtime_context is not None and hasattr(runtime_context, "acquire_llm"):
+        if not runtime_context.acquire_llm("ui-router"):
+            return None
 
     try:
         payload = {

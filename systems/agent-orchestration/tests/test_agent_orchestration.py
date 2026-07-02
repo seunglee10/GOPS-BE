@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import time
 import types
 import unittest
 from pathlib import Path
@@ -21,6 +22,7 @@ from gops_agents.orchestrator import AgentOrchestrator, canonical_analysis_inten
 from gops_agents.publisher import notification_payload
 from gops_agents.news_cache import MemoryNewsEvidenceCache, RedisNewsEvidenceCache
 from gops_agents.providers import ClickHouseNewsProvider, GraphDBOntologyProvider, ProviderRequest
+from gops_agents.report_store import InMemoryReportStore, RedisReportStore
 from gops_agents.router import route_intent
 from gops_agents.synthesizer import FinalAnswerSynthesizer
 import alfaka.alpaca.news  # noqa: F401
@@ -126,6 +128,20 @@ class BrokenRedisClient:
         raise RuntimeError("redis unavailable")
 
 
+class FakeRedisClient:
+    def __init__(self):
+        self.items = {}
+        self.setex_calls = []
+
+    def get(self, key):
+        entry = self.items.get(key)
+        return entry[1] if entry else None
+
+    def setex(self, key, ttl, value):
+        self.setex_calls.append((key, ttl, value))
+        self.items[key] = (ttl, value)
+
+
 class CountingNewsAgent(NewsAgent):
     def __init__(self, provider=None, localizer=None):
         super().__init__(provider=provider, localizer=localizer)
@@ -150,6 +166,58 @@ class CountingSynthesizer:
             citations=[],
             limitations=[],
         )
+
+
+class SlowNewsProvider:
+    def __init__(self, delay_seconds=0.2):
+        self.delay_seconds = delay_seconds
+
+    def fetch(self, request):
+        time.sleep(self.delay_seconds)
+        return [
+            EvidenceItem(
+                provider="news",
+                status="available",
+                title="Slow news",
+                summary="Slow news should timeout.",
+                raw={"publishedAt": utc_now_iso(), "symbols": [request.symbol]},
+            )
+        ]
+
+
+class SequencedDailyNewsProvider:
+    def __init__(self):
+        self.daily_calls = 0
+
+    def fetch(self, request):
+        return [
+            EvidenceItem(
+                provider="news",
+                status="available",
+                title="AAPL services growth",
+                summary="Apple services revenue improved.",
+                raw={
+                    "articleId": "aapl-fallback-daily-1",
+                    "publishedAt": utc_now_iso(),
+                    "symbols": [request.symbol],
+                    "dataSource": "test",
+                },
+            )
+        ]
+
+    def fetch_daily_summaries(self, request):
+        self.daily_calls += 1
+        if self.daily_calls == 1:
+            return []
+        return [
+            {
+                "date": "2026-07-01",
+                "symbol": request.symbol,
+                "summary": "fallback role daily summary",
+                "keyPoints": ["role fallback"],
+                "status": "final",
+            }
+        ]
 
 
 def layout_context(*, pinned_news=False):
@@ -224,6 +292,15 @@ class AgentOrchestrationTests(unittest.TestCase):
                 "AGENT_ROLE_ANALYSIS_PROVIDER",
                 "AGENT_FINAL_ANSWER_PROVIDER",
                 "AGENT_ALLOW_RUNTIME_NEWS_OPENAI",
+                "AGENT_GRAPHDB_TIMEOUT_MS",
+                "AGENT_MAX_REALTIME_LLM_CALLS",
+                "AGENT_NEWS_LOCALIZATION_PROVIDER",
+                "AGENT_NEWS_ROLE_ANALYSIS_PROVIDER",
+                "AGENT_REPORT_TTL_SECONDS",
+                "AGENT_ROUTER_PROVIDER",
+                "AGENT_SNAPSHOT_TIMEOUT_MS",
+                "AGENT_UI_ROUTER_PROVIDER",
+                "AGENT_USE_SNAPSHOT_HOT_PATH",
             ]
         }
 
@@ -251,6 +328,42 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertIsNotNone(report.finalAnswer)
         self.assertTrue(any(item.provider == "news" and item.status == "no-data" for item in report.providerEvidence))
         self.assertEqual(report.notificationDecision.level, "none")
+
+    def test_memory_report_store_round_trip(self):
+        store = InMemoryReportStore()
+        report = AgentOrchestrator(store=store).analyze({"symbol": "NVDA", "intent": "뉴스 보여줘"})
+
+        stored = store.get(report.analysisId)
+
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored.analysisId, report.analysisId)
+        self.assertEqual(stored.symbol, "NVDA")
+
+    def test_redis_report_store_round_trip_and_latest_keys(self):
+        redis = FakeRedisClient()
+        store = RedisReportStore(redis, ttl_seconds=43200)
+        report = AgentOrchestrator(store=store).analyze({"symbol": "NVDA", "intent": "뉴스 보여줘"})
+
+        stored = store.get(report.analysisId)
+
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored.analysisId, report.analysisId)
+        self.assertEqual(stored.symbol, "NVDA")
+        keys = {key for key, _ttl, _value in redis.setex_calls}
+        ttls = {ttl for _key, ttl, _value in redis.setex_calls}
+        self.assertIn(f"agent:report:{report.analysisId}", keys)
+        self.assertIn("agent:report:latest:NVDA", keys)
+        self.assertIn("agent:report:latest", keys)
+        self.assertEqual(ttls, {43200})
+
+    def test_redis_report_store_fail_open_when_redis_fails(self):
+        store = RedisReportStore(BrokenRedisClient(), ttl_seconds=43200)
+        report = AgentOrchestrator().analyze({"symbol": "NVDA", "intent": "뉴스 보여줘"})
+
+        saved = store.save(report)
+
+        self.assertEqual(saved.analysisId, report.analysisId)
+        self.assertIsNone(store.get(report.analysisId))
 
     def test_orchestrator_runs_only_requested_visible_agents_before_internal_steps(self):
         report = AgentOrchestrator().analyze({
@@ -313,6 +426,55 @@ class AgentOrchestrationTests(unittest.TestCase):
 
         self.assertTrue(any(item["panelId"] == "panel-news" and item["layoutWeight"] == 100 for item in report.layoutProposal.panelPriorities))
         self.assertFalse(any(command["type"] == "layout.panel.move" for command in report.layoutProposal.commands))
+
+    def test_ui_router_uses_shared_llm_budget(self):
+        ui_router_response = {
+            "output_text": json.dumps({
+                "isUiIntent": True,
+                "intentKind": "layout",
+                "targetPanelType": "newsFeed",
+                "targetPanelId": "panel-news",
+                "action": "resize",
+                "sizeIntent": "large",
+                "positionIntent": None,
+                "confidence": 0.9,
+                "reason": "User asked to enlarge the news panel.",
+            })
+        }
+
+        with patch.dict(os.environ, {
+            "OPENAI_API_KEY": "test-key",
+            "AGENT_MAX_REALTIME_LLM_CALLS": "1",
+        }, clear=False):
+            with patch("urllib.request.urlopen", return_value=FakeOpenAIResponse(ui_router_response)) as openai:
+                report = AgentOrchestrator().analyze({
+                    "symbol": "NVDA",
+                    "intent": "뉴스 패널 크게 보여줘",
+                    "layoutContext": layout_context(),
+                })
+
+        self.assertEqual(openai.call_count, 1)
+        self.assertEqual(report.route.intentType, "ui-layout")
+        self.assertEqual(report.route.source, "ui-llm")
+        self.assertEqual(report.timing["llmCalls"], 1)
+        self.assertEqual(report.timing["llmCallLabels"], ["ui-router"])
+
+    def test_ui_router_budget_block_falls_back_without_openai_call(self):
+        with patch.dict(os.environ, {
+            "OPENAI_API_KEY": "test-key",
+            "AGENT_MAX_REALTIME_LLM_CALLS": "0",
+        }, clear=False):
+            with patch("urllib.request.urlopen", side_effect=AssertionError("UI router should not call OpenAI after budget block")):
+                report = AgentOrchestrator().analyze({
+                    "symbol": "NVDA",
+                    "intent": "뉴스 패널 크게 보여줘",
+                    "layoutContext": layout_context(),
+                })
+
+        self.assertEqual(report.route.intentType, "ui-layout")
+        self.assertEqual(report.route.source, "ui-fallback")
+        self.assertEqual(report.timing["llmCalls"], 0)
+        self.assertEqual(report.timing["llmBudgetBlocked"], 1)
 
     def test_conductor_routes_market_move_to_all_visible_roles(self):
         report = AgentOrchestrator().analyze({
@@ -918,6 +1080,87 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(report.timing["llmCalls"], 0)
         self.assertIn("news_snapshot", {snapshot.snapshot_type for snapshot in report.snapshots})
 
+    def test_snapshot_timeout_returns_failed_snapshot_and_partial_report(self):
+        orchestrator = AgentOrchestrator()
+        orchestrator.news_agent = NewsAgent(SlowNewsProvider(delay_seconds=0.2))
+        orchestrator.ontology_agent = OntologyAgent(FakeOntologyProvider([
+            EvidenceItem(
+                provider="ontology",
+                status="available",
+                title="NVDA theme",
+                summary="NVDA is mapped to an AI theme.",
+                raw={"relationType": "theme", "ticker": "NVDA", "themeName": "AI"},
+            )
+        ]))
+
+        with patch.dict(os.environ, {
+            "AGENT_FINAL_ANSWER_PROVIDER": "deterministic",
+            "AGENT_NEWS_LOCALIZATION_PROVIDER": "deterministic",
+            "AGENT_SNAPSHOT_TIMEOUT_MS": "10",
+            "AGENT_UI_ROUTER_PROVIDER": "deterministic",
+        }, clear=False):
+            report = orchestrator.analyze({
+                "symbol": "NVDA",
+                "intent": "NVDA 뉴스 기반으로 영향 분석해줘",
+                "agentIds": ["agent-02"],
+            })
+
+        news_snapshot = next(snapshot for snapshot in report.snapshots if snapshot.snapshot_type == "news_snapshot")
+        self.assertEqual(news_snapshot.status, "failed")
+        self.assertIn("timeout", news_snapshot.warnings)
+        self.assertTrue(report.finalResponse.partial_data_used)
+        self.assertEqual(report.latencyTrace.stages[2].stage, "snapshot_fetch")
+        self.assertEqual(report.latencyTrace.stages[2].status, "timeout")
+
+    def test_llm_budget_blocks_second_realtime_call(self):
+        provider = ClickHouseNewsProvider(
+            clickhouse_provider=FakeClickHouseProvider([
+                {
+                    "articleId": "budget-1",
+                    "headline": "NVDA shares rise after strong earnings",
+                    "summary": "NVDA revenue beat expectations.",
+                    "publishedAt": utc_now_iso(),
+                    "url": "https://example.com/budget",
+                    "symbols": ["NVDA"],
+                    "source": "alpaca",
+                }
+            ]),
+            publish_fallback=False,
+        )
+        orchestrator = AgentOrchestrator()
+        orchestrator.news_agent = NewsAgent(provider)
+        orchestrator.ontology_agent = OntologyAgent(FakeOntologyProvider([]))
+        openai_role_response = {
+            "output_text": json.dumps({
+                "summary": "뉴스 LLM 분석입니다.",
+                "rationale": "제공된 뉴스만 사용했습니다.",
+                "confidence": 0.7,
+                "tags": ["news", "openai"],
+            })
+        }
+
+        with patch.dict(os.environ, {
+            "OPENAI_API_KEY": "test-key",
+            "AGENT_FINAL_ANSWER_PROVIDER": "openai",
+            "AGENT_MAX_REALTIME_LLM_CALLS": "1",
+            "AGENT_NEWS_LOCALIZATION_PROVIDER": "deterministic",
+            "AGENT_NEWS_ROLE_ANALYSIS_PROVIDER": "openai",
+            "AGENT_UI_ROUTER_PROVIDER": "deterministic",
+            "AGENT_USE_SNAPSHOT_HOT_PATH": "false",
+        }, clear=False):
+            with patch("urllib.request.urlopen", return_value=FakeOpenAIResponse(openai_role_response)) as openai:
+                report = orchestrator.analyze({
+                    "symbol": "NVDA",
+                    "intent": "NVDA 왜 올랐어?",
+                    "agentIds": ["agent-02"],
+                })
+
+        self.assertEqual(openai.call_count, 1)
+        self.assertEqual(report.timing["llmCalls"], 1)
+        self.assertEqual(report.timing["llmBudgetBlocked"], 1)
+        self.assertIn("role:news", report.timing["llmCallLabels"])
+        self.assertIn("llm_call_budget_exceeded", report.finalResponse.risk_warnings)
+
     def test_orchestrator_analysis_cache_fail_open_when_redis_fails(self):
         provider = ClickHouseNewsProvider(
             clickhouse_provider=FakeClickHouseProvider([
@@ -1454,6 +1697,29 @@ class AgentOrchestrationTests(unittest.TestCase):
         props = news_command["payload"]["props"]
         self.assertEqual(props["dailySummaries"][0]["date"], "2026-07-01")
         self.assertEqual(props["dailySummaries"][0]["keyPoints"], ["서비스 성장", "공급망 점검"])
+
+    def test_news_role_fallback_applies_daily_summaries_after_join(self):
+        provider = SequencedDailyNewsProvider()
+        orchestrator = AgentOrchestrator()
+        orchestrator.news_agent = NewsAgent(provider)
+
+        with patch.dict(os.environ, {
+            "AGENT_FINAL_ANSWER_PROVIDER": "deterministic",
+            "AGENT_NEWS_LOCALIZATION_PROVIDER": "deterministic",
+            "AGENT_UI_ROUTER_PROVIDER": "deterministic",
+            "AGENT_USE_SNAPSHOT_HOT_PATH": "false",
+        }, clear=False):
+            report = orchestrator.analyze({
+                "symbol": "AAPL",
+                "intent": "AAPL 뉴스 보여줘",
+                "agentIds": ["agent-02"],
+            })
+
+        self.assertEqual(provider.daily_calls, 2)
+        self.assertEqual(report.dailySummaries[0]["summary"], "fallback role daily summary")
+        news_command = news_panel_props_command(report)
+        props = news_command["payload"]["props"]
+        self.assertEqual(props["dailySummaries"][0]["keyPoints"], ["role fallback"])
 
     def test_topic_news_intent_uses_theme_basket_instead_of_current_chart_symbol(self):
         clickhouse = ThemeClickHouseProvider({

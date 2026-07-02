@@ -25,6 +25,7 @@ class AgentContext:
     marketEvents: list[MarketEvent] = field(default_factory=list)
     providerEvidence: list[EvidenceItem] = field(default_factory=list)
     timing: dict[str, Any] = field(default_factory=dict)
+    runtimeContext: Any | None = None
     newsSymbols: list[str] = field(default_factory=list)
     newsTopic: str | None = None
     newsDailySummaries: list[dict[str, Any]] = field(default_factory=list)
@@ -111,11 +112,12 @@ class NewsAgent(ProviderBackedAgent):
     def analyze(self, context: AgentContext) -> AgentFinding:
         news_only = is_news_only_context(context)
         started_at = time.perf_counter()
+        daily_summaries = []
         try:
             request = ProviderRequest(context.symbol, context.intent, symbols=tuple(context.newsSymbols))
             evidence = self.provider.fetch(request)
             if hasattr(self.provider, "fetch_daily_summaries"):
-                context.newsDailySummaries = list(self.provider.fetch_daily_summaries(request))
+                daily_summaries = list(self.provider.fetch_daily_summaries(request))
         finally:
             add_context_timing_ms(context, "newsFetchMs", (time.perf_counter() - started_at) * 1000)
         evidence = self.localizer.localize(
@@ -136,7 +138,7 @@ class NewsAgent(ProviderBackedAgent):
                 schema_name="news_agent_analysis",
             )
         analysis = openai_analysis or analysis
-        return AgentFinding(
+        finding = AgentFinding(
             agentId=self.agent_id,
             role=self.role,
             summary=str(analysis["summary"]),
@@ -145,6 +147,8 @@ class NewsAgent(ProviderBackedAgent):
             evidence=evidence,
             tags=[str(item) for item in analysis["tags"]],
         )
+        finding.daily_summaries = [item for item in daily_summaries if isinstance(item, dict)]
+        return finding
 
 
 def add_context_timing_ms(context: AgentContext, key: str, elapsed_ms: float) -> None:
@@ -993,8 +997,13 @@ def role_analysis_with_openai(
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key or not runtime_role_openai_allowed(role):
         return None
+    runtime_context = getattr(context, "runtimeContext", None)
+    if runtime_context is not None and hasattr(runtime_context, "acquire_llm"):
+        if not runtime_context.acquire_llm(f"role:{role}"):
+            return None
     try:
-        add_context_timing_count(context, "llmCalls", 1)
+        if runtime_context is None:
+            add_context_timing_count(context, "llmCalls", 1)
         payload = {
             "model": os.getenv("AGENT_ROLE_ANALYSIS_MODEL", os.getenv("OPENAI_MODEL", "gpt-5.2")),
             "input": [

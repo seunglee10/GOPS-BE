@@ -70,6 +70,10 @@ class RuntimePolicy:
     route_llm_fallback: str = "degraded_only"
     route_llm_fallback_threshold: float = 0.75
     llm_guardrail: str = "degraded_only"
+    total_timeout_ms: int = 3000
+    snapshot_timeout_ms: int = 700
+    synthesis_timeout_ms: int = 1700
+    graphdb_timeout_ms: int = 500
     max_items_per_snapshot: int = 5
     max_total_synthesis_evidence_items: int = 15
     max_synthesis_output_tokens: int = 350

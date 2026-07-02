@@ -31,6 +31,7 @@ class FinalAnswerSynthesizer:
         timing: dict[str, Any] | None = None,
         daily_summaries: list[dict[str, Any]] | None = None,
         synthesis_input: SynthesisInput | None = None,
+        runtime_context: Any | None = None,
     ) -> FinalAnswer:
         if is_news_route(route):
             return self._synthesize_deterministic(
@@ -57,6 +58,7 @@ class FinalAnswerSynthesizer:
             provider_evidence=provider_evidence,
             timing=timing,
             synthesis_input=synthesis_input,
+            runtime_context=runtime_context,
         )
         if openai_answer:
             return openai_answer
@@ -96,12 +98,16 @@ class FinalAnswerSynthesizer:
         provider_evidence: list[EvidenceItem],
         timing: dict[str, Any] | None = None,
         synthesis_input: SynthesisInput | None = None,
+        runtime_context: Any | None = None,
     ) -> FinalAnswer | None:
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key or os.getenv("AGENT_FINAL_ANSWER_PROVIDER") == "deterministic":
             return None
+        if runtime_context is not None and hasattr(runtime_context, "acquire_llm"):
+            if not runtime_context.acquire_llm("synthesis"):
+                return None
         try:
-            if isinstance(timing, dict):
+            if runtime_context is None and isinstance(timing, dict):
                 timing["llmCalls"] = int(timing.get("llmCalls") or 0) + 1
             payload = {
                 "model": os.getenv("AGENT_SYNTHESIZER_MODEL", os.getenv("OPENAI_MODEL", "gpt-5.2")),
@@ -181,7 +187,12 @@ class FinalAnswerSynthesizer:
                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                 method="POST",
             )
-            with urllib.request.urlopen(request, timeout=float(os.getenv("AGENT_SYNTHESIZER_TIMEOUT_SECONDS", "12"))) as response:
+            timeout_seconds = float(os.getenv("AGENT_SYNTHESIZER_TIMEOUT_SECONDS", "0"))
+            if timeout_seconds <= 0 and runtime_context is not None:
+                timeout_seconds = max(0.001, float(getattr(runtime_context.policy, "synthesis_timeout_ms", 1700)) / 1000)
+            if timeout_seconds <= 0:
+                timeout_seconds = 12.0
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
                 data = json.loads(response.read().decode("utf-8"))
             return final_answer_from_openai_json(parse_openai_text_json(data))
         except Exception:

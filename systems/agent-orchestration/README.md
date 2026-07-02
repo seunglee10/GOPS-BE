@@ -24,8 +24,16 @@ The v1 logical agents run inside the `agent-orchestrator` pod:
 - notification decision agent
 - layout agent
 
-News, macro, and ontology use empty provider adapters in v1. Real external APIs
-are intentionally not selected here.
+Provider status in v1:
+
+- News uses ClickHouse/Redis-backed cached news intelligence, with optional Alpaca direct fallback when explicitly enabled.
+- Macro intentionally remains an empty provider adapter.
+- Ontology uses GraphDB through `GraphDBOntologyProvider` and returns relationship snapshots.
+
+Report persistence is code-ready through the `ReportStore` interface. Runtime
+pod wiring still uses the current entrypoint behavior; Redis latest-report
+activation and future Postgres long-term storage should be handled in a
+separate runtime/deployment change.
 
 ## Kafka Topics
 

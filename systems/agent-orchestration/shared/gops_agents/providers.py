@@ -642,7 +642,10 @@ class GraphDBOntologyProvider(OntologyProvider):
     ):
         self.sparql_url = sparql_url or os.getenv("GRAPHDB_SPARQL_URL", "http://localhost:7200/repositories/nasdaq-fibo")
         self.limit = clamp_int(limit or os.getenv("AGENT_ONTOLOGY_LIMIT", "20"), default=20, minimum=1, maximum=200)
-        self.timeout_seconds = float(timeout_seconds or os.getenv("GRAPHDB_TIMEOUT_SECONDS", "5"))
+        graphdb_timeout = timeout_seconds or os.getenv("GRAPHDB_TIMEOUT_SECONDS")
+        if graphdb_timeout is None:
+            graphdb_timeout = float(os.getenv("AGENT_GRAPHDB_TIMEOUT_MS", "500")) / 1000
+        self.timeout_seconds = float(graphdb_timeout)
         self.sparql_client = sparql_client or GraphDBSparqlClient(self.sparql_url, self.timeout_seconds)
 
     def fetch(self, request: ProviderRequest) -> list[EvidenceItem]:

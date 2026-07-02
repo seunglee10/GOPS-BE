@@ -126,6 +126,10 @@ type RuntimePolicy = {
   route_llm_fallback: "degraded_only";
   route_llm_fallback_threshold: 0.75;
   llm_guardrail: "degraded_only";
+  total_timeout_ms: 3000;
+  snapshot_timeout_ms: 700;
+  synthesis_timeout_ms: 1700;
+  graphdb_timeout_ms: 500;
   max_items_per_snapshot: 5;
   max_total_synthesis_evidence_items: 15;
   max_synthesis_output_tokens: 350;
@@ -143,6 +147,7 @@ OpenAI latency guide의 원칙을 이 시스템에 적용하면 다음과 같다
 - **병렬화**: market/news/relationship snapshot은 병렬 조회하고, risk snapshot은 조회 결과 기반으로 생성한다.
 - **Streaming**: Synthesis 응답은 가능한 streaming으로 시작해 perceived latency를 낮춘다.
 - **LLM 남용 방지**: entity resolve, graph path scoring, guardrail은 기본적으로 LLM 밖에서 처리한다.
+- **중앙 LLM budget**: UI/intent router, role analysis, final synthesis는 request 단위 budget을 통과해야 하며, 기본 hot path에서는 총 1회 초과 호출을 실행하지 않는다.
 
 ### 3.4 Prompt Caching Policy
 
@@ -581,6 +586,7 @@ GraphDB 기반 관계 영향을 `relationship_snapshot`으로 제공한다. 핵�
 
 - `RelationshipSnapshotProvider`는 `ProviderRequest(symbol, intent)`를 만들어 ontology provider를 호출한다.
 - `GraphDBOntologyProvider`는 `GRAPHDB_SPARQL_URL`의 SPARQL endpoint를 조회한다.
+- GraphDB hot path 기본 timeout은 500ms이며 `GRAPHDB_TIMEOUT_SECONDS` 또는 `AGENT_GRAPHDB_TIMEOUT_MS`로 조정한다.
 - 조회 결과는 `EvidenceItem(provider="ontology")`로 normalize된 뒤 `DataSnapshot(snapshot_type="relationship_snapshot")`으로 변환된다.
 - 현재 relation type은 `theme`, `control`, `theme-company`, `theme-control`, `no-direct-control`, `no-ontology-evidence`, `graphdb-unavailable`이다.
 - ontology evidence가 없으면 `status="partial"`과 `no_clear_relationship_path` warning을 반환한다.
@@ -779,6 +785,8 @@ LLM guardrail이 필요한 경우:
 | News provider | ClickHouse/Redis/Kafka fallback 계층을 따르는 cached news provider를 사용한다. |
 | Relationship provider | `RelationshipSnapshotProvider`와 `GraphDBOntologyProvider`가 존재하지만 path scoring/cache는 GraphDB 담당자 TODO다. |
 | Synthesis and guardrail | `SynthesisInput`에서 `FinalResponse`로 변환하고 rule-based guardrail을 적용한다. |
+| Report store | `ReportStore`, memory store, Redis latest-report store 코드가 있다. Redis TTL 기본값은 12시간이며 pod wiring과 Postgres 장기 저장은 후속 runtime/storage 변경으로 분리한다. |
+| Runtime safety | snapshot timeout과 request 단위 LLM budget을 적용해 timeout/예산 초과를 trace와 warning에 남긴다. |
 
 남은 구현 우선순위:
 
@@ -788,8 +796,9 @@ LLM guardrail이 필요한 경우:
 4. relationship warning taxonomy 정리
 5. prompt prefix caching이 가능하도록 고정 instruction/schema/few-shot 분리
 6. `LatencyTrace`와 token usage logging 강화
-7. cache hit/miss, freshness, partial data logging 강화
-8. degraded path 분리
+7. Redis latest report activation과 Postgres 장기 저장 schema를 별도 storage 문서에서 확정
+8. cache hit/miss, freshness, partial data logging 강화
+9. degraded path 분리
 
 성공 기준은 분석 품질 완성보다 다음을 먼저 만족하는 것이다.
 

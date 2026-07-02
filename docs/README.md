@@ -11,6 +11,7 @@ The root `README.md` stays short; repo-wide Codex rules live in root `AGENTS.md`
 | `IMAGE_STRATEGY.md` | Docker image boundaries and naming rules. |
 | `ENVIRONMENT.md` | Env, secret, and platform contracts. |
 | `AGENT_ARCHITECTURE.md` | Canonical snapshot-based agent architecture and runtime contracts. |
+| `AGENT_REPORT_STORAGE.md` | Redis latest-report and future Postgres storage direction for agent reports. |
 | `GRAPHDB_RELATIONSHIP_AGENT_HANDOFF.md` | GraphDB Relationship Agent implementation handoff for SPARQL, relation normalization, scoring, and cache work. |
 | `../AGENTS.md` | Codex/contributor rules for this repo. |
 

@@ -28,7 +28,7 @@ KEYWORD_ROUTES = [
 ]
 
 
-def route_intent(intent: str, agent_ids: Any = None, router_mode: str = "hybrid") -> IntentRoute:
+def route_intent(intent: str, agent_ids: Any = None, router_mode: str = "hybrid", runtime_context: Any | None = None) -> IntentRoute:
     text = str(intent or "").strip()
     lowered = text.lower()
     market_move_keywords, market_move_roles, market_move_type = KEYWORD_ROUTES[0]
@@ -79,7 +79,7 @@ def route_intent(intent: str, agent_ids: Any = None, router_mode: str = "hybrid"
         )
 
     if router_mode in {"strict-llm", "llm"} or os.getenv("AGENT_ROUTER_PROVIDER") == "openai":
-        llm_route = route_with_openai(text)
+        llm_route = route_with_openai(text, runtime_context=runtime_context)
         if llm_route:
             return llm_route
 
@@ -131,10 +131,13 @@ def roles_from_agent_ids(agent_ids: Any) -> list[str]:
     return roles
 
 
-def route_with_openai(intent: str) -> IntentRoute | None:
+def route_with_openai(intent: str, runtime_context: Any | None = None) -> IntentRoute | None:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         return None
+    if runtime_context is not None and hasattr(runtime_context, "acquire_llm"):
+        if not runtime_context.acquire_llm("router"):
+            return None
     try:
         payload = {
             "model": os.getenv("AGENT_ROUTER_MODEL", os.getenv("OPENAI_MODEL", "gpt-5.2")),
