@@ -374,8 +374,20 @@ def build_news_final_answer(
         ),
         reverse=True,
     )
-    direct_items = [item for item in major_items if raw_text(item, "subjectRelevance", "") in {"primary", "secondary"}]
+    direct_items = [
+        item
+        for item in major_items
+        if raw_text(item, "subjectRelevance", "").strip().lower() not in {"mention", "irrelevant"}
+    ]
     mention_items = [item for item in major_items if raw_text(item, "subjectRelevance", "") == "mention"]
+    if not direct_items:
+        return FinalAnswer(
+            title=title,
+            summary=f"{symbol} 관련 저장 뉴스가 없습니다.",
+            sections=[],
+            citations=[],
+            limitations=[],
+        )
     headline_items = direct_items or mention_items or major_items
     sections = [
         FinalAnswerSection(
@@ -383,11 +395,9 @@ def build_news_final_answer(
             bullets=[f"{display_title(item)}: {display_summary(item)}" for item in headline_items[:3]],
         )
     ]
-    if not direct_items and mention_items:
-        sections = []
     return FinalAnswer(
         title=title,
-        summary=f"{symbol} 관련 뉴스 {len(news_items)}건을 가져왔습니다.",
+        summary=f"{symbol} 관련 뉴스 {len(direct_items)}건을 가져왔습니다.",
         sections=sections,
         citations=[],
         limitations=[],

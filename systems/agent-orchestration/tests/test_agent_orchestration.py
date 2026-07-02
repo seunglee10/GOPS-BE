@@ -17,7 +17,7 @@ from gops_agents.analysis_cache import MemoryAgentAnalysisCache, RedisAgentAnaly
 from gops_agents.contracts import AgentFinding, EvidenceItem, FinalAnswer, IntentRoute, utc_now_iso
 from gops_agents.event_detector import MarketEventDetector, MarketEventThresholds
 from gops_agents.news_localization import NewsLocalizationService
-from gops_agents.orchestrator import AgentOrchestrator, canonical_analysis_intent, extract_symbol_from_intent
+from gops_agents.orchestrator import AgentOrchestrator, canonical_analysis_intent, extract_symbol_from_intent, known_agent_symbols
 from gops_agents.publisher import notification_payload
 from gops_agents.news_cache import MemoryNewsEvidenceCache, RedisNewsEvidenceCache
 from gops_agents.providers import ClickHouseNewsProvider, GraphDBOntologyProvider, ProviderRequest
@@ -920,12 +920,12 @@ class AgentOrchestrationTests(unittest.TestCase):
         provider = ClickHouseNewsProvider(
             clickhouse_provider=FakeClickHouseProvider([
                 {
-                    "articleId": "orcl-article-1",
-                    "headline": "Oracle announces database update",
-                    "summary": "The article describes a database cloud update.",
+                    "articleId": "nvda-article-1",
+                    "headline": "Nvidia announces AI platform update",
+                    "summary": "The article describes an Nvidia AI platform update.",
                     "publishedAt": utc_now_iso(),
-                    "url": "https://example.com/orcl-article",
-                    "symbols": ["ORCL"],
+                    "url": "https://example.com/nvda-article",
+                    "symbols": ["NVDA"],
                     "source": "alpaca",
                 }
             ]),
@@ -1184,6 +1184,12 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(news_command["payload"]["props"]["latestNews"][0]["symbol"], "XLV")
 
     def test_lowercase_ticker_in_intent_normalizes_against_known_universe(self):
+        with patch.dict(os.environ, {"ALPACA_UNIVERSE": "gops20"}):
+            known_agent_symbols.cache_clear()
+            self.addCleanup(known_agent_symbols.cache_clear)
+            self.assertEqual(extract_symbol_from_intent("acgl 뉴스 보여줘"), "ACGL")
+
+        known_agent_symbols.cache_clear()
         self.assertEqual(extract_symbol_from_intent("acgl 뉴스 보여줘"), "ACGL")
         self.assertIsNone(extract_symbol_from_intent("show news about it"))
 
@@ -1245,6 +1251,69 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(props["status"], "empty")
         self.assertEqual(props["latestNews"], [])
         self.assertIn("ACGL", props["emptyMessage"])
+
+    def test_explicit_ticker_with_no_news_adds_empty_news_panel_without_existing_layout(self):
+        clickhouse = FakeClickHouseProvider([])
+        provider = ClickHouseNewsProvider(clickhouse_provider=clickhouse, redis_provider=FakeLocalizedRedisProvider([]), publish_fallback=False)
+        orchestrator = AgentOrchestrator()
+        orchestrator.news_agent = NewsAgent(provider)
+
+        report = orchestrator.analyze({
+            "symbol": "NVDA",
+            "intent": "ACGL 뉴스 보여줘",
+            "agentIds": ["agent-02"],
+            "layoutContext": {"panels": []},
+        })
+
+        news_command = news_panel_props_command(report)
+        self.assertEqual(news_command["type"], "layout.panel.add")
+        props = news_command["payload"]["props"]
+        self.assertEqual(props["symbol"], "ACGL")
+        self.assertEqual(props["status"], "empty")
+        self.assertIn("ACGL", props["emptyMessage"])
+
+    def test_explicit_ticker_with_only_mention_news_shows_empty_direct_news(self):
+        clickhouse = FakeClickHouseProvider([
+            {
+                "articleId": "acgl-mention-1",
+                "headline": "Market roundup mentions Arch Capital in passing",
+                "summary": "ACGL was listed among many financial stocks.",
+                "publishedAt": utc_now_iso(),
+                "url": "https://example.com/acgl-mention",
+                "symbols": ["ACGL", "AAPL", "NVDA"],
+                "symbol": "ACGL",
+                "targetSymbol": "ACGL",
+                "subjectRelevance": "mention",
+                "relevanceScoreV2": 0.2,
+                "source": "alpaca",
+            }
+        ])
+        provider = ClickHouseNewsProvider(clickhouse_provider=clickhouse, redis_provider=FakeLocalizedRedisProvider([]), publish_fallback=False)
+        orchestrator = AgentOrchestrator()
+        orchestrator.news_agent = NewsAgent(provider)
+
+        report = orchestrator.analyze({
+            "symbol": "NVDA",
+            "intent": "ACGL 뉴스 보여줘",
+            "agentIds": ["agent-02"],
+            "chartContext": {
+                "chartDocument": {"symbol": "NVDA", "timeframe": "1m"},
+                "dataStatus": {"candleCount": 10, "state": "ready"},
+            },
+            "layoutContext": layout_context(),
+        })
+
+        self.assertEqual(report.symbol, "ACGL")
+        self.assertEqual(report.finalAnswer.summary, "ACGL 관련 저장 뉴스가 없습니다.")
+        self.assertEqual(report.timing["directNewsCount"], 0)
+        self.assertEqual(report.timing["mentionNewsCount"], 1)
+        news_command = news_panel_props_command(report)
+        props = news_command["payload"]["props"]
+        self.assertEqual(props["symbol"], "ACGL")
+        self.assertEqual(props["status"], "empty")
+        self.assertEqual(props["latestNews"], [])
+        self.assertEqual(props["majorNews"], [])
+        self.assertEqual(props["mentionNewsCount"], 1)
 
     def test_company_name_alias_in_intent_overrides_current_chart_symbol_for_news(self):
         self.assertEqual(extract_symbol_from_intent("애플 뉴스 찾아줘"), "AAPL")

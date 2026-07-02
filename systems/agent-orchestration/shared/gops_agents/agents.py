@@ -333,10 +333,11 @@ class LayoutAgent:
         panels = normalize_layout_panels(context.layoutContext)
         if not panels:
             news_panel_props = build_news_panel_props(context.symbol, context.providerEvidence, context.newsDailySummaries)
+            has_layout_context = isinstance(context.layoutContext, dict) and "panels" in context.layoutContext
             return LayoutProposal(
                 title="Agent analysis workspace",
                 rationale="No layout context was supplied, so the layout agent only proposed display panels with available evidence.",
-                commands=[news_panel_add_command(news_panel_props)] if should_add_news_panel_without_layout(news_panel_props) else [],
+                commands=[news_panel_add_command(news_panel_props)] if should_add_news_panel_without_layout(news_panel_props, include_empty=has_layout_context) else [],
                 panelPriorities=[],
             )
 
@@ -888,6 +889,7 @@ def severity_rank(value: str) -> int:
 
 def analyze_news_evidence(context: AgentContext, evidence: list[EvidenceItem]) -> dict[str, Any]:
     available = [item for item in evidence if item.status == "available"]
+    direct_available = [item for item in available if is_direct_news_item(item)]
     if not available:
         summary = f"{context.symbol} 관련 저장 뉴스 근거를 확인하지 못했습니다."
         detail = evidence[0].summary if evidence else "뉴스 provider에서 반환된 근거가 없습니다."
@@ -897,14 +899,21 @@ def analyze_news_evidence(context: AgentContext, evidence: list[EvidenceItem]) -
             "confidence": 0.35,
             "tags": ["news", "no-data"],
         }
+    if not direct_available:
+        return {
+            "summary": f"{context.symbol} 관련 저장 뉴스 근거를 확인하지 못했습니다.",
+            "rationale": f"언급 기사 {len(available)}건은 있었지만 primary/secondary 직접 관련 기사로 분류되지 않았습니다.",
+            "confidence": 0.42,
+            "tags": ["news", "no-direct-news"],
+        }
 
-    directions = Counter(news_raw_value(item, "impactDirection", "unknown") for item in available)
-    events = Counter(news_raw_value(item, "eventType", "other") for item in available)
+    directions = Counter(news_raw_value(item, "impactDirection", "unknown") for item in direct_available)
+    events = Counter(news_raw_value(item, "eventType", "other") for item in direct_available)
     dominant_direction = dominant_label(directions, fallback="unknown")
     dominant_event = dominant_label(events, fallback="other")
-    top_titles = [display_news_title(item) for item in available[:3]]
+    top_titles = [display_news_title(item) for item in direct_available[:3]]
     summary = (
-        f"{context.symbol} 뉴스 {len(available)}건을 확인했습니다. "
+        f"{context.symbol} 뉴스 {len(direct_available)}건을 확인했습니다. "
         f"주요 이벤트는 {event_type_label(dominant_event)}이고, "
         f"주가 영향 방향은 {impact_direction_label(dominant_direction)}로 분류했습니다."
     )
@@ -1101,12 +1110,14 @@ def compact_role_evidence(items: list[EvidenceItem]) -> list[dict[str, Any]]:
 
 def build_news_panel_props(symbol: str, evidence: list[EvidenceItem], daily_summaries: list[dict[str, Any]] | None = None) -> dict[str, Any] | None:
     news_items = [item for item in evidence if item.provider == "news" and item.status == "available"]
+    direct_news_items = [item for item in news_items if is_direct_news_item(item)]
+    mention_items = [item for item in news_items if is_mention_news_item(item)]
     no_data = [item for item in evidence if item.provider == "news" and item.status == "no-data"]
-    if not news_items and not no_data and not daily_summaries:
+    if not direct_news_items and not mention_items and not no_data and not daily_summaries:
         return None
-    latest = sorted(news_items, key=lambda item: parse_panel_time(item), reverse=True)
+    latest = sorted(direct_news_items, key=lambda item: parse_panel_time(item), reverse=True)
     major = sorted(
-        news_items,
+        direct_news_items,
         key=lambda item: (
             panel_raw_number(item, "importanceScore"),
             panel_raw_number(item, "relevanceScore"),
@@ -1117,18 +1128,20 @@ def build_news_panel_props(symbol: str, evidence: list[EvidenceItem], daily_summ
     return {
         "symbol": symbol,
         "updatedAt": utc_now_iso(),
-        "status": "available" if news_items or daily_summaries else "empty",
+        "status": "available" if direct_news_items or daily_summaries else "empty",
         "emptyMessage": no_data[0].summary if no_data else f"{symbol} 관련 저장 뉴스가 없습니다.",
         "dailySummaries": [daily_summary_panel_item(item) for item in (daily_summaries or [])[:5]],
         "latestNews": [news_panel_item(item, symbol) for item in latest[:12]],
         "majorNews": [news_panel_item(item, symbol) for item in major[:8]],
+        "mentionNewsCount": len(mention_items),
     }
 
 
-def should_add_news_panel_without_layout(props: dict[str, Any] | None) -> bool:
+def should_add_news_panel_without_layout(props: dict[str, Any] | None, *, include_empty: bool = False) -> bool:
     if not props:
         return False
-    return bool(props.get("latestNews") or props.get("majorNews") or props.get("dailySummaries"))
+    has_content = bool(props.get("latestNews") or props.get("majorNews") or props.get("dailySummaries"))
+    return has_content or bool(include_empty and props.get("status") == "empty")
 
 
 def news_panel_add_command(props: dict[str, Any]) -> dict[str, Any]:
@@ -1179,6 +1192,21 @@ def news_panel_item(item: EvidenceItem, symbol: str) -> dict[str, Any]:
         "relevanceScoreV2": panel_raw_number(item, "relevanceScoreV2"),
         "importanceScore": panel_raw_number(item, "importanceScore"),
     }
+
+
+def is_direct_news_item(item: EvidenceItem) -> bool:
+    if item.provider != "news" or item.status != "available":
+        return False
+    raw = item.raw if isinstance(item.raw, dict) else {}
+    level = str(raw.get("subjectRelevance") or "").strip().lower()
+    return level not in {"mention", "irrelevant"}
+
+
+def is_mention_news_item(item: EvidenceItem) -> bool:
+    if item.provider != "news" or item.status != "available":
+        return False
+    raw = item.raw if isinstance(item.raw, dict) else {}
+    return str(raw.get("subjectRelevance") or "").strip().lower() == "mention"
 
 
 def daily_summary_panel_item(item: dict[str, Any]) -> dict[str, Any]:

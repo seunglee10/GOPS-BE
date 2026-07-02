@@ -195,7 +195,10 @@ class ClickHouseNewsProvider(NewsProvider):
         event_type = row.get("eventType") or row.get("event_type") or classify_news_event_type(f"{title} {summary}")
         impact_direction = row.get("impactDirection") or row.get("impact_direction") or classify_news_impact_direction(f"{title} {summary}")
         relevance = subject_relevance_for_row(symbol, original_title, original_summary, row)
-        subject_relevance = normalize_subject_level(row.get("subjectRelevance") or row.get("subject_relevance") or relevance["subjectRelevance"])
+        explicit_relevance = row.get("subjectRelevance") or row.get("subject_relevance")
+        subject_relevance = normalize_subject_level(explicit_relevance or relevance["subjectRelevance"])
+        if not explicit_relevance and subject_relevance == "mention" and symbol in row_symbols and len(row_symbols) <= 2:
+            subject_relevance = "secondary"
         relevance_score_v2 = float_or_default(row.get("relevanceScoreV2") or row.get("relevance_score_v2"), relevance["relevanceScoreV2"])
         relevance_score = score_news_relevance(symbol, original_title, original_summary, row.get("symbols"), subject_relevance=subject_relevance, relevance_score_v2=relevance_score_v2)
         importance_score = score_news_importance(

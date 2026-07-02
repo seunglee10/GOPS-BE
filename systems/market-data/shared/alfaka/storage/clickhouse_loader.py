@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sys
+import time
 from datetime import datetime, timezone
 
 from alfaka.alpaca.feed_profiles import market_session_for_timestamp
@@ -244,14 +245,25 @@ def clickhouse_time_or_none(value):
 
 def clickhouse_param_value(value):
     if isinstance(value, (list, tuple)):
-        return "[" + ",".join(clickhouse_param_value(item) for item in value) + "]"
+        return "[" + ",".join(clickhouse_string_literal(item) for item in value) + "]"
     if isinstance(value, str):
-        return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+        return value
     if isinstance(value, bool):
         return "1" if value else "0"
     if value is None:
         return "NULL"
     return str(value)
+
+
+def clickhouse_string_literal(value):
+    return "'" + str(value).replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def is_retryable_clickhouse_error(status_code, body):
+    if status_code in {429, 500, 502, 503, 504}:
+        text = str(body or "").lower()
+        return any(marker in text for marker in ("memory_limit_exceeded", "overcommit", "timeout", "temporarily"))
+    return False
 
 
 def int_or_zero(value):
@@ -285,14 +297,21 @@ class ClickHouseHttpClient:
 
         query = f"INSERT INTO {self.database}.{clickhouse_identifier(table)} FORMAT JSONEachRow"
         body = "\n".join(json.dumps(row, ensure_ascii=False, separators=(",", ":")) for row in rows) + "\n"
-        response = requests.post(
-            self.url,
-            params={"user": self.user, "password": self.password, "database": self.database, "query": query},
-            data=body.encode("utf-8"),
-            timeout=10,
-        )
-        if response.status_code >= 400:
-            raise RuntimeError(f"status={response.status_code}, body={response.text}")
+        last_error = None
+        for attempt in range(3):
+            response = requests.post(
+                self.url,
+                params={"user": self.user, "password": self.password, "database": self.database, "query": query},
+                data=body.encode("utf-8"),
+                timeout=10,
+            )
+            if response.status_code < 400:
+                return
+            last_error = RuntimeError(f"status={response.status_code}, body={response.text}")
+            if not is_retryable_clickhouse_error(response.status_code, response.text):
+                break
+            time.sleep(0.5 * (attempt + 1))
+        raise last_error
 
     def execute(self, query, parameters=None):
         import requests

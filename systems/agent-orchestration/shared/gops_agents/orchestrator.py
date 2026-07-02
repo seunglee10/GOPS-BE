@@ -887,9 +887,15 @@ def known_agent_symbols() -> frozenset[str]:
     for topic in NEWS_TOPIC_BASKETS:
         symbols.update(str(symbol).upper() for symbol in topic["symbols"])
     try:
-        from alfaka.alpaca.subscription import configured_universe_symbols
+        from alfaka.alpaca.subscription import configured_universe_symbols, load_request_config, load_universe_registry_symbols
 
-        symbols.update(configured_universe_symbols())
+        config = load_request_config()
+        symbols.update(load_universe_registry_symbols(config))
+        symbols.update(str(symbol).upper() for symbol in (config.get("symbolMetadata") or {}).keys())
+        try:
+            symbols.update(configured_universe_symbols(config))
+        except Exception:
+            pass
     except Exception:
         pass
     symbols.update({"XLV"})
