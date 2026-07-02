@@ -18,6 +18,8 @@ for topic in \
   market.candles.closed.v1 \
   market.status.v1 \
   market.volume-profile-bins.1m.v1 \
+  market.news.alpaca.v1 \
+  market.news.daily-summary-dirty.v1 \
   orders.commands.v1 \
   broker.submit-results.v1 \
   broker.order-events.v1 \

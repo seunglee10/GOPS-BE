@@ -3565,19 +3565,32 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "market.candles.closed.v1",
             "market.status.v1",
             "market.volume-profile-bins.1m.v1",
+            "market.news.alpaca.v1",
+            "market.news.daily-summary-dirty.v1",
             "orders.commands.v1",
             "broker.submit-results.v1",
             "broker.order-events.v1",
             "orders.dlq.v1",
+            "agents.market-events.v1",
+            "agents.analysis-requests.v1",
+            "agents.analysis-results.v1",
+            "agents.notification-decisions.v1",
+            "agents.dlq.v1",
         }
         aws_topics = {
             line.strip()
             for line in (root / "platform" / "kafka" / "topics.txt").read_text(encoding="utf-8").splitlines()
             if line.strip() and not line.startswith("#")
         }
+        k8s_topics = {
+            line.strip()
+            for line in (root / "infra" / "k8s" / "base" / "platform" / "kafka" / "topics.txt").read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.startswith("#")
+        }
         local_script = (root / "scripts" / "local" / "create-kafka-topics.sh").read_text(encoding="utf-8")
 
         self.assertTrue(required_topics.issubset(aws_topics))
+        self.assertTrue(required_topics.issubset(k8s_topics))
         for topic in required_topics:
             self.assertIn(topic, local_script)
 
