@@ -43,7 +43,7 @@ services:
       - /bin/bash
       - -ec
       - |
-        for topic in market.raw.bars market.raw.updated-bars market.raw.trades market.raw.daily-bars market.raw.statuses market.raw.quotes market.raw.corrections market.raw.cancel-errors market.ticks.v1 market.candles.live.1m.v1 market.candles.closed.v1 market.status.v1 market.volume-profile-bins.1m.v1 market.news.alpaca.v1 orders.commands.v1 broker.submit-results.v1 broker.order-events.v1 orders.dlq.v1 agents.market-events.v1 agents.analysis-requests.v1 agents.analysis-results.v1 agents.notification-decisions.v1 agents.dlq.v1; do
+        for topic in market.raw.bars market.raw.updated-bars market.raw.trades market.raw.daily-bars market.raw.statuses market.raw.quotes market.raw.corrections market.raw.cancel-errors market.ticks.v1 market.candles.live.1m.v1 market.candles.closed.v1 market.status.v1 market.volume-profile-bins.1m.v1 market.news.alpaca.v1 market.news.daily-summary-dirty.v1 orders.commands.v1 broker.submit-results.v1 broker.order-events.v1 orders.dlq.v1 agents.market-events.v1 agents.analysis-requests.v1 agents.analysis-results.v1 agents.notification-decisions.v1 agents.dlq.v1; do
           /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic "$${topic}" --partitions 3 --replication-factor 1
         done
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --list
@@ -313,13 +313,76 @@ services:
       AWS_SDK_LOAD_CONFIG: "${AWS_SDK_LOAD_CONFIG:-1}"
       ALPACA_NEWS_POLL_SECONDS: "${ALPACA_NEWS_POLL_SECONDS:-300}"
       ALPACA_NEWS_LIMIT: "${ALPACA_NEWS_LIMIT:-50}"
-      ALPACA_NEWS_INCLUDE_CONTENT: "${ALPACA_NEWS_INCLUDE_CONTENT:-false}"
+      ALPACA_NEWS_INCLUDE_CONTENT: "${ALPACA_NEWS_INCLUDE_CONTENT:-true}"
+      NEWS_S3_ARCHIVE_ENABLED: "${NEWS_S3_ARCHIVE_ENABLED:-false}"
+      S3_ENDPOINT_URL: "${DOCKER_S3_ENDPOINT_URL:-}"
+      S3_ACCESS_KEY_ID: "${S3_ACCESS_KEY_ID:-}"
+      S3_SECRET_ACCESS_KEY: "${S3_SECRET_ACCESS_KEY:-}"
+      S3_SESSION_TOKEN: "${S3_SESSION_TOKEN:-}"
+      S3_BUCKET: "${S3_BUCKET:-gops-market-data-<aws-account-id>-ap-northeast-2-an}"
+      S3_RAW_PREFIX: "${S3_RAW_PREFIX:-market-data/raw/alpaca}"
     command: ["python", "-u", "systems/market-data/pods/news-ingestor/main.py"]
     restart: unless-stopped
     volumes:
       - ${HOME}/.aws:/root/.aws:ro
     networks:
       - app_net
+      - streaming_net
+
+  news-backfill:
+    profiles: ["jobs"]
+    image: gops-market-storage
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-market-storage
+    container_name: alfaka-news-backfill
+    env_file: .env
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      KAFKA_NEWS_TOPIC: "market.news.alpaca.v1"
+      AWS_REGION: "${AWS_REGION:-ap-northeast-2}"
+      AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-ap-northeast-2}"
+      AWS_EC2_METADATA_DISABLED: "${AWS_EC2_METADATA_DISABLED:-true}"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
+      AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
+      AWS_PROFILE: "${AWS_PROFILE:-default}"
+      AWS_SDK_LOAD_CONFIG: "${AWS_SDK_LOAD_CONFIG:-1}"
+      ALPACA_CREDENTIAL_SOURCE: "aws-secrets-manager"
+      ALPACA_SECRET_NAME: "${ALPACA_SECRET_NAME:-dev/alpaca}"
+      S3_ENDPOINT_URL: "${DOCKER_S3_ENDPOINT_URL:-}"
+      S3_ACCESS_KEY_ID: "${S3_ACCESS_KEY_ID:-}"
+      S3_SECRET_ACCESS_KEY: "${S3_SECRET_ACCESS_KEY:-}"
+      S3_SESSION_TOKEN: "${S3_SESSION_TOKEN:-}"
+      S3_BUCKET: "${S3_BUCKET:-gops-market-data-<aws-account-id>-ap-northeast-2-an}"
+      S3_RAW_PREFIX: "${S3_RAW_PREFIX:-market-data/raw/alpaca}"
+      ALPACA_NEWS_MAX_RETRIES: "${ALPACA_NEWS_MAX_RETRIES:-5}"
+      ALPACA_NEWS_RETRY_SLEEP_SECONDS: "${ALPACA_NEWS_RETRY_SLEEP_SECONDS:-1}"
+      ALPACA_NEWS_RETRY_MAX_SLEEP_SECONDS: "${ALPACA_NEWS_RETRY_MAX_SLEEP_SECONDS:-30}"
+      NEWS_BACKFILL_UNIVERSE: "${NEWS_BACKFILL_UNIVERSE:-sp500}"
+      NEWS_BACKFILL_SYMBOLS: "${NEWS_BACKFILL_SYMBOLS:-}"
+      NEWS_BACKFILL_START: "${NEWS_BACKFILL_START:-}"
+      NEWS_BACKFILL_END: "${NEWS_BACKFILL_END:-}"
+      NEWS_BACKFILL_DAYS: "${NEWS_BACKFILL_DAYS:-365}"
+      NEWS_BACKFILL_CHUNK_DAYS: "${NEWS_BACKFILL_CHUNK_DAYS:-7}"
+      NEWS_BACKFILL_SHARD_INDEX: "${NEWS_BACKFILL_SHARD_INDEX:-0}"
+      NEWS_BACKFILL_SHARD_COUNT: "${NEWS_BACKFILL_SHARD_COUNT:-1}"
+      NEWS_BACKFILL_LIMIT: "${NEWS_BACKFILL_LIMIT:-50}"
+      NEWS_BACKFILL_INCLUDE_CONTENT: "${NEWS_BACKFILL_INCLUDE_CONTENT:-true}"
+      NEWS_BACKFILL_SORT: "${NEWS_BACKFILL_SORT:-asc}"
+      NEWS_BACKFILL_SKIP_COMPLETED_CHUNKS: "${NEWS_BACKFILL_SKIP_COMPLETED_CHUNKS:-true}"
+      NEWS_BACKFILL_PUBLISH_RECENT_TO_KAFKA: "${NEWS_BACKFILL_PUBLISH_RECENT_TO_KAFKA:-true}"
+      NEWS_CLICKHOUSE_DAYS: "${NEWS_CLICKHOUSE_DAYS:-30}"
+    command: ["python", "-u", "systems/market-data/jobs/news-backfill/main.py"]
+    restart: "no"
+    volumes:
+      - ${HOME}/.aws:/root/.aws:ro
+    networks:
+      - app_net
+      - data_net
       - streaming_net
 
   local-stream-processor:
@@ -375,6 +438,9 @@ services:
       AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
       AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
       S3_ENDPOINT_URL: "${DOCKER_S3_ENDPOINT_URL:-}"
+      S3_ACCESS_KEY_ID: "${S3_ACCESS_KEY_ID:-}"
+      S3_SECRET_ACCESS_KEY: "${S3_SECRET_ACCESS_KEY:-}"
+      S3_SESSION_TOKEN: "${S3_SESSION_TOKEN:-}"
       S3_BUCKET: "${S3_BUCKET:-gops-market-data-<aws-account-id>-ap-northeast-2-an}"
       S3_FINAL_PREFIX: "${S3_FINAL_PREFIX:-market-data/final}"
       S3_LIVE_PREFIX: "${S3_LIVE_PREFIX:-market-data/live}"
@@ -411,6 +477,9 @@ services:
       AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
       AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
       S3_ENDPOINT_URL: "${DOCKER_S3_ENDPOINT_URL:-}"
+      S3_ACCESS_KEY_ID: "${S3_ACCESS_KEY_ID:-}"
+      S3_SECRET_ACCESS_KEY: "${S3_SECRET_ACCESS_KEY:-}"
+      S3_SESSION_TOKEN: "${S3_SESSION_TOKEN:-}"
       S3_BUCKET: "${S3_BUCKET:-gops-market-data-<aws-account-id>-ap-northeast-2-an}"
       S3_RAW_PREFIX: "${S3_RAW_PREFIX:-market-data/raw/alpaca}"
       S3_MANIFEST_PREFIX: "${S3_MANIFEST_PREFIX:-market-data/manifest}"
@@ -453,6 +522,150 @@ services:
     networks:
       - app_net
       - streaming_net
+      - data_net
+
+  news-intelligence-worker:
+    image: gops-market-storage
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-market-storage
+    container_name: alfaka-news-intelligence-worker
+    env_file: .env
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      clickhouse:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NEWS_INTELLIGENCE_ENABLED: "${NEWS_INTELLIGENCE_ENABLED:-true}"
+      NEWS_INTELLIGENCE_PROVIDER: "${NEWS_INTELLIGENCE_PROVIDER:-openai}"
+      NEWS_INTELLIGENCE_MODEL: "${NEWS_INTELLIGENCE_MODEL:-gpt-5.4-mini}"
+      NEWS_INTELLIGENCE_TIMEOUT_SECONDS: "${NEWS_INTELLIGENCE_TIMEOUT_SECONDS:-30}"
+      NEWS_INTELLIGENCE_BATCH_SIZE: "${NEWS_INTELLIGENCE_BATCH_SIZE:-5}"
+      NEWS_INTELLIGENCE_MAX_POLL_INTERVAL_MS: "${NEWS_INTELLIGENCE_MAX_POLL_INTERVAL_MS:-900000}"
+      NEWS_INTELLIGENCE_MAX_POLL_RECORDS: "${NEWS_INTELLIGENCE_MAX_POLL_RECORDS:-1}"
+      NEWS_REDIS_TTL_SECONDS: "${NEWS_REDIS_TTL_SECONDS:-1800}"
+      NEWS_REDIS_MAX_ITEMS: "${NEWS_REDIS_MAX_ITEMS:-20}"
+      NEWS_LOCALIZATION_FALLBACK_ENABLED: "${NEWS_LOCALIZATION_FALLBACK_ENABLED:-true}"
+      NEWS_DAILY_SUMMARY_ENABLED: "${NEWS_DAILY_SUMMARY_ENABLED:-true}"
+      NEWS_DAILY_SUMMARY_PROVIDER: "${NEWS_DAILY_SUMMARY_PROVIDER:-openai}"
+      NEWS_DAILY_SUMMARY_MODEL: "${NEWS_DAILY_SUMMARY_MODEL:-gpt-5.4-mini}"
+      NEWS_DAILY_SUMMARY_TIMEOUT_SECONDS: "${NEWS_DAILY_SUMMARY_TIMEOUT_SECONDS:-20}"
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      KAFKA_NEWS_TOPIC: "market.news.alpaca.v1"
+      KAFKA_NEWS_DAILY_SUMMARY_DIRTY_TOPIC: "market.news.daily-summary-dirty.v1"
+      NEWS_INTELLIGENCE_GROUP_ID: "alfaka-news-intelligence-worker"
+      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
+      CLICKHOUSE_DATABASE: "market_data"
+      CLICKHOUSE_USER: "alfaka"
+      CLICKHOUSE_PASSWORD: "alfaka"
+      REDIS_URL: "redis://redis:6379/0"
+      REDIS_KEY_PREFIX: ""
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      OPENAI_MODEL: "${OPENAI_MODEL:-gpt-5.4-mini}"
+    command: ["python", "-u", "systems/market-data/pods/news-intelligence-worker/main.py"]
+    restart: unless-stopped
+    networks:
+      - app_net
+      - streaming_net
+      - data_net
+
+  news-daily-summary-worker:
+    image: gops-market-storage
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-market-storage
+    container_name: alfaka-news-daily-summary-worker
+    env_file: .env
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      clickhouse:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NEWS_DAILY_SUMMARY_ENABLED: "${NEWS_DAILY_SUMMARY_ENABLED:-true}"
+      NEWS_DAILY_SUMMARY_PROVIDER: "${NEWS_DAILY_SUMMARY_PROVIDER:-openai}"
+      NEWS_DAILY_SUMMARY_MODEL: "${NEWS_DAILY_SUMMARY_MODEL:-gpt-5.4-mini}"
+      NEWS_DAILY_SUMMARY_TIMEOUT_SECONDS: "${NEWS_DAILY_SUMMARY_TIMEOUT_SECONDS:-20}"
+      NEWS_DAILY_SUMMARY_ARTICLE_LIMIT: "${NEWS_DAILY_SUMMARY_ARTICLE_LIMIT:-50}"
+      NEWS_DAILY_REDIS_TTL_SECONDS: "${NEWS_DAILY_REDIS_TTL_SECONDS:-86400}"
+      NEWS_DAILY_REDIS_MAX_ITEMS: "${NEWS_DAILY_REDIS_MAX_ITEMS:-30}"
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      KAFKA_NEWS_DAILY_SUMMARY_DIRTY_TOPIC: "market.news.daily-summary-dirty.v1"
+      NEWS_DAILY_SUMMARY_GROUP_ID: "alfaka-news-daily-summary-worker"
+      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
+      CLICKHOUSE_DATABASE: "market_data"
+      CLICKHOUSE_USER: "alfaka"
+      CLICKHOUSE_PASSWORD: "alfaka"
+      REDIS_URL: "redis://redis:6379/0"
+      REDIS_KEY_PREFIX: ""
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      OPENAI_MODEL: "${OPENAI_MODEL:-gpt-5.4-mini}"
+    command: ["python", "-u", "systems/market-data/pods/news-daily-summary-worker/main.py"]
+    restart: unless-stopped
+    networks:
+      - app_net
+      - streaming_net
+      - data_net
+
+  news-intelligence-rebuild:
+    profiles: ["jobs"]
+    image: gops-market-storage
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-market-storage
+    container_name: alfaka-news-intelligence-rebuild
+    env_file: .env
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    environment:
+      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
+      CLICKHOUSE_DATABASE: "market_data"
+      CLICKHOUSE_USER: "alfaka"
+      CLICKHOUSE_PASSWORD: "alfaka"
+      NEWS_INTELLIGENCE_REBUILD_DAYS: "${NEWS_INTELLIGENCE_REBUILD_DAYS:-30}"
+      NEWS_INTELLIGENCE_REBUILD_BATCH_SIZE: "${NEWS_INTELLIGENCE_REBUILD_BATCH_SIZE:-500}"
+      NEWS_INTELLIGENCE_REBUILD_MAX_ROWS: "${NEWS_INTELLIGENCE_REBUILD_MAX_ROWS:-5000}"
+    command: ["python", "-u", "systems/market-data/jobs/news-intelligence-rebuild/main.py"]
+    restart: "no"
+    networks:
+      - data_net
+
+  news-daily-summary-rebuild:
+    profiles: ["jobs"]
+    image: gops-market-storage
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-market-storage
+    container_name: alfaka-news-daily-summary-rebuild
+    env_file: .env
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
+      CLICKHOUSE_DATABASE: "market_data"
+      CLICKHOUSE_USER: "alfaka"
+      CLICKHOUSE_PASSWORD: "alfaka"
+      REDIS_URL: "redis://redis:6379/0"
+      REDIS_KEY_PREFIX: ""
+      NEWS_DAILY_SUMMARY_REBUILD_DAYS: "${NEWS_DAILY_SUMMARY_REBUILD_DAYS:-30}"
+      NEWS_DAILY_SUMMARY_REBUILD_MAX_GROUPS: "${NEWS_DAILY_SUMMARY_REBUILD_MAX_GROUPS:-1000}"
+      NEWS_DAILY_SUMMARY_REBUILD_DRY_RUN: "${NEWS_DAILY_SUMMARY_REBUILD_DRY_RUN:-true}"
+      NEWS_DAILY_SUMMARY_PROVIDER: "${NEWS_DAILY_SUMMARY_PROVIDER:-openai}"
+      NEWS_DAILY_SUMMARY_MODEL: "${NEWS_DAILY_SUMMARY_MODEL:-gpt-5.4-mini}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      OPENAI_MODEL: "${OPENAI_MODEL:-gpt-5.4-mini}"
+    command: ["python", "-u", "systems/market-data/jobs/news-daily-summary-rebuild/main.py"]
+    restart: "no"
+    networks:
       - data_net
 
   symbol-registry-sync:

@@ -11,6 +11,7 @@ from alfaka.common.redis_keys import RedisKeyBuilder
 from alfaka.serving.dto import snapshot, websocket_event
 from alfaka.serving.intervals import normalize_chart_interval, resolve_candle_limit
 from alfaka.serving.moving_average import attach_moving_averages
+from alfaka.serving.news_hot_cache import read_company_daily_summaries_from_redis, read_localized_news_from_redis
 
 
 class RedisMarketDataProvider:
@@ -71,3 +72,21 @@ class RedisMarketDataProvider:
     def hot_symbols_snapshot(self):
         value = self.redis.get(self.keys.hot_symbols_snapshot())
         return json.loads(value) if value else None
+
+    def localized_news_articles(self, symbol, limit=10, locale="ko-KR"):
+        return read_localized_news_from_redis(self.redis, symbol, limit=limit, locale=locale)
+
+    def localized_news_articles_for_symbols(self, symbols, limit=10, locale="ko-KR"):
+        rows = []
+        seen = set()
+        for symbol in symbols or []:
+            for row in self.localized_news_articles(symbol, limit=limit, locale=locale):
+                key = row.get("articleId") or f"{row.get('symbol')}:{row.get('publishedAt')}:{row.get('headline')}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                rows.append(row)
+        return sorted(rows, key=lambda item: str(item.get("publishedAt") or ""), reverse=True)[: int(limit)]
+
+    def company_daily_news_summaries(self, symbol, limit=5, locale="ko-KR"):
+        return read_company_daily_summaries_from_redis(self.redis, symbol, limit=limit, locale=locale)

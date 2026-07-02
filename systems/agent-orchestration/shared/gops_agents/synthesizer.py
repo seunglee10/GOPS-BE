@@ -27,7 +27,18 @@ class FinalAnswerSynthesizer:
         route: IntentRoute,
         findings: list[AgentFinding],
         provider_evidence: list[EvidenceItem],
+        timing: dict[str, Any] | None = None,
+        daily_summaries: list[dict[str, Any]] | None = None,
     ) -> FinalAnswer:
+        if is_news_route(route):
+            return self._synthesize_deterministic(
+                symbol=symbol,
+                intent=intent,
+                route=route,
+                findings=findings,
+                provider_evidence=provider_evidence,
+                daily_summaries=daily_summaries,
+            )
         if is_ontology_route(route) and os.getenv("AGENT_ONTOLOGY_FINAL_ANSWER_PROVIDER") != "openai":
             return self._synthesize_deterministic(
                 symbol=symbol,
@@ -42,6 +53,7 @@ class FinalAnswerSynthesizer:
             route=route,
             findings=findings,
             provider_evidence=provider_evidence,
+            timing=timing,
         )
         if openai_answer:
             return openai_answer
@@ -61,9 +73,10 @@ class FinalAnswerSynthesizer:
         route: IntentRoute,
         findings: list[AgentFinding],
         provider_evidence: list[EvidenceItem],
+        daily_summaries: list[dict[str, Any]] | None = None,
     ) -> FinalAnswer:
         if route.intentType == "news" or route.selectedRoles == ["news"]:
-            return build_news_final_answer(symbol, findings, provider_evidence)
+            return build_news_final_answer(symbol, findings, provider_evidence, daily_summaries=daily_summaries)
         if route.intentType == "ontology" or route.selectedRoles == ["ontology"]:
             return build_ontology_final_answer(symbol, findings, provider_evidence)
         if route.intentType == "market-move":
@@ -78,11 +91,14 @@ class FinalAnswerSynthesizer:
         route: IntentRoute,
         findings: list[AgentFinding],
         provider_evidence: list[EvidenceItem],
+        timing: dict[str, Any] | None = None,
     ) -> FinalAnswer | None:
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key or os.getenv("AGENT_FINAL_ANSWER_PROVIDER") == "deterministic":
             return None
         try:
+            if isinstance(timing, dict):
+                timing["llmCalls"] = int(timing.get("llmCalls") or 0) + 1
             payload = {
                 "model": os.getenv("AGENT_SYNTHESIZER_MODEL", os.getenv("OPENAI_MODEL", "gpt-5.2")),
                 "input": [
@@ -171,6 +187,10 @@ def is_ontology_route(route: IntentRoute) -> bool:
     return route.intentType == "ontology" or route.selectedRoles == ["ontology"]
 
 
+def is_news_route(route: IntentRoute) -> bool:
+    return route.intentType == "news" or route.selectedRoles == ["news"]
+
+
 def build_summary(symbol: str, route: IntentRoute, findings: list[AgentFinding], evidence: list[EvidenceItem]) -> str:
     if evidence:
         return f"{symbol} 분석에 사용할 외부 근거를 확인했습니다."
@@ -213,7 +233,11 @@ def compact_evidence(items: list[EvidenceItem]) -> list[dict[str, Any]]:
                     "source",
                     "impactDirection",
                     "eventType",
+                    "subjectRelevance",
                     "relevanceScore",
+                    "relevanceScoreV2",
+                    "relevanceReason",
+                    "directSignals",
                     "importanceScore",
                     "originalTitle",
                     "originalSummary",
@@ -310,22 +334,37 @@ def clean_user_text(value: str) -> str:
     return text
 
 
-def build_news_final_answer(symbol: str, findings: list[AgentFinding], provider_evidence: list[EvidenceItem]) -> FinalAnswer:
+def build_news_final_answer(
+    symbol: str,
+    findings: list[AgentFinding],
+    provider_evidence: list[EvidenceItem],
+    *,
+    daily_summaries: list[dict[str, Any]] | None = None,
+) -> FinalAnswer:
     news_items = [item for item in provider_evidence if item.provider == "news" and item.status == "available"]
     no_data = [item for item in provider_evidence if item.provider == "news" and item.status == "no-data"]
-    warnings = verification_warnings(findings)
-    title = f"{symbol} 뉴스 분석"
-    if not news_items:
+    title = "뉴스를 가져왔습니다"
+    daily_summaries = [item for item in daily_summaries or [] if isinstance(item, dict)]
+    if daily_summaries and not news_items:
+        latest = daily_summaries[0]
+        bullets = [str(item) for item in latest.get("keyPoints") or [] if str(item).strip()]
         return FinalAnswer(
             title=title,
-            summary=f"{symbol} 관련 저장 뉴스가 아직 충분하지 않습니다.",
+            summary=str(latest.get("summary") or f"{symbol} 일일 뉴스 요약을 가져왔습니다."),
+            sections=[FinalAnswerSection(title="핵심 요약", bullets=bullets[:3])] if bullets else [],
+            citations=[],
+            limitations=[],
+        )
+    if not news_items:
+        summary = no_data[0].summary if no_data and no_data[0].summary else f"{symbol} 관련 저장 뉴스가 없습니다."
+        return FinalAnswer(
+            title=title,
+            summary=summary,
             sections=[],
             citations=[],
-            limitations=[item.summary for item in no_data[:5]] or ["뉴스 provider에서 반환된 기사 근거가 없습니다."],
+            limitations=[],
         )
 
-    directions = Counter(raw_text(item, "impactDirection", "unknown") for item in news_items)
-    dominant_direction = dominant_label(directions, "unknown")
     major_items = sorted(
         news_items,
         key=lambda item: (
@@ -335,23 +374,23 @@ def build_news_final_answer(symbol: str, findings: list[AgentFinding], provider_
         ),
         reverse=True,
     )
+    direct_items = [item for item in major_items if raw_text(item, "subjectRelevance", "") in {"primary", "secondary"}]
+    mention_items = [item for item in major_items if raw_text(item, "subjectRelevance", "") == "mention"]
+    headline_items = direct_items or mention_items or major_items
     sections = [
         FinalAnswerSection(
             title="핵심 뉴스",
-            bullets=[f"{display_title(item)}: {display_summary(item)}" for item in major_items[:5]],
-        ),
-        FinalAnswerSection(
-            title="주가 영향 방향",
-            bullets=[f"저장된 뉴스 키워드 기준 영향 방향은 {impact_direction_label(dominant_direction)}입니다."],
-        ),
+            bullets=[f"{display_title(item)}: {display_summary(item)}" for item in headline_items[:3]],
+        )
     ]
-    limitations = ["뉴스 provider에 저장된 기사 기준이며, 실시간 전체 뉴스 범위는 보장하지 않습니다.", *warnings]
+    if not direct_items and mention_items:
+        sections = []
     return FinalAnswer(
         title=title,
-        summary=f"최근 저장된 뉴스 기준으로 {symbol} 관련 주요 이슈를 정리했습니다.",
+        summary=f"{symbol} 관련 뉴스 {len(news_items)}건을 가져왔습니다.",
         sections=sections,
-        citations=citations_from_evidence(news_items),
-        limitations=limitations,
+        citations=[],
+        limitations=[],
     )
 
 

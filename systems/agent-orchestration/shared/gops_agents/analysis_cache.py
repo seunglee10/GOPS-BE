@@ -20,6 +20,7 @@ class CachedAgentAnalysis:
     providerEvidence: list[EvidenceItem]
     finalAnswer: FinalAnswer
     summary: str
+    dailySummaries: list[dict[str, Any]] | None = None
 
 
 class AgentAnalysisCache:
@@ -124,6 +125,7 @@ def serialize_cached_analysis(payload: CachedAgentAnalysis) -> str:
         "providerEvidence": [item.to_dict() for item in payload.providerEvidence],
         "finalAnswer": payload.finalAnswer.to_dict(),
         "summary": payload.summary,
+        "dailySummaries": list(payload.dailySummaries or []),
     }, ensure_ascii=False, separators=(",", ":"))
 
 
@@ -142,6 +144,7 @@ def deserialize_cached_analysis(payload: str) -> CachedAgentAnalysis | None:
             providerEvidence=[item for item in (evidence_item_from_dict(value) for value in decoded.get("providerEvidence", [])) if item],
             finalAnswer=final_answer,
             summary=str(decoded.get("summary") or final_answer.summary),
+            dailySummaries=[item for item in decoded.get("dailySummaries", []) if isinstance(item, dict)],
         )
     except Exception:
         return None

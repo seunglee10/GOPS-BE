@@ -6,6 +6,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from alfaka.news.relevance import classify_subject_relevance, is_direct_subject, normalize_subject_level, normalize_symbols
+from alfaka.storage.news_daily_summary import clickhouse_row_to_daily_summary
+
 from .contracts import EvidenceItem, utc_now_iso
 from .news_cache import NewsEvidenceCache, build_news_cache_from_env
 
@@ -53,18 +56,29 @@ class ClickHouseNewsProvider(NewsProvider):
         stale_after_seconds: int | None = None,
         publish_fallback: bool | None = None,
         cache: NewsEvidenceCache | None = None,
+        redis_provider=None,
     ):
         self.clickhouse_provider = clickhouse_provider
+        self.redis_provider = redis_provider
         self.limit = int(limit or os.getenv("AGENT_NEWS_LIMIT", "12"))
         self.days = int(days or os.getenv("AGENT_NEWS_LOOKBACK_DAYS", "7"))
-        self.direct_fallback = bool_env("AGENT_NEWS_DIRECT_FALLBACK", True) if direct_fallback is None else direct_fallback
+        self.direct_fallback = bool_env("AGENT_NEWS_DIRECT_FALLBACK", False) if direct_fallback is None else direct_fallback
         self.stale_after_seconds = int(stale_after_seconds or os.getenv("AGENT_NEWS_STALE_AFTER_SECONDS", "21600"))
         self.publish_fallback = bool_env("AGENT_NEWS_FALLBACK_PUBLISH_TO_KAFKA", True) if publish_fallback is None else publish_fallback
         self.cache = cache if cache is not None else build_news_cache_from_env()
         self.cache_ttl_seconds = int(os.getenv("AGENT_NEWS_CACHE_TTL_SECONDS", "300"))
         self.no_data_cache_ttl_seconds = int(os.getenv("AGENT_NEWS_NO_DATA_CACHE_TTL_SECONDS", "60"))
+        self.prelocalized_enabled = bool_env("AGENT_NEWS_PRELOCALIZED_ENABLED", True)
+        self.prelocalized_redis_first = bool_env("AGENT_NEWS_PRELOCALIZED_REDIS_FIRST", True)
+        self.locale = os.getenv("AGENT_NEWS_LOCALE", os.getenv("NEWS_INTELLIGENCE_LOCALE", "ko-KR"))
+        self.daily_summary_enabled = bool_env("AGENT_NEWS_DAILY_SUMMARY_ENABLED", True)
+        self.daily_summary_limit = int(os.getenv("AGENT_NEWS_DAILY_SUMMARY_LIMIT", "5"))
 
     def fetch(self, request: ProviderRequest) -> list[EvidenceItem]:
+        localized = self._fetch_prelocalized(request)
+        if localized:
+            return self._cache_set(request, localized)
+
         cached = self._cache_get(request)
         if cached is not None:
             return cached
@@ -79,7 +93,7 @@ class ClickHouseNewsProvider(NewsProvider):
         except Exception as exc:
             clickhouse_error = exc
 
-        evidence = normalize_news_evidence([self._row_to_evidence(row, request, source="clickhouse") for row in rows])[: self.limit]
+        evidence = filter_subject_relevance(normalize_news_evidence([self._row_to_evidence(row, request, source="clickhouse") for row in rows]), limit=self.limit)
         should_fallback = self.direct_fallback and (not evidence or self._is_stale(evidence[0]))
         if should_fallback:
             fallback = self._fetch_alpaca_fallback(request)
@@ -101,10 +115,55 @@ class ClickHouseNewsProvider(NewsProvider):
                 EvidenceItem.no_data(
                     "news",
                     "No news articles",
-                    f"{request.symbol} 관련 Alpaca 뉴스가 아직 저장되어 있지 않습니다.",
+                    f"{request.symbol} 관련 저장 뉴스가 없습니다.",
                 )
             ])
         return self._cache_set(request, evidence)
+
+    def _fetch_prelocalized(self, request: ProviderRequest) -> list[EvidenceItem]:
+        if not self.prelocalized_enabled:
+            return []
+        rows = []
+        requested_symbols = self._request_symbols(request)
+        if self.prelocalized_redis_first:
+            try:
+                redis_provider = self.redis_provider or (self._default_redis_provider() if os.getenv("REDIS_URL") else None)
+                if hasattr(redis_provider, "localized_news_articles_for_symbols"):
+                    rows.extend(redis_provider.localized_news_articles_for_symbols(requested_symbols, limit=self.limit, locale=self.locale))
+            except Exception:
+                rows = []
+        if not rows:
+            try:
+                provider = self.clickhouse_provider or self._default_provider()
+                if hasattr(provider, "localized_news_articles_for_symbols"):
+                    rows.extend(provider.localized_news_articles_for_symbols(requested_symbols, limit=self.limit, days=self.days, locale=self.locale))
+                elif len(requested_symbols) == 1 and hasattr(provider, "localized_news_articles"):
+                    rows.extend(provider.localized_news_articles(requested_symbols[0], limit=self.limit, days=self.days, locale=self.locale))
+            except Exception:
+                rows = []
+        evidence = normalize_news_evidence([self._row_to_evidence(row, request, source="prelocalized") for row in rows])
+        return filter_subject_relevance(evidence, limit=self.limit)
+
+    def fetch_daily_summaries(self, request: ProviderRequest) -> list[dict[str, Any]]:
+        if not self.daily_summary_enabled or request.symbols:
+            return []
+        symbol = self._request_symbols(request)[0]
+        rows = []
+        if self.prelocalized_redis_first:
+            try:
+                redis_provider = self.redis_provider or (self._default_redis_provider() if os.getenv("REDIS_URL") else None)
+                if hasattr(redis_provider, "company_daily_news_summaries"):
+                    rows.extend(redis_provider.company_daily_news_summaries(symbol, limit=self.daily_summary_limit, locale=self.locale))
+            except Exception:
+                rows = []
+        if not rows:
+            try:
+                provider = self.clickhouse_provider or self._default_provider()
+                if hasattr(provider, "company_daily_news_summaries"):
+                    rows.extend(provider.company_daily_news_summaries(symbol, limit=self.daily_summary_limit, days=max(self.days, 30), locale=self.locale))
+            except Exception:
+                rows = []
+        return [clickhouse_row_to_daily_summary(row) for row in rows if isinstance(row, dict)]
 
     def _request_symbols(self, request: ProviderRequest) -> list[str]:
         raw_symbols = request.symbols or (request.symbol,)
@@ -118,14 +177,27 @@ class ClickHouseNewsProvider(NewsProvider):
         return symbols or [str(request.symbol or "AAPL").strip().upper() or "AAPL"]
 
     def _row_to_evidence(self, row: dict, request: ProviderRequest, *, source: str) -> EvidenceItem:
-        symbol = str(row.get("symbol") or (row.get("symbols")[0] if isinstance(row.get("symbols"), list) and row.get("symbols") else "") or request.symbol).strip().upper()
-        title = str(row.get("headline") or row.get("title") or "Untitled news")
-        summary = str(row.get("summary") or row.get("content") or row.get("headline") or row.get("title") or "뉴스 요약이 없습니다.")
+        requested_symbols = self._request_symbols(request)
+        row_symbols = normalize_symbols(row.get("symbols"))
+        symbol = str(row.get("targetSymbol") or row.get("target_symbol") or row.get("symbol") or "").strip().upper()
+        if not symbol and len(row_symbols) == 1 and row_symbols[0] in requested_symbols:
+            symbol = row_symbols[0]
+        if not symbol:
+            symbol = str(requested_symbols[0] if requested_symbols else request.symbol).strip().upper()
+        original_title = str(row.get("headline") or row.get("title") or "Untitled news")
+        original_summary = str(row.get("summary") or row.get("content") or row.get("headline") or row.get("title") or "뉴스 요약이 없습니다.")
+        localized_title = row.get("localizedTitle") or row.get("localizedHeadline") or row.get("localized_title") or row.get("localized_headline")
+        localized_summary = row.get("localizedSummary") or row.get("localized_summary") or row.get("localizedSummaryText") or row.get("localized_summary_text")
+        title = str(localized_title or original_title)
+        summary = str(localized_summary or original_summary)
         published_at = row.get("publishedAt") or row.get("published_at")
         received_at = row.get("receivedAt") or row.get("received_at")
-        event_type = classify_news_event_type(f"{title} {summary}")
-        impact_direction = classify_news_impact_direction(f"{title} {summary}")
-        relevance_score = score_news_relevance(symbol, title, summary, row.get("symbols"))
+        event_type = row.get("eventType") or row.get("event_type") or classify_news_event_type(f"{title} {summary}")
+        impact_direction = row.get("impactDirection") or row.get("impact_direction") or classify_news_impact_direction(f"{title} {summary}")
+        relevance = subject_relevance_for_row(symbol, original_title, original_summary, row)
+        subject_relevance = normalize_subject_level(row.get("subjectRelevance") or row.get("subject_relevance") or relevance["subjectRelevance"])
+        relevance_score_v2 = float_or_default(row.get("relevanceScoreV2") or row.get("relevance_score_v2"), relevance["relevanceScoreV2"])
+        relevance_score = score_news_relevance(symbol, original_title, original_summary, row.get("symbols"), subject_relevance=subject_relevance, relevance_score_v2=relevance_score_v2)
         importance_score = score_news_importance(
             symbol=symbol,
             title=title,
@@ -137,6 +209,39 @@ class ClickHouseNewsProvider(NewsProvider):
             relevance_score=relevance_score,
             symbols=row.get("symbols"),
         )
+        raw = {
+            "articleId": row.get("articleId") or row.get("article_id"),
+            "source": row.get("source"),
+            "author": row.get("author"),
+            "headline": title,
+            "originalTitle": original_title,
+            "originalSummary": original_summary,
+            "symbol": row.get("symbol") or symbol,
+            "targetSymbol": symbol,
+            "symbols": row.get("symbols") if isinstance(row.get("symbols"), list) else [symbol],
+            "topic": request.symbol if request.symbol != symbol else None,
+            "publishedAt": published_at,
+            "receivedAt": received_at,
+            "impactDirection": impact_direction,
+            "eventType": event_type,
+            "sentiment": row.get("sentiment"),
+            "keyPoints": row.get("keyPoints") or row.get("key_points"),
+            "positivePoints": row.get("positivePoints") or row.get("positive_points"),
+            "concerns": row.get("concerns"),
+            "whyItMatters": row.get("whyItMatters") or row.get("why_it_matters"),
+            "subjectRelevance": subject_relevance,
+            "relevanceScoreV2": relevance_score_v2,
+            "relevanceReason": row.get("relevanceReason") or row.get("relevance_reason") or relevance["relevanceReason"],
+            "directSignals": row.get("directSignals") or row.get("direct_signals") or relevance["directSignals"],
+            "isDirectSubject": is_direct_subject(subject_relevance),
+            "relevanceScore": relevance_score,
+            "importanceScore": importance_score,
+            "dataSource": source,
+        }
+        if localized_title:
+            raw["localizedTitle"] = title
+        if localized_summary:
+            raw["localizedSummary"] = summary
         return EvidenceItem(
             provider="news",
             status="available",
@@ -144,24 +249,7 @@ class ClickHouseNewsProvider(NewsProvider):
             summary=summary,
             observedAt=str(published_at or received_at or utc_now_iso()),
             url=row.get("url"),
-            raw={
-                "articleId": row.get("articleId") or row.get("article_id"),
-                "source": row.get("source"),
-                "author": row.get("author"),
-                "headline": title,
-                "originalTitle": title,
-                "originalSummary": summary,
-                "symbol": row.get("symbol") or symbol,
-                "symbols": row.get("symbols") if isinstance(row.get("symbols"), list) else [symbol],
-                "topic": request.symbol if request.symbol != symbol else None,
-                "publishedAt": published_at,
-                "receivedAt": received_at,
-                "impactDirection": impact_direction,
-                "eventType": event_type,
-                "relevanceScore": relevance_score,
-                "importanceScore": importance_score,
-                "dataSource": source,
-            },
+            raw=raw,
         )
 
     def _fetch_alpaca_fallback(self, request: ProviderRequest) -> list[EvidenceItem]:
@@ -226,6 +314,12 @@ class ClickHouseNewsProvider(NewsProvider):
 
         self.clickhouse_provider = ClickHouseMarketDataProvider()
         return self.clickhouse_provider
+
+    def _default_redis_provider(self):
+        from alfaka.serving.redis_provider import RedisMarketDataProvider
+
+        self.redis_provider = RedisMarketDataProvider()
+        return self.redis_provider
 
     def _cache_get(self, request: ProviderRequest) -> list[EvidenceItem] | None:
         try:
@@ -381,7 +475,16 @@ def classify_news_impact_direction(text: str) -> str:
     return "unknown"
 
 
-def score_news_relevance(symbol: str, title: str, summary: str, symbols: Any = None) -> float:
+def score_news_relevance(symbol: str, title: str, summary: str, symbols: Any = None, *, subject_relevance: str | None = None, relevance_score_v2: float | None = None) -> float:
+    if subject_relevance is not None or relevance_score_v2 is not None:
+        level = normalize_subject_level(subject_relevance)
+        score = relevance_score_v2 if isinstance(relevance_score_v2, (int, float)) else {
+            "primary": 0.95,
+            "secondary": 0.75,
+            "mention": 0.35,
+            "irrelevant": 0.0,
+        }.get(level, 0.0)
+        return round(max(0.0, min(1.0, float(score))), 2)
     text_upper = f"{title} {summary}".upper()
     text_lower = f"{title} {summary}".lower()
     article_symbols = normalize_symbol_values(symbols)
@@ -420,7 +523,7 @@ def score_news_importance(
     if symbol and symbol.upper() in article_symbols:
         score += 0.08
     if len(article_symbols) >= 3:
-        score += 0.04
+        score -= 0.04
     observed = parse_time_value(published_at)
     if observed:
         age_hours = max(0.0, (datetime.now(timezone.utc).timestamp() - observed) / 3600)
@@ -433,6 +536,47 @@ def score_news_importance(
     if any(term in f"{title} {summary}".lower() for term in ("breaking", "exclusive", "속보", "단독")):
         score += 0.06
     return round(min(1.0, score), 2)
+
+
+def subject_relevance_for_row(symbol: str, title: str, summary: str, row: dict) -> dict[str, Any]:
+    raw = parse_json_dict(row.get("raw"))
+    return classify_subject_relevance(
+        target_symbol=row.get("targetSymbol") or row.get("target_symbol") or symbol,
+        headline=title or raw.get("headline"),
+        summary=summary or raw.get("summary"),
+        content=row.get("content") or raw.get("content"),
+        symbols=row.get("symbols") or raw.get("symbols"),
+    )
+
+
+def filter_subject_relevance(items: list[EvidenceItem], *, limit: int) -> list[EvidenceItem]:
+    direct = [item for item in items if is_direct_subject((item.raw or {}).get("subjectRelevance"))]
+    if direct:
+        return direct[: int(limit)]
+    mentions = [item for item in items if normalize_subject_level((item.raw or {}).get("subjectRelevance")) == "mention"]
+    return mentions[: min(int(limit), 3)] if mentions else items[: int(limit)]
+
+
+def parse_json_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            decoded = json.loads(value)
+            return decoded if isinstance(decoded, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+
+def float_or_default(value: Any, fallback: Any) -> float:
+    try:
+        return float(value)
+    except Exception:
+        try:
+            return float(fallback)
+        except Exception:
+            return 0.0
 
 
 def normalize_symbol_values(value: Any) -> set[str]:

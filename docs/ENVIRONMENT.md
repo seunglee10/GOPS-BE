@@ -349,6 +349,35 @@ INITIAL_LOAD_MAX_ENQUEUE
 INITIAL_LOAD_MAX_BACKLOG
 ```
 
+## News Backfill
+
+The news backfill job stores Alpaca News raw payloads in S3 as one canonical object per `articleId`, then publishes only recent rows to the news intelligence path for ClickHouse/Redis serving. Normal build/deploy does not need to insert data; keep the Kubernetes Job dry-run unless intentionally running a reviewed backfill.
+
+```text
+NEWS_BACKFILL_UNIVERSE
+NEWS_BACKFILL_SYMBOLS
+NEWS_BACKFILL_START
+NEWS_BACKFILL_END
+NEWS_BACKFILL_DAYS
+NEWS_BACKFILL_CHUNK_DAYS
+NEWS_BACKFILL_SHARD_INDEX
+NEWS_BACKFILL_SHARD_COUNT
+NEWS_BACKFILL_LIMIT
+NEWS_BACKFILL_INCLUDE_CONTENT
+NEWS_BACKFILL_DRY_RUN
+NEWS_BACKFILL_FORCE
+NEWS_BACKFILL_SKIP_COMPLETED_CHUNKS
+NEWS_BACKFILL_PUBLISH_RECENT_TO_KAFKA
+NEWS_CLICKHOUSE_DAYS
+NEWS_INTELLIGENCE_REBUILD_DRY_RUN
+NEWS_INTELLIGENCE_REBUILD_DAYS
+NEWS_INTELLIGENCE_REBUILD_MAX_ROWS
+```
+
+Storage policy: S3 keeps 1-year raw news with content when allowed, ClickHouse keeps recent serving rows, and Redis keeps only latest summaries/links/relevance metadata under `news:v2:latest:ko:{symbol}`.
+
+Use `scripts/aws/run-news-backfill-job.sh` for reviewed AWS runs. The script is dry-run by default and creates a unique one-shot Job, so normal app deploys do not accidentally start the 1-year S&P 500 preload.
+
 ## Agent Orchestration
 
 Current local stage:

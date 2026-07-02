@@ -27,6 +27,9 @@ class AgentContext:
     timing: dict[str, Any] = field(default_factory=dict)
     newsSymbols: list[str] = field(default_factory=list)
     newsTopic: str | None = None
+    newsDailySummaries: list[dict[str, Any]] = field(default_factory=list)
+    intentType: str | None = None
+    selectedRoles: list[str] = field(default_factory=list)
 
 
 class ChartAgent:
@@ -106,20 +109,32 @@ class NewsAgent(ProviderBackedAgent):
         self.localizer = localizer or NewsLocalizationService()
 
     def analyze(self, context: AgentContext) -> AgentFinding:
+        news_only = is_news_only_context(context)
         started_at = time.perf_counter()
         try:
-            evidence = self.provider.fetch(ProviderRequest(context.symbol, context.intent, symbols=tuple(context.newsSymbols)))
+            request = ProviderRequest(context.symbol, context.intent, symbols=tuple(context.newsSymbols))
+            evidence = self.provider.fetch(request)
+            if hasattr(self.provider, "fetch_daily_summaries"):
+                context.newsDailySummaries = list(self.provider.fetch_daily_summaries(request))
         finally:
             add_context_timing_ms(context, "newsFetchMs", (time.perf_counter() - started_at) * 1000)
-        evidence = self.localizer.localize(symbol=context.symbol, intent=context.intent, evidence=evidence)
-        analysis = analyze_news_evidence(context, evidence)
-        openai_analysis = role_analysis_with_openai(
-            role="news",
-            context=context,
+        evidence = self.localizer.localize(
+            symbol=context.symbol,
+            intent=context.intent,
             evidence=evidence,
-            fallback=analysis,
-            schema_name="news_agent_analysis",
+            allow_runtime_openai=not news_only,
         )
+        record_news_relevance_counts(context, evidence)
+        analysis = analyze_news_evidence(context, evidence)
+        openai_analysis = None
+        if not news_only:
+            openai_analysis = role_analysis_with_openai(
+                role="news",
+                context=context,
+                evidence=evidence,
+                fallback=analysis,
+                schema_name="news_agent_analysis",
+            )
         analysis = openai_analysis or analysis
         return AgentFinding(
             agentId=self.agent_id,
@@ -135,6 +150,32 @@ class NewsAgent(ProviderBackedAgent):
 def add_context_timing_ms(context: AgentContext, key: str, elapsed_ms: float) -> None:
     current = context.timing.get(key)
     context.timing[key] = (float(current) if isinstance(current, (int, float)) else 0.0) + elapsed_ms
+
+
+def add_context_timing_count(context: AgentContext, key: str, count: int = 1) -> None:
+    current = context.timing.get(key)
+    context.timing[key] = (int(current) if isinstance(current, int) else 0) + count
+
+
+def is_news_only_context(context: AgentContext) -> bool:
+    roles = [str(role) for role in context.selectedRoles]
+    return context.intentType == "news" and roles == ["news"]
+
+
+def record_news_relevance_counts(context: AgentContext, evidence: list[EvidenceItem]) -> None:
+    direct = 0
+    mention = 0
+    for item in evidence:
+        if item.provider != "news" or item.status != "available":
+            continue
+        raw = item.raw if isinstance(item.raw, dict) else {}
+        level = str(raw.get("subjectRelevance") or "").strip().lower()
+        if level in {"primary", "secondary"}:
+            direct += 1
+        elif level == "mention":
+            mention += 1
+    context.timing["directNewsCount"] = direct
+    context.timing["mentionNewsCount"] = mention
 
 
 class MacroAgent(ProviderBackedAgent):
@@ -291,18 +332,18 @@ class LayoutAgent:
     def propose(self, context: AgentContext, route=None) -> LayoutProposal:
         panels = normalize_layout_panels(context.layoutContext)
         if not panels:
-            news_panel_props = build_news_panel_props(context.symbol, context.providerEvidence)
+            news_panel_props = build_news_panel_props(context.symbol, context.providerEvidence, context.newsDailySummaries)
             return LayoutProposal(
                 title="Agent analysis workspace",
                 rationale="No layout context was supplied, so the layout agent only proposed display panels with available evidence.",
-                commands=[news_panel_add_command(news_panel_props)] if news_panel_props else [],
+                commands=[news_panel_add_command(news_panel_props)] if should_add_news_panel_without_layout(news_panel_props) else [],
                 panelPriorities=[],
             )
 
         primary_type = primary_panel_type_for_route(route, context)
         priorities = panel_priorities_for_route(panels, primary_type, route, context)
         commands = priority_commands(priorities)
-        news_panel_props = build_news_panel_props(context.symbol, context.providerEvidence)
+        news_panel_props = build_news_panel_props(context.symbol, context.providerEvidence, context.newsDailySummaries)
         if news_panel_props:
             commands.append(news_panel_props_command(panels, news_panel_props))
         primary_panel = first_panel_of_type(panels, primary_type)
@@ -944,6 +985,7 @@ def role_analysis_with_openai(
     if not api_key or os.getenv("AGENT_ROLE_ANALYSIS_PROVIDER") == "deterministic":
         return None
     try:
+        add_context_timing_count(context, "llmCalls", 1)
         payload = {
             "model": os.getenv("AGENT_ROLE_ANALYSIS_MODEL", os.getenv("OPENAI_MODEL", "gpt-5.2")),
             "input": [
@@ -1030,7 +1072,11 @@ def compact_role_evidence(items: list[EvidenceItem]) -> list[dict[str, Any]]:
                 for key in [
                     "impactDirection",
                     "eventType",
+                    "subjectRelevance",
                     "relevanceScore",
+                    "relevanceScoreV2",
+                    "relevanceReason",
+                    "directSignals",
                     "importanceScore",
                     "publishedAt",
                     "source",
@@ -1053,9 +1099,10 @@ def compact_role_evidence(items: list[EvidenceItem]) -> list[dict[str, Any]]:
     return compacted
 
 
-def build_news_panel_props(symbol: str, evidence: list[EvidenceItem]) -> dict[str, Any] | None:
+def build_news_panel_props(symbol: str, evidence: list[EvidenceItem], daily_summaries: list[dict[str, Any]] | None = None) -> dict[str, Any] | None:
     news_items = [item for item in evidence if item.provider == "news" and item.status == "available"]
-    if not news_items:
+    no_data = [item for item in evidence if item.provider == "news" and item.status == "no-data"]
+    if not news_items and not no_data and not daily_summaries:
         return None
     latest = sorted(news_items, key=lambda item: parse_panel_time(item), reverse=True)
     major = sorted(
@@ -1070,9 +1117,18 @@ def build_news_panel_props(symbol: str, evidence: list[EvidenceItem]) -> dict[st
     return {
         "symbol": symbol,
         "updatedAt": utc_now_iso(),
+        "status": "available" if news_items or daily_summaries else "empty",
+        "emptyMessage": no_data[0].summary if no_data else f"{symbol} 관련 저장 뉴스가 없습니다.",
+        "dailySummaries": [daily_summary_panel_item(item) for item in (daily_summaries or [])[:5]],
         "latestNews": [news_panel_item(item, symbol) for item in latest[:12]],
         "majorNews": [news_panel_item(item, symbol) for item in major[:8]],
     }
+
+
+def should_add_news_panel_without_layout(props: dict[str, Any] | None) -> bool:
+    if not props:
+        return False
+    return bool(props.get("latestNews") or props.get("majorNews") or props.get("dailySummaries"))
 
 
 def news_panel_add_command(props: dict[str, Any]) -> dict[str, Any]:
@@ -1116,8 +1172,30 @@ def news_panel_item(item: EvidenceItem, symbol: str) -> dict[str, Any]:
         "symbols": [str(value) for value in symbols if value],
         "eventType": raw.get("eventType") or "other",
         "impactDirection": raw.get("impactDirection") or "unknown",
+        "subjectRelevance": raw.get("subjectRelevance") or "mention",
+        "relevanceReason": raw.get("relevanceReason"),
+        "directSignals": raw.get("directSignals") or [],
         "relevanceScore": panel_raw_number(item, "relevanceScore"),
+        "relevanceScoreV2": panel_raw_number(item, "relevanceScoreV2"),
         "importanceScore": panel_raw_number(item, "importanceScore"),
+    }
+
+
+def daily_summary_panel_item(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "date": str(item.get("date") or ""),
+        "symbol": str(item.get("symbol") or "").upper(),
+        "summary": str(item.get("summary") or ""),
+        "keyPoints": [str(value) for value in item.get("keyPoints") or [] if str(value).strip()],
+        "positivePoints": [str(value) for value in item.get("positivePoints") or [] if str(value).strip()],
+        "concerns": [str(value) for value in item.get("concerns") or [] if str(value).strip()],
+        "impactDirection": item.get("impactDirection") or "neutral",
+        "sentiment": item.get("sentiment") or "neutral",
+        "articleIds": [str(value) for value in item.get("articleIds") or [] if str(value).strip()],
+        "articleCount": int(item.get("articleCount") or 0),
+        "mentionCount": int(item.get("mentionCount") or 0),
+        "status": item.get("status") or "rolling",
+        "generatedAt": item.get("generatedAt"),
     }
 
 

@@ -242,6 +242,18 @@ def clickhouse_time_or_none(value):
     return clickhouse_time(value) if value else None
 
 
+def clickhouse_param_value(value):
+    if isinstance(value, (list, tuple)):
+        return "[" + ",".join(clickhouse_param_value(item) for item in value) + "]"
+    if isinstance(value, str):
+        return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if value is None:
+        return "NULL"
+    return str(value)
+
+
 def int_or_zero(value):
     return int(value or 0)
 
@@ -282,18 +294,135 @@ class ClickHouseHttpClient:
         if response.status_code >= 400:
             raise RuntimeError(f"status={response.status_code}, body={response.text}")
 
-    def execute(self, query):
+    def execute(self, query, parameters=None):
         import requests
 
+        params = {"user": self.user, "password": self.password, "database": self.database, "query": query}
+        for key, value in (parameters or {}).items():
+            params[f"param_{key}"] = clickhouse_param_value(value)
         response = requests.post(
             self.url,
-            params={"user": self.user, "password": self.password, "database": self.database, "query": query},
+            params=params,
             timeout=10,
         )
         if response.status_code >= 400:
             raise RuntimeError(f"status={response.status_code}, body={response.text}")
 
+    def query_json_each_row(self, query, parameters=None):
+        import requests
+
+        params = {"user": self.user, "password": self.password, "database": self.database, "query": query}
+        for key, value in (parameters or {}).items():
+            params[f"param_{key}"] = clickhouse_param_value(value)
+        response = requests.post(self.url, params=params, timeout=10)
+        if response.status_code >= 400:
+            raise RuntimeError(f"status={response.status_code}, body={response.text}")
+        return [json.loads(line) for line in response.text.splitlines() if line.strip()]
+
     def ensure_market_data_schema(self):
+        self.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {self.database}.news_articles
+            (
+                published_at DateTime64(3, 'UTC'),
+                symbol LowCardinality(String),
+                article_id String,
+                headline String,
+                summary Nullable(String),
+                content Nullable(String),
+                url Nullable(String),
+                source Nullable(String),
+                author Nullable(String),
+                updated_at Nullable(DateTime64(3, 'UTC')),
+                received_at Nullable(DateTime64(3, 'UTC')),
+                raw String,
+                inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+            )
+            ENGINE = ReplacingMergeTree(inserted_at)
+            PARTITION BY toYYYYMM(published_at)
+            ORDER BY (symbol, published_at, article_id)
+            TTL toDateTime(published_at) + INTERVAL 30 DAY DELETE
+            """
+        )
+        self.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {self.database}.news_article_localizations
+            (
+                published_at DateTime64(3, 'UTC'),
+                symbol LowCardinality(String),
+                article_id String,
+                locale LowCardinality(String),
+                symbols Array(String),
+                target_symbol LowCardinality(String),
+                subject_relevance LowCardinality(String),
+                relevance_score_v2 Float32,
+                relevance_reason String,
+                direct_signals Array(String),
+                headline Nullable(String),
+                summary Nullable(String),
+                url Nullable(String),
+                source Nullable(String),
+                localized_headline String,
+                localized_summary String,
+                key_points Array(String),
+                positive_points Array(String),
+                concerns Array(String),
+                event_type LowCardinality(String),
+                sentiment LowCardinality(String),
+                impact_direction LowCardinality(String),
+                why_it_matters String,
+                model LowCardinality(String),
+                localized_at DateTime64(3, 'UTC'),
+                raw String,
+                inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+            )
+            ENGINE = ReplacingMergeTree(localized_at)
+            PARTITION BY toYYYYMM(published_at)
+            ORDER BY (symbol, locale, published_at, article_id)
+            TTL toDateTime(published_at) + INTERVAL 30 DAY DELETE
+            """
+        )
+        self.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {self.database}.news_company_daily_summaries
+            (
+                date Date,
+                symbol LowCardinality(String),
+                locale LowCardinality(String),
+                summary String,
+                key_points Array(String),
+                positive_points Array(String),
+                concerns Array(String),
+                impact_direction LowCardinality(String),
+                sentiment LowCardinality(String),
+                article_ids Array(String),
+                article_ids_hash String,
+                article_count UInt32,
+                mention_count UInt32,
+                status LowCardinality(String),
+                model LowCardinality(String),
+                generated_at DateTime64(3, 'UTC'),
+                version LowCardinality(String),
+                raw String,
+                inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+            )
+            ENGINE = ReplacingMergeTree(generated_at)
+            PARTITION BY toYYYYMM(date)
+            ORDER BY (symbol, locale, date, version)
+            TTL toDate(date) + INTERVAL 366 DAY DELETE
+            """
+        )
+        self.execute(
+            f"ALTER TABLE {self.database}.news_article_localizations "
+            "ADD COLUMN IF NOT EXISTS key_points Array(String) AFTER localized_summary, "
+            "ADD COLUMN IF NOT EXISTS positive_points Array(String) AFTER key_points, "
+            "ADD COLUMN IF NOT EXISTS concerns Array(String) AFTER positive_points, "
+            "ADD COLUMN IF NOT EXISTS target_symbol LowCardinality(String) DEFAULT symbol AFTER symbols, "
+            "ADD COLUMN IF NOT EXISTS subject_relevance LowCardinality(String) DEFAULT 'mention' AFTER target_symbol, "
+            "ADD COLUMN IF NOT EXISTS relevance_score_v2 Float32 DEFAULT 0 AFTER subject_relevance, "
+            "ADD COLUMN IF NOT EXISTS relevance_reason String DEFAULT '' AFTER relevance_score_v2, "
+            "ADD COLUMN IF NOT EXISTS direct_signals Array(String) DEFAULT [] AFTER relevance_reason"
+        )
         if os.getenv("CLICKHOUSE_ENSURE_SESSION_COLUMNS", "true").lower() not in {"1", "true", "yes"}:
             return
         for table, after_column in (

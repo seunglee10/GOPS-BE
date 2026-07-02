@@ -133,7 +133,7 @@ gops_deployments_for_service() {
       printf '%s\n' alfaka-local-stream-processor
       ;;
     market-storage)
-      printf '%s\n' alfaka-clickhouse-loader alfaka-s3-sink
+      printf '%s\n' alfaka-clickhouse-loader alfaka-s3-sink alfaka-news-intelligence-worker
       ;;
     order-worker)
       printf '%s\n' order-outbox-publisher
@@ -171,7 +171,7 @@ gops_primary_deployment_for_service() {
       echo "alfaka-local-stream-processor"
       ;;
     market-storage)
-      echo "alfaka-s3-sink"
+      echo "alfaka-clickhouse-loader"
       ;;
     order-worker)
       echo "order-outbox-publisher"

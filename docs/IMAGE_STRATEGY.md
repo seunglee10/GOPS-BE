@@ -10,7 +10,7 @@ This file defines current custom Docker image boundaries.
 | `gops-api-server` | `infra/docker/Dockerfile.gops-backend` | `systems/api-server`, market/order shared packages | api-server pod |
 | `gops-market-ingestor` | `infra/docker/Dockerfile.gops-market-ingestor` | `systems/market-data/pods/market-ingestor`, `systems/market-data/shared` | market-ingestor pod |
 | `gops-market-processor` | `infra/docker/Dockerfile.gops-market-processor` | `systems/market-data/pods/market-processor`, `systems/market-data/jobs/symbol-registry-sync`, `systems/market-data/jobs/coverage-repair`, `systems/market-data/jobs/initial-load`, `systems/market-data/shared` | market-processor pod, symbol-registry-sync job, coverage-repair job, initial-load job |
-| `gops-market-storage` | `infra/docker/Dockerfile.gops-market-storage` | `s3-sink`, `clickhouse-loader`, market shared code | processed S3 sink, raw S3 archive, and clickhouse-loader pods |
+| `gops-market-storage` | `infra/docker/Dockerfile.gops-market-storage` | `s3-sink`, `clickhouse-loader`, `news-intelligence-worker`, `news-backfill`, market shared code | processed S3 sink, raw S3 archive, clickhouse-loader, news intelligence worker, and one-shot news storage jobs |
 | `gops-backfill-worker` | `infra/docker/Dockerfile.gops-backfill-worker` | `systems/market-data/pods/backfill-worker`, market shared code | backfill-worker pod |
 | `gops-order-worker` | `infra/docker/Dockerfile.gops-order-worker` | `systems/order/pods/order-outbox`, `systems/order/jobs`, order shared code | order-outbox pod and order jobs |
 | `gops-kis-adapter` | `infra/docker/Dockerfile.gops-kis-adapter` | `systems/order/pods/kis-adapter`, order shared code | kis-adapter pod |
@@ -19,7 +19,7 @@ This file defines current custom Docker image boundaries.
 ## Why These Boundaries
 
 - `gops-kis-adapter` is separate because it touches KIS, secrets, and broker submission risk.
-- `gops-market-storage` groups processed S3 sink, raw S3 archive, and ClickHouse loader because they are market storage workers.
+- `gops-market-storage` groups processed S3 sink, raw S3 archive, ClickHouse loader, news intelligence, and news backfill because they are market storage/materialization workers.
 - `gops-order-worker` groups DB-centered order operations.
 - `gops-agent-orchestrator` is separate because role agents, LLM credentials, event detection, and notification publishing scale differently from the API gateway.
 - `gops-frontend` builds static React assets and serves them with nginx. It should not run the Vite dev server behind ALB.

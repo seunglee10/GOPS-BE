@@ -43,12 +43,13 @@ from alfaka.alpaca.feed_profiles import market_session_for_timestamp, resolve_fe
 from alfaka.alpaca.trade_tiers import resolve_trade_subscription_plan
 from alfaka.alpaca.websocket_collector import read_trade_subscription_symbols
 from alfaka.alpaca.assets import asset_to_symbol_metadata
-from alfaka.alpaca.news import build_news_events
+from alfaka.alpaca.news import build_news_events, iter_alpaca_news_pages
 from alfaka.common.kafka_io import create_json_consumer
 from alfaka.common.market_messages import build_raw_envelope, raw_topic_name, source_event_id
 from alfaka.common.redis_keys import RedisKeyBuilder
 from alfaka.common.runtime_health import read_component_health, write_component_health
 from alfaka.common.runtime_config import has_placeholder_value, validate_required_values
+from alfaka.common.s3_client import create_s3_client
 from alfaka.common.secrets import load_alpaca_credentials, resolve_alpaca_credential_source
 from alfaka.backfill.runner import BackfillRunner, BackfillUnavailable, fetch_alpaca_bars, raw_bar_to_processed_candle, raw_bars_to_processed_candles
 from alfaka.backfill.gapfill import TradingCalendar, detect_gapfill_ranges
@@ -60,8 +61,11 @@ from alfaka.serving.hot_symbols import build_hot_symbols_payload, dollar_volume_
 from alfaka.serving.intervals import candle_count_for_1y, candle_count_for_24h, historical_target_bars, redis_closed_candle_cap, resolve_candle_limit
 from alfaka.serving.provider import MarketDataProvider, has_more_before_target
 from alfaka.serving.redis_provider import RedisMarketDataProvider
+from alfaka.serving.news_hot_cache import read_company_daily_summaries_from_redis, read_localized_news_from_redis
 from alfaka.serving.symbol_registry import SymbolRegistry
 from alfaka.storage.clickhouse_loader import candle_to_clickhouse_row, load_payload, news_to_clickhouse_row, status_to_clickhouse_row, symbol_to_clickhouse_row, trade_to_clickhouse_row
+from alfaka.storage.news_daily_summary import build_daily_summary_record, daily_summary_to_clickhouse_row
+from alfaka.storage.news_intelligence import build_news_intelligence_record, news_intelligence_to_clickhouse_row
 from alfaka.storage.s3_materializer import (
     detect_s3_object_format,
     list_s3_objects,
@@ -74,6 +78,12 @@ from alfaka.storage.s3_materializer import (
 from alfaka.storage.processed_s3_sink import flush_buffer, flush_due_buffers, normalize_storage_row, s3_partition_key
 from alfaka.storage.raw_s3_archive_sink import flush_raw_buffer, raw_archive_row, raw_envelope_partition_key, raw_s3_archive_runtime_config, run_raw_s3_archive_sink
 from alfaka.storage.raw_s3_archive import raw_chunk_partition_key, raw_object_suffix, raw_partition_key, upload_raw_page_to_s3
+from alfaka.storage.news_s3_archive import (
+    canonical_news_article_key,
+    news_symbol_index_key,
+    upload_canonical_news_article_to_s3,
+    write_news_symbol_index_to_s3,
+)
 from alfaka.storage.s3_manifest import processed_candle_keys_from_manifest, raw_keys_from_manifest
 from alfaka.streaming.processor import ProcessorState, process_raw_envelope, processor_runtime_config, recover_processor_state_from_clickhouse, recover_processor_state_from_redis, write_closed_candle_to_redis
 from alfaka.streaming.transforms import (
@@ -233,9 +243,43 @@ class FakeClickHouseRecoveryProvider:
 class RecordingClickHouseClient:
     def __init__(self):
         self.inserts = []
+        self.executions = []
 
     def insert_json_each_row(self, table, rows):
         self.inserts.append((table, list(rows)))
+
+    def execute(self, query, parameters=None):
+        self.executions.append((query, parameters or {}))
+
+
+class QueryRecordingClickHouseClient(RecordingClickHouseClient):
+    database = "market_data"
+
+    def __init__(self, query_rows):
+        super().__init__()
+        self.query_rows = query_rows
+        self.queries = []
+
+    def query_json_each_row(self, query, parameters=None):
+        self.queries.append((query, parameters or {}))
+        if int((parameters or {}).get("offset") or 0) > 0:
+            return []
+        return list(self.query_rows)[: int((parameters or {}).get("limit") or len(self.query_rows))]
+
+
+class SequentialQueryClickHouseClient(RecordingClickHouseClient):
+    database = "market_data"
+
+    def __init__(self, query_batches):
+        super().__init__()
+        self.query_batches = [list(batch) for batch in query_batches]
+        self.queries = []
+
+    def query_json_each_row(self, query, parameters=None):
+        self.queries.append((query, parameters or {}))
+        if not self.query_batches:
+            return []
+        return self.query_batches.pop(0)
 
 
 class FailingAuditClickHouseClient(RecordingClickHouseClient):
@@ -253,6 +297,38 @@ class FailingAuditClickHouseClient(RecordingClickHouseClient):
 def load_initial_load_job_module():
     module_path = REPO_ROOT / "systems/market-data/jobs/initial-load/main.py"
     spec = importlib.util.spec_from_file_location("initial_load_job", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_news_intelligence_worker_module():
+    module_path = REPO_ROOT / "systems/market-data/pods/news-intelligence-worker/main.py"
+    spec = importlib.util.spec_from_file_location("news_intelligence_worker", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_news_daily_summary_worker_module():
+    module_path = REPO_ROOT / "systems/market-data/pods/news-daily-summary-worker/main.py"
+    spec = importlib.util.spec_from_file_location("news_daily_summary_worker", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_news_intelligence_rebuild_module():
+    module_path = REPO_ROOT / "systems/market-data/jobs/news-intelligence-rebuild/main.py"
+    spec = importlib.util.spec_from_file_location("news_intelligence_rebuild", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_news_backfill_module():
+    module_path = REPO_ROOT / "systems/market-data/jobs/news-backfill/main.py"
+    spec = importlib.util.spec_from_file_location("news_backfill", module_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -422,6 +498,19 @@ class MemoryRedis:
 
     def zrange(self, key, start, end):
         ordered = [member for member, _score in sorted(self.zsets.get(key, {}).items(), key=lambda item: (item[1], item[0]))]
+        length = len(ordered)
+        if start < 0:
+            start = length + start
+        if end < 0:
+            end = length + end
+        start = max(0, start)
+        end = min(length - 1, end)
+        if start > end or length == 0:
+            return []
+        return ordered[start:end + 1]
+
+    def zrevrange(self, key, start, end):
+        ordered = list(reversed([member for member, _score in sorted(self.zsets.get(key, {}).items(), key=lambda item: (item[1], item[0]))]))
         length = len(ordered)
         if start < 0:
             start = length + start
@@ -802,6 +891,25 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertFalse(consumer.kwargs["enable_auto_commit"])
         self.assertEqual(consumer.kwargs["group_id"], "alfaka-clickhouse-loader")
 
+    def test_kafka_consumer_accepts_slow_worker_poll_controls(self):
+        RecordingKafkaConsumer.calls = []
+        kafka_module = types.SimpleNamespace(KafkaConsumer=RecordingKafkaConsumer)
+
+        with mock.patch.dict(sys.modules, {"kafka": kafka_module}):
+            consumer = create_json_consumer(
+                ["market.news.alpaca.v1"],
+                "kafka:29092",
+                "alfaka-news-intelligence-worker",
+                "alfaka-news-intelligence-consumer",
+                enable_auto_commit=False,
+                max_poll_interval_ms=900000,
+                max_poll_records=1,
+            )
+
+        self.assertIsInstance(consumer, RecordingKafkaConsumer)
+        self.assertEqual(consumer.kwargs["max_poll_interval_ms"], 900000)
+        self.assertEqual(consumer.kwargs["max_poll_records"], 1)
+
     def test_live_path_trace_builds_read_only_contract(self):
         with mock.patch.dict(os.environ, {
             "KAFKA_RAW_TOPIC_PREFIX": "market.raw",
@@ -1116,12 +1224,18 @@ class MarketDataHardeningContractTest(unittest.TestCase):
     def test_kubernetes_base_includes_market_processor_runtime_unit(self):
         base_kustomization = (REPO_ROOT / "infra/k8s/base/kustomization.yaml").read_text(encoding="utf-8")
         deployment = (REPO_ROOT / "infra/k8s/base/deployment-market-processor.yaml").read_text(encoding="utf-8")
+        agent_orchestrator_deployment = (REPO_ROOT / "infra/k8s/base/deployment-agent-orchestrator.yaml").read_text(encoding="utf-8")
         raw_archive_deployment = (REPO_ROOT / "infra/k8s/base/deployment-raw-s3-archive.yaml").read_text(encoding="utf-8")
+        news_worker_deployment = (REPO_ROOT / "infra/k8s/base/deployment-news-intelligence-worker.yaml").read_text(encoding="utf-8")
+        news_backfill_job = (REPO_ROOT / "infra/k8s/base/job-news-backfill.yaml").read_text(encoding="utf-8")
+        news_rebuild_job = (REPO_ROOT / "infra/k8s/base/job-news-intelligence-rebuild.yaml").read_text(encoding="utf-8")
         configmap = (REPO_ROOT / "infra/k8s/base/configmap.yaml").read_text(encoding="utf-8")
         aws_overlay = (REPO_ROOT / "infra/k8s/overlays/aws/kustomization.yaml").read_text(encoding="utf-8")
+        aws_ci_overlay = (REPO_ROOT / "infra/k8s/overlays/aws-incluster-app-ci/kustomization.yaml").read_text(encoding="utf-8")
 
         self.assertIn("deployment-market-processor.yaml", base_kustomization)
         self.assertIn("deployment-raw-s3-archive.yaml", base_kustomization)
+        self.assertIn("job-news-backfill.yaml", base_kustomization)
         self.assertIn("name: alfaka-market-processor", deployment)
         self.assertIn("app: alfaka-market-processor", deployment)
         self.assertIn("gops-market-processor:latest", deployment)
@@ -1129,12 +1243,40 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn("name: alfaka-raw-s3-archive", raw_archive_deployment)
         self.assertIn("systems/market-data/pods/s3-sink/raw_archive_sink.py", raw_archive_deployment)
         self.assertIn("gops-market-storage:latest", raw_archive_deployment)
+        self.assertIn("name: alfaka-news-intelligence-worker", news_worker_deployment)
+        self.assertIn("replicas: 3", news_worker_deployment)
+        self.assertIn("name: agent-orchestrator", agent_orchestrator_deployment)
+        self.assertIn("name: alfaka-clickhouse-secret", agent_orchestrator_deployment)
+        self.assertIn("name: alfaka-news-backfill", news_backfill_job)
+        self.assertIn("systems/market-data/jobs/news-backfill/main.py", news_backfill_job)
+        self.assertIn("NEWS_BACKFILL_DRY_RUN", news_backfill_job)
+        self.assertIn('value: "true"', news_backfill_job)
+        self.assertIn("NEWS_BACKFILL_SHARD_INDEX", news_backfill_job)
+        self.assertIn("NEWS_BACKFILL_SHARD_COUNT", news_backfill_job)
+        self.assertIn("NEWS_BACKFILL_PUBLISH_RECENT_TO_KAFKA", news_backfill_job)
+        self.assertIn("NEWS_INTELLIGENCE_REBUILD_DRY_RUN", news_rebuild_job)
+        self.assertIn("name: alfaka-news-backfill", aws_ci_overlay)
+        self.assertIn("name: alfaka-news-intelligence-rebuild", aws_ci_overlay)
         self.assertIn("KAFKA_PROCESSOR_GROUP_ID: alfaka-market-processor", configmap)
         self.assertIn("KAFKA_RAW_S3_GROUP_ID: alfaka-raw-s3-archive", configmap)
+        self.assertIn('NEWS_BACKFILL_DAYS: "365"', configmap)
+        self.assertIn('NEWS_BACKFILL_SHARD_INDEX: "0"', configmap)
+        self.assertIn('NEWS_BACKFILL_SHARD_COUNT: "1"', configmap)
+        self.assertIn('NEWS_BACKFILL_INCLUDE_CONTENT: "true"', configmap)
+        self.assertIn('NEWS_S3_ARCHIVE_ENABLED: "true"', configmap)
         self.assertIn('S3_RAW_FLUSH_INTERVAL_SECONDS: "60"', configmap)
         self.assertIn('KAFKA_CLICKHOUSE_ENABLE_AUTO_COMMIT: "false"', configmap)
         self.assertIn("Python market-processor pod", aws_overlay)
         self.assertNotIn("local-stream-processor는 운영 Flink가 아니므로 포함하지 않습니다", aws_overlay)
+
+    def test_aws_service_detection_includes_news_storage_runtime_units(self):
+        lib = (REPO_ROOT / "scripts/aws/lib-gops-images.sh").read_text(encoding="utf-8")
+        detector = (REPO_ROOT / "scripts/aws/detect-changed-services.sh").read_text(encoding="utf-8")
+
+        self.assertIn("alfaka-news-intelligence-worker", lib)
+        self.assertIn("systems/market-data/pods/news-intelligence-worker/*", detector)
+        self.assertIn("systems/market-data/jobs/news-backfill/*", detector)
+        self.assertIn("systems/market-data/jobs/news-intelligence-rebuild/*", detector)
 
     def test_initial_load_compose_uses_sp500_universe_contract(self):
         compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
@@ -1142,6 +1284,9 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn('ALPACA_UNIVERSE: "sp500"', compose)
         self.assertIn('ALPACA_UNIVERSE_REGISTRY_PATH: "systems/market-data/config/sp500-universe.json"', compose)
         self.assertIn('INITIAL_LOAD_INTERVALS: "${INITIAL_LOAD_INTERVALS:-1D}"', compose)
+        self.assertIn("news-backfill:", compose)
+        self.assertIn('NEWS_BACKFILL_UNIVERSE: "${NEWS_BACKFILL_UNIVERSE:-sp500}"', compose)
+        self.assertIn("systems/market-data/jobs/news-backfill/main.py", compose)
 
     def test_raw_archive_batches_historical_bars_by_day(self):
         s3 = RecordingS3()
@@ -1256,6 +1401,244 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn("part-000001-backfill_AAPL_1m_first.jsonl", keys[0])
         self.assertIn("part-000001-backfill_AAPL_1m_second.jsonl", keys[1])
         self.assertNotEqual(raw_object_suffix("bars", "sip", "start-a", "end-a", 1), raw_object_suffix("bars", "sip", "start-b", "end-b", 1))
+
+    def test_alpaca_news_pages_follow_page_token_and_include_content(self):
+        responses = [
+            FakeHttpResponse(status_code=429, text="rate limited", headers={"Retry-After": "0"}),
+            FakeHttpResponse(status_code=200, payload={"news": [{"id": "news-1"}], "next_page_token": "page-2"}),
+            FakeHttpResponse(status_code=200, payload={"news": [{"id": "news-2"}]}),
+        ]
+        calls = []
+
+        def fake_get(_endpoint, headers, params, timeout):
+            calls.append({"headers": headers, "params": dict(params), "timeout": timeout})
+            return responses.pop(0)
+
+        with mock.patch.dict(os.environ, {
+            "ALPACA_NEWS_MAX_RETRIES": "2",
+            "ALPACA_NEWS_RETRY_SLEEP_SECONDS": "0",
+            "ALPACA_NEWS_RETRY_MAX_SLEEP_SECONDS": "0",
+        }):
+            with mock.patch("requests.get", side_effect=fake_get):
+                pages = list(iter_alpaca_news_pages(
+                    "key",
+                    "secret",
+                    symbols=["AAPL"],
+                    limit=50,
+                    include_content=True,
+                    start="2026-06-01T00:00:00.000Z",
+                    end="2026-07-01T00:00:00.000Z",
+                    sort="asc",
+                ))
+
+        self.assertEqual([page["pageNumber"] for page in pages], [1, 2])
+        self.assertEqual([row["id"] for page in pages for row in page["news"]], ["news-1", "news-2"])
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(calls[1]["params"]["include_content"], "true")
+        self.assertNotIn("page_token", calls[1]["params"])
+        self.assertEqual(calls[2]["params"]["page_token"], "page-2")
+
+    def test_news_s3_archive_stores_raw_article_once_and_symbol_indexes_separately(self):
+        s3 = S3ObjectStore()
+        article = {
+            "id": "shared-article",
+            "headline": "Apple and Nvidia supply chain update",
+            "summary": "Apple and Nvidia are discussed in the same report.",
+            "content": "Full article body from Alpaca.",
+            "created_at": "2026-06-29T01:02:03.000Z",
+            "url": "https://example.com/shared",
+            "symbols": ["AAPL", "NVDA"],
+        }
+
+        first = upload_canonical_news_article_to_s3(s3, "bucket", "market-data/raw/alpaca", article)
+        second = upload_canonical_news_article_to_s3(s3, "bucket", "market-data/raw/alpaca", article)
+        aapl_index = write_news_symbol_index_to_s3(
+            s3,
+            "bucket",
+            "market-data/raw/alpaca",
+            article,
+            symbol="AAPL",
+            canonical_key=first["key"],
+        )
+        nvda_index = write_news_symbol_index_to_s3(
+            s3,
+            "bucket",
+            "market-data/raw/alpaca",
+            article,
+            symbol="NVDA",
+            canonical_key=first["key"],
+        )
+
+        raw_keys = [key for key in s3.objects if "/news/articles/" in key]
+        index_keys = [key for key in s3.objects if "/news/index/" in key]
+        raw_payload = json.loads(s3.objects[first["key"]]["Body"].decode("utf-8"))
+
+        self.assertTrue(first["stored"])
+        self.assertFalse(second["stored"])
+        self.assertEqual(raw_keys, [canonical_news_article_key("market-data/raw/alpaca", "shared-article")])
+        self.assertEqual(len(index_keys), 2)
+        self.assertEqual(raw_payload["raw"]["content"], "Full article body from Alpaca.")
+        self.assertEqual(aapl_index["key"], news_symbol_index_key("market-data/raw/alpaca", "AAPL", "2026-06-29T01:02:03.000Z", "shared-article"))
+        self.assertIn("symbol=NVDA", nvda_index["key"])
+
+    def test_news_backfill_writes_canonical_s3_and_publishes_only_recent_events(self):
+        backfill = load_news_backfill_module()
+        s3 = S3ObjectStore()
+        producer = RecordingProducer()
+        recent = {
+            "id": "shared-recent",
+            "headline": "Apple and Nvidia supply chain update",
+            "summary": "Apple and Nvidia are both discussed.",
+            "content": "Full body.",
+            "created_at": "2026-06-20T01:02:03.000Z",
+            "url": "https://example.com/recent",
+            "symbols": ["AAPL", "NVDA"],
+        }
+        old = {
+            "id": "old-aapl",
+            "headline": "Apple old update",
+            "summary": "Old Apple story.",
+            "content": "Old body.",
+            "created_at": "2026-05-10T01:02:03.000Z",
+            "url": "https://example.com/old",
+            "symbols": ["AAPL"],
+        }
+        out_of_range = {
+            "id": "ancient-aapl",
+            "headline": "Apple article updated recently but published years ago",
+            "summary": "This should not be included in a one-year backfill chunk.",
+            "content": "Ancient body.",
+            "created_at": "2024-05-10T01:02:03.000Z",
+            "updated_at": "2026-06-30T01:02:03.000Z",
+            "url": "https://example.com/ancient",
+            "symbols": ["AAPL"],
+        }
+        calls = []
+
+        def fake_pages(_key, _secret, symbols, limit, include_content, start, end, sort, max_pages=None):
+            calls.append({
+                "symbols": list(symbols),
+                "limit": limit,
+                "include_content": include_content,
+                "start": start,
+                "end": end,
+                "sort": sort,
+                "max_pages": max_pages,
+            })
+            symbol = symbols[0]
+            return [{"news": [recent, old, out_of_range] if symbol == "AAPL" else [recent], "nextPageToken": None, "pageNumber": 1}]
+
+        config = {
+            "symbols": ["AAPL", "NVDA"],
+            "start": "2026-05-01T00:00:00.000Z",
+            "end": "2026-07-01T00:00:00.000Z",
+            "chunkDays": 90,
+            "clickhouseDays": 30,
+            "limit": 50,
+            "includeContent": True,
+            "sort": "asc",
+            "s3Bucket": "bucket",
+            "s3RawPrefix": "market-data/raw/alpaca",
+            "force": False,
+            "skipCompletedChunks": True,
+            "sleepSeconds": 0,
+            "maxPagesPerChunk": 0,
+            "maxChunks": 0,
+            "publishRecentToKafka": True,
+            "kafkaNewsTopic": "market.news.alpaca.v1",
+        }
+
+        result = backfill.run_news_backfill(
+            config,
+            s3=s3,
+            producer=producer,
+            key_id="key",
+            secret_key="secret",
+            fetch_pages_fn=fake_pages,
+        )
+
+        raw_keys = [key for key in s3.objects if "/news/articles/" in key]
+        index_keys = [key for key in s3.objects if "/news/index/" in key]
+        marker_keys = [key for key in s3.objects if "/news/manifest/backfill-chunks/" in key]
+
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(all(call["include_content"] for call in calls))
+        self.assertEqual(len(raw_keys), 2)
+        self.assertEqual(len(index_keys), 3)
+        self.assertEqual(len(marker_keys), 2)
+        self.assertEqual(result["s3RawStored"], 2)
+        self.assertEqual(result["s3RawSkipped"], 1)
+        self.assertEqual(result["articlesOutOfRange"], 1)
+        self.assertEqual(result["eventsPublished"], 2)
+        self.assertEqual([item["value"]["articleId"] for item in producer.sent], ["shared-recent", "shared-recent"])
+        self.assertEqual({item["key"] for item in producer.sent}, {"AAPL", "NVDA"})
+        self.assertNotIn("old-aapl", [item["value"]["articleId"] for item in producer.sent])
+        self.assertNotIn("ancient-aapl", [item["value"]["articleId"] for item in producer.sent])
+
+    def test_news_backfill_dry_run_reports_plan_without_fetching(self):
+        backfill = load_news_backfill_module()
+        config = {
+            "symbols": ["AAPL", "NVDA"],
+            "start": "2026-06-01T00:00:00.000Z",
+            "end": "2026-06-15T00:00:00.000Z",
+            "chunkDays": 7,
+            "clickhouseDays": 30,
+            "includeContent": True,
+            "s3Bucket": "bucket",
+            "s3RawPrefix": "market-data/raw/alpaca",
+            "publishRecentToKafka": False,
+        }
+
+        plan = backfill.plan_news_backfill(config)
+
+        self.assertTrue(plan["dryRun"])
+        self.assertEqual(plan["symbols"], 2)
+        self.assertEqual(plan["chunksPerSymbol"], 2)
+        self.assertEqual(plan["totalChunks"], 4)
+        self.assertFalse(plan["publishRecentToKafka"])
+
+    def test_news_backfill_empty_universe_registry_path_uses_default_sp500_file(self):
+        backfill = load_news_backfill_module()
+
+        symbols = backfill.resolve_news_backfill_symbols({
+            "NEWS_BACKFILL_UNIVERSE": "sp500",
+            "NEWS_BACKFILL_UNIVERSE_REGISTRY_PATH": "",
+            "ALPACA_UNIVERSE_REGISTRY_PATH": "",
+            "ALPACA_SYMBOLS": "AAPL,NVDA",
+        })
+
+        self.assertIn("AAPL", symbols)
+        self.assertIn("NVDA", symbols)
+        self.assertGreater(len(symbols), 100)
+
+    def test_news_backfill_shards_symbols_deterministically(self):
+        backfill = load_news_backfill_module()
+
+        first = backfill.news_backfill_runtime_config({
+            "NEWS_BACKFILL_SYMBOLS": "AAPL,MSFT,NVDA,AMZN,META,GOOGL,TSLA,DDOG",
+            "NEWS_BACKFILL_SHARD_INDEX": "0",
+            "NEWS_BACKFILL_SHARD_COUNT": "3",
+        })
+        second = backfill.news_backfill_runtime_config({
+            "NEWS_BACKFILL_SYMBOLS": "AAPL,MSFT,NVDA,AMZN,META,GOOGL,TSLA,DDOG",
+            "NEWS_BACKFILL_SHARD_INDEX": "1",
+            "NEWS_BACKFILL_SHARD_COUNT": "3",
+        })
+        third = backfill.news_backfill_runtime_config({
+            "NEWS_BACKFILL_SYMBOLS": "AAPL,MSFT,NVDA,AMZN,META,GOOGL,TSLA,DDOG",
+            "NEWS_BACKFILL_SHARD_INDEX": "2",
+            "NEWS_BACKFILL_SHARD_COUNT": "3",
+        })
+
+        self.assertEqual(first["symbols"], ["AAPL", "AMZN", "TSLA"])
+        self.assertEqual(second["symbols"], ["MSFT", "META", "DDOG"])
+        self.assertEqual(third["symbols"], ["NVDA", "GOOGL"])
+        combined = first["symbols"] + second["symbols"] + third["symbols"]
+        self.assertEqual(sorted(combined), sorted(["AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "TSLA", "DDOG"]))
+        self.assertEqual(len(combined), len(set(combined)))
+        plan = backfill.plan_news_backfill(first)
+        self.assertEqual(plan["shardIndex"], 0)
+        self.assertEqual(plan["shardCount"], 3)
 
     def test_daily_bar_normalizes_to_canonical_1d_candle(self):
         envelope = build_raw_envelope(
@@ -3392,6 +3775,8 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         for dockerfile in dockerfiles:
             content = (REPO_ROOT / "infra" / "docker" / dockerfile).read_text(encoding="utf-8")
             self.assertIn("COPY systems/market-data/config ./systems/market-data/config", content)
+        storage = (REPO_ROOT / "infra/docker/Dockerfile.gops-market-storage").read_text(encoding="utf-8")
+        self.assertIn("COPY systems/market-data/jobs/news-backfill ./systems/market-data/jobs/news-backfill", storage)
 
     def test_clickhouse_array_query_parameter_serializes_symbols(self):
         self.assertEqual(clickhouse_param_value(["AAPL", "BRK.B", "O'Reilly"]), "['AAPL','BRK.B','O\\'Reilly']")
@@ -3719,11 +4104,403 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(client.inserts[0][0], "news_articles")
         self.assertEqual(client.inserts[0][1][0]["article_id"], "news-1")
 
+    def test_news_intelligence_row_keeps_ko_fields_for_clickhouse(self):
+        record = build_news_intelligence_record(
+            {
+                "eventType": "NEWS_ARTICLE",
+                "symbol": "AAPL",
+                "articleId": "news-ko-1",
+                "headline": "Apple supplier expands",
+                "summary": "Apple supplier plans expansion.",
+                "publishedAt": "2026-06-29T01:02:03.000Z",
+                "url": "https://example.com/aapl",
+                "source": "alpaca",
+                "symbols": ["AAPL"],
+            },
+            {
+                "localizedHeadline": "애플 공급사, 사업 확장",
+                "localizedSummary": "애플 공급사가 사업 확장을 추진합니다.",
+                "keyPoints": ["사업 확장 추진"],
+                "positivePoints": [],
+                "concerns": ["애플 의존도 완화 필요"],
+                "eventType": "corporate-action",
+                "sentiment": "neutral",
+                "impactDirection": "neutral",
+                "whyItMatters": "애플 공급망과 관련된 뉴스입니다.",
+            },
+            model="unit-model",
+            localized_at="2026-06-29T01:03:00.000Z",
+        )
+
+        row = news_intelligence_to_clickhouse_row(record)
+
+        self.assertEqual(row["article_id"], "news-ko-1")
+        self.assertEqual(row["localized_headline"], "애플 공급사, 사업 확장")
+        self.assertEqual(row["localized_summary"], "애플 공급사가 사업 확장을 추진합니다.")
+        self.assertEqual(row["key_points"], ["사업 확장 추진"])
+        self.assertEqual(row["concerns"], ["애플 의존도 완화 필요"])
+        self.assertEqual(row["event_type"], "corporate-action")
+        self.assertEqual(row["model"], "unit-model")
+        self.assertEqual(row["target_symbol"], "AAPL")
+        self.assertIn(row["subject_relevance"], {"primary", "secondary"})
+        self.assertGreater(row["relevance_score_v2"], 0.7)
+        self.assertIn("apple", [item.lower() for item in row["direct_signals"]])
+
+    def test_news_intelligence_worker_writes_clickhouse_and_redis_hot_cache(self):
+        worker = load_news_intelligence_worker_module()
+        client = RecordingClickHouseClient()
+        redis_client = MemoryRedis()
+        event = {
+            "eventType": "NEWS_ARTICLE",
+            "symbol": "AAPL",
+            "articleId": "worker-news-1",
+            "headline": "Apple supplier expands",
+            "summary": "Apple supplier plans expansion.",
+            "publishedAt": "2026-06-29T01:02:03.000Z",
+            "url": "https://example.com/worker-aapl",
+            "source": "alpaca",
+            "symbols": ["AAPL"],
+        }
+
+        record = worker.process_news_event(
+            event,
+            clickhouse_client=client,
+            redis_client=redis_client,
+            enrich_fn=lambda _event: {
+                "localizedHeadline": "애플 공급사, 사업 확장 추진",
+                "localizedSummary": "애플 공급사가 사업 확장을 추진한다는 내용입니다.",
+                "keyPoints": ["사업 확장 추진"],
+                "positivePoints": [],
+                "concerns": [],
+                "eventType": "corporate-action",
+                "sentiment": "neutral",
+                "impactDirection": "neutral",
+                "whyItMatters": "애플 공급망 관련 뉴스입니다.",
+            },
+            locale="ko-KR",
+            model="unit-model",
+            ttl_seconds=1800,
+            max_items=20,
+        )
+        duplicate = worker.process_news_event(
+            event,
+            clickhouse_client=client,
+            redis_client=redis_client,
+            enrich_fn=lambda _event: {
+                "localizedHeadline": "중복",
+                "localizedSummary": "중복",
+            },
+            locale="ko-KR",
+            model="unit-model",
+            ttl_seconds=1800,
+            max_items=20,
+        )
+
+        self.assertEqual(client.inserts[0][0], "news_article_localizations")
+        self.assertEqual(client.inserts[0][1][0]["localized_headline"], "애플 공급사, 사업 확장 추진")
+        self.assertEqual(record["localizedSummary"], "애플 공급사가 사업 확장을 추진한다는 내용입니다.")
+        self.assertEqual(record["keyPoints"], ["사업 확장 추진"])
+        self.assertIsNone(duplicate)
+        self.assertEqual(len(client.inserts), 1)
+        cached = read_localized_news_from_redis(redis_client, "AAPL", limit=5, locale="ko-KR")
+        self.assertEqual(cached[0]["localizedHeadline"], "애플 공급사, 사업 확장 추진")
+        self.assertEqual(cached[0]["keyPoints"], ["사업 확장 추진"])
+        self.assertEqual(cached[0]["articleId"], "worker-news-1")
+        self.assertEqual(cached[0]["targetSymbol"], "AAPL")
+        self.assertIn(cached[0]["subjectRelevance"], {"primary", "secondary"})
+        self.assertNotIn("content", cached[0])
+        self.assertNotIn("raw", cached[0])
+        self.assertIn(RedisKeyBuilder().news_latest_v2("ko-KR", "AAPL"), redis_client.zsets)
+        self.assertNotIn(RedisKeyBuilder().news_latest("ko-KR", "AAPL"), redis_client.zsets)
+
+    def test_news_intelligence_worker_publishes_daily_summary_dirty_event(self):
+        worker = load_news_intelligence_worker_module()
+        client = RecordingClickHouseClient()
+        redis_client = MemoryRedis()
+
+        class RecordingProducer:
+            def __init__(self):
+                self.sent = []
+
+            def send(self, topic, key, value):
+                self.sent.append((topic, key, value))
+
+        producer = RecordingProducer()
+        worker.process_news_event(
+            {
+                "eventType": "NEWS_ARTICLE",
+                "symbol": "AAPL",
+                "articleId": "daily-dirty-1",
+                "headline": "Apple services revenue grows",
+                "summary": "Apple services revenue improved.",
+                "publishedAt": "2026-07-01T14:02:03.000Z",
+                "url": "https://example.com/aapl-dirty",
+                "source": "alpaca",
+                "symbols": ["AAPL"],
+            },
+            clickhouse_client=client,
+            redis_client=redis_client,
+            enrich_fn=lambda _event: {
+                "localizedHeadline": "애플 서비스 매출 성장",
+                "localizedSummary": "애플 서비스 매출이 개선됐습니다.",
+                "keyPoints": ["서비스 매출 개선"],
+                "positivePoints": ["서비스 성장"],
+                "concerns": [],
+                "eventType": "earnings",
+                "sentiment": "positive",
+                "impactDirection": "positive",
+                "whyItMatters": "애플 수익성에 긍정적입니다.",
+            },
+            locale="ko-KR",
+            daily_summary_producer=producer,
+        )
+
+        self.assertEqual(producer.sent[0][0], "market.news.daily-summary-dirty.v1")
+        self.assertEqual(producer.sent[0][1], "AAPL:2026-07-01")
+        self.assertEqual(producer.sent[0][2]["eventType"], "NEWS_DAILY_SUMMARY_DIRTY")
+        self.assertEqual(producer.sent[0][2]["symbol"], "AAPL")
+
+    def test_daily_summary_row_and_redis_cache_keep_lightweight_brief(self):
+        record = build_daily_summary_record(
+            symbol="AAPL",
+            date="2026-07-01",
+            rows=[
+                {
+                    "articleId": "aapl-daily-1",
+                    "localizedHeadline": "애플 서비스 성장",
+                    "localizedSummary": "서비스 매출이 개선됐습니다.",
+                    "impactDirection": "positive",
+                    "sentiment": "positive",
+                    "keyPoints": ["서비스 매출 개선"],
+                }
+            ],
+            locale="ko-KR",
+            model="unit-model",
+            generated_at="2026-07-01T22:00:00.000Z",
+            status="final",
+            mention_count=2,
+        )
+        row = daily_summary_to_clickhouse_row(record)
+        redis_client = MemoryRedis()
+        from alfaka.serving.news_hot_cache import write_company_daily_summary_to_redis
+
+        write_company_daily_summary_to_redis(redis_client, record, locale="ko-KR", ttl_seconds=86400, max_items=30)
+        cached = read_company_daily_summaries_from_redis(redis_client, "AAPL", locale="ko-KR")
+
+        self.assertEqual(row["symbol"], "AAPL")
+        self.assertEqual(row["article_count"], 1)
+        self.assertEqual(row["mention_count"], 2)
+        self.assertEqual(cached[0]["summary"], record["summary"])
+        self.assertEqual(cached[0]["articleCount"], 1)
+        self.assertIn(RedisKeyBuilder().news_daily_v2("ko-KR", "AAPL"), redis_client.zsets)
+
+    def test_news_daily_summary_worker_inserts_summary_and_skips_same_article_hash(self):
+        worker = load_news_daily_summary_worker_module()
+        redis_client = MemoryRedis()
+        rows = [
+            {
+                "articleId": "aapl-daily-worker-1",
+                "symbol": "AAPL",
+                "targetSymbol": "AAPL",
+                "subjectRelevance": "primary",
+                "headline": "Apple services revenue grows",
+                "summary": "Apple services revenue improved.",
+                "localizedHeadline": "애플 서비스 매출 성장",
+                "localizedSummary": "애플 서비스 매출이 개선됐습니다.",
+                "keyPoints": ["서비스 매출 개선"],
+                "positivePoints": ["서비스 성장"],
+                "concerns": [],
+                "impactDirection": "positive",
+                "sentiment": "positive",
+            },
+            {
+                "articleId": "aapl-mention-worker-1",
+                "symbol": "NVDA",
+                "targetSymbol": "AAPL",
+                "subjectRelevance": "mention",
+                "headline": "Broad tech roundup mentions Apple",
+                "summary": "Apple appears in a broad list.",
+                "localizedHeadline": "기술주 라운드업",
+                "localizedSummary": "애플이 넓은 목록에 언급됐습니다.",
+                "impactDirection": "neutral",
+                "sentiment": "neutral",
+            },
+        ]
+        client = SequentialQueryClickHouseClient([rows, []])
+
+        record = worker.process_dirty_event(
+            {"eventType": "NEWS_DAILY_SUMMARY_DIRTY", "symbol": "AAPL", "date": "2026-07-01", "locale": "ko-KR"},
+            clickhouse_client=client,
+            redis_client=redis_client,
+            summarize_fn=lambda **_kwargs: {
+                "summary": "애플 일일 브리프입니다.",
+                "keyPoints": ["서비스 매출 개선"],
+                "positivePoints": ["서비스 성장"],
+                "concerns": [],
+                "impactDirection": "positive",
+                "sentiment": "positive",
+            },
+            model="unit-model",
+        )
+
+        self.assertEqual(record["articleIds"], ["aapl-daily-worker-1"])
+        self.assertEqual(record["mentionCount"], 1)
+        self.assertEqual(client.inserts[0][0], "news_company_daily_summaries")
+        cached = read_company_daily_summaries_from_redis(redis_client, "AAPL", locale="ko-KR")
+        self.assertEqual(cached[0]["summary"], "애플 일일 브리프입니다.")
+
+        skip_client = SequentialQueryClickHouseClient([rows, [{"articleIdsHash": record["articleIdsHash"]}]])
+        skipped = worker.process_dirty_event(
+            {"eventType": "NEWS_DAILY_SUMMARY_DIRTY", "symbol": "AAPL", "date": "2026-07-01", "locale": "ko-KR"},
+            clickhouse_client=skip_client,
+            redis_client=redis_client,
+            summarize_fn=lambda **_kwargs: {"summary": "재생성되면 안 됩니다."},
+            model="unit-model",
+        )
+        self.assertIsNone(skipped)
+        self.assertEqual(skip_client.inserts, [])
+
+    def test_news_hot_cache_v2_does_not_fan_out_multi_symbol_rows_to_other_companies(self):
+        worker = load_news_intelligence_worker_module()
+        client = RecordingClickHouseClient()
+        redis_client = MemoryRedis()
+        event = {
+            "eventType": "NEWS_ARTICLE",
+            "symbol": "NVDA",
+            "articleId": "nvda-apple-mention",
+            "headline": "Jim Cramer says Nvidia recommendation made a fortune",
+            "summary": "Apple is only present in provider metadata.",
+            "publishedAt": "2026-06-29T01:02:03.000Z",
+            "url": "https://example.com/nvda",
+            "source": "alpaca",
+            "symbols": ["AAPL", "NVDA", "MSFT", "META"],
+        }
+
+        worker.process_news_event(
+            event,
+            clickhouse_client=client,
+            redis_client=redis_client,
+            enrich_fn=lambda _event: {
+                "localizedHeadline": "엔비디아 추천 사례",
+                "localizedSummary": "엔비디아 추천 사례를 다룬 기사입니다.",
+                "keyPoints": ["엔비디아 직접 관련"],
+                "positivePoints": [],
+                "concerns": [],
+                "eventType": "commentary",
+                "sentiment": "neutral",
+                "impactDirection": "neutral",
+                "whyItMatters": "엔비디아 관련 기사입니다.",
+            },
+            locale="ko-KR",
+        )
+
+        self.assertEqual(read_localized_news_from_redis(redis_client, "AAPL", limit=5, locale="ko-KR"), [])
+        self.assertEqual(read_localized_news_from_redis(redis_client, "NVDA", limit=5, locale="ko-KR")[0]["articleId"], "nvda-apple-mention")
+
+    def test_news_intelligence_rebuild_reinserts_recent_rows_with_relevance_v2(self):
+        rebuild = load_news_intelligence_rebuild_module()
+        client = QueryRecordingClickHouseClient([
+            {
+                "publishedAt": "2026-06-29T01:02:03.000Z",
+                "symbol": "AAPL",
+                "articleId": "rebuild-aapl-1",
+                "locale": "ko-KR",
+                "symbols": ["AAPL"],
+                "headline": "Apple CEO Tim Cook flags memory chip shortage",
+                "summary": "Apple CEO Tim Cook discussed an extreme memory chip shortage.",
+                "localizedHeadline": "팀 쿡, 메모리칩 부족 언급",
+                "localizedSummary": "애플 CEO 팀 쿡이 메모리칩 부족을 언급했습니다.",
+                "keyPoints": ["애플 CEO 발언"],
+                "positivePoints": [],
+                "concerns": ["공급 부족"],
+                "eventType": "supply-shortage",
+                "sentiment": "mixed",
+                "impactDirection": "mixed",
+                "whyItMatters": "애플 공급망 이슈입니다.",
+                "url": "https://example.com/aapl-rebuild",
+                "source": "benzinga",
+                "model": "old-model",
+                "raw": "{}",
+            },
+            {
+                "publishedAt": "2026-06-29T01:02:03.000Z",
+                "symbol": "AAPL",
+                "articleId": "rebuild-aapl-1",
+                "locale": "ko-KR",
+                "symbols": ["AAPL", "NVDA"],
+                "headline": "Jim Cramer says Nvidia recommendation made a fortune",
+                "summary": "AAPL appears only in provider metadata.",
+                "localizedHeadline": "짐 크레이머, 엔비디아 추천 사례 언급",
+                "localizedSummary": "엔비디아 추천 사례를 다룬 기사입니다.",
+                "keyPoints": [],
+                "positivePoints": [],
+                "concerns": [],
+                "eventType": "market-commentary",
+                "sentiment": "neutral",
+                "impactDirection": "neutral",
+                "whyItMatters": "",
+                "url": "https://example.com/aapl-rebuild-duplicate",
+                "source": "benzinga",
+                "model": "old-model",
+                "raw": "{}",
+            }
+        ])
+
+        rebuilt = rebuild.rebuild_recent_localizations(client, days=30, batch_size=10, max_rows=10)
+
+        self.assertEqual(rebuilt, 1)
+        self.assertEqual(len(client.executions), 1)
+        self.assertIn("DELETE WHERE article_id IN", client.executions[0][0])
+        self.assertEqual(client.executions[0][1]["articleIds"], ["rebuild-aapl-1"])
+        self.assertEqual(client.inserts[0][0], "news_article_localizations")
+        row = client.inserts[0][1][0]
+        self.assertEqual(row["target_symbol"], "AAPL")
+        self.assertIn(row["subject_relevance"], {"primary", "secondary"})
+        self.assertGreater(row["relevance_score_v2"], 0.7)
+
+    def test_news_intelligence_worker_falls_back_when_openai_fails(self):
+        worker = load_news_intelligence_worker_module()
+        client = RecordingClickHouseClient()
+        redis_client = MemoryRedis()
+        event = {
+            "eventType": "NEWS_ARTICLE",
+            "symbol": "NVDA",
+            "articleId": "openai-fail-1",
+            "headline": "NVIDIA shares rise",
+            "summary": "NVIDIA shares rise after product news.",
+            "publishedAt": "2026-06-29T01:02:03.000Z",
+            "symbols": ["NVDA"],
+        }
+
+        with mock.patch.dict(os.environ, {
+            "OPENAI_API_KEY": "test-key",
+            "NEWS_INTELLIGENCE_PROVIDER": "openai",
+            "NEWS_INTELLIGENCE_DETERMINISTIC_FALLBACK": "true",
+        }, clear=False):
+            with mock.patch.object(worker, "enrich_news_with_openai", side_effect=RuntimeError("timeout")):
+                record = worker.process_news_event(event, clickhouse_client=client, redis_client=redis_client)
+
+        self.assertEqual(record["model"], "deterministic-fallback")
+        self.assertEqual(client.inserts[0][0], "news_article_localizations")
+        self.assertEqual(client.inserts[0][1][0]["localized_headline"], "NVIDIA shares rise")
+
     def test_clickhouse_news_articles_table_has_30_day_ttl(self):
         schema = (REPO_ROOT / "infra" / "clickhouse" / "initdb" / "01-market-data.sql").read_text(encoding="utf-8")
 
         self.assertIn("CREATE TABLE IF NOT EXISTS market_data.news_articles", schema)
-        self.assertIn("TTL published_at + INTERVAL 30 DAY DELETE", schema)
+        self.assertIn("TTL toDateTime(published_at) + INTERVAL 30 DAY DELETE", schema)
+        self.assertIn("CREATE TABLE IF NOT EXISTS market_data.news_article_localizations", schema)
+        self.assertIn("key_points Array(String)", schema)
+        self.assertIn("positive_points Array(String)", schema)
+        self.assertIn("concerns Array(String)", schema)
+        self.assertIn("target_symbol LowCardinality(String)", schema)
+        self.assertIn("subject_relevance LowCardinality(String)", schema)
+        self.assertIn("relevance_score_v2 Float32", schema)
+        self.assertIn("direct_signals Array(String)", schema)
+        self.assertIn("ORDER BY (symbol, locale, published_at, article_id)", schema)
+        self.assertIn("CREATE TABLE IF NOT EXISTS market_data.news_company_daily_summaries", schema)
+        self.assertIn("article_ids_hash String", schema)
+        self.assertIn("TTL toDate(date) + INTERVAL 366 DAY DELETE", schema)
 
     def test_storage_boundaries_skip_invalid_weekend_stock_candles(self):
         client = RecordingClickHouseClient()
@@ -3798,6 +4575,30 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             keys = materialize_keys_from_env(s3, "bucket", "market-data/final/candles")
 
         self.assertEqual(keys, ["market-data/final/candles/part-b.jsonl"])
+
+    def test_s3_client_can_use_s3_specific_credentials_for_minio(self):
+        captured = {}
+
+        def fake_client(service, **kwargs):
+            captured["service"] = service
+            captured["kwargs"] = kwargs
+            return object()
+
+        with mock.patch.dict(os.environ, {
+            "S3_ENDPOINT_URL": "http://minio:9000",
+            "S3_ACCESS_KEY_ID": "minioadmin",
+            "S3_SECRET_ACCESS_KEY": "minioadmin",
+            "S3_SESSION_TOKEN": "",
+            "AWS_REGION": "ap-northeast-2",
+        }, clear=False):
+            with mock.patch("alfaka.common.s3_client.boto3.client", side_effect=fake_client):
+                create_s3_client()
+
+        self.assertEqual(captured["service"], "s3")
+        self.assertEqual(captured["kwargs"]["endpoint_url"], "http://minio:9000")
+        self.assertEqual(captured["kwargs"]["aws_access_key_id"], "minioadmin")
+        self.assertEqual(captured["kwargs"]["aws_secret_access_key"], "minioadmin")
+        self.assertNotIn("aws_session_token", captured["kwargs"])
 
     def test_s3_materializer_reads_parquet_processed_candle_objects(self):
         if importlib.util.find_spec("pyarrow") is None:

@@ -25,7 +25,14 @@ class NewsLocalizationService:
         self.batch_size = max(1, int(os.getenv("AGENT_NEWS_LOCALIZATION_BATCH_SIZE", "4")))
         self._cache: dict[str, CachedNewsLocalization] = {}
 
-    def localize(self, *, symbol: str, intent: str, evidence: list[EvidenceItem]) -> list[EvidenceItem]:
+    def localize(
+        self,
+        *,
+        symbol: str,
+        intent: str,
+        evidence: list[EvidenceItem],
+        allow_runtime_openai: bool = True,
+    ) -> list[EvidenceItem]:
         news_items = [item for item in evidence if item.provider == "news" and item.status == "available"]
         if not news_items:
             return evidence
@@ -36,6 +43,9 @@ class NewsLocalizationService:
         uncached = []
         now = time.time()
         for item in news_items[: self.limit]:
+            raw = item.raw if isinstance(item.raw, dict) else {}
+            if raw.get("localizedTitle") and raw.get("localizedSummary"):
+                continue
             key = localization_cache_key(item)
             cached = self._cache.get(key)
             if cached and cached.expiresAt > now:
@@ -43,7 +53,12 @@ class NewsLocalizationService:
             else:
                 uncached.append(item)
 
-        if not uncached or os.getenv("AGENT_NEWS_LOCALIZATION_PROVIDER") == "deterministic":
+        if (
+            not uncached
+            or not allow_runtime_openai
+            or os.getenv("NEWS_LOCALIZATION_FALLBACK_ENABLED", "true").lower() in {"0", "false", "no"}
+            or os.getenv("AGENT_NEWS_LOCALIZATION_PROVIDER") == "deterministic"
+        ):
             return evidence
 
         localized = []

@@ -9,11 +9,14 @@ pods/market-ingestor/       Alpaca live WebSocket entrypoint
 pods/market-processor/      Python stream processor for local and current AWS runtime
 pods/s3-sink/               processed and raw Kafka topics to S3
 pods/clickhouse-loader/     processed Kafka topics to ClickHouse
+pods/news-intelligence-worker/ precomputes Korean news summaries/relevance
 pods/backfill-worker/       Redis queued historical backfill worker
 pods/market-processor/flink/ future Flink job contract for market processing
 jobs/symbol-registry-sync/  symbol metadata sync job
 jobs/coverage-repair/       chart coverage audit/backfill queue job
 jobs/initial-load/          chunked canonical history initial-load planner job
+jobs/news-backfill/         Alpaca News historical raw/archive backfill job
+jobs/news-intelligence-rebuild/ relevance v2 rebuild job for localized news
 config/                     market universe and subscription policy
 shared/alfaka/              market-data import namespace
 tests/                      market-data tests
@@ -28,10 +31,13 @@ infra/k8s/base/deployment-market-processor.yaml current Kubernetes processor dep
 pods/s3-sink/processed_sink.py                  wraps alfaka.storage.processed_s3_sink
 pods/s3-sink/raw_archive_sink.py                 wraps alfaka.storage.raw_s3_archive_sink
 pods/clickhouse-loader/processed_loader.py      wraps alfaka.storage.clickhouse_loader
+pods/news-intelligence-worker/main.py           precomputes Korean news intelligence records
 pods/backfill-worker/main.py                    wraps alfaka.backfill.worker
 jobs/symbol-registry-sync/main.py               wraps alfaka.tools.sync_symbol_registry
 jobs/coverage-repair/main.py                    audits /api/charts/candles and queues /api/charts/backfill
 jobs/initial-load/main.py                       plans/queues chunked initial_load jobs
+jobs/news-backfill/main.py                      stores Alpaca News raw payloads once per articleId
+jobs/news-intelligence-rebuild/main.py          rebuilds relevance v2 fields for recent localized news
 ```
 
 ## Images
@@ -39,7 +45,7 @@ jobs/initial-load/main.py                       plans/queues chunked initial_loa
 ```text
 gops-market-ingestor    market-ingestor
 gops-market-processor   market-processor, symbol-registry-sync, coverage-repair, initial-load
-gops-market-storage     processed S3 sink, raw S3 archive, clickhouse-loader
+gops-market-storage     processed S3 sink, raw S3 archive, clickhouse-loader, news-intelligence-worker, news jobs
 gops-backfill-worker    backfill-worker
 ```
 
@@ -159,3 +165,42 @@ Before broad preload, prove S3-to-ClickHouse materialization with one explicit p
 ```bash
 S3_MATERIALIZE_KEYS=market-data/final/candles/.../part-....parquet python -m alfaka.storage.s3_materializer
 ```
+
+## News Backfill And Hot Cache
+
+The news path is precomputed. User news questions should read Redis/ClickHouse and should not call Alpaca or OpenAI synchronously.
+
+```text
+Alpaca News API
+-> alpaca-news-ingestor / news-backfill
+-> Kafka market.news.alpaca.v1
+-> news-intelligence-worker
+-> ClickHouse news_article_localizations
+-> Redis news:v2:latest:ko:{symbol}
+-> API/agent response
+```
+
+Storage boundaries:
+
+- S3 keeps the Alpaca raw payload, preferably with `include_content=true`, as one canonical object per `articleId`.
+- S3 symbol indexes point to canonical raw objects; they do not duplicate full article bodies per symbol.
+- ClickHouse keeps recent app-serving rows, currently 30 days, with localized summaries, key points, relevance v2, sentiment, and links.
+- Redis keeps only latest N hot-cache summaries and metadata. It must not store article body/raw payload.
+
+The Kubernetes `alfaka-news-backfill` and `alfaka-news-intelligence-rebuild` Jobs are safe by default: they render with dry-run env values. Set `NEWS_BACKFILL_DRY_RUN=false` or `NEWS_INTELLIGENCE_REBUILD_DRY_RUN=false` only for an intentional one-shot run after reviewing scope and API cost.
+
+Local small smoke:
+
+```bash
+NEWS_BACKFILL_SYMBOLS=AAPL,NVDA NEWS_BACKFILL_DAYS=2 NEWS_BACKFILL_CHUNK_DAYS=2 NEWS_BACKFILL_MAX_PAGES_PER_CHUNK=1 NEWS_BACKFILL_DRY_RUN=false docker compose --profile jobs --profile local-s3 run --rm news-backfill
+```
+
+AWS reviewed run:
+
+```bash
+AWS_ACCOUNT_ID=<aws-account-id> IMAGE_TAG=news-v2-smoke ./scripts/aws/build-and-push-images.sh market-storage
+AWS_ACCOUNT_ID=<aws-account-id> IMAGE_TAG=news-v2-smoke NEWS_BACKFILL_DRY_RUN=false NEWS_BACKFILL_SYMBOLS=AAPL,NVDA NEWS_BACKFILL_DAYS=2 NEWS_BACKFILL_MAX_PAGES_PER_CHUNK=1 ./scripts/aws/run-news-backfill-job.sh
+```
+
+For the full S&P 500 1-year run, remove `NEWS_BACKFILL_SYMBOLS`, keep `NEWS_BACKFILL_UNIVERSE=sp500`, and run only after the smoke confirms S3, ClickHouse, and Redis counts.
+For a long backfill, split the universe into deterministic shards with `NEWS_BACKFILL_SHARD_INDEX` and `NEWS_BACKFILL_SHARD_COUNT`; for example, run indexes `0..7` with count `8`.

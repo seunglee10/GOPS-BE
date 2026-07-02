@@ -1,0 +1,31 @@
+# 역할: 회사/날짜 단위 뉴스 daily brief를 사전 생성해 ClickHouse와 Redis에 저장합니다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alfaka-news-daily-summary-worker
+  namespace: alfaka-market-data
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: alfaka-news-daily-summary-worker
+  template:
+    metadata:
+      labels:
+        app: alfaka-news-daily-summary-worker
+    spec:
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: news-daily-summary-worker
+          image: YOUR_ECR_REPOSITORY/gops-market-storage:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "systems/market-data/pods/news-daily-summary-worker/main.py"]
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-clickhouse-secret
+                optional: true
+            - secretRef:
+                name: alfaka-openai-secret
+                optional: true

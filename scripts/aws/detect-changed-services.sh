@@ -130,7 +130,7 @@ select_services_for_path() {
     systems/market-data/pods/market-processor/* | systems/market-data/jobs/symbol-registry-sync/* | systems/market-data/jobs/coverage-repair/* | systems/market-data/jobs/initial-load/*)
       add_service market-processor
       ;;
-    systems/market-data/pods/s3-sink/* | systems/market-data/pods/clickhouse-loader/*)
+    systems/market-data/pods/s3-sink/* | systems/market-data/pods/clickhouse-loader/* | systems/market-data/pods/news-intelligence-worker/* | systems/market-data/jobs/news-backfill/* | systems/market-data/jobs/news-intelligence-rebuild/*)
       add_service market-storage
       ;;
     systems/market-data/pods/backfill-worker/*)

@@ -569,6 +569,44 @@ class ClickHouseMarketDataProvider:
                 "ADD COLUMN IF NOT EXISTS feed_profile LowCardinality(String) DEFAULT feed AFTER feed, "
                 "ADD COLUMN IF NOT EXISTS market_session LowCardinality(String) DEFAULT 'unknown' AFTER feed_profile"
             )
+        self.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {self.table('news_company_daily_summaries')}
+            (
+                date Date,
+                symbol LowCardinality(String),
+                locale LowCardinality(String),
+                summary String,
+                key_points Array(String),
+                positive_points Array(String),
+                concerns Array(String),
+                impact_direction LowCardinality(String),
+                sentiment LowCardinality(String),
+                article_ids Array(String),
+                article_ids_hash String,
+                article_count UInt32,
+                mention_count UInt32,
+                status LowCardinality(String),
+                model LowCardinality(String),
+                generated_at DateTime64(3, 'UTC'),
+                version LowCardinality(String),
+                raw String,
+                inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+            )
+            ENGINE = ReplacingMergeTree(generated_at)
+            PARTITION BY toYYYYMM(date)
+            ORDER BY (symbol, locale, date, version)
+            TTL toDate(date) + INTERVAL 366 DAY DELETE
+            """
+        )
+        self.execute(
+            f"ALTER TABLE {self.table('news_article_localizations')} "
+            "ADD COLUMN IF NOT EXISTS target_symbol LowCardinality(String) DEFAULT symbol AFTER symbols, "
+            "ADD COLUMN IF NOT EXISTS subject_relevance LowCardinality(String) DEFAULT 'mention' AFTER target_symbol, "
+            "ADD COLUMN IF NOT EXISTS relevance_score_v2 Float32 DEFAULT 0 AFTER subject_relevance, "
+            "ADD COLUMN IF NOT EXISTS relevance_reason String DEFAULT '' AFTER relevance_score_v2, "
+            "ADD COLUMN IF NOT EXISTS direct_signals Array(String) DEFAULT [] AFTER relevance_reason"
+        )
 
     def search_symbols(self, query_text, limit=20):
         query = f"""
@@ -634,6 +672,128 @@ class ClickHouseMarketDataProvider:
         FORMAT JSONEachRow
         """
         return self.query_json_each_row(query, {"symbol": symbol, "limit": int(limit), "days": int(days)})
+
+    def localized_news_articles(self, symbol, limit=10, days=7, locale="ko-KR"):
+        return self.localized_news_articles_for_symbols([symbol], limit=limit, days=days, locale=locale)
+
+    def localized_news_articles_for_symbols(self, symbols, limit=10, days=7, locale="ko-KR"):
+        normalized_symbols = []
+        for value in symbols or []:
+            symbol = str(value or "").strip().upper()
+            if symbol and symbol not in normalized_symbols:
+                normalized_symbols.append(symbol)
+        if not normalized_symbols:
+            return []
+        direct_rows = self.localized_news_articles_for_symbols_by_relevance(
+            normalized_symbols,
+            limit=limit,
+            days=days,
+            locale=locale,
+            relevance_levels=["primary", "secondary"],
+        )
+        if direct_rows:
+            return direct_rows
+        return self.localized_news_articles_for_symbols_by_relevance(
+            normalized_symbols,
+            limit=min(int(limit), 3),
+            days=days,
+            locale=locale,
+            relevance_levels=["mention"],
+        )
+
+    def localized_news_articles_for_symbols_by_relevance(self, symbols, limit=10, days=7, locale="ko-KR", relevance_levels=None):
+        normalized_symbols = []
+        for value in symbols or []:
+            symbol = str(value or "").strip().upper()
+            if symbol and symbol not in normalized_symbols:
+                normalized_symbols.append(symbol)
+        if not normalized_symbols:
+            return []
+        levels = [str(level or "").strip().lower() for level in (relevance_levels or ["primary", "secondary"]) if str(level or "").strip()]
+        query = f"""
+        SELECT
+          formatDateTime(published_at, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS publishedAt,
+          symbol,
+          article_id AS articleId,
+          locale,
+          symbols,
+          target_symbol AS targetSymbol,
+          subject_relevance AS subjectRelevance,
+          relevance_score_v2 AS relevanceScoreV2,
+          relevance_reason AS relevanceReason,
+          direct_signals AS directSignals,
+          headline,
+          summary,
+          url,
+          source,
+          localized_headline AS localizedHeadline,
+          localized_summary AS localizedSummary,
+          key_points AS keyPoints,
+          positive_points AS positivePoints,
+          concerns,
+          event_type AS eventType,
+          sentiment,
+          impact_direction AS impactDirection,
+          why_it_matters AS whyItMatters,
+          model,
+          formatDateTime(localized_at, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS localizedAt
+        FROM {self.table('news_article_localizations')}
+        WHERE target_symbol IN {{symbols:Array(String)}}
+          AND locale = {{locale:String}}
+          AND subject_relevance IN {{relevanceLevels:Array(String)}}
+          AND published_at >= now64(3) - INTERVAL {{days:UInt32}} DAY
+        ORDER BY relevance_score_v2 DESC, published_at DESC, localized_at DESC
+        LIMIT {{limit:UInt32}}
+        FORMAT JSONEachRow
+        """
+        return self.query_json_each_row(
+            query,
+            {
+                "symbols": normalized_symbols,
+                "relevanceLevels": levels,
+                "locale": locale,
+                "limit": int(limit),
+                "days": int(days),
+            },
+        )
+
+    def company_daily_news_summaries(self, symbol, limit=5, days=30, locale="ko-KR"):
+        query = f"""
+        SELECT
+          toString(date) AS date,
+          symbol,
+          locale,
+          summary,
+          key_points AS keyPoints,
+          positive_points AS positivePoints,
+          concerns,
+          impact_direction AS impactDirection,
+          sentiment,
+          article_ids AS articleIds,
+          article_ids_hash AS articleIdsHash,
+          article_count AS articleCount,
+          mention_count AS mentionCount,
+          status,
+          model,
+          formatDateTime(generated_at, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS generatedAt,
+          version
+        FROM {self.table('news_company_daily_summaries')}
+        WHERE symbol = {{symbol:String}}
+          AND locale = {{locale:String}}
+          AND date >= toDate(now('UTC') - INTERVAL {{days:UInt32}} DAY)
+        ORDER BY date DESC, generated_at DESC
+        LIMIT {{limit:UInt32}}
+        FORMAT JSONEachRow
+        """
+        return self.query_json_each_row(
+            query,
+            {
+                "symbol": str(symbol or "").strip().upper(),
+                "locale": locale,
+                "limit": int(limit),
+                "days": int(days),
+            },
+        )
 
     def table(self, name):
         return f"{clickhouse_identifier(self.database)}.{clickhouse_identifier(name)}"

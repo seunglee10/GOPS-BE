@@ -20,7 +20,7 @@ sys.modules.setdefault(
 )
 sys.modules.setdefault("redis", types.SimpleNamespace(from_url=lambda *args, **kwargs: None))
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "systems" / "market-data" / "shared"))
 sys.path.insert(0, str(ROOT / "systems" / "api-server" / "pods" / "api-server" / "gops-backend"))
 

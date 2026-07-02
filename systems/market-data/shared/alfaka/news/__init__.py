@@ -1,0 +1,1 @@
+"""News-specific shared utilities."""

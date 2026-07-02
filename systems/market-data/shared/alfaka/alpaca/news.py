@@ -2,6 +2,7 @@
 # 사용: alpaca-news-ingestor가 Kafka topic market.news.alpaca.v1에 넣을 payload를 만듭니다.
 import hashlib
 import os
+import time
 
 from alfaka.common.env import parse_csv, utc_now_iso
 
@@ -18,6 +19,67 @@ def fetch_alpaca_news(
     start=None,
     end=None,
     sort="desc",
+    page_token=None,
+):
+    page = fetch_alpaca_news_page(
+        key_id,
+        secret_key,
+        symbols=symbols,
+        limit=limit,
+        include_content=include_content,
+        start=start,
+        end=end,
+        sort=sort,
+        page_token=page_token,
+    )
+    return page["news"]
+
+
+def iter_alpaca_news_pages(
+    key_id,
+    secret_key,
+    symbols=None,
+    limit=50,
+    include_content=False,
+    start=None,
+    end=None,
+    sort="asc",
+    page_token=None,
+    max_pages=None,
+):
+    next_page_token = page_token
+    page_number = 0
+    while True:
+        page = fetch_alpaca_news_page(
+            key_id,
+            secret_key,
+            symbols=symbols,
+            limit=limit,
+            include_content=include_content,
+            start=start,
+            end=end,
+            sort=sort,
+            page_token=next_page_token,
+        )
+        page_number += 1
+        yield {**page, "pageNumber": page_number}
+        next_page_token = page.get("nextPageToken")
+        if not next_page_token:
+            return
+        if max_pages and page_number >= int(max_pages):
+            return
+
+
+def fetch_alpaca_news_page(
+    key_id,
+    secret_key,
+    symbols=None,
+    limit=50,
+    include_content=False,
+    start=None,
+    end=None,
+    sort="desc",
+    page_token=None,
 ):
     import requests
 
@@ -34,19 +96,58 @@ def fetch_alpaca_news(
         params["start"] = start
     if end:
         params["end"] = end
+    if page_token:
+        params["page_token"] = page_token
 
-    response = requests.get(
-        os.getenv("ALPACA_NEWS_API_URL", NEWS_API_URL),
-        headers={
-            "APCA-API-KEY-ID": key_id,
-            "APCA-API-SECRET-KEY": secret_key,
-        },
-        params=params,
-        timeout=float(os.getenv("ALPACA_NEWS_TIMEOUT_SECONDS", "10")),
-    )
-    response.raise_for_status()
+    max_attempts = max(1, int(os.getenv("ALPACA_NEWS_MAX_RETRIES", "5")))
+    retry_sleep_seconds = max(0.0, float(os.getenv("ALPACA_NEWS_RETRY_SLEEP_SECONDS", "1")))
+    retry_max_sleep_seconds = max(retry_sleep_seconds, float(os.getenv("ALPACA_NEWS_RETRY_MAX_SLEEP_SECONDS", "30")))
+    response = None
+    endpoint = os.getenv("ALPACA_NEWS_API_URL", NEWS_API_URL)
+    headers = {
+        "APCA-API-KEY-ID": key_id,
+        "APCA-API-SECRET-KEY": secret_key,
+    }
+    request_exception = getattr(requests, "RequestException", Exception)
+    for attempt in range(1, max_attempts + 1):
+        try:
+            response = requests.get(
+                endpoint,
+                headers=headers,
+                params=params,
+                timeout=float(os.getenv("ALPACA_NEWS_TIMEOUT_SECONDS", "10")),
+            )
+        except request_exception as exc:
+            if attempt >= max_attempts:
+                raise RuntimeError(f"Alpaca news request failed after retries: {exc}") from exc
+            time.sleep(news_retry_delay(None, attempt, retry_sleep_seconds, retry_max_sleep_seconds))
+            continue
+        if response.status_code == 429 or response.status_code >= 500:
+            if attempt >= max_attempts:
+                raise RuntimeError(f"Alpaca news request failed: status={response.status_code}, body={response.text}")
+            time.sleep(news_retry_delay(response, attempt, retry_sleep_seconds, retry_max_sleep_seconds))
+            continue
+        break
+    if response is None:
+        return {"news": [], "nextPageToken": None}
+    if response.status_code >= 400:
+        raise RuntimeError(f"Alpaca news request failed: status={response.status_code}, body={response.text}")
     payload = response.json()
-    return payload.get("news") if isinstance(payload, dict) and isinstance(payload.get("news"), list) else []
+    news = payload.get("news") if isinstance(payload, dict) and isinstance(payload.get("news"), list) else []
+    next_page_token = payload.get("next_page_token") if isinstance(payload, dict) else None
+    return {"news": news, "nextPageToken": next_page_token}
+
+
+def news_retry_delay(response, attempt, base_seconds, max_seconds):
+    retry_after = None
+    if response is not None:
+        retry_after = getattr(response, "headers", {}).get("Retry-After")
+    if retry_after:
+        try:
+            return min(float(retry_after), max_seconds)
+        except ValueError:
+            pass
+    return min(base_seconds * (2 ** max(attempt - 1, 0)), max_seconds)
 
 
 def build_news_events(article, requested_symbols=None, received_at=None):

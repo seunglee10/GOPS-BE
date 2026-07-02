@@ -24,6 +24,7 @@ from gops_agents.providers import ClickHouseNewsProvider, GraphDBOntologyProvide
 from gops_agents.synthesizer import FinalAnswerSynthesizer
 import alfaka.alpaca.news  # noqa: F401
 import alfaka.common.secrets  # noqa: F401
+from alfaka.news.relevance import classify_subject_relevance
 
 
 class FakeSparqlClient:
@@ -63,6 +64,37 @@ class FakeClickHouseProvider:
         self.calls += 1
         self.requested_symbols.append(symbol)
         return self.rows
+
+
+class FakeLocalizedClickHouseProvider(FakeClickHouseProvider):
+    def __init__(self, rows, localized_rows=None):
+        super().__init__(rows)
+        self.localized_rows = localized_rows or []
+        self.localized_calls = 0
+        self.localized_requested_symbols = []
+
+    def localized_news_articles_for_symbols(self, symbols, limit, days, locale="ko-KR"):
+        self.localized_calls += 1
+        self.localized_requested_symbols.append(list(symbols))
+        return self.localized_rows[:limit]
+
+
+class FakeLocalizedRedisProvider:
+    def __init__(self, rows, daily_rows=None):
+        self.rows = rows
+        self.daily_rows = daily_rows or []
+        self.calls = 0
+        self.requested_symbols = []
+        self.daily_calls = 0
+
+    def localized_news_articles_for_symbols(self, symbols, limit, locale="ko-KR"):
+        self.calls += 1
+        self.requested_symbols.append(list(symbols))
+        return self.rows[:limit]
+
+    def company_daily_news_summaries(self, symbol, limit=5, locale="ko-KR"):
+        self.daily_calls += 1
+        return self.daily_rows[:limit]
 
 
 class ThemeClickHouseProvider:
@@ -246,11 +278,11 @@ class AgentOrchestrationTests(unittest.TestCase):
             "symbol": "NVDA",
             "intent": "뉴스 보여줘",
             "agentIds": ["agent-01"],
-            "layoutContext": layout_context(),
             "chartContext": {
                 "chartDocument": {"symbol": "NVDA", "timeframe": "1m"},
                 "dataStatus": {"candleCount": 10, "state": "ready"},
             },
+            "layoutContext": layout_context(),
         })
 
         roles = {finding.role for finding in report.findings}
@@ -288,6 +320,7 @@ class AgentOrchestrationTests(unittest.TestCase):
                 "chartDocument": {"symbol": "NVDA", "timeframe": "1m"},
                 "dataStatus": {"candleCount": 10, "state": "ready"},
             },
+            "layoutContext": layout_context(),
         })
 
         self.assertEqual(report.route.intentType, "market-move")
@@ -336,8 +369,8 @@ class AgentOrchestrationTests(unittest.TestCase):
                 "url": "https://example.com/new",
             },
             {
-                "headline": "Macro stocks mixed",
-                "summary": "Chip stocks are mixed.",
+                "headline": "Nvidia AI demand supports chip stocks",
+                "summary": "NVDA suppliers gained as AI chip demand stayed strong.",
                 "publishedAt": "2026-06-27T00:00:00Z",
                 "url": "https://example.com/macro",
             },
@@ -350,12 +383,145 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(evidence[0].url, "https://example.com/new")
         self.assertEqual(evidence[0].raw["eventType"], "earnings")
         self.assertEqual(evidence[0].raw["impactDirection"], "positive")
-        self.assertGreater(evidence[0].raw["relevanceScore"], evidence[1].raw["relevanceScore"])
+        self.assertEqual(evidence[0].raw["relevanceScore"], evidence[1].raw["relevanceScore"])
+        self.assertGreater(evidence[0].raw["importanceScore"], evidence[1].raw["importanceScore"])
         self.assertGreater(evidence[0].raw["importanceScore"], 0)
+
+    def test_news_provider_reads_prelocalized_redis_before_clickhouse_originals(self):
+        redis = FakeLocalizedRedisProvider([
+            {
+                "articleId": "ko-aapl-1",
+                "symbol": "AAPL",
+                "symbols": ["AAPL"],
+                "headline": "Apple supplier expands",
+                "summary": "Apple supplier plans expansion.",
+                "localizedHeadline": "애플 공급사, 사업 확장 추진",
+                "localizedSummary": "애플 공급사가 사업 확장을 추진한다는 내용입니다.",
+                "publishedAt": utc_now_iso(),
+                "url": "https://example.com/aapl-ko",
+                "eventType": "corporate-action",
+                "sentiment": "neutral",
+                "impactDirection": "neutral",
+                "keyPoints": ["애플 공급망 관련 뉴스"],
+                "positivePoints": [],
+                "concerns": [],
+                "whyItMatters": "애플 공급망 이슈입니다.",
+            }
+        ])
+        clickhouse = FakeClickHouseProvider([])
+        provider = ClickHouseNewsProvider(
+            clickhouse_provider=clickhouse,
+            redis_provider=redis,
+            limit=5,
+            direct_fallback=False,
+        )
+
+        evidence = provider.fetch(ProviderRequest("AAPL", "애플 뉴스 보여줘"))
+
+        self.assertEqual(redis.calls, 1)
+        self.assertEqual(clickhouse.calls, 0)
+        self.assertEqual(evidence[0].title, "애플 공급사, 사업 확장 추진")
+        self.assertEqual(evidence[0].raw["localizedTitle"], "애플 공급사, 사업 확장 추진")
+        self.assertEqual(evidence[0].raw["localizedSummary"], "애플 공급사가 사업 확장을 추진한다는 내용입니다.")
+        self.assertEqual(evidence[0].raw["keyPoints"], ["애플 공급망 관련 뉴스"])
+        self.assertEqual(evidence[0].raw["dataSource"], "prelocalized")
+
+    def test_news_provider_reads_prelocalized_clickhouse_when_redis_misses(self):
+        redis = FakeLocalizedRedisProvider([])
+        clickhouse = FakeLocalizedClickHouseProvider(
+            [],
+            localized_rows=[
+                {
+                    "articleId": "ko-ddog-1",
+                    "symbol": "DDOG",
+                    "symbols": ["DDOG"],
+                    "headline": "Datadog launches observability feature",
+                    "summary": "Datadog announced a new feature.",
+                    "localizedHeadline": "데이터독, 관측성 기능 출시",
+                    "localizedSummary": "데이터독이 새 관측성 기능을 발표했습니다.",
+                    "publishedAt": utc_now_iso(),
+                    "url": "https://example.com/ddog-ko",
+                    "eventType": "product-market",
+                    "sentiment": "positive",
+                    "impactDirection": "positive",
+                    "whyItMatters": "제품 경쟁력과 관련된 뉴스입니다.",
+                }
+            ],
+        )
+        provider = ClickHouseNewsProvider(
+            clickhouse_provider=clickhouse,
+            redis_provider=redis,
+            limit=5,
+            direct_fallback=False,
+        )
+
+        evidence = provider.fetch(ProviderRequest("DDOG", "DDOG 뉴스 알려줘"))
+
+        self.assertEqual(redis.calls, 1)
+        self.assertEqual(clickhouse.localized_calls, 1)
+        self.assertEqual(clickhouse.calls, 0)
+        self.assertEqual(evidence[0].title, "데이터독, 관측성 기능 출시")
+        self.assertEqual(evidence[0].raw["eventType"], "product-market")
+        self.assertEqual(evidence[0].raw["impactDirection"], "positive")
+
+    def test_news_provider_keeps_direct_subject_news_before_metadata_mentions(self):
+        redis = FakeLocalizedRedisProvider([
+            {
+                "articleId": "aapl-primary-1",
+                "symbol": "AAPL",
+                "targetSymbol": "AAPL",
+                "symbols": ["AAPL"],
+                "headline": "Apple CEO Tim Cook flags memory chip shortage",
+                "summary": "Apple CEO Tim Cook discussed memory chip shortages.",
+                "localizedHeadline": "팀 쿡, 메모리칩 부족 언급",
+                "localizedSummary": "애플 CEO 팀 쿡이 메모리칩 부족을 언급했습니다.",
+                "publishedAt": utc_now_iso(),
+                "url": "https://example.com/aapl-primary",
+                "subjectRelevance": "primary",
+                "relevanceScoreV2": 0.95,
+            },
+            {
+                "articleId": "aapl-mention-1",
+                "symbol": "AAPL",
+                "targetSymbol": "AAPL",
+                "symbols": ["AAPL", "NVDA", "MSFT", "META"],
+                "headline": "Jim Cramer says Nvidia recommendation made a fortune",
+                "summary": "AAPL appears only in provider metadata.",
+                "localizedHeadline": "짐 크레이머, 엔비디아 추천 사례 언급",
+                "localizedSummary": "엔비디아 추천 사례를 다룬 기사입니다.",
+                "publishedAt": utc_now_iso(),
+                "url": "https://example.com/aapl-mention",
+                "subjectRelevance": "mention",
+                "relevanceScoreV2": 0.35,
+            },
+        ])
+        provider = ClickHouseNewsProvider(redis_provider=redis, clickhouse_provider=FakeClickHouseProvider([]), limit=5)
+
+        evidence = provider.fetch(ProviderRequest("AAPL", "애플 뉴스 보여줘"))
+
+        self.assertEqual([item.raw["articleId"] for item in evidence], ["aapl-primary-1"])
+        self.assertEqual(evidence[0].raw["subjectRelevance"], "primary")
+
+    def test_news_relevance_demotes_final_trades_lists_to_mentions(self):
+        list_only = classify_subject_relevance(
+            target_symbol="AAPL",
+            headline="CNBC Final Trades: Apple, Amgen, Micron Technology, Palo Alto Networks",
+            summary="The segment listed several stocks as final trades.",
+            symbols=["AAPL", "AMGN", "MU", "PANW"],
+        )
+        contextual = classify_subject_relevance(
+            target_symbol="AAPL",
+            headline="CNBC Final Trades: Apple, Amgen, Micron Technology, Palo Alto Networks",
+            summary="Brown said Apple shares could stay bullish into the second half.",
+            symbols=["AAPL", "AMGN", "MU", "PANW"],
+        )
+
+        self.assertEqual(list_only["subjectRelevance"], "mention")
+        self.assertEqual(contextual["subjectRelevance"], "secondary")
 
     def test_news_provider_uses_alpaca_fallback_when_clickhouse_is_empty(self):
         clickhouse = FakeClickHouseProvider([])
-        provider = ClickHouseNewsProvider(clickhouse_provider=clickhouse, limit=5, publish_fallback=False)
+        provider = ClickHouseNewsProvider(clickhouse_provider=clickhouse, limit=5, direct_fallback=True, publish_fallback=False)
         article = {
             "id": "fallback-1",
             "headline": "NVDA shares rise after new AI chip launch",
@@ -451,6 +617,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         provider = ClickHouseNewsProvider(
             clickhouse_provider=clickhouse,
             limit=5,
+            direct_fallback=True,
             publish_fallback=False,
             cache=MemoryNewsEvidenceCache(),
         )
@@ -608,6 +775,8 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertFalse(first.timing["cacheHit"])
         self.assertTrue(second.timing["cacheHit"])
         self.assertEqual(second.timing["cacheLayer"], "analysis")
+        self.assertEqual(second.timing["directNewsCount"], first.timing["directNewsCount"])
+        self.assertEqual(second.timing["mentionNewsCount"], first.timing["mentionNewsCount"])
         self.assertEqual(news_agent.calls, 1)
         self.assertEqual(synthesizer.calls, 1)
         self.assertEqual(first.finalAnswer.summary, second.finalAnswer.summary)
@@ -821,7 +990,7 @@ class AgentOrchestrationTests(unittest.TestCase):
             "AGENT_FINAL_ANSWER_PROVIDER": "deterministic",
         }, clear=False):
             with patch("urllib.request.urlopen", return_value=FakeOpenAIResponse(response)):
-                report = orchestrator.analyze({"symbol": "NVDA", "intent": "뉴스 보여줘", "agentIds": ["agent-02"]})
+                report = orchestrator.analyze({"symbol": "NVDA", "intent": "NVDA 왜 올랐는지 봐줘", "agentIds": ["agent-01", "agent-02"]})
 
         evidence = report.providerEvidence[0]
         self.assertEqual(evidence.raw["originalTitle"], "NVDA shares rise after strong earnings")
@@ -911,6 +1080,41 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(first.evidence[0].raw["localizedTitle"], "엔비디아 실적 호조")
         self.assertEqual(second.evidence[0].raw["localizedTitle"], "엔비디아 실적 호조")
 
+    def test_news_localization_skips_prelocalized_evidence(self):
+        provider = ClickHouseNewsProvider(
+            clickhouse_provider=FakeLocalizedClickHouseProvider(
+                [],
+                localized_rows=[
+                    {
+                        "articleId": "prelocalized-1",
+                        "symbol": "NVDA",
+                        "symbols": ["NVDA"],
+                        "headline": "NVDA shares rise after strong earnings",
+                        "summary": "NVDA revenue beat expectations.",
+                        "localizedHeadline": "엔비디아, 실적 호조에 상승",
+                        "localizedSummary": "엔비디아 매출이 기대치를 웃돌았습니다.",
+                        "publishedAt": utc_now_iso(),
+                        "url": "https://example.com/prelocalized",
+                    }
+                ],
+            ),
+            publish_fallback=False,
+        )
+        agent = NewsAgent(provider, localizer=NewsLocalizationService())
+        context = AgentContext(symbol="NVDA", intent="뉴스 보여줘")
+
+        with patch.dict(os.environ, {
+            "OPENAI_API_KEY": "test-key",
+            "AGENT_NEWS_LOCALIZATION_PROVIDER": "openai",
+            "AGENT_ROLE_ANALYSIS_PROVIDER": "deterministic",
+        }, clear=False):
+            with patch("urllib.request.urlopen") as urlopen:
+                finding = agent.analyze(context)
+
+        urlopen.assert_not_called()
+        self.assertEqual(finding.evidence[0].raw["localizedTitle"], "엔비디아, 실적 호조에 상승")
+        self.assertEqual(finding.evidence[0].raw["localizedSummary"], "엔비디아 매출이 기대치를 웃돌았습니다.")
+
     def test_news_final_answer_prefers_localized_text(self):
         evidence = [
             EvidenceItem(
@@ -943,7 +1147,7 @@ class AgentOrchestrationTests(unittest.TestCase):
 
         self.assertIn("엔비디아, 실적 호조에 상승", answer.sections[0].bullets[0])
         self.assertIn("엔비디아 매출이 기대치를 웃돌며", answer.sections[0].bullets[0])
-        self.assertEqual(answer.citations[0].title, "엔비디아, 실적 호조에 상승")
+        self.assertEqual(answer.citations, [])
 
     def test_explicit_ticker_in_intent_overrides_current_chart_symbol_for_news(self):
         clickhouse = FakeClickHouseProvider([
@@ -965,6 +1169,7 @@ class AgentOrchestrationTests(unittest.TestCase):
             "symbol": "NVDA",
             "intent": "XLV 헬스케어 뉴스 보여줘",
             "agentIds": ["agent-02"],
+            "layoutContext": layout_context(),
             "chartContext": {
                 "chartDocument": {"symbol": "NVDA", "timeframe": "1m"},
                 "dataStatus": {"candleCount": 10, "state": "ready"},
@@ -973,10 +1178,73 @@ class AgentOrchestrationTests(unittest.TestCase):
 
         self.assertEqual(report.symbol, "XLV")
         self.assertEqual(clickhouse.requested_symbols, ["XLV"])
-        self.assertIn("XLV", report.finalAnswer.title)
+        self.assertEqual(report.finalAnswer.title, "뉴스를 가져왔습니다")
         news_command = news_panel_props_command(report)
         self.assertEqual(news_command["payload"]["props"]["symbol"], "XLV")
         self.assertEqual(news_command["payload"]["props"]["latestNews"][0]["symbol"], "XLV")
+
+    def test_lowercase_ticker_in_intent_normalizes_against_known_universe(self):
+        self.assertEqual(extract_symbol_from_intent("acgl 뉴스 보여줘"), "ACGL")
+        self.assertIsNone(extract_symbol_from_intent("show news about it"))
+
+        clickhouse = FakeClickHouseProvider([
+            {
+                "articleId": "acgl-1",
+                "headline": "Arch Capital shares rise after insurance update",
+                "summary": "ACGL insurance results improved.",
+                "publishedAt": utc_now_iso(),
+                "url": "https://example.com/acgl",
+                "symbols": ["ACGL"],
+                "source": "alpaca",
+            }
+        ])
+        provider = ClickHouseNewsProvider(clickhouse_provider=clickhouse, publish_fallback=False)
+        orchestrator = AgentOrchestrator()
+        orchestrator.news_agent = NewsAgent(provider)
+
+        report = orchestrator.analyze({
+            "symbol": "NVDA",
+            "intent": "acgl 뉴스 보여줘",
+            "agentIds": ["agent-02"],
+            "chartContext": {
+                "chartDocument": {"symbol": "NVDA", "timeframe": "1m"},
+                "dataStatus": {"candleCount": 10, "state": "ready"},
+            },
+            "layoutContext": layout_context(),
+        })
+
+        self.assertEqual(report.symbol, "ACGL")
+        self.assertEqual(clickhouse.requested_symbols, ["ACGL"])
+        news_command = news_panel_props_command(report)
+        self.assertEqual(news_command["payload"]["props"]["symbol"], "ACGL")
+        self.assertEqual(news_command["payload"]["props"]["latestNews"][0]["symbol"], "ACGL")
+
+    def test_explicit_ticker_with_no_news_does_not_fallback_to_current_chart_symbol(self):
+        clickhouse = FakeClickHouseProvider([])
+        provider = ClickHouseNewsProvider(clickhouse_provider=clickhouse, redis_provider=FakeLocalizedRedisProvider([]), publish_fallback=False)
+        orchestrator = AgentOrchestrator()
+        orchestrator.news_agent = NewsAgent(provider)
+
+        report = orchestrator.analyze({
+            "symbol": "NVDA",
+            "intent": "acgl 뉴스 보여줘",
+            "agentIds": ["agent-02"],
+            "chartContext": {
+                "chartDocument": {"symbol": "NVDA", "timeframe": "1m"},
+                "dataStatus": {"candleCount": 10, "state": "ready"},
+            },
+            "layoutContext": layout_context(),
+        })
+
+        self.assertEqual(report.symbol, "ACGL")
+        self.assertEqual(clickhouse.requested_symbols, ["ACGL"])
+        self.assertEqual(report.finalAnswer.summary, "ACGL 관련 저장 뉴스가 없습니다.")
+        news_command = news_panel_props_command(report)
+        props = news_command["payload"]["props"]
+        self.assertEqual(props["symbol"], "ACGL")
+        self.assertEqual(props["status"], "empty")
+        self.assertEqual(props["latestNews"], [])
+        self.assertIn("ACGL", props["emptyMessage"])
 
     def test_company_name_alias_in_intent_overrides_current_chart_symbol_for_news(self):
         self.assertEqual(extract_symbol_from_intent("애플 뉴스 찾아줘"), "AAPL")
@@ -1010,10 +1278,91 @@ class AgentOrchestrationTests(unittest.TestCase):
 
         self.assertEqual(report.symbol, "AAPL")
         self.assertEqual(clickhouse.requested_symbols, ["AAPL"])
-        self.assertIn("AAPL", report.finalAnswer.title)
+        self.assertEqual(report.finalAnswer.title, "뉴스를 가져왔습니다")
         news_command = news_panel_props_command(report)
         self.assertEqual(news_command["payload"]["props"]["symbol"], "AAPL")
         self.assertEqual(news_command["payload"]["props"]["latestNews"][0]["symbol"], "AAPL")
+
+    def test_news_only_request_skips_runtime_openai_and_uses_fast_deterministic_answer(self):
+        clickhouse = FakeClickHouseProvider([
+            {
+                "articleId": "aapl-fast-1",
+                "headline": "Apple CEO Tim Cook flags memory chip shortage",
+                "summary": "Apple CEO Tim Cook discussed an extreme memory chip shortage.",
+                "publishedAt": utc_now_iso(),
+                "url": "https://example.com/aapl-fast",
+                "symbols": ["AAPL"],
+                "source": "alpaca",
+            }
+        ])
+        provider = ClickHouseNewsProvider(
+            clickhouse_provider=clickhouse,
+            redis_provider=FakeLocalizedRedisProvider([]),
+            publish_fallback=False,
+        )
+        orchestrator = AgentOrchestrator()
+        orchestrator.news_agent = NewsAgent(provider)
+
+        with patch.dict(os.environ, {
+            "OPENAI_API_KEY": "test-key",
+            "AGENT_NEWS_LOCALIZATION_PROVIDER": "openai",
+        }, clear=False):
+            with patch("urllib.request.urlopen", side_effect=AssertionError("runtime OpenAI should not be called for news-only requests")):
+                report = orchestrator.analyze({
+                    "symbol": "NVDA",
+                    "intent": "애플 뉴스 보여줘",
+                    "agentIds": ["agent-02"],
+                    "chartContext": {
+                        "chartDocument": {"symbol": "NVDA", "timeframe": "1m"},
+                        "dataStatus": {"candleCount": 10, "state": "ready"},
+                    },
+                })
+
+        self.assertEqual(report.symbol, "AAPL")
+        self.assertEqual(report.timing["llmCalls"], 0)
+        self.assertEqual(report.timing["directNewsCount"], 1)
+        self.assertLess(report.timing["roleAnalysisMs"], 10)
+        self.assertLess(report.timing["finalAnswerMs"], 100)
+        self.assertEqual(report.finalAnswer.title, "뉴스를 가져왔습니다")
+
+    def test_news_panel_receives_company_daily_summaries(self):
+        redis = FakeLocalizedRedisProvider(
+            [],
+            daily_rows=[
+                {
+                    "date": "2026-07-01",
+                    "symbol": "AAPL",
+                    "summary": "애플 관련 일일 뉴스 요약입니다.",
+                    "keyPoints": ["서비스 성장", "공급망 점검"],
+                    "positivePoints": ["서비스 매출 기대"],
+                    "concerns": [],
+                    "impactDirection": "positive",
+                    "sentiment": "positive",
+                    "articleIds": ["aapl-daily-1"],
+                    "articleCount": 1,
+                    "mentionCount": 0,
+                    "status": "final",
+                    "generatedAt": "2026-07-01T22:00:00.000Z",
+                }
+            ],
+        )
+        provider = ClickHouseNewsProvider(clickhouse_provider=FakeClickHouseProvider([]), redis_provider=redis, publish_fallback=False)
+        orchestrator = AgentOrchestrator()
+        orchestrator.news_agent = NewsAgent(provider)
+
+        report = orchestrator.analyze({
+            "symbol": "NVDA",
+            "intent": "애플 뉴스 보여줘",
+            "agentIds": ["agent-02"],
+        })
+
+        self.assertEqual(report.symbol, "AAPL")
+        self.assertEqual(report.dailySummaries[0]["summary"], "애플 관련 일일 뉴스 요약입니다.")
+        self.assertIn("일일 뉴스 요약", report.finalAnswer.summary)
+        news_command = news_panel_props_command(report)
+        props = news_command["payload"]["props"]
+        self.assertEqual(props["dailySummaries"][0]["date"], "2026-07-01")
+        self.assertEqual(props["dailySummaries"][0]["keyPoints"], ["서비스 성장", "공급망 점검"])
 
     def test_topic_news_intent_uses_theme_basket_instead_of_current_chart_symbol(self):
         clickhouse = ThemeClickHouseProvider({
@@ -1059,11 +1408,58 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertIn("AMD", clickhouse.requested_symbols)
         self.assertIn("MU", clickhouse.requested_symbols)
         self.assertNotEqual(clickhouse.requested_symbols, ["NVDA"])
-        self.assertIn("반도체", report.finalAnswer.title)
+        self.assertEqual(report.finalAnswer.title, "뉴스를 가져왔습니다")
         news_command = news_panel_props_command(report)
         props = news_command["payload"]["props"]
         self.assertEqual(props["symbol"], "반도체")
         self.assertTrue({"AMD", "MU"}.issubset({item["symbol"] for item in props["latestNews"]}))
+
+    def test_topic_news_intent_can_use_prelocalized_redis_basket_evidence(self):
+        redis = FakeLocalizedRedisProvider([
+            {
+                "articleId": "semi-amd-ko-1",
+                "symbol": "AMD",
+                "symbols": ["AMD"],
+                "headline": "AMD rises on AI chip demand",
+                "summary": "AI chip demand lifted AMD shares.",
+                "localizedHeadline": "AMD, AI 칩 수요에 상승",
+                "localizedSummary": "AI 칩 수요가 AMD 주가를 끌어올렸습니다.",
+                "publishedAt": utc_now_iso(),
+                "url": "https://example.com/amd-ko",
+            },
+            {
+                "articleId": "semi-mu-ko-1",
+                "symbol": "MU",
+                "symbols": ["MU"],
+                "headline": "Micron gains on memory demand",
+                "summary": "Memory demand supported Micron.",
+                "localizedHeadline": "마이크론, 메모리 수요 개선에 상승",
+                "localizedSummary": "메모리 수요 개선이 마이크론에 긍정적으로 작용했습니다.",
+                "publishedAt": utc_now_iso(),
+                "url": "https://example.com/mu-ko",
+            },
+        ])
+        clickhouse = ThemeClickHouseProvider({})
+        provider = ClickHouseNewsProvider(clickhouse_provider=clickhouse, redis_provider=redis, publish_fallback=False)
+        orchestrator = AgentOrchestrator()
+        orchestrator.news_agent = NewsAgent(provider)
+
+        report = orchestrator.analyze({
+            "symbol": "NVDA",
+            "intent": "반도체 관련 뉴스 보여줘",
+            "agentIds": ["agent-02"],
+            "chartContext": {
+                "chartDocument": {"symbol": "NVDA", "timeframe": "1m"},
+                "dataStatus": {"candleCount": 10, "state": "ready"},
+            },
+        })
+
+        requested = redis.requested_symbols[0]
+        self.assertIn("AMD", requested)
+        self.assertIn("MU", requested)
+        self.assertEqual(clickhouse.calls, 0)
+        self.assertEqual(report.symbol, "반도체")
+        self.assertTrue(any(item.raw.get("localizedTitle") == "AMD, AI 칩 수요에 상승" for item in report.providerEvidence))
 
     def test_news_agent_openai_success_and_fallback_keep_shape(self):
         provider = ClickHouseNewsProvider(

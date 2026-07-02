@@ -45,6 +45,21 @@ class RedisKeyBuilder:
     def hot_symbols_snapshot(self):
         return self.key("hot:symbols:snapshot")
 
+    def news_latest(self, locale, symbol):
+        return self.key(f"news:latest:{redis_locale(locale)}:{symbol}")
+
+    def news_topic(self, locale, topic):
+        return self.key(f"news:topic:{redis_locale(locale)}:{topic}")
+
+    def news_latest_v2(self, locale, symbol):
+        return self.key(f"news:v2:latest:{redis_locale(locale)}:{symbol}")
+
+    def news_topic_v2(self, locale, topic):
+        return self.key(f"news:v2:topic:{redis_locale(locale)}:{topic}")
+
+    def news_daily_v2(self, locale, symbol):
+        return self.key(f"news:v2:daily:{redis_locale(locale)}:{symbol}")
+
     def market_status_latest(self):
         return self.key("market:status:latest")
 
@@ -77,3 +92,8 @@ class RedisKeyBuilder:
 
     def backfill_dead_letter_stream(self):
         return self.key("backfill:dead-letter")
+
+
+def redis_locale(locale):
+    value = str(locale or "ko-KR").strip().lower()
+    return value.split("-", 1)[0] or "ko"

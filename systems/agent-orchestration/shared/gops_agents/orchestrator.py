@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import lru_cache
 import json
 import os
 import re
@@ -20,6 +21,7 @@ from .agents import (
     UIAgent,
     UnusualEventExplainerAgent,
     VerificationGuardrailAgent,
+    record_news_relevance_counts,
 )
 from .contracts import AgentFinding, AnalysisReport, EvidenceItem, FinalAnswer, IntentRoute, MarketEvent, stable_id, utc_now_iso
 from .router import route_intent
@@ -178,6 +180,8 @@ class AgentOrchestrator:
         if not selected_roles:
             requested_roles = resolve_requested_roles(request.get("agentIds"))
             selected_roles = [role for role in ["chart", "news", "macro", "ontology"] if role in requested_roles]
+        state["context"].intentType = route.intentType
+        state["context"].selectedRoles = list(selected_roles)
         return self._load_analysis_cache({**state, "route": route, "selected_roles": selected_roles, "ui_intent": None})
 
     def _load_analysis_cache(self, state: dict[str, Any]) -> dict[str, Any]:
@@ -193,6 +197,8 @@ class AgentOrchestrator:
             timing = state["timing"]
             timing["cacheHit"] = True
             timing["cacheLayer"] = "analysis"
+            record_news_relevance_counts(state["context"], cached.providerEvidence)
+            state["context"].newsDailySummaries = list(cached.dailySummaries or [])
             print(
                 f"Agent analysis cache hit: symbol={state['symbol']} roles={','.join(cached.route.selectedRoles)} key={cache_key}",
                 flush=True,
@@ -205,6 +211,7 @@ class AgentOrchestrator:
                 "provider_evidence": cached.providerEvidence,
                 "final_answer": cached.finalAnswer,
                 "summary": cached.summary,
+                "daily_summaries": list(cached.dailySummaries or []),
                 "analysis_cacheable": True,
                 "analysis_cache_hit": True,
                 "analysis_cache_key": cache_key,
@@ -262,7 +269,12 @@ class AgentOrchestrator:
             role_findings = [findings_by_role[role] for role in selected_roles if role in findings_by_role]
             return {**state, "role_findings": role_findings}
         finally:
-            add_timing_ms(state, "roleAnalysisMs", (time.perf_counter() - started_at) * 1000)
+            elapsed_ms = (time.perf_counter() - started_at) * 1000
+            if is_news_only_state(state):
+                fetch_ms = state.get("timing", {}).get("newsFetchMs")
+                if isinstance(fetch_ms, (int, float)):
+                    elapsed_ms = max(0.0, elapsed_ms - float(fetch_ms))
+            add_timing_ms(state, "roleAnalysisMs", elapsed_ms)
 
     def _safe_analyze_role(self, role: str, agent, context: AgentContext):
         try:
@@ -331,6 +343,8 @@ class AgentOrchestrator:
                     route=route,
                     findings=role_findings,
                     provider_evidence=provider_evidence,
+                    timing=state.get("timing"),
+                    daily_summaries=list(state["context"].newsDailySummaries),
                 )
             finally:
                 add_timing_ms(state, "finalAnswerMs", (time.perf_counter() - started_at) * 1000)
@@ -377,6 +391,7 @@ class AgentOrchestrator:
             notificationDecision=state["notification"],
             layoutProposal=layout,
             chartProposal=request.get("chartProposal") if isinstance(request.get("chartProposal"), dict) else None,
+            dailySummaries=list(context.newsDailySummaries),
             timing=finalize_timing(state),
         )
         return {**state, "layout": layout, "report": report}
@@ -394,6 +409,7 @@ class AgentOrchestrator:
             providerEvidence=list(state.get("provider_evidence", [])),
             finalAnswer=final_answer,
             summary=str(state.get("summary") or final_answer.summary),
+            dailySummaries=list(state["context"].newsDailySummaries),
         )
         ttl_seconds = self.analysis_cache_ttl_seconds if has_available_analysis_data(payload) else self.analysis_no_data_cache_ttl_seconds
         try:
@@ -433,6 +449,9 @@ def empty_timing() -> dict[str, Any]:
         "newsFetchMs": 0.0,
         "roleAnalysisMs": 0.0,
         "finalAnswerMs": 0.0,
+        "llmCalls": 0,
+        "directNewsCount": 0,
+        "mentionNewsCount": 0,
     }
 
 
@@ -452,6 +471,9 @@ def finalize_timing(state: dict[str, Any]) -> dict[str, Any]:
     for key in ["totalMs", "newsFetchMs", "roleAnalysisMs", "finalAnswerMs"]:
         value = timing.get(key)
         timing[key] = round(float(value) if isinstance(value, (int, float)) else 0.0, 3)
+    for key in ["llmCalls", "directNewsCount", "mentionNewsCount"]:
+        value = timing.get(key)
+        timing[key] = int(value) if isinstance(value, (int, float)) else 0
     timing["cacheHit"] = bool(timing.get("cacheHit"))
     timing["cacheLayer"] = str(timing.get("cacheLayer") or "none")
     return timing
@@ -492,6 +514,11 @@ def is_analysis_cacheable_state(state: dict[str, Any]) -> bool:
     if has_order_or_account_terms(intent) or is_live_status_intent(intent):
         return False
     return True
+
+
+def is_news_only_state(state: dict[str, Any]) -> bool:
+    route = state.get("route")
+    return isinstance(route, IntentRoute) and route.intentType == "news" and list(state.get("selected_roles", [])) == ["news"]
 
 
 def normalize_cache_intent(intent: str) -> str:
@@ -805,8 +832,65 @@ def extract_symbol_from_intent(intent: str) -> str | None:
         "ROI",
         "USD",
     }
-    for match in re.finditer(r"(?<![A-Za-z0-9.])([A-Z][A-Z0-9]{0,4}(?:\.[A-Z])?)(?![A-Za-z0-9.])", str(intent or "")):
-        token = match.group(1).upper()
-        if token not in excluded_tokens:
+    ambiguous_lowercase_words = {
+        "a",
+        "all",
+        "are",
+        "at",
+        "ball",
+        "best",
+        "bro",
+        "cat",
+        "cost",
+        "day",
+        "de",
+        "do",
+        "d",
+        "f",
+        "fix",
+        "for",
+        "fox",
+        "has",
+        "hi",
+        "it",
+        "key",
+        "ko",
+        "low",
+        "now",
+        "o",
+        "on",
+        "or",
+        "q",
+        "so",
+        "sw",
+        "t",
+        "tell",
+        "to",
+        "v",
+    }
+    known_symbols = known_agent_symbols()
+    for match in re.finditer(r"(?<![A-Za-z0-9.])([A-Za-z][A-Za-z0-9]{0,4}(?:\.[A-Za-z])?)(?![A-Za-z0-9.])", str(intent or "")):
+        raw_token = match.group(1)
+        token = raw_token.upper()
+        if token in excluded_tokens:
+            continue
+        if raw_token != token and raw_token.lower() in ambiguous_lowercase_words:
+            continue
+        if token in known_symbols:
             return token
     return None
+
+
+@lru_cache(maxsize=1)
+def known_agent_symbols() -> frozenset[str]:
+    symbols = {symbol for _alias, symbol in COMPANY_SYMBOL_ALIASES}
+    for topic in NEWS_TOPIC_BASKETS:
+        symbols.update(str(symbol).upper() for symbol in topic["symbols"])
+    try:
+        from alfaka.alpaca.subscription import configured_universe_symbols
+
+        symbols.update(configured_universe_symbols())
+    except Exception:
+        pass
+    symbols.update({"XLV"})
+    return frozenset(symbols)

@@ -230,6 +230,7 @@ class AnalysisReport:
     notificationDecision: NotificationDecision | None = None
     layoutProposal: LayoutProposal | None = None
     chartProposal: dict[str, Any] | None = None
+    dailySummaries: list[dict[str, Any]] = field(default_factory=list)
     timing: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
