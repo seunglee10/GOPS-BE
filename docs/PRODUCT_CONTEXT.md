@@ -7,7 +7,7 @@ It is not a claim that every feature is already implemented.
 
 **종목을 찾는 사람에게 기준을, 시장을 읽는 사람에게 방향을.**
 
-GOPS combines real-time market data, company relationship context, and role-based AI agents into a trading environment that can reorganize charts, news, comparisons, and order flow around user intent.
+GOPS combines real-time market data, company relationship context, and snapshot-based AI agents into a trading environment that can reorganize charts, news, comparisons, and order flow around user intent.
 
 GOPS should not merely show more information. It should help users read market relationships and surface the screen they need.
 
@@ -28,7 +28,7 @@ The current repository contains:
 Expected future areas:
 
 - Real-time charts and natural-language visualization.
-- Role-based multi-agent analysis.
+- Snapshot-based multi-agent analysis with role-compatible UI labels where needed.
 - Ontology-based company, sector, competitor, and supply-chain exploration.
 - Dynamic UI composition based on user intent and market context.
 - Watchlist, issue detection, and comparison analysis.
@@ -40,7 +40,7 @@ Expected future areas:
 - Kafka/Flink-compatible streaming for market data.
 - ClickHouse and Redis for time-series serving and low-latency cache.
 - S3 for durable source data, replay, and evidence.
-- GraphDB/GraphRAG for future relationship reasoning.
+- GraphDB-backed relationship snapshots, with GraphRAG as a possible future extension.
 - Idempotent and ordered order/execution handling.
 
 ## Codex Guidance

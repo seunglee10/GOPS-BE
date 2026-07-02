@@ -53,7 +53,7 @@ flowchart LR
   end
 
   subgraph Agents["systems/agent-orchestration"]
-    AgentOrch["pod: agent-orchestrator<br/>role agents"]
+    AgentOrch["pod: agent-orchestrator<br/>snapshot orchestration"]
     EventDetector["pod: agent-event-detector"]
     AlertPublisher["pod: agent-notification-publisher"]
     AgentShared["shared: gops_agents.*"]

@@ -21,7 +21,7 @@ This file defines current custom Docker image boundaries.
 - `gops-kis-adapter` is separate because it touches KIS, secrets, and broker submission risk.
 - `gops-market-storage` groups processed S3 sink, raw S3 archive, ClickHouse loader, news intelligence, and news backfill because they are market storage/materialization workers.
 - `gops-order-worker` groups DB-centered order operations.
-- `gops-agent-orchestrator` is separate because role agents, LLM credentials, event detection, and notification publishing scale differently from the API gateway.
+- `gops-agent-orchestrator` is separate because snapshot providers, LLM credentials, event detection, and notification publishing scale differently from the API gateway.
 - `gops-frontend` builds static React assets and serves them with nginx. It should not run the Vite dev server behind ALB.
 - Avoid one generic worker image for unrelated market, order, ontology, agent, and UI-composition runtimes.
 

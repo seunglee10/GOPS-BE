@@ -1,6 +1,6 @@
 # Multi-Agent Stock Trading Platform AI Architecture
 
-이 문서는 멀티에이전트 기반 주식 트레이딩 플랫폼의 AI 아키텍처 초안이다. 현재 단계에서는 Kafka, UI 패널 payload, topic/event stream 같은 전송 계층은 제외한다. 초점은 **3초대 응답을 목표로 하는 멀티 데이터 에이전트 + 싱글 Synthesis LLM 구조**에 둔다.
+이 문서는 멀티에이전트 기반 주식 트레이딩 플랫폼의 AI 아키텍처 기준 문서다. 현재 단계에서는 Kafka, UI 패널 payload, topic/event stream 같은 전송 계층은 제외한다. 초점은 **3초대 응답을 목표로 하는 멀티 데이터 snapshot provider + 싱글 Synthesis LLM 구조**에 둔다.
 
 핵심 전제는 다음과 같다.
 
@@ -9,6 +9,7 @@
 - `Market Agent`, `News Agent`, `Relationship Impact Agent`는 런타임 LLM 분석가가 아니라 **Data Snapshot Provider**다.
 - 뉴스, 시장, 그래프 관계 분석은 가능한 한 백그라운드에서 사전 계산하고 캐시한다.
 - 모델 종류를 마음대로 바꿀 수 없다는 전제하에, 최적화는 요청 수, 입력 토큰, 출력 토큰, 캐시, 사전 계산으로 해결한다.
+- 현재 구현 기준 hot path는 `RoutePlan` 생성, `ResolvedEntity` 생성, market/news/relationship `DataSnapshot` 병렬 조회, hidden `risk_policy_snapshot` 생성, `SynthesisInput` 구성, `FinalResponse` 반환 순서다.
 
 참고 원칙:
 
@@ -49,17 +50,22 @@ flowchart TD
   subgraph HOT["Online Hot Path: Target p50 3s"]
     A["User Prompt"] --> R["RouteAndPlan<br/>rule + search + cache"]
     R --> E["Entity Resolver<br/>alias/ticker/graph node"]
-    E --> X["Parallel Snapshot Fetch"]
+    E --> X["Parallel DataSnapshot Fetch"]
 
     X --> N["News Snapshot Provider"]
     X --> M["Market Snapshot Provider"]
     X --> G["Relationship Snapshot Provider"]
-    X --> K["Risk/Policy Snapshot"]
 
-    N --> S["Synthesis LLM<br/>single realtime OpenAI call"]
-    M --> S
-    G --> S
-    K --> S
+    N --> K["Risk/Policy Snapshot<br/>hidden"]
+    M --> K
+    G --> K
+
+    N --> I["SynthesisInput"]
+    M --> I
+    G --> I
+    K --> I
+
+    I --> S["Synthesis LLM<br/>single realtime OpenAI call"]
 
     S --> V["Rule-Based Guardrail"]
     V --> F["Final Response"]
@@ -78,8 +84,8 @@ flowchart TD
 | `Entity Resolver` | DB/alias/fuzzy search first | 사용자 표현을 ticker, canonical entity, graph node로 변환한다. |
 | `Market Snapshot Provider` | Cache/DB query | 시장 레짐, 섹터 흐름, 거시 위험 snapshot을 반환한다. |
 | `News Snapshot Provider` | Cached news intelligence query | 사전 처리된 뉴스 이벤트, 감성, 영향 방향을 반환한다. |
-| `Relationship Snapshot Provider` | Graph DB/path cache | 기업 간 직접/간접 영향 경로와 path score를 반환한다. |
-| `Risk/Policy Snapshot` | Rule/computed | confidence cap, 투자 조언 제한, 데이터 누락 위험을 반환한다. |
+| `Relationship Snapshot Provider` | `GraphDBOntologyProvider`/path cache | 기업 간 직접/간접 영향 경로와 path score를 `relationship_snapshot`으로 반환한다. |
+| `Risk/Policy Snapshot` | Rule/computed | confidence cap, 투자 조언 제한, 데이터 누락 위험을 내부 snapshot으로 반환한다. UI trace에는 기본 노출하지 않는다. |
 | `Synthesis LLM` | Realtime LLM call 1회 | snapshot들을 취합해 사용자 답변 초안을 생성한다. |
 | `Rule-Based Guardrail` | Rule only by default | 금지 표현, 과신, 데이터 누락, schema를 검증한다. |
 
@@ -134,7 +140,7 @@ OpenAI latency guide의 원칙을 이 시스템에 적용하면 다음과 같다
 - **요청 수 줄이기**: route, plan, synthesis를 여러 LLM 호출로 쪼개지 않는다. 기본 hot path에서는 Synthesis LLM 1회만 호출한다.
 - **출력 토큰 줄이기**: Synthesis 응답은 350 output tokens 이하를 목표로 한다. 긴 리포트는 별도 “deep analysis” 모드로 분리한다.
 - **입력 토큰 줄이기**: 뉴스 원문, 전체 그래프 경로, 모든 시장 데이터를 넣지 않는다. 각 provider는 top-k snapshot만 넘긴다.
-- **병렬화**: market/news/relationship/risk snapshot은 병렬 조회한다.
+- **병렬화**: market/news/relationship snapshot은 병렬 조회하고, risk snapshot은 조회 결과 기반으로 생성한다.
 - **Streaming**: Synthesis 응답은 가능한 streaming으로 시작해 perceived latency를 낮춘다.
 - **LLM 남용 방지**: entity resolve, graph path scoring, guardrail은 기본적으로 LLM 밖에서 처리한다.
 
@@ -175,11 +181,12 @@ OpenAI prompt caching을 활용하기 위해 Synthesis prompt는 다음 순서�
 1. 사용자가 자연어 prompt를 입력한다.
 2. `RouteAndPlan`이 rule/search/cache 기반으로 intent와 snapshot bundle을 결정한다.
 3. `Entity Resolver`가 alias table, ticker table, graph node mapping, fuzzy search로 entity를 표준화한다.
-4. 필요한 snapshot을 병렬 조회한다.
-5. `SynthesisInput`을 구성한다. 각 snapshot은 최대 5개 item만 포함한다.
-6. `Synthesis LLM`을 1회 호출한다.
-7. `Rule-Based Guardrail`이 최종 응답을 검증하고 필요하면 confidence와 문구를 조정한다.
-8. 사용자에게 `FinalResponse`를 반환한다.
+4. market/news/relationship snapshot을 병렬 조회한다.
+5. 조회 결과를 바탕으로 hidden `risk_policy_snapshot`을 생성한다.
+6. `SynthesisInput`을 구성한다. 각 snapshot은 최대 5개 item만 포함한다.
+7. `Synthesis LLM`을 1회 호출한다.
+8. `Rule-Based Guardrail`이 최종 응답을 검증하고 필요하면 confidence와 문구를 조정한다.
+9. 사용자에게 `FinalResponse`를 반환한다.
 
 ### 4.3 Broad Retrieval Policy
 
@@ -568,7 +575,25 @@ Online에서 할 것:
 
 ### 6.5 Relationship Snapshot Provider
 
-Graph DB 기반 관계 영향을 snapshot으로 제공한다. 핵심은 LLM 추론이 아니라 graph query, path scoring, cache다.
+GraphDB 기반 관계 영향을 `relationship_snapshot`으로 제공한다. 핵심은 LLM 추론이 아니라 SPARQL query, relation normalization, path scoring, cache다.
+
+현재 구현:
+
+- `RelationshipSnapshotProvider`는 `ProviderRequest(symbol, intent)`를 만들어 ontology provider를 호출한다.
+- `GraphDBOntologyProvider`는 `GRAPHDB_SPARQL_URL`의 SPARQL endpoint를 조회한다.
+- 조회 결과는 `EvidenceItem(provider="ontology")`로 normalize된 뒤 `DataSnapshot(snapshot_type="relationship_snapshot")`으로 변환된다.
+- 현재 relation type은 `theme`, `control`, `theme-company`, `theme-control`, `no-direct-control`, `no-ontology-evidence`, `graphdb-unavailable`이다.
+- ontology evidence가 없으면 `status="partial"`과 `no_clear_relationship_path` warning을 반환한다.
+- GraphDB timeout/error는 provider evidence의 `raw.relationType="graphdb-unavailable"`로 표현된다.
+
+GraphDB 담당자 TODO:
+
+- ticker, company, theme, control 관계를 안정적으로 반환하는 SPARQL query를 보강한다.
+- `theme`, `control`, supply-chain, competitor, customer, supplier 같은 relation type normalize 규칙을 확정한다.
+- target entity와 news/sector/source entity 간 path score를 계산한다.
+- 자주 쓰이는 entity pair의 graph path cache를 붙인다.
+- GraphDB empty, timeout, partial path, direct path missing case의 warning을 명확히 구분한다.
+- 상세 구현 범위는 `docs/GRAPHDB_RELATIONSHIP_AGENT_HANDOFF.md`를 따른다.
 
 Background에서 생성할 것:
 
@@ -742,33 +767,38 @@ LLM guardrail이 필요한 경우:
 - `llm_calls_used`와 timeout을 기록한다.
 - 사용자에게 partial response임을 알린다.
 
-## 8. Implementation Checklist
+## 8. Implementation Status And Checklist
 
-초기 구현 우선순위:
+현재 구현 반영 상태:
 
-1. `LatencyBudget`, `RuntimePolicy`, `RoutePlan`, `DataSnapshot`, `SynthesisInput`, `FinalResponse`, `LatencyTrace` 타입 정의
-2. rule/search/cache 기반 `RouteAndPlan` 구현
-3. alias/ticker/graph node 기반 `Entity Resolver` 구현
-4. cached `Market Snapshot Provider` 구현
-5. cached `News Snapshot Provider` adapter 구현
-6. Graph DB query + path cache 기반 `Relationship Snapshot Provider` 구현
-7. `Risk/Policy Snapshot Provider` 구현
-8. snapshot 병렬 조회 executor 구현
-9. Synthesis LLM prompt 작성
-10. prompt prefix caching이 가능하도록 고정 instruction/schema/few-shot 분리
-11. `max_synthesis_output_tokens` 적용
-12. rule-based guardrail 구현
-13. `LatencyTrace`와 token usage logging 구현
-14. cache hit/miss, freshness, partial data logging 구현
-15. degraded path 분리
+| Area | Status |
+| --- | --- |
+| Core contracts | `RuntimePolicy`, `RoutePlan`, `ResolvedEntity`, `DataSnapshot`, `SynthesisInput`, `FinalResponse`, `LatencyTrace`가 정의되어 있다. |
+| Route and entity | rule/search/cache 기반 route와 ticker 중심 `ResolvedEntity` 생성이 들어가 있다. |
+| Snapshot execution | market/news/relationship snapshot은 병렬 조회하고, `risk_policy_snapshot`은 내부 snapshot으로 뒤에 붙인다. |
+| News provider | ClickHouse/Redis/Kafka fallback 계층을 따르는 cached news provider를 사용한다. |
+| Relationship provider | `RelationshipSnapshotProvider`와 `GraphDBOntologyProvider`가 존재하지만 path scoring/cache는 GraphDB 담당자 TODO다. |
+| Synthesis and guardrail | `SynthesisInput`에서 `FinalResponse`로 변환하고 rule-based guardrail을 적용한다. |
 
-초기 구현의 성공 기준은 분석 품질 완성보다 다음을 먼저 만족하는 것이다.
+남은 구현 우선순위:
+
+1. GraphDB SPARQL query coverage 확장
+2. graph relation normalization 규칙 확정
+3. graph path scoring/cache 구현
+4. relationship warning taxonomy 정리
+5. prompt prefix caching이 가능하도록 고정 instruction/schema/few-shot 분리
+6. `LatencyTrace`와 token usage logging 강화
+7. cache hit/miss, freshness, partial data logging 강화
+8. degraded path 분리
+
+성공 기준은 분석 품질 완성보다 다음을 먼저 만족하는 것이다.
 
 - cached hot path에서 LLM 호출 1회
 - p50 3초대 응답
 - snapshot별 latency 계측
 - output token cap 준수
 - partial data warning 누락 없음
+- `risk_policy_snapshot`은 최종 응답 생성에는 사용하지만 기본 UI trace에는 노출하지 않음
 
 ## 9. Test Scenarios
 
@@ -800,7 +830,7 @@ LLM guardrail이 필요한 경우:
 검증:
 
 - `Entity Resolver`가 `NVIDIA Corporation`, `NVDA`, `company:nvidia`를 찾는다.
-- market/news/relationship/risk snapshot을 병렬 조회한다.
+- market/news/relationship snapshot을 병렬 조회하고, 이후 hidden risk snapshot을 붙인다.
 - Synthesis LLM 1회만 호출한다.
 - final response는 bullish, bearish, relationship impact, risk warning을 포함한다.
 

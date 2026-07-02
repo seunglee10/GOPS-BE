@@ -411,14 +411,15 @@ GRAPHDB_SPARQL_URL
 GRAPHDB_REPOSITORY
 AGENT_ONTOLOGY_LIMIT
 GRAPHDB_TIMEOUT_SECONDS
-AGENT_ONTOLOGY_ROLE_ANALYSIS_PROVIDER
-AGENT_ONTOLOGY_FINAL_ANSWER_PROVIDER
 ```
 
-Ontology-only analysis and final answers use deterministic GraphDB evidence by
-default. Set `AGENT_ONTOLOGY_ROLE_ANALYSIS_PROVIDER=openai` or
-`AGENT_ONTOLOGY_FINAL_ANSWER_PROVIDER=openai` only when the team explicitly
-accepts model synthesis for ontology output.
+The snapshot hot path uses deterministic GraphDB evidence for
+`relationship_snapshot`. Compatibility flags such as
+`AGENT_ONTOLOGY_ROLE_ANALYSIS_PROVIDER` and
+`AGENT_ONTOLOGY_FINAL_ANSWER_PROVIDER` may exist in compatibility code paths, but they
+are not the default architecture for relationship snapshots. Realtime OpenAI
+usage should remain concentrated in final synthesis unless the team explicitly
+chooses a degraded or offline analysis path.
 
 Local GraphDB restore artifact:
 
