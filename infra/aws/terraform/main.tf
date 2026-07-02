@@ -1,6 +1,6 @@
 # 역할: AWS에 바로 붙는 공통 리소스 ECR/S3/Secret/IRSA를 준비합니다.
 # 사용: EKS, MSK, Redis가 준비된 뒤 이 foundation을 적용합니다.
-# 주의: MSK/Flink/Redis 서버 자체 생성은 별도 네트워크/운영 모듈에서 다룹니다.
+# 주의: MSK/Redis 서버 자체 생성은 별도 네트워크/운영 모듈에서 다룹니다.
 data "aws_caller_identity" "current" {}
 
 locals {

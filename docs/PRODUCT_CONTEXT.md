@@ -37,7 +37,7 @@ Expected future areas:
 ## Technical Themes
 
 - React, FastAPI, and WebSocket for real-time web interaction.
-- Kafka/Flink-compatible streaming for market data.
+- Kafka-compatible Python/Kubernetes stream processing for market data.
 - ClickHouse and Redis for time-series serving and low-latency cache.
 - S3 for durable source data, replay, and evidence.
 - GraphDB/GraphRAG for future relationship reasoning.

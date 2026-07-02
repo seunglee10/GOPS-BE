@@ -1,10 +1,9 @@
-# Deprecated Archive
+# Goal Process Archive
 
-The old archive files were removed because they contained stale chart-data
-contracts that no longer match the current chart direction.
+These files are historical evidence only.
 
-Use:
+For chart-data implementation, follow
+`../../docs/CHART_DATA_REBUILD_PLAN.md`.
 
-```text
-../../docs/CHART_DATA_REBUILD_PLAN.md
-```
+Archived notes must not reintroduce preset company lists, broad preload,
+legacy Kafka topic assumptions, or raw S3 serving behavior.

@@ -1,25 +1,49 @@
 import os
 
 
+DEFAULT_REDIS_KEY_PREFIX = "gops:market:on-demand:v1"
+
+
 class RedisKeyBuilder:
     def __init__(self, prefix=None):
-        raw_prefix = prefix if prefix is not None else os.getenv("REDIS_KEY_PREFIX", "")
+        raw_prefix = prefix if prefix is not None else (os.getenv("REDIS_KEY_PREFIX") or DEFAULT_REDIS_KEY_PREFIX)
         self.prefix = raw_prefix.strip().strip(":")
 
     def key(self, value):
         return f"{self.prefix}:{value}" if self.prefix else value
 
-    def price_latest(self, symbol):
-        return self.key(f"price:{symbol}:latest")
+    def candle_cache(self, symbol, interval):
+        return self.key(f"cache:candles:{symbol}:{interval}")
 
     def live_candle(self, symbol, interval="1m"):
-        return self.key(f"candle:{symbol}:{interval}:live")
+        return self.key(f"live:candle:{symbol}:{interval}")
 
-    def latest_candle(self, symbol, interval):
-        return self.key(f"candle:{symbol}:{interval}:latest")
+    def latest_closed_candle(self, symbol, interval):
+        return self.key(f"latest:closed:candle:{symbol}:{interval}")
 
     def recent_candles(self, symbol, interval):
-        return self.key(f"candles:{symbol}:{interval}")
+        return self.candle_cache(symbol, interval)
+
+    def latest_candle(self, symbol, interval):
+        return self.latest_closed_candle(symbol, interval)
+
+    def pending_replace_candle(self, symbol, interval, timestamp):
+        return self.key(f"pending:replace:{symbol}:{interval}:{timestamp}")
+
+    def candle_window(self, symbol, interval, bucket):
+        return self.key(f"state:candle-window:{symbol}:{interval}:{bucket}")
+
+    def live_trade(self, symbol):
+        return self.key(f"live:trade:{symbol}")
+
+    def live_quote(self, symbol):
+        return self.key(f"live:quote:{symbol}")
+
+    def live_event(self, symbol):
+        return self.key(f"live:event:{symbol}")
+
+    def price_latest(self, symbol):
+        return self.live_trade(symbol)
 
     def market_events(self):
         return self.key("market.events")
@@ -36,8 +60,41 @@ class RedisKeyBuilder:
     def active_symbol(self, symbol):
         return self.key(f"active:charts:{symbol}")
 
+    def subscription_symbols(self):
+        return self.key("subscription:symbols")
+
+    def subscription_symbol(self, symbol):
+        return self.key(f"subscription:symbol:{symbol}")
+
+    def subscription_version(self):
+        return self.key("subscription:version")
+
+    def subscription_events(self):
+        return self.key("subscription:events")
+
     def watchlist_symbols(self):
-        return self.key("watchlist:symbols")
+        return self.subscription_symbols()
+
+    def feed_active(self):
+        return self.key("feed:active")
+
+    def feed_active_profile(self):
+        return self.key("feed:active:profile")
+
+    def feed_active_epoch(self):
+        return self.key("feed:active:epoch")
+
+    def feed_lease(self, feed_profile):
+        return self.key(f"feed:lease:{str(feed_profile).lower()}")
+
+    def feed_switch_lock(self):
+        return self.key("feed:switch:lock")
+
+    def feed_switch_state(self):
+        return self.key("feed:switch:state")
+
+    def feed_quarantine(self, date):
+        return self.key(f"feed:quarantine:{date}")
 
     def hot_symbols(self):
         return self.key("hot:symbols")
@@ -61,13 +118,16 @@ class RedisKeyBuilder:
         return self.key(f"volume-profile:{symbol}:1m:live")
 
     def backfill_lock(self, symbol, interval, range_digest):
-        return self.key(f"backfill:lock:{symbol}:{interval}:{range_digest}")
+        return self.key(f"backfill:lock:{range_digest}")
 
     def backfill_status(self, request_id):
         return self.key(f"backfill:status:{request_id}")
 
     def backfill_latest(self, symbol, interval):
         return self.key(f"backfill:latest:{symbol}:{interval}")
+
+    def backfill_coverage(self, symbol, interval):
+        return self.key(f"backfill:coverage:{symbol}:{interval}")
 
     def backfill_queue(self):
         return self.key("backfill:queue")

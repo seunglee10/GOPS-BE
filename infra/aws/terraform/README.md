@@ -16,7 +16,6 @@ IRSA IAM role/policy
 ```text
 EKS cluster
 MSK cluster
-Flink cluster/application
 ElastiCache Redis
 VPC/Subnet/NAT
 ```

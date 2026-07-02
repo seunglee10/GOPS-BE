@@ -14,11 +14,8 @@ except Exception:
 
 from app.market_data.query.service import get_query_service
 from app.services.alfaka_market_data import (
-    hot_symbol_summaries,
-    replace_watchlist_symbols,
     search_symbol_summaries,
     symbol_summaries,
-    watchlist_summaries,
 )
 from alfaka.serving.intervals import MAX_CHART_CANDLE_LIMIT
 
@@ -36,13 +33,9 @@ class BackfillRequestBody(BaseModel):
     force: bool = False
 
 
-class WatchlistRequestBody(BaseModel):
-    symbols: list[str] = []
-
-
 @router.get("/api/charts/candles")
 def chart_candles(
-    symbol: str = Query(default="AAPL", min_length=1, max_length=12),
+    symbol: str = Query(min_length=1, max_length=12),
     interval: str = Query(default="1m", pattern=CHART_INTERVAL_PATTERN),
     ma: str = Query(default="5,20,60"),
     limit: int | None = Query(default=None, ge=1, le=MAX_CHART_CANDLE_LIMIT),
@@ -87,23 +80,3 @@ def chart_symbols(
         "feed": "configured-market-feed",
         "symbols": search_symbol_summaries(query, limit) if query is not None else symbol_summaries(),
     }
-
-
-@router.get("/api/charts/watchlist")
-def chart_watchlist(
-    symbols: str | None = Query(default=None, max_length=2000),
-) -> dict[str, Any]:
-    requested_symbols = [item.strip() for item in symbols.split(",") if item.strip()] if symbols is not None else None
-    return watchlist_summaries(requested_symbols)
-
-
-@router.put("/api/charts/watchlist")
-def update_chart_watchlist(body: WatchlistRequestBody) -> dict[str, Any]:
-    return replace_watchlist_symbols(body.symbols or [])
-
-
-@router.get("/api/charts/hot-symbols")
-def chart_hot_symbols(
-    limit: int = Query(default=20, ge=1, le=100),
-) -> dict[str, Any]:
-    return hot_symbol_summaries(limit=limit)

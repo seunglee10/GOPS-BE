@@ -35,8 +35,8 @@ def runtime_config() -> dict[str, object]:
             "endpointMode": "real-aws" if not os.getenv("S3_ENDPOINT_URL") else "custom-endpoint",
             "rawPrefix": os.getenv("S3_RAW_PREFIX") or "",
             "finalPrefix": os.getenv("S3_FINAL_PREFIX") or "",
-            "livePrefix": os.getenv("S3_LIVE_PREFIX") or "",
             "manifestPrefix": os.getenv("S3_MANIFEST_PREFIX") or "",
+            "livePrefixEnabled": False,
         },
         "canonical": canonical_config(),
         "alpaca": {
@@ -94,8 +94,8 @@ def runtime_config_warnings() -> list[str]:
     warnings = []
     if os.getenv("ALFAKA_REQUEST_CONFIG") not in {None, "", "systems/market-data/config/market-data-request.json"}:
         warnings.append("stale_request_config_path")
-    if os.getenv("ALPACA_UNIVERSE") not in {None, "", "gops20"}:
-        warnings.append("alpaca_universe_not_gops20")
+    if os.getenv("ALPACA_UNIVERSE") not in {None, ""}:
+        warnings.append("preset_alpaca_universe_configured")
     channels = {item.strip() for item in (os.getenv("ALPACA_CHANNELS") or "").split(",") if item.strip()}
     if channels and "dailyBars" not in channels:
         warnings.append("alpaca_channels_missing_dailyBars")

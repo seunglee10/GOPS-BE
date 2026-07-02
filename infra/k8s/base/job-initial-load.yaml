@@ -1,4 +1,4 @@
-# 역할: 20-symbol canonical history Initial Load를 chunked Redis Streams jobs로 계획/큐잉합니다.
+# 역할: 명시한 chart history Initial Load를 chunked Redis Streams jobs로 계획/큐잉합니다.
 # 사용: 기본은 dry-run입니다. 실제 enqueue는 INITIAL_LOAD_DRY_RUN=false로 별도 patch 후 실행합니다.
 apiVersion: batch/v1
 kind: Job
@@ -21,7 +21,7 @@ spec:
           command: ["python", "-u", "systems/market-data/jobs/initial-load/main.py"]
           env:
             - name: INITIAL_LOAD_SYMBOLS
-              value: AAPL,MSFT,NVDA,AMZN,GOOGL,META,TSLA,BRK.B,JPM,UNH,V,XOM,MA,AVGO,PG,COST,HD,JNJ,NFLX,AMD
+              value: ""
             - name: INITIAL_LOAD_INTERVALS
               value: 1D
             - name: INITIAL_LOAD_START

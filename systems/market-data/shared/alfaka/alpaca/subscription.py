@@ -10,16 +10,11 @@ from alfaka.common.env import load_dotenv, parse_csv
 
 
 DEFAULT_REQUEST_CONFIG = {
-    "defaultUniverse": "gops20",
+    "defaultUniverse": "",
     "universeRegistryPath": "",
-    "collectionSymbolSource": "universe",
-    "defaultSymbols": [
-        "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "BRK.B", "JPM", "UNH",
-        "V", "XOM", "MA", "AVGO", "PG", "COST", "HD", "JNJ", "NFLX", "AMD",
-    ],
-    "defaultSeedSymbols": [
-        "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "BRK.B", "JPM", "UNH",
-    ],
+    "collectionSymbolSource": "on-demand",
+    "defaultSymbols": [],
+    "defaultSeedSymbols": [],
     "defaultChannels": ["bars", "updatedBars", "dailyBars", "statuses"],
     "activeChartChannels": ["trades"],
     "validChannels": ["bars", "updatedBars", "trades", "dailyBars", "statuses", "quotes", "corrections", "cancelErrors"],
@@ -110,6 +105,8 @@ def configured_universe_name(config=None):
 def configured_universe_symbols(config=None):
     config = config or load_request_config()
     universe_name = configured_universe_name(config).lower()
+    if not universe_name:
+        return []
     configured_universes = config.get("universes") or {}
     if universe_name in configured_universes:
         return _validated_symbol_list(configured_universes[universe_name], config, f"ALPACA_UNIVERSE:{universe_name}")
@@ -155,12 +152,15 @@ def configured_collection_symbols(config=None):
         return _validated_symbol_list(parse_csv(raw_symbols), config, "ALPACA_COLLECTION_SYMBOLS")
 
     source = (os.getenv("ALPACA_COLLECTION_SYMBOL_SOURCE") or config.get("collectionSymbolSource") or "seed").strip().lower()
+    if source in {"on-demand", "ondemand", "none", "empty"}:
+        return []
     if source == "universe":
         return configured_universe_symbols(config)
     if source == "seed":
         return configured_seed_symbols(config)
     if source == "defaultsymbols":
-        return _validated_symbol_list(config.get("defaultSymbols") or [], config, "defaultSymbols")
+        values = config.get("defaultSymbols") or []
+        return _validated_symbol_list(values, config, "defaultSymbols") if values else []
     raise ValueError(f"지원하지 않는 ALPACA_COLLECTION_SYMBOL_SOURCE입니다: {source}")
 
 
@@ -169,7 +169,7 @@ def configured_seed_symbols(config=None):
     raw_symbols = os.getenv("ALPACA_SYMBOLS")
     values = parse_csv(raw_symbols) if raw_symbols is not None else list(config.get("defaultSeedSymbols") or [])
     if not values:
-        raise ValueError("ALPACA_SYMBOLS가 비어 있습니다. 기본 수집/watch list seed 심볼을 CSV로 설정하세요.")
+        return []
     return _validated_symbol_list(values, config, "ALPACA_SYMBOLS")
 
 

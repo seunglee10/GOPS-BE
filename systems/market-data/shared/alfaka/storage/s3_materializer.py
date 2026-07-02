@@ -14,7 +14,7 @@ from alfaka.storage.candle_validation import invalid_candle_reason
 def main():
     load_dotenv()
     bucket = os.getenv("S3_BUCKET")
-    prefix = os.getenv("S3_MATERIALIZE_PREFIX") or os.getenv("S3_FINAL_PREFIX", "market-data/final")
+    prefix = os.getenv("S3_MATERIALIZE_PREFIX") or os.getenv("S3_FINAL_PREFIX", "market-data/rebuild-20260702-lazy-v1/final")
     if not bucket:
         raise SystemExit("S3_BUCKET is required for S3 materialization.")
     from alfaka.common.s3_client import create_s3_client
@@ -200,6 +200,11 @@ def materialize_processed_rows(client, object_path, rows, source_name="s3-proces
     if clickhouse_rows:
         client.insert_json_each_row("chart_candles", clickhouse_rows)
 
+    client.insert_json_each_row("storage_object_audit", [storage_object_audit_row(
+        object_path,
+        clickhouse_rows,
+        source_name=source_name,
+    )])
     client.insert_json_each_row("load_audit", [{
         "source_name": source_name,
         "object_path": object_path,
@@ -207,6 +212,30 @@ def materialize_processed_rows(client, object_path, rows, source_name="s3-proces
         "note": f"S3 processed/final chart candle materialization; skipped_invalid={skipped_invalid}",
     }])
     return {"objectPath": object_path, "rowCount": len(clickhouse_rows), "skippedInvalidRowCount": skipped_invalid}
+
+
+def storage_object_audit_row(object_path, rows, source_name="s3-processed-final"):
+    first = rows[0] if rows else {}
+    bucket = None
+    if str(object_path).startswith("s3://"):
+        bucket = str(object_path)[5:].split("/", 1)[0]
+    try:
+        object_format = detect_s3_object_format(object_path)
+    except ValueError:
+        object_format = "virtual"
+    return {
+        "object_path": object_path,
+        "bucket": bucket,
+        "dataset": "candles",
+        "layer": "candles",
+        "symbol": first.get("symbol"),
+        "interval": first.get("interval"),
+        "object_format": object_format,
+        "row_count": len(rows),
+        "checksum": None,
+        "source": source_name,
+        "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:23],
+    }
 
 
 def normalize_processed_candle_row(row):

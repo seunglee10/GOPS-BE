@@ -8,11 +8,11 @@ data:
   AWS_EC2_METADATA_DISABLED: "false"
   S3_ENDPOINT_URL: ""
   ALFAKA_REQUEST_CONFIG: systems/market-data/config/market-data-request.json
-  ALPACA_UNIVERSE: gops20
+  ALPACA_UNIVERSE: ""
   ALPACA_UNIVERSE_REGISTRY_PATH: ""
-  ALPACA_COLLECTION_SYMBOL_SOURCE: universe
+  ALPACA_COLLECTION_SYMBOL_SOURCE: on-demand
   ALPACA_CHANNELS: bars,updatedBars,dailyBars,statuses
-  ALPACA_ACTIVE_CHANNELS: trades
+  ALPACA_ACTIVE_CHANNELS: trades,quotes
   ALPACA_ACTIVE_TICK_SUBSCRIPTION: "true"
   ALPACA_MAX_TRADE_SYMBOLS: ""
   HOT_TIER_SIZE: "10"
@@ -26,7 +26,7 @@ data:
   CLICKHOUSE_HTTP_URL: http://clickhouse:8123
   CLICKHOUSE_DATABASE: market_data
   CLICKHOUSE_USER: alfaka
-  CLICKHOUSE_LOAD_TRADES: "false"
+  CLICKHOUSE_LOAD_TRADES: "true"
   AGENT_NEWS_CACHE_BACKEND: auto
   AGENT_NEWS_CACHE_TTL_SECONDS: "300"
   AGENT_NEWS_NO_DATA_CACHE_TTL_SECONDS: "60"
@@ -40,11 +40,10 @@ data:
   DATABASE_NAME: gops
   DATABASE_USER: gops
   S3_BUCKET: gops-market-data-<aws-account-id>-ap-northeast-2-an
-  S3_RAW_PREFIX: market-data/rebuild-20260701/raw/alpaca
-  S3_FINAL_PREFIX: market-data/rebuild-20260701/final
-  S3_LIVE_PREFIX: market-data/rebuild-20260701/live
-  S3_MANIFEST_PREFIX: market-data/rebuild-20260701/manifest
-  S3_MATERIALIZE_PREFIX: market-data/rebuild-20260701/final
+  S3_RAW_PREFIX: market-data/rebuild-20260702-lazy-v1/raw/alpaca
+  S3_FINAL_PREFIX: market-data/rebuild-20260702-lazy-v1/final
+  S3_MANIFEST_PREFIX: market-data/rebuild-20260702-lazy-v1/manifest
+  S3_MATERIALIZE_PREFIX: market-data/rebuild-20260702-lazy-v1/final
   S3_PROCESSED_FORMAT: parquet
   S3_HISTORICAL_RAW_PARTITION_MODE: chunk
   S3_HISTORICAL_PROCESSED_MANIFEST_LAYOUT: compact

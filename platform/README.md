@@ -5,7 +5,6 @@ It should not contain application logic.
 
 ```text
 kafka/       topic contract and local/MSK transition notes
-flink/       stream-processing transition notes
 redis/       cache endpoint contract
 postgres/    order DB endpoint and migration contract
 clickhouse/  chart serving projection contract

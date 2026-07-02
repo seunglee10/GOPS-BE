@@ -2,6 +2,11 @@
 
 Shared chart-command contract for frontend runtime and backend/agent code.
 
+Chart data storage and transport semantics are defined by
+`docs/CHART_DATA_REBUILD_PLAN.md`. This contract covers UI/chart command shape;
+it must not reintroduce preset-universe preload, fake candle rendering, or direct
+frontend access to Redis, S3, or ClickHouse.
+
 Current mirrors:
 
 ```text
@@ -19,10 +24,12 @@ Rules:
 - Canonical intervals are `1m`, `5m`, `10m`, `1D`, `1W`, `1M`.
 - Candle readiness uses both `dataStatus` and detailed `coverage`.
 - Backfill success does not mean a chart is renderable unless stored candle coverage is sufficient.
-- The planned chart-data rebuild starts from empty storage and may return empty/partial coverage while bounded backfill is queued.
-- Redis is only the newest 120-candle cache and realtime/replacement state; older confirmed candles come from ClickHouse.
-- Live candle events may be provisional first and then be replaced by confirmed `bars`, `updatedBars`, or `dailyBars` for the same timestamp.
-- Chart payloads must preserve `feedProfile`, `marketSession`, and planned `feedEpoch` metadata so SIP/BOATS overlap can be rejected.
+- Chart data layers are consumed independently: `candles`, `trades`, `quotes`,
+  and `events`. Indicator layers such as moving averages and VWAP are calculated
+  from candle/trade/quote data by the chart engine or explicit downstream code,
+  not by a separate preload-only API.
+- Frontend requests use API/WebSocket only. It must not connect directly to
+  Redis, S3, or ClickHouse.
 - One accepted proposal should become one undo/redo unit.
 - Drawing proposals are preview-first; applying a preview turns it into an editable drawing.
 

@@ -35,7 +35,7 @@ class MarketDataProvider:
         interval = normalize_chart_interval(interval)
         limit = resolve_candle_limit(interval, limit)
         query_limit = moving_average_query_limit(interval, limit)
-        clickhouse_from_time = target_floor_from_time(interval, from_time)
+        clickhouse_from_time = None if before and not from_time else target_floor_from_time(interval, from_time)
         range_query = bool(before or from_time or to_time)
         redis_candles = [] if range_query else filter_stock_weekdays(self.redis_provider.recent_candles(symbol, interval, query_limit))
         live_candle = None if range_query else self._live_candle(symbol, interval)
@@ -212,10 +212,11 @@ def has_more_before_target(oldest, available_from, target_range_from):
         return False
     target_start = parse_iso_time(target_range_from)
     available_start = parse_iso_time(available_from)
-    effective_start = target_start or available_start
-    if not effective_start:
-        return False
-    return oldest_time - effective_start > TARGET_FLOOR_TOLERANCE
+    if available_start and oldest_time - available_start > TARGET_FLOOR_TOLERANCE:
+        return True
+    if target_start and oldest_time - target_start > TARGET_FLOOR_TOLERANCE:
+        return True
+    return False
 
 
 def candles_are_behind_coverage(candles, coverage):

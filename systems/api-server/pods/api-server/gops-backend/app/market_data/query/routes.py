@@ -28,7 +28,7 @@ def market_symbol_detail(symbol: str) -> dict[str, Any]:
 
 @router.get("/api/charts/volume-profile-bins")
 def chart_volume_profile_bins(
-    symbol: str = Query(default="AAPL", min_length=1, max_length=12),
+    symbol: str = Query(min_length=1, max_length=12),
     from_time: str = Query(alias="from"),
     to_time: str = Query(alias="to"),
     price_bin_size: str = Query(default="auto", alias="priceBinSize"),
@@ -48,7 +48,7 @@ def market_symbol_status(symbol: str) -> dict[str, Any]:
 
 @router.get("/api/agent/context/chart")
 def agent_chart_context(
-    symbol: str = Query(default="AAPL", min_length=1, max_length=12),
+    symbol: str = Query(min_length=1, max_length=12),
     interval: str = Query(default="1m", pattern=CHART_INTERVAL_PATTERN),
     from_time: str = Query(alias="from"),
     to_time: str = Query(alias="to"),

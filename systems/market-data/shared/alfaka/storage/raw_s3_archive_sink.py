@@ -19,15 +19,13 @@ from alfaka.storage.processed_s3_sink import (
 from alfaka.storage.s3_manifest import DEFAULT_MANIFEST_PREFIX, normalize_raw_channel, write_raw_manifest
 
 
-RAW_TOPIC_SUFFIXES = (
-    "bars",
-    "updated-bars",
-    "trades",
-    "daily-bars",
-    "statuses",
-    "quotes",
-    "corrections",
-    "cancel-errors",
+RAW_ARCHIVE_TOPICS = (
+    "market.input.realtime.trades.v1",
+    "market.input.realtime.quotes.v1",
+    "market.input.realtime.events.v1",
+    "market.input.realtime.bars.1m.v1",
+    "market.input.realtime.updated-bars.1m.v1",
+    "market.input.realtime.daily-bars.v1",
 )
 
 
@@ -52,15 +50,14 @@ def main():
 def raw_s3_archive_runtime_config(environ=None):
     environ = environ or os.environ
     kafka_servers = environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
-    raw_prefix = environ.get("KAFKA_RAW_TOPIC_PREFIX", environ.get("KAFKA_TOPIC_PREFIX", "market.raw"))
     configured_topics = parse_csv(environ.get("KAFKA_RAW_ARCHIVE_TOPICS", ""))
-    topics = configured_topics or [f"{raw_prefix}.{suffix}" for suffix in RAW_TOPIC_SUFFIXES]
+    topics = configured_topics or list(RAW_ARCHIVE_TOPICS)
     config = {
         "kafka_servers": kafka_servers,
         "group_id": environ.get("KAFKA_RAW_S3_GROUP_ID", "alfaka-raw-s3-archive"),
         "topics": topics,
         "s3_bucket": environ.get("S3_BUCKET"),
-        "raw_prefix": environ.get("S3_RAW_PREFIX", "market-data/raw/alpaca"),
+        "raw_prefix": environ.get("S3_RAW_PREFIX", "market-data/rebuild-20260702-lazy-v1/raw/alpaca"),
         "manifest_prefix": environ.get("S3_MANIFEST_PREFIX", DEFAULT_MANIFEST_PREFIX),
         "flush_count": parse_positive_int(environ.get("S3_RAW_FLUSH_COUNT", environ.get("S3_FLUSH_COUNT", "500")), default=500),
         "flush_interval_seconds": parse_non_negative_float(environ.get("S3_RAW_FLUSH_INTERVAL_SECONDS", environ.get("S3_FLUSH_INTERVAL_SECONDS", "60")), default=60),
@@ -85,7 +82,7 @@ def run_raw_s3_archive_sink(
     group_id=None,
     topics=None,
     s3_bucket=None,
-    raw_prefix="market-data/raw/alpaca",
+    raw_prefix="market-data/rebuild-20260702-lazy-v1/raw/alpaca",
     manifest_prefix=DEFAULT_MANIFEST_PREFIX,
     flush_count=500,
     flush_interval_seconds=60,

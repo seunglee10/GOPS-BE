@@ -11,6 +11,9 @@ def candle_to_gops(candle):
     ma = candle.get("ma") or {}
     timestamp = canonical_utc_timestamp(candle.get("timestamp"))
     result = {
+        "layer": "candles",
+        "symbol": candle.get("symbol"),
+        "timeframe": candle.get("interval"),
         "timestamp": timestamp,
         "open": number_or_zero(candle.get("open")),
         "high": number_or_zero(candle.get("high")),
@@ -18,6 +21,8 @@ def candle_to_gops(candle):
         "close": number_or_zero(candle.get("close")),
         "volume": number_or_zero(candle.get("volume")),
         "isClosed": bool(candle.get("isClosed", candle.get("is_closed", True))),
+        "state": "closed" if bool(candle.get("isClosed", candle.get("is_closed", True))) else "live",
+        "source": candle.get("source") or "unknown",
     }
 
     for key in ("ma5", "ma20", "ma60"):
@@ -50,7 +55,12 @@ def snapshot(
     resolved_message = message
     if resolved_message is None and resolved_data_status == "empty":
         resolved_message = "No candle data is available for this symbol and interval."
-    converted_candles = [candle_to_gops(candle) for candle in candles]
+    converted_candles = []
+    for candle in candles:
+        converted = candle_to_gops(candle)
+        converted["symbol"] = converted.get("symbol") or symbol
+        converted["timeframe"] = converted.get("timeframe") or interval
+        converted_candles.append(converted)
     payload = {
         "symbol": symbol,
         "interval": interval,

@@ -26,7 +26,6 @@ The repository currently includes:
 | `docs/PRODUCT_CONTEXT.md` | Product intent and future direction. |
 | `docs/STRUCTURE_GUIDE.md` | Where new code, pods, jobs, images, and platform contracts belong. |
 | `docs/ARCHITECTURE.md` | Current runtime architecture and system boundaries. |
-| `docs/CHART_DATA_REBUILD_PLAN.md` | Planned chart-data rebuild contract for the upcoming chart/market-data overhaul. |
 | `docs/IMAGE_STRATEGY.md` | Docker image boundaries. |
 | `docs/ENVIRONMENT.md` | Env, secret, and platform contracts. |
 | `AGENTS.md` | Rules for Codex and future contributors. |
@@ -128,7 +127,7 @@ Frontend: http://localhost:5173
 Backend:  http://localhost:8000/health
 Agents:   http://localhost:8100/health
 Symbols:  http://localhost:8000/api/charts/symbols
-Candles:  http://localhost:8000/api/charts/candles?symbol=AAPL&interval=1m&limit=120
+Candles:  http://localhost:8000/api/charts/candles?symbol=AAPL&interval=1m&limit=160
 ```
 
 Start live Alpaca ingestion only when needed:
@@ -188,11 +187,9 @@ Auth rules:
 ## Operating Rules
 
 - Chart API serves from Redis and ClickHouse, not directly from S3.
-- S3 final objects and manifests are durable replay/rematerialization storage.
-- S3 raw archives are backup-only and do not participate in active chart logic.
+- S3 is durable replay/rematerialization storage.
 - ClickHouse `chart_candles` is the serving projection.
 - Local runtime must not invent fake market candles.
-- The upcoming chart-data overhaul is documented in `docs/CHART_DATA_REBUILD_PLAN.md`; it starts from empty chart data, uses on-demand backfill, keeps only the latest 120 candles per timeframe in Redis, and forbids simultaneous SIP/BOATS writes.
 - Agent-orchestration v1 must not execute orders or choose real news/macro/ontology providers.
 - `.env`, access-key CSV files, KIS token caches, `node_modules`, `dist`, and local caches must not be committed.
 

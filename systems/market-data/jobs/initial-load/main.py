@@ -146,13 +146,13 @@ def resolve_initial_load_symbols(value: str | None) -> tuple[list[str], str]:
     raw_value = (value or "").strip()
     allowed_symbols = configured_collection_symbols()
     allowed = set(allowed_symbols)
-    if not raw_value or raw_value.lower() in {"universe", "gops20", "all", "*"}:
+    if not raw_value or raw_value.lower() in {"universe", "all", "*"}:
         return allowed_symbols, "configured_collection"
     symbols = []
     outside = []
     seen = set()
     for symbol in parse_symbols(raw_value):
-        if symbol not in allowed:
+        if allowed and symbol not in allowed:
             outside.append(symbol)
             continue
         if symbol in seen:

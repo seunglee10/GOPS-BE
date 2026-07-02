@@ -1,5 +1,5 @@
 # 역할: 한 종목 기준으로 Alpaca live path의 read-only 운영 증거를 수집합니다.
-# 사용: 로컬 compose 또는 AWS 배포 runtime shell에서 raw Kafka -> Redis/API 상태를 추적합니다.
+# 사용: 로컬 compose 또는 AWS 배포 runtime shell에서 input Kafka -> Redis/API 상태를 추적합니다.
 import argparse
 import json
 import os
@@ -16,26 +16,24 @@ DEFAULT_INTERVAL = "1m"
 
 def expected_raw_topics(raw_prefix):
     return [
-        f"{raw_prefix}.bars",
-        f"{raw_prefix}.updated-bars",
-        f"{raw_prefix}.trades",
-        f"{raw_prefix}.daily-bars",
-        f"{raw_prefix}.statuses",
-        f"{raw_prefix}.quotes",
-        f"{raw_prefix}.corrections",
-        f"{raw_prefix}.cancel-errors",
+        "market.input.realtime.trades.v1",
+        "market.input.realtime.quotes.v1",
+        "market.input.realtime.events.v1",
+        "market.input.realtime.bars.1m.v1",
+        "market.input.realtime.updated-bars.1m.v1",
+        "market.input.realtime.daily-bars.v1",
     ]
 
 
 def expected_processed_topics(environ=None):
-    environ = environ or os.environ
+    environ = os.environ if environ is None else environ
     configured = parse_csv(environ.get("KAFKA_PROCESSED_TOPICS", ""))
     canonical = [
-        environ.get("KAFKA_TICKS_TOPIC", "market.ticks.v1"),
-        environ.get("KAFKA_LIVE_CANDLE_TOPIC", "market.candles.live.1m.v1"),
-        environ.get("KAFKA_CLOSED_CANDLE_TOPIC", "market.candles.closed.v1"),
-        environ.get("KAFKA_STATUS_TOPIC", "market.status.v1"),
-        environ.get("KAFKA_VOLUME_PROFILE_BINS_TOPIC", "market.volume-profile-bins.1m.v1"),
+        environ.get("KAFKA_TRADES_LAYER_TOPIC", "market.layer.trades.v1"),
+        environ.get("KAFKA_CLOSED_CANDLE_TOPIC", "market.layer.candles.closed.v1"),
+        environ.get("KAFKA_LIVE_CANDLE_TOPIC", "market.layer.candles.live.v1"),
+        environ.get("KAFKA_QUOTES_LAYER_TOPIC", "market.layer.quotes.v1"),
+        environ.get("KAFKA_EVENTS_LAYER_TOPIC", "market.layer.events.v1"),
     ]
     return list(dict.fromkeys(configured + canonical))
 
@@ -70,8 +68,8 @@ def collect_trace(
     api_base_url = (api_base_url or os.getenv("GOPS_API_BASE_URL") or os.getenv("API_BASE_URL") or "http://localhost:8000").rstrip("/")
     redis_url = redis_url or os.getenv("REDIS_URL", "redis://localhost:6379/0")
     kafka_bootstrap_servers = kafka_bootstrap_servers or os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
-    processor_group_id = processor_group_id or os.getenv("KAFKA_PROCESSOR_GROUP_ID") or os.getenv("KAFKA_FLINK_GROUP_ID") or "alfaka-stream-processor"
-    raw_prefix = raw_prefix or os.getenv("KAFKA_RAW_TOPIC_PREFIX", os.getenv("KAFKA_TOPIC_PREFIX", "market.raw"))
+    processor_group_id = processor_group_id or os.getenv("KAFKA_PROCESSOR_GROUP_ID") or "alfaka-market-processor"
+    raw_prefix = raw_prefix or os.getenv("KAFKA_INPUT_TOPIC_PREFIX", "market.input")
 
     raw_topics = expected_raw_topics(raw_prefix)
     processed_topics = expected_processed_topics()
@@ -85,7 +83,7 @@ def collect_trace(
         "symbol": symbol,
         "interval": interval,
         "status": overall_status(checks),
-        "path": "Alpaca -> raw Kafka -> Python processor -> Redis/processed Kafka -> ClickHouse/API/WebSocket -> browser",
+        "path": "Alpaca -> input Kafka -> tick fanout topics -> Kubernetes market-processor -> Redis/layer Kafka -> ClickHouse/S3/API/WebSocket -> browser",
         "config": {
             "apiBaseUrl": api_base_url,
             "redisUrl": redact_url(redis_url),

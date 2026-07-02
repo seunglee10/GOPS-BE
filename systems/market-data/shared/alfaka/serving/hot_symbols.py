@@ -24,7 +24,7 @@ def build_hot_symbols_payload(records: list[dict[str, Any]], limit: int = DEFAUL
     return {
         "ranking": {
             "method": HOT_RANKING_METHOD,
-            "universe": "gops20",
+            "universe": "active-subscriptions",
             "limit": limit,
             "asOf": as_of,
             "refreshSeconds": 60,

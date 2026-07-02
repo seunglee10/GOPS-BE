@@ -11,7 +11,7 @@ CHART_INTERVAL_PATTERN = "^(1m|5m|10m|1D|1W|1M|1d|1w|1mo|1MO|1month)$"
 @router.websocket("/ws/charts")
 async def chart_stream(
     websocket: WebSocket,
-    symbol: str = Query(default="AAPL", min_length=1, max_length=12),
+    symbol: str = Query(min_length=1, max_length=12),
     interval: str = Query(default="1m", pattern=CHART_INTERVAL_PATTERN),
     cursor: str | None = Query(default=None),
 ) -> None:

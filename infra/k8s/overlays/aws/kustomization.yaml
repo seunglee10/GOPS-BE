@@ -1,6 +1,6 @@
 # 역할: AWS/EKS에 적용할 Kubernetes manifest 조합입니다.
 # 사용: PLACEHOLDER를 실제 AWS 값으로 바꾼 뒤 kubectl apply -k로 적용합니다.
-# 주의: 현재 stream runtime은 real Flink가 아니라 Python market-processor pod입니다.
+# 주의: 현재 stream runtime은 Python market-processor pod입니다.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 

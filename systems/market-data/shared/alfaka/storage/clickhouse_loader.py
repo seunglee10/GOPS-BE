@@ -1,6 +1,6 @@
 # 역할: Kafka Processed Topic을 읽어 ClickHouse 조회 테이블에 적재합니다.
 # 사용: GOPS API Server가 과거 캔들을 ClickHouse에서 읽을 수 있게 만드는 연결 job입니다.
-# 입력: 기본은 market.candles.closed.v1만 적재합니다. tick 적재는 옵션입니다.
+# 입력: closed candle/trades/quotes/events layer topic을 적재합니다.
 import json
 import os
 import re
@@ -20,13 +20,9 @@ def main():
 
     kafka_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
     group_id = os.getenv("KAFKA_CLICKHOUSE_GROUP_ID", "alfaka-clickhouse-loader")
-    topics = parse_csv(os.getenv("KAFKA_CLICKHOUSE_TOPICS", ",".join([
-        os.getenv("KAFKA_CLOSED_CANDLE_TOPIC", "market.candles.closed.v1"),
-        os.getenv("KAFKA_STATUS_TOPIC", "market.status.v1"),
-        os.getenv("KAFKA_VOLUME_PROFILE_BINS_TOPIC", "market.volume-profile-bins.1m.v1"),
-        os.getenv("KAFKA_NEWS_TOPIC", "market.news.alpaca.v1"),
-    ])))
-    load_trades = os.getenv("CLICKHOUSE_LOAD_TRADES", "false").lower() in {"1", "true", "yes"}
+    load_trades = os.getenv("CLICKHOUSE_LOAD_TRADES", "true").lower() in {"1", "true", "yes"}
+    load_quotes = os.getenv("CLICKHOUSE_LOAD_QUOTES", "true").lower() in {"1", "true", "yes"}
+    topics = clickhouse_topics_from_env(os.environ, load_trades=load_trades, load_quotes=load_quotes)
     enable_auto_commit = os.getenv("KAFKA_CLICKHOUSE_ENABLE_AUTO_COMMIT", "false").lower() in {"1", "true", "yes"}
     validate_required_values("clickhouse loader", {
         "kafka_servers": kafka_servers,
@@ -57,15 +53,43 @@ def main():
     for record in consumer:
         payload = record.value
         try:
-            load_payload(client, payload, load_trades=load_trades)
+            load_payload(client, payload, load_trades=load_trades, load_quotes=load_quotes)
             if not enable_auto_commit:
                 consumer.commit()
         except Exception as exc:
             print(f"ClickHouse 적재 실패: {exc}; payload={json.dumps(payload, ensure_ascii=False)}", file=sys.stderr, flush=True)
 
 
-def load_payload(client, payload, load_trades=False):
+def clickhouse_topics_from_env(environ=None, load_trades=False, load_quotes=True):
+    environ = environ or os.environ
+    default_topics = [
+        environ.get("KAFKA_CLOSED_CANDLE_TOPIC", "market.layer.candles.closed.v1"),
+        environ.get("KAFKA_TRADES_LAYER_TOPIC", "market.layer.trades.v1"),
+        environ.get("KAFKA_EVENTS_LAYER_TOPIC", "market.layer.events.v1"),
+        environ.get("KAFKA_NEWS_TOPIC", "market.news.alpaca.v1"),
+    ]
+    if load_quotes:
+        default_topics.insert(2, environ.get("KAFKA_QUOTES_LAYER_TOPIC", "market.layer.quotes.v1"))
+    topics = parse_csv(environ.get("KAFKA_CLICKHOUSE_TOPICS", ",".join(default_topics)))
+    quotes_topic = environ.get("KAFKA_QUOTES_LAYER_TOPIC", "market.layer.quotes.v1")
+    if load_quotes and quotes_topic not in topics:
+        topics.append(quotes_topic)
+    trades_topic = environ.get("KAFKA_TRADES_LAYER_TOPIC", "market.layer.trades.v1")
+    if load_trades and trades_topic not in topics:
+        topics.append(trades_topic)
+    return topics
+
+
+def load_payload(client, payload, load_trades=False, load_quotes=True):
     event_type = payload.get("eventType")
+    if event_type == "QUOTE" or payload.get("layer") == "quotes":
+        if not load_quotes:
+            print(f"ClickHouse quote 적재 제외: symbol={payload.get('symbol', 'UNKNOWN')}", flush=True)
+            return
+        row = quote_to_clickhouse_row(payload)
+        client.insert_json_each_row("quote_ticks", [row])
+        print(f"ClickHouse quote 적재: symbol={row['symbol']} time={row['event_time']}", flush=True)
+        return
     if event_type == "TRADE":
         if not load_trades:
             print(f"ClickHouse trade 적재 제외: symbol={payload.get('symbol', 'UNKNOWN')}", flush=True)
@@ -76,6 +100,8 @@ def load_payload(client, payload, load_trades=False):
         return
 
     if event_type == "MARKET_STATUS":
+        event_row = market_event_to_clickhouse_row(payload)
+        client.insert_json_each_row("market_events", [event_row])
         row = status_to_clickhouse_row(payload)
         client.insert_json_each_row("market_status_events", [row])
         print(f"ClickHouse status 적재: symbol={row['symbol']} status={row['status']} time={row['event_time']}", flush=True)
@@ -113,6 +139,12 @@ def load_payload(client, payload, load_trades=False):
         print(f"ClickHouse candle 적재: symbol={row['symbol']} interval={row['interval']} time={row['event_time']}", flush=True)
         return
 
+    if payload.get("layer") == "events" or event_type:
+        row = market_event_to_clickhouse_row(payload)
+        client.insert_json_each_row("market_events", [row])
+        print(f"ClickHouse event 적재: symbol={row['symbol']} type={row['event_type']} time={row['event_time']}", flush=True)
+        return
+
     print(f"ClickHouse 적재 제외 eventType={event_type}", flush=True)
 
 
@@ -127,6 +159,26 @@ def trade_to_clickhouse_row(payload):
         "conditions": payload.get("conditions") or [],
         "tape": payload.get("tape"),
         "source": payload.get("source", "alpaca"),
+        "feed": payload.get("feed") or "unknown",
+        "feed_profile": payload.get("feedProfile") or payload.get("feed") or "unknown",
+        "market_session": payload.get("marketSession") or market_session_for_timestamp(payload.get("timestamp")),
+        "source_event_id": payload.get("sourceEventId"),
+        "received_at": clickhouse_time_or_none(payload.get("receivedAt")),
+    }
+
+
+def quote_to_clickhouse_row(payload):
+    return {
+        "event_time": clickhouse_time(payload.get("timestamp")),
+        "symbol": payload.get("symbol", "UNKNOWN"),
+        "bid_price": float_or_none(payload.get("bidPrice")),
+        "bid_size": int_or_none(payload.get("bidSize")),
+        "ask_price": float_or_none(payload.get("askPrice")),
+        "ask_size": int_or_none(payload.get("askSize")),
+        "bid_exchange": payload.get("bidExchange"),
+        "ask_exchange": payload.get("askExchange"),
+        "conditions": payload.get("conditions") or [],
+        "source": payload.get("source", "alpaca.quotes"),
         "feed": payload.get("feed") or "unknown",
         "feed_profile": payload.get("feedProfile") or payload.get("feed") or "unknown",
         "market_session": payload.get("marketSession") or market_session_for_timestamp(payload.get("timestamp")),
@@ -179,6 +231,23 @@ def status_to_clickhouse_row(payload):
         "market_session": payload.get("marketSession") or market_session_for_timestamp(payload.get("eventTime")),
         "source_event_id": payload.get("sourceEventId"),
         "raw": json.dumps(payload.get("raw") or {}, ensure_ascii=False, separators=(",", ":")),
+    }
+
+
+def market_event_to_clickhouse_row(payload):
+    symbol = payload.get("symbol")
+    event_time = payload.get("eventTime") or payload.get("timestamp") or payload.get("receivedAt")
+    return {
+        "event_time": clickhouse_time(event_time),
+        "symbol": None if symbol in {None, "_MARKET"} else symbol,
+        "event_type": str(payload.get("eventType") or payload.get("type") or "UNKNOWN"),
+        "layer": str(payload.get("layer") or "events"),
+        "source": payload.get("source", "alpaca"),
+        "feed": payload.get("feed") or "unknown",
+        "feed_profile": payload.get("feedProfile") or payload.get("feed") or "unknown",
+        "market_session": payload.get("marketSession") or market_session_for_timestamp(event_time),
+        "source_event_id": payload.get("sourceEventId"),
+        "payload": json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
     }
 
 
@@ -320,11 +389,99 @@ class ClickHouseHttpClient:
     def ensure_market_data_schema(self):
         if os.getenv("CLICKHOUSE_ENSURE_SESSION_COLUMNS", "true").lower() not in {"1", "true", "yes"}:
             return
+        self.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.database}.market_events
+            (
+                event_time DateTime64(3, 'UTC'),
+                symbol Nullable(String),
+                event_type LowCardinality(String),
+                layer LowCardinality(String),
+                source LowCardinality(String),
+                feed LowCardinality(String),
+                feed_profile LowCardinality(String) DEFAULT feed,
+                market_session LowCardinality(String) DEFAULT 'unknown',
+                source_event_id Nullable(String),
+                payload String,
+                inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+            )
+            ENGINE = ReplacingMergeTree(inserted_at)
+            PARTITION BY toYYYYMM(event_time)
+            ORDER BY (coalesce(symbol, '_MARKET'), event_type, event_time, feed_profile, market_session)
+        """)
+        self.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.database}.backfill_jobs
+            (
+                request_id String,
+                symbol LowCardinality(String),
+                interval LowCardinality(String),
+                job_type LowCardinality(String),
+                status LowCardinality(String),
+                range_start DateTime64(3, 'UTC'),
+                range_end DateTime64(3, 'UTC'),
+                source_preference LowCardinality(String),
+                object_paths Array(String),
+                error Nullable(String),
+                created_at DateTime64(3, 'UTC'),
+                updated_at DateTime64(3, 'UTC'),
+                finished_at Nullable(DateTime64(3, 'UTC')),
+                raw String,
+                inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+            )
+            ENGINE = ReplacingMergeTree(inserted_at)
+            PARTITION BY toYYYYMM(created_at)
+            ORDER BY (request_id, symbol, interval)
+        """)
+        self.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.database}.storage_object_audit
+            (
+                object_path String,
+                bucket Nullable(String),
+                dataset LowCardinality(String),
+                layer LowCardinality(String),
+                symbol Nullable(String),
+                interval Nullable(String),
+                object_format LowCardinality(String),
+                row_count UInt64,
+                checksum Nullable(String),
+                source LowCardinality(String),
+                created_at DateTime64(3, 'UTC'),
+                inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+            )
+            ENGINE = ReplacingMergeTree(inserted_at)
+            PARTITION BY toYYYYMM(created_at)
+            ORDER BY (object_path, dataset, layer)
+        """)
+        self.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.database}.quote_ticks
+            (
+                event_time DateTime64(3, 'UTC'),
+                symbol LowCardinality(String),
+                bid_price Nullable(Float64),
+                bid_size Nullable(UInt64),
+                ask_price Nullable(Float64),
+                ask_size Nullable(UInt64),
+                bid_exchange Nullable(String),
+                ask_exchange Nullable(String),
+                conditions Array(String),
+                source LowCardinality(String),
+                feed LowCardinality(String),
+                feed_profile LowCardinality(String) DEFAULT feed,
+                market_session LowCardinality(String) DEFAULT 'unknown',
+                source_event_id Nullable(String),
+                received_at Nullable(DateTime64(3, 'UTC')),
+                inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+            )
+            ENGINE = MergeTree
+            PARTITION BY toYYYYMM(event_time)
+            ORDER BY (symbol, event_time, feed_profile)
+        """)
         for table, after_column in (
             ("trade_ticks", "feed"),
+            ("quote_ticks", "feed"),
             ("chart_candles", "feed"),
             ("volume_profile_bins_1m", "feed"),
             ("market_status_events", "feed"),
+            ("market_events", "feed"),
         ):
             table_name = f"{self.database}.{clickhouse_identifier(table)}"
             self.execute(

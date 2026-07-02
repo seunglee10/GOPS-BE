@@ -1,9 +1,13 @@
-name: Deploy dev to EKS
+name: Deploy dev/test to EKS
 
 on:
   push:
     branches:
       - dev
+      # Branches matching these patterns deploy to the shared dev EKS environment.
+      - kimheejun
+      - "deploy/**"
+      - "test/**"
   workflow_dispatch:
     inputs:
       services:
@@ -108,6 +112,7 @@ jobs:
         run: kubectl apply -k "$KUSTOMIZE_OVERLAY" --dry-run=server
 
       - name: Deploy app workloads
+        id: deploy_app
         if: steps.changes.outputs.has_services == 'true'
         run: kubectl apply -k "$KUSTOMIZE_OVERLAY"
 
@@ -151,3 +156,16 @@ jobs:
           if [[ "$SMOKE_BACKEND" == "true" ]]; then
             smoke_url https://stargops.com/api/charts/symbols
           fi
+
+      - name: Roll back failed app rollout
+        if: failure() && steps.changes.outputs.has_services == 'true' && steps.deploy_app.outcome == 'success'
+        env:
+          DEPLOYMENTS: ${{ steps.changes.outputs.deployments }}
+        run: |
+          for deployment in ${DEPLOYMENTS}; do
+            echo "Rolling back deployment/${deployment}"
+            kubectl rollout undo "deployment/${deployment}" -n "$K8S_NAMESPACE"
+            kubectl rollout status "deployment/${deployment}" \
+              -n "$K8S_NAMESPACE" \
+              --timeout=600s
+          done

@@ -1,50 +1,46 @@
 # S3 Platform Contract
 
-S3 is durable market-data evidence. Only final objects and manifests participate
-in chart serving, backfill coverage, and ClickHouse rebuild.
+S3 has two roles in the chart rebuild:
 
-Raw Alpaca payloads may be written under `S3_RAW_PREFIX`, but that prefix is
-backup-only. It must not be read by chart API, coverage checks, backfill
-decisions, or ClickHouse loaders unless a future raw-replay pipeline is
-explicitly designed.
+- `final` and `manifest` are durable evidence and ClickHouse rebuild sources.
+- `raw/alpaca` is optional backup-only storage and is outside the read path.
 
-Current AWS bucket:
-
-```text
-gops-market-data-<aws-account-id>-ap-northeast-2-an
-```
-
-Chart-data rewrite prefix contract:
+## Prefix Contract
 
 ```text
 S3_RAW_PREFIX=market-data/rebuild-20260702-lazy-v1/raw/alpaca
 S3_FINAL_PREFIX=market-data/rebuild-20260702-lazy-v1/final
-S3_LIVE_PREFIX=market-data/rebuild-20260702-lazy-v1/live
 S3_MANIFEST_PREFIX=market-data/rebuild-20260702-lazy-v1/manifest
 S3_MATERIALIZE_PREFIX=market-data/rebuild-20260702-lazy-v1/final
 ```
 
-Runtime writers:
+Do not configure `S3_LIVE_PREFIX` for the rebuild path. Live candles belong in
+Redis/WebSocket state, not S3. Quote layer payloads are stored under
+`final/quotes` after the quote processor republishes them to
+`market.layer.quotes.v1`.
 
-- raw archive sink writes backup-only payloads under `S3_RAW_PREFIX`;
-- processed/final sink writes confirmed data under `S3_FINAL_PREFIX`;
-- live evidence writes under `S3_LIVE_PREFIX`;
-- backfill workers write manifests under `S3_MANIFEST_PREFIX`.
-
-Runtime readers:
-
-- chart API reads Redis and ClickHouse, not S3 raw;
-- backfill coverage checks S3 manifests/final objects, not S3 raw;
-- ClickHouse materialization reads final objects, not S3 raw.
-
-Final candle keys include `feed={sip|boats}` so SIP/BOATS overlap cannot
-collapse into one object.
-
-Leave endpoint values empty for real AWS S3:
+## Final Objects
 
 ```text
-S3_ENDPOINT_URL=
-DOCKER_S3_ENDPOINT_URL=
+market-data/rebuild-20260702-lazy-v1/final/candles/feed={feed}/interval={1m|5m|10m|1D|1W|1M}/symbol={symbol}/year=YYYY/month=MM/day=DD/*.parquet
+market-data/rebuild-20260702-lazy-v1/final/trades/symbol={symbol}/year=YYYY/month=MM/day=DD/feed={feed}/*.parquet
+market-data/rebuild-20260702-lazy-v1/final/quotes/symbol={symbol}/year=YYYY/month=MM/day=DD/feed={feed}/*.parquet
+market-data/rebuild-20260702-lazy-v1/final/events/event_type={status|unknown}/symbol={symbol}/year=YYYY/month=MM/day=DD/*.parquet
 ```
 
-Use the compose `local-s3` profile only for MinIO experiments.
+## Manifests
+
+```text
+market-data/rebuild-20260702-lazy-v1/manifest/candles/interval={interval}/symbol={symbol}/objects/{digest}.json
+market-data/rebuild-20260702-lazy-v1/manifest/backfill/request={requestId}.json
+```
+
+## Raw Backup
+
+```text
+market-data/rebuild-20260702-lazy-v1/raw/alpaca/source=alpaca/channel={trades|quotes|bars|updated-bars|daily-bars|events}/symbol={symbol}/year=YYYY/month=MM/day=DD/*.jsonl
+market-data/rebuild-20260702-lazy-v1/raw/alpaca/source=alpaca/channel={bars|daily-bars}/symbol={symbol}/request={requestId}/*.jsonl
+```
+
+Raw backup objects must not participate in chart serving, coverage checks,
+backfill decisions, or ClickHouse loading.

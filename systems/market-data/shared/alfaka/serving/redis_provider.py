@@ -1,6 +1,6 @@
 # 역할: GOPS API/WebSocket이 Redis에서 최신/최근 캔들을 읽는 adapter입니다.
 # 사용: 과거 API는 최근 구간 보강에, WebSocket은 live candle push에 사용합니다.
-# 계약: systems/market-data/shared/alfaka/streaming/processor.py가 쓰는 Redis key를 그대로 읽습니다.
+# 계약: CHART_DATA_REBUILD_PLAN.md의 Redis 120-bar/live state key를 읽습니다.
 import json
 import os
 
@@ -20,7 +20,7 @@ class RedisMarketDataProvider:
         self.keys = RedisKeyBuilder()
 
     def latest_price(self, symbol):
-        return self.redis.hgetall(self.keys.price_latest(symbol))
+        return self.redis.hgetall(self.keys.live_trade(symbol))
 
     def live_candle(self, symbol, interval="1m"):
         interval = normalize_chart_interval(interval)
@@ -48,12 +48,24 @@ class RedisMarketDataProvider:
 
     def closed_event(self, symbol, interval):
         interval = normalize_chart_interval(interval)
-        value = self.redis.get(self.keys.latest_candle(symbol, interval))
+        value = self.redis.get(self.keys.latest_closed_candle(symbol, interval))
         if not value:
             return None
         candle = json.loads(value)
         event_type = "CANDLE_CORRECTED" if candle.get("correctionType") == "UPDATED" else "CANDLE_CLOSED"
         return websocket_event(event_type, symbol, interval, candle)
+
+    def live_trade(self, symbol):
+        values = self.redis.hgetall(self.keys.live_trade(symbol))
+        return values or None
+
+    def live_quote(self, symbol):
+        value = self.redis.get(self.keys.live_quote(symbol))
+        return json.loads(value) if value else None
+
+    def live_market_event(self, symbol):
+        value = self.redis.get(self.keys.live_event(symbol))
+        return json.loads(value) if value else None
 
     def latest_status(self, symbol=None):
         key = self.keys.market_status_symbol_latest(symbol) if symbol else self.keys.market_status_latest()

@@ -25,7 +25,7 @@ class SymbolRegistry:
                 results.extend([
                     item
                     for item in self.clickhouse_provider.search_symbols(normalized_query, max(limit, 40))
-                    if isinstance(item, dict) and item.get("symbol") in universe_symbols
+                    if isinstance(item, dict) and (not universe_symbols or item.get("symbol") in universe_symbols)
                 ])
             except Exception:
                 logger.warning("ClickHouse symbol search failed; falling back to configured symbols.", exc_info=True)
@@ -128,8 +128,15 @@ class SymbolRegistry:
         return symbol in self._universe_symbols()
 
     def _universe_symbols(self) -> list[str]:
-        return [
+        symbols = [
             symbol
             for symbol in configured_universe_symbols(self.config)
             if self._is_valid_symbol(symbol)
+        ]
+        if symbols:
+            return symbols
+        return [
+            str(symbol).strip().upper()
+            for symbol in self.config.get("defaultSymbols") or []
+            if isinstance(symbol, str) and self._is_valid_symbol(str(symbol).strip().upper())
         ]

@@ -1,21 +1,23 @@
-# Deprecated: S3-First Backfill Goal Plan
+# On-Demand Chart Backfill Historical Note
 
-This file is retained only so older references do not break.
-Do not use previous revisions of this file for chart work.
+> Superseded for the current chart-data rebuild.
 
-Use the current source of truth:
+Use `../docs/CHART_DATA_REBUILD_PLAN.md` for implementation. This historical
+plan no longer defines active symbols, default watch lists, preload scope, or
+browser-smoke symbols.
 
-```text
-../docs/CHART_DATA_REBUILD_PLAN.md
-```
+Current implementation direction:
 
-New chart direction:
+- Start with no preloaded chart companies.
+- Load chart data only when the frontend requests a symbol/timeframe/range or an
+  operator explicitly runs a backfill job.
+- Keep Redis limited to latest 120 candles per symbol/timeframe plus live and
+  replacement state.
+- Serve older confirmed history from ClickHouse.
+- Check S3 final/manifest before Alpaca for missing ranges.
+- Keep raw S3 as backup-only until a separate design promotes it.
+- Prevent duplicate storage through deterministic keys and idempotent writes.
+- Keep SIP and BOATS mutually exclusive so both feeds never write the same data.
 
-- start from empty chart storage;
-- never preload chart data outside explicit user requests;
-- load only the requested symbol/timeframe/range/layer;
-- keep Redis bounded to latest 120 candles per timeframe;
-- replace provisional candles with confirmed Alpaca bars;
-- use ClickHouse for older confirmed history;
-- use S3 for durable evidence and rebuild;
-- enforce exclusive SIP/BOATS writers.
+Any new Goal Mode prompt must be written from the active rebuild plan, not from
+this archived document.

@@ -3,6 +3,11 @@
 This is the current repository and runtime architecture.
 For placement rules, read `STRUCTURE_GUIDE.md`.
 
+Chart-data rebuild work must use `CHART_DATA_REBUILD_PLAN.md` as the
+source-of-truth. Older market-data notes that describe preset universe preload,
+non-Mermaid Kafka topic layouts, raw S3 replay as an active read path, or Redis
+as historical storage are superseded.
+
 ## Repository Shape
 
 ```text
@@ -23,7 +28,6 @@ systems/
 
 platform/
   kafka/
-  flink/
   redis/
   postgres/
   clickhouse/
@@ -38,11 +42,6 @@ infra/
 ```
 
 ## Runtime Architecture
-
-This diagram describes the current repository/runtime shape. The planned
-chart/market-data rebuild is intentionally documented separately in
-`CHART_DATA_REBUILD_PLAN.md` so the large upcoming change does not blur the
-current implementation contract.
 
 ```mermaid
 flowchart LR
@@ -141,6 +140,32 @@ flowchart LR
   Reconciler --> KIS
 ```
 
+## Chart Data Rebuild Boundary
+
+The chart rebuild is on-demand:
+
+```text
+Frontend chart request
+  -> API Redis latest 120 check
+  -> ClickHouse confirmed history
+  -> S3 final/manifest evidence
+  -> Alpaca historical backfill only after all stores miss
+```
+
+Realtime data is feed-guarded and symbol-keyed:
+
+```text
+SIP only 04:00-20:00 ET / BOATS only 20:00-04:00 ET
+  -> Kafka market.input.realtime.* topics with key=symbol
+  -> processor feed guard
+  -> Redis live/provisional/latest 120
+  -> market.layer.* topics for canonical downstream storage
+```
+
+Raw Alpaca payload archives may be written to S3 for backup only. Raw archives
+must not participate in chart serving, coverage checks, backfill decisions, or
+ClickHouse loading unless a future explicit raw-replay pipeline is designed.
+
 ## Platform Staging
 
 Platform dependencies can move through stages without changing system ownership:
@@ -149,7 +174,7 @@ Platform dependencies can move through stages without changing system ownership:
 local compose -> single pod candidate -> managed AWS candidate
 ```
 
-This matters most for Kafka and Flink/stream processing.
+This matters most for Kafka and stream processing.
 Do not make folder structure depend on a final AWS choice before the team decides.
 
 ## Future System Candidates

@@ -1,6 +1,6 @@
-# 역할: Alpaca WebSocket에서 실시간 데이터를 받아 Kafka Raw Topic에 저장합니다.
-# 사용: ALPACA_FEED_PROFILE 또는 legacy ALPACA_FEED를 설정하면 해당 feed runtime이 Kafka Raw Topic에 적재합니다.
-# 출력: market.raw.bars, market.raw.updated-bars, market.raw.trades.
+# 역할: Alpaca WebSocket에서 실시간 데이터를 받아 Kafka input topic에 저장합니다.
+# 사용: ALPACA_FEED_PROFILE 또는 ALPACA_FEED를 설정하면 해당 feed runtime이 Kafka input topic에 적재합니다.
+# 출력: market.input.realtime.*.v1.
 import asyncio
 import json
 import os
@@ -11,8 +11,7 @@ import redis
 import websockets
 
 from alfaka.alpaca.feed_profiles import feed_profile_active_for_session, market_session_for_now, resolve_feed_profile
-from alfaka.alpaca.subscription import build_subscription_request, configured_collection_symbols, load_request_config, load_symbols_and_channels, validate_channels
-from alfaka.alpaca.trade_tiers import resolve_trade_subscription_plan
+from alfaka.alpaca.subscription import build_subscription_request, load_request_config, load_symbols_and_channels, validate_channels
 from alfaka.common.env import load_dotenv, parse_csv
 from alfaka.common.kafka_io import create_json_producer
 from alfaka.common.market_messages import CONTROL_MESSAGE_TYPES, build_raw_envelope, raw_topic_name
@@ -39,7 +38,7 @@ async def main():
 
     kafka_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
     kafka_client_id = os.getenv("KAFKA_CLIENT_ID", "alfaka-alpaca-ingestor")
-    raw_topic_prefix = os.getenv("KAFKA_RAW_TOPIC_PREFIX", os.getenv("KAFKA_TOPIC_PREFIX", "market.raw"))
+    raw_topic_prefix = os.getenv("KAFKA_INPUT_TOPIC_PREFIX", "market.input")
     validate_required_values("alpaca ingestor", {
         "kafka_servers": kafka_servers,
         "raw_topic_prefix": raw_topic_prefix,
@@ -71,7 +70,7 @@ async def main():
     print(f"요청 종목: {symbols}", flush=True)
     print(f"요청 채널: {channels}", flush=True)
     print(f"활성 차트 tick 채널: {active_channels or 'disabled'}", flush=True)
-    print(f"Kafka Raw Topic Prefix: {raw_topic_prefix}", flush=True)
+    print(f"Kafka Input Topic Prefix: {raw_topic_prefix}", flush=True)
 
     delay = reconnect_backoff
     while True:
@@ -140,7 +139,7 @@ async def run_stream_session(
     raw_topic_prefix,
     enforce_session_window,
 ):
-    active_subscribed_symbols = set()
+    active_subscribed_symbols = {channel: set() for channel in active_channels}
     last_active_sync = 0.0
     authenticated = False
     async with websockets.connect(alpaca_url, ping_interval=20, ping_timeout=20) as ws:
@@ -199,7 +198,7 @@ async def run_stream_session(
                             ws,
                             redis_client,
                             active_channels,
-                            set(),
+                            {},
                         )
                         last_active_sync = time.monotonic()
                     continue
@@ -234,6 +233,7 @@ async def run_stream_session(
                     feed=alpaca_feed,
                     feed_profile=feed_profile.profile_id,
                 )
+                attach_feed_epoch(redis_client, envelope)
                 kafka_topic = raw_topic_name(raw_topic_prefix, message_type)
                 kafka_key = envelope["symbol"]
                 producer.send(kafka_topic, key=kafka_key, value=envelope)
@@ -280,71 +280,81 @@ async def sync_active_chart_subscriptions(ws, redis_client, channels, subscribed
     if not redis_client or not channels:
         return subscribed_symbols
 
-    desired_symbols = read_trade_subscription_symbols(redis_client)
-    subscribe_symbols = sorted(desired_symbols - subscribed_symbols)
-    unsubscribe_symbols = sorted(subscribed_symbols - desired_symbols)
+    desired_by_channel = read_realtime_subscription_symbols_by_channel(redis_client, channels)
+    next_subscribed = {}
+    subscribe_request = {"action": "subscribe"}
+    unsubscribe_request = {"action": "unsubscribe"}
 
-    if subscribe_symbols:
-        request = build_subscription_request(subscribe_symbols, channels)
-        print(f"활성 차트 구독 추가: {request}", flush=True)
-        await ws.send(json.dumps(request))
+    for channel in channels:
+        current = set(subscribed_symbols.get(channel, set())) if isinstance(subscribed_symbols, dict) else set(subscribed_symbols)
+        desired = desired_by_channel.get(channel, set())
+        subscribe_symbols = sorted(desired - current)
+        unsubscribe_symbols = sorted(current - desired)
+        next_subscribed[channel] = set(desired)
+        if subscribe_symbols:
+            subscribe_request[channel] = subscribe_symbols
+        if unsubscribe_symbols:
+            unsubscribe_request[channel] = unsubscribe_symbols
 
-    if unsubscribe_symbols:
-        request = {"action": "unsubscribe"}
-        for channel in channels:
-            request[channel] = unsubscribe_symbols
-        print(f"활성 차트 구독 해제: {request}", flush=True)
-        await ws.send(json.dumps(request))
+    if len(subscribe_request) > 1:
+        print(f"활성 차트 구독 추가: {subscribe_request}", flush=True)
+        await ws.send(json.dumps(subscribe_request))
 
-    return desired_symbols
+    if len(unsubscribe_request) > 1:
+        print(f"활성 차트 구독 해제: {unsubscribe_request}", flush=True)
+        await ws.send(json.dumps(unsubscribe_request))
+
+    return next_subscribed
+
+
+def read_realtime_subscription_symbols_by_channel(redis_client, channels):
+    keys = RedisKeyBuilder()
+    result = {channel: set() for channel in channels}
+    for symbol in read_symbol_set(redis_client, keys.subscription_symbols()):
+        layers = read_subscription_layers(redis_client, keys, symbol)
+        if "trades" in layers and "trades" in result:
+            result["trades"].add(symbol)
+        if "quotes" in layers and "quotes" in result and "trades" in layers:
+            result["quotes"].add(symbol)
+        if "events" in layers and "statuses" in result:
+            result["statuses"].add(symbol)
+    cap = parse_positive_int(os.getenv("ALPACA_MAX_TRADE_SYMBOLS"), default=None)
+    if cap:
+        for channel, symbols in list(result.items()):
+            result[channel] = set(sorted(symbols)[:cap])
+    return result
 
 
 def read_trade_subscription_symbols(redis_client):
+    return read_realtime_subscription_symbols_by_channel(redis_client, ["trades"]).get("trades", set())
+
+
+def read_subscription_layers(redis_client, keys, symbol):
     try:
-        allowed_symbols = configured_collection_symbols()
-    except Exception as exc:
-        print(f"활성 차트 구독 universe 제한을 적용하지 못했습니다: {exc}", flush=True)
-        allowed_symbols = None
-    plan = resolve_trade_subscription_plan(
-        active_symbols=read_active_chart_symbols(redis_client),
-        watchlist_symbols=read_watchlist_symbols(redis_client),
-        hot_symbols=read_hot_symbols(redis_client),
-        max_symbols=os.getenv("ALPACA_MAX_TRADE_SYMBOLS"),
-        allowed_symbols=allowed_symbols,
-    )
-    return set(plan["symbols"])
+        hgetall = getattr(redis_client, "hgetall", None)
+        if callable(hgetall):
+            record = hgetall(keys.subscription_symbol(symbol)) or {}
+        else:
+            record = getattr(redis_client, "hashes", {}).get(keys.subscription_symbol(symbol), {})
+    except Exception:
+        return set()
+    raw_layers = record.get("layers", "")
+    if isinstance(raw_layers, bytes):
+        raw_layers = raw_layers.decode("utf-8")
+    return {item.strip() for item in str(raw_layers).split(",") if item.strip()}
 
 
-def read_active_chart_symbols(redis_client):
+def attach_feed_epoch(redis_client, envelope):
+    if not redis_client:
+        return envelope
     keys = RedisKeyBuilder()
-    symbols = set()
-    for symbol in redis_client.smembers(keys.active_symbols()):
-        if redis_client.exists(keys.active_symbol(symbol)):
-            symbols.add(symbol)
-    return symbols
-
-
-def read_watchlist_symbols(redis_client):
-    return read_symbol_set(redis_client, RedisKeyBuilder().watchlist_symbols())
-
-
-def read_hot_symbols(redis_client):
-    keys = RedisKeyBuilder()
-    symbols = read_symbol_set(redis_client, keys.hot_symbols())
-    snapshot_value = redis_client.get(keys.hot_symbols_snapshot())
-    if not snapshot_value:
-        return symbols
     try:
-        snapshot = json.loads(snapshot_value)
-    except json.JSONDecodeError:
-        return symbols
-    rows = snapshot.get("symbols") if isinstance(snapshot, dict) else None
-    if not isinstance(rows, list):
-        return symbols
-    for row in rows:
-        if isinstance(row, dict) and isinstance(row.get("symbol"), str):
-            symbols.add(row["symbol"])
-    return symbols
+        epoch = redis_client.get(keys.feed_active_epoch())
+    except Exception:
+        epoch = None
+    if epoch:
+        envelope["feedEpoch"] = epoch.decode("utf-8") if isinstance(epoch, bytes) else str(epoch)
+    return envelope
 
 
 def read_symbol_set(redis_client, key):
@@ -357,6 +367,14 @@ def read_symbol_set(redis_client, key):
 def parse_positive_float(value, default):
     try:
         parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+def parse_positive_int(value, default):
+    try:
+        parsed = int(value)
     except (TypeError, ValueError):
         return default
     return parsed if parsed > 0 else default

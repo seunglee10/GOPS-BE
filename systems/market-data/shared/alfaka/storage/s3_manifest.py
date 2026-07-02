@@ -8,7 +8,7 @@ from alfaka.common.env import utc_now_iso
 from alfaka.storage.s3_materializer import list_s3_objects
 
 
-DEFAULT_MANIFEST_PREFIX = "market-data/manifest"
+DEFAULT_MANIFEST_PREFIX = "market-data/rebuild-20260702-lazy-v1/manifest"
 
 
 def write_processed_candle_manifest(s3, bucket, manifest_prefix, object_key, rows, put_object=None, layout="daily"):

@@ -130,7 +130,7 @@ class BackfillRunner:
                     }
 
         if (not force_refresh or source_preference == "s3-only") and source_preference in {"coverage-first", "s3-only"} and (job_type != "initial_load" or source_preference == "s3-only"):
-            final_prefix = os.getenv("S3_FINAL_PREFIX", os.getenv("S3_PROCESSED_PREFIX", "market-data/final"))
+            final_prefix = os.getenv("S3_FINAL_PREFIX", os.getenv("S3_PROCESSED_PREFIX", "market-data/rebuild-20260702-lazy-v1/final"))
             processed_keys = []
             for repair_range in repair_ranges:
                 processed_keys.extend(find_processed_candle_objects(
@@ -153,34 +153,8 @@ class BackfillRunner:
                     "processedObjects": [f"s3://{bucket}/{key}" for key in processed_keys],
                     "materializedRowCount": materialized["rowCount"],
                 }
-            raw_prefix = os.getenv("S3_RAW_PREFIX", os.getenv("S3_PREFIX", "market-data/raw/alpaca"))
-            raw_keys = []
-            for repair_range in repair_ranges:
-                raw_keys.extend(find_raw_candle_objects(
-                    self.s3,
-                    bucket,
-                    raw_prefix,
-                    symbol,
-                    interval,
-                    repair_range["start"],
-                    repair_range["end"],
-                    job_type,
-                ))
-            raw_keys = unique_ordered(raw_keys)
-            if raw_keys:
-                return materialize_raw_s3_candle_objects(
-                    self.clickhouse_client,
-                    self.s3,
-                    bucket,
-                    raw_keys,
-                    interval,
-                    job_type,
-                    source_preference,
-                    repair_ranges,
-                    source_name="backfill-worker-s3-raw",
-                )
             if source_preference == "s3-only":
-                raise BackfillUnavailable("No processed or raw S3 candle objects are available for the requested symbol and interval.")
+                raise BackfillUnavailable("No S3 final candle objects are available for the requested symbol and interval.")
 
         timeframe = "1Day" if interval == "1D" else "1Min"
         adjustment = historical_adjustment_from_env(os.environ)
@@ -216,8 +190,8 @@ class BackfillRunner:
                 }
             raise BackfillUnavailable("Historical provider returned no bars.")
 
-        raw_prefix = os.getenv("S3_RAW_PREFIX", os.getenv("S3_PREFIX", "market-data/raw/alpaca"))
-        final_prefix = os.getenv("S3_FINAL_PREFIX", os.getenv("S3_PROCESSED_PREFIX", "market-data/final"))
+        raw_prefix = os.getenv("S3_RAW_PREFIX", os.getenv("S3_PREFIX", "market-data/rebuild-20260702-lazy-v1/raw/alpaca"))
+        final_prefix = os.getenv("S3_FINAL_PREFIX", os.getenv("S3_PROCESSED_PREFIX", "market-data/rebuild-20260702-lazy-v1/final"))
         output_format = os.getenv("S3_PROCESSED_FORMAT", "parquet").lower()
         raw_kind = "daily-bars" if interval == "1D" else "bars"
 
@@ -240,7 +214,13 @@ class BackfillRunner:
             canonical_version=CANONICAL_VERSION,
         )
         processed = raw_bars_to_processed_candles(symbol, processed_source_bars, feed=feed, interval=interval, price_adjustment=adjustment)
-        partition_key = f"{final_prefix}/candles/interval={interval}/symbol={symbol}/backfill_request={record['requestId'].replace(':', '_')}"
+        first_event_time = parse_time(processed[0]["timestamp"])
+        request_id = record["requestId"].replace(":", "_")
+        partition_key = (
+            f"{final_prefix}/candles/feed={feed or 'unknown'}/interval={interval}/symbol={symbol}"
+            f"/year={first_event_time:%Y}/month={first_event_time:%m}/day={first_event_time:%d}"
+            f"/backfill_request={request_id}"
+        )
         processed_key = flush_buffer(
             self.s3,
             bucket,
@@ -288,7 +268,7 @@ class BackfillRunner:
     def _run_replay_job(self, bucket, symbol, interval, start, end, job_type, source_preference):
         if source_preference == "alpaca-only":
             raise BackfillUnavailable(f"{job_type} cannot use sourcePreference=alpaca-only.")
-        final_prefix = os.getenv("S3_FINAL_PREFIX", os.getenv("S3_PROCESSED_PREFIX", "market-data/final"))
+        final_prefix = os.getenv("S3_FINAL_PREFIX", os.getenv("S3_PROCESSED_PREFIX", "market-data/rebuild-20260702-lazy-v1/final"))
         processed_keys = find_processed_candle_objects(self.s3, bucket, final_prefix, symbol, interval, start, end)
         if processed_keys:
             materialized = materialize_s3_processed_objects(
@@ -306,21 +286,7 @@ class BackfillRunner:
                 "materializedRowCount": materialized["rowCount"],
             }
 
-        raw_prefix = os.getenv("S3_RAW_PREFIX", os.getenv("S3_PREFIX", "market-data/raw/alpaca"))
-        raw_keys = find_raw_candle_objects(self.s3, bucket, raw_prefix, symbol, interval, start, end, job_type)
-        if not raw_keys:
-            raise BackfillUnavailable(f"No S3 processed or raw candle objects are available for {job_type}.")
-
-        return materialize_raw_s3_candle_objects(
-            self.clickhouse_client,
-            self.s3,
-            bucket,
-            raw_keys,
-            interval,
-            job_type,
-            source_preference,
-            source_name=f"backfill-worker-{job_type}-raw",
-        )
+        raise BackfillUnavailable(f"No S3 final candle objects are available for {job_type}.")
 
 
 def fetch_alpaca_bars(symbol, start, end, feed, timeframe="1Min"):

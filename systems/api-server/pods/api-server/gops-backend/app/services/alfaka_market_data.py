@@ -61,11 +61,13 @@ def configured_symbols() -> list[str]:
 
 
 def configured_universe_symbols() -> list[str]:
-    # 검색/검증 후보군은 ALPACA_UNIVERSE를 따릅니다.
+    # On-demand rebuild에서는 ALPACA_UNIVERSE가 비어 있을 수 있습니다.
+    # 이때 UI 검색/기본 Watch List 검증은 legacy/local smoke seed만 fallback으로 씁니다.
     try:
-        return [normalize_market_symbol(symbol) for symbol in load_configured_universe_symbols()]
+        symbols = [normalize_market_symbol(symbol) for symbol in load_configured_universe_symbols()]
     except ValueError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return symbols or configured_symbols()
 
 
 def normalize_market_symbol(symbol: str) -> str:
@@ -79,7 +81,7 @@ def normalize_market_symbol(symbol: str) -> str:
 
 def requested_ma_from_csv(value: str) -> list[int]:
     # 프론트가 ma=5,20,60처럼 요청하면 허용된 이동평균선만 남깁니다.
-    # 실제 ma 값은 Flink/local processor가 만든 캔들 payload의 ma5/ma20/ma60을 씁니다.
+    # 실제 ma 값은 Kubernetes market-processor가 만든 캔들 payload의 ma5/ma20/ma60을 씁니다.
     requested = []
     for item in value.split(","):
         item = item.strip()
@@ -102,13 +104,12 @@ def symbol_summaries() -> list[dict[str, Any]]:
 
 
 def search_symbol_summaries(query: str | None = None, limit: int | None = None) -> list[dict[str, Any]]:
-    requested_limit = min(_read_positive_int(limit) or MAX_WATCHLIST_SYMBOLS, len(configured_universe_symbols()))
+    requested_limit = _read_positive_int(limit) or MAX_WATCHLIST_SYMBOLS
     query_text = (query or "").strip()
     if not query_text:
         return symbol_summaries_for(configured_symbols()[:requested_limit])
 
     provider = get_market_data_provider()
-    allowed = set(configured_universe_symbols())
     matches: list[str] = []
     try:
         records = provider.search_symbols(query_text, requested_limit)
@@ -119,7 +120,7 @@ def search_symbol_summaries(query: str | None = None, limit: int | None = None) 
         if not isinstance(symbol_value, str):
             continue
         symbol = normalize_market_symbol(symbol_value)
-        if symbol not in allowed or symbol in matches:
+        if symbol in matches:
             continue
         matches.append(symbol)
         if len(matches) >= requested_limit:
@@ -208,7 +209,7 @@ def normalize_watchlist_symbol_list(symbols: list[str], reject_outside: bool = T
         if not isinstance(value, str):
             continue
         symbol = normalize_market_symbol(value)
-        if symbol not in allowed:
+        if allowed and symbol not in allowed:
             outside.append(symbol)
             continue
         if symbol in seen:
@@ -230,7 +231,7 @@ def _configured_symbol_search(query: str, limit: int) -> list[str]:
     normalized_query = query.strip().upper()
     matches: list[str] = []
     provider = get_market_data_provider()
-    for symbol in configured_universe_symbols():
+    for symbol in configured_universe_symbols() or configured_symbols():
         metadata = _symbol_metadata(provider, symbol)
         haystack = f"{symbol} {metadata.get('name') or ''}".upper()
         if normalized_query in haystack:

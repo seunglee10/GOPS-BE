@@ -1,13 +1,13 @@
 # Local Docker Onboarding
 
 This is the first document to follow after cloning the repo.
-It focuses on reproducing the local runtime without creating fake chart data.
+It is intentionally short and focuses on reproducing the local Docker runtime.
 
 ## 1. Prerequisites
 
 - Docker Desktop is installed and running.
 - Python `3.12.x` is available.
-- AWS credentials with access to Secrets Manager and S3 are available when using real Alpaca/S3 paths.
+- AWS credentials with access to Secrets Manager and S3 are available.
 - Ports `5173`, `8000`, `8123`, `9092`, `6379`, and `5433` are free.
 
 ## 2. Create `.env`
@@ -16,31 +16,24 @@ It focuses on reproducing the local runtime without creating fake chart data.
 cp .env.example .env
 ```
 
-Keep these values aligned for the chart-data rewrite:
+For the default local Docker flow, GOPS uses real AWS S3 and AWS Secrets Manager.
+Compose mounts the host `~/.aws` directory read-only into the API, backfill,
+and optional Alpaca live-ingestion services, so a working local AWS profile is
+enough in most cases. Keep these values aligned:
 
 ```text
 AWS_REGION=ap-northeast-2
 AWS_DEFAULT_REGION=ap-northeast-2
 AWS_PROFILE=default
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+AWS_SESSION_TOKEN=
 
 ALPACA_SECRET_NAME=dev/alpaca
-ALPACA_FEED_PROFILES=sip,boats
-ALPACA_ENFORCE_FEED_SESSION_WINDOW=true
-
-REDIS_KEY_PREFIX=gops:market:on-demand:v1
-
 S3_BUCKET=gops-market-data-<aws-account-id>-ap-northeast-2-an
 S3_ENDPOINT_URL=
 DOCKER_S3_ENDPOINT_URL=
-S3_RAW_PREFIX=market-data/rebuild-20260702-lazy-v1/raw/alpaca
-S3_FINAL_PREFIX=market-data/rebuild-20260702-lazy-v1/final
-S3_LIVE_PREFIX=market-data/rebuild-20260702-lazy-v1/live
-S3_MANIFEST_PREFIX=market-data/rebuild-20260702-lazy-v1/manifest
-S3_MATERIALIZE_PREFIX=market-data/rebuild-20260702-lazy-v1/final
 ```
-
-`S3_RAW_PREFIX` is backup-only. The chart API, backfill coverage, and ClickHouse
-materialization must not depend on raw S3 objects.
 
 `dev/alpaca` must be a JSON secret:
 
@@ -78,23 +71,34 @@ Backend:  http://localhost:8000/health
 Config:   http://localhost:8000/health/config
 ```
 
-## 5. Live And Backfill
+## 5. Profiles
 
-Do not preload chart data. Start realtime ingestion only when testing realtime
-chart behavior:
+| Profile | Use |
+| --- | --- |
+| default | Backend, frontend, Kafka, Redis, Postgres, ClickHouse, storage workers, backfill worker. |
+| `alpaca` | Live Alpaca ingestion and symbol registry sync. Use only when live market ingestion is needed. |
+| `repair` | Coverage audit and missing chart backfill queue. Dry-run by default. |
+| `local-s3` | MinIO experiments only. Not the default path. |
+| `reconciliation` | Manual order reconciliation job. |
+
+Start live Alpaca ingestion only when real-time charts are needed. The default
+contract uses SIP for `04:00-20:00 ET` and BOATS for `20:00-04:00 ET`:
 
 ```sh
-docker compose --profile alpaca up -d --build
+docker compose --profile alpaca up -d --build alpaca-ingestor alpaca-ingestor-boats
 ```
 
-SIP and BOATS must be exclusive writers:
+Audit chart coverage:
 
-```text
-04:00 - 20:00 ET = SIP only
-20:00 - 04:00 ET = BOATS only
+```sh
+docker compose --profile repair run --rm coverage-repair
 ```
 
-Backfill should be queued only for missing requested chart ranges.
+Queue missing backfills intentionally:
+
+```sh
+COVERAGE_REPAIR_DRY_RUN=false docker compose --profile repair run --rm coverage-repair
+```
 
 ## 6. Smoke Checks
 
@@ -102,8 +106,10 @@ Backfill should be queued only for missing requested chart ranges.
 curl -fsS http://localhost:8000/health
 curl -fsS http://localhost:8000/health/config
 curl -fsS http://localhost:8000/api/charts/symbols
-curl -fsS 'http://localhost:8000/api/charts/candles?symbol=AAPL&interval=1m&limit=120'
+curl -fsS 'http://localhost:8000/api/charts/candles?symbol=NVDA&interval=1m&limit=2'
 curl -fsS http://localhost:8000/api/order-contract
+curl -fsS 'http://localhost:8000/api/orders/balance?symbol=NVDA&exchange=NASD&price=1.00'
+docker compose --profile repair run --rm coverage-repair
 ```
 
 `/health/config` must show only safe `SET`/`EMPTY` values for credentials.
@@ -115,9 +121,9 @@ It must never print secret values.
 | --- | --- |
 | Docker services do not start | Confirm Docker Desktop is running and required ports are free. |
 | Backend cannot read Alpaca credentials | Check AWS keys and the `dev/alpaca` secret JSON shape. |
-| S3 write/read fails | Check bucket name, region, IAM permission, and real AWS endpoint values are empty. |
-| Chart has no candles | This is valid after reset. Request backfill only for the visible range. |
-| Live stream shows idle | Market may be closed, no active chart subscription may exist, or the non-active feed may be idle by design. |
+| S3 write/read fails | Check bucket name, region, IAM permission, and that S3 endpoint values are empty for real AWS. |
+| Chart has no candles | Run the `repair` profile dry-run, then queue missing backfills if needed. |
+| Live stream shows idle | This can mean WebSocket is connected but no current market data is arriving yet. Stored candles should still render. |
+| Order submit path fails locally | Keep `KIS_ENV=demo`, `KIS_CREDENTIAL_SOURCE=aws-secrets-manager`, and check the `tead/gops/kis` secret JSON shape. Use `KIS_BROKER_ADAPTER_ARGS=--fake-kis success` only for explicit fake smoke runs. |
 
-If a local access-key CSV exists in the repo root, remove it after copying
-values into `.env`.
+If a local access-key CSV exists in the repo root, remove it after copying values into `.env`.

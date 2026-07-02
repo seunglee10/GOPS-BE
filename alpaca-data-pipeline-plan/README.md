@@ -1,22 +1,22 @@
-# Deprecated Alpaca Data Pipeline Plans
+# Alpaca Data Pipeline Plan
 
-This folder is no longer the source of truth for chart work.
-It is retained only so older links do not break.
+The active chart-data rebuild plan is:
 
-Do not use previous revisions of files in this folder for chart work.
+- `../docs/CHART_DATA_REBUILD_PLAN.md`
 
-Use this document instead:
-
-```text
-../docs/CHART_DATA_REBUILD_PLAN.md
-```
+Files in this folder are historical handoff notes only. They must not define
+active chart symbols, default company lists, preload ranges, Kafka topics,
+Redis keys, S3 prefixes, ClickHouse tables, or backfill source order.
 
 Current chart direction:
 
-- empty chart-data start;
-- no universe preload;
-- on-demand chart backfill only;
-- Redis latest 120 candles per timeframe;
-- ClickHouse older confirmed history;
-- S3 durable evidence;
-- exclusive SIP/BOATS feed ownership.
+- no preset chart universe
+- no default company preload
+- Redis latest 120 candles per symbol/timeframe
+- ClickHouse historical serving
+- S3 final/manifest evidence before Alpaca
+- raw S3 backup-only
+- SIP/BOATS single-feed operation by time window
+
+Archive material is useful for understanding why earlier decisions changed, but
+the current rebuild must follow `docs/CHART_DATA_REBUILD_PLAN.md`.

@@ -1,23 +1,27 @@
 #!/usr/bin/env bash
-# 역할: 로컬 Docker Kafka에 Raw/Processed topic을 생성합니다.
+# 역할: 로컬 Docker Kafka에 GOPS canonical topic을 생성합니다.
 # 사용: docker compose up 이후 한 번 실행하거나 kafka-init 서비스 대신 수동 실행합니다.
-# 출력: 생성된 Kafka topic 목록을 보여줍니다.
 set -euo pipefail
 
 for topic in \
-  market.raw.bars \
-  market.raw.updated-bars \
-  market.raw.trades \
-  market.raw.daily-bars \
-  market.raw.statuses \
-  market.raw.quotes \
-  market.raw.corrections \
-  market.raw.cancel-errors \
-  market.ticks.v1 \
-  market.candles.live.1m.v1 \
-  market.candles.closed.v1 \
-  market.status.v1 \
-  market.volume-profile-bins.1m.v1 \
+  market.input.realtime.trades.v1 \
+  market.input.realtime.quotes.v1 \
+  market.input.realtime.events.v1 \
+  market.input.realtime.bars.1m.v1 \
+  market.input.realtime.updated-bars.1m.v1 \
+  market.input.realtime.daily-bars.v1 \
+  market.realtime.ticks.to.1m.v1 \
+  market.realtime.ticks.to.5m.v1 \
+  market.realtime.ticks.to.10m.v1 \
+  market.realtime.ticks.to.1d.v1 \
+  market.realtime.ticks.to.1w.v1 \
+  market.realtime.ticks.to.1mo.v1 \
+  market.layer.candles.live.v1 \
+  market.layer.candles.closed.v1 \
+  market.layer.trades.v1 \
+  market.layer.quotes.v1 \
+  market.layer.events.v1 \
+  market.news.alpaca.v1 \
   orders.commands.v1 \
   broker.submit-results.v1 \
   broker.order-events.v1 \
