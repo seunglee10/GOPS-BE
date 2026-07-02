@@ -252,8 +252,11 @@ class RelationshipSnapshotProvider:
 
     def fetch(self, context: Any, run_id: str, max_items: int) -> DataSnapshot:
         started_at = time.perf_counter()
+        relationship_symbols = tuple(getattr(context, "relationshipSymbols", []) or ())
         try:
-            evidence = self.ontology_agent.provider.fetch(ProviderRequest(str(context.symbol), str(context.intent)))
+            evidence = self.ontology_agent.provider.fetch(
+                ProviderRequest(str(context.symbol), str(context.intent), symbols=relationship_symbols)
+            )
         except Exception as exc:
             evidence = [EvidenceItem.no_data("ontology", "Relationship snapshot unavailable", f"관계 snapshot 조회에 실패했습니다: {exc.__class__.__name__}")]
         available = [item for item in evidence if item.provider == "ontology" and item.status == "available"]

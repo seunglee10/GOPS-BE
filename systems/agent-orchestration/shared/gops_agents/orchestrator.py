@@ -148,6 +148,7 @@ class AgentOrchestrator:
             for item in request.get("marketEvents", [])
             if isinstance(item, (dict, MarketEvent))
         ]
+        relationship_symbols = relationship_symbols_for_context(intent, symbol)
         context = AgentContext(
             symbol=symbol,
             intent=intent,
@@ -159,6 +160,7 @@ class AgentOrchestrator:
             runtimeContext=runtime_context,
             newsSymbols=list(news_topic["symbols"]) if news_topic else [],
             newsTopic=str(news_topic["label"]) if news_topic else None,
+            relationshipSymbols=list(relationship_symbols),
         )
         run_id = stable_id(
             "run",
@@ -973,73 +975,127 @@ def extract_symbol_alias_from_intent(intent: str) -> str | None:
     return None
 
 
-def extract_symbol_from_intent(intent: str) -> str | None:
-    alias_symbol = extract_symbol_alias_from_intent(intent)
-    if alias_symbol:
-        return alias_symbol
+EXCLUDED_TICKER_TOKENS = {
+    "AI",
+    "API",
+    "CEO",
+    "CFO",
+    "ETF",
+    "GDP",
+    "KST",
+    "MVP",
+    "PER",
+    "PBR",
+    "RAG",
+    "ROI",
+    "USD",
+}
 
-    excluded_tokens = {
-        "AI",
-        "API",
-        "CEO",
-        "CFO",
-        "ETF",
-        "GDP",
-        "KST",
-        "MVP",
-        "PER",
-        "PBR",
-        "RAG",
-        "ROI",
-        "USD",
-    }
-    ambiguous_lowercase_words = {
-        "a",
-        "all",
-        "are",
-        "at",
-        "ball",
-        "best",
-        "bro",
-        "cat",
-        "cost",
-        "day",
-        "de",
-        "do",
-        "d",
-        "f",
-        "fix",
-        "for",
-        "fox",
-        "has",
-        "hi",
-        "it",
-        "key",
-        "ko",
-        "low",
-        "now",
-        "o",
-        "on",
-        "or",
-        "q",
-        "so",
-        "sw",
-        "t",
-        "tell",
-        "to",
-        "v",
-    }
+AMBIGUOUS_LOWERCASE_TICKER_WORDS = {
+    "a",
+    "all",
+    "are",
+    "at",
+    "ball",
+    "best",
+    "bro",
+    "cat",
+    "cost",
+    "day",
+    "de",
+    "do",
+    "d",
+    "f",
+    "fix",
+    "for",
+    "fox",
+    "has",
+    "hi",
+    "it",
+    "key",
+    "ko",
+    "low",
+    "now",
+    "o",
+    "on",
+    "or",
+    "q",
+    "so",
+    "sw",
+    "t",
+    "tell",
+    "to",
+    "v",
+}
+
+
+def iter_ticker_token_matches(intent: str):
     known_symbols = known_agent_symbols()
     for match in re.finditer(r"(?<![A-Za-z0-9.])([A-Za-z][A-Za-z0-9]{0,4}(?:\.[A-Za-z])?)(?![A-Za-z0-9.])", str(intent or "")):
         raw_token = match.group(1)
         token = raw_token.upper()
-        if token in excluded_tokens:
+        if token in EXCLUDED_TICKER_TOKENS:
             continue
-        if raw_token != token and raw_token.lower() in ambiguous_lowercase_words:
+        if raw_token != token and raw_token.lower() in AMBIGUOUS_LOWERCASE_TICKER_WORDS:
             continue
         if token in known_symbols:
-            return token
+            yield token, match.start()
+
+
+def extract_symbol_from_intent(intent: str) -> str | None:
+    alias_symbol = extract_symbol_alias_from_intent(intent)
+    if alias_symbol:
+        return alias_symbol
+    for token, _position in iter_ticker_token_matches(intent):
+        return token
     return None
+
+
+def alias_order_key(normalized: str, compacted: str, alias: str) -> int:
+    normalized_alias = normalize_cache_intent(alias)
+    if re.fullmatch(r"[a-z0-9 .&-]+", normalized_alias):
+        pattern = re.escape(normalized_alias).replace(r"\ ", r"\s+")
+        match = re.search(rf"(?<![a-z0-9]){pattern}(?![a-z0-9])", normalized)
+        if match:
+            return match.start()
+        return len(normalized) + 1
+    compacted_alias = "".join(normalized_alias.split())
+    index = compacted.find(compacted_alias)
+    return index if index >= 0 else len(compacted) + 1
+
+
+def extract_relationship_symbols_from_intent(intent: str, *, max_symbols: int = 5) -> tuple[str, ...]:
+    text = str(intent or "")
+    normalized = normalize_cache_intent(text)
+    compacted = "".join(normalized.split())
+    order_by_symbol: dict[str, int] = {}
+
+    for alias, symbol in COMPANY_SYMBOL_ALIASES:
+        if not intent_contains_alias(normalized, compacted, alias):
+            continue
+        position = alias_order_key(normalized, compacted, alias)
+        if symbol not in order_by_symbol or position < order_by_symbol[symbol]:
+            order_by_symbol[symbol] = position
+
+    for token, position in iter_ticker_token_matches(text):
+        if token not in order_by_symbol:
+            order_by_symbol[token] = position
+
+    ordered = sorted(order_by_symbol.items(), key=lambda item: item[1])
+    return tuple(symbol for symbol, _position in ordered[:max_symbols])
+
+
+def relationship_symbols_for_context(intent: str, primary_symbol: str) -> tuple[str, ...]:
+    found = extract_relationship_symbols_from_intent(intent)
+    if not found:
+        return (primary_symbol,)
+    if primary_symbol not in found:
+        found = (primary_symbol, *found)
+    deduped: list[str] = []
+    for symbol in found:
+        if symbol not in deduped:
+            deduped.append(symbol)
+    return tuple(deduped[:5])
 
 
 @lru_cache(maxsize=1)

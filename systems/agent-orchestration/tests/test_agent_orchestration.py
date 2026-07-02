@@ -18,8 +18,15 @@ from gops_agents.analysis_cache import MemoryAgentAnalysisCache, RedisAgentAnaly
 from gops_agents.contracts import AgentFinding, DataSnapshot, EvidenceItem, FinalAnswer, IntentRoute, SynthesisInput, utc_now_iso
 from gops_agents.event_detector import MarketEventDetector, MarketEventThresholds
 from gops_agents.news_localization import NewsLocalizationService
-from gops_agents.orchestrator import AgentOrchestrator, canonical_analysis_intent, extract_symbol_from_intent
+from gops_agents.orchestrator import (
+    AgentOrchestrator,
+    canonical_analysis_intent,
+    extract_relationship_symbols_from_intent,
+    extract_symbol_from_intent,
+    relationship_symbols_for_context,
+)
 from gops_agents.publisher import notification_payload
+from gops_agents.graph_path_cache import MemoryGraphPathCache
 from gops_agents.news_cache import MemoryNewsEvidenceCache, RedisNewsEvidenceCache
 from gops_agents.providers import ClickHouseNewsProvider, GraphDBOntologyProvider, ProviderRequest
 from gops_agents.report_store import InMemoryReportStore, RedisReportStore
@@ -41,6 +48,18 @@ class FakeSparqlClient:
         if self.error:
             raise self.error
         return self.payload
+
+
+class QueueSparqlClient:
+    def __init__(self, payloads):
+        self.payloads = list(payloads)
+        self.queries = []
+
+    def query(self, sparql):
+        self.queries.append(sparql)
+        if not self.payloads:
+            return {"results": {"bindings": []}}
+        return self.payloads.pop(0)
 
 
 class FakeOpenAIResponse:
@@ -1901,6 +1920,108 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(error_evidence[0].provider, "ontology")
         self.assertEqual(error_evidence[0].status, "no-data")
         self.assertEqual(error_evidence[0].raw["relationType"], "graphdb-unavailable")
+
+    def test_graphdb_provider_multi_symbol_shared_theme_evidence(self):
+        payload = {
+            "results": {
+                "bindings": [
+                    {
+                        "ticker": {"value": "NVDA"},
+                        "companyName": {"value": "NVIDIA Corp"},
+                        "themeName": {"value": "AI/반도체/데이터센터"},
+                        "controlledName": {"value": "Mellanox Technologies"},
+                    }
+                ]
+            }
+        }
+        provider = GraphDBOntologyProvider(sparql_client=FakeSparqlClient(payload), limit=10, cache=MemoryGraphPathCache())
+
+        evidence = provider.fetch(ProviderRequest("NVDA", "NVDA와 AMD 관계 분석", symbols=("NVDA", "AMD")))
+
+        shared_theme_items = [item for item in evidence if item.raw.get("relationType") == "shared-theme"]
+        self.assertTrue(shared_theme_items, "expected a shared-theme evidence item between NVDA and AMD")
+        self.assertEqual(shared_theme_items[0].raw["themeName"], "AI/반도체/데이터센터")
+        self.assertEqual(set(shared_theme_items[0].raw["symbols"]), {"NVDA", "AMD"})
+
+    def test_graphdb_provider_multi_symbol_cross_control_evidence(self):
+        payloads = [
+            {"results": {"bindings": [{
+                "ticker": {"value": "MSFT"},
+                "companyName": {"value": "MICROSOFT CORP"},
+                "themeName": {"value": "클라우드/소프트웨어/사이버보안"},
+            }]}},
+            {"results": {"bindings": [{
+                "ticker": {"value": "MSFT"},
+                "companyName": {"value": "MICROSOFT CORP"},
+                "controlledName": {"value": "Activision Blizzard, Inc."},
+                "confidence": {"value": "explicit"},
+                "sourceUrl": {"value": "https://www.sec.gov/msft-ex21"},
+            }]}},
+            {"results": {"bindings": [{
+                "ticker": {"value": "ATVI"},
+                "companyName": {"value": "Activision Blizzard, Inc."},
+                "themeName": {"value": "인터넷 플랫폼/미디어/광고"},
+            }]}},
+            {"results": {"bindings": []}},
+        ]
+        provider = GraphDBOntologyProvider(sparql_client=QueueSparqlClient(payloads), limit=10, cache=MemoryGraphPathCache())
+
+        evidence = provider.fetch(ProviderRequest("MSFT", "MSFT와 ATVI 관계 분석", symbols=("MSFT", "ATVI")))
+
+        cross_control_items = [item for item in evidence if item.raw.get("relationType") == "cross-control"]
+        self.assertTrue(cross_control_items, "expected a cross-symbol control evidence item between MSFT and ATVI")
+        self.assertEqual(cross_control_items[0].raw["controllerTicker"], "MSFT")
+        self.assertEqual(cross_control_items[0].raw["controlledTicker"], "ATVI")
+        self.assertEqual(cross_control_items[0].url, "https://www.sec.gov/msft-ex21")
+
+    def test_graphdb_provider_multi_symbol_no_shared_relationship(self):
+        payloads = [
+            {"results": {"bindings": [{"ticker": {"value": "NVDA"}, "companyName": {"value": "NVIDIA Corp"}, "themeName": {"value": "AI/반도체/데이터센터"}}]}},
+            {"results": {"bindings": []}},
+            {"results": {"bindings": [{"ticker": {"value": "KO"}, "companyName": {"value": "COCA COLA CO"}, "themeName": {"value": "필수소비재"}}]}},
+            {"results": {"bindings": []}},
+        ]
+        provider = GraphDBOntologyProvider(sparql_client=QueueSparqlClient(payloads), limit=10, cache=MemoryGraphPathCache())
+
+        evidence = provider.fetch(ProviderRequest("NVDA", "NVDA와 KO 관계 분석", symbols=("NVDA", "KO")))
+
+        self.assertTrue(any(item.raw.get("relationType") == "no-shared-relationship" for item in evidence))
+
+    def test_graphdb_provider_caches_results_and_skips_repeat_sparql_queries(self):
+        payload = {
+            "results": {
+                "bindings": [
+                    {
+                        "ticker": {"value": "NVDA"},
+                        "companyName": {"value": "NVIDIA Corp"},
+                        "themeName": {"value": "AI/반도체/데이터센터"},
+                    }
+                ]
+            }
+        }
+        sparql_client = FakeSparqlClient(payload)
+        cache = MemoryGraphPathCache()
+        provider = GraphDBOntologyProvider(sparql_client=sparql_client, limit=5, cache=cache)
+        request = ProviderRequest("NVDA", "관계 분석")
+
+        first = provider.fetch(request)
+        queries_after_first = len(sparql_client.queries)
+        second = provider.fetch(request)
+
+        self.assertGreater(queries_after_first, 0)
+        self.assertEqual(len(sparql_client.queries), queries_after_first, "second fetch should be served from cache without new SPARQL queries")
+        self.assertEqual([item.summary for item in first], [item.summary for item in second])
+
+    def test_extract_relationship_symbols_from_intent_finds_multiple_tickers_in_order(self):
+        symbols = extract_relationship_symbols_from_intent("NVDA와 AMD 비교해서 관계 분석해줘")
+        self.assertEqual(symbols, ("NVDA", "AMD"))
+
+    def test_relationship_symbols_for_context_includes_primary_symbol(self):
+        symbols = relationship_symbols_for_context("엔비디아랑 AMD 관계 어때", "NVDA")
+        self.assertEqual(symbols, ("NVDA", "AMD"))
+
+        fallback = relationship_symbols_for_context("아무 종목도 언급 안 함", "TSLA")
+        self.assertEqual(fallback, ("TSLA",))
 
     def test_ontology_agent_defaults_to_graphdb_evidence_analysis_even_with_openai_key(self):
         evidence = [
