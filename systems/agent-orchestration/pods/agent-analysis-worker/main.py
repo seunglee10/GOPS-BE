@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from gops_agents.analysis_worker import run_kafka_worker
+from gops_agents.runtime.workers import run_kafka_worker
 
 
 if __name__ == "__main__":

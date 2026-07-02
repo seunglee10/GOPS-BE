@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sys
 
-from gops_agents.graph_expansion import refresh_graph_expansions, symbols_from_env
+from gops_agents.retrieval.graph_expansion import refresh_graph_expansions, symbols_from_env
 
 
 def main() -> int:

@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from threading import Lock
 from typing import Any
 
-from .contracts import RuntimePolicy
+from ..contracts import RuntimePolicy
 
 
 @dataclass

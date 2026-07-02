@@ -9,7 +9,7 @@ from typing import Any
 from alfaka.news.relevance import classify_subject_relevance, is_direct_subject, normalize_subject_level, normalize_symbols
 from alfaka.storage.news_daily_summary import clickhouse_row_to_daily_summary
 
-from .contracts import EvidenceItem, utc_now_iso
+from ..contracts import EvidenceItem, utc_now_iso
 from .news_cache import NewsEvidenceCache, build_news_cache_from_env
 
 
@@ -596,24 +596,6 @@ def bool_env(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-GRAPHDB_THEME_NAMES = (
-    "AI/반도체/데이터센터",
-    "클라우드/소프트웨어/사이버보안",
-    "인터넷 플랫폼/미디어/광고",
-    "소비/리테일/여행",
-    "결제/핀테크/거래소",
-    "은행/보험/자산운용",
-    "헬스케어/제약/의료기기",
-    "에너지/전력/전기화",
-    "산업재/방산/운송/인프라",
-    "부동산/REIT/통신 인프라",
-    "통신/네트워크",
-    "자동차/모빌리티",
-    "필수소비재",
-    "소재/화학",
-)
-
-
 class GraphDBSparqlClient:
     def __init__(self, sparql_url: str, timeout_seconds: float = 5.0):
         self.sparql_url = sparql_url
@@ -786,8 +768,12 @@ def normalize_ticker(value: str) -> str | None:
 
 
 def matched_theme_names(intent: str) -> list[str]:
-    text = str(intent or "")
-    return [theme_name for theme_name in GRAPHDB_THEME_NAMES if theme_name in text]
+    try:
+        from ..query_understanding.topics import extract_theme_names_from_intent
+
+        return extract_theme_names_from_intent(intent)
+    except Exception:
+        return []
 
 
 def dedupe_evidence(items: list[EvidenceItem]) -> list[EvidenceItem]:

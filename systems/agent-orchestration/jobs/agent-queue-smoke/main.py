@@ -4,10 +4,10 @@ import json
 import os
 import sys
 
-from gops_agents.analysis_queue import InProcessAnalysisRequestQueue
-from gops_agents.analysis_worker import AgentAnalysisWorker
-from gops_agents.report_store import InMemoryReportStore
-from gops_agents.request_envelope import build_request_envelope
+from gops_agents.runtime.envelope import build_request_envelope
+from gops_agents.runtime.queues import InProcessAnalysisRequestQueue
+from gops_agents.runtime.report_store import InMemoryReportStore
+from gops_agents.runtime.workers import AgentAnalysisWorker
 
 
 def main() -> int:

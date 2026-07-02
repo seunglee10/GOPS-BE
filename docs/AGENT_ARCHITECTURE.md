@@ -787,7 +787,7 @@ LLM guardrail이 필요한 경우:
 | Synthesis and guardrail | `SynthesisInput`에서 `FinalResponse`로 변환하고 rule-based guardrail을 적용한다. |
 | Report store | `ReportStore`, memory store, Redis latest-report store와 idempotency mapping이 있다. Async runtime은 Redis shared report store를 사용하고 Postgres 장기 저장은 후속 storage 변경으로 분리한다. |
 | Async request boundary | API async submit, `AgentAnalysisRequestEnvelope`, Kafka request topic, `agent-analysis-worker`가 있다. 기존 HTTP orchestrator는 compatibility path로 남긴다. |
-| Admission/backpressure | `shared/gops_agents/admission.py`가 queue metrics, deep-mode flag, stream-to-poll degradation, 429 rejection policy를 담당한다. |
+| Admission/backpressure | `shared/gops_agents/runtime/admission.py`가 queue metrics, deep-mode flag, stream-to-poll degradation, 429 rejection policy를 담당한다. |
 | Provider bulkheads | Snapshot providers are wrapped by global provider semaphores with env-tunable concurrency limits and `providerBulkheadRejected` diagnostics. |
 | Retrieval context | `RetrievalContext`가 route와 snapshot 사이에 들어갔다. Graph expansion cache는 Redis/ClickHouse fallback을 지원하고, expanded retrieval flag가 켜지면 news snapshot에 primary + top related symbols를 넘긴다. |
 | CrossSignal join | `AGENT_CROSS_SIGNAL_ENABLED=true`에서 news/relationship/market snapshots와 retrieval context를 rule-based로 결합해 `crossSignals`를 trace와 `SynthesisInput`에 넣는다. |

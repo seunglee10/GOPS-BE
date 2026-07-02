@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-from gops_agents.event_detector import MarketEventDetector
+from gops_agents.events.detector import MarketEventDetector
 
 
 def main() -> None:

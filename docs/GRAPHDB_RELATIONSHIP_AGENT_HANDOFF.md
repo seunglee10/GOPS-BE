@@ -27,8 +27,8 @@
 | Area | Path |
 | --- | --- |
 | Core contracts | `systems/agent-orchestration/shared/gops_agents/contracts.py` |
-| `ProviderRequest`, `GraphDBOntologyProvider`, SPARQL helpers | `systems/agent-orchestration/shared/gops_agents/providers.py` |
-| `RelationshipSnapshotProvider`, `SnapshotExecutor` | `systems/agent-orchestration/shared/gops_agents/snapshots.py` |
+| `ProviderRequest`, `GraphDBOntologyProvider`, SPARQL helpers | `systems/agent-orchestration/shared/gops_agents/providers/__init__.py` |
+| `RelationshipSnapshotProvider`, `SnapshotExecutor` | `systems/agent-orchestration/shared/gops_agents/retrieval/snapshots.py` |
 | Orchestrator trace and hidden snapshot behavior | `systems/agent-orchestration/shared/gops_agents/orchestrator.py` |
 | Agent orchestration tests | `systems/agent-orchestration/tests/test_agent_orchestration.py` |
 | Canonical architecture | `docs/AGENT_ARCHITECTURE.md` |

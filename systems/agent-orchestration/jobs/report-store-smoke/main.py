@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 import sys
 
-from gops_agents.report_store import build_report_store_from_env
-from gops_agents.request_envelope import REQUEST_STATUS_QUEUED, build_request_envelope, status_report_for_envelope
+from gops_agents.runtime.envelope import REQUEST_STATUS_QUEUED, build_request_envelope, status_report_for_envelope
+from gops_agents.runtime.report_store import build_report_store_from_env
 
 
 def main() -> int:

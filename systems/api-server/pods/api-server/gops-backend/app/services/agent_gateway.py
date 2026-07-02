@@ -9,17 +9,17 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.core.config import read_dotenv_value
-from gops_agents.admission import AdmissionPolicy, admit_analysis_request
-from gops_agents.analysis_queue import build_analysis_request_queue_from_env
-from gops_agents.report_store import build_report_store_from_env
-from gops_agents.request_envelope import (
+from gops_agents.runtime.admission import AdmissionPolicy, admit_analysis_request
+from gops_agents.runtime.envelope import (
     REQUEST_STATUS_COMPLETED,
     REQUEST_STATUS_DEEP_COMPLETED,
     REQUEST_STATUS_QUEUED,
-    build_request_envelope,
     accepted_response_for_report,
+    build_request_envelope,
     status_report_for_envelope,
 )
+from gops_agents.runtime.queues import build_analysis_request_queue_from_env
+from gops_agents.runtime.report_store import build_report_store_from_env
 
 DEFAULT_ORCHESTRATOR_TIMEOUT_SECONDS = 60.0
 

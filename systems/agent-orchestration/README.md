@@ -35,6 +35,49 @@ The v1 logical agents run inside the `agent-orchestrator` pod:
 - notification decision agent
 - layout agent
 
+## Query Understanding
+
+`shared/gops_agents/query_understanding/` owns Korean-first entity resolution
+before request normalization. The hot path is catalog-based rather than a
+hard-coded company/theme list:
+
+- `catalog.py` loads company and theme entities from `market_data.symbols`,
+  GraphDB theme relationships, and the reviewed alias artifact.
+- `alias_index.py` builds an in-memory exact/compact/choseong/jamo/fuzzy index
+  for low-latency lookup across large symbol universes.
+- `entity_resolver.py` resolves both company entities and theme entities.
+  Company results can override the current chart symbol; theme results feed
+  `newsTopic` and bounded `newsSymbols` fanout.
+- `config/entity-aliases.seed.json` and seed constants are fallback bootstrap
+  data only. They are not the operational source of truth.
+
+The resolver maps ticker, English/Korean company aliases, compact mixed text
+such as `apple뉴스알려줘`, Hangul typos such as `얘플`, and long-enough
+initial-consonant queries such as `ㅇㅂㄷㅇ` to canonical symbols. Ambiguous
+short inputs are not forced into a symbol; the orchestrator falls back to the
+request or chart symbol and records the resolver result in `agentTrace`.
+
+`shared/gops_agents/orchestration/` owns the workflow nodes, cache helpers,
+timing, role execution helpers, request normalization, and report tracing.
+`shared/gops_agents/orchestrator.py` remains as a compatibility import shim.
+
+## Shared Package Layout
+
+`shared/gops_agents/` keeps only package boundaries at the top level:
+
+```text
+contracts/             report, evidence, route, snapshot, runtime dataclasses
+query_understanding/   Korean-first entity/theme resolution
+orchestration/         request normalization, workflow, routing, timing, tracing
+runtime/               admission, queues, workers, report store, delivery gateway
+retrieval/             graph expansion, retrieval context, snapshots, cross signals
+providers/             news, ontology, macro provider adapters and provider caches
+roles/                 logical role agents and AgentContext
+synthesis/             final answer synthesis
+events/                market event detection and notification publishing
+orchestrator.py        compatibility entrypoint for AgentOrchestrator imports
+```
+
 Provider status in v1:
 
 - News uses ClickHouse/Redis-backed cached news intelligence, with optional Alpaca direct fallback when explicitly enabled.
@@ -53,7 +96,7 @@ an `AgentAnalysisRequestEnvelope` to `agents.analysis-requests.v1`, and returns
 `202` with a request id. The worker writes the completed report under the same
 id.
 
-`shared/gops_agents/admission.py` applies the request admission policy before
+`shared/gops_agents/runtime/admission.py` applies the request admission policy before
 enqueue. It records queue metrics in the accepted report trace, can reject when
 configured backpressure thresholds are crossed, and can degrade stream delivery
 requests to polling under backlog.

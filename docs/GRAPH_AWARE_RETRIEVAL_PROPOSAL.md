@@ -187,16 +187,16 @@ Hot path 주요 파일:
 | --- | --- |
 | HTTP entry | `systems/api-server/pods/api-server/gops-backend/app/routes/agents.py` |
 | API gateway | `systems/api-server/pods/api-server/gops-backend/app/services/agent_gateway.py` |
-| request contract | `systems/agent-orchestration/shared/gops_agents/request_envelope.py` |
-| admission | `systems/agent-orchestration/shared/gops_agents/admission.py` |
-| queue adapter | `systems/agent-orchestration/shared/gops_agents/analysis_queue.py` |
-| worker | `systems/agent-orchestration/shared/gops_agents/analysis_worker.py` |
+| request contract | `systems/agent-orchestration/shared/gops_agents/runtime/envelope.py` |
+| admission | `systems/agent-orchestration/shared/gops_agents/runtime/admission.py` |
+| queue adapter | `systems/agent-orchestration/shared/gops_agents/runtime/queues.py` |
+| worker | `systems/agent-orchestration/shared/gops_agents/runtime/workers.py` |
 | orchestrator | `systems/agent-orchestration/shared/gops_agents/orchestrator.py` |
-| retrieval | `systems/agent-orchestration/shared/gops_agents/retrieval_context.py` |
-| snapshots | `systems/agent-orchestration/shared/gops_agents/snapshots.py` |
-| cross-signal | `systems/agent-orchestration/shared/gops_agents/cross_signal.py` |
-| synthesis/roles | `systems/agent-orchestration/shared/gops_agents/agents.py` |
-| report store | `systems/agent-orchestration/shared/gops_agents/report_store.py` |
+| retrieval | `systems/agent-orchestration/shared/gops_agents/retrieval/context.py` |
+| snapshots | `systems/agent-orchestration/shared/gops_agents/retrieval/snapshots.py` |
+| cross-signal | `systems/agent-orchestration/shared/gops_agents/retrieval/cross_signal.py` |
+| synthesis/roles | `systems/agent-orchestration/shared/gops_agents/roles/__init__.py` |
+| report store | `systems/agent-orchestration/shared/gops_agents/runtime/report_store.py` |
 
 ## 3. Warm Path
 
@@ -368,12 +368,12 @@ classDiagram
 
 | 계약 | 파일 |
 | --- | --- |
-| `AgentAnalysisRequestEnvelope` | `systems/agent-orchestration/shared/gops_agents/request_envelope.py` |
-| `RetrievalContext`, `GraphExpansion`, `FanoutPolicy` | `systems/agent-orchestration/shared/gops_agents/retrieval_context.py` |
-| graph expansion load/save | `systems/agent-orchestration/shared/gops_agents/graph_expansion.py` |
+| `AgentAnalysisRequestEnvelope` | `systems/agent-orchestration/shared/gops_agents/runtime/envelope.py` |
+| `RetrievalContext`, `GraphExpansion`, `FanoutPolicy` | `systems/agent-orchestration/shared/gops_agents/retrieval/context.py` |
+| graph expansion load/save | `systems/agent-orchestration/shared/gops_agents/retrieval/graph_expansion.py` |
 | `DataSnapshot`, `SynthesisInput`, `AnalysisReport` | `systems/agent-orchestration/shared/gops_agents/contracts.py` |
-| `CrossSignal` build | `systems/agent-orchestration/shared/gops_agents/cross_signal.py` |
-| report serialization/deserialization | `systems/agent-orchestration/shared/gops_agents/report_store.py` |
+| `CrossSignal` build | `systems/agent-orchestration/shared/gops_agents/retrieval/cross_signal.py` |
+| report serialization/deserialization | `systems/agent-orchestration/shared/gops_agents/runtime/report_store.py` |
 
 ## 6. Kafka, Redis, ClickHouse 배치
 
@@ -479,7 +479,7 @@ deep mode는 feature flag와 quota로 끌 수 있어야 한다.
 
 | 파일 | 역할 |
 | --- | --- |
-| `systems/agent-orchestration/shared/gops_agents/analysis_worker.py` | hot report 이후 deep envelope enqueue와 `deep_pending/deep_completed` 상태 처리 |
+| `systems/agent-orchestration/shared/gops_agents/runtime/workers.py` | hot report 이후 deep envelope enqueue와 `deep_pending/deep_completed` 상태 처리 |
 | `systems/agent-orchestration/pods/deep-analysis-worker/main.py` | deep worker entrypoint |
 | `infra/k8s/base/deployment-deep-analysis-worker.yaml` | k8s deep worker deployment |
 

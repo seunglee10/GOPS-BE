@@ -118,7 +118,7 @@ class AgentRouteHelperTest(unittest.TestCase):
 
     @unittest.skipUnless(AGENT_ROUTE_HELPERS_AVAILABLE, "agent gateway module is not importable")
     def test_agent_gateway_async_submit_enqueues_and_stores_queued_report(self):
-        from gops_agents.report_store import InMemoryReportStore
+        from gops_agents.runtime.report_store import InMemoryReportStore
 
         store = InMemoryReportStore()
         queue = FakeAnalysisQueue()
@@ -143,7 +143,7 @@ class AgentRouteHelperTest(unittest.TestCase):
 
     @unittest.skipUnless(AGENT_ROUTE_HELPERS_AVAILABLE, "agent gateway module is not importable")
     def test_agent_gateway_async_submit_reuses_idempotent_report(self):
-        from gops_agents.report_store import InMemoryReportStore
+        from gops_agents.runtime.report_store import InMemoryReportStore
 
         store = InMemoryReportStore()
         queue = FakeAnalysisQueue()
@@ -162,7 +162,7 @@ class AgentRouteHelperTest(unittest.TestCase):
 
     @unittest.skipUnless(AGENT_ROUTE_HELPERS_AVAILABLE, "agent gateway module is not importable")
     def test_agent_gateway_admission_rejects_when_queue_backpressure_hits(self):
-        from gops_agents.report_store import InMemoryReportStore
+        from gops_agents.runtime.report_store import InMemoryReportStore
 
         store = InMemoryReportStore()
         queue = FakeAnalysisQueue(queue_depth=1)
@@ -185,7 +185,7 @@ class AgentRouteHelperTest(unittest.TestCase):
     @unittest.skipUnless(AGENT_ROUTE_HELPERS_AVAILABLE, "agent gateway module is not importable")
     def test_agent_gateway_sync_compat_wait_returns_completed_store_report(self):
         from gops_agents.contracts import AnalysisReport, utc_now_iso
-        from gops_agents.report_store import InMemoryReportStore
+        from gops_agents.runtime.report_store import InMemoryReportStore
 
         store = InMemoryReportStore()
         queue = CompletingFakeAnalysisQueue(store)
@@ -250,7 +250,7 @@ class FakeAnalysisQueue:
         self.envelopes.append(envelope)
 
     def metrics(self):
-        from gops_agents.analysis_queue import AnalysisQueueMetrics
+        from gops_agents.runtime.queues import AnalysisQueueMetrics
 
         return AnalysisQueueMetrics(backend="fake", queue_depth=self.queue_depth, consumer_lag=0)
 

@@ -6,7 +6,7 @@ import urllib.request
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from .router import parse_openai_text_json
+from .routing import parse_openai_text_json
 
 
 PANEL_TYPES = ("chart", "newsFeed", "indicatorCompare", "orderTicket", "portfolioHoldings", "aiSummary", "ontologyGraph")

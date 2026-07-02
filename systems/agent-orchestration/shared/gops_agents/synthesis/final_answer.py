@@ -7,7 +7,7 @@ import urllib.request
 from collections import Counter
 from typing import Any
 
-from .contracts import (
+from ..contracts import (
     AgentFinding,
     EvidenceItem,
     FinalAnswer,
@@ -16,7 +16,7 @@ from .contracts import (
     IntentRoute,
     SynthesisInput,
 )
-from .router import parse_openai_text_json
+from ..orchestration.routing import parse_openai_text_json
 
 
 class FinalAnswerSynthesizer:

@@ -6,7 +6,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 
 from gops_agents.orchestrator import AgentOrchestrator
-from gops_agents.report_store import build_report_store_from_env
+from gops_agents.runtime.report_store import build_report_store_from_env
 
 store = build_report_store_from_env()
 orchestrator = AgentOrchestrator(store)

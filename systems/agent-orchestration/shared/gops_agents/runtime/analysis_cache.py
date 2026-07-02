@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from .contracts import AgentFinding, EvidenceItem, FinalAnswer, FinalAnswerCitation, FinalAnswerSection, IntentRoute
+from ..contracts import AgentFinding, EvidenceItem, FinalAnswer, FinalAnswerCitation, FinalAnswerSection, IntentRoute
 
 
 DEFAULT_ANALYSIS_CACHE_PREFIX = "gops:agent:analysis"

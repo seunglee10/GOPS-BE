@@ -4,8 +4,8 @@ import os
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from .analysis_queue import AnalysisQueueMetrics
-from .request_envelope import AgentAnalysisRequestEnvelope
+from .envelope import AgentAnalysisRequestEnvelope
+from .queues import AnalysisQueueMetrics
 
 
 @dataclass

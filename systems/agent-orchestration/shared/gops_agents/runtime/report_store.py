@@ -6,7 +6,7 @@ import hashlib
 from typing import Any
 
 from .analysis_cache import agent_finding_from_dict, evidence_item_from_dict, final_answer_from_dict, intent_route_from_dict
-from .contracts import (
+from ..contracts import (
     AgentSignal,
     AnalysisReport,
     DataSnapshot,

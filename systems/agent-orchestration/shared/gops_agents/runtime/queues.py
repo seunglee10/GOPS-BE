@@ -5,7 +5,7 @@ from collections import deque
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from .request_envelope import AgentAnalysisRequestEnvelope
+from .envelope import AgentAnalysisRequestEnvelope
 
 
 DEFAULT_ANALYSIS_REQUESTS_TOPIC = "agents.analysis-requests.v1"

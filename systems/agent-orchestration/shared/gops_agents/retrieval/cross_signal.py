@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from .contracts import DataSnapshot, EvidenceItem, stable_id
-from .retrieval_context import RetrievalContext
+from ..contracts import DataSnapshot, EvidenceItem, stable_id
+from .context import RetrievalContext
 
 
 @dataclass

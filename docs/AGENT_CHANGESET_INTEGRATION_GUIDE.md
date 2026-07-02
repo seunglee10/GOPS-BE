@@ -91,20 +91,20 @@ X-GOPS-User-Id
 에이전트 담당자가 가져가야 하는 최소 묶음은 다음이다.
 
 ```text
-systems/agent-orchestration/shared/gops_agents/admission.py
-systems/agent-orchestration/shared/gops_agents/analysis_queue.py
-systems/agent-orchestration/shared/gops_agents/analysis_worker.py
-systems/agent-orchestration/shared/gops_agents/bulkhead.py
-systems/agent-orchestration/shared/gops_agents/cross_signal.py
-systems/agent-orchestration/shared/gops_agents/delivery_gateway.py
-systems/agent-orchestration/shared/gops_agents/graph_expansion.py
-systems/agent-orchestration/shared/gops_agents/request_envelope.py
-systems/agent-orchestration/shared/gops_agents/retrieval_context.py
-systems/agent-orchestration/shared/gops_agents/report_store.py
+systems/agent-orchestration/shared/gops_agents/runtime/admission.py
+systems/agent-orchestration/shared/gops_agents/runtime/queues.py
+systems/agent-orchestration/shared/gops_agents/runtime/workers.py
+systems/agent-orchestration/shared/gops_agents/retrieval/bulkhead.py
+systems/agent-orchestration/shared/gops_agents/retrieval/cross_signal.py
+systems/agent-orchestration/shared/gops_agents/runtime/delivery_gateway.py
+systems/agent-orchestration/shared/gops_agents/retrieval/graph_expansion.py
+systems/agent-orchestration/shared/gops_agents/runtime/envelope.py
+systems/agent-orchestration/shared/gops_agents/retrieval/context.py
+systems/agent-orchestration/shared/gops_agents/runtime/report_store.py
 systems/agent-orchestration/shared/gops_agents/orchestrator.py
-systems/agent-orchestration/shared/gops_agents/snapshots.py
+systems/agent-orchestration/shared/gops_agents/retrieval/snapshots.py
 systems/agent-orchestration/shared/gops_agents/contracts.py
-systems/agent-orchestration/shared/gops_agents/agents.py
+systems/agent-orchestration/shared/gops_agents/roles/__init__.py
 systems/agent-orchestration/shared/gops_agents/__init__.py
 systems/agent-orchestration/pods/agent-orchestrator/main.py
 systems/agent-orchestration/pods/agent-analysis-worker/main.py
@@ -378,7 +378,7 @@ AGENT_GROUNDING_EVAL_CASES_JSON
 - `platform/kafka/topics.txt`: agent topic 6개를 append한다. 기존 market/order topic은 건드리지 않는다.
 - `systems/api-server/pods/api-server/gops-backend/app/routes/agents.py`: 새 report/SSE route와 기존 alert WebSocket을 둘 다 유지한다.
 - `systems/agent-orchestration/shared/gops_agents/contracts.py`: 새 field를 추가할 때 serialization/deserialization round trip test를 같이 확인한다.
-- `systems/agent-orchestration/shared/gops_agents/snapshots.py`: provider fetch 변경은 bulkhead와 fanout cap을 유지한 상태로 병합한다.
+- `systems/agent-orchestration/shared/gops_agents/retrieval/snapshots.py`: provider fetch 변경은 bulkhead와 fanout cap을 유지한 상태로 병합한다.
 
 ## Rollout 모드
 
@@ -404,12 +404,12 @@ Syntax/config checks:
 
 ```bash
 .venv/bin/python -m py_compile \
-  systems/agent-orchestration/shared/gops_agents/bulkhead.py \
-  systems/agent-orchestration/shared/gops_agents/admission.py \
-  systems/agent-orchestration/shared/gops_agents/analysis_queue.py \
-  systems/agent-orchestration/shared/gops_agents/analysis_worker.py \
-  systems/agent-orchestration/shared/gops_agents/snapshots.py \
-  systems/agent-orchestration/shared/gops_agents/cross_signal.py \
+  systems/agent-orchestration/shared/gops_agents/retrieval/bulkhead.py \
+  systems/agent-orchestration/shared/gops_agents/runtime/admission.py \
+  systems/agent-orchestration/shared/gops_agents/runtime/queues.py \
+  systems/agent-orchestration/shared/gops_agents/runtime/workers.py \
+  systems/agent-orchestration/shared/gops_agents/retrieval/snapshots.py \
+  systems/agent-orchestration/shared/gops_agents/retrieval/cross_signal.py \
   systems/api-server/pods/api-server/gops-backend/app/services/agent_gateway.py \
   systems/api-server/pods/api-server/gops-backend/app/routes/agents.py
 
@@ -456,11 +456,11 @@ platform/kafka/topics.txt
 systems/agent-orchestration/README.md
 systems/agent-orchestration/pods/agent-orchestrator/main.py
 systems/agent-orchestration/shared/gops_agents/__init__.py
-systems/agent-orchestration/shared/gops_agents/agents.py
+systems/agent-orchestration/shared/gops_agents/roles/__init__.py
 systems/agent-orchestration/shared/gops_agents/contracts.py
 systems/agent-orchestration/shared/gops_agents/orchestrator.py
-systems/agent-orchestration/shared/gops_agents/report_store.py
-systems/agent-orchestration/shared/gops_agents/snapshots.py
+systems/agent-orchestration/shared/gops_agents/runtime/report_store.py
+systems/agent-orchestration/shared/gops_agents/retrieval/snapshots.py
 systems/agent-orchestration/tests/test_agent_orchestration.py
 systems/api-server/.env.example
 systems/api-server/pods/api-server/gops-backend/app/contracts/agents.py
@@ -497,15 +497,15 @@ systems/agent-orchestration/jobs/retrieval-quality-eval/main.py
 systems/agent-orchestration/pods/agent-analysis-worker/main.py
 systems/agent-orchestration/pods/agent-delivery-gateway/main.py
 systems/agent-orchestration/pods/deep-analysis-worker/main.py
-systems/agent-orchestration/shared/gops_agents/admission.py
-systems/agent-orchestration/shared/gops_agents/analysis_queue.py
-systems/agent-orchestration/shared/gops_agents/analysis_worker.py
-systems/agent-orchestration/shared/gops_agents/bulkhead.py
-systems/agent-orchestration/shared/gops_agents/cross_signal.py
-systems/agent-orchestration/shared/gops_agents/delivery_gateway.py
-systems/agent-orchestration/shared/gops_agents/graph_expansion.py
-systems/agent-orchestration/shared/gops_agents/request_envelope.py
-systems/agent-orchestration/shared/gops_agents/retrieval_context.py
+systems/agent-orchestration/shared/gops_agents/runtime/admission.py
+systems/agent-orchestration/shared/gops_agents/runtime/queues.py
+systems/agent-orchestration/shared/gops_agents/runtime/workers.py
+systems/agent-orchestration/shared/gops_agents/retrieval/bulkhead.py
+systems/agent-orchestration/shared/gops_agents/retrieval/cross_signal.py
+systems/agent-orchestration/shared/gops_agents/runtime/delivery_gateway.py
+systems/agent-orchestration/shared/gops_agents/retrieval/graph_expansion.py
+systems/agent-orchestration/shared/gops_agents/runtime/envelope.py
+systems/agent-orchestration/shared/gops_agents/retrieval/context.py
 ```
 
 ## 현재 검증 상태

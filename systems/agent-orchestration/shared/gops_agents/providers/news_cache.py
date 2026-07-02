@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
-from .contracts import EvidenceItem
+from ..contracts import EvidenceItem
 
 
 DEFAULT_NEWS_CACHE_PREFIX = "gops:agent:news"

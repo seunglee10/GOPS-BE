@@ -4,7 +4,7 @@ import os
 
 import redis
 
-from gops_agents.publisher import RedisNotificationPublisher
+from gops_agents.events.publisher import RedisNotificationPublisher
 
 
 def main() -> None:

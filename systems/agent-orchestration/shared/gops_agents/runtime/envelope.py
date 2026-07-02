@@ -4,7 +4,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from .contracts import AnalysisReport, stable_id, utc_now_iso
+from ..contracts import AnalysisReport, stable_id, utc_now_iso
 
 
 REQUEST_STATUS_ACCEPTED = "accepted"

@@ -8,11 +8,11 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
-from .contracts import AgentFinding, EvidenceItem, LayoutProposal, MarketEvent, NotificationDecision, stable_id, utc_now_iso
-from .news_localization import NewsLocalizationService
-from .providers import ClickHouseNewsProvider, EmptyMacroProvider, GraphDBOntologyProvider, ProviderRequest
-from .router import parse_openai_text_json
-from .ui_intent import UIIntent
+from ..contracts import AgentFinding, EvidenceItem, LayoutProposal, MarketEvent, NotificationDecision, stable_id, utc_now_iso
+from ..orchestration.routing import parse_openai_text_json
+from ..orchestration.ui_intent import UIIntent
+from ..providers import ClickHouseNewsProvider, EmptyMacroProvider, GraphDBOntologyProvider, ProviderRequest
+from ..providers.news_localization import NewsLocalizationService
 
 
 @dataclass
@@ -32,6 +32,7 @@ class AgentContext:
     intentType: str | None = None
     selectedRoles: list[str] = field(default_factory=list)
     retrievalContext: Any | None = None
+    entityResolution: dict[str, Any] = field(default_factory=dict)
 
 
 class ChartAgent:

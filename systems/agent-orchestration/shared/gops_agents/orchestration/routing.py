@@ -5,7 +5,7 @@ import os
 import urllib.request
 from typing import Any
 
-from .contracts import IntentRoute
+from ..contracts import IntentRoute
 
 
 ROLE_ORDER = ["chart", "news", "macro", "ontology"]

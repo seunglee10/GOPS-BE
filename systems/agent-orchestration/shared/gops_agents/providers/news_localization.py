@@ -7,8 +7,8 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
-from .contracts import EvidenceItem
-from .router import parse_openai_text_json
+from ..contracts import EvidenceItem
+from ..orchestration.routing import parse_openai_text_json
 
 
 @dataclass

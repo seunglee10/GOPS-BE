@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from gops_agents.delivery_gateway import run_delivery_gateway
+from gops_agents.runtime.delivery_gateway import run_delivery_gateway
 
 
 if __name__ == "__main__":

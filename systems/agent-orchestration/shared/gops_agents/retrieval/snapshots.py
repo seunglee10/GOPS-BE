@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .bulkhead import ProviderBulkheadRejected, provider_bulkhead
-from .contracts import (
+from ..contracts import (
     AgentFinding,
     AgentSignal,
     DataSnapshot,
@@ -27,7 +27,7 @@ from .contracts import (
     stable_id,
     utc_now_iso,
 )
-from .providers import ProviderRequest
+from ..providers import ProviderRequest
 
 
 SNAPSHOT_BUNDLE_BY_INTENT = {
@@ -93,6 +93,23 @@ def route_plan_intent(route: IntentRoute) -> str:
 
 
 def resolve_entities_for_plan(context: Any, route_plan: RoutePlan) -> list[ResolvedEntity]:
+    resolution = getattr(context, "entityResolution", None)
+    if isinstance(resolution, dict) and resolution.get("status") == "confirmed" and resolution.get("symbol"):
+        symbol = str(resolution.get("symbol") or "").upper()
+        matched_alias = str(resolution.get("matchedAlias") or "")
+        aliases = [matched_alias] if matched_alias and matched_alias != symbol else []
+        return [
+            ResolvedEntity(
+                raw_name=str(resolution.get("matchedText") or matched_alias or symbol),
+                canonical_name=str(resolution.get("canonicalName") or symbol),
+                ticker=symbol,
+                market="US",
+                asset_type="stock",
+                graph_node_id=f"company:{symbol}",
+                aliases=aliases,
+                confidence=float(resolution.get("confidence") or 0.82),
+            )
+        ]
     values = route_plan.entity_candidates or [str(getattr(context, "symbol", "") or "UNKNOWN")]
     entities = []
     for value in values[:3]:

@@ -4,7 +4,7 @@ import json
 import os
 import sys
 
-from gops_agents.graph_expansion import GraphExpansionCache
+from gops_agents.retrieval.graph_expansion import GraphExpansionCache
 
 
 def main() -> int:

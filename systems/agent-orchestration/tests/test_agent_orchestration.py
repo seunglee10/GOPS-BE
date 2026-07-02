@@ -13,32 +13,34 @@ sys.path.insert(0, str(ROOT / "shared"))
 sys.path.insert(0, str(REPO_ROOT / "systems" / "market-data" / "shared"))
 sys.modules.setdefault("boto3", types.SimpleNamespace(client=lambda *args, **kwargs: None))
 
-from gops_agents.agents import AgentContext, NewsAgent, OntologyAgent, VerificationGuardrailAgent
-from gops_agents.admission import AdmissionPolicy, admit_analysis_request
-from gops_agents.analysis_queue import AnalysisQueueMetrics
-from gops_agents.analysis_worker import AgentAnalysisWorker
-from gops_agents.analysis_cache import MemoryAgentAnalysisCache, RedisAgentAnalysisCache
-from gops_agents.bulkhead import provider_bulkhead
 from gops_agents.contracts import AgentFinding, DataSnapshot, EvidenceItem, FinalAnswer, IntentRoute, SynthesisInput, utc_now_iso
-from gops_agents.delivery_gateway import AgentDeliveryGateway
-from gops_agents.event_detector import MarketEventDetector, MarketEventThresholds
-from gops_agents.graph_expansion import (
+from gops_agents.events.detector import MarketEventDetector, MarketEventThresholds
+from gops_agents.events.publisher import notification_payload
+from gops_agents.orchestrator import AgentOrchestrator, canonical_analysis_intent, extract_symbol_from_intent
+from gops_agents.providers import ClickHouseNewsProvider, GraphDBOntologyProvider, ProviderRequest
+from gops_agents.providers.news_cache import MemoryNewsEvidenceCache, RedisNewsEvidenceCache
+from gops_agents.providers.news_localization import NewsLocalizationService
+from gops_agents.query_understanding import EntityAliasRecord, EntityResolution, KoreanEntityResolver
+from gops_agents.query_understanding.alias_index import EntityAliasIndex
+from gops_agents.retrieval import provider_bulkhead
+from gops_agents.retrieval.context import GraphExpansion, RelatedSymbol
+from gops_agents.retrieval.graph_expansion import (
     GraphExpansionCache,
     GraphExpansionWriter,
     build_graph_expansion_from_evidence,
     graph_expansion_cache_key,
 )
-from gops_agents.news_localization import NewsLocalizationService
-from gops_agents.orchestrator import AgentOrchestrator, canonical_analysis_intent, extract_symbol_from_intent
-from gops_agents.publisher import notification_payload
-from gops_agents.news_cache import MemoryNewsEvidenceCache, RedisNewsEvidenceCache
-from gops_agents.providers import ClickHouseNewsProvider, GraphDBOntologyProvider, ProviderRequest
-from gops_agents.report_store import InMemoryReportStore, RedisReportStore
-from gops_agents.request_envelope import build_request_envelope
-from gops_agents.retrieval_context import GraphExpansion, RelatedSymbol
-from gops_agents.router import route_intent
-from gops_agents.snapshots import trim_cross_signals
-from gops_agents.synthesizer import FinalAnswerSynthesizer
+from gops_agents.retrieval.snapshots import trim_cross_signals
+from gops_agents.roles import AgentContext, NewsAgent, OntologyAgent, VerificationGuardrailAgent
+from gops_agents.runtime.admission import AdmissionPolicy, admit_analysis_request
+from gops_agents.runtime.analysis_cache import MemoryAgentAnalysisCache, RedisAgentAnalysisCache
+from gops_agents.runtime.delivery_gateway import AgentDeliveryGateway
+from gops_agents.runtime.envelope import build_request_envelope
+from gops_agents.runtime.queues import AnalysisQueueMetrics
+from gops_agents.runtime.report_store import InMemoryReportStore, RedisReportStore
+from gops_agents.runtime.workers import AgentAnalysisWorker
+from gops_agents.orchestration.routing import route_intent
+from gops_agents.synthesis import FinalAnswerSynthesizer
 import alfaka.alpaca.news  # noqa: F401
 import alfaka.common.secrets  # noqa: F401
 from alfaka.news.relevance import classify_subject_relevance
@@ -368,6 +370,15 @@ class AgentOrchestrationTests(unittest.TestCase):
             else:
                 os.environ[name] = value
 
+    def test_gops_agents_top_level_keeps_only_package_boundaries(self):
+        allowed = {"__init__.py", "orchestrator.py"}
+        top_level_files = {
+            path.name
+            for path in (ROOT / "shared" / "gops_agents").iterdir()
+            if path.is_file() and path.suffix == ".py"
+        }
+        self.assertEqual(top_level_files, allowed)
+
     def test_orchestrator_returns_report_with_empty_provider_evidence(self):
         report = AgentOrchestrator().analyze({
             "symbol": "NVDA",
@@ -481,7 +492,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         )
         worker = AgentAnalysisWorker(store=store, orchestrator=AgentOrchestrator(store=store))
 
-        with patch("gops_agents.analysis_worker.publish_agent_outputs"):
+        with patch("gops_agents.runtime.workers.publish_agent_outputs"):
             report = worker.process_envelope(envelope)
 
         self.assertEqual(report.analysisId, "agent-request-worker")
@@ -507,7 +518,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         )
 
         with patch.dict(os.environ, {"AGENT_DEEP_ANALYSIS_ENABLED": "true"}):
-            with patch("gops_agents.analysis_worker.publish_agent_outputs"):
+            with patch("gops_agents.runtime.workers.publish_agent_outputs"):
                 report = worker.process_envelope(envelope)
 
         self.assertEqual(report.status, "deep_pending")
@@ -531,7 +542,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         )
 
         with patch.dict(os.environ, {"AGENT_DEEP_ANALYSIS_ENABLED": "true"}):
-            with patch("gops_agents.analysis_worker.publish_agent_outputs"):
+            with patch("gops_agents.runtime.workers.publish_agent_outputs"):
                 report = worker.process_envelope(envelope)
 
         self.assertEqual(report.status, "deep_completed")
@@ -556,7 +567,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         )
         worker = AgentAnalysisWorker(store=store, orchestrator=orchestrator, deep_queue=FakeAnalysisQueue())
 
-        with patch("gops_agents.analysis_worker.publish_agent_outputs"):
+        with patch("gops_agents.runtime.workers.publish_agent_outputs"):
             report = worker.process_envelope(envelope)
 
         self.assertIsNotNone(orchestrator.seen_report.finalAnswer)
@@ -660,7 +671,7 @@ class AgentOrchestrationTests(unittest.TestCase):
             "AGENT_EXPANDED_RETRIEVAL_ENABLED": "true",
             "AGENT_MAX_RELATED_SYMBOLS": "1",
         }):
-            with patch("gops_agents.graph_expansion.load_graph_expansion", return_value=graph_expansion):
+            with patch("gops_agents.retrieval.graph_expansion.load_graph_expansion", return_value=graph_expansion):
                 report = orchestrator.analyze({"symbol": "NVDA", "intent": "뉴스 보여줘", "agentIds": ["agent-02"]})
 
         self.assertEqual(report.timing["graphExpansionCacheHit"], True)
@@ -681,7 +692,7 @@ class AgentOrchestrationTests(unittest.TestCase):
             "AGENT_EXPANDED_RETRIEVAL_ENABLED": "true",
             "AGENT_MAX_MARKET_PEERS": "1",
         }):
-            with patch("gops_agents.graph_expansion.load_graph_expansion", return_value=graph_expansion):
+            with patch("gops_agents.retrieval.graph_expansion.load_graph_expansion", return_value=graph_expansion):
                 report = orchestrator.analyze({
                     "symbol": "NVDA",
                     "intent": "NVDA 시장 요약",
@@ -754,7 +765,7 @@ class AgentOrchestrationTests(unittest.TestCase):
             "AGENT_EXPANDED_RETRIEVAL_ENABLED": "true",
             "AGENT_CROSS_SIGNAL_ENABLED": "true",
         }):
-            with patch("gops_agents.graph_expansion.load_graph_expansion", return_value=graph_expansion):
+            with patch("gops_agents.retrieval.graph_expansion.load_graph_expansion", return_value=graph_expansion):
                 report = orchestrator.analyze({"symbol": "NVDA", "intent": "뉴스 보여줘", "agentIds": ["agent-02"]})
 
         signal = report.agentTrace["crossSignals"][0]
@@ -2025,6 +2036,217 @@ class AgentOrchestrationTests(unittest.TestCase):
         news_command = news_panel_props_command(report)
         self.assertEqual(news_command["payload"]["props"]["symbol"], "AAPL")
         self.assertEqual(news_command["payload"]["props"]["latestNews"][0]["symbol"], "AAPL")
+
+    def test_korean_entity_resolver_handles_compact_typos_and_choseong(self):
+        cases = {
+            "애플뉴스알려줘": "AAPL",
+            "apple뉴스알려줘": "AAPL",
+            "얘플 뉴스": "AAPL",
+            "애플ㄹ 뉴스": "AAPL",
+            "엔비댜 왜 오름": "NVDA",
+            "테슬랴 급등 이유": "TSLA",
+            "ㅇㅂㄷㅇ 왜오름": "NVDA",
+            "ㅌㅅㄹ 뉴스": "TSLA",
+            "마소 실적 어때": "MSFT",
+        }
+        for intent, symbol in cases.items():
+            with self.subTest(intent=intent):
+                self.assertEqual(extract_symbol_from_intent(intent), symbol)
+
+        self.assertIsNone(extract_symbol_from_intent("ㅇㅍ 뉴스"))
+        self.assertIsNone(extract_symbol_from_intent("ㅁㅌ 뉴스"))
+        self.assertIsNone(extract_symbol_from_intent("사과 뉴스"))
+
+    def test_dynamic_entity_index_resolves_non_seed_company_alias(self):
+        records = [
+            EntityAliasRecord(
+                alias="샘플전자",
+                entity_id="company:ZZZZ",
+                entity_type="company",
+                symbol="ZZZZ",
+                canonical_name="Sample Electronics Inc.",
+                source="test-catalog",
+                confidence=0.99,
+                priority=0.99,
+            ),
+            EntityAliasRecord(
+                alias="sample electronics",
+                entity_id="company:ZZZZ",
+                entity_type="company",
+                symbol="ZZZZ",
+                canonical_name="Sample Electronics Inc.",
+                source="test-catalog",
+                confidence=0.99,
+                priority=0.99,
+            ),
+        ]
+        resolver = KoreanEntityResolver(index=EntityAliasIndex.from_records(records, known_symbols=["ZZZZ"]))
+
+        resolution = resolver.resolve("샘플전자 뉴스 알려줘")
+
+        self.assertEqual(resolution.status, "confirmed")
+        self.assertEqual(resolution.symbol, "ZZZZ")
+        self.assertEqual(resolution.entity_type, "company")
+        self.assertEqual(resolution.catalog_source, "test-catalog")
+        self.assertEqual(resolver.resolve("zzzz 뉴스").symbol, "ZZZZ")
+
+    def test_dynamic_entity_index_handles_large_symbol_catalog(self):
+        records = []
+        symbols = []
+        for index in range(6000):
+            symbol = f"Z{index:04d}"
+            symbols.append(symbol)
+            records.extend([
+                EntityAliasRecord(
+                    alias=f"테스트기업{index}",
+                    entity_id=f"company:{symbol}",
+                    entity_type="company",
+                    symbol=symbol,
+                    canonical_name=f"Test Company {index}",
+                    source="large-test-catalog",
+                    confidence=0.99,
+                    priority=0.99,
+                ),
+                EntityAliasRecord(
+                    alias=f"test company {index}",
+                    entity_id=f"company:{symbol}",
+                    entity_type="company",
+                    symbol=symbol,
+                    canonical_name=f"Test Company {index}",
+                    source="large-test-catalog",
+                    confidence=0.99,
+                    priority=0.99,
+                ),
+                EntityAliasRecord(
+                    alias=f"테기{index}",
+                    entity_id=f"company:{symbol}",
+                    entity_type="company",
+                    symbol=symbol,
+                    canonical_name=f"Test Company {index}",
+                    source="large-test-catalog",
+                    confidence=0.99,
+                    priority=0.99,
+                ),
+            ])
+        resolver = KoreanEntityResolver(index=EntityAliasIndex.from_records(records, known_symbols=symbols))
+
+        resolution = resolver.resolve("테스트기업5999 뉴스")
+
+        self.assertEqual(resolution.status, "confirmed")
+        self.assertEqual(resolution.symbol, "Z5999")
+        self.assertEqual(resolution.catalog_source, "large-test-catalog")
+
+    def test_dynamic_theme_entity_resolution_returns_theme_symbols(self):
+        records = [
+            EntityAliasRecord(
+                alias="헬스케어",
+                entity_id="theme:healthcare",
+                entity_type="theme",
+                canonical_name="헬스케어",
+                source="test-graphdb",
+                confidence=0.98,
+                priority=0.98,
+                theme_name="헬스케어",
+                theme_symbols=("UNH", "PFE", "MRK"),
+                theme_category="sector",
+            )
+        ]
+        resolver = KoreanEntityResolver(index=EntityAliasIndex.from_records(records, known_symbols=["UNH", "PFE", "MRK"]))
+
+        resolution = resolver.resolve("헬스케어 주 뉴스")
+
+        self.assertEqual(resolution.status, "confirmed")
+        self.assertEqual(resolution.entity_type, "theme")
+        self.assertIsNone(resolution.symbol)
+        self.assertEqual(resolution.theme_name, "헬스케어")
+        self.assertEqual(resolution.theme_symbols, ("UNH", "PFE", "MRK"))
+
+    def test_theme_entity_resolution_feeds_news_symbol_fanout(self):
+        clickhouse = ThemeClickHouseProvider({
+            "UNH": [
+                {
+                    "articleId": "unh-1",
+                    "headline": "UnitedHealth rises with healthcare peers",
+                    "summary": "Healthcare stocks gained.",
+                    "publishedAt": utc_now_iso(),
+                    "url": "https://example.com/unh",
+                    "symbols": ["UNH"],
+                    "source": "alpaca",
+                }
+            ],
+            "PFE": [
+                {
+                    "articleId": "pfe-1",
+                    "headline": "Pfizer shares move after sector update",
+                    "summary": "Healthcare sector news lifted pharma shares.",
+                    "publishedAt": utc_now_iso(),
+                    "url": "https://example.com/pfe",
+                    "symbols": ["PFE"],
+                    "source": "alpaca",
+                }
+            ],
+        })
+        provider = ClickHouseNewsProvider(clickhouse_provider=clickhouse, publish_fallback=False)
+        orchestrator = AgentOrchestrator()
+        orchestrator.news_agent = NewsAgent(provider)
+        resolution = EntityResolution(
+            status="confirmed",
+            canonical_name="헬스케어",
+            confidence=0.98,
+            match_type="alias_exact",
+            matched_text="헬스케어",
+            matched_alias="헬스케어",
+            entity_type="theme",
+            entity_id="theme:healthcare",
+            catalog_source="test-graphdb",
+            theme_name="헬스케어",
+            theme_symbols=("UNH", "PFE"),
+        )
+
+        with patch("gops_agents.orchestration.request.resolve_entity", return_value=resolution):
+            report = orchestrator.analyze({
+                "symbol": "NVDA",
+                "intent": "헬스케어 주 뉴스",
+                "agentIds": ["agent-02"],
+                "layoutContext": layout_context(),
+            })
+
+        self.assertEqual(report.symbol, "헬스케어")
+        self.assertEqual(clickhouse.requested_symbols, ["UNH", "PFE"])
+        self.assertEqual(report.agentTrace["entityResolution"]["entityType"], "theme")
+        self.assertEqual(report.agentTrace["entityResolution"]["themeSymbols"], ["UNH", "PFE"])
+
+    def test_korean_entity_resolution_trace_is_reported(self):
+        clickhouse = FakeClickHouseProvider([
+            {
+                "articleId": "aapl-typo-1",
+                "headline": "Apple shares rise after services growth improves",
+                "summary": "Apple services revenue improved investor sentiment.",
+                "publishedAt": utc_now_iso(),
+                "url": "https://example.com/aapl-typo",
+                "symbols": ["AAPL"],
+                "source": "alpaca",
+            }
+        ])
+        provider = ClickHouseNewsProvider(clickhouse_provider=clickhouse, publish_fallback=False)
+        orchestrator = AgentOrchestrator()
+        orchestrator.news_agent = NewsAgent(provider)
+
+        report = orchestrator.analyze({
+            "symbol": "NVDA",
+            "intent": "얘플 뉴스 찾아줘",
+            "agentIds": ["agent-02"],
+            "chartContext": {
+                "chartDocument": {"symbol": "NVDA", "timeframe": "1m"},
+                "dataStatus": {"candleCount": 10, "state": "ready"},
+            },
+        })
+
+        self.assertEqual(report.symbol, "AAPL")
+        self.assertEqual(clickhouse.requested_symbols, ["AAPL"])
+        self.assertEqual(report.agentTrace["entityResolution"]["status"], "confirmed")
+        self.assertEqual(report.agentTrace["entityResolution"]["symbol"], "AAPL")
+        self.assertEqual(report.resolvedEntities[0].aliases, ["애플"])
 
     def test_news_only_request_skips_runtime_openai_and_uses_fast_deterministic_answer(self):
         clickhouse = FakeClickHouseProvider([
