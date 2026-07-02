@@ -4,7 +4,7 @@ import re
 import time
 from datetime import timedelta, timezone
 
-from alfaka.backfill.gapfill import detect_gapfill_ranges, parse_time
+from alfaka.backfill.gapfill import TradingCalendar, detect_gapfill_ranges, gapfill_windows_between, parse_time
 from alfaka.common.canonical import CANONICAL_VERSION, candle_metadata, historical_adjustment_from_env
 from alfaka.common.env import load_dotenv, utc_now_iso
 from alfaka.common.market_messages import source_event_id
@@ -86,7 +86,7 @@ class BackfillRunner:
         job_type = (record.get("jobType") or "gapfill").strip().lower()
         force_refresh = bool(record.get("force"))
         source_preference = normalize_source_preference(record.get("sourcePreference", "coverage-first"))
-        feed = os.getenv("HISTORICAL_FEED", os.getenv("ALPACA_FEED", "sip"))
+        feed = historical_daytime_feed_from_env()
 
         if job_type not in {"initial_load", "gapfill", "replay_repair", "correction_replay"}:
             raise BackfillUnavailable(f"Unsupported backfill job type: {job_type}.")
@@ -184,9 +184,8 @@ class BackfillRunner:
 
         timeframe = "1Day" if interval == "1D" else "1Min"
         adjustment = historical_adjustment_from_env(os.environ)
-        raw_bars = []
-        for repair_range in repair_ranges:
-            raw_bars.extend(fetch_alpaca_bars(symbol, repair_range["start"], repair_range["end"], feed, timeframe))
+        historical_batches = fetch_historical_bar_batches(symbol, interval, repair_ranges, feed, timeframe)
+        raw_bars = [row for batch in historical_batches for row in batch["rawBars"]]
         if not raw_bars:
             if job_type == "initial_load":
                 manifest_prefix = os.getenv("S3_MANIFEST_PREFIX", DEFAULT_MANIFEST_PREFIX)
@@ -221,25 +220,39 @@ class BackfillRunner:
         output_format = os.getenv("S3_PROCESSED_FORMAT", "parquet").lower()
         raw_kind = "daily-bars" if interval == "1D" else "bars"
 
-        processed_source_bars = repair_daily_bar_outliers(symbol, raw_bars, feed) if interval == "1D" else raw_bars
-        repair_count = sum(1 for row in processed_source_bars if row.get("_repairSource"))
-
-        raw_count = upload_raw_bars_to_s3(
-            self.s3,
-            bucket,
-            raw_prefix,
-            raw_kind,
-            feed,
-            start,
-            end,
-            1,
-            {symbol: raw_bars},
-            object_id=record["requestId"],
-            partition_mode=os.getenv("S3_HISTORICAL_RAW_PARTITION_MODE", "chunk"),
-            price_adjustment=adjustment,
-            canonical_version=CANONICAL_VERSION,
-        )
-        processed = raw_bars_to_processed_candles(symbol, processed_source_bars, feed=feed, interval=interval, price_adjustment=adjustment)
+        raw_count = 0
+        processed = []
+        repair_count = 0
+        non_empty_batches = [batch for batch in historical_batches if batch["rawBars"]]
+        for index, batch in enumerate(non_empty_batches, start=1):
+            raw_count += upload_raw_bars_to_s3(
+                self.s3,
+                bucket,
+                raw_prefix,
+                raw_kind,
+                batch["feed"],
+                batch["start"],
+                batch["end"],
+                index,
+                {symbol: batch["rawBars"]},
+                object_id=historical_raw_object_id(record["requestId"], batch, index, len(non_empty_batches)),
+                partition_mode=os.getenv("S3_HISTORICAL_RAW_PARTITION_MODE", "chunk"),
+                price_adjustment=adjustment,
+                canonical_version=CANONICAL_VERSION,
+            )
+            processed_source_bars = repair_daily_bar_outliers(symbol, batch["rawBars"], batch["feed"]) if interval == "1D" else batch["rawBars"]
+            repair_count += sum(1 for row in processed_source_bars if row.get("_repairSource"))
+            processed.extend(
+                raw_bar_to_processed_candle(
+                    symbol,
+                    row,
+                    feed=batch["feed"],
+                    interval=interval,
+                    price_adjustment=adjustment,
+                )
+                for row in processed_source_bars
+            )
+        processed = attach_moving_averages(sorted(processed, key=lambda row: row["timestamp"]))
         partition_key = f"{final_prefix}/candles/interval={interval}/symbol={symbol}/backfill_request={record['requestId'].replace(':', '_')}"
         processed_key = flush_buffer(
             self.s3,
@@ -373,6 +386,66 @@ def fetch_alpaca_bars(symbol, start, end, feed, timeframe="1Min"):
         if not page_token:
             return rows
         params["page_token"] = page_token
+
+
+def fetch_historical_bar_batches(symbol, interval, repair_ranges, daytime_feed, timeframe):
+    batches = []
+    for repair_range in repair_ranges:
+        for routed_range in historical_feed_ranges(
+            repair_range["start"],
+            repair_range["end"],
+            daytime_feed,
+            interval=interval,
+        ):
+            rows = fetch_alpaca_bars(
+                symbol,
+                routed_range["start"],
+                routed_range["end"],
+                routed_range["feed"],
+                timeframe,
+            )
+            batches.append({**routed_range, "rawBars": rows})
+    return batches
+
+
+def historical_feed_ranges(start, end, daytime_feed, interval="1m", calendar=None):
+    if normalize_chart_interval(interval) != "1m":
+        return [{"start": start, "end": end, "feed": daytime_feed, "session": "daily"}]
+
+    windows = gapfill_windows_between(start, end, calendar or TradingCalendar.from_environment())
+    if not windows:
+        return [{"start": start, "end": end, "feed": daytime_feed, "session": "unknown"}]
+    return [
+        {
+            "start": iso_utc(window.start),
+            "end": iso_utc(window.end),
+            "feed": historical_feed_for_session(window.session, daytime_feed),
+            "session": window.session,
+        }
+        for window in windows
+    ]
+
+
+def historical_feed_for_session(session, daytime_feed):
+    if str(session or "").lower() == "overnight":
+        return historical_overnight_feed_from_env()
+    return daytime_feed
+
+
+def historical_daytime_feed_from_env(environ=None):
+    environ = environ or os.environ
+    return environ.get("HISTORICAL_FEED", environ.get("ALPACA_FEED", "sip"))
+
+
+def historical_overnight_feed_from_env(environ=None):
+    environ = environ or os.environ
+    return environ.get("HISTORICAL_OVERNIGHT_FEED", environ.get("ALPACA_OVERNIGHT_FEED", "boats"))
+
+
+def historical_raw_object_id(request_id, batch, index, batch_count):
+    if batch_count <= 1:
+        return request_id
+    return f"{request_id}:{batch.get('feed', 'unknown')}:{index}"
 
 
 def historical_retry_delay(response, attempt, base_seconds, max_seconds):

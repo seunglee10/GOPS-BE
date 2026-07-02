@@ -34,6 +34,22 @@ class GapfillCalendarTests(unittest.TestCase):
         self.assertEqual(after_market_ranges[0].end, "2026-06-25T21:02:00.000Z")
         self.assertEqual(after_market_ranges[0].missingCount, 1)
 
+    def test_gapfill_ranges_include_overnight_minutes(self):
+        ranges = detect_gapfill_ranges(
+            "2026-07-02T00:00:00.000Z",
+            "2026-07-02T00:03:00.000Z",
+            "1m",
+            actual_timestamps=[
+                "2026-07-02T00:00:00.000Z",
+                "2026-07-02T00:02:00.000Z",
+            ],
+        )
+
+        self.assertEqual(len(ranges), 1)
+        self.assertEqual(ranges[0].start, "2026-07-02T00:01:00.000Z")
+        self.assertEqual(ranges[0].end, "2026-07-02T00:02:00.000Z")
+        self.assertEqual(ranges[0].missingCount, 1)
+
     def test_gapfill_ranges_honor_early_close_as_day_session_close(self):
         calendar = TradingCalendar(early_closes={"2026-11-27": time(13, 0)})
 

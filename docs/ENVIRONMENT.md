@@ -355,6 +355,8 @@ BACKFILL_INITIAL_LOAD_MAX_BACKLOG
 BACKFILL_WORKER_POLL_SECONDS
 BACKFILL_WORKER_ONCE
 HISTORICAL_ADJUSTMENT
+HISTORICAL_FEED
+HISTORICAL_OVERNIGHT_FEED
 ALLOW_NON_CANONICAL_HISTORICAL_ADJUSTMENT
 HISTORICAL_1M_MINUTES_PER_TRADING_DAY
 HISTORICAL_MAX_RETRIES
@@ -365,11 +367,11 @@ DAILY_BAR_1M_REPAIR_ENABLED
 DAILY_BAR_1M_REPAIR_RATIO
 ```
 
-Canonical Alpaca historical backfill uses `adjustment=split` and writes `priceAdjustment=split`, `canonicalVersion=v2`. A stale `HISTORICAL_ADJUSTMENT=raw` does not override this unless `ALLOW_NON_CANONICAL_HISTORICAL_ADJUSTMENT=true` is explicitly set for a non-serving diagnostic job. Keep `S3_REQUIRE_CANONICAL_PROCESSED_CANDLES=true` so S3-first backfill ignores legacy processed/raw candle manifests that lack split/v2 metadata. `BACKFILL_ACTIVE_STALE_SECONDS` fails old queued/running gapfill status records so stale Redis state cannot block new bounded repairs. `BACKFILL_MAX_GAPFILL_1M_RANGE_HOURS` rejects oversized `1m` gapfill requests from the chart/API path; broad intraday rebuilds must use Initial Load chunks or explicit S3 materialize jobs. `DAILY_BAR_1M_REPAIR_ENABLED=true` lets `1D` backfill validate suspicious split-day dailyBars high/low values against same-day split-adjusted `1m` bars; only the outlier high/low is repaired, while daily open/close/volume remain from dailyBars. `HISTORICAL_1M_MINUTES_PER_TRADING_DAY=960` keeps 1m preload dry-run estimates conservative for Alpaca extended-hours bars. Retry settings are used for transient Alpaca historical API failures such as rate limits and 5xx responses.
+Canonical Alpaca historical backfill uses `adjustment=split` and writes `priceAdjustment=split`, `canonicalVersion=v2`. A stale `HISTORICAL_ADJUSTMENT=raw` does not override this unless `ALLOW_NON_CANONICAL_HISTORICAL_ADJUSTMENT=true` is explicitly set for a non-serving diagnostic job. `HISTORICAL_FEED=sip` is the daytime historical feed for pre-market, regular, and after-hours ranges; `HISTORICAL_OVERNIGHT_FEED=boats` is used for `20:00-04:00 ET` overnight ranges. Keep `S3_REQUIRE_CANONICAL_PROCESSED_CANDLES=true` so S3-first backfill ignores legacy processed/raw candle manifests that lack split/v2 metadata. `BACKFILL_ACTIVE_STALE_SECONDS` fails old queued/running gapfill status records so stale Redis state cannot block new bounded repairs. `BACKFILL_MAX_GAPFILL_1M_RANGE_HOURS` rejects oversized `1m` gapfill requests from the chart/API path; broad intraday rebuilds must use Initial Load chunks or explicit S3 materialize jobs. `DAILY_BAR_1M_REPAIR_ENABLED=true` lets `1D` backfill validate suspicious split-day dailyBars high/low values against same-day split-adjusted `1m` bars; only the outlier high/low is repaired, while daily open/close/volume remain from dailyBars. `HISTORICAL_1M_MINUTES_PER_TRADING_DAY=960` keeps 1m preload dry-run estimates conservative for Alpaca extended-hours bars. Retry settings are used for transient Alpaca historical API failures such as rate limits and 5xx responses.
 
 ## Market Calendar
 
-GapFill uses the configured market calendar to avoid false gaps on weekends, holidays, and early closes. The v1 provider is `configured-nyse`; it is an adapter boundary that can later be replaced by a managed exchange-calendar provider. `MARKET_OPEN_TIME` and `MARKET_CLOSE_TIME` describe the regular session, while `MARKET_EXTENDED_OPEN_TIME` and `MARKET_EXTENDED_CLOSE_TIME` describe the daytime historical gapfill window, defaulting to `04:00-20:00 ET` for pre-market, regular, and after-hours bars. Early closes truncate the daytime gapfill window at the configured early close. Intraday chart renderability treats sparse gaps as blocking only when both candles are inside the regular session; sparse extended-hours 1m bars can still render because Alpaca may only emit bars for minutes with activity.
+GapFill uses the configured market calendar to avoid false gaps on weekends, holidays, and early closes. The v1 provider is `configured-nyse`; it is an adapter boundary that can later be replaced by a managed exchange-calendar provider. `MARKET_OPEN_TIME` and `MARKET_CLOSE_TIME` describe the regular session, while `MARKET_EXTENDED_OPEN_TIME` and `MARKET_EXTENDED_CLOSE_TIME` describe the daytime historical gapfill window, defaulting to `04:00-20:00 ET` for pre-market, regular, and after-hours bars. `MARKET_OVERNIGHT_OPEN_TIME` and `MARKET_OVERNIGHT_CLOSE_TIME` describe the BOATS overnight gapfill window, defaulting to `20:00-04:00 ET`. Early closes truncate the daytime gapfill window at the configured early close. Intraday chart renderability treats sparse gaps as blocking only when both candles are inside the regular session; sparse extended-hours and overnight 1m bars can still render because Alpaca may only emit bars for minutes with activity.
 
 ```text
 MARKET_CALENDAR_PROVIDER
@@ -378,6 +380,8 @@ MARKET_OPEN_TIME
 MARKET_CLOSE_TIME
 MARKET_EXTENDED_OPEN_TIME
 MARKET_EXTENDED_CLOSE_TIME
+MARKET_OVERNIGHT_OPEN_TIME
+MARKET_OVERNIGHT_CLOSE_TIME
 MARKET_CLOSED_DATES
 MARKET_EARLY_CLOSES
 ```

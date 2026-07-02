@@ -16,6 +16,8 @@ class TradingCalendar:
     close_time: time = time(16, 0)
     extended_open_time: time = time(4, 0)
     extended_close_time: time = time(20, 0)
+    overnight_open_time: time = time(20, 0)
+    overnight_close_time: time = time(4, 0)
     closed_dates: frozenset[str] = frozenset()
     early_closes: dict[str, time] | None = None
 
@@ -28,6 +30,8 @@ class TradingCalendar:
             close_time=parse_market_clock_time(os.getenv("MARKET_CLOSE_TIME"), time(16, 0)),
             extended_open_time=parse_market_clock_time(os.getenv("MARKET_EXTENDED_OPEN_TIME"), time(4, 0)),
             extended_close_time=parse_market_clock_time(os.getenv("MARKET_EXTENDED_CLOSE_TIME"), time(20, 0)),
+            overnight_open_time=parse_market_clock_time(os.getenv("MARKET_OVERNIGHT_OPEN_TIME"), time(20, 0)),
+            overnight_close_time=parse_market_clock_time(os.getenv("MARKET_OVERNIGHT_CLOSE_TIME"), time(4, 0)),
             closed_dates=parse_closed_dates(os.getenv("MARKET_CLOSED_DATES")),
             early_closes=parse_early_closes(os.getenv("MARKET_EARLY_CLOSES")),
         )
@@ -58,6 +62,13 @@ class GapFillRange:
     missingCount: int
 
 
+@dataclass(frozen=True)
+class GapFillWindow:
+    start: datetime
+    end: datetime
+    session: str
+
+
 def detect_gapfill_ranges(start, end, interval, actual_timestamps, calendar=None):
     interval = normalize_chart_interval(interval)
     calendar = calendar or TradingCalendar.from_environment()
@@ -81,25 +92,70 @@ def expected_bucket_starts(start, end, interval, calendar):
 
 
 def expected_minute_buckets(start_dt, end_dt, calendar):
+    values = []
+    for window in gapfill_windows_between(start_dt, end_dt, calendar):
+        cursor = round_down_minute(window.start)
+        while cursor < window.end:
+            values.append(cursor.astimezone(timezone.utc))
+            cursor += timedelta(minutes=1)
+    return values
+
+
+def gapfill_windows_between(start, end, calendar=None):
+    calendar = calendar or TradingCalendar.from_environment()
+    start_dt = parse_time(start)
+    end_dt = parse_time(end)
+    if start_dt >= end_dt:
+        return []
     zone = calendar.timezone
     local_start = start_dt.astimezone(zone)
     local_end = end_dt.astimezone(zone)
     session_date = local_start.date()
-    values = []
-    while session_date <= local_end.date():
-        if calendar.is_session_date(session_date):
-            session_open = datetime.combine(session_date, calendar.gapfill_open_for(session_date), zone)
-            session_close = datetime.combine(session_date, calendar.gapfill_close_for(session_date), zone)
-            if session_close <= session_open:
-                session_date += timedelta(days=1)
-                continue
-            cursor = max(round_down_minute(local_start), session_open)
-            session_end = min(local_end, session_close)
-            while cursor < session_end:
-                values.append(cursor.astimezone(timezone.utc))
-                cursor += timedelta(minutes=1)
+    final_session_date = local_end.date() + timedelta(days=1)
+    windows = []
+    while session_date <= final_session_date:
+        windows.extend(clipped_gapfill_windows_for_date(session_date, local_start, local_end, calendar))
         session_date += timedelta(days=1)
-    return values
+    return sorted(windows, key=lambda window: window.start)
+
+
+def clipped_gapfill_windows_for_date(session_date, local_start, local_end, calendar):
+    if not calendar.is_session_date(session_date):
+        return []
+    windows = []
+    zone = calendar.timezone
+    for session, window_start, window_end in (
+        ("overnight", *overnight_window_ending_on(session_date, calendar, zone)),
+        ("daytime", *daytime_window_on(session_date, calendar, zone)),
+    ):
+        if window_end <= window_start:
+            continue
+        clipped_start = max(local_start, window_start)
+        clipped_end = min(local_end, window_end)
+        if clipped_start < clipped_end:
+            windows.append(GapFillWindow(
+                clipped_start.astimezone(timezone.utc),
+                clipped_end.astimezone(timezone.utc),
+                session,
+            ))
+    return windows
+
+
+def daytime_window_on(session_date, calendar, zone):
+    return (
+        datetime.combine(session_date, calendar.gapfill_open_for(session_date), zone),
+        datetime.combine(session_date, calendar.gapfill_close_for(session_date), zone),
+    )
+
+
+def overnight_window_ending_on(session_date, calendar, zone):
+    open_date = session_date
+    if calendar.overnight_close_time <= calendar.overnight_open_time:
+        open_date = session_date - timedelta(days=1)
+    return (
+        datetime.combine(open_date, calendar.overnight_open_time, zone),
+        datetime.combine(session_date, calendar.overnight_close_time, zone),
+    )
 
 
 def expected_daily_buckets(start_dt, end_dt, calendar):

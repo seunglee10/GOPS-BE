@@ -3415,18 +3415,23 @@ class MarketDataHardeningContractTest(unittest.TestCase):
 
     def test_gapfill_ranges_skip_weekends_and_configured_closed_dates(self):
         calendar = TradingCalendar(closed_dates=frozenset({"2026-07-03"}))
-        ranges = detect_gapfill_ranges(
+        closed_day_ranges = detect_gapfill_ranges(
             "2026-07-03T13:30:00.000Z",
-            "2026-07-06T13:32:00.000Z",
+            "2026-07-03T13:32:00.000Z",
             "1m",
-            actual_timestamps=["2026-07-06T13:30:00.000Z"],
+            actual_timestamps=[],
+            calendar=calendar,
+        )
+        weekend_ranges = detect_gapfill_ranges(
+            "2026-07-04T13:30:00.000Z",
+            "2026-07-04T13:32:00.000Z",
+            "1m",
+            actual_timestamps=[],
             calendar=calendar,
         )
 
-        self.assertEqual(len(ranges), 1)
-        self.assertEqual(ranges[0].start, "2026-07-06T13:31:00.000Z")
-        self.assertEqual(ranges[0].end, "2026-07-06T13:32:00.000Z")
-        self.assertEqual(ranges[0].missingCount, 1)
+        self.assertEqual(closed_day_ranges, [])
+        self.assertEqual(weekend_ranges, [])
 
     def test_gapfill_ranges_honor_configured_early_close(self):
         calendar = TradingCalendar(early_closes={"2026-11-27": time(13, 0)})
@@ -3452,9 +3457,9 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             calendar = TradingCalendar.from_environment()
             closed_ranges = detect_gapfill_ranges(
                 "2026-07-03T13:30:00.000Z",
-                "2026-07-06T13:31:00.000Z",
+                "2026-07-03T13:31:00.000Z",
                 "1m",
-                actual_timestamps=["2026-07-06T13:30:00.000Z"],
+                actual_timestamps=[],
                 calendar=calendar,
             )
             early_close_ranges = detect_gapfill_ranges(
