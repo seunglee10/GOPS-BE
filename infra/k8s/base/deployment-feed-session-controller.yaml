@@ -1,0 +1,25 @@
+# 역할: SIP/BOATS 중 현재 장 세션에 맞는 단 하나의 실시간 feed를 Redis에 기록합니다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alfaka-feed-session-controller
+  namespace: alfaka-market-data
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alfaka-feed-session-controller
+  template:
+    metadata:
+      labels:
+        app: alfaka-feed-session-controller
+    spec:
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: feed-session-controller
+          image: YOUR_ECR_REPOSITORY/gops-market-processor:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "systems/market-data/pods/feed-session-controller/main.py"]
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config

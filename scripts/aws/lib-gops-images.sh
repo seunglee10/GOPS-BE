@@ -130,7 +130,7 @@ gops_deployments_for_service() {
       printf '%s\n' alfaka-alpaca-ingestor-sip alfaka-alpaca-ingestor-boats alfaka-alpaca-news-ingestor
       ;;
     market-processor)
-      printf '%s\n' alfaka-market-processor
+      printf '%s\n' alfaka-market-processor alfaka-feed-session-controller alfaka-subscription-controller
       ;;
     market-storage)
       printf '%s\n' alfaka-clickhouse-loader alfaka-s3-sink

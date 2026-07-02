@@ -211,6 +211,8 @@ def load_symbols_and_channels(company_or_symbol=None):
 
 def build_subscription_request(symbols, channels):
     request = {"action": "subscribe"}
+    if not symbols:
+        return request
     for channel in channels:
         request[channel] = symbols
     return request

@@ -192,8 +192,11 @@ async def run_stream_session(
                             alpacaFeed=alpaca_feed,
                             channels=list(subscribe_request.keys()),
                         )
-                        print("구독 요청:", subscribe_request, flush=True)
-                        await ws.send(json.dumps(subscribe_request))
+                        if has_subscription_payload(subscribe_request):
+                            print("구독 요청:", subscribe_request, flush=True)
+                            await ws.send(json.dumps(subscribe_request))
+                        else:
+                            print("초기 구독 요청 생략: 요청 종목 없음", flush=True)
                         active_subscribed_symbols = await sync_active_chart_subscriptions(
                             ws,
                             redis_client,
@@ -305,6 +308,10 @@ async def sync_active_chart_subscriptions(ws, redis_client, channels, subscribed
         await ws.send(json.dumps(unsubscribe_request))
 
     return next_subscribed
+
+
+def has_subscription_payload(request):
+    return any(key != "action" and value for key, value in request.items())
 
 
 def read_realtime_subscription_symbols_by_channel(redis_client, channels):

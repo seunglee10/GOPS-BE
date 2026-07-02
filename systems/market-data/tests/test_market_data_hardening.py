@@ -18,6 +18,7 @@ sys.modules.setdefault("redis", types.SimpleNamespace(from_url=lambda *args, **k
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 from alfaka.alpaca.subscription import (
+    build_subscription_request,
     configured_collection_symbols,
     configured_seed_symbols,
     configured_universe_symbols,
@@ -27,7 +28,7 @@ from alfaka.alpaca.subscription import (
 )
 from alfaka.alpaca.feed_profiles import feed_profile_active_for_session, market_session_for_timestamp, resolve_feed_profile
 from alfaka.alpaca.trade_tiers import resolve_trade_subscription_plan
-from alfaka.alpaca.websocket_collector import read_trade_subscription_symbols
+from alfaka.alpaca.websocket_collector import read_realtime_subscription_symbols_by_channel, read_trade_subscription_symbols
 from alfaka.alpaca.assets import asset_to_symbol_metadata
 from alfaka.alpaca.news import build_news_events
 from alfaka.common.kafka_io import create_json_consumer
@@ -71,6 +72,7 @@ from alfaka.streaming.transforms import (
 )
 from alfaka.tools import live_path_trace
 from alfaka.tools.canonical_candle_audit import canonical_candle_audit_query
+from app.market_data.realtime.active_symbols import ActiveSymbolManager
 
 
 class FakeRedisProvider:
@@ -281,15 +283,30 @@ class MemoryRedis:
         self.values[key] = value
         return True
 
+    def setex(self, key, seconds, value):
+        self.values[key] = value
+        return True
+
     def get(self, key):
         return self.values.get(key)
 
     def exists(self, key):
         return key in self.values or key in self.hashes or key in self.zsets or key in self.sets
 
-    def hset(self, key, mapping):
-        self.hashes[key] = dict(mapping)
-        return len(mapping)
+    def hset(self, key, mapping=None, **kwargs):
+        values = dict(mapping or kwargs)
+        self.hashes.setdefault(key, {}).update(values)
+        return len(values)
+
+    def hgetall(self, key):
+        return dict(self.hashes.get(key, {}))
+
+    def delete(self, key):
+        self.values.pop(key, None)
+        self.hashes.pop(key, None)
+        self.zsets.pop(key, None)
+        self.sets.pop(key, None)
+        return 1
 
     def lpush(self, key, value):
         self.queues.setdefault(key, []).insert(0, value)
@@ -458,6 +475,10 @@ class MemoryRedis:
     def sadd(self, key, *values):
         self.sets.setdefault(key, set()).update(values)
         return len(values)
+
+    def srem(self, key, value):
+        self.sets.setdefault(key, set()).discard(value)
+        return 1
 
     def smembers(self, key):
         return set(self.sets.get(key, set()))
@@ -4866,6 +4887,27 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(client.inserts[1][0], "storage_object_audit")
         self.assertEqual(client.inserts[1][1][0]["source"], "smoke")
         self.assertEqual(client.inserts[2][1][0]["source_name"], "smoke")
+
+
+class RealtimeChartSubscriptionContractTest(unittest.TestCase):
+    def test_empty_collection_symbols_do_not_create_empty_alpaca_channel_payloads(self):
+        self.assertEqual(build_subscription_request([], ["bars", "updatedBars"]), {"action": "subscribe"})
+
+    def test_active_chart_session_populates_ingestor_subscription_keys(self):
+        redis_client = MemoryRedis()
+        manager = ActiveSymbolManager(redis_client, ttl_seconds=90, refresh_seconds=1)
+        manager.refresh("aapl")
+
+        keys = RedisKeyBuilder()
+        self.assertEqual(redis_client.smembers(keys.subscription_symbols()), {"AAPL"})
+        record = redis_client.hgetall(keys.subscription_symbol("AAPL"))
+        self.assertEqual(record["reason"], "active-chart-session")
+        self.assertEqual(record["enabled"], "true")
+        self.assertEqual(set(record["layers"].split(",")), {"trades", "quotes"})
+
+        desired = read_realtime_subscription_symbols_by_channel(redis_client, ["trades", "quotes"])
+        self.assertEqual(desired["trades"], {"AAPL"})
+        self.assertEqual(desired["quotes"], {"AAPL"})
 
 
 if __name__ == "__main__":
