@@ -22,6 +22,10 @@
 | 4 | Infra / Platform / CI-CD | AWS, EKS, Kubernetes, Docker image, GitHub Actions, ECR, 배포/rollback |
 | 5 | Backend API / Auth / Order / Integration | FastAPI API, Google OAuth2, session, Postgres, order, KIS demo, 시스템 통합 |
 
+## Detail Documents
+
+- `market-data-tick-candle-architecture.md`: tick 이벤트를 1분 단위 closed candle로 집계하고, live candle Kafka topic 없이 실시간 차트를 제공하는 v2 market-data 재설계안.
+
 ## Common Rules
 
 - 각 담당자는 자신에게 나눠진 역할 문서를 확인하고 수정할 때 원본 `docs/v2/gops-v2-architecture.md`도 함께 수정한다.
