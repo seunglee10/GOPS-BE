@@ -160,5 +160,5 @@ INITIAL_LOAD_INTERVALS=1m INITIAL_LOAD_START=2026-05-01T00:00:00Z INITIAL_LOAD_E
 Before broad preload, prove S3-to-ClickHouse materialization with one explicit processed candle object:
 
 ```bash
-S3_MATERIALIZE_KEYS=market-data/rebuild-20260701/final/candles/.../canonical=v2.parquet python -m alfaka.storage.s3_materializer
+S3_MATERIALIZE_KEYS=market-data/v2/tick-candle/final/candles/.../canonical=v2.parquet python -m alfaka.storage.s3_materializer
 ```
