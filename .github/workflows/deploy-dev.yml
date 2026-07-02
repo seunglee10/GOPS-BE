@@ -1,9 +1,12 @@
-name: Deploy dev to EKS
+name: Deploy dev/test to EKS
 
 on:
   push:
     branches:
       - dev
+      # Branches matching these patterns deploy to the shared dev EKS environment.
+      - "deploy/**"
+      - "test/**"
   workflow_dispatch:
     inputs:
       services:
@@ -25,7 +28,7 @@ env:
   DOCKER_PLATFORM: linux/amd64
   EKS_CLUSTER_NAME: gops-eks-cluster
   K8S_NAMESPACE: alfaka-market-data
-  KUSTOMIZE_OVERLAY: infra/k8s/overlays/aws-incluster-app-ci
+  KUSTOMIZE_OVERLAY: infra/k8s/overlays/aws-ci
   ECR_FRONTEND_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-frontend
   ECR_API_SERVER_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-api-server
   ECR_MARKET_INGESTOR_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-ingestor
@@ -108,6 +111,7 @@ jobs:
         run: kubectl apply -k "$KUSTOMIZE_OVERLAY" --dry-run=server
 
       - name: Deploy app workloads
+        id: deploy_app
         if: steps.changes.outputs.has_services == 'true'
         run: kubectl apply -k "$KUSTOMIZE_OVERLAY"
 
@@ -151,3 +155,16 @@ jobs:
           if [[ "$SMOKE_BACKEND" == "true" ]]; then
             smoke_url https://stargops.com/api/charts/symbols
           fi
+
+      - name: Roll back failed app rollout
+        if: failure() && steps.changes.outputs.has_services == 'true' && steps.deploy_app.outcome == 'success'
+        env:
+          DEPLOYMENTS: ${{ steps.changes.outputs.deployments }}
+        run: |
+          for deployment in ${DEPLOYMENTS}; do
+            echo "Rolling back deployment/${deployment}"
+            kubectl rollout undo "deployment/${deployment}" -n "$K8S_NAMESPACE"
+            kubectl rollout status "deployment/${deployment}" \
+              -n "$K8S_NAMESPACE" \
+              --timeout=600s
+          done
