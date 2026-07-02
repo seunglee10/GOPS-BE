@@ -127,7 +127,7 @@ gops_deployments_for_service() {
       printf '%s\n' kis-broker-adapter
       ;;
     market-ingestor)
-      printf '%s\n' alfaka-alpaca-ingestor alfaka-alpaca-news-ingestor
+      printf '%s\n' alfaka-alpaca-ingestor-sip alfaka-alpaca-ingestor-boats alfaka-alpaca-news-ingestor
       ;;
     market-processor)
       printf '%s\n' alfaka-market-processor
@@ -165,7 +165,7 @@ gops_primary_deployment_for_service() {
       echo "kis-broker-adapter"
       ;;
     market-ingestor)
-      echo "alfaka-alpaca-ingestor"
+      echo "alfaka-alpaca-ingestor-sip"
       ;;
     market-processor)
       echo "alfaka-market-processor"
