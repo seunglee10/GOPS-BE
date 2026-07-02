@@ -351,6 +351,179 @@ class CandleAggregator:
         }
 
 
+class TickWindowCandleBuilder:
+    def __init__(self, grace_seconds=5):
+        self.grace = timedelta(seconds=max(0, int(grace_seconds)))
+        self.windows = {}
+        self.closed_keys = set()
+        self.max_event_time = None
+
+    def update(self, trade):
+        event_time = parse_time(trade["timestamp"])
+        if self.max_event_time is None or event_time > self.max_event_time:
+            self.max_event_time = event_time
+        bucket = floor_minute(event_time)
+        key = (trade["symbol"], to_iso(bucket), trade.get("feedProfile") or trade.get("feed") or "unknown")
+        if key in self.closed_keys:
+            return False
+        price = float(trade["price"])
+        size = int(trade.get("size") or 0)
+        current = self.windows.get(key)
+        if current is None:
+            current = {
+                "symbol": trade["symbol"],
+                "timestamp": to_iso(bucket),
+                "windowEnd": to_iso(bucket + timedelta(minutes=1)),
+                "open": price,
+                "openTime": event_time,
+                "high": price,
+                "low": price,
+                "close": price,
+                "closeTime": event_time,
+                "volume": 0,
+                "tradeCount": 0,
+                "notional": 0.0,
+                "feed": trade.get("feed"),
+                "feedProfile": trade.get("feedProfile"),
+                "marketSession": trade.get("marketSession"),
+                "sourceEventId": trade.get("sourceEventId"),
+                "createdAt": trade.get("receivedAt"),
+            }
+        if event_time < current["openTime"]:
+            current["open"] = price
+            current["openTime"] = event_time
+        if event_time >= current["closeTime"]:
+            current["close"] = price
+            current["closeTime"] = event_time
+        current["high"] = max(current["high"], price)
+        current["low"] = min(current["low"], price)
+        current["volume"] += size
+        current["tradeCount"] += 1
+        current["notional"] += price * size
+        current["feed"] = trade.get("feed") or current.get("feed")
+        current["feedProfile"] = trade.get("feedProfile") or current.get("feedProfile")
+        current["marketSession"] = trade.get("marketSession") or current.get("marketSession")
+        current["sourceEventId"] = trade.get("sourceEventId")
+        current["createdAt"] = trade.get("receivedAt") or current.get("createdAt")
+        self.windows[key] = current
+        return True
+
+    def flush_ready(self, reference_time=None):
+        reference = reference_time or self.max_event_time
+        if reference is None:
+            return []
+        reference = parse_time(reference) if isinstance(reference, str) else reference
+        ready = []
+        for key, window in list(self.windows.items()):
+            window_end = parse_time(window["windowEnd"])
+            if window_end + self.grace > reference:
+                continue
+            self.windows.pop(key, None)
+            self.closed_keys.add(key)
+            ready.append(self._to_candle(window))
+        return sorted(ready, key=lambda candle: (candle["symbol"], parse_time(candle["timestamp"])))
+
+    def _to_candle(self, window):
+        volume = window.get("volume") or 0
+        return {
+            "eventType": "CANDLE",
+            "symbol": window["symbol"],
+            "interval": "1m",
+            "timestamp": window["timestamp"],
+            "open": window["open"],
+            "high": window["high"],
+            "low": window["low"],
+            "close": window["close"],
+            "volume": volume,
+            "tradeCount": window.get("tradeCount") or 0,
+            "vwap": (window["notional"] / volume) if volume else window["close"],
+            "ma": {},
+            "isClosed": True,
+            "correctionType": "NONE",
+            "source": "stream-processor",
+            "sourceInterval": "trades",
+            "feed": window.get("feed"),
+            "feedProfile": window.get("feedProfile"),
+            "marketSession": window.get("marketSession"),
+            "sourceEventId": window.get("sourceEventId"),
+            "createdAt": window.get("createdAt"),
+            **candle_metadata("split"),
+        }
+
+
+class CalendarCandleAggregator:
+    def __init__(self, source_interval, target_interval):
+        self.source_interval = source_interval
+        self.target_interval = target_interval
+        self.windows = defaultdict(dict)
+        self.closed_keys = set()
+
+    def update(self, candle):
+        bucket, end = self._bucket(candle["timestamp"])
+        key = (candle["symbol"], self.target_interval, to_iso(bucket), candle.get("feedProfile") or candle.get("feed") or "unknown")
+        if key in self.closed_keys:
+            return None
+        self.windows[key][candle["timestamp"]] = dict(candle)
+        return key, end
+
+    def flush_ready(self, reference_time):
+        if reference_time is None:
+            return []
+        reference = parse_time(reference_time) if isinstance(reference_time, str) else reference_time
+        ready = []
+        for key, window in list(self.windows.items()):
+            bucket = parse_time(key[2])
+            _bucket, end = self._bucket(bucket)
+            if end > reference:
+                continue
+            self.windows.pop(key, None)
+            self.closed_keys.add(key)
+            ready.append(self._to_candle(key, window))
+        return sorted(ready, key=lambda candle: (candle["symbol"], parse_time(candle["timestamp"])))
+
+    def _bucket(self, timestamp):
+        if self.target_interval == "1D":
+            bucket = floor_day(timestamp)
+            return bucket, bucket + timedelta(days=1)
+        if self.target_interval == "1W":
+            bucket = floor_week(timestamp)
+            return bucket, bucket + timedelta(days=7)
+        if self.target_interval == "1M":
+            bucket = floor_month(timestamp)
+            month = bucket.month + 1
+            year = bucket.year + (1 if month == 13 else 0)
+            return bucket, bucket.replace(year=year, month=1 if month == 13 else month)
+        raise ValueError(f"Unsupported calendar rollup target: {self.target_interval}")
+
+    def _to_candle(self, key, window):
+        candles = [window[timestamp] for timestamp in sorted(window, key=parse_time)]
+        latest = candles[-1]
+        return {
+            "eventType": "CANDLE",
+            "symbol": key[0],
+            "interval": self.target_interval,
+            "timestamp": key[2],
+            "open": candles[0]["open"],
+            "high": max(candle["high"] for candle in candles),
+            "low": min(candle["low"] for candle in candles),
+            "close": latest["close"],
+            "volume": sum(candle.get("volume") or 0 for candle in candles),
+            "tradeCount": sum(candle.get("tradeCount") or 0 for candle in candles),
+            "vwap": latest.get("vwap"),
+            "ma": {},
+            "isClosed": True,
+            "correctionType": latest.get("correctionType", "NONE"),
+            "source": "stream-processor",
+            "sourceInterval": self.source_interval,
+            "feed": latest.get("feed"),
+            "feedProfile": latest.get("feedProfile"),
+            "marketSession": latest.get("marketSession"),
+            "sourceEventId": latest.get("sourceEventId"),
+            "createdAt": latest.get("createdAt"),
+            **candle_metadata(latest.get("priceAdjustment"), latest.get("canonicalVersion")),
+        }
+
+
 class SourceEventDeduper:
     def __init__(self, max_seen=10000):
         self.max_seen = max_seen
