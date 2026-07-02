@@ -28,7 +28,7 @@ env:
   DOCKER_PLATFORM: linux/amd64
   EKS_CLUSTER_NAME: gops-eks-cluster
   K8S_NAMESPACE: alfaka-market-data
-  KUSTOMIZE_OVERLAY: infra/k8s/overlays/aws-ci
+  KUSTOMIZE_OVERLAY: infra/k8s/overlays/aws-incluster-app-ci
   ECR_FRONTEND_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-frontend
   ECR_API_SERVER_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-api-server
   ECR_MARKET_INGESTOR_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-ingestor
