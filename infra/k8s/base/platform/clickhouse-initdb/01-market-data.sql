@@ -1,3 +1,7 @@
+-- 역할: ClickHouse에 시장 데이터 조회용 기본 테이블을 만듭니다.
+-- 사용: in-cluster ClickHouse dev/test 배포가 처음 뜰 때 자동 실행됩니다.
+-- 주의: 운영 적재 방식은 이후 S3/Parquet 또는 Flink sink로 교체할 수 있습니다.
+
 CREATE DATABASE IF NOT EXISTS market_data;
 
 CREATE TABLE IF NOT EXISTS market_data.trade_ticks
@@ -12,13 +16,15 @@ CREATE TABLE IF NOT EXISTS market_data.trade_ticks
     tape Nullable(String),
     source LowCardinality(String),
     feed LowCardinality(String),
+    feed_profile LowCardinality(String) DEFAULT feed,
+    market_session LowCardinality(String) DEFAULT 'unknown',
     source_event_id Nullable(String),
     received_at Nullable(DateTime64(3, 'UTC')),
     inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(event_time)
-ORDER BY (symbol, event_time, trade_id);
+ORDER BY (symbol, event_time, feed_profile, trade_id);
 
 CREATE TABLE IF NOT EXISTS market_data.chart_candles
 (
@@ -49,7 +55,7 @@ CREATE TABLE IF NOT EXISTS market_data.chart_candles
 )
 ENGINE = ReplacingMergeTree(inserted_at)
 PARTITION BY toYYYYMM(event_time)
-ORDER BY (symbol, interval, event_time);
+ORDER BY (symbol, interval, event_time, feed_profile, market_session);
 
 CREATE TABLE IF NOT EXISTS market_data.volume_profile_bins_1m
 (
@@ -62,13 +68,15 @@ CREATE TABLE IF NOT EXISTS market_data.volume_profile_bins_1m
     vwap Nullable(Float64),
     source LowCardinality(String),
     feed LowCardinality(String),
+    feed_profile LowCardinality(String) DEFAULT feed,
+    market_session LowCardinality(String) DEFAULT 'unknown',
     source_event_id Nullable(String),
     updated_at Nullable(DateTime64(3, 'UTC')),
     inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
 )
 ENGINE = ReplacingMergeTree(inserted_at)
 PARTITION BY toYYYYMM(event_minute)
-ORDER BY (symbol, event_minute, price_bin_size, price_bin);
+ORDER BY (symbol, event_minute, feed_profile, price_bin_size, price_bin);
 
 CREATE TABLE IF NOT EXISTS market_data.market_status_events
 (
@@ -79,13 +87,15 @@ CREATE TABLE IF NOT EXISTS market_data.market_status_events
     reason Nullable(String),
     source LowCardinality(String),
     feed LowCardinality(String),
+    feed_profile LowCardinality(String) DEFAULT feed,
+    market_session LowCardinality(String) DEFAULT 'unknown',
     source_event_id Nullable(String),
     raw String,
     inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
 )
 ENGINE = ReplacingMergeTree(inserted_at)
 PARTITION BY toYYYYMM(event_time)
-ORDER BY (coalesce(symbol, '_MARKET'), status_type, event_time);
+ORDER BY (coalesce(symbol, '_MARKET'), status_type, event_time, feed_profile, market_session);
 
 CREATE TABLE IF NOT EXISTS market_data.symbols
 (
@@ -103,6 +113,26 @@ CREATE TABLE IF NOT EXISTS market_data.symbols
 )
 ENGINE = ReplacingMergeTree(inserted_at)
 ORDER BY symbol;
+
+CREATE TABLE IF NOT EXISTS market_data.news_articles
+(
+    published_at DateTime64(3, 'UTC'),
+    symbol LowCardinality(String),
+    article_id String,
+    headline String,
+    summary Nullable(String),
+    content Nullable(String),
+    url Nullable(String),
+    source Nullable(String),
+    author Nullable(String),
+    updated_at Nullable(DateTime64(3, 'UTC')),
+    received_at Nullable(DateTime64(3, 'UTC')),
+    raw String,
+    inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(inserted_at)
+PARTITION BY toYYYYMM(published_at)
+ORDER BY (symbol, published_at, article_id);
 
 CREATE TABLE IF NOT EXISTS market_data.load_audit
 (
@@ -124,6 +154,20 @@ ALTER TABLE market_data.trade_ticks
 
 ALTER TABLE market_data.chart_candles
     ADD COLUMN IF NOT EXISTS feed_profile LowCardinality(String) DEFAULT feed AFTER feed,
-    ADD COLUMN IF NOT EXISTS market_session LowCardinality(String) DEFAULT 'unknown' AFTER feed_profile,
+    ADD COLUMN IF NOT EXISTS market_session LowCardinality(String) DEFAULT 'unknown' AFTER feed_profile;
+
+ALTER TABLE market_data.chart_candles
     ADD COLUMN IF NOT EXISTS price_adjustment LowCardinality(String) DEFAULT 'unknown' AFTER market_session,
     ADD COLUMN IF NOT EXISTS canonical_version LowCardinality(String) DEFAULT 'legacy' AFTER price_adjustment;
+
+ALTER TABLE market_data.trade_ticks
+    ADD COLUMN IF NOT EXISTS feed_profile LowCardinality(String) DEFAULT feed AFTER feed,
+    ADD COLUMN IF NOT EXISTS market_session LowCardinality(String) DEFAULT 'unknown' AFTER feed_profile;
+
+ALTER TABLE market_data.volume_profile_bins_1m
+    ADD COLUMN IF NOT EXISTS feed_profile LowCardinality(String) DEFAULT feed AFTER feed,
+    ADD COLUMN IF NOT EXISTS market_session LowCardinality(String) DEFAULT 'unknown' AFTER feed_profile;
+
+ALTER TABLE market_data.market_status_events
+    ADD COLUMN IF NOT EXISTS feed_profile LowCardinality(String) DEFAULT feed AFTER feed,
+    ADD COLUMN IF NOT EXISTS market_session LowCardinality(String) DEFAULT 'unknown' AFTER feed_profile;
