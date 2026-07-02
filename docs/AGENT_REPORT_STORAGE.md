@@ -1,7 +1,8 @@
 # Agent Report Storage
 
-This note records the storage direction for agent analysis reports. It does not
-activate runtime pods or add database schema.
+This note records the storage direction for agent analysis reports. Redis
+short-lived report storage is wired for async agent runtime; it does not add a
+Postgres long-term history schema.
 
 ## Redis Latest Report Store
 
@@ -23,6 +24,7 @@ Keys:
 agent:report:{analysisId}
 agent:report:latest:{SYMBOL}
 agent:report:latest
+agent:request:idempotency:{userHash}:{keyHash}
 ```
 
 The value is the serialized `AnalysisReport` JSON shape returned by the agent
@@ -45,6 +47,8 @@ Future schema should preserve:
 
 ## Runtime Boundary
 
-The shared code may provide `ReportStore`, `InMemoryReportStore`, and
-`RedisReportStore`. Pod entrypoint wiring, env activation, compose, k8s, and
-Docker changes are separate runtime work.
+The shared code provides `ReportStore`, `InMemoryReportStore`, and
+`RedisReportStore`. Non-local runtime uses Redis when
+`AGENT_REPORT_STORE_BACKEND=auto` and `REDIS_URL` is present. The
+`agent-analysis-worker` writes completed reports under the request id used by
+the API admission path.

@@ -43,7 +43,7 @@ services:
       - /bin/bash
       - -ec
       - |
-        for topic in market.raw.bars market.raw.updated-bars market.raw.trades market.raw.daily-bars market.raw.statuses market.raw.quotes market.raw.corrections market.raw.cancel-errors market.ticks.v1 market.candles.live.1m.v1 market.candles.closed.v1 market.status.v1 market.volume-profile-bins.1m.v1 market.news.alpaca.v1 market.news.daily-summary-dirty.v1 orders.commands.v1 broker.submit-results.v1 broker.order-events.v1 orders.dlq.v1 agents.market-events.v1 agents.analysis-requests.v1 agents.analysis-results.v1 agents.notification-decisions.v1 agents.dlq.v1; do
+        for topic in market.raw.bars market.raw.updated-bars market.raw.trades market.raw.daily-bars market.raw.statuses market.raw.quotes market.raw.corrections market.raw.cancel-errors market.ticks.v1 market.candles.live.1m.v1 market.candles.closed.v1 market.status.v1 market.volume-profile-bins.1m.v1 market.news.alpaca.v1 market.news.daily-summary-dirty.v1 orders.commands.v1 broker.submit-results.v1 broker.order-events.v1 orders.dlq.v1 agents.market-events.v1 agents.analysis-requests.v1 agents.deep-analysis-requests.v1 agents.analysis-results.v1 agents.notification-decisions.v1 agents.dlq.v1; do
           /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic "$${topic}" --partitions 3 --replication-factor 1
         done
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --list
@@ -785,10 +785,24 @@ services:
       REDIS_URL: "redis://redis:6379/0"
       AGENT_MARKET_EVENTS_TOPIC: "agents.market-events.v1"
       AGENT_ANALYSIS_REQUESTS_TOPIC: "agents.analysis-requests.v1"
+      AGENT_DEEP_ANALYSIS_REQUESTS_TOPIC: "agents.deep-analysis-requests.v1"
       AGENT_ANALYSIS_RESULTS_TOPIC: "agents.analysis-results.v1"
       AGENT_NOTIFICATION_DECISIONS_TOPIC: "agents.notification-decisions.v1"
       AGENT_DLQ_TOPIC: "agents.dlq.v1"
       AGENT_PUBLISH_TO_KAFKA: "true"
+      AGENT_REPORT_STORE_BACKEND: "${AGENT_REPORT_STORE_BACKEND:-auto}"
+      AGENT_REPORT_TTL_SECONDS: "${AGENT_REPORT_TTL_SECONDS:-43200}"
+      AGENT_GRAPH_EXPANSION_CACHE_ENABLED: "${AGENT_GRAPH_EXPANSION_CACHE_ENABLED:-false}"
+      AGENT_GRAPH_EXPANSION_REDIS_PREFIX: "gops:agent:graph-expansion:v1"
+      AGENT_GRAPH_EXPANSION_CLICKHOUSE_TABLE: "agent_graph_expansions"
+      AGENT_EXPANDED_RETRIEVAL_ENABLED: "${AGENT_EXPANDED_RETRIEVAL_ENABLED:-false}"
+      AGENT_MAX_SYNTHESIS_CROSS_SIGNALS: "${AGENT_MAX_SYNTHESIS_CROSS_SIGNALS:-6}"
+      AGENT_MAX_SYNTHESIS_CROSS_SIGNAL_CHARS: "${AGENT_MAX_SYNTHESIS_CROSS_SIGNAL_CHARS:-1800}"
+      AGENT_PROVIDER_BULKHEAD_DEFAULT_MAX_CONCURRENCY: "${AGENT_PROVIDER_BULKHEAD_DEFAULT_MAX_CONCURRENCY:-50}"
+      AGENT_PROVIDER_BULKHEAD_MARKET_MAX_CONCURRENCY: "${AGENT_PROVIDER_BULKHEAD_MARKET_MAX_CONCURRENCY:-100}"
+      AGENT_PROVIDER_BULKHEAD_NEWS_MAX_CONCURRENCY: "${AGENT_PROVIDER_BULKHEAD_NEWS_MAX_CONCURRENCY:-100}"
+      AGENT_PROVIDER_BULKHEAD_RELATIONSHIP_MAX_CONCURRENCY: "${AGENT_PROVIDER_BULKHEAD_RELATIONSHIP_MAX_CONCURRENCY:-20}"
+      AGENT_PROVIDER_BULKHEAD_ACQUIRE_TIMEOUT_MS: "${AGENT_PROVIDER_BULKHEAD_ACQUIRE_TIMEOUT_MS:-25}"
       CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
       CLICKHOUSE_DATABASE: "market_data"
       CLICKHOUSE_USER: "alfaka"
@@ -811,6 +825,315 @@ services:
       - app_net
       - data_net
       - streaming_net
+
+  agent-analysis-worker:
+    image: gops-agent-orchestrator
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
+    container_name: alfaka-agent-analysis-worker
+    env_file: .env
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      REDIS_URL: "redis://redis:6379/0"
+      AGENT_ANALYSIS_REQUESTS_TOPIC: "agents.analysis-requests.v1"
+      AGENT_DEEP_ANALYSIS_REQUESTS_TOPIC: "agents.deep-analysis-requests.v1"
+      AGENT_ANALYSIS_RESULTS_TOPIC: "agents.analysis-results.v1"
+      AGENT_NOTIFICATION_DECISIONS_TOPIC: "agents.notification-decisions.v1"
+      AGENT_DLQ_TOPIC: "agents.dlq.v1"
+      AGENT_PUBLISH_TO_KAFKA: "true"
+      AGENT_REPORT_STORE_BACKEND: "${AGENT_REPORT_STORE_BACKEND:-auto}"
+      AGENT_REPORT_TTL_SECONDS: "${AGENT_REPORT_TTL_SECONDS:-43200}"
+      AGENT_GRAPH_EXPANSION_CACHE_ENABLED: "${AGENT_GRAPH_EXPANSION_CACHE_ENABLED:-false}"
+      AGENT_GRAPH_EXPANSION_REDIS_PREFIX: "gops:agent:graph-expansion:v1"
+      AGENT_GRAPH_EXPANSION_CLICKHOUSE_TABLE: "agent_graph_expansions"
+      AGENT_EXPANDED_RETRIEVAL_ENABLED: "${AGENT_EXPANDED_RETRIEVAL_ENABLED:-false}"
+      AGENT_MAX_SYNTHESIS_CROSS_SIGNALS: "${AGENT_MAX_SYNTHESIS_CROSS_SIGNALS:-6}"
+      AGENT_MAX_SYNTHESIS_CROSS_SIGNAL_CHARS: "${AGENT_MAX_SYNTHESIS_CROSS_SIGNAL_CHARS:-1800}"
+      AGENT_PROVIDER_BULKHEAD_DEFAULT_MAX_CONCURRENCY: "${AGENT_PROVIDER_BULKHEAD_DEFAULT_MAX_CONCURRENCY:-50}"
+      AGENT_PROVIDER_BULKHEAD_MARKET_MAX_CONCURRENCY: "${AGENT_PROVIDER_BULKHEAD_MARKET_MAX_CONCURRENCY:-100}"
+      AGENT_PROVIDER_BULKHEAD_NEWS_MAX_CONCURRENCY: "${AGENT_PROVIDER_BULKHEAD_NEWS_MAX_CONCURRENCY:-100}"
+      AGENT_PROVIDER_BULKHEAD_RELATIONSHIP_MAX_CONCURRENCY: "${AGENT_PROVIDER_BULKHEAD_RELATIONSHIP_MAX_CONCURRENCY:-20}"
+      AGENT_PROVIDER_BULKHEAD_ACQUIRE_TIMEOUT_MS: "${AGENT_PROVIDER_BULKHEAD_ACQUIRE_TIMEOUT_MS:-25}"
+      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
+      CLICKHOUSE_DATABASE: "market_data"
+      CLICKHOUSE_USER: "alfaka"
+      CLICKHOUSE_PASSWORD: "alfaka"
+      AGENT_NEWS_CACHE_BACKEND: "auto"
+      AGENT_NEWS_CACHE_TTL_SECONDS: "300"
+      AGENT_NEWS_NO_DATA_CACHE_TTL_SECONDS: "60"
+      AGENT_NEWS_LOOKBACK_DAYS: "30"
+      AGENT_ANALYSIS_CACHE_BACKEND: "auto"
+      AGENT_ANALYSIS_CACHE_TTL_SECONDS: "180"
+      AGENT_ANALYSIS_NO_DATA_CACHE_TTL_SECONDS: "60"
+      AGENT_ANALYSIS_CACHE_KEY_PREFIX: "gops:agent:analysis"
+      GRAPHDB_SPARQL_URL: "${GRAPHDB_SPARQL_URL:-http://graphdb:7200/repositories/nasdaq-fibo}"
+      GRAPHDB_REPOSITORY: "${GRAPHDB_REPOSITORY:-nasdaq-fibo}"
+      AGENT_ONTOLOGY_LIMIT: "${AGENT_ONTOLOGY_LIMIT:-20}"
+    command: ["python", "-u", "/app/systems/agent-orchestration/pods/agent-analysis-worker/main.py"]
+    restart: unless-stopped
+    networks:
+      - app_net
+      - data_net
+      - streaming_net
+
+  deep-analysis-worker:
+    image: gops-agent-orchestrator
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
+    container_name: alfaka-deep-analysis-worker
+    env_file: .env
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      REDIS_URL: "redis://redis:6379/0"
+      AGENT_DEEP_ANALYSIS_REQUESTS_TOPIC: "agents.deep-analysis-requests.v1"
+      AGENT_ANALYSIS_RESULTS_TOPIC: "agents.analysis-results.v1"
+      AGENT_NOTIFICATION_DECISIONS_TOPIC: "agents.notification-decisions.v1"
+      AGENT_DLQ_TOPIC: "agents.dlq.v1"
+      AGENT_PUBLISH_TO_KAFKA: "true"
+      AGENT_REPORT_STORE_BACKEND: "${AGENT_REPORT_STORE_BACKEND:-auto}"
+      AGENT_REPORT_TTL_SECONDS: "${AGENT_REPORT_TTL_SECONDS:-43200}"
+      AGENT_DEEP_ANALYSIS_ENABLED: "${AGENT_DEEP_ANALYSIS_ENABLED:-false}"
+      AGENT_GRAPH_EXPANSION_CACHE_ENABLED: "${AGENT_GRAPH_EXPANSION_CACHE_ENABLED:-false}"
+      AGENT_EXPANDED_RETRIEVAL_ENABLED: "${AGENT_EXPANDED_RETRIEVAL_ENABLED:-false}"
+      AGENT_CROSS_SIGNAL_ENABLED: "${AGENT_CROSS_SIGNAL_ENABLED:-false}"
+      AGENT_MAX_SYNTHESIS_CROSS_SIGNALS: "${AGENT_MAX_SYNTHESIS_CROSS_SIGNALS:-6}"
+      AGENT_MAX_SYNTHESIS_CROSS_SIGNAL_CHARS: "${AGENT_MAX_SYNTHESIS_CROSS_SIGNAL_CHARS:-1800}"
+      AGENT_PROVIDER_BULKHEAD_DEFAULT_MAX_CONCURRENCY: "${AGENT_PROVIDER_BULKHEAD_DEFAULT_MAX_CONCURRENCY:-50}"
+      AGENT_PROVIDER_BULKHEAD_MARKET_MAX_CONCURRENCY: "${AGENT_PROVIDER_BULKHEAD_MARKET_MAX_CONCURRENCY:-100}"
+      AGENT_PROVIDER_BULKHEAD_NEWS_MAX_CONCURRENCY: "${AGENT_PROVIDER_BULKHEAD_NEWS_MAX_CONCURRENCY:-100}"
+      AGENT_PROVIDER_BULKHEAD_RELATIONSHIP_MAX_CONCURRENCY: "${AGENT_PROVIDER_BULKHEAD_RELATIONSHIP_MAX_CONCURRENCY:-20}"
+      AGENT_PROVIDER_BULKHEAD_ACQUIRE_TIMEOUT_MS: "${AGENT_PROVIDER_BULKHEAD_ACQUIRE_TIMEOUT_MS:-25}"
+      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
+      CLICKHOUSE_DATABASE: "market_data"
+      CLICKHOUSE_USER: "alfaka"
+      CLICKHOUSE_PASSWORD: "alfaka"
+      GRAPHDB_SPARQL_URL: "${GRAPHDB_SPARQL_URL:-http://graphdb:7200/repositories/nasdaq-fibo}"
+      GRAPHDB_REPOSITORY: "${GRAPHDB_REPOSITORY:-nasdaq-fibo}"
+      AGENT_ONTOLOGY_LIMIT: "${AGENT_ONTOLOGY_LIMIT:-20}"
+    command: ["python", "-u", "/app/systems/agent-orchestration/pods/deep-analysis-worker/main.py"]
+    restart: unless-stopped
+    networks:
+      - app_net
+      - data_net
+      - streaming_net
+
+  agent-delivery-gateway:
+    image: gops-agent-orchestrator
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
+    container_name: alfaka-agent-delivery-gateway
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      REDIS_URL: "redis://redis:6379/0"
+      AGENT_ANALYSIS_RESULTS_TOPIC: "agents.analysis-results.v1"
+      AGENT_REPORT_STORE_BACKEND: "${AGENT_REPORT_STORE_BACKEND:-auto}"
+      AGENT_REPORT_UPDATES_CHANNEL: "agent.reports"
+    command: ["python", "-u", "/app/systems/agent-orchestration/pods/agent-delivery-gateway/main.py"]
+    restart: unless-stopped
+    networks:
+      - app_net
+      - streaming_net
+
+  agent-queue-smoke:
+    image: gops-agent-orchestrator
+    profiles: ["smoke"]
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
+    environment:
+      AGENT_PUBLISH_TO_KAFKA: "false"
+    command: ["python", "-u", "/app/systems/agent-orchestration/jobs/agent-queue-smoke/main.py"]
+    restart: "no"
+    networks:
+      - app_net
+
+  report-store-smoke:
+    image: gops-agent-orchestrator
+    profiles: ["smoke"]
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_URL: "redis://redis:6379/0"
+      AGENT_REPORT_STORE_BACKEND: "auto"
+    command: ["python", "-u", "/app/systems/agent-orchestration/jobs/report-store-smoke/main.py"]
+    restart: "no"
+    networks:
+      - app_net
+
+  graph-expansion-smoke:
+    image: gops-agent-orchestrator
+    profiles: ["smoke"]
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_URL: "redis://redis:6379/0"
+      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
+      CLICKHOUSE_DATABASE: "market_data"
+      CLICKHOUSE_USER: "alfaka"
+      CLICKHOUSE_PASSWORD: "alfaka"
+    command: ["python", "-u", "/app/systems/agent-orchestration/jobs/graph-expansion-smoke/main.py"]
+    restart: "no"
+    networks:
+      - app_net
+      - data_net
+
+  graph-expansion-refresh:
+    image: gops-agent-orchestrator
+    profiles: ["agent-refresh"]
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
+    depends_on:
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    environment:
+      REDIS_URL: "redis://redis:6379/0"
+      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
+      CLICKHOUSE_DATABASE: "market_data"
+      CLICKHOUSE_USER: "alfaka"
+      CLICKHOUSE_PASSWORD: "alfaka"
+      GRAPHDB_SPARQL_URL: "${GRAPHDB_SPARQL_URL:-http://graphdb:7200/repositories/nasdaq-fibo}"
+      GRAPHDB_REPOSITORY: "${GRAPHDB_REPOSITORY:-nasdaq-fibo}"
+      AGENT_GRAPH_EXPANSION_SYMBOLS: "${AGENT_GRAPH_EXPANSION_SYMBOLS:-}"
+      AGENT_GRAPH_EXPANSION_RELATION_VERSION: "${AGENT_GRAPH_EXPANSION_RELATION_VERSION:-v1}"
+    command: ["python", "-u", "/app/systems/agent-orchestration/jobs/graph-expansion-refresh/main.py"]
+    restart: "no"
+    networks:
+      - app_net
+      - data_net
+
+  retrieval-latency-benchmark:
+    image: gops-agent-orchestrator
+    profiles: ["agent-eval"]
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
+    depends_on:
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    environment:
+      REDIS_URL: "redis://redis:6379/0"
+      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
+      CLICKHOUSE_DATABASE: "market_data"
+      CLICKHOUSE_USER: "alfaka"
+      CLICKHOUSE_PASSWORD: "alfaka"
+      AGENT_PUBLISH_TO_KAFKA: "false"
+    command: ["python", "-u", "/app/systems/agent-orchestration/jobs/retrieval-latency-benchmark/main.py"]
+    restart: "no"
+    networks:
+      - app_net
+      - data_net
+
+  fanout-policy-benchmark:
+    image: gops-agent-orchestrator
+    profiles: ["agent-eval"]
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
+    depends_on:
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    environment:
+      REDIS_URL: "redis://redis:6379/0"
+      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
+      CLICKHOUSE_DATABASE: "market_data"
+      CLICKHOUSE_USER: "alfaka"
+      CLICKHOUSE_PASSWORD: "alfaka"
+      AGENT_PUBLISH_TO_KAFKA: "false"
+      AGENT_GRAPH_EXPANSION_CACHE_ENABLED: "${AGENT_GRAPH_EXPANSION_CACHE_ENABLED:-false}"
+      AGENT_EXPANDED_RETRIEVAL_ENABLED: "${AGENT_EXPANDED_RETRIEVAL_ENABLED:-true}"
+    command: ["python", "-u", "/app/systems/agent-orchestration/jobs/fanout-policy-benchmark/main.py"]
+    restart: "no"
+    networks:
+      - app_net
+      - data_net
+
+  retrieval-quality-eval:
+    image: gops-agent-orchestrator
+    profiles: ["agent-eval"]
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
+    depends_on:
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    environment:
+      REDIS_URL: "redis://redis:6379/0"
+      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
+      CLICKHOUSE_DATABASE: "market_data"
+      CLICKHOUSE_USER: "alfaka"
+      CLICKHOUSE_PASSWORD: "alfaka"
+      AGENT_PUBLISH_TO_KAFKA: "false"
+      AGENT_GRAPH_EXPANSION_CACHE_ENABLED: "${AGENT_GRAPH_EXPANSION_CACHE_ENABLED:-false}"
+      AGENT_EXPANDED_RETRIEVAL_ENABLED: "${AGENT_EXPANDED_RETRIEVAL_ENABLED:-false}"
+      AGENT_CROSS_SIGNAL_ENABLED: "${AGENT_CROSS_SIGNAL_ENABLED:-false}"
+    command: ["python", "-u", "/app/systems/agent-orchestration/jobs/retrieval-quality-eval/main.py"]
+    restart: "no"
+    networks:
+      - app_net
+      - data_net
+
+  answer-grounding-eval:
+    image: gops-agent-orchestrator
+    profiles: ["agent-eval"]
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
+    depends_on:
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    environment:
+      REDIS_URL: "redis://redis:6379/0"
+      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
+      CLICKHOUSE_DATABASE: "market_data"
+      CLICKHOUSE_USER: "alfaka"
+      CLICKHOUSE_PASSWORD: "alfaka"
+      AGENT_PUBLISH_TO_KAFKA: "false"
+    command: ["python", "-u", "/app/systems/agent-orchestration/jobs/answer-grounding-eval/main.py"]
+    restart: "no"
+    networks:
+      - app_net
+      - data_net
 
   agent-event-detector:
     image: gops-agent-orchestrator
@@ -868,8 +1191,11 @@ services:
         condition: service_completed_successfully
       agent-orchestrator:
         condition: service_started
+      agent-analysis-worker:
+        condition: service_started
     environment:
       REDIS_URL: "redis://redis:6379/0"
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
       AUTH_ENABLED: "${AUTH_ENABLED:-false}"
       AUTH_PUBLIC_BASE_URL: "${AUTH_PUBLIC_BASE_URL:-http://localhost:5173}"
       AUTH_SESSION_SECRET: "${AUTH_SESSION_SECRET:-}"
@@ -884,6 +1210,23 @@ services:
       GOOGLE_OAUTH_SECRET_NAME: "${GOOGLE_OAUTH_SECRET_NAME:-}"
       DATABASE_URL: "postgresql://gops:${POSTGRES_PASSWORD:-gops_dev_password}@postgres:5432/gops"
       AGENT_ORCHESTRATOR_URL: "http://agent-orchestrator:8100"
+      AGENT_ASYNC_ANALYSIS_ENABLED: "${AGENT_ASYNC_ANALYSIS_ENABLED:-true}"
+      AGENT_SYNC_COMPAT_WAIT_ENABLED: "${AGENT_SYNC_COMPAT_WAIT_ENABLED:-false}"
+      AGENT_SYNC_COMPAT_WAIT_TIMEOUT_SECONDS: "${AGENT_SYNC_COMPAT_WAIT_TIMEOUT_SECONDS:-3}"
+      AGENT_SYNC_COMPAT_WAIT_POLL_SECONDS: "${AGENT_SYNC_COMPAT_WAIT_POLL_SECONDS:-0.1}"
+      AGENT_SHARED_REPORT_STORE_ENABLED: "${AGENT_SHARED_REPORT_STORE_ENABLED:-true}"
+      AGENT_REPORT_STORE_BACKEND: "${AGENT_REPORT_STORE_BACKEND:-auto}"
+      AGENT_ANALYSIS_QUEUE_BACKEND: "${AGENT_ANALYSIS_QUEUE_BACKEND:-auto}"
+      AGENT_ADMISSION_ENABLED: "${AGENT_ADMISSION_ENABLED:-true}"
+      AGENT_ADMISSION_MAX_QUEUE_DEPTH: "${AGENT_ADMISSION_MAX_QUEUE_DEPTH:-}"
+      AGENT_ADMISSION_MAX_PRODUCER_BUFFERED: "${AGENT_ADMISSION_MAX_PRODUCER_BUFFERED:-}"
+      AGENT_ADMISSION_DEGRADE_STREAM_TO_POLL: "${AGENT_ADMISSION_DEGRADE_STREAM_TO_POLL:-true}"
+      AGENT_REPORT_STREAM_REDIS_ENABLED: "${AGENT_REPORT_STREAM_REDIS_ENABLED:-true}"
+      AGENT_REPORT_UPDATES_CHANNEL: "agent.reports"
+      AGENT_ANALYSIS_REQUESTS_TOPIC: "agents.analysis-requests.v1"
+      AGENT_ANALYSIS_RESULTS_TOPIC: "agents.analysis-results.v1"
+      AGENT_NOTIFICATION_DECISIONS_TOPIC: "agents.notification-decisions.v1"
+      AGENT_DLQ_TOPIC: "agents.dlq.v1"
       ORDER_REPOSITORY: "postgres"
       KIS_ENV: "${KIS_ENV:-demo}"
       KIS_SECRET_NAME: "${KIS_SECRET_NAME:-dev/kis}"

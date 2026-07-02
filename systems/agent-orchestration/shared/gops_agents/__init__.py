@@ -20,13 +20,20 @@ from .contracts import (
     SynthesisInput,
 )
 from .orchestrator import AgentOrchestrator
+from .admission import AdmissionDecision, AdmissionPolicy
+from .bulkhead import ProviderBulkheadRejected
+from .graph_expansion import GraphExpansionHint
 from .report_store import InMemoryReportStore, RedisReportStore, ReportStore, build_report_store_from_env
+from .request_envelope import AgentAnalysisRequestEnvelope
 from .runtime import LlmBudget, RuntimeRunContext
 
 __all__ = [
     "AgentFinding",
+    "AgentAnalysisRequestEnvelope",
     "AgentSignal",
     "AgentOrchestrator",
+    "AdmissionDecision",
+    "AdmissionPolicy",
     "AnalysisReport",
     "DataSnapshot",
     "EvidenceItem",
@@ -34,6 +41,7 @@ __all__ = [
     "FinalAnswerCitation",
     "FinalAnswerSection",
     "FinalResponse",
+    "GraphExpansionHint",
     "InMemoryReportStore",
     "IntentRoute",
     "LatencyStage",
@@ -42,6 +50,7 @@ __all__ = [
     "LlmBudget",
     "MarketEvent",
     "NotificationDecision",
+    "ProviderBulkheadRejected",
     "RedisReportStore",
     "ResolvedEntity",
     "ReportStore",

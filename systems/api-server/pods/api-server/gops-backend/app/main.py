@@ -6,7 +6,7 @@ from app.core.config import CORS_ORIGINS, read_dotenv_value
 from app.market_data.query.routes import router as market_query_router
 from app.routes.account import account_holdings, router as account_router
 from app.routes.auth import router as auth_router
-from app.routes.agents import agent_alerts, agent_report, analyze_agents, router as agents_router
+from app.routes.agents import agent_alerts, agent_report, agent_report_stream, analyze_agents, router as agents_router
 from app.routes.charts import chart_candles, chart_symbols, router as charts_router
 from app.routes.health import health, log_runtime_config, router as health_router
 from app.routes.llm import agent_chat, chart_proposal, router as llm_router
@@ -47,6 +47,7 @@ __all__ = [
     "agent_alerts",
     "agent_chat",
     "agent_report",
+    "agent_report_stream",
     "account_holdings",
     "analyze_agents",
     "app",

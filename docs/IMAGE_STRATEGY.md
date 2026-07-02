@@ -14,7 +14,7 @@ This file defines current custom Docker image boundaries.
 | `gops-backfill-worker` | `infra/docker/Dockerfile.gops-backfill-worker` | `systems/market-data/pods/backfill-worker`, market shared code | backfill-worker pod |
 | `gops-order-worker` | `infra/docker/Dockerfile.gops-order-worker` | `systems/order/pods/order-outbox`, `systems/order/jobs`, order shared code | order-outbox pod and order jobs |
 | `gops-kis-adapter` | `infra/docker/Dockerfile.gops-kis-adapter` | `systems/order/pods/kis-adapter`, order shared code | kis-adapter pod |
-| `gops-agent-orchestrator` | `infra/docker/Dockerfile.gops-agent-orchestrator` | `systems/agent-orchestration`, market shared code | agent-orchestrator, agent-event-detector, and agent-notification-publisher pods |
+| `gops-agent-orchestrator` | `infra/docker/Dockerfile.gops-agent-orchestrator` | `systems/agent-orchestration`, market shared code | agent-orchestrator, agent-analysis-worker, deep-analysis-worker, agent-delivery-gateway, agent-event-detector, notification-publisher, and agent smoke/refresh/eval jobs |
 
 ## Why These Boundaries
 

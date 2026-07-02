@@ -14,8 +14,19 @@ resources:
   - job-news-backfill.yaml
   - job-news-intelligence-rebuild.yaml
   - job-news-daily-summary-rebuild.yaml
+  - job-agent-queue-smoke.yaml
+  - job-report-store-smoke.yaml
+  - job-graph-expansion-refresh.yaml
+  - job-graph-expansion-smoke.yaml
+  - job-retrieval-latency-benchmark.yaml
+  - job-fanout-policy-benchmark.yaml
+  - job-retrieval-quality-eval.yaml
+  - job-answer-grounding-eval.yaml
   - statefulset-graphdb.yaml
   - deployment-agent-orchestrator.yaml
+  - deployment-agent-analysis-worker.yaml
+  - deployment-deep-analysis-worker.yaml
+  - deployment-agent-delivery-gateway.yaml
   - deployment-agent-event-detector.yaml
   - deployment-agent-notification-publisher.yaml
   - deployment-alpaca-ingestor.yaml

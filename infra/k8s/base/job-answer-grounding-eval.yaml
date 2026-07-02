@@ -1,0 +1,32 @@
+# 역할: final answer citation과 answer text가 provider evidence에 grounded 되는지 평가합니다.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: answer-grounding-eval
+  namespace: alfaka-market-data
+spec:
+  template:
+    metadata:
+      labels:
+        app: answer-grounding-eval
+    spec:
+      restartPolicy: Never
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: answer-grounding-eval
+          image: YOUR_ECR_REPOSITORY/gops-agent-orchestrator:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -u
+            - /app/systems/agent-orchestration/jobs/answer-grounding-eval/main.py
+          env:
+            - name: AGENT_PUBLISH_TO_KAFKA
+              value: "false"
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-clickhouse-secret
+                optional: true
+  backoffLimit: 1

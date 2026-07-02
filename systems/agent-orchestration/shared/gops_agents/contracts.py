@@ -155,6 +155,7 @@ class SynthesisInput:
     intent: str
     entities: list[ResolvedEntity] = field(default_factory=list)
     snapshots: list[DataSnapshot] = field(default_factory=list)
+    crossSignals: list[dict[str, Any]] = field(default_factory=list)
     missing_data: list[str] = field(default_factory=list)
     risk_warnings: list[str] = field(default_factory=list)
     output_policy: dict[str, Any] = field(default_factory=dict)

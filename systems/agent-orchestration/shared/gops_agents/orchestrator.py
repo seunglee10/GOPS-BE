@@ -24,7 +24,9 @@ from .agents import (
     record_news_relevance_counts,
 )
 from .contracts import AgentFinding, AnalysisReport, EvidenceItem, FinalAnswer, IntentRoute, MarketEvent, stable_id, utc_now_iso
+from .cross_signal import CrossSignal, build_cross_signals
 from .report_store import InMemoryReportStore, ReportStore
+from .retrieval_context import RetrievalContext, build_primary_retrieval_context
 from .router import route_intent
 from .runtime import RuntimeRunContext
 from .snapshots import (
@@ -91,7 +93,9 @@ class AgentOrchestrator:
             graph.add_node("normalize_request", self._normalize_request)
             graph.add_node("route_intent", self._route_intent)
             graph.add_node("build_snapshot_plan", self._build_snapshot_plan)
+            graph.add_node("build_retrieval_context", self._build_retrieval_context)
             graph.add_node("fetch_data_snapshots", self._fetch_data_snapshots)
+            graph.add_node("join_cross_signals", self._join_cross_signals)
             graph.add_node("run_selected_role_agents", self._run_selected_role_agents)
             graph.add_node("verify", self._verify)
             graph.add_node("synthesize_final_answer", self._synthesize_final_answer)
@@ -100,8 +104,10 @@ class AgentOrchestrator:
             graph.set_entry_point("normalize_request")
             graph.add_edge("normalize_request", "route_intent")
             graph.add_edge("route_intent", "build_snapshot_plan")
-            graph.add_edge("build_snapshot_plan", "fetch_data_snapshots")
-            graph.add_edge("fetch_data_snapshots", "run_selected_role_agents")
+            graph.add_edge("build_snapshot_plan", "build_retrieval_context")
+            graph.add_edge("build_retrieval_context", "fetch_data_snapshots")
+            graph.add_edge("fetch_data_snapshots", "join_cross_signals")
+            graph.add_edge("join_cross_signals", "run_selected_role_agents")
             graph.add_edge("run_selected_role_agents", "verify")
             graph.add_edge("verify", "synthesize_final_answer")
             graph.add_edge("synthesize_final_answer", "decide_notification")
@@ -117,7 +123,9 @@ class AgentOrchestrator:
             self._normalize_request,
             self._route_intent,
             self._build_snapshot_plan,
+            self._build_retrieval_context,
             self._fetch_data_snapshots,
+            self._join_cross_signals,
             self._run_selected_role_agents,
             self._verify,
             self._synthesize_final_answer,
@@ -228,6 +236,25 @@ class AgentOrchestrator:
             "resolved_entities": resolved_entities,
         }
 
+    def _build_retrieval_context(self, state: dict[str, Any]) -> dict[str, Any]:
+        route_plan = state.get("route_plan")
+        if is_ui_layout_state(state) or route_plan is None:
+            return {**state, "retrieval_context": None}
+        started_at = time.perf_counter()
+        retrieval_context = build_primary_retrieval_context(state["run_id"], state["context"], route_plan)
+        state["context"].retrievalContext = retrieval_context
+        expanded_enabled = os.getenv("AGENT_EXPANDED_RETRIEVAL_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
+        related_symbols = retrieval_context.related_symbol_values() if expanded_enabled else []
+        timing = state.get("timing")
+        if isinstance(timing, dict):
+            timing["graphExpansionCacheHit"] = bool(retrieval_context.graph_expansion.cache_hit)
+            timing["relatedSymbolsRequested"] = len(retrieval_context.graph_expansion.related_symbols)
+            timing["relatedSymbolsUsed"] = len(related_symbols)
+            timing["themesUsed"] = len(retrieval_context.graph_expansion.themes[: retrieval_context.fanout_policy.max_themes]) if expanded_enabled else 0
+            timing["fanoutTruncated"] = expanded_enabled and len(retrieval_context.graph_expansion.related_symbols) > len(related_symbols)
+        add_timing_ms(state, "retrievalContextMs", (time.perf_counter() - started_at) * 1000)
+        return {**state, "retrieval_context": retrieval_context}
+
     def _fetch_data_snapshots(self, state: dict[str, Any]) -> dict[str, Any]:
         route_plan = state.get("route_plan")
         if is_ui_layout_state(state) or route_plan is None:
@@ -257,6 +284,21 @@ class AgentOrchestrator:
                     state["context"].newsDailySummaries = [item for item in daily_summaries if isinstance(item, dict)]
                 record_news_relevance_counts(state["context"], snapshot.evidence)
         return {**state, "snapshots": snapshots}
+
+    def _join_cross_signals(self, state: dict[str, Any]) -> dict[str, Any]:
+        if is_ui_layout_state(state) or not cross_signal_enabled():
+            return {**state, "cross_signals": []}
+        started_at = time.perf_counter()
+        signals = build_cross_signals(
+            primary_symbol=state["symbol"],
+            snapshots=list(state.get("snapshots", [])),
+            retrieval_context=state.get("retrieval_context"),
+        )
+        timing = state.get("timing")
+        if isinstance(timing, dict):
+            timing["crossSignals"] = len(signals)
+        add_timing_ms(state, "crossSignalJoinMs", (time.perf_counter() - started_at) * 1000)
+        return {**state, "cross_signals": signals}
 
     def _load_analysis_cache(self, state: dict[str, Any]) -> dict[str, Any]:
         cache_key = analysis_cache_key_for_state(state)
@@ -412,6 +454,7 @@ class AgentOrchestrator:
                 entities=list(state.get("resolved_entities", [])),
                 snapshots=list(state.get("snapshots", [])),
                 policy=state.get("runtime_policy") or self.runtime_policy,
+                cross_signals=[item.to_dict() if isinstance(item, CrossSignal) else dict(item) for item in state.get("cross_signals", [])],
             )
         analysis_id = stable_id(
             "analysis",
@@ -422,6 +465,7 @@ class AgentOrchestrator:
                 "createdAt": request.get("createdAt") or utc_now_iso(),
             },
         )
+        analysis_id = str(request.get("analysisId") or request.get("requestId") or analysis_id)
         if state.get("analysis_cache_hit") and state.get("final_answer"):
             final_answer = state["final_answer"]
         elif is_ui_layout_state(state):
@@ -493,6 +537,7 @@ class AgentOrchestrator:
             timing = finalize_timing(state)
             final_response.latency_ms = float(timing.get("totalMs") or 0.0)
         latency_trace = latency_trace_from_timing(state["run_id"], timing, snapshots)
+        agent_trace = build_agent_trace(snapshots, state.get("retrieval_context"), list(state.get("cross_signals", [])))
         report = AnalysisReport(
             analysisId=state["analysis_id"],
             symbol=state["symbol"],
@@ -521,7 +566,7 @@ class AgentOrchestrator:
             synthesisInput=state.get("synthesis_input"),
             finalResponse=final_response,
             latencyTrace=latency_trace,
-            agentTrace=build_agent_trace(snapshots),
+            agentTrace=agent_trace,
         )
         return {**state, "layout": layout, "report": report}
 
@@ -580,12 +625,15 @@ def dedupe_provider_evidence(items: list[EvidenceItem]) -> list[EvidenceItem]:
 def empty_timing() -> dict[str, Any]:
     return {
         "totalMs": 0.0,
+        "queueWaitMs": 0.0,
         "cacheHit": False,
         "cacheLayer": "none",
         "newsFetchMs": 0.0,
         "routeAndPlanMs": 0.0,
         "entityResolveMs": 0.0,
+        "retrievalContextMs": 0.0,
         "snapshotFetchMs": 0.0,
+        "crossSignalJoinMs": 0.0,
         "roleAnalysisMs": 0.0,
         "finalAnswerMs": 0.0,
         "guardrailMs": 0.0,
@@ -593,6 +641,18 @@ def empty_timing() -> dict[str, Any]:
         "llmBudgetBlocked": 0,
         "directNewsCount": 0,
         "mentionNewsCount": 0,
+        "newsItemsFetched": 0,
+        "crossSignals": 0,
+        "graphExpansionCacheHit": False,
+        "relatedSymbolsRequested": 0,
+        "relatedSymbolsUsed": 0,
+        "themesUsed": 0,
+        "marketPeersRequested": 0,
+        "marketPeersFetched": 0,
+        "fanoutTruncated": False,
+        "hotWorkerSaturation": False,
+        "deepWorkerSaturation": False,
+        "providerBulkheadRejected": 0,
     }
 
 
@@ -609,27 +669,31 @@ def finalize_timing(state: dict[str, Any]) -> dict[str, Any]:
     started_at = state.get("timing_started_at")
     if isinstance(started_at, (int, float)):
         timing["totalMs"] = (time.perf_counter() - started_at) * 1000
-    for key in ["totalMs", "newsFetchMs", "roleAnalysisMs", "finalAnswerMs", "routeAndPlanMs", "entityResolveMs", "snapshotFetchMs", "guardrailMs"]:
+    for key in ["totalMs", "queueWaitMs", "newsFetchMs", "roleAnalysisMs", "finalAnswerMs", "routeAndPlanMs", "entityResolveMs", "retrievalContextMs", "snapshotFetchMs", "crossSignalJoinMs", "guardrailMs"]:
         value = timing.get(key)
         timing[key] = round(float(value) if isinstance(value, (int, float)) else 0.0, 3)
-    for key in ["llmCalls", "llmBudgetBlocked", "directNewsCount", "mentionNewsCount"]:
+    for key in ["llmCalls", "llmBudgetBlocked", "directNewsCount", "mentionNewsCount", "newsItemsFetched", "relatedSymbolsRequested", "relatedSymbolsUsed", "themesUsed", "marketPeersRequested", "marketPeersFetched", "crossSignals", "providerBulkheadRejected"]:
         value = timing.get(key)
         timing[key] = int(value) if isinstance(value, (int, float)) else 0
     labels = timing.get("llmCallLabels")
     timing["llmCallLabels"] = [str(item) for item in labels] if isinstance(labels, list) else []
     timing["cacheHit"] = bool(timing.get("cacheHit"))
     timing["cacheLayer"] = str(timing.get("cacheLayer") or "none")
+    timing["graphExpansionCacheHit"] = bool(timing.get("graphExpansionCacheHit"))
+    timing["fanoutTruncated"] = bool(timing.get("fanoutTruncated"))
+    timing["hotWorkerSaturation"] = bool(timing.get("hotWorkerSaturation"))
+    timing["deepWorkerSaturation"] = bool(timing.get("deepWorkerSaturation"))
     return timing
 
 
-def build_agent_trace(snapshots) -> dict[str, Any]:
+def build_agent_trace(snapshots, retrieval_context: RetrievalContext | None = None, cross_signals: list[CrossSignal] | None = None) -> dict[str, Any]:
     visible = [
         snapshot
         for snapshot in snapshots
         if getattr(snapshot, "snapshot_type", "") in {"market_snapshot", "news_snapshot", "relationship_snapshot"}
     ]
     hidden = [snapshot for snapshot in snapshots if getattr(snapshot, "snapshot_type", "") == "risk_policy_snapshot"]
-    return {
+    trace = {
         "visibleSnapshots": [snapshot.to_dict() for snapshot in visible],
         "hiddenSnapshots": [snapshot.snapshot_type for snapshot in hidden],
         "warnings": [
@@ -638,6 +702,11 @@ def build_agent_trace(snapshots) -> dict[str, Any]:
             for warning in getattr(snapshot, "warnings", [])
         ],
     }
+    if retrieval_context is not None:
+        trace["retrievalContext"] = retrieval_context.to_dict()
+    if cross_signals:
+        trace["crossSignals"] = [item.to_dict() if isinstance(item, CrossSignal) else dict(item) for item in cross_signals]
+    return trace
 
 
 def analysis_cache_key_for_state(state: dict[str, Any]) -> str | None:
@@ -680,6 +749,10 @@ def is_analysis_cacheable_state(state: dict[str, Any]) -> bool:
 def is_news_only_state(state: dict[str, Any]) -> bool:
     route = state.get("route")
     return isinstance(route, IntentRoute) and route.intentType == "news" and list(state.get("selected_roles", [])) == ["news"]
+
+
+def cross_signal_enabled() -> bool:
+    return os.getenv("AGENT_CROSS_SIGNAL_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def normalize_cache_intent(intent: str) -> str:

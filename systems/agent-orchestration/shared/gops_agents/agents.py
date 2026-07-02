@@ -31,6 +31,7 @@ class AgentContext:
     newsDailySummaries: list[dict[str, Any]] = field(default_factory=list)
     intentType: str | None = None
     selectedRoles: list[str] = field(default_factory=list)
+    retrievalContext: Any | None = None
 
 
 class ChartAgent:

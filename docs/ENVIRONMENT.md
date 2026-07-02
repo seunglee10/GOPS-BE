@@ -76,6 +76,7 @@ broker.order-events.v1
 orders.dlq.v1
 agents.market-events.v1
 agents.analysis-requests.v1
+agents.deep-analysis-requests.v1
 agents.analysis-results.v1
 agents.notification-decisions.v1
 agents.dlq.v1
@@ -85,6 +86,58 @@ Do not force MSK as the next step. The staged path is:
 
 ```text
 local compose -> single Kafka pod candidate -> MSK candidate
+```
+
+Agent analysis async ingress uses:
+
+```text
+AGENT_ASYNC_ANALYSIS_ENABLED
+AGENT_SYNC_COMPAT_WAIT_ENABLED
+AGENT_SYNC_COMPAT_WAIT_TIMEOUT_SECONDS
+AGENT_SYNC_COMPAT_WAIT_POLL_SECONDS
+AGENT_SHARED_REPORT_STORE_ENABLED
+AGENT_ANALYSIS_QUEUE_BACKEND
+AGENT_ADMISSION_ENABLED
+AGENT_ADMISSION_MAX_QUEUE_DEPTH
+AGENT_ADMISSION_MAX_PRODUCER_BUFFERED
+AGENT_ADMISSION_DEGRADE_STREAM_TO_POLL
+AGENT_PROVIDER_BULKHEAD_DEFAULT_MAX_CONCURRENCY
+AGENT_PROVIDER_BULKHEAD_MARKET_MAX_CONCURRENCY
+AGENT_PROVIDER_BULKHEAD_NEWS_MAX_CONCURRENCY
+AGENT_PROVIDER_BULKHEAD_RELATIONSHIP_MAX_CONCURRENCY
+AGENT_PROVIDER_BULKHEAD_ACQUIRE_TIMEOUT_MS
+AGENT_ANALYSIS_REQUESTS_TOPIC
+AGENT_DEEP_ANALYSIS_REQUESTS_TOPIC
+AGENT_ANALYSIS_RESULTS_TOPIC
+AGENT_NOTIFICATION_DECISIONS_TOPIC
+AGENT_DLQ_TOPIC
+AGENT_DEEP_ANALYSIS_ENABLED
+AGENT_REPORT_STREAM_REDIS_ENABLED
+AGENT_REPORT_UPDATES_CHANNEL
+AGENT_MAX_SYNTHESIS_CROSS_SIGNALS
+AGENT_MAX_SYNTHESIS_CROSS_SIGNAL_CHARS
+```
+
+The default production-oriented path is API acknowledgement, Kafka
+`agents.analysis-requests.v1`, `agent-analysis-worker`, Redis report store, then
+polling or SSE report delivery. Set `AGENT_ASYNC_ANALYSIS_ENABLED=false` to keep
+the compatibility HTTP call to `agent-orchestrator`. When
+`AGENT_DEEP_ANALYSIS_ENABLED=true`, hot reports can move to `deep_pending` and a
+separate deep worker later writes `deep_completed` under the same report id.
+`AGENT_SYNC_COMPAT_WAIT_ENABLED=true` keeps the queue-backed path but waits
+briefly on the shared report store before returning, for compatibility testing
+only. Admission backpressure can reject requests with HTTP 429 when configured
+queue metrics cross the configured thresholds.
+
+Agent benchmark/eval jobs accept JSON query sets through:
+
+```text
+AGENT_BENCHMARK_QUERIES_JSON
+AGENT_BENCHMARK_BURST_REQUESTS
+AGENT_BENCHMARK_BURST_SYMBOL
+AGENT_FANOUT_BENCHMARK_VALUES
+AGENT_RETRIEVAL_EVAL_CASES_JSON
+AGENT_GROUNDING_EVAL_CASES_JSON
 ```
 
 ## Flink / Stream Processing
@@ -149,6 +202,36 @@ AUTH_OAUTH_STATE_TTL_SECONDS=300
 ```
 
 When `AUTH_REDIS_URL` is empty, the API server uses `REDIS_URL`.
+
+Agent reports and idempotency mappings use Redis when enabled:
+
+```text
+AGENT_REPORT_STORE_BACKEND=auto
+AGENT_REPORT_TTL_SECONDS=43200
+AGENT_REPORT_KEY_PREFIX=agent:report
+AGENT_IDEMPOTENCY_TTL_SECONDS
+AGENT_IDEMPOTENCY_KEY_PREFIX=agent:request:idempotency
+```
+
+Graph-aware retrieval cache knobs:
+
+```text
+AGENT_GRAPH_EXPANSION_CACHE_ENABLED=false
+AGENT_GRAPH_EXPANSION_REDIS_PREFIX=gops:agent:graph-expansion:v1
+AGENT_GRAPH_EXPANSION_CLICKHOUSE_TABLE=agent_graph_expansions
+AGENT_GRAPH_EXPANSION_SYMBOLS
+AGENT_GRAPH_EXPANSION_SYMBOL_FILE
+AGENT_GRAPH_EXPANSION_RELATION_VERSION=v1
+AGENT_GRAPH_EXPANSION_TTL_SECONDS=21600
+AGENT_EXPANDED_RETRIEVAL_ENABLED=false
+AGENT_MAX_RELATED_SYMBOLS=3
+AGENT_MAX_RELATED_THEMES=2
+AGENT_MAX_NEWS_ITEMS_TOTAL=12
+AGENT_MAX_MARKET_PEERS=3
+AGENT_GRAPH_CACHE_DEADLINE_MS=80
+AGENT_EXPANDED_RETRIEVAL_DEADLINE_MS=350
+AGENT_SNAPSHOT_TOTAL_DEADLINE_MS=900
+```
 
 ## Postgres
 

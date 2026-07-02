@@ -1,0 +1,26 @@
+# 역할: Redis/shared report store와 idempotency mapping lookup을 검증합니다.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: report-store-smoke
+  namespace: alfaka-market-data
+spec:
+  template:
+    metadata:
+      labels:
+        app: report-store-smoke
+    spec:
+      restartPolicy: Never
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: report-store-smoke
+          image: YOUR_ECR_REPOSITORY/gops-agent-orchestrator:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -u
+            - /app/systems/agent-orchestration/jobs/report-store-smoke/main.py
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+  backoffLimit: 1

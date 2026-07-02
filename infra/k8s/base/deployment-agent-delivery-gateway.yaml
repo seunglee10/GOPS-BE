@@ -1,0 +1,28 @@
+# 역할: agent analysis result topic을 shared report store와 delivery pub/sub으로 반영합니다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-delivery-gateway
+  namespace: alfaka-market-data
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-delivery-gateway
+  template:
+    metadata:
+      labels:
+        app: agent-delivery-gateway
+    spec:
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: agent-delivery-gateway
+          image: YOUR_ECR_REPOSITORY/gops-agent-orchestrator:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -u
+            - /app/systems/agent-orchestration/pods/agent-delivery-gateway/main.py
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config

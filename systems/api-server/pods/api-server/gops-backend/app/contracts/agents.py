@@ -13,3 +13,9 @@ class AgentAnalysisRequest(BaseModel):
     layoutContext: dict[str, Any] = Field(default_factory=dict)
     marketEvents: list[dict[str, Any]] = Field(default_factory=list)
     chartProposal: dict[str, Any] | None = None
+    requestId: str | None = None
+    idempotencyKey: str | None = None
+    userId: str | None = None
+    mode: str | None = None
+    priority: str | None = None
+    responseMode: str | None = None

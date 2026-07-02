@@ -3,10 +3,12 @@ from __future__ import annotations
 import os
 import re
 import time
+import json
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError, as_completed
 from datetime import datetime, timezone
 from typing import Any
 
+from .bulkhead import ProviderBulkheadRejected, provider_bulkhead
 from .contracts import (
     AgentFinding,
     AgentSignal,
@@ -133,7 +135,7 @@ class SnapshotExecutor:
             timeout_seconds = max(0.001, policy.snapshot_timeout_ms / 1000)
             executor = ThreadPoolExecutor(max_workers=len(bundle))
             futures = {
-                executor.submit(providers[snapshot_type].fetch, context, run_id, policy.max_items_per_snapshot): snapshot_type
+                executor.submit(fetch_provider_snapshot, providers[snapshot_type], snapshot_type, context, run_id, policy.max_items_per_snapshot): snapshot_type
                 for snapshot_type in bundle
             }
             try:
@@ -167,13 +169,57 @@ class SnapshotExecutor:
         return ordered
 
 
+def fetch_provider_snapshot(provider: Any, snapshot_type: str, context: Any, run_id: str, max_items: int) -> DataSnapshot:
+    bulkhead_name = snapshot_type.replace("_snapshot", "")
+    try:
+        with provider_bulkhead(bulkhead_name):
+            return provider.fetch(context, run_id, max_items)
+    except ProviderBulkheadRejected as exc:
+        timing = getattr(context, "timing", None)
+        if isinstance(timing, dict):
+            timing["providerBulkheadRejected"] = int(timing.get("providerBulkheadRejected") or 0) + 1
+        return error_snapshot(run_id, snapshot_type, exc)
+
+
+def news_symbols_for_context(context: Any) -> list[str]:
+    symbols = []
+    for value in getattr(context, "newsSymbols", []):
+        symbol = str(value or "").strip().upper()
+        if symbol and symbol not in symbols:
+            symbols.append(symbol)
+    if bool_env("AGENT_EXPANDED_RETRIEVAL_ENABLED", False):
+        primary_symbol = str(getattr(context, "symbol", "") or "").strip().upper()
+        if primary_symbol and primary_symbol not in symbols:
+            symbols.append(primary_symbol)
+        retrieval_context = getattr(context, "retrievalContext", None)
+        if retrieval_context is not None and hasattr(retrieval_context, "related_symbol_values"):
+            for value in retrieval_context.related_symbol_values():
+                symbol = str(value or "").strip().upper()
+                if symbol and symbol not in symbols:
+                    symbols.append(symbol)
+    return symbols
+
+
+def market_peer_symbols_for_context(context: Any) -> list[str]:
+    if not bool_env("AGENT_EXPANDED_RETRIEVAL_ENABLED", False):
+        return []
+    retrieval_context = getattr(context, "retrievalContext", None)
+    if retrieval_context is None or not hasattr(retrieval_context, "related_symbol_values"):
+        return []
+    policy = getattr(retrieval_context, "fanout_policy", None)
+    max_peers = int(getattr(policy, "max_market_peers", 0) or 0)
+    if max_peers <= 0:
+        return []
+    return retrieval_context.related_symbol_values()[:max_peers]
+
+
 class NewsSnapshotProvider:
     def __init__(self, news_agent: Any):
         self.news_agent = news_agent
 
     def fetch(self, context: Any, run_id: str, max_items: int) -> DataSnapshot:
         started_at = time.perf_counter()
-        request = ProviderRequest(str(context.symbol), str(context.intent), symbols=tuple(getattr(context, "newsSymbols", [])))
+        request = ProviderRequest(str(context.symbol), str(context.intent), symbols=tuple(news_symbols_for_context(context)))
         provider = self.news_agent.provider
         localizer = self.news_agent.localizer
         daily_summaries = []
@@ -190,6 +236,9 @@ class NewsSnapshotProvider:
         except Exception as exc:
             evidence = [EvidenceItem.no_data("news", "News snapshot unavailable", f"뉴스 snapshot 조회에 실패했습니다: {exc.__class__.__name__}")]
         available = [item for item in evidence if item.provider == "news" and item.status == "available"]
+        timing = getattr(context, "timing", None)
+        if isinstance(timing, dict):
+            timing["newsItemsFetched"] = len(available)
         warnings = []
         if not available and not daily_summaries:
             warnings.append("no_relevant_news_found")
@@ -226,8 +275,17 @@ class MarketSnapshotProvider:
         chart_evidence = chart_context_evidence(context, chart_context)
         if chart_evidence:
             evidence.insert(0, chart_evidence)
+        peer_symbols = market_peer_symbols_for_context(context)
+        peer_evidence = peer_market_evidence(chart_context, peer_symbols)
+        evidence.extend(peer_evidence)
+        timing = getattr(context, "timing", None)
+        if isinstance(timing, dict):
+            timing["marketPeersRequested"] = len(peer_symbols)
+            timing["marketPeersFetched"] = len(peer_evidence)
         warnings = [] if evidence else ["market_snapshot_unavailable"]
-        summary = f"{context.symbol} 시장/차트 snapshot을 구성했습니다." if evidence else f"{context.symbol} 시장 snapshot cache가 없습니다."
+        if peer_symbols and not peer_evidence:
+            warnings.append("market_peer_data_unavailable")
+        summary = market_snapshot_summary(context.symbol, evidence, peer_symbols, peer_evidence)
         return DataSnapshot(
             snapshot_id=stable_id("snapshot", {"runId": run_id, "type": "market_snapshot", "symbol": context.symbol}),
             run_id=run_id,
@@ -320,6 +378,7 @@ def build_synthesis_input(
     entities: list[ResolvedEntity],
     snapshots: list[DataSnapshot],
     policy: RuntimePolicy,
+    cross_signals: list[dict[str, Any]] | None = None,
 ) -> SynthesisInput:
     missing_data = unique_strings(
         warning
@@ -339,6 +398,7 @@ def build_synthesis_input(
         intent=intent,
         entities=entities,
         snapshots=trim_snapshot_evidence(snapshots, policy),
+        crossSignals=trim_cross_signals(cross_signals or []),
         missing_data=missing_data,
         risk_warnings=risk_warnings,
         output_policy={
@@ -347,6 +407,19 @@ def build_synthesis_input(
             "prohibit_direct_investment_command": True,
         },
     )
+
+
+def trim_cross_signals(cross_signals: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    max_items = env_int("AGENT_MAX_SYNTHESIS_CROSS_SIGNALS", 6)
+    max_chars = env_int("AGENT_MAX_SYNTHESIS_CROSS_SIGNAL_CHARS", 1800)
+    ordered = sorted(
+        [dict(item) for item in cross_signals if isinstance(item, dict)],
+        key=lambda item: float(item.get("confidence") or 0.0),
+        reverse=True,
+    )[:max_items]
+    while ordered and len(json.dumps(ordered, ensure_ascii=False, default=str)) > max_chars:
+        ordered.pop()
+    return ordered
 
 
 def final_response_from_answer(
@@ -455,6 +528,8 @@ def latency_trace_from_timing(run_id: str, timing: dict[str, Any], snapshots: li
         LatencyStage("route_and_plan", float(timing.get("routeAndPlanMs") or 0.0), "success"),
         LatencyStage("entity_resolve", float(timing.get("entityResolveMs") or 0.0), "success"),
         LatencyStage("snapshot_fetch", snapshot_latency, snapshot_status, any(snapshot.cache_hit for snapshot in snapshots)),
+        LatencyStage("retrieval_context", float(timing.get("retrievalContextMs") or 0.0), "success", bool(timing.get("graphExpansionCacheHit"))),
+        LatencyStage("cross_signal_join", float(timing.get("crossSignalJoinMs") or 0.0), "success"),
         LatencyStage("synthesis_llm", float(timing.get("finalAnswerMs") or 0.0), synthesis_status),
         LatencyStage("guardrail", float(timing.get("guardrailMs") or 0.0), "success"),
     ]
@@ -604,6 +679,42 @@ def chart_context_evidence(context: Any, chart_context: dict[str, Any]) -> Evide
     )
 
 
+def peer_market_evidence(chart_context: dict[str, Any], peer_symbols: list[str]) -> list[EvidenceItem]:
+    if not peer_symbols:
+        return []
+    peer_payload = chart_context.get("peerSummaries") or chart_context.get("relatedMarketSnapshots") or []
+    rows = peer_payload.values() if isinstance(peer_payload, dict) else peer_payload
+    by_symbol = {}
+    for row in rows if isinstance(rows, list) else list(rows):
+        if not isinstance(row, dict):
+            continue
+        symbol = str(row.get("symbol") or row.get("ticker") or "").upper()
+        if symbol:
+            by_symbol[symbol] = row
+    evidence = []
+    for symbol in peer_symbols:
+        row = by_symbol.get(symbol)
+        if not row:
+            continue
+        change = str(row.get("change") or row.get("changePercent") or row.get("percentChange") or "unknown")
+        evidence.append(EvidenceItem(
+            provider="market-data",
+            status="available",
+            title=f"{symbol} peer market snapshot",
+            summary=f"{symbol} peer market movement is {change}.",
+            raw={"peerSymbol": symbol, "peerSummary": row},
+        ))
+    return evidence
+
+
+def market_snapshot_summary(symbol: str, evidence: list[EvidenceItem], peer_symbols: list[str], peer_evidence: list[EvidenceItem]) -> str:
+    if not evidence:
+        return f"{symbol} 시장 snapshot cache가 없습니다."
+    if peer_symbols:
+        return f"{symbol} 시장/차트 snapshot과 {len(peer_evidence)}/{len(peer_symbols)}개 peer market snapshot을 구성했습니다."
+    return f"{symbol} 시장/차트 snapshot을 구성했습니다."
+
+
 def market_signals(context: Any, chart_context: dict[str, Any], evidence: list[EvidenceItem]) -> list[AgentSignal]:
     visible = chart_context.get("visibleSummary") if isinstance(chart_context.get("visibleSummary"), dict) else {}
     change = str(visible.get("change") or "").strip()
@@ -623,6 +734,12 @@ def market_signals(context: Any, chart_context: dict[str, Any], evidence: list[E
     ]
     for item in evidence:
         raw = item.raw if isinstance(item.raw, dict) else {}
+        peer_symbol = str(raw.get("peerSymbol") or "").strip().upper()
+        if peer_symbol:
+            peer_summary = raw.get("peerSummary") if isinstance(raw.get("peerSummary"), dict) else {}
+            peer_change = str(peer_summary.get("change") or peer_summary.get("changePercent") or peer_summary.get("percentChange") or "unknown")
+            signals.append(AgentSignal(target=peer_symbol, direction="unknown", horizon="intraday", strength="low", reasoning=f"Peer market change: {peer_change}."))
+            continue
         event_type = str(raw.get("eventType") or raw.get("event_type") or "").strip()
         if event_type:
             signals.append(AgentSignal(target=str(context.symbol), direction="mixed", horizon="intraday", strength="medium", reasoning=item.summary))
@@ -837,3 +954,11 @@ def bool_env(name: str, default: bool) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def env_int(name: str, default: int) -> int:
+    try:
+        parsed = int(os.getenv(name, str(default)))
+    except Exception:
+        return default
+    return parsed if parsed >= 0 else default

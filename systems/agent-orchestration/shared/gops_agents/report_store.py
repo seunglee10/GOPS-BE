@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import hashlib
 from typing import Any
 
 from .analysis_cache import agent_finding_from_dict, evidence_item_from_dict, final_answer_from_dict, intent_route_from_dict
@@ -23,6 +24,7 @@ from .contracts import (
 
 DEFAULT_REPORT_KEY_PREFIX = "agent:report"
 DEFAULT_REPORT_TTL_SECONDS = 43200
+DEFAULT_IDEMPOTENCY_KEY_PREFIX = "agent:request:idempotency"
 
 
 class ReportStore:
@@ -32,10 +34,17 @@ class ReportStore:
     def get(self, analysis_id: str) -> AnalysisReport | None:
         raise NotImplementedError
 
+    def save_idempotency_mapping(self, user_id: str, idempotency_key: str, request_id: str, ttl_seconds: int | None = None) -> None:
+        return None
+
+    def get_idempotency_request_id(self, user_id: str, idempotency_key: str) -> str | None:
+        return None
+
 
 class InMemoryReportStore(ReportStore):
     def __init__(self):
         self._reports: dict[str, AnalysisReport] = {}
+        self._idempotency: dict[tuple[str, str], str] = {}
 
     def save(self, report: AnalysisReport) -> AnalysisReport:
         self._reports[report.analysisId] = report
@@ -43,6 +52,13 @@ class InMemoryReportStore(ReportStore):
 
     def get(self, analysis_id: str) -> AnalysisReport | None:
         return self._reports.get(analysis_id)
+
+    def save_idempotency_mapping(self, user_id: str, idempotency_key: str, request_id: str, ttl_seconds: int | None = None) -> None:
+        if user_id and idempotency_key and request_id:
+            self._idempotency[(str(user_id), str(idempotency_key))] = str(request_id)
+
+    def get_idempotency_request_id(self, user_id: str, idempotency_key: str) -> str | None:
+        return self._idempotency.get((str(user_id), str(idempotency_key)))
 
 
 class RedisReportStore(ReportStore):
@@ -62,6 +78,7 @@ class RedisReportStore(ReportStore):
             self.redis = redis.from_url(redis_url or os.getenv("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True)
         self.ttl_seconds = int(ttl_seconds if ttl_seconds is not None else os.getenv("AGENT_REPORT_TTL_SECONDS", str(DEFAULT_REPORT_TTL_SECONDS)))
         self.key_prefix = key_prefix or os.getenv("AGENT_REPORT_KEY_PREFIX", DEFAULT_REPORT_KEY_PREFIX)
+        self.idempotency_key_prefix = os.getenv("AGENT_IDEMPOTENCY_KEY_PREFIX", DEFAULT_IDEMPOTENCY_KEY_PREFIX)
 
     def save(self, report: AnalysisReport) -> AnalysisReport:
         if self.ttl_seconds <= 0:
@@ -71,7 +88,8 @@ class RedisReportStore(ReportStore):
             self.redis.setex(self._report_key(report.analysisId), self.ttl_seconds, encoded)
             self.redis.setex(self._latest_key(), self.ttl_seconds, encoded)
             self.redis.setex(self._latest_key(report.symbol), self.ttl_seconds, encoded)
-        except Exception:
+        except Exception as exc:
+            report.agentTrace["reportStoreWriteFailed"] = f"{exc.__class__.__name__}: {exc}"
             return report
         return report
 
@@ -84,6 +102,26 @@ class RedisReportStore(ReportStore):
             payload = payload.decode("utf-8")
         return deserialize_report(payload) if payload else None
 
+    def save_idempotency_mapping(self, user_id: str, idempotency_key: str, request_id: str, ttl_seconds: int | None = None) -> None:
+        ttl = int(ttl_seconds if ttl_seconds is not None else os.getenv("AGENT_IDEMPOTENCY_TTL_SECONDS", str(self.ttl_seconds)))
+        if ttl <= 0 or not user_id or not idempotency_key or not request_id:
+            return
+        try:
+            self.redis.setex(self._idempotency_key(user_id, idempotency_key), ttl, request_id)
+        except Exception:
+            return None
+
+    def get_idempotency_request_id(self, user_id: str, idempotency_key: str) -> str | None:
+        if not user_id or not idempotency_key:
+            return None
+        try:
+            payload = self.redis.get(self._idempotency_key(user_id, idempotency_key))
+        except Exception:
+            return None
+        if isinstance(payload, bytes):
+            payload = payload.decode("utf-8")
+        return str(payload) if payload else None
+
     def _report_key(self, analysis_id: str) -> str:
         return f"{self.key_prefix}:{analysis_id}"
 
@@ -91,6 +129,13 @@ class RedisReportStore(ReportStore):
         if symbol:
             return f"{self.key_prefix}:latest:{str(symbol).upper()}"
         return f"{self.key_prefix}:latest"
+
+    def _idempotency_key(self, user_id: str, idempotency_key: str) -> str:
+        return f"{self.idempotency_key_prefix}:{stable_idempotency_part(user_id)}:{stable_idempotency_part(idempotency_key)}"
+
+
+def stable_idempotency_part(value: str) -> str:
+    return hashlib.sha1(str(value).encode("utf-8")).hexdigest()[:24]
 
 
 def build_report_store_from_env() -> ReportStore:
@@ -278,6 +323,7 @@ def synthesis_input_from_dict(value: Any) -> SynthesisInput | None:
         intent=str(value.get("intent") or ""),
         entities=[item for item in (resolved_entity_from_dict(item) for item in value.get("entities", [])) if item],
         snapshots=[item for item in (data_snapshot_from_dict(item) for item in value.get("snapshots", [])) if item],
+        crossSignals=[item for item in value.get("crossSignals", []) if isinstance(item, dict)],
         missing_data=[str(item) for item in value.get("missing_data", []) if isinstance(item, (str, int, float))],
         risk_warnings=[str(item) for item in value.get("risk_warnings", []) if isinstance(item, (str, int, float))],
         output_policy=dict(value.get("output_policy") or {}),
