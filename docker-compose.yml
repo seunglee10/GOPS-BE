@@ -43,7 +43,7 @@ services:
       - /bin/bash
       - -ec
       - |
-        for topic in market.raw.bars market.raw.updated-bars market.raw.trades market.raw.daily-bars market.raw.statuses market.raw.quotes market.raw.corrections market.raw.cancel-errors market.ticks.v1 market.candles.live.1m.v1 market.candles.closed.v1 market.status.v1 market.volume-profile-bins.1m.v1 market.news.alpaca.v1 orders.commands.v1 broker.submit-results.v1 broker.order-events.v1 orders.dlq.v1 agents.market-events.v1 agents.analysis-requests.v1 agents.analysis-results.v1 agents.notification-decisions.v1 agents.dlq.v1; do
+        for topic in market.raw.bars market.raw.updated-bars market.raw.trades market.raw.daily-bars market.raw.statuses market.raw.quotes market.raw.corrections market.raw.cancel-errors market.ticks.v1 market.candles.closed.v1 market.status.v1 market.volume-profile-bins.1m.v1 market.news.alpaca.v1 orders.commands.v1 broker.submit-results.v1 broker.order-events.v1 orders.dlq.v1 agents.market-events.v1 agents.analysis-requests.v1 agents.analysis-results.v1 agents.notification-decisions.v1 agents.dlq.v1; do
           /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic "$${topic}" --partitions 3 --replication-factor 1
         done
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --list
@@ -258,13 +258,22 @@ services:
       context: .
       dockerfile: infra/docker/Dockerfile.gops-market-ingestor
     container_name: alfaka-alpaca-news-ingestor
-    env_file: .env
     depends_on:
       kafka-init:
         condition: service_completed_successfully
     environment:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
       KAFKA_NEWS_TOPIC: "market.news.alpaca.v1"
+      APCA_API_KEY_ID: "${APCA_API_KEY_ID:-}"
+      APCA_API_SECRET_KEY: "${APCA_API_SECRET_KEY:-}"
+      ALPACA_CREDENTIAL_SOURCE: "${ALPACA_CREDENTIAL_SOURCE:-env}"
+      ALPACA_SECRET_NAME: "${ALPACA_SECRET_NAME:-dev/alpaca}"
+      ALPACA_SYMBOLS: "${ALPACA_SYMBOLS:-AAPL,MSFT,NVDA,AMZN,META,GOOGL,TSLA}"
+      AWS_REGION: "${AWS_REGION:-ap-northeast-2}"
+      AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-ap-northeast-2}"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
+      AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
       AWS_PROFILE: "${AWS_PROFILE:-default}"
       AWS_SDK_LOAD_CONFIG: "${AWS_SDK_LOAD_CONFIG:-1}"
       ALPACA_NEWS_POLL_SECONDS: "${ALPACA_NEWS_POLL_SECONDS:-300}"
@@ -294,10 +303,12 @@ services:
       KAFKA_RAW_TOPIC_PREFIX: "market.raw"
       KAFKA_PROCESSOR_GROUP_ID: "alfaka-local-stream-processor"
       KAFKA_TICKS_TOPIC: "market.ticks.v1"
-      KAFKA_LIVE_CANDLE_TOPIC: "market.candles.live.1m.v1"
       KAFKA_CLOSED_CANDLE_TOPIC: "market.candles.closed.v1"
       KAFKA_STATUS_TOPIC: "market.status.v1"
       KAFKA_VOLUME_PROFILE_BINS_TOPIC: "market.volume-profile-bins.1m.v1"
+      KAFKA_PROCESSOR_ENABLE_AUTO_COMMIT: "false"
+      CANDLE_WATERMARK_GRACE_SECONDS: "5"
+      CANDLE_FLUSH_INTERVAL_SECONDS: "1"
       KAFKA_FLINK_GROUP_ID: "alfaka-local-stream-processor"
       VOLUME_PROFILE_PRICE_BIN_SIZE: "0.05"
       PROCESSOR_LOG_EVERY_N: "500"
@@ -323,7 +334,8 @@ services:
     environment:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
       KAFKA_S3_GROUP_ID: "alfaka-processed-s3-sink"
-      KAFKA_PROCESSED_TOPICS: "market.ticks.v1,market.candles.live.1m.v1,market.candles.closed.v1,market.status.v1,market.volume-profile-bins.1m.v1"
+      KAFKA_S3_ENABLE_AUTO_COMMIT: "false"
+      KAFKA_PROCESSED_TOPICS: "market.ticks.v1,market.candles.closed.v1,market.status.v1,market.volume-profile-bins.1m.v1"
       AWS_REGION: "${AWS_REGION:-ap-northeast-2}"
       AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-ap-northeast-2}"
       AWS_EC2_METADATA_DISABLED: "${AWS_EC2_METADATA_DISABLED:-true}"
@@ -332,9 +344,9 @@ services:
       AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
       S3_ENDPOINT_URL: "${DOCKER_S3_ENDPOINT_URL:-}"
       S3_BUCKET: "${S3_BUCKET:-gops-market-data-<aws-account-id>-ap-northeast-2-an}"
-      S3_FINAL_PREFIX: "${S3_FINAL_PREFIX:-market-data/rebuild-20260701/final}"
-      S3_LIVE_PREFIX: "${S3_LIVE_PREFIX:-market-data/rebuild-20260701/live}"
-      S3_MANIFEST_PREFIX: "${S3_MANIFEST_PREFIX:-market-data/rebuild-20260701/manifest}"
+      S3_FINAL_PREFIX: "${S3_FINAL_PREFIX:-market-data/v2/tick-candle/final}"
+      S3_LIVE_PREFIX: "${S3_LIVE_PREFIX:-market-data/v2/tick-candle/live}"
+      S3_MANIFEST_PREFIX: "${S3_MANIFEST_PREFIX:-market-data/v2/tick-candle/manifest}"
       S3_PROCESSED_FORMAT: "parquet"
       S3_FLUSH_COUNT: "1000"
       S3_FLUSH_INTERVAL_SECONDS: "60"
@@ -368,8 +380,8 @@ services:
       AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
       S3_ENDPOINT_URL: "${DOCKER_S3_ENDPOINT_URL:-}"
       S3_BUCKET: "${S3_BUCKET:-gops-market-data-<aws-account-id>-ap-northeast-2-an}"
-      S3_RAW_PREFIX: "${S3_RAW_PREFIX:-market-data/rebuild-20260701/raw/alpaca}"
-      S3_MANIFEST_PREFIX: "${S3_MANIFEST_PREFIX:-market-data/rebuild-20260701/manifest}"
+      S3_RAW_PREFIX: "${S3_RAW_PREFIX:-market-data/v2/tick-candle/raw/alpaca}"
+      S3_MANIFEST_PREFIX: "${S3_MANIFEST_PREFIX:-market-data/v2/tick-candle/manifest}"
       S3_RAW_FLUSH_COUNT: "1000"
       S3_RAW_FLUSH_INTERVAL_SECONDS: "60"
       S3_PUT_MAX_ATTEMPTS: "${S3_PUT_MAX_ATTEMPTS:-3}"
@@ -517,7 +529,6 @@ services:
       context: .
       dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
     container_name: alfaka-agent-orchestrator
-    env_file: .env
     depends_on:
       kafka-init:
         condition: service_completed_successfully
@@ -531,11 +542,15 @@ services:
       AGENT_ANALYSIS_RESULTS_TOPIC: "agents.analysis-results.v1"
       AGENT_NOTIFICATION_DECISIONS_TOPIC: "agents.notification-decisions.v1"
       AGENT_DLQ_TOPIC: "agents.dlq.v1"
+      AGENT_EVENT_INPUT_TOPICS: "market.ticks.v1,market.candles.closed.v1"
       AGENT_PUBLISH_TO_KAFKA: "true"
+      KAFKA_NEWS_TOPIC: "market.news.alpaca.v1"
       CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
       CLICKHOUSE_DATABASE: "market_data"
       CLICKHOUSE_USER: "alfaka"
       CLICKHOUSE_PASSWORD: "alfaka"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      OPENAI_MODEL: "${OPENAI_MODEL:-gpt-5.2}"
       AGENT_NEWS_CACHE_BACKEND: "auto"
       AGENT_NEWS_CACHE_TTL_SECONDS: "300"
       AGENT_NEWS_NO_DATA_CACHE_TTL_SECONDS: "60"
@@ -566,7 +581,7 @@ services:
         condition: service_completed_successfully
     environment:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
-      AGENT_EVENT_INPUT_TOPICS: "market.ticks.v1,market.candles.live.1m.v1,market.candles.closed.v1"
+      AGENT_EVENT_INPUT_TOPICS: "market.ticks.v1,market.candles.closed.v1"
       AGENT_MARKET_EVENTS_TOPIC: "agents.market-events.v1"
     command: ["python", "-u", "/app/systems/agent-orchestration/pods/event-detector/main.py"]
     restart: unless-stopped
@@ -688,10 +703,10 @@ services:
       ALPACA_SECRET_NAME: "${ALPACA_SECRET_NAME:-dev/alpaca}"
       S3_ENDPOINT_URL: "${DOCKER_S3_ENDPOINT_URL:-}"
       S3_BUCKET: "${S3_BUCKET:-gops-market-data-<aws-account-id>-ap-northeast-2-an}"
-      S3_RAW_PREFIX: "${S3_RAW_PREFIX:-market-data/rebuild-20260701/raw/alpaca}"
-      S3_FINAL_PREFIX: "${S3_FINAL_PREFIX:-market-data/rebuild-20260701/final}"
-      S3_LIVE_PREFIX: "${S3_LIVE_PREFIX:-market-data/rebuild-20260701/live}"
-      S3_MANIFEST_PREFIX: "${S3_MANIFEST_PREFIX:-market-data/rebuild-20260701/manifest}"
+      S3_RAW_PREFIX: "${S3_RAW_PREFIX:-market-data/v2/tick-candle/raw/alpaca}"
+      S3_FINAL_PREFIX: "${S3_FINAL_PREFIX:-market-data/v2/tick-candle/final}"
+      S3_LIVE_PREFIX: "${S3_LIVE_PREFIX:-market-data/v2/tick-candle/live}"
+      S3_MANIFEST_PREFIX: "${S3_MANIFEST_PREFIX:-market-data/v2/tick-candle/manifest}"
       S3_PROCESSED_FORMAT: "parquet"
       S3_HISTORICAL_RAW_PARTITION_MODE: "${S3_HISTORICAL_RAW_PARTITION_MODE:-chunk}"
       S3_HISTORICAL_PROCESSED_MANIFEST_LAYOUT: "${S3_HISTORICAL_PROCESSED_MANIFEST_LAYOUT:-compact}"
@@ -879,10 +894,10 @@ services:
       ALPACA_SECRET_NAME: "${ALPACA_SECRET_NAME:-dev/alpaca}"
       S3_ENDPOINT_URL: "${DOCKER_S3_ENDPOINT_URL:-}"
       S3_BUCKET: "${S3_BUCKET:-gops-market-data-<aws-account-id>-ap-northeast-2-an}"
-      S3_RAW_PREFIX: "${S3_RAW_PREFIX:-market-data/rebuild-20260701/raw/alpaca}"
-      S3_FINAL_PREFIX: "${S3_FINAL_PREFIX:-market-data/rebuild-20260701/final}"
-      S3_LIVE_PREFIX: "${S3_LIVE_PREFIX:-market-data/rebuild-20260701/live}"
-      S3_MANIFEST_PREFIX: "${S3_MANIFEST_PREFIX:-market-data/rebuild-20260701/manifest}"
+      S3_RAW_PREFIX: "${S3_RAW_PREFIX:-market-data/v2/tick-candle/raw/alpaca}"
+      S3_FINAL_PREFIX: "${S3_FINAL_PREFIX:-market-data/v2/tick-candle/final}"
+      S3_LIVE_PREFIX: "${S3_LIVE_PREFIX:-market-data/v2/tick-candle/live}"
+      S3_MANIFEST_PREFIX: "${S3_MANIFEST_PREFIX:-market-data/v2/tick-candle/manifest}"
       S3_PROCESSED_FORMAT: "parquet"
       S3_HISTORICAL_RAW_PARTITION_MODE: "${S3_HISTORICAL_RAW_PARTITION_MODE:-chunk}"
       S3_HISTORICAL_PROCESSED_MANIFEST_LAYOUT: "${S3_HISTORICAL_PROCESSED_MANIFEST_LAYOUT:-compact}"
