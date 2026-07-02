@@ -20,13 +20,8 @@ def main():
 
     kafka_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
     group_id = os.getenv("KAFKA_CLICKHOUSE_GROUP_ID", "alfaka-clickhouse-loader")
-    topics = parse_csv(os.getenv("KAFKA_CLICKHOUSE_TOPICS", ",".join([
-        os.getenv("KAFKA_CLOSED_CANDLE_TOPIC", "market.candles.closed.v1"),
-        os.getenv("KAFKA_STATUS_TOPIC", "market.status.v1"),
-        os.getenv("KAFKA_VOLUME_PROFILE_BINS_TOPIC", "market.volume-profile-bins.1m.v1"),
-        os.getenv("KAFKA_NEWS_TOPIC", "market.news.alpaca.v1"),
-    ])))
     load_trades = os.getenv("CLICKHOUSE_LOAD_TRADES", "false").lower() in {"1", "true", "yes"}
+    topics = clickhouse_topics_from_env(os.environ, load_trades=load_trades)
     enable_auto_commit = os.getenv("KAFKA_CLICKHOUSE_ENABLE_AUTO_COMMIT", "false").lower() in {"1", "true", "yes"}
     validate_required_values("clickhouse loader", {
         "kafka_servers": kafka_servers,
@@ -62,6 +57,20 @@ def main():
                 consumer.commit()
         except Exception as exc:
             print(f"ClickHouse 적재 실패: {exc}; payload={json.dumps(payload, ensure_ascii=False)}", file=sys.stderr, flush=True)
+
+
+def clickhouse_topics_from_env(environ=None, load_trades=False):
+    environ = environ or os.environ
+    topics = parse_csv(environ.get("KAFKA_CLICKHOUSE_TOPICS", ",".join([
+        environ.get("KAFKA_CLOSED_CANDLE_TOPIC", "market.candles.closed.v1"),
+        environ.get("KAFKA_STATUS_TOPIC", "market.status.v1"),
+        environ.get("KAFKA_VOLUME_PROFILE_BINS_TOPIC", "market.volume-profile-bins.1m.v1"),
+        environ.get("KAFKA_NEWS_TOPIC", "market.news.alpaca.v1"),
+    ])))
+    ticks_topic = environ.get("KAFKA_TICKS_TOPIC", "market.ticks.v1")
+    if load_trades and ticks_topic not in topics:
+        topics.append(ticks_topic)
+    return topics
 
 
 def load_payload(client, payload, load_trades=False):
