@@ -11,7 +11,7 @@ def main() -> None:
     kafka_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
     input_topics = parse_csv(os.getenv(
         "AGENT_EVENT_INPUT_TOPICS",
-        "market.ticks.v1,market.candles.live.1m.v1,market.candles.closed.v1",
+        "market.ticks.v1,market.candles.closed.v1",
     ))
     output_topic = os.getenv("AGENT_MARKET_EVENTS_TOPIC", "agents.market-events.v1")
     group_id = os.getenv("AGENT_EVENT_DETECTOR_GROUP_ID", "gops-agent-event-detector")
