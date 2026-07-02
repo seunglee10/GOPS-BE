@@ -68,10 +68,10 @@ market.raw.quotes
 market.raw.corrections
 market.raw.cancel-errors
 market.ticks.v1
-market.candles.live.1m.v1
 market.candles.closed.v1
 market.status.v1
 market.volume-profile-bins.1m.v1
+market.news.alpaca.v1
 orders.commands.v1
 broker.submit-results.v1
 broker.order-events.v1
@@ -111,6 +111,9 @@ Common stream processor env:
 KAFKA_BOOTSTRAP_SERVERS
 KAFKA_RAW_TOPIC_PREFIX
 KAFKA_PROCESSOR_GROUP_ID
+KAFKA_PROCESSOR_ENABLE_AUTO_COMMIT
+CANDLE_WATERMARK_GRACE_SECONDS
+CANDLE_FLUSH_INTERVAL_SECONDS
 REDIS_URL
 PROCESSOR_RECOVERY_SYMBOLS
 PROCESSOR_RECOVERY_CLICKHOUSE_ENABLED
@@ -126,6 +129,8 @@ COMPONENT_HEALTH_TTL_SECONDS
 Critical storage consumers may disable Kafka auto commit and commit after successful side effects:
 
 ```text
+KAFKA_PROCESSOR_ENABLE_AUTO_COMMIT=false
+KAFKA_S3_ENABLE_AUTO_COMMIT=false
 KAFKA_CLICKHOUSE_ENABLE_AUTO_COMMIT=false
 ```
 
@@ -276,11 +281,11 @@ Leave `S3_ENDPOINT_URL` empty for real AWS S3.
 Current local/AWS rebuild prefix contract:
 
 ```text
-S3_RAW_PREFIX=market-data/rebuild-20260701/raw/alpaca
-S3_FINAL_PREFIX=market-data/rebuild-20260701/final
-S3_LIVE_PREFIX=market-data/rebuild-20260701/live
-S3_MANIFEST_PREFIX=market-data/rebuild-20260701/manifest
-S3_MATERIALIZE_PREFIX=market-data/rebuild-20260701/final
+S3_RAW_PREFIX=market-data/v2/tick-candle/raw/alpaca
+S3_FINAL_PREFIX=market-data/v2/tick-candle/final
+S3_LIVE_PREFIX=market-data/v2/tick-candle/live
+S3_MANIFEST_PREFIX=market-data/v2/tick-candle/manifest
+S3_MATERIALIZE_PREFIX=market-data/v2/tick-candle/final
 ```
 
 Keep these prefixes aligned between local Docker Compose and AWS overlays while
@@ -295,13 +300,13 @@ local path is `AWS_PROFILE` plus the read-only host `~/.aws` mount configured in
 `docker-compose.yml` for the API, backfill, and optional Alpaca ingestion
 services. This keeps copied AWS keys out of `.env`.
 
-The processed S3 sink writes processed Kafka topics under `S3_FINAL_PREFIX` and `S3_LIVE_PREFIX`. The raw S3 archive sink writes raw Kafka topics under `S3_RAW_PREFIX` with manifest entries under `S3_MANIFEST_PREFIX`.
+The processed S3 sink writes closed candle/status/profile artifacts under `S3_FINAL_PREFIX` and processed tick artifacts under `S3_LIVE_PREFIX`. The raw S3 archive sink writes raw Kafka topics under `S3_RAW_PREFIX` with manifest entries under `S3_MANIFEST_PREFIX`.
 
 S3 prefixes have different serving roles:
 
 ```text
 S3_RAW_PREFIX   raw Alpaca/Kafka evidence and replay source
-S3_LIVE_PREFIX  append-style live/today evidence, not direct chart serving truth
+S3_LIVE_PREFIX  append-style processed tick evidence, not direct chart serving truth
 S3_FINAL_PREFIX deterministic canonical parquet/manifest used for ClickHouse rebuild
 ```
 
