@@ -1,6 +1,6 @@
 # 역할: Kafka Processed Topic의 차트 데이터를 S3/MinIO에 장기 저장합니다.
 # 사용: 로컬은 MinIO, 운영은 AWS S3로 같은 코드가 동작합니다.
-# 출력: 전날까지 확정 데이터는 market-data/final, 오늘 live/tick은 market-data/live 아래에 저장합니다.
+# 출력: 확정 데이터는 v2 final prefix, tick은 v2 live prefix 아래에 저장합니다.
 import io
 import json
 import os
@@ -31,6 +31,7 @@ def main():
     put_max_attempts = parse_positive_int(os.getenv("S3_PUT_MAX_ATTEMPTS", "3"), default=3)
     put_retry_sleep_seconds = parse_non_negative_float(os.getenv("S3_PUT_RETRY_SLEEP_SECONDS", "1"), default=1)
     output_format = os.getenv("S3_PROCESSED_FORMAT", "parquet").lower()
+    enable_auto_commit = os.getenv("KAFKA_S3_ENABLE_AUTO_COMMIT", "false").lower() in {"1", "true", "yes"}
 
     if not s3_bucket:
         print("S3_BUCKET을 .env 또는 Kubernetes ConfigMap에 넣어주세요.", file=sys.stderr)
@@ -39,13 +40,7 @@ def main():
         print("S3_PROCESSED_FORMAT은 parquet 또는 jsonl만 가능합니다.", file=sys.stderr)
         sys.exit(1)
 
-    topics = parse_csv(os.getenv("KAFKA_PROCESSED_TOPICS", ",".join([
-        os.getenv("KAFKA_TICKS_TOPIC", "market.ticks.v1"),
-        os.getenv("KAFKA_LIVE_CANDLE_TOPIC", "market.candles.live.1m.v1"),
-        os.getenv("KAFKA_CLOSED_CANDLE_TOPIC", "market.candles.closed.v1"),
-        os.getenv("KAFKA_STATUS_TOPIC", "market.status.v1"),
-        os.getenv("KAFKA_VOLUME_PROFILE_BINS_TOPIC", "market.volume-profile-bins.1m.v1"),
-    ])))
+    topics = processed_topics_from_env(os.environ)
     validate_required_values("processed s3 sink", {
         "kafka_servers": kafka_servers,
         "processed_topics": topics,
@@ -54,7 +49,13 @@ def main():
         "live_prefix": live_prefix,
     })
 
-    consumer = create_json_consumer(topics, kafka_servers, group_id, "alfaka-processed-s3-consumer")
+    consumer = create_json_consumer(
+        topics,
+        kafka_servers,
+        group_id,
+        "alfaka-processed-s3-consumer",
+        enable_auto_commit=enable_auto_commit,
+    )
     from alfaka.common.s3_client import create_s3_client
 
     s3 = create_s3_client()
@@ -75,7 +76,18 @@ def main():
         poll_timeout_ms=poll_timeout_ms,
         put_max_attempts=put_max_attempts,
         put_retry_sleep_seconds=put_retry_sleep_seconds,
+        enable_auto_commit=enable_auto_commit,
     )
+
+
+def processed_topics_from_env(environ=None):
+    environ = environ or os.environ
+    return parse_csv(environ.get("KAFKA_PROCESSED_TOPICS", ",".join([
+        environ.get("KAFKA_TICKS_TOPIC", "market.ticks.v1"),
+        environ.get("KAFKA_CLOSED_CANDLE_TOPIC", "market.candles.closed.v1"),
+        environ.get("KAFKA_STATUS_TOPIC", "market.status.v1"),
+        environ.get("KAFKA_VOLUME_PROFILE_BINS_TOPIC", "market.volume-profile-bins.1m.v1"),
+    ])))
 
 
 def run_processed_s3_sink(
@@ -91,11 +103,13 @@ def run_processed_s3_sink(
     poll_timeout_ms=1000,
     put_max_attempts=3,
     put_retry_sleep_seconds=1,
+    enable_auto_commit=False,
     now_fn=None,
 ):
     buffers = defaultdict(list)
     last_updated_at = {}
     now_fn = now_fn or (lambda: datetime.now(timezone.utc))
+    failed = False
     try:
         while True:
             batches = consumer.poll(timeout_ms=poll_timeout_ms)
@@ -134,23 +148,37 @@ def run_processed_s3_sink(
                 flush_interval_seconds,
                 now_fn(),
             )
+            if not enable_auto_commit and not any(buffers.values()):
+                commit_consumer(consumer)
     except KeyboardInterrupt:
         print("S3 sink 종료 신호 수신: 남은 buffer를 flush합니다.", flush=True)
+    except Exception:
+        failed = True
+        raise
     finally:
-        flush_all_buffers(
-            buffers,
-            last_updated_at,
-            lambda partition_key, rows: flush_buffer(
-                s3,
-                bucket,
-                partition_key,
-                rows,
-                output_format,
-                manifest_prefix=manifest_prefix,
-                max_attempts=put_max_attempts,
-                retry_sleep_seconds=put_retry_sleep_seconds,
-            ),
-        )
+        if not failed:
+            flush_all_buffers(
+                buffers,
+                last_updated_at,
+                lambda partition_key, rows: flush_buffer(
+                    s3,
+                    bucket,
+                    partition_key,
+                    rows,
+                    output_format,
+                    manifest_prefix=manifest_prefix,
+                    max_attempts=put_max_attempts,
+                    retry_sleep_seconds=put_retry_sleep_seconds,
+                ),
+            )
+            if not enable_auto_commit:
+                commit_consumer(consumer)
+
+
+def commit_consumer(consumer):
+    commit = getattr(consumer, "commit", None)
+    if callable(commit):
+        commit()
 
 
 def s3_partition_key(final_prefix, live_prefix, payload):
