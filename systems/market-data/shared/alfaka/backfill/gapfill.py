@@ -14,6 +14,8 @@ class TradingCalendar:
     timezone_name: str = "America/New_York"
     open_time: time = time(9, 30)
     close_time: time = time(16, 0)
+    extended_open_time: time = time(4, 0)
+    extended_close_time: time = time(20, 0)
     closed_dates: frozenset[str] = frozenset()
     early_closes: dict[str, time] | None = None
 
@@ -24,6 +26,8 @@ class TradingCalendar:
             timezone_name=os.getenv("MARKET_TIMEZONE", "America/New_York"),
             open_time=parse_market_clock_time(os.getenv("MARKET_OPEN_TIME"), time(9, 30)),
             close_time=parse_market_clock_time(os.getenv("MARKET_CLOSE_TIME"), time(16, 0)),
+            extended_open_time=parse_market_clock_time(os.getenv("MARKET_EXTENDED_OPEN_TIME"), time(4, 0)),
+            extended_close_time=parse_market_clock_time(os.getenv("MARKET_EXTENDED_CLOSE_TIME"), time(20, 0)),
             closed_dates=parse_closed_dates(os.getenv("MARKET_CLOSED_DATES")),
             early_closes=parse_early_closes(os.getenv("MARKET_EARLY_CLOSES")),
         )
@@ -35,6 +39,13 @@ class TradingCalendar:
     def session_close_for(self, session_date: date) -> time:
         early_closes = self.early_closes or {}
         return early_closes.get(session_date.isoformat(), self.close_time)
+
+    def gapfill_open_for(self, session_date: date) -> time:
+        return self.extended_open_time
+
+    def gapfill_close_for(self, session_date: date) -> time:
+        early_closes = self.early_closes or {}
+        return early_closes.get(session_date.isoformat(), self.extended_close_time)
 
     def is_session_date(self, session_date: date) -> bool:
         return session_date.weekday() < 5 and session_date.isoformat() not in self.closed_dates
@@ -77,8 +88,11 @@ def expected_minute_buckets(start_dt, end_dt, calendar):
     values = []
     while session_date <= local_end.date():
         if calendar.is_session_date(session_date):
-            session_open = datetime.combine(session_date, calendar.open_time, zone)
-            session_close = datetime.combine(session_date, calendar.session_close_for(session_date), zone)
+            session_open = datetime.combine(session_date, calendar.gapfill_open_for(session_date), zone)
+            session_close = datetime.combine(session_date, calendar.gapfill_close_for(session_date), zone)
+            if session_close <= session_open:
+                session_date += timedelta(days=1)
+                continue
             cursor = max(round_down_minute(local_start), session_open)
             session_end = min(local_end, session_close)
             while cursor < session_end:

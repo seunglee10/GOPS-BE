@@ -369,13 +369,15 @@ Canonical Alpaca historical backfill uses `adjustment=split` and writes `priceAd
 
 ## Market Calendar
 
-GapFill uses the configured market calendar to avoid false gaps on weekends, holidays, and early closes. The v1 provider is `configured-nyse`; it is an adapter boundary that can later be replaced by a managed exchange-calendar provider. Intraday chart renderability treats sparse gaps as blocking only when both candles are inside the regular session; sparse extended-hours 1m bars can still render because Alpaca may only emit bars for minutes with activity.
+GapFill uses the configured market calendar to avoid false gaps on weekends, holidays, and early closes. The v1 provider is `configured-nyse`; it is an adapter boundary that can later be replaced by a managed exchange-calendar provider. `MARKET_OPEN_TIME` and `MARKET_CLOSE_TIME` describe the regular session, while `MARKET_EXTENDED_OPEN_TIME` and `MARKET_EXTENDED_CLOSE_TIME` describe the daytime historical gapfill window, defaulting to `04:00-20:00 ET` for pre-market, regular, and after-hours bars. Early closes truncate the daytime gapfill window at the configured early close. Intraday chart renderability treats sparse gaps as blocking only when both candles are inside the regular session; sparse extended-hours 1m bars can still render because Alpaca may only emit bars for minutes with activity.
 
 ```text
 MARKET_CALENDAR_PROVIDER
 MARKET_TIMEZONE
 MARKET_OPEN_TIME
 MARKET_CLOSE_TIME
+MARKET_EXTENDED_OPEN_TIME
+MARKET_EXTENDED_CLOSE_TIME
 MARKET_CLOSED_DATES
 MARKET_EARLY_CLOSES
 ```
