@@ -28,6 +28,7 @@ GOPS v2는 Google OAuth2 로그인, SEC EDGAR 펀더멘탈, Alpaca 뉴스/시장
 
 - Cache first: 조회는 Redis를 먼저 본다. Redis에 없으면 ClickHouse/Postgres에서 읽고 다시 Redis를 채운다.
 - Event driven: 시장 데이터, 뉴스, 주문, Agent 진행 상태는 Kafka 이벤트로 흘린다.
+- Closed candle first: v2 market-data 재설계에서는 tick을 event-time window로 집계해 closed candle을 발행하고, 전역 live candle Kafka topic은 기본 경로로 두지 않는다.
 - Processed tick storage: S3에 저장되는 tick 데이터는 원본 Alpaca tick payload가 아니라 가공된 tick 데이터다. 저장 형식, partition, schema는 미정이다.
 - Projection first: 조회 API는 S3 객체를 직접 serving source로 쓰지 않고 Redis/ClickHouse/Postgres projection을 우선 사용한다.
 - Billing surface: repository 전체에서 결제/과금 API, billing table, Stripe/Toss/PortOne 같은 결제 provider 연동은 없다. Alpaca SIP 유료 구독은 운영 credential/market-data 비용으로 취급하고 사용자 결제 기능으로 보지 않는다.
@@ -119,7 +120,7 @@ Alpaca News Worker는 Alpaca News API에서 뉴스 데이터를 가져온다.
 - 관심 종목별 뉴스 수집.
 - 뉴스 원문 payload를 S3 raw bucket에 저장.
 - 내부 `NewsEvent`와 `EvidenceItem`으로 정규화.
-- Kafka `news.alpaca` topic으로 발행.
+- Kafka `market.news.alpaca.v1` topic으로 발행.
 - Redis에 최신 뉴스 summary warm cache 갱신.
 - rate limit 발생 시 Agent/API가 사용할 `news.delayed` health 상태를 갱신.
 
@@ -143,8 +144,11 @@ Market Processor는 시장 데이터 이벤트를 받아 차트용 projection을
 
 책임:
 
-- `market.alpaca.trades`, `market.alpaca.quotes`, `market.alpaca.bars` 이벤트 소비.
-- Redis latest quote/live candle/indicator summary 갱신.
+- `market.raw.trades`, `market.raw.quotes`, `market.raw.bars`, status/correction 계열 이벤트 소비.
+- raw trade를 검증하고 `market.ticks.v1` 정규화 tick으로 발행.
+- `market.ticks.v1`을 event-time 기준 `1m` window로 집계해 `market.candles.closed.v1` closed candle 발행.
+- `5m`, `10m`, `1D`, `1W`, `1M` 상위 interval은 closed lower interval candle에서 rollup.
+- Redis latest quote/current price/subscription-scoped live state/indicator summary 갱신.
 - ClickHouse trades/quotes/candles 테이블 적재.
 - 캔들 aggregation, volume spike, bid/ask imbalance, spread widening 같은 derived signal 계산.
 - indicator engine을 호출해 SMA/EMA/WMA/Bollinger/RSI/MACD/Stochastic/VWAP 계산.
@@ -435,6 +439,8 @@ S3에 저장되는 tick 데이터는 Alpaca 원본 tick payload가 아니다. �
 
 Kafka event와 ClickHouse projection은 `docs/ENVIRONMENT.md`와 `platform/kafka/topics.txt`의 market-data contract를 기준으로 한다.
 
+tick을 closed candle로 만드는 v2 재설계는 `docs/v2/market-data-tick-candle-architecture.md`를 기준으로 한다. 핵심 결정은 `market.ticks.v1`을 canonical tick stream으로 두고, 모든 interval의 확정 candle을 `market.candles.closed.v1`에 발행하며, 전역 `market.candles.live.1m.v1` topic을 code/config contract에서 제거하는 것이다.
+
 입력 범위:
 
 - trades.
@@ -627,31 +633,75 @@ ClickHouse는 읽기 많은 시계열/분석 데이터를 저장한다.
 
 ## 19. Kafka Topics
 
-Topic:
+v2 target topic contract는 platform topic 파일과 맞춘다. 시장 데이터는 raw feed와 processed event를 분리한다.
 
-- `market.alpaca.trades`
-- `market.alpaca.quotes`
-- `market.alpaca.bars`
-- `news.alpaca`
-- `fundamentals.sec`
-- `orders.requested`
-- `orders.state-changed`
-- `agent-runs.events`
-- `projection.workspace`
-- `health.components`
+Market raw topics:
 
-Event envelope:
+- `market.raw.trades`
+- `market.raw.quotes`
+- `market.raw.bars`
+- `market.raw.updated-bars`
+- `market.raw.daily-bars`
+- `market.raw.statuses`
+- `market.raw.corrections`
+- `market.raw.cancel-errors`
+
+Market processed topics:
+
+- `market.ticks.v1`
+- `market.candles.closed.v1`
+- `market.status.v1`
+- `market.volume-profile-bins.1m.v1`
+- `market.news.alpaca.v1`
+
+Retired market topic:
+
+- `market.candles.live.1m.v1`
+
+`market.candles.live.1m.v1`은 v1 legacy topic이다. v2 code/config contract에서는 제거하고, MSK에 남아 있으면 운영에서 lag/consumer가 0인지 확인한 뒤 수동 삭제한다.
+
+Order topics:
+
+- `orders.commands.v1`
+- `broker.submit-results.v1`
+- `broker.order-events.v1`
+- `orders.dlq.v1`
+
+Agent topics:
+
+- `agents.market-events.v1`
+- `agents.analysis-requests.v1`
+- `agents.analysis-results.v1`
+- `agents.notification-decisions.v1`
+- `agents.dlq.v1`
+
+Processed market event shape:
 
 ```json
 {
-  "eventId": "evt_01HY...",
-  "eventType": "market.alpaca.trade",
-  "schemaVersion": 1,
-  "occurredAt": "2026-07-02T13:30:00Z",
-  "ingestedAt": "2026-07-02T13:30:01Z",
+  "eventType": "TRADE",
+  "symbol": "TSLA",
+  "price": 244.12,
+  "size": 100,
+  "timestamp": "2026-07-02T13:30:00.123Z",
   "source": "alpaca",
-  "partitionKey": "TSLA",
-  "payload": {}
+  "feed": "iex"
+}
+```
+
+```json
+{
+  "eventType": "CANDLE",
+  "symbol": "TSLA",
+  "interval": "1m",
+  "timestamp": "2026-07-02T13:30:00.000Z",
+  "open": 244.01,
+  "high": 244.50,
+  "low": 243.95,
+  "close": 244.12,
+  "volume": 1200,
+  "isClosed": true,
+  "source": "stream-processor"
 }
 ```
 
@@ -659,6 +709,7 @@ Event envelope:
 
 - consumer는 at-least-once 처리를 전제로 한다.
 - 중복은 `eventId` 또는 natural key로 제거한다.
+- critical consumer는 downstream produce 또는 storage write 성공 후 offset을 commit한다.
 - schemaVersion을 올릴 때는 backward-compatible 변경을 우선한다.
 - 처리 실패 이벤트는 DLQ로 보낸다.
 
@@ -777,13 +828,14 @@ Order implementation:
 Kafka topic contract:
 
 - Raw topics: `market.raw.bars`, `market.raw.updated-bars`, `market.raw.trades`, `market.raw.daily-bars`, `market.raw.statuses`, `market.raw.quotes`, `market.raw.corrections`, `market.raw.cancel-errors`.
-- Processed topics: `market.ticks.v1`, `market.candles.live.1m.v1`, `market.candles.closed.v1`, `market.status.v1`, `market.volume-profile-bins.1m.v1`.
+- Processed topics: `market.ticks.v1`, `market.candles.closed.v1`, `market.status.v1`, `market.volume-profile-bins.1m.v1`, `market.news.alpaca.v1`.
+- Retired topic: `market.candles.live.1m.v1`은 v2 code/config contract에서 제거한다.
 - Agent/order topics: `orders.commands.v1`, `broker.submit-results.v1`, `broker.order-events.v1`, `orders.dlq.v1`, `agents.*`.
 
 Redis serving/cache:
 
 - 최신 체결은 `price:{symbol}:latest` hash로 저장하고 TTL은 1일이다.
-- 진행 중 candle은 `candle:{symbol}:{interval}:live`에 저장하고 TTL은 1일이다.
+- 진행 중 candle은 전역 Kafka topic이 아니라 `candle:{symbol}:{interval}:live` 같은 Redis subscription-scoped state에 저장하고 TTL은 1일이다.
 - 닫힌 candle은 `candle:{symbol}:{interval}:latest`와 `candles:{symbol}:{interval}` sorted set에 저장한다. latest TTL은 1일, series TTL은 7일이다.
 - market status는 `market:status:latest`, `market:status:{symbol}:latest`에 저장하고 TTL은 1일이다.
 - chart event는 `market.events`와 `market.events:{symbol}` Redis pub/sub channel로 발행한다.
@@ -791,8 +843,8 @@ Redis serving/cache:
 
 S3/ClickHouse 복구 흐름:
 
-- processed S3 sink는 `market.ticks.v1`, live/closed candle, status, volume profile topic을 소비한다.
-- 오늘/live 성격 데이터는 `S3_LIVE_PREFIX`, 확정 historical/canonical 데이터는 `S3_FINAL_PREFIX` 아래에 쓴다.
+- processed S3 sink는 `market.ticks.v1`, closed candle, status, volume profile topic을 소비한다.
+- 오늘 진행 중인 live state는 Redis/WebSocket 경로에 두고, S3에는 processed tick과 확정 historical/canonical 데이터를 중심으로 쓴다.
 - processed output 기본 format은 `S3_PROCESSED_FORMAT=parquet`이다.
 - candle partition은 `S3_MANIFEST_PREFIX` 아래 manifest를 쓴다.
 - canonical historical candle은 `priceAdjustment=split`, `canonicalVersion=v2` metadata를 요구한다.
