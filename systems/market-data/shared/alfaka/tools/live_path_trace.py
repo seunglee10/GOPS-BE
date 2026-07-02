@@ -32,7 +32,6 @@ def expected_processed_topics(environ=None):
     configured = parse_csv(environ.get("KAFKA_PROCESSED_TOPICS", ""))
     canonical = [
         environ.get("KAFKA_TICKS_TOPIC", "market.ticks.v1"),
-        environ.get("KAFKA_LIVE_CANDLE_TOPIC", "market.candles.live.1m.v1"),
         environ.get("KAFKA_CLOSED_CANDLE_TOPIC", "market.candles.closed.v1"),
         environ.get("KAFKA_STATUS_TOPIC", "market.status.v1"),
         environ.get("KAFKA_VOLUME_PROFILE_BINS_TOPIC", "market.volume-profile-bins.1m.v1"),
