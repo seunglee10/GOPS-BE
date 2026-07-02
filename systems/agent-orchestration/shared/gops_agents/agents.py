@@ -122,12 +122,12 @@ class NewsAgent(ProviderBackedAgent):
             symbol=context.symbol,
             intent=context.intent,
             evidence=evidence,
-            allow_runtime_openai=not news_only,
+            allow_runtime_openai=runtime_news_openai_allowed() and not news_only,
         )
         record_news_relevance_counts(context, evidence)
         analysis = analyze_news_evidence(context, evidence)
         openai_analysis = None
-        if not news_only:
+        if runtime_role_openai_allowed("news") and not news_only:
             openai_analysis = role_analysis_with_openai(
                 role="news",
                 context=context,
@@ -160,6 +160,15 @@ def add_context_timing_count(context: AgentContext, key: str, count: int = 1) ->
 def is_news_only_context(context: AgentContext) -> bool:
     roles = [str(role) for role in context.selectedRoles]
     return context.intentType == "news" and roles == ["news"]
+
+
+def runtime_news_openai_allowed() -> bool:
+    return str(os.getenv("AGENT_ALLOW_RUNTIME_NEWS_OPENAI") or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def runtime_role_openai_allowed(role: str) -> bool:
+    role_key = f"AGENT_{role.upper()}_ROLE_ANALYSIS_PROVIDER"
+    return os.getenv(role_key) == "openai" or os.getenv("AGENT_ROLE_ANALYSIS_PROVIDER") == "openai"
 
 
 def record_news_relevance_counts(context: AgentContext, evidence: list[EvidenceItem]) -> None:
@@ -982,7 +991,7 @@ def role_analysis_with_openai(
     schema_name: str,
 ) -> dict[str, Any] | None:
     api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key or os.getenv("AGENT_ROLE_ANALYSIS_PROVIDER") == "deterministic":
+    if not api_key or not runtime_role_openai_allowed(role):
         return None
     try:
         add_context_timing_count(context, "llmCalls", 1)

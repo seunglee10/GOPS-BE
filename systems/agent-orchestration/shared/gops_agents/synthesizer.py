@@ -14,6 +14,7 @@ from .contracts import (
     FinalAnswerCitation,
     FinalAnswerSection,
     IntentRoute,
+    SynthesisInput,
 )
 from .router import parse_openai_text_json
 
@@ -29,6 +30,7 @@ class FinalAnswerSynthesizer:
         provider_evidence: list[EvidenceItem],
         timing: dict[str, Any] | None = None,
         daily_summaries: list[dict[str, Any]] | None = None,
+        synthesis_input: SynthesisInput | None = None,
     ) -> FinalAnswer:
         if is_news_route(route):
             return self._synthesize_deterministic(
@@ -54,6 +56,7 @@ class FinalAnswerSynthesizer:
             findings=findings,
             provider_evidence=provider_evidence,
             timing=timing,
+            synthesis_input=synthesis_input,
         )
         if openai_answer:
             return openai_answer
@@ -92,6 +95,7 @@ class FinalAnswerSynthesizer:
         findings: list[AgentFinding],
         provider_evidence: list[EvidenceItem],
         timing: dict[str, Any] | None = None,
+        synthesis_input: SynthesisInput | None = None,
     ) -> FinalAnswer | None:
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key or os.getenv("AGENT_FINAL_ANSWER_PROVIDER") == "deterministic":
@@ -115,13 +119,14 @@ class FinalAnswerSynthesizer:
                     {
                         "role": "user",
                         "content": json.dumps(
-                            {
-                                "symbol": symbol,
-                                "intent": intent,
-                                "route": route.to_dict(),
-                                "findings": compact_findings(findings),
-                                "providerEvidence": compact_evidence(provider_evidence),
-                            },
+                            synthesis_payload(
+                                symbol=symbol,
+                                intent=intent,
+                                route=route,
+                                findings=findings,
+                                provider_evidence=provider_evidence,
+                                synthesis_input=synthesis_input,
+                            ),
                             ensure_ascii=False,
                         ),
                     },
@@ -259,6 +264,30 @@ def compact_evidence(items: list[EvidenceItem]) -> list[dict[str, Any]]:
             },
         })
     return compacted
+
+
+def synthesis_payload(
+    *,
+    symbol: str,
+    intent: str,
+    route: IntentRoute,
+    findings: list[AgentFinding],
+    provider_evidence: list[EvidenceItem],
+    synthesis_input: SynthesisInput | None,
+) -> dict[str, Any]:
+    if synthesis_input is not None:
+        return {
+            "symbol": symbol,
+            "intent": intent,
+            "synthesisInput": synthesis_input.to_dict(),
+        }
+    return {
+        "symbol": symbol,
+        "intent": intent,
+        "route": route.to_dict(),
+        "findings": compact_findings(findings),
+        "providerEvidence": compact_evidence(provider_evidence),
+    }
 
 
 def final_answer_from_openai_json(data: dict[str, Any]) -> FinalAnswer | None:

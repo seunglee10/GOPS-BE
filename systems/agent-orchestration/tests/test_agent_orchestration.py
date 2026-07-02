@@ -14,13 +14,14 @@ sys.modules.setdefault("boto3", types.SimpleNamespace(client=lambda *args, **kwa
 
 from gops_agents.agents import AgentContext, NewsAgent, OntologyAgent, VerificationGuardrailAgent
 from gops_agents.analysis_cache import MemoryAgentAnalysisCache, RedisAgentAnalysisCache
-from gops_agents.contracts import AgentFinding, EvidenceItem, FinalAnswer, IntentRoute, utc_now_iso
+from gops_agents.contracts import AgentFinding, DataSnapshot, EvidenceItem, FinalAnswer, IntentRoute, SynthesisInput, utc_now_iso
 from gops_agents.event_detector import MarketEventDetector, MarketEventThresholds
 from gops_agents.news_localization import NewsLocalizationService
 from gops_agents.orchestrator import AgentOrchestrator, canonical_analysis_intent, extract_symbol_from_intent
 from gops_agents.publisher import notification_payload
 from gops_agents.news_cache import MemoryNewsEvidenceCache, RedisNewsEvidenceCache
 from gops_agents.providers import ClickHouseNewsProvider, GraphDBOntologyProvider, ProviderRequest
+from gops_agents.router import route_intent
 from gops_agents.synthesizer import FinalAnswerSynthesizer
 import alfaka.alpaca.news  # noqa: F401
 import alfaka.common.secrets  # noqa: F401
@@ -222,6 +223,7 @@ class AgentOrchestrationTests(unittest.TestCase):
                 "AGENT_ONTOLOGY_FINAL_ANSWER_PROVIDER",
                 "AGENT_ROLE_ANALYSIS_PROVIDER",
                 "AGENT_FINAL_ANSWER_PROVIDER",
+                "AGENT_ALLOW_RUNTIME_NEWS_OPENAI",
             ]
         }
 
@@ -777,7 +779,8 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(second.timing["cacheLayer"], "analysis")
         self.assertEqual(second.timing["directNewsCount"], first.timing["directNewsCount"])
         self.assertEqual(second.timing["mentionNewsCount"], first.timing["mentionNewsCount"])
-        self.assertEqual(news_agent.calls, 1)
+        self.assertEqual(news_agent.calls, 0)
+        self.assertEqual(provider.clickhouse_provider.calls, 1)
         self.assertEqual(synthesizer.calls, 1)
         self.assertEqual(first.finalAnswer.summary, second.finalAnswer.summary)
         self.assertTrue(any(command["type"] == "layout.panel.move" for command in first.layoutProposal.commands))
@@ -813,7 +816,8 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertTrue(second.timing["cacheHit"])
         self.assertTrue(third.timing["cacheHit"])
         self.assertTrue(fourth.timing["cacheHit"])
-        self.assertEqual(news_agent.calls, 1)
+        self.assertEqual(news_agent.calls, 0)
+        self.assertEqual(provider.clickhouse_provider.calls, 1)
         self.assertEqual(synthesizer.calls, 1)
 
     def test_news_canonical_intent_separates_filtered_news_requests(self):
@@ -830,6 +834,89 @@ class AgentOrchestrationTests(unittest.TestCase):
 
         chart_route = IntentRoute(source="rule", intentType="chart", selectedRoles=["chart"], confidence=0.9, reason="test")
         self.assertEqual(canonical_analysis_intent("DDOG 뉴스 알려줘", chart_route, ["chart"]), "ddog 뉴스 알려줘")
+
+    def test_orchestrator_adds_snapshot_contract_and_hides_risk_snapshot_from_visible_trace(self):
+        provider = ClickHouseNewsProvider(
+            clickhouse_provider=FakeClickHouseProvider([
+                {
+                    "articleId": "snapshot-news-1",
+                    "headline": "NVDA shares rise after AI demand update",
+                    "summary": "NVDA demand for AI chips stayed strong.",
+                    "publishedAt": utc_now_iso(),
+                    "url": "https://example.com/snapshot-news",
+                    "symbols": ["NVDA"],
+                    "source": "alpaca",
+                }
+            ]),
+            publish_fallback=False,
+        )
+        orchestrator = AgentOrchestrator()
+        orchestrator.news_agent = NewsAgent(provider)
+
+        report = orchestrator.analyze({
+            "symbol": "NVDA",
+            "intent": "NVDA 뉴스 기반으로 영향 분석해줘",
+            "agentIds": ["agent-02"],
+        })
+
+        snapshot_types = {snapshot.snapshot_type for snapshot in report.snapshots}
+        self.assertEqual(report.routePlan.intent, "news_impact_analysis")
+        self.assertIn("news_snapshot", snapshot_types)
+        self.assertIn("relationship_snapshot", snapshot_types)
+        self.assertIn("risk_policy_snapshot", snapshot_types)
+        self.assertEqual(report.synthesisInput.run_id, report.routePlan.run_id)
+        self.assertEqual(report.finalResponse.answer_type, "news_impact_summary")
+        visible_types = {item["snapshot_type"] for item in report.agentTrace["visibleSnapshots"]}
+        self.assertIn("news_snapshot", visible_types)
+        self.assertNotIn("risk_policy_snapshot", visible_types)
+        self.assertEqual(report.agentTrace["hiddenSnapshots"], ["risk_policy_snapshot"])
+        self.assertLessEqual(report.finalResponse.llm_calls_used, 1)
+        self.assertTrue(report.finalResponse.partial_data_used)
+        self.assertIn("partial_data_used", report.finalResponse.risk_warnings)
+
+    def test_hybrid_router_does_not_call_openai_only_because_api_key_exists(self):
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False):
+            with patch("urllib.request.urlopen", side_effect=AssertionError("route LLM should be degraded-only")) as urlopen:
+                route = route_intent("분석해줘", None, "hybrid")
+
+        urlopen.assert_not_called()
+        self.assertEqual(route.source, "fallback")
+        self.assertEqual(route.selectedRoles, ["chart", "news", "macro", "ontology"])
+
+    def test_snapshot_hot_path_does_not_call_news_role_llm_even_when_enabled(self):
+        provider = ClickHouseNewsProvider(
+            clickhouse_provider=FakeClickHouseProvider([
+                {
+                    "articleId": "no-role-llm-1",
+                    "headline": "NVDA shares rise after strong earnings",
+                    "summary": "NVDA revenue beat expectations.",
+                    "publishedAt": utc_now_iso(),
+                    "url": "https://example.com/no-role-llm",
+                    "symbols": ["NVDA"],
+                    "source": "alpaca",
+                }
+            ]),
+            publish_fallback=False,
+        )
+        orchestrator = AgentOrchestrator()
+        orchestrator.news_agent = NewsAgent(provider)
+
+        with patch.dict(os.environ, {
+            "OPENAI_API_KEY": "test-key",
+            "AGENT_NEWS_ROLE_ANALYSIS_PROVIDER": "openai",
+            "AGENT_FINAL_ANSWER_PROVIDER": "deterministic",
+            "AGENT_NEWS_LOCALIZATION_PROVIDER": "deterministic",
+        }, clear=False):
+            with patch("urllib.request.urlopen", side_effect=AssertionError("news role LLM should not run in snapshot hot path")):
+                report = orchestrator.analyze({
+                    "symbol": "NVDA",
+                    "intent": "NVDA 왜 올랐어?",
+                    "routerMode": "rules",
+                    "agentIds": ["agent-02"],
+                })
+
+        self.assertEqual(report.timing["llmCalls"], 0)
+        self.assertIn("news_snapshot", {snapshot.snapshot_type for snapshot in report.snapshots})
 
     def test_orchestrator_analysis_cache_fail_open_when_redis_fails(self):
         provider = ClickHouseNewsProvider(
@@ -859,7 +946,8 @@ class AgentOrchestrationTests(unittest.TestCase):
         })
 
         self.assertFalse(report.timing["cacheHit"])
-        self.assertEqual(news_agent.calls, 1)
+        self.assertEqual(news_agent.calls, 0)
+        self.assertEqual(provider.clickhouse_provider.calls, 1)
         self.assertTrue(report.finalAnswer.summary)
 
     def test_news_content_request_does_not_route_to_ui_agent_when_ui_router_is_available(self):
@@ -986,6 +1074,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         with patch.dict(os.environ, {
             "OPENAI_API_KEY": "test-key",
             "AGENT_NEWS_LOCALIZATION_PROVIDER": "openai",
+            "AGENT_ALLOW_RUNTIME_NEWS_OPENAI": "true",
             "AGENT_ROLE_ANALYSIS_PROVIDER": "deterministic",
             "AGENT_FINAL_ANSWER_PROVIDER": "deterministic",
         }, clear=False):
@@ -1025,6 +1114,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         with patch.dict(os.environ, {
             "OPENAI_API_KEY": "test-key",
             "AGENT_NEWS_LOCALIZATION_PROVIDER": "openai",
+            "AGENT_ALLOW_RUNTIME_NEWS_OPENAI": "true",
             "AGENT_ROLE_ANALYSIS_PROVIDER": "deterministic",
             "AGENT_FINAL_ANSWER_PROVIDER": "deterministic",
         }, clear=False):
@@ -1070,6 +1160,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         with patch.dict(os.environ, {
             "OPENAI_API_KEY": "test-key",
             "AGENT_NEWS_LOCALIZATION_PROVIDER": "openai",
+            "AGENT_ALLOW_RUNTIME_NEWS_OPENAI": "true",
             "AGENT_ROLE_ANALYSIS_PROVIDER": "deterministic",
         }, clear=False):
             with patch("urllib.request.urlopen", return_value=FakeOpenAIResponse(response)) as urlopen:
@@ -1483,7 +1574,11 @@ class AgentOrchestrationTests(unittest.TestCase):
             })
         }
 
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key", "AGENT_NEWS_LOCALIZATION_PROVIDER": "deterministic"}, clear=False):
+        with patch.dict(os.environ, {
+            "OPENAI_API_KEY": "test-key",
+            "AGENT_NEWS_LOCALIZATION_PROVIDER": "deterministic",
+            "AGENT_ROLE_ANALYSIS_PROVIDER": "openai",
+        }, clear=False):
             with patch("urllib.request.urlopen", return_value=FakeOpenAIResponse(response)):
                 openai_finding = NewsAgent(provider).analyze(context)
             with patch("urllib.request.urlopen", return_value=FakeOpenAIResponse({"output_text": "{invalid"})):
@@ -1811,6 +1906,65 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertNotIn("providerEvidence", answer.summary)
         self.assertIn("근거", answer.summary)
         self.assertEqual(answer.citations[0].provider, "ontology")
+
+    def test_openai_synthesizer_uses_synthesis_input_payload_when_available(self):
+        response = {
+            "output_text": json.dumps({
+                "title": "NVDA 통합 분석",
+                "summary": "snapshot 근거를 바탕으로 요약했습니다.",
+                "sections": [{"title": "근거", "bullets": ["뉴스 snapshot이 있습니다."]}],
+                "citations": [],
+                "limitations": [],
+            })
+        }
+        evidence = [
+            EvidenceItem(
+                provider="news",
+                status="available",
+                title="NVDA shares rise",
+                summary="NVDA demand stayed strong.",
+            )
+        ]
+        synthesis_input = SynthesisInput(
+            run_id="run-test",
+            original_prompt="NVDA 영향 분석",
+            intent="news_impact_analysis",
+            snapshots=[
+                DataSnapshot(
+                    snapshot_id="snapshot-test",
+                    run_id="run-test",
+                    snapshot_type="news_snapshot",
+                    status="success",
+                    source="cache",
+                    cache_hit=True,
+                    summary="뉴스 snapshot",
+                    evidence=evidence,
+                    confidence=0.7,
+                )
+            ],
+        )
+
+        with patch.dict(
+            os.environ,
+            {"OPENAI_API_KEY": "test-key", "AGENT_ONTOLOGY_FINAL_ANSWER_PROVIDER": "openai"},
+            clear=False,
+        ):
+            with patch("urllib.request.urlopen", return_value=FakeOpenAIResponse(response)) as urlopen:
+                answer = FinalAnswerSynthesizer().synthesize(
+                    symbol="NVDA",
+                    intent="NVDA 영향 분석",
+                    route=IntentRoute("rule", "ontology", ["ontology"], 0.9, "test"),
+                    findings=[],
+                    provider_evidence=evidence,
+                    synthesis_input=synthesis_input,
+                )
+
+        request_payload = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+        user_payload = json.loads(request_payload["input"][1]["content"])
+        self.assertEqual(answer.title, "NVDA 통합 분석")
+        self.assertIn("synthesisInput", user_payload)
+        self.assertNotIn("providerEvidence", user_payload)
+        self.assertNotIn("findings", user_payload)
 
     def test_openai_synthesizer_falls_back_on_invalid_json(self):
         evidence = [

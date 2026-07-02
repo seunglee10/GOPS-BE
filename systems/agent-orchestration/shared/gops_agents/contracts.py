@@ -64,6 +64,153 @@ class IntentRoute:
 
 
 @dataclass
+class RuntimePolicy:
+    max_realtime_llm_calls: int = 1
+    default_route_strategy: str = "rule_search_cache"
+    route_llm_fallback: str = "degraded_only"
+    route_llm_fallback_threshold: float = 0.75
+    llm_guardrail: str = "degraded_only"
+    max_items_per_snapshot: int = 5
+    max_total_synthesis_evidence_items: int = 15
+    max_synthesis_output_tokens: int = 350
+    stream_synthesis_response: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class RoutePlan:
+    run_id: str
+    intent: str
+    route_confidence: float
+    entity_candidates: list[str] = field(default_factory=list)
+    snapshot_bundle: list[str] = field(default_factory=list)
+    execution_mode: str = "parallel_snapshots"
+    llm_calls_allowed: int = 1
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class ResolvedEntity:
+    raw_name: str
+    canonical_name: str
+    ticker: str | None = None
+    market: str = "US"
+    asset_type: str = "stock"
+    graph_node_id: str | None = None
+    aliases: list[str] = field(default_factory=list)
+    confidence: float = 0.5
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class AgentSignal:
+    target: str
+    direction: str = "unknown"
+    horizon: str = "unknown"
+    strength: str = "low"
+    reasoning: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class DataSnapshot:
+    snapshot_id: str
+    run_id: str
+    snapshot_type: str
+    status: str
+    source: str
+    cache_hit: bool
+    freshness: dict[str, Any] = field(default_factory=dict)
+    summary: str = ""
+    signals: list[AgentSignal] = field(default_factory=list)
+    evidence: list[EvidenceItem] = field(default_factory=list)
+    data_quality: str = "low"
+    confidence: float = 0.5
+    latency_ms: float = 0.0
+    warnings: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        data["signals"] = [item.to_dict() for item in self.signals]
+        data["evidence"] = [item.to_dict() for item in self.evidence]
+        return data
+
+
+@dataclass
+class SynthesisInput:
+    run_id: str
+    original_prompt: str
+    intent: str
+    entities: list[ResolvedEntity] = field(default_factory=list)
+    snapshots: list[DataSnapshot] = field(default_factory=list)
+    missing_data: list[str] = field(default_factory=list)
+    risk_warnings: list[str] = field(default_factory=list)
+    output_policy: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        data["entities"] = [item.to_dict() for item in self.entities]
+        data["snapshots"] = [item.to_dict() for item in self.snapshots]
+        return data
+
+
+@dataclass
+class FinalResponse:
+    run_id: str
+    answer_type: str
+    summary: str
+    key_points: list[str] = field(default_factory=list)
+    bullish_points: list[str] = field(default_factory=list)
+    bearish_points: list[str] = field(default_factory=list)
+    relationship_impacts: list[str] = field(default_factory=list)
+    risk_warnings: list[str] = field(default_factory=list)
+    data_freshness_warnings: list[str] = field(default_factory=list)
+    partial_data_used: bool = False
+    confidence: float = 0.5
+    final_stance: str = "not_applicable"
+    latency_ms: float = 0.0
+    llm_calls_used: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class LatencyStage:
+    stage: str
+    latency_ms: float
+    status: str
+    cache_hit: bool | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cached_tokens: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {key: value for key, value in asdict(self).items() if value is not None}
+
+
+@dataclass
+class LatencyTrace:
+    run_id: str
+    total_latency_ms: float = 0.0
+    llm_calls_used: int = 0
+    stages: list[LatencyStage] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        data["stages"] = [item.to_dict() for item in self.stages]
+        return data
+
+
+@dataclass
 class FinalAnswerCitation:
     provider: str
     title: str
@@ -232,6 +379,13 @@ class AnalysisReport:
     chartProposal: dict[str, Any] | None = None
     dailySummaries: list[dict[str, Any]] = field(default_factory=list)
     timing: dict[str, Any] = field(default_factory=dict)
+    routePlan: RoutePlan | None = None
+    resolvedEntities: list[ResolvedEntity] = field(default_factory=list)
+    snapshots: list[DataSnapshot] = field(default_factory=list)
+    synthesisInput: SynthesisInput | None = None
+    finalResponse: FinalResponse | None = None
+    latencyTrace: LatencyTrace | None = None
+    agentTrace: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -242,4 +396,10 @@ class AnalysisReport:
         data["finalAnswer"] = self.finalAnswer.to_dict() if self.finalAnswer else None
         data["notificationDecision"] = self.notificationDecision.to_dict() if self.notificationDecision else None
         data["layoutProposal"] = self.layoutProposal.to_dict() if self.layoutProposal else None
+        data["routePlan"] = self.routePlan.to_dict() if self.routePlan else None
+        data["resolvedEntities"] = [item.to_dict() for item in self.resolvedEntities]
+        data["snapshots"] = [item.to_dict() for item in self.snapshots]
+        data["synthesisInput"] = self.synthesisInput.to_dict() if self.synthesisInput else None
+        data["finalResponse"] = self.finalResponse.to_dict() if self.finalResponse else None
+        data["latencyTrace"] = self.latencyTrace.to_dict() if self.latencyTrace else None
         return data

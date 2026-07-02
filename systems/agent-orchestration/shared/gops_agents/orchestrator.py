@@ -25,6 +25,18 @@ from .agents import (
 )
 from .contracts import AgentFinding, AnalysisReport, EvidenceItem, FinalAnswer, IntentRoute, MarketEvent, stable_id, utc_now_iso
 from .router import route_intent
+from .snapshots import (
+    SnapshotExecutor,
+    apply_rule_guardrail,
+    build_route_plan,
+    build_synthesis_input,
+    final_response_from_answer,
+    latency_trace_from_timing,
+    resolve_entities_for_plan,
+    role_findings_from_snapshots,
+    runtime_policy_from_env,
+    snapshots_from_cached_evidence,
+)
 from .synthesizer import FinalAnswerSynthesizer
 from .ui_intent import route_ui_intent
 
@@ -64,6 +76,8 @@ class AgentOrchestrator:
         self.layout_agent = LayoutAgent()
         self.ui_agent = UIAgent()
         self.synthesizer = FinalAnswerSynthesizer()
+        self.runtime_policy = runtime_policy_from_env()
+        self.snapshot_executor = SnapshotExecutor(news_agent=self.news_agent, ontology_agent=self.ontology_agent)
         self.workflow = self._build_workflow()
 
     def analyze(self, request: dict[str, Any]) -> AnalysisReport:
@@ -86,6 +100,8 @@ class AgentOrchestrator:
             graph = StateGraph(dict)
             graph.add_node("normalize_request", self._normalize_request)
             graph.add_node("route_intent", self._route_intent)
+            graph.add_node("build_snapshot_plan", self._build_snapshot_plan)
+            graph.add_node("fetch_data_snapshots", self._fetch_data_snapshots)
             graph.add_node("run_selected_role_agents", self._run_selected_role_agents)
             graph.add_node("verify", self._verify)
             graph.add_node("synthesize_final_answer", self._synthesize_final_answer)
@@ -93,7 +109,9 @@ class AgentOrchestrator:
             graph.add_node("propose_layout", self._propose_layout)
             graph.set_entry_point("normalize_request")
             graph.add_edge("normalize_request", "route_intent")
-            graph.add_edge("route_intent", "run_selected_role_agents")
+            graph.add_edge("route_intent", "build_snapshot_plan")
+            graph.add_edge("build_snapshot_plan", "fetch_data_snapshots")
+            graph.add_edge("fetch_data_snapshots", "run_selected_role_agents")
             graph.add_edge("run_selected_role_agents", "verify")
             graph.add_edge("verify", "synthesize_final_answer")
             graph.add_edge("synthesize_final_answer", "decide_notification")
@@ -108,6 +126,8 @@ class AgentOrchestrator:
         for node in [
             self._normalize_request,
             self._route_intent,
+            self._build_snapshot_plan,
+            self._fetch_data_snapshots,
             self._run_selected_role_agents,
             self._verify,
             self._synthesize_final_answer,
@@ -147,8 +167,17 @@ class AgentOrchestrator:
             newsSymbols=list(news_topic["symbols"]) if news_topic else [],
             newsTopic=str(news_topic["label"]) if news_topic else None,
         )
+        run_id = stable_id(
+            "run",
+            {
+                "symbol": symbol,
+                "intent": intent,
+                "createdAt": request.get("createdAt") or utc_now_iso(),
+            },
+        )
         return {
             **state,
+            "run_id": run_id,
             "symbol": symbol,
             "intent": intent,
             "events": events,
@@ -183,6 +212,51 @@ class AgentOrchestrator:
         state["context"].intentType = route.intentType
         state["context"].selectedRoles = list(selected_roles)
         return self._load_analysis_cache({**state, "route": route, "selected_roles": selected_roles, "ui_intent": None})
+
+    def _build_snapshot_plan(self, state: dict[str, Any]) -> dict[str, Any]:
+        if is_ui_layout_state(state):
+            return {**state, "runtime_policy": self.runtime_policy, "route_plan": None, "resolved_entities": []}
+        started_at = time.perf_counter()
+        policy = runtime_policy_from_env()
+        route_plan = build_route_plan(state["run_id"], state["route"], state["context"], policy)
+        add_timing_ms(state, "routeAndPlanMs", (time.perf_counter() - started_at) * 1000)
+
+        entity_started_at = time.perf_counter()
+        resolved_entities = resolve_entities_for_plan(state["context"], route_plan)
+        add_timing_ms(state, "entityResolveMs", (time.perf_counter() - entity_started_at) * 1000)
+        return {
+            **state,
+            "runtime_policy": policy,
+            "route_plan": route_plan,
+            "resolved_entities": resolved_entities,
+        }
+
+    def _fetch_data_snapshots(self, state: dict[str, Any]) -> dict[str, Any]:
+        route_plan = state.get("route_plan")
+        if is_ui_layout_state(state) or route_plan is None:
+            return {**state, "snapshots": []}
+
+        started_at = time.perf_counter()
+        if state.get("analysis_cache_hit"):
+            snapshots = snapshots_from_cached_evidence(
+                state["run_id"],
+                state["context"],
+                route_plan,
+                list(state.get("provider_evidence", [])),
+            )
+        else:
+            executor = SnapshotExecutor(news_agent=self.news_agent, ontology_agent=self.ontology_agent)
+            snapshots = executor.fetch(
+                context=state["context"],
+                run_id=state["run_id"],
+                route_plan=route_plan,
+                policy=state.get("runtime_policy") or self.runtime_policy,
+            )
+        add_timing_ms(state, "snapshotFetchMs", (time.perf_counter() - started_at) * 1000)
+        for snapshot in snapshots:
+            if snapshot.snapshot_type == "news_snapshot":
+                record_news_relevance_counts(state["context"], snapshot.evidence)
+        return {**state, "snapshots": snapshots}
 
     def _load_analysis_cache(self, state: dict[str, Any]) -> dict[str, Any]:
         cache_key = analysis_cache_key_for_state(state)
@@ -252,6 +326,18 @@ class AgentOrchestrator:
         }
         if not selected_roles:
             return {**state, "role_findings": []}
+
+        snapshots = list(state.get("snapshots", []))
+        if snapshots and os.getenv("AGENT_USE_SNAPSHOT_HOT_PATH", "true").lower() not in {"0", "false", "no"}:
+            started_at = time.perf_counter()
+            try:
+                return {
+                    **state,
+                    "role_findings": role_findings_from_snapshots(selected_roles, snapshots, state["context"]),
+                }
+            finally:
+                add_timing_ms(state, "roleAnalysisMs", (time.perf_counter() - started_at) * 1000)
+
         started_at = time.perf_counter()
         try:
             if len(selected_roles) == 1:
@@ -315,6 +401,17 @@ class AgentOrchestrator:
         role_findings = state["role_findings"]
         provider_evidence = state["provider_evidence"]
         route = state["route"]
+        route_plan = state.get("route_plan")
+        synthesis_input = None
+        if route_plan is not None:
+            synthesis_input = build_synthesis_input(
+                run_id=state["run_id"],
+                intent=route_plan.intent,
+                original_prompt=intent,
+                entities=list(state.get("resolved_entities", [])),
+                snapshots=list(state.get("snapshots", [])),
+                policy=state.get("runtime_policy") or self.runtime_policy,
+            )
         analysis_id = stable_id(
             "analysis",
             {
@@ -345,6 +442,7 @@ class AgentOrchestrator:
                     provider_evidence=provider_evidence,
                     timing=state.get("timing"),
                     daily_summaries=list(state["context"].newsDailySummaries),
+                    synthesis_input=synthesis_input,
                 )
             finally:
                 add_timing_ms(state, "finalAnswerMs", (time.perf_counter() - started_at) * 1000)
@@ -353,6 +451,7 @@ class AgentOrchestrator:
             **state,
             "analysis_id": analysis_id,
             "final_answer": final_answer,
+            "synthesis_input": synthesis_input,
             "summary": summary,
         }
         self._store_analysis_cache(next_state)
@@ -371,6 +470,27 @@ class AgentOrchestrator:
                 state["final_answer"].summary = layout.rationale
         else:
             layout = self.layout_agent.propose(context, state.get("route"))
+        timing = finalize_timing(state)
+        route_plan = state.get("route_plan")
+        snapshots = list(state.get("snapshots", []))
+        final_response = (
+            final_response_from_answer(
+                run_id=state["run_id"],
+                route_plan=route_plan,
+                answer=state["final_answer"],
+                snapshots=snapshots,
+                timing=timing,
+            )
+            if route_plan and state.get("final_answer")
+            else None
+        )
+        if final_response is not None and route_plan is not None:
+            guardrail_started_at = time.perf_counter()
+            final_response = apply_rule_guardrail(final_response, route_plan, snapshots)
+            add_timing_ms(state, "guardrailMs", (time.perf_counter() - guardrail_started_at) * 1000)
+            timing = finalize_timing(state)
+            final_response.latency_ms = float(timing.get("totalMs") or 0.0)
+        latency_trace = latency_trace_from_timing(state["run_id"], timing, snapshots)
         report = AnalysisReport(
             analysisId=state["analysis_id"],
             symbol=state["symbol"],
@@ -392,7 +512,14 @@ class AgentOrchestrator:
             layoutProposal=layout,
             chartProposal=request.get("chartProposal") if isinstance(request.get("chartProposal"), dict) else None,
             dailySummaries=list(context.newsDailySummaries),
-            timing=finalize_timing(state),
+            timing=timing,
+            routePlan=route_plan,
+            resolvedEntities=list(state.get("resolved_entities", [])),
+            snapshots=snapshots,
+            synthesisInput=state.get("synthesis_input"),
+            finalResponse=final_response,
+            latencyTrace=latency_trace,
+            agentTrace=build_agent_trace(snapshots),
         )
         return {**state, "layout": layout, "report": report}
 
@@ -447,8 +574,12 @@ def empty_timing() -> dict[str, Any]:
         "cacheHit": False,
         "cacheLayer": "none",
         "newsFetchMs": 0.0,
+        "routeAndPlanMs": 0.0,
+        "entityResolveMs": 0.0,
+        "snapshotFetchMs": 0.0,
         "roleAnalysisMs": 0.0,
         "finalAnswerMs": 0.0,
+        "guardrailMs": 0.0,
         "llmCalls": 0,
         "directNewsCount": 0,
         "mentionNewsCount": 0,
@@ -468,7 +599,7 @@ def finalize_timing(state: dict[str, Any]) -> dict[str, Any]:
     started_at = state.get("timing_started_at")
     if isinstance(started_at, (int, float)):
         timing["totalMs"] = (time.perf_counter() - started_at) * 1000
-    for key in ["totalMs", "newsFetchMs", "roleAnalysisMs", "finalAnswerMs"]:
+    for key in ["totalMs", "newsFetchMs", "roleAnalysisMs", "finalAnswerMs", "routeAndPlanMs", "entityResolveMs", "snapshotFetchMs", "guardrailMs"]:
         value = timing.get(key)
         timing[key] = round(float(value) if isinstance(value, (int, float)) else 0.0, 3)
     for key in ["llmCalls", "directNewsCount", "mentionNewsCount"]:
@@ -477,6 +608,24 @@ def finalize_timing(state: dict[str, Any]) -> dict[str, Any]:
     timing["cacheHit"] = bool(timing.get("cacheHit"))
     timing["cacheLayer"] = str(timing.get("cacheLayer") or "none")
     return timing
+
+
+def build_agent_trace(snapshots) -> dict[str, Any]:
+    visible = [
+        snapshot
+        for snapshot in snapshots
+        if getattr(snapshot, "snapshot_type", "") in {"market_snapshot", "news_snapshot", "relationship_snapshot"}
+    ]
+    hidden = [snapshot for snapshot in snapshots if getattr(snapshot, "snapshot_type", "") == "risk_policy_snapshot"]
+    return {
+        "visibleSnapshots": [snapshot.to_dict() for snapshot in visible],
+        "hiddenSnapshots": [snapshot.snapshot_type for snapshot in hidden],
+        "warnings": [
+            warning
+            for snapshot in snapshots
+            for warning in getattr(snapshot, "warnings", [])
+        ],
+    }
 
 
 def analysis_cache_key_for_state(state: dict[str, Any]) -> str | None:
