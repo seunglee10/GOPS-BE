@@ -38,17 +38,20 @@ data:
   KAFKA_RAW_S3_GROUP_ID: alfaka-raw-s3-archive
   KAFKA_PROCESSOR_GROUP_ID: alfaka-market-processor
   KAFKA_TICKS_TOPIC: market.ticks.v1
-  KAFKA_LIVE_CANDLE_TOPIC: market.candles.live.1m.v1
   KAFKA_CLOSED_CANDLE_TOPIC: market.candles.closed.v1
   KAFKA_STATUS_TOPIC: market.status.v1
   KAFKA_VOLUME_PROFILE_BINS_TOPIC: market.volume-profile-bins.1m.v1
   KAFKA_NEWS_TOPIC: market.news.alpaca.v1
   VOLUME_PROFILE_PRICE_BIN_SIZE: "0.05"
   PROCESSOR_LOG_EVERY_N: "500"
+  CANDLE_WATERMARK_GRACE_SECONDS: "5"
+  CANDLE_FLUSH_INTERVAL_SECONDS: "1"
+  KAFKA_PROCESSOR_ENABLE_AUTO_COMMIT: "false"
   PROCESSOR_RECOVERY_SYMBOLS: ""
   PROCESSOR_RECOVERY_CLICKHOUSE_ENABLED: "false"
   COMPONENT_HEALTH_TTL_SECONDS: "300"
-  KAFKA_PROCESSED_TOPICS: market.ticks.v1,market.candles.live.1m.v1,market.candles.closed.v1,market.status.v1,market.volume-profile-bins.1m.v1
+  KAFKA_PROCESSED_TOPICS: market.ticks.v1,market.candles.closed.v1,market.status.v1,market.volume-profile-bins.1m.v1
+  KAFKA_S3_ENABLE_AUTO_COMMIT: "false"
   KAFKA_CLICKHOUSE_ENABLE_AUTO_COMMIT: "false"
   KAFKA_CLICKHOUSE_TOPICS: market.candles.closed.v1,market.status.v1,market.volume-profile-bins.1m.v1,market.news.alpaca.v1
   CLICKHOUSE_HTTP_URL: http://YOUR_CLICKHOUSE_ENDPOINT:8123
@@ -67,10 +70,10 @@ data:
   AUTH_COOKIE_SAMESITE: lax
   GOOGLE_OAUTH_SECRET_NAME: oauth/google
   S3_BUCKET: gops-market-data-<aws-account-id>-ap-northeast-2-an
-  S3_RAW_PREFIX: market-data/rebuild-20260701/raw/alpaca
-  S3_FINAL_PREFIX: market-data/rebuild-20260701/final
-  S3_LIVE_PREFIX: market-data/rebuild-20260701/live
-  S3_MANIFEST_PREFIX: market-data/rebuild-20260701/manifest
+  S3_RAW_PREFIX: market-data/v2/tick-candle/raw/alpaca
+  S3_FINAL_PREFIX: market-data/v2/tick-candle/final
+  S3_LIVE_PREFIX: market-data/v2/tick-candle/live
+  S3_MANIFEST_PREFIX: market-data/v2/tick-candle/manifest
   S3_PROCESSED_FORMAT: parquet
   S3_HISTORICAL_RAW_PARTITION_MODE: chunk
   S3_HISTORICAL_PROCESSED_MANIFEST_LAYOUT: compact
@@ -80,7 +83,7 @@ data:
   S3_RAW_FLUSH_INTERVAL_SECONDS: "60"
   S3_PUT_MAX_ATTEMPTS: "3"
   S3_PUT_RETRY_SLEEP_SECONDS: "1"
-  S3_MATERIALIZE_PREFIX: market-data/rebuild-20260701/final
+  S3_MATERIALIZE_PREFIX: market-data/v2/tick-candle/final
   S3_MATERIALIZE_KEYS: ""
   S3_MATERIALIZE_MAX_OBJECTS: ""
   HISTORICAL_ADJUSTMENT: split
@@ -136,7 +139,7 @@ data:
   KAFKA_ORDER_EVENTS_TOPIC: broker.order-events.v1
   KAFKA_DLQ_TOPIC: orders.dlq.v1
   AGENT_ORCHESTRATOR_URL: http://agent-orchestrator:8100
-  AGENT_EVENT_INPUT_TOPICS: market.ticks.v1,market.candles.live.1m.v1,market.candles.closed.v1
+  AGENT_EVENT_INPUT_TOPICS: market.ticks.v1,market.candles.closed.v1
   AGENT_MARKET_EVENTS_TOPIC: agents.market-events.v1
   AGENT_ANALYSIS_REQUESTS_TOPIC: agents.analysis-requests.v1
   AGENT_ANALYSIS_RESULTS_TOPIC: agents.analysis-results.v1
