@@ -8,7 +8,6 @@ inputTopics:
   - market.raw.trades
 outputTopics:
   ticks: market.ticks.v1
-  liveCandle1m: market.candles.live.1m.v1
   closedCandles: market.candles.closed.v1
 redisKeys:
   latestPrice: price:{symbol}:latest
@@ -16,9 +15,8 @@ redisKeys:
   latestClosedCandle: candle:{symbol}:{interval}:latest
   recentCandles: candles:{symbol}:{interval}
 s3Paths:
-  finalCandles: market-data/final/candles/interval={interval}/symbol={symbol}/year={yyyy}/month={mm}/day={dd}/
-  liveCandles: market-data/live/candles/interval=1m/symbol={symbol}/year={yyyy}/month={mm}/day={dd}/
-  liveTrades: market-data/live/trades/symbol={symbol}/year={yyyy}/month={mm}/day={dd}/hour={hh}/
+  finalCandles: market-data/v2/tick-candle/final/candles/interval={interval}/symbol={symbol}/year={yyyy}/month={mm}/day={dd}/
+  liveTrades: market-data/v2/tick-candle/live/trades/symbol={symbol}/year={yyyy}/month={mm}/day={dd}/hour={hh}/
 calculations:
   intervals:
     - 1m
