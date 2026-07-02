@@ -47,7 +47,7 @@ from alfaka.serving.intervals import candle_count_for_1y, candle_count_for_24h, 
 from alfaka.serving.provider import MarketDataProvider, has_more_before_target, target_range_from_for_interval
 from alfaka.serving.redis_provider import RedisMarketDataProvider
 from alfaka.serving.symbol_registry import SymbolRegistry
-from alfaka.storage.clickhouse_loader import candle_to_clickhouse_row, load_payload, news_to_clickhouse_row, status_to_clickhouse_row, symbol_to_clickhouse_row, trade_to_clickhouse_row
+from alfaka.storage.clickhouse_loader import candle_to_clickhouse_row, clickhouse_topics_from_env, load_payload, news_to_clickhouse_row, status_to_clickhouse_row, symbol_to_clickhouse_row, trade_to_clickhouse_row
 from alfaka.storage.s3_materializer import (
     detect_s3_object_format,
     list_s3_objects,
@@ -57,11 +57,11 @@ from alfaka.storage.s3_materializer import (
     normalize_processed_candle_row,
     read_s3_rows,
 )
-from alfaka.storage.processed_s3_sink import flush_buffer, flush_due_buffers, normalize_storage_row, s3_partition_key
+from alfaka.storage.processed_s3_sink import flush_buffer, flush_due_buffers, normalize_storage_row, processed_topics_from_env, run_processed_s3_sink, s3_partition_key
 from alfaka.storage.raw_s3_archive_sink import flush_raw_buffer, raw_archive_row, raw_envelope_partition_key, raw_s3_archive_runtime_config, run_raw_s3_archive_sink
 from alfaka.storage.raw_s3_archive import raw_chunk_partition_key, raw_object_suffix, raw_partition_key, upload_raw_page_to_s3
 from alfaka.storage.s3_manifest import processed_candle_keys_from_manifest, raw_keys_from_manifest
-from alfaka.streaming.processor import ProcessorState, process_raw_envelope, processor_runtime_config, recover_processor_state_from_clickhouse, recover_processor_state_from_redis, write_closed_candle_to_redis
+from alfaka.streaming.processor import ProcessorState, flush_ready_closed_candles, process_raw_envelope, processor_runtime_config, recover_processor_state_from_clickhouse, recover_processor_state_from_redis, run_stream_processor, write_closed_candle_to_redis
 from alfaka.streaming.transforms import (
     CandleAggregator,
     VolumeProfileBinBuilder,
@@ -584,9 +584,13 @@ class TimestampCoverageProvider(StaticCoverageProvider):
 class RecordingProducer:
     def __init__(self):
         self.sent = []
+        self.flush_count = 0
 
     def send(self, topic, key, value):
         self.sent.append({"topic": topic, "key": key, "value": value})
+
+    def flush(self):
+        self.flush_count += 1
 
 
 class RecordingKafkaConsumer:
@@ -596,6 +600,22 @@ class RecordingKafkaConsumer:
         self.topics = topics
         self.kwargs = kwargs
         RecordingKafkaConsumer.calls.append({"topics": topics, "kwargs": kwargs})
+
+
+class OneBatchKafkaConsumer:
+    def __init__(self, value):
+        self.value = value
+        self.poll_count = 0
+        self.commits = 0
+
+    def poll(self, timeout_ms=1000):
+        self.poll_count += 1
+        if self.poll_count == 1:
+            return {None: [types.SimpleNamespace(value=self.value)]}
+        raise KeyboardInterrupt
+
+    def commit(self):
+        self.commits += 1
 
 
 class FakeWebSocket:
@@ -786,6 +806,22 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(config["recovery_symbols"], ["AAPL", "MSFT"])
         self.assertTrue(config["clickhouse_recovery_enabled"])
 
+    def test_clickhouse_topic_defaults_append_ticks_only_when_trade_load_enabled(self):
+        environ = {
+            "KAFKA_CLICKHOUSE_TOPICS": "market.candles.closed.v1,market.status.v1",
+            "KAFKA_TICKS_TOPIC": "market.ticks.v1",
+        }
+
+        self.assertEqual(clickhouse_topics_from_env(environ, load_trades=False), [
+            "market.candles.closed.v1",
+            "market.status.v1",
+        ])
+        self.assertEqual(clickhouse_topics_from_env(environ, load_trades=True), [
+            "market.candles.closed.v1",
+            "market.status.v1",
+            "market.ticks.v1",
+        ])
+
     def test_processor_runtime_config_rejects_placeholders(self):
         with self.assertRaisesRegex(RuntimeError, "placeholder"):
             processor_runtime_config({
@@ -893,7 +929,6 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "KAFKA_RAW_TOPIC_PREFIX": "market.raw",
             "KAFKA_PROCESSOR_GROUP_ID": "alfaka-market-processor",
             "KAFKA_TICKS_TOPIC": "market.ticks.v1",
-            "KAFKA_LIVE_CANDLE_TOPIC": "market.candles.live.1m.v1",
             "KAFKA_CLOSED_CANDLE_TOPIC": "market.candles.closed.v1",
             "KAFKA_STATUS_TOPIC": "market.status.v1",
             "KAFKA_VOLUME_PROFILE_BINS_TOPIC": "market.volume-profile-bins.1m.v1",
@@ -919,7 +954,6 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         keys = RedisKeyBuilder()
         topics = {
             "ticks": "market.ticks.v1",
-            "live_candle": "market.candles.live.1m.v1",
             "closed_candle": "market.candles.closed.v1",
             "status": "market.status.v1",
             "profile": "market.volume-profile-bins.1m.v1",
@@ -934,7 +968,6 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(result, "trades")
         self.assertEqual([sent["topic"] for sent in producer.sent], [
             "market.ticks.v1",
-            "market.candles.live.1m.v1",
             "market.volume-profile-bins.1m.v1",
         ])
         self.assertEqual(redis.hashes[keys.price_latest("AAPL")]["price"], 195.2)
@@ -955,19 +988,50 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         keys = RedisKeyBuilder()
         topics = {
             "ticks": "market.ticks.v1",
-            "live_candle": "market.candles.live.1m.v1",
             "closed_candle": "market.candles.closed.v1",
             "status": "market.status.v1",
             "profile": "market.volume-profile-bins.1m.v1",
         }
         state = ProcessorState()
-
-        for message in (
-            {"T": "d", "S": "AAPL", "t": "2026-06-24T00:00:00.000Z", "o": 180, "h": 186, "l": 179, "c": 185, "v": 1000},
-            {"T": "b", "S": "AAPL", "t": "2026-06-25T10:15:00.000Z", "o": 190, "h": 191, "l": 189, "c": 190.5, "v": 100},
-            {"T": "t", "S": "AAPL", "i": 124, "p": 195.2, "s": 10, "t": "2026-06-25T10:17:20.100Z"},
-        ):
-            process_raw_envelope(build_raw_envelope(message, "sip"), producer, redis, keys, state, topics)
+        closed_1d = {
+            "eventType": "CANDLE",
+            "symbol": "AAPL",
+            "interval": "1D",
+            "timestamp": "2026-06-24T00:00:00.000Z",
+            "open": 180,
+            "high": 186,
+            "low": 179,
+            "close": 185,
+            "volume": 1000,
+            "isClosed": True,
+            "source": "test",
+            "feed": "sip",
+        }
+        closed_1m = {
+            "eventType": "CANDLE",
+            "symbol": "AAPL",
+            "interval": "1m",
+            "timestamp": "2026-06-25T10:15:00.000Z",
+            "open": 190,
+            "high": 191,
+            "low": 189,
+            "close": 190.5,
+            "volume": 100,
+            "tradeCount": 1,
+            "isClosed": True,
+            "source": "test",
+            "feed": "sip",
+        }
+        state.provisional_state.record_closed(closed_1d)
+        state.provisional_state.record_closed(closed_1m)
+        process_raw_envelope(
+            build_raw_envelope({"T": "t", "S": "AAPL", "i": 124, "p": 195.2, "s": 10, "t": "2026-06-25T10:17:20.100Z"}, "sip"),
+            producer,
+            redis,
+            keys,
+            state,
+            topics,
+        )
 
         live_5m = json.loads(redis.values[keys.live_candle("AAPL", "5m")])
         live_10m = json.loads(redis.values[keys.live_candle("AAPL", "10m")])
@@ -1010,7 +1074,6 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         keys = RedisKeyBuilder()
         topics = {
             "ticks": "market.ticks.v1",
-            "live_candle": "market.candles.live.1m.v1",
             "closed_candle": "market.candles.closed.v1",
             "status": "market.status.v1",
             "profile": "market.volume-profile-bins.1m.v1",
@@ -1075,7 +1138,6 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         keys = RedisKeyBuilder()
         topics = {
             "ticks": "market.ticks.v1",
-            "live_candle": "market.candles.live.1m.v1",
             "closed_candle": "market.candles.closed.v1",
             "status": "market.status.v1",
             "profile": "market.volume-profile-bins.1m.v1",
@@ -1104,13 +1166,12 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(live_1w["open"], 180)
         self.assertEqual(live_1w["close"], 195.2)
 
-    def test_official_bar_event_replaces_matching_trade_live_bucket_contract(self):
+    def test_bar_event_is_reference_only_and_does_not_publish_canonical_candle(self):
         producer = RecordingProducer()
         redis = MemoryRedis()
         keys = RedisKeyBuilder()
         topics = {
             "ticks": "market.ticks.v1",
-            "live_candle": "market.candles.live.1m.v1",
             "closed_candle": "market.candles.closed.v1",
             "status": "market.status.v1",
             "profile": "market.volume-profile-bins.1m.v1",
@@ -1134,40 +1195,131 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             topics,
         )
 
-        events = [json.loads(value) for _, value in redis.published]
-        one_minute_events = [event for event in events if event.get("symbol") == "AAPL" and event.get("interval") == "1m"]
-        self.assertEqual(one_minute_events[0]["type"], "LIVE_CANDLE_UPDATE")
-        self.assertFalse(one_minute_events[0]["data"]["isClosed"])
-        self.assertEqual(one_minute_events[-1]["type"], "CANDLE_CLOSED")
-        self.assertTrue(one_minute_events[-1]["data"]["isClosed"])
-        self.assertEqual(one_minute_events[-1]["data"]["timestamp"], "2026-06-25T10:15:00.000Z")
+        self.assertEqual([sent["topic"] for sent in producer.sent], [
+            "market.ticks.v1",
+            "market.volume-profile-bins.1m.v1",
+        ])
+        health = read_component_health(redis, keys, "market-processor")
+        self.assertEqual(health["lastResult"], "bars_reference_only")
 
-    def test_processor_smoke_processes_bar_to_closed_candle_and_pubsub(self):
+    def test_processor_flushes_tick_window_to_closed_candle_and_pubsub(self):
         producer = RecordingProducer()
         redis = MemoryRedis()
         keys = RedisKeyBuilder()
         topics = {
             "ticks": "market.ticks.v1",
-            "live_candle": "market.candles.live.1m.v1",
             "closed_candle": "market.candles.closed.v1",
             "status": "market.status.v1",
             "profile": "market.volume-profile-bins.1m.v1",
         }
-        envelope = build_raw_envelope(
-            {"T": "b", "S": "AAPL", "t": "2026-06-25T10:15:00.000Z", "o": 1, "h": 2, "l": 1, "c": 2, "v": 100},
-            "sip",
-        )
+        state = ProcessorState()
+        envelope = build_raw_envelope({"T": "t", "S": "AAPL", "i": 123, "p": 2, "s": 100, "t": "2026-06-25T10:15:20.100Z"}, "sip")
 
-        result = process_raw_envelope(envelope, producer, redis, keys, ProcessorState(), topics)
+        result = process_raw_envelope(envelope, producer, redis, keys, state, topics)
+        flushed = flush_ready_closed_candles(producer, redis, keys, state, topics, reference_time="2026-06-25T10:16:06.000Z")
 
-        self.assertEqual(result, "bars")
-        self.assertEqual(producer.sent[0]["topic"], "market.candles.closed.v1")
-        self.assertEqual(producer.sent[0]["value"]["interval"], "1m")
-        self.assertTrue(producer.sent[0]["value"]["isClosed"])
+        self.assertEqual(result, "trades")
+        self.assertEqual(flushed, 1)
+        self.assertEqual(producer.sent[-1]["topic"], "market.candles.closed.v1")
+        self.assertEqual(producer.sent[-1]["value"]["interval"], "1m")
+        self.assertTrue(producer.sent[-1]["value"]["isClosed"])
         self.assertIn(keys.latest_candle("AAPL", "1m"), redis.values)
         self.assertIn(keys.recent_candles("AAPL", "1m"), redis.zsets)
         published_events = [json.loads(value) for _, value in redis.published]
         self.assertTrue(any(event["type"] == "CANDLE_CLOSED" and event["interval"] == "1m" for event in published_events))
+
+    def test_tick_window_uses_event_time_for_out_of_order_ohlc(self):
+        producer = RecordingProducer()
+        redis = MemoryRedis()
+        keys = RedisKeyBuilder()
+        topics = {
+            "ticks": "market.ticks.v1",
+            "closed_candle": "market.candles.closed.v1",
+            "status": "market.status.v1",
+            "profile": "market.volume-profile-bins.1m.v1",
+        }
+        state = ProcessorState()
+
+        for message in (
+            {"T": "t", "S": "AAPL", "i": 2, "p": 102, "s": 10, "t": "2026-06-25T10:15:50.000Z"},
+            {"T": "t", "S": "AAPL", "i": 1, "p": 100, "s": 5, "t": "2026-06-25T10:15:05.000Z"},
+            {"T": "t", "S": "AAPL", "i": 3, "p": 101, "s": 7, "t": "2026-06-25T10:15:30.000Z"},
+        ):
+            process_raw_envelope(build_raw_envelope(message, "sip"), producer, redis, keys, state, topics)
+
+        flushed = flush_ready_closed_candles(producer, redis, keys, state, topics, reference_time="2026-06-25T10:16:06.000Z")
+        candle = producer.sent[-1]["value"]
+
+        self.assertEqual(flushed, 1)
+        self.assertEqual(candle["open"], 100)
+        self.assertEqual(candle["close"], 102)
+        self.assertEqual(candle["high"], 102)
+        self.assertEqual(candle["low"], 100)
+        self.assertEqual(candle["volume"], 22)
+
+    def test_tick_window_flushes_same_symbol_minute_once(self):
+        producer = RecordingProducer()
+        redis = MemoryRedis()
+        keys = RedisKeyBuilder()
+        topics = {
+            "ticks": "market.ticks.v1",
+            "closed_candle": "market.candles.closed.v1",
+            "status": "market.status.v1",
+            "profile": "market.volume-profile-bins.1m.v1",
+        }
+        state = ProcessorState()
+
+        process_raw_envelope(build_raw_envelope({"T": "t", "S": "AAPL", "i": 1, "p": 100, "s": 1, "t": "2026-06-25T10:15:05.000Z"}, "sip"), producer, redis, keys, state, topics)
+        self.assertEqual(flush_ready_closed_candles(producer, redis, keys, state, topics, reference_time="2026-06-25T10:16:06.000Z"), 1)
+        self.assertEqual(flush_ready_closed_candles(producer, redis, keys, state, topics, reference_time="2026-06-25T10:17:00.000Z"), 0)
+
+    def test_late_tick_after_watermark_does_not_reopen_closed_candle(self):
+        producer = RecordingProducer()
+        redis = MemoryRedis()
+        keys = RedisKeyBuilder()
+        topics = {
+            "ticks": "market.ticks.v1",
+            "closed_candle": "market.candles.closed.v1",
+            "status": "market.status.v1",
+            "profile": "market.volume-profile-bins.1m.v1",
+        }
+        state = ProcessorState()
+
+        process_raw_envelope(build_raw_envelope({"T": "t", "S": "AAPL", "i": 1, "p": 100, "s": 1, "t": "2026-06-25T10:15:05.000Z"}, "sip"), producer, redis, keys, state, topics)
+        flush_ready_closed_candles(producer, redis, keys, state, topics, reference_time="2026-06-25T10:16:06.000Z")
+        result = process_raw_envelope(build_raw_envelope({"T": "t", "S": "AAPL", "i": 2, "p": 99, "s": 1, "t": "2026-06-25T10:15:10.000Z"}, "sip"), producer, redis, keys, state, topics)
+
+        self.assertEqual(result, "trades_late_after_closed")
+        self.assertEqual(flush_ready_closed_candles(producer, redis, keys, state, topics, reference_time="2026-06-25T10:17:00.000Z"), 0)
+
+    def test_processor_commits_after_produce_and_flush_success(self):
+        producer = RecordingProducer()
+        redis = MemoryRedis()
+        keys = RedisKeyBuilder()
+        topics = {
+            "ticks": "market.ticks.v1",
+            "closed_candle": "market.candles.closed.v1",
+            "status": "market.status.v1",
+            "profile": "market.volume-profile-bins.1m.v1",
+        }
+        consumer = OneBatchKafkaConsumer(
+            build_raw_envelope({"T": "t", "S": "AAPL", "i": 1, "p": 100, "s": 1, "t": "2026-06-25T10:15:05.000Z"}, "sip")
+        )
+
+        run_stream_processor(
+            consumer,
+            producer,
+            redis,
+            keys,
+            ProcessorState(),
+            topics,
+            enable_auto_commit=False,
+            now_fn=lambda: datetime(2026, 6, 25, 10, 16, 6, tzinfo=timezone.utc),
+        )
+
+        self.assertGreaterEqual(consumer.commits, 1)
+        self.assertGreaterEqual(producer.flush_count, 1)
+        self.assertIn("market.candles.closed.v1", [sent["topic"] for sent in producer.sent])
 
     def test_closed_candle_redis_series_is_trimmed_to_interval_cap(self):
         redis = MemoryRedis()
@@ -3714,19 +3866,18 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(status_row["source_event_id"], "status-1")
 
     def test_s3_partition_keys_and_storage_rows_follow_contract(self):
-        final_prefix = "market-data/final"
-        live_prefix = "market-data/live"
+        final_prefix = "market-data/v2/tick-candle/final"
+        live_prefix = "market-data/v2/tick-candle/live"
         candle_key = s3_partition_key(final_prefix, live_prefix, {
             "eventType": "CANDLE",
             "timestamp": "2026-01-02T10:15:00.000Z",
             "symbol": "AAPL",
             "interval": "1m",
         })
-        live_key = s3_partition_key(final_prefix, live_prefix, {
-            "eventType": "LIVE_CANDLE",
+        tick_key = s3_partition_key(final_prefix, live_prefix, {
+            "eventType": "TRADE",
             "timestamp": "2026-01-02T10:15:00.000Z",
             "symbol": "AAPL",
-            "interval": "1m",
         })
         profile_key = s3_partition_key(final_prefix, live_prefix, {
             "eventType": "VOLUME_PROFILE_BIN",
@@ -3735,12 +3886,60 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         })
         storage_row = normalize_storage_row({"ma": {"ma5": 1.0}, "raw": {"T": "s"}})
 
-        self.assertEqual(candle_key, "market-data/final/candles/interval=1m/symbol=AAPL/year=2026/month=01/day=02")
-        self.assertEqual(live_key, "market-data/live/candles/interval=1m/symbol=AAPL/year=2026/month=01/day=02")
-        self.assertEqual(profile_key, "market-data/final/volume-profile-bins/timeBucket=1m/symbol=AAPL/year=2026/month=01/day=02")
+        self.assertEqual(candle_key, "market-data/v2/tick-candle/final/candles/interval=1m/symbol=AAPL/year=2026/month=01/day=02")
+        self.assertEqual(tick_key, "market-data/v2/tick-candle/live/trades/symbol=AAPL/year=2026/month=01/day=02/hour=10")
+        self.assertEqual(profile_key, "market-data/v2/tick-candle/final/volume-profile-bins/timeBucket=1m/symbol=AAPL/year=2026/month=01/day=02")
         self.assertEqual(storage_row["ma5"], 1.0)
         self.assertIsNone(storage_row["ma20"])
         self.assertEqual(storage_row["raw"], "{\"T\":\"s\"}")
+
+    def test_s3_sink_default_topics_exclude_live_candle_topic(self):
+        topics = processed_topics_from_env({})
+
+        self.assertEqual(topics, [
+            "market.ticks.v1",
+            "market.candles.closed.v1",
+            "market.status.v1",
+            "market.volume-profile-bins.1m.v1",
+        ])
+
+    def test_s3_sink_commits_after_successful_flush(self):
+        class OneBatchConsumer:
+            def __init__(self):
+                self.polls = 0
+                self.commits = 0
+
+            def poll(self, timeout_ms=1000):
+                self.polls += 1
+                if self.polls > 1:
+                    raise KeyboardInterrupt()
+                return {None: [types.SimpleNamespace(value={
+                    "eventType": "TRADE",
+                    "timestamp": "2026-01-02T10:15:00.000Z",
+                    "symbol": "AAPL",
+                    "price": 1,
+                })]}
+
+            def commit(self):
+                self.commits += 1
+
+        consumer = OneBatchConsumer()
+        s3 = RecordingS3()
+
+        run_processed_s3_sink(
+            consumer,
+            s3,
+            "bucket",
+            "market-data/v2/tick-candle/final",
+            "market-data/v2/tick-candle/live",
+            "jsonl",
+            flush_count=1,
+            flush_interval_seconds=60,
+            enable_auto_commit=False,
+        )
+
+        self.assertGreaterEqual(consumer.commits, 1)
+        self.assertEqual(len(s3.objects), 1)
 
     def test_local_and_aws_topic_lists_cover_same_market_contract(self):
         root = Path(__file__).resolve().parents[3]
@@ -3754,10 +3953,10 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "market.raw.corrections",
             "market.raw.cancel-errors",
             "market.ticks.v1",
-            "market.candles.live.1m.v1",
             "market.candles.closed.v1",
             "market.status.v1",
             "market.volume-profile-bins.1m.v1",
+            "market.news.alpaca.v1",
             "orders.commands.v1",
             "broker.submit-results.v1",
             "broker.order-events.v1",
