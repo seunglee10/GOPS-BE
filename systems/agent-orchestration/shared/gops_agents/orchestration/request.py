@@ -5,7 +5,7 @@ from typing import Any
 
 from ..contracts import MarketEvent, stable_id, utc_now_iso
 from ..intent_understanding import build_query_understanding, fallback_news_topic
-from ..query_understanding import is_supported_company_symbol, supported_company_catalog_payload
+from ..query_understanding import is_supported_company_symbol, relationship_symbols_for_context, supported_company_catalog_payload
 from ..retrieval.snapshots import runtime_policy_from_env
 from ..roles import AgentContext
 from ..runtime import RuntimeRunContext
@@ -52,6 +52,7 @@ def normalize_request_state(state: dict[str, Any]) -> dict[str, Any]:
         for item in request.get("marketEvents", [])
         if isinstance(item, (dict, MarketEvent))
     ]
+    relationship_symbols = relationship_symbols_for_context(intent, symbol)
     entity_resolution_payload = entity_resolution.to_dict()
     query_understanding.resolvedSymbol = symbol
     query_understanding.resolvedSymbolSource = symbol_source
@@ -70,6 +71,7 @@ def normalize_request_state(state: dict[str, Any]) -> dict[str, Any]:
         runtimeContext=runtime_context,
         newsSymbols=list(news_topic["symbols"]) if news_topic else [],
         newsTopic=str(news_topic["label"]) if news_topic else None,
+        relationshipSymbols=list(relationship_symbols),
         entityResolution=entity_resolution_payload,
         queryUnderstanding=query_understanding_payload,
         subjectValidation=subject_validation,
@@ -95,6 +97,7 @@ def normalize_request_state(state: dict[str, Any]) -> dict[str, Any]:
         "timing_started_at": time.perf_counter(),
         "news_topic": news_topic,
         "news_symbols": list(news_topic["symbols"]) if news_topic else [],
+        "relationship_symbols": list(relationship_symbols),
         "entity_resolution": entity_resolution_payload,
         "query_understanding": query_understanding_payload,
         "subject_validation": subject_validation,

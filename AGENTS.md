@@ -4,9 +4,11 @@ These rules are for Codex and future contributors.
 
 ## Read First
 
-- `docs/PRODUCT_CONTEXT.md` for product direction.
-- `docs/STRUCTURE_GUIDE.md` before adding a feature, pod, job, image, platform dependency, or new folder.
-- `docs/ARCHITECTURE.md`, `docs/IMAGE_STRATEGY.md`, and `docs/ENVIRONMENT.md` before changing runtime, Docker, compose, k8s, env, or AWS assets.
+- `docs/README.md` for the current agent-document index.
+- `docs/AGENT_ARCHITECTURE.md` before changing agent runtime, provider boundaries, snapshots, synthesis, or report contracts.
+- `docs/AGENT_BACKEND_INTEGRATION.md` before changing agent API routes, idempotency, async queueing, report polling, SSE, or alert WebSocket behavior.
+- `docs/AGENT_FRONTEND_INTEGRATION.md` before changing agent chat submit, report rendering, chart proposals, layout proposals, or alert UI behavior.
+- `docs/AGENT_AWS_BUILD.md` before changing agent Docker, compose, k8s, env, AWS, Kafka, Redis/Valkey, ClickHouse, GraphDB, S3, or secret assets.
 - Current code before changing paths or imports.
 Use current code, this file, and the docs in `docs/` as the source of truth. If an older conversation or copied prompt conflicts with them, report the conflict before reshaping the project.
 
@@ -69,5 +71,5 @@ real credentials
 
 - Keep durable docs short and current.
 - Prefer one clear README at each system or platform boundary.
-- Update README, structure, image, env, compose, and k8s docs in the same change when runtime boundaries change.
-- Product-context docs guide direction; they are not permission to implement missing features without a task.
+- Update the relevant agent architecture, backend, frontend, and AWS docs in the same change when their contracts change.
+- Agent architecture docs guide direction; they are not permission to implement missing features without a task.

@@ -11,7 +11,7 @@ except Exception:  # pragma: no cover - exercised only when optional dependency 
     fuzz = None
 
 from .alias_index import EntityAlias, EntityAliasIndex, default_alias_index
-from .korean_text import choseong_key, choseong_tokens, compact_text, jamo_key, query_fragments, similarity
+from .korean_text import choseong_key, choseong_tokens, compact_text, jamo_key, normalize_query_text, query_fragments, similarity
 
 
 @dataclass
@@ -278,6 +278,77 @@ def extract_symbol_from_intent(intent: str) -> str | None:
     if resolution.status == "confirmed" and resolution.entity_type == "company":
         return resolution.symbol
     return None
+
+
+def extract_relationship_symbols_from_intent(intent: str, *, max_symbols: int = 5) -> tuple[str, ...]:
+    text = str(intent or "")
+    normalized = normalize_query_text(text)
+    compacted = compact_text(normalized)
+    order_by_symbol: dict[str, int] = {}
+
+    for alias in default_alias_index().aliases:
+        if alias.entity_type != "company" or not alias.symbol:
+            continue
+        if not contains_alias(normalized, compacted, alias.alias):
+            continue
+        position = alias_order_key(normalized, compacted, alias.alias)
+        if alias.symbol not in order_by_symbol or position < order_by_symbol[alias.symbol]:
+            order_by_symbol[alias.symbol] = position
+
+    for token, position in iter_ticker_token_matches(text):
+        if token not in order_by_symbol:
+            order_by_symbol[token] = position
+
+    ordered = sorted(order_by_symbol.items(), key=lambda item: item[1])
+    return tuple(symbol for symbol, _position in ordered[:max_symbols])
+
+
+def relationship_symbols_for_context(intent: str, primary_symbol: str) -> tuple[str, ...]:
+    found = extract_relationship_symbols_from_intent(intent)
+    normalized_primary = str(primary_symbol or "").strip().upper()
+    if not found:
+        return (normalized_primary,) if normalized_primary and normalized_primary != "UNKNOWN" else ()
+    if normalized_primary and normalized_primary != "UNKNOWN" and normalized_primary not in found:
+        found = (normalized_primary, *found)
+    deduped: list[str] = []
+    for symbol in found:
+        if symbol and symbol not in deduped:
+            deduped.append(symbol)
+    return tuple(deduped[:5])
+
+
+def iter_ticker_token_matches(intent: str):
+    known_symbols = default_alias_index().known_symbols
+    for match in re.finditer(r"(?<![A-Za-z0-9.])([A-Za-z][A-Za-z0-9]{0,4}(?:\.[A-Za-z])?)(?![A-Za-z0-9.])", str(intent or "")):
+        raw_token = match.group(1)
+        token = raw_token.upper()
+        if token in EXCLUDED_TICKER_TOKENS:
+            continue
+        if raw_token != token and raw_token.lower() in AMBIGUOUS_LOWERCASE_WORDS:
+            continue
+        if token in known_symbols:
+            yield token, match.start()
+
+
+def alias_order_key(normalized: str, compacted: str, alias: str) -> int:
+    normalized_alias = normalize_query_text(alias)
+    if re.fullmatch(r"[a-z0-9 .&-]+", normalized_alias):
+        pattern = re.escape(normalized_alias).replace(r"\ ", r"\s+")
+        match = re.search(rf"(?<![a-z0-9]){pattern}(?![a-z0-9])", normalized)
+        if match:
+            return match.start()
+        return len(normalized) + 1
+    compacted_alias = compact_text(normalized_alias)
+    index = compacted.find(compacted_alias)
+    return index if index >= 0 else len(compacted) + 1
+
+
+def contains_alias(normalized: str, compacted: str, alias: str) -> bool:
+    normalized_alias = normalize_query_text(alias)
+    if re.fullmatch(r"[a-z0-9 .&-]+", normalized_alias):
+        pattern = re.escape(normalized_alias).replace(r"\ ", r"\s+")
+        return bool(re.search(rf"(?<![a-z0-9]){pattern}(?![a-z0-9])", normalized))
+    return compact_text(normalized_alias) in compacted
 
 
 EXCLUDED_TICKER_TOKENS = {

@@ -1,18 +1,31 @@
-# GOPS Docs
+# GOPS Agent Docs
 
-Reference docs for current implementation and handoff.
-The root `README.md` stays short; repo-wide Codex rules live in root `AGENTS.md`; architecture and project docs live here.
+이 디렉터리는 에이전트 담당자를 위한 handoff 문서만 유지한다. repo-wide
+contributor rules는 root `AGENTS.md`를 따른다.
+
+```mermaid
+flowchart TD
+  README["docs/README.md"]
+  ARCH["AGENT_ARCHITECTURE.md<br/>에이전트 자체 설명"]
+  BE["AGENT_BACKEND_INTEGRATION.md<br/>백엔드 연동"]
+  FE["AGENT_FRONTEND_INTEGRATION.md<br/>프런트 연동"]
+  AWS["AGENT_AWS_BUILD.md<br/>AWS 빌드/배포"]
+
+  README --> ARCH
+  README --> BE
+  README --> FE
+  README --> AWS
+  FE --> BE
+  BE --> ARCH
+  ARCH --> AWS
+```
 
 | File | Purpose |
 | --- | --- |
-| `PRODUCT_CONTEXT.md` | Product direction and current/future scope boundary. |
-| `STRUCTURE_GUIDE.md` | Folder placement rules for future code. |
-| `ARCHITECTURE.md` | Current system, pod/job, and platform relationships. |
-| `IMAGE_STRATEGY.md` | Docker image boundaries and naming rules. |
-| `ENVIRONMENT.md` | Env, secret, and platform contracts. |
-| `AGENT_ARCHITECTURE.md` | Canonical agent architecture, handoff, API, AWS, storage, and validation contracts. |
-| `AGENT_INTEGRATION_FILE_GUIDE.md` | Files to inspect when building new frontend, backend, or AWS integration around agents. |
-| `../AGENTS.md` | Codex/contributor rules for this repo. |
+| `AGENT_ARCHITECTURE.md` | `AgentOrchestrator`, role agents, snapshots, synthesis, provider boundary, `EvidenceItem` 계약. |
+| `AGENT_BACKEND_INTEGRATION.md` | Backend API, idempotency, Kafka async path, Redis report store, polling/SSE/WebSocket 계약. |
+| `AGENT_FRONTEND_INTEGRATION.md` | 프런트 request shape, `analysisId`, polling/SSE, report rendering, layout/chart proposal 처리. |
+| `AGENT_AWS_BUILD.md` | `gops-agent-orchestrator` image, ECR/EKS, Kafka, Redis/Valkey, ClickHouse, GraphDB, S3, secrets, smoke checks. |
 
-Legacy proposal and merge-handoff specs were removed to avoid conflicting guidance.
-If a future long-form spec is needed, add it with a clear owner and date.
+새로운 장문 proposal이나 merge handoff 문서를 추가하지 말고, 필요한 내용은 위
+네 문서 중 하나에 합친다.

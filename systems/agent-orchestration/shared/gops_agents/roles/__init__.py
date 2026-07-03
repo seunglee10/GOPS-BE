@@ -29,6 +29,7 @@ class AgentContext:
     runtimeContext: Any | None = None
     newsSymbols: list[str] = field(default_factory=list)
     newsTopic: str | None = None
+    relationshipSymbols: list[str] = field(default_factory=list)
     newsDailySummaries: list[dict[str, Any]] = field(default_factory=list)
     intentType: str | None = None
     selectedRoles: list[str] = field(default_factory=list)
@@ -214,7 +215,7 @@ class OntologyAgent(ProviderBackedAgent):
         super().__init__(provider or GraphDBOntologyProvider())
 
     def analyze(self, context: AgentContext) -> AgentFinding:
-        evidence = self.provider.fetch(ProviderRequest(context.symbol, context.intent))
+        evidence = self.provider.fetch(ProviderRequest(context.symbol, context.intent, symbols=tuple(context.relationshipSymbols)))
         analysis = analyze_ontology_evidence(context, evidence)
         openai_analysis = None
         if os.getenv("AGENT_ONTOLOGY_ROLE_ANALYSIS_PROVIDER") == "openai":

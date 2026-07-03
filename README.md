@@ -3,7 +3,7 @@
 GOPS is a real-time market-data, chart, and order-control platform.
 
 Product direction: **종목을 찾는 사람에게 기준을, 시장을 읽는 사람에게 방향을.**
-See `docs/PRODUCT_CONTEXT.md` for the product vision. Future-facing product ideas are context, not implemented guarantees.
+See `docs/AGENT_ARCHITECTURE.md` for the current agent direction and handoff boundaries. Future-facing product ideas are context, not implemented guarantees.
 
 ## Current Scope
 
@@ -22,12 +22,11 @@ The repository currently includes:
 
 | File | Use |
 | --- | --- |
-| `docs/README.md` | Index for project reference docs. |
-| `docs/PRODUCT_CONTEXT.md` | Product intent and future direction. |
-| `docs/STRUCTURE_GUIDE.md` | Where new code, pods, jobs, images, and platform contracts belong. |
-| `docs/ARCHITECTURE.md` | Current runtime architecture and system boundaries. |
-| `docs/IMAGE_STRATEGY.md` | Docker image boundaries. |
-| `docs/ENVIRONMENT.md` | Env, secret, and platform contracts. |
+| `docs/README.md` | Index for agent handoff docs. |
+| `docs/AGENT_ARCHITECTURE.md` | Agent runtime, provider boundary, snapshots, synthesis, and report contracts. |
+| `docs/AGENT_BACKEND_INTEGRATION.md` | Agent API, idempotency, Kafka async path, Redis report store, polling, SSE, and alert WebSocket contracts. |
+| `docs/AGENT_FRONTEND_INTEGRATION.md` | Agent chat submit, `analysisId`, report rendering, and layout/chart proposal handling. |
+| `docs/AGENT_AWS_BUILD.md` | Agent image, EKS resources, Kafka, Redis/Valkey, ClickHouse, GraphDB, S3, secrets, and smoke checks. |
 | `AGENTS.md` | Rules for Codex and future contributors. |
 
 ## Repository Map
@@ -152,7 +151,8 @@ Agent API:
 
 ```text
 POST /api/agents/analyze
-GET  /api/agents/reports/{analysisId}
+GET  /api/agents/reports/{analysis_id}
+GET  /api/agents/reports/{analysis_id}/stream
 WS   /ws/agent-alerts
 ```
 
@@ -188,7 +188,8 @@ Auth rules:
 - S3 is durable replay/rematerialization storage.
 - ClickHouse `chart_candles` is the serving projection.
 - Local runtime must not invent fake market candles.
-- Agent-orchestration v1 must not execute orders or choose real news/macro/ontology providers.
+- Agent-orchestration must not execute orders or call account-control flows.
+- Agent provider failures should degrade to no-data evidence instead of crashing the whole analysis path.
 - `.env`, access-key CSV files, KIS token caches, `node_modules`, `dist`, and local caches must not be committed.
 
 ## Verification

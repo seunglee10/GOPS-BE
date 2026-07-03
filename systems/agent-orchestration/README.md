@@ -5,9 +5,9 @@ analysis reports, layout proposals, market-event explanations, and notification
 decisions. It does not execute orders or call account-control flows.
 
 For team handoff, read `docs/AGENT_ARCHITECTURE.md` first, then
-`docs/AGENT_INTEGRATION_FILE_GUIDE.md` for frontend/backend/AWS file
-checklists. This README keeps the code-level ownership and run commands close
-to the implementation.
+`docs/AGENT_BACKEND_INTEGRATION.md`, `docs/AGENT_FRONTEND_INTEGRATION.md`, or
+`docs/AGENT_AWS_BUILD.md` depending on the integration boundary. This README
+keeps the code-level ownership and run commands close to the implementation.
 
 ## Runtime Units
 
@@ -153,11 +153,15 @@ KAFKA_BOOTSTRAP_SERVERS
 REDIS_URL
 CLICKHOUSE_HTTP_URL
 GRAPHDB_SPARQL_URL
+AGENT_GRAPH_PATH_CACHE_BACKEND
+AGENT_GRAPH_PATH_CACHE_TTL_SECONDS
+AGENT_GRAPH_PATH_CACHE_NO_DATA_TTL_SECONDS
+AGENT_GRAPH_PATH_CACHE_KEY_PREFIX
 OPENAI_API_KEY
 ```
 
-Use `docs/ENVIRONMENT.md` for the repo-wide env contract and
-`docs/AGENT_ARCHITECTURE.md` for the agent handoff contract.
+Use `docs/AGENT_AWS_BUILD.md` for deploy/env/platform contracts and
+`docs/AGENT_ARCHITECTURE.md` for the agent runtime contract.
 
 ## Validation
 

@@ -10,6 +10,7 @@ from alfaka.news.relevance import classify_subject_relevance, is_direct_subject,
 from alfaka.storage.news_daily_summary import clickhouse_row_to_daily_summary
 
 from ..contracts import EvidenceItem, utc_now_iso
+from .graph_path_cache import GraphPathCache, build_graph_path_cache_from_env
 from .news_cache import NewsEvidenceCache, build_news_cache_from_env
 
 
@@ -623,6 +624,9 @@ class GraphDBOntologyProvider(OntologyProvider):
         sparql_url: str | None = None,
         limit: int | None = None,
         timeout_seconds: float | None = None,
+        cache: GraphPathCache | None = None,
+        cache_ttl_seconds: int | None = None,
+        no_data_cache_ttl_seconds: int | None = None,
     ):
         self.sparql_url = sparql_url or os.getenv("GRAPHDB_SPARQL_URL", "http://localhost:7200/repositories/nasdaq-fibo")
         self.limit = clamp_int(limit or os.getenv("AGENT_ONTOLOGY_LIMIT", "20"), default=20, minimum=1, maximum=200)
@@ -631,10 +635,15 @@ class GraphDBOntologyProvider(OntologyProvider):
             graphdb_timeout = float(os.getenv("AGENT_GRAPHDB_TIMEOUT_MS", "500")) / 1000
         self.timeout_seconds = float(graphdb_timeout)
         self.sparql_client = sparql_client or GraphDBSparqlClient(self.sparql_url, self.timeout_seconds)
+        self.cache = cache if cache is not None else build_graph_path_cache_from_env()
+        self.cache_ttl_seconds = int(cache_ttl_seconds or os.getenv("AGENT_GRAPH_PATH_CACHE_TTL_SECONDS", "900"))
+        self.no_data_cache_ttl_seconds = int(
+            no_data_cache_ttl_seconds or os.getenv("AGENT_GRAPH_PATH_CACHE_NO_DATA_TTL_SECONDS", "120")
+        )
 
     def fetch(self, request: ProviderRequest) -> list[EvidenceItem]:
-        symbol = normalize_ticker(request.symbol)
-        if not symbol:
+        requested = ontology_request_symbols(request)
+        if not requested:
             return [
                 EvidenceItem.no_data(
                     "ontology",
@@ -643,13 +652,22 @@ class GraphDBOntologyProvider(OntologyProvider):
                 )
             ]
 
+        intent_themes = tuple(matched_theme_names(request.intent))
+        cached = self._cache_get(requested, intent_themes)
+        if cached is not None:
+            return cached
+
+        primary_symbol = requested[0]
+        per_symbol_rows: dict[str, dict[str, list[dict[str, Any]]]] = {}
+        theme_matched_rows: list[dict[str, Any]] = []
         try:
-            theme_rows = self._query_rows(themes_by_company_query(symbol, self.limit), "ticker-theme")
-            control_rows = self._query_rows(control_relationships_by_company_query(symbol, self.limit), "ticker-control-relationship")
-            rows = [*theme_rows, *control_rows]
-            for theme_name in matched_theme_names(request.intent):
-                rows.extend(self._query_rows(companies_by_theme_query(theme_name, self.limit), "theme-company"))
-                rows.extend(self._query_rows(theme_control_relationships_query(theme_name, self.limit), "theme-control-relationship"))
+            for symbol in requested:
+                theme_rows = self._query_rows(themes_by_company_query(symbol, self.limit), "ticker-theme")
+                control_rows = self._query_rows(control_relationships_by_company_query(symbol, self.limit), "ticker-control-relationship")
+                per_symbol_rows[symbol] = {"theme": theme_rows, "control": control_rows}
+            for theme_name in intent_themes:
+                theme_matched_rows.extend(self._query_rows(companies_by_theme_query(theme_name, self.limit), "theme-company"))
+                theme_matched_rows.extend(self._query_rows(theme_control_relationships_query(theme_name, self.limit), "theme-control-relationship"))
         except Exception as exc:
             return [
                 EvidenceItem(
@@ -661,12 +679,36 @@ class GraphDBOntologyProvider(OntologyProvider):
                 )
             ]
 
-        evidence = dedupe_evidence([row_to_ontology_evidence(row) for row in rows])
+        primary_rows = [
+            *per_symbol_rows[primary_symbol]["theme"],
+            *per_symbol_rows[primary_symbol]["control"],
+            *theme_matched_rows,
+        ]
+        evidence = dedupe_evidence([row_to_ontology_evidence(row) for row in primary_rows])
         if not evidence:
-            return [no_ontology_evidence(symbol), no_direct_control_evidence(symbol)][: self.limit]
-        if not control_rows:
-            evidence.append(no_direct_control_evidence(symbol))
-        return evidence[: self.limit]
+            evidence = [no_ontology_evidence(primary_symbol), no_direct_control_evidence(primary_symbol)]
+        elif not per_symbol_rows[primary_symbol]["control"]:
+            evidence.append(no_direct_control_evidence(primary_symbol))
+
+        if len(requested) > 1:
+            evidence.extend(cross_symbol_relationship_evidence(requested, per_symbol_rows))
+
+        evidence = evidence[: self.limit]
+        self._cache_set(requested, intent_themes, evidence)
+        return evidence
+
+    def _cache_get(self, symbols: list[str], intent_themes: tuple[str, ...]) -> list[EvidenceItem] | None:
+        try:
+            return self.cache.get(symbols=tuple(symbols), intent_themes=intent_themes, limit=self.limit)
+        except Exception:
+            return None
+
+    def _cache_set(self, symbols: list[str], intent_themes: tuple[str, ...], items: list[EvidenceItem]) -> None:
+        ttl_seconds = self.cache_ttl_seconds if any(item.status == "available" for item in items) else self.no_data_cache_ttl_seconds
+        try:
+            self.cache.set(symbols=tuple(symbols), intent_themes=intent_themes, limit=self.limit, items=items, ttl_seconds=ttl_seconds)
+        except Exception:
+            return None
 
     def _query_rows(self, sparql: str, row_type: str) -> list[dict[str, Any]]:
         payload = self.sparql_client.query(sparql)
@@ -740,6 +782,123 @@ def ontology_relation_type(row_type: str) -> str:
         "theme-control-relationship": "theme-control",
     }
     return mapping.get(row_type, "ontology")
+
+
+def ontology_request_symbols(request: ProviderRequest) -> list[str]:
+    symbols: list[str] = []
+    primary = normalize_ticker(request.symbol)
+    if primary:
+        symbols.append(primary)
+    for value in request.symbols:
+        ticker = normalize_ticker(str(value or ""))
+        if ticker and ticker not in symbols:
+            symbols.append(ticker)
+    return symbols
+
+
+def cross_symbol_relationship_evidence(
+    symbols: list[str],
+    per_symbol_rows: dict[str, dict[str, list[dict[str, Any]]]],
+) -> list[EvidenceItem]:
+    theme_membership: dict[str, dict[str, str]] = {}
+    company_names: dict[str, str] = {}
+    for symbol in symbols:
+        for row in per_symbol_rows.get(symbol, {}).get("theme", []):
+            theme_name = row.get("themeName")
+            if theme_name:
+                theme_membership.setdefault(symbol, {})[str(theme_name)] = str(row.get("themeCategory") or "")
+            if row.get("companyName"):
+                company_names[symbol] = str(row["companyName"])
+
+    evidence: list[EvidenceItem] = []
+    seen_theme_pairs: set[tuple[str, str, str]] = set()
+    for index, symbol_a in enumerate(symbols):
+        for symbol_b in symbols[index + 1 :]:
+            shared_themes = set(theme_membership.get(symbol_a, {})) & set(theme_membership.get(symbol_b, {}))
+            for theme_name in sorted(shared_themes):
+                key = (symbol_a, symbol_b, theme_name)
+                if key in seen_theme_pairs:
+                    continue
+                seen_theme_pairs.add(key)
+                evidence.append(
+                    EvidenceItem(
+                        provider="ontology",
+                        status="available",
+                        title=f"{symbol_a}-{symbol_b} 공통 테마",
+                        summary=f"{symbol_a}와 {symbol_b}는 모두 {theme_name} 테마에 속합니다.",
+                        observedAt=utc_now_iso(),
+                        raw={
+                            "type": "cross-symbol-shared-theme",
+                            "relationType": "shared-theme",
+                            "themeName": theme_name,
+                            "symbols": [symbol_a, symbol_b],
+                        },
+                    )
+                )
+
+            evidence.extend(
+                cross_symbol_control_evidence(
+                    symbol_a,
+                    symbol_b,
+                    per_symbol_rows.get(symbol_a, {}).get("control", []),
+                    per_symbol_rows.get(symbol_b, {}).get("control", []),
+                    company_names,
+                )
+            )
+
+    if not evidence:
+        evidence.append(
+            EvidenceItem(
+                provider="ontology",
+                status="no-data",
+                title="종목 간 직접 관계 없음",
+                summary=f"GraphDB에서 {', '.join(symbols)} 사이의 공유 테마 또는 직접 지배 관계 근거를 찾지 못했습니다.",
+                raw={"relationType": "no-shared-relationship", "symbols": list(symbols)},
+            )
+        )
+    return evidence
+
+
+def cross_symbol_control_evidence(
+    symbol_a: str,
+    symbol_b: str,
+    control_rows_a: list[dict[str, Any]],
+    control_rows_b: list[dict[str, Any]],
+    company_names: dict[str, str],
+) -> list[EvidenceItem]:
+    evidence: list[EvidenceItem] = []
+    company_a = (company_names.get(symbol_a) or symbol_a).strip().lower()
+    company_b = (company_names.get(symbol_b) or symbol_b).strip().lower()
+    for row in control_rows_a:
+        controlled_name = str(row.get("controlledName") or "").strip().lower()
+        if controlled_name and (controlled_name == company_b or symbol_b.lower() in controlled_name):
+            evidence.append(cross_control_evidence_item(symbol_a, symbol_b, row))
+    for row in control_rows_b:
+        controlled_name = str(row.get("controlledName") or "").strip().lower()
+        if controlled_name and (controlled_name == company_a or symbol_a.lower() in controlled_name):
+            evidence.append(cross_control_evidence_item(symbol_b, symbol_a, row))
+    return evidence
+
+
+def cross_control_evidence_item(controller_symbol: str, controlled_symbol: str, row: dict[str, Any]) -> EvidenceItem:
+    return EvidenceItem(
+        provider="ontology",
+        status="available",
+        title=f"{controller_symbol}-{controlled_symbol} 직접 지배/자회사 관계",
+        summary=f"{controller_symbol}는 {controlled_symbol}({row.get('controlledName') or controlled_symbol})와 직접 지배/자회사 관계 근거가 있습니다.",
+        observedAt=utc_now_iso(),
+        url=row.get("sourceUrl"),
+        raw={
+            "type": "cross-symbol-control",
+            "relationType": "cross-control",
+            "controllerTicker": controller_symbol,
+            "controlledTicker": controlled_symbol,
+            "controlledName": row.get("controlledName"),
+            "confidence": row.get("confidence"),
+            "accession": row.get("accession"),
+            "sourceUrl": row.get("sourceUrl"),
+        },
+    )
 
 
 def no_direct_control_evidence(symbol: str) -> EvidenceItem:
