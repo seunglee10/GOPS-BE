@@ -22,7 +22,7 @@ import { createPortal } from "react-dom";
 import { requestChartAgentActions } from "../agent/chartAgent";
 import { applyChartAction, applyChartActions } from "../chart/actions";
 import { ChartCanvas } from "../chart/ChartCanvas";
-import { fetchCandles, fetchSymbols, openChartSocket } from "../chart/cdcClient";
+import { fetchCandles, openChartSocket } from "../chart/cdcClient";
 import {
   buildDraftPreviewDrawing,
   buildSingleAnchorPreviewDrawing,
@@ -39,13 +39,12 @@ import {
 } from "../chart/drawings";
 import { expansionCloseButtonSize, expansionMetadataCenterY, expansionParentThumbnailRight } from "../chart/expansionLayout";
 import { createCoordinateTransform, hitTestSemanticNode, type ChartScene } from "../chart/scene";
-import { adjacentInterval, anchoredViewportForCandles, intervalQueryRangeAround, type IntervalQueryRange, type ViewportAnchor } from "../chart/intervalNavigation";
+import { adjacentInterval, anchoredViewportForCandles, type ViewportAnchor } from "../chart/intervalNavigation";
 import {
   candleRange,
   childQueryRange,
   expansionLimitForInterval,
   nextDigTargetInterval,
-  semanticNodeId,
   semanticExpansionId,
   snapshotFromSemanticUnit,
   type SemanticExpansion,
@@ -55,6 +54,7 @@ import {
 import type { CandleDto, CandleEventDto, ChartAction, ChartInterval, ChartLayerKey, ChartLineExtension, ChartState, ChartSymbolDto, ChartToolMode, DrawingEntity } from "../chart/types";
 import { chartIntervals, defaultVisibleBarsForInterval } from "../chart/types";
 import { dragDeltaToRightOffset, latestCandleRightOffset, normalizeViewport, zoomViewport, zoomViewportAt, type ChartViewport } from "../chart/viewport";
+import { SymbolSearch } from "./SymbolSearch";
 
 const initialLayers: Record<ChartLayerKey, boolean> = {
   candles: true,
@@ -64,26 +64,24 @@ const initialLayers: Record<ChartLayerKey, boolean> = {
   ma60: true
 };
 
-const initialChart: ChartState = {
-  symbol: "GOPS-ALP",
-  interval: "1D",
-  candles: [],
-  status: "loading",
-  layers: initialLayers,
-  volumeRatio: 0.22,
-  visibleCount: defaultVisibleBarsForInterval("1D"),
-  rightOffset: latestCandleRightOffset(defaultVisibleBarsForInterval("1D")),
-  toolMode: "pan",
-  trendLineExtension: "segment",
-  drawings: [],
-  streamState: "connecting"
-};
+const initialVolumeRatio = 0.22;
 
-const fallbackSymbols: ChartSymbolDto[] = [
-  { symbol: "GOPS-ALP", name: "Alpinary Systems", sector: "Synthetic Cloud Infrastructure", isMock: true },
-  { symbol: "GOPS-ION", name: "Ionbridge Dynamics", sector: "Synthetic Energy Platforms", isMock: true },
-  { symbol: "GOPS-NOVA", name: "Novastra Fabrication", sector: "Synthetic Robotics", isMock: true }
-];
+function createInitialChart(symbol: string): ChartState {
+  return {
+    symbol: symbol.toUpperCase(),
+    interval: "1D",
+    candles: [],
+    status: "loading",
+    layers: initialLayers,
+    volumeRatio: initialVolumeRatio,
+    visibleCount: defaultVisibleBarsForInterval("1D"),
+    rightOffset: latestCandleRightOffset(defaultVisibleBarsForInterval("1D")),
+    toolMode: "pan",
+    trendLineExtension: "segment",
+    drawings: [],
+    streamState: "connecting"
+  };
+}
 
 type DragAnchor = {
   x: number;
@@ -132,9 +130,13 @@ type LiveQuote = {
 };
 
 type ChartPanelProps = {
+  symbol: string;
+  symbols: ChartSymbolDto[];
   laneHeight?: number;
   onSemanticSelectionChange?: (selection: SemanticSelectionSnapshot | null) => void;
   onChartHoverChange?: (hovered: boolean) => void;
+  onSymbolChange?: (symbol: string) => void;
+  onBackToTreeMap?: () => void;
 };
 
 type VolumeResizeDrag = {
@@ -157,9 +159,16 @@ const unavailableQuote: LiveQuote = {
 
 const minLaneHeightForVolume = 245;
 
-export function ChartPanel({ laneHeight, onSemanticSelectionChange, onChartHoverChange }: ChartPanelProps) {
-  const [chart, setChart] = useState<ChartState>(initialChart);
-  const [symbols, setSymbols] = useState<ChartSymbolDto[]>(fallbackSymbols);
+export function ChartPanel({
+  symbol,
+  symbols,
+  laneHeight,
+  onSemanticSelectionChange,
+  onChartHoverChange,
+  onSymbolChange,
+  onBackToTreeMap
+}: ChartPanelProps) {
+  const [chart, setChart] = useState<ChartState>(() => createInitialChart(symbol));
   const [previousClose, setPreviousClose] = useState<number | null>(null);
   const [activeExpansions, setActiveExpansions] = useState<SemanticExpansion[]>([]);
   const [chartMemory, setChartMemory] = useState<Record<string, ChartMemory>>({});
@@ -173,8 +182,6 @@ export function ChartPanel({ laneHeight, onSemanticSelectionChange, onChartHover
   const [agentBusy, setAgentBusy] = useState(false);
   const [agentDrawingPreview, setAgentDrawingPreview] = useState<PendingAgentDrawingPreview | null>(null);
   const [agentPortalTarget, setAgentPortalTarget] = useState<HTMLElement | null>(null);
-  const [symbolSearch, setSymbolSearch] = useState(initialChart.symbol);
-  const [symbolSearchOpen, setSymbolSearchOpen] = useState(false);
   const [crosshair, setCrosshair] = useState<{ x: number; y: number } | undefined>();
   const [drawingDraft, setDrawingDraft] = useState<DrawingDraft | null>(null);
   const [maMenuOpen, setMaMenuOpen] = useState(false);
@@ -185,30 +192,13 @@ export function ChartPanel({ laneHeight, onSemanticSelectionChange, onChartHover
   const chartRef = useRef<ChartState>(chart);
   const activeExpansionsRef = useRef<SemanticExpansion[]>(activeExpansions);
   const chartMemoryRef = useRef<Record<string, ChartMemory>>(chartMemory);
-  const pendingViewportAnchorRef = useRef<{ key: string; anchor: ViewportAnchor; range?: IntervalQueryRange } | null>(null);
+  const pendingViewportAnchorRef = useRef<{ key: string; anchor: ViewportAnchor } | null>(null);
   const overlayKeyRef = useRef("");
   const dragAnchorRef = useRef<DragAnchor | null>(null);
   const drawingDragRef = useRef<DrawingDrag | null>(null);
   const pendingSemanticClickRef = useRef<PendingSemanticClick | null>(null);
   const transientViewportRef = useRef<ChartViewport | null>(null);
   const volumeResizeRef = useRef<VolumeResizeDrag | null>(null);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    fetchSymbols(controller.signal)
-      .then((response) => {
-        if (response.symbols.length) {
-          setSymbols(response.symbols);
-          setChart((current) => response.symbols.some((item) => item.symbol === current.symbol)
-            ? current
-            : applyChartAction(current, { type: "setSymbol", symbol: response.symbols[0].symbol }));
-        }
-      })
-      .catch(() => {
-        setSymbols(fallbackSymbols);
-      });
-    return () => controller.abort();
-  }, []);
 
   useEffect(() => {
     chartRef.current = chart;
@@ -246,14 +236,11 @@ export function ChartPanel({ laneHeight, onSemanticSelectionChange, onChartHover
     const controller = new AbortController();
     const requestKey = chartMemoryKey(chart.symbol, chart.interval);
     const pendingLoad = pendingViewportAnchorRef.current?.key === requestKey ? pendingViewportAnchorRef.current : null;
-    const limit = pendingLoad?.range?.limit ?? defaultVisibleBarsForInterval(chart.interval);
     setChart((current) => ({ ...current, status: "loading", message: "Loading CDC candles..." }));
     fetchCandles({
       symbol: chart.symbol,
       interval: chart.interval,
-      limit,
-      from: pendingLoad?.range?.from,
-      to: pendingLoad?.range?.to,
+      limit: defaultVisibleBarsForInterval(chart.interval),
       ma: [5, 20, 60]
     }, controller.signal)
       .then((response) => {
@@ -261,7 +248,7 @@ export function ChartPanel({ laneHeight, onSemanticSelectionChange, onChartHover
           ...current,
           candles: response.candles,
           status: response.status,
-          message: response.error?.message,
+          message: response.error?.message ?? (response.status === "empty" ? `No chart data for ${response.symbol}` : undefined),
           ...anchoredViewportForCandles(
             response.candles,
             current.interval,
@@ -361,20 +348,14 @@ export function ChartPanel({ laneHeight, onSemanticSelectionChange, onChartHover
   const renderExpansions = activeExpansions;
   const previewDrawings = useMemo(() => agentDrawingPreview?.visible ? agentDrawingPreview.drawings : [], [agentDrawingPreview]);
   const selectedDrawing = chart.drawings.find((drawing) => drawing.id === chart.selectedDrawingId);
-  const currentSymbol = symbols.find((symbol) => symbol.symbol === chart.symbol) ?? fallbackSymbols[0];
+  const currentSymbol = symbols.find((symbol) => symbol.symbol === chart.symbol) ?? {
+    symbol: chart.symbol,
+    name: chart.symbol,
+    sector: undefined,
+    isMock: false
+  };
   const liveQuote = useMemo(() => buildLiveQuote(chart, previousClose), [chart, previousClose]);
-  const currentSymbolLabel = `${currentSymbol.symbol} · ${currentSymbol.name}`;
-  const filteredSymbols = useMemo(() => {
-    const query = symbolSearch.trim().toLowerCase();
-    const matches = query
-      ? symbols.filter((symbol) => (
-          symbol.symbol.toLowerCase().includes(query) ||
-          symbol.name.toLowerCase().includes(query) ||
-          symbol.sector?.toLowerCase().includes(query)
-        ))
-      : symbols;
-    return matches.slice(0, 8);
-  }, [symbolSearch, symbols]);
+  const currentSymbolLabel = `${currentSymbol.symbol} - ${currentSymbol.name}`;
 
   const dispatchChartAction = useCallback((action: ChartAction) => {
     setDrawingDraft(null);
@@ -406,23 +387,20 @@ export function ChartPanel({ laneHeight, onSemanticSelectionChange, onChartHover
   const switchSymbolInterval = useCallback((
     symbol: string,
     interval: ChartInterval,
-    options: { anchor?: ViewportAnchor; range?: IntervalQueryRange | null; expansionOverride?: SemanticExpansion | null } = {}
+    options: { anchor?: ViewportAnchor } = {}
   ) => {
     persistCurrentChartMemory();
     const normalizedSymbol = symbol.toUpperCase();
     const key = chartMemoryKey(normalizedSymbol, interval);
     const memory = chartMemoryRef.current[key];
-    const nextExpansions = Object.prototype.hasOwnProperty.call(options, "expansionOverride")
-      ? options.expansionOverride ? [options.expansionOverride] : []
-      : memory?.expansions ?? [];
+    const nextExpansions = memory?.expansions ?? [];
     if (options.anchor) {
       pendingViewportAnchorRef.current = {
         key,
         anchor: {
           ...options.anchor,
           visibleCount: options.anchor.visibleCount ?? memory?.visibleCount ?? defaultVisibleBarsForInterval(interval)
-        },
-        range: options.range ?? undefined
+        }
       };
     } else {
       pendingViewportAnchorRef.current = null;
@@ -438,11 +416,12 @@ export function ChartPanel({ laneHeight, onSemanticSelectionChange, onChartHover
     switchSymbolInterval(symbol, chartRef.current.interval);
   }, [switchSymbolInterval]);
 
-  const selectSymbol = useCallback((symbol: ChartSymbolDto) => {
-    setSymbolSearch(`${symbol.symbol} · ${symbol.name}`);
-    setSymbolSearchOpen(false);
-    setSymbol(symbol.symbol);
-  }, [setSymbol]);
+  useEffect(() => {
+    const normalizedSymbol = symbol.toUpperCase();
+    if (normalizedSymbol !== chartRef.current.symbol) {
+      setSymbol(normalizedSymbol);
+    }
+  }, [setSymbol, symbol]);
 
   const setInterval = useCallback((interval: ChartInterval) => {
     const current = chartRef.current;
@@ -557,7 +536,11 @@ export function ChartPanel({ laneHeight, onSemanticSelectionChange, onChartHover
   }, []);
 
   const closeExpansion = useCallback((expansionId: string) => {
-    setActiveExpansions((current) => current.filter((expansion) => expansion.id !== expansionId));
+    setActiveExpansions((current) => {
+      const next = removeExpansionTree(current, expansionId);
+      activeExpansionsRef.current = next;
+      return next;
+    });
     setSelectedSemanticNode((current) => current?.nodeId.includes(expansionId) ? null : current);
   }, []);
 
@@ -605,25 +588,9 @@ export function ChartPanel({ laneHeight, onSemanticSelectionChange, onChartHover
     if (unit.kind !== "candle") {
       return;
     }
-    const rootParentNodeId = unit.parentExpansionId
-      ? semanticNodeId(unit.symbol, unit.interval, unit.timestamp)
-      : unit.id;
-    const expansion = buildSemanticExpansion(unit, rootParentNodeId, unit.parentExpansionId ? 1 : unit.depth + 1);
-    if (unit.parentExpansionId) {
-      const visibleCount = chartMemoryRef.current[chartMemoryKey(unit.symbol, unit.interval)]?.visibleCount ?? defaultVisibleBarsForInterval(unit.interval);
-      switchSymbolInterval(unit.symbol, unit.interval, {
-        anchor: {
-          mode: "center",
-          timestamp: unit.timestamp,
-          visibleCount
-        },
-        range: intervalQueryRangeAround(unit.timestamp, unit.interval, visibleCount),
-        expansionOverride: expansion
-      });
-    } else {
-      activeExpansionsRef.current = upsertExpansion(activeExpansionsRef.current, expansion);
-      setActiveExpansions((current) => upsertExpansion(current, expansion));
-    }
+    const expansion = buildSemanticExpansion(unit);
+    activeExpansionsRef.current = upsertExpansion(activeExpansionsRef.current, expansion);
+    setActiveExpansions((current) => upsertExpansion(current, expansion));
     if (expansion.childInterval === "footprint") {
       setSelectedSemanticNode({
         ...snapshotFromSemanticUnit(unit),
@@ -632,7 +599,7 @@ export function ChartPanel({ laneHeight, onSemanticSelectionChange, onChartHover
       return;
     }
     void loadExpansionCandles(expansion, unit.symbol);
-  }, [loadExpansionCandles, selectSemanticUnit, switchSymbolInterval]);
+  }, [loadExpansionCandles, selectSemanticUnit]);
 
   const zoomBy = useCallback((delta: number) => {
     setChart((current) => {
@@ -913,12 +880,6 @@ export function ChartPanel({ laneHeight, onSemanticSelectionChange, onChartHover
     onChartHoverChange?.(false);
   }, [onChartHoverChange]);
 
-  useEffect(() => {
-    if (!symbolSearchOpen) {
-      setSymbolSearch(currentSymbolLabel);
-    }
-  }, [currentSymbolLabel, symbolSearchOpen]);
-
   const removeSelectedDrawing = () => {
     if (!selectedDrawing) {
       return;
@@ -930,11 +891,12 @@ export function ChartPanel({ laneHeight, onSemanticSelectionChange, onChartHover
     if (!selectedDrawing) {
       return;
     }
-    const nextColor = selectedDrawing.style.color === "#dc2626" ? defaultDrawingStyle(selectedDrawing.type, chart.trendLineExtension).color : "#dc2626";
+    const defaultStyle = defaultDrawingStyle(selectedDrawing.type, chart.trendLineExtension);
+    const nextToken = selectedDrawing.style.colorToken === "down" ? defaultStyle.colorToken : "down";
     dispatchChartAction({
       type: "updateDrawing",
       drawingId: selectedDrawing.id,
-      patch: { style: { ...selectedDrawing.style, color: nextColor, textColor: nextColor } }
+      patch: { style: { ...selectedDrawing.style, color: undefined, textColor: undefined, colorToken: nextToken, textToken: nextToken } }
     });
   };
 
@@ -1005,17 +967,6 @@ export function ChartPanel({ laneHeight, onSemanticSelectionChange, onChartHover
 
   return (
     <section className="chart-panel">
-      <header className="panel-header">
-        <div>
-          <h1>{chart.symbol} <span>{chart.interval}</span></h1>
-          <p className="symbol-name">{currentSymbol.name}</p>
-        </div>
-        <div className={`live-quote ${liveQuote.tone}`} aria-label="Live quote">
-          <span className="quote-price">{liveQuote.priceText}</span>
-          <span className="quote-change">{liveQuote.changeText}</span>
-          <span className="quote-percent">{liveQuote.percentText}</span>
-        </div>
-      </header>
       {hoverSnapshot?.kind === "candle" && (
         <dl className="hover-ohlc hover-ohlc-overlay" aria-label="Hovered candle data">
           <div className="hover-ohlc-time"><dt>Time</dt><dd>{formatHoverTimestamp(hoverSnapshot.timestamp ?? hoverSnapshot.from)}</dd></div>
@@ -1194,69 +1145,41 @@ export function ChartPanel({ laneHeight, onSemanticSelectionChange, onChartHover
 
       {agentPortalTarget && createPortal(
         <div className="agent-overlay" onPointerEnter={(event) => event.stopPropagation()} onPointerMove={(event) => event.stopPropagation()} onPointerLeave={(event) => event.stopPropagation()}>
-          <div className="symbol-search" onPointerEnter={clearChartHover} onPointerMove={clearChartHover}>
-            <input
-              value={symbolSearch}
-              onChange={(event) => {
-                setSymbolSearch(event.target.value);
-                setSymbolSearchOpen(true);
-              }}
-              onFocus={() => {
-                setSymbolSearchOpen(true);
-                setSymbolSearch("");
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && filteredSymbols[0]) {
-                  event.preventDefault();
-                  selectSymbol(filteredSymbols[0]);
-                }
-                if (event.key === "Escape") {
-                  setSymbolSearchOpen(false);
-                  setSymbolSearch(currentSymbolLabel);
-                }
-              }}
-              placeholder="종목 검색"
-              aria-label="Symbol search"
-              autoComplete="off"
-            />
-            <button
-              type="button"
-              aria-label="Open symbol dropdown"
-              title="Open symbol dropdown"
-              onClick={() => {
-                if (symbolSearchOpen) {
-                  setSymbolSearchOpen(false);
-                  setSymbolSearch(currentSymbolLabel);
-                  return;
-                }
-                setSymbolSearch("");
-                setSymbolSearchOpen(true);
-              }}
-            >
-              {chart.symbol}
-            </button>
-            {symbolSearchOpen && (
-              <div className="symbol-search-menu" role="listbox" aria-label="Symbols">
-                {filteredSymbols.map((symbol) => (
-                  <button
-                    key={symbol.symbol}
-                    type="button"
-                    className={symbol.symbol === chart.symbol ? "active" : ""}
-                    role="option"
-                    aria-selected={symbol.symbol === chart.symbol}
-                    onPointerDown={(event) => {
-                      event.preventDefault();
-                      selectSymbol(symbol);
-                    }}
-                  >
-                    <strong>{symbol.symbol}</strong>
-                    <span>{symbol.name}</span>
-                  </button>
-                ))}
-                {!filteredSymbols.length && <p>검색 결과 없음</p>}
+          <header className="company-summary" aria-label="Current company">
+            <div className="company-summary-main">
+              {onBackToTreeMap && (
+                <button
+                  type="button"
+                  className="company-summary-back"
+                  aria-label="Back to TreeMap"
+                  title="Back to TreeMap"
+                  onClick={onBackToTreeMap}
+                >
+                  <X size={12} />
+                </button>
+              )}
+              <h1>{chart.symbol} <span>{chart.interval}</span></h1>
+              <div className={`live-quote ${liveQuote.tone}`} aria-label="Live quote">
+                <span className="quote-price">{liveQuote.priceText}</span>
+                <span className="quote-change">{liveQuote.changeText}</span>
+                <span className="quote-percent">{liveQuote.percentText}</span>
               </div>
-            )}
-          </div>
+            </div>
+            <p className="symbol-name">{currentSymbol.name}</p>
+          </header>
+          <SymbolSearch
+            symbols={symbols}
+            selectedSymbol={chart.symbol}
+            selectedLabel={currentSymbolLabel}
+            onSelectSymbol={(nextSymbol) => {
+              if (onSymbolChange) {
+                onSymbolChange(nextSymbol);
+              } else {
+                setSymbol(nextSymbol);
+              }
+            }}
+            onPointerActivity={clearChartHover}
+          />
           {agentMessage && agentMessage !== "차트 에이전트가 차트 명령을 기다립니다." && (
             <p className="agent-answer">{agentMessage}</p>
           )}
@@ -1326,6 +1249,21 @@ function upsertExpansion(expansions: SemanticExpansion[], expansion: SemanticExp
   return next;
 }
 
+function removeExpansionTree(expansions: SemanticExpansion[], expansionId: string): SemanticExpansion[] {
+  const removed = new Set<string>([expansionId]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    expansions.forEach((expansion) => {
+      if (!removed.has(expansion.id) && removed.has(expansion.parentExpansionId ?? "")) {
+        removed.add(expansion.id);
+        changed = true;
+      }
+    });
+  }
+  return expansions.filter((expansion) => !removed.has(expansion.id));
+}
+
 function captureChartMemory(chart: ChartState, expansions: SemanticExpansion[]): ChartMemory {
   return {
     expansions,
@@ -1376,7 +1314,7 @@ function restoreChartFromMemory(
     status: "loading",
     message: "Loading CDC candles...",
     layers: memory?.layers ? { ...memory.layers } : { ...initialLayers },
-    volumeRatio: memory?.volumeRatio ?? initialChart.volumeRatio,
+    volumeRatio: memory?.volumeRatio ?? initialVolumeRatio,
     visibleCount: memory?.visibleCount ?? defaultVisibleBarsForInterval(interval),
     rightOffset: memory?.rightOffset ?? latestCandleRightOffset(defaultVisibleBarsForInterval(interval)),
     drawings: memory?.drawings ?? [],
@@ -1393,19 +1331,21 @@ function visibleRightAnchorTimestamp(scene: ChartScene | null, chart: ChartState
   return chart.candles.at(-1)?.timestamp;
 }
 
-function buildSemanticExpansion(unit: Extract<SemanticRenderUnit, { kind: "candle" }>, parentNodeId: string, depth: number): SemanticExpansion {
+function buildSemanticExpansion(unit: Extract<SemanticRenderUnit, { kind: "candle" }>): SemanticExpansion {
   const childInterval = nextDigTargetInterval(unit.interval);
   const range = candleRange(unit.candle, unit.interval);
   return {
-    id: semanticExpansionId(parentNodeId),
-    parentNodeId,
+    id: semanticExpansionId(unit.id),
+    symbol: unit.symbol,
+    parentExpansionId: unit.parentExpansionId,
+    parentNodeId: unit.id,
     parentTimestamp: unit.timestamp,
     parentInterval: unit.interval,
     parentCandle: unit.candle,
     childInterval,
     from: range.from,
     to: range.to,
-    depth,
+    depth: unit.depth + 1,
     status: childInterval === "footprint" ? "ready" : "loading",
     candles: [],
     openedAt: new Date().toISOString()

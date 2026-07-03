@@ -89,10 +89,14 @@ export type ChartLineExtension = "segment" | "ray" | "line";
 
 export type DrawingStyle = {
   color?: string;
+  colorToken?: string;
   lineWidth?: number;
   lineDash?: number[];
   fillColor?: string;
+  fillToken?: string;
+  fillOpacity?: number;
   textColor?: string;
+  textToken?: string;
   fontSize?: number;
   opacity?: number;
   extension?: ChartLineExtension;

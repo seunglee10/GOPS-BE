@@ -96,18 +96,18 @@ export function buildSingleAnchorPreviewDrawing(type: DrawingType, anchor: Drawi
 
 export function defaultDrawingStyle(type: DrawingType, trendLineExtension: ChartLineExtension = "segment"): DrawingStyle {
   if (type === "rangeBox") {
-    return { color: "#2563eb", fillColor: "rgba(37, 99, 235, 0.12)", lineWidth: 1.4 };
+    return { colorToken: "preview", fillToken: "preview", fillOpacity: 0.12, lineWidth: 1.4 };
   }
   if (type === "trendLine") {
-    return { color: "#111111", lineWidth: 1.5, extension: trendLineExtension };
+    return { colorToken: "drawing", lineWidth: 1.5, extension: trendLineExtension };
   }
   if (type === "measurement") {
-    return { color: "#7c3aed", textColor: "#4c1d95", lineWidth: 1.4 };
+    return { colorToken: "ma20", textToken: "ma20", lineWidth: 1.4 };
   }
   if (type === "arrow") {
-    return { color: "#d97706", lineWidth: 1.6 };
+    return { colorToken: "ma60", lineWidth: 1.6 };
   }
-  return { color: "#111111", lineWidth: 1.5 };
+  return { colorToken: "drawing", lineWidth: 1.5 };
 }
 
 export function defaultDrawingLabel(type?: DrawingType): string | undefined {

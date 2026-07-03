@@ -10,12 +10,6 @@ export type ViewportAnchor = {
   visibleCount?: number;
 };
 
-export type IntervalQueryRange = {
-  from: string;
-  to: string;
-  limit: number;
-};
-
 export function adjacentInterval(interval: ChartInterval, direction: IntervalDirection): ChartInterval | null {
   const index = chartIntervals.indexOf(interval);
   if (index < 0) {
@@ -99,23 +93,6 @@ export function anchoredViewportForCandles(
   );
 }
 
-export function intervalQueryRangeAround(timestamp: string, interval: ChartInterval, visibleCount: number): IntervalQueryRange | null {
-  const anchor = new Date(timestamp);
-  if (!Number.isFinite(anchor.getTime())) {
-    return null;
-  }
-  const count = Math.max(1, Math.round(visibleCount));
-  const before = Math.floor(count / 2);
-  const after = Math.max(1, count - before);
-  const from = stepInterval(anchor, interval, -before);
-  const to = stepInterval(anchor, interval, after);
-  return {
-    from: toIso(from),
-    to: toIso(to),
-    limit: count
-  };
-}
-
 function findCandleIndexAtOrBefore(candles: CandleDto[], timestamp: string): number {
   const target = new Date(timestamp).getTime();
   if (!Number.isFinite(target)) {
@@ -134,31 +111,4 @@ function findCandleIndexAtOrBefore(candles: CandleDto[], timestamp: string): num
     break;
   }
   return best;
-}
-
-function stepInterval(date: Date, interval: ChartInterval, steps: number): Date {
-  const next = new Date(date.getTime());
-  switch (interval) {
-    case "1m":
-      next.setUTCMinutes(next.getUTCMinutes() + steps);
-      return next;
-    case "5m":
-      next.setUTCMinutes(next.getUTCMinutes() + steps * 5);
-      return next;
-    case "10m":
-      next.setUTCMinutes(next.getUTCMinutes() + steps * 10);
-      return next;
-    case "1D":
-      next.setUTCDate(next.getUTCDate() + steps);
-      return next;
-    case "1W":
-      next.setUTCDate(next.getUTCDate() + steps * 7);
-      return next;
-    case "1M":
-      return new Date(Date.UTC(next.getUTCFullYear(), next.getUTCMonth() + steps, 1));
-  }
-}
-
-function toIso(date: Date): string {
-  return date.toISOString().replace(".000Z", "Z");
 }

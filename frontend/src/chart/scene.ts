@@ -112,11 +112,13 @@ export function buildChartScene(chart: ChartState, width: number, height: number
   const volumeRange = volumeDomain(maxVolume);
   const slotWidth = plotWidth / Math.max(1, semanticBase.totalSlots);
   const candleWidth = slotWidth < 2 ? Math.max(0.3, slotWidth * 0.75) : Math.max(2, Math.min(24, slotWidth * 0.72));
-  const expansionRanges = semanticBase.expansionRanges.map((range) => ({
-    ...range,
-    left: slotBoundaryToX(plot, slotWidth, range.slotStart),
-    right: slotBoundaryToX(plot, slotWidth, range.slotEnd)
-  }));
+  const expansionRanges = semanticBase.expansionRanges
+    .map((range) => ({
+      ...range,
+      left: slotBoundaryToX(plot, slotWidth, range.slotStart),
+      right: slotBoundaryToX(plot, slotWidth, range.slotEnd)
+    }))
+    .sort((left, right) => left.depth - right.depth || left.slotStart - right.slotStart);
   return {
     width: safeWidth,
     height: safeHeight,

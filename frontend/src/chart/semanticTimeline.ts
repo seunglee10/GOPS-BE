@@ -6,6 +6,8 @@ export type ExpansionStatus = "loading" | "ready" | "empty" | "error";
 
 export type SemanticExpansion = {
   id: string;
+  symbol: string;
+  parentExpansionId?: string;
   parentNodeId: string;
   parentTimestamp: string;
   parentInterval: ChartInterval;
@@ -178,7 +180,7 @@ export function buildSemanticTimeline(input: BuildSemanticTimelineInput): Semant
   const timestampToSlot = new Map<string, number>();
   const unitById = new Map<string, SemanticRenderUnit>();
   const expansionByParent = new Map(input.expansions.map((expansion) => [expansion.parentNodeId, expansion]));
-  const maxExpansionWidth = Math.max(0, ...input.expansions.map(expansionSlotWidth));
+  const maxExpansionWidth = Math.max(0, ...input.expansions.map((expansion) => expansionSlotWidth(expansion, expansionByParent)));
   const renderStartIndex = Math.max(0, input.visibleStartIndex - maxExpansionWidth - 2);
   const renderEndIndex = Math.min(input.candles.length, input.visibleEndIndex + maxExpansionWidth + 2);
 
@@ -227,7 +229,7 @@ export function buildSemanticTimeline(input: BuildSemanticTimelineInput): Semant
     } else if (expansion.status === "ready" && expansion.candles.length > 0) {
       const childInterval = expansion.childInterval;
       expansion.candles.forEach((childCandle) => {
-        cursor = appendCandle(childCandle, childInterval, expansion.depth, expansion.id, undefined, cursor, false);
+        cursor = appendCandle(childCandle, childInterval, expansion.depth, expansion.id, undefined, cursor, true);
       });
     } else {
       const message = expansion.status === "loading"
@@ -313,7 +315,7 @@ export function buildSemanticTimeline(input: BuildSemanticTimelineInput): Semant
     const slotStart = index - input.viewportStartIndex + extraSlots;
     const rootNodeId = semanticNodeId(input.symbol, input.interval, candle.timestamp);
     const expansion = expansionByParent.get(rootNodeId);
-    const width = expansion ? expansionSlotWidth(expansion) : 1;
+    const width = expansion ? expansionSlotWidth(expansion, expansionByParent) : 1;
     const rootVisible = index >= input.visibleStartIndex && index < input.visibleEndIndex;
     const overlapsViewport = slotStart < input.visibleSlotCount && slotStart + width > 0;
     if (!rootVisible && !overlapsViewport) {
@@ -333,12 +335,25 @@ export function buildSemanticTimeline(input: BuildSemanticTimelineInput): Semant
   };
 }
 
-function expansionSlotWidth(expansion: SemanticExpansion): number {
-  if (expansion.childInterval === "footprint") {
+function expansionSlotWidth(
+  expansion: SemanticExpansion,
+  expansionByParent: Map<string, SemanticExpansion>,
+  visited = new Set<string>()
+): number {
+  if (visited.has(expansion.id)) {
+    return 1;
+  }
+  const nextVisited = new Set(visited).add(expansion.id);
+  const childInterval = expansion.childInterval;
+  if (childInterval === "footprint") {
     return footprintSlotWidth;
   }
   if (expansion.status === "ready" && expansion.candles.length > 0) {
-    return Math.max(1, expansion.candles.length);
+    return Math.max(1, expansion.candles.reduce((total, candle) => {
+      const childNodeId = semanticNodeId(expansion.symbol, childInterval, candle.timestamp, expansion.id);
+      const childExpansion = expansionByParent.get(childNodeId);
+      return total + (childExpansion ? expansionSlotWidth(childExpansion, expansionByParent, nextVisited) : 1);
+    }, 0));
   }
   return placeholderSlotWidth;
 }

@@ -2,7 +2,15 @@ import { MoveVertical } from "lucide-react";
 import { PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { ChartPanel } from "./components/ChartPanel";
 import { PlaceholderPanel } from "./components/PlaceholderPanel";
+import { SymbolSearch } from "./components/SymbolSearch";
 import type { SemanticSelectionSnapshot } from "./chart/semanticTimeline";
+import type { ChartSymbolDto } from "./chart/types";
+import { sp500UniverseSeed } from "./market/sp500Universe.seed";
+import { TreeMapCanvas } from "./treemap/TreeMapCanvas";
+
+type MainView =
+  | { mode: "treemap" }
+  | { mode: "chart"; symbol: string };
 
 type ChartLaneLayout = {
   top: number;
@@ -18,7 +26,7 @@ function initialLaneLayout(): ChartLaneLayout {
   if (typeof window === "undefined") {
     return { top: 194, height: 332 };
   }
-  const height = clampChartHeight(Math.round(window.innerHeight * 0.56), window.innerHeight);
+  const height = chartMaxHeight(window.innerHeight);
   return clampChartLayout({
     top: Math.round((window.innerHeight - height) / 2),
     height
@@ -26,11 +34,14 @@ function initialLaneLayout(): ChartLaneLayout {
 }
 
 export function App() {
+  const [mainView, setMainView] = useState<MainView>({ mode: "treemap" });
   const [chartLane, setChartLane] = useState<ChartLaneLayout>(() => initialLaneLayout());
   const [semanticSelection, setSemanticSelection] = useState<SemanticSelectionSnapshot | null>(null);
   const [chartHover, setChartHover] = useState(false);
   const [gripHover, setGripHover] = useState<"top" | "bottom" | null>(null);
   const dragRef = useRef<LayoutDrag | null>(null);
+  const laneCanMove = canMoveChartLayout(chartLane);
+  const laneCanResize = canResizeChartLayout();
 
   useEffect(() => {
     const applyDrag = (clientY: number) => {
@@ -40,6 +51,9 @@ export function App() {
       }
       const deltaY = clientY - drag.startY;
       if (drag.type === "move") {
+        if (!canMoveChartLayout({ top: drag.startTop, height: drag.startHeight })) {
+          return;
+        }
         setChartLane(clampChartLayout({ top: drag.startTop + deltaY, height: drag.startHeight }));
         return;
       }
@@ -107,8 +121,31 @@ export function App() {
     ].filter((item) => item.value !== "-");
   }, [semanticSelection]);
 
+  const universeSymbols = useMemo((): ChartSymbolDto[] => sp500UniverseSeed.map((item) => ({
+    symbol: item.symbol,
+    name: item.companyName,
+    sector: item.sector,
+    isMock: item.symbol === "TSLA" || item.symbol === "AAPL" || item.symbol === "GOOGL"
+  })), []);
+
+  const showChart = (symbol: string) => {
+    setSemanticSelection(null);
+    setMainView({ mode: "chart", symbol: symbol.toUpperCase() });
+  };
+
+  const showTreeMap = () => {
+    setSemanticSelection(null);
+    setMainView({ mode: "treemap" });
+  };
+
   const beginDrag = (type: LayoutDrag["type"]) => (event: ReactPointerEvent<HTMLElement>) => {
     event.preventDefault();
+    if (type === "move" && !laneCanMove) {
+      return;
+    }
+    if (type !== "move" && !laneCanResize) {
+      return;
+    }
     event.currentTarget.setPointerCapture?.(event.pointerId);
     setChartHover(true);
     if (type === "resize-top") {
@@ -132,6 +169,9 @@ export function App() {
     }
     const deltaY = event.clientY - drag.startY;
     if (drag.type === "move") {
+      if (!canMoveChartLayout({ top: drag.startTop, height: drag.startHeight })) {
+        return;
+      }
       setChartLane(clampChartLayout({ top: drag.startTop + deltaY, height: drag.startHeight }));
       return;
     }
@@ -159,7 +199,9 @@ export function App() {
           className={[
             "chart-lane-frame",
             chartHover ? "is-chart-hovered" : "",
-            gripHover ? "is-grip-hovered" : ""
+            gripHover ? "is-grip-hovered" : "",
+            laneCanMove ? "" : "is-move-disabled",
+            laneCanResize ? "" : "is-resize-disabled"
           ].filter(Boolean).join(" ")}
           style={{ top: chartLane.top, height: chartLane.height }}
           onPointerEnter={() => setChartHover(true)}
@@ -175,6 +217,7 @@ export function App() {
             className="chart-move-button"
             aria-label="Move chart lane"
             title="Move chart lane"
+            disabled={!laneCanMove}
             onPointerDown={beginDrag("move")}
             onPointerMove={updateDrag}
             onPointerUp={endDrag}
@@ -185,18 +228,30 @@ export function App() {
           <div
             className="chart-resize-grip top"
             aria-hidden="true"
-            onPointerEnter={() => setGripHover("top")}
+            onPointerEnter={() => laneCanResize && setGripHover("top")}
             onPointerLeave={() => !dragRef.current && setGripHover(null)}
             onPointerDown={beginDrag("resize-top")}
             onPointerMove={updateDrag}
             onPointerUp={endDrag}
             onPointerCancel={endDrag}
           />
-          <ChartPanel laneHeight={chartLane.height} onSemanticSelectionChange={setSemanticSelection} onChartHoverChange={setChartHover} />
+          {mainView.mode === "treemap" ? (
+            <TreeMapCanvas items={sp500UniverseSeed} onSelectSymbol={showChart} />
+          ) : (
+            <ChartPanel
+              symbol={mainView.symbol}
+              symbols={universeSymbols}
+              laneHeight={chartLane.height}
+              onSemanticSelectionChange={setSemanticSelection}
+              onChartHoverChange={setChartHover}
+              onSymbolChange={showChart}
+              onBackToTreeMap={showTreeMap}
+            />
+          )}
           <div
             className="chart-resize-grip bottom"
             aria-hidden="true"
-            onPointerEnter={() => setGripHover("bottom")}
+            onPointerEnter={() => laneCanResize && setGripHover("bottom")}
             onPointerLeave={() => !dragRef.current && setGripHover(null)}
             onPointerDown={beginDrag("resize-bottom")}
             onPointerMove={updateDrag}
@@ -204,10 +259,25 @@ export function App() {
             onPointerCancel={endDrag}
           />
         </div>
-        <div className="floating-panels" aria-label="Workspace panels">
-          <PlaceholderPanel label="Panel 02" title="선택 시점 메타데이터" className="floating-panel top" style={floatingPanelStyles.top} metadata={panelMetadata} />
-          <PlaceholderPanel label="Panel 03" title="연동 패널" className="floating-panel bottom" style={floatingPanelStyles.bottom} metadata={panelMetadata} />
-        </div>
+        {mainView.mode === "treemap" && (
+          <>
+            <div className="treemap-landing-overlay">
+              <h1>어떤 종목이 궁금하신가요?</h1>
+            </div>
+            <SymbolSearch
+              symbols={universeSymbols}
+              className="treemap-symbol-search"
+              buttonLabel="S&P500"
+              onSelectSymbol={showChart}
+            />
+          </>
+        )}
+        {mainView.mode === "chart" && (
+          <div className="floating-panels" aria-label="Workspace panels">
+            <PlaceholderPanel label="Panel 02" title="선택 시점 메타데이터" className="floating-panel top" style={floatingPanelStyles.top} metadata={panelMetadata} />
+            <PlaceholderPanel label="Panel 03" title="연동 패널" className="floating-panel bottom" style={floatingPanelStyles.bottom} metadata={panelMetadata} />
+          </div>
+        )}
       </section>
     </main>
   );
@@ -236,12 +306,17 @@ function formatVolume(value: number | undefined): string {
 
 function clampChartLayout(layout: ChartLaneLayout): ChartLaneLayout {
   const viewportHeight = typeof window === "undefined" ? 720 : window.innerHeight;
-  const reservedPanelSpace = Math.max(82, Math.min(150, Math.round(viewportHeight * 0.14)));
-  const minHeight = Math.min(170, Math.max(150, viewportHeight - reservedPanelSpace * 2 - 28));
-  const maxHeight = Math.max(minHeight, Math.min(Math.round(viewportHeight * 0.72), viewportHeight - reservedPanelSpace * 2 - 28));
+  const minHeight = chartMinHeight(viewportHeight);
+  const maxHeight = chartMaxHeight(viewportHeight);
   const height = clampChartHeight(layout.height, viewportHeight, minHeight, maxHeight);
-  const minTop = reservedPanelSpace + 8;
-  const maxTop = Math.max(minTop, viewportHeight - reservedPanelSpace - height - 8);
+  const minTop = chartReservedPanelSpace(viewportHeight) + 8;
+  const maxTop = Math.max(minTop, viewportHeight - chartReservedPanelSpace(viewportHeight) - height - 8);
+  if (height >= maxHeight - 0.5) {
+    return {
+      top: Math.round((minTop + maxTop) / 2),
+      height
+    };
+  }
   return {
     top: Math.round(Math.min(maxTop, Math.max(minTop, layout.top))),
     height
@@ -250,4 +325,28 @@ function clampChartLayout(layout: ChartLaneLayout): ChartLaneLayout {
 
 function clampChartHeight(height: number, viewportHeight: number, minHeight = 150, maxHeight = Math.round(viewportHeight * 0.72)): number {
   return Math.round(Math.min(maxHeight, Math.max(minHeight, height)));
+}
+
+function chartReservedPanelSpace(viewportHeight: number): number {
+  return Math.max(82, Math.min(150, Math.round(viewportHeight * 0.12)));
+}
+
+function chartMinHeight(viewportHeight: number): number {
+  const reservedPanelSpace = chartReservedPanelSpace(viewportHeight);
+  return Math.min(170, Math.max(150, viewportHeight - reservedPanelSpace * 2 - 28));
+}
+
+function chartMaxHeight(viewportHeight: number): number {
+  const reservedPanelSpace = chartReservedPanelSpace(viewportHeight);
+  return Math.max(chartMinHeight(viewportHeight), Math.min(Math.round(viewportHeight * 0.72), viewportHeight - reservedPanelSpace * 2 - 28));
+}
+
+function canMoveChartLayout(layout: ChartLaneLayout): boolean {
+  const viewportHeight = typeof window === "undefined" ? 720 : window.innerHeight;
+  return layout.height < chartMaxHeight(viewportHeight) - 0.5;
+}
+
+function canResizeChartLayout(): boolean {
+  const viewportHeight = typeof window === "undefined" ? 720 : window.innerHeight;
+  return chartMaxHeight(viewportHeight) > chartMinHeight(viewportHeight) + 0.5;
 }

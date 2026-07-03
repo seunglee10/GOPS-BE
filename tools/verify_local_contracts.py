@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import re
 import sys
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -21,12 +23,14 @@ def main() -> None:
     assert_volume_diversity(current_time)
     assert_digging_range_coverage()
     assert_frontend_digging_contract()
-    assert_frontend_single_digging_contract()
+    assert_frontend_recursive_digging_contract()
     assert_frontend_digging_pan_contract()
     assert_frontend_agent_preview_contract()
     assert_frontend_integer_price_axis_contract()
     assert_frontend_volume_pane_contract()
     assert_frontend_chart_layout_contract()
+    assert_frontend_treemap_main_view_contract()
+    assert_frontend_palette_contract()
     assert_frontend_parent_summary_contract()
     assert_frontend_trend_menu_contract()
     assert_agent_actions_are_not_prompt_hardcoded()
@@ -35,16 +39,21 @@ def main() -> None:
 
 def assert_fake_symbols() -> None:
     symbols = {profile.symbol for profile in mock.FAKE_SYMBOLS}
-    assert symbols == {"GOPS-ALP", "GOPS-ION", "GOPS-NOVA"}
-    assert not symbols.intersection({"AAPL", "MSFT", "NVDA"})
+    assert symbols == {"TSLA", "AAPL", "GOOGL"}
+    assert not symbols.intersection({"MU", "KO", "MSFT", "NVDA"})
+    assert mock.normalize_symbol("googl") == "GOOGL"
+    unsupported = asyncio.run(mock.get_candles(symbol="MSFT", interval="1D", limit=10, ma=""))
+    assert unsupported["symbol"] == "MSFT"
+    assert unsupported["status"] == "empty"
+    assert unsupported["candles"] == []
 
 
 def assert_intraday_aggregation(current_time: datetime) -> None:
     start = datetime(2026, 7, 2, 13, 30, tzinfo=timezone.utc)
     for interval, minutes in (("5m", 5), ("10m", 10)):
-        candle = mock.aggregate_target_bucket("GOPS-ALP", interval, start, current_time)
+        candle = mock.aggregate_target_bucket("TSLA", interval, start, current_time)
         source = [
-            mock.source_minute_candle("GOPS-ALP", start + timedelta(minutes=offset), current_time)
+            mock.source_minute_candle("TSLA", start + timedelta(minutes=offset), current_time)
             for offset in range(minutes)
         ]
         assert candle is not None
@@ -53,29 +62,29 @@ def assert_intraday_aggregation(current_time: datetime) -> None:
 
 def assert_daily_weekly_monthly_aggregation(current_time: datetime) -> None:
     day_start = datetime(2026, 7, 2, tzinfo=timezone.utc)
-    day = mock.aggregate_target_bucket("GOPS-ALP", "1D", day_start, current_time)
+    day = mock.aggregate_target_bucket("TSLA", "1D", day_start, current_time)
     minutes = [
-        mock.source_minute_candle("GOPS-ALP", day_start + timedelta(hours=13, minutes=30 + offset), current_time)
+        mock.source_minute_candle("TSLA", day_start + timedelta(hours=13, minutes=30 + offset), current_time)
         for offset in range(mock.REGULAR_SESSION_MINUTES)
     ]
     assert day is not None
     assert_candle_matches_source(day, minutes)
 
     week_start = mock.floor_bucket(day_start, "1W")
-    week = mock.aggregate_target_bucket("GOPS-ALP", "1W", week_start, current_time)
+    week = mock.aggregate_target_bucket("TSLA", "1W", week_start, current_time)
     week_days = [
-        mock.aggregate_target_bucket("GOPS-ALP", "1D", week_start + timedelta(days=offset), current_time)
+        mock.aggregate_target_bucket("TSLA", "1D", week_start + timedelta(days=offset), current_time)
         for offset in range(7)
     ]
     assert week is not None
     assert_candle_matches_source(week, week_days)
 
     month_start = mock.floor_bucket(day_start, "1M")
-    month = mock.aggregate_target_bucket("GOPS-ALP", "1M", month_start, current_time)
+    month = mock.aggregate_target_bucket("TSLA", "1M", month_start, current_time)
     month_days = []
     day = month_start
     while day < mock.add_bucket(month_start, "1M"):
-        month_days.append(mock.aggregate_target_bucket("GOPS-ALP", "1D", day, current_time))
+        month_days.append(mock.aggregate_target_bucket("TSLA", "1D", day, current_time))
         day += timedelta(days=1)
     assert month is not None
     assert_candle_matches_source(month, month_days)
@@ -84,15 +93,15 @@ def assert_daily_weekly_monthly_aggregation(current_time: datetime) -> None:
 def assert_live_candle_contract() -> None:
     live_time = datetime(2026, 7, 2, 14, 37, 24, tzinfo=timezone.utc)
 
-    first = mock.collect_live_candles("GOPS-ALP", "1m", datetime(2026, 7, 2, 14, 37, 10, tzinfo=timezone.utc), 80)[-1]
-    second = mock.collect_live_candles("GOPS-ALP", "1m", datetime(2026, 7, 2, 14, 37, 30, tzinfo=timezone.utc), 80)[-1]
+    first = mock.collect_live_candles("TSLA", "1m", datetime(2026, 7, 2, 14, 37, 10, tzinfo=timezone.utc), 80)[-1]
+    second = mock.collect_live_candles("TSLA", "1m", datetime(2026, 7, 2, 14, 37, 30, tzinfo=timezone.utc), 80)[-1]
     assert first["timestamp"] == second["timestamp"]
     assert first["close"] != second["close"]
     assert second["volume"] > first["volume"]
 
     for interval in ("1m", "5m", "10m", "1D", "1W", "1M"):
         bucket = mock.floor_bucket(live_time, interval)
-        candle = mock.aggregate_live_target_bucket("GOPS-ALP", interval, bucket, live_time)
+        candle = mock.aggregate_live_target_bucket("TSLA", interval, bucket, live_time)
         assert candle is not None
         assert candle["isClosed"] is False
         assert_finite_candle(candle)
@@ -104,29 +113,29 @@ def assert_live_candle_contract() -> None:
         minute = bucket
         for _ in range(minutes):
             if minute <= current_minute and mock.is_trading_minute(minute):
-                values.append(mock.live_source_minute_values("GOPS-ALP", minute, live_time))
+                values.append(mock.live_source_minute_values("TSLA", minute, live_time))
             minute += timedelta(minutes=1)
-        candle = mock.aggregate_live_target_bucket("GOPS-ALP", interval, bucket, live_time)
+        candle = mock.aggregate_live_target_bucket("TSLA", interval, bucket, live_time)
         assert candle is not None
         assert_candle_matches_ohlcv_source(candle, values)
 
     day_bucket = mock.floor_bucket(live_time, "1D")
-    day = mock.aggregate_live_target_bucket("GOPS-ALP", "1D", day_bucket, live_time)
+    day = mock.aggregate_live_target_bucket("TSLA", "1D", day_bucket, live_time)
     assert day is not None
-    assert_candle_matches_ohlcv_source(day, mock.live_regular_session_source_values("GOPS-ALP", day_bucket.date(), live_time))
+    assert_candle_matches_ohlcv_source(day, mock.live_regular_session_source_values("TSLA", day_bucket.date(), live_time))
 
     week_bucket = mock.floor_bucket(live_time, "1W")
-    week = mock.aggregate_live_target_bucket("GOPS-ALP", "1W", week_bucket, live_time)
-    week_days = [mock.aggregate_live_day("GOPS-ALP", week_bucket + timedelta(days=offset), live_time) for offset in range(7)]
+    week = mock.aggregate_live_target_bucket("TSLA", "1W", week_bucket, live_time)
+    week_days = [mock.aggregate_live_day("TSLA", week_bucket + timedelta(days=offset), live_time) for offset in range(7)]
     assert week is not None
     assert_candle_matches_source(week, week_days)
 
     month_bucket = mock.floor_bucket(live_time, "1M")
-    month = mock.aggregate_live_target_bucket("GOPS-ALP", "1M", month_bucket, live_time)
+    month = mock.aggregate_live_target_bucket("TSLA", "1M", month_bucket, live_time)
     month_days = []
     day_cursor = month_bucket
     while day_cursor < mock.add_bucket(month_bucket, "1M"):
-        month_days.append(mock.aggregate_live_day("GOPS-ALP", day_cursor, live_time))
+        month_days.append(mock.aggregate_live_day("TSLA", day_cursor, live_time))
         day_cursor += timedelta(days=1)
     assert month is not None
     assert_candle_matches_source(month, month_days)
@@ -135,7 +144,7 @@ def assert_live_candle_contract() -> None:
 def assert_volume_diversity(current_time: datetime) -> None:
     start = datetime(2026, 7, 2, 13, 30, tzinfo=timezone.utc)
     minute_candles = [
-        mock.source_minute_candle("GOPS-ALP", start + timedelta(minutes=offset), current_time)
+        mock.source_minute_candle("TSLA", start + timedelta(minutes=offset), current_time)
         for offset in range(mock.REGULAR_SESSION_MINUTES)
     ]
     volumes = sorted(candle["volume"] for candle in minute_candles if candle)
@@ -147,7 +156,7 @@ def assert_volume_diversity(current_time: datetime) -> None:
 
     day_start = datetime(2026, 6, 1, tzinfo=timezone.utc)
     daily = [
-        mock.aggregate_target_bucket("GOPS-ALP", "1D", day_start + timedelta(days=offset), current_time)
+        mock.aggregate_target_bucket("TSLA", "1D", day_start + timedelta(days=offset), current_time)
         for offset in range(22)
     ]
     daily_volumes = sorted(candle["volume"] for candle in daily if candle)
@@ -160,19 +169,19 @@ def assert_digging_range_coverage() -> None:
     july_start = datetime(2026, 7, 1, tzinfo=timezone.utc)
     july_end = mock.add_bucket(july_start, "1M")
 
-    parent = mock.aggregate_target_bucket("GOPS-ALP", "1M", july_start, completed_time)
+    parent = mock.aggregate_target_bucket("TSLA", "1M", july_start, completed_time)
     assert parent is not None
 
     query_start = mock.floor_bucket(july_start, "1W")
     query_end = mock.ceil_bucket(july_end, "1W")
-    raw = mock.candles_for_range("GOPS-ALP", "1W", query_start, query_end, 0, completed_time)
+    raw = mock.candles_for_range("TSLA", "1W", query_start, query_end, 0, completed_time)
     timestamps = [item["timestamp"] for item in raw["withLookback"]]
     assert "2026-06-29T00:00:00Z" in timestamps
     assert "2026-07-27T00:00:00Z" in timestamps
 
     day_start = datetime(2026, 7, 2, tzinfo=timezone.utc)
     day_end = mock.add_bucket(day_start, "1D")
-    intraday = mock.candles_for_range("GOPS-ALP", "10m", day_start, day_end, 0, completed_time)
+    intraday = mock.candles_for_range("TSLA", "10m", day_start, day_end, 0, completed_time)
     assert len(intraday["withLookback"]) == 39
 
 
@@ -184,38 +193,47 @@ def assert_frontend_digging_contract() -> None:
     assert 'case "1m":\n      return "footprint";' in source
 
 
-def assert_frontend_single_digging_contract() -> None:
+def assert_frontend_recursive_digging_contract() -> None:
     timeline = (REPO_ROOT / "frontend/src/chart/semanticTimeline.ts").read_text()
     panel = (REPO_ROOT / "frontend/src/components/ChartPanel.tsx").read_text()
-    assert "cursor = appendCandle(childCandle, childInterval, expansion.depth, expansion.id, undefined, cursor, false);" in timeline
+    assert "cursor = appendCandle(childCandle, childInterval, expansion.depth, expansion.id, undefined, cursor, true);" in timeline
     assert "appendCandle(candle, input.interval, 0, undefined, index, slotStart, true)" in timeline
     assert "parentNodeId.includes(expansionId)" not in panel
+    assert "parentExpansionId?: string;" in timeline
+    assert "symbol: string;" in timeline
     assert "const [activeExpansions, setActiveExpansions] = useState<SemanticExpansion[]>([]);" in panel
     assert "const renderExpansions = activeExpansions;" in panel
     assert "function upsertExpansion" in panel
+    assert "function removeExpansionTree" in panel
     assert "setActiveExpansions((current) => upsertExpansion(current, expansion));" in panel
     assert "setActiveExpansions(expansion)" not in panel
     assert "activeExpansionRef" not in panel
-    assert "unit.parentExpansionId" in panel
-    assert "semanticNodeId(unit.symbol, unit.interval, unit.timestamp)" in panel
-    assert "range: intervalQueryRangeAround(unit.timestamp, unit.interval, visibleCount)" in panel
-    assert "expansionOverride: expansion" in panel
-    assert "options.expansionOverride ? [options.expansionOverride] : []" in panel
+    assert "switchSymbolInterval(unit.symbol, unit.interval" not in panel
+    assert "intervalQueryRangeAround" not in panel
+    assert "expansionOverride" not in panel
+    assert "semanticExpansionId(unit.id)" in panel
+    assert "parentExpansionId: unit.parentExpansionId" in panel
+    assert "const childNodeId = semanticNodeId(expansion.symbol, childInterval, candle.timestamp, expansion.id);" in timeline
+    assert "visited.has(expansion.id)" in timeline
 
 
 def assert_frontend_digging_pan_contract() -> None:
     timeline = (REPO_ROOT / "frontend/src/chart/semanticTimeline.ts").read_text()
     canvas = (REPO_ROOT / "frontend/src/chart/ChartCanvas.tsx").read_text()
     panel = (REPO_ROOT / "frontend/src/components/ChartPanel.tsx").read_text()
-    assert "const maxExpansionWidth = Math.max(0, ...input.expansions.map(expansionSlotWidth));" in timeline
+    scene = (REPO_ROOT / "frontend/src/chart/scene.ts").read_text()
+    assert "const maxExpansionWidth = Math.max(0, ...input.expansions.map((expansion) => expansionSlotWidth(expansion, expansionByParent)));" in timeline
     assert "const renderStartIndex = Math.max(0, input.visibleStartIndex - maxExpansionWidth - 2);" in timeline
     assert "const renderEndIndex = Math.min(input.candles.length, input.visibleEndIndex + maxExpansionWidth + 2);" in timeline
     assert "for (let index = renderStartIndex; index < renderEndIndex; index += 1)" in timeline
     assert "const overlapsViewport = slotStart < input.visibleSlotCount && slotStart + width > 0;" in timeline
     assert "totalSlots: Math.max(1, input.visibleSlotCount)," in timeline
     assert "input.visibleSlotCount + extraSlots" not in timeline
-    assert "function expansionSlotWidth" in timeline
-    assert "const depthAlpha = Math.min(0.046, 0.018 + range.depth * 0.006);" in canvas
+    assert "function expansionSlotWidth(" in timeline
+    assert ".sort((left, right) => left.depth - right.depth || left.slotStart - right.slotStart)" in scene
+    assert "const depthAlpha = Math.min(0.034, 0.012 + range.depth * 0.004);" in canvas
+    assert "function drawExpansionSideShadow" in canvas
+    assert "context.globalAlpha = 0.095;" not in canvas
     assert "function drawPlotClipped" in canvas
     assert "drawPlotClipped(context, scene, () => drawCandles(context, scene))" in canvas
     assert "drawPlotClipped(context, scene, () => drawVolume(context, scene))" in canvas
@@ -242,7 +260,7 @@ def assert_frontend_agent_preview_contract() -> None:
     assert "setAgentDrawingPreview({" in panel
     assert "applyChartActions(current, preview.actions)" in panel
     assert "previewDrawings?: DrawingEntity[];" in canvas
-    assert '{ id: "agent-preview", draw: () => drawDrawings(context, scene, previewDrawings, true) }' in canvas
+    assert "() => drawDrawings(context, scene, previewDrawings, true)" in canvas
 
 
 def assert_frontend_integer_price_axis_contract() -> None:
@@ -268,7 +286,7 @@ def assert_frontend_volume_pane_contract() -> None:
     assert "volumeTicks: volumeRange.ticks" in scene
     assert "function volumeDomain" in scene
     assert "function niceIntegerCeil" in scene
-    assert "priceBoundary" in canvas
+    assert "context.strokeStyle = colors.border;" in canvas
     assert "line(context, scene.plot.left, scene.plot.priceBottom, right, scene.plot.priceBottom);" in canvas
     assert "line(context, scene.plot.left, scene.plot.volumeTop, right, scene.plot.volumeTop)" not in canvas
     assert "scene.scales.volumeTicks.forEach((volume)" in canvas
@@ -277,9 +295,18 @@ def assert_frontend_volume_pane_contract() -> None:
     assert "function formatCompactVolumeNumber" in canvas
     assert 'const unit = value >= 999_500 ? "M" : "K";' in canvas
     assert "return `${formatCompactVolumeNumber(value / divisor)}${unit}`;" in canvas
-    assert "function semanticVisualStyle" in canvas
-    assert "function applySemanticVisualStyle" in canvas
-    assert "applySemanticVisualStyle(context, semanticVisualStyle(scene, unit));" in canvas
+    assert "function semanticContextOpacity" in canvas
+    assert "context.globalAlpha *= semanticContextOpacity(scene, unit);" in canvas
+    assert "function semanticVisualStyle" not in canvas
+    assert "function applySemanticVisualStyle" not in canvas
+    assert "SemanticVisualRole" not in canvas
+    assert "SemanticVisualStyle" not in canvas
+    assert "type RenderLayer" not in canvas
+    assert "drawPriceAxisBackdrop" not in canvas
+    assert "function candleStrokeColor" in canvas
+    assert "return hovered ? colors.up : colors.upSoft;" in canvas
+    assert "return hovered ? colors.down : colors.downSoft;" in canvas
+    assert "context.globalAlpha *= 0.18;" in canvas
     assert "hoveredCandleId" not in canvas
     assert "? scene.plot.priceBottom : null" in panel
     assert ".volume-resize-handle::before" in styles
@@ -308,13 +335,23 @@ def assert_frontend_chart_layout_contract() -> None:
     assert ".hover-ohlc-time {\n  display: block;" in styles
     assert ".hover-ohlc .hover-ohlc-time dd" in styles
     assert "width: 108px;" in styles
-    assert ".panel-header {\n  position: absolute;\n  top: 16px;" in styles
-    assert "justify-content: flex-start;" in styles
-    assert "min-width: 0;" in styles
-    assert ".live-quote {\n  position: absolute;\n  top: 2px;\n  left: 152px;" in styles
+    assert 'className="company-summary"' in panel
+    assert ".company-summary {\n  position: fixed;\n  top: 17px;\n  left: 24px;" in styles
+    assert ".company-summary-main {\n  display: flex;" in styles
+    assert ".live-quote {\n  display: flex;" in styles
     assert "flex-wrap: nowrap;" in styles
-    assert "min-width: 172px;" in styles
+    assert ".live-quote span {\n  white-space: nowrap;" in styles
+    assert ".symbol-search {\n  position: fixed;\n  top: 16px;\n  right: 18px;" in styles
+    assert ".symbol-search-menu {\n  position: absolute;\n  top: 42px;\n  right: 0;" in styles
+    assert ".panel-header" not in panel
     assert ".toolbar {\n  position: absolute;\n  top: 16px;" in styles
+    assert "if (height >= maxHeight - 0.5)" in (REPO_ROOT / "frontend/src/App.tsx").read_text()
+    assert "function canMoveChartLayout" in (REPO_ROOT / "frontend/src/App.tsx").read_text()
+    assert "disabled={!laneCanMove}" in (REPO_ROOT / "frontend/src/App.tsx").read_text()
+    assert "height: 28px;" in styles
+    assert "cursor: ns-resize !important;" in styles
+    assert ".chart-lane-frame.is-move-disabled:hover .chart-move-button" in styles
+    assert ".chart-lane-frame.is-resize-disabled .chart-resize-grip" in styles
 
     viewport = (REPO_ROOT / "frontend/src/chart/viewport.ts").read_text()
     interval_navigation = (REPO_ROOT / "frontend/src/chart/intervalNavigation.ts").read_text()
@@ -328,6 +365,156 @@ def assert_frontend_chart_layout_contract() -> None:
     assert "function chartSocketUrl" in client
     assert "function reconnectDelayMs" in client
     assert "reconnectTimer = window.setTimeout(connect, reconnectDelayMs(reconnectAttempts));" in client
+
+
+def assert_frontend_treemap_main_view_contract() -> None:
+    app = (REPO_ROOT / "frontend/src/App.tsx").read_text()
+    panel = (REPO_ROOT / "frontend/src/components/ChartPanel.tsx").read_text()
+    search = (REPO_ROOT / "frontend/src/components/SymbolSearch.tsx").read_text()
+    treemap = (REPO_ROOT / "frontend/src/treemap/TreeMapCanvas.tsx").read_text()
+    layout = (REPO_ROOT / "frontend/src/treemap/treemapLayout.ts").read_text()
+    seed = (REPO_ROOT / "frontend/src/market/sp500Universe.seed.ts").read_text()
+    styles = (REPO_ROOT / "frontend/src/styles.css").read_text()
+
+    assert "type MainView =" in app
+    assert '| { mode: "treemap" }' in app
+    assert '| { mode: "chart"; symbol: string };' in app
+    assert 'useState<MainView>({ mode: "treemap" })' in app
+    assert "<TreeMapCanvas items={sp500UniverseSeed} onSelectSymbol={showChart} />" in app
+    assert 'symbol={mainView.symbol}' in app
+    assert "onBackToTreeMap={showTreeMap}" in app
+    assert "어떤 종목이 궁금하신가요?" in app
+    assert "mainView.mode === \"treemap\"" in app
+    assert "mainView.mode === \"chart\"" in app
+    assert "const height = chartMaxHeight(window.innerHeight);" in app
+    assert "function chartMaxHeight" in app
+
+    assert "fetchSymbols" not in panel
+    assert "No chart data for" in panel
+    assert "function createInitialChart(symbol: string): ChartState" in panel
+    assert "symbol: string;" in panel
+    assert "symbols: ChartSymbolDto[];" in panel
+
+    assert "function rankSymbolMatches" in search
+    assert "function symbolSearchRank" in search
+    assert "ticker === query" in search
+    assert "submitFirstMatch(event.currentTarget.value)" in search
+
+    assert "layoutSp500TreeMap" in treemap
+    assert "hitTestTreeMapTile" in treemap
+    assert "tileFillForChange" in treemap
+    assert "context.fillRect(0, 0, size.width, size.height)" not in treemap
+    assert "strokeRect(tile.x" not in treemap
+    assert "tileStrokeForDepth" not in treemap
+    assert "function insetTile" in treemap
+    assert "export function layoutSp500TreeMap" in layout
+    assert "export function hitTestTreeMapTile" in layout
+    assert "export const sp500UniverseSeed" in seed
+    assert '"symbol": "TSLA"' in seed
+    assert '"symbol": "AAPL"' in seed
+    assert '"symbol": "GOOGL"' in seed
+    assert 'item.symbol === "TSLA" || item.symbol === "AAPL" || item.symbol === "GOOGL"' in app
+    assert "item.symbol === \"MU\"" not in app
+    assert "item.symbol === \"KO\"" not in app
+    assert "--gops-background: #e5e6e1;" in styles
+    assert "--color-background: var(--gops-background);" in styles
+    assert ".treemap-panel {\n  position: relative;" in styles
+    assert "background: var(--color-background);" in styles
+    assert ".symbol-search.treemap-symbol-search {\n  position: fixed;" in styles
+    assert "bottom: 20px;" in styles
+    assert "transform: translateX(-50%);" in styles
+
+
+def assert_frontend_palette_contract() -> None:
+    allowed_hex = {
+        "#000000",
+        "#ffffff",
+        "#343532",
+        "#e5e6e1",
+        "#66461c",
+        "#9a7038",
+        "#463b61",
+        "#776b91",
+        "#5d2429",
+        "#955f67",
+        "#116b65",
+        "#4f827d",
+        "#3d4a08",
+        "#788447",
+    }
+    checked_paths = [
+        *sorted((REPO_ROOT / "frontend/src").rglob("*.css")),
+        *sorted((REPO_ROOT / "frontend/src").rglob("*.ts")),
+        *sorted((REPO_ROOT / "frontend/src").rglob("*.tsx")),
+        *sorted((REPO_ROOT / "agent_backend/app").rglob("*.py")),
+    ]
+    for path in checked_paths:
+        source = path.read_text()
+        for match in re.findall(r"#[0-9a-fA-F]{3,8}", source):
+            assert match.lower() in allowed_hex, f"Unexpected color {match} in {path}"
+        lowered = source.lower()
+        assert "rgba(" not in lowered, f"rgba() color found in {path}"
+        assert "rgb(" not in lowered, f"rgb() color found in {path}"
+        assert "hsl(" not in lowered, f"hsl() color found in {path}"
+        assert "hsla(" not in lowered, f"hsla() color found in {path}"
+        assert "transparent" not in lowered, f"transparent color found in {path}"
+        assert "data:image" not in lowered, f"data image color texture found in {path}"
+
+    styles = (REPO_ROOT / "frontend/src/styles.css").read_text()
+    theme = (REPO_ROOT / "frontend/src/theme/colors.ts").read_text()
+    chart_canvas = (REPO_ROOT / "frontend/src/chart/ChartCanvas.tsx").read_text()
+    treemap_colors = (REPO_ROOT / "frontend/src/treemap/treemapColors.ts").read_text()
+    drawings = (REPO_ROOT / "frontend/src/chart/drawings.ts").read_text()
+    agent = (REPO_ROOT / "agent_backend/app/main.py").read_text()
+    assert "--gops-background: #e5e6e1;" in styles
+    assert "--color-surface: var(--gops-background);" in styles
+    assert "--color-muted: var(--gops-ink);" in styles
+    assert "--color-border: var(--gops-white);" in styles
+    assert "--color-shadow: var(--gops-ink);" in styles
+    assert "--gops-umber: #66461c;" in styles
+    assert "--gops-umber-soft: #9a7038;" in styles
+    assert "--gops-violet: #463b61;" in styles
+    assert "--gops-violet-soft: #776b91;" in styles
+    assert "--gops-crimson: #5d2429;" in styles
+    assert "--gops-crimson-soft: #955f67;" in styles
+    assert "--gops-teal: #116b65;" in styles
+    assert "--gops-teal-soft: #4f827d;" in styles
+    assert "--gops-moss: #3d4a08;" in styles
+    assert "--gops-moss-soft: #788447;" in styles
+    assert "--color-up: var(--gops-crimson);" in styles
+    assert "--color-up-soft: var(--gops-crimson-soft);" in styles
+    assert "--color-down: var(--gops-teal);" in styles
+    assert "--color-down-soft: var(--gops-teal-soft);" in styles
+    assert "--gops-brown" not in styles
+    assert "--gops-gold" not in styles
+    assert "--gops-purple" not in styles
+    assert "--gops-lavender" not in styles
+    assert "--gops-red" not in styles
+    assert "--gops-rose" not in styles
+    assert "--gops-green" not in styles
+    assert "--gops-mint" not in styles
+    assert "--gops-olive" not in styles
+    assert "--gops-sage" not in styles
+    assert "--color-ma5: var(--gops-ink);" in styles
+    assert "--color-ma20: var(--gops-ink);" in styles
+    assert "--color-ma60: var(--gops-ink);" in styles
+    assert "--color-preview: var(--gops-ink);" in styles
+    assert "--color-footprint: var(--gops-ink);" in styles
+    assert "--color-grid: var(--gops-ink);" in styles
+    assert "--color-axis: var(--gops-ink);" in styles
+    assert "readThemeColors" in theme
+    assert "resolveRawPaletteColor" in theme
+    assert "readThemeColors()" in chart_canvas
+    assert "function movingAverageAlpha" in chart_canvas
+    assert "context.lineWidth = 1.05;" in chart_canvas
+    assert "function drawExpansionSideShadow" in chart_canvas
+    assert "context.globalAlpha = Math.max(0.006, 0.028 - index * 0.004);" in chart_canvas
+    assert "colorToken" in drawings and "fillToken" in drawings and "fillOpacity" in drawings
+    assert "colorToken" in agent and "fillToken" in agent and "textToken" in agent
+    assert "hue" not in treemap_colors
+    assert "saturation" not in treemap_colors
+    assert "export function tileOpacityForChange" in treemap_colors
+    assert "return change > 0 ? theme.up : theme.down;" in treemap_colors
 
 
 def assert_frontend_parent_summary_contract() -> None:
@@ -387,7 +574,7 @@ def assert_agent_actions_are_not_prompt_hardcoded() -> None:
     ]
     context = {
         "prompt": "주봉으로 바꾸고 거래량이 큰 봉에 표시해줘",
-        "panel": {"symbol": "GOPS-ALP", "interval": "1m", "visibleCount": 120, "rightOffset": 0},
+        "panel": {"symbol": "TSLA", "interval": "1m", "visibleCount": 120, "rightOffset": 0},
         "candles": {"current": [], "daily": [], "weekly": weekly},
     }
 
@@ -401,7 +588,7 @@ def assert_agent_actions_are_not_prompt_hardcoded() -> None:
                 "drawing": {
                     "id": "llm-selected",
                     "type": "pointMarker",
-                    "anchors": [{"timestamp": "2026-02-06T00:00:00Z", "price": 120, "symbol": "GOPS-ALP"}],
+                    "anchors": [{"timestamp": "2026-02-06T00:00:00Z", "price": 120, "symbol": "TSLA"}],
                     "style": {"color": "#ff0000"},
                     "label": "LLM 선택",
                     "visible": True,

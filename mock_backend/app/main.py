@@ -59,9 +59,9 @@ class SessionShape:
 
 
 FAKE_SYMBOLS: tuple[FakeSymbolProfile, ...] = (
-    FakeSymbolProfile("GOPS-ALP", "Alpinary Systems", "Synthetic Cloud Infrastructure", 118.0, 0.038, 1.12, 3_800),
-    FakeSymbolProfile("GOPS-ION", "Ionbridge Dynamics", "Synthetic Energy Platforms", 72.0, 0.008, 0.98, 5_600),
-    FakeSymbolProfile("GOPS-NOVA", "Novastra Fabrication", "Synthetic Robotics", 238.0, -0.052, 1.64, 2_900),
+    FakeSymbolProfile("TSLA", "Tesla Inc.", "Consumer Cyclical", 312.0, 0.044, 4.2, 14_200),
+    FakeSymbolProfile("AAPL", "Apple Inc.", "Technology", 214.0, 0.018, 2.2, 12_600),
+    FakeSymbolProfile("GOOGL", "Alphabet Inc.", "Communication Services", 188.0, 0.012, 1.9, 10_800),
 )
 FAKE_SYMBOL_BY_SYMBOL = {profile.symbol: profile for profile in FAKE_SYMBOLS}
 
@@ -106,7 +106,7 @@ async def get_symbols() -> dict[str, Any]:
 
 @app.get("/api/charts/candles")
 async def get_candles(
-    symbol: str = Query("GOPS-ALP", min_length=1, max_length=16),
+    symbol: str = Query("TSLA", min_length=1, max_length=16),
     interval: Interval = Query("1m"),
     limit: int = Query(360, ge=1, le=5_000),
     before: str | None = Query(None),
@@ -117,6 +117,19 @@ async def get_candles(
 ) -> dict[str, Any]:
     windows = parse_ma_windows(ma)
     normalized_symbol = normalize_symbol(symbol)
+    if normalized_symbol not in FAKE_SYMBOL_BY_SYMBOL:
+        return candle_response(
+            normalized_symbol,
+            interval,
+            limit,
+            before,
+            from_,
+            to,
+            "empty",
+            [],
+            has_more_before=False,
+            has_more_after=False,
+        )
     if session != "regular":
         return candle_response(
             normalized_symbol,
@@ -192,8 +205,15 @@ async def get_candles(
 @app.websocket("/ws/charts")
 async def chart_socket(websocket: WebSocket) -> None:
     await websocket.accept()
-    symbol = normalize_symbol(websocket.query_params.get("symbol") or "GOPS-ALP")
+    symbol = normalize_symbol(websocket.query_params.get("symbol") or "TSLA")
     interval = normalize_interval(websocket.query_params.get("interval") or "1m")
+    if symbol not in FAKE_SYMBOL_BY_SYMBOL:
+        try:
+            while True:
+                await websocket.send_json({"type": "HEARTBEAT"})
+                await asyncio.sleep(3)
+        except WebSocketDisconnect:
+            return
     previous_bucket: datetime | None = None
     try:
         while True:
@@ -232,8 +252,7 @@ async def chart_socket(websocket: WebSocket) -> None:
 
 
 def normalize_symbol(symbol: str) -> str:
-    normalized = symbol.upper()
-    return normalized if normalized in FAKE_SYMBOL_BY_SYMBOL else FAKE_SYMBOLS[0].symbol
+    return symbol.strip().upper()
 
 
 def candle_response(

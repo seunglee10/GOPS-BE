@@ -304,15 +304,32 @@ def openai_response_schema() -> dict[str, Any]:
         "type": "object",
         "properties": {
             "color": {"type": null_string},
+            "colorToken": {"type": null_string},
             "lineWidth": {"type": ["number", "null"]},
             "lineDash": {"type": ["array", "null"], "items": {"type": "number"}},
             "fillColor": {"type": null_string},
+            "fillToken": {"type": null_string},
+            "fillOpacity": {"type": ["number", "null"]},
             "textColor": {"type": null_string},
+            "textToken": {"type": null_string},
             "fontSize": {"type": ["number", "null"]},
             "opacity": {"type": ["number", "null"]},
             "extension": {"type": ["string", "null"], "enum": ["segment", "ray", "line", None]},
         },
-        "required": ["color", "lineWidth", "lineDash", "fillColor", "textColor", "fontSize", "opacity", "extension"],
+        "required": [
+            "color",
+            "colorToken",
+            "lineWidth",
+            "lineDash",
+            "fillColor",
+            "fillToken",
+            "fillOpacity",
+            "textColor",
+            "textToken",
+            "fontSize",
+            "opacity",
+            "extension",
+        ],
         "additionalProperties": False,
     }
     drawing_schema = {
@@ -494,10 +511,10 @@ def normalize_style(value: Any) -> dict[str, Any] | None:
     if not isinstance(value, dict):
         return None
     style: dict[str, Any] = {}
-    for key in ("color", "fillColor", "textColor", "extension"):
+    for key in ("color", "colorToken", "fillColor", "fillToken", "textColor", "textToken", "extension"):
         if isinstance(value.get(key), str):
             style[key] = value[key]
-    for key in ("lineWidth", "fontSize", "opacity"):
+    for key in ("lineWidth", "fontSize", "opacity", "fillOpacity"):
         if isinstance(value.get(key), (int, float)):
             style[key] = value[key]
     if isinstance(value.get("lineDash"), list):
@@ -513,11 +530,11 @@ def chart_action(action_type: str, **kwargs: Any) -> dict[str, Any]:
 
 def vertical_marker(symbol: str, candle: dict[str, Any], label: str, suffix: str) -> dict[str, Any]:
     price = safe_float(candle.get("close"), safe_float(candle.get("high"), 0))
-    return drawing("verticalMarker", [{"timestamp": candle.get("timestamp"), "price": price, "symbol": symbol}], label, suffix, {"color": "#dc2626", "lineWidth": 1.6})
+    return drawing("verticalMarker", [{"timestamp": candle.get("timestamp"), "price": price, "symbol": symbol}], label, suffix, {"colorToken": "down", "lineWidth": 1.6})
 
 
 def horizontal_line(symbol: str, price: float, label: str) -> dict[str, Any]:
-    return drawing("horizontalLine", [{"price": price, "symbol": symbol}], label, "agent-line", {"color": "#2563eb", "lineWidth": 1.5})
+    return drawing("horizontalLine", [{"price": price, "symbol": symbol}], label, "agent-line", {"colorToken": "preview", "lineWidth": 1.5})
 
 
 def trend_line(symbol: str, low: dict[str, Any], high: dict[str, Any], suffix: str) -> dict[str, Any]:
@@ -525,7 +542,7 @@ def trend_line(symbol: str, low: dict[str, Any], high: dict[str, Any], suffix: s
         {"timestamp": low.get("timestamp"), "price": low.get("low"), "symbol": symbol},
         {"timestamp": high.get("timestamp"), "price": high.get("high"), "symbol": symbol},
     ]
-    return drawing("trendLine", anchors, "추세 후보", suffix, {"color": "#111111", "lineWidth": 1.6, "extension": "ray"})
+    return drawing("trendLine", anchors, "추세 후보", suffix, {"colorToken": "drawing", "lineWidth": 1.6, "extension": "ray"})
 
 
 def drawing(drawing_type: str, anchors: list[dict[str, Any]], label: str, suffix: str, style: dict[str, Any]) -> dict[str, Any]:
@@ -545,10 +562,10 @@ def drawing(drawing_type: str, anchors: list[dict[str, Any]], label: str, suffix
 
 def default_style(drawing_type: str) -> dict[str, Any]:
     if drawing_type == "rangeBox":
-        return {"color": "#2563eb", "fillColor": "rgba(37, 99, 235, 0.12)", "lineWidth": 1.4}
+        return {"colorToken": "preview", "fillToken": "preview", "fillOpacity": 0.12, "lineWidth": 1.4}
     if drawing_type == "measurement":
-        return {"color": "#7c3aed", "textColor": "#4c1d95", "lineWidth": 1.4}
-    return {"color": "#111111", "lineWidth": 1.5}
+        return {"colorToken": "ma20", "textToken": "ma20", "lineWidth": 1.4}
+    return {"colorToken": "drawing", "lineWidth": 1.5}
 
 
 def normalize_symbol(symbol: str) -> str:

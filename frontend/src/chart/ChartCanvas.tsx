@@ -5,6 +5,7 @@ import { buildChartScene, createCoordinateTransform, hitTestSemanticNode, unitBo
 import { normalizeLineExtension, projectTrendLine } from "./drawings";
 import { expansionMetadataTop, expansionParentCandleHeight, expansionParentCandleWidth, expansionSummaryVisibleBounds } from "./expansionLayout";
 import { formatSemanticTimestamp, type SemanticCandleUnit, type SemanticExpansion, type SemanticRenderUnit } from "./semanticTimeline";
+import { readThemeColors, resolveRawPaletteColor, resolveThemeColor, type ThemeColors, type ThemeColorToken } from "../theme/colors";
 
 type ChartCanvasProps = {
   chart: ChartState;
@@ -23,20 +24,7 @@ type ChartCanvasProps = {
   onLostPointerCapture?: PointerEventHandler<HTMLCanvasElement>;
 };
 
-const colors = {
-  grid: "rgba(129, 145, 168, 0.22)",
-  priceBoundary: "rgba(83, 97, 118, 0.36)",
-  text: "#344256",
-  muted: "rgba(83, 97, 118, 0.72)",
-  bullish: "#168c68",
-  bearish: "#c94b4b",
-  volume: "rgba(77, 96, 130, 0.16)",
-  ma5: "#2563eb",
-  ma20: "#a855f7",
-  ma60: "#f59e0b",
-  drawing: "#0f172a",
-  preview: "#2563eb"
-};
+let colors: ThemeColors;
 
 export function ChartCanvas({
   chart,
@@ -103,24 +91,13 @@ export function ChartCanvas({
   );
 }
 
-type RenderLayer = {
-  id: string;
-  draw: () => void;
-};
-
-type SemanticVisualRole = "normal" | "hover-target" | "hover-context";
-
-type SemanticVisualStyle = {
-  role: SemanticVisualRole;
-  opacity: number;
-};
-
 function drawChart(
   context: CanvasRenderingContext2D,
   scene: ChartScene,
   crosshair?: { x: number; y: number },
   previewDrawings: DrawingEntity[] = []
 ) {
+  colors = readThemeColors();
   context.clearRect(0, 0, scene.width, scene.height);
 
   if (!scene.candles.length && !scene.semantic.units.length) {
@@ -128,23 +105,23 @@ function drawChart(
     return;
   }
 
-  const layers: RenderLayer[] = [
-    { id: "expansion-background", draw: () => drawExpansionRanges(context, scene, Boolean(crosshair)) },
-    { id: "time-grid", draw: () => drawTimeGrid(context, scene) },
-    { id: "price-grid", draw: () => drawGrid(context, scene) },
-    { id: "volume", draw: () => hasVolumePane(scene) && drawPlotClipped(context, scene, () => drawVolume(context, scene)) },
-    { id: "candles", draw: () => scene.chart.layers.candles && drawPlotClipped(context, scene, () => drawCandles(context, scene)) },
-    { id: "ma5", draw: () => drawPlotClipped(context, scene, () => drawMovingAverage(context, scene, "ma5", scene.chart.layers.ma5, colors.ma5)) },
-    { id: "ma20", draw: () => drawPlotClipped(context, scene, () => drawMovingAverage(context, scene, "ma20", scene.chart.layers.ma20, colors.ma20)) },
-    { id: "ma60", draw: () => drawPlotClipped(context, scene, () => drawMovingAverage(context, scene, "ma60", scene.chart.layers.ma60, colors.ma60)) },
-    { id: "drawings", draw: () => drawDrawings(context, scene, scene.chart.drawings, false) },
-    { id: "agent-preview", draw: () => drawDrawings(context, scene, previewDrawings, true) },
-    { id: "expansion-summary", draw: () => drawExpansionParentSummaries(context, scene) },
-    { id: "time-axis", draw: () => drawAxes(context, scene) },
-    { id: "price-axis", draw: () => drawPriceAxis(context, scene) },
-    { id: "crosshair", draw: () => drawCrosshair(context, scene, crosshair) }
+  const layers: Array<() => void> = [
+    () => drawExpansionRanges(context, scene, Boolean(crosshair)),
+    () => drawTimeGrid(context, scene),
+    () => drawGrid(context, scene),
+    () => hasVolumePane(scene) && drawPlotClipped(context, scene, () => drawVolume(context, scene)),
+    () => scene.chart.layers.candles && drawPlotClipped(context, scene, () => drawCandles(context, scene)),
+    () => drawPlotClipped(context, scene, () => drawMovingAverage(context, scene, "ma5", scene.chart.layers.ma5, colors.ma5)),
+    () => drawPlotClipped(context, scene, () => drawMovingAverage(context, scene, "ma20", scene.chart.layers.ma20, colors.ma20)),
+    () => drawPlotClipped(context, scene, () => drawMovingAverage(context, scene, "ma60", scene.chart.layers.ma60, colors.ma60)),
+    () => drawDrawings(context, scene, scene.chart.drawings, false),
+    () => drawDrawings(context, scene, previewDrawings, true),
+    () => drawExpansionParentSummaries(context, scene),
+    () => drawAxes(context, scene),
+    () => drawPriceAxis(context, scene),
+    () => drawCrosshair(context, scene, crosshair)
   ];
-  layers.forEach((layer) => layer.draw());
+  layers.forEach((drawLayer) => drawLayer());
 }
 
 function drawPlotClipped(context: CanvasRenderingContext2D, scene: ChartScene, draw: () => void) {
@@ -175,7 +152,9 @@ function volumeAtY(scene: ChartScene, y: number): number {
 }
 
 function drawGrid(context: CanvasRenderingContext2D, scene: ChartScene) {
+  context.save();
   context.strokeStyle = colors.grid;
+  context.globalAlpha = 0.12;
   context.lineWidth = 1;
   const right = horizontalGuideRight(scene);
   scene.scales.priceTicks.forEach((price) => {
@@ -187,11 +166,13 @@ function drawGrid(context: CanvasRenderingContext2D, scene: ChartScene) {
       line(context, scene.plot.left, volumeY(scene, volume), right, volumeY(scene, volume));
     });
     context.save();
-    context.strokeStyle = colors.priceBoundary;
+    context.strokeStyle = colors.border;
+    context.globalAlpha = 0.26;
     context.lineWidth = 1.2;
     line(context, scene.plot.left, scene.plot.priceBottom, right, scene.plot.priceBottom);
     context.restore();
   }
+  context.restore();
 }
 
 function drawCandles(context: CanvasRenderingContext2D, scene: ChartScene) {
@@ -203,10 +184,10 @@ function drawCandles(context: CanvasRenderingContext2D, scene: ChartScene) {
     const high = priceY(scene, candle.high);
     const low = priceY(scene, candle.low);
     const up = candle.close >= candle.open;
+    const candleColor = candleStrokeColor(scene, unit, up);
     context.save();
-    applySemanticVisualStyle(context, semanticVisualStyle(scene, unit));
-    context.strokeStyle = up ? colors.bullish : colors.bearish;
-    context.fillStyle = up ? colors.bullish : colors.bearish;
+    context.strokeStyle = candleColor;
+    context.fillStyle = candleColor;
     context.lineWidth = 1.25;
     const bodyTop = Math.min(open, close);
     const bodyHeight = Math.max(2, Math.abs(close - open));
@@ -218,13 +199,22 @@ function drawCandles(context: CanvasRenderingContext2D, scene: ChartScene) {
   });
 }
 
+function candleStrokeColor(scene: ChartScene, unit: SemanticCandleUnit, up: boolean): string {
+  const hovered = scene.hoveredNodeId === unit.id;
+  if (up) {
+    return hovered ? colors.up : colors.upSoft;
+  }
+  return hovered ? colors.down : colors.downSoft;
+}
+
 function drawVolume(context: CanvasRenderingContext2D, scene: ChartScene) {
   candleUnits(scene).forEach((unit) => {
     const candle = unit.candle;
     const y = volumeY(scene, candle.volume);
     context.save();
-    applySemanticVisualStyle(context, semanticVisualStyle(scene, unit));
-    context.fillStyle = colors.volume;
+    context.globalAlpha *= semanticContextOpacity(scene, unit);
+    context.fillStyle = colors.muted;
+    context.globalAlpha *= 0.18;
     context.fillRect(
       unitCenterX(scene, unit) - scene.scales.candleWidth / 2,
       y,
@@ -245,8 +235,10 @@ function drawMovingAverage(
   if (!enabled) {
     return;
   }
+  context.save();
   context.strokeStyle = stroke;
-  context.lineWidth = 1.7;
+  context.globalAlpha *= movingAverageAlpha(key);
+  context.lineWidth = 1.05;
   let started = false;
   let lastSegmentKey = "";
   context.beginPath();
@@ -280,6 +272,17 @@ function drawMovingAverage(
   if (started) {
     context.stroke();
   }
+  context.restore();
+}
+
+function movingAverageAlpha(key: "ma5" | "ma20" | "ma60"): number {
+  if (key === "ma5") {
+    return 0.44;
+  }
+  if (key === "ma20") {
+    return 0.32;
+  }
+  return 0.24;
 }
 
 function drawDrawings(context: CanvasRenderingContext2D, scene: ChartScene, drawings: DrawingEntity[], previewLayer: boolean) {
@@ -289,11 +292,12 @@ function drawDrawings(context: CanvasRenderingContext2D, scene: ChartScene, draw
     const preview = previewLayer || drawing.id === "drawing-draft-preview";
     const style = drawing.style ?? {};
     const points = drawing.anchors.map((anchor) => transform.anchorToPoint(anchor)).filter((point): point is { x: number; y: number } => Boolean(point));
+    const strokeColor = resolveDrawingColor(style, "colorToken", "color", preview ? "preview" : "drawing");
 
     context.save();
     context.globalAlpha = preview ? 0.58 : style.opacity ?? 1;
-    context.strokeStyle = style.color ?? (preview ? colors.preview : colors.drawing);
-    context.fillStyle = style.fillColor ?? (preview ? "rgba(37, 99, 235, 0.08)" : "rgba(17, 17, 17, 0.08)");
+    context.strokeStyle = strokeColor;
+    context.fillStyle = resolveDrawingColor(style, "fillToken", "fillColor", preview ? "preview" : "drawing");
     context.lineWidth = selected ? Math.max(2.2, style.lineWidth ?? 1.5) : style.lineWidth ?? 1.5;
     context.setLineDash(preview ? [6, 4] : style.lineDash ?? []);
 
@@ -311,13 +315,16 @@ function drawDrawings(context: CanvasRenderingContext2D, scene: ChartScene, draw
       if (drawing.type === "arrow") {
         drawArrowHead(context, start, end);
       }
-      drawDrawingLabel(context, drawing.label ?? measurementLabel(drawing, scene), (start.x + end.x) / 2, (start.y + end.y) / 2 - 8, drawing);
+      drawDrawingLabel(context, drawing.label ?? measurementLabel(drawing), (start.x + end.x) / 2, (start.y + end.y) / 2 - 8, drawing);
     } else if (drawing.type === "rangeBox" && points.length >= 2) {
       const x = Math.min(points[0].x, points[1].x);
       const y = Math.min(points[0].y, points[1].y);
       const width = Math.abs(points[1].x - points[0].x);
       const height = Math.abs(points[1].y - points[0].y);
+      const previousAlpha = context.globalAlpha;
+      context.globalAlpha = previousAlpha * (style.fillOpacity ?? (preview ? 0.22 : 0.14));
       context.fillRect(x, y, width, height);
+      context.globalAlpha = previousAlpha;
       context.strokeRect(x, y, width, height);
       drawDrawingLabel(context, drawing.label, x + 5, y + 13, drawing);
     } else if ((drawing.type === "pointMarker" || drawing.type === "textLabel") && points[0]) {
@@ -328,8 +335,8 @@ function drawDrawings(context: CanvasRenderingContext2D, scene: ChartScene, draw
 
     if (selected && points.length) {
       context.setLineDash([]);
-      context.fillStyle = "#ffffff";
-      context.strokeStyle = "#111111";
+      context.fillStyle = colors.surface;
+      context.strokeStyle = colors.drawing;
       points.forEach((point) => {
         circle(context, point.x, point.y, 4);
         context.fill();
@@ -345,14 +352,14 @@ function drawDrawingLabel(context: CanvasRenderingContext2D, label: string | und
     return;
   }
   const style = drawing.style ?? {};
-  context.fillStyle = style.textColor ?? style.color ?? colors.drawing;
+  context.fillStyle = resolveDrawingColor(style, "textToken", "textColor", "drawing");
   context.font = `${style.fontSize ?? 11}px Inter, system-ui, sans-serif`;
   context.textAlign = "left";
   context.textBaseline = "middle";
   context.fillText(label, x, y);
 }
 
-function measurementLabel(drawing: DrawingEntity, scene: ChartScene): string {
+function measurementLabel(drawing: DrawingEntity): string {
   const [start, end] = drawing.anchors;
   if (typeof start?.price !== "number" || typeof end?.price !== "number") {
     return drawing.label ?? "측정";
@@ -378,11 +385,11 @@ function drawTimeGrid(context: CanvasRenderingContext2D, scene: ChartScene) {
     return;
   }
   context.save();
-  context.strokeStyle = "rgba(99, 116, 139, 0.11)";
+  context.strokeStyle = colors.grid;
   context.lineWidth = 1;
   ticks.forEach((tick) => {
-    const alpha = tick.parentExpansionId ? 0.14 : 0.1;
-    context.strokeStyle = `rgba(99, 116, 139, ${alpha})`;
+    const alpha = tick.parentExpansionId ? 0.13 : 0.09;
+    context.globalAlpha = alpha;
     line(context, tick.x, scene.plot.top, tick.x, Math.min(scene.height, timeAxisY(scene) - 10));
   });
   context.restore();
@@ -406,7 +413,7 @@ function drawAxes(context: CanvasRenderingContext2D, scene: ChartScene) {
       return;
     }
     lastLabelX = x;
-    context.fillStyle = tick.parentExpansionId ? "rgba(58, 72, 91, 0.74)" : colors.muted;
+    context.fillStyle = tick.parentExpansionId ? colors.axis : colors.muted;
     context.fillText(tick.label, x, y);
   });
 }
@@ -498,17 +505,11 @@ function formatAxisTimestamp(value: string, interval: SemanticCandleUnit["interv
   return new Intl.DateTimeFormat("en-US", { month: "short", day: "2-digit" }).format(date);
 }
 
-function semanticVisualStyle(scene: ChartScene, unit: SemanticRenderUnit): SemanticVisualStyle {
-  if (!scene.hoveredNodeId) {
-    return { role: "normal", opacity: 1 };
+function semanticContextOpacity(scene: ChartScene, unit: SemanticRenderUnit): number {
+  if (!scene.hoveredNodeId || unit.id === scene.hoveredNodeId) {
+    return 1;
   }
-  return unit.id === scene.hoveredNodeId
-    ? { role: "hover-target", opacity: 1 }
-    : { role: "hover-context", opacity: 0.68 };
-}
-
-function applySemanticVisualStyle(context: CanvasRenderingContext2D, style: SemanticVisualStyle) {
-  context.globalAlpha *= style.opacity;
+  return 0.68;
 }
 
 function timeAxisY(scene: ChartScene): number {
@@ -517,7 +518,6 @@ function timeAxisY(scene: ChartScene): number {
 }
 
 function drawPriceAxis(context: CanvasRenderingContext2D, scene: ChartScene) {
-  drawPriceAxisBackdrop(context, scene);
   context.save();
   context.font = "10px Inter, system-ui, sans-serif";
   context.fillStyle = colors.muted;
@@ -530,18 +530,13 @@ function drawPriceAxis(context: CanvasRenderingContext2D, scene: ChartScene) {
   context.restore();
 }
 
-function drawPriceAxisBackdrop(context: CanvasRenderingContext2D, scene: ChartScene) {
-  void context;
-  void scene;
-}
-
 function drawVolumeAxisLabels(context: CanvasRenderingContext2D, scene: ChartScene) {
   if (!hasVolumePane(scene)) {
     return;
   }
   context.save();
   context.font = "9px Inter, system-ui, sans-serif";
-  context.fillStyle = "rgba(83, 97, 118, 0.64)";
+  context.fillStyle = colors.axis;
   context.textAlign = "right";
   context.textBaseline = "middle";
   scene.scales.volumeTicks.forEach((volume) => {
@@ -596,7 +591,8 @@ function drawCrosshair(context: CanvasRenderingContext2D, scene: ChartScene, cro
   const inPricePane = crosshair.y <= scene.plot.priceBottom;
   const inVolumePane = hasVolumePane(scene) && crosshair.y >= scene.plot.volumeTop && crosshair.y <= scene.plot.bottom;
   context.save();
-  context.strokeStyle = `rgba(20, 20, 20, ${alpha})`;
+  context.strokeStyle = colors.crosshair;
+  context.globalAlpha = alpha;
   context.lineWidth = 1;
   context.setLineDash([]);
   line(context, x, 0, x, scene.height);
@@ -605,6 +601,7 @@ function drawCrosshair(context: CanvasRenderingContext2D, scene: ChartScene, cro
   } else if (inVolumePane) {
     line(context, scene.plot.left, crosshair.y, horizontalGuideRight(scene), crosshair.y);
   }
+  context.globalAlpha = 1;
   drawAxisPill(context, label, x, timeAxisY(scene), "center");
   if (inPricePane) {
     const price = createCoordinateTransform(scene).yToPrice(y);
@@ -628,13 +625,13 @@ function drawAxisPill(
   const height = 17;
   const left = align === "right" ? x - width : align === "left" ? x : x - width / 2;
   const top = y - height / 2;
-  context.fillStyle = "rgba(247, 250, 252, 0.82)";
-  context.strokeStyle = "rgba(129, 145, 168, 0.28)";
+  context.fillStyle = colors.surfaceStrong;
+  context.strokeStyle = colors.border;
   context.lineWidth = 1;
   roundedRect(context, left, top, width, height, 5);
   context.fill();
   context.stroke();
-  context.fillStyle = "rgba(38, 54, 76, 0.82)";
+  context.fillStyle = colors.text;
   context.textAlign = "center";
   context.textBaseline = "middle";
   context.fillText(text, left + width / 2, y + 0.5);
@@ -671,28 +668,18 @@ function drawExpansionRanges(context: CanvasRenderingContext2D, scene: ChartScen
     context.beginPath();
     context.rect(left, 0, width, scene.height);
     context.clip();
-    const depthAlpha = Math.min(0.046, 0.018 + range.depth * 0.006);
-    context.fillStyle = range.childInterval === "footprint"
-      ? `rgba(245, 158, 11, ${Math.min(0.046, depthAlpha + 0.004)})`
-      : `rgba(37, 99, 235, ${depthAlpha})`;
+    const depthAlpha = Math.min(0.034, 0.012 + range.depth * 0.004);
+    context.fillStyle = colors.shadow;
+    context.globalAlpha = range.childInterval === "footprint" ? Math.min(0.04, depthAlpha + 0.004) : depthAlpha;
     context.fillRect(left, 0, width, scene.height);
 
     if (active) {
-      const sideWidth = Math.min(8, Math.max(4, width / 3));
       if (range.left >= scene.plot.left) {
-        const leftGradient = context.createLinearGradient(left, 0, left + sideWidth, 0);
-        leftGradient.addColorStop(0, "rgba(22, 32, 51, 0.095)");
-        leftGradient.addColorStop(1, "rgba(22, 32, 51, 0)");
-        context.fillStyle = leftGradient;
-        context.fillRect(left, 0, sideWidth, scene.height);
+        drawExpansionSideShadow(context, left, scene.height, "left", width);
       }
 
       if (range.right <= scene.plot.right) {
-        const rightGradient = context.createLinearGradient(right - sideWidth, 0, right, 0);
-        rightGradient.addColorStop(0, "rgba(22, 32, 51, 0)");
-        rightGradient.addColorStop(1, "rgba(22, 32, 51, 0.095)");
-        context.fillStyle = rightGradient;
-        context.fillRect(right - sideWidth, 0, sideWidth, scene.height);
+        drawExpansionSideShadow(context, right, scene.height, "right", width);
       }
     }
     context.restore();
@@ -702,6 +689,22 @@ function drawExpansionRanges(context: CanvasRenderingContext2D, scene: ChartScen
       drawSemanticPlaceholder(context, scene, unit);
     }
   });
+}
+
+function drawExpansionSideShadow(
+  context: CanvasRenderingContext2D,
+  x: number,
+  height: number,
+  side: "left" | "right",
+  rangeWidth: number
+) {
+  const sideWidth = Math.min(5, Math.max(2, rangeWidth / 8));
+  context.fillStyle = colors.shadow;
+  for (let index = 0; index < sideWidth; index += 1) {
+    context.globalAlpha = Math.max(0.006, 0.028 - index * 0.004);
+    const offset = side === "left" ? index : -index - 1;
+    context.fillRect(x + offset, 0, 1, height);
+  }
 }
 
 function drawExpansionParentSummaries(context: CanvasRenderingContext2D, scene: ChartScene) {
@@ -729,15 +732,13 @@ function drawExpansionParentSummaries(context: CanvasRenderingContext2D, scene: 
     const bodyLeft = candleCenter - candleWidth / 2;
 
     context.save();
-    context.strokeStyle = up ? colors.bullish : colors.bearish;
-    context.fillStyle = up ? colors.bullish : colors.bearish;
-    context.globalAlpha = 0.72;
+    context.strokeStyle = up ? colors.upSoft : colors.downSoft;
+    context.fillStyle = up ? colors.upSoft : colors.downSoft;
     context.lineWidth = 1;
     line(context, candleCenter, high, candleCenter, bodyTop);
     line(context, candleCenter, bodyBottom, candleCenter, low);
     context.fillRect(bodyLeft, bodyTop, candleWidth, bodyHeight);
-    context.globalAlpha = 1;
-    context.fillStyle = "rgba(38, 54, 76, 0.76)";
+    context.fillStyle = colors.text;
     context.font = "10px Inter, system-ui, sans-serif";
     context.textAlign = "left";
     context.textBaseline = "middle";
@@ -807,12 +808,29 @@ function drawSemanticPlaceholder(context: CanvasRenderingContext2D, scene: Chart
   const x = (visibleLeft + visibleRight) / 2;
   const y = scene.plot.top + (scene.plot.priceBottom - scene.plot.top) / 2;
   context.save();
-  context.fillStyle = unit.kind === "footprint" ? "#98650d" : colors.muted;
+  context.fillStyle = unit.kind === "footprint" ? colors.footprint : colors.muted;
   context.font = "10px Inter, system-ui, sans-serif";
   context.textAlign = "center";
   context.textBaseline = "middle";
   context.fillText(unit.message, x, y, Math.max(24, visibleWidth - 8));
   context.restore();
+}
+
+function resolveDrawingColor(
+  style: DrawingEntity["style"],
+  tokenKey: "colorToken" | "fillToken" | "textToken",
+  rawKey: "color" | "fillColor" | "textColor",
+  fallback: ThemeColorToken
+): string {
+  const token = style[tokenKey];
+  if (isThemeColorToken(token)) {
+    return resolveThemeColor(colors, token);
+  }
+  return resolveRawPaletteColor(colors, style[rawKey], fallback);
+}
+
+function isThemeColorToken(value: unknown): value is ThemeColorToken {
+  return typeof value === "string" && value in colors;
 }
 
 function candleUnits(scene: ChartScene): SemanticCandleUnit[] {
