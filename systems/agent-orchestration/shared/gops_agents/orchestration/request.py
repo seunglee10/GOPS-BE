@@ -25,6 +25,7 @@ def normalize_request_state(state: dict[str, Any]) -> dict[str, Any]:
         agent_ids=request.get("agentIds"),
         layout_context=layout_context,
         chart_context=request.get("chartContext"),
+        request_symbol=request.get("symbol"),
         runtime_context=runtime_context,
         timing=timing,
     )
@@ -173,9 +174,6 @@ def resolve_analysis_mode(request: dict[str, Any], intent: str) -> str:
         return "multi_agent"
     if raw_mode in {"auto", "single", "snapshot"}:
         return "auto"
-    compacted = "".join(str(intent or "").lower().split())
-    if any(term in compacted for term in ("멀티에이전트", "multiagent", "multi-agent")):
-        return "multi_agent"
     return "auto"
 
 

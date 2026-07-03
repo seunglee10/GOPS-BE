@@ -230,6 +230,14 @@ class RoleAnswerOnlySynthesizer:
         )
 
 
+class FailingUIAgent:
+    def propose(self, *args, **kwargs):
+        raise AssertionError("multi-agent chat mode must not call UIAgent")
+
+    def propose_many(self, *args, **kwargs):
+        raise AssertionError("multi-agent chat mode must not call UIAgent")
+
+
 class InspectingDeepOrchestrator:
     def __init__(self, store):
         self.store = store
@@ -362,6 +370,7 @@ class AgentOrchestrationTests(unittest.TestCase):
                 "AGENT_CROSS_SIGNAL_ENABLED",
                 "AGENT_REPORT_TTL_SECONDS",
                 "AGENT_ROUTER_PROVIDER",
+                "AGENT_INTENT_CLASSIFIER_ALWAYS",
                 "AGENT_SNAPSHOT_TIMEOUT_MS",
                 "AGENT_EXPANDED_RETRIEVAL_ENABLED",
                 "AGENT_INTENT_CLASSIFIER_PROVIDER",
@@ -418,6 +427,68 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertGreater(timing["queryUnderstandingMs"], 0)
         self.assertGreater(timing["entityResolveMs"], 0)
         self.assertTrue(timing["intentClassifierRequired"])
+
+    def test_ui_only_query_understanding_returns_before_slow_entity_branch(self):
+        def slow_entity(query, chart_context=None):
+            time.sleep(0.3)
+            return EntityResolution(status="not_found", needs_clarification=False, reason="slow entity")
+
+        def slow_content(query):
+            time.sleep(0.3)
+            return []
+
+        timing = {}
+        started_at = time.perf_counter()
+        with patch("gops_agents.intent_understanding.fanout.resolve_entity", side_effect=slow_entity):
+            with patch("gops_agents.intent_understanding.fanout.deterministic_content_tasks", side_effect=slow_content):
+                with patch(
+                    "gops_agents.intent_understanding.fanout.classify_with_provider",
+                    side_effect=AssertionError("clear UI route should not call classifier"),
+                ):
+                    understanding, entity_resolution = build_query_understanding(
+                        "뉴스 패널 크게 보여줘",
+                        layout_context=layout_context(),
+                        timing=timing,
+                    )
+        elapsed_seconds = time.perf_counter() - started_at
+
+        self.assertLess(elapsed_seconds, 0.2)
+        self.assertEqual(entity_resolution.status, "not_found")
+        self.assertEqual(entity_resolution.reason, "entity resolver skipped after high-confidence UI-only intent")
+        self.assertEqual(understanding.routeMode, "ui_layout")
+        self.assertEqual(understanding.intentType, "ui-layout")
+        self.assertEqual(understanding.uiTasks[0].targetPanelType, "newsFeed")
+        self.assertEqual(timing["queryUnderstandingEarlyReturn"], "ui_only")
+        self.assertNotIn("entity_timeout", understanding.warnings)
+
+    def test_entity_timeout_with_subject_fallback_does_not_force_classifier(self):
+        def slow_entity(query, chart_context=None):
+            time.sleep(0.2)
+            return EntityResolution(status="not_found", needs_clarification=False, reason="slow entity")
+
+        with patch.dict(os.environ, {"AGENT_QUERY_UNDERSTANDING_TIMEOUT_MS": "50"}, clear=False):
+            with patch("gops_agents.intent_understanding.fanout.resolve_entity", side_effect=slow_entity):
+                with patch(
+                    "gops_agents.intent_understanding.fanout.classify_with_provider",
+                    side_effect=AssertionError("content route with subject fallback should not call classifier"),
+                ):
+                    for label, kwargs in [
+                        ("request symbol", {"request_symbol": "NVDA"}),
+                        ("chart context", {"chart_context": {"chartDocument": {"symbol": "NVDA"}}}),
+                    ]:
+                        with self.subTest(label=label):
+                            timing = {}
+                            understanding, _ = build_query_understanding(
+                                "뉴스 보여줘",
+                                timing=timing,
+                                **kwargs,
+                            )
+
+                            self.assertEqual(understanding.routeMode, "analysis")
+                            self.assertEqual(understanding.intentType, "news")
+                            self.assertEqual([task.taskType for task in understanding.contentTasks], ["news"])
+                            self.assertIn("entity_timeout", understanding.warnings)
+                            self.assertNotIn("intentClassifierRequired", timing)
 
     def test_classifier_payload_preserves_multi_panel_task(self):
         result = classifier_result_from_payload({
@@ -1040,6 +1111,40 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(report.timing["llmCalls"], 0)
         self.assertEqual(report.timing["llmCallLabels"], [])
 
+    def test_ui_layout_only_returns_fixed_ack_without_final_report_synthesis(self):
+        orchestrator = AgentOrchestrator()
+        orchestrator.workflow = None
+
+        with patch.object(
+            orchestrator,
+            "_synthesize_final_answer",
+            side_effect=AssertionError("UI-only fast ack must not synthesize a final answer"),
+        ):
+            with patch.object(
+                orchestrator,
+                "_finalize_report",
+                side_effect=AssertionError("UI-only fast ack must not build a final report response"),
+            ):
+                report = orchestrator.analyze({
+                    "symbol": "NVDA",
+                    "intent": "뉴스 패널 크게 보여줘",
+                    "layoutContext": layout_context(),
+                })
+
+        self.assertEqual(report.summary, "변경했습니다.")
+        self.assertEqual(report.route.intentType, "ui-layout")
+        self.assertEqual(report.findings, [])
+        self.assertEqual(report.providerEvidence, [])
+        self.assertEqual(report.snapshots, [])
+        self.assertIsNone(report.finalAnswer)
+        self.assertIsNone(report.finalResponse)
+        self.assertIsNone(report.latencyTrace)
+        self.assertIsNone(report.routePlan)
+        self.assertIsNotNone(report.layoutProposal)
+        self.assertEqual(report.agentTrace["analysisMode"], "auto")
+        self.assertTrue(report.agentTrace["uiLayoutFastAck"])
+        self.assertEqual(report.agentTrace["queryUnderstanding"]["routeMode"], "ui_layout")
+
     def test_ui_router_budget_block_falls_back_without_openai_call(self):
         with patch.dict(os.environ, {
             "OPENAI_API_KEY": "test-key",
@@ -1105,6 +1210,65 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(report.snapshots, [])
         self.assertEqual([answer.role for answer in report.agentAnswers], ["chart-analysis", "news-analysis"])
         self.assertCountEqual(synthesizer.role_answer_calls, ["chart-analysis", "news-analysis"])
+        self.assertEqual(report.finalAnswer.summary, "각 에이전트가 독립 답변을 작성했습니다.")
+
+    def test_multi_agent_text_does_not_switch_mode_without_request_field(self):
+        report = AgentOrchestrator().analyze({
+            "symbol": "NVDA",
+            "intent": "NVDA 뉴스랑 차트 멀티 에이전트로 분석해줘",
+            "chartContext": {
+                "chartDocument": {"symbol": "NVDA", "timeframe": "1m"},
+                "visibleSummary": {"lastPrice": "120.00", "change": "+2.10%"},
+                "dataStatus": {"candleCount": 10, "state": "ready"},
+            },
+            "layoutContext": layout_context(),
+        })
+
+        self.assertEqual(report.agentTrace["analysisMode"], "auto")
+        self.assertNotIn("multiAgent", report.agentTrace)
+        self.assertEqual(report.agentAnswers, [])
+        self.assertIsNotNone(report.finalAnswer)
+
+    def test_multi_agent_ui_layout_request_stays_chat_only_without_ui_side_effects(self):
+        orchestrator = AgentOrchestrator()
+        orchestrator.ui_agent = FailingUIAgent()
+
+        report = orchestrator.analyze({
+            "symbol": "NVDA",
+            "intent": "뉴스 패널 크게 보여줘",
+            "analysisMode": "multi_agent",
+            "layoutContext": layout_context(),
+        })
+
+        self.assertEqual(report.agentTrace["analysisMode"], "multi_agent")
+        self.assertEqual(report.route.intentType, "ui-layout")
+        self.assertEqual(report.findings, [])
+        self.assertEqual(report.providerEvidence, [])
+        self.assertEqual(report.snapshots, [])
+        self.assertIsNone(report.layoutProposal)
+        self.assertEqual(report.agentAnswers, [])
+        self.assertEqual(report.finalAnswer.summary, "채팅 모드에서는 UI 변경을 실행하지 않습니다.")
+        self.assertTrue(report.agentTrace["multiAgent"]["mergeSynthesisSkipped"])
+
+    def test_multi_agent_hybrid_query_does_not_emit_layout_proposal(self):
+        synthesizer = RoleAnswerOnlySynthesizer()
+        orchestrator = AgentOrchestrator()
+        orchestrator.synthesizer = synthesizer
+        orchestrator.ui_agent = FailingUIAgent()
+
+        report = orchestrator.analyze({
+            "symbol": "NVDA",
+            "intent": "NVDA 뉴스 분석해주고 뉴스 패널 크게 보여줘",
+            "analysisMode": "multi_agent",
+            "layoutContext": layout_context(),
+        })
+
+        self.assertEqual(report.agentTrace["analysisMode"], "multi_agent")
+        self.assertEqual(report.agentTrace["queryUnderstanding"]["routeMode"], "hybrid")
+        self.assertTrue(report.agentTrace["multiAgent"]["mergeSynthesisSkipped"])
+        self.assertIsNone(report.layoutProposal)
+        self.assertEqual([answer.role for answer in report.agentAnswers], ["news-analysis"])
+        self.assertCountEqual(synthesizer.role_answer_calls, ["news-analysis"])
         self.assertEqual(report.finalAnswer.summary, "각 에이전트가 독립 답변을 작성했습니다.")
 
     def test_route_intent_preserves_composite_content_keywords(self):

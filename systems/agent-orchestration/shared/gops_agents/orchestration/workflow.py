@@ -60,6 +60,10 @@ except Exception:
     StateGraph = None
 
 
+UI_LAYOUT_ACK_SUMMARY = "변경했습니다."
+MULTI_AGENT_UI_SIDE_EFFECT_BLOCKED_SUMMARY = "채팅 모드에서는 UI 변경을 실행하지 않습니다."
+
+
 class AgentOrchestrator:
     def __init__(self, store: ReportStore | None = None, analysis_cache: AgentAnalysisCache | None = None):
         self.store = store or InMemoryReportStore()
@@ -107,12 +111,20 @@ class AgentOrchestrator:
             graph.add_node("verify", self._verify)
             graph.add_node("synthesize_final_answer", self._synthesize_final_answer)
             graph.add_node("propose_layout", self._propose_layout)
+            graph.add_node("ui_layout_ack", self._build_ui_layout_ack)
             graph.add_node("finalize_report", self._finalize_report)
 
             graph.set_entry_point("normalize_request")
 
             graph.add_edge("normalize_request", "route_intent")
-            graph.add_edge("route_intent", "build_snapshot_plan")
+            graph.add_conditional_edges(
+                "route_intent",
+                route_after_intent,
+                {
+                    "ui_layout_ack": "ui_layout_ack",
+                    "build_snapshot_plan": "build_snapshot_plan",
+                },
+            )
             graph.add_edge("build_snapshot_plan", "build_retrieval_context")
             graph.add_edge("build_retrieval_context", "fetch_data_snapshots")
             graph.add_edge("fetch_data_snapshots", "join_cross_signals")
@@ -128,6 +140,7 @@ class AgentOrchestrator:
                 },
             )
             graph.add_edge("propose_layout", "finalize_report")
+            graph.add_edge("ui_layout_ack", END)
             graph.add_edge("finalize_report", END)
             return graph.compile()
         except Exception:
@@ -135,9 +148,11 @@ class AgentOrchestrator:
 
     def _run_sequential_workflow(self, request: dict[str, Any]) -> dict[str, Any]:
         state: dict[str, Any] = {"request": request}
+        state = self._normalize_request(state)
+        state = self._route_intent(state)
+        if should_return_ui_layout_ack(state):
+            return self._build_ui_layout_ack(state)
         for node in [
-            self._normalize_request,
-            self._route_intent,
             self._build_snapshot_plan,
             self._build_retrieval_context,
             self._fetch_data_snapshots,
@@ -163,6 +178,9 @@ class AgentOrchestrator:
         route_mode = str(understanding.get("routeMode") or state.get("route_mode") or "analysis")
         ui_intent = ui_intent_from_understanding(understanding)
         ui_tasks = [task for task in understanding.get("uiTasks", []) if isinstance(task, dict)]
+        allow_layout_side_effects = not is_multi_agent_chat_state(state)
+        hybrid_ui_intent = ui_intent if route_mode == "hybrid" and allow_layout_side_effects else None
+        hybrid_ui_tasks = ui_tasks if route_mode == "hybrid" and allow_layout_side_effects else []
         if is_unsupported_subject_state(state):
             validation = state.get("subject_validation") if isinstance(state.get("subject_validation"), dict) else {}
             route = IntentRoute(
@@ -174,7 +192,15 @@ class AgentOrchestrator:
             )
             state["context"].intentType = route.intentType
             state["context"].selectedRoles = []
-            return {**state, "route": route, "selected_roles": [], "ui_intent": ui_intent if route_mode == "hybrid" else None, "ui_tasks": ui_tasks if route_mode == "hybrid" else [], "analysis_cacheable": False, "analysis_cache_hit": False}
+            return {
+                **state,
+                "route": route,
+                "selected_roles": [],
+                "ui_intent": hybrid_ui_intent,
+                "ui_tasks": hybrid_ui_tasks,
+                "analysis_cacheable": False,
+                "analysis_cache_hit": False,
+            }
         if route_mode == "clarify":
             route = IntentRoute(
                 source=str(understanding.get("source") or "query-understanding"),
@@ -185,7 +211,15 @@ class AgentOrchestrator:
             )
             state["context"].intentType = route.intentType
             state["context"].selectedRoles = []
-            return {**state, "route": route, "selected_roles": [], "ui_intent": ui_intent if ui_intent is not None else None, "ui_tasks": ui_tasks, "analysis_cacheable": False, "analysis_cache_hit": False}
+            return {
+                **state,
+                "route": route,
+                "selected_roles": [],
+                "ui_intent": ui_intent if ui_intent is not None and allow_layout_side_effects else None,
+                "ui_tasks": ui_tasks if allow_layout_side_effects else [],
+                "analysis_cacheable": False,
+                "analysis_cache_hit": False,
+            }
         if route_mode == "ui_layout" and ui_intent is not None:
             route = IntentRoute(
                 source=ui_intent.source or str(understanding.get("source") or "query-understanding"),
@@ -196,7 +230,16 @@ class AgentOrchestrator:
             )
             state["context"].intentType = route.intentType
             state["context"].selectedRoles = []
-            return {**state, "route": route, "selected_roles": [], "ui_intent": ui_intent, "ui_tasks": ui_tasks, "route_mode": route_mode, "analysis_cacheable": False, "analysis_cache_hit": False}
+            return {
+                **state,
+                "route": route,
+                "selected_roles": [],
+                "ui_intent": ui_intent if allow_layout_side_effects else None,
+                "ui_tasks": ui_tasks if allow_layout_side_effects else [],
+                "route_mode": route_mode,
+                "analysis_cacheable": False,
+                "analysis_cache_hit": False,
+            }
 
         selected_roles = [role for role in understanding.get("selectedRoles", []) if role in {"chart", "news", "macro", "ontology"}]
         if selected_roles:
@@ -214,7 +257,14 @@ class AgentOrchestrator:
         state["context"].selectedRoles = list(selected_roles)
         if state.get("analysis_mode") == "multi_agent":
             allow_role_answer_llm_calls(state.get("runtime_context"), len(selected_roles))
-        return self._load_analysis_cache({**state, "route": route, "selected_roles": selected_roles, "ui_intent": ui_intent if route_mode == "hybrid" else None, "ui_tasks": ui_tasks if route_mode == "hybrid" else [], "route_mode": route_mode})
+        return self._load_analysis_cache({
+            **state,
+            "route": route,
+            "selected_roles": selected_roles,
+            "ui_intent": hybrid_ui_intent,
+            "ui_tasks": hybrid_ui_tasks,
+            "route_mode": route_mode,
+        })
 
     def _build_snapshot_plan(self, state: dict[str, Any]) -> dict[str, Any]:
         if is_terminal_no_analysis_state(state):
@@ -478,10 +528,18 @@ class AgentOrchestrator:
             final_answer = unsupported_subject_final_answer(symbol, state.get("subject_validation"))
         elif is_clarify_state(state):
             final_answer = clarify_final_answer()
+        elif is_multi_agent_chat_state(state) and is_ui_layout_state(state):
+            final_answer = FinalAnswer(
+                title="멀티 에이전트 채팅",
+                summary=MULTI_AGENT_UI_SIDE_EFFECT_BLOCKED_SUMMARY,
+                sections=[],
+                citations=[],
+                limitations=[],
+            )
         elif is_ui_layout_state(state):
             final_answer = FinalAnswer(
                 title="UI 레이아웃 조정",
-                summary="요청한 UI 레이아웃 변경을 준비했습니다.",
+                summary=UI_LAYOUT_ACK_SUMMARY,
                 sections=[],
                 citations=[],
                 limitations=[],
@@ -524,6 +582,8 @@ class AgentOrchestrator:
         return next_state
 
     def _propose_layout(self, state: dict[str, Any]) -> dict[str, Any]:
+        if is_multi_agent_chat_state(state):
+            return {**state, "layout": None}
         context = state["context"]
         ui_tasks = list(state.get("ui_tasks", [])) if isinstance(state.get("ui_tasks"), list) else []
         if is_ui_layout_state(state):
@@ -536,6 +596,66 @@ class AgentOrchestrator:
         else:
             layout = None
         return {**state, "layout": layout}
+
+    def _build_ui_layout_ack(self, state: dict[str, Any]) -> dict[str, Any]:
+        context = state["context"]
+        context.providerEvidence = []
+        ui_tasks = list(state.get("ui_tasks", [])) if isinstance(state.get("ui_tasks"), list) else []
+        layout = self.ui_agent.propose_many(context, ui_tasks) if ui_tasks else self.ui_agent.propose(context, state["ui_intent"])
+        timing = finalize_timing(state)
+        analysis_id = analysis_id_for_state(state)
+        agent_trace = build_agent_trace(
+            [],
+            None,
+            [],
+            state.get("entity_resolution"),
+            state.get("query_understanding"),
+        )
+        agent_trace["analysisMode"] = str(state.get("analysis_mode") or "auto")
+        agent_trace["uiLayoutFastAck"] = True
+        report = AnalysisReport(
+            analysisId=analysis_id,
+            symbol=state["symbol"],
+            intent=state["intent"],
+            status="completed",
+            createdAt=utc_now_iso(),
+            summary=UI_LAYOUT_ACK_SUMMARY,
+            rationale="The conductor returned a layout-only acknowledgement without final report synthesis.",
+            findings=[],
+            marketEvents=state["events"],
+            providerEvidence=[],
+            route=state.get("route"),
+            finalAnswer=None,
+            notificationDecision=None,
+            layoutProposal=layout,
+            chartProposal=(
+                state["request"].get("chartProposal")
+                if isinstance(state["request"].get("chartProposal"), dict)
+                else None
+            ),
+            dailySummaries=[],
+            timing=timing,
+            routePlan=None,
+            resolvedEntities=[],
+            snapshots=[],
+            synthesisInput=None,
+            finalResponse=None,
+            latencyTrace=None,
+            agentAnswers=[],
+            agentTrace=agent_trace,
+        )
+        return {
+            **state,
+            "analysis_id": analysis_id,
+            "summary": UI_LAYOUT_ACK_SUMMARY,
+            "layout": layout,
+            "role_findings": [],
+            "provider_evidence": [],
+            "snapshots": [],
+            "final_answer": None,
+            "final_response": None,
+            "report": report,
+        }
 
     def _finalize_report(self, state: dict[str, Any]) -> dict[str, Any]:
         request = state["request"]
@@ -581,11 +701,7 @@ class AgentOrchestrator:
             status="completed",
             createdAt=utc_now_iso(),
             summary=state["summary"],
-            rationale=(
-                "The conductor routed the request to UIAgent for layout-only handling."
-                if is_ui_layout_state(state)
-                else "The conductor routed the request to role agents, composed provider evidence, then generated a final user-facing answer."
-            ),
+            rationale=report_rationale_for_state(state),
             findings=state["role_findings"],
             marketEvents=state["events"],
             providerEvidence=state["provider_evidence"],
@@ -672,6 +788,51 @@ def cross_signal_enabled() -> bool:
     return os.getenv("AGENT_CROSS_SIGNAL_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def analysis_id_for_state(state: dict[str, Any]) -> str:
+    request = state["request"]
+    return str(
+        request.get("analysisId")
+        or request.get("requestId")
+        or stable_id(
+            "analysis",
+            {
+                "symbol": state["symbol"],
+                "intent": state["intent"],
+                "events": [event.eventId for event in state.get("events", [])],
+                "createdAt": request.get("createdAt") or utc_now_iso(),
+            },
+        )
+    )
+
+
+def is_multi_agent_chat_state(state: dict[str, Any]) -> bool:
+    return str(state.get("analysis_mode") or "").strip() == "multi_agent"
+
+
+def allows_layout_side_effects(state: dict[str, Any]) -> bool:
+    return not is_multi_agent_chat_state(state) and not is_terminal_no_analysis_state(state)
+
+
+def should_return_ui_layout_ack(state: dict[str, Any]) -> bool:
+    return bool(
+        allows_layout_side_effects(state)
+        and is_ui_layout_state(state)
+        and state.get("ui_intent") is not None
+    )
+
+
+def route_after_intent(state: dict[str, Any]) -> str:
+    return "ui_layout_ack" if should_return_ui_layout_ack(state) else "build_snapshot_plan"
+
+
+def report_rationale_for_state(state: dict[str, Any]) -> str:
+    if is_multi_agent_chat_state(state):
+        return "The conductor handled the request in multi-agent chat mode without UI layout side effects."
+    if is_ui_layout_state(state):
+        return "The conductor routed the request to UIAgent for layout-only handling."
+    return "The conductor routed the request to role agents, composed provider evidence, then generated a final user-facing answer."
+
+
 def is_unsupported_subject_state(state: dict[str, Any]) -> bool:
     validation = state.get("subject_validation")
     return isinstance(validation, dict) and validation.get("status") == "unsupported"
@@ -687,6 +848,8 @@ def is_terminal_no_analysis_state(state: dict[str, Any]) -> bool:
 
 
 def should_propose_layout(state: dict[str, Any]) -> bool:
+    if is_multi_agent_chat_state(state):
+        return False
     if is_terminal_no_analysis_state(state):
         return False
     if is_ui_layout_state(state):
