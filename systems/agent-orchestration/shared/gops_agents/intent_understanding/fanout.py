@@ -56,7 +56,14 @@ def build_query_understanding(
             reason="entity resolver unavailable in parallel query understanding",
         )
     rule_content_tasks = list(results.get("content_rules") or [])
-    rule_ui_tasks = list(results.get("ui_rules") or [])
+    raw_ui_tasks = results.get("ui_rules")
+    if raw_ui_tasks is None:
+        raw_ui_tasks = []
+    rule_ui_tasks = list(raw_ui_tasks)
+    ui_parser_needs_classifier = bool(getattr(raw_ui_tasks, "needs_classifier", False))
+    for warning in getattr(raw_ui_tasks, "warnings", []):
+        if warning not in warnings:
+            warnings.append(str(warning))
     classifier_result = None
     classifier_required = should_call_classifier_fallback(
         query=query,
@@ -64,6 +71,7 @@ def build_query_understanding(
         rule_content_tasks=rule_content_tasks,
         rule_ui_tasks=rule_ui_tasks,
         warnings=warnings,
+        ui_parser_needs_classifier=ui_parser_needs_classifier,
     )
     if classifier_required:
         if acquire_llm(runtime_context, "intent-classifier"):
@@ -129,8 +137,11 @@ def should_call_classifier_fallback(
     rule_content_tasks: list[Any],
     rule_ui_tasks: list[Any],
     warnings: list[str],
+    ui_parser_needs_classifier: bool = False,
 ) -> bool:
     if bool_env("AGENT_INTENT_CLASSIFIER_ALWAYS", False):
+        return True
+    if ui_parser_needs_classifier:
         return True
     if getattr(entity_resolution, "needs_clarification", False) or getattr(entity_resolution, "status", None) == "ambiguous":
         return True

@@ -343,17 +343,6 @@ def placements_overlap(left, right):
     )
 
 
-def news_panel_props_command(report):
-    return next(
-        command for command in report.layoutProposal.commands
-        if command.get("type") in {"layout.panel.add", "layout.panel.props.update"}
-        and (
-            command.get("payload", {}).get("panelType") == "newsFeed"
-            or command.get("payload", {}).get("panelId") == "panel-news"
-        )
-    )
-
-
 class AgentOrchestrationTests(unittest.TestCase):
     def setUp(self):
         self._env_backup = {
@@ -456,6 +445,70 @@ class AgentOrchestrationTests(unittest.TestCase):
 
         self.assertEqual(understanding.routeMode, "analysis")
         self.assertEqual(understanding.intentType, "news")
+        self.assertEqual(understanding.uiTasks, [])
+
+    def test_content_news_show_query_does_not_become_ui_task(self):
+        with patch("gops_agents.intent_understanding.fanout.classify_with_provider", side_effect=AssertionError("content-only news should not call classifier")):
+            understanding, _ = build_query_understanding("NVDA 뉴스 보여줘", layout_context=layout_context())
+
+        self.assertEqual(understanding.routeMode, "analysis")
+        self.assertEqual(understanding.intentType, "news")
+        self.assertEqual(understanding.uiTasks, [])
+
+    def test_ui_parser_handles_korean_typos_without_llm_classifier(self):
+        with patch("gops_agents.intent_understanding.fanout.classify_with_provider", side_effect=AssertionError("clear typo UI route should not call classifier")):
+            understanding, _ = build_query_understanding("뉴스 페널 크개 띠워줘", layout_context=layout_context())
+
+        self.assertEqual(understanding.routeMode, "ui_layout")
+        self.assertEqual(understanding.intentType, "ui-layout")
+        self.assertEqual(understanding.uiTasks[0].source, "ui-parser")
+        self.assertEqual(understanding.uiTasks[0].targetPanelType, "newsFeed")
+        self.assertEqual(understanding.uiTasks[0].targetPanelId, "panel-news")
+        self.assertEqual(understanding.uiTasks[0].action, "resize")
+        self.assertEqual(understanding.uiTasks[0].sizeIntent, "large")
+
+    def test_mixed_ui_news_and_ontology_scopes_ui_clause(self):
+        query = "뉴스 패널 크게 띄워주고 엔비디아 뉴스 불러와줘. 그리고 온톨로지 분석해줘"
+        with patch("gops_agents.intent_understanding.fanout.classify_with_provider", side_effect=AssertionError("clear mixed route should not call classifier")):
+            understanding, _ = build_query_understanding(query, layout_context=layout_context())
+
+        self.assertEqual(understanding.routeMode, "hybrid")
+        self.assertEqual(understanding.intentType, "news+ontology")
+        self.assertEqual(understanding.selectedRoles, ["news", "ontology"])
+        self.assertEqual(len(understanding.uiTasks), 1)
+        self.assertEqual(understanding.uiTasks[0].targetPanelType, "newsFeed")
+        self.assertEqual(understanding.uiTasks[0].targetPanelTypes, ["newsFeed"])
+        self.assertNotIn("ontologyGraph", understanding.uiTasks[0].targetPanelTypes)
+
+    def test_ontology_analysis_query_does_not_become_ui_task(self):
+        with patch("gops_agents.intent_understanding.fanout.classify_with_provider", side_effect=AssertionError("content-only ontology should not call classifier")):
+            understanding, _ = build_query_understanding("온톨로지 분석해줘", layout_context=layout_context())
+
+        self.assertEqual(understanding.routeMode, "analysis")
+        self.assertEqual(understanding.intentType, "ontology")
+        self.assertEqual(understanding.uiTasks, [])
+
+    def test_incomplete_ui_surface_uses_llm_classifier_fallback(self):
+        classifier_payload = classifier_result_from_payload({
+            "uiTasks": [
+                {
+                    "action": "focus",
+                    "targetPanelType": "newsFeed",
+                    "targetPanelId": "panel-news",
+                    "confidence": 0.86,
+                    "reason": "LLM recovered incomplete news panel UI request.",
+                }
+            ],
+            "routeMode": "ui_layout",
+            "confidence": 0.86,
+        }, source="test-llm")
+
+        with patch("gops_agents.intent_understanding.fanout.classify_with_provider", return_value=classifier_payload) as classifier:
+            understanding, _ = build_query_understanding("뉴스 패널 좀", layout_context=layout_context())
+
+        classifier.assert_called_once()
+        self.assertEqual(understanding.routeMode, "ui_layout")
+        self.assertEqual(understanding.uiTasks[0].source, "test-llm")
 
     def test_unclear_query_understanding_uses_llm_classifier_fallback(self):
         classifier_payload = classifier_result_from_payload({
@@ -499,7 +552,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertIsNotNone(report.finalAnswer)
         self.assertEqual(report.finalAnswer.title, "추가 확인 필요")
         self.assertEqual(report.providerEvidence, [])
-        self.assertEqual(report.notificationDecision.level, "none")
+        self.assertIsNone(report.notificationDecision)
 
     def test_memory_report_store_round_trip(self):
         store = InMemoryReportStore()
@@ -929,27 +982,24 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(report.route.selectedRoles, ["news"])
         self.assertIn("news-analysis", roles)
         self.assertNotIn("chart-analysis", roles)
-        self.assertTrue(any(item["panelId"] == "panel-news" and item["layoutWeight"] == 100 for item in report.layoutProposal.panelPriorities))
-        self.assertTrue(any(command["type"] == "layout.panel.move" and command["payload"]["panelId"] == "panel-news" for command in report.layoutProposal.commands))
+        self.assertIsNone(report.layoutProposal)
 
-    def test_layout_agent_skips_commands_without_layout_context(self):
+    def test_analysis_request_does_not_propose_layout_without_ui_intent(self):
         report = AgentOrchestrator().analyze({
             "symbol": "NVDA",
             "intent": "뉴스 보여줘",
         })
 
-        self.assertEqual(report.layoutProposal.commands, [])
-        self.assertEqual(report.layoutProposal.panelPriorities, [])
+        self.assertIsNone(report.layoutProposal)
 
-    def test_layout_agent_does_not_move_pinned_primary_panel(self):
+    def test_analysis_request_ignores_layout_context_without_ui_intent(self):
         report = AgentOrchestrator().analyze({
             "symbol": "NVDA",
             "intent": "뉴스 보여줘",
             "layoutContext": layout_context(pinned_news=True),
         })
 
-        self.assertTrue(any(item["panelId"] == "panel-news" and item["layoutWeight"] == 100 for item in report.layoutProposal.panelPriorities))
-        self.assertFalse(any(command["type"] == "layout.panel.move" for command in report.layoutProposal.commands))
+        self.assertIsNone(report.layoutProposal)
 
     def test_clear_ui_router_does_not_call_llm_classifier(self):
         ui_router_response = {
@@ -986,7 +1036,7 @@ class AgentOrchestrationTests(unittest.TestCase):
 
         self.assertEqual(openai.call_count, 0)
         self.assertEqual(report.route.intentType, "ui-layout")
-        self.assertEqual(report.route.source, "ui-fallback")
+        self.assertEqual(report.route.source, "ui-parser")
         self.assertEqual(report.timing["llmCalls"], 0)
         self.assertEqual(report.timing["llmCallLabels"], [])
 
@@ -1004,7 +1054,7 @@ class AgentOrchestrationTests(unittest.TestCase):
                 })
 
         self.assertEqual(report.route.intentType, "ui-layout")
-        self.assertEqual(report.route.source, "ui-fallback")
+        self.assertEqual(report.route.source, "ui-parser")
         self.assertEqual(report.timing["llmCalls"], 0)
         self.assertEqual(report.timing["llmBudgetBlocked"], 0)
 
@@ -1497,7 +1547,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         fetch.assert_not_called()
         self.assertEqual(evidence[0].raw["dataSource"], "clickhouse")
 
-    def test_orchestrator_adds_news_panel_layout_payload(self):
+    def test_analysis_news_request_does_not_add_news_panel_layout_payload(self):
         provider = ClickHouseNewsProvider(
             clickhouse_provider=FakeClickHouseProvider([
                 {
@@ -1517,13 +1567,10 @@ class AgentOrchestrationTests(unittest.TestCase):
 
         report = orchestrator.analyze({"symbol": "NVDA", "intent": "뉴스 보여줘", "agentIds": ["agent-02"]})
 
-        news_command = news_panel_props_command(report)
-        props = news_command["payload"]["props"]
-        self.assertEqual(props["symbol"], "NVDA")
-        self.assertEqual(props["latestNews"][0]["title"], "NVDA shares rise after strong earnings")
-        self.assertEqual(props["majorNews"][0]["importanceScore"], props["latestNews"][0]["importanceScore"])
+        self.assertIsNotNone(report.finalAnswer)
+        self.assertIsNone(report.layoutProposal)
 
-    def test_orchestrator_updates_existing_news_panel_layout_payload(self):
+    def test_analysis_news_request_does_not_update_existing_news_panel_layout_payload(self):
         provider = ClickHouseNewsProvider(
             clickhouse_provider=FakeClickHouseProvider([
                 {
@@ -1548,14 +1595,10 @@ class AgentOrchestrationTests(unittest.TestCase):
             "layoutContext": layout_context(),
         })
 
-        news_command = news_panel_props_command(report)
-        self.assertEqual(news_command["type"], "layout.panel.props.update")
-        self.assertEqual(news_command["payload"]["panelId"], "panel-news")
-        self.assertEqual(news_command["target"]["panelId"], "panel-news")
-        self.assertEqual(news_command["payload"]["props"]["latestNews"][0]["title"], "NVDA shares rise after strong earnings")
-        self.assertFalse(any(command["type"] == "layout.panel.add" for command in report.layoutProposal.commands))
+        self.assertIsNotNone(report.finalAnswer)
+        self.assertIsNone(report.layoutProposal)
 
-    def test_orchestrator_analysis_cache_reuses_final_answer_but_rebuilds_layout(self):
+    def test_orchestrator_analysis_cache_reuses_final_answer_without_layout_side_effects(self):
         provider = ClickHouseNewsProvider(
             clickhouse_provider=FakeClickHouseProvider([
                 {
@@ -1598,8 +1641,8 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(provider.clickhouse_provider.calls, 1)
         self.assertEqual(synthesizer.calls, 1)
         self.assertEqual(first.finalAnswer.summary, second.finalAnswer.summary)
-        self.assertTrue(any(command["type"] == "layout.panel.move" for command in first.layoutProposal.commands))
-        self.assertFalse(any(command["type"] == "layout.panel.move" for command in second.layoutProposal.commands))
+        self.assertIsNone(first.layoutProposal)
+        self.assertIsNone(second.layoutProposal)
 
     def test_news_paraphrases_share_overview_analysis_cache(self):
         provider = ClickHouseNewsProvider(
@@ -1933,9 +1976,8 @@ class AgentOrchestrationTests(unittest.TestCase):
 
                 self.assertEqual(report.route.intentType, "news")
                 self.assertEqual(report.route.selectedRoles, ["news"])
-                news_command = news_panel_props_command(report)
-                self.assertEqual(news_command["type"], "layout.panel.props.update")
-                self.assertEqual(news_command["payload"]["panelId"], "panel-news")
+                self.assertEqual(report.finalAnswer.title, "뉴스를 가져왔습니다")
+                self.assertIsNone(report.layoutProposal)
 
     def test_news_localization_success_updates_panel_payload_and_preserves_originals(self):
         provider = ClickHouseNewsProvider(
@@ -1982,12 +2024,10 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(evidence.raw["localizedTitle"], "엔비디아, 실적 호조에 주가 상승")
         self.assertEqual(evidence.raw["localizedSummary"], "엔비디아 매출이 기대치를 웃돌며 투자심리가 개선됐습니다.")
         self.assertEqual(evidence.url, "https://example.com/panel-ko")
-        news_command = news_panel_props_command(report)
-        item = news_command["payload"]["props"]["latestNews"][0]
-        self.assertEqual(item["title"], "엔비디아, 실적 호조에 주가 상승")
-        self.assertEqual(item["summary"], "엔비디아 매출이 기대치를 웃돌며 투자심리가 개선됐습니다.")
-        self.assertEqual(item["originalTitle"], "NVDA shares rise after strong earnings")
-        self.assertEqual(item["originalSummary"], "NVDA revenue beat expectations.")
+        self.assertIsNone(report.layoutProposal)
+        final_text = json.dumps(report.finalAnswer.to_dict(), ensure_ascii=False)
+        self.assertIn("엔비디아, 실적 호조에 주가 상승", final_text)
+        self.assertIn("엔비디아 매출이 기대치를 웃돌며 투자심리가 개선됐습니다.", final_text)
 
     def test_news_localization_failure_falls_back_to_original_text(self):
         provider = ClickHouseNewsProvider(
@@ -2018,10 +2058,10 @@ class AgentOrchestrationTests(unittest.TestCase):
 
         evidence = report.providerEvidence[0]
         self.assertNotIn("localizedTitle", evidence.raw)
-        news_command = news_panel_props_command(report)
-        item = news_command["payload"]["props"]["latestNews"][0]
-        self.assertEqual(item["title"], "NVDA shares rise after strong earnings")
-        self.assertEqual(item["summary"], "NVDA revenue beat expectations.")
+        self.assertIsNone(report.layoutProposal)
+        final_text = json.dumps(report.finalAnswer.to_dict(), ensure_ascii=False)
+        self.assertIn("NVDA shares rise after strong earnings", final_text)
+        self.assertIn("NVDA revenue beat expectations.", final_text)
 
     def test_news_localization_cache_avoids_repeated_openai_calls(self):
         provider = ClickHouseNewsProvider(
@@ -2165,9 +2205,8 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(report.symbol, "XLV")
         self.assertEqual(clickhouse.requested_symbols, ["XLV"])
         self.assertEqual(report.finalAnswer.title, "뉴스를 가져왔습니다")
-        news_command = news_panel_props_command(report)
-        self.assertEqual(news_command["payload"]["props"]["symbol"], "XLV")
-        self.assertEqual(news_command["payload"]["props"]["latestNews"][0]["symbol"], "XLV")
+        self.assertIsNone(report.layoutProposal)
+        self.assertEqual(report.providerEvidence[0].raw.get("symbol"), "XLV")
 
     def test_lowercase_ticker_in_intent_normalizes_against_known_universe(self):
         self.assertEqual(extract_symbol_from_intent("acgl 뉴스 보여줘"), "ACGL")
@@ -2201,9 +2240,8 @@ class AgentOrchestrationTests(unittest.TestCase):
 
         self.assertEqual(report.symbol, "ACGL")
         self.assertEqual(clickhouse.requested_symbols, ["ACGL"])
-        news_command = news_panel_props_command(report)
-        self.assertEqual(news_command["payload"]["props"]["symbol"], "ACGL")
-        self.assertEqual(news_command["payload"]["props"]["latestNews"][0]["symbol"], "ACGL")
+        self.assertIsNone(report.layoutProposal)
+        self.assertEqual(report.providerEvidence[0].raw.get("symbol"), "ACGL")
 
     def test_explicit_ticker_with_no_news_does_not_fallback_to_current_chart_symbol(self):
         clickhouse = FakeClickHouseProvider([])
@@ -2225,12 +2263,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(report.symbol, "ACGL")
         self.assertEqual(clickhouse.requested_symbols, ["ACGL"])
         self.assertEqual(report.finalAnswer.summary, "ACGL 관련 저장 뉴스가 없습니다.")
-        news_command = news_panel_props_command(report)
-        props = news_command["payload"]["props"]
-        self.assertEqual(props["symbol"], "ACGL")
-        self.assertEqual(props["status"], "empty")
-        self.assertEqual(props["latestNews"], [])
-        self.assertIn("ACGL", props["emptyMessage"])
+        self.assertIsNone(report.layoutProposal)
 
     def test_company_name_alias_in_intent_overrides_current_chart_symbol_for_news(self):
         self.assertEqual(extract_symbol_from_intent("애플 뉴스 찾아줘"), "AAPL")
@@ -2265,9 +2298,8 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(report.symbol, "AAPL")
         self.assertEqual(clickhouse.requested_symbols, ["AAPL"])
         self.assertEqual(report.finalAnswer.title, "뉴스를 가져왔습니다")
-        news_command = news_panel_props_command(report)
-        self.assertEqual(news_command["payload"]["props"]["symbol"], "AAPL")
-        self.assertEqual(news_command["payload"]["props"]["latestNews"][0]["symbol"], "AAPL")
+        self.assertIsNone(report.layoutProposal)
+        self.assertEqual(report.providerEvidence[0].raw.get("symbol"), "AAPL")
 
     def test_korean_entity_resolver_handles_compact_typos_and_choseong(self):
         cases = {
@@ -2559,10 +2591,9 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(report.symbol, "AAPL")
         self.assertEqual(report.dailySummaries[0]["summary"], "애플 관련 일일 뉴스 요약입니다.")
         self.assertIn("일일 뉴스 요약", report.finalAnswer.summary)
-        news_command = news_panel_props_command(report)
-        props = news_command["payload"]["props"]
-        self.assertEqual(props["dailySummaries"][0]["date"], "2026-07-01")
-        self.assertEqual(props["dailySummaries"][0]["keyPoints"], ["서비스 성장", "공급망 점검"])
+        self.assertIsNone(report.layoutProposal)
+        self.assertEqual(report.dailySummaries[0]["date"], "2026-07-01")
+        self.assertEqual(report.dailySummaries[0]["keyPoints"], ["서비스 성장", "공급망 점검"])
 
     def test_news_role_fallback_applies_daily_summaries_after_join(self):
         provider = SequencedDailyNewsProvider()
@@ -2583,9 +2614,8 @@ class AgentOrchestrationTests(unittest.TestCase):
 
         self.assertEqual(provider.daily_calls, 2)
         self.assertEqual(report.dailySummaries[0]["summary"], "fallback role daily summary")
-        news_command = news_panel_props_command(report)
-        props = news_command["payload"]["props"]
-        self.assertEqual(props["dailySummaries"][0]["keyPoints"], ["role fallback"])
+        self.assertIsNone(report.layoutProposal)
+        self.assertEqual(report.dailySummaries[0]["keyPoints"], ["role fallback"])
 
     def test_topic_news_intent_uses_theme_basket_instead_of_current_chart_symbol(self):
         clickhouse = ThemeClickHouseProvider({
@@ -2632,10 +2662,8 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertIn("MU", clickhouse.requested_symbols)
         self.assertNotEqual(clickhouse.requested_symbols, ["NVDA"])
         self.assertEqual(report.finalAnswer.title, "뉴스를 가져왔습니다")
-        news_command = news_panel_props_command(report)
-        props = news_command["payload"]["props"]
-        self.assertEqual(props["symbol"], "반도체")
-        self.assertTrue({"AMD", "MU"}.issubset({item["symbol"] for item in props["latestNews"]}))
+        self.assertIsNone(report.layoutProposal)
+        self.assertTrue({"AMD", "MU"}.issubset({item.raw.get("symbol") for item in report.providerEvidence}))
 
     def test_topic_news_intent_can_use_prelocalized_redis_basket_evidence(self):
         redis = FakeLocalizedRedisProvider([
@@ -2861,7 +2889,7 @@ class AgentOrchestrationTests(unittest.TestCase):
                 })
 
         self.assertEqual(openai.call_count, 0)
-        self.assertEqual(report.route.source, "ui-fallback")
+        self.assertEqual(report.route.source, "ui-parser")
         self.assertEqual(report.route.intentType, "ui-layout")
         self.assertEqual(report.route.selectedRoles, [])
         self.assertEqual(report.findings, [])
@@ -2889,7 +2917,7 @@ class AgentOrchestrationTests(unittest.TestCase):
             "layoutContext": layout_context(),
         })
 
-        self.assertEqual(report.route.source, "ui-fallback")
+        self.assertEqual(report.route.source, "ui-parser")
         self.assertEqual(report.route.intentType, "ui-layout")
         self.assertEqual(report.route.selectedRoles, [])
         self.assertEqual(report.findings, [])
@@ -3027,7 +3055,7 @@ class AgentOrchestrationTests(unittest.TestCase):
             "layoutContext": layout_context(),
         })
 
-        self.assertEqual(report.route.source, "ui-fallback")
+        self.assertEqual(report.route.source, "ui-parser")
         self.assertEqual(report.route.intentType, "ui-layout")
         self.assertEqual(report.findings, [])
         self.assertTrue(any(command["type"] == "layout.panels.arrange" for command in report.layoutProposal.commands))
@@ -3039,7 +3067,7 @@ class AgentOrchestrationTests(unittest.TestCase):
             "layoutContext": layout_context(),
         })
 
-        self.assertEqual(report.route.source, "ui-fallback")
+        self.assertEqual(report.route.source, "ui-parser")
         self.assertEqual(report.route.intentType, "ui-layout")
         self.assertEqual(report.findings, [])
         self.assertTrue(any(command["type"] == "layout.panels.arrange" for command in report.layoutProposal.commands))
@@ -3051,7 +3079,7 @@ class AgentOrchestrationTests(unittest.TestCase):
             "layoutContext": layout_context(),
         })
 
-        self.assertEqual(report.route.source, "ui-fallback")
+        self.assertEqual(report.route.source, "ui-parser")
         self.assertEqual(report.route.intentType, "ui-layout")
         self.assertEqual(report.route.selectedRoles, [])
         self.assertEqual(report.findings, [])

@@ -5,7 +5,7 @@ import os
 import time
 from typing import Any
 
-from ..contracts import AnalysisReport, FinalAnswer, IntentRoute, LayoutProposal, stable_id, utc_now_iso
+from ..contracts import AnalysisReport, FinalAnswer, IntentRoute, stable_id, utc_now_iso
 from ..retrieval.context import build_primary_retrieval_context
 from ..retrieval.cross_signal import CrossSignal, build_cross_signals
 from ..retrieval.snapshots import (
@@ -22,11 +22,9 @@ from ..retrieval.snapshots import (
 )
 from ..roles import (
     ChartAgent,
-    LayoutAgent,
     MacroAgent,
     MarketSummaryAgent,
     NewsAgent,
-    NotificationDecisionAgent,
     OntologyAgent,
     UIAgent,
     UnusualEventExplainerAgent,
@@ -75,8 +73,6 @@ class AgentOrchestrator:
         self.event_explainer = UnusualEventExplainerAgent()
         self.market_summary = MarketSummaryAgent()
         self.verifier = VerificationGuardrailAgent()
-        self.notifier = NotificationDecisionAgent()
-        self.layout_agent = LayoutAgent()
         self.ui_agent = UIAgent()
         self.synthesizer = FinalAnswerSynthesizer()
         self.runtime_policy = runtime_policy_from_env()
@@ -110,8 +106,8 @@ class AgentOrchestrator:
             graph.add_node("run_selected_role_agents", self._run_selected_role_agents)
             graph.add_node("verify", self._verify)
             graph.add_node("synthesize_final_answer", self._synthesize_final_answer)
-            graph.add_node("decide_notification", self._decide_notification)
             graph.add_node("propose_layout", self._propose_layout)
+            graph.add_node("finalize_report", self._finalize_report)
 
             graph.set_entry_point("normalize_request")
 
@@ -123,9 +119,16 @@ class AgentOrchestrator:
             graph.add_edge("join_cross_signals", "run_selected_role_agents")
             graph.add_edge("run_selected_role_agents", "verify")
             graph.add_edge("verify", "synthesize_final_answer")
-            graph.add_edge("synthesize_final_answer", "decide_notification")
-            graph.add_edge("decide_notification", "propose_layout")
-            graph.add_edge("propose_layout", END)
+            graph.add_conditional_edges(
+                "synthesize_final_answer",
+                route_after_synthesis,
+                {
+                    "propose_layout": "propose_layout",
+                    "finalize_report": "finalize_report",
+                },
+            )
+            graph.add_edge("propose_layout", "finalize_report")
+            graph.add_edge("finalize_report", END)
             return graph.compile()
         except Exception:
             return None
@@ -142,10 +145,11 @@ class AgentOrchestrator:
             self._run_selected_role_agents,
             self._verify,
             self._synthesize_final_answer,
-            self._decide_notification,
-            self._propose_layout,
         ]:
             state = node(state)
+        if should_propose_layout(state):
+            state = self._propose_layout(state)
+        state = self._finalize_report(state)
         return state
 
     def _normalize_request(self, state: dict[str, Any]) -> dict[str, Any]:
@@ -519,30 +523,23 @@ class AgentOrchestrator:
         self._store_analysis_cache(next_state)
         return next_state
 
-    def _decide_notification(self, state: dict[str, Any]) -> dict[str, Any]:
-        notification = self.notifier.decide(state["analysis_id"], state["context"])
-        return {**state, "notification": notification}
-
     def _propose_layout(self, state: dict[str, Any]) -> dict[str, Any]:
-        request = state["request"]
         context = state["context"]
         ui_tasks = list(state.get("ui_tasks", [])) if isinstance(state.get("ui_tasks"), list) else []
-        if is_terminal_no_analysis_state(state):
-            layout = LayoutProposal(
-                title="Agent request not executed",
-                rationale="No layout change was proposed because the request could not be mapped to a supported analysis target.",
-                commands=[],
-                autoApply=False,
-                panelPriorities=[],
-            )
-        elif is_ui_layout_state(state):
+        if is_ui_layout_state(state):
             layout = self.ui_agent.propose_many(context, ui_tasks) if ui_tasks else self.ui_agent.propose(context, state["ui_intent"])
             if state.get("final_answer"):
                 state["final_answer"].summary = layout.rationale
+                state["summary"] = layout.rationale
         elif state.get("route_mode") == "hybrid" and state.get("ui_intent") is not None:
             layout = self.ui_agent.propose_many(context, ui_tasks) if ui_tasks else self.ui_agent.propose(context, state["ui_intent"])
         else:
-            layout = self.layout_agent.propose(context, state.get("route"))
+            layout = None
+        return {**state, "layout": layout}
+
+    def _finalize_report(self, state: dict[str, Any]) -> dict[str, Any]:
+        request = state["request"]
+        context = state["context"]
         timing = finalize_timing(state)
         route_plan = state.get("route_plan")
         snapshots = list(state.get("snapshots", []))
@@ -594,8 +591,8 @@ class AgentOrchestrator:
             providerEvidence=state["provider_evidence"],
             route=state["route"],
             finalAnswer=state["final_answer"],
-            notificationDecision=state["notification"],
-            layoutProposal=layout,
+            notificationDecision=state.get("notification"),
+            layoutProposal=state.get("layout"),
             chartProposal=request.get("chartProposal") if isinstance(request.get("chartProposal"), dict) else None,
             dailySummaries=list(context.newsDailySummaries),
             timing=timing,
@@ -608,7 +605,7 @@ class AgentOrchestrator:
             agentAnswers=list(state.get("agent_answers", [])),
             agentTrace=agent_trace,
         )
-        return {**state, "layout": layout, "report": report}
+        return {**state, "report": report}
 
     def _synthesize_agent_answers(self, state: dict[str, Any], role_findings: list[Any]) -> list[Any]:
         started_at = time.perf_counter()
@@ -687,6 +684,21 @@ def is_clarify_state(state: dict[str, Any]) -> bool:
 
 def is_terminal_no_analysis_state(state: dict[str, Any]) -> bool:
     return is_unsupported_subject_state(state) or is_clarify_state(state)
+
+
+def should_propose_layout(state: dict[str, Any]) -> bool:
+    if is_terminal_no_analysis_state(state):
+        return False
+    if is_ui_layout_state(state):
+        return True
+    if str(state.get("route_mode") or "") != "hybrid":
+        return False
+    ui_intent = state.get("ui_intent")
+    return bool(ui_intent and getattr(ui_intent, "isUiIntent", False))
+
+
+def route_after_synthesis(state: dict[str, Any]) -> str:
+    return "propose_layout" if should_propose_layout(state) else "finalize_report"
 
 
 def allow_role_answer_llm_calls(runtime_context: Any, selected_role_count: int) -> None:

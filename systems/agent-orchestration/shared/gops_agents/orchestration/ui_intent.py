@@ -37,14 +37,17 @@ def route_ui_intent(intent: str, layout_context: dict[str, Any], router_mode: st
     panels = compact_layout_panels(layout_context)
     if not text:
         return non_ui_intent("Empty user intent.")
-    if is_content_request_without_ui_operation(text):
+    parser_result = parse_ui_query_for_compat(text, layout_context)
+    if parser_result.tasks:
+        return ui_intent_from_task(parser_result.tasks[0])
+    if not parser_result.needs_classifier and is_content_request_without_ui_operation(text):
         return non_ui_intent("Content request did not include an explicit UI operation.")
 
     llm_intent = route_ui_intent_with_openai(text, panels, router_mode, runtime_context=runtime_context)
     if llm_intent:
         return resolve_ui_target(llm_intent, panels, text)
 
-    return resolve_ui_target(infer_ui_intent_fallback(text, panels), panels, text)
+    return non_ui_intent("No confident UI parser match.")
 
 
 def route_ui_intent_with_openai(
@@ -203,24 +206,10 @@ def resolve_ui_target(ui_intent: UIIntent, panels: list[dict[str, Any]], intent:
 
 
 def infer_ui_intent_fallback(intent: str, panels: list[dict[str, Any]]) -> UIIntent:
-    text = normalize_text(intent)
-    target = match_panel(text, panels)
-    action, size_intent, position_intent = infer_action_size_and_position(text)
-    if not target or action == "unknown" or not is_confident_fallback_ui_action(text, size_intent):
+    parser_result = parse_ui_query_for_compat(intent, {"panels": panels})
+    if not parser_result.tasks:
         return non_ui_intent("No confident fallback UI target/action match.")
-    confidence = 0.82 if size_intent or action in {"focus", "open", "close"} else 0.68
-    return UIIntent(
-        isUiIntent=True,
-        intentKind="layout",
-        targetPanelType=target["type"],
-        targetPanelId=target["id"],
-        action=action,
-        sizeIntent=size_intent,
-        positionIntent=position_intent,
-        confidence=confidence,
-        reason="Fallback matched a visible panel and layout action after the LLM UI router was unavailable.",
-        source="ui-fallback",
-    )
+    return ui_intent_from_task(parser_result.tasks[0])
 
 
 def is_confident_fallback_ui_action(text: str, size_intent: str | None) -> bool:
@@ -254,76 +243,9 @@ def is_content_request_without_ui_operation(intent: str) -> bool:
 
 
 def has_explicit_ui_operation(intent: str) -> bool:
-    text = normalize_text(intent)
-    if not text:
-        return False
-    operation_terms = (
-        "제일크",
-        "젤크",
-        "최대",
-        "가득",
-        "크게",
-        "키워",
-        "확대",
-        "넓게",
-        "작게",
-        "줄여",
-        "축소",
-        "최소",
-        "오른쪽",
-        "우측",
-        "왼쪽",
-        "좌측",
-        "위로",
-        "상단",
-        "아래",
-        "밑",
-        "하단",
-        "옆",
-        "옆에",
-        "가운데",
-        "중앙",
-        "나란히",
-        "같이보이",
-        "동시에보이",
-        "재배치",
-        "배치",
-        "정렬",
-        "옮겨",
-        "이동",
-        "띄워",
-        "바꿔",
-        "변경",
-        "조정",
-        "full",
-        "max",
-        "maximum",
-        "large",
-        "big",
-        "small",
-        "min",
-        "right",
-        "left",
-        "top",
-        "bottom",
-        "center",
-        "middle",
-        "side",
-        "beside",
-        "nextto",
-        "arrange",
-        "move",
-        "resize",
-    )
-    surface_terms = ("패널", "창", "화면", "레이아웃", "영역", "탭", "ui", "panel", "window", "layout", "view", "screen")
-    surface_action_terms = ("열어", "닫아", "숨겨", "띄워", "추가", "제거", "없애", "켜", "꺼", "open", "close", "hide", "add", "remove")
-    return (
-        any(term in text for term in operation_terms)
-        or (
-            any(term in text for term in surface_terms)
-            and any(term in text for term in surface_action_terms)
-        )
-    )
+    from ..intent_understanding.ui_parser import has_ui_operation_signal
+
+    return has_ui_operation_signal(intent)
 
 
 def non_ui_intent(reason: str) -> UIIntent:
@@ -341,27 +263,9 @@ def non_ui_intent(reason: str) -> UIIntent:
 
 
 def compact_layout_panels(layout_context: dict[str, Any]) -> list[dict[str, Any]]:
-    panels = layout_context.get("panels") if isinstance(layout_context, dict) else None
-    if not isinstance(panels, list):
-        return []
-    compacted = []
-    for item in panels:
-        if not isinstance(item, dict):
-            continue
-        panel_id = str(item.get("id") or "").strip()
-        panel_type = str(item.get("type") or "").strip()
-        if not panel_id or panel_type not in PANEL_TYPES:
-            continue
-        compacted.append({
-            "id": panel_id,
-            "type": panel_type,
-            "title": str(item.get("title") or default_panel_title(panel_type)),
-            "aliases": panel_aliases(panel_type, item.get("aliases")),
-            "variant": str(item.get("variant") or ""),
-            "layoutPinned": bool(item.get("layoutPinned")),
-            "placement": item.get("placement") if isinstance(item.get("placement"), dict) else {},
-        })
-    return compacted
+    from ..intent_understanding.ui_parser import compact_layout_panels_for_parser
+
+    return compact_layout_panels_for_parser(layout_context if isinstance(layout_context, dict) else {})
 
 
 def match_panel(text: str, panels: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -379,36 +283,13 @@ def match_panel(text: str, panels: list[dict[str, Any]]) -> dict[str, Any] | Non
 
 
 def infer_action_size_and_position(text: str) -> tuple[str, str | None, str | None]:
-    position_intent = infer_position(text)
-    if any(token in text for token in ("제일크", "젤크", "최대", "가득", "full", "max", "maximum")):
-        return "resize", "max", position_intent
-    if any(token in text for token in ("크게", "키워", "확대", "넓게", "larg", "big")):
-        return "resize", "large", position_intent
-    if any(token in text for token in ("작게", "줄여", "축소", "최소", "small", "min")):
-        return "resize", "min", position_intent
-    if position_intent:
-        return "move", None, position_intent
-    if any(token in text for token in ("위로", "보여", "바꿔", "변경", "재배치", "배치", "정렬", "조정", "나란히", "ui", "layout", "focus")):
-        return "focus", None, position_intent
-    if any(token in text for token in ("열어", "추가", "띄워", "open", "add")):
-        return "open", None, position_intent
-    if any(token in text for token in ("닫아", "숨겨", "제거", "close", "hide", "remove")):
-        return "close", None, position_intent
-    return "unknown", None, position_intent
+    from ..intent_understanding.ui_parser import infer_action_size_and_position_from_query
+
+    return infer_action_size_and_position_from_query(text)
 
 
 def infer_position(text: str) -> str | None:
-    if any(token in text for token in ("아래", "밑", "하단", "bottom", "down")):
-        return "bottom"
-    if any(token in text for token in ("위", "상단", "top", "up")):
-        return "top"
-    if any(token in text for token in ("왼쪽", "좌측", "left")):
-        return "left"
-    if any(token in text for token in ("오른쪽", "우측", "right")):
-        return "right"
-    if any(token in text for token in ("가운데", "중앙", "center", "middle")):
-        return "center"
-    return None
+    return infer_action_size_and_position(text)[2]
 
 
 def alias_match_score(text: str, alias: str) -> int:
@@ -428,27 +309,33 @@ def normalize_text(value: str) -> str:
 
 
 def default_panel_title(panel_type: str) -> str:
-    return {
-        "chart": "차트",
-        "newsFeed": "시장 뉴스",
-        "indicatorCompare": "지표 비교",
-        "orderTicket": "주문",
-        "portfolioHoldings": "내 투자",
-        "aiSummary": "AI 요약",
-        "ontologyGraph": "온톨로지",
-    }.get(panel_type, panel_type)
+    from ..intent_understanding.ui_parser import default_panel_title as parser_default_panel_title
+
+    return parser_default_panel_title(panel_type)
 
 
 def panel_aliases(panel_type: str, supplied: Any = None) -> list[str]:
-    aliases = {
-        "chart": ["차트", "캔들", "가격 그래프", "chart", "graph"],
-        "newsFeed": ["뉴스", "시장 뉴스", "기사", "헤드라인", "news", "headline"],
-        "indicatorCompare": ["지표", "지표 비교", "인디케이터", "거시", "indicator", "macro"],
-        "orderTicket": ["주문", "주문 입력", "주문창", "매수창", "매도창", "오더", "order", "ticket"],
-        "portfolioHoldings": ["내 투자", "보유종목", "잔고", "계좌", "포트폴리오", "portfolio", "holdings", "balance"],
-        "aiSummary": ["AI 요약", "요약", "AI 어시스턴트", "assistant", "summary"],
-        "ontologyGraph": ["온톨로지", "관계 그래프", "기업 관계", "ontology", "relationship"],
-    }.get(panel_type, [panel_type])
-    if isinstance(supplied, list):
-        aliases.extend(str(item) for item in supplied if isinstance(item, str))
-    return aliases
+    from ..intent_understanding.ui_parser import panel_aliases_for_type
+
+    return panel_aliases_for_type(panel_type, supplied=supplied)
+
+
+def parse_ui_query_for_compat(intent: str, layout_context: dict[str, Any]):
+    from ..intent_understanding.ui_parser import parse_ui_query
+
+    return parse_ui_query(intent, layout_context)
+
+
+def ui_intent_from_task(task: Any) -> UIIntent:
+    return UIIntent(
+        isUiIntent=True,
+        intentKind="layout",
+        targetPanelType=getattr(task, "targetPanelType", None),
+        targetPanelId=getattr(task, "targetPanelId", None),
+        action=str(getattr(task, "action", "focus") or "focus"),
+        sizeIntent=getattr(task, "sizeIntent", None),
+        positionIntent=getattr(task, "positionIntent", None),
+        confidence=float(getattr(task, "confidence", 0.7) or 0.7),
+        reason=str(getattr(task, "reason", "UI task from parser.")),
+        source=str(getattr(task, "source", "ui-parser")),
+    )

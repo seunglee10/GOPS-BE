@@ -166,9 +166,11 @@ flowchart TD
   J --> A["run_selected_role_agents"]
   A --> V["verify"]
   V --> S["synthesize_final_answer"]
-  S --> D["decide_notification"]
-  D --> L["propose_layout"]
-  L --> Report["AnalysisReport"]
+  S --> Q{"UI layout needed?"}
+  Q -- "yes" --> L["propose_layout"]
+  Q -- "no" --> F["finalize_report"]
+  L --> F
+  F --> Report["AnalysisReport"]
 ```
 
 Hot path에서 중요한 제한:

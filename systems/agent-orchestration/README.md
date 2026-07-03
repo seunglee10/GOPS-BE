@@ -95,6 +95,10 @@ UI tasks support both single-panel targets and multi-panel sets. A generic
 request such as `패널 여러개 띄워줘` maps to the default workspace set
 `chart`, `newsFeed`, and `aiSummary`; explicit requests such as
 `차트 뉴스 온톨로지 패널 띄워줘` preserve the named panel set.
+UI parsing uses the Korean text normalization/fuzzy matching path in
+`shared/gops_agents/intent_understanding/ui_parser.py`; aliases and operation
+terms live in `config/ui-intent-lexicon.json` and can be replaced with
+`AGENT_UI_LEXICON_PATH`.
 
 `shared/gops_agents/orchestration/` owns the workflow nodes, cache helpers,
 timing, role execution helpers, request normalization, and report tracing.
