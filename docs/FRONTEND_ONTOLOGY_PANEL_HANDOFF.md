@@ -23,28 +23,88 @@ GraphDB zip에 존재하는 모든 관계를 프론트가 직접 읽거나 전�
 프론트 graph mapper가 그 relationType을 처리해야 합니다.
 ```
 
-## 백엔드 수정이 필요한 경우
+## 온톨로지 관련 백엔드 코드 읽기 순서
 
-이 문서는 프론트 패널 연동 요청서이지만, 프론트 담당자가 백엔드 코드를 절대 만지면 안 된다는 뜻은 아닙니다.
-
-기본 책임은 프론트에서 ontology evidence를 그래프로 그리는 것이지만, 아래 문제가 있으면 백엔드 쪽도 함께 확인하거나 수정할 수 있습니다.
-
-- completed analysis report에 `providerEvidence`가 내려오지 않는 경우
-- `providerEvidence`는 있지만 `provider="ontology"` 항목이 없는 경우
-- ontology evidence가 `status="available"`이 아니라 `no-data`로만 내려오는 경우
-- `raw.relationType`이 프론트 mapper가 처리하지 않는 새 값인 경우
-- GraphDB에는 관계가 있는데 백엔드가 해당 관계를 evidence로 변환하지 못하는 경우
-
-백엔드에서 수정할 수 있는 범위는 **ontology evidence 계약을 맞추는 부분**입니다.
+온톨로지를 사용하려면 백엔드에서는 `사용자 질의 -> ontology role 선택 -> GraphDB 조회 -> EvidenceItem 생성 -> AnalysisReport.providerEvidence` 흐름을 읽으면 됩니다.
 
 ```txt
-GraphDB / ontology provider
-  -> EvidenceItem(provider="ontology", status="available")
-  -> raw.relationType / raw.ticker / raw.themeName / raw.companyName
-  -> completed AnalysisReport.providerEvidence
+사용자 질의
+  -> routing.py에서 ontology role 선택
+  -> GraphDBOntologyProvider.fetch()
+  -> SPARQL query
+  -> row_to_ontology_evidence()
+  -> EvidenceItem(provider="ontology")
+  -> AnalysisReport.providerEvidence
+  -> 프론트 buildOntologyGraphFromEvidence()
 ```
 
-반대로 이 요청서만 보고 뉴스, 차트, 주문, 계좌, 전체 멀티에이전트 orchestration 구조를 같이 개편하지는 않습니다.
+### 1. 온톨로지 결과가 담기는 report 계약
+
+```txt
+systems/agent-orchestration/shared/gops_agents/contracts/__init__.py
+```
+
+읽을 코드:
+
+- `EvidenceItem`
+- `AnalysisReport.providerEvidence`
+- `AnalysisReport.to_dict()`
+
+이 파일은 백엔드가 프론트로 내려주는 최종 report shape를 정의합니다. 온톨로지 결과는 `EvidenceItem(provider="ontology", status="available", raw={...})` 형태로 만들어지고, 최종적으로 `AnalysisReport.providerEvidence` 배열에 담겨 프론트로 전달됩니다.
+
+### 2. GraphDB에서 ontology evidence를 만드는 provider
+
+```txt
+systems/agent-orchestration/shared/gops_agents/providers/__init__.py
+```
+
+읽을 코드:
+
+- `ProviderRequest`
+- `GraphDBOntologyProvider.fetch(...)`
+- `row_to_ontology_evidence(...)`
+- `ontology_relation_type(...)`
+- `themes_by_company_query(...)`
+- `control_relationships_by_company_query(...)`
+- `companies_by_theme_query(...)`
+- `theme_control_relationships_query(...)`
+
+이 파일은 GraphDB/SPARQL 조회 결과를 프론트가 사용할 수 있는 ontology evidence로 바꾸는 핵심 코드입니다. `GraphDBOntologyProvider.fetch(...)`가 ticker와 intent를 받아 theme/control/related company 관계를 조회하고, `row_to_ontology_evidence(...)`가 각 row를 `EvidenceItem`으로 변환합니다.
+
+`ontology_relation_type(...)`은 백엔드 row type을 프론트 graph mapper가 이해하는 `raw.relationType`으로 정규화합니다.
+
+```txt
+ticker-theme                  -> theme
+ticker-control-relationship   -> control
+theme-company                 -> theme-company
+theme-control-relationship    -> theme-control
+```
+
+### 3. 사용자 질의가 ontology role로 라우팅되는 코드
+
+```txt
+systems/agent-orchestration/shared/gops_agents/orchestration/routing.py
+```
+
+읽을 코드:
+
+- `KEYWORD_ROUTES`
+- `route_intent(...)`
+
+이 파일은 `연관기업`, `관계`, `온톨로지`, `공급망`, `경쟁사`, `섹터` 같은 질의를 ontology role로 보내는 라우팅 규칙을 갖고 있습니다. 예를 들어 `엔비디아의 연관기업 알려줘` 같은 질의가 들어오면 `route_intent(...)`가 ontology 역할을 선택하고, 이후 ontology provider가 GraphDB evidence를 만들 수 있습니다.
+
+### 4. provider evidence가 최종 AnalysisReport로 조립되는 코드
+
+```txt
+systems/agent-orchestration/shared/gops_agents/orchestration/workflow.py
+```
+
+읽을 코드:
+
+- provider evidence를 orchestration context에 넣는 흐름
+- `AnalysisReport(...)`를 생성하면서 `providerEvidence`를 채우는 흐름
+
+이 파일은 provider들이 만든 evidence를 orchestration context에 모으고, 최종 `AnalysisReport`로 조립합니다. 프론트가 받는 `report.providerEvidence`가 어느 단계에서 채워지는지 확인할 때 읽으면 됩니다.
 
 ## 프론트가 처리해야 하는 Evidence 조건
 
