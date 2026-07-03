@@ -615,6 +615,9 @@ class GraphDBSparqlClient:
         return response.json()
 
 
+RELATED_COMPANY_CACHE_MARKER = "__related_company_expansion__"
+
+
 class GraphDBOntologyProvider(OntologyProvider):
     def __init__(
         self,
@@ -651,7 +654,9 @@ class GraphDBOntologyProvider(OntologyProvider):
             ]
 
         intent_themes = tuple(matched_theme_names(request.intent))
-        cached = self._cache_get(requested, intent_themes)
+        expand_related_companies = is_related_company_intent(request.intent)
+        cache_intent_themes = cache_key_themes(intent_themes, expand_related_companies)
+        cached = self._cache_get(requested, cache_intent_themes)
         if cached is not None:
             return cached
 
@@ -663,7 +668,12 @@ class GraphDBOntologyProvider(OntologyProvider):
                 theme_rows = self._query_rows(themes_by_company_query(symbol, self.limit), "ticker-theme")
                 control_rows = self._query_rows(control_relationships_by_company_query(symbol, self.limit), "ticker-control-relationship")
                 per_symbol_rows[symbol] = {"theme": theme_rows, "control": control_rows}
-            for theme_name in intent_themes:
+            theme_names = theme_names_for_related_lookup(
+                intent_themes,
+                per_symbol_rows.get(primary_symbol, {}).get("theme", []),
+                expand_related_companies,
+            )
+            for theme_name in theme_names:
                 theme_matched_rows.extend(self._query_rows(companies_by_theme_query(theme_name, self.limit), "theme-company"))
                 theme_matched_rows.extend(self._query_rows(theme_control_relationships_query(theme_name, self.limit), "theme-control-relationship"))
         except Exception as exc:
@@ -689,7 +699,7 @@ class GraphDBOntologyProvider(OntologyProvider):
             evidence.extend(cross_symbol_relationship_evidence(requested, per_symbol_rows))
 
         evidence = evidence[: self.limit]
-        self._cache_set(requested, intent_themes, evidence)
+        self._cache_set(requested, cache_intent_themes, evidence)
         return evidence
 
     def _cache_get(self, symbols: list[str], intent_themes: tuple[str, ...]) -> list[EvidenceItem] | None:
@@ -789,6 +799,59 @@ def ontology_request_symbols(request: ProviderRequest) -> list[str]:
         if ticker and ticker not in symbols:
             symbols.append(ticker)
     return symbols
+
+
+def is_related_company_intent(intent: str) -> bool:
+    normalized = str(intent or "").strip().lower()
+    compacted = "".join(normalized.split())
+    related_terms = (
+        "연관기업",
+        "관련기업",
+        "관계기업",
+        "관련회사",
+        "연관회사",
+        "피어",
+        "경쟁사",
+        "동종기업",
+        "같은테마",
+        "같은섹터",
+        "relatedcompany",
+        "relatedcompanies",
+        "peer",
+        "peers",
+        "competitor",
+        "competitors",
+    )
+    return any(term in compacted for term in related_terms)
+
+
+def cache_key_themes(intent_themes: tuple[str, ...], expand_related_companies: bool) -> tuple[str, ...]:
+    if expand_related_companies:
+        return (RELATED_COMPANY_CACHE_MARKER, *intent_themes)
+    return intent_themes
+
+
+def theme_names_for_related_lookup(
+    intent_themes: tuple[str, ...],
+    primary_theme_rows: list[dict[str, Any]],
+    expand_related_companies: bool,
+    max_theme_count: int = 2,
+) -> list[str]:
+    theme_names: list[str] = []
+    for theme_name in intent_themes:
+        append_unique_theme_name(theme_names, theme_name)
+    if expand_related_companies:
+        for row in primary_theme_rows:
+            append_unique_theme_name(theme_names, row.get("themeName"))
+            if len(theme_names) >= max_theme_count:
+                break
+    return theme_names[:max_theme_count]
+
+
+def append_unique_theme_name(theme_names: list[str], value: Any) -> None:
+    theme_name = str(value or "").strip()
+    if theme_name and theme_name not in theme_names:
+        theme_names.append(theme_name)
 
 
 def cross_symbol_relationship_evidence(

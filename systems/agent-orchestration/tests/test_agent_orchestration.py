@@ -1484,6 +1484,19 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(route.source, "fallback")
         self.assertEqual(route.selectedRoles, ["chart", "news", "macro", "ontology"])
 
+    def test_general_analysis_from_primary_agent_expands_beyond_chart(self):
+        route = route_intent("엔비디아 분석해줘", ["agent-01"], "hybrid")
+
+        self.assertEqual(route.source, "rule+selection")
+        self.assertEqual(route.intentType, "general-analysis")
+        self.assertEqual(route.selectedRoles, ["chart", "news", "ontology"])
+
+    def test_explicit_chart_analysis_stays_chart_only(self):
+        route = route_intent("엔비디아 차트 분석해줘", ["agent-01"], "hybrid")
+
+        self.assertEqual(route.intentType, "chart")
+        self.assertEqual(route.selectedRoles, ["chart"])
+
     def test_snapshot_hot_path_does_not_call_news_role_llm_even_when_enabled(self):
         provider = ClickHouseNewsProvider(
             clickhouse_provider=FakeClickHouseProvider([
@@ -2574,6 +2587,37 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(shared_theme_items[0].raw["themeName"], "AI/반도체/데이터센터")
         self.assertEqual(set(shared_theme_items[0].raw["symbols"]), {"NVDA", "AMD"})
 
+    def test_graphdb_provider_related_company_intent_expands_primary_theme_peers(self):
+        payloads = [
+            {"results": {"bindings": [{
+                "ticker": {"value": "NVDA"},
+                "companyName": {"value": "NVIDIA Corp"},
+                "themeName": {"value": "AI/반도체/데이터센터"},
+            }]}},
+            {"results": {"bindings": []}},
+            {"results": {"bindings": [
+                {
+                    "ticker": {"value": "AMD"},
+                    "companyName": {"value": "Advanced Micro Devices"},
+                    "themeName": {"value": "AI/반도체/데이터센터"},
+                },
+                {
+                    "ticker": {"value": "AVGO"},
+                    "companyName": {"value": "Broadcom Inc"},
+                    "themeName": {"value": "AI/반도체/데이터센터"},
+                },
+            ]}},
+            {"results": {"bindings": []}},
+        ]
+        provider = GraphDBOntologyProvider(sparql_client=QueueSparqlClient(payloads), limit=10, cache=MemoryGraphPathCache())
+
+        evidence = provider.fetch(ProviderRequest("NVDA", "엔비디아의 연관기업 알려줘"))
+
+        related_items = [item for item in evidence if item.raw.get("relationType") == "theme-company"]
+        self.assertTrue(related_items, "expected related company evidence from NVDA's primary theme")
+        self.assertEqual({item.raw.get("ticker") for item in related_items}, {"AMD", "AVGO"})
+        self.assertEqual(related_items[0].raw["themeName"], "AI/반도체/데이터센터")
+
     def test_graphdb_provider_multi_symbol_cross_control_evidence(self):
         payloads = [
             {"results": {"bindings": [{
@@ -2701,6 +2745,12 @@ class AgentOrchestrationTests(unittest.TestCase):
 
         self.assertEqual(report.route.selectedRoles, ["ontology"])
         self.assertEqual(report.route.intentType, "ontology")
+
+    def test_related_company_keyword_routes_to_ontology_role(self):
+        route = route_intent("엔비디아의 연관기업 알려줘", ["agent-01"], "hybrid")
+
+        self.assertEqual(route.selectedRoles, ["ontology"])
+        self.assertEqual(route.intentType, "ontology")
 
     def test_korean_ontology_ui_prompt_routes_to_ontology_layout(self):
         report = AgentOrchestrator().analyze({

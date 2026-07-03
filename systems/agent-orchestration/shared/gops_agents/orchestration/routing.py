@@ -9,6 +9,7 @@ from ..contracts import IntentRoute
 
 
 ROLE_ORDER = ["chart", "news", "macro", "ontology"]
+GENERAL_ANALYSIS_ROLES = ["chart", "news", "ontology"]
 AGENT_ID_TO_ROLE = {
     "agent-01": "chart",
     "agent-02": "news",
@@ -24,7 +25,7 @@ KEYWORD_ROUTES = [
     (("뉴스", "기사", "보도", "헤드라인", "news", "headline", "article"), ["news"], "news"),
     (("차트", "캔들", "가격", "추세", "chart", "candle", "price", "trend"), ["chart"], "chart"),
     (("거시", "금리", "cpi", "fomc", "macro", "rate", "inflation"), ["macro"], "macro"),
-    (("관계", "온톨로지", "공급망", "경쟁사", "섹터", "ontology", "relationship", "supply"), ["ontology"], "ontology"),
+    (("관계", "연관", "연관기업", "관계기업", "관련기업", "온톨로지", "공급망", "경쟁사", "섹터", "ontology", "relationship", "related company", "supplier", "supply"), ["ontology"], "ontology"),
 ]
 
 
@@ -68,6 +69,14 @@ def route_intent(intent: str, agent_ids: Any = None, router_mode: str = "hybrid"
         )
 
     selected = roles_from_agent_ids(agent_ids)
+    if selected == ["chart"] and is_general_analysis_request(lowered):
+        return IntentRoute(
+            source="rule+selection",
+            intentType="general-analysis",
+            selectedRoles=list(GENERAL_ANALYSIS_ROLES),
+            confidence=0.78,
+            reason="General analysis wording from the primary AI agent expands chart-only selection to chart, news, and ontology roles.",
+        )
     if selected:
         intent_type = "+".join(selected)
         return IntentRoute(
@@ -116,6 +125,27 @@ def is_news_scoped_market_question(lowered_intent: str) -> bool:
         "articlebased",
     )
     return any(term in compacted for term in news_basis_terms)
+
+
+def is_general_analysis_request(lowered_intent: str) -> bool:
+    compacted = "".join(lowered_intent.split())
+    general_terms = (
+        "분석",
+        "분석해",
+        "분석해줘",
+        "봐줘",
+        "살펴",
+        "살펴봐",
+        "점검",
+        "검토",
+        "알려줘",
+        "어때",
+        "analyze",
+        "analysis",
+        "inspect",
+        "review",
+    )
+    return any(term in compacted for term in general_terms)
 
 
 def roles_from_agent_ids(agent_ids: Any) -> list[str]:
