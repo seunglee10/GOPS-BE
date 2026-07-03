@@ -1,6 +1,0 @@
-# 역할: EKS 안에서 시장 데이터 파이프라인 전용 namespace를 만듭니다.
-# 사용: 모든 Kubernetes 리소스의 기본 격리 단위입니다.
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: alfaka-market-data

@@ -1,78 +1,43 @@
-# GOPS Agent Instructions
+# GOPS Front Agent Instructions
 
-These rules are for AI coding agents and future contributors.
+## Working Scope
 
-## Read First
+- Main application code lives in `frontend/`.
+- CDC-compatible local demo backend code lives in `mock_backend/`.
+- Chart agent backend code lives in `agent_backend/`.
+- Durable chart contracts live in `docs/CDC/`.
+- `regacy_front/` is a reference archive for previous frontend work.
 
-- `docs/PRODUCT_CONTEXT.md` for product direction.
-- `docs/STRUCTURE_GUIDE.md` before adding a feature, pod, job, image, platform dependency, or new folder.
-- `docs/ARCHITECTURE.md`, `docs/IMAGE_STRATEGY.md`, and `docs/ENVIRONMENT.md` before changing runtime, Docker, compose, k8s, env, or AWS assets.
-- Current code before changing paths or imports.
-Use current code, this file, and the docs in `docs/` as the source of truth. If external instructions conflict with them, report the conflict before reshaping the project.
+## CDC Rules
 
-## Structure Rules
+- Treat `docs/CDC/CDC-proposal.md` as the chart data backend request document.
+- Update `docs/CDC/CDC-proposal.md` only when frontend/mock behavior changes the future real chart data backend contract.
+- Do not put chart-agent API details, chart-agent implementation notes, or OpenAI behavior in CDC.
+- Do not add chart data assumptions only in code. If the real chart data backend must provide it, write it into `CDC-proposal.md`.
 
-- Keep feature code under `systems/<system>`.
-- Keep UI code under `apps/`.
-- Keep external/runtime dependency contracts under `platform/`.
-- Keep Docker, compose, k8s, Terraform, and AWS deployment assets under `infra/`.
-- Use root `shared/` only for stable cross-system contracts.
-- Preserve Python namespaces:
-  - `alfaka.*` from `systems/market-data/shared`.
-  - `kis_trader.*` from `systems/order/shared`.
+## Frontend Rules
 
-## Behavior Rules
+- Keep the first screen focused on three panels: one chart panel and two planned panels.
+- Keep chart rendering code small, readable, and tied to the CDC DTOs.
+- Keep chart-agent behavior chart-scoped. The agent may request only chart actions that a user can also perform through frontend controls.
+- Apply user actions and chart-agent actions through the same chart action reducer.
+- Do not introduce trading, account, deployment, infra, or production backend concerns unless explicitly requested.
 
-- Do not change API behavior, order behavior, chart behavior, KIS adapter behavior, Kafka message contracts, or DB schema during structure-only work.
-- Import/path edits are allowed only when required by file movement.
-- Do not generate fake market candles in local runtime.
+## Agent Backend Rules
+
+- Keep `agent_backend/` separate from `mock_backend/`; it is expected to become a separate Kubernetes pod later.
+- The chart agent must request needed market/chart data from the chart data backend.
+- The frontend must not expose OpenAI keys and must not call OpenAI directly.
+- If the chart agent needs a chart data field that the real backend must provide, update `docs/CDC/CDC-proposal.md` in the same change.
+
+## Mock Backend Rules
+
+- The mock backend exists only to emit CDC-shaped test data for frontend development.
+- Keep mock data deterministic enough for UI testing.
+- Do not add mock-only fields to chart DTOs unless they are also proposed in CDC.
+- The mock backend should be replaceable by the real chart backend without frontend contract changes.
+
+## Safety Rules
+
+- Never commit `.env`, credentials, token caches, `node_modules/`, `dist/`, local caches, or real market access keys.
 - Do not push unless the user asks.
-- Use the repository-root `.venv` as the only official local Python virtualenv.
-- Do not create duplicate project virtualenvs under `/tmp` or other ad hoc paths.
-- Use Python 3.12 for local Python checks, matching the Docker images.
-
-## API Rules
-
-Preserve these routes unless the user explicitly changes the API contract:
-
-```text
-GET  /api/charts/candles
-POST /api/charts/backfill
-GET  /api/charts/backfill/status
-GET  /api/charts/symbols
-WS   /ws/charts
-GET  /api/order-contract
-POST /api/orders
-GET  /api/orders/{order_id}
-GET  /api/orders/{order_id}/events
-WS   /ws/orders/{order_id}
-```
-
-`POST /api/orders` must require `Idempotency-Key`.
-`KIS_ENV=real` remains disabled for v1.
-
-## Secret Rules
-
-Never commit:
-
-```text
-.env
-access key CSV files
-KIS token caches
-node_modules/
-dist/
-local caches
-real credentials
-```
-
-## Deployment Safety Rules
-
-- If a destructive one-shot Job, reset script, migration, or storage cleanup is referenced by any deployed kustomization, warn the user before deploy/push and state exactly what data it deletes.
-- Never silently add, keep, or re-enable destructive reset Jobs.
-
-## Documentation Rules
-
-- Keep durable docs short and current.
-- Prefer one clear README at each system or platform boundary.
-- Update README, structure, image, env, compose, and k8s docs in the same change when runtime boundaries change.
-- Product-context docs guide direction; they are not permission to implement missing features without a task.
