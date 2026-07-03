@@ -87,8 +87,6 @@ flowchart LR
 
 ## Local Setup
 
-First-time Docker setup should follow `docs/ONBOARDING_LOCAL_DOCKER.md`.
-
 Create `.env` from `.env.example`.
 
 Use one official local Python environment at the repository root:
