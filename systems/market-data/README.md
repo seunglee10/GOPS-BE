@@ -132,7 +132,7 @@ COVERAGE_REPAIR_DRY_RUN=false docker compose --profile repair run --rm coverage-
 ```
 
 The job talks to the API server rather than Redis or ClickHouse directly, so derived intervals keep the same source-interval rules as the frontend: `5m/10m` repair through `1m`, and `1W/1M` repair through `1D`.
-Backfill API requests are queued in Redis Streams by default, with consumer-group claim/ack/reclaim semantics and dead-letter handling after the configured max attempts. Stale queued/running gapfill records fail after `BACKFILL_ACTIVE_STALE_SECONDS`, and oversized `1m` gapfill windows are rejected by `BACKFILL_MAX_GAPFILL_1M_RANGE_HOURS`; broad intraday rebuilds belong to Initial Load or explicit S3 materialize jobs.
+Backfill API requests are queued in Redis Streams by default, with consumer-group claim/ack/reclaim semantics and dead-letter handling after the configured max attempts. Stale queued/running gapfill records fail after `BACKFILL_ACTIVE_STALE_SECONDS`, and chart/API `1m` gapfill windows are bounded by `BACKFILL_MAX_GAPFILL_1M_RANGE_HOURS` (14 days by default); broad intraday rebuilds belong to Initial Load or explicit S3 materialize jobs.
 
 ## Initial Load
 

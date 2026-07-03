@@ -154,6 +154,7 @@ async def run_stream_session(
     enforce_session_window,
     raw_log_every_n=0,
 ):
+    """Alpaca WebSocket 세션 하나를 열고 인증, 구독, raw Kafka 발행을 처리합니다."""
     active_subscribed_symbols = {channel: set() for channel in active_channels}
     last_active_sync = 0.0
     authenticated = False
@@ -309,6 +310,7 @@ def create_active_subscription_redis():
 
 
 async def sync_active_chart_subscriptions(ws, redis_client, channels, subscribed_symbols):
+    """Redis의 활성 차트 상태를 읽어 Alpaca 동적 subscribe/unsubscribe 요청을 보냅니다."""
     if not redis_client or not channels:
         return subscribed_symbols
 

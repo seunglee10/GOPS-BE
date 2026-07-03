@@ -13,11 +13,13 @@ logger = logging.getLogger(__name__)
 
 class SymbolRegistry:
     def __init__(self, clickhouse_provider=None, redis_provider=None):
+        """심볼 검색/상세 조회에 필요한 ClickHouse, Redis, 설정 파일을 준비합니다."""
         self.clickhouse_provider = clickhouse_provider
         self.redis_provider = redis_provider
         self.config = load_request_config()
 
     def search(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
+        """설정 universe와 provider 저장 데이터를 합쳐 심볼 검색 결과를 반환합니다."""
         normalized_query = query.strip().upper()
         results = self._universe_matches(normalized_query)
         provider_filter_symbols = self._provider_filter_symbols()
@@ -43,6 +45,7 @@ class SymbolRegistry:
         return list(deduped.values())[:limit]
 
     def detail(self, symbol: str) -> dict[str, Any]:
+        """단일 심볼의 메타데이터를 ClickHouse, Redis, 설정 순서로 조회합니다."""
         normalized = symbol.strip().upper()
         validate_symbol(normalized, self.config)
         if self.clickhouse_provider:
@@ -66,6 +69,7 @@ class SymbolRegistry:
         raise LookupError(f"Unknown market symbol: {normalized}")
 
     def _universe_matches(self, query: str) -> list[dict[str, Any]]:
+        """설정에 들어 있는 universe/extra 심볼 중 검색어와 맞는 항목을 찾습니다."""
         matches = []
         for index, symbol in enumerate(self._universe_symbols()):
             metadata = self._metadata_for_symbol(symbol)
@@ -84,6 +88,7 @@ class SymbolRegistry:
         ]
 
     def _match_score(self, metadata: dict[str, Any], query: str) -> int:
+        """심볼/이름이 검색어와 얼마나 가깝게 맞는지 정렬 점수를 계산합니다."""
         symbol = metadata["symbol"].upper()
         name = metadata["name"].upper()
         if symbol == query:
@@ -99,6 +104,7 @@ class SymbolRegistry:
         return 5
 
     def _metadata_for_symbol(self, symbol: str) -> dict[str, Any]:
+        """설정 파일의 symbolMetadata를 차트 API가 쓰는 메타데이터 형태로 바꿉니다."""
         configured_metadata = (self.config.get("symbolMetadata") or {}).get(symbol) or {}
         names = {
             value.upper(): key.title()
@@ -119,6 +125,7 @@ class SymbolRegistry:
         }
 
     def _is_valid_symbol(self, symbol: str) -> bool:
+        """설정된 심볼 패턴을 통과하는지 bool로 확인합니다."""
         try:
             validate_symbol(symbol, self.config)
             return True
@@ -126,9 +133,11 @@ class SymbolRegistry:
             return False
 
     def _is_universe_symbol(self, symbol: str) -> bool:
+        """심볼이 현재 registry가 노출하는 universe에 포함되는지 확인합니다."""
         return symbol in self._universe_symbols()
 
     def _provider_filter_symbols(self) -> set[str]:
+        """provider 검색 결과를 제한할 registry/universe 심볼 집합을 만듭니다."""
         return {
             symbol
             for symbol in self._configured_registry_universe_symbols()
@@ -136,6 +145,7 @@ class SymbolRegistry:
         }
 
     def _universe_symbols(self) -> list[str]:
+        """검색/상세 fallback에 쓸 설정 기반 universe와 extraSymbols를 합칩니다."""
         symbols = [
             symbol
             for symbol in self._configured_registry_universe_symbols()
@@ -157,6 +167,7 @@ class SymbolRegistry:
         return [*symbols, *[symbol for symbol in extra_symbols if symbol not in symbols]]
 
     def _configured_registry_universe_symbols(self) -> list[str]:
+        """collection source가 registry/universe일 때만 대형 universe 심볼을 읽습니다."""
         source = (os.getenv("ALPACA_COLLECTION_SYMBOL_SOURCE") or self.config.get("collectionSymbolSource") or "").strip().lower()
         if source not in {"universe", "registry"}:
             return []

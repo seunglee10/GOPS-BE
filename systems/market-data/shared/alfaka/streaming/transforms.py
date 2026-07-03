@@ -16,6 +16,7 @@ def to_iso(value):
 
 
 def float_or_zero(value):
+    """crypto 거래량처럼 소수일 수 있는 값을 float로 바꾸고 실패하면 0.0을 씁니다."""
     try:
         return float(value or 0)
     except (TypeError, ValueError):

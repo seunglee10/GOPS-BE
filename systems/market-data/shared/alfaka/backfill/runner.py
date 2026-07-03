@@ -33,6 +33,7 @@ class BackfillUnavailable(RuntimeError):
 
 class BackfillRunner:
     def __init__(self, store=None, s3=None, clickhouse_client=None, coverage_provider=None):
+        """backfill 실행에 필요한 S3, ClickHouse, coverage 조회 의존성을 준비합니다."""
         load_dotenv()
         if s3 is None:
             from alfaka.common.s3_client import create_s3_client
@@ -56,6 +57,7 @@ class BackfillRunner:
         )
 
     def run(self, record):
+        """backfill job 상태를 running/succeeded/failed로 갱신하며 실제 작업을 실행합니다."""
         current = record
         if self.store:
             current = self.store.update_status(current, "running")
@@ -75,6 +77,7 @@ class BackfillRunner:
         return {**current, "status": "succeeded", "result": result}
 
     def _run(self, record):
+        """단일 backfill 요청을 sourcePreference와 jobType에 맞춰 처리합니다."""
         bucket = os.getenv("S3_BUCKET")
         if not bucket:
             raise BackfillUnavailable("S3_BUCKET is required for backfill.")
@@ -248,6 +251,7 @@ class BackfillRunner:
         }
 
     def detect_missing_ranges(self, symbol, interval, start, end, job_type):
+        """ClickHouse에 이미 있는 timestamp를 보고 실제로 비어 있는 gap 구간만 계산합니다."""
         if job_type != "gapfill" or os.getenv("BACKFILL_GAPFILL_DETECT_INTERNAL", "true").lower() not in {"1", "true", "yes"}:
             return None
         if not hasattr(self.coverage_provider, "candle_timestamps"):
@@ -267,6 +271,7 @@ class BackfillRunner:
         ]
 
     def _run_replay_job(self, bucket, symbol, interval, start, end, job_type, source_preference):
+        """S3에 저장된 processed/raw 객체를 재생해서 ClickHouse를 복구합니다."""
         if source_preference == "alpaca-only":
             raise BackfillUnavailable(f"{job_type} cannot use sourcePreference=alpaca-only.")
         final_prefix = os.getenv("S3_FINAL_PREFIX", os.getenv("S3_PROCESSED_PREFIX", "market-data/rebuild-20260702-lazy-v1/final"))
@@ -291,6 +296,7 @@ class BackfillRunner:
 
 
 def fetch_alpaca_bars(symbol, start, end, feed, timeframe="1Min"):
+    """Alpaca historical bars API에서 주식 또는 crypto 캔들을 가져옵니다."""
     import requests
     from alfaka.common.secrets import load_alpaca_credentials
 
@@ -349,6 +355,7 @@ def fetch_alpaca_bars(symbol, start, end, feed, timeframe="1Min"):
 
 
 def historical_retry_delay(response, attempt, base_seconds, max_seconds):
+    """Alpaca rate limit이나 일시 오류 재시도 전에 기다릴 시간을 계산합니다."""
     retry_after = None
     if response is not None:
         retry_after = getattr(response, "headers", {}).get("Retry-After")
@@ -361,6 +368,7 @@ def historical_retry_delay(response, attempt, base_seconds, max_seconds):
 
 
 def repair_daily_bar_outliers(symbol, raw_bars, feed):
+    """주식 일봉의 비정상 high/low를 1분봉 재집계로 보정합니다."""
     if is_crypto_symbol(symbol):
         return raw_bars
     repaired = []
@@ -412,6 +420,7 @@ def daily_bar_repair_end(start):
 
 
 def aggregate_minute_bars_to_daily(rows):
+    """1분봉 목록을 하나의 일봉 값으로 집계합니다."""
     rows = sorted([row for row in rows if row.get("t")], key=lambda row: row["t"])
     if not rows:
         return None
@@ -448,12 +457,14 @@ def normalize_source_preference(value):
 
 
 def historical_feed_for_symbol(symbol, default_feed):
+    """심볼 종류에 맞는 historical feed 이름을 반환합니다."""
     if not is_crypto_symbol(symbol):
         return default_feed
     return f"crypto-{os.getenv('ALPACA_CRYPTO_LOCATION', 'us')}"
 
 
 def calendar_for_symbol(symbol):
+    """gapfill 계산에 사용할 심볼별 거래 캘린더를 선택합니다."""
     return TradingCalendar.crypto_24x7() if is_crypto_symbol(symbol) else None
 
 
@@ -626,6 +637,7 @@ def write_empty_initial_load_marker(s3, bucket, manifest_prefix, symbol, interva
 
 
 def raw_archive_rows_to_processed_candles(rows, interval):
+    """raw archive row들을 stream processor와 같은 processed candle 형태로 변환합니다."""
     interval = normalize_chart_interval(interval)
     candles = []
     for row in sorted(rows, key=lambda item: item.get("eventTime") or (item.get("raw") or {}).get("t") or ""):
@@ -669,6 +681,7 @@ def raw_archive_channel_to_envelope_channel(channel):
 
 
 def raw_bar_to_processed_candle(symbol, raw_bar, feed="sip", received_at=None, interval="1m", price_adjustment=None):
+    """Alpaca historical bar 하나를 ClickHouse/S3용 processed candle로 변환합니다."""
     interval = normalize_chart_interval(interval)
     price_adjustment = price_adjustment or historical_adjustment_from_env(os.environ)
     received_at = received_at or utc_now_iso()
@@ -701,6 +714,7 @@ def raw_bar_to_processed_candle(symbol, raw_bar, feed="sip", received_at=None, i
 
 
 def raw_bars_to_processed_candles(symbol, raw_bars, feed="sip", interval="1m", price_adjustment=None):
+    """여러 historical bar를 processed candle 목록으로 변환하고 이동평균을 붙입니다."""
     return attach_moving_averages([
         raw_bar_to_processed_candle(symbol, row, feed=feed, interval=interval, price_adjustment=price_adjustment)
         for row in raw_bars

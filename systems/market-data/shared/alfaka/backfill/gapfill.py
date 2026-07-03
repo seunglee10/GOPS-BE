@@ -19,6 +19,7 @@ class TradingCalendar:
 
     @classmethod
     def from_environment(cls):
+        """환경변수로 설정한 주식장 캘린더를 만듭니다."""
         return cls(
             provider=os.getenv("MARKET_CALENDAR_PROVIDER", "configured-nyse"),
             timezone_name=os.getenv("MARKET_TIMEZONE", "America/New_York"),
@@ -30,6 +31,7 @@ class TradingCalendar:
 
     @classmethod
     def crypto_24x7(cls):
+        """BTCUSD처럼 매일 24시간 거래되는 crypto용 캘린더를 만듭니다."""
         return cls(
             provider="crypto-24x7",
             timezone_name="UTC",
@@ -41,17 +43,21 @@ class TradingCalendar:
 
     @property
     def timezone(self):
+        """캘린더가 사용하는 시간대를 ZoneInfo 객체로 반환합니다."""
         return ZoneInfo(self.timezone_name)
 
     @property
     def is_24x7(self) -> bool:
+        """이 캘린더가 휴장 없는 24/7 시장인지 확인합니다."""
         return self.provider == "crypto-24x7"
 
     def session_close_for(self, session_date: date) -> time:
+        """특정 날짜의 장 마감 시간을 조기폐장 설정까지 반영해 반환합니다."""
         early_closes = self.early_closes or {}
         return early_closes.get(session_date.isoformat(), self.close_time)
 
     def is_session_date(self, session_date: date) -> bool:
+        """해당 날짜가 gapfill 대상 거래일인지 판단합니다."""
         if self.is_24x7:
             return True
         return session_date.weekday() < 5 and session_date.isoformat() not in self.closed_dates
@@ -65,6 +71,7 @@ class GapFillRange:
 
 
 def detect_gapfill_ranges(start, end, interval, actual_timestamps, calendar=None):
+    """기대 bucket과 실제 timestamp를 비교해 비어 있는 구간을 찾습니다."""
     interval = normalize_chart_interval(interval)
     calendar = calendar or TradingCalendar.from_environment()
     expected = expected_bucket_starts(start, end, interval, calendar)
@@ -74,6 +81,7 @@ def detect_gapfill_ranges(start, end, interval, actual_timestamps, calendar=None
 
 
 def expected_bucket_starts(start, end, interval, calendar):
+    """지정한 구간에서 있어야 할 1m 또는 1D bucket 시작 시각을 계산합니다."""
     interval = normalize_chart_interval(interval)
     start_dt = parse_time(start)
     end_dt = parse_time(end)
@@ -87,6 +95,7 @@ def expected_bucket_starts(start, end, interval, calendar):
 
 
 def expected_minute_buckets(start_dt, end_dt, calendar):
+    """1분봉 gapfill 기준으로 기대되는 모든 분 단위 bucket을 만듭니다."""
     if calendar.is_24x7:
         cursor = round_down_minute(start_dt)
         values = []
@@ -114,6 +123,7 @@ def expected_minute_buckets(start_dt, end_dt, calendar):
 
 
 def expected_daily_buckets(start_dt, end_dt, calendar):
+    """일봉 gapfill 기준으로 기대되는 모든 일 단위 bucket을 만듭니다."""
     if calendar.is_24x7:
         session_date = start_dt.astimezone(timezone.utc).date()
         end_date = end_dt.astimezone(timezone.utc).date()
@@ -139,6 +149,7 @@ def expected_daily_buckets(start_dt, end_dt, calendar):
 
 
 def coalesce_bucket_ranges(missing_buckets, delta):
+    """연속으로 비어 있는 bucket들을 하나의 gapfill 요청 구간으로 합칩니다."""
     ranges = []
     if not missing_buckets:
         return ranges
@@ -158,6 +169,7 @@ def coalesce_bucket_ranges(missing_buckets, delta):
 
 
 def bucket_delta(interval):
+    """interval 하나가 시간상 얼마만큼 이동하는지 timedelta로 반환합니다."""
     interval = normalize_chart_interval(interval)
     if interval == "1m":
         return timedelta(minutes=1)
@@ -167,6 +179,7 @@ def bucket_delta(interval):
 
 
 def to_bucket_start(value, interval, calendar):
+    """임의 timestamp를 해당 interval의 bucket 시작 시각으로 내립니다."""
     parsed = parse_time(value)
     interval = normalize_chart_interval(interval)
     if interval == "1m":
@@ -181,26 +194,31 @@ def to_bucket_start(value, interval, calendar):
 
 
 def parse_time(value):
+    """문자열이나 datetime 값을 UTC datetime으로 파싱합니다."""
     if isinstance(value, datetime):
         return value.astimezone(timezone.utc)
     return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(timezone.utc)
 
 
 def round_down_minute(value):
+    """초/마이크로초를 버려 UTC 기준 분 시작 시각으로 맞춥니다."""
     return value.astimezone(timezone.utc).replace(second=0, microsecond=0)
 
 
 def to_iso(value):
+    """UTC datetime을 GOPS에서 쓰는 millisecond ISO 문자열로 변환합니다."""
     return value.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def parse_market_clock_time(value, default):
+    """HH:MM 형태의 장 시작/마감 시간을 파싱하고 없으면 기본값을 씁니다."""
     if not value:
         return default
     return time.fromisoformat(value.strip())
 
 
 def parse_closed_dates(value):
+    """쉼표로 전달된 휴장일 목록을 검증된 날짜 집합으로 변환합니다."""
     dates = []
     for item in (value or "").split(","):
         cleaned = item.strip()
@@ -212,6 +230,7 @@ def parse_closed_dates(value):
 
 
 def parse_early_closes(value):
+    """YYYY-MM-DD=HH:MM 형식의 조기폐장 설정을 날짜별 마감 시간으로 변환합니다."""
     closes = {}
     for item in (value or "").split(","):
         cleaned = item.strip()

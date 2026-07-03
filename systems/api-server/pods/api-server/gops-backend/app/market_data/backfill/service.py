@@ -12,7 +12,7 @@ from alfaka.backfill.gapfill import TradingCalendar
 from alfaka.backfill.runner import BackfillRunner
 from alfaka.backfill.status import ACTIVE_STATUSES, RedisBackfillStore
 from alfaka.serving.intervals import (
-    historical_target_bars,
+    backfill_target_bars,
     interval_seconds,
     minimum_renderable_returned_bars,
     minimum_renderable_source_bars,
@@ -37,7 +37,7 @@ class BackfillService:
             returned_count = int(payload_or_has_candles.get("returnedCount") or len(payload_or_has_candles.get("candles") or []))
             requested_limit = int(payload_or_has_candles.get("requestedLimit") or returned_count)
             stored_count = int(payload_or_has_candles.get("storedCandleCount") or returned_count)
-            target_stored_count = int(payload_or_has_candles.get("targetStoredCount") or historical_target_bars(source_interval))
+            target_stored_count = int(payload_or_has_candles.get("targetStoredCount") or backfill_target_bars(source_interval))
             available_from = payload_or_has_candles.get("availableFrom")
             available_to = payload_or_has_candles.get("availableTo")
             target_range_from = payload_or_has_candles.get("targetRangeFrom")

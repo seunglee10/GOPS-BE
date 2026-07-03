@@ -16,11 +16,13 @@ _runtime_config_logged = False
 
 @router.get("/health")
 def health() -> dict[str, str]:
+    """backend 프로세스가 살아 있는지 확인하는 기본 health 응답을 반환합니다."""
     return {"status": "ok", "service": "gops-backend"}
 
 
 @router.get("/health/config")
 def runtime_config() -> dict[str, object]:
+    """운영자가 현재 런타임 환경설정 상태를 점검할 수 있는 요약을 반환합니다."""
     return {
         "status": "ok",
         "aws": {
@@ -56,6 +58,7 @@ def runtime_config() -> dict[str, object]:
 
 
 def log_runtime_config() -> None:
+    """프로세스 시작 후 한 번만 runtime config 요약을 로그로 남깁니다."""
     global _runtime_config_logged
     if _runtime_config_logged:
         return
@@ -64,10 +67,12 @@ def log_runtime_config() -> None:
 
 
 def presence(value: str | None) -> str:
+    """민감한 값은 노출하지 않고 설정 여부만 SET/EMPTY로 표시합니다."""
     return "SET" if value else "EMPTY"
 
 
 def alpaca_credential_source() -> str:
+    """실제로 Alpaca credential을 어디서 읽을 수 있는지 판단합니다."""
     try:
         configured = resolve_alpaca_credential_source()
     except ValueError:
@@ -84,6 +89,7 @@ def alpaca_credential_source() -> str:
 
 
 def configured_alpaca_credential_source() -> str:
+    """환경변수에 설정된 Alpaca credential source 값을 검증해 반환합니다."""
     try:
         return resolve_alpaca_credential_source()
     except ValueError:
@@ -91,6 +97,7 @@ def configured_alpaca_credential_source() -> str:
 
 
 def runtime_config_warnings() -> list[str]:
+    """현재 설정이 권장 런타임 계약에서 벗어난 항목을 warning 코드로 모읍니다."""
     warnings = []
     if os.getenv("ALFAKA_REQUEST_CONFIG") not in {None, "", "systems/market-data/config/market-data-request.json"}:
         warnings.append("stale_request_config_path")
@@ -129,6 +136,7 @@ def runtime_config_warnings() -> list[str]:
 
 
 def canonical_config() -> dict[str, object]:
+    """캔들 정규화와 S3/ClickHouse canonical 필터 설정을 요약합니다."""
     return {
         "historicalAdjustment": os.getenv("HISTORICAL_ADJUSTMENT") or "split",
         "allowNonCanonicalHistoricalAdjustment": env_bool(
@@ -148,6 +156,7 @@ def canonical_config() -> dict[str, object]:
 
 
 def env_bool(name: str, *, default: bool) -> bool:
+    """환경변수 문자열을 bool 값으로 해석하고 없으면 기본값을 사용합니다."""
     value = os.getenv(name)
     if value is None or value == "":
         return default
@@ -155,6 +164,7 @@ def env_bool(name: str, *, default: bool) -> bool:
 
 
 def configured_feed_profiles() -> list[str]:
+    """단일 또는 다중 Alpaca feed profile 설정을 문자열 목록으로 반환합니다."""
     profiles = csv_values(os.getenv("ALPACA_FEED_PROFILES"))
     if profiles:
         return profiles
@@ -162,10 +172,12 @@ def configured_feed_profiles() -> list[str]:
 
 
 def csv_values(value: str | None) -> list[str]:
+    """쉼표로 구분된 환경변수 값을 공백 제거된 문자열 목록으로 바꿉니다."""
     return [item.strip() for item in (value or "").split(",") if item.strip()]
 
 
 def pipeline_component_health() -> dict[str, object]:
+    """Redis에 기록된 market ingestor/processor health 정보를 읽어 반환합니다."""
     redis_url = os.getenv("REDIS_URL")
     if not redis_url:
         return {"available": False, "reason": "redis_url_not_configured"}
@@ -195,6 +207,7 @@ def pipeline_component_health() -> dict[str, object]:
 
 
 def redact_component_health(payload):
+    """health payload에서 화면에 보여도 되는 필드만 골라 반환합니다."""
     if not payload:
         return None
     allowed = {

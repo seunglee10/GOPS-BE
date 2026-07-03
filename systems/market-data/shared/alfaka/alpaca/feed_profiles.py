@@ -40,10 +40,12 @@ class FeedProfile:
 
     @property
     def websocket_feed(self) -> str:
+        """테스트 profile만 Alpaca test feed 이름으로 바꿔 반환합니다."""
         return "test" if self.feed == "test" else self.feed
 
     @property
     def websocket_url(self) -> str:
+        """profile 설정에 맞는 Alpaca WebSocket 접속 URL을 만듭니다."""
         if self.websocket_path:
             return f"wss://stream.data.alpaca.markets/{self.websocket_path.lstrip('/')}"
         feed = self.websocket_feed
@@ -88,6 +90,7 @@ PROFILE_DEFINITIONS: dict[str, FeedProfile] = {
 
 
 def resolve_feed_profile(environ=None) -> FeedProfile:
+    """환경변수에서 사용할 Alpaca feed profile 하나를 결정합니다."""
     environ = environ or os.environ
     profile_name = (
         environ.get("ALPACA_FEED_PROFILE") or
@@ -98,6 +101,7 @@ def resolve_feed_profile(environ=None) -> FeedProfile:
 
 
 def feed_profile_by_name(value: str | None) -> FeedProfile:
+    """문자열 profile 이름을 FeedProfile 설정 객체로 변환합니다."""
     key = str(value or "sip").strip().lower()
     profile = PROFILE_DEFINITIONS.get(key)
     if profile:
@@ -106,6 +110,7 @@ def feed_profile_by_name(value: str | None) -> FeedProfile:
 
 
 def configured_feed_profiles(environ=None) -> list[FeedProfile]:
+    """여러 수집 profile을 동시에 띄울 때 사용할 profile 목록을 읽습니다."""
     environ = environ or os.environ
     values = parse_csv(environ.get("ALPACA_FEED_PROFILES", ""))
     if not values:
@@ -114,6 +119,7 @@ def configured_feed_profiles(environ=None) -> list[FeedProfile]:
 
 
 def market_session_for_timestamp(timestamp: str | None, timezone=MARKET_TIMEZONE) -> str:
+    """UTC timestamp 문자열을 미국 주식장 세션 이름으로 분류합니다."""
     parsed = parse_utc_time(timestamp)
     if not parsed:
         return "unknown"
@@ -121,6 +127,7 @@ def market_session_for_timestamp(timestamp: str | None, timezone=MARKET_TIMEZONE
 
 
 def market_session_for_datetime(value: datetime, timezone=MARKET_TIMEZONE, closed_dates=None) -> str:
+    """datetime 값을 pre/regular/after/overnight/closed 세션으로 분류합니다."""
     if value.tzinfo is None:
         value = value.replace(tzinfo=datetime_timezone.utc)
     local = value.astimezone(timezone)
@@ -143,10 +150,12 @@ def market_session_for_datetime(value: datetime, timezone=MARKET_TIMEZONE, close
 
 
 def market_session_for_now(now: datetime | None = None, timezone=MARKET_TIMEZONE) -> str:
+    """현재 시각 기준의 미국 주식장 세션을 계산합니다."""
     return market_session_for_datetime(now or datetime.now(datetime_timezone.utc), timezone=timezone)
 
 
 def configured_closed_dates(environ=None) -> frozenset[str]:
+    """환경변수와 기본 휴장일을 합쳐 주식장 휴장일 집합을 반환합니다."""
     environ = environ or os.environ
     configured = frozenset(parse_csv(environ.get("MARKET_CLOSED_DATES", "")))
     include_defaults = str(environ.get("MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS", "true")).strip().lower()
@@ -156,10 +165,12 @@ def configured_closed_dates(environ=None) -> frozenset[str]:
 
 
 def feed_profile_active_for_session(feed_profile: FeedProfile, session: str | None) -> bool:
+    """현재 세션에서 해당 profile이 payload를 받을 수 있는 상태인지 판단합니다."""
     if "crypto" in feed_profile.sessions:
         return True
     return str(session or "").strip().lower() in feed_profile.sessions
 
 
 def is_24_5_market_session(session: str | None) -> bool:
+    """미국 주식 24/5 거래 세션에 해당하는지 확인합니다."""
     return str(session or "").strip().lower() in {"overnight", "pre", "regular", "after"}

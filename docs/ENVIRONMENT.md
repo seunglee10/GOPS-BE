@@ -409,9 +409,11 @@ Canonical Alpaca historical backfill uses `adjustment=split` and writes
 latest 120, ClickHouse, S3 final/manifest, then Alpaca historical. Raw S3 backup
 objects are not a backfill source. `BACKFILL_ACTIVE_STALE_SECONDS` fails old
 queued/running gapfill status records so stale Redis state cannot block new
-bounded repairs. `BACKFILL_MAX_GAPFILL_1M_RANGE_HOURS` rejects oversized `1m`
-gapfill requests from the chart/API path. Retry settings are used for transient
-Alpaca historical API failures such as rate limits and 5xx responses.
+bounded repairs. `BACKFILL_MAX_GAPFILL_1M_RANGE_HOURS` defines the chart/API
+`1m` repair window and defaults to 14 days; broad six-year intraday rebuilds
+belong to Initial Load or explicit S3 materialize jobs. Retry settings are used
+for transient Alpaca historical API failures such as rate limits and 5xx
+responses.
 
 ## Market Calendar
 

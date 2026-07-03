@@ -150,6 +150,7 @@ def load_payload(client, payload, load_trades=False, load_quotes=True):
 
 
 def trade_to_clickhouse_row(payload):
+    """processed trade payload를 trade_ticks 테이블 row로 변환합니다."""
     return {
         "event_time": clickhouse_time(payload.get("timestamp")),
         "symbol": payload.get("symbol", "UNKNOWN"),
@@ -169,6 +170,7 @@ def trade_to_clickhouse_row(payload):
 
 
 def quote_to_clickhouse_row(payload):
+    """processed quote payload를 quote_ticks 테이블 row로 변환합니다."""
     return {
         "event_time": clickhouse_time(payload.get("timestamp")),
         "symbol": payload.get("symbol", "UNKNOWN"),
@@ -189,6 +191,7 @@ def quote_to_clickhouse_row(payload):
 
 
 def candle_to_clickhouse_row(payload):
+    """processed candle payload를 chart_candles 테이블 row로 변환합니다."""
     ma = payload.get("ma") or {}
     metadata = candle_metadata(payload.get("priceAdjustment") or payload.get("price_adjustment"), payload.get("canonicalVersion") or payload.get("canonical_version"))
     return {
@@ -219,6 +222,7 @@ def candle_to_clickhouse_row(payload):
 
 
 def status_to_clickhouse_row(payload):
+    """Alpaca market status payload를 market_status_events 테이블 row로 변환합니다."""
     symbol = payload.get("symbol")
     return {
         "event_time": clickhouse_time(payload.get("eventTime")),
@@ -236,6 +240,7 @@ def status_to_clickhouse_row(payload):
 
 
 def market_event_to_clickhouse_row(payload):
+    """기타 market event payload를 market_events 테이블 row로 변환합니다."""
     symbol = payload.get("symbol")
     event_time = payload.get("eventTime") or payload.get("timestamp") or payload.get("receivedAt")
     return {
@@ -253,6 +258,7 @@ def market_event_to_clickhouse_row(payload):
 
 
 def volume_profile_bin_to_clickhouse_row(payload):
+    """거래량 프로파일 bin payload를 volume_profile_bins_1m 테이블 row로 변환합니다."""
     return {
         "event_minute": clickhouse_time(payload.get("eventMinute")),
         "symbol": payload.get("symbol", "UNKNOWN"),
@@ -333,6 +339,7 @@ def float_or_none(value):
 
 
 def market_session_for_symbol(symbol, timestamp):
+    """crypto는 항상 crypto 세션으로, 주식은 timestamp 기반 장 세션으로 분류합니다."""
     return "crypto" if is_crypto_symbol(symbol) else market_session_for_timestamp(timestamp)
 
 
@@ -392,6 +399,7 @@ class ClickHouseHttpClient:
         return bool(self.query_json_each_row(query))
 
     def ensure_market_data_schema(self):
+        """기존 ClickHouse 테이블을 현재 적재 계약에 맞게 보정합니다."""
         if os.getenv("CLICKHOUSE_ENSURE_SESSION_COLUMNS", "true").lower() not in {"1", "true", "yes"}:
             return
         self.execute(f"""
@@ -500,6 +508,7 @@ class ClickHouseHttpClient:
             "ADD COLUMN IF NOT EXISTS price_adjustment LowCardinality(String) DEFAULT 'unknown' AFTER market_session, "
             "ADD COLUMN IF NOT EXISTS canonical_version LowCardinality(String) DEFAULT 'legacy' AFTER price_adjustment"
         )
+        # Crypto 체결 수량과 거래량은 0.013 BTC처럼 소수일 수 있어서 Float64로 보정합니다.
         for table, column, column_type in (
             ("trade_ticks", "size", "Nullable(Float64)"),
             ("quote_ticks", "bid_size", "Nullable(Float64)"),

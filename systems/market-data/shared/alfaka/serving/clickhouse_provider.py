@@ -15,6 +15,7 @@ from alfaka.serving.moving_average import attach_moving_averages
 
 class ClickHouseMarketDataProvider:
     def __init__(self, url=None, database=None, user=None, password=None):
+        """ClickHouse HTTP API 접속 정보를 환경변수 또는 인자로 초기화합니다."""
         load_dotenv()
         self.url = (url or os.getenv("CLICKHOUSE_HTTP_URL", "http://localhost:8123")).rstrip("/")
         self.database = database or os.getenv("CLICKHOUSE_DATABASE", "market_data")
@@ -24,6 +25,7 @@ class ClickHouseMarketDataProvider:
             self.ensure_market_data_schema()
 
     def candles(self, symbol, interval, limit=None, before=None, from_time=None, to_time=None):
+        """요청 interval에 맞는 캔들 목록을 ClickHouse에서 조회합니다."""
         interval = normalize_chart_interval(interval)
         limit = resolve_candle_limit(interval, limit)
         if interval in {"5m", "10m"}:
@@ -83,6 +85,7 @@ class ClickHouseMarketDataProvider:
         return list(reversed(rows))
 
     def daily_candles(self, symbol, interval="1D", limit=None, before=None, from_time=None, to_time=None):
+        """저장된 일봉을 차트 응답용 일봉으로 조회합니다."""
         interval = normalize_chart_interval(interval)
         limit = resolve_candle_limit(interval, limit)
         time_filter = ""
@@ -149,6 +152,7 @@ class ClickHouseMarketDataProvider:
         return attach_moving_averages(list(reversed(rows)))
 
     def aggregated_minute_candles(self, symbol, interval, limit=None, before=None, from_time=None, to_time=None):
+        """1분봉을 5분/10분봉으로 묶어 차트용 캔들을 만듭니다."""
         interval = normalize_chart_interval(interval)
         limit = resolve_candle_limit(interval, limit)
         bucket_minutes = {"5m": 5, "10m": 10}[interval]
@@ -215,6 +219,7 @@ class ClickHouseMarketDataProvider:
         return attach_moving_averages(list(reversed(rows)))
 
     def aggregated_daily_candles(self, symbol, interval, limit=None, before=None, from_time=None, to_time=None):
+        """일봉을 주봉/월봉으로 묶어 차트용 캔들을 만듭니다."""
         # V1 serves higher timeframes as query-time aggregation from stored daily candles.
         # The long-term contract is to materialize these interval candles into chart_candles.
         interval = normalize_chart_interval(interval)
@@ -283,6 +288,7 @@ class ClickHouseMarketDataProvider:
         return attach_moving_averages(list(reversed(rows)))
 
     def candles_since(self, symbol, interval, timestamp, limit=500, include_from=False):
+        """WebSocket gap 보정용으로 특정 timestamp 이후의 캔들을 조회합니다."""
         interval = normalize_chart_interval(interval)
         if interval in {"5m", "10m", "1W", "1M"}:
             return self.candles(symbol, interval, limit, from_time=timestamp)
@@ -333,6 +339,7 @@ class ClickHouseMarketDataProvider:
         return snapshot(symbol=symbol, interval=interval, candles=candles, source=source, feed=feed)
 
     def candle_coverage(self, symbol, interval):
+        """backfill 판단에 필요한 저장 캔들 개수와 가용 기간을 계산합니다."""
         interval = normalize_chart_interval(interval)
         stored_interval = "1m" if interval in {"5m", "10m"} else "1D" if interval in {"1W", "1M"} else interval
         interval_filter = "interval IN ('1D', '1d')" if stored_interval == "1D" else "interval = {interval:String}"
@@ -386,6 +393,7 @@ class ClickHouseMarketDataProvider:
         }
 
     def candle_timestamps(self, symbol, interval, from_time, to_time, limit=200000):
+        """gapfill 비교에 사용할 저장 candle timestamp 목록을 조회합니다."""
         interval = normalize_chart_interval(interval)
         stored_interval = "1m" if interval in {"5m", "10m"} else "1D" if interval in {"1W", "1M"} else interval
         interval_filter = "interval IN ('1D', '1d')" if stored_interval == "1D" else "interval = {interval:String}"
@@ -668,6 +676,7 @@ class ClickHouseMarketDataProvider:
         return self.query_json_each_row(query, params)
 
     def ensure_market_data_schema(self):
+        """조회 전에 필요한 ClickHouse 컬럼과 타입이 준비되어 있는지 보정합니다."""
         for table in ("trade_ticks", "chart_candles", "volume_profile_bins_1m", "market_status_events"):
             self.execute(
                 f"ALTER TABLE {self.table(table)} "
@@ -679,6 +688,7 @@ class ClickHouseMarketDataProvider:
             "ADD COLUMN IF NOT EXISTS price_adjustment LowCardinality(String) DEFAULT 'unknown' AFTER market_session, "
             "ADD COLUMN IF NOT EXISTS canonical_version LowCardinality(String) DEFAULT 'legacy' AFTER price_adjustment"
         )
+        # Crypto 체결/거래량은 소수 단위가 자연스럽기 때문에 조회 스키마도 Float64로 맞춥니다.
         for table, column, column_type in (
             ("trade_ticks", "size", "Nullable(Float64)"),
             ("quote_ticks", "bid_size", "Nullable(Float64)"),
@@ -689,6 +699,7 @@ class ClickHouseMarketDataProvider:
             self.execute(f"ALTER TABLE {self.table(table)} MODIFY COLUMN IF EXISTS {column} {column_type}")
 
     def market_session_filter_sql(self, symbol, column="event_time"):
+        """주식은 평일 장 캔들만, crypto는 24/7 캔들을 모두 통과시키는 SQL 조건을 만듭니다."""
         if is_crypto_symbol(symbol):
             return "1 = 1"
         return f"toDayOfWeek({column}) BETWEEN 1 AND 5"

@@ -986,18 +986,18 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             "returnedCount": 1,
             "requestedLimit": 390,
             "storedCandleCount": 1,
-            "targetStoredCount": 589680,
+            "targetStoredCount": 5460,
             "availableFrom": "2026-06-25T00:00:00.000Z",
             "availableTo": "2026-06-25T00:00:00.000Z",
-            "targetRangeFrom": "2020-07-01T00:00:00.000Z",
+            "targetRangeFrom": "2026-06-11T00:00:00.000Z",
         })
         empty = service.snapshot_metadata("AAPL", "1m", {
             "candles": [],
             "returnedCount": 0,
             "requestedLimit": 390,
             "storedCandleCount": 0,
-            "targetStoredCount": 589680,
-            "targetRangeFrom": "2020-07-01T00:00:00.000Z",
+            "targetStoredCount": 5460,
+            "targetRangeFrom": "2026-06-11T00:00:00.000Z",
         })
 
         self.assertEqual(partial["dataStatus"], "partial")
@@ -1093,10 +1093,10 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             "returnedCount": 30,
             "requestedLimit": 30,
             "storedCandleCount": 30,
-            "targetStoredCount": 589680,
+            "targetStoredCount": 5460,
             "availableFrom": "2026-06-25T10:00:00.000Z",
             "availableTo": "2026-06-25T10:29:00.000Z",
-            "targetRangeFrom": "2020-07-01T00:00:00.000Z",
+            "targetRangeFrom": "2026-06-11T00:00:00.000Z",
         })
 
         self.assertEqual(metadata["dataStatus"], "ready")
@@ -1122,10 +1122,10 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             "returnedCount": 120,
             "requestedLimit": 120,
             "storedCandleCount": 120,
-            "targetStoredCount": 589680,
+            "targetStoredCount": 5460,
             "availableFrom": candles[0]["timestamp"],
             "availableTo": candles[-1]["timestamp"],
-            "targetRangeFrom": "2020-07-01T00:00:00.000Z",
+            "targetRangeFrom": "2026-06-11T00:00:00.000Z",
         })
 
         self.assertEqual(metadata["dataStatus"], "ready")
@@ -1149,10 +1149,10 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             "returnedCount": 20,
             "requestedLimit": 20,
             "storedCandleCount": 30,
-            "targetStoredCount": 589680,
+            "targetStoredCount": 5460,
             "availableFrom": candles[0]["timestamp"],
             "availableTo": candles[-1]["timestamp"],
-            "targetRangeFrom": "2020-07-01T00:00:00.000Z",
+            "targetRangeFrom": "2026-06-11T00:00:00.000Z",
         })
 
         self.assertFalse(metadata["coverage"]["renderable"])
@@ -1169,7 +1169,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         record, _ = store.create_request(
             "AAPL",
             "1m",
-            start="2020-07-01T00:00:00.000Z",
+            start="2026-06-16T00:00:00.000Z",
             end="2026-06-30T00:00:00.000Z",
         )
         store.latest[("AAPL", "1m")] = {
@@ -1187,11 +1187,11 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             "candles": candles,
             "returnedCount": len(candles),
             "requestedLimit": len(candles),
-            "storedCandleCount": 589680,
-            "targetStoredCount": 589680,
-            "availableFrom": "2020-07-01T08:00:00.000Z",
+            "storedCandleCount": 5460,
+            "targetStoredCount": 5460,
+            "availableFrom": "2026-06-16T00:00:00.000Z",
             "availableTo": candles[-1]["timestamp"],
-            "targetRangeFrom": "2020-07-01T00:00:00.000Z",
+            "targetRangeFrom": "2026-06-16T00:00:00.000Z",
         })
 
         self.assertEqual(metadata["dataStatus"], "ready")

@@ -8,9 +8,8 @@ from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
 from alfaka.serving.cursors import timestamp_from_cursor
 from alfaka.serving.dto import cursor_for, snapshot
 from alfaka.serving.intervals import (
+    backfill_target_bars,
     backfill_target_days,
-    historical_target_bars,
-    intraday_preload_min_start_iso,
     normalize_chart_interval,
     resolve_candle_limit,
     source_interval_for,
@@ -186,7 +185,7 @@ def with_coverage_metadata(payload, coverage, requested_limit):
     row_count = coverage.get("rowCount") if coverage else None
     invalid_row_count = coverage.get("invalidRowCount") if coverage else None
     stored_count = int(row_count) if row_count is not None else len(candles)
-    target_stored_count = historical_target_bars(source_interval)
+    target_stored_count = backfill_target_bars(source_interval)
     target_range_from = target_range_from_for_interval(source_interval)
     payload.update({
         "requestedLimit": requested_limit,
@@ -249,10 +248,6 @@ def target_floor_from_time(interval, from_time=None):
 
 
 def target_range_from_for_interval(interval, reference_timestamp=None):
-    if source_interval_for(interval) == "1m":
-        min_start = parse_iso_time(intraday_preload_min_start_iso())
-        if min_start:
-            return min_start.strftime("%Y-%m-%dT%H:%M:%S.000Z")
     reference = parse_iso_time(reference_timestamp) or datetime.now(timezone.utc)
     target = reference - timedelta(days=backfill_target_days(interval))
     return target.strftime("%Y-%m-%dT%H:%M:%S.000Z")

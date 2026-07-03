@@ -46,10 +46,12 @@ def expected_processed_topics(environ=None):
 
 
 def trace_check(name, status, **details):
+    """개별 live path 점검 결과를 공통 dict 형태로 만듭니다."""
     return {"name": name, "status": status, "details": details}
 
 
 def overall_status(checks):
+    """여러 점검 결과를 하나의 ok/warn/fail 상태로 요약합니다."""
     statuses = {check["status"] for check in checks}
     if "fail" in statuses:
         return "fail"
@@ -70,6 +72,7 @@ def collect_trace(
     require_live=False,
     timeout_seconds=5,
 ):
+    """API, Redis, Kafka, ClickHouse/S3 경로가 살아 있는지 한 번에 점검합니다."""
     symbol = symbol.upper()
     interval = interval or DEFAULT_INTERVAL
     api_base_url = (api_base_url or os.getenv("GOPS_API_BASE_URL") or os.getenv("API_BASE_URL") or "http://localhost:8000").rstrip("/")
@@ -105,6 +108,7 @@ def collect_trace(
 
 
 def check_market_session(symbol=None):
+    """현재 장 상태와 심볼 종류를 보고 실시간 payload 기대 여부를 진단합니다."""
     try:
         now = datetime.now(timezone.utc)
         session = market_session_for_datetime(now)
@@ -144,6 +148,7 @@ def check_market_session(symbol=None):
 
 
 def recommended_realtime_feed_for_session(session, symbol=None):
+    """세션과 심볼에 맞는 권장 Alpaca realtime feed 이름을 반환합니다."""
     if is_crypto_symbol(symbol):
         return "crypto"
     normalized = str(session or "").strip().lower()
@@ -155,6 +160,7 @@ def recommended_realtime_feed_for_session(session, symbol=None):
 
 
 def local_ingestor_service_for_feed(feed):
+    """feed 이름을 로컬 docker-compose ingestor 서비스 이름으로 매핑합니다."""
     if feed == "sip":
         return "alpaca-ingestor"
     if feed == "boats":

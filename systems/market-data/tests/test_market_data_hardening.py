@@ -49,7 +49,7 @@ from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider, cli
 from alfaka.serving.cursors import timestamp_from_cursor
 from alfaka.serving.dto import cursor_for, market_status_event, snapshot, websocket_event
 from alfaka.serving.hot_symbols import build_hot_symbols_payload, dollar_volume_from_candle
-from alfaka.serving.intervals import candle_count_for_1y, candle_count_for_24h, historical_target_bars, redis_closed_candle_cap, resolve_candle_limit
+from alfaka.serving.intervals import backfill_target_bars, candle_count_for_1y, candle_count_for_24h, historical_target_bars, redis_closed_candle_cap, resolve_candle_limit
 from alfaka.serving.provider import MarketDataProvider, has_more_before_target, target_range_from_for_interval
 from alfaka.serving.redis_provider import RedisMarketDataProvider
 from alfaka.serving.symbol_registry import SymbolRegistry
@@ -786,6 +786,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertTrue(feed_profile_active_for_session(crypto, "closed"))
 
     def test_crypto_symbol_uses_internal_symbol_and_alpaca_provider_symbol(self):
+        """BTCUSD는 내부 표기, BTC/USD는 Alpaca provider 표기로 쓰는 계약을 검증한다."""
         request = build_subscription_request(["BTCUSD"], ["bars", "trades"])
         self.assertEqual(request["bars"], ["BTC/USD"])
         self.assertEqual(request["trades"], ["BTC/USD"])
@@ -3471,9 +3472,11 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(calls[-1]["params"]["timeframe"], "1Min")
 
     def test_fetch_alpaca_bars_uses_crypto_endpoint_for_btcusd(self):
+        """BTCUSD historical 요청이 주식 endpoint가 아니라 crypto bars endpoint로 나가는지 검증한다."""
         calls = []
 
         def fake_get(endpoint, headers, params, timeout):
+            """requests.get mock으로 Alpaca crypto bars 응답 형태를 흉내 낸다."""
             calls.append({"endpoint": endpoint, "headers": headers, "params": dict(params), "timeout": timeout})
             return FakeHttpResponse(
                 status_code=200,
@@ -3590,6 +3593,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(ranges[0].missingCount, 1)
 
     def test_gapfill_ranges_include_weekend_minutes_for_crypto_calendar(self):
+        """crypto 24/7 캘린더에서는 주말 분봉도 gapfill 대상에 포함되는지 검증한다."""
         ranges = detect_gapfill_ranges(
             "2026-06-28T13:30:00.000Z",
             "2026-06-28T13:33:00.000Z",
@@ -3655,7 +3659,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             second = default_backfill_range(now="2026-06-25T14:30:59.999Z")
 
         self.assertEqual(first, second)
-        self.assertEqual(first.start, "2020-07-01T00:00:00.000Z")
+        self.assertEqual(first.start, "2026-06-11T14:30:00.000Z")
         self.assertEqual(first.end, "2026-06-25T14:30:00.000Z")
 
     def test_default_backfill_range_uses_interval_groups(self):
@@ -3663,8 +3667,8 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         derived_intraday = default_backfill_range(now="2026-06-25T14:30:11.123Z", interval="5m")
         daily = default_backfill_range(now="2026-06-25T14:30:11.123Z", interval="1D")
 
-        self.assertEqual(intraday.start, "2020-07-01T00:00:00.000Z")
-        self.assertEqual(derived_intraday.start, "2020-07-01T00:00:00.000Z")
+        self.assertEqual(intraday.start, "2026-06-11T14:30:00.000Z")
+        self.assertEqual(derived_intraday.start, "2026-06-11T14:30:00.000Z")
         self.assertEqual(daily.start, "2020-06-26T14:30:00.000Z")
 
     def test_explicit_backfill_lookback_hours_is_still_supported_for_direct_calls(self):
@@ -3679,6 +3683,9 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(candle_count_for_24h("1d"), 250)
         self.assertEqual(candle_count_for_24h("1W"), 260)
         self.assertEqual(candle_count_for_24h("1M"), 120)
+        self.assertEqual(backfill_target_bars("1m"), 5460)
+        self.assertEqual(backfill_target_bars("5m"), 1092)
+        self.assertEqual(backfill_target_bars("10m"), 546)
         self.assertEqual(historical_target_bars("1m"), 589680)
         self.assertEqual(historical_target_bars("1D"), 1512)
         self.assertEqual(historical_target_bars("1M"), 72)
@@ -3727,6 +3734,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(candles[-1]["timestamp"], "2026-06-25T13:30:00.000Z")
 
     def test_clickhouse_provider_does_not_weekday_filter_crypto_candles(self):
+        """BTCUSD 조회 SQL에는 주식용 평일 필터가 들어가지 않는지 검증한다."""
         rows = [{
             "timestamp": "2026-06-28T13:30:00.000Z",
             "open": 61500,
@@ -3747,6 +3755,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(candles[-1]["timestamp"], "2026-06-28T13:30:00.000Z")
 
     def test_crypto_weekend_candle_is_valid_and_keeps_decimal_sizes(self):
+        """crypto 주말 캔들과 소수 단위 거래량/수량이 적재 변환에서 유지되는지 검증한다."""
         self.assertIsNone(invalid_candle_reason({
             "symbol": "BTCUSD",
             "interval": "1m",
@@ -4063,15 +4072,15 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "2020-07-01T00:00:00.000Z",
         ))
 
-    def test_intraday_target_floor_uses_fixed_preload_cutoff(self):
-        with mock.patch.dict(os.environ, {"BACKFILL_INITIAL_LOAD_1M_MIN_START": "2020-07-01T00:00:00Z"}):
+    def test_intraday_target_floor_uses_bounded_gapfill_window(self):
+        with mock.patch.dict(os.environ, {"BACKFILL_MAX_GAPFILL_1M_RANGE_HOURS": "336"}):
             self.assertEqual(
                 target_range_from_for_interval("1m", "2026-06-30T11:15:09.000Z"),
-                "2020-07-01T00:00:00.000Z",
+                "2026-06-16T11:15:09.000Z",
             )
             self.assertEqual(
                 target_range_from_for_interval("5m", "2026-06-30T11:15:09.000Z"),
-                "2020-07-01T00:00:00.000Z",
+                "2026-06-16T11:15:09.000Z",
             )
 
     def test_clickhouse_daily_snapshot_groups_daily_source_by_calendar_day(self):
@@ -4363,6 +4372,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             registry.detail("ZZZZ")
 
     def test_symbol_registry_includes_configured_btcusd_metadata(self):
+        """기본 on-demand 설정에서도 extraSymbols의 BTCUSD 메타데이터가 노출되는지 검증한다."""
         registry = SymbolRegistry(
             clickhouse_provider=FakeClickHouseProvider(symbols={}),
             redis_provider=FakeRedisProvider(symbol_metadata={}),
@@ -4378,6 +4388,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual([item["symbol"] for item in search_results], ["BTCUSD"])
 
     def test_on_demand_config_has_no_default_symbols_but_accepts_explicit_seed(self):
+        """on-demand 수집은 기본 구독을 비우되 UI 검색용 extraSymbols는 유지하는지 검증한다."""
         previous_universe = os.environ.get("ALPACA_UNIVERSE")
         previous = os.environ.get("ALPACA_SYMBOLS")
         previous_collection_source = os.environ.get("ALPACA_COLLECTION_SYMBOL_SOURCE")

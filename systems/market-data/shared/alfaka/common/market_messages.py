@@ -38,6 +38,7 @@ CONTROL_MESSAGE_TYPES = {"success", "subscription", "error"}
 
 
 def build_raw_envelope(message, feed, feed_profile=None, market_session=None):
+    """Alpaca 원본 메시지를 GOPS 내부 raw envelope 계약으로 감쌉니다."""
     message_type = message.get("T")
     channel = MESSAGE_TYPE_TO_CHANNEL.get(message_type, "unknown")
     received_at = utc_now_iso()
@@ -68,6 +69,7 @@ def build_raw_envelope(message, feed, feed_profile=None, market_session=None):
 
 
 def raw_topic_name(prefix, message_type):
+    """Alpaca 메시지 타입에 맞는 raw Kafka topic 이름을 만듭니다."""
     normalized_prefix = (prefix or "market.input").rstrip(".")
     topic_suffix = MESSAGE_TYPE_TO_RAW_TOPIC_SUFFIX.get(message_type, "unknown")
     if normalized_prefix == "market.input":
@@ -76,6 +78,7 @@ def raw_topic_name(prefix, message_type):
 
 
 def source_event_id(message, feed, channel, symbol, received_at):
+    """중복 적재를 줄이기 위해 원본 이벤트를 식별할 안정적인 ID를 만듭니다."""
     event_time = message.get("t") or received_at
     if channel == "trades":
         return f"alpaca/{feed}/trades/{symbol}/{message.get('i', 'no-id')}/{event_time}"
@@ -99,5 +102,6 @@ def source_event_id(message, feed, channel, symbol, received_at):
 
 
 def payload_digest(message):
+    """고유 ID가 없는 상태 메시지에 붙일 짧은 payload 해시를 계산합니다."""
     payload = json.dumps(message, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]

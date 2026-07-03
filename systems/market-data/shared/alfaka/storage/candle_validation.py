@@ -5,6 +5,7 @@ from alfaka.serving.intervals import normalize_chart_interval
 
 
 def invalid_candle_reason(row):
+    """적재하면 안 되는 candle이면 사유를 반환하고, 정상 candle이면 None을 반환합니다."""
     try:
         interval = normalize_chart_interval(row.get("interval", "1m"))
     except ValueError as exc:
@@ -21,6 +22,7 @@ def invalid_candle_reason(row):
 
 
 def parse_time(value):
+    """검증용 timestamp 값을 UTC datetime으로 파싱하고 실패하면 None을 반환합니다."""
     if isinstance(value, datetime):
         return value.astimezone(timezone.utc)
     if not value:

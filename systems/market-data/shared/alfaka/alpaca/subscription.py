@@ -27,6 +27,7 @@ DEFAULT_REQUEST_CONFIG = {
 
 
 def default_config_path():
+    """repo 안의 기본 market-data 요청 설정 파일 위치를 찾습니다."""
     current_file = Path(__file__).resolve()
     for parent in current_file.parents:
         candidate = parent / "config" / "market-data-request.json"
@@ -36,6 +37,7 @@ def default_config_path():
 
 
 def resolve_request_config_path():
+    """환경변수 또는 repo 상대 경로를 실제 설정 파일 경로로 해석합니다."""
     raw_path = os.getenv("ALFAKA_REQUEST_CONFIG")
     if not raw_path:
         return default_config_path()
@@ -53,6 +55,7 @@ def resolve_request_config_path():
 
 
 def load_request_config():
+    """구독 요청 설정 JSON을 읽고 누락된 값은 안전한 기본값으로 채웁니다."""
     config_path = resolve_request_config_path()
     if not config_path.exists():
         return DEFAULT_REQUEST_CONFIG
@@ -77,6 +80,7 @@ def load_request_config():
 
 
 def resolve_symbol(value, config=None):
+    """회사명 별칭이나 사용자 입력을 검증된 내부 심볼로 변환합니다."""
     config = config or load_request_config()
     cleaned = value.strip()
     if not cleaned:
@@ -89,11 +93,13 @@ def resolve_symbol(value, config=None):
 
 
 def validate_symbol(symbol, config):
+    """설정된 정규식 규칙에 맞는 심볼인지 검사합니다."""
     if not re.fullmatch(config["symbolPattern"], symbol):
         raise ValueError(f"지원하지 않는 회사명 또는 심볼입니다: {symbol}")
 
 
 def validate_channels(channels, config):
+    """요청 채널이 Alpaca 수집 설정에서 허용된 채널인지 검사합니다."""
     valid_channels = set(config["validChannels"])
     invalid_channels = [channel for channel in channels if channel not in valid_channels]
     if invalid_channels:
@@ -101,11 +107,13 @@ def validate_channels(channels, config):
 
 
 def configured_universe_name(config=None):
+    """환경변수와 설정 파일을 합쳐 현재 universe 이름을 결정합니다."""
     config = config or load_request_config()
     return (os.getenv("ALPACA_UNIVERSE", "") or config["defaultUniverse"]).strip()
 
 
 def configured_universe_symbols(config=None):
+    """선택된 universe에 포함된 수집 후보 심볼 목록을 반환합니다."""
     config = config or load_request_config()
     universe_name = configured_universe_name(config).lower()
     if not universe_name:
@@ -120,6 +128,7 @@ def configured_universe_symbols(config=None):
 
 
 def load_universe_registry_symbols(config=None):
+    """registry 파일에 저장된 universe 심볼을 읽고 없으면 기본 심볼을 반환합니다."""
     config = config or load_request_config()
     registry = load_universe_registry(config)
     values = registry.get("symbols") if isinstance(registry, dict) else None
@@ -127,6 +136,7 @@ def load_universe_registry_symbols(config=None):
 
 
 def load_universe_registry(config=None):
+    """universe registry JSON 파일을 읽어 심볼 묶음 설정으로 반환합니다."""
     config = config or load_request_config()
     registry_path = resolve_universe_registry_path(config)
     if not registry_path or not registry_path.exists():
@@ -136,6 +146,7 @@ def load_universe_registry(config=None):
 
 
 def resolve_universe_registry_path(config=None):
+    """registry 경로를 절대 경로나 설정 파일 기준 상대 경로로 해석합니다."""
     config = config or load_request_config()
     raw_path = os.getenv("ALPACA_UNIVERSE_REGISTRY_PATH") or config.get("universeRegistryPath")
     if not raw_path:
@@ -152,6 +163,7 @@ def resolve_universe_registry_path(config=None):
 
 
 def configured_collection_symbols(config=None):
+    """수집기가 시작할 때 기본으로 구독할 심볼 목록을 결정합니다."""
     config = config or load_request_config()
     raw_symbols = os.getenv("ALPACA_COLLECTION_SYMBOLS")
     if raw_symbols is not None:
@@ -174,6 +186,7 @@ def configured_collection_symbols(config=None):
 
 
 def configured_seed_symbols(config=None):
+    """명시적으로 seed 된 심볼 목록을 환경변수 또는 설정 파일에서 읽습니다."""
     config = config or load_request_config()
     raw_symbols = os.getenv("ALPACA_SYMBOLS")
     values = parse_csv(raw_symbols) if raw_symbols is not None else list(config.get("defaultSeedSymbols") or [])
@@ -183,6 +196,7 @@ def configured_seed_symbols(config=None):
 
 
 def _validated_symbol_list(values, config, source_name):
+    """여러 출처에서 온 심볼 목록을 중복 제거하고 내부 표기로 정규화합니다."""
     symbols = []
     seen = set()
     for value in values:
@@ -204,6 +218,7 @@ def _validated_symbol_list(values, config, source_name):
 
 
 def load_symbols_and_channels(company_or_symbol=None):
+    """CLI/환경변수 입력을 합쳐 최종 심볼 목록과 채널 목록을 만듭니다."""
     load_dotenv()
     config = load_request_config()
     requested_symbol = resolve_symbol(company_or_symbol, config) if company_or_symbol else None
@@ -219,6 +234,7 @@ def load_symbols_and_channels(company_or_symbol=None):
 
 
 def build_subscription_request(symbols, channels, action="subscribe", config=None):
+    """내부 심볼 목록을 Alpaca WebSocket subscribe/unsubscribe 요청으로 만듭니다."""
     config = config or load_request_config()
     request = {"action": action}
     if not symbols:
@@ -230,6 +246,7 @@ def build_subscription_request(symbols, channels, action="subscribe", config=Non
 
 
 def alpaca_subscription_symbols(symbols, config=None):
+    """GOPS 내부 심볼을 Alpaca 구독용 provider 심볼로 변환하고 중복을 제거합니다."""
     config = config or load_request_config()
     provider_symbols = []
     seen = set()
@@ -243,10 +260,12 @@ def alpaca_subscription_symbols(symbols, config=None):
 
 
 def build_request_from_env(company_or_symbol=None):
+    """현재 환경 설정만으로 Alpaca WebSocket 구독 요청을 구성합니다."""
     symbols, channels = load_symbols_and_channels(company_or_symbol)
     return build_subscription_request(symbols, channels)
 
 
 def print_request(company_or_symbol=None):
+    """디버깅용으로 최종 구독 요청 JSON을 콘솔에 출력합니다."""
     request = build_request_from_env(company_or_symbol)
     print(json.dumps(request, indent=2, ensure_ascii=False))
