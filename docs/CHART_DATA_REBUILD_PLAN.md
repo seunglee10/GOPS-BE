@@ -5,8 +5,8 @@ It is a plan, not a claim that the current runtime already behaves this way.
 
 ## Korean Summary
 
-이 문서는 `GOPS On-Demand Chart Data Plan - Redis 120-Bar + SIP/BOATS 단독
-Feed` 반영본이다.
+이 문서는 `GOPS Hybrid Chart Data Plan - S&P500 Baseline + Redis 120-Bar +
+SIP/BOATS 단독 Feed` 반영본이다.
 
 핵심은 세 가지다.
 
@@ -19,6 +19,11 @@ Feed` 반영본이다.
 - 원본 Alpaca payload는 S3 raw prefix에 백업용으로만 저장할 수 있다.
   이 raw backup은 read path, coverage check, backfill 결정, ClickHouse
   적재 로직에 참여하지 않는다.
+- S&P500 전체는 기본 가격 표시와 차트 진입 속도를 위해 `bars`,
+  `updatedBars`, `dailyBars`, `statuses` baseline 데이터를 계속 수신한다.
+- `trades`와 `quotes`는 S&P500 전체에 붙이지 않는다. 관심종목, 보유종목,
+  거래대금/거래량/급등/급락 ranking, 현재 보고 있는 차트, manual-admin처럼
+  실제 tick layer가 필요한 선택 종목에만 붙인다.
 - 실시간 feed는 `04:00-20:00 ET = SIP 단독`,
   `20:00-04:00 ET = BOATS 단독`으로 운영한다. 두 feed가 같은 데이터를
   동시에 저장하는 상황은 절대 허용하지 않는다.
@@ -32,10 +37,14 @@ Kafka `key=symbol` 순서 규칙으로 processor에 전달되고, Redis 임시�
 
 ## Goal
 
-Start chart data from an empty state and rebuild the chart path around
-on-demand data access.
+Rebuild the chart path around hybrid baseline + explicit realtime access.
 
-- Do not preload any preset symbol universe for chart data.
+- Keep S&P500 baseline collection active for `bars`, `updatedBars`, `dailyBars`,
+  and `statuses`.
+- Do not subscribe all S&P500 symbols to high-frequency `trades` or `quotes`.
+- Subscribe `trades` and `quotes` only for explicit realtime cohorts:
+  watchlist, portfolio, rankings, active chart sessions, and manual admin
+  subscriptions.
 - Do not generate fake market candles.
 - Load only the symbol, timeframe, range, and layer requested by the chart.
 - Keep only the newest 120 candles per `symbol + timeframe` in Redis.
@@ -132,11 +141,24 @@ flowchart LR
     A_EVENT["historical events/status"]
   end
 
-  subgraph RT["8. On-Demand Realtime"]
-    SUB["subscription-controller<br/>current chart / explicit subscription only<br/>no preset universe subscription"]
+  subgraph BASE["8. S&P500 Baseline Realtime"]
+    SP500["systems/market-data/config/sp500-universe.json<br/>S&P500 symbols"]
+    BASE_SUB["baseline subscription<br/>all S&P500 symbols<br/>bars / updatedBars / dailyBars / statuses only"]
   end
 
-  subgraph FEED["8-A. SIP / BOATS Exclusive Feed Control"]
+  subgraph RT["8-B. Explicit Realtime Tick / Quote"]
+    WL["watchlist"]
+    PF["portfolio"]
+    RDV["rank:dollar-volume"]
+    RVOL["rank:volume"]
+    RGAIN["rank:gainers"]
+    RLOSE["rank:losers"]
+    ACT["active-chart:{userId}:{sessionId}<br/>TTL heartbeat"]
+    MANUAL["manual-admin"]
+    SUB["subscription-controller<br/>user-scoped sources -> global subscription<br/>trades / quotes only"]
+  end
+
+  subgraph FEED["8-C. SIP / BOATS Exclusive Feed Control"]
     CLOCK["session-clock<br/>America/New_York"]
     FCTRL["feed-session-controller<br/>choose exactly one active feed"]
     ACTIVE["Redis feed:active"]
@@ -239,6 +261,17 @@ flowchart LR
   DEDUPE --> CH_AUDIT
   DEDUPE --> R_STATUS
 
+  SP500 --> BASE_SUB
+  WL --> SUB
+  PF --> SUB
+  RDV --> SUB
+  RVOL --> SUB
+  RGAIN --> SUB
+  RLOSE --> SUB
+  ACT --> SUB
+  MANUAL --> SUB
+
+  BASE_SUB --> CLOCK
   SUB --> CLOCK
   CLOCK --> FCTRL
   FCTRL --> ACTIVE
@@ -251,20 +284,20 @@ flowchart LR
 
   ACTIVE --> SIP
   ACTIVE --> BOATS
-  SIP -->|activeFeed=sip| K_TR
-  SIP -->|activeFeed=sip| K_QT
-  SIP -->|activeFeed=sip| K_B1
-  SIP -->|activeFeed=sip| K_UB
-  SIP -->|activeFeed=sip| K_D
-  SIP -->|activeFeed=sip| K_EV
+  SIP -->|S&P500 baseline activeFeed=sip| K_B1
+  SIP -->|S&P500 baseline activeFeed=sip| K_UB
+  SIP -->|S&P500 baseline activeFeed=sip| K_D
+  SIP -->|S&P500 baseline activeFeed=sip| K_EV
+  SIP -->|selected realtime activeFeed=sip| K_TR
+  SIP -->|selected realtime activeFeed=sip| K_QT
   SIP -->|activeFeed!=sip| SIP_IDLE
 
-  BOATS -->|activeFeed=boats| K_TR
-  BOATS -->|activeFeed=boats| K_QT
-  BOATS -->|activeFeed=boats| K_B1
-  BOATS -->|activeFeed=boats| K_UB
-  BOATS -->|activeFeed=boats| K_D
-  BOATS -->|activeFeed=boats| K_EV
+  BOATS -->|S&P500 baseline activeFeed=boats| K_B1
+  BOATS -->|S&P500 baseline activeFeed=boats| K_UB
+  BOATS -->|S&P500 baseline activeFeed=boats| K_D
+  BOATS -->|S&P500 baseline activeFeed=boats| K_EV
+  BOATS -->|selected realtime activeFeed=boats| K_TR
+  BOATS -->|selected realtime activeFeed=boats| K_QT
   BOATS -->|activeFeed!=boats| BOATS_IDLE
 
   K_TR --> GUARD
@@ -418,6 +451,14 @@ Planned rebuild env:
 
 ```text
 REDIS_KEY_PREFIX=gops:market:on-demand:v1
+
+ALFAKA_REQUEST_CONFIG=systems/market-data/config/market-data-request.json
+ALPACA_UNIVERSE=sp500
+ALPACA_UNIVERSE_REGISTRY_PATH=systems/market-data/config/sp500-universe.json
+ALPACA_COLLECTION_SYMBOL_SOURCE=universe
+ALPACA_CHANNELS=bars,updatedBars,dailyBars,statuses
+ALPACA_ACTIVE_CHANNELS=trades,quotes
+ALPACA_ACTIVE_TICK_SUBSCRIPTION=true
 
 S3_BUCKET=gops-market-data-<aws-account-id>-ap-northeast-2-an
 S3_RAW_PREFIX=market-data/rebuild-20260702-lazy-v1/raw/alpaca
@@ -590,28 +631,21 @@ Historical/backfill uses the same exclusivity contract:
 
 ## Frontend Rebuild Scope
 
-During the chart rebuild, simplify `apps/gops-frontend` into a Market Data
-Workbench.
+Keep the existing GOPS frontend shell and connect its chart, S&P500 list,
+watchlist, ranking, and subscription surfaces to the rebuilt chart-data APIs.
 
-Keep:
+Required frontend behavior:
 
-- Basic chart.
-- `symbol`, `timeframe`, `range` inputs.
-- Load and Backfill Missing controls.
-- Backfill status panel.
-- Redis key/value preview.
-- S3 object/manifest preview.
-- ClickHouse row count/sample/duplicate audit.
-- WebSocket live payload log.
-
-Remove or hide for the rebuild pass:
-
-- Order/KIS panels.
-- Agent panels.
-- Multi-workspace layout complexity.
-- Drawing tools.
-- Automatic chart-data collection outside explicit user requests.
-- Fake/seed candle rendering.
+- Basic candle chart reads `candles` layer from `GET /api/charts/candles`.
+- Chart WebSocket receives `candles`, `trades`, `quotes`, and `events` layer
+  payloads.
+- Current chart symbol registers an active-chart session so `trades` and
+  `quotes` are subscribed while the chart is open.
+- S&P500/search/watchlist/ranking rows use Redis or ClickHouse latest candle
+  prices and show "가격 준비 중" only when no latest price exists.
+- Monitoring panels or tabs can inspect Redis/S3/ClickHouse/backfill state, but
+  the frontend must not become a monitoring-only workbench.
+- Fake/seed candle rendering remains forbidden.
 
 ## API Additions
 
@@ -692,7 +726,9 @@ the chart reset unless the operator explicitly requests a broader reset.
 ## Test Plan
 
 - Fresh reset shows no fake/seed candles.
-- Preset-universe chart preload jobs are disabled.
+- S&P500 baseline `bars`/`updatedBars`/`dailyBars`/`statuses` subscription is enabled.
+- S&P500 symbols are not subscribed to `trades` or `quotes` by default.
+- Watchlist, portfolio, ranking, active-chart, and manual-admin symbols subscribe to `trades` and `quotes`.
 - Redis keeps exactly 120 candles per `symbol + timeframe`.
 - The 121st candle trims the oldest bucket.
 - Redis-range requests return without ClickHouse.
@@ -712,3 +748,44 @@ the chart reset unless the operator explicitly requests a broader reset.
 - `04:00:00 ET`: BOATS unsubscribes before SIP subscribes.
 - Wrong-feed or stale-epoch payloads are quarantined and not stored.
 - Feed switch may create a small gap, but never duplicate candles.
+
+## 추가 운영 원칙: 로컬 Alpaca 연결 검증 시 AWS ingestor 일시 중지
+
+로컬에서 새 Alpaca key를 검증할 때는 AWS Secrets Manager `dev/alpaca`를 갱신하지 않는다.
+
+로컬 검증의 목적은 운영/개발 AWS key를 바꾸는 것이 아니라, 로컬 `.env`의 `APCA_API_KEY_ID`, `APCA_API_SECRET_KEY`, `ALPACA_CREDENTIAL_SOURCE=local-env` 조합이 실제 Alpaca WebSocket에 정상 연결되는지 확인하는 것이다.
+
+따라서 로컬 실시간 연결 검증 중에는 EKS의 Alpaca ingestor가 같은 Alpaca 계정 연결을 점유하지 않도록 아래 workload를 일시적으로 `replicas=0`으로 내린다.
+
+- `alfaka-alpaca-ingestor-sip`
+- `alfaka-alpaca-ingestor-boats`
+
+검증 완료 후에는 기존 replicas 값으로 복구한다.
+
+로컬 검증 절차는 다음 순서를 따른다.
+
+1. AWS Secrets Manager `dev/alpaca`는 변경하지 않는다.
+2. 로컬 `.env`에 새 Alpaca key를 설정한다.
+3. 로컬 runtime은 `ALPACA_CREDENTIAL_SOURCE=local-env`만 사용한다.
+4. 현재 ET 기준 active feed 하나만 로컬에서 실행한다.
+   - 04:00-20:00 ET: SIP
+   - 20:00-04:00 ET: BOATS
+5. EKS의 SIP/BOATS ingestor는 검증 동안 `replicas=0`으로 내려 WebSocket connection limit 충돌을 방지한다.
+6. 로컬 로그에서 key 원문 없이 아래만 확인한다.
+   - credential source = local-env
+   - key id = SET
+   - secret = SET
+   - active feed = sip 또는 boats
+7. Alpaca WebSocket connected/authenticated/subscribed, Kafka input topic 수신, Redis live key 생성, 프론트 실시간 반영까지 확인한다.
+8. 검증 완료 후 EKS ingestor replicas를 원래 값으로 복구한다.
+
+주의:
+AWS Secrets Manager `dev/alpaca`를 로컬 검증용 새 key로 갱신하면 AWS EKS ingestor도 같은 key로 다시 접속하게 되어 로컬과 AWS가 Alpaca WebSocket connection limit을 서로 점유할 수 있다. 그러므로 로컬 검증 단계에서는 AWS secret 갱신이 아니라 AWS ingestor 일시 중지가 우선이다.
+
+## S&P500 목록 최신 가격 Backfill 원칙
+
+S&P500 전체 종목은 실시간 tick 구독 대상이 아니지만, 목록에 표시되는 종목은 장이 닫혀 있어도 마지막 확정 가격이 보여야 한다.
+
+`/api/market/symbols`는 각 symbol의 가격을 `Redis live trade -> Redis latest closed candle -> ClickHouse latest 1D candle` 순서로 조회한다. 모두 없으면 해당 symbol의 최신 `1D candle` backfill을 dedupe lock으로 요청하고, 완료 후 `market_data.chart_candles`, S3 final/manifest, Redis `latest:closed:candle:{symbol}:1D`에 반영한다.
+
+프론트는 가격이 없을 때 단순히 `가격 준비 중`으로 방치하지 않고 `최신 가격 불러오는 중` 상태를 보여준다. 더미/seed 가격은 사용하지 않으며, 표시되는 가격에는 `source=live|redis|clickhouse|latest-backfill`을 붙여 추적 가능하게 한다.

@@ -126,7 +126,21 @@ class FakeProvider:
         }
 
 
+class NoMutationRedis:
+    def sadd(self, *args, **kwargs):
+        raise AssertionError("GET ranking/hot routes must not mutate Redis subscription state")
+
+    def hset(self, *args, **kwargs):
+        raise AssertionError("GET ranking/hot routes must not mutate Redis subscription state")
+
+    def delete(self, *args, **kwargs):
+        raise AssertionError("GET ranking/hot routes must not mutate Redis subscription state")
+
+
 class FakeHotRedisProvider:
+    def __init__(self):
+        self.redis = NoMutationRedis()
+
     def hot_symbols_snapshot(self):
         return None
 
@@ -168,17 +182,46 @@ class FakeHotProvider:
 class FakeWatchlistRedis:
     def __init__(self):
         self.sets = {}
+        self.hashes = {}
+        self.values = {}
+        self.expirations = {}
 
     def delete(self, key):
         self.sets.pop(key, None)
+        self.hashes.pop(key, None)
         return 1
 
     def sadd(self, key, *values):
         self.sets.setdefault(key, set()).update(values)
         return len(values)
 
+    def srem(self, key, value):
+        self.sets.setdefault(key, set()).discard(value)
+        return 1
+
     def smembers(self, key):
         return set(self.sets.get(key, set()))
+
+    def hset(self, key, mapping=None, **kwargs):
+        values = mapping or kwargs
+        self.hashes.setdefault(key, {}).update(values)
+        return len(values)
+
+    def hgetall(self, key):
+        return dict(self.hashes.get(key, {}))
+
+    def get(self, key):
+        return self.values.get(key)
+
+    def set(self, key, value, ex=None):
+        self.values[key] = value
+        if ex is not None:
+            self.expirations[key] = ex
+        return True
+
+    def expire(self, key, ttl):
+        self.expirations[key] = ttl
+        return True
 
 
 class FakeMonitorRedis:
@@ -592,7 +635,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(queue["queueBackend"], "streams")
         self.assertEqual(queue["stream"]["backlogCount"], 2)
 
-    def test_monitor_subscription_route_writes_redis_control_plane(self):
+    def test_monitor_subscription_route_writes_manual_source_for_controller(self):
         fake_redis = FakeMonitorRedis()
         previous = monitor_routes.get_monitor_service
         monitor_routes.get_monitor_service = lambda: __import__(
@@ -610,10 +653,25 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         finally:
             monitor_routes.get_monitor_service = previous
 
+        from alfaka.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
+
+        self.assertEqual(fake_redis.sets["gops:market:on-demand:v1:subscription:source:manual:symbols"], {"AAPL"})
+        self.assertEqual(fake_redis.sets["gops:market:on-demand:v1:subscription:source:manual:AAPL"], {"candles,quotes,trades"})
+        self.assertNotIn("gops:market:on-demand:v1:subscription:symbols", fake_redis.sets)
+        self.assertTrue(payload["pendingReconcile"])
+
+        RealtimeSubscriptionCohortService(fake_redis).reconcile()
+        monitor_routes.get_monitor_service = lambda: __import__(
+            "app.market_data.monitor.service",
+            fromlist=["MarketDataMonitorService"],
+        ).MarketDataMonitorService(redis_client=fake_redis)
+        try:
+            subscriptions = monitor_routes.market_data_monitor_subscriptions()
+        finally:
+            monitor_routes.get_monitor_service = previous
         self.assertEqual(fake_redis.sets["gops:market:on-demand:v1:subscription:symbols"], {"AAPL"})
         self.assertEqual(fake_redis.hashes["gops:market:on-demand:v1:subscription:symbol:AAPL"]["layers"], "candles,quotes,trades")
         self.assertEqual(payload["subscription"]["symbol"], "AAPL")
-        self.assertEqual(payload["version"], "1")
         self.assertEqual(subscriptions["symbols"][0]["layers"], ["candles", "quotes", "trades"])
 
     def test_monitor_subscription_rejects_quotes_without_trades(self):
@@ -648,7 +706,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             market_data_service.get_market_data_provider = previous_provider
 
         self.assertEqual([item["symbol"] for item in brk["symbols"]], ["BRK.B"])
-        self.assertEqual(adbe["symbols"], [])
+        self.assertEqual([item["symbol"] for item in adbe["symbols"]], ["ADBE"])
 
     def test_watchlist_change_percent_uses_previous_close_not_intraday_open(self):
         provider = FakeWatchlistProvider()
@@ -659,8 +717,9 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         finally:
             market_data_service.get_market_data_provider = previous
 
-        self.assertEqual(payload[0]["lastPrice"], 109.0)
-        self.assertEqual(payload[0]["changePercent"], 9.0)
+        self.assertEqual(payload[0]["lastPrice"], 100.0)
+        self.assertEqual(payload[0]["priceSource"], "clickhouse")
+        self.assertEqual(payload[0]["changePercent"], 11.11)
 
     def test_watchlist_change_percent_does_not_fake_from_intraday_open_without_previous_close(self):
         provider = FakeWatchlistProvider()
@@ -671,10 +730,11 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         finally:
             market_data_service.get_market_data_provider = previous
 
-        self.assertEqual(payload[0]["lastPrice"], 241.0)
+        self.assertEqual(payload[0]["lastPrice"], 240.5)
+        self.assertEqual(payload[0]["priceSource"], "clickhouse")
         self.assertIsNone(payload[0]["changePercent"])
 
-    def test_watchlist_change_percent_can_use_previous_intraday_close_when_daily_missing(self):
+    def test_watchlist_change_percent_stays_empty_when_daily_baseline_missing(self):
         provider = FakeWatchlistProvider()
         previous = market_data_service.get_market_data_provider
         market_data_service.get_market_data_provider = lambda: provider
@@ -683,8 +743,139 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         finally:
             market_data_service.get_market_data_provider = previous
 
-        self.assertEqual(payload[0]["lastPrice"], 355.0)
-        self.assertEqual(payload[0]["changePercent"], 1.43)
+        self.assertEqual(payload[0]["lastPrice"], 354.5)
+        self.assertEqual(payload[0]["priceSource"], "clickhouse")
+        self.assertIsNone(payload[0]["changePercent"])
+
+    def test_watchlist_replace_uses_user_key_until_controller_reconciles(self):
+        provider = FakeWatchlistProvider()
+        previous = market_data_service.get_market_data_provider
+        previous_universe = market_data_service.configured_universe_symbols
+        market_data_service.get_market_data_provider = lambda: provider
+        market_data_service.configured_universe_symbols = lambda: ["AAPL", "MSFT", "NVDA"]
+        try:
+            payload = market_data_service.replace_watchlist_symbols("user-a", ["aapl", "msft"])
+            redis_state = provider.redis_provider.redis
+        finally:
+            market_data_service.get_market_data_provider = previous
+            market_data_service.configured_universe_symbols = previous_universe
+
+        self.assertEqual([item["symbol"] for item in payload["symbols"]], ["AAPL", "MSFT"])
+        self.assertNotIn("gops:market:on-demand:v1:ui:watchlist:symbols", redis_state.sets)
+        self.assertEqual(redis_state.sets["gops:market:on-demand:v1:user:user-a:watchlist:symbols"], {"AAPL", "MSFT"})
+        self.assertEqual(redis_state.sets["gops:market:on-demand:v1:subscription:users:watchlist"], {"user-a"})
+        self.assertNotIn("gops:market:on-demand:v1:subscription:symbols", redis_state.sets)
+
+        from alfaka.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
+
+        RealtimeSubscriptionCohortService(redis_state).reconcile()
+        self.assertEqual(redis_state.sets["gops:market:on-demand:v1:subscription:source:watchlist:AAPL"], {"user-a"})
+        self.assertEqual(redis_state.sets["gops:market:on-demand:v1:subscription:symbols"], {"AAPL", "MSFT"})
+        self.assertEqual(redis_state.hashes["gops:market:on-demand:v1:subscription:symbol:AAPL"]["layers"], "quotes,trades")
+        self.assertEqual(redis_state.hashes["gops:market:on-demand:v1:subscription:symbol:AAPL"]["sources"], "watchlist")
+        self.assertEqual(redis_state.hashes["gops:market:on-demand:v1:subscription:symbol:AAPL"]["source"], "subscription-controller")
+
+    def test_watchlist_remove_preserves_active_chart_subscription_source(self):
+        provider = FakeWatchlistProvider()
+        redis_state = provider.redis_provider.redis
+        from alfaka.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
+        controller = RealtimeSubscriptionCohortService(redis_state)
+        controller.replace_user_watchlist("user-a", ["AAPL"])
+        controller.refresh_active_chart("user-a", "session-1", "AAPL", 60)
+        previous = market_data_service.get_market_data_provider
+        previous_universe = market_data_service.configured_universe_symbols
+        market_data_service.get_market_data_provider = lambda: provider
+        market_data_service.configured_universe_symbols = lambda: ["AAPL"]
+        try:
+            market_data_service.replace_watchlist_symbols("user-a", [])
+        finally:
+            market_data_service.get_market_data_provider = previous
+            market_data_service.configured_universe_symbols = previous_universe
+
+        controller.reconcile()
+        self.assertEqual(redis_state.sets["gops:market:on-demand:v1:subscription:symbols"], {"AAPL"})
+        self.assertEqual(redis_state.hashes["gops:market:on-demand:v1:subscription:symbol:AAPL"]["sources"], "active-chart")
+        self.assertEqual(redis_state.hashes["gops:market:on-demand:v1:subscription:symbol:AAPL"]["reason"], "active-chart-session")
+
+    def test_sp500_symbol_page_uses_registry_without_subscribing_every_symbol(self):
+        provider = FakeWatchlistProvider()
+        previous_provider = market_data_service.get_market_data_provider
+        previous_sp500 = market_data_service.sp500_universe_symbols
+        market_data_service.get_market_data_provider = lambda: provider
+        market_data_service.sp500_universe_symbols = lambda: ["AAPL", "MSFT", "NVDA"]
+        try:
+            payload = market_data_service.market_symbol_page("", page=1, page_size=2)
+            redis_state = provider.redis_provider.redis
+        finally:
+            market_data_service.get_market_data_provider = previous_provider
+            market_data_service.sp500_universe_symbols = previous_sp500
+
+        self.assertEqual(payload["total"], 3)
+        self.assertEqual([item["symbol"] for item in payload["symbols"]], ["AAPL", "MSFT"])
+        self.assertEqual(payload["symbols"][0]["priceSource"], "live")
+        self.assertEqual(payload["symbols"][1]["priceSource"], "clickhouse")
+        self.assertIn("gops:market:on-demand:v1:latest:closed:candle:MSFT:1D", redis_state.values)
+        self.assertNotIn("gops:market:on-demand:v1:subscription:symbols", redis_state.sets)
+
+    def test_sp500_symbol_page_requests_latest_daily_backfill_when_price_missing(self):
+        class NoPriceRedisProvider:
+            def __init__(self):
+                self.redis = FakeWatchlistRedis()
+
+            def latest_price(self, symbol):
+                return {}
+
+        class NoPriceClickHouseProvider:
+            def candles(self, symbol, interval, limit):
+                return []
+
+        class NoPriceProvider:
+            def __init__(self):
+                self.redis_provider = NoPriceRedisProvider()
+                self.clickhouse_provider = NoPriceClickHouseProvider()
+
+            def symbol_detail(self, symbol):
+                return {"symbol": symbol, "name": symbol, "market": "US"}
+
+        class RecordingLatestPriceBackfill:
+            def __init__(self):
+                self.calls = []
+
+            def request_backfill(self, symbol, interval, start=None, end=None, mode="default", force=False):
+                self.calls.append((symbol, interval, start, end, mode, force))
+                return {
+                    "symbol": symbol,
+                    "interval": interval,
+                    "sourceInterval": interval,
+                    "requestId": f"backfill:{symbol}:{interval}:latest",
+                    "status": "queued",
+                    "deduplicated": False,
+                }
+
+        provider = NoPriceProvider()
+        backfill = RecordingLatestPriceBackfill()
+        previous_provider = market_data_service.get_market_data_provider
+        previous_sp500 = market_data_service.sp500_universe_symbols
+        market_data_service.get_market_data_provider = lambda: provider
+        market_data_service.sp500_universe_symbols = lambda: ["MSFT"]
+        try:
+            payload = market_data_service.market_symbol_page("", page=1, page_size=1, backfill_service=backfill)
+        finally:
+            market_data_service.get_market_data_provider = previous_provider
+            market_data_service.sp500_universe_symbols = previous_sp500
+
+        self.assertEqual(len(backfill.calls), 1)
+        symbol, interval, start, end, mode, force = backfill.calls[0]
+        self.assertEqual((symbol, interval, mode, force), ("MSFT", "1D", "default", False))
+        self.assertIsInstance(start, str)
+        self.assertIsInstance(end, str)
+        start_dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
+        end_dt = datetime.fromisoformat(end.replace("Z", "+00:00"))
+        self.assertLessEqual(end_dt - start_dt, timedelta(days=31))
+        self.assertEqual(payload["symbols"][0]["lastPrice"], None)
+        self.assertEqual(payload["symbols"][0]["priceSource"], "latest-backfill")
+        self.assertEqual(payload["symbols"][0]["priceStatus"], "loading")
+        self.assertEqual(payload["symbols"][0]["latestPriceBackfill"]["status"], "queued")
 
     def test_requested_backfill_mode_is_ignored_unless_explicitly_enabled(self):
         previous_mode = os.environ.get("BACKFILL_EXECUTION_MODE")
@@ -1071,6 +1262,25 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["symbols"][0]["symbol"], "AAPL")
 
+    @unittest.skipUnless(FASTAPI_TESTCLIENT_AVAILABLE, "fastapi TestClient dependency is not installed")
+    def test_chart_mutation_routes_require_authenticated_user_when_auth_enabled(self):
+        from app.main import create_app
+
+        with mock.patch.dict(os.environ, {
+            "AUTH_ENABLED": "true",
+            "AUTH_SESSION_SECRET": "test-session-secret",
+            "AUTH_REDIS_URL": "",
+            "AUTH_REDIS_KEY_PREFIX": "gops:test-auth",
+        }, clear=False):
+            client = TestClient(create_app())
+            watchlist = client.put("/api/charts/watchlist", json={"symbols": ["NVDA"]})
+            portfolio = client.put("/api/charts/subscription-cohorts/portfolio", json={"symbols": ["AAPL"]})
+            backfill = client.post("/api/charts/backfill", json={"symbol": "NVDA", "interval": "1m"})
+
+        self.assertEqual(watchlist.status_code, 401)
+        self.assertEqual(portfolio.status_code, 401)
+        self.assertEqual(backfill.status_code, 401)
+
     def test_monitor_overview_documents_quote_and_raw_s3_policy(self):
         fake_redis = FakeMonitorRedis()
         previous = monitor_routes.get_monitor_service
@@ -1166,6 +1376,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             "S3_REQUIRE_CANONICAL_PROCESSED_CANDLES": "false",
             "BACKFILL_INITIAL_LOAD_1M_MIN_START": "2025-04-01T00:00:00Z",
             "ALPACA_CREDENTIAL_SOURCE": "bogus",
+            "ALPACA_COLLECTION_SYMBOL_SOURCE": "on-demand",
         }, clear=False):
             payload = runtime_config()
 
@@ -1175,7 +1386,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertFalse(payload["canonical"]["clickhouseRequireCanonicalCandles"])
         self.assertFalse(payload["canonical"]["s3RequireCanonicalProcessedCandles"])
         self.assertIn("stale_request_config_path", payload["warnings"])
-        self.assertIn("preset_alpaca_universe_configured", payload["warnings"])
+        self.assertIn("alpaca_universe_without_registry_source", payload["warnings"])
         self.assertIn("alpaca_channels_missing_dailyBars", payload["warnings"])
         self.assertIn("alpaca_channels_missing_statuses", payload["warnings"])
         self.assertIn("s3_processed_format_not_parquet", payload["warnings"])

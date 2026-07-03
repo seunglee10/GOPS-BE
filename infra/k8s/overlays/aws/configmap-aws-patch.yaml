@@ -13,9 +13,9 @@ data:
   ALPACA_FEED_PROFILE: sip
   ALPACA_FEED_PROFILES: sip,boats
   ALFAKA_REQUEST_CONFIG: systems/market-data/config/market-data-request.json
-  ALPACA_UNIVERSE: ""
-  ALPACA_UNIVERSE_REGISTRY_PATH: ""
-  ALPACA_COLLECTION_SYMBOL_SOURCE: on-demand
+  ALPACA_UNIVERSE: sp500
+  ALPACA_UNIVERSE_REGISTRY_PATH: systems/market-data/config/sp500-universe.json
+  ALPACA_COLLECTION_SYMBOL_SOURCE: universe
   ALPACA_CHANNELS: bars,updatedBars,dailyBars,statuses
   ALPACA_ACTIVE_CHANNELS: trades,quotes
   ALPACA_ACTIVE_TICK_SUBSCRIPTION: "true"
@@ -123,6 +123,7 @@ data:
   MARKET_OPEN_TIME: "09:30"
   MARKET_CLOSE_TIME: "16:00"
   MARKET_CLOSED_DATES: ""
+  MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS: "true"
   MARKET_EARLY_CLOSES: ""
   AGENT_ORCHESTRATOR_URL: http://agent-orchestrator:8100
   AGENT_EVENT_INPUT_TOPICS: market.layer.trades.v1,market.layer.candles.closed.v1,market.layer.events.v1

@@ -293,9 +293,9 @@ class AgentOrchestrationTests(unittest.TestCase):
 
     def test_event_detector_detects_price_surge_and_volume_spike(self):
         detector = MarketEventDetector(MarketEventThresholds(price_change_percent=3.0, volume_spike_multiplier=2.0))
-        self.assertEqual(detector.detect({"symbol": "NVDA", "price": 100, "volume": 100}, "market.ticks.v1"), [])
+        self.assertEqual(detector.detect({"symbol": "NVDA", "price": 100, "volume": 100}, "market.layer.trades.v1"), [])
 
-        events = detector.detect({"symbol": "NVDA", "price": 105, "volume": 250}, "market.ticks.v1")
+        events = detector.detect({"symbol": "NVDA", "price": 105, "volume": 250}, "market.layer.trades.v1")
 
         event_types = {event.eventType for event in events}
         self.assertIn("price_surge", event_types)

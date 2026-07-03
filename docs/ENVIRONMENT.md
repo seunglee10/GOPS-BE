@@ -4,9 +4,11 @@ This file documents platform dependencies and env contracts.
 Do not put real secrets here.
 
 For chart-data work, `docs/CHART_DATA_REBUILD_PLAN.md` is the source of truth.
-If this file or older handoff docs mention a preset universe preload, S&P500-wide
-chart collection, non-Mermaid Kafka topic layouts, or raw S3 as an active
-materialization source, the rebuild plan wins.
+The current runtime uses a hybrid collection model: S&P500 baseline
+bars/updatedBars/dailyBars/statuses stay subscribed for list prices and fast
+chart entry, while realtime trades/quotes are limited to explicit cohorts such
+as watchlist, portfolio, rankings, active chart sessions, and manual admin
+subscriptions.
 
 ## Platform Folders
 
@@ -27,9 +29,9 @@ Current chart rebuild contract:
 
 ```text
 ALFAKA_REQUEST_CONFIG=systems/market-data/config/market-data-request.json
-ALPACA_UNIVERSE=
-ALPACA_UNIVERSE_REGISTRY_PATH=
-ALPACA_COLLECTION_SYMBOL_SOURCE=on-demand
+ALPACA_UNIVERSE=sp500
+ALPACA_UNIVERSE_REGISTRY_PATH=systems/market-data/config/sp500-universe.json
+ALPACA_COLLECTION_SYMBOL_SOURCE=universe
 ALPACA_CHANNELS=bars,updatedBars,dailyBars,statuses
 ALPACA_ACTIVE_CHANNELS=trades,quotes
 ALPACA_MAX_TRADE_SYMBOLS=
@@ -37,26 +39,24 @@ ALPACA_FEED_PROFILE=sip
 ALPACA_FEED_PROFILES=sip,boats
 ALPACA_ENFORCE_FEED_SESSION_WINDOW=true
 ALPACA_SESSION_IDLE_POLL_SECONDS=60
-ALPACA_CREDENTIAL_SOURCE=aws-secrets-manager
-ALPACA_SECRET_NAME=dev/alpaca
+ALPACA_CREDENTIAL_SOURCE=local-env
+ALPACA_SECRET_NAME=
 HOT_TIER_SIZE=10
 HOT_TIER_FALLBACK_SCAN_LIMIT=20
 ```
 
-Do not preload any preset symbol universe for chart data. Chart data starts
-empty and is loaded only for the requested `symbol + timeframe + range + layer`.
-Symbol registries may exist for search/validation, but they are not permission
-to subscribe to or backfill every symbol. `ALPACA_SYMBOLS`, old named universes,
-and older watch/hot seeds are legacy/local smoke inputs unless a current task
-explicitly wires them into the on-demand subscription controller. `quotes`
-follow the exact same explicit symbol set as realtime `trades`; quotes are not
-a separate all-symbol feed.
+S&P500 baseline collection subscribes to `bars`, `updatedBars`, `dailyBars`, and
+`statuses` only. It does not subscribe every S&P500 symbol to high-frequency
+`trades` or `quotes`. `trades` and `quotes` follow the exact same explicit
+symbol set as realtime cohorts: watchlist, portfolio, rankings, active chart
+sessions, and manual admin subscriptions. Quotes are never a separate all-symbol
+feed.
 Set `ALPACA_MAX_TRADE_SYMBOLS` only when an Alpaca subscription cap requires an
 operational limit; explicit active chart subscriptions remain the priority.
 
 `ALPACA_FEED_PROFILE` selects one ingestor runtime feed (`sip` or `boats`). The live contract is session-routed: SIP is primary for `04:00-20:00 ET` (`pre`, `regular`, `after`) and BOATS is primary for `20:00-04:00 ET` (`overnight`). Local compose and k8s run one ingestor per active profile, and `/health/config` reports the expected profile set from `ALPACA_FEED_PROFILES`. Market-data envelopes, Redis live state, ClickHouse candle rows, API candles, and chart snapshots preserve `feedProfile` and `marketSession` so daytime and BOATS/overnight data are diagnosable instead of collapsing into an anonymous stream.
 
-`ALPACA_CREDENTIAL_SOURCE` accepts `auto`, `aws-secrets-manager`, or `local-env`. Local AWS-contract and Docker Compose market-data services pin `aws-secrets-manager` so stale local `APCA_*` values cannot override Secrets Manager credentials. Use `local-env` only for an explicit local smoke outside the AWS-contract flow.
+`ALPACA_CREDENTIAL_SOURCE` accepts `auto`, `aws-secrets-manager`, or `local-env`. Use `local-env` with `APCA_API_KEY_ID` and `APCA_API_SECRET_KEY` for explicit local Alpaca smoke runs while Secrets Manager is disconnected. AWS/EKS overlays set `aws-secrets-manager` and read the same canonical key names from the `dev/alpaca` JSON secret.
 
 ## Kafka
 
@@ -136,9 +136,10 @@ PROCESSOR_RECOVERY_CLICKHOUSE_ENABLED
 COMPONENT_HEALTH_TTL_SECONDS
 ```
 
-`PROCESSOR_RECOVERY_SYMBOLS` is optional. Keep it empty in the rebuild path
-unless an incident repair needs explicit symbols. The processor must not infer a
-preset chart universe for recovery or preload.
+`PROCESSOR_RECOVERY_SYMBOLS` is optional. Keep it empty unless an incident repair
+needs explicit symbols. Baseline S&P500 collection is performed by the ingestor;
+processor recovery should still avoid broad ClickHouse recovery unless an
+operator explicitly enables it.
 
 `PROCESSOR_RECOVERY_CLICKHOUSE_ENABLED=false` by default. Keep Redis-first recovery on by default; enable ClickHouse recovery only when the processor should rebuild missing startup state from deterministic canonical `1m`/`1D` rows and ClickHouse is known healthy.
 
@@ -168,16 +169,20 @@ chart/live/backfill/feed-control state. It stores newest 120 confirmed candles
 per `symbol + timeframe`, current provisional candles, latest closed candles,
 live trade/quote/event values, backfill status, and SIP/BOATS feed state.
 Durable historical candles live in ClickHouse and S3 final/manifest.
-Run Redis with append-only persistence, RDB snapshots disabled, and write blocking
-disabled for background save failures:
+Run the in-cluster Redis StatefulSet as an ephemeral cache/control-plane store.
+Do not make Redis replay large AOF/RDB files on restart; large market-data cache
+snapshots can keep Redis in loading state and block Alpaca subscription control.
+Historical chart data remains durable in ClickHouse and S3 final/manifest.
 
 ```text
-redis-server --appendonly yes --save "" --stop-writes-on-bgsave-error no
+redis-server --appendonly no --save "" --dir /tmp
 ```
 
-This keeps backfill queues, live chart keys, and component health writable even
-if an in-cluster disk snapshot fails. Chart resets must still use scan-delete for
-the documented market-data key patterns, not `FLUSHALL`.
+This keeps live chart keys, feed control, and component health writable after a
+pod restart. Redis restarts may drop live cache, login sessions, and queued
+backfill state; those are runtime state and must be rebuilt by API/WebSocket
+activity or re-enqueued work. Chart resets must still use scan-delete for the
+documented market-data key patterns, not `FLUSHALL`.
 
 GOPS login sessions reuse Redis by default:
 
@@ -312,11 +317,13 @@ the on-demand chart rebuild is active. Pointing AWS at old dated rebuild
 prefixes or `market-data/v2/tick-candle` mixes legacy data with the new
 contract.
 
-Local Docker services that read AWS Secrets Manager or S3 can authenticate with
-direct `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` values, but the preferred
-local path is `AWS_PROFILE` plus the read-only host `~/.aws` mount configured in
+Local Docker services that read S3 can authenticate with direct
+`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` values, but the preferred local path
+is `AWS_PROFILE` plus the read-only host `~/.aws` mount configured in
 `docker-compose.yml` for the API, backfill, and optional Alpaca ingestion
-services. This keeps copied AWS keys out of `.env`.
+services. This keeps copied AWS keys out of `.env`. Alpaca local smoke can bypass
+Secrets Manager with `ALPACA_CREDENTIAL_SOURCE=local-env`; AWS-contract runs set
+`ALPACA_CREDENTIAL_SOURCE=aws-secrets-manager`.
 
 The processed S3 sink writes canonical layer artifacts under `S3_FINAL_PREFIX`.
 The raw S3 archive sink may copy Alpaca payload envelopes under `S3_RAW_PREFIX`
@@ -403,7 +410,7 @@ Alpaca historical API failures such as rate limits and 5xx responses.
 
 ## Market Calendar
 
-GapFill uses the configured market calendar to avoid false gaps on weekends, holidays, and early closes. The v1 provider is `configured-nyse`; it is an adapter boundary that can later be replaced by a managed exchange-calendar provider. Intraday chart renderability treats sparse gaps as blocking only when both candles are inside the regular session; sparse extended-hours 1m bars can still render because Alpaca may only emit bars for minutes with activity.
+GapFill uses the configured market calendar to avoid false gaps on weekends, holidays, and early closes. Alpaca feed session gating reads `MARKET_CLOSED_DATES` plus the built-in 2026 NYSE/Nasdaq full-day holiday set by default; a full-market holiday reports `closed` instead of `pre`, `regular`, `after`, or `overnight`, so local smoke tests do not wait for live payloads on a known closed session. Set `MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS=false` only for a test that intentionally disables the built-in holiday set. The v1 provider is `configured-nyse`; it is an adapter boundary that can later be replaced by a managed exchange-calendar provider. Intraday chart renderability treats sparse gaps as blocking only when both candles are inside the regular session; sparse extended-hours 1m bars can still render because Alpaca may only emit bars for minutes with activity.
 
 ```text
 MARKET_CALENDAR_PROVIDER
@@ -411,6 +418,7 @@ MARKET_TIMEZONE
 MARKET_OPEN_TIME
 MARKET_CLOSE_TIME
 MARKET_CLOSED_DATES
+MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS
 MARKET_EARLY_CLOSES
 ```
 
@@ -430,11 +438,12 @@ Keep `COVERAGE_REPAIR_DRY_RUN=true` for audits. Set it to `false` only when inte
 
 ## Initial Load
 
-The chart rebuild disables preset-universe chart preload as a normal path.
-Initial Load is legacy/bootstrap tooling and must not run automatically during
-the rebuild. Use it only after an operator explicitly approves a bounded
-bootstrap or migration job. Normal chart expansion comes from the API/backfill
-path: Redis latest 120 -> ClickHouse -> S3 final/manifest -> Alpaca historical.
+The chart rebuild does not use Initial Load as its normal S&P500 baseline path.
+Baseline collection comes from Alpaca realtime bars/statuses. Initial Load is
+legacy/bootstrap tooling and must not run automatically during the rebuild. Use
+it only after an operator explicitly approves a bounded bootstrap or migration
+job. Normal long-range chart expansion still comes from the API/backfill path:
+Redis latest 120 -> ClickHouse -> S3 final/manifest -> Alpaca historical.
 
 ```text
 INITIAL_LOAD_SYMBOLS

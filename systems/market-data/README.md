@@ -155,10 +155,12 @@ not fail a chart request, backfill job, or ClickHouse materialization job.
 Backfill/materialization decisions use Redis, ClickHouse, and S3 final/manifest,
 not raw backup objects.
 
-For local AWS-contract runs, market-data Docker services pin
-`ALPACA_CREDENTIAL_SOURCE=aws-secrets-manager` and `S3_PROCESSED_FORMAT=parquet`.
-This prevents stale root `.env` values such as legacy universes, local Alpaca
-keys, or `jsonl` output from overriding the on-demand rebuild contract.
+For local AWS-contract runs, set
+`ALPACA_CREDENTIAL_SOURCE=aws-secrets-manager` and keep `S3_PROCESSED_FORMAT=parquet`.
+Docker Compose passes `APCA_API_KEY_ID` and `APCA_API_SECRET_KEY` through so an
+explicit `ALPACA_CREDENTIAL_SOURCE=local-env` smoke can run while Secrets Manager
+is disconnected. Keep legacy universes and `jsonl` output out of the on-demand
+rebuild contract.
 
 Drag-left chart history uses the candles API first. If the returned older range is partial but repairable, the frontend queues a bounded backfill request with an explicit `start`/`end`, polls `/api/charts/backfill/status`, and refetches the same range after completion. The chart request path must still serve from Redis/ClickHouse; it must not list S3 or call Alpaca synchronously. Do not convert a sparse chart window into a full-range `force=true` `1m` backfill.
 

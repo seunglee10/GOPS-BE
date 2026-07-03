@@ -3,16 +3,22 @@
 # 설정: ALPACA_UNIVERSE, ALPACA_SYMBOLS, REDIS_URL, CLICKHOUSE_* 값을 .env 또는 Docker env에 넣습니다.
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
+
+from app.market_data.realtime.subscription_cohorts import (
+    RealtimeSubscriptionCohortService,
+    normalize_rank_kind,
+)
 
 
 SYMBOL_PATTERN = re.compile(r"^[A-Z][A-Z0-9]{0,9}(?:\.[A-Z])?$")
@@ -48,6 +54,7 @@ from alfaka.serving.time_utils import parse_utc_time  # noqa: E402
 
 MAX_WATCHLIST_SYMBOLS = 10
 MAX_HOT_SYMBOLS = 10
+MAX_SYMBOL_PAGE_SIZE = 100
 DEFAULT_MARKET_TIMEZONE = "America/New_York"
 
 
@@ -100,14 +107,15 @@ def get_market_data_provider() -> MarketDataProvider:
 def symbol_summaries() -> list[dict[str, Any]]:
     # 기존 /api/charts/symbols 호환 요약입니다. 사용자 Watch List는 watchlist_summaries를 씁니다.
     # Redis에 최신 가격이 없으면 ClickHouse serving projection의 최신 1m candle로 보완합니다.
-    return symbol_summaries_for(configured_symbols())
+    return symbol_summaries_for(configured_universe_symbols() or sp500_universe_symbols() or configured_symbols())
 
 
 def search_symbol_summaries(query: str | None = None, limit: int | None = None) -> list[dict[str, Any]]:
     requested_limit = _read_positive_int(limit) or MAX_WATCHLIST_SYMBOLS
     query_text = (query or "").strip()
     if not query_text:
-        return symbol_summaries_for(configured_symbols()[:requested_limit])
+        universe = configured_universe_symbols() or sp500_universe_symbols() or configured_symbols()
+        return symbol_summaries_for(universe[:requested_limit], max_items=requested_limit)
 
     provider = get_market_data_provider()
     matches: list[str] = []
@@ -130,16 +138,30 @@ def search_symbol_summaries(query: str | None = None, limit: int | None = None) 
     return symbol_summaries_for(matches, max_items=requested_limit)
 
 
-def symbol_summaries_for(symbols: list[str], max_items: int | None = MAX_WATCHLIST_SYMBOLS) -> list[dict[str, Any]]:
-    return [build_symbol_summary(symbol) for symbol in normalize_symbol_list(symbols, max_items=max_items)]
+def symbol_summaries_for(
+    symbols: list[str],
+    max_items: int | None = MAX_WATCHLIST_SYMBOLS,
+    backfill_service: Any | None = None,
+    auto_backfill_missing: bool = False,
+) -> list[dict[str, Any]]:
+    provider = get_market_data_provider()
+    return [
+        build_symbol_summary(
+            symbol,
+            provider=provider,
+            backfill_service=backfill_service,
+            auto_backfill_missing=auto_backfill_missing,
+        )
+        for symbol in normalize_symbol_list(symbols, max_items=max_items)
+    ]
 
 
-def watchlist_summaries(symbols: list[str] | None = None) -> dict[str, Any]:
+def watchlist_summaries(symbols: list[str] | None = None, user_id: str | None = None) -> dict[str, Any]:
     persisted = False
     if symbols is not None:
         requested_symbols = normalize_watchlist_symbol_list(symbols)
     else:
-        requested_symbols = read_watchlist_symbols()
+        requested_symbols = read_watchlist_symbols(user_id)
         persisted = bool(requested_symbols)
         if not requested_symbols:
             requested_symbols = default_watchlist_symbols()
@@ -151,19 +173,13 @@ def watchlist_summaries(symbols: list[str] | None = None) -> dict[str, Any]:
     }
 
 
-def replace_watchlist_symbols(symbols: list[str]) -> dict[str, Any]:
+def replace_watchlist_symbols(user_id: str, symbols: list[str]) -> dict[str, Any]:
     requested_symbols = normalize_watchlist_symbol_list(symbols)
     provider = get_market_data_provider()
-    key = RedisKeyBuilder().watchlist_symbols()
     try:
-        redis_client = provider.redis_provider.redis
-        delete_method = getattr(redis_client, "delete", None)
-        if callable(delete_method):
-            delete_method(key)
-        elif hasattr(redis_client, "sets"):
-            redis_client.sets.pop(key, None)
-        if requested_symbols:
-            redis_client.sadd(key, *requested_symbols)
+        RealtimeSubscriptionCohortService(provider.redis_provider.redis, auto_reconcile=False).replace_user_watchlist(user_id, requested_symbols)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Watch List sync failed: {exc}") from exc
     return {
@@ -174,14 +190,63 @@ def replace_watchlist_symbols(symbols: list[str]) -> dict[str, Any]:
     }
 
 
-def read_watchlist_symbols() -> list[str]:
+def read_watchlist_symbols(user_id: str | None = None) -> list[str]:
     provider = get_market_data_provider()
-    key = RedisKeyBuilder().watchlist_symbols()
+    keys = RedisKeyBuilder()
+    key = keys.user_watchlist_symbols(user_id) if user_id else keys.watchlist_symbols()
     try:
         values = provider.redis_provider.redis.smembers(key)
     except Exception:
         values = []
     return normalize_watchlist_symbol_list(sorted(values), reject_outside=False)
+
+
+def replace_portfolio_subscription_symbols(user_id: str, symbols: list[str]) -> dict[str, Any]:
+    provider = get_market_data_provider()
+    try:
+        normalized = RealtimeSubscriptionCohortService(provider.redis_provider.redis, auto_reconcile=False).replace_user_portfolio(user_id, symbols)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Portfolio subscription sync failed: {exc}") from exc
+    return {"source": "portfolio", "symbols": symbol_summaries_for(normalized, max_items=None)}
+
+
+def market_symbol_page(
+    query: str | None = None,
+    page: int = 1,
+    page_size: int = 50,
+    backfill_service: Any | None = None,
+) -> dict[str, Any]:
+    page = max(1, int(page or 1))
+    page_size = max(1, min(int(page_size or 50), MAX_SYMBOL_PAGE_SIZE))
+    symbols = sp500_universe_symbols()
+    normalized_query = (query or "").strip().upper()
+    if normalized_query:
+        provider = get_market_data_provider()
+        symbols = [
+            symbol for symbol in symbols
+            if normalized_query in symbol or normalized_query in (_symbol_metadata(provider, symbol).get("name") or "").upper()
+        ]
+    total = len(symbols)
+    start = (page - 1) * page_size
+    end = start + page_size
+    page_symbols = symbols[start:end]
+    return {
+        "source": "sp500-universe",
+        "query": query or "",
+        "page": page,
+        "pageSize": page_size,
+        "total": total,
+        "hasPrev": page > 1,
+        "hasNext": end < total,
+        "symbols": symbol_summaries_for(
+            page_symbols,
+            max_items=None,
+            backfill_service=backfill_service,
+            auto_backfill_missing=True,
+        ),
+    }
 
 
 def normalize_symbol_list(symbols: list[str], max_items: int | None = None) -> list[str]:
@@ -201,7 +266,7 @@ def normalize_symbol_list(symbols: list[str], max_items: int | None = None) -> l
 
 
 def normalize_watchlist_symbol_list(symbols: list[str], reject_outside: bool = True) -> list[str]:
-    allowed = set(configured_universe_symbols())
+    allowed = set(configured_universe_symbols() or sp500_universe_symbols())
     normalized = []
     seen = set()
     outside = []
@@ -246,18 +311,52 @@ def hot_symbol_summaries(limit: int | None = None) -> dict[str, Any]:
     provider = get_market_data_provider()
     snapshot = _safe_hot_snapshot(provider)
     if snapshot:
-        return _limit_hot_snapshot(provider, snapshot, requested_limit)
+        payload = _limit_hot_snapshot(provider, snapshot, requested_limit)
+        return payload
 
-    universe = configured_universe_symbols()
+    universe = configured_universe_symbols() or sp500_universe_symbols()
     clickhouse_records = _safe_clickhouse_hot_symbols(provider, universe, requested_limit)
     if clickhouse_records:
-        return build_hot_symbols_payload(_enrich_hot_symbol_records(provider, clickhouse_records), limit=requested_limit)
+        payload = build_hot_symbols_payload(_enrich_hot_symbol_records(provider, clickhouse_records), limit=requested_limit)
+        return payload
 
     scan_limit = _read_positive_int(os.getenv("HOT_TIER_FALLBACK_SCAN_LIMIT")) or 20
     records = []
     for symbol in universe[:scan_limit]:
         records.append(build_hot_symbol_record(provider, symbol))
-    return build_hot_symbols_payload(records, limit=requested_limit)
+    payload = build_hot_symbols_payload(records, limit=requested_limit)
+    return payload
+
+
+def ranking_symbol_summaries(kind: str, limit: int | None = None) -> dict[str, Any]:
+    normalized_kind = normalize_rank_kind(kind)
+    requested_limit = min(_read_positive_int(limit) or MAX_HOT_SYMBOLS, MAX_HOT_SYMBOLS)
+    provider = get_market_data_provider()
+    universe = sp500_universe_symbols() or configured_universe_symbols()
+    rows = []
+    method = getattr(provider.clickhouse_provider, "rank_symbols", None)
+    if callable(method):
+        try:
+            rows = method(universe, kind=normalized_kind, limit=requested_limit)
+        except Exception:
+            rows = []
+    if not rows and normalized_kind == "dollar-volume":
+        return hot_symbol_summaries(requested_limit)
+    enriched = _enrich_hot_symbol_records(provider, rows)
+    payload = {
+        "ranking": {
+            "method": normalized_kind,
+            "universe": "sp500-on-demand",
+            "limit": requested_limit,
+            "refreshSeconds": 60,
+            "source": "clickhouse",
+        },
+        "symbols": [
+            {"rank": index, **record}
+            for index, record in enumerate(enriched[:requested_limit], start=1)
+        ],
+    }
+    return payload
 
 
 def build_hot_symbol_record(provider: MarketDataProvider, symbol: str) -> dict[str, Any]:
@@ -295,32 +394,199 @@ def build_hot_symbol_record(provider: MarketDataProvider, symbol: str) -> dict[s
     }
 
 
-def build_symbol_summary(symbol: str) -> dict[str, Any]:
+def sp500_universe_symbols() -> list[str]:
+    raw_path = os.getenv("SP500_UNIVERSE_REGISTRY_PATH")
+    registry_path = Path(raw_path) if raw_path else Path(__file__).resolve().parents[7] / "systems" / "market-data" / "config" / "sp500-universe.json"
+    try:
+        payload = json.loads(registry_path.read_text(encoding="utf-8"))
+    except Exception:
+        return configured_universe_symbols()
+    values = payload.get("symbols") if isinstance(payload, dict) else None
+    if not isinstance(values, list):
+        return configured_universe_symbols()
+    return normalize_symbol_list([value for value in values if isinstance(value, str)], max_items=None)
+
+
+def _replace_ranking_subscription(kind: str, symbols: list[Any]) -> None:
     provider = get_market_data_provider()
+    try:
+        RealtimeSubscriptionCohortService(provider.redis_provider.redis, auto_reconcile=False).replace_ranking_source(kind, [
+            symbol for symbol in symbols if isinstance(symbol, str)
+        ])
+    except Exception:
+        return
+
+
+def build_symbol_summary(
+    symbol: str,
+    provider: MarketDataProvider | None = None,
+    backfill_service: Any | None = None,
+    auto_backfill_missing: bool = False,
+) -> dict[str, Any]:
+    provider = provider or get_market_data_provider()
     symbol = normalize_market_symbol(symbol)
     metadata = _symbol_metadata(provider, symbol)
-    latest_price = _safe_latest_price(provider, symbol)
-    candles = _safe_recent_candles(provider, symbol, candle_count_for_24h("1m"))
-    if not candles:
-        candles = _safe_clickhouse_candles(provider, symbol, candle_count_for_24h("1m"))
-    last_candle = candles[-1] if candles else {}
-    last_price = _read_float(latest_price.get("price")) or _read_float(last_candle.get("close"))
+    price = _resolve_symbol_price(provider, symbol)
+    backfill = None
+    if price["lastPrice"] is None and auto_backfill_missing:
+        backfill = _request_latest_price_backfill(backfill_service, symbol)
+        if backfill:
+            price["priceStatus"] = "loading"
+            price["priceSource"] = "latest-backfill"
+
     change_percent = _change_percent_from_previous_close(
         provider,
         symbol,
-        last_price,
-        candles,
-        anchor_timestamp=latest_price.get("timestamp") or last_candle.get("timestamp"),
+        price["lastPrice"],
+        _price_change_candles(price),
+        anchor_timestamp=_price_change_anchor(price),
     )
 
-    return {
+    summary = {
         "symbol": symbol,
         "name": metadata.get("name") or symbol,
         "market": metadata.get("market") or metadata.get("exchange") or "US",
-        "lastPrice": last_price,
+        "lastPrice": price["lastPrice"],
         "changePercent": change_percent,
-        "volume": _read_float(last_candle.get("volume")),
+        "volume": _read_float((price.get("priceCandle") or {}).get("volume")) if isinstance(price.get("priceCandle"), dict) else None,
+        "priceSource": price.get("priceSource"),
+        "priceStatus": price.get("priceStatus"),
+        "priceUpdatedAt": price.get("priceTimestamp"),
     }
+    if backfill:
+        summary["latestPriceBackfill"] = backfill
+    return summary
+
+
+def _price_change_anchor(price: dict[str, Any]) -> Any:
+    if price.get("priceSource") == "clickhouse":
+        return None
+    candle = price.get("priceCandle")
+    if isinstance(candle, dict) and candle.get("interval") == "1D":
+        return None
+    return price.get("priceTimestamp")
+
+
+def _price_change_candles(price: dict[str, Any]) -> list[dict[str, Any]]:
+    if price.get("priceSource") == "clickhouse":
+        return []
+    candle = price.get("priceCandle")
+    return [candle] if isinstance(candle, dict) else []
+
+
+def _resolve_symbol_price(provider: MarketDataProvider, symbol: str) -> dict[str, Any]:
+    latest_price = _safe_latest_price(provider, symbol)
+    live_price = _read_float(latest_price.get("price"))
+    if live_price is not None:
+        return {
+            "lastPrice": live_price,
+            "priceSource": "live",
+            "priceStatus": "ready",
+            "priceTimestamp": latest_price.get("timestamp") or latest_price.get("eventTime"),
+            "priceCandle": None,
+        }
+
+    redis_candle = _safe_latest_closed_candle(provider, symbol)
+    redis_price = _read_float(redis_candle.get("close")) if redis_candle else None
+    if redis_price is not None:
+        return {
+            "lastPrice": redis_price,
+            "priceSource": "redis",
+            "priceStatus": "ready",
+            "priceTimestamp": redis_candle.get("timestamp"),
+            "priceCandle": redis_candle,
+        }
+
+    daily_candles = _safe_clickhouse_candles(provider, symbol, 1, interval="1D")
+    daily_candle = daily_candles[-1] if daily_candles else {}
+    daily_price = _read_float(daily_candle.get("close"))
+    if daily_price is not None:
+        _safe_write_latest_closed_candle_cache(provider, symbol, "1D", daily_candle)
+        return {
+            "lastPrice": daily_price,
+            "priceSource": "clickhouse",
+            "priceStatus": "ready",
+            "priceTimestamp": daily_candle.get("timestamp"),
+            "priceCandle": daily_candle,
+        }
+
+    return {
+        "lastPrice": None,
+        "priceSource": None,
+        "priceStatus": "missing",
+        "priceTimestamp": None,
+        "priceCandle": None,
+    }
+
+
+def _safe_latest_closed_candle(provider: MarketDataProvider, symbol: str) -> dict[str, Any] | None:
+    redis_provider = getattr(provider, "redis_provider", None)
+    redis_client = getattr(redis_provider, "redis", None)
+    if redis_client is None:
+        return None
+    keys = RedisKeyBuilder()
+    for interval in ("1m", "1D"):
+        try:
+            value = redis_client.get(keys.latest_closed_candle(symbol, interval))
+        except Exception:
+            value = None
+        if not value:
+            continue
+        try:
+            return json.loads(value)
+        except Exception:
+            continue
+    return None
+
+
+def _safe_write_latest_closed_candle_cache(provider: MarketDataProvider, symbol: str, interval: str, candle: dict[str, Any]) -> None:
+    redis_provider = getattr(provider, "redis_provider", None)
+    redis_client = getattr(redis_provider, "redis", None)
+    if redis_client is None or not isinstance(candle, dict) or not candle:
+        return
+    keys = RedisKeyBuilder()
+    cached = {
+        **candle,
+        "symbol": symbol,
+        "interval": interval,
+        "isClosed": candle.get("isClosed", True),
+    }
+    try:
+        redis_client.set(
+            keys.latest_closed_candle(symbol, interval),
+            json.dumps(cached, ensure_ascii=False, separators=(",", ":")),
+        )
+        redis_client.expire(keys.latest_closed_candle(symbol, interval), 86400)
+    except Exception:
+        return
+
+
+def _request_latest_price_backfill(backfill_service: Any | None, symbol: str) -> dict[str, Any] | None:
+    if backfill_service is None:
+        return None
+    start, end = _latest_daily_backfill_range()
+    try:
+        requested = backfill_service.request_backfill(symbol, "1D", start=start, end=end, mode="default", force=False)
+    except Exception:
+        return None
+    if not isinstance(requested, dict):
+        return None
+    return {
+        "requestId": requested.get("requestId"),
+        "status": requested.get("status"),
+        "deduplicated": requested.get("deduplicated"),
+        "sourceInterval": requested.get("sourceInterval") or requested.get("interval") or "1D",
+    }
+
+
+def _latest_daily_backfill_range() -> tuple[str, str]:
+    lookback_days = int(os.getenv("LATEST_PRICE_BACKFILL_1D_LOOKBACK_DAYS", "30"))
+    end = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    start = end - timedelta(days=max(1, lookback_days))
+    return (
+        start.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+        end.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+    )
 
 
 def _symbol_metadata(provider: MarketDataProvider, symbol: str) -> dict[str, Any]:

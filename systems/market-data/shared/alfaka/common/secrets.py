@@ -15,6 +15,21 @@ ALPACA_CREDENTIAL_SOURCES = {
     ALPACA_CREDENTIAL_SOURCE_LOCAL,
     ALPACA_CREDENTIAL_SOURCE_AWS,
 }
+ALPACA_KEY_ID_ENV_NAMES = ("APCA_API_KEY_ID", "ALPACA_API_KEY_ID")
+ALPACA_SECRET_KEY_ENV_NAMES = ("APCA_API_SECRET_KEY", "ALPACA_API_SECRET_KEY")
+ALPACA_KEY_ID_SECRET_FIELDS = (*ALPACA_KEY_ID_ENV_NAMES, "key_id", "key")
+ALPACA_SECRET_KEY_SECRET_FIELDS = (*ALPACA_SECRET_KEY_ENV_NAMES, "secret_key", "secret")
+PLACEHOLDER_VALUES = {
+    "",
+    "your_key_id",
+    "your_secret_key",
+    "your_alpaca_key_id",
+    "your_alpaca_secret_key",
+    "your_alpaca_key",
+    "your_alpaca_secret",
+    "YOUR_ALPACA_KEY_ID",
+    "YOUR_ALPACA_SECRET_KEY",
+}
 
 
 def resolve_alpaca_credential_source(environ=None):
@@ -38,9 +53,9 @@ def resolve_alpaca_credential_source(environ=None):
 
 def local_alpaca_credentials(environ=None):
     environ = environ or os.environ
-    local_key = environ.get("APCA_API_KEY_ID")
-    local_secret = environ.get("APCA_API_SECRET_KEY")
-    if local_key and local_secret and local_key != "your_key_id" and local_secret != "your_secret_key":
+    local_key = _first_config_value(environ, ALPACA_KEY_ID_ENV_NAMES)
+    local_secret = _first_config_value(environ, ALPACA_SECRET_KEY_ENV_NAMES)
+    if local_key and local_secret:
         return local_key, local_secret
     return None, None
 
@@ -71,9 +86,20 @@ def load_alpaca_credentials(source=None):
             raise RuntimeError("SecretString이 비어 있습니다.")
 
         secret_payload = json.loads(secret_text)
-        key = secret_payload.get("APCA_API_KEY_ID") or secret_payload.get("key")
-        secret = secret_payload.get("APCA_API_SECRET_KEY") or secret_payload.get("secret")
+        key = _first_config_value(secret_payload, ALPACA_KEY_ID_SECRET_FIELDS)
+        secret = _first_config_value(secret_payload, ALPACA_SECRET_KEY_SECRET_FIELDS)
         return key, secret
     except Exception as exc:
         print(f"AWS Secrets Manager에서 Alpaca 키를 읽지 못했습니다: {exc}", file=sys.stderr)
         return None, None
+
+
+def _first_config_value(source, names):
+    for name in names:
+        value = source.get(name)
+        if value is None:
+            continue
+        normalized = str(value).strip()
+        if normalized and normalized not in PLACEHOLDER_VALUES:
+            return normalized
+    return None

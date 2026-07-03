@@ -94,8 +94,11 @@ def runtime_config_warnings() -> list[str]:
     warnings = []
     if os.getenv("ALFAKA_REQUEST_CONFIG") not in {None, "", "systems/market-data/config/market-data-request.json"}:
         warnings.append("stale_request_config_path")
-    if os.getenv("ALPACA_UNIVERSE") not in {None, ""}:
-        warnings.append("preset_alpaca_universe_configured")
+    # Hybrid chart runtime intentionally keeps an S&P500 baseline universe for
+    # bars/updatedBars/dailyBars/statuses. It is only a warning when the
+    # baseline collection source is not the registry/universe contract.
+    if os.getenv("ALPACA_UNIVERSE") and os.getenv("ALPACA_COLLECTION_SYMBOL_SOURCE") not in {"registry", "universe"}:
+        warnings.append("alpaca_universe_without_registry_source")
     channels = {item.strip() for item in (os.getenv("ALPACA_CHANNELS") or "").split(",") if item.strip()}
     if channels and "dailyBars" not in channels:
         warnings.append("alpaca_channels_missing_dailyBars")

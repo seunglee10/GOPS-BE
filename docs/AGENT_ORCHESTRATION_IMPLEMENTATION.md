@@ -1,5 +1,10 @@
 # Agent Orchestration Implementation Summary
 
+> Historical implementation note.
+>
+> Market-data topic names in this file may be stale. Current chart-data rebuild
+> work uses `docs/CHART_DATA_REBUILD_PLAN.md` and the `market.layer.*` topics.
+
 작성일: 2026-06-29
 대상 브랜치: `demulage`
 주요 커밋:
@@ -36,7 +41,7 @@ flowchart LR
 
   Kafka["Kafka"]
   Redis["Redis"]
-  MarketTopics["market.layer.trades.v1<br/>market.layer.candles.live.v1<br/>market.layer.candles.closed.v1<br/>market.layer.events.v1"]
+  MarketTopics["market.layer.trades.v1<br/>market.layer.candles.live.v1<br/>market.layer.candles.closed.v1"]
   AgentTopics["agents.market-events.v1<br/>agents.analysis-results.v1<br/>agents.notification-decisions.v1"]
 
   Frontend --> Backend
@@ -178,7 +183,7 @@ sequenceDiagram
   participant BE as gops-backend WebSocket
   participant FE as gops-frontend
 
-  M->>K: market.layer trades/candles/events
+  M->>K: market.ticks/candles events
   K->>ED: consume market topics
   ED->>K: publish agents.market-events.v1
   AO->>K: publish agents.notification-decisions.v1

@@ -58,9 +58,9 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
-    command: ["redis-server", "--appendonly", "yes", "--save", "", "--stop-writes-on-bgsave-error", "no"]
+    command: ["redis-server", "--appendonly", "no", "--save", "", "--dir", "/tmp"]
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "test \"$$(redis-cli ping)\" = PONG"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -180,6 +180,9 @@ services:
       KAFKA_CLIENT_ID: "alfaka-alpaca-ingestor-sip"
       REDIS_URL: "redis://redis:6379/0"
       REDIS_KEY_PREFIX: "gops:market:on-demand:v1"
+      MARKET_TIMEZONE: "${MARKET_TIMEZONE:-America/New_York}"
+      MARKET_CLOSED_DATES: "${MARKET_CLOSED_DATES:-}"
+      MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS: "${MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS:-true}"
       AWS_REGION: "${AWS_REGION:-ap-northeast-2}"
       AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-ap-northeast-2}"
       AWS_EC2_METADATA_DISABLED: "${AWS_EC2_METADATA_DISABLED:-true}"
@@ -188,15 +191,17 @@ services:
       AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
       AWS_PROFILE: "${AWS_PROFILE:-default}"
       AWS_SDK_LOAD_CONFIG: "${AWS_SDK_LOAD_CONFIG:-1}"
-      ALPACA_CREDENTIAL_SOURCE: "aws-secrets-manager"
-      ALPACA_SECRET_NAME: "${ALPACA_SECRET_NAME:-dev/alpaca}"
+      APCA_API_KEY_ID: "${APCA_API_KEY_ID:-}"
+      APCA_API_SECRET_KEY: "${APCA_API_SECRET_KEY:-}"
+      ALPACA_CREDENTIAL_SOURCE: "${ALPACA_CREDENTIAL_SOURCE:-aws-secrets-manager}"
+      ALPACA_SECRET_NAME: "${ALPACA_SECRET_NAME:-}"
       ALFAKA_REQUEST_CONFIG: "systems/market-data/config/market-data-request.json"
       ALPACA_FEED_PROFILE: "sip"
-      ALPACA_UNIVERSE: ""
-      ALPACA_UNIVERSE_REGISTRY_PATH: ""
-      ALPACA_COLLECTION_SYMBOL_SOURCE: "universe"
+      ALPACA_UNIVERSE: "${ALPACA_UNIVERSE:-sp500}"
+      ALPACA_UNIVERSE_REGISTRY_PATH: "${ALPACA_UNIVERSE_REGISTRY_PATH:-systems/market-data/config/sp500-universe.json}"
+      ALPACA_COLLECTION_SYMBOL_SOURCE: "${ALPACA_COLLECTION_SYMBOL_SOURCE:-universe}"
       ALPACA_CHANNELS: "bars,updatedBars,dailyBars,statuses"
-      ALPACA_ACTIVE_CHANNELS: "trades"
+      ALPACA_ACTIVE_CHANNELS: "${ALPACA_ACTIVE_CHANNELS:-trades,quotes}"
       ALPACA_ACTIVE_TICK_SUBSCRIPTION: "true"
     command: ["python", "-u", "systems/market-data/pods/market-ingestor/market_stream.py"]
     restart: unless-stopped
@@ -224,6 +229,9 @@ services:
       KAFKA_CLIENT_ID: "alfaka-alpaca-ingestor-boats"
       REDIS_URL: "redis://redis:6379/0"
       REDIS_KEY_PREFIX: "gops:market:on-demand:v1"
+      MARKET_TIMEZONE: "${MARKET_TIMEZONE:-America/New_York}"
+      MARKET_CLOSED_DATES: "${MARKET_CLOSED_DATES:-}"
+      MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS: "${MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS:-true}"
       AWS_REGION: "${AWS_REGION:-ap-northeast-2}"
       AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-ap-northeast-2}"
       AWS_EC2_METADATA_DISABLED: "${AWS_EC2_METADATA_DISABLED:-true}"
@@ -232,15 +240,17 @@ services:
       AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
       AWS_PROFILE: "${AWS_PROFILE:-default}"
       AWS_SDK_LOAD_CONFIG: "${AWS_SDK_LOAD_CONFIG:-1}"
-      ALPACA_CREDENTIAL_SOURCE: "aws-secrets-manager"
-      ALPACA_SECRET_NAME: "${ALPACA_SECRET_NAME:-dev/alpaca}"
+      APCA_API_KEY_ID: "${APCA_API_KEY_ID:-}"
+      APCA_API_SECRET_KEY: "${APCA_API_SECRET_KEY:-}"
+      ALPACA_CREDENTIAL_SOURCE: "${ALPACA_CREDENTIAL_SOURCE:-aws-secrets-manager}"
+      ALPACA_SECRET_NAME: "${ALPACA_SECRET_NAME:-}"
       ALFAKA_REQUEST_CONFIG: "systems/market-data/config/market-data-request.json"
       ALPACA_FEED_PROFILE: "boats"
-      ALPACA_UNIVERSE: ""
-      ALPACA_UNIVERSE_REGISTRY_PATH: ""
-      ALPACA_COLLECTION_SYMBOL_SOURCE: "universe"
+      ALPACA_UNIVERSE: "${ALPACA_UNIVERSE:-sp500}"
+      ALPACA_UNIVERSE_REGISTRY_PATH: "${ALPACA_UNIVERSE_REGISTRY_PATH:-systems/market-data/config/sp500-universe.json}"
+      ALPACA_COLLECTION_SYMBOL_SOURCE: "${ALPACA_COLLECTION_SYMBOL_SOURCE:-universe}"
       ALPACA_CHANNELS: "bars,updatedBars,dailyBars,statuses"
-      ALPACA_ACTIVE_CHANNELS: "trades"
+      ALPACA_ACTIVE_CHANNELS: "${ALPACA_ACTIVE_CHANNELS:-trades,quotes}"
       ALPACA_ACTIVE_TICK_SUBSCRIPTION: "true"
     command: ["python", "-u", "systems/market-data/pods/market-ingestor/market_stream.py"]
     restart: unless-stopped
@@ -266,8 +276,8 @@ services:
       KAFKA_NEWS_TOPIC: "market.news.alpaca.v1"
       APCA_API_KEY_ID: "${APCA_API_KEY_ID:-}"
       APCA_API_SECRET_KEY: "${APCA_API_SECRET_KEY:-}"
-      ALPACA_CREDENTIAL_SOURCE: "${ALPACA_CREDENTIAL_SOURCE:-env}"
-      ALPACA_SECRET_NAME: "${ALPACA_SECRET_NAME:-dev/alpaca}"
+      ALPACA_CREDENTIAL_SOURCE: "${ALPACA_CREDENTIAL_SOURCE:-aws-secrets-manager}"
+      ALPACA_SECRET_NAME: "${ALPACA_SECRET_NAME:-}"
       ALPACA_SYMBOLS: "${ALPACA_SYMBOLS:-}"
       AWS_REGION: "${AWS_REGION:-ap-northeast-2}"
       AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-ap-northeast-2}"
@@ -332,6 +342,26 @@ services:
     networks:
       - app_net
       - streaming_net
+      - data_net
+
+  subscription-controller:
+    image: gops-market-processor
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-market-processor
+    container_name: alfaka-subscription-controller
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_KEY_PREFIX: "gops:market:on-demand:v1"
+      REDIS_URL: "redis://redis:6379/0"
+      SUBSCRIPTION_CONTROLLER_POLL_SECONDS: "${SUBSCRIPTION_CONTROLLER_POLL_SECONDS:-1}"
+      COMPONENT_HEALTH_TTL_SECONDS: "300"
+    command: ["python", "-u", "systems/market-data/pods/subscription-controller/main.py"]
+    restart: unless-stopped
+    networks:
+      - app_net
       - data_net
 
   s3-sink:
@@ -460,11 +490,13 @@ services:
       AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
       AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
       AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
-      ALPACA_CREDENTIAL_SOURCE: "aws-secrets-manager"
-      ALPACA_SECRET_NAME: "${ALPACA_SECRET_NAME:-dev/alpaca}"
+      APCA_API_KEY_ID: "${APCA_API_KEY_ID:-}"
+      APCA_API_SECRET_KEY: "${APCA_API_SECRET_KEY:-}"
+      ALPACA_CREDENTIAL_SOURCE: "${ALPACA_CREDENTIAL_SOURCE:-aws-secrets-manager}"
+      ALPACA_SECRET_NAME: "${ALPACA_SECRET_NAME:-}"
       ALFAKA_REQUEST_CONFIG: "systems/market-data/config/market-data-request.json"
-      ALPACA_UNIVERSE: ""
-      ALPACA_UNIVERSE_REGISTRY_PATH: ""
+      ALPACA_UNIVERSE: "${ALPACA_UNIVERSE:-sp500}"
+      ALPACA_UNIVERSE_REGISTRY_PATH: "${ALPACA_UNIVERSE_REGISTRY_PATH:-systems/market-data/config/sp500-universe.json}"
       SYMBOL_REGISTRY_ASSET_CLASS: "us_equity"
       SYMBOL_REGISTRY_STATUS: "active"
       SYMBOL_REGISTRY_REDIS_CACHE: "true"
@@ -511,10 +543,11 @@ services:
       backfill-worker:
         condition: service_started
     environment:
+      REDIS_KEY_PREFIX: "gops:market:on-demand:v1"
       REDIS_URL: "redis://redis:6379/0"
       ALFAKA_REQUEST_CONFIG: "systems/market-data/config/market-data-request.json"
-      ALPACA_UNIVERSE: ""
-      ALPACA_UNIVERSE_REGISTRY_PATH: ""
+      ALPACA_UNIVERSE: "${ALPACA_UNIVERSE:-sp500}"
+      ALPACA_UNIVERSE_REGISTRY_PATH: "${ALPACA_UNIVERSE_REGISTRY_PATH:-systems/market-data/config/sp500-universe.json}"
       INITIAL_LOAD_SYMBOLS: "${INITIAL_LOAD_SYMBOLS:-}"
       INITIAL_LOAD_INTERVALS: "${INITIAL_LOAD_INTERVALS:-1D}"
       INITIAL_LOAD_START: "${INITIAL_LOAD_START:-}"
@@ -676,8 +709,9 @@ services:
       REDIS_KEY_PREFIX: "gops:market:on-demand:v1"
       ALFAKA_REQUEST_CONFIG: "systems/market-data/config/market-data-request.json"
       ALPACA_FEED_PROFILES: "sip,boats"
-      ALPACA_UNIVERSE: ""
-      ALPACA_UNIVERSE_REGISTRY_PATH: ""
+      ALPACA_UNIVERSE: "${ALPACA_UNIVERSE:-sp500}"
+      ALPACA_UNIVERSE_REGISTRY_PATH: "${ALPACA_UNIVERSE_REGISTRY_PATH:-systems/market-data/config/sp500-universe.json}"
+      ALPACA_COLLECTION_SYMBOL_SOURCE: "${ALPACA_COLLECTION_SYMBOL_SOURCE:-universe}"
       BACKFILL_EXECUTION_MODE: "queue"
       BACKFILL_STATUS_TTL_SECONDS: "604800"
       BACKFILL_QUEUE_BACKEND: "streams"
@@ -700,8 +734,9 @@ services:
       MARKET_TIMEZONE: "America/New_York"
       MARKET_OPEN_TIME: "09:30"
       MARKET_CLOSE_TIME: "16:00"
-      MARKET_CLOSED_DATES: ""
-      MARKET_EARLY_CLOSES: ""
+      MARKET_CLOSED_DATES: "${MARKET_CLOSED_DATES:-}"
+      MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS: "${MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS:-true}"
+      MARKET_EARLY_CLOSES: "${MARKET_EARLY_CLOSES:-}"
       AWS_REGION: "${AWS_REGION:-ap-northeast-2}"
       AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-ap-northeast-2}"
       AWS_EC2_METADATA_DISABLED: "${AWS_EC2_METADATA_DISABLED:-true}"
@@ -710,8 +745,10 @@ services:
       AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
       AWS_PROFILE: "${AWS_PROFILE:-default}"
       AWS_SDK_LOAD_CONFIG: "${AWS_SDK_LOAD_CONFIG:-1}"
-      ALPACA_CREDENTIAL_SOURCE: "aws-secrets-manager"
-      ALPACA_SECRET_NAME: "${ALPACA_SECRET_NAME:-dev/alpaca}"
+      APCA_API_KEY_ID: "${APCA_API_KEY_ID:-}"
+      APCA_API_SECRET_KEY: "${APCA_API_SECRET_KEY:-}"
+      ALPACA_CREDENTIAL_SOURCE: "${ALPACA_CREDENTIAL_SOURCE:-aws-secrets-manager}"
+      ALPACA_SECRET_NAME: "${ALPACA_SECRET_NAME:-}"
       S3_ENDPOINT_URL: "${DOCKER_S3_ENDPOINT_URL:-}"
       S3_BUCKET: "${S3_BUCKET:-gops-market-data-<aws-account-id>-ap-northeast-2-an}"
       S3_RAW_PREFIX: "${S3_RAW_PREFIX:-market-data/rebuild-20260702-lazy-v1/raw/alpaca}"
@@ -858,6 +895,7 @@ services:
       clickhouse:
         condition: service_healthy
     environment:
+      REDIS_KEY_PREFIX: "gops:market:on-demand:v1"
       REDIS_URL: "redis://redis:6379/0"
       CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
       CLICKHOUSE_DATABASE: "market_data"
@@ -887,11 +925,12 @@ services:
       MARKET_TIMEZONE: "America/New_York"
       MARKET_OPEN_TIME: "09:30"
       MARKET_CLOSE_TIME: "16:00"
-      MARKET_CLOSED_DATES: ""
-      MARKET_EARLY_CLOSES: ""
+      MARKET_CLOSED_DATES: "${MARKET_CLOSED_DATES:-}"
+      MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS: "${MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS:-true}"
+      MARKET_EARLY_CLOSES: "${MARKET_EARLY_CLOSES:-}"
       ALFAKA_REQUEST_CONFIG: "systems/market-data/config/market-data-request.json"
-      ALPACA_UNIVERSE: ""
-      ALPACA_UNIVERSE_REGISTRY_PATH: ""
+      ALPACA_UNIVERSE: "${ALPACA_UNIVERSE:-sp500}"
+      ALPACA_UNIVERSE_REGISTRY_PATH: "${ALPACA_UNIVERSE_REGISTRY_PATH:-systems/market-data/config/sp500-universe.json}"
       AWS_REGION: "${AWS_REGION:-ap-northeast-2}"
       AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-ap-northeast-2}"
       AWS_EC2_METADATA_DISABLED: "${AWS_EC2_METADATA_DISABLED:-true}"
@@ -900,8 +939,10 @@ services:
       AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
       AWS_PROFILE: "${AWS_PROFILE:-default}"
       AWS_SDK_LOAD_CONFIG: "${AWS_SDK_LOAD_CONFIG:-1}"
-      ALPACA_CREDENTIAL_SOURCE: "aws-secrets-manager"
-      ALPACA_SECRET_NAME: "${ALPACA_SECRET_NAME:-dev/alpaca}"
+      APCA_API_KEY_ID: "${APCA_API_KEY_ID:-}"
+      APCA_API_SECRET_KEY: "${APCA_API_SECRET_KEY:-}"
+      ALPACA_CREDENTIAL_SOURCE: "${ALPACA_CREDENTIAL_SOURCE:-aws-secrets-manager}"
+      ALPACA_SECRET_NAME: "${ALPACA_SECRET_NAME:-}"
       S3_ENDPOINT_URL: "${DOCKER_S3_ENDPOINT_URL:-}"
       S3_BUCKET: "${S3_BUCKET:-gops-market-data-<aws-account-id>-ap-northeast-2-an}"
       S3_RAW_PREFIX: "${S3_RAW_PREFIX:-market-data/rebuild-20260702-lazy-v1/raw/alpaca}"

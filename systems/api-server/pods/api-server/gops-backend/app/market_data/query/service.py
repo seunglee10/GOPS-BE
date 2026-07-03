@@ -72,6 +72,11 @@ class MarketDataQueryService:
             "symbols": self.provider.search_symbols(query, limit),
         }
 
+    def symbol_page(self, query: str, page: int, page_size: int) -> dict[str, Any]:
+        from app.services.alfaka_market_data import market_symbol_page
+
+        return market_symbol_page(query, page, page_size, backfill_service=self.backfill_service)
+
     def symbol_detail(self, symbol: str) -> dict[str, Any]:
         try:
             return self.provider.symbol_detail(normalize_market_symbol(symbol))

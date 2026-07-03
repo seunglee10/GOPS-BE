@@ -18,13 +18,14 @@ from alfaka.common.market_messages import CONTROL_MESSAGE_TYPES, build_raw_envel
 from alfaka.common.redis_keys import RedisKeyBuilder
 from alfaka.common.runtime_health import write_component_health
 from alfaka.common.runtime_config import validate_required_values
-from alfaka.common.secrets import load_alpaca_credentials
+from alfaka.common.secrets import load_alpaca_credentials, resolve_alpaca_credential_source
 
 
 async def main():
     load_dotenv()
 
-    alpaca_key, alpaca_secret = load_alpaca_credentials()
+    credential_source = resolve_alpaca_credential_source()
+    alpaca_key, alpaca_secret = load_alpaca_credentials(credential_source)
     feed_profile = resolve_feed_profile()
     alpaca_feed = feed_profile.feed
     symbols, channels = load_symbols_and_channels()
@@ -35,6 +36,7 @@ async def main():
     active_poll_seconds = parse_positive_float(os.getenv("ALPACA_ACTIVE_POLL_SECONDS", "5"), default=5.0)
     enforce_session_window = parse_bool(os.getenv("ALPACA_ENFORCE_FEED_SESSION_WINDOW", "true"), default=True)
     session_idle_poll_seconds = parse_positive_float(os.getenv("ALPACA_SESSION_IDLE_POLL_SECONDS", "60"), default=60.0)
+    raw_log_every_n = parse_positive_int(os.getenv("ALPACA_RAW_LOG_EVERY_N", "0"), default=0)
 
     kafka_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
     kafka_client_id = os.getenv("KAFKA_CLIENT_ID", "alfaka-alpaca-ingestor")
@@ -45,7 +47,12 @@ async def main():
     })
 
     if not alpaca_key or not alpaca_secret:
-        print("Alpaca 키가 없습니다. .env 직접 키 또는 AWS Secrets Manager 설정을 넣어주세요.", file=sys.stderr)
+        print(
+            "Alpaca credential error: category=missing_env "
+            f"credentialSource={credential_source} keyId={presence(alpaca_key)} secretKey={presence(alpaca_secret)}",
+            file=sys.stderr,
+            flush=True,
+        )
         sys.exit(1)
 
     alpaca_url = feed_profile.websocket_url
@@ -66,8 +73,14 @@ async def main():
     )
 
     print(f"Alpaca profile: {feed_profile.profile_id} feed={alpaca_feed} sessions={','.join(feed_profile.sessions)}", flush=True)
+    print(
+        "Alpaca credential: "
+        f"source={credential_source} keyId={presence(alpaca_key)} secretKey={presence(alpaca_secret)} "
+        f"secretName={presence(os.getenv('ALPACA_SECRET_NAME'))}",
+        flush=True,
+    )
     print(f"Alpaca 연결: {alpaca_url}", flush=True)
-    print(f"요청 종목: {symbols}", flush=True)
+    print(f"요청 종목: count={len(symbols)} sample={symbols[:8]}", flush=True)
     print(f"요청 채널: {channels}", flush=True)
     print(f"활성 차트 tick 채널: {active_channels or 'disabled'}", flush=True)
     print(f"Kafka Input Topic Prefix: {raw_topic_prefix}", flush=True)
@@ -106,6 +119,7 @@ async def main():
                 active_poll_seconds=active_poll_seconds,
                 raw_topic_prefix=raw_topic_prefix,
                 enforce_session_window=enforce_session_window,
+                raw_log_every_n=raw_log_every_n,
             )
             delay = reconnect_backoff
         except asyncio.CancelledError:
@@ -138,10 +152,12 @@ async def run_stream_session(
     active_poll_seconds,
     raw_topic_prefix,
     enforce_session_window,
+    raw_log_every_n,
 ):
     active_subscribed_symbols = {channel: set() for channel in active_channels}
     last_active_sync = 0.0
     authenticated = False
+    raw_event_count = 0
     async with websockets.connect(alpaca_url, ping_interval=20, ping_timeout=20) as ws:
         await ws.send(json.dumps({"action": "auth", "key": alpaca_key, "secret": alpaca_secret}))
 
@@ -193,7 +209,7 @@ async def run_stream_session(
                             channels=list(subscribe_request.keys()),
                         )
                         if has_subscription_payload(subscribe_request):
-                            print("구독 요청:", subscribe_request, flush=True)
+                            print("구독 요청:", summarize_subscription_request(subscribe_request), flush=True)
                             await ws.send(json.dumps(subscribe_request))
                         else:
                             print("초기 구독 요청 생략: 요청 종목 없음", flush=True)
@@ -214,18 +230,25 @@ async def run_stream_session(
                         alpacaFeed=alpaca_feed,
                         subscription=message,
                     )
-                    print("현재 구독:", message, flush=True)
+                    print("현재 구독:", summarize_subscription_request(message), flush=True)
                     continue
 
                 if message_type == "error":
+                    category = classify_alpaca_error(message)
                     write_ingestor_health(
                         redis_client,
                         feed_profile,
                         status="error",
                         alpacaFeed=alpaca_feed,
                         alpacaError=message,
+                        errorCategory=category,
                     )
-                    print("Alpaca 에러:", message, file=sys.stderr, flush=True)
+                    print(
+                        "Alpaca 에러: "
+                        f"category={category} code={message.get('code')} msg={message.get('msg')}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
                     continue
 
                 if message_type in CONTROL_MESSAGE_TYPES:
@@ -240,6 +263,7 @@ async def run_stream_session(
                 kafka_topic = raw_topic_name(raw_topic_prefix, message_type)
                 kafka_key = envelope["symbol"]
                 producer.send(kafka_topic, key=kafka_key, value=envelope)
+                raw_event_count += 1
                 write_ingestor_health(
                     redis_client,
                     feed_profile,
@@ -251,7 +275,12 @@ async def run_stream_session(
                     lastMarketSession=envelope.get("marketSession"),
                     lastSourceEventId=envelope.get("sourceEventId"),
                 )
-                print(f"Kafka Raw 전송: topic={kafka_topic}, key={kafka_key}, channel={envelope['channel']}", flush=True)
+                if raw_log_every_n and raw_event_count % raw_log_every_n == 0:
+                    print(
+                        f"Kafka Raw 전송: count={raw_event_count}, topic={kafka_topic}, "
+                        f"key={kafka_key}, channel={envelope['channel']}",
+                        flush=True,
+                    )
 
             if authenticated and time.monotonic() - last_active_sync >= active_poll_seconds:
                 active_subscribed_symbols = await sync_active_chart_subscriptions(
@@ -300,11 +329,11 @@ async def sync_active_chart_subscriptions(ws, redis_client, channels, subscribed
             unsubscribe_request[channel] = unsubscribe_symbols
 
     if len(subscribe_request) > 1:
-        print(f"활성 차트 구독 추가: {subscribe_request}", flush=True)
+        print(f"활성 차트 구독 추가: {summarize_subscription_request(subscribe_request)}", flush=True)
         await ws.send(json.dumps(subscribe_request))
 
     if len(unsubscribe_request) > 1:
-        print(f"활성 차트 구독 해제: {unsubscribe_request}", flush=True)
+        print(f"활성 차트 구독 해제: {summarize_subscription_request(unsubscribe_request)}", flush=True)
         await ws.send(json.dumps(unsubscribe_request))
 
     return next_subscribed
@@ -391,6 +420,36 @@ def parse_bool(value, default):
     if value is None or value == "":
         return default
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def presence(value):
+    return "SET" if value else "EMPTY"
+
+
+def classify_alpaca_error(message):
+    code = str(message.get("code") or "")
+    msg = str(message.get("msg") or "").lower()
+    if code == "406" or "connection limit" in msg:
+        return "connection_limit"
+    if "auth" in msg and ("failed" in msg or "unauthorized" in msg or "invalid" in msg):
+        return "auth_failed"
+    if "auth timeout" in msg:
+        return "auth_timeout"
+    if "disconnected" in msg or "close" in msg:
+        return "websocket_disconnected"
+    return "alpaca_error"
+
+
+def summarize_subscription_request(request):
+    summary = {"action": request.get("action")}
+    for channel, values in request.items():
+        if channel == "action":
+            continue
+        if isinstance(values, list):
+            summary[channel] = {"count": len(values), "sample": values[:8]}
+        else:
+            summary[channel] = values
+    return summary
 
 
 def write_ingestor_health(redis_client, feed_profile, **fields):

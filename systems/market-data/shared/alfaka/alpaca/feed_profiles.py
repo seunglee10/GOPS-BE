@@ -14,6 +14,20 @@ REGULAR_OPEN = time(9, 30)
 REGULAR_CLOSE = time(16, 0)
 PRE_MARKET_OPEN = time(4, 0)
 AFTER_MARKET_CLOSE = time(20, 0)
+DEFAULT_US_EQUITY_CLOSED_DATES = frozenset({
+    # 2026 NYSE/Nasdaq full-day holidays. Keep MARKET_CLOSED_DATES additive for
+    # emergency closures or future schedule overrides.
+    "2026-01-01",
+    "2026-01-19",
+    "2026-02-16",
+    "2026-04-03",
+    "2026-05-25",
+    "2026-06-19",
+    "2026-07-03",
+    "2026-09-07",
+    "2026-11-26",
+    "2026-12-25",
+})
 
 
 @dataclass(frozen=True)
@@ -99,10 +113,13 @@ def market_session_for_timestamp(timestamp: str | None, timezone=MARKET_TIMEZONE
     return market_session_for_datetime(parsed, timezone=timezone)
 
 
-def market_session_for_datetime(value: datetime, timezone=MARKET_TIMEZONE) -> str:
+def market_session_for_datetime(value: datetime, timezone=MARKET_TIMEZONE, closed_dates=None) -> str:
     if value.tzinfo is None:
         value = value.replace(tzinfo=datetime_timezone.utc)
     local = value.astimezone(timezone)
+    closed_dates = configured_closed_dates() if closed_dates is None else closed_dates
+    if local.date().isoformat() in closed_dates:
+        return "closed"
     weekday = local.weekday()
     local_time = local.time()
     if weekday >= 5:
@@ -120,6 +137,15 @@ def market_session_for_datetime(value: datetime, timezone=MARKET_TIMEZONE) -> st
 
 def market_session_for_now(now: datetime | None = None, timezone=MARKET_TIMEZONE) -> str:
     return market_session_for_datetime(now or datetime.now(datetime_timezone.utc), timezone=timezone)
+
+
+def configured_closed_dates(environ=None) -> frozenset[str]:
+    environ = environ or os.environ
+    configured = frozenset(parse_csv(environ.get("MARKET_CLOSED_DATES", "")))
+    include_defaults = str(environ.get("MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS", "true")).strip().lower()
+    if include_defaults in {"0", "false", "no", "off"}:
+        return configured
+    return DEFAULT_US_EQUITY_CLOSED_DATES | configured
 
 
 def feed_profile_active_for_session(feed_profile: FeedProfile, session: str | None) -> bool:

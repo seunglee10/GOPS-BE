@@ -20,7 +20,7 @@ def main():
 
     kafka_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
     topic = os.getenv("KAFKA_NEWS_TOPIC", "market.news.alpaca.v1")
-    symbols = parse_csv(os.getenv("ALPACA_SYMBOLS", "AAPL,NVDA,MSFT,TSLA,AMZN,META,GOOGL"))
+    symbols = parse_csv(os.getenv("ALPACA_SYMBOLS", ""))
     limit = int(os.getenv("ALPACA_NEWS_LIMIT", "50"))
     poll_seconds = float(os.getenv("ALPACA_NEWS_POLL_SECONDS", "300"))
     include_content = os.getenv("ALPACA_NEWS_INCLUDE_CONTENT", "false").lower() in {"1", "true", "yes"}

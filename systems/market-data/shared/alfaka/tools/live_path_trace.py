@@ -7,6 +7,12 @@ from datetime import datetime, timezone
 
 import requests
 
+from alfaka.alpaca.feed_profiles import (
+    configured_closed_dates,
+    configured_feed_profiles,
+    feed_profile_active_for_session,
+    market_session_for_datetime,
+)
 from alfaka.common.env import load_dotenv, parse_csv
 from alfaka.common.redis_keys import RedisKeyBuilder
 
@@ -74,6 +80,7 @@ def collect_trace(
     raw_topics = expected_raw_topics(raw_prefix)
     processed_topics = expected_processed_topics()
     checks = []
+    checks.append(check_market_session())
     checks.append(check_api(api_base_url, symbol, interval, timeout_seconds))
     checks.append(check_redis(redis_url, symbol, interval, require_live))
     checks.append(check_kafka(kafka_bootstrap_servers, processor_group_id, raw_topics, processed_topics))
@@ -90,9 +97,65 @@ def collect_trace(
             "kafkaBootstrapServers": kafka_bootstrap_servers,
             "processorGroupId": processor_group_id,
             "rawTopicPrefix": raw_prefix,
+            "noDummyData": True,
         },
         "checks": checks,
     }
+
+
+def check_market_session():
+    try:
+        now = datetime.now(timezone.utc)
+        session = market_session_for_datetime(now)
+        profiles = configured_feed_profiles()
+        recommended_feed = recommended_realtime_feed_for_session(session)
+        active_profiles = [
+            profile.profile_id
+            for profile in profiles
+            if feed_profile_active_for_session(profile, session)
+        ]
+        closed_dates = sorted(configured_closed_dates())
+        if session == "closed":
+            status = "warn"
+            note = "market session is closed; a live feed can authenticate but may not receive market payloads"
+        elif active_profiles:
+            status = "ok"
+            note = "at least one configured feed profile is active for the current session"
+        else:
+            status = "warn"
+            note = "no configured feed profile is active for the current session"
+        return trace_check(
+            "market-session",
+            status,
+            utcNow=now.isoformat(timespec="seconds").replace("+00:00", "Z"),
+            session=session,
+            recommendedFeed=recommended_feed,
+            recommendedLocalIngestorService=local_ingestor_service_for_feed(recommended_feed),
+            payloadExpected=session != "closed" and bool(recommended_feed),
+            configuredFeedProfiles=[profile.profile_id for profile in profiles],
+            activeFeedProfiles=active_profiles,
+            configuredClosedDates=closed_dates,
+            note=note,
+        )
+    except Exception as exc:
+        return trace_check("market-session", "fail", error=str(exc))
+
+
+def recommended_realtime_feed_for_session(session):
+    normalized = str(session or "").strip().lower()
+    if normalized in {"pre", "regular", "after"}:
+        return "sip"
+    if normalized == "overnight":
+        return "boats"
+    return None
+
+
+def local_ingestor_service_for_feed(feed):
+    if feed == "sip":
+        return "alpaca-ingestor"
+    if feed == "boats":
+        return "alpaca-ingestor-boats"
+    return None
 
 
 def check_api(api_base_url, symbol, interval, timeout_seconds):
@@ -103,10 +166,17 @@ def check_api(api_base_url, symbol, interval, timeout_seconds):
             params={"symbol": symbol, "interval": interval, "limit": 20},
             timeout=timeout_seconds,
         )
+        symbols = requests.get(
+            f"{api_base_url}/api/market/symbols",
+            params={"page": 1, "pageSize": 5, "q": ""},
+            timeout=timeout_seconds,
+        )
         health_ok = health.ok
         candles_ok = candles.ok
+        symbols_ok = symbols.ok
         payload = candles.json() if candles_ok else {}
-        status = "ok" if health_ok and candles_ok and payload.get("candles") else "warn"
+        symbols_payload = symbols.json() if symbols_ok else {}
+        status = "ok" if health_ok and candles_ok and symbols_ok and payload.get("candles") else "warn"
         return trace_check(
             "api",
             status,
@@ -116,6 +186,10 @@ def check_api(api_base_url, symbol, interval, timeout_seconds):
             returnedCount=payload.get("returnedCount"),
             sourceInterval=payload.get("sourceInterval"),
             newestTimestamp=payload.get("newestTimestamp"),
+            symbolsStatus=symbols.status_code,
+            symbolsSource=symbols_payload.get("source"),
+            symbolsTotal=symbols_payload.get("total"),
+            symbolsSample=[item.get("symbol") for item in symbols_payload.get("symbols", [])],
         )
     except Exception as exc:
         return trace_check("api", "fail", error=str(exc))
@@ -131,11 +205,19 @@ def check_redis(redis_url, symbol, interval, require_live):
         live_key = keys.live_candle(symbol, interval)
         latest_key = keys.latest_candle(symbol, interval)
         series_key = keys.recent_candles(symbol, interval)
+        subscription_key = keys.subscription_symbols()
+        subscription_symbol_key = keys.subscription_symbol(symbol)
+        active_symbols_key = keys.active_symbols()
+        active_chart_source_key = keys.subscription_source_active_chart(symbol)
         processor_health_key = keys.component_health("market-processor")
         price = client.hgetall(price_key) if client.exists(price_key) else {}
         live = client.get(live_key)
         latest = client.get(latest_key)
         series_count = client.zcard(series_key)
+        subscription_symbols = sorted(client.smembers(subscription_key) or [])
+        subscription_record = client.hgetall(subscription_symbol_key) if client.exists(subscription_symbol_key) else {}
+        active_symbols = sorted(client.smembers(active_symbols_key) or [])
+        active_chart_source_members = sorted(client.smembers(active_chart_source_key) or [])
         processor_health = parse_json_value(client.get(processor_health_key))
         has_runtime_evidence = bool(price or live or processor_health)
         if require_live and not live:
@@ -155,6 +237,19 @@ def check_redis(redis_url, symbol, interval, require_live):
             latestCandlePresent=bool(latest),
             recentSeriesKey=series_key,
             recentSeriesCount=series_count,
+            subscriptionSymbolsKey=subscription_key,
+            subscriptionSymbolCount=len(subscription_symbols),
+            subscriptionSymbolSample=subscription_symbols[:10],
+            symbolSubscribed=symbol in subscription_symbols,
+            subscriptionSymbolKey=subscription_symbol_key,
+            subscriptionLayers=subscription_record.get("layers"),
+            subscriptionSources=subscription_record.get("sources"),
+            activeSymbolsKey=active_symbols_key,
+            activeSymbolCount=len(active_symbols),
+            activeSymbolSample=active_symbols[:10],
+            activeChartSourceKey=active_chart_source_key,
+            activeChartSourceCount=len(active_chart_source_members),
+            activeChartSessionCount=subscription_record.get("activeChartSessionCount"),
             processorHealthKey=processor_health_key,
             processorHeartbeatPresent=bool(processor_health),
             processorUpdatedAt=(processor_health or {}).get("updatedAt"),

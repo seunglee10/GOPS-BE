@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
+import uuid
 
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -20,7 +21,8 @@ class WebSocketSessionManager:
         self.queue_size = parse_int(os.getenv("REALTIME_CLIENT_QUEUE_SIZE"), 128)
         self.heartbeat_seconds = parse_int(os.getenv("REALTIME_HEARTBEAT_SECONDS"), 15)
 
-    async def serve_chart(self, websocket: WebSocket, symbol: str, interval: str, cursor: str | None = None) -> None:
+    async def serve_chart(self, websocket: WebSocket, symbol: str, interval: str, cursor: str | None = None, user_id: str = "anonymous") -> None:
+        session_id = uuid.uuid4().hex
         session = StreamSession(symbol=symbol, interval=interval, queue_size=self.queue_size)
         await websocket.accept()
         await self.hub.subscribe(session)
@@ -28,7 +30,10 @@ class WebSocketSessionManager:
         try:
             await self._send_gap_fill(websocket, symbol, interval, cursor)
             while True:
-                self.active_symbols.refresh(symbol)
+                try:
+                    self.active_symbols.refresh(user_id, session_id, symbol)
+                except TypeError:
+                    self.active_symbols.refresh(symbol)
                 try:
                     event = await asyncio.wait_for(session.queue.get(), timeout=1.0)
                     await websocket.send_json(event)
@@ -43,6 +48,9 @@ class WebSocketSessionManager:
         except WebSocketDisconnect:
             return
         finally:
+            close = getattr(self.active_symbols, "close", None)
+            if callable(close):
+                close(user_id, session_id)
             await self.hub.unsubscribe(session)
 
     async def _send_gap_fill(self, websocket: WebSocket, symbol: str, interval: str, cursor: str | None) -> None:

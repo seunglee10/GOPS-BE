@@ -28,7 +28,12 @@ from alfaka.alpaca.subscription import (
 )
 from alfaka.alpaca.feed_profiles import feed_profile_active_for_session, market_session_for_timestamp, resolve_feed_profile
 from alfaka.alpaca.trade_tiers import resolve_trade_subscription_plan
-from alfaka.alpaca.websocket_collector import read_realtime_subscription_symbols_by_channel, read_trade_subscription_symbols
+from alfaka.alpaca.websocket_collector import (
+    classify_alpaca_error,
+    read_realtime_subscription_symbols_by_channel,
+    read_trade_subscription_symbols,
+    summarize_subscription_request,
+)
 from alfaka.alpaca.assets import asset_to_symbol_metadata
 from alfaka.alpaca.news import build_news_events
 from alfaka.common.kafka_io import create_json_consumer
@@ -73,6 +78,7 @@ from alfaka.streaming.transforms import (
 from alfaka.tools import live_path_trace
 from alfaka.tools.canonical_candle_audit import canonical_candle_audit_query
 from app.market_data.realtime.active_symbols import ActiveSymbolManager
+from alfaka.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
 
 
 class FakeRedisProvider:
@@ -276,6 +282,7 @@ class MemoryRedis:
         self.zsets = {}
         self.sets = {}
         self.published = []
+        self.expirations = {}
 
     def set(self, key, value, nx=False, ex=None):
         if nx and key in self.values:
@@ -484,6 +491,7 @@ class MemoryRedis:
         return set(self.sets.get(key, set()))
 
     def expire(self, key, seconds):
+        self.expirations[key] = seconds
         return True
 
     def publish(self, channel, value):
@@ -758,6 +766,13 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(market_session_for_timestamp("2026-06-29T21:00:00.000Z"), "after")
         self.assertEqual(market_session_for_timestamp("2026-06-30T02:00:00.000Z"), "overnight")
         self.assertEqual(market_session_for_timestamp("2026-06-28T14:00:00.000Z"), "closed")
+        self.assertEqual(market_session_for_timestamp("2026-07-03T08:30:00.000Z"), "closed")
+        with mock.patch.dict(os.environ, {
+            "MARKET_CLOSED_DATES": "2026-07-06",
+            "MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS": "false",
+        }):
+            self.assertEqual(market_session_for_timestamp("2026-07-03T08:30:00.000Z"), "pre")
+            self.assertEqual(market_session_for_timestamp("2026-07-06T14:00:00.000Z"), "closed")
 
     def test_active_trade_subscription_waits_for_authenticated(self):
         import asyncio
@@ -945,6 +960,58 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         boto_client.assert_not_called()
         self.assertEqual(resolve_alpaca_credential_source({"ALPACA_CREDENTIAL_SOURCE": "aws"}), "aws-secrets-manager")
 
+    def test_alpaca_local_env_supports_aliases_and_ignores_placeholders(self):
+        with mock.patch.dict(os.environ, {
+            "ALPACA_CREDENTIAL_SOURCE": "env",
+            "APCA_API_KEY_ID": "your_key_id",
+            "APCA_API_SECRET_KEY": "your_secret_key",
+            "ALPACA_API_KEY_ID": " alias-key ",
+            "ALPACA_API_SECRET_KEY": " alias-secret ",
+        }):
+            with mock.patch.object(sys.modules["boto3"], "client") as boto_client:
+                key, secret = load_alpaca_credentials()
+
+        self.assertEqual((key, secret), ("alias-key", "alias-secret"))
+        boto_client.assert_not_called()
+
+    def test_alpaca_ingestor_log_helpers_redact_bulk_subscription_and_classify_errors(self):
+        request = {
+            "action": "subscribe",
+            "bars": ["AAPL", "MSFT", "NVDA", "TSLA", "GOOGL", "META", "AMZN", "AMD", "AVGO"],
+            "trades": ["NVDA"],
+            "quotes": ["NVDA"],
+        }
+
+        summary = summarize_subscription_request(request)
+
+        self.assertEqual(summary["bars"]["count"], 9)
+        self.assertEqual(summary["bars"]["sample"], ["AAPL", "MSFT", "NVDA", "TSLA", "GOOGL", "META", "AMZN", "AMD"])
+        self.assertNotIn("AVGO", str(summary))
+        self.assertEqual(summary["trades"], {"count": 1, "sample": ["NVDA"]})
+        self.assertEqual(classify_alpaca_error({"code": 406, "msg": "connection limit exceeded"}), "connection_limit")
+        self.assertEqual(classify_alpaca_error({"msg": "auth timeout"}), "auth_timeout")
+        self.assertEqual(classify_alpaca_error({"msg": "auth failed"}), "auth_failed")
+
+    def test_alpaca_aws_secret_supports_canonical_and_legacy_field_names(self):
+        class FakeSecretsManager:
+            def get_secret_value(self, SecretId):
+                return {"SecretString": json.dumps({
+                    "key_id": "aws-key",
+                    "secret_key": "aws-secret",
+                })}
+
+        with mock.patch.dict(os.environ, {
+            "ALPACA_CREDENTIAL_SOURCE": "aws-secrets-manager",
+            "ALPACA_SECRET_NAME": "dev/alpaca",
+            "AWS_REGION": "ap-northeast-2",
+            "APCA_API_KEY_ID": "",
+            "APCA_API_SECRET_KEY": "",
+        }):
+            with mock.patch.object(sys.modules["boto3"], "client", return_value=FakeSecretsManager()):
+                key, secret = load_alpaca_credentials()
+
+        self.assertEqual((key, secret), ("aws-key", "aws-secret"))
+
     def test_component_health_round_trips_through_redis(self):
         redis_client = MemoryRedis()
         keys = RedisKeyBuilder()
@@ -1001,6 +1068,12 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(live_path_trace.overall_status([live_path_trace.trace_check("x", "ok")]), "ok")
         self.assertEqual(live_path_trace.overall_status([live_path_trace.trace_check("x", "fail")]), "fail")
         self.assertEqual(live_path_trace.redact_url("redis://user:pass@redis:6379/0"), "redis://***@redis:6379/0")
+        self.assertEqual(live_path_trace.recommended_realtime_feed_for_session("pre"), "sip")
+        self.assertEqual(live_path_trace.recommended_realtime_feed_for_session("regular"), "sip")
+        self.assertEqual(live_path_trace.recommended_realtime_feed_for_session("after"), "sip")
+        self.assertEqual(live_path_trace.recommended_realtime_feed_for_session("overnight"), "boats")
+        self.assertIsNone(live_path_trace.recommended_realtime_feed_for_session("closed"))
+        self.assertEqual(live_path_trace.local_ingestor_service_for_feed("boats"), "alpaca-ingestor-boats")
 
     def test_processor_smoke_processes_trade_to_topics_and_redis(self):
         producer = RecordingProducer()
@@ -4262,9 +4335,9 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             os.chdir(repo_root / "systems" / "api-server" / "pods" / "api-server" / "gops-backend")
             self.assertTrue(resolve_request_config_path().exists())
             config = load_request_config()
-            self.assertEqual(config["defaultUniverse"], "")
-            self.assertEqual(config["collectionSymbolSource"], "on-demand")
-            self.assertEqual(config["universeRegistryPath"], "")
+            self.assertEqual(config["defaultUniverse"], "sp500")
+            self.assertEqual(config["collectionSymbolSource"], "universe")
+            self.assertEqual(config["universeRegistryPath"], "sp500-universe.json")
         finally:
             os.chdir(previous_cwd)
             if previous_config is None:
@@ -4893,21 +4966,61 @@ class RealtimeChartSubscriptionContractTest(unittest.TestCase):
     def test_empty_collection_symbols_do_not_create_empty_alpaca_channel_payloads(self):
         self.assertEqual(build_subscription_request([], ["bars", "updatedBars"]), {"action": "subscribe"})
 
-    def test_active_chart_session_populates_ingestor_subscription_keys(self):
+    def test_active_chart_session_writes_user_state_until_controller_reconciles(self):
         redis_client = MemoryRedis()
         manager = ActiveSymbolManager(redis_client, ttl_seconds=90, refresh_seconds=1)
-        manager.refresh("aapl")
+        manager.refresh("user-a", "session-1", "aapl")
 
         keys = RedisKeyBuilder()
+        self.assertEqual(redis_client.smembers(keys.user_active_chart_sessions("user-a")), {"session-1"})
+        session = redis_client.hgetall(keys.user_active_chart_session("user-a", "session-1"))
+        self.assertEqual(session["symbol"], "AAPL")
+        self.assertEqual(redis_client.expirations[keys.user_active_chart_session("user-a", "session-1")], 90)
+        self.assertNotIn(keys.subscription_symbols(), redis_client.sets)
+
+        RealtimeSubscriptionCohortService(redis_client).reconcile()
         self.assertEqual(redis_client.smembers(keys.subscription_symbols()), {"AAPL"})
         record = redis_client.hgetall(keys.subscription_symbol("AAPL"))
         self.assertEqual(record["reason"], "active-chart-session")
         self.assertEqual(record["enabled"], "true")
+        self.assertEqual(record["source"], "subscription-controller")
         self.assertEqual(set(record["layers"].split(",")), {"trades", "quotes"})
 
         desired = read_realtime_subscription_symbols_by_channel(redis_client, ["trades", "quotes"])
         self.assertEqual(desired["trades"], {"AAPL"})
         self.assertEqual(desired["quotes"], {"AAPL"})
+
+    def test_multi_user_watchlists_aggregate_without_overwriting_each_other(self):
+        redis_client = MemoryRedis()
+        controller = RealtimeSubscriptionCohortService(redis_client)
+        keys = RedisKeyBuilder()
+
+        controller.replace_user_watchlist("user-a", ["NVDA", "AAPL"])
+        controller.replace_user_watchlist("user-b", ["TSLA"])
+
+        self.assertEqual(redis_client.smembers(keys.subscription_symbols()), {"NVDA", "AAPL", "TSLA"})
+        self.assertEqual(redis_client.hgetall(keys.subscription_symbol("NVDA"))["watchlistUserCount"], "1")
+
+        controller.replace_user_watchlist("user-b", ["MSFT"])
+
+        self.assertEqual(redis_client.smembers(keys.subscription_symbols()), {"NVDA", "AAPL", "MSFT"})
+        self.assertEqual(redis_client.hgetall(keys.subscription_symbol("NVDA"))["sources"], "watchlist")
+        self.assertNotIn(keys.subscription_symbol("TSLA"), redis_client.hashes)
+
+    def test_active_chart_close_preserves_watchlist_subscription_source(self):
+        redis_client = MemoryRedis()
+        controller = RealtimeSubscriptionCohortService(redis_client)
+        keys = RedisKeyBuilder()
+
+        controller.replace_user_watchlist("user-a", ["NVDA"])
+        controller.refresh_active_chart("user-a", "session-1", "NVDA", 90)
+        self.assertEqual(redis_client.hgetall(keys.subscription_symbol("NVDA"))["sources"], "active-chart,watchlist")
+
+        controller.remove_active_chart("user-a", "session-1")
+
+        record = redis_client.hgetall(keys.subscription_symbol("NVDA"))
+        self.assertEqual(record["sources"], "watchlist")
+        self.assertEqual(redis_client.smembers(keys.subscription_symbols()), {"NVDA"})
 
 
 if __name__ == "__main__":

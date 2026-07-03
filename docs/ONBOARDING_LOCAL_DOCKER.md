@@ -7,7 +7,8 @@ It is intentionally short and focuses on reproducing the local Docker runtime.
 
 - Docker Desktop is installed and running.
 - Python `3.12.x` is available.
-- AWS credentials with access to Secrets Manager and S3 are available.
+- AWS credentials with S3 access are available when using real AWS S3.
+- Alpaca API keys are available either as local `APCA_*` env values or in AWS Secrets Manager.
 - Ports `5173`, `8000`, `8123`, `9092`, `6379`, and `5433` are free.
 
 ## 2. Create `.env`
@@ -16,10 +17,11 @@ It is intentionally short and focuses on reproducing the local Docker runtime.
 cp .env.example .env
 ```
 
-For the default local Docker flow, GOPS uses real AWS S3 and AWS Secrets Manager.
+For local Alpaca smoke while Secrets Manager is disconnected, put Alpaca keys
+only in your uncommitted `.env` and use `ALPACA_CREDENTIAL_SOURCE=local-env`.
 Compose mounts the host `~/.aws` directory read-only into the API, backfill,
-and optional Alpaca live-ingestion services, so a working local AWS profile is
-enough in most cases. Keep these values aligned:
+and optional Alpaca live-ingestion services for S3/AWS-contract runs. Keep these
+values aligned:
 
 ```text
 AWS_REGION=ap-northeast-2
@@ -29,13 +31,18 @@ AWS_ACCESS_KEY_ID=
 AWS_SECRET_ACCESS_KEY=
 AWS_SESSION_TOKEN=
 
-ALPACA_SECRET_NAME=dev/alpaca
+APCA_API_KEY_ID=
+APCA_API_SECRET_KEY=
+ALPACA_CREDENTIAL_SOURCE=local-env
+ALPACA_SECRET_NAME=
 S3_BUCKET=gops-market-data-<aws-account-id>-ap-northeast-2-an
 S3_ENDPOINT_URL=
 DOCKER_S3_ENDPOINT_URL=
 ```
 
-`dev/alpaca` must be a JSON secret:
+For AWS/EKS or an AWS-contract local run, keep `APCA_*` empty, set
+`ALPACA_CREDENTIAL_SOURCE=aws-secrets-manager`, and set
+`ALPACA_SECRET_NAME=dev/alpaca`. `dev/alpaca` must be a JSON secret:
 
 ```json
 {"APCA_API_KEY_ID":"...","APCA_API_SECRET_KEY":"..."}

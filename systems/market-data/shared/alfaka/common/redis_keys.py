@@ -60,6 +60,40 @@ class RedisKeyBuilder:
     def active_symbol(self, symbol):
         return self.key(f"active:charts:{symbol}")
 
+    def subscription_users(self, source=None):
+        suffix = f":{source}" if source else ""
+        return self.key(f"subscription:users{suffix}")
+
+    def user_watchlist_symbols(self, user_id):
+        return self.key(f"user:{user_id}:watchlist:symbols")
+
+    def user_portfolio_symbols(self, user_id):
+        return self.key(f"user:{user_id}:portfolio:symbols")
+
+    def user_active_chart_session(self, user_id, session_id):
+        return self.key(f"user:{user_id}:active-chart:{session_id}")
+
+    def user_active_chart_sessions(self, user_id):
+        return self.key(f"user:{user_id}:active-chart:sessions")
+
+    def subscription_source_symbols(self, source):
+        return self.key(f"subscription:source:{source}:symbols")
+
+    def subscription_source_watchlist(self, symbol):
+        return self.key(f"subscription:source:watchlist:{symbol}")
+
+    def subscription_source_portfolio(self, symbol):
+        return self.key(f"subscription:source:portfolio:{symbol}")
+
+    def subscription_source_active_chart(self, symbol):
+        return self.key(f"subscription:source:active-chart:{symbol}")
+
+    def subscription_source_ranking(self, kind, symbol):
+        return self.key(f"subscription:source:rank:{kind}:{symbol}")
+
+    def subscription_source_manual(self, symbol):
+        return self.key(f"subscription:source:manual:{symbol}")
+
     def subscription_symbols(self):
         return self.key("subscription:symbols")
 
@@ -73,7 +107,13 @@ class RedisKeyBuilder:
         return self.key("subscription:events")
 
     def watchlist_symbols(self):
-        return self.subscription_symbols()
+        return self.key("ui:watchlist:symbols")
+
+    def portfolio_symbols(self):
+        return self.key("cohort:portfolio:symbols")
+
+    def rank_symbols(self, kind):
+        return self.key(f"cohort:rank:{kind}:top10")
 
     def feed_active(self):
         return self.key("feed:active")

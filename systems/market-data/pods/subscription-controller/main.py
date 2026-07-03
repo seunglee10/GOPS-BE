@@ -5,6 +5,7 @@ import redis
 
 from alfaka.common.env import load_dotenv
 from alfaka.common.redis_keys import RedisKeyBuilder
+from alfaka.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
 from alfaka.common.runtime_config import validate_required_values
 from alfaka.common.runtime_health import write_component_health
 
@@ -16,7 +17,9 @@ def main():
     validate_required_values("subscription controller", {"redis_url": redis_url})
     redis_client = redis.from_url(redis_url, decode_responses=True)
     keys = RedisKeyBuilder()
+    cohorts = RealtimeSubscriptionCohortService(redis_client, keys, auto_reconcile=True)
     while True:
+        records = cohorts.reconcile()
         symbols = sorted(redis_client.smembers(keys.subscription_symbols()))
         invalid_quote_symbols = [symbol for symbol in symbols if quote_without_trade(redis_client, keys, symbol)]
         for symbol in invalid_quote_symbols:
@@ -28,6 +31,7 @@ def main():
             status="ok",
             subscriptionVersion=redis_client.get(keys.subscription_version()) or "0",
             symbolCount=len(symbols),
+            sourceSymbolCount=len(records),
             invalidQuoteSymbols=",".join(invalid_quote_symbols),
         )
         print(f"subscription-controller symbols={symbols} invalidQuotes={invalid_quote_symbols}", flush=True)

@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from app.market_data.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
 from app.services.alfaka_market_data import get_market_data_provider, normalize_market_symbol
 from alfaka.common.redis_keys import RedisKeyBuilder
 
@@ -143,46 +144,16 @@ class MarketDataMonitorService:
     def add_subscription(self, symbol: str, layers: list[str], reason: str | None = None, ttl_seconds: int | None = None) -> dict[str, Any]:
         symbol = normalize_market_symbol(symbol)
         requested_layers = normalize_layers(layers)
-        existing = self._subscription_record(symbol)
-        existing_layers = set(existing.get("layers") or [])
+        existing_layers = set(self._subscription_record(symbol).get("layers") or [])
         if "quotes" in requested_layers and "trades" not in requested_layers and "trades" not in existing_layers:
             raise HTTPException(status_code=400, detail="quotes layer requires an existing or requested trades realtime subscription for the same symbol")
-
-        merged_layers = sorted(existing_layers | requested_layers)
-        ttl = normalize_ttl(ttl_seconds)
-        record = {
-            "symbol": symbol,
-            "layers": merged_layers,
-            "reason": (reason or "manual-monitor").strip() or "manual-monitor",
-            "ttlSeconds": ttl,
-            "enabled": True,
-            "updatedAt": now_iso(),
-        }
-        self._sadd(self.keys.subscription_symbols(), symbol)
-        self._hset(self.keys.subscription_symbol(symbol), record)
-        self._expire(self.keys.subscription_symbol(symbol), ttl)
-        version = self._incr(self.keys.subscription_version())
-        self._xadd(self.keys.subscription_events(), {
-            "action": "upsert",
-            "symbol": symbol,
-            "layers": ",".join(merged_layers),
-            "version": str(version),
-            "updatedAt": record["updatedAt"],
-        })
-        return {"subscription": record, "version": str(version)}
+        record = RealtimeSubscriptionCohortService(self.redis, self.keys, auto_reconcile=False).add_manual_source(symbol, requested_layers)
+        return {"subscription": self._subscription_record(symbol) or record, "version": self._get(self.keys.subscription_version()) or "0", "pendingReconcile": True}
 
     def remove_subscription(self, symbol: str) -> dict[str, Any]:
         symbol = normalize_market_symbol(symbol)
-        self._srem(self.keys.subscription_symbols(), symbol)
-        self._delete(self.keys.subscription_symbol(symbol))
-        version = self._incr(self.keys.subscription_version())
-        self._xadd(self.keys.subscription_events(), {
-            "action": "delete",
-            "symbol": symbol,
-            "version": str(version),
-            "updatedAt": now_iso(),
-        })
-        return {"symbol": symbol, "removed": True, "version": str(version)}
+        RealtimeSubscriptionCohortService(self.redis, self.keys, auto_reconcile=False).remove_manual_source(symbol)
+        return {"symbol": symbol, "removed": True, "version": self._get(self.keys.subscription_version()) or "0", "pendingReconcile": True}
 
     def _subscription_record(self, symbol: str) -> dict[str, Any]:
         raw = self._hgetall(self.keys.subscription_symbol(symbol))
@@ -192,6 +163,7 @@ class MarketDataMonitorService:
         return {
             "symbol": symbol,
             "layers": sorted(set(layers)),
+            "sources": sorted(set([item for item in str(raw.get("sources") or "").split(",") if item])),
             "reason": raw.get("reason"),
             "ttlSeconds": int(raw.get("ttlSeconds") or 0),
             "enabled": raw.get("enabled") in {True, "true", "True", "1", 1},

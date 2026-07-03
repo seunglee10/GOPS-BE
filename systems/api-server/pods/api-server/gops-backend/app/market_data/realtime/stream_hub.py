@@ -22,7 +22,7 @@ class StreamSession:
         if not self.queue.full():
             await self.queue.put(event)
             return
-        if event.get("type") == "LIVE_CANDLE_UPDATE":
+        if event.get("type") in {"LIVE_CANDLE_UPDATE", "LIVE_TRADE_UPDATE", "LIVE_QUOTE_UPDATE"}:
             await self._drop_one_droppable_update()
             if not self.queue.full():
                 await self.queue.put(event)
@@ -38,7 +38,7 @@ class StreamSession:
         dropped = False
         while not self.queue.empty():
             item = self.queue.get_nowait()
-            if not dropped and item.get("type") in {"LIVE_CANDLE_UPDATE", "VOLUME_PROFILE_BINS_UPDATE", "HEARTBEAT"}:
+            if not dropped and item.get("type") in {"LIVE_CANDLE_UPDATE", "LIVE_TRADE_UPDATE", "LIVE_QUOTE_UPDATE", "VOLUME_PROFILE_BINS_UPDATE", "HEARTBEAT"}:
                 dropped = True
                 continue
             retained.append(item)
@@ -116,6 +116,25 @@ class SymbolStreamHub:
                 continue
             self.last_markers[marker_key] = marker
             await self._broadcast(symbol, live_event)
+        for event in self._live_trade_quote_events(symbol):
+            marker = event_marker(event)
+            marker_key = (symbol, event.get("type", ""))
+            if marker and marker == self.last_markers.get(marker_key):
+                continue
+            self.last_markers[marker_key] = marker
+            await self._broadcast(symbol, event)
+
+    def _live_trade_quote_events(self, symbol: str) -> list[dict[str, Any]]:
+        events = []
+        live_trade = getattr(self.provider.redis_provider, "live_trade", None)
+        live_quote = getattr(self.provider.redis_provider, "live_quote", None)
+        trade = live_trade(symbol) if callable(live_trade) else None
+        if trade:
+            events.append({"type": "LIVE_TRADE_UPDATE", "symbol": symbol, "data": trade})
+        quote = live_quote(symbol) if callable(live_quote) else None
+        if quote:
+            events.append({"type": "LIVE_QUOTE_UPDATE", "symbol": symbol, "data": quote})
+        return events
 
     async def _broadcast(self, symbol: str, event: dict[str, Any]) -> None:
         marker = event_marker(event)
@@ -133,6 +152,8 @@ class SymbolStreamHub:
 def should_deliver_to_session(event: dict[str, Any], session: StreamSession) -> bool:
     if event.get("type") == "MARKET_STATUS_UPDATE":
         return event.get("symbol") in {session.symbol, "_MARKET"}
+    if event.get("type") in {"LIVE_TRADE_UPDATE", "LIVE_QUOTE_UPDATE"}:
+        return event.get("symbol") == session.symbol
     return event.get("symbol") == session.symbol and event.get("interval") == session.interval
 
 
@@ -164,6 +185,10 @@ def event_marker(event: dict | None) -> str | None:
             event.get("interval"),
             data.get("timestamp"),
             data.get("updatedAt") or data.get("createdAt"),
+            data.get("price"),
+            data.get("size"),
+            data.get("bidPrice"),
+            data.get("askPrice"),
             data.get("close"),
             data.get("volume"),
         )

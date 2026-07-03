@@ -429,6 +429,15 @@ class ClickHouseMarketDataProvider:
             return rows
         return self._hot_symbols_by_interval_dollar_volume(symbols, limit=limit, interval="1D")
 
+    def rank_symbols(self, symbols, kind="dollar-volume", limit=10):
+        symbols = [symbol for symbol in symbols if isinstance(symbol, str) and symbol.strip()]
+        if not symbols:
+            return []
+        rows = self._rank_symbols_by_interval(symbols, kind=kind, limit=limit, interval="1m")
+        if rows:
+            return rows
+        return self._rank_symbols_by_interval(symbols, kind=kind, limit=limit, interval="1D")
+
     def _hot_symbols_by_interval_dollar_volume(self, symbols, limit=20, interval="1m"):
         normalized_interval = "1D" if interval in {"1D", "1d"} else "1m"
         interval_filter = "interval IN ('1D', '1d')" if normalized_interval == "1D" else "interval = '1m'"
@@ -480,6 +489,71 @@ class ClickHouseMarketDataProvider:
         )
         GROUP BY symbol
         ORDER BY sessionDollarVolume DESC, symbol ASC
+        LIMIT {{limit:UInt32}}
+        FORMAT JSONEachRow
+        """
+        return self.query_json_each_row(query, {"symbols": symbols, "limit": int(limit), "lookbackDays": lookback_days})
+
+    def _rank_symbols_by_interval(self, symbols, kind="dollar-volume", limit=10, interval="1m"):
+        normalized_interval = "1D" if interval in {"1D", "1d"} else "1m"
+        interval_filter = "interval IN ('1D', '1d')" if normalized_interval == "1D" else "interval = '1m'"
+        normalized_kind = str(kind or "dollar-volume").strip().lower().replace("_", "-")
+        order_by = {
+            "dollar-volume": "sessionDollarVolume DESC, symbol ASC",
+            "volume": "volume DESC, symbol ASC",
+            "gainers": "ifNull(changePercent, -1000000) DESC, symbol ASC",
+            "losers": "ifNull(changePercent, 1000000) ASC, symbol ASC",
+        }.get(normalized_kind)
+        if not order_by:
+            return []
+        try:
+            lookback_days = max(1, int(os.getenv("HOT_TIER_LOOKBACK_DAYS", "14")))
+        except ValueError:
+            lookback_days = 14
+        latest_source_query = f"""
+        SELECT event_time
+        FROM {self.table('chart_candles')}
+        WHERE symbol IN {{symbols:Array(String)}}
+          AND {interval_filter}
+          AND {self.canonical_candle_filter_sql(include_live=normalized_interval == "1m")}
+          AND event_time >= subtractDays(now(), {{lookbackDays:UInt32}})
+          AND toDayOfWeek(event_time) BETWEEN 1 AND 5
+        """
+        session_source_query = self.latest_chart_candles_source(f"""
+            symbol IN {{symbols:Array(String)}}
+            AND {interval_filter}
+            AND event_time >= subtractDays(now(), {{lookbackDays:UInt32}})
+            AND toDate(event_time) = latest_session_date
+            AND toDayOfWeek(event_time) BETWEEN 1 AND 5
+        """, include_live=normalized_interval == "1m")
+        query = f"""
+        WITH (
+          SELECT max(toDate(event_time))
+          FROM ({latest_source_query})
+        ) AS latest_session_date
+        SELECT
+          symbol,
+          argMax(close, event_time) AS lastPrice,
+          if(argMin(open, event_time) = 0, NULL, round(((argMax(close, event_time) - argMin(open, event_time)) / argMin(open, event_time)) * 100, 2)) AS changePercent,
+          sum(toFloat64(row_volume) * close) AS sessionDollarVolume,
+          sum(row_volume) AS volume,
+          formatDateTime(max(event_time), '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS sourceUpdatedAt,
+          {clickhouse_string_literal('current_session' if normalized_interval == '1m' else 'latest_daily_session')} AS rankingWindow,
+          {clickhouse_string_literal(f'clickhouse_{normalized_interval}_{normalized_kind}_rank')} AS rankReason
+        FROM (
+          SELECT
+            symbol,
+            event_time,
+            open,
+            close,
+            volume AS row_volume
+          FROM (
+            {session_source_query}
+          )
+          WHERE toDate(event_time) = latest_session_date
+        )
+        GROUP BY symbol
+        ORDER BY {order_by}
         LIMIT {{limit:UInt32}}
         FORMAT JSONEachRow
         """

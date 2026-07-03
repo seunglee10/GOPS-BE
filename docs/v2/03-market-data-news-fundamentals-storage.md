@@ -1,0 +1,24 @@
+# Retired Market Data / News / Fundamentals / Storage Role Notes
+
+This role document is retired for chart-data implementation details.
+
+Use `../CHART_DATA_REBUILD_PLAN.md` as the active chart-data rebuild contract.
+Use current `systems/market-data/`, `platform/`, and `infra/` files for runtime
+behavior.
+
+Active chart-data rules:
+
+- Do not preload a fixed universe or old legacy symbol set.
+- Fetch chart ranges on demand from Redis, ClickHouse, S3 final/manifest, then
+  Alpaca backfill.
+- Store only the newest 120 candles per `symbol + timeframe` in Redis.
+- Keep live provisional candles and latest closed replacements in Redis.
+- Store confirmed candles in ClickHouse and S3 final/manifest.
+- Keep raw Alpaca S3 backup out of chart-serving and materialization logic.
+- Subscribe quotes only for the same explicit symbols that receive realtime
+  trades; keep quotes in Redis/WebSocket only.
+- Preserve Kafka `key=symbol` ordering and avoid splitting one symbol partition
+  across multiple pods.
+
+News, fundamentals, orders, auth, and agent topics outside chart data should
+continue to follow their current system contracts and task-specific docs.

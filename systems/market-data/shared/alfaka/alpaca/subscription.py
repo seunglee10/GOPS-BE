@@ -110,6 +110,9 @@ def configured_universe_symbols(config=None):
     configured_universes = config.get("universes") or {}
     if universe_name in configured_universes:
         return _validated_symbol_list(configured_universes[universe_name], config, f"ALPACA_UNIVERSE:{universe_name}")
+    registry_symbols = load_universe_registry_symbols(config)
+    if registry_symbols:
+        return _validated_symbol_list(registry_symbols, config, f"ALPACA_UNIVERSE_REGISTRY_PATH:{universe_name}")
     raise ValueError(f"지원하지 않는 ALPACA_UNIVERSE입니다: {universe_name}")
 
 
@@ -156,6 +159,9 @@ def configured_collection_symbols(config=None):
         return []
     if source == "universe":
         return configured_universe_symbols(config)
+    if source == "registry":
+        values = load_universe_registry_symbols(config)
+        return _validated_symbol_list(values, config, "ALPACA_UNIVERSE_REGISTRY_PATH") if values else []
     if source == "seed":
         return configured_seed_symbols(config)
     if source == "defaultsymbols":
