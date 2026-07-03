@@ -28,15 +28,32 @@ class TradingCalendar:
             early_closes=parse_early_closes(os.getenv("MARKET_EARLY_CLOSES")),
         )
 
+    @classmethod
+    def crypto_24x7(cls):
+        return cls(
+            provider="crypto-24x7",
+            timezone_name="UTC",
+            open_time=time(0, 0),
+            close_time=time(0, 0),
+            closed_dates=frozenset(),
+            early_closes={},
+        )
+
     @property
     def timezone(self):
         return ZoneInfo(self.timezone_name)
+
+    @property
+    def is_24x7(self) -> bool:
+        return self.provider == "crypto-24x7"
 
     def session_close_for(self, session_date: date) -> time:
         early_closes = self.early_closes or {}
         return early_closes.get(session_date.isoformat(), self.close_time)
 
     def is_session_date(self, session_date: date) -> bool:
+        if self.is_24x7:
+            return True
         return session_date.weekday() < 5 and session_date.isoformat() not in self.closed_dates
 
 
@@ -70,6 +87,14 @@ def expected_bucket_starts(start, end, interval, calendar):
 
 
 def expected_minute_buckets(start_dt, end_dt, calendar):
+    if calendar.is_24x7:
+        cursor = round_down_minute(start_dt)
+        values = []
+        while cursor < end_dt:
+            values.append(cursor)
+            cursor += timedelta(minutes=1)
+        return values
+
     zone = calendar.timezone
     local_start = start_dt.astimezone(zone)
     local_end = end_dt.astimezone(zone)
@@ -89,6 +114,17 @@ def expected_minute_buckets(start_dt, end_dt, calendar):
 
 
 def expected_daily_buckets(start_dt, end_dt, calendar):
+    if calendar.is_24x7:
+        session_date = start_dt.astimezone(timezone.utc).date()
+        end_date = end_dt.astimezone(timezone.utc).date()
+        values = []
+        while session_date <= end_date:
+            bucket = datetime.combine(session_date, time(0, 0), timezone.utc)
+            if start_dt <= bucket < end_dt:
+                values.append(bucket)
+            session_date += timedelta(days=1)
+        return values
+
     zone = calendar.timezone
     session_date = start_dt.astimezone(zone).date()
     end_date = end_dt.astimezone(zone).date()
@@ -136,6 +172,9 @@ def to_bucket_start(value, interval, calendar):
     if interval == "1m":
         return round_down_minute(parsed)
     if interval == "1D":
+        if calendar.is_24x7:
+            parsed_utc = parsed.astimezone(timezone.utc)
+            return datetime.combine(parsed_utc.date(), time(0, 0), timezone.utc)
         local = parsed.astimezone(calendar.timezone)
         return datetime.combine(local.date(), time(0, 0), calendar.timezone).astimezone(timezone.utc)
     raise ValueError(f"Unsupported source interval for GapFill: {interval}")

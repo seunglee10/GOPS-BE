@@ -4,10 +4,11 @@ import re
 import time
 from datetime import timedelta, timezone
 
-from alfaka.backfill.gapfill import detect_gapfill_ranges, parse_time
+from alfaka.backfill.gapfill import TradingCalendar, detect_gapfill_ranges, parse_time
 from alfaka.common.canonical import CANONICAL_VERSION, candle_metadata, historical_adjustment_from_env
 from alfaka.common.env import load_dotenv, utc_now_iso
 from alfaka.common.market_messages import source_event_id
+from alfaka.common.symbols import alpaca_provider_symbol, is_crypto_symbol, normalize_provider_symbol
 from alfaka.alpaca.feed_profiles import market_session_for_timestamp
 from alfaka.serving.intervals import is_derived_interval, normalize_chart_interval, source_interval_for
 from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
@@ -86,7 +87,7 @@ class BackfillRunner:
         job_type = (record.get("jobType") or "gapfill").strip().lower()
         force_refresh = bool(record.get("force"))
         source_preference = normalize_source_preference(record.get("sourcePreference", "coverage-first"))
-        feed = os.getenv("HISTORICAL_FEED", os.getenv("ALPACA_FEED", "sip"))
+        feed = historical_feed_for_symbol(symbol, os.getenv("HISTORICAL_FEED", os.getenv("ALPACA_FEED", "sip")))
 
         if job_type not in {"initial_load", "gapfill", "replay_repair", "correction_replay"}:
             raise BackfillUnavailable(f"Unsupported backfill job type: {job_type}.")
@@ -262,7 +263,7 @@ class BackfillRunner:
         )
         return [
             {"start": gap.start, "end": gap.end, "missingCount": gap.missingCount}
-            for gap in detect_gapfill_ranges(start, end, interval, actual_timestamps)
+            for gap in detect_gapfill_ranges(start, end, interval, actual_timestamps, calendar=calendar_for_symbol(symbol))
         ]
 
     def _run_replay_job(self, bucket, symbol, interval, start, end, job_type, source_preference):
@@ -297,19 +298,25 @@ def fetch_alpaca_bars(symbol, start, end, feed, timeframe="1Min"):
     if not key or not secret:
         raise BackfillUnavailable("Alpaca credentials are not configured.")
 
-    endpoint = "https://data.alpaca.markets/v2/stocks/bars"
+    provider_symbol = alpaca_provider_symbol(symbol)
+    crypto_symbol = is_crypto_symbol(symbol)
+    endpoint = (
+        f"https://data.alpaca.markets/v1beta3/crypto/{os.getenv('ALPACA_CRYPTO_LOCATION', 'us')}/bars"
+        if crypto_symbol
+        else "https://data.alpaca.markets/v2/stocks/bars"
+    )
     headers = {"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret}
     params = {
-        "symbols": symbol,
+        "symbols": provider_symbol,
         "start": start,
         "end": end,
-        "feed": feed,
         "timeframe": timeframe,
         "limit": os.getenv("HISTORICAL_LIMIT", "10000"),
         "sort": "asc",
     }
     adjustment = historical_adjustment_from_env(os.environ)
-    if adjustment:
+    if not crypto_symbol:
+        params["feed"] = feed
         params["adjustment"] = adjustment
     max_attempts = max(1, int(os.getenv("HISTORICAL_MAX_RETRIES", "5")))
     retry_sleep_seconds = max(0.0, float(os.getenv("HISTORICAL_RETRY_SLEEP_SECONDS", "1")))
@@ -334,7 +341,7 @@ def fetch_alpaca_bars(symbol, start, end, feed, timeframe="1Min"):
         if response.status_code >= 400:
             raise RuntimeError(f"Alpaca historical request failed: status={response.status_code}, body={response.text}")
         payload = response.json()
-        rows.extend((payload.get("bars") or {}).get(symbol, []))
+        rows.extend((payload.get("bars") or {}).get(provider_symbol, []))
         page_token = payload.get("next_page_token")
         if not page_token:
             return rows
@@ -354,6 +361,8 @@ def historical_retry_delay(response, attempt, base_seconds, max_seconds):
 
 
 def repair_daily_bar_outliers(symbol, raw_bars, feed):
+    if is_crypto_symbol(symbol):
+        return raw_bars
     repaired = []
     for raw_bar in raw_bars:
         outlier_flags = daily_bar_outlier_flags(raw_bar)
@@ -406,8 +415,8 @@ def aggregate_minute_bars_to_daily(rows):
     rows = sorted([row for row in rows if row.get("t")], key=lambda row: row["t"])
     if not rows:
         return None
-    total_volume = sum(int(row.get("v") or 0) for row in rows)
-    weighted_vwap = sum(float(row.get("vw") or row.get("c") or 0) * int(row.get("v") or 0) for row in rows)
+    total_volume = sum(float(row.get("v") or 0) for row in rows)
+    weighted_vwap = sum(float(row.get("vw") or row.get("c") or 0) * float(row.get("v") or 0) for row in rows)
     return {
         "o": rows[0].get("o"),
         "h": max(row.get("h") for row in rows if row.get("h") is not None),
@@ -436,6 +445,16 @@ def normalize_source_preference(value):
     if normalized not in allowed:
         raise BackfillUnavailable(f"Unsupported backfill sourcePreference: {value}.")
     return normalized
+
+
+def historical_feed_for_symbol(symbol, default_feed):
+    if not is_crypto_symbol(symbol):
+        return default_feed
+    return f"crypto-{os.getenv('ALPACA_CRYPTO_LOCATION', 'us')}"
+
+
+def calendar_for_symbol(symbol):
+    return TradingCalendar.crypto_24x7() if is_crypto_symbol(symbol) else None
 
 
 def materialize_raw_s3_candle_objects(client, s3, bucket, raw_keys, interval, job_type, source_preference, gap_ranges=None, source_name="backfill-worker-raw"):
@@ -618,8 +637,8 @@ def raw_archive_rows_to_processed_candles(rows, interval):
         raw = row.get("raw") or {}
         feed = row.get("feed") or "unknown"
         feed_profile = row.get("feedProfile") or row.get("feed_profile") or feed
-        market_session = row.get("marketSession") or row.get("market_session") or market_session_for_timestamp(row.get("eventTime") or raw.get("t"))
-        symbol = row.get("symbol") or raw.get("S")
+        symbol = normalize_provider_symbol(row.get("symbol") or raw.get("S"))
+        market_session = row.get("marketSession") or row.get("market_session") or ("crypto" if is_crypto_symbol(symbol) else market_session_for_timestamp(row.get("eventTime") or raw.get("t")))
         received_at = row.get("receivedAt") or utc_now_iso()
         envelope = {
             "source": row.get("source", "alpaca"),
@@ -663,7 +682,7 @@ def raw_bar_to_processed_candle(symbol, raw_bar, feed="sip", received_at=None, i
         "source": "alpaca",
         "feed": feed,
         "feedProfile": feed,
-        "marketSession": market_session_for_timestamp(raw_bar.get("t")),
+        "marketSession": "crypto" if is_crypto_symbol(symbol) else market_session_for_timestamp(raw_bar.get("t")),
         "channel": channel,
         "symbol": symbol,
         "eventTime": raw_bar.get("t"),

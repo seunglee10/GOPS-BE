@@ -261,6 +261,52 @@ services:
       - data_net
       - streaming_net
 
+  alpaca-ingestor-crypto:
+    profiles: ["alpaca"]
+    image: gops-market-ingestor
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-market-ingestor
+    container_name: alfaka-alpaca-ingestor-crypto
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      KAFKA_CLIENT_ID: "alfaka-alpaca-ingestor-crypto"
+      REDIS_URL: "redis://redis:6379/0"
+      REDIS_KEY_PREFIX: "gops:market:on-demand:v1"
+      AWS_REGION: "${AWS_REGION:-ap-northeast-2}"
+      AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-ap-northeast-2}"
+      AWS_EC2_METADATA_DISABLED: "${AWS_EC2_METADATA_DISABLED:-true}"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
+      AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
+      AWS_PROFILE: "${AWS_PROFILE:-default}"
+      AWS_SDK_LOAD_CONFIG: "${AWS_SDK_LOAD_CONFIG:-1}"
+      APCA_API_KEY_ID: "${APCA_API_KEY_ID:-}"
+      APCA_API_SECRET_KEY: "${APCA_API_SECRET_KEY:-}"
+      ALPACA_CREDENTIAL_SOURCE: "${ALPACA_CREDENTIAL_SOURCE:-aws-secrets-manager}"
+      ALPACA_SECRET_NAME: "${ALPACA_SECRET_NAME:-}"
+      ALFAKA_REQUEST_CONFIG: "systems/market-data/config/market-data-request.json"
+      ALPACA_FEED_PROFILE: "crypto-us"
+      ALPACA_CRYPTO_LOCATION: "${ALPACA_CRYPTO_LOCATION:-us}"
+      ALPACA_CRYPTO_SYMBOLS: "${ALPACA_CRYPTO_SYMBOLS:-BTCUSD}"
+      ALPACA_COLLECTION_SYMBOLS: "${ALPACA_CRYPTO_SYMBOLS:-BTCUSD}"
+      ALPACA_CHANNELS: "${ALPACA_CRYPTO_CHANNELS:-bars,updatedBars,dailyBars,trades,quotes}"
+      ALPACA_ACTIVE_TICK_SUBSCRIPTION: "false"
+      ALPACA_ENFORCE_FEED_SESSION_WINDOW: "true"
+    command: ["python", "-u", "systems/market-data/pods/market-ingestor/market_stream.py"]
+    restart: unless-stopped
+    volumes:
+      - ${HOME}/.aws:/root/.aws:ro
+    networks:
+      - app_net
+      - data_net
+      - streaming_net
+
   alpaca-news-ingestor:
     profiles: ["alpaca"]
     image: gops-market-ingestor
@@ -546,8 +592,8 @@ services:
       REDIS_KEY_PREFIX: "gops:market:on-demand:v1"
       REDIS_URL: "redis://redis:6379/0"
       ALFAKA_REQUEST_CONFIG: "systems/market-data/config/market-data-request.json"
-      ALPACA_UNIVERSE: "${ALPACA_UNIVERSE:-sp500}"
-      ALPACA_UNIVERSE_REGISTRY_PATH: "${ALPACA_UNIVERSE_REGISTRY_PATH:-systems/market-data/config/sp500-universe.json}"
+      ALPACA_UNIVERSE: ""
+      ALPACA_UNIVERSE_REGISTRY_PATH: ""
       INITIAL_LOAD_SYMBOLS: "${INITIAL_LOAD_SYMBOLS:-}"
       INITIAL_LOAD_INTERVALS: "${INITIAL_LOAD_INTERVALS:-1D}"
       INITIAL_LOAD_START: "${INITIAL_LOAD_START:-}"
@@ -708,7 +754,10 @@ services:
       ALFAKA_PACKAGES_PATH: "/app/systems/market-data/shared"
       REDIS_KEY_PREFIX: "gops:market:on-demand:v1"
       ALFAKA_REQUEST_CONFIG: "systems/market-data/config/market-data-request.json"
-      ALPACA_FEED_PROFILES: "sip,boats"
+      ALPACA_FEED_PROFILES: "sip,boats,crypto-us"
+      ALPACA_CRYPTO_LOCATION: "${ALPACA_CRYPTO_LOCATION:-us}"
+      ALPACA_CRYPTO_SYMBOLS: "${ALPACA_CRYPTO_SYMBOLS:-BTCUSD}"
+      ALPACA_CRYPTO_CHANNELS: "${ALPACA_CRYPTO_CHANNELS:-bars,updatedBars,dailyBars,trades,quotes}"
       ALPACA_UNIVERSE: "${ALPACA_UNIVERSE:-sp500}"
       ALPACA_UNIVERSE_REGISTRY_PATH: "${ALPACA_UNIVERSE_REGISTRY_PATH:-systems/market-data/config/sp500-universe.json}"
       ALPACA_COLLECTION_SYMBOL_SOURCE: "${ALPACA_COLLECTION_SYMBOL_SOURCE:-universe}"

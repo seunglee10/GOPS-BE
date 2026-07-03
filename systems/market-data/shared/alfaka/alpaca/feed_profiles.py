@@ -77,6 +77,13 @@ PROFILE_DEFINITIONS: dict[str, FeedProfile] = {
         sessions=("pre", "regular", "after"),
         description="Alpaca test stream profile.",
     ),
+    "crypto-us": FeedProfile(
+        profile_id="crypto-us",
+        feed="crypto",
+        sessions=("crypto",),
+        description="Alpaca 24/7 crypto feed for US crypto market data.",
+        websocket_path=f"v1beta3/crypto/{os.getenv('ALPACA_CRYPTO_LOCATION', 'us')}",
+    ),
 }
 
 
@@ -149,6 +156,8 @@ def configured_closed_dates(environ=None) -> frozenset[str]:
 
 
 def feed_profile_active_for_session(feed_profile: FeedProfile, session: str | None) -> bool:
+    if "crypto" in feed_profile.sessions:
+        return True
     return str(session or "").strip().lower() in feed_profile.sessions
 
 

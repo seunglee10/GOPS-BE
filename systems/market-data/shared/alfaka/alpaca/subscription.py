@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 
 from alfaka.common.env import load_dotenv, parse_csv
+from alfaka.common.symbols import alpaca_provider_symbol, normalize_market_symbol
 
 
 DEFAULT_REQUEST_CONFIG = {
@@ -15,6 +16,7 @@ DEFAULT_REQUEST_CONFIG = {
     "collectionSymbolSource": "on-demand",
     "defaultSymbols": [],
     "defaultSeedSymbols": [],
+    "extraSymbols": [],
     "defaultChannels": ["bars", "updatedBars", "dailyBars", "statuses"],
     "activeChartChannels": ["trades"],
     "validChannels": ["bars", "updatedBars", "trades", "dailyBars", "statuses", "quotes", "corrections", "cancelErrors"],
@@ -70,6 +72,7 @@ def load_request_config():
         "activeChartChannels": loaded_config.get("activeChartChannels") or DEFAULT_REQUEST_CONFIG["activeChartChannels"],
         "defaultSymbols": loaded_config.get("defaultSymbols") or DEFAULT_REQUEST_CONFIG["defaultSymbols"],
         "defaultSeedSymbols": loaded_config.get("defaultSeedSymbols") or DEFAULT_REQUEST_CONFIG["defaultSeedSymbols"],
+        "extraSymbols": loaded_config.get("extraSymbols") or DEFAULT_REQUEST_CONFIG["extraSymbols"],
     }
 
 
@@ -80,7 +83,7 @@ def resolve_symbol(value, config=None):
         return None
 
     mapped_symbol = config["companyToSymbol"].get(cleaned.lower())
-    symbol = (mapped_symbol or cleaned).upper()
+    symbol = normalize_market_symbol(mapped_symbol or cleaned)
     validate_symbol(symbol, config)
     return symbol
 
@@ -185,7 +188,7 @@ def _validated_symbol_list(values, config, source_name):
     for value in values:
         if not isinstance(value, str):
             continue
-        symbol = value.strip().upper()
+        symbol = normalize_market_symbol(value)
         if not symbol:
             continue
         try:
@@ -215,13 +218,28 @@ def load_symbols_and_channels(company_or_symbol=None):
     return symbols, channels
 
 
-def build_subscription_request(symbols, channels):
-    request = {"action": "subscribe"}
+def build_subscription_request(symbols, channels, action="subscribe", config=None):
+    config = config or load_request_config()
+    request = {"action": action}
     if not symbols:
         return request
+    provider_symbols = alpaca_subscription_symbols(symbols, config)
     for channel in channels:
-        request[channel] = symbols
+        request[channel] = provider_symbols
     return request
+
+
+def alpaca_subscription_symbols(symbols, config=None):
+    config = config or load_request_config()
+    provider_symbols = []
+    seen = set()
+    for symbol in symbols:
+        provider_symbol = alpaca_provider_symbol(symbol, config)
+        if provider_symbol in seen:
+            continue
+        provider_symbols.append(provider_symbol)
+        seen.add(provider_symbol)
+    return provider_symbols
 
 
 def build_request_from_env(company_or_symbol=None):

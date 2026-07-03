@@ -67,3 +67,44 @@ spec:
               value: boats
             - name: KAFKA_CLIENT_ID
               value: alfaka-alpaca-ingestor-boats
+---
+# 역할: Alpaca Crypto WebSocket 수집기를 EKS에 배포합니다.
+# 사용: BTCUSD 같은 24/7 crypto feed를 주식 SIP/BOATS feed와 분리해 관측합니다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alfaka-alpaca-ingestor-crypto
+  namespace: alfaka-market-data
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alfaka-alpaca-ingestor-crypto
+  template:
+    metadata:
+      labels:
+        app: alfaka-alpaca-ingestor-crypto
+    spec:
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: alpaca-ingestor
+          image: YOUR_ECR_REPOSITORY/gops-market-ingestor:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "systems/market-data/pods/market-ingestor/market_stream.py"]
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-alpaca-secret
+                optional: true
+          env:
+            - name: ALPACA_FEED_PROFILE
+              value: crypto-us
+            - name: KAFKA_CLIENT_ID
+              value: alfaka-alpaca-ingestor-crypto
+            - name: ALPACA_COLLECTION_SYMBOLS
+              value: BTCUSD
+            - name: ALPACA_CHANNELS
+              value: bars,updatedBars,dailyBars,trades,quotes
+            - name: ALPACA_ACTIVE_TICK_SUBSCRIPTION
+              value: "false"

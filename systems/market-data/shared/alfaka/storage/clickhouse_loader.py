@@ -12,6 +12,7 @@ from alfaka.common.canonical import candle_metadata
 from alfaka.common.env import load_dotenv, parse_csv
 from alfaka.common.kafka_io import create_json_consumer
 from alfaka.common.runtime_config import validate_required_values
+from alfaka.common.symbols import is_crypto_symbol
 from alfaka.storage.candle_validation import invalid_candle_reason
 
 
@@ -154,14 +155,14 @@ def trade_to_clickhouse_row(payload):
         "symbol": payload.get("symbol", "UNKNOWN"),
         "trade_id": int_or_zero(payload.get("tradeId")),
         "price": float_or_zero(payload.get("price")),
-        "size": int_or_none(payload.get("size")),
+        "size": float_or_none(payload.get("size")),
         "exchange": payload.get("exchange"),
         "conditions": payload.get("conditions") or [],
         "tape": payload.get("tape"),
         "source": payload.get("source", "alpaca"),
         "feed": payload.get("feed") or "unknown",
         "feed_profile": payload.get("feedProfile") or payload.get("feed") or "unknown",
-        "market_session": payload.get("marketSession") or market_session_for_timestamp(payload.get("timestamp")),
+        "market_session": payload.get("marketSession") or market_session_for_symbol(payload.get("symbol"), payload.get("timestamp")),
         "source_event_id": payload.get("sourceEventId"),
         "received_at": clickhouse_time_or_none(payload.get("receivedAt")),
     }
@@ -172,16 +173,16 @@ def quote_to_clickhouse_row(payload):
         "event_time": clickhouse_time(payload.get("timestamp")),
         "symbol": payload.get("symbol", "UNKNOWN"),
         "bid_price": float_or_none(payload.get("bidPrice")),
-        "bid_size": int_or_none(payload.get("bidSize")),
+        "bid_size": float_or_none(payload.get("bidSize")),
         "ask_price": float_or_none(payload.get("askPrice")),
-        "ask_size": int_or_none(payload.get("askSize")),
+        "ask_size": float_or_none(payload.get("askSize")),
         "bid_exchange": payload.get("bidExchange"),
         "ask_exchange": payload.get("askExchange"),
         "conditions": payload.get("conditions") or [],
         "source": payload.get("source", "alpaca.quotes"),
         "feed": payload.get("feed") or "unknown",
         "feed_profile": payload.get("feedProfile") or payload.get("feed") or "unknown",
-        "market_session": payload.get("marketSession") or market_session_for_timestamp(payload.get("timestamp")),
+        "market_session": payload.get("marketSession") or market_session_for_symbol(payload.get("symbol"), payload.get("timestamp")),
         "source_event_id": payload.get("sourceEventId"),
         "received_at": clickhouse_time_or_none(payload.get("receivedAt")),
     }
@@ -198,7 +199,7 @@ def candle_to_clickhouse_row(payload):
         "high": float_or_zero(payload.get("high")),
         "low": float_or_zero(payload.get("low")),
         "close": float_or_zero(payload.get("close")),
-        "volume": int_or_zero(payload.get("volume")),
+        "volume": float_or_zero(payload.get("volume")),
         "trade_count": int_or_none(payload.get("tradeCount")),
         "vwap": float_or_none(payload.get("vwap")),
         "ma5": float_or_none(ma.get("ma5", payload.get("ma5"))),
@@ -209,7 +210,7 @@ def candle_to_clickhouse_row(payload):
         "source": payload.get("source", "stream-processor"),
         "feed": payload.get("feed") or "unknown",
         "feed_profile": payload.get("feedProfile") or payload.get("feed") or "unknown",
-        "market_session": payload.get("marketSession") or market_session_for_timestamp(payload.get("timestamp")),
+        "market_session": payload.get("marketSession") or market_session_for_symbol(payload.get("symbol"), payload.get("timestamp")),
         "price_adjustment": metadata["priceAdjustment"],
         "canonical_version": metadata["canonicalVersion"],
         "source_event_id": payload.get("sourceEventId"),
@@ -228,7 +229,7 @@ def status_to_clickhouse_row(payload):
         "source": payload.get("source", "alpaca"),
         "feed": payload.get("feed") or "unknown",
         "feed_profile": payload.get("feedProfile") or payload.get("feed") or "unknown",
-        "market_session": payload.get("marketSession") or market_session_for_timestamp(payload.get("eventTime")),
+        "market_session": payload.get("marketSession") or market_session_for_symbol(symbol, payload.get("eventTime")),
         "source_event_id": payload.get("sourceEventId"),
         "raw": json.dumps(payload.get("raw") or {}, ensure_ascii=False, separators=(",", ":")),
     }
@@ -245,7 +246,7 @@ def market_event_to_clickhouse_row(payload):
         "source": payload.get("source", "alpaca"),
         "feed": payload.get("feed") or "unknown",
         "feed_profile": payload.get("feedProfile") or payload.get("feed") or "unknown",
-        "market_session": payload.get("marketSession") or market_session_for_timestamp(event_time),
+        "market_session": payload.get("marketSession") or market_session_for_symbol(symbol, event_time),
         "source_event_id": payload.get("sourceEventId"),
         "payload": json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
     }
@@ -257,13 +258,13 @@ def volume_profile_bin_to_clickhouse_row(payload):
         "symbol": payload.get("symbol", "UNKNOWN"),
         "price_bin": float_or_zero(payload.get("priceBin")),
         "price_bin_size": float_or_zero(payload.get("priceBinSize")),
-        "volume": int_or_zero(payload.get("volume")),
+        "volume": float_or_zero(payload.get("volume")),
         "trade_count": int_or_zero(payload.get("tradeCount")),
         "vwap": float_or_none(payload.get("vwap")),
         "source": payload.get("source", "alpaca"),
         "feed": payload.get("feed") or "unknown",
         "feed_profile": payload.get("feedProfile") or payload.get("feed") or "unknown",
-        "market_session": payload.get("marketSession") or market_session_for_timestamp(payload.get("eventMinute")),
+        "market_session": payload.get("marketSession") or market_session_for_symbol(payload.get("symbol"), payload.get("eventMinute")),
         "source_event_id": payload.get("sourceEventId"),
         "updated_at": clickhouse_time_or_none(payload.get("updatedAt")),
     }
@@ -329,6 +330,10 @@ def float_or_zero(value):
 
 def float_or_none(value):
     return float(value) if value is not None else None
+
+
+def market_session_for_symbol(symbol, timestamp):
+    return "crypto" if is_crypto_symbol(symbol) else market_session_for_timestamp(timestamp)
 
 
 class ClickHouseHttpClient:
@@ -457,9 +462,9 @@ class ClickHouseHttpClient:
                 event_time DateTime64(3, 'UTC'),
                 symbol LowCardinality(String),
                 bid_price Nullable(Float64),
-                bid_size Nullable(UInt64),
+                bid_size Nullable(Float64),
                 ask_price Nullable(Float64),
-                ask_size Nullable(UInt64),
+                ask_size Nullable(Float64),
                 bid_exchange Nullable(String),
                 ask_exchange Nullable(String),
                 conditions Array(String),
@@ -495,6 +500,15 @@ class ClickHouseHttpClient:
             "ADD COLUMN IF NOT EXISTS price_adjustment LowCardinality(String) DEFAULT 'unknown' AFTER market_session, "
             "ADD COLUMN IF NOT EXISTS canonical_version LowCardinality(String) DEFAULT 'legacy' AFTER price_adjustment"
         )
+        for table, column, column_type in (
+            ("trade_ticks", "size", "Nullable(Float64)"),
+            ("quote_ticks", "bid_size", "Nullable(Float64)"),
+            ("quote_ticks", "ask_size", "Nullable(Float64)"),
+            ("chart_candles", "volume", "Float64"),
+            ("volume_profile_bins_1m", "volume", "Float64"),
+        ):
+            table_name = f"{self.database}.{clickhouse_identifier(table)}"
+            self.execute(f"ALTER TABLE {table_name} MODIFY COLUMN IF EXISTS {column} {column_type}")
 
 
 def clickhouse_identifier(value):

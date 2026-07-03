@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS market_data.trade_ticks
     symbol LowCardinality(String),
     trade_id UInt64 DEFAULT 0,
     price Float64,
-    size Nullable(UInt64),
+    size Nullable(Float64),
     exchange Nullable(String),
     conditions Array(String),
     tape Nullable(String),
@@ -31,9 +31,9 @@ CREATE TABLE IF NOT EXISTS market_data.quote_ticks
     event_time DateTime64(3, 'UTC'),
     symbol LowCardinality(String),
     bid_price Nullable(Float64),
-    bid_size Nullable(UInt64),
+    bid_size Nullable(Float64),
     ask_price Nullable(Float64),
-    ask_size Nullable(UInt64),
+    ask_size Nullable(Float64),
     bid_exchange Nullable(String),
     ask_exchange Nullable(String),
     conditions Array(String),
@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS market_data.chart_candles
     high Float64,
     low Float64,
     close Float64,
-    volume UInt64,
+    volume Float64,
     trade_count Nullable(UInt64),
     vwap Nullable(Float64),
     ma5 Nullable(Float64),
@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS market_data.volume_profile_bins_1m
     symbol LowCardinality(String),
     price_bin Float64,
     price_bin_size Float64,
-    volume UInt64,
+    volume Float64,
     trade_count UInt64,
     vwap Nullable(Float64),
     source LowCardinality(String),
@@ -263,3 +263,9 @@ ALTER TABLE market_data.market_status_events
 ALTER TABLE market_data.market_events
     ADD COLUMN IF NOT EXISTS feed_profile LowCardinality(String) DEFAULT feed AFTER feed,
     ADD COLUMN IF NOT EXISTS market_session LowCardinality(String) DEFAULT 'unknown' AFTER feed_profile;
+
+ALTER TABLE market_data.trade_ticks MODIFY COLUMN IF EXISTS size Nullable(Float64);
+ALTER TABLE market_data.quote_ticks MODIFY COLUMN IF EXISTS bid_size Nullable(Float64);
+ALTER TABLE market_data.quote_ticks MODIFY COLUMN IF EXISTS ask_size Nullable(Float64);
+ALTER TABLE market_data.chart_candles MODIFY COLUMN IF EXISTS volume Float64;
+ALTER TABLE market_data.volume_profile_bins_1m MODIFY COLUMN IF EXISTS volume Float64;

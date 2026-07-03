@@ -11,7 +11,7 @@ import redis
 import websockets
 
 from alfaka.alpaca.feed_profiles import feed_profile_active_for_session, market_session_for_now, resolve_feed_profile
-from alfaka.alpaca.subscription import build_subscription_request, load_request_config, load_symbols_and_channels, validate_channels
+from alfaka.alpaca.subscription import alpaca_subscription_symbols, build_subscription_request, load_request_config, load_symbols_and_channels, validate_channels
 from alfaka.common.env import load_dotenv, parse_csv
 from alfaka.common.kafka_io import create_json_producer
 from alfaka.common.market_messages import CONTROL_MESSAGE_TYPES, build_raw_envelope, raw_topic_name
@@ -152,7 +152,7 @@ async def run_stream_session(
     active_poll_seconds,
     raw_topic_prefix,
     enforce_session_window,
-    raw_log_every_n,
+    raw_log_every_n=0,
 ):
     active_subscribed_symbols = {channel: set() for channel in active_channels}
     last_active_sync = 0.0
@@ -324,9 +324,9 @@ async def sync_active_chart_subscriptions(ws, redis_client, channels, subscribed
         unsubscribe_symbols = sorted(current - desired)
         next_subscribed[channel] = set(desired)
         if subscribe_symbols:
-            subscribe_request[channel] = subscribe_symbols
+            subscribe_request[channel] = alpaca_subscription_symbols(subscribe_symbols)
         if unsubscribe_symbols:
-            unsubscribe_request[channel] = unsubscribe_symbols
+            unsubscribe_request[channel] = alpaca_subscription_symbols(unsubscribe_symbols)
 
     if len(subscribe_request) > 1:
         print(f"활성 차트 구독 추가: {summarize_subscription_request(subscribe_request)}", flush=True)

@@ -7,6 +7,7 @@ import re
 
 from alfaka.common.env import load_dotenv
 from alfaka.common.canonical import CANONICAL_VERSION, HISTORICAL_SERVING_PRICE_ADJUSTMENTS, SERVING_PRICE_ADJUSTMENTS
+from alfaka.common.symbols import is_crypto_symbol
 from alfaka.serving.dto import snapshot
 from alfaka.serving.intervals import normalize_chart_interval, resolve_candle_limit
 from alfaka.serving.moving_average import attach_moving_averages
@@ -46,10 +47,11 @@ class ClickHouseMarketDataProvider:
             time_filter += "\n          AND event_time < parseDateTime64BestEffort({before:String})"
             params["before"] = before
 
+        session_filter = self.market_session_filter_sql(symbol)
         source_query = self.latest_chart_candles_source(f"""
             symbol = {{symbol:String}}
             AND {interval_filter}
-            AND toDayOfWeek(event_time) BETWEEN 1 AND 5
+            AND {session_filter}
             {time_filter}
         """)
         query = f"""
@@ -95,10 +97,11 @@ class ClickHouseMarketDataProvider:
             time_filter += "\n          AND event_time < parseDateTime64BestEffort({before:String})"
             params["before"] = before
 
+        session_filter = self.market_session_filter_sql(symbol)
         source_query = self.latest_chart_candles_source(f"""
             symbol = {{symbol:String}}
             AND interval IN ('1D', '1d')
-            AND toDayOfWeek(event_time) BETWEEN 1 AND 5
+            AND {session_filter}
             {time_filter}
         """)
         query = f"""
@@ -161,10 +164,11 @@ class ClickHouseMarketDataProvider:
             time_filter += "\n          AND event_time < parseDateTime64BestEffort({before:String})"
             params["before"] = before
 
+        session_filter = self.market_session_filter_sql(symbol)
         source_query = self.latest_chart_candles_source(f"""
             symbol = {{symbol:String}}
             AND interval = '1m'
-            AND toDayOfWeek(event_time) BETWEEN 1 AND 5
+            AND {session_filter}
             {time_filter}
         """)
         query = f"""
@@ -228,10 +232,11 @@ class ClickHouseMarketDataProvider:
             time_filter += "\n          AND event_time < parseDateTime64BestEffort({before:String})"
             params["before"] = before
 
+        session_filter = self.market_session_filter_sql(symbol)
         source_query = self.latest_chart_candles_source(f"""
             symbol = {{symbol:String}}
             AND interval IN ('1D', '1d')
-            AND toDayOfWeek(event_time) BETWEEN 1 AND 5
+            AND {session_filter}
             {time_filter}
         """)
         query = f"""
@@ -286,10 +291,11 @@ class ClickHouseMarketDataProvider:
         params = {"symbol": symbol, "timestamp": timestamp, "limit": int(limit)}
         if interval != "1D":
             params["interval"] = interval
+        session_filter = self.market_session_filter_sql(symbol)
         source_query = self.latest_chart_candles_source(f"""
             symbol = {{symbol:String}}
             AND {interval_filter}
-            AND toDayOfWeek(event_time) BETWEEN 1 AND 5
+            AND {session_filter}
             AND event_time {operator} parseDateTime64BestEffort({{timestamp:String}})
         """)
         query = f"""
@@ -333,10 +339,24 @@ class ClickHouseMarketDataProvider:
         params = {"symbol": symbol}
         if stored_interval != "1D":
             params["interval"] = stored_interval
-        if stored_interval == "1D":
+        if is_crypto_symbol(symbol):
+            if stored_interval == "1D":
+                row_count_expr = "uniqExact(toDate(event_time))"
+            else:
+                row_count_expr = "count()"
+            invalid_row_count_expr = "0"
+            available_from_expr = "min(event_time)"
+            available_to_expr = "max(event_time)"
+        elif stored_interval == "1D":
             row_count_expr = "uniqExactIf(toDate(event_time), toDayOfWeek(event_time) BETWEEN 1 AND 5)"
+            invalid_row_count_expr = "countIf(toDayOfWeek(event_time) NOT BETWEEN 1 AND 5)"
+            available_from_expr = "minIf(event_time, toDayOfWeek(event_time) BETWEEN 1 AND 5)"
+            available_to_expr = "maxIf(event_time, toDayOfWeek(event_time) BETWEEN 1 AND 5)"
         else:
             row_count_expr = "countIf(toDayOfWeek(event_time) BETWEEN 1 AND 5)"
+            invalid_row_count_expr = "countIf(toDayOfWeek(event_time) NOT BETWEEN 1 AND 5)"
+            available_from_expr = "minIf(event_time, toDayOfWeek(event_time) BETWEEN 1 AND 5)"
+            available_to_expr = "maxIf(event_time, toDayOfWeek(event_time) BETWEEN 1 AND 5)"
 
         source_query = self.latest_chart_candles_source(f"""
             symbol = {{symbol:String}}
@@ -345,9 +365,9 @@ class ClickHouseMarketDataProvider:
         query = f"""
         SELECT
           {row_count_expr} AS rowCount,
-          countIf(toDayOfWeek(event_time) NOT BETWEEN 1 AND 5) AS invalidRowCount,
-          formatDateTime(minIf(event_time, toDayOfWeek(event_time) BETWEEN 1 AND 5), '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS availableFrom,
-          formatDateTime(maxIf(event_time, toDayOfWeek(event_time) BETWEEN 1 AND 5), '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS availableTo
+          {invalid_row_count_expr} AS invalidRowCount,
+          formatDateTime({available_from_expr}, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS availableFrom,
+          formatDateTime({available_to_expr}, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS availableTo
         FROM (
           {source_query}
         )
@@ -377,6 +397,7 @@ class ClickHouseMarketDataProvider:
         }
         if stored_interval != "1D":
             params["interval"] = stored_interval
+        session_filter = self.market_session_filter_sql(symbol)
         source_query = self.latest_chart_candles_source(f"""
             symbol = {{symbol:String}}
             AND {interval_filter}
@@ -389,7 +410,7 @@ class ClickHouseMarketDataProvider:
         FROM (
           {source_query}
         )
-        WHERE toDayOfWeek(event_time) BETWEEN 1 AND 5
+        WHERE {session_filter}
         ORDER BY event_time ASC
         LIMIT {{limit:UInt32}}
         FORMAT JSONEachRow
@@ -658,6 +679,19 @@ class ClickHouseMarketDataProvider:
             "ADD COLUMN IF NOT EXISTS price_adjustment LowCardinality(String) DEFAULT 'unknown' AFTER market_session, "
             "ADD COLUMN IF NOT EXISTS canonical_version LowCardinality(String) DEFAULT 'legacy' AFTER price_adjustment"
         )
+        for table, column, column_type in (
+            ("trade_ticks", "size", "Nullable(Float64)"),
+            ("quote_ticks", "bid_size", "Nullable(Float64)"),
+            ("quote_ticks", "ask_size", "Nullable(Float64)"),
+            ("chart_candles", "volume", "Float64"),
+            ("volume_profile_bins_1m", "volume", "Float64"),
+        ):
+            self.execute(f"ALTER TABLE {self.table(table)} MODIFY COLUMN IF EXISTS {column} {column_type}")
+
+    def market_session_filter_sql(self, symbol, column="event_time"):
+        if is_crypto_symbol(symbol):
+            return "1 = 1"
+        return f"toDayOfWeek({column}) BETWEEN 1 AND 5"
 
     def canonical_candle_filter_sql(self, *, include_live=False):
         if os.getenv("CLICKHOUSE_REQUIRE_CANONICAL_CANDLES", "true").lower() not in {"1", "true", "yes"}:

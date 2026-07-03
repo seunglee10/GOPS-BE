@@ -15,6 +15,13 @@ def to_iso(value):
     return value.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
+def float_or_zero(value):
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def floor_minute(value):
     dt = parse_time(value) if isinstance(value, str) else value
     return dt.replace(second=0, microsecond=0)
@@ -156,7 +163,7 @@ class LiveCandleBuilder:
         bucket = floor_minute(trade["timestamp"])
         key = (trade["symbol"], to_iso(bucket))
         price = trade["price"]
-        size = trade.get("size") or 0
+        size = float_or_zero(trade.get("size"))
         candle = self.candles.get(key)
 
         if candle is None:
@@ -390,7 +397,7 @@ class TickWindowCandleBuilder:
         if key in self.closed_keys:
             return False
         price = float(trade["price"])
-        size = int(trade.get("size") or 0)
+        size = float_or_zero(trade.get("size"))
         current = self.windows.get(key)
         if current is None:
             current = {
@@ -574,7 +581,7 @@ class VolumeProfileBinBuilder:
     def update(self, trade):
         minute = to_iso(floor_minute(trade["timestamp"]))
         price = float(trade["price"])
-        size = int(trade.get("size") or 0)
+        size = float_or_zero(trade.get("size"))
         price_bin = round(round(price / self.price_bin_size) * self.price_bin_size, 6)
         key = (trade["symbol"], minute, price_bin)
         current = self.bins.get(key)

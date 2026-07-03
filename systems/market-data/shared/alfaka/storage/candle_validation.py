@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 
+from alfaka.common.symbols import is_crypto_symbol
 from alfaka.serving.intervals import normalize_chart_interval
 
 
@@ -12,6 +13,8 @@ def invalid_candle_reason(row):
     timestamp = parse_time(row.get("timestamp") or row.get("event_time"))
     if timestamp is None:
         return "Candle timestamp is missing or invalid."
+    if is_crypto_symbol(row.get("symbol")):
+        return None
     if interval not in {"1W", "1M"} and timestamp.weekday() >= 5:
         return f"{interval} stock candle timestamp falls outside weekday market sessions."
     return None

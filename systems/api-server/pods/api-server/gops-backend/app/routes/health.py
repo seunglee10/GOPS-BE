@@ -117,7 +117,7 @@ def runtime_config_warnings() -> list[str]:
     if os.getenv("BACKFILL_INITIAL_LOAD_1M_MIN_START") not in {None, "", "2020-07-01T00:00:00Z"}:
         warnings.append("1m_lazy_floor_not_6y")
     profiles = set(configured_feed_profiles())
-    allowed_profiles = {"sip", "boats", "overnight", "test"}
+    allowed_profiles = {"sip", "boats", "overnight", "test", "crypto-us"}
     if any(profile not in allowed_profiles for profile in profiles):
         warnings.append("invalid_alpaca_feed_profile")
     expected_profiles = {"sip", "boats"}

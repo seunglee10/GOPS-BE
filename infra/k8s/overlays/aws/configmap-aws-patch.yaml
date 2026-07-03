@@ -11,7 +11,10 @@ data:
   AWS_EC2_METADATA_DISABLED: "false"
   ALPACA_FEED: sip
   ALPACA_FEED_PROFILE: sip
-  ALPACA_FEED_PROFILES: sip,boats
+  ALPACA_FEED_PROFILES: sip,boats,crypto-us
+  ALPACA_CRYPTO_LOCATION: us
+  ALPACA_CRYPTO_SYMBOLS: BTCUSD
+  ALPACA_CRYPTO_CHANNELS: bars,updatedBars,dailyBars,trades,quotes
   ALFAKA_REQUEST_CONFIG: systems/market-data/config/market-data-request.json
   ALPACA_UNIVERSE: sp500
   ALPACA_UNIVERSE_REGISTRY_PATH: systems/market-data/config/sp500-universe.json

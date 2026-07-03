@@ -15,6 +15,7 @@ from alfaka.alpaca.feed_profiles import (
 )
 from alfaka.common.env import load_dotenv, parse_csv
 from alfaka.common.redis_keys import RedisKeyBuilder
+from alfaka.common.symbols import is_crypto_symbol
 
 
 DEFAULT_INTERVAL = "1m"
@@ -80,7 +81,7 @@ def collect_trace(
     raw_topics = expected_raw_topics(raw_prefix)
     processed_topics = expected_processed_topics()
     checks = []
-    checks.append(check_market_session())
+    checks.append(check_market_session(symbol))
     checks.append(check_api(api_base_url, symbol, interval, timeout_seconds))
     checks.append(check_redis(redis_url, symbol, interval, require_live))
     checks.append(check_kafka(kafka_bootstrap_servers, processor_group_id, raw_topics, processed_topics))
@@ -103,19 +104,20 @@ def collect_trace(
     }
 
 
-def check_market_session():
+def check_market_session(symbol=None):
     try:
         now = datetime.now(timezone.utc)
         session = market_session_for_datetime(now)
         profiles = configured_feed_profiles()
-        recommended_feed = recommended_realtime_feed_for_session(session)
+        recommended_feed = recommended_realtime_feed_for_session(session, symbol=symbol)
         active_profiles = [
             profile.profile_id
             for profile in profiles
             if feed_profile_active_for_session(profile, session)
         ]
         closed_dates = sorted(configured_closed_dates())
-        if session == "closed":
+        crypto_symbol = is_crypto_symbol(symbol)
+        if session == "closed" and not crypto_symbol:
             status = "warn"
             note = "market session is closed; a live feed can authenticate but may not receive market payloads"
         elif active_profiles:
@@ -131,7 +133,7 @@ def check_market_session():
             session=session,
             recommendedFeed=recommended_feed,
             recommendedLocalIngestorService=local_ingestor_service_for_feed(recommended_feed),
-            payloadExpected=session != "closed" and bool(recommended_feed),
+            payloadExpected=(crypto_symbol or session != "closed") and bool(recommended_feed),
             configuredFeedProfiles=[profile.profile_id for profile in profiles],
             activeFeedProfiles=active_profiles,
             configuredClosedDates=closed_dates,
@@ -141,7 +143,9 @@ def check_market_session():
         return trace_check("market-session", "fail", error=str(exc))
 
 
-def recommended_realtime_feed_for_session(session):
+def recommended_realtime_feed_for_session(session, symbol=None):
+    if is_crypto_symbol(symbol):
+        return "crypto"
     normalized = str(session or "").strip().lower()
     if normalized in {"pre", "regular", "after"}:
         return "sip"
@@ -155,6 +159,8 @@ def local_ingestor_service_for_feed(feed):
         return "alpaca-ingestor"
     if feed == "boats":
         return "alpaca-ingestor-boats"
+    if feed == "crypto":
+        return "alpaca-ingestor-crypto"
     return None
 
 

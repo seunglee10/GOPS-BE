@@ -89,10 +89,11 @@ Config:   http://localhost:8000/health/config
 | `reconciliation` | Manual order reconciliation job. |
 
 Start live Alpaca ingestion only when real-time charts are needed. The default
-contract uses SIP for `04:00-20:00 ET` and BOATS for `20:00-04:00 ET`:
+contract uses SIP for `04:00-20:00 ET`, BOATS for `20:00-04:00 ET`,
+and a separate 24/7 crypto ingestor for `BTCUSD`:
 
 ```sh
-docker compose --profile alpaca up -d --build alpaca-ingestor alpaca-ingestor-boats
+docker compose --profile alpaca up -d --build alpaca-ingestor alpaca-ingestor-boats alpaca-ingestor-crypto
 ```
 
 Audit chart coverage:

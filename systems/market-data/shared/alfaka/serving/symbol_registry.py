@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import UTC, datetime
 from typing import Any
 
@@ -19,13 +20,13 @@ class SymbolRegistry:
     def search(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
         normalized_query = query.strip().upper()
         results = self._universe_matches(normalized_query)
-        universe_symbols = set(self._universe_symbols())
+        provider_filter_symbols = self._provider_filter_symbols()
         if self.clickhouse_provider:
             try:
                 results.extend([
                     item
                     for item in self.clickhouse_provider.search_symbols(normalized_query, max(limit, 40))
-                    if isinstance(item, dict) and (not universe_symbols or item.get("symbol") in universe_symbols)
+                    if isinstance(item, dict) and (not provider_filter_symbols or item.get("symbol") in provider_filter_symbols)
                 ])
             except Exception:
                 logger.warning("ClickHouse symbol search failed; falling back to configured symbols.", exc_info=True)
@@ -127,16 +128,36 @@ class SymbolRegistry:
     def _is_universe_symbol(self, symbol: str) -> bool:
         return symbol in self._universe_symbols()
 
+    def _provider_filter_symbols(self) -> set[str]:
+        return {
+            symbol
+            for symbol in self._configured_registry_universe_symbols()
+            if self._is_valid_symbol(symbol)
+        }
+
     def _universe_symbols(self) -> list[str]:
         symbols = [
             symbol
-            for symbol in configured_universe_symbols(self.config)
+            for symbol in self._configured_registry_universe_symbols()
             if self._is_valid_symbol(symbol)
         ]
+        extra_symbols = [
+            str(symbol).strip().upper()
+            for symbol in self.config.get("extraSymbols") or []
+            if isinstance(symbol, str) and self._is_valid_symbol(str(symbol).strip().upper())
+        ]
+        symbols.extend(symbol for symbol in extra_symbols if symbol not in symbols)
         if symbols:
             return symbols
-        return [
+        symbols = [
             str(symbol).strip().upper()
             for symbol in self.config.get("defaultSymbols") or []
             if isinstance(symbol, str) and self._is_valid_symbol(str(symbol).strip().upper())
         ]
+        return [*symbols, *[symbol for symbol in extra_symbols if symbol not in symbols]]
+
+    def _configured_registry_universe_symbols(self) -> list[str]:
+        source = (os.getenv("ALPACA_COLLECTION_SYMBOL_SOURCE") or self.config.get("collectionSymbolSource") or "").strip().lower()
+        if source not in {"universe", "registry"}:
+            return []
+        return configured_universe_symbols(self.config)

@@ -54,6 +54,7 @@ from alfaka.serving.provider import MarketDataProvider, has_more_before_target, 
 from alfaka.serving.redis_provider import RedisMarketDataProvider
 from alfaka.serving.symbol_registry import SymbolRegistry
 from alfaka.storage.clickhouse_loader import candle_to_clickhouse_row, clickhouse_topics_from_env, load_payload, market_event_to_clickhouse_row, news_to_clickhouse_row, status_to_clickhouse_row, symbol_to_clickhouse_row, trade_to_clickhouse_row
+from alfaka.storage.candle_validation import invalid_candle_reason
 from alfaka.storage.s3_materializer import (
     detect_s3_object_format,
     list_s3_objects,
@@ -719,12 +720,16 @@ class MarketDataHardeningContractTest(unittest.TestCase):
                 "ALPACA_UNIVERSE",
                 "ALPACA_UNIVERSE_REGISTRY_PATH",
                 "ALPACA_COLLECTION_SYMBOL_SOURCE",
+                "ALPACA_CRYPTO_SYMBOLS",
+                "BACKFILL_INITIAL_LOAD_1M_MIN_START",
             )
         }
         os.environ["ALFAKA_REQUEST_CONFIG"] = "systems/market-data/config/market-data-request.json"
         os.environ["ALPACA_UNIVERSE"] = ""
         os.environ["ALPACA_UNIVERSE_REGISTRY_PATH"] = ""
         os.environ["ALPACA_COLLECTION_SYMBOL_SOURCE"] = "defaultSymbols"
+        os.environ["ALPACA_CRYPTO_SYMBOLS"] = "BTCUSD"
+        os.environ["BACKFILL_INITIAL_LOAD_1M_MIN_START"] = "2020-07-01T00:00:00Z"
 
     def tearDown(self):
         for key, value in self._saved_market_env.items():
@@ -773,6 +778,29 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         }):
             self.assertEqual(market_session_for_timestamp("2026-07-03T08:30:00.000Z"), "pre")
             self.assertEqual(market_session_for_timestamp("2026-07-06T14:00:00.000Z"), "closed")
+
+        crypto = resolve_feed_profile({"ALPACA_FEED_PROFILE": "crypto-us"})
+        self.assertEqual(crypto.feed, "crypto")
+        self.assertEqual(crypto.sessions, ("crypto",))
+        self.assertEqual(crypto.websocket_url, "wss://stream.data.alpaca.markets/v1beta3/crypto/us")
+        self.assertTrue(feed_profile_active_for_session(crypto, "closed"))
+
+    def test_crypto_symbol_uses_internal_symbol_and_alpaca_provider_symbol(self):
+        request = build_subscription_request(["BTCUSD"], ["bars", "trades"])
+        self.assertEqual(request["bars"], ["BTC/USD"])
+        self.assertEqual(request["trades"], ["BTC/USD"])
+
+        envelope = build_raw_envelope(
+            {"T": "t", "S": "BTC/USD", "i": 7, "p": 61500.5, "s": 0.013, "t": "2026-06-28T10:15:20.100Z"},
+            "crypto",
+            feed_profile="crypto-us",
+        )
+
+        self.assertEqual(envelope["symbol"], "BTCUSD")
+        self.assertEqual(envelope["providerSymbol"], "BTC/USD")
+        self.assertEqual(envelope["assetClass"], "crypto")
+        self.assertEqual(envelope["marketSession"], "crypto")
+        self.assertEqual(envelope["sourceEventId"], "alpaca/crypto/trades/BTCUSD/7/2026-06-28T10:15:20.100Z")
 
     def test_active_trade_subscription_waits_for_authenticated(self):
         import asyncio
@@ -1074,6 +1102,8 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(live_path_trace.recommended_realtime_feed_for_session("overnight"), "boats")
         self.assertIsNone(live_path_trace.recommended_realtime_feed_for_session("closed"))
         self.assertEqual(live_path_trace.local_ingestor_service_for_feed("boats"), "alpaca-ingestor-boats")
+        self.assertEqual(live_path_trace.recommended_realtime_feed_for_session("closed", symbol="BTCUSD"), "crypto")
+        self.assertEqual(live_path_trace.local_ingestor_service_for_feed("crypto"), "alpaca-ingestor-crypto")
 
     def test_processor_smoke_processes_trade_to_topics_and_redis(self):
         producer = RecordingProducer()
@@ -3440,6 +3470,37 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(calls[-1]["params"]["adjustment"], "split")
         self.assertEqual(calls[-1]["params"]["timeframe"], "1Min")
 
+    def test_fetch_alpaca_bars_uses_crypto_endpoint_for_btcusd(self):
+        calls = []
+
+        def fake_get(endpoint, headers, params, timeout):
+            calls.append({"endpoint": endpoint, "headers": headers, "params": dict(params), "timeout": timeout})
+            return FakeHttpResponse(
+                status_code=200,
+                payload={"bars": {"BTC/USD": [alpaca_raw_bar("2026-06-28T13:30:00.000Z", open_price=61500)]}},
+            )
+
+        with mock.patch.dict(os.environ, {
+            "ALPACA_CRYPTO_LOCATION": "us",
+            "HISTORICAL_MAX_RETRIES": "1",
+        }):
+            with mock.patch("alfaka.common.secrets.load_alpaca_credentials", return_value=("key", "secret")):
+                with mock.patch("requests.get", side_effect=fake_get):
+                    rows = fetch_alpaca_bars(
+                        "BTCUSD",
+                        "2026-06-28T13:30:00.000Z",
+                        "2026-06-28T13:31:00.000Z",
+                        "crypto-us",
+                        "1Min",
+                    )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(calls[0]["endpoint"], "https://data.alpaca.markets/v1beta3/crypto/us/bars")
+        self.assertEqual(calls[0]["params"]["symbols"], "BTC/USD")
+        self.assertEqual(calls[0]["params"]["timeframe"], "1Min")
+        self.assertNotIn("feed", calls[0]["params"])
+        self.assertNotIn("adjustment", calls[0]["params"])
+
     def test_daily_backfill_repairs_split_day_daily_bar_outlier_from_1m(self):
         daily_bar = {
             "t": "2024-06-10T04:00:00Z",
@@ -3527,6 +3588,23 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(ranges[0].start, "2026-07-06T13:31:00.000Z")
         self.assertEqual(ranges[0].end, "2026-07-06T13:32:00.000Z")
         self.assertEqual(ranges[0].missingCount, 1)
+
+    def test_gapfill_ranges_include_weekend_minutes_for_crypto_calendar(self):
+        ranges = detect_gapfill_ranges(
+            "2026-06-28T13:30:00.000Z",
+            "2026-06-28T13:33:00.000Z",
+            "1m",
+            actual_timestamps=["2026-06-28T13:31:00.000Z"],
+            calendar=TradingCalendar.crypto_24x7(),
+        )
+
+        self.assertEqual(len(ranges), 2)
+        self.assertEqual(ranges[0].start, "2026-06-28T13:30:00.000Z")
+        self.assertEqual(ranges[0].end, "2026-06-28T13:31:00.000Z")
+        self.assertEqual(ranges[0].missingCount, 1)
+        self.assertEqual(ranges[1].start, "2026-06-28T13:32:00.000Z")
+        self.assertEqual(ranges[1].end, "2026-06-28T13:33:00.000Z")
+        self.assertEqual(ranges[1].missingCount, 1)
 
     def test_gapfill_ranges_honor_configured_early_close(self):
         calendar = TradingCalendar(early_closes={"2026-11-27": time(13, 0)})
@@ -3647,6 +3725,62 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn("ifNull(source_event_id, '') DESC", query)
         self.assertIn("canonical_version = 'v2'", query)
         self.assertEqual(candles[-1]["timestamp"], "2026-06-25T13:30:00.000Z")
+
+    def test_clickhouse_provider_does_not_weekday_filter_crypto_candles(self):
+        rows = [{
+            "timestamp": "2026-06-28T13:30:00.000Z",
+            "open": 61500,
+            "high": 61600,
+            "low": 61400,
+            "close": 61550,
+            "volume": 0.25,
+            "isClosed": 1,
+            "source": "alpaca.bars",
+            "feed": "crypto",
+        }]
+        provider = RecordingClickHouseProviderForAggregation(rows)
+
+        candles = provider.candles("BTCUSD", "1m", 5)
+
+        query = provider.queries[0][0]
+        self.assertNotIn("toDayOfWeek(event_time) BETWEEN 1 AND 5", query)
+        self.assertEqual(candles[-1]["timestamp"], "2026-06-28T13:30:00.000Z")
+
+    def test_crypto_weekend_candle_is_valid_and_keeps_decimal_sizes(self):
+        self.assertIsNone(invalid_candle_reason({
+            "symbol": "BTCUSD",
+            "interval": "1m",
+            "timestamp": "2026-06-28T13:30:00.000Z",
+        }))
+        self.assertIn("weekday market sessions", invalid_candle_reason({
+            "symbol": "AAPL",
+            "interval": "1m",
+            "timestamp": "2026-06-28T13:30:00.000Z",
+        }))
+
+        trade_row = trade_to_clickhouse_row({
+            "eventType": "TRADE",
+            "symbol": "BTCUSD",
+            "tradeId": 1,
+            "price": 61500,
+            "size": 0.013,
+            "timestamp": "2026-06-28T13:30:00.000Z",
+        })
+        candle_row = candle_to_clickhouse_row({
+            "eventType": "CANDLE",
+            "symbol": "BTCUSD",
+            "interval": "1m",
+            "timestamp": "2026-06-28T13:30:00.000Z",
+            "open": 61500,
+            "high": 61600,
+            "low": 61400,
+            "close": 61550,
+            "volume": 0.013,
+        })
+
+        self.assertEqual(trade_row["size"], 0.013)
+        self.assertEqual(candle_row["volume"], 0.013)
+        self.assertEqual(candle_row["market_session"], "crypto")
 
     def test_clickhouse_query_time_minute_aggregation_uses_1m_source_and_attaches_ma(self):
         rows = [
@@ -4228,6 +4362,21 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         with self.assertRaises(LookupError):
             registry.detail("ZZZZ")
 
+    def test_symbol_registry_includes_configured_btcusd_metadata(self):
+        registry = SymbolRegistry(
+            clickhouse_provider=FakeClickHouseProvider(symbols={}),
+            redis_provider=FakeRedisProvider(symbol_metadata={}),
+        )
+
+        detail = registry.detail("BTCUSD")
+        search_results = registry.search("btc", 5)
+
+        self.assertEqual(detail["symbol"], "BTCUSD")
+        self.assertEqual(detail["assetClass"], "crypto")
+        self.assertEqual(detail["market"], "CRYPTO")
+        self.assertFalse(detail["tradable"])
+        self.assertEqual([item["symbol"] for item in search_results], ["BTCUSD"])
+
     def test_on_demand_config_has_no_default_symbols_but_accepts_explicit_seed(self):
         previous_universe = os.environ.get("ALPACA_UNIVERSE")
         previous = os.environ.get("ALPACA_SYMBOLS")
@@ -4247,7 +4396,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             with self.assertRaises(LookupError):
                 registry.detail("IBM")
             self.assertEqual(registry.search("ibm", 5), [])
-            self.assertEqual(registry.search("", 5), [])
+            self.assertEqual([item["symbol"] for item in registry.search("", 5)], ["BTCUSD"])
         finally:
             if previous_universe is None:
                 os.environ.pop("ALPACA_UNIVERSE", None)
@@ -4729,7 +4878,9 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(candle_inserts[0], candle_inserts[1])
         self.assertEqual(candle_inserts[1][0]["source_event_id"], "event-1")
         self.assertEqual(len(storage_audit_inserts), 2)
-        self.assertEqual(storage_audit_inserts[0], storage_audit_inserts[1])
+        first_storage_audit = [{key: value for key, value in row.items() if key != "created_at"} for row in storage_audit_inserts[0]]
+        second_storage_audit = [{key: value for key, value in row.items() if key != "created_at"} for row in storage_audit_inserts[1]]
+        self.assertEqual(first_storage_audit, second_storage_audit)
         self.assertEqual(len(audit_inserts), 1)
         self.assertEqual(audit_inserts[0][0]["object_path"], object_path)
 

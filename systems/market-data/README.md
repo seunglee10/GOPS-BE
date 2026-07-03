@@ -95,7 +95,8 @@ scripts/aws/check-live-path.sh NVDA
 ```
 
 ```bash
-kubectl logs -n alfaka-market-data deploy/alfaka-alpaca-ingestor --tail=100
+kubectl logs -n alfaka-market-data deploy/alfaka-alpaca-ingestor-sip --tail=100
+kubectl logs -n alfaka-market-data deploy/alfaka-alpaca-ingestor-crypto --tail=100
 kubectl logs -n alfaka-market-data deploy/alfaka-market-processor --tail=100
 kubectl logs -n alfaka-market-data deploy/alfaka-clickhouse-loader --tail=100
 ```

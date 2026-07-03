@@ -36,7 +36,10 @@ ALPACA_CHANNELS=bars,updatedBars,dailyBars,statuses
 ALPACA_ACTIVE_CHANNELS=trades,quotes
 ALPACA_MAX_TRADE_SYMBOLS=
 ALPACA_FEED_PROFILE=sip
-ALPACA_FEED_PROFILES=sip,boats
+ALPACA_FEED_PROFILES=sip,boats,crypto-us
+ALPACA_CRYPTO_LOCATION=us
+ALPACA_CRYPTO_SYMBOLS=BTCUSD
+ALPACA_CRYPTO_CHANNELS=bars,updatedBars,dailyBars,trades,quotes
 ALPACA_ENFORCE_FEED_SESSION_WINDOW=true
 ALPACA_SESSION_IDLE_POLL_SECONDS=60
 ALPACA_CREDENTIAL_SOURCE=local-env
@@ -54,7 +57,9 @@ feed.
 Set `ALPACA_MAX_TRADE_SYMBOLS` only when an Alpaca subscription cap requires an
 operational limit; explicit active chart subscriptions remain the priority.
 
-`ALPACA_FEED_PROFILE` selects one ingestor runtime feed (`sip` or `boats`). The live contract is session-routed: SIP is primary for `04:00-20:00 ET` (`pre`, `regular`, `after`) and BOATS is primary for `20:00-04:00 ET` (`overnight`). Local compose and k8s run one ingestor per active profile, and `/health/config` reports the expected profile set from `ALPACA_FEED_PROFILES`. Market-data envelopes, Redis live state, ClickHouse candle rows, API candles, and chart snapshots preserve `feedProfile` and `marketSession` so daytime and BOATS/overnight data are diagnosable instead of collapsing into an anonymous stream.
+`ALPACA_FEED_PROFILE` selects one ingestor runtime feed (`sip`, `boats`, or `crypto-us`). The live contract is session-routed: SIP is primary for `04:00-20:00 ET` (`pre`, `regular`, `after`), BOATS is primary for `20:00-04:00 ET` (`overnight`), and `crypto-us` is the 24/7 Alpaca crypto feed. Local compose and k8s run one ingestor per active profile, and `/health/config` reports the expected profile set from `ALPACA_FEED_PROFILES`. Market-data envelopes, Redis live state, ClickHouse candle rows, API candles, and chart snapshots preserve `feedProfile` and `marketSession` so daytime, BOATS/overnight, and crypto data are diagnosable instead of collapsing into an anonymous stream.
+
+Crypto uses `BTCUSD` inside GOPS and `BTC/USD` only when talking to Alpaca. It shares the existing Kafka topics; records are separated by Kafka key/message `symbol=BTCUSD`, not by a new topic.
 
 `ALPACA_CREDENTIAL_SOURCE` accepts `auto`, `aws-secrets-manager`, or `local-env`. Use `local-env` with `APCA_API_KEY_ID` and `APCA_API_SECRET_KEY` for explicit local Alpaca smoke runs while Secrets Manager is disconnected. AWS/EKS overlays set `aws-secrets-manager` and read the same canonical key names from the `dev/alpaca` JSON secret.
 

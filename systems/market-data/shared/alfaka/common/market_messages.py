@@ -7,6 +7,7 @@ import json
 from alfaka.common.env import utc_now_iso
 from alfaka.alpaca.feed_profiles import market_session_for_timestamp
 from alfaka.common.canonical import LIVE_PRICE_ADJUSTMENT, candle_metadata
+from alfaka.common.symbols import is_crypto_symbol, normalize_provider_symbol
 
 
 MESSAGE_TYPE_TO_CHANNEL = {
@@ -40,9 +41,11 @@ def build_raw_envelope(message, feed, feed_profile=None, market_session=None):
     message_type = message.get("T")
     channel = MESSAGE_TYPE_TO_CHANNEL.get(message_type, "unknown")
     received_at = utc_now_iso()
-    symbol = message.get("S") or "_MARKET"
+    provider_symbol = message.get("S") or "_MARKET"
+    symbol = normalize_provider_symbol(provider_symbol)
     event_time = message.get("t")
-    resolved_session = market_session or ("regular" if channel == "dailyBars" else market_session_for_timestamp(event_time or received_at))
+    asset_class = "crypto" if is_crypto_symbol(symbol) else "us_equity"
+    resolved_session = market_session or ("crypto" if asset_class == "crypto" else "regular" if channel == "dailyBars" else market_session_for_timestamp(event_time or received_at))
 
     envelope = {
         "source": "alpaca",
@@ -51,11 +54,14 @@ def build_raw_envelope(message, feed, feed_profile=None, market_session=None):
         "marketSession": resolved_session,
         "channel": channel,
         "symbol": symbol,
+        "assetClass": asset_class,
         "eventTime": event_time,
         "receivedAt": received_at,
         "sourceEventId": source_event_id(message, feed, channel, symbol, received_at),
         "raw": message,
     }
+    if provider_symbol != symbol:
+        envelope["providerSymbol"] = provider_symbol
     if channel in {"bars", "updatedBars", "dailyBars"}:
         envelope.update(candle_metadata(LIVE_PRICE_ADJUSTMENT))
     return envelope
