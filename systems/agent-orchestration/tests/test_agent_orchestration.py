@@ -13,7 +13,7 @@ sys.path.insert(0, str(ROOT / "shared"))
 sys.path.insert(0, str(REPO_ROOT / "systems" / "market-data" / "shared"))
 sys.modules.setdefault("boto3", types.SimpleNamespace(client=lambda *args, **kwargs: None))
 
-from gops_agents.contracts import AgentAnswer, AgentFinding, DataSnapshot, EvidenceItem, FinalAnswer, IntentRoute, SynthesisInput, utc_now_iso
+from gops_agents.contracts import AgentAnswer, AgentFinding, DataSnapshot, EvidenceItem, FinalAnswer, FinalResponse, IntentRoute, RoutePlan, SynthesisInput, utc_now_iso
 from gops_agents.events.detector import MarketEventDetector, MarketEventThresholds
 from gops_agents.events.publisher import notification_payload
 from gops_agents.intent_understanding import build_query_understanding
@@ -39,7 +39,7 @@ from gops_agents.retrieval.graph_expansion import (
     build_graph_expansion_from_evidence,
     graph_expansion_cache_key,
 )
-from gops_agents.retrieval.snapshots import trim_cross_signals
+from gops_agents.retrieval.snapshots import apply_rule_guardrail, trim_cross_signals
 from gops_agents.roles import AgentContext, NewsAgent, OntologyAgent, VerificationGuardrailAgent
 from gops_agents.runtime.admission import AdmissionPolicy, admit_analysis_request
 from gops_agents.runtime.analysis_cache import MemoryAgentAnalysisCache, RedisAgentAnalysisCache
@@ -653,6 +653,45 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertIsNotNone(stored)
         self.assertEqual(stored.analysisId, report.analysisId)
         self.assertEqual(stored.symbol, "NVDA")
+
+    def test_user_pii_is_redacted_across_serialized_report(self):
+        report = AgentOrchestrator().analyze({
+            "symbol": "NVDA",
+            "intent": "NVDA 뉴스 보여줘 contact pii.person@example.com 010-1234-5678 900101-1234567",
+            "messages": [{"role": "user", "content": "token=sk-testsecret12345"}],
+            "chartContext": {
+                "chartDocument": {"symbol": "NVDA", "timeframe": "1m", "sourceUrl": "https://example.com/chart?token=secret#debug"},
+                "visibleSummary": {"lastPrice": "120.00", "change": "+2.10%"},
+                "dataStatus": {"candleCount": 10, "state": "ready"},
+            },
+        })
+
+        payload = report.to_dict()
+        encoded = json.dumps(payload, ensure_ascii=False, default=str)
+
+        self.assertNotIn("pii.person@example.com", encoded)
+        self.assertNotIn("010-1234-5678", encoded)
+        self.assertNotIn("900101-1234567", encoded)
+        self.assertNotIn("sk-testsecret12345", encoded)
+        self.assertNotIn("token=secret", encoded)
+        self.assertIn("[REDACTED_EMAIL]", encoded)
+        self.assertIn("[REDACTED_PHONE]", encoded)
+        self.assertIn("[REDACTED_KR_RRN]", encoded)
+        self.assertIn("pii_redacted", payload.get("finalResponse", {}).get("risk_warnings", []))
+
+    def test_report_to_dict_recursively_redacts_nested_sensitive_fields(self):
+        report = AgentOrchestrator().analyze({"symbol": "NVDA", "intent": "뉴스 보여줘"})
+        report.agentTrace["debug"] = {
+            "authorization": "Bearer secret-token",
+            "nested": [{"url": "https://example.com/path?api_key=secret#fragment"}],
+        }
+
+        encoded = json.dumps(report.to_dict(), ensure_ascii=False, default=str)
+
+        self.assertNotIn("Bearer secret-token", encoded)
+        self.assertNotIn("api_key=secret", encoded)
+        self.assertIn("[REDACTED_SECRET]", encoded)
+        self.assertIn("https://example.com/path", encoded)
 
     def test_redis_report_store_round_trip_and_latest_keys(self):
         redis = FakeRedisClient()
@@ -1476,6 +1515,53 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(evidence[0].raw["keyPoints"], ["애플 공급망 관련 뉴스"])
         self.assertEqual(evidence[0].raw["dataSource"], "prelocalized")
 
+    def test_news_provider_uses_evidence_cache_before_prelocalized_sources(self):
+        cache = MemoryNewsEvidenceCache()
+        cache.set(
+            symbol="AAPL",
+            limit=5,
+            days=7,
+            fallback_enabled=False,
+            items=[
+                EvidenceItem(
+                    provider="news",
+                    status="available",
+                    title="Cached Apple news",
+                    summary="Cached Apple summary.",
+                    raw={"articleId": "cached-aapl-1", "dataSource": "cache"},
+                )
+            ],
+            ttl_seconds=60,
+        )
+        redis = FakeLocalizedRedisProvider([
+            {
+                "articleId": "ko-aapl-1",
+                "symbol": "AAPL",
+                "symbols": ["AAPL"],
+                "headline": "Apple supplier expands",
+                "summary": "Apple supplier plans expansion.",
+                "localizedHeadline": "애플 공급사, 사업 확장 추진",
+                "localizedSummary": "애플 공급사가 사업 확장을 추진한다는 내용입니다.",
+                "publishedAt": utc_now_iso(),
+            }
+        ])
+        clickhouse = FakeClickHouseProvider([])
+        provider = ClickHouseNewsProvider(
+            clickhouse_provider=clickhouse,
+            redis_provider=redis,
+            limit=5,
+            days=7,
+            direct_fallback=False,
+            cache=cache,
+        )
+
+        evidence = provider.fetch(ProviderRequest("AAPL", "애플 뉴스 보여줘"))
+
+        self.assertEqual(redis.calls, 0)
+        self.assertEqual(clickhouse.calls, 0)
+        self.assertEqual(evidence[0].title, "Cached Apple news")
+        self.assertEqual(evidence[0].raw["articleId"], "cached-aapl-1")
+
     def test_news_provider_reads_prelocalized_clickhouse_when_redis_misses(self):
         redis = FakeLocalizedRedisProvider([])
         clickhouse = FakeLocalizedClickHouseProvider(
@@ -1711,6 +1797,29 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(cached[0].url, "https://example.com/round-trip")
         self.assertEqual(cached[0].raw["articleId"], "round-trip-1")
 
+    def test_agent_redis_cache_clients_use_short_socket_timeouts(self):
+        calls = []
+
+        def fake_from_url(url, **kwargs):
+            calls.append((url, kwargs))
+            return FakeRedisClient()
+
+        with patch.dict(os.environ, {
+            "REDIS_CONNECT_TIMEOUT_SECONDS": "0.11",
+            "REDIS_SOCKET_TIMEOUT_SECONDS": "0.22",
+            "REDIS_HEALTH_CHECK_INTERVAL_SECONDS": "12",
+        }):
+            with patch.dict(sys.modules, {"redis": types.SimpleNamespace(from_url=fake_from_url)}):
+                RedisNewsEvidenceCache(redis_url="redis://news-cache")
+                RedisAgentAnalysisCache(redis_url="redis://analysis-cache")
+
+        self.assertEqual([call[0] for call in calls], ["redis://news-cache", "redis://analysis-cache"])
+        for _, kwargs in calls:
+            self.assertTrue(kwargs["decode_responses"])
+            self.assertEqual(kwargs["socket_connect_timeout"], 0.11)
+            self.assertEqual(kwargs["socket_timeout"], 0.22)
+            self.assertEqual(kwargs["health_check_interval"], 12)
+
     def test_news_provider_does_not_fallback_when_clickhouse_news_is_fresh(self):
         clickhouse = FakeClickHouseProvider([
             {
@@ -1914,6 +2023,77 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertLessEqual(report.finalResponse.llm_calls_used, 1)
         self.assertTrue(report.finalResponse.partial_data_used)
         self.assertIn("partial_data_used", report.finalResponse.risk_warnings)
+
+    def test_provider_evidence_pii_and_profanity_are_redacted_before_display_and_report(self):
+        provider = ClickHouseNewsProvider(
+            clickhouse_provider=FakeClickHouseProvider([
+                {
+                    "articleId": "redaction-1",
+                    "headline": "NVDA contact pii.news@example.com after earnings",
+                    "summary": "Analyst note included phone 010-9876-5432 and shit language.",
+                    "publishedAt": utc_now_iso(),
+                    "url": "https://example.com/news?token=secret#debug",
+                    "symbols": ["NVDA"],
+                    "source": "alpaca",
+                }
+            ]),
+            publish_fallback=False,
+        )
+        orchestrator = AgentOrchestrator()
+        orchestrator.news_agent = NewsAgent(provider)
+
+        report = orchestrator.analyze({
+            "symbol": "NVDA",
+            "intent": "NVDA 뉴스 기반으로 영향 분석해줘",
+            "agentIds": ["agent-02"],
+        })
+        payload = report.to_dict()
+        encoded = json.dumps(payload, ensure_ascii=False, default=str)
+
+        self.assertNotIn("pii.news@example.com", encoded)
+        self.assertNotIn("010-9876-5432", encoded)
+        self.assertNotIn("shit", encoded.lower())
+        self.assertNotIn("token=secret", encoded)
+        self.assertIn("[REDACTED_EMAIL]", encoded)
+        self.assertIn("[REDACTED_PHONE]", encoded)
+        self.assertIn("[FILTERED]", encoded)
+        self.assertIn("pii_redacted", report.finalResponse.risk_warnings)
+        self.assertIn("profanity_removed", report.finalResponse.risk_warnings)
+
+    def test_rule_guardrail_sanitizes_all_final_response_sections(self):
+        response = FinalResponse(
+            run_id="run-redaction",
+            answer_type="investment_opinion",
+            summary="Buy now after checking pii.final@example.com",
+            key_points=["place order after 010-1111-2222"],
+            bullish_points=["지금 매수하세요"],
+            bearish_points=["This includes shit wording."],
+            relationship_impacts=["relationship contact 900101-1234567"],
+            confidence=0.9,
+            final_stance="buy",
+            llm_calls_used=0,
+        )
+        route_plan = RoutePlan(
+            run_id="run-redaction",
+            intent="investment_opinion",
+            route_confidence=0.9,
+            llm_calls_allowed=1,
+        )
+
+        guarded = apply_rule_guardrail(response, route_plan, [])
+        encoded = json.dumps(guarded.to_dict(), ensure_ascii=False, default=str)
+
+        self.assertEqual(guarded.final_stance, "watch")
+        self.assertLessEqual(guarded.confidence, 0.55)
+        self.assertNotIn("Buy now", encoded)
+        self.assertNotIn("place order", encoded)
+        self.assertNotIn("pii.final@example.com", encoded)
+        self.assertNotIn("010-1111-2222", encoded)
+        self.assertNotIn("900101-1234567", encoded)
+        self.assertNotIn("shit", encoded.lower())
+        self.assertIn("direct_investment_command_removed", guarded.risk_warnings)
+        self.assertIn("pii_redacted", guarded.risk_warnings)
+        self.assertIn("profanity_removed", guarded.risk_warnings)
 
     def test_hybrid_router_does_not_call_openai_only_because_api_key_exists(self):
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False):

@@ -81,6 +81,16 @@ Kafka queue, worker, Redis report store를 쓰는 async path다.
 `shared/gops_agents/orchestrator.py`는 compatibility import shim이고, 실제
 workflow 구현은 `shared/gops_agents/orchestration/` 아래에 있다.
 
+## Deterministic Safety Guardrail
+
+Agent runtime은 외부 moderation 서비스 없이 deterministic sanitizer를 적용한다.
+사용자 입력, provider evidence, synthesis payload, 최종 답변, serialized report의
+문자열은 이메일, 전화번호, 한국 주민등록번호 후보, 계좌/API key/token/secret
+패턴, URL query/fragment, 제한된 욕설 denylist를 마스킹한다. 마스킹이 발생하면
+`finalResponse.risk_warnings` 또는 `agentTrace.inputGuardrail.warnings`에
+`pii_redacted`, `profanity_removed`, `sensitive_url_redacted` 같은 원인 코드만
+남기고 원문 값은 저장하거나 반환하지 않는다.
+
 ## Provider Boundary
 
 Provider는 외부 데이터 fetch boundary다. 최종 답변 생성기나 UI command

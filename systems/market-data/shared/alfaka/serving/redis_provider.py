@@ -17,7 +17,13 @@ from alfaka.serving.news_hot_cache import read_company_daily_summaries_from_redi
 class RedisMarketDataProvider:
     def __init__(self, redis_url=None):
         load_dotenv()
-        self.redis = redis.from_url(redis_url or os.getenv("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True)
+        self.redis = redis.from_url(
+            redis_url or os.getenv("REDIS_URL", "redis://localhost:6379/0"),
+            decode_responses=True,
+            socket_connect_timeout=float(os.getenv("REDIS_CONNECT_TIMEOUT_SECONDS", "0.2")),
+            socket_timeout=float(os.getenv("REDIS_SOCKET_TIMEOUT_SECONDS", "0.2")),
+            health_check_interval=int(os.getenv("REDIS_HEALTH_CHECK_INTERVAL_SECONDS", "30")),
+        )
         self.keys = RedisKeyBuilder()
 
     def latest_price(self, symbol):

@@ -810,7 +810,11 @@ class ClickHouseMarketDataProvider:
         for key, value in parameters.items():
             params[f"param_{key}"] = clickhouse_param_value(value)
 
-        response = requests.post(self.url, params=params, timeout=10)
+        response = requests.post(
+            self.url,
+            params=params,
+            timeout=float(os.getenv("CLICKHOUSE_PROVIDER_TIMEOUT_SECONDS", "0.6")),
+        )
         if response.status_code >= 400:
             raise RuntimeError(f"ClickHouse query failed: status={response.status_code}, body={response.text}")
         return [json.loads(line) for line in response.text.splitlines() if line.strip()]

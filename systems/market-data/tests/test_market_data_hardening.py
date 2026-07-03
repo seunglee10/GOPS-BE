@@ -1736,6 +1736,29 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(event["sourceInterval"], "1m")
         self.assertEqual(event["data"]["updatedAt"], "2026-06-25T10:17:20.250Z")
 
+    def test_redis_market_data_provider_uses_short_socket_timeouts(self):
+        calls = []
+
+        def fake_from_url(url, **kwargs):
+            calls.append((url, kwargs))
+            return MemoryRedis()
+
+        import alfaka.serving.redis_provider as redis_provider_module
+
+        with mock.patch.object(redis_provider_module, "redis", types.SimpleNamespace(from_url=fake_from_url)):
+            with mock.patch.dict(os.environ, {
+                "REDIS_CONNECT_TIMEOUT_SECONDS": "0.13",
+                "REDIS_SOCKET_TIMEOUT_SECONDS": "0.27",
+                "REDIS_HEALTH_CHECK_INTERVAL_SECONDS": "9",
+            }):
+                RedisMarketDataProvider(redis_url="redis://market-data")
+
+        self.assertEqual(calls[0][0], "redis://market-data")
+        self.assertTrue(calls[0][1]["decode_responses"])
+        self.assertEqual(calls[0][1]["socket_connect_timeout"], 0.13)
+        self.assertEqual(calls[0][1]["socket_timeout"], 0.27)
+        self.assertEqual(calls[0][1]["health_check_interval"], 9)
+
     def test_alpaca_asset_maps_to_symbol_metadata_contract(self):
         metadata = asset_to_symbol_metadata(
             {
@@ -3226,6 +3249,32 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(provider.table("symbols"), "custom_market_data.symbols")
         with self.assertRaises(ValueError):
             provider.table("bad-table-name")
+
+    def test_clickhouse_provider_query_uses_short_serving_timeout(self):
+        calls = []
+
+        class FakeResponse:
+            status_code = 200
+            text = '{"ok":1}\n'
+
+        def fake_post(url, **kwargs):
+            calls.append((url, kwargs))
+            return FakeResponse()
+
+        provider = ClickHouseMarketDataProvider(
+            url="http://clickhouse:8123",
+            database="market_data",
+            user="alfaka",
+            password="secret",
+        )
+        with mock.patch.dict(os.environ, {"CLICKHOUSE_PROVIDER_TIMEOUT_SECONDS": "0.45"}):
+            with mock.patch("requests.post", side_effect=fake_post):
+                rows = provider.query_json_each_row("SELECT 1", {"symbol": "AAPL"})
+
+        self.assertEqual(rows, [{"ok": 1}])
+        self.assertEqual(calls[0][0], "http://clickhouse:8123")
+        self.assertEqual(calls[0][1]["timeout"], 0.45)
+        self.assertEqual(calls[0][1]["params"]["param_symbol"], "AAPL")
 
     def test_clickhouse_direct_candles_use_deterministic_latest_source(self):
         rows = [{

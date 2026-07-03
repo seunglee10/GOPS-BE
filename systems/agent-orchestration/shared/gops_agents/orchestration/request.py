@@ -9,11 +9,14 @@ from ..query_understanding import is_supported_company_symbol, relationship_symb
 from ..retrieval.snapshots import runtime_policy_from_env
 from ..roles import AgentContext
 from ..runtime import RuntimeRunContext
+from ..security import sanitize_value
 from .timing import empty_timing
 
 
 def normalize_request_state(state: dict[str, Any]) -> dict[str, Any]:
-    request = state["request"]
+    request_result = sanitize_value(state["request"] if isinstance(state.get("request"), dict) else {})
+    request = request_result.value if isinstance(request_result.value, dict) else {}
+    input_safety_warnings = list(request_result.warnings)
     timing = empty_timing()
     runtime_policy = runtime_policy_from_env()
     runtime_context = RuntimeRunContext(policy=runtime_policy, timing=timing)
@@ -86,6 +89,7 @@ def normalize_request_state(state: dict[str, Any]) -> dict[str, Any]:
     )
     return {
         **state,
+        "request": request,
         "run_id": run_id,
         "symbol": symbol,
         "intent": intent,
@@ -101,6 +105,7 @@ def normalize_request_state(state: dict[str, Any]) -> dict[str, Any]:
         "entity_resolution": entity_resolution_payload,
         "query_understanding": query_understanding_payload,
         "subject_validation": subject_validation,
+        "input_safety_warnings": input_safety_warnings,
         "analysis_mode": analysis_mode,
         "route_mode": query_understanding.routeMode,
     }

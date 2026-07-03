@@ -34,6 +34,7 @@ from ..roles import (
 from ..runtime import RuntimeRunContext
 from ..runtime.analysis_cache import AgentAnalysisCache, CachedAgentAnalysis, build_analysis_cache_from_env
 from ..runtime.report_store import InMemoryReportStore, ReportStore
+from ..security import merge_safety_warnings
 from ..synthesis import FinalAnswerSynthesizer
 from .cache import (
     analysis_cache_key_for_state,
@@ -613,6 +614,8 @@ class AgentOrchestrator:
         )
         agent_trace["analysisMode"] = str(state.get("analysis_mode") or "auto")
         agent_trace["uiLayoutFastAck"] = True
+        if state.get("input_safety_warnings"):
+            agent_trace["inputGuardrail"] = {"warnings": list(state.get("input_safety_warnings", []))}
         report = AnalysisReport(
             analysisId=analysis_id,
             symbol=state["symbol"],
@@ -677,6 +680,11 @@ class AgentOrchestrator:
         if final_response is not None and route_plan is not None:
             guardrail_started_at = time.perf_counter()
             final_response = apply_rule_guardrail(final_response, route_plan, snapshots)
+            if state.get("input_safety_warnings"):
+                final_response.risk_warnings = merge_safety_warnings([
+                    *final_response.risk_warnings,
+                    *list(state.get("input_safety_warnings", [])),
+                ])[:5]
             add_timing_ms(state, "guardrailMs", (time.perf_counter() - guardrail_started_at) * 1000)
             timing = finalize_timing(state)
             final_response.latency_ms = float(timing.get("totalMs") or 0.0)
@@ -689,6 +697,8 @@ class AgentOrchestrator:
             state.get("query_understanding"),
         )
         agent_trace["analysisMode"] = str(state.get("analysis_mode") or "auto")
+        if state.get("input_safety_warnings"):
+            agent_trace["inputGuardrail"] = {"warnings": list(state.get("input_safety_warnings", []))}
         if state.get("analysis_mode") == "multi_agent":
             agent_trace["multiAgent"] = {
                 "answerCount": len(state.get("agent_answers", [])),

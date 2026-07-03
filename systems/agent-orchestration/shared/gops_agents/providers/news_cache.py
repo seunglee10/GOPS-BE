@@ -106,7 +106,13 @@ class RedisNewsEvidenceCache(NewsEvidenceCache):
         else:
             import redis
 
-            self.redis = redis.from_url(redis_url or os.getenv("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True)
+            self.redis = redis.from_url(
+                redis_url or os.getenv("REDIS_URL", "redis://localhost:6379/0"),
+                decode_responses=True,
+                socket_connect_timeout=float(os.getenv("REDIS_CONNECT_TIMEOUT_SECONDS", "0.2")),
+                socket_timeout=float(os.getenv("REDIS_SOCKET_TIMEOUT_SECONDS", "0.2")),
+                health_check_interval=int(os.getenv("REDIS_HEALTH_CHECK_INTERVAL_SECONDS", "30")),
+            )
 
     def get(self, *, symbol: str, limit: int, days: int, fallback_enabled: bool) -> list[EvidenceItem] | None:
         try:

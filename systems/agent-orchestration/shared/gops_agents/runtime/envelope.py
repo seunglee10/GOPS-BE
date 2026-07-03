@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from ..contracts import AnalysisReport, stable_id, utc_now_iso
+from ..security import sanitize_value
 
 
 REQUEST_STATUS_ACCEPTED = "accepted"
@@ -81,6 +82,8 @@ def build_request_envelope(
     max_output_tokens = parse_optional_positive_int(clean_payload.pop("maxOutputTokens", None))
     budget_owner = normalize_choice(clean_payload.pop("llmBudgetOwner", None), {"platform", "user"}, "platform")
     resolved_request_id = clean_string(request_id) or clean_string(clean_payload.pop("requestId", None))
+    payload_result = sanitize_value(clean_payload)
+    clean_payload = payload_result.value if isinstance(payload_result.value, dict) else {}
     if not resolved_request_id:
         resolved_request_id = request_id_for_payload(user, idem_key, clean_payload, submitted_at)
     return AgentAnalysisRequestEnvelope(
@@ -138,7 +141,8 @@ def status_report_for_envelope(
     summary: str | None = None,
     error: str | None = None,
 ) -> AnalysisReport:
-    payload = envelope.payload if isinstance(envelope.payload, dict) else {}
+    payload_result = sanitize_value(envelope.payload if isinstance(envelope.payload, dict) else {})
+    payload = payload_result.value if isinstance(payload_result.value, dict) else {}
     symbol = str(payload.get("symbol") or "UNKNOWN").strip().upper() or "UNKNOWN"
     intent = str(payload.get("intent") or payload.get("prompt") or "analysis")
     trace = {
@@ -149,6 +153,8 @@ def status_report_for_envelope(
             "delivery": envelope.delivery.to_dict(),
         }
     }
+    if payload_result.warnings:
+        trace["inputGuardrail"] = {"warnings": list(payload_result.warnings)}
     if error:
         trace["error"] = error
     return AnalysisReport(

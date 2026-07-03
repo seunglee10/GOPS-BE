@@ -28,6 +28,7 @@ from ..contracts import (
     utc_now_iso,
 )
 from ..providers import ProviderRequest
+from ..security import SanitizationResult, merge_safety_warnings, sanitize_text, sanitize_url, sanitize_value
 
 
 SNAPSHOT_BUNDLE_BY_INTENT = {
@@ -183,7 +184,7 @@ class SnapshotExecutor:
                         snapshots_by_type[snapshot_type] = timeout_snapshot(run_id, snapshot_type, policy.snapshot_timeout_ms)
                 executor.shutdown(wait=False, cancel_futures=True)
 
-        ordered = [snapshots_by_type[item] for item in bundle if item in snapshots_by_type]
+        ordered = [sanitize_snapshot(snapshots_by_type[item]) for item in bundle if item in snapshots_by_type]
         if "risk_policy_snapshot" in route_plan.snapshot_bundle:
             ordered.append(self.risk.fetch(context, run_id, policy.max_items_per_snapshot, ordered))
         return ordered
@@ -282,7 +283,12 @@ class NewsSnapshotProvider:
             warnings=warnings,
         )
         snapshot.daily_summaries = daily_summaries
-        return snapshot
+        sanitized = sanitize_snapshot(snapshot)
+        daily_result = sanitize_value(daily_summaries)
+        sanitized.daily_summaries = daily_result.value
+        if daily_result.warnings:
+            sanitized.warnings = merge_safety_warnings([*sanitized.warnings, *daily_result.warnings])
+        return sanitized
 
 
 class MarketSnapshotProvider:
@@ -306,7 +312,7 @@ class MarketSnapshotProvider:
         if peer_symbols and not peer_evidence:
             warnings.append("market_peer_data_unavailable")
         summary = market_snapshot_summary(context.symbol, evidence, peer_symbols, peer_evidence)
-        return DataSnapshot(
+        return sanitize_snapshot(DataSnapshot(
             snapshot_id=stable_id("snapshot", {"runId": run_id, "type": "market_snapshot", "symbol": context.symbol}),
             run_id=run_id,
             snapshot_type="market_snapshot",
@@ -321,7 +327,7 @@ class MarketSnapshotProvider:
             confidence=0.64 if evidence else 0.35,
             latency_ms=elapsed_ms(started_at),
             warnings=warnings,
-        )
+        ))
 
 
 class RelationshipSnapshotProvider:
@@ -339,7 +345,7 @@ class RelationshipSnapshotProvider:
             evidence = [EvidenceItem.no_data("ontology", "Relationship snapshot unavailable", f"관계 snapshot 조회에 실패했습니다: {exc.__class__.__name__}")]
         available = [item for item in evidence if item.provider == "ontology" and item.status == "available"]
         warnings = [] if available else ["no_clear_relationship_path"]
-        return DataSnapshot(
+        return sanitize_snapshot(DataSnapshot(
             snapshot_id=stable_id("snapshot", {"runId": run_id, "type": "relationship_snapshot", "symbol": context.symbol}),
             run_id=run_id,
             snapshot_type="relationship_snapshot",
@@ -354,7 +360,7 @@ class RelationshipSnapshotProvider:
             confidence=0.7 if available else 0.3,
             latency_ms=elapsed_ms(started_at),
             warnings=warnings,
-        )
+        ))
 
 
 class RiskPolicySnapshotProvider:
@@ -392,6 +398,78 @@ class RiskPolicySnapshotProvider:
             warnings=warnings,
         )
 
+
+def sanitize_snapshot(snapshot: DataSnapshot) -> DataSnapshot:
+    summary_result = sanitize_text(snapshot.summary)
+    freshness_result = sanitize_value(dict(snapshot.freshness))
+    signal_results = [sanitize_agent_signal(item) for item in snapshot.signals]
+    evidence_results = [sanitize_evidence_item(item) for item in snapshot.evidence]
+    warnings = [
+        *snapshot.warnings,
+        *summary_result.warnings,
+        *freshness_result.warnings,
+        *(warning for result in signal_results for warning in result.warnings),
+        *(warning for result in evidence_results for warning in result.warnings),
+    ]
+    sanitized = DataSnapshot(
+        snapshot_id=snapshot.snapshot_id,
+        run_id=snapshot.run_id,
+        snapshot_type=snapshot.snapshot_type,
+        status=snapshot.status,
+        source=snapshot.source,
+        cache_hit=snapshot.cache_hit,
+        freshness=freshness_result.value if isinstance(freshness_result.value, dict) else {},
+        summary=summary_result.value,
+        signals=[result.value for result in signal_results],
+        evidence=[result.value for result in evidence_results],
+        data_quality=snapshot.data_quality,
+        confidence=snapshot.confidence,
+        latency_ms=snapshot.latency_ms,
+        warnings=merge_safety_warnings(warnings),
+    )
+    daily_summaries = getattr(snapshot, "daily_summaries", None)
+    if isinstance(daily_summaries, list):
+        daily_result = sanitize_value(daily_summaries)
+        sanitized.daily_summaries = daily_result.value
+        if daily_result.warnings:
+            sanitized.warnings = merge_safety_warnings([*sanitized.warnings, *daily_result.warnings])
+    return sanitized
+
+
+def sanitize_evidence_item(item: EvidenceItem) -> SanitizationResult:
+    title_result = sanitize_text(item.title)
+    summary_result = sanitize_text(item.summary)
+    url_result = sanitize_url(item.url)
+    raw_result = sanitize_value(item.raw)
+    warnings = merge_safety_warnings([*title_result.warnings, *summary_result.warnings, *url_result.warnings, *raw_result.warnings])
+    return SanitizationResult(
+        EvidenceItem(
+            provider=item.provider,
+            status=item.status,
+            title=title_result.value,
+            summary=summary_result.value,
+            observedAt=item.observedAt,
+            url=url_result.value,
+            raw=raw_result.value if isinstance(raw_result.value, dict) else {},
+        ),
+        warnings,
+    )
+
+
+def sanitize_agent_signal(item: AgentSignal) -> SanitizationResult:
+    target_result = sanitize_text(item.target)
+    reasoning_result = sanitize_text(item.reasoning)
+    warnings = merge_safety_warnings([*target_result.warnings, *reasoning_result.warnings])
+    return SanitizationResult(
+        AgentSignal(
+            target=target_result.value,
+            direction=item.direction,
+            horizon=item.horizon,
+            strength=item.strength,
+            reasoning=reasoning_result.value,
+        ),
+        warnings,
+    )
 
 def build_synthesis_input(
     *,
@@ -436,7 +514,7 @@ def trim_cross_signals(cross_signals: list[dict[str, Any]]) -> list[dict[str, An
     max_items = env_int("AGENT_MAX_SYNTHESIS_CROSS_SIGNALS", 6)
     max_chars = env_int("AGENT_MAX_SYNTHESIS_CROSS_SIGNAL_CHARS", 1800)
     ordered = sorted(
-        [dict(item) for item in cross_signals if isinstance(item, dict)],
+        [sanitize_value(dict(item)).value for item in cross_signals if isinstance(item, dict)],
         key=lambda item: float(item.get("confidence") or 0.0),
         reverse=True,
     )[:max_items]
@@ -498,6 +576,9 @@ def apply_rule_guardrail(response: FinalResponse, route_plan: RoutePlan, snapsho
     final_stance = response.final_stance
     summary = response.summary
     key_points = list(response.key_points)
+    bullish_points = list(response.bullish_points)
+    bearish_points = list(response.bearish_points)
+    relationship_impacts = list(response.relationship_impacts)
 
     if response.llm_calls_used > route_plan.llm_calls_allowed:
         risk_warnings.append("llm_call_budget_exceeded")
@@ -509,23 +590,37 @@ def apply_rule_guardrail(response: FinalResponse, route_plan: RoutePlan, snapsho
             risk_warnings.append("partial_data_used")
         confidence = min(confidence, 0.65)
 
-    combined_text = " ".join([summary, *key_points, *response.bullish_points, *response.bearish_points]).lower()
+    combined_text = " ".join([summary, *key_points, *bullish_points, *bearish_points, *relationship_impacts]).lower()
     if contains_direct_investment_command(combined_text):
         risk_warnings.append("direct_investment_command_removed")
         summary = soften_direct_investment_language(summary)
         key_points = [soften_direct_investment_language(item) for item in key_points]
+        bullish_points = [soften_direct_investment_language(item) for item in bullish_points]
+        bearish_points = [soften_direct_investment_language(item) for item in bearish_points]
+        relationship_impacts = [soften_direct_investment_language(item) for item in relationship_impacts]
         final_stance = "watch"
         confidence = min(confidence, 0.55)
+
+    summary_result = sanitize_text(summary)
+    key_point_results = [sanitize_text(item) for item in key_points]
+    bullish_results = [sanitize_text(item) for item in bullish_points]
+    bearish_results = [sanitize_text(item) for item in bearish_points]
+    relationship_results = [sanitize_text(item) for item in relationship_impacts]
+    risk_warnings.extend(summary_result.warnings)
+    risk_warnings.extend(warning for result in key_point_results for warning in result.warnings)
+    risk_warnings.extend(warning for result in bullish_results for warning in result.warnings)
+    risk_warnings.extend(warning for result in bearish_results for warning in result.warnings)
+    risk_warnings.extend(warning for result in relationship_results for warning in result.warnings)
 
     return FinalResponse(
         run_id=response.run_id,
         answer_type=response.answer_type,
-        summary=summary,
-        key_points=key_points,
-        bullish_points=list(response.bullish_points),
-        bearish_points=list(response.bearish_points),
-        relationship_impacts=list(response.relationship_impacts),
-        risk_warnings=unique_strings(risk_warnings)[:5],
+        summary=summary_result.value,
+        key_points=[result.value for result in key_point_results],
+        bullish_points=[result.value for result in bullish_results],
+        bearish_points=[result.value for result in bearish_results],
+        relationship_impacts=[result.value for result in relationship_results],
+        risk_warnings=merge_safety_warnings(risk_warnings)[:5],
         data_freshness_warnings=unique_strings(data_warnings)[:5],
         partial_data_used=response.partial_data_used or any(snapshot.status in {"partial", "failed"} for snapshot in snapshots),
         confidence=confidence,
@@ -657,7 +752,7 @@ def snapshots_from_cached_evidence(run_id: str, context: Any, route_plan: RouteP
             summary = f"{context.symbol} cached market snapshot을 재사용했습니다." if items else f"{context.symbol} cached market snapshot이 없습니다."
             warnings = [] if items else ["market_snapshot_unavailable"]
         snapshots.append(
-            DataSnapshot(
+            sanitize_snapshot(DataSnapshot(
                 snapshot_id=stable_id("snapshot", {"runId": run_id, "type": snapshot_type, "cached": True}),
                 run_id=run_id,
                 snapshot_type=snapshot_type,
@@ -672,7 +767,7 @@ def snapshots_from_cached_evidence(run_id: str, context: Any, route_plan: RouteP
                 confidence=0.68 if available else 0.35,
                 latency_ms=0.0,
                 warnings=warnings,
-            )
+            ))
         )
     if "risk_policy_snapshot" in route_plan.snapshot_bundle:
         snapshots.append(RiskPolicySnapshotProvider().fetch(context, run_id, 5, snapshots))
@@ -928,10 +1023,14 @@ def soften_direct_investment_language(text: str) -> str:
         "매도하세요": "투자 판단 전 추가 확인이 필요합니다",
         "buy now": "review the evidence before making any trade",
         "sell now": "review the evidence before making any trade",
+        "place order": "review the evidence before making any trade",
     }
     result = str(text)
     for source, target in replacements.items():
-        result = result.replace(source, target)
+        if source.isascii():
+            result = re.sub(re.escape(source), target, result, flags=re.IGNORECASE)
+        else:
+            result = result.replace(source, target)
     return result
 
 

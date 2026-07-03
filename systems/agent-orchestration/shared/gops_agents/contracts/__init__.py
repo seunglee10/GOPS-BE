@@ -425,4 +425,6 @@ class AnalysisReport:
         data["finalResponse"] = self.finalResponse.to_dict() if self.finalResponse else None
         data["latencyTrace"] = self.latencyTrace.to_dict() if self.latencyTrace else None
         data["agentAnswers"] = [item.to_dict() for item in self.agentAnswers]
-        return data
+        from ..security import sanitize_value
+
+        return sanitize_value(data).value

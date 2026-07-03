@@ -18,6 +18,7 @@ from ..contracts import (
     SynthesisInput,
 )
 from ..orchestration.routing import parse_openai_text_json
+from ..security import sanitize_text, sanitize_url, sanitize_value
 
 
 class FinalAnswerSynthesizer:
@@ -83,12 +84,12 @@ class FinalAnswerSynthesizer:
     ) -> FinalAnswer:
         intent_types = {part.strip() for part in str(route.intentType or "").lower().split("+") if part.strip()}
         if route.intentType == "news" or route.selectedRoles == ["news"]:
-            return build_news_final_answer(symbol, findings, provider_evidence, daily_summaries=daily_summaries)
+            return sanitize_final_answer(build_news_final_answer(symbol, findings, provider_evidence, daily_summaries=daily_summaries))
         if route.intentType == "ontology" or route.selectedRoles == ["ontology"]:
-            return build_ontology_final_answer(symbol, findings, provider_evidence)
+            return sanitize_final_answer(build_ontology_final_answer(symbol, findings, provider_evidence))
         if "market-move" in intent_types:
-            return build_market_move_final_answer(symbol, findings, provider_evidence)
-        return build_general_final_answer(symbol, route, findings, provider_evidence)
+            return sanitize_final_answer(build_market_move_final_answer(symbol, findings, provider_evidence))
+        return sanitize_final_answer(build_general_final_answer(symbol, route, findings, provider_evidence))
 
     def _synthesize_with_openai(
         self,
@@ -220,14 +221,14 @@ class FinalAnswerSynthesizer:
             return openai_answer
         if isinstance(timing, dict):
             timing["roleAnswerLlmUnavailable"] = int(timing.get("roleAnswerLlmUnavailable") or 0) + 1
-        return AgentAnswer(
+        return sanitize_agent_answer(AgentAnswer(
             agentId=finding.agentId,
             role=finding.role,
             title=f"{finding.role} 답변",
             content=finding.summary,
             confidence=finding.confidence,
             citations=citations_from_evidence(finding.evidence),
-        )
+        ))
 
     def _synthesize_agent_answer_with_openai(
         self,
@@ -261,7 +262,7 @@ class FinalAnswerSynthesizer:
                     {
                         "role": "user",
                         "content": json.dumps(
-                            {
+                            sanitize_value({
                                 "symbol": symbol,
                                 "intent": intent,
                                 "roleFinding": {
@@ -272,7 +273,7 @@ class FinalAnswerSynthesizer:
                                     "confidence": finding.confidence,
                                     "evidence": compact_evidence(finding.evidence),
                                 },
-                            },
+                            }).value,
                             ensure_ascii=False,
                         ),
                     },
@@ -312,14 +313,14 @@ class FinalAnswerSynthesizer:
             content = parsed.get("content")
             if not isinstance(title, str) or not isinstance(content, str):
                 return None
-            return AgentAnswer(
+            return sanitize_agent_answer(AgentAnswer(
                 agentId=finding.agentId,
                 role=finding.role,
                 title=title,
                 content=content,
                 confidence=finding.confidence,
                 citations=citations_from_evidence(finding.evidence),
-            )
+            ))
         except Exception:
             return None
 
@@ -345,8 +346,8 @@ def compact_findings(findings: list[AgentFinding]) -> list[dict[str, Any]]:
         {
             "agentId": item.agentId,
             "role": item.role,
-            "summary": item.summary,
-            "rationale": item.rationale,
+            "summary": sanitize_text(item.summary).value,
+            "rationale": sanitize_text(item.rationale).value,
             "confidence": item.confidence,
             "tags": item.tags,
         }
@@ -360,7 +361,7 @@ def compact_evidence(items: list[EvidenceItem]) -> list[dict[str, Any]]:
         raw = item.raw if isinstance(item.raw, dict) else {}
         title = display_title(item)
         summary = display_summary(item)
-        compacted.append({
+        compacted.append(sanitize_value({
             "provider": item.provider,
             "status": item.status,
             "title": title,
@@ -398,7 +399,7 @@ def compact_evidence(items: list[EvidenceItem]) -> list[dict[str, Any]]:
                 ]
                 if key in raw
             },
-        })
+        }).value)
     return compacted
 
 
@@ -412,18 +413,18 @@ def synthesis_payload(
     synthesis_input: SynthesisInput | None,
 ) -> dict[str, Any]:
     if synthesis_input is not None:
-        return {
+        return sanitize_value({
             "symbol": symbol,
             "intent": intent,
             "synthesisInput": synthesis_input.to_dict(),
-        }
-    return {
+        }).value
+    return sanitize_value({
         "symbol": symbol,
         "intent": intent,
         "route": route.to_dict(),
         "findings": compact_findings(findings),
         "providerEvidence": compact_evidence(provider_evidence),
-    }
+    }).value
 
 
 def final_answer_from_openai_json(data: dict[str, Any]) -> FinalAnswer | None:
@@ -472,8 +473,31 @@ def sanitize_final_answer(answer: FinalAnswer) -> FinalAnswer:
             )
             for section in answer.sections
         ],
-        citations=[citation for citation in answer.citations if citation.url],
+        citations=[sanitize_final_answer_citation(citation) for citation in answer.citations if citation.url],
         limitations=[clean_user_text(item) for item in answer.limitations],
+    )
+
+
+def sanitize_final_answer_citation(citation: FinalAnswerCitation) -> FinalAnswerCitation:
+    title_result = sanitize_text(citation.title)
+    url_result = sanitize_url(citation.url)
+    return FinalAnswerCitation(
+        provider=citation.provider,
+        title=title_result.value,
+        url=url_result.value,
+        publishedAt=citation.publishedAt,
+    )
+
+
+def sanitize_agent_answer(answer: AgentAnswer) -> AgentAnswer:
+    return AgentAnswer(
+        agentId=answer.agentId,
+        role=answer.role,
+        title=clean_user_text(answer.title),
+        content=clean_user_text(answer.content),
+        confidence=answer.confidence,
+        citations=[sanitize_final_answer_citation(citation) for citation in answer.citations if citation.url],
+        createdAt=answer.createdAt,
     )
 
 
@@ -496,7 +520,7 @@ def clean_user_text(value: str) -> str:
         text = text.replace(source, target)
     text = re.sub(r"증거\((근거|evidence)\)", "근거", text)
     text = re.sub(r"근거\((근거|evidence)\)", "근거", text)
-    return text
+    return sanitize_text(text).value
 
 
 def build_news_final_answer(

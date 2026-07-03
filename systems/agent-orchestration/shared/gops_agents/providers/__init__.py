@@ -76,13 +76,13 @@ class ClickHouseNewsProvider(NewsProvider):
         self.daily_summary_limit = int(os.getenv("AGENT_NEWS_DAILY_SUMMARY_LIMIT", "5"))
 
     def fetch(self, request: ProviderRequest) -> list[EvidenceItem]:
-        localized = self._fetch_prelocalized(request)
-        if localized:
-            return self._cache_set(request, localized)
-
         cached = self._cache_get(request)
         if cached is not None:
             return cached
+
+        localized = self._fetch_prelocalized(request)
+        if localized:
+            return self._cache_set(request, localized)
 
         clickhouse_error: Exception | None = None
         rows = []
