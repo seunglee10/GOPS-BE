@@ -39,6 +39,7 @@ def build_agent_trace(
     retrieval_context: RetrievalContext | None = None,
     cross_signals: list[CrossSignal] | None = None,
     entity_resolution: dict[str, Any] | None = None,
+    query_understanding: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     visible = [
         snapshot
@@ -61,6 +62,8 @@ def build_agent_trace(
         trace["crossSignals"] = [item.to_dict() if isinstance(item, CrossSignal) else dict(item) for item in cross_signals]
     if entity_resolution:
         trace["entityResolution"] = dict(entity_resolution)
+    if query_understanding:
+        trace["queryUnderstanding"] = dict(query_understanding)
     return trace
 
 

@@ -1,5 +1,6 @@
 from .catalog import CatalogEntity, EntityAliasRecord, EntityCatalog, EntityCatalogProvider
 from .entity_resolver import EntityCandidate, EntityResolution, KoreanEntityResolver, extract_symbol_from_intent, resolve_entity
+from .supported_companies import is_supported_company_symbol, supported_company_catalog_payload
 from .topics import NEWS_TOPIC_BASKETS, extract_news_topic_from_intent, extract_theme_names_from_intent
 
 __all__ = [
@@ -14,5 +15,7 @@ __all__ = [
     "extract_news_topic_from_intent",
     "extract_symbol_from_intent",
     "extract_theme_names_from_intent",
+    "is_supported_company_symbol",
     "resolve_entity",
+    "supported_company_catalog_payload",
 ]

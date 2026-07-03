@@ -13,9 +13,11 @@ sys.path.insert(0, str(ROOT / "shared"))
 sys.path.insert(0, str(REPO_ROOT / "systems" / "market-data" / "shared"))
 sys.modules.setdefault("boto3", types.SimpleNamespace(client=lambda *args, **kwargs: None))
 
-from gops_agents.contracts import AgentFinding, DataSnapshot, EvidenceItem, FinalAnswer, IntentRoute, SynthesisInput, utc_now_iso
+from gops_agents.contracts import AgentAnswer, AgentFinding, DataSnapshot, EvidenceItem, FinalAnswer, IntentRoute, SynthesisInput, utc_now_iso
 from gops_agents.events.detector import MarketEventDetector, MarketEventThresholds
 from gops_agents.events.publisher import notification_payload
+from gops_agents.intent_understanding import build_query_understanding
+from gops_agents.intent_understanding.classifier import classifier_result_from_payload
 from gops_agents.orchestrator import AgentOrchestrator, canonical_analysis_intent, extract_symbol_from_intent
 from gops_agents.providers import ClickHouseNewsProvider, GraphDBOntologyProvider, ProviderRequest
 from gops_agents.providers.news_cache import MemoryNewsEvidenceCache, RedisNewsEvidenceCache
@@ -209,6 +211,25 @@ class CountingSynthesizer:
         )
 
 
+class RoleAnswerOnlySynthesizer:
+    def __init__(self):
+        self.role_answer_calls = []
+
+    def synthesize(self, **kwargs):
+        raise AssertionError("multi-agent mode must not merge role answers through final synthesis")
+
+    def synthesize_agent_answer(self, **kwargs):
+        finding = kwargs["finding"]
+        self.role_answer_calls.append(finding.role)
+        return AgentAnswer(
+            agentId=finding.agentId,
+            role=finding.role,
+            title=f"{finding.role} 독립 답변",
+            content=f"{finding.role}가 독립적으로 작성한 답변입니다.",
+            confidence=finding.confidence,
+        )
+
+
 class InspectingDeepOrchestrator:
     def __init__(self, store):
         self.store = store
@@ -354,6 +375,11 @@ class AgentOrchestrationTests(unittest.TestCase):
                 "AGENT_ROUTER_PROVIDER",
                 "AGENT_SNAPSHOT_TIMEOUT_MS",
                 "AGENT_EXPANDED_RETRIEVAL_ENABLED",
+                "AGENT_INTENT_CLASSIFIER_PROVIDER",
+                "AGENT_INTENT_CLASSIFIER_URL",
+                "AGENT_INTENT_CLASSIFIER_TIMEOUT_SECONDS",
+                "AGENT_QUERY_UNDERSTANDING_TIMEOUT_MS",
+                "AGENT_QUERY_UNDERSTANDING_EVENTS_TOPIC",
                 "AGENT_MAX_RELATED_SYMBOLS",
                 "AGENT_MAX_RELATED_THEMES",
                 "AGENT_MAX_NEWS_ITEMS_TOTAL",
@@ -370,6 +396,82 @@ class AgentOrchestrationTests(unittest.TestCase):
             else:
                 os.environ[name] = value
 
+    def test_query_understanding_fanout_runs_branches_in_parallel(self):
+        branch_calls = []
+
+        def slow_entity(query, chart_context=None):
+            branch_calls.append("entity")
+            time.sleep(0.12)
+            return EntityResolution(status="not_found", needs_clarification=False, reason="test")
+
+        def slow_content(query):
+            branch_calls.append("content_rules")
+            time.sleep(0.12)
+            return []
+
+        def slow_ui(query, layout_context):
+            branch_calls.append("ui_rules")
+            time.sleep(0.12)
+            return []
+
+        started_at = time.perf_counter()
+        timing = {}
+        with patch("gops_agents.intent_understanding.fanout.resolve_entity", side_effect=slow_entity):
+            with patch("gops_agents.intent_understanding.fanout.deterministic_content_tasks", side_effect=slow_content):
+                with patch("gops_agents.intent_understanding.fanout.deterministic_ui_tasks", side_effect=slow_ui):
+                    understanding, entity_resolution = build_query_understanding("애플 뉴스 보여줘", timing=timing)
+        elapsed_seconds = time.perf_counter() - started_at
+
+        self.assertCountEqual(branch_calls, ["entity", "content_rules", "ui_rules"])
+        self.assertLess(elapsed_seconds, 0.25)
+        self.assertEqual(entity_resolution.status, "not_found")
+        self.assertEqual(understanding.routeMode, "clarify")
+        self.assertGreater(timing["queryUnderstandingMs"], 0)
+        self.assertGreater(timing["entityResolveMs"], 0)
+        self.assertTrue(timing["intentClassifierRequired"])
+
+    def test_classifier_payload_preserves_multi_panel_task(self):
+        result = classifier_result_from_payload({
+            "uiTasks": [
+                {
+                    "action": "open",
+                    "targetPanelTypes": ["chart", "newsFeed", "aiSummary"],
+                    "layoutPreset": "default_workspace",
+                    "confidence": 0.88,
+                    "reason": "Open the default panel set.",
+                }
+            ],
+            "routeMode": "ui_layout",
+            "confidence": 0.88,
+        }, source="test-classifier")
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.uiTasks[0].targetPanelTypes, ["chart", "newsFeed", "aiSummary"])
+        self.assertEqual(result.uiTasks[0].layoutPreset, "default_workspace")
+        self.assertEqual(result.routeMode, "ui_layout")
+
+    def test_clear_query_understanding_does_not_call_llm_classifier(self):
+        with patch("gops_agents.intent_understanding.fanout.classify_with_provider", side_effect=AssertionError("clear route should not call classifier")):
+            understanding, _ = build_query_understanding("NVDA 뉴스 보여줘")
+
+        self.assertEqual(understanding.routeMode, "analysis")
+        self.assertEqual(understanding.intentType, "news")
+
+    def test_unclear_query_understanding_uses_llm_classifier_fallback(self):
+        classifier_payload = classifier_result_from_payload({
+            "contentTasks": [{"taskType": "news", "confidence": 0.88, "reason": "LLM recovered unclear news intent."}],
+            "routeMode": "analysis",
+            "confidence": 0.88,
+        }, source="test-llm")
+
+        with patch("gops_agents.intent_understanding.fanout.classify_with_provider", return_value=classifier_payload) as classifier:
+            understanding, _ = build_query_understanding("이거 좀 봐줘")
+
+        classifier.assert_called_once()
+        self.assertEqual(understanding.routeMode, "analysis")
+        self.assertEqual(understanding.intentType, "news")
+        self.assertEqual(understanding.source, "test-llm")
+
     def test_gops_agents_top_level_keeps_only_package_boundaries(self):
         allowed = {"__init__.py", "orchestrator.py"}
         top_level_files = {
@@ -379,7 +481,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         }
         self.assertEqual(top_level_files, allowed)
 
-    def test_orchestrator_returns_report_with_empty_provider_evidence(self):
+    def test_orchestrator_clarifies_generic_analyze_when_llm_unavailable(self):
         report = AgentOrchestrator().analyze({
             "symbol": "NVDA",
             "intent": "analyze",
@@ -392,9 +494,11 @@ class AgentOrchestrationTests(unittest.TestCase):
 
         self.assertEqual(report.symbol, "NVDA")
         self.assertEqual(report.status, "completed")
-        self.assertEqual(report.route.intentType, "general-analysis")
+        self.assertEqual(report.route.intentType, "clarify")
+        self.assertEqual(report.route.selectedRoles, [])
         self.assertIsNotNone(report.finalAnswer)
-        self.assertTrue(any(item.provider == "news" and item.status == "no-data" for item in report.providerEvidence))
+        self.assertEqual(report.finalAnswer.title, "추가 확인 필요")
+        self.assertEqual(report.providerEvidence, [])
         self.assertEqual(report.notificationDecision.level, "none")
 
     def test_memory_report_store_round_trip(self):
@@ -847,23 +951,30 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertTrue(any(item["panelId"] == "panel-news" and item["layoutWeight"] == 100 for item in report.layoutProposal.panelPriorities))
         self.assertFalse(any(command["type"] == "layout.panel.move" for command in report.layoutProposal.commands))
 
-    def test_ui_router_uses_shared_llm_budget(self):
+    def test_clear_ui_router_does_not_call_llm_classifier(self):
         ui_router_response = {
             "output_text": json.dumps({
-                "isUiIntent": True,
-                "intentKind": "layout",
-                "targetPanelType": "newsFeed",
-                "targetPanelId": "panel-news",
-                "action": "resize",
-                "sizeIntent": "large",
-                "positionIntent": None,
+                "contentTasks": [],
+                "uiTasks": [
+                    {
+                        "targetPanelType": "newsFeed",
+                        "targetPanelId": "panel-news",
+                        "action": "resize",
+                        "sizeIntent": "large",
+                        "positionIntent": None,
+                        "confidence": 0.9,
+                        "reason": "User asked to enlarge the news panel.",
+                    }
+                ],
+                "routeMode": "ui_layout",
                 "confidence": 0.9,
-                "reason": "User asked to enlarge the news panel.",
+                "warnings": [],
             })
         }
 
         with patch.dict(os.environ, {
             "OPENAI_API_KEY": "test-key",
+            "AGENT_INTENT_CLASSIFIER_PROVIDER": "openai",
             "AGENT_MAX_REALTIME_LLM_CALLS": "1",
         }, clear=False):
             with patch("urllib.request.urlopen", return_value=FakeOpenAIResponse(ui_router_response)) as openai:
@@ -873,15 +984,16 @@ class AgentOrchestrationTests(unittest.TestCase):
                     "layoutContext": layout_context(),
                 })
 
-        self.assertEqual(openai.call_count, 1)
+        self.assertEqual(openai.call_count, 0)
         self.assertEqual(report.route.intentType, "ui-layout")
-        self.assertEqual(report.route.source, "ui-llm")
-        self.assertEqual(report.timing["llmCalls"], 1)
-        self.assertEqual(report.timing["llmCallLabels"], ["ui-router"])
+        self.assertEqual(report.route.source, "ui-fallback")
+        self.assertEqual(report.timing["llmCalls"], 0)
+        self.assertEqual(report.timing["llmCallLabels"], [])
 
     def test_ui_router_budget_block_falls_back_without_openai_call(self):
         with patch.dict(os.environ, {
             "OPENAI_API_KEY": "test-key",
+            "AGENT_INTENT_CLASSIFIER_PROVIDER": "openai",
             "AGENT_MAX_REALTIME_LLM_CALLS": "0",
         }, clear=False):
             with patch("urllib.request.urlopen", side_effect=AssertionError("UI router should not call OpenAI after budget block")):
@@ -894,7 +1006,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(report.route.intentType, "ui-layout")
         self.assertEqual(report.route.source, "ui-fallback")
         self.assertEqual(report.timing["llmCalls"], 0)
-        self.assertEqual(report.timing["llmBudgetBlocked"], 1)
+        self.assertEqual(report.timing["llmBudgetBlocked"], 0)
 
     def test_conductor_routes_market_move_to_all_visible_roles(self):
         report = AgentOrchestrator().analyze({
@@ -910,15 +1022,128 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(report.route.intentType, "market-move")
         self.assertEqual(report.route.selectedRoles, ["chart", "news", "macro", "ontology"])
 
-    def test_conductor_routes_news_based_market_question_to_news_role(self):
+    def test_conductor_preserves_news_based_market_question_as_composite_intent(self):
         report = AgentOrchestrator().analyze({
             "symbol": "NVDA",
             "intent": "NVDA 뉴스 기반으로 왜 올랐는지 알려줘",
             "layoutContext": layout_context(),
         })
 
-        self.assertEqual(report.route.intentType, "news")
-        self.assertEqual(report.route.selectedRoles, ["news"])
+        self.assertEqual(report.route.intentType, "market-move+news")
+        self.assertEqual(report.route.selectedRoles, ["chart", "news", "macro", "ontology"])
+        self.assertEqual(report.routePlan.intent, "investment_opinion")
+
+    def test_multi_agent_mode_posts_independent_role_answers_without_merge_synthesis(self):
+        synthesizer = RoleAnswerOnlySynthesizer()
+        orchestrator = AgentOrchestrator()
+        orchestrator.synthesizer = synthesizer
+
+        report = orchestrator.analyze({
+            "symbol": "NVDA",
+            "intent": "NVDA 뉴스랑 차트 멀티 에이전트로 분석해줘",
+            "analysisMode": "multi_agent",
+            "chartContext": {
+                "chartDocument": {"symbol": "NVDA", "timeframe": "1m"},
+                "visibleSummary": {"lastPrice": "120.00", "change": "+2.10%"},
+                "dataStatus": {"candleCount": 10, "state": "ready"},
+            },
+            "layoutContext": layout_context(),
+        })
+
+        self.assertEqual(report.agentTrace["analysisMode"], "multi_agent")
+        self.assertTrue(report.agentTrace["multiAgent"]["mergeSynthesisSkipped"])
+        self.assertEqual(report.snapshots, [])
+        self.assertEqual([answer.role for answer in report.agentAnswers], ["chart-analysis", "news-analysis"])
+        self.assertCountEqual(synthesizer.role_answer_calls, ["chart-analysis", "news-analysis"])
+        self.assertEqual(report.finalAnswer.summary, "각 에이전트가 독립 답변을 작성했습니다.")
+
+    def test_route_intent_preserves_composite_content_keywords(self):
+        news_chart = route_intent("NVDA 뉴스랑 차트 보여줘")
+        self.assertEqual(news_chart.intentType, "news+chart")
+        self.assertEqual(news_chart.selectedRoles, ["chart", "news"])
+
+        market_news_chart = route_intent("NVDA 왜 올랐는지 뉴스랑 차트로 봐줘")
+        self.assertEqual(market_news_chart.intentType, "market-move+news+chart")
+        self.assertEqual(market_news_chart.selectedRoles, ["chart", "news", "macro", "ontology"])
+
+    def test_query_understanding_expands_composite_route_into_content_tasks(self):
+        understanding, _ = build_query_understanding("NVDA 왜 올랐는지 뉴스랑 차트로 봐줘")
+
+        self.assertEqual(understanding.intentType, "market-move+news+chart")
+        self.assertEqual([task.taskType for task in understanding.contentTasks], ["market_move", "news", "chart"])
+        self.assertEqual(understanding.selectedRoles, ["chart", "news", "macro", "ontology"])
+
+    def test_query_company_entity_wins_over_chart_entity_fallback(self):
+        report = AgentOrchestrator().analyze({
+            "symbol": "NVDA",
+            "intent": "애플 뉴스 보여줘",
+            "chartContext": {
+                "entityFallback": {
+                    "source": "selected-chart",
+                    "panelId": "panel-chart",
+                    "chartDocumentId": "chart-doc-nvda",
+                    "symbol": "NVDA",
+                },
+                "chartDocument": {"symbol": "NVDA", "timeframe": "1m"},
+            },
+            "layoutContext": layout_context(),
+        })
+
+        self.assertEqual(report.symbol, "AAPL")
+        self.assertEqual(report.agentTrace["queryUnderstanding"]["resolvedSymbolSource"], "query_company")
+
+    def test_query_without_company_uses_explicit_chart_entity_fallback(self):
+        report = AgentOrchestrator().analyze({
+            "intent": "뉴스 보여줘",
+            "chartContext": {
+                "entityFallback": {
+                    "source": "selected-chart",
+                    "panelId": "panel-chart",
+                    "chartDocumentId": "chart-doc-msft",
+                    "symbol": "MSFT",
+                },
+                "chartDocument": {"symbol": "NVDA", "timeframe": "1m"},
+            },
+            "layoutContext": layout_context(),
+        })
+
+        self.assertEqual(report.symbol, "MSFT")
+        self.assertEqual(report.agentTrace["queryUnderstanding"]["resolvedSymbolSource"], "chart_context_entity_fallback")
+
+    def test_query_without_company_uses_legacy_chart_document_symbol(self):
+        report = AgentOrchestrator().analyze({
+            "intent": "뉴스 보여줘",
+            "chartContext": {"chartDocument": {"symbol": "MSFT", "timeframe": "1m"}},
+            "layoutContext": layout_context(),
+        })
+
+        self.assertEqual(report.symbol, "MSFT")
+        self.assertEqual(report.agentTrace["queryUnderstanding"]["resolvedSymbolSource"], "chart_context_chart_document")
+
+    def test_request_symbol_not_in_supported_catalog_stops_before_provider_calls(self):
+        with patch("gops_agents.orchestration.request.is_supported_company_symbol", return_value=False):
+            report = AgentOrchestrator().analyze({
+                "symbol": "ZZZZ",
+                "intent": "ZZZZ 뉴스 보여줘",
+                "layoutContext": layout_context(),
+            })
+
+        self.assertEqual(report.symbol, "ZZZZ")
+        self.assertEqual(report.route.intentType, "unsupported-company")
+        self.assertEqual(report.findings, [])
+        self.assertEqual(report.providerEvidence, [])
+        self.assertEqual(report.finalAnswer.title, "지원되지 않는 기업")
+        self.assertEqual(report.agentTrace["queryUnderstanding"]["subjectValidation"]["status"], "unsupported")
+
+    def test_request_without_subject_does_not_default_to_aapl(self):
+        report = AgentOrchestrator().analyze({
+            "intent": "뉴스 분석해줘",
+            "layoutContext": layout_context(),
+        })
+
+        self.assertEqual(report.symbol, "UNKNOWN")
+        self.assertEqual(report.route.intentType, "unsupported-company")
+        self.assertIn("지원 기업", report.finalAnswer.summary)
 
     def test_event_detector_detects_price_surge_and_volume_spike(self):
         detector = MarketEventDetector(MarketEventThresholds(price_change_percent=3.0, volume_spike_multiplier=2.0))
@@ -970,6 +1195,14 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(evidence[0].raw["relevanceScore"], evidence[1].raw["relevanceScore"])
         self.assertGreater(evidence[0].raw["importanceScore"], evidence[1].raw["importanceScore"])
         self.assertGreater(evidence[0].raw["importanceScore"], 0)
+
+    def test_news_provider_does_not_default_empty_symbol_to_aapl(self):
+        clickhouse = FakeClickHouseProvider([])
+        provider = ClickHouseNewsProvider(clickhouse_provider=clickhouse, limit=5, direct_fallback=False)
+
+        provider.fetch(ProviderRequest("", "뉴스 보여줘"))
+
+        self.assertEqual(clickhouse.requested_symbols, ["UNKNOWN"])
 
     def test_news_provider_reads_prelocalized_redis_before_clickhouse_originals(self):
         redis = FakeLocalizedRedisProvider([
@@ -1459,7 +1692,7 @@ class AgentOrchestrationTests(unittest.TestCase):
     def test_hybrid_router_does_not_call_openai_only_because_api_key_exists(self):
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False):
             with patch("urllib.request.urlopen", side_effect=AssertionError("route LLM should be degraded-only")) as urlopen:
-                route = route_intent("분석해줘", None, "hybrid")
+                route = route_intent("분석해줘", router_mode="hybrid")
 
         urlopen.assert_not_called()
         self.assertEqual(route.source, "fallback")
@@ -1688,7 +1921,6 @@ class AgentOrchestrationTests(unittest.TestCase):
         for intent in (
             "관련 뉴스 보여줘",
             "오늘 기사 요약해줘",
-            "NVDA 뉴스 기반으로 왜 올랐는지 알려줘",
             "뉴스 중심으로 분석해줘",
         ):
             with self.subTest(intent=intent):
@@ -2056,6 +2288,9 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertIsNone(extract_symbol_from_intent("ㅇㅍ 뉴스"))
         self.assertIsNone(extract_symbol_from_intent("ㅁㅌ 뉴스"))
         self.assertIsNone(extract_symbol_from_intent("사과 뉴스"))
+        self.assertIsNone(extract_symbol_from_intent("차트랑 뉴스 나란히 보여줘"))
+        self.assertIsNone(extract_symbol_from_intent("차트를 아래로 옮겨줘"))
+        self.assertIsNone(extract_symbol_from_intent("UI 바꿔줘 온톨로지 기반으로"))
 
     def test_dynamic_entity_index_resolves_non_seed_company_alias(self):
         records = [
@@ -2203,7 +2438,7 @@ class AgentOrchestrationTests(unittest.TestCase):
             theme_symbols=("UNH", "PFE"),
         )
 
-        with patch("gops_agents.orchestration.request.resolve_entity", return_value=resolution):
+        with patch("gops_agents.intent_understanding.fanout.resolve_entity", return_value=resolution):
             report = orchestrator.analyze({
                 "symbol": "NVDA",
                 "intent": "헬스케어 주 뉴스",
@@ -2560,7 +2795,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertIn("GraphDB 기준", finding.summary)
         self.assertNotIn("CUDA 공급망", finding.summary)
 
-    def test_ontology_agent_selection_routes_to_ontology_role(self):
+    def test_legacy_agent_ids_do_not_route_unclear_query_to_role(self):
         report = AgentOrchestrator().analyze({
             "symbol": "NVDA",
             "intent": "analyze",
@@ -2568,9 +2803,11 @@ class AgentOrchestrationTests(unittest.TestCase):
         })
 
         roles = {finding.role for finding in report.findings}
-        self.assertEqual(report.route.selectedRoles, ["ontology"])
-        self.assertIn("company-relationship-analysis", roles)
-        self.assertEqual({item.provider for item in report.providerEvidence}, {"ontology"})
+        self.assertEqual(report.route.selectedRoles, [])
+        self.assertEqual(report.route.intentType, "clarify")
+        self.assertEqual(roles, set())
+        self.assertEqual(report.providerEvidence, [])
+        self.assertEqual(report.finalAnswer.title, "추가 확인 필요")
 
     def test_ontology_keyword_routes_to_ontology_role(self):
         report = AgentOrchestrator().analyze({
@@ -2594,21 +2831,27 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertTrue(any(item["panelId"] == "panel-ontology" and item["layoutWeight"] == 100 for item in report.layoutProposal.panelPriorities))
         self.assertTrue(any(command["type"] == "layout.panels.arrange" for command in report.layoutProposal.commands))
 
-    def test_llm_ui_router_sends_order_panel_resize_only_to_ui_agent(self):
+    def test_clear_order_panel_resize_skips_llm_classifier(self):
         response = {
             "output_text": json.dumps({
-                "isUiIntent": True,
-                "intentKind": "layout",
-                "targetPanelType": "orderTicket",
-                "targetPanelId": "panel-order",
-                "action": "resize",
-                "sizeIntent": "max",
+                "contentTasks": [],
+                "uiTasks": [
+                    {
+                        "targetPanelType": "orderTicket",
+                        "targetPanelId": "panel-order",
+                        "action": "resize",
+                        "sizeIntent": "max",
+                        "confidence": 0.94,
+                        "reason": "The user asked to maximize the order entry panel.",
+                    }
+                ],
+                "routeMode": "ui_layout",
                 "confidence": 0.94,
-                "reason": "The user asked to maximize the order entry panel.",
+                "warnings": [],
             })
         }
 
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False):
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key", "AGENT_INTENT_CLASSIFIER_PROVIDER": "openai"}, clear=False):
             with patch("urllib.request.urlopen", return_value=FakeOpenAIResponse(response)) as openai:
                 report = AgentOrchestrator().analyze({
                     "symbol": "NVDA",
@@ -2617,8 +2860,8 @@ class AgentOrchestrationTests(unittest.TestCase):
                     "layoutContext": layout_context(),
                 })
 
-        self.assertEqual(openai.call_count, 1)
-        self.assertEqual(report.route.source, "ui-llm")
+        self.assertEqual(openai.call_count, 0)
+        self.assertEqual(report.route.source, "ui-fallback")
         self.assertEqual(report.route.intentType, "ui-layout")
         self.assertEqual(report.route.selectedRoles, [])
         self.assertEqual(report.findings, [])
@@ -2651,6 +2894,110 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(report.route.selectedRoles, [])
         self.assertEqual(report.findings, [])
         self.assertTrue(any(command["type"] == "layout.panels.arrange" for command in report.layoutProposal.commands))
+
+    def test_mixed_news_and_ui_query_runs_analysis_and_ui_agent(self):
+        clickhouse = FakeClickHouseProvider([
+            {
+                "articleId": "aapl-hybrid-1",
+                "headline": "Apple announces new services revenue milestone",
+                "summary": "Apple services revenue reached a new high.",
+                "publishedAt": utc_now_iso(),
+                "url": "https://example.com/aapl-hybrid",
+                "symbols": ["AAPL"],
+                "source": "alpaca",
+            }
+        ])
+        orchestrator = AgentOrchestrator()
+        orchestrator.news_agent = NewsAgent(ClickHouseNewsProvider(clickhouse_provider=clickhouse, publish_fallback=False))
+
+        with patch.dict(os.environ, {
+            "AGENT_FINAL_ANSWER_PROVIDER": "deterministic",
+            "AGENT_NEWS_LOCALIZATION_PROVIDER": "deterministic",
+        }, clear=False):
+            report = orchestrator.analyze({
+                "symbol": "NVDA",
+                "intent": "뉴스 패널 키워주고 애플 뉴스 보여줘",
+                "layoutContext": layout_context(),
+            })
+
+        self.assertEqual(report.symbol, "AAPL")
+        self.assertEqual(clickhouse.requested_symbols, ["AAPL"])
+        self.assertEqual(report.route.intentType, "news")
+        self.assertEqual(report.route.selectedRoles, ["news"])
+        self.assertEqual(report.agentTrace["queryUnderstanding"]["routeMode"], "hybrid")
+        self.assertEqual(report.agentTrace["queryUnderstanding"]["resolvedSymbol"], "AAPL")
+        self.assertTrue(report.agentTrace["queryUnderstanding"]["uiTasks"])
+        self.assertTrue(any(finding.role == "news-analysis" for finding in report.findings))
+        self.assertTrue(any(command["type"] == "layout.panels.arrange" for command in report.layoutProposal.commands))
+        self.assertNotEqual(report.finalAnswer.summary, "UIAgent arranged 시장 뉴스 for the requested UI action.")
+
+    def test_generic_many_panels_opens_default_workspace_set(self):
+        report = AgentOrchestrator().analyze({
+            "symbol": "NVDA",
+            "intent": "패널 여러개 띄워줘",
+            "layoutContext": layout_context(),
+        })
+
+        understanding = report.agentTrace["queryUnderstanding"]
+        self.assertEqual(report.route.intentType, "ui-layout")
+        self.assertEqual(understanding["routeMode"], "ui_layout")
+        self.assertEqual(understanding["uiTasks"][0]["layoutPreset"], "default_workspace")
+        self.assertEqual(understanding["uiTasks"][0]["targetPanelTypes"], ["chart", "newsFeed", "aiSummary"])
+        add_commands = [command for command in report.layoutProposal.commands if command["type"] == "layout.panel.add"]
+        self.assertEqual(add_commands[0]["payload"]["panelType"], "aiSummary")
+        arrange_command = next(command for command in report.layoutProposal.commands if command["type"] == "layout.panels.arrange")
+        placement_ids = {item["panelId"] for item in arrange_command["payload"]["placements"]}
+        self.assertTrue({"panel-chart-primary", "panel-news", "panel-ai-summary"}.issubset(placement_ids))
+
+    def test_explicit_multi_panel_command_uses_named_panel_set(self):
+        report = AgentOrchestrator().analyze({
+            "symbol": "NVDA",
+            "intent": "차트 뉴스 온톨로지 패널 띄워줘",
+            "layoutContext": layout_context(),
+        })
+
+        understanding = report.agentTrace["queryUnderstanding"]
+        self.assertEqual(report.route.intentType, "ui-layout")
+        self.assertEqual(report.findings, [])
+        self.assertEqual(understanding["uiTasks"][0]["targetPanelTypes"], ["chart", "newsFeed", "ontologyGraph"])
+        self.assertIsNone(understanding["uiTasks"][0]["layoutPreset"])
+        self.assertFalse(any(command["type"] == "layout.panel.add" for command in report.layoutProposal.commands))
+        arrange_command = next(command for command in report.layoutProposal.commands if command["type"] == "layout.panels.arrange")
+        placement_ids = {item["panelId"] for item in arrange_command["payload"]["placements"]}
+        self.assertTrue({"panel-chart-primary", "panel-news", "panel-ontology"}.issubset(placement_ids))
+
+    def test_hybrid_news_and_generic_many_panels_runs_both_paths(self):
+        clickhouse = FakeClickHouseProvider([
+            {
+                "articleId": "aapl-hybrid-panels-1",
+                "headline": "Apple expands services business",
+                "summary": "Apple services growth improved sentiment.",
+                "publishedAt": utc_now_iso(),
+                "url": "https://example.com/aapl-panels",
+                "symbols": ["AAPL"],
+                "source": "alpaca",
+            }
+        ])
+        orchestrator = AgentOrchestrator()
+        orchestrator.news_agent = NewsAgent(ClickHouseNewsProvider(clickhouse_provider=clickhouse, publish_fallback=False))
+
+        with patch.dict(os.environ, {
+            "AGENT_FINAL_ANSWER_PROVIDER": "deterministic",
+            "AGENT_NEWS_LOCALIZATION_PROVIDER": "deterministic",
+        }, clear=False):
+            report = orchestrator.analyze({
+                "symbol": "NVDA",
+                "intent": "애플 뉴스 보여주고 패널 여러개 띄워줘",
+                "layoutContext": layout_context(),
+            })
+
+        understanding = report.agentTrace["queryUnderstanding"]
+        self.assertEqual(report.symbol, "AAPL")
+        self.assertEqual(report.route.intentType, "news")
+        self.assertEqual(understanding["routeMode"], "hybrid")
+        self.assertEqual(understanding["uiTasks"][0]["layoutPreset"], "default_workspace")
+        self.assertTrue(any(finding.role == "news-analysis" for finding in report.findings))
+        self.assertTrue(any(command["type"] == "layout.panel.add" and command["payload"]["panelType"] == "aiSummary" for command in report.layoutProposal.commands))
 
     def test_ui_agent_preserves_pinned_panels_and_uses_largest_available_slot(self):
         context = layout_context()

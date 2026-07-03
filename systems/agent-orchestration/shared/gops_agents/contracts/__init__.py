@@ -251,6 +251,22 @@ class FinalAnswer:
 
 
 @dataclass
+class AgentAnswer:
+    agentId: str
+    role: str
+    title: str
+    content: str
+    confidence: float = 0.5
+    citations: list[FinalAnswerCitation] = field(default_factory=list)
+    createdAt: str = field(default_factory=utc_now_iso)
+
+    def to_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        data["citations"] = [item.to_dict() for item in self.citations]
+        return data
+
+
+@dataclass
 class MarketEvent:
     eventId: str
     symbol: str
@@ -390,6 +406,7 @@ class AnalysisReport:
     synthesisInput: SynthesisInput | None = None
     finalResponse: FinalResponse | None = None
     latencyTrace: LatencyTrace | None = None
+    agentAnswers: list[AgentAnswer] = field(default_factory=list)
     agentTrace: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -407,4 +424,5 @@ class AnalysisReport:
         data["synthesisInput"] = self.synthesisInput.to_dict() if self.synthesisInput else None
         data["finalResponse"] = self.finalResponse.to_dict() if self.finalResponse else None
         data["latencyTrace"] = self.latencyTrace.to_dict() if self.latencyTrace else None
+        data["agentAnswers"] = [item.to_dict() for item in self.agentAnswers]
         return data

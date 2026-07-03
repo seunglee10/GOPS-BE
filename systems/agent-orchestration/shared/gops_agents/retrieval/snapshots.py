@@ -76,16 +76,19 @@ def build_route_plan(run_id: str, route: IntentRoute, context: Any, policy: Runt
 
 def route_plan_intent(route: IntentRoute) -> str:
     intent_type = str(route.intentType or "").strip().lower()
+    intent_types = {part.strip() for part in intent_type.split("+") if part.strip()}
     roles = list(route.selectedRoles or [])
-    if intent_type == "news" or roles == ["news"]:
+    if intent_types == {"news"} or roles == ["news"]:
         return "news_impact_analysis"
-    if intent_type == "ontology" or roles == ["ontology"]:
+    if intent_types == {"ontology"} or roles == ["ontology"]:
         return "relationship_impact_analysis"
-    if intent_type == "macro" or roles == ["macro"]:
+    if intent_types == {"macro"} or roles == ["macro"]:
         return "market_summary"
-    if intent_type == "chart" or roles == ["chart"]:
+    if intent_types == {"chart"} or roles == ["chart"]:
         return "market_summary"
-    if intent_type == "market-move":
+    if intent_types == {"market-summary"} or (roles and set(roles).issubset({"chart", "macro"})):
+        return "market_summary"
+    if "market-move" in intent_types:
         return "investment_opinion"
     if "news" in roles or "ontology" in roles:
         return "investment_opinion"

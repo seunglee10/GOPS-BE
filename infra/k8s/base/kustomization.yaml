@@ -24,6 +24,7 @@ resources:
   - job-answer-grounding-eval.yaml
   - statefulset-graphdb.yaml
   - deployment-agent-orchestrator.yaml
+  - deployment-agent-intent-classifier.yaml
   - deployment-agent-analysis-worker.yaml
   - deployment-deep-analysis-worker.yaml
   - deployment-agent-delivery-gateway.yaml
@@ -43,6 +44,7 @@ resources:
   - deployment-gops-backend.yaml
   - deployment-gops-frontend.yaml
   - service-agent-orchestrator.yaml
+  - service-agent-intent-classifier.yaml
   - service-graphdb.yaml
   - service-gops-backend.yaml
   - service-gops-frontend.yaml

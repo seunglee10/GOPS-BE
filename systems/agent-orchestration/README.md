@@ -8,6 +8,7 @@
 | --- | --- | --- |
 | `agent-orchestrator` | pod | Compatibility HTTP endpoint for direct analysis and report lookup. |
 | `agent-analysis-worker` | pod | Consumes queued analysis requests and writes shared reports. |
+| `agent-intent-classifier` | pod | Optional cheap classifier endpoint for ambiguous multi-intent query decomposition. |
 | `deep-analysis-worker` | pod | Consumes opt-in deep analysis requests separately from the hot queue. |
 | `agent-delivery-gateway` | pod | Mirrors analysis result events into the shared report store and Redis report update channels. |
 | `event-detector` | pod | Reads market Kafka topics and emits unusual market events. |
@@ -37,9 +38,26 @@ The v1 logical agents run inside the `agent-orchestrator` pod:
 
 ## Query Understanding
 
-`shared/gops_agents/query_understanding/` owns Korean-first entity resolution
-before request normalization. The hot path is catalog-based rather than a
-hard-coded company/theme list:
+The hot request path decomposes the user query before route planning. It is a
+parallel fan-out, not a single intent router:
+
+```text
+Kafka agents.analysis-requests.v1
+  -> agent-analysis-worker
+  -> normalize_request
+  -> parallel query understanding
+       - Korean entity/theme resolver
+       - deterministic content-task rules
+       - deterministic UI-task rules
+       - optional cheap classifier pod/LLM
+  -> merged routeMode: analysis | ui_layout | hybrid | clarify
+  -> role agents and/or UIAgent
+  -> agents.analysis-results.v1
+  -> agents.query-understanding-events.v1
+```
+
+`shared/gops_agents/query_understanding/` owns Korean-first entity resolution.
+The hot path is catalog-based rather than a hard-coded company/theme list:
 
 - `catalog.py` loads company and theme entities from `market_data.symbols`,
   GraphDB theme relationships, and the reviewed alias artifact.
@@ -57,6 +75,27 @@ initial-consonant queries such as `ㅇㅂㄷㅇ` to canonical symbols. Ambiguous
 short inputs are not forced into a symbol; the orchestrator falls back to the
 request or chart symbol and records the resolver result in `agentTrace`.
 
+`shared/gops_agents/intent_understanding/` owns multi-intent decomposition.
+It merges content tasks and UI tasks into a `QueryUnderstanding` object:
+
+- `analysis`: role agents only.
+- `ui_layout`: UIAgent only.
+- `hybrid`: role agents and UIAgent in the same request, for queries such as
+  `뉴스 패널 키워주고 애플 뉴스 보여줘`.
+- `clarify`: reserved for ambiguous cases that should ask the user before
+  executing.
+
+The default provider is deterministic and does not call an LLM. Set
+`AGENT_INTENT_CLASSIFIER_PROVIDER=pod` or `openai` to enable the optional cheap
+classifier branch. That branch is still executed in parallel with entity and
+rules work; Kafka is used for request/result/event boundaries, not for
+request/reply inside the hot path.
+
+UI tasks support both single-panel targets and multi-panel sets. A generic
+request such as `패널 여러개 띄워줘` maps to the default workspace set
+`chart`, `newsFeed`, and `aiSummary`; explicit requests such as
+`차트 뉴스 온톨로지 패널 띄워줘` preserve the named panel set.
+
 `shared/gops_agents/orchestration/` owns the workflow nodes, cache helpers,
 timing, role execution helpers, request normalization, and report tracing.
 `shared/gops_agents/orchestrator.py` remains as a compatibility import shim.
@@ -68,6 +107,7 @@ timing, role execution helpers, request normalization, and report tracing.
 ```text
 contracts/             report, evidence, route, snapshot, runtime dataclasses
 query_understanding/   Korean-first entity/theme resolution
+intent_understanding/  parallel content/UI intent decomposition and classifier adapters
 orchestration/         request normalization, workflow, routing, timing, tracing
 runtime/               admission, queues, workers, report store, delivery gateway
 retrieval/             graph expansion, retrieval context, snapshots, cross signals
@@ -115,6 +155,7 @@ agents.market-events.v1
 agents.analysis-requests.v1
 agents.deep-analysis-requests.v1
 agents.analysis-results.v1
+agents.query-understanding-events.v1
 agents.notification-decisions.v1
 agents.dlq.v1
 ```

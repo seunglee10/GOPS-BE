@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
 from ..contracts import AgentFinding, EvidenceItem
 
 
@@ -34,28 +32,3 @@ def role_agent_error_finding(role: str, symbol: str, exc: Exception):
         ],
         tags=[role, "agent-error"],
     )
-
-
-def resolve_requested_roles(agent_ids: Any) -> set[str]:
-    all_roles = {"chart", "news", "macro", "ontology"}
-    if not isinstance(agent_ids, list) or not agent_ids:
-        return all_roles
-
-    id_to_role = {
-        "agent-01": "chart",
-        "agent-02": "news",
-        "agent-03": "macro",
-        "agent-04": "ontology",
-        "chart-agent": "chart",
-        "news-agent": "news",
-        "macro-agent": "macro",
-        "ontology-agent": "ontology",
-    }
-    roles = {
-        role
-        for item in agent_ids
-        if isinstance(item, str)
-        for role in [id_to_role.get(item)]
-        if role
-    }
-    return roles or all_roles

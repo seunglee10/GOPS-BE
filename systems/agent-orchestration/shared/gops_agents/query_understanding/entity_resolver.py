@@ -165,7 +165,7 @@ class KoreanEntityResolver:
                 score = max(
                     fuzzy_ratio(fragment_compact, alias.compact),
                     fuzzy_ratio(fragment_jamo, alias.jamo),
-                    similarity(fragment_choseong, alias.choseong) if len(alias.choseong) >= 3 else 0.0,
+                    similarity(fragment_choseong, alias.choseong) if len(fragment_choseong) >= 3 and len(alias.choseong) >= 3 else 0.0,
                 )
                 if score < 0.78:
                     continue

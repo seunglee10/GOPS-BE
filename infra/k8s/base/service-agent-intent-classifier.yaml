@@ -1,0 +1,13 @@
+# 역할: agent-analysis-worker가 intent classifier pod를 호출할 수 있게 합니다.
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-intent-classifier
+  namespace: alfaka-market-data
+spec:
+  selector:
+    app: agent-intent-classifier
+  ports:
+    - name: http
+      port: 8120
+      targetPort: 8120

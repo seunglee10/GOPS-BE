@@ -8,6 +8,7 @@ from collections import Counter
 from typing import Any
 
 from ..contracts import (
+    AgentAnswer,
     AgentFinding,
     EvidenceItem,
     FinalAnswer,
@@ -80,11 +81,12 @@ class FinalAnswerSynthesizer:
         provider_evidence: list[EvidenceItem],
         daily_summaries: list[dict[str, Any]] | None = None,
     ) -> FinalAnswer:
+        intent_types = {part.strip() for part in str(route.intentType or "").lower().split("+") if part.strip()}
         if route.intentType == "news" or route.selectedRoles == ["news"]:
             return build_news_final_answer(symbol, findings, provider_evidence, daily_summaries=daily_summaries)
         if route.intentType == "ontology" or route.selectedRoles == ["ontology"]:
             return build_ontology_final_answer(symbol, findings, provider_evidence)
-        if route.intentType == "market-move":
+        if "market-move" in intent_types:
             return build_market_move_final_answer(symbol, findings, provider_evidence)
         return build_general_final_answer(symbol, route, findings, provider_evidence)
 
@@ -195,6 +197,129 @@ class FinalAnswerSynthesizer:
             with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
                 data = json.loads(response.read().decode("utf-8"))
             return final_answer_from_openai_json(parse_openai_text_json(data))
+        except Exception:
+            return None
+
+    def synthesize_agent_answer(
+        self,
+        *,
+        symbol: str,
+        intent: str,
+        finding: AgentFinding,
+        timing: dict[str, Any] | None = None,
+        runtime_context: Any | None = None,
+    ) -> AgentAnswer:
+        openai_answer = self._synthesize_agent_answer_with_openai(
+            symbol=symbol,
+            intent=intent,
+            finding=finding,
+            timing=timing,
+            runtime_context=runtime_context,
+        )
+        if openai_answer is not None:
+            return openai_answer
+        if isinstance(timing, dict):
+            timing["roleAnswerLlmUnavailable"] = int(timing.get("roleAnswerLlmUnavailable") or 0) + 1
+        return AgentAnswer(
+            agentId=finding.agentId,
+            role=finding.role,
+            title=f"{finding.role} 답변",
+            content=finding.summary,
+            confidence=finding.confidence,
+            citations=citations_from_evidence(finding.evidence),
+        )
+
+    def _synthesize_agent_answer_with_openai(
+        self,
+        *,
+        symbol: str,
+        intent: str,
+        finding: AgentFinding,
+        timing: dict[str, Any] | None = None,
+        runtime_context: Any | None = None,
+    ) -> AgentAnswer | None:
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            return None
+        if runtime_context is not None and hasattr(runtime_context, "acquire_llm"):
+            if not runtime_context.acquire_llm(f"{finding.role}-answer"):
+                return None
+        try:
+            if runtime_context is None and isinstance(timing, dict):
+                timing["llmCalls"] = int(timing.get("llmCalls") or 0) + 1
+            payload = {
+                "model": os.getenv("AGENT_ROLE_ANSWER_MODEL", os.getenv("AGENT_SYNTHESIZER_MODEL", os.getenv("OPENAI_MODEL", "gpt-5.2"))),
+                "input": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Write one Korean stock-analysis answer for a single role agent from its evidence only. "
+                            "Do not merge with other agents. Do not invent facts, prices, news, relationships, or recommendations. "
+                            "Return strict JSON only."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": json.dumps(
+                            {
+                                "symbol": symbol,
+                                "intent": intent,
+                                "roleFinding": {
+                                    "agentId": finding.agentId,
+                                    "role": finding.role,
+                                    "summary": finding.summary,
+                                    "rationale": finding.rationale,
+                                    "confidence": finding.confidence,
+                                    "evidence": compact_evidence(finding.evidence),
+                                },
+                            },
+                            ensure_ascii=False,
+                        ),
+                    },
+                ],
+                "text": {
+                    "format": {
+                        "type": "json_schema",
+                        "name": "role_agent_answer",
+                        "strict": True,
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": {
+                                "title": {"type": "string"},
+                                "content": {"type": "string"},
+                            },
+                            "required": ["title", "content"],
+                        },
+                    }
+                },
+            }
+            request = urllib.request.Request(
+                "https://api.openai.com/v1/responses",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                method="POST",
+            )
+            timeout_seconds = float(os.getenv("AGENT_ROLE_ANSWER_TIMEOUT_SECONDS", "0"))
+            if timeout_seconds <= 0 and runtime_context is not None:
+                timeout_seconds = max(0.001, float(getattr(runtime_context.policy, "synthesis_timeout_ms", 1700)) / 1000)
+            if timeout_seconds <= 0:
+                timeout_seconds = 12.0
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+                data = json.loads(response.read().decode("utf-8"))
+            parsed = parse_openai_text_json(data)
+            title = parsed.get("title")
+            content = parsed.get("content")
+            if not isinstance(title, str) or not isinstance(content, str):
+                return None
+            return AgentAnswer(
+                agentId=finding.agentId,
+                role=finding.role,
+                title=title,
+                content=content,
+                confidence=finding.confidence,
+                citations=citations_from_evidence(finding.evidence),
+            )
         except Exception:
             return None
 

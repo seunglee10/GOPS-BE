@@ -184,6 +184,20 @@ def publish_agent_outputs(report: dict[str, Any]) -> None:
         notification_topic = os.getenv("AGENT_NOTIFICATION_DECISIONS_TOPIC", "agents.notification-decisions.v1")
         symbol = report.get("symbol") or "UNKNOWN"
         producer.send(analysis_topic, key=str(symbol), value=report)
+        understanding = report.get("agentTrace", {}).get("queryUnderstanding") if isinstance(report.get("agentTrace"), dict) else None
+        if isinstance(understanding, dict):
+            query_topic = os.getenv("AGENT_QUERY_UNDERSTANDING_EVENTS_TOPIC", "agents.query-understanding-events.v1")
+            producer.send(
+                query_topic,
+                key=str(report.get("analysisId") or symbol),
+                value={
+                    "analysisId": report.get("analysisId"),
+                    "symbol": symbol,
+                    "status": report.get("status"),
+                    "createdAt": report.get("createdAt"),
+                    "queryUnderstanding": understanding,
+                },
+            )
         decision = report.get("notificationDecision")
         if isinstance(decision, dict):
             producer.send(notification_topic, key=str(symbol), value=decision)

@@ -17,12 +17,12 @@ def analysis_cache_key_for_state(state: dict[str, Any]) -> str | None:
         "symbol": state["symbol"],
         "intent": canonical_analysis_intent(state["intent"], route, selected_roles),
         "routerMode": str(state["request"].get("routerMode") or "hybrid"),
-        "agentIds": normalized_agent_ids(state["request"].get("agentIds")),
         "route": {
             "source": route.source,
             "intentType": route.intentType,
             "selectedRoles": selected_roles,
         },
+        "routeMode": analysis_cache_route_mode(state),
         "events": [event.eventId for event in state.get("events", [])],
         "chartContext": chart_context_cache_payload(state["context"].chartContext, selected_roles),
         "newsSymbols": list(state.get("news_symbols", [])),
@@ -31,6 +31,8 @@ def analysis_cache_key_for_state(state: dict[str, Any]) -> str | None:
 
 
 def is_analysis_cacheable_state(state: dict[str, Any]) -> bool:
+    if state.get("analysis_mode") == "multi_agent":
+        return False
     if is_ui_layout_state(state):
         return False
     route = state.get("route")
@@ -50,9 +52,17 @@ def is_news_only_state(state: dict[str, Any]) -> bool:
     return isinstance(route, IntentRoute) and route.intentType == "news" and list(state.get("selected_roles", [])) == ["news"]
 
 
+def analysis_cache_route_mode(state: dict[str, Any]) -> str:
+    route_mode = str(state.get("route_mode") or "analysis")
+    return "analysis" if route_mode == "hybrid" else route_mode
+
+
 def is_ui_layout_state(state: dict[str, Any]) -> bool:
+    if str(state.get("route_mode") or "").strip() == "ui_layout":
+        return True
     ui_intent = state.get("ui_intent")
-    return bool(ui_intent and getattr(ui_intent, "isUiIntent", False))
+    route = state.get("route")
+    return bool(ui_intent and getattr(ui_intent, "isUiIntent", False) and isinstance(route, IntentRoute) and route.intentType == "ui-layout")
 
 
 def normalize_cache_intent(intent: str) -> str:
@@ -73,13 +83,6 @@ def canonical_analysis_intent(intent: str, route: IntentRoute, selected_roles: l
     if any(term in compacted for term in ("애널리스트", "목표가", "등급", "투자의견", "analyst", "price target", "pricetarget", "rating", "upgrade", "downgrade")):
         return "news-analyst"
     return "news-overview"
-
-
-def normalized_agent_ids(agent_ids: Any) -> list[str]:
-    if not isinstance(agent_ids, list):
-        return []
-    return sorted({str(item).strip() for item in agent_ids if isinstance(item, str) and item.strip()})
-
 
 def chart_context_cache_payload(chart_context: dict[str, Any], selected_roles: list[str]) -> dict[str, Any] | None:
     if "chart" not in selected_roles or not isinstance(chart_context, dict):

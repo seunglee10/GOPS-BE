@@ -174,7 +174,7 @@ class ClickHouseNewsProvider(NewsProvider):
                 continue
             if symbol not in symbols:
                 symbols.append(symbol)
-        return symbols or [str(request.symbol or "AAPL").strip().upper() or "AAPL"]
+        return symbols or [str(request.symbol or "UNKNOWN").strip().upper() or "UNKNOWN"]
 
     def _row_to_evidence(self, row: dict, request: ProviderRequest, *, source: str) -> EvidenceItem:
         requested_symbols = self._request_symbols(request)
@@ -192,7 +192,9 @@ class ClickHouseNewsProvider(NewsProvider):
         summary = str(localized_summary or original_summary)
         published_at = row.get("publishedAt") or row.get("published_at")
         received_at = row.get("receivedAt") or row.get("received_at")
-        event_type = row.get("eventType") or row.get("event_type") or classify_news_event_type(f"{title} {summary}")
+        event_type = row.get("eventType") or row.get("event_type")
+        if not event_type or str(event_type).upper() in {"NEWS", "NEWS_ARTICLE"}:
+            event_type = classify_news_event_type(f"{title} {summary}")
         impact_direction = row.get("impactDirection") or row.get("impact_direction") or classify_news_impact_direction(f"{title} {summary}")
         relevance = subject_relevance_for_row(symbol, original_title, original_summary, row)
         subject_relevance = normalize_subject_level(row.get("subjectRelevance") or row.get("subject_relevance") or relevance["subjectRelevance"])

@@ -5,7 +5,7 @@ import os
 import time
 from typing import Any
 
-from ..contracts import AnalysisReport, FinalAnswer, IntentRoute, stable_id, utc_now_iso
+from ..contracts import AnalysisReport, FinalAnswer, IntentRoute, LayoutProposal, stable_id, utc_now_iso
 from ..retrieval.context import build_primary_retrieval_context
 from ..retrieval.cross_signal import CrossSignal, build_cross_signals
 from ..retrieval.snapshots import (
@@ -51,9 +51,9 @@ from .reporting import (
     collect_provider_evidence,
 )
 from .routing import route_intent
-from .roles import resolve_requested_roles, role_agent_error_finding
+from .roles import role_agent_error_finding
 from .timing import add_timing_ms, finalize_timing
-from .ui_intent import route_ui_intent
+from .ui_intent import UIIntent
 
 try:
     from langgraph.graph import END, StateGraph
@@ -112,7 +112,9 @@ class AgentOrchestrator:
             graph.add_node("synthesize_final_answer", self._synthesize_final_answer)
             graph.add_node("decide_notification", self._decide_notification)
             graph.add_node("propose_layout", self._propose_layout)
+
             graph.set_entry_point("normalize_request")
+
             graph.add_edge("normalize_request", "route_intent")
             graph.add_edge("route_intent", "build_snapshot_plan")
             graph.add_edge("build_snapshot_plan", "build_retrieval_context")
@@ -153,27 +155,66 @@ class AgentOrchestrator:
         request = state["request"]
         intent = state["intent"]
         router_mode = str(request.get("routerMode") or "hybrid")
-        ui_intent = route_ui_intent(intent, state["context"].layoutContext, router_mode, runtime_context=state.get("runtime_context"))
-        if ui_intent.isUiIntent:
+        understanding = state.get("query_understanding") if isinstance(state.get("query_understanding"), dict) else {}
+        route_mode = str(understanding.get("routeMode") or state.get("route_mode") or "analysis")
+        ui_intent = ui_intent_from_understanding(understanding)
+        ui_tasks = [task for task in understanding.get("uiTasks", []) if isinstance(task, dict)]
+        if is_unsupported_subject_state(state):
+            validation = state.get("subject_validation") if isinstance(state.get("subject_validation"), dict) else {}
             route = IntentRoute(
-                source=ui_intent.source,
+                source="subject-validation",
+                intentType="unsupported-company",
+                selectedRoles=[],
+                confidence=1.0,
+                reason=str(validation.get("reason") or "Unsupported company subject."),
+            )
+            state["context"].intentType = route.intentType
+            state["context"].selectedRoles = []
+            return {**state, "route": route, "selected_roles": [], "ui_intent": ui_intent if route_mode == "hybrid" else None, "ui_tasks": ui_tasks if route_mode == "hybrid" else [], "analysis_cacheable": False, "analysis_cache_hit": False}
+        if route_mode == "clarify":
+            route = IntentRoute(
+                source=str(understanding.get("source") or "query-understanding"),
+                intentType="clarify",
+                selectedRoles=[],
+                confidence=float(understanding.get("confidence") or 0.0),
+                reason="Query understanding requires clarification before selecting analysis agents.",
+            )
+            state["context"].intentType = route.intentType
+            state["context"].selectedRoles = []
+            return {**state, "route": route, "selected_roles": [], "ui_intent": ui_intent if ui_intent is not None else None, "ui_tasks": ui_tasks, "analysis_cacheable": False, "analysis_cache_hit": False}
+        if route_mode == "ui_layout" and ui_intent is not None:
+            route = IntentRoute(
+                source=ui_intent.source or str(understanding.get("source") or "query-understanding"),
                 intentType="ui-layout",
                 selectedRoles=[],
                 confidence=ui_intent.confidence,
                 reason=ui_intent.reason,
             )
-            return {**state, "route": route, "selected_roles": [], "ui_intent": ui_intent, "analysis_cacheable": False, "analysis_cache_hit": False}
+            state["context"].intentType = route.intentType
+            state["context"].selectedRoles = []
+            return {**state, "route": route, "selected_roles": [], "ui_intent": ui_intent, "ui_tasks": ui_tasks, "route_mode": route_mode, "analysis_cacheable": False, "analysis_cache_hit": False}
 
-        route = route_intent(intent, request.get("agentIds"), router_mode, runtime_context=state.get("runtime_context"))
+        selected_roles = [role for role in understanding.get("selectedRoles", []) if role in {"chart", "news", "macro", "ontology"}]
+        if selected_roles:
+            route = IntentRoute(
+                source=str(understanding.get("source") or "query-understanding"),
+                intentType=str(understanding.get("intentType") or "general-analysis"),
+                selectedRoles=selected_roles,
+                confidence=float(understanding.get("confidence") or 0.6),
+                reason="Merged parallel query understanding into analysis route.",
+            )
+        else:
+            route = route_intent(intent, router_mode=router_mode, runtime_context=state.get("runtime_context"))
         selected_roles = list(route.selectedRoles)
-        if not selected_roles:
-            requested_roles = resolve_requested_roles(request.get("agentIds"))
-            selected_roles = [role for role in ["chart", "news", "macro", "ontology"] if role in requested_roles]
         state["context"].intentType = route.intentType
         state["context"].selectedRoles = list(selected_roles)
-        return self._load_analysis_cache({**state, "route": route, "selected_roles": selected_roles, "ui_intent": None})
+        if state.get("analysis_mode") == "multi_agent":
+            allow_role_answer_llm_calls(state.get("runtime_context"), len(selected_roles))
+        return self._load_analysis_cache({**state, "route": route, "selected_roles": selected_roles, "ui_intent": ui_intent if route_mode == "hybrid" else None, "ui_tasks": ui_tasks if route_mode == "hybrid" else [], "route_mode": route_mode})
 
     def _build_snapshot_plan(self, state: dict[str, Any]) -> dict[str, Any]:
+        if is_terminal_no_analysis_state(state):
+            return {**state, "runtime_policy": self.runtime_policy, "route_plan": None, "resolved_entities": []}
         if is_ui_layout_state(state):
             return {**state, "runtime_policy": self.runtime_policy, "route_plan": None, "resolved_entities": []}
         started_at = time.perf_counter()
@@ -215,7 +256,7 @@ class AgentOrchestrator:
 
     def _fetch_data_snapshots(self, state: dict[str, Any]) -> dict[str, Any]:
         route_plan = state.get("route_plan")
-        if is_ui_layout_state(state) or route_plan is None:
+        if is_terminal_no_analysis_state(state) or state.get("analysis_mode") == "multi_agent" or is_ui_layout_state(state) or route_plan is None:
             return {**state, "snapshots": []}
 
         started_at = time.perf_counter()
@@ -328,7 +369,7 @@ class AgentOrchestrator:
             return {**state, "role_findings": []}
 
         snapshots = list(state.get("snapshots", []))
-        if snapshots and os.getenv("AGENT_USE_SNAPSHOT_HOT_PATH", "true").lower() not in {"0", "false", "no"}:
+        if state.get("analysis_mode") != "multi_agent" and snapshots and os.getenv("AGENT_USE_SNAPSHOT_HOT_PATH", "true").lower() not in {"0", "false", "no"}:
             started_at = time.perf_counter()
             try:
                 return {
@@ -375,6 +416,9 @@ class AgentOrchestrator:
         return {**state, "role_findings": role_findings}
 
     def _verify(self, state: dict[str, Any]) -> dict[str, Any]:
+        if is_terminal_no_analysis_state(state):
+            state["context"].providerEvidence = []
+            return {**state, "role_findings": [], "provider_evidence": []}
         if state.get("analysis_cache_hit"):
             provider_evidence = list(state.get("provider_evidence", []))
             state["context"].providerEvidence = provider_evidence
@@ -426,10 +470,24 @@ class AgentOrchestrator:
         analysis_id = str(request.get("analysisId") or request.get("requestId") or analysis_id)
         if state.get("analysis_cache_hit") and state.get("final_answer"):
             final_answer = state["final_answer"]
+        elif is_unsupported_subject_state(state):
+            final_answer = unsupported_subject_final_answer(symbol, state.get("subject_validation"))
+        elif is_clarify_state(state):
+            final_answer = clarify_final_answer()
         elif is_ui_layout_state(state):
             final_answer = FinalAnswer(
                 title="UI 레이아웃 조정",
                 summary="요청한 UI 레이아웃 변경을 준비했습니다.",
+                sections=[],
+                citations=[],
+                limitations=[],
+            )
+        elif state.get("analysis_mode") == "multi_agent":
+            agent_answers = self._synthesize_agent_answers(state, role_findings)
+            state["agent_answers"] = agent_answers
+            final_answer = FinalAnswer(
+                title="멀티 에이전트 분석",
+                summary="각 에이전트가 독립 답변을 작성했습니다.",
                 sections=[],
                 citations=[],
                 limitations=[],
@@ -468,10 +526,21 @@ class AgentOrchestrator:
     def _propose_layout(self, state: dict[str, Any]) -> dict[str, Any]:
         request = state["request"]
         context = state["context"]
-        if is_ui_layout_state(state):
-            layout = self.ui_agent.propose(context, state["ui_intent"])
+        ui_tasks = list(state.get("ui_tasks", [])) if isinstance(state.get("ui_tasks"), list) else []
+        if is_terminal_no_analysis_state(state):
+            layout = LayoutProposal(
+                title="Agent request not executed",
+                rationale="No layout change was proposed because the request could not be mapped to a supported analysis target.",
+                commands=[],
+                autoApply=False,
+                panelPriorities=[],
+            )
+        elif is_ui_layout_state(state):
+            layout = self.ui_agent.propose_many(context, ui_tasks) if ui_tasks else self.ui_agent.propose(context, state["ui_intent"])
             if state.get("final_answer"):
                 state["final_answer"].summary = layout.rationale
+        elif state.get("route_mode") == "hybrid" and state.get("ui_intent") is not None:
+            layout = self.ui_agent.propose_many(context, ui_tasks) if ui_tasks else self.ui_agent.propose(context, state["ui_intent"])
         else:
             layout = self.layout_agent.propose(context, state.get("route"))
         timing = finalize_timing(state)
@@ -500,7 +569,14 @@ class AgentOrchestrator:
             state.get("retrieval_context"),
             list(state.get("cross_signals", [])),
             state.get("entity_resolution"),
+            state.get("query_understanding"),
         )
+        agent_trace["analysisMode"] = str(state.get("analysis_mode") or "auto")
+        if state.get("analysis_mode") == "multi_agent":
+            agent_trace["multiAgent"] = {
+                "answerCount": len(state.get("agent_answers", [])),
+                "mergeSynthesisSkipped": True,
+            }
         report = AnalysisReport(
             analysisId=state["analysis_id"],
             symbol=state["symbol"],
@@ -529,9 +605,45 @@ class AgentOrchestrator:
             synthesisInput=state.get("synthesis_input"),
             finalResponse=final_response,
             latencyTrace=latency_trace,
+            agentAnswers=list(state.get("agent_answers", [])),
             agentTrace=agent_trace,
         )
         return {**state, "layout": layout, "report": report}
+
+    def _synthesize_agent_answers(self, state: dict[str, Any], role_findings: list[Any]) -> list[Any]:
+        started_at = time.perf_counter()
+        selected_finding_roles = {
+            role_finding_name(role)
+            for role in state.get("selected_roles", [])
+        }
+        findings = [
+            finding
+            for finding in role_findings
+            if getattr(finding, "agentId", "")
+            and getattr(finding, "role", "") in selected_finding_roles
+        ]
+        if not findings:
+            return []
+        answers_by_agent: dict[str, Any] = {}
+        max_workers = max(1, len(findings))
+        try:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {
+                    executor.submit(
+                        self.synthesizer.synthesize_agent_answer,
+                        symbol=state["symbol"],
+                        intent=state["intent"],
+                        finding=finding,
+                        timing=state.get("timing"),
+                        runtime_context=state.get("runtime_context"),
+                    ): finding.agentId
+                    for finding in findings
+                }
+                for future in as_completed(futures):
+                    answers_by_agent[futures[future]] = future.result()
+        finally:
+            add_timing_ms(state, "roleAnswerMs", (time.perf_counter() - started_at) * 1000)
+        return [answers_by_agent[finding.agentId] for finding in findings if finding.agentId in answers_by_agent]
 
     def _store_analysis_cache(self, state: dict[str, Any]) -> None:
         if state.get("analysis_cache_hit") or not state.get("analysis_cacheable") or not state.get("analysis_cache_key"):
@@ -561,3 +673,82 @@ class AgentOrchestrator:
 
 def cross_signal_enabled() -> bool:
     return os.getenv("AGENT_CROSS_SIGNAL_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def is_unsupported_subject_state(state: dict[str, Any]) -> bool:
+    validation = state.get("subject_validation")
+    return isinstance(validation, dict) and validation.get("status") == "unsupported"
+
+
+def is_clarify_state(state: dict[str, Any]) -> bool:
+    route = state.get("route")
+    return isinstance(route, IntentRoute) and route.intentType == "clarify"
+
+
+def is_terminal_no_analysis_state(state: dict[str, Any]) -> bool:
+    return is_unsupported_subject_state(state) or is_clarify_state(state)
+
+
+def allow_role_answer_llm_calls(runtime_context: Any, selected_role_count: int) -> None:
+    if runtime_context is None or not hasattr(runtime_context, "llm_budget"):
+        return
+    budget = runtime_context.llm_budget
+    current = int(getattr(budget, "max_calls", 0) or 0)
+    used = int(getattr(budget, "used_calls", 0) or 0)
+    budget.max_calls = max(current, used + max(1, selected_role_count))
+
+
+def role_finding_name(role: str) -> str:
+    return {
+        "chart": "chart-analysis",
+        "news": "news-analysis",
+        "macro": "macro-analysis",
+        "ontology": "company-relationship-analysis",
+    }.get(str(role), str(role))
+
+
+def unsupported_subject_final_answer(symbol: str, validation: Any) -> FinalAnswer:
+    payload = validation if isinstance(validation, dict) else {}
+    raw_name = str(payload.get("rawName") or payload.get("symbol") or symbol or "UNKNOWN")
+    if raw_name == "UNKNOWN":
+        summary = "분석할 지원 기업을 찾지 못했습니다. 지원 기업 목록에 있는 기업명이나 티커를 입력해 주세요."
+    else:
+        summary = f"{raw_name}은 현재 지원 기업 목록에 없습니다. 지원 기업 목록에 추가된 뒤 분석할 수 있습니다."
+    return FinalAnswer(
+        title="지원되지 않는 기업",
+        summary=summary,
+        sections=[],
+        citations=[],
+        limitations=["지원 기업 목록 밖의 기업은 에이전트 분석 provider를 호출하지 않습니다."],
+    )
+
+
+def clarify_final_answer() -> FinalAnswer:
+    return FinalAnswer(
+        title="추가 확인 필요",
+        summary="요청의 분석 대상이나 작업이 명확하지 않아 에이전트를 선택하지 않았습니다. 기업명과 원하는 분석 종류를 함께 입력해 주세요.",
+        sections=[],
+        citations=[],
+        limitations=["불명확한 요청은 LLM intent fallback을 거친 뒤에도 확정되지 않으면 broad analysis로 강제 실행하지 않습니다."],
+    )
+
+
+def ui_intent_from_understanding(understanding: dict[str, Any]) -> UIIntent | None:
+    ui_tasks = understanding.get("uiTasks")
+    if not isinstance(ui_tasks, list) or not ui_tasks:
+        return None
+    task = ui_tasks[0]
+    if not isinstance(task, dict):
+        return None
+    return UIIntent(
+        isUiIntent=True,
+        intentKind="layout",
+        targetPanelType=str(task.get("targetPanelType") or "") or None,
+        targetPanelId=str(task.get("targetPanelId") or "") or None,
+        action=str(task.get("action") or "focus"),
+        sizeIntent=str(task.get("sizeIntent") or "") or None,
+        positionIntent=str(task.get("positionIntent") or "") or None,
+        confidence=float(task.get("confidence") or understanding.get("confidence") or 0.7),
+        reason=str(task.get("reason") or "UI task from parallel query understanding."),
+        source=str(task.get("source") or understanding.get("source") or "query-understanding"),
+    )

@@ -17,5 +17,6 @@ class AgentAnalysisRequest(BaseModel):
     idempotencyKey: str | None = None
     userId: str | None = None
     mode: str | None = None
+    analysisMode: str | None = None
     priority: str | None = None
     responseMode: str | None = None

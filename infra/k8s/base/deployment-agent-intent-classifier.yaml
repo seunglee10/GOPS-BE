@@ -1,0 +1,47 @@
+# 역할: 사용자 쿼리를 content task와 UI task로 병렬 분해하는 cheap classifier pod입니다.
+# 사용: agent-analysis-worker가 hot path 중 HTTP로 호출합니다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-intent-classifier
+  namespace: alfaka-market-data
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-intent-classifier
+  template:
+    metadata:
+      labels:
+        app: agent-intent-classifier
+    spec:
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: agent-intent-classifier
+          image: YOUR_ECR_REPOSITORY/gops-agent-orchestrator:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -m
+            - uvicorn
+            - --app-dir
+            - /app/systems/agent-orchestration/pods/agent-intent-classifier
+            - main:app
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8120"
+          ports:
+            - containerPort: 8120
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-openai-secret
+                optional: true
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8120
+            initialDelaySeconds: 10
+            periodSeconds: 10

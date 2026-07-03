@@ -5,8 +5,9 @@ import os
 import hashlib
 from typing import Any
 
-from .analysis_cache import agent_finding_from_dict, evidence_item_from_dict, final_answer_from_dict, intent_route_from_dict
+from .analysis_cache import agent_finding_from_dict, evidence_item_from_dict, final_answer_citation_from_dict, final_answer_from_dict, intent_route_from_dict
 from ..contracts import (
+    AgentAnswer,
     AgentSignal,
     AnalysisReport,
     DataSnapshot,
@@ -196,6 +197,7 @@ def analysis_report_from_dict(value: Any) -> AnalysisReport | None:
         synthesisInput=synthesis_input_from_dict(value.get("synthesisInput")),
         finalResponse=final_response_from_dict(value.get("finalResponse")),
         latencyTrace=latency_trace_from_dict(value.get("latencyTrace")),
+        agentAnswers=[item for item in (agent_answer_from_dict(item) for item in value.get("agentAnswers", [])) if item],
         agentTrace=dict(value.get("agentTrace") or {}),
     )
 
@@ -332,6 +334,23 @@ def synthesis_input_from_dict(value: Any) -> SynthesisInput | None:
 
 def final_response_from_dict(value: Any) -> FinalResponse | None:
     if not isinstance(value, dict):
+        return None
+
+
+def agent_answer_from_dict(value: Any) -> AgentAnswer | None:
+    if not isinstance(value, dict):
+        return None
+    try:
+        return AgentAnswer(
+            agentId=str(value.get("agentId") or ""),
+            role=str(value.get("role") or ""),
+            title=str(value.get("title") or ""),
+            content=str(value.get("content") or ""),
+            confidence=float(value.get("confidence") if isinstance(value.get("confidence"), (int, float)) else 0.5),
+            citations=[item for item in (final_answer_citation_from_dict(item) for item in value.get("citations", [])) if item],
+            createdAt=str(value.get("createdAt") or ""),
+        )
+    except Exception:
         return None
     try:
         return FinalResponse(

@@ -1,0 +1,191 @@
+from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+import os
+import time
+from typing import Any
+
+from ..query_understanding import EntityResolution, extract_news_topic_from_intent, resolve_entity
+from .classifier import ClassifierResult, build_intent_classifier_from_env
+from .merger import merge_understanding
+from .rules import deterministic_content_tasks, deterministic_ui_tasks
+from .schema import QueryUnderstanding
+
+
+def build_query_understanding(
+    query: str,
+    *,
+    agent_ids: Any = None,
+    layout_context: dict[str, Any] | None = None,
+    chart_context: Any = None,
+    runtime_context: Any | None = None,
+    timing: dict[str, Any] | None = None,
+) -> tuple[QueryUnderstanding, Any]:
+    started_at = time.perf_counter()
+    layout = layout_context if isinstance(layout_context, dict) else {}
+    timeout_seconds = max(0.05, float(os.getenv("AGENT_QUERY_UNDERSTANDING_TIMEOUT_MS", "700")) / 1000)
+    executor = ThreadPoolExecutor(max_workers=3)
+    futures = {
+        "entity": executor.submit(timed_call, resolve_entity, query, chart_context=chart_context),
+        "content_rules": executor.submit(timed_call, deterministic_content_tasks, query),
+        "ui_rules": executor.submit(timed_call, deterministic_ui_tasks, query, layout),
+    }
+    results: dict[str, Any] = {}
+    branch_timings: dict[str, float] = {}
+    warnings: list[str] = []
+    try:
+        for name, future in futures.items():
+            remaining = max(0.001, timeout_seconds - (time.perf_counter() - started_at))
+            try:
+                value, elapsed_ms = future.result(timeout=remaining)
+                results[name] = value
+                branch_timings[name] = elapsed_ms
+            except FutureTimeoutError:
+                future.cancel()
+                warnings.append(f"{name}_timeout")
+            except Exception as exc:
+                warnings.append(f"{name}_failed:{exc.__class__.__name__}")
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+    entity_resolution = results.get("entity")
+    if entity_resolution is None:
+        entity_resolution = EntityResolution(
+            status="not_found",
+            needs_clarification=False,
+            reason="entity resolver unavailable in parallel query understanding",
+        )
+    rule_content_tasks = list(results.get("content_rules") or [])
+    rule_ui_tasks = list(results.get("ui_rules") or [])
+    classifier_result = None
+    classifier_required = should_call_classifier_fallback(
+        query=query,
+        entity_resolution=entity_resolution,
+        rule_content_tasks=rule_content_tasks,
+        rule_ui_tasks=rule_ui_tasks,
+        warnings=warnings,
+    )
+    if classifier_required:
+        if acquire_llm(runtime_context, "intent-classifier"):
+            try:
+                classifier_result, classifier_ms = timed_call(
+                    classify_with_provider,
+                    query,
+                    layout,
+                    entity_resolution.to_dict() if hasattr(entity_resolution, "to_dict") else None,
+                    True,
+                )
+                branch_timings["classifier"] = classifier_ms
+            except Exception as exc:
+                warnings.append(f"classifier_failed:{exc.__class__.__name__}")
+        else:
+            warnings.append("classifier_budget_blocked")
+        if classifier_result is None:
+            classifier_result = ClassifierResult(
+                routeMode="clarify",
+                confidence=0.0,
+                source="intent-classifier-required",
+                warnings=["intent_classifier_required_unavailable"],
+            )
+    if classifier_result is not None and warnings:
+        classifier_result.warnings.extend(warnings)
+    elif warnings:
+        classifier_result = ClassifierResult(warnings=warnings, source="fallback")
+
+    elapsed_ms = (time.perf_counter() - started_at) * 1000
+    if isinstance(timing, dict):
+        timing["queryUnderstandingMs"] = elapsed_ms
+        if "entity" in branch_timings:
+            timing["entityResolveMs"] = branch_timings["entity"]
+        if "classifier" in branch_timings:
+            timing["intentClassifierMs"] = branch_timings["classifier"]
+            timing["intentClassifierRequired"] = bool(classifier_required)
+    understanding = merge_understanding(
+        query=query,
+        entity_resolution=entity_resolution,
+        rule_content_tasks=rule_content_tasks,
+        rule_ui_tasks=rule_ui_tasks,
+        classifier_result=classifier_result,
+        timings={"totalMs": round(elapsed_ms, 3)},
+    )
+    return understanding, entity_resolution
+
+
+def timed_call(func, *args, **kwargs) -> tuple[Any, float]:
+    started_at = time.perf_counter()
+    value = func(*args, **kwargs)
+    return value, (time.perf_counter() - started_at) * 1000
+
+
+def classify_with_provider(query: str, layout_context: dict[str, Any], entity_resolution: dict[str, Any] | None, required: bool = False):
+    classifier = build_intent_classifier_from_env(required=required)
+    return classifier.classify(query=query, layout_context=layout_context, entity_resolution=entity_resolution)
+
+
+def should_call_classifier_fallback(
+    *,
+    query: str,
+    entity_resolution: Any,
+    rule_content_tasks: list[Any],
+    rule_ui_tasks: list[Any],
+    warnings: list[str],
+) -> bool:
+    if bool_env("AGENT_INTENT_CLASSIFIER_ALWAYS", False):
+        return True
+    if getattr(entity_resolution, "needs_clarification", False) or getattr(entity_resolution, "status", None) == "ambiguous":
+        return True
+    if any(item.endswith("_timeout") for item in warnings):
+        return True
+    has_rule_content = bool(rule_content_tasks)
+    has_ui = bool(rule_ui_tasks)
+    if not has_rule_content and not has_ui:
+        return True
+    text = str(query or "").strip()
+    if text and looks_like_multi_task_query(text) and (len(rule_content_tasks) + len(rule_ui_tasks) < 2):
+        return True
+    return False
+
+
+def looks_like_multi_task_query(query: str) -> bool:
+    text = str(query or "").lower()
+    compacted = "".join(text.split())
+    separators = ("그리고", "랑", "하고", "동시에", "각각", "또", "및", "and", "&", ",")
+    return any(separator in compacted for separator in separators)
+
+
+def bool_env(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def acquire_llm(runtime_context: Any | None, label: str) -> bool:
+    if runtime_context is not None and hasattr(runtime_context, "acquire_llm"):
+        return bool(runtime_context.acquire_llm(label))
+    return True
+
+
+def topic_from_entity_resolution(entity_resolution: Any) -> dict[str, Any] | None:
+    if getattr(entity_resolution, "status", None) != "confirmed":
+        return None
+    if getattr(entity_resolution, "entity_type", None) != "theme":
+        return None
+    symbols = [str(symbol).upper() for symbol in getattr(entity_resolution, "theme_symbols", ()) if str(symbol or "").strip()]
+    if not symbols:
+        return None
+    return {
+        "label": getattr(entity_resolution, "theme_name", None) or getattr(entity_resolution, "canonical_name", None) or "theme",
+        "symbols": tuple(symbols),
+        "source": getattr(entity_resolution, "catalog_source", None),
+        "entityId": getattr(entity_resolution, "entity_id", None),
+    }
+
+
+def fallback_news_topic(intent: str, explicit_symbol: str | None, entity_resolution: Any) -> dict[str, Any] | None:
+    news_topic = topic_from_entity_resolution(entity_resolution)
+    if explicit_symbol:
+        return None
+    if news_topic is None:
+        return extract_news_topic_from_intent(intent)
+    return news_topic

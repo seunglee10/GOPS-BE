@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import os
 import urllib.request
@@ -9,18 +10,9 @@ from ..contracts import IntentRoute
 
 
 ROLE_ORDER = ["chart", "news", "macro", "ontology"]
-AGENT_ID_TO_ROLE = {
-    "agent-01": "chart",
-    "agent-02": "news",
-    "agent-03": "macro",
-    "agent-04": "ontology",
-    "chart-agent": "chart",
-    "news-agent": "news",
-    "macro-agent": "macro",
-    "ontology-agent": "ontology",
-}
 KEYWORD_ROUTES = [
     (("급등", "급락", "극락", "이상", "변동", "원인", "왜", "surge", "spike", "move", "why"), ROLE_ORDER, "market-move"),
+    (("시장", "시황", "market summary", "market overview"), ["chart", "macro"], "market-summary"),
     (("뉴스", "기사", "보도", "헤드라인", "news", "headline", "article"), ["news"], "news"),
     (("차트", "캔들", "가격", "추세", "chart", "candle", "price", "trend"), ["chart"], "chart"),
     (("거시", "금리", "cpi", "fomc", "macro", "rate", "inflation"), ["macro"], "macro"),
@@ -28,55 +20,20 @@ KEYWORD_ROUTES = [
 ]
 
 
-def route_intent(intent: str, agent_ids: Any = None, router_mode: str = "hybrid", runtime_context: Any | None = None) -> IntentRoute:
+@dataclass(frozen=True)
+class RouteSignal:
+    intent_type: str
+    roles: tuple[str, ...]
+    confidence: float
+    source: str
+    reason: str
+
+
+def route_intent(intent: str, router_mode: str = "hybrid", runtime_context: Any | None = None) -> IntentRoute:
     text = str(intent or "").strip()
-    lowered = text.lower()
-    market_move_keywords, market_move_roles, market_move_type = KEYWORD_ROUTES[0]
-    if is_news_scoped_market_question(lowered):
-        return IntentRoute(
-            source="rule",
-            intentType="news",
-            selectedRoles=["news"],
-            confidence=0.9,
-            reason="Matched explicit news-basis wording before market-move routing.",
-        )
-
-    if any(keyword in lowered for keyword in market_move_keywords):
-        return IntentRoute(
-            source="rule",
-            intentType=market_move_type,
-            selectedRoles=list(market_move_roles),
-            confidence=0.9,
-            reason=f"Matched intent keyword for {market_move_type}.",
-        )
-
-    matched_roles = set()
-    matched_types = []
-    for keywords, roles, intent_type in KEYWORD_ROUTES[1:]:
-        if any(keyword in lowered for keyword in keywords):
-            matched_roles.update(roles)
-            matched_types.append(intent_type)
-    if matched_roles:
-        ordered_roles = [role for role in ROLE_ORDER if role in matched_roles]
-        intent_type = "+".join(matched_types)
-        return IntentRoute(
-            source="rule",
-            intentType=intent_type,
-            selectedRoles=ordered_roles,
-            confidence=0.9,
-            reason=f"Matched intent keyword for {intent_type}.",
-        )
-
-    selected = roles_from_agent_ids(agent_ids)
-    if selected:
-        intent_type = "+".join(selected)
-        return IntentRoute(
-            source="selection",
-            intentType=intent_type or "selected-agents",
-            selectedRoles=selected,
-            confidence=0.75,
-            reason="No strong intent keyword matched; using selected agent hints.",
-        )
+    rule_route = merge_route_signals(collect_route_signals(text))
+    if rule_route is not None:
+        return rule_route
 
     if router_mode in {"strict-llm", "llm"} or os.getenv("AGENT_ROUTER_PROVIDER") == "openai":
         llm_route = route_with_openai(text, runtime_context=runtime_context)
@@ -88,47 +45,49 @@ def route_intent(intent: str, agent_ids: Any = None, router_mode: str = "hybrid"
         intentType="general-analysis",
         selectedRoles=list(ROLE_ORDER),
         confidence=0.5,
-        reason="No keyword or selected agent hint matched; using all visible analysis roles.",
+        reason="No keyword matched; using all visible analysis roles.",
     )
 
 
-def is_news_scoped_market_question(lowered_intent: str) -> bool:
-    if not any(keyword in lowered_intent for keyword in KEYWORD_ROUTES[1][0]):
-        return False
-    compacted = "".join(lowered_intent.split())
-    news_basis_terms = (
-        "뉴스기반",
-        "뉴스를기반",
-        "뉴스에기반",
-        "뉴스바탕",
-        "뉴스를바탕",
-        "뉴스근거",
-        "뉴스로왜",
-        "기사기반",
-        "기사를기반",
-        "기사에기반",
-        "기사바탕",
-        "기사근거",
-        "기사로왜",
-        "basedonnews",
-        "newsbased",
-        "basedonarticles",
-        "articlebased",
+def collect_route_signals(intent: str) -> list[RouteSignal]:
+    lowered = str(intent or "").lower()
+    signals = []
+    for keywords, roles, intent_type in KEYWORD_ROUTES:
+        if any(keyword in lowered for keyword in keywords):
+            signals.append(
+                RouteSignal(
+                    intent_type=intent_type,
+                    roles=tuple(roles),
+                    confidence=0.9,
+                    source="rule",
+                    reason=f"Matched intent keyword for {intent_type}.",
+                )
+            )
+    return signals
+
+
+def merge_route_signals(signals: list[RouteSignal]) -> IntentRoute | None:
+    if not signals:
+        return None
+    intent_types = []
+    role_set = set()
+    confidence = 0.0
+    sources = []
+    for signal in signals:
+        if signal.intent_type not in intent_types:
+            intent_types.append(signal.intent_type)
+        role_set.update(signal.roles)
+        confidence = max(confidence, signal.confidence)
+        if signal.source not in sources:
+            sources.append(signal.source)
+    intent_type = "+".join(intent_types)
+    return IntentRoute(
+        source="+".join(sources) if sources else "rule",
+        intentType=intent_type,
+        selectedRoles=[role for role in ROLE_ORDER if role in role_set],
+        confidence=confidence or 0.5,
+        reason=f"Merged route signals for {intent_type}.",
     )
-    return any(term in compacted for term in news_basis_terms)
-
-
-def roles_from_agent_ids(agent_ids: Any) -> list[str]:
-    if not isinstance(agent_ids, list):
-        return []
-    roles = []
-    seen = set()
-    for item in agent_ids:
-        role = AGENT_ID_TO_ROLE.get(item) if isinstance(item, str) else None
-        if role and role not in seen:
-            roles.append(role)
-            seen.add(role)
-    return roles
 
 
 def route_with_openai(intent: str, runtime_context: Any | None = None) -> IntentRoute | None:
