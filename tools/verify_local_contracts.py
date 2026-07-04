@@ -348,28 +348,35 @@ def assert_frontend_chart_layout_contract() -> None:
     assert ".hover-ohlc-time {\n  display: block;" in styles
     assert ".hover-ohlc .hover-ohlc-time dd" in styles
     assert "width: 108px;" in styles
-    assert 'className="company-summary"' in app
+    assert 'className="workspace-top-nav chart"' in app
+    assert 'className={`header-quote-stack ${activeHeaderQuote?.tone ?? "unavailable"}`}' in app
+    assert '<h1 className="company-ticker">{activeHeaderSymbol}</h1>' in app
+    assert 'className="workspace-top-nav-spacer"' in app
+    assert 'className="company-summary"' not in app
     assert 'className="company-summary"' not in panel
     assert "company-summary-back" not in app
     assert "symbol-name" not in app
-    assert ".company-summary {\n  position: relative;" in styles
-    assert ".company-summary-main {\n  display: flex;" in styles
-    assert "align-items: flex-end;" in styles
+    assert ".company-summary" not in styles
+    assert ".company-summary-main" not in styles
+    assert "grid-template-columns: minmax(180px, 1fr) auto minmax(180px, 1fr);" in styles
     assert ".company-ticker {" in styles
+    assert "justify-self: center;" in styles
     assert "font-size: 54px;" in styles
     assert '--font-ui-serif: "Times New Roman", Times, Georgia, "Nanum Myeongjo", "Noto Serif KR", serif;' in styles
     assert "font-family: var(--font-ui-serif);" in styles
     assert "font-style: normal;" in styles
     assert "font-weight: 500;" in styles
     assert "font-synthesis: weight;" in styles
-    assert ".header-quote-stack {\n  display: grid;" in styles
+    assert ".header-quote-stack {" in styles
+    assert "display: grid;" in styles
+    assert "justify-self: start;" in styles
     assert "font-size: 13px;" in styles
     assert ".quote-price-line {\n  display: inline-flex;" in styles
     assert ".quote-price {\n  color: var(--color-text);\n  font-size: 17px;" in styles
     assert ".symbol-search {\n  position: relative;" in styles
-    assert ".workspace-top-nav .symbol-search" in styles
-    assert "formatSelectedLabel={(symbol) => symbol.name}" in app
-    assert "selectedLabel={activeHeaderName}" in app
+    assert ".workspace-top-nav .symbol-search" not in styles
+    assert "top-nav-symbol-search" not in app
+    assert "activeHeaderName" not in app
     assert ".symbol-search-menu {\n  position: absolute;\n  top: 42px;\n  right: 0;" in styles
     assert ".chart-instance.is-editable-chart .chart-instance-symbol-search button {" in styles
     assert ".workspace-panel-frame.is-chart-hovered .chart-instance.is-editable-chart .chart-instance-symbol-search button" in styles
@@ -561,7 +568,7 @@ def assert_frontend_layout_grid_contract() -> None:
     assert "const workspaceStyle = {\n    \"--layout-gutter\": `${layoutGutter}px`" in app
     assert "style={panelSlotStyle(slot)}" not in app
     assert "function currentViewportSize" in app
-    assert 'import { BottomCommandBar, type BottomMenuKey } from "./components/BottomCommandBar";' in app
+    assert 'import { BottomCommandBar, type BottomMenuKey, type ChatLogEntry } from "./components/BottomCommandBar";' in app
     assert "<BottomCommandBar" in app
     assert "snapGridSpan(" not in app
     assert 'className="chart-horizontal-resize-grip left"' not in app
@@ -616,15 +623,40 @@ def assert_frontend_layout_grid_contract() -> None:
     assert 'className={`bottom-nav-actions ${side} ${isMenuOpen ? "is-menu-open" : ""}`}' in bottom_bar
     assert 'className="bottom-menu-dismiss-layer"' in bottom_bar
     assert "handleOutsidePointerDown" in bottom_bar
-    assert 'event.target.closest(".bottom-menu-panel, .bottom-nav-actions")' in bottom_bar
+    assert 'event.target.closest(".bottom-menu-panel, .bottom-nav-actions, .bottom-chat-panel, .agent-dock")' in bottom_bar
     assert 'document.addEventListener("pointerdown", handleOutsidePointerDown, true);' in bottom_bar
     assert 'document.removeEventListener("pointerdown", handleOutsidePointerDown, true);' in bottom_bar
+    assert 'export type ChatLogEntry = {' in bottom_bar
+    assert 'role: "user" | "assistant" | "system";' in bottom_bar
+    assert "chatPanelOpen" in bottom_bar
+    assert "setChatPanelOpen" in bottom_bar
+    assert "const hasFloatingPanel = activeMenu !== null || chatPanelOpen;" in bottom_bar
+    assert "const closeFloatingPanels = () => {" in bottom_bar
+    assert "const toggleChatPanel = () => {" in bottom_bar
+    assert "const toggleBottomMenu = (key: BottomMenuKey) => {" in bottom_bar
+    assert "setChatPanelOpen(false);\n    onToggleMenu(key);" in bottom_bar
+    assert "if (next && activeMenu) {" in bottom_bar
+    assert "{hasFloatingPanel && (" in bottom_bar
+    assert 'aria-label="Close bottom floating panel"' in bottom_bar
+    assert "ChevronUp" in bottom_bar
+    assert "ChevronDown" in bottom_bar
+    assert "bottom-chat-panel surface-floating" in bottom_bar
+    assert "bottom-chat-log" in bottom_bar
+    assert "bottom-chat-message" in bottom_bar
+    assert "agent-dock-toggle" in bottom_bar
     assert "activeMenu === label" in bottom_bar
     assert 'aria-label={`Menu ${label}`}' in bottom_bar
     assert "홈화면" in bottom_bar
     assert "onShowTreeMap();" in bottom_bar
     assert "Back to TreeMap" not in app
     assert "Reserved action" not in app
+    assert "agent-answer" not in app
+    assert "agentMessage" not in app
+    assert "const [chatLog, setChatLog] = useState<ChatLogEntry[]>([]);" in app
+    assert 'const userEntry = createChatLogEntry("user", prompt);' in app
+    assert 'createChatLogEntry("assistant", "차트 에이전트가 차트를 읽고 있습니다.", true)' in app
+    assert "replaceChatLogEntry(setChatLog, pendingEntry.id" in app
+    assert "chatLog={chatLog}" in app
     assert "agent-box surface-recessed" in bottom_bar
     assert "workspace-nav-button surface-raised" in bottom_bar
     assert "surface-gradient" not in app
@@ -678,6 +710,19 @@ def assert_frontend_layout_grid_contract() -> None:
     assert ".surface-recessed-y" not in styles
     assert ".workspace-top-nav" in styles
     assert ".workspace-bottom-nav" in styles
+    assert ".agent-dock" in styles
+    assert ".agent-dock-toggle" in styles
+    assert ".bottom-chat-panel" in styles
+    assert ".bottom-chat-panel.is-open" in styles
+    assert ".agent-box .agent-dock-toggle" not in styles
+    assert "grid-template-columns: minmax(96px, 1fr) minmax(300px, 520px) minmax(96px, 1fr);" in styles
+    assert "width: clamp(360px, calc(100vw - var(--layout-gutter) - var(--layout-gutter) - 176px), 660px);" in styles
+    assert "height: clamp(468px, 68vh, 676px);" in styles
+    assert "transform: translate(-50%, 104%);" in styles
+    assert "transform: translate(-50%, 0);" in styles
+    assert ".bottom-chat-log" in styles
+    assert ".bottom-chat-message" in styles
+    assert ".agent-answer" not in styles
     assert ".bottom-menu-panel {" in styles
     assert "width: clamp(248px, 23vw, 328px);" in styles
     assert "height: clamp(468px, 68vh, 676px);" in styles
@@ -885,7 +930,7 @@ def assert_frontend_treemap_main_view_contract() -> None:
     assert "transform: none;" in styles
     assert "treemap-hover-card" not in styles
     assert "treemap-landing-overlay" not in styles
-    assert 'className="top-nav-symbol-search"' in app
+    assert 'className="top-nav-symbol-search"' not in app
     assert "workspace-top-nav treemap" not in styles and ".workspace-top-nav.treemap" not in styles
     assert "treemap-symbol-search" not in styles
 

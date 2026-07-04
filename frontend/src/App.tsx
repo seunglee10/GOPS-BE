@@ -1,17 +1,18 @@
 import {
   type CSSProperties,
+  type Dispatch,
   type FormEvent,
   type PointerEvent as ReactPointerEvent,
+  type SetStateAction,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState
 } from "react";
-import { BottomCommandBar, type BottomMenuKey } from "./components/BottomCommandBar";
+import { BottomCommandBar, type BottomMenuKey, type ChatLogEntry } from "./components/BottomCommandBar";
 import { type ChartHeaderSnapshot, type ChartPanelHandle } from "./components/ChartPanel";
 import { PanelWorkspace } from "./components/PanelWorkspace";
-import { SymbolSearch } from "./components/SymbolSearch";
 import type { SemanticSelectionSnapshot } from "./chart/semanticTimeline";
 import type { ChartSymbolDto } from "./chart/types";
 import { gridGutter } from "./layout/grid";
@@ -36,7 +37,7 @@ type MainView =
 type LayoutDrag =
   { mode: "treemap"; type: "resize-bottom"; startY: number; startHeight: number };
 
-const idleAgentMessage = "";
+let chatLogEntrySequence = 0;
 
 function initialPanelState(): TiledPanelState {
   if (typeof window === "undefined") {
@@ -60,7 +61,7 @@ export function App() {
   const [chartHeader, setChartHeader] = useState<ChartHeaderSnapshot | null>(null);
   const [, setSemanticSelection] = useState<SemanticSelectionSnapshot | null>(null);
   const [agentInput, setAgentInput] = useState("");
-  const [agentMessage, setAgentMessage] = useState(idleAgentMessage);
+  const [chatLog, setChatLog] = useState<ChatLogEntry[]>([]);
   const [agentBusy, setAgentBusy] = useState(false);
   const [treeMapLaneHover, setTreeMapLaneHover] = useState(false);
   const [activeBottomMenu, setActiveBottomMenu] = useState<BottomMenuKey | null>(null);
@@ -137,14 +138,10 @@ export function App() {
     isMock: item.symbol === "TSLA" || item.symbol === "AAPL" || item.symbol === "GOOGL"
   })), []);
   const activeHeaderSymbol = mainView.mode === "chart" ? chartHeader?.symbol ?? mainView.symbol : "";
-  const activeHeaderName = mainView.mode === "chart"
-    ? chartHeader?.name ?? universeSymbols.find((item) => item.symbol === activeHeaderSymbol)?.name ?? ""
-    : "";
   const activeHeaderQuote = chartHeader?.liveQuote;
 
   const showChart = (symbol: string) => {
     setSemanticSelection(null);
-    setAgentMessage(idleAgentMessage);
     setTreeMapLaneHover(false);
     setMainView({ mode: "chart", symbol: symbol.toUpperCase() });
   };
@@ -152,7 +149,6 @@ export function App() {
   const showTreeMap = () => {
     setSemanticSelection(null);
     setChartHeader(null);
-    setAgentMessage(idleAgentMessage);
     setActiveBottomMenu(null);
     setMainView({ mode: "treemap" });
   };
@@ -167,25 +163,37 @@ export function App() {
     if (!prompt || agentBusy) {
       return;
     }
+    const userEntry = createChatLogEntry("user", prompt);
     setAgentInput("");
     if (mainView.mode !== "chart") {
-      setAgentMessage("차트를 선택하면 분석할 수 있습니다.");
+      setChatLog((current) => [
+        ...current,
+        userEntry,
+        createChatLogEntry("system", "차트를 선택하면 분석할 수 있습니다.")
+      ]);
       return;
     }
     const chartPanel = chartPanelRef.current;
     if (!chartPanel) {
-      setAgentMessage("차트가 준비되면 다시 시도해주세요.");
+      setChatLog((current) => [
+        ...current,
+        userEntry,
+        createChatLogEntry("system", "차트가 준비되면 다시 시도해주세요.")
+      ]);
       return;
     }
+    const pendingEntry = createChatLogEntry("assistant", "차트 에이전트가 차트를 읽고 있습니다.", true);
     setAgentBusy(true);
-    setAgentMessage("차트 에이전트가 차트를 읽고 있습니다.");
+    setChatLog((current) => [...current, userEntry, pendingEntry]);
     try {
       const result = await chartPanel.runAgentPrompt(prompt);
-      if (result.message) {
-        setAgentMessage(result.message);
-      }
+      replaceChatLogEntry(setChatLog, pendingEntry.id, result.message || "응답이 없습니다.");
     } catch (error: unknown) {
-      setAgentMessage(error instanceof Error ? error.message : "차트 에이전트 요청에 실패했습니다.");
+      replaceChatLogEntry(
+        setChatLog,
+        pendingEntry.id,
+        error instanceof Error ? error.message : "차트 에이전트 요청에 실패했습니다."
+      );
     } finally {
       setAgentBusy(false);
     }
@@ -223,27 +231,15 @@ export function App() {
     <main className="app-shell">
       {mainView.mode === "chart" && (
         <header className="workspace-top-nav chart" aria-label="Workspace header">
-          <div className="company-summary" aria-label="Current company">
-            <div className="company-summary-main">
-              <h1 className="company-ticker">{activeHeaderSymbol}</h1>
-              <div className={`header-quote-stack ${activeHeaderQuote?.tone ?? "unavailable"}`} aria-label="Live quote">
-                <span className="quote-percent">{activeHeaderQuote?.percentText ?? "-"}</span>
-                <span className="quote-price-line">
-                  <span className="quote-price">{activeHeaderQuote?.priceText ?? "-"}</span>
-                  <span className="quote-change">{activeHeaderQuote?.changeText ?? "-"}</span>
-                </span>
-              </div>
-            </div>
+          <div className={`header-quote-stack ${activeHeaderQuote?.tone ?? "unavailable"}`} aria-label="Live quote">
+            <span className="quote-percent">{activeHeaderQuote?.percentText ?? "-"}</span>
+            <span className="quote-price-line">
+              <span className="quote-price">{activeHeaderQuote?.priceText ?? "-"}</span>
+              <span className="quote-change">{activeHeaderQuote?.changeText ?? "-"}</span>
+            </span>
           </div>
-          <SymbolSearch
-            symbols={universeSymbols}
-            className="top-nav-symbol-search"
-            selectedSymbol={activeHeaderSymbol}
-            selectedLabel={activeHeaderName}
-            placeholder="종목명 검색"
-            formatSelectedLabel={(symbol) => symbol.name}
-            onSelectSymbol={showChart}
-          />
+          <h1 className="company-ticker">{activeHeaderSymbol}</h1>
+          <div className="workspace-top-nav-spacer" aria-hidden="true" />
         </header>
       )}
       <section className="canvas-workspace" style={workspaceStyle}>
@@ -287,11 +283,11 @@ export function App() {
           />
         )}
       </section>
-      {agentMessage && <p className="agent-answer">{agentMessage}</p>}
       <BottomCommandBar
         activeMenu={activeBottomMenu}
         agentBusy={agentBusy}
         agentInput={agentInput}
+        chatLog={chatLog}
         isChartMode={mainView.mode === "chart"}
         onAgentInputChange={setAgentInput}
         onAgentSubmit={runAgentPrompt}
@@ -301,6 +297,28 @@ export function App() {
       />
     </main>
   );
+}
+
+function createChatLogEntry(role: ChatLogEntry["role"], text: string, pending = false): ChatLogEntry {
+  chatLogEntrySequence += 1;
+  return {
+    id: `chat-${Date.now()}-${chatLogEntrySequence}`,
+    role,
+    text,
+    pending
+  };
+}
+
+function replaceChatLogEntry(
+  setChatLog: Dispatch<SetStateAction<ChatLogEntry[]>>,
+  entryId: string,
+  text: string
+) {
+  setChatLog((current) => current.map((entry) => (
+    entry.id === entryId
+      ? { ...entry, text, pending: false }
+      : entry
+  )));
 }
 
 function currentViewportSize(): ViewportSize {

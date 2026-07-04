@@ -222,7 +222,7 @@ button {
 
 .workspace-top-nav {
   top: 0;
-  grid-template-columns: minmax(0, 1fr) minmax(220px, 320px);
+  grid-template-columns: minmax(180px, 1fr) auto minmax(180px, 1fr);
   column-gap: 18px;
   height: var(--top-nav-height);
   padding: 12px var(--layout-gutter) 8px;
@@ -230,7 +230,7 @@ button {
 
 .workspace-bottom-nav {
   bottom: 0;
-  grid-template-columns: minmax(96px, 1fr) minmax(320px, 560px) minmax(96px, 1fr);
+  grid-template-columns: minmax(96px, 1fr) minmax(300px, 520px) minmax(96px, 1fr);
   column-gap: 16px;
   height: var(--bottom-nav-height);
   padding: 10px var(--layout-gutter) 18px;
@@ -358,6 +358,91 @@ button {
   opacity: 0.12;
 }
 
+.agent-dock {
+  position: relative;
+  z-index: 3;
+  width: 100%;
+  pointer-events: auto;
+}
+
+.bottom-chat-panel {
+  position: fixed;
+  left: 50%;
+  bottom: 0;
+  z-index: 1;
+  width: clamp(360px, calc(100vw - var(--layout-gutter) - var(--layout-gutter) - 176px), 660px);
+  height: clamp(468px, 68vh, 676px);
+  overflow: hidden;
+  border-radius: 14px 14px 10px 10px;
+  background: var(--color-background);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 104%);
+  transition:
+    transform 220ms ease,
+    opacity 160ms ease;
+}
+
+.bottom-chat-panel.is-open {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate(-50%, 0);
+}
+
+.bottom-chat-log {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+  overflow-y: auto;
+  padding: 18px 18px calc(var(--bottom-control-size) + 42px);
+}
+
+.bottom-chat-message {
+  display: grid;
+  gap: 5px;
+  max-width: 88%;
+  color: var(--color-text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.bottom-chat-message.user {
+  align-self: flex-end;
+  text-align: right;
+}
+
+.bottom-chat-message.assistant,
+.bottom-chat-message.system {
+  align-self: flex-start;
+}
+
+.bottom-chat-message.is-pending {
+  opacity: 0.64;
+}
+
+.bottom-chat-message-role {
+  color: var(--color-muted);
+  font-family: var(--font-ui-serif);
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 0.68;
+}
+
+.bottom-chat-message p,
+.bottom-chat-empty {
+  margin: 0;
+}
+
+.bottom-chat-empty {
+  color: var(--color-muted);
+  font-family: var(--font-ui-serif);
+  font-size: 12px;
+  opacity: 0.58;
+}
+
 .chart-lane-frame {
   position: absolute;
   z-index: 1;
@@ -402,23 +487,8 @@ button {
   text-transform: uppercase;
 }
 
-.company-summary {
-  position: relative;
-  max-width: none;
-  min-width: 0;
-  color: var(--color-text);
-  pointer-events: auto;
-}
-
-.company-summary-main {
-  display: flex;
-  align-items: flex-end;
-  gap: 18px;
-  min-width: 0;
-}
-
 .company-ticker {
-  flex: 0 0 auto;
+  justify-self: center;
   font-family: var(--font-ui-serif);
   font-size: 54px;
   font-style: normal;
@@ -426,7 +496,9 @@ button {
   font-synthesis: weight;
   letter-spacing: 0;
   line-height: 0.82;
+  text-align: center;
   text-shadow: none;
+  pointer-events: auto;
 }
 
 h1,
@@ -516,6 +588,7 @@ h2 {
 }
 
 .header-quote-stack {
+  justify-self: start;
   display: grid;
   gap: 4px;
   align-content: end;
@@ -524,6 +597,12 @@ h2 {
   font-size: 13px;
   font-weight: 760;
   line-height: 1;
+  text-align: left;
+  pointer-events: auto;
+}
+
+.workspace-top-nav-spacer {
+  min-width: 0;
 }
 
 .quote-price-line {
@@ -925,10 +1004,6 @@ h2 {
   z-index: 1;
 }
 
-.workspace-top-nav .symbol-search {
-  justify-self: end;
-}
-
 .symbol-search input {
   min-width: 0;
   height: 36px;
@@ -1031,7 +1106,7 @@ h2 {
 
 .agent-box {
   position: relative;
-  z-index: 1;
+  z-index: 2;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
@@ -1043,6 +1118,54 @@ h2 {
   background: var(--color-surface);
   backdrop-filter: blur(14px);
   pointer-events: auto;
+}
+
+.agent-dock-toggle {
+  position: absolute;
+  left: 50%;
+  top: -20px;
+  z-index: 4;
+  display: inline-grid;
+  place-items: center;
+  width: min(210px, 54%);
+  height: 20px;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--color-text);
+  opacity: 0;
+  transform: translateX(-50%);
+  transition: opacity 140ms ease;
+}
+
+.agent-dock-toggle::before,
+.agent-dock-toggle::after {
+  position: absolute;
+  top: 50%;
+  width: calc(50% - 17px);
+  height: 1px;
+  background: var(--color-text);
+  opacity: 0.3;
+  content: "";
+}
+
+.agent-dock-toggle::before {
+  left: 0;
+}
+
+.agent-dock-toggle::after {
+  right: 0;
+}
+
+.agent-dock-toggle svg {
+  position: relative;
+  z-index: 1;
+}
+
+.agent-dock:hover .agent-dock-toggle,
+.agent-dock:focus-within .agent-dock-toggle,
+.agent-dock.is-chat-open .agent-dock-toggle {
+  opacity: 1;
 }
 
 .agent-box::after {
@@ -1116,23 +1239,6 @@ h2 {
 .agent-preview-controls button.active {
   background: var(--color-preview);
   color: var(--color-tile-text-inverse);
-}
-
-.agent-answer {
-  position: fixed;
-  top: calc(var(--top-nav-height) + 8px);
-  left: 50%;
-  z-index: 21;
-  width: min(720px, calc(100vw - 64px));
-  margin: 0;
-  color: var(--color-text);
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1.45;
-  text-align: center;
-  text-shadow: 0 1px 0 var(--color-surface);
-  transform: translateX(-50%);
-  pointer-events: none;
 }
 
 .workspace-panel-surface {
@@ -1581,14 +1687,6 @@ h2 {
 }
 
 @media (max-width: 720px) {
-  .company-summary {
-    max-width: none;
-  }
-
-  .company-summary-main {
-    gap: 10px;
-  }
-
   .symbol-search {
     width: auto;
   }
