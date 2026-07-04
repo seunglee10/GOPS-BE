@@ -954,7 +954,7 @@ class ClickHouseMarketDataProvider:
         response = requests.post(
             self.url,
             params=params,
-            timeout=float(os.getenv("CLICKHOUSE_PROVIDER_TIMEOUT_SECONDS", "0.6")),
+            timeout=float(os.getenv("CLICKHOUSE_PROVIDER_TIMEOUT_SECONDS", "3")),
         )
         if response.status_code >= 400:
             raise RuntimeError(f"ClickHouse query failed: status={response.status_code}, body={response.text}")
