@@ -98,6 +98,45 @@ class MarketDataQueryService:
             "feed": "unknown",
         }
 
+    def latest_news(self, symbol: str, limit: int = 10, locale: str = "ko-KR") -> dict[str, Any]:
+        symbol = normalize_market_symbol(symbol)
+        limit = max(1, min(int(limit), 30))
+        rows, source = self._latest_news_rows(symbol, limit, locale)
+        return {
+            "symbol": symbol,
+            "source": source,
+            "items": [normalize_news_item(row, symbol) for row in rows],
+        }
+
+    def _latest_news_rows(self, symbol: str, limit: int, locale: str) -> tuple[list[dict[str, Any]], str]:
+        redis_provider = getattr(self.provider, "redis_provider", None)
+        clickhouse_provider = getattr(self.provider, "clickhouse_provider", None)
+        for provider, source in ((redis_provider, "redis"), (clickhouse_provider, "clickhouse")):
+            if provider is None:
+                continue
+            method = getattr(provider, "localized_news_articles_for_symbols", None)
+            if not callable(method):
+                method = getattr(provider, "localized_news_articles", None)
+                if not callable(method):
+                    continue
+                try:
+                    rows = method(symbol, limit=limit, locale=locale)
+                except TypeError:
+                    rows = method(symbol, limit=limit)
+                except Exception:
+                    rows = []
+            else:
+                try:
+                    rows = method([symbol], limit=limit, locale=locale)
+                except TypeError:
+                    rows = method([symbol], limit=limit)
+                except Exception:
+                    rows = []
+            normalized_rows = [row for row in rows or [] if isinstance(row, dict)]
+            if normalized_rows:
+                return normalized_rows[:limit], source
+        return [], "no-data"
+
     def agent_chart_context(self, symbol: str, interval: str, from_time: str, to_time: str, include: str) -> dict[str, Any]:
         symbol = normalize_market_symbol(symbol)
         interval = normalize_chart_interval(interval)
@@ -110,3 +149,37 @@ class MarketDataQueryService:
 
 def get_query_service() -> MarketDataQueryService:
     return MarketDataQueryService()
+
+
+def normalize_news_item(row: dict[str, Any], fallback_symbol: str) -> dict[str, Any]:
+    title = read_string(row.get("title")) or read_string(row.get("localizedTitle")) or read_string(row.get("localizedHeadline")) or read_string(row.get("headline")) or "Untitled news"
+    summary = read_string(row.get("summary")) or read_string(row.get("localizedSummary")) or read_string(row.get("localized_summary")) or ""
+    symbols = read_string_list(row.get("symbols"))
+    symbol = read_string(row.get("targetSymbol")) or read_string(row.get("target_symbol")) or read_string(row.get("symbol")) or fallback_symbol
+    return {
+        "symbol": symbol.upper(),
+        "symbols": symbols or [symbol.upper()],
+        "title": title,
+        "summary": summary,
+        "url": read_string(row.get("url")),
+        "source": read_string(row.get("source")),
+        "publishedAt": read_string(row.get("publishedAt")) or read_string(row.get("published_at")),
+        "impactDirection": read_string(row.get("impactDirection")) or read_string(row.get("impact_direction")),
+    }
+
+
+def read_string(value: Any) -> str | None:
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def read_string_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value.strip().upper()] if value.strip() else []
+    if not isinstance(value, list):
+        return []
+    symbols = []
+    for item in value:
+        text = read_string(item)
+        if text and text.upper() not in symbols:
+            symbols.append(text.upper())
+    return symbols

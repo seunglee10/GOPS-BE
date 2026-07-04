@@ -9,8 +9,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 MARKET_SHARED = ROOT / "systems" / "market-data" / "shared"
 ORDER_SHARED = ROOT / "systems" / "order" / "shared"
+AGENT_SHARED = ROOT / "systems" / "agent-orchestration" / "shared"
 BACKEND = ROOT / "systems" / "api-server" / "pods" / "api-server" / "gops-backend"
-for path in (str(MARKET_SHARED), str(ORDER_SHARED), str(BACKEND)):
+for path in (str(MARKET_SHARED), str(ORDER_SHARED), str(AGENT_SHARED), str(BACKEND)):
     if path not in sys.path:
         sys.path.insert(0, path)
 
@@ -124,6 +125,28 @@ class FakeProvider:
             "visibleRange": {"from": from_time, "to": to_time},
             "include": sorted(include),
         }
+
+
+class FakeNewsRedisProvider:
+    def __init__(self, rows=None):
+        self.rows = rows or []
+
+    def localized_news_articles_for_symbols(self, symbols, limit=10, locale="ko-KR"):
+        return self.rows[:limit]
+
+
+class FakeNewsClickHouseProvider:
+    def __init__(self, rows=None):
+        self.rows = rows or []
+
+    def localized_news_articles_for_symbols(self, symbols, limit=10, locale="ko-KR"):
+        return self.rows[:limit]
+
+
+class FakeNewsProvider:
+    def __init__(self, redis_rows=None, clickhouse_rows=None):
+        self.redis_provider = FakeNewsRedisProvider(redis_rows)
+        self.clickhouse_provider = FakeNewsClickHouseProvider(clickhouse_rows)
 
 
 class NoMutationRedis:
@@ -476,6 +499,9 @@ class FakeQueryService:
     def agent_chart_context(self, symbol, interval, from_time, to_time, include):
         return self.service.agent_chart_context(symbol, interval, from_time, to_time, include)
 
+    def latest_news(self, symbol, limit=10, locale="ko-KR"):
+        return self.service.latest_news(symbol, limit=limit, locale=locale)
+
     def request_backfill(self, symbol, interval, start=None, end=None, mode="default", force=False):
         return self.service.request_backfill(symbol, interval, start=start, end=end, mode=mode, force=force)
 
@@ -528,6 +554,55 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(service.volume_profile_bins("aapl", "from", "to", "auto")["symbol"], "AAPL")
         context = service.agent_chart_context("aapl", "1m", "from", "to", "status,volumeProfile")
         self.assertEqual(context["include"], ["status", "volumeProfile"])
+
+    def test_latest_news_uses_redis_cache_and_normalizes_response_shape(self):
+        service = MarketDataQueryService(FakeNewsProvider(redis_rows=[{
+            "targetSymbol": "NVDA",
+            "symbols": ["NVDA", "AMD"],
+            "localizedHeadline": "엔비디아 최신 뉴스",
+            "localizedSummary": "데이터센터 수요가 강합니다.",
+            "url": "https://example.com/nvda",
+            "source": "alpaca",
+            "publishedAt": "2026-07-01T12:00:00.000Z",
+            "impactDirection": "positive",
+        }]), backfill_service=FakeBackfillService())
+
+        payload = service.latest_news("nvda", limit=5)
+
+        self.assertEqual(payload["symbol"], "NVDA")
+        self.assertEqual(payload["source"], "redis")
+        self.assertEqual(payload["items"][0]["title"], "엔비디아 최신 뉴스")
+        self.assertEqual(payload["items"][0]["summary"], "데이터센터 수요가 강합니다.")
+        self.assertEqual(payload["items"][0]["impactDirection"], "positive")
+
+    def test_latest_news_falls_back_to_clickhouse_when_redis_empty(self):
+        service = MarketDataQueryService(FakeNewsProvider(clickhouse_rows=[{
+            "target_symbol": "AAPL",
+            "headline": "Apple headline",
+            "summary": "Apple summary",
+            "published_at": "2026-07-01T12:00:00.000Z",
+        }]), backfill_service=FakeBackfillService())
+
+        payload = service.latest_news("aapl", limit=5)
+
+        self.assertEqual(payload["source"], "clickhouse")
+        self.assertEqual(payload["items"][0]["symbol"], "AAPL")
+        self.assertEqual(payload["items"][0]["title"], "Apple headline")
+
+    def test_latest_news_route_delegates_to_query_service(self):
+        previous = query_routes.get_query_service
+        query_routes.get_query_service = lambda: FakeQueryService(FakeNewsProvider(redis_rows=[{
+            "targetSymbol": "NVDA",
+            "headline": "NVIDIA",
+            "summary": "News summary",
+        }]))
+        try:
+            payload = query_routes.market_latest_news("nvda", limit=3)
+        finally:
+            query_routes.get_query_service = previous
+
+        self.assertEqual(payload["symbol"], "NVDA")
+        self.assertEqual(payload["items"][0]["title"], "NVIDIA")
 
     def test_agent_chat_without_openai_key_returns_503(self):
         request = AgentChatRequest(
