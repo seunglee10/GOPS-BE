@@ -8,6 +8,7 @@ import {
   useRef,
   useState
 } from "react";
+import { BottomCommandBar, type BottomMenuKey } from "./components/BottomCommandBar";
 import { type ChartHeaderSnapshot, type ChartPanelHandle } from "./components/ChartPanel";
 import { PanelWorkspace } from "./components/PanelWorkspace";
 import { SymbolSearch } from "./components/SymbolSearch";
@@ -35,12 +36,7 @@ type MainView =
 type LayoutDrag =
   { mode: "treemap"; type: "resize-bottom"; startY: number; startHeight: number };
 
-type BottomMenuKey = "I" | "II" | "III" | "IV" | "V" | "VI";
-type BottomMenuSide = "left" | "right";
-
 const idleAgentMessage = "";
-const leftMenuKeys: BottomMenuKey[] = ["I", "II", "III"];
-const rightMenuKeys: BottomMenuKey[] = ["IV", "V", "VI"];
 
 function initialPanelState(): TiledPanelState {
   if (typeof window === "undefined") {
@@ -164,25 +160,6 @@ export function App() {
   const toggleBottomMenu = (key: BottomMenuKey) => {
     setActiveBottomMenu((current) => (current === key ? null : key));
   };
-
-  useEffect(() => {
-    if (!activeBottomMenu) {
-      return undefined;
-    }
-
-    const handleBottomMenuOutsidePointerDown = (event: PointerEvent) => {
-      if (!(event.target instanceof Element)) {
-        return;
-      }
-      if (event.target.closest(".bottom-menu-panel, .bottom-nav-actions")) {
-        return;
-      }
-      setActiveBottomMenu(null);
-    };
-
-    document.addEventListener("pointerdown", handleBottomMenuOutsidePointerDown, true);
-    return () => document.removeEventListener("pointerdown", handleBottomMenuOutsidePointerDown, true);
-  }, [activeBottomMenu]);
 
   const runAgentPrompt = useCallback(async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -311,112 +288,18 @@ export function App() {
         )}
       </section>
       {agentMessage && <p className="agent-answer">{agentMessage}</p>}
-      {activeBottomMenu && (
-        <button
-          type="button"
-          className="bottom-menu-dismiss-layer"
-          aria-label="Close bottom menu"
-          onClick={() => setActiveBottomMenu(null)}
-        />
-      )}
-      <nav className="workspace-bottom-nav" aria-label="Workspace command bar">
-        <div
-          className={`bottom-nav-actions left ${activeBottomMenu && leftMenuKeys.includes(activeBottomMenu) ? "is-menu-open" : ""}`}
-          aria-label="Menu actions left"
-        >
-          <BottomMenuPanel
-            side="left"
-            activeKey={activeBottomMenu}
-            onShowTreeMap={showTreeMap}
-            onClose={() => setActiveBottomMenu(null)}
-          />
-          {leftMenuKeys.map((label) => (
-            <button
-              key={label}
-              type="button"
-              className={`workspace-nav-button surface-raised ${activeBottomMenu === label ? "is-active" : ""}`}
-              aria-label={`Menu ${label}`}
-              aria-expanded={activeBottomMenu === label}
-              onClick={() => toggleBottomMenu(label)}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        <form className="agent-box surface-recessed" onSubmit={runAgentPrompt}>
-          <input
-            value={agentInput}
-            onChange={(event) => setAgentInput(event.target.value)}
-            placeholder={mainView.mode === "chart" ? "차트에게 물어보기" : "종목을 선택한 뒤 차트에게 물어보기"}
-            aria-label="Chart agent command"
-            disabled={agentBusy}
-          />
-          <button type="submit" disabled={agentBusy}>{agentBusy ? "..." : "Run"}</button>
-        </form>
-        <div
-          className={`bottom-nav-actions right ${activeBottomMenu && rightMenuKeys.includes(activeBottomMenu) ? "is-menu-open" : ""}`}
-          aria-label="Menu actions right"
-        >
-          <BottomMenuPanel
-            side="right"
-            activeKey={activeBottomMenu}
-            onShowTreeMap={showTreeMap}
-            onClose={() => setActiveBottomMenu(null)}
-          />
-          {rightMenuKeys.map((label) => (
-            <button
-              key={label}
-              type="button"
-              className={`workspace-nav-button surface-raised ${activeBottomMenu === label ? "is-active" : ""}`}
-              aria-label={`Menu ${label}`}
-              aria-expanded={activeBottomMenu === label}
-              onClick={() => toggleBottomMenu(label)}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      </nav>
+      <BottomCommandBar
+        activeMenu={activeBottomMenu}
+        agentBusy={agentBusy}
+        agentInput={agentInput}
+        isChartMode={mainView.mode === "chart"}
+        onAgentInputChange={setAgentInput}
+        onAgentSubmit={runAgentPrompt}
+        onCloseMenu={() => setActiveBottomMenu(null)}
+        onShowTreeMap={showTreeMap}
+        onToggleMenu={toggleBottomMenu}
+      />
     </main>
-  );
-}
-
-function BottomMenuPanel({
-  side,
-  activeKey,
-  onShowTreeMap,
-  onClose
-}: {
-  side: BottomMenuSide;
-  activeKey: BottomMenuKey | null;
-  onShowTreeMap: () => void;
-  onClose: () => void;
-}) {
-  const sideKeys = side === "left" ? leftMenuKeys : rightMenuKeys;
-  const isOpen = activeKey !== null && sideKeys.includes(activeKey);
-  const menuContent = isOpen && activeKey === "I" ? (
-    <button
-      type="button"
-      className="bottom-menu-item surface-raised"
-      onClick={() => {
-        onShowTreeMap();
-        onClose();
-      }}
-    >
-      홈화면
-    </button>
-  ) : (
-    <p className="bottom-menu-empty">{isOpen && activeKey ? `${activeKey} menu` : "Menu"}</p>
-  );
-
-  return (
-    <section
-      className={`bottom-menu-panel surface-floating ${side} ${isOpen ? "is-open" : ""}`}
-      aria-label={`${side === "left" ? "Left" : "Right"} menu panel`}
-      aria-hidden={!isOpen}
-    >
-      <div className="bottom-menu-list">{menuContent}</div>
-    </section>
   );
 }
 

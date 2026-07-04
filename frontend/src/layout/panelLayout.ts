@@ -1,5 +1,15 @@
 import type { CSSProperties } from "react";
 import { gridBoundaryX, gridGutter, type GridLineIndex, type PanelGridSpan } from "./grid";
+import {
+  almostEqual,
+  clamp,
+  rangesOverlap,
+  rectBottom,
+  rectRight,
+  rectsOverlap,
+  sortedUnique,
+  uniqueStrings
+} from "./panelGeometry";
 import { workspaceBottomInset, workspaceTopInset } from "./workspaceMetrics";
 
 export type ViewportSize = {
@@ -1330,15 +1340,6 @@ function hasVerticalSlotBetween(
   ));
 }
 
-function rangesOverlap(aStart: number, aEnd: number, bStart: number, bEnd: number, tolerance = 0): boolean {
-  return Math.min(aEnd, bEnd) - Math.max(aStart, bStart) > tolerance;
-}
-
-function rectsOverlap(a: PanelRect, b: PanelRect, tolerance = 0): boolean {
-  return rangesOverlap(a.left, rectRight(a), b.left, rectRight(b), tolerance) &&
-    rangesOverlap(a.top, rectBottom(a), b.top, rectBottom(b), tolerance);
-}
-
 function viewportFromState(state: TiledPanelState): ViewportSize {
   const width = Math.max(...state.slots.map((slot) => rectRight(slot.rect)), 1280);
   const height = Math.max(...state.slots.map((slot) => rectBottom(slot.rect) + workspaceBottomInset), 720);
@@ -1356,28 +1357,4 @@ function nearestGridLine(x: number, viewport: ViewportSize): GridLineIndex {
     }
   });
   return best;
-}
-
-function rectRight(rect: PanelRect): number {
-  return rect.left + rect.width;
-}
-
-function rectBottom(rect: PanelRect): number {
-  return rect.top + rect.height;
-}
-
-function almostEqual(a: number, b: number): boolean {
-  return Math.abs(a - b) <= epsilon;
-}
-
-function uniqueStrings(values: string[]): string[] {
-  return [...new Set(values)].sort();
-}
-
-function sortedUnique(values: number[]): number[] {
-  return [...new Set(values.map((value) => Math.round(value * 1000) / 1000))].sort((a, b) => a - b);
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
 }

@@ -1,6 +1,4 @@
-import { X } from "lucide-react";
 import {
-  type CSSProperties,
   type Dispatch,
   type MouseEvent as ReactMouseEvent,
   type MutableRefObject,
@@ -28,14 +26,18 @@ import {
   type BoundaryInsertOption,
   type PanelBoundary,
   type PanelContentInstance,
-  type PanelSlot,
   type PanelSlotId,
   type TiledPanelState,
   type ViewportSize
 } from "../layout/panelLayout";
-import { bottomNavigationHeight } from "../layout/workspaceMetrics";
-import { ChartPanel, type ChartHeaderSnapshot, type ChartPanelHandle } from "./ChartPanel";
-import { SymbolSearch } from "./SymbolSearch";
+import { type ChartHeaderSnapshot, type ChartPanelHandle } from "./ChartPanel";
+import { PanelContentRenderer } from "./PanelContentRenderer";
+import {
+  boundaryAddMenuPosition,
+  boundaryStyle,
+  hitTestSwappableSlot,
+  panelNavHeight
+} from "./panelWorkspaceGeometry";
 import { WorkspacePanelFrame } from "./WorkspacePanelFrame";
 
 type PanelWorkspaceProps = {
@@ -47,7 +49,7 @@ type PanelWorkspaceProps = {
   chartHeader: ChartHeaderSnapshot | null;
   chartPanelRef: MutableRefObject<ChartPanelHandle | null>;
   setSemanticSelection: (selection: SemanticSelectionSnapshot | null) => void;
-  setChartHeader: (header: ChartHeaderSnapshot) => void;
+  setChartHeader: Dispatch<SetStateAction<ChartHeaderSnapshot | null>>;
 };
 
 type LayoutDrag =
@@ -70,8 +72,6 @@ type BoundaryAddMenu = {
   top: number;
   options: BoundaryInsertOption[];
 };
-
-const panelNavHeight = 30;
 
 export function PanelWorkspace({
   panelState,
@@ -120,9 +120,13 @@ export function PanelWorkspace({
   }, []);
 
   const recordChartHeader = useCallback((content: PanelContentInstance, header: ChartHeaderSnapshot) => {
-    setChartHeaders((current) => ({ ...current, [content.id]: header }));
+    setChartHeaders((current) => (
+      chartHeaderEquals(current[content.id], header)
+        ? current
+        : { ...current, [content.id]: header }
+    ));
     if (content.isDefaultChart) {
-      setChartHeader(header);
+      setChartHeader((current) => (chartHeaderEquals(current, header) ? current : header));
     }
   }, [setChartHeader]);
 
@@ -291,21 +295,21 @@ export function PanelWorkspace({
               }
             }}
           >
-            {renderPanelContent({
-              slot,
-              content,
-              symbol: content.symbol ?? activeSymbol,
-              symbols,
-              laneHeight: Math.max(120, isChart ? slot.rect.height : slot.rect.height - panelNavHeight),
-              chartPanelRef: isDefaultChart ? chartPanelRef : null,
-              chartHeaderSnapshot: chartHeaders[content.id],
-              setSemanticSelection,
-              onChartHoverChange: (hovered) => setChartSlotHover(slot.id, hovered),
-              onHeaderChange: isChart ? (header) => recordChartHeader(content, header) : undefined,
-              onClosePanel: closePanel,
-              onChangePanelChartSymbol: changePanelChartSymbol,
-              onChartSwapPointerDown: !isDefaultChart ? beginPanelSwap(slot.id) : undefined
-            })}
+            <PanelContentRenderer
+              slot={slot}
+              content={content}
+              symbol={content.symbol ?? activeSymbol}
+              symbols={symbols}
+              laneHeight={Math.max(120, isChart ? slot.rect.height : slot.rect.height - panelNavHeight)}
+              chartPanelRef={isDefaultChart ? chartPanelRef : null}
+              chartHeaderSnapshot={chartHeaders[content.id]}
+              setSemanticSelection={setSemanticSelection}
+              onChartHoverChange={(hovered) => setChartSlotHover(slot.id, hovered)}
+              onHeaderChange={isChart ? (header) => recordChartHeader(content, header) : undefined}
+              onClosePanel={closePanel}
+              onChangePanelChartSymbol={changePanelChartSymbol}
+              onChartSwapPointerDown={!isDefaultChart ? beginPanelSwap(slot.id) : undefined}
+            />
           </WorkspacePanelFrame>
         );
       })}
@@ -369,147 +373,18 @@ export function PanelWorkspace({
   );
 }
 
-function renderPanelContent({
-  slot,
-  content,
-  symbol,
-  symbols,
-  laneHeight,
-  chartPanelRef,
-  chartHeaderSnapshot,
-  setSemanticSelection,
-  onChartHoverChange,
-  onHeaderChange,
-  onClosePanel,
-  onChangePanelChartSymbol,
-  onChartSwapPointerDown
-}: {
-  slot: PanelSlot;
-  content: PanelContentInstance;
-  symbol: string;
-  symbols: ChartSymbolDto[];
-  laneHeight: number;
-  chartPanelRef: MutableRefObject<ChartPanelHandle | null> | null;
-  chartHeaderSnapshot?: ChartHeaderSnapshot;
-  setSemanticSelection: (selection: SemanticSelectionSnapshot | null) => void;
-  onChartHoverChange: (hovered: boolean) => void;
-  onHeaderChange?: (header: ChartHeaderSnapshot) => void;
-  onClosePanel: (slotId: PanelSlotId) => void;
-  onChangePanelChartSymbol: (contentId: string, symbol: string) => void;
-  onChartSwapPointerDown?: (event: ReactPointerEvent<HTMLElement>) => void;
-}) {
-  if (content.kind === "chart") {
-    const selectedSymbol = symbol.toUpperCase();
-    const interval = chartHeaderSnapshot?.interval ?? "1D";
-    return (
-      <div className={content.isDefaultChart ? "chart-instance is-default-chart" : "chart-instance is-editable-chart"}>
-        <div
-          className={!content.isDefaultChart ? "chart-instance-symbol chart-instance-swap-handle" : "chart-instance-symbol"}
-          onPointerEnter={() => onChartHoverChange(true)}
-          onPointerMove={() => onChartHoverChange(true)}
-          onPointerDown={!content.isDefaultChart ? onChartSwapPointerDown : undefined}
-        >
-          <span className="chart-instance-interval">{interval}</span>
-          {content.isDefaultChart && <span className="chart-instance-symbol-text">{selectedSymbol}</span>}
-          {!content.isDefaultChart && (
-            <div className="chart-instance-symbol-search-wrap" onPointerDown={(event) => event.stopPropagation()}>
-              <SymbolSearch
-                symbols={symbols}
-                className="chart-instance-symbol-search"
-                compact
-                selectedSymbol={selectedSymbol}
-                selectedLabel={selectedSymbol}
-                placeholder={selectedSymbol}
-                formatSelectedLabel={(symbol) => symbol.symbol}
-                onSelectSymbol={(nextSymbol) => onChangePanelChartSymbol(content.id, nextSymbol)}
-                onPointerActivity={() => onChartHoverChange(true)}
-              />
-            </div>
-          )}
-        </div>
-        {!content.isDefaultChart && (
-          <button
-            type="button"
-            className="chart-instance-close"
-            aria-label="차트 패널 닫기"
-            title="차트 패널 닫기"
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={() => onClosePanel(slot.id)}
-          >
-            <X size={13} />
-          </button>
-        )}
-        <ChartPanel
-          ref={chartPanelRef ?? undefined}
-          symbol={selectedSymbol}
-          symbols={symbols}
-          laneHeight={laneHeight}
-          onSemanticSelectionChange={setSemanticSelection}
-          onChartHoverChange={onChartHoverChange}
-          onHeaderChange={onHeaderChange}
-        />
-      </div>
-    );
+function chartHeaderEquals(a: ChartHeaderSnapshot | null | undefined, b: ChartHeaderSnapshot): boolean {
+  if (!a) {
+    return false;
   }
-  return <div className="workspace-panel-empty" aria-label={`${content.title} content`} data-panel-slot-id={slot.id} />;
-}
-
-function boundaryStyle(boundary: PanelBoundary): CSSProperties {
-  if (boundary.orientation === "vertical") {
-    return {
-      left: boundary.position - 7,
-      top: boundary.rangeStart,
-      width: 14,
-      height: boundary.rangeEnd - boundary.rangeStart
-    };
-  }
-  return {
-    left: boundary.rangeStart,
-    top: boundary.position - 7,
-    width: boundary.rangeEnd - boundary.rangeStart,
-    height: 14
-  };
-}
-
-function boundaryAddMenuPosition(
-  boundary: PanelBoundary,
-  optionCount: number,
-  viewport: ViewportSize,
-  gutter: number
-): { left: number; top: number } {
-  const menuWidth = 126;
-  const menuHeight = optionCount * 28 + 10;
-  const desiredLeft = boundary.orientation === "vertical"
-    ? boundary.position
-    : (boundary.rangeStart + boundary.rangeEnd) / 2;
-  const desiredTop = boundary.orientation === "vertical"
-    ? (boundary.rangeStart + boundary.rangeEnd) / 2
-    : boundary.position;
-  const minLeft = gutter + menuWidth / 2;
-  const maxLeft = viewport.width - gutter - menuWidth / 2;
-  const minTop = gutter + menuHeight / 2;
-  const maxTop = viewport.height - bottomNavigationHeight - gutter - menuHeight / 2;
-
-  return {
-    left: clampNumber(desiredLeft, minLeft, maxLeft),
-    top: clampNumber(desiredTop, minTop, maxTop)
-  };
-}
-
-function clampNumber(value: number, min: number, max: number): number {
-  if (max < min) {
-    return (min + max) / 2;
-  }
-  return Math.min(max, Math.max(min, value));
-}
-
-function hitTestSwappableSlot(state: TiledPanelState, x: number, y: number, sourceSlotId: PanelSlotId): PanelSlot | null {
-  return state.slots.find((slot) => (
-    slot.id !== sourceSlotId &&
-    !slot.required &&
-    x >= slot.rect.left &&
-    x <= slot.rect.left + slot.rect.width &&
-    y >= slot.rect.top &&
-    y <= slot.rect.top + slot.rect.height
-  )) ?? null;
+  return (
+    a.symbol === b.symbol &&
+    a.interval === b.interval &&
+    a.name === b.name &&
+    a.searchLabel === b.searchLabel &&
+    a.liveQuote.priceText === b.liveQuote.priceText &&
+    a.liveQuote.changeText === b.liveQuote.changeText &&
+    a.liveQuote.percentText === b.liveQuote.percentText &&
+    a.liveQuote.tone === b.liveQuote.tone
+  );
 }

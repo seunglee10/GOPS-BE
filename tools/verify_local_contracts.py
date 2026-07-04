@@ -320,6 +320,8 @@ def assert_frontend_chart_layout_contract() -> None:
     panel = (REPO_ROOT / "frontend/src/components/ChartPanel.tsx").read_text()
     app = (REPO_ROOT / "frontend/src/App.tsx").read_text()
     workspace = (REPO_ROOT / "frontend/src/components/PanelWorkspace.tsx").read_text()
+    panel_content = (REPO_ROOT / "frontend/src/components/PanelContentRenderer.tsx").read_text()
+    workspace_geometry = (REPO_ROOT / "frontend/src/components/panelWorkspaceGeometry.ts").read_text()
     styles = (REPO_ROOT / "frontend/src/styles.css").read_text()
     assert "top: safeHeight < 240 ? 62 : 84," in scene
     assert "bottom: chart.layers.volume ? 36 : 30," in scene
@@ -412,10 +414,14 @@ def assert_frontend_layout_grid_contract() -> None:
     app = (REPO_ROOT / "frontend/src/App.tsx").read_text()
     grid = (REPO_ROOT / "frontend/src/layout/grid.ts").read_text()
     panel_layout = (REPO_ROOT / "frontend/src/layout/panelLayout.ts").read_text()
+    panel_geometry = (REPO_ROOT / "frontend/src/layout/panelGeometry.ts").read_text()
     metrics = (REPO_ROOT / "frontend/src/layout/workspaceMetrics.ts").read_text()
     styles = (REPO_ROOT / "frontend/src/styles.css").read_text()
     frame = (REPO_ROOT / "frontend/src/components/WorkspacePanelFrame.tsx").read_text()
     workspace = (REPO_ROOT / "frontend/src/components/PanelWorkspace.tsx").read_text()
+    panel_content = (REPO_ROOT / "frontend/src/components/PanelContentRenderer.tsx").read_text()
+    workspace_geometry = (REPO_ROOT / "frontend/src/components/panelWorkspaceGeometry.ts").read_text()
+    bottom_bar = (REPO_ROOT / "frontend/src/components/BottomCommandBar.tsx").read_text()
     panel = (REPO_ROOT / "frontend/src/components/ChartPanel.tsx").read_text()
     search = (REPO_ROOT / "frontend/src/components/SymbolSearch.tsx").read_text()
     package = (REPO_ROOT / "package.json").read_text()
@@ -440,6 +446,17 @@ def assert_frontend_layout_grid_contract() -> None:
 
     assert 'export type PanelContentKind = "chart" | "news" | "ontology" | "companyAnalysis" | "trade";' in panel_layout
     assert 'import { workspaceBottomInset, workspaceTopInset } from "./workspaceMetrics";' in panel_layout
+    assert 'from "./panelGeometry";' in panel_layout
+    assert "export function rectRight" in panel_geometry
+    assert "export function rectBottom" in panel_geometry
+    assert "export function rangesOverlap" in panel_geometry
+    assert "export function rectsOverlap" in panel_geometry
+    assert "export function almostEqual" in panel_geometry
+    assert "export function uniqueStrings" in panel_geometry
+    assert "export function sortedUnique" in panel_geometry
+    assert "export function clamp" in panel_geometry
+    assert "function rectRight(rect: PanelRect)" not in panel_layout
+    assert "function rectBottom(rect: PanelRect)" not in panel_layout
     assert 'chart: "",' in panel_layout
     assert 'chart: "차트"' not in panel_layout
     assert "export type PanelSlot =" in panel_layout
@@ -544,6 +561,8 @@ def assert_frontend_layout_grid_contract() -> None:
     assert "const workspaceStyle = {\n    \"--layout-gutter\": `${layoutGutter}px`" in app
     assert "style={panelSlotStyle(slot)}" not in app
     assert "function currentViewportSize" in app
+    assert 'import { BottomCommandBar, type BottomMenuKey } from "./components/BottomCommandBar";' in app
+    assert "<BottomCommandBar" in app
     assert "snapGridSpan(" not in app
     assert 'className="chart-horizontal-resize-grip left"' not in app
     assert 'className="chart-horizontal-resize-grip right"' not in app
@@ -564,8 +583,8 @@ def assert_frontend_layout_grid_contract() -> None:
     assert "canClose={!isDefaultChart && !isChart}" in workspace
     assert "canSwap={!isDefaultChart}" in workspace
     assert "isChartHovered={isChart && hoveredChartSlotId === slot.id}" in workspace
-    assert "onChartHoverChange: (hovered) => setChartSlotHover(slot.id, hovered)" in workspace
-    assert "onChartSwapPointerDown: !isDefaultChart ? beginPanelSwap(slot.id) : undefined" in workspace
+    assert "onChartHoverChange={(hovered) => setChartSlotHover(slot.id, hovered)}" in workspace
+    assert "onChartSwapPointerDown={!isDefaultChart ? beginPanelSwap(slot.id) : undefined}" in workspace
     assert "boundary.interaction === \"resize\" ? \"can-resize\" : \"is-insert-only\"" in workspace
     assert "boundary.pageEdge ? \"is-page-edge\"" in workspace
     assert "canAdd ? \"has-add\"" in workspace
@@ -577,52 +596,57 @@ def assert_frontend_layout_grid_contract() -> None:
     assert "WorkspacePanelFrame" not in app
     assert "renderPanelContent" not in app
     assert "WorkspacePanelFrame" in workspace
-    assert "renderPanelContent" in workspace
+    assert "PanelContentRenderer" in workspace
+    assert "renderPanelContent" not in workspace
     assert "workspace-panel-empty" not in app
-    assert "workspace-panel-empty" in workspace
+    assert "workspace-panel-empty" in panel_content
     assert "workspace-panel-surface" in app
     assert "chart-lane-side-shadow" not in app
     assert 'className="panel-add-menu surface-floating"' in workspace
-    assert "function boundaryAddMenuPosition" in workspace
-    assert "function clampNumber" in workspace
+    assert "function boundaryAddMenuPosition" in workspace_geometry
+    assert "function clampNumber" in workspace_geometry
     assert "workspace-top-nav" in app
     assert 'className="workspace-top-nav chart"' in app
-    assert "workspace-bottom-nav" in app
-    assert 'type BottomMenuKey = "I" | "II" | "III" | "IV" | "V" | "VI";' in app
-    assert 'const leftMenuKeys: BottomMenuKey[] = ["I", "II", "III"];' in app
-    assert 'const rightMenuKeys: BottomMenuKey[] = ["IV", "V", "VI"];' in app
-    assert 'className={`bottom-menu-panel surface-floating ${side} ${isOpen ? "is-open" : ""}`}' in app
-    assert 'bottom-nav-actions left ${activeBottomMenu && leftMenuKeys.includes(activeBottomMenu) ? "is-menu-open" : ""}' in app
-    assert 'bottom-nav-actions right ${activeBottomMenu && rightMenuKeys.includes(activeBottomMenu) ? "is-menu-open" : ""}' in app
-    assert 'className="bottom-menu-dismiss-layer"' in app
-    assert "handleBottomMenuOutsidePointerDown" in app
-    assert 'event.target.closest(".bottom-menu-panel, .bottom-nav-actions")' in app
-    assert 'document.addEventListener("pointerdown", handleBottomMenuOutsidePointerDown, true);' in app
-    assert 'document.removeEventListener("pointerdown", handleBottomMenuOutsidePointerDown, true);' in app
-    assert "activeBottomMenu === label" in app
-    assert 'aria-label={`Menu ${label}`}' in app
-    assert "홈화면" in app
-    assert "onShowTreeMap();" in app
+    assert "workspace-bottom-nav" not in app
+    assert "workspace-bottom-nav" in bottom_bar
+    assert 'export type BottomMenuKey = "I" | "II" | "III" | "IV" | "V" | "VI";' in bottom_bar
+    assert 'const leftMenuKeys: BottomMenuKey[] = ["I", "II", "III"];' in bottom_bar
+    assert 'const rightMenuKeys: BottomMenuKey[] = ["IV", "V", "VI"];' in bottom_bar
+    assert 'className={`bottom-menu-panel surface-floating ${side} ${isOpen ? "is-open" : ""}`}' in bottom_bar
+    assert 'className={`bottom-nav-actions ${side} ${isMenuOpen ? "is-menu-open" : ""}`}' in bottom_bar
+    assert 'className="bottom-menu-dismiss-layer"' in bottom_bar
+    assert "handleOutsidePointerDown" in bottom_bar
+    assert 'event.target.closest(".bottom-menu-panel, .bottom-nav-actions")' in bottom_bar
+    assert 'document.addEventListener("pointerdown", handleOutsidePointerDown, true);' in bottom_bar
+    assert 'document.removeEventListener("pointerdown", handleOutsidePointerDown, true);' in bottom_bar
+    assert "activeMenu === label" in bottom_bar
+    assert 'aria-label={`Menu ${label}`}' in bottom_bar
+    assert "홈화면" in bottom_bar
+    assert "onShowTreeMap();" in bottom_bar
     assert "Back to TreeMap" not in app
     assert "Reserved action" not in app
-    assert "agent-box surface-recessed" in app
-    assert "workspace-nav-button surface-raised" in app
+    assert "agent-box surface-recessed" in bottom_bar
+    assert "workspace-nav-button surface-raised" in bottom_bar
     assert "surface-gradient" not in app
     assert "runAgentPrompt" in app
     assert "chartPanelRef" in app
     assert "chartPanelRef" in workspace
-    assert "chart-instance is-default-chart" in workspace
-    assert "chart-instance is-editable-chart" in workspace
-    assert "chart-instance-swap-handle" in workspace
-    assert "chart-instance-symbol-search-wrap" in workspace
-    assert "onPointerDown={(event) => event.stopPropagation()}" in workspace
-    assert "chart-instance-symbol-search" in workspace
-    assert "chart-instance-interval" in workspace
-    assert "chartHeaderSnapshot" in workspace
+    assert "chartPanelRef" in panel_content
+    assert "chart-instance is-default-chart" in panel_content
+    assert "chart-instance is-editable-chart" in panel_content
+    assert "chart-instance-swap-handle" in panel_content
+    assert "chart-instance-symbol-search-wrap" in panel_content
+    assert "onPointerDown={(event) => event.stopPropagation()}" in panel_content
+    assert "chart-instance-symbol-search" in panel_content
+    assert "chart-instance-interval" in panel_content
+    assert "chartHeaderSnapshot" in panel_content
     assert "setChartHeaders" in workspace
-    assert "compact" in workspace
-    assert "formatSelectedLabel={(symbol) => symbol.symbol}" in workspace
-    assert "chart-instance-close" in workspace
+    assert "function chartHeaderEquals" in workspace
+    assert "chartHeaderEquals(current[content.id], header)" in workspace
+    assert "chartHeaderEquals(current, header) ? current : header" in workspace
+    assert "compact" in panel_content
+    assert "formatSelectedLabel={(symbolOption) => symbolOption.symbol}" in panel_content
+    assert "chart-instance-close" in panel_content
     assert "data-panel-slot-id={slot.id}" in frame
     assert "workspace-panel-nav" in frame
     assert "showNav?: boolean;" in frame
@@ -668,7 +692,7 @@ def assert_frontend_layout_grid_contract() -> None:
     assert "justify-content: flex-start;" in styles
     assert ".bottom-menu-item" in styles
     assert ".bottom-menu-item.surface-raised" in styles
-    assert 'className="bottom-menu-item surface-raised"' in app
+    assert 'className="bottom-menu-item surface-raised"' in bottom_bar
     assert ".bottom-menu-item::after" not in styles
     assert ".bottom-menu-dismiss-layer" in styles
     assert "width: var(--bottom-control-size);" in styles
@@ -678,9 +702,24 @@ def assert_frontend_layout_grid_contract() -> None:
     assert ".bottom-menu-panel::before" not in styles
     assert ".bottom-menu-panel::after" not in styles
     assert ".app-shell::before" in styles
-    assert "--paper-texture-opacity: 0.08;" in styles
+    assert "--paper-fiber-light:" in styles
+    assert "--paper-fiber-mid:" in styles
+    assert "--paper-fiber-deep:" in styles
+    assert "--paper-grain-light:" in styles
+    assert "--paper-grain-mid:" in styles
+    assert "--paper-grain-deep:" in styles
+    assert "--paper-texture-opacity: 0.2;" in styles
+    assert "--paper-grain-opacity: 0.18;" in styles
     assert "mix-blend-mode: multiply;" in styles
-    assert "background-blend-mode: multiply;" in styles
+    assert "background-blend-mode: soft-light, multiply, multiply;" in styles
+    assert ".app-shell::after" in styles
+    assert "repeating-conic-gradient" not in styles
+    assert "repeating-linear-gradient(0deg" in styles
+    assert "repeating-linear-gradient(90deg" in styles
+    assert "repeating-linear-gradient(7deg" not in styles
+    assert "repeating-linear-gradient(128deg" not in styles
+    assert "repeating-linear-gradient(154deg" not in styles
+    assert "radial-gradient(circle at 18% 22%" not in styles
     assert ".canvas-workspace::before" not in styles
     assert "STARGOPS" not in styles
     assert ".workspace-panel-surface" in styles
@@ -761,6 +800,7 @@ def assert_frontend_layout_grid_contract() -> None:
 def assert_frontend_treemap_main_view_contract() -> None:
     app = (REPO_ROOT / "frontend/src/App.tsx").read_text()
     workspace = (REPO_ROOT / "frontend/src/components/PanelWorkspace.tsx").read_text()
+    bottom_bar = (REPO_ROOT / "frontend/src/components/BottomCommandBar.tsx").read_text()
     panel = (REPO_ROOT / "frontend/src/components/ChartPanel.tsx").read_text()
     search = (REPO_ROOT / "frontend/src/components/SymbolSearch.tsx").read_text()
     treemap = (REPO_ROOT / "frontend/src/treemap/TreeMapCanvas.tsx").read_text()
@@ -774,10 +814,10 @@ def assert_frontend_treemap_main_view_contract() -> None:
     assert 'useState<MainView>({ mode: "treemap" })' in app
     assert "<TreeMapCanvas items={sp500UniverseSeed} onSelectSymbol={showChart} />" in app
     assert "activeSymbol={mainView.symbol}" in app
-    assert "symbol: content.symbol ?? activeSymbol" in workspace
+    assert "symbol={content.symbol ?? activeSymbol}" in workspace
     assert "onBackToTreeMap" not in app
     assert "onClick={index === 0 ? showTreeMap : undefined}" not in app
-    assert 'aria-label={`Menu ${label}`}' in app
+    assert 'aria-label={`Menu ${label}`}' in bottom_bar
     assert "STARGOPS" not in app
     assert "어떤 종목이 궁금하신가요?" not in app
     assert "mainView.mode === \"treemap\"" in app
