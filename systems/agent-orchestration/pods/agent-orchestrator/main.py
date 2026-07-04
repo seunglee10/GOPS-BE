@@ -5,9 +5,10 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 
-from gops_agents.orchestrator import AgentOrchestrator, InMemoryReportStore
+from gops_agents.orchestrator import AgentOrchestrator
+from gops_agents.runtime.report_store import build_report_store_from_env
 
-store = InMemoryReportStore()
+store = build_report_store_from_env()
 orchestrator = AgentOrchestrator(store)
 app = FastAPI(title="GOPS Agent Orchestrator", version="0.1.0")
 

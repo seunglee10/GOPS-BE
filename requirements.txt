@@ -8,3 +8,4 @@ python-dotenv>=1.0.1
 redis>=5.0.0
 pyarrow>=16.0.0
 langgraph>=0.2.0
+rapidfuzz>=3.10.0

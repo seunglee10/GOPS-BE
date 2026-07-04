@@ -1,0 +1,200 @@
+{
+  "openai": [
+    {
+      "id": "intent-classifier-json",
+      "description": "Small structured-output request shaped like the hosted intent classifier.",
+      "expectJson": true,
+      "payload": {
+        "input": [
+          {
+            "role": "system",
+            "content": "Parse one Korean stock-app query into content tasks and UI layout tasks. Return strict JSON only."
+          },
+          {
+            "role": "user",
+            "content": "{\"query\":\"엔비디아 뉴스랑 차트 같이 보기 좋게 정리해줘\",\"availablePanels\":[{\"id\":\"panel-chart-primary\",\"type\":\"chart\"},{\"id\":\"panel-news\",\"type\":\"newsFeed\"}]}"
+          }
+        ],
+        "text": {
+          "format": {
+            "type": "json_schema",
+            "name": "latency_lab_intent_classifier",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "contentTasks": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "uiTasks": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "routeMode": {
+                  "type": "string"
+                },
+                "confidence": {
+                  "type": "number"
+                }
+              },
+              "required": ["contentTasks", "uiTasks", "routeMode", "confidence"]
+            }
+          }
+        },
+        "max_output_tokens": 220
+      }
+    },
+    {
+      "id": "router-json",
+      "description": "Small structured-output request shaped like the stock-analysis role router.",
+      "expectJson": true,
+      "payload": {
+        "input": [
+          {
+            "role": "system",
+            "content": "Route a stock analysis request to chart, news, macro, ontology roles. Return strict JSON only."
+          },
+          {
+            "role": "user",
+            "content": "NVDA 급등 원인을 차트와 뉴스 중심으로 설명해줘"
+          }
+        ],
+        "text": {
+          "format": {
+            "type": "json_schema",
+            "name": "latency_lab_route",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "intentType": {
+                  "type": "string"
+                },
+                "selectedRoles": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": ["chart", "news", "macro", "ontology"]
+                  }
+                },
+                "confidence": {
+                  "type": "number"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": ["intentType", "selectedRoles", "confidence", "reason"]
+            }
+          }
+        },
+        "max_output_tokens": 180
+      }
+    },
+    {
+      "id": "final-answer-json",
+      "description": "Evidence-grounded final-answer shaped request.",
+      "expectJson": true,
+      "payload": {
+        "input": [
+          {
+            "role": "system",
+            "content": "Generate a short Korean stock-analysis answer from retrieved evidence only. Return strict JSON only."
+          },
+          {
+            "role": "user",
+            "content": "{\"symbol\":\"NVDA\",\"intent\":\"NVDA 왜 올랐어?\",\"evidence\":[{\"provider\":\"news\",\"title\":\"AI demand remains strong\",\"summary\":\"Datacenter demand and AI chip orders stayed strong.\"},{\"provider\":\"chart\",\"title\":\"Intraday move\",\"summary\":\"The visible chart shows upward momentum.\"}]}"
+          }
+        ],
+        "text": {
+          "format": {
+            "type": "json_schema",
+            "name": "latency_lab_final_answer",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "title": {
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "bullets": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "limitations": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": ["title", "summary", "bullets", "limitations"]
+            }
+          }
+        },
+        "max_output_tokens": 320
+      }
+    }
+  ],
+  "pipeline": [
+    {
+      "id": "market-move-final-answer",
+      "description": "Runs the GOPS orchestrator hot path and allows final-answer OpenAI synthesis.",
+      "env": {
+        "AGENT_FINAL_ANSWER_PROVIDER": "openai",
+        "AGENT_MAX_REALTIME_LLM_CALLS": "1",
+        "AGENT_PUBLISH_TO_KAFKA": "false"
+      },
+      "request": {
+        "symbol": "NVDA",
+        "intent": "NVDA 왜 올랐어?",
+        "agentIds": ["agent-01", "agent-02"]
+      }
+    },
+    {
+      "id": "intent-classifier-fallback",
+      "description": "Forces the parallel query-understanding fanout to call the hosted intent classifier.",
+      "env": {
+        "AGENT_INTENT_CLASSIFIER_ALWAYS": "true",
+        "AGENT_INTENT_CLASSIFIER_PROVIDER": "openai",
+        "AGENT_FINAL_ANSWER_PROVIDER": "deterministic",
+        "AGENT_MAX_REALTIME_LLM_CALLS": "2",
+        "AGENT_PUBLISH_TO_KAFKA": "false"
+      },
+      "request": {
+        "symbol": "NVDA",
+        "intent": "엔비디아 뉴스랑 차트 같이 보기 좋게 정리해줘",
+        "agentIds": ["agent-01", "agent-02"],
+        "layoutContext": {
+          "panels": [
+            {
+              "id": "panel-chart-primary",
+              "type": "chart"
+            },
+            {
+              "id": "panel-news",
+              "type": "newsFeed"
+            },
+            {
+              "id": "panel-summary",
+              "type": "aiSummary"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

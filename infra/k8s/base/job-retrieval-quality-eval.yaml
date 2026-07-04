@@ -1,0 +1,32 @@
+# 역할: related symbol, news, market evidence precision을 golden query set 기준으로 평가합니다.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: retrieval-quality-eval
+  namespace: alfaka-market-data
+spec:
+  template:
+    metadata:
+      labels:
+        app: retrieval-quality-eval
+    spec:
+      restartPolicy: Never
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: retrieval-quality-eval
+          image: YOUR_ECR_REPOSITORY/gops-agent-orchestrator:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -u
+            - /app/systems/agent-orchestration/jobs/retrieval-quality-eval/main.py
+          env:
+            - name: AGENT_PUBLISH_TO_KAFKA
+              value: "false"
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-clickhouse-secret
+                optional: true
+  backoffLimit: 1

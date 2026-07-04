@@ -1,0 +1,37 @@
+{
+  "description": "Small reviewed fallback alias artifact. Operational coverage should be generated from market_data.symbols, GraphDB, and future alias catalog storage.",
+  "companies": [
+    {
+      "symbol": "AAPL",
+      "canonicalName": "Apple Inc.",
+      "aliases": ["애플", "apple"],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "NVDA",
+      "canonicalName": "NVIDIA Corporation",
+      "aliases": ["엔비디아", "nvidia"],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "TSLA",
+      "canonicalName": "Tesla, Inc.",
+      "aliases": ["테슬라", "tesla"],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "MSFT",
+      "canonicalName": "Microsoft Corporation",
+      "aliases": ["마이크로소프트", "마소", "microsoft"],
+      "source": "reviewed-seed"
+    }
+  ],
+  "themes": [
+    {
+      "name": "반도체",
+      "aliases": ["반도체주", "semiconductor", "semiconductors", "chip", "gpu", "hbm"],
+      "symbols": ["NVDA", "AMD", "AVGO", "TSM", "ASML", "MU", "INTC", "QCOM", "TXN", "ADI", "MRVL", "AMAT", "LRCX", "KLAC"],
+      "source": "reviewed-seed"
+    }
+  ]
+}

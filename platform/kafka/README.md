@@ -50,5 +50,24 @@ market.layer.events.v1
 Candle layer topics are single canonical topics. Timeframe is carried in the
 payload `interval` field, not in the topic name.
 
-Any topic not listed in the source-of-truth chart rebuild plan is outside the
-current chart-data contract.
+`platform/kafka/topics.txt` is the canonical market/order/agent topic list for
+local creation and future MSK creation. Agent analysis uses separate hot and
+deep request topics so deep backlog does not consume the hot worker group.
+
+Agent topics:
+
+```text
+agents.analysis-requests.v1
+agents.deep-analysis-requests.v1
+agents.analysis-results.v1
+agents.query-understanding-events.v1
+agents.notification-decisions.v1
+agents.dlq.v1
+```
+
+`agents.query-understanding-events.v1` is an observability/audit stream emitted
+with completed reports. It is not used as request/reply transport inside the
+hot query-understanding fan-out.
+
+Any market-data topic not listed in the source-of-truth chart rebuild plan is
+outside the current chart-data contract.

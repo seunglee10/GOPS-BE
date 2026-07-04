@@ -43,7 +43,37 @@ services:
       - /bin/bash
       - -ec
       - |
-        for topic in market.input.realtime.trades.v1 market.input.realtime.quotes.v1 market.input.realtime.bars.1m.v1 market.input.realtime.updated-bars.1m.v1 market.input.realtime.daily-bars.v1 market.input.realtime.events.v1 market.realtime.ticks.to.1m.v1 market.realtime.ticks.to.5m.v1 market.realtime.ticks.to.10m.v1 market.realtime.ticks.to.1d.v1 market.realtime.ticks.to.1w.v1 market.realtime.ticks.to.1mo.v1 market.layer.candles.live.v1 market.layer.candles.closed.v1 market.layer.trades.v1 market.layer.quotes.v1 market.layer.events.v1 market.news.alpaca.v1 orders.commands.v1 broker.submit-results.v1 broker.order-events.v1 orders.dlq.v1 agents.market-events.v1 agents.analysis-requests.v1 agents.analysis-results.v1 agents.notification-decisions.v1 agents.dlq.v1; do
+        for topic in \
+          market.input.realtime.trades.v1 \
+          market.input.realtime.quotes.v1 \
+          market.input.realtime.bars.1m.v1 \
+          market.input.realtime.updated-bars.1m.v1 \
+          market.input.realtime.daily-bars.v1 \
+          market.input.realtime.events.v1 \
+          market.realtime.ticks.to.1m.v1 \
+          market.realtime.ticks.to.5m.v1 \
+          market.realtime.ticks.to.10m.v1 \
+          market.realtime.ticks.to.1d.v1 \
+          market.realtime.ticks.to.1w.v1 \
+          market.realtime.ticks.to.1mo.v1 \
+          market.layer.candles.live.v1 \
+          market.layer.candles.closed.v1 \
+          market.layer.trades.v1 \
+          market.layer.quotes.v1 \
+          market.layer.events.v1 \
+          market.news.alpaca.v1 \
+          market.news.daily-summary-dirty.v1 \
+          orders.commands.v1 \
+          broker.submit-results.v1 \
+          broker.order-events.v1 \
+          orders.dlq.v1 \
+          agents.market-events.v1 \
+          agents.analysis-requests.v1 \
+          agents.deep-analysis-requests.v1 \
+          agents.analysis-results.v1 \
+          agents.query-understanding-events.v1 \
+          agents.notification-decisions.v1 \
+          agents.dlq.v1; do
           /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic "$${topic}" --partitions 3 --replication-factor 1
         done
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --list
@@ -334,13 +364,76 @@ services:
       AWS_SDK_LOAD_CONFIG: "${AWS_SDK_LOAD_CONFIG:-1}"
       ALPACA_NEWS_POLL_SECONDS: "${ALPACA_NEWS_POLL_SECONDS:-300}"
       ALPACA_NEWS_LIMIT: "${ALPACA_NEWS_LIMIT:-50}"
-      ALPACA_NEWS_INCLUDE_CONTENT: "${ALPACA_NEWS_INCLUDE_CONTENT:-false}"
+      ALPACA_NEWS_INCLUDE_CONTENT: "${ALPACA_NEWS_INCLUDE_CONTENT:-true}"
+      NEWS_S3_ARCHIVE_ENABLED: "${NEWS_S3_ARCHIVE_ENABLED:-false}"
+      S3_ENDPOINT_URL: "${DOCKER_S3_ENDPOINT_URL:-}"
+      S3_ACCESS_KEY_ID: "${S3_ACCESS_KEY_ID:-}"
+      S3_SECRET_ACCESS_KEY: "${S3_SECRET_ACCESS_KEY:-}"
+      S3_SESSION_TOKEN: "${S3_SESSION_TOKEN:-}"
+      S3_BUCKET: "${S3_BUCKET:-gops-market-data-<aws-account-id>-ap-northeast-2-an}"
+      S3_RAW_PREFIX: "${S3_RAW_PREFIX:-market-data/raw/alpaca}"
     command: ["python", "-u", "systems/market-data/pods/news-ingestor/main.py"]
     restart: unless-stopped
     volumes:
       - ${HOME}/.aws:/root/.aws:ro
     networks:
       - app_net
+      - streaming_net
+
+  news-backfill:
+    profiles: ["jobs"]
+    image: gops-market-storage
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-market-storage
+    container_name: alfaka-news-backfill
+    env_file: .env
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      KAFKA_NEWS_TOPIC: "market.news.alpaca.v1"
+      AWS_REGION: "${AWS_REGION:-ap-northeast-2}"
+      AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-ap-northeast-2}"
+      AWS_EC2_METADATA_DISABLED: "${AWS_EC2_METADATA_DISABLED:-true}"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
+      AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
+      AWS_PROFILE: "${AWS_PROFILE:-default}"
+      AWS_SDK_LOAD_CONFIG: "${AWS_SDK_LOAD_CONFIG:-1}"
+      ALPACA_CREDENTIAL_SOURCE: "aws-secrets-manager"
+      ALPACA_SECRET_NAME: "${ALPACA_SECRET_NAME:-dev/alpaca}"
+      S3_ENDPOINT_URL: "${DOCKER_S3_ENDPOINT_URL:-}"
+      S3_ACCESS_KEY_ID: "${S3_ACCESS_KEY_ID:-}"
+      S3_SECRET_ACCESS_KEY: "${S3_SECRET_ACCESS_KEY:-}"
+      S3_SESSION_TOKEN: "${S3_SESSION_TOKEN:-}"
+      S3_BUCKET: "${S3_BUCKET:-gops-market-data-<aws-account-id>-ap-northeast-2-an}"
+      S3_RAW_PREFIX: "${S3_RAW_PREFIX:-market-data/raw/alpaca}"
+      ALPACA_NEWS_MAX_RETRIES: "${ALPACA_NEWS_MAX_RETRIES:-5}"
+      ALPACA_NEWS_RETRY_SLEEP_SECONDS: "${ALPACA_NEWS_RETRY_SLEEP_SECONDS:-1}"
+      ALPACA_NEWS_RETRY_MAX_SLEEP_SECONDS: "${ALPACA_NEWS_RETRY_MAX_SLEEP_SECONDS:-30}"
+      NEWS_BACKFILL_UNIVERSE: "${NEWS_BACKFILL_UNIVERSE:-sp500}"
+      NEWS_BACKFILL_SYMBOLS: "${NEWS_BACKFILL_SYMBOLS:-}"
+      NEWS_BACKFILL_START: "${NEWS_BACKFILL_START:-}"
+      NEWS_BACKFILL_END: "${NEWS_BACKFILL_END:-}"
+      NEWS_BACKFILL_DAYS: "${NEWS_BACKFILL_DAYS:-365}"
+      NEWS_BACKFILL_CHUNK_DAYS: "${NEWS_BACKFILL_CHUNK_DAYS:-7}"
+      NEWS_BACKFILL_SHARD_INDEX: "${NEWS_BACKFILL_SHARD_INDEX:-0}"
+      NEWS_BACKFILL_SHARD_COUNT: "${NEWS_BACKFILL_SHARD_COUNT:-1}"
+      NEWS_BACKFILL_LIMIT: "${NEWS_BACKFILL_LIMIT:-50}"
+      NEWS_BACKFILL_INCLUDE_CONTENT: "${NEWS_BACKFILL_INCLUDE_CONTENT:-true}"
+      NEWS_BACKFILL_SORT: "${NEWS_BACKFILL_SORT:-asc}"
+      NEWS_BACKFILL_SKIP_COMPLETED_CHUNKS: "${NEWS_BACKFILL_SKIP_COMPLETED_CHUNKS:-true}"
+      NEWS_BACKFILL_PUBLISH_RECENT_TO_KAFKA: "${NEWS_BACKFILL_PUBLISH_RECENT_TO_KAFKA:-true}"
+      NEWS_CLICKHOUSE_DAYS: "${NEWS_CLICKHOUSE_DAYS:-30}"
+    command: ["python", "-u", "systems/market-data/jobs/news-backfill/main.py"]
+    restart: "no"
+    volumes:
+      - ${HOME}/.aws:/root/.aws:ro
+    networks:
+      - app_net
+      - data_net
       - streaming_net
 
   local-stream-processor:
@@ -431,6 +524,9 @@ services:
       AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
       AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
       S3_ENDPOINT_URL: "${DOCKER_S3_ENDPOINT_URL:-}"
+      S3_ACCESS_KEY_ID: "${S3_ACCESS_KEY_ID:-}"
+      S3_SECRET_ACCESS_KEY: "${S3_SECRET_ACCESS_KEY:-}"
+      S3_SESSION_TOKEN: "${S3_SESSION_TOKEN:-}"
       S3_BUCKET: "${S3_BUCKET:-gops-market-data-<aws-account-id>-ap-northeast-2-an}"
       S3_FINAL_PREFIX: "${S3_FINAL_PREFIX:-market-data/rebuild-20260702-lazy-v1/final}"
       S3_MANIFEST_PREFIX: "${S3_MANIFEST_PREFIX:-market-data/rebuild-20260702-lazy-v1/manifest}"
@@ -466,6 +562,9 @@ services:
       AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
       AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
       S3_ENDPOINT_URL: "${DOCKER_S3_ENDPOINT_URL:-}"
+      S3_ACCESS_KEY_ID: "${S3_ACCESS_KEY_ID:-}"
+      S3_SECRET_ACCESS_KEY: "${S3_SECRET_ACCESS_KEY:-}"
+      S3_SESSION_TOKEN: "${S3_SESSION_TOKEN:-}"
       S3_BUCKET: "${S3_BUCKET:-gops-market-data-<aws-account-id>-ap-northeast-2-an}"
       S3_RAW_PREFIX: "${S3_RAW_PREFIX:-market-data/rebuild-20260702-lazy-v1/raw/alpaca}"
       S3_MANIFEST_PREFIX: "${S3_MANIFEST_PREFIX:-market-data/rebuild-20260702-lazy-v1/manifest}"
@@ -508,6 +607,150 @@ services:
     networks:
       - app_net
       - streaming_net
+      - data_net
+
+  news-intelligence-worker:
+    image: gops-market-storage
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-market-storage
+    container_name: alfaka-news-intelligence-worker
+    env_file: .env
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      clickhouse:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NEWS_INTELLIGENCE_ENABLED: "${NEWS_INTELLIGENCE_ENABLED:-true}"
+      NEWS_INTELLIGENCE_PROVIDER: "${NEWS_INTELLIGENCE_PROVIDER:-openai}"
+      NEWS_INTELLIGENCE_MODEL: "${NEWS_INTELLIGENCE_MODEL:-gpt-5.4-mini}"
+      NEWS_INTELLIGENCE_TIMEOUT_SECONDS: "${NEWS_INTELLIGENCE_TIMEOUT_SECONDS:-30}"
+      NEWS_INTELLIGENCE_BATCH_SIZE: "${NEWS_INTELLIGENCE_BATCH_SIZE:-5}"
+      NEWS_INTELLIGENCE_MAX_POLL_INTERVAL_MS: "${NEWS_INTELLIGENCE_MAX_POLL_INTERVAL_MS:-900000}"
+      NEWS_INTELLIGENCE_MAX_POLL_RECORDS: "${NEWS_INTELLIGENCE_MAX_POLL_RECORDS:-1}"
+      NEWS_REDIS_TTL_SECONDS: "${NEWS_REDIS_TTL_SECONDS:-1800}"
+      NEWS_REDIS_MAX_ITEMS: "${NEWS_REDIS_MAX_ITEMS:-20}"
+      NEWS_LOCALIZATION_FALLBACK_ENABLED: "${NEWS_LOCALIZATION_FALLBACK_ENABLED:-true}"
+      NEWS_DAILY_SUMMARY_ENABLED: "${NEWS_DAILY_SUMMARY_ENABLED:-true}"
+      NEWS_DAILY_SUMMARY_PROVIDER: "${NEWS_DAILY_SUMMARY_PROVIDER:-openai}"
+      NEWS_DAILY_SUMMARY_MODEL: "${NEWS_DAILY_SUMMARY_MODEL:-gpt-5.4-mini}"
+      NEWS_DAILY_SUMMARY_TIMEOUT_SECONDS: "${NEWS_DAILY_SUMMARY_TIMEOUT_SECONDS:-20}"
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      KAFKA_NEWS_TOPIC: "market.news.alpaca.v1"
+      KAFKA_NEWS_DAILY_SUMMARY_DIRTY_TOPIC: "market.news.daily-summary-dirty.v1"
+      NEWS_INTELLIGENCE_GROUP_ID: "alfaka-news-intelligence-worker"
+      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
+      CLICKHOUSE_DATABASE: "market_data"
+      CLICKHOUSE_USER: "alfaka"
+      CLICKHOUSE_PASSWORD: "alfaka"
+      REDIS_URL: "redis://redis:6379/0"
+      REDIS_KEY_PREFIX: ""
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      OPENAI_MODEL: "${OPENAI_MODEL:-gpt-5.4-mini}"
+    command: ["python", "-u", "systems/market-data/pods/news-intelligence-worker/main.py"]
+    restart: unless-stopped
+    networks:
+      - app_net
+      - streaming_net
+      - data_net
+
+  news-daily-summary-worker:
+    image: gops-market-storage
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-market-storage
+    container_name: alfaka-news-daily-summary-worker
+    env_file: .env
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      clickhouse:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NEWS_DAILY_SUMMARY_ENABLED: "${NEWS_DAILY_SUMMARY_ENABLED:-true}"
+      NEWS_DAILY_SUMMARY_PROVIDER: "${NEWS_DAILY_SUMMARY_PROVIDER:-openai}"
+      NEWS_DAILY_SUMMARY_MODEL: "${NEWS_DAILY_SUMMARY_MODEL:-gpt-5.4-mini}"
+      NEWS_DAILY_SUMMARY_TIMEOUT_SECONDS: "${NEWS_DAILY_SUMMARY_TIMEOUT_SECONDS:-20}"
+      NEWS_DAILY_SUMMARY_ARTICLE_LIMIT: "${NEWS_DAILY_SUMMARY_ARTICLE_LIMIT:-50}"
+      NEWS_DAILY_REDIS_TTL_SECONDS: "${NEWS_DAILY_REDIS_TTL_SECONDS:-86400}"
+      NEWS_DAILY_REDIS_MAX_ITEMS: "${NEWS_DAILY_REDIS_MAX_ITEMS:-30}"
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      KAFKA_NEWS_DAILY_SUMMARY_DIRTY_TOPIC: "market.news.daily-summary-dirty.v1"
+      NEWS_DAILY_SUMMARY_GROUP_ID: "alfaka-news-daily-summary-worker"
+      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
+      CLICKHOUSE_DATABASE: "market_data"
+      CLICKHOUSE_USER: "alfaka"
+      CLICKHOUSE_PASSWORD: "alfaka"
+      REDIS_URL: "redis://redis:6379/0"
+      REDIS_KEY_PREFIX: ""
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      OPENAI_MODEL: "${OPENAI_MODEL:-gpt-5.4-mini}"
+    command: ["python", "-u", "systems/market-data/pods/news-daily-summary-worker/main.py"]
+    restart: unless-stopped
+    networks:
+      - app_net
+      - streaming_net
+      - data_net
+
+  news-intelligence-rebuild:
+    profiles: ["jobs"]
+    image: gops-market-storage
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-market-storage
+    container_name: alfaka-news-intelligence-rebuild
+    env_file: .env
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    environment:
+      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
+      CLICKHOUSE_DATABASE: "market_data"
+      CLICKHOUSE_USER: "alfaka"
+      CLICKHOUSE_PASSWORD: "alfaka"
+      NEWS_INTELLIGENCE_REBUILD_DAYS: "${NEWS_INTELLIGENCE_REBUILD_DAYS:-30}"
+      NEWS_INTELLIGENCE_REBUILD_BATCH_SIZE: "${NEWS_INTELLIGENCE_REBUILD_BATCH_SIZE:-500}"
+      NEWS_INTELLIGENCE_REBUILD_MAX_ROWS: "${NEWS_INTELLIGENCE_REBUILD_MAX_ROWS:-5000}"
+    command: ["python", "-u", "systems/market-data/jobs/news-intelligence-rebuild/main.py"]
+    restart: "no"
+    networks:
+      - data_net
+
+  news-daily-summary-rebuild:
+    profiles: ["jobs"]
+    image: gops-market-storage
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-market-storage
+    container_name: alfaka-news-daily-summary-rebuild
+    env_file: .env
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
+      CLICKHOUSE_DATABASE: "market_data"
+      CLICKHOUSE_USER: "alfaka"
+      CLICKHOUSE_PASSWORD: "alfaka"
+      REDIS_URL: "redis://redis:6379/0"
+      REDIS_KEY_PREFIX: ""
+      NEWS_DAILY_SUMMARY_REBUILD_DAYS: "${NEWS_DAILY_SUMMARY_REBUILD_DAYS:-30}"
+      NEWS_DAILY_SUMMARY_REBUILD_MAX_GROUPS: "${NEWS_DAILY_SUMMARY_REBUILD_MAX_GROUPS:-1000}"
+      NEWS_DAILY_SUMMARY_REBUILD_DRY_RUN: "${NEWS_DAILY_SUMMARY_REBUILD_DRY_RUN:-true}"
+      NEWS_DAILY_SUMMARY_PROVIDER: "${NEWS_DAILY_SUMMARY_PROVIDER:-openai}"
+      NEWS_DAILY_SUMMARY_MODEL: "${NEWS_DAILY_SUMMARY_MODEL:-gpt-5.4-mini}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      OPENAI_MODEL: "${OPENAI_MODEL:-gpt-5.4-mini}"
+    command: ["python", "-u", "systems/market-data/jobs/news-daily-summary-rebuild/main.py"]
+    restart: "no"
+    networks:
       - data_net
 
   symbol-registry-sync:
@@ -629,12 +872,31 @@ services:
       REDIS_URL: "redis://redis:6379/0"
       AGENT_MARKET_EVENTS_TOPIC: "agents.market-events.v1"
       AGENT_ANALYSIS_REQUESTS_TOPIC: "agents.analysis-requests.v1"
+      AGENT_DEEP_ANALYSIS_REQUESTS_TOPIC: "agents.deep-analysis-requests.v1"
       AGENT_ANALYSIS_RESULTS_TOPIC: "agents.analysis-results.v1"
       AGENT_NOTIFICATION_DECISIONS_TOPIC: "agents.notification-decisions.v1"
       AGENT_DLQ_TOPIC: "agents.dlq.v1"
       AGENT_EVENT_INPUT_TOPICS: "market.layer.trades.v1,market.layer.candles.closed.v1,market.layer.events.v1"
       AGENT_PUBLISH_TO_KAFKA: "true"
       KAFKA_NEWS_TOPIC: "market.news.alpaca.v1"
+      AGENT_QUERY_UNDERSTANDING_EVENTS_TOPIC: "agents.query-understanding-events.v1"
+      AGENT_REPORT_STORE_BACKEND: "${AGENT_REPORT_STORE_BACKEND:-auto}"
+      AGENT_REPORT_TTL_SECONDS: "${AGENT_REPORT_TTL_SECONDS:-43200}"
+      AGENT_REPORT_STREAM_REDIS_ENABLED: "${AGENT_REPORT_STREAM_REDIS_ENABLED:-true}"
+      AGENT_REPORT_UPDATES_CHANNEL: "${AGENT_REPORT_UPDATES_CHANNEL:-agent.reports}"
+      AGENT_IDEMPOTENCY_TTL_SECONDS: "${AGENT_IDEMPOTENCY_TTL_SECONDS:-43200}"
+      AGENT_IDEMPOTENCY_KEY_PREFIX: "${AGENT_IDEMPOTENCY_KEY_PREFIX:-agent:request:idempotency}"
+      AGENT_GRAPH_EXPANSION_CACHE_ENABLED: "${AGENT_GRAPH_EXPANSION_CACHE_ENABLED:-false}"
+      AGENT_GRAPH_EXPANSION_REDIS_PREFIX: "gops:agent:graph-expansion:v1"
+      AGENT_GRAPH_EXPANSION_CLICKHOUSE_TABLE: "agent_graph_expansions"
+      AGENT_EXPANDED_RETRIEVAL_ENABLED: "${AGENT_EXPANDED_RETRIEVAL_ENABLED:-false}"
+      AGENT_MAX_SYNTHESIS_CROSS_SIGNALS: "${AGENT_MAX_SYNTHESIS_CROSS_SIGNALS:-6}"
+      AGENT_MAX_SYNTHESIS_CROSS_SIGNAL_CHARS: "${AGENT_MAX_SYNTHESIS_CROSS_SIGNAL_CHARS:-1800}"
+      AGENT_PROVIDER_BULKHEAD_DEFAULT_MAX_CONCURRENCY: "${AGENT_PROVIDER_BULKHEAD_DEFAULT_MAX_CONCURRENCY:-50}"
+      AGENT_PROVIDER_BULKHEAD_MARKET_MAX_CONCURRENCY: "${AGENT_PROVIDER_BULKHEAD_MARKET_MAX_CONCURRENCY:-100}"
+      AGENT_PROVIDER_BULKHEAD_NEWS_MAX_CONCURRENCY: "${AGENT_PROVIDER_BULKHEAD_NEWS_MAX_CONCURRENCY:-100}"
+      AGENT_PROVIDER_BULKHEAD_RELATIONSHIP_MAX_CONCURRENCY: "${AGENT_PROVIDER_BULKHEAD_RELATIONSHIP_MAX_CONCURRENCY:-20}"
+      AGENT_PROVIDER_BULKHEAD_ACQUIRE_TIMEOUT_MS: "${AGENT_PROVIDER_BULKHEAD_ACQUIRE_TIMEOUT_MS:-25}"
       CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
       CLICKHOUSE_DATABASE: "market_data"
       CLICKHOUSE_USER: "alfaka"
@@ -659,6 +921,315 @@ services:
       - app_net
       - data_net
       - streaming_net
+
+  agent-analysis-worker:
+    image: gops-agent-orchestrator
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
+    container_name: alfaka-agent-analysis-worker
+    env_file: .env
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      REDIS_URL: "redis://redis:6379/0"
+      AGENT_ANALYSIS_REQUESTS_TOPIC: "agents.analysis-requests.v1"
+      AGENT_DEEP_ANALYSIS_REQUESTS_TOPIC: "agents.deep-analysis-requests.v1"
+      AGENT_ANALYSIS_RESULTS_TOPIC: "agents.analysis-results.v1"
+      AGENT_NOTIFICATION_DECISIONS_TOPIC: "agents.notification-decisions.v1"
+      AGENT_DLQ_TOPIC: "agents.dlq.v1"
+      AGENT_PUBLISH_TO_KAFKA: "true"
+      AGENT_REPORT_STORE_BACKEND: "${AGENT_REPORT_STORE_BACKEND:-auto}"
+      AGENT_REPORT_TTL_SECONDS: "${AGENT_REPORT_TTL_SECONDS:-43200}"
+      AGENT_GRAPH_EXPANSION_CACHE_ENABLED: "${AGENT_GRAPH_EXPANSION_CACHE_ENABLED:-false}"
+      AGENT_GRAPH_EXPANSION_REDIS_PREFIX: "gops:agent:graph-expansion:v1"
+      AGENT_GRAPH_EXPANSION_CLICKHOUSE_TABLE: "agent_graph_expansions"
+      AGENT_EXPANDED_RETRIEVAL_ENABLED: "${AGENT_EXPANDED_RETRIEVAL_ENABLED:-false}"
+      AGENT_MAX_SYNTHESIS_CROSS_SIGNALS: "${AGENT_MAX_SYNTHESIS_CROSS_SIGNALS:-6}"
+      AGENT_MAX_SYNTHESIS_CROSS_SIGNAL_CHARS: "${AGENT_MAX_SYNTHESIS_CROSS_SIGNAL_CHARS:-1800}"
+      AGENT_PROVIDER_BULKHEAD_DEFAULT_MAX_CONCURRENCY: "${AGENT_PROVIDER_BULKHEAD_DEFAULT_MAX_CONCURRENCY:-50}"
+      AGENT_PROVIDER_BULKHEAD_MARKET_MAX_CONCURRENCY: "${AGENT_PROVIDER_BULKHEAD_MARKET_MAX_CONCURRENCY:-100}"
+      AGENT_PROVIDER_BULKHEAD_NEWS_MAX_CONCURRENCY: "${AGENT_PROVIDER_BULKHEAD_NEWS_MAX_CONCURRENCY:-100}"
+      AGENT_PROVIDER_BULKHEAD_RELATIONSHIP_MAX_CONCURRENCY: "${AGENT_PROVIDER_BULKHEAD_RELATIONSHIP_MAX_CONCURRENCY:-20}"
+      AGENT_PROVIDER_BULKHEAD_ACQUIRE_TIMEOUT_MS: "${AGENT_PROVIDER_BULKHEAD_ACQUIRE_TIMEOUT_MS:-25}"
+      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
+      CLICKHOUSE_DATABASE: "market_data"
+      CLICKHOUSE_USER: "alfaka"
+      CLICKHOUSE_PASSWORD: "alfaka"
+      AGENT_NEWS_CACHE_BACKEND: "auto"
+      AGENT_NEWS_CACHE_TTL_SECONDS: "300"
+      AGENT_NEWS_NO_DATA_CACHE_TTL_SECONDS: "60"
+      AGENT_NEWS_LOOKBACK_DAYS: "30"
+      AGENT_ANALYSIS_CACHE_BACKEND: "auto"
+      AGENT_ANALYSIS_CACHE_TTL_SECONDS: "180"
+      AGENT_ANALYSIS_NO_DATA_CACHE_TTL_SECONDS: "60"
+      AGENT_ANALYSIS_CACHE_KEY_PREFIX: "gops:agent:analysis"
+      GRAPHDB_SPARQL_URL: "${GRAPHDB_SPARQL_URL:-http://graphdb:7200/repositories/nasdaq-fibo}"
+      GRAPHDB_REPOSITORY: "${GRAPHDB_REPOSITORY:-nasdaq-fibo}"
+      AGENT_ONTOLOGY_LIMIT: "${AGENT_ONTOLOGY_LIMIT:-20}"
+    command: ["python", "-u", "/app/systems/agent-orchestration/pods/agent-analysis-worker/main.py"]
+    restart: unless-stopped
+    networks:
+      - app_net
+      - data_net
+      - streaming_net
+
+  deep-analysis-worker:
+    image: gops-agent-orchestrator
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
+    container_name: alfaka-deep-analysis-worker
+    env_file: .env
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      REDIS_URL: "redis://redis:6379/0"
+      AGENT_DEEP_ANALYSIS_REQUESTS_TOPIC: "agents.deep-analysis-requests.v1"
+      AGENT_ANALYSIS_RESULTS_TOPIC: "agents.analysis-results.v1"
+      AGENT_NOTIFICATION_DECISIONS_TOPIC: "agents.notification-decisions.v1"
+      AGENT_DLQ_TOPIC: "agents.dlq.v1"
+      AGENT_PUBLISH_TO_KAFKA: "true"
+      AGENT_REPORT_STORE_BACKEND: "${AGENT_REPORT_STORE_BACKEND:-auto}"
+      AGENT_REPORT_TTL_SECONDS: "${AGENT_REPORT_TTL_SECONDS:-43200}"
+      AGENT_DEEP_ANALYSIS_ENABLED: "${AGENT_DEEP_ANALYSIS_ENABLED:-false}"
+      AGENT_GRAPH_EXPANSION_CACHE_ENABLED: "${AGENT_GRAPH_EXPANSION_CACHE_ENABLED:-false}"
+      AGENT_EXPANDED_RETRIEVAL_ENABLED: "${AGENT_EXPANDED_RETRIEVAL_ENABLED:-false}"
+      AGENT_CROSS_SIGNAL_ENABLED: "${AGENT_CROSS_SIGNAL_ENABLED:-false}"
+      AGENT_MAX_SYNTHESIS_CROSS_SIGNALS: "${AGENT_MAX_SYNTHESIS_CROSS_SIGNALS:-6}"
+      AGENT_MAX_SYNTHESIS_CROSS_SIGNAL_CHARS: "${AGENT_MAX_SYNTHESIS_CROSS_SIGNAL_CHARS:-1800}"
+      AGENT_PROVIDER_BULKHEAD_DEFAULT_MAX_CONCURRENCY: "${AGENT_PROVIDER_BULKHEAD_DEFAULT_MAX_CONCURRENCY:-50}"
+      AGENT_PROVIDER_BULKHEAD_MARKET_MAX_CONCURRENCY: "${AGENT_PROVIDER_BULKHEAD_MARKET_MAX_CONCURRENCY:-100}"
+      AGENT_PROVIDER_BULKHEAD_NEWS_MAX_CONCURRENCY: "${AGENT_PROVIDER_BULKHEAD_NEWS_MAX_CONCURRENCY:-100}"
+      AGENT_PROVIDER_BULKHEAD_RELATIONSHIP_MAX_CONCURRENCY: "${AGENT_PROVIDER_BULKHEAD_RELATIONSHIP_MAX_CONCURRENCY:-20}"
+      AGENT_PROVIDER_BULKHEAD_ACQUIRE_TIMEOUT_MS: "${AGENT_PROVIDER_BULKHEAD_ACQUIRE_TIMEOUT_MS:-25}"
+      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
+      CLICKHOUSE_DATABASE: "market_data"
+      CLICKHOUSE_USER: "alfaka"
+      CLICKHOUSE_PASSWORD: "alfaka"
+      GRAPHDB_SPARQL_URL: "${GRAPHDB_SPARQL_URL:-http://graphdb:7200/repositories/nasdaq-fibo}"
+      GRAPHDB_REPOSITORY: "${GRAPHDB_REPOSITORY:-nasdaq-fibo}"
+      AGENT_ONTOLOGY_LIMIT: "${AGENT_ONTOLOGY_LIMIT:-20}"
+    command: ["python", "-u", "/app/systems/agent-orchestration/pods/deep-analysis-worker/main.py"]
+    restart: unless-stopped
+    networks:
+      - app_net
+      - data_net
+      - streaming_net
+
+  agent-delivery-gateway:
+    image: gops-agent-orchestrator
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
+    container_name: alfaka-agent-delivery-gateway
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      REDIS_URL: "redis://redis:6379/0"
+      AGENT_ANALYSIS_RESULTS_TOPIC: "agents.analysis-results.v1"
+      AGENT_REPORT_STORE_BACKEND: "${AGENT_REPORT_STORE_BACKEND:-auto}"
+      AGENT_REPORT_UPDATES_CHANNEL: "agent.reports"
+    command: ["python", "-u", "/app/systems/agent-orchestration/pods/agent-delivery-gateway/main.py"]
+    restart: unless-stopped
+    networks:
+      - app_net
+      - streaming_net
+
+  agent-queue-smoke:
+    image: gops-agent-orchestrator
+    profiles: ["smoke"]
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
+    environment:
+      AGENT_PUBLISH_TO_KAFKA: "false"
+    command: ["python", "-u", "/app/systems/agent-orchestration/jobs/agent-queue-smoke/main.py"]
+    restart: "no"
+    networks:
+      - app_net
+
+  report-store-smoke:
+    image: gops-agent-orchestrator
+    profiles: ["smoke"]
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_URL: "redis://redis:6379/0"
+      AGENT_REPORT_STORE_BACKEND: "auto"
+    command: ["python", "-u", "/app/systems/agent-orchestration/jobs/report-store-smoke/main.py"]
+    restart: "no"
+    networks:
+      - app_net
+
+  graph-expansion-smoke:
+    image: gops-agent-orchestrator
+    profiles: ["smoke"]
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_URL: "redis://redis:6379/0"
+      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
+      CLICKHOUSE_DATABASE: "market_data"
+      CLICKHOUSE_USER: "alfaka"
+      CLICKHOUSE_PASSWORD: "alfaka"
+    command: ["python", "-u", "/app/systems/agent-orchestration/jobs/graph-expansion-smoke/main.py"]
+    restart: "no"
+    networks:
+      - app_net
+      - data_net
+
+  graph-expansion-refresh:
+    image: gops-agent-orchestrator
+    profiles: ["agent-refresh"]
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
+    depends_on:
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    environment:
+      REDIS_URL: "redis://redis:6379/0"
+      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
+      CLICKHOUSE_DATABASE: "market_data"
+      CLICKHOUSE_USER: "alfaka"
+      CLICKHOUSE_PASSWORD: "alfaka"
+      GRAPHDB_SPARQL_URL: "${GRAPHDB_SPARQL_URL:-http://graphdb:7200/repositories/nasdaq-fibo}"
+      GRAPHDB_REPOSITORY: "${GRAPHDB_REPOSITORY:-nasdaq-fibo}"
+      AGENT_GRAPH_EXPANSION_SYMBOLS: "${AGENT_GRAPH_EXPANSION_SYMBOLS:-}"
+      AGENT_GRAPH_EXPANSION_RELATION_VERSION: "${AGENT_GRAPH_EXPANSION_RELATION_VERSION:-v1}"
+    command: ["python", "-u", "/app/systems/agent-orchestration/jobs/graph-expansion-refresh/main.py"]
+    restart: "no"
+    networks:
+      - app_net
+      - data_net
+
+  retrieval-latency-benchmark:
+    image: gops-agent-orchestrator
+    profiles: ["agent-eval"]
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
+    depends_on:
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    environment:
+      REDIS_URL: "redis://redis:6379/0"
+      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
+      CLICKHOUSE_DATABASE: "market_data"
+      CLICKHOUSE_USER: "alfaka"
+      CLICKHOUSE_PASSWORD: "alfaka"
+      AGENT_PUBLISH_TO_KAFKA: "false"
+    command: ["python", "-u", "/app/systems/agent-orchestration/jobs/retrieval-latency-benchmark/main.py"]
+    restart: "no"
+    networks:
+      - app_net
+      - data_net
+
+  fanout-policy-benchmark:
+    image: gops-agent-orchestrator
+    profiles: ["agent-eval"]
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
+    depends_on:
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    environment:
+      REDIS_URL: "redis://redis:6379/0"
+      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
+      CLICKHOUSE_DATABASE: "market_data"
+      CLICKHOUSE_USER: "alfaka"
+      CLICKHOUSE_PASSWORD: "alfaka"
+      AGENT_PUBLISH_TO_KAFKA: "false"
+      AGENT_GRAPH_EXPANSION_CACHE_ENABLED: "${AGENT_GRAPH_EXPANSION_CACHE_ENABLED:-false}"
+      AGENT_EXPANDED_RETRIEVAL_ENABLED: "${AGENT_EXPANDED_RETRIEVAL_ENABLED:-true}"
+    command: ["python", "-u", "/app/systems/agent-orchestration/jobs/fanout-policy-benchmark/main.py"]
+    restart: "no"
+    networks:
+      - app_net
+      - data_net
+
+  retrieval-quality-eval:
+    image: gops-agent-orchestrator
+    profiles: ["agent-eval"]
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
+    depends_on:
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    environment:
+      REDIS_URL: "redis://redis:6379/0"
+      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
+      CLICKHOUSE_DATABASE: "market_data"
+      CLICKHOUSE_USER: "alfaka"
+      CLICKHOUSE_PASSWORD: "alfaka"
+      AGENT_PUBLISH_TO_KAFKA: "false"
+      AGENT_GRAPH_EXPANSION_CACHE_ENABLED: "${AGENT_GRAPH_EXPANSION_CACHE_ENABLED:-false}"
+      AGENT_EXPANDED_RETRIEVAL_ENABLED: "${AGENT_EXPANDED_RETRIEVAL_ENABLED:-false}"
+      AGENT_CROSS_SIGNAL_ENABLED: "${AGENT_CROSS_SIGNAL_ENABLED:-false}"
+    command: ["python", "-u", "/app/systems/agent-orchestration/jobs/retrieval-quality-eval/main.py"]
+    restart: "no"
+    networks:
+      - app_net
+      - data_net
+
+  answer-grounding-eval:
+    image: gops-agent-orchestrator
+    profiles: ["agent-eval"]
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
+    depends_on:
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    environment:
+      REDIS_URL: "redis://redis:6379/0"
+      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
+      CLICKHOUSE_DATABASE: "market_data"
+      CLICKHOUSE_USER: "alfaka"
+      CLICKHOUSE_PASSWORD: "alfaka"
+      AGENT_PUBLISH_TO_KAFKA: "false"
+    command: ["python", "-u", "/app/systems/agent-orchestration/jobs/answer-grounding-eval/main.py"]
+    restart: "no"
+    networks:
+      - app_net
+      - data_net
 
   agent-event-detector:
     image: gops-agent-orchestrator
@@ -716,8 +1287,11 @@ services:
         condition: service_completed_successfully
       agent-orchestrator:
         condition: service_started
+      agent-analysis-worker:
+        condition: service_started
     environment:
       REDIS_URL: "redis://redis:6379/0"
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
       AUTH_ENABLED: "${AUTH_ENABLED:-false}"
       AUTH_PUBLIC_BASE_URL: "${AUTH_PUBLIC_BASE_URL:-http://localhost:5173}"
       AUTH_SESSION_SECRET: "${AUTH_SESSION_SECRET:-}"
@@ -732,6 +1306,23 @@ services:
       GOOGLE_OAUTH_SECRET_NAME: "${GOOGLE_OAUTH_SECRET_NAME:-}"
       DATABASE_URL: "postgresql://gops:${POSTGRES_PASSWORD:-gops_dev_password}@postgres:5432/gops"
       AGENT_ORCHESTRATOR_URL: "http://agent-orchestrator:8100"
+      AGENT_ASYNC_ANALYSIS_ENABLED: "${AGENT_ASYNC_ANALYSIS_ENABLED:-true}"
+      AGENT_SYNC_COMPAT_WAIT_ENABLED: "${AGENT_SYNC_COMPAT_WAIT_ENABLED:-false}"
+      AGENT_SYNC_COMPAT_WAIT_TIMEOUT_SECONDS: "${AGENT_SYNC_COMPAT_WAIT_TIMEOUT_SECONDS:-3}"
+      AGENT_SYNC_COMPAT_WAIT_POLL_SECONDS: "${AGENT_SYNC_COMPAT_WAIT_POLL_SECONDS:-0.1}"
+      AGENT_SHARED_REPORT_STORE_ENABLED: "${AGENT_SHARED_REPORT_STORE_ENABLED:-true}"
+      AGENT_REPORT_STORE_BACKEND: "${AGENT_REPORT_STORE_BACKEND:-auto}"
+      AGENT_ANALYSIS_QUEUE_BACKEND: "${AGENT_ANALYSIS_QUEUE_BACKEND:-auto}"
+      AGENT_ADMISSION_ENABLED: "${AGENT_ADMISSION_ENABLED:-true}"
+      AGENT_ADMISSION_MAX_QUEUE_DEPTH: "${AGENT_ADMISSION_MAX_QUEUE_DEPTH:-}"
+      AGENT_ADMISSION_MAX_PRODUCER_BUFFERED: "${AGENT_ADMISSION_MAX_PRODUCER_BUFFERED:-}"
+      AGENT_ADMISSION_DEGRADE_STREAM_TO_POLL: "${AGENT_ADMISSION_DEGRADE_STREAM_TO_POLL:-true}"
+      AGENT_REPORT_STREAM_REDIS_ENABLED: "${AGENT_REPORT_STREAM_REDIS_ENABLED:-true}"
+      AGENT_REPORT_UPDATES_CHANNEL: "agent.reports"
+      AGENT_ANALYSIS_REQUESTS_TOPIC: "agents.analysis-requests.v1"
+      AGENT_ANALYSIS_RESULTS_TOPIC: "agents.analysis-results.v1"
+      AGENT_NOTIFICATION_DECISIONS_TOPIC: "agents.notification-decisions.v1"
+      AGENT_DLQ_TOPIC: "agents.dlq.v1"
       ORDER_REPOSITORY: "postgres"
       KIS_ENV: "${KIS_ENV:-demo}"
       KIS_SECRET_NAME: "${KIS_SECRET_NAME:-dev/kis}"

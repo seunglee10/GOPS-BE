@@ -1,0 +1,41 @@
+# 역할: Alpaca News 과거 데이터를 S3 canonical raw와 최근 30일 Kafka/ClickHouse/Redis 경로로 백필합니다.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: alfaka-news-backfill
+  namespace: alfaka-market-data
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app: alfaka-news-backfill
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: news-backfill
+          image: YOUR_ECR_REPOSITORY/gops-market-storage:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "systems/market-data/jobs/news-backfill/main.py"]
+          env:
+            - name: NEWS_BACKFILL_DRY_RUN
+              value: "true"
+            - name: NEWS_BACKFILL_SHARD_INDEX
+              value: "0"
+            - name: NEWS_BACKFILL_SHARD_COUNT
+              value: "1"
+            - name: NEWS_BACKFILL_PUBLISH_RECENT_TO_KAFKA
+              value: "false"
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-alpaca-secret
+                optional: true
+            - secretRef:
+                name: alfaka-clickhouse-secret
+                optional: true
+            - secretRef:
+                name: alfaka-openai-secret
+                optional: true

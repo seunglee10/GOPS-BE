@@ -1,0 +1,30 @@
+# 역할: GraphDB에서 symbol별 graph expansion hint를 생성해 Redis/ClickHouse에 저장합니다.
+# 사용: AGENT_GRAPH_EXPANSION_SYMBOLS 또는 AGENT_GRAPH_EXPANSION_SYMBOL_FILE을 설정해 수동 실행합니다.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: graph-expansion-refresh
+  namespace: alfaka-market-data
+spec:
+  template:
+    metadata:
+      labels:
+        app: graph-expansion-refresh
+    spec:
+      restartPolicy: Never
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: graph-expansion-refresh
+          image: YOUR_ECR_REPOSITORY/gops-agent-orchestrator:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -u
+            - /app/systems/agent-orchestration/jobs/graph-expansion-refresh/main.py
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-clickhouse-secret
+                optional: true
+  backoffLimit: 1

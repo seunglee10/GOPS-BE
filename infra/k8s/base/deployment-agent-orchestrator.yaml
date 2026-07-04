@@ -26,6 +26,9 @@ spec:
             - configMapRef:
                 name: alfaka-market-data-config
             - secretRef:
+                name: alfaka-clickhouse-secret
+                optional: true
+            - secretRef:
                 name: alfaka-openai-secret
                 optional: true
           readinessProbe:

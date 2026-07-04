@@ -167,7 +167,8 @@ def configured_collection_symbols(config=None):
     config = config or load_request_config()
     raw_symbols = os.getenv("ALPACA_COLLECTION_SYMBOLS")
     if raw_symbols is not None:
-        return _validated_symbol_list(parse_csv(raw_symbols), config, "ALPACA_COLLECTION_SYMBOLS")
+        values = parse_csv(raw_symbols)
+        return _validated_symbol_list(values, config, "ALPACA_COLLECTION_SYMBOLS") if values else []
 
     source = (os.getenv("ALPACA_COLLECTION_SYMBOL_SOURCE") or config.get("collectionSymbolSource") or "seed").strip().lower()
     if source in {"on-demand", "ondemand", "none", "empty"}:

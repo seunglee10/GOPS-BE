@@ -173,7 +173,70 @@ CREATE TABLE IF NOT EXISTS market_data.news_articles
 )
 ENGINE = ReplacingMergeTree(inserted_at)
 PARTITION BY toYYYYMM(published_at)
-ORDER BY (symbol, published_at, article_id);
+ORDER BY (symbol, published_at, article_id)
+TTL toDateTime(published_at) + INTERVAL 30 DAY DELETE;
+
+CREATE TABLE IF NOT EXISTS market_data.news_article_localizations
+(
+    published_at DateTime64(3, 'UTC'),
+    symbol LowCardinality(String),
+    article_id String,
+    locale LowCardinality(String),
+    symbols Array(String),
+    target_symbol LowCardinality(String),
+    subject_relevance LowCardinality(String),
+    relevance_score_v2 Float32,
+    relevance_reason String,
+    direct_signals Array(String),
+    headline Nullable(String),
+    summary Nullable(String),
+    url Nullable(String),
+    source Nullable(String),
+    localized_headline String,
+    localized_summary String,
+    key_points Array(String),
+    positive_points Array(String),
+    concerns Array(String),
+    event_type LowCardinality(String),
+    sentiment LowCardinality(String),
+    impact_direction LowCardinality(String),
+    why_it_matters String,
+    model LowCardinality(String),
+    localized_at DateTime64(3, 'UTC'),
+    raw String,
+    inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(localized_at)
+PARTITION BY toYYYYMM(published_at)
+ORDER BY (symbol, locale, published_at, article_id)
+TTL toDateTime(published_at) + INTERVAL 30 DAY DELETE;
+
+CREATE TABLE IF NOT EXISTS market_data.news_company_daily_summaries
+(
+    date Date,
+    symbol LowCardinality(String),
+    locale LowCardinality(String),
+    summary String,
+    key_points Array(String),
+    positive_points Array(String),
+    concerns Array(String),
+    impact_direction LowCardinality(String),
+    sentiment LowCardinality(String),
+    article_ids Array(String),
+    article_ids_hash String,
+    article_count UInt32,
+    mention_count UInt32,
+    status LowCardinality(String),
+    model LowCardinality(String),
+    generated_at DateTime64(3, 'UTC'),
+    version LowCardinality(String),
+    raw String,
+    inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(generated_at)
+PARTITION BY toYYYYMM(date)
+ORDER BY (symbol, locale, date, version)
+TTL toDate(date) + INTERVAL 366 DAY DELETE;
 
 CREATE TABLE IF NOT EXISTS market_data.load_audit
 (

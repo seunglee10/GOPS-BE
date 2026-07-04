@@ -4,10 +4,11 @@ import os
 import sys
 import time
 
-from alfaka.alpaca.news import build_news_events, fetch_alpaca_news
+from alfaka.alpaca.news import build_news_events, fetch_alpaca_news, normalize_article_symbols
 from alfaka.common.env import load_dotenv, parse_csv, utc_now_iso
 from alfaka.common.kafka_io import create_json_producer
 from alfaka.common.secrets import load_alpaca_credentials
+from alfaka.storage.news_s3_archive import upload_canonical_news_article_to_s3, write_news_symbol_index_to_s3
 
 
 def main():
@@ -25,9 +26,17 @@ def main():
     poll_seconds = float(os.getenv("ALPACA_NEWS_POLL_SECONDS", "300"))
     include_content = os.getenv("ALPACA_NEWS_INCLUDE_CONTENT", "false").lower() in {"1", "true", "yes"}
     producer = create_json_producer(kafka_servers, "alfaka-alpaca-news-ingestor")
+    s3 = None
+    s3_bucket = os.getenv("S3_BUCKET")
+    s3_prefix = os.getenv("S3_RAW_PREFIX", "market-data/raw/alpaca")
+    archive_to_s3 = os.getenv("NEWS_S3_ARCHIVE_ENABLED", "false").lower() in {"1", "true", "yes"} and bool(s3_bucket)
+    if archive_to_s3:
+        from alfaka.common.s3_client import create_s3_client
+
+        s3 = create_s3_client()
     seen_ids = set()
 
-    print(f"Alpaca 뉴스 수집 시작: symbols={symbols} topic={topic}", flush=True)
+    print(f"Alpaca 뉴스 수집 시작: symbols={symbols} topic={topic} s3Archive={archive_to_s3}", flush=True)
     while True:
         try:
             received_at = utc_now_iso()
@@ -42,6 +51,8 @@ def main():
             for article in articles:
                 if not isinstance(article, dict):
                     continue
+                if archive_to_s3:
+                    archive_article_to_s3(s3, s3_bucket, s3_prefix, article, requested_symbols=symbols, received_at=received_at)
                 for event in build_news_events(article, requested_symbols=symbols, received_at=received_at):
                     dedupe_key = f"{event['symbol']}:{event['articleId']}"
                     if dedupe_key in seen_ids:
@@ -56,6 +67,33 @@ def main():
         except Exception as exc:
             print(f"Alpaca 뉴스 수집 실패: {exc}", file=sys.stderr, flush=True)
         time.sleep(poll_seconds)
+
+
+def archive_article_to_s3(s3, bucket, prefix, article, *, requested_symbols, received_at):
+    try:
+        raw_result = upload_canonical_news_article_to_s3(
+            s3,
+            bucket,
+            prefix,
+            article,
+            received_at=received_at,
+        )
+        requested_list = [symbol.upper() for symbol in requested_symbols or []]
+        requested = set(requested_list)
+        article_symbols = [symbol for symbol in normalize_article_symbols(article) if not requested or symbol in requested]
+        index_symbols = article_symbols or requested_list[:1]
+        for symbol in index_symbols:
+            write_news_symbol_index_to_s3(
+                s3,
+                bucket,
+                prefix,
+                article,
+                symbol=symbol,
+                canonical_key=raw_result["key"],
+                received_at=received_at,
+            )
+    except Exception as exc:
+        print(f"Alpaca 뉴스 S3 archive 실패: article={article.get('id') or article.get('articleId')} error={exc}", file=sys.stderr, flush=True)
 
 
 if __name__ == "__main__":

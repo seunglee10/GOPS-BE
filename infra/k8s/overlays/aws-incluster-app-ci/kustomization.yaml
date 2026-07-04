@@ -91,6 +91,30 @@ patches:
         name: alfaka-initial-load
         namespace: alfaka-market-data
       $patch: delete
+  - target:
+      group: batch
+      version: v1
+      kind: Job
+      name: alfaka-news-backfill
+    patch: |-
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: alfaka-news-backfill
+        namespace: alfaka-market-data
+      $patch: delete
+  - target:
+      group: batch
+      version: v1
+      kind: Job
+      name: alfaka-news-intelligence-rebuild
+    patch: |-
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: alfaka-news-intelligence-rebuild
+        namespace: alfaka-market-data
+      $patch: delete
 
 images:
   - name: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-ingestor
