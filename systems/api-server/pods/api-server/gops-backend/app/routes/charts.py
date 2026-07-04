@@ -58,13 +58,18 @@ def chart_candles(
 ) -> dict[str, Any]:
     try:
         return get_query_service().candle_snapshot(symbol, interval, ma, limit, before=before, from_time=from_time, to_time=to_time)
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Market data provider failed: {exc}") from exc
 
 
 @router.post("/api/charts/backfill")
-def chart_backfill(body: BackfillRequestBody, _user: AuthenticatedUser = Depends(require_current_user)) -> dict[str, Any]:
-    return get_query_service().request_backfill(body.symbol, body.interval, start=body.start, end=body.end, mode=body.mode, force=body.force)
+def chart_backfill(body: BackfillRequestBody) -> dict[str, Any]:
+    raise HTTPException(
+        status_code=410,
+        detail="Backfill queue endpoints were replaced by on-demand fill in GET /api/charts/candles.",
+    )
 
 
 @router.get("/api/charts/backfill/status")
@@ -73,12 +78,18 @@ def chart_backfill_status(
     interval: str = Query(default="1m", pattern=CHART_INTERVAL_PATTERN),
     request_id: str | None = Query(default=None, alias="requestId"),
 ) -> dict[str, Any]:
-    return get_query_service().backfill_status(symbol, interval, request_id=request_id)
+    raise HTTPException(
+        status_code=410,
+        detail="Backfill status was replaced by per-request on-demand fill trace in GET /api/charts/candles.",
+    )
 
 
 @router.get("/api/charts/backfill/queue")
 def chart_backfill_queue() -> dict[str, Any]:
-    return get_query_service().backfill_queue_metrics()
+    raise HTTPException(
+        status_code=410,
+        detail="Backfill queue metrics were replaced by per-request on-demand fill trace.",
+    )
 
 
 @router.get("/api/charts/watchlist")

@@ -41,9 +41,6 @@ gops_normalize_service_key() {
     storage | market-storage | gops-market-storage)
       echo "market-storage"
       ;;
-    backfill | backfill-worker | gops-backfill-worker)
-      echo "backfill-worker"
-      ;;
     order | order-worker | gops-order-worker)
       echo "order-worker"
       ;;
@@ -114,9 +111,6 @@ gops_deployments_for_service() {
     agent-orchestrator)
       printf '%s\n' agent-event-detector agent-notification-publisher agent-orchestrator
       ;;
-    backfill-worker)
-      printf '%s\n' alfaka-backfill-worker
-      ;;
     backend)
       printf '%s\n' gops-backend
       ;;
@@ -151,9 +145,6 @@ gops_primary_deployment_for_service() {
   case "${key}" in
     agent-orchestrator)
       echo "agent-orchestrator"
-      ;;
-    backfill-worker)
-      echo "alfaka-backfill-worker"
       ;;
     backend)
       echo "gops-backend"

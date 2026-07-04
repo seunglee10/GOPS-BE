@@ -1,0 +1,36 @@
+# 역할: 자동 배포 가능한 장기 실행 앱 워크로드 묶음입니다.
+# 일회성/검증 Job은 상위 base에서만 포함하고 앱 배포 overlay는 이 base를 사용합니다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - serviceaccount-irsa.example.yaml
+  - statefulset-graphdb.yaml
+  - deployment-agent-orchestrator.yaml
+  - deployment-agent-intent-classifier.yaml
+  - deployment-agent-analysis-worker.yaml
+  - deployment-deep-analysis-worker.yaml
+  - deployment-agent-delivery-gateway.yaml
+  - deployment-agent-event-detector.yaml
+  - deployment-agent-notification-publisher.yaml
+  - deployment-alpaca-ingestor.yaml
+  - deployment-feed-session-controller.yaml
+  - deployment-subscription-controller.yaml
+  - deployment-alpaca-news-ingestor.yaml
+  - deployment-market-processor.yaml
+  - deployment-s3-sink.yaml
+  - deployment-raw-s3-archive.yaml
+  - deployment-clickhouse-loader.yaml
+  - deployment-news-intelligence-worker.yaml
+  - deployment-news-daily-summary-worker.yaml
+  - deployment-order-outbox-publisher.yaml
+  - deployment-kis-broker-adapter.yaml
+  - deployment-gops-backend.yaml
+  - deployment-gops-frontend.yaml
+  - service-agent-orchestrator.yaml
+  - service-agent-intent-classifier.yaml
+  - service-graphdb.yaml
+  - service-gops-backend.yaml
+  - service-gops-frontend.yaml

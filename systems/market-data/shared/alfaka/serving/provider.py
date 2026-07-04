@@ -7,13 +7,7 @@ from datetime import datetime, timedelta, timezone
 from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
 from alfaka.serving.cursors import timestamp_from_cursor
 from alfaka.serving.dto import cursor_for, snapshot
-from alfaka.serving.intervals import (
-    backfill_target_bars,
-    backfill_target_days,
-    normalize_chart_interval,
-    resolve_candle_limit,
-    source_interval_for,
-)
+from alfaka.serving.intervals import normalize_chart_interval, resolve_candle_limit, source_interval_for
 from alfaka.serving.moving_average import MA_WINDOWS, attach_moving_averages
 from alfaka.serving.redis_provider import RedisMarketDataProvider
 from alfaka.serving.symbol_registry import SymbolRegistry
@@ -34,7 +28,7 @@ class MarketDataProvider:
         interval = normalize_chart_interval(interval)
         limit = resolve_candle_limit(interval, limit)
         query_limit = moving_average_query_limit(interval, limit)
-        clickhouse_from_time = None if before and not from_time else target_floor_from_time(interval, from_time)
+        clickhouse_from_time = None if before and not from_time else target_floor_from_time(interval, from_time, limit)
         range_query = bool(before or from_time or to_time)
         redis_candles = [] if range_query else filter_stock_weekdays(self.redis_provider.recent_candles(symbol, interval, query_limit))
         live_candle = None if range_query else self._live_candle(symbol, interval)
@@ -44,7 +38,11 @@ class MarketDataProvider:
             coverage = self._coverage(symbol, interval)
             if not candles_are_behind_coverage(merged_redis, coverage):
                 payload = snapshot(symbol=symbol, interval=interval, candles=attach_moving_averages(merged_redis)[-limit:])
-                return with_coverage_metadata(payload, coverage, limit)
+                payload["_sourceTrace"] = {
+                    "redis": {"checked": True, "hit": len(merged_redis) > 0, "rowCount": len(merged_redis)},
+                    "clickhouse": {"checked": False, "hit": False, "rowCount": 0},
+                }
+                return with_coverage_metadata(payload, coverage, limit, before=before, from_time=from_time, to_time=to_time)
 
         clickhouse_candles = filter_stock_weekdays(self.clickhouse_provider.candles(
             symbol,
@@ -54,13 +52,32 @@ class MarketDataProvider:
             from_time=clickhouse_from_time,
             to_time=to_time,
         ))
+        if interval in {"1m", "5m", "10m"} and not range_query and len(clickhouse_candles) < query_limit and clickhouse_from_time:
+            latest_candles = filter_stock_weekdays(self.clickhouse_provider.candles(
+                symbol,
+                interval,
+                query_limit,
+            ))
+            if len(latest_candles) > len(clickhouse_candles):
+                clickhouse_candles = latest_candles
         live_group = [live_candle] if live_candle else []
         merged = merge_candles(clickhouse_candles, redis_candles, live_group)
         candles = attach_moving_averages(merged)[-limit:]
         feed = first_value(candles, "feed", "sip")
         source = first_value(candles, "source", "alpaca")
         payload = snapshot(symbol=symbol, interval=interval, candles=candles, source=source, feed=feed)
-        return with_coverage_metadata(payload, coverage or self._coverage(symbol, interval, candles), limit)
+        payload["_sourceTrace"] = {
+            "redis": {"checked": not range_query, "hit": len(redis_candles) > 0 or live_candle is not None, "rowCount": len(redis_candles) + len(live_group)},
+            "clickhouse": {"checked": True, "hit": len(clickhouse_candles) > 0, "rowCount": len(clickhouse_candles)},
+        }
+        return with_coverage_metadata(
+            payload,
+            coverage or self._coverage(symbol, interval, candles),
+            limit,
+            before=before,
+            from_time=from_time,
+            to_time=to_time,
+        )
 
     def candles_since_cursor(self, symbol, interval, cursor, limit=500):
         interval = normalize_chart_interval(interval)
@@ -174,7 +191,7 @@ def merge_candles(*groups):
     return [by_timestamp[key] for key in sorted(by_timestamp)]
 
 
-def with_coverage_metadata(payload, coverage, requested_limit):
+def with_coverage_metadata(payload, coverage, requested_limit, before=None, from_time=None, to_time=None):
     interval = normalize_chart_interval(payload.get("interval"))
     source_interval = source_interval_for(interval)
     candles = payload.get("candles") or []
@@ -185,13 +202,26 @@ def with_coverage_metadata(payload, coverage, requested_limit):
     row_count = coverage.get("rowCount") if coverage else None
     invalid_row_count = coverage.get("invalidRowCount") if coverage else None
     stored_count = int(row_count) if row_count is not None else len(candles)
-    target_stored_count = backfill_target_bars(source_interval)
-    target_range_from = target_range_from_for_interval(source_interval)
+    target_stored_count = requested_source_bar_target(interval, requested_limit)
+    target_range_from, target_range_to = requested_window_for_interval(
+        interval,
+        requested_limit,
+        before=before,
+        from_time=from_time,
+        to_time=to_time,
+    )
+    missing_ranges = missing_ranges_for_requested_window(
+        target_range_from=target_range_from,
+        target_range_to=target_range_to,
+        available_from=available_from,
+        available_to=available_to,
+    )
     payload.update({
         "requestedLimit": requested_limit,
         "returnedCount": len(candles),
         "targetStoredCount": target_stored_count,
         "targetRangeFrom": target_range_from,
+        "targetRangeTo": target_range_to,
         "sourceInterval": source_interval,
         "availableFrom": available_from,
         "availableTo": available_to,
@@ -201,6 +231,7 @@ def with_coverage_metadata(payload, coverage, requested_limit):
         "hasMoreAfter": bool(newest and available_to and available_to > newest),
         "storedCandleCount": stored_count,
         "invalidRowCount": int(invalid_row_count or 0),
+        "missingRanges": missing_ranges,
     })
     return payload
 
@@ -236,8 +267,8 @@ def one_year_target_from(reference_timestamp=None):
     return target_range_from_for_interval("1m", reference_timestamp)
 
 
-def target_floor_from_time(interval, from_time=None):
-    target_floor = target_range_from_for_interval(source_interval_for(interval))
+def target_floor_from_time(interval, from_time=None, requested_limit=None):
+    target_floor = target_range_from_for_interval(interval, requested_limit=requested_limit)
     if not from_time:
         return target_floor
     requested = parse_iso_time(from_time)
@@ -247,10 +278,79 @@ def target_floor_from_time(interval, from_time=None):
     return target_floor
 
 
-def target_range_from_for_interval(interval, reference_timestamp=None):
+def target_range_from_for_interval(interval, reference_timestamp=None, requested_limit=None):
     reference = parse_iso_time(reference_timestamp) or datetime.now(timezone.utc)
-    target = reference - timedelta(days=backfill_target_days(interval))
+    target = reference - requested_window_delta(interval, requested_limit or resolve_candle_limit(interval, None))
     return target.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+def requested_window_for_interval(interval, requested_limit, before=None, from_time=None, to_time=None):
+    interval = normalize_chart_interval(interval)
+    explicit_start = parse_iso_time(from_time)
+    explicit_end = parse_iso_time(to_time)
+    cursor_end = parse_iso_time(before)
+    end = explicit_end or cursor_end or datetime.now(timezone.utc)
+    start = explicit_start or (end - requested_window_delta(interval, requested_limit))
+    return (
+        start.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+        end.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+    )
+
+
+def requested_window_delta(interval, requested_limit):
+    interval = normalize_chart_interval(interval)
+    limit = max(1, int(requested_limit or 1))
+    if interval == "1m":
+        return timedelta(minutes=limit * 4)
+    if interval == "5m":
+        return timedelta(minutes=limit * 5 * 4)
+    if interval == "10m":
+        return timedelta(minutes=limit * 10 * 4)
+    if interval == "1D":
+        return timedelta(days=limit * 2)
+    if interval == "1W":
+        return timedelta(days=limit * 8)
+    if interval == "1M":
+        return timedelta(days=limit * 32)
+    return timedelta(minutes=limit * 4)
+
+
+def requested_source_bar_target(interval, requested_limit):
+    interval = normalize_chart_interval(interval)
+    limit = max(1, int(requested_limit or 1))
+    if interval == "5m":
+        return limit * 5
+    if interval == "10m":
+        return limit * 10
+    if interval == "1W":
+        return limit * 5
+    if interval == "1M":
+        return limit * 22
+    return limit
+
+
+def missing_ranges_for_requested_window(*, target_range_from, target_range_to, available_from, available_to):
+    target_start = parse_iso_time(target_range_from)
+    target_end = parse_iso_time(target_range_to)
+    if not target_start or not target_end:
+        return []
+    available_start = parse_iso_time(available_from)
+    available_end = parse_iso_time(available_to)
+    if not available_start or not available_end:
+        return [{"start": target_range_from, "end": target_range_to}]
+
+    ranges = []
+    if available_start - target_start > TARGET_FLOOR_TOLERANCE:
+        ranges.append({
+            "start": target_start.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+            "end": min(available_start, target_end).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+        })
+    if target_end - available_end > TARGET_FLOOR_TOLERANCE:
+        ranges.append({
+            "start": max(available_end, target_start).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+            "end": target_end.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+        })
+    return [item for item in ranges if item["start"] < item["end"]]
 
 
 def parse_iso_time(value):

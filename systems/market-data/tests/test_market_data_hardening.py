@@ -50,7 +50,7 @@ from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider, cli
 from alfaka.serving.cursors import timestamp_from_cursor
 from alfaka.serving.dto import cursor_for, market_status_event, snapshot, websocket_event
 from alfaka.serving.hot_symbols import build_hot_symbols_payload, dollar_volume_from_candle
-from alfaka.serving.intervals import backfill_target_bars, candle_count_for_1y, candle_count_for_24h, historical_target_bars, redis_closed_candle_cap, resolve_candle_limit
+from alfaka.serving.intervals import candle_count_for_1y, candle_count_for_24h, historical_target_bars, redis_closed_candle_cap, resolve_candle_limit
 from alfaka.serving.provider import MarketDataProvider, has_more_before_target, target_range_from_for_interval
 from alfaka.serving.redis_provider import RedisMarketDataProvider
 from alfaka.serving.news_hot_cache import read_company_daily_summaries_from_redis, read_localized_news_from_redis
@@ -310,6 +310,8 @@ class FailingAuditClickHouseClient(RecordingClickHouseClient):
 
 def load_initial_load_job_module():
     module_path = REPO_ROOT / "systems/market-data/jobs/initial-load/main.py"
+    if not module_path.exists():
+        raise unittest.SkipTest("initial-load job was removed; chart history now uses API on-demand fill.")
     spec = importlib.util.spec_from_file_location("initial_load_job", module_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -1591,19 +1593,27 @@ class MarketDataHardeningContractTest(unittest.TestCase):
 
     def test_kubernetes_base_includes_market_processor_runtime_unit(self):
         base_kustomization = (REPO_ROOT / "infra/k8s/base/kustomization.yaml").read_text(encoding="utf-8")
-        deployment = (REPO_ROOT / "infra/k8s/base/deployment-market-processor.yaml").read_text(encoding="utf-8")
-        agent_orchestrator_deployment = (REPO_ROOT / "infra/k8s/base/deployment-agent-orchestrator.yaml").read_text(encoding="utf-8")
-        raw_archive_deployment = (REPO_ROOT / "infra/k8s/base/deployment-raw-s3-archive.yaml").read_text(encoding="utf-8")
-        news_worker_deployment = (REPO_ROOT / "infra/k8s/base/deployment-news-intelligence-worker.yaml").read_text(encoding="utf-8")
+        app_kustomization = (REPO_ROOT / "infra/k8s/base/app/kustomization.yaml").read_text(encoding="utf-8")
+        deployment = (REPO_ROOT / "infra/k8s/base/app/deployment-market-processor.yaml").read_text(encoding="utf-8")
+        agent_orchestrator_deployment = (
+            REPO_ROOT / "infra/k8s/base/app/deployment-agent-orchestrator.yaml"
+        ).read_text(encoding="utf-8")
+        raw_archive_deployment = (REPO_ROOT / "infra/k8s/base/app/deployment-raw-s3-archive.yaml").read_text(
+            encoding="utf-8"
+        )
+        news_worker_deployment = (
+            REPO_ROOT / "infra/k8s/base/app/deployment-news-intelligence-worker.yaml"
+        ).read_text(encoding="utf-8")
         news_backfill_job = (REPO_ROOT / "infra/k8s/base/job-news-backfill.yaml").read_text(encoding="utf-8")
         news_rebuild_job = (REPO_ROOT / "infra/k8s/base/job-news-intelligence-rebuild.yaml").read_text(encoding="utf-8")
-        configmap = (REPO_ROOT / "infra/k8s/base/configmap.yaml").read_text(encoding="utf-8")
+        configmap = (REPO_ROOT / "infra/k8s/base/app/configmap.yaml").read_text(encoding="utf-8")
         aws_overlay = (REPO_ROOT / "infra/k8s/overlays/aws/kustomization.yaml").read_text(encoding="utf-8")
         aws_ci_overlay = (REPO_ROOT / "infra/k8s/overlays/aws-incluster-app-ci/kustomization.yaml").read_text(encoding="utf-8")
 
-        self.assertIn("deployment-market-processor.yaml", base_kustomization)
-        self.assertIn("deployment-raw-s3-archive.yaml", base_kustomization)
+        self.assertIn("  - app", base_kustomization)
         self.assertIn("job-news-backfill.yaml", base_kustomization)
+        self.assertIn("deployment-market-processor.yaml", app_kustomization)
+        self.assertIn("deployment-raw-s3-archive.yaml", app_kustomization)
         self.assertIn("name: alfaka-market-processor", deployment)
         self.assertIn("app: alfaka-market-processor", deployment)
         self.assertIn("gops-market-processor:latest", deployment)
@@ -1623,10 +1633,15 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn("NEWS_BACKFILL_SHARD_COUNT", news_backfill_job)
         self.assertIn("NEWS_BACKFILL_PUBLISH_RECENT_TO_KAFKA", news_backfill_job)
         self.assertIn("NEWS_INTELLIGENCE_REBUILD_DRY_RUN", news_rebuild_job)
-        self.assertIn("name: alfaka-news-backfill", aws_ci_overlay)
-        self.assertIn("name: alfaka-news-intelligence-rebuild", aws_ci_overlay)
+        self.assertIn("../../base/app", aws_overlay)
+        self.assertIn("../aws-incluster-app", aws_ci_overlay)
+        self.assertNotIn("kind: Job", aws_ci_overlay)
+        self.assertNotIn("name: alfaka-news-backfill", aws_ci_overlay)
+        self.assertNotIn("name: alfaka-news-intelligence-rebuild", aws_ci_overlay)
         self.assertIn("KAFKA_PROCESSOR_GROUP_ID: alfaka-market-processor", configmap)
         self.assertIn("KAFKA_RAW_S3_GROUP_ID: alfaka-raw-s3-archive", configmap)
+        self.assertIn('CLICKHOUSE_PROVIDER_TIMEOUT_SECONDS: "8"', configmap)
+        self.assertIn('CLICKHOUSE_PROVIDER_RETRY_ATTEMPTS: "2"', configmap)
         self.assertIn('NEWS_BACKFILL_DAYS: "365"', configmap)
         self.assertIn('NEWS_BACKFILL_SHARD_INDEX: "0"', configmap)
         self.assertIn('NEWS_BACKFILL_SHARD_COUNT: "1"', configmap)
@@ -1649,10 +1664,9 @@ class MarketDataHardeningContractTest(unittest.TestCase):
     def test_initial_load_compose_uses_on_demand_universe_contract(self):
         compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 
-        self.assertIn('ALPACA_UNIVERSE: ""', compose)
-        self.assertIn('ALPACA_UNIVERSE_REGISTRY_PATH: ""', compose)
-        self.assertIn('INITIAL_LOAD_SYMBOLS: "${INITIAL_LOAD_SYMBOLS:-}"', compose)
-        self.assertIn('INITIAL_LOAD_INTERVALS: "${INITIAL_LOAD_INTERVALS:-1D}"', compose)
+        self.assertNotIn("initial-load:", compose)
+        self.assertNotIn("systems/market-data/jobs/initial-load", compose)
+        self.assertIn('ON_DEMAND_FILL_TIMEOUT_SECONDS: "${ON_DEMAND_FILL_TIMEOUT_SECONDS:-8}"', compose)
         self.assertIn("news-backfill:", compose)
         self.assertIn('NEWS_BACKFILL_UNIVERSE: "${NEWS_BACKFILL_UNIVERSE:-sp500}"', compose)
         self.assertIn("systems/market-data/jobs/news-backfill/main.py", compose)
@@ -4087,23 +4101,20 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(value.start, "2026-06-24T14:30:00.000Z")
 
     def test_chart_candle_limit_defaults_to_interval_visible_bars(self):
-        self.assertEqual(candle_count_for_24h("1m"), 390)
-        self.assertEqual(candle_count_for_24h("5m"), 390)
-        self.assertEqual(candle_count_for_24h("10m"), 390)
-        self.assertEqual(candle_count_for_24h("1d"), 250)
-        self.assertEqual(candle_count_for_24h("1W"), 260)
-        self.assertEqual(candle_count_for_24h("1M"), 120)
-        self.assertEqual(backfill_target_bars("1m"), 5460)
-        self.assertEqual(backfill_target_bars("5m"), 1092)
-        self.assertEqual(backfill_target_bars("10m"), 546)
+        self.assertEqual(candle_count_for_24h("1m"), 120)
+        self.assertEqual(candle_count_for_24h("5m"), 120)
+        self.assertEqual(candle_count_for_24h("10m"), 120)
+        self.assertEqual(candle_count_for_24h("1d"), 120)
+        self.assertEqual(candle_count_for_24h("1W"), 104)
+        self.assertEqual(candle_count_for_24h("1M"), 36)
         self.assertEqual(historical_target_bars("1m"), 589680)
         self.assertEqual(historical_target_bars("1D"), 1512)
         self.assertEqual(historical_target_bars("1M"), 72)
         self.assertEqual(candle_count_for_1y("1m"), 589680)
-        self.assertEqual(resolve_candle_limit("1m", None), 390)
+        self.assertEqual(resolve_candle_limit("1m", None), 120)
         self.assertEqual(resolve_candle_limit("1m", 9999), 9999)
         self.assertEqual(resolve_candle_limit("1m", 999999), 589680)
-        self.assertEqual(resolve_candle_limit("1M", 999999), 120)
+        self.assertEqual(resolve_candle_limit("1M", 999999), 72)
         self.assertEqual(redis_closed_candle_cap("1m"), 780)
         self.assertEqual(redis_closed_candle_cap("5m"), 156)
         self.assertEqual(redis_closed_candle_cap("10m"), 78)
@@ -4143,6 +4154,41 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(calls[0][0], "http://clickhouse:8123")
         self.assertEqual(calls[0][1]["timeout"], 0.45)
         self.assertEqual(calls[0][1]["params"]["param_symbol"], "AAPL")
+
+    def test_clickhouse_provider_retries_transient_timeout(self):
+        import requests
+
+        calls = []
+
+        class FakeResponse:
+            status_code = 200
+            text = '{"ok":1}\n'
+
+        def fake_post(url, **kwargs):
+            calls.append((url, kwargs))
+            if len(calls) == 1:
+                raise requests.exceptions.Timeout("cold query")
+            return FakeResponse()
+
+        provider = ClickHouseMarketDataProvider(
+            url="http://clickhouse:8123",
+            database="market_data",
+            user="alfaka",
+            password="secret",
+        )
+        with mock.patch.dict(os.environ, {
+            "CLICKHOUSE_PROVIDER_TIMEOUT_SECONDS": "0.45",
+            "CLICKHOUSE_PROVIDER_RETRY_ATTEMPTS": "2",
+        }):
+            with mock.patch("requests.post", side_effect=fake_post):
+                with mock.patch("alfaka.serving.clickhouse_provider.time.sleep") as sleep:
+                    rows = provider.query_json_each_row("SELECT 1", {"symbol": "AAPL"})
+
+        self.assertEqual(rows, [{"ok": 1}])
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][1]["timeout"], 0.45)
+        self.assertEqual(calls[1][1]["params"]["param_symbol"], "AAPL")
+        sleep.assert_called_once()
 
     def test_clickhouse_direct_candles_use_deterministic_latest_source(self):
         rows = [{
@@ -4508,16 +4554,15 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "2020-07-01T00:00:00.000Z",
         ))
 
-    def test_intraday_target_floor_uses_bounded_gapfill_window(self):
-        with mock.patch.dict(os.environ, {"BACKFILL_MAX_GAPFILL_1M_RANGE_HOURS": "336"}):
-            self.assertEqual(
-                target_range_from_for_interval("1m", "2026-06-30T11:15:09.000Z"),
-                "2026-06-16T11:15:09.000Z",
-            )
-            self.assertEqual(
-                target_range_from_for_interval("5m", "2026-06-30T11:15:09.000Z"),
-                "2026-06-16T11:15:09.000Z",
-            )
+    def test_intraday_target_floor_uses_requested_visible_window(self):
+        self.assertEqual(
+            target_range_from_for_interval("1m", "2026-06-30T11:15:09.000Z"),
+            "2026-06-30T03:15:09.000Z",
+        )
+        self.assertEqual(
+            target_range_from_for_interval("5m", "2026-06-30T11:15:09.000Z"),
+            "2026-06-28T19:15:09.000Z",
+        )
 
     def test_clickhouse_daily_snapshot_groups_daily_source_by_calendar_day(self):
         rows = [
@@ -4843,7 +4888,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             with self.assertRaises(LookupError):
                 registry.detail("IBM")
             self.assertEqual(registry.search("ibm", 5), [])
-            self.assertEqual([item["symbol"] for item in registry.search("", 5)], ["BTCUSD"])
+            self.assertEqual([item["symbol"] for item in registry.search("", 5)], ["BTCUSD", "XLV"])
         finally:
             if previous_universe is None:
                 os.environ.pop("ALPACA_UNIVERSE", None)
@@ -4944,7 +4989,6 @@ class MarketDataHardeningContractTest(unittest.TestCase):
     def test_market_data_images_copy_config_to_env_contract_path(self):
         dockerfiles = [
             "Dockerfile.gops-backend",
-            "Dockerfile.gops-backfill-worker",
             "Dockerfile.gops-market-ingestor",
             "Dockerfile.gops-market-processor",
             "Dockerfile.gops-market-storage",
@@ -5091,6 +5135,38 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(payload["newestTimestamp"], "2026-06-25T11:24:00.000Z")
         self.assertFalse(payload["hasMoreAfter"])
         self.assertEqual(payload["candles"][-1]["timestamp"], "2026-06-25T11:24:00.000Z")
+
+    def test_provider_retries_latest_candles_when_default_window_is_after_available_data(self):
+        start = datetime(2026, 7, 2, 14, 0, tzinfo=timezone.utc)
+        candles = [
+            {
+                "timestamp": (start + timedelta(minutes=minute)).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                "open": minute + 1,
+                "high": minute + 2,
+                "low": minute,
+                "close": minute + 1,
+                "volume": 100,
+                "isClosed": True,
+            }
+            for minute in range(65)
+        ]
+        clickhouse = RecordingRangeClickHouseProvider(candles=candles)
+        provider = MarketDataProvider(
+            redis_provider=FakeRedisProvider(),
+            clickhouse_provider=clickhouse,
+        )
+
+        with mock.patch("alfaka.serving.provider.datetime") as fake_datetime:
+            fake_datetime.now.return_value = datetime(2026, 7, 4, 14, 0, tzinfo=timezone.utc)
+            fake_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+            payload = provider.candle_snapshot("AAPL", "1m", 20)
+
+        self.assertEqual(len(payload["candles"]), 20)
+        self.assertEqual(payload["dataStatus"], "ready")
+        self.assertEqual(payload["candles"][-1]["timestamp"], "2026-07-02T15:04:00.000Z")
+        self.assertEqual(len(clickhouse.calls), 2)
+        self.assertIsNotNone(clickhouse.calls[0]["from_time"])
+        self.assertIsNone(clickhouse.calls[1]["from_time"])
 
     def test_provider_merges_redis_live_candle_into_snapshot_without_duplicate_bucket(self):
         closed = {

@@ -49,9 +49,6 @@ normalize_service_key() {
     storage | market-storage | gops-market-storage)
       echo "market-storage"
       ;;
-    backfill | backfill-worker | gops-backfill-worker)
-      echo "backfill-worker"
-      ;;
     order | order-worker | gops-order-worker)
       echo "order-worker"
       ;;

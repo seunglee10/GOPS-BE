@@ -7,7 +7,7 @@ import json
 import os
 import re
 import sys
-from datetime import date, datetime, timedelta, timezone
+from datetime import date
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -144,13 +144,12 @@ def symbol_summaries_for(
     backfill_service: Any | None = None,
     auto_backfill_missing: bool = False,
 ) -> list[dict[str, Any]]:
+    _ = backfill_service, auto_backfill_missing
     provider = get_market_data_provider()
     return [
         build_symbol_summary(
             symbol,
             provider=provider,
-            backfill_service=backfill_service,
-            auto_backfill_missing=auto_backfill_missing,
         )
         for symbol in normalize_symbol_list(symbols, max_items=max_items)
     ]
@@ -244,7 +243,6 @@ def market_symbol_page(
             page_symbols,
             max_items=None,
             backfill_service=backfill_service,
-            auto_backfill_missing=True,
         ),
     }
 
@@ -423,16 +421,11 @@ def build_symbol_summary(
     backfill_service: Any | None = None,
     auto_backfill_missing: bool = False,
 ) -> dict[str, Any]:
+    _ = backfill_service, auto_backfill_missing
     provider = provider or get_market_data_provider()
     symbol = normalize_market_symbol(symbol)
     metadata = _symbol_metadata(provider, symbol)
     price = _resolve_symbol_price(provider, symbol)
-    backfill = None
-    if price["lastPrice"] is None and auto_backfill_missing:
-        backfill = _request_latest_price_backfill(backfill_service, symbol)
-        if backfill:
-            price["priceStatus"] = "loading"
-            price["priceSource"] = "latest-backfill"
 
     change_percent = _change_percent_from_previous_close(
         provider,
@@ -453,8 +446,6 @@ def build_symbol_summary(
         "priceStatus": price.get("priceStatus"),
         "priceUpdatedAt": price.get("priceTimestamp"),
     }
-    if backfill:
-        summary["latestPriceBackfill"] = backfill
     return summary
 
 
@@ -559,34 +550,6 @@ def _safe_write_latest_closed_candle_cache(provider: MarketDataProvider, symbol:
         redis_client.expire(keys.latest_closed_candle(symbol, interval), 86400)
     except Exception:
         return
-
-
-def _request_latest_price_backfill(backfill_service: Any | None, symbol: str) -> dict[str, Any] | None:
-    if backfill_service is None:
-        return None
-    start, end = _latest_daily_backfill_range()
-    try:
-        requested = backfill_service.request_backfill(symbol, "1D", start=start, end=end, mode="default", force=False)
-    except Exception:
-        return None
-    if not isinstance(requested, dict):
-        return None
-    return {
-        "requestId": requested.get("requestId"),
-        "status": requested.get("status"),
-        "deduplicated": requested.get("deduplicated"),
-        "sourceInterval": requested.get("sourceInterval") or requested.get("interval") or "1D",
-    }
-
-
-def _latest_daily_backfill_range() -> tuple[str, str]:
-    lookback_days = int(os.getenv("LATEST_PRICE_BACKFILL_1D_LOOKBACK_DAYS", "30"))
-    end = datetime.now(timezone.utc).replace(second=0, microsecond=0)
-    start = end - timedelta(days=max(1, lookback_days))
-    return (
-        start.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
-        end.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
-    )
 
 
 def _symbol_metadata(provider: MarketDataProvider, symbol: str) -> dict[str, Any]:

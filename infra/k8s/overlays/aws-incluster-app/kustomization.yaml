@@ -3,7 +3,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
-  - ../../base
+  - ../../base/app
   - secretstore-aws-secrets-manager.yaml
   - externalsecret-openai.yaml
   - ingress.yaml
@@ -148,14 +148,6 @@ patches:
           limits:
             cpu: 750m
             memory: 768Mi
-  - target:
-      kind: Job
-    patch: |-
-      - op: add
-        path: /spec/template/spec/nodeSelector
-        value:
-          kubernetes.io/arch: amd64
-
 images:
   - name: YOUR_ECR_REPOSITORY/gops-market-ingestor
     newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-ingestor
@@ -165,9 +157,6 @@ images:
     newTag: 324661e
   - name: YOUR_ECR_REPOSITORY/gops-market-storage
     newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-storage
-    newTag: 324661e
-  - name: YOUR_ECR_REPOSITORY/gops-backfill-worker
-    newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-backfill-worker
     newTag: 324661e
   - name: YOUR_ECR_REPOSITORY/gops-api-server
     newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-api-server

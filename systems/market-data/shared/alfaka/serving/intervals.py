@@ -15,12 +15,12 @@ CHART_INTERVALS = ("1m", "5m", "10m", "1D", "1W", "1M")
 LEGACY_INTERVALS = {"1d": "1D", "1w": "1W", "1mo": "1M", "1MO": "1M", "1month": "1M"}
 
 DEFAULT_VISIBLE_BARS = {
-    "1m": 390,
-    "5m": 390,
-    "10m": 390,
-    "1D": 250,
-    "1W": 260,
-    "1M": 120,
+    "1m": 120,
+    "5m": 120,
+    "10m": 120,
+    "1D": 120,
+    "1W": 104,
+    "1M": 36,
 }
 
 BACKFILL_TARGET_BARS = {

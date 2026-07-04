@@ -387,7 +387,6 @@ services:
       context: .
       dockerfile: infra/docker/Dockerfile.gops-market-storage
     container_name: alfaka-news-backfill
-    env_file: .env
     depends_on:
       kafka-init:
         condition: service_completed_successfully
@@ -615,7 +614,6 @@ services:
       context: .
       dockerfile: infra/docker/Dockerfile.gops-market-storage
     container_name: alfaka-news-intelligence-worker
-    env_file: .env
     depends_on:
       kafka-init:
         condition: service_completed_successfully
@@ -663,7 +661,6 @@ services:
       context: .
       dockerfile: infra/docker/Dockerfile.gops-market-storage
     container_name: alfaka-news-daily-summary-worker
-    env_file: .env
     depends_on:
       kafka-init:
         condition: service_completed_successfully
@@ -704,7 +701,6 @@ services:
       context: .
       dockerfile: infra/docker/Dockerfile.gops-market-storage
     container_name: alfaka-news-intelligence-rebuild
-    env_file: .env
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -728,7 +724,6 @@ services:
       context: .
       dockerfile: infra/docker/Dockerfile.gops-market-storage
     container_name: alfaka-news-daily-summary-rebuild
-    env_file: .env
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -805,52 +800,12 @@ services:
     depends_on:
       gops-backend:
         condition: service_started
-      backfill-worker:
-        condition: service_started
     environment:
       GOPS_API_BASE_URL: "http://gops-backend:8000"
       COVERAGE_REPAIR_SYMBOLS: "${COVERAGE_REPAIR_SYMBOLS:-}"
       COVERAGE_REPAIR_INTERVALS: "${COVERAGE_REPAIR_INTERVALS:-1m,5m,10m,1D,1W,1M}"
       COVERAGE_REPAIR_DRY_RUN: "${COVERAGE_REPAIR_DRY_RUN:-true}"
-      COVERAGE_REPAIR_FORCE: "${COVERAGE_REPAIR_FORCE:-false}"
     command: ["python", "-u", "systems/market-data/jobs/coverage-repair/main.py"]
-    restart: "no"
-    networks:
-      - app_net
-      - data_net
-
-  initial-load:
-    profiles: ["repair"]
-    image: gops-market-processor
-    build:
-      context: .
-      dockerfile: infra/docker/Dockerfile.gops-market-processor
-    container_name: alfaka-initial-load
-    depends_on:
-      redis:
-        condition: service_healthy
-      backfill-worker:
-        condition: service_started
-    environment:
-      REDIS_KEY_PREFIX: "gops:market:on-demand:v1"
-      REDIS_URL: "redis://redis:6379/0"
-      ALFAKA_REQUEST_CONFIG: "systems/market-data/config/market-data-request.json"
-      ALPACA_UNIVERSE: ""
-      ALPACA_UNIVERSE_REGISTRY_PATH: ""
-      INITIAL_LOAD_SYMBOLS: "${INITIAL_LOAD_SYMBOLS:-}"
-      INITIAL_LOAD_INTERVALS: "${INITIAL_LOAD_INTERVALS:-1D}"
-      INITIAL_LOAD_START: "${INITIAL_LOAD_START:-}"
-      INITIAL_LOAD_END: "${INITIAL_LOAD_END:-}"
-      INITIAL_LOAD_DRY_RUN: "${INITIAL_LOAD_DRY_RUN:-true}"
-      INITIAL_LOAD_FORCE: "${INITIAL_LOAD_FORCE:-false}"
-      INITIAL_LOAD_SOURCE_PREFERENCE: "${INITIAL_LOAD_SOURCE_PREFERENCE:-coverage-first}"
-      INITIAL_LOAD_MAX_ENQUEUE: "${INITIAL_LOAD_MAX_ENQUEUE:-100}"
-      INITIAL_LOAD_MAX_BACKLOG: "${INITIAL_LOAD_MAX_BACKLOG:-1000}"
-      HISTORICAL_1M_MINUTES_PER_TRADING_DAY: "${HISTORICAL_1M_MINUTES_PER_TRADING_DAY:-960}"
-      BACKFILL_INITIAL_LOAD_1M_MIN_START: "${BACKFILL_INITIAL_LOAD_1M_MIN_START:-2020-07-01T00:00:00Z}"
-      S3_HISTORICAL_RAW_PARTITION_MODE: "${S3_HISTORICAL_RAW_PARTITION_MODE:-chunk}"
-      S3_HISTORICAL_PROCESSED_MANIFEST_LAYOUT: "${S3_HISTORICAL_PROCESSED_MANIFEST_LAYOUT:-compact}"
-    command: ["python", "-u", "systems/market-data/jobs/initial-load/main.py"]
     restart: "no"
     networks:
       - app_net
@@ -928,7 +883,6 @@ services:
       context: .
       dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
     container_name: alfaka-agent-analysis-worker
-    env_file: .env
     depends_on:
       kafka-init:
         condition: service_completed_successfully
@@ -942,9 +896,12 @@ services:
       AGENT_ANALYSIS_REQUESTS_TOPIC: "agents.analysis-requests.v1"
       AGENT_DEEP_ANALYSIS_REQUESTS_TOPIC: "agents.deep-analysis-requests.v1"
       AGENT_ANALYSIS_RESULTS_TOPIC: "agents.analysis-results.v1"
+      AGENT_QUERY_UNDERSTANDING_EVENTS_TOPIC: "agents.query-understanding-events.v1"
       AGENT_NOTIFICATION_DECISIONS_TOPIC: "agents.notification-decisions.v1"
       AGENT_DLQ_TOPIC: "agents.dlq.v1"
       AGENT_PUBLISH_TO_KAFKA: "true"
+      KAFKA_NEWS_TOPIC: "market.news.alpaca.v1"
+      ACTIVE_CHART_TTL_SECONDS: "${ACTIVE_CHART_TTL_SECONDS:-45}"
       AGENT_REPORT_STORE_BACKEND: "${AGENT_REPORT_STORE_BACKEND:-auto}"
       AGENT_REPORT_TTL_SECONDS: "${AGENT_REPORT_TTL_SECONDS:-43200}"
       AGENT_GRAPH_EXPANSION_CACHE_ENABLED: "${AGENT_GRAPH_EXPANSION_CACHE_ENABLED:-false}"
@@ -962,6 +919,9 @@ services:
       CLICKHOUSE_DATABASE: "market_data"
       CLICKHOUSE_USER: "alfaka"
       CLICKHOUSE_PASSWORD: "alfaka"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      OPENAI_MODEL: "${OPENAI_MODEL:-gpt-5.2}"
+      OPENAI_TIMEOUT_SECONDS: "${OPENAI_TIMEOUT_SECONDS:-20}"
       AGENT_NEWS_CACHE_BACKEND: "auto"
       AGENT_NEWS_CACHE_TTL_SECONDS: "300"
       AGENT_NEWS_NO_DATA_CACHE_TTL_SECONDS: "60"
@@ -986,7 +946,6 @@ services:
       context: .
       dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
     container_name: alfaka-deep-analysis-worker
-    env_file: .env
     depends_on:
       kafka-init:
         condition: service_completed_successfully
@@ -999,9 +958,12 @@ services:
       REDIS_URL: "redis://redis:6379/0"
       AGENT_DEEP_ANALYSIS_REQUESTS_TOPIC: "agents.deep-analysis-requests.v1"
       AGENT_ANALYSIS_RESULTS_TOPIC: "agents.analysis-results.v1"
+      AGENT_QUERY_UNDERSTANDING_EVENTS_TOPIC: "agents.query-understanding-events.v1"
       AGENT_NOTIFICATION_DECISIONS_TOPIC: "agents.notification-decisions.v1"
       AGENT_DLQ_TOPIC: "agents.dlq.v1"
       AGENT_PUBLISH_TO_KAFKA: "true"
+      KAFKA_NEWS_TOPIC: "market.news.alpaca.v1"
+      ACTIVE_CHART_TTL_SECONDS: "${ACTIVE_CHART_TTL_SECONDS:-45}"
       AGENT_REPORT_STORE_BACKEND: "${AGENT_REPORT_STORE_BACKEND:-auto}"
       AGENT_REPORT_TTL_SECONDS: "${AGENT_REPORT_TTL_SECONDS:-43200}"
       AGENT_DEEP_ANALYSIS_ENABLED: "${AGENT_DEEP_ANALYSIS_ENABLED:-false}"
@@ -1019,6 +981,9 @@ services:
       CLICKHOUSE_DATABASE: "market_data"
       CLICKHOUSE_USER: "alfaka"
       CLICKHOUSE_PASSWORD: "alfaka"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      OPENAI_MODEL: "${OPENAI_MODEL:-gpt-5.2}"
+      OPENAI_TIMEOUT_SECONDS: "${OPENAI_TIMEOUT_SECONDS:-20}"
       GRAPHDB_SPARQL_URL: "${GRAPHDB_SPARQL_URL:-http://graphdb:7200/repositories/nasdaq-fibo}"
       GRAPHDB_REPOSITORY: "${GRAPHDB_REPOSITORY:-nasdaq-fibo}"
       AGENT_ONTOLOGY_LIMIT: "${AGENT_ONTOLOGY_LIMIT:-20}"
@@ -1341,6 +1306,8 @@ services:
       CLICKHOUSE_DATABASE: "market_data"
       CLICKHOUSE_USER: "alfaka"
       CLICKHOUSE_PASSWORD: "alfaka"
+      CLICKHOUSE_PROVIDER_TIMEOUT_SECONDS: "${CLICKHOUSE_PROVIDER_TIMEOUT_SECONDS:-8}"
+      CLICKHOUSE_PROVIDER_RETRY_ATTEMPTS: "${CLICKHOUSE_PROVIDER_RETRY_ATTEMPTS:-2}"
       CLICKHOUSE_PROVIDER_ENSURE_SESSION_COLUMNS: "true"
       ALFAKA_PACKAGES_PATH: "/app/systems/market-data/shared"
       REDIS_KEY_PREFIX: "gops:market:on-demand:v1"
@@ -1352,24 +1319,7 @@ services:
       ALPACA_UNIVERSE: "${ALPACA_UNIVERSE:-sp500}"
       ALPACA_UNIVERSE_REGISTRY_PATH: "${ALPACA_UNIVERSE_REGISTRY_PATH:-systems/market-data/config/sp500-universe.json}"
       ALPACA_COLLECTION_SYMBOL_SOURCE: "${ALPACA_COLLECTION_SYMBOL_SOURCE:-universe}"
-      BACKFILL_EXECUTION_MODE: "queue"
-      BACKFILL_STATUS_TTL_SECONDS: "604800"
-      BACKFILL_QUEUE_BACKEND: "streams"
-      BACKFILL_STREAM_GROUP: "backfill-workers"
-      BACKFILL_STREAM_RECLAIM_IDLE_MS: "600000"
-      BACKFILL_STREAM_MAXLEN: "100000"
-      BACKFILL_MAX_ATTEMPTS: "3"
-      BACKFILL_ACTIVE_STALE_SECONDS: "1800"
-      BACKFILL_MAX_GAPFILL_1M_RANGE_HOURS: "336"
-      BACKFILL_GAPFILL_DETECT_INTERNAL: "true"
-      BACKFILL_GAPFILL_MAX_DETECT_DAYS: "7"
-      BACKFILL_GAPFILL_TIMESTAMP_LIMIT: "200000"
-      BACKFILL_INITIAL_LOAD_1M_CHUNK_DAYS: "5"
-      BACKFILL_INITIAL_LOAD_1D_CHUNK_DAYS: "370"
-      BACKFILL_INITIAL_LOAD_1M_MIN_START: "2020-07-01T00:00:00Z"
-      BACKFILL_INITIAL_LOAD_MAX_ENQUEUE: "100"
-      BACKFILL_INITIAL_LOAD_MAX_BACKLOG: "1000"
-      BACKFILL_DEFAULT_LOOKBACK_HOURS: "8760"
+      ON_DEMAND_FILL_TIMEOUT_SECONDS: "${ON_DEMAND_FILL_TIMEOUT_SECONDS:-8}"
       MARKET_CALENDAR_PROVIDER: "configured-nyse"
       MARKET_TIMEZONE: "America/New_York"
       MARKET_OPEN_TIME: "09:30"
@@ -1522,85 +1472,6 @@ services:
     volumes:
       - kis_token_cache:/kis-cache
     networks:
-      - data_net
-
-  backfill-worker:
-    image: gops-backfill-worker
-    build:
-      context: .
-      dockerfile: infra/docker/Dockerfile.gops-backfill-worker
-    container_name: alfaka-backfill-worker
-    depends_on:
-      redis:
-        condition: service_healthy
-      clickhouse:
-        condition: service_healthy
-    environment:
-      REDIS_KEY_PREFIX: "gops:market:on-demand:v1"
-      REDIS_URL: "redis://redis:6379/0"
-      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
-      CLICKHOUSE_DATABASE: "market_data"
-      CLICKHOUSE_USER: "alfaka"
-      CLICKHOUSE_PASSWORD: "alfaka"
-      CLICKHOUSE_ENSURE_SESSION_COLUMNS: "true"
-      BACKFILL_EXECUTION_MODE: "queue"
-      BACKFILL_STATUS_TTL_SECONDS: "604800"
-      BACKFILL_QUEUE_BACKEND: "streams"
-      BACKFILL_STREAM_GROUP: "backfill-workers"
-      BACKFILL_STREAM_RECLAIM_IDLE_MS: "600000"
-      BACKFILL_STREAM_MAXLEN: "100000"
-      BACKFILL_MAX_ATTEMPTS: "3"
-      BACKFILL_ACTIVE_STALE_SECONDS: "1800"
-      BACKFILL_MAX_GAPFILL_1M_RANGE_HOURS: "336"
-      BACKFILL_GAPFILL_DETECT_INTERNAL: "true"
-      BACKFILL_GAPFILL_MAX_DETECT_DAYS: "7"
-      BACKFILL_GAPFILL_TIMESTAMP_LIMIT: "200000"
-      BACKFILL_INITIAL_LOAD_1M_CHUNK_DAYS: "5"
-      BACKFILL_INITIAL_LOAD_1D_CHUNK_DAYS: "370"
-      BACKFILL_INITIAL_LOAD_1M_MIN_START: "2020-07-01T00:00:00Z"
-      BACKFILL_INITIAL_LOAD_MAX_ENQUEUE: "100"
-      BACKFILL_INITIAL_LOAD_MAX_BACKLOG: "1000"
-      BACKFILL_WORKER_POLL_SECONDS: "5"
-      BACKFILL_DEFAULT_LOOKBACK_HOURS: "8760"
-      MARKET_CALENDAR_PROVIDER: "configured-nyse"
-      MARKET_TIMEZONE: "America/New_York"
-      MARKET_OPEN_TIME: "09:30"
-      MARKET_CLOSE_TIME: "16:00"
-      MARKET_CLOSED_DATES: "${MARKET_CLOSED_DATES:-}"
-      MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS: "${MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS:-true}"
-      MARKET_EARLY_CLOSES: "${MARKET_EARLY_CLOSES:-}"
-      ALFAKA_REQUEST_CONFIG: "systems/market-data/config/market-data-request.json"
-      ALPACA_UNIVERSE: "${ALPACA_UNIVERSE:-sp500}"
-      ALPACA_UNIVERSE_REGISTRY_PATH: "${ALPACA_UNIVERSE_REGISTRY_PATH:-systems/market-data/config/sp500-universe.json}"
-      AWS_REGION: "${AWS_REGION:-ap-northeast-2}"
-      AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-ap-northeast-2}"
-      AWS_EC2_METADATA_DISABLED: "${AWS_EC2_METADATA_DISABLED:-true}"
-      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
-      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
-      AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
-      AWS_PROFILE: "${AWS_PROFILE:-default}"
-      AWS_SDK_LOAD_CONFIG: "${AWS_SDK_LOAD_CONFIG:-1}"
-      APCA_API_KEY_ID: "${APCA_API_KEY_ID:-}"
-      APCA_API_SECRET_KEY: "${APCA_API_SECRET_KEY:-}"
-      ALPACA_CREDENTIAL_SOURCE: "${ALPACA_CREDENTIAL_SOURCE:-aws-secrets-manager}"
-      ALPACA_SECRET_NAME: "${ALPACA_SECRET_NAME:-}"
-      S3_ENDPOINT_URL: "${DOCKER_S3_ENDPOINT_URL:-}"
-      S3_BUCKET: "${S3_BUCKET:-gops-market-data-<aws-account-id>-ap-northeast-2-an}"
-      S3_RAW_PREFIX: "${S3_RAW_PREFIX:-market-data/rebuild-20260702-lazy-v1/raw/alpaca}"
-      S3_FINAL_PREFIX: "${S3_FINAL_PREFIX:-market-data/rebuild-20260702-lazy-v1/final}"
-      S3_MANIFEST_PREFIX: "${S3_MANIFEST_PREFIX:-market-data/rebuild-20260702-lazy-v1/manifest}"
-      S3_PROCESSED_FORMAT: "parquet"
-      S3_HISTORICAL_RAW_PARTITION_MODE: "${S3_HISTORICAL_RAW_PARTITION_MODE:-chunk}"
-      S3_HISTORICAL_PROCESSED_MANIFEST_LAYOUT: "${S3_HISTORICAL_PROCESSED_MANIFEST_LAYOUT:-compact}"
-      HISTORICAL_ADJUSTMENT: "split"
-      ALLOW_NON_CANONICAL_HISTORICAL_ADJUSTMENT: "false"
-      S3_REQUIRE_CANONICAL_PROCESSED_CANDLES: "true"
-    command: ["python", "-u", "systems/market-data/pods/backfill-worker/main.py"]
-    restart: unless-stopped
-    volumes:
-      - ${HOME}/.aws:/root/.aws:ro
-    networks:
-      - app_net
       - data_net
 
   gops-frontend:

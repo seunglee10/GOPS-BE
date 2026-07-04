@@ -52,7 +52,7 @@ systems/<system>/
 
 ```text
 systems/api-server/   FastAPI chart/order/WebSocket gateway
-systems/market-data/  Alpaca ingest, processing, storage, backfill, serving helpers
+systems/market-data/  Alpaca ingest, processing, storage, on-demand fill, serving helpers
 systems/order/        KIS demo order domain, outbox, adapter, jobs
 ```
 

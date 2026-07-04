@@ -69,7 +69,6 @@ flowchart LR
     S3Sink["pod: processed-s3-sink"]
     RawS3Archive["pod: raw-s3-archive"]
     CHLoader["pod: clickhouse-loader"]
-    Backfill["pod: backfill-worker"]
     Registry["job: symbol-registry-sync"]
     CoverageRepair["job: coverage-repair"]
     MarketShared["shared: alfaka.*"]
@@ -121,10 +120,6 @@ flowchart LR
   AlertPublisher --> Redis
   S3Sink --> S3
   CHLoader --> ClickHouse
-  Backfill --> Redis
-  Backfill --> S3
-  Backfill --> ClickHouse
-  Backfill --> Secrets
   Registry --> Redis
   Registry --> ClickHouse
 
@@ -149,7 +144,7 @@ Frontend chart request
   -> API Redis latest 120 check
   -> ClickHouse confirmed history
   -> S3 final/manifest evidence
-  -> Alpaca historical backfill only after all stores miss
+  -> Alpaca historical on-demand fill only after all stores miss
 ```
 
 Realtime data is feed-guarded and symbol-keyed:
@@ -163,7 +158,7 @@ SIP only 04:00-20:00 ET / BOATS only 20:00-04:00 ET
 ```
 
 Raw Alpaca payload archives may be written to S3 for backup only. Raw archives
-must not participate in chart serving, coverage checks, backfill decisions, or
+must not participate in chart serving, coverage checks, fill decisions, or
 ClickHouse loading unless a future explicit raw-replay pipeline is designed.
 
 ## Platform Staging

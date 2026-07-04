@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -9,8 +8,6 @@ from zoneinfo import ZoneInfo
 from fastapi import HTTPException
 
 from alfaka.backfill.gapfill import TradingCalendar
-from alfaka.backfill.runner import BackfillRunner
-from alfaka.backfill.status import ACTIVE_STATUSES, RedisBackfillStore
 from alfaka.serving.intervals import (
     backfill_target_bars,
     interval_seconds,
@@ -22,13 +19,14 @@ from alfaka.serving.intervals import (
 
 
 logger = logging.getLogger(__name__)
+ACTIVE_STATUSES: set[str] = set()
 
 
 class BackfillService:
     def __init__(self, provider=None, store=None, runner_factory=None):
         self.provider = provider
-        self.store = store or RedisBackfillStore(redis_client=getattr(getattr(provider, "redis_provider", None), "redis", None))
-        self.runner_factory = runner_factory or (lambda: BackfillRunner(store=self.store))
+        self.store = store
+        self.runner_factory = runner_factory
 
     def snapshot_metadata(self, symbol: str, interval: str, payload_or_has_candles: Any) -> dict[str, Any]:
         interval = normalize_chart_interval(interval)
@@ -41,6 +39,8 @@ class BackfillService:
             available_from = payload_or_has_candles.get("availableFrom")
             available_to = payload_or_has_candles.get("availableTo")
             target_range_from = payload_or_has_candles.get("targetRangeFrom")
+            target_range_to = payload_or_has_candles.get("targetRangeTo")
+            missing_ranges = payload_or_has_candles.get("missingRanges") or []
             invalid_row_count = int(payload_or_has_candles.get("invalidRowCount") or 0)
             candles = payload_or_has_candles.get("candles") or []
             has_more_before = payload_or_has_candles.get("hasMoreBefore")
@@ -52,25 +52,29 @@ class BackfillService:
             available_from = None
             available_to = None
             target_range_from = None
+            target_range_to = None
+            missing_ranges = []
             invalid_row_count = 0
             candles = []
             has_more_before = None
 
-        latest = self._latest_status(symbol, source_interval)
-        backfill_status = latest.get("status") if latest else "not_requested"
+        latest = None
+        backfill_status = "not_requested"
 
         renderability = renderability_payload(interval, source_interval, candles, returned_count, stored_count)
         complete = complete_coverage(
             returned_count=returned_count,
             invalid_row_count=invalid_row_count,
             available_from=available_from,
+            available_to=available_to,
             target_range_from=target_range_from,
+            target_range_to=target_range_to,
             stored_count=stored_count,
             target_stored_count=target_stored_count,
             backfill_status=backfill_status,
             renderability=renderability,
+            missing_ranges=missing_ranges,
         )
-        can_backfill = can_request_backfill(backfill_status, complete)
         target_boundary = target_boundary_reached(
             has_more_before=has_more_before,
             returned_count=returned_count,
@@ -84,22 +88,20 @@ class BackfillService:
                 message=None,
                 repair_status=repair_status,
                 source_interval=source_interval,
-                backfill_status=backfill_status,
                 requested_limit=requested_limit,
                 returned_count=returned_count,
                 stored_count=stored_count,
                 target_stored_count=target_stored_count,
                 target_range_from=target_range_from,
+                target_range_to=target_range_to,
                 available_from=available_from,
                 available_to=available_to,
                 invalid_row_count=invalid_row_count,
                 renderability=renderability,
+                missing_ranges=missing_ranges,
             )
             return {
                 "dataStatus": "ready",
-                "backfillStatus": backfill_status,
-                "repairStatus": repair_status,
-                "canBackfill": False,
                 "sourceInterval": source_interval,
                 "message": None,
                 "coverage": coverage,
@@ -143,22 +145,20 @@ class BackfillService:
                 message=message,
                 repair_status=repair_status,
                 source_interval=source_interval,
-                backfill_status=backfill_status,
                 requested_limit=requested_limit,
                 returned_count=returned_count,
                 stored_count=stored_count,
                 target_stored_count=target_stored_count,
                 target_range_from=target_range_from,
+                target_range_to=target_range_to,
                 available_from=available_from,
                 available_to=available_to,
                 invalid_row_count=invalid_row_count,
                 renderability=renderability,
+                missing_ranges=missing_ranges,
             )
             return {
                 "dataStatus": data_status,
-                "backfillStatus": backfill_status,
-                "repairStatus": repair_status,
-                "canBackfill": False if target_boundary else can_backfill,
                 "sourceInterval": source_interval,
                 "message": message,
                 "coverage": coverage,
@@ -166,13 +166,8 @@ class BackfillService:
 
         message = latest.get("error") if latest and latest.get("status") in {"failed", "unavailable"} else None
         if not message:
-            if backfill_status in ACTIVE_STATUSES:
-                message = f"Preparing {source_interval} candle data for {symbol}."
-            elif backfill_status == "succeeded":
-                message = f"Backfill completed, but no stored {source_interval} candles were found for {symbol}."
-            else:
-                message = f"No stored {source_interval} candles were found for {symbol}."
-        data_status = "empty" if can_backfill else "error" if backfill_status in {"failed", "unavailable"} else "empty"
+            message = f"No stored {source_interval} candles were found for {symbol}."
+        data_status = "empty"
         repair_status = repair_status_for(
             complete=complete,
             backfill_status=backfill_status,
@@ -186,22 +181,20 @@ class BackfillService:
             message=message,
             repair_status=repair_status,
             source_interval=source_interval,
-            backfill_status=backfill_status,
             requested_limit=requested_limit,
             returned_count=returned_count,
             stored_count=stored_count,
             target_stored_count=target_stored_count,
             target_range_from=target_range_from,
+            target_range_to=target_range_to,
             available_from=available_from,
             available_to=available_to,
             invalid_row_count=invalid_row_count,
             renderability=renderability,
+            missing_ranges=missing_ranges,
         )
         return {
             "dataStatus": data_status,
-            "backfillStatus": backfill_status,
-            "repairStatus": repair_status,
-            "canBackfill": can_backfill,
             "sourceInterval": source_interval,
             "message": message,
             "coverage": coverage,
@@ -216,62 +209,25 @@ class BackfillService:
         mode: str = "default",
         force: bool = False,
     ) -> dict[str, Any]:
-        interval = normalize_chart_interval(interval)
-        source_interval = source_interval_for(interval)
-        execution_mode = resolve_execution_mode(mode)
-        try:
-            record, deduplicated = self.store.create_request(symbol, source_interval, start=start, end=end, mode=execution_mode, force=force)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except Exception as exc:
-            raise HTTPException(status_code=503, detail=f"Backfill status store failed: {exc}") from exc
-
-        if not deduplicated and execution_mode == "sync-dev":
-            record = self.runner_factory().run(record)
-
-        return summarize_status(record, deduplicated=deduplicated, requested_interval=interval, source_interval=source_interval)
+        raise HTTPException(
+            status_code=410,
+            detail="Backfill queue endpoints were replaced by on-demand fill in GET /api/charts/candles.",
+        )
 
     def get_status(self, symbol: str, interval: str, request_id: str | None = None) -> dict[str, Any]:
-        interval = normalize_chart_interval(interval)
-        source_interval = source_interval_for(interval)
-        try:
-            record = self.store.get_status(request_id) if request_id else self.store.latest_status(symbol, source_interval)
-        except Exception as exc:
-            raise HTTPException(status_code=503, detail=f"Backfill status store failed: {exc}") from exc
-        if not record:
-            return {
-                "symbol": symbol,
-                "interval": interval,
-                "requestId": None,
-                "status": "not_requested",
-                "range": None,
-                "sourceInterval": source_interval,
-            }
-        return summarize_status(record, requested_interval=interval, source_interval=source_interval)
+        raise HTTPException(
+            status_code=410,
+            detail="Backfill status was replaced by per-request on-demand fill trace in GET /api/charts/candles.",
+        )
 
     def queue_metrics(self) -> dict[str, Any]:
-        try:
-            return self.store.queue_metrics()
-        except Exception as exc:
-            raise HTTPException(status_code=503, detail=f"Backfill queue metrics failed: {exc}") from exc
+        raise HTTPException(
+            status_code=410,
+            detail="Backfill queue metrics were replaced by per-request on-demand fill trace.",
+        )
 
     def _latest_status(self, symbol: str, interval: str) -> dict[str, Any] | None:
-        interval = normalize_chart_interval(interval)
-        try:
-            return self.store.latest_status(symbol, interval)
-        except Exception:
-            logger.warning("Backfill status lookup failed for %s %s.", symbol, interval, exc_info=True)
-            return None
-
-
-def resolve_execution_mode(mode: str | None) -> str:
-    requested = (mode or "default").strip()
-    allow_requested_mode = os.getenv("BACKFILL_ALLOW_REQUESTED_MODE", "false").lower() in {"1", "true", "yes"}
-    allowed_modes = {"queue", "sync-dev"}
-    if allow_requested_mode and requested in allowed_modes:
-        return requested
-    configured = os.getenv("BACKFILL_EXECUTION_MODE", "queue")
-    return configured if configured in allowed_modes else "queue"
+        return None
 
 
 def summarize_status(
@@ -331,7 +287,7 @@ def repair_status_for(
     if backfill_status in {"failed", "unavailable"}:
         return "gapfill_failed"
     if renderability.get("renderable") and returned_count >= requested_limit:
-        return "history_preload_required"
+        return "gapfill_required"
     return "gapfill_required"
 
 
@@ -342,16 +298,17 @@ def coverage_payload(
     message: str | None,
     repair_status: str,
     source_interval: str,
-    backfill_status: str,
     requested_limit: int,
     returned_count: int,
     stored_count: int,
     target_stored_count: int,
     target_range_from: str | None,
+    target_range_to: str | None,
     available_from: str | None,
     available_to: str | None,
     invalid_row_count: int,
     renderability: dict[str, Any],
+    missing_ranges: list[dict[str, Any]],
 ) -> dict[str, Any]:
     return {
         "state": state,
@@ -359,15 +316,16 @@ def coverage_payload(
         "message": message,
         "repairStatus": repair_status,
         "sourceInterval": source_interval,
-        "backfillStatus": backfill_status,
         "requestedLimit": requested_limit,
         "returnedCount": returned_count,
         "storedCandleCount": stored_count,
         "targetStoredCount": target_stored_count,
         "targetRangeFrom": target_range_from,
+        "targetRangeTo": target_range_to,
         "availableFrom": available_from,
         "availableTo": available_to,
         "invalidRowCount": invalid_row_count,
+        "missingRanges": missing_ranges,
         **renderability,
     }
 
@@ -377,29 +335,37 @@ def complete_coverage(
     returned_count: int,
     invalid_row_count: int,
     available_from: str | None,
+    available_to: str | None,
     target_range_from: str | None,
+    target_range_to: str | None,
     stored_count: int,
     target_stored_count: int,
     backfill_status: str,
     renderability: dict[str, Any],
+    missing_ranges: list[dict[str, Any]],
 ) -> bool:
     if returned_count <= 0 or invalid_row_count > 0:
         return False
+    if missing_ranges:
+        return False
 
-    has_range_coverage = bool(available_from and target_range_from and str(available_from) <= str(target_range_from))
+    has_range_coverage = range_start_covered(available_from, target_range_from) and range_end_covered(available_to, target_range_to)
     has_count_coverage = stored_count >= target_stored_count
     if has_range_coverage and has_count_coverage:
         return bool(renderability.get("renderable"))
 
     # Historical stock bars skip weekends/holidays and may begin at the next
     # trading session after the requested calendar boundary. Treat a dense,
-    # renderable completed backfill as complete when it is only slightly short
-    # of the naive calendar target.
-    if backfill_status != "succeeded" or not renderability.get("renderable"):
+    # renderable stored window as complete when it is only slightly short of
+    # the naive calendar target.
+    _ = backfill_status
+    if not renderability.get("renderable"):
         return False
     if stored_count < int(target_stored_count * 0.98):
         return False
     if not within_start_tolerance(available_from, target_range_from):
+        return False
+    if not within_end_tolerance(available_to, target_range_to):
         return False
     return True
 
@@ -609,12 +575,38 @@ def max_renderable_span_seconds(interval: str, returned_count: int) -> int | Non
     return int(interval_seconds(interval) * max(1, returned_count - 1) * factor)
 
 
+def range_start_covered(available_from: str | None, target_range_from: str | None) -> bool:
+    if not target_range_from:
+        return True
+    available = parse_time(available_from)
+    target = parse_time(target_range_from)
+    return bool(available and target and available <= target)
+
+
+def range_end_covered(available_to: str | None, target_range_to: str | None) -> bool:
+    if not target_range_to:
+        return True
+    available = parse_time(available_to)
+    target = parse_time(target_range_to)
+    return bool(available and target and available >= target)
+
+
 def within_start_tolerance(available_from: str | None, target_range_from: str | None) -> bool:
     available = parse_time(available_from)
     target = parse_time(target_range_from)
     if not available or not target:
         return False
     return (available - target).total_seconds() <= 7 * 24 * 60 * 60
+
+
+def within_end_tolerance(available_to: str | None, target_range_to: str | None) -> bool:
+    if not target_range_to:
+        return True
+    available = parse_time(available_to)
+    target = parse_time(target_range_to)
+    if not available or not target:
+        return False
+    return (target - available).total_seconds() <= 7 * 24 * 60 * 60
 
 
 def parse_time(value: Any) -> datetime | None:

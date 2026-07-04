@@ -31,90 +31,6 @@ patches:
         name: alfaka-openai-secret
         namespace: alfaka-market-data
       $patch: delete
-  - target:
-      group: batch
-      version: v1
-      kind: Job
-      name: order-migrations
-    patch: |-
-      apiVersion: batch/v1
-      kind: Job
-      metadata:
-        name: order-migrations
-        namespace: alfaka-market-data
-      $patch: delete
-  - target:
-      group: batch
-      version: v1
-      kind: Job
-      name: order-reconciler
-    patch: |-
-      apiVersion: batch/v1
-      kind: Job
-      metadata:
-        name: order-reconciler
-        namespace: alfaka-market-data
-      $patch: delete
-  - target:
-      group: batch
-      version: v1
-      kind: Job
-      name: alfaka-coverage-repair
-    patch: |-
-      apiVersion: batch/v1
-      kind: Job
-      metadata:
-        name: alfaka-coverage-repair
-        namespace: alfaka-market-data
-      $patch: delete
-  - target:
-      group: batch
-      version: v1
-      kind: Job
-      name: alfaka-symbol-registry-sync
-    patch: |-
-      apiVersion: batch/v1
-      kind: Job
-      metadata:
-        name: alfaka-symbol-registry-sync
-        namespace: alfaka-market-data
-      $patch: delete
-  - target:
-      group: batch
-      version: v1
-      kind: Job
-      name: alfaka-initial-load
-    patch: |-
-      apiVersion: batch/v1
-      kind: Job
-      metadata:
-        name: alfaka-initial-load
-        namespace: alfaka-market-data
-      $patch: delete
-  - target:
-      group: batch
-      version: v1
-      kind: Job
-      name: alfaka-news-backfill
-    patch: |-
-      apiVersion: batch/v1
-      kind: Job
-      metadata:
-        name: alfaka-news-backfill
-        namespace: alfaka-market-data
-      $patch: delete
-  - target:
-      group: batch
-      version: v1
-      kind: Job
-      name: alfaka-news-intelligence-rebuild
-    patch: |-
-      apiVersion: batch/v1
-      kind: Job
-      metadata:
-        name: alfaka-news-intelligence-rebuild
-        namespace: alfaka-market-data
-      $patch: delete
 
 images:
   - name: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-ingestor
@@ -122,8 +38,6 @@ images:
   - name: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-processor
     newTag: "ci-placeholder"
   - name: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-storage
-    newTag: "ci-placeholder"
-  - name: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-backfill-worker
     newTag: "ci-placeholder"
   - name: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-api-server
     newTag: "ci-placeholder"

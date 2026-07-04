@@ -121,8 +121,6 @@ def runtime_config_warnings() -> list[str]:
         warnings.append("clickhouse_canonical_filter_disabled")
     if not env_bool("S3_REQUIRE_CANONICAL_PROCESSED_CANDLES", default=True):
         warnings.append("s3_canonical_manifest_filter_disabled")
-    if os.getenv("BACKFILL_INITIAL_LOAD_1M_MIN_START") not in {None, "", "2020-07-01T00:00:00Z"}:
-        warnings.append("1m_lazy_floor_not_6y")
     profiles = set(configured_feed_profiles())
     allowed_profiles = {"sip", "boats", "overnight", "test", "crypto-us"}
     if any(profile not in allowed_profiles for profile in profiles):

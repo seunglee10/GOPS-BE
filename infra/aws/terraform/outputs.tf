@@ -25,10 +25,6 @@ output "market_storage_ecr_repository_url" {
   value = aws_ecr_repository.custom_images["market_storage"].repository_url
 }
 
-output "backfill_worker_ecr_repository_url" {
-  value = aws_ecr_repository.custom_images["backfill_worker"].repository_url
-}
-
 output "order_worker_ecr_repository_url" {
   value = aws_ecr_repository.custom_images["order_worker"].repository_url
 }

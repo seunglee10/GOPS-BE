@@ -1,4 +1,4 @@
-"""Audit chart coverage through the API and queue missing backfills."""
+"""Audit chart coverage through the API on-demand fill path."""
 
 from __future__ import annotations
 
@@ -15,42 +15,28 @@ def main() -> None:
     base_url = os.getenv("GOPS_API_BASE_URL", "http://gops-backend:8000").rstrip("/")
     symbols = parse_symbols(os.getenv("COVERAGE_REPAIR_SYMBOLS") or os.getenv("ALPACA_SYMBOLS"))
     intervals = parse_csv(os.getenv("COVERAGE_REPAIR_INTERVALS")) or list(DEFAULT_INTERVALS)
-    force = os.getenv("COVERAGE_REPAIR_FORCE", "false").lower() in {"1", "true", "yes"}
     dry_run = os.getenv("COVERAGE_REPAIR_DRY_RUN", "false").lower() in {"1", "true", "yes"}
 
     if not symbols:
         raise SystemExit("COVERAGE_REPAIR_SYMBOLS or ALPACA_SYMBOLS is required.")
 
     report = []
-    queued = 0
     failures = 0
     for symbol in symbols:
         for interval in intervals:
             status = fetch_snapshot_status(base_url, symbol, interval)
             should_repair = not is_renderable(status)
-            action = "ok"
-            backfills = []
+            action = "ok" if not should_repair else "needs_attention"
             repair_ranges = recommended_repair_ranges(status)
-            if should_repair and status["canBackfill"]:
-                action = "would_queue" if dry_run else "queued"
-                if not dry_run:
-                    for repair_range in repair_ranges:
-                        backfills.append(request_backfill(
-                            base_url,
-                            symbol,
-                            interval,
-                            force=force,
-                            start=repair_range.get("start"),
-                            end=repair_range.get("end"),
-                        ))
-                    queued += len(backfills)
-            elif should_repair:
-                action = "needs_attention"
+            if should_repair:
+                fill_status = (status.get("fill") or {}).get("status") if isinstance(status.get("fill"), dict) else None
+                if fill_status in {"filled", "partial", "timeout", "empty", "failed"}:
+                    action = f"fill_{fill_status}"
                 failures += 1
-            report.append({**status, "action": action, "repairRanges": repair_ranges, "backfills": backfills})
+            report.append({**status, "action": action, "repairRanges": repair_ranges})
 
-    print(json.dumps({"queued": queued, "failures": failures, "items": report}, ensure_ascii=False, indent=2), flush=True)
-    if failures:
+    print(json.dumps({"dryRun": dry_run, "failures": failures, "items": report}, ensure_ascii=False, indent=2), flush=True)
+    if failures and not dry_run:
         raise SystemExit(1)
 
 
@@ -62,27 +48,16 @@ def fetch_snapshot_status(base_url: str, symbol: str, interval: str) -> dict[str
         "interval": interval,
         "sourceInterval": payload.get("sourceInterval"),
         "dataStatus": payload.get("dataStatus"),
-        "backfillStatus": payload.get("backfillStatus"),
-        "canBackfill": bool(payload.get("canBackfill")),
         "candleCount": len(payload.get("candles") or []),
         "coverageState": (payload.get("coverage") or {}).get("state"),
         "coverageReason": (payload.get("coverage") or {}).get("reasonCode"),
         "coverageRenderable": (payload.get("coverage") or {}).get("renderable"),
-        "repairStatus": payload.get("repairStatus"),
+        "repairStatus": (payload.get("coverage") or {}).get("repairStatus"),
+        "fill": payload.get("fill"),
         "targetRangeFrom": (payload.get("coverage") or {}).get("targetRangeFrom") or payload.get("targetRangeFrom"),
         "availableFrom": (payload.get("coverage") or {}).get("availableFrom") or payload.get("availableFrom"),
         "availableTo": (payload.get("coverage") or {}).get("availableTo") or payload.get("availableTo"),
     }
-
-
-def request_backfill(base_url: str, symbol: str, interval: str, *, force: bool, start: str | None = None, end: str | None = None) -> dict[str, object]:
-    payload = {"symbol": symbol, "interval": interval, "force": force}
-    if start:
-        payload["start"] = start
-    if end:
-        payload["end"] = end
-    body = json.dumps(payload).encode("utf-8")
-    return request_json("POST", f"{base_url}/api/charts/backfill", body=body)
 
 
 def request_json(method: str, url: str, body: bytes | None = None) -> dict[str, object]:

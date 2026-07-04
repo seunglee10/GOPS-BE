@@ -114,27 +114,22 @@ select_services_for_path() {
       add_service market-ingestor
       add_service market-processor
       add_service market-storage
-      add_service backfill-worker
       ;;
     systems/market-data/shared/*)
       add_service backend
       add_service market-ingestor
       add_service market-processor
       add_service market-storage
-      add_service backfill-worker
       add_service agent-orchestrator
       ;;
     systems/market-data/pods/market-ingestor/* | systems/market-data/pods/news-ingestor/*)
       add_service market-ingestor
       ;;
-    systems/market-data/pods/market-processor/* | systems/market-data/pods/feed-session-controller/* | systems/market-data/pods/subscription-controller/* | systems/market-data/jobs/symbol-registry-sync/* | systems/market-data/jobs/coverage-repair/* | systems/market-data/jobs/initial-load/*)
+    systems/market-data/pods/market-processor/* | systems/market-data/pods/feed-session-controller/* | systems/market-data/pods/subscription-controller/* | systems/market-data/jobs/symbol-registry-sync/* | systems/market-data/jobs/coverage-repair/*)
       add_service market-processor
       ;;
     systems/market-data/pods/s3-sink/* | systems/market-data/pods/clickhouse-loader/* | systems/market-data/pods/news-intelligence-worker/* | systems/market-data/jobs/news-backfill/* | systems/market-data/jobs/news-intelligence-rebuild/*)
       add_service market-storage
-      ;;
-    systems/market-data/pods/backfill-worker/*)
-      add_service backfill-worker
       ;;
     systems/order/shared/*)
       add_service backend
@@ -149,9 +144,6 @@ select_services_for_path() {
       ;;
     infra/docker/Dockerfile.gops-agent-orchestrator)
       add_service agent-orchestrator
-      ;;
-    infra/docker/Dockerfile.gops-backfill-worker)
-      add_service backfill-worker
       ;;
     infra/docker/Dockerfile.gops-backend)
       add_service backend

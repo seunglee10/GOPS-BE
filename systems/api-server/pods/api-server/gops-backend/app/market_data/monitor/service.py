@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from app.market_data.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
 from app.services.alfaka_market_data import get_market_data_provider, normalize_market_symbol
 from alfaka.common.redis_keys import RedisKeyBuilder
+from alfaka.serving.intervals import DEFAULT_VISIBLE_BARS
 
 
 ALLOWED_LAYERS = {"trades", "quotes", "events", "candles"}
@@ -25,13 +26,13 @@ class MarketDataMonitorService:
         return {
             "sourceOfTruth": "docs/CHART_DATA_REBUILD_PLAN.md",
             "mode": "on-demand",
-            "redisCandleCacheLimit": 120,
+            "redisCandleCacheLimit": dict(DEFAULT_VISIBLE_BARS),
             "quotesPersistence": "redis-websocket-s3-clickhouse",
             "rawS3Role": "backup-only",
             "feedPolicy": "sip-04:00-20:00-ET-boats-20:00-04:00-ET-exclusive",
             "subscriptions": self.subscriptions(),
             "feed": self.feed_state(),
-            "backfill": self.backfill(),
+            "fill": self.fill(),
         }
 
     def redis_state(self) -> dict[str, Any]:
@@ -80,11 +81,9 @@ class MarketDataMonitorService:
             ],
             "manifestPrefixes": [
                 "market-data/rebuild-20260702-lazy-v1/manifest/candles/interval={interval}/symbol={symbol}/objects/{digest}.json",
-                "market-data/rebuild-20260702-lazy-v1/manifest/backfill/request={requestId}.json",
             ],
             "rawBackupPrefixes": [
                 "market-data/rebuild-20260702-lazy-v1/raw/alpaca/source=alpaca/channel={channel}/symbol={symbol}/year=YYYY/month=MM/day=DD/*.jsonl",
-                "market-data/rebuild-20260702-lazy-v1/raw/alpaca/source=alpaca/channel={bars|daily-bars}/symbol={symbol}/request={requestId}/*.jsonl",
             ],
             "rawBackupParticipatesInReadPath": False,
         }
@@ -97,7 +96,6 @@ class MarketDataMonitorService:
                 "market_data.quote_ticks",
                 "market_data.market_events",
                 "market_data.market_status_events",
-                "market_data.backfill_jobs",
                 "market_data.storage_object_audit",
                 "market_data.load_audit",
             ],
@@ -105,16 +103,17 @@ class MarketDataMonitorService:
             "quotesPersistence": "stored-in-market_data.quote_ticks",
         }
 
-    def backfill(self) -> dict[str, Any]:
-        stream = self.keys.backfill_stream()
-        dead_letter = self.keys.backfill_dead_letter_stream()
+    def fill(self) -> dict[str, Any]:
         return {
-            "stream": stream,
-            "deadLetter": dead_letter,
-            "queue": self._stream_length(stream),
-            "deadLetterQueue": self._stream_length(dead_letter),
+            "mode": "bounded-sync",
+            "timeoutSeconds": 8,
             "sourceIntervals": {"1m": ["1m", "5m", "10m"], "1D": ["1D", "1W", "1M"]},
-            "coverageOrder": ["redis", "clickhouse", "s3-manifest", "alpaca-backfill"],
+            "coverageOrder": ["redis", "clickhouse", "s3-final-manifest", "alpaca-historical"],
+            "deprecatedEndpoints": [
+                "POST /api/charts/backfill",
+                "GET /api/charts/backfill/status",
+                "GET /api/charts/backfill/queue",
+            ],
         }
 
     def feed_state(self) -> dict[str, Any]:
@@ -243,12 +242,6 @@ class MarketDataMonitorService:
         method = getattr(self.redis, "xadd", None) if self.redis else None
         if callable(method):
             method(key, fields)
-
-    def _stream_length(self, key: str) -> int | None:
-        method = getattr(self.redis, "xlen", None) if self.redis else None
-        if callable(method):
-            return int(method(key))
-        return None
 
 
 def normalize_layers(layers: list[str]) -> set[str]:

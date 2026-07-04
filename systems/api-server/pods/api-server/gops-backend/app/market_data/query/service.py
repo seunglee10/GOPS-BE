@@ -5,14 +5,16 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.market_data.backfill.service import get_backfill_service
+from app.market_data.fill.service import get_on_demand_fill_service
 from app.services.alfaka_market_data import get_market_data_provider, normalize_market_symbol, requested_ma_from_csv
 from alfaka.serving.intervals import normalize_chart_interval, resolve_candle_limit
 
 
 class MarketDataQueryService:
-    def __init__(self, provider=None, backfill_service=None):
+    def __init__(self, provider=None, backfill_service=None, fill_service=None):
         self.provider = provider or get_market_data_provider()
         self.backfill_service = backfill_service or get_backfill_service(self.provider)
+        self.fill_service = fill_service or get_on_demand_fill_service(self.provider)
 
     def candle_snapshot(
         self,
@@ -32,8 +34,29 @@ class MarketDataQueryService:
             payload = self.provider.candle_snapshot(symbol, interval, resolved_limit, before=before, from_time=from_time, to_time=to_time)
         except Exception as exc:
             raise HTTPException(status_code=503, detail=f"Market data provider failed: {exc}") from exc
+        payload = self.fill_service.fill_if_needed(
+            symbol=symbol,
+            interval=interval,
+            limit=resolved_limit,
+            before=before,
+            from_time=from_time,
+            to_time=to_time,
+            payload=payload,
+        )
         payload["indicators"] = {"ma": requested_ma, "volume": True}
-        payload.update(self.backfill_service.snapshot_metadata(symbol, interval, payload))
+        metadata = self.backfill_service.snapshot_metadata(symbol, interval, payload)
+        payload.update(metadata)
+        if isinstance(payload.get("fill"), dict):
+            coverage = metadata.get("coverage") or {}
+            payload["fill"] = {
+                **payload["fill"],
+                "status": normalize_fill_status(payload["fill"], metadata),
+                "missingRanges": coverage.get("missingRanges") or payload["fill"].get("missingRanges") or [],
+                "gapRanges": coverage.get("gapRanges") or payload["fill"].get("gapRanges") or [],
+                "renderable": bool(coverage.get("renderable")),
+                "minimumReturnedCount": coverage.get("minimumReturnedCount") or payload["fill"].get("minimumReturnedCount"),
+                "minimumRenderableSourceBars": coverage.get("minimumRenderableSourceBars") or payload["fill"].get("minimumRenderableSourceBars"),
+            }
         return payload
 
     def request_backfill(
@@ -149,6 +172,20 @@ class MarketDataQueryService:
 
 def get_query_service() -> MarketDataQueryService:
     return MarketDataQueryService()
+
+
+def normalize_fill_status(fill: dict[str, Any], metadata: dict[str, Any]) -> str:
+    status = fill.get("status")
+    data_status = metadata.get("dataStatus")
+    if status in {"timeout", "failed"}:
+        return status
+    if data_status == "ready":
+        return "not_needed" if status == "not_needed" else "filled"
+    if data_status == "partial":
+        return "partial"
+    if data_status == "empty":
+        return "empty" if status in {"not_needed", "empty"} else status or "empty"
+    return status or "partial"
 
 
 def normalize_news_item(row: dict[str, Any], fallback_symbol: str) -> dict[str, Any]:

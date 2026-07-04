@@ -42,7 +42,6 @@ gops-api-server
 gops-market-ingestor
 gops-market-processor
 gops-market-storage
-gops-backfill-worker
 gops-order-worker
 gops-kis-adapter
 ```
@@ -56,7 +55,6 @@ Build script variable mapping:
 | `market_ingestor_ecr_repository_url` | `ECR_MARKET_INGESTOR_REPO` |
 | `market_processor_ecr_repository_url` | `ECR_MARKET_PROCESSOR_REPO` |
 | `market_storage_ecr_repository_url` | `ECR_MARKET_STORAGE_REPO` |
-| `backfill_worker_ecr_repository_url` | `ECR_BACKFILL_WORKER_REPO` |
 | `order_worker_ecr_repository_url` | `ECR_ORDER_WORKER_REPO` |
 | `kis_adapter_ecr_repository_url` | `ECR_KIS_ADAPTER_REPO` |
 

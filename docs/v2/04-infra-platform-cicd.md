@@ -94,6 +94,7 @@ CI/CD는 Continuous Integration/Continuous Delivery의 줄임말이다. 코드�
 ECR은 Amazon Elastic Container Registry의 줄임말이다. Docker image를 저장하는 AWS registry다. GitHub Actions에서 image를 build한 뒤 ECR에 push하고, EKS pod는 그 image를 pull해서 실행한다.
 
 Kustomize는 Kubernetes manifest를 base와 overlay로 나눠 관리하는 도구다. GOPS는 `infra/k8s/base`에 공통 manifest를 두고, `infra/k8s/overlays/*`에서 AWS/dev/CI 환경 차이를 반영한다.
+자동 앱 배포 overlay는 `infra/k8s/base/app`만 상속해야 한다. `infra/k8s/base`의 one-shot/smoke/eval Job은 수동 실행 대상이며, CI apply 경로에 포함하면 기존 Job의 immutable `spec.template` 때문에 dry-run/apply가 실패할 수 있다.
 
 IRSA는 IAM Roles for Service Accounts의 줄임말이다. EKS pod가 AWS credential을 직접 들고 있지 않아도 특정 AWS 권한을 가진 IAM role로 동작하게 해준다.
 
