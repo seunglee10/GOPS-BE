@@ -31,6 +31,7 @@ def main() -> None:
     assert_frontend_chart_layout_contract()
     assert_frontend_layout_grid_contract()
     assert_frontend_treemap_main_view_contract()
+    assert_frontend_handoff_docs()
     assert_frontend_ontology_contract()
     assert_frontend_palette_contract()
     assert_frontend_parent_summary_contract()
@@ -939,7 +940,7 @@ def assert_frontend_treemap_main_view_contract() -> None:
 
 
 def assert_frontend_ontology_contract() -> None:
-    odc = (REPO_ROOT / "docs/ODC/ODC-proposal.md").read_text()
+    odc = (REPO_ROOT / "docs/ODC.md").read_text()
     mapper = (REPO_ROOT / "frontend/src/ontology/buildOntologyGraphFromEvidence.ts").read_text()
     types = (REPO_ROOT / "frontend/src/ontology/ontologyTypes.ts").read_text()
     client = (REPO_ROOT / "frontend/src/ontology/ontologyReportClient.ts").read_text()
@@ -955,6 +956,8 @@ def assert_frontend_ontology_contract() -> None:
     assert '`provider === "ontology"`' in odc
     assert '`status === "available"`' in odc
     assert "관계 분석 결과가 아직 없습니다" in odc
+    assert "frontend/src/ontology/ontologyReportClient.ts" in odc
+    assert "frontend/src/ontology/buildOntologyGraphFromEvidence.ts" in odc
     for relation_type in ("theme", "theme-company", "control", "theme-control", "shared-theme", "cross-control"):
         assert relation_type in odc
         assert f'relationType === "{relation_type}"' in mapper
@@ -980,6 +983,62 @@ def assert_frontend_ontology_contract() -> None:
     assert ".ontology-panel" in styles
     assert ".ontology-graph-svg" in styles
     assert ".ontology-node.is-active circle" in styles
+
+
+def assert_frontend_handoff_docs() -> None:
+    docs_dir = REPO_ROOT / "docs"
+    expected = {"about_front.md", "CDC.md", "ODC.md"}
+    actual = {path.name for path in docs_dir.iterdir() if path.is_file()}
+    assert actual == expected, f"docs/ should contain only {expected}, got {actual}"
+    assert not (docs_dir / "CDC").exists()
+    assert not (docs_dir / "ODC").exists()
+    assert not (REPO_ROOT / "AGENTS.md").exists()
+    assert "AGENTS.md" in (REPO_ROOT / ".gitignore").read_text()
+
+    about = (docs_dir / "about_front.md").read_text()
+    cdc = (docs_dir / "CDC.md").read_text()
+    odc = (docs_dir / "ODC.md").read_text()
+    for source in (about, cdc, odc):
+        assert "_proposal" not in source
+        assert "요청서" not in source
+        assert "제안" not in source
+
+    assert "Frontend Handoff Report" in about
+    assert "frontend/vite.config.ts" in about
+    assert "frontend/src/components/PanelContentRenderer.tsx" in about
+    assert "frontend/src/components/BottomCommandBar.tsx" in about
+    assert "docs/CDC.md" in about
+    assert "docs/ODC.md" in about
+    assert "mock_backend/`, 더미 환경변수, local seed" in about
+    assert "프론트 시연과 개발 검증을 위한 참조 자산" in about
+    assert "실제 구현 기준으로 삼지 않는다" in about
+    assert "frontend/src/market/sp500Universe.seed.ts" in about
+    assert "sp500UniverseSeed" in about
+    assert "실시간 API에 연결되어 있지 않다" in about
+    assert "S&P500 전체의 분봉 기반 summary/live 데이터" in about
+    assert "tick/trade stream이 필요하지 않다" in about
+
+    assert "Chart Data Contract" in cdc
+    assert "frontend/src/chart/cdcClient.ts" in cdc
+    assert "frontend/src/chart/types.ts" in cdc
+    assert "GET /api/charts/symbols" in cdc
+    assert "GET /api/charts/candles" in cdc
+    assert "WS /ws/charts" in cdc
+    assert "TreeMap Data Note" in cdc
+    assert "chart candle API/WS와 연결되어 있지 않다" in cdc
+    assert "frontend/src/market/sp500Universe.seed.ts" in cdc
+    assert "sp500UniverseSeed" in cdc
+    assert "S&P500 전체의 분봉 기반 summary/live 데이터" in cdc
+    assert "latestPrice" in cdc
+    assert "changePercent" in cdc
+    assert "updatedAt" in cdc
+    assert "trade tick stream을 직접 요구하지 않는다" in cdc
+    assert "TreeMap data source와 `TreeMapCanvas` 입력" in cdc
+
+    assert "Ontology Data Contract" in odc
+    assert "frontend/src/ontology/ontologyReportClient.ts" in odc
+    assert "frontend/src/ontology/buildOntologyGraphFromEvidence.ts" in odc
+    assert "AnalysisReport.providerEvidence" in odc
 
 
 def assert_frontend_palette_contract() -> None:
