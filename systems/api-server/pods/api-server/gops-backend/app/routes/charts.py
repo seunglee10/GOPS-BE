@@ -1,6 +1,6 @@
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 try:
     from pydantic import BaseModel, Field
 except Exception:
@@ -10,11 +10,21 @@ except Exception:
                 setattr(self, key, value)
 
     def Field(default=None, **kwargs):
+        if "default_factory" in kwargs and default is None:
+            return kwargs["default_factory"]()
         return default
 
+from app.auth.dependencies import require_current_user
+from app.auth.models import AuthenticatedUser
 from app.market_data.query.service import get_query_service
 from app.services.alfaka_market_data import (
+    hot_symbol_summaries,
+    ranking_symbol_summaries,
+    replace_portfolio_subscription_symbols,
+    replace_watchlist_symbols,
+    search_symbol_summaries,
     symbol_summaries,
+    watchlist_summaries,
 )
 from alfaka.serving.intervals import MAX_CHART_CANDLE_LIMIT
 
@@ -32,9 +42,13 @@ class BackfillRequestBody(BaseModel):
     force: bool = False
 
 
+class SymbolListRequestBody(BaseModel):
+    symbols: list[str] = Field(default_factory=list)
+
+
 @router.get("/api/charts/candles")
 def chart_candles(
-    symbol: str = Query(default="AAPL", min_length=1, max_length=12),
+    symbol: str = Query(min_length=1, max_length=12),
     interval: str = Query(default="1m", pattern=CHART_INTERVAL_PATTERN),
     ma: str = Query(default="5,20,60"),
     limit: int | None = Query(default=None, ge=1, le=MAX_CHART_CANDLE_LIMIT),
@@ -49,7 +63,7 @@ def chart_candles(
 
 
 @router.post("/api/charts/backfill")
-def chart_backfill(body: BackfillRequestBody) -> dict[str, Any]:
+def chart_backfill(body: BackfillRequestBody, _user: AuthenticatedUser = Depends(require_current_user)) -> dict[str, Any]:
     return get_query_service().request_backfill(body.symbol, body.interval, start=body.start, end=body.end, mode=body.mode, force=body.force)
 
 
@@ -62,12 +76,63 @@ def chart_backfill_status(
     return get_query_service().backfill_status(symbol, interval, request_id=request_id)
 
 
+@router.get("/api/charts/backfill/queue")
+def chart_backfill_queue() -> dict[str, Any]:
+    return get_query_service().backfill_queue_metrics()
+
+
+@router.get("/api/charts/watchlist")
+def chart_watchlist(
+    symbols: str | None = Query(default=None, max_length=512),
+    user: AuthenticatedUser = Depends(require_current_user),
+) -> dict[str, Any]:
+    requested = parse_symbol_csv(symbols) if symbols is not None else None
+    return watchlist_summaries(requested, user_id=user.sub)
+
+
+@router.put("/api/charts/watchlist")
+def chart_watchlist_replace(body: SymbolListRequestBody, user: AuthenticatedUser = Depends(require_current_user)) -> dict[str, Any]:
+    return replace_watchlist_symbols(user.sub, body.symbols)
+
+
+@router.get("/api/charts/hot-symbols")
+def chart_hot_symbols(
+    limit: int = Query(default=10, ge=1, le=10),
+) -> dict[str, Any]:
+    return hot_symbol_summaries(limit)
+
+
+@router.get("/api/charts/rankings")
+def chart_rankings(
+    kind: str = Query(default="dollar-volume", pattern="^(dollar-volume|dollar|volume|gainers|gainer|losers|loser)$"),
+    limit: int = Query(default=10, ge=1, le=10),
+) -> dict[str, Any]:
+    try:
+        return ranking_symbol_summaries(kind, limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.put("/api/charts/subscription-cohorts/portfolio")
+def chart_portfolio_subscription_cohort(body: SymbolListRequestBody, user: AuthenticatedUser = Depends(require_current_user)) -> dict[str, Any]:
+    return replace_portfolio_subscription_symbols(user.sub, body.symbols)
+
+
 @router.get("/api/charts/symbols")
-def chart_symbols() -> dict[str, Any]:
+def chart_symbols(
+    query: str | None = Query(default=None, max_length=120),
+    limit: int = Query(default=20, ge=1, le=100),
+) -> dict[str, Any]:
     # 프론트의 심볼 목록/요약 영역이 호출합니다.
-    # 심볼 목록은 ALPACA_SYMBOLS 기준이며, 최신 가격은 Redis에 있으면 같이 내려갑니다.
+    # 검색 후보는 현재 universe 기준이며, 최신 가격은 Redis/ClickHouse에서 보완합니다.
     return {
         "source": "alpaca",
         "feed": "configured-market-feed",
-        "symbols": symbol_summaries(),
+        "symbols": search_symbol_summaries(query, limit) if query is not None else symbol_summaries(),
     }
+
+
+def parse_symbol_csv(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]

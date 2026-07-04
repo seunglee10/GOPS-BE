@@ -92,5 +92,21 @@ def test_valid_envelope_is_normalized():
     assert command.env == "demo"
 
 
+@pytest.mark.parametrize(
+    ("payload_updates", "message"),
+    [
+        ({"market": "domestic", "symbol": "005930", "exchange": "KRX"}, "market"),
+        ({"order_division": "01"}, "order_division"),
+        ({"qty": "1.5"}, "whole-share"),
+        ({"exchange": "KRX"}, "exchange"),
+    ],
+)
+def test_order_envelope_accepts_only_overseas_demo_limit_whole_share_orders(payload_updates, message):
+    envelope = sample_envelope(payload={**sample_envelope()["payload"], **payload_updates})
+
+    with pytest.raises(OrderContractError, match=message):
+        validate_order_envelope(envelope)
+
+
 def test_kafka_message_key_uses_account_alias_and_symbol():
     assert build_order_message_key("demo-account", "aapl") == "demo-account:AAPL"

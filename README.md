@@ -3,7 +3,7 @@
 GOPS is a real-time market-data, chart, and order-control platform.
 
 Product direction: **종목을 찾는 사람에게 기준을, 시장을 읽는 사람에게 방향을.**
-See `docs/PRODUCT_CONTEXT.md` for the product vision. Future-facing product ideas are context, not implemented guarantees.
+See `docs/AGENT_ARCHITECTURE.md` for the current agent direction and handoff boundaries. Future-facing product ideas are context, not implemented guarantees.
 
 ## Current Scope
 
@@ -15,18 +15,18 @@ The repository currently includes:
 - Kafka-compatible stream processing.
 - Redis, ClickHouse, and S3 market-data serving/storage.
 - KIS demo order API, Postgres persistence, outbox, broker adapter, migrations, and reconciliation.
+- Agent-orchestration v1 with role-agent skeletons, market-event detection, and notification publishing.
 - Local Docker Compose and early AWS/EKS deployment assets.
 
 ## Read First
 
 | File | Use |
 | --- | --- |
-| `docs/README.md` | Index for project reference docs. |
-| `docs/PRODUCT_CONTEXT.md` | Product intent and future direction. |
-| `docs/STRUCTURE_GUIDE.md` | Where new code, pods, jobs, images, and platform contracts belong. |
-| `docs/ARCHITECTURE.md` | Current runtime architecture and system boundaries. |
-| `docs/IMAGE_STRATEGY.md` | Docker image boundaries. |
-| `docs/ENVIRONMENT.md` | Env, secret, and platform contracts. |
+| `docs/README.md` | Index for agent handoff docs. |
+| `docs/AGENT_ARCHITECTURE.md` | Agent runtime, provider boundary, snapshots, synthesis, and report contracts. |
+| `docs/AGENT_BACKEND_INTEGRATION.md` | Agent API, idempotency, Kafka async path, Redis report store, polling, SSE, and alert WebSocket contracts. |
+| `docs/AGENT_FRONTEND_INTEGRATION.md` | Agent chat submit, `analysisId`, report rendering, and layout/chart proposal handling. |
+| `docs/AGENT_AWS_BUILD.md` | Agent image, EKS resources, Kafka, Redis/Valkey, ClickHouse, GraphDB, S3, secrets, and smoke checks. |
 | `AGENTS.md` | Rules for Codex and future contributors. |
 
 ## Repository Map
@@ -38,6 +38,7 @@ apps/chart-engine/                 chart document/runtime/canvas engine
 systems/api-server/                FastAPI chart/order/WebSocket gateway
 systems/market-data/               config, ingest, processing, storage, serving helpers, backfill
 systems/order/                     KIS demo order domain, outbox, adapter, jobs
+systems/agent-orchestration/       role agents, event detector, notification publisher
 
 platform/kafka/topics.txt          market/order Kafka topic contract
 platform/*/README.md               local -> pod -> managed-service transition notes
@@ -61,10 +62,14 @@ flowchart LR
   API --> Redis["Redis"]
   API --> CH["ClickHouse"]
   API --> PG["Postgres"]
+  API --> AgentOrch["agent-orchestrator"]
 
   Alpaca["Alpaca"] --> Ingestor["market-ingestor"]
   Ingestor --> Kafka["Kafka"]
   Kafka --> Processor["market-processor"]
+  Kafka --> EventDetector["agent-event-detector"]
+  EventDetector --> Kafka
+  Kafka --> AlertPublisher["agent-notification-publisher"] --> Redis
   Processor --> Redis
   Processor --> S3Sink["s3-sink"] --> S3["S3"]
   Processor --> CHLoader["clickhouse-loader"] --> CH
@@ -80,8 +85,6 @@ flowchart LR
 ```
 
 ## Local Setup
-
-First-time Docker setup should follow `docs/ONBOARDING_LOCAL_DOCKER.md`.
 
 Create `.env` from `.env.example`.
 
@@ -119,6 +122,7 @@ Open:
 ```text
 Frontend: http://localhost:5173
 Backend:  http://localhost:8000/health
+Agents:   http://localhost:8100/health
 Symbols:  http://localhost:8000/api/charts/symbols
 Candles:  http://localhost:8000/api/charts/candles?symbol=AAPL&interval=1m&limit=160
 ```
@@ -143,10 +147,20 @@ GET  /api/charts/symbols
 WS   /ws/charts
 ```
 
+Agent API:
+
+```text
+POST /api/agents/analyze
+GET  /api/agents/reports/{analysis_id}
+GET  /api/agents/reports/{analysis_id}/stream
+WS   /ws/agent-alerts
+```
+
 Order API:
 
 ```text
 GET  /api/order-contract
+GET  /api/orders/balance
 POST /api/orders
 GET  /api/orders/{order_id}
 GET  /api/orders/{order_id}/events
@@ -156,13 +170,17 @@ WS   /ws/orders/{order_id}
 Order rules:
 
 - `POST /api/orders` requires the `Idempotency-Key` header.
-- `KIS_ENV=real` is disabled for v1. Use demo/fake local flow unless the release policy changes.
+- `GET /api/orders/balance` queries KIS demo overseas orderable cash for the selected symbol/exchange.
+- `KIS_ENV=real` is disabled for v1.
+- v1 order submit supports KIS overseas demo limit orders only.
+- KIS demo credentials are read from AWS Secrets Manager `tead/gops/kis` by default.
 
 Auth rules:
 
 - Set `AUTH_ENABLED=true` to require Google login for `/api/orders`, `/ws/orders/{order_id}`, and `/api/llm/*`.
 - Chart and market-data APIs remain public in v1.
 - Sessions are stored in Redis and scoped by `AUTH_REDIS_KEY_PREFIX`.
+- Google OAuth env values are read directly first; when they are empty, set `GOOGLE_OAUTH_SECRET_NAME` to read them from AWS Secrets Manager.
 
 ## Operating Rules
 
@@ -170,6 +188,8 @@ Auth rules:
 - S3 is durable replay/rematerialization storage.
 - ClickHouse `chart_candles` is the serving projection.
 - Local runtime must not invent fake market candles.
+- Agent-orchestration must not execute orders or call account-control flows.
+- Agent provider failures should degrade to no-data evidence instead of crashing the whole analysis path.
 - `.env`, access-key CSV files, KIS token caches, `node_modules`, `dist`, and local caches must not be committed.
 
 ## Verification
@@ -196,4 +216,5 @@ curl -fsS http://localhost:8000/health
 curl -fsS http://localhost:8000/api/charts/symbols
 curl -fsS 'http://localhost:8000/api/charts/candles?symbol=NVDA&interval=1m&limit=2'
 curl -fsS http://localhost:8000/api/order-contract
+curl -fsS 'http://localhost:8000/api/orders/balance?symbol=NVDA&exchange=NASD&price=1.00'
 ```

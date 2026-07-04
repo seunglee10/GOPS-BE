@@ -1,0 +1,35 @@
+# 역할: 깊은 graph-aware 분석 요청을 별도 Kafka topic에서 처리합니다.
+# 주의: hot analysis worker와 분리해 deep backlog가 interactive path를 막지 않게 합니다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deep-analysis-worker
+  namespace: alfaka-market-data
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: deep-analysis-worker
+  template:
+    metadata:
+      labels:
+        app: deep-analysis-worker
+    spec:
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: deep-analysis-worker
+          image: YOUR_ECR_REPOSITORY/gops-agent-orchestrator:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -u
+            - /app/systems/agent-orchestration/pods/deep-analysis-worker/main.py
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-clickhouse-secret
+                optional: true
+            - secretRef:
+                name: alfaka-openai-secret
+                optional: true

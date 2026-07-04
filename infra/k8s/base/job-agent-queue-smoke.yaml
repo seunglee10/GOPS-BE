@@ -1,0 +1,25 @@
+# 역할: agent request envelope, queue adapter, worker, report store round trip을 검증합니다.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: agent-queue-smoke
+  namespace: alfaka-market-data
+spec:
+  template:
+    metadata:
+      labels:
+        app: agent-queue-smoke
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: agent-queue-smoke
+          image: YOUR_ECR_REPOSITORY/gops-agent-orchestrator:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -u
+            - /app/systems/agent-orchestration/jobs/agent-queue-smoke/main.py
+          env:
+            - name: AGENT_PUBLISH_TO_KAFKA
+              value: "false"
+  backoffLimit: 1

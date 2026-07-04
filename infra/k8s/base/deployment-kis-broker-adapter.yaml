@@ -1,5 +1,5 @@
 # 역할: 주문 command 토픽을 소비해 KIS demo API에 주문을 제출합니다.
-# 사용: KIS 키는 env가 아니라 KIS_SECRET_NAME(dev/kis)을 Secrets Manager에서 조회합니다.
+# 사용: KIS 키는 env가 아니라 KIS_SECRET_NAME(tead/gops/kis)을 Secrets Manager에서 조회합니다.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

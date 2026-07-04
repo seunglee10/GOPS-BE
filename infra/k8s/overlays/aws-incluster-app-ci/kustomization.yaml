@@ -8,6 +8,30 @@ resources:
 
 patches:
   - target:
+      group: external-secrets.io
+      version: v1beta1
+      kind: SecretStore
+      name: aws-secrets-manager
+    patch: |-
+      apiVersion: external-secrets.io/v1beta1
+      kind: SecretStore
+      metadata:
+        name: aws-secrets-manager
+        namespace: alfaka-market-data
+      $patch: delete
+  - target:
+      group: external-secrets.io
+      version: v1beta1
+      kind: ExternalSecret
+      name: alfaka-openai-secret
+    patch: |-
+      apiVersion: external-secrets.io/v1beta1
+      kind: ExternalSecret
+      metadata:
+        name: alfaka-openai-secret
+        namespace: alfaka-market-data
+      $patch: delete
+  - target:
       group: batch
       version: v1
       kind: Job
@@ -55,6 +79,42 @@ patches:
         name: alfaka-symbol-registry-sync
         namespace: alfaka-market-data
       $patch: delete
+  - target:
+      group: batch
+      version: v1
+      kind: Job
+      name: alfaka-initial-load
+    patch: |-
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: alfaka-initial-load
+        namespace: alfaka-market-data
+      $patch: delete
+  - target:
+      group: batch
+      version: v1
+      kind: Job
+      name: alfaka-news-backfill
+    patch: |-
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: alfaka-news-backfill
+        namespace: alfaka-market-data
+      $patch: delete
+  - target:
+      group: batch
+      version: v1
+      kind: Job
+      name: alfaka-news-intelligence-rebuild
+    patch: |-
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: alfaka-news-intelligence-rebuild
+        namespace: alfaka-market-data
+      $patch: delete
 
 images:
   - name: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-ingestor
@@ -72,4 +132,6 @@ images:
   - name: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-order-worker
     newTag: "ci-placeholder"
   - name: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-kis-adapter
+    newTag: "ci-placeholder"
+  - name: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-agent-orchestrator
     newTag: "ci-placeholder"

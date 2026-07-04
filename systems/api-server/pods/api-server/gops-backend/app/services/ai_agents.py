@@ -207,9 +207,13 @@ def build_agent_market_analysis_context(context: dict[str, Any]) -> dict[str, An
     chart_document = context.get("chartDocument") if isinstance(context.get("chartDocument"), dict) else {}
     visible_summary = context.get("visibleSummary") if isinstance(context.get("visibleSummary"), dict) else {}
     data_status = context.get("dataStatus") if isinstance(context.get("dataStatus"), dict) else {}
-    raw_symbol = chart_document.get("symbol") if isinstance(chart_document.get("symbol"), str) else "AAPL"
+    raw_symbol = chart_document.get("symbol") if isinstance(chart_document.get("symbol"), str) else "UNKNOWN"
     symbols = configured_symbols()
-    symbol = raw_symbol.upper() if raw_symbol.upper() in symbols else symbols[0]
+    normalized_symbol = raw_symbol.upper()
+    if symbols:
+        symbol = normalized_symbol if normalized_symbol in symbols else symbols[0]
+    else:
+        symbol = normalized_symbol
     try:
         active_timeframe = normalize_chart_interval(chart_document.get("timeframe") if isinstance(chart_document.get("timeframe"), str) else "1m")
     except ValueError:

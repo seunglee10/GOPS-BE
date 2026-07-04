@@ -1,0 +1,31 @@
+# 역할: 뉴스 수집 이벤트를 한국어/분류 가공해 ClickHouse와 Redis hot cache에 저장합니다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alfaka-news-intelligence-worker
+  namespace: alfaka-market-data
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: alfaka-news-intelligence-worker
+  template:
+    metadata:
+      labels:
+        app: alfaka-news-intelligence-worker
+    spec:
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: news-intelligence-worker
+          image: YOUR_ECR_REPOSITORY/gops-market-storage:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "systems/market-data/pods/news-intelligence-worker/main.py"]
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-clickhouse-secret
+                optional: true
+            - secretRef:
+                name: alfaka-openai-secret
+                optional: true

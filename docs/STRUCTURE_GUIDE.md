@@ -115,4 +115,4 @@ Kafka and stream processing stay staged:
 local compose -> single pod candidate -> managed AWS candidate
 ```
 
-Do not hard-code MSK or managed Flink as the next step before the team decides.
+Do not hard-code MSK or any external stream processor as the next step before the team decides.

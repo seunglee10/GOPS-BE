@@ -1,0 +1,29 @@
+# Retired GOPS v2 Architecture Notes
+
+This historical v2 architecture file is retired as an implementation source for
+the current rebuild.
+
+For active contracts, use:
+
+- `../CHART_DATA_REBUILD_PLAN.md` for chart data, realtime market data,
+  Redis/S3/ClickHouse/Kafka/backfill, SIP/BOATS, and frontend monitoring.
+- `../PRODUCT_CONTEXT.md` for product direction.
+- `../STRUCTURE_GUIDE.md` for repository structure.
+- `../ARCHITECTURE.md`, `../ENVIRONMENT.md`, and `../IMAGE_STRATEGY.md` for
+  current runtime, image, deployment, and platform boundaries.
+- Current code under `systems/`, `apps/`, `platform/`, and `infra/`.
+
+Retired chart assumptions that must not be reintroduced:
+
+- fixed legacy symbol set or broad S&P500 chart preload
+- legacy raw/tick/candle topic families from the pre-rebuild design
+  chart topics
+- Redis keys such as `price:{symbol}:latest`,
+  `candle:{symbol}:{interval}:live`, or `candles:{symbol}:{interval}`
+- S3 live prefixes or raw S3 as a chart-serving/materialization source
+- quotes as all-symbol durable storage
+
+The current chart rebuild starts empty, subscribes only explicit realtime
+symbols, attaches quotes only to the same realtime trade symbols, keeps quotes
+in Redis/WebSocket only, and serves history through Redis latest 120 candles,
+ClickHouse, S3 final/manifest, then Alpaca backfill.

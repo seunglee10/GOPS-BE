@@ -7,7 +7,8 @@ It is intentionally short and focuses on reproducing the local Docker runtime.
 
 - Docker Desktop is installed and running.
 - Python `3.12.x` is available.
-- AWS credentials with access to Secrets Manager and S3 are available.
+- AWS credentials with S3 access are available when using real AWS S3.
+- Alpaca API keys are available either as local `APCA_*` env values or in AWS Secrets Manager.
 - Ports `5173`, `8000`, `8123`, `9092`, `6379`, and `5433` are free.
 
 ## 2. Create `.env`
@@ -16,23 +17,32 @@ It is intentionally short and focuses on reproducing the local Docker runtime.
 cp .env.example .env
 ```
 
-For the default local Docker flow, GOPS uses real AWS S3 and AWS Secrets Manager.
-Keep these values aligned:
+For local Alpaca smoke while Secrets Manager is disconnected, put Alpaca keys
+only in your uncommitted `.env` and use `ALPACA_CREDENTIAL_SOURCE=local-env`.
+Compose mounts the host `~/.aws` directory read-only into the API, backfill,
+and optional Alpaca live-ingestion services for S3/AWS-contract runs. Keep these
+values aligned:
 
 ```text
 AWS_REGION=ap-northeast-2
 AWS_DEFAULT_REGION=ap-northeast-2
-AWS_ACCESS_KEY_ID=<your restricted local key>
-AWS_SECRET_ACCESS_KEY=<your restricted local secret>
+AWS_PROFILE=default
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
 AWS_SESSION_TOKEN=
 
-ALPACA_SECRET_NAME=dev/alpaca
+APCA_API_KEY_ID=
+APCA_API_SECRET_KEY=
+ALPACA_CREDENTIAL_SOURCE=local-env
+ALPACA_SECRET_NAME=
 S3_BUCKET=gops-market-data-<aws-account-id>-ap-northeast-2-an
 S3_ENDPOINT_URL=
 DOCKER_S3_ENDPOINT_URL=
 ```
 
-`dev/alpaca` must be a JSON secret:
+For AWS/EKS or an AWS-contract local run, keep `APCA_*` empty, set
+`ALPACA_CREDENTIAL_SOURCE=aws-secrets-manager`, and set
+`ALPACA_SECRET_NAME=dev/alpaca`. `dev/alpaca` must be a JSON secret:
 
 ```json
 {"APCA_API_KEY_ID":"...","APCA_API_SECRET_KEY":"..."}
@@ -78,10 +88,12 @@ Config:   http://localhost:8000/health/config
 | `local-s3` | MinIO experiments only. Not the default path. |
 | `reconciliation` | Manual order reconciliation job. |
 
-Start live Alpaca ingestion only when needed:
+Start live Alpaca ingestion only when real-time charts are needed. The default
+contract uses SIP for `04:00-20:00 ET`, BOATS for `20:00-04:00 ET`,
+and a separate 24/7 crypto ingestor for `BTCUSD`:
 
 ```sh
-docker compose --profile alpaca up -d --build alpaca-ingestor
+docker compose --profile alpaca up -d --build alpaca-ingestor alpaca-ingestor-boats alpaca-ingestor-crypto
 ```
 
 Audit chart coverage:
@@ -104,6 +116,7 @@ curl -fsS http://localhost:8000/health/config
 curl -fsS http://localhost:8000/api/charts/symbols
 curl -fsS 'http://localhost:8000/api/charts/candles?symbol=NVDA&interval=1m&limit=2'
 curl -fsS http://localhost:8000/api/order-contract
+curl -fsS 'http://localhost:8000/api/orders/balance?symbol=NVDA&exchange=NASD&price=1.00'
 docker compose --profile repair run --rm coverage-repair
 ```
 
@@ -119,6 +132,6 @@ It must never print secret values.
 | S3 write/read fails | Check bucket name, region, IAM permission, and that S3 endpoint values are empty for real AWS. |
 | Chart has no candles | Run the `repair` profile dry-run, then queue missing backfills if needed. |
 | Live stream shows idle | This can mean WebSocket is connected but no current market data is arriving yet. Stored candles should still render. |
-| Order submit path fails locally | Keep `KIS_ENV=demo` and the default fake KIS adapter args unless intentionally testing KIS demo. |
+| Order submit path fails locally | Keep `KIS_ENV=demo`, `KIS_CREDENTIAL_SOURCE=aws-secrets-manager`, and check the `tead/gops/kis` secret JSON shape. Use `KIS_BROKER_ADAPTER_ARGS=--fake-kis success` only for explicit fake smoke runs. |
 
 If a local access-key CSV exists in the repo root, remove it after copying values into `.env`.

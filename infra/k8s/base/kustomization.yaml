@@ -10,13 +10,43 @@ resources:
   - job-order-reconciler.yaml
   - job-symbol-registry-sync.yaml
   - job-coverage-repair.yaml
+  - job-initial-load.yaml
+  - job-news-backfill.yaml
+  - job-news-intelligence-rebuild.yaml
+  - job-news-daily-summary-rebuild.yaml
+  - job-agent-queue-smoke.yaml
+  - job-report-store-smoke.yaml
+  - job-graph-expansion-refresh.yaml
+  - job-graph-expansion-smoke.yaml
+  - job-retrieval-latency-benchmark.yaml
+  - job-fanout-policy-benchmark.yaml
+  - job-retrieval-quality-eval.yaml
+  - job-answer-grounding-eval.yaml
+  - statefulset-graphdb.yaml
+  - deployment-agent-orchestrator.yaml
+  - deployment-agent-intent-classifier.yaml
+  - deployment-agent-analysis-worker.yaml
+  - deployment-deep-analysis-worker.yaml
+  - deployment-agent-delivery-gateway.yaml
+  - deployment-agent-event-detector.yaml
+  - deployment-agent-notification-publisher.yaml
   - deployment-alpaca-ingestor.yaml
+  - deployment-feed-session-controller.yaml
+  - deployment-subscription-controller.yaml
+  - deployment-alpaca-news-ingestor.yaml
+  - deployment-market-processor.yaml
   - deployment-s3-sink.yaml
+  - deployment-raw-s3-archive.yaml
   - deployment-clickhouse-loader.yaml
+  - deployment-news-intelligence-worker.yaml
+  - deployment-news-daily-summary-worker.yaml
   - deployment-backfill-worker.yaml
   - deployment-order-outbox-publisher.yaml
   - deployment-kis-broker-adapter.yaml
   - deployment-gops-backend.yaml
   - deployment-gops-frontend.yaml
+  - service-agent-orchestrator.yaml
+  - service-agent-intent-classifier.yaml
+  - service-graphdb.yaml
   - service-gops-backend.yaml
   - service-gops-frontend.yaml

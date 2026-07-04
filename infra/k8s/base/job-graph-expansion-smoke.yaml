@@ -1,0 +1,29 @@
+# 역할: graph expansion cache Redis/ClickHouse lookup degrade 동작을 검증합니다.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: graph-expansion-smoke
+  namespace: alfaka-market-data
+spec:
+  template:
+    metadata:
+      labels:
+        app: graph-expansion-smoke
+    spec:
+      restartPolicy: Never
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: graph-expansion-smoke
+          image: YOUR_ECR_REPOSITORY/gops-agent-orchestrator:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -u
+            - /app/systems/agent-orchestration/jobs/graph-expansion-smoke/main.py
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-clickhouse-secret
+                optional: true
+  backoffLimit: 1

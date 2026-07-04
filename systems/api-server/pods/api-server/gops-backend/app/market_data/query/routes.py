@@ -8,6 +8,15 @@ router = APIRouter()
 CHART_INTERVAL_PATTERN = "^(1m|5m|10m|1D|1W|1M|1d|1w|1mo|1MO|1month)$"
 
 
+@router.get("/api/market/symbols")
+def market_symbols(
+    q: str = Query(default="", max_length=64),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100, alias="pageSize"),
+) -> dict[str, Any]:
+    return get_query_service().symbol_page(q, page, page_size)
+
+
 @router.get("/api/market/symbols/search")
 def market_symbol_search(
     q: str = Query(default="", max_length=64),
@@ -28,7 +37,7 @@ def market_symbol_detail(symbol: str) -> dict[str, Any]:
 
 @router.get("/api/charts/volume-profile-bins")
 def chart_volume_profile_bins(
-    symbol: str = Query(default="AAPL", min_length=1, max_length=12),
+    symbol: str = Query(min_length=1, max_length=12),
     from_time: str = Query(alias="from"),
     to_time: str = Query(alias="to"),
     price_bin_size: str = Query(default="auto", alias="priceBinSize"),
@@ -48,7 +57,7 @@ def market_symbol_status(symbol: str) -> dict[str, Any]:
 
 @router.get("/api/agent/context/chart")
 def agent_chart_context(
-    symbol: str = Query(default="AAPL", min_length=1, max_length=12),
+    symbol: str = Query(min_length=1, max_length=12),
     interval: str = Query(default="1m", pattern=CHART_INTERVAL_PATTERN),
     from_time: str = Query(alias="from"),
     to_time: str = Query(alias="to"),

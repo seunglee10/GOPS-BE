@@ -1,0 +1,35 @@
+# 역할: Kafka 분석 요청을 소비해 GOPS agent report를 생성합니다.
+# 사용: gops-backend는 agents.analysis-requests.v1에 요청을 넣고 이 worker가 처리합니다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-analysis-worker
+  namespace: alfaka-market-data
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-analysis-worker
+  template:
+    metadata:
+      labels:
+        app: agent-analysis-worker
+    spec:
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: agent-analysis-worker
+          image: YOUR_ECR_REPOSITORY/gops-agent-orchestrator:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -u
+            - /app/systems/agent-orchestration/pods/agent-analysis-worker/main.py
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-clickhouse-secret
+                optional: true
+            - secretRef:
+                name: alfaka-openai-secret
+                optional: true

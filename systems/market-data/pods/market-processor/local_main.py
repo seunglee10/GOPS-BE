@@ -1,6 +1,6 @@
-# 역할: 로컬 Docker에서 Flink 역할을 흉내 내는 Python 처리기를 실행합니다.
-# 사용: AWS 배포 전 Kafka Raw -> Redis/Processed Kafka 계약을 빠르게 검증합니다.
-# 운영: 실제 운영에서는 systems/market-data/pods/market-processor/flink/market-data-normalizer 또는 관리형 Flink로 대체합니다.
+# 역할: 현재 로컬 Docker와 AWS/EKS에서 사용하는 Python stream processor를 실행합니다.
+# 사용: Kafka Raw -> Redis/Processed Kafka 계약을 담당하는 market-processor pod entrypoint입니다.
+# 운영: CHART_DATA_REBUILD_PLAN.md 기준 Python/Kubernetes processor가 명시적 runtime unit입니다.
 from alfaka.streaming.processor import main
 
 

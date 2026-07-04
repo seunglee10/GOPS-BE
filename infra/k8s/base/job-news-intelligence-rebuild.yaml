@@ -1,0 +1,29 @@
+# 역할: 기존 30일 뉴스 localization row에 relevance v2 필드를 재계산합니다.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: alfaka-news-intelligence-rebuild
+  namespace: alfaka-market-data
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app: alfaka-news-intelligence-rebuild
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: news-intelligence-rebuild
+          image: YOUR_ECR_REPOSITORY/gops-market-storage:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "systems/market-data/jobs/news-intelligence-rebuild/main.py"]
+          env:
+            - name: NEWS_INTELLIGENCE_REBUILD_DRY_RUN
+              value: "true"
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-clickhouse-secret
+                optional: true

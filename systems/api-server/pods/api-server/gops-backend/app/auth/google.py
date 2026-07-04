@@ -83,4 +83,3 @@ def _required_string(payload: dict[str, Any], key: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise GoogleOAuthError(f"Google token response is missing {key}")
     return value.strip()
-

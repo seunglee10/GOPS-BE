@@ -1,23 +1,73 @@
 # Kafka Platform Contract
 
-Current local stage:
+Kafka is the ordered handoff layer for the on-demand chart data rebuild.
+Market-data producers must use `key=symbol`; one partition is handled by one
+consumer pod at a time.
+
+## Canonical Topic File
 
 ```text
-docker-compose kafka
-docker-compose kafka-init
 platform/kafka/topics.txt
+infra/k8s/base/platform/kafka/topics.txt
 ```
 
-Staged path:
+## Input Topics
 
 ```text
-local compose -> single Kafka pod candidate -> MSK candidate
+market.input.realtime.trades.v1
+market.input.realtime.quotes.v1
+market.input.realtime.events.v1
+market.input.realtime.bars.1m.v1
+market.input.realtime.updated-bars.1m.v1
+market.input.realtime.daily-bars.v1
 ```
 
-Main env:
+`market.input.realtime.quotes.v1` is consumed by the quote processor, written
+to Redis/WebSocket live state, and republished as `market.layer.quotes.v1` for
+canonical S3/ClickHouse storage.
+
+## Tick Fanout Topics
 
 ```text
-KAFKA_BOOTSTRAP_SERVERS
+market.realtime.ticks.to.1m.v1
+market.realtime.ticks.to.5m.v1
+market.realtime.ticks.to.10m.v1
+market.realtime.ticks.to.1d.v1
+market.realtime.ticks.to.1w.v1
+market.realtime.ticks.to.1mo.v1
 ```
 
-`platform/kafka/topics.txt` is the canonical market/order topic list for local creation and future MSK creation.
+## Layer Topics
+
+```text
+market.layer.candles.live.v1
+market.layer.candles.closed.v1
+market.layer.trades.v1
+market.layer.quotes.v1
+market.layer.events.v1
+```
+
+Candle layer topics are single canonical topics. Timeframe is carried in the
+payload `interval` field, not in the topic name.
+
+`platform/kafka/topics.txt` is the canonical market/order/agent topic list for
+local creation and future MSK creation. Agent analysis uses separate hot and
+deep request topics so deep backlog does not consume the hot worker group.
+
+Agent topics:
+
+```text
+agents.analysis-requests.v1
+agents.deep-analysis-requests.v1
+agents.analysis-results.v1
+agents.query-understanding-events.v1
+agents.notification-decisions.v1
+agents.dlq.v1
+```
+
+`agents.query-understanding-events.v1` is an observability/audit stream emitted
+with completed reports. It is not used as request/reply transport inside the
+hot query-understanding fan-out.
+
+Any market-data topic not listed in the source-of-truth chart rebuild plan is
+outside the current chart-data contract.

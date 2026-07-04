@@ -141,4 +141,3 @@ def _safe_return_to(value: str) -> str:
     if not value.startswith("/") or value.startswith("//"):
         return "/"
     return value
-

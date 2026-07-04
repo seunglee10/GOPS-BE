@@ -1,6 +1,15 @@
+import os
+
+
 TRADING_MINUTES_PER_DAY = 390
 TRADING_DAYS_PER_YEAR = 252
-HIGHER_TIMEFRAME_YEARS = 5
+HISTORICAL_TARGET_YEARS = 6
+DEFAULT_INTRADAY_GAPFILL_TARGET_DAYS = 14
+INTRADAY_PRELOAD_TARGET_TRADING_DAYS = TRADING_DAYS_PER_YEAR * HISTORICAL_TARGET_YEARS
+INTRADAY_PRELOAD_TARGET_DAYS = 365 * HISTORICAL_TARGET_YEARS
+INTRADAY_PRELOAD_TARGET_BARS = TRADING_MINUTES_PER_DAY * INTRADAY_PRELOAD_TARGET_TRADING_DAYS
+INTRADAY_PRELOAD_MIN_START_ENV = "BACKFILL_INITIAL_LOAD_1M_MIN_START"
+DEFAULT_INTRADAY_PRELOAD_MIN_START = "2020-07-01T00:00:00Z"
 
 CHART_INTERVALS = ("1m", "5m", "10m", "1D", "1W", "1M")
 LEGACY_INTERVALS = {"1d": "1D", "1w": "1W", "1mo": "1M", "1MO": "1M", "1month": "1M"}
@@ -15,12 +24,31 @@ DEFAULT_VISIBLE_BARS = {
 }
 
 BACKFILL_TARGET_BARS = {
-    "1m": TRADING_MINUTES_PER_DAY * TRADING_DAYS_PER_YEAR,
-    "5m": (TRADING_MINUTES_PER_DAY * TRADING_DAYS_PER_YEAR + 4) // 5,
-    "10m": (TRADING_MINUTES_PER_DAY * TRADING_DAYS_PER_YEAR + 9) // 10,
-    "1D": TRADING_DAYS_PER_YEAR * HIGHER_TIMEFRAME_YEARS,
-    "1W": 52 * HIGHER_TIMEFRAME_YEARS,
-    "1M": 12 * HIGHER_TIMEFRAME_YEARS,
+    "1D": TRADING_DAYS_PER_YEAR * HISTORICAL_TARGET_YEARS,
+    "1W": 52 * HISTORICAL_TARGET_YEARS,
+    "1M": 12 * HISTORICAL_TARGET_YEARS,
+}
+
+BACKFILL_TARGET_DAYS = {
+    "1D": 365 * HISTORICAL_TARGET_YEARS,
+    "1W": 365 * HISTORICAL_TARGET_YEARS,
+    "1M": 365 * HISTORICAL_TARGET_YEARS,
+}
+
+HISTORICAL_TARGET_BARS = {
+    "1m": INTRADAY_PRELOAD_TARGET_BARS,
+    "5m": (INTRADAY_PRELOAD_TARGET_BARS + 4) // 5,
+    "10m": (INTRADAY_PRELOAD_TARGET_BARS + 9) // 10,
+    **BACKFILL_TARGET_BARS,
+}
+
+REDIS_CLOSED_CANDLE_CAPS = {
+    "1m": TRADING_MINUTES_PER_DAY * 2,
+    "5m": (TRADING_MINUTES_PER_DAY * 2 + 4) // 5,
+    "10m": (TRADING_MINUTES_PER_DAY * 2 + 9) // 10,
+    "1D": TRADING_DAYS_PER_YEAR * HISTORICAL_TARGET_YEARS,
+    "1W": 52 * HISTORICAL_TARGET_YEARS,
+    "1M": 12 * HISTORICAL_TARGET_YEARS,
 }
 
 MIN_RENDERABLE_RETURNED_BARS = {
@@ -47,7 +75,7 @@ INTERVAL_SECONDS = {
 }
 
 MAX_REQUEST_BARS = {
-    interval: max(DEFAULT_VISIBLE_BARS[interval], BACKFILL_TARGET_BARS[interval])
+    interval: max(DEFAULT_VISIBLE_BARS[interval], HISTORICAL_TARGET_BARS[interval])
     for interval in CHART_INTERVALS
 }
 
@@ -67,12 +95,43 @@ def default_visible_bars(interval):
 
 
 def backfill_target_bars(interval):
-    return BACKFILL_TARGET_BARS[normalize_chart_interval(interval)]
+    interval = normalize_chart_interval(interval)
+    if source_interval_for(interval) == "1m":
+        bars = int(TRADING_MINUTES_PER_DAY * intraday_gapfill_target_days())
+        divisor = 1 if interval == "1m" else 5 if interval == "5m" else 10
+        return (bars + divisor - 1) // divisor
+    return BACKFILL_TARGET_BARS[interval]
 
 
 def backfill_target_days(interval):
     interval = normalize_chart_interval(interval)
-    return 365 if interval in {"1m", "5m", "10m"} else 365 * HIGHER_TIMEFRAME_YEARS
+    if source_interval_for(interval) == "1m":
+        return intraday_gapfill_target_days()
+    return BACKFILL_TARGET_DAYS[interval]
+
+
+def historical_target_bars(interval):
+    return HISTORICAL_TARGET_BARS[normalize_chart_interval(interval)]
+
+
+def intraday_preload_min_start_iso():
+    return (os.getenv(INTRADAY_PRELOAD_MIN_START_ENV) or DEFAULT_INTRADAY_PRELOAD_MIN_START).strip()
+
+
+def intraday_gapfill_target_days():
+    raw_hours = os.getenv("BACKFILL_MAX_GAPFILL_1M_RANGE_HOURS")
+    if raw_hours:
+        try:
+            hours = float(raw_hours)
+            if hours > 0:
+                return hours / 24
+        except ValueError:
+            pass
+    return DEFAULT_INTRADAY_GAPFILL_TARGET_DAYS
+
+
+def redis_closed_candle_cap(interval):
+    return REDIS_CLOSED_CANDLE_CAPS[normalize_chart_interval(interval)]
 
 
 def max_request_bars(interval):
@@ -110,7 +169,7 @@ def candle_count_for_24h(interval):
 
 
 def candle_count_for_1y(interval):
-    return backfill_target_bars(interval)
+    return historical_target_bars(interval)
 
 
 def resolve_candle_limit(interval, limit=None):

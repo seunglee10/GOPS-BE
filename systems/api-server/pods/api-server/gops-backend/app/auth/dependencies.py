@@ -51,4 +51,3 @@ class WebSocketAuthRequired(RuntimeError):
 
 class WebSocketAuthUnavailable(RuntimeError):
     """Raised when session storage cannot be checked."""
-

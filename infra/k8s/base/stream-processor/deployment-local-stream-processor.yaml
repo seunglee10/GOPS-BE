@@ -1,4 +1,4 @@
-# Runs the current Python stream processor in place of a real Flink cluster.
+# Runs the current Python stream processor as the chart-data stream runtime.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

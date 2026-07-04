@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "panels": {
+    "chart": {
+      "title": "차트",
+      "aliases": ["차트", "캔들", "가격 그래프", "그래프", "chart", "candle", "price chart", "graph"]
+    },
+    "newsFeed": {
+      "title": "시장 뉴스",
+      "aliases": ["뉴스", "시장 뉴스", "기사", "헤드라인", "뉴스 피드", "news", "headline", "article", "news feed"]
+    },
+    "indicatorCompare": {
+      "title": "지표 비교",
+      "aliases": ["지표", "지표 비교", "인디케이터", "거시", "indicator", "macro", "comparison"]
+    },
+    "orderTicket": {
+      "title": "주문",
+      "aliases": ["주문", "주문 입력", "주문창", "주문 패널", "매수창", "매도창", "오더", "order", "ticket", "order ticket"]
+    },
+    "portfolioHoldings": {
+      "title": "내 투자",
+      "aliases": ["내 투자", "보유종목", "잔고", "계좌", "포트폴리오", "portfolio", "holdings", "balance"]
+    },
+    "aiSummary": {
+      "title": "AI 요약",
+      "aliases": ["AI 요약", "요약", "AI 어시스턴트", "어시스턴트", "assistant", "summary"]
+    },
+    "ontologyGraph": {
+      "title": "온톨로지",
+      "aliases": ["온톨로지", "관계 그래프", "기업 관계", "관계", "ontology", "relationship", "relationship graph"]
+    }
+  },
+  "actions": {
+    "open": {
+      "strength": "strong",
+      "aliases": ["열어", "열어줘", "띄워", "띄워줘", "띄어", "띄어줘", "띠워", "띠워줘", "추가", "추가해", "켜", "켜줘", "open", "add"]
+    },
+    "close": {
+      "strength": "strong",
+      "aliases": ["닫아", "닫아줘", "숨겨", "숨겨줘", "제거", "없애", "꺼", "꺼줘", "close", "hide", "remove"]
+    },
+    "arrange": {
+      "strength": "strong",
+      "aliases": ["재배치", "배치", "정렬", "나란히", "같이", "동시에", "바꿔", "바꿔줘", "변경", "변경해", "조정", "arrange", "layout", "side by side"]
+    },
+    "move": {
+      "strength": "strong",
+      "aliases": ["옮겨", "옮겨줘", "이동", "이동해", "move"]
+    },
+    "focus": {
+      "strength": "weak",
+      "aliases": ["보여", "보여줘", "보이게", "앞으로", "포커스", "focus", "show"]
+    }
+  },
+  "sizes": {
+    "max": {
+      "aliases": ["제일 크게", "젤 크게", "제일크", "젤크", "최대", "가득", "전체화면", "full", "max", "maximum", "fullscreen"]
+    },
+    "large": {
+      "aliases": ["크게", "크개", "크계", "키워", "키워줘", "확대", "넓게", "크게 만들어", "large", "big", "bigger", "enlarge"]
+    },
+    "small": {
+      "aliases": ["작게", "줄여", "줄여줘", "축소", "좁게", "small", "smaller", "shrink"]
+    },
+    "min": {
+      "aliases": ["최소", "최소화", "접어", "min", "minimize"]
+    }
+  },
+  "positions": {
+    "top": {
+      "aliases": ["위로", "상단", "맨 위", "top", "up"]
+    },
+    "bottom": {
+      "aliases": ["아래", "밑", "하단", "맨 아래", "bottom", "down"]
+    },
+    "left": {
+      "aliases": ["왼쪽", "좌측", "왼편", "left"]
+    },
+    "right": {
+      "aliases": ["오른쪽", "우측", "오른편", "right"]
+    },
+    "center": {
+      "aliases": ["가운데", "중앙", "center", "middle"]
+    }
+  },
+  "surfaceNouns": ["패널", "페널", "창", "화면", "레이아웃", "영역", "탭", "ui", "panel", "window", "layout", "view", "screen"],
+  "multiPanelHints": ["여러", "여러개", "여러 패널", "여러 창", "대시보드", "동시에", "한번에", "같이", "나란히", "모두", "전체", "dashboard", "side by side"],
+  "contentOnlyVerbs": ["분석", "분석해", "분석해줘", "불러와", "불러와줘", "알려", "알려줘", "요약", "요약해", "검색", "찾아", "설명", "분석 요청"]
+}

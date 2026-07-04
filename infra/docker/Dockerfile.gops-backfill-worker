@@ -11,7 +11,7 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY systems/market-data/config ./config
+COPY systems/market-data/config ./systems/market-data/config
 COPY systems/market-data/shared ./systems/market-data/shared
 COPY systems/market-data/pods/backfill-worker ./systems/market-data/pods/backfill-worker
 

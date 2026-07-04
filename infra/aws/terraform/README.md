@@ -16,7 +16,6 @@ IRSA IAM role/policy
 ```text
 EKS cluster
 MSK cluster
-Flink cluster/application
 ElastiCache Redis
 VPC/Subnet/NAT
 ```
@@ -61,6 +60,16 @@ Build script variable mapping:
 | `order_worker_ecr_repository_url` | `ECR_ORDER_WORKER_REPO` |
 | `kis_adapter_ecr_repository_url` | `ECR_KIS_ADAPTER_REPO` |
 
+이미지를 전부 다시 빌드하지 않고 변경된 서비스만 빌드/푸시할 수 있습니다.
+
+```sh
+AWS_ACCOUNT_ID=<aws-account-id> scripts/aws/build-and-push-images.sh frontend
+AWS_ACCOUNT_ID=<aws-account-id> scripts/aws/build-and-push-images.sh backend market-storage
+AWS_ACCOUNT_ID=<aws-account-id> SERVICES=frontend,backend scripts/aws/build-and-push-images.sh
+```
+
+서비스 이름은 `scripts/aws/build-and-push-images.sh --help`로 확인합니다.
+
 ## Secrets Manager
 
 기본값은 이미 만들어진 `dev/alpaca` secret을 참조합니다.
@@ -78,6 +87,31 @@ secret 값은 아래 JSON key 중 하나의 형태여야 합니다.
 
 기존 secret이 없고 Terraform으로 빈 secret shell을 만들고 싶을 때만
 `create_alpaca_secret = true`로 바꿉니다.
+
+`google_oauth_secret_name`을 비워두면 IRSA 정책에 Google OAuth secret을
+추가하지 않습니다. Google login secret을 Secrets Manager에서 읽을 때는
+아래처럼 값을 넣으면 gops-backend가 해당 secret을 읽을 수 있도록 같은 pod
+policy에 ARN이 포함됩니다.
+
+```hcl
+google_oauth_secret_name = "oauth/google"
+```
+
+OpenAI API key를 External Secrets로 동기화할 때는 `openai_secret_name` secret
+ARN도 pod policy에 포함됩니다.
+
+```hcl
+openai_secret_name = "/gops/prod/agent-orchestrator/openai/api-key"
+```
+
+Terraform 대신 dev helper script로 IRSA를 갱신할 때도 같은 secret 이름을
+넘겨야 합니다.
+
+```bash
+GOOGLE_OAUTH_SECRET_NAME=oauth/google \
+OPENAI_SECRET_NAME=/gops/prod/agent-orchestrator/openai/api-key \
+./scripts/aws/create-irsa.sh
+```
 
 ## S3 Bucket
 

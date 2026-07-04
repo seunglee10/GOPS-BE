@@ -1,6 +1,6 @@
 # 역할: AWS에 바로 붙는 공통 리소스 ECR/S3/Secret/IRSA를 준비합니다.
 # 사용: EKS, MSK, Redis가 준비된 뒤 이 foundation을 적용합니다.
-# 주의: MSK/Flink/Redis 서버 자체 생성은 별도 네트워크/운영 모듈에서 다룹니다.
+# 주의: MSK/Redis 서버 자체 생성은 별도 네트워크/운영 모듈에서 다룹니다.
 data "aws_caller_identity" "current" {}
 
 locals {
@@ -77,6 +77,15 @@ data "aws_secretsmanager_secret" "kis_api" {
   name = var.kis_secret_name
 }
 
+data "aws_secretsmanager_secret" "google_oauth" {
+  count = var.google_oauth_secret_name == "" ? 0 : 1
+  name  = var.google_oauth_secret_name
+}
+
+data "aws_secretsmanager_secret" "openai_api_key" {
+  name = var.openai_secret_name
+}
+
 resource "aws_secretsmanager_secret" "alpaca_api" {
   count       = var.create_alpaca_secret ? 1 : 0
   name        = var.alpaca_secret_name
@@ -102,10 +111,16 @@ locals {
     data.aws_secretsmanager_secret.alpaca_api[*].name
   ))
   kis_secret_arn = data.aws_secretsmanager_secret.kis_api.arn
-  pod_secret_arns = [
-    local.alpaca_secret_arn,
-    local.kis_secret_arn
-  ]
+  openai_secret_arn = data.aws_secretsmanager_secret.openai_api_key.arn
+  google_oauth_secret_arns = data.aws_secretsmanager_secret.google_oauth[*].arn
+  pod_secret_arns = concat(
+    [
+      local.alpaca_secret_arn,
+      local.kis_secret_arn,
+      local.openai_secret_arn
+    ],
+    local.google_oauth_secret_arns
+  )
 }
 
 resource "aws_iam_policy" "market_data_pod_policy" {

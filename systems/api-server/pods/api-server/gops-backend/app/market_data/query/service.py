@@ -62,12 +62,20 @@ class MarketDataQueryService:
         interval = normalize_chart_interval(interval)
         return self.backfill_service.get_status(symbol, interval, request_id=request_id)
 
+    def backfill_queue_metrics(self) -> dict[str, Any]:
+        return self.backfill_service.queue_metrics()
+
     def symbol_search(self, query: str, limit: int) -> dict[str, Any]:
         return {
             "source": "alpaca",
             "query": query,
             "symbols": self.provider.search_symbols(query, limit),
         }
+
+    def symbol_page(self, query: str, page: int, page_size: int) -> dict[str, Any]:
+        from app.services.alfaka_market_data import market_symbol_page
+
+        return market_symbol_page(query, page, page_size, backfill_service=self.backfill_service)
 
     def symbol_detail(self, symbol: str) -> dict[str, Any]:
         try:

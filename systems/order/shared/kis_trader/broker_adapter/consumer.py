@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from typing import Any
 
-from confluent_kafka import Consumer as ConfluentConsumer, KafkaException
+from confluent_kafka import Consumer as ConfluentConsumer, KafkaError, KafkaException
 
 from kis_trader.domain.topics import ORDERS_COMMANDS_TOPIC
 from kis_trader.kis.client import DemoKisHttpClient
@@ -27,6 +28,26 @@ def build_broker_adapter_consumer_config(bootstrap_servers: str, **overrides: An
     config["group.id"] = "kis-broker-adapter"
     config["enable.auto.commit"] = False
     return config
+
+
+def _kafka_error_code(exc: KafkaException) -> int | None:
+    if not exc.args:
+        return None
+    error = exc.args[0]
+    code = getattr(error, "code", None)
+    if not callable(code):
+        return None
+    return code()
+
+
+def _waitable_kafka_error_codes() -> set[int]:
+    names = ("UNKNOWN_TOPIC_OR_PART", "_ALL_BROKERS_DOWN", "_TRANSPORT", "_TIMED_OUT")
+    return {getattr(KafkaError, name) for name in names if hasattr(KafkaError, name)}
+
+
+def _is_waitable_kafka_exception(exc: KafkaException) -> bool:
+    code = _kafka_error_code(exc)
+    return code in _waitable_kafka_error_codes()
 
 
 class KafkaBrokerAdapterConsumer:
@@ -57,11 +78,26 @@ class KafkaBrokerAdapterConsumer:
         self.consumer.commit(message=message, asynchronous=False)
         return result
 
-    def run(self, *, max_messages: int | None = None, timeout_seconds: float = 1.0) -> int:
+    def run(
+        self,
+        *,
+        max_messages: int | None = None,
+        timeout_seconds: float = 1.0,
+        retry_kafka_errors: bool | None = None,
+    ) -> int:
         processed = 0
+        retry_kafka_errors = max_messages is None if retry_kafka_errors is None else retry_kafka_errors
+        retry_seconds = float(os.getenv("KIS_ADAPTER_KAFKA_RETRY_SECONDS", "5"))
         try:
             while max_messages is None or processed < max_messages:
-                result = self.consume_once(timeout_seconds=timeout_seconds)
+                try:
+                    result = self.consume_once(timeout_seconds=timeout_seconds)
+                except KafkaException as exc:
+                    if not retry_kafka_errors or not _is_waitable_kafka_exception(exc):
+                        raise
+                    print(f"KIS broker adapter waiting for Kafka topic/bootstrap: {exc}", flush=True)
+                    time.sleep(retry_seconds)
+                    continue
                 if result is None:
                     if max_messages is not None:
                         break

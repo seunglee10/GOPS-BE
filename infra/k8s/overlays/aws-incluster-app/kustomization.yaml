@@ -4,8 +4,10 @@ kind: Kustomization
 
 resources:
   - ../../base
-  - ../../base/stream-processor
+  - secretstore-aws-secrets-manager.yaml
+  - externalsecret-openai.yaml
   - ingress.yaml
+  - retired-alpaca-ingestor.yaml
 
 patches:
   - path: configmap-incluster-patch.yaml
@@ -26,11 +28,18 @@ patches:
       - op: add
         path: /metadata/annotations
         value:
-          alb.ingress.kubernetes.io/healthcheck-path: /
+          alb.ingress.kubernetes.io/healthcheck-path: /healthz
           alb.ingress.kubernetes.io/success-codes: "200-399"
   - target:
       kind: Deployment
     patch: |-
+      - op: add
+        path: /spec/strategy
+        value:
+          type: RollingUpdate
+          rollingUpdate:
+            maxUnavailable: 0
+            maxSurge: 1
       - op: add
         path: /spec/template/metadata/annotations
         value:
@@ -46,6 +55,99 @@ patches:
         path: /spec/template/spec/nodeSelector
         value:
           kubernetes.io/arch: amd64
+      - op: add
+        path: /spec/template/spec/topologySpreadConstraints
+        value:
+          - maxSkew: 3
+            topologyKey: kubernetes.io/hostname
+            whenUnsatisfiable: ScheduleAnyway
+            labelSelector:
+              matchExpressions:
+                - key: app
+                  operator: Exists
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+  - target:
+      kind: Deployment
+      name: gops-backend
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/readinessProbe
+        value:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 6
+      - op: add
+        path: /spec/template/spec/containers/0/startupProbe
+        value:
+          httpGet:
+            path: /health
+            port: 8000
+          periodSeconds: 5
+          timeoutSeconds: 5
+          failureThreshold: 30
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 150m
+            memory: 384Mi
+          limits:
+            cpu: "1"
+            memory: 1Gi
+  - target:
+      kind: Deployment
+      name: gops-frontend
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+  - target:
+      kind: Deployment
+      name: agent-orchestrator
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+      - op: replace
+        path: /spec/template/spec/containers/0/readinessProbe
+        value:
+          httpGet:
+            path: /health
+            port: 8100
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 6
+      - op: add
+        path: /spec/template/spec/containers/0/startupProbe
+        value:
+          httpGet:
+            path: /health
+            port: 8100
+          periodSeconds: 5
+          timeoutSeconds: 5
+          failureThreshold: 30
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 750m
+            memory: 768Mi
   - target:
       kind: Job
     patch: |-
@@ -78,4 +180,7 @@ images:
     newTag: 324661e
   - name: YOUR_ECR_REPOSITORY/gops-kis-adapter
     newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-kis-adapter
+    newTag: 324661e
+  - name: YOUR_ECR_REPOSITORY/gops-agent-orchestrator
+    newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-agent-orchestrator
     newTag: 324661e

@@ -23,7 +23,7 @@ spec:
             - name: GOPS_API_BASE_URL
               value: http://gops-backend:8000
             - name: COVERAGE_REPAIR_SYMBOLS
-              value: NVDA,AMD,AVGO,TSM,ASML,AMAT,MU
+              value: ""
             - name: COVERAGE_REPAIR_INTERVALS
               value: 1m,5m,10m,1D,1W,1M
             - name: COVERAGE_REPAIR_DRY_RUN

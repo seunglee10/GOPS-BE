@@ -1,0 +1,34 @@
+# 역할: graph-aware retrieval fanout top-k별 latency와 fanout 사용량을 비교합니다.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: fanout-policy-benchmark
+  namespace: alfaka-market-data
+spec:
+  template:
+    metadata:
+      labels:
+        app: fanout-policy-benchmark
+    spec:
+      restartPolicy: Never
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: fanout-policy-benchmark
+          image: YOUR_ECR_REPOSITORY/gops-agent-orchestrator:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -u
+            - /app/systems/agent-orchestration/jobs/fanout-policy-benchmark/main.py
+          env:
+            - name: AGENT_PUBLISH_TO_KAFKA
+              value: "false"
+            - name: AGENT_EXPANDED_RETRIEVAL_ENABLED
+              value: "true"
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-clickhouse-secret
+                optional: true
+  backoffLimit: 1

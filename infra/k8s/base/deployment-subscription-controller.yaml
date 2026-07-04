@@ -1,0 +1,25 @@
+# 역할: 차트 실시간 구독 Redis state를 검증하고 ingestor가 읽을 수 있게 유지합니다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alfaka-subscription-controller
+  namespace: alfaka-market-data
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alfaka-subscription-controller
+  template:
+    metadata:
+      labels:
+        app: alfaka-subscription-controller
+    spec:
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: subscription-controller
+          image: YOUR_ECR_REPOSITORY/gops-market-processor:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "systems/market-data/pods/subscription-controller/main.py"]
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config

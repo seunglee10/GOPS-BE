@@ -14,4 +14,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY systems/market-data ./systems/market-data
 COPY systems/order ./systems/order
-COPY systems/market-data/config ./config
+COPY systems/market-data/config ./systems/market-data/config
