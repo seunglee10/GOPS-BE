@@ -276,3 +276,44 @@ They should not be interpreted as price data.
 | Footprint-like estimated delta | `trades`, `quotes` |
 | Halt/LULD markers | `events` |
 
+---
+
+## Helix Frontend Compatibility
+
+The `helix/front` workspace UI reads chart data through the current GOPS backend
+routes instead of a separate mock server. Keep these routes compatible when
+changing the frontend or chart-serving layer:
+
+| Usage | Route |
+| --- | --- |
+| Symbol list | `GET /api/charts/symbols` |
+| Candle window | `GET /api/charts/candles` |
+| Live candles | `WS /ws/charts?symbol={symbol}&interval={interval}` |
+
+The candle query uses `symbol`, `interval`, `limit`, optional `before`,
+optional `from`/`to`, and optional `ma`. The frontend currently sends
+`session=regular` and `ma=5,20,60`; the backend may ignore unsupported optional
+query parameters as long as the response remains compatible.
+
+The frontend consumes candles in ascending timestamp order:
+
+```ts
+type CandleDto = {
+  timestamp: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  isClosed: boolean;
+  ma5?: number;
+  ma20?: number;
+  ma60?: number;
+};
+```
+
+Realtime chart messages should be normalized to the existing chart WebSocket
+contract. The helix frontend handles `LIVE_CANDLE_UPDATE`, `CANDLE_CLOSED`, and
+`CANDLE_CORRECTED` by replacing a matching candle timestamp or appending a newer
+candle. TreeMap data remains a static frontend seed in this merge; live TreeMap
+summary data is a later backend integration task.
