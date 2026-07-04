@@ -75,7 +75,7 @@ CI/CD는 Continuous Integration/Continuous Delivery의 줄임말이다. 코드�
 
 흐름:
 
-1. `dev`, `kimheejun`, `deploy/**`, `test/**` branch push 또는 manual dispatch로 시작한다.
+1. `dev`, `kimheejun`, `helix/front-chart`, `deploy/**`, `test/**` branch push 또는 manual dispatch로 시작한다.
 2. `scripts/aws/detect-changed-services.sh`가 변경된 service를 감지한다.
 3. AWS OIDC role을 assume한다.
 4. ECR repository를 확인하거나 생성한다.

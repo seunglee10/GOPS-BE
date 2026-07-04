@@ -6,6 +6,7 @@ on:
       - dev
       # Branches matching these patterns deploy to the shared dev EKS environment.
       - kimheejun
+      - helix/front-chart
       - "deploy/**"
       - "test/**"
   workflow_dispatch:

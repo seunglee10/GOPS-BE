@@ -26,6 +26,10 @@ flowchart LR
   Deploy --> Jobs["Run smoke/eval jobs"]
 ```
 
+GitHub Actions dev/test deploy entrypoint is `.github/workflows/deploy-dev.yml`.
+It deploys to the shared dev EKS environment on pushes to `dev`, `kimheejun`,
+`helix/front-chart`, `deploy/**`, and `test/**`, or by manual dispatch.
+
 ## Image
 
 Agent runtime image:
