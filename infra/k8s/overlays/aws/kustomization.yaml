@@ -23,9 +23,6 @@ images:
   - name: YOUR_ECR_REPOSITORY/gops-market-storage
     newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-storage
     newTag: latest
-  - name: YOUR_ECR_REPOSITORY/gops-backfill-worker
-    newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-backfill-worker
-    newTag: latest
   - name: YOUR_ECR_REPOSITORY/gops-api-server
     newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-api-server
     newTag: latest

@@ -16,7 +16,6 @@ locals {
     market_ingestor  = "gops-market-ingestor"
     market_processor = "gops-market-processor"
     market_storage   = "gops-market-storage"
-    backfill_worker  = "gops-backfill-worker"
     order_worker     = "gops-order-worker"
     kis_adapter      = "gops-kis-adapter"
   }

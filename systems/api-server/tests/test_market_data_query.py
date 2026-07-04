@@ -9,8 +9,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 MARKET_SHARED = ROOT / "systems" / "market-data" / "shared"
 ORDER_SHARED = ROOT / "systems" / "order" / "shared"
+AGENT_SHARED = ROOT / "systems" / "agent-orchestration" / "shared"
 BACKEND = ROOT / "systems" / "api-server" / "pods" / "api-server" / "gops-backend"
-for path in (str(MARKET_SHARED), str(ORDER_SHARED), str(BACKEND)):
+for path in (str(MARKET_SHARED), str(ORDER_SHARED), str(AGENT_SHARED), str(BACKEND)):
     if path not in sys.path:
         sys.path.insert(0, path)
 
@@ -74,7 +75,8 @@ except Exception:
 sys.modules.setdefault("redis", types.SimpleNamespace(from_url=lambda *args, **kwargs: None))
 
 from app.market_data.query.service import MarketDataQueryService  # noqa: E402
-from app.market_data.backfill.service import BackfillService, resolve_execution_mode  # noqa: E402
+from app.market_data.backfill.service import BackfillService  # noqa: E402
+from app.market_data.fill.service import OnDemandFillService  # noqa: E402
 from app.market_data.monitor import routes as monitor_routes  # noqa: E402
 from app.market_data.query import routes as query_routes  # noqa: E402
 from app.contracts.chart import AgentChatMessage, AgentChatRequest  # noqa: E402
@@ -373,55 +375,83 @@ class FakeBackfillService:
         if has_candles:
             return {
                 "dataStatus": "ready",
-                "backfillStatus": "not_requested",
-                "canBackfill": False,
                 "message": None,
             }
         return {
             "dataStatus": "empty",
-            "backfillStatus": "not_requested",
-            "canBackfill": True,
             "sourceInterval": interval,
             "message": f"No stored {interval} candles were found for {symbol}.",
             "coverage": {
                 "state": "empty",
                 "reasonCode": "no_stored_candles",
                 "sourceInterval": interval,
-                "backfillStatus": "not_requested",
                 "returnedCount": 0,
             },
         }
 
     def request_backfill(self, symbol, interval, start=None, end=None, mode="default", force=False):
-        return {
-            "symbol": symbol,
-            "interval": interval,
-            "requestId": "backfill:INTC:1m:test",
-            "status": "queued",
-            "deduplicated": False,
-        }
+        raise HTTPException(status_code=410, detail="Backfill queue endpoints were replaced by on-demand fill.")
 
     def get_status(self, symbol, interval, request_id=None):
-        return {
-            "symbol": symbol,
-            "interval": interval,
-            "requestId": request_id or "backfill:INTC:1m:test",
-            "status": "queued",
-            "range": {"start": "2026-06-25T13:30:00.000Z", "end": "2026-06-25T14:30:00.000Z"},
-        }
+        raise HTTPException(status_code=410, detail="Backfill status was replaced by on-demand fill trace.")
 
     def queue_metrics(self):
-        return {
-            "queueBackend": "streams",
-            "observedAt": "2026-06-25T13:30:00.000Z",
-            "stream": {
-                "retainedLength": 2,
-                "pendingCount": 1,
-                "undeliveredCount": 1,
-                "backlogCount": 2,
+        raise HTTPException(status_code=410, detail="Backfill queue metrics were replaced by on-demand fill trace.")
+
+
+class FakeFillService:
+    def fill_if_needed(self, *, symbol, interval, limit, before, from_time, to_time, payload):
+        returned = len(payload.get("candles") or [])
+        payload["fill"] = {
+            "status": "not_needed" if returned else "empty",
+            "requestedLimit": limit,
+            "sourceInterval": interval,
+            "sources": {
+                "redis": {"checked": False, "hit": False, "rowCount": 0, "durationMs": 0, "error": None},
+                "clickhouse": {"checked": True, "hit": returned > 0, "rowCount": returned, "durationMs": 0, "error": None},
+                "s3": {"checked": False, "hit": False, "rowCount": 0, "durationMs": 0, "error": None},
+                "alpaca": {"checked": False, "hit": False, "rowCount": 0, "durationMs": 0, "error": None},
             },
-            "deadLetter": {"length": 0},
+            "missingRanges": [],
+            "gapRanges": [],
+            "renderable": returned > 0,
         }
+        return payload
+
+
+def make_fill_candles(count):
+    return [
+        {"timestamp": f"2026-06-25T13:{index:02d}:00.000Z", "open": 1, "high": 1, "low": 1, "close": 1, "volume": 1}
+        for index in range(count)
+    ]
+
+
+class ReloadingFillProvider:
+    def __init__(self, refreshed_payload):
+        self.refreshed_payload = refreshed_payload
+        self.calls = []
+
+    def candle_snapshot(self, symbol, interval, limit, before=None, from_time=None, to_time=None):
+        self.calls.append((symbol, interval, limit, before, from_time, to_time))
+        return dict(self.refreshed_payload)
+
+
+class RecordingOnDemandFillService(OnDemandFillService):
+    def __init__(self, *, provider=None, s3_result=False, alpaca_result=False):
+        super().__init__(provider=provider, timeout_seconds=8)
+        self.s3_result = s3_result
+        self.alpaca_result = alpaca_result
+        self.calls = []
+
+    def _fill_from_s3(self, symbol, interval, ranges, trace, started):
+        self.calls.append(("s3", symbol, interval, list(ranges)))
+        trace["sources"]["s3"].update({"checked": True, "hit": self.s3_result, "rowCount": 30 if self.s3_result else 0})
+        return self.s3_result
+
+    def _fill_from_alpaca(self, symbol, interval, ranges, trace, started):
+        self.calls.append(("alpaca", symbol, interval, list(ranges)))
+        trace["sources"]["alpaca"].update({"checked": True, "hit": self.alpaca_result, "rowCount": 30 if self.alpaca_result else 0})
+        return self.alpaca_result
 
 
 class RecordingBackfillStore:
@@ -459,7 +489,7 @@ class RecordingBackfillStore:
 
 class FakeQueryService:
     def __init__(self, provider=None):
-        self.service = MarketDataQueryService(provider or FakeProvider(), backfill_service=FakeBackfillService())
+        self.service = MarketDataQueryService(provider or FakeProvider(), backfill_service=FakeBackfillService(), fill_service=FakeFillService())
 
     def symbol_search(self, query, limit):
         return self.service.symbol_search(query, limit)
@@ -489,17 +519,17 @@ class FakeQueryService:
 class MarketDataQueryServiceTest(unittest.TestCase):
     def test_candle_snapshot_adds_requested_indicators_and_normalizes_symbol(self):
         provider = FakeProvider()
-        service = MarketDataQueryService(provider, backfill_service=FakeBackfillService())
+        service = MarketDataQueryService(provider, backfill_service=FakeBackfillService(), fill_service=FakeFillService())
 
         payload = service.candle_snapshot("aapl", "1m", "5,60,999", None)
 
         self.assertEqual(payload["symbol"], "AAPL")
-        self.assertEqual(provider.last_limit, 390)
+        self.assertEqual(provider.last_limit, 120)
         self.assertEqual(payload["indicators"], {"ma": [5, 60], "volume": True})
 
     def test_candle_snapshot_accepts_canonical_and_legacy_intervals(self):
         provider = FakeProvider()
-        service = MarketDataQueryService(provider, backfill_service=FakeBackfillService())
+        service = MarketDataQueryService(provider, backfill_service=FakeBackfillService(), fill_service=FakeFillService())
 
         daily_payload = service.candle_snapshot("aapl", "1d", "5,20,60", None)
         weekly_payload = service.candle_snapshot("aapl", "1W", "5,20,60", None)
@@ -510,7 +540,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(monthly_payload["interval"], "1M")
 
     def test_candle_snapshot_provider_error_maps_to_503(self):
-        service = MarketDataQueryService(FakeProvider(fail_snapshot=True), backfill_service=FakeBackfillService())
+        service = MarketDataQueryService(FakeProvider(fail_snapshot=True), backfill_service=FakeBackfillService(), fill_service=FakeFillService())
 
         with self.assertRaises(HTTPException) as raised:
             service.candle_snapshot("AAPL", "1m", "5,20,60", 30)
@@ -519,7 +549,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertIn("Market data provider failed", str(raised.exception.detail))
 
     def test_query_service_routes_core_market_context(self):
-        service = MarketDataQueryService(FakeProvider(), backfill_service=FakeBackfillService())
+        service = MarketDataQueryService(FakeProvider(), backfill_service=FakeBackfillService(), fill_service=FakeFillService())
 
         self.assertEqual(service.symbol_search("aa", 10)["symbols"][0]["symbol"], "AAPL")
         self.assertEqual(service.symbol_detail("aapl")["symbol"], "AAPL")
@@ -553,7 +583,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             context = build_agent_market_analysis_context({
                 "chartDocument": {"symbol": "NVDA", "timeframe": "1m"},
                 "visibleSummary": {"lastPrice": "123.45", "high": "125.00", "low": "120.00"},
-                "dataStatus": {"state": "ready", "candleCount": 120, "backfillStatus": "not_requested"},
+                "dataStatus": {"state": "ready", "candleCount": 120},
                 "streamStatus": "error",
             })
         finally:
@@ -591,18 +621,128 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertNotIn("liveFeedStatus", build_agent_market_analysis_context(prompt_context)["dataReadiness"])
 
     def test_empty_candle_snapshot_includes_backfill_metadata(self):
-        service = MarketDataQueryService(EmptyFakeProvider(), backfill_service=FakeBackfillService())
+        service = MarketDataQueryService(EmptyFakeProvider(), backfill_service=FakeBackfillService(), fill_service=FakeFillService())
 
         payload = service.candle_snapshot("intc", "1m", "5,20,60", 30)
 
         self.assertEqual(payload["symbol"], "INTC")
         self.assertEqual(payload["candles"], [])
         self.assertEqual(payload["dataStatus"], "empty")
-        self.assertEqual(payload["backfillStatus"], "not_requested")
-        self.assertTrue(payload["canBackfill"])
+        self.assertEqual(payload["fill"]["status"], "empty")
+        self.assertTrue(payload["fill"]["sources"]["clickhouse"]["checked"])
         self.assertIn("No stored 1m candles", payload["message"])
         self.assertEqual(payload["coverage"]["state"], "empty")
         self.assertEqual(payload["coverage"]["reasonCode"], "no_stored_candles")
+
+    def test_on_demand_fill_stops_when_redis_has_requested_window(self):
+        payload = {
+            "symbol": "NVDA",
+            "interval": "1m",
+            "candles": make_fill_candles(30),
+            "_sourceTrace": {
+                "redis": {"checked": True, "hit": True, "rowCount": 30},
+                "clickhouse": {"checked": False, "hit": False, "rowCount": 0},
+            },
+        }
+        service = RecordingOnDemandFillService(s3_result=True, alpaca_result=True)
+
+        result = service.fill_if_needed(
+            symbol="NVDA",
+            interval="1m",
+            limit=20,
+            before="2026-06-25T14:00:00.000Z",
+            from_time=None,
+            to_time=None,
+            payload=payload,
+        )
+
+        self.assertEqual(result["fill"]["status"], "not_needed")
+        self.assertEqual(service.calls, [])
+        self.assertTrue(result["fill"]["sources"]["redis"]["hit"])
+        self.assertFalse(result["fill"]["sources"]["s3"]["checked"])
+        self.assertFalse(result["fill"]["sources"]["alpaca"]["checked"])
+
+    def test_on_demand_fill_stops_when_clickhouse_has_requested_window(self):
+        payload = {
+            "symbol": "AMD",
+            "interval": "1m",
+            "candles": make_fill_candles(30),
+            "_sourceTrace": {
+                "redis": {"checked": True, "hit": False, "rowCount": 0},
+                "clickhouse": {"checked": True, "hit": True, "rowCount": 30},
+            },
+        }
+        service = RecordingOnDemandFillService(s3_result=True, alpaca_result=True)
+
+        result = service.fill_if_needed(
+            symbol="AMD",
+            interval="1m",
+            limit=20,
+            before="2026-06-25T14:00:00.000Z",
+            from_time=None,
+            to_time=None,
+            payload=payload,
+        )
+
+        self.assertEqual(result["fill"]["status"], "not_needed")
+        self.assertEqual(service.calls, [])
+        self.assertTrue(result["fill"]["sources"]["clickhouse"]["hit"])
+        self.assertFalse(result["fill"]["sources"]["s3"]["checked"])
+        self.assertFalse(result["fill"]["sources"]["alpaca"]["checked"])
+
+    def test_on_demand_fill_materializes_s3_before_alpaca(self):
+        refreshed = {
+            "symbol": "CSCO",
+            "interval": "1m",
+            "candles": make_fill_candles(30),
+            "_sourceTrace": {
+                "redis": {"checked": True, "hit": False, "rowCount": 0},
+                "clickhouse": {"checked": True, "hit": True, "rowCount": 30},
+            },
+        }
+        service = RecordingOnDemandFillService(provider=ReloadingFillProvider(refreshed), s3_result=True, alpaca_result=True)
+
+        result = service.fill_if_needed(
+            symbol="CSCO",
+            interval="1m",
+            limit=30,
+            before="2026-06-25T14:00:00.000Z",
+            from_time=None,
+            to_time=None,
+            payload={"symbol": "CSCO", "interval": "1m", "candles": []},
+        )
+
+        self.assertEqual(result["fill"]["status"], "filled")
+        self.assertEqual([call[0] for call in service.calls], ["s3"])
+        self.assertTrue(result["fill"]["sources"]["s3"]["hit"])
+        self.assertFalse(result["fill"]["sources"]["alpaca"]["checked"])
+
+    def test_on_demand_fill_falls_back_to_alpaca_when_s3_misses(self):
+        refreshed = {
+            "symbol": "CSCO",
+            "interval": "1m",
+            "candles": make_fill_candles(30),
+            "_sourceTrace": {
+                "redis": {"checked": True, "hit": False, "rowCount": 0},
+                "clickhouse": {"checked": True, "hit": True, "rowCount": 30},
+            },
+        }
+        service = RecordingOnDemandFillService(provider=ReloadingFillProvider(refreshed), s3_result=False, alpaca_result=True)
+
+        result = service.fill_if_needed(
+            symbol="CSCO",
+            interval="1m",
+            limit=30,
+            before="2026-06-25T14:00:00.000Z",
+            from_time=None,
+            to_time=None,
+            payload={"symbol": "CSCO", "interval": "1m", "candles": []},
+        )
+
+        self.assertEqual(result["fill"]["status"], "filled")
+        self.assertEqual([call[0] for call in service.calls], ["s3", "alpaca"])
+        self.assertFalse(result["fill"]["sources"]["s3"]["hit"])
+        self.assertTrue(result["fill"]["sources"]["alpaca"]["hit"])
 
     def test_configured_symbols_uses_alpaca_symbols_watchlist_seed(self):
         previous = os.environ.get("ALPACA_SYMBOLS")
@@ -615,25 +755,27 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             else:
                 os.environ["ALPACA_SYMBOLS"] = previous
 
-    def test_backfill_routes_delegate_to_query_service(self):
+    def test_backfill_routes_return_gone(self):
         previous = chart_routes.get_query_service
         chart_routes.get_query_service = lambda: FakeQueryService(EmptyFakeProvider())
         try:
-            requested = chart_routes.chart_backfill(chart_routes.BackfillRequestBody(
-                symbol="intc",
-                interval="1m",
-                start="2026-06-25T13:30:00.000Z",
-                end="2026-06-25T14:30:00.000Z",
-            ))
-            status = chart_routes.chart_backfill_status("intc", "1m")
-            queue = chart_routes.chart_backfill_queue()
+            with self.assertRaises(HTTPException) as requested:
+                chart_routes.chart_backfill(chart_routes.BackfillRequestBody(
+                    symbol="intc",
+                    interval="1m",
+                    start="2026-06-25T13:30:00.000Z",
+                    end="2026-06-25T14:30:00.000Z",
+                ))
+            with self.assertRaises(HTTPException) as status:
+                chart_routes.chart_backfill_status("intc", "1m")
+            with self.assertRaises(HTTPException) as queue:
+                chart_routes.chart_backfill_queue()
         finally:
             chart_routes.get_query_service = previous
 
-        self.assertEqual(requested["requestId"], "backfill:INTC:1m:test")
-        self.assertEqual(status["status"], "queued")
-        self.assertEqual(queue["queueBackend"], "streams")
-        self.assertEqual(queue["stream"]["backlogCount"], 2)
+        self.assertEqual(requested.exception.status_code, 410)
+        self.assertEqual(status.exception.status_code, 410)
+        self.assertEqual(queue.exception.status_code, 410)
 
     def test_monitor_subscription_route_writes_manual_source_for_controller(self):
         fake_redis = FakeMonitorRedis()
@@ -817,7 +959,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertIn("gops:market:on-demand:v1:latest:closed:candle:MSFT:1D", redis_state.values)
         self.assertNotIn("gops:market:on-demand:v1:subscription:symbols", redis_state.sets)
 
-    def test_sp500_symbol_page_requests_latest_daily_backfill_when_price_missing(self):
+    def test_sp500_symbol_page_does_not_queue_latest_daily_backfill_when_price_missing(self):
         class NoPriceRedisProvider:
             def __init__(self):
                 self.redis = FakeWatchlistRedis()
@@ -864,45 +1006,14 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             market_data_service.get_market_data_provider = previous_provider
             market_data_service.sp500_universe_symbols = previous_sp500
 
-        self.assertEqual(len(backfill.calls), 1)
-        symbol, interval, start, end, mode, force = backfill.calls[0]
-        self.assertEqual((symbol, interval, mode, force), ("MSFT", "1D", "default", False))
-        self.assertIsInstance(start, str)
-        self.assertIsInstance(end, str)
-        start_dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
-        end_dt = datetime.fromisoformat(end.replace("Z", "+00:00"))
-        self.assertLessEqual(end_dt - start_dt, timedelta(days=31))
+        self.assertEqual(backfill.calls, [])
         self.assertEqual(payload["symbols"][0]["lastPrice"], None)
-        self.assertEqual(payload["symbols"][0]["priceSource"], "latest-backfill")
-        self.assertEqual(payload["symbols"][0]["priceStatus"], "loading")
-        self.assertEqual(payload["symbols"][0]["latestPriceBackfill"]["status"], "queued")
+        self.assertEqual(payload["symbols"][0]["priceSource"], None)
+        self.assertEqual(payload["symbols"][0]["priceStatus"], "missing")
+        self.assertNotIn("latestPriceBackfill", payload["symbols"][0])
 
-    def test_requested_backfill_mode_is_ignored_unless_explicitly_enabled(self):
-        previous_mode = os.environ.get("BACKFILL_EXECUTION_MODE")
-        previous_allow = os.environ.get("BACKFILL_ALLOW_REQUESTED_MODE")
-        os.environ["BACKFILL_EXECUTION_MODE"] = "queue"
-        os.environ.pop("BACKFILL_ALLOW_REQUESTED_MODE", None)
-        try:
-            self.assertEqual(resolve_execution_mode("unsupported-dev"), "queue")
-            os.environ["BACKFILL_ALLOW_REQUESTED_MODE"] = "true"
-            self.assertEqual(resolve_execution_mode("unsupported-dev"), "queue")
-            self.assertEqual(resolve_execution_mode("sync-dev"), "sync-dev")
-        finally:
-            if previous_mode is None:
-                os.environ.pop("BACKFILL_EXECUTION_MODE", None)
-            else:
-                os.environ["BACKFILL_EXECUTION_MODE"] = previous_mode
-            if previous_allow is None:
-                os.environ.pop("BACKFILL_ALLOW_REQUESTED_MODE", None)
-            else:
-                os.environ["BACKFILL_ALLOW_REQUESTED_MODE"] = previous_allow
-
-    def test_oversized_backfill_request_returns_bad_request(self):
-        class RejectingBackfillStore:
-            def create_request(self, *args, **kwargs):
-                raise ValueError("Rejected oversized 1m gapfill")
-
-        service = BackfillService(store=RejectingBackfillStore())
+    def test_backfill_request_service_returns_gone(self):
+        service = BackfillService(store=RecordingBackfillStore())
 
         with self.assertRaises(HTTPException) as raised:
             service.request_backfill(
@@ -913,43 +1024,23 @@ class MarketDataQueryServiceTest(unittest.TestCase):
                 force=True,
             )
 
-        self.assertEqual(raised.exception.status_code, 400)
-        self.assertIn("Rejected oversized", str(raised.exception.detail))
+        self.assertEqual(raised.exception.status_code, 410)
+        self.assertIn("on-demand fill", str(raised.exception.detail))
 
-    def test_derived_interval_backfill_queues_source_interval(self):
-        store = RecordingBackfillStore()
-        service = BackfillService(store=store)
+    def test_backfill_status_and_queue_services_return_gone(self):
+        service = BackfillService(store=RecordingBackfillStore())
 
-        intraday = service.request_backfill("AAPL", "5m")
-        monthly_request = service.request_backfill("AAPL", "1M")
-        monthly_status = service.get_status("AAPL", "1M")
+        with self.assertRaises(HTTPException) as status:
+            service.get_status("AAPL", "1M")
+        with self.assertRaises(HTTPException) as queue:
+            service.queue_metrics()
 
-        self.assertEqual(store.created[0][1], "1m")
-        self.assertEqual(store.created[1][1], "1D")
-        self.assertEqual(intraday["status"], "queued")
-        self.assertEqual(intraday["interval"], "5m")
-        self.assertEqual(intraday["sourceInterval"], "1m")
-        self.assertEqual(monthly_request["status"], "queued")
-        self.assertEqual(monthly_request["interval"], "1M")
-        self.assertEqual(monthly_request["sourceInterval"], "1D")
-        self.assertEqual(monthly_status["status"], "queued")
-        self.assertEqual(monthly_status["interval"], "1M")
-        self.assertEqual(monthly_status["sourceInterval"], "1D")
+        self.assertEqual(status.exception.status_code, 410)
+        self.assertEqual(queue.exception.status_code, 410)
 
-    def test_force_backfill_flag_is_passed_to_status_store(self):
-        store = RecordingBackfillStore()
-        service = BackfillService(store=store)
+    def test_derived_interval_snapshot_metadata_uses_source_interval(self):
+        service = BackfillService(store=RecordingBackfillStore())
 
-        requested = service.request_backfill("AAPL", "1D", force=True)
-
-        self.assertEqual(requested["status"], "queued")
-        self.assertTrue(store.created[0][5])
-
-    def test_derived_interval_snapshot_metadata_uses_source_interval_status(self):
-        store = RecordingBackfillStore()
-        service = BackfillService(store=store)
-
-        service.request_backfill("AAPL", "1M")
         metadata = service.snapshot_metadata("AAPL", "1W", {
             "candles": [],
             "returnedCount": 0,
@@ -959,12 +1050,9 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         })
 
         self.assertEqual(metadata["dataStatus"], "empty")
-        self.assertEqual(metadata["backfillStatus"], "queued")
-        self.assertEqual(metadata["repairStatus"], "gapfill_active")
-        self.assertFalse(metadata["canBackfill"])
         self.assertEqual(metadata["sourceInterval"], "1D")
-        self.assertEqual(metadata["coverage"]["reasonCode"], "backfill_active")
-        self.assertEqual(metadata["coverage"]["repairStatus"], "gapfill_active")
+        self.assertEqual(metadata["coverage"]["reasonCode"], "no_stored_candles")
+        self.assertEqual(metadata["coverage"]["repairStatus"], "gapfill_required")
 
     def test_succeeded_backfill_without_stored_coverage_is_not_ready(self):
         store = RecordingBackfillStore()
@@ -1001,16 +1089,15 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         })
 
         self.assertEqual(partial["dataStatus"], "partial")
-        self.assertEqual(partial["backfillStatus"], "succeeded")
-        self.assertEqual(partial["repairStatus"], "gapfill_required")
-        self.assertTrue(partial["canBackfill"])
+        self.assertNotIn("backfillStatus", partial)
+        self.assertNotIn("canBackfill", partial)
         self.assertEqual(partial["coverage"]["reasonCode"], "insufficient_source_bars")
+        self.assertEqual(partial["coverage"]["repairStatus"], "gapfill_required")
         self.assertFalse(partial["coverage"]["renderable"])
         self.assertEqual(empty["dataStatus"], "empty")
-        self.assertEqual(empty["repairStatus"], "gapfill_required")
-        self.assertTrue(empty["canBackfill"])
-        self.assertEqual(empty["coverage"]["reasonCode"], "backfill_succeeded_without_complete_coverage")
-        self.assertIn("Backfill completed", empty["message"])
+        self.assertEqual(empty["coverage"]["repairStatus"], "gapfill_required")
+        self.assertEqual(empty["coverage"]["reasonCode"], "no_stored_candles")
+        self.assertIn("No stored", empty["message"])
 
     def test_unavailable_backfill_without_stored_coverage_can_retry(self):
         store = RecordingBackfillStore()
@@ -1037,11 +1124,11 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         })
 
         self.assertEqual(metadata["dataStatus"], "empty")
-        self.assertEqual(metadata["backfillStatus"], "unavailable")
-        self.assertEqual(metadata["repairStatus"], "gapfill_failed")
-        self.assertTrue(metadata["canBackfill"])
+        self.assertNotIn("backfillStatus", metadata)
+        self.assertNotIn("canBackfill", metadata)
         self.assertEqual(metadata["sourceInterval"], "1D")
-        self.assertEqual(metadata["coverage"]["reasonCode"], "backfill_unavailable")
+        self.assertEqual(metadata["coverage"]["reasonCode"], "no_stored_candles")
+        self.assertEqual(metadata["coverage"]["repairStatus"], "gapfill_required")
 
     def test_sparse_daily_coverage_is_not_renderable_ready_for_higher_timeframes(self):
         store = RecordingBackfillStore()
@@ -1076,7 +1163,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         })
 
         self.assertEqual(metadata["dataStatus"], "partial")
-        self.assertEqual(metadata["repairStatus"], "gapfill_required")
+        self.assertEqual(metadata["coverage"]["repairStatus"], "gapfill_required")
         self.assertEqual(metadata["coverage"]["reasonCode"], "insufficient_source_bars")
         self.assertFalse(metadata["coverage"]["renderable"])
         self.assertEqual(metadata["coverage"]["sourceInterval"], "1D")
@@ -1100,8 +1187,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         })
 
         self.assertEqual(metadata["dataStatus"], "ready")
-        self.assertEqual(metadata["repairStatus"], "history_preload_required")
-        self.assertTrue(metadata["canBackfill"])
+        self.assertEqual(metadata["coverage"]["repairStatus"], "gapfill_required")
         self.assertEqual(metadata["coverage"]["state"], "partial")
         self.assertTrue(metadata["coverage"]["renderable"])
 
@@ -1129,7 +1215,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         })
 
         self.assertEqual(metadata["dataStatus"], "ready")
-        self.assertEqual(metadata["repairStatus"], "history_preload_required")
+        self.assertEqual(metadata["coverage"]["repairStatus"], "gapfill_required")
         self.assertTrue(metadata["coverage"]["renderable"])
 
     def test_intraday_renderability_rejects_same_session_sparse_gap(self):
@@ -1195,7 +1281,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         })
 
         self.assertEqual(metadata["dataStatus"], "ready")
-        self.assertEqual(metadata["repairStatus"], "none")
+        self.assertEqual(metadata["coverage"]["repairStatus"], "none")
         self.assertTrue(metadata["coverage"]["renderable"])
         self.assertIsNone(metadata["coverage"]["renderabilityReasonCode"])
         self.assertEqual(metadata["coverage"]["gapRanges"], [])
@@ -1231,7 +1317,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         })
 
         self.assertEqual(metadata["dataStatus"], "ready")
-        self.assertEqual(metadata["repairStatus"], "none")
+        self.assertEqual(metadata["coverage"]["repairStatus"], "none")
         self.assertEqual(metadata["coverage"]["state"], "complete")
         self.assertEqual(metadata["coverage"]["reasonCode"], "coverage_complete")
         self.assertTrue(metadata["coverage"]["renderable"])
@@ -1279,7 +1365,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
 
         self.assertEqual(watchlist.status_code, 401)
         self.assertEqual(portfolio.status_code, 401)
-        self.assertEqual(backfill.status_code, 401)
+        self.assertEqual(backfill.status_code, 410)
 
     def test_monitor_overview_documents_quote_and_raw_s3_policy(self):
         fake_redis = FakeMonitorRedis()
@@ -1295,7 +1381,14 @@ class MarketDataQueryServiceTest(unittest.TestCase):
 
         self.assertEqual(payload["quotesPersistence"], "redis-websocket-s3-clickhouse")
         self.assertEqual(payload["rawS3Role"], "backup-only")
-        self.assertEqual(payload["redisCandleCacheLimit"], 120)
+        self.assertEqual(payload["redisCandleCacheLimit"], {
+            "1m": 120,
+            "5m": 120,
+            "10m": 120,
+            "1D": 120,
+            "1W": 104,
+            "1M": 36,
+        })
 
     def test_hot_symbol_summaries_use_clickhouse_ranking_before_symbol_scan(self):
         provider = FakeHotProvider()
@@ -1336,7 +1429,6 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             "ALPACA_UNIVERSE": "",
             "ALPACA_CHANNELS": "bars,updatedBars,dailyBars,statuses",
             "ALPACA_FEED_PROFILES": "sip,boats",
-            "BACKFILL_INITIAL_LOAD_1M_MIN_START": "2020-07-01T00:00:00Z",
             "ALPACA_CREDENTIAL_SOURCE": "aws-secrets-manager",
             "ALPACA_SECRET_NAME": "dev/alpaca",
             "APCA_API_KEY_ID": "",
@@ -1374,7 +1466,6 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             "ALLOW_NON_CANONICAL_HISTORICAL_ADJUSTMENT": "true",
             "CLICKHOUSE_REQUIRE_CANONICAL_CANDLES": "false",
             "S3_REQUIRE_CANONICAL_PROCESSED_CANDLES": "false",
-            "BACKFILL_INITIAL_LOAD_1M_MIN_START": "2025-04-01T00:00:00Z",
             "ALPACA_CREDENTIAL_SOURCE": "bogus",
             "ALPACA_COLLECTION_SYMBOL_SOURCE": "on-demand",
         }, clear=False):
@@ -1394,7 +1485,6 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertIn("noncanonical_historical_adjustment_allowed", payload["warnings"])
         self.assertIn("clickhouse_canonical_filter_disabled", payload["warnings"])
         self.assertIn("s3_canonical_manifest_filter_disabled", payload["warnings"])
-        self.assertIn("1m_lazy_floor_not_6y", payload["warnings"])
         self.assertIn("invalid_alpaca_credential_source", payload["warnings"])
         self.assertNotIn("semiconductor-100", str(payload))
 

@@ -1,6 +1,6 @@
 # Market Data System
 
-Owns Alpaca ingest, stream processing, market-data storage, backfill, and serving helpers.
+Owns Alpaca ingest, stream processing, market-data storage, on-demand fill, and serving helpers.
 
 For chart-data rebuild work, `docs/CHART_DATA_REBUILD_PLAN.md` is the source of
 truth. Older notes in this system that describe a fixed preset universe,
@@ -15,10 +15,8 @@ pods/market-processor/      Python stream processor for local and current AWS ru
 pods/s3-sink/               processed and raw Kafka topics to S3
 pods/clickhouse-loader/     processed Kafka topics to ClickHouse
 pods/news-intelligence-worker/ precomputes Korean news summaries/relevance
-pods/backfill-worker/       Redis queued historical backfill worker
 jobs/symbol-registry-sync/  symbol metadata sync job
-jobs/coverage-repair/       chart coverage audit/backfill queue job
-jobs/initial-load/          chunked canonical history initial-load planner job
+jobs/coverage-repair/       chart coverage and on-demand fill trace audit job
 jobs/news-backfill/         Alpaca News historical raw/archive backfill job
 jobs/news-intelligence-rebuild/ relevance v2 rebuild job for localized news
 config/                     market universe and subscription policy
@@ -36,10 +34,8 @@ pods/s3-sink/processed_sink.py                  wraps alfaka.storage.processed_s
 pods/s3-sink/raw_archive_sink.py                 wraps alfaka.storage.raw_s3_archive_sink
 pods/clickhouse-loader/processed_loader.py      wraps alfaka.storage.clickhouse_loader
 pods/news-intelligence-worker/main.py           precomputes Korean news intelligence records
-pods/backfill-worker/main.py                    wraps alfaka.backfill.worker
 jobs/symbol-registry-sync/main.py               wraps alfaka.tools.sync_symbol_registry
-jobs/coverage-repair/main.py                    audits /api/charts/candles and queues /api/charts/backfill
-jobs/initial-load/main.py                       plans/queues chunked initial_load jobs
+jobs/coverage-repair/main.py                    audits /api/charts/candles fill traces
 jobs/news-backfill/main.py                      stores Alpaca News raw payloads once per articleId
 jobs/news-intelligence-rebuild/main.py          rebuilds relevance v2 fields for recent localized news
 ```
@@ -48,9 +44,8 @@ jobs/news-intelligence-rebuild/main.py          rebuilds relevance v2 fields for
 
 ```text
 gops-market-ingestor    market-ingestor
-gops-market-processor   market-processor, symbol-registry-sync, coverage-repair, initial-load
+gops-market-processor   market-processor, symbol-registry-sync, coverage-repair
 gops-market-storage     processed S3 sink, raw S3 archive, clickhouse-loader, news-intelligence-worker, news jobs
-gops-backfill-worker    backfill-worker
 ```
 
 ## Platform Dependencies
@@ -82,7 +77,7 @@ Runtime policy:
 
 - no preset universe chart preload
 - realtime trades/quotes/bars/events only for explicit active subscriptions
-- Redis keeps newest 120 candles per `symbol + timeframe`
+- Redis keeps only the frontend-requested recent chart window per `symbol + timeframe`
 - older confirmed candles come from ClickHouse
 - ClickHouse misses check S3 final/manifest before Alpaca historical
 - raw S3 archives are backup-only and not an active read/materialization source
@@ -131,23 +126,24 @@ Use the repair job after bootstrapping a new local volume, restoring ClickHouse,
 docker compose --profile repair run --rm coverage-repair
 ```
 
-The compose job is dry-run by default. To queue missing backfills:
+The compose job is dry-run by default. It calls `GET /api/charts/candles`, so
+the API may perform bounded on-demand fill for the requested window and then
+report the resulting `fill` trace.
 
 ```bash
 COVERAGE_REPAIR_DRY_RUN=false docker compose --profile repair run --rm coverage-repair
 ```
 
-The job talks to the API server rather than Redis or ClickHouse directly, so derived intervals keep the same source-interval rules as the frontend: `5m/10m` repair through `1m`, and `1W/1M` repair through `1D`.
-Backfill API requests are queued in Redis Streams by default, with consumer-group claim/ack/reclaim semantics and dead-letter handling after the configured max attempts. Stale queued/running gapfill records fail after `BACKFILL_ACTIVE_STALE_SECONDS`, and chart/API `1m` gapfill windows are bounded by `BACKFILL_MAX_GAPFILL_1M_RANGE_HOURS` (14 days by default); broad intraday rebuilds belong to Initial Load or explicit S3 materialize jobs.
+The job talks to the API server rather than Redis or ClickHouse directly, so
+derived intervals keep the same source-interval rules as the frontend:
+`5m/10m` fill through `1m`, and `1W/1M` fill through `1D`.
 
-## Initial Load
+## On-Demand Historical Fill
 
-Initial Load is legacy/bootstrap tooling during the on-demand chart rebuild. Do
-not use it as the normal chart path and do not run broad preset-universe preload
-without explicit operator approval. Normal chart expansion is:
+Normal chart expansion is:
 
 ```text
-Redis latest 120 -> ClickHouse -> S3 final/manifest -> Alpaca historical
+Redis recent requested window -> ClickHouse -> S3 final/manifest -> Alpaca historical
 ```
 
 Canonical historical candles use Alpaca `adjustment=split` and are stored as
@@ -155,11 +151,11 @@ Canonical historical candles use Alpaca `adjustment=split` and are stored as
 legacy/raw/unknown rows.
 
 Before deleting or quarantining suspect ClickHouse candle rows, run `python -m alfaka.tools.canonical_candle_audit` with optional `CANONICAL_AUDIT_SYMBOL`, `CANONICAL_AUDIT_INTERVAL`, and `CANONICAL_AUDIT_LIMIT` to get duplicate/non-canonical/invalid OHLC row counts.
-`force=true` backfill bypasses existing canonical S3 processed objects and fetches Alpaca again. This is required when a previously materialized canonical object is known to contain bad values. For `1D`, suspicious split-day high/low outliers are validated against same-day split-adjusted `1m` bars; only the outlier high/low is repaired, while daily open/close/volume remain from dailyBars.
+Explicit operator repair may bypass existing canonical S3 processed objects and fetch Alpaca again when a previously materialized canonical object is known to contain bad values. For `1D`, suspicious split-day high/low outliers are validated against same-day split-adjusted `1m` bars; only the outlier high/low is repaired, while daily open/close/volume remain from dailyBars.
 
 Raw backup may be written as a side effect for audit, but missing raw backup must
-not fail a chart request, backfill job, or ClickHouse materialization job.
-Backfill/materialization decisions use Redis, ClickHouse, and S3 final/manifest,
+not fail a chart request, on-demand fill, or ClickHouse materialization job.
+Fill/materialization decisions use Redis, ClickHouse, and S3 final/manifest,
 not raw backup objects.
 
 For local AWS-contract runs, set
@@ -169,7 +165,12 @@ explicit `ALPACA_CREDENTIAL_SOURCE=local-env` smoke can run while Secrets Manage
 is disconnected. Keep legacy universes and `jsonl` output out of the on-demand
 rebuild contract.
 
-Drag-left chart history uses the candles API first. If the returned older range is partial but repairable, the frontend queues a bounded backfill request with an explicit `start`/`end`, polls `/api/charts/backfill/status`, and refetches the same range after completion. The chart request path must still serve from Redis/ClickHouse; it must not list S3 or call Alpaca synchronously. Do not convert a sparse chart window into a full-range `force=true` `1m` backfill.
+Chart entry and drag-left history use the candles API first. The frontend owns
+the requested `interval`, `limit`, and `start`/`end` or `before` window. The API
+checks Redis, ClickHouse, S3 final/manifest, then Alpaca historical for that
+requested window. The response includes `dataStatus`, `coverage`, and a `fill`
+trace that shows where Redis/ClickHouse/S3/Alpaca hit, missed, timed out, or
+failed. Do not convert a sparse chart window into a full-range preload.
 
 Before any operator-approved bootstrap, prove S3-to-ClickHouse materialization
 with one explicit final candle object:

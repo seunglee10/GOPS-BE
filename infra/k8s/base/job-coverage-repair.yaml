@@ -1,5 +1,5 @@
-# 역할: API 기준 chart coverage를 감사하고 부족한 source interval backfill을 큐잉합니다.
-# 사용: 기본은 dry-run입니다. 실제 repair는 COVERAGE_REPAIR_DRY_RUN=false로 별도 patch 후 실행합니다.
+# 역할: API 기준 chart coverage와 on-demand fill trace를 감사합니다.
+# 사용: 기본은 dry-run입니다. COVERAGE_REPAIR_DRY_RUN=false이면 미렌더 항목에서 실패 상태로 종료합니다.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -28,8 +28,6 @@ spec:
               value: 1m,5m,10m,1D,1W,1M
             - name: COVERAGE_REPAIR_DRY_RUN
               value: "true"
-            - name: COVERAGE_REPAIR_FORCE
-              value: "false"
           envFrom:
             - configMapRef:
                 name: alfaka-market-data-config

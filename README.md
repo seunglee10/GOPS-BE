@@ -11,7 +11,7 @@ The repository currently includes:
 
 - React frontend and shared chart engine.
 - FastAPI chart/order/WebSocket API server.
-- Alpaca market-data ingest and historical backfill.
+- Alpaca market-data ingest and on-demand historical fill.
 - Kafka-compatible stream processing.
 - Redis, ClickHouse, and S3 market-data serving/storage.
 - KIS demo order API, Postgres persistence, outbox, broker adapter, migrations, and reconciliation.
@@ -36,7 +36,7 @@ apps/gops-frontend/                React frontend
 apps/chart-engine/                 chart document/runtime/canvas engine
 
 systems/api-server/                FastAPI chart/order/WebSocket gateway
-systems/market-data/               config, ingest, processing, storage, serving helpers, backfill
+systems/market-data/               config, ingest, processing, storage, serving helpers, on-demand fill
 systems/order/                     KIS demo order domain, outbox, adapter, jobs
 systems/agent-orchestration/       role agents, event detector, notification publisher
 
@@ -141,11 +141,13 @@ Chart API:
 
 ```text
 GET  /api/charts/candles
-POST /api/charts/backfill
-GET  /api/charts/backfill/status
 GET  /api/charts/symbols
 WS   /ws/charts
 ```
+
+Deprecated chart backfill queue routes return `410 Gone`. `GET /api/charts/candles`
+is the single chart read/fill entrypoint and includes a `fill` trace when data is
+missing or partially filled.
 
 Agent API:
 

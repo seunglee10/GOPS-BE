@@ -226,7 +226,6 @@ def build_agent_market_analysis_context(context: dict[str, Any]) -> dict[str, An
         "state": data_state,
         "candleCount": candle_count,
         "hasUsableCandles": candle_count > 0 or data_state in {"ready", "partial"},
-        "backfillStatus": data_status.get("backfillStatus") if isinstance(data_status.get("backfillStatus"), str) else None,
     }
     if stream_status:
         data_readiness["liveFeedStatus"] = stream_status

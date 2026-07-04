@@ -50,7 +50,7 @@ from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider, cli
 from alfaka.serving.cursors import timestamp_from_cursor
 from alfaka.serving.dto import cursor_for, market_status_event, snapshot, websocket_event
 from alfaka.serving.hot_symbols import build_hot_symbols_payload, dollar_volume_from_candle
-from alfaka.serving.intervals import backfill_target_bars, candle_count_for_1y, candle_count_for_24h, historical_target_bars, redis_closed_candle_cap, resolve_candle_limit
+from alfaka.serving.intervals import candle_count_for_1y, candle_count_for_24h, historical_target_bars, redis_closed_candle_cap, resolve_candle_limit
 from alfaka.serving.provider import MarketDataProvider, has_more_before_target, target_range_from_for_interval
 from alfaka.serving.redis_provider import RedisMarketDataProvider
 from alfaka.serving.news_hot_cache import read_company_daily_summaries_from_redis, read_localized_news_from_redis
@@ -310,6 +310,8 @@ class FailingAuditClickHouseClient(RecordingClickHouseClient):
 
 def load_initial_load_job_module():
     module_path = REPO_ROOT / "systems/market-data/jobs/initial-load/main.py"
+    if not module_path.exists():
+        raise unittest.SkipTest("initial-load job was removed; chart history now uses API on-demand fill.")
     spec = importlib.util.spec_from_file_location("initial_load_job", module_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -1649,10 +1651,9 @@ class MarketDataHardeningContractTest(unittest.TestCase):
     def test_initial_load_compose_uses_on_demand_universe_contract(self):
         compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 
-        self.assertIn('ALPACA_UNIVERSE: ""', compose)
-        self.assertIn('ALPACA_UNIVERSE_REGISTRY_PATH: ""', compose)
-        self.assertIn('INITIAL_LOAD_SYMBOLS: "${INITIAL_LOAD_SYMBOLS:-}"', compose)
-        self.assertIn('INITIAL_LOAD_INTERVALS: "${INITIAL_LOAD_INTERVALS:-1D}"', compose)
+        self.assertNotIn("initial-load:", compose)
+        self.assertNotIn("systems/market-data/jobs/initial-load", compose)
+        self.assertIn('ON_DEMAND_FILL_TIMEOUT_SECONDS: "${ON_DEMAND_FILL_TIMEOUT_SECONDS:-8}"', compose)
         self.assertIn("news-backfill:", compose)
         self.assertIn('NEWS_BACKFILL_UNIVERSE: "${NEWS_BACKFILL_UNIVERSE:-sp500}"', compose)
         self.assertIn("systems/market-data/jobs/news-backfill/main.py", compose)
@@ -4087,23 +4088,20 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(value.start, "2026-06-24T14:30:00.000Z")
 
     def test_chart_candle_limit_defaults_to_interval_visible_bars(self):
-        self.assertEqual(candle_count_for_24h("1m"), 390)
-        self.assertEqual(candle_count_for_24h("5m"), 390)
-        self.assertEqual(candle_count_for_24h("10m"), 390)
-        self.assertEqual(candle_count_for_24h("1d"), 250)
-        self.assertEqual(candle_count_for_24h("1W"), 260)
-        self.assertEqual(candle_count_for_24h("1M"), 120)
-        self.assertEqual(backfill_target_bars("1m"), 5460)
-        self.assertEqual(backfill_target_bars("5m"), 1092)
-        self.assertEqual(backfill_target_bars("10m"), 546)
+        self.assertEqual(candle_count_for_24h("1m"), 120)
+        self.assertEqual(candle_count_for_24h("5m"), 120)
+        self.assertEqual(candle_count_for_24h("10m"), 120)
+        self.assertEqual(candle_count_for_24h("1d"), 120)
+        self.assertEqual(candle_count_for_24h("1W"), 104)
+        self.assertEqual(candle_count_for_24h("1M"), 36)
         self.assertEqual(historical_target_bars("1m"), 589680)
         self.assertEqual(historical_target_bars("1D"), 1512)
         self.assertEqual(historical_target_bars("1M"), 72)
         self.assertEqual(candle_count_for_1y("1m"), 589680)
-        self.assertEqual(resolve_candle_limit("1m", None), 390)
+        self.assertEqual(resolve_candle_limit("1m", None), 120)
         self.assertEqual(resolve_candle_limit("1m", 9999), 9999)
         self.assertEqual(resolve_candle_limit("1m", 999999), 589680)
-        self.assertEqual(resolve_candle_limit("1M", 999999), 120)
+        self.assertEqual(resolve_candle_limit("1M", 999999), 72)
         self.assertEqual(redis_closed_candle_cap("1m"), 780)
         self.assertEqual(redis_closed_candle_cap("5m"), 156)
         self.assertEqual(redis_closed_candle_cap("10m"), 78)
@@ -4508,16 +4506,15 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "2020-07-01T00:00:00.000Z",
         ))
 
-    def test_intraday_target_floor_uses_bounded_gapfill_window(self):
-        with mock.patch.dict(os.environ, {"BACKFILL_MAX_GAPFILL_1M_RANGE_HOURS": "336"}):
-            self.assertEqual(
-                target_range_from_for_interval("1m", "2026-06-30T11:15:09.000Z"),
-                "2026-06-16T11:15:09.000Z",
-            )
-            self.assertEqual(
-                target_range_from_for_interval("5m", "2026-06-30T11:15:09.000Z"),
-                "2026-06-16T11:15:09.000Z",
-            )
+    def test_intraday_target_floor_uses_requested_visible_window(self):
+        self.assertEqual(
+            target_range_from_for_interval("1m", "2026-06-30T11:15:09.000Z"),
+            "2026-06-30T03:15:09.000Z",
+        )
+        self.assertEqual(
+            target_range_from_for_interval("5m", "2026-06-30T11:15:09.000Z"),
+            "2026-06-28T19:15:09.000Z",
+        )
 
     def test_clickhouse_daily_snapshot_groups_daily_source_by_calendar_day(self):
         rows = [
@@ -4843,7 +4840,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             with self.assertRaises(LookupError):
                 registry.detail("IBM")
             self.assertEqual(registry.search("ibm", 5), [])
-            self.assertEqual([item["symbol"] for item in registry.search("", 5)], ["BTCUSD"])
+            self.assertEqual([item["symbol"] for item in registry.search("", 5)], ["BTCUSD", "XLV"])
         finally:
             if previous_universe is None:
                 os.environ.pop("ALPACA_UNIVERSE", None)
@@ -4944,7 +4941,6 @@ class MarketDataHardeningContractTest(unittest.TestCase):
     def test_market_data_images_copy_config_to_env_contract_path(self):
         dockerfiles = [
             "Dockerfile.gops-backend",
-            "Dockerfile.gops-backfill-worker",
             "Dockerfile.gops-market-ingestor",
             "Dockerfile.gops-market-processor",
             "Dockerfile.gops-market-storage",

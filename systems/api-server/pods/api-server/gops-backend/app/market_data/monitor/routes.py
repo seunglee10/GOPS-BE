@@ -67,9 +67,14 @@ def market_data_monitor_clickhouse() -> dict[str, Any]:
     return get_monitor_service().clickhouse_state()
 
 
+@router.get("/api/monitor/market-data/fill")
+def market_data_monitor_fill() -> dict[str, Any]:
+    return get_monitor_service().fill()
+
+
 @router.get("/api/monitor/market-data/backfill")
 def market_data_monitor_backfill() -> dict[str, Any]:
-    return get_monitor_service().backfill()
+    raise HTTPException(status_code=410, detail="Backfill monitor was replaced by on-demand fill diagnostics.")
 
 
 @router.get("/api/monitor/market-data/subscriptions")

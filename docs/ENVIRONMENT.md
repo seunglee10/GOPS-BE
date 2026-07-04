@@ -170,9 +170,9 @@ REDIS_KEY_PREFIX=gops:market:on-demand:v1
 AWS/EKS may later point `REDIS_URL` at ElastiCache, Valkey, or another Redis-compatible endpoint.
 
 For local compose and the in-cluster Redis StatefulSet, Redis is runtime
-chart/live/backfill/feed-control state. It stores newest 120 confirmed candles
+chart/live/feed-control state. It stores newest 120 confirmed candles
 per `symbol + timeframe`, current provisional candles, latest closed candles,
-live trade/quote/event values, backfill status, and SIP/BOATS feed state.
+live trade/quote/event values, and SIP/BOATS feed state.
 Durable historical candles live in ClickHouse and S3 final/manifest.
 Run the in-cluster Redis StatefulSet as an ephemeral cache/control-plane store.
 Do not make Redis replay large AOF/RDB files on restart; large market-data cache
@@ -184,10 +184,9 @@ redis-server --appendonly no --save "" --dir /tmp
 ```
 
 This keeps live chart keys, feed control, and component health writable after a
-pod restart. Redis restarts may drop live cache, login sessions, and queued
-backfill state; those are runtime state and must be rebuilt by API/WebSocket
-activity or re-enqueued work. Chart resets must still use scan-delete for the
-documented market-data key patterns, not `FLUSHALL`.
+pod restart. Redis restarts may drop live cache and login sessions; live chart
+state is rebuilt by API/WebSocket activity. Chart resets must still use
+scan-delete for the documented market-data key patterns, not `FLUSHALL`.
 
 GOPS login sessions reuse Redis by default:
 
@@ -268,7 +267,7 @@ CLICKHOUSE_ENSURE_SESSION_COLUMNS
 CLICKHOUSE_REQUIRE_CANONICAL_CANDLES
 ```
 
-Set `CLICKHOUSE_PROVIDER_ENSURE_SESSION_COLUMNS=true` for API serving pods and `CLICKHOUSE_ENSURE_SESSION_COLUMNS=true` for storage/backfill jobs during the transition to feed/session/canonical-aware rows. New deployments create `feed_profile`, `market_session`, `price_adjustment`, and `canonical_version` in the primary schema. Existing ClickHouse volumes can add the columns idempotently, but preserving multiple feed/session rows after merges requires rebuilding old tables with the new `ORDER BY` definition. Keep `CLICKHOUSE_REQUIRE_CANONICAL_CANDLES=true` so chart serving excludes legacy/raw/unknown candles.
+Set `CLICKHOUSE_PROVIDER_ENSURE_SESSION_COLUMNS=true` for API serving pods and `CLICKHOUSE_ENSURE_SESSION_COLUMNS=true` for storage jobs during the transition to feed/session/canonical-aware rows. New deployments create `feed_profile`, `market_session`, `price_adjustment`, and `canonical_version` in the primary schema. Existing ClickHouse volumes can add the columns idempotently, but preserving multiple feed/session rows after merges requires rebuilding old tables with the new `ORDER BY` definition. Keep `CLICKHOUSE_REQUIRE_CANONICAL_CANDLES=true` so chart serving excludes legacy/raw/unknown candles.
 
 ## S3
 
@@ -325,7 +324,7 @@ contract.
 Local Docker services that read S3 can authenticate with direct
 `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` values, but the preferred local path
 is `AWS_PROFILE` plus the read-only host `~/.aws` mount configured in
-`docker-compose.yml` for the API, backfill, and optional Alpaca ingestion
+`docker-compose.yml` for the API and optional Alpaca ingestion
 services. This keeps copied AWS keys out of `.env`. Alpaca local smoke can bypass
 Secrets Manager with `ALPACA_CREDENTIAL_SOURCE=local-env`; AWS-contract runs set
 `ALPACA_CREDENTIAL_SOURCE=aws-secrets-manager`.
@@ -339,20 +338,20 @@ S3 prefixes have different serving roles:
 ```text
 S3_RAW_PREFIX      backup-only Alpaca payload archive, not read by chart logic
 S3_FINAL_PREFIX    deterministic canonical parquet used for ClickHouse rebuild
-S3_MANIFEST_PREFIX final-object coverage evidence and backfill request manifests
+S3_MANIFEST_PREFIX final-object coverage evidence for on-demand fill
 ```
 
 Do not configure `S3_LIVE_PREFIX` for the rebuild path. Live candles belong in
 Redis/WebSocket state. Quote payloads also update Redis/WebSocket live state,
 then flow through `market.layer.quotes.v1` to S3 final and ClickHouse.
 
-Chart API reads, coverage checks, backfill decisions, and ClickHouse loaders
+Chart API reads, coverage checks, fill decisions, and ClickHouse loaders
 must not query `S3_RAW_PREFIX`. S3 data becomes chart-serving data only from
 final objects/manifests after a bounded materialization step writes canonical
 rows into ClickHouse.
 
 Normal market-data runtime uses `S3_PROCESSED_FORMAT=parquet`. Docker Compose
-pins this value for market-data storage/backfill services so an old root `.env`
+pins this value for market-data storage and API fill services so an old root `.env`
 cannot silently switch runtime output back to `jsonl`.
 
 Use time-based flush values so low-volume symbols and status events do not remain only in process memory. Keep retry settings conservative; duplicate delivery must remain safe through deterministic replay/materialization.
@@ -365,34 +364,18 @@ S3 final evidence, leave `S3_MATERIALIZE_KEYS` empty and set
 Do not materialize from raw backup objects.
 
 Sparse chart windows report bounded `coverage.gapRanges`. UI and operators
-should request backfill for those small ranges first. Do not turn a visible
-regular-session gap into an automatic full-range `force=true` backfill.
+should inspect the per-request `fill` trace for those small ranges. Do not turn a
+visible regular-session gap into a hidden full-range preload.
 
-## Backfill Queue
+## On-Demand Fill
 
-Backfill requests are stored in Redis status keys and queued through Redis Streams.
-Workers consume the `backfill-workers` group, reclaim idle pending jobs, and move exhausted jobs to a dead-letter stream.
+`GET /api/charts/candles` is the chart read and fill entrypoint. The API checks
+the requested `symbol + interval + limit/before/from/to` window in order:
+Redis, ClickHouse, S3 final/manifest, then Alpaca historical. It does not enqueue
+a Redis Stream worker and it does not run broad preload jobs from a chart request.
 
 ```text
-BACKFILL_EXECUTION_MODE
-BACKFILL_STATUS_TTL_SECONDS
-BACKFILL_QUEUE_BACKEND
-BACKFILL_STREAM_GROUP
-BACKFILL_STREAM_RECLAIM_IDLE_MS
-BACKFILL_STREAM_MAXLEN
-BACKFILL_MAX_ATTEMPTS
-BACKFILL_ACTIVE_STALE_SECONDS
-BACKFILL_MAX_GAPFILL_1M_RANGE_HOURS
-BACKFILL_GAPFILL_DETECT_INTERNAL
-BACKFILL_GAPFILL_MAX_DETECT_DAYS
-BACKFILL_GAPFILL_TIMESTAMP_LIMIT
-BACKFILL_INITIAL_LOAD_1M_CHUNK_DAYS
-BACKFILL_INITIAL_LOAD_1D_CHUNK_DAYS
-BACKFILL_INITIAL_LOAD_1M_MIN_START
-BACKFILL_INITIAL_LOAD_MAX_ENQUEUE
-BACKFILL_INITIAL_LOAD_MAX_BACKLOG
-BACKFILL_WORKER_POLL_SECONDS
-BACKFILL_WORKER_ONCE
+ON_DEMAND_FILL_TIMEOUT_SECONDS
 HISTORICAL_ADJUSTMENT
 ALLOW_NON_CANONICAL_HISTORICAL_ADJUSTMENT
 HISTORICAL_1M_MINUTES_PER_TRADING_DAY
@@ -404,16 +387,14 @@ DAILY_BAR_1M_REPAIR_ENABLED
 DAILY_BAR_1M_REPAIR_RATIO
 ```
 
-Canonical Alpaca historical backfill uses `adjustment=split` and writes
-`priceAdjustment=split`, `canonicalVersion=v2`. Backfill source order is Redis
-latest 120, ClickHouse, S3 final/manifest, then Alpaca historical. Raw S3 backup
-objects are not a backfill source. `BACKFILL_ACTIVE_STALE_SECONDS` fails old
-queued/running gapfill status records so stale Redis state cannot block new
-bounded repairs. `BACKFILL_MAX_GAPFILL_1M_RANGE_HOURS` defines the chart/API
-`1m` repair window and defaults to 14 days; broad six-year intraday rebuilds
-belong to Initial Load or explicit S3 materialize jobs. Retry settings are used
-for transient Alpaca historical API failures such as rate limits and 5xx
-responses.
+Canonical Alpaca historical fill uses `adjustment=split` and writes
+`priceAdjustment=split`, `canonicalVersion=v2`. `5m` and `10m` fill through
+`1m` source bars; `1W` and `1M` fill through `1D` source bars and are then
+aggregated for serving. Raw S3 backup objects are not a fill source. Retry
+settings are used for transient Alpaca historical API failures such as rate
+limits and 5xx responses. Deprecated `POST /api/charts/backfill`,
+`GET /api/charts/backfill/status`, and `GET /api/charts/backfill/queue` return
+`410 Gone`.
 
 ## Market Calendar
 
@@ -431,38 +412,18 @@ MARKET_EARLY_CLOSES
 
 ## Coverage Repair
 
-The manual repair job audits chart API coverage and can queue missing source interval backfills.
+The manual repair job audits chart API coverage and the returned on-demand fill
+trace. It does not call deprecated backfill queue endpoints.
 
 ```text
 COVERAGE_REPAIR_SYMBOLS
 COVERAGE_REPAIR_INTERVALS
 COVERAGE_REPAIR_DRY_RUN
-COVERAGE_REPAIR_FORCE
 GOPS_API_BASE_URL
 ```
 
-Keep `COVERAGE_REPAIR_DRY_RUN=true` for audits. Set it to `false` only when intentionally queuing backfills.
-
-## Initial Load
-
-The chart rebuild does not use Initial Load as its normal S&P500 baseline path.
-Baseline collection comes from Alpaca realtime bars/statuses. Initial Load is
-legacy/bootstrap tooling and must not run automatically during the rebuild. Use
-it only after an operator explicitly approves a bounded bootstrap or migration
-job. Normal long-range chart expansion still comes from the API/backfill path:
-Redis latest 120 -> ClickHouse -> S3 final/manifest -> Alpaca historical.
-
-```text
-INITIAL_LOAD_SYMBOLS
-INITIAL_LOAD_INTERVALS
-INITIAL_LOAD_START
-INITIAL_LOAD_END
-INITIAL_LOAD_DRY_RUN
-INITIAL_LOAD_FORCE
-INITIAL_LOAD_SOURCE_PREFERENCE
-INITIAL_LOAD_MAX_ENQUEUE
-INITIAL_LOAD_MAX_BACKLOG
-```
+Keep `COVERAGE_REPAIR_DRY_RUN=true` for audits. Set it to `false` only when a
+non-renderable result should fail the job.
 
 ## Agent Orchestration
 
@@ -606,7 +567,6 @@ gops-api-server
 gops-market-ingestor
 gops-market-processor
 gops-market-storage
-gops-backfill-worker
 gops-order-worker
 gops-kis-adapter
 gops-agent-orchestrator
