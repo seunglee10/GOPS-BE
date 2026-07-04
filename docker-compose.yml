@@ -1410,6 +1410,7 @@ services:
     networks:
       - app_net
       - data_net
+      - streaming_net
 
   order-migrations:
     image: gops-order-worker
