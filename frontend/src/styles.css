@@ -372,7 +372,7 @@ button {
   z-index: 1;
   width: clamp(360px, calc(100vw - var(--layout-gutter) - var(--layout-gutter) - 176px), 660px);
   height: clamp(468px, 68vh, 676px);
-  overflow: hidden;
+  overflow: visible;
   border-radius: 14px 14px 10px 10px;
   background: var(--color-background);
   opacity: 0;
@@ -381,6 +381,10 @@ button {
   transition:
     transform 220ms ease,
     opacity 160ms ease;
+}
+
+.bottom-chat-panel::after {
+  z-index: 0;
 }
 
 .bottom-chat-panel.is-open {
@@ -396,7 +400,8 @@ button {
   flex-direction: column;
   gap: 12px;
   height: 100%;
-  overflow-y: auto;
+  overflow: hidden auto;
+  border-radius: inherit;
   padding: 18px 18px calc(var(--bottom-control-size) + 42px);
 }
 
@@ -1118,10 +1123,6 @@ h2 {
   background: var(--color-surface);
   backdrop-filter: blur(14px);
   pointer-events: auto;
-}
-
-.agent-box.surface-raised {
-  background: var(--surface-raised-surface);
 }
 
 .agent-dock-toggle {

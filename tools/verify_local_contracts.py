@@ -658,7 +658,7 @@ def assert_frontend_layout_grid_contract() -> None:
     assert 'createChatLogEntry("assistant", "차트 에이전트가 차트를 읽고 있습니다.", true)' in app
     assert "replaceChatLogEntry(setChatLog, pendingEntry.id" in app
     assert "chatLog={chatLog}" in app
-    assert "agent-box surface-raised" in bottom_bar
+    assert "agent-box surface-recessed" in bottom_bar
     assert "workspace-nav-button surface-raised" in bottom_bar
     assert "surface-gradient" not in app
     assert "runAgentPrompt" in app
@@ -712,9 +712,10 @@ def assert_frontend_layout_grid_contract() -> None:
     assert ".workspace-top-nav" in styles
     assert ".workspace-bottom-nav" in styles
     assert ".agent-dock" in styles
-    assert ".agent-box.surface-raised" in styles
     assert ".agent-dock-toggle" in styles
     assert ".bottom-chat-panel" in styles
+    assert ".bottom-chat-panel.surface-raised" not in styles
+    assert ".bottom-chat-panel::after" in styles
     assert ".bottom-chat-panel.is-open" in styles
     assert ".agent-box .agent-dock-toggle" not in styles
     assert "grid-template-columns: minmax(96px, 1fr) minmax(300px, 520px) minmax(96px, 1fr);" in styles
