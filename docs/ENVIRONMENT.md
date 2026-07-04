@@ -117,7 +117,7 @@ Current repository stage:
 
 ```text
 systems/market-data/pods/market-processor/local_main.py
-infra/k8s/base/deployment-market-processor.yaml
+infra/k8s/base/app/deployment-market-processor.yaml
 ```
 
 Runtime path:

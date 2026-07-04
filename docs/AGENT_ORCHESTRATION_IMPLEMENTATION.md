@@ -226,11 +226,11 @@ Docker 검증 중 실제 문제가 발견되어 수정했다.
 
 추가/수정된 항목:
 
-- `infra/k8s/base/deployment-agent-orchestrator.yaml`
-- `infra/k8s/base/deployment-agent-event-detector.yaml`
-- `infra/k8s/base/deployment-agent-notification-publisher.yaml`
-- `infra/k8s/base/service-agent-orchestrator.yaml`
-- `infra/k8s/base/configmap.yaml`
+- `infra/k8s/base/app/deployment-agent-orchestrator.yaml`
+- `infra/k8s/base/app/deployment-agent-event-detector.yaml`
+- `infra/k8s/base/app/deployment-agent-notification-publisher.yaml`
+- `infra/k8s/base/app/service-agent-orchestrator.yaml`
+- `infra/k8s/base/app/configmap.yaml`
 - `infra/k8s/base/kustomization.yaml`
 - `infra/k8s/overlays/aws/configmap-aws-patch.yaml`
 - `infra/k8s/overlays/aws/kustomization.yaml`

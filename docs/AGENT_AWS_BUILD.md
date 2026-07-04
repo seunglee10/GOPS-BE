@@ -70,18 +70,18 @@ Agent entity resolver는 기본 운영 catalog로
 Required deployments:
 
 ```text
-infra/k8s/base/deployment-agent-orchestrator.yaml
-infra/k8s/base/deployment-agent-analysis-worker.yaml
-infra/k8s/base/deployment-agent-delivery-gateway.yaml
+infra/k8s/base/app/deployment-agent-orchestrator.yaml
+infra/k8s/base/app/deployment-agent-analysis-worker.yaml
+infra/k8s/base/app/deployment-agent-delivery-gateway.yaml
 ```
 
 Optional deployments:
 
 ```text
-infra/k8s/base/deployment-agent-intent-classifier.yaml
-infra/k8s/base/deployment-deep-analysis-worker.yaml
-infra/k8s/base/deployment-agent-event-detector.yaml
-infra/k8s/base/deployment-agent-notification-publisher.yaml
+infra/k8s/base/app/deployment-agent-intent-classifier.yaml
+infra/k8s/base/app/deployment-deep-analysis-worker.yaml
+infra/k8s/base/app/deployment-agent-event-detector.yaml
+infra/k8s/base/app/deployment-agent-notification-publisher.yaml
 ```
 
 Optional jobs:
@@ -98,7 +98,7 @@ infra/k8s/base/job-answer-grounding-eval.yaml
 Config and overlay references:
 
 ```text
-infra/k8s/base/configmap.yaml
+infra/k8s/base/app/configmap.yaml
 infra/k8s/base/kustomization.yaml
 infra/k8s/overlays/aws/configmap-aws-patch.yaml
 infra/k8s/overlays/aws/kustomization.yaml

@@ -178,8 +178,8 @@ scale_graphdb_up() {
     return
   fi
   if ! kubectl get statefulset "${STATEFULSET_NAME}" -n "${NAMESPACE}" >/dev/null 2>&1; then
-    echo "apply: infra/k8s/base/statefulset-graphdb.yaml"
-    kubectl apply -f "${REPO_ROOT}/infra/k8s/base/statefulset-graphdb.yaml"
+    echo "apply: infra/k8s/base/app/statefulset-graphdb.yaml"
+    kubectl apply -f "${REPO_ROOT}/infra/k8s/base/app/statefulset-graphdb.yaml"
   fi
   echo "scale: statefulset/${STATEFULSET_NAME} -> 1"
   kubectl scale statefulset "${STATEFULSET_NAME}" -n "${NAMESPACE}" --replicas=1 >/dev/null

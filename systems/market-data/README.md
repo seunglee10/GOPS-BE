@@ -29,7 +29,7 @@ tests/                      market-data tests
 ```text
 pods/market-ingestor/market_stream.py           wraps alfaka.alpaca.websocket_collector
 pods/market-processor/local_main.py             wraps alfaka.streaming.processor
-infra/k8s/base/deployment-market-processor.yaml current Kubernetes processor deployment
+infra/k8s/base/app/deployment-market-processor.yaml current Kubernetes processor deployment
 pods/s3-sink/processed_sink.py                  wraps alfaka.storage.processed_s3_sink
 pods/s3-sink/raw_archive_sink.py                 wraps alfaka.storage.raw_s3_archive_sink
 pods/clickhouse-loader/processed_loader.py      wraps alfaka.storage.clickhouse_loader

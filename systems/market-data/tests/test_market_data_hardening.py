@@ -1593,19 +1593,27 @@ class MarketDataHardeningContractTest(unittest.TestCase):
 
     def test_kubernetes_base_includes_market_processor_runtime_unit(self):
         base_kustomization = (REPO_ROOT / "infra/k8s/base/kustomization.yaml").read_text(encoding="utf-8")
-        deployment = (REPO_ROOT / "infra/k8s/base/deployment-market-processor.yaml").read_text(encoding="utf-8")
-        agent_orchestrator_deployment = (REPO_ROOT / "infra/k8s/base/deployment-agent-orchestrator.yaml").read_text(encoding="utf-8")
-        raw_archive_deployment = (REPO_ROOT / "infra/k8s/base/deployment-raw-s3-archive.yaml").read_text(encoding="utf-8")
-        news_worker_deployment = (REPO_ROOT / "infra/k8s/base/deployment-news-intelligence-worker.yaml").read_text(encoding="utf-8")
+        app_kustomization = (REPO_ROOT / "infra/k8s/base/app/kustomization.yaml").read_text(encoding="utf-8")
+        deployment = (REPO_ROOT / "infra/k8s/base/app/deployment-market-processor.yaml").read_text(encoding="utf-8")
+        agent_orchestrator_deployment = (
+            REPO_ROOT / "infra/k8s/base/app/deployment-agent-orchestrator.yaml"
+        ).read_text(encoding="utf-8")
+        raw_archive_deployment = (REPO_ROOT / "infra/k8s/base/app/deployment-raw-s3-archive.yaml").read_text(
+            encoding="utf-8"
+        )
+        news_worker_deployment = (
+            REPO_ROOT / "infra/k8s/base/app/deployment-news-intelligence-worker.yaml"
+        ).read_text(encoding="utf-8")
         news_backfill_job = (REPO_ROOT / "infra/k8s/base/job-news-backfill.yaml").read_text(encoding="utf-8")
         news_rebuild_job = (REPO_ROOT / "infra/k8s/base/job-news-intelligence-rebuild.yaml").read_text(encoding="utf-8")
-        configmap = (REPO_ROOT / "infra/k8s/base/configmap.yaml").read_text(encoding="utf-8")
+        configmap = (REPO_ROOT / "infra/k8s/base/app/configmap.yaml").read_text(encoding="utf-8")
         aws_overlay = (REPO_ROOT / "infra/k8s/overlays/aws/kustomization.yaml").read_text(encoding="utf-8")
         aws_ci_overlay = (REPO_ROOT / "infra/k8s/overlays/aws-incluster-app-ci/kustomization.yaml").read_text(encoding="utf-8")
 
-        self.assertIn("deployment-market-processor.yaml", base_kustomization)
-        self.assertIn("deployment-raw-s3-archive.yaml", base_kustomization)
+        self.assertIn("  - app", base_kustomization)
         self.assertIn("job-news-backfill.yaml", base_kustomization)
+        self.assertIn("deployment-market-processor.yaml", app_kustomization)
+        self.assertIn("deployment-raw-s3-archive.yaml", app_kustomization)
         self.assertIn("name: alfaka-market-processor", deployment)
         self.assertIn("app: alfaka-market-processor", deployment)
         self.assertIn("gops-market-processor:latest", deployment)
@@ -1625,8 +1633,11 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn("NEWS_BACKFILL_SHARD_COUNT", news_backfill_job)
         self.assertIn("NEWS_BACKFILL_PUBLISH_RECENT_TO_KAFKA", news_backfill_job)
         self.assertIn("NEWS_INTELLIGENCE_REBUILD_DRY_RUN", news_rebuild_job)
-        self.assertIn("name: alfaka-news-backfill", aws_ci_overlay)
-        self.assertIn("name: alfaka-news-intelligence-rebuild", aws_ci_overlay)
+        self.assertIn("../../base/app", aws_overlay)
+        self.assertIn("../aws-incluster-app", aws_ci_overlay)
+        self.assertNotIn("kind: Job", aws_ci_overlay)
+        self.assertNotIn("name: alfaka-news-backfill", aws_ci_overlay)
+        self.assertNotIn("name: alfaka-news-intelligence-rebuild", aws_ci_overlay)
         self.assertIn("KAFKA_PROCESSOR_GROUP_ID: alfaka-market-processor", configmap)
         self.assertIn("KAFKA_RAW_S3_GROUP_ID: alfaka-raw-s3-archive", configmap)
         self.assertIn('NEWS_BACKFILL_DAYS: "365"', configmap)
