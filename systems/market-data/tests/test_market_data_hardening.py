@@ -1640,7 +1640,8 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertNotIn("name: alfaka-news-intelligence-rebuild", aws_ci_overlay)
         self.assertIn("KAFKA_PROCESSOR_GROUP_ID: alfaka-market-processor", configmap)
         self.assertIn("KAFKA_RAW_S3_GROUP_ID: alfaka-raw-s3-archive", configmap)
-        self.assertIn('CLICKHOUSE_PROVIDER_TIMEOUT_SECONDS: "3"', configmap)
+        self.assertIn('CLICKHOUSE_PROVIDER_TIMEOUT_SECONDS: "8"', configmap)
+        self.assertIn('CLICKHOUSE_PROVIDER_RETRY_ATTEMPTS: "2"', configmap)
         self.assertIn('NEWS_BACKFILL_DAYS: "365"', configmap)
         self.assertIn('NEWS_BACKFILL_SHARD_INDEX: "0"', configmap)
         self.assertIn('NEWS_BACKFILL_SHARD_COUNT: "1"', configmap)
@@ -4153,6 +4154,41 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(calls[0][0], "http://clickhouse:8123")
         self.assertEqual(calls[0][1]["timeout"], 0.45)
         self.assertEqual(calls[0][1]["params"]["param_symbol"], "AAPL")
+
+    def test_clickhouse_provider_retries_transient_timeout(self):
+        import requests
+
+        calls = []
+
+        class FakeResponse:
+            status_code = 200
+            text = '{"ok":1}\n'
+
+        def fake_post(url, **kwargs):
+            calls.append((url, kwargs))
+            if len(calls) == 1:
+                raise requests.exceptions.Timeout("cold query")
+            return FakeResponse()
+
+        provider = ClickHouseMarketDataProvider(
+            url="http://clickhouse:8123",
+            database="market_data",
+            user="alfaka",
+            password="secret",
+        )
+        with mock.patch.dict(os.environ, {
+            "CLICKHOUSE_PROVIDER_TIMEOUT_SECONDS": "0.45",
+            "CLICKHOUSE_PROVIDER_RETRY_ATTEMPTS": "2",
+        }):
+            with mock.patch("requests.post", side_effect=fake_post):
+                with mock.patch("alfaka.serving.clickhouse_provider.time.sleep") as sleep:
+                    rows = provider.query_json_each_row("SELECT 1", {"symbol": "AAPL"})
+
+        self.assertEqual(rows, [{"ok": 1}])
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][1]["timeout"], 0.45)
+        self.assertEqual(calls[1][1]["params"]["param_symbol"], "AAPL")
+        sleep.assert_called_once()
 
     def test_clickhouse_direct_candles_use_deterministic_latest_source(self):
         rows = [{

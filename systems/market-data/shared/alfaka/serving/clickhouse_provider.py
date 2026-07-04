@@ -4,6 +4,7 @@
 import json
 import os
 import re
+import time
 
 from alfaka.common.env import load_dotenv
 from alfaka.common.canonical import CANONICAL_VERSION, HISTORICAL_SERVING_PRICE_ADJUSTMENTS, SERVING_PRICE_ADJUSTMENTS
@@ -951,11 +952,23 @@ class ClickHouseMarketDataProvider:
         for key, value in parameters.items():
             params[f"param_{key}"] = clickhouse_param_value(value)
 
-        response = requests.post(
-            self.url,
-            params=params,
-            timeout=float(os.getenv("CLICKHOUSE_PROVIDER_TIMEOUT_SECONDS", "3")),
-        )
+        timeout = float(os.getenv("CLICKHOUSE_PROVIDER_TIMEOUT_SECONDS", "8"))
+        attempts = max(1, int(os.getenv("CLICKHOUSE_PROVIDER_RETRY_ATTEMPTS", "2")))
+        response = None
+        for attempt in range(attempts):
+            try:
+                response = requests.post(
+                    self.url,
+                    params=params,
+                    timeout=timeout,
+                )
+                break
+            except requests.exceptions.Timeout:
+                if attempt >= attempts - 1:
+                    raise
+                time.sleep(min(0.25, 0.05 * (attempt + 1)))
+        if response is None:
+            raise RuntimeError("ClickHouse query failed without a response")
         if response.status_code >= 400:
             raise RuntimeError(f"ClickHouse query failed: status={response.status_code}, body={response.text}")
         return [json.loads(line) for line in response.text.splitlines() if line.strip()]
