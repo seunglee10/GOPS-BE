@@ -31,6 +31,7 @@ def main() -> None:
     assert_frontend_chart_layout_contract()
     assert_frontend_layout_grid_contract()
     assert_frontend_treemap_main_view_contract()
+    assert_frontend_ontology_contract()
     assert_frontend_palette_contract()
     assert_frontend_parent_summary_contract()
     assert_frontend_trend_menu_contract()
@@ -657,7 +658,7 @@ def assert_frontend_layout_grid_contract() -> None:
     assert 'createChatLogEntry("assistant", "차트 에이전트가 차트를 읽고 있습니다.", true)' in app
     assert "replaceChatLogEntry(setChatLog, pendingEntry.id" in app
     assert "chatLog={chatLog}" in app
-    assert "agent-box surface-recessed" in bottom_bar
+    assert "agent-box surface-raised" in bottom_bar
     assert "workspace-nav-button surface-raised" in bottom_bar
     assert "surface-gradient" not in app
     assert "runAgentPrompt" in app
@@ -711,6 +712,7 @@ def assert_frontend_layout_grid_contract() -> None:
     assert ".workspace-top-nav" in styles
     assert ".workspace-bottom-nav" in styles
     assert ".agent-dock" in styles
+    assert ".agent-box.surface-raised" in styles
     assert ".agent-dock-toggle" in styles
     assert ".bottom-chat-panel" in styles
     assert ".bottom-chat-panel.is-open" in styles
@@ -933,6 +935,50 @@ def assert_frontend_treemap_main_view_contract() -> None:
     assert 'className="top-nav-symbol-search"' not in app
     assert "workspace-top-nav treemap" not in styles and ".workspace-top-nav.treemap" not in styles
     assert "treemap-symbol-search" not in styles
+
+
+def assert_frontend_ontology_contract() -> None:
+    odc = (REPO_ROOT / "docs/ODC/ODC-proposal.md").read_text()
+    mapper = (REPO_ROOT / "frontend/src/ontology/buildOntologyGraphFromEvidence.ts").read_text()
+    types = (REPO_ROOT / "frontend/src/ontology/ontologyTypes.ts").read_text()
+    client = (REPO_ROOT / "frontend/src/ontology/ontologyReportClient.ts").read_text()
+    panel = (REPO_ROOT / "frontend/src/ontology/OntologyPanel.tsx").read_text()
+    graph = (REPO_ROOT / "frontend/src/ontology/OntologyGraphView.tsx").read_text()
+    panel_content = (REPO_ROOT / "frontend/src/components/PanelContentRenderer.tsx").read_text()
+    vite = (REPO_ROOT / "frontend/vite.config.ts").read_text()
+    package = (REPO_ROOT / "package.json").read_text()
+    styles = (REPO_ROOT / "frontend/src/styles.css").read_text()
+
+    assert "GraphDB, SPARQL, zip" in odc
+    assert "AnalysisReport.providerEvidence" in odc
+    assert '`provider === "ontology"`' in odc
+    assert '`status === "available"`' in odc
+    assert "관계 분석 결과가 아직 없습니다" in odc
+    for relation_type in ("theme", "theme-company", "control", "theme-control", "shared-theme", "cross-control"):
+        assert relation_type in odc
+        assert f'relationType === "{relation_type}"' in mapper
+
+    assert "export type AgentEvidenceItem" in types
+    assert "export type AnalysisReport" in types
+    assert "export type OntologyGraphData" in types
+    assert "item.provider !== \"ontology\" || item.status !== \"available\"" in mapper
+    assert "ensureSymbolNode(symbol);" in mapper
+    assert "ticker -> themeName" not in mapper
+    assert "NVDA" not in mapper
+    assert "VITE_ONTOLOGY_REPORT_URL" in client
+    assert 'const defaultOntologyReportUrl = "/api/agent-analysis/run";' in client
+    assert '"/api/agent-analysis": agentTarget' in vite
+    assert "normalizeAnalysisReport" in client
+    assert "<OntologyPanel symbol={symbol} />" in panel_content
+    assert "buildOntologyGraphFromEvidence(evidence, normalizedSymbol)" in panel
+    assert "관계 분석 결과가 아직 없습니다" in panel
+    assert "OntologyGraphView graph={graph}" in panel
+    assert "viewBox={`0 0 ${graphWidth} ${graphHeight}`}" in graph
+    assert "d3" not in graph.lower()
+    assert "node tools/verify_ontology_graph.mjs" in package
+    assert ".ontology-panel" in styles
+    assert ".ontology-graph-svg" in styles
+    assert ".ontology-node.is-active circle" in styles
 
 
 def assert_frontend_palette_contract() -> None:

@@ -3,6 +3,7 @@ import type { MutableRefObject, PointerEvent as ReactPointerEvent } from "react"
 import type { SemanticSelectionSnapshot } from "../chart/semanticTimeline";
 import type { ChartSymbolDto } from "../chart/types";
 import type { PanelContentInstance, PanelSlot, PanelSlotId } from "../layout/panelLayout";
+import { OntologyPanel } from "../ontology/OntologyPanel";
 import { ChartPanel, type ChartHeaderSnapshot, type ChartPanelHandle } from "./ChartPanel";
 import { SymbolSearch } from "./SymbolSearch";
 
@@ -37,6 +38,10 @@ export function PanelContentRenderer({
   onChangePanelChartSymbol,
   onChartSwapPointerDown
 }: PanelContentRendererProps) {
+  if (content.kind === "ontology") {
+    return <OntologyPanel symbol={symbol} />;
+  }
+
   if (content.kind !== "chart") {
     return <div className="workspace-panel-empty" aria-label={`${content.title} content`} data-panel-slot-id={slot.id} />;
   }
