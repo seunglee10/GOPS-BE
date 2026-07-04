@@ -5100,6 +5100,38 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertFalse(payload["hasMoreAfter"])
         self.assertEqual(payload["candles"][-1]["timestamp"], "2026-06-25T11:24:00.000Z")
 
+    def test_provider_retries_latest_candles_when_default_window_is_after_available_data(self):
+        start = datetime(2026, 7, 2, 14, 0, tzinfo=timezone.utc)
+        candles = [
+            {
+                "timestamp": (start + timedelta(minutes=minute)).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                "open": minute + 1,
+                "high": minute + 2,
+                "low": minute,
+                "close": minute + 1,
+                "volume": 100,
+                "isClosed": True,
+            }
+            for minute in range(65)
+        ]
+        clickhouse = RecordingRangeClickHouseProvider(candles=candles)
+        provider = MarketDataProvider(
+            redis_provider=FakeRedisProvider(),
+            clickhouse_provider=clickhouse,
+        )
+
+        with mock.patch("alfaka.serving.provider.datetime") as fake_datetime:
+            fake_datetime.now.return_value = datetime(2026, 7, 4, 14, 0, tzinfo=timezone.utc)
+            fake_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+            payload = provider.candle_snapshot("AAPL", "1m", 20)
+
+        self.assertEqual(len(payload["candles"]), 20)
+        self.assertEqual(payload["dataStatus"], "ready")
+        self.assertEqual(payload["candles"][-1]["timestamp"], "2026-07-02T15:04:00.000Z")
+        self.assertEqual(len(clickhouse.calls), 2)
+        self.assertIsNotNone(clickhouse.calls[0]["from_time"])
+        self.assertIsNone(clickhouse.calls[1]["from_time"])
+
     def test_provider_merges_redis_live_candle_into_snapshot_without_duplicate_bucket(self):
         closed = {
             "timestamp": "2026-06-25T10:15:00Z",

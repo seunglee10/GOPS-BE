@@ -52,6 +52,14 @@ class MarketDataProvider:
             from_time=clickhouse_from_time,
             to_time=to_time,
         ))
+        if interval in {"1m", "5m", "10m"} and not range_query and len(clickhouse_candles) < query_limit and clickhouse_from_time:
+            latest_candles = filter_stock_weekdays(self.clickhouse_provider.candles(
+                symbol,
+                interval,
+                query_limit,
+            ))
+            if len(latest_candles) > len(clickhouse_candles):
+                clickhouse_candles = latest_candles
         live_group = [live_candle] if live_candle else []
         merged = merge_candles(clickhouse_candles, redis_candles, live_group)
         candles = attach_moving_averages(merged)[-limit:]
