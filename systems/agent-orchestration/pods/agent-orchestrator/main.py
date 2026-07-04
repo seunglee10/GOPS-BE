@@ -1,16 +1,25 @@
 from __future__ import annotations
 
 import os
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
 
 from gops_agents.orchestrator import AgentOrchestrator
+from gops_agents.query_understanding import warm_entity_catalog_cache
 from gops_agents.runtime.report_store import build_report_store_from_env
+
+
+@asynccontextmanager
+async def app_lifespan(app: FastAPI):
+    warm_entity_catalog_cache()
+    yield
+
 
 store = build_report_store_from_env()
 orchestrator = AgentOrchestrator(store)
-app = FastAPI(title="GOPS Agent Orchestrator", version="0.1.0")
+app = FastAPI(title="GOPS Agent Orchestrator", version="0.1.0", lifespan=app_lifespan)
 
 
 @app.get("/health")

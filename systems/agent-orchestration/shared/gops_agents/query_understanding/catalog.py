@@ -13,7 +13,8 @@ from .korean_text import compact_text
 from .seeds import COMPANY_SYMBOL_ALIASES, EXTRA_KNOWN_SYMBOLS, NEWS_TOPIC_BASKETS
 
 
-DEFAULT_ALIAS_CATALOG_PATH = "systems/agent-orchestration/config/entity-aliases.seed.json"
+DEFAULT_ALIAS_CATALOG_PATH = "systems/agent-orchestration/config/entity-aliases.json"
+DEFAULT_ALIAS_SEED_PATH = "systems/agent-orchestration/config/entity-aliases.seed.json"
 
 
 @dataclass(frozen=True)
@@ -63,29 +64,42 @@ class EntityCatalogProvider:
         clickhouse_provider: Any = None,
         sparql_client: Any = None,
         alias_catalog_path: str | os.PathLike[str] | None = None,
+        alias_seed_path: str | os.PathLike[str] | None = None,
         include_fallback_seed: bool = True,
+        include_dynamic_company_sources: bool | None = None,
+        strict: bool | None = None,
         symbol_limit: int | None = None,
         theme_limit: int | None = None,
     ):
         self.clickhouse_provider = clickhouse_provider
         self.sparql_client = sparql_client
         self.alias_catalog_path = resolve_catalog_path(alias_catalog_path or os.getenv("AGENT_ENTITY_ALIAS_CATALOG_PATH", DEFAULT_ALIAS_CATALOG_PATH))
+        self.alias_seed_path = resolve_catalog_path(alias_seed_path or os.getenv("AGENT_ENTITY_ALIAS_SEED_PATH", DEFAULT_ALIAS_SEED_PATH))
         self.include_fallback_seed = include_fallback_seed
+        self.include_dynamic_company_sources = (
+            bool_config("AGENT_ENTITY_CATALOG_DYNAMIC_COMPANIES_ENABLED", clickhouse_provider is not None)
+            if include_dynamic_company_sources is None
+            else bool(include_dynamic_company_sources)
+        )
+        self.strict = bool_config("AGENT_ENTITY_CATALOG_STRICT", False) if strict is None else bool(strict)
         self.symbol_limit = int(symbol_limit or os.getenv("AGENT_ENTITY_CATALOG_SYMBOL_LIMIT", "10000"))
         self.theme_limit = int(theme_limit or os.getenv("AGENT_ENTITY_CATALOG_THEME_LIMIT", "10000"))
 
     def load(self) -> EntityCatalog:
         builder = EntityCatalogBuilder()
-        for entity in self._symbol_entities_from_clickhouse():
-            builder.add_entity(entity)
-        for entity in self._symbol_entities_from_market_config():
+        catalog_entities = self._entities_from_alias_artifact(self.alias_catalog_path, required=self.strict)
+        for entity in catalog_entities:
             builder.add_entity(entity)
         for entity in self._theme_entities_from_graphdb():
             builder.add_entity(entity)
-        for entity in self._entities_from_alias_artifact():
-            builder.add_entity(entity)
-        if self.include_fallback_seed:
-            for entity in fallback_seed_entities():
+        if self.include_dynamic_company_sources:
+            for entity in self._symbol_entities_from_clickhouse():
+                builder.add_entity(entity)
+            for entity in self._symbol_entities_from_market_config():
+                builder.add_entity(entity)
+        if not catalog_entities and self.include_fallback_seed:
+            seed_entities = self._entities_from_alias_artifact(self.alias_seed_path, required=False)
+            for entity in seed_entities or fallback_seed_entities():
                 builder.add_entity(entity)
         return builder.build()
 
@@ -196,12 +210,20 @@ class EntityCatalogProvider:
             )
         return entities
 
-    def _entities_from_alias_artifact(self) -> list[CatalogEntity]:
-        if not self.alias_catalog_path.exists():
+    def _entities_from_alias_artifact(self, path: Path, *, required: bool) -> list[CatalogEntity]:
+        if not path.exists():
+            if required:
+                raise FileNotFoundError(f"Entity alias catalog does not exist: {path}")
             return []
         try:
-            payload = json.loads(self.alias_catalog_path.read_text(encoding="utf-8"))
-        except Exception:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            if required:
+                raise ValueError(f"Entity alias catalog is not valid JSON: {path}") from exc
+            return []
+        if not isinstance(payload, dict):
+            if required:
+                raise ValueError(f"Entity alias catalog must be a JSON object: {path}")
             return []
         entities = []
         for item in payload.get("companies") or []:
@@ -499,6 +521,13 @@ def float_or_default(value: Any, default: float) -> float:
         return default
 
 
+def bool_config(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def guess_language(value: str) -> str:
     text = str(value or "")
     if re.search(r"[가-힣ㄱ-ㅎㅏ-ㅣ]", text):
@@ -514,4 +543,4 @@ def resolve_catalog_path(value: str | os.PathLike[str]) -> Path:
         return path
     repo_root = Path(__file__).resolve().parents[5]
     rooted = repo_root / path
-    return rooted if rooted.exists() else path
+    return rooted

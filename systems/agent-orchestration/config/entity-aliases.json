@@ -1,0 +1,4574 @@
+{
+  "description": "Operational entity alias catalog for GOPS agent company/theme resolution. Manage reviewed company names and aliases here; entity-aliases.seed.json and seeds.py are bootstrap fallbacks only.",
+  "companies": [
+    {
+      "symbol": "MMM",
+      "canonicalName": "3M",
+      "aliases": [
+        "쓰리엠",
+        "3m"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "AOS",
+      "canonicalName": "A. O. Smith",
+      "aliases": [
+        "A. O. 스미스",
+        "a. o. smith"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ABT",
+      "canonicalName": "Abbott Laboratories",
+      "aliases": [
+        "애벗 래버러토리스",
+        "abbott laboratories"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ABBV",
+      "canonicalName": "AbbVie",
+      "aliases": [
+        "애브비",
+        "abbvie"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ACN",
+      "canonicalName": "Accenture",
+      "aliases": [
+        "액센추어",
+        "accenture"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ADBE",
+      "canonicalName": "Adobe Inc.",
+      "aliases": [
+        "어도비",
+        "adobe"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "AMD",
+      "canonicalName": "Advanced Micro Devices",
+      "aliases": [
+        "에이엠디",
+        "advanced micro devices"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "AES",
+      "canonicalName": "AES Corporation",
+      "aliases": [
+        "AES 코퍼레이션",
+        "aes"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "AFL",
+      "canonicalName": "Aflac",
+      "aliases": [
+        "아플락",
+        "aflac"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "A",
+      "canonicalName": "Agilent Technologies",
+      "aliases": [
+        "애질런트 테크놀로지스",
+        "agilent technologies"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "APD",
+      "canonicalName": "Air Products",
+      "aliases": [
+        "에어 프로덕츠",
+        "air products"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ABNB",
+      "canonicalName": "Airbnb",
+      "aliases": [
+        "에어비앤비",
+        "airbnb"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "AKAM",
+      "canonicalName": "Akamai Technologies",
+      "aliases": [
+        "아카마이 테크놀로지스",
+        "akamai technologies"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ALB",
+      "canonicalName": "Albemarle Corporation",
+      "aliases": [
+        "앨버말",
+        "albemarle"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ARE",
+      "canonicalName": "Alexandria Real Estate Equities",
+      "aliases": [
+        "알렉산드리아 리얼 에스테이트",
+        "alexandria real estate equities"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ALGN",
+      "canonicalName": "Align Technology",
+      "aliases": [
+        "얼라인 테크놀로지",
+        "align technology"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ALLE",
+      "canonicalName": "Allegion",
+      "aliases": [
+        "알레지온",
+        "allegion"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "LNT",
+      "canonicalName": "Alliant Energy",
+      "aliases": [
+        "얼라이언트 에너지",
+        "alliant energy"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ALL",
+      "canonicalName": "Allstate",
+      "aliases": [
+        "올스테이트",
+        "allstate"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "GOOGL",
+      "canonicalName": "Alphabet Inc. (Class A)",
+      "aliases": [
+        "구글",
+        "알파벳",
+        "google",
+        "alphabet"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "GOOG",
+      "canonicalName": "Alphabet Inc. (Class C)",
+      "aliases": [
+        "구글",
+        "알파벳",
+        "google",
+        "alphabet"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "MO",
+      "canonicalName": "Altria",
+      "aliases": [
+        "알트리아 그룹",
+        "altria"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "AMZN",
+      "canonicalName": "Amazon",
+      "aliases": [
+        "아마존",
+        "amazon"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "AMCR",
+      "canonicalName": "Amcor",
+      "aliases": [
+        "앰코",
+        "amcor"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "AEE",
+      "canonicalName": "Ameren",
+      "aliases": [
+        "아메렌",
+        "ameren"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "AEP",
+      "canonicalName": "American Electric Power",
+      "aliases": [
+        "아메리칸 일렉트릭 파워",
+        "american electric power"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "AXP",
+      "canonicalName": "American Express",
+      "aliases": [
+        "아메리칸 익스프레스",
+        "american express"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "AIG",
+      "canonicalName": "American International Group",
+      "aliases": [
+        "아메리칸 인터내셔널 그룹",
+        "american international group"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "AMT",
+      "canonicalName": "American Tower",
+      "aliases": [
+        "아메리칸 타워",
+        "american tower"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "AWK",
+      "canonicalName": "American Water Works",
+      "aliases": [
+        "아메리칸 워터 웍스",
+        "american water works"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "AMP",
+      "canonicalName": "Ameriprise Financial",
+      "aliases": [
+        "아메리프라이즈 파이낸셜",
+        "ameriprise financial"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "AME",
+      "canonicalName": "Ametek",
+      "aliases": [
+        "아메텍",
+        "ametek"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "AMGN",
+      "canonicalName": "Amgen",
+      "aliases": [
+        "암젠",
+        "amgen"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "APH",
+      "canonicalName": "Amphenol",
+      "aliases": [
+        "암페놀 코퍼레이션",
+        "amphenol"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ADI",
+      "canonicalName": "Analog Devices",
+      "aliases": [
+        "아날로그 디바이스",
+        "analog devices"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "AON",
+      "canonicalName": "Aon plc",
+      "aliases": [
+        "에이온",
+        "aon"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "APA",
+      "canonicalName": "APA Corporation",
+      "aliases": [
+        "APA 코퍼레이션",
+        "apa"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "APO",
+      "canonicalName": "Apollo Global Management",
+      "aliases": [
+        "아폴로 글로벌 매니지먼트",
+        "apollo global management"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "AAPL",
+      "canonicalName": "Apple Inc.",
+      "aliases": [
+        "애플",
+        "apple"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "AMAT",
+      "canonicalName": "Applied Materials",
+      "aliases": [
+        "어플라이드 머티어리얼즈",
+        "applied materials"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "APP",
+      "canonicalName": "AppLovin",
+      "aliases": [
+        "앱러빈 코퍼레이션",
+        "applovin"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "APTV",
+      "canonicalName": "Aptiv",
+      "aliases": [
+        "앱티브",
+        "aptiv"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ACGL",
+      "canonicalName": "Arch Capital Group",
+      "aliases": [
+        "아치 캐피털",
+        "arch capital group"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ADM",
+      "canonicalName": "Archer Daniels Midland",
+      "aliases": [
+        "아처 대니얼스 미들랜드",
+        "archer daniels midland"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ARES",
+      "canonicalName": "Ares Management",
+      "aliases": [
+        "아레스 매니지먼트",
+        "ares management"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ANET",
+      "canonicalName": "Arista Networks",
+      "aliases": [
+        "아리스타 네트웍스",
+        "arista networks"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "AJG",
+      "canonicalName": "Arthur J. Gallagher & Co.",
+      "aliases": [
+        "아서 J. 갤러거",
+        "arthur j. gallagher &"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "AIZ",
+      "canonicalName": "Assurant",
+      "aliases": [
+        "어슈런트",
+        "assurant"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "T",
+      "canonicalName": "AT&T",
+      "aliases": [
+        "에이티앤티",
+        "at&t"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ATO",
+      "canonicalName": "Atmos Energy",
+      "aliases": [
+        "애트모스 에너지",
+        "atmos energy"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ADSK",
+      "canonicalName": "Autodesk",
+      "aliases": [
+        "오토데스크",
+        "autodesk"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ADP",
+      "canonicalName": "Automatic Data Processing",
+      "aliases": [
+        "에이디피",
+        "automatic data processing"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "AZO",
+      "canonicalName": "AutoZone",
+      "aliases": [
+        "오토존",
+        "autozone"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "AVB",
+      "canonicalName": "AvalonBay Communities",
+      "aliases": [
+        "아발론베이 커뮤니티스",
+        "avalonbay communities"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "AVY",
+      "canonicalName": "Avery Dennison",
+      "aliases": [
+        "에이버리 데니슨",
+        "avery dennison"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "AXON",
+      "canonicalName": "Axon Enterprise",
+      "aliases": [
+        "액손 엔터프라이즈",
+        "axon enterprise"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "BKR",
+      "canonicalName": "Baker Hughes",
+      "aliases": [
+        "베이커 휴즈",
+        "baker hughes"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "BALL",
+      "canonicalName": "Ball Corporation",
+      "aliases": [
+        "볼 코퍼레이션",
+        "ball"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "BAC",
+      "canonicalName": "Bank of America",
+      "aliases": [
+        "뱅크 오브 아메리카",
+        "bank of america"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "BAX",
+      "canonicalName": "Baxter International",
+      "aliases": [
+        "백스터",
+        "baxter international"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "BDX",
+      "canonicalName": "Becton Dickinson",
+      "aliases": [
+        "벡톤 디킨슨",
+        "becton dickinson"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "BRK.B",
+      "canonicalName": "Berkshire Hathaway",
+      "aliases": [
+        "버크셔 해서웨이",
+        "버크셔",
+        "berkshire hathaway"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "BBY",
+      "canonicalName": "Best Buy",
+      "aliases": [
+        "베스트 바이",
+        "best buy"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "TECH",
+      "canonicalName": "Bio-Techne",
+      "aliases": [
+        "바이오테크네",
+        "bio-techne"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "BIIB",
+      "canonicalName": "Biogen",
+      "aliases": [
+        "바이오젠",
+        "biogen"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "BLK",
+      "canonicalName": "BlackRock",
+      "aliases": [
+        "블랙록",
+        "blackrock"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "BX",
+      "canonicalName": "Blackstone Inc.",
+      "aliases": [
+        "블랙스톤 그룹",
+        "blackstone"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "XYZ",
+      "canonicalName": "Block, Inc.",
+      "aliases": [
+        "블록",
+        "block"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "BNY",
+      "canonicalName": "BNY Mellon",
+      "aliases": [
+        "BNY 멜론",
+        "bny mellon"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "BA",
+      "canonicalName": "Boeing",
+      "aliases": [
+        "보잉",
+        "boeing"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "BKNG",
+      "canonicalName": "Booking Holdings",
+      "aliases": [
+        "부킹 홀딩스",
+        "booking holdings"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "BSX",
+      "canonicalName": "Boston Scientific",
+      "aliases": [
+        "보스턴 사이언티픽",
+        "boston scientific"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "BMY",
+      "canonicalName": "Bristol Myers Squibb",
+      "aliases": [
+        "브리스톨 마이어스 스퀴브",
+        "bristol myers squibb"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "AVGO",
+      "canonicalName": "Broadcom",
+      "aliases": [
+        "브로드컴",
+        "broadcom"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "BR",
+      "canonicalName": "Broadridge Financial Solutions",
+      "aliases": [
+        "브로드리지 파이낸셜",
+        "broadridge financial solutions"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "BRO",
+      "canonicalName": "Brown & Brown",
+      "aliases": [
+        "브라운 앤 브라운",
+        "brown & brown"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "BF.B",
+      "canonicalName": "Brown–Forman",
+      "aliases": [
+        "브라운포먼",
+        "brown-forman"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "BLDR",
+      "canonicalName": "Builders FirstSource",
+      "aliases": [
+        "빌더스 퍼스트소스",
+        "builders firstsource"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "BG",
+      "canonicalName": "Bunge Global",
+      "aliases": [
+        "번지 글로벌",
+        "bunge global"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "BXP",
+      "canonicalName": "BXP, Inc.",
+      "aliases": [
+        "BXP 리츠",
+        "bxp"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CHRW",
+      "canonicalName": "C.H. Robinson",
+      "aliases": [
+        "C.H. 로빈슨",
+        "c.h. robinson"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CDNS",
+      "canonicalName": "Cadence Design Systems",
+      "aliases": [
+        "케이던스 디자인 시스템즈",
+        "cadence design systems"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CPT",
+      "canonicalName": "Camden Property Trust",
+      "aliases": [
+        "캠든 프로퍼티 트러스트",
+        "camden property trust"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "COF",
+      "canonicalName": "Capital One",
+      "aliases": [
+        "캐피털 원",
+        "capital one"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CAH",
+      "canonicalName": "Cardinal Health",
+      "aliases": [
+        "카디널 헬스",
+        "cardinal health"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CCL",
+      "canonicalName": "Carnival Corporation",
+      "aliases": [
+        "카니발 코퍼레이션",
+        "carnival"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CARR",
+      "canonicalName": "Carrier Global",
+      "aliases": [
+        "캐리어 글로벌",
+        "carrier global"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CVNA",
+      "canonicalName": "Carvana",
+      "aliases": [
+        "카바나",
+        "carvana"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CASY",
+      "canonicalName": "Casey's",
+      "aliases": [
+        "케이시스",
+        "casey's"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CAT",
+      "canonicalName": "Caterpillar Inc.",
+      "aliases": [
+        "캐터필러",
+        "caterpillar"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CBOE",
+      "canonicalName": "Cboe Global Markets",
+      "aliases": [
+        "시보 글로벌 마켓츠",
+        "cboe global markets"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CBRE",
+      "canonicalName": "CBRE Group",
+      "aliases": [
+        "CBRE 그룹",
+        "cbre group"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CDW",
+      "canonicalName": "CDW Corporation",
+      "aliases": [
+        "CDW 코퍼레이션",
+        "cdw"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "COR",
+      "canonicalName": "Cencora",
+      "aliases": [
+        "센코라",
+        "cencora"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CNC",
+      "canonicalName": "Centene Corporation",
+      "aliases": [
+        "센틴 코퍼레이션",
+        "centene"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CNP",
+      "canonicalName": "CenterPoint Energy",
+      "aliases": [
+        "센터포인트 에너지",
+        "centerpoint energy"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CF",
+      "canonicalName": "CF Industries",
+      "aliases": [
+        "CF 인더스트리스",
+        "cf industries"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CRL",
+      "canonicalName": "Charles River Laboratories",
+      "aliases": [
+        "찰스 리버 래버러토리스",
+        "charles river laboratories"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "SCHW",
+      "canonicalName": "Charles Schwab Corporation",
+      "aliases": [
+        "찰스 슈왑",
+        "charles schwab"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CHTR",
+      "canonicalName": "Charter Communications",
+      "aliases": [
+        "차터 커뮤니케이션스",
+        "charter communications"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CVX",
+      "canonicalName": "Chevron Corporation",
+      "aliases": [
+        "셰브론",
+        "chevron"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CMG",
+      "canonicalName": "Chipotle Mexican Grill",
+      "aliases": [
+        "치폴레 멕시칸 그릴",
+        "chipotle mexican grill"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CB",
+      "canonicalName": "Chubb Limited",
+      "aliases": [
+        "처브",
+        "chubb"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CHD",
+      "canonicalName": "Church & Dwight",
+      "aliases": [
+        "처치 앤 드와이트",
+        "church & dwight"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CIEN",
+      "canonicalName": "Ciena",
+      "aliases": [
+        "시에나",
+        "ciena"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CI",
+      "canonicalName": "Cigna",
+      "aliases": [
+        "시그나 그룹",
+        "cigna"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CINF",
+      "canonicalName": "Cincinnati Financial",
+      "aliases": [
+        "신시내티 파이낸셜",
+        "cincinnati financial"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CTAS",
+      "canonicalName": "Cintas",
+      "aliases": [
+        "신타스",
+        "cintas"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CSCO",
+      "canonicalName": "Cisco",
+      "aliases": [
+        "시스코",
+        "cisco"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "C",
+      "canonicalName": "Citigroup",
+      "aliases": [
+        "씨티그룹",
+        "citigroup"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CFG",
+      "canonicalName": "Citizens Financial Group",
+      "aliases": [
+        "시티즌스 파이낸셜",
+        "citizens financial group"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CLX",
+      "canonicalName": "Clorox",
+      "aliases": [
+        "크로락스",
+        "clorox"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CME",
+      "canonicalName": "CME Group",
+      "aliases": [
+        "CME 그룹",
+        "cme group"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CMS",
+      "canonicalName": "CMS Energy",
+      "aliases": [
+        "CMS 에너지",
+        "cms energy"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "KO",
+      "canonicalName": "Coca-Cola Company (The)",
+      "aliases": [
+        "코카콜라",
+        "코크",
+        "coca-cola"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CTSH",
+      "canonicalName": "Cognizant",
+      "aliases": [
+        "코그니전트",
+        "cognizant"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "COHR",
+      "canonicalName": "Coherent Corp.",
+      "aliases": [
+        "코히런트",
+        "coherent"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "COIN",
+      "canonicalName": "Coinbase",
+      "aliases": [
+        "코인베이스",
+        "coinbase"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CL",
+      "canonicalName": "Colgate-Palmolive",
+      "aliases": [
+        "콜게이트-파몰리브",
+        "colgate-palmolive"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CMCSA",
+      "canonicalName": "Comcast",
+      "aliases": [
+        "컴캐스트",
+        "comcast"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "FIX",
+      "canonicalName": "Comfort Systems USA",
+      "aliases": [
+        "컴포트 시스템즈 USA",
+        "comfort systems usa"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "COP",
+      "canonicalName": "ConocoPhillips",
+      "aliases": [
+        "코노코필립스",
+        "conocophillips"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ED",
+      "canonicalName": "Consolidated Edison",
+      "aliases": [
+        "콘솔리데이티드 에디슨",
+        "consolidated edison"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "STZ",
+      "canonicalName": "Constellation Brands",
+      "aliases": [
+        "컨스텔레이션 브랜즈",
+        "constellation brands"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CEG",
+      "canonicalName": "Constellation Energy",
+      "aliases": [
+        "컨스텔레이션 에너지",
+        "constellation energy"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "COO",
+      "canonicalName": "Cooper Companies (The)",
+      "aliases": [
+        "쿠퍼 컴퍼니스",
+        "cooper companies"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CPRT",
+      "canonicalName": "Copart",
+      "aliases": [
+        "코파트",
+        "copart"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "GLW",
+      "canonicalName": "Corning Inc.",
+      "aliases": [
+        "코닝",
+        "corning"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CPAY",
+      "canonicalName": "Corpay",
+      "aliases": [
+        "코페이",
+        "corpay"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CTVA",
+      "canonicalName": "Corteva",
+      "aliases": [
+        "코르테바",
+        "corteva"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CSGP",
+      "canonicalName": "CoStar Group",
+      "aliases": [
+        "코스타 그룹",
+        "costar group"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "COST",
+      "canonicalName": "Costco",
+      "aliases": [
+        "코스트코",
+        "costco"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CRH",
+      "canonicalName": "CRH plc",
+      "aliases": [
+        "씨알에이치",
+        "crh"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CRWD",
+      "canonicalName": "CrowdStrike",
+      "aliases": [
+        "크라우드스트라이크",
+        "crowdstrike"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CCI",
+      "canonicalName": "Crown Castle",
+      "aliases": [
+        "크라운 캐슬",
+        "crown castle"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CSX",
+      "canonicalName": "CSX Corporation",
+      "aliases": [
+        "CSX 코퍼레이션",
+        "csx"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CMI",
+      "canonicalName": "Cummins",
+      "aliases": [
+        "커민스",
+        "cummins"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CVS",
+      "canonicalName": "CVS Health",
+      "aliases": [
+        "CVS 헬스",
+        "cvs health"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "DHR",
+      "canonicalName": "Danaher Corporation",
+      "aliases": [
+        "다나허 코퍼레이션",
+        "danaher"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "DRI",
+      "canonicalName": "Darden Restaurants",
+      "aliases": [
+        "다든 레스토랑",
+        "darden restaurants"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "DDOG",
+      "canonicalName": "Datadog",
+      "aliases": [
+        "데이터도그",
+        "datadog"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "DVA",
+      "canonicalName": "DaVita",
+      "aliases": [
+        "다비타",
+        "davita"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "DECK",
+      "canonicalName": "Deckers Brands",
+      "aliases": [
+        "데커스 브랜즈",
+        "deckers brands"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "DE",
+      "canonicalName": "Deere & Company",
+      "aliases": [
+        "디어",
+        "deere &"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "DELL",
+      "canonicalName": "Dell Technologies",
+      "aliases": [
+        "델 테크놀로지스",
+        "dell technologies"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "DAL",
+      "canonicalName": "Delta Air Lines",
+      "aliases": [
+        "델타 항공",
+        "delta air lines"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "DVN",
+      "canonicalName": "Devon Energy",
+      "aliases": [
+        "데번 에너지",
+        "devon energy"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "DXCM",
+      "canonicalName": "Dexcom",
+      "aliases": [
+        "덱스콤",
+        "dexcom"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "FANG",
+      "canonicalName": "Diamondback Energy",
+      "aliases": [
+        "다이아몬드백 에너지",
+        "diamondback energy"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "DLR",
+      "canonicalName": "Digital Realty",
+      "aliases": [
+        "디지털 리얼티",
+        "digital realty"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "DG",
+      "canonicalName": "Dollar General",
+      "aliases": [
+        "달러 제너럴",
+        "dollar general"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "DLTR",
+      "canonicalName": "Dollar Tree",
+      "aliases": [
+        "달러 트리",
+        "dollar tree"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "D",
+      "canonicalName": "Dominion Energy",
+      "aliases": [
+        "도미니언 에너지",
+        "dominion energy"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "DPZ",
+      "canonicalName": "Domino's",
+      "aliases": [
+        "도미노피자",
+        "domino's"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "DASH",
+      "canonicalName": "DoorDash",
+      "aliases": [
+        "도어대시",
+        "doordash"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "DOV",
+      "canonicalName": "Dover Corporation",
+      "aliases": [
+        "도버",
+        "dover"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "DOW",
+      "canonicalName": "Dow Inc.",
+      "aliases": [
+        "다우",
+        "dow"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "DHI",
+      "canonicalName": "D. R. Horton",
+      "aliases": [
+        "D.R. 호턴",
+        "d. r. horton"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "DTE",
+      "canonicalName": "DTE Energy",
+      "aliases": [
+        "DTE 에너지",
+        "dte energy"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "DUK",
+      "canonicalName": "Duke Energy",
+      "aliases": [
+        "듀크 에너지",
+        "duke energy"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "DD",
+      "canonicalName": "DuPont",
+      "aliases": [
+        "듀폰",
+        "dupont"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ETN",
+      "canonicalName": "Eaton Corporation",
+      "aliases": [
+        "이튼 코퍼레이션",
+        "eaton"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "EBAY",
+      "canonicalName": "eBay Inc.",
+      "aliases": [
+        "이베이",
+        "ebay"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ECHO",
+      "canonicalName": "EchoStar",
+      "aliases": [
+        "에코스타",
+        "echostar"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ECL",
+      "canonicalName": "Ecolab",
+      "aliases": [
+        "에코랩",
+        "ecolab"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "EIX",
+      "canonicalName": "Edison International",
+      "aliases": [
+        "에디슨 인터내셔널",
+        "edison international"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "EW",
+      "canonicalName": "Edwards Lifesciences",
+      "aliases": [
+        "에드워즈 라이프사이언시스",
+        "edwards lifesciences"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "EA",
+      "canonicalName": "Electronic Arts",
+      "aliases": [
+        "일렉트로닉 아츠",
+        "electronic arts"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ELV",
+      "canonicalName": "Elevance Health",
+      "aliases": [
+        "엘리밴스 헬스케어",
+        "elevance health"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "EME",
+      "canonicalName": "Emcor",
+      "aliases": [
+        "엠코어",
+        "emcor"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "EMR",
+      "canonicalName": "Emerson Electric",
+      "aliases": [
+        "에머슨 일렉트릭",
+        "emerson electric"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ETR",
+      "canonicalName": "Entergy",
+      "aliases": [
+        "엔터지",
+        "entergy"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "EOG",
+      "canonicalName": "EOG Resources",
+      "aliases": [
+        "EOG 리소시스",
+        "eog resources"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "EQT",
+      "canonicalName": "EQT Corporation",
+      "aliases": [
+        "EQT 코퍼레이션",
+        "eqt"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "EFX",
+      "canonicalName": "Equifax",
+      "aliases": [
+        "에퀴팩스",
+        "equifax"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "EQIX",
+      "canonicalName": "Equinix",
+      "aliases": [
+        "에퀴닉스",
+        "equinix"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "EQR",
+      "canonicalName": "Equity Residential",
+      "aliases": [
+        "에퀴티 레지덴셜",
+        "equity residential"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ERIE",
+      "canonicalName": "Erie Indemnity",
+      "aliases": [
+        "이리 인뎀니티",
+        "erie indemnity"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ESS",
+      "canonicalName": "Essex Property Trust",
+      "aliases": [
+        "에섹스 프로퍼티 트러스트",
+        "essex property trust"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "EL",
+      "canonicalName": "Estée Lauder Companies (The)",
+      "aliases": [
+        "에스티 로더",
+        "estée lauder companies"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "EG",
+      "canonicalName": "Everest Group",
+      "aliases": [
+        "에베레스트 그룹",
+        "everest group"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "EVRG",
+      "canonicalName": "Evergy",
+      "aliases": [
+        "에버지",
+        "evergy"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ES",
+      "canonicalName": "Eversource Energy",
+      "aliases": [
+        "에버소스 에너지",
+        "eversource energy"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "EXC",
+      "canonicalName": "Exelon",
+      "aliases": [
+        "엑셀론",
+        "exelon"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "EXE",
+      "canonicalName": "Expand Energy",
+      "aliases": [
+        "익스팬드 에너지",
+        "expand energy"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "EXPE",
+      "canonicalName": "Expedia Group",
+      "aliases": [
+        "익스피디아 그룹",
+        "expedia group"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "EXPD",
+      "canonicalName": "Expeditors International",
+      "aliases": [
+        "익스페디터스 인터내셔널",
+        "expeditors international"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "EXR",
+      "canonicalName": "Extra Space Storage",
+      "aliases": [
+        "엑스트라 스페이스 스토리지",
+        "extra space storage"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "XOM",
+      "canonicalName": "ExxonMobil",
+      "aliases": [
+        "엑슨모빌",
+        "exxonmobil"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "FFIV",
+      "canonicalName": "F5, Inc.",
+      "aliases": [
+        "F5 네트웍스",
+        "f5"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "FDS",
+      "canonicalName": "FactSet",
+      "aliases": [
+        "팩트셋",
+        "factset"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "FICO",
+      "canonicalName": "Fair Isaac",
+      "aliases": [
+        "파이코",
+        "fair isaac"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "FAST",
+      "canonicalName": "Fastenal",
+      "aliases": [
+        "패스널",
+        "fastenal"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "FRT",
+      "canonicalName": "Federal Realty Investment Trust",
+      "aliases": [
+        "페더럴 리얼티",
+        "federal realty investment trust"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "FDX",
+      "canonicalName": "FedEx",
+      "aliases": [
+        "페덱스",
+        "fedex"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "FDXF",
+      "canonicalName": "FedEx Freight",
+      "aliases": [
+        "페덱스 프레이트",
+        "fedex freight"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "FIS",
+      "canonicalName": "Fidelity National Information Services",
+      "aliases": [
+        "피델리티 내셔널 인포메이션 서비스",
+        "fidelity national information services"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "FITB",
+      "canonicalName": "Fifth Third Bancorp",
+      "aliases": [
+        "피프스 서드 뱅코프",
+        "fifth third bancorp"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "FSLR",
+      "canonicalName": "First Solar",
+      "aliases": [
+        "퍼스트 솔라",
+        "first solar"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "FE",
+      "canonicalName": "FirstEnergy",
+      "aliases": [
+        "퍼스트에너지",
+        "firstenergy"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "FISV",
+      "canonicalName": "Fiserv",
+      "aliases": [
+        "파이서브",
+        "fiserv"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "FLEX",
+      "canonicalName": "Flex Ltd.",
+      "aliases": [
+        "플렉스",
+        "flex"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "F",
+      "canonicalName": "Ford Motor Company",
+      "aliases": [
+        "포드 모터 컴퍼니",
+        "ford motor"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "FTNT",
+      "canonicalName": "Fortinet",
+      "aliases": [
+        "포티넷",
+        "fortinet"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "FTV",
+      "canonicalName": "Fortive",
+      "aliases": [
+        "포티브",
+        "fortive"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "FOXA",
+      "canonicalName": "Fox Corporation (Class A)",
+      "aliases": [
+        "폭스 코퍼레이션",
+        "fox"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "FOX",
+      "canonicalName": "Fox Corporation (Class B)",
+      "aliases": [
+        "폭스 코퍼레이션",
+        "fox"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "BEN",
+      "canonicalName": "Franklin Resources",
+      "aliases": [
+        "프랭클린 리소시스",
+        "franklin resources"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "FCX",
+      "canonicalName": "Freeport-McMoRan",
+      "aliases": [
+        "프리포트 맥모란",
+        "freeport-mcmoran"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "GRMN",
+      "canonicalName": "Garmin",
+      "aliases": [
+        "가민",
+        "garmin"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "IT",
+      "canonicalName": "Gartner",
+      "aliases": [
+        "가트너",
+        "gartner"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "GE",
+      "canonicalName": "GE Aerospace",
+      "aliases": [
+        "GE 에어로스페이스",
+        "ge aerospace"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "GEHC",
+      "canonicalName": "GE HealthCare",
+      "aliases": [
+        "GE 헬스케어",
+        "ge healthcare"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "GEV",
+      "canonicalName": "GE Vernova",
+      "aliases": [
+        "GE버노바",
+        "ge vernova"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "GEN",
+      "canonicalName": "Gen Digital",
+      "aliases": [
+        "젠 디지털",
+        "gen digital"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "GNRC",
+      "canonicalName": "Generac",
+      "aliases": [
+        "제너락",
+        "generac"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "GD",
+      "canonicalName": "General Dynamics",
+      "aliases": [
+        "제너럴 다이내믹스",
+        "general dynamics"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "GIS",
+      "canonicalName": "General Mills",
+      "aliases": [
+        "제너럴 밀스",
+        "general mills"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "GM",
+      "canonicalName": "General Motors",
+      "aliases": [
+        "제너럴 모터스",
+        "general motors"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "GPC",
+      "canonicalName": "Genuine Parts Company",
+      "aliases": [
+        "제뉴인 파츠",
+        "genuine parts"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "GILD",
+      "canonicalName": "Gilead Sciences",
+      "aliases": [
+        "길리어드 사이언스",
+        "gilead sciences"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "GPN",
+      "canonicalName": "Global Payments",
+      "aliases": [
+        "글로벌 페이먼츠",
+        "global payments"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "GL",
+      "canonicalName": "Globe Life",
+      "aliases": [
+        "글로브 라이프",
+        "globe life"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "GDDY",
+      "canonicalName": "GoDaddy",
+      "aliases": [
+        "고대디",
+        "godaddy"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "GS",
+      "canonicalName": "Goldman Sachs",
+      "aliases": [
+        "골드만삭스",
+        "goldman sachs"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "HAL",
+      "canonicalName": "Halliburton",
+      "aliases": [
+        "할리버튼",
+        "halliburton"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "HIG",
+      "canonicalName": "Hartford (The)",
+      "aliases": [
+        "하트퍼드",
+        "hartford"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "HAS",
+      "canonicalName": "Hasbro",
+      "aliases": [
+        "해즈브로",
+        "hasbro"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "HCA",
+      "canonicalName": "HCA Healthcare",
+      "aliases": [
+        "HCA 헬스케어",
+        "hca healthcare"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "DOC",
+      "canonicalName": "Healthpeak Properties",
+      "aliases": [
+        "헬스피크 프로퍼티스",
+        "healthpeak properties"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "HSIC",
+      "canonicalName": "Henry Schein",
+      "aliases": [
+        "헨리 샤인",
+        "henry schein"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "HSY",
+      "canonicalName": "Hershey Company (The)",
+      "aliases": [
+        "허쉬",
+        "hershey"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "HPE",
+      "canonicalName": "Hewlett Packard Enterprise",
+      "aliases": [
+        "휴렛 팩커드 엔터프라이즈",
+        "hewlett packard enterprise"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "HLT",
+      "canonicalName": "Hilton Worldwide",
+      "aliases": [
+        "힐튼 월드와이드",
+        "hilton worldwide"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "HD",
+      "canonicalName": "Home Depot (The)",
+      "aliases": [
+        "홈디포",
+        "home depot"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "HONA",
+      "canonicalName": "Honeywell Aerospace",
+      "aliases": [
+        "허니웰 에어로스페이스",
+        "honeywell aerospace"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "HON",
+      "canonicalName": "Honeywell Technologies",
+      "aliases": [
+        "허니웰",
+        "honeywell technologies"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "HRL",
+      "canonicalName": "Hormel Foods",
+      "aliases": [
+        "호멜",
+        "hormel foods"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "HST",
+      "canonicalName": "Host Hotels & Resorts",
+      "aliases": [
+        "호스트 호텔 앤 리조트",
+        "host hotels & resorts"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "HWM",
+      "canonicalName": "Howmet Aerospace",
+      "aliases": [
+        "하우멧 에어로스페이스",
+        "howmet aerospace"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "HPQ",
+      "canonicalName": "HP Inc.",
+      "aliases": [
+        "에이치피",
+        "hp"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "HUBB",
+      "canonicalName": "Hubbell Incorporated",
+      "aliases": [
+        "허벨",
+        "hubbell"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "HUM",
+      "canonicalName": "Humana",
+      "aliases": [
+        "휴매나",
+        "humana"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "HBAN",
+      "canonicalName": "Huntington Bancshares",
+      "aliases": [
+        "헌팅턴 뱅크셰어스",
+        "huntington bancshares"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "HII",
+      "canonicalName": "Huntington Ingalls Industries",
+      "aliases": [
+        "헌팅턴 잉걸스",
+        "huntington ingalls industries"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "IBM",
+      "canonicalName": "IBM",
+      "aliases": [
+        "아이비엠",
+        "ibm"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "IEX",
+      "canonicalName": "IDEX Corporation",
+      "aliases": [
+        "IDEX 코퍼레이션",
+        "idex"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "IDXX",
+      "canonicalName": "Idexx Laboratories",
+      "aliases": [
+        "아이덱스 래버러토리스",
+        "idexx laboratories"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ITW",
+      "canonicalName": "Illinois Tool Works",
+      "aliases": [
+        "일리노이 툴 웍스",
+        "illinois tool works"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "INCY",
+      "canonicalName": "Incyte",
+      "aliases": [
+        "인사이트",
+        "incyte"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "IR",
+      "canonicalName": "Ingersoll Rand",
+      "aliases": [
+        "잉거솔 랜드",
+        "ingersoll rand"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "PODD",
+      "canonicalName": "Insulet Corporation",
+      "aliases": [
+        "인슐렛",
+        "insulet"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "INTC",
+      "canonicalName": "Intel",
+      "aliases": [
+        "인텔",
+        "intel"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "IBKR",
+      "canonicalName": "Interactive Brokers",
+      "aliases": [
+        "인터랙티브 브로커스",
+        "interactive brokers"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ICE",
+      "canonicalName": "Intercontinental Exchange",
+      "aliases": [
+        "인터콘티넨털 익스체인지",
+        "intercontinental exchange"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "IFF",
+      "canonicalName": "International Flavors & Fragrances",
+      "aliases": [
+        "인터내셔널 플레이버스 앤 프래그런시스",
+        "international flavors & fragrances"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "IP",
+      "canonicalName": "International Paper",
+      "aliases": [
+        "인터내셔널페이퍼",
+        "international paper"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "INTU",
+      "canonicalName": "Intuit",
+      "aliases": [
+        "인튜이트",
+        "intuit"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ISRG",
+      "canonicalName": "Intuitive Surgical",
+      "aliases": [
+        "인튜이티브 서지컬",
+        "intuitive surgical"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "IVZ",
+      "canonicalName": "Invesco",
+      "aliases": [
+        "인베스코",
+        "invesco"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "INVH",
+      "canonicalName": "Invitation Homes",
+      "aliases": [
+        "인비테이션 홈즈",
+        "invitation homes"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "IQV",
+      "canonicalName": "IQVIA",
+      "aliases": [
+        "아이큐비아",
+        "iqvia"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "IRM",
+      "canonicalName": "Iron Mountain",
+      "aliases": [
+        "아이언 마운틴",
+        "iron mountain"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "JBHT",
+      "canonicalName": "J.B. Hunt",
+      "aliases": [
+        "J.B. 헌트",
+        "j.b. hunt"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "JBL",
+      "canonicalName": "Jabil",
+      "aliases": [
+        "자빌",
+        "jabil"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "JKHY",
+      "canonicalName": "Jack Henry & Associates",
+      "aliases": [
+        "잭 헨리",
+        "jack henry & associates"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "J",
+      "canonicalName": "Jacobs Solutions",
+      "aliases": [
+        "제이콥스 솔루션스",
+        "jacobs solutions"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "JNJ",
+      "canonicalName": "Johnson & Johnson",
+      "aliases": [
+        "존슨앤드존슨",
+        "johnson & johnson"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "JCI",
+      "canonicalName": "Johnson Controls",
+      "aliases": [
+        "존슨 컨트롤스",
+        "johnson controls"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "JPM",
+      "canonicalName": "JPMorgan Chase",
+      "aliases": [
+        "JP모건 체이스",
+        "jpmorgan chase"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "KVUE",
+      "canonicalName": "Kenvue",
+      "aliases": [
+        "켄뷰",
+        "kenvue"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "KDP",
+      "canonicalName": "Keurig Dr Pepper",
+      "aliases": [
+        "큐리그 닥터페퍼",
+        "keurig dr pepper"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "KEY",
+      "canonicalName": "KeyCorp",
+      "aliases": [
+        "키코프",
+        "keycorp"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "KEYS",
+      "canonicalName": "Keysight Technologies",
+      "aliases": [
+        "키사이트 테크놀로지스",
+        "keysight technologies"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "KMB",
+      "canonicalName": "Kimberly-Clark",
+      "aliases": [
+        "킴벌리-클라크",
+        "kimberly-clark"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "KIM",
+      "canonicalName": "Kimco Realty",
+      "aliases": [
+        "킴코 리얼티",
+        "kimco realty"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "KMI",
+      "canonicalName": "Kinder Morgan",
+      "aliases": [
+        "킨더 모건",
+        "kinder morgan"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "KKR",
+      "canonicalName": "KKR & Co.",
+      "aliases": [
+        "KKR 코퍼레이션",
+        "kkr &"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "KLAC",
+      "canonicalName": "KLA Corporation",
+      "aliases": [
+        "케이엘에이",
+        "kla"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "KHC",
+      "canonicalName": "Kraft Heinz",
+      "aliases": [
+        "크래프트 하인즈",
+        "kraft heinz"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "KR",
+      "canonicalName": "Kroger",
+      "aliases": [
+        "크로거",
+        "kroger"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "LHX",
+      "canonicalName": "L3Harris",
+      "aliases": [
+        "L3해리스",
+        "l3harris"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "LH",
+      "canonicalName": "Labcorp",
+      "aliases": [
+        "랩코프",
+        "labcorp"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "LRCX",
+      "canonicalName": "Lam Research",
+      "aliases": [
+        "램 리서치",
+        "lam research"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "LVS",
+      "canonicalName": "Las Vegas Sands",
+      "aliases": [
+        "라스베가스 샌즈",
+        "las vegas sands"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "LDOS",
+      "canonicalName": "Leidos",
+      "aliases": [
+        "레이도스",
+        "leidos"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "LEN",
+      "canonicalName": "Lennar",
+      "aliases": [
+        "레나",
+        "lennar"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "LII",
+      "canonicalName": "Lennox International",
+      "aliases": [
+        "레녹스 인터내셔널",
+        "lennox international"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "LLY",
+      "canonicalName": "Lilly (Eli)",
+      "aliases": [
+        "일라이 릴리 앤드 컴퍼니",
+        "lilly (eli)"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "LIN",
+      "canonicalName": "Linde plc",
+      "aliases": [
+        "린데",
+        "linde"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "LYV",
+      "canonicalName": "Live Nation Entertainment",
+      "aliases": [
+        "라이브 네이션",
+        "live nation entertainment"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "LMT",
+      "canonicalName": "Lockheed Martin",
+      "aliases": [
+        "록히드 마틴",
+        "lockheed martin"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "L",
+      "canonicalName": "Loews Corporation",
+      "aliases": [
+        "로우스 코퍼레이션",
+        "loews"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "LOW",
+      "canonicalName": "Lowe's",
+      "aliases": [
+        "로우스",
+        "lowe's"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "LULU",
+      "canonicalName": "Lululemon Athletica",
+      "aliases": [
+        "룰루레몬",
+        "lululemon athletica"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "LITE",
+      "canonicalName": "Lumentum",
+      "aliases": [
+        "루멘텀",
+        "lumentum"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "LYB",
+      "canonicalName": "LyondellBasell",
+      "aliases": [
+        "라이온델바젤",
+        "lyondellbasell"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "MTB",
+      "canonicalName": "M&T Bank",
+      "aliases": [
+        "M&T 은행",
+        "m&t bank"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "MPC",
+      "canonicalName": "Marathon Petroleum",
+      "aliases": [
+        "마라톤 페트롤리엄",
+        "marathon petroleum"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "MAR",
+      "canonicalName": "Marriott International",
+      "aliases": [
+        "메리어트 인터내셔널",
+        "marriott international"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "MRSH",
+      "canonicalName": "Marsh McLennan",
+      "aliases": [
+        "마쉬 맥레넌",
+        "marsh mclennan"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "MLM",
+      "canonicalName": "Martin Marietta Materials",
+      "aliases": [
+        "마틴 마리에타 머티리얼즈",
+        "martin marietta materials"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "MRVL",
+      "canonicalName": "Marvell Technology",
+      "aliases": [
+        "마벨 테크놀로지",
+        "marvell technology"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "MAS",
+      "canonicalName": "Masco",
+      "aliases": [
+        "마스코",
+        "masco"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "MA",
+      "canonicalName": "Mastercard",
+      "aliases": [
+        "마스터카드",
+        "mastercard"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "MKC",
+      "canonicalName": "McCormick & Company",
+      "aliases": [
+        "맥코믹",
+        "mccormick &"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "MCD",
+      "canonicalName": "McDonald's",
+      "aliases": [
+        "맥도날드",
+        "맥날",
+        "mcdonald's"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "MCK",
+      "canonicalName": "McKesson Corporation",
+      "aliases": [
+        "맥케슨",
+        "mckesson"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "MDT",
+      "canonicalName": "Medtronic",
+      "aliases": [
+        "메드트로닉",
+        "medtronic"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "MRK",
+      "canonicalName": "Merck & Co.",
+      "aliases": [
+        "머크",
+        "merck &"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "META",
+      "canonicalName": "Meta Platforms",
+      "aliases": [
+        "메타",
+        "페이스북",
+        "meta platforms"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "MET",
+      "canonicalName": "MetLife",
+      "aliases": [
+        "메트라이프",
+        "metlife"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "MTD",
+      "canonicalName": "Mettler Toledo",
+      "aliases": [
+        "메틀러 톨레도",
+        "mettler toledo"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "MGM",
+      "canonicalName": "MGM Resorts",
+      "aliases": [
+        "MGM 리조트",
+        "mgm resorts"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "MCHP",
+      "canonicalName": "Microchip Technology",
+      "aliases": [
+        "마이크로칩 테크놀로지",
+        "microchip technology"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "MU",
+      "canonicalName": "Micron Technology",
+      "aliases": [
+        "마이크론 테크놀로지",
+        "micron technology"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "MSFT",
+      "canonicalName": "Microsoft",
+      "aliases": [
+        "마이크로소프트",
+        "마소",
+        "microsoft"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "MAA",
+      "canonicalName": "Mid-America Apartment Communities",
+      "aliases": [
+        "미드아메리카 아파트먼트 커뮤니티스",
+        "mid-america apartment communities"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "MRNA",
+      "canonicalName": "Moderna",
+      "aliases": [
+        "모더나",
+        "moderna"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "TAP",
+      "canonicalName": "Molson Coors Beverage Company",
+      "aliases": [
+        "몰슨 쿠어스",
+        "molson coors beverage"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "MDLZ",
+      "canonicalName": "Mondelez International",
+      "aliases": [
+        "몬델리즈 인터내셔널",
+        "mondelez international"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "MPWR",
+      "canonicalName": "Monolithic Power Systems",
+      "aliases": [
+        "모놀리식 파워 시스템즈",
+        "monolithic power systems"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "MNST",
+      "canonicalName": "Monster Beverage",
+      "aliases": [
+        "몬스터 베버리지",
+        "monster beverage"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "MCO",
+      "canonicalName": "Moody's Corporation",
+      "aliases": [
+        "무디스",
+        "moody's"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "MS",
+      "canonicalName": "Morgan Stanley",
+      "aliases": [
+        "모건 스탠리",
+        "morgan stanley"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "MOS",
+      "canonicalName": "Mosaic Company (The)",
+      "aliases": [
+        "모자이크 컴퍼니",
+        "mosaic"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "MSI",
+      "canonicalName": "Motorola Solutions",
+      "aliases": [
+        "모토로라 솔루션스",
+        "motorola solutions"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "MSCI",
+      "canonicalName": "MSCI Inc.",
+      "aliases": [
+        "MSCI 지수",
+        "msci"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "NDAQ",
+      "canonicalName": "Nasdaq, Inc.",
+      "aliases": [
+        "나스닥",
+        "nasdaq"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "NTAP",
+      "canonicalName": "NetApp",
+      "aliases": [
+        "넷앱",
+        "netapp"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "NFLX",
+      "canonicalName": "Netflix",
+      "aliases": [
+        "넷플릭스",
+        "netflix"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "NEM",
+      "canonicalName": "Newmont",
+      "aliases": [
+        "뉴몬트",
+        "newmont"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "NWSA",
+      "canonicalName": "News Corp (Class A shares)",
+      "aliases": [
+        "뉴스코프",
+        "news corp"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "NWS",
+      "canonicalName": "News Corp (Class B shares)",
+      "aliases": [
+        "뉴스코프",
+        "news corp"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "NEE",
+      "canonicalName": "NextEra Energy",
+      "aliases": [
+        "넥스트에라 에너지",
+        "nextera energy"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "NKE",
+      "canonicalName": "Nike, Inc.",
+      "aliases": [
+        "나이키",
+        "nike"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "NI",
+      "canonicalName": "NiSource",
+      "aliases": [
+        "나이소스",
+        "nisource"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "NDSN",
+      "canonicalName": "Nordson Corporation",
+      "aliases": [
+        "노드슨",
+        "nordson"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "NSC",
+      "canonicalName": "Norfolk Southern",
+      "aliases": [
+        "노퍽 서던",
+        "norfolk southern"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "NTRS",
+      "canonicalName": "Northern Trust",
+      "aliases": [
+        "노던 트러스트",
+        "northern trust"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "NOC",
+      "canonicalName": "Northrop Grumman",
+      "aliases": [
+        "노스롭 그루먼",
+        "northrop grumman"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "NCLH",
+      "canonicalName": "Norwegian Cruise Line Holdings",
+      "aliases": [
+        "노르웨이지안 크루즈 라인",
+        "norwegian cruise line holdings"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "NRG",
+      "canonicalName": "NRG Energy",
+      "aliases": [
+        "NRG 에너지",
+        "nrg energy"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "NUE",
+      "canonicalName": "Nucor",
+      "aliases": [
+        "뉴코",
+        "nucor"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "NVDA",
+      "canonicalName": "Nvidia",
+      "aliases": [
+        "엔비디아",
+        "nvidia",
+        "nvidia corp",
+        "nvidia corporation"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "NVR",
+      "canonicalName": "NVR, Inc.",
+      "aliases": [
+        "NVR 주택",
+        "nvr"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "NXPI",
+      "canonicalName": "NXP Semiconductors",
+      "aliases": [
+        "NXP 반도체",
+        "nxp semiconductors"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ORLY",
+      "canonicalName": "O’Reilly Automotive",
+      "aliases": [
+        "오라일리 오토모티브",
+        "o'reilly automotive"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "OXY",
+      "canonicalName": "Occidental Petroleum",
+      "aliases": [
+        "옥시덴털 페트롤리엄",
+        "occidental petroleum"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ODFL",
+      "canonicalName": "Old Dominion",
+      "aliases": [
+        "올드 도미니언",
+        "old dominion"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "OMC",
+      "canonicalName": "Omnicom Group",
+      "aliases": [
+        "옴니콤 그룹",
+        "omnicom group"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ON",
+      "canonicalName": "ON Semiconductor",
+      "aliases": [
+        "온 세미컨덕터",
+        "on semiconductor"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "OKE",
+      "canonicalName": "Oneok",
+      "aliases": [
+        "원오크",
+        "oneok"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ORCL",
+      "canonicalName": "Oracle Corporation",
+      "aliases": [
+        "오라클",
+        "oracle"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "OTIS",
+      "canonicalName": "Otis Worldwide",
+      "aliases": [
+        "오티스 엘리베이터",
+        "otis worldwide"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "PCAR",
+      "canonicalName": "Paccar",
+      "aliases": [
+        "파카 그룹",
+        "paccar"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "PKG",
+      "canonicalName": "Packaging Corporation of America",
+      "aliases": [
+        "패키징 코퍼레이션 오브 아메리카",
+        "packaging of america"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "PLTR",
+      "canonicalName": "Palantir Technologies",
+      "aliases": [
+        "팔란티어",
+        "palantir technologies"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "PANW",
+      "canonicalName": "Palo Alto Networks",
+      "aliases": [
+        "팰로앨토 네트웍스",
+        "palo alto networks"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "PSKY",
+      "canonicalName": "Paramount Skydance Corporation",
+      "aliases": [
+        "파라마운트 스카이댄스",
+        "paramount skydance"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "PH",
+      "canonicalName": "Parker Hannifin",
+      "aliases": [
+        "파커 하니핀",
+        "parker hannifin"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "PAYX",
+      "canonicalName": "Paychex",
+      "aliases": [
+        "페이첵스",
+        "paychex"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "PYPL",
+      "canonicalName": "PayPal",
+      "aliases": [
+        "페이팔",
+        "paypal"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "PNR",
+      "canonicalName": "Pentair",
+      "aliases": [
+        "펜테어",
+        "pentair"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "PEP",
+      "canonicalName": "PepsiCo",
+      "aliases": [
+        "펩시코",
+        "pepsico"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "PFE",
+      "canonicalName": "Pfizer",
+      "aliases": [
+        "화이자 제약",
+        "pfizer"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "PCG",
+      "canonicalName": "PG&E Corporation",
+      "aliases": [
+        "피지앤이",
+        "pg&e"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "PM",
+      "canonicalName": "Philip Morris International",
+      "aliases": [
+        "필립 모리스 인터내셔널",
+        "philip morris international"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "PSX",
+      "canonicalName": "Phillips 66",
+      "aliases": [
+        "필립스 66",
+        "phillips 66"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "PNW",
+      "canonicalName": "Pinnacle West Capital",
+      "aliases": [
+        "피나클 웨스트",
+        "pinnacle west capital"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "PNC",
+      "canonicalName": "PNC Financial Services",
+      "aliases": [
+        "PNC 파이낸셜 서비시즈",
+        "pnc financial services"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "PPG",
+      "canonicalName": "PPG Industries",
+      "aliases": [
+        "PPG 인더스트리",
+        "ppg industries"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "PPL",
+      "canonicalName": "PPL Corporation",
+      "aliases": [
+        "PPL 코퍼레이션",
+        "ppl"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "PFG",
+      "canonicalName": "Principal Financial Group",
+      "aliases": [
+        "프린시펄 파이낸셜",
+        "principal financial group"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "PG",
+      "canonicalName": "Procter & Gamble",
+      "aliases": [
+        "프록터 앤드 갬블",
+        "procter & gamble"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "PGR",
+      "canonicalName": "Progressive Corporation",
+      "aliases": [
+        "프로그레시브",
+        "progressive"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "PLD",
+      "canonicalName": "Prologis",
+      "aliases": [
+        "프로로지스",
+        "prologis"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "PRU",
+      "canonicalName": "Prudential Financial",
+      "aliases": [
+        "푸르덴셜 파이낸셜",
+        "prudential financial"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "PEG",
+      "canonicalName": "Public Service Enterprise Group",
+      "aliases": [
+        "퍼블릭 서비스 엔터프라이즈 그룹",
+        "public service enterprise group"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "PTC",
+      "canonicalName": "PTC Inc.",
+      "aliases": [
+        "PTC 소프트웨어",
+        "ptc"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "PSA",
+      "canonicalName": "Public Storage",
+      "aliases": [
+        "퍼블릭 스토리지",
+        "public storage"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "PHM",
+      "canonicalName": "PulteGroup",
+      "aliases": [
+        "풀티그룹",
+        "pultegroup"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "PWR",
+      "canonicalName": "Quanta Services",
+      "aliases": [
+        "콴타 서비스",
+        "quanta services"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "QCOM",
+      "canonicalName": "Qualcomm",
+      "aliases": [
+        "퀄컴",
+        "qualcomm"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "DGX",
+      "canonicalName": "Quest Diagnostics",
+      "aliases": [
+        "퀘스트 다이아그노스틱스",
+        "quest diagnostics"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "Q",
+      "canonicalName": "Qnity Electronics",
+      "aliases": [
+        "큐니티 일렉트로닉스",
+        "qnity electronics"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "RL",
+      "canonicalName": "Ralph Lauren Corporation",
+      "aliases": [
+        "랄프 로렌",
+        "ralph lauren"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "RJF",
+      "canonicalName": "Raymond James Financial",
+      "aliases": [
+        "레이먼드 제임스",
+        "raymond james financial"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "RTX",
+      "canonicalName": "RTX Corporation",
+      "aliases": [
+        "RTX 코퍼레이션",
+        "rtx"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "O",
+      "canonicalName": "Realty Income",
+      "aliases": [
+        "리얼티 인컴",
+        "realty income"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "REG",
+      "canonicalName": "Regency Centers",
+      "aliases": [
+        "리젠시 센터스",
+        "regency centers"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "REGN",
+      "canonicalName": "Regeneron Pharmaceuticals",
+      "aliases": [
+        "리제네론 파마슈티컬스",
+        "regeneron pharmaceuticals"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "RF",
+      "canonicalName": "Regions Financial Corporation",
+      "aliases": [
+        "리전스 파이낸셜",
+        "regions financial"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "RSG",
+      "canonicalName": "Republic Services",
+      "aliases": [
+        "리퍼블릭 서비스",
+        "republic services"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "RMD",
+      "canonicalName": "ResMed",
+      "aliases": [
+        "레스메드",
+        "resmed"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "RVTY",
+      "canonicalName": "Revvity",
+      "aliases": [
+        "레비티",
+        "revvity"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "HOOD",
+      "canonicalName": "Robinhood Markets",
+      "aliases": [
+        "로빈후드",
+        "robinhood markets"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ROK",
+      "canonicalName": "Rockwell Automation",
+      "aliases": [
+        "로크웰 오토메이션",
+        "rockwell automation"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ROL",
+      "canonicalName": "Rollins, Inc.",
+      "aliases": [
+        "롤린스",
+        "rollins"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ROP",
+      "canonicalName": "Roper Technologies",
+      "aliases": [
+        "로퍼 테크놀로지스",
+        "roper technologies"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ROST",
+      "canonicalName": "Ross Stores",
+      "aliases": [
+        "로스 스토어스",
+        "ross stores"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "RCL",
+      "canonicalName": "Royal Caribbean Group",
+      "aliases": [
+        "로열 캐리비안",
+        "royal caribbean group"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "SPGI",
+      "canonicalName": "S&P Global",
+      "aliases": [
+        "S&P 글로벌",
+        "s&p global"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "CRM",
+      "canonicalName": "Salesforce",
+      "aliases": [
+        "세일즈포스닷컴",
+        "salesforce"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "SNDK",
+      "canonicalName": "Sandisk",
+      "aliases": [
+        "샌디스크",
+        "sandisk"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "SBAC",
+      "canonicalName": "SBA Communications",
+      "aliases": [
+        "SBA 커뮤니케이션스",
+        "sba communications"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "SLB",
+      "canonicalName": "Schlumberger",
+      "aliases": [
+        "슐럼버거 리미티드",
+        "schlumberger"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "STX",
+      "canonicalName": "Seagate Technology",
+      "aliases": [
+        "씨게이트 테크놀로지",
+        "seagate technology"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "SRE",
+      "canonicalName": "Sempra",
+      "aliases": [
+        "셈프라",
+        "sempra"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "NOW",
+      "canonicalName": "ServiceNow",
+      "aliases": [
+        "서비스나우",
+        "servicenow"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "SHW",
+      "canonicalName": "Sherwin-Williams",
+      "aliases": [
+        "셔윈윌리암스",
+        "sherwin-williams"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "SPG",
+      "canonicalName": "Simon Property Group",
+      "aliases": [
+        "사이먼 프로퍼티 그룹",
+        "simon property group"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "SWKS",
+      "canonicalName": "Skyworks Solutions",
+      "aliases": [
+        "스카이웍스 솔루션스",
+        "skyworks solutions"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "SJM",
+      "canonicalName": "J.M. Smucker Company (The)",
+      "aliases": [
+        "J.M. 스머커",
+        "j.m. smucker"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "SW",
+      "canonicalName": "Smurfit Westrock",
+      "aliases": [
+        "스머핏 웨스트록",
+        "smurfit westrock"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "SNA",
+      "canonicalName": "Snap-on",
+      "aliases": [
+        "스냅온",
+        "snap-on"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "SOLV",
+      "canonicalName": "Solventum",
+      "aliases": [
+        "솔벤텀",
+        "solventum"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "SO",
+      "canonicalName": "Southern Company",
+      "aliases": [
+        "서던 컴퍼니",
+        "southern"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "LUV",
+      "canonicalName": "Southwest Airlines",
+      "aliases": [
+        "사우스웨스트 항공",
+        "southwest airlines"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "SWK",
+      "canonicalName": "Stanley Black & Decker",
+      "aliases": [
+        "스탠리 블랙앤데커",
+        "stanley black & decker"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "SBUX",
+      "canonicalName": "Starbucks",
+      "aliases": [
+        "스타벅스 커피",
+        "starbucks"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "STT",
+      "canonicalName": "State Street Corporation",
+      "aliases": [
+        "스테이트 스트리트 코퍼레이션",
+        "state street"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "STLD",
+      "canonicalName": "Steel Dynamics",
+      "aliases": [
+        "스틸 다이내믹스",
+        "steel dynamics"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "STE",
+      "canonicalName": "Steris",
+      "aliases": [
+        "스테리스",
+        "steris"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "SYK",
+      "canonicalName": "Stryker Corporation",
+      "aliases": [
+        "스트라이커",
+        "stryker"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "SMCI",
+      "canonicalName": "Supermicro",
+      "aliases": [
+        "슈퍼마이크로",
+        "supermicro"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "SYF",
+      "canonicalName": "Synchrony Financial",
+      "aliases": [
+        "싱크로니 파이낸셜",
+        "synchrony financial"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "SNPS",
+      "canonicalName": "Synopsys",
+      "aliases": [
+        "시높시스",
+        "synopsys"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "SYY",
+      "canonicalName": "Sysco",
+      "aliases": [
+        "시스코 식품",
+        "sysco"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "TMUS",
+      "canonicalName": "T-Mobile US",
+      "aliases": [
+        "T-모바일 US",
+        "t-mobile us"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "TROW",
+      "canonicalName": "T. Rowe Price",
+      "aliases": [
+        "티. 로우 프라이스",
+        "t. rowe price"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "TTWO",
+      "canonicalName": "Take-Two Interactive",
+      "aliases": [
+        "테이크투 인터랙티브",
+        "take-two interactive"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "TPR",
+      "canonicalName": "Tapestry, Inc.",
+      "aliases": [
+        "태피스트리",
+        "tapestry"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "TRGP",
+      "canonicalName": "Targa Resources",
+      "aliases": [
+        "타르가 리소시스",
+        "targa resources"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "TGT",
+      "canonicalName": "Target Corporation",
+      "aliases": [
+        "타깃 코퍼레이션",
+        "target"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "TEL",
+      "canonicalName": "TE Connectivity",
+      "aliases": [
+        "TE 커넥티비티",
+        "te connectivity"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "TDY",
+      "canonicalName": "Teledyne Technologies",
+      "aliases": [
+        "텔레다인 테크놀로지스",
+        "teledyne technologies"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "TER",
+      "canonicalName": "Teradyne",
+      "aliases": [
+        "테라다인 테크놀로지",
+        "teradyne"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "TSLA",
+      "canonicalName": "Tesla, Inc.",
+      "aliases": [
+        "테슬라",
+        "tesla"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "TXN",
+      "canonicalName": "Texas Instruments",
+      "aliases": [
+        "텍사스 인스트루먼트",
+        "texas instruments"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "TPL",
+      "canonicalName": "Texas Pacific Land Corporation",
+      "aliases": [
+        "텍사스 퍼시픽 랜드",
+        "texas pacific land"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "TXT",
+      "canonicalName": "Textron",
+      "aliases": [
+        "텍스트론",
+        "textron"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "TMO",
+      "canonicalName": "Thermo Fisher Scientific",
+      "aliases": [
+        "써모 피셔 사이언티픽",
+        "thermo fisher scientific"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "TJX",
+      "canonicalName": "TJX Companies",
+      "aliases": [
+        "TJX 컴퍼니스",
+        "tjx companies"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "TKO",
+      "canonicalName": "TKO Group Holdings",
+      "aliases": [
+        "TKO 그룹",
+        "tko group holdings"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "TTD",
+      "canonicalName": "Trade Desk (The)",
+      "aliases": [
+        "트레이드 데스크",
+        "trade desk"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "TSCO",
+      "canonicalName": "Tractor Supply",
+      "aliases": [
+        "트랙터 서플라이",
+        "tractor supply"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "TT",
+      "canonicalName": "Trane Technologies",
+      "aliases": [
+        "트레인 테크놀로지스",
+        "trane technologies"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "TDG",
+      "canonicalName": "TransDigm Group",
+      "aliases": [
+        "트랜스다임 그룹",
+        "transdigm group"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "TRV",
+      "canonicalName": "Travelers Companies (The)",
+      "aliases": [
+        "트래블러스 컴퍼니",
+        "travelers companies"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "TRMB",
+      "canonicalName": "Trimble Inc.",
+      "aliases": [
+        "트림블 테크놀로지",
+        "trimble"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "TFC",
+      "canonicalName": "Truist Financial",
+      "aliases": [
+        "트루이스트 파이낸셜",
+        "truist financial"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "TYL",
+      "canonicalName": "Tyler Technologies",
+      "aliases": [
+        "타일러 테크놀로지스",
+        "tyler technologies"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "TSN",
+      "canonicalName": "Tyson Foods",
+      "aliases": [
+        "타이슨 푸드",
+        "tyson foods"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "USB",
+      "canonicalName": "U.S. Bancorp",
+      "aliases": [
+        "U.S. 뱅코프",
+        "u.s. bancorp"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "UBER",
+      "canonicalName": "Uber",
+      "aliases": [
+        "우버",
+        "uber"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "UDR",
+      "canonicalName": "UDR, Inc.",
+      "aliases": [
+        "UDR 리츠",
+        "udr"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ULTA",
+      "canonicalName": "Ulta Beauty",
+      "aliases": [
+        "울타 뷰티",
+        "ulta beauty"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "UNP",
+      "canonicalName": "Union Pacific Corporation",
+      "aliases": [
+        "유니온 퍼시픽",
+        "union pacific"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "UAL",
+      "canonicalName": "United Airlines Holdings",
+      "aliases": [
+        "유나이티드 에어라인 홀딩스",
+        "united airlines holdings"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "UPS",
+      "canonicalName": "United Parcel Service",
+      "aliases": [
+        "유피에스",
+        "united parcel service"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "URI",
+      "canonicalName": "United Rentals",
+      "aliases": [
+        "유나이티드 렌탈스",
+        "united rentals"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "UNH",
+      "canonicalName": "UnitedHealth Group",
+      "aliases": [
+        "유나이티드헬스그룹",
+        "unitedhealth group"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "UHS",
+      "canonicalName": "Universal Health Services",
+      "aliases": [
+        "유니버설 헬스 서비스",
+        "universal health services"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "VLO",
+      "canonicalName": "Valero Energy",
+      "aliases": [
+        "발레로 에너지",
+        "valero energy"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "VEEV",
+      "canonicalName": "Veeva Systems",
+      "aliases": [
+        "비바 시스템즈",
+        "veeva systems"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "VTR",
+      "canonicalName": "Ventas",
+      "aliases": [
+        "벤타스",
+        "ventas"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "VLTO",
+      "canonicalName": "Veralto",
+      "aliases": [
+        "베랄토",
+        "veralto"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "VRSN",
+      "canonicalName": "Verisign",
+      "aliases": [
+        "베리사인",
+        "verisign"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "VRSK",
+      "canonicalName": "Verisk Analytics",
+      "aliases": [
+        "베리스크 애널리틱스",
+        "verisk analytics"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "VZ",
+      "canonicalName": "Verizon",
+      "aliases": [
+        "버라이즌 커뮤니케이션스",
+        "verizon"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "VRTX",
+      "canonicalName": "Vertex Pharmaceuticals",
+      "aliases": [
+        "버텍스 파마슈티컬",
+        "vertex pharmaceuticals"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "VRT",
+      "canonicalName": "Vertiv",
+      "aliases": [
+        "버티브",
+        "vertiv"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "VTRS",
+      "canonicalName": "Viatris",
+      "aliases": [
+        "비아트리스",
+        "viatris"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "VICI",
+      "canonicalName": "Vici Properties",
+      "aliases": [
+        "비시 프로퍼티스",
+        "vici properties"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "V",
+      "canonicalName": "Visa Inc.",
+      "aliases": [
+        "비자",
+        "visa"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "VST",
+      "canonicalName": "Vistra Corp.",
+      "aliases": [
+        "비스트라",
+        "vistra"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "VMC",
+      "canonicalName": "Vulcan Materials Company",
+      "aliases": [
+        "벌컨 머티리얼즈",
+        "vulcan materials"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "WRB",
+      "canonicalName": "W. R. Berkley Corporation",
+      "aliases": [
+        "W.R. 버클리",
+        "w. r. berkley"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "GWW",
+      "canonicalName": "W. W. Grainger",
+      "aliases": [
+        "W.W. 그레인저",
+        "w. w. grainger"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "WAB",
+      "canonicalName": "Wabtec",
+      "aliases": [
+        "웹텍",
+        "wabtec"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "WMT",
+      "canonicalName": "Walmart",
+      "aliases": [
+        "월마트",
+        "walmart"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "DIS",
+      "canonicalName": "Walt Disney Company (The)",
+      "aliases": [
+        "디즈니",
+        "월트 디즈니",
+        "walt disney"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "WBD",
+      "canonicalName": "Warner Bros. Discovery",
+      "aliases": [
+        "워너 브라더스 디스커버리",
+        "warner bros. discovery"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "WM",
+      "canonicalName": "Waste Management",
+      "aliases": [
+        "웨이스트 매니지먼트",
+        "waste management"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "WAT",
+      "canonicalName": "Waters Corporation",
+      "aliases": [
+        "워터스 코퍼레이션",
+        "waters"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "WEC",
+      "canonicalName": "WEC Energy Group",
+      "aliases": [
+        "WEC 에너지",
+        "wec energy group"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "WFC",
+      "canonicalName": "Wells Fargo",
+      "aliases": [
+        "웰스 파고",
+        "wells fargo"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "WELL",
+      "canonicalName": "Welltower",
+      "aliases": [
+        "웰타워",
+        "welltower"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "WST",
+      "canonicalName": "West Pharmaceutical Services",
+      "aliases": [
+        "웨스트 파마슈티컬 서비스",
+        "west pharmaceutical services"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "WDC",
+      "canonicalName": "Western Digital",
+      "aliases": [
+        "웨스턴 디지털",
+        "western digital"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "WY",
+      "canonicalName": "Weyerhaeuser",
+      "aliases": [
+        "와이어하우저",
+        "weyerhaeuser"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "WSM",
+      "canonicalName": "Williams-Sonoma, Inc.",
+      "aliases": [
+        "윌리엄스 소노마",
+        "williams-sonoma"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "WMB",
+      "canonicalName": "Williams Companies",
+      "aliases": [
+        "윌리엄스 컴퍼니스",
+        "williams companies"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "WTW",
+      "canonicalName": "Willis Towers Watson",
+      "aliases": [
+        "윌리스 타워스 왓슨",
+        "willis towers watson"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "WDAY",
+      "canonicalName": "Workday, Inc.",
+      "aliases": [
+        "워크데이",
+        "workday"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "WYNN",
+      "canonicalName": "Wynn Resorts",
+      "aliases": [
+        "윈 리조트",
+        "wynn resorts"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "XEL",
+      "canonicalName": "Xcel Energy",
+      "aliases": [
+        "엑셀 에너지",
+        "xcel energy"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "XYL",
+      "canonicalName": "Xylem Inc.",
+      "aliases": [
+        "자일럼 워터",
+        "xylem"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "YUM",
+      "canonicalName": "Yum! Brands",
+      "aliases": [
+        "얌! 브랜즈",
+        "yum! brands"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ZBRA",
+      "canonicalName": "Zebra Technologies",
+      "aliases": [
+        "지브라 테크놀로지스",
+        "zebra technologies"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ZBH",
+      "canonicalName": "Zimmer Biomet",
+      "aliases": [
+        "짐머 바이오멧",
+        "zimmer biomet"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ZTS",
+      "canonicalName": "Zoetis",
+      "aliases": [
+        "조에티스 동물의약품",
+        "zoetis"
+      ],
+      "source": "reviewed-seed"
+    }
+  ],
+  "themes": [
+    {
+      "name": "반도체",
+      "aliases": [
+        "반도체주",
+        "semiconductor",
+        "semiconductors",
+        "chip",
+        "gpu",
+        "hbm"
+      ],
+      "symbols": [
+        "NVDA",
+        "AMD",
+        "AVGO",
+        "TSM",
+        "ASML",
+        "MU",
+        "INTC",
+        "QCOM",
+        "TXN",
+        "ADI",
+        "MRVL",
+        "AMAT",
+        "LRCX",
+        "KLAC"
+      ],
+      "source": "reviewed-seed"
+    }
+  ]
+}

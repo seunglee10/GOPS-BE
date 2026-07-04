@@ -48,6 +48,7 @@ sequenceDiagram
 
 ```text
 POST /api/agents/analyze
+GET  /api/agents/entities/resolve
 GET  /api/agents/reports/{analysis_id}
 GET  /api/agents/reports/{analysis_id}/stream
 WS   /ws/agent-alerts
@@ -85,6 +86,18 @@ permissive하게 유지한다.
 
 백엔드는 모르는 agent context field를 임의로 제거하지 말고 worker envelope로
 전달해야 한다.
+
+## Entity Resolve Shortcut
+
+`GET /api/agents/entities/resolve?q=...&mode=chartShortcut`는 에이전트
+카탈로그의 `KoreanEntityResolver`를 얇게 노출한다. 프런트는 에이전트 입력이
+회사명/티커 하나인지 확인해 차트만 즉시 전환할 때 이 route를 쓴다.
+
+응답의 `chartShortcut=true`는 입력 전체가 하나의 company/ticker로 확정된 경우에만
+반환하며, 해당 symbol이 기존 market-data symbol registry/universe에서 차트로
+열 수 있어야 한다. `엔비디아 뉴스`, `엔비디아 분석해줘`, 테마 entity,
+ambiguous match, registry 미지원 symbol은 분석 요청으로 fallback할 수 있도록
+`chartShortcut=false`를 반환한다.
 
 ## Async Submit Response
 
@@ -160,6 +173,10 @@ AGENT_REPORT_STREAM_REDIS_ENABLED
 AGENT_REPORT_UPDATES_CHANNEL
 AGENT_IDEMPOTENCY_TTL_SECONDS
 AGENT_IDEMPOTENCY_KEY_PREFIX
+AGENT_ENTITY_ALIAS_CATALOG_PATH
+AGENT_ENTITY_ALIAS_SEED_PATH
+AGENT_ENTITY_CATALOG_STRICT
+AGENT_MARKET_SYMBOL_REGISTRY_PATH
 KAFKA_BOOTSTRAP_SERVERS
 AGENT_ANALYSIS_REQUESTS_TOPIC
 AGENT_ANALYSIS_RESULTS_TOPIC

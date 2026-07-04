@@ -1,6 +1,8 @@
 import asyncio
 import json
+import re
 import time
+from functools import lru_cache
 from typing import Any
 
 from fastapi import APIRouter, Query, Request, Response, WebSocket, WebSocketDisconnect
@@ -9,11 +11,64 @@ from fastapi.responses import StreamingResponse
 from app.contracts.agents import AgentAnalysisRequest
 from app.core.config import read_dotenv_value
 from app.services.agent_alert_payloads import parse_pubsub_payload
+from app.services.alfaka_market_data import get_market_data_provider, normalize_market_symbol, sp500_universe_symbols
 from app.services.agent_gateway import get_agent_report, request_agent_analysis
+from gops_agents.query_understanding import EntityResolution, KoreanEntityResolver
+from gops_agents.query_understanding.korean_text import compact_text
 
 router = APIRouter()
 AGENT_ALERTS_CHANNEL = "agent.alerts"
 AGENT_REPORTS_CHANNEL = "agent.reports"
+CHART_SHORTCUT_MODE = "chartShortcut"
+
+CHART_SHORTCUT_BLOCKING_KEYWORDS = (
+    "뉴스",
+    "기사",
+    "보도",
+    "헤드라인",
+    "분석",
+    "해석",
+    "살펴",
+    "거시",
+    "금리",
+    "관계",
+    "온톨로지",
+    "공급망",
+    "경쟁사",
+    "섹터",
+    "급등",
+    "급락",
+    "이상",
+    "변동",
+    "원인",
+    "왜",
+    "차트",
+    "그래프",
+    "보여",
+    "열어",
+    "띄워",
+    "바꿔",
+    "변경",
+    "조정",
+    "news",
+    "headline",
+    "article",
+    "analysis",
+    "analyze",
+    "inspect",
+    "macro",
+    "rate",
+    "relationship",
+    "ontology",
+    "surge",
+    "spike",
+    "why",
+    "chart",
+    "graph",
+    "show",
+    "open",
+    "change",
+)
 
 
 @router.post("/api/agents/analyze")
@@ -25,6 +80,14 @@ def analyze_agents(request: AgentAnalysisRequest, http_request: Request, respons
     )
     response.status_code = int(result.pop("_status_code", 200))
     return result
+
+
+@router.get("/api/agents/entities/resolve")
+def resolve_agent_entity(
+    q: str = Query(default="", max_length=128),
+    mode: str = Query(default=CHART_SHORTCUT_MODE, max_length=32),
+) -> dict[str, Any]:
+    return resolve_agent_entity_for_chart_shortcut(q, mode=mode)
 
 
 @router.get("/api/agents/reports/{analysis_id}")
@@ -151,6 +214,105 @@ def parse_report_update_payload(payload: Any) -> dict[str, Any]:
     except Exception:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def resolve_agent_entity_for_chart_shortcut(query: str, *, mode: str = CHART_SHORTCUT_MODE) -> dict[str, Any]:
+    text = str(query or "").strip()
+    if mode != CHART_SHORTCUT_MODE:
+        return {
+            "status": "unsupported",
+            "chartShortcut": False,
+            "reason": f"unsupported resolve mode: {mode}",
+        }
+    if not text:
+        return {
+            "status": "not_found",
+            "chartShortcut": False,
+            "reason": "empty query",
+        }
+
+    resolution = get_agent_entity_resolver().resolve(text)
+    return agent_entity_resolution_payload(text, resolution)
+
+
+def agent_entity_resolution_payload(query: str, resolution: EntityResolution) -> dict[str, Any]:
+    status = resolution.status
+    if status == "confirmed" and resolution.entity_type != "company":
+        status = "unsupported"
+
+    payload = {
+        "status": status,
+        "chartShortcut": is_chart_shortcut_entity_query(query, resolution),
+        "symbol": resolution.symbol,
+        "canonicalName": resolution.canonical_name,
+        "matchedText": resolution.matched_text,
+        "matchedAlias": resolution.matched_alias,
+        "confidence": round(float(resolution.confidence or 0.0), 4),
+        "entityType": resolution.entity_type,
+        "reason": resolution.reason,
+    }
+    return {key: value for key, value in payload.items() if value is not None}
+
+
+def is_chart_shortcut_entity_query(query: str, resolution: EntityResolution) -> bool:
+    if resolution.status != "confirmed" or resolution.entity_type != "company" or not resolution.symbol:
+        return False
+    if not is_chart_symbol_supported(resolution.symbol):
+        return False
+    if contains_chart_shortcut_blocking_keyword(query):
+        return False
+
+    query_compact = compact_text(query)
+    if not query_compact:
+        return False
+    allowed_values = [
+        resolution.symbol,
+        resolution.canonical_name,
+        resolution.matched_text,
+        resolution.matched_alias,
+        *(candidate.canonical_name for candidate in resolution.candidates),
+        *(candidate.matched_alias for candidate in resolution.candidates),
+        *(candidate.matched_text for candidate in resolution.candidates),
+    ]
+    return any(query_compact == compact_text(value) for value in allowed_values if value)
+
+
+def contains_chart_shortcut_blocking_keyword(query: str) -> bool:
+    normalized = str(query or "").strip().lower()
+    for keyword in CHART_SHORTCUT_BLOCKING_KEYWORDS:
+        if re.fullmatch(r"[a-z]+", keyword):
+            if re.search(rf"(?<![a-z0-9]){re.escape(keyword)}(?![a-z0-9])", normalized):
+                return True
+            continue
+        if keyword in normalized:
+            return True
+    return False
+
+
+@lru_cache(maxsize=2048)
+def is_chart_symbol_supported(symbol: str) -> bool:
+    normalized = str(symbol or "").strip().upper()
+    if not normalized:
+        return False
+    try:
+        normalized = normalize_market_symbol(normalized)
+    except Exception:
+        return False
+    try:
+        if normalized in set(sp500_universe_symbols()):
+            return True
+    except Exception:
+        pass
+    try:
+        get_market_data_provider().symbol_detail(normalized)
+        return True
+    except Exception:
+        return False
+
+
+@lru_cache(maxsize=1)
+def get_agent_entity_resolver() -> KoreanEntityResolver:
+    return KoreanEntityResolver()
 
 
 def bool_config(name: str, default: bool) -> bool:

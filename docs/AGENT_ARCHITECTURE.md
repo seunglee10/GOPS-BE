@@ -182,8 +182,11 @@ clarify
 ```
 
 Company and theme resolution은 catalog 기반이다.
+`config/entity-aliases.json`이 운영 alias catalog다.
 `config/entity-aliases.seed.json`과 seed constants는 bootstrap fallback이며
-운영 source of truth가 아니다.
+운영 source of truth가 아니다. agent runtime은 시작 시 catalog/index cache를
+warm하고, 회사 지원 여부는 alias 존재 여부가 아니라 market-data symbol
+registry/universe 기준으로 검증한다.
 
 ## Runtime Units
 
@@ -205,7 +208,7 @@ Company and theme resolution은 catalog 기반이다.
 
 ```text
 systems/agent-orchestration/
-  config/                 UI lexicon and fallback entity aliases
+  config/                 UI lexicon, operational entity aliases, fallback aliases
   shared/gops_agents/
     contracts/            report, evidence, route, snapshot dataclasses
     query_understanding/  Korean-first entity/theme resolution

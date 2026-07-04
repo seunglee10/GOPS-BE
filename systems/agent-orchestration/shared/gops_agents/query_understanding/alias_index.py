@@ -166,4 +166,13 @@ def longest_alias_matches(values: list[EntityAlias]) -> list[EntityAlias]:
 
 @lru_cache(maxsize=1)
 def default_alias_index() -> EntityAliasIndex:
-    return EntityAliasIndex.from_catalog(default_entity_catalog())
+    catalog = default_entity_catalog()
+    known_symbols = set(catalog.known_symbols)
+    try:
+        from .supported_companies import supported_company_catalog
+
+        known_symbols.update(supported_company_catalog().symbols)
+    except Exception:
+        pass
+    aliases = [entity_alias_from_record(record) for record in catalog.aliases]
+    return EntityAliasIndex(aliases, known_symbols)

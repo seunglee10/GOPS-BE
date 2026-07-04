@@ -5,7 +5,7 @@
   "collectionSymbolSource": "universe",
   "defaultSeedSymbols": [],
   "defaultSymbols": [],
-  "extraSymbols": ["BTCUSD"],
+  "extraSymbols": ["BTCUSD", "XLV"],
   "universes": {},
   "symbolMetadata": {
     "BTCUSD": {
@@ -18,6 +18,15 @@
       "source": "alpaca",
       "alpacaSymbol": "BTC/USD",
       "cryptoLocation": "us"
+    },
+    "XLV": {
+      "name": "Health Care Select Sector SPDR Fund",
+      "exchange": "NYSEARCA",
+      "market": "US",
+      "assetClass": "us_etf",
+      "tradable": true,
+      "status": "active",
+      "source": "alpaca"
     }
   },
   "defaultChannels": ["bars", "updatedBars", "dailyBars", "statuses"],

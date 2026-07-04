@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import time
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -29,8 +30,9 @@ from gops_agents.providers import ClickHouseNewsProvider, GraphDBOntologyProvide
 from gops_agents.providers.graph_path_cache import MemoryGraphPathCache
 from gops_agents.providers.news_cache import MemoryNewsEvidenceCache, RedisNewsEvidenceCache
 from gops_agents.providers.news_localization import NewsLocalizationService
-from gops_agents.query_understanding import EntityAliasRecord, EntityResolution, KoreanEntityResolver
+from gops_agents.query_understanding import EntityAliasRecord, EntityCatalogProvider, EntityResolution, KoreanEntityResolver
 from gops_agents.query_understanding.alias_index import EntityAliasIndex
+from gops_agents.query_understanding.supported_companies import is_supported_company_symbol, market_symbol_registry_supports, supported_company_catalog
 from gops_agents.retrieval import provider_bulkhead
 from gops_agents.retrieval.context import GraphExpansion, RelatedSymbol
 from gops_agents.retrieval.graph_expansion import (
@@ -1415,7 +1417,8 @@ class AgentOrchestrationTests(unittest.TestCase):
 
         self.assertEqual(report.symbol, "UNKNOWN")
         self.assertEqual(report.route.intentType, "unsupported-company")
-        self.assertIn("지원 기업", report.finalAnswer.summary)
+        self.assertEqual(report.finalAnswer.title, "기업 인식 실패")
+        self.assertIn("지원 기업으로 인식하지 못했습니다", report.finalAnswer.summary)
 
     def test_event_detector_detects_price_surge_and_volume_spike(self):
         detector = MarketEventDetector(MarketEventThresholds(price_change_percent=3.0, volume_spike_multiplier=2.0))
@@ -2719,6 +2722,64 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(resolution.entity_type, "company")
         self.assertEqual(resolution.catalog_source, "test-catalog")
         self.assertEqual(resolver.resolve("zzzz 뉴스").symbol, "ZZZZ")
+
+    def test_default_entity_catalog_uses_operational_alias_file_without_seed_aliases(self):
+        catalog = EntityCatalogProvider(
+            sparql_client=FakeSparqlClient(),
+            include_dynamic_company_sources=False,
+            include_fallback_seed=True,
+        ).load()
+        resolver = KoreanEntityResolver(index=EntityAliasIndex.from_catalog(catalog))
+
+        self.assertEqual(resolver.resolve("어도비 뉴스").symbol, "ADBE")
+        self.assertEqual(resolver.resolve("브로드컴 분석").symbol, "AVGO")
+        self.assertEqual(resolver.resolve("버크셔 해서웨이").symbol, "BRK.B")
+        self.assertIn("GOOGL", catalog.known_symbols)
+        self.assertIn("GOOG", catalog.known_symbols)
+        self.assertNotIn("fallback-seed", catalog.source_counts)
+
+    def test_entity_catalog_falls_back_to_seed_artifact_when_primary_missing(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            missing = Path(temp_dir) / "missing-aliases.json"
+            catalog = EntityCatalogProvider(
+                alias_catalog_path=missing,
+                sparql_client=FakeSparqlClient(),
+                include_dynamic_company_sources=False,
+                include_fallback_seed=True,
+                strict=False,
+            ).load()
+
+        self.assertIn("AAPL", catalog.known_symbols)
+        self.assertIn("NVDA", catalog.known_symbols)
+        self.assertNotIn("ADBE", catalog.known_symbols)
+
+    def test_entity_catalog_strict_mode_rejects_broken_primary_catalog(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            broken = Path(temp_dir) / "broken-aliases.json"
+            broken.write_text("{not json", encoding="utf-8")
+            provider = EntityCatalogProvider(
+                alias_catalog_path=broken,
+                sparql_client=FakeSparqlClient(),
+                include_dynamic_company_sources=False,
+                strict=True,
+            )
+
+            with self.assertRaises(ValueError):
+                provider.load()
+
+    def test_supported_company_catalog_uses_market_symbol_registry_not_alias_catalog(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            registry = Path(temp_dir) / "market-registry.json"
+            registry.write_text(json.dumps({"symbols": ["NVDA"]}), encoding="utf-8")
+            with patch.dict(os.environ, {"AGENT_MARKET_SYMBOL_REGISTRY_PATH": str(registry)}, clear=False):
+                supported_company_catalog.cache_clear()
+                market_symbol_registry_supports.cache_clear()
+
+                self.assertTrue(is_supported_company_symbol("NVDA"))
+                self.assertFalse(is_supported_company_symbol("ADBE"))
+
+            supported_company_catalog.cache_clear()
+            market_symbol_registry_supports.cache_clear()
 
     def test_dynamic_entity_index_handles_large_symbol_catalog(self):
         records = []

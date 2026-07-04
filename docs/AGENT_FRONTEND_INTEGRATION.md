@@ -40,6 +40,13 @@ flowchart TD
   Report --> OptionalUI["optional layout/chart proposal"]
 ```
 
+사용자 입력이 회사명이나 티커 하나뿐이면 프런트는 먼저
+`GET /api/agents/entities/resolve?mode=chartShortcut`를 호출한다. 응답이
+`chartShortcut=true`이면 기존 chart symbol 선택 흐름만 적용하고
+`/api/agents/analyze`는 호출하지 않는다. `엔비디아 뉴스`,
+`엔비디아 분석해줘`, 관계 질문, chart registry 미지원 symbol은 기존 분석
+흐름을 유지한다.
+
 ## Submit Request
 
 프런트는 최소한 `symbol`, `intent`, `messages`를 보낸다. 가능한 경우 현재 차트와
@@ -177,7 +184,8 @@ shape, `analysisId` 처리, report delivery, proposal ignore/apply 정책이다.
 
 ```text
 사용자가 종목 질문을 보낸다.
-POST /api/agents/analyze가 호출된다.
+회사명/티커만 입력하면 entity resolve shortcut으로 차트 symbol만 바뀐다.
+분석 요청이면 POST /api/agents/analyze가 호출된다.
 queued response의 analysisId가 화면 상태에 저장된다.
 SSE 또는 polling으로 completed report를 받는다.
 final answer와 evidence가 렌더링된다.

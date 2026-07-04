@@ -896,11 +896,13 @@ def unsupported_subject_final_answer(symbol: str, validation: Any) -> FinalAnswe
     payload = validation if isinstance(validation, dict) else {}
     raw_name = str(payload.get("rawName") or payload.get("symbol") or symbol or "UNKNOWN")
     if raw_name == "UNKNOWN":
-        summary = "분석할 지원 기업을 찾지 못했습니다. 지원 기업 목록에 있는 기업명이나 티커를 입력해 주세요."
+        title = "기업 인식 실패"
+        summary = "입력한 내용을 지원 기업으로 인식하지 못했습니다. 지원 기업 목록에 있는 기업명이나 티커를 입력해 주세요."
     else:
+        title = "지원되지 않는 기업"
         summary = f"{raw_name}은 현재 지원 기업 목록에 없습니다. 지원 기업 목록에 추가된 뒤 분석할 수 있습니다."
     return FinalAnswer(
-        title="지원되지 않는 기업",
+        title=title,
         summary=summary,
         sections=[],
         citations=[],

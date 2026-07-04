@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -15,10 +17,17 @@ from app.routes.orders import order_contract, router as orders_router
 from app.routes.streams import chart_stream, router as streams_router
 from app.services.ai_agents import openai_agent_chat, openai_chart_proposal
 from app.services.alfaka_market_data import configured_symbols, get_market_data_provider, symbol_summaries
+from gops_agents.query_understanding import warm_entity_catalog_cache
+
+
+@asynccontextmanager
+async def app_lifespan(app: FastAPI):
+    warm_entity_catalog_cache()
+    yield
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="GOPS Backend Scaffold", version="0.1.0")
+    app = FastAPI(title="GOPS Backend Scaffold", version="0.1.0", lifespan=app_lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=CORS_ORIGINS,
@@ -36,6 +45,7 @@ def create_app() -> FastAPI:
     app.include_router(llm_router)
     app.include_router(orders_router)
     app.include_router(streams_router)
+
     log_runtime_config()
     return app
 

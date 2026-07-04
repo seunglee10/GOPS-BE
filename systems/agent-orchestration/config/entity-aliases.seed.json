@@ -1,36 +1,164 @@
 {
-  "description": "Small reviewed fallback alias artifact. Operational coverage should be generated from market_data.symbols, GraphDB, and future alias catalog storage.",
+  "description": "Small bootstrap alias artifact. Operational company coverage lives in entity-aliases.json; Python seeds.py remains an emergency fallback only.",
   "companies": [
     {
       "symbol": "AAPL",
       "canonicalName": "Apple Inc.",
-      "aliases": ["애플", "apple"],
+      "aliases": [
+        "애플",
+        "apple"
+      ],
       "source": "reviewed-seed"
     },
     {
       "symbol": "NVDA",
-      "canonicalName": "NVIDIA Corporation",
-      "aliases": ["엔비디아", "nvidia"],
+      "canonicalName": "Nvidia",
+      "aliases": [
+        "엔비디아",
+        "nvidia"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "DDOG",
+      "canonicalName": "Datadog",
+      "aliases": [
+        "데이터도그",
+        "datadog"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "ORCL",
+      "canonicalName": "Oracle Corporation",
+      "aliases": [
+        "오라클",
+        "oracle"
+      ],
       "source": "reviewed-seed"
     },
     {
       "symbol": "TSLA",
       "canonicalName": "Tesla, Inc.",
-      "aliases": ["테슬라", "tesla"],
+      "aliases": [
+        "테슬라",
+        "tesla"
+      ],
       "source": "reviewed-seed"
     },
     {
       "symbol": "MSFT",
-      "canonicalName": "Microsoft Corporation",
-      "aliases": ["마이크로소프트", "마소", "microsoft"],
+      "canonicalName": "Microsoft",
+      "aliases": [
+        "마이크로소프트",
+        "마소",
+        "microsoft"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "AMZN",
+      "canonicalName": "Amazon",
+      "aliases": [
+        "아마존",
+        "amazon"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "GOOGL",
+      "canonicalName": "Alphabet Inc. (Class A)",
+      "aliases": [
+        "구글",
+        "알파벳",
+        "google",
+        "alphabet"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "META",
+      "canonicalName": "Meta Platforms",
+      "aliases": [
+        "메타",
+        "페이스북",
+        "meta platforms"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "AMD",
+      "canonicalName": "Advanced Micro Devices",
+      "aliases": [
+        "에이엠디",
+        "advanced micro devices"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "AVGO",
+      "canonicalName": "Broadcom",
+      "aliases": [
+        "브로드컴",
+        "broadcom"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "INTC",
+      "canonicalName": "Intel",
+      "aliases": [
+        "인텔",
+        "intel"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "NFLX",
+      "canonicalName": "Netflix",
+      "aliases": [
+        "넷플릭스",
+        "netflix"
+      ],
+      "source": "reviewed-seed"
+    },
+    {
+      "symbol": "PLTR",
+      "canonicalName": "Palantir Technologies",
+      "aliases": [
+        "팔란티어",
+        "palantir technologies"
+      ],
       "source": "reviewed-seed"
     }
   ],
   "themes": [
     {
       "name": "반도체",
-      "aliases": ["반도체주", "semiconductor", "semiconductors", "chip", "gpu", "hbm"],
-      "symbols": ["NVDA", "AMD", "AVGO", "TSM", "ASML", "MU", "INTC", "QCOM", "TXN", "ADI", "MRVL", "AMAT", "LRCX", "KLAC"],
+      "aliases": [
+        "반도체주",
+        "semiconductor",
+        "semiconductors",
+        "chip",
+        "gpu",
+        "hbm"
+      ],
+      "symbols": [
+        "NVDA",
+        "AMD",
+        "AVGO",
+        "TSM",
+        "ASML",
+        "MU",
+        "INTC",
+        "QCOM",
+        "TXN",
+        "ADI",
+        "MRVL",
+        "AMAT",
+        "LRCX",
+        "KLAC"
+      ],
       "source": "reviewed-seed"
     }
   ]

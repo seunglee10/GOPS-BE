@@ -17,13 +17,15 @@ for path in (str(MARKET_SHARED), str(ORDER_SHARED), str(AGENT_SHARED), str(BACKE
 try:
     from app.services.agent_alert_payloads import parse_pubsub_payload
     from app.services import agent_gateway
-    from app.routes.agents import parse_report_update_payload
+    from app.routes.agents import is_chart_symbol_supported, parse_report_update_payload, resolve_agent_entity_for_chart_shortcut
 
     AGENT_ROUTE_HELPERS_AVAILABLE = True
 except Exception:
     parse_pubsub_payload = None
     agent_gateway = None
+    is_chart_symbol_supported = None
     parse_report_update_payload = None
+    resolve_agent_entity_for_chart_shortcut = None
     AGENT_ROUTE_HELPERS_AVAILABLE = False
 
 try:
@@ -74,6 +76,13 @@ class AgentRoutesTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), expected)
 
+    def test_resolve_agent_entity_returns_chart_shortcut(self):
+        response = self.client.get("/api/agents/entities/resolve", params={"q": "엔비디아", "mode": "chartShortcut"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["chartShortcut"], True)
+        self.assertEqual(response.json()["symbol"], "NVDA")
+
 class AgentRouteHelperTest(unittest.TestCase):
     @unittest.skipUnless(AGENT_ROUTE_HELPERS_AVAILABLE, "agent routes module is not importable")
     def test_parse_pubsub_payload_accepts_json_string(self):
@@ -90,6 +99,40 @@ class AgentRouteHelperTest(unittest.TestCase):
         payload = parse_report_update_payload('{"analysisId":"agent-request-1","status":"deep_completed"}')
         self.assertEqual(payload["analysisId"], "agent-request-1")
         self.assertEqual(payload["status"], "deep_completed")
+
+    @unittest.skipUnless(AGENT_ROUTE_HELPERS_AVAILABLE, "agent routes module is not importable")
+    def test_agent_entity_resolve_confirms_bare_company_names(self):
+        for query in ("엔비디아", "nvidia", "nvidia corp", "NVIDIA Corporation", "NVDA"):
+            with self.subTest(query=query):
+                payload = resolve_agent_entity_for_chart_shortcut(query)
+                self.assertEqual(payload["status"], "confirmed")
+                self.assertEqual(payload["chartShortcut"], True)
+                self.assertEqual(payload["symbol"], "NVDA")
+
+    @unittest.skipUnless(AGENT_ROUTE_HELPERS_AVAILABLE, "agent routes module is not importable")
+    def test_agent_entity_resolve_rejects_non_bare_chart_shortcuts(self):
+        for query in ("엔비디아 뉴스", "엔비디아 분석해줘", "엔비디아랑 AMD 관계", "반도체"):
+            with self.subTest(query=query):
+                payload = resolve_agent_entity_for_chart_shortcut(query)
+                self.assertEqual(payload["chartShortcut"], False)
+
+        unsupported = resolve_agent_entity_for_chart_shortcut("엔비디아", mode="analysis")
+        self.assertEqual(unsupported["status"], "unsupported")
+        self.assertEqual(unsupported["chartShortcut"], False)
+
+    @unittest.skipUnless(AGENT_ROUTE_HELPERS_AVAILABLE, "agent routes module is not importable")
+    def test_agent_entity_resolve_requires_chart_registry_support(self):
+        is_chart_symbol_supported.cache_clear()
+        with patch("app.routes.agents.sp500_universe_symbols", return_value=["NVDA"]):
+            with patch("app.routes.agents.get_market_data_provider") as provider_factory:
+                provider_factory.return_value.symbol_detail.side_effect = LookupError("unsupported")
+
+                payload = resolve_agent_entity_for_chart_shortcut("어도비")
+
+        is_chart_symbol_supported.cache_clear()
+        self.assertEqual(payload["status"], "confirmed")
+        self.assertEqual(payload["symbol"], "ADBE")
+        self.assertEqual(payload["chartShortcut"], False)
 
     @unittest.skipUnless(AGENT_ROUTE_HELPERS_AVAILABLE, "agent gateway module is not importable")
     def test_agent_gateway_uses_configured_orchestrator_timeout(self):

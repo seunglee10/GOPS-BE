@@ -10,6 +10,7 @@ from .entity_resolver import (
 )
 from .supported_companies import is_supported_company_symbol, supported_company_catalog_payload
 from .topics import NEWS_TOPIC_BASKETS, extract_news_topic_from_intent, extract_theme_names_from_intent
+from .warmup import warm_entity_catalog_cache
 
 __all__ = [
     "CatalogEntity",
@@ -28,4 +29,5 @@ __all__ = [
     "relationship_symbols_for_context",
     "resolve_entity",
     "supported_company_catalog_payload",
+    "warm_entity_catalog_cache",
 ]

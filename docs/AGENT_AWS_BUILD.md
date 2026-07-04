@@ -54,11 +54,16 @@ Image에는 다음 source가 들어가야 한다.
 ```text
 systems/agent-orchestration
 systems/market-data/shared
+systems/market-data/config/sp500-universe.json
 ```
 
 현재 agent provider가 `alfaka.*` helper를 import하므로
 `systems/market-data/shared`를 image에서 빼면 안 된다. 이 dependency를 제거하려면
 먼저 agent-owned provider interface를 만든 뒤 migration한다.
+
+Agent entity resolver는 기본 운영 catalog로
+`systems/agent-orchestration/config/entity-aliases.json`을 읽는다.
+`entity-aliases.seed.json`과 Python seed constants는 bootstrap fallback이다.
 
 ## Kubernetes Resources
 
@@ -182,6 +187,10 @@ CLICKHOUSE_HTTP_URL
 CLICKHOUSE_DATABASE
 CLICKHOUSE_USER
 CLICKHOUSE_PASSWORD
+AGENT_ENTITY_ALIAS_CATALOG_PATH
+AGENT_ENTITY_ALIAS_SEED_PATH
+AGENT_ENTITY_CATALOG_STRICT
+AGENT_MARKET_SYMBOL_REGISTRY_PATH
 ```
 
 Tables used by agent providers:
