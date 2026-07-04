@@ -29,6 +29,7 @@ def main() -> None:
     assert_frontend_integer_price_axis_contract()
     assert_frontend_volume_pane_contract()
     assert_frontend_chart_layout_contract()
+    assert_frontend_layout_grid_contract()
     assert_frontend_treemap_main_view_contract()
     assert_frontend_palette_contract()
     assert_frontend_parent_summary_contract()
@@ -315,10 +316,19 @@ def assert_frontend_volume_pane_contract() -> None:
 
 def assert_frontend_chart_layout_contract() -> None:
     scene = (REPO_ROOT / "frontend/src/chart/scene.ts").read_text()
+    canvas = (REPO_ROOT / "frontend/src/chart/ChartCanvas.tsx").read_text()
     panel = (REPO_ROOT / "frontend/src/components/ChartPanel.tsx").read_text()
+    app = (REPO_ROOT / "frontend/src/App.tsx").read_text()
+    workspace = (REPO_ROOT / "frontend/src/components/PanelWorkspace.tsx").read_text()
     styles = (REPO_ROOT / "frontend/src/styles.css").read_text()
     assert "top: safeHeight < 240 ? 62 : 84," in scene
     assert "bottom: chart.layers.volume ? 36 : 30," in scene
+    assert "export function priceToY(scene: Pick<ChartScene, \"plot\" | \"scales\">, value: number): number" in scene
+    assert "export function topPriceGridY(scene: Pick<ChartScene, \"plot\" | \"scales\">): number" in scene
+    assert "return priceToY(scene, Math.max(...ticks));" in scene
+    assert "priceToY(scene, price)" in canvas
+    assert "topPriceGridY" in panel
+    assert 'style={{ "--hover-ohlc-top": `${hoverOhlcTop}px` } as CSSProperties}' in panel
     assert 'className="hover-ohlc hover-ohlc-overlay"' in panel
     assert ".hover-ohlc {\n  display: grid;" in styles
     assert "grid-template-columns: 108px repeat(4, 72px);" in styles
@@ -327,7 +337,8 @@ def assert_frontend_chart_layout_contract() -> None:
     assert "font-weight: 480;" in styles
     assert "font-variant-numeric: tabular-nums;" in styles
     assert ".hover-ohlc-overlay {\n  position: absolute;" in styles
-    assert "top: 86px;" in styles
+    assert "top: var(--hover-ohlc-top, 86px);" in styles
+    assert "top: 86px;" not in styles
     assert ".hover-ohlc div {\n  display: grid;" in styles
     assert "grid-template-columns: max-content minmax(0, 1fr);" in styles
     assert "gap: 1px;" in styles
@@ -335,22 +346,52 @@ def assert_frontend_chart_layout_contract() -> None:
     assert ".hover-ohlc-time {\n  display: block;" in styles
     assert ".hover-ohlc .hover-ohlc-time dd" in styles
     assert "width: 108px;" in styles
-    assert 'className="company-summary"' in panel
-    assert ".company-summary {\n  position: fixed;\n  top: 17px;\n  left: 24px;" in styles
+    assert 'className="company-summary"' in app
+    assert 'className="company-summary"' not in panel
+    assert "company-summary-back" not in app
+    assert "symbol-name" not in app
+    assert ".company-summary {\n  position: relative;" in styles
     assert ".company-summary-main {\n  display: flex;" in styles
-    assert ".live-quote {\n  display: flex;" in styles
-    assert "flex-wrap: nowrap;" in styles
-    assert ".live-quote span {\n  white-space: nowrap;" in styles
-    assert ".symbol-search {\n  position: fixed;\n  top: 16px;\n  right: 18px;" in styles
+    assert "align-items: flex-end;" in styles
+    assert ".company-ticker {" in styles
+    assert "font-size: 54px;" in styles
+    assert '--font-ui-serif: "Times New Roman", Times, Georgia, "Nanum Myeongjo", "Noto Serif KR", serif;' in styles
+    assert "font-family: var(--font-ui-serif);" in styles
+    assert "font-style: normal;" in styles
+    assert "font-weight: 500;" in styles
+    assert "font-synthesis: weight;" in styles
+    assert ".header-quote-stack {\n  display: grid;" in styles
+    assert "font-size: 13px;" in styles
+    assert ".quote-price-line {\n  display: inline-flex;" in styles
+    assert ".quote-price {\n  color: var(--color-text);\n  font-size: 17px;" in styles
+    assert ".symbol-search {\n  position: relative;" in styles
+    assert ".workspace-top-nav .symbol-search" in styles
+    assert "formatSelectedLabel={(symbol) => symbol.name}" in app
+    assert "selectedLabel={activeHeaderName}" in app
     assert ".symbol-search-menu {\n  position: absolute;\n  top: 42px;\n  right: 0;" in styles
+    assert ".chart-instance.is-editable-chart .chart-instance-symbol-search button {" in styles
+    assert ".workspace-panel-frame.is-chart-hovered .chart-instance.is-editable-chart .chart-instance-symbol-search button" in styles
+    assert ".chart-instance.is-editable-chart .chart-instance-symbol:hover .chart-instance-symbol-search button" not in styles
+    assert ".chart-instance.is-editable-chart .chart-instance-symbol-search:hover button" not in styles
+    assert ".chart-instance.is-editable-chart .chart-instance-symbol-search:focus-within button" in styles
+    assert ".chart-instance.is-editable-chart .chart-instance-symbol-search.is-active button" in styles
     assert ".panel-header" not in panel
     assert ".toolbar {\n  position: absolute;\n  top: 16px;" in styles
-    assert "if (height >= maxHeight - 0.5)" in (REPO_ROOT / "frontend/src/App.tsx").read_text()
-    assert "function canMoveChartLayout" in (REPO_ROOT / "frontend/src/App.tsx").read_text()
-    assert "disabled={!laneCanMove}" in (REPO_ROOT / "frontend/src/App.tsx").read_text()
-    assert "height: 28px;" in styles
-    assert "cursor: ns-resize !important;" in styles
-    assert ".chart-lane-frame.is-move-disabled:hover .chart-move-button" in styles
+    assert "function canMoveChartLayout" not in app
+    assert "disabled={!laneCanMove}" not in app
+    assert 'className="panel-move-button"' not in app
+    assert "<Move size={16} />" not in app
+    assert "panel-resize-grip" not in app
+    assert "beginBoundaryResize" not in app
+    assert "beginPanelSwap" not in app
+    assert "panel-boundary" not in app
+    assert "beginBoundaryResize" in workspace
+    assert "beginPanelSwap" in workspace
+    assert "panel-boundary" in workspace
+    assert ".workspace-panel-frame {" in styles
+    assert ".panel-boundary {" in styles
+    assert ".panel-move-button {" not in styles
+    assert ".panel-resize-grip {" not in styles
     assert ".chart-lane-frame.is-resize-disabled .chart-resize-grip" in styles
 
     viewport = (REPO_ROOT / "frontend/src/chart/viewport.ts").read_text()
@@ -367,8 +408,359 @@ def assert_frontend_chart_layout_contract() -> None:
     assert "reconnectTimer = window.setTimeout(connect, reconnectDelayMs(reconnectAttempts));" in client
 
 
+def assert_frontend_layout_grid_contract() -> None:
+    app = (REPO_ROOT / "frontend/src/App.tsx").read_text()
+    grid = (REPO_ROOT / "frontend/src/layout/grid.ts").read_text()
+    panel_layout = (REPO_ROOT / "frontend/src/layout/panelLayout.ts").read_text()
+    metrics = (REPO_ROOT / "frontend/src/layout/workspaceMetrics.ts").read_text()
+    styles = (REPO_ROOT / "frontend/src/styles.css").read_text()
+    frame = (REPO_ROOT / "frontend/src/components/WorkspacePanelFrame.tsx").read_text()
+    workspace = (REPO_ROOT / "frontend/src/components/PanelWorkspace.tsx").read_text()
+    panel = (REPO_ROOT / "frontend/src/components/ChartPanel.tsx").read_text()
+    search = (REPO_ROOT / "frontend/src/components/SymbolSearch.tsx").read_text()
+    package = (REPO_ROOT / "package.json").read_text()
+
+    assert "export type GridLineIndex = 0 | 1 | 2 | 3 | 4;" in grid
+    assert 'export type PanelEdgeBehavior = "normal" | "flush-at-page-edge";' in grid
+    assert "export const gridLockMaxWidth = 760;" in grid
+    assert "export const defaultChartGridSpan: PanelGridSpan = { start: 0, end: 4 };" in grid
+    assert "export const workspaceTopInset = 76;" in metrics
+    assert "export const bottomNavigationHeight = 76;" in metrics
+    assert "export const navigationGap = 8;" in metrics
+    assert "export const treeMapHoverMetaReserve = 28;" in metrics
+    assert "export const workspaceBottomInset = bottomNavigationHeight + treeMapHoverMetaReserve + navigationGap;" in metrics
+    assert "floatingPanelGridSpan" not in grid
+    assert "treemapSearchGridSpan" not in grid
+    assert "return Math.round(Math.min(18, Math.max(10, viewportWidth * 0.012)));" in grid
+    assert 'edgeBehavior === "flush-at-page-edge" && line === 0' in grid
+    assert 'edgeBehavior === "flush-at-page-edge" && line === 4' in grid
+    assert "export function snapGridSpan" not in grid
+    assert "export function lockedGridSpan" not in grid
+    assert "export function isGridLocked(viewportWidth: number): boolean" in grid
+
+    assert 'export type PanelContentKind = "chart" | "news" | "ontology" | "companyAnalysis" | "trade";' in panel_layout
+    assert 'import { workspaceBottomInset, workspaceTopInset } from "./workspaceMetrics";' in panel_layout
+    assert 'chart: "",' in panel_layout
+    assert 'chart: "차트"' not in panel_layout
+    assert "export type PanelSlot =" in panel_layout
+    assert "chartGridX" not in panel_layout
+    assert "export type PanelContentInstance =" in panel_layout
+    assert "symbol?: string;" in panel_layout
+    assert "isDefaultChart?: boolean;" in panel_layout
+    assert "export type TiledPanelState =" in panel_layout
+    assert "export type PanelBoundary =" in panel_layout
+    assert 'export type PanelBoundaryInteraction = "resize" | "insert-only";' in panel_layout
+    assert "interaction: PanelBoundaryInteraction;" in panel_layout
+    assert 'pageEdge?: "left" | "right" | "top" | "bottom";' in panel_layout
+    assert 'export type PanelBoundaryKind = "shared" | "outer";' in panel_layout
+    assert 'export const insertablePanelKinds: PanelContentKind[] = ["news", "ontology", "companyAnalysis", "trade", "chart"];' in panel_layout
+    assert "export function createInitialTiledPanelState" in panel_layout
+    assert "export function detectPanelBoundaries" in panel_layout
+    assert "export function resizePanelBoundary" in panel_layout
+    assert "export function canInsertPanelAtBoundary" in panel_layout
+    assert "export function insertPanelAtBoundary" in panel_layout
+    assert "export function removePanelSlot" in panel_layout
+    assert "export function setPanelContentSymbol" in panel_layout
+    assert "export function swapPanelContents" in panel_layout
+    assert "export function scaleTiledPanelState" in panel_layout
+    assert "export function layoutHasGapsOrOverlaps" in panel_layout
+    assert "export function panelSlotStyle" in panel_layout
+    assert "export function panelGutter" in panel_layout
+    assert "sharedVerticalGuide" in panel_layout
+    assert "insertionGuidesForSlot" in panel_layout
+    assert "outerGuidesForSlot" not in panel_layout
+    assert "chartPageEdgeGuides" in panel_layout
+    assert "slotsTouchingPageSide" not in panel_layout
+    assert 'interaction: "insert-only"' in panel_layout
+    assert 'interaction: "resize"' in panel_layout
+    assert 'if (!boundary || boundary.interaction !== "resize")' in panel_layout
+    assert "return layoutHasGapsOrOverlaps(next, viewport) ? state : next;" in panel_layout
+    assert "function isChartSlot" in panel_layout
+    assert 'return state.contents[slot.contentId]?.kind === "chart";' in panel_layout
+    assert "insertedKind !== \"chart\" && isChartSlot(state, slot)" in panel_layout
+    assert 'kind === "chart" && boundary.pageEdge === "left"' in panel_layout
+    assert 'kind === "chart" && boundary.pageEdge === "right"' in panel_layout
+    assert 'kind === "chart" && boundary.pageEdge === "bottom"' in panel_layout
+    assert 'boundary.pageEdge === "top"' not in panel_layout
+    assert 'pageEdge: "bottom"' in panel_layout
+    assert "boundaryInsertCapacity" in panel_layout
+    assert "sideInsertCapacity" in panel_layout
+    assert "pageEdgeExtraShrinkForInsertSlot" in panel_layout
+    assert "slotFlushesPageEdge" in panel_layout
+    assert "fullHeightPageSideSlotIds" in panel_layout
+    assert "rangeStart: workspace.top + gutter" in panel_layout
+    assert "rangeEnd: workspaceBottom - gutter" in panel_layout
+    assert 'positiveSlotIds: fullHeightPageSideSlotIds(state, workspace, gutter, "left")' in panel_layout
+    assert 'negativeSlotIds: fullHeightPageSideSlotIds(state, workspace, gutter, "right")' in panel_layout
+    assert "pageEdgeShrinkForSlot" in panel_layout
+    assert "const isFlushSlot = slotFlushesPageEdge(slot, side, workspace);" in panel_layout
+    assert 'insertedKind === "chart" && !isFlushSlot' in panel_layout
+    assert "slot.rect.top < workspace.top + gutter - tolerance" in panel_layout
+    assert "const bottomLimit = isChart && almostEqual(slotBottom, rectBottom(workspace)) ? rectBottom(workspace) : rectBottom(workspace) - gutter;" in panel_layout
+    assert "slotBottom > bottomLimit + tolerance" in panel_layout
+    assert "rectBottom(workspace) - gutter - chartTop" not in panel_layout
+    assert "const chartHeight = Math.max(chartMinHeight, rectBottom(workspace) - chartTop);" in panel_layout
+    assert "Math.abs(gap - gutter) > tolerance" in panel_layout
+    assert "hasHorizontalSlotBetween" in panel_layout
+    assert "hasVerticalSlotBetween" in panel_layout
+    assert "rect: insertedPanelRect(state, boundary, negative, insertSize, gutter, kind, workspace)" in panel_layout
+    assert "horizontalChartInsertBounds" in panel_layout
+    assert "chartSlotFromIds" in panel_layout
+    assert 'const inheritedChartBounds = kind === "chart" ? horizontalChartInsertBounds(state, boundary) : null;' in panel_layout
+    assert "left: inheritedChartBounds.left" in panel_layout
+    assert "width: inheritedChartBounds.right - inheritedChartBounds.left" in panel_layout
+    assert "chartSlotFromIds(state, boundary.positiveSlotIds) ?? chartSlotFromIds(state, boundary.negativeSlotIds)" in panel_layout
+    assert 'const insetLeft = kind !== "chart"' in panel_layout
+    assert 'const insetRight = kind !== "chart"' in panel_layout
+    assert "removeCoveredPageEdgeGuides" in panel_layout
+    assert "expandAdjacentSlotsAfterRemoval" in panel_layout
+    assert "minimumCrossSize" in panel_layout
+    assert "kind: \"outer\"" in panel_layout
+    assert "insertSize + gutter" in panel_layout
+    assert "mergeBoundarySegments" in panel_layout
+    assert "removableNeighbor" in panel_layout
+    assert "movePanelLayout" not in panel_layout
+    assert "resizePanelLayout" not in panel_layout
+    assert "applyPanelLayoutChange" not in panel_layout
+    assert "resolvePanelPush" not in panel_layout
+    assert "const [viewportSize, setViewportSize] = useState<ViewportSize>(() => currentViewportSize());" in app
+    assert "const [panelState, setPanelState] = useState<TiledPanelState>(() => initialPanelState());" in app
+    assert "const [chartHover" not in app
+    assert "setChartHover" not in app
+    assert "const [treeMapLaneHover, setTreeMapLaneHover] = useState(false);" in app
+    assert "const [hoveredChartSlotId, setHoveredChartSlotId] = useState<PanelSlotId | null>(null);" not in app
+    assert "const setChartSlotHover = useCallback((slotId: PanelSlotId, hovered: boolean) => {" not in app
+    assert "const panelBoundaries = useMemo(() => detectPanelBoundaries(panelState, viewportSize), [panelState, viewportSize]);" not in app
+    assert "const activeBoundarySlotIds = useMemo(() => (" not in app
+    assert "setPanelState(resizePanelBoundary(drag.startState, drag.boundaryId, delta, viewport));" not in app
+    assert "setPanelState((current) => insertPanelAtBoundary(" not in app
+    assert "setPanelState((current) => removePanelSlot(current, slotId, viewportSizeRef.current));" not in app
+    assert "setPanelState((current) => setPanelContentSymbol(current, contentId, symbol));" not in app
+    assert "swapPanelContents(current, drag.sourceSlotId, target.id)" not in app
+    assert 'import { PanelWorkspace } from "./components/PanelWorkspace";' in app
+    assert "<PanelWorkspace" in app
+    assert "setPanelState={setPanelState}" in app
+    assert "scaleTiledPanelState(current, previous, next)" in app
+    assert "const workspaceStyle = {\n    \"--layout-gutter\": `${layoutGutter}px`" in app
+    assert "style={panelSlotStyle(slot)}" not in app
+    assert "function currentViewportSize" in app
+    assert "snapGridSpan(" not in app
+    assert 'className="chart-horizontal-resize-grip left"' not in app
+    assert 'className="chart-horizontal-resize-grip right"' not in app
+    assert 'mainView.mode === "chart" && (' in app
+    assert "panelCanResizeHorizontal" not in app
+    assert "floatingPanelGridSpan" not in app
+    assert "supportPanelLeftGridSpan" not in app
+    assert "supportPanelRightGridSpan" not in app
+    assert "const rowBottom = Math.max(rowTop + chartSupportPanelMinHeight, chartLane.top - chartSupportPanelGap);" not in app
+    assert "const treeMapLaneStyle: CSSProperties = {" in app
+    assert "height: treeMapHeight," in app
+    assert 'type LayoutDrag =\n  { mode: "treemap"; type: "resize-bottom"; startY: number; startHeight: number };' in app
+    assert "treemapSearchGridSpan" not in app
+    assert "style={treemapSearchStyle}" not in app
+    assert "isChart && slot.rect.left > 1 ? \"has-left-boundary\"" in workspace
+    assert "isChart && slot.rect.left + slot.rect.width < viewportSize.width - 1 ? \"has-right-boundary\"" in workspace
+    assert "const isDefaultChart = Boolean(content.isDefaultChart);" in workspace
+    assert "canClose={!isDefaultChart && !isChart}" in workspace
+    assert "canSwap={!isDefaultChart}" in workspace
+    assert "isChartHovered={isChart && hoveredChartSlotId === slot.id}" in workspace
+    assert "onChartHoverChange: (hovered) => setChartSlotHover(slot.id, hovered)" in workspace
+    assert "onChartSwapPointerDown: !isDefaultChart ? beginPanelSwap(slot.id) : undefined" in workspace
+    assert "boundary.interaction === \"resize\" ? \"can-resize\" : \"is-insert-only\"" in workspace
+    assert "boundary.pageEdge ? \"is-page-edge\"" in workspace
+    assert "canAdd ? \"has-add\"" in workspace
+    assert 'className="panel-move-button"' not in app
+    assert "panel-resize-grip" not in app
+    assert "renderPanelControls" not in app
+    assert "Panel 02" not in app
+    assert "Panel 03" not in app
+    assert "WorkspacePanelFrame" not in app
+    assert "renderPanelContent" not in app
+    assert "WorkspacePanelFrame" in workspace
+    assert "renderPanelContent" in workspace
+    assert "workspace-panel-empty" not in app
+    assert "workspace-panel-empty" in workspace
+    assert "workspace-panel-surface" in app
+    assert "chart-lane-side-shadow" not in app
+    assert 'className="panel-add-menu surface-floating"' in workspace
+    assert "function boundaryAddMenuPosition" in workspace
+    assert "function clampNumber" in workspace
+    assert "workspace-top-nav" in app
+    assert 'className="workspace-top-nav chart"' in app
+    assert "workspace-bottom-nav" in app
+    assert 'type BottomMenuKey = "I" | "II" | "III" | "IV" | "V" | "VI";' in app
+    assert 'const leftMenuKeys: BottomMenuKey[] = ["I", "II", "III"];' in app
+    assert 'const rightMenuKeys: BottomMenuKey[] = ["IV", "V", "VI"];' in app
+    assert 'className={`bottom-menu-panel surface-floating ${side} ${isOpen ? "is-open" : ""}`}' in app
+    assert 'bottom-nav-actions left ${activeBottomMenu && leftMenuKeys.includes(activeBottomMenu) ? "is-menu-open" : ""}' in app
+    assert 'bottom-nav-actions right ${activeBottomMenu && rightMenuKeys.includes(activeBottomMenu) ? "is-menu-open" : ""}' in app
+    assert 'className="bottom-menu-dismiss-layer"' in app
+    assert "handleBottomMenuOutsidePointerDown" in app
+    assert 'event.target.closest(".bottom-menu-panel, .bottom-nav-actions")' in app
+    assert 'document.addEventListener("pointerdown", handleBottomMenuOutsidePointerDown, true);' in app
+    assert 'document.removeEventListener("pointerdown", handleBottomMenuOutsidePointerDown, true);' in app
+    assert "activeBottomMenu === label" in app
+    assert 'aria-label={`Menu ${label}`}' in app
+    assert "홈화면" in app
+    assert "onShowTreeMap();" in app
+    assert "Back to TreeMap" not in app
+    assert "Reserved action" not in app
+    assert "agent-box surface-recessed" in app
+    assert "workspace-nav-button surface-raised" in app
+    assert "surface-gradient" not in app
+    assert "runAgentPrompt" in app
+    assert "chartPanelRef" in app
+    assert "chartPanelRef" in workspace
+    assert "chart-instance is-default-chart" in workspace
+    assert "chart-instance is-editable-chart" in workspace
+    assert "chart-instance-swap-handle" in workspace
+    assert "chart-instance-symbol-search-wrap" in workspace
+    assert "onPointerDown={(event) => event.stopPropagation()}" in workspace
+    assert "chart-instance-symbol-search" in workspace
+    assert "chart-instance-interval" in workspace
+    assert "chartHeaderSnapshot" in workspace
+    assert "setChartHeaders" in workspace
+    assert "compact" in workspace
+    assert "formatSelectedLabel={(symbol) => symbol.symbol}" in workspace
+    assert "chart-instance-close" in workspace
+    assert "data-panel-slot-id={slot.id}" in frame
+    assert "workspace-panel-nav" in frame
+    assert "showNav?: boolean;" in frame
+    assert "has-no-panel-nav" in frame
+    assert "onPointerDown={canSwap ? onSwapPointerDown?.(slot.id) : undefined}" in frame
+    assert "workspace-panel-swap-handle" not in frame
+    assert "GripHorizontal" not in frame
+    assert "workspace-panel-close" in frame
+
+    assert "--layout-gutter: 24px;" in styles
+    assert "--top-nav-height: 68px;" in styles
+    assert "--bottom-nav-height: 76px;" in styles
+    assert "--bottom-control-size: 44px;" in styles
+    assert "--surface-raised-surface: color-mix(in srgb, var(--color-surface) 94%, var(--gops-white));" in styles
+    assert "--surface-raised-highlight-shadow: -3px -3px 8px var(--color-border);" in styles
+    assert "--surface-raised-depth-shadow: 5px 6px 12px var(--color-shadow);" in styles
+    assert "--surface-raised-depth-opacity: 0.16;" in styles
+    assert "--surface-floating-depth-shadow: 0 16px 34px var(--color-shadow);" in styles
+    assert "--surface-floating-depth-opacity: 0.1;" in styles
+    assert "--surface-recessed-shadow: inset 0 0 12px var(--color-shadow);" in styles
+    assert "--surface-recessed-opacity: 0.2;" in styles
+    assert "--surface-recessed-strong-opacity: 0.3;" in styles
+    assert ".surface-flat" in styles
+    assert ".surface-raised" in styles
+    assert ".surface-gradient" not in styles
+    assert ".surface-pressed" not in styles
+    assert ".surface-floating" in styles
+    assert ".surface-recessed-x" not in styles
+    assert ".surface-recessed-y" not in styles
+    assert ".workspace-top-nav" in styles
+    assert ".workspace-bottom-nav" in styles
+    assert ".bottom-menu-panel {" in styles
+    assert "width: clamp(248px, 23vw, 328px);" in styles
+    assert "height: clamp(468px, 68vh, 676px);" in styles
+    assert "transform 220ms ease" in styles
+    assert "background: var(--color-background);" in styles
+    assert ".bottom-menu-panel.left {" in styles
+    assert ".bottom-menu-panel.right {" in styles
+    assert ".bottom-menu-panel.is-open" in styles
+    assert ".bottom-nav-actions.is-menu-open .workspace-nav-button:not(.is-active)" in styles
+    assert ".bottom-nav-actions.is-menu-open .workspace-nav-button:not(.is-active)::after" in styles
+    assert ".bottom-menu-list" in styles
+    assert "justify-content: flex-start;" in styles
+    assert ".bottom-menu-item" in styles
+    assert ".bottom-menu-item.surface-raised" in styles
+    assert 'className="bottom-menu-item surface-raised"' in app
+    assert ".bottom-menu-item::after" not in styles
+    assert ".bottom-menu-dismiss-layer" in styles
+    assert "width: var(--bottom-control-size);" in styles
+    assert "height: var(--bottom-control-size);" in styles
+    assert "border-radius: 50%;" in styles
+    assert "min-height: var(--bottom-control-size);" in styles
+    assert ".bottom-menu-panel::before" not in styles
+    assert ".bottom-menu-panel::after" not in styles
+    assert ".app-shell::before" in styles
+    assert "--paper-texture-opacity: 0.08;" in styles
+    assert "mix-blend-mode: multiply;" in styles
+    assert "background-blend-mode: multiply;" in styles
+    assert ".canvas-workspace::before" not in styles
+    assert "STARGOPS" not in styles
+    assert ".workspace-panel-surface" in styles
+    assert "box-shadow: var(--surface-recessed-shadow);" in styles
+    assert ".surface-recessed::after {\n  box-shadow: var(--surface-recessed-shadow);\n  opacity: var(--surface-recessed-opacity);" in styles
+    assert ".symbol-search:hover::after,\n.symbol-search.is-active::after {\n  opacity: var(--surface-recessed-opacity);" in styles
+    assert ".workspace-panel-surface:hover::after,\n.workspace-panel-surface:focus-within::after,\n.workspace-panel-surface.is-chart-hovered::after" in styles
+    assert "opacity: var(--surface-recessed-opacity);" in styles
+    assert ".workspace-panel-surface.is-boundary-active::after,\n.workspace-panel-surface.is-panel-content-dragging::after" in styles
+    assert "opacity: var(--surface-recessed-strong-opacity);" in styles
+    assert ".workspace-panel-frame {" in styles
+    assert ".workspace-panel-frame.has-no-panel-nav" in styles
+    assert ".workspace-panel-nav {" in styles
+    assert ".workspace-panel-nav.is-swappable" in styles
+    assert ".workspace-panel-swap-handle" not in styles
+    assert ".workspace-panel-close" in styles
+    assert ".workspace-panel-frame:hover .workspace-panel-close" in styles
+    assert ".panel-boundary {" in styles
+    assert ".panel-boundary::before" in styles
+    assert ".panel-boundary::after" in styles
+    assert ".panel-boundary.vertical.has-add::before" in styles
+    assert ".panel-boundary.horizontal.has-add::after" in styles
+    assert ".panel-boundary-add" in styles
+    assert "--boundary-add-clearance: calc(var(--boundary-add-size) / 2 + var(--boundary-add-gap));" in styles
+    assert ".panel-boundary-add {\n  position: absolute;" in styles
+    assert "transform: translate(-50%, -50%);" in styles
+    assert ".panel-boundary-add svg" not in styles
+    assert ".panel-boundary-add-glyph" in styles
+    assert ".panel-boundary.is-page-edge .panel-boundary-add" in styles
+    assert "background: var(--gops-white);" in styles
+    assert "box-shadow: inset 0 0 14px var(--color-shadow);" not in styles
+    assert "box-shadow: inset 0 0 8px var(--color-shadow);" not in styles
+    assert ".panel-add-menu button:hover,\n.panel-add-menu button:focus-visible {\n  background: var(--color-background);" in styles
+    assert "background: none;" in styles
+    assert ".panel-add-menu" in styles
+    assert ".chart-instance-symbol" in styles
+    assert "grid-template-columns: 42px 118px;" in styles
+    assert ".chart-instance-interval" in styles
+    assert ".chart-instance-swap-handle" in styles
+    assert "cursor: grab;" in styles
+    assert ".chart-instance.is-editable-chart .chart-instance-symbol-search-wrap" in styles
+    assert ".chart-instance-symbol-search" in styles
+    assert ".chart-instance-close" in styles
+    assert ".chart-lane-frame:hover .semantic-expansion-close" in styles
+    assert ".chart-lane-side-shadow" not in styles
+    assert ".chart-lane-frame::before" not in styles
+    assert ".chart-lane-frame {\n  position: absolute;\n  z-index: 1;\n  min-height: 150px;\n  border-radius: 0;" in styles
+    assert ".chart-lane-frame.workspace-panel-surface {\n  border-radius: 0;" in styles
+    assert ".chart-lane-frame.workspace-panel-surface.has-left-boundary {\n  border-top-left-radius: var(--surface-radius);" in styles
+    assert ".chart-lane-frame.workspace-panel-surface.has-right-boundary {\n  border-top-right-radius: var(--surface-radius);" in styles
+    assert ".panel-resize-grip {" not in styles
+    assert "cursor: ew-resize;" in styles
+    assert ".panel-resize-grip::before" not in styles
+    assert ".placeholder-panel" not in styles
+    assert ".support-panels" not in styles
+    assert ".support-panel" not in styles
+    assert ".floating-panels" not in styles
+    assert ".floating-panel" not in styles
+    assert "active ? \"surface-recessed is-active\"" in search
+    assert "buttonLabel" not in search
+    assert "symbol-search-menu surface-flat surface-recessed" in search
+    assert "ma-menu surface-raised" not in panel
+    assert "trend-menu surface-raised" not in panel
+    assert "semantic-expansion-close surface-raised" not in panel
+    assert "agent-preview-controls surface-raised" not in panel
+    assert "agent-box surface-raised" not in panel
+    assert "function segmentedClass" in panel
+    assert "function iconButtonClass" in panel
+    assert '"segmented surface-raised surface-pressed active"' not in panel
+    assert '"icon-button surface-raised surface-pressed active"' not in panel
+    assert 'return active ? "segmented active" : "segmented";' in panel
+    assert 'return active ? "icon-button active" : "icon-button";' in panel
+    assert "export type ChartPanelHandle" in panel
+    assert "useImperativeHandle(ref, () => ({ runAgentPrompt }), [runAgentPrompt]);" in panel
+    assert "node tools/verify_layout_grid.mjs" in package
+
+
 def assert_frontend_treemap_main_view_contract() -> None:
     app = (REPO_ROOT / "frontend/src/App.tsx").read_text()
+    workspace = (REPO_ROOT / "frontend/src/components/PanelWorkspace.tsx").read_text()
     panel = (REPO_ROOT / "frontend/src/components/ChartPanel.tsx").read_text()
     search = (REPO_ROOT / "frontend/src/components/SymbolSearch.tsx").read_text()
     treemap = (REPO_ROOT / "frontend/src/treemap/TreeMapCanvas.tsx").read_text()
@@ -381,13 +773,26 @@ def assert_frontend_treemap_main_view_contract() -> None:
     assert '| { mode: "chart"; symbol: string };' in app
     assert 'useState<MainView>({ mode: "treemap" })' in app
     assert "<TreeMapCanvas items={sp500UniverseSeed} onSelectSymbol={showChart} />" in app
-    assert 'symbol={mainView.symbol}' in app
-    assert "onBackToTreeMap={showTreeMap}" in app
-    assert "어떤 종목이 궁금하신가요?" in app
+    assert "activeSymbol={mainView.symbol}" in app
+    assert "symbol: content.symbol ?? activeSymbol" in workspace
+    assert "onBackToTreeMap" not in app
+    assert "onClick={index === 0 ? showTreeMap : undefined}" not in app
+    assert 'aria-label={`Menu ${label}`}' in app
+    assert "STARGOPS" not in app
+    assert "어떤 종목이 궁금하신가요?" not in app
     assert "mainView.mode === \"treemap\"" in app
     assert "mainView.mode === \"chart\"" in app
-    assert "const height = chartMaxHeight(window.innerHeight);" in app
-    assert "function chartMaxHeight" in app
+    assert 'mainView.mode === "chart" && (' in app
+    assert 'className="workspace-top-nav chart"' in app
+    assert "const treeMapLaneStyle: CSSProperties = {" in app
+    assert 'const [treeMapHeight, setTreeMapHeight] = useState(() => initialTreeMapHeight());' in app
+    assert "const beginTreeMapResize = (event: ReactPointerEvent<HTMLElement>) => {" in app
+    assert 'mode: "treemap",' in app
+    assert 'from "./layout/workspaceMetrics";' in app
+    assert "const treeMapHoverMetaReserve = 28;" not in app
+    assert "function initialPanelState" in app
+    assert "createInitialTiledPanelState(currentViewportSize())" in app
+    assert "function treeMapMaxHeight" in app
 
     assert "fetchSymbols" not in panel
     assert "No chart data for" in panel
@@ -403,6 +808,19 @@ def assert_frontend_treemap_main_view_contract() -> None:
     assert "layoutSp500TreeMap" in treemap
     assert "hitTestTreeMapTile" in treemap
     assert "tileFillForChange" in treemap
+    assert "treemap-hover-meta" in treemap
+    assert '"--treemap-hover-meta-left"' in treemap
+    assert "Math.min(...symbolTiles.map((tile) => insetTile(tile, tileGap).x))" in treemap
+    assert "treemap-hover-card" not in treemap
+    assert "drawHover" not in treemap
+    assert "otherHovered" not in treemap
+    assert "theme.colors.text : tileFillForChange" in treemap
+    assert "theme.colors.background : tileTextForChange" in treemap
+    assert "theme.sans" not in treemap
+    assert "const changeFont = `500 12px ${theme.serif}`;" in treemap
+    assert "context.font = `500 ${symbolSize}px ${theme.serif}`;" in treemap
+    assert 'return toneForChange(changePercent) === "down" ? theme.colors.down : theme.colors.up;' in treemap
+    assert 'serif: root.getPropertyValue("--font-ui-serif").trim() || "\\"Times New Roman\\", Times, Georgia, serif",' in treemap
     assert "context.fillRect(0, 0, size.width, size.height)" not in treemap
     assert "strokeRect(tile.x" not in treemap
     assert "tileStrokeForDepth" not in treemap
@@ -416,13 +834,20 @@ def assert_frontend_treemap_main_view_contract() -> None:
     assert 'item.symbol === "TSLA" || item.symbol === "AAPL" || item.symbol === "GOOGL"' in app
     assert "item.symbol === \"MU\"" not in app
     assert "item.symbol === \"KO\"" not in app
-    assert "--gops-background: #e5e6e1;" in styles
+    assert "--gops-background: #ece4d0;" in styles
     assert "--color-background: var(--gops-background);" in styles
     assert ".treemap-panel {\n  position: relative;" in styles
+    assert "overflow: visible;" in styles
     assert "background: var(--color-background);" in styles
-    assert ".symbol-search.treemap-symbol-search {\n  position: fixed;" in styles
-    assert "bottom: 20px;" in styles
-    assert "transform: translateX(-50%);" in styles
+    assert ".treemap-hover-meta {" in styles
+    assert "left: var(--treemap-hover-meta-left, 16px);" in styles
+    assert "top: calc(100% + 8px);" in styles
+    assert "transform: none;" in styles
+    assert "treemap-hover-card" not in styles
+    assert "treemap-landing-overlay" not in styles
+    assert 'className="top-nav-symbol-search"' in app
+    assert "workspace-top-nav treemap" not in styles and ".workspace-top-nav.treemap" not in styles
+    assert "treemap-symbol-search" not in styles
 
 
 def assert_frontend_palette_contract() -> None:
@@ -430,15 +855,15 @@ def assert_frontend_palette_contract() -> None:
         "#000000",
         "#ffffff",
         "#343532",
-        "#e5e6e1",
+        "#ece4d0",
         "#66461c",
         "#9a7038",
         "#463b61",
         "#776b91",
-        "#5d2429",
-        "#955f67",
-        "#116b65",
-        "#4f827d",
+        "#6ed65b",
+        "#04915b",
+        "#b00001",
+        "#620101",
         "#3d4a08",
         "#788447",
     }
@@ -466,25 +891,27 @@ def assert_frontend_palette_contract() -> None:
     treemap_colors = (REPO_ROOT / "frontend/src/treemap/treemapColors.ts").read_text()
     drawings = (REPO_ROOT / "frontend/src/chart/drawings.ts").read_text()
     agent = (REPO_ROOT / "agent_backend/app/main.py").read_text()
-    assert "--gops-background: #e5e6e1;" in styles
+    assert "--gops-background: #ece4d0;" in styles
     assert "--color-surface: var(--gops-background);" in styles
     assert "--color-muted: var(--gops-ink);" in styles
-    assert "--color-border: var(--gops-white);" in styles
+    assert "--color-border: color-mix(in srgb, var(--gops-background) 68%, var(--gops-white));" in styles
     assert "--color-shadow: var(--gops-ink);" in styles
     assert "--gops-umber: #66461c;" in styles
     assert "--gops-umber-soft: #9a7038;" in styles
     assert "--gops-violet: #463b61;" in styles
     assert "--gops-violet-soft: #776b91;" in styles
-    assert "--gops-crimson: #5d2429;" in styles
-    assert "--gops-crimson-soft: #955f67;" in styles
-    assert "--gops-teal: #116b65;" in styles
-    assert "--gops-teal-soft: #4f827d;" in styles
+    assert "--gops-crimson: #6ed65b;" in styles
+    assert "--gops-crimson-soft: #04915b;" in styles
+    assert "--gops-teal: #b00001;" in styles
+    assert "--gops-teal-soft: #620101;" in styles
     assert "--gops-moss: #3d4a08;" in styles
     assert "--gops-moss-soft: #788447;" in styles
     assert "--color-up: var(--gops-crimson);" in styles
     assert "--color-up-soft: var(--gops-crimson-soft);" in styles
     assert "--color-down: var(--gops-teal);" in styles
     assert "--color-down-soft: var(--gops-teal-soft);" in styles
+    assert "--color-change-up: var(--gops-crimson-soft);" in styles
+    assert "--color-change-down: var(--gops-teal-soft);" in styles
     assert "--gops-brown" not in styles
     assert "--gops-gold" not in styles
     assert "--gops-purple" not in styles
@@ -502,19 +929,22 @@ def assert_frontend_palette_contract() -> None:
     assert "--color-footprint: var(--gops-ink);" in styles
     assert "--color-grid: var(--gops-ink);" in styles
     assert "--color-axis: var(--gops-ink);" in styles
+    assert "--color-tile-text: var(--gops-ink);" in styles
+    assert "--color-tile-text-inverse: var(--gops-background);" in styles
     assert "readThemeColors" in theme
     assert "resolveRawPaletteColor" in theme
     assert "readThemeColors()" in chart_canvas
     assert "function movingAverageAlpha" in chart_canvas
     assert "context.lineWidth = 1.05;" in chart_canvas
     assert "function drawExpansionSideShadow" in chart_canvas
-    assert "context.globalAlpha = Math.max(0.006, 0.028 - index * 0.004);" in chart_canvas
+    assert "const sideWidth = Math.min(6, Math.max(2, rangeWidth / 7));" in chart_canvas
+    assert "context.globalAlpha = Math.max(0.008, 0.036 - index * 0.005);" in chart_canvas
     assert "colorToken" in drawings and "fillToken" in drawings and "fillOpacity" in drawings
     assert "colorToken" in agent and "fillToken" in agent and "textToken" in agent
     assert "hue" not in treemap_colors
     assert "saturation" not in treemap_colors
     assert "export function tileOpacityForChange" in treemap_colors
-    assert "return change > 0 ? theme.up : theme.down;" in treemap_colors
+    assert "return change > 0 ? theme.upSoft : theme.downSoft;" in treemap_colors
 
 
 def assert_frontend_parent_summary_contract() -> None:
@@ -552,6 +982,7 @@ def assert_frontend_trend_menu_contract() -> None:
     assert "const trendExtensionButtons = useMemo(() => ([" in panel
     assert '<div className="trend-control" key={tool.mode}>' in panel
     assert 'className="trend-menu" role="menu" aria-label="Trend line type"' in panel
+    assert "trend-menu surface-raised" not in panel
     assert "<TrendExtensionIcon extension={extension} />" in panel
     assert "function TrendExtensionIcon" in panel
     assert 'className="trend-extension-icon"' in panel

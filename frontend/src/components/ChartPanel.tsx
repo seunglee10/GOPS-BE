@@ -17,8 +17,18 @@ import {
   Type,
   X
 } from "lucide-react";
-import { FormEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState, WheelEvent as ReactWheelEvent } from "react";
-import { createPortal } from "react-dom";
+import {
+  type CSSProperties,
+  forwardRef,
+  PointerEvent as ReactPointerEvent,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  WheelEvent as ReactWheelEvent
+} from "react";
 import { requestChartAgentActions } from "../agent/chartAgent";
 import { applyChartAction, applyChartActions } from "../chart/actions";
 import { ChartCanvas } from "../chart/ChartCanvas";
@@ -38,7 +48,7 @@ import {
   type DrawingDrag
 } from "../chart/drawings";
 import { expansionCloseButtonSize, expansionMetadataCenterY, expansionParentThumbnailRight } from "../chart/expansionLayout";
-import { createCoordinateTransform, hitTestSemanticNode, type ChartScene } from "../chart/scene";
+import { createCoordinateTransform, hitTestSemanticNode, topPriceGridY, type ChartScene } from "../chart/scene";
 import { adjacentInterval, anchoredViewportForCandles, type ViewportAnchor } from "../chart/intervalNavigation";
 import {
   candleRange,
@@ -54,7 +64,6 @@ import {
 import type { CandleDto, CandleEventDto, ChartAction, ChartInterval, ChartLayerKey, ChartLineExtension, ChartState, ChartSymbolDto, ChartToolMode, DrawingEntity } from "../chart/types";
 import { chartIntervals, defaultVisibleBarsForInterval } from "../chart/types";
 import { dragDeltaToRightOffset, latestCandleRightOffset, normalizeViewport, zoomViewport, zoomViewportAt, type ChartViewport } from "../chart/viewport";
-import { SymbolSearch } from "./SymbolSearch";
 
 const initialLayers: Record<ChartLayerKey, boolean> = {
   candles: true,
@@ -65,6 +74,14 @@ const initialLayers: Record<ChartLayerKey, boolean> = {
 };
 
 const initialVolumeRatio = 0.22;
+
+function segmentedClass(active = false): string {
+  return active ? "segmented active" : "segmented";
+}
+
+function iconButtonClass(active = false): string {
+  return active ? "icon-button active" : "icon-button";
+}
 
 function createInitialChart(symbol: string): ChartState {
   return {
@@ -122,7 +139,7 @@ type PendingAgentDrawingPreview = {
   visible: boolean;
 };
 
-type LiveQuote = {
+export type LiveQuote = {
   priceText: string;
   changeText: string;
   percentText: string;
@@ -135,8 +152,23 @@ type ChartPanelProps = {
   laneHeight?: number;
   onSemanticSelectionChange?: (selection: SemanticSelectionSnapshot | null) => void;
   onChartHoverChange?: (hovered: boolean) => void;
-  onSymbolChange?: (symbol: string) => void;
-  onBackToTreeMap?: () => void;
+  onHeaderChange?: (header: ChartHeaderSnapshot) => void;
+};
+
+export type ChartPanelHandle = {
+  runAgentPrompt: (prompt: string) => Promise<ChartAgentPromptResult>;
+};
+
+export type ChartAgentPromptResult = {
+  message: string;
+};
+
+export type ChartHeaderSnapshot = {
+  symbol: string;
+  interval: ChartInterval;
+  name: string;
+  searchLabel: string;
+  liveQuote: LiveQuote;
 };
 
 type VolumeResizeDrag = {
@@ -159,15 +191,14 @@ const unavailableQuote: LiveQuote = {
 
 const minLaneHeightForVolume = 245;
 
-export function ChartPanel({
+export const ChartPanel = forwardRef<ChartPanelHandle, ChartPanelProps>(function ChartPanel({
   symbol,
   symbols,
   laneHeight,
   onSemanticSelectionChange,
   onChartHoverChange,
-  onSymbolChange,
-  onBackToTreeMap
-}: ChartPanelProps) {
+  onHeaderChange
+}: ChartPanelProps, ref) {
   const [chart, setChart] = useState<ChartState>(() => createInitialChart(symbol));
   const [previousClose, setPreviousClose] = useState<number | null>(null);
   const [activeExpansions, setActiveExpansions] = useState<SemanticExpansion[]>([]);
@@ -177,11 +208,8 @@ export function ChartPanel({
   const [selectedSemanticNode, setSelectedSemanticNode] = useState<SemanticSelectionSnapshot | null>(null);
   const [expansionOverlays, setExpansionOverlays] = useState<ExpansionOverlay[]>([]);
   const [volumeHandleTop, setVolumeHandleTop] = useState<number | null>(null);
-  const [agentInput, setAgentInput] = useState("");
-  const [agentMessage, setAgentMessage] = useState("차트 에이전트가 차트 명령을 기다립니다.");
-  const [agentBusy, setAgentBusy] = useState(false);
+  const [hoverOhlcTop, setHoverOhlcTop] = useState(86);
   const [agentDrawingPreview, setAgentDrawingPreview] = useState<PendingAgentDrawingPreview | null>(null);
-  const [agentPortalTarget, setAgentPortalTarget] = useState<HTMLElement | null>(null);
   const [crosshair, setCrosshair] = useState<{ x: number; y: number } | undefined>();
   const [drawingDraft, setDrawingDraft] = useState<DrawingDraft | null>(null);
   const [maMenuOpen, setMaMenuOpen] = useState(false);
@@ -313,10 +341,6 @@ export function ChartPanel({
   }, [laneHeight]);
 
   useEffect(() => {
-    setAgentPortalTarget(document.body);
-  }, []);
-
-  useEffect(() => {
     const handlePointerMove = (event: PointerEvent) => {
       const drag = volumeResizeRef.current;
       if (!drag) {
@@ -356,6 +380,23 @@ export function ChartPanel({
   };
   const liveQuote = useMemo(() => buildLiveQuote(chart, previousClose), [chart, previousClose]);
   const currentSymbolLabel = `${currentSymbol.symbol} - ${currentSymbol.name}`;
+
+  useEffect(() => {
+    onHeaderChange?.({
+      symbol: currentSymbol.symbol,
+      interval: chart.interval,
+      name: currentSymbol.name,
+      searchLabel: currentSymbolLabel,
+      liveQuote
+    });
+  }, [
+    chart.interval,
+    currentSymbol.name,
+    currentSymbol.symbol,
+    currentSymbolLabel,
+    liveQuote,
+    onHeaderChange
+  ]);
 
   const dispatchChartAction = useCallback((action: ChartAction) => {
     setDrawingDraft(null);
@@ -529,6 +570,10 @@ export function ChartPanel({
     setVolumeHandleTop((current) => (
       current === nextVolumeHandleTop ? current : nextVolumeHandleTop
     ));
+    const nextHoverOhlcTop = topPriceGridY(scene) + 2;
+    setHoverOhlcTop((current) => (
+      Math.abs(current - nextHoverOhlcTop) < 0.5 ? current : nextHoverOhlcTop
+    ));
   }, []);
 
   const selectSemanticUnit = useCallback((unit: SemanticRenderUnit) => {
@@ -614,27 +659,19 @@ export function ChartPanel({
     });
   }, []);
 
-  const runAgent = async (event: FormEvent) => {
-    event.preventDefault();
-    const prompt = agentInput.trim();
-    if (!prompt || agentBusy) {
-      return;
+  const runAgentPrompt = useCallback(async (rawPrompt: string): Promise<ChartAgentPromptResult> => {
+    const prompt = rawPrompt.trim();
+    if (!prompt) {
+      return { message: "" };
     }
-    setAgentInput("");
-    setAgentBusy(true);
-    setAgentMessage("차트 에이전트가 차트를 읽고 있습니다.");
-    try {
-      const result = await requestChartAgentActions({ prompt, chart });
-      setAgentMessage(result.message);
-      if (result.actions.length) {
-        applyAgentActions(result.actions);
-      }
-    } catch (error: unknown) {
-      setAgentMessage(error instanceof Error ? error.message : "차트 에이전트 요청에 실패했습니다.");
-    } finally {
-      setAgentBusy(false);
+    const result = await requestChartAgentActions({ prompt, chart: chartRef.current });
+    if (result.actions.length) {
+      applyAgentActions(result.actions);
     }
-  };
+    return { message: result.message };
+  }, [applyAgentActions]);
+
+  useImperativeHandle(ref, () => ({ runAgentPrompt }), [runAgentPrompt]);
 
   const maLayerButtons = useMemo(() => ([
     ["ma5", "MA5"],
@@ -968,7 +1005,11 @@ export function ChartPanel({
   return (
     <section className="chart-panel">
       {hoverSnapshot?.kind === "candle" && (
-        <dl className="hover-ohlc hover-ohlc-overlay" aria-label="Hovered candle data">
+        <dl
+          className="hover-ohlc hover-ohlc-overlay"
+          style={{ "--hover-ohlc-top": `${hoverOhlcTop}px` } as CSSProperties}
+          aria-label="Hovered candle data"
+        >
           <div className="hover-ohlc-time"><dt>Time</dt><dd>{formatHoverTimestamp(hoverSnapshot.timestamp ?? hoverSnapshot.from)}</dd></div>
           <div><dt>O</dt><dd>{formatMetric(hoverSnapshot.open)}</dd></div>
           <div><dt>C</dt><dd>{formatMetric(hoverSnapshot.close)}</dd></div>
@@ -980,26 +1021,26 @@ export function ChartPanel({
       <div className="toolbar" aria-label="Chart controls">
         <div className="toolbar-row">
           <div className="interval-stepper" aria-label="Interval controls">
-            <button type="button" className="icon-button" aria-label="Smaller interval" title="Smaller interval" disabled={!smallerInterval} onClick={() => smallerInterval && setInterval(smallerInterval)}>
+            <button type="button" className={iconButtonClass()} aria-label="Smaller interval" title="Smaller interval" disabled={!smallerInterval} onClick={() => smallerInterval && setInterval(smallerInterval)}>
               <ChevronDown size={15} />
             </button>
             <select value={chart.interval} onChange={(event) => setInterval(event.target.value as ChartInterval)} aria-label="Interval">
               {chartIntervals.map((interval) => <option key={interval} value={interval}>{interval}</option>)}
             </select>
-            <button type="button" className="icon-button" aria-label="Larger interval" title="Larger interval" disabled={!largerInterval} onClick={() => largerInterval && setInterval(largerInterval)}>
+            <button type="button" className={iconButtonClass()} aria-label="Larger interval" title="Larger interval" disabled={!largerInterval} onClick={() => largerInterval && setInterval(largerInterval)}>
               <ChevronUp size={15} />
             </button>
           </div>
-          <button className={chart.layers.volume ? "segmented active" : "segmented"} onClick={() => toggleLayer("volume")} type="button">
+          <button className={segmentedClass(chart.layers.volume)} onClick={() => toggleLayer("volume")} type="button">
             VOL
           </button>
-          <button className="segmented" disabled={!hasAnyCurrentSymbolExpansion} onClick={clearAllDigging} type="button" title="Clear all digging">
+          <button className={segmentedClass()} disabled={!hasAnyCurrentSymbolExpansion} onClick={clearAllDigging} type="button" title="Clear all digging">
             DIG OFF
           </button>
           <div className="ma-control">
             <button
               type="button"
-              className={anyMaEnabled ? "segmented active" : "segmented"}
+              className={segmentedClass(anyMaEnabled)}
               aria-expanded={maMenuOpen}
               onClick={() => {
                 setTrendMenuOpen(false);
@@ -1014,7 +1055,7 @@ export function ChartPanel({
                   <button
                     key={layer}
                     type="button"
-                    className={chart.layers[layer] ? "segmented active" : "segmented"}
+                    className={segmentedClass(chart.layers[layer])}
                     onClick={() => toggleLayer(layer)}
                   >
                     {label}
@@ -1029,7 +1070,7 @@ export function ChartPanel({
               <div className="trend-control" key={tool.mode}>
                 <button
                   type="button"
-                  className={chart.toolMode === tool.mode ? "icon-button active" : "icon-button"}
+                  className={iconButtonClass(chart.toolMode === tool.mode)}
                   aria-label={tool.label}
                   title={tool.label}
                   aria-expanded={trendMenuOpen}
@@ -1047,7 +1088,7 @@ export function ChartPanel({
                       <button
                         key={extension}
                         type="button"
-                        className={chart.trendLineExtension === extension ? "icon-button active" : "icon-button"}
+                        className={iconButtonClass(chart.trendLineExtension === extension)}
                         aria-label={label}
                         title={label}
                         onClick={() => setTrendLineExtension(extension)}
@@ -1062,7 +1103,7 @@ export function ChartPanel({
               <button
                 key={tool.mode}
                 type="button"
-                className={chart.toolMode === tool.mode ? "icon-button active" : "icon-button"}
+                className={iconButtonClass(chart.toolMode === tool.mode)}
                 aria-label={tool.label}
                 title={tool.label}
                 onClick={() => {
@@ -1074,13 +1115,13 @@ export function ChartPanel({
               </button>
             )
           ))}
-          <button type="button" className="icon-button" aria-label="Selected drawing color" title="Selected drawing color" disabled={!selectedDrawing} onClick={updateSelectedDrawingStyle}>
+          <button type="button" className={iconButtonClass()} aria-label="Selected drawing color" title="Selected drawing color" disabled={!selectedDrawing} onClick={updateSelectedDrawingStyle}>
             <Palette size={16} />
           </button>
-          <button type="button" className="icon-button" aria-label="Delete selected drawing" title="Delete selected drawing" disabled={!selectedDrawing} onClick={removeSelectedDrawing}>
+          <button type="button" className={iconButtonClass()} aria-label="Delete selected drawing" title="Delete selected drawing" disabled={!selectedDrawing} onClick={removeSelectedDrawing}>
             <Eraser size={16} />
           </button>
-          <button type="button" className="icon-button" aria-label="Clear drawings" title="Clear drawings" disabled={chart.drawings.length === 0} onClick={clearAllDrawings}>
+          <button type="button" className={iconButtonClass()} aria-label="Clear drawings" title="Clear drawings" disabled={chart.drawings.length === 0} onClick={clearAllDrawings}>
             <Trash2 size={16} />
           </button>
           {drawingDraft && <span className="draft-pill">{defaultDrawingLabel(drawingDraft.type) ?? drawingDraft.type} 2nd point</span>}
@@ -1143,84 +1184,31 @@ export function ChartPanel({
         ))}
       </div>
 
-      {agentPortalTarget && createPortal(
-        <div className="agent-overlay" onPointerEnter={(event) => event.stopPropagation()} onPointerMove={(event) => event.stopPropagation()} onPointerLeave={(event) => event.stopPropagation()}>
-          <header className="company-summary" aria-label="Current company">
-            <div className="company-summary-main">
-              {onBackToTreeMap && (
-                <button
-                  type="button"
-                  className="company-summary-back"
-                  aria-label="Back to TreeMap"
-                  title="Back to TreeMap"
-                  onClick={onBackToTreeMap}
-                >
-                  <X size={12} />
-                </button>
-              )}
-              <h1>{chart.symbol} <span>{chart.interval}</span></h1>
-              <div className={`live-quote ${liveQuote.tone}`} aria-label="Live quote">
-                <span className="quote-price">{liveQuote.priceText}</span>
-                <span className="quote-change">{liveQuote.changeText}</span>
-                <span className="quote-percent">{liveQuote.percentText}</span>
-              </div>
-            </div>
-            <p className="symbol-name">{currentSymbol.name}</p>
-          </header>
-          <SymbolSearch
-            symbols={symbols}
-            selectedSymbol={chart.symbol}
-            selectedLabel={currentSymbolLabel}
-            onSelectSymbol={(nextSymbol) => {
-              if (onSymbolChange) {
-                onSymbolChange(nextSymbol);
-              } else {
-                setSymbol(nextSymbol);
-              }
-            }}
-            onPointerActivity={clearChartHover}
-          />
-          {agentMessage && agentMessage !== "차트 에이전트가 차트 명령을 기다립니다." && (
-            <p className="agent-answer">{agentMessage}</p>
-          )}
-          {agentDrawingPreview && (
-            <div className="agent-preview-controls" onPointerEnter={clearChartHover} onPointerMove={clearChartHover}>
-              <button
-                type="button"
-                className={agentDrawingPreview.visible ? "active" : ""}
-                aria-label={agentDrawingPreview.visible ? "Hide agent drawing preview" : "Show agent drawing preview"}
-                title={agentDrawingPreview.visible ? "Hide preview" : "Show preview"}
-                onClick={() => setAgentDrawingPreview((current) => current ? { ...current, visible: !current.visible } : current)}
-              >
-                {agentDrawingPreview.visible ? <EyeOff size={14} /> : <Eye size={14} />}
-                Preview
-              </button>
-              <button type="button" aria-label="Apply agent drawing preview" title="Apply preview" onClick={applyAgentDrawingPreview}>
-                <Check size={14} />
-                Apply
-              </button>
-              <button type="button" aria-label="Discard agent drawing preview" title="Discard preview" onClick={() => setAgentDrawingPreview(null)}>
-                <X size={14} />
-                Discard
-              </button>
-            </div>
-          )}
-          <form className="agent-box" onPointerEnter={clearChartHover} onPointerMove={clearChartHover} onSubmit={runAgent}>
-            <input
-              value={agentInput}
-              onChange={(event) => setAgentInput(event.target.value)}
-              placeholder="차트에게 물어보기"
-              aria-label="Chart agent command"
-              disabled={agentBusy}
-            />
-            <button type="submit" disabled={agentBusy}>{agentBusy ? "..." : "Run"}</button>
-          </form>
-        </div>,
-        agentPortalTarget
+      {agentDrawingPreview && (
+        <div className="agent-preview-controls" onPointerEnter={clearChartHover} onPointerMove={clearChartHover}>
+          <button
+            type="button"
+            className={agentDrawingPreview.visible ? "active" : ""}
+            aria-label={agentDrawingPreview.visible ? "Hide agent drawing preview" : "Show agent drawing preview"}
+            title={agentDrawingPreview.visible ? "Hide preview" : "Show preview"}
+            onClick={() => setAgentDrawingPreview((current) => current ? { ...current, visible: !current.visible } : current)}
+          >
+            {agentDrawingPreview.visible ? <EyeOff size={14} /> : <Eye size={14} />}
+            Preview
+          </button>
+          <button type="button" aria-label="Apply agent drawing preview" title="Apply preview" onClick={applyAgentDrawingPreview}>
+            <Check size={14} />
+            Apply
+          </button>
+          <button type="button" aria-label="Discard agent drawing preview" title="Discard preview" onClick={() => setAgentDrawingPreview(null)}>
+            <X size={14} />
+            Discard
+          </button>
+        </div>
       )}
     </section>
   );
-}
+});
 
 function chartMemoryKey(symbol: string, interval: ChartInterval): string {
   return `${symbol.toUpperCase()}:${interval}`;

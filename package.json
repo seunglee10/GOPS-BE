@@ -12,7 +12,7 @@
     "dev:backend": ".venv/bin/uvicorn mock_backend.app.main:app --host 127.0.0.1 --port 8000 --reload",
     "dev:agent": ".venv/bin/uvicorn agent_backend.app.main:app --host 127.0.0.1 --port 8010 --reload",
     "build": "npm run build --workspace frontend",
-    "test": "npm run build && .venv/bin/python -m py_compile mock_backend/app/main.py agent_backend/app/main.py && .venv/bin/python tools/verify_local_contracts.py && node tools/verify_treemap_layout.mjs"
+    "test": "npm run build && .venv/bin/python -m py_compile mock_backend/app/main.py agent_backend/app/main.py && .venv/bin/python tools/verify_local_contracts.py && node tools/verify_treemap_layout.mjs && node tools/verify_layout_grid.mjs"
   },
   "devDependencies": {
     "typescript": "^5.7.2"

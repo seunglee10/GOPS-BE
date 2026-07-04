@@ -1,27 +1,37 @@
-import { useEffect, useMemo, useState } from "react";
+import { Search } from "lucide-react";
+import { type CSSProperties, useEffect, useMemo, useState } from "react";
 import type { ChartSymbolDto } from "../chart/types";
 
 type SymbolSearchProps = {
   symbols: ChartSymbolDto[];
   selectedSymbol?: string;
   selectedLabel?: string;
+  placeholder?: string;
+  compact?: boolean;
   className?: string;
-  buttonLabel?: string;
+  style?: CSSProperties;
   onSelectSymbol: (symbol: string) => void;
   onPointerActivity?: () => void;
+  formatSelectedLabel?: (symbol: ChartSymbolDto) => string;
 };
 
 export function SymbolSearch({
   symbols,
   selectedSymbol,
   selectedLabel,
+  placeholder = "종목 검색",
+  compact = false,
   className,
-  buttonLabel,
+  style,
   onSelectSymbol,
-  onPointerActivity
+  onPointerActivity,
+  formatSelectedLabel
 }: SymbolSearchProps) {
   const [query, setQuery] = useState(selectedLabel ?? "");
   const [open, setOpen] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const fallbackLabel = selectedSymbol ?? "";
+  const selectedDisplayLabel = selectedLabel ?? fallbackLabel;
 
   const filteredSymbols = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -30,13 +40,14 @@ export function SymbolSearch({
 
   useEffect(() => {
     if (!open) {
-      setQuery(selectedLabel ?? "");
+      setQuery(selectedDisplayLabel);
     }
-  }, [open, selectedLabel]);
+  }, [open, selectedDisplayLabel]);
 
   const selectSymbol = (symbol: ChartSymbolDto) => {
-    setQuery(`${symbol.symbol} - ${symbol.name}`);
+    setQuery(formatSymbolLabel(symbol, formatSelectedLabel));
     setOpen(false);
+    setFocused(false);
     onSelectSymbol(symbol.symbol);
   };
 
@@ -50,11 +61,28 @@ export function SymbolSearch({
     }
   };
 
+  const active = open || focused;
+
   return (
     <div
-      className={["symbol-search", className].filter(Boolean).join(" ")}
+      className={[
+        "symbol-search",
+        compact ? "symbol-search-compact" : "",
+        "surface-flat",
+        active ? "surface-recessed is-active" : "",
+        className
+      ].filter(Boolean).join(" ")}
+      style={style}
       onPointerEnter={onPointerActivity}
       onPointerMove={onPointerActivity}
+      onBlur={(event) => {
+        const relatedTarget = event.relatedTarget;
+        if (!(relatedTarget instanceof Node) || !event.currentTarget.contains(relatedTarget)) {
+          setFocused(false);
+          setOpen(false);
+          setQuery(selectedDisplayLabel);
+        }
+      }}
     >
       <input
         value={query}
@@ -63,6 +91,7 @@ export function SymbolSearch({
           setOpen(true);
         }}
         onFocus={() => {
+          setFocused(true);
           setQuery("");
           setOpen(true);
         }}
@@ -73,10 +102,11 @@ export function SymbolSearch({
           }
           if (event.key === "Escape") {
             setOpen(false);
-            setQuery(selectedLabel ?? "");
+            setFocused(false);
+            setQuery(selectedDisplayLabel);
           }
         }}
-        placeholder="종목 검색"
+        placeholder={placeholder}
         aria-label="Symbol search"
         autoComplete="off"
       />
@@ -87,17 +117,19 @@ export function SymbolSearch({
         onClick={() => {
           if (open) {
             setOpen(false);
-            setQuery(selectedLabel ?? "");
+            setFocused(false);
+            setQuery(selectedDisplayLabel);
             return;
           }
+          setFocused(true);
           setQuery("");
           setOpen(true);
         }}
       >
-        {buttonLabel ?? selectedSymbol ?? "S&P500"}
+        <Search size={compact ? 12 : 14} aria-hidden="true" />
       </button>
       {open && (
-        <div className="symbol-search-menu" role="listbox" aria-label="Symbols">
+        <div className="symbol-search-menu surface-flat surface-recessed" role="listbox" aria-label="Symbols">
           {filteredSymbols.map((symbol) => (
             <button
               key={symbol.symbol}
@@ -119,6 +151,13 @@ export function SymbolSearch({
       )}
     </div>
   );
+}
+
+function formatSymbolLabel(
+  symbol: ChartSymbolDto,
+  formatSelectedLabel?: (symbol: ChartSymbolDto) => string
+): string {
+  return formatSelectedLabel?.(symbol) ?? `${symbol.symbol} - ${symbol.name}`;
 }
 
 function rankSymbolMatches(symbols: ChartSymbolDto[], query: string): ChartSymbolDto[] {

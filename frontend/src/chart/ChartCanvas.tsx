@@ -1,7 +1,7 @@
 import type { PointerEventHandler, WheelEventHandler } from "react";
 import { useEffect, useRef } from "react";
 import type { ChartState, DrawingEntity } from "./types";
-import { buildChartScene, createCoordinateTransform, hitTestSemanticNode, unitBoundsX, unitCenterX, type ChartScene } from "./scene";
+import { buildChartScene, createCoordinateTransform, hitTestSemanticNode, priceToY, unitBoundsX, unitCenterX, type ChartScene } from "./scene";
 import { normalizeLineExtension, projectTrendLine } from "./drawings";
 import { expansionMetadataTop, expansionParentCandleHeight, expansionParentCandleWidth, expansionSummaryVisibleBounds } from "./expansionLayout";
 import { formatSemanticTimestamp, type SemanticCandleUnit, type SemanticExpansion, type SemanticRenderUnit } from "./semanticTimeline";
@@ -133,11 +133,6 @@ function drawPlotClipped(context: CanvasRenderingContext2D, scene: ChartScene, d
   context.restore();
 }
 
-function priceY(scene: ChartScene, value: number): number {
-  const range = Math.max(0.0001, scene.scales.maxPrice - scene.scales.minPrice);
-  return scene.plot.top + ((scene.scales.maxPrice - value) / range) * Math.max(1, scene.plot.priceBottom - scene.plot.top);
-}
-
 function volumeY(scene: ChartScene, value: number): number {
   const range = Math.max(1, scene.scales.maxVolume);
   const height = Math.max(1, scene.plot.bottom - scene.plot.volumeTop);
@@ -158,7 +153,7 @@ function drawGrid(context: CanvasRenderingContext2D, scene: ChartScene) {
   context.lineWidth = 1;
   const right = horizontalGuideRight(scene);
   scene.scales.priceTicks.forEach((price) => {
-    const y = priceY(scene, price);
+    const y = priceToY(scene, price);
     line(context, scene.plot.left, y, right, y);
   });
   if (hasVolumePane(scene)) {
@@ -179,10 +174,10 @@ function drawCandles(context: CanvasRenderingContext2D, scene: ChartScene) {
   candleUnits(scene).forEach((unit) => {
     const candle = unit.candle;
     const center = unitCenterX(scene, unit);
-    const open = priceY(scene, candle.open);
-    const close = priceY(scene, candle.close);
-    const high = priceY(scene, candle.high);
-    const low = priceY(scene, candle.low);
+    const open = priceToY(scene, candle.open);
+    const close = priceToY(scene, candle.close);
+    const high = priceToY(scene, candle.high);
+    const low = priceToY(scene, candle.low);
     const up = candle.close >= candle.open;
     const candleColor = candleStrokeColor(scene, unit, up);
     context.save();
@@ -260,7 +255,7 @@ function drawMovingAverage(
       started = false;
     }
     const x = unitCenterX(scene, unit);
-    const y = priceY(scene, value);
+    const y = priceToY(scene, value);
     if (!started) {
       context.moveTo(x, y);
       started = true;
@@ -524,7 +519,7 @@ function drawPriceAxis(context: CanvasRenderingContext2D, scene: ChartScene) {
   context.textAlign = "right";
   context.textBaseline = "middle";
   scene.scales.priceTicks.forEach((price) => {
-    context.fillText(formatPriceAxisValue(price), scene.width - 8, priceY(scene, price));
+    context.fillText(formatPriceAxisValue(price), scene.width - 8, priceToY(scene, price));
   });
   drawVolumeAxisLabels(context, scene);
   context.restore();
@@ -698,10 +693,10 @@ function drawExpansionSideShadow(
   side: "left" | "right",
   rangeWidth: number
 ) {
-  const sideWidth = Math.min(5, Math.max(2, rangeWidth / 8));
+  const sideWidth = Math.min(6, Math.max(2, rangeWidth / 7));
   context.fillStyle = colors.shadow;
   for (let index = 0; index < sideWidth; index += 1) {
-    context.globalAlpha = Math.max(0.006, 0.028 - index * 0.004);
+    context.globalAlpha = Math.max(0.008, 0.036 - index * 0.005);
     const offset = side === "left" ? index : -index - 1;
     context.fillRect(x + offset, 0, 1, height);
   }

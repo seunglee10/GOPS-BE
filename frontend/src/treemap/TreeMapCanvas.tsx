@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import type { Sp500UniverseItem } from "../market/sp500Universe.seed";
 import { sp500WeightValue } from "../market/sp500Universe.seed";
 import { hitTestTreeMapTile, layoutSp500TreeMap } from "./treemapLayout";
@@ -43,6 +43,18 @@ export function TreeMapCanvas({ items, onSelectSymbol }: TreeMapCanvasProps) {
     width: Math.max(1, size.width - canvasPadding * 2),
     height: Math.max(1, size.height - canvasPadding * 2)
   }), [inputItems, size.height, size.width]);
+
+  const hoverMetaLeft = useMemo(() => {
+    const symbolTiles = tiles.filter((tile) => tile.kind === "symbol");
+    if (!symbolTiles.length) {
+      return canvasPadding;
+    }
+    return Math.min(...symbolTiles.map((tile) => insetTile(tile, tileGap).x));
+  }, [tiles]);
+
+  const panelStyle = {
+    "--treemap-hover-meta-left": `${Math.round(hoverMetaLeft)}px`
+  } as CSSProperties;
 
   useEffect(() => {
     tilesRef.current = tiles;
@@ -101,7 +113,7 @@ export function TreeMapCanvas({ items, onSelectSymbol }: TreeMapCanvasProps) {
   };
 
   return (
-    <section className="treemap-panel" aria-label="S&P 500 TreeMap">
+    <section className="treemap-panel" style={panelStyle} aria-label="S&P 500 TreeMap">
       <canvas
         ref={canvasRef}
         className="treemap-canvas"
@@ -111,10 +123,10 @@ export function TreeMapCanvas({ items, onSelectSymbol }: TreeMapCanvasProps) {
         onClick={selectHoveredTile}
       />
       {hoveredTile?.symbol && (
-        <div className="treemap-hover-card" aria-live="polite">
+        <div className="treemap-hover-meta" aria-live="polite">
           <strong>{hoveredTile.symbol}</strong>
           <span>{hoveredTile.companyName}</span>
-          <em className={toneForChange(hoveredTile.changePercent)}>{formatChange(hoveredTile.changePercent)}</em>
+          <em>{formatChange(hoveredTile.changePercent)}</em>
           <small>{hoveredTile.sector} / {hoveredTile.industry}</small>
         </div>
       )}
@@ -134,17 +146,14 @@ function drawTreeMap(
   tiles.filter((tile) => tile.kind === "sector").forEach((tile) => drawSector(context, tile, theme));
   tiles.filter((tile) => tile.kind === "industry").forEach((tile) => drawIndustry(context, tile, theme));
   tiles.filter((tile) => tile.kind === "symbol").forEach((tile) => drawSymbol(context, tile, hoveredTile?.id, theme));
-  if (hoveredTile) {
-    drawHover(context, hoveredTile, theme);
-  }
 }
 
 function drawSector(context: CanvasRenderingContext2D, tile: TreeMapTile, theme: TreeMapTheme) {
   if (tile.width < 92 || tile.height < 34) {
     return;
   }
-  const nameFont = `700 14px ${theme.serif}`;
-  const changeFont = `700 12px ${theme.sans}`;
+  const nameFont = `500 14px ${theme.serif}`;
+  const changeFont = `500 12px ${theme.serif}`;
   const changeText = formatChange(tile.changePercent);
   context.textBaseline = "top";
   context.font = changeFont;
@@ -157,7 +166,7 @@ function drawSector(context: CanvasRenderingContext2D, tile: TreeMapTile, theme:
   if (canShowChange) {
     context.font = changeFont;
     context.textAlign = "right";
-    context.fillStyle = toneForChange(tile.changePercent) === "down" ? theme.colors.down : theme.colors.up;
+    context.fillStyle = toneForChange(tile.changePercent) === "down" ? theme.colors.changeDown : theme.colors.changeUp;
     context.fillText(changeText, tile.x + tile.width - labelPadding, tile.y + 8);
     context.textAlign = "start";
   }
@@ -167,10 +176,13 @@ function drawIndustry(context: CanvasRenderingContext2D, tile: TreeMapTile, them
   if (tile.width < 70 || tile.height < 24) {
     return;
   }
-  context.font = `700 9px ${theme.serif}`;
+  context.save();
+  context.font = `500 9px ${theme.serif}`;
   context.fillStyle = theme.colors.muted;
+  context.globalAlpha = 0.64;
   context.textBaseline = "top";
   fillFittedText(context, tile.label, tile.x + 5, tile.y + 3, tile.width - 10);
+  context.restore();
 }
 
 function drawSymbol(
@@ -180,13 +192,12 @@ function drawSymbol(
   theme: TreeMapTheme
 ) {
   const hovered = hoveredTileId === tile.id;
-  const otherHovered = Boolean(hoveredTileId) && !hovered;
   const rect = insetTile(tile, tileGap);
   if (rect.width <= 0 || rect.height <= 0) {
     return;
   }
-  context.fillStyle = tileFillForChange(tile.changePercent, theme.colors);
-  context.globalAlpha = tileOpacityForChange(tile.changePercent) * (otherHovered ? 0.74 : 1);
+  context.fillStyle = hovered ? theme.colors.text : tileFillForChange(tile.changePercent, theme.colors);
+  context.globalAlpha = hovered ? 1 : tileOpacityForChange(tile.changePercent);
   context.fillRect(rect.x, rect.y, rect.width, rect.height);
   context.globalAlpha = 1;
 
@@ -195,27 +206,22 @@ function drawSymbol(
     return;
   }
   const symbolSize = clamp(Math.min(rect.width / 5.8, rect.height / 3.4), 11, 25);
-  context.font = `700 ${symbolSize}px ${theme.serif}`;
-  context.fillStyle = tileTextForChange(tile.changePercent, theme.colors);
+  const textColor = hovered ? theme.colors.background : tileTextForChange(tile.changePercent, theme.colors);
+  context.font = `500 ${symbolSize}px ${theme.serif}`;
+  context.fillStyle = textColor;
   context.textBaseline = "top";
   fillFittedText(context, tile.label, rect.x + 6, rect.y + 6, labelSpace);
 
   if (rect.height < 44) {
     return;
   }
-  context.font = `700 ${Math.max(10, symbolSize * 0.72)}px ${theme.sans}`;
-  context.fillStyle = tileTextForChange(tile.changePercent, theme.colors);
+  context.font = `500 ${Math.max(10, symbolSize * 0.72)}px ${theme.serif}`;
+  context.fillStyle = hovered ? changeTextColor(tile.changePercent, theme) : textColor;
   fillFittedText(context, formatChange(tile.changePercent), rect.x + 6, rect.y + 8 + symbolSize, labelSpace);
 }
 
-function drawHover(context: CanvasRenderingContext2D, tile: TreeMapTile, theme: TreeMapTheme) {
-  const rect = insetTile(tile, tileGap);
-  context.save();
-  context.strokeStyle = theme.colors.text;
-  context.globalAlpha = 0.22;
-  context.lineWidth = 1;
-  context.strokeRect(rect.x + 1, rect.y + 1, Math.max(0, rect.width - 2), Math.max(0, rect.height - 2));
-  context.restore();
+function changeTextColor(changePercent: number | undefined, theme: TreeMapTheme): string {
+  return toneForChange(changePercent) === "down" ? theme.colors.down : theme.colors.up;
 }
 
 function fillFittedText(
@@ -246,15 +252,13 @@ function formatChange(value: number | undefined): string {
 
 type TreeMapTheme = {
   serif: string;
-  sans: string;
   colors: ThemeColors;
 };
 
 function readTheme(): TreeMapTheme {
   const root = getComputedStyle(document.documentElement);
   return {
-    serif: root.getPropertyValue("--font-ui-serif").trim() || "Georgia, serif",
-    sans: root.getPropertyValue("--font-data-sans").trim() || "Inter, ui-sans-serif, system-ui, sans-serif",
+    serif: root.getPropertyValue("--font-ui-serif").trim() || "\"Times New Roman\", Times, Georgia, serif",
     colors: readThemeColors()
   };
 }

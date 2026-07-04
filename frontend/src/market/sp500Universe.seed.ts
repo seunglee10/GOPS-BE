@@ -519,9 +519,3 @@ export const sp500UniverseSeed: Sp500UniverseItem[] = [
 export function sp500WeightValue(item: Sp500UniverseItem): number {
   return item.indexWeight ?? item.marketCap;
 }
-
-export function findSp500Symbol(symbol: string): Sp500UniverseItem | undefined {
-  const normalized = symbol.trim().toUpperCase();
-  return sp500UniverseSeed.find((item) => item.symbol.toUpperCase() === normalized);
-}
-

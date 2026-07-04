@@ -5,7 +5,7 @@ export function tileFillForChange(changePercent: number | undefined, theme: Them
   if (Math.abs(change) < 0.08) {
     return theme.muted;
   }
-  return change > 0 ? theme.up : theme.down;
+  return change > 0 ? theme.upSoft : theme.downSoft;
 }
 
 export function tileOpacityForChange(changePercent: number | undefined): number {

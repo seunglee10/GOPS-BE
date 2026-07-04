@@ -151,10 +151,7 @@ export function buildChartScene(chart: ChartState, width: number, height: number
 
 export function createCoordinateTransform(scene: ChartScene): CoordinateTransform {
   const timestampIndex = new Map(scene.allCandles.map((candle, index) => [candle.timestamp, index]));
-  const priceToY = (price: number) => {
-    const range = Math.max(0.0001, scene.scales.maxPrice - scene.scales.minPrice);
-    return scene.plot.top + ((scene.scales.maxPrice - price) / range) * Math.max(1, scene.plot.priceBottom - scene.plot.top);
-  };
+  const anchorPriceToY = (price: number) => priceToY(scene, price);
   const yToPrice = (y: number) => {
     const range = Math.max(0.0001, scene.scales.maxPrice - scene.scales.minPrice);
     return scene.scales.maxPrice - ((y - scene.plot.top) / Math.max(1, scene.plot.priceBottom - scene.plot.top)) * range;
@@ -177,7 +174,7 @@ export function createCoordinateTransform(scene: ChartScene): CoordinateTransfor
   };
 
   return {
-    priceToY,
+    priceToY: anchorPriceToY,
     yToPrice,
     logicalToX,
     xToLogical,
@@ -190,7 +187,7 @@ export function createCoordinateTransform(scene: ChartScene): CoordinateTransfor
       if (typeof x !== "number") {
         return null;
       }
-      return { x, y: typeof value === "number" ? priceToY(value) : scene.plot.top };
+      return { x, y: typeof value === "number" ? anchorPriceToY(value) : scene.plot.top };
     },
     pointToAnchor: (x, y, symbol) => {
       if (x < scene.plot.left || x > scene.plot.right || y < scene.plot.top || y > scene.plot.priceBottom) {
@@ -220,6 +217,19 @@ export function createCoordinateTransform(scene: ChartScene): CoordinateTransfor
       };
     }
   };
+}
+
+export function priceToY(scene: Pick<ChartScene, "plot" | "scales">, value: number): number {
+  const range = Math.max(0.0001, scene.scales.maxPrice - scene.scales.minPrice);
+  return scene.plot.top + ((scene.scales.maxPrice - value) / range) * Math.max(1, scene.plot.priceBottom - scene.plot.top);
+}
+
+export function topPriceGridY(scene: Pick<ChartScene, "plot" | "scales">): number {
+  const ticks = scene.scales.priceTicks.filter((tick) => Number.isFinite(tick));
+  if (!ticks.length) {
+    return scene.plot.top;
+  }
+  return priceToY(scene, Math.max(...ticks));
 }
 
 export function slotCenterToX(scene: Pick<ChartScene, "plot" | "scales">, slotCenter: number): number {

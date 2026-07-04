@@ -43,7 +43,7 @@ export function layoutSp500TreeMap(items: TreeMapInputItem[], bounds: TreeMapRec
       sector: sector.label
     });
 
-    const sectorInner = contentRect(rect, headerHeight(rect, 28), 5);
+    const sectorInner = contentRect(rect, headerHeight(rect, 22), 2);
     const industries = groupItems(sector.items, (item) => item.industry);
     const industryNodes = squarify(industries, sectorInner, (industry) => industry.value);
 
