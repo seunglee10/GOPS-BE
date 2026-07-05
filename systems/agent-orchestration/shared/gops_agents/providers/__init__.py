@@ -947,6 +947,16 @@ class GraphDBOntologyProvider(OntologyProvider):
             for theme_name in intent_themes:
                 theme_matched_rows.extend(self._query_rows(companies_by_theme_query(theme_name, self.limit), "theme-company"))
                 theme_matched_rows.extend(self._query_rows(theme_control_relationships_query(theme_name, self.limit), "theme-control-relationship"))
+            # 단일 종목 요청에서도 소속 테마의 멤버 기업을 포함해
+            # 프론트 관계 그래프가 테마 -> 멤버 종목으로 확장될 수 있게 한다.
+            symbol_theme_names: list[str] = []
+            for row in per_symbol_rows[primary_symbol]["theme"]:
+                row_theme = str(row.get("themeName") or "").strip()
+                if row_theme and row_theme not in intent_themes and row_theme not in symbol_theme_names:
+                    symbol_theme_names.append(row_theme)
+            member_limit = min(self.limit, 12)
+            for theme_name in symbol_theme_names[:6]:
+                theme_matched_rows.extend(self._query_rows(companies_by_theme_query(theme_name, member_limit), "theme-company"))
         except Exception as exc:
             return [
                 EvidenceItem(
@@ -972,7 +982,7 @@ class GraphDBOntologyProvider(OntologyProvider):
         if len(requested) > 1:
             evidence.extend(cross_symbol_relationship_evidence(requested, per_symbol_rows))
 
-        evidence = evidence[: self.limit]
+        evidence = evidence[: max(self.limit, 60)]
         self._cache_set(requested, intent_themes, evidence)
         return evidence
 
