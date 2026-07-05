@@ -12,6 +12,7 @@ resources:
   - job-coverage-repair.yaml
   - job-initial-load.yaml
   - job-news-backfill.yaml
+  - job-sec-fundamentals-backfill.yaml
   - job-news-intelligence-rebuild.yaml
   - job-news-daily-summary-rebuild.yaml
   - job-agent-queue-smoke.yaml

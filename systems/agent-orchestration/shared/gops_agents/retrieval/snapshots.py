@@ -27,7 +27,7 @@ from ..contracts import (
     stable_id,
     utc_now_iso,
 )
-from ..providers import ProviderRequest
+from ..providers import ClickHouseFinancialProvider, ProviderRequest
 from ..security import SanitizationResult, merge_safety_warnings, sanitize_text, sanitize_url, sanitize_value
 
 
@@ -37,6 +37,9 @@ SNAPSHOT_BUNDLE_BY_INTENT = {
     "relationship_impact_analysis": ["news_snapshot", "relationship_snapshot", "risk_policy_snapshot"],
     "market_summary": ["market_snapshot", "risk_policy_snapshot"],
     "company_comparison": ["market_snapshot", "news_snapshot", "relationship_snapshot", "risk_policy_snapshot"],
+    "financial_analysis": ["financial_snapshot", "risk_policy_snapshot"],
+    "financial_comparison": ["financial_snapshot", "financial_peer_snapshot", "risk_policy_snapshot"],
+    "financial_news_analysis": ["financial_snapshot", "news_snapshot", "risk_policy_snapshot"],
     "general_question": ["risk_policy_snapshot"],
 }
 
@@ -79,6 +82,12 @@ def route_plan_intent(route: IntentRoute) -> str:
     intent_type = str(route.intentType or "").strip().lower()
     intent_types = {part.strip() for part in intent_type.split("+") if part.strip()}
     roles = list(route.selectedRoles or [])
+    if "financial" in roles or any("financial" in item for item in intent_types):
+        if "news" in roles or "news" in intent_types:
+            return "financial_news_analysis"
+        if "ontology" in roles or any(item in intent_types for item in {"ontology", "company-comparison", "financial-comparison"}):
+            return "financial_comparison"
+        return "financial_analysis"
     if intent_types == {"news"} or roles == ["news"]:
         return "news_impact_analysis"
     if intent_types == {"ontology"} or roles == ["ontology"]:
@@ -141,6 +150,8 @@ class SnapshotExecutor:
         self.news = NewsSnapshotProvider(news_agent)
         self.market = MarketSnapshotProvider()
         self.relationship = RelationshipSnapshotProvider(ontology_agent)
+        self.financial = FinancialSnapshotProvider()
+        self.financial_peer = FinancialPeerSnapshotProvider(self.financial.provider)
         self.risk = RiskPolicySnapshotProvider()
 
     def fetch(self, *, context: Any, run_id: str, route_plan: RoutePlan, policy: RuntimePolicy) -> list[DataSnapshot]:
@@ -148,6 +159,8 @@ class SnapshotExecutor:
             "market_snapshot": self.market,
             "news_snapshot": self.news,
             "relationship_snapshot": self.relationship,
+            "financial_snapshot": self.financial,
+            "financial_peer_snapshot": self.financial_peer,
         }
         bundle = [item for item in route_plan.snapshot_bundle if item in providers]
         snapshots_by_type: dict[str, DataSnapshot] = {}
@@ -232,6 +245,16 @@ def market_peer_symbols_for_context(context: Any) -> list[str]:
     if max_peers <= 0:
         return []
     return retrieval_context.related_symbol_values()[:max_peers]
+
+
+def financial_peer_symbols_for_context(context: Any) -> list[str]:
+    values = []
+    for attr in ("relationshipSymbols", "newsSymbols"):
+        for value in getattr(context, attr, []) or []:
+            symbol = str(value or "").strip().upper()
+            if symbol and symbol not in values:
+                values.append(symbol)
+    return values[:5]
 
 
 class NewsSnapshotProvider:
@@ -361,6 +384,56 @@ class RelationshipSnapshotProvider:
             latency_ms=elapsed_ms(started_at),
             warnings=warnings,
         ))
+
+
+class FinancialSnapshotProvider:
+    snapshot_type = "financial_snapshot"
+    warning_name = "no_financial_summary"
+
+    def __init__(self, provider: Any | None = None):
+        self.provider = provider or ClickHouseFinancialProvider()
+
+    def fetch(self, context: Any, run_id: str, max_items: int) -> DataSnapshot:
+        started_at = time.perf_counter()
+        try:
+            evidence = self.provider.fetch(ProviderRequest(str(context.symbol), str(context.intent), symbols=tuple(financial_peer_symbols_for_context(context))))
+        except Exception as exc:
+            evidence = [EvidenceItem.no_data("financial", "Financial snapshot unavailable", f"재무 snapshot 조회에 실패했습니다: {exc.__class__.__name__}")]
+        return self._snapshot(context, run_id, max_items, evidence, started_at)
+
+    def _snapshot(self, context: Any, run_id: str, max_items: int, evidence: list[EvidenceItem], started_at: float) -> DataSnapshot:
+        available = [item for item in evidence if item.provider == "financial" and item.status == "available"]
+        items = (available or evidence)[:max_items]
+        warnings = financial_snapshot_warnings(items, self.warning_name)
+        return sanitize_snapshot(DataSnapshot(
+            snapshot_id=stable_id("snapshot", {"runId": run_id, "type": self.snapshot_type, "symbol": context.symbol}),
+            run_id=run_id,
+            snapshot_type=self.snapshot_type,
+            status="success" if available and not warnings else ("partial" if evidence else "failed"),
+            source="cache" if financial_cache_hit(items) else ("database" if available else "computed"),
+            cache_hit=financial_cache_hit(items),
+            freshness=freshness_from_evidence(items),
+            summary=financial_snapshot_summary(context, items, self.snapshot_type),
+            signals=[financial_signal_from_evidence(item, context.symbol) for item in available[:max_items]],
+            evidence=items,
+            data_quality="high" if available and not warnings else ("medium" if available else "low"),
+            confidence=0.72 if available and not warnings else (0.58 if available else 0.3),
+            latency_ms=elapsed_ms(started_at),
+            warnings=warnings,
+        ))
+
+
+class FinancialPeerSnapshotProvider(FinancialSnapshotProvider):
+    snapshot_type = "financial_peer_snapshot"
+    warning_name = "no_financial_peer_summary"
+
+    def fetch(self, context: Any, run_id: str, max_items: int) -> DataSnapshot:
+        started_at = time.perf_counter()
+        try:
+            evidence = self.provider.fetch_peer(ProviderRequest(str(context.symbol), str(context.intent), symbols=tuple(financial_peer_symbols_for_context(context))))
+        except Exception as exc:
+            evidence = [EvidenceItem.no_data("financial", "Financial peer snapshot unavailable", f"재무 peer snapshot 조회에 실패했습니다: {exc.__class__.__name__}")]
+        return self._snapshot(context, run_id, max_items, evidence, started_at)
 
 
 class RiskPolicySnapshotProvider:
@@ -690,7 +763,37 @@ def snapshot_for_role(role: str, by_type: dict[str, DataSnapshot]) -> DataSnapsh
         return by_type.get("market_snapshot")
     if role == "ontology":
         return by_type.get("relationship_snapshot")
+    if role == "financial":
+        return merge_financial_snapshots(by_type)
     return None
+
+
+def merge_financial_snapshots(by_type: dict[str, DataSnapshot]) -> DataSnapshot | None:
+    primary = by_type.get("financial_snapshot")
+    peer = by_type.get("financial_peer_snapshot")
+    if primary is None and peer is None:
+        return None
+    snapshots = [snapshot for snapshot in (primary, peer) if snapshot is not None]
+    evidence = [item for snapshot in snapshots for item in snapshot.evidence]
+    signals = [item for snapshot in snapshots for item in snapshot.signals]
+    summaries = [snapshot.summary for snapshot in snapshots if snapshot.summary]
+    status = "partial" if any(snapshot.status != "success" for snapshot in snapshots) else "success"
+    return sanitize_snapshot(DataSnapshot(
+        snapshot_id=stable_id("snapshot", {"runId": snapshots[0].run_id, "type": "financial_synthetic", "parts": [snapshot.snapshot_type for snapshot in snapshots]}),
+        run_id=snapshots[0].run_id,
+        snapshot_type="financial_synthetic_snapshot",
+        status=status,
+        source="computed",
+        cache_hit=any(snapshot.cache_hit for snapshot in snapshots),
+        freshness=snapshots[0].freshness,
+        summary=" ".join(summaries),
+        signals=signals,
+        evidence=evidence,
+        data_quality="low" if any(snapshot.data_quality == "low" for snapshot in snapshots) else "medium",
+        confidence=min((snapshot.confidence for snapshot in snapshots), default=0.5),
+        latency_ms=max((snapshot.latency_ms for snapshot in snapshots), default=0.0),
+        warnings=unique_strings(warning for snapshot in snapshots for warning in snapshot.warnings),
+    ))
 
 
 def role_name(role: str) -> str:
@@ -699,6 +802,7 @@ def role_name(role: str) -> str:
         "news": "news-analysis",
         "macro": "macro-analysis",
         "ontology": "company-relationship-analysis",
+        "financial": "financial-analysis",
     }.get(role, role)
 
 
@@ -736,6 +840,8 @@ def snapshots_from_cached_evidence(run_id: str, context: Any, route_plan: RouteP
         "news_snapshot": [item for item in evidence if item.provider == "news"],
         "relationship_snapshot": [item for item in evidence if item.provider == "ontology"],
         "market_snapshot": [item for item in evidence if item.provider in {"macro", "market-data"}],
+        "financial_snapshot": [item for item in evidence if item.provider == "financial" and "peer" not in str(item.title).lower()],
+        "financial_peer_snapshot": [item for item in evidence if item.provider == "financial" and "peer" in str(item.title).lower()],
     }
     for snapshot_type in route_plan.snapshot_bundle:
         if snapshot_type == "risk_policy_snapshot":
@@ -748,6 +854,12 @@ def snapshots_from_cached_evidence(run_id: str, context: Any, route_plan: RouteP
         elif snapshot_type == "relationship_snapshot":
             summary = relationship_summary(context, available)
             warnings = [] if available else ["no_clear_relationship_path"]
+        elif snapshot_type == "financial_snapshot":
+            summary = financial_snapshot_summary(context, items, snapshot_type)
+            warnings = financial_snapshot_warnings(items, "no_financial_summary")
+        elif snapshot_type == "financial_peer_snapshot":
+            summary = financial_snapshot_summary(context, items, snapshot_type)
+            warnings = financial_snapshot_warnings(items, "no_financial_peer_summary")
         else:
             summary = f"{context.symbol} cached market snapshot을 재사용했습니다." if items else f"{context.symbol} cached market snapshot이 없습니다."
             warnings = [] if items else ["market_snapshot_unavailable"]
@@ -779,6 +891,8 @@ def signals_for_cached_snapshot(snapshot_type: str, items: list[EvidenceItem], c
         return [news_signal_from_evidence(item, context.symbol) for item in items[:5]]
     if snapshot_type == "relationship_snapshot":
         return [relationship_signal_from_evidence(item, context.symbol) for item in items[:5]]
+    if snapshot_type in {"financial_snapshot", "financial_peer_snapshot"}:
+        return [financial_signal_from_evidence(item, context.symbol) for item in items[:5]]
     return [AgentSignal(target=str(context.symbol), direction="unknown", horizon="unknown", strength="low", reasoning=item.summary) for item in items[:5]]
 
 
@@ -886,6 +1000,50 @@ def relationship_signal_from_evidence(item: EvidenceItem, default_target: str) -
         strength="medium",
         reasoning=item.summary,
     )
+
+
+def financial_signal_from_evidence(item: EvidenceItem, default_target: str) -> AgentSignal:
+    raw = item.raw if isinstance(item.raw, dict) else {}
+    metric_count = len(raw.get("metrics") or raw.get("peers") or [])
+    return AgentSignal(
+        target=str(raw.get("symbol") or default_target),
+        direction="unknown",
+        horizon="fundamental",
+        strength="medium" if metric_count else "low",
+        reasoning=item.summary,
+    )
+
+
+def financial_snapshot_summary(context: Any, items: list[EvidenceItem], snapshot_type: str) -> str:
+    available = [item for item in items if item.status == "available"]
+    if not available:
+        return f"{context.symbol} SEC 재무 snapshot 근거가 없습니다."
+    if snapshot_type == "financial_peer_snapshot":
+        frame_period = next((str((item.raw or {}).get("frame_period") or "") for item in available if isinstance(item.raw, dict)), "")
+        suffix = f" 기준 기간 {frame_period}" if frame_period else ""
+        return f"{context.symbol} SEC peer 재무 비교 근거를 확인했습니다.{suffix}"
+    return available[0].summary or f"{context.symbol} SEC 재무 요약을 확인했습니다."
+
+
+def financial_snapshot_warnings(items: list[EvidenceItem], empty_warning: str) -> list[str]:
+    if not any(item.status == "available" for item in items):
+        return [empty_warning]
+    warnings = []
+    for item in items:
+        raw = item.raw if isinstance(item.raw, dict) else {}
+        if raw.get("stale"):
+            warnings.append("stale_financial_summary")
+        quality = raw.get("quality")
+        if quality and quality not in {"available"}:
+            warnings.append(str(quality))
+        for metric in raw.get("metrics") or []:
+            if isinstance(metric, dict) and metric.get("quality") and metric.get("quality") != "available":
+                warnings.append(str(metric.get("quality")))
+    return unique_strings(warnings)
+
+
+def financial_cache_hit(items: list[EvidenceItem]) -> bool:
+    return any(isinstance(item.raw, dict) and (item.raw.get("cache_hit") or item.raw.get("dataSource") == "redis") for item in items)
 
 
 def news_snapshot_source(items: list[EvidenceItem]) -> str:

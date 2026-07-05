@@ -65,6 +65,10 @@ Agent entity resolver는 기본 운영 catalog로
 `systems/agent-orchestration/config/entity-aliases.json`을 읽는다.
 `entity-aliases.seed.json`과 Python seed constants는 bootstrap fallback이다.
 
+SEC companyfacts backfill은 `gops-agent-orchestrator`가 아니라
+`gops-market-storage` image에서 실행한다. 해당 image에는
+`systems/fundamentals`와 `systems/market-data/shared`가 포함되어야 한다.
+
 ## Kubernetes Resources
 
 Required deployments:
@@ -91,6 +95,7 @@ infra/k8s/base/job-agent-queue-smoke.yaml
 infra/k8s/base/job-report-store-smoke.yaml
 infra/k8s/base/job-graph-expansion-*.yaml
 infra/k8s/base/job-retrieval-*.yaml
+infra/k8s/base/job-sec-fundamentals-backfill.yaml
 infra/k8s/base/job-fanout-policy-benchmark.yaml
 infra/k8s/base/job-answer-grounding-eval.yaml
 ```
@@ -175,7 +180,14 @@ agent:request:idempotency:{userHash}:{keyHash}
 agent.reports
 agent.reports:{analysisId}
 gops:agent:graph-expansion:v1:{symbol}
+gops:fundamentals:summary:v1:{SYMBOL}
+gops:fundamentals:peer:v1:{SYMBOL}:latest
+gops:fundamentals:peer:v1:{SYMBOL}:{FRAME_PERIOD}
 ```
+
+Fundamentals Redis keys are written by the SEC companyfacts backfill job and
+future reconcile jobs. Agent runtime trusts Redis hits and does not perform
+ClickHouse stale checks on the hot path.
 
 ## ClickHouse
 
@@ -201,11 +213,71 @@ market_data.news_articles
 market_data.news_article_localizations
 market_data.news_company_daily_summaries
 market_data.agent_graph_expansions
+market_data.sec_company_tickers
+market_data.sec_filing_events
+market_data.sec_raw_artifacts
+market_data.sec_financial_facts
+market_data.sec_derived_metrics
+market_data.sec_frames
+market_data.sec_collection_runs
 ```
 
 News provider는 ClickHouse의 recent serving rows와 Redis latest summaries를
 우선 사용한다. `market_data.agent_graph_expansions`는 GraphDB에서 미리 계산한
 관계 hint를 warm/deep path에서 재사용하기 위한 table이다.
+
+## SEC Fundamentals
+
+SEC fundamentals are collected by `systems/fundamentals`, not by the agent
+runtime. The implemented initial-load job is
+`systems/fundamentals/jobs/sec-companyfacts-backfill/main.py` and should run in
+the `gops-market-storage` image. Initial load uses SEC `companyfacts.zip` bulk
+data. Incremental
+sync should use EDGAR latest filings RSS/full-index or submissions index, then
+re-fetch `companyfacts` only for companies with new `10-K`, `10-Q`, `10-K/A`, or
+`10-Q/A`. `8-K` is stored as an event and does not trigger metric recomputation
+by default.
+
+Required env:
+
+```text
+SEC_USER_AGENT
+SEC_COMPANYFACTS_ZIP_URL
+SEC_FUNDAMENTALS_S3_PREFIX
+SEC_FUNDAMENTALS_DRY_RUN
+SEC_FUNDAMENTALS_MAX_COMPANIES
+SEC_FUNDAMENTALS_BATCH_SIZE
+SEC_FUNDAMENTALS_LOAD_FRAMES
+S3_BUCKET
+REDIS_URL
+CLICKHOUSE_HTTP_URL
+CLICKHOUSE_DATABASE
+CLICKHOUSE_USER
+CLICKHOUSE_PASSWORD
+```
+
+`SEC_USER_AGENT` must include a contact email or URL. SEC requests are limited
+to at most 8 requests per second. S&P 500 membership comes from
+`systems/market-data/config/sp500-universe.json`; ticker/CIK mapping is stored in
+`market_data.sec_company_tickers`. Universe removals update
+`is_active_universe_member`; historical facts and metrics are retained.
+
+Manual AWS run:
+
+```sh
+SEC_FUNDAMENTALS_DRY_RUN=false \
+SEC_USER_AGENT="GOPS fundamentals contact@example.com" \
+./scripts/aws/run-sec-fundamentals-backfill-job.sh
+```
+
+For a small load test:
+
+```sh
+SEC_FUNDAMENTALS_DRY_RUN=false \
+SEC_USER_AGENT="GOPS fundamentals contact@example.com" \
+SEC_FUNDAMENTALS_SYMBOLS=AAPL,NVDA \
+./scripts/aws/run-sec-fundamentals-backfill-job.sh
+```
 
 ## GraphDB
 
@@ -278,6 +350,10 @@ OPENAI_API_KEY
 CLICKHOUSE_PASSWORD
 ```
 
+SEC fundamentals backfill also requires `SEC_USER_AGENT`, but it is not an
+agent runtime secret. It may live in the deployment ConfigMap/secret as long as
+it contains contact information.
+
 AWS Secrets Manager reference:
 
 ```text
@@ -329,6 +405,7 @@ CLICKHOUSE_USER
 CLICKHOUSE_PASSWORD
 GRAPHDB_SPARQL_URL
 GRAPHDB_REPOSITORY
+SEC_USER_AGENT
 ```
 
 Backpressure and deadline:
@@ -355,7 +432,8 @@ Local static checks:
 
 ```sh
 git diff --check
-.venv/bin/python -m unittest discover -s systems/agent-orchestration/tests -p 'test_agent_orchestration.py'
+.venv/bin/python -m unittest discover -s systems/agent-orchestration/tests -p 'test_*.py'
+.venv/bin/python -m unittest discover -s systems/fundamentals/tests -p 'test_*.py'
 ```
 
 Kubernetes manifests:

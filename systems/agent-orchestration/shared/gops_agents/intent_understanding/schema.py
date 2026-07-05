@@ -4,9 +4,10 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
-CONTENT_TASK_TYPES = ("news", "chart", "macro", "ontology", "market_move", "general")
+CONTENT_TASK_TYPES = ("news", "chart", "macro", "ontology", "financial", "financial_comparison", "market_move", "general")
 ROUTE_MODES = ("analysis", "ui_layout", "hybrid", "clarify")
-ROLE_ORDER = ("chart", "news", "macro", "ontology")
+ROLE_ORDER = ("chart", "news", "macro", "ontology", "financial")
+DEFAULT_ANALYSIS_ROLES = ("chart", "news", "macro", "ontology")
 UI_ACTIONS = ("focus", "resize", "move", "open", "close", "arrange")
 UI_PANEL_TYPES = ("chart", "newsFeed", "indicatorCompare", "orderTicket", "portfolioHoldings", "aiSummary", "ontologyGraph")
 UI_SIZE_INTENTS = ("max", "large", "small", "min")
@@ -18,8 +19,10 @@ ROLES_BY_CONTENT_TASK = {
     "chart": ("chart",),
     "macro": ("macro",),
     "ontology": ("ontology",),
-    "market_move": ROLE_ORDER,
-    "general": ROLE_ORDER,
+    "financial": ("financial",),
+    "financial_comparison": ("financial",),
+    "market_move": DEFAULT_ANALYSIS_ROLES,
+    "general": DEFAULT_ANALYSIS_ROLES,
 }
 
 INTENT_TYPE_BY_CONTENT_TASK = {
@@ -27,6 +30,8 @@ INTENT_TYPE_BY_CONTENT_TASK = {
     "chart": "chart",
     "macro": "macro",
     "ontology": "ontology",
+    "financial": "financial-analysis",
+    "financial_comparison": "financial-comparison",
     "market_move": "market-move",
     "general": "general-analysis",
 }
