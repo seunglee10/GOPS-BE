@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 from dataclasses import dataclass, field
@@ -33,6 +34,14 @@ class MacroProvider:
 
 class OntologyProvider:
     def fetch(self, request: ProviderRequest) -> list[EvidenceItem]:
+        raise NotImplementedError
+
+
+class FinancialProvider:
+    def fetch(self, request: ProviderRequest) -> list[EvidenceItem]:
+        raise NotImplementedError
+
+    def fetch_peer(self, request: ProviderRequest) -> list[EvidenceItem]:
         raise NotImplementedError
 
 
@@ -366,6 +375,276 @@ class EmptyMacroProvider(MacroProvider):
                 "No external macro data source is configured in v1.",
             )
         ]
+
+
+class ClickHouseFinancialProvider(FinancialProvider):
+    def __init__(self, clickhouse_provider=None, redis_client=None, limit: int | None = None):
+        self.clickhouse_provider = clickhouse_provider
+        self.redis_client = redis_client
+        self.limit = int(limit or os.getenv("AGENT_FINANCIAL_LIMIT", "24"))
+
+    def fetch(self, request: ProviderRequest) -> list[EvidenceItem]:
+        try:
+            payload = self.financial_summary(request.symbol)
+        except Exception as exc:
+            return [EvidenceItem.no_data("financial", "Financial provider unavailable", f"재무 provider 조회에 실패했습니다: {exc.__class__.__name__}")]
+        if not payload:
+            return [EvidenceItem.no_data("financial", "No financial summary", f"{request.symbol} SEC 재무 요약이 없습니다.")]
+        return [financial_payload_to_evidence(payload, request.symbol, title_suffix="financial summary")]
+
+    def fetch_peer(self, request: ProviderRequest) -> list[EvidenceItem]:
+        try:
+            payload = self.financial_peer_summary(request.symbol)
+        except Exception as exc:
+            return [EvidenceItem.no_data("financial", "Financial peer provider unavailable", f"재무 비교 provider 조회에 실패했습니다: {exc.__class__.__name__}")]
+        if not payload:
+            return [EvidenceItem.no_data("financial", "No financial peer summary", f"{request.symbol} SEC peer 비교 요약이 없습니다.")]
+        return [financial_payload_to_evidence(payload, request.symbol, title_suffix="financial peer summary")]
+
+    def financial_summary(self, symbol: str) -> dict[str, Any] | None:
+        symbol = normalize_financial_symbol(symbol)
+        cached = self._redis_json(financial_summary_key(symbol))
+        if cached:
+            cached.setdefault("cache_hit", True)
+            return cached
+        provider = self.clickhouse_provider or self._default_provider()
+        if hasattr(provider, "financial_summary"):
+            return provider.financial_summary(symbol, limit=self.limit)
+        if not hasattr(provider, "query_json_each_row"):
+            return None
+        derived_table = provider.table("sec_derived_metrics") if hasattr(provider, "table") else "market_data.sec_derived_metrics"
+        facts_table = provider.table("sec_financial_facts") if hasattr(provider, "table") else "market_data.sec_financial_facts"
+        rows = provider.query_json_each_row(
+            f"""
+            SELECT
+              symbol,
+              cik,
+              'derived' AS kind,
+              metric,
+              value,
+              '' AS taxonomy,
+              '' AS concept,
+              '' AS unit,
+              fiscal_year AS fiscalYear,
+              fiscal_period AS fiscalPeriod,
+              period_end AS periodEnd,
+              form,
+              accession,
+              filed_at AS filedAt,
+              quality,
+              raw,
+              version_filed_at AS versionFiledAt,
+              computed_at AS computedAt
+            FROM {derived_table}
+            WHERE symbol = {{symbol:String}}
+            UNION ALL
+            SELECT
+              symbol,
+              cik,
+              'fact' AS kind,
+              metric,
+              value,
+              taxonomy,
+              concept,
+              unit,
+              fiscal_year AS fiscalYear,
+              fiscal_period AS fiscalPeriod,
+              period_end AS periodEnd,
+              form,
+              accession,
+              filed_at AS filedAt,
+              quality,
+              raw,
+              version_filed_at AS versionFiledAt,
+              inserted_at AS computedAt
+            FROM {facts_table}
+            WHERE symbol = {{symbol:String}}
+            ORDER BY versionFiledAt DESC, computedAt DESC, kind ASC, metric ASC
+            LIMIT {{limit:UInt32}}
+            FORMAT JSONEachRow
+            """,
+            {"symbol": symbol, "limit": self.limit},
+        )
+        return financial_rows_to_payload(symbol, rows)
+
+    def financial_peer_summary(self, symbol: str) -> dict[str, Any] | None:
+        symbol = normalize_financial_symbol(symbol)
+        cached = self._redis_json(financial_peer_latest_key(symbol))
+        if cached:
+            cached.setdefault("cache_hit", True)
+            return cached
+        provider = self.clickhouse_provider or self._default_provider()
+        if hasattr(provider, "financial_peer_summary"):
+            return provider.financial_peer_summary(symbol, limit=self.limit)
+        if not hasattr(provider, "query_json_each_row"):
+            return None
+        table = provider.table("sec_frames") if hasattr(provider, "table") else "market_data.sec_frames"
+        rows = provider.query_json_each_row(
+            f"""
+            SELECT
+              frame_period AS framePeriod,
+              taxonomy,
+              concept,
+              unit,
+              symbol,
+              cik,
+              value,
+              accession,
+              filed_at AS filedAt,
+              quality,
+              raw
+            FROM {table}
+            WHERE symbol = {{symbol:String}}
+            ORDER BY frame_period DESC, concept ASC
+            LIMIT {{limit:UInt32}}
+            FORMAT JSONEachRow
+            """,
+            {"symbol": symbol, "limit": self.limit},
+        )
+        return financial_peer_rows_to_payload(symbol, rows)
+
+    def _redis_json(self, key: str) -> dict[str, Any] | None:
+        client = self.redis_client
+        if client is None and os.getenv("REDIS_URL"):
+            client = self._default_redis_client()
+        if client is None:
+            return None
+        try:
+            value = client.get(key)
+        except Exception:
+            return None
+        if not value:
+            return None
+        if isinstance(value, bytes):
+            value = value.decode("utf-8")
+        try:
+            decoded = json.loads(value)
+        except Exception:
+            return None
+        return decoded if isinstance(decoded, dict) else None
+
+    def _default_provider(self):
+        from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
+
+        self.clickhouse_provider = ClickHouseMarketDataProvider()
+        return self.clickhouse_provider
+
+    def _default_redis_client(self):
+        import redis
+
+        self.redis_client = redis.from_url(
+            os.getenv("REDIS_URL", "redis://localhost:6379/0"),
+            decode_responses=True,
+            socket_connect_timeout=float(os.getenv("REDIS_CONNECT_TIMEOUT_SECONDS", "0.2")),
+            socket_timeout=float(os.getenv("REDIS_SOCKET_TIMEOUT_SECONDS", "0.2")),
+        )
+        return self.redis_client
+
+
+def financial_summary_key(symbol: str) -> str:
+    return f"gops:fundamentals:summary:v1:{normalize_financial_symbol(symbol)}"
+
+
+def financial_peer_latest_key(symbol: str) -> str:
+    return f"gops:fundamentals:peer:v1:{normalize_financial_symbol(symbol)}:latest"
+
+
+def normalize_financial_symbol(symbol: str) -> str:
+    return str(symbol or "UNKNOWN").strip().upper() or "UNKNOWN"
+
+
+def financial_rows_to_payload(symbol: str, rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not rows:
+        return None
+    metrics = []
+    for row in rows:
+        raw = parse_raw_json(row.get("raw"))
+        metrics.append({
+            "kind": row.get("kind") or "derived",
+            "metric": row.get("metric"),
+            "value": row.get("value"),
+            "fiscalYear": row.get("fiscalYear"),
+            "fiscalPeriod": row.get("fiscalPeriod"),
+            "periodEnd": str(row.get("periodEnd") or ""),
+            "asOf": str(row.get("periodEnd") or ""),
+            "taxonomy": row.get("taxonomy"),
+            "concept": row.get("concept"),
+            "unit": row.get("unit"),
+            "cik": row.get("cik"),
+            "form": row.get("form"),
+            "accession": row.get("accession"),
+            "filedAt": str(row.get("filedAt") or ""),
+            "source": "sec_companyfacts" if row.get("kind") == "fact" else "sec_companyfacts_derived",
+            "quality": row.get("quality") or raw.get("quality"),
+            "selectedConcept": raw.get("selected_concept"),
+        })
+    latest = rows[0]
+    latest_period = " ".join(str(item) for item in (latest.get("fiscalYear"), latest.get("fiscalPeriod")) if item)
+    return {
+        "symbol": normalize_financial_symbol(symbol),
+        "cik": latest.get("cik"),
+        "summary": f"{normalize_financial_symbol(symbol)} SEC 재무 지표 {len(metrics)}개를 확인했습니다.",
+        "latest_period": latest_period.strip(),
+        "source": "sec_companyfacts",
+        "source_accession": latest.get("accession"),
+        "source_filed_at": str(latest.get("filedAt") or ""),
+        "as_of": str(latest.get("periodEnd") or ""),
+        "computed_at": str(latest.get("computedAt") or ""),
+        "metrics": metrics,
+        "cache_hit": False,
+    }
+
+
+def financial_peer_rows_to_payload(symbol: str, rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not rows:
+        return None
+    frame_period = str(rows[0].get("framePeriod") or "")
+    peers = []
+    for row in rows:
+        raw = parse_raw_json(row.get("raw"))
+        peers.append({
+            "symbol": row.get("symbol"),
+            "concept": row.get("concept"),
+            "value": row.get("value"),
+            "unit": row.get("unit"),
+            "quality": row.get("quality") or raw.get("quality") or "frame_as_reported",
+        })
+    return {
+        "symbol": normalize_financial_symbol(symbol),
+        "summary": f"{normalize_financial_symbol(symbol)} SEC frames 기준 peer 비교 데이터를 확인했습니다.",
+        "frame_period": frame_period,
+        "peers": peers,
+        "quality": "frame_as_reported",
+        "cache_hit": False,
+    }
+
+
+def financial_payload_to_evidence(payload: dict[str, Any], symbol: str, *, title_suffix: str) -> EvidenceItem:
+    raw = dict(payload)
+    raw.setdefault("quality", raw.get("quality") or "available")
+    raw.setdefault("dataSource", "redis" if raw.get("cache_hit") else "clickhouse")
+    summary = str(payload.get("summary") or f"{normalize_financial_symbol(symbol)} SEC financial data is available.")
+    return EvidenceItem(
+        provider="financial",
+        status="available",
+        title=f"{normalize_financial_symbol(symbol)} {title_suffix}",
+        summary=summary,
+        observedAt=str(payload.get("computed_at") or payload.get("source_filed_at") or utc_now_iso()),
+        url=payload.get("source_url"),
+        raw=raw,
+    )
+
+
+def parse_raw_json(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if not value:
+        return {}
+    try:
+        decoded = json.loads(value)
+    except Exception:
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
 
 
 class EmptyOntologyProvider(OntologyProvider):

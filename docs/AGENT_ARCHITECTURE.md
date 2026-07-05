@@ -7,7 +7,7 @@
 
 ## 목적
 
-GOPS 에이전트는 사용자 질의를 받아 시장 데이터, 뉴스, 온톨로지 관계
+GOPS 에이전트는 사용자 질의를 받아 시장 데이터, 뉴스, 온톨로지 관계, SEC 재무
 근거를 모은 뒤 분석 리포트와 UI 제안을 만든다. 에이전트는 분석과 제안만
 담당하며 주문 실행, 계좌 제어, 브로커 호출은 담당하지 않는다.
 
@@ -23,20 +23,20 @@ GOPS 에이전트는 사용자 질의를 받아 시장 데이터, 뉴스, 온톨
 
 - user query understanding
 - `AgentOrchestrator` workflow
-- market, news, relationship snapshots
+- market, news, relationship, financial snapshots
 - role agent findings
 - final answer synthesis
 - analysis report serialization
 - async worker, report store, delivery gateway contract
 - market-event detection and notification-decision publishing
-- provider adapters for market/news/ontology/macro evidence
+- provider adapters for market/news/ontology/financial/macro evidence
 
 소유하지 않는 범위:
 
 - frontend chat or panel rendering
 - FastAPI auth/session policy
 - AWS resource provisioning
-- market-data ingestion, backfill, and storage workers
+- market-data and SEC fundamentals ingestion, backfill, and storage workers
 - order, account, KIS, broker-control flows
 
 에이전트는 절대 실주문을 실행하지 않는다. 주문 관련 의사결정이 필요하면
@@ -51,7 +51,7 @@ flowchart LR
   Queue --> Worker["agent-analysis-worker"]
   Worker --> Orchestrator["AgentOrchestrator"]
   Orchestrator --> Understanding["query understanding"]
-  Understanding --> Snapshots["market/news/relationship snapshots"]
+  Understanding --> Snapshots["market/news/relationship/financial snapshots"]
   Snapshots --> Roles["role agents"]
   Roles --> Synthesis["final answer synthesis"]
   Synthesis --> Store["Redis report store"]
@@ -72,8 +72,8 @@ Kafka queue, worker, Redis report store를 쓰는 async path다.
 | --- | --- |
 | `AgentOrchestrator` | 질의 이해, snapshot 수집, role agent 실행, synthesis를 묶는 workflow 진입점. |
 | query understanding | 종목, 관계 종목, 테마, content task, UI task, route mode를 추출한다. |
-| snapshots | market/news/relationship/macro evidence를 bounded provider call로 수집한다. |
-| role agents | 시장, 뉴스, 온톨로지, 리스크 등 역할별 finding을 만든다. |
+| snapshots | market/news/relationship/financial/macro evidence를 bounded provider call로 수집한다. |
+| role agents | 시장, 뉴스, 온톨로지, 재무, 리스크 등 역할별 finding을 만든다. |
 | synthesis | evidence와 role finding을 기반으로 최종 답변과 리포트를 만든다. |
 | report store | `analysisId`별 리포트, latest report, idempotency mapping을 저장한다. |
 | delivery gateway | result topic을 Redis update channel로 fanout한다. |
@@ -134,7 +134,7 @@ class EvidenceItem:
 
 | Field | Requirement |
 | --- | --- |
-| `provider` | `market`, `news`, `ontology`, `macro` 같은 evidence source. |
+| `provider` | `market`, `news`, `ontology`, `financial`, `macro` 같은 evidence source. |
 | `status` | `available` 또는 `no-data`. |
 | `title` | 짧은 evidence 제목. |
 | `summary` | 최종 답변 문장이 아니라 사실 요약. |
@@ -152,12 +152,17 @@ Provider 실패나 빈 결과는 예외로 전체 분석을 멈추지 않는다.
 | Market | Redis, ClickHouse | chart/quote/candle 기반 snapshot을 만든다. |
 | News | Redis, ClickHouse, optional Alpaca fallback | cached news intelligence와 article rows를 evidence로 바꾼다. |
 | Ontology | GraphDB, optional Redis path cache | `GraphDBOntologyProvider`가 기업 관계, peer, theme, path evidence를 만든다. |
+| Financial | Redis, ClickHouse | SEC companyfacts/frames에서 미리 계산한 fundamentals snapshot을 evidence로 바꾼다. 사용자 요청 hot path에서는 SEC API를 호출하지 않는다. |
 | Macro | none in v1 | v1에서는 intentional empty adapter다. |
 
 News provider는 `provider="news"` evidence만 반환한다. Ontology provider는
 `provider="ontology"` evidence를 반환하고 가능한 경우
 `raw["relationType"]`, ticker, confidence, source URL, theme, sector, graph node
 metadata를 보존한다.
+Financial provider는 `provider="financial"` evidence만 반환한다. `missing_source`,
+`stale`, `frame_coverage_gap`, `equity_includes_nci` 같은 상태는
+`EvidenceItem.status`가 아니라 `raw["quality"]` 또는 snapshot `warnings`에
+담는다. `EvidenceItem.status`는 `available` 또는 `no-data`만 사용한다.
 
 GraphDB가 없거나 timeout이면 ontology snapshot은 no-data evidence가 되고,
 market/news 근거만으로 분석은 계속된다. Kafka나 ClickHouse가 있다는 사실만으로
@@ -206,9 +211,13 @@ registry/universe 기준으로 검증한다.
 | `event-detector` | no | market Kafka topics를 agent market events로 바꾼다. |
 | `notification-publisher` | no | notification decision을 Redis/WebSocket consumer에 fanout한다. |
 | `graph-expansion-refresh` | no | GraphDB hint를 Redis/ClickHouse cache로 materialize한다. |
+| `sec-companyfacts-backfill` | no | SEC companyfacts bulk ZIP을 S3에 저장하고 ClickHouse/Redis fundamentals projection을 만든다. |
+| `sec-fundamentals-reconcile` | future | ClickHouse 최신 revision과 Redis cache를 비교해 stale cache를 재작성한다. Hot path stale check를 하지 않는다. |
 | smoke/eval jobs | no | queue, store, graph, latency, retrieval, grounding checks. |
 
-모든 agent runtime은 `gops-agent-orchestrator` image를 공유한다.
+Agent runtime은 `gops-agent-orchestrator` image를 공유한다. SEC
+companyfacts backfill은 S3/ClickHouse helpers를 재사용하기 위해
+`gops-market-storage` image에서 실행된다.
 
 ## Package Layout
 
@@ -229,6 +238,11 @@ systems/agent-orchestration/
   pods/                   runtime entrypoint wrappers
   jobs/                   smoke, refresh, benchmark, eval entrypoints
   tests/                  unit and contract tests
+
+systems/fundamentals/
+  jobs/sec-companyfacts-backfill/
+  shared/fundamentals/    SEC concept map, deterministic metrics, Redis keys, DDL contracts
+  tests/                  fundamentals normalization and metric tests
 ```
 
 Current provider implementation still imports `alfaka.*` helpers from
@@ -261,7 +275,14 @@ agent.reports
 agent.reports:{analysisId}
 gops:agent:graph-expansion:v1:{symbol}
 gops:agent:graph-path:{...}
+gops:fundamentals:summary:v1:{SYMBOL}
+gops:fundamentals:peer:v1:{SYMBOL}:latest
+gops:fundamentals:peer:v1:{SYMBOL}:{FRAME_PERIOD}
 ```
+
+Fundamentals Redis cache is trusted on the agent hot path. Stale detection is
+performed by SEC backfill/reconcile jobs, not by querying ClickHouse on every
+Redis hit.
 
 ClickHouse tables used by agent providers:
 
@@ -271,13 +292,38 @@ market_data.news_articles
 market_data.news_article_localizations
 market_data.news_company_daily_summaries
 market_data.agent_graph_expansions
+market_data.sec_company_tickers
+market_data.sec_filing_events
+market_data.sec_raw_artifacts
+market_data.sec_financial_facts
+market_data.sec_derived_metrics
+market_data.sec_frames
+market_data.sec_collection_runs
+```
+
+Financial role contract:
+
+```text
+role = financial
+agent id = financial-agent
+finding role = financial-analysis
+evidence provider = financial
+```
+
+Snapshot bundle additions:
+
+```text
+financial_analysis -> financial_snapshot, risk_policy_snapshot
+financial_comparison -> financial_snapshot, financial_peer_snapshot, risk_policy_snapshot
+financial_news_analysis -> financial_snapshot, news_snapshot, risk_policy_snapshot
 ```
 
 ## Validation
 
 ```sh
 git diff --check
-.venv/bin/python -m unittest discover -s systems/agent-orchestration/tests -p 'test_agent_orchestration.py'
+.venv/bin/python -m unittest discover -s systems/agent-orchestration/tests -p 'test_*.py'
+.venv/bin/python -m unittest discover -s systems/fundamentals/tests -p 'test_*.py'
 ```
 
 Backend bridge changes should also run:

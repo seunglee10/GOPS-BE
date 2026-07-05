@@ -168,7 +168,8 @@ Use `docs/AGENT_AWS_BUILD.md` for deploy/env/platform contracts and
 Unit tests:
 
 ```sh
-.venv/bin/python -m unittest discover -s systems/agent-orchestration/tests -p 'test_agent_orchestration.py'
+.venv/bin/python -m unittest discover -s systems/agent-orchestration/tests -p 'test_*.py'
+.venv/bin/python -m unittest discover -s systems/fundamentals/tests -p 'test_*.py'
 ```
 
 Backend bridge tests:

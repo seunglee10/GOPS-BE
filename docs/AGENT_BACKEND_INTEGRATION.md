@@ -270,7 +270,8 @@ polling/SSE semantics는 보존해야 한다.
 ```sh
 git diff --check
 .venv/bin/python -m unittest discover -s systems/api-server/tests -p 'test_agent_routes.py'
-.venv/bin/python -m unittest discover -s systems/agent-orchestration/tests -p 'test_agent_orchestration.py'
+.venv/bin/python -m unittest discover -s systems/agent-orchestration/tests -p 'test_*.py'
+.venv/bin/python -m unittest discover -s systems/fundamentals/tests -p 'test_*.py'
 ```
 
 Runtime acceptance:
