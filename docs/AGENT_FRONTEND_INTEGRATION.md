@@ -186,14 +186,13 @@ apps/gops-frontend/src/App.tsx
 apps/gops-frontend/src/agent/agentAnalysisClient.ts
 apps/gops-frontend/src/agents/agentAnalysis.ts
 apps/gops-frontend/src/components/BottomCommandBar.tsx
+apps/gops-frontend/src/layout/agentLayoutTypes.ts
+apps/gops-frontend/src/layout/panelLayout.ts
 apps/gops-frontend/src/layout/tiledAgentLayout.ts
 apps/chart-engine/src/agentReference.ts
 apps/chart-engine/src/agentChat.ts
 apps/chart-engine/src/proposals.ts
 apps/chart-engine/src/types.ts
-apps/gops-frontend/src/layout/types.ts
-apps/gops-frontend/src/layout/commands.ts
-apps/gops-frontend/src/layout/panelRegistry.ts
 ```
 
 새 프런트는 위 구현을 그대로 가져올 필요는 없다. 보존해야 하는 것은 request
