@@ -390,9 +390,11 @@ def decode_json_object(value: Any) -> dict[str, Any] | None:
 def repo_root() -> Path:
     current = Path(__file__).resolve()
     for parent in current.parents:
-        if (parent / "systems").exists() and (parent / "apps").exists():
+        if (parent / "systems").exists():
             return parent
-    return current.parents[7]
+        if parent.name == "systems":
+            return parent.parent
+    return current.parents[-1]
 
 
 def read_string(value: Any) -> str | None:
