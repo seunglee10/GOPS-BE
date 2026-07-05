@@ -224,13 +224,20 @@ def project_market_cap(
 
 def quote_rows_by_symbol(provider: Any, symbols: list[str]) -> dict[str, dict[str, Any]]:
     clickhouse_provider = getattr(provider, "clickhouse_provider", None)
+    latest_quotes = getattr(clickhouse_provider, "latest_quotes", None)
     rank_symbols = getattr(clickhouse_provider, "rank_symbols", None)
     rows: list[dict[str, Any]] = []
-    if callable(rank_symbols):
+    if callable(latest_quotes):
         try:
-            rows = rank_symbols(symbols, kind="dollar-volume", limit=len(symbols))
+            rows = latest_quotes(symbols, limit=len(symbols))
         except Exception:
             rows = []
+    if callable(rank_symbols):
+        if not rows:
+            try:
+                rows = rank_symbols(symbols, kind="dollar-volume", limit=len(symbols))
+            except Exception:
+                rows = []
     by_symbol = {
         normalize_market_symbol(row["symbol"]): row
         for row in rows or []

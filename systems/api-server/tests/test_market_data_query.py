@@ -409,6 +409,12 @@ class FakeHeatmapClickHouseProvider:
         allowed = set(symbols)
         return [row for row in self.rows if row.get("symbol") in allowed][:limit]
 
+    def latest_quotes(self, symbols, limit=None):
+        self.calls.append({"symbols": list(symbols), "limit": limit, "method": "latest_quotes"})
+        allowed = set(symbols)
+        rows = [row for row in self.rows if row.get("symbol") in allowed]
+        return rows[:limit] if limit is not None else rows
+
     def table(self, name):
         return f"market_data.{name}"
 
@@ -1208,7 +1214,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(payload["quoteRefreshSeconds"], 60)
         self.assertEqual(payload["layoutRefreshSeconds"], 300)
         self.assertEqual(payload["layoutAsOf"], "2026-06-25T15:30:00Z")
-        self.assertEqual(provider.clickhouse_provider.calls[:1], [{"symbols": ["AAPL", "MSFT"], "kind": "dollar-volume", "limit": 2}])
+        self.assertEqual(provider.clickhouse_provider.calls[:1], [{"symbols": ["AAPL", "MSFT"], "limit": 2, "method": "latest_quotes"}])
         self.assertEqual(cached_payload["items"][0]["symbol"], "AAPL")
         self.assertEqual(payload["coverage"]["marketCapFromFundamentals"], 1)
         self.assertEqual(payload["coverage"]["marketCapFromSeed"], 1)
