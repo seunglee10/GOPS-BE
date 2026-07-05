@@ -91,8 +91,34 @@ class AgentOrchestrator:
             except Exception:
                 state = self._run_sequential_workflow(request)
         else:
-            state = self._run_sequential_workflow(request)
+                state = self._run_sequential_workflow(request)
         return self.store.save(state["report"])
+
+    def resolve_layout(self, request: dict[str, Any]) -> dict[str, Any]:
+        state: dict[str, Any] = {"request": request}
+        state = self._normalize_request(state)
+        state = self._route_intent(state)
+        if should_return_ui_layout_ack(state):
+            state = self._build_ui_layout_ack(state)
+            report = state["report"].to_dict()
+            return {
+                "status": "ui_layout",
+                "summary": report.get("summary") or UI_LAYOUT_ACK_SUMMARY,
+                "rationale": report.get("rationale"),
+                "analysisId": report.get("analysisId"),
+                "route": report.get("route"),
+                "layoutProposal": report.get("layoutProposal"),
+                "agentTrace": report.get("agentTrace") or {},
+            }
+        return {
+            "status": "not_ui",
+            "summary": "",
+            "rationale": "The request was not a layout-only UI command.",
+            "analysisId": analysis_id_for_state(state),
+            "route": state["route"].to_dict() if hasattr(state.get("route"), "to_dict") else None,
+            "layoutProposal": None,
+            "agentTrace": layout_resolve_trace_for_state(state),
+        }
 
     def get_report(self, analysis_id: str) -> AnalysisReport | None:
         return self.store.get(analysis_id)
@@ -817,6 +843,19 @@ def analysis_id_for_state(state: dict[str, Any]) -> str:
 
 def is_multi_agent_chat_state(state: dict[str, Any]) -> bool:
     return str(state.get("analysis_mode") or "").strip() == "multi_agent"
+
+
+def layout_resolve_trace_for_state(state: dict[str, Any]) -> dict[str, Any]:
+    agent_trace = build_agent_trace(
+        [],
+        None,
+        [],
+        state.get("entity_resolution"),
+        state.get("query_understanding"),
+    )
+    agent_trace["analysisMode"] = str(state.get("analysis_mode") or "auto")
+    agent_trace["uiLayoutFastAck"] = False
+    return agent_trace
 
 
 def allows_layout_side_effects(state: dict[str, Any]) -> bool:

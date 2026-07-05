@@ -20,3 +20,7 @@ class AgentAnalysisRequest(BaseModel):
     analysisMode: str | None = None
     priority: str | None = None
     responseMode: str | None = None
+
+
+class AgentLayoutResolveRequest(AgentAnalysisRequest):
+    pass

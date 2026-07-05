@@ -8,11 +8,11 @@ from typing import Any
 from fastapi import APIRouter, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 
-from app.contracts.agents import AgentAnalysisRequest
+from app.contracts.agents import AgentAnalysisRequest, AgentLayoutResolveRequest
 from app.core.config import read_dotenv_value
 from app.services.agent_alert_payloads import parse_pubsub_payload
 from app.services.alfaka_market_data import get_market_data_provider, normalize_market_symbol, sp500_universe_symbols
-from app.services.agent_gateway import get_agent_report, request_agent_analysis
+from app.services.agent_gateway import get_agent_report, request_agent_analysis, request_agent_layout_resolution
 from gops_agents.query_understanding import EntityResolution, KoreanEntityResolver
 from gops_agents.query_understanding.korean_text import compact_text
 
@@ -80,6 +80,11 @@ def analyze_agents(request: AgentAnalysisRequest, http_request: Request, respons
     )
     response.status_code = int(result.pop("_status_code", 200))
     return result
+
+
+@router.post("/api/agents/layout/resolve")
+def resolve_agent_layout(request: AgentLayoutResolveRequest) -> dict[str, Any]:
+    return request_agent_layout_resolution(request.model_dump())
 
 
 @router.get("/api/agents/entities/resolve")

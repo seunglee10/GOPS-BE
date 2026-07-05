@@ -34,6 +34,11 @@ def analyze(request: dict[str, Any]) -> dict[str, Any]:
     return report
 
 
+@app.post("/layout/resolve")
+def resolve_layout(request: dict[str, Any]) -> dict[str, Any]:
+    return orchestrator.resolve_layout(request)
+
+
 @app.get("/reports/{analysis_id}")
 def get_report(analysis_id: str) -> dict[str, Any]:
     report = orchestrator.get_report(analysis_id)

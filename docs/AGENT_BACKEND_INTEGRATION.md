@@ -48,6 +48,7 @@ sequenceDiagram
 
 ```text
 POST /api/agents/analyze
+POST /api/agents/layout/resolve
 GET  /api/agents/entities/resolve
 GET  /api/agents/reports/{analysis_id}
 GET  /api/agents/reports/{analysis_id}/stream
@@ -63,6 +64,24 @@ X-GOPS-User-Id
 
 `Idempotency-Key`가 있으면 같은 user/key 조합은 같은 `analysisId`를 재사용해야
 한다. 이미 완료된 report가 있으면 completed report를 반환할 수 있다.
+
+`POST /api/agents/layout/resolve`는 UI-only layout command preflight다. 이 route는
+Kafka queue와 report polling을 타지 않고 `agent-orchestrator`의 `/layout/resolve`
+compat endpoint를 동기로 호출한다. 응답은 다음 shape를 유지한다.
+
+```json
+{
+  "status": "ui_layout",
+  "summary": "변경했습니다.",
+  "rationale": "The conductor returned a layout-only acknowledgement without final report synthesis.",
+  "analysisId": "agent-request-id",
+  "route": {"source": "ui-parser", "intentType": "ui-layout", "selectedRoles": []},
+  "layoutProposal": {},
+  "agentTrace": {"uiLayoutFastAck": true}
+}
+```
+
+`status="not_ui"`이면 프런트는 기존 `POST /api/agents/analyze`로 fallback한다.
 
 ## Request Shape
 
