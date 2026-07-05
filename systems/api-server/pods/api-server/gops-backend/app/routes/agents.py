@@ -21,7 +21,7 @@ AGENT_ALERTS_CHANNEL = "agent.alerts"
 AGENT_REPORTS_CHANNEL = "agent.reports"
 CHART_SHORTCUT_MODE = "chartShortcut"
 
-CHART_SHORTCUT_BLOCKING_KEYWORDS = (
+CHART_SHORTCUT_CONTENT_BLOCKING_KEYWORDS = (
     "뉴스",
     "기사",
     "보도",
@@ -42,13 +42,6 @@ CHART_SHORTCUT_BLOCKING_KEYWORDS = (
     "변동",
     "원인",
     "왜",
-    "차트",
-    "그래프",
-    "보여",
-    "열어",
-    "띄워",
-    "바꿔",
-    "변경",
     "조정",
     "news",
     "headline",
@@ -63,11 +56,82 @@ CHART_SHORTCUT_BLOCKING_KEYWORDS = (
     "surge",
     "spike",
     "why",
+)
+
+CHART_SHORTCUT_OPEN_KEYWORDS = (
+    "차트",
+    "그래프",
+    "캔들",
+    "가격",
+    "주가",
+    "보여줘",
+    "보여",
+    "열어줘",
+    "열어",
+    "띄워줘",
+    "띄워",
+    "바꿔줘",
+    "바꿔",
+    "변경해줘",
+    "변경",
     "chart",
     "graph",
+    "candle",
+    "price",
     "show",
     "open",
+    "switch",
     "change",
+)
+
+CHART_SHORTCUT_ADD_KEYWORDS = (
+    "추가",
+    "추가해",
+    "추가해줘",
+    "같이",
+    "함께",
+    "동시에",
+    "나란히",
+    "비교",
+    "도",
+    "또",
+    "add",
+    "also",
+    "too",
+    "compare",
+    "comparison",
+    "side by side",
+)
+
+CHART_SHORTCUT_REPLACE_KEYWORDS = (
+    "바꿔줘",
+    "바꿔",
+    "변경해줘",
+    "변경",
+    "전환",
+    "대신",
+    "switch",
+    "change",
+    "replace",
+    "instead",
+)
+
+CHART_SHORTCUT_PLACEMENT_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "bottom": ("밑에", "아래", "하단", "bottom", "below", "down"),
+    "top": ("위에", "위로", "상단", "top", "above", "up"),
+    "left": ("왼쪽", "좌측", "left"),
+    "right": ("오른쪽", "우측", "나란히", "옆에", "right", "side by side"),
+    "center": ("가운데", "중앙", "center", "middle"),
+}
+
+CHART_SHORTCUT_FILLER_KEYWORDS = (
+    "좀",
+    "줘",
+    "주세요",
+    "에",
+    "로",
+    "으로",
+    "please",
 )
 
 
@@ -245,9 +309,13 @@ def agent_entity_resolution_payload(query: str, resolution: EntityResolution) ->
     if status == "confirmed" and resolution.entity_type != "company":
         status = "unsupported"
 
+    chart_shortcut = is_chart_shortcut_entity_query(query, resolution)
+    chart_action = chart_shortcut_action(query, resolution) if chart_shortcut else "none"
     payload = {
         "status": status,
-        "chartShortcut": is_chart_shortcut_entity_query(query, resolution),
+        "chartShortcut": chart_shortcut,
+        "chartAction": chart_action,
+        "chartPlacementIntent": chart_shortcut_placement_intent(query) if chart_action == "add" else None,
         "symbol": resolution.symbol,
         "canonicalName": resolution.canonical_name,
         "matchedText": resolution.matched_text,
@@ -264,7 +332,7 @@ def is_chart_shortcut_entity_query(query: str, resolution: EntityResolution) -> 
         return False
     if not is_chart_symbol_supported(resolution.symbol):
         return False
-    if contains_chart_shortcut_blocking_keyword(query):
+    if contains_chart_shortcut_content_keyword(query):
         return False
 
     query_compact = compact_text(query)
@@ -279,12 +347,89 @@ def is_chart_shortcut_entity_query(query: str, resolution: EntityResolution) -> 
         *(candidate.matched_alias for candidate in resolution.candidates),
         *(candidate.matched_text for candidate in resolution.candidates),
     ]
-    return any(query_compact == compact_text(value) for value in allowed_values if value)
+    allowed_compact_values = [compact_text(value) for value in allowed_values if value]
+    if any(query_compact == value for value in allowed_compact_values if value):
+        return True
+    return is_chart_open_shortcut_query(query_compact, allowed_compact_values)
 
 
-def contains_chart_shortcut_blocking_keyword(query: str) -> bool:
+def is_chart_open_shortcut_query(query_compact: str, allowed_compact_values: list[str]) -> bool:
+    remainder = query_compact
+    matched_entity = False
+    for value in sorted({value for value in allowed_compact_values if value}, key=len, reverse=True):
+        if value in remainder:
+            remainder = remainder.replace(value, "", 1)
+            matched_entity = True
+            break
+    if not matched_entity or not remainder:
+        return False
+
+    open_remainder = remainder
+    for keyword in compact_keywords(chart_shortcut_modifier_keywords()):
+        open_remainder = open_remainder.replace(keyword, "")
+    if open_remainder == remainder:
+        return False
+    for keyword in compact_keywords(CHART_SHORTCUT_FILLER_KEYWORDS):
+        open_remainder = open_remainder.replace(keyword, "")
+    return open_remainder == ""
+
+
+def chart_shortcut_action(query: str, resolution: EntityResolution) -> str:
+    query_compact = compact_text(query)
+    remainder = query_compact
+    for value in sorted(chart_resolution_compact_values(resolution), key=len, reverse=True):
+        if value in remainder:
+            remainder = remainder.replace(value, "", 1)
+            break
+    if contains_compact_keyword(remainder or query_compact, CHART_SHORTCUT_ADD_KEYWORDS):
+        return "add"
+    if contains_compact_keyword(remainder or query_compact, CHART_SHORTCUT_REPLACE_KEYWORDS):
+        return "replace"
+    return "replace"
+
+
+def chart_shortcut_placement_intent(query: str) -> str | None:
+    compacted = compact_text(query)
+    for placement, keywords in CHART_SHORTCUT_PLACEMENT_KEYWORDS.items():
+        if contains_compact_keyword(compacted, keywords):
+            return placement
+    return None
+
+
+def chart_resolution_compact_values(resolution: EntityResolution) -> list[str]:
+    values = [
+        resolution.symbol,
+        resolution.canonical_name,
+        resolution.matched_text,
+        resolution.matched_alias,
+        *(candidate.canonical_name for candidate in resolution.candidates),
+        *(candidate.matched_alias for candidate in resolution.candidates),
+        *(candidate.matched_text for candidate in resolution.candidates),
+    ]
+    return [compact_text(value) for value in values if value]
+
+
+def contains_compact_keyword(text: str, keywords: tuple[str, ...]) -> bool:
+    compacted = compact_text(text)
+    return any(keyword and keyword in compacted for keyword in compact_keywords(keywords))
+
+
+def compact_keywords(keywords: tuple[str, ...]) -> list[str]:
+    return sorted({compact_text(keyword) for keyword in keywords if compact_text(keyword)}, key=len, reverse=True)
+
+
+def chart_shortcut_modifier_keywords() -> tuple[str, ...]:
+    placement_keywords = tuple(
+        keyword
+        for keywords in CHART_SHORTCUT_PLACEMENT_KEYWORDS.values()
+        for keyword in keywords
+    )
+    return CHART_SHORTCUT_OPEN_KEYWORDS + CHART_SHORTCUT_ADD_KEYWORDS + CHART_SHORTCUT_REPLACE_KEYWORDS + placement_keywords
+
+
+def contains_chart_shortcut_content_keyword(query: str) -> bool:
     normalized = str(query or "").strip().lower()
-    for keyword in CHART_SHORTCUT_BLOCKING_KEYWORDS:
+    for keyword in CHART_SHORTCUT_CONTENT_BLOCKING_KEYWORDS:
         if re.fullmatch(r"[a-z]+", keyword):
             if re.search(rf"(?<![a-z0-9]){re.escape(keyword)}(?![a-z0-9])", normalized):
                 return True

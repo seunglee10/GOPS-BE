@@ -127,11 +127,36 @@ class AgentRouteHelperTest(unittest.TestCase):
                 self.assertEqual(payload["symbol"], "NVDA")
 
     @unittest.skipUnless(AGENT_ROUTE_HELPERS_AVAILABLE, "agent routes module is not importable")
-    def test_agent_entity_resolve_rejects_non_bare_chart_shortcuts(self):
-        for query in ("엔비디아 뉴스", "엔비디아 분석해줘", "엔비디아랑 AMD 관계", "반도체"):
+    def test_agent_entity_resolve_confirms_chart_open_commands(self):
+        for query in ("애플차트", "애플 차트 보여줘", "AAPL chart", "show AAPL chart"):
+            with self.subTest(query=query):
+                payload = resolve_agent_entity_for_chart_shortcut(query)
+                self.assertEqual(payload["status"], "confirmed")
+                self.assertEqual(payload["chartShortcut"], True)
+                self.assertEqual(payload["chartAction"], "replace")
+                self.assertEqual(payload["symbol"], "AAPL")
+
+    @unittest.skipUnless(AGENT_ROUTE_HELPERS_AVAILABLE, "agent routes module is not importable")
+    def test_agent_entity_resolve_confirms_chart_add_commands(self):
+        for query in ("애플 차트 추가해줘", "애플도 같이 보여줘", "AAPL chart too", "애플 비교 차트"):
+            with self.subTest(query=query):
+                payload = resolve_agent_entity_for_chart_shortcut(query)
+                self.assertEqual(payload["status"], "confirmed")
+                self.assertEqual(payload["chartShortcut"], True)
+                self.assertEqual(payload["chartAction"], "add")
+                self.assertEqual(payload["symbol"], "AAPL")
+
+        bottom = resolve_agent_entity_for_chart_shortcut("애플 차트 밑에 추가해줘")
+        self.assertEqual(bottom["chartAction"], "add")
+        self.assertEqual(bottom["chartPlacementIntent"], "bottom")
+
+    @unittest.skipUnless(AGENT_ROUTE_HELPERS_AVAILABLE, "agent routes module is not importable")
+    def test_agent_entity_resolve_rejects_analysis_chart_shortcuts(self):
+        for query in ("엔비디아 뉴스", "엔비디아 분석해줘", "엔비디아 차트 분석해줘", "엔비디아 왜 올랐어", "엔비디아랑 AMD 관계", "반도체"):
             with self.subTest(query=query):
                 payload = resolve_agent_entity_for_chart_shortcut(query)
                 self.assertEqual(payload["chartShortcut"], False)
+                self.assertEqual(payload["chartAction"], "none")
 
         unsupported = resolve_agent_entity_for_chart_shortcut("엔비디아", mode="analysis")
         self.assertEqual(unsupported["status"], "unsupported")
