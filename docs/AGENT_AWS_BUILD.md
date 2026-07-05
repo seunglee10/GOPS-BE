@@ -452,6 +452,10 @@ Provider and LLM:
 ```text
 OPENAI_API_KEY
 OPENAI_MODEL
+AGENT_FINANCIAL_FINAL_ANSWER_PROVIDER
+AGENT_FINANCIAL_SYNTHESIZER_TIMEOUT_SECONDS
+AGENT_FINANCIAL_FINAL_ANSWER_CACHE_ENABLED
+AGENT_FINANCIAL_FINAL_ANSWER_CACHE_TTL_SECONDS
 REDIS_URL
 CLICKHOUSE_HTTP_URL
 CLICKHOUSE_DATABASE
@@ -461,6 +465,14 @@ GRAPHDB_SPARQL_URL
 GRAPHDB_REPOSITORY
 SEC_USER_AGENT
 ```
+
+Financial final-answer synthesis is enabled with
+`AGENT_FINANCIAL_FINAL_ANSWER_PROVIDER=openai`. The orchestrator still reads SEC
+fundamentals from Redis/ClickHouse snapshots only; OpenAI rewrites formatted
+facts and deterministic financial signals into user-facing Korean prose. The
+generated financial report is cached in Redis under
+`gops:agent:financial-final-answer:v1:{SYMBOL}:{digest}` when Redis is
+available.
 
 Backpressure and deadline:
 

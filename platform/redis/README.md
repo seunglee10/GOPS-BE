@@ -69,9 +69,14 @@ ClickHouse `market_data.sec_*` tables are.
 gops:fundamentals:summary:v1:{SYMBOL}
 gops:fundamentals:peer:v1:{SYMBOL}:latest
 gops:fundamentals:peer:v1:{SYMBOL}:{FRAME_PERIOD}
+gops:agent:financial-final-answer:v1:{SYMBOL}:{digest}
 ```
 
 The `:latest` peer key is an alias written by the backfill/reconcile job.
 Runtime reads it first and uses the payload `frame_period` to show the
 comparison basis. Runtime does not query ClickHouse to stale-check Redis hits;
 stale checks belong to the backfill/nightly reconcile job.
+
+The `financial-final-answer` key caches the LLM-written Korean report generated
+from a specific formatted facts/signals payload. Its digest changes when the
+snapshot facts, route, or limitations change.

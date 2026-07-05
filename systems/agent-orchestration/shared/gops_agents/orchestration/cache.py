@@ -12,7 +12,7 @@ def analysis_cache_key_for_state(state: dict[str, Any]) -> str | None:
     if not is_analysis_cacheable_state(state):
         return None
     route = state["route"]
-    selected_roles = [role for role in route.selectedRoles if role in {"chart", "news", "macro", "ontology"}]
+    selected_roles = [role for role in route.selectedRoles if role in {"chart", "news", "macro", "ontology", "financial"}]
     payload = {
         "symbol": state["symbol"],
         "intent": canonical_analysis_intent(state["intent"], route, selected_roles),

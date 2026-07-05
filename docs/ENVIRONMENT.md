@@ -507,6 +507,23 @@ default. Set `AGENT_ONTOLOGY_ROLE_ANALYSIS_PROVIDER=openai` or
 `AGENT_ONTOLOGY_FINAL_ANSWER_PROVIDER=openai` only when the team explicitly
 accepts model synthesis for ontology output.
 
+Financial final-answer env:
+
+```text
+AGENT_FINANCIAL_FINAL_ANSWER_PROVIDER
+AGENT_FINANCIAL_SYNTHESIZER_MODEL
+AGENT_FINANCIAL_SYNTHESIZER_TIMEOUT_SECONDS
+AGENT_FINANCIAL_FINAL_ANSWER_CACHE_ENABLED
+AGENT_FINANCIAL_FINAL_ANSWER_CACHE_TTL_SECONDS
+AGENT_FINANCIAL_FINAL_ANSWER_CACHE_PREFIX
+```
+
+`AGENT_FINANCIAL_FINAL_ANSWER_PROVIDER=openai` lets the final answer layer turn
+precomputed SEC fundamentals snapshots into easier Korean prose. The model must
+use only formatted facts and rule-based financial signals; metric calculation
+and missing-value handling remain deterministic. Redis final-answer caching is
+enabled by default when `REDIS_URL` is configured.
+
 Local GraphDB restore artifact:
 
 ```text
