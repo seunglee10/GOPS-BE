@@ -3,6 +3,7 @@ import os
 import socket
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any
 
@@ -11,6 +12,7 @@ from fastapi import HTTPException
 from app.core.config import read_dotenv_value
 from gops_agents.runtime.admission import AdmissionPolicy, admit_analysis_request
 from gops_agents.runtime.envelope import (
+    REQUEST_STATUS_CANCELED,
     REQUEST_STATUS_COMPLETED,
     REQUEST_STATUS_DEEP_COMPLETED,
     REQUEST_STATUS_QUEUED,
@@ -18,6 +20,7 @@ from gops_agents.runtime.envelope import (
     build_request_envelope,
     status_report_for_envelope,
 )
+from gops_agents.runtime.delivery_gateway import AgentDeliveryGateway
 from gops_agents.runtime.queues import build_analysis_request_queue_from_env
 from gops_agents.runtime.report_store import build_report_store_from_env
 
@@ -60,9 +63,27 @@ def get_agent_report(analysis_id: str) -> dict[str, Any]:
     return request_orchestrator_json("GET", f"/reports/{analysis_id}", None)
 
 
+def cancel_agent_analysis(analysis_id: str, *, user_id: str | None = None) -> dict[str, Any]:
+    request_id = str(analysis_id or "").strip()
+    if not request_id:
+        raise HTTPException(status_code=400, detail="Agent analysis id is required.")
+    if async_analysis_enabled() or shared_report_store_enabled():
+        store = build_report_store_from_env()
+        report = store.mark_canceled(request_id, reason="canceled by user", user_id=user_id)
+        payload = report.to_dict()
+        payload["cancelAccepted"] = report.status == REQUEST_STATUS_CANCELED
+        publish_report_update(payload, store=store)
+        return payload
+    return request_orchestrator_json("POST", f"/reports/{urllib.parse.quote(request_id)}/cancel", {"userId": user_id})
+
+
 def submit_agent_analysis(payload: dict[str, Any], *, idempotency_key: str | None = None, user_id: str | None = None) -> dict[str, Any]:
     store = build_report_store_from_env()
     envelope = build_request_envelope(payload, idempotency_key=idempotency_key, user_id=user_id)
+    if store.is_canceled(envelope.request_id):
+        canceled = store.mark_canceled(envelope.request_id, reason="canceled before submit acknowledgement", user_id=envelope.user_id)
+        publish_report_update(canceled.to_dict(), store=store)
+        return response_for_report(canceled)
     if envelope.idempotency_key:
         existing_request_id = store.get_idempotency_request_id(envelope.user_id, envelope.idempotency_key)
         if existing_request_id:
@@ -94,7 +115,7 @@ def submit_agent_analysis(payload: dict[str, Any], *, idempotency_key: str | Non
 
 
 def response_for_report(report) -> dict[str, Any]:
-    if report.status in {REQUEST_STATUS_COMPLETED, REQUEST_STATUS_DEEP_COMPLETED}:
+    if report.status in {REQUEST_STATUS_COMPLETED, REQUEST_STATUS_DEEP_COMPLETED, REQUEST_STATUS_CANCELED}:
         payload = report.to_dict()
         payload["_status_code"] = 200
         return payload
@@ -130,7 +151,7 @@ def wait_for_agent_report(request_id: str) -> dict[str, Any]:
     deadline = time.monotonic() + timeout_seconds
     store = build_report_store_from_env()
     latest = None
-    terminal_statuses = {REQUEST_STATUS_COMPLETED, REQUEST_STATUS_DEEP_COMPLETED, "failed"}
+    terminal_statuses = {REQUEST_STATUS_COMPLETED, REQUEST_STATUS_DEEP_COMPLETED, REQUEST_STATUS_CANCELED, "failed"}
     while time.monotonic() <= deadline:
         report = store.get(request_id)
         if report is not None:
@@ -173,6 +194,13 @@ def positive_int_config(name: str) -> int | None:
     except Exception:
         return None
     return parsed if parsed > 0 else None
+
+
+def publish_report_update(payload: dict[str, Any], *, store=None) -> None:
+    try:
+        AgentDeliveryGateway(store=store).publish_report_update(payload)
+    except Exception:
+        return
 
 
 def request_orchestrator_json(method: str, path: str, payload: dict[str, Any] | None) -> dict[str, Any]:
