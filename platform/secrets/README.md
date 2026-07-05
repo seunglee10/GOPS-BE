@@ -9,6 +9,7 @@ dev/alpaca
 tead/gops/kis
 oauth/google
 /gops/prod/agent-orchestrator/openai/api-key
+/gops/prod/fundamentals/sec-user-agent
 ```
 
 `dev/alpaca` must contain:
@@ -55,3 +56,15 @@ Expected SecretString shape:
 ```
 
 Do not commit OpenAI API keys.
+
+`/gops/prod/fundamentals/sec-user-agent` is read by the AWS/EKS ExternalSecret
+manifests and becomes Kubernetes Secret `alfaka-sec-fundamentals-secret` key
+`SEC_USER_AGENT`.
+
+Expected SecretString shape:
+
+```json
+{"SEC_USER_AGENT":"GOPS fundamentals contact@example.com"}
+```
+
+Do not commit the real SEC User-Agent contact value.

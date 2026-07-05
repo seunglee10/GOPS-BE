@@ -8,6 +8,8 @@ resources:
   - ../../base/app
   - secretstore-aws-secrets-manager.yaml
   - externalsecret-openai.yaml
+  - externalsecret-sec-fundamentals.yaml
+  - cronjob-sec-fundamentals-sync.yaml
 
 patches:
   - path: configmap-aws-patch.yaml

@@ -26,9 +26,10 @@ SEC_FUNDAMENTALS_FRAME_PERIODS="${SEC_FUNDAMENTALS_FRAME_PERIODS:-}"
 SEC_FUNDAMENTALS_REDIS_TTL_SECONDS="${SEC_FUNDAMENTALS_REDIS_TTL_SECONDS:-0}"
 SEC_FUNDAMENTALS_DOWNLOAD_IN_DRY_RUN="${SEC_FUNDAMENTALS_DOWNLOAD_IN_DRY_RUN:-false}"
 SEC_USER_AGENT="${SEC_USER_AGENT:-}"
+SEC_USER_AGENT_SECRET_NAME="${SEC_USER_AGENT_SECRET_NAME:-alfaka-sec-fundamentals-secret}"
 
-if [[ "${SEC_FUNDAMENTALS_DRY_RUN}" == "false" && -z "${SEC_USER_AGENT}" ]]; then
-  echo "SEC_USER_AGENT is required for real SEC fundamentals ingestion. Include an app name and contact email." >&2
+if [[ "${SEC_FUNDAMENTALS_DRY_RUN}" == "false" && -z "${SEC_USER_AGENT}" && -z "${SEC_USER_AGENT_SECRET_NAME}" ]]; then
+  echo "SEC_USER_AGENT or SEC_USER_AGENT_SECRET_NAME is required for real SEC fundamentals ingestion." >&2
   exit 1
 fi
 
@@ -43,6 +44,17 @@ cleanup() {
   rm -f "${tmp_file}"
 }
 trap cleanup EXIT
+
+if [[ -n "${SEC_USER_AGENT}" ]]; then
+  sec_user_agent_env_block="            - name: SEC_USER_AGENT
+              value: \"${SEC_USER_AGENT}\""
+else
+  sec_user_agent_env_block="            - name: SEC_USER_AGENT
+              valueFrom:
+                secretKeyRef:
+                  name: ${SEC_USER_AGENT_SECRET_NAME}
+                  key: SEC_USER_AGENT"
+fi
 
 cat > "${tmp_file}" <<YAML
 apiVersion: batch/v1
@@ -93,8 +105,7 @@ spec:
               value: "${SEC_FUNDAMENTALS_REDIS_TTL_SECONDS}"
             - name: SEC_FUNDAMENTALS_DOWNLOAD_IN_DRY_RUN
               value: "${SEC_FUNDAMENTALS_DOWNLOAD_IN_DRY_RUN}"
-            - name: SEC_USER_AGENT
-              value: "${SEC_USER_AGENT}"
+${sec_user_agent_env_block}
           envFrom:
             - configMapRef:
                 name: alfaka-market-data-config

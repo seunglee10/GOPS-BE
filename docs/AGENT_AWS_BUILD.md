@@ -266,11 +266,35 @@ to at most 8 requests per second. S&P 500 membership comes from
 `market_data.sec_company_tickers`. Universe removals update
 `is_active_universe_member`; historical facts and metrics are retained.
 
+AWS scheduled sync:
+
+```text
+infra/k8s/overlays/aws/externalsecret-sec-fundamentals.yaml
+infra/k8s/overlays/aws/cronjob-sec-fundamentals-sync.yaml
+```
+
+The AWS overlay syncs property `SEC_USER_AGENT` from
+`/gops/prod/fundamentals/sec-user-agent` in Secrets Manager into Kubernetes
+Secret `alfaka-sec-fundamentals-secret` key `SEC_USER_AGENT`.
+`alfaka-sec-fundamentals-sync` is a daily CronJob
+(`30 20 * * *`, UTC; 05:30 KST) that runs the fundamentals job with
+`SEC_FUNDAMENTALS_DRY_RUN=false`, writes the SEC ZIP to S3, and refreshes
+ClickHouse/Redis projections. Local developer machines are not required after
+the CronJob and ExternalSecret are applied in EKS.
+
 Manual AWS run:
 
 ```sh
 SEC_FUNDAMENTALS_DRY_RUN=false \
 SEC_USER_AGENT="GOPS fundamentals contact@example.com" \
+./scripts/aws/run-sec-fundamentals-backfill-job.sh
+```
+
+When `alfaka-sec-fundamentals-secret` exists in EKS, manual runs can omit the
+literal User-Agent value and use the Kubernetes Secret reference:
+
+```sh
+SEC_FUNDAMENTALS_DRY_RUN=false \
 ./scripts/aws/run-sec-fundamentals-backfill-job.sh
 ```
 
@@ -355,23 +379,27 @@ CLICKHOUSE_PASSWORD
 ```
 
 SEC fundamentals backfill also requires `SEC_USER_AGENT`, but it is not an
-agent runtime secret. It may live in the deployment ConfigMap/secret as long as
-it contains contact information.
+agent runtime secret. In AWS/EKS it lives in Secrets Manager at
+`/gops/prod/fundamentals/sec-user-agent` and is synced to Kubernetes Secret
+`alfaka-sec-fundamentals-secret`.
 
 AWS Secrets Manager reference:
 
 ```text
 /gops/prod/agent-orchestrator/openai/api-key
+/gops/prod/fundamentals/sec-user-agent
 ```
 
 SecretString shape:
 
 ```json
 {"OPENAI_API_KEY":"sk-..."}
+{"SEC_USER_AGENT":"GOPS fundamentals contact@example.com"}
 ```
 
 EKS overlay는 External Secrets Operator를 통해 Kubernetes Secret
-`alfaka-openai-secret`의 `OPENAI_API_KEY`로 sync한다.
+`alfaka-openai-secret`의 `OPENAI_API_KEY`와
+`alfaka-sec-fundamentals-secret`의 `SEC_USER_AGENT`로 sync한다.
 
 절대 커밋하지 않을 것:
 

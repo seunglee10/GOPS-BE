@@ -12,7 +12,8 @@ S3_BUCKET="${S3_BUCKET:-gops-market-data-<aws-account-id>-ap-northeast-2-an}"
 ALPACA_SECRET_NAME="${ALPACA_SECRET_NAME:-dev/alpaca}"
 KIS_SECRET_NAME="${KIS_SECRET_NAME:-tead/gops/kis}"
 GOOGLE_OAUTH_SECRET_NAME="${GOOGLE_OAUTH_SECRET_NAME:-}"
-OPENAI_SECRET_NAME="${OPENAI_SECRET_NAME:-}"
+OPENAI_SECRET_NAME="${OPENAI_SECRET_NAME:-/gops/prod/agent-orchestrator/openai/api-key}"
+SEC_FUNDAMENTALS_SECRET_NAME="${SEC_FUNDAMENTALS_SECRET_NAME:-/gops/prod/fundamentals/sec-user-agent}"
 
 ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
 ISSUER_URL="$(aws eks describe-cluster --region "${AWS_REGION}" --name "${CLUSTER_NAME}" --query 'cluster.identity.oidc.issuer' --output text)"
@@ -23,8 +24,10 @@ POLICY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/${POLICY_NAME}"
 S3_BUCKET_ARN="arn:aws:s3:::${S3_BUCKET}"
 ALPACA_SECRET_ARN="$(aws secretsmanager describe-secret --region "${AWS_REGION}" --secret-id "${ALPACA_SECRET_NAME}" --query ARN --output text)"
 KIS_SECRET_ARN="$(aws secretsmanager describe-secret --region "${AWS_REGION}" --secret-id "${KIS_SECRET_NAME}" --query ARN --output text)"
+SEC_FUNDAMENTALS_SECRET_ARN="$(aws secretsmanager describe-secret --region "${AWS_REGION}" --secret-id "${SEC_FUNDAMENTALS_SECRET_NAME}" --query ARN --output text)"
 SECRET_RESOURCE_LINES="\"${ALPACA_SECRET_ARN}\",
-        \"${KIS_SECRET_ARN}\""
+        \"${KIS_SECRET_ARN}\",
+        \"${SEC_FUNDAMENTALS_SECRET_ARN}\""
 if [[ -n "${GOOGLE_OAUTH_SECRET_NAME}" ]]; then
   GOOGLE_OAUTH_SECRET_ARN="$(aws secretsmanager describe-secret --region "${AWS_REGION}" --secret-id "${GOOGLE_OAUTH_SECRET_NAME}" --query ARN --output text)"
   SECRET_RESOURCE_LINES="${SECRET_RESOURCE_LINES},

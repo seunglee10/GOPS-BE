@@ -40,5 +40,8 @@ spec:
             - configMapRef:
                 name: alfaka-market-data-config
             - secretRef:
+                name: alfaka-sec-fundamentals-secret
+                optional: true
+            - secretRef:
                 name: alfaka-clickhouse-secret
                 optional: true
