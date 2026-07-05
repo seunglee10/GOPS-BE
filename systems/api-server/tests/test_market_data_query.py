@@ -476,6 +476,20 @@ class RecordingOnDemandFillService(OnDemandFillService):
         return self.alpaca_result
 
 
+class DeadlineAfterAlpacaFillService(RecordingOnDemandFillService):
+    def __init__(self, *, provider=None):
+        super().__init__(provider=provider, s3_result=False, alpaca_result=True)
+        self.deadline_exceeded = False
+
+    def _fill_from_alpaca(self, symbol, interval, ranges, trace, started):
+        result = super()._fill_from_alpaca(symbol, interval, ranges, trace, started)
+        self.deadline_exceeded = True
+        return result
+
+    def _deadline_exceeded(self, started):
+        return self.deadline_exceeded
+
+
 class RecordingBackfillStore:
     def __init__(self):
         self.created = []
@@ -817,6 +831,34 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual([call[0] for call in service.calls], ["s3", "alpaca"])
         self.assertFalse(result["fill"]["sources"]["s3"]["hit"])
         self.assertTrue(result["fill"]["sources"]["alpaca"]["hit"])
+
+    def test_on_demand_fill_returns_refreshed_candles_when_alpaca_finishes_after_deadline(self):
+        refreshed = {
+            "symbol": "CSCO",
+            "interval": "1m",
+            "candles": make_fill_candles(30),
+            "_sourceTrace": {
+                "redis": {"checked": True, "hit": False, "rowCount": 0},
+                "clickhouse": {"checked": True, "hit": True, "rowCount": 30},
+            },
+        }
+        provider = ReloadingFillProvider(refreshed)
+        service = DeadlineAfterAlpacaFillService(provider=provider)
+
+        result = service.fill_if_needed(
+            symbol="CSCO",
+            interval="1m",
+            limit=30,
+            before="2026-06-25T14:00:00.000Z",
+            from_time=None,
+            to_time=None,
+            payload={"symbol": "CSCO", "interval": "1m", "candles": []},
+        )
+
+        self.assertEqual(result["fill"]["status"], "filled")
+        self.assertEqual(len(result["candles"]), 30)
+        self.assertEqual([call[0] for call in service.calls], ["s3", "alpaca"])
+        self.assertEqual(len(provider.calls), 1)
 
     def test_configured_symbols_uses_alpaca_symbols_watchlist_seed(self):
         previous = os.environ.get("ALPACA_SYMBOLS")

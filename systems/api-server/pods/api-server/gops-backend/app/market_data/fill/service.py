@@ -26,7 +26,7 @@ from alfaka.storage.s3_manifest import DEFAULT_MANIFEST_PREFIX
 from alfaka.storage.s3_materializer import materialize_s3_processed_objects
 
 
-FILL_TIMEOUT_SECONDS = 8.0
+FILL_TIMEOUT_SECONDS = 30.0
 FILL_SOURCES = ("redis", "clickhouse", "s3", "alpaca")
 
 
@@ -78,7 +78,7 @@ class OnDemandFillService:
             return payload
 
         s3_filled = self._fill_from_s3(symbol, source_interval, fill_ranges, trace, started)
-        if s3_filled and not self._deadline_exceeded(started):
+        if s3_filled:
             refreshed = self._reload_payload(symbol, interval, limit, before, from_time, to_time, payload)
             self._record_refreshed_result(trace, refreshed)
             trace["status"] = "filled" if self._is_renderable(refreshed, interval, source_interval) else "partial"
@@ -93,7 +93,7 @@ class OnDemandFillService:
             return payload
 
         alpaca_filled = self._fill_from_alpaca(symbol, source_interval, fill_ranges, trace, started)
-        if alpaca_filled and not self._deadline_exceeded(started):
+        if alpaca_filled:
             refreshed = self._reload_payload(symbol, interval, limit, before, from_time, to_time, payload)
             self._record_refreshed_result(trace, refreshed)
             trace["status"] = "filled" if self._is_renderable(refreshed, interval, source_interval) else "partial"

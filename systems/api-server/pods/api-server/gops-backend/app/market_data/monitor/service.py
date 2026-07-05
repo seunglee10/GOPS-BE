@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException
 
+from app.market_data.fill.service import FILL_TIMEOUT_SECONDS
 from app.market_data.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
 from app.services.alfaka_market_data import get_market_data_provider, normalize_market_symbol
 from alfaka.common.redis_keys import RedisKeyBuilder
@@ -14,6 +16,14 @@ from alfaka.serving.intervals import DEFAULT_VISIBLE_BARS
 
 ALLOWED_LAYERS = {"trades", "quotes", "events", "candles"}
 DEFAULT_SUBSCRIPTION_TTL_SECONDS = 3600
+
+
+def on_demand_fill_timeout_seconds() -> float:
+    try:
+        value = float(os.getenv("ON_DEMAND_FILL_TIMEOUT_SECONDS", FILL_TIMEOUT_SECONDS))
+    except (TypeError, ValueError):
+        return FILL_TIMEOUT_SECONDS
+    return value if value > 0 else FILL_TIMEOUT_SECONDS
 
 
 class MarketDataMonitorService:
@@ -106,7 +116,7 @@ class MarketDataMonitorService:
     def fill(self) -> dict[str, Any]:
         return {
             "mode": "bounded-sync",
-            "timeoutSeconds": 8,
+            "timeoutSeconds": on_demand_fill_timeout_seconds(),
             "sourceIntervals": {"1m": ["1m", "5m", "10m"], "1D": ["1D", "1W", "1M"]},
             "coverageOrder": ["redis", "clickhouse", "s3-final-manifest", "alpaca-historical"],
             "deprecatedEndpoints": [
