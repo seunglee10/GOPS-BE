@@ -23,7 +23,7 @@ Vite dev proxy는 `apps/gops-frontend/vite.config.ts`에 있다. 현재 프론�
 
 `helix/front`의 `mock_backend/`, `agent_backend/`, 더미 환경변수는 프론트 시연과 개발 검증을 위한 참조 자산이었고 이번 병합에는 들이지 않았다. 실제 데이터 소스와 운영 환경변수는 현재 GOPS backend/API server 기준을 따른다.
 
-현재 TreeMap은 `apps/gops-frontend/src/market/sp500Universe.seed.ts`의 `sp500UniverseSeed`를 직접 사용한다. `marketCap`과 `changePercent`는 정적 seed 값이며 실시간 API에 연결되어 있지 않다. 실제 연결 시 TreeMap 데이터는 백엔드가 관리하는 S&P500 전체의 분봉 기반 summary/live 데이터로 교체하면 된다. TreeMap 기본 입력에는 tick/trade stream이 필요하지 않다.
+현재 TreeMap은 첫 렌더만 `apps/gops-frontend/src/market/sp500Universe.seed.ts`의 `sp500UniverseSeed`를 fallback으로 사용한다. 기본 데이터 경로는 `GET /api/market/heatmap?universe=sp500`이며, 백엔드가 latest fundamentals의 `sharesOutstanding/sector/industry/companyName`과 시장 가격을 결합해 `marketCap/changePercent` projection을 내려준다. 프론트는 quote/color를 1분 주기로 갱신하고, 백엔드 `layoutAsOf`가 바뀌는 5분 경계에서만 타일 layout 크기를 갱신한다.
 
 ## 화면 구조
 

@@ -1,0 +1,1 @@
+"""Market heatmap projection boundary."""

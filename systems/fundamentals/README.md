@@ -106,3 +106,11 @@ sec_collection_runs
 
 Redis stale checks are not part of the Financial Agent runtime. Sync or nightly
 reconcile jobs compare ClickHouse revisions and rewrite summary/peer keys.
+
+## Heatmap Consumers
+
+The market heatmap does not collect SEC data. It reads this system's Redis
+summary key first and falls back to ClickHouse `sec_financial_facts` plus
+`sec_company_tickers`. Keep the `shares_outstanding` metric populated in either
+store so `/api/market/heatmap?universe=sp500` can compute
+`marketCap = lastPrice * sharesOutstanding`.
