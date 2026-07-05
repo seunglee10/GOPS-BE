@@ -478,13 +478,20 @@ class UIAgent:
         commands = []
         for panel_type in add_panel_types:
             panel_id = proposed_panel_id(panel_type)
+            payload = {
+                "panelId": panel_id,
+                "panelType": panel_type,
+                "placement": placement_by_id.get(panel_id, default_panel_placement(panel_type)),
+                "layoutWeight": 100,
+            }
+            props = panel_props_for_context(context, panel_type)
+            if props:
+                payload["props"] = props
+                if "symbol" in props:
+                    payload["symbol"] = props["symbol"]
             commands.append(layout_command(
                 "layout.panel.add",
-                {
-                    "panelId": panel_id,
-                    "panelType": panel_type,
-                    "placement": placement_by_id.get(panel_id, default_panel_placement(panel_type)),
-                },
+                payload,
                 {"panelId": panel_id},
             ))
         for panel in target_panels:
@@ -523,6 +530,9 @@ class UIAgent:
 
         target_panel = resolve_ui_target_panel(panels, ui_intent)
         if not target_panel:
+            restore_proposal = propose_missing_panel_layout(context, panels, ui_intent)
+            if restore_proposal is not None:
+                return restore_proposal
             add_command = ui_add_command(ui_intent)
             return LayoutProposal(
                 title="UI layout request",
@@ -572,30 +582,39 @@ class UIAgent:
                 panelPriorities=ui_panel_priorities(panels, target_panel["id"]),
             )
 
+        commands = []
+        props = panel_props_for_context(context, target_panel["type"])
+        if props:
+            commands.append(layout_command(
+                "layout.panel.props.update",
+                {"panelId": target_panel["id"], "props": props},
+                {"panelId": target_panel["id"]},
+            ))
+        commands.extend([
+            layout_command(
+                "layout.panel.priority.set",
+                {"panelId": target_panel["id"], "layoutWeight": 100},
+                {"panelId": target_panel["id"]},
+            ),
+            layout_command(
+                "layout.panels.arrange",
+                {
+                    "reason": "ui-agent-layout-intent",
+                    "placements": placements,
+                },
+                {"panelId": target_panel["id"]},
+            ),
+            layout_command(
+                "layout.panel.move",
+                {"panelId": target_panel["id"], "placement": placements[0]["placement"]},
+                {"panelId": target_panel["id"]},
+            ),
+            layout_command("layout.reflow", {"reason": "ui-agent-layout-intent"}),
+        ])
         return LayoutProposal(
             title="UI layout request",
             rationale=panel_action_message(target_panel, ui_intent.action),
-            commands=[
-                layout_command(
-                    "layout.panel.priority.set",
-                    {"panelId": target_panel["id"], "layoutWeight": 100},
-                    {"panelId": target_panel["id"]},
-                ),
-                layout_command(
-                    "layout.panels.arrange",
-                    {
-                        "reason": "ui-agent-layout-intent",
-                        "placements": placements,
-                    },
-                    {"panelId": target_panel["id"]},
-                ),
-                layout_command(
-                    "layout.panel.move",
-                    {"panelId": target_panel["id"], "placement": placements[0]["placement"]},
-                    {"panelId": target_panel["id"]},
-                ),
-                layout_command("layout.reflow", {"reason": "ui-agent-layout-intent"}),
-            ],
+            commands=commands,
             autoApply=True,
             panelPriorities=ui_panel_priorities(panels, target_panel["id"]),
         )
@@ -753,6 +772,77 @@ def panel_action_message(panel: dict[str, Any], action: str) -> str:
     if action == "focus":
         return f"{label} 패널을 앞으로 배치했습니다."
     return f"{label} 패널을 정리했습니다."
+
+
+def propose_missing_panel_layout(context: AgentContext, panels: list[dict[str, Any]], ui_intent: UIIntent) -> LayoutProposal | None:
+    if not ui_intent.targetPanelType or not is_visibility_panel_action(ui_intent.action):
+        return None
+
+    panel_type = ui_intent.targetPanelType
+    panel_id = proposed_panel_id(panel_type)
+    target_panel = {
+        "id": panel_id,
+        "type": panel_type,
+        "title": default_panel_title(panel_type),
+        "placement": default_panel_placement(panel_type),
+        "layoutPinned": False,
+        "layoutWeight": 100,
+        "minSpan": default_min_span(panel_type),
+        "maxSpan": default_max_span(panel_type),
+    }
+    placements = arrange_panel_set(panels, [target_panel], ui_intent.positionIntent)
+    placement_by_id = {item["panelId"]: item["placement"] for item in placements or []}
+    payload = {
+        "panelId": panel_id,
+        "panelType": panel_type,
+        "placement": placement_by_id.get(panel_id, target_panel["placement"]),
+        "layoutWeight": 100,
+    }
+    props = panel_props_for_context(context, panel_type)
+    if props:
+        payload["props"] = props
+        if "symbol" in props:
+            payload["symbol"] = props["symbol"]
+    commands = [
+        layout_command("layout.panel.add", payload, {"panelId": panel_id}),
+        layout_command(
+            "layout.panel.priority.set",
+            {"panelId": panel_id, "layoutWeight": 100},
+            {"panelId": panel_id},
+        ),
+    ]
+    if placements:
+        commands.append(layout_command(
+            "layout.panels.arrange",
+            {
+                "reason": "ui-agent-panel-restore",
+                "placements": placements,
+            },
+            {"panelId": panel_id},
+        ))
+    commands.append(layout_command("layout.reflow", {"reason": "ui-agent-panel-restore"}))
+    return LayoutProposal(
+        title="UI layout request",
+        rationale=f"{default_panel_title(panel_type)} 패널을 열었습니다.",
+        commands=commands,
+        autoApply=True,
+        panelPriorities=multi_ui_panel_priorities([*panels, target_panel], [panel_id]),
+    )
+
+
+def is_visibility_panel_action(action: str) -> bool:
+    return action in {"open", "focus", "resize", "move", "arrange"}
+
+
+def panel_props_for_context(context: AgentContext, panel_type: str) -> dict[str, Any]:
+    symbol = str(context.symbol or "").strip().upper()
+    query_understanding = context.queryUnderstanding if isinstance(context.queryUnderstanding, dict) else {}
+    symbol_source = str(query_understanding.get("resolvedSymbolSource") or "").strip()
+    if symbol_source not in {"query_company", "chart_shortcut"}:
+        return {}
+    if symbol and symbol != "UNKNOWN" and panel_type in {"chart", "newsFeed", "ontologyGraph", "orderTicket"}:
+        return {"symbol": symbol}
+    return {}
 
 
 def propose_chart_add_layout(context: AgentContext, panels: list[dict[str, Any]], task: UiTask) -> LayoutProposal:
@@ -1837,6 +1927,7 @@ def build_news_panel_props(symbol: str, evidence: list[EvidenceItem], daily_summ
     return {
         "symbol": symbol,
         "updatedAt": utc_now_iso(),
+        "displayMode": "dailySummary" if daily_summaries else "articleList",
         "status": "available" if news_items or daily_summaries else "empty",
         "emptyMessage": no_data[0].summary if no_data else f"{symbol} 관련 저장 뉴스가 없습니다.",
         "dailySummaries": [daily_summary_panel_item(item) for item in (daily_summaries or [])[:5]],
@@ -1916,7 +2007,61 @@ def daily_summary_panel_item(item: dict[str, Any]) -> dict[str, Any]:
         "mentionCount": int(item.get("mentionCount") or 0),
         "status": item.get("status") or "rolling",
         "generatedAt": item.get("generatedAt"),
+        "sources": daily_summary_sources(item.get("sources")),
+        "priceChange": daily_summary_price_change(item.get("priceChange")),
     }
+
+
+def daily_summary_price_change(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    try:
+        previous_close = float(value.get("previousClose"))
+        close = float(value.get("close"))
+        change = float(value.get("change"))
+        change_percent = float(value.get("changePercent", 0))
+    except (TypeError, ValueError):
+        return None
+    date = str(value.get("date") or "").strip()
+    if not date:
+        return None
+    return {
+        "date": date[:10],
+        "previousClose": previous_close,
+        "close": close,
+        "change": change,
+        "changePercent": change_percent,
+    }
+
+
+def daily_summary_sources(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    sources = []
+    seen = set()
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        url = str(item.get("url") or "").strip()
+        if not title or not url:
+            continue
+        key = str(item.get("articleId") or url)
+        if key in seen:
+            continue
+        seen.add(key)
+        source = {
+            "title": title,
+            "url": url,
+        }
+        for key in ("articleId", "name", "publishedAt"):
+            text = str(item.get(key) or "").strip()
+            if text:
+                source[key] = text
+        sources.append(source)
+        if len(sources) >= 3:
+            break
+    return sources
 
 
 def panel_raw_number(item: EvidenceItem, key: str) -> float:

@@ -30,6 +30,7 @@ def normalize_request_state(state: dict[str, Any]) -> dict[str, Any]:
         chart_context=request.get("chartContext"),
         request_symbol=request.get("symbol"),
         runtime_context=runtime_context,
+        layout_command_preflight=bool(request.get("_layoutResolveOnly")),
         timing=timing,
     )
     explicit_symbol = (

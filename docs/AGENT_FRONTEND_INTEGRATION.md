@@ -183,6 +183,20 @@ instance의 symbol이다. `layout.panel.priority.set`과 `layout.panels.arrange`
 `layoutWeight`는 다음 요청의 `layoutContext`에 보존되어, 직전 요청 panel과 chart
 panel이 더 크게 배치되고 낮은 priority support panel은 축소/이동될 수 있다.
 
+news panel은 `panelType="newsFeed"`와 `props.displayMode="dailySummary"`를
+받으면 일자별 요약 전용으로 렌더링한다. 이때 `props.dailySummaries[]`는
+`date`, `summary`, `sources[]`를 포함해야 하며, source 항목은 실제 기사
+`url`과 링크에 표시할 `title`을 가진다. `priceChange`가 있으면 날짜 옆에
+전일 종가 대비 절대 가격 차이를 표시하고, 출처 링크는 요약 아래 `출처` 행의
+favicon 아이콘으로 렌더링한다. Redis/ClickHouse 같은 저장소 provenance는 프런트에
+표시하는 source 값으로 쓰지 않는다.
+
+market indices panel은 `panelType="marketIndices"`/`kind="indices"`로 표현한다.
+현재 `gops-frontend`는 이 패널에서 `GET /api/market/indices`만 호출하며, 차트
+panel의 symbol/interval/coverage 상태와 연결하지 않는다. 응답의 `refreshSeconds`,
+`cacheStatus`, `warning`, `items[]`를 사용해 자동 새로고침, stale 표시, 행별 가격과
+변동률을 렌더링한다.
+
 지원하지 않는 경우 정책:
 
 ```text
@@ -217,9 +231,11 @@ apps/gops-frontend/src/App.tsx
 apps/gops-frontend/src/agent/agentAnalysisClient.ts
 apps/gops-frontend/src/agents/agentAnalysis.ts
 apps/gops-frontend/src/components/BottomCommandBar.tsx
+apps/gops-frontend/src/components/IndexPanel.tsx
 apps/gops-frontend/src/layout/agentLayoutTypes.ts
 apps/gops-frontend/src/layout/panelLayout.ts
 apps/gops-frontend/src/layout/tiledAgentLayout.ts
+apps/gops-frontend/src/market/indicesApi.ts
 apps/chart-engine/src/agentReference.ts
 apps/chart-engine/src/agentChat.ts
 apps/chart-engine/src/proposals.ts

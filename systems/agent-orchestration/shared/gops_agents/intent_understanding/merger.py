@@ -13,6 +13,7 @@ from .schema import (
     normalize_query,
     selected_roles_for_tasks,
 )
+from .ui_parser import content_display_should_be_layout_only, content_display_ui_tasks
 
 
 def merge_understanding(
@@ -22,14 +23,19 @@ def merge_understanding(
     rule_content_tasks: list[ContentTask],
     rule_ui_tasks: list[UiTask],
     classifier_result: ClassifierResult | None,
+    layout_context: dict[str, Any] | None = None,
+    allow_content_display_ui: bool = False,
     timings: dict[str, float] | None = None,
 ) -> QueryUnderstanding:
     classifier_content = list(classifier_result.contentTasks) if classifier_result else []
     classifier_ui = list(classifier_result.uiTasks) if classifier_result else []
     content_tasks = merge_content_tasks([*rule_content_tasks, *classifier_content])
     ui_tasks = merge_ui_tasks([*rule_ui_tasks, *classifier_ui])
+    ui_tasks = merge_ui_tasks([*ui_tasks, *content_display_ui_tasks(query, content_tasks, ui_tasks, layout_context, allow_content_display_ui)])
     has_confirmed_entity = getattr(entity_resolution, "status", None) == "confirmed"
-    if content_tasks_are_only_panel_references(content_tasks, ui_tasks, has_confirmed_entity):
+    if allow_content_display_ui and content_display_should_be_layout_only(query, content_tasks, ui_tasks):
+        content_tasks = []
+    elif content_tasks_are_only_panel_references(content_tasks, ui_tasks, has_confirmed_entity):
         content_tasks = []
     selected_roles = selected_roles_for_tasks(content_tasks)
     route_mode = route_mode_for_tasks(content_tasks, ui_tasks, classifier_result)

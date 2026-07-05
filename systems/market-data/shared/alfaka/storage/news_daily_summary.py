@@ -7,6 +7,7 @@ from alfaka.storage.clickhouse_loader import clickhouse_time
 
 
 SUMMARY_VERSION = "v1"
+SOURCE_LINK_LIMIT = 3
 
 
 def build_daily_summary_record(
@@ -36,6 +37,7 @@ def build_daily_summary_record(
     impact_direction = normalize_label(impact_direction or dominant_row_label(normalized_rows, "impactDirection", "impact_direction"), "neutral")
     sentiment = normalize_label(sentiment or dominant_row_label(normalized_rows, "sentiment", "sentiment"), "neutral")
     summary = clean_text(summary or deterministic_summary(normalized_symbol, date, key_points, impact_direction), 700)
+    sources = build_daily_summary_sources(normalized_rows, limit=SOURCE_LINK_LIMIT)
     return {
         "date": str(date),
         "symbol": normalized_symbol,
@@ -54,6 +56,7 @@ def build_daily_summary_record(
         "model": model or "deterministic",
         "generatedAt": generated_at,
         "version": SUMMARY_VERSION,
+        "sources": sources,
     }
 
 
@@ -81,6 +84,7 @@ def daily_summary_to_clickhouse_row(record):
 
 
 def clickhouse_row_to_daily_summary(row):
+    raw = parse_raw_json(row.get("raw"))
     return {
         "date": str(row.get("date") or ""),
         "symbol": str(row.get("symbol") or "").upper(),
@@ -99,6 +103,8 @@ def clickhouse_row_to_daily_summary(row):
         "model": row.get("model") or "",
         "generatedAt": row.get("generatedAt") or row.get("generated_at"),
         "version": row.get("version") or SUMMARY_VERSION,
+        "sources": normalize_source_links(row.get("sources") or raw.get("sources")),
+        "priceChange": normalize_price_change(row.get("priceChange") or row.get("price_change") or raw.get("priceChange")),
     }
 
 
@@ -121,9 +127,170 @@ def canonical_article_ids(rows):
     return sorted(ids)
 
 
+def build_daily_summary_sources(rows, limit=SOURCE_LINK_LIMIT):
+    sources = []
+    seen = set()
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        url = clean_text(row.get("url"), 500)
+        title = clean_text(
+            row.get("localizedHeadline")
+            or row.get("localized_headline")
+            or row.get("headline")
+            or row.get("title"),
+            180,
+        )
+        if not url or not title:
+            continue
+        article_id = clean_text(row.get("articleId") or row.get("article_id"), 120)
+        key = article_id or url
+        if key in seen:
+            continue
+        seen.add(key)
+        source = {
+            "title": title,
+            "url": url,
+        }
+        if article_id:
+            source["articleId"] = article_id
+        name = clean_text(row.get("source"), 80)
+        if name:
+            source["name"] = name
+        published_at = clean_text(row.get("publishedAt") or row.get("published_at"), 40)
+        if published_at:
+            source["publishedAt"] = published_at
+        sources.append(source)
+        if len(sources) >= int(limit):
+            break
+    return sources
+
+
+def normalize_source_links(value):
+    if not isinstance(value, list):
+        return []
+    sources = []
+    seen = set()
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        url = clean_text(item.get("url"), 500)
+        title = clean_text(item.get("title"), 180)
+        if not url or not title:
+            continue
+        key = clean_text(item.get("articleId") or item.get("article_id"), 120) or url
+        if key in seen:
+            continue
+        seen.add(key)
+        source = {"title": title, "url": url}
+        article_id = clean_text(item.get("articleId") or item.get("article_id"), 120)
+        if article_id:
+            source["articleId"] = article_id
+        name = clean_text(item.get("name") or item.get("source"), 80)
+        if name:
+            source["name"] = name
+        published_at = clean_text(item.get("publishedAt") or item.get("published_at"), 40)
+        if published_at:
+            source["publishedAt"] = published_at
+        sources.append(source)
+        if len(sources) >= SOURCE_LINK_LIMIT:
+            break
+    return sources
+
+
+def attach_price_changes_to_daily_summaries(summaries, candles):
+    price_changes = daily_price_changes(candles)
+    if not price_changes:
+        return list(summaries or [])
+    enriched = []
+    for item in summaries or []:
+        if not isinstance(item, dict):
+            continue
+        next_item = dict(item)
+        date = summary_date_key(next_item.get("date"))
+        price_change = price_changes.get(date)
+        if price_change:
+            next_item["priceChange"] = price_change
+        enriched.append(next_item)
+    return enriched
+
+
+def daily_price_changes(candles):
+    normalized = []
+    for candle in candles or []:
+        if not isinstance(candle, dict):
+            continue
+        date = summary_date_key(candle.get("timestamp") or candle.get("date"))
+        close = float_or_none(candle.get("close"))
+        if not date or close is None:
+            continue
+        normalized.append((date, close))
+    normalized.sort(key=lambda item: item[0])
+    changes = {}
+    previous_close = None
+    for date, close in normalized:
+        if previous_close is not None:
+            change = close - previous_close
+            changes[date] = {
+                "date": date,
+                "previousClose": round(previous_close, 6),
+                "close": round(close, 6),
+                "change": round(change, 6),
+                "changePercent": round((change / previous_close) * 100, 6) if previous_close else 0,
+            }
+        previous_close = close
+    return changes
+
+
+def normalize_price_change(value):
+    if not isinstance(value, dict):
+        return None
+    date = summary_date_key(value.get("date"))
+    previous_close = float_or_none(value.get("previousClose") if "previousClose" in value else value.get("previous_close"))
+    close = float_or_none(value.get("close"))
+    change = float_or_none(value.get("change"))
+    if not date or previous_close is None or close is None or change is None:
+        return None
+    change_percent = float_or_none(value.get("changePercent") if "changePercent" in value else value.get("change_percent"))
+    return {
+        "date": date,
+        "previousClose": round(previous_close, 6),
+        "close": round(close, 6),
+        "change": round(change, 6),
+        "changePercent": round(change_percent if change_percent is not None else ((change / previous_close) * 100 if previous_close else 0), 6),
+    }
+
+
+def summary_date_key(value):
+    if not value:
+        return ""
+    text = str(value).strip()
+    return text[:10] if len(text) >= 10 else text
+
+
+def float_or_none(value):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number == number and number not in (float("inf"), float("-inf")) else None
+
+
 def article_ids_hash(article_ids):
     encoded = "\n".join(sorted(str(item) for item in article_ids or [] if str(item).strip()))
     return hashlib.sha1(encoded.encode("utf-8")).hexdigest()
+
+
+def parse_raw_json(value):
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return {}
+    try:
+        decoded = json.loads(value)
+    except Exception:
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
 
 
 def derive_key_points(rows):

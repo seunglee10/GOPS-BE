@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from alfaka.news.relevance import classify_subject_relevance, is_direct_subject, normalize_subject_level, normalize_symbols
-from alfaka.storage.news_daily_summary import clickhouse_row_to_daily_summary
+from alfaka.storage.news_daily_summary import attach_price_changes_to_daily_summaries, clickhouse_row_to_daily_summary
 
 from ..contracts import EvidenceItem, utc_now_iso
 from .graph_path_cache import GraphPathCache, build_graph_path_cache_from_env
@@ -173,7 +173,19 @@ class ClickHouseNewsProvider(NewsProvider):
                     rows.extend(provider.company_daily_news_summaries(symbol, limit=self.daily_summary_limit, days=max(self.days, 30), locale=self.locale))
             except Exception:
                 rows = []
-        return [clickhouse_row_to_daily_summary(row) for row in rows if isinstance(row, dict)]
+        summaries = [clickhouse_row_to_daily_summary(row) for row in rows if isinstance(row, dict)]
+        return attach_price_changes_to_daily_summaries(summaries, self._daily_price_candles(symbol))
+
+    def _daily_price_candles(self, symbol: str) -> list[dict[str, Any]]:
+        try:
+            provider = self.clickhouse_provider or self._default_provider()
+            method = getattr(provider, "candles", None)
+            if not callable(method):
+                return []
+            rows = method(symbol, "1D", max(2, self.daily_summary_limit + 10))
+        except Exception:
+            rows = []
+        return [row for row in rows or [] if isinstance(row, dict)]
 
     def _request_symbols(self, request: ProviderRequest) -> list[str]:
         raw_symbols = request.symbols or (request.symbol,)

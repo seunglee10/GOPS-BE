@@ -324,9 +324,17 @@ def clickhouse_time_or_none(value):
 
 def clickhouse_param_value(value):
     if isinstance(value, (list, tuple)):
-        return "[" + ",".join(clickhouse_param_value(item) for item in value) + "]"
+        return "[" + ",".join(clickhouse_array_param_item_value(item) for item in value) + "]"
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if value is None:
+        return "NULL"
+    return str(value)
+
+
+def clickhouse_array_param_item_value(value):
     if isinstance(value, str):
-        return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+        return clickhouse_string_literal(value)
     if isinstance(value, bool):
         return "1" if value else "0"
     if value is None:

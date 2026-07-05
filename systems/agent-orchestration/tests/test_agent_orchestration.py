@@ -19,6 +19,7 @@ from gops_agents.events.detector import MarketEventDetector, MarketEventThreshol
 from gops_agents.events.publisher import notification_payload
 from gops_agents.intent_understanding import build_query_understanding
 from gops_agents.intent_understanding.classifier import classifier_result_from_payload
+from gops_agents.intent_understanding.ui_parser import parse_ui_query
 from gops_agents.orchestrator import (
     AgentOrchestrator,
     canonical_analysis_intent,
@@ -97,8 +98,9 @@ class FakeOpenAIResponse:
 
 
 class FakeClickHouseProvider:
-    def __init__(self, rows):
+    def __init__(self, rows, candles=None):
         self.rows = rows
+        self.candle_rows = candles or []
         self.calls = 0
         self.requested_symbols = []
 
@@ -106,6 +108,9 @@ class FakeClickHouseProvider:
         self.calls += 1
         self.requested_symbols.append(symbol)
         return self.rows
+
+    def candles(self, symbol, interval, limit):
+        return self.candle_rows[-limit:]
 
 
 class FakeLocalizedClickHouseProvider(FakeClickHouseProvider):
@@ -359,6 +364,26 @@ def layout_context(*, pinned_news=False):
     }
 
 
+def chart_only_layout_context(symbol="AAPL"):
+    return {
+        "version": 1,
+        "selectedPanelId": "panel-chart-primary",
+        "panels": [
+            {
+                "id": "panel-chart-primary",
+                "type": "chart",
+                "placement": {"group": "workspace", "zone": "mainContext", "col": 1, "row": 1, "colSpan": 4, "rowSpan": 4},
+                "layoutPinned": False,
+                "layoutWeight": 100,
+                "minSpan": {"colSpan": 2, "rowSpan": 2},
+                "maxSpan": {"colSpan": 4, "rowSpan": 5},
+                "symbol": symbol,
+                "props": {"symbol": symbol},
+            },
+        ],
+    }
+
+
 def placements_overlap(left, right):
     left_col_end = left["col"] + left["colSpan"] - 1
     right_col_end = right["col"] + right["colSpan"] - 1
@@ -539,12 +564,27 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(understanding.intentType, "news")
         self.assertEqual(understanding.uiTasks, [])
 
-    def test_content_news_show_query_does_not_become_ui_task(self):
-        with patch("gops_agents.intent_understanding.fanout.classify_with_provider", side_effect=AssertionError("content-only news should not call classifier")):
-            understanding, _ = build_query_understanding("NVDA 뉴스 보여줘", layout_context=layout_context())
+    def test_content_news_show_query_with_layout_context_becomes_ui_task(self):
+        with patch("gops_agents.intent_understanding.fanout.classify_with_provider", side_effect=AssertionError("content display should not call classifier")):
+            understanding, _ = build_query_understanding(
+                "NVDA 뉴스 보여줘",
+                layout_context=layout_context(),
+                layout_command_preflight=True,
+            )
+
+        self.assertEqual(understanding.routeMode, "ui_layout")
+        self.assertEqual(understanding.intentType, "ui-layout")
+        self.assertEqual(understanding.contentTasks, [])
+        self.assertEqual(understanding.uiTasks[0].targetPanelType, "newsFeed")
+        self.assertEqual(understanding.uiTasks[0].source, "content-display-rule")
+
+    def test_news_analysis_query_with_layout_context_stays_analysis(self):
+        with patch("gops_agents.intent_understanding.fanout.classify_with_provider", side_effect=AssertionError("clear analysis route should not call classifier")):
+            understanding, _ = build_query_understanding("NVDA 뉴스 분석해줘", layout_context=layout_context())
 
         self.assertEqual(understanding.routeMode, "analysis")
         self.assertEqual(understanding.intentType, "news")
+        self.assertEqual([task.taskType for task in understanding.contentTasks], ["news"])
         self.assertEqual(understanding.uiTasks, [])
 
     def test_ui_parser_handles_korean_typos_without_llm_classifier(self):
@@ -569,6 +609,48 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(understanding.uiTasks[0].action, "keep")
         self.assertEqual(understanding.uiTasks[0].targetPanelType, "chart")
         self.assertEqual(understanding.uiTasks[0].targetPanelId, "panel-chart-primary")
+
+    def test_ui_parser_handles_keep_only_delete_variants_without_size_fuzzy(self):
+        variants = [
+            "차트 패널 빼고 다 지워줘",
+            "차트 빼고 다 삭제해줘",
+            "차트 패널 빼고 나머지 패널 치워줘",
+        ]
+        for query in variants:
+            with self.subTest(query=query):
+                with patch("gops_agents.intent_understanding.fanout.classify_with_provider", side_effect=AssertionError("clear delete keep-only UI route should not call classifier")):
+                    understanding, _ = build_query_understanding(query, layout_context=layout_context())
+
+                self.assertEqual(understanding.routeMode, "ui_layout")
+                self.assertEqual(understanding.intentType, "ui-layout")
+                self.assertEqual(understanding.uiTasks[0].source, "ui-parser")
+                self.assertEqual(understanding.uiTasks[0].action, "keep")
+                self.assertEqual(understanding.uiTasks[0].targetPanelType, "chart")
+                self.assertEqual(understanding.uiTasks[0].targetPanelId, "panel-chart-primary")
+                self.assertIsNone(understanding.uiTasks[0].sizeIntent)
+
+    def test_ui_parser_treats_single_panel_delete_as_close_not_resize(self):
+        with patch("gops_agents.intent_understanding.fanout.classify_with_provider", side_effect=AssertionError("clear panel delete UI route should not call classifier")):
+            understanding, _ = build_query_understanding("주문 패널 지워줘", layout_context=layout_context())
+
+        self.assertEqual(understanding.routeMode, "ui_layout")
+        self.assertEqual(understanding.intentType, "ui-layout")
+        self.assertEqual(understanding.uiTasks[0].source, "ui-parser")
+        self.assertEqual(understanding.uiTasks[0].action, "close")
+        self.assertEqual(understanding.uiTasks[0].targetPanelType, "orderTicket")
+        self.assertEqual(understanding.uiTasks[0].targetPanelId, "panel-order")
+        self.assertIsNone(understanding.uiTasks[0].sizeIntent)
+
+    def test_ui_parser_preserves_resize_and_content_except_phrasing(self):
+        with patch("gops_agents.intent_understanding.fanout.classify_with_provider", side_effect=AssertionError("clear resize UI route should not call classifier")):
+            resize_understanding, _ = build_query_understanding("뉴스 패널 줄여줘", layout_context=layout_context())
+
+        self.assertEqual(resize_understanding.routeMode, "ui_layout")
+        self.assertEqual(resize_understanding.uiTasks[0].action, "resize")
+        self.assertEqual(resize_understanding.uiTasks[0].sizeIntent, "small")
+
+        parsed = parse_ui_query("차트 빼고 분석해줘", layout_context())
+        self.assertEqual(parsed.tasks, [])
 
     def test_mixed_ui_news_and_ontology_scopes_ui_clause(self):
         query = "뉴스 패널 크게 띄워주고 엔비디아 뉴스 불러와줘. 그리고 온톨로지 분석해줘"
@@ -1307,6 +1389,45 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertTrue(response["agentTrace"]["uiLayoutFastAck"])
         self.assertIsNotNone(response["layoutProposal"])
 
+    def test_layout_resolve_opens_news_panel_for_display_request(self):
+        response = AgentOrchestrator().resolve_layout({
+            "symbol": "AAPL",
+            "intent": "NVDA 뉴스 보여줘",
+            "layoutContext": chart_only_layout_context("AAPL"),
+        })
+
+        self.assertEqual(response["status"], "ui_layout")
+        self.assertEqual(response["agentTrace"]["queryUnderstanding"]["routeMode"], "ui_layout")
+        self.assertEqual(response["agentTrace"]["queryUnderstanding"]["resolvedSymbol"], "NVDA")
+        proposal = response["layoutProposal"]
+        add_command = next(command for command in proposal["commands"] if command["type"] == "layout.panel.add")
+        self.assertEqual(add_command["payload"]["panelType"], "newsFeed")
+        self.assertEqual(add_command["payload"]["panelId"], "panel-news")
+        self.assertEqual(add_command["payload"]["props"]["symbol"], "NVDA")
+        self.assertNotIn("대상 패널을 찾지 못했습니다", proposal["rationale"])
+
+    def test_layout_resolve_reopens_closed_named_panels_from_korean_show_variants(self):
+        cases = [
+            ("온톨로지 패널 보여주세요", "ontologyGraph", "panel-ontology"),
+            ("관계 그래프 보여주세요", "ontologyGraph", "panel-ontology"),
+            ("주문 패널 보여주세요", "orderTicket", "panel-order"),
+            ("주문창 다시 띄워줘", "orderTicket", "panel-order"),
+        ]
+        for prompt, panel_type, panel_id in cases:
+            with self.subTest(prompt=prompt):
+                response = AgentOrchestrator().resolve_layout({
+                    "symbol": "NVDA",
+                    "intent": prompt,
+                    "layoutContext": chart_only_layout_context("NVDA"),
+                })
+
+                self.assertEqual(response["status"], "ui_layout")
+                proposal = response["layoutProposal"]
+                add_command = next(command for command in proposal["commands"] if command["type"] == "layout.panel.add")
+                self.assertEqual(add_command["payload"]["panelType"], panel_type)
+                self.assertEqual(add_command["payload"]["panelId"], panel_id)
+                self.assertNotIn("대상 패널을 찾지 못했습니다", proposal["rationale"])
+
     def test_layout_resolve_returns_not_ui_for_analysis_request(self):
         response = AgentOrchestrator().resolve_layout({
             "symbol": "NVDA",
@@ -1349,6 +1470,34 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertIn("panel-news", remove_ids)
         self.assertIn("panel-ontology", remove_ids)
         self.assertNotIn("panel-chart-primary", remove_ids)
+
+    def test_layout_resolve_keep_only_handles_delete_variants(self):
+        variants = [
+            "차트 패널 빼고 다 지워줘",
+            "차트 빼고 다 삭제해줘",
+            "차트 패널 빼고 나머지 패널 치워줘",
+        ]
+        for query in variants:
+            with self.subTest(query=query):
+                response = AgentOrchestrator().resolve_layout({
+                    "symbol": "NVDA",
+                    "intent": query,
+                    "layoutContext": layout_context(),
+                })
+
+                self.assertEqual(response["status"], "ui_layout")
+                proposal = response["layoutProposal"]
+                self.assertEqual(proposal["autoApply"], True)
+                self.assertIn("차트만 남기고", proposal["rationale"])
+                remove_ids = {
+                    command["payload"]["panelId"]
+                    for command in proposal["commands"]
+                    if command["type"] == "layout.panel.remove"
+                }
+                self.assertIn("panel-news", remove_ids)
+                self.assertIn("panel-ontology", remove_ids)
+                self.assertIn("panel-order", remove_ids)
+                self.assertNotIn("panel-chart-primary", remove_ids)
 
     def test_layout_resolve_removes_multiple_named_panels(self):
         response = AgentOrchestrator().resolve_layout({
@@ -3161,10 +3310,29 @@ class AgentOrchestrationTests(unittest.TestCase):
                     "mentionCount": 0,
                     "status": "final",
                     "generatedAt": "2026-07-01T22:00:00.000Z",
+                    "sources": [
+                        {
+                            "articleId": "aapl-daily-1",
+                            "title": "Apple services revenue grows",
+                            "name": "Example News",
+                            "url": "https://example.com/aapl-services",
+                            "publishedAt": "2026-07-01T12:00:00.000Z",
+                        }
+                    ],
                 }
             ],
         )
-        provider = ClickHouseNewsProvider(clickhouse_provider=FakeClickHouseProvider([]), redis_provider=redis, publish_fallback=False)
+        provider = ClickHouseNewsProvider(
+            clickhouse_provider=FakeClickHouseProvider(
+                [],
+                candles=[
+                    {"timestamp": "2026-06-30T00:00:00.000Z", "close": 199.85},
+                    {"timestamp": "2026-07-01T00:00:00.000Z", "close": 200.00},
+                ],
+            ),
+            redis_provider=redis,
+            publish_fallback=False,
+        )
         orchestrator = AgentOrchestrator()
         orchestrator.news_agent = NewsAgent(provider)
 
@@ -3180,6 +3348,9 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertIsNone(report.layoutProposal)
         self.assertEqual(report.dailySummaries[0]["date"], "2026-07-01")
         self.assertEqual(report.dailySummaries[0]["keyPoints"], ["서비스 성장", "공급망 점검"])
+        self.assertEqual(report.dailySummaries[0]["sources"][0]["url"], "https://example.com/aapl-services")
+        self.assertEqual(report.dailySummaries[0]["priceChange"]["change"], 0.15)
+        self.assertEqual(report.finalAnswer.sections, [])
 
     def test_news_role_fallback_applies_daily_summaries_after_join(self):
         provider = SequencedDailyNewsProvider()
