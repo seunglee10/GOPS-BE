@@ -14,7 +14,7 @@ sys.path.insert(0, str(ROOT / "shared"))
 sys.path.insert(0, str(REPO_ROOT / "systems" / "market-data" / "shared"))
 sys.modules.setdefault("boto3", types.SimpleNamespace(client=lambda *args, **kwargs: None))
 
-from gops_agents.contracts import AgentAnswer, AgentFinding, DataSnapshot, EvidenceItem, FinalAnswer, FinalResponse, IntentRoute, RoutePlan, SynthesisInput, utc_now_iso
+from gops_agents.contracts import AgentAnswer, AgentFinding, AnalysisReport, DataSnapshot, EvidenceItem, FinalAnswer, FinalResponse, IntentRoute, RoutePlan, SynthesisInput, utc_now_iso
 from gops_agents.events.detector import MarketEventDetector, MarketEventThresholds
 from gops_agents.events.publisher import notification_payload
 from gops_agents.intent_understanding import build_query_understanding
@@ -559,6 +559,17 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(understanding.uiTasks[0].action, "resize")
         self.assertEqual(understanding.uiTasks[0].sizeIntent, "large")
 
+    def test_ui_parser_handles_keep_only_panel_request_without_llm_classifier(self):
+        with patch("gops_agents.intent_understanding.fanout.classify_with_provider", side_effect=AssertionError("clear keep-only UI route should not call classifier")):
+            understanding, _ = build_query_understanding("차트 패널 빼고 나머지 패널 없애줘", layout_context=layout_context())
+
+        self.assertEqual(understanding.routeMode, "ui_layout")
+        self.assertEqual(understanding.intentType, "ui-layout")
+        self.assertEqual(understanding.uiTasks[0].source, "ui-parser")
+        self.assertEqual(understanding.uiTasks[0].action, "keep")
+        self.assertEqual(understanding.uiTasks[0].targetPanelType, "chart")
+        self.assertEqual(understanding.uiTasks[0].targetPanelId, "panel-chart-primary")
+
     def test_mixed_ui_news_and_ontology_scopes_ui_clause(self):
         query = "뉴스 패널 크게 띄워주고 엔비디아 뉴스 불러와줘. 그리고 온톨로지 분석해줘"
         with patch("gops_agents.intent_understanding.fanout.classify_with_provider", side_effect=AssertionError("clear mixed route should not call classifier")):
@@ -729,6 +740,43 @@ class AgentOrchestrationTests(unittest.TestCase):
 
         self.assertEqual(store.get_idempotency_request_id("user-1", "idem-1"), "agent-request-1")
 
+    def test_report_store_cancel_marker_prevents_completed_overwrite(self):
+        store = InMemoryReportStore()
+
+        canceled = store.mark_canceled("agent-request-cancel", reason="test cancel", user_id="user-1")
+        saved = store.save(AnalysisReport(
+            analysisId="agent-request-cancel",
+            symbol="NVDA",
+            intent="analysis",
+            status="completed",
+            createdAt=utc_now_iso(),
+            summary="done",
+            rationale="late completion",
+        ))
+
+        self.assertEqual(canceled.status, "canceled")
+        self.assertEqual(saved.status, "canceled")
+        self.assertEqual(store.get("agent-request-cancel").status, "canceled")
+        self.assertTrue(store.is_canceled("agent-request-cancel"))
+
+    def test_report_store_cancel_does_not_override_completed_report(self):
+        store = InMemoryReportStore()
+        store.save(AnalysisReport(
+            analysisId="agent-request-completed",
+            symbol="NVDA",
+            intent="analysis",
+            status="completed",
+            createdAt=utc_now_iso(),
+            summary="done",
+            rationale="test",
+        ))
+
+        report = store.mark_canceled("agent-request-completed", reason="too late", user_id="user-1")
+
+        self.assertEqual(report.status, "completed")
+        self.assertEqual(store.get("agent-request-completed").status, "completed")
+        self.assertFalse(store.is_canceled("agent-request-completed"))
+
     def test_admission_rejects_when_queue_depth_crosses_policy(self):
         envelope = build_request_envelope({"symbol": "NVDA", "intent": "analysis"}, request_id="agent-admission")
 
@@ -770,6 +818,20 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(report.agentTrace["retrievalContext"]["primary_symbol"], "NVDA")
         self.assertEqual(report.timing["relatedSymbolsUsed"], 0)
 
+    def test_orchestrator_returns_canceled_when_marker_exists_before_start(self):
+        store = InMemoryReportStore()
+        store.mark_canceled("agent-request-before-start", reason="user stopped", user_id="user-1")
+
+        report = AgentOrchestrator(store=store).analyze({
+            "symbol": "NVDA",
+            "intent": "뉴스 보여줘",
+            "requestId": "agent-request-before-start",
+        })
+
+        self.assertEqual(report.analysisId, "agent-request-before-start")
+        self.assertEqual(report.status, "canceled")
+        self.assertTrue(store.is_canceled("agent-request-before-start"))
+
     def test_analysis_worker_processes_envelope_to_shared_store(self):
         store = InMemoryReportStore()
         envelope = build_request_envelope(
@@ -790,6 +852,24 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(report.timing["providerBulkheadRejected"], 0)
         self.assertEqual(store.get("agent-request-worker").status, "completed")
         self.assertEqual(store.get_idempotency_request_id("user-1", "idem-1"), "agent-request-worker")
+
+    def test_analysis_worker_skips_orchestrator_when_request_is_canceled(self):
+        store = InMemoryReportStore()
+        envelope = build_request_envelope(
+            {"symbol": "NVDA", "intent": "뉴스 보여줘"},
+            request_id="agent-request-worker-cancel",
+            user_id="user-1",
+        )
+        store.mark_canceled(envelope.request_id, reason="user stopped", user_id="user-1")
+        orchestrator = AgentOrchestrator(store=store)
+        with patch.object(orchestrator, "analyze", side_effect=AssertionError("canceled request must not run orchestrator")):
+            worker = AgentAnalysisWorker(store=store, orchestrator=orchestrator)
+            with patch("gops_agents.runtime.workers.publish_agent_outputs") as publish:
+                report = worker.process_envelope(envelope)
+
+        self.assertEqual(report.status, "canceled")
+        self.assertEqual(store.get(envelope.request_id).status, "canceled")
+        self.assertEqual(publish.call_args.args[0]["status"], "canceled")
 
     def test_analysis_worker_queues_deep_update_and_marks_hot_report_pending(self):
         store = InMemoryReportStore()
@@ -1192,6 +1272,7 @@ class AgentOrchestrationTests(unittest.TestCase):
                 })
 
         self.assertEqual(report.summary, "변경했습니다.")
+        self.assertEqual(report.rationale, "시장 뉴스 패널 크기를 조정했습니다.")
         self.assertEqual(report.route.intentType, "ui-layout")
         self.assertEqual(report.findings, [])
         self.assertEqual(report.providerEvidence, [])
@@ -1221,6 +1302,7 @@ class AgentOrchestrationTests(unittest.TestCase):
 
         self.assertEqual(response["status"], "ui_layout")
         self.assertEqual(response["summary"], "변경했습니다.")
+        self.assertEqual(response["rationale"], "시장 뉴스 패널 크기를 조정했습니다.")
         self.assertEqual(response["route"]["intentType"], "ui-layout")
         self.assertTrue(response["agentTrace"]["uiLayoutFastAck"])
         self.assertIsNotNone(response["layoutProposal"])
@@ -1235,6 +1317,55 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(response["status"], "not_ui")
         self.assertIsNone(response["layoutProposal"])
         self.assertFalse(response["agentTrace"]["uiLayoutFastAck"])
+
+    def test_layout_resolve_returns_ui_clarify_for_unclear_ui_request(self):
+        response = AgentOrchestrator().resolve_layout({
+            "symbol": "NVDA",
+            "intent": "패널 좀 해줘",
+            "layoutContext": layout_context(),
+        })
+
+        self.assertEqual(response["status"], "ui_clarify")
+        self.assertIn("어떤 패널", response["summary"])
+        self.assertIsNone(response["layoutProposal"])
+        self.assertEqual(response["route"]["intentType"], "ui-clarify")
+
+    def test_layout_resolve_keep_only_removes_non_target_panels(self):
+        response = AgentOrchestrator().resolve_layout({
+            "symbol": "NVDA",
+            "intent": "차트 패널 빼고 나머지 패널 없애줘",
+            "layoutContext": layout_context(),
+        })
+
+        self.assertEqual(response["status"], "ui_layout")
+        proposal = response["layoutProposal"]
+        self.assertEqual(proposal["autoApply"], True)
+        self.assertIn("차트만 남기고", proposal["rationale"])
+        remove_ids = [
+            command["payload"]["panelId"]
+            for command in proposal["commands"]
+            if command["type"] == "layout.panel.remove"
+        ]
+        self.assertIn("panel-news", remove_ids)
+        self.assertIn("panel-ontology", remove_ids)
+        self.assertNotIn("panel-chart-primary", remove_ids)
+
+    def test_layout_resolve_removes_multiple_named_panels(self):
+        response = AgentOrchestrator().resolve_layout({
+            "symbol": "NVDA",
+            "intent": "뉴스랑 주문 패널 없애줘",
+            "layoutContext": layout_context(),
+        })
+
+        self.assertEqual(response["status"], "ui_layout")
+        proposal = response["layoutProposal"]
+        remove_ids = {
+            command["payload"]["panelId"]
+            for command in proposal["commands"]
+            if command["type"] == "layout.panel.remove"
+        }
+        self.assertEqual(remove_ids, {"panel-news", "panel-order"})
+        self.assertIn("패널을 숨겼습니다", proposal["rationale"])
 
     def test_ui_router_budget_block_falls_back_without_openai_call(self):
         with patch.dict(os.environ, {
@@ -3649,6 +3780,11 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(report.route.intentType, "ui-layout")
         self.assertEqual(report.route.selectedRoles, [])
         self.assertEqual(report.findings, [])
+        self.assertTrue(any(
+            command["type"] == "layout.panel.remove" and command["payload"]["panelId"] == "panel-order"
+            for command in report.layoutProposal.commands
+        ))
+        self.assertIn("주문", report.layoutProposal.rationale)
 
     def test_ui_fallback_moves_chart_to_bottom(self):
         report = AgentOrchestrator().analyze({

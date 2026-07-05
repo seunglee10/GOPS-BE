@@ -2848,7 +2848,9 @@
       "symbol": "MU",
       "canonicalName": "Micron Technology",
       "aliases": [
+        "마이크론",
         "마이크론 테크놀로지",
+        "micron",
         "micron technology"
       ],
       "source": "reviewed-seed"

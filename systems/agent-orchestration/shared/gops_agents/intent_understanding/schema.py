@@ -7,7 +7,7 @@ from typing import Any
 CONTENT_TASK_TYPES = ("news", "chart", "macro", "ontology", "market_move", "general")
 ROUTE_MODES = ("analysis", "ui_layout", "hybrid", "clarify")
 ROLE_ORDER = ("chart", "news", "macro", "ontology")
-UI_ACTIONS = ("focus", "resize", "move", "open", "close", "arrange")
+UI_ACTIONS = ("focus", "resize", "move", "open", "close", "arrange", "keep")
 UI_PANEL_TYPES = ("chart", "newsFeed", "indicatorCompare", "orderTicket", "portfolioHoldings", "aiSummary", "ontologyGraph")
 UI_SIZE_INTENTS = ("max", "large", "small", "min")
 UI_POSITION_INTENTS = ("top", "bottom", "left", "right", "center")

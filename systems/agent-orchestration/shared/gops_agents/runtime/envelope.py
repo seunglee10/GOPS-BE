@@ -15,6 +15,7 @@ REQUEST_STATUS_COMPLETED = "completed"
 REQUEST_STATUS_DEEP_PENDING = "deep_pending"
 REQUEST_STATUS_DEEP_COMPLETED = "deep_completed"
 REQUEST_STATUS_FAILED = "failed"
+REQUEST_STATUS_CANCELED = "canceled"
 
 
 @dataclass
@@ -201,6 +202,8 @@ def status_summary(status: str, symbol: str) -> str:
         return f"{symbol} analysis is running."
     if status == REQUEST_STATUS_FAILED:
         return f"{symbol} analysis failed."
+    if status == REQUEST_STATUS_CANCELED:
+        return f"{symbol} analysis was canceled."
     if status == REQUEST_STATUS_DEEP_PENDING:
         return f"{symbol} hot analysis is complete and deep analysis is queued."
     if status == REQUEST_STATUS_DEEP_COMPLETED:

@@ -391,23 +391,20 @@ class UIAgent:
         chart_add_task = next((task for task in tasks if is_chart_add_task(task)), None)
         if chart_add_task is not None:
             return propose_chart_add_layout(context, panels, chart_add_task)
+        keep_task = next((task for task in tasks if task.action == "keep"), None)
+        if keep_task is not None:
+            return propose_keep_only_layout(panels, keep_task)
         if len(tasks) == 1 and not is_multi_ui_task(tasks[0]):
             return self.propose(context, ui_intent_from_task(tasks[0]))
 
         if any(task.action == "close" for task in tasks):
-            return LayoutProposal(
-                title="UI layout request",
-                rationale="Closing or removing multiple panels is not auto-applied by the UI agent.",
-                commands=[],
-                autoApply=False,
-                panelPriorities=multi_ui_panel_priorities(panels, []),
-            )
+            return propose_remove_panels_layout(panels, [task for task in tasks if task.action == "close"])
 
         target_panel_types = multi_ui_target_panel_types(tasks, panels)
         if not target_panel_types:
             return LayoutProposal(
                 title="UI layout request",
-                rationale="The UI agent could not identify target panels for this multi-panel request.",
+                rationale="대상 패널을 찾지 못했습니다. 차트, 뉴스, 주문처럼 패널 이름을 포함해 주세요.",
                 commands=[],
                 autoApply=False,
                 panelPriorities=[],
@@ -419,7 +416,7 @@ class UIAgent:
         if not placements:
             return LayoutProposal(
                 title="UI layout request",
-                rationale="The UI agent could not find a valid arrangement for the requested panel set.",
+                rationale="요청한 패널 묶음을 배치할 공간을 찾지 못했습니다.",
                 commands=[],
                 autoApply=False,
                 panelPriorities=multi_ui_panel_priorities(panels, [panel["id"] for panel in target_panels]),
@@ -455,7 +452,7 @@ class UIAgent:
         commands.append(layout_command("layout.reflow", {"reason": "ui-agent-multi-panel-layout-intent"}))
         return LayoutProposal(
             title="UI layout request",
-            rationale="UIAgent arranged the requested panel set for the multi-panel UI action.",
+            rationale="요청한 패널들을 다시 배치했습니다.",
             commands=commands,
             autoApply=True,
             panelPriorities=multi_ui_panel_priorities([*panels, *[panel for panel in target_panels if panel["id"] not in {item["id"] for item in panels}]], [panel["id"] for panel in target_panels]),
@@ -466,7 +463,7 @@ class UIAgent:
         if not ui_intent.isUiIntent:
             return LayoutProposal(
                 title="UI layout request",
-                rationale="The request was not classified as a UI layout action.",
+                rationale="레이아웃 변경 요청으로 확정하지 못했습니다.",
                 commands=[],
                 autoApply=False,
                 panelPriorities=[],
@@ -478,9 +475,9 @@ class UIAgent:
             return LayoutProposal(
                 title="UI layout request",
                 rationale=(
-                    f"Prepared to open a {ui_intent.targetPanelType} panel."
+                    f"{default_panel_title(ui_intent.targetPanelType or '')} 패널을 열었습니다."
                     if add_command
-                    else "The UI agent could not identify a visible target panel for this request."
+                    else "대상 패널을 찾지 못했습니다. 차트, 뉴스, 주문처럼 패널 이름을 포함해 주세요."
                 ),
                 commands=[add_command] if add_command else [],
                 autoApply=bool(add_command),
@@ -490,26 +487,34 @@ class UIAgent:
         if target_panel.get("layoutPinned"):
             return LayoutProposal(
                 title="UI layout request",
-                rationale=f"{target_panel.get('title') or target_panel['id']} is pinned, so the UI agent did not move it.",
+                rationale=f"{target_panel.get('title') or target_panel['id']} 패널은 고정되어 있어 옮기지 않았습니다.",
                 commands=[],
                 autoApply=False,
                 panelPriorities=ui_panel_priorities(panels, target_panel["id"]),
             )
 
         if ui_intent.action == "close":
+            remaining_panels = [panel for panel in panels if panel["id"] != target_panel["id"]]
             return LayoutProposal(
                 title="UI layout request",
-                rationale="Closing or removing panels is not auto-applied by the UI agent.",
-                commands=[],
-                autoApply=False,
-                panelPriorities=ui_panel_priorities(panels, target_panel["id"]),
+                rationale=f"{target_panel.get('title') or target_panel['id']} 패널을 숨겼습니다.",
+                commands=[
+                    layout_command(
+                        "layout.panel.remove",
+                        {"panelId": target_panel["id"]},
+                        {"panelId": target_panel["id"]},
+                    ),
+                    layout_command("layout.reflow", {"reason": "ui-agent-panel-remove"}),
+                ],
+                autoApply=True,
+                panelPriorities=multi_ui_panel_priorities(remaining_panels, []),
             )
 
         placements = arrange_ui_panels(panels, target_panel, ui_intent)
         if not placements:
             return LayoutProposal(
                 title="UI layout request",
-                rationale="The UI agent could not find a valid panel arrangement for the requested layout.",
+                rationale="요청한 배치로 옮길 수 있는 공간을 찾지 못했습니다.",
                 commands=[],
                 autoApply=False,
                 panelPriorities=ui_panel_priorities(panels, target_panel["id"]),
@@ -517,7 +522,7 @@ class UIAgent:
 
         return LayoutProposal(
             title="UI layout request",
-            rationale=f"UIAgent arranged {target_panel.get('title') or target_panel['type']} for the requested UI action.",
+            rationale=panel_action_message(target_panel, ui_intent.action),
             commands=[
                 layout_command(
                     "layout.panel.priority.set",
@@ -575,11 +580,127 @@ def optional_text(value: Any) -> str | None:
 
 
 def is_multi_ui_task(task: UiTask) -> bool:
-    return bool(task.chartAction == "add" or task.layoutPreset or len(task.targetPanelTypes) > 1 or len(task.targetPanelIds) > 1)
+    return bool(task.action == "keep" or task.chartAction == "add" or task.layoutPreset or len(task.targetPanelTypes) > 1 or len(task.targetPanelIds) > 1)
 
 
 def is_chart_add_task(task: UiTask) -> bool:
     return task.chartAction == "add" and task.targetPanelType == "chart"
+
+
+def propose_remove_panels_layout(panels: list[dict[str, Any]], tasks: list[UiTask]) -> LayoutProposal:
+    remove_ids: list[str] = []
+    remove_types: list[str] = []
+    for task in tasks:
+        remove_ids.extend(task.targetPanelIds)
+        remove_types.extend(task.targetPanelTypes or ([task.targetPanelType] if task.targetPanelType else []))
+    remove_id_set = set(remove_ids)
+    remove_type_set = set(remove_types)
+    remove_panels = [
+        panel
+        for panel in panels
+        if panel["id"] in remove_id_set or panel["type"] in remove_type_set
+    ]
+    if not remove_panels:
+        return LayoutProposal(
+            title="UI layout request",
+            rationale="숨길 패널을 찾지 못했습니다. 차트, 뉴스, 주문처럼 패널 이름을 포함해 주세요.",
+            commands=[],
+            autoApply=False,
+            panelPriorities=multi_ui_panel_priorities(panels, []),
+        )
+
+    commands = [
+        layout_command(
+            "layout.panel.remove",
+            {"panelId": panel["id"]},
+            {"panelId": panel["id"]},
+        )
+        for panel in remove_panels
+    ]
+    commands.append(layout_command("layout.reflow", {"reason": "ui-agent-panel-remove"}))
+    remove_label = panel_set_label(remove_panels)
+    remaining_ids = [panel["id"] for panel in panels if panel["id"] not in {item["id"] for item in remove_panels}]
+    return LayoutProposal(
+        title="UI layout request",
+        rationale=f"{remove_label} 패널을 숨겼습니다.",
+        commands=commands,
+        autoApply=True,
+        panelPriorities=multi_ui_panel_priorities(panels, remaining_ids),
+    )
+
+
+def propose_keep_only_layout(panels: list[dict[str, Any]], task: UiTask) -> LayoutProposal:
+    keep_panel_ids = set(task.targetPanelIds)
+    keep_panel_types = set(task.targetPanelTypes or ([task.targetPanelType] if task.targetPanelType else []))
+    keep_panels = [
+        panel
+        for panel in panels
+        if panel["id"] in keep_panel_ids or panel["type"] in keep_panel_types
+    ]
+    if not keep_panels:
+        return LayoutProposal(
+            title="UI layout request",
+            rationale="남길 패널을 찾지 못했습니다. 차트, 뉴스, 주문처럼 패널 이름을 포함해 주세요.",
+            commands=[],
+            autoApply=False,
+            panelPriorities=[],
+        )
+
+    keep_ids = {panel["id"] for panel in keep_panels}
+    remove_panels = [panel for panel in panels if panel["id"] not in keep_ids]
+    if not remove_panels:
+        keep_label = panel_set_label(keep_panels)
+        return LayoutProposal(
+            title="UI layout request",
+            rationale=f"이미 {keep_label}만 표시되어 있습니다.",
+            commands=[],
+            autoApply=False,
+            panelPriorities=multi_ui_panel_priorities(panels, list(keep_ids)),
+        )
+
+    commands = [
+        layout_command(
+            "layout.panel.remove",
+            {"panelId": panel["id"]},
+            {"panelId": panel["id"]},
+        )
+        for panel in remove_panels
+    ]
+    commands.append(layout_command("layout.reflow", {"reason": "ui-agent-keep-only"}))
+    keep_label = panel_set_label(keep_panels)
+    return LayoutProposal(
+        title="UI layout request",
+        rationale=f"{keep_label}만 남기고 {len(remove_panels)}개 패널을 숨겼습니다.",
+        commands=commands,
+        autoApply=True,
+        panelPriorities=multi_ui_panel_priorities(panels, list(keep_ids)),
+    )
+
+
+def panel_set_label(panels: list[dict[str, Any]]) -> str:
+    labels = [str(panel.get("title") or default_panel_title(panel["type"])) for panel in panels]
+    unique = []
+    for label in labels:
+        if label and label not in unique:
+            unique.append(label)
+    if not unique:
+        return "선택한 패널"
+    if len(unique) == 1:
+        return unique[0]
+    return ", ".join(unique)
+
+
+def panel_action_message(panel: dict[str, Any], action: str) -> str:
+    label = str(panel.get("title") or default_panel_title(str(panel.get("type") or "")) or panel.get("id") or "선택한")
+    if action == "resize":
+        return f"{label} 패널 크기를 조정했습니다."
+    if action == "move":
+        return f"{label} 패널 위치를 옮겼습니다."
+    if action == "open":
+        return f"{label} 패널을 열었습니다."
+    if action == "focus":
+        return f"{label} 패널을 앞으로 배치했습니다."
+    return f"{label} 패널을 정리했습니다."
 
 
 def propose_chart_add_layout(context: AgentContext, panels: list[dict[str, Any]], task: UiTask) -> LayoutProposal:
@@ -587,7 +708,7 @@ def propose_chart_add_layout(context: AgentContext, panels: list[dict[str, Any]]
     if not symbol:
         return LayoutProposal(
             title="UI layout request",
-            rationale="The UI agent could not identify a symbol for the additional chart panel.",
+            rationale="추가할 차트 종목을 확정하지 못했습니다.",
             commands=[],
             autoApply=False,
             panelPriorities=[],
@@ -597,7 +718,7 @@ def propose_chart_add_layout(context: AgentContext, panels: list[dict[str, Any]]
     if existing_same_symbol:
         return LayoutProposal(
             title="UI layout request",
-            rationale=f"{symbol} chart is already visible, so the UI agent prioritized the existing chart panel.",
+            rationale=f"{symbol} 차트가 이미 열려 있어 기존 차트 패널을 앞으로 배치했습니다.",
             commands=[
                 layout_command(
                     "layout.panel.priority.set",
@@ -624,7 +745,7 @@ def propose_chart_add_layout(context: AgentContext, panels: list[dict[str, Any]]
         placements = arrange_chart_comparison(updated_panels, anchor, next(panel for panel in updated_panels if panel["id"] == replace_panel["id"]), task.positionIntent)
         return LayoutProposal(
             title="UI layout request",
-            rationale=f"UIAgent reused the lower-priority chart panel for {symbol} and reflowed panels by priority.",
+            rationale=f"{symbol} 차트를 기존 비교 차트 패널에 표시했습니다.",
             commands=[
                 layout_command(
                     "layout.panel.props.update",
@@ -668,7 +789,7 @@ def propose_chart_add_layout(context: AgentContext, panels: list[dict[str, Any]]
     placement_by_id = {item["panelId"]: item["placement"] for item in placements}
     return LayoutProposal(
         title="UI layout request",
-        rationale=f"UIAgent added a {symbol} chart panel and reflowed panels by priority.",
+        rationale=f"{symbol} 차트 패널을 추가했습니다.",
         commands=[
             layout_command(
                 "layout.panel.add",

@@ -12,6 +12,7 @@ from ..query_understanding import warm_entity_catalog_cache
 from .queues import AnalysisRequestQueue, build_deep_analysis_request_queue_from_env
 from .report_store import ReportStore, build_report_store_from_env
 from .envelope import (
+    REQUEST_STATUS_CANCELED,
     REQUEST_STATUS_COMPLETED,
     REQUEST_STATUS_DEEP_COMPLETED,
     REQUEST_STATUS_DEEP_PENDING,
@@ -21,6 +22,7 @@ from .envelope import (
     request_envelope_from_dict,
     status_report_for_envelope,
 )
+from .context import AgentAnalysisCanceled
 
 
 class AgentAnalysisWorker:
@@ -44,14 +46,34 @@ class AgentAnalysisWorker:
     def process_envelope(self, envelope: AgentAnalysisRequestEnvelope):
         if envelope.idempotency_key:
             self.store.save_idempotency_mapping(envelope.user_id, envelope.idempotency_key, envelope.request_id)
+        if self.store.is_canceled(envelope.request_id):
+            canceled = self.store.mark_canceled(envelope.request_id, reason="canceled before worker start", user_id=envelope.user_id)
+            publish_agent_outputs(canceled.to_dict())
+            return canceled
         self._mark_started(envelope)
+        if self.store.is_canceled(envelope.request_id):
+            canceled = self.store.mark_canceled(envelope.request_id, reason="canceled after worker start", user_id=envelope.user_id)
+            publish_agent_outputs(canceled.to_dict())
+            return canceled
         try:
             payload = analysis_payload_for_envelope(envelope)
             report = self.orchestrator.analyze(payload)
+            if self.store.is_canceled(envelope.request_id) or report.status == REQUEST_STATUS_CANCELED:
+                canceled = self.store.mark_canceled(envelope.request_id, reason="canceled during analysis", user_id=envelope.user_id)
+                publish_agent_outputs(canceled.to_dict())
+                return canceled
             apply_worker_diagnostics(report, envelope)
             report = self._apply_deep_analysis_policy(envelope, report)
             publish_agent_outputs(report.to_dict())
             return report
+        except AgentAnalysisCanceled as exc:
+            canceled = self.store.mark_canceled(
+                envelope.request_id,
+                reason=f"canceled during {exc.stage}" if exc.stage else "canceled during analysis",
+                user_id=envelope.user_id,
+            )
+            publish_agent_outputs(canceled.to_dict())
+            return canceled
         except Exception as exc:
             error = f"{exc.__class__.__name__}: {exc}"
             failed = status_report_for_envelope(
@@ -66,6 +88,8 @@ class AgentAnalysisWorker:
             return failed
 
     def _mark_started(self, envelope: AgentAnalysisRequestEnvelope) -> None:
+        if self.store.is_canceled(envelope.request_id):
+            return
         if envelope.mode != "deep":
             self.store.save(status_report_for_envelope(envelope, REQUEST_STATUS_RUNNING))
             return

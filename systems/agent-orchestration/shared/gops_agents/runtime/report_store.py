@@ -20,12 +20,16 @@ from ..contracts import (
     ResolvedEntity,
     RoutePlan,
     SynthesisInput,
+    utc_now_iso,
 )
 
 
 DEFAULT_REPORT_KEY_PREFIX = "agent:report"
 DEFAULT_REPORT_TTL_SECONDS = 43200
 DEFAULT_IDEMPOTENCY_KEY_PREFIX = "agent:request:idempotency"
+DEFAULT_CANCEL_KEY_PREFIX = "agent:report:cancel"
+CANCELED_REPORT_STATUS = "canceled"
+TERMINAL_REPORT_STATUSES = {"completed", "deep_completed", "failed", CANCELED_REPORT_STATUS}
 
 
 class ReportStore:
@@ -34,6 +38,12 @@ class ReportStore:
 
     def get(self, analysis_id: str) -> AnalysisReport | None:
         raise NotImplementedError
+
+    def mark_canceled(self, analysis_id: str, *, reason: str | None = None, user_id: str | None = None) -> AnalysisReport:
+        raise NotImplementedError
+
+    def is_canceled(self, analysis_id: str) -> bool:
+        return False
 
     def save_idempotency_mapping(self, user_id: str, idempotency_key: str, request_id: str, ttl_seconds: int | None = None) -> None:
         return None
@@ -46,13 +56,39 @@ class InMemoryReportStore(ReportStore):
     def __init__(self):
         self._reports: dict[str, AnalysisReport] = {}
         self._idempotency: dict[tuple[str, str], str] = {}
+        self._canceled: dict[str, dict[str, Any]] = {}
 
     def save(self, report: AnalysisReport) -> AnalysisReport:
+        if report.status != CANCELED_REPORT_STATUS and self.is_canceled(report.analysisId):
+            existing = self.get(report.analysisId)
+            if existing and existing.status == CANCELED_REPORT_STATUS:
+                return existing
         self._reports[report.analysisId] = report
         return report
 
     def get(self, analysis_id: str) -> AnalysisReport | None:
         return self._reports.get(analysis_id)
+
+    def mark_canceled(self, analysis_id: str, *, reason: str | None = None, user_id: str | None = None) -> AnalysisReport:
+        canceled_at = utc_now_iso()
+        existing = self.get(str(analysis_id))
+        if existing and existing.status in TERMINAL_REPORT_STATUSES and existing.status != CANCELED_REPORT_STATUS:
+            return existing
+        self._canceled[str(analysis_id)] = cancellation_marker(reason=reason, user_id=user_id, canceled_at=canceled_at)
+        report = canceled_report_for_existing(
+            str(analysis_id),
+            existing,
+            reason=reason,
+            user_id=user_id,
+            canceled_at=canceled_at,
+        )
+        return self.save(report)
+
+    def is_canceled(self, analysis_id: str) -> bool:
+        if str(analysis_id) in self._canceled:
+            return True
+        report = self.get(str(analysis_id))
+        return bool(report and report.status == CANCELED_REPORT_STATUS)
 
     def save_idempotency_mapping(self, user_id: str, idempotency_key: str, request_id: str, ttl_seconds: int | None = None) -> None:
         if user_id and idempotency_key and request_id:
@@ -80,10 +116,15 @@ class RedisReportStore(ReportStore):
         self.ttl_seconds = int(ttl_seconds if ttl_seconds is not None else os.getenv("AGENT_REPORT_TTL_SECONDS", str(DEFAULT_REPORT_TTL_SECONDS)))
         self.key_prefix = key_prefix or os.getenv("AGENT_REPORT_KEY_PREFIX", DEFAULT_REPORT_KEY_PREFIX)
         self.idempotency_key_prefix = os.getenv("AGENT_IDEMPOTENCY_KEY_PREFIX", DEFAULT_IDEMPOTENCY_KEY_PREFIX)
+        self.cancel_key_prefix = os.getenv("AGENT_REPORT_CANCEL_KEY_PREFIX", DEFAULT_CANCEL_KEY_PREFIX)
 
     def save(self, report: AnalysisReport) -> AnalysisReport:
         if self.ttl_seconds <= 0:
             return report
+        if report.status != CANCELED_REPORT_STATUS and self.is_canceled(report.analysisId):
+            existing = self.get(report.analysisId)
+            if existing and existing.status == CANCELED_REPORT_STATUS:
+                return existing
         try:
             encoded = serialize_report(report)
             self.redis.setex(self._report_key(report.analysisId), self.ttl_seconds, encoded)
@@ -102,6 +143,34 @@ class RedisReportStore(ReportStore):
         if isinstance(payload, bytes):
             payload = payload.decode("utf-8")
         return deserialize_report(payload) if payload else None
+
+    def mark_canceled(self, analysis_id: str, *, reason: str | None = None, user_id: str | None = None) -> AnalysisReport:
+        canceled_at = utc_now_iso()
+        existing = self.get(str(analysis_id))
+        if existing and existing.status in TERMINAL_REPORT_STATUSES and existing.status != CANCELED_REPORT_STATUS:
+            return existing
+        marker = cancellation_marker(reason=reason, user_id=user_id, canceled_at=canceled_at)
+        try:
+            self.redis.setex(self._cancel_key(str(analysis_id)), self.ttl_seconds, json.dumps(marker, ensure_ascii=False, separators=(",", ":")))
+        except Exception:
+            pass
+        report = canceled_report_for_existing(
+            str(analysis_id),
+            existing,
+            reason=reason,
+            user_id=user_id,
+            canceled_at=canceled_at,
+        )
+        return self.save(report)
+
+    def is_canceled(self, analysis_id: str) -> bool:
+        try:
+            if self.redis.get(self._cancel_key(str(analysis_id))):
+                return True
+        except Exception:
+            pass
+        report = self.get(str(analysis_id))
+        return bool(report and report.status == CANCELED_REPORT_STATUS)
 
     def save_idempotency_mapping(self, user_id: str, idempotency_key: str, request_id: str, ttl_seconds: int | None = None) -> None:
         ttl = int(ttl_seconds if ttl_seconds is not None else os.getenv("AGENT_IDEMPOTENCY_TTL_SECONDS", str(self.ttl_seconds)))
@@ -133,6 +202,52 @@ class RedisReportStore(ReportStore):
 
     def _idempotency_key(self, user_id: str, idempotency_key: str) -> str:
         return f"{self.idempotency_key_prefix}:{stable_idempotency_part(user_id)}:{stable_idempotency_part(idempotency_key)}"
+
+    def _cancel_key(self, analysis_id: str) -> str:
+        return f"{self.cancel_key_prefix}:{analysis_id}"
+
+
+def cancellation_marker(*, reason: str | None, user_id: str | None, canceled_at: str) -> dict[str, Any]:
+    marker = {
+        "status": CANCELED_REPORT_STATUS,
+        "canceledAt": canceled_at,
+    }
+    if reason:
+        marker["reason"] = str(reason)
+    if user_id:
+        marker["userId"] = str(user_id)
+    return marker
+
+
+def canceled_report_for_existing(
+    analysis_id: str,
+    existing: AnalysisReport | None,
+    *,
+    reason: str | None = None,
+    user_id: str | None = None,
+    canceled_at: str | None = None,
+) -> AnalysisReport:
+    if existing and existing.status in TERMINAL_REPORT_STATUSES and existing.status != CANCELED_REPORT_STATUS:
+        return existing
+    canceled_at = canceled_at or utc_now_iso()
+    summary = "AI 분석을 중단했습니다."
+    rationale = reason or "The analysis request was canceled by the user."
+    if existing is None:
+        existing = AnalysisReport(
+            analysisId=analysis_id,
+            symbol="UNKNOWN",
+            intent="analysis",
+            status=CANCELED_REPORT_STATUS,
+            createdAt=canceled_at,
+            summary=summary,
+            rationale=rationale,
+        )
+    existing.status = CANCELED_REPORT_STATUS
+    existing.summary = summary
+    existing.rationale = rationale
+    existing.agentTrace.setdefault("cancellation", {})
+    existing.agentTrace["cancellation"].update(cancellation_marker(reason=reason, user_id=user_id, canceled_at=canceled_at))
+    return existing
 
 
 def stable_idempotency_part(value: str) -> str:

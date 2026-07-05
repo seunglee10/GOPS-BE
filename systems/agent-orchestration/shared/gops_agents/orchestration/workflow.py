@@ -6,6 +6,7 @@ import time
 from typing import Any
 
 from ..contracts import AnalysisReport, FinalAnswer, IntentRoute, stable_id, utc_now_iso
+from ..intent_understanding.ui_parser import has_ui_operation_signal, parse_ui_query
 from ..retrieval.context import build_primary_retrieval_context
 from ..retrieval.cross_signal import CrossSignal, build_cross_signals
 from ..retrieval.snapshots import (
@@ -31,7 +32,7 @@ from ..roles import (
     VerificationGuardrailAgent,
     record_news_relevance_counts,
 )
-from ..runtime import RuntimeRunContext
+from ..runtime import AgentAnalysisCanceled, RuntimeRunContext
 from ..runtime.analysis_cache import AgentAnalysisCache, CachedAgentAnalysis, build_analysis_cache_from_env
 from ..runtime.report_store import InMemoryReportStore, ReportStore
 from ..security import merge_safety_warnings
@@ -85,16 +86,30 @@ class AgentOrchestrator:
         self.workflow = self._build_workflow()
 
     def analyze(self, request: dict[str, Any]) -> AnalysisReport:
-        if self.workflow:
-            try:
-                state = self.workflow.invoke({"request": request})
-            except Exception:
+        try:
+            if self.workflow:
+                try:
+                    state = self.workflow.invoke({"request": request})
+                except AgentAnalysisCanceled:
+                    raise
+                except Exception:
+                    state = self._run_sequential_workflow(request)
+            else:
                 state = self._run_sequential_workflow(request)
-        else:
-                state = self._run_sequential_workflow(request)
-        return self.store.save(state["report"])
+            return self.store.save(state["report"])
+        except AgentAnalysisCanceled as exc:
+            return self.store.mark_canceled(
+                exc.analysis_id,
+                reason=f"canceled during {exc.stage}" if exc.stage else "canceled",
+            )
+
+    def cancel_analysis(self, analysis_id: str, *, reason: str | None = None, user_id: str | None = None) -> AnalysisReport:
+        return self.store.mark_canceled(analysis_id, reason=reason, user_id=user_id)
 
     def resolve_layout(self, request: dict[str, Any]) -> dict[str, Any]:
+        preflight = ui_layout_preflight_response(request)
+        if preflight is not None:
+            return preflight
         state: dict[str, Any] = {"request": request}
         state = self._normalize_request(state)
         state = self._route_intent(state)
@@ -128,18 +143,18 @@ class AgentOrchestrator:
             return None
         try:
             graph = StateGraph(dict)
-            graph.add_node("normalize_request", self._normalize_request)
-            graph.add_node("route_intent", self._route_intent)
-            graph.add_node("build_snapshot_plan", self._build_snapshot_plan)
-            graph.add_node("build_retrieval_context", self._build_retrieval_context)
-            graph.add_node("fetch_data_snapshots", self._fetch_data_snapshots)
-            graph.add_node("join_cross_signals", self._join_cross_signals)
-            graph.add_node("run_selected_role_agents", self._run_selected_role_agents)
-            graph.add_node("verify", self._verify)
-            graph.add_node("synthesize_final_answer", self._synthesize_final_answer)
-            graph.add_node("propose_layout", self._propose_layout)
-            graph.add_node("ui_layout_ack", self._build_ui_layout_ack)
-            graph.add_node("finalize_report", self._finalize_report)
+            graph.add_node("normalize_request", self._cancelable_node("normalize_request", self._normalize_request))
+            graph.add_node("route_intent", self._cancelable_node("route_intent", self._route_intent))
+            graph.add_node("build_snapshot_plan", self._cancelable_node("build_snapshot_plan", self._build_snapshot_plan))
+            graph.add_node("build_retrieval_context", self._cancelable_node("build_retrieval_context", self._build_retrieval_context))
+            graph.add_node("fetch_data_snapshots", self._cancelable_node("fetch_data_snapshots", self._fetch_data_snapshots))
+            graph.add_node("join_cross_signals", self._cancelable_node("join_cross_signals", self._join_cross_signals))
+            graph.add_node("run_selected_role_agents", self._cancelable_node("run_selected_role_agents", self._run_selected_role_agents))
+            graph.add_node("verify", self._cancelable_node("verify", self._verify))
+            graph.add_node("synthesize_final_answer", self._cancelable_node("synthesize_final_answer", self._synthesize_final_answer))
+            graph.add_node("propose_layout", self._cancelable_node("propose_layout", self._propose_layout))
+            graph.add_node("ui_layout_ack", self._cancelable_node("ui_layout_ack", self._build_ui_layout_ack))
+            graph.add_node("finalize_report", self._cancelable_node("finalize_report", self._finalize_report))
 
             graph.set_entry_point("normalize_request")
 
@@ -175,24 +190,49 @@ class AgentOrchestrator:
 
     def _run_sequential_workflow(self, request: dict[str, Any]) -> dict[str, Any]:
         state: dict[str, Any] = {"request": request}
-        state = self._normalize_request(state)
-        state = self._route_intent(state)
+        state = self._run_cancelable_node("normalize_request", self._normalize_request, state)
+        state = self._run_cancelable_node("route_intent", self._route_intent, state)
         if should_return_ui_layout_ack(state):
-            return self._build_ui_layout_ack(state)
-        for node in [
-            self._build_snapshot_plan,
-            self._build_retrieval_context,
-            self._fetch_data_snapshots,
-            self._join_cross_signals,
-            self._run_selected_role_agents,
-            self._verify,
-            self._synthesize_final_answer,
+            return self._run_cancelable_node("ui_layout_ack", self._build_ui_layout_ack, state)
+        for name, node in [
+            ("build_snapshot_plan", self._build_snapshot_plan),
+            ("build_retrieval_context", self._build_retrieval_context),
+            ("fetch_data_snapshots", self._fetch_data_snapshots),
+            ("join_cross_signals", self._join_cross_signals),
+            ("run_selected_role_agents", self._run_selected_role_agents),
+            ("verify", self._verify),
+            ("synthesize_final_answer", self._synthesize_final_answer),
         ]:
-            state = node(state)
+            state = self._run_cancelable_node(name, node, state)
         if should_propose_layout(state):
-            state = self._propose_layout(state)
-        state = self._finalize_report(state)
+            state = self._run_cancelable_node("propose_layout", self._propose_layout, state)
+        state = self._run_cancelable_node("finalize_report", self._finalize_report, state)
         return state
+
+    def _cancelable_node(self, name: str, node):
+        def run(state: dict[str, Any]) -> dict[str, Any]:
+            return self._run_cancelable_node(name, node, state)
+
+        return run
+
+    def _run_cancelable_node(self, name: str, node, state: dict[str, Any]) -> dict[str, Any]:
+        self._raise_if_canceled(state, f"{name}:start")
+        next_state = node(state)
+        self._raise_if_canceled(next_state, f"{name}:end")
+        return next_state
+
+    def _raise_if_canceled(self, state: dict[str, Any], stage: str) -> None:
+        analysis_id = analysis_id_for_possible_state(state)
+        runtime_context = state.get("runtime_context")
+        if isinstance(runtime_context, RuntimeRunContext) and analysis_id:
+            runtime_context.set_cancellation_checker(
+                analysis_id,
+                lambda analysis_id=analysis_id: self.store.is_canceled(analysis_id),
+            )
+            runtime_context.raise_if_canceled(stage)
+            return
+        if analysis_id and self.store.is_canceled(analysis_id):
+            raise AgentAnalysisCanceled(analysis_id, stage)
 
     def _normalize_request(self, state: dict[str, Any]) -> dict[str, Any]:
         return normalize_request_state(state)
@@ -642,6 +682,7 @@ class AgentOrchestrator:
         agent_trace["uiLayoutFastAck"] = True
         if state.get("input_safety_warnings"):
             agent_trace["inputGuardrail"] = {"warnings": list(state.get("input_safety_warnings", []))}
+        ack_message = layout_ack_message(layout)
         report = AnalysisReport(
             analysisId=analysis_id,
             symbol=state["symbol"],
@@ -649,7 +690,7 @@ class AgentOrchestrator:
             status="completed",
             createdAt=utc_now_iso(),
             summary=UI_LAYOUT_ACK_SUMMARY,
-            rationale="The conductor returned a layout-only acknowledgement without final report synthesis.",
+            rationale=ack_message,
             findings=[],
             marketEvents=state["events"],
             providerEvidence=[],
@@ -841,6 +882,16 @@ def analysis_id_for_state(state: dict[str, Any]) -> str:
     )
 
 
+def analysis_id_for_possible_state(state: dict[str, Any]) -> str | None:
+    request = state.get("request") if isinstance(state.get("request"), dict) else {}
+    explicit = request.get("analysisId") or request.get("requestId")
+    if explicit:
+        return str(explicit)
+    if "symbol" in state and "intent" in state:
+        return analysis_id_for_state(state)
+    return None
+
+
 def is_multi_agent_chat_state(state: dict[str, Any]) -> bool:
     return str(state.get("analysis_mode") or "").strip() == "multi_agent"
 
@@ -856,6 +907,93 @@ def layout_resolve_trace_for_state(state: dict[str, Any]) -> dict[str, Any]:
     agent_trace["analysisMode"] = str(state.get("analysis_mode") or "auto")
     agent_trace["uiLayoutFastAck"] = False
     return agent_trace
+
+
+def ui_layout_preflight_response(request: dict[str, Any]) -> dict[str, Any] | None:
+    if str(request.get("chartAction") or "").strip():
+        return None
+    intent = str(request.get("intent") or request.get("prompt") or "")
+    if not intent and isinstance(request.get("messages"), list) and request["messages"]:
+        latest = request["messages"][-1]
+        if isinstance(latest, dict):
+            intent = str(latest.get("content") or "")
+    if not intent.strip():
+        return None
+    layout_context = request.get("layoutContext") if isinstance(request.get("layoutContext"), dict) else {}
+    parsed = parse_ui_query(intent, layout_context)
+    if parsed.tasks:
+        return None
+    if not parsed.needs_classifier and not has_ui_operation_signal(intent):
+        return None
+    analysis_id = str(
+        request.get("analysisId")
+        or request.get("requestId")
+        or stable_id(
+            "analysis",
+            {
+                "symbol": str(request.get("symbol") or "UNKNOWN"),
+                "intent": intent,
+                "events": [],
+                "createdAt": request.get("createdAt") or utc_now_iso(),
+            },
+        )
+    )
+    summary = "어떤 패널을 어떻게 바꿀지 조금 더 구체적으로 말해 주세요. 예: \"차트만 남겨줘\", \"뉴스 패널 숨겨줘\"."
+    route = {
+        "source": "ui-parser",
+        "intentType": "ui-clarify",
+        "selectedRoles": [],
+        "confidence": round(float(parsed.confidence or 0.0), 4),
+        "reason": "UI-related wording was detected, but no actionable layout task was resolved.",
+    }
+    return {
+        "status": "ui_clarify",
+        "summary": summary,
+        "rationale": summary,
+        "analysisId": analysis_id,
+        "route": route,
+        "layoutProposal": None,
+        "agentTrace": {
+            "visibleSnapshots": [],
+            "hiddenSnapshots": [],
+            "warnings": list(parsed.warnings),
+            "queryUnderstanding": {
+                "originalQuery": intent,
+                "routeMode": "clarify",
+                "intentType": "ui-clarify",
+                "selectedRoles": [],
+                "contentTasks": [],
+                "uiTasks": [],
+                "confidence": round(float(parsed.confidence or 0.0), 4),
+                "source": "ui-parser",
+                "needsClarification": True,
+                "warnings": list(parsed.warnings),
+            },
+            "analysisMode": "auto",
+            "uiLayoutFastAck": False,
+        },
+    }
+
+
+def layout_ack_message(layout: Any) -> str:
+    rationale = str(getattr(layout, "rationale", "") or "").strip()
+    if rationale and not is_internal_layout_rationale(rationale):
+        return rationale
+    commands = getattr(layout, "commands", None)
+    if isinstance(commands, list) and commands:
+        return "레이아웃을 변경했습니다."
+    return "레이아웃 변경을 적용하지 못했습니다."
+
+
+def is_internal_layout_rationale(value: str) -> bool:
+    return value.strip().startswith((
+        "The conductor",
+        "Closing or removing",
+        "UIAgent",
+        "Prepared to",
+        "The UI agent",
+        "LLM actor",
+    ))
 
 
 def allows_layout_side_effects(state: dict[str, Any]) -> bool:
@@ -876,10 +1014,10 @@ def route_after_intent(state: dict[str, Any]) -> str:
 
 def report_rationale_for_state(state: dict[str, Any]) -> str:
     if is_multi_agent_chat_state(state):
-        return "The conductor handled the request in multi-agent chat mode without UI layout side effects."
+        return "채팅 모드에서는 UI 변경 없이 분석 응답만 생성했습니다."
     if is_ui_layout_state(state):
-        return "The conductor routed the request to UIAgent for layout-only handling."
-    return "The conductor routed the request to role agents, composed provider evidence, then generated a final user-facing answer."
+        return "레이아웃 변경 요청으로 처리했습니다."
+    return "요청 의도에 맞춰 필요한 에이전트와 데이터 근거를 조합했습니다."
 
 
 def is_unsupported_subject_state(state: dict[str, Any]) -> bool:

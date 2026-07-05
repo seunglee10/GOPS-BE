@@ -75,11 +75,16 @@ Kafka queue, worker, Redis report store를 쓰는 async path다.
 | snapshots | market/news/relationship/macro evidence를 bounded provider call로 수집한다. |
 | role agents | 시장, 뉴스, 온톨로지, 리스크 등 역할별 finding을 만든다. |
 | synthesis | evidence와 role finding을 기반으로 최종 답변과 리포트를 만든다. |
-| report store | `analysisId`별 리포트, latest report, idempotency mapping을 저장한다. |
+| report store | `analysisId`별 리포트, latest report, idempotency mapping, cancel marker를 저장한다. |
 | delivery gateway | result topic을 Redis update channel로 fanout한다. |
 
 `shared/gops_agents/orchestrator.py`는 compatibility import shim이고, 실제
 workflow 구현은 `shared/gops_agents/orchestration/` 아래에 있다.
+
+사용자 중단은 cooperative cancellation이다. API가 `canceled` terminal report와
+cancel marker를 저장하면 worker/orchestrator는 단계 경계에서 이를 확인하고,
+이미 시작된 외부 provider/LLM 호출은 기존 timeout 안에서 반환되더라도 결과가
+`canceled` report를 덮어쓰지 못하게 한다.
 
 ## Deterministic Safety Guardrail
 
@@ -186,6 +191,12 @@ UI layout proposal은 panel type singleton 가정만으로 배치하지 않는�
 기본 priority가 높다. 명시적인 chart add/compare 요청은 기존 chart를 유지하고
 symbol-bearing chart panel을 추가하거나 낮은 priority chart panel을 재사용할 수
 있다.
+Chart shortcut entity resolve는 단일 `symbol` 호환 필드와 다중 요청용 `symbols`
+목록을 함께 낼 수 있으며, 프런트는 다중 요청을 분석 fallback이 아니라 chart add
+layout proposal로 처리한다.
+Layout resolve는 UI 관련 표현이지만 대상/동작이 확정되지 않은 요청을 분석
+fallback으로 보내지 않고 `ui_clarify`로 빠르게 되돌려 사용자에게 구체화를
+요청한다.
 
 Company and theme resolution은 catalog 기반이다.
 `config/entity-aliases.json`이 운영 alias catalog다.
@@ -193,6 +204,9 @@ Company and theme resolution은 catalog 기반이다.
 운영 source of truth가 아니다. agent runtime은 시작 시 catalog/index cache를
 warm하고, 회사 지원 여부는 alias 존재 여부가 아니라 market-data symbol
 registry/universe 기준으로 검증한다.
+`KoreanEntityResolver`를 직접 실행하는 runtime은 agent pods뿐 아니라
+`gops-backend` entity resolve shortcut route도 포함하므로, 모두 운영 alias
+catalog를 image/runtime filesystem에 포함해야 한다.
 
 ## Runtime Units
 
@@ -257,6 +271,7 @@ agent:report:{analysisId}
 agent:report:latest:{SYMBOL}
 agent:report:latest
 agent:request:idempotency:{userHash}:{keyHash}
+agent:report:cancel:{analysisId}
 agent.reports
 agent.reports:{analysisId}
 gops:agent:graph-expansion:v1:{symbol}
