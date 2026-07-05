@@ -107,7 +107,8 @@ The development-only separation must not become permanent architecture.
 
 When `ChartCommandAgent` is integrated into `AgentOrchestrator`, remove:
 
-- Development-only chart-command routing toggles.
+- Development-only chart-command routing branches. The current frontend target
+  selector is the per-chart robot button, not a bottom-input dev toggle.
 - Temporary frontend routing branches that bypass the main agent entry point.
 - API-server prompt/schema duplication for chart command generation.
 - Compatibility wrappers that only exist for the old `/api/llm/chat` path,

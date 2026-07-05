@@ -57,10 +57,10 @@ def chart_command_payload_schema(supported_symbols: list[str]) -> dict[str, Any]
             "symbol": {"type": ["string", "null"], "enum": [*supported_symbols, None]},
             "timeframe": {"type": ["string", "null"], "enum": ["1m", "5m", "10m", "1D", "1W", "1M", None]},
             "visibleCount": {"type": ["number", "null"], "minimum": 6, "maximum": 525600},
-            "rightOffset": {"type": ["number", "null"], "minimum": 0},
+            "rightOffset": {"type": ["number", "null"]},
             "layer": {"type": ["string", "null"], "enum": ["candles", "volume", "ma5", "ma20", "ma60", None]},
             "visible": {"type": ["boolean", "null"]},
-            "drawingType": {"type": ["string", "null"], "enum": ["horizontalLine", "trendLine", "verticalMarker", "textLabel", "pointMarker", "arrow", "rangeBox", "measurement", None]},
+            "drawingType": {"type": ["string", "null"], "enum": ["horizontalLine", "trendLine", "verticalMarker", "textLabel", "pointMarker", "arrow", "rangeBox", None]},
             "anchors": {
                 "type": ["array", "null"],
                 "items": {
@@ -104,7 +104,6 @@ def chart_command_schema(supported_symbols: list[str], min_items: int) -> dict[s
                         "chart.layer.visibility.set",
                         "chart.drawing.add",
                         "chart.comparison.add",
-                        "chart.measurement.add",
                     ],
                 },
                 "payload": chart_command_payload_schema(supported_symbols),
