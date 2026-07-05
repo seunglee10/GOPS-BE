@@ -12,8 +12,8 @@ from app.contracts.agents import AgentAnalysisRequest, AgentLayoutResolveRequest
 from app.core.config import read_dotenv_value
 from app.services.agent_alert_payloads import parse_pubsub_payload
 from app.services.alfaka_market_data import get_market_data_provider, normalize_market_symbol, sp500_universe_symbols
-from app.services.agent_gateway import get_agent_report, request_agent_analysis, request_agent_layout_resolution
-from gops_agents.query_understanding import EntityResolution, KoreanEntityResolver
+from app.services.agent_gateway import cancel_agent_analysis, get_agent_report, request_agent_analysis, request_agent_layout_resolution
+from gops_agents.query_understanding import EntityResolution, KoreanEntityResolver, extract_relationship_symbols_from_intent
 from gops_agents.query_understanding.korean_text import compact_text
 
 router = APIRouter()
@@ -128,6 +128,12 @@ CHART_SHORTCUT_FILLER_KEYWORDS = (
     "좀",
     "줘",
     "주세요",
+    "랑",
+    "이랑",
+    "와",
+    "과",
+    "하고",
+    "및",
     "에",
     "로",
     "으로",
@@ -162,6 +168,11 @@ def resolve_agent_entity(
 @router.get("/api/agents/reports/{analysis_id}")
 def agent_report(analysis_id: str) -> dict[str, Any]:
     return get_agent_report(analysis_id)
+
+
+@router.post("/api/agents/reports/{analysis_id}/cancel")
+def cancel_agent_report(analysis_id: str, http_request: Request) -> dict[str, Any]:
+    return cancel_agent_analysis(analysis_id, user_id=http_request.headers.get("X-GOPS-User-Id"))
 
 
 @router.get("/api/agents/reports/{analysis_id}/stream")
@@ -213,7 +224,7 @@ async def stream_agent_report_updates(analysis_id: str):
     deadline = time.monotonic() + max(1, max_seconds)
     last_status = None
     last_poll_at = 0.0
-    terminal_statuses = {"completed", "failed", "deep_completed"}
+    terminal_statuses = {"completed", "failed", "deep_completed", "canceled"}
     pubsub = report_update_pubsub(analysis_id)
     try:
         while time.monotonic() <= deadline:
@@ -309,14 +320,20 @@ def agent_entity_resolution_payload(query: str, resolution: EntityResolution) ->
     if status == "confirmed" and resolution.entity_type != "company":
         status = "unsupported"
 
-    chart_shortcut = is_chart_shortcut_entity_query(query, resolution)
-    chart_action = chart_shortcut_action(query, resolution) if chart_shortcut else "none"
+    extracted_symbols = chart_shortcut_symbols(query)
+    single_chart_shortcut = is_chart_shortcut_entity_query(query, resolution)
+    chart_shortcut = single_chart_shortcut or bool(extracted_symbols)
+    symbols = chart_payload_symbols(resolution, extracted_symbols) if chart_shortcut else []
+    if chart_shortcut and extracted_symbols:
+        status = "confirmed"
+    chart_action = chart_shortcut_action_for_symbols(query, resolution, symbols) if chart_shortcut else "none"
     payload = {
         "status": status,
         "chartShortcut": chart_shortcut,
         "chartAction": chart_action,
         "chartPlacementIntent": chart_shortcut_placement_intent(query) if chart_action == "add" else None,
-        "symbol": resolution.symbol,
+        "symbol": symbols[0] if symbols else resolution.symbol,
+        "symbols": symbols or None,
         "canonicalName": resolution.canonical_name,
         "matchedText": resolution.matched_text,
         "matchedAlias": resolution.matched_alias,
@@ -325,6 +342,43 @@ def agent_entity_resolution_payload(query: str, resolution: EntityResolution) ->
         "reason": resolution.reason,
     }
     return {key: value for key, value in payload.items() if value is not None}
+
+
+def chart_shortcut_symbols(query: str) -> list[str]:
+    if contains_chart_shortcut_content_keyword(query):
+        return []
+    if not contains_compact_keyword(query, chart_shortcut_modifier_keywords()):
+        return []
+    symbols = [
+        symbol
+        for symbol in extract_relationship_symbols_from_intent(query, max_symbols=4)
+        if symbol and is_chart_symbol_supported(symbol)
+    ]
+    return dedupe_symbols(symbols)
+
+
+def chart_payload_symbols(resolution: EntityResolution, extracted_symbols: list[str]) -> list[str]:
+    values = list(extracted_symbols)
+    if not values and resolution.symbol and is_chart_symbol_supported(resolution.symbol):
+        values.append(resolution.symbol)
+    return dedupe_symbols(values)
+
+
+def chart_shortcut_action_for_symbols(query: str, resolution: EntityResolution, symbols: list[str]) -> str:
+    if len(symbols) > 1:
+        return "add"
+    if contains_compact_keyword(query, CHART_SHORTCUT_ADD_KEYWORDS):
+        return "add"
+    return chart_shortcut_action(query, resolution)
+
+
+def dedupe_symbols(symbols: list[str]) -> list[str]:
+    deduped = []
+    for symbol in symbols:
+        normalized = str(symbol or "").strip().upper()
+        if normalized and normalized not in deduped:
+            deduped.append(normalized)
+    return deduped
 
 
 def is_chart_shortcut_entity_query(query: str, resolution: EntityResolution) -> bool:

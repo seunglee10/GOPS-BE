@@ -468,6 +468,30 @@ class ClickHouseMarketDataProvider:
             return rows
         return self._rank_symbols_by_interval(symbols, kind=kind, limit=limit, interval="1D")
 
+    def latest_quotes(self, symbols, limit=None):
+        symbols = list(dict.fromkeys(symbol for symbol in symbols if isinstance(symbol, str) and symbol.strip()))
+        if not symbols:
+            return []
+        limit = len(symbols) if limit is None else max(0, int(limit))
+        if limit == 0:
+            return []
+
+        rows = self._latest_quotes_by_interval(symbols, limit=limit, interval="1m")
+        by_symbol = {
+            str(row.get("symbol")).strip().upper(): row
+            for row in rows
+            if isinstance(row, dict) and row.get("symbol")
+        }
+        remaining = max(0, limit - len(by_symbol))
+        missing_symbols = [symbol for symbol in symbols if symbol.strip().upper() not in by_symbol]
+        if missing_symbols and remaining:
+            fallback_rows = self._latest_quotes_by_interval(missing_symbols, limit=remaining, interval="1D")
+            for row in fallback_rows:
+                symbol = str(row.get("symbol") or "").strip().upper()
+                if symbol and symbol not in by_symbol:
+                    by_symbol[symbol] = row
+        return [by_symbol[symbol.strip().upper()] for symbol in symbols if symbol.strip().upper() in by_symbol][:limit]
+
     def _hot_symbols_by_interval_dollar_volume(self, symbols, limit=20, interval="1m"):
         normalized_interval = "1D" if interval in {"1D", "1d"} else "1m"
         interval_filter = "interval IN ('1D', '1d')" if normalized_interval == "1D" else "interval = '1m'"
@@ -588,6 +612,59 @@ class ClickHouseMarketDataProvider:
         FORMAT JSONEachRow
         """
         return self.query_json_each_row(query, {"symbols": symbols, "limit": int(limit), "lookbackDays": lookback_days})
+
+    def _latest_quotes_by_interval(self, symbols, limit=None, interval="1m"):
+        normalized_interval = "1D" if interval in {"1D", "1d"} else "1m"
+        interval_filter = "interval IN ('1D', '1d')" if normalized_interval == "1D" else "interval = '1m'"
+        limit = len(symbols) if limit is None else int(limit)
+        try:
+            lookback_days = max(1, int(os.getenv("HOT_TIER_LOOKBACK_DAYS", "14")))
+        except ValueError:
+            lookback_days = 14
+        latest_source_query = f"""
+        SELECT
+          symbol,
+          event_time
+        FROM {self.table('chart_candles')}
+        WHERE symbol IN {{symbols:Array(String)}}
+          AND {interval_filter}
+          AND {self.canonical_candle_filter_sql(include_live=normalized_interval == "1m")}
+          AND event_time >= subtractDays(now(), {{lookbackDays:UInt32}})
+          AND toDayOfWeek(event_time) BETWEEN 1 AND 5
+        """
+        session_source_query = self.latest_chart_candles_source(f"""
+            symbol IN {{symbols:Array(String)}}
+            AND {interval_filter}
+            AND event_time >= subtractDays(now(), {{lookbackDays:UInt32}})
+            AND toDayOfWeek(event_time) BETWEEN 1 AND 5
+        """, include_live=normalized_interval == "1m")
+        query = f"""
+        WITH latest_sessions AS (
+          SELECT
+            symbol,
+            max(toDate(event_time)) AS latest_session_date
+          FROM ({latest_source_query})
+          GROUP BY symbol
+        )
+        SELECT
+          c.symbol AS symbol,
+          argMax(c.close, c.event_time) AS lastPrice,
+          if(argMin(c.open, c.event_time) = 0, NULL, round(((argMax(c.close, c.event_time) - argMin(c.open, c.event_time)) / argMin(c.open, c.event_time)) * 100, 2)) AS changePercent,
+          sum(toFloat64(c.volume) * c.close) AS sessionDollarVolume,
+          sum(c.volume) AS volume,
+          formatDateTime(max(c.event_time), '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS sourceUpdatedAt,
+          {clickhouse_string_literal('latest_available_session')} AS rankingWindow,
+          {clickhouse_string_literal(f'clickhouse_{normalized_interval}_latest_quote')} AS rankReason
+        FROM ({session_source_query}) AS c
+        INNER JOIN latest_sessions AS latest
+          ON c.symbol = latest.symbol
+         AND toDate(c.event_time) = latest.latest_session_date
+        GROUP BY c.symbol
+        ORDER BY c.symbol ASC
+        LIMIT {{limit:UInt32}}
+        FORMAT JSONEachRow
+        """
+        return self.query_json_each_row(query, {"symbols": symbols, "limit": limit, "lookbackDays": lookback_days})
 
     def latest_chart_candles_source(self, where_sql, *, include_live=False):
         return f"""

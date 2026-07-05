@@ -43,6 +43,10 @@
       "strength": "strong",
       "aliases": ["재배치", "배치", "정렬", "나란히", "같이", "동시에", "바꿔", "바꿔줘", "변경", "변경해", "조정", "arrange", "layout", "side by side"]
     },
+    "keep": {
+      "strength": "strong",
+      "aliases": ["남겨", "남겨줘", "남기고", "유지", "유지해", "유지해줘", "살려", "살려줘", "keep", "keep only"]
+    },
     "move": {
       "strength": "strong",
       "aliases": ["옮겨", "옮겨줘", "이동", "이동해", "move"]
@@ -83,7 +87,8 @@
       "aliases": ["가운데", "중앙", "center", "middle"]
     }
   },
-  "surfaceNouns": ["패널", "페널", "창", "화면", "레이아웃", "영역", "탭", "ui", "panel", "window", "layout", "view", "screen"],
-  "multiPanelHints": ["여러", "여러개", "여러 패널", "여러 창", "대시보드", "동시에", "한번에", "같이", "나란히", "모두", "전체", "dashboard", "side by side"],
+  "surfaceNouns": ["패널", "페널", "창", "화면", "레이아웃", "영역", "섹션", "카드", "뷰", "위젯", "박스", "탭", "ui", "panel", "window", "layout", "view", "screen", "section", "card", "widget", "box"],
+  "multiPanelHints": ["여러", "여러개", "여러 패널", "여러 창", "대시보드", "동시에", "한번에", "같이", "나란히", "모두", "전체", "나머지", "다른", "dashboard", "side by side"],
+  "keepOnlyHints": ["만", "빼고", "제외", "제외하고", "말고", "외에는", "나머지", "나머지는", "다른", "다른건", "다른 것은", "only", "except", "besides"],
   "contentOnlyVerbs": ["분석", "분석해", "분석해줘", "불러와", "불러와줘", "알려", "알려줘", "요약", "요약해", "검색", "찾아", "설명", "분석 요청"]
 }

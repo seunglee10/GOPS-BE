@@ -45,10 +45,12 @@ chart-open 명령이면 프런트는 먼저
 `GET /api/agents/entities/resolve?mode=chartShortcut`를 호출한다. 응답이
 `chartShortcut=true`이고 `chartAction="replace"`이면 기존 chart symbol 선택
 흐름만 적용하고 `/api/agents/analyze`는 호출하지 않는다. 응답이
-`chartAction="add"`이면 차트 화면에서는 `POST /api/agents/layout/resolve`에
-`chartAction`, `chartTargetSymbol`, `chartPlacementIntent`, 현재 `layoutContext`를
-보내 기존 chart를 유지한 추가 chart panel proposal을 받는다. 차트 화면이 아니면
-비교 대상이 없으므로 replace처럼 chart 화면으로 진입한다. `엔비디아 뉴스`,
+`symbols`를 2개 이상 포함하면 첫 번째 symbol을 기본 chart에 표시하고 나머지는
+`POST /api/agents/layout/resolve`의 chart add proposal로 추가한다. 응답이
+`chartAction="add"`이면 차트 화면에서는 `chartAction`, `chartTargetSymbol`,
+`chartPlacementIntent`, 현재 `layoutContext`를 보내 기존 chart를 유지한 추가
+chart panel proposal을 받는다. 차트 화면이 아니면 첫 번째 chart로 진입한 뒤 추가
+panel proposal을 적용한다. `엔비디아 뉴스`,
 `엔비디아 분석해줘`, `엔비디아 차트 분석해줘`, 관계 질문, chart registry 미지원
 symbol은 기존 분석 흐름을 유지한다.
 
@@ -57,6 +59,9 @@ symbol은 기존 분석 흐름을 유지한다.
 응답이 `status="ui_layout"`이고 `layoutProposal`이 있으면 즉시 적용하고
 사용자에게 `summary`만 표시한다. `status="not_ui"`이거나 route가 실패하면
 기존 `/api/agents/analyze` 흐름으로 fallback한다.
+`status="ui_clarify"`이면 패널/레이아웃 관련 표현은 맞지만 대상이나 동작이
+불명확한 것이므로 `/api/agents/analyze`로 fallback하지 않고 `summary`를 채팅에
+표시한다.
 
 ## Submit Request
 
@@ -80,6 +85,7 @@ symbol은 기존 분석 흐름을 유지한다.
     "activePanelId": "chart-main",
     "panels": []
   },
+  "requestId": "agent-request-client-id",
   "chartAction": null,
   "chartTargetSymbol": null,
   "chartPlacementIntent": null,
@@ -129,10 +135,22 @@ Async response:
 
 1. `stream_url`이 있으면 `GET /api/agents/reports/{analysis_id}/stream`으로 SSE를 연다.
 2. SSE가 끊기거나 지원되지 않으면 `GET /api/agents/reports/{analysis_id}` polling으로 degrade한다.
-3. report status가 completed, failed, deep_completed 같은 terminal state가 되면 loading state를 끝낸다.
+3. report status가 completed, failed, deep_completed, canceled 같은 terminal state가 되면 loading state를 끝낸다.
 
 프런트는 SSE만 전제로 하면 안 된다. Redis pubsub이나 delivery gateway가 준비되지
 않은 환경에서는 polling fallback이 필요하다.
+
+## User Cancellation
+
+분석 대기 중에는 채팅 입력은 계속 잠그되 전송 버튼을 중단 버튼으로 바꾼다.
+프런트는 submit 전에 client-generated `requestId`를 만들고 request body에
+넣어야 한다. 사용자가 중단하면 현재 fetch/SSE/polling을 `AbortController`로
+닫고 `POST /api/agents/reports/{analysis_id}/cancel`을 호출한다.
+
+Cancel 후에는 pending 메시지를 중단됨으로 바꾸고 입력을 다시 연다. 서버가
+`canceled` report를 반환하거나 polling/SSE에서 같은 status를 받으면 terminal로
+처리한다. 이미 completed/deep_completed/failed가 도착한 뒤의 cancel 응답은 기존
+terminal report를 유지할 수 있다.
 
 ## Report Rendering
 
@@ -199,14 +217,13 @@ apps/gops-frontend/src/App.tsx
 apps/gops-frontend/src/agent/agentAnalysisClient.ts
 apps/gops-frontend/src/agents/agentAnalysis.ts
 apps/gops-frontend/src/components/BottomCommandBar.tsx
+apps/gops-frontend/src/layout/agentLayoutTypes.ts
+apps/gops-frontend/src/layout/panelLayout.ts
 apps/gops-frontend/src/layout/tiledAgentLayout.ts
 apps/chart-engine/src/agentReference.ts
 apps/chart-engine/src/agentChat.ts
 apps/chart-engine/src/proposals.ts
 apps/chart-engine/src/types.ts
-apps/gops-frontend/src/layout/types.ts
-apps/gops-frontend/src/layout/commands.ts
-apps/gops-frontend/src/layout/panelRegistry.ts
 ```
 
 새 프런트는 위 구현을 그대로 가져올 필요는 없다. 보존해야 하는 것은 request
@@ -220,6 +237,7 @@ shape, `analysisId` 처리, report delivery, proposal ignore/apply 정책이다.
 분석 요청이면 POST /api/agents/analyze가 호출된다.
 queued response의 analysisId가 화면 상태에 저장된다.
 SSE 또는 polling으로 completed report를 받는다.
+사용자가 중단하면 cancel route가 호출되고 canceled 상태로 loading state가 끝난다.
 final answer와 evidence가 렌더링된다.
 no-data provider message가 전체 실패로 처리되지 않는다.
 layout/chart proposal 미지원 환경에서도 text analysis는 깨지지 않는다.
