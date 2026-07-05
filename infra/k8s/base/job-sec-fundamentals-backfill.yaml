@@ -1,0 +1,47 @@
+# 역할: SEC companyfacts bulk ZIP을 S3에 보관하고 ClickHouse/Redis fundamentals snapshot으로 적재합니다.
+# 기본은 dry-run입니다. 실제 적재는 SEC_FUNDAMENTALS_DRY_RUN=false와 SEC_USER_AGENT를 명시해야 합니다.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: alfaka-sec-fundamentals-backfill
+  namespace: alfaka-market-data
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app: alfaka-sec-fundamentals-backfill
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: sec-fundamentals-backfill
+          image: YOUR_ECR_REPOSITORY/gops-market-storage:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "systems/fundamentals/jobs/sec-companyfacts-backfill/main.py"]
+          env:
+            - name: SEC_FUNDAMENTALS_DRY_RUN
+              value: "true"
+            - name: SEC_COMPANYFACTS_S3_KEY
+              value: ""
+            - name: SEC_FUNDAMENTALS_MAX_COMPANIES
+              value: "0"
+            - name: SEC_FUNDAMENTALS_BATCH_SIZE
+              value: "500"
+            - name: SEC_FUNDAMENTALS_LOAD_COMPANYFACTS
+              value: "true"
+            - name: SEC_FUNDAMENTALS_LOAD_FRAMES
+              value: "true"
+            - name: SEC_FUNDAMENTALS_WRITE_FRAME_ROWS
+              value: "true"
+            - name: SEC_FUNDAMENTALS_FRAME_PERIODS
+              value: ""
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-sec-fundamentals-secret
+                optional: true
+            - secretRef:
+                name: alfaka-clickhouse-secret
+                optional: true

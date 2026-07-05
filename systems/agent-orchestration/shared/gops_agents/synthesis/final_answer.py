@@ -52,6 +52,14 @@ class FinalAnswerSynthesizer:
                 findings=findings,
                 provider_evidence=provider_evidence,
             )
+        if is_financial_route(route) and os.getenv("AGENT_FINANCIAL_FINAL_ANSWER_PROVIDER") != "openai":
+            return self._synthesize_deterministic(
+                symbol=symbol,
+                intent=intent,
+                route=route,
+                findings=findings,
+                provider_evidence=provider_evidence,
+            )
         openai_answer = self._synthesize_with_openai(
             symbol=symbol,
             intent=intent,
@@ -87,6 +95,8 @@ class FinalAnswerSynthesizer:
             return sanitize_final_answer(build_news_final_answer(symbol, findings, provider_evidence, daily_summaries=daily_summaries))
         if route.intentType == "ontology" or route.selectedRoles == ["ontology"]:
             return sanitize_final_answer(build_ontology_final_answer(symbol, findings, provider_evidence))
+        if is_financial_route(route):
+            return sanitize_final_answer(build_financial_final_answer(symbol, findings, provider_evidence))
         if "market-move" in intent_types:
             return sanitize_final_answer(build_market_move_final_answer(symbol, findings, provider_evidence))
         return sanitize_final_answer(build_general_final_answer(symbol, route, findings, provider_evidence))
@@ -331,6 +341,11 @@ def is_ontology_route(route: IntentRoute) -> bool:
 
 def is_news_route(route: IntentRoute) -> bool:
     return route.intentType == "news" or route.selectedRoles == ["news"]
+
+
+def is_financial_route(route: IntentRoute) -> bool:
+    intent_type = str(route.intentType or "").lower()
+    return "financial" in intent_type or route.selectedRoles == ["financial"] or "financial" in route.selectedRoles
 
 
 def build_summary(symbol: str, route: IntentRoute, findings: list[AgentFinding], evidence: list[EvidenceItem]) -> str:
@@ -653,6 +668,48 @@ def build_ontology_final_answer(symbol: str, findings: list[AgentFinding], provi
     )
 
 
+def build_financial_final_answer(symbol: str, findings: list[AgentFinding], provider_evidence: list[EvidenceItem]) -> FinalAnswer:
+    financial_items = [item for item in provider_evidence if item.provider == "financial" and item.status == "available"]
+    no_data = [item for item in provider_evidence if item.provider == "financial" and item.status == "no-data"]
+    title = f"{symbol} SEC 재무 분석"
+    if not financial_items:
+        return FinalAnswer(
+            title=title,
+            summary=no_data[0].summary if no_data else f"{symbol} SEC 재무 근거가 없습니다.",
+            sections=[],
+            citations=[],
+            limitations=["사용자 요청 시점에는 SEC API를 호출하지 않고 사전 계산된 Redis/ClickHouse snapshot만 사용합니다."],
+        )
+
+    summary_items = [item for item in financial_items if "peer" not in str(item.title).lower()]
+    peer_items = [item for item in financial_items if "peer" in str(item.title).lower()]
+    sections = []
+    if summary_items:
+        sections.append(FinalAnswerSection(
+            title="공시 기반 재무 요약",
+            bullets=financial_metric_bullets(summary_items[0]) or [summary_items[0].summary],
+        ))
+    if peer_items:
+        sections.append(FinalAnswerSection(
+            title="Peer 비교",
+            bullets=financial_peer_bullets(peer_items[0]) or [peer_items[0].summary],
+        ))
+    limitations = [
+        "SEC companyfacts/frames 기반 사전 계산 snapshot만 사용했습니다.",
+        "PER, PBR, PSR, 예상 실적처럼 주가나 외부 컨센서스가 필요한 지표는 이번 범위에서 제외했습니다.",
+    ]
+    warnings = unique_financial_warnings(financial_items)
+    if warnings:
+        limitations.extend(warnings[:4])
+    return FinalAnswer(
+        title=title,
+        summary=summary_items[0].summary if summary_items else financial_items[0].summary,
+        sections=sections,
+        citations=citations_from_evidence(financial_items),
+        limitations=limitations,
+    )
+
+
 def build_market_move_final_answer(symbol: str, findings: list[AgentFinding], provider_evidence: list[EvidenceItem]) -> FinalAnswer:
     visible_findings = visible_role_findings(findings)
     available = [item for item in provider_evidence if item.status == "available"]
@@ -719,8 +776,63 @@ def visible_role_findings(findings: list[AgentFinding]) -> list[AgentFinding]:
     return [
         item
         for item in findings
-        if item.role in {"chart-analysis", "news-analysis", "macro-analysis", "company-relationship-analysis"}
+        if item.role in {"chart-analysis", "news-analysis", "macro-analysis", "company-relationship-analysis", "financial-analysis"}
     ]
+
+
+def financial_metric_bullets(item: EvidenceItem) -> list[str]:
+    raw = item.raw if isinstance(item.raw, dict) else {}
+    metrics = [metric for metric in raw.get("metrics") or [] if isinstance(metric, dict)]
+    order = {
+        "revenue": 0,
+        "operating_income": 1,
+        "net_income": 2,
+        "eps": 3,
+        "assets": 4,
+        "liabilities": 5,
+        "equity": 6,
+        "operating_cash_flow": 7,
+        "free_cash_flow": 8,
+        "shares_outstanding": 9,
+    }
+    metrics = sorted(metrics, key=lambda metric: (order.get(str(metric.get("metric") or ""), 100), str(metric.get("kind") or ""), str(metric.get("metric") or "")))
+    bullets = []
+    for metric in metrics[:10]:
+        name = metric.get("metric")
+        value = metric.get("value")
+        period = " ".join(str(part) for part in (metric.get("fiscalYear"), metric.get("fiscalPeriod")) if part)
+        quality = metric.get("quality")
+        suffix = f" ({quality})" if quality and quality != "available" else ""
+        bullets.append(f"{name}: {value} {period}".strip() + suffix)
+    return bullets
+
+
+def financial_peer_bullets(item: EvidenceItem) -> list[str]:
+    raw = item.raw if isinstance(item.raw, dict) else {}
+    frame_period = str(raw.get("frame_period") or "").strip()
+    peers = [peer for peer in raw.get("peers") or [] if isinstance(peer, dict)]
+    bullets = []
+    for peer in peers[:6]:
+        quality = peer.get("quality")
+        suffix = f" ({quality})" if quality and quality != "available" else ""
+        bullets.append(f"{peer.get('symbol')}: {peer.get('concept')}={peer.get('value')} {frame_period}".strip() + suffix)
+    return bullets
+
+
+def unique_financial_warnings(items: list[EvidenceItem]) -> list[str]:
+    values = []
+    for item in items:
+        raw = item.raw if isinstance(item.raw, dict) else {}
+        for key in ("quality", "warning"):
+            value = raw.get(key)
+            if value and value != "available" and str(value) not in values:
+                values.append(str(value))
+        for metric in raw.get("metrics") or []:
+            if isinstance(metric, dict):
+                quality = metric.get("quality")
+                if quality and quality != "available" and str(quality) not in values:
+                    values.append(str(quality))
+    return values
 
 
 def verification_warnings(findings: list[AgentFinding]) -> list[str]:

@@ -12,7 +12,7 @@ from ..contracts import AgentFinding, EvidenceItem, LayoutProposal, MarketEvent,
 from ..intent_understanding.schema import UiTask
 from ..orchestration.routing import parse_openai_text_json
 from ..orchestration.ui_intent import UIIntent
-from ..providers import ClickHouseNewsProvider, EmptyMacroProvider, GraphDBOntologyProvider, ProviderRequest
+from ..providers import ClickHouseFinancialProvider, ClickHouseNewsProvider, EmptyMacroProvider, GraphDBOntologyProvider, ProviderRequest
 from ..providers.news_localization import NewsLocalizationService
 
 
@@ -197,6 +197,26 @@ def record_news_relevance_counts(context: AgentContext, evidence: list[EvidenceI
     context.timing["mentionNewsCount"] = mention
 
 
+def financial_comparison_requested(context: AgentContext) -> bool:
+    intent_type = str(context.intentType or "").lower()
+    intent_text = str(context.intent or "").lower()
+    selected_roles = [str(role).lower() for role in context.selectedRoles]
+    comparison_terms = ("compare", "comparison", "peer", "vs", "versus", "경쟁사", "비교", "대비", "동종")
+    return (
+        "financial-comparison" in intent_type
+        or ("financial" in selected_roles and any(term in intent_text for term in comparison_terms))
+        or bool(context.relationshipSymbols)
+    )
+
+
+def financial_summary_from_evidence(symbol: str, evidence: list[EvidenceItem]) -> str:
+    summary_item = next((item for item in evidence if "peer" not in str(item.title).lower()), evidence[0])
+    peer_item = next((item for item in evidence if "peer" in str(item.title).lower()), None)
+    if peer_item:
+        return f"{summary_item.summary} {peer_item.summary}"
+    return summary_item.summary or f"{symbol} SEC 재무 근거를 확인했습니다."
+
+
 class MacroAgent(ProviderBackedAgent):
     agent_id = "macro-agent"
     role = "macro-analysis"
@@ -204,6 +224,38 @@ class MacroAgent(ProviderBackedAgent):
 
     def __init__(self, provider=None):
         super().__init__(provider or EmptyMacroProvider())
+
+
+class FinancialAgent(ProviderBackedAgent):
+    agent_id = "financial-agent"
+    role = "financial-analysis"
+    provider_name = "financial"
+
+    def __init__(self, provider=None):
+        super().__init__(provider or ClickHouseFinancialProvider())
+
+    def analyze(self, context: AgentContext) -> AgentFinding:
+        request = ProviderRequest(context.symbol, context.intent, symbols=tuple(context.relationshipSymbols or context.newsSymbols))
+        evidence = self.provider.fetch(request)
+        if financial_comparison_requested(context):
+            evidence = [*evidence, *self.provider.fetch_peer(request)]
+        available = [item for item in evidence if item.provider == "financial" and item.status == "available"]
+        no_data = [item for item in evidence if item.provider == "financial" and item.status == "no-data"]
+        if available:
+            summary = financial_summary_from_evidence(context.symbol, available)
+            confidence = 0.68
+        else:
+            summary = no_data[0].summary if no_data else f"{context.symbol} SEC 재무 근거가 없습니다."
+            confidence = 0.28
+        return AgentFinding(
+            agentId=self.agent_id,
+            role=self.role,
+            summary=summary,
+            rationale="Financial agent uses precomputed SEC fundamentals snapshots from Redis/ClickHouse only.",
+            confidence=confidence,
+            evidence=evidence,
+            tags=["financial", "sec", "fundamentals"],
+        )
 
 
 class OntologyAgent(ProviderBackedAgent):

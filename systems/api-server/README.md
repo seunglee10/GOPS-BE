@@ -34,6 +34,21 @@ The backend reads `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, and
 them are empty, `GOOGLE_OAUTH_SECRET_NAME` can point to an AWS Secrets Manager
 JSON secret that supplies the missing values.
 
+## Market Heatmap
+
+`GET /api/market/heatmap?universe=sp500` is the API-owned serving projection for
+the frontend TreeMap. It reads the fundamentals store produced by
+`systems/fundamentals`: Redis summary key
+`gops:fundamentals:summary:v1:{SYMBOL}` first, then ClickHouse
+`sec_financial_facts` and `sec_company_tickers` fallback. It combines
+`sharesOutstanding` with market prices from the market-data provider and caches
+the result in Redis. It does not collect SEC filings directly; that remains a
+separate worker/store responsibility.
+
+The expected minimum data is a `shares_outstanding` metric plus symbol identity.
+`companyName`, `sector`, `industry`, `cik`, `periodEndDate`, and `filedAt` are
+used when available; seed classification remains the fallback.
+
 ## Imports
 
 The backend imports shared packages by namespace:

@@ -60,6 +60,20 @@ Secrets Manager / Alpaca credentials
 
 Keep `alfaka.*` imports stable. Docker, compose, k8s, tests, and local scripts should place `systems/market-data/shared` on `PYTHONPATH`.
 
+## Heatmap Projection Contract
+
+The heatmap is a consumer of market-data state, not a fundamentals collector.
+The API endpoint `GET /api/market/heatmap?universe=sp500` reads the
+`systems/fundamentals` Redis/ClickHouse store, then combines
+`sharesOutstanding` with the latest price/change rows from Redis/ClickHouse
+serving state. Market-data services keep prices fresh; the fundamentals system
+owns SEC ingestion, CIK mapping, and latest fundamentals persistence.
+
+When fundamentals are absent, the API falls back to the local
+`systems/market-data/config/sp500-heatmap-seed.json` layout seed. When prices are
+absent, it can reuse the last cached projection or show the seed item with a
+neutral/minimum market-cap fallback.
+
 ## Feed Profiles And Sessions
 
 Live Alpaca ingest is profile-scoped. The default v1 runtime uses `sip` for `04:00-20:00 ET` (`pre`, `regular`, `after`) and `boats` for `20:00-04:00 ET` (`overnight`). `overnight` remains an alias for Alpaca's overnight feed where needed. Compose and k8s run separate ingestor runtimes per active profile with distinct client IDs instead of switching feeds inside one process.

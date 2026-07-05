@@ -25,6 +25,13 @@ def market_symbol_search(
     return get_query_service().symbol_search(q, limit)
 
 
+@router.get("/api/market/heatmap")
+def market_heatmap(
+    universe: str = Query(default="sp500", max_length=32),
+) -> dict[str, Any]:
+    return get_query_service().heatmap(universe)
+
+
 @router.get("/api/market/symbols/{symbol}")
 def market_symbol_detail(symbol: str) -> dict[str, Any]:
     try:

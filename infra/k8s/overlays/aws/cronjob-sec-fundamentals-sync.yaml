@@ -1,0 +1,57 @@
+# 역할: AWS/EKS에서 SEC fundamentals를 주기적으로 수집해 S3, ClickHouse, Redis를 갱신합니다.
+# schedule은 Kubernetes controller 기준 UTC입니다. 20:30 UTC는 한국 시간 05:30입니다.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: alfaka-sec-fundamentals-sync
+  namespace: alfaka-market-data
+spec:
+  schedule: "30 20 * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 7200
+      template:
+        metadata:
+          labels:
+            app: alfaka-sec-fundamentals-sync
+        spec:
+          restartPolicy: Never
+          serviceAccountName: alfaka-market-data-sa
+          containers:
+            - name: sec-fundamentals-sync
+              image: YOUR_ECR_REPOSITORY/gops-market-storage:latest
+              imagePullPolicy: IfNotPresent
+              command: ["python", "-u", "systems/fundamentals/jobs/sec-companyfacts-backfill/main.py"]
+              env:
+                - name: SEC_FUNDAMENTALS_DRY_RUN
+                  value: "false"
+                - name: SEC_COMPANYFACTS_S3_KEY
+                  value: ""
+                - name: SEC_FUNDAMENTALS_MAX_COMPANIES
+                  value: "0"
+                - name: SEC_FUNDAMENTALS_BATCH_SIZE
+                  value: "5000"
+                - name: SEC_FUNDAMENTALS_LOAD_COMPANYFACTS
+                  value: "true"
+                - name: SEC_FUNDAMENTALS_LOAD_FRAMES
+                  value: "true"
+                - name: SEC_FUNDAMENTALS_WRITE_FRAME_ROWS
+                  value: "true"
+                - name: SEC_FUNDAMENTALS_FRAME_PERIODS
+                  value: ""
+                - name: SEC_USER_AGENT
+                  valueFrom:
+                    secretKeyRef:
+                      name: alfaka-sec-fundamentals-secret
+                      key: SEC_USER_AGENT
+              envFrom:
+                - configMapRef:
+                    name: alfaka-market-data-config
+                - secretRef:
+                    name: alfaka-clickhouse-secret
+                    optional: true
