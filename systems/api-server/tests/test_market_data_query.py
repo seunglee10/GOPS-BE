@@ -1309,6 +1309,43 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(second_payload["items"][0]["layoutPrice"], 200)
         self.assertEqual(second_payload["items"][0]["layoutMarketCap"], 200000)
 
+    def test_market_heatmap_upgrades_seed_layout_when_fundamentals_projection_arrives(self):
+        seed_items = [{
+            "symbol": "AAPL",
+            "companyName": "Apple Inc.",
+            "sector": "Technology",
+            "industry": "Technology Hardware",
+            "marketCap": 100000,
+            "changePercent": 0.1,
+        }]
+        provider = FakeHeatmapProvider(rows=[])
+        adapter = FakeFundamentalsAdapter({
+            "AAPL": FundamentalsRecord(symbol="AAPL", sharesOutstanding=1000, source="sec", asOf="2026-07-05")
+        })
+        with mock.patch.object(heatmap_service, "load_heatmap_seed_items", return_value=seed_items), mock.patch.object(
+            heatmap_service,
+            "utc_now",
+            return_value=datetime(2026, 6, 25, 15, 34, tzinfo=timezone.utc),
+        ), mock.patch.dict(os.environ, {"HEATMAP_LAYOUT_REFRESH_SECONDS": "300"}):
+            service = heatmap_service.MarketHeatmapService(provider=provider, fundamentals_adapter=adapter)
+            first_payload = service.snapshot("sp500")
+            provider.redis_provider.redis.values.pop("gops:market:on-demand:v1:heatmap:sp500", None)
+            provider.clickhouse_provider.rows = [{
+                "symbol": "AAPL",
+                "lastPrice": 210,
+                "changePercent": 2.0,
+                "sourceUpdatedAt": "2026-06-25T15:32:00.000Z",
+                "rankReason": "clickhouse_1m_latest_quote",
+            }]
+            second_payload = service.snapshot("sp500")
+
+        self.assertEqual(first_payload["items"][0]["layoutMarketCapSource"], "seed")
+        self.assertEqual(second_payload["layoutAsOf"], "2026-06-25T15:30:00Z")
+        self.assertEqual(second_payload["items"][0]["marketCapSource"], "fundamentals")
+        self.assertEqual(second_payload["items"][0]["layoutPrice"], 210)
+        self.assertEqual(second_payload["items"][0]["layoutMarketCap"], 210000)
+        self.assertEqual(second_payload["items"][0]["layoutMarketCapSource"], "fundamentals")
+
     def test_market_heatmap_overlays_redis_live_price_on_clickhouse_rows(self):
         seed_items = [{
             "symbol": "AAPL",

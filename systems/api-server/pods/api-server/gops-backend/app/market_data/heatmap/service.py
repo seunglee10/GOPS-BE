@@ -17,6 +17,12 @@ DEFAULT_LAYOUT_REFRESH_SECONDS = 300
 DEFAULT_CACHE_TTL_SECONDS = 55
 DEFAULT_STALE_CACHE_TTL_SECONDS = 900
 DEFAULT_MINIMUM_MARKET_CAP = 1_000_000.0
+LAYOUT_SOURCE_PRIORITY = {
+    "minimum": 0,
+    "seed": 1,
+    "cached-projection": 2,
+    "fundamentals": 3,
+}
 
 
 class MarketHeatmapService:
@@ -147,7 +153,7 @@ def build_heatmap_item(
     layout_price_updated_at = price_updated_at
     layout_market_cap = None
     layout_market_cap_source = None
-    if keep_previous_layout:
+    if keep_previous_layout and should_keep_previous_layout(previous_item, market_cap_source):
         layout_market_cap = read_float(previous_item.get("layoutMarketCap"))
         layout_market_cap_source = read_string(previous_item.get("layoutMarketCapSource"))
         layout_price = read_float(previous_item.get("layoutPrice"))
@@ -200,6 +206,15 @@ def build_heatmap_item(
         "priceSource": price_source,
         "priceUpdatedAt": price_updated_at,
     }
+
+
+def should_keep_previous_layout(previous_item: dict[str, Any], current_market_cap_source: str) -> bool:
+    previous_source = read_string(previous_item.get("layoutMarketCapSource"))
+    if not previous_source:
+        return False
+    previous_priority = LAYOUT_SOURCE_PRIORITY.get(previous_source, -1)
+    current_priority = LAYOUT_SOURCE_PRIORITY.get(current_market_cap_source, -1)
+    return previous_priority >= current_priority
 
 
 def project_market_cap(
