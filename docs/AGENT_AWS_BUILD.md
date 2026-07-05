@@ -69,6 +69,28 @@ Agent entity resolver는 기본 운영 catalog로
 `systems/agent-orchestration/config/entity-aliases.json`을 읽는다.
 `entity-aliases.seed.json`과 Python seed constants는 bootstrap fallback이다.
 
+Backend/API image:
+
+```text
+gops-api-server
+infra/docker/Dockerfile.gops-backend
+```
+
+`gops-backend`도 `GET /api/agents/entities/resolve`에서 agent entity resolver를
+직접 실행하므로 image에 다음 source가 함께 들어가야 한다.
+
+```text
+systems/agent-orchestration/config
+systems/agent-orchestration/shared
+systems/market-data/config
+systems/market-data/shared
+systems/order/shared
+systems/api-server/pods/api-server/gops-backend
+```
+
+`systems/agent-orchestration/config`가 빠지면 backend가 bootstrap seed로 degrade해
+운영 alias catalog에만 있는 회사명/한글명 shortcut을 놓칠 수 있다.
+
 SEC companyfacts backfill은 `gops-agent-orchestrator`가 아니라
 `gops-market-storage` image에서 실행한다. 해당 image에는
 `systems/fundamentals`와 `systems/market-data/shared`가 포함되어야 한다.

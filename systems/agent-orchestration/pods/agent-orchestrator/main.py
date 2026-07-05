@@ -47,6 +47,19 @@ def get_report(analysis_id: str) -> dict[str, Any]:
     return report.to_dict()
 
 
+@app.post("/reports/{analysis_id}/cancel")
+def cancel_report(analysis_id: str, request: dict[str, Any] | None = None) -> dict[str, Any]:
+    payload = request or {}
+    report = orchestrator.cancel_analysis(
+        analysis_id,
+        reason="canceled by user",
+        user_id=str(payload.get("userId") or "") or None,
+    ).to_dict()
+    report["cancelAccepted"] = report.get("status") == "canceled"
+    publish_agent_outputs(report)
+    return report
+
+
 _producer = None
 
 

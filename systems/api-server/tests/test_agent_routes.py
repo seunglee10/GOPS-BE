@@ -93,6 +93,19 @@ class AgentRoutesTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), expected)
 
+    def test_cancel_agent_report_delegates_to_gateway(self):
+        expected = {"analysisId": "analysis-1", "status": "canceled", "cancelAccepted": True}
+        with patch("app.routes.agents.cancel_agent_analysis", return_value=expected) as gateway:
+            response = self.client.post(
+                "/api/agents/reports/analysis-1/cancel",
+                headers={"X-GOPS-User-Id": "user-1"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), expected)
+        self.assertEqual(gateway.call_args.args[0], "analysis-1")
+        self.assertEqual(gateway.call_args.kwargs["user_id"], "user-1")
+
     def test_resolve_agent_entity_returns_chart_shortcut(self):
         response = self.client.get("/api/agents/entities/resolve", params={"q": "엔비디아", "mode": "chartShortcut"})
 
@@ -126,6 +139,14 @@ class AgentRouteHelperTest(unittest.TestCase):
                 self.assertEqual(payload["chartShortcut"], True)
                 self.assertEqual(payload["symbol"], "NVDA")
 
+        for query in ("마이크론", "마이크론 보여줘", "micron", "Micron Technology", "MU"):
+            with self.subTest(query=query):
+                payload = resolve_agent_entity_for_chart_shortcut(query)
+                self.assertEqual(payload["status"], "confirmed")
+                self.assertEqual(payload["chartShortcut"], True)
+                self.assertEqual(payload["chartAction"], "replace")
+                self.assertEqual(payload["symbol"], "MU")
+
     @unittest.skipUnless(AGENT_ROUTE_HELPERS_AVAILABLE, "agent routes module is not importable")
     def test_agent_entity_resolve_confirms_chart_open_commands(self):
         for query in ("애플차트", "애플 차트 보여줘", "AAPL chart", "show AAPL chart"):
@@ -136,19 +157,38 @@ class AgentRouteHelperTest(unittest.TestCase):
                 self.assertEqual(payload["chartAction"], "replace")
                 self.assertEqual(payload["symbol"], "AAPL")
 
+        for query in ("마이크론 차트 보여줘", "micron chart", "MU chart"):
+            with self.subTest(query=query):
+                payload = resolve_agent_entity_for_chart_shortcut(query)
+                self.assertEqual(payload["status"], "confirmed")
+                self.assertEqual(payload["chartShortcut"], True)
+                self.assertEqual(payload["chartAction"], "replace")
+                self.assertEqual(payload["symbol"], "MU")
+
     @unittest.skipUnless(AGENT_ROUTE_HELPERS_AVAILABLE, "agent routes module is not importable")
     def test_agent_entity_resolve_confirms_chart_add_commands(self):
-        for query in ("애플 차트 추가해줘", "애플도 같이 보여줘", "AAPL chart too", "애플 비교 차트"):
+        for query in ("애플 차트 추가해줘", "애플도 같이 보여줘", "애플 차트랑 같이 보여줘", "AAPL chart too", "애플 비교 차트"):
             with self.subTest(query=query):
                 payload = resolve_agent_entity_for_chart_shortcut(query)
                 self.assertEqual(payload["status"], "confirmed")
                 self.assertEqual(payload["chartShortcut"], True)
                 self.assertEqual(payload["chartAction"], "add")
                 self.assertEqual(payload["symbol"], "AAPL")
+                self.assertEqual(payload["symbols"], ["AAPL"])
 
         bottom = resolve_agent_entity_for_chart_shortcut("애플 차트 밑에 추가해줘")
         self.assertEqual(bottom["chartAction"], "add")
         self.assertEqual(bottom["chartPlacementIntent"], "bottom")
+
+    @unittest.skipUnless(AGENT_ROUTE_HELPERS_AVAILABLE, "agent routes module is not importable")
+    def test_agent_entity_resolve_confirms_multi_chart_commands(self):
+        payload = resolve_agent_entity_for_chart_shortcut("애플 차트 엔비디아 차트 같이 보여줘")
+
+        self.assertEqual(payload["status"], "confirmed")
+        self.assertEqual(payload["chartShortcut"], True)
+        self.assertEqual(payload["chartAction"], "add")
+        self.assertEqual(payload["symbol"], "AAPL")
+        self.assertEqual(payload["symbols"], ["AAPL", "NVDA"])
 
     @unittest.skipUnless(AGENT_ROUTE_HELPERS_AVAILABLE, "agent routes module is not importable")
     def test_agent_entity_resolve_rejects_analysis_chart_shortcuts(self):
@@ -254,6 +294,73 @@ class AgentRouteHelperTest(unittest.TestCase):
         self.assertEqual(len(queue.envelopes), 1)
 
     @unittest.skipUnless(AGENT_ROUTE_HELPERS_AVAILABLE, "agent gateway module is not importable")
+    def test_agent_gateway_async_cancel_marks_report_canceled(self):
+        from gops_agents.runtime.report_store import InMemoryReportStore
+
+        store = InMemoryReportStore()
+        with patch(
+            "app.services.agent_gateway.read_dotenv_value",
+            side_effect=lambda name: {"AGENT_ASYNC_ANALYSIS_ENABLED": "true"}.get(name),
+        ):
+            with patch("app.services.agent_gateway.build_report_store_from_env", return_value=store):
+                with patch("app.services.agent_gateway.publish_report_update") as publish:
+                    response = agent_gateway.cancel_agent_analysis("agent-request-cancel", user_id="user-1")
+
+        self.assertEqual(response["analysisId"], "agent-request-cancel")
+        self.assertEqual(response["status"], "canceled")
+        self.assertEqual(response["cancelAccepted"], True)
+        self.assertTrue(store.is_canceled("agent-request-cancel"))
+        self.assertEqual(publish.call_args.args[0]["status"], "canceled")
+
+    @unittest.skipUnless(AGENT_ROUTE_HELPERS_AVAILABLE, "agent gateway module is not importable")
+    def test_agent_gateway_submit_skips_queue_when_request_was_already_canceled(self):
+        from gops_agents.runtime.report_store import InMemoryReportStore
+
+        store = InMemoryReportStore()
+        store.mark_canceled("agent-request-pre-canceled", reason="user stopped", user_id="user-1")
+        queue = FakeAnalysisQueue()
+        with patch(
+            "app.services.agent_gateway.read_dotenv_value",
+            side_effect=lambda name: {"AGENT_ASYNC_ANALYSIS_ENABLED": "true"}.get(name),
+        ):
+            with patch("app.services.agent_gateway.build_report_store_from_env", return_value=store):
+                with patch("app.services.agent_gateway.build_analysis_request_queue_from_env", return_value=queue):
+                    response = agent_gateway.request_agent_analysis(
+                        {"symbol": "NVDA", "intent": "analysis", "requestId": "agent-request-pre-canceled"},
+                        user_id="user-1",
+                    )
+
+        self.assertEqual(response["_status_code"], 200)
+        self.assertEqual(response["status"], "canceled")
+        self.assertEqual(len(queue.envelopes), 0)
+
+    @unittest.skipUnless(AGENT_ROUTE_HELPERS_AVAILABLE, "agent gateway module is not importable")
+    def test_agent_gateway_cancel_does_not_overwrite_completed_report(self):
+        from gops_agents.contracts import AnalysisReport, utc_now_iso
+        from gops_agents.runtime.report_store import InMemoryReportStore
+
+        store = InMemoryReportStore()
+        store.save(AnalysisReport(
+            analysisId="agent-request-completed",
+            symbol="NVDA",
+            intent="analysis",
+            status="completed",
+            createdAt=utc_now_iso(),
+            summary="done",
+            rationale="test",
+        ))
+        with patch(
+            "app.services.agent_gateway.read_dotenv_value",
+            side_effect=lambda name: {"AGENT_ASYNC_ANALYSIS_ENABLED": "true"}.get(name),
+        ):
+            with patch("app.services.agent_gateway.build_report_store_from_env", return_value=store):
+                response = agent_gateway.cancel_agent_analysis("agent-request-completed", user_id="user-1")
+
+        self.assertEqual(response["status"], "completed")
+        self.assertEqual(response["cancelAccepted"], False)
+        self.assertFalse(store.is_canceled("agent-request-completed"))
+
+    @unittest.skipUnless(AGENT_ROUTE_HELPERS_AVAILABLE, "agent gateway module is not importable")
     def test_agent_gateway_admission_rejects_when_queue_backpressure_hits(self):
         from gops_agents.runtime.report_store import InMemoryReportStore
 
@@ -318,6 +425,35 @@ class AgentRouteHelperTest(unittest.TestCase):
 
         self.assertEqual(response["_status_code"], 200)
         self.assertEqual(response["status"], "deep_completed")
+
+    @unittest.skipUnless(AGENT_ROUTE_HELPERS_AVAILABLE, "agent gateway module is not importable")
+    def test_agent_gateway_returns_canceled_report_as_terminal(self):
+        from gops_agents.contracts import AnalysisReport, utc_now_iso
+
+        report = AnalysisReport(
+            analysisId="agent-request-canceled",
+            symbol="NVDA",
+            intent="analysis",
+            status="canceled",
+            createdAt=utc_now_iso(),
+            summary="canceled",
+            rationale="test",
+        )
+
+        response = agent_gateway.response_for_report(report)
+
+        self.assertEqual(response["_status_code"], 200)
+        self.assertEqual(response["status"], "canceled")
+
+
+class AgentDockerImageContractTest(unittest.TestCase):
+    def test_gops_backend_image_includes_agent_entity_alias_catalog(self):
+        dockerfile = (ROOT / "infra" / "docker" / "Dockerfile.gops-backend").read_text(encoding="utf-8")
+
+        self.assertIn(
+            "COPY systems/agent-orchestration/config ./systems/agent-orchestration/config",
+            dockerfile,
+        )
 
 
 class FakeJsonResponse:

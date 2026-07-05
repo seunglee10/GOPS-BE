@@ -51,6 +51,7 @@ POST /api/agents/analyze
 POST /api/agents/layout/resolve
 GET  /api/agents/entities/resolve
 GET  /api/agents/reports/{analysis_id}
+POST /api/agents/reports/{analysis_id}/cancel
 GET  /api/agents/reports/{analysis_id}/stream
 WS   /ws/agent-alerts
 ```
@@ -73,7 +74,7 @@ compat endpoint를 동기로 호출한다. 응답은 다음 shape를 유지한�
 {
   "status": "ui_layout",
   "summary": "변경했습니다.",
-  "rationale": "The conductor returned a layout-only acknowledgement without final report synthesis.",
+  "rationale": "시장 뉴스 패널 크기를 조정했습니다.",
   "analysisId": "agent-request-id",
   "route": {"source": "ui-parser", "intentType": "ui-layout", "selectedRoles": []},
   "layoutProposal": {},
@@ -82,6 +83,9 @@ compat endpoint를 동기로 호출한다. 응답은 다음 shape를 유지한�
 ```
 
 `status="not_ui"`이면 프런트는 기존 `POST /api/agents/analyze`로 fallback한다.
+`status="ui_clarify"`이면 UI 관련 표현은 감지했지만 실행 가능한 layout task가
+확정되지 않은 상태다. 프런트는 분석 fallback을 하지 않고 `summary`를 사용자에게
+표시한다.
 
 ## Request Shape
 
@@ -99,6 +103,7 @@ permissive하게 유지한다.
   "chartAction": null,
   "chartTargetSymbol": null,
   "chartPlacementIntent": null,
+  "requestId": "agent-request-client-id",
   "mode": null,
   "analysisMode": null,
   "priority": null,
@@ -116,9 +121,11 @@ permissive하게 유지한다.
 회사명/티커 단독이거나 `애플차트 보여줘`, `AAPL chart` 같은 chart-open 명령인지
 확인해 차트만 즉시 전환할 때 이 route를 쓴다.
 
-응답의 `chartShortcut=true`는 입력이 하나의 company/ticker로 확정되고, 나머지
-표현이 차트 열기/전환 명령일 때만 반환한다. 해당 symbol은 기존 market-data
-symbol registry/universe에서 차트로 열 수 있어야 한다. `엔비디아 뉴스`,
+응답의 `chartShortcut=true`는 입력이 company/ticker로 확정되고, 나머지 표현이
+차트 열기/전환/추가 명령일 때만 반환한다. 해당 symbol은 기존 market-data
+symbol registry/universe에서 차트로 열 수 있어야 한다. 다중 차트 요청이면
+호환용 `symbol`은 첫 번째 종목을 담고 optional `symbols`가 입력 순서의 ticker
+목록을 담는다. `엔비디아 뉴스`,
 `엔비디아 분석해줘`, `엔비디아 차트 분석해줘`, 관계 질문, 테마 entity,
 ambiguous match, registry 미지원 symbol은 분석 요청으로 fallback할 수 있도록
 `chartShortcut=false`를 반환한다.
@@ -126,8 +133,9 @@ ambiguous match, registry 미지원 symbol은 분석 요청으로 fallback할 �
 응답은 optional `chartAction`을 포함할 수 있다. 기본 `애플 차트 보여줘`,
 `AAPL chart`, 회사명/티커 단독 입력은 `chartAction="replace"`로 현재 chart
 symbol 전환을 의미한다. `애플 차트 추가해줘`, `애플도 같이 보여줘`,
-`AAPL chart too`, 비교/동시 표시 표현은 `chartAction="add"`로 기존 chart를
-유지한 추가 chart panel 요청을 의미한다. 위치 표현이 있으면
+`AAPL chart too`, `애플 차트 엔비디아 차트 같이 보여줘` 같은 비교/동시 표시
+표현은 `chartAction="add"`로 기존 chart를 유지한 추가 chart panel 요청을
+의미한다. 위치 표현이 있으면
 `chartPlacementIntent`에 `top`, `bottom`, `left`, `right`, `center` 중 하나를
 담는다.
 
@@ -137,6 +145,12 @@ symbol 전환을 의미한다. `애플 차트 추가해줘`, `애플도 같이 �
 orchestrator는 이 메타데이터를 UI-only layout task로 보강해 analysis pipeline을
 타지 않고 `layout.panel.add`와 priority-aware `layout.panels.arrange` proposal을
 반환한다.
+
+이 route는 `gops-backend` process 안에서 `KoreanEntityResolver`를 직접 실행한다.
+따라서 backend image에도 `systems/agent-orchestration/config`와
+`systems/agent-orchestration/shared`가 함께 포함되어야 한다. 운영 alias catalog인
+`entity-aliases.json`이 없으면 bootstrap seed로 degrade해 seed에 없는 회사명
+shortcut을 놓칠 수 있다.
 
 ## Async Submit Response
 
@@ -155,6 +169,23 @@ Async submit은 기본적으로 `202`를 반환한다.
 
 완료된 idempotent retry는 `200`과 completed `AnalysisReport`를 반환할 수
 있다. 프런트는 `analysisId`를 canonical key로 사용한다.
+
+## Cancellation
+
+`POST /api/agents/reports/{analysis_id}/cancel`은 사용자가 실행 중인 분석을
+중단할 때 호출한다. 프런트가 submit 전에 `requestId`를 생성해 body에 넣으면
+submit 응답이 오기 전에도 같은 값을 `analysis_id`로 cancel할 수 있다.
+
+Cancel은 cooperative cancellation이다. 백엔드는 report store에 `canceled`
+terminal report와 cancel marker를 저장하고 Redis update channel로 publish한다.
+queued Kafka message는 삭제하지 않으며, worker는 message를 소비할 때 marker를
+확인해 orchestrator 실행을 건너뛴다. 이미 실행 중인 worker/orchestrator는 단계
+경계에서 marker를 확인하고 `completed` 결과가 `canceled` report를 덮어쓰지
+못하게 해야 한다.
+
+이미 `completed`, `deep_completed`, `failed`인 report는 cancel로 덮어쓰지 않는다.
+프런트는 `completed`, `deep_completed`, `failed`, `canceled`를 terminal status로
+취급한다.
 
 ## Queue And Report Store
 
@@ -178,6 +209,7 @@ agent:report:{analysisId}
 agent:report:latest:{SYMBOL}
 agent:report:latest
 agent:request:idempotency:{userHash}:{keyHash}
+agent:report:cancel:{analysisId}
 agent.reports
 agent.reports:{analysisId}
 ```
@@ -208,6 +240,7 @@ AGENT_SHARED_REPORT_STORE_ENABLED
 AGENT_ANALYSIS_QUEUE_BACKEND
 AGENT_REPORT_STORE_BACKEND
 AGENT_REPORT_TTL_SECONDS
+AGENT_REPORT_CANCEL_KEY_PREFIX
 AGENT_REPORT_STREAM_REDIS_ENABLED
 AGENT_REPORT_UPDATES_CHANNEL
 AGENT_IDEMPOTENCY_TTL_SECONDS

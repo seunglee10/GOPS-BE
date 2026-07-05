@@ -2,9 +2,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from threading import Lock
-from typing import Any
+from typing import Any, Callable
 
 from ..contracts import RuntimePolicy
+
+
+class AgentAnalysisCanceled(Exception):
+    def __init__(self, analysis_id: str, stage: str | None = None):
+        self.analysis_id = analysis_id
+        self.stage = stage
+        message = f"Agent analysis {analysis_id} was canceled"
+        if stage:
+            message = f"{message} during {stage}"
+        super().__init__(message)
 
 
 @dataclass
@@ -34,6 +44,8 @@ class LlmBudget:
 class RuntimeRunContext:
     policy: RuntimePolicy
     timing: dict[str, Any] = field(default_factory=dict)
+    cancellation_checker: Callable[[], bool] | None = None
+    analysis_id: str | None = None
     llm_budget: LlmBudget = field(init=False)
 
     def __post_init__(self) -> None:
@@ -44,4 +56,16 @@ class RuntimeRunContext:
         self.llm_budget.max_calls = max(0, int(policy.max_realtime_llm_calls))
 
     def acquire_llm(self, label: str) -> bool:
+        self.raise_if_canceled(label)
         return self.llm_budget.acquire(label, self.timing)
+
+    def set_cancellation_checker(self, analysis_id: str, checker: Callable[[], bool]) -> None:
+        self.analysis_id = analysis_id
+        self.cancellation_checker = checker
+
+    def is_canceled(self) -> bool:
+        return bool(self.cancellation_checker and self.cancellation_checker())
+
+    def raise_if_canceled(self, stage: str | None = None) -> None:
+        if self.is_canceled():
+            raise AgentAnalysisCanceled(self.analysis_id or "unknown", stage)

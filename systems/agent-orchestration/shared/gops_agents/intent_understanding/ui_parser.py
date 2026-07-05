@@ -137,11 +137,16 @@ def parse_ui_clause(clause: Clause, panels: list[dict[str, Any]], lexicon: dict[
     position_matches = value_matches(clause, lexicon.get("positions", {}), allow_short_fuzzy=False)
     surface_matches = term_matches(clause, lexicon.get("surfaceNouns", []), allow_short_fuzzy=True)
     multi_matches = term_matches(clause, lexicon.get("multiPanelHints", []), allow_short_fuzzy=False)
+    keep_only_matches = term_matches(clause, lexicon.get("keepOnlyHints", []), allow_short_fuzzy=False)
     content_only_matches = term_matches(clause, lexicon.get("contentOnlyVerbs", []), allow_short_fuzzy=False)
 
-    explicit_operation = has_layout_operation(action_matches, size_matches, position_matches, surface_matches, multi_matches)
-    if is_content_only_clause(action_matches, size_matches, position_matches, surface_matches, multi_matches, content_only_matches):
+    explicit_operation = has_layout_operation(action_matches, size_matches, position_matches, surface_matches, multi_matches, keep_only_matches)
+    if is_content_only_clause(action_matches, size_matches, position_matches, surface_matches, multi_matches, keep_only_matches, content_only_matches):
         return UiParseResult(confidence=max_match_score(content_only_matches))
+
+    keep_task = build_keep_only_task(clause, panel_matches, action_matches, surface_matches, multi_matches, keep_only_matches)
+    if keep_task is not None:
+        return UiParseResult(tasks=[keep_task], confidence=keep_task.confidence)
 
     multi_task = build_multi_panel_task(
         clause,
@@ -174,6 +179,7 @@ def parse_ui_clause(clause: Clause, panels: list[dict[str, Any]], lexicon: dict[
         or size_matches
         or position_matches
         or multi_matches
+        or keep_only_matches
     )
     ui_like = bool(panel_matches or strong_ui_signals or action_matches)
     incomplete_ui = ui_like and strong_ui_signals and not explicit_operation
@@ -185,8 +191,42 @@ def parse_ui_clause(clause: Clause, panels: list[dict[str, Any]], lexicon: dict[
             *position_matches,
             *surface_matches,
             *multi_matches,
+            *keep_only_matches,
         ]))
     return UiParseResult(confidence=max_match_score(panel_matches))
+
+
+def build_keep_only_task(
+    clause: Clause,
+    panel_matches: list[AliasMatch],
+    action_matches: list[AliasMatch],
+    surface_matches: list[AliasMatch],
+    multi_matches: list[AliasMatch],
+    keep_only_matches: list[AliasMatch],
+) -> UiTask | None:
+    if not panel_matches:
+        return None
+    keep_action = best_match([match for match in action_matches if match.value == "keep"])
+    close_action = best_match([match for match in action_matches if match.value == "close"])
+    if not keep_action and not (close_action and keep_only_matches):
+        return None
+
+    panel_types = unique_panel_types([match.value for match in panel_matches])
+    panel_ids = unique_texts([
+        match.source.removeprefix("panel:")
+        for match in panel_matches
+        if match.source.startswith("panel:")
+    ])
+    return UiTask(
+        action="keep",
+        targetPanelType=panel_types[0] if panel_types else None,
+        targetPanelId=panel_ids[0] if panel_ids else None,
+        targetPanelTypes=panel_types,
+        targetPanelIds=panel_ids,
+        confidence=ui_task_confidence([*panel_matches, keep_action, close_action, *surface_matches, *multi_matches, *keep_only_matches]),
+        source="ui-parser",
+        reason=f"UI parser matched a keep-only panel operation in clause '{clause.text}'.",
+    )
 
 
 def build_single_panel_task(
@@ -275,9 +315,13 @@ def infer_action(
 ) -> str | None:
     if size:
         return "resize"
+    if strong_action and strong_action.value == "keep":
+        return "keep"
     if strong_action and strong_action.value == "close":
         return "close"
     if multi_panel:
+        if strong_action and strong_action.value == "close":
+            return "close"
         if strong_action and strong_action.value in {"open", "arrange"}:
             return strong_action.value
         return "arrange"
@@ -296,8 +340,11 @@ def has_layout_operation(
     position_matches: list[AliasMatch],
     surface_matches: list[AliasMatch],
     multi_matches: list[AliasMatch],
+    keep_only_matches: list[AliasMatch] | None = None,
 ) -> bool:
     if size_matches or position_matches or multi_matches:
+        return True
+    if keep_only_matches:
         return True
     if any(match.strength == "strong" for match in action_matches):
         return True
@@ -310,11 +357,12 @@ def is_content_only_clause(
     position_matches: list[AliasMatch],
     surface_matches: list[AliasMatch],
     multi_matches: list[AliasMatch],
+    keep_only_matches: list[AliasMatch],
     content_only_matches: list[AliasMatch],
 ) -> bool:
     if not content_only_matches:
         return False
-    if size_matches or position_matches or multi_matches or surface_matches:
+    if size_matches or position_matches or multi_matches or surface_matches or keep_only_matches:
         return False
     strong_layout_actions = [match for match in action_matches if match.strength == "strong" and match.value != "focus"]
     if not strong_layout_actions:
@@ -505,7 +553,8 @@ def has_ui_operation_signal(query: Any) -> bool:
         position_matches = value_matches(clause, lexicon.get("positions", {}), allow_short_fuzzy=False)
         surface_matches = term_matches(clause, lexicon.get("surfaceNouns", []), allow_short_fuzzy=True)
         multi_matches = term_matches(clause, lexicon.get("multiPanelHints", []), allow_short_fuzzy=False)
-        if has_layout_operation(action_matches, size_matches, position_matches, surface_matches, multi_matches):
+        keep_only_matches = term_matches(clause, lexicon.get("keepOnlyHints", []), allow_short_fuzzy=False)
+        if has_layout_operation(action_matches, size_matches, position_matches, surface_matches, multi_matches, keep_only_matches):
             return True
     return False
 
