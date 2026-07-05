@@ -68,6 +68,23 @@ class AgentRoutesTest(unittest.TestCase):
         self.assertEqual(response.status_code, 202)
         self.assertEqual(response.json(), {"request_id": "agent-request-1", "status": "queued"})
 
+    def test_layout_resolve_delegates_to_orchestrator_gateway(self):
+        expected = {
+            "status": "ui_layout",
+            "summary": "변경했습니다.",
+            "layoutProposal": {"commands": []},
+        }
+        with patch("app.routes.agents.request_agent_layout_resolution", return_value=expected) as gateway:
+            response = self.client.post(
+                "/api/agents/layout/resolve",
+                json={"symbol": "NVDA", "intent": "온톨로지 패널 키워줘", "layoutContext": {"panels": []}},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), expected)
+        self.assertEqual(gateway.call_args.args[0]["symbol"], "NVDA")
+        self.assertEqual(gateway.call_args.args[0]["intent"], "온톨로지 패널 키워줘")
+
     def test_agent_report_delegates_to_gateway(self):
         expected = {"analysisId": "analysis-1", "status": "completed"}
         with patch("app.routes.agents.get_agent_report", return_value=expected):
@@ -148,6 +165,14 @@ class AgentRouteHelperTest(unittest.TestCase):
 
         self.assertEqual(response, {"status": "ok"})
         self.assertEqual(urlopen.call_args.kwargs["timeout"], 45.0)
+
+    @unittest.skipUnless(AGENT_ROUTE_HELPERS_AVAILABLE, "agent gateway module is not importable")
+    def test_agent_gateway_layout_resolution_uses_orchestrator_fast_path(self):
+        with patch("app.services.agent_gateway.request_orchestrator_json", return_value={"status": "not_ui"}) as request_json:
+            response = agent_gateway.request_agent_layout_resolution({"symbol": "NVDA", "intent": "analysis"})
+
+        self.assertEqual(response, {"status": "not_ui"})
+        self.assertEqual(request_json.call_args.args, ("POST", "/layout/resolve", {"symbol": "NVDA", "intent": "analysis"}))
 
     @unittest.skipUnless(AGENT_ROUTE_HELPERS_AVAILABLE, "agent gateway module is not importable")
     def test_agent_gateway_maps_upstream_timeout_to_504(self):

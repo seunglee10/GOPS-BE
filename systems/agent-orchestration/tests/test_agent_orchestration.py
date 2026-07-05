@@ -1205,6 +1205,37 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertTrue(report.agentTrace["uiLayoutFastAck"])
         self.assertEqual(report.agentTrace["queryUnderstanding"]["routeMode"], "ui_layout")
 
+    def test_layout_resolve_returns_ui_layout_without_analysis_report_pipeline(self):
+        orchestrator = AgentOrchestrator()
+
+        with patch.object(
+            orchestrator,
+            "_build_snapshot_plan",
+            side_effect=AssertionError("Layout resolve must not build snapshots"),
+        ):
+            response = orchestrator.resolve_layout({
+                "symbol": "NVDA",
+                "intent": "뉴스 패널 크게 보여줘",
+                "layoutContext": layout_context(),
+            })
+
+        self.assertEqual(response["status"], "ui_layout")
+        self.assertEqual(response["summary"], "변경했습니다.")
+        self.assertEqual(response["route"]["intentType"], "ui-layout")
+        self.assertTrue(response["agentTrace"]["uiLayoutFastAck"])
+        self.assertIsNotNone(response["layoutProposal"])
+
+    def test_layout_resolve_returns_not_ui_for_analysis_request(self):
+        response = AgentOrchestrator().resolve_layout({
+            "symbol": "NVDA",
+            "intent": "NVDA 뉴스 분석해줘",
+            "layoutContext": layout_context(),
+        })
+
+        self.assertEqual(response["status"], "not_ui")
+        self.assertIsNone(response["layoutProposal"])
+        self.assertFalse(response["agentTrace"]["uiLayoutFastAck"])
+
     def test_ui_router_budget_block_falls_back_without_openai_call(self):
         with patch.dict(os.environ, {
             "OPENAI_API_KEY": "test-key",

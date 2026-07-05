@@ -47,6 +47,12 @@ flowchart TD
 `엔비디아 분석해줘`, 관계 질문, chart registry 미지원 symbol은 기존 분석
 흐름을 유지한다.
 
+티커 shortcut이 아니면 프런트는 분석 pending 메시지를 띄우기 전에
+`POST /api/agents/layout/resolve`로 UI-only layout command인지 확인한다.
+응답이 `status="ui_layout"`이고 `layoutProposal`이 있으면 즉시 적용하고
+사용자에게 `summary`만 표시한다. `status="not_ui"`이거나 route가 실패하면
+기존 `/api/agents/analyze` 흐름으로 fallback한다.
+
 ## Submit Request
 
 프런트는 최소한 `symbol`, `intent`, `messages`를 보낸다. 가능한 경우 현재 차트와
@@ -85,6 +91,9 @@ X-GOPS-User-Id
 
 `Idempotency-Key`는 같은 submit을 중복 클릭하거나 네트워크 retry가 발생했을 때
 같은 `analysisId`를 재사용하기 위해 필요하다.
+
+`POST /api/agents/layout/resolve`는 idempotency header를 요구하지 않는다. 이 route는
+분석 report 생성이 아니라 현재 layout context에 대한 빠른 proposal 판정이다.
 
 ## Response Handling
 
@@ -139,6 +148,10 @@ Provider가 `status="no-data"` evidence를 반환하는 것은 정상적인 part
 에이전트가 `layoutProposal` 또는 `chartProposal`을 반환할 수 있다. 프런트가
 이를 지원하면 preview 후 사용자가 적용하도록 만든다.
 
+현재 `gops-frontend`의 active entrypoint는 `App.tsx`이며 `layoutProposal`만
+자동 적용한다. `chartProposal`은 차트 엔진 command path와 별도로 연결해야 하며,
+현재 App의 일반 분석 렌더링에서는 사용하지 않는다.
+
 지원하지 않는 경우 정책:
 
 ```text
@@ -155,6 +168,9 @@ provider가 직접 UI panel command를 만들면 안 된다.
 `WS /ws/agent-alerts`는 notification publisher가 Redis에 publish한 alert를
 프런트에 전달하는 bridge다.
 
+현재 active App에는 alert WebSocket consumer가 붙어 있지 않다. 알림 UI를 붙일 때
+이 route를 사용하고, 그 전까지 agent 분석/레이아웃 흐름과 섞지 않는다.
+
 프런트는 alert를 다음처럼 취급한다.
 
 - market-event explanation 또는 notification decision으로 표시한다.
@@ -166,8 +182,11 @@ provider가 직접 UI panel command를 만들면 안 된다.
 기존 구현을 참고할 때 볼 파일:
 
 ```text
+apps/gops-frontend/src/App.tsx
+apps/gops-frontend/src/agent/agentAnalysisClient.ts
 apps/gops-frontend/src/agents/agentAnalysis.ts
-apps/gops-frontend/src/components/SystemArea.tsx
+apps/gops-frontend/src/components/BottomCommandBar.tsx
+apps/gops-frontend/src/layout/tiledAgentLayout.ts
 apps/chart-engine/src/agentReference.ts
 apps/chart-engine/src/agentChat.ts
 apps/chart-engine/src/proposals.ts

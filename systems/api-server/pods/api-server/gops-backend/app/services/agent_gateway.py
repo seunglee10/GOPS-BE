@@ -48,6 +48,10 @@ def request_agent_analysis(payload: dict[str, Any], *, idempotency_key: str | No
     return request_orchestrator_json("POST", "/analyze", payload)
 
 
+def request_agent_layout_resolution(payload: dict[str, Any]) -> dict[str, Any]:
+    return request_orchestrator_json("POST", "/layout/resolve", payload)
+
+
 def get_agent_report(analysis_id: str) -> dict[str, Any]:
     if async_analysis_enabled() or shared_report_store_enabled():
         report = build_report_store_from_env().get(analysis_id)
