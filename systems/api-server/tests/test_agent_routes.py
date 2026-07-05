@@ -192,7 +192,17 @@ class AgentRouteHelperTest(unittest.TestCase):
 
     @unittest.skipUnless(AGENT_ROUTE_HELPERS_AVAILABLE, "agent routes module is not importable")
     def test_agent_entity_resolve_rejects_analysis_chart_shortcuts(self):
-        for query in ("엔비디아 뉴스", "엔비디아 분석해줘", "엔비디아 차트 분석해줘", "엔비디아 왜 올랐어", "엔비디아랑 AMD 관계", "반도체"):
+        for query in (
+            "엔비디아 뉴스",
+            "엔비디아 분석해줘",
+            "엔비디아 차트 분석해줘",
+            "엔비디아 왜 올랐어",
+            "엔비디아랑 AMD 관계",
+            "NVDA랑 AAPL 재무 비교해줘",
+            "NVDA AAPL 매출 비교해줘",
+            "NVDA AAPL fundamentals compare",
+            "반도체",
+        ):
             with self.subTest(query=query):
                 payload = resolve_agent_entity_for_chart_shortcut(query)
                 self.assertEqual(payload["chartShortcut"], False)

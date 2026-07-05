@@ -15,6 +15,7 @@ sys.modules.setdefault("boto3", types.SimpleNamespace(client=lambda *args, **kwa
 
 from gops_agents.contracts import EvidenceItem, IntentRoute, utc_now_iso
 from gops_agents.intent_understanding import build_query_understanding
+from gops_agents.orchestration.cache import analysis_cache_key_for_state
 from gops_agents.orchestration.reporting import build_agent_trace
 from gops_agents.orchestration.routing import route_intent
 from gops_agents.providers import ClickHouseFinancialProvider, ProviderRequest, financial_peer_latest_key, financial_summary_key
@@ -39,6 +40,35 @@ class FakeRedisClient:
     def get(self, key):
         self.get_calls.append(key)
         return self.items.get(key)
+
+
+class FakeAnswerRedisClient:
+    def __init__(self):
+        self.items = {}
+        self.get_calls = []
+        self.setex_calls = []
+
+    def get(self, key):
+        self.get_calls.append(key)
+        return self.items.get(key)
+
+    def setex(self, key, ttl, value):
+        self.setex_calls.append((key, ttl, value))
+        self.items[key] = value
+
+
+class FakeOpenAIResponse:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def read(self):
+        return json.dumps(self.payload).encode("utf-8")
 
 
 class BrokenRedisClient:
@@ -74,8 +104,18 @@ class FakeFinancialProvider:
                     "symbol": request.symbol,
                     "latest_period": "2025 FY",
                     "metrics": [
-                        {"metric": "revenue", "value": 100, "quality": "available", "selectedConcept": "Revenues"},
-                        {"metric": "net_margin", "value": 0.2, "quality": "available"},
+                        {"metric": "revenue", "value": 383_285_000_000, "quality": "available", "selectedConcept": "Revenues", "fiscalYear": 2025, "fiscalPeriod": "FY"},
+                        {"metric": "net_income", "value": 97_000_000_000, "quality": "available", "fiscalYear": 2025, "fiscalPeriod": "FY"},
+                        {"metric": "assets", "value": 359_241_000_000, "quality": "available", "fiscalYear": 2026, "fiscalPeriod": "Q2"},
+                        {"metric": "liabilities", "value": 285_508_000_000, "quality": "available", "fiscalYear": 2026, "fiscalPeriod": "Q2"},
+                        {"metric": "equity", "value": 73_733_000_000, "quality": "available", "fiscalYear": 2026, "fiscalPeriod": "Q2"},
+                        {"metric": "current_ratio", "value": 0.8932929222186667, "quality": "available", "fiscalYear": 2026, "fiscalPeriod": "Q2"},
+                        {"metric": "liabilities_to_assets", "value": 0.7947455900083788, "quality": "available", "fiscalYear": 2026, "fiscalPeriod": "Q2"},
+                        {"metric": "liabilities_to_equity", "value": 3.872187487285205, "quality": "available", "fiscalYear": 2026, "fiscalPeriod": "Q2"},
+                        {"metric": "total_debt_to_assets", "value": 0.2524155093655791, "quality": "available", "fiscalYear": 2026, "fiscalPeriod": "Q2"},
+                        {"metric": "long_term_debt_current", "value": 12_350_000_000, "quality": "available", "fiscalYear": 2026, "fiscalPeriod": "Q2"},
+                        {"metric": "free_cash_flow", "value": None, "quality": "missing_source", "fiscalYear": 2026, "fiscalPeriod": "Q2"},
+                        {"metric": "net_margin", "value": 0.253, "quality": "available", "fiscalYear": 2025, "fiscalPeriod": "FY"},
                     ],
                     "quality": "available",
                     "cache_hit": True,
@@ -98,7 +138,34 @@ class FakeFinancialProvider:
                     "frame_period": "CY2025Q4",
                     "peers": [
                         {"symbol": request.symbol, "concept": "Revenues", "value": 100, "quality": "frame_as_reported"},
-                        {"symbol": "AMD", "concept": "Revenues", "value": 70, "quality": "frame_as_reported"},
+                    ],
+                    "frames": [
+                        {
+                            "frame_period": "CY2025Q4",
+                            "display_period": "CY2025Q4",
+                            "concept": "Revenues",
+                            "peers": [
+                                {"symbol": request.symbol, "concept": "Revenues", "value": 100, "quality": "frame_as_reported"},
+                            ],
+                        },
+                        {
+                            "frame_period": "CY2025Q4",
+                            "display_period": "CY2025Q4",
+                            "concept": "OperatingIncomeLoss",
+                            "peers": [
+                                {"symbol": request.symbol, "concept": "OperatingIncomeLoss", "value": 60, "quality": "frame_as_reported"},
+                                {"symbol": "AMD", "concept": "OperatingIncomeLoss", "value": 40, "quality": "frame_as_reported"},
+                            ],
+                        },
+                        {
+                            "frame_period": "CY2025Q4I",
+                            "display_period": "CY2025Q4",
+                            "concept": "Assets",
+                            "peers": [
+                                {"symbol": request.symbol, "concept": "Assets", "value": 200, "quality": "frame_as_reported"},
+                                {"symbol": "AMD", "concept": "Assets", "value": 120, "quality": "frame_as_reported"},
+                            ],
+                        },
                     ],
                     "quality": "frame_as_reported",
                     "cache_hit": True,
@@ -116,7 +183,10 @@ class FinancialAgentIntegrationTests(unittest.TestCase):
                 "OPENAI_API_KEY",
                 "AGENT_FINAL_ANSWER_PROVIDER",
                 "AGENT_FINANCIAL_FINAL_ANSWER_PROVIDER",
+                "AGENT_FINANCIAL_FINAL_ANSWER_CACHE_ENABLED",
+                "AGENT_FINANCIAL_FINAL_ANSWER_CACHE_TTL_SECONDS",
                 "AGENT_SNAPSHOT_TIMEOUT_MS",
+                "REDIS_URL",
             ]
         }
 
@@ -286,8 +356,97 @@ class FinancialAgentIntegrationTests(unittest.TestCase):
 
         self.assertEqual(answer.title, "NVDA SEC 재무 분석")
         self.assertTrue(any(section.title == "공시 기반 재무 요약" for section in answer.sections))
+        self.assertTrue(any(section.title == "해석 포인트" for section in answer.sections))
         self.assertTrue(any(section.title == "Peer 비교" for section in answer.sections))
         self.assertTrue(any("SEC" in item for item in answer.limitations))
+        rendered = json.dumps(answer.to_dict(), ensure_ascii=False)
+        self.assertIn("총자산", rendered)
+        self.assertIn("유동비율", rendered)
+        self.assertIn("89.3%", rendered)
+        self.assertIn("총부채/총자산", rendered)
+        self.assertIn("79.5%", rendered)
+        self.assertIn("이자성 부채/총자산", rendered)
+        self.assertIn("25.2%", rendered)
+        self.assertIn("영업이익", rendered)
+        self.assertIn("총자산", rendered)
+        self.assertNotIn("Assets:", rendered)
+        self.assertIn("AMD", rendered)
+        self.assertIn("단기 유동성", rendered)
+        self.assertNotIn("assets:", rendered)
+        self.assertNotIn("약 1달러", rendered)
+        self.assertNotIn("long_term_debt_current", rendered)
+        self.assertNotIn("free_cash_flow", rendered)
+        self.assertNotIn("None", rendered)
+        self.assertNotIn("missing_source", rendered)
+
+    def test_financial_analysis_cache_key_includes_financial_role(self):
+        route = IntentRoute(source="rule", intentType="financial-analysis", selectedRoles=["financial"], confidence=0.9, reason="test")
+        context = AgentContext(symbol="NVDA", intent="NVDA 재무 분석", selectedRoles=["financial"], intentType="financial-analysis")
+        with patch("gops_agents.orchestration.cache.analysis_cache_key", side_effect=lambda *, symbol, payload, prefix=None: payload):
+            payload = analysis_cache_key_for_state({
+                "route": route,
+                "symbol": "NVDA",
+                "intent": "NVDA 재무 분석",
+                "request": {"routerMode": "hybrid"},
+                "events": [],
+                "context": context,
+                "selected_roles": ["financial"],
+                "route_mode": "analysis",
+                "ui_intent": None,
+                "analysis_mode": "auto",
+                "news_symbols": [],
+            })
+
+        self.assertEqual(payload["route"]["selectedRoles"], ["financial"])
+
+    def test_financial_openai_final_answer_uses_cache(self):
+        provider = FakeFinancialProvider()
+        finding = FinancialAgent(provider).analyze(
+            AgentContext(symbol="NVDA", intent="NVDA 재무 분석", selectedRoles=["financial"], intentType="financial-analysis")
+        )
+        response = {
+            "output_text": json.dumps({
+                "title": "NVDA 재무제표 해석",
+                "summary": "LLM이 재무 snapshot을 쉬운 한국어로 설명했습니다.",
+                "sections": [{"title": "핵심 요약", "bullets": ["총자산과 유동비율을 중심으로 확인했습니다."]}],
+                "citations": [],
+                "limitations": ["SEC 공시 기반 데이터만 사용했습니다."],
+            })
+        }
+        redis_client = FakeAnswerRedisClient()
+
+        with patch.dict(
+            os.environ,
+            {
+                "OPENAI_API_KEY": "test-key",
+                "REDIS_URL": "redis://example/0",
+                "AGENT_FINANCIAL_FINAL_ANSWER_PROVIDER": "openai",
+                "AGENT_FINANCIAL_FINAL_ANSWER_CACHE_TTL_SECONDS": "600",
+            },
+            clear=False,
+        ):
+            with patch("gops_agents.synthesis.final_answer.financial_final_answer_cache_client", return_value=redis_client):
+                with patch("urllib.request.urlopen", return_value=FakeOpenAIResponse(response)) as openai:
+                    first = FinalAnswerSynthesizer().synthesize(
+                        symbol="NVDA",
+                        intent="NVDA 재무 분석",
+                        route=IntentRoute(source="rule", intentType="financial-analysis", selectedRoles=["financial"], confidence=0.9, reason="test"),
+                        findings=[finding],
+                        provider_evidence=finding.evidence,
+                    )
+                    second = FinalAnswerSynthesizer().synthesize(
+                        symbol="NVDA",
+                        intent="NVDA 재무 분석",
+                        route=IntentRoute(source="rule", intentType="financial-analysis", selectedRoles=["financial"], confidence=0.9, reason="test"),
+                        findings=[finding],
+                        provider_evidence=finding.evidence,
+                    )
+
+        self.assertEqual(openai.call_count, 1)
+        self.assertEqual(len(redis_client.setex_calls), 1)
+        self.assertEqual(redis_client.setex_calls[0][1], 600)
+        self.assertEqual(first.summary, "LLM이 재무 snapshot을 쉬운 한국어로 설명했습니다.")
+        self.assertEqual(second.summary, first.summary)
 
 
 if __name__ == "__main__":
