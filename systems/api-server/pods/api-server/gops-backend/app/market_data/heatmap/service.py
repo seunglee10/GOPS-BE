@@ -17,6 +17,12 @@ DEFAULT_LAYOUT_REFRESH_SECONDS = 300
 DEFAULT_CACHE_TTL_SECONDS = 55
 DEFAULT_STALE_CACHE_TTL_SECONDS = 900
 DEFAULT_MINIMUM_MARKET_CAP = 1_000_000.0
+LAYOUT_SOURCE_PRIORITY = {
+    "minimum": 0,
+    "seed": 1,
+    "cached-projection": 2,
+    "fundamentals": 3,
+}
 
 
 class MarketHeatmapService:
@@ -43,7 +49,9 @@ class MarketHeatmapService:
         now = utc_now()
         quote_as_of = latest_quote_timestamp(quote_rows.values()) or parse_timestamp(previous.get("quoteAsOf")) or now
         layout_seconds = read_positive_int("HEATMAP_LAYOUT_REFRESH_SECONDS", DEFAULT_LAYOUT_REFRESH_SECONDS)
-        layout_as_of = floor_timestamp(quote_as_of, layout_seconds)
+        layout_as_of = floor_timestamp(now, layout_seconds)
+        layout_as_of_text = isoformat_z(layout_as_of)
+        keep_previous_layout = read_string(previous.get("layoutAsOf")) == layout_as_of_text
 
         items = [
             build_heatmap_item(
@@ -51,13 +59,14 @@ class MarketHeatmapService:
                 quote_row=quote_rows.get(seed_item["symbol"]),
                 fundamentals=fundamentals.get(seed_item["symbol"]),
                 previous_item=previous_items.get(seed_item["symbol"]),
+                keep_previous_layout=keep_previous_layout,
             )
             for seed_item in seed_items
         ]
         payload = {
             "source": "market-heatmap-projection",
             "universe": universe_name,
-            "layoutAsOf": isoformat_z(layout_as_of),
+            "layoutAsOf": layout_as_of_text,
             "quoteAsOf": isoformat_z(quote_as_of),
             "quoteRefreshSeconds": read_positive_int("HEATMAP_QUOTE_REFRESH_SECONDS", DEFAULT_QUOTE_REFRESH_SECONDS),
             "layoutRefreshSeconds": layout_seconds,
@@ -115,6 +124,7 @@ def build_heatmap_item(
     quote_row: dict[str, Any] | None,
     fundamentals: FundamentalsRecord | None,
     previous_item: dict[str, Any] | None = None,
+    keep_previous_layout: bool = False,
 ) -> dict[str, Any]:
     symbol = seed_item["symbol"]
     quote_row = quote_row or {}
@@ -127,19 +137,40 @@ def build_heatmap_item(
 
     shares_outstanding = fundamentals.sharesOutstanding if fundamentals else None
     seed_market_cap = read_float(seed_item.get("marketCap"))
-    market_cap = None
-    market_cap_source = "minimum"
-    if last_price is not None and shares_outstanding:
-        market_cap = last_price * shares_outstanding
-        market_cap_source = "fundamentals"
-    elif price_from_previous and read_string(previous_item.get("marketCapSource")) == "fundamentals":
-        market_cap = read_float(previous_item.get("marketCap"))
-        market_cap_source = "cached-projection"
-    elif seed_market_cap is not None:
-        market_cap = seed_market_cap
-        market_cap_source = "seed"
-    else:
-        market_cap = DEFAULT_MINIMUM_MARKET_CAP
+    market_cap, market_cap_source = project_market_cap(
+        price=last_price,
+        shares_outstanding=shares_outstanding,
+        seed_market_cap=seed_market_cap,
+        previous_item=previous_item,
+        previous_cap_key="marketCap",
+        previous_source_key="marketCapSource",
+    )
+
+    price_source = "cached-projection" if price_from_previous else read_string(quote_row.get("rankReason") or quote_row.get("priceSource"))
+    price_updated_at = read_string(quote_row.get("sourceUpdatedAt") or quote_row.get("priceUpdatedAt")) or read_string(previous_item.get("priceUpdatedAt"))
+    layout_price = last_price
+    layout_price_source = price_source
+    layout_price_updated_at = price_updated_at
+    layout_market_cap = None
+    layout_market_cap_source = None
+    if keep_previous_layout and should_keep_previous_layout(previous_item, market_cap_source):
+        layout_market_cap = read_float(previous_item.get("layoutMarketCap"))
+        layout_market_cap_source = read_string(previous_item.get("layoutMarketCapSource"))
+        layout_price = read_float(previous_item.get("layoutPrice"))
+        layout_price_source = read_string(previous_item.get("layoutPriceSource"))
+        layout_price_updated_at = read_string(previous_item.get("layoutPriceUpdatedAt"))
+    if layout_market_cap is None:
+        layout_price = last_price
+        layout_price_source = price_source
+        layout_price_updated_at = price_updated_at
+        layout_market_cap, layout_market_cap_source = project_market_cap(
+            price=layout_price,
+            shares_outstanding=shares_outstanding,
+            seed_market_cap=seed_market_cap,
+            previous_item=previous_item,
+            previous_cap_key="layoutMarketCap",
+            previous_source_key="layoutMarketCapSource",
+        )
 
     change_percent = read_float(quote_row.get("changePercent"))
     if change_percent is None:
@@ -159,6 +190,11 @@ def build_heatmap_item(
         "sharesOutstanding": shares_outstanding,
         "marketCap": market_cap,
         "marketCapSource": market_cap_source,
+        "layoutPrice": layout_price,
+        "layoutMarketCap": layout_market_cap,
+        "layoutMarketCapSource": layout_market_cap_source,
+        "layoutPriceSource": layout_price_source,
+        "layoutPriceUpdatedAt": layout_price_updated_at,
         "fundamentalsAsOf": public_fundamentals.get("asOf"),
         "fundamentalsSource": public_fundamentals.get("source"),
         "fiscalPeriod": public_fundamentals.get("fiscalPeriod"),
@@ -167,20 +203,56 @@ def build_heatmap_item(
         "currency": public_fundamentals.get("currency") or "USD",
         "volume": read_float(quote_row.get("volume")) or read_float(previous_item.get("volume")),
         "sessionDollarVolume": read_float(quote_row.get("sessionDollarVolume")) or read_float(previous_item.get("sessionDollarVolume")),
-        "priceSource": "cached-projection" if price_from_previous else read_string(quote_row.get("rankReason") or quote_row.get("priceSource")),
-        "priceUpdatedAt": read_string(quote_row.get("sourceUpdatedAt") or quote_row.get("priceUpdatedAt")) or read_string(previous_item.get("priceUpdatedAt")),
+        "priceSource": price_source,
+        "priceUpdatedAt": price_updated_at,
     }
+
+
+def should_keep_previous_layout(previous_item: dict[str, Any], current_market_cap_source: str) -> bool:
+    previous_source = read_string(previous_item.get("layoutMarketCapSource"))
+    if not previous_source:
+        return False
+    previous_priority = LAYOUT_SOURCE_PRIORITY.get(previous_source, -1)
+    current_priority = LAYOUT_SOURCE_PRIORITY.get(current_market_cap_source, -1)
+    return previous_priority >= current_priority
+
+
+def project_market_cap(
+    *,
+    price: float | None,
+    shares_outstanding: float | int | None,
+    seed_market_cap: float | None,
+    previous_item: dict[str, Any],
+    previous_cap_key: str,
+    previous_source_key: str,
+) -> tuple[float, str]:
+    if price is not None and shares_outstanding:
+        return price * shares_outstanding, "fundamentals"
+    if read_string(previous_item.get(previous_source_key)) == "fundamentals":
+        previous_cap = read_float(previous_item.get(previous_cap_key))
+        if previous_cap is not None:
+            return previous_cap, "cached-projection"
+    if seed_market_cap is not None:
+        return seed_market_cap, "seed"
+    return DEFAULT_MINIMUM_MARKET_CAP, "minimum"
 
 
 def quote_rows_by_symbol(provider: Any, symbols: list[str]) -> dict[str, dict[str, Any]]:
     clickhouse_provider = getattr(provider, "clickhouse_provider", None)
+    latest_quotes = getattr(clickhouse_provider, "latest_quotes", None)
     rank_symbols = getattr(clickhouse_provider, "rank_symbols", None)
     rows: list[dict[str, Any]] = []
-    if callable(rank_symbols):
+    if callable(latest_quotes):
         try:
-            rows = rank_symbols(symbols, kind="dollar-volume", limit=len(symbols))
+            rows = latest_quotes(symbols, limit=len(symbols))
         except Exception:
             rows = []
+    if callable(rank_symbols):
+        if not rows:
+            try:
+                rows = rank_symbols(symbols, kind="dollar-volume", limit=len(symbols))
+            except Exception:
+                rows = []
     by_symbol = {
         normalize_market_symbol(row["symbol"]): row
         for row in rows or []
@@ -245,9 +317,11 @@ def heatmap_seed_path(universe: str) -> Path:
 def repo_root() -> Path:
     current = Path(__file__).resolve()
     for parent in current.parents:
-        if (parent / "systems").exists() and (parent / "apps").exists():
+        if (parent / "systems").exists():
             return parent
-    return current.parents[7]
+        if parent.name == "systems":
+            return parent.parent
+    return current.parents[-1]
 
 
 def heatmap_cache_key(universe: str) -> str:
@@ -279,6 +353,9 @@ def coverage(items: list[dict[str, Any]], fundamentals_count: int, quote_count: 
         "marketCapFromFundamentals": sum(1 for item in items if item.get("marketCapSource") == "fundamentals"),
         "marketCapFromSeed": sum(1 for item in items if item.get("marketCapSource") == "seed"),
         "marketCapFromCache": sum(1 for item in items if item.get("marketCapSource") == "cached-projection"),
+        "layoutMarketCapFromFundamentals": sum(1 for item in items if item.get("layoutMarketCapSource") == "fundamentals"),
+        "layoutMarketCapFromSeed": sum(1 for item in items if item.get("layoutMarketCapSource") == "seed"),
+        "layoutMarketCapFromCache": sum(1 for item in items if item.get("layoutMarketCapSource") == "cached-projection"),
     }
 
 
