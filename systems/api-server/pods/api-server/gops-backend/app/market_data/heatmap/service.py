@@ -295,9 +295,11 @@ def heatmap_seed_path(universe: str) -> Path:
 def repo_root() -> Path:
     current = Path(__file__).resolve()
     for parent in current.parents:
-        if (parent / "systems").exists() and (parent / "apps").exists():
+        if (parent / "systems").exists():
             return parent
-    return current.parents[7]
+        if parent.name == "systems":
+            return parent.parent
+    return current.parents[-1]
 
 
 def heatmap_cache_key(universe: str) -> str:
