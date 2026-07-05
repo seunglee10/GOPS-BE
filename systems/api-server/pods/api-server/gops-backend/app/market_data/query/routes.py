@@ -71,6 +71,15 @@ def market_latest_news(
     return get_query_service().latest_news(symbol, limit=limit, locale=locale)
 
 
+@router.get("/api/market/news/daily")
+def market_daily_news(
+    symbol: str = Query(min_length=1, max_length=12),
+    limit: int = Query(default=5, ge=1, le=30),
+    locale: str = Query(default="ko-KR", max_length=16),
+) -> dict[str, Any]:
+    return get_query_service().daily_news(symbol, limit=limit, locale=locale)
+
+
 @router.get("/api/agent/context/chart")
 def agent_chart_context(
     symbol: str = Query(min_length=1, max_length=12),

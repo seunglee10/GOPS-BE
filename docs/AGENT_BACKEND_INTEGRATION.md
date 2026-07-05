@@ -56,6 +56,15 @@ GET  /api/agents/reports/{analysis_id}/stream
 WS   /ws/agent-alerts
 ```
 
+news 패널과 news agent가 일자별 요약을 렌더링할 때 market-data query route
+`GET /api/market/news/daily?symbol={SYMBOL}&limit=5&locale=ko-KR`를 사용할 수
+있다. 응답은 `displayMode="dailySummary"`와 `dailySummaries[]`를 포함하며,
+각 summary의 `sources[]`는 실제 기사 `url`, 표시용 `title`, 선택적 `name`을
+가진다. 가능한 경우 각 summary에는 같은 날짜의 1D 종가와 직전 거래일 1D 종가
+차이를 나타내는 `priceChange`를 포함한다. 이 public payload에는
+`source="redis"` 또는 `source="clickhouse"` 같은 내부 저장소 provenance를 넣지
+않는다.
+
 `POST /api/agents/analyze`는 다음 header를 읽는다.
 
 ```text

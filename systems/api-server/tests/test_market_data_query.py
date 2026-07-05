@@ -132,25 +132,37 @@ class FakeProvider:
 
 
 class FakeNewsRedisProvider:
-    def __init__(self, rows=None):
+    def __init__(self, rows=None, daily_rows=None):
         self.rows = rows or []
+        self.daily_rows = daily_rows or []
 
     def localized_news_articles_for_symbols(self, symbols, limit=10, locale="ko-KR"):
         return self.rows[:limit]
+
+    def company_daily_news_summaries(self, symbol, limit=5, locale="ko-KR"):
+        return self.daily_rows[:limit]
 
 
 class FakeNewsClickHouseProvider:
-    def __init__(self, rows=None):
+    def __init__(self, rows=None, daily_rows=None, candles=None):
         self.rows = rows or []
+        self.daily_rows = daily_rows or []
+        self.candle_rows = candles or []
 
     def localized_news_articles_for_symbols(self, symbols, limit=10, locale="ko-KR"):
         return self.rows[:limit]
 
+    def company_daily_news_summaries(self, symbol, limit=5, locale="ko-KR"):
+        return self.daily_rows[:limit]
+
+    def candles(self, symbol, interval, limit):
+        return self.candle_rows[-limit:]
+
 
 class FakeNewsProvider:
-    def __init__(self, redis_rows=None, clickhouse_rows=None):
-        self.redis_provider = FakeNewsRedisProvider(redis_rows)
-        self.clickhouse_provider = FakeNewsClickHouseProvider(clickhouse_rows)
+    def __init__(self, redis_rows=None, clickhouse_rows=None, redis_daily_rows=None, clickhouse_daily_rows=None, candle_rows=None):
+        self.redis_provider = FakeNewsRedisProvider(redis_rows, redis_daily_rows)
+        self.clickhouse_provider = FakeNewsClickHouseProvider(clickhouse_rows, clickhouse_daily_rows, candle_rows)
 
 
 class NoMutationRedis:
@@ -732,6 +744,37 @@ class MarketDataQueryServiceTest(unittest.TestCase):
 
         self.assertEqual(payload["symbol"], "NVDA")
         self.assertEqual(payload["items"][0]["title"], "NVIDIA")
+
+    def test_daily_news_returns_real_source_links_without_internal_source(self):
+        service = MarketDataQueryService(FakeNewsProvider(redis_daily_rows=[{
+            "date": "2026-07-01",
+            "symbol": "NVDA",
+            "summary": "엔비디아 일일 뉴스 요약입니다.",
+            "keyPoints": ["데이터센터 수요"],
+            "articleIds": ["nvda-daily-1"],
+            "articleCount": 1,
+            "sources": [
+                {
+                    "articleId": "nvda-daily-1",
+                    "title": "NVIDIA shares rise",
+                    "name": "Example News",
+                    "url": "https://example.com/nvda-daily",
+                    "publishedAt": "2026-07-01T12:00:00.000Z",
+                }
+            ],
+        }], candle_rows=[
+            {"timestamp": "2026-06-30T00:00:00.000Z", "close": 158.35},
+            {"timestamp": "2026-07-01T00:00:00.000Z", "close": 158.50},
+        ]), backfill_service=FakeBackfillService())
+
+        payload = service.daily_news("nvda", limit=5)
+
+        self.assertEqual(payload["symbol"], "NVDA")
+        self.assertEqual(payload["displayMode"], "dailySummary")
+        self.assertNotIn("source", payload)
+        self.assertEqual(payload["dailySummaries"][0]["sources"][0]["url"], "https://example.com/nvda-daily")
+        self.assertEqual(payload["dailySummaries"][0]["sources"][0]["name"], "Example News")
+        self.assertEqual(payload["dailySummaries"][0]["priceChange"]["change"], 0.15)
 
     def test_agent_chat_without_openai_key_returns_503(self):
         request = AgentChatRequest(

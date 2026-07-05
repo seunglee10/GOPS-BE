@@ -995,7 +995,8 @@ class ClickHouseMarketDataProvider:
           status,
           model,
           formatDateTime(generated_at, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS generatedAt,
-          version
+          version,
+          raw
         FROM {self.table('news_company_daily_summaries')}
         WHERE symbol = {{symbol:String}}
           AND locale = {{locale:String}}

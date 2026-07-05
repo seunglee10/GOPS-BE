@@ -57,7 +57,7 @@ from alfaka.serving.news_hot_cache import read_company_daily_summaries_from_redi
 from alfaka.serving.symbol_registry import SymbolRegistry
 from alfaka.storage.clickhouse_loader import candle_to_clickhouse_row, clickhouse_topics_from_env, load_payload, market_event_to_clickhouse_row, news_to_clickhouse_row, status_to_clickhouse_row, symbol_to_clickhouse_row, trade_to_clickhouse_row
 from alfaka.storage.candle_validation import invalid_candle_reason
-from alfaka.storage.news_daily_summary import build_daily_summary_record, daily_summary_to_clickhouse_row
+from alfaka.storage.news_daily_summary import attach_price_changes_to_daily_summaries, build_daily_summary_record, clickhouse_row_to_daily_summary, daily_summary_to_clickhouse_row
 from alfaka.storage.news_intelligence import build_news_intelligence_record, news_intelligence_to_clickhouse_row
 from alfaka.storage.s3_materializer import (
     detect_s3_object_format,
@@ -5671,6 +5671,9 @@ class MarketDataHardeningContractTest(unittest.TestCase):
                     "impactDirection": "positive",
                     "sentiment": "positive",
                     "keyPoints": ["서비스 매출 개선"],
+                    "url": "https://example.com/aapl-services",
+                    "source": "Example News",
+                    "publishedAt": "2026-07-01T12:00:00.000Z",
                 }
             ],
             locale="ko-KR",
@@ -5689,9 +5692,25 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(row["symbol"], "AAPL")
         self.assertEqual(row["article_count"], 1)
         self.assertEqual(row["mention_count"], 2)
+        self.assertEqual(record["sources"][0]["url"], "https://example.com/aapl-services")
+        self.assertEqual(record["sources"][0]["name"], "Example News")
+        self.assertEqual(clickhouse_row_to_daily_summary(row)["sources"][0]["title"], "애플 서비스 성장")
         self.assertEqual(cached[0]["summary"], record["summary"])
         self.assertEqual(cached[0]["articleCount"], 1)
+        self.assertEqual(cached[0]["sources"][0]["url"], "https://example.com/aapl-services")
         self.assertIn(RedisKeyBuilder().news_daily_v2("ko-KR", "AAPL"), redis_client.zsets)
+
+    def test_daily_summary_price_change_uses_previous_trading_day_close(self):
+        summaries = [{"date": "2026-07-01", "symbol": "AAPL", "summary": "브리프"}]
+        enriched = attach_price_changes_to_daily_summaries(summaries, [
+            {"timestamp": "2026-06-29T00:00:00.000Z", "close": 199.25},
+            {"timestamp": "2026-06-30T00:00:00.000Z", "close": 199.85},
+            {"timestamp": "2026-07-01T00:00:00.000Z", "close": 200.00},
+        ])
+
+        self.assertEqual(enriched[0]["priceChange"]["previousClose"], 199.85)
+        self.assertEqual(enriched[0]["priceChange"]["close"], 200.0)
+        self.assertEqual(enriched[0]["priceChange"]["change"], 0.15)
 
     def test_news_daily_summary_worker_inserts_summary_and_skips_same_article_hash(self):
         worker = load_news_daily_summary_worker_module()
@@ -5711,6 +5730,9 @@ class MarketDataHardeningContractTest(unittest.TestCase):
                 "concerns": [],
                 "impactDirection": "positive",
                 "sentiment": "positive",
+                "url": "https://example.com/aapl-worker",
+                "source": "Example News",
+                "publishedAt": "2026-07-01T12:00:00.000Z",
             },
             {
                 "articleId": "aapl-mention-worker-1",
@@ -5744,9 +5766,11 @@ class MarketDataHardeningContractTest(unittest.TestCase):
 
         self.assertEqual(record["articleIds"], ["aapl-daily-worker-1"])
         self.assertEqual(record["mentionCount"], 1)
+        self.assertEqual(record["sources"][0]["url"], "https://example.com/aapl-worker")
         self.assertEqual(client.inserts[0][0], "news_company_daily_summaries")
         cached = read_company_daily_summaries_from_redis(redis_client, "AAPL", locale="ko-KR")
         self.assertEqual(cached[0]["summary"], "애플 일일 브리프입니다.")
+        self.assertEqual(cached[0]["sources"][0]["name"], "Example News")
 
         skip_client = SequentialQueryClickHouseClient([rows, [{"articleIdsHash": record["articleIdsHash"]}]])
         skipped = worker.process_dirty_event(

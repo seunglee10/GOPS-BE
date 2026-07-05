@@ -98,8 +98,9 @@ class FakeOpenAIResponse:
 
 
 class FakeClickHouseProvider:
-    def __init__(self, rows):
+    def __init__(self, rows, candles=None):
         self.rows = rows
+        self.candle_rows = candles or []
         self.calls = 0
         self.requested_symbols = []
 
@@ -107,6 +108,9 @@ class FakeClickHouseProvider:
         self.calls += 1
         self.requested_symbols.append(symbol)
         return self.rows
+
+    def candles(self, symbol, interval, limit):
+        return self.candle_rows[-limit:]
 
 
 class FakeLocalizedClickHouseProvider(FakeClickHouseProvider):
@@ -3306,10 +3310,29 @@ class AgentOrchestrationTests(unittest.TestCase):
                     "mentionCount": 0,
                     "status": "final",
                     "generatedAt": "2026-07-01T22:00:00.000Z",
+                    "sources": [
+                        {
+                            "articleId": "aapl-daily-1",
+                            "title": "Apple services revenue grows",
+                            "name": "Example News",
+                            "url": "https://example.com/aapl-services",
+                            "publishedAt": "2026-07-01T12:00:00.000Z",
+                        }
+                    ],
                 }
             ],
         )
-        provider = ClickHouseNewsProvider(clickhouse_provider=FakeClickHouseProvider([]), redis_provider=redis, publish_fallback=False)
+        provider = ClickHouseNewsProvider(
+            clickhouse_provider=FakeClickHouseProvider(
+                [],
+                candles=[
+                    {"timestamp": "2026-06-30T00:00:00.000Z", "close": 199.85},
+                    {"timestamp": "2026-07-01T00:00:00.000Z", "close": 200.00},
+                ],
+            ),
+            redis_provider=redis,
+            publish_fallback=False,
+        )
         orchestrator = AgentOrchestrator()
         orchestrator.news_agent = NewsAgent(provider)
 
@@ -3325,6 +3348,9 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertIsNone(report.layoutProposal)
         self.assertEqual(report.dailySummaries[0]["date"], "2026-07-01")
         self.assertEqual(report.dailySummaries[0]["keyPoints"], ["서비스 성장", "공급망 점검"])
+        self.assertEqual(report.dailySummaries[0]["sources"][0]["url"], "https://example.com/aapl-services")
+        self.assertEqual(report.dailySummaries[0]["priceChange"]["change"], 0.15)
+        self.assertEqual(report.finalAnswer.sections, [])
 
     def test_news_role_fallback_applies_daily_summaries_after_join(self):
         provider = SequencedDailyNewsProvider()

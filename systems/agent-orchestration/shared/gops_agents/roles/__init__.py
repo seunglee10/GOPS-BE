@@ -1927,6 +1927,7 @@ def build_news_panel_props(symbol: str, evidence: list[EvidenceItem], daily_summ
     return {
         "symbol": symbol,
         "updatedAt": utc_now_iso(),
+        "displayMode": "dailySummary" if daily_summaries else "articleList",
         "status": "available" if news_items or daily_summaries else "empty",
         "emptyMessage": no_data[0].summary if no_data else f"{symbol} 관련 저장 뉴스가 없습니다.",
         "dailySummaries": [daily_summary_panel_item(item) for item in (daily_summaries or [])[:5]],
@@ -2006,7 +2007,61 @@ def daily_summary_panel_item(item: dict[str, Any]) -> dict[str, Any]:
         "mentionCount": int(item.get("mentionCount") or 0),
         "status": item.get("status") or "rolling",
         "generatedAt": item.get("generatedAt"),
+        "sources": daily_summary_sources(item.get("sources")),
+        "priceChange": daily_summary_price_change(item.get("priceChange")),
     }
+
+
+def daily_summary_price_change(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    try:
+        previous_close = float(value.get("previousClose"))
+        close = float(value.get("close"))
+        change = float(value.get("change"))
+        change_percent = float(value.get("changePercent", 0))
+    except (TypeError, ValueError):
+        return None
+    date = str(value.get("date") or "").strip()
+    if not date:
+        return None
+    return {
+        "date": date[:10],
+        "previousClose": previous_close,
+        "close": close,
+        "change": change,
+        "changePercent": change_percent,
+    }
+
+
+def daily_summary_sources(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    sources = []
+    seen = set()
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        url = str(item.get("url") or "").strip()
+        if not title or not url:
+            continue
+        key = str(item.get("articleId") or url)
+        if key in seen:
+            continue
+        seen.add(key)
+        source = {
+            "title": title,
+            "url": url,
+        }
+        for key in ("articleId", "name", "publishedAt"):
+            text = str(item.get(key) or "").strip()
+            if text:
+                source[key] = text
+        sources.append(source)
+        if len(sources) >= 3:
+            break
+    return sources
 
 
 def panel_raw_number(item: EvidenceItem, key: str) -> float:

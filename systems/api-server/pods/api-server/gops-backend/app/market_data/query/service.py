@@ -9,6 +9,7 @@ from app.market_data.fill.service import get_on_demand_fill_service
 from app.market_data.heatmap.service import get_heatmap_service
 from app.services.alfaka_market_data import get_market_data_provider, normalize_market_symbol, requested_ma_from_csv
 from alfaka.serving.intervals import normalize_chart_interval, resolve_candle_limit
+from alfaka.storage.news_daily_summary import attach_price_changes_to_daily_summaries, clickhouse_row_to_daily_summary
 
 
 class MarketDataQueryService:
@@ -138,6 +139,18 @@ class MarketDataQueryService:
             "items": [normalize_news_item(row, symbol) for row in rows],
         }
 
+    def daily_news(self, symbol: str, limit: int = 5, locale: str = "ko-KR") -> dict[str, Any]:
+        symbol = normalize_market_symbol(symbol)
+        limit = max(1, min(int(limit), 30))
+        rows = self._daily_news_rows(symbol, limit, locale)
+        summaries = [clickhouse_row_to_daily_summary(row) for row in rows]
+        summaries = attach_price_changes_to_daily_summaries(summaries, self._daily_news_price_candles(symbol, limit))
+        return {
+            "symbol": symbol,
+            "displayMode": "dailySummary",
+            "dailySummaries": summaries,
+        }
+
     def _latest_news_rows(self, symbol: str, limit: int, locale: str) -> tuple[list[dict[str, Any]], str]:
         redis_provider = getattr(self.provider, "redis_provider", None)
         clickhouse_provider = getattr(self.provider, "clickhouse_provider", None)
@@ -166,6 +179,39 @@ class MarketDataQueryService:
             if normalized_rows:
                 return normalized_rows[:limit], source
         return [], "no-data"
+
+    def _daily_news_rows(self, symbol: str, limit: int, locale: str) -> list[dict[str, Any]]:
+        redis_provider = getattr(self.provider, "redis_provider", None)
+        clickhouse_provider = getattr(self.provider, "clickhouse_provider", None)
+        for provider in (redis_provider, clickhouse_provider):
+            if provider is None:
+                continue
+            method = getattr(provider, "company_daily_news_summaries", None)
+            if not callable(method):
+                continue
+            try:
+                rows = method(symbol, limit=limit, locale=locale)
+            except TypeError:
+                rows = method(symbol, limit=limit)
+            except Exception:
+                rows = []
+            normalized_rows = [row for row in rows or [] if isinstance(row, dict)]
+            if normalized_rows:
+                return normalized_rows[:limit]
+        return []
+
+    def _daily_news_price_candles(self, symbol: str, limit: int) -> list[dict[str, Any]]:
+        clickhouse_provider = getattr(self.provider, "clickhouse_provider", None)
+        method = getattr(clickhouse_provider, "candles", None)
+        if not callable(method):
+            method = getattr(self.provider, "candles", None)
+        if not callable(method):
+            return []
+        try:
+            rows = method(symbol, "1D", max(2, limit + 10))
+        except Exception:
+            rows = []
+        return [row for row in rows or [] if isinstance(row, dict)]
 
     def agent_chart_context(self, symbol: str, interval: str, from_time: str, to_time: str, include: str) -> dict[str, Any]:
         symbol = normalize_market_symbol(symbol)

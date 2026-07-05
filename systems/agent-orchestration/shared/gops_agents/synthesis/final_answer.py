@@ -549,13 +549,12 @@ def build_news_final_answer(
     no_data = [item for item in provider_evidence if item.provider == "news" and item.status == "no-data"]
     title = "뉴스를 가져왔습니다"
     daily_summaries = [item for item in daily_summaries or [] if isinstance(item, dict)]
-    if daily_summaries and not news_items:
+    if daily_summaries:
         latest = daily_summaries[0]
-        bullets = [str(item) for item in latest.get("keyPoints") or [] if str(item).strip()]
         return FinalAnswer(
             title=title,
             summary=str(latest.get("summary") or f"{symbol} 일일 뉴스 요약을 가져왔습니다."),
-            sections=[FinalAnswerSection(title="핵심 요약", bullets=bullets[:3])] if bullets else [],
+            sections=[],
             citations=[],
             limitations=[],
         )
