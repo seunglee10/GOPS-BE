@@ -65,6 +65,13 @@ news 패널과 news agent가 일자별 요약을 렌더링할 때 market-data qu
 `source="redis"` 또는 `source="clickhouse"` 같은 내부 저장소 provenance를 넣지
 않는다.
 
+지수 패널은 market-data query route `GET /api/market/indices`를 사용한다. 이
+route는 차트 candle coverage/backfill/read-through 경로를 타지 않고 Yahoo
+Finance snapshot을 Redis에 fresh/stale 캐시한다. 백엔드는 fresh 캐시가 있으면
+즉시 반환하고, fresh가 없을 때만 짧은 refresh lock을 잡아 Yahoo Finance를
+조회한다. refresh 중이거나 Yahoo Finance가 timeout/rate-limit/failure를 반환하면
+마지막 성공 snapshot을 `cacheStatus="stale"`로 반환할 수 있다.
+
 `POST /api/agents/analyze`는 다음 header를 읽는다.
 
 ```text

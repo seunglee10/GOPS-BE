@@ -1,6 +1,6 @@
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 
 from app.market_data.query.service import get_query_service
 
@@ -30,6 +30,11 @@ def market_heatmap(
     universe: str = Query(default="sp500", max_length=32),
 ) -> dict[str, Any]:
     return get_query_service().heatmap(universe)
+
+
+@router.get("/api/market/indices")
+def market_indices(background_tasks: BackgroundTasks) -> dict[str, Any]:
+    return get_query_service().indices(background_tasks=background_tasks)
 
 
 @router.get("/api/market/symbols/{symbol}")

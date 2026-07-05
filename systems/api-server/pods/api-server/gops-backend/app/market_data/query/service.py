@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from app.market_data.backfill.service import get_backfill_service
 from app.market_data.fill.service import get_on_demand_fill_service
 from app.market_data.heatmap.service import get_heatmap_service
+from app.market_data.indices.service import get_indices_service
 from app.services.alfaka_market_data import get_market_data_provider, normalize_market_symbol, requested_ma_from_csv
 from alfaka.serving.intervals import normalize_chart_interval, resolve_candle_limit
 from alfaka.storage.news_daily_summary import attach_price_changes_to_daily_summaries, clickhouse_row_to_daily_summary
@@ -107,6 +108,14 @@ class MarketDataQueryService:
             return get_heatmap_service(self.provider).snapshot(universe)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    def indices(self, background_tasks=None) -> dict[str, Any]:
+        try:
+            return get_indices_service(self.provider).snapshot(background_tasks=background_tasks)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=f"Market indices provider failed: {exc}") from exc
 
     def symbol_detail(self, symbol: str) -> dict[str, Any]:
         try:

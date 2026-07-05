@@ -80,6 +80,7 @@ from app.market_data.backfill.service import BackfillService  # noqa: E402
 from app.market_data.fill.service import OnDemandFillService  # noqa: E402
 from app.market_data.fundamentals.service import FundamentalsAdapter, FundamentalsRecord, StoreFundamentalsAdapter, records_from_payload  # noqa: E402
 from app.market_data.heatmap import service as heatmap_service  # noqa: E402
+from app.market_data.indices import service as indices_service  # noqa: E402
 from app.market_data.monitor import routes as monitor_routes  # noqa: E402
 from app.market_data.query import routes as query_routes  # noqa: E402
 from app.contracts.chart import AgentChatMessage, AgentChatRequest  # noqa: E402
@@ -228,6 +229,7 @@ class FakeWatchlistRedis:
     def delete(self, key):
         self.sets.pop(key, None)
         self.hashes.pop(key, None)
+        self.values.pop(key, None)
         return 1
 
     def sadd(self, key, *values):
@@ -252,7 +254,9 @@ class FakeWatchlistRedis:
     def get(self, key):
         return self.values.get(key)
 
-    def set(self, key, value, ex=None):
+    def set(self, key, value, ex=None, nx=False):
+        if nx and key in self.values:
+            return False
         self.values[key] = value
         if ex is not None:
             self.expirations[key] = ex
@@ -1308,6 +1312,139 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(payload["quoteAsOf"], "2026-06-25T15:31:00Z")
         self.assertEqual(payload["layoutAsOf"], "2026-06-25T15:35:00Z")
         self.assertEqual(payload["items"][0]["layoutMarketCap"], 200000)
+
+    def test_market_indices_fetches_yahoo_once_and_reuses_fresh_cache(self):
+        provider = FakeHeatmapProvider()
+        calls = []
+
+        def fetcher(**kwargs):
+            calls.append(kwargs)
+            return {
+                "^GSPC": [
+                    {
+                        "timestamp": "2026-07-02T20:00:00Z",
+                        "Open": 99,
+                        "High": 101,
+                        "Low": 98,
+                        "Close": 100,
+                        "Volume": 1000,
+                    },
+                    {
+                        "timestamp": "2026-07-03T20:00:00Z",
+                        "Open": 100,
+                        "High": 102,
+                        "Low": 99,
+                        "Close": 101,
+                        "Volume": 1200,
+                    },
+                ],
+                "KRW=X": [
+                    {"timestamp": "2026-07-02T20:00:00Z", "Close": 1300},
+                    {"timestamp": "2026-07-03T20:00:00Z", "Close": 1305},
+                ],
+            }
+
+        with mock.patch.object(indices_service, "utc_now", return_value=datetime(2026, 7, 3, 20, 1, tzinfo=timezone.utc)), mock.patch.dict(
+            os.environ,
+            {
+                "MARKET_INDICES_CACHE_TTL_SECONDS": "30",
+                "MARKET_INDICES_REFRESH_SECONDS": "30",
+                "MARKET_INDICES_STALE_REFRESH_SECONDS": "300",
+            },
+        ):
+            service = indices_service.MarketIndicesService(provider=provider, fetcher=fetcher)
+            payload = service.snapshot()
+            cached_payload = service.snapshot()
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["period"], "5d")
+        self.assertEqual(calls[0]["interval"], "5m")
+        self.assertIn("^GSPC", calls[0]["symbols"])
+        self.assertEqual(payload["cacheStatus"], "fresh")
+        self.assertEqual(payload["updatedAt"], "2026-07-03T20:01:00Z")
+        self.assertEqual(payload["coverage"]["total"], len(indices_service.INDEX_DEFINITIONS))
+        self.assertEqual(payload["coverage"]["priced"], 2)
+        self.assertEqual(cached_payload["cacheStatus"], "fresh")
+        sp500 = payload["items"][0]
+        self.assertEqual(sp500["symbol"], "^GSPC")
+        self.assertEqual(sp500["price"], 101)
+        self.assertEqual(sp500["previousClose"], 100)
+        self.assertEqual(sp500["change"], 1)
+        self.assertEqual(sp500["changePercent"], 1)
+        self.assertEqual(sp500["sparkline"], [100, 101])
+        self.assertEqual(provider.redis_provider.redis.expirations[indices_service.indices_cache_key()], 30)
+
+    def test_market_indices_returns_stale_immediately_and_refreshes_in_background(self):
+        provider = FakeHeatmapProvider()
+        calls = []
+
+        def fetcher(**kwargs):
+            calls.append(kwargs)
+            latest_close = 100 + len(calls)
+            return {
+                "^GSPC": [
+                    {"timestamp": "2026-07-02T20:00:00Z", "Close": 100},
+                    {"timestamp": "2026-07-03T20:00:00Z", "Close": latest_close},
+                ],
+            }
+
+        class FakeBackgroundTasks:
+            def __init__(self):
+                self.tasks = []
+
+            def add_task(self, func, *args, **kwargs):
+                self.tasks.append((func, args, kwargs))
+
+        service = indices_service.MarketIndicesService(provider=provider, fetcher=fetcher)
+        first_payload = service.snapshot()
+        provider.redis_provider.redis.values.pop(indices_service.indices_cache_key(), None)
+        background_tasks = FakeBackgroundTasks()
+
+        stale_payload = service.snapshot(background_tasks=background_tasks)
+        task, args, kwargs = background_tasks.tasks[0]
+        task(*args, **kwargs)
+        refreshed_payload = service.snapshot()
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(first_payload["items"][0]["price"], 101)
+        self.assertEqual(stale_payload["cacheStatus"], "stale")
+        self.assertIn("Refreshing in background", stale_payload["warning"])
+        self.assertEqual(stale_payload["items"][0]["price"], 101)
+        self.assertEqual(refreshed_payload["cacheStatus"], "fresh")
+        self.assertEqual(refreshed_payload["items"][0]["price"], 102)
+        self.assertNotIn(indices_service.indices_lock_key(), provider.redis_provider.redis.values)
+
+    def test_market_indices_returns_stale_cache_when_refresh_locked_or_yahoo_fails(self):
+        provider = FakeHeatmapProvider()
+        redis_state = provider.redis_provider.redis
+
+        def fetcher(**_kwargs):
+            return {
+                "^GSPC": [
+                    {"timestamp": "2026-07-02T20:00:00Z", "Close": 100},
+                    {"timestamp": "2026-07-03T20:00:00Z", "Close": 101},
+                ],
+            }
+
+        service = indices_service.MarketIndicesService(provider=provider, fetcher=fetcher)
+        service.snapshot()
+        redis_state.values.pop(indices_service.indices_cache_key(), None)
+        redis_state.set(indices_service.indices_lock_key(), "locked", ex=15)
+
+        locked_payload = service.snapshot()
+
+        def failing_fetcher(**_kwargs):
+            raise TimeoutError("upstream timeout")
+
+        redis_state.delete(indices_service.indices_lock_key())
+        failing_service = indices_service.MarketIndicesService(provider=provider, fetcher=failing_fetcher)
+        failed_payload = failing_service.snapshot()
+
+        self.assertEqual(locked_payload["cacheStatus"], "stale")
+        self.assertIn("Refresh already in progress", locked_payload["warning"])
+        self.assertEqual(locked_payload["refreshSeconds"], indices_service.DEFAULT_STALE_REFRESH_SECONDS)
+        self.assertEqual(failed_payload["cacheStatus"], "stale")
+        self.assertIn("Yahoo Finance refresh failed", failed_payload["warning"])
 
     def test_market_heatmap_keeps_layout_cap_stable_within_layout_bucket(self):
         seed_items = [{

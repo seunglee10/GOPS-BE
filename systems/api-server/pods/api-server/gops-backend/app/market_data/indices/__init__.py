@@ -1,0 +1,2 @@
+"""Market index snapshot service."""
+
