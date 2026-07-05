@@ -181,6 +181,12 @@ hybrid
 clarify
 ```
 
+UI layout proposal은 panel type singleton 가정만으로 배치하지 않는다. `layoutWeight`
+와 최근 요청 대상을 함께 사용해 priority-aware reflow를 만들며, chart panel은
+기본 priority가 높다. 명시적인 chart add/compare 요청은 기존 chart를 유지하고
+symbol-bearing chart panel을 추가하거나 낮은 priority chart panel을 재사용할 수
+있다.
+
 Company and theme resolution은 catalog 기반이다.
 `config/entity-aliases.json`이 운영 alias catalog다.
 `config/entity-aliases.seed.json`과 seed constants는 bootstrap fallback이며

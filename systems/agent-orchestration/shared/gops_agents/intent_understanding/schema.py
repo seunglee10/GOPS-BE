@@ -70,6 +70,8 @@ class UiTask:
     layoutPreset: str | None = None
     sizeIntent: str | None = None
     positionIntent: str | None = None
+    chartAction: str | None = None
+    symbol: str | None = None
 
     def __post_init__(self) -> None:
         if self.action not in UI_ACTIONS:
@@ -92,6 +94,9 @@ class UiTask:
             self.sizeIntent = None
         if self.positionIntent not in UI_POSITION_INTENTS:
             self.positionIntent = None
+        if self.chartAction not in {"add", "replace"}:
+            self.chartAction = None
+        self.symbol = str(self.symbol or "").strip().upper() or None
         self.confidence = max(0.0, min(1.0, float(self.confidence)))
 
     def to_dict(self) -> dict[str, Any]:

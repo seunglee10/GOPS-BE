@@ -62,6 +62,7 @@ def normalize_request_state(state: dict[str, Any]) -> dict[str, Any]:
     query_understanding.newsTopic = str(news_topic["label"]) if news_topic else None
     query_understanding.newsSymbols = list(news_topic["symbols"]) if news_topic else []
     query_understanding_payload = query_understanding.to_dict()
+    query_understanding_payload = apply_chart_action_ui_task(request, query_understanding_payload, symbol)
     query_understanding_payload["subjectValidation"] = dict(subject_validation)
     context = AgentContext(
         symbol=symbol,
@@ -107,8 +108,49 @@ def normalize_request_state(state: dict[str, Any]) -> dict[str, Any]:
         "subject_validation": subject_validation,
         "input_safety_warnings": input_safety_warnings,
         "analysis_mode": analysis_mode,
-        "route_mode": query_understanding.routeMode,
+        "route_mode": str(query_understanding_payload.get("routeMode") or query_understanding.routeMode),
     }
+
+
+def apply_chart_action_ui_task(
+    request: dict[str, Any],
+    query_understanding: dict[str, Any],
+    symbol: str,
+) -> dict[str, Any]:
+    chart_action = str(request.get("chartAction") or "").strip().lower()
+    if chart_action != "add":
+        return query_understanding
+    target_symbol = normalize_symbol(request.get("chartTargetSymbol") or symbol)
+    if not target_symbol or target_symbol == "UNKNOWN":
+        return query_understanding
+    placement_intent = str(request.get("chartPlacementIntent") or "").strip().lower() or None
+    if placement_intent not in {"top", "bottom", "left", "right", "center"}:
+        placement_intent = None
+    task = {
+        "action": "open",
+        "confidence": 0.98,
+        "source": "chart-shortcut",
+        "reason": "Chart shortcut requested an additional chart panel.",
+        "targetPanelType": "chart",
+        "targetPanelId": None,
+        "targetPanelTypes": ["chart"],
+        "targetPanelIds": [],
+        "layoutPreset": None,
+        "sizeIntent": None,
+        "positionIntent": placement_intent,
+        "chartAction": "add",
+        "symbol": target_symbol,
+    }
+    existing_tasks = query_understanding.get("uiTasks") if isinstance(query_understanding.get("uiTasks"), list) else []
+    next_payload = dict(query_understanding)
+    next_payload["routeMode"] = "ui_layout"
+    next_payload["intentType"] = "ui-layout"
+    next_payload["selectedRoles"] = []
+    next_payload["contentTasks"] = []
+    next_payload["uiTasks"] = [task, *existing_tasks]
+    next_payload["resolvedSymbol"] = target_symbol
+    next_payload["resolvedSymbolSource"] = "chart_shortcut"
+    return next_payload
 
 
 def resolve_subject_symbol(*, request: dict[str, Any], explicit_symbol: str | None, news_topic: dict[str, Any] | None) -> tuple[str, str, bool]:

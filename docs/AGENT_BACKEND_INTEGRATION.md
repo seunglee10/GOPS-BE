@@ -96,6 +96,9 @@ permissive하게 유지한다.
   "messages": [{"role": "user", "content": "NVDA 분석해줘"}],
   "chartContext": {},
   "layoutContext": {},
+  "chartAction": null,
+  "chartTargetSymbol": null,
+  "chartPlacementIntent": null,
   "mode": null,
   "analysisMode": null,
   "priority": null,
@@ -110,13 +113,30 @@ permissive하게 유지한다.
 
 `GET /api/agents/entities/resolve?q=...&mode=chartShortcut`는 에이전트
 카탈로그의 `KoreanEntityResolver`를 얇게 노출한다. 프런트는 에이전트 입력이
-회사명/티커 하나인지 확인해 차트만 즉시 전환할 때 이 route를 쓴다.
+회사명/티커 단독이거나 `애플차트 보여줘`, `AAPL chart` 같은 chart-open 명령인지
+확인해 차트만 즉시 전환할 때 이 route를 쓴다.
 
-응답의 `chartShortcut=true`는 입력 전체가 하나의 company/ticker로 확정된 경우에만
-반환하며, 해당 symbol이 기존 market-data symbol registry/universe에서 차트로
-열 수 있어야 한다. `엔비디아 뉴스`, `엔비디아 분석해줘`, 테마 entity,
+응답의 `chartShortcut=true`는 입력이 하나의 company/ticker로 확정되고, 나머지
+표현이 차트 열기/전환 명령일 때만 반환한다. 해당 symbol은 기존 market-data
+symbol registry/universe에서 차트로 열 수 있어야 한다. `엔비디아 뉴스`,
+`엔비디아 분석해줘`, `엔비디아 차트 분석해줘`, 관계 질문, 테마 entity,
 ambiguous match, registry 미지원 symbol은 분석 요청으로 fallback할 수 있도록
 `chartShortcut=false`를 반환한다.
+
+응답은 optional `chartAction`을 포함할 수 있다. 기본 `애플 차트 보여줘`,
+`AAPL chart`, 회사명/티커 단독 입력은 `chartAction="replace"`로 현재 chart
+symbol 전환을 의미한다. `애플 차트 추가해줘`, `애플도 같이 보여줘`,
+`AAPL chart too`, 비교/동시 표시 표현은 `chartAction="add"`로 기존 chart를
+유지한 추가 chart panel 요청을 의미한다. 위치 표현이 있으면
+`chartPlacementIntent`에 `top`, `bottom`, `left`, `right`, `center` 중 하나를
+담는다.
+
+프런트가 chart add shortcut을 `POST /api/agents/layout/resolve`로 넘길 때는
+`chartAction="add"`, `chartTargetSymbol`, `chartPlacementIntent`를 request body에
+포함할 수 있다. 백엔드는 이 필드를 제거하지 않고 orchestrator로 전달해야 한다.
+orchestrator는 이 메타데이터를 UI-only layout task로 보강해 analysis pipeline을
+타지 않고 `layout.panel.add`와 priority-aware `layout.panels.arrange` proposal을
+반환한다.
 
 ## Async Submit Response
 

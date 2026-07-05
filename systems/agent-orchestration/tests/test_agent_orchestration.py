@@ -3666,6 +3666,28 @@ class AgentOrchestrationTests(unittest.TestCase):
         )
         self.assertEqual(chart_placement["row"], 3)
 
+    def test_layout_resolve_adds_chart_panel_from_chart_shortcut_action(self):
+        response = AgentOrchestrator().resolve_layout({
+            "symbol": "AAPL",
+            "intent": "애플도 같이 보여줘",
+            "chartAction": "add",
+            "chartTargetSymbol": "AAPL",
+            "chartPlacementIntent": "bottom",
+            "layoutContext": layout_context(),
+        })
+
+        self.assertEqual(response["status"], "ui_layout")
+        proposal = response["layoutProposal"]
+        add_command = next(command for command in proposal["commands"] if command["type"] == "layout.panel.add")
+        self.assertEqual(add_command["payload"]["panelType"], "chart")
+        self.assertEqual(add_command["payload"]["props"]["symbol"], "AAPL")
+        self.assertEqual(add_command["payload"]["layoutWeight"], 120)
+        arrange_command = next(command for command in proposal["commands"] if command["type"] == "layout.panels.arrange")
+        placements = {item["panelId"]: item["placement"] for item in arrange_command["payload"]["placements"]}
+        self.assertEqual(placements["panel-chart-primary"]["row"], 2)
+        self.assertEqual(placements[add_command["payload"]["panelId"]]["row"], 4)
+        self.assertEqual(response["agentTrace"]["queryUnderstanding"]["routeMode"], "ui_layout")
+
     def test_ontology_final_answer_defaults_to_deterministic_even_with_openai_key(self):
         response = {
             "output_text": json.dumps({
