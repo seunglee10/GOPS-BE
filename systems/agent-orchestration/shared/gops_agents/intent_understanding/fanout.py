@@ -46,6 +46,7 @@ def build_query_understanding(
     chart_context: Any = None,
     request_symbol: Any = None,
     runtime_context: Any | None = None,
+    layout_command_preflight: bool = False,
     timing: dict[str, Any] | None = None,
 ) -> tuple[QueryUnderstanding, Any]:
     started_at = time.perf_counter()
@@ -171,6 +172,8 @@ def build_query_understanding(
         rule_content_tasks=rule_content_tasks,
         rule_ui_tasks=rule_ui_tasks,
         classifier_result=classifier_result,
+        layout_context=layout,
+        allow_content_display_ui=layout_command_preflight,
         timings={"totalMs": round(elapsed_ms, 3)},
     )
     return understanding, entity_resolution

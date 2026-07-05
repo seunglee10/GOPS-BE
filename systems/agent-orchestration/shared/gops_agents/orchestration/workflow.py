@@ -112,7 +112,7 @@ class AgentOrchestrator:
         preflight = ui_layout_preflight_response(request)
         if preflight is not None:
             return preflight
-        state: dict[str, Any] = {"request": request}
+        state: dict[str, Any] = {"request": {**request, "_layoutResolveOnly": True}}
         state = self._normalize_request(state)
         state = self._route_intent(state)
         if should_return_ui_layout_ack(state):
