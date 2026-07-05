@@ -12,7 +12,7 @@ from ..contracts import AgentFinding, EvidenceItem, LayoutProposal, MarketEvent,
 from ..intent_understanding.schema import UiTask
 from ..orchestration.routing import parse_openai_text_json
 from ..orchestration.ui_intent import UIIntent
-from ..providers import ClickHouseNewsProvider, EmptyMacroProvider, GraphDBOntologyProvider, ProviderRequest
+from ..providers import ClickHouseFinancialProvider, ClickHouseNewsProvider, EmptyMacroProvider, GraphDBOntologyProvider, ProviderRequest
 from ..providers.news_localization import NewsLocalizationService
 
 
@@ -197,6 +197,26 @@ def record_news_relevance_counts(context: AgentContext, evidence: list[EvidenceI
     context.timing["mentionNewsCount"] = mention
 
 
+def financial_comparison_requested(context: AgentContext) -> bool:
+    intent_type = str(context.intentType or "").lower()
+    intent_text = str(context.intent or "").lower()
+    selected_roles = [str(role).lower() for role in context.selectedRoles]
+    comparison_terms = ("compare", "comparison", "peer", "vs", "versus", "경쟁사", "비교", "대비", "동종")
+    return (
+        "financial-comparison" in intent_type
+        or ("financial" in selected_roles and any(term in intent_text for term in comparison_terms))
+        or bool(context.relationshipSymbols)
+    )
+
+
+def financial_summary_from_evidence(symbol: str, evidence: list[EvidenceItem]) -> str:
+    summary_item = next((item for item in evidence if "peer" not in str(item.title).lower()), evidence[0])
+    peer_item = next((item for item in evidence if "peer" in str(item.title).lower()), None)
+    if peer_item:
+        return f"{summary_item.summary} {peer_item.summary}"
+    return summary_item.summary or f"{symbol} SEC 재무 근거를 확인했습니다."
+
+
 class MacroAgent(ProviderBackedAgent):
     agent_id = "macro-agent"
     role = "macro-analysis"
@@ -204,6 +224,38 @@ class MacroAgent(ProviderBackedAgent):
 
     def __init__(self, provider=None):
         super().__init__(provider or EmptyMacroProvider())
+
+
+class FinancialAgent(ProviderBackedAgent):
+    agent_id = "financial-agent"
+    role = "financial-analysis"
+    provider_name = "financial"
+
+    def __init__(self, provider=None):
+        super().__init__(provider or ClickHouseFinancialProvider())
+
+    def analyze(self, context: AgentContext) -> AgentFinding:
+        request = ProviderRequest(context.symbol, context.intent, symbols=tuple(context.relationshipSymbols or context.newsSymbols))
+        evidence = self.provider.fetch(request)
+        if financial_comparison_requested(context):
+            evidence = [*evidence, *self.provider.fetch_peer(request)]
+        available = [item for item in evidence if item.provider == "financial" and item.status == "available"]
+        no_data = [item for item in evidence if item.provider == "financial" and item.status == "no-data"]
+        if available:
+            summary = financial_summary_from_evidence(context.symbol, available)
+            confidence = 0.68
+        else:
+            summary = no_data[0].summary if no_data else f"{context.symbol} SEC 재무 근거가 없습니다."
+            confidence = 0.28
+        return AgentFinding(
+            agentId=self.agent_id,
+            role=self.role,
+            summary=summary,
+            rationale="Financial agent uses precomputed SEC fundamentals snapshots from Redis/ClickHouse only.",
+            confidence=confidence,
+            evidence=evidence,
+            tags=["financial", "sec", "fundamentals"],
+        )
 
 
 class OntologyAgent(ProviderBackedAgent):
@@ -387,10 +439,13 @@ class UIAgent:
         tasks = [task for task in tasks if task is not None]
         if not tasks:
             return self.propose(context, UIIntent(False, "non-ui", None, None, "unknown", None, None, 0.0, "No UI tasks were supplied."))
+        panels = normalize_layout_panels(context.layoutContext)
+        chart_add_task = next((task for task in tasks if is_chart_add_task(task)), None)
+        if chart_add_task is not None:
+            return propose_chart_add_layout(context, panels, chart_add_task)
         if len(tasks) == 1 and not is_multi_ui_task(tasks[0]):
             return self.propose(context, ui_intent_from_task(tasks[0]))
 
-        panels = normalize_layout_panels(context.layoutContext)
         if any(task.action == "close" for task in tasks):
             return LayoutProposal(
                 title="UI layout request",
@@ -558,6 +613,8 @@ def ui_task_from_payload(value: Any) -> UiTask | None:
         layoutPreset=optional_text(value.get("layoutPreset")),
         sizeIntent=optional_text(value.get("sizeIntent")),
         positionIntent=optional_text(value.get("positionIntent")),
+        chartAction=optional_text(value.get("chartAction")),
+        symbol=optional_text(value.get("symbol")),
         confidence=read_float(value.get("confidence"), 0.7),
         source=str(value.get("source") or "ui-fallback"),
         reason=str(value.get("reason") or "UI task from query understanding."),
@@ -570,7 +627,251 @@ def optional_text(value: Any) -> str | None:
 
 
 def is_multi_ui_task(task: UiTask) -> bool:
-    return bool(task.layoutPreset or len(task.targetPanelTypes) > 1 or len(task.targetPanelIds) > 1)
+    return bool(task.chartAction == "add" or task.layoutPreset or len(task.targetPanelTypes) > 1 or len(task.targetPanelIds) > 1)
+
+
+def is_chart_add_task(task: UiTask) -> bool:
+    return task.chartAction == "add" and task.targetPanelType == "chart"
+
+
+def propose_chart_add_layout(context: AgentContext, panels: list[dict[str, Any]], task: UiTask) -> LayoutProposal:
+    symbol = chart_task_symbol(context, task)
+    if not symbol:
+        return LayoutProposal(
+            title="UI layout request",
+            rationale="The UI agent could not identify a symbol for the additional chart panel.",
+            commands=[],
+            autoApply=False,
+            panelPriorities=[],
+        )
+
+    existing_same_symbol = first_chart_panel_for_symbol(panels, symbol)
+    if existing_same_symbol:
+        return LayoutProposal(
+            title="UI layout request",
+            rationale=f"{symbol} chart is already visible, so the UI agent prioritized the existing chart panel.",
+            commands=[
+                layout_command(
+                    "layout.panel.priority.set",
+                    {"panelId": existing_same_symbol["id"], "layoutWeight": 120},
+                    {"panelId": existing_same_symbol["id"]},
+                ),
+                layout_command("layout.reflow", {"reason": "chart-add-existing-symbol"}),
+            ],
+            autoApply=True,
+            panelPriorities=chart_add_panel_priorities(panels, existing_same_symbol["id"], None),
+        )
+
+    chart_panels = [panel for panel in panels if panel["type"] == "chart"]
+    anchor_chart = chart_panels[0] if chart_panels else None
+    if len(chart_panels) >= 2:
+        replace_panel = chart_panel_to_replace(chart_panels, anchor_chart["id"] if anchor_chart else None)
+        updated_panels = [
+            {**panel, "symbol": symbol, "layoutWeight": 120}
+            if panel["id"] == replace_panel["id"]
+            else panel
+            for panel in panels
+        ]
+        anchor = next((panel for panel in updated_panels if panel["type"] == "chart" and panel["id"] != replace_panel["id"]), None)
+        placements = arrange_chart_comparison(updated_panels, anchor, next(panel for panel in updated_panels if panel["id"] == replace_panel["id"]), task.positionIntent)
+        return LayoutProposal(
+            title="UI layout request",
+            rationale=f"UIAgent reused the lower-priority chart panel for {symbol} and reflowed panels by priority.",
+            commands=[
+                layout_command(
+                    "layout.panel.props.update",
+                    {
+                        "panelId": replace_panel["id"],
+                        "props": {"symbol": symbol},
+                        "layoutWeight": 120,
+                    },
+                    {"panelId": replace_panel["id"]},
+                ),
+                layout_command(
+                    "layout.panel.priority.set",
+                    {"panelId": replace_panel["id"], "layoutWeight": 120},
+                    {"panelId": replace_panel["id"]},
+                ),
+                layout_command(
+                    "layout.panels.arrange",
+                    {"reason": "chart-add-priority-reflow", "placements": placements},
+                    {"panelIds": [item["panelId"] for item in placements]},
+                ),
+                layout_command("layout.reflow", {"reason": "chart-add-priority-reflow"}),
+            ],
+            autoApply=True,
+            panelPriorities=chart_add_panel_priorities(updated_panels, replace_panel["id"], anchor["id"] if anchor else None),
+        )
+
+    panel_id = proposed_chart_panel_id(symbol, panels)
+    new_panel = {
+        "id": panel_id,
+        "type": "chart",
+        "title": default_panel_title("chart"),
+        "symbol": symbol,
+        "placement": default_chart_add_placement(task.positionIntent),
+        "layoutPinned": False,
+        "layoutWeight": 120,
+        "minSpan": {"colSpan": 2, "rowSpan": 2},
+        "maxSpan": default_max_span("chart"),
+    }
+    combined_panels = [*panels, new_panel]
+    placements = arrange_chart_comparison(combined_panels, anchor_chart, new_panel, task.positionIntent)
+    placement_by_id = {item["panelId"]: item["placement"] for item in placements}
+    return LayoutProposal(
+        title="UI layout request",
+        rationale=f"UIAgent added a {symbol} chart panel and reflowed panels by priority.",
+        commands=[
+            layout_command(
+                "layout.panel.add",
+                {
+                    "panelId": panel_id,
+                    "panelType": "chart",
+                    "props": {"symbol": symbol},
+                    "symbol": symbol,
+                    "layoutWeight": 120,
+                    "placement": placement_by_id.get(panel_id, new_panel["placement"]),
+                },
+                {"panelId": panel_id},
+            ),
+            layout_command(
+                "layout.panel.priority.set",
+                {"panelId": panel_id, "layoutWeight": 120},
+                {"panelId": panel_id},
+            ),
+            layout_command(
+                "layout.panels.arrange",
+                {"reason": "chart-add-priority-reflow", "placements": placements},
+                {"panelIds": [item["panelId"] for item in placements]},
+            ),
+            layout_command("layout.reflow", {"reason": "chart-add-priority-reflow"}),
+        ],
+        autoApply=True,
+        panelPriorities=chart_add_panel_priorities(combined_panels, panel_id, anchor_chart["id"] if anchor_chart else None),
+    )
+
+
+def chart_task_symbol(context: AgentContext, task: UiTask) -> str:
+    return str(task.symbol or context.symbol or "").strip().upper()
+
+
+def first_chart_panel_for_symbol(panels: list[dict[str, Any]], symbol: str) -> dict[str, Any] | None:
+    normalized = symbol.upper()
+    return next((panel for panel in panels if panel["type"] == "chart" and chart_panel_symbol(panel) == normalized), None)
+
+
+def chart_panel_symbol(panel: dict[str, Any]) -> str:
+    return str(panel.get("symbol") or "").strip().upper()
+
+
+def chart_panel_to_replace(chart_panels: list[dict[str, Any]], anchor_panel_id: str | None) -> dict[str, Any]:
+    replaceable = [
+        panel
+        for panel in chart_panels
+        if not panel.get("layoutPinned") and panel["id"] != anchor_panel_id
+    ]
+    return sorted(replaceable or chart_panels, key=lambda panel: (read_float(panel.get("layoutWeight"), 0.0), panel["id"]))[0]
+
+
+def proposed_chart_panel_id(symbol: str, panels: list[dict[str, Any]]) -> str:
+    base = f"panel-chart-{symbol.lower().replace('.', '-')}"
+    existing = {panel["id"] for panel in panels}
+    if base not in existing:
+        return base
+    suffix = 2
+    while f"{base}-{suffix}" in existing:
+        suffix += 1
+    return f"{base}-{suffix}"
+
+
+def default_chart_add_placement(position_intent: str | None) -> dict[str, Any]:
+    if position_intent == "top":
+        return workspace_placement(1, 2, 4, 2)
+    if position_intent == "left":
+        return workspace_placement(1, 2, 2, 4)
+    if position_intent in {"right", "center"}:
+        return workspace_placement(3, 2, 2, 4)
+    return workspace_placement(1, 4, 4, 2)
+
+
+def arrange_chart_comparison(
+    panels: list[dict[str, Any]],
+    anchor_chart: dict[str, Any] | None,
+    target_chart: dict[str, Any],
+    position_intent: str | None,
+) -> list[dict[str, Any]]:
+    placements: list[dict[str, Any]] = []
+    support = [panel for panel in panels if panel["type"] != "chart" and not panel.get("layoutPinned")]
+    support.sort(key=supporting_panel_sort_key)
+    for index, panel in enumerate(support[:4]):
+        placements.append({
+            "panelId": panel["id"],
+            "placement": workspace_placement(index + 1, 1, 1, 1),
+            "layoutWeight": max(20, min(50, int(read_float(panel.get("layoutWeight"), 35.0)))),
+        })
+
+    pinned_support = [panel for panel in panels if panel["type"] != "chart" and panel.get("layoutPinned")]
+    for panel in pinned_support:
+        placements.append({
+            "panelId": panel["id"],
+            "placement": panel["placement"],
+            "layoutWeight": max(20, min(80, int(read_float(panel.get("layoutWeight"), 50.0)))),
+        })
+
+    anchor_id = anchor_chart["id"] if anchor_chart else None
+    target_id = target_chart["id"]
+    if anchor_chart and position_intent == "top":
+        placements.extend([
+            {"panelId": target_id, "placement": workspace_placement(1, 2, 4, 2), "layoutWeight": 120},
+            {"panelId": anchor_id, "placement": workspace_placement(1, 4, 4, 2), "layoutWeight": chart_anchor_weight(anchor_chart)},
+        ])
+    elif anchor_chart and position_intent == "left":
+        placements.extend([
+            {"panelId": target_id, "placement": workspace_placement(1, 2, 2, 4), "layoutWeight": 120},
+            {"panelId": anchor_id, "placement": workspace_placement(3, 2, 2, 4), "layoutWeight": chart_anchor_weight(anchor_chart)},
+        ])
+    elif anchor_chart and position_intent in {"right", "center"}:
+        placements.extend([
+            {"panelId": anchor_id, "placement": workspace_placement(1, 2, 2, 4), "layoutWeight": chart_anchor_weight(anchor_chart)},
+            {"panelId": target_id, "placement": workspace_placement(3, 2, 2, 4), "layoutWeight": 120},
+        ])
+    elif anchor_chart:
+        placements.extend([
+            {"panelId": anchor_id, "placement": workspace_placement(1, 2, 4, 2), "layoutWeight": chart_anchor_weight(anchor_chart)},
+            {"panelId": target_id, "placement": workspace_placement(1, 4, 4, 2), "layoutWeight": 120},
+        ])
+    else:
+        placements.append({"panelId": target_id, "placement": workspace_placement(1, 2, 4, 4), "layoutWeight": 120})
+    return placements
+
+
+def chart_anchor_weight(panel: dict[str, Any]) -> int:
+    return max(90, min(110, int(read_float(panel.get("layoutWeight"), 100.0))))
+
+
+def chart_add_panel_priorities(
+    panels: list[dict[str, Any]],
+    target_panel_id: str,
+    anchor_panel_id: str | None,
+) -> list[dict[str, Any]]:
+    priorities = []
+    for panel in panels:
+        if panel["id"] == target_panel_id:
+            weight = 120
+            reason = "Most recent chart request."
+        elif panel["id"] == anchor_panel_id or panel["type"] == "chart":
+            weight = max(95, min(110, int(read_float(panel.get("layoutWeight"), 100.0))))
+            reason = "Chart panels stay high priority during comparison layouts."
+        else:
+            weight = max(20, min(50, int(read_float(panel.get("layoutWeight"), 35.0))))
+            reason = "Supporting panel compacted below the active chart comparison."
+        priorities.append({
+            "panelId": panel["id"],
+            "panelType": panel["type"],
+            "layoutWeight": weight,
+            "reason": reason,
+        })
+    return sorted(priorities, key=lambda item: (-item["layoutWeight"], item["panelId"]))
 
 
 def ui_intent_from_task(task: UiTask) -> UIIntent:
@@ -744,9 +1045,11 @@ def normalize_layout_panels(layout_context: dict[str, Any]) -> list[dict[str, An
         panel_id = str(item.get("id") or "").strip()
         panel_type = str(item.get("type") or "").strip()
         placement = item.get("placement") if isinstance(item.get("placement"), dict) else {}
+        props = item.get("props") if isinstance(item.get("props"), dict) else {}
+        symbol = str(item.get("symbol") or props.get("symbol") or "").strip().upper()
         if not panel_id or not panel_type:
             continue
-        normalized.append({
+        panel = {
             "id": panel_id,
             "type": panel_type,
             "title": str(item.get("title") or default_panel_title(panel_type)),
@@ -762,7 +1065,12 @@ def normalize_layout_panels(layout_context: dict[str, Any]) -> list[dict[str, An
             "layoutWeight": read_float(item.get("layoutWeight"), 0.0),
             "minSpan": read_span(item.get("minSpan"), default_min_span(panel_type)),
             "maxSpan": read_span(item.get("maxSpan"), default_max_span(panel_type)),
-        })
+        }
+        if panel_type == "chart" and symbol:
+            panel["symbol"] = symbol
+        if props:
+            panel["props"] = props
+        normalized.append(panel)
     return normalized
 
 

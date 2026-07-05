@@ -84,7 +84,7 @@ Derived intervals fill their canonical source interval first:
 1M  -> 1D, then aggregate
 ```
 
-Minimum renderability is separate from full coverage. If the bounded 8-second
+Minimum renderability is separate from full coverage. If the bounded 30-second
 fill window obtains enough candles to render, the frontend may show partial data
 with the `fill` trace instead of blocking the chart.
 

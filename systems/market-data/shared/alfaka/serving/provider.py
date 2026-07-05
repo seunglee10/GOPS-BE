@@ -28,7 +28,12 @@ class MarketDataProvider:
         interval = normalize_chart_interval(interval)
         limit = resolve_candle_limit(interval, limit)
         query_limit = moving_average_query_limit(interval, limit)
-        clickhouse_from_time = None if before and not from_time else target_floor_from_time(interval, from_time, limit)
+        if from_time and to_time:
+            clickhouse_from_time = from_time
+        elif before and not from_time:
+            clickhouse_from_time = None
+        else:
+            clickhouse_from_time = target_floor_from_time(interval, from_time, limit)
         range_query = bool(before or from_time or to_time)
         redis_candles = [] if range_query else filter_stock_weekdays(self.redis_provider.recent_candles(symbol, interval, query_limit))
         live_candle = None if range_query else self._live_candle(symbol, interval)

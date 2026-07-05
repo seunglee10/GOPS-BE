@@ -57,3 +57,21 @@ canonical state read by chart feed guards.
 The API server also stores Google login sessions in Redis when `AUTH_ENABLED=true`.
 Session keys use `AUTH_REDIS_KEY_PREFIX` (`gops:auth` by default) and TTLs, so no
 separate Redis deployment is required for auth.
+
+## Fundamentals Keys
+
+SEC fundamentals summaries are cache projections written by
+`systems/fundamentals/jobs/sec-companyfacts-backfill` and future reconcile jobs,
+then read by the Financial Agent. They are not the durable source of truth;
+ClickHouse `market_data.sec_*` tables are.
+
+```text
+gops:fundamentals:summary:v1:{SYMBOL}
+gops:fundamentals:peer:v1:{SYMBOL}:latest
+gops:fundamentals:peer:v1:{SYMBOL}:{FRAME_PERIOD}
+```
+
+The `:latest` peer key is an alias written by the backfill/reconcile job.
+Runtime reads it first and uses the payload `frame_period` to show the
+comparison basis. Runtime does not query ClickHouse to stale-check Redis hits;
+stale checks belong to the backfill/nightly reconcile job.

@@ -1,0 +1,4031 @@
+{
+  "description": "S&P 500 heatmap fallback metadata for GOPS TreeMap layout. Fundamentals workers own live shares outstanding and financial facts.",
+  "source": "apps/gops-frontend/src/market/sp500Universe.seed.ts",
+  "sourceRetrievedAt": "2026-06-30",
+  "items": [
+    {
+      "symbol": "DOW",
+      "companyName": "Dow Inc.",
+      "sector": "Basic Materials",
+      "industry": "Commodity Chemicals",
+      "marketCap": 9033110538,
+      "changePercent": 0.46
+    },
+    {
+      "symbol": "CRH",
+      "companyName": "CRH plc",
+      "sector": "Basic Materials",
+      "industry": "Construction Materials",
+      "marketCap": 5569995651,
+      "changePercent": -0.63
+    },
+    {
+      "symbol": "MLM",
+      "companyName": "Martin Marietta Materials",
+      "sector": "Basic Materials",
+      "industry": "Construction Materials",
+      "marketCap": 5128428039,
+      "changePercent": -1.41
+    },
+    {
+      "symbol": "VMC",
+      "companyName": "Vulcan Materials Company",
+      "sector": "Basic Materials",
+      "industry": "Construction Materials",
+      "marketCap": 4200000000,
+      "changePercent": -0.94
+    },
+    {
+      "symbol": "FCX",
+      "companyName": "Freeport-McMoRan",
+      "sector": "Basic Materials",
+      "industry": "Copper",
+      "marketCap": 6671720783,
+      "changePercent": 2.97
+    },
+    {
+      "symbol": "CF",
+      "companyName": "CF Industries",
+      "sector": "Basic Materials",
+      "industry": "Fertilizers & Agricultural Chemicals",
+      "marketCap": 12491174256,
+      "changePercent": -3.01
+    },
+    {
+      "symbol": "CTVA",
+      "companyName": "Corteva",
+      "sector": "Basic Materials",
+      "industry": "Fertilizers & Agricultural Chemicals",
+      "marketCap": 10080987961,
+      "changePercent": -0.48
+    },
+    {
+      "symbol": "MOS",
+      "companyName": "Mosaic Company (The)",
+      "sector": "Basic Materials",
+      "industry": "Fertilizers & Agricultural Chemicals",
+      "marketCap": 4200000000,
+      "changePercent": -2.92
+    },
+    {
+      "symbol": "NEM",
+      "companyName": "Newmont",
+      "sector": "Basic Materials",
+      "industry": "Gold",
+      "marketCap": 4200000000,
+      "changePercent": -1.7
+    },
+    {
+      "symbol": "APD",
+      "companyName": "Air Products",
+      "sector": "Basic Materials",
+      "industry": "Industrial Gases",
+      "marketCap": 10683879243,
+      "changePercent": 0.92
+    },
+    {
+      "symbol": "LIN",
+      "companyName": "Linde plc",
+      "sector": "Basic Materials",
+      "industry": "Industrial Gases",
+      "marketCap": 7597466800,
+      "changePercent": 1.63
+    },
+    {
+      "symbol": "BALL",
+      "companyName": "Ball Corporation",
+      "sector": "Basic Materials",
+      "industry": "Metal, Glass & Plastic Containers",
+      "marketCap": 17173640128,
+      "changePercent": 1.67
+    },
+    {
+      "symbol": "AMCR",
+      "companyName": "Amcor",
+      "sector": "Basic Materials",
+      "industry": "Paper & Plastic Packaging Products & Materials",
+      "marketCap": 19574215251,
+      "changePercent": -0.81
+    },
+    {
+      "symbol": "AVY",
+      "companyName": "Avery Dennison",
+      "sector": "Basic Materials",
+      "industry": "Paper & Plastic Packaging Products & Materials",
+      "marketCap": 9238553507,
+      "changePercent": 0.84
+    },
+    {
+      "symbol": "IP",
+      "companyName": "International Paper",
+      "sector": "Basic Materials",
+      "industry": "Paper & Plastic Packaging Products & Materials",
+      "marketCap": 9716498443,
+      "changePercent": -0.83
+    },
+    {
+      "symbol": "PKG",
+      "companyName": "Packaging Corporation of America",
+      "sector": "Basic Materials",
+      "industry": "Paper & Plastic Packaging Products & Materials",
+      "marketCap": 4444988115,
+      "changePercent": -0.48
+    },
+    {
+      "symbol": "SW",
+      "companyName": "Smurfit Westrock",
+      "sector": "Basic Materials",
+      "industry": "Paper & Plastic Packaging Products & Materials",
+      "marketCap": 4200000000,
+      "changePercent": -1.79
+    },
+    {
+      "symbol": "ALB",
+      "companyName": "Albemarle Corporation",
+      "sector": "Basic Materials",
+      "industry": "Specialty Chemicals",
+      "marketCap": 16621109733,
+      "changePercent": 0.42
+    },
+    {
+      "symbol": "DD",
+      "companyName": "DuPont",
+      "sector": "Basic Materials",
+      "industry": "Specialty Chemicals",
+      "marketCap": 10657879124,
+      "changePercent": 1.75
+    },
+    {
+      "symbol": "ECL",
+      "companyName": "Ecolab",
+      "sector": "Basic Materials",
+      "industry": "Specialty Chemicals",
+      "marketCap": 7623689574,
+      "changePercent": -0.76
+    },
+    {
+      "symbol": "IFF",
+      "companyName": "International Flavors & Fragrances",
+      "sector": "Basic Materials",
+      "industry": "Specialty Chemicals",
+      "marketCap": 6291054827,
+      "changePercent": 0.24
+    },
+    {
+      "symbol": "LYB",
+      "companyName": "LyondellBasell",
+      "sector": "Basic Materials",
+      "industry": "Specialty Chemicals",
+      "marketCap": 4628318363,
+      "changePercent": 0.63
+    },
+    {
+      "symbol": "PPG",
+      "companyName": "PPG Industries",
+      "sector": "Basic Materials",
+      "industry": "Specialty Chemicals",
+      "marketCap": 6772500000,
+      "changePercent": 1.99
+    },
+    {
+      "symbol": "SHW",
+      "companyName": "Sherwin-Williams",
+      "sector": "Basic Materials",
+      "industry": "Specialty Chemicals",
+      "marketCap": 4200000000,
+      "changePercent": -0.46
+    },
+    {
+      "symbol": "NUE",
+      "companyName": "Nucor",
+      "sector": "Basic Materials",
+      "industry": "Steel",
+      "marketCap": 4844821059,
+      "changePercent": -1.64
+    },
+    {
+      "symbol": "STLD",
+      "companyName": "Steel Dynamics",
+      "sector": "Basic Materials",
+      "industry": "Steel",
+      "marketCap": 5229000000,
+      "changePercent": 1.37
+    },
+    {
+      "symbol": "OMC",
+      "companyName": "Omnicom Group",
+      "sector": "Communication Services",
+      "industry": "Advertising",
+      "marketCap": 6596078380,
+      "changePercent": 3.48
+    },
+    {
+      "symbol": "TTD",
+      "companyName": "Trade Desk (The)",
+      "sector": "Communication Services",
+      "industry": "Advertising",
+      "marketCap": 9933921747,
+      "changePercent": -1.73
+    },
+    {
+      "symbol": "FOX",
+      "companyName": "Fox Corporation (Class B)",
+      "sector": "Communication Services",
+      "industry": "Broadcasting",
+      "marketCap": 10021300475,
+      "changePercent": -0.48
+    },
+    {
+      "symbol": "FOXA",
+      "companyName": "Fox Corporation (Class A)",
+      "sector": "Communication Services",
+      "industry": "Broadcasting",
+      "marketCap": 20443447457,
+      "changePercent": 3.05
+    },
+    {
+      "symbol": "WBD",
+      "companyName": "Warner Bros. Discovery",
+      "sector": "Communication Services",
+      "industry": "Broadcasting",
+      "marketCap": 4200000000,
+      "changePercent": 3.44
+    },
+    {
+      "symbol": "CHTR",
+      "companyName": "Charter Communications",
+      "sector": "Communication Services",
+      "industry": "Cable & Satellite",
+      "marketCap": 18754521293,
+      "changePercent": 0.1
+    },
+    {
+      "symbol": "CMCSA",
+      "companyName": "Comcast",
+      "sector": "Communication Services",
+      "industry": "Cable & Satellite",
+      "marketCap": 140000000000,
+      "changePercent": -1.09
+    },
+    {
+      "symbol": "T",
+      "companyName": "AT&T",
+      "sector": "Communication Services",
+      "industry": "Integrated Telecommunication Services",
+      "marketCap": 160000000000,
+      "changePercent": -1.58
+    },
+    {
+      "symbol": "VZ",
+      "companyName": "Verizon",
+      "sector": "Communication Services",
+      "industry": "Integrated Telecommunication Services",
+      "marketCap": 170000000000,
+      "changePercent": -0.74
+    },
+    {
+      "symbol": "EA",
+      "companyName": "Electronic Arts",
+      "sector": "Communication Services",
+      "industry": "Interactive Home Entertainment",
+      "marketCap": 18527974113,
+      "changePercent": 3.28
+    },
+    {
+      "symbol": "TTWO",
+      "companyName": "Take-Two Interactive",
+      "sector": "Communication Services",
+      "industry": "Interactive Home Entertainment",
+      "marketCap": 11297794889,
+      "changePercent": -2.93
+    },
+    {
+      "symbol": "GOOG",
+      "companyName": "Alphabet Inc. (Class C)",
+      "sector": "Communication Services",
+      "industry": "Interactive Media & Services",
+      "marketCap": 1250000000000,
+      "changePercent": -0.5
+    },
+    {
+      "symbol": "GOOGL",
+      "companyName": "Alphabet Inc. (Class A)",
+      "sector": "Communication Services",
+      "industry": "Interactive Media & Services",
+      "marketCap": 1250000000000,
+      "changePercent": -0.36
+    },
+    {
+      "symbol": "META",
+      "companyName": "Meta Platforms",
+      "sector": "Communication Services",
+      "industry": "Interactive Media & Services",
+      "marketCap": 1900000000000,
+      "changePercent": -4.9
+    },
+    {
+      "symbol": "DIS",
+      "companyName": "Walt Disney Company (The)",
+      "sector": "Communication Services",
+      "industry": "Movies & Entertainment",
+      "marketCap": 200000000000,
+      "changePercent": 3.36
+    },
+    {
+      "symbol": "LYV",
+      "companyName": "Live Nation Entertainment",
+      "sector": "Communication Services",
+      "industry": "Movies & Entertainment",
+      "marketCap": 13147585584,
+      "changePercent": 1.04
+    },
+    {
+      "symbol": "NFLX",
+      "companyName": "Netflix",
+      "sector": "Communication Services",
+      "industry": "Movies & Entertainment",
+      "marketCap": 540000000000,
+      "changePercent": 4.66
+    },
+    {
+      "symbol": "PSKY",
+      "companyName": "Paramount Skydance Corporation",
+      "sector": "Communication Services",
+      "industry": "Movies & Entertainment",
+      "marketCap": 7866667260,
+      "changePercent": -1.89
+    },
+    {
+      "symbol": "TKO",
+      "companyName": "TKO Group Holdings",
+      "sector": "Communication Services",
+      "industry": "Movies & Entertainment",
+      "marketCap": 9044230641,
+      "changePercent": -3.26
+    },
+    {
+      "symbol": "NWS",
+      "companyName": "News Corp (Class B)",
+      "sector": "Communication Services",
+      "industry": "Publishing",
+      "marketCap": 14352499830,
+      "changePercent": 0.88
+    },
+    {
+      "symbol": "NWSA",
+      "companyName": "News Corp (Class A)",
+      "sector": "Communication Services",
+      "industry": "Publishing",
+      "marketCap": 7879047607,
+      "changePercent": -1.49
+    },
+    {
+      "symbol": "ECHO",
+      "companyName": "EchoStar",
+      "sector": "Communication Services",
+      "industry": "Wireless Telecommunication Services",
+      "marketCap": 20763833746,
+      "changePercent": -1.61
+    },
+    {
+      "symbol": "TMUS",
+      "companyName": "T-Mobile US",
+      "sector": "Communication Services",
+      "industry": "Wireless Telecommunication Services",
+      "marketCap": 8010965712,
+      "changePercent": 2.87
+    },
+    {
+      "symbol": "ROST",
+      "companyName": "Ross Stores",
+      "sector": "Consumer Cyclical",
+      "industry": "Apparel Retail",
+      "marketCap": 10052436957,
+      "changePercent": -0.5
+    },
+    {
+      "symbol": "TJX",
+      "companyName": "TJX Companies",
+      "sector": "Consumer Cyclical",
+      "industry": "Apparel Retail",
+      "marketCap": 6485694345,
+      "changePercent": -0.35
+    },
+    {
+      "symbol": "LULU",
+      "companyName": "Lululemon Athletica",
+      "sector": "Consumer Cyclical",
+      "industry": "Apparel, Accessories & Luxury Goods",
+      "marketCap": 16752050725,
+      "changePercent": -1.15
+    },
+    {
+      "symbol": "NKE",
+      "companyName": "Nike, Inc.",
+      "sector": "Consumer Cyclical",
+      "industry": "Apparel, Accessories & Luxury Goods",
+      "marketCap": 16198312298,
+      "changePercent": -3.05
+    },
+    {
+      "symbol": "RL",
+      "companyName": "Ralph Lauren Corporation",
+      "sector": "Consumer Cyclical",
+      "industry": "Apparel, Accessories & Luxury Goods",
+      "marketCap": 6567278079,
+      "changePercent": 3.01
+    },
+    {
+      "symbol": "TPR",
+      "companyName": "Tapestry, Inc.",
+      "sector": "Consumer Cyclical",
+      "industry": "Apparel, Accessories & Luxury Goods",
+      "marketCap": 8240172817,
+      "changePercent": 3.16
+    },
+    {
+      "symbol": "F",
+      "companyName": "Ford Motor Company",
+      "sector": "Consumer Cyclical",
+      "industry": "Automobile Manufacturers",
+      "marketCap": 18056242406,
+      "changePercent": -1.31
+    },
+    {
+      "symbol": "GM",
+      "companyName": "General Motors",
+      "sector": "Consumer Cyclical",
+      "industry": "Automobile Manufacturers",
+      "marketCap": 19079968187,
+      "changePercent": 1.48
+    },
+    {
+      "symbol": "TSLA",
+      "companyName": "Tesla, Inc.",
+      "sector": "Consumer Cyclical",
+      "industry": "Automobile Manufacturers",
+      "marketCap": 1050000000000,
+      "changePercent": -7.49
+    },
+    {
+      "symbol": "APTV",
+      "companyName": "Aptiv",
+      "sector": "Consumer Cyclical",
+      "industry": "Automotive Parts & Equipment",
+      "marketCap": 27542497156,
+      "changePercent": 0.32
+    },
+    {
+      "symbol": "AZO",
+      "companyName": "AutoZone",
+      "sector": "Consumer Cyclical",
+      "industry": "Automotive Retail",
+      "marketCap": 23960688555,
+      "changePercent": -1.27
+    },
+    {
+      "symbol": "CVNA",
+      "companyName": "Carvana",
+      "sector": "Consumer Cyclical",
+      "industry": "Automotive Retail",
+      "marketCap": 14878518955,
+      "changePercent": -1.57
+    },
+    {
+      "symbol": "ORLY",
+      "companyName": "O'Reilly Automotive",
+      "sector": "Consumer Cyclical",
+      "industry": "Automotive Retail",
+      "marketCap": 12325102278,
+      "changePercent": 2.01
+    },
+    {
+      "symbol": "AMZN",
+      "companyName": "Amazon",
+      "sector": "Consumer Cyclical",
+      "industry": "Broadline Retail",
+      "marketCap": 2400000000000,
+      "changePercent": 0.4
+    },
+    {
+      "symbol": "EBAY",
+      "companyName": "eBay Inc.",
+      "sector": "Consumer Cyclical",
+      "industry": "Broadline Retail",
+      "marketCap": 23663632396,
+      "changePercent": 0.86
+    },
+    {
+      "symbol": "LVS",
+      "companyName": "Las Vegas Sands",
+      "sector": "Consumer Cyclical",
+      "industry": "Casinos & Gaming",
+      "marketCap": 8184661262,
+      "changePercent": 0.98
+    },
+    {
+      "symbol": "MGM",
+      "companyName": "MGM Resorts",
+      "sector": "Consumer Cyclical",
+      "industry": "Casinos & Gaming",
+      "marketCap": 15419535875,
+      "changePercent": 3.09
+    },
+    {
+      "symbol": "WYNN",
+      "companyName": "Wynn Resorts",
+      "sector": "Consumer Cyclical",
+      "industry": "Casinos & Gaming",
+      "marketCap": 4903017219,
+      "changePercent": 3.26
+    },
+    {
+      "symbol": "BBY",
+      "companyName": "Best Buy",
+      "sector": "Consumer Cyclical",
+      "industry": "Computer & Electronics Retail",
+      "marketCap": 39454869915,
+      "changePercent": 3.26
+    },
+    {
+      "symbol": "GRMN",
+      "companyName": "Garmin",
+      "sector": "Consumer Cyclical",
+      "industry": "Consumer Electronics",
+      "marketCap": 20481932277,
+      "changePercent": -1.45
+    },
+    {
+      "symbol": "GPC",
+      "companyName": "Genuine Parts Company",
+      "sector": "Consumer Cyclical",
+      "industry": "Distributors",
+      "marketCap": 21855087271,
+      "changePercent": 3.22
+    },
+    {
+      "symbol": "DECK",
+      "companyName": "Deckers Brands",
+      "sector": "Consumer Cyclical",
+      "industry": "Footwear",
+      "marketCap": 18698713548,
+      "changePercent": -2.01
+    },
+    {
+      "symbol": "HD",
+      "companyName": "Home Depot (The)",
+      "sector": "Consumer Cyclical",
+      "industry": "Home Improvement Retail",
+      "marketCap": 410000000000,
+      "changePercent": -3.49
+    },
+    {
+      "symbol": "LOW",
+      "companyName": "Lowe's",
+      "sector": "Consumer Cyclical",
+      "industry": "Home Improvement Retail",
+      "marketCap": 6903148274,
+      "changePercent": -1.9
+    },
+    {
+      "symbol": "DHI",
+      "companyName": "D. R. Horton",
+      "sector": "Consumer Cyclical",
+      "industry": "Homebuilding",
+      "marketCap": 10684334970,
+      "changePercent": -3.28
+    },
+    {
+      "symbol": "LEN",
+      "companyName": "Lennar",
+      "sector": "Consumer Cyclical",
+      "industry": "Homebuilding",
+      "marketCap": 12286214686,
+      "changePercent": -1.94
+    },
+    {
+      "symbol": "NVR",
+      "companyName": "NVR, Inc.",
+      "sector": "Consumer Cyclical",
+      "industry": "Homebuilding",
+      "marketCap": 14890227839,
+      "changePercent": 1.52
+    },
+    {
+      "symbol": "PHM",
+      "companyName": "PulteGroup",
+      "sector": "Consumer Cyclical",
+      "industry": "Homebuilding",
+      "marketCap": 10614886667,
+      "changePercent": 1.87
+    },
+    {
+      "symbol": "WSM",
+      "companyName": "Williams-Sonoma, Inc.",
+      "sector": "Consumer Cyclical",
+      "industry": "Homefurnishing Retail",
+      "marketCap": 8999295983,
+      "changePercent": -3.39
+    },
+    {
+      "symbol": "ABNB",
+      "companyName": "Airbnb",
+      "sector": "Consumer Cyclical",
+      "industry": "Hotels, Resorts & Cruise Lines",
+      "marketCap": 40246324807,
+      "changePercent": 2
+    },
+    {
+      "symbol": "BKNG",
+      "companyName": "Booking Holdings",
+      "sector": "Consumer Cyclical",
+      "industry": "Hotels, Resorts & Cruise Lines",
+      "marketCap": 34377638878,
+      "changePercent": -0.45
+    },
+    {
+      "symbol": "CCL",
+      "companyName": "Carnival Corporation",
+      "sector": "Consumer Cyclical",
+      "industry": "Hotels, Resorts & Cruise Lines",
+      "marketCap": 22239607203,
+      "changePercent": -0.55
+    },
+    {
+      "symbol": "EXPE",
+      "companyName": "Expedia Group",
+      "sector": "Consumer Cyclical",
+      "industry": "Hotels, Resorts & Cruise Lines",
+      "marketCap": 9549562367,
+      "changePercent": 2.99
+    },
+    {
+      "symbol": "HLT",
+      "companyName": "Hilton Worldwide",
+      "sector": "Consumer Cyclical",
+      "industry": "Hotels, Resorts & Cruise Lines",
+      "marketCap": 18839114416,
+      "changePercent": -1.7
+    },
+    {
+      "symbol": "MAR",
+      "companyName": "Marriott International",
+      "sector": "Consumer Cyclical",
+      "industry": "Hotels, Resorts & Cruise Lines",
+      "marketCap": 6985417845,
+      "changePercent": -0.75
+    },
+    {
+      "symbol": "NCLH",
+      "companyName": "Norwegian Cruise Line Holdings",
+      "sector": "Consumer Cyclical",
+      "industry": "Hotels, Resorts & Cruise Lines",
+      "marketCap": 8122794132,
+      "changePercent": -0.6
+    },
+    {
+      "symbol": "RCL",
+      "companyName": "Royal Caribbean Group",
+      "sector": "Consumer Cyclical",
+      "industry": "Hotels, Resorts & Cruise Lines",
+      "marketCap": 11947502692,
+      "changePercent": -1.57
+    },
+    {
+      "symbol": "HAS",
+      "companyName": "Hasbro",
+      "sector": "Consumer Cyclical",
+      "industry": "Leisure Products",
+      "marketCap": 16415119931,
+      "changePercent": 0.01
+    },
+    {
+      "symbol": "TSCO",
+      "companyName": "Tractor Supply",
+      "sector": "Consumer Cyclical",
+      "industry": "Other Specialty Retail",
+      "marketCap": 6934904440,
+      "changePercent": -1.79
+    },
+    {
+      "symbol": "ULTA",
+      "companyName": "Ulta Beauty",
+      "sector": "Consumer Cyclical",
+      "industry": "Other Specialty Retail",
+      "marketCap": 4829876868,
+      "changePercent": 0.29
+    },
+    {
+      "symbol": "CMG",
+      "companyName": "Chipotle Mexican Grill",
+      "sector": "Consumer Cyclical",
+      "industry": "Restaurants",
+      "marketCap": 23920456805,
+      "changePercent": 1.04
+    },
+    {
+      "symbol": "DPZ",
+      "companyName": "Domino's",
+      "sector": "Consumer Cyclical",
+      "industry": "Restaurants",
+      "marketCap": 22746618888,
+      "changePercent": -0.74
+    },
+    {
+      "symbol": "DRI",
+      "companyName": "Darden Restaurants",
+      "sector": "Consumer Cyclical",
+      "industry": "Restaurants",
+      "marketCap": 11850202783,
+      "changePercent": 3.43
+    },
+    {
+      "symbol": "MCD",
+      "companyName": "McDonald's",
+      "sector": "Consumer Cyclical",
+      "industry": "Restaurants",
+      "marketCap": 220000000000,
+      "changePercent": 0.72
+    },
+    {
+      "symbol": "SBUX",
+      "companyName": "Starbucks",
+      "sector": "Consumer Cyclical",
+      "industry": "Restaurants",
+      "marketCap": 9867969818,
+      "changePercent": -1.33
+    },
+    {
+      "symbol": "YUM",
+      "companyName": "Yum! Brands",
+      "sector": "Consumer Cyclical",
+      "industry": "Restaurants",
+      "marketCap": 4356119272,
+      "changePercent": 1.5
+    },
+    {
+      "symbol": "DASH",
+      "companyName": "DoorDash",
+      "sector": "Consumer Cyclical",
+      "industry": "Specialized Consumer Services",
+      "marketCap": 17298390214,
+      "changePercent": 0.44
+    },
+    {
+      "symbol": "ADM",
+      "companyName": "Archer Daniels Midland",
+      "sector": "Consumer Defensive",
+      "industry": "Agricultural Products & Services",
+      "marketCap": 14076777012,
+      "changePercent": 0.65
+    },
+    {
+      "symbol": "BG",
+      "companyName": "Bunge Global",
+      "sector": "Consumer Defensive",
+      "industry": "Agricultural Products & Services",
+      "marketCap": 17368648730,
+      "changePercent": -0.01
+    },
+    {
+      "symbol": "TAP",
+      "companyName": "Molson Coors Beverage Company",
+      "sector": "Consumer Defensive",
+      "industry": "Brewers",
+      "marketCap": 10581038993,
+      "changePercent": 0.28
+    },
+    {
+      "symbol": "COST",
+      "companyName": "Costco",
+      "sector": "Consumer Defensive",
+      "industry": "Consumer Staples Merchandise Retail",
+      "marketCap": 430000000000,
+      "changePercent": 2.92
+    },
+    {
+      "symbol": "DG",
+      "companyName": "Dollar General",
+      "sector": "Consumer Defensive",
+      "industry": "Consumer Staples Merchandise Retail",
+      "marketCap": 17047860700,
+      "changePercent": 0.52
+    },
+    {
+      "symbol": "DLTR",
+      "companyName": "Dollar Tree",
+      "sector": "Consumer Defensive",
+      "industry": "Consumer Staples Merchandise Retail",
+      "marketCap": 21860601835,
+      "changePercent": 1.89
+    },
+    {
+      "symbol": "TGT",
+      "companyName": "Target Corporation",
+      "sector": "Consumer Defensive",
+      "industry": "Consumer Staples Merchandise Retail",
+      "marketCap": 4406705574,
+      "changePercent": -1.79
+    },
+    {
+      "symbol": "WMT",
+      "companyName": "Walmart",
+      "sector": "Consumer Defensive",
+      "industry": "Consumer Staples Merchandise Retail",
+      "marketCap": 760000000000,
+      "changePercent": 2.78
+    },
+    {
+      "symbol": "BF.B",
+      "companyName": "Brown-Forman",
+      "sector": "Consumer Defensive",
+      "industry": "Distillers & Vintners",
+      "marketCap": 30756463330,
+      "changePercent": 1.27
+    },
+    {
+      "symbol": "STZ",
+      "companyName": "Constellation Brands",
+      "sector": "Consumer Defensive",
+      "industry": "Distillers & Vintners",
+      "marketCap": 13618286340,
+      "changePercent": -1.01
+    },
+    {
+      "symbol": "SYY",
+      "companyName": "Sysco",
+      "sector": "Consumer Defensive",
+      "industry": "Food Distributors",
+      "marketCap": 9596138467,
+      "changePercent": -3.24
+    },
+    {
+      "symbol": "CASY",
+      "companyName": "Casey's",
+      "sector": "Consumer Defensive",
+      "industry": "Food Retail",
+      "marketCap": 33053531017,
+      "changePercent": 1.14
+    },
+    {
+      "symbol": "KR",
+      "companyName": "Kroger",
+      "sector": "Consumer Defensive",
+      "industry": "Food Retail",
+      "marketCap": 7554863682,
+      "changePercent": 3.06
+    },
+    {
+      "symbol": "CHD",
+      "companyName": "Church & Dwight",
+      "sector": "Consumer Defensive",
+      "industry": "Household Products",
+      "marketCap": 14282410392,
+      "changePercent": -0.72
+    },
+    {
+      "symbol": "CL",
+      "companyName": "Colgate-Palmolive",
+      "sector": "Consumer Defensive",
+      "industry": "Household Products",
+      "marketCap": 10486186408,
+      "changePercent": -1.25
+    },
+    {
+      "symbol": "CLX",
+      "companyName": "Clorox",
+      "sector": "Consumer Defensive",
+      "industry": "Household Products",
+      "marketCap": 10349961099,
+      "changePercent": 0.63
+    },
+    {
+      "symbol": "KMB",
+      "companyName": "Kimberly-Clark",
+      "sector": "Consumer Defensive",
+      "industry": "Household Products",
+      "marketCap": 13536507446,
+      "changePercent": 1.93
+    },
+    {
+      "symbol": "GIS",
+      "companyName": "General Mills",
+      "sector": "Consumer Defensive",
+      "industry": "Packaged Foods & Meats",
+      "marketCap": 16541000448,
+      "changePercent": -1.82
+    },
+    {
+      "symbol": "HRL",
+      "companyName": "Hormel Foods",
+      "sector": "Consumer Defensive",
+      "industry": "Packaged Foods & Meats",
+      "marketCap": 9064762522,
+      "changePercent": -1.98
+    },
+    {
+      "symbol": "HSY",
+      "companyName": "Hershey Company (The)",
+      "sector": "Consumer Defensive",
+      "industry": "Packaged Foods & Meats",
+      "marketCap": 17604263545,
+      "changePercent": -0.08
+    },
+    {
+      "symbol": "KHC",
+      "companyName": "Kraft Heinz",
+      "sector": "Consumer Defensive",
+      "industry": "Packaged Foods & Meats",
+      "marketCap": 9908842287,
+      "changePercent": -3.35
+    },
+    {
+      "symbol": "MDLZ",
+      "companyName": "Mondelez International",
+      "sector": "Consumer Defensive",
+      "industry": "Packaged Foods & Meats",
+      "marketCap": 6872226132,
+      "changePercent": -3.42
+    },
+    {
+      "symbol": "MKC",
+      "companyName": "McCormick & Company",
+      "sector": "Consumer Defensive",
+      "industry": "Packaged Foods & Meats",
+      "marketCap": 6223708544,
+      "changePercent": -2.81
+    },
+    {
+      "symbol": "SJM",
+      "companyName": "J.M. Smucker Company (The)",
+      "sector": "Consumer Defensive",
+      "industry": "Packaged Foods & Meats",
+      "marketCap": 10246174462,
+      "changePercent": -1.49
+    },
+    {
+      "symbol": "TSN",
+      "companyName": "Tyson Foods",
+      "sector": "Consumer Defensive",
+      "industry": "Packaged Foods & Meats",
+      "marketCap": 4200000000,
+      "changePercent": 0.35
+    },
+    {
+      "symbol": "EL",
+      "companyName": "Estee Lauder Companies (The)",
+      "sector": "Consumer Defensive",
+      "industry": "Personal Care Products",
+      "marketCap": 19421299439,
+      "changePercent": -0.42
+    },
+    {
+      "symbol": "KVUE",
+      "companyName": "Kenvue",
+      "sector": "Consumer Defensive",
+      "industry": "Personal Care Products",
+      "marketCap": 6922225898,
+      "changePercent": 1.82
+    },
+    {
+      "symbol": "PG",
+      "companyName": "Procter & Gamble",
+      "sector": "Consumer Defensive",
+      "industry": "Personal Care Products",
+      "marketCap": 390000000000,
+      "changePercent": -2.95
+    },
+    {
+      "symbol": "KDP",
+      "companyName": "Keurig Dr Pepper",
+      "sector": "Consumer Defensive",
+      "industry": "Soft Drinks & Non-alcoholic Beverages",
+      "marketCap": 9429172983,
+      "changePercent": -2.83
+    },
+    {
+      "symbol": "KO",
+      "companyName": "Coca-Cola Company (The)",
+      "sector": "Consumer Defensive",
+      "industry": "Soft Drinks & Non-alcoholic Beverages",
+      "marketCap": 310000000000,
+      "changePercent": 1.92
+    },
+    {
+      "symbol": "MNST",
+      "companyName": "Monster Beverage",
+      "sector": "Consumer Defensive",
+      "industry": "Soft Drinks & Non-alcoholic Beverages",
+      "marketCap": 8426778782,
+      "changePercent": 1.82
+    },
+    {
+      "symbol": "PEP",
+      "companyName": "PepsiCo",
+      "sector": "Consumer Defensive",
+      "industry": "Soft Drinks & Non-alcoholic Beverages",
+      "marketCap": 210000000000,
+      "changePercent": 1.27
+    },
+    {
+      "symbol": "MO",
+      "companyName": "Altria",
+      "sector": "Consumer Defensive",
+      "industry": "Tobacco",
+      "marketCap": 29048344305,
+      "changePercent": -3.3
+    },
+    {
+      "symbol": "PM",
+      "companyName": "Philip Morris International",
+      "sector": "Consumer Defensive",
+      "industry": "Tobacco",
+      "marketCap": 8223586262,
+      "changePercent": -1.12
+    },
+    {
+      "symbol": "CVX",
+      "companyName": "Chevron Corporation",
+      "sector": "Energy",
+      "industry": "Integrated Oil & Gas",
+      "marketCap": 11020115936,
+      "changePercent": 2.99
+    },
+    {
+      "symbol": "XOM",
+      "companyName": "ExxonMobil",
+      "sector": "Energy",
+      "industry": "Integrated Oil & Gas",
+      "marketCap": 510000000000,
+      "changePercent": 0.54
+    },
+    {
+      "symbol": "BKR",
+      "companyName": "Baker Hughes",
+      "sector": "Energy",
+      "industry": "Oil & Gas Equipment & Services",
+      "marketCap": 20163993271,
+      "changePercent": 0.6
+    },
+    {
+      "symbol": "HAL",
+      "companyName": "Halliburton",
+      "sector": "Energy",
+      "industry": "Oil & Gas Equipment & Services",
+      "marketCap": 8520616041,
+      "changePercent": -1.03
+    },
+    {
+      "symbol": "SLB",
+      "companyName": "Schlumberger",
+      "sector": "Energy",
+      "industry": "Oil & Gas Equipment & Services",
+      "marketCap": 9066344927,
+      "changePercent": 0.54
+    },
+    {
+      "symbol": "APA",
+      "companyName": "APA Corporation",
+      "sector": "Energy",
+      "industry": "Oil & Gas Exploration & Production",
+      "marketCap": 30778179808,
+      "changePercent": -1.81
+    },
+    {
+      "symbol": "COP",
+      "companyName": "ConocoPhillips",
+      "sector": "Energy",
+      "industry": "Oil & Gas Exploration & Production",
+      "marketCap": 13342471654,
+      "changePercent": -1.04
+    },
+    {
+      "symbol": "DVN",
+      "companyName": "Devon Energy",
+      "sector": "Energy",
+      "industry": "Oil & Gas Exploration & Production",
+      "marketCap": 23115300079,
+      "changePercent": -3.02
+    },
+    {
+      "symbol": "EOG",
+      "companyName": "EOG Resources",
+      "sector": "Energy",
+      "industry": "Oil & Gas Exploration & Production",
+      "marketCap": 19740764404,
+      "changePercent": 3.17
+    },
+    {
+      "symbol": "EQT",
+      "companyName": "EQT Corporation",
+      "sector": "Energy",
+      "industry": "Oil & Gas Exploration & Production",
+      "marketCap": 16789814802,
+      "changePercent": -0.53
+    },
+    {
+      "symbol": "EXE",
+      "companyName": "Expand Energy",
+      "sector": "Energy",
+      "industry": "Oil & Gas Exploration & Production",
+      "marketCap": 11415282031,
+      "changePercent": 3
+    },
+    {
+      "symbol": "FANG",
+      "companyName": "Diamondback Energy",
+      "sector": "Energy",
+      "industry": "Oil & Gas Exploration & Production",
+      "marketCap": 8740973400,
+      "changePercent": -2.98
+    },
+    {
+      "symbol": "OXY",
+      "companyName": "Occidental Petroleum",
+      "sector": "Energy",
+      "industry": "Oil & Gas Exploration & Production",
+      "marketCap": 9414182858,
+      "changePercent": -1.43
+    },
+    {
+      "symbol": "TPL",
+      "companyName": "Texas Pacific Land Corporation",
+      "sector": "Energy",
+      "industry": "Oil & Gas Exploration & Production",
+      "marketCap": 10498723712,
+      "changePercent": -0.37
+    },
+    {
+      "symbol": "MPC",
+      "companyName": "Marathon Petroleum",
+      "sector": "Energy",
+      "industry": "Oil & Gas Refining & Marketing",
+      "marketCap": 16116233742,
+      "changePercent": -0.3
+    },
+    {
+      "symbol": "PSX",
+      "companyName": "Phillips 66",
+      "sector": "Energy",
+      "industry": "Oil & Gas Refining & Marketing",
+      "marketCap": 9065010746,
+      "changePercent": 0.86
+    },
+    {
+      "symbol": "VLO",
+      "companyName": "Valero Energy",
+      "sector": "Energy",
+      "industry": "Oil & Gas Refining & Marketing",
+      "marketCap": 4200000000,
+      "changePercent": -0.33
+    },
+    {
+      "symbol": "KMI",
+      "companyName": "Kinder Morgan",
+      "sector": "Energy",
+      "industry": "Oil & Gas Storage & Transportation",
+      "marketCap": 7090411054,
+      "changePercent": 0.85
+    },
+    {
+      "symbol": "OKE",
+      "companyName": "Oneok",
+      "sector": "Energy",
+      "industry": "Oil & Gas Storage & Transportation",
+      "marketCap": 13155368816,
+      "changePercent": -2.01
+    },
+    {
+      "symbol": "TRGP",
+      "companyName": "Targa Resources",
+      "sector": "Energy",
+      "industry": "Oil & Gas Storage & Transportation",
+      "marketCap": 4668510285,
+      "changePercent": -3.1
+    },
+    {
+      "symbol": "WMB",
+      "companyName": "Williams Companies",
+      "sector": "Energy",
+      "industry": "Oil & Gas Storage & Transportation",
+      "marketCap": 4384494019,
+      "changePercent": -2.86
+    },
+    {
+      "symbol": "AMP",
+      "companyName": "Ameriprise Financial",
+      "sector": "Financial Services",
+      "industry": "Asset Management & Custody Banks",
+      "marketCap": 31742490227,
+      "changePercent": -0.35
+    },
+    {
+      "symbol": "APO",
+      "companyName": "Apollo Global Management",
+      "sector": "Financial Services",
+      "industry": "Asset Management & Custody Banks",
+      "marketCap": 31553853745,
+      "changePercent": -1.63
+    },
+    {
+      "symbol": "ARES",
+      "companyName": "Ares Management",
+      "sector": "Financial Services",
+      "industry": "Asset Management & Custody Banks",
+      "marketCap": 25957019945,
+      "changePercent": 1.08
+    },
+    {
+      "symbol": "BEN",
+      "companyName": "Franklin Resources",
+      "sector": "Financial Services",
+      "industry": "Asset Management & Custody Banks",
+      "marketCap": 12014393856,
+      "changePercent": 1.71
+    },
+    {
+      "symbol": "BLK",
+      "companyName": "BlackRock",
+      "sector": "Financial Services",
+      "industry": "Asset Management & Custody Banks",
+      "marketCap": 22986760330,
+      "changePercent": 1.66
+    },
+    {
+      "symbol": "BNY",
+      "companyName": "BNY Mellon",
+      "sector": "Financial Services",
+      "industry": "Asset Management & Custody Banks",
+      "marketCap": 27024815209,
+      "changePercent": 1.89
+    },
+    {
+      "symbol": "BX",
+      "companyName": "Blackstone Inc.",
+      "sector": "Financial Services",
+      "industry": "Asset Management & Custody Banks",
+      "marketCap": 26759198506,
+      "changePercent": -2.87
+    },
+    {
+      "symbol": "IVZ",
+      "companyName": "Invesco",
+      "sector": "Financial Services",
+      "industry": "Asset Management & Custody Banks",
+      "marketCap": 8248056378,
+      "changePercent": 0.11
+    },
+    {
+      "symbol": "KKR",
+      "companyName": "KKR & Co.",
+      "sector": "Financial Services",
+      "industry": "Asset Management & Custody Banks",
+      "marketCap": 9152290707,
+      "changePercent": -0.19
+    },
+    {
+      "symbol": "NTRS",
+      "companyName": "Northern Trust",
+      "sector": "Financial Services",
+      "industry": "Asset Management & Custody Banks",
+      "marketCap": 10177954809,
+      "changePercent": 3.39
+    },
+    {
+      "symbol": "STT",
+      "companyName": "State Street Corporation",
+      "sector": "Financial Services",
+      "industry": "Asset Management & Custody Banks",
+      "marketCap": 6463464565,
+      "changePercent": 1.86
+    },
+    {
+      "symbol": "TROW",
+      "companyName": "T. Rowe Price",
+      "sector": "Financial Services",
+      "industry": "Asset Management & Custody Banks",
+      "marketCap": 7494008422,
+      "changePercent": -0.04
+    },
+    {
+      "symbol": "AXP",
+      "companyName": "American Express",
+      "sector": "Financial Services",
+      "industry": "Consumer Finance",
+      "marketCap": 14932476947,
+      "changePercent": -1.09
+    },
+    {
+      "symbol": "COF",
+      "companyName": "Capital One",
+      "sector": "Financial Services",
+      "industry": "Consumer Finance",
+      "marketCap": 19495588219,
+      "changePercent": -0.72
+    },
+    {
+      "symbol": "SYF",
+      "companyName": "Synchrony Financial",
+      "sector": "Financial Services",
+      "industry": "Consumer Finance",
+      "marketCap": 10160795194,
+      "changePercent": 1.35
+    },
+    {
+      "symbol": "BAC",
+      "companyName": "Bank of America",
+      "sector": "Financial Services",
+      "industry": "Diversified Banks",
+      "marketCap": 350000000000,
+      "changePercent": 0.63
+    },
+    {
+      "symbol": "C",
+      "companyName": "Citigroup",
+      "sector": "Financial Services",
+      "industry": "Diversified Banks",
+      "marketCap": 18755637974,
+      "changePercent": -3.46
+    },
+    {
+      "symbol": "JPM",
+      "companyName": "JPMorgan Chase",
+      "sector": "Financial Services",
+      "industry": "Diversified Banks",
+      "marketCap": 780000000000,
+      "changePercent": 0.12
+    },
+    {
+      "symbol": "PNC",
+      "companyName": "PNC Financial Services",
+      "sector": "Financial Services",
+      "industry": "Diversified Banks",
+      "marketCap": 9840895880,
+      "changePercent": 0.12
+    },
+    {
+      "symbol": "TFC",
+      "companyName": "Truist Financial",
+      "sector": "Financial Services",
+      "industry": "Diversified Banks",
+      "marketCap": 7032044053,
+      "changePercent": -1.11
+    },
+    {
+      "symbol": "USB",
+      "companyName": "U.S. Bancorp",
+      "sector": "Financial Services",
+      "industry": "Diversified Banks",
+      "marketCap": 5121881683,
+      "changePercent": -1.93
+    },
+    {
+      "symbol": "WFC",
+      "companyName": "Wells Fargo",
+      "sector": "Financial Services",
+      "industry": "Diversified Banks",
+      "marketCap": 8201494116,
+      "changePercent": 1.25
+    },
+    {
+      "symbol": "CBOE",
+      "companyName": "Cboe Global Markets",
+      "sector": "Financial Services",
+      "industry": "Financial Exchanges & Data",
+      "marketCap": 17298907020,
+      "changePercent": 0.3
+    },
+    {
+      "symbol": "CME",
+      "companyName": "CME Group",
+      "sector": "Financial Services",
+      "industry": "Financial Exchanges & Data",
+      "marketCap": 11428255273,
+      "changePercent": -3.39
+    },
+    {
+      "symbol": "COIN",
+      "companyName": "Coinbase",
+      "sector": "Financial Services",
+      "industry": "Financial Exchanges & Data",
+      "marketCap": 18330454232,
+      "changePercent": -0.57
+    },
+    {
+      "symbol": "FDS",
+      "companyName": "FactSet",
+      "sector": "Financial Services",
+      "industry": "Financial Exchanges & Data",
+      "marketCap": 8579662516,
+      "changePercent": 0.22
+    },
+    {
+      "symbol": "ICE",
+      "companyName": "Intercontinental Exchange",
+      "sector": "Financial Services",
+      "industry": "Financial Exchanges & Data",
+      "marketCap": 17355946217,
+      "changePercent": 3.06
+    },
+    {
+      "symbol": "MCO",
+      "companyName": "Moody's Corporation",
+      "sector": "Financial Services",
+      "industry": "Financial Exchanges & Data",
+      "marketCap": 9572812321,
+      "changePercent": 1.5
+    },
+    {
+      "symbol": "MSCI",
+      "companyName": "MSCI Inc.",
+      "sector": "Financial Services",
+      "industry": "Financial Exchanges & Data",
+      "marketCap": 11286039625,
+      "changePercent": -0.68
+    },
+    {
+      "symbol": "NDAQ",
+      "companyName": "Nasdaq, Inc.",
+      "sector": "Financial Services",
+      "industry": "Financial Exchanges & Data",
+      "marketCap": 6131130244,
+      "changePercent": -2.98
+    },
+    {
+      "symbol": "SPGI",
+      "companyName": "S&P Global",
+      "sector": "Financial Services",
+      "industry": "Financial Exchanges & Data",
+      "marketCap": 7653627921,
+      "changePercent": -0.58
+    },
+    {
+      "symbol": "AJG",
+      "companyName": "Arthur J. Gallagher & Co.",
+      "sector": "Financial Services",
+      "industry": "Insurance Brokers",
+      "marketCap": 20657401925,
+      "changePercent": 2.84
+    },
+    {
+      "symbol": "AON",
+      "companyName": "Aon plc",
+      "sector": "Financial Services",
+      "industry": "Insurance Brokers",
+      "marketCap": 36258183036,
+      "changePercent": -1.7
+    },
+    {
+      "symbol": "BRO",
+      "companyName": "Brown & Brown",
+      "sector": "Financial Services",
+      "industry": "Insurance Brokers",
+      "marketCap": 14413181898,
+      "changePercent": -3.45
+    },
+    {
+      "symbol": "ERIE",
+      "companyName": "Erie Indemnity",
+      "sector": "Financial Services",
+      "industry": "Insurance Brokers",
+      "marketCap": 21696531688,
+      "changePercent": -0.6
+    },
+    {
+      "symbol": "MRSH",
+      "companyName": "Marsh McLennan",
+      "sector": "Financial Services",
+      "industry": "Insurance Brokers",
+      "marketCap": 8822478797,
+      "changePercent": 0.45
+    },
+    {
+      "symbol": "WTW",
+      "companyName": "Willis Towers Watson",
+      "sector": "Financial Services",
+      "industry": "Insurance Brokers",
+      "marketCap": 4200000000,
+      "changePercent": -0.38
+    },
+    {
+      "symbol": "GS",
+      "companyName": "Goldman Sachs",
+      "sector": "Financial Services",
+      "industry": "Investment Banking & Brokerage",
+      "marketCap": 190000000000,
+      "changePercent": 1.41
+    },
+    {
+      "symbol": "HOOD",
+      "companyName": "Robinhood Markets",
+      "sector": "Financial Services",
+      "industry": "Investment Banking & Brokerage",
+      "marketCap": 6842206460,
+      "changePercent": -1.91
+    },
+    {
+      "symbol": "IBKR",
+      "companyName": "Interactive Brokers",
+      "sector": "Financial Services",
+      "industry": "Investment Banking & Brokerage",
+      "marketCap": 9809185725,
+      "changePercent": 0.48
+    },
+    {
+      "symbol": "MS",
+      "companyName": "Morgan Stanley",
+      "sector": "Financial Services",
+      "industry": "Investment Banking & Brokerage",
+      "marketCap": 180000000000,
+      "changePercent": -1.48
+    },
+    {
+      "symbol": "RJF",
+      "companyName": "Raymond James Financial",
+      "sector": "Financial Services",
+      "industry": "Investment Banking & Brokerage",
+      "marketCap": 10021398582,
+      "changePercent": -1.49
+    },
+    {
+      "symbol": "SCHW",
+      "companyName": "Charles Schwab Corporation",
+      "sector": "Financial Services",
+      "industry": "Investment Banking & Brokerage",
+      "marketCap": 15453930919,
+      "changePercent": -3.13
+    },
+    {
+      "symbol": "AFL",
+      "companyName": "Aflac",
+      "sector": "Financial Services",
+      "industry": "Life & Health Insurance",
+      "marketCap": 19538306860,
+      "changePercent": 0.96
+    },
+    {
+      "symbol": "GL",
+      "companyName": "Globe Life",
+      "sector": "Financial Services",
+      "industry": "Life & Health Insurance",
+      "marketCap": 12518486410,
+      "changePercent": -0.96
+    },
+    {
+      "symbol": "MET",
+      "companyName": "MetLife",
+      "sector": "Financial Services",
+      "industry": "Life & Health Insurance",
+      "marketCap": 10821858371,
+      "changePercent": 1.78
+    },
+    {
+      "symbol": "PFG",
+      "companyName": "Principal Financial Group",
+      "sector": "Financial Services",
+      "industry": "Life & Health Insurance",
+      "marketCap": 10226852461,
+      "changePercent": 1.6
+    },
+    {
+      "symbol": "PRU",
+      "companyName": "Prudential Financial",
+      "sector": "Financial Services",
+      "industry": "Life & Health Insurance",
+      "marketCap": 4395634585,
+      "changePercent": 1.1
+    },
+    {
+      "symbol": "BRK.B",
+      "companyName": "Berkshire Hathaway",
+      "sector": "Financial Services",
+      "industry": "Multi-Sector Holdings",
+      "marketCap": 1050000000000,
+      "changePercent": 1.61
+    },
+    {
+      "symbol": "AIG",
+      "companyName": "American International Group",
+      "sector": "Financial Services",
+      "industry": "Multi-line Insurance",
+      "marketCap": 35511991290,
+      "changePercent": 2.97
+    },
+    {
+      "symbol": "AIZ",
+      "companyName": "Assurant",
+      "sector": "Financial Services",
+      "industry": "Multi-line Insurance",
+      "marketCap": 31152108178,
+      "changePercent": -0.84
+    },
+    {
+      "symbol": "L",
+      "companyName": "Loews Corporation",
+      "sector": "Financial Services",
+      "industry": "Multi-line Insurance",
+      "marketCap": 12589521382,
+      "changePercent": 0.73
+    },
+    {
+      "symbol": "ACGL",
+      "companyName": "Arch Capital Group",
+      "sector": "Financial Services",
+      "industry": "Property & Casualty Insurance",
+      "marketCap": 32532421889,
+      "changePercent": -2.91
+    },
+    {
+      "symbol": "ALL",
+      "companyName": "Allstate",
+      "sector": "Financial Services",
+      "industry": "Property & Casualty Insurance",
+      "marketCap": 17654769645,
+      "changePercent": -0.92
+    },
+    {
+      "symbol": "CB",
+      "companyName": "Chubb Limited",
+      "sector": "Financial Services",
+      "industry": "Property & Casualty Insurance",
+      "marketCap": 16765631101,
+      "changePercent": 0.76
+    },
+    {
+      "symbol": "CINF",
+      "companyName": "Cincinnati Financial",
+      "sector": "Financial Services",
+      "industry": "Property & Casualty Insurance",
+      "marketCap": 20822071664,
+      "changePercent": 2.94
+    },
+    {
+      "symbol": "HIG",
+      "companyName": "Hartford (The)",
+      "sector": "Financial Services",
+      "industry": "Property & Casualty Insurance",
+      "marketCap": 14547991350,
+      "changePercent": 1.63
+    },
+    {
+      "symbol": "PGR",
+      "companyName": "Progressive Corporation",
+      "sector": "Financial Services",
+      "industry": "Property & Casualty Insurance",
+      "marketCap": 4738891143,
+      "changePercent": 1.28
+    },
+    {
+      "symbol": "TRV",
+      "companyName": "Travelers Companies (The)",
+      "sector": "Financial Services",
+      "industry": "Property & Casualty Insurance",
+      "marketCap": 8764140720,
+      "changePercent": 0.06
+    },
+    {
+      "symbol": "WRB",
+      "companyName": "W. R. Berkley Corporation",
+      "sector": "Financial Services",
+      "industry": "Property & Casualty Insurance",
+      "marketCap": 6610914895,
+      "changePercent": -0.39
+    },
+    {
+      "symbol": "CFG",
+      "companyName": "Citizens Financial Group",
+      "sector": "Financial Services",
+      "industry": "Regional Banks",
+      "marketCap": 9474889768,
+      "changePercent": -1.92
+    },
+    {
+      "symbol": "FITB",
+      "companyName": "Fifth Third Bancorp",
+      "sector": "Financial Services",
+      "industry": "Regional Banks",
+      "marketCap": 19724619595,
+      "changePercent": 1.79
+    },
+    {
+      "symbol": "HBAN",
+      "companyName": "Huntington Bancshares",
+      "sector": "Financial Services",
+      "industry": "Regional Banks",
+      "marketCap": 16348959247,
+      "changePercent": -0.05
+    },
+    {
+      "symbol": "KEY",
+      "companyName": "KeyCorp",
+      "sector": "Financial Services",
+      "industry": "Regional Banks",
+      "marketCap": 5521336561,
+      "changePercent": -1.26
+    },
+    {
+      "symbol": "MTB",
+      "companyName": "M&T Bank",
+      "sector": "Financial Services",
+      "industry": "Regional Banks",
+      "marketCap": 13919126882,
+      "changePercent": 1.79
+    },
+    {
+      "symbol": "RF",
+      "companyName": "Regions Financial Corporation",
+      "sector": "Financial Services",
+      "industry": "Regional Banks",
+      "marketCap": 10761867224,
+      "changePercent": -1.55
+    },
+    {
+      "symbol": "EG",
+      "companyName": "Everest Group",
+      "sector": "Financial Services",
+      "industry": "Reinsurance",
+      "marketCap": 12423842750,
+      "changePercent": 0.45
+    },
+    {
+      "symbol": "CPAY",
+      "companyName": "Corpay",
+      "sector": "Financial Services",
+      "industry": "Transaction & Payment Processing Services",
+      "marketCap": 8846174848,
+      "changePercent": -0.13
+    },
+    {
+      "symbol": "FIS",
+      "companyName": "Fidelity National Information Services",
+      "sector": "Financial Services",
+      "industry": "Transaction & Payment Processing Services",
+      "marketCap": 19336711030,
+      "changePercent": -1.95
+    },
+    {
+      "symbol": "FISV",
+      "companyName": "Fiserv",
+      "sector": "Financial Services",
+      "industry": "Transaction & Payment Processing Services",
+      "marketCap": 10990315451,
+      "changePercent": -0.37
+    },
+    {
+      "symbol": "GPN",
+      "companyName": "Global Payments",
+      "sector": "Financial Services",
+      "industry": "Transaction & Payment Processing Services",
+      "marketCap": 11485723829,
+      "changePercent": 1.32
+    },
+    {
+      "symbol": "JKHY",
+      "companyName": "Jack Henry & Associates",
+      "sector": "Financial Services",
+      "industry": "Transaction & Payment Processing Services",
+      "marketCap": 7030761723,
+      "changePercent": -0.96
+    },
+    {
+      "symbol": "MA",
+      "companyName": "Mastercard",
+      "sector": "Financial Services",
+      "industry": "Transaction & Payment Processing Services",
+      "marketCap": 610000000000,
+      "changePercent": 0.03
+    },
+    {
+      "symbol": "PYPL",
+      "companyName": "PayPal",
+      "sector": "Financial Services",
+      "industry": "Transaction & Payment Processing Services",
+      "marketCap": 6747759575,
+      "changePercent": -1.68
+    },
+    {
+      "symbol": "V",
+      "companyName": "Visa Inc.",
+      "sector": "Financial Services",
+      "industry": "Transaction & Payment Processing Services",
+      "marketCap": 690000000000,
+      "changePercent": 3.15
+    },
+    {
+      "symbol": "XYZ",
+      "companyName": "Block, Inc.",
+      "sector": "Financial Services",
+      "industry": "Transaction & Payment Processing Services",
+      "marketCap": 25934691511,
+      "changePercent": -1.5
+    },
+    {
+      "symbol": "ABBV",
+      "companyName": "AbbVie",
+      "sector": "Healthcare",
+      "industry": "Biotechnology",
+      "marketCap": 360000000000,
+      "changePercent": 3.99
+    },
+    {
+      "symbol": "AMGN",
+      "companyName": "Amgen",
+      "sector": "Healthcare",
+      "industry": "Biotechnology",
+      "marketCap": 38476586068,
+      "changePercent": 3.23
+    },
+    {
+      "symbol": "BIIB",
+      "companyName": "Biogen",
+      "sector": "Healthcare",
+      "industry": "Biotechnology",
+      "marketCap": 23371418549,
+      "changePercent": 1.33
+    },
+    {
+      "symbol": "GILD",
+      "companyName": "Gilead Sciences",
+      "sector": "Healthcare",
+      "industry": "Biotechnology",
+      "marketCap": 8784348751,
+      "changePercent": 0.22
+    },
+    {
+      "symbol": "INCY",
+      "companyName": "Incyte",
+      "sector": "Healthcare",
+      "industry": "Biotechnology",
+      "marketCap": 17245267380,
+      "changePercent": 1.38
+    },
+    {
+      "symbol": "MRNA",
+      "companyName": "Moderna",
+      "sector": "Healthcare",
+      "industry": "Biotechnology",
+      "marketCap": 5755223496,
+      "changePercent": -3.42
+    },
+    {
+      "symbol": "REGN",
+      "companyName": "Regeneron Pharmaceuticals",
+      "sector": "Healthcare",
+      "industry": "Biotechnology",
+      "marketCap": 9730466013,
+      "changePercent": 0.12
+    },
+    {
+      "symbol": "VRTX",
+      "companyName": "Vertex Pharmaceuticals",
+      "sector": "Healthcare",
+      "industry": "Biotechnology",
+      "marketCap": 8523513900,
+      "changePercent": 3.3
+    },
+    {
+      "symbol": "CAH",
+      "companyName": "Cardinal Health",
+      "sector": "Healthcare",
+      "industry": "Health Care Distributors",
+      "marketCap": 12878649559,
+      "changePercent": 0.84
+    },
+    {
+      "symbol": "COR",
+      "companyName": "Cencora",
+      "sector": "Healthcare",
+      "industry": "Health Care Distributors",
+      "marketCap": 18674614929,
+      "changePercent": -0.28
+    },
+    {
+      "symbol": "HSIC",
+      "companyName": "Henry Schein",
+      "sector": "Healthcare",
+      "industry": "Health Care Distributors",
+      "marketCap": 10143976279,
+      "changePercent": 0.19
+    },
+    {
+      "symbol": "MCK",
+      "companyName": "McKesson Corporation",
+      "sector": "Healthcare",
+      "industry": "Health Care Distributors",
+      "marketCap": 6379440360,
+      "changePercent": -1.6
+    },
+    {
+      "symbol": "ABT",
+      "companyName": "Abbott Laboratories",
+      "sector": "Healthcare",
+      "industry": "Health Care Equipment",
+      "marketCap": 210000000000,
+      "changePercent": -1.24
+    },
+    {
+      "symbol": "BAX",
+      "companyName": "Baxter International",
+      "sector": "Healthcare",
+      "industry": "Health Care Equipment",
+      "marketCap": 36141826307,
+      "changePercent": 1.94
+    },
+    {
+      "symbol": "BDX",
+      "companyName": "Becton Dickinson",
+      "sector": "Healthcare",
+      "industry": "Health Care Equipment",
+      "marketCap": 27572182544,
+      "changePercent": 3.3
+    },
+    {
+      "symbol": "BSX",
+      "companyName": "Boston Scientific",
+      "sector": "Healthcare",
+      "industry": "Health Care Equipment",
+      "marketCap": 18939862281,
+      "changePercent": 0.91
+    },
+    {
+      "symbol": "DXCM",
+      "companyName": "Dexcom",
+      "sector": "Healthcare",
+      "industry": "Health Care Equipment",
+      "marketCap": 22854321407,
+      "changePercent": -1.48
+    },
+    {
+      "symbol": "EW",
+      "companyName": "Edwards Lifesciences",
+      "sector": "Healthcare",
+      "industry": "Health Care Equipment",
+      "marketCap": 10229341982,
+      "changePercent": -1.07
+    },
+    {
+      "symbol": "GEHC",
+      "companyName": "GE HealthCare",
+      "sector": "Healthcare",
+      "industry": "Health Care Equipment",
+      "marketCap": 14796849577,
+      "changePercent": -1.61
+    },
+    {
+      "symbol": "IDXX",
+      "companyName": "Idexx Laboratories",
+      "sector": "Healthcare",
+      "industry": "Health Care Equipment",
+      "marketCap": 7422225917,
+      "changePercent": -0.6
+    },
+    {
+      "symbol": "ISRG",
+      "companyName": "Intuitive Surgical",
+      "sector": "Healthcare",
+      "industry": "Health Care Equipment",
+      "marketCap": 210000000000,
+      "changePercent": -0.69
+    },
+    {
+      "symbol": "MDT",
+      "companyName": "Medtronic",
+      "sector": "Healthcare",
+      "industry": "Health Care Equipment",
+      "marketCap": 7390569295,
+      "changePercent": 3.48
+    },
+    {
+      "symbol": "PODD",
+      "companyName": "Insulet Corporation",
+      "sector": "Healthcare",
+      "industry": "Health Care Equipment",
+      "marketCap": 18978937907,
+      "changePercent": -1.58
+    },
+    {
+      "symbol": "RMD",
+      "companyName": "ResMed",
+      "sector": "Healthcare",
+      "industry": "Health Care Equipment",
+      "marketCap": 12459212549,
+      "changePercent": 0.27
+    },
+    {
+      "symbol": "RVTY",
+      "companyName": "Revvity",
+      "sector": "Healthcare",
+      "industry": "Health Care Equipment",
+      "marketCap": 6679916825,
+      "changePercent": -0.92
+    },
+    {
+      "symbol": "STE",
+      "companyName": "Steris",
+      "sector": "Healthcare",
+      "industry": "Health Care Equipment",
+      "marketCap": 12053801064,
+      "changePercent": -1.99
+    },
+    {
+      "symbol": "SYK",
+      "companyName": "Stryker Corporation",
+      "sector": "Healthcare",
+      "industry": "Health Care Equipment",
+      "marketCap": 4200000000,
+      "changePercent": 1.51
+    },
+    {
+      "symbol": "ZBH",
+      "companyName": "Zimmer Biomet",
+      "sector": "Healthcare",
+      "industry": "Health Care Equipment",
+      "marketCap": 6128802141,
+      "changePercent": 1.92
+    },
+    {
+      "symbol": "HCA",
+      "companyName": "HCA Healthcare",
+      "sector": "Healthcare",
+      "industry": "Health Care Facilities",
+      "marketCap": 7778586163,
+      "changePercent": -0.19
+    },
+    {
+      "symbol": "UHS",
+      "companyName": "Universal Health Services",
+      "sector": "Healthcare",
+      "industry": "Health Care Facilities",
+      "marketCap": 5296034962,
+      "changePercent": -1.86
+    },
+    {
+      "symbol": "CI",
+      "companyName": "Cigna",
+      "sector": "Healthcare",
+      "industry": "Health Care Services",
+      "marketCap": 27292839603,
+      "changePercent": -1.56
+    },
+    {
+      "symbol": "CVS",
+      "companyName": "CVS Health",
+      "sector": "Healthcare",
+      "industry": "Health Care Services",
+      "marketCap": 19164343377,
+      "changePercent": -3.31
+    },
+    {
+      "symbol": "DGX",
+      "companyName": "Quest Diagnostics",
+      "sector": "Healthcare",
+      "industry": "Health Care Services",
+      "marketCap": 13639691394,
+      "changePercent": -1.96
+    },
+    {
+      "symbol": "DVA",
+      "companyName": "DaVita",
+      "sector": "Healthcare",
+      "industry": "Health Care Services",
+      "marketCap": 25115058686,
+      "changePercent": -0.94
+    },
+    {
+      "symbol": "LH",
+      "companyName": "Labcorp",
+      "sector": "Healthcare",
+      "industry": "Health Care Services",
+      "marketCap": 8936646971,
+      "changePercent": -1.64
+    },
+    {
+      "symbol": "ALGN",
+      "companyName": "Align Technology",
+      "sector": "Healthcare",
+      "industry": "Health Care Supplies",
+      "marketCap": 20822257164,
+      "changePercent": 1.94
+    },
+    {
+      "symbol": "COO",
+      "companyName": "Cooper Companies (The)",
+      "sector": "Healthcare",
+      "industry": "Health Care Supplies",
+      "marketCap": 16679219311,
+      "changePercent": -3.33
+    },
+    {
+      "symbol": "WST",
+      "companyName": "West Pharmaceutical Services",
+      "sector": "Healthcare",
+      "industry": "Health Care Supplies",
+      "marketCap": 4200000000,
+      "changePercent": 3.37
+    },
+    {
+      "symbol": "SOLV",
+      "companyName": "Solventum",
+      "sector": "Healthcare",
+      "industry": "Health Care Technology",
+      "marketCap": 11559926634,
+      "changePercent": 1.49
+    },
+    {
+      "symbol": "VEEV",
+      "companyName": "Veeva Systems",
+      "sector": "Healthcare",
+      "industry": "Health Care Technology",
+      "marketCap": 9590272047,
+      "changePercent": 1.03
+    },
+    {
+      "symbol": "A",
+      "companyName": "Agilent Technologies",
+      "sector": "Healthcare",
+      "industry": "Life Sciences Tools & Services",
+      "marketCap": 40377709400,
+      "changePercent": -0.15
+    },
+    {
+      "symbol": "CRL",
+      "companyName": "Charles River Laboratories",
+      "sector": "Healthcare",
+      "industry": "Life Sciences Tools & Services",
+      "marketCap": 14700662494,
+      "changePercent": -3.38
+    },
+    {
+      "symbol": "DHR",
+      "companyName": "Danaher Corporation",
+      "sector": "Healthcare",
+      "industry": "Life Sciences Tools & Services",
+      "marketCap": 20773398634,
+      "changePercent": -3.35
+    },
+    {
+      "symbol": "IQV",
+      "companyName": "IQVIA",
+      "sector": "Healthcare",
+      "industry": "Life Sciences Tools & Services",
+      "marketCap": 9091472286,
+      "changePercent": 0.67
+    },
+    {
+      "symbol": "MTD",
+      "companyName": "Mettler Toledo",
+      "sector": "Healthcare",
+      "industry": "Life Sciences Tools & Services",
+      "marketCap": 12346014854,
+      "changePercent": 0.94
+    },
+    {
+      "symbol": "TECH",
+      "companyName": "Bio-Techne",
+      "sector": "Healthcare",
+      "industry": "Life Sciences Tools & Services",
+      "marketCap": 24805983223,
+      "changePercent": -0.11
+    },
+    {
+      "symbol": "TMO",
+      "companyName": "Thermo Fisher Scientific",
+      "sector": "Healthcare",
+      "industry": "Life Sciences Tools & Services",
+      "marketCap": 210000000000,
+      "changePercent": -0.43
+    },
+    {
+      "symbol": "WAT",
+      "companyName": "Waters Corporation",
+      "sector": "Healthcare",
+      "industry": "Life Sciences Tools & Services",
+      "marketCap": 8725304480,
+      "changePercent": 1.11
+    },
+    {
+      "symbol": "CNC",
+      "companyName": "Centene Corporation",
+      "sector": "Healthcare",
+      "industry": "Managed Health Care",
+      "marketCap": 31260325880,
+      "changePercent": 0.83
+    },
+    {
+      "symbol": "ELV",
+      "companyName": "Elevance Health",
+      "sector": "Healthcare",
+      "industry": "Managed Health Care",
+      "marketCap": 21905032796,
+      "changePercent": -0.19
+    },
+    {
+      "symbol": "HUM",
+      "companyName": "Humana",
+      "sector": "Healthcare",
+      "industry": "Managed Health Care",
+      "marketCap": 20037185668,
+      "changePercent": -0.16
+    },
+    {
+      "symbol": "UNH",
+      "companyName": "UnitedHealth Group",
+      "sector": "Healthcare",
+      "industry": "Managed Health Care",
+      "marketCap": 4201605889,
+      "changePercent": 2.82
+    },
+    {
+      "symbol": "BMY",
+      "companyName": "Bristol Myers Squibb",
+      "sector": "Healthcare",
+      "industry": "Pharmaceuticals",
+      "marketCap": 12716195649,
+      "changePercent": 1.26
+    },
+    {
+      "symbol": "JNJ",
+      "companyName": "Johnson & Johnson",
+      "sector": "Healthcare",
+      "industry": "Pharmaceuticals",
+      "marketCap": 390000000000,
+      "changePercent": 3.57
+    },
+    {
+      "symbol": "LLY",
+      "companyName": "Lilly (Eli)",
+      "sector": "Healthcare",
+      "industry": "Pharmaceuticals",
+      "marketCap": 820000000000,
+      "changePercent": 1.57
+    },
+    {
+      "symbol": "MRK",
+      "companyName": "Merck & Co.",
+      "sector": "Healthcare",
+      "industry": "Pharmaceuticals",
+      "marketCap": 210000000000,
+      "changePercent": -3.36
+    },
+    {
+      "symbol": "PFE",
+      "companyName": "Pfizer",
+      "sector": "Healthcare",
+      "industry": "Pharmaceuticals",
+      "marketCap": 145000000000,
+      "changePercent": 0.91
+    },
+    {
+      "symbol": "VTRS",
+      "companyName": "Viatris",
+      "sector": "Healthcare",
+      "industry": "Pharmaceuticals",
+      "marketCap": 6999306023,
+      "changePercent": -1.38
+    },
+    {
+      "symbol": "ZTS",
+      "companyName": "Zoetis",
+      "sector": "Healthcare",
+      "industry": "Pharmaceuticals",
+      "marketCap": 4200000000,
+      "changePercent": 1.74
+    },
+    {
+      "symbol": "AXON",
+      "companyName": "Axon Enterprise",
+      "sector": "Industrials",
+      "industry": "Aerospace & Defense",
+      "marketCap": 30361661305,
+      "changePercent": -3.01
+    },
+    {
+      "symbol": "BA",
+      "companyName": "Boeing",
+      "sector": "Industrials",
+      "industry": "Aerospace & Defense",
+      "marketCap": 26585679079,
+      "changePercent": 1.56
+    },
+    {
+      "symbol": "GD",
+      "companyName": "General Dynamics",
+      "sector": "Industrials",
+      "industry": "Aerospace & Defense",
+      "marketCap": 9060537647,
+      "changePercent": -1.48
+    },
+    {
+      "symbol": "GE",
+      "companyName": "GE Aerospace",
+      "sector": "Industrials",
+      "industry": "Aerospace & Defense",
+      "marketCap": 330000000000,
+      "changePercent": 0.69
+    },
+    {
+      "symbol": "HII",
+      "companyName": "Huntington Ingalls Industries",
+      "sector": "Industrials",
+      "industry": "Aerospace & Defense",
+      "marketCap": 9822937816,
+      "changePercent": -1.52
+    },
+    {
+      "symbol": "HONA",
+      "companyName": "Honeywell Aerospace",
+      "sector": "Industrials",
+      "industry": "Aerospace & Defense",
+      "marketCap": 12580105516,
+      "changePercent": 0.23
+    },
+    {
+      "symbol": "HWM",
+      "companyName": "Howmet Aerospace",
+      "sector": "Industrials",
+      "industry": "Aerospace & Defense",
+      "marketCap": 11261864599,
+      "changePercent": -3.08
+    },
+    {
+      "symbol": "LHX",
+      "companyName": "L3Harris",
+      "sector": "Industrials",
+      "industry": "Aerospace & Defense",
+      "marketCap": 11951034285,
+      "changePercent": 3.09
+    },
+    {
+      "symbol": "LMT",
+      "companyName": "Lockheed Martin",
+      "sector": "Industrials",
+      "industry": "Aerospace & Defense",
+      "marketCap": 11500524618,
+      "changePercent": 1.45
+    },
+    {
+      "symbol": "NOC",
+      "companyName": "Northrop Grumman",
+      "sector": "Industrials",
+      "industry": "Aerospace & Defense",
+      "marketCap": 4420857195,
+      "changePercent": 1.5
+    },
+    {
+      "symbol": "RTX",
+      "companyName": "RTX Corporation",
+      "sector": "Industrials",
+      "industry": "Aerospace & Defense",
+      "marketCap": 180000000000,
+      "changePercent": 0.63
+    },
+    {
+      "symbol": "TDG",
+      "companyName": "TransDigm Group",
+      "sector": "Industrials",
+      "industry": "Aerospace & Defense",
+      "marketCap": 7360748620,
+      "changePercent": 1.17
+    },
+    {
+      "symbol": "TXT",
+      "companyName": "Textron",
+      "sector": "Industrials",
+      "industry": "Aerospace & Defense",
+      "marketCap": 4662462635,
+      "changePercent": -3.25
+    },
+    {
+      "symbol": "DE",
+      "companyName": "Deere & Company",
+      "sector": "Industrials",
+      "industry": "Agricultural & Farm Machinery",
+      "marketCap": 17193034916,
+      "changePercent": -3.15
+    },
+    {
+      "symbol": "CHRW",
+      "companyName": "C.H. Robinson",
+      "sector": "Industrials",
+      "industry": "Air Freight & Logistics",
+      "marketCap": 15482718704,
+      "changePercent": 1.53
+    },
+    {
+      "symbol": "EXPD",
+      "companyName": "Expeditors International",
+      "sector": "Industrials",
+      "industry": "Air Freight & Logistics",
+      "marketCap": 16697431952,
+      "changePercent": -2.87
+    },
+    {
+      "symbol": "FDX",
+      "companyName": "FedEx",
+      "sector": "Industrials",
+      "industry": "Air Freight & Logistics",
+      "marketCap": 16948209282,
+      "changePercent": 0.72
+    },
+    {
+      "symbol": "UPS",
+      "companyName": "United Parcel Service",
+      "sector": "Industrials",
+      "industry": "Air Freight & Logistics",
+      "marketCap": 7222913732,
+      "changePercent": -1.56
+    },
+    {
+      "symbol": "ALLE",
+      "companyName": "Allegion",
+      "sector": "Industrials",
+      "industry": "Building Products",
+      "marketCap": 31621498290,
+      "changePercent": -2.98
+    },
+    {
+      "symbol": "AOS",
+      "companyName": "A. O. Smith",
+      "sector": "Industrials",
+      "industry": "Building Products",
+      "marketCap": 13340422073,
+      "changePercent": -2.98
+    },
+    {
+      "symbol": "BLDR",
+      "companyName": "Builders FirstSource",
+      "sector": "Industrials",
+      "industry": "Building Products",
+      "marketCap": 16469664759,
+      "changePercent": 1.33
+    },
+    {
+      "symbol": "CARR",
+      "companyName": "Carrier Global",
+      "sector": "Industrials",
+      "industry": "Building Products",
+      "marketCap": 21842815925,
+      "changePercent": -1.77
+    },
+    {
+      "symbol": "JCI",
+      "companyName": "Johnson Controls",
+      "sector": "Industrials",
+      "industry": "Building Products",
+      "marketCap": 11683758682,
+      "changePercent": 3.34
+    },
+    {
+      "symbol": "LII",
+      "companyName": "Lennox International",
+      "sector": "Industrials",
+      "industry": "Building Products",
+      "marketCap": 9218932907,
+      "changePercent": -0.76
+    },
+    {
+      "symbol": "MAS",
+      "companyName": "Masco",
+      "sector": "Industrials",
+      "industry": "Building Products",
+      "marketCap": 10619150983,
+      "changePercent": 3.1
+    },
+    {
+      "symbol": "TT",
+      "companyName": "Trane Technologies",
+      "sector": "Industrials",
+      "industry": "Building Products",
+      "marketCap": 4829664717,
+      "changePercent": -1.92
+    },
+    {
+      "symbol": "FDXF",
+      "companyName": "FedEx Freight",
+      "sector": "Industrials",
+      "industry": "Cargo Ground Transportation",
+      "marketCap": 14515036713,
+      "changePercent": -1.07
+    },
+    {
+      "symbol": "JBHT",
+      "companyName": "J.B. Hunt",
+      "sector": "Industrials",
+      "industry": "Cargo Ground Transportation",
+      "marketCap": 5127221931,
+      "changePercent": 0.98
+    },
+    {
+      "symbol": "ODFL",
+      "companyName": "Old Dominion",
+      "sector": "Industrials",
+      "industry": "Cargo Ground Transportation",
+      "marketCap": 5111545557,
+      "changePercent": -0.8
+    },
+    {
+      "symbol": "EME",
+      "companyName": "Emcor",
+      "sector": "Industrials",
+      "industry": "Construction & Engineering",
+      "marketCap": 14779553609,
+      "changePercent": 0.48
+    },
+    {
+      "symbol": "FIX",
+      "companyName": "Comfort Systems USA",
+      "sector": "Industrials",
+      "industry": "Construction & Engineering",
+      "marketCap": 18074209010,
+      "changePercent": -1.48
+    },
+    {
+      "symbol": "J",
+      "companyName": "Jacobs Solutions",
+      "sector": "Industrials",
+      "industry": "Construction & Engineering",
+      "marketCap": 14726693513,
+      "changePercent": 1.59
+    },
+    {
+      "symbol": "PWR",
+      "companyName": "Quanta Services",
+      "sector": "Industrials",
+      "industry": "Construction & Engineering",
+      "marketCap": 10747329249,
+      "changePercent": 1.75
+    },
+    {
+      "symbol": "CAT",
+      "companyName": "Caterpillar Inc.",
+      "sector": "Industrials",
+      "industry": "Construction Machinery & Heavy Transportation Equipment",
+      "marketCap": 170000000000,
+      "changePercent": -2.81
+    },
+    {
+      "symbol": "CMI",
+      "companyName": "Cummins",
+      "sector": "Industrials",
+      "industry": "Construction Machinery & Heavy Transportation Equipment",
+      "marketCap": 25075360467,
+      "changePercent": -3.38
+    },
+    {
+      "symbol": "PCAR",
+      "companyName": "Paccar",
+      "sector": "Industrials",
+      "industry": "Construction Machinery & Heavy Transportation Equipment",
+      "marketCap": 10234021064,
+      "changePercent": 0.3
+    },
+    {
+      "symbol": "WAB",
+      "companyName": "Wabtec",
+      "sector": "Industrials",
+      "industry": "Construction Machinery & Heavy Transportation Equipment",
+      "marketCap": 6566870702,
+      "changePercent": 0.73
+    },
+    {
+      "symbol": "BR",
+      "companyName": "Broadridge Financial Solutions",
+      "sector": "Industrials",
+      "industry": "Data Processing & Outsourced Services",
+      "marketCap": 21424269728,
+      "changePercent": 0.04
+    },
+    {
+      "symbol": "CPRT",
+      "companyName": "Copart",
+      "sector": "Industrials",
+      "industry": "Diversified Support Services",
+      "marketCap": 11001818504,
+      "changePercent": -0.53
+    },
+    {
+      "symbol": "CTAS",
+      "companyName": "Cintas",
+      "sector": "Industrials",
+      "industry": "Diversified Support Services",
+      "marketCap": 9788255487,
+      "changePercent": 2.88
+    },
+    {
+      "symbol": "LDOS",
+      "companyName": "Leidos",
+      "sector": "Industrials",
+      "industry": "Diversified Support Services",
+      "marketCap": 7625301590,
+      "changePercent": -3.16
+    },
+    {
+      "symbol": "AME",
+      "companyName": "Ametek",
+      "sector": "Industrials",
+      "industry": "Electrical Components & Equipment",
+      "marketCap": 14037841224,
+      "changePercent": -1.04
+    },
+    {
+      "symbol": "EMR",
+      "companyName": "Emerson Electric",
+      "sector": "Industrials",
+      "industry": "Electrical Components & Equipment",
+      "marketCap": 20284381246,
+      "changePercent": -0.17
+    },
+    {
+      "symbol": "ETN",
+      "companyName": "Eaton Corporation",
+      "sector": "Industrials",
+      "industry": "Electrical Components & Equipment",
+      "marketCap": 19354195364,
+      "changePercent": -1.14
+    },
+    {
+      "symbol": "GNRC",
+      "companyName": "Generac",
+      "sector": "Industrials",
+      "industry": "Electrical Components & Equipment",
+      "marketCap": 16492738031,
+      "changePercent": -0.69
+    },
+    {
+      "symbol": "ROK",
+      "companyName": "Rockwell Automation",
+      "sector": "Industrials",
+      "industry": "Electrical Components & Equipment",
+      "marketCap": 9351430854,
+      "changePercent": 0.37
+    },
+    {
+      "symbol": "VRT",
+      "companyName": "Vertiv",
+      "sector": "Industrials",
+      "industry": "Electrical Components & Equipment",
+      "marketCap": 4393080211,
+      "changePercent": 3.32
+    },
+    {
+      "symbol": "ROL",
+      "companyName": "Rollins, Inc.",
+      "sector": "Industrials",
+      "industry": "Environmental & Facilities Services",
+      "marketCap": 5097657674,
+      "changePercent": -0.33
+    },
+    {
+      "symbol": "RSG",
+      "companyName": "Republic Services",
+      "sector": "Industrials",
+      "industry": "Environmental & Facilities Services",
+      "marketCap": 5707686754,
+      "changePercent": -0.34
+    },
+    {
+      "symbol": "VLTO",
+      "companyName": "Veralto",
+      "sector": "Industrials",
+      "industry": "Environmental & Facilities Services",
+      "marketCap": 6926761442,
+      "changePercent": -1.42
+    },
+    {
+      "symbol": "WM",
+      "companyName": "Waste Management",
+      "sector": "Industrials",
+      "industry": "Environmental & Facilities Services",
+      "marketCap": 5556248017,
+      "changePercent": 3.24
+    },
+    {
+      "symbol": "GEV",
+      "companyName": "GE Vernova",
+      "sector": "Industrials",
+      "industry": "Heavy Electrical Equipment",
+      "marketCap": 8547483318,
+      "changePercent": -1.48
+    },
+    {
+      "symbol": "ADP",
+      "companyName": "Automatic Data Processing",
+      "sector": "Industrials",
+      "industry": "Human Resource & Employment Services",
+      "marketCap": 27820072009,
+      "changePercent": -1.58
+    },
+    {
+      "symbol": "PAYX",
+      "companyName": "Paychex",
+      "sector": "Industrials",
+      "industry": "Human Resource & Employment Services",
+      "marketCap": 9948524616,
+      "changePercent": 0.87
+    },
+    {
+      "symbol": "HON",
+      "companyName": "Honeywell Technologies",
+      "sector": "Industrials",
+      "industry": "Industrial Conglomerates",
+      "marketCap": 16887186797,
+      "changePercent": 0.45
+    },
+    {
+      "symbol": "MMM",
+      "companyName": "3M",
+      "sector": "Industrials",
+      "industry": "Industrial Conglomerates",
+      "marketCap": 27142521102,
+      "changePercent": 1.17
+    },
+    {
+      "symbol": "DOV",
+      "companyName": "Dover Corporation",
+      "sector": "Industrials",
+      "industry": "Industrial Machinery & Supplies & Components",
+      "marketCap": 9397256452,
+      "changePercent": -0.96
+    },
+    {
+      "symbol": "FTV",
+      "companyName": "Fortive",
+      "sector": "Industrials",
+      "industry": "Industrial Machinery & Supplies & Components",
+      "marketCap": 12901405307,
+      "changePercent": 0.63
+    },
+    {
+      "symbol": "GWW",
+      "companyName": "W. W. Grainger",
+      "sector": "Industrials",
+      "industry": "Industrial Machinery & Supplies & Components",
+      "marketCap": 4200000000,
+      "changePercent": 3.06
+    },
+    {
+      "symbol": "HUBB",
+      "companyName": "Hubbell Incorporated",
+      "sector": "Industrials",
+      "industry": "Industrial Machinery & Supplies & Components",
+      "marketCap": 14387002038,
+      "changePercent": 1.54
+    },
+    {
+      "symbol": "IEX",
+      "companyName": "IDEX Corporation",
+      "sector": "Industrials",
+      "industry": "Industrial Machinery & Supplies & Components",
+      "marketCap": 7839611254,
+      "changePercent": 1.11
+    },
+    {
+      "symbol": "IR",
+      "companyName": "Ingersoll Rand",
+      "sector": "Industrials",
+      "industry": "Industrial Machinery & Supplies & Components",
+      "marketCap": 7664071172,
+      "changePercent": 0.89
+    },
+    {
+      "symbol": "ITW",
+      "companyName": "Illinois Tool Works",
+      "sector": "Industrials",
+      "industry": "Industrial Machinery & Supplies & Components",
+      "marketCap": 14637410517,
+      "changePercent": 1.01
+    },
+    {
+      "symbol": "NDSN",
+      "companyName": "Nordson Corporation",
+      "sector": "Industrials",
+      "industry": "Industrial Machinery & Supplies & Components",
+      "marketCap": 12737766529,
+      "changePercent": 1.48
+    },
+    {
+      "symbol": "OTIS",
+      "companyName": "Otis Worldwide",
+      "sector": "Industrials",
+      "industry": "Industrial Machinery & Supplies & Components",
+      "marketCap": 10896597200,
+      "changePercent": -1.07
+    },
+    {
+      "symbol": "PH",
+      "companyName": "Parker Hannifin",
+      "sector": "Industrials",
+      "industry": "Industrial Machinery & Supplies & Components",
+      "marketCap": 5329552936,
+      "changePercent": -1.66
+    },
+    {
+      "symbol": "PNR",
+      "companyName": "Pentair",
+      "sector": "Industrials",
+      "industry": "Industrial Machinery & Supplies & Components",
+      "marketCap": 5031521202,
+      "changePercent": 0.12
+    },
+    {
+      "symbol": "SNA",
+      "companyName": "Snap-on",
+      "sector": "Industrials",
+      "industry": "Industrial Machinery & Supplies & Components",
+      "marketCap": 4657297353,
+      "changePercent": 1.22
+    },
+    {
+      "symbol": "SWK",
+      "companyName": "Stanley Black & Decker",
+      "sector": "Industrials",
+      "industry": "Industrial Machinery & Supplies & Components",
+      "marketCap": 4200000000,
+      "changePercent": -1.99
+    },
+    {
+      "symbol": "XYL",
+      "companyName": "Xylem Inc.",
+      "sector": "Industrials",
+      "industry": "Industrial Machinery & Supplies & Components",
+      "marketCap": 4200000000,
+      "changePercent": 0.2
+    },
+    {
+      "symbol": "DAL",
+      "companyName": "Delta Air Lines",
+      "sector": "Industrials",
+      "industry": "Passenger Airlines",
+      "marketCap": 20121742446,
+      "changePercent": 2.99
+    },
+    {
+      "symbol": "LUV",
+      "companyName": "Southwest Airlines",
+      "sector": "Industrials",
+      "industry": "Passenger Airlines",
+      "marketCap": 8434516569,
+      "changePercent": 0.81
+    },
+    {
+      "symbol": "UAL",
+      "companyName": "United Airlines Holdings",
+      "sector": "Industrials",
+      "industry": "Passenger Airlines",
+      "marketCap": 4200000000,
+      "changePercent": -1.46
+    },
+    {
+      "symbol": "UBER",
+      "companyName": "Uber",
+      "sector": "Industrials",
+      "industry": "Passenger Ground Transportation",
+      "marketCap": 5329034871,
+      "changePercent": 3.13
+    },
+    {
+      "symbol": "CSX",
+      "companyName": "CSX Corporation",
+      "sector": "Industrials",
+      "industry": "Rail Transportation",
+      "marketCap": 24302725667,
+      "changePercent": -0.98
+    },
+    {
+      "symbol": "NSC",
+      "companyName": "Norfolk Southern",
+      "sector": "Industrials",
+      "industry": "Rail Transportation",
+      "marketCap": 4936293388,
+      "changePercent": 0.35
+    },
+    {
+      "symbol": "UNP",
+      "companyName": "Union Pacific Corporation",
+      "sector": "Industrials",
+      "industry": "Rail Transportation",
+      "marketCap": 5118535650,
+      "changePercent": 2.96
+    },
+    {
+      "symbol": "EFX",
+      "companyName": "Equifax",
+      "sector": "Industrials",
+      "industry": "Research & Consulting Services",
+      "marketCap": 18218192722,
+      "changePercent": 2.89
+    },
+    {
+      "symbol": "VRSK",
+      "companyName": "Verisk Analytics",
+      "sector": "Industrials",
+      "industry": "Research & Consulting Services",
+      "marketCap": 7304736627,
+      "changePercent": -1.71
+    },
+    {
+      "symbol": "FAST",
+      "companyName": "Fastenal",
+      "sector": "Industrials",
+      "industry": "Trading Companies & Distributors",
+      "marketCap": 7517663123,
+      "changePercent": 0.12
+    },
+    {
+      "symbol": "URI",
+      "companyName": "United Rentals",
+      "sector": "Industrials",
+      "industry": "Trading Companies & Distributors",
+      "marketCap": 8133243377,
+      "changePercent": -0.05
+    },
+    {
+      "symbol": "DLR",
+      "companyName": "Digital Realty",
+      "sector": "Real Estate",
+      "industry": "Data Center REITs",
+      "marketCap": 11470270728,
+      "changePercent": 1.79
+    },
+    {
+      "symbol": "EQIX",
+      "companyName": "Equinix",
+      "sector": "Real Estate",
+      "industry": "Data Center REITs",
+      "marketCap": 11602304785,
+      "changePercent": 1.99
+    },
+    {
+      "symbol": "DOC",
+      "companyName": "Healthpeak Properties",
+      "sector": "Real Estate",
+      "industry": "Health Care REITs",
+      "marketCap": 6750144825,
+      "changePercent": -3.19
+    },
+    {
+      "symbol": "VTR",
+      "companyName": "Ventas",
+      "sector": "Real Estate",
+      "industry": "Health Care REITs",
+      "marketCap": 4200000000,
+      "changePercent": 3.45
+    },
+    {
+      "symbol": "WELL",
+      "companyName": "Welltower",
+      "sector": "Real Estate",
+      "industry": "Health Care REITs",
+      "marketCap": 5082000000,
+      "changePercent": -1.02
+    },
+    {
+      "symbol": "HST",
+      "companyName": "Host Hotels & Resorts",
+      "sector": "Real Estate",
+      "industry": "Hotel & Resort REITs",
+      "marketCap": 8228673275,
+      "changePercent": 0.46
+    },
+    {
+      "symbol": "VICI",
+      "companyName": "Vici Properties",
+      "sector": "Real Estate",
+      "industry": "Hotel & Resort REITs",
+      "marketCap": 5561500000,
+      "changePercent": -1.67
+    },
+    {
+      "symbol": "PLD",
+      "companyName": "Prologis",
+      "sector": "Real Estate",
+      "industry": "Industrial REITs",
+      "marketCap": 7371874105,
+      "changePercent": 1.14
+    },
+    {
+      "symbol": "AVB",
+      "companyName": "AvalonBay Communities",
+      "sector": "Real Estate",
+      "industry": "Multi-Family Residential REITs",
+      "marketCap": 6876410054,
+      "changePercent": -1.72
+    },
+    {
+      "symbol": "CPT",
+      "companyName": "Camden Property Trust",
+      "sector": "Real Estate",
+      "industry": "Multi-Family Residential REITs",
+      "marketCap": 6600627802,
+      "changePercent": -1.4
+    },
+    {
+      "symbol": "EQR",
+      "companyName": "Equity Residential",
+      "sector": "Real Estate",
+      "industry": "Multi-Family Residential REITs",
+      "marketCap": 5944639036,
+      "changePercent": -0.17
+    },
+    {
+      "symbol": "ESS",
+      "companyName": "Essex Property Trust",
+      "sector": "Real Estate",
+      "industry": "Multi-Family Residential REITs",
+      "marketCap": 12518509694,
+      "changePercent": -1.84
+    },
+    {
+      "symbol": "MAA",
+      "companyName": "Mid-America Apartment Communities",
+      "sector": "Real Estate",
+      "industry": "Multi-Family Residential REITs",
+      "marketCap": 4774527926,
+      "changePercent": -3.32
+    },
+    {
+      "symbol": "UDR",
+      "companyName": "UDR, Inc.",
+      "sector": "Real Estate",
+      "industry": "Multi-Family Residential REITs",
+      "marketCap": 6069000000,
+      "changePercent": 0.05
+    },
+    {
+      "symbol": "ARE",
+      "companyName": "Alexandria Real Estate Equities",
+      "sector": "Real Estate",
+      "industry": "Office REITs",
+      "marketCap": 14792471440,
+      "changePercent": -1.24
+    },
+    {
+      "symbol": "BXP",
+      "companyName": "BXP, Inc.",
+      "sector": "Real Estate",
+      "industry": "Office REITs",
+      "marketCap": 15481877713,
+      "changePercent": 0.85
+    },
+    {
+      "symbol": "IRM",
+      "companyName": "Iron Mountain",
+      "sector": "Real Estate",
+      "industry": "Other Specialized REITs",
+      "marketCap": 4200000000,
+      "changePercent": 1.5
+    },
+    {
+      "symbol": "CBRE",
+      "companyName": "CBRE Group",
+      "sector": "Real Estate",
+      "industry": "Real Estate Services",
+      "marketCap": 11850457349,
+      "changePercent": -1.56
+    },
+    {
+      "symbol": "CSGP",
+      "companyName": "CoStar Group",
+      "sector": "Real Estate",
+      "industry": "Real Estate Services",
+      "marketCap": 13194163195,
+      "changePercent": 0.63
+    },
+    {
+      "symbol": "FRT",
+      "companyName": "Federal Realty Investment Trust",
+      "sector": "Real Estate",
+      "industry": "Retail REITs",
+      "marketCap": 10795527758,
+      "changePercent": 1.99
+    },
+    {
+      "symbol": "KIM",
+      "companyName": "Kimco Realty",
+      "sector": "Real Estate",
+      "industry": "Retail REITs",
+      "marketCap": 5418997501,
+      "changePercent": 0.32
+    },
+    {
+      "symbol": "O",
+      "companyName": "Realty Income",
+      "sector": "Real Estate",
+      "industry": "Retail REITs",
+      "marketCap": 7095539797,
+      "changePercent": 3.17
+    },
+    {
+      "symbol": "REG",
+      "companyName": "Regency Centers",
+      "sector": "Real Estate",
+      "industry": "Retail REITs",
+      "marketCap": 4200000000,
+      "changePercent": 1.22
+    },
+    {
+      "symbol": "SPG",
+      "companyName": "Simon Property Group",
+      "sector": "Real Estate",
+      "industry": "Retail REITs",
+      "marketCap": 4200000000,
+      "changePercent": 1.51
+    },
+    {
+      "symbol": "EXR",
+      "companyName": "Extra Space Storage",
+      "sector": "Real Estate",
+      "industry": "Self-Storage REITs",
+      "marketCap": 6202043583,
+      "changePercent": -1.92
+    },
+    {
+      "symbol": "PSA",
+      "companyName": "Public Storage",
+      "sector": "Real Estate",
+      "industry": "Self-Storage REITs",
+      "marketCap": 4200000000,
+      "changePercent": 2.95
+    },
+    {
+      "symbol": "INVH",
+      "companyName": "Invitation Homes",
+      "sector": "Real Estate",
+      "industry": "Single-Family Residential REITs",
+      "marketCap": 4566084623,
+      "changePercent": -1.96
+    },
+    {
+      "symbol": "AMT",
+      "companyName": "American Tower",
+      "sector": "Real Estate",
+      "industry": "Telecom Tower REITs",
+      "marketCap": 18507465919,
+      "changePercent": -0.05
+    },
+    {
+      "symbol": "CCI",
+      "companyName": "Crown Castle",
+      "sector": "Real Estate",
+      "industry": "Telecom Tower REITs",
+      "marketCap": 14857079286,
+      "changePercent": 0.69
+    },
+    {
+      "symbol": "SBAC",
+      "companyName": "SBA Communications",
+      "sector": "Real Estate",
+      "industry": "Telecom Tower REITs",
+      "marketCap": 6797000000,
+      "changePercent": 0.6
+    },
+    {
+      "symbol": "WY",
+      "companyName": "Weyerhaeuser",
+      "sector": "Real Estate",
+      "industry": "Timber REITs",
+      "marketCap": 6587000000,
+      "changePercent": 0.76
+    },
+    {
+      "symbol": "ADBE",
+      "companyName": "Adobe Inc.",
+      "sector": "Technology",
+      "industry": "Application Software",
+      "marketCap": 185000000000,
+      "changePercent": 0.55
+    },
+    {
+      "symbol": "ADSK",
+      "companyName": "Autodesk",
+      "sector": "Technology",
+      "industry": "Application Software",
+      "marketCap": 28893890150,
+      "changePercent": -0.92
+    },
+    {
+      "symbol": "APP",
+      "companyName": "AppLovin",
+      "sector": "Technology",
+      "industry": "Application Software",
+      "marketCap": 17862752268,
+      "changePercent": 1.19
+    },
+    {
+      "symbol": "CDNS",
+      "companyName": "Cadence Design Systems",
+      "sector": "Technology",
+      "industry": "Application Software",
+      "marketCap": 38642237042,
+      "changePercent": -1.12
+    },
+    {
+      "symbol": "CRM",
+      "companyName": "Salesforce",
+      "sector": "Technology",
+      "industry": "Application Software",
+      "marketCap": 260000000000,
+      "changePercent": 0.78
+    },
+    {
+      "symbol": "DDOG",
+      "companyName": "Datadog",
+      "sector": "Technology",
+      "industry": "Application Software",
+      "marketCap": 14740743586,
+      "changePercent": 0.17
+    },
+    {
+      "symbol": "FICO",
+      "companyName": "Fair Isaac",
+      "sector": "Technology",
+      "industry": "Application Software",
+      "marketCap": 13914925446,
+      "changePercent": -0.43
+    },
+    {
+      "symbol": "INTU",
+      "companyName": "Intuit",
+      "sector": "Technology",
+      "industry": "Application Software",
+      "marketCap": 210000000000,
+      "changePercent": 1.01
+    },
+    {
+      "symbol": "ORCL",
+      "companyName": "Oracle Corporation",
+      "sector": "Technology",
+      "industry": "Application Software",
+      "marketCap": 640000000000,
+      "changePercent": -0.31
+    },
+    {
+      "symbol": "PLTR",
+      "companyName": "Palantir Technologies",
+      "sector": "Technology",
+      "industry": "Application Software",
+      "marketCap": 260000000000,
+      "changePercent": -0.65
+    },
+    {
+      "symbol": "PTC",
+      "companyName": "PTC Inc.",
+      "sector": "Technology",
+      "industry": "Application Software",
+      "marketCap": 11760442097,
+      "changePercent": -0.41
+    },
+    {
+      "symbol": "SNPS",
+      "companyName": "Synopsys",
+      "sector": "Technology",
+      "industry": "Application Software",
+      "marketCap": 9670247454,
+      "changePercent": 0.46
+    },
+    {
+      "symbol": "TRMB",
+      "companyName": "Trimble Inc.",
+      "sector": "Technology",
+      "industry": "Application Software",
+      "marketCap": 8244745639,
+      "changePercent": -1.2
+    },
+    {
+      "symbol": "TYL",
+      "companyName": "Tyler Technologies",
+      "sector": "Technology",
+      "industry": "Application Software",
+      "marketCap": 6841801075,
+      "changePercent": 0.39
+    },
+    {
+      "symbol": "WDAY",
+      "companyName": "Workday, Inc.",
+      "sector": "Technology",
+      "industry": "Application Software",
+      "marketCap": 4200000000,
+      "changePercent": 1.04
+    },
+    {
+      "symbol": "ANET",
+      "companyName": "Arista Networks",
+      "sector": "Technology",
+      "industry": "Communications Equipment",
+      "marketCap": 23841386543,
+      "changePercent": 1.56
+    },
+    {
+      "symbol": "CIEN",
+      "companyName": "Ciena",
+      "sector": "Technology",
+      "industry": "Communications Equipment",
+      "marketCap": 14758196729,
+      "changePercent": 1.77
+    },
+    {
+      "symbol": "CSCO",
+      "companyName": "Cisco",
+      "sector": "Technology",
+      "industry": "Communications Equipment",
+      "marketCap": 260000000000,
+      "changePercent": -0.7
+    },
+    {
+      "symbol": "FFIV",
+      "companyName": "F5, Inc.",
+      "sector": "Technology",
+      "industry": "Communications Equipment",
+      "marketCap": 17437511856,
+      "changePercent": 0.77
+    },
+    {
+      "symbol": "LITE",
+      "companyName": "Lumentum",
+      "sector": "Technology",
+      "industry": "Communications Equipment",
+      "marketCap": 8430591276,
+      "changePercent": -1.73
+    },
+    {
+      "symbol": "MSI",
+      "companyName": "Motorola Solutions",
+      "sector": "Technology",
+      "industry": "Communications Equipment",
+      "marketCap": 15907513588,
+      "changePercent": 0.19
+    },
+    {
+      "symbol": "APH",
+      "companyName": "Amphenol",
+      "sector": "Technology",
+      "industry": "Electronic Components",
+      "marketCap": 28774829781,
+      "changePercent": 1.52
+    },
+    {
+      "symbol": "COHR",
+      "companyName": "Coherent Corp.",
+      "sector": "Technology",
+      "industry": "Electronic Components",
+      "marketCap": 15349132520,
+      "changePercent": -3.18
+    },
+    {
+      "symbol": "GLW",
+      "companyName": "Corning Inc.",
+      "sector": "Technology",
+      "industry": "Electronic Components",
+      "marketCap": 25158483448,
+      "changePercent": 3.38
+    },
+    {
+      "symbol": "KEYS",
+      "companyName": "Keysight Technologies",
+      "sector": "Technology",
+      "industry": "Electronic Equipment & Instruments",
+      "marketCap": 9486233090,
+      "changePercent": -0.62
+    },
+    {
+      "symbol": "ROP",
+      "companyName": "Roper Technologies",
+      "sector": "Technology",
+      "industry": "Electronic Equipment & Instruments",
+      "marketCap": 15740787507,
+      "changePercent": -1.51
+    },
+    {
+      "symbol": "TDY",
+      "companyName": "Teledyne Technologies",
+      "sector": "Technology",
+      "industry": "Electronic Equipment & Instruments",
+      "marketCap": 6324084897,
+      "changePercent": -1.42
+    },
+    {
+      "symbol": "ZBRA",
+      "companyName": "Zebra Technologies",
+      "sector": "Technology",
+      "industry": "Electronic Equipment & Instruments",
+      "marketCap": 5641796299,
+      "changePercent": -1.27
+    },
+    {
+      "symbol": "FLEX",
+      "companyName": "Flex Ltd.",
+      "sector": "Technology",
+      "industry": "Electronic Manufacturing Services",
+      "marketCap": 20954573821,
+      "changePercent": -0.98
+    },
+    {
+      "symbol": "JBL",
+      "companyName": "Jabil",
+      "sector": "Technology",
+      "industry": "Electronic Manufacturing Services",
+      "marketCap": 16584497113,
+      "changePercent": -3.07
+    },
+    {
+      "symbol": "TEL",
+      "companyName": "TE Connectivity",
+      "sector": "Technology",
+      "industry": "Electronic Manufacturing Services",
+      "marketCap": 9250512933,
+      "changePercent": -0.18
+    },
+    {
+      "symbol": "ACN",
+      "companyName": "Accenture",
+      "sector": "Technology",
+      "industry": "IT Consulting & Other Services",
+      "marketCap": 30415212787,
+      "changePercent": -1.67
+    },
+    {
+      "symbol": "CTSH",
+      "companyName": "Cognizant",
+      "sector": "Technology",
+      "industry": "IT Consulting & Other Services",
+      "marketCap": 25203962068,
+      "changePercent": -1.66
+    },
+    {
+      "symbol": "IBM",
+      "companyName": "IBM",
+      "sector": "Technology",
+      "industry": "IT Consulting & Other Services",
+      "marketCap": 260000000000,
+      "changePercent": 1.79
+    },
+    {
+      "symbol": "IT",
+      "companyName": "Gartner",
+      "sector": "Technology",
+      "industry": "IT Consulting & Other Services",
+      "marketCap": 21030627851,
+      "changePercent": -3.21
+    },
+    {
+      "symbol": "AKAM",
+      "companyName": "Akamai Technologies",
+      "sector": "Technology",
+      "industry": "Internet Services & Infrastructure",
+      "marketCap": 41036867543,
+      "changePercent": 0.61
+    },
+    {
+      "symbol": "GDDY",
+      "companyName": "GoDaddy",
+      "sector": "Technology",
+      "industry": "Internet Services & Infrastructure",
+      "marketCap": 11460808729,
+      "changePercent": -2.83
+    },
+    {
+      "symbol": "VRSN",
+      "companyName": "Verisign",
+      "sector": "Technology",
+      "industry": "Internet Services & Infrastructure",
+      "marketCap": 7467546883,
+      "changePercent": 0.54
+    },
+    {
+      "symbol": "AMAT",
+      "companyName": "Applied Materials",
+      "sector": "Technology",
+      "industry": "Semiconductor Materials & Equipment",
+      "marketCap": 180000000000,
+      "changePercent": 1.94
+    },
+    {
+      "symbol": "KLAC",
+      "companyName": "KLA Corporation",
+      "sector": "Technology",
+      "industry": "Semiconductor Materials & Equipment",
+      "marketCap": 12312104554,
+      "changePercent": -3.18
+    },
+    {
+      "symbol": "LRCX",
+      "companyName": "Lam Research",
+      "sector": "Technology",
+      "industry": "Semiconductor Materials & Equipment",
+      "marketCap": 19049080357,
+      "changePercent": -0.37
+    },
+    {
+      "symbol": "Q",
+      "companyName": "Qnity Electronics",
+      "sector": "Technology",
+      "industry": "Semiconductor Materials & Equipment",
+      "marketCap": 15826209429,
+      "changePercent": 1.09
+    },
+    {
+      "symbol": "TER",
+      "companyName": "Teradyne",
+      "sector": "Technology",
+      "industry": "Semiconductor Materials & Equipment",
+      "marketCap": 7708067847,
+      "changePercent": 0.1
+    },
+    {
+      "symbol": "ADI",
+      "companyName": "Analog Devices",
+      "sector": "Technology",
+      "industry": "Semiconductors",
+      "marketCap": 42743186702,
+      "changePercent": 0.37
+    },
+    {
+      "symbol": "AMD",
+      "companyName": "Advanced Micro Devices",
+      "sector": "Technology",
+      "industry": "Semiconductors",
+      "marketCap": 280000000000,
+      "changePercent": -4.26
+    },
+    {
+      "symbol": "AVGO",
+      "companyName": "Broadcom",
+      "sector": "Technology",
+      "industry": "Semiconductors",
+      "marketCap": 1650000000000,
+      "changePercent": -2.41
+    },
+    {
+      "symbol": "FSLR",
+      "companyName": "First Solar",
+      "sector": "Technology",
+      "industry": "Semiconductors",
+      "marketCap": 25293915022,
+      "changePercent": -1.92
+    },
+    {
+      "symbol": "INTC",
+      "companyName": "Intel",
+      "sector": "Technology",
+      "industry": "Semiconductors",
+      "marketCap": 95000000000,
+      "changePercent": -3.2
+    },
+    {
+      "symbol": "MCHP",
+      "companyName": "Microchip Technology",
+      "sector": "Technology",
+      "industry": "Semiconductors",
+      "marketCap": 12353471369,
+      "changePercent": -0.9
+    },
+    {
+      "symbol": "MPWR",
+      "companyName": "Monolithic Power Systems",
+      "sector": "Technology",
+      "industry": "Semiconductors",
+      "marketCap": 17239406982,
+      "changePercent": -0.54
+    },
+    {
+      "symbol": "MRVL",
+      "companyName": "Marvell Technology",
+      "sector": "Technology",
+      "industry": "Semiconductors",
+      "marketCap": 19950640147,
+      "changePercent": 1.86
+    },
+    {
+      "symbol": "MU",
+      "companyName": "Micron Technology",
+      "sector": "Technology",
+      "industry": "Semiconductors",
+      "marketCap": 150000000000,
+      "changePercent": -5.49
+    },
+    {
+      "symbol": "NVDA",
+      "companyName": "Nvidia",
+      "sector": "Technology",
+      "industry": "Semiconductors",
+      "marketCap": 4100000000000,
+      "changePercent": -1.39
+    },
+    {
+      "symbol": "NXPI",
+      "companyName": "NXP Semiconductors",
+      "sector": "Technology",
+      "industry": "Semiconductors",
+      "marketCap": 7920102334,
+      "changePercent": -2.84
+    },
+    {
+      "symbol": "ON",
+      "companyName": "ON Semiconductor",
+      "sector": "Technology",
+      "industry": "Semiconductors",
+      "marketCap": 17249095534,
+      "changePercent": 3.46
+    },
+    {
+      "symbol": "QCOM",
+      "companyName": "Qualcomm",
+      "sector": "Technology",
+      "industry": "Semiconductors",
+      "marketCap": 190000000000,
+      "changePercent": 0.37
+    },
+    {
+      "symbol": "SWKS",
+      "companyName": "Skyworks Solutions",
+      "sector": "Technology",
+      "industry": "Semiconductors",
+      "marketCap": 8346269346,
+      "changePercent": -3.3
+    },
+    {
+      "symbol": "TXN",
+      "companyName": "Texas Instruments",
+      "sector": "Technology",
+      "industry": "Semiconductors",
+      "marketCap": 180000000000,
+      "changePercent": 1.21
+    },
+    {
+      "symbol": "CRWD",
+      "companyName": "CrowdStrike",
+      "sector": "Technology",
+      "industry": "Systems Software",
+      "marketCap": 23057734504,
+      "changePercent": 3.22
+    },
+    {
+      "symbol": "FTNT",
+      "companyName": "Fortinet",
+      "sector": "Technology",
+      "industry": "Systems Software",
+      "marketCap": 29689717980,
+      "changePercent": 0.94
+    },
+    {
+      "symbol": "GEN",
+      "companyName": "Gen Digital",
+      "sector": "Technology",
+      "industry": "Systems Software",
+      "marketCap": 24918313795,
+      "changePercent": -1.84
+    },
+    {
+      "symbol": "MSFT",
+      "companyName": "Microsoft",
+      "sector": "Technology",
+      "industry": "Systems Software",
+      "marketCap": 3850000000000,
+      "changePercent": 1.62
+    },
+    {
+      "symbol": "NOW",
+      "companyName": "ServiceNow",
+      "sector": "Technology",
+      "industry": "Systems Software",
+      "marketCap": 230000000000,
+      "changePercent": 0.55
+    },
+    {
+      "symbol": "PANW",
+      "companyName": "Palo Alto Networks",
+      "sector": "Technology",
+      "industry": "Systems Software",
+      "marketCap": 13593117391,
+      "changePercent": -0.42
+    },
+    {
+      "symbol": "CDW",
+      "companyName": "CDW Corporation",
+      "sector": "Technology",
+      "industry": "Technology Distributors",
+      "marketCap": 16363356845,
+      "changePercent": 0.69
+    },
+    {
+      "symbol": "AAPL",
+      "companyName": "Apple Inc.",
+      "sector": "Technology",
+      "industry": "Technology Hardware, Storage & Peripherals",
+      "marketCap": 3600000000000,
+      "changePercent": 4.84
+    },
+    {
+      "symbol": "DELL",
+      "companyName": "Dell Technologies",
+      "sector": "Technology",
+      "industry": "Technology Hardware, Storage & Peripherals",
+      "marketCap": 21037833376,
+      "changePercent": 0.73
+    },
+    {
+      "symbol": "HPE",
+      "companyName": "Hewlett Packard Enterprise",
+      "sector": "Technology",
+      "industry": "Technology Hardware, Storage & Peripherals",
+      "marketCap": 18950610077,
+      "changePercent": -3.36
+    },
+    {
+      "symbol": "HPQ",
+      "companyName": "HP Inc.",
+      "sector": "Technology",
+      "industry": "Technology Hardware, Storage & Peripherals",
+      "marketCap": 19260161895,
+      "changePercent": 1.65
+    },
+    {
+      "symbol": "NTAP",
+      "companyName": "NetApp",
+      "sector": "Technology",
+      "industry": "Technology Hardware, Storage & Peripherals",
+      "marketCap": 10540331636,
+      "changePercent": 1.38
+    },
+    {
+      "symbol": "SMCI",
+      "companyName": "Supermicro",
+      "sector": "Technology",
+      "industry": "Technology Hardware, Storage & Peripherals",
+      "marketCap": 11896656083,
+      "changePercent": 1.15
+    },
+    {
+      "symbol": "SNDK",
+      "companyName": "Sandisk",
+      "sector": "Technology",
+      "industry": "Technology Hardware, Storage & Peripherals",
+      "marketCap": 6137744156,
+      "changePercent": 0.91
+    },
+    {
+      "symbol": "STX",
+      "companyName": "Seagate Technology",
+      "sector": "Technology",
+      "industry": "Technology Hardware, Storage & Peripherals",
+      "marketCap": 9939353224,
+      "changePercent": 0.61
+    },
+    {
+      "symbol": "WDC",
+      "companyName": "Western Digital",
+      "sector": "Technology",
+      "industry": "Technology Hardware, Storage & Peripherals",
+      "marketCap": 9716212244,
+      "changePercent": 0.11
+    },
+    {
+      "symbol": "AEP",
+      "companyName": "American Electric Power",
+      "sector": "Utilities",
+      "industry": "Electric Utilities",
+      "marketCap": 10602710914,
+      "changePercent": -0.47
+    },
+    {
+      "symbol": "CEG",
+      "companyName": "Constellation Energy",
+      "sector": "Utilities",
+      "industry": "Electric Utilities",
+      "marketCap": 15090158138,
+      "changePercent": 1.79
+    },
+    {
+      "symbol": "DUK",
+      "companyName": "Duke Energy",
+      "sector": "Utilities",
+      "industry": "Electric Utilities",
+      "marketCap": 12145413076,
+      "changePercent": 0.94
+    },
+    {
+      "symbol": "EIX",
+      "companyName": "Edison International",
+      "sector": "Utilities",
+      "industry": "Electric Utilities",
+      "marketCap": 4438420344,
+      "changePercent": -0.03
+    },
+    {
+      "symbol": "ES",
+      "companyName": "Eversource Energy",
+      "sector": "Utilities",
+      "industry": "Electric Utilities",
+      "marketCap": 5606553086,
+      "changePercent": 3.14
+    },
+    {
+      "symbol": "ETR",
+      "companyName": "Entergy",
+      "sector": "Utilities",
+      "industry": "Electric Utilities",
+      "marketCap": 10915500586,
+      "changePercent": 0.76
+    },
+    {
+      "symbol": "EVRG",
+      "companyName": "Evergy",
+      "sector": "Utilities",
+      "industry": "Electric Utilities",
+      "marketCap": 11194008280,
+      "changePercent": -1.19
+    },
+    {
+      "symbol": "EXC",
+      "companyName": "Exelon",
+      "sector": "Utilities",
+      "industry": "Electric Utilities",
+      "marketCap": 9935792878,
+      "changePercent": -0.55
+    },
+    {
+      "symbol": "FE",
+      "companyName": "FirstEnergy",
+      "sector": "Utilities",
+      "industry": "Electric Utilities",
+      "marketCap": 9498998526,
+      "changePercent": 0.91
+    },
+    {
+      "symbol": "LNT",
+      "companyName": "Alliant Energy",
+      "sector": "Utilities",
+      "industry": "Electric Utilities",
+      "marketCap": 20278843261,
+      "changePercent": 3.4
+    },
+    {
+      "symbol": "PEG",
+      "companyName": "Public Service Enterprise Group",
+      "sector": "Utilities",
+      "industry": "Electric Utilities",
+      "marketCap": 4781987621,
+      "changePercent": 0.77
+    },
+    {
+      "symbol": "PPL",
+      "companyName": "PPL Corporation",
+      "sector": "Utilities",
+      "industry": "Electric Utilities",
+      "marketCap": 4773306979,
+      "changePercent": 2.99
+    },
+    {
+      "symbol": "SO",
+      "companyName": "Southern Company",
+      "sector": "Utilities",
+      "industry": "Electric Utilities",
+      "marketCap": 4854500000,
+      "changePercent": -0.68
+    },
+    {
+      "symbol": "VST",
+      "companyName": "Vistra Corp.",
+      "sector": "Utilities",
+      "industry": "Electric Utilities",
+      "marketCap": 6692000000,
+      "changePercent": 3.11
+    },
+    {
+      "symbol": "WEC",
+      "companyName": "WEC Energy Group",
+      "sector": "Utilities",
+      "industry": "Electric Utilities",
+      "marketCap": 4200000000,
+      "changePercent": -2.92
+    },
+    {
+      "symbol": "ATO",
+      "companyName": "Atmos Energy",
+      "sector": "Utilities",
+      "industry": "Gas Utilities",
+      "marketCap": 19207836391,
+      "changePercent": -1.74
+    },
+    {
+      "symbol": "AES",
+      "companyName": "AES Corporation",
+      "sector": "Utilities",
+      "industry": "Independent Power Producers & Energy Traders",
+      "marketCap": 14638620620,
+      "changePercent": 3.28
+    },
+    {
+      "symbol": "NRG",
+      "companyName": "NRG Energy",
+      "sector": "Utilities",
+      "industry": "Independent Power Producers & Energy Traders",
+      "marketCap": 4200000000,
+      "changePercent": 1.07
+    },
+    {
+      "symbol": "AEE",
+      "companyName": "Ameren",
+      "sector": "Utilities",
+      "industry": "Multi-Utilities",
+      "marketCap": 19186794370,
+      "changePercent": 3.36
+    },
+    {
+      "symbol": "CMS",
+      "companyName": "CMS Energy",
+      "sector": "Utilities",
+      "industry": "Multi-Utilities",
+      "marketCap": 14109328547,
+      "changePercent": 3.09
+    },
+    {
+      "symbol": "CNP",
+      "companyName": "CenterPoint Energy",
+      "sector": "Utilities",
+      "industry": "Multi-Utilities",
+      "marketCap": 16134560781,
+      "changePercent": 1.78
+    },
+    {
+      "symbol": "D",
+      "companyName": "Dominion Energy",
+      "sector": "Utilities",
+      "industry": "Multi-Utilities",
+      "marketCap": 9855585769,
+      "changePercent": -0.32
+    },
+    {
+      "symbol": "DTE",
+      "companyName": "DTE Energy",
+      "sector": "Utilities",
+      "industry": "Multi-Utilities",
+      "marketCap": 5599309332,
+      "changePercent": -2.94
+    },
+    {
+      "symbol": "ED",
+      "companyName": "Consolidated Edison",
+      "sector": "Utilities",
+      "industry": "Multi-Utilities",
+      "marketCap": 15519932386,
+      "changePercent": -3.44
+    },
+    {
+      "symbol": "NEE",
+      "companyName": "NextEra Energy",
+      "sector": "Utilities",
+      "industry": "Multi-Utilities",
+      "marketCap": 6886804157,
+      "changePercent": 1.04
+    },
+    {
+      "symbol": "NI",
+      "companyName": "NiSource",
+      "sector": "Utilities",
+      "industry": "Multi-Utilities",
+      "marketCap": 4200000000,
+      "changePercent": -1.32
+    },
+    {
+      "symbol": "PCG",
+      "companyName": "PG&E Corporation",
+      "sector": "Utilities",
+      "industry": "Multi-Utilities",
+      "marketCap": 6138117890,
+      "changePercent": 3.01
+    },
+    {
+      "symbol": "PNW",
+      "companyName": "Pinnacle West Capital",
+      "sector": "Utilities",
+      "industry": "Multi-Utilities",
+      "marketCap": 6604161098,
+      "changePercent": 0.93
+    },
+    {
+      "symbol": "SRE",
+      "companyName": "Sempra",
+      "sector": "Utilities",
+      "industry": "Multi-Utilities",
+      "marketCap": 4200000000,
+      "changePercent": 0.67
+    },
+    {
+      "symbol": "XEL",
+      "companyName": "Xcel Energy",
+      "sector": "Utilities",
+      "industry": "Multi-Utilities",
+      "marketCap": 4200000000,
+      "changePercent": -0.02
+    },
+    {
+      "symbol": "AWK",
+      "companyName": "American Water Works",
+      "sector": "Utilities",
+      "industry": "Water Utilities",
+      "marketCap": 8219882937,
+      "changePercent": -3.43
+    }
+  ]
+}

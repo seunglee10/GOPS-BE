@@ -2,6 +2,7 @@ import sys
 import types
 import unittest
 import os
+import json
 from datetime import datetime, timedelta
 from unittest import mock
 from pathlib import Path
@@ -77,6 +78,8 @@ sys.modules.setdefault("redis", types.SimpleNamespace(from_url=lambda *args, **k
 from app.market_data.query.service import MarketDataQueryService  # noqa: E402
 from app.market_data.backfill.service import BackfillService  # noqa: E402
 from app.market_data.fill.service import OnDemandFillService  # noqa: E402
+from app.market_data.fundamentals.service import FundamentalsAdapter, FundamentalsRecord, StoreFundamentalsAdapter, records_from_payload  # noqa: E402
+from app.market_data.heatmap import service as heatmap_service  # noqa: E402
 from app.market_data.monitor import routes as monitor_routes  # noqa: E402
 from app.market_data.query import routes as query_routes  # noqa: E402
 from app.contracts.chart import AgentChatMessage, AgentChatRequest  # noqa: E402
@@ -379,6 +382,83 @@ class FakeWatchlistProvider:
         return {"symbol": symbol, "name": names.get(symbol, symbol), "market": "NASDAQ"}
 
 
+class FakeHeatmapClickHouseProvider:
+    def __init__(self, rows=None):
+        self.rows = rows if rows is not None else [
+            {
+                "symbol": "AAPL",
+                "lastPrice": 200,
+                "changePercent": 1.25,
+                "volume": 1000,
+                "sessionDollarVolume": 200000,
+                "sourceUpdatedAt": "2026-06-25T15:31:00.000Z",
+                "rankReason": "clickhouse_1m_session_aggregate",
+            },
+            {
+                "symbol": "MSFT",
+                "lastPrice": 300,
+                "changePercent": -2.5,
+                "sourceUpdatedAt": "2026-06-25T15:31:00.000Z",
+                "rankReason": "clickhouse_1m_session_aggregate",
+            },
+        ]
+        self.calls = []
+
+    def rank_symbols(self, symbols, kind="dollar-volume", limit=10):
+        self.calls.append({"symbols": list(symbols), "kind": kind, "limit": limit})
+        allowed = set(symbols)
+        return [row for row in self.rows if row.get("symbol") in allowed][:limit]
+
+    def table(self, name):
+        return f"market_data.{name}"
+
+    def query_json_each_row(self, query, params):
+        self.calls.append({"query": query, "params": dict(params)})
+        if "sec_company_tickers" in query:
+            return [
+                {"symbol": "MSFT", "cik": "0000789019", "companyName": "Microsoft Corporation"},
+            ]
+        if "sec_financial_facts" in query:
+            return [
+                {
+                    "symbol": "MSFT",
+                    "cik": "0000789019",
+                    "sharesOutstanding": 7500,
+                    "fiscalPeriod": "Q1",
+                    "periodEndDate": "2026-03-31",
+                    "filedAt": "2026-04-25",
+                },
+            ]
+        return []
+
+
+class FakeHeatmapRedisProvider:
+    def __init__(self, prices=None):
+        self.redis = FakeWatchlistRedis()
+        self.prices = prices or {}
+
+    def latest_price(self, symbol):
+        return self.prices.get(symbol) or {}
+
+
+class FakeHeatmapProvider:
+    def __init__(self, rows=None, redis_prices=None):
+        self.redis_provider = FakeHeatmapRedisProvider(redis_prices)
+        self.clickhouse_provider = FakeHeatmapClickHouseProvider(rows)
+
+    def symbol_detail(self, symbol):
+        return {"symbol": symbol, "name": symbol, "market": "NASDAQ"}
+
+
+class FakeFundamentalsAdapter(FundamentalsAdapter):
+    def __init__(self, records):
+        self.records = records
+
+    def latest_for_symbols(self, symbols):
+        requested = set(symbols)
+        return {symbol: record for symbol, record in self.records.items() if symbol in requested}
+
+
 class EmptyFakeProvider(FakeProvider):
     def candle_snapshot(self, symbol, interval, limit, before=None, from_time=None, to_time=None):
         return {
@@ -474,6 +554,20 @@ class RecordingOnDemandFillService(OnDemandFillService):
         self.calls.append(("alpaca", symbol, interval, list(ranges)))
         trace["sources"]["alpaca"].update({"checked": True, "hit": self.alpaca_result, "rowCount": 30 if self.alpaca_result else 0})
         return self.alpaca_result
+
+
+class DeadlineAfterAlpacaFillService(RecordingOnDemandFillService):
+    def __init__(self, *, provider=None):
+        super().__init__(provider=provider, s3_result=False, alpaca_result=True)
+        self.deadline_exceeded = False
+
+    def _fill_from_alpaca(self, symbol, interval, ranges, trace, started):
+        result = super()._fill_from_alpaca(symbol, interval, ranges, trace, started)
+        self.deadline_exceeded = True
+        return result
+
+    def _deadline_exceeded(self, started):
+        return self.deadline_exceeded
 
 
 class RecordingBackfillStore:
@@ -818,6 +912,34 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertFalse(result["fill"]["sources"]["s3"]["hit"])
         self.assertTrue(result["fill"]["sources"]["alpaca"]["hit"])
 
+    def test_on_demand_fill_returns_refreshed_candles_when_alpaca_finishes_after_deadline(self):
+        refreshed = {
+            "symbol": "CSCO",
+            "interval": "1m",
+            "candles": make_fill_candles(30),
+            "_sourceTrace": {
+                "redis": {"checked": True, "hit": False, "rowCount": 0},
+                "clickhouse": {"checked": True, "hit": True, "rowCount": 30},
+            },
+        }
+        provider = ReloadingFillProvider(refreshed)
+        service = DeadlineAfterAlpacaFillService(provider=provider)
+
+        result = service.fill_if_needed(
+            symbol="CSCO",
+            interval="1m",
+            limit=30,
+            before="2026-06-25T14:00:00.000Z",
+            from_time=None,
+            to_time=None,
+            payload={"symbol": "CSCO", "interval": "1m", "candles": []},
+        )
+
+        self.assertEqual(result["fill"]["status"], "filled")
+        self.assertEqual(len(result["candles"]), 30)
+        self.assertEqual([call[0] for call in service.calls], ["s3", "alpaca"])
+        self.assertEqual(len(provider.calls), 1)
+
     def test_configured_symbols_uses_alpaca_symbols_watchlist_seed(self):
         previous = os.environ.get("ALPACA_SYMBOLS")
         os.environ["ALPACA_SYMBOLS"] = "IBM,ORCL"
@@ -1032,6 +1154,139 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(payload["symbols"][1]["priceSource"], "clickhouse")
         self.assertIn("gops:market:on-demand:v1:latest:closed:candle:MSFT:1D", redis_state.values)
         self.assertNotIn("gops:market:on-demand:v1:subscription:symbols", redis_state.sets)
+
+    def test_market_heatmap_combines_fundamentals_quotes_seed_and_cache(self):
+        seed_items = [
+            {
+                "symbol": "AAPL",
+                "companyName": "Apple Inc.",
+                "sector": "Technology",
+                "industry": "Technology Hardware",
+                "marketCap": 100000,
+                "changePercent": 0.1,
+            },
+            {
+                "symbol": "MSFT",
+                "companyName": "Microsoft",
+                "sector": "Technology",
+                "industry": "Systems Software",
+                "marketCap": 200000,
+                "changePercent": 0.2,
+            },
+        ]
+        provider = FakeHeatmapProvider()
+        adapter = FakeFundamentalsAdapter({
+            "AAPL": FundamentalsRecord(
+                symbol="AAPL",
+                companyName="Apple Inc.",
+                sector="Technology",
+                industry="Technology Hardware",
+                sharesOutstanding=1000,
+                source="sec",
+                asOf="2026-07-05",
+                periodEndDate="2026-04-30",
+            )
+        })
+        with mock.patch.object(heatmap_service, "load_heatmap_seed_items", return_value=seed_items), mock.patch.dict(os.environ, {
+            "HEATMAP_QUOTE_REFRESH_SECONDS": "60",
+            "HEATMAP_LAYOUT_REFRESH_SECONDS": "300",
+            "HEATMAP_CACHE_TTL_SECONDS": "55",
+        }):
+            service = heatmap_service.MarketHeatmapService(provider=provider, fundamentals_adapter=adapter)
+            payload = service.snapshot("sp500")
+            cached_payload = service.snapshot("sp500")
+
+            redis_state = provider.redis_provider.redis
+            redis_state.values.pop("gops:market:on-demand:v1:heatmap:sp500", None)
+            provider.clickhouse_provider.rows = []
+            stale_payload = service.snapshot("sp500")
+
+        self.assertEqual(payload["quoteRefreshSeconds"], 60)
+        self.assertEqual(payload["layoutRefreshSeconds"], 300)
+        self.assertEqual(payload["layoutAsOf"], "2026-06-25T15:30:00Z")
+        self.assertEqual(provider.clickhouse_provider.calls[:1], [{"symbols": ["AAPL", "MSFT"], "kind": "dollar-volume", "limit": 2}])
+        self.assertEqual(cached_payload["items"][0]["symbol"], "AAPL")
+        self.assertEqual(payload["coverage"]["marketCapFromFundamentals"], 1)
+        self.assertEqual(payload["coverage"]["marketCapFromSeed"], 1)
+        self.assertEqual(payload["items"][0]["marketCap"], 200000)
+        self.assertEqual(payload["items"][0]["marketCapSource"], "fundamentals")
+        self.assertEqual(payload["items"][0]["fundamentalsAsOf"], "2026-07-05")
+        self.assertEqual(payload["items"][0]["changePercent"], 1.25)
+        self.assertEqual(payload["items"][1]["marketCap"], 200000)
+        self.assertEqual(payload["items"][1]["marketCapSource"], "seed")
+        self.assertEqual(stale_payload["items"][0]["lastPrice"], 200)
+        self.assertEqual(stale_payload["items"][0]["priceSource"], "cached-projection")
+
+    def test_market_heatmap_overlays_redis_live_price_on_clickhouse_rows(self):
+        seed_items = [{
+            "symbol": "AAPL",
+            "companyName": "Apple Inc.",
+            "sector": "Technology",
+            "industry": "Technology Hardware",
+            "marketCap": 100000,
+            "changePercent": 0.1,
+        }]
+        provider = FakeHeatmapProvider(redis_prices={
+            "AAPL": {"price": "201.5", "timestamp": "2026-06-25T15:32:00.000Z"}
+        })
+        adapter = FakeFundamentalsAdapter({
+            "AAPL": FundamentalsRecord(symbol="AAPL", sharesOutstanding=1000, source="sec", asOf="2026-07-05")
+        })
+        with mock.patch.object(heatmap_service, "load_heatmap_seed_items", return_value=seed_items):
+            payload = heatmap_service.MarketHeatmapService(provider=provider, fundamentals_adapter=adapter).snapshot("sp500")
+
+        self.assertEqual(payload["items"][0]["lastPrice"], 201.5)
+        self.assertEqual(payload["items"][0]["marketCap"], 201500)
+        self.assertEqual(payload["items"][0]["priceSource"], "redis_live")
+
+    def test_store_fundamentals_adapter_reads_redis_summary_before_clickhouse(self):
+        provider = FakeHeatmapProvider()
+        provider.redis_provider.redis.values["gops:fundamentals:summary:v1:AAPL"] = json.dumps({
+            "symbol": "AAPL",
+            "cik": "0000320193",
+            "source": "sec_companyfacts",
+            "source_filed_at": "2026-05-01",
+            "as_of": "2026-04-30",
+            "metrics": [{
+                "metric": "shares_outstanding",
+                "value": 1000,
+                "fiscalPeriod": "Q2",
+                "periodEnd": "2026-04-30",
+                "filedAt": "2026-05-01",
+                "unit": "shares",
+            }],
+        })
+
+        records = StoreFundamentalsAdapter(provider=provider).latest_for_symbols(["AAPL"])
+
+        self.assertEqual(records["AAPL"].sharesOutstanding, 1000)
+        self.assertEqual(records["AAPL"].cik, "0000320193")
+        self.assertEqual(records["AAPL"].source, "sec_companyfacts:redis")
+        self.assertEqual(records["AAPL"].asOf, "2026-04-30")
+
+    def test_store_fundamentals_adapter_falls_back_to_clickhouse_tables(self):
+        records = StoreFundamentalsAdapter(provider=FakeHeatmapProvider()).latest_for_symbols(["MSFT"])
+
+        self.assertEqual(records["MSFT"].companyName, "Microsoft Corporation")
+        self.assertEqual(records["MSFT"].sharesOutstanding, 7500)
+        self.assertEqual(records["MSFT"].source, "sec_companyfacts")
+        self.assertEqual(records["MSFT"].periodEndDate, "2026-03-31")
+
+    def test_fundamentals_adapter_accepts_symbol_keyed_latest_payload(self):
+        records = records_from_payload({
+            "NVDA": {
+                "companyName": "NVIDIA Corporation",
+                "sector": "Technology",
+                "industry": "Semiconductors",
+                "sharesOutstanding": 24000000000,
+                "source": "sec",
+                "asOf": "2026-07-05",
+            }
+        }, symbols=["nvda"])
+
+        self.assertEqual(records["NVDA"].companyName, "NVIDIA Corporation")
+        self.assertEqual(records["NVDA"].sharesOutstanding, 24000000000)
+        self.assertEqual(records["NVDA"].source, "sec")
 
     def test_sp500_symbol_page_does_not_queue_latest_daily_backfill_when_price_missing(self):
         class NoPriceRedisProvider:

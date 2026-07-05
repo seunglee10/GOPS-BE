@@ -22,6 +22,7 @@ from ..retrieval.snapshots import (
 )
 from ..roles import (
     ChartAgent,
+    FinancialAgent,
     MacroAgent,
     MarketSummaryAgent,
     NewsAgent,
@@ -74,6 +75,7 @@ class AgentOrchestrator:
         self.chart_agent = ChartAgent()
         self.news_agent = NewsAgent()
         self.macro_agent = MacroAgent()
+        self.financial_agent = FinancialAgent()
         self.ontology_agent = OntologyAgent()
         self.event_explainer = UnusualEventExplainerAgent()
         self.market_summary = MarketSummaryAgent()
@@ -268,7 +270,7 @@ class AgentOrchestrator:
                 "analysis_cache_hit": False,
             }
 
-        selected_roles = [role for role in understanding.get("selectedRoles", []) if role in {"chart", "news", "macro", "ontology"}]
+        selected_roles = [role for role in understanding.get("selectedRoles", []) if role in {"chart", "news", "macro", "ontology", "financial"}]
         if selected_roles:
             route = IntentRoute(
                 source=str(understanding.get("source") or "query-understanding"),
@@ -431,13 +433,16 @@ class AgentOrchestrator:
     def _run_ontology(self, state: dict[str, Any]) -> dict[str, Any]:
         return self._run_role_agent(state, "ontology", self.ontology_agent)
 
+    def _run_financial(self, state: dict[str, Any]) -> dict[str, Any]:
+        return self._run_role_agent(state, "financial", self.financial_agent)
+
     def _run_selected_role_agents(self, state: dict[str, Any]) -> dict[str, Any]:
         if state.get("analysis_cache_hit"):
             return state
 
         selected_roles = [
             role
-            for role in ["chart", "news", "macro", "ontology"]
+            for role in ["chart", "news", "macro", "ontology", "financial"]
             if role in state.get("selected_roles", [])
         ]
         agents = {
@@ -445,6 +450,7 @@ class AgentOrchestrator:
             "news": self.news_agent,
             "macro": self.macro_agent,
             "ontology": self.ontology_agent,
+            "financial": self.financial_agent,
         }
         if not selected_roles:
             return {**state, "role_findings": []}
@@ -928,6 +934,7 @@ def role_finding_name(role: str) -> str:
         "news": "news-analysis",
         "macro": "macro-analysis",
         "ontology": "company-relationship-analysis",
+        "financial": "financial-analysis",
     }.get(str(role), str(role))
 
 

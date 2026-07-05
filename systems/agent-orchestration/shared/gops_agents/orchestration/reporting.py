@@ -11,7 +11,7 @@ from ..roles import AgentContext
 def collect_provider_evidence(findings) -> list[EvidenceItem]:
     evidence: list[EvidenceItem] = []
     for finding in findings:
-        evidence.extend(item for item in finding.evidence if item.provider in {"news", "macro", "ontology"})
+        evidence.extend(item for item in finding.evidence if item.provider in {"news", "macro", "ontology", "financial"})
     return dedupe_provider_evidence(evidence)
 
 
@@ -44,7 +44,7 @@ def build_agent_trace(
     visible = [
         snapshot
         for snapshot in snapshots
-        if getattr(snapshot, "snapshot_type", "") in {"market_snapshot", "news_snapshot", "relationship_snapshot"}
+        if getattr(snapshot, "snapshot_type", "") in {"market_snapshot", "news_snapshot", "relationship_snapshot", "financial_snapshot", "financial_peer_snapshot"}
     ]
     hidden = [snapshot for snapshot in snapshots if getattr(snapshot, "snapshot_type", "") == "risk_policy_snapshot"]
     trace = {

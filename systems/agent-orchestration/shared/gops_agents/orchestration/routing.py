@@ -3,20 +3,47 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import os
+import re
 import urllib.request
 from typing import Any
 
 from ..contracts import IntentRoute
 
 
-ROLE_ORDER = ["chart", "news", "macro", "ontology"]
+ROLE_ORDER = ["chart", "news", "macro", "ontology", "financial"]
+FALLBACK_ROLE_ORDER = ["chart", "news", "macro", "ontology"]
+BOUNDARY_KEYWORDS = {"eps", "roe", "fcf"}
+FINANCIAL_COMPARISON_KEYWORDS = ("compare", "comparison", "peer", "vs", "versus", "경쟁사", "비교", "대비", "동종")
 KEYWORD_ROUTES = [
-    (("급등", "급락", "극락", "이상", "변동", "원인", "왜", "surge", "spike", "move", "why"), ROLE_ORDER, "market-move"),
+    (("급등", "급락", "극락", "이상", "변동", "원인", "왜", "surge", "spike", "move", "why"), FALLBACK_ROLE_ORDER, "market-move"),
     (("시장", "시황", "market summary", "market overview"), ["chart", "macro"], "market-summary"),
     (("뉴스", "기사", "보도", "헤드라인", "news", "headline", "article"), ["news"], "news"),
     (("차트", "캔들", "가격", "추세", "chart", "candle", "price", "trend"), ["chart"], "chart"),
     (("거시", "금리", "cpi", "fomc", "macro", "rate", "inflation"), ["macro"], "macro"),
     (("관계", "온톨로지", "공급망", "경쟁사", "섹터", "ontology", "relationship", "supply"), ["ontology"], "ontology"),
+    (
+        (
+            "재무",
+            "재무제표",
+            "펀더멘탈",
+            "실적",
+            "매출",
+            "순이익",
+            "영업이익",
+            "부채비율",
+            "유동비율",
+            "이자보상비율",
+            "손익계산서",
+            "재무상태표",
+            "현금흐름표",
+            "성장률",
+            "eps",
+            "roe",
+            "fcf",
+        ),
+        ["financial"],
+        "financial-analysis",
+    ),
 ]
 
 
@@ -43,9 +70,9 @@ def route_intent(intent: str, router_mode: str = "hybrid", runtime_context: Any 
     return IntentRoute(
         source="fallback",
         intentType="general-analysis",
-        selectedRoles=list(ROLE_ORDER),
+        selectedRoles=list(FALLBACK_ROLE_ORDER),
         confidence=0.5,
-        reason="No keyword matched; using all visible analysis roles.",
+        reason="No keyword matched; using default visible analysis roles.",
     )
 
 
@@ -53,7 +80,9 @@ def collect_route_signals(intent: str) -> list[RouteSignal]:
     lowered = str(intent or "").lower()
     signals = []
     for keywords, roles, intent_type in KEYWORD_ROUTES:
-        if any(keyword in lowered for keyword in keywords):
+        if route_keywords_match(lowered, keywords):
+            if intent_type == "financial-analysis" and route_keywords_match(lowered, FINANCIAL_COMPARISON_KEYWORDS):
+                intent_type = "financial-comparison"
             signals.append(
                 RouteSignal(
                     intent_type=intent_type,
@@ -103,7 +132,7 @@ def route_with_openai(intent: str, runtime_context: Any | None = None) -> Intent
             "input": [
                 {
                     "role": "system",
-                    "content": "Route a stock analysis request to chart, news, macro, ontology roles. Return strict JSON only.",
+                    "content": "Route a stock analysis request to chart, news, macro, ontology, financial roles. Return strict JSON only.",
                 },
                 {"role": "user", "content": intent},
             ],
@@ -161,3 +190,15 @@ def parse_openai_text_json(data: dict[str, Any]) -> dict[str, Any]:
             if isinstance(text, str):
                 return json.loads(text)
     return {}
+
+
+def route_keywords_match(lowered: str, keywords: tuple[str, ...]) -> bool:
+    for keyword in keywords:
+        token = str(keyword).lower()
+        if token in BOUNDARY_KEYWORDS:
+            if re.search(rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])", lowered):
+                return True
+            continue
+        if token in lowered:
+            return True
+    return False

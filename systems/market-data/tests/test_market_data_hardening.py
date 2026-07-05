@@ -1666,7 +1666,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
 
         self.assertNotIn("initial-load:", compose)
         self.assertNotIn("systems/market-data/jobs/initial-load", compose)
-        self.assertIn('ON_DEMAND_FILL_TIMEOUT_SECONDS: "${ON_DEMAND_FILL_TIMEOUT_SECONDS:-8}"', compose)
+        self.assertIn('ON_DEMAND_FILL_TIMEOUT_SECONDS: "${ON_DEMAND_FILL_TIMEOUT_SECONDS:-30}"', compose)
         self.assertIn("news-backfill:", compose)
         self.assertIn('NEWS_BACKFILL_UNIVERSE: "${NEWS_BACKFILL_UNIVERSE:-sp500}"', compose)
         self.assertIn("systems/market-data/jobs/news-backfill/main.py", compose)
@@ -4514,6 +4514,50 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual([candle["timestamp"] for candle in payload["candles"]], [
             "2018-01-01T00:00:00.000Z",
             "2019-01-01T00:00:00.000Z",
+        ])
+
+    def test_chart_snapshot_explicit_range_can_read_before_target_floor(self):
+        rows = [
+            {
+                "timestamp": "2020-01-02T14:30:00.000Z",
+                "interval": "1m",
+                "open": 1,
+                "high": 2,
+                "low": 1,
+                "close": 2,
+                "volume": 100,
+                "isClosed": True,
+            },
+            {
+                "timestamp": "2020-01-02T14:31:00.000Z",
+                "interval": "1m",
+                "open": 2,
+                "high": 3,
+                "low": 2,
+                "close": 3,
+                "volume": 110,
+                "isClosed": True,
+            },
+        ]
+        clickhouse = RecordingRangeClickHouseProvider(rows)
+        provider = MarketDataProvider(
+            redis_provider=FakeRedisProvider(),
+            clickhouse_provider=clickhouse,
+        )
+
+        with mock.patch("alfaka.serving.provider.target_range_from_for_interval", return_value="2020-07-01T00:00:00.000Z"):
+            payload = provider.candle_snapshot(
+                "AAPL",
+                "1m",
+                2,
+                from_time="2020-01-02T00:00:00.000Z",
+                to_time="2020-01-03T00:00:00.000Z",
+            )
+
+        self.assertEqual(clickhouse.calls[-1]["from_time"], "2020-01-02T00:00:00.000Z")
+        self.assertEqual([candle["timestamp"] for candle in payload["candles"]], [
+            "2020-01-02T14:30:00.000Z",
+            "2020-01-02T14:31:00.000Z",
         ])
 
     def test_has_more_before_uses_available_history_before_target_floor(self):

@@ -404,6 +404,38 @@ limits and 5xx responses. Deprecated `POST /api/charts/backfill`,
 `GET /api/charts/backfill/status`, and `GET /api/charts/backfill/queue` return
 `410 Gone`.
 
+## Market Heatmap
+
+`GET /api/market/heatmap?universe=sp500` builds a serving projection for the
+frontend TreeMap. It does not collect SEC or financial statement data directly.
+The API reads the SEC fundamentals store created by `systems/fundamentals`
+first: Redis key `gops:fundamentals:summary:v1:{SYMBOL}`, then ClickHouse
+`sec_financial_facts` plus `sec_company_tickers`. Optional URL/file adapters are
+compatibility fallbacks. The heatmap combines `sharesOutstanding` with the
+latest market price from Redis/ClickHouse serving state and falls back to the
+local S&P500 seed when fundamentals or quotes are missing.
+
+```text
+FUNDAMENTALS_SOURCE
+FUNDAMENTALS_LATEST_FILE
+FUNDAMENTALS_LATEST_URL
+FUNDAMENTALS_TIMEOUT_SECONDS
+HEATMAP_UNIVERSE
+HEATMAP_UNIVERSE_REGISTRY_PATH
+HEATMAP_QUOTE_REFRESH_SECONDS
+HEATMAP_LAYOUT_REFRESH_SECONDS
+HEATMAP_CACHE_TTL_SECONDS
+HEATMAP_STALE_CACHE_TTL_SECONDS
+```
+
+The fundamentals store must expose `shares_outstanding` in the summary metrics
+or in `sec_financial_facts`. `companyName`, `sector`, `industry`, `cik`,
+`periodEndDate`, and `filedAt` are passed through when available; the S&P500
+seed fills missing classification fields. Quotes, color, and computed market cap
+refresh every 60 seconds by default. Tile layout timestamps advance every 300
+seconds by default, so the frontend can update colors frequently without
+reshuffling the treemap on every quote refresh.
+
 ## Market Calendar
 
 GapFill uses the configured market calendar to avoid false gaps on weekends, holidays, and early closes. Alpaca feed session gating reads `MARKET_CLOSED_DATES` plus the built-in 2026 NYSE/Nasdaq full-day holiday set by default; a full-market holiday reports `closed` instead of `pre`, `regular`, `after`, or `overnight`, so local smoke tests do not wait for live payloads on a known closed session. Set `MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS=false` only for a test that intentionally disables the built-in holiday set. The v1 provider is `configured-nyse`; it is an adapter boundary that can later be replaced by a managed exchange-calendar provider. Intraday chart renderability treats sparse gaps as blocking only when both candles are inside the regular session; sparse extended-hours 1m bars can still render because Alpaca may only emit bars for minutes with activity.

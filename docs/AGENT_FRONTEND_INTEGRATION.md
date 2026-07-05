@@ -40,12 +40,17 @@ flowchart TD
   Report --> OptionalUI["optional layout/chart proposal"]
 ```
 
-사용자 입력이 회사명이나 티커 하나뿐이면 프런트는 먼저
+사용자 입력이 회사명/티커 단독이거나 `애플차트 보여줘`, `AAPL chart` 같은
+chart-open 명령이면 프런트는 먼저
 `GET /api/agents/entities/resolve?mode=chartShortcut`를 호출한다. 응답이
-`chartShortcut=true`이면 기존 chart symbol 선택 흐름만 적용하고
-`/api/agents/analyze`는 호출하지 않는다. `엔비디아 뉴스`,
-`엔비디아 분석해줘`, 관계 질문, chart registry 미지원 symbol은 기존 분석
-흐름을 유지한다.
+`chartShortcut=true`이고 `chartAction="replace"`이면 기존 chart symbol 선택
+흐름만 적용하고 `/api/agents/analyze`는 호출하지 않는다. 응답이
+`chartAction="add"`이면 차트 화면에서는 `POST /api/agents/layout/resolve`에
+`chartAction`, `chartTargetSymbol`, `chartPlacementIntent`, 현재 `layoutContext`를
+보내 기존 chart를 유지한 추가 chart panel proposal을 받는다. 차트 화면이 아니면
+비교 대상이 없으므로 replace처럼 chart 화면으로 진입한다. `엔비디아 뉴스`,
+`엔비디아 분석해줘`, `엔비디아 차트 분석해줘`, 관계 질문, chart registry 미지원
+symbol은 기존 분석 흐름을 유지한다.
 
 티커 shortcut이 아니면 프런트는 분석 pending 메시지를 띄우기 전에
 `POST /api/agents/layout/resolve`로 UI-only layout command인지 확인한다.
@@ -75,6 +80,9 @@ flowchart TD
     "activePanelId": "chart-main",
     "panels": []
   },
+  "chartAction": null,
+  "chartTargetSymbol": null,
+  "chartPlacementIntent": null,
   "mode": null,
   "analysisMode": null,
   "priority": null,
@@ -152,6 +160,11 @@ Provider가 `status="no-data"` evidence를 반환하는 것은 정상적인 part
 자동 적용한다. `chartProposal`은 차트 엔진 command path와 별도로 연결해야 하며,
 현재 App의 일반 분석 렌더링에서는 사용하지 않는다.
 
+`layout.panel.add`가 chart panel을 추가할 때 payload의 `props.symbol`은 새 chart
+instance의 symbol이다. `layout.panel.priority.set`과 `layout.panels.arrange`의
+`layoutWeight`는 다음 요청의 `layoutContext`에 보존되어, 직전 요청 panel과 chart
+panel이 더 크게 배치되고 낮은 priority support panel은 축소/이동될 수 있다.
+
 지원하지 않는 경우 정책:
 
 ```text
@@ -202,7 +215,7 @@ shape, `analysisId` 처리, report delivery, proposal ignore/apply 정책이다.
 
 ```text
 사용자가 종목 질문을 보낸다.
-회사명/티커만 입력하면 entity resolve shortcut으로 차트 symbol만 바뀐다.
+회사명/티커 또는 chart-open 명령을 입력하면 entity resolve shortcut으로 차트 symbol만 바뀐다.
 분석 요청이면 POST /api/agents/analyze가 호출된다.
 queued response의 analysisId가 화면 상태에 저장된다.
 SSE 또는 polling으로 completed report를 받는다.

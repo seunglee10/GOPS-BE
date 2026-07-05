@@ -435,6 +435,58 @@ services:
       - data_net
       - streaming_net
 
+  sec-fundamentals-backfill:
+    profiles: ["jobs"]
+    image: gops-market-storage
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-market-storage
+    container_name: alfaka-sec-fundamentals-backfill
+    env_file: .env
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
+      CLICKHOUSE_DATABASE: "market_data"
+      CLICKHOUSE_USER: "alfaka"
+      CLICKHOUSE_PASSWORD: "alfaka"
+      REDIS_URL: "redis://redis:6379/0"
+      AWS_REGION: "${AWS_REGION:-ap-northeast-2}"
+      AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-ap-northeast-2}"
+      AWS_EC2_METADATA_DISABLED: "${AWS_EC2_METADATA_DISABLED:-true}"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
+      AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
+      AWS_PROFILE: "${AWS_PROFILE:-default}"
+      AWS_SDK_LOAD_CONFIG: "${AWS_SDK_LOAD_CONFIG:-1}"
+      S3_ENDPOINT_URL: "${DOCKER_S3_ENDPOINT_URL:-}"
+      S3_ACCESS_KEY_ID: "${S3_ACCESS_KEY_ID:-}"
+      S3_SECRET_ACCESS_KEY: "${S3_SECRET_ACCESS_KEY:-}"
+      S3_SESSION_TOKEN: "${S3_SESSION_TOKEN:-}"
+      S3_BUCKET: "${S3_BUCKET:-gops-market-data-<aws-account-id>-ap-northeast-2-an}"
+      SEC_COMPANYFACTS_ZIP_URL: "${SEC_COMPANYFACTS_ZIP_URL:-https://www.sec.gov/Archives/edgar/daily-index/xbrl/companyfacts.zip}"
+      SEC_COMPANYFACTS_ZIP_PATH: "${SEC_COMPANYFACTS_ZIP_PATH:-}"
+      SEC_FUNDAMENTALS_S3_PREFIX: "${SEC_FUNDAMENTALS_S3_PREFIX:-fundamentals/sec/companyfacts}"
+      SEC_FUNDAMENTALS_DRY_RUN: "${SEC_FUNDAMENTALS_DRY_RUN:-true}"
+      SEC_FUNDAMENTALS_SYMBOLS: "${SEC_FUNDAMENTALS_SYMBOLS:-}"
+      SEC_FUNDAMENTALS_MAX_COMPANIES: "${SEC_FUNDAMENTALS_MAX_COMPANIES:-0}"
+      SEC_FUNDAMENTALS_BATCH_SIZE: "${SEC_FUNDAMENTALS_BATCH_SIZE:-5000}"
+      SEC_FUNDAMENTALS_LOAD_FRAMES: "${SEC_FUNDAMENTALS_LOAD_FRAMES:-true}"
+      SEC_FUNDAMENTALS_FRAME_CONCEPTS: "${SEC_FUNDAMENTALS_FRAME_CONCEPTS:-}"
+      SEC_FUNDAMENTALS_REDIS_TTL_SECONDS: "${SEC_FUNDAMENTALS_REDIS_TTL_SECONDS:-0}"
+      SEC_FUNDAMENTALS_DOWNLOAD_IN_DRY_RUN: "${SEC_FUNDAMENTALS_DOWNLOAD_IN_DRY_RUN:-false}"
+      SEC_USER_AGENT: "${SEC_USER_AGENT:-}"
+    command: ["python", "-u", "systems/fundamentals/jobs/sec-companyfacts-backfill/main.py"]
+    restart: "no"
+    volumes:
+      - ${HOME}/.aws:/root/.aws:ro
+    networks:
+      - app_net
+      - data_net
+
   local-stream-processor:
     image: gops-market-processor
     build:
@@ -1319,7 +1371,17 @@ services:
       ALPACA_UNIVERSE: "${ALPACA_UNIVERSE:-sp500}"
       ALPACA_UNIVERSE_REGISTRY_PATH: "${ALPACA_UNIVERSE_REGISTRY_PATH:-systems/market-data/config/sp500-universe.json}"
       ALPACA_COLLECTION_SYMBOL_SOURCE: "${ALPACA_COLLECTION_SYMBOL_SOURCE:-universe}"
-      ON_DEMAND_FILL_TIMEOUT_SECONDS: "${ON_DEMAND_FILL_TIMEOUT_SECONDS:-8}"
+      ON_DEMAND_FILL_TIMEOUT_SECONDS: "${ON_DEMAND_FILL_TIMEOUT_SECONDS:-30}"
+      FUNDAMENTALS_SOURCE: "${FUNDAMENTALS_SOURCE:-auto}"
+      FUNDAMENTALS_LATEST_FILE: "${FUNDAMENTALS_LATEST_FILE:-}"
+      FUNDAMENTALS_LATEST_URL: "${FUNDAMENTALS_LATEST_URL:-}"
+      FUNDAMENTALS_TIMEOUT_SECONDS: "${FUNDAMENTALS_TIMEOUT_SECONDS:-2}"
+      HEATMAP_UNIVERSE: "${HEATMAP_UNIVERSE:-sp500}"
+      HEATMAP_UNIVERSE_REGISTRY_PATH: "${HEATMAP_UNIVERSE_REGISTRY_PATH:-systems/market-data/config/sp500-heatmap-seed.json}"
+      HEATMAP_QUOTE_REFRESH_SECONDS: "${HEATMAP_QUOTE_REFRESH_SECONDS:-60}"
+      HEATMAP_LAYOUT_REFRESH_SECONDS: "${HEATMAP_LAYOUT_REFRESH_SECONDS:-300}"
+      HEATMAP_CACHE_TTL_SECONDS: "${HEATMAP_CACHE_TTL_SECONDS:-55}"
+      HEATMAP_STALE_CACHE_TTL_SECONDS: "${HEATMAP_STALE_CACHE_TTL_SECONDS:-900}"
       MARKET_CALENDAR_PROVIDER: "configured-nyse"
       MARKET_TIMEZONE: "America/New_York"
       MARKET_OPEN_TIME: "09:30"

@@ -43,6 +43,10 @@ def content_task_type_for_route(intent_type: str) -> str:
         return "macro"
     if "ontology" in normalized:
         return "ontology"
+    if "financial-comparison" in normalized or "financial_comparison" in normalized:
+        return "financial_comparison"
+    if "financial" in normalized or "fundamental" in normalized or "재무" in normalized:
+        return "financial"
     return "general"
 
 
@@ -65,4 +69,4 @@ def content_task_roles(task_type: str, selected_roles: Any) -> list[str]:
 def content_tasks_are_only_panel_references(tasks: list[ContentTask], ui_tasks: list[UiTask], has_confirmed_entity: bool) -> bool:
     if not tasks or not ui_tasks or has_confirmed_entity:
         return False
-    return all(task.source in {"rule", "selection"} and task.taskType in {"news", "chart", "macro", "ontology"} for task in tasks)
+    return all(task.source in {"rule", "selection"} and task.taskType in {"news", "chart", "macro", "ontology", "financial", "financial_comparison"} for task in tasks)

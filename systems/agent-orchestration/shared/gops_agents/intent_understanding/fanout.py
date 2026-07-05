@@ -292,7 +292,13 @@ def should_call_classifier_fallback(
     if bool_env("AGENT_INTENT_CLASSIFIER_ALWAYS", False):
         return True
     if ui_parser_needs_classifier:
-        return True
+        return not deterministic_understanding_is_sufficient(
+            query=query,
+            entity_resolution=entity_resolution,
+            rule_content_tasks=rule_content_tasks,
+            rule_ui_tasks=rule_ui_tasks,
+            has_subject_fallback=has_subject_fallback,
+        )
     if getattr(entity_resolution, "needs_clarification", False) or getattr(entity_resolution, "status", None) == "ambiguous":
         return True
     if any(item.endswith("_timeout") for item in warnings):
