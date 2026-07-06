@@ -22,13 +22,20 @@ for topic in \
   market.layer.quotes.v1 \
   market.layer.events.v1 \
   market.news.alpaca.v1 \
+  market.news.daily-summary-dirty.v1 \
+  market.chart-derived.requests.v1 \
+  market.chart-derived.dlq.v1 \
   orders.commands.v1 \
   broker.submit-results.v1 \
   broker.order-events.v1 \
   orders.dlq.v1 \
+  alerts.triggered.v1 \
+  alerts.dlq.v1 \
   agents.market-events.v1 \
   agents.analysis-requests.v1 \
+  agents.deep-analysis-requests.v1 \
   agents.analysis-results.v1 \
+  agents.query-understanding-events.v1 \
   agents.notification-decisions.v1 \
   agents.dlq.v1; do
   docker exec alfaka-kafka /opt/kafka/bin/kafka-topics.sh \

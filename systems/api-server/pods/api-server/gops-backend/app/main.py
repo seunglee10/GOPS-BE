@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.alerts.routes import router as alerts_router
 from app.contracts.chart import AgentChatMessage, AgentChatRequest, ChartProposalRequest
 from app.core.config import CORS_ORIGINS, read_dotenv_value
 from app.market_data.monitor.routes import router as market_monitor_router
@@ -44,6 +45,7 @@ def create_app() -> FastAPI:
     app.include_router(agents_router)
     app.include_router(llm_router)
     app.include_router(orders_router)
+    app.include_router(alerts_router)
     app.include_router(streams_router)
 
     log_runtime_config()

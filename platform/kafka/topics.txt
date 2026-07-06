@@ -23,6 +23,8 @@ orders.commands.v1
 broker.submit-results.v1
 broker.order-events.v1
 orders.dlq.v1
+alerts.triggered.v1
+alerts.dlq.v1
 agents.market-events.v1
 agents.analysis-requests.v1
 agents.deep-analysis-requests.v1

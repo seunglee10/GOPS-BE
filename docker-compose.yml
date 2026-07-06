@@ -69,6 +69,8 @@ services:
           broker.submit-results.v1 \
           broker.order-events.v1 \
           orders.dlq.v1 \
+          alerts.triggered.v1 \
+          alerts.dlq.v1 \
           agents.market-events.v1 \
           agents.analysis-requests.v1 \
           agents.deep-analysis-requests.v1 \
@@ -90,7 +92,7 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
-    command: ["redis-server", "--appendonly", "no", "--save", "", "--dir", "/tmp"]
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--save", "", "--dir", "/data"]
     healthcheck:
       test: ["CMD-SHELL", "test \"$$(redis-cli ping)\" = PONG"]
       interval: 5s
@@ -1395,6 +1397,14 @@ services:
       CHART_DERIVED_DLQ_TOPIC: "market.chart-derived.dlq.v1"
       CHART_DERIVED_API_WAIT_MS: "${CHART_DERIVED_API_WAIT_MS:-1200}"
       CHART_DERIVED_RETRY_AFTER_MS: "${CHART_DERIVED_RETRY_AFTER_MS:-1000}"
+      ALERT_EVALUATOR_INPUT_TOPIC: "market.layer.trades.v1"
+      ALERT_TRIGGERED_TOPIC: "alerts.triggered.v1"
+      ALERT_DLQ_TOPIC: "alerts.dlq.v1"
+      ALERT_EVALUATOR_GROUP_ID: "gops-alert-evaluator"
+      ALERT_REDIS_KEY_PREFIX: "alerts:v1"
+      ALERT_OUTBOX_STREAM: "alerts:outbox"
+      ALERT_OUTBOX_GROUP: "gops-alert-outbox-senders"
+      ALERT_RECONCILE_INTERVAL_SECONDS: "${ALERT_RECONCILE_INTERVAL_SECONDS:-60}"
       ORDER_REPOSITORY: "postgres"
       KIS_ENV: "${KIS_ENV:-demo}"
       KIS_SECRET_NAME: "${KIS_SECRET_NAME:-dev/kis}"
@@ -1476,6 +1486,39 @@ services:
     restart: unless-stopped
     networks:
       - app_net
+      - data_net
+      - streaming_net
+
+  alert-evaluator:
+    image: gops-api-server
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-backend
+    container_name: alfaka-alert-evaluator
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      order-migrations:
+        condition: service_completed_successfully
+    environment:
+      REDIS_URL: "redis://redis:6379/0"
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      DATABASE_URL: "postgresql://gops:${POSTGRES_PASSWORD:-gops_dev_password}@postgres:5432/gops"
+      ALERT_EVALUATOR_INPUT_TOPIC: "market.layer.trades.v1"
+      ALERT_TRIGGERED_TOPIC: "alerts.triggered.v1"
+      ALERT_DLQ_TOPIC: "alerts.dlq.v1"
+      ALERT_EVALUATOR_GROUP_ID: "gops-alert-evaluator"
+      ALERT_REDIS_KEY_PREFIX: "alerts:v1"
+      ALERT_OUTBOX_STREAM: "alerts:outbox"
+      ALERT_OUTBOX_GROUP: "gops-alert-outbox-senders"
+      ALERT_RECONCILE_INTERVAL_SECONDS: "${ALERT_RECONCILE_INTERVAL_SECONDS:-60}"
+    command: ["python", "-u", "-m", "app.alerts.evaluator"]
+    restart: unless-stopped
+    networks:
       - data_net
       - streaming_net
 

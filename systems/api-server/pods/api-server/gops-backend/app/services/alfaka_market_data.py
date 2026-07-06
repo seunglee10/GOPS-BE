@@ -394,6 +394,19 @@ def build_hot_symbol_record(provider: MarketDataProvider, symbol: str) -> dict[s
     }
 
 
+def resolve_latest_trade_price(symbol: str) -> dict[str, Any]:
+    normalized_symbol = normalize_market_symbol(symbol)
+    provider = get_market_data_provider()
+    latest_price = _safe_latest_price(provider, normalized_symbol)
+    price = _read_float(latest_price.get("price"))
+    return {
+        "symbol": normalized_symbol,
+        "price": price,
+        "timestamp": latest_price.get("timestamp") or latest_price.get("eventTime"),
+        "sourceEventId": latest_price.get("sourceEventId"),
+    }
+
+
 def sp500_universe_symbols() -> list[str]:
     raw_path = os.getenv("SP500_UNIVERSE_REGISTRY_PATH")
     registry_path = Path(raw_path) if raw_path else Path(__file__).resolve().parents[7] / "systems" / "market-data" / "config" / "sp500-universe.json"

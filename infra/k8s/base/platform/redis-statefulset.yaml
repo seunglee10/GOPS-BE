@@ -30,11 +30,13 @@ spec:
           command:
             - redis-server
             - --appendonly
-            - "no"
+            - "yes"
+            - --appendfsync
+            - everysec
             - --save
             - ""
             - --dir
-            - /tmp
+            - /data
           ports:
             - name: redis
               containerPort: 6379
