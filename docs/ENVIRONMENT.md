@@ -266,6 +266,8 @@ CLICKHOUSE_PROVIDER_TIMEOUT_SECONDS
 CLICKHOUSE_PROVIDER_RETRY_ATTEMPTS
 CLICKHOUSE_PROVIDER_ENSURE_SESSION_COLUMNS
 CLICKHOUSE_ENSURE_SESSION_COLUMNS
+CLICKHOUSE_ENSURE_SCHEMA_ON_START
+CLICKHOUSE_HTTP_TIMEOUT_SECONDS
 CLICKHOUSE_REQUIRE_CANONICAL_CANDLES
 ```
 
@@ -276,6 +278,11 @@ filled chart response. `CLICKHOUSE_PROVIDER_RETRY_ATTEMPTS` controls a small
 API-side retry budget for transient ClickHouse timeout spikes.
 
 Set `CLICKHOUSE_PROVIDER_ENSURE_SESSION_COLUMNS=true` for API serving pods and `CLICKHOUSE_ENSURE_SESSION_COLUMNS=true` for storage jobs during the transition to feed/session/canonical-aware rows. New deployments create `feed_profile`, `market_session`, `price_adjustment`, and `canonical_version` in the primary schema. Existing ClickHouse volumes can add the columns idempotently, but preserving multiple feed/session rows after merges requires rebuilding old tables with the new `ORDER BY` definition. Keep `CLICKHOUSE_REQUIRE_CANONICAL_CANDLES=true` so chart serving excludes legacy/raw/unknown candles.
+
+Keep `CLICKHOUSE_ENSURE_SCHEMA_ON_START=false` for normal API, worker, and
+cache rebuild pods. Schema DDL should run as an explicit migration/maintenance
+step, not from every runtime pod on rollout. `CLICKHOUSE_HTTP_TIMEOUT_SECONDS`
+controls the storage client HTTP timeout used by loaders and maintenance jobs.
 
 ## S3
 

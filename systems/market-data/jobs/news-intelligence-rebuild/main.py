@@ -11,7 +11,7 @@ from alfaka.serving.news_hot_cache import (
     DEFAULT_NEWS_TTL_SECONDS,
     write_localized_news_to_redis,
 )
-from alfaka.storage.clickhouse_loader import ClickHouseHttpClient
+from alfaka.storage.clickhouse_loader import ClickHouseHttpClient, should_ensure_schema_on_start
 from alfaka.storage.news_intelligence import build_news_intelligence_record, news_intelligence_to_clickhouse_row, utc_now_iso
 
 
@@ -23,7 +23,8 @@ def main():
         user=os.getenv("CLICKHOUSE_USER", "alfaka"),
         password=os.getenv("CLICKHOUSE_PASSWORD", "alfaka"),
     )
-    client.ensure_market_data_schema()
+    if should_ensure_schema_on_start():
+        client.ensure_market_data_schema()
     days = int(os.getenv("NEWS_INTELLIGENCE_REBUILD_DAYS", "30"))
     batch_size = int(os.getenv("NEWS_INTELLIGENCE_REBUILD_BATCH_SIZE", "500"))
     max_rows = int(os.getenv("NEWS_INTELLIGENCE_REBUILD_MAX_ROWS", "5000"))
@@ -34,12 +35,24 @@ def main():
         return
 
     warm_redis = bool_env(os.getenv("NEWS_INTELLIGENCE_REBUILD_WARM_REDIS"), default=True)
+    rewrite_clickhouse = bool_env(os.getenv("NEWS_INTELLIGENCE_REBUILD_REWRITE_CLICKHOUSE"), default=False)
     redis_client = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True) if warm_redis else None
-    total = rebuild_recent_localizations(client, days=days, batch_size=batch_size, max_rows=max_rows, redis_client=redis_client)
-    print(f"News intelligence rebuild 완료: rows={total} days={days} redisWarm={warm_redis}", flush=True)
+    total = rebuild_recent_localizations(
+        client,
+        days=days,
+        batch_size=batch_size,
+        max_rows=max_rows,
+        redis_client=redis_client,
+        rewrite_clickhouse=rewrite_clickhouse,
+    )
+    print(
+        f"News intelligence rebuild 완료: rows={total} days={days} "
+        f"redisWarm={warm_redis} clickhouseRewrite={rewrite_clickhouse}",
+        flush=True,
+    )
 
 
-def rebuild_recent_localizations(client, *, days=30, batch_size=500, max_rows=5000, redis_client=None):
+def rebuild_recent_localizations(client, *, days=30, batch_size=500, max_rows=5000, redis_client=None, rewrite_clickhouse=False):
     rows = []
     offset = 0
     while len(rows) < max_rows:
@@ -51,12 +64,16 @@ def rebuild_recent_localizations(client, *, days=30, batch_size=500, max_rows=50
 
     total = 0
     for batch in chunked(dedupe_localization_rows(rows), batch_size):
-        records = [rebuild_localization_record(row) for row in batch]
-        rebuilt = [news_intelligence_to_clickhouse_row(record) for record in records]
-        delete_localization_rows(client, rebuilt)
-        client.insert_json_each_row("news_article_localizations", rebuilt)
-        warm_localization_records_to_redis(redis_client, records)
-        total += len(rebuilt)
+        if rewrite_clickhouse:
+            records = [rebuild_localization_record(row) for row in batch]
+            rebuilt = [news_intelligence_to_clickhouse_row(record) for record in records]
+            delete_localization_rows(client, rebuilt)
+            client.insert_json_each_row("news_article_localizations", rebuilt)
+            warm_localization_records_to_redis(redis_client, records)
+            total += len(rebuilt)
+            continue
+        warm_localization_records_to_redis(redis_client, batch)
+        total += len(batch)
     return total
 
 
@@ -90,6 +107,11 @@ def read_localization_batch(client, *, days, limit, offset):
       article_id AS articleId,
       locale,
       symbols,
+      target_symbol AS targetSymbol,
+      subject_relevance AS subjectRelevance,
+      relevance_score_v2 AS relevanceScoreV2,
+      relevance_reason AS relevanceReason,
+      direct_signals AS directSignals,
       headline,
       summary,
       url,
@@ -104,6 +126,7 @@ def read_localization_batch(client, *, days, limit, offset):
       impact_direction AS impactDirection,
       why_it_matters AS whyItMatters,
       model,
+      formatDateTime(localized_at, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS localizedAt,
       raw
     FROM {client.database}.news_article_localizations
     WHERE published_at >= now64(3) - INTERVAL {{days:UInt32}} DAY

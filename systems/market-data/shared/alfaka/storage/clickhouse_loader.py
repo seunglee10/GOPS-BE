@@ -39,7 +39,8 @@ def main():
         user=os.getenv("CLICKHOUSE_USER", "alfaka"),
         password=os.getenv("CLICKHOUSE_PASSWORD", "alfaka"),
     )
-    client.ensure_market_data_schema()
+    if should_ensure_schema_on_start():
+        client.ensure_market_data_schema()
 
     consumer = create_json_consumer(
         topics,
@@ -369,6 +370,7 @@ class ClickHouseHttpClient:
         self.database = clickhouse_identifier(database)
         self.user = user
         self.password = password
+        self.timeout_seconds = float(os.getenv("CLICKHOUSE_HTTP_TIMEOUT_SECONDS", "10"))
 
     def insert_json_each_row(self, table, rows):
         if not rows:
@@ -382,7 +384,7 @@ class ClickHouseHttpClient:
             self.url,
             params={"user": self.user, "password": self.password, "database": self.database, "query": query},
             data=body.encode("utf-8"),
-            timeout=10,
+            timeout=self.timeout_seconds,
         )
         if response.status_code >= 400:
             raise RuntimeError(f"status={response.status_code}, body={response.text}")
@@ -396,7 +398,7 @@ class ClickHouseHttpClient:
         response = requests.post(
             self.url,
             params=params,
-            timeout=10,
+            timeout=self.timeout_seconds,
         )
         if response.status_code >= 400:
             raise RuntimeError(f"status={response.status_code}, body={response.text}")
@@ -407,7 +409,7 @@ class ClickHouseHttpClient:
         params = {"user": self.user, "password": self.password, "database": self.database, "query": query}
         for key, value in (parameters or {}).items():
             params[f"param_{key}"] = clickhouse_param_value(value)
-        response = requests.post(self.url, params=params, timeout=10)
+        response = requests.post(self.url, params=params, timeout=self.timeout_seconds)
         if response.status_code >= 400:
             raise RuntimeError(f"status={response.status_code}, body={response.text}")
         return [json.loads(line) for line in response.text.splitlines() if line.strip()]
@@ -673,6 +675,15 @@ def clickhouse_identifier(value):
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(value)):
         raise ValueError(f"Invalid ClickHouse identifier: {value}")
     return str(value)
+
+
+def should_ensure_schema_on_start(environ=None):
+    if environ is None:
+        environ = os.environ
+    value = environ.get("CLICKHOUSE_ENSURE_SCHEMA_ON_START")
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def clickhouse_string_literal(value):

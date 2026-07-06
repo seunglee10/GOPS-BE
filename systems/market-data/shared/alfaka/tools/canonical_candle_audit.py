@@ -6,7 +6,12 @@ import os
 from alfaka.common.canonical import CANONICAL_VERSION, HISTORICAL_SERVING_PRICE_ADJUSTMENTS
 from alfaka.common.env import load_dotenv
 from alfaka.serving.intervals import normalize_chart_interval
-from alfaka.storage.clickhouse_loader import ClickHouseHttpClient, clickhouse_identifier, clickhouse_string_literal
+from alfaka.storage.clickhouse_loader import (
+    ClickHouseHttpClient,
+    clickhouse_identifier,
+    clickhouse_string_literal,
+    should_ensure_schema_on_start,
+)
 
 
 def canonical_candle_audit_query(database="market_data", symbol=None, interval=None, limit=100):
@@ -61,7 +66,8 @@ def main():
         user=os.getenv("CLICKHOUSE_USER", "alfaka"),
         password=os.getenv("CLICKHOUSE_PASSWORD", "alfaka"),
     )
-    client.ensure_market_data_schema()
+    if should_ensure_schema_on_start():
+        client.ensure_market_data_schema()
     rows = run_audit(
         client,
         database=os.getenv("CLICKHOUSE_DATABASE", "market_data"),
