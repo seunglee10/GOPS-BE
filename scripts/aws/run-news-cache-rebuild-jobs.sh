@@ -28,9 +28,18 @@ print_job_debug() {
 
   kubectl describe "job/${job_name}" -n "${K8S_NAMESPACE}" || true
   kubectl get pods -n "${K8S_NAMESPACE}" -l "job-name=${job_name}" -o wide || true
+  kubectl get events -n "${K8S_NAMESPACE}" \
+    --field-selector "involvedObject.kind=Pod" \
+    --sort-by=.lastTimestamp || true
   kubectl logs -n "${K8S_NAMESPACE}" \
     -l "job-name=${job_name}" \
     --all-containers=true \
+    --tail="${LOG_TAIL}" \
+    --ignore-errors=true || true
+  kubectl logs -n "${K8S_NAMESPACE}" \
+    -l "job-name=${job_name}" \
+    --all-containers=true \
+    --previous=true \
     --tail="${LOG_TAIL}" \
     --ignore-errors=true || true
 }
@@ -112,8 +121,10 @@ run_rebuild_job \
   "news-intelligence-rebuild" \
   "NEWS_INTELLIGENCE_REBUILD_DRY_RUN"
 
-run_rebuild_job \
+if ! run_rebuild_job \
   "infra/k8s/base/job-news-daily-summary-rebuild.yaml" \
   "alfaka-news-daily-summary-rebuild" \
   "news-daily-summary-rebuild" \
-  "NEWS_DAILY_SUMMARY_REBUILD_DRY_RUN"
+  "NEWS_DAILY_SUMMARY_REBUILD_DRY_RUN"; then
+  echo "Daily summary cache rebuild failed; continuing because app deploy and primary news intelligence rebuild succeeded." >&2
+fi

@@ -160,16 +160,24 @@ def compute_indicator_request(request: dict[str, Any], *, provider: Any) -> dict
 def compute_volume_profile_request(request: dict[str, Any], *, provider: Any) -> dict[str, Any]:
     params = request.get("parameters") or {}
     symbol = str(request["symbol"]).upper()
+    interval = normalize_chart_interval(str(request.get("interval") or "1m"))
     from_time = str(request.get("from") or "")
     to_time = str(request.get("to") or "")
-    price_bin_size = str(params.get("priceBinSize") or "auto")
     target_bins = normalize_target_bins(params.get("targetBins"))
     price_min = number_or_none(params.get("priceMin"))
     price_max = number_or_none(params.get("priceMax"))
-    raw_payload = provider.volume_profile_bins(symbol, from_time, to_time, price_bin_size)
+    candle_payload = provider_candle_snapshot(
+        provider,
+        symbol,
+        interval,
+        resolve_candle_limit(interval, request.get("limit")),
+        from_time=from_time,
+        to_time=to_time,
+    )
     result = compute_volume_profile_payload(
-        raw_payload,
+        candle_payload,
         symbol=symbol,
+        interval=interval,
         from_time=from_time,
         to_time=to_time,
         target_bins=target_bins,

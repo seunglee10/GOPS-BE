@@ -18,25 +18,25 @@ patches:
 images:
   - name: YOUR_ECR_REPOSITORY/gops-market-ingestor
     newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-ingestor
-    newTag: latest
+    newTag: 0c876e9
   - name: YOUR_ECR_REPOSITORY/gops-market-processor
     newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-processor
-    newTag: latest
+    newTag: 0c876e9
   - name: YOUR_ECR_REPOSITORY/gops-market-storage
     newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-storage
-    newTag: latest
+    newTag: 0c876e9
   - name: YOUR_ECR_REPOSITORY/gops-api-server
     newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-api-server
-    newTag: latest
+    newTag: 0c876e9
   - name: YOUR_ECR_REPOSITORY/gops-frontend
     newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-frontend
-    newTag: latest
+    newTag: 0c876e9
   - name: YOUR_ECR_REPOSITORY/gops-order-worker
     newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-order-worker
-    newTag: latest
+    newTag: 0c876e9
   - name: YOUR_ECR_REPOSITORY/gops-kis-adapter
     newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-kis-adapter
-    newTag: latest
+    newTag: 0c876e9
   - name: YOUR_ECR_REPOSITORY/gops-agent-orchestrator
     newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-agent-orchestrator
-    newTag: latest
+    newTag: 0c876e9

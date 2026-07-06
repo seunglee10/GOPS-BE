@@ -193,10 +193,12 @@ def replace_watchlist_symbols(user_id: str, symbols: list[str]) -> dict[str, Any
 
 def read_watchlist_symbols(user_id: str | None = None) -> list[str]:
     provider = get_market_data_provider()
+    if user_id:
+        service = RealtimeSubscriptionCohortService(provider.redis_provider.redis, auto_reconcile=False)
+        return normalize_watchlist_symbol_list(service.user_watchlist_symbols(user_id), reject_outside=False)
     keys = RedisKeyBuilder()
-    key = keys.user_watchlist_symbols(user_id) if user_id else keys.watchlist_symbols()
     try:
-        values = provider.redis_provider.redis.smembers(key)
+        values = provider.redis_provider.redis.smembers(keys.watchlist_symbols())
     except Exception:
         values = []
     return normalize_watchlist_symbol_list(sorted(values), reject_outside=False)

@@ -58,6 +58,7 @@ def build_indicator_request(
 def build_volume_profile_request(
     *,
     symbol: str,
+    interval: str = "1m",
     from_time: str,
     to_time: str,
     price_bin_size: str,
@@ -65,9 +66,11 @@ def build_volume_profile_request(
     price_min: float | None,
     price_max: float | None,
 ) -> dict[str, Any]:
+    interval = normalize_chart_interval(interval)
     identity = {
         "version": VOLUME_PROFILE_CALCULATION_VERSION,
         "symbol": symbol,
+        "interval": interval,
         "from": from_time,
         "to": to_time,
         "priceBinSize": price_bin_size,
@@ -78,7 +81,7 @@ def build_volume_profile_request(
     return build_request(
         DERIVED_KIND_VOLUME_PROFILE,
         symbol=symbol,
-        interval="1m",
+        interval=interval,
         from_time=from_time,
         to_time=to_time,
         limit=None,
@@ -434,17 +437,23 @@ def pending_payload(request: dict[str, Any], *, error: str | None = None, state:
         params = request.get("parameters") or {}
         payload = {
             "symbol": request["symbol"],
+            "interval": request.get("interval") or "1m",
+            "sourceInterval": request.get("interval") or "1m",
             "from": request.get("from"),
             "to": request.get("to"),
-            "timeBucket": "1m",
+            "timeBucket": request.get("interval") or "1m",
             "targetBins": int(params.get("targetBins") or 10),
             "bucketCount": 0,
             "priceBinSize": 0,
             "sourcePriceBinSize": None,
             "sourceBinCount": 0,
+            "sourceCandleCount": 0,
             "source": "worker",
             "feed": "unknown",
             "calculationVersion": request["calculationVersion"],
+            "classificationVersion": request["calculationVersion"],
+            "sideClassification": "estimated",
+            "estimationMethod": "candle-range-volume-overlap",
             "dataStatus": state,
             "priceRange": {"min": None, "max": None, "requestedMin": params.get("priceMin"), "requestedMax": params.get("priceMax")},
             "totalVolume": 0,

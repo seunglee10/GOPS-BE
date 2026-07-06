@@ -373,12 +373,14 @@ class FakeWatchlistRedis:
         self.sets = {}
         self.hashes = {}
         self.values = {}
+        self.lists = {}
         self.expirations = {}
 
     def delete(self, key):
         self.sets.pop(key, None)
         self.hashes.pop(key, None)
         self.values.pop(key, None)
+        self.lists.pop(key, None)
         return 1
 
     def sadd(self, key, *values):
@@ -391,6 +393,16 @@ class FakeWatchlistRedis:
 
     def smembers(self, key):
         return set(self.sets.get(key, set()))
+
+    def rpush(self, key, *values):
+        self.lists.setdefault(key, []).extend(values)
+        return len(self.lists[key])
+
+    def lrange(self, key, start, end):
+        values = list(self.lists.get(key, []))
+        if end == -1:
+            return values[start:]
+        return values[start:end + 1]
 
     def hset(self, key, mapping=None, **kwargs):
         values = mapping or kwargs
@@ -796,9 +808,11 @@ class FakeDerivedClient:
         if request["kind"] == "volumeProfile":
             return {
                 "symbol": request["symbol"],
+                "interval": request["interval"],
+                "sourceInterval": request["interval"],
                 "from": request["from"],
                 "to": request["to"],
-                "timeBucket": "1m",
+                "timeBucket": request["interval"],
                 "targetBins": int((request.get("parameters") or {}).get("targetBins") or 10),
                 "bucketCount": 0,
                 "priceBinSize": 0,
@@ -806,6 +820,9 @@ class FakeDerivedClient:
                 "source": "worker",
                 "feed": "test",
                 "calculationVersion": request["calculationVersion"],
+                "classificationVersion": request["calculationVersion"],
+                "sideClassification": "estimated",
+                "estimationMethod": "candle-range-volume-overlap",
                 "dataStatus": "ready",
                 "priceRange": {"min": None, "max": None, "requestedMin": None, "requestedMax": None},
                 "totalVolume": 0,
@@ -1047,9 +1064,22 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(payload["derived"]["state"], "ready")
         self.assertEqual(provider.calls, [])
         self.assertEqual(derived_client.requests[0]["kind"], "volumeProfile")
+        self.assertEqual(derived_client.requests[0]["interval"], "1m")
         self.assertEqual(derived_client.requests[0]["parameters"]["targetBins"], 4)
         self.assertEqual(derived_client.requests[0]["parameters"]["priceMin"], 100)
         self.assertEqual(derived_client.requests[0]["parameters"]["priceMax"], 102)
+        payload_5m = service.volume_profile_bins(
+            "aapl",
+            "2026-06-25T13:30:00.000Z",
+            "2026-06-25T14:00:00.000Z",
+            "auto",
+            target_bins=4,
+            price_min=100,
+            price_max=102,
+            interval="5m",
+        )
+        self.assertEqual(payload_5m["interval"], "5m")
+        self.assertNotEqual(derived_client.requests[0]["requestHash"], derived_client.requests[1]["requestHash"])
 
     def test_volume_profile_bins_rejects_reversed_price_range(self):
         service = MarketDataQueryService(FakeVolumeProfileProvider(), backfill_service=FakeBackfillService(), fill_service=FakeFillService())
@@ -1693,6 +1723,21 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(redis_state.hashes["gops:market:on-demand:v1:subscription:symbol:AAPL"]["layers"], "quotes,trades")
         self.assertEqual(redis_state.hashes["gops:market:on-demand:v1:subscription:symbol:AAPL"]["sources"], "watchlist")
         self.assertEqual(redis_state.hashes["gops:market:on-demand:v1:subscription:symbol:AAPL"]["source"], "subscription-controller")
+
+    def test_watchlist_read_preserves_user_order(self):
+        provider = FakeWatchlistProvider()
+        previous = market_data_service.get_market_data_provider
+        previous_universe = market_data_service.configured_universe_symbols
+        market_data_service.get_market_data_provider = lambda: provider
+        market_data_service.configured_universe_symbols = lambda: ["AAPL", "MSFT", "NVDA"]
+        try:
+            market_data_service.replace_watchlist_symbols("user-a", ["NVDA", "AAPL", "MSFT"])
+            payload = market_data_service.watchlist_summaries(user_id="user-a")
+        finally:
+            market_data_service.get_market_data_provider = previous
+            market_data_service.configured_universe_symbols = previous_universe
+
+        self.assertEqual([item["symbol"] for item in payload["symbols"]], ["NVDA", "AAPL", "MSFT"])
 
     def test_watchlist_remove_preserves_active_chart_subscription_source(self):
         provider = FakeWatchlistProvider()
@@ -2614,11 +2659,13 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             "AUTH_REDIS_KEY_PREFIX": "gops:test-auth",
         }, clear=False):
             client = TestClient(create_app())
-            watchlist = client.put("/api/charts/watchlist", json={"symbols": ["NVDA"]})
+            watchlist_read = client.get("/api/charts/watchlist")
+            watchlist_write = client.put("/api/charts/watchlist", json={"symbols": ["NVDA"]})
             portfolio = client.put("/api/charts/subscription-cohorts/portfolio", json={"symbols": ["AAPL"]})
             backfill = client.post("/api/charts/backfill", json={"symbol": "NVDA", "interval": "1m"})
 
-        self.assertEqual(watchlist.status_code, 401)
+        self.assertEqual(watchlist_read.status_code, 401)
+        self.assertEqual(watchlist_write.status_code, 401)
         self.assertEqual(portfolio.status_code, 401)
         self.assertEqual(backfill.status_code, 410)
 

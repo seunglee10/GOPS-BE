@@ -6,12 +6,20 @@ metadata:
   name: graph-expansion-refresh
   namespace: alfaka-market-data
 spec:
+  ttlSecondsAfterFinished: 86400
   template:
     metadata:
       labels:
         app: graph-expansion-refresh
     spec:
       restartPolicy: Never
+      nodeSelector:
+        karpenter.sh/nodepool: batch
+      tolerations:
+        - key: gops.io/dedicated
+          operator: Equal
+          value: batch
+          effect: NoSchedule
       serviceAccountName: alfaka-market-data-sa
       containers:
         - name: graph-expansion-refresh

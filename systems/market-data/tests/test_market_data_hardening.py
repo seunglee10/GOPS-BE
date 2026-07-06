@@ -290,6 +290,27 @@ class QueryRecordingClickHouseClient(RecordingClickHouseClient):
         return list(self.query_rows)[: int((parameters or {}).get("limit") or len(self.query_rows))]
 
 
+class NewsRebuildSchemaAwareClickHouseClient(RecordingClickHouseClient):
+    database = "market_data"
+
+    def __init__(self, columns, partitions, rows_by_partition):
+        super().__init__()
+        self.columns = list(columns)
+        self.partitions = list(partitions)
+        self.rows_by_partition = dict(rows_by_partition)
+        self.queries = []
+
+    def query_json_each_row(self, query, parameters=None):
+        parameters = parameters or {}
+        self.queries.append((query, parameters))
+        if "FROM system.columns" in query:
+            return [{"name": name} for name in self.columns]
+        if "GROUP BY symbol, locale" in query:
+            return list(self.partitions)
+        key = (parameters.get("symbol"), parameters.get("locale"))
+        return list(self.rows_by_partition.get(key, []))[: int(parameters.get("limit") or 0)]
+
+
 class SequentialQueryClickHouseClient(RecordingClickHouseClient):
     database = "market_data"
 
@@ -1668,6 +1689,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn("NEWS_BACKFILL_SHARD_COUNT", news_backfill_job)
         self.assertIn("NEWS_BACKFILL_PUBLISH_RECENT_TO_KAFKA", news_backfill_job)
         self.assertIn("NEWS_INTELLIGENCE_REBUILD_DRY_RUN", news_rebuild_job)
+        self.assertIn("restartPolicy: Never", news_rebuild_job)
         self.assertIn("../../base/app", aws_overlay)
         self.assertIn("../aws-incluster-app", aws_ci_overlay)
         self.assertNotIn("kind: Job", aws_ci_overlay)
@@ -1689,6 +1711,8 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn('KAFKA_CLICKHOUSE_ENABLE_AUTO_COMMIT: "false"', configmap)
         self.assertIn("wait_for_rebuild_job", news_rebuild_script)
         self.assertIn('status.conditions[?(@.type=="Failed")].status', news_rebuild_script)
+        self.assertIn("--previous=true", news_rebuild_script)
+        self.assertIn("kubectl get events", news_rebuild_script)
         self.assertNotIn("kubectl wait --for=condition=complete", news_rebuild_script)
         self.assertIn("Python market-processor pod", aws_overlay)
         self.assertNotIn("managed stream processor", aws_overlay)
@@ -5212,17 +5236,26 @@ class MarketDataHardeningContractTest(unittest.TestCase):
                 }],
                 profile_bins=[{"priceBinSize": 0.05, "source": "redis", "feed": "sip"}],
             ),
-            clickhouse_provider=FailingClickHouseProvider(),
+            clickhouse_provider=FailingClickHouseProvider(candles=[{
+                "timestamp": "2026-06-25T10:16:00.000Z",
+                "open": 1,
+                "high": 2,
+                "low": 1,
+                "close": 2,
+                "volume": 100,
+                "source": "clickhouse",
+                "feed": "sip",
+            }]),
         )
 
         with self.assertLogs("alfaka.serving.provider", level="WARNING") as logs:
             candles = provider.candles_since_cursor("AAPL", "1m", "v1:AAPL:1m:2026-06-25T10:15:00.000Z:abc")
-            profile = provider.volume_profile_bins("AAPL", "from", "to", "auto")
+            profile = provider.volume_profile_bins("AAPL", "2026-06-25T10:15:00.000Z", "2026-06-25T10:17:00.000Z", "auto")
 
         self.assertEqual(candles[0]["sourceEventId"], "event-later")
-        self.assertEqual(profile["source"], "redis")
+        self.assertEqual(profile["sideClassification"], "estimated")
+        self.assertEqual(profile["totalVolume"], 100)
         self.assertIn("ClickHouse candles_since failed", "\n".join(logs.output))
-        self.assertIn("ClickHouse volume_profile_bins failed", "\n".join(logs.output))
 
     def test_empty_snapshot_does_not_emit_gap_fill_cursor(self):
         payload = snapshot("INTC", "1m", [])
@@ -6045,6 +6078,11 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(client.queries[0][1]["date"], "2026-07-01")
         self.assertEqual(client.queries[0][1]["locale"], "ko-KR")
         self.assertIsInstance(client.queries[0][1]["limit"], int)
+        existing_query, existing_params = client.queries[1]
+        self.assertIn("FROM market_data.news_company_daily_summaries AS summaries", existing_query)
+        self.assertIn("summaries.date = {date:Date}", existing_query)
+        self.assertNotIn("AND date =", existing_query)
+        self.assertEqual(existing_params["date"], "2026-07-01")
         self.assertEqual(record["articleIds"], ["aapl-daily-worker-1"])
         self.assertEqual(record["mentionCount"], 1)
         self.assertEqual(record["sources"][0]["url"], "https://example.com/aapl-worker")
@@ -6239,6 +6277,76 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(redis_client.expirations[RedisKeyBuilder().news_latest_v2("ko-KR", "AAPL")], 2592000)
         self.assertEqual(client.executions, [])
         self.assertEqual(client.inserts, [])
+
+    def test_news_intelligence_rebuild_selects_schema_compatible_legacy_rows(self):
+        rebuild = load_news_intelligence_rebuild_module()
+        redis_client = MemoryRedis()
+        client = NewsRebuildSchemaAwareClickHouseClient(
+            columns=[
+                "published_at",
+                "symbol",
+                "article_id",
+                "locale",
+                "headline",
+                "summary",
+                "url",
+                "source",
+                "localized_headline",
+                "localized_summary",
+                "event_type",
+                "sentiment",
+                "impact_direction",
+                "why_it_matters",
+                "model",
+                "localized_at",
+                "raw",
+            ],
+            partitions=[{"symbol": "AAPL", "locale": "ko-KR"}],
+            rows_by_partition={
+                ("AAPL", "ko-KR"): [
+                    {
+                        "publishedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                        "symbol": "AAPL",
+                        "articleId": "legacy-aapl-1",
+                        "locale": "ko-KR",
+                        "symbols": ["AAPL"],
+                        "headline": "Apple expands AI features",
+                        "summary": "Apple expanded AI features.",
+                        "localizedHeadline": "애플, AI 기능 확대",
+                        "localizedSummary": "애플이 AI 기능을 확대했습니다.",
+                        "eventType": "product-market",
+                        "sentiment": "positive",
+                        "impactDirection": "positive",
+                        "whyItMatters": "제품 경쟁력과 관련됩니다.",
+                        "url": "https://example.com/aapl-ai",
+                        "source": "benzinga",
+                        "model": "old-model",
+                        "raw": "{}",
+                    }
+                ]
+            },
+        )
+
+        rebuilt = rebuild.rebuild_recent_localizations(
+            client,
+            days=30,
+            batch_size=10,
+            max_rows=10,
+            redis_client=redis_client,
+        )
+
+        self.assertEqual(rebuilt, 1)
+        select_query = client.queries[-1][0]
+        self.assertIn("symbol AS targetSymbol", select_query)
+        self.assertIn("'mention' AS subjectRelevance", select_query)
+        self.assertIn("toFloat32(0) AS relevanceScoreV2", select_query)
+        self.assertIn("CAST([], 'Array(String)') AS directSignals", select_query)
+        self.assertNotIn("OFFSET", select_query)
+        self.assertEqual(client.queries[-1][1]["symbol"], "AAPL")
+        self.assertEqual(client.queries[-1][1]["locale"], "ko-KR")
+        cached = read_localized_news_from_redis(redis_client, "AAPL", limit=5, locale="ko-KR")
+        self.assertEqual(cached[0]["articleId"], "legacy-aapl-1")
+        self.assertEqual(cached[0]["targetSymbol"], "AAPL")
 
     def test_news_intelligence_worker_falls_back_when_openai_fails(self):
         worker = load_news_intelligence_worker_module()

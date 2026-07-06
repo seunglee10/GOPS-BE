@@ -255,6 +255,11 @@ docker-compose clickhouse
 infra/clickhouse/initdb
 ```
 
+Local ClickHouse is only a development runtime. AWS ClickHouse replacement is a
+post-push deployment operation: keep merge work limited to code, DDL, and env
+contracts, then run AWS schema initialization and data rebuild jobs against the
+new AWS endpoint.
+
 Common env:
 
 ```text

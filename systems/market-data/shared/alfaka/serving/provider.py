@@ -13,6 +13,7 @@ from alfaka.serving.moving_average import MA_WINDOWS, attach_moving_averages
 from alfaka.serving.redis_provider import RedisMarketDataProvider
 from alfaka.serving.symbol_registry import SymbolRegistry
 from alfaka.serving.time_utils import canonical_utc_timestamp, parse_utc_time
+from alfaka.serving.volume_profile import compute_volume_profile_payload
 
 
 logger = logging.getLogger(__name__)
@@ -148,25 +149,16 @@ class MarketDataProvider:
     def latest_status(self, symbol=None):
         return self.redis_provider.latest_status(symbol) or self.clickhouse_provider.latest_status(symbol)
 
-    def volume_profile_bins(self, symbol, from_time, to_time, price_bin_size=None):
-        try:
-            bins = self.clickhouse_provider.volume_profile_bins(symbol, from_time, to_time, None if price_bin_size == "auto" else price_bin_size)
-        except Exception:
-            logger.warning("ClickHouse volume_profile_bins failed; falling back to Redis live bins.", exc_info=True)
-            bins = []
-        if not bins:
-            bins = self.redis_provider.volume_profile_bins(symbol)
-        resolved_size = first_value(bins, "priceBinSize", 0.05)
-        return {
-            "symbol": symbol,
-            "from": from_time,
-            "to": to_time,
-            "timeBucket": "1m",
-            "priceBinSize": resolved_size,
-            "source": first_value(bins, "source", "clickhouse"),
-            "feed": first_value(bins, "feed", "unknown"),
-            "bins": bins,
-        }
+    def volume_profile_bins(self, symbol, from_time, to_time, price_bin_size=None, interval="1m"):
+        interval = normalize_chart_interval(interval)
+        candles = self.candle_snapshot(symbol, interval, resolve_candle_limit(interval), from_time=from_time, to_time=to_time, ma_windows=())
+        return compute_volume_profile_payload(
+            candles,
+            symbol=symbol,
+            interval=interval,
+            from_time=from_time,
+            to_time=to_time,
+        )
 
     def footprint_ticks(self, symbol, from_time, to_time, limit=20000):
         try:
@@ -194,7 +186,7 @@ class MarketDataProvider:
             "latestDailyCandle": daily[-1] if daily else None,
             "previousDailyCandle": daily[-2] if len(daily) > 1 else None,
             "marketStatus": self.latest_status(symbol) if "status" in include else None,
-            "volumeProfile": self.volume_profile_bins(symbol, from_time, to_time, "auto") if "volumeProfile" in include else None,
+            "volumeProfile": self.volume_profile_bins(symbol, from_time, to_time, "auto", interval=interval) if "volumeProfile" in include else None,
             "comparisonCandidates": self.search_symbols(symbol[:2], 5),
         }
 

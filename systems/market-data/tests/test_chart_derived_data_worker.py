@@ -112,19 +112,7 @@ class FakeProvider:
         return {"symbol": symbol, "interval": interval, "source": "unit", "feed": "test", "dataStatus": "ready", "candles": candles}
 
     def volume_profile_bins(self, symbol, from_time, to_time, price_bin_size):
-        self.calls.append({"kind": "volumeProfile", "symbol": symbol, "priceBinSize": price_bin_size})
-        return {
-            "symbol": symbol,
-            "from": from_time,
-            "to": to_time,
-            "source": "unit",
-            "feed": "test",
-            "priceBinSize": 0.25,
-            "bins": [
-                {"priceBin": 100.0, "priceBinSize": 0.25, "volume": 10, "tradeCount": 1, "vwap": 100.1},
-                {"priceBin": 100.5, "priceBinSize": 0.25, "volume": 50, "tradeCount": 4, "vwap": 100.6},
-            ],
-        }
+        raise AssertionError("Volume Profile v1 must use candle snapshots, not materialized bins.")
 
     def footprint_ticks(self, symbol, from_time, to_time, limit=20000):
         self.calls.append({"kind": "footprint", "symbol": symbol, "limit": limit})
@@ -143,8 +131,8 @@ class FakeProvider:
 
 
 class FailingVolumeProfileProvider(FakeProvider):
-    def volume_profile_bins(self, symbol, from_time, to_time, price_bin_size):
-        raise RuntimeError("volume profile source unavailable")
+    def candle_snapshot(self, symbol, interval, limit, before=None, from_time=None, to_time=None, ma_windows=None):
+        raise RuntimeError("volume profile candle source unavailable")
 
 
 class ChartDerivedDataWorkerTest(unittest.TestCase):
@@ -194,6 +182,7 @@ class ChartDerivedDataWorkerTest(unittest.TestCase):
         worker = load_worker_module()
         request = build_volume_profile_request(
             symbol="AAPL",
+            interval="5m",
             from_time="2026-06-25T13:30:00.000Z",
             to_time="2026-06-25T14:00:00.000Z",
             price_bin_size="auto",
@@ -204,9 +193,30 @@ class ChartDerivedDataWorkerTest(unittest.TestCase):
 
         payload = worker.process_request(request, provider=FakeProvider(), redis_client=FakeRedis(), artifact_store=FakeArtifactStore())
 
+        self.assertEqual(payload["interval"], "5m")
+        self.assertEqual(payload["sourceInterval"], "5m")
+        self.assertEqual(payload["sideClassification"], "estimated")
         self.assertEqual(payload["targetBins"], 4)
-        self.assertEqual(payload["poc"]["volume"], 50)
+        self.assertGreater(payload["totalVolume"], 0)
+        self.assertIsNotNone(payload["poc"])
         self.assertEqual(payload["derived"]["artifactStored"], True)
+
+    def test_volume_profile_request_hash_includes_interval(self):
+        base = {
+            "symbol": "AAPL",
+            "from_time": "2026-06-25T13:30:00.000Z",
+            "to_time": "2026-06-25T14:00:00.000Z",
+            "price_bin_size": "auto",
+            "target_bins": 10,
+            "price_min": 100,
+            "price_max": 102,
+        }
+        one_minute = build_volume_profile_request(interval="1m", **base)
+        five_minute = build_volume_profile_request(interval="5m", **base)
+
+        self.assertNotEqual(one_minute["requestHash"], five_minute["requestHash"])
+        self.assertNotEqual(one_minute["cacheKey"], five_minute["cacheKey"])
+        self.assertEqual(five_minute["interval"], "5m")
 
     def test_footprint_request_is_1m_estimated(self):
         worker = load_worker_module()
@@ -230,6 +240,7 @@ class ChartDerivedDataWorkerTest(unittest.TestCase):
         producer = FakeProducer()
         request = build_volume_profile_request(
             symbol="AAPL",
+            interval="1m",
             from_time="2026-06-25T13:30:00.000Z",
             to_time="2026-06-25T14:00:00.000Z",
             price_bin_size="auto",

@@ -67,6 +67,9 @@ class RedisKeyBuilder:
     def user_watchlist_symbols(self, user_id):
         return self.key(f"user:{user_id}:watchlist:symbols")
 
+    def user_watchlist_symbol_order(self, user_id):
+        return self.key(f"user:{user_id}:watchlist:symbol-order")
+
     def user_portfolio_symbols(self, user_id):
         return self.key(f"user:{user_id}:portfolio:symbols")
 
