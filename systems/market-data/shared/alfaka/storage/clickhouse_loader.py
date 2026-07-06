@@ -590,6 +590,30 @@ class ClickHouseHttpClient:
             ORDER BY (object_path, dataset, layer)
         """)
         self.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.database}.chart_derived_artifacts
+            (
+                request_hash String,
+                kind LowCardinality(String),
+                symbol LowCardinality(String),
+                interval LowCardinality(String),
+                from_time Nullable(DateTime64(3, 'UTC')),
+                to_time Nullable(DateTime64(3, 'UTC')),
+                parameters_json String,
+                calculation_version LowCardinality(String),
+                data_status LowCardinality(String),
+                payload_json String,
+                source LowCardinality(String),
+                feed LowCardinality(String),
+                created_at DateTime64(3, 'UTC'),
+                expires_at DateTime64(3, 'UTC'),
+                inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+            )
+            ENGINE = ReplacingMergeTree(inserted_at)
+            PARTITION BY toYYYYMM(created_at)
+            ORDER BY (kind, symbol, request_hash)
+            TTL toDateTime(expires_at) DELETE
+        """)
+        self.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.database}.quote_ticks
             (
                 event_time DateTime64(3, 'UTC'),

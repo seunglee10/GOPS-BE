@@ -753,6 +753,63 @@ class ClickHouseMarketDataProvider:
             params["priceBinSize"] = float(price_bin_size)
         return self.query_json_each_row(query, params)
 
+    def footprint_ticks(self, symbol, from_time, to_time, limit=20000):
+        trade_query = f"""
+        SELECT
+          formatDateTime(event_time, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS timestamp,
+          price,
+          size,
+          exchange,
+          conditions,
+          tape,
+          source,
+          feed,
+          feed_profile AS feedProfile,
+          market_session AS marketSession,
+          source_event_id AS sourceEventId
+        FROM {self.table('trade_ticks')}
+        WHERE symbol = {{symbol:String}}
+          AND event_time >= parseDateTime64BestEffort({{fromTime:String}})
+          AND event_time < parseDateTime64BestEffort({{toTime:String}})
+        ORDER BY event_time ASC
+        LIMIT {{limit:UInt32}}
+        FORMAT JSONEachRow
+        """
+        quote_query = f"""
+        SELECT
+          formatDateTime(event_time, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS timestamp,
+          bid_price AS bidPrice,
+          bid_size AS bidSize,
+          ask_price AS askPrice,
+          ask_size AS askSize,
+          bid_exchange AS bidExchange,
+          ask_exchange AS askExchange,
+          conditions,
+          source,
+          feed,
+          feed_profile AS feedProfile,
+          market_session AS marketSession,
+          source_event_id AS sourceEventId
+        FROM {self.table('quote_ticks')}
+        WHERE symbol = {{symbol:String}}
+          AND event_time >= parseDateTime64BestEffort({{fromTime:String}}) - INTERVAL 5 MINUTE
+          AND event_time < parseDateTime64BestEffort({{toTime:String}})
+        ORDER BY event_time ASC
+        LIMIT {{quoteLimit:UInt32}}
+        FORMAT JSONEachRow
+        """
+        params = {"symbol": symbol, "fromTime": from_time, "toTime": to_time, "limit": int(limit)}
+        trades = self.query_json_each_row(trade_query, params)
+        quotes = self.query_json_each_row(quote_query, {**params, "quoteLimit": int(limit)})
+        return {
+            "symbol": symbol,
+            "from": from_time,
+            "to": to_time,
+            "source": "clickhouse",
+            "trades": trades,
+            "quotes": quotes,
+        }
+
     def ensure_market_data_schema(self):
         """조회 전에 필요한 ClickHouse 컬럼과 타입이 준비되어 있는지 보정합니다."""
         for table in ("trade_ticks", "chart_candles", "volume_profile_bins_1m", "market_status_events"):

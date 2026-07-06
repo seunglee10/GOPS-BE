@@ -31,6 +31,9 @@ Active chart routes:
 
 ```text
 GET  /api/charts/candles
+GET  /api/charts/indicators
+GET  /api/charts/volume-profile-bins
+GET  /api/charts/footprint
 GET  /api/charts/symbols
 WS   /ws/charts
 ```
@@ -127,6 +130,22 @@ Chart on-demand fill runs inside the API server. The chart `backfill-worker`
 deployment, `initial-load` job, and chart backfill queue env are not part of the
 current runtime. Coverage repair is an audit job that calls the candles endpoint
 and reports the returned fill trace.
+
+Chart-derived rendering data is separate from candle fill. The API server owns
+request normalization, candle source fill for indicator requests, Redis/ClickHouse
+artifact lookup, Kafka enqueue, and short wait/pending responses. The
+`chart-derived-data-worker` owns indicator, volume profile, and footprint
+calculation. It consumes `market.chart-derived.requests.v1`, writes hot results
+to Redis, and materializes request artifacts into
+`market_data.chart_derived_artifacts` so the frontend and future Agent flows can
+reference the same derived result by request hash.
+
+Derived result retention is intentionally shorter than candle history:
+
+```text
+Redis: indicators 300s, volume profile 30s, footprint 15s
+ClickHouse artifacts: indicators 7d, volume profile 1d, footprint 6h
+```
 
 News historical collection remains a separate news-domain job and may still use
 `NEWS_BACKFILL_*` env names.

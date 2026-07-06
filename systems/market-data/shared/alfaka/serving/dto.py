@@ -71,7 +71,7 @@ def snapshot(
         "backfillStatus": backfill_status,
         "canBackfill": bool(can_backfill),
         "message": resolved_message,
-        "indicators": indicators or {"ma": [5, 20, 60], "volume": True},
+        "indicators": indicators or {"ma": [], "volume": True},
         "candles": converted_candles,
     }
     if last_candle.get("feedProfile"):

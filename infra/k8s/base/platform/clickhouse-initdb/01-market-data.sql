@@ -101,6 +101,29 @@ ENGINE = ReplacingMergeTree(inserted_at)
 PARTITION BY toYYYYMM(event_minute)
 ORDER BY (symbol, event_minute, feed_profile, price_bin_size, price_bin);
 
+CREATE TABLE IF NOT EXISTS market_data.chart_derived_artifacts
+(
+    request_hash String,
+    kind LowCardinality(String),
+    symbol LowCardinality(String),
+    interval LowCardinality(String),
+    from_time Nullable(DateTime64(3, 'UTC')),
+    to_time Nullable(DateTime64(3, 'UTC')),
+    parameters_json String,
+    calculation_version LowCardinality(String),
+    data_status LowCardinality(String),
+    payload_json String,
+    source LowCardinality(String),
+    feed LowCardinality(String),
+    created_at DateTime64(3, 'UTC'),
+    expires_at DateTime64(3, 'UTC'),
+    inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(inserted_at)
+PARTITION BY toYYYYMM(created_at)
+ORDER BY (kind, symbol, request_hash)
+TTL toDateTime(expires_at) DELETE;
+
 CREATE TABLE IF NOT EXISTS market_data.market_status_events
 (
     event_time DateTime64(3, 'UTC'),

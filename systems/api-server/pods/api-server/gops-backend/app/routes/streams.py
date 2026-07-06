@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
 
-from app.auth.dependencies import WebSocketAuthRequired, WebSocketAuthUnavailable, require_websocket_user
+from app.auth.dependencies import WebSocketAuthUnavailable, optional_websocket_user
 from app.market_data.realtime.session_manager import WebSocketSessionManager
 from app.services.alfaka_market_data import normalize_market_symbol
 from alfaka.serving.intervals import normalize_chart_interval
@@ -17,12 +17,7 @@ async def chart_stream(
     cursor: str | None = Query(default=None),
 ) -> None:
     try:
-        user = require_websocket_user(websocket)
-    except WebSocketAuthRequired as exc:
-        await websocket.accept()
-        await websocket.send_json({"type": "ERROR", "detail": str(exc)})
-        await websocket.close(code=1008)
-        return
+        user = optional_websocket_user(websocket)
     except WebSocketAuthUnavailable as exc:
         await websocket.accept()
         await websocket.send_json({"type": "ERROR", "detail": str(exc), "retryable": True})
@@ -44,6 +39,12 @@ async def chart_stream(
         return
 
     try:
-        await WebSocketSessionManager().serve_chart(websocket, symbol, interval, cursor, user_id=user.sub)
+        await WebSocketSessionManager().serve_chart(
+            websocket,
+            symbol,
+            interval,
+            cursor,
+            user_id=user.sub if user else "anonymous",
+        )
     except WebSocketDisconnect:
         return

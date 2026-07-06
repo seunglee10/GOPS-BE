@@ -50,7 +50,7 @@ class SymbolListRequestBody(BaseModel):
 def chart_candles(
     symbol: str = Query(min_length=1, max_length=12),
     interval: str = Query(default="1m", pattern=CHART_INTERVAL_PATTERN),
-    ma: str = Query(default="5,20,60"),
+    ma: str = Query(default=""),
     limit: int | None = Query(default=None, ge=1, le=MAX_CHART_CANDLE_LIMIT),
     before: str | None = Query(default=None),
     from_time: str | None = Query(default=None, alias="from"),
