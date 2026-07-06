@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from alfaka.news.relevance import classify_subject_relevance, is_direct_subject, normalize_subject_level, normalize_symbols
+from alfaka.serving.news_hot_cache import company_daily_summary_coverage_valid
 from alfaka.storage.news_daily_summary import attach_price_changes_to_daily_summaries, clickhouse_row_to_daily_summary
 
 from ..contracts import EvidenceItem, utc_now_iso
@@ -79,7 +80,6 @@ class ClickHouseNewsProvider(NewsProvider):
         self.cache_ttl_seconds = int(os.getenv("AGENT_NEWS_CACHE_TTL_SECONDS", "300"))
         self.no_data_cache_ttl_seconds = int(os.getenv("AGENT_NEWS_NO_DATA_CACHE_TTL_SECONDS", "60"))
         self.prelocalized_enabled = bool_env("AGENT_NEWS_PRELOCALIZED_ENABLED", True)
-        self.prelocalized_redis_first = bool_env("AGENT_NEWS_PRELOCALIZED_REDIS_FIRST", True)
         self.locale = os.getenv("AGENT_NEWS_LOCALE", os.getenv("NEWS_INTELLIGENCE_LOCALE", "ko-KR"))
         self.daily_summary_enabled = bool_env("AGENT_NEWS_DAILY_SUMMARY_ENABLED", True)
         self.daily_summary_limit = int(os.getenv("AGENT_NEWS_DAILY_SUMMARY_LIMIT", "5"))
@@ -133,48 +133,107 @@ class ClickHouseNewsProvider(NewsProvider):
     def _fetch_prelocalized(self, request: ProviderRequest) -> list[EvidenceItem]:
         if not self.prelocalized_enabled:
             return []
-        rows = []
         requested_symbols = self._request_symbols(request)
-        if self.prelocalized_redis_first:
-            try:
-                redis_provider = self.redis_provider or (self._default_redis_provider() if os.getenv("REDIS_URL") else None)
-                if hasattr(redis_provider, "localized_news_articles_for_symbols"):
-                    rows.extend(redis_provider.localized_news_articles_for_symbols(requested_symbols, limit=self.limit, locale=self.locale))
-            except Exception:
-                rows = []
-        if not rows:
-            try:
-                provider = self.clickhouse_provider or self._default_provider()
-                if hasattr(provider, "localized_news_articles_for_symbols"):
-                    rows.extend(provider.localized_news_articles_for_symbols(requested_symbols, limit=self.limit, days=self.days, locale=self.locale))
-                elif len(requested_symbols) == 1 and hasattr(provider, "localized_news_articles"):
-                    rows.extend(provider.localized_news_articles(requested_symbols[0], limit=self.limit, days=self.days, locale=self.locale))
-            except Exception:
-                rows = []
+        rows = self._fetch_prelocalized_redis_rows(requested_symbols)
+        if len(rows) < self.limit:
+            clickhouse_rows = self._fetch_prelocalized_clickhouse_rows(requested_symbols)
+            if clickhouse_rows:
+                self._warm_prelocalized_redis_rows(clickhouse_rows)
+                rows = clickhouse_rows
         evidence = normalize_news_evidence([self._row_to_evidence(row, request, source="prelocalized") for row in rows])
         return filter_subject_relevance(evidence, limit=self.limit)
+
+    def _fetch_prelocalized_clickhouse_rows(self, requested_symbols: list[str]) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        try:
+            provider = self.clickhouse_provider or self._default_provider()
+            if hasattr(provider, "localized_news_articles_for_symbols"):
+                rows.extend(provider.localized_news_articles_for_symbols(requested_symbols, limit=self.limit, days=self.days, locale=self.locale))
+            elif len(requested_symbols) == 1 and hasattr(provider, "localized_news_articles"):
+                rows.extend(provider.localized_news_articles(requested_symbols[0], limit=self.limit, days=self.days, locale=self.locale))
+        except Exception:
+            return []
+        return [row for row in rows if isinstance(row, dict)]
+
+    def _fetch_prelocalized_redis_rows(self, requested_symbols: list[str]) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        try:
+            redis_provider = self.redis_provider or (self._default_redis_provider() if os.getenv("REDIS_URL") else None)
+            if hasattr(redis_provider, "localized_news_articles_for_symbols"):
+                rows.extend(redis_provider.localized_news_articles_for_symbols(requested_symbols, limit=self.limit, locale=self.locale))
+        except Exception:
+            return []
+        return [row for row in rows if isinstance(row, dict)]
+
+    def _warm_prelocalized_redis_rows(self, rows: list[dict[str, Any]]) -> None:
+        try:
+            redis_provider = self.redis_provider or (self._default_redis_provider() if os.getenv("REDIS_URL") else None)
+            method = getattr(redis_provider, "warm_localized_news_articles", None)
+            if callable(method):
+                method(rows, locale=self.locale)
+        except Exception:
+            return
 
     def fetch_daily_summaries(self, request: ProviderRequest) -> list[dict[str, Any]]:
         if not self.daily_summary_enabled or request.symbols:
             return []
         symbol = self._request_symbols(request)[0]
-        rows = []
-        if self.prelocalized_redis_first:
-            try:
-                redis_provider = self.redis_provider or (self._default_redis_provider() if os.getenv("REDIS_URL") else None)
-                if hasattr(redis_provider, "company_daily_news_summaries"):
-                    rows.extend(redis_provider.company_daily_news_summaries(symbol, limit=self.daily_summary_limit, locale=self.locale))
-            except Exception:
-                rows = []
-        if not rows:
-            try:
-                provider = self.clickhouse_provider or self._default_provider()
-                if hasattr(provider, "company_daily_news_summaries"):
-                    rows.extend(provider.company_daily_news_summaries(symbol, limit=self.daily_summary_limit, days=max(self.days, 30), locale=self.locale))
-            except Exception:
-                rows = []
+        days = max(self.days, 30)
+        rows = self._fetch_daily_summary_redis_rows(symbol)
+        if not self._daily_summary_redis_coverage_valid(symbol, days, rows):
+            clickhouse_rows = self._fetch_daily_summary_clickhouse_rows(symbol)
+            if clickhouse_rows:
+                self._warm_daily_summary_redis_rows(symbol, clickhouse_rows, days)
+                rows = clickhouse_rows
         summaries = [clickhouse_row_to_daily_summary(row) for row in rows if isinstance(row, dict)]
         return attach_price_changes_to_daily_summaries(summaries, self._daily_price_candles(symbol))
+
+    def _fetch_daily_summary_clickhouse_rows(self, symbol: str) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        try:
+            provider = self.clickhouse_provider or self._default_provider()
+            if hasattr(provider, "company_daily_news_summaries"):
+                rows.extend(provider.company_daily_news_summaries(symbol, limit=self.daily_summary_limit, days=max(self.days, 30), locale=self.locale))
+        except Exception:
+            return []
+        return [row for row in rows if isinstance(row, dict)]
+
+    def _fetch_daily_summary_redis_rows(self, symbol: str) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        try:
+            redis_provider = self.redis_provider or (self._default_redis_provider() if os.getenv("REDIS_URL") else None)
+            if hasattr(redis_provider, "company_daily_news_summaries"):
+                rows.extend(redis_provider.company_daily_news_summaries(symbol, limit=self.daily_summary_limit, locale=self.locale))
+        except Exception:
+            return []
+        return [row for row in rows if isinstance(row, dict)]
+
+    def _daily_summary_redis_coverage_valid(self, symbol: str, days: int, rows: list[dict[str, Any]]) -> bool:
+        try:
+            redis_provider = self.redis_provider or (self._default_redis_provider() if os.getenv("REDIS_URL") else None)
+            method = getattr(redis_provider, "company_daily_news_coverage", None)
+            if not callable(method):
+                return False
+            coverage = method(symbol, locale=self.locale)
+        except Exception:
+            return False
+        return company_daily_summary_coverage_valid(
+            coverage,
+            symbol=symbol,
+            days=days,
+            limit=self.daily_summary_limit,
+            locale=self.locale,
+            rows=rows,
+        )
+
+    def _warm_daily_summary_redis_rows(self, symbol: str, rows: list[dict[str, Any]], days: int) -> None:
+        try:
+            redis_provider = self.redis_provider or (self._default_redis_provider() if os.getenv("REDIS_URL") else None)
+            method = getattr(redis_provider, "warm_company_daily_news_summaries", None)
+            if callable(method):
+                method(symbol, rows, days=days, limit=self.daily_summary_limit, locale=self.locale)
+        except Exception:
+            return
 
     def _daily_price_candles(self, symbol: str) -> list[dict[str, Any]]:
         try:

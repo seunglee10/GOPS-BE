@@ -88,6 +88,7 @@ CI/CD는 Continuous Integration/Continuous Delivery의 줄임말이다. 코드�
 11. `kubectl apply -k` server-side dry run을 실행한다.
 12. `kubectl apply -k`로 app workload를 배포한다.
 13. `kubectl rollout status`로 rollout을 확인한다.
+14. `market-storage`가 선택된 배포에서는 `scripts/aws/run-news-cache-rebuild-jobs.sh`가 뉴스 Redis cache rebuild Job을 실행한다.
 14. frontend/backend public endpoint smoke test를 실행한다.
 15. 실패하면 `kubectl rollout undo`로 rollback한다.
 

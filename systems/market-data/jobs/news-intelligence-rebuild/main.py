@@ -2,7 +2,15 @@
 # 사용: 배포 후 최근 30일 뉴스 cache/schema 전환을 한 번 보정하는 Kubernetes Job으로 실행합니다.
 import os
 
+import redis
+
 from alfaka.common.env import load_dotenv
+from alfaka.serving.news_hot_cache import (
+    DEFAULT_NEWS_MAX_ITEMS,
+    DEFAULT_NEWS_RETENTION_DAYS,
+    DEFAULT_NEWS_TTL_SECONDS,
+    write_localized_news_to_redis,
+)
 from alfaka.storage.clickhouse_loader import ClickHouseHttpClient
 from alfaka.storage.news_intelligence import build_news_intelligence_record, news_intelligence_to_clickhouse_row, utc_now_iso
 
@@ -25,11 +33,13 @@ def main():
         print(f"News intelligence rebuild dry-run: rows={total} days={days} maxRows={max_rows}", flush=True)
         return
 
-    total = rebuild_recent_localizations(client, days=days, batch_size=batch_size, max_rows=max_rows)
-    print(f"News intelligence rebuild 완료: rows={total} days={days}", flush=True)
+    warm_redis = bool_env(os.getenv("NEWS_INTELLIGENCE_REBUILD_WARM_REDIS"), default=True)
+    redis_client = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True) if warm_redis else None
+    total = rebuild_recent_localizations(client, days=days, batch_size=batch_size, max_rows=max_rows, redis_client=redis_client)
+    print(f"News intelligence rebuild 완료: rows={total} days={days} redisWarm={warm_redis}", flush=True)
 
 
-def rebuild_recent_localizations(client, *, days=30, batch_size=500, max_rows=5000):
+def rebuild_recent_localizations(client, *, days=30, batch_size=500, max_rows=5000, redis_client=None):
     rows = []
     offset = 0
     while len(rows) < max_rows:
@@ -41,11 +51,35 @@ def rebuild_recent_localizations(client, *, days=30, batch_size=500, max_rows=50
 
     total = 0
     for batch in chunked(dedupe_localization_rows(rows), batch_size):
-        rebuilt = [news_intelligence_to_clickhouse_row(rebuild_localization_record(row)) for row in batch]
+        records = [rebuild_localization_record(row) for row in batch]
+        rebuilt = [news_intelligence_to_clickhouse_row(record) for record in records]
         delete_localization_rows(client, rebuilt)
         client.insert_json_each_row("news_article_localizations", rebuilt)
+        warm_localization_records_to_redis(redis_client, records)
         total += len(rebuilt)
     return total
+
+
+def warm_localization_records_to_redis(redis_client, records):
+    if redis_client is None:
+        return 0
+    ttl_seconds = int(os.getenv("NEWS_REDIS_TTL_SECONDS", str(DEFAULT_NEWS_TTL_SECONDS)))
+    max_items = int(os.getenv("NEWS_REDIS_MAX_ITEMS", str(DEFAULT_NEWS_MAX_ITEMS)))
+    retention_days = int(os.getenv("NEWS_REDIS_RETENTION_DAYS", str(DEFAULT_NEWS_RETENTION_DAYS)))
+    warmed = 0
+    for record in records or []:
+        if not isinstance(record, dict):
+            continue
+        write_localized_news_to_redis(
+            redis_client,
+            record,
+            ttl_seconds=ttl_seconds,
+            max_items=max_items,
+            retention_days=retention_days,
+            locale=record.get("locale") or os.getenv("NEWS_INTELLIGENCE_LOCALE", "ko-KR"),
+        )
+        warmed += 1
+    return warmed
 
 
 def read_localization_batch(client, *, days, limit, offset):

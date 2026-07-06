@@ -53,7 +53,14 @@ from alfaka.serving.hot_symbols import build_hot_symbols_payload, dollar_volume_
 from alfaka.serving.intervals import candle_count_for_1y, candle_count_for_24h, historical_target_bars, redis_closed_candle_cap, resolve_candle_limit
 from alfaka.serving.provider import MarketDataProvider, has_more_before_target, target_range_from_for_interval
 from alfaka.serving.redis_provider import RedisMarketDataProvider
-from alfaka.serving.news_hot_cache import read_company_daily_summaries_from_redis, read_localized_news_from_redis
+from alfaka.serving.news_hot_cache import (
+    company_daily_summary_coverage_valid,
+    read_company_daily_summaries_from_redis,
+    read_company_daily_summary_coverage_from_redis,
+    read_localized_news_from_redis,
+    write_company_daily_summaries_to_redis,
+    write_localized_news_to_redis,
+)
 from alfaka.serving.symbol_registry import SymbolRegistry
 from alfaka.storage.clickhouse_loader import (
     ClickHouseHttpClient,
@@ -5688,6 +5695,55 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn(RedisKeyBuilder().news_latest_v2("ko-KR", "AAPL"), redis_client.zsets)
         self.assertNotIn(RedisKeyBuilder().news_latest("ko-KR", "AAPL"), redis_client.zsets)
 
+    def test_localized_news_redis_cache_defaults_to_thirty_day_retention(self):
+        redis_client = MemoryRedis()
+        now = datetime.now(timezone.utc)
+        recent_published_at = (now - timedelta(days=1)).isoformat().replace("+00:00", "Z")
+        old_published_at = (now - timedelta(days=31)).isoformat().replace("+00:00", "Z")
+
+        with mock.patch.dict(os.environ, {
+            "NEWS_REDIS_TTL_SECONDS": "2592000",
+            "NEWS_REDIS_MAX_ITEMS": "1000",
+            "NEWS_REDIS_RETENTION_DAYS": "30",
+        }, clear=False):
+            write_localized_news_to_redis(
+                redis_client,
+                {
+                    "articleId": "old-news",
+                    "symbol": "AAPL",
+                    "targetSymbol": "AAPL",
+                    "symbols": ["AAPL"],
+                    "localizedHeadline": "오래된 뉴스",
+                    "localizedSummary": "31일 전 뉴스입니다.",
+                    "publishedAt": old_published_at,
+                },
+                ttl_seconds=int(os.environ["NEWS_REDIS_TTL_SECONDS"]),
+                max_items=int(os.environ["NEWS_REDIS_MAX_ITEMS"]),
+                retention_days=int(os.environ["NEWS_REDIS_RETENTION_DAYS"]),
+                locale="ko-KR",
+            )
+            write_localized_news_to_redis(
+                redis_client,
+                {
+                    "articleId": "recent-news",
+                    "symbol": "AAPL",
+                    "targetSymbol": "AAPL",
+                    "symbols": ["AAPL"],
+                    "localizedHeadline": "최근 뉴스",
+                    "localizedSummary": "최근 뉴스입니다.",
+                    "publishedAt": recent_published_at,
+                },
+                ttl_seconds=int(os.environ["NEWS_REDIS_TTL_SECONDS"]),
+                max_items=int(os.environ["NEWS_REDIS_MAX_ITEMS"]),
+                retention_days=int(os.environ["NEWS_REDIS_RETENTION_DAYS"]),
+                locale="ko-KR",
+            )
+
+        cached = read_localized_news_from_redis(redis_client, "AAPL", limit=10, locale="ko-KR")
+
+        self.assertEqual([row["articleId"] for row in cached], ["recent-news"])
+        self.assertEqual(redis_client.expirations[RedisKeyBuilder().news_latest_v2("ko-KR", "AAPL")], 2592000)
+
     def test_news_intelligence_worker_publishes_daily_summary_dirty_event(self):
         worker = load_news_intelligence_worker_module()
         client = RecordingClickHouseClient()
@@ -5776,6 +5832,54 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(cached[0]["sources"][0]["url"], "https://example.com/aapl-services")
         self.assertIn(RedisKeyBuilder().news_daily_v2("ko-KR", "AAPL"), redis_client.zsets)
 
+    def test_daily_summary_redis_warmup_records_coverage_and_dedupes_dates(self):
+        redis_client = MemoryRedis()
+        rows = [
+            {
+                "date": "2026-07-01",
+                "symbol": "AAPL",
+                "summary": "오래된 요약입니다.",
+                "generatedAt": "2026-07-01T20:00:00.000Z",
+                "articleIds": ["old"],
+                "articleCount": 1,
+            },
+            {
+                "date": "2026-07-01",
+                "symbol": "AAPL",
+                "summary": "최신 요약입니다.",
+                "generatedAt": "2026-07-01T22:00:00.000Z",
+                "articleIds": ["new"],
+                "articleCount": 1,
+            },
+            {
+                "date": "2026-06-30",
+                "symbol": "AAPL",
+                "summary": "전일 요약입니다.",
+                "generatedAt": "2026-06-30T22:00:00.000Z",
+                "articleIds": ["previous"],
+                "articleCount": 1,
+            },
+        ]
+
+        write_company_daily_summaries_to_redis(
+            redis_client,
+            rows,
+            symbol="AAPL",
+            days=30,
+            limit=30,
+            ttl_seconds=604800,
+            coverage_ttl_seconds=604800,
+            locale="ko-KR",
+        )
+        cached = read_company_daily_summaries_from_redis(redis_client, "AAPL", limit=30, locale="ko-KR")
+        coverage = read_company_daily_summary_coverage_from_redis(redis_client, "AAPL", locale="ko-KR")
+
+        self.assertEqual([row["date"] for row in cached], ["2026-07-01", "2026-06-30"])
+        self.assertEqual(cached[0]["summary"], "최신 요약입니다.")
+        self.assertEqual(coverage["rowCount"], 2)
+        self.assertTrue(company_daily_summary_coverage_valid(coverage, symbol="AAPL", days=30, limit=30, locale="ko-KR", rows=cached))
+        self.assertIn(RedisKeyBuilder().news_daily_coverage_v2("ko-KR", "AAPL"), redis_client.values)
+
     def test_daily_summary_price_change_uses_previous_trading_day_close(self):
         summaries = [{"date": "2026-07-01", "symbol": "AAPL", "summary": "브리프"}]
         enriched = attach_price_changes_to_daily_summaries(summaries, [
@@ -5862,6 +5966,41 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         )
         self.assertIsNone(skipped)
         self.assertEqual(skip_client.inserts, [])
+
+        existing_record = {
+            "date": "2026-07-01",
+            "symbol": "AAPL",
+            "locale": "ko-KR",
+            "summary": "ClickHouse 기존 일일 브리프입니다.",
+            "keyPoints": ["서비스 매출 개선"],
+            "positivePoints": ["서비스 성장"],
+            "concerns": [],
+            "impactDirection": "positive",
+            "sentiment": "positive",
+            "articleIds": ["aapl-daily-worker-1"],
+            "articleIdsHash": record["articleIdsHash"],
+            "articleCount": 1,
+            "mentionCount": 1,
+            "status": "final",
+            "model": "unit-model",
+            "generatedAt": "2026-07-01T23:00:00.000Z",
+            "version": "v1",
+            "sources": [{"title": "애플 서비스 매출 성장", "url": "https://example.com/aapl-worker"}],
+        }
+        warm_client = SequentialQueryClickHouseClient([rows, [existing_record]])
+        warm_redis = MemoryRedis()
+        warmed = worker.process_dirty_event(
+            {"eventType": "NEWS_DAILY_SUMMARY_DIRTY", "symbol": "AAPL", "date": "2026-07-01", "locale": "ko-KR"},
+            clickhouse_client=warm_client,
+            redis_client=warm_redis,
+            summarize_fn=lambda **_kwargs: self.fail("unchanged ClickHouse summary should not be regenerated"),
+            model="unit-model",
+        )
+        self.assertIsNone(warmed)
+        self.assertEqual(warm_client.inserts, [])
+        warmed_cache = read_company_daily_summaries_from_redis(warm_redis, "AAPL", locale="ko-KR")
+        self.assertEqual(warmed_cache[0]["summary"], "ClickHouse 기존 일일 브리프입니다.")
+        self.assertEqual(warmed_cache[0]["sources"][0]["url"], "https://example.com/aapl-worker")
 
     def test_news_hot_cache_v2_does_not_fan_out_multi_symbol_rows_to_other_companies(self):
         worker = load_news_intelligence_worker_module()
@@ -5960,6 +6099,47 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(row["target_symbol"], "AAPL")
         self.assertIn(row["subject_relevance"], {"primary", "secondary"})
         self.assertGreater(row["relevance_score_v2"], 0.7)
+
+    def test_news_intelligence_rebuild_warms_redis_with_recent_localizations(self):
+        rebuild = load_news_intelligence_rebuild_module()
+        client = QueryRecordingClickHouseClient([
+            {
+                "publishedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "symbol": "AAPL",
+                "articleId": "redis-warm-aapl-1",
+                "locale": "ko-KR",
+                "symbols": ["AAPL"],
+                "headline": "Apple expands AI features",
+                "summary": "Apple expanded AI features.",
+                "localizedHeadline": "애플, AI 기능 확대",
+                "localizedSummary": "애플이 AI 기능을 확대했습니다.",
+                "keyPoints": ["AI 기능 확대"],
+                "positivePoints": [],
+                "concerns": [],
+                "eventType": "product-market",
+                "sentiment": "positive",
+                "impactDirection": "positive",
+                "whyItMatters": "제품 경쟁력과 관련됩니다.",
+                "url": "https://example.com/aapl-ai",
+                "source": "benzinga",
+                "model": "old-model",
+                "raw": "{}",
+            }
+        ])
+        redis_client = MemoryRedis()
+
+        with mock.patch.dict(os.environ, {
+            "NEWS_REDIS_TTL_SECONDS": "2592000",
+            "NEWS_REDIS_MAX_ITEMS": "1000",
+            "NEWS_REDIS_RETENTION_DAYS": "30",
+        }, clear=False):
+            rebuilt = rebuild.rebuild_recent_localizations(client, days=30, batch_size=10, max_rows=10, redis_client=redis_client)
+        cached = read_localized_news_from_redis(redis_client, "AAPL", limit=10, locale="ko-KR")
+
+        self.assertEqual(rebuilt, 1)
+        self.assertEqual(cached[0]["articleId"], "redis-warm-aapl-1")
+        self.assertEqual(cached[0]["localizedHeadline"], "애플, AI 기능 확대")
+        self.assertEqual(redis_client.expirations[RedisKeyBuilder().news_latest_v2("ko-KR", "AAPL")], 2592000)
 
     def test_news_intelligence_worker_falls_back_when_openai_fails(self):
         worker = load_news_intelligence_worker_module()

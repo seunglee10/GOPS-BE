@@ -250,15 +250,43 @@ class FakeFootprintProvider(FakeProvider):
 
 
 class FakeNewsRedisProvider:
-    def __init__(self, rows=None, daily_rows=None):
+    def __init__(self, rows=None, daily_rows=None, daily_coverage=None):
         self.rows = rows or []
         self.daily_rows = daily_rows or []
+        self.daily_coverage = daily_coverage
+        self.localized_calls = []
+        self.daily_calls = []
+        self.localized_warm_calls = []
+        self.daily_warm_calls = []
 
     def localized_news_articles_for_symbols(self, symbols, limit=10, locale="ko-KR"):
+        self.localized_calls.append({"symbols": list(symbols), "limit": limit, "locale": locale})
         return self.rows[:limit]
 
+    def warm_localized_news_articles(self, rows, locale="ko-KR"):
+        self.localized_warm_calls.append({"rows": list(rows), "locale": locale})
+        self.rows = list(rows)
+        return len(rows)
+
     def company_daily_news_summaries(self, symbol, limit=5, locale="ko-KR"):
+        self.daily_calls.append({"symbol": symbol, "limit": limit, "locale": locale})
         return self.daily_rows[:limit]
+
+    def company_daily_news_coverage(self, symbol, locale="ko-KR"):
+        return self.daily_coverage
+
+    def warm_company_daily_news_summaries(self, symbol, rows, days=30, limit=30, locale="ko-KR"):
+        self.daily_warm_calls.append({"symbol": symbol, "rows": list(rows), "days": days, "limit": limit, "locale": locale})
+        self.daily_rows = list(rows)[:limit]
+        self.daily_coverage = {
+            "symbol": symbol,
+            "locale": locale,
+            "days": days,
+            "limit": limit,
+            "rowCount": len(self.daily_rows),
+            "coverageType": "complete",
+        }
+        return self.daily_rows
 
 
 class FakeNewsClickHouseProvider:
@@ -266,11 +294,15 @@ class FakeNewsClickHouseProvider:
         self.rows = rows or []
         self.daily_rows = daily_rows or []
         self.candle_rows = candles or []
+        self.localized_calls = []
+        self.daily_calls = []
 
-    def localized_news_articles_for_symbols(self, symbols, limit=10, locale="ko-KR"):
+    def localized_news_articles_for_symbols(self, symbols, limit=10, days=7, locale="ko-KR"):
+        self.localized_calls.append({"symbols": list(symbols), "limit": limit, "days": days, "locale": locale})
         return self.rows[:limit]
 
-    def company_daily_news_summaries(self, symbol, limit=5, locale="ko-KR"):
+    def company_daily_news_summaries(self, symbol, limit=5, days=30, locale="ko-KR"):
+        self.daily_calls.append({"symbol": symbol, "limit": limit, "days": days, "locale": locale})
         return self.daily_rows[:limit]
 
     def candles(self, symbol, interval, limit):
@@ -278,8 +310,8 @@ class FakeNewsClickHouseProvider:
 
 
 class FakeNewsProvider:
-    def __init__(self, redis_rows=None, clickhouse_rows=None, redis_daily_rows=None, clickhouse_daily_rows=None, candle_rows=None):
-        self.redis_provider = FakeNewsRedisProvider(redis_rows, redis_daily_rows)
+    def __init__(self, redis_rows=None, clickhouse_rows=None, redis_daily_rows=None, clickhouse_daily_rows=None, candle_rows=None, redis_daily_coverage=None):
+        self.redis_provider = FakeNewsRedisProvider(redis_rows, redis_daily_rows, redis_daily_coverage)
         self.clickhouse_provider = FakeNewsClickHouseProvider(clickhouse_rows, clickhouse_daily_rows, candle_rows)
 
 
@@ -1029,8 +1061,36 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(payload["symbol"], "AAPL")
         self.assertIn("sma:5", payload["series"])
 
-    def test_latest_news_uses_redis_cache_and_normalizes_response_shape(self):
+    def test_latest_news_uses_redis_when_cache_has_enough_rows(self):
         service = MarketDataQueryService(FakeNewsProvider(redis_rows=[{
+            "targetSymbol": "NVDA",
+            "symbols": ["NVDA"],
+            "localizedHeadline": "Redis 엔비디아 뉴스",
+            "localizedSummary": "Redis hot cache 요약입니다.",
+            "publishedAt": "2026-07-02T12:00:00.000Z",
+        }], clickhouse_rows=[{
+            "targetSymbol": "NVDA",
+            "symbols": ["NVDA"],
+            "localizedHeadline": "ClickHouse 엔비디아 뉴스",
+            "localizedSummary": "ClickHouse 요약입니다.",
+            "publishedAt": "2026-07-01T12:00:00.000Z",
+        }]), backfill_service=FakeBackfillService())
+
+        payload = service.latest_news("nvda", limit=1)
+
+        self.assertEqual(payload["source"], "redis")
+        self.assertEqual(payload["items"][0]["title"], "Redis 엔비디아 뉴스")
+        self.assertEqual(service.provider.redis_provider.localized_calls[0]["limit"], 1)
+        self.assertEqual(service.provider.clickhouse_provider.localized_calls, [])
+
+    def test_latest_news_uses_clickhouse_when_redis_cache_is_insufficient(self):
+        service = MarketDataQueryService(FakeNewsProvider(redis_rows=[{
+            "targetSymbol": "NVDA",
+            "symbols": ["NVDA"],
+            "localizedHeadline": "Redis 엔비디아 뉴스",
+            "localizedSummary": "Redis hot cache 요약입니다.",
+            "publishedAt": "2026-07-02T12:00:00.000Z",
+        }], clickhouse_rows=[{
             "targetSymbol": "NVDA",
             "symbols": ["NVDA", "AMD"],
             "localizedHeadline": "엔비디아 최신 뉴스",
@@ -1044,13 +1104,16 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         payload = service.latest_news("nvda", limit=5)
 
         self.assertEqual(payload["symbol"], "NVDA")
-        self.assertEqual(payload["source"], "redis")
+        self.assertEqual(payload["source"], "clickhouse")
         self.assertEqual(payload["items"][0]["title"], "엔비디아 최신 뉴스")
         self.assertEqual(payload["items"][0]["summary"], "데이터센터 수요가 강합니다.")
         self.assertEqual(payload["items"][0]["impactDirection"], "positive")
+        self.assertEqual(service.provider.redis_provider.localized_calls[0]["limit"], 5)
+        self.assertEqual(service.provider.clickhouse_provider.localized_calls[0]["days"], 30)
+        self.assertEqual(len(service.provider.redis_provider.localized_warm_calls[0]["rows"]), 1)
 
-    def test_latest_news_falls_back_to_clickhouse_when_redis_empty(self):
-        service = MarketDataQueryService(FakeNewsProvider(clickhouse_rows=[{
+    def test_latest_news_falls_back_to_redis_when_clickhouse_empty(self):
+        service = MarketDataQueryService(FakeNewsProvider(redis_rows=[{
             "target_symbol": "AAPL",
             "headline": "Apple headline",
             "summary": "Apple summary",
@@ -1059,9 +1122,11 @@ class MarketDataQueryServiceTest(unittest.TestCase):
 
         payload = service.latest_news("aapl", limit=5)
 
-        self.assertEqual(payload["source"], "clickhouse")
+        self.assertEqual(payload["source"], "redis")
         self.assertEqual(payload["items"][0]["symbol"], "AAPL")
         self.assertEqual(payload["items"][0]["title"], "Apple headline")
+        self.assertEqual(service.provider.redis_provider.localized_calls[0]["limit"], 5)
+        self.assertEqual(service.provider.clickhouse_provider.localized_calls[0]["days"], 30)
 
     def test_latest_news_route_delegates_to_query_service(self):
         previous = query_routes.get_query_service
@@ -1078,36 +1143,91 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(payload["symbol"], "NVDA")
         self.assertEqual(payload["items"][0]["title"], "NVIDIA")
 
-    def test_daily_news_returns_real_source_links_without_internal_source(self):
+    def test_daily_news_uses_redis_when_thirty_day_coverage_is_valid(self):
         service = MarketDataQueryService(FakeNewsProvider(redis_daily_rows=[{
             "date": "2026-07-01",
             "symbol": "NVDA",
-            "summary": "엔비디아 일일 뉴스 요약입니다.",
-            "keyPoints": ["데이터센터 수요"],
-            "articleIds": ["nvda-daily-1"],
+            "summary": "Redis 30일 coverage 요약입니다.",
+            "articleIds": ["redis-daily-1"],
             "articleCount": 1,
-            "sources": [
-                {
-                    "articleId": "nvda-daily-1",
-                    "title": "NVIDIA shares rise",
-                    "name": "Example News",
-                    "url": "https://example.com/nvda-daily",
-                    "publishedAt": "2026-07-01T12:00:00.000Z",
-                }
-            ],
-        }], candle_rows=[
+        }], redis_daily_coverage={
+            "symbol": "NVDA",
+            "locale": "ko-KR",
+            "days": 30,
+            "limit": 30,
+            "rowCount": 1,
+            "coverageType": "complete",
+        }, clickhouse_daily_rows=[{
+            "date": "2026-07-01",
+            "symbol": "NVDA",
+            "summary": "ClickHouse 요약입니다.",
+        }]), backfill_service=FakeBackfillService())
+
+        payload = service.daily_news("nvda", limit=30)
+
+        self.assertEqual(payload["dailySummaries"][0]["summary"], "Redis 30일 coverage 요약입니다.")
+        self.assertEqual(service.provider.redis_provider.daily_calls[0]["limit"], 30)
+        self.assertEqual(service.provider.clickhouse_provider.daily_calls, [])
+
+    def test_daily_news_warms_redis_from_clickhouse_when_coverage_is_missing(self):
+        clickhouse_daily_rows = [
+            {
+                "date": f"2026-07-{day:02d}",
+                "symbol": "NVDA",
+                "summary": f"엔비디아 {day}일 뉴스 요약입니다.",
+                "keyPoints": ["데이터센터 수요"],
+                "articleIds": [f"nvda-daily-{day}"],
+                "articleCount": 1,
+                "sources": [
+                    {
+                        "articleId": f"nvda-daily-{day}",
+                        "title": "NVIDIA shares rise",
+                        "name": "Example News",
+                        "url": "https://example.com/nvda-daily",
+                        "publishedAt": f"2026-07-{day:02d}T12:00:00.000Z",
+                    }
+                ],
+            }
+            for day in range(1, 31)
+        ]
+        service = MarketDataQueryService(FakeNewsProvider(redis_daily_rows=[{
+            "date": "2026-07-31",
+            "symbol": "NVDA",
+            "summary": "Redis hot cache 요약입니다.",
+        }], clickhouse_daily_rows=clickhouse_daily_rows, candle_rows=[
             {"timestamp": "2026-06-30T00:00:00.000Z", "close": 158.35},
             {"timestamp": "2026-07-01T00:00:00.000Z", "close": 158.50},
         ]), backfill_service=FakeBackfillService())
 
-        payload = service.daily_news("nvda", limit=5)
+        payload = service.daily_news("nvda", limit=30)
 
         self.assertEqual(payload["symbol"], "NVDA")
         self.assertEqual(payload["displayMode"], "dailySummary")
         self.assertNotIn("source", payload)
+        self.assertEqual(len(payload["dailySummaries"]), 30)
+        self.assertEqual(payload["dailySummaries"][0]["summary"], "엔비디아 1일 뉴스 요약입니다.")
         self.assertEqual(payload["dailySummaries"][0]["sources"][0]["url"], "https://example.com/nvda-daily")
         self.assertEqual(payload["dailySummaries"][0]["sources"][0]["name"], "Example News")
         self.assertEqual(payload["dailySummaries"][0]["priceChange"]["change"], 0.15)
+        self.assertEqual(service.provider.redis_provider.daily_calls[0]["limit"], 30)
+        self.assertEqual(service.provider.clickhouse_provider.daily_calls[0]["days"], 30)
+        self.assertEqual(service.provider.redis_provider.daily_warm_calls[0]["days"], 30)
+        self.assertEqual(len(service.provider.redis_provider.daily_warm_calls[0]["rows"]), 30)
+
+    def test_daily_news_falls_back_to_redis_when_clickhouse_empty(self):
+        service = MarketDataQueryService(FakeNewsProvider(redis_daily_rows=[{
+            "date": "2026-07-01",
+            "symbol": "NVDA",
+            "summary": "Redis 일일 뉴스 요약입니다.",
+            "articleIds": ["redis-daily-1"],
+            "articleCount": 1,
+        }]), backfill_service=FakeBackfillService())
+
+        payload = service.daily_news("nvda", limit=30)
+
+        self.assertEqual(payload["dailySummaries"][0]["summary"], "Redis 일일 뉴스 요약입니다.")
+        self.assertEqual(service.provider.clickhouse_provider.daily_calls[0]["days"], 30)
+        self.assertEqual(service.provider.redis_provider.daily_calls[0]["limit"], 30)
 
     def test_agent_chat_without_openai_key_returns_503(self):
         request = AgentChatRequest(
