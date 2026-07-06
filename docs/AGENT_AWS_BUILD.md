@@ -107,6 +107,9 @@ image: gops-market-storage
 계산 결과는 Redis hot cache와 ClickHouse
 `market_data.chart_derived_artifacts`에 함께 저장하며, 향후 Agent가 같은
 request hash로 동일 결과를 재참조하는 기준이 된다.
+Volume profile v1은 요청 chart interval의 candle OHLCV로 계산하는
+`estimated` 결과이며, trade tick 또는 `volume_profile_bins_1m` 적재에
+의존하지 않는다.
 
 ## Kubernetes Resources
 

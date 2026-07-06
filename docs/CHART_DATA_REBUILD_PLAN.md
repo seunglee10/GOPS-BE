@@ -139,6 +139,9 @@ calculation. It consumes `market.chart-derived.requests.v1`, writes hot results
 to Redis, and materializes request artifacts into
 `market_data.chart_derived_artifacts` so the frontend and future Agent flows can
 reference the same derived result by request hash.
+Volume profile v1 is always candle OHLCV based `estimated` data for the
+requested chart interval; it does not depend on trade ticks or
+`volume_profile_bins_1m` materialization.
 
 Derived result retention is intentionally shorter than candle history:
 

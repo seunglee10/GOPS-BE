@@ -699,9 +699,11 @@ class FakeDerivedClient:
         if request["kind"] == "volumeProfile":
             return {
                 "symbol": request["symbol"],
+                "interval": request["interval"],
+                "sourceInterval": request["interval"],
                 "from": request["from"],
                 "to": request["to"],
-                "timeBucket": "1m",
+                "timeBucket": request["interval"],
                 "targetBins": int((request.get("parameters") or {}).get("targetBins") or 10),
                 "bucketCount": 0,
                 "priceBinSize": 0,
@@ -709,6 +711,9 @@ class FakeDerivedClient:
                 "source": "worker",
                 "feed": "test",
                 "calculationVersion": request["calculationVersion"],
+                "classificationVersion": request["calculationVersion"],
+                "sideClassification": "estimated",
+                "estimationMethod": "candle-range-volume-overlap",
                 "dataStatus": "ready",
                 "priceRange": {"min": None, "max": None, "requestedMin": None, "requestedMax": None},
                 "totalVolume": 0,
@@ -950,9 +955,22 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(payload["derived"]["state"], "ready")
         self.assertEqual(provider.calls, [])
         self.assertEqual(derived_client.requests[0]["kind"], "volumeProfile")
+        self.assertEqual(derived_client.requests[0]["interval"], "1m")
         self.assertEqual(derived_client.requests[0]["parameters"]["targetBins"], 4)
         self.assertEqual(derived_client.requests[0]["parameters"]["priceMin"], 100)
         self.assertEqual(derived_client.requests[0]["parameters"]["priceMax"], 102)
+        payload_5m = service.volume_profile_bins(
+            "aapl",
+            "2026-06-25T13:30:00.000Z",
+            "2026-06-25T14:00:00.000Z",
+            "auto",
+            target_bins=4,
+            price_min=100,
+            price_max=102,
+            interval="5m",
+        )
+        self.assertEqual(payload_5m["interval"], "5m")
+        self.assertNotEqual(derived_client.requests[0]["requestHash"], derived_client.requests[1]["requestHash"])
 
     def test_volume_profile_bins_rejects_reversed_price_range(self):
         service = MarketDataQueryService(FakeVolumeProfileProvider(), backfill_service=FakeBackfillService(), fill_service=FakeFillService())

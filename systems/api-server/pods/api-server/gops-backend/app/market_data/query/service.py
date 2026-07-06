@@ -161,13 +161,16 @@ class MarketDataQueryService:
         target_bins: int = DEFAULT_VOLUME_PROFILE_TARGET_BINS,
         price_min: float | None = None,
         price_max: float | None = None,
+        interval: str = "1m",
     ) -> dict[str, Any]:
         symbol = normalize_market_symbol(symbol)
+        interval = normalize_chart_interval(interval)
         if price_min is not None and price_max is not None and price_max <= price_min:
             raise HTTPException(status_code=400, detail="priceMax must be greater than priceMin.")
         resolved_target_bins = normalize_target_bins(target_bins)
         request = build_volume_profile_request(
             symbol=symbol,
+            interval=interval,
             from_time=from_time,
             to_time=to_time,
             price_bin_size=price_bin_size,
@@ -327,7 +330,14 @@ class MarketDataQueryService:
         interval = normalize_chart_interval(interval)
         include_set = {item.strip() for item in include.split(",") if item.strip()}
         try:
-            return self.provider.agent_chart_context(symbol, interval, from_time, to_time, include_set)
+            provider_include = set(include_set)
+            needs_volume_profile = "volumeProfile" in provider_include
+            provider_include.discard("volumeProfile")
+            context = self.provider.agent_chart_context(symbol, interval, from_time, to_time, provider_include)
+            if needs_volume_profile:
+                context["volumeProfile"] = self.volume_profile_bins(symbol, from_time, to_time, "auto", interval=interval)
+            context["include"] = sorted(include_set)
+            return context
         except Exception as exc:
             raise HTTPException(status_code=503, detail=f"Market context provider failed: {exc}") from exc
 

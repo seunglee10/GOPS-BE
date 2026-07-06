@@ -5149,17 +5149,26 @@ class MarketDataHardeningContractTest(unittest.TestCase):
                 }],
                 profile_bins=[{"priceBinSize": 0.05, "source": "redis", "feed": "sip"}],
             ),
-            clickhouse_provider=FailingClickHouseProvider(),
+            clickhouse_provider=FailingClickHouseProvider(candles=[{
+                "timestamp": "2026-06-25T10:16:00.000Z",
+                "open": 1,
+                "high": 2,
+                "low": 1,
+                "close": 2,
+                "volume": 100,
+                "source": "clickhouse",
+                "feed": "sip",
+            }]),
         )
 
         with self.assertLogs("alfaka.serving.provider", level="WARNING") as logs:
             candles = provider.candles_since_cursor("AAPL", "1m", "v1:AAPL:1m:2026-06-25T10:15:00.000Z:abc")
-            profile = provider.volume_profile_bins("AAPL", "from", "to", "auto")
+            profile = provider.volume_profile_bins("AAPL", "2026-06-25T10:15:00.000Z", "2026-06-25T10:17:00.000Z", "auto")
 
         self.assertEqual(candles[0]["sourceEventId"], "event-later")
-        self.assertEqual(profile["source"], "redis")
+        self.assertEqual(profile["sideClassification"], "estimated")
+        self.assertEqual(profile["totalVolume"], 100)
         self.assertIn("ClickHouse candles_since failed", "\n".join(logs.output))
-        self.assertIn("ClickHouse volume_profile_bins failed", "\n".join(logs.output))
 
     def test_empty_snapshot_does_not_emit_gap_fill_cursor(self):
         payload = snapshot("INTC", "1m", [])
