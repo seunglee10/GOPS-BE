@@ -79,6 +79,9 @@ patches:
       name: gops-backend
     patch: |-
       - op: replace
+        path: /spec/replicas
+        value: 1
+      - op: replace
         path: /spec/template/spec/containers/0/readinessProbe
         value:
           httpGet:
@@ -112,7 +115,7 @@ patches:
     patch: |-
       - op: replace
         path: /spec/replicas
-        value: 2
+        value: 1
   - target:
       kind: Deployment
       name: agent-orchestrator
@@ -151,25 +154,25 @@ patches:
 images:
   - name: YOUR_ECR_REPOSITORY/gops-market-ingestor
     newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-ingestor
-    newTag: 324661e
+    newTag: 0c876e9
   - name: YOUR_ECR_REPOSITORY/gops-market-processor
     newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-processor
-    newTag: 324661e
+    newTag: 0c876e9
   - name: YOUR_ECR_REPOSITORY/gops-market-storage
     newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-storage
-    newTag: 324661e
+    newTag: 0c876e9
   - name: YOUR_ECR_REPOSITORY/gops-api-server
     newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-api-server
-    newTag: 324661e
+    newTag: 0c876e9
   - name: YOUR_ECR_REPOSITORY/gops-frontend
     newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-frontend
-    newTag: 324661e-stargops
+    newTag: 0c876e9
   - name: YOUR_ECR_REPOSITORY/gops-order-worker
     newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-order-worker
-    newTag: 324661e
+    newTag: 0c876e9
   - name: YOUR_ECR_REPOSITORY/gops-kis-adapter
     newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-kis-adapter
-    newTag: 324661e
+    newTag: 0c876e9
   - name: YOUR_ECR_REPOSITORY/gops-agent-orchestrator
     newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-agent-orchestrator
-    newTag: 324661e
+    newTag: 0c876e9

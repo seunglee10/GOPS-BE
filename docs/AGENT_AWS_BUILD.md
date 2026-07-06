@@ -148,15 +148,17 @@ infra/k8s/base/job-answer-grounding-eval.yaml
 In-cluster clean rebuild sizing:
 
 ```text
-app-agent:     2 x m5a/m6a large class, 2 vCPU / 8 GiB, app + agent + workers
+app-agent:     2 x m5a/m6a large class, 2 vCPU / 8 GiB, system add-ons + app + agent + workers
 platform-core: 1 x m5a/m6a 2xlarge class, 8 vCPU / 32 GiB, ClickHouse + Kafka + GraphDB + Redis + Postgres
-batch:         0->1 x m5a/m6a xlarge class, 4 vCPU / 16 GiB, ad hoc Jobs
+batch:         0->1 x 4 vCPU on-demand node, memory varies by available family, ad hoc Jobs
 ```
 
-This 16 vCPU profile trades strict stateful isolation for quota fit. Steady
-state uses 12 vCPU (`app-agent` 4 + `platform-core` 8). Batch Jobs may add one
-4 vCPU node, reaching 16 vCPU. Do not run heavy backfills while the app is under
-load in this profile.
+This 16 vCPU profile trades strict stateful isolation for quota fit. Drain old
+`general-purpose` nodes after the new NodePools are ready so steady state uses
+12 vCPU (`app-agent` 4 + `platform-core` 8). Batch Jobs may add one 4 vCPU node,
+reaching 16 vCPU. Because the batch pool is intentionally relaxed to fit quota
+and current capacity, keep it for short bootstrap and smoke Jobs only. Do not run
+heavy backfills while the app is under load in this profile.
 
 `app-agent` and `platform-core` use static `spec.replicas` to hold the intended
 node count. `batch` remains dynamic so it scales from 0 only when a Job is
