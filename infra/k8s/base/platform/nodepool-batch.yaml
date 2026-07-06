@@ -29,6 +29,7 @@ spec:
         - key: eks.amazonaws.com/instance-cpu
           operator: In
           values:
+            - "2"
             - "4"
         - key: eks.amazonaws.com/instance-generation
           operator: Gt

@@ -121,8 +121,10 @@ run_rebuild_job \
   "news-intelligence-rebuild" \
   "NEWS_INTELLIGENCE_REBUILD_DRY_RUN"
 
-run_rebuild_job \
+if ! run_rebuild_job \
   "infra/k8s/base/job-news-daily-summary-rebuild.yaml" \
   "alfaka-news-daily-summary-rebuild" \
   "news-daily-summary-rebuild" \
-  "NEWS_DAILY_SUMMARY_REBUILD_DRY_RUN"
+  "NEWS_DAILY_SUMMARY_REBUILD_DRY_RUN"; then
+  echo "Daily summary cache rebuild failed; continuing because app deploy and primary news intelligence rebuild succeeded." >&2
+fi

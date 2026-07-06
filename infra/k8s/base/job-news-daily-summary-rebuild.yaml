@@ -12,7 +12,7 @@ spec:
       labels:
         app: alfaka-news-daily-summary-rebuild
     spec:
-      restartPolicy: OnFailure
+      restartPolicy: Never
       nodeSelector:
         karpenter.sh/nodepool: batch
       tolerations:

@@ -38,8 +38,8 @@ patches:
         value:
           type: RollingUpdate
           rollingUpdate:
-            maxUnavailable: 0
-            maxSurge: 1
+            maxUnavailable: 1
+            maxSurge: 0
       - op: add
         path: /spec/template/metadata/annotations
         value:
@@ -54,6 +54,7 @@ patches:
       - op: add
         path: /spec/template/spec/nodeSelector
         value:
+          karpenter.sh/nodepool: app-agent
           kubernetes.io/arch: amd64
       - op: add
         path: /spec/template/spec/topologySpreadConstraints
