@@ -224,12 +224,14 @@ class FakeWatchlistRedis:
         self.sets = {}
         self.hashes = {}
         self.values = {}
+        self.lists = {}
         self.expirations = {}
 
     def delete(self, key):
         self.sets.pop(key, None)
         self.hashes.pop(key, None)
         self.values.pop(key, None)
+        self.lists.pop(key, None)
         return 1
 
     def sadd(self, key, *values):
@@ -242,6 +244,16 @@ class FakeWatchlistRedis:
 
     def smembers(self, key):
         return set(self.sets.get(key, set()))
+
+    def rpush(self, key, *values):
+        self.lists.setdefault(key, []).extend(values)
+        return len(self.lists[key])
+
+    def lrange(self, key, start, end):
+        values = list(self.lists.get(key, []))
+        if end == -1:
+            return values[start:]
+        return values[start:end + 1]
 
     def hset(self, key, mapping=None, **kwargs):
         values = mapping or kwargs
@@ -1166,6 +1178,21 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(redis_state.hashes["gops:market:on-demand:v1:subscription:symbol:AAPL"]["sources"], "watchlist")
         self.assertEqual(redis_state.hashes["gops:market:on-demand:v1:subscription:symbol:AAPL"]["source"], "subscription-controller")
 
+    def test_watchlist_read_preserves_user_order(self):
+        provider = FakeWatchlistProvider()
+        previous = market_data_service.get_market_data_provider
+        previous_universe = market_data_service.configured_universe_symbols
+        market_data_service.get_market_data_provider = lambda: provider
+        market_data_service.configured_universe_symbols = lambda: ["AAPL", "MSFT", "NVDA"]
+        try:
+            market_data_service.replace_watchlist_symbols("user-a", ["NVDA", "AAPL", "MSFT"])
+            payload = market_data_service.watchlist_summaries(user_id="user-a")
+        finally:
+            market_data_service.get_market_data_provider = previous
+            market_data_service.configured_universe_symbols = previous_universe
+
+        self.assertEqual([item["symbol"] for item in payload["symbols"]], ["NVDA", "AAPL", "MSFT"])
+
     def test_watchlist_remove_preserves_active_chart_subscription_source(self):
         provider = FakeWatchlistProvider()
         redis_state = provider.redis_provider.redis
@@ -1999,11 +2026,13 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             "AUTH_REDIS_KEY_PREFIX": "gops:test-auth",
         }, clear=False):
             client = TestClient(create_app())
-            watchlist = client.put("/api/charts/watchlist", json={"symbols": ["NVDA"]})
+            watchlist_read = client.get("/api/charts/watchlist")
+            watchlist_write = client.put("/api/charts/watchlist", json={"symbols": ["NVDA"]})
             portfolio = client.put("/api/charts/subscription-cohorts/portfolio", json={"symbols": ["AAPL"]})
             backfill = client.post("/api/charts/backfill", json={"symbol": "NVDA", "interval": "1m"})
 
-        self.assertEqual(watchlist.status_code, 401)
+        self.assertEqual(watchlist_read.status_code, 401)
+        self.assertEqual(watchlist_write.status_code, 401)
         self.assertEqual(portfolio.status_code, 401)
         self.assertEqual(backfill.status_code, 410)
 
