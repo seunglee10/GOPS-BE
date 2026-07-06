@@ -102,11 +102,9 @@ class ClickHouseMarketDataProvider:
             time_filter += "\n          AND event_time < parseDateTime64BestEffort({before:String})"
             params["before"] = before
 
-        session_filter = self.market_session_filter_sql(symbol)
         source_query = self.latest_chart_candles_source(f"""
             symbol = {{symbol:String}}
             AND interval IN ('1D', '1d')
-            AND {session_filter}
             {time_filter}
         """)
         query = f"""
@@ -122,7 +120,7 @@ class ClickHouseMarketDataProvider:
           anyLast(source) AS source,
           anyLast(feed) AS feed,
           anyLast(feed_profile) AS feedProfile,
-          anyLast(market_session) AS marketSession,
+          'regular' AS marketSession,
           concat('agg/1D/', symbol, '/', formatDateTime(bucket, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC')) AS sourceEventId
         FROM (
           SELECT
@@ -239,11 +237,9 @@ class ClickHouseMarketDataProvider:
             time_filter += "\n          AND event_time < parseDateTime64BestEffort({before:String})"
             params["before"] = before
 
-        session_filter = self.market_session_filter_sql(symbol)
         source_query = self.latest_chart_candles_source(f"""
             symbol = {{symbol:String}}
             AND interval IN ('1D', '1d')
-            AND {session_filter}
             {time_filter}
         """)
         query = f"""
@@ -259,7 +255,7 @@ class ClickHouseMarketDataProvider:
           anyLast(source) AS source,
           anyLast(feed) AS feed,
           anyLast(feed_profile) AS feedProfile,
-          anyLast(market_session) AS marketSession,
+          'regular' AS marketSession,
           concat('agg/{interval}/', symbol, '/', formatDateTime(bucket, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC')) AS sourceEventId
         FROM (
           SELECT
@@ -299,7 +295,7 @@ class ClickHouseMarketDataProvider:
         params = {"symbol": symbol, "timestamp": timestamp, "limit": int(limit)}
         if interval != "1D":
             params["interval"] = interval
-        session_filter = self.market_session_filter_sql(symbol)
+        session_filter = "1 = 1" if interval == "1D" else self.market_session_filter_sql(symbol)
         source_query = self.latest_chart_candles_source(f"""
             symbol = {{symbol:String}}
             AND {interval_filter}
@@ -407,7 +403,7 @@ class ClickHouseMarketDataProvider:
         }
         if stored_interval != "1D":
             params["interval"] = stored_interval
-        session_filter = self.market_session_filter_sql(symbol)
+        session_filter = "1 = 1" if stored_interval == "1D" else self.market_session_filter_sql(symbol)
         source_query = self.latest_chart_candles_source(f"""
             symbol = {{symbol:String}}
             AND {interval_filter}
