@@ -3,8 +3,11 @@
 # 주의: 운영에서는 이 로직을 Python/Kubernetes processor pod에서 실행합니다.
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from alfaka.common.canonical import candle_metadata
+
+MARKET_TIMEZONE = ZoneInfo("America/New_York")
 
 
 def parse_time(value):
@@ -37,6 +40,13 @@ def floor_interval(value, minutes):
 def floor_day(value):
     dt = parse_time(value) if isinstance(value, str) else value
     return dt.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def floor_market_day(value):
+    dt = parse_time(value) if isinstance(value, str) else value
+    market_dt = dt.astimezone(MARKET_TIMEZONE)
+    market_day = market_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+    return market_day.astimezone(timezone.utc)
 
 
 def floor_week(value):
@@ -225,7 +235,7 @@ class ProvisionalCandleState:
             bucket = floor_interval(anchor, minutes)
             end = bucket + timedelta(minutes=minutes)
         elif target_interval == "1D":
-            bucket = floor_day(anchor)
+            bucket = floor_market_day(anchor)
             end = bucket + timedelta(days=1)
         else:
             raise ValueError(f"Unsupported 1m provisional target: {target_interval}")
@@ -514,7 +524,7 @@ class CalendarCandleAggregator:
 
     def _bucket(self, timestamp):
         if self.target_interval == "1D":
-            bucket = floor_day(timestamp)
+            bucket = floor_market_day(timestamp)
             return bucket, bucket + timedelta(days=1)
         if self.target_interval == "1W":
             bucket = floor_week(timestamp)

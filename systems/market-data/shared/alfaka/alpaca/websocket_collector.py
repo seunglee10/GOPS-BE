@@ -36,6 +36,8 @@ async def main():
     enforce_session_window = parse_bool(os.getenv("ALPACA_ENFORCE_FEED_SESSION_WINDOW", "true"), default=True)
     session_idle_poll_seconds = parse_positive_float(os.getenv("ALPACA_SESSION_IDLE_POLL_SECONDS", "60"), default=60.0)
     raw_log_every_n = parse_positive_int(os.getenv("ALPACA_RAW_LOG_EVERY_N", "0"), default=0)
+    ws_ping_interval = parse_optional_positive_float(os.getenv("ALPACA_WS_PING_INTERVAL_SECONDS"), default=30.0)
+    ws_ping_timeout = parse_optional_positive_float(os.getenv("ALPACA_WS_PING_TIMEOUT_SECONDS"), default=60.0)
 
     kafka_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
     kafka_client_id = os.getenv("KAFKA_CLIENT_ID", "alfaka-alpaca-ingestor")
@@ -130,6 +132,8 @@ async def main():
                 raw_topic_prefix=raw_topic_prefix,
                 enforce_session_window=enforce_session_window,
                 raw_log_every_n=raw_log_every_n,
+                ws_ping_interval=ws_ping_interval,
+                ws_ping_timeout=ws_ping_timeout,
             )
             delay = reconnect_backoff
         except asyncio.CancelledError:
@@ -163,13 +167,15 @@ async def run_stream_session(
     raw_topic_prefix,
     enforce_session_window,
     raw_log_every_n=0,
+    ws_ping_interval=30.0,
+    ws_ping_timeout=60.0,
 ):
     """Alpaca WebSocket 세션 하나를 열고 인증, 구독, raw Kafka 발행을 처리합니다."""
     active_subscribed_symbols = {channel: set() for channel in active_channels}
     last_active_sync = 0.0
     authenticated = False
     raw_event_count = 0
-    async with websockets.connect(alpaca_url, ping_interval=20, ping_timeout=20) as ws:
+    async with websockets.connect(alpaca_url, ping_interval=ws_ping_interval, ping_timeout=ws_ping_timeout) as ws:
         await ws.send(json.dumps({"action": "auth", "key": alpaca_key, "secret": alpaca_secret}))
 
         while True:
@@ -418,6 +424,12 @@ def parse_positive_float(value, default):
     except (TypeError, ValueError):
         return default
     return parsed if parsed > 0 else default
+
+
+def parse_optional_positive_float(value, default):
+    if str(value or "").strip().lower() in {"", "none", "off", "false", "0"}:
+        return None if str(value or "").strip().lower() in {"none", "off", "false", "0"} else default
+    return parse_positive_float(value, default)
 
 
 def parse_positive_int(value, default):

@@ -11,8 +11,19 @@ from ..roles import AgentContext
 def collect_provider_evidence(findings) -> list[EvidenceItem]:
     evidence: list[EvidenceItem] = []
     for finding in findings:
-        evidence.extend(item for item in finding.evidence if item.provider in {"news", "macro", "ontology", "financial"})
+        evidence.extend(
+            item
+            for item in finding.evidence
+            if item.provider in {"news", "macro", "ontology", "financial"} or is_reference_market_evidence(item)
+        )
     return dedupe_provider_evidence(evidence)
+
+
+def is_reference_market_evidence(item: EvidenceItem) -> bool:
+    if item.provider != "market-data":
+        return False
+    raw = item.raw if isinstance(item.raw, dict) else {}
+    return "referenceIndex" in raw and isinstance(raw.get("reference"), dict)
 
 
 def apply_role_context_updates(context: AgentContext, findings) -> None:
@@ -40,6 +51,7 @@ def build_agent_trace(
     cross_signals: list[CrossSignal] | None = None,
     entity_resolution: dict[str, Any] | None = None,
     query_understanding: dict[str, Any] | None = None,
+    operation_ir: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     visible = [
         snapshot
@@ -64,6 +76,8 @@ def build_agent_trace(
         trace["entityResolution"] = dict(entity_resolution)
     if query_understanding:
         trace["queryUnderstanding"] = dict(query_understanding)
+    if operation_ir:
+        trace["operationIR"] = dict(operation_ir)
     return trace
 
 

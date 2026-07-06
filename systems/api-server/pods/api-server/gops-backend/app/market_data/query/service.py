@@ -156,6 +156,20 @@ class MarketDataQueryService:
             "items": [point.to_public_dict() for point in series],
         }
 
+    def earnings_series(self, symbol: str, years: int) -> dict[str, Any]:
+        try:
+            normalized = normalize_market_symbol(symbol)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        adapter = build_fundamentals_adapter(self.provider)
+        series = adapter.earnings_series(normalized, years=years)
+        return {
+            "source": "sec-yahoo",
+            "symbol": normalized,
+            "years": years,
+            "items": [point.to_public_dict() for point in series],
+        }
+
     def indices(self, background_tasks=None) -> dict[str, Any]:
         try:
             return get_indices_service(self.provider).snapshot(background_tasks=background_tasks)

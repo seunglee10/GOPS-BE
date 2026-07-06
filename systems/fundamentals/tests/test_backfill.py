@@ -182,6 +182,49 @@ class FundamentalsBackfillTests(unittest.TestCase):
         self.assertEqual(summary_metrics["shares_outstanding"]["taxonomy"], "dei")
         self.assertEqual(summary_metrics["shares_outstanding"]["source"], "sec_companyfacts")
 
+    def test_summary_payload_keeps_metric_latest_when_shares_has_separate_period_end(self):
+        fact_rows = [
+            {
+                "symbol": "NVDA",
+                "cik": "0001045810",
+                "metric": "assets",
+                "value": 100,
+                "fiscal_year": 2027,
+                "fiscal_period": "Q1",
+                "period_end": "2026-04-26",
+                "filed_at": "2026-05-20",
+                "version_filed_at": "2026-05-20",
+                "taxonomy": "us-gaap",
+                "concept": "Assets",
+                "unit": "USD",
+                "quality": "available",
+                "raw": "{}",
+            },
+            {
+                "symbol": "NVDA",
+                "cik": "0001045810",
+                "metric": "shares_outstanding",
+                "value": 24200000000,
+                "fiscal_year": 2027,
+                "fiscal_period": "Q1",
+                "period_end": "2026-05-15",
+                "filed_at": "2026-05-20",
+                "version_filed_at": "2026-05-20",
+                "taxonomy": "dei",
+                "concept": "EntityCommonStockSharesOutstanding",
+                "unit": "shares",
+                "quality": "available",
+                "raw": "{}",
+            },
+        ]
+
+        summary = build_summary_payload("NVDA", fact_rows, [])
+        summary_metrics = {item["metric"]: item for item in summary["metrics"]}
+
+        self.assertEqual(summary["as_of"], "2026-04-26")
+        self.assertEqual(summary_metrics["assets"]["value"], 100)
+        self.assertEqual(summary_metrics["shares_outstanding"]["value"], 24200000000)
+
     def test_write_redis_peer_summary_writes_group_for_each_symbol(self):
         redis = FakeRedis()
         frame_rows = [

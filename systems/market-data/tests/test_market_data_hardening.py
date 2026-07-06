@@ -51,7 +51,7 @@ from alfaka.serving.cursors import timestamp_from_cursor
 from alfaka.serving.dto import cursor_for, market_status_event, snapshot, websocket_event
 from alfaka.serving.hot_symbols import build_hot_symbols_payload, dollar_volume_from_candle
 from alfaka.serving.intervals import candle_count_for_1y, candle_count_for_24h, historical_target_bars, redis_closed_candle_cap, resolve_candle_limit
-from alfaka.serving.provider import MarketDataProvider, filter_stock_chart_candles, has_more_before_target, target_range_from_for_interval
+from alfaka.serving.provider import MarketDataProvider, filter_stock_chart_candles, has_more_before_target, merge_candles, target_range_from_for_interval
 from alfaka.serving.redis_provider import RedisMarketDataProvider
 from alfaka.serving.news_hot_cache import (
     company_daily_summary_coverage_valid,
@@ -1044,8 +1044,26 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(config["group_id"], "alfaka-market-processor")
         self.assertEqual(config["raw_topics"][0], "market.input.realtime.trades.v1")
         self.assertIn("market.input.realtime.events.v1", config["raw_topics"])
+        self.assertEqual(config["tick_fanout_topics"], {"1m": "market.realtime.ticks.to.1m.v1"})
+        self.assertIn("market.realtime.ticks.to.1m.v1", config["raw_topics"])
+        self.assertNotIn("market.realtime.ticks.to.5m.v1", config["raw_topics"])
         self.assertEqual(config["recovery_symbols"], ["AAPL", "MSFT"])
         self.assertTrue(config["clickhouse_recovery_enabled"])
+
+    def test_processor_runtime_config_can_enable_all_tick_fanout_topics(self):
+        config = processor_runtime_config({
+            "KAFKA_BOOTSTRAP_SERVERS": "kafka:29092",
+            "KAFKA_PROCESSOR_GROUP_ID": "alfaka-market-processor",
+            "KAFKA_INPUT_TOPIC_PREFIX": "market.input",
+            "REDIS_URL": "redis://redis:6379/0",
+            "KAFKA_TICK_FANOUT_INTERVALS": "all",
+        })
+
+        self.assertEqual(
+            list(config["tick_fanout_topics"]),
+            ["1m", "5m", "10m", "1D", "1W", "1M"],
+        )
+        self.assertIn("market.realtime.ticks.to.1mo.v1", config["raw_topics"])
 
     def test_clickhouse_topic_defaults_append_ticks_only_when_trade_load_enabled(self):
         environ = {
@@ -1374,7 +1392,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(live_5m["sourceInterval"], "1m")
         self.assertFalse(live_5m["isClosed"])
         self.assertEqual(live_10m["timestamp"], "2026-06-25T10:10:00.000Z")
-        self.assertEqual(live_1d["timestamp"], "2026-06-25T00:00:00.000Z")
+        self.assertEqual(live_1d["timestamp"], "2026-06-25T04:00:00.000Z")
         self.assertEqual(live_1d["sourceInterval"], "1m")
         self.assertEqual(live_1w["timestamp"], "2026-06-22T00:00:00.000Z")
         self.assertEqual(live_1w["sourceInterval"], "1D")
@@ -5515,6 +5533,31 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         visible = filter_stock_chart_candles(candles, now=datetime(2026, 7, 6, 2, 30, tzinfo=timezone.utc))
 
         self.assertEqual(visible, candles)
+
+    def test_daily_live_candle_merges_on_market_day_timestamp(self):
+        merged = merge_candles(
+            [{
+                "interval": "1D",
+                "timestamp": "2026-07-06T04:00:00.000Z",
+                "close": 196.22,
+                "isClosed": True,
+                "state": "closed",
+                "source": "alpaca.dailyBars",
+            }],
+            [{
+                "interval": "1D",
+                "timestamp": "2026-07-06T00:00:00.000Z",
+                "close": 196.43,
+                "isClosed": False,
+                "state": "live",
+                "source": "derived.live",
+            }],
+        )
+
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0]["timestamp"], "2026-07-06T04:00:00.000Z")
+        self.assertEqual(merged[0]["state"], "live")
+        self.assertEqual(merged[0]["close"], 196.43)
 
     def test_empty_cursor_does_not_trigger_clickhouse_timestamp_query(self):
         provider = MarketDataProvider(

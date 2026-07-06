@@ -683,6 +683,7 @@ class AgentOrchestrator:
             [],
             state.get("entity_resolution"),
             state.get("query_understanding"),
+            state.get("operation_ir"),
         )
         agent_trace["analysisMode"] = str(state.get("analysis_mode") or "auto")
         agent_trace["uiLayoutFastAck"] = True
@@ -768,6 +769,7 @@ class AgentOrchestrator:
             list(state.get("cross_signals", [])),
             state.get("entity_resolution"),
             state.get("query_understanding"),
+            state.get("operation_ir"),
         )
         agent_trace["analysisMode"] = str(state.get("analysis_mode") or "auto")
         if state.get("input_safety_warnings"):
@@ -909,6 +911,7 @@ def layout_resolve_trace_for_state(state: dict[str, Any]) -> dict[str, Any]:
         [],
         state.get("entity_resolution"),
         state.get("query_understanding"),
+        state.get("operation_ir"),
     )
     agent_trace["analysisMode"] = str(state.get("analysis_mode") or "auto")
     agent_trace["uiLayoutFastAck"] = False

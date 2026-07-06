@@ -279,6 +279,9 @@ class NewsSnapshotProvider:
             )
         except Exception as exc:
             evidence = [EvidenceItem.no_data("news", "News snapshot unavailable", f"뉴스 snapshot 조회에 실패했습니다: {exc.__class__.__name__}")]
+        reference_evidence = news_reference_evidence(context)
+        if reference_evidence:
+            evidence = [*reference_evidence, *evidence]
         available = [item for item in evidence if item.provider == "news" and item.status == "available"]
         timing = getattr(context, "timing", None)
         if isinstance(timing, dict):
@@ -324,6 +327,9 @@ class MarketSnapshotProvider:
         chart_evidence = chart_context_evidence(context, chart_context)
         if chart_evidence:
             evidence.insert(0, chart_evidence)
+        reference_evidence = chart_reference_evidence(context)
+        if reference_evidence:
+            evidence = [*reference_evidence, *evidence]
         peer_symbols = market_peer_symbols_for_context(context)
         peer_evidence = peer_market_evidence(chart_context, peer_symbols)
         evidence.extend(peer_evidence)
@@ -909,6 +915,63 @@ def chart_context_evidence(context: Any, chart_context: dict[str, Any]) -> Evide
         summary=f"{context.symbol} chart snapshot is available.",
         raw={"chartDocument": chart_document, "visibleSummary": visible_summary, "dataStatus": data_status},
     )
+
+
+def chart_reference_evidence(context: Any) -> list[EvidenceItem]:
+    evidence = []
+    for index, reference in enumerate(context_references(context)):
+        ref_type = str(reference.get("type") or "")
+        if ref_type not in {"chart.candle", "chart.range"}:
+            continue
+        data = reference.get("data") if isinstance(reference.get("data"), dict) else {}
+        symbol = str(data.get("symbol") or context.symbol)
+        interval = str(data.get("interval") or data.get("timeframe") or "unknown")
+        if ref_type == "chart.candle":
+            timestamp = str(data.get("timestamp") or data.get("from") or "unknown")
+            close = data.get("close")
+            summary = f"사용자가 {symbol} {interval} {timestamp} 봉을 분석 기준으로 선택했습니다."
+            if isinstance(close, (int, float)):
+                summary = f"사용자가 {symbol} {interval} {timestamp} 봉을 선택했고 종가는 {close}입니다."
+            title = "Selected chart candle"
+        else:
+            summary = f"사용자가 {symbol} {interval} {data.get('from', 'unknown')}~{data.get('to', 'unknown')} 구간을 분석 기준으로 선택했습니다."
+            title = "Selected chart range"
+        evidence.append(EvidenceItem(
+            provider="market-data",
+            status="available",
+            title=title,
+            summary=summary,
+            raw={"referenceIndex": index, "reference": reference},
+        ))
+    return evidence
+
+
+def news_reference_evidence(context: Any) -> list[EvidenceItem]:
+    evidence = []
+    for index, reference in enumerate(context_references(context)):
+        ref_type = str(reference.get("type") or "")
+        if ref_type not in {"news.article", "news.dailySummary"}:
+            continue
+        data = reference.get("data") if isinstance(reference.get("data"), dict) else {}
+        title = str(data.get("title") or data.get("date") or "Selected news")
+        summary = str(data.get("summary") or title)
+        observed_at = str(data.get("publishedAt") or data.get("date") or utc_now_iso())
+        url = data.get("url") if isinstance(data.get("url"), str) else None
+        evidence.append(EvidenceItem(
+            provider="news",
+            status="available",
+            title=title,
+            summary=summary,
+            observedAt=observed_at,
+            url=url,
+            raw={"referenceIndex": index, "reference": reference},
+        ))
+    return evidence
+
+
+def context_references(context: Any) -> list[dict[str, Any]]:
+    references = getattr(context, "references", [])
+    return [item for item in references if isinstance(item, dict)]
 
 
 def peer_market_evidence(chart_context: dict[str, Any], peer_symbols: list[str]) -> list[EvidenceItem]:

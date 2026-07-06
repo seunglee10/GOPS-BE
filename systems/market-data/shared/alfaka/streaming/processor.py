@@ -97,6 +97,18 @@ def processor_runtime_config(environ=None):
     group_id = environ.get("KAFKA_PROCESSOR_GROUP_ID") or "alfaka-market-processor"
     input_prefix = environ.get("KAFKA_INPUT_TOPIC_PREFIX", "market.input")
     realtime_prefix = environ.get("KAFKA_REALTIME_TICK_TOPIC_PREFIX", "market.realtime.ticks.to")
+    tick_fanout_topics = {
+        "1m": environ.get("KAFKA_REALTIME_TICKS_TO_1M_TOPIC", f"{realtime_prefix}.1m.v1"),
+        "5m": environ.get("KAFKA_REALTIME_TICKS_TO_5M_TOPIC", f"{realtime_prefix}.5m.v1"),
+        "10m": environ.get("KAFKA_REALTIME_TICKS_TO_10M_TOPIC", f"{realtime_prefix}.10m.v1"),
+        "1D": environ.get("KAFKA_REALTIME_TICKS_TO_1D_TOPIC", f"{realtime_prefix}.1d.v1"),
+        "1W": environ.get("KAFKA_REALTIME_TICKS_TO_1W_TOPIC", f"{realtime_prefix}.1w.v1"),
+        "1M": environ.get("KAFKA_REALTIME_TICKS_TO_1MO_TOPIC", f"{realtime_prefix}.1mo.v1"),
+    }
+    enabled_tick_fanout_intervals = parse_tick_fanout_intervals(
+        environ.get("KAFKA_TICK_FANOUT_INTERVALS", "1m"),
+        tick_fanout_topics,
+    )
     config = {
         "kafka_servers": kafka_servers,
         "input_prefix": input_prefix,
@@ -105,14 +117,7 @@ def processor_runtime_config(environ=None):
         "quotes_topic": environ.get("KAFKA_QUOTES_LAYER_TOPIC", "market.layer.quotes.v1"),
         "events_topic": environ.get("KAFKA_EVENTS_LAYER_TOPIC", "market.layer.events.v1"),
         "status_topic": environ.get("KAFKA_STATUS_TOPIC", "market.layer.events.v1"),
-        "tick_fanout_topics": {
-            "1m": environ.get("KAFKA_REALTIME_TICKS_TO_1M_TOPIC", f"{realtime_prefix}.1m.v1"),
-            "5m": environ.get("KAFKA_REALTIME_TICKS_TO_5M_TOPIC", f"{realtime_prefix}.5m.v1"),
-            "10m": environ.get("KAFKA_REALTIME_TICKS_TO_10M_TOPIC", f"{realtime_prefix}.10m.v1"),
-            "1D": environ.get("KAFKA_REALTIME_TICKS_TO_1D_TOPIC", f"{realtime_prefix}.1d.v1"),
-            "1W": environ.get("KAFKA_REALTIME_TICKS_TO_1W_TOPIC", f"{realtime_prefix}.1w.v1"),
-            "1M": environ.get("KAFKA_REALTIME_TICKS_TO_1MO_TOPIC", f"{realtime_prefix}.1mo.v1"),
-        },
+        "tick_fanout_topics": {interval: tick_fanout_topics[interval] for interval in enabled_tick_fanout_intervals},
         "live_candle_topic": environ.get("KAFKA_LIVE_CANDLE_TOPIC", "market.layer.candles.live.v1"),
         "closed_candle_topic": environ.get("KAFKA_CLOSED_CANDLE_TOPIC", "market.layer.candles.closed.v1"),
         "redis_url": environ.get("REDIS_URL", "redis://localhost:6379/0"),
@@ -136,6 +141,31 @@ def processor_runtime_config(environ=None):
     ]
     validate_processor_runtime_config(config)
     return config
+
+
+def parse_tick_fanout_intervals(value, available_topics):
+    requested = [normalize_tick_fanout_interval(item) for item in parse_csv(value or "1m")]
+    if not requested:
+        requested = ["1m"]
+    if requested == ["all"]:
+        return list(available_topics)
+    return [interval for interval in requested if interval in available_topics]
+
+
+def normalize_tick_fanout_interval(value):
+    normalized = str(value or "").strip()
+    aliases = {
+        "1min": "1m",
+        "5min": "5m",
+        "10min": "10m",
+        "1d": "1D",
+        "1day": "1D",
+        "1w": "1W",
+        "1week": "1W",
+        "1mo": "1M",
+        "1month": "1M",
+    }
+    return aliases.get(normalized.lower(), normalized)
 
 
 def validate_processor_runtime_config(config):

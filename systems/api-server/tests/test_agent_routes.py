@@ -66,6 +66,30 @@ class AgentRoutesTest(unittest.TestCase):
         self.assertEqual(gateway.call_args.kwargs["idempotency_key"], "idem-1")
         self.assertEqual(gateway.call_args.kwargs["user_id"], "user-1")
 
+    def test_analyze_agents_preserves_interactive_context_fields(self):
+        expected = {"analysisId": "analysis-1", "symbol": "NVDA", "status": "completed"}
+        reference = {
+            "type": "chart.candle",
+            "data": {"symbol": "NVDA", "interval": "1D", "timestamp": "2026-07-04T00:00:00Z", "close": 145.5},
+        }
+        with patch("app.routes.agents.request_agent_analysis", return_value=expected) as gateway:
+            response = self.client.post(
+                "/api/agents/analyze",
+                json={
+                    "symbol": "NVDA",
+                    "intent": "여기 왜 내려갔어?",
+                    "references": [reference],
+                    "uiContext": {"activePanelType": "chart"},
+                    "futureContext": {"keep": True},
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = gateway.call_args.args[0]
+        self.assertEqual(payload["references"], [reference])
+        self.assertEqual(payload["uiContext"], {"activePanelType": "chart"})
+        self.assertEqual(payload["futureContext"], {"keep": True})
+
     def test_analyze_agents_uses_gateway_status_code_marker(self):
         expected = {"_status_code": 202, "request_id": "agent-request-1", "status": "queued"}
         with patch("app.routes.agents.request_agent_analysis", return_value=expected):

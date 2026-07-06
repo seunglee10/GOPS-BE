@@ -182,6 +182,18 @@ Hot path query understanding은 bounded fan-out으로 실행된다.
 - deterministic UI-task rules
 - optional classifier pod or OpenAI classifier
 
+Interactive chart/news 질문은 shortcut router가 최종 판단하지 않는다. 프런트가
+보낸 `references`와 `uiContext`를 먼저 `OperationIR` 후보로 모으고, 날짜·캔들·가격·
+레이어·뉴스 anchor 계산은 deterministic resolver가 처리한다. 현재 v1은
+`systems/agent-orchestration/shared/gops_agents/operations`에서 analysis/chart
+operation 후보와 `contextWindow` spec을 만들고, `agentTrace.operationIR`에 남긴다.
+LLM은 confidence가 낮거나 required slot이 비어 있는 복합 요청의 structured planner
+fallback으로만 사용한다. 이 fallback은 `AGENT_OPERATION_PLANNER_PROVIDER=openai`일
+때만 Responses API JSON schema로 호출하고, 실패하거나 예산을 얻지 못하면
+deterministic `OperationIR`을 그대로 쓴다. 차트 변경은 영구 `ChartCommand[]`와
+임시 visual overlay를 분리하고, 분석 질문은 resolved anchor를 기준으로
+market/news/ontology/financial snapshot을 수집한다.
+
 Route mode:
 
 ```text
