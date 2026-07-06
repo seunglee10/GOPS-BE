@@ -1360,7 +1360,8 @@ WHERE {{
                   gops:confidence ?confidence ;
                   gops:accessionNumber ?accession ;
                   gops:sourceUrl ?sourceUrl .
-    OPTIONAL {{ ?controlled rdfs:label ?controlledName . }}
+    ?controlled rdfs:label ?controlledName .
+    {valid_controlled_name_filter()}
   }}
 }}
 ORDER BY ?controlledName
@@ -1409,10 +1410,23 @@ WHERE {{
                   gops:confidence ?confidence ;
                   gops:accessionNumber ?accession ;
                   gops:sourceUrl ?sourceUrl .
-    OPTIONAL {{ ?controlled rdfs:label ?controlledName . }}
+    ?controlled rdfs:label ?controlledName .
+    {valid_controlled_name_filter()}
   }}
   FILTER (STR(?themeName) = {sparql_string_literal(theme_name)})
 }}
 ORDER BY ?ticker ?controlledName
 LIMIT {clamp_int(limit, default=20, minimum=1, maximum=200)}
 """.strip()
+
+
+def valid_controlled_name_filter() -> str:
+    return """
+    FILTER (
+      !CONTAINS(LCASE(STR(?controlledName)), "following subsidiar") &&
+      !CONTAINS(LCASE(STR(?controlledName)), "partially own") &&
+      !CONTAINS(LCASE(STR(?controlledName)), "collectively own") &&
+      !CONTAINS(LCASE(STR(?controlledName)), " owns ") &&
+      LCASE(STR(?controlledName)) != "legal entity name"
+    )
+    """.strip()

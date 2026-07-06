@@ -3903,6 +3903,22 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(evidence[0].url, "https://www.sec.gov/example")
         self.assertTrue(any(item.raw.get("relationType") == "control" for item in evidence))
 
+    def test_graphdb_provider_filters_control_relationship_note_labels(self):
+        sparql_client = FakeSparqlClient()
+        provider = GraphDBOntologyProvider(sparql_client=sparql_client, limit=3, cache=MemoryGraphPathCache())
+
+        provider.fetch(ProviderRequest("AMAT", "자회사 관계 분석"))
+
+        control_queries = [
+            query
+            for query in sparql_client.queries
+            if "DerivedControlRelationship" in query and 'FILTER (UCASE(STR(?ticker)) = "AMAT")' in query
+        ]
+        self.assertTrue(control_queries)
+        self.assertIn("following subsidiar", control_queries[0])
+        self.assertIn("partially own", control_queries[0])
+        self.assertIn("legal entity name", control_queries[0])
+
     def test_graphdb_provider_returns_no_data_on_empty_or_error(self):
         empty_provider = GraphDBOntologyProvider(sparql_client=FakeSparqlClient(), limit=3)
         empty_evidence = empty_provider.fetch(ProviderRequest("NVDA", "관계 분석"))
