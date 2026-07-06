@@ -7,6 +7,7 @@ from fastapi import HTTPException
 
 from app.market_data.backfill.service import get_backfill_service
 from app.market_data.fill.service import get_on_demand_fill_service
+from app.market_data.fundamentals.service import build_fundamentals_adapter
 from app.market_data.heatmap.service import get_heatmap_service
 from app.market_data.indices.service import get_indices_service
 from app.services.alfaka_market_data import get_market_data_provider, normalize_market_symbol, requested_ma_from_csv
@@ -138,6 +139,22 @@ class MarketDataQueryService:
             return get_heatmap_service(self.provider).snapshot(universe)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    def financial_series(self, symbol: str, years: int, period: str) -> dict[str, Any]:
+        try:
+            normalized = normalize_market_symbol(symbol)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        normalized_period = "annual" if period.lower() in {"annual", "year", "fy"} else "quarterly"
+        adapter = build_fundamentals_adapter(self.provider)
+        series = adapter.financial_series(normalized, years=years, period=normalized_period)
+        return {
+            "source": "sec",
+            "symbol": normalized,
+            "period": normalized_period,
+            "years": years,
+            "items": [point.to_public_dict() for point in series],
+        }
 
     def indices(self, background_tasks=None) -> dict[str, Any]:
         try:

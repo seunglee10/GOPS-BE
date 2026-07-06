@@ -308,6 +308,13 @@ ClickHouse stale checks on the hot path.
 Agent providers read ClickHouse serving tables. ClickHouse must be reachable
 before worker smoke checks are considered valid.
 
+`dev` merge/pull is not the ClickHouse migration boundary. Local ClickHouse and
+AWS ClickHouse are separate runtimes, so merge conflict resolution should only
+preserve code contracts and DDL files. Switching to a new AWS ClickHouse,
+initializing schemas, rebuilding Redis projections, and S3 prefix cleanup are
+push/deploy maintenance tasks that run against the AWS environment after the
+merged image set is ready.
+
 ```text
 CLICKHOUSE_HTTP_URL
 CLICKHOUSE_DATABASE
@@ -335,6 +342,7 @@ market_data.sec_financial_facts
 market_data.sec_derived_metrics
 market_data.sec_frames
 market_data.sec_collection_runs
+market_data.yahoo_earnings_estimates
 ```
 
 News provider는 Redis 30일 article/daily hot cache를 우선 사용하고, daily coverage
@@ -345,6 +353,15 @@ ClickHouse rewrite/mutation disabled unless
 `NEWS_INTELLIGENCE_REBUILD_REWRITE_CLICKHOUSE=true` is set intentionally.
 `market_data.agent_graph_expansions`는 GraphDB에서 미리 계산한
 관계 hint를 warm/deep path에서 재사용하기 위한 table이다.
+
+When AWS ClickHouse is replaced, do not migrate rows from the broken instance.
+Create the schema from `infra/clickhouse/initdb/01-market-data.sql` and
+`infra/clickhouse/initdb/02-sec-fundamentals.sql`, then rebuild projections from
+the official sources: S3 final/manifest for chart history, SEC companyfacts for
+actual fundamentals, and the separate Yahoo estimates collector for consensus
+data. Redis reset must be targeted to fundamentals summary/peer keys and chart
+live/latest/coverage keys; do not flush agent reports, sessions, or unrelated
+caches.
 
 ## SEC Fundamentals
 

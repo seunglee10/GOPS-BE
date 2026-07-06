@@ -104,10 +104,12 @@ def get_market_data_provider() -> MarketDataProvider:
     return MarketDataProvider()
 
 
-def symbol_summaries() -> list[dict[str, Any]]:
+def symbol_summaries(limit: int | None = MAX_WATCHLIST_SYMBOLS) -> list[dict[str, Any]]:
     # 기존 /api/charts/symbols 호환 요약입니다. 사용자 Watch List는 watchlist_summaries를 씁니다.
     # Redis에 최신 가격이 없으면 ClickHouse serving projection의 최신 1m candle로 보완합니다.
-    return symbol_summaries_for(configured_universe_symbols() or sp500_universe_symbols() or configured_symbols())
+    requested_limit = min(_read_positive_int(limit) or MAX_WATCHLIST_SYMBOLS, MAX_SYMBOL_PAGE_SIZE)
+    universe = configured_universe_symbols() or sp500_universe_symbols() or configured_symbols()
+    return symbol_summaries_for(universe[:requested_limit], max_items=requested_limit)
 
 
 def search_symbol_summaries(query: str | None = None, limit: int | None = None) -> list[dict[str, Any]]:

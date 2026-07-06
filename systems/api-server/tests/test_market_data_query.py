@@ -601,12 +601,77 @@ class FakeHeatmapClickHouseProvider:
             return [
                 {"symbol": "MSFT", "cik": "0000789019", "companyName": "Microsoft Corporation"},
             ]
+        if "sec_derived_metrics" in query:
+            return [
+                {
+                    "symbol": "MSFT",
+                    "metric": "free_cash_flow",
+                    "value": 25000,
+                    "fiscalYear": 2026,
+                    "fiscalPeriod": "Q1",
+                    "periodEndDate": "2026-03-31",
+                    "filedAt": "2026-04-25",
+                },
+            ]
+        if "yahoo_earnings_estimates" in query:
+            return [
+                {
+                    "symbol": "MSFT",
+                    "metric": "eps",
+                    "value": 4.5,
+                    "fiscalYear": 2026,
+                    "fiscalPeriod": "Q1",
+                    "periodEndDate": "2026-03-31",
+                    "collectedAt": "2026-04-20T00:00:00Z",
+                },
+                {
+                    "symbol": "MSFT",
+                    "metric": "revenue",
+                    "value": 95000,
+                    "fiscalYear": 2026,
+                    "fiscalPeriod": "Q1",
+                    "periodEndDate": "2026-03-31",
+                    "collectedAt": "2026-04-20T00:00:00Z",
+                },
+            ]
         if "sec_financial_facts" in query:
             return [
                 {
                     "symbol": "MSFT",
                     "cik": "0000789019",
-                    "sharesOutstanding": 7500,
+                    "metric": "shares_outstanding",
+                    "value": 7500,
+                    "fiscalYear": 2026,
+                    "fiscalPeriod": "Q1",
+                    "periodEndDate": "2026-03-31",
+                    "filedAt": "2026-04-25",
+                },
+                {
+                    "symbol": "MSFT",
+                    "cik": "0000789019",
+                    "metric": "revenue",
+                    "value": 100000,
+                    "fiscalYear": 2026,
+                    "fiscalPeriod": "Q1",
+                    "periodEndDate": "2026-03-31",
+                    "filedAt": "2026-04-25",
+                },
+                {
+                    "symbol": "MSFT",
+                    "cik": "0000789019",
+                    "metric": "equity",
+                    "value": 50000,
+                    "fiscalYear": 2026,
+                    "fiscalPeriod": "Q1",
+                    "periodEndDate": "2026-03-31",
+                    "filedAt": "2026-04-25",
+                },
+                {
+                    "symbol": "MSFT",
+                    "cik": "0000789019",
+                    "metric": "eps",
+                    "value": 4,
+                    "fiscalYear": 2026,
                     "fiscalPeriod": "Q1",
                     "periodEndDate": "2026-03-31",
                     "filedAt": "2026-04-25",
@@ -1578,6 +1643,20 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual([item["symbol"] for item in brk["symbols"]], ["BRK.B"])
         self.assertEqual([item["symbol"] for item in adbe["symbols"]], ["ADBE"])
 
+    def test_chart_symbols_route_applies_limit_without_query(self):
+        provider = FakeWatchlistProvider()
+        previous_provider = market_data_service.get_market_data_provider
+        previous_universe = market_data_service.configured_universe_symbols
+        market_data_service.get_market_data_provider = lambda: provider
+        market_data_service.configured_universe_symbols = lambda: ["AAPL", "BRK.B", "JPM"]
+        try:
+            payload = chart_routes.chart_symbols(query=None, limit=1)
+        finally:
+            market_data_service.get_market_data_provider = previous_provider
+            market_data_service.configured_universe_symbols = previous_universe
+
+        self.assertEqual([item["symbol"] for item in payload["symbols"]], ["AAPL"])
+
     def test_watchlist_change_percent_uses_previous_close_not_intraday_open(self):
         provider = FakeWatchlistProvider()
         previous = market_data_service.get_market_data_provider
@@ -1729,6 +1808,10 @@ class MarketDataQueryServiceTest(unittest.TestCase):
                 sector="Technology",
                 industry="Technology Hardware",
                 sharesOutstanding=1000,
+                revenue=100000,
+                eps=5,
+                totalEquity=50000,
+                freeCashFlow=10000,
                 source="sec",
                 asOf="2026-07-05",
                 periodEndDate="2026-04-30",
@@ -1764,6 +1847,10 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(payload["items"][0]["marketCap"], 200000)
         self.assertEqual(payload["items"][0]["marketCapSource"], "fundamentals")
         self.assertEqual(payload["items"][0]["layoutPrice"], 200)
+        self.assertEqual(payload["items"][0]["eps"], 5)
+        self.assertEqual(payload["items"][0]["revenue"], 100000)
+        self.assertEqual(payload["items"][0]["totalEquity"], 50000)
+        self.assertEqual(payload["items"][0]["freeCashFlow"], 10000)
         self.assertEqual(payload["items"][0]["layoutMarketCap"], 200000)
         self.assertEqual(payload["items"][0]["layoutMarketCapSource"], "fundamentals")
         self.assertEqual(payload["items"][0]["fundamentalsAsOf"], "2026-07-05")
@@ -2084,12 +2171,40 @@ class MarketDataQueryServiceTest(unittest.TestCase):
                 "periodEnd": "2026-04-30",
                 "filedAt": "2026-05-01",
                 "unit": "shares",
+            }, {
+                "metric": "eps",
+                "value": 3.5,
+                "fiscalPeriod": "Q2",
+                "periodEnd": "2026-04-30",
+                "filedAt": "2026-05-01",
+            }, {
+                "metric": "revenue",
+                "value": 90000,
+                "fiscalPeriod": "Q2",
+                "periodEnd": "2026-04-30",
+                "filedAt": "2026-05-01",
+            }, {
+                "metric": "equity",
+                "value": 45000,
+                "fiscalPeriod": "Q2",
+                "periodEnd": "2026-04-30",
+                "filedAt": "2026-05-01",
+            }, {
+                "metric": "free_cash_flow",
+                "value": 12000,
+                "fiscalPeriod": "Q2",
+                "periodEnd": "2026-04-30",
+                "filedAt": "2026-05-01",
             }],
         })
 
         records = StoreFundamentalsAdapter(provider=provider).latest_for_symbols(["AAPL"])
 
         self.assertEqual(records["AAPL"].sharesOutstanding, 1000)
+        self.assertEqual(records["AAPL"].eps, 3.5)
+        self.assertEqual(records["AAPL"].revenue, 90000)
+        self.assertEqual(records["AAPL"].totalEquity, 45000)
+        self.assertEqual(records["AAPL"].freeCashFlow, 12000)
         self.assertEqual(records["AAPL"].cik, "0000320193")
         self.assertEqual(records["AAPL"].source, "sec_companyfacts:redis")
         self.assertEqual(records["AAPL"].asOf, "2026-04-30")
@@ -2099,8 +2214,34 @@ class MarketDataQueryServiceTest(unittest.TestCase):
 
         self.assertEqual(records["MSFT"].companyName, "Microsoft Corporation")
         self.assertEqual(records["MSFT"].sharesOutstanding, 7500)
+        self.assertEqual(records["MSFT"].eps, 4)
+        self.assertEqual(records["MSFT"].revenue, 100000)
+        self.assertEqual(records["MSFT"].totalEquity, 50000)
+        self.assertEqual(records["MSFT"].freeCashFlow, 25000)
         self.assertEqual(records["MSFT"].source, "sec_companyfacts")
         self.assertEqual(records["MSFT"].periodEndDate, "2026-03-31")
+
+    def test_store_fundamentals_adapter_returns_sec_financial_series(self):
+        series = StoreFundamentalsAdapter(provider=FakeHeatmapProvider()).financial_series("MSFT")
+
+        self.assertEqual(series[0].period, "2026Q1")
+        self.assertEqual(series[0].periodEndDate, "2026-03-31")
+        self.assertEqual(series[0].revenue, 100000)
+        self.assertEqual(series[0].netIncome, None)
+        self.assertEqual(series[0].eps, 4)
+        self.assertEqual(series[0].totalEquity, 50000)
+        self.assertEqual(series[0].freeCashFlow, 25000)
+        self.assertEqual(series[0].source, "sec")
+
+    def test_query_service_returns_sec_financial_series_payload(self):
+        payload = MarketDataQueryService(provider=FakeHeatmapProvider()).financial_series("MSFT", years=3, period="quarterly")
+
+        self.assertEqual(payload["source"], "sec")
+        self.assertEqual(payload["symbol"], "MSFT")
+        self.assertEqual(payload["period"], "quarterly")
+        self.assertEqual(payload["items"][0]["period"], "2026Q1")
+        self.assertEqual(payload["items"][0]["revenue"], 100000)
+        self.assertEqual(payload["items"][0]["freeCashFlow"], 25000)
 
     def test_fundamentals_adapter_accepts_symbol_keyed_latest_payload(self):
         records = records_from_payload({

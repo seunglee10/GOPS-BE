@@ -57,11 +57,11 @@ feed.
 Set `ALPACA_MAX_TRADE_SYMBOLS` only when an Alpaca subscription cap requires an
 operational limit; explicit active chart subscriptions remain the priority.
 
-`ALPACA_FEED_PROFILE` selects one ingestor runtime feed (`sip`, `boats`, or `crypto-us`). The live contract is session-routed: SIP is primary for `04:00-20:00 ET` (`pre`, `regular`, `after`), BOATS is primary for `20:00-04:00 ET` (`overnight`), and `crypto-us` is the 24/7 Alpaca crypto feed. Local compose and k8s run one ingestor per active profile, and `/health/config` reports the expected profile set from `ALPACA_FEED_PROFILES`. Market-data envelopes, Redis live state, ClickHouse candle rows, API candles, and chart snapshots preserve `feedProfile` and `marketSession` so daytime, BOATS/overnight, and crypto data are diagnosable instead of collapsing into an anonymous stream.
+`ALPACA_FEED_PROFILE` selects one ingestor runtime feed (`sip`, `boats`, or `crypto-us`). The live contract is session-routed: SIP is primary for `04:00-20:00 ET` (`pre`, `regular`, `after`), BOATS is primary for `20:00-04:00 ET` (`overnight`), and `crypto-us` is the 24/7 Alpaca crypto feed. Sunday `20:00 ET` opens the Monday overnight slice; Friday `20:00 ET` closes the equity 24/5 window. Local compose and k8s run one ingestor per active profile, and `/health/config` reports the expected profile set from `ALPACA_FEED_PROFILES`. Market-data envelopes, Redis live state, ClickHouse candle rows, API candles, and chart snapshots preserve `feedProfile` and `marketSession` so daytime, BOATS/overnight, and crypto data are diagnosable instead of collapsing into an anonymous stream.
 
 Crypto uses `BTCUSD` inside GOPS and `BTC/USD` only when talking to Alpaca. It shares the existing Kafka topics; records are separated by Kafka key/message `symbol=BTCUSD`, not by a new topic.
 
-`ALPACA_CREDENTIAL_SOURCE` accepts `auto`, `aws-secrets-manager`, or `local-env`. Use `local-env` with `APCA_API_KEY_ID` and `APCA_API_SECRET_KEY` for explicit local Alpaca smoke runs while Secrets Manager is disconnected. AWS/EKS overlays set `aws-secrets-manager` and read the same canonical key names from the `dev/alpaca` JSON secret.
+`ALPACA_CREDENTIAL_SOURCE` accepts `auto`, `aws-secrets-manager`, or `local-env`. Use `local-env` with `APCA_API_KEY_ID` and `APCA_API_SECRET_KEY` for explicit local Alpaca smoke runs while Secrets Manager is disconnected. AWS/EKS overlays set `aws-secrets-manager` and read the same canonical key names from the `dev/alpaca` JSON secret. Alpaca ingestors read credentials immediately before each WebSocket connect attempt, so a Secrets Manager rotation is picked up on the next reconnect or session open.
 
 ## Kafka
 
@@ -255,6 +255,11 @@ docker-compose clickhouse
 infra/clickhouse/initdb
 ```
 
+Local ClickHouse is only a development runtime. AWS ClickHouse replacement is a
+post-push deployment operation: keep merge work limited to code, DDL, and env
+contracts, then run AWS schema initialization and data rebuild jobs against the
+new AWS endpoint.
+
 Common env:
 
 ```text
@@ -443,6 +448,13 @@ refresh every 60 seconds by default. Tile layout timestamps advance every 300
 seconds by default, so the frontend can update colors frequently without
 reshuffling the treemap on every quote refresh.
 
+SEC actuals and Yahoo consensus estimates stay separate. SEC EDGAR actual
+financial statement rows live in `market_data.sec_financial_facts` and
+`market_data.sec_derived_metrics`; Yahoo/yfinance consensus rows are materialized
+by a separate scheduled collector into `market_data.yahoo_earnings_estimates`.
+The API only reads ClickHouse/Redis snapshots on screen requests. It must not
+call SEC or Yahoo directly from the frontend hot path.
+
 ## Market Indices
 
 `GET /api/market/indices` serves the frontend index panel from a Redis-backed
@@ -471,7 +483,7 @@ server refresh only asks Yahoo whether newer data is available.
 
 ## Market Calendar
 
-GapFill uses the configured market calendar to avoid false gaps on weekends, holidays, and early closes. Alpaca feed session gating reads `MARKET_CLOSED_DATES` plus the built-in 2026 NYSE/Nasdaq full-day holiday set by default; a full-market holiday reports `closed` instead of `pre`, `regular`, `after`, or `overnight`, so local smoke tests do not wait for live payloads on a known closed session. Set `MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS=false` only for a test that intentionally disables the built-in holiday set. The v1 provider is `configured-nyse`; it is an adapter boundary that can later be replaced by a managed exchange-calendar provider. Intraday chart renderability treats sparse gaps as blocking only when both candles are inside the regular session; sparse extended-hours 1m bars can still render because Alpaca may only emit bars for minutes with activity.
+GapFill uses the configured market calendar to avoid false gaps on weekends, holidays, and early closes. Alpaca feed session gating reads `MARKET_CLOSED_DATES` plus the built-in 2026 NYSE/Nasdaq full-day holiday set by default; a full-market holiday reports `closed` instead of `pre`, `regular`, `after`, or `overnight`, so local smoke tests do not wait for live payloads on a known closed session. Set `MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS=false` only for a test that intentionally disables the built-in holiday set. The v1 provider is `configured-nyse`; it is an adapter boundary that can later be replaced by a managed exchange-calendar provider. Sunday `20:00 ET` through Friday `20:00 ET` is treated as the 24/5 equity window, with BOATS active only for the `overnight` slices. Intraday chart serving keeps historical views regular-session-only and allows the currently active `pre`, `after`, or `overnight` session to appear while it is live. Intraday chart renderability treats sparse gaps as blocking only when both candles are inside the regular session; sparse extended-hours 1m bars can still render because Alpaca may only emit bars for minutes with activity.
 
 ```text
 MARKET_CALENDAR_PROVIDER

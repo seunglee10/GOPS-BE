@@ -139,7 +139,7 @@ def chart_symbols(
     return {
         "source": "alpaca",
         "feed": "configured-market-feed",
-        "symbols": search_symbol_summaries(query, limit) if query is not None else symbol_summaries(),
+        "symbols": search_symbol_summaries(query, limit) if query is not None else symbol_summaries(limit),
     }
 
 

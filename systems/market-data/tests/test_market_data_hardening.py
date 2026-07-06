@@ -51,7 +51,7 @@ from alfaka.serving.cursors import timestamp_from_cursor
 from alfaka.serving.dto import cursor_for, market_status_event, snapshot, websocket_event
 from alfaka.serving.hot_symbols import build_hot_symbols_payload, dollar_volume_from_candle
 from alfaka.serving.intervals import candle_count_for_1y, candle_count_for_24h, historical_target_bars, redis_closed_candle_cap, resolve_candle_limit
-from alfaka.serving.provider import MarketDataProvider, has_more_before_target, target_range_from_for_interval
+from alfaka.serving.provider import MarketDataProvider, filter_stock_chart_candles, has_more_before_target, target_range_from_for_interval
 from alfaka.serving.redis_provider import RedisMarketDataProvider
 from alfaka.serving.news_hot_cache import (
     company_daily_summary_coverage_valid,
@@ -907,6 +907,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(market_session_for_timestamp("2026-06-29T21:00:00.000Z"), "after")
         self.assertEqual(market_session_for_timestamp("2026-06-30T02:00:00.000Z"), "overnight")
         self.assertEqual(market_session_for_timestamp("2026-07-06T02:00:00.000Z"), "overnight")
+        self.assertEqual(market_session_for_timestamp("2026-06-27T01:00:00.000Z"), "closed")
         self.assertEqual(market_session_for_timestamp("2026-06-28T14:00:00.000Z"), "closed")
         self.assertEqual(market_session_for_timestamp("2026-06-27T02:00:00.000Z"), "closed")
         self.assertEqual(market_session_for_timestamp("2026-07-03T08:30:00.000Z"), "closed")
@@ -920,8 +921,8 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS": "false",
         }):
             self.assertEqual(market_session_for_timestamp("2026-07-03T08:30:00.000Z"), "pre")
-            self.assertEqual(market_session_for_timestamp("2026-07-06T14:00:00.000Z"), "closed")
             self.assertEqual(market_session_for_timestamp("2026-07-06T02:00:00.000Z"), "closed")
+            self.assertEqual(market_session_for_timestamp("2026-07-06T14:00:00.000Z"), "closed")
 
         crypto = resolve_feed_profile({"ALPACA_FEED_PROFILE": "crypto-us"})
         self.assertEqual(crypto.feed, "crypto")
@@ -1724,6 +1725,20 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn("systems/market-data/pods/news-intelligence-worker/*", detector)
         self.assertIn("systems/market-data/jobs/news-backfill/*", detector)
         self.assertIn("systems/market-data/jobs/news-intelligence-rebuild/*", detector)
+
+    def test_market_ingestor_rollout_targets_all_feed_deployments(self):
+        lib = (REPO_ROOT / "scripts/aws/lib-gops-images.sh").read_text(encoding="utf-8")
+
+        self.assertIn("alfaka-alpaca-ingestor-sip", lib)
+        self.assertIn("alfaka-alpaca-ingestor-boats", lib)
+        self.assertIn("alfaka-alpaca-ingestor-crypto", lib)
+        self.assertIn("alfaka-alpaca-news-ingestor", lib)
+
+    def test_deploy_smoke_uses_lightweight_health_endpoint(self):
+        workflow = (REPO_ROOT / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8")
+
+        self.assertIn("smoke_url https://stargops.com/api/health", workflow)
+        self.assertNotIn("smoke_url https://stargops.com/api/charts/symbols", workflow)
 
     def test_initial_load_compose_uses_on_demand_universe_contract(self):
         compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
@@ -4359,6 +4374,25 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertNotIn("toDayOfWeek(event_time) BETWEEN 1 AND 5", query)
         self.assertEqual(candles[-1]["timestamp"], "2026-06-28T13:30:00.000Z")
 
+    def test_stock_clickhouse_query_filters_historical_extended_hours(self):
+        provider = RecordingClickHouseProviderForAggregation([])
+
+        with mock.patch(
+            "alfaka.serving.clickhouse_provider.active_extended_session_window",
+            return_value=(
+                "overnight",
+                datetime(2026, 7, 6, 0, 0, tzinfo=timezone.utc),
+                datetime(2026, 7, 6, 8, 0, tzinfo=timezone.utc),
+            ),
+        ):
+            provider.candles("AAPL", "1m", 5)
+
+        query = provider.queries[0][0]
+        self.assertIn("market_session = 'regular'", query)
+        self.assertIn("market_session = 'overnight'", query)
+        self.assertIn("2026-07-06T00:00:00.000Z", query)
+        self.assertIn("2026-07-06T08:00:00.000Z", query)
+
     def test_crypto_weekend_candle_is_valid_and_keeps_decimal_sizes(self):
         """crypto 주말 캔들과 소수 단위 거래량/수량이 적재 변환에서 유지되는지 검증한다."""
         self.assertIsNone(invalid_candle_reason({
@@ -5409,6 +5443,47 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         payload = provider.candle_snapshot("AAPL", "1m", 30)
 
         self.assertEqual([candle["timestamp"] for candle in payload["candles"]], ["2026-06-29T10:00:00.000Z"])
+
+    def test_stock_chart_filter_hides_historical_extended_and_keeps_active_extended(self):
+        candles = [
+            {
+                "timestamp": "2026-07-02T22:00:00.000Z",
+                "open": 100,
+                "high": 101,
+                "low": 99,
+                "close": 100,
+                "volume": 100,
+                "isClosed": True,
+                "marketSession": "after",
+            },
+            {
+                "timestamp": "2026-07-02T14:30:00.000Z",
+                "open": 101,
+                "high": 102,
+                "low": 100,
+                "close": 101,
+                "volume": 100,
+                "isClosed": True,
+                "marketSession": "regular",
+            },
+            {
+                "timestamp": "2026-07-06T02:15:00.000Z",
+                "open": 102,
+                "high": 103,
+                "low": 101,
+                "close": 102,
+                "volume": 100,
+                "isClosed": False,
+                "marketSession": "overnight",
+            },
+        ]
+
+        visible = filter_stock_chart_candles(candles, now=datetime(2026, 7, 6, 2, 30, tzinfo=timezone.utc))
+
+        self.assertEqual(
+            [candle["timestamp"] for candle in visible],
+            ["2026-07-02T14:30:00.000Z", "2026-07-06T02:15:00.000Z"],
+        )
 
     def test_empty_cursor_does_not_trigger_clickhouse_timestamp_query(self):
         provider = MarketDataProvider(
