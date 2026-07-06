@@ -46,26 +46,29 @@ spec:
               path: /ping
               port: 8123
             periodSeconds: 10
+            timeoutSeconds: 10
             failureThreshold: 30
           readinessProbe:
             httpGet:
               path: /ping
               port: 8123
             periodSeconds: 10
-            failureThreshold: 6
+            timeoutSeconds: 10
+            failureThreshold: 12
           livenessProbe:
             httpGet:
               path: /ping
               port: 8123
             periodSeconds: 30
-            failureThreshold: 3
+            timeoutSeconds: 10
+            failureThreshold: 6
           resources:
             requests:
-              cpu: 250m
-              memory: 1024Mi
+              cpu: "1"
+              memory: 6Gi
             limits:
-              cpu: "2"
-              memory: 3072Mi
+              cpu: "4"
+              memory: 8Gi
       volumes:
         - name: clickhouse-initdb
           configMap:
