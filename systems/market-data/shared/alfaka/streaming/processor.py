@@ -711,6 +711,8 @@ def enforce_active_feed(redis_client, redis_keys, envelope):
     actual_profile = envelope.get("feedProfile") or envelope.get("feed")
     actual_epoch = envelope.get("feedEpoch")
     symbol = envelope.get("symbol") or (envelope.get("raw") or {}).get("S") or "_UNKNOWN"
+    if str(expected_profile or "").strip().lower() in {"", "none", "closed"}:
+        return "accepted"
     if expected_profile and actual_profile and str(expected_profile).lower() != str(actual_profile).lower():
         quarantine_feed_payload(redis_client, redis_keys, actual_profile, symbol, envelope, "wrong_feed_profile")
         return "quarantined_wrong_feed_profile"

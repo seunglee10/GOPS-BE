@@ -62,6 +62,7 @@ from alfaka.serving.news_hot_cache import (
     write_localized_news_to_redis,
 )
 from alfaka.serving.symbol_registry import SymbolRegistry
+from alfaka.realtime.feed_control import active_feed_profile_for
 from alfaka.storage.clickhouse_loader import (
     ClickHouseHttpClient,
     candle_to_clickhouse_row,
@@ -884,14 +885,22 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(market_session_for_timestamp("2026-06-29T14:00:00.000Z"), "regular")
         self.assertEqual(market_session_for_timestamp("2026-06-29T21:00:00.000Z"), "after")
         self.assertEqual(market_session_for_timestamp("2026-06-30T02:00:00.000Z"), "overnight")
+        self.assertEqual(market_session_for_timestamp("2026-07-06T02:00:00.000Z"), "overnight")
         self.assertEqual(market_session_for_timestamp("2026-06-28T14:00:00.000Z"), "closed")
+        self.assertEqual(market_session_for_timestamp("2026-06-27T02:00:00.000Z"), "closed")
         self.assertEqual(market_session_for_timestamp("2026-07-03T08:30:00.000Z"), "closed")
+        self.assertEqual(
+            active_feed_profile_for(datetime(2026, 7, 6, 2, 0, tzinfo=timezone.utc)),
+            "boats",
+        )
+        self.assertIsNone(active_feed_profile_for(datetime(2026, 6, 27, 2, 0, tzinfo=timezone.utc)))
         with mock.patch.dict(os.environ, {
             "MARKET_CLOSED_DATES": "2026-07-06",
             "MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS": "false",
         }):
             self.assertEqual(market_session_for_timestamp("2026-07-03T08:30:00.000Z"), "pre")
             self.assertEqual(market_session_for_timestamp("2026-07-06T14:00:00.000Z"), "closed")
+            self.assertEqual(market_session_for_timestamp("2026-07-06T02:00:00.000Z"), "closed")
 
         crypto = resolve_feed_profile({"ALPACA_FEED_PROFILE": "crypto-us"})
         self.assertEqual(crypto.feed, "crypto")

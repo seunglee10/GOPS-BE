@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from datetime import datetime, time, timezone as datetime_timezone
+from datetime import datetime, time, timedelta, timezone as datetime_timezone
 from zoneinfo import ZoneInfo
 
 from alfaka.common.env import parse_csv
@@ -132,19 +132,28 @@ def market_session_for_datetime(value: datetime, timezone=MARKET_TIMEZONE, close
         value = value.replace(tzinfo=datetime_timezone.utc)
     local = value.astimezone(timezone)
     closed_dates = configured_closed_dates() if closed_dates is None else closed_dates
-    if local.date().isoformat() in closed_dates:
-        return "closed"
-    weekday = local.weekday()
+    local_date = local.date()
     local_time = local.time()
-    if weekday >= 5:
+    weekday = local.weekday()
+    if local_date.isoformat() in closed_dates:
         return "closed"
+
+    if weekday == 5:
+        return "closed"
+    if weekday == 6:
+        if local_time >= AFTER_MARKET_CLOSE and not next_local_date_is_closed(local, closed_dates):
+            return "overnight"
+        return "closed"
+
     if PRE_MARKET_OPEN <= local_time < REGULAR_OPEN:
         return "pre"
     if REGULAR_OPEN <= local_time < REGULAR_CLOSE:
         return "regular"
     if REGULAR_CLOSE <= local_time < AFTER_MARKET_CLOSE:
         return "after"
-    if weekday < 5:
+    if local_time < PRE_MARKET_OPEN:
+        return "overnight"
+    if weekday < 4 and not next_local_date_is_closed(local, closed_dates):
         return "overnight"
     return "closed"
 
@@ -162,6 +171,11 @@ def configured_closed_dates(environ=None) -> frozenset[str]:
     if include_defaults in {"0", "false", "no", "off"}:
         return configured
     return DEFAULT_US_EQUITY_CLOSED_DATES | configured
+
+
+def next_local_date_is_closed(local: datetime, closed_dates: frozenset[str]) -> bool:
+    """Overnight 세션이 다음 거래일 휴장에 걸리면 열지 않습니다."""
+    return (local.date() + timedelta(days=1)).isoformat() in closed_dates
 
 
 def feed_profile_active_for_session(feed_profile: FeedProfile, session: str | None) -> bool:
