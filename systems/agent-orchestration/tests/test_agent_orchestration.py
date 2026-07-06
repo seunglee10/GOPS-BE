@@ -14,7 +14,7 @@ sys.path.insert(0, str(ROOT / "shared"))
 sys.path.insert(0, str(REPO_ROOT / "systems" / "market-data" / "shared"))
 sys.modules.setdefault("boto3", types.SimpleNamespace(client=lambda *args, **kwargs: None))
 
-from gops_agents.contracts import AgentAnswer, AgentFinding, AnalysisReport, DataSnapshot, EvidenceItem, FinalAnswer, FinalResponse, IntentRoute, RoutePlan, SynthesisInput, utc_now_iso
+from gops_agents.contracts import AgentAnswer, AgentFinding, AnalysisReport, DataSnapshot, EvidenceItem, FinalAnswer, FinalResponse, IntentRoute, RoutePlan, RuntimePolicy, SynthesisInput, utc_now_iso
 from gops_agents.events.detector import MarketEventDetector, MarketEventThresholds
 from gops_agents.events.publisher import notification_payload
 from gops_agents.intent_understanding import build_query_understanding
@@ -27,7 +27,7 @@ from gops_agents.orchestrator import (
     extract_symbol_from_intent,
     relationship_symbols_for_context,
 )
-from gops_agents.operations import build_agent_operation_ir, maybe_plan_operation_ir, needs_operation_planner
+from gops_agents.operations import build_agent_operation_ir, maybe_plan_operation_ir, needs_operation_planner, normalize_operation_references
 from gops_agents.providers import ClickHouseNewsProvider, GraphDBOntologyProvider, ProviderRequest
 from gops_agents.providers.graph_path_cache import MemoryGraphPathCache
 from gops_agents.providers.news_cache import MemoryNewsEvidenceCache, RedisNewsEvidenceCache
@@ -51,6 +51,7 @@ from gops_agents.runtime.delivery_gateway import AgentDeliveryGateway
 from gops_agents.runtime.envelope import build_request_envelope
 from gops_agents.runtime.queues import AnalysisQueueMetrics
 from gops_agents.runtime.report_store import InMemoryReportStore, RedisReportStore
+from gops_agents.runtime import RuntimeRunContext
 from gops_agents.runtime.workers import AgentAnalysisWorker
 from gops_agents.orchestration.routing import route_intent
 from gops_agents.orchestration.request import normalize_request_state
@@ -542,6 +543,32 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(operation_ir["suggestedRoles"], ["chart", "news", "ontology"])
         self.assertEqual(operation_ir["contextWindow"]["requiredSnapshots"], ["market_snapshot", "news_snapshot", "relationship_snapshot"])
         self.assertGreaterEqual(operation_ir["confidence"], 0.9)
+
+    def test_operation_reference_normalization_dedupes_chart_context_reference(self):
+        reference = {
+            "type": "chart.candle",
+            "displayLabel": "NVDA 1D 2026-07-04",
+            "data": {"symbol": "NVDA", "interval": "1D", "timestamp": "2026-07-04T00:00:00Z", "close": 145.5},
+        }
+
+        references = normalize_operation_references(
+            [reference],
+            {"selectedReference": reference},
+            {"selectedReference": reference, "hoverReference": reference},
+        )
+
+        self.assertEqual(len(references), 1)
+        self.assertEqual(references[0]["type"], "chart.candle")
+
+    def test_llm_budget_reserves_single_call_for_final_synthesis(self):
+        timing = {}
+        context = RuntimeRunContext(policy=RuntimePolicy(max_realtime_llm_calls=1), timing=timing)
+
+        self.assertFalse(context.acquire_llm("intent-classifier"))
+        self.assertTrue(context.acquire_llm("synthesis"))
+        self.assertEqual(timing["llmCalls"], 1)
+        self.assertEqual(timing["llmBudgetBlocked"], 1)
+        self.assertEqual(timing["llmCallLabels"], ["synthesis"])
 
     def test_operation_planner_fallback_returns_structured_ir(self):
         base_ir = build_agent_operation_ir(
@@ -2855,12 +2882,13 @@ class AgentOrchestrationTests(unittest.TestCase):
         orchestrator = AgentOrchestrator()
         orchestrator.news_agent = NewsAgent(provider)
         orchestrator.ontology_agent = OntologyAgent(FakeOntologyProvider([]))
-        openai_role_response = {
+        openai_synthesis_response = {
             "output_text": json.dumps({
-                "summary": "뉴스 LLM 분석입니다.",
-                "rationale": "제공된 뉴스만 사용했습니다.",
-                "confidence": 0.7,
-                "tags": ["news", "openai"],
+                "title": "NVDA 종합 판단",
+                "summary": "NVDA 상승은 뉴스 근거와 일부 관련 가능성이 있지만 단일 원인으로 확정하기는 어렵습니다.",
+                "sections": [{"title": "핵심 이유", "bullets": ["뉴스 근거가 있습니다."]}],
+                "citations": [],
+                "limitations": [],
             })
         }
 
@@ -2873,7 +2901,7 @@ class AgentOrchestrationTests(unittest.TestCase):
             "AGENT_UI_ROUTER_PROVIDER": "deterministic",
             "AGENT_USE_SNAPSHOT_HOT_PATH": "false",
         }, clear=False):
-            with patch("urllib.request.urlopen", return_value=FakeOpenAIResponse(openai_role_response)) as openai:
+            with patch("urllib.request.urlopen", return_value=FakeOpenAIResponse(openai_synthesis_response)) as openai:
                 report = orchestrator.analyze({
                     "symbol": "NVDA",
                     "intent": "NVDA 왜 올랐어?",
@@ -2883,7 +2911,9 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(openai.call_count, 1)
         self.assertEqual(report.timing["llmCalls"], 1)
         self.assertEqual(report.timing["llmBudgetBlocked"], 1)
-        self.assertIn("role:news", report.timing["llmCallLabels"])
+        self.assertEqual(report.timing["llmCallLabels"], ["synthesis"])
+        self.assertEqual(report.timing["synthesisProvider"], "openai")
+        self.assertEqual(report.finalAnswer.title, "NVDA 종합 판단")
         self.assertIn("llm_call_budget_exceeded", report.finalResponse.risk_warnings)
 
     def test_orchestrator_analysis_cache_fail_open_when_redis_fails(self):
@@ -4538,6 +4568,64 @@ class AgentOrchestrationTests(unittest.TestCase):
                 )
 
         self.assertIn("GraphDB 기준", answer.summary)
+
+    def test_synthesizer_records_fallback_reason_when_openai_key_missing(self):
+        timing = {}
+        evidence = [
+            EvidenceItem(provider="news", status="available", title="NVDA news", summary="NVDA demand stayed strong.")
+        ]
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "", "AGENT_FINAL_ANSWER_PROVIDER": "openai"}, clear=False):
+            answer = FinalAnswerSynthesizer().synthesize(
+                symbol="NVDA",
+                intent="NVDA 왜 올랐어?",
+                route=IntentRoute("rule", "market-move", ["chart", "news"], 0.9, "test"),
+                findings=[],
+                provider_evidence=evidence,
+                timing=timing,
+            )
+
+        self.assertEqual(timing["synthesisProvider"], "deterministic")
+        self.assertEqual(timing["synthesisSkippedReason"], "missing_openai_api_key")
+        self.assertEqual(timing["synthesisFallbackReason"], "missing_openai_api_key")
+        self.assertNotIn("근거를 확인했습니다", answer.summary)
+
+    def test_synthesizer_records_invalid_openai_response_fallback_reason(self):
+        timing = {}
+        evidence = [
+            EvidenceItem(provider="news", status="available", title="NVDA news", summary="NVDA demand stayed strong.")
+        ]
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key", "AGENT_FINAL_ANSWER_PROVIDER": "openai"}, clear=False):
+            with patch("urllib.request.urlopen", return_value=FakeOpenAIResponse({"output_text": "{invalid"})):
+                answer = FinalAnswerSynthesizer().synthesize(
+                    symbol="NVDA",
+                    intent="NVDA 왜 올랐어?",
+                    route=IntentRoute("rule", "market-move", ["chart", "news"], 0.9, "test"),
+                    findings=[],
+                    provider_evidence=evidence,
+                    timing=timing,
+                )
+
+        self.assertEqual(timing["synthesisProvider"], "deterministic")
+        self.assertEqual(timing["synthesisFallbackReason"], "openai_JSONDecodeError")
+        self.assertNotIn("근거를 확인했습니다", answer.summary)
+
+    def test_explain_price_move_uses_market_move_final_answer_builder(self):
+        evidence = [
+            EvidenceItem(provider="market", status="available", title="Selected candle", summary="NVDA selected candle closed lower."),
+            EvidenceItem(provider="news", status="available", title="NVDA supply headline", summary="Supply chain update affected chip stocks."),
+        ]
+        with patch.dict(os.environ, {"AGENT_FINAL_ANSWER_PROVIDER": "deterministic"}, clear=False):
+            answer = FinalAnswerSynthesizer().synthesize(
+                symbol="NVDA",
+                intent="선택한 봉이 왜 내려갔어?",
+                route=IntentRoute("operation-extractor", "explain_price_move", ["chart", "news", "macro"], 0.86, "test"),
+                findings=[],
+                provider_evidence=evidence,
+            )
+
+        self.assertEqual(answer.title, "NVDA 주가 변동 원인 분석")
+        self.assertIn("관련 가능성", answer.summary)
+        self.assertNotIn("근거를 확인했습니다", answer.summary)
 
     def test_verification_conflict_is_reflected_in_market_move_answer(self):
         context = AgentContext(symbol="NVDA", intent="NVDA 왜 올랐어?")

@@ -22,12 +22,13 @@ class LlmBudget:
     max_calls: int = 1
     used_calls: int = 0
     blocked_calls: int = 0
+    reserved_synthesis_calls: int = 1
     labels: list[str] = field(default_factory=list)
     _lock: Lock = field(default_factory=Lock, init=False, repr=False)
 
     def acquire(self, label: str, timing: dict[str, Any] | None = None) -> bool:
         with self._lock:
-            if self.used_calls >= self.max_calls:
+            if self.used_calls >= self.max_calls or not self._has_available_slot(label):
                 self.blocked_calls += 1
                 if isinstance(timing, dict):
                     timing["llmBudgetBlocked"] = int(timing.get("llmBudgetBlocked") or 0) + 1
@@ -38,6 +39,19 @@ class LlmBudget:
                 timing["llmCalls"] = self.used_calls
                 timing["llmCallLabels"] = list(self.labels)
             return True
+
+    def _has_available_slot(self, label: str) -> bool:
+        if is_synthesis_llm_label(label):
+            return True
+        reserve = min(max(0, int(self.reserved_synthesis_calls)), max(0, int(self.max_calls)))
+        if reserve <= 0:
+            return True
+        return self.used_calls < max(0, self.max_calls - reserve)
+
+
+def is_synthesis_llm_label(label: str) -> bool:
+    normalized = str(label or "").strip().lower()
+    return normalized in {"synthesis", "financial-synthesis"}
 
 
 @dataclass

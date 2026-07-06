@@ -46,11 +46,11 @@ SNAPSHOT_BUNDLE_BY_INTENT = {
 
 def runtime_policy_from_env() -> RuntimePolicy:
     return RuntimePolicy(
-        max_realtime_llm_calls=int(os.getenv("AGENT_MAX_REALTIME_LLM_CALLS", "1")),
+        max_realtime_llm_calls=int(os.getenv("AGENT_MAX_REALTIME_LLM_CALLS", "2")),
         route_llm_fallback_threshold=float(os.getenv("AGENT_ROUTE_LLM_FALLBACK_THRESHOLD", "0.75")),
         total_timeout_ms=int(os.getenv("AGENT_TOTAL_TIMEOUT_MS", "3000")),
         snapshot_timeout_ms=int(os.getenv("AGENT_SNAPSHOT_TIMEOUT_MS", "700")),
-        synthesis_timeout_ms=int(os.getenv("AGENT_SYNTHESIS_TIMEOUT_MS", "1700")),
+        synthesis_timeout_ms=int(os.getenv("AGENT_SYNTHESIS_TIMEOUT_MS", "5000")),
         graphdb_timeout_ms=int(os.getenv("AGENT_GRAPHDB_TIMEOUT_MS", "500")),
         max_items_per_snapshot=int(os.getenv("AGENT_MAX_ITEMS_PER_SNAPSHOT", "5")),
         max_total_synthesis_evidence_items=int(os.getenv("AGENT_MAX_SYNTHESIS_EVIDENCE_ITEMS", "15")),

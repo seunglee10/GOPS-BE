@@ -10,14 +10,20 @@ ONTOLOGY_REFERENCE_TYPES = {"ontology.entity"}
 FINANCIAL_REFERENCE_TYPES = {"financial.metric"}
 
 
-def normalize_operation_references(references: Any, ui_context: Any = None) -> list[dict[str, Any]]:
+def normalize_operation_references(
+    references: Any,
+    ui_context: Any = None,
+    chart_context: Any = None,
+) -> list[dict[str, Any]]:
     values: list[dict[str, Any]] = []
     for item in references if isinstance(references, list) else []:
         if isinstance(item, dict) and isinstance(item.get("type"), str):
             values.append(dict(item))
-    if isinstance(ui_context, dict):
+    for context in (ui_context, chart_context):
+        if not isinstance(context, dict):
+            continue
         for key in ("selectedReference", "hoverReference"):
-            item = ui_context.get(key)
+            item = context.get(key)
             if isinstance(item, dict) and isinstance(item.get("type"), str):
                 values.append(dict(item))
     deduped: list[dict[str, Any]] = []
@@ -40,7 +46,7 @@ def build_agent_operation_ir(
     chart_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     text = normalize_text(intent)
-    refs = normalize_operation_references(references, ui_context)
+    refs = normalize_operation_references(references, ui_context, chart_context)
     ref_types = {str(item.get("type") or "") for item in refs}
     dates = extract_date_hints(text)
     layers = extract_layer_hints(text)

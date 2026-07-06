@@ -194,6 +194,16 @@ deterministic `OperationIR`을 그대로 쓴다. 차트 변경은 영구 `ChartC
 임시 visual overlay를 분리하고, 분석 질문은 resolved anchor를 기준으로
 market/news/ontology/financial snapshot을 수집한다.
 
+일반 분석의 최종 사용자 답변은 `final answer synthesis`를 우선한다.
+`AGENT_MAX_REALTIME_LLM_CALLS`의 운영 기본값은 2이며, runtime은
+`synthesis`/`financial-synthesis` 호출 1회를 예약해 intent classifier, operation
+planner, role answer 호출이 최종 종합 답변 예산을 소진하지 못하게 한다. synthesis가
+API key, provider 설정, 예산, timeout, 응답 형식 문제로 OpenAI를 쓰지 못하면
+deterministic fallback으로 degrade하되 `timing.synthesisProvider`,
+`timing.synthesisSkippedReason`, `timing.synthesisFallbackReason`와
+`agentTrace.synthesis`에 이유를 남긴다. `finalAnswer.summary`는 근거 조회 상태가
+아니라 종합 판단/결론 문장이어야 한다.
+
 Route mode:
 
 ```text

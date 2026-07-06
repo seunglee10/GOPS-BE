@@ -566,6 +566,10 @@ Provider and LLM:
 ```text
 OPENAI_API_KEY
 OPENAI_MODEL
+AGENT_FINAL_ANSWER_PROVIDER
+AGENT_MAX_REALTIME_LLM_CALLS
+AGENT_SYNTHESIZER_TIMEOUT_SECONDS
+AGENT_SYNTHESIS_TIMEOUT_MS
 AGENT_OPERATION_PLANNER_PROVIDER
 AGENT_OPERATION_PLANNER_MODEL
 AGENT_OPERATION_PLANNER_TIMEOUT_SECONDS
@@ -590,6 +594,16 @@ facts and deterministic financial signals into user-facing Korean prose. The
 generated financial report is cached in Redis under
 `gops:agent:financial-final-answer:v1:{SYMBOL}:{digest}` when Redis is
 available.
+
+General final-answer synthesis is enabled with `AGENT_FINAL_ANSWER_PROVIDER=openai`.
+Production config should keep `AGENT_MAX_REALTIME_LLM_CALLS=2`,
+`AGENT_SYNTHESIZER_TIMEOUT_SECONDS=5`, and `AGENT_SYNTHESIS_TIMEOUT_MS=5000` so
+one LLM call remains reserved for final answer synthesis. A completed report whose
+`timing.llmCallLabels` does not contain `synthesis` or `financial-synthesis` did
+not even attempt the final synthesis LLM call. A report whose
+`timing.synthesisProvider` is not `openai` used deterministic fallback for the final
+answer; check `synthesisSkippedReason` and `synthesisFallbackReason` in `timing` or
+`agentTrace.synthesis`.
 
 Interactive OperationIR planner fallback is enabled with
 `AGENT_OPERATION_PLANNER_PROVIDER=openai`. Leave it unset for deterministic-only
