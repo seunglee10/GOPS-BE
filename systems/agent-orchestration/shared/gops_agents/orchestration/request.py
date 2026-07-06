@@ -5,6 +5,7 @@ from typing import Any
 
 from ..contracts import MarketEvent, stable_id, utc_now_iso
 from ..intent_understanding import build_query_understanding, fallback_news_topic
+from ..operations import build_agent_operation_ir, maybe_plan_operation_ir, normalize_operation_references
 from ..query_understanding import is_supported_company_symbol, relationship_symbols_for_context, supported_company_catalog_payload
 from ..retrieval.snapshots import runtime_policy_from_env
 from ..roles import AgentContext
@@ -23,6 +24,8 @@ def normalize_request_state(state: dict[str, Any]) -> dict[str, Any]:
     intent = str(request.get("intent") or request.get("prompt") or latest_message(request.get("messages")) or "analysis")
     analysis_mode = resolve_analysis_mode(request, intent)
     layout_context = request.get("layoutContext") if isinstance(request.get("layoutContext"), dict) else {}
+    ui_context = request.get("uiContext") if isinstance(request.get("uiContext"), dict) else {}
+    references = normalize_operation_references(request.get("references", []), ui_context)
     query_understanding, entity_resolution = build_query_understanding(
         intent,
         agent_ids=request.get("agentIds"),
@@ -65,12 +68,32 @@ def normalize_request_state(state: dict[str, Any]) -> dict[str, Any]:
     query_understanding_payload = query_understanding.to_dict()
     query_understanding_payload = apply_chart_action_ui_task(request, query_understanding_payload, symbol)
     query_understanding_payload["subjectValidation"] = dict(subject_validation)
+    operation_ir = build_agent_operation_ir(
+        intent=intent,
+        symbol=symbol,
+        references=references,
+        ui_context=ui_context,
+        chart_context=chart_context,
+    )
+    operation_ir = maybe_plan_operation_ir(
+        base_ir=operation_ir,
+        intent=intent,
+        symbol=symbol,
+        references=references,
+        ui_context=ui_context,
+        chart_context=chart_context,
+        runtime_context=runtime_context,
+    ) or operation_ir
+    query_understanding_payload = apply_operation_ir_to_query_understanding(query_understanding_payload, operation_ir)
     context = AgentContext(
         symbol=symbol,
         intent=intent,
         messages=[item for item in request.get("messages", []) if isinstance(item, dict)],
         chartContext=chart_context,
         layoutContext=layout_context,
+        references=references,
+        uiContext=ui_context,
+        operationIR=operation_ir,
         marketEvents=events,
         timing=timing,
         runtimeContext=runtime_context,
@@ -106,6 +129,7 @@ def normalize_request_state(state: dict[str, Any]) -> dict[str, Any]:
         "relationship_symbols": list(relationship_symbols),
         "entity_resolution": entity_resolution_payload,
         "query_understanding": query_understanding_payload,
+        "operation_ir": operation_ir,
         "subject_validation": subject_validation,
         "input_safety_warnings": input_safety_warnings,
         "analysis_mode": analysis_mode,
@@ -151,6 +175,43 @@ def apply_chart_action_ui_task(
     next_payload["uiTasks"] = [task, *existing_tasks]
     next_payload["resolvedSymbol"] = target_symbol
     next_payload["resolvedSymbolSource"] = "chart_shortcut"
+    return next_payload
+
+
+def apply_operation_ir_to_query_understanding(
+    query_understanding: dict[str, Any],
+    operation_ir: dict[str, Any],
+) -> dict[str, Any]:
+    next_payload = dict(query_understanding)
+    next_payload["operationIR"] = dict(operation_ir)
+    roles = [
+        role
+        for role in operation_ir.get("suggestedRoles", [])
+        if role in {"chart", "news", "macro", "ontology", "financial"}
+    ]
+    if not roles:
+        return next_payload
+    existing_roles = [
+        role
+        for role in next_payload.get("selectedRoles", [])
+        if role in {"chart", "news", "macro", "ontology", "financial"}
+    ]
+    merged_roles = list(existing_roles)
+    for role in roles:
+        if role not in merged_roles:
+            merged_roles.append(role)
+    next_payload["selectedRoles"] = merged_roles
+    confidence = float(operation_ir.get("confidence") or 0.0)
+    if str(next_payload.get("routeMode") or "") == "clarify" and confidence >= 0.7:
+        next_payload["routeMode"] = "analysis"
+        next_payload["source"] = "operation-extractor"
+        operations = operation_ir.get("operations") if isinstance(operation_ir.get("operations"), list) else []
+        first_operation = operations[0] if operations and isinstance(operations[0], dict) else {}
+        next_payload["intentType"] = str(first_operation.get("type") or next_payload.get("intentType") or "reference-analysis")
+        next_payload["confidence"] = confidence
+        next_payload["reason"] = "Explicit UI references resolved a short contextual analysis request."
+    elif merged_roles != existing_roles:
+        next_payload["confidence"] = max(float(next_payload.get("confidence") or 0.0), min(confidence, 0.92))
     return next_payload
 
 

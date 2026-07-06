@@ -27,6 +27,7 @@ from gops_agents.orchestrator import (
     extract_symbol_from_intent,
     relationship_symbols_for_context,
 )
+from gops_agents.operations import build_agent_operation_ir, maybe_plan_operation_ir, needs_operation_planner
 from gops_agents.providers import ClickHouseNewsProvider, GraphDBOntologyProvider, ProviderRequest
 from gops_agents.providers.graph_path_cache import MemoryGraphPathCache
 from gops_agents.providers.news_cache import MemoryNewsEvidenceCache, RedisNewsEvidenceCache
@@ -42,7 +43,7 @@ from gops_agents.retrieval.graph_expansion import (
     build_graph_expansion_from_evidence,
     graph_expansion_cache_key,
 )
-from gops_agents.retrieval.snapshots import apply_rule_guardrail, trim_cross_signals
+from gops_agents.retrieval.snapshots import apply_rule_guardrail, chart_reference_evidence, news_reference_evidence, trim_cross_signals
 from gops_agents.roles import AgentContext, NewsAgent, OntologyAgent, VerificationGuardrailAgent
 from gops_agents.runtime.admission import AdmissionPolicy, admit_analysis_request
 from gops_agents.runtime.analysis_cache import MemoryAgentAnalysisCache, RedisAgentAnalysisCache
@@ -52,6 +53,8 @@ from gops_agents.runtime.queues import AnalysisQueueMetrics
 from gops_agents.runtime.report_store import InMemoryReportStore, RedisReportStore
 from gops_agents.runtime.workers import AgentAnalysisWorker
 from gops_agents.orchestration.routing import route_intent
+from gops_agents.orchestration.request import normalize_request_state
+from gops_agents.orchestration.cache import analysis_cache_key_for_state
 from gops_agents.synthesis import FinalAnswerSynthesizer
 import alfaka.alpaca.news  # noqa: F401
 import alfaka.common.secrets  # noqa: F401
@@ -474,6 +477,218 @@ class AgentOrchestrationTests(unittest.TestCase):
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = value
+
+    def test_reference_evidence_anchors_chart_and_news_context(self):
+        context = AgentContext(
+            symbol="NVDA",
+            intent="이 뉴스랑 여기 봉이 연결돼?",
+            references=[
+                {
+                    "type": "chart.candle",
+                    "data": {
+                        "symbol": "NVDA",
+                        "interval": "1D",
+                        "timestamp": "2026-07-04T00:00:00Z",
+                        "close": 145.5,
+                    },
+                },
+                {
+                    "type": "news.article",
+                    "data": {
+                        "symbol": "NVDA",
+                        "title": "Nvidia supply headline",
+                        "summary": "Supply chain update affected chip stocks.",
+                        "publishedAt": "2026-07-04T13:30:00Z",
+                        "url": "https://example.com/nvda",
+                    },
+                },
+            ],
+        )
+
+        chart_items = chart_reference_evidence(context)
+        news_items = news_reference_evidence(context)
+
+        self.assertEqual(len(chart_items), 1)
+        self.assertEqual(chart_items[0].provider, "market-data")
+        self.assertIn("145.5", chart_items[0].summary)
+        self.assertEqual(len(news_items), 1)
+        self.assertEqual(news_items[0].provider, "news")
+        self.assertEqual(news_items[0].title, "Nvidia supply headline")
+        self.assertEqual(news_items[0].url, "https://example.com/nvda")
+
+    def test_operation_extractor_links_news_reference_to_chart_reference(self):
+        references = [
+            {
+                "type": "chart.candle",
+                "displayLabel": "NVDA 1D 2026-07-04",
+                "data": {"symbol": "NVDA", "interval": "1D", "timestamp": "2026-07-04T00:00:00Z", "close": 145.5},
+            },
+            {
+                "type": "news.article",
+                "displayLabel": "NVDA supply headline",
+                "data": {"symbol": "NVDA", "title": "NVDA supply headline", "publishedAt": "2026-07-04T13:30:00Z"},
+            },
+        ]
+
+        operation_ir = build_agent_operation_ir(
+            intent="이 뉴스랑 여기 봉 하락이 연결된 거야?",
+            symbol="NVDA",
+            references=references,
+            ui_context={},
+            chart_context={"chartDocument": {"symbol": "NVDA", "timeframe": "1D"}},
+        )
+
+        self.assertEqual(operation_ir["operations"][0]["type"], "link_news_to_price_move")
+        self.assertEqual(operation_ir["suggestedRoles"], ["chart", "news", "ontology"])
+        self.assertEqual(operation_ir["contextWindow"]["requiredSnapshots"], ["market_snapshot", "news_snapshot", "relationship_snapshot"])
+        self.assertGreaterEqual(operation_ir["confidence"], 0.9)
+
+    def test_operation_planner_fallback_returns_structured_ir(self):
+        base_ir = build_agent_operation_ir(
+            intent="이거랑 저거 같이 봐줘",
+            symbol="NVDA",
+            references=[],
+            ui_context={},
+            chart_context={"chartDocument": {"symbol": "NVDA", "timeframe": "1D"}},
+        )
+        self.assertTrue(needs_operation_planner(base_ir))
+
+        planned = maybe_plan_operation_ir(
+            base_ir=base_ir,
+            intent="이거랑 저거 같이 봐줘",
+            symbol="NVDA",
+            references=[],
+            ui_context={},
+            chart_context={"chartDocument": {"symbol": "NVDA", "timeframe": "1D"}},
+            response_requester=lambda _payload: {
+                "output_text": json.dumps({
+                    "operations": [
+                        {
+                            "kind": "analysis",
+                            "type": "explain_price_move",
+                            "target": None,
+                            "visible": None,
+                            "priceSource": None,
+                            "requiredSources": ["market", "news", "macro"],
+                            "applyMode": None,
+                            "timeRange": {"dateHints": []},
+                            "confidence": 0.78,
+                        }
+                    ],
+                    "ambiguities": [],
+                    "confidence": 0.78,
+                    "reason": "Contextual analysis request needs market, news, and macro evidence.",
+                })
+            },
+        )
+
+        self.assertIsNotNone(planned)
+        assert planned is not None
+        self.assertEqual(planned["source"], "operation-planner-openai")
+        self.assertEqual(planned["operations"][0]["type"], "explain_price_move")
+        self.assertEqual(planned["suggestedRoles"], ["chart", "news", "macro"])
+        self.assertEqual(planned["contextWindow"]["requiredSnapshots"], ["market_snapshot", "news_snapshot", "macro_snapshot"])
+
+    def test_normalize_request_operation_ir_prevents_reference_query_clarify(self):
+        state = normalize_request_state({
+            "request": {
+                "symbol": "NVDA",
+                "intent": "이 뉴스랑 여기 봉 하락이 연결된 거야?",
+                "references": [
+                    {
+                        "type": "chart.candle",
+                        "data": {"symbol": "NVDA", "interval": "1D", "timestamp": "2026-07-04T00:00:00Z", "close": 145.5},
+                    },
+                    {
+                        "type": "news.article",
+                        "data": {"symbol": "NVDA", "title": "NVDA supply headline", "publishedAt": "2026-07-04T13:30:00Z"},
+                    },
+                ],
+            }
+        })
+
+        understanding = state["query_understanding"]
+        self.assertEqual(understanding["operationIR"]["operations"][0]["type"], "link_news_to_price_move")
+        self.assertNotEqual(understanding["routeMode"], "clarify")
+        self.assertIn("chart", understanding["selectedRoles"])
+        self.assertIn("news", understanding["selectedRoles"])
+        self.assertIn("ontology", understanding["selectedRoles"])
+
+    def test_analysis_cache_key_changes_for_different_references(self):
+        route = IntentRoute(
+            source="operation-extractor",
+            intentType="link_news_to_price_move",
+            selectedRoles=["chart", "news"],
+            confidence=0.92,
+            reason="test",
+        )
+        base_context = AgentContext(symbol="NVDA", intent="이 뉴스랑 여기 봉 연결돼?")
+        base_state = {
+            "symbol": "NVDA",
+            "intent": "이 뉴스랑 여기 봉 연결돼?",
+            "request": {"routerMode": "hybrid"},
+            "route": route,
+            "route_mode": "analysis",
+            "events": [],
+            "news_symbols": [],
+            "analysis_mode": "auto",
+            "context": base_context,
+        }
+        first_context = AgentContext(
+            symbol="NVDA",
+            intent="이 뉴스랑 여기 봉 연결돼?",
+            references=[{"type": "news.article", "data": {"symbol": "NVDA", "title": "A", "publishedAt": "2026-07-04T13:30:00Z"}}],
+            operationIR={"operations": [{"kind": "analysis", "type": "link_news_to_price_move", "requiredSources": ["market", "news"]}], "suggestedRoles": ["chart", "news"]},
+        )
+        second_context = AgentContext(
+            symbol="NVDA",
+            intent="이 뉴스랑 여기 봉 연결돼?",
+            references=[{"type": "news.article", "data": {"symbol": "NVDA", "title": "B", "publishedAt": "2026-07-05T13:30:00Z"}}],
+            operationIR={"operations": [{"kind": "analysis", "type": "link_news_to_price_move", "requiredSources": ["market", "news"]}], "suggestedRoles": ["chart", "news"]},
+        )
+
+        first_key = analysis_cache_key_for_state({**base_state, "context": first_context})
+        second_key = analysis_cache_key_for_state({**base_state, "context": second_context})
+
+        self.assertIsNotNone(first_key)
+        self.assertIsNotNone(second_key)
+        self.assertNotEqual(first_key, second_key)
+
+    def test_reference_market_evidence_is_exposed_in_provider_evidence(self):
+        orchestrator = AgentOrchestrator(analysis_cache=MemoryAgentAnalysisCache())
+
+        report = orchestrator.analyze({
+            "symbol": "NVDA",
+            "intent": "이 뉴스랑 여기 봉 하락이 연결된 거야?",
+            "references": [
+                {
+                    "type": "chart.candle",
+                    "data": {
+                        "symbol": "NVDA",
+                        "interval": "1D",
+                        "timestamp": "2026-07-04T00:00:00Z",
+                        "open": 149.0,
+                        "high": 150.0,
+                        "low": 144.0,
+                        "close": 145.5,
+                        "volume": 100,
+                    },
+                },
+                {
+                    "type": "news.article",
+                    "data": {
+                        "symbol": "NVDA",
+                        "title": "NVDA supply headline",
+                        "summary": "Supply chain update affected chip stocks.",
+                        "publishedAt": "2026-07-04T13:30:00Z",
+                    },
+                },
+            ],
+        })
+
+        self.assertTrue(any(item.provider == "market-data" and item.raw.get("referenceIndex") == 0 for item in report.providerEvidence))
+        self.assertTrue(any(item.provider == "news" and item.raw.get("referenceIndex") == 1 for item in report.providerEvidence))
+        self.assertEqual(report.agentTrace["operationIR"]["operations"][0]["type"], "link_news_to_price_move")
 
     def test_query_understanding_fanout_runs_branches_in_parallel(self):
         branch_calls = []

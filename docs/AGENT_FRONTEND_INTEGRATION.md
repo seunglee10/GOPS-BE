@@ -85,6 +85,25 @@ symbol은 기존 분석 흐름을 유지한다.
     "activePanelId": "chart-main",
     "panels": []
   },
+  "references": [
+    {
+      "type": "chart.candle",
+      "sourcePanelId": "content-chart-1",
+      "displayLabel": "NVDA 1D 2026-07-04T00:00:00Z",
+      "data": {
+        "symbol": "NVDA",
+        "interval": "1D",
+        "timestamp": "2026-07-04T00:00:00Z",
+        "close": 145.5
+      }
+    }
+  ],
+  "uiContext": {
+    "activePanelId": "content-chart-1",
+    "activePanelType": "chart",
+    "selectedReference": null,
+    "visibleRange": null
+  },
   "requestId": "agent-request-client-id",
   "chartAction": null,
   "chartTargetSymbol": null,
@@ -95,6 +114,24 @@ symbol은 기존 분석 흐름을 유지한다.
   "responseMode": null
 }
 ```
+
+`references`는 사용자가 명시적으로 선택한 화면 객체를 구조화해 보내는 필드다.
+차트 봉, 차트 구간, 뉴스 기사, 일자별 뉴스 요약, 온톨로지 노드처럼 사용자가
+"이거", "여기", "이 뉴스"라고 가리킬 수 있는 객체를 prompt 문자열로 긁어 넣지
+말고 별도 reference로 보낸다. `uiContext`는 현재 active panel, visible range,
+selection 같은 화면 상태 hint만 담고, provider 조회나 최종 판단은 백엔드/agent가
+수행한다.
+
+현재 `gops-frontend`는 canvas chart의 `SemanticSelectionSnapshot`을
+`chart.candle` reference로 보내고, news row 선택을 `news.article` 또는
+`news.dailySummary` reference로 보낸다. 사용자가 별도 reference를 선택하지 않아도
+`uiContext.selectedReference`/`hoverReference`를 보낼 수 있지만, 명시 선택 chip이나
+row selection이 있으면 그것을 우선한다.
+
+차트 명령의 v1 fast path는 `ChartCommand[]`로 변환되는 영구 변경과
+`AgentVisualOverlay[]` 임시 강조를 분리한다. 예를 들어 선택된 봉 기준 수평선은
+drawing command로 저장하고, 해당 봉은 canvas에서 만료 시간이 있는 highlight overlay로
+잠깐 표시한다.
 
 Headers:
 
