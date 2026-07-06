@@ -220,7 +220,9 @@ dry-run env values. Set `NEWS_BACKFILL_DRY_RUN=false`,
 `NEWS_INTELLIGENCE_REBUILD_DRY_RUN=false`, or
 `NEWS_DAILY_SUMMARY_REBUILD_DRY_RUN=false` only for an intentional one-shot run
 after reviewing scope and API/OpenAI cost. `news-intelligence-rebuild` also
-warms Redis by default from the recent ClickHouse localization rows.
+warms Redis by default from the recent ClickHouse localization rows without
+rewriting ClickHouse. Set `NEWS_INTELLIGENCE_REBUILD_REWRITE_CLICKHOUSE=true`
+only for an intentional relevance-row rewrite maintenance run.
 GitHub Actions dev/test deploys run the two news rebuild Jobs automatically
 after a successful `market-storage` rollout so pushed Redis cache changes also
 warm the existing 30-day ClickHouse news window.

@@ -15,7 +15,7 @@ from alfaka.serving.news_hot_cache import (
     DEFAULT_NEWS_TTL_SECONDS,
     write_localized_news_to_redis,
 )
-from alfaka.storage.clickhouse_loader import ClickHouseHttpClient
+from alfaka.storage.clickhouse_loader import ClickHouseHttpClient, should_ensure_schema_on_start
 from alfaka.storage.news_intelligence import (
     build_news_intelligence_record,
     deterministic_news_intelligence,
@@ -40,7 +40,8 @@ def main():
         user=os.getenv("CLICKHOUSE_USER", "alfaka"),
         password=os.getenv("CLICKHOUSE_PASSWORD", "alfaka"),
     )
-    clickhouse.ensure_market_data_schema()
+    if should_ensure_schema_on_start():
+        clickhouse.ensure_market_data_schema()
     redis_client = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True)
     daily_summary_producer = None
     if bool_env("NEWS_DAILY_SUMMARY_ENABLED", True):

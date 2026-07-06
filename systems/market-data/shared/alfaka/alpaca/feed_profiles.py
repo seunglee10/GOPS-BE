@@ -199,6 +199,11 @@ def configured_closed_dates(environ=None) -> frozenset[str]:
     return DEFAULT_US_EQUITY_CLOSED_DATES | configured
 
 
+def next_local_date_is_closed(local: datetime, closed_dates: frozenset[str]) -> bool:
+    """Overnight 세션이 다음 거래일 휴장에 걸리면 열지 않습니다."""
+    return (local.date() + timedelta(days=1)).isoformat() in closed_dates
+
+
 def feed_profile_active_for_session(feed_profile: FeedProfile, session: str | None) -> bool:
     """현재 세션에서 해당 profile이 payload를 받을 수 있는 상태인지 판단합니다."""
     if "crypto" in feed_profile.sessions:

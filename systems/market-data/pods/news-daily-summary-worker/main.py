@@ -11,7 +11,7 @@ import redis
 from alfaka.common.env import load_dotenv
 from alfaka.common.kafka_io import create_json_consumer
 from alfaka.serving.news_hot_cache import write_company_daily_summary_to_redis
-from alfaka.storage.clickhouse_loader import ClickHouseHttpClient
+from alfaka.storage.clickhouse_loader import ClickHouseHttpClient, should_ensure_schema_on_start
 from alfaka.storage.news_daily_summary import (
     article_ids_hash,
     build_daily_summary_record,
@@ -38,7 +38,8 @@ def main():
         user=os.getenv("CLICKHOUSE_USER", "alfaka"),
         password=os.getenv("CLICKHOUSE_PASSWORD", "alfaka"),
     )
-    clickhouse.ensure_market_data_schema()
+    if should_ensure_schema_on_start():
+        clickhouse.ensure_market_data_schema()
     redis_client = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True)
     consumer = create_json_consumer(
         [topic],

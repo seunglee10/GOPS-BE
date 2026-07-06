@@ -62,6 +62,7 @@ from alfaka.serving.news_hot_cache import (
     write_localized_news_to_redis,
 )
 from alfaka.serving.symbol_registry import SymbolRegistry
+from alfaka.realtime.feed_control import active_feed_profile_for
 from alfaka.storage.clickhouse_loader import (
     ClickHouseHttpClient,
     candle_to_clickhouse_row,
@@ -73,6 +74,7 @@ from alfaka.storage.clickhouse_loader import (
     status_to_clickhouse_row,
     symbol_to_clickhouse_row,
     trade_to_clickhouse_row,
+    should_ensure_schema_on_start,
 )
 from alfaka.storage.candle_validation import invalid_candle_reason
 from alfaka.storage.news_daily_summary import attach_price_changes_to_daily_summaries, build_daily_summary_record, clickhouse_row_to_daily_summary, daily_summary_to_clickhouse_row
@@ -886,7 +888,13 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(market_session_for_timestamp("2026-07-06T02:00:00.000Z"), "overnight")
         self.assertEqual(market_session_for_timestamp("2026-06-27T01:00:00.000Z"), "closed")
         self.assertEqual(market_session_for_timestamp("2026-06-28T14:00:00.000Z"), "closed")
+        self.assertEqual(market_session_for_timestamp("2026-06-27T02:00:00.000Z"), "closed")
         self.assertEqual(market_session_for_timestamp("2026-07-03T08:30:00.000Z"), "closed")
+        self.assertEqual(
+            active_feed_profile_for(datetime(2026, 7, 6, 2, 0, tzinfo=timezone.utc)),
+            "boats",
+        )
+        self.assertIsNone(active_feed_profile_for(datetime(2026, 6, 27, 2, 0, tzinfo=timezone.utc)))
         with mock.patch.dict(os.environ, {
             "MARKET_CLOSED_DATES": "2026-07-06",
             "MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS": "false",
@@ -1035,6 +1043,11 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "market.layer.quotes.v1",
             "market.layer.trades.v1",
         ])
+
+    def test_clickhouse_schema_ensure_is_opt_in_for_runtime_starts(self):
+        self.assertFalse(should_ensure_schema_on_start({}))
+        self.assertFalse(should_ensure_schema_on_start({"CLICKHOUSE_ENSURE_SCHEMA_ON_START": "false"}))
+        self.assertTrue(should_ensure_schema_on_start({"CLICKHOUSE_ENSURE_SCHEMA_ON_START": "true"}))
 
     def test_processor_runtime_config_rejects_placeholders(self):
         with self.assertRaisesRegex(RuntimeError, "placeholder"):
@@ -1627,6 +1640,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         ).read_text(encoding="utf-8")
         news_backfill_job = (REPO_ROOT / "infra/k8s/base/job-news-backfill.yaml").read_text(encoding="utf-8")
         news_rebuild_job = (REPO_ROOT / "infra/k8s/base/job-news-intelligence-rebuild.yaml").read_text(encoding="utf-8")
+        news_rebuild_script = (REPO_ROOT / "scripts/aws/run-news-cache-rebuild-jobs.sh").read_text(encoding="utf-8")
         configmap = (REPO_ROOT / "infra/k8s/base/app/configmap.yaml").read_text(encoding="utf-8")
         aws_overlay = (REPO_ROOT / "infra/k8s/overlays/aws/kustomization.yaml").read_text(encoding="utf-8")
         aws_ci_overlay = (REPO_ROOT / "infra/k8s/overlays/aws-incluster-app-ci/kustomization.yaml").read_text(encoding="utf-8")
@@ -1668,8 +1682,14 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn('NEWS_BACKFILL_SHARD_COUNT: "1"', configmap)
         self.assertIn('NEWS_BACKFILL_INCLUDE_CONTENT: "true"', configmap)
         self.assertIn('NEWS_S3_ARCHIVE_ENABLED: "true"', configmap)
+        self.assertIn('NEWS_INTELLIGENCE_REBUILD_REWRITE_CLICKHOUSE: "false"', configmap)
+        self.assertIn('CLICKHOUSE_ENSURE_SCHEMA_ON_START: "false"', configmap)
+        self.assertIn('CLICKHOUSE_HTTP_TIMEOUT_SECONDS: "10"', configmap)
         self.assertIn('S3_RAW_FLUSH_INTERVAL_SECONDS: "60"', configmap)
         self.assertIn('KAFKA_CLICKHOUSE_ENABLE_AUTO_COMMIT: "false"', configmap)
+        self.assertIn("wait_for_rebuild_job", news_rebuild_script)
+        self.assertIn('status.conditions[?(@.type=="Failed")].status', news_rebuild_script)
+        self.assertNotIn("kubectl wait --for=condition=complete", news_rebuild_script)
         self.assertIn("Python market-processor pod", aws_overlay)
         self.assertNotIn("managed stream processor", aws_overlay)
 
@@ -6151,7 +6171,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             }
         ])
 
-        rebuilt = rebuild.rebuild_recent_localizations(client, days=30, batch_size=10, max_rows=10)
+        rebuilt = rebuild.rebuild_recent_localizations(client, days=30, batch_size=10, max_rows=10, rewrite_clickhouse=True)
 
         self.assertEqual(rebuilt, 1)
         self.assertEqual(len(client.executions), 1)
@@ -6203,6 +6223,8 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(cached[0]["articleId"], "redis-warm-aapl-1")
         self.assertEqual(cached[0]["localizedHeadline"], "애플, AI 기능 확대")
         self.assertEqual(redis_client.expirations[RedisKeyBuilder().news_latest_v2("ko-KR", "AAPL")], 2592000)
+        self.assertEqual(client.executions, [])
+        self.assertEqual(client.inserts, [])
 
     def test_news_intelligence_worker_falls_back_when_openai_fails(self):
         worker = load_news_intelligence_worker_module()

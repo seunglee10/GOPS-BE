@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import os
@@ -8,10 +9,10 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
 from typing import Any
 
-DEFAULT_CACHE_TTL_SECONDS = 30
+DEFAULT_CACHE_TTL_SECONDS = 60
 DEFAULT_STALE_CACHE_TTL_SECONDS = 1_800
 DEFAULT_REFRESH_LOCK_SECONDS = 15
-DEFAULT_REFRESH_SECONDS = 30
+DEFAULT_REFRESH_SECONDS = 60
 DEFAULT_STALE_REFRESH_SECONDS = 300
 DEFAULT_UPSTREAM_TIMEOUT_SECONDS = 5
 DEFAULT_PERIOD = "5d"
@@ -198,6 +199,15 @@ class MarketIndicesService:
                 return with_cache_status(stale, "stale", str(exc))
             raise
 
+    def refresh(self) -> dict[str, Any] | None:
+        fresh_key = indices_cache_key()
+        stale_key = indices_stale_cache_key()
+        lock_key = indices_lock_key()
+        lock_token = uuid.uuid4().hex
+        if not self._acquire_lock(lock_key, lock_token):
+            return None
+        return self._refresh_locked(fresh_key, stale_key, lock_key, lock_token)
+
     def _refresh_locked(self, fresh_key: str, stale_key: str, lock_key: str, lock_token: str) -> dict[str, Any]:
         try:
             payload = self._build_snapshot()
@@ -304,6 +314,29 @@ class MarketIndicesService:
                 redis_client.delete(key)
         except Exception:
             return
+
+
+async def warm_market_indices_once(service: MarketIndicesService | None = None) -> dict[str, Any] | None:
+    active_service = service or get_indices_service()
+    return await asyncio.to_thread(active_service.refresh)
+
+
+async def run_market_indices_warmer(service: MarketIndicesService | None = None) -> None:
+    active_service = service or get_indices_service()
+    while True:
+        try:
+            await warm_market_indices_once(active_service)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(f"Market indices warmer refresh failed: {exc.__class__.__name__}", flush=True)
+        await asyncio.sleep(market_indices_warm_interval_seconds())
+
+
+def start_market_indices_warmer() -> asyncio.Task[None] | None:
+    if not market_indices_warmer_enabled():
+        return None
+    return asyncio.create_task(run_market_indices_warmer())
 
 
 def fetch_yahoo_indices(*, symbols: Sequence[str], period: str, interval: str, timeout: int) -> Any:
@@ -482,6 +515,26 @@ def cache_ttl_seconds() -> int:
 
 def stale_cache_ttl_seconds() -> int:
     return read_positive_int("MARKET_INDICES_STALE_CACHE_TTL_SECONDS", DEFAULT_STALE_CACHE_TTL_SECONDS)
+
+
+def market_indices_warmer_enabled() -> bool:
+    return read_bool("MARKET_INDICES_WARMER_ENABLED", False)
+
+
+def market_indices_warm_interval_seconds() -> int:
+    return read_positive_int("MARKET_INDICES_WARM_INTERVAL_SECONDS", cache_ttl_seconds())
+
+
+def read_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default
 
 
 def read_positive_int(name: str, default: int) -> int:

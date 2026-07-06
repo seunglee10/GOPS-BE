@@ -1895,6 +1895,31 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(failed_payload["cacheStatus"], "stale")
         self.assertIn("Yahoo Finance refresh failed", failed_payload["warning"])
 
+    def test_market_indices_refresh_forces_cache_warm_without_panel_request(self):
+        provider = FakeHeatmapProvider()
+        calls = []
+
+        def fetcher(**kwargs):
+            calls.append(kwargs)
+            latest_close = 100 + len(calls)
+            return {
+                "^GSPC": [
+                    {"timestamp": "2026-07-02T20:00:00Z", "Close": 100},
+                    {"timestamp": "2026-07-03T20:00:00Z", "Close": latest_close},
+                ],
+            }
+
+        service = indices_service.MarketIndicesService(provider=provider, fetcher=fetcher)
+        first_payload = service.snapshot()
+        warmed_payload = service.refresh()
+        cached_payload = service.snapshot()
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(first_payload["items"][0]["price"], 101)
+        self.assertEqual(warmed_payload["items"][0]["price"], 102)
+        self.assertEqual(cached_payload["items"][0]["price"], 102)
+        self.assertEqual(provider.redis_provider.redis.expirations[indices_service.indices_cache_key()], indices_service.DEFAULT_CACHE_TTL_SECONDS)
+
     def test_market_heatmap_keeps_layout_cap_stable_within_layout_bucket(self):
         seed_items = [{
             "symbol": "AAPL",

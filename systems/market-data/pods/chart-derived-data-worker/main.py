@@ -35,6 +35,7 @@ from alfaka.serving.indicators import (
 from alfaka.serving.intervals import normalize_chart_interval, resolve_candle_limit
 from alfaka.serving.provider import MarketDataProvider
 from alfaka.serving.volume_profile import compute_volume_profile_payload, normalize_target_bins
+from alfaka.storage.clickhouse_loader import should_ensure_schema_on_start
 
 
 def main() -> None:
@@ -59,7 +60,8 @@ def main() -> None:
     producer = create_json_producer(kafka_servers, "alfaka-chart-derived-data-worker")
     redis_client = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True)
     clickhouse = clickhouse_client_from_env()
-    clickhouse.ensure_market_data_schema()
+    if should_ensure_schema_on_start():
+        clickhouse.ensure_market_data_schema()
     artifact_store = ChartDerivedArtifactStore(clickhouse)
     provider = MarketDataProvider()
     print(f"Chart derived data worker 시작: topic={request_topic} group={group_id}", flush=True)
