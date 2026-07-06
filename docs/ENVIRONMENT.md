@@ -443,6 +443,32 @@ refresh every 60 seconds by default. Tile layout timestamps advance every 300
 seconds by default, so the frontend can update colors frequently without
 reshuffling the treemap on every quote refresh.
 
+## Market Indices
+
+`GET /api/market/indices` serves the frontend index panel from a Redis-backed
+Yahoo Finance snapshot. API pods can also warm this cache in the background so
+the first user opening the panel does not trigger the only refresh path.
+Multiple API pods share the same Redis refresh lock, so EKS replicas do not
+fan out duplicate Yahoo Finance requests.
+
+```text
+MARKET_INDICES_WARMER_ENABLED
+MARKET_INDICES_WARM_INTERVAL_SECONDS
+MARKET_INDICES_CACHE_TTL_SECONDS
+MARKET_INDICES_STALE_CACHE_TTL_SECONDS
+MARKET_INDICES_REFRESH_SECONDS
+MARKET_INDICES_STALE_REFRESH_SECONDS
+MARKET_INDICES_REFRESH_LOCK_SECONDS
+MARKET_INDICES_PERIOD
+MARKET_INDICES_INTERVAL
+MARKET_INDICES_UPSTREAM_TIMEOUT_SECONDS
+```
+
+The EKS and Docker Compose defaults enable the warmer every 60 seconds, keep the
+fresh Redis snapshot for 60 seconds, and keep the last successful stale snapshot
+for 30 minutes. The Yahoo Finance request interval remains `5m`; the 60-second
+server refresh only asks Yahoo whether newer data is available.
+
 ## Market Calendar
 
 GapFill uses the configured market calendar to avoid false gaps on weekends, holidays, and early closes. Alpaca feed session gating reads `MARKET_CLOSED_DATES` plus the built-in 2026 NYSE/Nasdaq full-day holiday set by default; a full-market holiday reports `closed` instead of `pre`, `regular`, `after`, or `overnight`, so local smoke tests do not wait for live payloads on a known closed session. Set `MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS=false` only for a test that intentionally disables the built-in holiday set. The v1 provider is `configured-nyse`; it is an adapter boundary that can later be replaced by a managed exchange-calendar provider. Intraday chart renderability treats sparse gaps as blocking only when both candles are inside the regular session; sparse extended-hours 1m bars can still render because Alpaca may only emit bars for minutes with activity.
