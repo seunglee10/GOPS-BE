@@ -5994,6 +5994,11 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(client.queries[0][1]["date"], "2026-07-01")
         self.assertEqual(client.queries[0][1]["locale"], "ko-KR")
         self.assertIsInstance(client.queries[0][1]["limit"], int)
+        existing_query, existing_params = client.queries[1]
+        self.assertIn("FROM market_data.news_company_daily_summaries AS summaries", existing_query)
+        self.assertIn("summaries.date = {date:Date}", existing_query)
+        self.assertNotIn("AND date =", existing_query)
+        self.assertEqual(existing_params["date"], "2026-07-01")
         self.assertEqual(record["articleIds"], ["aapl-daily-worker-1"])
         self.assertEqual(record["mentionCount"], 1)
         self.assertEqual(record["sources"][0]["url"], "https://example.com/aapl-worker")

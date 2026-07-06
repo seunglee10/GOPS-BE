@@ -174,29 +174,29 @@ def read_daily_candidate_rows(client, *, symbol, date, locale):
 def read_existing_daily_summary(client, *, symbol, date, locale):
     query = f"""
     SELECT
-      toString(date) AS date,
-      symbol,
-      locale,
-      summary,
-      key_points AS keyPoints,
-      positive_points AS positivePoints,
-      concerns,
-      impact_direction AS impactDirection,
-      sentiment,
-      article_ids AS articleIds,
-      article_ids_hash AS articleIdsHash,
-      article_count AS articleCount,
-      mention_count AS mentionCount,
-      status,
-      model,
-      formatDateTime(generated_at, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS generatedAt,
-      version,
-      raw
-    FROM {client.database}.news_company_daily_summaries
-    WHERE symbol = {{symbol:String}}
-      AND locale = {{locale:String}}
-      AND date = toDate({{date:String}})
-    ORDER BY generated_at DESC
+      toString(summaries.date) AS date,
+      summaries.symbol,
+      summaries.locale,
+      summaries.summary,
+      summaries.key_points AS keyPoints,
+      summaries.positive_points AS positivePoints,
+      summaries.concerns,
+      summaries.impact_direction AS impactDirection,
+      summaries.sentiment,
+      summaries.article_ids AS articleIds,
+      summaries.article_ids_hash AS articleIdsHash,
+      summaries.article_count AS articleCount,
+      summaries.mention_count AS mentionCount,
+      summaries.status,
+      summaries.model,
+      formatDateTime(summaries.generated_at, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS generatedAt,
+      summaries.version,
+      summaries.raw
+    FROM {client.database}.news_company_daily_summaries AS summaries
+    WHERE summaries.symbol = {{symbol:String}}
+      AND summaries.locale = {{locale:String}}
+      AND summaries.date = {{date:Date}}
+    ORDER BY summaries.generated_at DESC
     LIMIT 1
     FORMAT JSONEachRow
     """
