@@ -595,9 +595,31 @@ class FakeHeatmapClickHouseProvider:
                     "symbol": "MSFT",
                     "metric": "free_cash_flow",
                     "value": 25000,
+                    "fiscalYear": 2026,
                     "fiscalPeriod": "Q1",
                     "periodEndDate": "2026-03-31",
                     "filedAt": "2026-04-25",
+                },
+            ]
+        if "yahoo_earnings_estimates" in query:
+            return [
+                {
+                    "symbol": "MSFT",
+                    "metric": "eps",
+                    "value": 4.5,
+                    "fiscalYear": 2026,
+                    "fiscalPeriod": "Q1",
+                    "periodEndDate": "2026-03-31",
+                    "collectedAt": "2026-04-20T00:00:00Z",
+                },
+                {
+                    "symbol": "MSFT",
+                    "metric": "revenue",
+                    "value": 95000,
+                    "fiscalYear": 2026,
+                    "fiscalPeriod": "Q1",
+                    "periodEndDate": "2026-03-31",
+                    "collectedAt": "2026-04-20T00:00:00Z",
                 },
             ]
         if "sec_financial_facts" in query:
@@ -607,6 +629,7 @@ class FakeHeatmapClickHouseProvider:
                     "cik": "0000789019",
                     "metric": "shares_outstanding",
                     "value": 7500,
+                    "fiscalYear": 2026,
                     "fiscalPeriod": "Q1",
                     "periodEndDate": "2026-03-31",
                     "filedAt": "2026-04-25",
@@ -616,6 +639,7 @@ class FakeHeatmapClickHouseProvider:
                     "cik": "0000789019",
                     "metric": "revenue",
                     "value": 100000,
+                    "fiscalYear": 2026,
                     "fiscalPeriod": "Q1",
                     "periodEndDate": "2026-03-31",
                     "filedAt": "2026-04-25",
@@ -625,6 +649,7 @@ class FakeHeatmapClickHouseProvider:
                     "cik": "0000789019",
                     "metric": "equity",
                     "value": 50000,
+                    "fiscalYear": 2026,
                     "fiscalPeriod": "Q1",
                     "periodEndDate": "2026-03-31",
                     "filedAt": "2026-04-25",
@@ -634,6 +659,7 @@ class FakeHeatmapClickHouseProvider:
                     "cik": "0000789019",
                     "metric": "eps",
                     "value": 4,
+                    "fiscalYear": 2026,
                     "fiscalPeriod": "Q1",
                     "periodEndDate": "2026-03-31",
                     "filedAt": "2026-04-25",
@@ -2149,6 +2175,28 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(records["MSFT"].freeCashFlow, 25000)
         self.assertEqual(records["MSFT"].source, "sec_companyfacts")
         self.assertEqual(records["MSFT"].periodEndDate, "2026-03-31")
+
+    def test_store_fundamentals_adapter_returns_sec_financial_series(self):
+        series = StoreFundamentalsAdapter(provider=FakeHeatmapProvider()).financial_series("MSFT")
+
+        self.assertEqual(series[0].period, "2026Q1")
+        self.assertEqual(series[0].periodEndDate, "2026-03-31")
+        self.assertEqual(series[0].revenue, 100000)
+        self.assertEqual(series[0].netIncome, None)
+        self.assertEqual(series[0].eps, 4)
+        self.assertEqual(series[0].totalEquity, 50000)
+        self.assertEqual(series[0].freeCashFlow, 25000)
+        self.assertEqual(series[0].source, "sec")
+
+    def test_query_service_returns_sec_financial_series_payload(self):
+        payload = MarketDataQueryService(provider=FakeHeatmapProvider()).financial_series("MSFT", years=3, period="quarterly")
+
+        self.assertEqual(payload["source"], "sec")
+        self.assertEqual(payload["symbol"], "MSFT")
+        self.assertEqual(payload["period"], "quarterly")
+        self.assertEqual(payload["items"][0]["period"], "2026Q1")
+        self.assertEqual(payload["items"][0]["revenue"], 100000)
+        self.assertEqual(payload["items"][0]["freeCashFlow"], 25000)
 
     def test_fundamentals_adapter_accepts_symbol_keyed_latest_payload(self):
         records = records_from_payload({

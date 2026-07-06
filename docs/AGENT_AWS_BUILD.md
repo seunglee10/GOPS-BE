@@ -287,6 +287,7 @@ market_data.sec_financial_facts
 market_data.sec_derived_metrics
 market_data.sec_frames
 market_data.sec_collection_runs
+market_data.yahoo_earnings_estimates
 ```
 
 News provider는 Redis 30일 article/daily hot cache를 우선 사용하고, daily coverage

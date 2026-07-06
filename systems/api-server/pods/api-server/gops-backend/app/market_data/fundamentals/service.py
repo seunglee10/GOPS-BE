@@ -12,6 +12,70 @@ from app.services.alfaka_market_data import normalize_market_symbol
 
 
 @dataclass(frozen=True)
+class EarningsSeriesPoint:
+    period: str
+    periodEndDate: str | None = None
+    actualEps: float | None = None
+    estimatedEps: float | None = None
+    actualRevenue: float | None = None
+    estimatedRevenue: float | None = None
+    source: str | None = None
+    estimateSource: str | None = None
+    filedAt: str | None = None
+    collectedAt: str | None = None
+
+    def to_public_dict(self) -> dict[str, Any]:
+        return {
+            "period": self.period,
+            "periodEndDate": self.periodEndDate,
+            "actualEps": self.actualEps,
+            "estimatedEps": self.estimatedEps,
+            "actualRevenue": self.actualRevenue,
+            "estimatedRevenue": self.estimatedRevenue,
+            "source": self.source,
+            "estimateSource": self.estimateSource,
+            "filedAt": self.filedAt,
+            "collectedAt": self.collectedAt,
+        }
+
+
+@dataclass(frozen=True)
+class FinancialSeriesPoint:
+    period: str
+    periodEndDate: str | None = None
+    revenue: float | None = None
+    operatingIncome: float | None = None
+    netIncome: float | None = None
+    eps: float | None = None
+    totalAssets: float | None = None
+    totalLiabilities: float | None = None
+    totalEquity: float | None = None
+    operatingCashFlow: float | None = None
+    freeCashFlow: float | None = None
+    sharesOutstanding: float | None = None
+    source: str | None = None
+    filedAt: str | None = None
+
+    def to_public_dict(self) -> dict[str, Any]:
+        return {
+            "period": self.period,
+            "periodEndDate": self.periodEndDate,
+            "revenue": self.revenue,
+            "operatingIncome": self.operatingIncome,
+            "netIncome": self.netIncome,
+            "eps": self.eps,
+            "totalAssets": self.totalAssets,
+            "totalLiabilities": self.totalLiabilities,
+            "totalEquity": self.totalEquity,
+            "operatingCashFlow": self.operatingCashFlow,
+            "freeCashFlow": self.freeCashFlow,
+            "sharesOutstanding": self.sharesOutstanding,
+            "source": self.source,
+            "filedAt": self.filedAt,
+        }
+
+
+@dataclass(frozen=True)
 class FundamentalsRecord:
     symbol: str
     cik: str | None = None
@@ -34,6 +98,7 @@ class FundamentalsRecord:
     filedAt: str | None = None
     source: str | None = None
     asOf: str | None = None
+    earningsSeries: list[EarningsSeriesPoint] | None = None
     raw: dict[str, Any] | None = None
 
     def to_public_dict(self) -> dict[str, Any]:
@@ -59,12 +124,16 @@ class FundamentalsRecord:
             "filedAt": self.filedAt,
             "source": self.source,
             "asOf": self.asOf,
+            "earningsSeries": [point.to_public_dict() for point in self.earningsSeries or []],
         }
 
 
 class FundamentalsAdapter:
     def latest_for_symbols(self, symbols: list[str]) -> dict[str, FundamentalsRecord]:
         raise NotImplementedError
+
+    def financial_series(self, symbol: str, *, years: int = 3, period: str = "quarterly") -> list[FinancialSeriesPoint]:
+        return []
 
 
 class EmptyFundamentalsAdapter(FundamentalsAdapter):
@@ -117,6 +186,148 @@ class StoreFundamentalsAdapter(FundamentalsAdapter):
             if record is not None:
                 records[record.symbol] = record
         return records
+
+    def _series_from_clickhouse(self, symbols: list[str]) -> dict[str, list[EarningsSeriesPoint]]:
+        provider = self._clickhouse()
+        query_json_each_row = getattr(provider, "query_json_each_row", None)
+        if not callable(query_json_each_row):
+            return {}
+        facts_table = provider.table("sec_financial_facts") if hasattr(provider, "table") else "market_data.sec_financial_facts"
+        estimates_table = provider.table("yahoo_earnings_estimates") if hasattr(provider, "table") else "market_data.yahoo_earnings_estimates"
+        try:
+            actual_rows = query_json_each_row(
+                f"""
+                SELECT
+                  symbol,
+                  metric,
+                  value,
+                  fiscal_year AS fiscalYear,
+                  fiscal_period AS fiscalPeriod,
+                  period_end AS periodEndDate,
+                  filed_at AS filedAt,
+                  version_filed_at AS versionFiledAt
+                FROM {facts_table}
+                WHERE symbol IN {{symbols:Array(String)}}
+                  AND metric IN {{metrics:Array(String)}}
+                  AND value IS NOT NULL
+                  AND fiscal_period IN ('Q1', 'Q2', 'Q3', 'Q4')
+                  AND period_end >= addMonths(today(), -30)
+                ORDER BY symbol ASC, metric ASC, period_end DESC, version_filed_at DESC
+                LIMIT 12 BY symbol, metric
+                FORMAT JSONEachRow
+                """,
+                {"symbols": symbols, "metrics": list(EARNINGS_SERIES_METRICS)},
+            )
+        except Exception:
+            actual_rows = []
+        try:
+            estimate_rows = query_json_each_row(
+                f"""
+                SELECT
+                  symbol,
+                  metric,
+                  average AS value,
+                  low,
+                  high,
+                  analyst_count AS analystCount,
+                  fiscal_year AS fiscalYear,
+                  fiscal_period AS fiscalPeriod,
+                  period_end AS periodEndDate,
+                  collected_at AS collectedAt,
+                  raw
+                FROM {estimates_table}
+                WHERE symbol IN {{symbols:Array(String)}}
+                  AND metric IN {{metrics:Array(String)}}
+                  AND average IS NOT NULL
+                  AND fiscal_period IN ('Q1', 'Q2', 'Q3', 'Q4')
+                  AND period_end >= addMonths(today(), -30)
+                ORDER BY symbol ASC, metric ASC, period_end DESC, collected_at DESC
+                LIMIT 12 BY symbol, metric
+                FORMAT JSONEachRow
+                """,
+                {"symbols": symbols, "metrics": list(EARNINGS_SERIES_METRICS)},
+            )
+        except Exception:
+            estimate_rows = []
+        return earnings_series_from_rows(actual_rows or [], estimate_rows or [])
+
+    def financial_series(self, symbol: str, *, years: int = 3, period: str = "quarterly") -> list[FinancialSeriesPoint]:
+        normalized = normalize_market_symbol(symbol)
+        provider = self._clickhouse()
+        query_json_each_row = getattr(provider, "query_json_each_row", None)
+        if not callable(query_json_each_row):
+            return []
+        facts_table = provider.table("sec_financial_facts") if hasattr(provider, "table") else "market_data.sec_financial_facts"
+        derived_table = provider.table("sec_derived_metrics") if hasattr(provider, "table") else "market_data.sec_derived_metrics"
+        fiscal_periods = ("FY",) if period == "annual" else ("Q1", "Q2", "Q3", "Q4")
+        months = max(12, min(120, int(years) * 12 + 6))
+        limit_by_metric = 12 if period == "annual" else 20
+        try:
+            fact_rows = query_json_each_row(
+                f"""
+                SELECT
+                  symbol,
+                  cik,
+                  metric,
+                  value,
+                  fiscal_year AS fiscalYear,
+                  fiscal_period AS fiscalPeriod,
+                  period_end AS periodEndDate,
+                  filed_at AS filedAt,
+                  version_filed_at AS versionFiledAt
+                FROM {facts_table}
+                WHERE symbol = {{symbol:String}}
+                  AND metric IN {{metrics:Array(String)}}
+                  AND fiscal_period IN {{fiscalPeriods:Array(String)}}
+                  AND value IS NOT NULL
+                  AND period_end >= addMonths(today(), -{{months:UInt16}})
+                ORDER BY metric ASC, period_end DESC, version_filed_at DESC
+                LIMIT {{limitByMetric:UInt16}} BY metric
+                FORMAT JSONEachRow
+                """,
+                {
+                    "symbol": normalized,
+                    "metrics": list(FINANCIAL_SERIES_METRICS),
+                    "fiscalPeriods": list(fiscal_periods),
+                    "months": months,
+                    "limitByMetric": limit_by_metric,
+                },
+            )
+        except Exception:
+            fact_rows = []
+        try:
+            derived_rows = query_json_each_row(
+                f"""
+                SELECT
+                  symbol,
+                  metric,
+                  value,
+                  fiscal_year AS fiscalYear,
+                  fiscal_period AS fiscalPeriod,
+                  period_end AS periodEndDate,
+                  filed_at AS filedAt,
+                  version_filed_at AS versionFiledAt
+                FROM {derived_table}
+                WHERE symbol = {{symbol:String}}
+                  AND metric IN {{metrics:Array(String)}}
+                  AND fiscal_period IN {{fiscalPeriods:Array(String)}}
+                  AND value IS NOT NULL
+                  AND period_end >= addMonths(today(), -{{months:UInt16}})
+                ORDER BY metric ASC, period_end DESC, version_filed_at DESC
+                LIMIT {{limitByMetric:UInt16}} BY metric
+                FORMAT JSONEachRow
+                """,
+                {
+                    "symbol": normalized,
+                    "metrics": list(FINANCIAL_DERIVED_SERIES_METRICS),
+                    "fiscalPeriods": list(fiscal_periods),
+                    "months": months,
+                    "limitByMetric": limit_by_metric,
+                },
+            )
+        except Exception:
+            derived_rows = []
+        return financial_series_from_rows([*(fact_rows or []), *(derived_rows or [])]).get(normalized, [])
 
     def _from_clickhouse(self, symbols: list[str]) -> dict[str, FundamentalsRecord]:
         provider = self._clickhouse()
@@ -236,6 +447,13 @@ class CompositeFundamentalsAdapter(FundamentalsAdapter):
                 break
             records.update(adapter.latest_for_symbols(missing))
         return records
+
+    def financial_series(self, symbol: str, *, years: int = 3, period: str = "quarterly") -> list[FinancialSeriesPoint]:
+        for adapter in self.adapters:
+            series = adapter.financial_series(symbol, years=years, period=period)
+            if series:
+                return series
+        return []
 
 
 class FileFundamentalsAdapter(FundamentalsAdapter):
@@ -365,6 +583,27 @@ FUNDAMENTAL_DERIVED_METRICS = (
     "free_cash_flow",
 )
 
+EARNINGS_SERIES_METRICS = (
+    "eps",
+    "revenue",
+)
+
+FINANCIAL_SERIES_METRICS = (
+    "shares_outstanding",
+    "revenue",
+    "operating_income",
+    "net_income",
+    "eps",
+    "assets",
+    "liabilities",
+    "equity",
+    "operating_cash_flow",
+)
+
+FINANCIAL_DERIVED_SERIES_METRICS = (
+    "free_cash_flow",
+)
+
 METRIC_FIELD_MAP = {
     "shares_outstanding": "sharesOutstanding",
     "revenue": "revenue",
@@ -413,6 +652,7 @@ def record_from_row(row: dict[str, Any]) -> FundamentalsRecord | None:
         filedAt=read_string(row.get("filedAt") or row.get("filed_at")),
         source=read_string(row.get("source")),
         asOf=read_string(row.get("asOf") or row.get("as_of")),
+        earningsSeries=parse_earnings_series(row.get("earningsSeries") or row.get("earnings_series")),
         raw=raw,
     )
 
@@ -500,6 +740,173 @@ def first_metric_row(metric_rows: dict[str, dict[str, Any]]) -> dict[str, Any] |
     return None
 
 
+def earnings_series_from_rows(actual_rows: list[Any], estimate_rows: list[Any]) -> dict[str, list[EarningsSeriesPoint]]:
+    grouped: dict[str, dict[str, dict[str, Any]]] = {}
+    for row in actual_rows:
+        if not isinstance(row, dict):
+            continue
+        symbol = read_string(row.get("symbol"))
+        metric = read_string(row.get("metric"))
+        value = read_float(row.get("value"))
+        if not symbol or metric not in EARNINGS_SERIES_METRICS or value is None:
+            continue
+        normalized = normalize_market_symbol(symbol)
+        period_key = period_key_from_row(row)
+        point = grouped.setdefault(normalized, {}).setdefault(period_key, {
+            "period": period_label_from_row(row),
+            "periodEndDate": read_string(row.get("periodEndDate")),
+            "source": "sec",
+            "filedAt": read_string(row.get("filedAt")),
+        })
+        if metric == "eps":
+            point["actualEps"] = value
+        elif metric == "revenue":
+            point["actualRevenue"] = value
+
+    for row in estimate_rows:
+        if not isinstance(row, dict):
+            continue
+        symbol = read_string(row.get("symbol"))
+        metric = read_string(row.get("metric"))
+        value = read_float(row.get("value") or row.get("average") or row.get("avg"))
+        if not symbol or metric not in EARNINGS_SERIES_METRICS or value is None:
+            continue
+        normalized = normalize_market_symbol(symbol)
+        period_key = period_key_from_row(row)
+        point = grouped.setdefault(normalized, {}).setdefault(period_key, {
+            "period": period_label_from_row(row),
+            "periodEndDate": read_string(row.get("periodEndDate")),
+        })
+        point.setdefault("period", period_label_from_row(row))
+        point.setdefault("periodEndDate", read_string(row.get("periodEndDate")))
+        point["estimateSource"] = "yahoo"
+        point["collectedAt"] = read_string(row.get("collectedAt"))
+        if metric == "eps":
+            point["estimatedEps"] = value
+        elif metric == "revenue":
+            point["estimatedRevenue"] = value
+
+    return {
+        symbol: [
+            point for point in (
+                earnings_series_point_from_row(row)
+                for row in sorted(points.values(), key=series_sort_key)
+            )
+            if point is not None
+        ]
+        for symbol, points in grouped.items()
+    }
+
+
+def financial_series_from_rows(rows: list[Any]) -> dict[str, list[FinancialSeriesPoint]]:
+    grouped: dict[str, dict[str, dict[str, Any]]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        symbol = read_string(row.get("symbol"))
+        metric = read_string(row.get("metric"))
+        value = read_float(row.get("value"))
+        field = METRIC_FIELD_MAP.get(metric or "")
+        if not symbol or not field or value is None:
+            continue
+        normalized = normalize_market_symbol(symbol)
+        period_key = period_key_from_row(row)
+        point = grouped.setdefault(normalized, {}).setdefault(period_key, {
+            "period": period_label_from_row(row),
+            "periodEndDate": read_string(row.get("periodEndDate")),
+            "source": "sec",
+            "filedAt": read_string(row.get("filedAt")),
+        })
+        point[field] = value
+    return {
+        symbol: [
+            point for point in (
+                financial_series_point_from_row(row)
+                for row in sorted(points.values(), key=series_sort_key)
+            )
+            if point is not None
+        ]
+        for symbol, points in grouped.items()
+    }
+
+
+def financial_series_point_from_row(row: dict[str, Any]) -> FinancialSeriesPoint | None:
+    period = read_string(row.get("period")) or period_label_from_row(row)
+    if not period:
+        return None
+    return FinancialSeriesPoint(
+        period=period,
+        periodEndDate=read_string(row.get("periodEndDate") or row.get("period_end_date")),
+        revenue=read_float(row.get("revenue")),
+        operatingIncome=read_float(row.get("operatingIncome") or row.get("operating_income")),
+        netIncome=read_float(row.get("netIncome") or row.get("net_income")),
+        eps=read_float(row.get("eps")),
+        totalAssets=read_float(row.get("totalAssets") or row.get("total_assets") or row.get("assets")),
+        totalLiabilities=read_float(row.get("totalLiabilities") or row.get("total_liabilities") or row.get("liabilities")),
+        totalEquity=read_float(row.get("totalEquity") or row.get("total_equity") or row.get("equity")),
+        operatingCashFlow=read_float(row.get("operatingCashFlow") or row.get("operating_cash_flow")),
+        freeCashFlow=read_float(row.get("freeCashFlow") or row.get("free_cash_flow")),
+        sharesOutstanding=read_float(row.get("sharesOutstanding") or row.get("shares_outstanding")),
+        source=read_string(row.get("source")),
+        filedAt=read_string(row.get("filedAt") or row.get("filed_at")),
+    )
+
+
+def parse_earnings_series(value: Any) -> list[EarningsSeriesPoint] | None:
+    if not isinstance(value, list):
+        return None
+    points = [earnings_series_point_from_row(row) for row in value if isinstance(row, dict)]
+    parsed = [point for point in points if point is not None]
+    return parsed or None
+
+
+def earnings_series_point_from_row(row: dict[str, Any]) -> EarningsSeriesPoint | None:
+    period = read_string(row.get("period")) or period_label_from_row(row)
+    if not period:
+        return None
+    return EarningsSeriesPoint(
+        period=period,
+        periodEndDate=read_string(row.get("periodEndDate") or row.get("period_end_date")),
+        actualEps=read_float(row.get("actualEps") or row.get("actual_eps")),
+        estimatedEps=read_float(row.get("estimatedEps") or row.get("estimated_eps")),
+        actualRevenue=read_float(row.get("actualRevenue") or row.get("actual_revenue")),
+        estimatedRevenue=read_float(row.get("estimatedRevenue") or row.get("estimated_revenue")),
+        source=read_string(row.get("source")),
+        estimateSource=read_string(row.get("estimateSource") or row.get("estimate_source")),
+        filedAt=read_string(row.get("filedAt") or row.get("filed_at")),
+        collectedAt=read_string(row.get("collectedAt") or row.get("collected_at")),
+    )
+
+
+def period_key_from_row(row: dict[str, Any]) -> str:
+    year = read_text(row.get("fiscalYear") or row.get("fiscal_year"))
+    period = read_string(row.get("fiscalPeriod") or row.get("fiscal_period"))
+    period_end = read_string(row.get("periodEndDate") or row.get("period_end_date"))
+    if year and period:
+        return f"{year}{period}"
+    if period_end:
+        return period_end
+    return read_string(row.get("period")) or "unknown"
+
+
+def period_label_from_row(row: dict[str, Any]) -> str:
+    period = read_string(row.get("period"))
+    if period:
+        return period
+    year = read_text(row.get("fiscalYear") or row.get("fiscal_year"))
+    fiscal_period = read_string(row.get("fiscalPeriod") or row.get("fiscal_period"))
+    if year and fiscal_period:
+        return f"{year}{fiscal_period}"
+    return read_string(row.get("periodEndDate") or row.get("period_end_date")) or ""
+
+
+def series_sort_key(row: dict[str, Any]) -> tuple[str, str]:
+    return (
+        read_string(row.get("periodEndDate")) or read_string(row.get("period")) or "",
+        read_string(row.get("period")) or "",
+    )
+
+
 def fundamentals_summary_key(symbol: str) -> str:
     return f"gops:fundamentals:summary:v1:{normalize_market_symbol(symbol)}"
 
@@ -530,6 +937,14 @@ def repo_root() -> Path:
 
 def read_string(value: Any) -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def read_text(value: Any) -> str | None:
+    if isinstance(value, str):
+        return value.strip() or None
+    if isinstance(value, int):
+        return str(value)
+    return None
 
 
 def read_float(value: Any) -> float | None:

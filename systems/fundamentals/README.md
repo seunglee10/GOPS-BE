@@ -102,6 +102,7 @@ sec_financial_facts
 sec_derived_metrics
 sec_frames
 sec_collection_runs
+yahoo_earnings_estimates
 ```
 
 Redis stale checks are not part of the Financial Agent runtime. Sync or nightly
@@ -114,3 +115,8 @@ summary key first and falls back to ClickHouse `sec_financial_facts` plus
 `sec_company_tickers`. Keep the `shares_outstanding` metric populated in either
 store so `/api/market/heatmap?universe=sp500` can compute
 `marketCap = lastPrice * sharesOutstanding`.
+
+Actual financial statement metrics and forecast metrics are separate. SEC EDGAR
+actuals power company information and investment ratios. Yahoo/yfinance EPS and
+revenue estimates are stored in `market_data.yahoo_earnings_estimates` by a
+separate daily collector and are only consumed as forecast/consensus overlays.

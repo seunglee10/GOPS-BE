@@ -443,6 +443,13 @@ refresh every 60 seconds by default. Tile layout timestamps advance every 300
 seconds by default, so the frontend can update colors frequently without
 reshuffling the treemap on every quote refresh.
 
+SEC actuals and Yahoo consensus estimates stay separate. SEC EDGAR actual
+financial statement rows live in `market_data.sec_financial_facts` and
+`market_data.sec_derived_metrics`; Yahoo/yfinance consensus rows are materialized
+by a separate scheduled collector into `market_data.yahoo_earnings_estimates`.
+The API only reads ClickHouse/Redis snapshots on screen requests. It must not
+call SEC or Yahoo directly from the frontend hot path.
+
 ## Market Indices
 
 `GET /api/market/indices` serves the frontend index panel from a Redis-backed
