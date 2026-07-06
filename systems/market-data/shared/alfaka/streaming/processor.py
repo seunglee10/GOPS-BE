@@ -599,7 +599,7 @@ def write_trade_to_redis(redis_client, redis_keys, trade):
         "feedProfile": trade.get("feedProfile") or trade.get("feed") or "unknown",
         "marketSession": trade.get("marketSession") or "unknown",
     })
-    redis_client.expire(key, 86400)
+    redis_client.expire(key, live_trade_ttl_seconds())
 
 
 def write_quote_to_redis(redis_client, redis_keys, quote):
@@ -617,7 +617,7 @@ def write_event_to_redis(redis_client, redis_keys, event):
 def write_live_candle_to_redis(redis_client, redis_keys, candle):
     key = redis_keys.live_candle(candle["symbol"], candle.get("interval", "1m"))
     redis_client.set(key, json.dumps(candle, ensure_ascii=False, separators=(",", ":")))
-    redis_client.expire(key, 86400)
+    redis_client.expire(key, live_candle_ttl_seconds())
 
 
 def publish_live_candle(producer, redis_client, redis_keys, topics, candle, feed="unknown", log_every_n=500):
@@ -816,6 +816,15 @@ def write_processor_health(redis_client, redis_keys, envelope, result):
 def timestamp_score(timestamp):
     from datetime import datetime
     return int(datetime.fromisoformat(timestamp.replace("Z", "+00:00")).timestamp() * 1000)
+
+
+def live_trade_ttl_seconds():
+    default_ttl = parse_positive_int(os.getenv("LIVE_CANDLE_TTL_SECONDS", "180"), default=180)
+    return parse_positive_int(os.getenv("LIVE_TRADE_TTL_SECONDS", str(default_ttl)), default=default_ttl)
+
+
+def live_candle_ttl_seconds():
+    return parse_positive_int(os.getenv("LIVE_CANDLE_TTL_SECONDS", "180"), default=180)
 
 
 def parse_positive_int(value, default):

@@ -89,6 +89,7 @@ from app.routes.health import runtime_config  # noqa: E402
 from app.services import alfaka_market_data as market_data_service  # noqa: E402
 from app.services.alfaka_market_data import configured_symbols  # noqa: E402
 from app.services.ai_agents import build_agent_market_analysis_context, chart_context_for_agent_prompt, is_live_feed_status_request, openai_agent_chat  # noqa: E402
+from alfaka.common.redis_keys import RedisKeyBuilder  # noqa: E402
 
 
 class FakeProvider:
@@ -1695,6 +1696,53 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(payload[0]["lastPrice"], 354.5)
         self.assertEqual(payload[0]["priceSource"], "clickhouse")
         self.assertIsNone(payload[0]["changePercent"])
+
+    def test_symbol_summary_ignores_stale_redis_live_state(self):
+        class StaleRedisProvider:
+            def __init__(self):
+                self.redis = FakeWatchlistRedis()
+                keys = RedisKeyBuilder()
+                self.redis.set(keys.latest_closed_candle("MLM", "1m"), json.dumps({
+                    "symbol": "MLM",
+                    "interval": "1m",
+                    "timestamp": "2000-01-01T13:15:00.000Z",
+                    "close": 602.94,
+                }))
+
+            def latest_price(self, symbol):
+                return {
+                    "symbol": symbol,
+                    "price": "602.94",
+                    "timestamp": "2000-01-01T13:15:20.000Z",
+                }
+
+        class FreshClickHouseProvider:
+            def candles(self, symbol, interval, limit):
+                if interval != "1D":
+                    return []
+                return [{
+                    "symbol": symbol,
+                    "interval": "1D",
+                    "timestamp": "2026-07-06T04:00:00.000Z",
+                    "close": 599.11,
+                }]
+
+        class Provider:
+            def __init__(self):
+                self.redis_provider = StaleRedisProvider()
+                self.clickhouse_provider = FreshClickHouseProvider()
+
+            def symbol_detail(self, symbol):
+                return {"symbol": symbol, "name": "Martin Marietta Materials", "market": "NYSE"}
+
+        with mock.patch.dict(os.environ, {
+            "SYMBOL_LIVE_PRICE_STALE_SECONDS": "180",
+            "SYMBOL_REDIS_INTRADAY_STALE_SECONDS": "300",
+        }):
+            summary = market_data_service.build_symbol_summary("MLM", provider=Provider())
+
+        self.assertEqual(summary["lastPrice"], 599.11)
+        self.assertEqual(summary["priceSource"], "clickhouse")
 
     def test_watchlist_replace_uses_user_key_until_controller_reconciles(self):
         provider = FakeWatchlistProvider()

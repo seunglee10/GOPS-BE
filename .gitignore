@@ -51,3 +51,6 @@ graphdb-volume.tgz
 /.agents/
 /.codex/
 /.ignore
+
+# Annotation (auto-generated)
+.annotation/

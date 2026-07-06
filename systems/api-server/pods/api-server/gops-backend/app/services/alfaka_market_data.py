@@ -7,7 +7,7 @@ import json
 import os
 import re
 import sys
-from datetime import date
+from datetime import date, datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -541,9 +541,16 @@ def _safe_latest_closed_candle(provider: MarketDataProvider, symbol: str) -> dic
         if not value:
             continue
         try:
-            return json.loads(value)
+            candle = json.loads(value)
         except Exception:
             continue
+        if interval == "1m" and not _market_payload_is_fresh(
+            candle,
+            env_key="SYMBOL_REDIS_INTRADAY_STALE_SECONDS",
+            default_seconds=300,
+        ):
+            continue
+        return candle
     return None
 
 
@@ -578,9 +585,16 @@ def _symbol_metadata(provider: MarketDataProvider, symbol: str) -> dict[str, Any
 
 def _safe_latest_price(provider: MarketDataProvider, symbol: str) -> dict[str, Any]:
     try:
-        return provider.redis_provider.latest_price(symbol) or {}
+        payload = provider.redis_provider.latest_price(symbol) or {}
     except Exception:
         return {}
+    if not _market_payload_is_fresh(
+        payload,
+        env_key="SYMBOL_LIVE_PRICE_STALE_SECONDS",
+        default_seconds=180,
+    ):
+        return {}
+    return payload
 
 
 def _safe_recent_candles(provider: MarketDataProvider, symbol: str, limit: int) -> list[dict[str, Any]]:
@@ -595,6 +609,35 @@ def _safe_clickhouse_candles(provider: MarketDataProvider, symbol: str, limit: i
         return provider.clickhouse_provider.candles(symbol, interval, limit)
     except Exception:
         return []
+
+
+def _market_payload_is_fresh(
+    payload: dict[str, Any],
+    *,
+    env_key: str,
+    default_seconds: int,
+) -> bool:
+    if not isinstance(payload, dict) or not payload:
+        return False
+    max_age_seconds = _read_non_negative_env_seconds(env_key, default_seconds)
+    if max_age_seconds == 0:
+        return True
+    timestamp = payload.get("updatedAt") or payload.get("createdAt") or payload.get("timestamp") or payload.get("eventTime")
+    if not timestamp:
+        return True
+    parsed = parse_utc_time(timestamp)
+    if not parsed:
+        return True
+    age_seconds = (datetime.now(timezone.utc) - parsed).total_seconds()
+    return age_seconds <= max_age_seconds or age_seconds < 0
+
+
+def _read_non_negative_env_seconds(env_key: str, default_seconds: int) -> int:
+    try:
+        parsed = int(os.getenv(env_key, str(default_seconds)))
+    except (TypeError, ValueError):
+        return default_seconds
+    return parsed if parsed >= 0 else default_seconds
 
 
 def _safe_hot_snapshot(provider: MarketDataProvider) -> dict[str, Any] | None:

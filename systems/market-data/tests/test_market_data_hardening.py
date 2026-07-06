@@ -98,7 +98,7 @@ from alfaka.storage.news_s3_archive import (
     write_news_symbol_index_to_s3,
 )
 from alfaka.storage.s3_manifest import processed_candle_keys_from_manifest, raw_keys_from_manifest
-from alfaka.streaming.processor import ProcessorState, flush_ready_closed_candles, process_raw_envelope, processor_runtime_config, recover_processor_state_from_clickhouse, recover_processor_state_from_redis, run_stream_processor, write_closed_candle_to_redis
+from alfaka.streaming.processor import ProcessorState, flush_ready_closed_candles, process_raw_envelope, processor_runtime_config, recover_processor_state_from_clickhouse, recover_processor_state_from_redis, run_stream_processor, write_closed_candle_to_redis, write_live_candle_to_redis, write_trade_to_redis
 from alfaka.streaming.transforms import (
     CandleAggregator,
     VolumeProfileBinBuilder,
@@ -1330,6 +1330,41 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertTrue(health["lastSourceEventId"].startswith(envelope["sourceEventId"]))
         self.assertTrue(health["lastSourceEventId"].endswith("/fanout/1m"))
 
+    def test_processor_live_redis_state_uses_short_ttl(self):
+        redis = MemoryRedis()
+        keys = RedisKeyBuilder()
+        trade = {
+            "symbol": "MLM",
+            "price": 602.94,
+            "size": 10,
+            "timestamp": "2026-07-06T13:15:20.000Z",
+            "feed": "sip",
+            "feedProfile": "sip",
+            "marketSession": "pre",
+        }
+        candle = {
+            "eventType": "LIVE_CANDLE",
+            "symbol": "MLM",
+            "interval": "1m",
+            "timestamp": "2026-07-06T13:15:00.000Z",
+            "open": 602.94,
+            "high": 602.94,
+            "low": 602.94,
+            "close": 602.94,
+            "volume": 10,
+            "updatedAt": "2026-07-06T13:15:20.000Z",
+        }
+
+        with mock.patch.dict(os.environ, {
+            "LIVE_CANDLE_TTL_SECONDS": "120",
+            "LIVE_TRADE_TTL_SECONDS": "90",
+        }):
+            write_trade_to_redis(redis, keys, trade)
+            write_live_candle_to_redis(redis, keys, candle)
+
+        self.assertEqual(redis.expirations[keys.live_trade("MLM")], 90)
+        self.assertEqual(redis.expirations[keys.live_candle("MLM", "1m")], 120)
+
     def test_processor_emits_provisional_live_candles_for_all_chart_intervals(self):
         producer = RecordingProducer()
         redis = MemoryRedis()
@@ -2211,12 +2246,33 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         provider.redis = redis
         provider.keys = keys
 
-        event = provider.live_event("AAPL", "5m")
+        with mock.patch.dict(os.environ, {"LIVE_CANDLE_STALE_SECONDS": "0"}):
+            event = provider.live_event("AAPL", "5m")
 
         self.assertEqual(event["interval"], "5m")
         self.assertEqual(event["source"], "derived.live")
         self.assertEqual(event["sourceInterval"], "1m")
         self.assertEqual(event["data"]["updatedAt"], "2026-06-25T10:17:20.250Z")
+
+    def test_redis_provider_ignores_stale_live_candle(self):
+        redis = MemoryRedis()
+        keys = RedisKeyBuilder()
+        redis.set(keys.live_candle("MLM", "1m"), json.dumps({
+            "eventType": "LIVE_CANDLE",
+            "symbol": "MLM",
+            "interval": "1m",
+            "timestamp": "2000-01-01T13:15:00.000Z",
+            "close": 602.94,
+            "updatedAt": "2000-01-01T13:15:20.000Z",
+        }))
+        provider = RedisMarketDataProvider.__new__(RedisMarketDataProvider)
+        provider.redis = redis
+        provider.keys = keys
+
+        with mock.patch.dict(os.environ, {"LIVE_CANDLE_STALE_SECONDS": "180"}):
+            event = provider.live_event("MLM", "1m")
+
+        self.assertIsNone(event)
 
     def test_redis_market_data_provider_uses_short_socket_timeouts(self):
         calls = []

@@ -1,0 +1,48 @@
+# PintOS C Coding Style (GNU-based)
+# Auto-formatted on save (editor.formatOnSave: true)
+BasedOnStyle: GNU
+Language: Cpp
+UseTab: ForIndentation
+TabWidth: 4
+IndentWidth: 4
+ContinuationIndentWidth: 8
+IndentCaseLabels: false
+IndentGotoLabels: false
+NamespaceIndentation: None
+ColumnLimit: 0
+AlwaysBreakAfterReturnType: TopLevelDefinitions
+AlwaysBreakAfterDefinitionReturnType: TopLevel
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterFunction: false
+  AfterControlStatement: Never
+  AfterEnum: false
+  AfterStruct: false
+  AfterUnion: false
+  BeforeElse: false
+  BeforeWhile: false
+  SplitEmptyFunction: false
+SpaceBeforeParens: Always
+SpaceInEmptyParentheses: false
+SpacesInParentheses: false
+SpaceAfterCStyleCast: true
+SpacesBeforeTrailingComments: 1
+PointerAlignment: Right
+DerivePointerAlignment: false
+AlignConsecutiveMacros: true
+AlignConsecutiveDeclarations: false
+AlignConsecutiveAssignments: false
+AlignTrailingComments: true
+AlignEscapedNewlines: Left
+AlignOperands: true
+SortIncludes: false
+IncludeBlocks: Preserve
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: false
+AllowShortCaseLabelsOnASingleLine: false
+BreakBeforeBinaryOperators: None
+BreakBeforeTernaryOperators: true
+MaxEmptyLinesToKeep: 1
+KeepEmptyLinesAtTheStartOfBlocks: false

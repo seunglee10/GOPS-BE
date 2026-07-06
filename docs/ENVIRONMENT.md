@@ -145,6 +145,11 @@ PROCESSOR_RECOVERY_SYMBOLS
 PROCESSOR_RECOVERY_CLICKHOUSE_ENABLED
 COMPONENT_HEALTH_TTL_SECONDS
 KAFKA_TICK_FANOUT_INTERVALS
+LIVE_CANDLE_TTL_SECONDS
+LIVE_TRADE_TTL_SECONDS
+LIVE_CANDLE_STALE_SECONDS
+SYMBOL_LIVE_PRICE_STALE_SECONDS
+SYMBOL_REDIS_INTRADAY_STALE_SECONDS
 ```
 
 `PROCESSOR_RECOVERY_SYMBOLS` is optional. Keep it empty unless an incident repair
@@ -160,6 +165,14 @@ operator explicitly enables it.
 processor derives 5m, 10m, 1D, 1W, and 1M live candles from the 1m stream, so
 consuming every tick fanout topic in the same processor creates avoidable lag.
 Use `all` only when separate interval-specific processors are deployed.
+
+`LIVE_CANDLE_TTL_SECONDS` and `LIVE_TRADE_TTL_SECONDS` keep Redis live state
+short-lived. AWS/EKS defaults to `180` seconds so a thinly traded symbol cannot
+keep showing an old premarket trade or live candle as the current price.
+`LIVE_CANDLE_STALE_SECONDS`, `SYMBOL_LIVE_PRICE_STALE_SECONDS`, and
+`SYMBOL_REDIS_INTRADAY_STALE_SECONDS` are read-side guards; API and WebSocket
+paths ignore live values older than these thresholds even if a Redis key has not
+expired yet.
 
 Critical storage consumers may disable Kafka auto commit and commit after successful side effects:
 
