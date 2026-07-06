@@ -11,7 +11,7 @@ spec:
       labels:
         app: alfaka-news-intelligence-rebuild
     spec:
-      restartPolicy: OnFailure
+      restartPolicy: Never
       serviceAccountName: alfaka-market-data-sa
       containers:
         - name: news-intelligence-rebuild

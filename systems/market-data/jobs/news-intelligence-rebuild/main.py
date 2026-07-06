@@ -53,14 +53,8 @@ def main():
 
 
 def rebuild_recent_localizations(client, *, days=30, batch_size=500, max_rows=5000, redis_client=None, rewrite_clickhouse=False):
-    rows = []
-    offset = 0
-    while len(rows) < max_rows:
-        batch = read_localization_batch(client, days=days, limit=min(batch_size, max_rows - len(rows)), offset=offset)
-        if not batch:
-            break
-        rows.extend(batch)
-        offset += len(batch)
+    columns = read_localization_columns(client)
+    rows = read_recent_localization_rows(client, days=days, batch_size=batch_size, max_rows=max_rows, columns=columns)
 
     total = 0
     for batch in chunked(dedupe_localization_rows(rows), batch_size):
@@ -99,28 +93,91 @@ def warm_localization_records_to_redis(redis_client, records):
     return warmed
 
 
-def read_localization_batch(client, *, days, limit, offset):
+def read_recent_localization_rows(client, *, days, batch_size, max_rows, columns=None):
+    rows = []
+    partitions = read_localization_partitions(client, days=days, limit=max(1, int(max_rows or 1)))
+    if not partitions:
+        return rows
+    limit_per_symbol = max(1, min(int(batch_size or 1), (int(max_rows or 1) + len(partitions) - 1) // len(partitions)))
+    for partition in partitions:
+        if len(rows) >= max_rows:
+            break
+        symbol = str(partition.get("symbol") or "").strip().upper()
+        locale = str(partition.get("locale") or "ko-KR").strip() or "ko-KR"
+        if not symbol:
+            continue
+        batch = read_localization_batch(
+            client,
+            days=days,
+            limit=min(limit_per_symbol, max_rows - len(rows)),
+            columns=columns,
+            symbol=symbol,
+            locale=locale,
+        )
+        rows.extend(batch)
+    return rows[:max_rows]
+
+
+def read_localization_columns(client):
+    query = f"""
+    SELECT name
+    FROM system.columns
+    WHERE database = {{database:String}}
+      AND table = 'news_article_localizations'
+    FORMAT JSONEachRow
+    """
+    try:
+        rows = client.query_json_each_row(query, {"database": client.database})
+    except Exception as exc:
+        print(f"News intelligence rebuild schema discovery failed: {type(exc).__name__}: {exc}", flush=True)
+        return set()
+    return {str(row.get("name") or "").strip() for row in rows if str(row.get("name") or "").strip()}
+
+
+def read_localization_partitions(client, *, days, limit):
+    query = f"""
+    SELECT symbol, locale
+    FROM {client.database}.news_article_localizations
+    WHERE published_at >= now64(3) - INTERVAL {{days:UInt32}} DAY
+    GROUP BY symbol, locale
+    LIMIT {{limit:UInt32}}
+    FORMAT JSONEachRow
+    """
+    return client.query_json_each_row(query, {"days": int(days), "limit": int(limit)})
+
+
+def read_localization_batch(client, *, days, limit, columns=None, symbol=None, locale=None):
+    where_clauses = ["published_at >= now64(3) - INTERVAL {days:UInt32} DAY"]
+    parameters = {"days": int(days), "limit": int(limit)}
+    if symbol:
+        where_clauses.append("symbol = {symbol:String}")
+        parameters["symbol"] = str(symbol).strip().upper()
+    if locale:
+        where_clauses.append("locale = {locale:String}")
+        parameters["locale"] = str(locale).strip() or "ko-KR"
+    where_sql = "\n      AND ".join(where_clauses)
+    order_sql = "ORDER BY published_at DESC, article_id DESC" if symbol and locale else ""
     query = f"""
     SELECT
       formatDateTime(published_at, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS publishedAt,
       symbol,
       article_id AS articleId,
       locale,
-      symbols,
-      target_symbol AS targetSymbol,
-      subject_relevance AS subjectRelevance,
-      relevance_score_v2 AS relevanceScoreV2,
-      relevance_reason AS relevanceReason,
-      direct_signals AS directSignals,
+      {localization_select_expr(columns, 'symbols', 'symbols', '[symbol]')},
+      {localization_select_expr(columns, 'target_symbol', 'targetSymbol', 'symbol')},
+      {localization_select_expr(columns, 'subject_relevance', 'subjectRelevance', "'mention'")},
+      {localization_select_expr(columns, 'relevance_score_v2', 'relevanceScoreV2', 'toFloat32(0)')},
+      {localization_select_expr(columns, 'relevance_reason', 'relevanceReason', "''")},
+      {localization_select_expr(columns, 'direct_signals', 'directSignals', "CAST([], 'Array(String)')")},
       headline,
       summary,
       url,
       source,
       localized_headline AS localizedHeadline,
       localized_summary AS localizedSummary,
-      key_points AS keyPoints,
-      positive_points AS positivePoints,
-      concerns,
+      {localization_select_expr(columns, 'key_points', 'keyPoints', "CAST([], 'Array(String)')")},
+      {localization_select_expr(columns, 'positive_points', 'positivePoints', "CAST([], 'Array(String)')")},
+      {localization_select_expr(columns, 'concerns', 'concerns', "CAST([], 'Array(String)')")},
       event_type AS eventType,
       sentiment,
       impact_direction AS impactDirection,
@@ -129,12 +186,18 @@ def read_localization_batch(client, *, days, limit, offset):
       formatDateTime(localized_at, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS localizedAt,
       raw
     FROM {client.database}.news_article_localizations
-    WHERE published_at >= now64(3) - INTERVAL {{days:UInt32}} DAY
-    ORDER BY published_at DESC, localized_at DESC
-    LIMIT {{limit:UInt32}} OFFSET {{offset:UInt32}}
+    WHERE {where_sql}
+    {order_sql}
+    LIMIT {{limit:UInt32}}
     FORMAT JSONEachRow
     """
-    return client.query_json_each_row(query, {"days": int(days), "limit": int(limit), "offset": int(offset)})
+    return client.query_json_each_row(query, parameters)
+
+
+def localization_select_expr(columns, column, alias, fallback):
+    if columns and column in columns:
+        return f"{column} AS {alias}" if column != alias else column
+    return f"{fallback} AS {alias}"
 
 
 def count_recent_localizations(client, *, days, max_rows):

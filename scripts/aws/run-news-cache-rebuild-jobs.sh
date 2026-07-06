@@ -28,9 +28,18 @@ print_job_debug() {
 
   kubectl describe "job/${job_name}" -n "${K8S_NAMESPACE}" || true
   kubectl get pods -n "${K8S_NAMESPACE}" -l "job-name=${job_name}" -o wide || true
+  kubectl get events -n "${K8S_NAMESPACE}" \
+    --field-selector "involvedObject.kind=Pod" \
+    --sort-by=.lastTimestamp || true
   kubectl logs -n "${K8S_NAMESPACE}" \
     -l "job-name=${job_name}" \
     --all-containers=true \
+    --tail="${LOG_TAIL}" \
+    --ignore-errors=true || true
+  kubectl logs -n "${K8S_NAMESPACE}" \
+    -l "job-name=${job_name}" \
+    --all-containers=true \
+    --previous=true \
     --tail="${LOG_TAIL}" \
     --ignore-errors=true || true
 }
