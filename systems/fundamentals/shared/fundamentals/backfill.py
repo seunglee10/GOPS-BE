@@ -740,21 +740,11 @@ def build_summary_payload(symbol: str, fact_rows: list[dict[str, Any]], derived_
     if not basis_rows:
         return None
     latest = max(basis_rows, key=lambda row: (str(row.get("version_filed_at") or row.get("filed_at") or ""), int(row.get("fiscal_year") or 0), PERIOD_ORDER.get(str(row.get("fiscal_period") or ""), 0)))
-    same_period_derived = [
-        row for row in derived_rows
-        if row.get("fiscal_year") == latest.get("fiscal_year")
-        and row.get("fiscal_period") == latest.get("fiscal_period")
-        and row.get("period_end") == latest.get("period_end")
-    ]
-    same_period_facts = [
-        row for row in fact_rows
-        if row.get("fiscal_year") == latest.get("fiscal_year")
-        and row.get("fiscal_period") == latest.get("fiscal_period")
-        and row.get("period_end") == latest.get("period_end")
-    ]
-    metrics = [summary_fact_metric(row) for row in sorted(same_period_facts, key=lambda item: str(item.get("metric") or ""))]
-    metrics.extend(summary_derived_metric(row) for row in sorted(same_period_derived, key=lambda item: str(item.get("metric") or "")))
-    warnings = unique_strings(row.get("quality") for row in [*same_period_facts, *same_period_derived] if row.get("quality") not in {"", None, "available"})
+    latest_facts = latest_metric_rows(available_facts)
+    latest_derived = latest_metric_rows(available_rows)
+    metrics = [summary_fact_metric(row) for row in sorted(latest_facts, key=lambda item: str(item.get("metric") or ""))]
+    metrics.extend(summary_derived_metric(row) for row in sorted(latest_derived, key=lambda item: str(item.get("metric") or "")))
+    warnings = unique_strings(row.get("quality") for row in [*latest_facts, *latest_derived] if row.get("quality") not in {"", None, "available"})
     return {
         "symbol": symbol,
         "cik": latest.get("cik"),
@@ -769,6 +759,27 @@ def build_summary_payload(symbol: str, fact_rows: list[dict[str, Any]], derived_
         "warnings": warnings,
         "cache_hit": False,
     }
+
+
+def latest_metric_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    latest_by_metric: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        metric = str(row.get("metric") or "")
+        if not metric:
+            continue
+        current = latest_by_metric.get(metric)
+        if current is None or summary_row_sort_key(row) > summary_row_sort_key(current):
+            latest_by_metric[metric] = row
+    return list(latest_by_metric.values())
+
+
+def summary_row_sort_key(row: dict[str, Any]) -> tuple[str, int, int, str]:
+    return (
+        str(row.get("version_filed_at") or row.get("filed_at") or ""),
+        int(row.get("fiscal_year") or 0),
+        PERIOD_ORDER.get(str(row.get("fiscal_period") or ""), 0),
+        str(row.get("period_end") or ""),
+    )
 
 
 def summary_fact_metric(row: dict[str, Any]) -> dict[str, Any]:

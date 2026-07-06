@@ -63,6 +63,11 @@ Crypto uses `BTCUSD` inside GOPS and `BTC/USD` only when talking to Alpaca. It s
 
 `ALPACA_CREDENTIAL_SOURCE` accepts `auto`, `aws-secrets-manager`, or `local-env`. Use `local-env` with `APCA_API_KEY_ID` and `APCA_API_SECRET_KEY` for explicit local Alpaca smoke runs while Secrets Manager is disconnected. AWS/EKS overlays set `aws-secrets-manager` and read the same canonical key names from the `dev/alpaca` JSON secret. Alpaca ingestors read credentials immediately before each WebSocket connect attempt, so a Secrets Manager rotation is picked up on the next reconnect or session open.
 
+`ALPACA_WS_PING_INTERVAL_SECONDS` and `ALPACA_WS_PING_TIMEOUT_SECONDS` control
+Alpaca WebSocket keepalive behavior. AWS/EKS defaults to `30` and `60` seconds
+to avoid unnecessary reconnect loops when the SIP stream is busy. Set either to
+`off` only for a controlled incident mitigation.
+
 ## Kafka
 
 Current local stage:
@@ -139,6 +144,7 @@ REDIS_URL
 PROCESSOR_RECOVERY_SYMBOLS
 PROCESSOR_RECOVERY_CLICKHOUSE_ENABLED
 COMPONENT_HEALTH_TTL_SECONDS
+KAFKA_TICK_FANOUT_INTERVALS
 ```
 
 `PROCESSOR_RECOVERY_SYMBOLS` is optional. Keep it empty unless an incident repair
@@ -149,6 +155,11 @@ operator explicitly enables it.
 `PROCESSOR_RECOVERY_CLICKHOUSE_ENABLED=false` by default. Keep Redis-first recovery on by default; enable ClickHouse recovery only when the processor should rebuild missing startup state from deterministic canonical `1m`/`1D` rows and ClickHouse is known healthy.
 
 `COMPONENT_HEALTH_TTL_SECONDS` controls how long Redis keeps lightweight component freshness heartbeats such as `pipeline:health:market-processor`.
+
+`KAFKA_TICK_FANOUT_INTERVALS` should normally stay `1m` in AWS/EKS. The
+processor derives 5m, 10m, 1D, 1W, and 1M live candles from the 1m stream, so
+consuming every tick fanout topic in the same processor creates avoidable lag.
+Use `all` only when separate interval-specific processors are deployed.
 
 Critical storage consumers may disable Kafka auto commit and commit after successful side effects:
 
@@ -452,6 +463,12 @@ SEC actuals and Yahoo consensus estimates stay separate. SEC EDGAR actual
 financial statement rows live in `market_data.sec_financial_facts` and
 `market_data.sec_derived_metrics`; Yahoo/yfinance consensus rows are materialized
 by a separate scheduled collector into `market_data.yahoo_earnings_estimates`.
+The AWS collector is `alfaka-yahoo-estimates-sync` and runs the
+`systems/fundamentals/jobs/yahoo-estimates-sync/main.py` entrypoint in the
+`gops-market-storage` image. It writes only Yahoo consensus rows and keeps them
+separate from SEC actuals. Daily refreshes use the ClickHouse key
+`symbol + metric + fiscal_year + fiscal_period + period_end`, so current
+consensus values are replaced rather than duplicated indefinitely.
 The API only reads ClickHouse/Redis snapshots on screen requests. It must not
 call SEC or Yahoo directly from the frontend hot path.
 

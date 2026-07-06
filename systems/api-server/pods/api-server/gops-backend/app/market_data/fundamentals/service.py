@@ -135,6 +135,9 @@ class FundamentalsAdapter:
     def financial_series(self, symbol: str, *, years: int = 3, period: str = "quarterly") -> list[FinancialSeriesPoint]:
         return []
 
+    def earnings_series(self, symbol: str, *, years: int = 3) -> list[EarningsSeriesPoint]:
+        return []
+
 
 class EmptyFundamentalsAdapter(FundamentalsAdapter):
     def latest_for_symbols(self, symbols: list[str]) -> dict[str, FundamentalsRecord]:
@@ -150,9 +153,15 @@ class StoreFundamentalsAdapter(FundamentalsAdapter):
         if not normalized:
             return {}
         records = self._from_redis(normalized)
-        missing = [symbol for symbol in normalized if symbol not in records]
-        if missing:
-            records.update(self._from_clickhouse(missing))
+        needs_clickhouse = [
+            symbol
+            for symbol in normalized
+            if symbol not in records or record_needs_clickhouse_supplement(records[symbol])
+        ]
+        if needs_clickhouse:
+            clickhouse_records = self._from_clickhouse(needs_clickhouse)
+            for symbol, record in clickhouse_records.items():
+                records[symbol] = merge_fundamentals_records(records.get(symbol), record)
         return records
 
     def _provider(self):
@@ -250,6 +259,10 @@ class StoreFundamentalsAdapter(FundamentalsAdapter):
         except Exception:
             estimate_rows = []
         return earnings_series_from_rows(actual_rows or [], estimate_rows or [])
+
+    def earnings_series(self, symbol: str, *, years: int = 3) -> list[EarningsSeriesPoint]:
+        normalized = normalize_market_symbol(symbol)
+        return self._series_from_clickhouse([normalized]).get(normalized, [])
 
     def financial_series(self, symbol: str, *, years: int = 3, period: str = "quarterly") -> list[FinancialSeriesPoint]:
         normalized = normalize_market_symbol(symbol)
@@ -455,6 +468,13 @@ class CompositeFundamentalsAdapter(FundamentalsAdapter):
                 return series
         return []
 
+    def earnings_series(self, symbol: str, *, years: int = 3) -> list[EarningsSeriesPoint]:
+        for adapter in self.adapters:
+            series = adapter.earnings_series(symbol, years=years)
+            if series:
+                return series
+        return []
+
 
 class FileFundamentalsAdapter(FundamentalsAdapter):
     def __init__(self, path: str | Path):
@@ -616,6 +636,51 @@ METRIC_FIELD_MAP = {
     "operating_cash_flow": "operatingCashFlow",
     "free_cash_flow": "freeCashFlow",
 }
+
+SUPPLEMENTAL_FUNDAMENTAL_FIELDS = (
+    "sharesOutstanding",
+    "revenue",
+    "eps",
+    "totalEquity",
+    "freeCashFlow",
+)
+
+
+def record_needs_clickhouse_supplement(record: FundamentalsRecord) -> bool:
+    return any(getattr(record, field) is None for field in SUPPLEMENTAL_FUNDAMENTAL_FIELDS)
+
+
+def merge_fundamentals_records(primary: FundamentalsRecord | None, supplement: FundamentalsRecord) -> FundamentalsRecord:
+    if primary is None:
+        return supplement
+    merged_source = primary.source
+    if supplement.source and supplement.source not in {primary.source, None}:
+        merged_source = f"{primary.source or 'unknown'}+{supplement.source}"
+    return FundamentalsRecord(
+        symbol=primary.symbol or supplement.symbol,
+        cik=primary.cik or supplement.cik,
+        companyName=primary.companyName or supplement.companyName,
+        sector=primary.sector or supplement.sector,
+        industry=primary.industry or supplement.industry,
+        sharesOutstanding=primary.sharesOutstanding if primary.sharesOutstanding is not None else supplement.sharesOutstanding,
+        revenue=primary.revenue if primary.revenue is not None else supplement.revenue,
+        operatingIncome=primary.operatingIncome if primary.operatingIncome is not None else supplement.operatingIncome,
+        netIncome=primary.netIncome if primary.netIncome is not None else supplement.netIncome,
+        eps=primary.eps if primary.eps is not None else supplement.eps,
+        totalAssets=primary.totalAssets if primary.totalAssets is not None else supplement.totalAssets,
+        totalLiabilities=primary.totalLiabilities if primary.totalLiabilities is not None else supplement.totalLiabilities,
+        totalEquity=primary.totalEquity if primary.totalEquity is not None else supplement.totalEquity,
+        operatingCashFlow=primary.operatingCashFlow if primary.operatingCashFlow is not None else supplement.operatingCashFlow,
+        freeCashFlow=primary.freeCashFlow if primary.freeCashFlow is not None else supplement.freeCashFlow,
+        currency=primary.currency or supplement.currency,
+        fiscalPeriod=primary.fiscalPeriod or supplement.fiscalPeriod,
+        periodEndDate=primary.periodEndDate or supplement.periodEndDate,
+        filedAt=primary.filedAt or supplement.filedAt,
+        source=merged_source,
+        asOf=primary.asOf or supplement.asOf,
+        earningsSeries=primary.earningsSeries or supplement.earningsSeries,
+        raw=primary.raw or supplement.raw,
+    )
 
 
 def record_from_row(row: dict[str, Any]) -> FundamentalsRecord | None:

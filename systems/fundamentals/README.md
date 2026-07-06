@@ -120,3 +120,35 @@ Actual financial statement metrics and forecast metrics are separate. SEC EDGAR
 actuals power company information and investment ratios. Yahoo/yfinance EPS and
 revenue estimates are stored in `market_data.yahoo_earnings_estimates` by a
 separate daily collector and are only consumed as forecast/consensus overlays.
+
+## Yahoo Estimates Sync
+
+The Yahoo estimates entrypoint is:
+
+```sh
+python -u systems/fundamentals/jobs/yahoo-estimates-sync/main.py
+```
+
+It runs in the `gops-market-storage` image and writes only
+`market_data.yahoo_earnings_estimates`. It does not write SEC actual tables or
+Redis fundamentals summaries. In AWS/EKS the scheduled collector is
+`infra/k8s/overlays/aws/cronjob-yahoo-estimates-sync.yaml`.
+
+Default execution is a dry-run:
+
+```sh
+YAHOO_ESTIMATES_DRY_RUN=true \
+python -u systems/fundamentals/jobs/yahoo-estimates-sync/main.py
+```
+
+Actual AWS execution uses:
+
+```sh
+YAHOO_ESTIMATES_DRY_RUN=false \
+python -u systems/fundamentals/jobs/yahoo-estimates-sync/main.py
+```
+
+Rows are keyed in ClickHouse by
+`symbol + metric + fiscal_year + fiscal_period + period_end` with
+`ReplacingMergeTree(collected_at)`, so daily refreshes replace the latest
+consensus for the same period instead of accumulating duplicate history.

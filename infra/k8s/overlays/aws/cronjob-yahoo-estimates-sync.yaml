@@ -1,0 +1,50 @@
+# 역할: AWS/EKS에서 Yahoo Finance EPS/매출 컨센서스를 주기적으로 수집해 ClickHouse에 적재합니다.
+# schedule은 Kubernetes controller 기준 UTC입니다. 21:15 UTC는 한국 시간 06:15입니다.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: alfaka-yahoo-estimates-sync
+  namespace: alfaka-market-data
+spec:
+  schedule: "15 21 * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 86400
+      backoffLimit: 2
+      activeDeadlineSeconds: 3600
+      template:
+        metadata:
+          labels:
+            app: alfaka-yahoo-estimates-sync
+        spec:
+          restartPolicy: Never
+          nodeSelector:
+            karpenter.sh/nodepool: batch
+          tolerations:
+            - key: gops.io/dedicated
+              operator: Equal
+              value: batch
+              effect: NoSchedule
+          serviceAccountName: alfaka-market-data-sa
+          containers:
+            - name: yahoo-estimates-sync
+              image: YOUR_ECR_REPOSITORY/gops-market-storage:latest
+              imagePullPolicy: IfNotPresent
+              command: ["python", "-u", "systems/fundamentals/jobs/yahoo-estimates-sync/main.py"]
+              env:
+                - name: YAHOO_ESTIMATES_DRY_RUN
+                  value: "false"
+                - name: YAHOO_ESTIMATES_MAX_COMPANIES
+                  value: "0"
+                - name: YAHOO_ESTIMATES_BATCH_SIZE
+                  value: "500"
+              envFrom:
+                - configMapRef:
+                    name: alfaka-market-data-config
+                - secretRef:
+                    name: alfaka-clickhouse-secret
+                    optional: true
