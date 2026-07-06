@@ -16,7 +16,7 @@ data:
   ALFAKA_REQUEST_CONFIG: systems/market-data/config/market-data-request.json
   ALPACA_UNIVERSE: sp500
   ALPACA_UNIVERSE_REGISTRY_PATH: systems/market-data/config/sp500-universe.json
-  ALPACA_COLLECTION_SYMBOL_SOURCE: universe
+  ALPACA_COLLECTION_SYMBOL_SOURCE: on-demand
   ALPACA_CHANNELS: bars,updatedBars,dailyBars,statuses
   ALPACA_ACTIVE_CHANNELS: trades,quotes
   ALPACA_ACTIVE_TICK_SUBSCRIPTION: "true"
