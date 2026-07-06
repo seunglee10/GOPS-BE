@@ -28,6 +28,7 @@ from alfaka.serving.volume_profile import (
     DEFAULT_VOLUME_PROFILE_TARGET_BINS,
     normalize_target_bins,
 )
+from alfaka.serving.news_hot_cache import company_daily_summary_coverage_valid
 from alfaka.storage.news_daily_summary import attach_price_changes_to_daily_summaries, clickhouse_row_to_daily_summary
 
 
@@ -263,51 +264,107 @@ class MarketDataQueryService:
     def _latest_news_rows(self, symbol: str, limit: int, locale: str) -> tuple[list[dict[str, Any]], str]:
         redis_provider = getattr(self.provider, "redis_provider", None)
         clickhouse_provider = getattr(self.provider, "clickhouse_provider", None)
-        for provider, source in ((redis_provider, "redis"), (clickhouse_provider, "clickhouse")):
-            if provider is None:
-                continue
-            method = getattr(provider, "localized_news_articles_for_symbols", None)
-            if not callable(method):
-                method = getattr(provider, "localized_news_articles", None)
-                if not callable(method):
-                    continue
-                try:
-                    rows = method(symbol, limit=limit, locale=locale)
-                except TypeError:
-                    rows = method(symbol, limit=limit)
-                except Exception:
-                    rows = []
-            else:
-                try:
-                    rows = method([symbol], limit=limit, locale=locale)
-                except TypeError:
-                    rows = method([symbol], limit=limit)
-                except Exception:
-                    rows = []
-            normalized_rows = [row for row in rows or [] if isinstance(row, dict)]
-            if normalized_rows:
-                return normalized_rows[:limit], source
+        redis_rows = self._localized_news_rows_from_provider(redis_provider, symbol, limit, locale, use_days=False)
+        if len(redis_rows) >= limit:
+            return redis_rows[:limit], "redis"
+
+        clickhouse_rows = self._localized_news_rows_from_provider(clickhouse_provider, symbol, limit, locale, use_days=True)
+        if clickhouse_rows:
+            self._warm_localized_news_redis(redis_provider, clickhouse_rows, locale)
+            return clickhouse_rows[:limit], "clickhouse"
+        if redis_rows:
+            return redis_rows[:limit], "redis"
         return [], "no-data"
 
-    def _daily_news_rows(self, symbol: str, limit: int, locale: str) -> list[dict[str, Any]]:
-        redis_provider = getattr(self.provider, "redis_provider", None)
-        clickhouse_provider = getattr(self.provider, "clickhouse_provider", None)
-        for provider in (redis_provider, clickhouse_provider):
-            if provider is None:
-                continue
-            method = getattr(provider, "company_daily_news_summaries", None)
+    def _localized_news_rows_from_provider(self, provider, symbol: str, limit: int, locale: str, *, use_days: bool) -> list[dict[str, Any]]:
+        if provider is None:
+            return []
+        method = getattr(provider, "localized_news_articles_for_symbols", None)
+        if not callable(method):
+            method = getattr(provider, "localized_news_articles", None)
             if not callable(method):
-                continue
+                return []
             try:
-                rows = method(symbol, limit=limit, locale=locale)
+                if use_days:
+                    rows = method(symbol, limit=limit, days=30, locale=locale)
+                else:
+                    rows = method(symbol, limit=limit, locale=locale)
             except TypeError:
                 rows = method(symbol, limit=limit)
             except Exception:
                 rows = []
-            normalized_rows = [row for row in rows or [] if isinstance(row, dict)]
-            if normalized_rows:
-                return normalized_rows[:limit]
+        else:
+            try:
+                if use_days:
+                    rows = method([symbol], limit=limit, days=30, locale=locale)
+                else:
+                    rows = method([symbol], limit=limit, locale=locale)
+            except TypeError:
+                rows = method([symbol], limit=limit)
+            except Exception:
+                rows = []
+        return [row for row in rows or [] if isinstance(row, dict)]
+
+    def _warm_localized_news_redis(self, redis_provider, rows: list[dict[str, Any]], locale: str) -> None:
+        method = getattr(redis_provider, "warm_localized_news_articles", None)
+        if not callable(method):
+            return
+        try:
+            method(rows, locale=locale)
+        except Exception:
+            return
+
+    def _daily_news_rows(self, symbol: str, limit: int, locale: str) -> list[dict[str, Any]]:
+        redis_provider = getattr(self.provider, "redis_provider", None)
+        clickhouse_provider = getattr(self.provider, "clickhouse_provider", None)
+        days = 30
+        redis_rows = self._daily_news_rows_from_provider(redis_provider, symbol, limit, locale, use_days=False)
+        if self._daily_news_redis_coverage_valid(redis_provider, symbol, days, limit, locale, redis_rows):
+            return redis_rows[:limit]
+
+        clickhouse_rows = self._daily_news_rows_from_provider(clickhouse_provider, symbol, limit, locale, use_days=True)
+        if clickhouse_rows:
+            self._warm_daily_news_redis(redis_provider, symbol, clickhouse_rows, days, limit, locale)
+            return clickhouse_rows[:limit]
+        if redis_rows:
+            return redis_rows[:limit]
         return []
+
+    def _daily_news_rows_from_provider(self, provider, symbol: str, limit: int, locale: str, *, use_days: bool) -> list[dict[str, Any]]:
+        if provider is None:
+            return []
+        method = getattr(provider, "company_daily_news_summaries", None)
+        if not callable(method):
+            return []
+        try:
+            if use_days:
+                rows = method(symbol, limit=limit, days=30, locale=locale)
+            else:
+                rows = method(symbol, limit=limit, locale=locale)
+        except TypeError:
+            rows = method(symbol, limit=limit)
+        except Exception:
+            rows = []
+        return [row for row in rows or [] if isinstance(row, dict)]
+
+    def _daily_news_redis_coverage_valid(self, redis_provider, symbol: str, days: int, limit: int, locale: str, rows: list[dict[str, Any]]) -> bool:
+        method = getattr(redis_provider, "company_daily_news_coverage", None)
+        if not callable(method):
+            return False
+        try:
+            coverage = method(symbol, locale=locale)
+        except Exception:
+            return False
+        return company_daily_summary_coverage_valid(coverage, symbol=symbol, days=days, limit=limit, locale=locale, rows=rows)
+
+    def _warm_daily_news_redis(self, redis_provider, symbol: str, rows: list[dict[str, Any]], days: int, limit: int, locale: str) -> None:
+        method = getattr(redis_provider, "warm_company_daily_news_summaries", None)
+        if not callable(method):
+            return
+        try:
+            method(symbol, rows, days=days, limit=limit, locale=locale)
+        except Exception:
+            return
 
     def _daily_news_price_candles(self, symbol: str, limit: int) -> list[dict[str, Any]]:
         clickhouse_provider = getattr(self.provider, "clickhouse_provider", None)

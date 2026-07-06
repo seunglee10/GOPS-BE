@@ -155,7 +155,7 @@ Provider 실패나 빈 결과는 예외로 전체 분석을 멈추지 않는다.
 | Provider | Runtime dependency | Behavior |
 | --- | --- | --- |
 | Market | Redis, ClickHouse | chart/quote/candle 기반 snapshot을 만든다. |
-| News | Redis, ClickHouse, optional Alpaca fallback | cached news intelligence와 article rows를 evidence로 바꾼다. |
+| News | Redis, ClickHouse, optional Alpaca fallback | Redis 30일 cached news intelligence를 먼저 쓰고 coverage가 부족하면 ClickHouse rows로 보강한다. |
 | Ontology | GraphDB, optional Redis path cache | `GraphDBOntologyProvider`가 기업 관계, peer, theme, path evidence를 만든다. |
 | Financial | Redis, ClickHouse | SEC companyfacts/frames에서 미리 계산한 fundamentals snapshot을 evidence로 바꾼다. 사용자 요청 hot path에서는 SEC API를 호출하지 않는다. |
 | Macro | none in v1 | v1에서는 intentional empty adapter다. |
