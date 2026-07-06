@@ -38,8 +38,8 @@ patches:
         value:
           type: RollingUpdate
           rollingUpdate:
-            maxUnavailable: 1
-            maxSurge: 0
+            maxUnavailable: 0
+            maxSurge: 1
       - op: add
         path: /spec/template/metadata/annotations
         value:
@@ -81,7 +81,7 @@ patches:
     patch: |-
       - op: replace
         path: /spec/replicas
-        value: 1
+        value: 2
       - op: replace
         path: /spec/template/spec/containers/0/readinessProbe
         value:
@@ -90,7 +90,7 @@ patches:
             port: 8000
           initialDelaySeconds: 15
           periodSeconds: 10
-          timeoutSeconds: 5
+          timeoutSeconds: 10
           failureThreshold: 6
       - op: add
         path: /spec/template/spec/containers/0/startupProbe
@@ -99,16 +99,16 @@ patches:
             path: /health
             port: 8000
           periodSeconds: 5
-          timeoutSeconds: 5
+          timeoutSeconds: 10
           failureThreshold: 30
       - op: replace
         path: /spec/template/spec/containers/0/resources
         value:
           requests:
-            cpu: 150m
-            memory: 384Mi
+            cpu: 300m
+            memory: 512Mi
           limits:
-            cpu: "1"
+            cpu: "2"
             memory: 1Gi
   - target:
       kind: Deployment
