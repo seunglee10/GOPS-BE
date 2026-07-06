@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
 from alfaka.common.redis_keys import RedisKeyBuilder
+from alfaka.serving.dto import websocket_event
+from alfaka.serving.redis_provider import live_candle_is_fresh
 
 
 @dataclass(eq=False)
@@ -68,12 +71,13 @@ class SymbolStreamHub:
         self.sessions_by_symbol: dict[str, set[StreamSession]] = {}
         self.tasks: dict[str, asyncio.Task] = {}
         self.last_markers: dict[tuple[str, str], str] = {}
+        self.poll_seconds = read_positive_float_env("REALTIME_REDIS_POLL_SECONDS", 0.25)
 
     async def subscribe(self, session: StreamSession) -> None:
         sessions = self.sessions_by_symbol.setdefault(session.symbol, set())
         sessions.add(session)
-        if session.symbol not in self.tasks:
-            self.tasks[session.symbol] = asyncio.create_task(self._listen_symbol(session.symbol))
+        if not self.tasks:
+            self.tasks["__global__"] = asyncio.create_task(self._listen_global())
 
     async def unsubscribe(self, session: StreamSession) -> None:
         sessions = self.sessions_by_symbol.get(session.symbol)
@@ -82,29 +86,42 @@ class SymbolStreamHub:
         sessions.discard(session)
         if sessions:
             return
-        task = self.tasks.pop(session.symbol, None)
+        self.sessions_by_symbol.pop(session.symbol, None)
+        if self.sessions_by_symbol:
+            return
+        task = self.tasks.pop("__global__", None)
         if task:
             task.cancel()
-        self.sessions_by_symbol.pop(session.symbol, None)
 
-    async def _listen_symbol(self, symbol: str) -> None:
+    async def _listen_global(self) -> None:
+        if self.redis is None:
+            await self._idle_until_cancelled()
+            return
         pubsub = self.redis.pubsub(ignore_subscribe_messages=True)
-        pubsub.subscribe(self.keys.market_events_symbol(symbol), self.keys.market_events())
+        pubsub.subscribe(self.keys.market_events())
         try:
             while True:
-                message = await asyncio.to_thread(pubsub.get_message, timeout=1.0)
+                message = await asyncio.to_thread(pubsub.get_message, timeout=max(0.1, self.poll_seconds))
                 event = parse_pubsub_event(message)
                 if event:
-                    await self._broadcast(symbol, event)
-                    continue
-                await self._broadcast_latest_redis_live_event(symbol)
-                await asyncio.sleep(0.25)
+                    await self._broadcast_event(event)
+                await self._broadcast_latest_redis_live_events()
         except asyncio.CancelledError:
             return
         finally:
             pubsub.close()
 
+    async def _idle_until_cancelled(self) -> None:
+        try:
+            while True:
+                await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            return
+
     async def _broadcast_latest_redis_live_event(self, symbol: str) -> None:
+        if self.redis is not None:
+            await self._broadcast_latest_redis_live_events({symbol})
+            return
         intervals = sorted({session.interval for session in self.sessions_by_symbol.get(symbol, set())})
         for interval in intervals:
             live_event = self.provider.redis_provider.live_event(symbol, interval)
@@ -124,17 +141,75 @@ class SymbolStreamHub:
             self.last_markers[marker_key] = marker
             await self._broadcast(symbol, event)
 
+    async def _broadcast_latest_redis_live_events(self, symbols: set[str] | None = None) -> None:
+        active = {
+            symbol: sorted({session.interval for session in sessions})
+            for symbol, sessions in self.sessions_by_symbol.items()
+            if sessions and (symbols is None or symbol in symbols)
+        }
+        if not active or self.redis is None:
+            return
+        events = await asyncio.to_thread(self._read_latest_live_events_batch, active)
+        for event in events:
+            await self._broadcast_event(event)
+
+    def _read_latest_live_events_batch(self, active: dict[str, list[str]]) -> list[dict[str, Any]]:
+        pipeline = self.redis.pipeline()
+        operations: list[tuple[str, str, str | None]] = []
+        for symbol, intervals in active.items():
+            for interval in intervals:
+                pipeline.get(self.keys.live_candle(symbol, interval))
+                operations.append(("candle", symbol, interval))
+            pipeline.hgetall(self.keys.live_trade(symbol))
+            operations.append(("trade", symbol, None))
+            pipeline.get(self.keys.live_quote(symbol))
+            operations.append(("quote", symbol, None))
+        try:
+            values = pipeline.execute()
+        except Exception:
+            return []
+        events: list[dict[str, Any]] = []
+        for operation, value in zip(operations, values):
+            kind, symbol, interval = operation
+            event = self._event_from_live_value(kind, symbol, interval, value)
+            if event:
+                events.append(event)
+        return events
+
+    def _event_from_live_value(self, kind: str, symbol: str, interval: str | None, value: Any) -> dict[str, Any] | None:
+        if kind == "candle":
+            candle = parse_json_value(value)
+            if not candle or not live_candle_is_fresh(candle):
+                return None
+            return websocket_event("LIVE_CANDLE_UPDATE", symbol, interval or candle.get("interval") or "1m", candle)
+        if kind == "trade" and isinstance(value, dict) and value:
+            return {"type": "LIVE_TRADE_UPDATE", "symbol": symbol, "interval": "trades", "data": value}
+        if kind == "quote":
+            quote = parse_json_value(value)
+            if quote:
+                return {"type": "LIVE_QUOTE_UPDATE", "symbol": symbol, "interval": "quotes", "data": quote}
+        return None
+
     def _live_trade_quote_events(self, symbol: str) -> list[dict[str, Any]]:
         events = []
         live_trade = getattr(self.provider.redis_provider, "live_trade", None)
         live_quote = getattr(self.provider.redis_provider, "live_quote", None)
         trade = live_trade(symbol) if callable(live_trade) else None
         if trade:
-            events.append({"type": "LIVE_TRADE_UPDATE", "symbol": symbol, "data": trade})
+            events.append({"type": "LIVE_TRADE_UPDATE", "symbol": symbol, "interval": "trades", "data": trade})
         quote = live_quote(symbol) if callable(live_quote) else None
         if quote:
-            events.append({"type": "LIVE_QUOTE_UPDATE", "symbol": symbol, "data": quote})
+            events.append({"type": "LIVE_QUOTE_UPDATE", "symbol": symbol, "interval": "quotes", "data": quote})
         return events
+
+    async def _broadcast_event(self, event: dict[str, Any]) -> None:
+        symbol = event.get("symbol")
+        if symbol == "_MARKET":
+            for subscribed_symbol in list(self.sessions_by_symbol):
+                await self._broadcast(subscribed_symbol, event)
+            return
+        if isinstance(symbol, str):
+            await self._broadcast(symbol, event)
 
     async def _broadcast(self, symbol: str, event: dict[str, Any]) -> None:
         marker = event_marker(event)
@@ -161,12 +236,30 @@ def parse_pubsub_event(message: dict | None) -> dict | None:
     if not message or message.get("type") != "message":
         return None
     data = message.get("data")
+    if isinstance(data, bytes):
+        data = data.decode("utf-8")
     if not isinstance(data, str):
         return None
     try:
         return json.loads(data)
     except json.JSONDecodeError:
         return None
+
+
+def parse_json_value(value: Any) -> dict[str, Any] | None:
+    if not value:
+        return None
+    if isinstance(value, bytes):
+        value = value.decode("utf-8")
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 def event_marker(event: dict | None) -> str | None:
@@ -193,6 +286,14 @@ def event_marker(event: dict | None) -> str | None:
             data.get("volume"),
         )
     )
+
+
+def read_positive_float_env(name: str, default: float) -> float:
+    try:
+        value = float(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
 
 
 _hub: SymbolStreamHub | None = None

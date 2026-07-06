@@ -127,9 +127,16 @@ Then verify the serving side uses the same namespace:
 ```bash
 redis-cli -u "$REDIS_URL" GET "gops:market:on-demand:v1:live:candle:NVDA:1m"
 curl -fsS "$GOPS_API_BASE_URL/api/charts/candles?symbol=NVDA&interval=1m&limit=20"
+curl -fsS "$GOPS_API_BASE_URL/api/monitor/market-data/realtime?symbol=NVDA&interval=1m"
 ```
 
-The required path is `Alpaca -> market.input.realtime.* Kafka -> Python processor feed guard -> Redis/market.layer.* Kafka -> ClickHouse/S3 final -> API/WebSocket -> browser`.
+The required path is `Alpaca -> market.input.realtime.* Kafka -> Python processor feed guard -> Redis live candle/trade/quote + market.layer.* Kafka -> ClickHouse/S3 final -> API/WebSocket -> browser`.
+The chart page keeps the currently viewed symbol in the active realtime cohort
+through `POST /api/charts/active-symbol`; that heartbeat is independent from the
+visible interval and from whether the browser currently opens an intraday
+WebSocket. The API WebSocket hub uses one global Redis `market.events` listener
+and batched Redis live reads for active sessions; do not reintroduce one Redis
+pubsub listener per symbol.
 During closed market hours, use controlled replay and local live-path tracing for debugging. Keep a market-hours AWS smoke as an out-of-band production/live-market verification item unless the user explicitly reopens direct AWS verification.
 
 ## Coverage Repair

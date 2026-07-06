@@ -150,6 +150,8 @@ LIVE_TRADE_TTL_SECONDS
 LIVE_CANDLE_STALE_SECONDS
 SYMBOL_LIVE_PRICE_STALE_SECONDS
 SYMBOL_REDIS_INTRADAY_STALE_SECONDS
+ACTIVE_CHART_TTL_SECONDS
+REALTIME_REDIS_POLL_SECONDS
 ```
 
 `PROCESSOR_RECOVERY_SYMBOLS` is optional. Keep it empty unless an incident repair
@@ -160,11 +162,23 @@ operator explicitly enables it.
 `PROCESSOR_RECOVERY_CLICKHOUSE_ENABLED=false` by default. Keep Redis-first recovery on by default; enable ClickHouse recovery only when the processor should rebuild missing startup state from deterministic canonical `1m`/`1D` rows and ClickHouse is known healthy.
 
 `COMPONENT_HEALTH_TTL_SECONDS` controls how long Redis keeps lightweight component freshness heartbeats such as `pipeline:health:market-processor`.
+The processor also writes scoped health keys such as
+`pipeline:health:market-processor:symbol:NVDA` and
+`pipeline:health:market-processor:feed:sip` so one noisy feed or symbol does not
+hide another symbol's live-path diagnosis.
 
 `KAFKA_TICK_FANOUT_INTERVALS` should normally stay `1m` in AWS/EKS. The
 processor derives 5m, 10m, 1D, 1W, and 1M live candles from the 1m stream, so
 consuming every tick fanout topic in the same processor creates avoidable lag.
 Use `all` only when separate interval-specific processors are deployed.
+
+`ACTIVE_CHART_TTL_SECONDS` keeps the symbol currently open in the chart inside
+the explicit realtime cohort even when the visible chart interval is 1D, 1W, or
+1M. WebSocket delivery can still be interval-specific, but trades/quotes
+subscription state must not depend on whether an intraday socket is open.
+`REALTIME_REDIS_POLL_SECONDS` controls the API WebSocket hub's Redis batch poll
+period. The hub uses one global `market.events` listener plus batched live
+candle/trade/quote Redis reads instead of one Redis pubsub listener per symbol.
 
 `LIVE_CANDLE_TTL_SECONDS` and `LIVE_TRADE_TTL_SECONDS` keep Redis live state
 short-lived. AWS/EKS defaults to `180` seconds so a thinly traded symbol cannot

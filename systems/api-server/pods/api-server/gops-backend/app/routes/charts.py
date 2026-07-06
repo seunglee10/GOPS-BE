@@ -15,11 +15,14 @@ except Exception:
             return kwargs["default_factory"]()
         return default
 
-from app.auth.dependencies import require_current_user
+from app.auth.dependencies import optional_current_user, require_current_user
 from app.auth.models import AuthenticatedUser
+from app.market_data.realtime.active_symbols import ActiveSymbolManager
 from app.market_data.query.service import get_query_service
 from app.services.alfaka_market_data import (
+    get_market_data_provider,
     hot_symbol_summaries,
+    normalize_market_symbol,
     ranking_symbol_summaries,
     replace_portfolio_subscription_symbols,
     replace_watchlist_symbols,
@@ -59,6 +62,12 @@ class SymbolListRequestBody(BaseModel):
     symbols: list[str] = Field(default_factory=list)
 
 
+class ActiveChartHeartbeatBody(BaseModel):
+    symbol: str = Field(min_length=1, max_length=12)
+    sessionId: str | None = Field(default=None, max_length=120)
+    ttlSeconds: int | None = Field(default=None, ge=15, le=300)
+
+
 @router.get("/api/charts/candles")
 def chart_candles(
     symbol: str = Query(min_length=1, max_length=12),
@@ -85,6 +94,32 @@ def chart_candles(
         raise
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Market data provider failed: {exc}") from exc
+
+
+@router.post("/api/charts/active-symbol")
+def chart_active_symbol_heartbeat(
+    body: ActiveChartHeartbeatBody,
+    user: AuthenticatedUser | None = Depends(optional_current_user),
+) -> dict[str, Any]:
+    try:
+        symbol = normalize_market_symbol(body.symbol)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    provider = get_market_data_provider()
+    redis_client = getattr(getattr(provider, "redis_provider", None), "redis", None)
+    if redis_client is None:
+        raise HTTPException(status_code=503, detail="Realtime subscription Redis is unavailable.")
+    manager = ActiveSymbolManager(redis_client, ttl_seconds=body.ttlSeconds)
+    session_id = body.sessionId or "chart-active-http"
+    user_id = user.sub if user else "anonymous"
+    manager.refresh(user_id, session_id, symbol)
+    return {
+        "symbol": symbol,
+        "sessionId": session_id,
+        "ttlSeconds": manager.ttl_seconds,
+        "layers": ["trades", "quotes"],
+        "pendingReconcile": True,
+    }
 
 
 @router.post("/api/charts/backfill")

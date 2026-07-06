@@ -795,20 +795,39 @@ def quarantine_feed_payload(redis_client, redis_keys, feed_profile, symbol, enve
 
 def write_processor_health(redis_client, redis_keys, envelope, result):
     try:
+        health_fields = {
+            "status": "ok",
+            "lastResult": result,
+            "lastChannel": envelope.get("channel"),
+            "lastSymbol": envelope.get("symbol") or (envelope.get("raw") or {}).get("S"),
+            "lastEventTime": envelope.get("eventTime") or (envelope.get("raw") or {}).get("t"),
+            "lastFeed": envelope.get("feed"),
+            "lastFeedProfile": envelope.get("feedProfile"),
+            "lastMarketSession": envelope.get("marketSession"),
+            "lastSourceEventId": envelope.get("sourceEventId"),
+        }
         write_component_health(
             redis_client,
             redis_keys,
             "market-processor",
-            status="ok",
-            lastResult=result,
-            lastChannel=envelope.get("channel"),
-            lastSymbol=envelope.get("symbol") or (envelope.get("raw") or {}).get("S"),
-            lastEventTime=envelope.get("eventTime") or (envelope.get("raw") or {}).get("t"),
-            lastFeed=envelope.get("feed"),
-            lastFeedProfile=envelope.get("feedProfile"),
-            lastMarketSession=envelope.get("marketSession"),
-            lastSourceEventId=envelope.get("sourceEventId"),
+            **health_fields,
         )
+        symbol = health_fields.get("lastSymbol")
+        if symbol:
+            write_component_health(
+                redis_client,
+                redis_keys,
+                f"market-processor:symbol:{str(symbol).upper()}",
+                **health_fields,
+            )
+        feed_profile = health_fields.get("lastFeedProfile")
+        if feed_profile:
+            write_component_health(
+                redis_client,
+                redis_keys,
+                f"market-processor:feed:{str(feed_profile).lower()}",
+                **health_fields,
+            )
     except Exception as exc:
         print(f"Processor health heartbeat write skipped: error={exc}", flush=True)
 

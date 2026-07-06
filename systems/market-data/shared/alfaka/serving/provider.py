@@ -55,7 +55,7 @@ class MarketDataProvider:
                 to_time=to_time,
             ) else None
         coverage = None
-        if len(redis_candles) >= query_limit:
+        if len(redis_candles) >= query_limit and redis_recent_window_is_current(redis_candles, clickhouse_from_time, range_query):
             merged_redis = merge_candles(redis_candles, [live_candle] if live_candle else [])
             payload = snapshot(symbol=symbol, interval=interval, candles=attach_moving_averages(merged_redis, windows=ma_windows)[-limit:])
             payload["_sourceTrace"] = {
@@ -321,6 +321,18 @@ def coverage_from_loaded_candles(candles):
         "availableFrom": candles[0].get("timestamp"),
         "availableTo": candles[-1].get("timestamp"),
     }
+
+
+def redis_recent_window_is_current(candles, target_from_time, range_query):
+    if range_query or not target_from_time:
+        return True
+    if not candles:
+        return False
+    newest = parse_iso_time(candles[-1].get("timestamp"))
+    target = parse_iso_time(target_from_time)
+    if not newest or not target:
+        return True
+    return newest >= target
 
 
 def has_more_before_target(oldest, available_from, target_range_from):

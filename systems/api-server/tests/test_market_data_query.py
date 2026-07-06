@@ -1625,6 +1625,86 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(payload["subscription"]["symbol"], "AAPL")
         self.assertEqual(subscriptions["symbols"][0]["layers"], ["candles", "quotes", "trades"])
 
+    def test_active_chart_heartbeat_writes_source_without_websocket(self):
+        fake_redis = FakeMonitorRedis()
+        fake_provider = types.SimpleNamespace(redis_provider=types.SimpleNamespace(redis=fake_redis))
+        previous_provider = chart_routes.get_market_data_provider
+        chart_routes.get_market_data_provider = lambda: fake_provider
+        try:
+            payload = chart_routes.chart_active_symbol_heartbeat(
+                chart_routes.ActiveChartHeartbeatBody(symbol="mlm", sessionId="panel-1", ttlSeconds=45),
+                user=None,
+            )
+        finally:
+            chart_routes.get_market_data_provider = previous_provider
+
+        from alfaka.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
+
+        self.assertEqual(payload["symbol"], "MLM")
+        self.assertTrue(payload["pendingReconcile"])
+        self.assertIn("anonymous", fake_redis.sets["gops:market:on-demand:v1:subscription:users:active-chart"])
+        self.assertEqual(
+            fake_redis.hashes["gops:market:on-demand:v1:user:anonymous:active-chart:panel-1"]["symbol"],
+            "MLM",
+        )
+
+        RealtimeSubscriptionCohortService(fake_redis).reconcile()
+        self.assertEqual(fake_redis.sets["gops:market:on-demand:v1:subscription:symbols"], {"MLM"})
+        self.assertEqual(
+            fake_redis.hashes["gops:market:on-demand:v1:subscription:symbol:MLM"]["sources"],
+            "active-chart",
+        )
+
+    def test_realtime_monitor_reports_symbol_live_age_and_scoped_health(self):
+        fake_redis = FakeMonitorRedis()
+        keys = __import__("alfaka.common.redis_keys", fromlist=["RedisKeyBuilder"]).RedisKeyBuilder()
+        fake_redis.sadd(keys.subscription_symbols(), "MLM")
+        fake_redis.sadd(keys.active_symbols(), "MLM")
+        fake_redis.hset(keys.subscription_symbol("MLM"), mapping={
+            "symbol": "MLM",
+            "enabled": "true",
+            "layers": "quotes,trades",
+            "sources": "active-chart",
+            "ttlSeconds": "45",
+        })
+        fake_redis.hset(keys.live_trade("MLM"), mapping={
+            "symbol": "MLM",
+            "price": "547.10",
+            "timestamp": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+        })
+        fake_redis.set(keys.live_quote("MLM"), json.dumps({
+            "symbol": "MLM",
+            "bidPrice": 547.0,
+            "askPrice": 547.2,
+            "updatedAt": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+        }))
+        fake_redis.set(keys.live_candle("MLM", "1m"), json.dumps({
+            "symbol": "MLM",
+            "interval": "1m",
+            "close": 547.1,
+            "updatedAt": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+        }))
+        fake_redis.set(keys.component_health("market-processor:symbol:MLM"), json.dumps({
+            "component": "market-processor:symbol:MLM",
+            "status": "ok",
+            "lastSymbol": "MLM",
+            "lastFeedProfile": "sip",
+        }))
+        service_mod = __import__("app.market_data.monitor.service", fromlist=["MarketDataMonitorService"])
+        service = service_mod.MarketDataMonitorService(redis_client=fake_redis)
+        with mock.patch.dict(os.environ, {"KAFKA_BOOTSTRAP_SERVERS": ""}):
+            payload = service.realtime(symbol="MLM", interval="1m")
+
+        self.assertEqual(payload["subscriptionVersion"], "0")
+        self.assertEqual(payload["symbol"]["symbol"], "MLM")
+        self.assertTrue(payload["symbol"]["subscribed"])
+        self.assertTrue(payload["symbol"]["liveTradePresent"])
+        self.assertTrue(payload["symbol"]["liveQuotePresent"])
+        self.assertTrue(payload["symbol"]["liveCandlePresent"])
+        self.assertIsNotNone(payload["symbol"]["liveCandleAgeSeconds"])
+        self.assertEqual(payload["symbolProcessorHealth"]["lastSymbol"], "MLM")
+        self.assertFalse(payload["kafka"]["enabled"])
+
     def test_monitor_subscription_rejects_quotes_without_trades(self):
         fake_redis = FakeMonitorRedis()
         previous = monitor_routes.get_monitor_service
