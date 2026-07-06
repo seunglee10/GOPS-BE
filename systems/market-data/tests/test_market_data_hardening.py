@@ -5426,6 +5426,65 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(payload["candles"][0]["close"], 101.25)
         self.assertFalse(payload["candles"][0]["isClosed"])
 
+    def test_provider_includes_redis_live_candles_in_from_to_snapshot(self):
+        start = datetime(2026, 7, 6, 13, 30, tzinfo=timezone.utc)
+        clickhouse_candles = [
+            {
+                "timestamp": (start + timedelta(minutes=minute)).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                "open": 100 + minute,
+                "high": 101 + minute,
+                "low": 99 + minute,
+                "close": 100 + minute,
+                "volume": 1000 + minute,
+                "isClosed": True,
+                "marketSession": "regular",
+            }
+            for minute in range(10)
+        ]
+        redis_candles = [
+            {
+                "timestamp": (start + timedelta(minutes=minute)).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                "open": 100 + minute,
+                "high": 101 + minute,
+                "low": 99 + minute,
+                "close": 100 + minute,
+                "volume": 1000 + minute,
+                "isClosed": True,
+                "marketSession": "regular",
+            }
+            for minute in range(10, 29)
+        ]
+        live_candle = {
+            "timestamp": (start + timedelta(minutes=29)).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+            "open": 129,
+            "high": 130,
+            "low": 128,
+            "close": 129.5,
+            "volume": 2000,
+            "isClosed": False,
+            "marketSession": "regular",
+        }
+        provider = MarketDataProvider(
+            redis_provider=FakeRedisProvider(candles=redis_candles, live_candle=live_candle),
+            clickhouse_provider=RecordingRangeClickHouseProvider(candles=clickhouse_candles),
+        )
+
+        payload = provider.candle_snapshot(
+            "AAPL",
+            "1m",
+            30,
+            from_time="2026-07-06T13:30:00.000Z",
+            to_time="2026-07-06T13:59:00.000Z",
+            ma_windows=(),
+        )
+
+        self.assertEqual(len(payload["candles"]), 30)
+        self.assertEqual(payload["candles"][0]["timestamp"], "2026-07-06T13:30:00.000Z")
+        self.assertEqual(payload["candles"][-1]["timestamp"], "2026-07-06T13:59:00.000Z")
+        self.assertEqual(payload["candles"][-1]["close"], 129.5)
+        self.assertTrue(payload["_sourceTrace"]["redis"]["checked"])
+        self.assertEqual(payload["_sourceTrace"]["redis"]["rowCount"], 20)
+
     def test_provider_filters_weekend_stock_candles_from_serving_snapshot(self):
         candles = [
             {

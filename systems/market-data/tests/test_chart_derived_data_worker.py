@@ -93,6 +93,7 @@ class FakeProvider:
             "symbol": symbol,
             "interval": interval,
             "limit": limit,
+            "before": before,
             "fromTime": from_time,
             "toTime": to_time,
             "maWindows": ma_windows,
@@ -135,6 +136,40 @@ class FailingVolumeProfileProvider(FakeProvider):
         raise RuntimeError("volume profile candle source unavailable")
 
 
+class WarmupIndicatorProvider:
+    def __init__(self):
+        self.calls = []
+
+    def candle_snapshot(self, symbol, interval, limit, before=None, from_time=None, to_time=None, ma_windows=None):
+        self.calls.append({
+            "symbol": symbol,
+            "interval": interval,
+            "limit": limit,
+            "before": before,
+            "fromTime": from_time,
+            "toTime": to_time,
+            "maWindows": ma_windows,
+        })
+        if before:
+            start = datetime(2026, 7, 2, 19, 40, tzinfo=timezone.utc)
+            offset = 0
+        else:
+            start = datetime(2026, 7, 6, 13, 30, tzinfo=timezone.utc)
+            offset = 20
+        candles = []
+        for index in range(limit):
+            close = offset + index + 1
+            candles.append({
+                "timestamp": (start + timedelta(minutes=index)).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                "open": close - 0.5,
+                "high": close + 1,
+                "low": close - 1,
+                "close": close,
+                "volume": 100 + index,
+            })
+        return {"symbol": symbol, "interval": interval, "source": "unit", "feed": "test", "dataStatus": "ready", "candles": candles}
+
+
 class ChartDerivedDataWorkerTest(unittest.TestCase):
     def test_artifact_store_writes_clickhouse_json_time_format(self):
         client = FakeClickHouseArtifactClient()
@@ -173,10 +208,34 @@ class ChartDerivedDataWorkerTest(unittest.TestCase):
 
         self.assertEqual(payload["symbol"], "AAPL")
         self.assertEqual([item["id"] for item in payload["indicators"]], ["sma:5", "ema:5", "rsi:14"])
-        self.assertEqual(provider.calls[0]["limit"], 45)
-        self.assertEqual(provider.calls[0]["fromTime"], "2026-06-25T13:00:00.000Z")
+        self.assertEqual(provider.calls[0]["limit"], 15)
+        self.assertEqual(provider.calls[0]["before"], "2026-06-25T13:30:00.000Z")
+        self.assertEqual(provider.calls[1]["limit"], 30)
+        self.assertEqual(provider.calls[1]["fromTime"], "2026-06-25T13:30:00.000Z")
         self.assertEqual(read_json_cache(redis_client, request["cacheKey"])["derived"]["state"], "ready")
         self.assertEqual(artifact_store.rows[0][0]["requestHash"], request["requestHash"])
+
+    def test_indicator_request_uses_before_warmup_for_visible_range(self):
+        worker = load_worker_module()
+        provider = WarmupIndicatorProvider()
+        request = build_indicator_request(
+            symbol="AAPL",
+            interval="1m",
+            from_time="2026-07-06T13:30:00.000Z",
+            to_time="2026-07-06T13:39:00.000Z",
+            specs=indicator_specs_from_csv("sma:20"),
+            limit=10,
+        )
+
+        payload = worker.process_request(request, provider=provider, redis_client=FakeRedis(), artifact_store=FakeArtifactStore())
+
+        points = payload["series"]["sma:20"]
+        self.assertEqual(provider.calls[0]["before"], "2026-07-06T13:30:00.000Z")
+        self.assertEqual(provider.calls[0]["limit"], 20)
+        self.assertEqual(provider.calls[1]["fromTime"], "2026-07-06T13:30:00.000Z")
+        self.assertEqual(provider.calls[1]["limit"], 10)
+        self.assertEqual(points[0]["timestamp"], "2026-07-06T13:30:00.000Z")
+        self.assertIsNotNone(points[0]["value"])
 
     def test_volume_profile_request_materializes_request_artifact(self):
         worker = load_worker_module()

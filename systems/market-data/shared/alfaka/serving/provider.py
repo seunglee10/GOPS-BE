@@ -37,8 +37,21 @@ class MarketDataProvider:
         else:
             clickhouse_from_time = target_floor_from_time(interval, from_time, limit)
         range_query = bool(before or from_time or to_time)
-        redis_candles = [] if range_query else filter_stock_chart_candles(self.redis_provider.recent_candles(symbol, interval, query_limit))
-        live_candle = None if range_query else self._live_candle(symbol, interval)
+        redis_candles = filter_stock_chart_candles(self.redis_provider.recent_candles(symbol, interval, query_limit))
+        live_candle = self._live_candle(symbol, interval)
+        if range_query:
+            redis_candles = filter_candles_for_requested_window(
+                redis_candles,
+                before=before,
+                from_time=from_time,
+                to_time=to_time,
+            )
+            live_candle = live_candle if candle_in_requested_window(
+                live_candle,
+                before=before,
+                from_time=from_time,
+                to_time=to_time,
+            ) else None
         coverage = None
         if len(redis_candles) >= query_limit:
             merged_redis = merge_candles(redis_candles, [live_candle] if live_candle else [])
@@ -74,7 +87,7 @@ class MarketDataProvider:
         source = first_value(candles, "source", "alpaca")
         payload = snapshot(symbol=symbol, interval=interval, candles=candles, source=source, feed=feed)
         payload["_sourceTrace"] = {
-            "redis": {"checked": not range_query, "hit": len(redis_candles) > 0 or live_candle is not None, "rowCount": len(redis_candles) + len(live_group)},
+            "redis": {"checked": True, "hit": len(redis_candles) > 0 or live_candle is not None, "rowCount": len(redis_candles) + len(live_group)},
             "clickhouse": {"checked": True, "hit": len(clickhouse_candles) > 0, "rowCount": len(clickhouse_candles)},
         }
         return with_coverage_metadata(
@@ -201,6 +214,31 @@ def merge_candles(*groups):
             if timestamp:
                 by_timestamp[timestamp] = {**candle, "timestamp": timestamp}
     return [by_timestamp[key] for key in sorted(by_timestamp)]
+
+
+def filter_candles_for_requested_window(candles, before=None, from_time=None, to_time=None):
+    return [
+        candle for candle in candles
+        if candle_in_requested_window(candle, before=before, from_time=from_time, to_time=to_time)
+    ]
+
+
+def candle_in_requested_window(candle, before=None, from_time=None, to_time=None):
+    if not candle:
+        return False
+    timestamp = parse_iso_time(candle.get("timestamp") or candle.get("eventTime"))
+    if not timestamp:
+        return False
+    before_time = parse_iso_time(before)
+    start_time = parse_iso_time(from_time)
+    end_time = parse_iso_time(to_time)
+    if before_time and timestamp >= before_time:
+        return False
+    if start_time and timestamp < start_time:
+        return False
+    if end_time and timestamp > end_time:
+        return False
+    return True
 
 
 def with_coverage_metadata(payload, coverage, requested_limit, before=None, from_time=None, to_time=None):

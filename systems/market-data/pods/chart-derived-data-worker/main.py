@@ -126,15 +126,37 @@ def compute_indicator_request(request: dict[str, Any], *, provider: Any) -> dict
     specs = indicator_specs_from_csv((request.get("parameters") or {}).get("layers"))
     lookback = indicator_required_lookback_bars(specs)
     fetch_limit = requested_limit + lookback
-    fetch_from_time = indicator_fetch_from_time(interval, from_time, lookback)
-    candle_payload = provider_candle_snapshot(
-        provider,
-        symbol,
-        interval,
-        fetch_limit,
-        from_time=fetch_from_time,
-        to_time=to_time,
-    )
+    if from_time and lookback > 0:
+        warmup_payload = provider_candle_snapshot(
+            provider,
+            symbol,
+            interval,
+            lookback,
+            before=from_time,
+            from_time=None,
+            to_time=None,
+        )
+        range_payload = provider_candle_snapshot(
+            provider,
+            symbol,
+            interval,
+            requested_limit,
+            before=None,
+            from_time=from_time,
+            to_time=to_time,
+        )
+        candle_payload = merge_candle_payloads(warmup_payload, range_payload)
+    else:
+        fetch_from_time = indicator_fetch_from_time(interval, from_time, lookback)
+        candle_payload = provider_candle_snapshot(
+            provider,
+            symbol,
+            interval,
+            fetch_limit,
+            before=None,
+            from_time=fetch_from_time,
+            to_time=to_time,
+        )
     computed = compute_indicator_payload(
         candle_payload.get("candles") or [],
         specs,
@@ -171,6 +193,7 @@ def compute_volume_profile_request(request: dict[str, Any], *, provider: Any) ->
         symbol,
         interval,
         resolve_candle_limit(interval, request.get("limit")),
+        before=None,
         from_time=from_time,
         to_time=to_time,
     )
@@ -203,11 +226,36 @@ def compute_footprint_request(request: dict[str, Any], *, provider: Any) -> dict
     return result
 
 
-def provider_candle_snapshot(provider: Any, symbol: str, interval: str, limit: int, *, from_time: str | None, to_time: str | None) -> dict[str, Any]:
+def merge_candle_payloads(*payloads: dict[str, Any]) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    by_timestamp: dict[str, dict[str, Any]] = {}
+    for payload in payloads:
+        if not merged:
+            merged = dict(payload)
+        else:
+            merged.update({key: value for key, value in payload.items() if key != "candles"})
+        for candle in payload.get("candles") or []:
+            timestamp = str(candle.get("timestamp") or "")
+            if timestamp:
+                by_timestamp[timestamp] = candle
+    merged["candles"] = [by_timestamp[key] for key in sorted(by_timestamp)]
+    return merged
+
+
+def provider_candle_snapshot(
+    provider: Any,
+    symbol: str,
+    interval: str,
+    limit: int,
+    *,
+    before: str | None,
+    from_time: str | None,
+    to_time: str | None,
+) -> dict[str, Any]:
     try:
-        return provider.candle_snapshot(symbol, interval, limit, from_time=from_time, to_time=to_time, ma_windows=())
+        return provider.candle_snapshot(symbol, interval, limit, before=before, from_time=from_time, to_time=to_time, ma_windows=())
     except TypeError:
-        return provider.candle_snapshot(symbol, interval, limit, from_time=from_time, to_time=to_time)
+        return provider.candle_snapshot(symbol, interval, limit, before=before, from_time=from_time, to_time=to_time)
 
 
 def publish_dlq(request: dict[str, Any], error: str, producer: Any | None) -> None:
