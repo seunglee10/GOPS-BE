@@ -566,6 +566,9 @@ Provider and LLM:
 ```text
 OPENAI_API_KEY
 OPENAI_MODEL
+AGENT_OPERATION_PLANNER_PROVIDER
+AGENT_OPERATION_PLANNER_MODEL
+AGENT_OPERATION_PLANNER_TIMEOUT_SECONDS
 AGENT_FINANCIAL_FINAL_ANSWER_PROVIDER
 AGENT_FINANCIAL_SYNTHESIZER_TIMEOUT_SECONDS
 AGENT_FINANCIAL_FINAL_ANSWER_CACHE_ENABLED
@@ -587,6 +590,11 @@ facts and deterministic financial signals into user-facing Korean prose. The
 generated financial report is cached in Redis under
 `gops:agent:financial-final-answer:v1:{SYMBOL}:{digest}` when Redis is
 available.
+
+Interactive OperationIR planner fallback is enabled with
+`AGENT_OPERATION_PLANNER_PROVIDER=openai`. Leave it unset for deterministic-only
+operation extraction. When enabled, only low-confidence or ambiguous operation
+requests call the Responses API with JSON schema output.
 
 Backpressure and deadline:
 

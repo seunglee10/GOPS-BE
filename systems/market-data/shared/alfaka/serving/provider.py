@@ -3,6 +3,7 @@
 # 결과: GOPS CandleSnapshot 형식으로 반환합니다.
 import logging
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from alfaka.alpaca.feed_profiles import active_extended_session_window, market_session_for_timestamp
 from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
@@ -18,6 +19,7 @@ from alfaka.serving.volume_profile import compute_volume_profile_payload
 
 logger = logging.getLogger(__name__)
 TARGET_FLOOR_TOLERANCE = timedelta(days=3)
+MARKET_TIMEZONE = ZoneInfo("America/New_York")
 
 
 class MarketDataProvider:
@@ -210,10 +212,30 @@ def merge_candles(*groups):
         for candle in group:
             if not candle:
                 continue
-            timestamp = canonical_utc_timestamp(candle.get("timestamp"))
+            timestamp = merge_timestamp_key(candle)
             if timestamp:
                 by_timestamp[timestamp] = {**candle, "timestamp": timestamp}
     return [by_timestamp[key] for key in sorted(by_timestamp)]
+
+
+def merge_timestamp_key(candle):
+    timestamp = canonical_utc_timestamp(candle.get("timestamp"))
+    if not timestamp:
+        return None
+    try:
+        interval = normalize_chart_interval(candle.get("interval", "1m"))
+    except ValueError:
+        interval = "1m"
+    if interval != "1D":
+        return timestamp
+    parsed = parse_iso_time(timestamp)
+    if not parsed:
+        return timestamp
+    if parsed.hour == 0 and parsed.minute == 0 and parsed.second == 0 and parsed.microsecond == 0:
+        market_day = datetime(parsed.year, parsed.month, parsed.day, tzinfo=MARKET_TIMEZONE)
+    else:
+        market_day = parsed.astimezone(MARKET_TIMEZONE).replace(hour=0, minute=0, second=0, microsecond=0)
+    return market_day.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
 def filter_candles_for_requested_window(candles, before=None, from_time=None, to_time=None):
@@ -226,7 +248,7 @@ def filter_candles_for_requested_window(candles, before=None, from_time=None, to
 def candle_in_requested_window(candle, before=None, from_time=None, to_time=None):
     if not candle:
         return False
-    timestamp = parse_iso_time(candle.get("timestamp") or candle.get("eventTime"))
+    timestamp = parse_iso_time(merge_timestamp_key(candle))
     if not timestamp:
         return False
     before_time = parse_iso_time(before)

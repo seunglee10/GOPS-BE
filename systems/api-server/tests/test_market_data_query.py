@@ -2224,6 +2224,29 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(records["MSFT"].source, "sec_companyfacts")
         self.assertEqual(records["MSFT"].periodEndDate, "2026-03-31")
 
+    def test_store_fundamentals_adapter_supplements_incomplete_redis_summary_from_clickhouse(self):
+        provider = FakeHeatmapProvider()
+        provider.redis_provider.redis.values["gops:fundamentals:summary:v1:MSFT"] = json.dumps({
+            "symbol": "MSFT",
+            "source": "sec_companyfacts",
+            "as_of": "2026-03-31",
+            "metrics": [{
+                "metric": "revenue",
+                "value": 100000,
+                "fiscalPeriod": "Q1",
+                "periodEnd": "2026-03-31",
+                "filedAt": "2026-04-25",
+            }],
+        })
+
+        records = StoreFundamentalsAdapter(provider=provider).latest_for_symbols(["MSFT"])
+
+        self.assertEqual(records["MSFT"].revenue, 100000)
+        self.assertEqual(records["MSFT"].sharesOutstanding, 7500)
+        self.assertEqual(records["MSFT"].eps, 4)
+        self.assertEqual(records["MSFT"].totalEquity, 50000)
+        self.assertIn("sec_companyfacts", records["MSFT"].source)
+
     def test_store_fundamentals_adapter_returns_sec_financial_series(self):
         series = StoreFundamentalsAdapter(provider=FakeHeatmapProvider()).financial_series("MSFT")
 
@@ -2236,6 +2259,16 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(series[0].freeCashFlow, 25000)
         self.assertEqual(series[0].source, "sec")
 
+    def test_store_fundamentals_adapter_returns_earnings_series_with_yahoo_estimates(self):
+        series = StoreFundamentalsAdapter(provider=FakeHeatmapProvider()).earnings_series("MSFT")
+
+        self.assertEqual(series[0].period, "2026Q1")
+        self.assertEqual(series[0].actualEps, 4)
+        self.assertEqual(series[0].estimatedEps, 4.5)
+        self.assertEqual(series[0].actualRevenue, 100000)
+        self.assertEqual(series[0].estimatedRevenue, 95000)
+        self.assertEqual(series[0].estimateSource, "yahoo")
+
     def test_query_service_returns_sec_financial_series_payload(self):
         payload = MarketDataQueryService(provider=FakeHeatmapProvider()).financial_series("MSFT", years=3, period="quarterly")
 
@@ -2245,6 +2278,14 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(payload["items"][0]["period"], "2026Q1")
         self.assertEqual(payload["items"][0]["revenue"], 100000)
         self.assertEqual(payload["items"][0]["freeCashFlow"], 25000)
+
+    def test_query_service_returns_earnings_series_payload(self):
+        payload = MarketDataQueryService(provider=FakeHeatmapProvider()).earnings_series("MSFT", years=3)
+
+        self.assertEqual(payload["source"], "sec-yahoo")
+        self.assertEqual(payload["symbol"], "MSFT")
+        self.assertEqual(payload["items"][0]["actualEps"], 4)
+        self.assertEqual(payload["items"][0]["estimatedEps"], 4.5)
 
     def test_fundamentals_adapter_accepts_symbol_keyed_latest_payload(self):
         records = records_from_payload({

@@ -119,6 +119,8 @@ permissive하게 유지한다.
   "messages": [{"role": "user", "content": "NVDA 분석해줘"}],
   "chartContext": {},
   "layoutContext": {},
+  "references": [],
+  "uiContext": {},
   "chartAction": null,
   "chartTargetSymbol": null,
   "chartPlacementIntent": null,
@@ -132,6 +134,11 @@ permissive하게 유지한다.
 
 백엔드는 모르는 agent context field를 임의로 제거하지 말고 worker envelope로
 전달해야 한다.
+
+`references`와 `uiContext`는 worker payload에 보존되어 agent runtime의
+`OperationIR` extractor로 전달된다. reference가 포함된 분석 요청은 선택한 뉴스,
+차트 봉, 차트 구간이 cache key에 반영되어야 하며, 같은 자연어 질문이라도 anchor가
+다르면 cached analysis를 재사용하지 않는다.
 
 ## Entity Resolve Shortcut
 
@@ -291,7 +298,14 @@ CLICKHOUSE_PASSWORD
 GRAPHDB_SPARQL_URL
 GRAPHDB_REPOSITORY
 OPENAI_API_KEY
+AGENT_OPERATION_PLANNER_PROVIDER
+AGENT_OPERATION_PLANNER_MODEL
+AGENT_OPERATION_PLANNER_TIMEOUT_SECONDS
 ```
+
+`AGENT_OPERATION_PLANNER_PROVIDER=openai` enables the slow-path structured
+OperationIR planner for low-confidence or ambiguous interactive requests. Keep it
+unset to run only deterministic extraction.
 
 ## Backend Reference Files
 

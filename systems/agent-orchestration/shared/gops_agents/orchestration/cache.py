@@ -25,6 +25,8 @@ def analysis_cache_key_for_state(state: dict[str, Any]) -> str | None:
         "routeMode": analysis_cache_route_mode(state),
         "events": [event.eventId for event in state.get("events", [])],
         "chartContext": chart_context_cache_payload(state["context"].chartContext, selected_roles),
+        "references": references_cache_payload(getattr(state["context"], "references", [])),
+        "operationIR": operation_ir_cache_payload(getattr(state["context"], "operationIR", {})),
         "newsSymbols": list(state.get("news_symbols", [])),
     }
     return analysis_cache_key(symbol=state["symbol"], payload=payload)
@@ -88,6 +90,47 @@ def chart_context_cache_payload(chart_context: dict[str, Any], selected_roles: l
     if "chart" not in selected_roles or not isinstance(chart_context, dict):
         return None
     return json.loads(json.dumps(chart_context, sort_keys=True, ensure_ascii=True, default=str))
+
+
+def references_cache_payload(references: Any) -> list[dict[str, Any]]:
+    if not isinstance(references, list):
+        return []
+    compact = []
+    for item in references:
+        if not isinstance(item, dict):
+            continue
+        data = item.get("data") if isinstance(item.get("data"), dict) else {}
+        compact.append({
+            "type": item.get("type"),
+            "sourcePanelId": item.get("sourcePanelId"),
+            "displayLabel": item.get("displayLabel"),
+            "symbol": data.get("symbol"),
+            "timestamp": data.get("timestamp") or data.get("publishedAt") or data.get("date") or data.get("from"),
+            "title": data.get("title"),
+            "summary": data.get("summary"),
+            "close": data.get("close"),
+        })
+    return json.loads(json.dumps(compact, sort_keys=True, ensure_ascii=True, default=str))
+
+
+def operation_ir_cache_payload(operation_ir: Any) -> dict[str, Any]:
+    if not isinstance(operation_ir, dict):
+        return {}
+    payload = {
+        "operations": [
+            {
+                "kind": item.get("kind"),
+                "type": item.get("type"),
+                "target": item.get("target"),
+                "requiredSources": item.get("requiredSources"),
+            }
+            for item in operation_ir.get("operations", [])
+            if isinstance(item, dict)
+        ],
+        "entities": operation_ir.get("entities") if isinstance(operation_ir.get("entities"), dict) else {},
+        "suggestedRoles": operation_ir.get("suggestedRoles") if isinstance(operation_ir.get("suggestedRoles"), list) else [],
+    }
+    return json.loads(json.dumps(payload, sort_keys=True, ensure_ascii=True, default=str))
 
 
 def has_order_or_account_terms(intent: str) -> bool:
