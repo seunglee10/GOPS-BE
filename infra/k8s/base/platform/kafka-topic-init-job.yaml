@@ -4,6 +4,7 @@ metadata:
   name: kafka-topic-init
   namespace: alfaka-market-data
 spec:
+  ttlSecondsAfterFinished: 86400
   backoffLimit: 6
   template:
     metadata:
@@ -11,6 +12,13 @@ spec:
         app: kafka-topic-init
     spec:
       restartPolicy: OnFailure
+      nodeSelector:
+        karpenter.sh/nodepool: batch
+      tolerations:
+        - key: gops.io/dedicated
+          operator: Equal
+          value: batch
+          effect: NoSchedule
       containers:
         - name: kafka-topic-init
           image: apache/kafka:3.9.0

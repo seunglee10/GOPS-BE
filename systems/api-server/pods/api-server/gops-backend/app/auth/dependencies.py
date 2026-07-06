@@ -33,6 +33,13 @@ def require_current_user(request: Request) -> AuthenticatedUser:
 
 
 def require_websocket_user(websocket: WebSocket) -> AuthenticatedUser:
+    user = optional_websocket_user(websocket)
+    if user is None:
+        raise WebSocketAuthRequired("authentication required")
+    return user
+
+
+def optional_websocket_user(websocket: WebSocket) -> AuthenticatedUser | None:
     config = AuthConfig.from_env()
     if not config.enabled:
         return AuthenticatedUser.dev()
@@ -40,8 +47,6 @@ def require_websocket_user(websocket: WebSocket) -> AuthenticatedUser:
         user = session_store_from_app(websocket.app, config).get_session(websocket.cookies.get(config.session_cookie_name))
     except (AuthConfigError, AuthUserError, SessionStoreError) as exc:
         raise WebSocketAuthUnavailable(str(exc)) from exc
-    if user is None:
-        raise WebSocketAuthRequired("authentication required")
     return user
 
 

@@ -128,7 +128,7 @@ select_services_for_path() {
     systems/market-data/pods/market-processor/* | systems/market-data/pods/feed-session-controller/* | systems/market-data/pods/subscription-controller/* | systems/market-data/jobs/symbol-registry-sync/* | systems/market-data/jobs/coverage-repair/*)
       add_service market-processor
       ;;
-    systems/market-data/pods/s3-sink/* | systems/market-data/pods/clickhouse-loader/* | systems/market-data/pods/news-intelligence-worker/* | systems/market-data/jobs/news-backfill/* | systems/market-data/jobs/news-intelligence-rebuild/*)
+    systems/market-data/pods/s3-sink/* | systems/market-data/pods/clickhouse-loader/* | systems/market-data/pods/news-intelligence-worker/* | systems/market-data/pods/news-daily-summary-worker/* | systems/market-data/jobs/news-backfill/* | systems/market-data/jobs/news-intelligence-rebuild/* | systems/market-data/jobs/news-daily-summary-rebuild/*)
       add_service market-storage
       ;;
     systems/order/shared/*)
@@ -166,7 +166,7 @@ select_services_for_path() {
     infra/docker/Dockerfile.gops-order-worker)
       add_service order-worker
       ;;
-    infra/k8s/base/platform/* | infra/k8s/overlays/aws-incluster-platform/*)
+    infra/k8s/base/platform/* | infra/k8s/overlays/aws-incluster-platform/* | infra/k8s/overlays/aws-incluster-app-rebuild/*)
       ;;
     infra/docker/* | infra/k8s/base/* | infra/k8s/base/stream-processor/* | infra/k8s/overlays/aws-incluster-app/* | infra/k8s/overlays/aws-incluster-app-ci/* | .github/workflows/deploy-dev.yml | scripts/aws/*)
       add_all_services
@@ -201,6 +201,7 @@ deployments="$(join_by_space "${SELECTED_DEPLOYMENTS[@]}")"
 has_services="false"
 smoke_frontend="false"
 smoke_backend="false"
+news_cache_rebuild="false"
 
 if [[ "${#SELECTED_KEYS[@]}" -gt 0 ]]; then
   has_services="true"
@@ -211,9 +212,13 @@ fi
 if [[ -n "${SELECTED[backend]:-}" ]]; then
   smoke_backend="true"
 fi
+if [[ -n "${SELECTED[market-storage]:-}" ]]; then
+  news_cache_rebuild="true"
+fi
 
 write_output "has_services" "${has_services}"
 write_output "services" "${services}"
 write_output "deployments" "${deployments}"
 write_output "smoke_frontend" "${smoke_frontend}"
 write_output "smoke_backend" "${smoke_backend}"
+write_output "news_cache_rebuild" "${news_cache_rebuild}"

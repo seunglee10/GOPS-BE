@@ -6,6 +6,7 @@ metadata:
   name: order-reconciler
   namespace: alfaka-market-data
 spec:
+  ttlSecondsAfterFinished: 86400
   backoffLimit: 1
   template:
     metadata:
@@ -13,6 +14,13 @@ spec:
         app: order-reconciler
     spec:
       restartPolicy: Never
+      nodeSelector:
+        karpenter.sh/nodepool: batch
+      tolerations:
+        - key: gops.io/dedicated
+          operator: Equal
+          value: batch
+          effect: NoSchedule
       serviceAccountName: alfaka-market-data-sa
       containers:
         - name: order-reconciler

@@ -67,6 +67,9 @@ class RedisKeyBuilder:
     def user_watchlist_symbols(self, user_id):
         return self.key(f"user:{user_id}:watchlist:symbols")
 
+    def user_watchlist_symbol_order(self, user_id):
+        return self.key(f"user:{user_id}:watchlist:symbol-order")
+
     def user_portfolio_symbols(self, user_id):
         return self.key(f"user:{user_id}:portfolio:symbols")
 
@@ -156,6 +159,9 @@ class RedisKeyBuilder:
 
     def news_daily_v2(self, locale, symbol):
         return self.key(f"news:v2:daily:{redis_locale(locale)}:{symbol}")
+
+    def news_daily_coverage_v2(self, locale, symbol):
+        return self.key(f"news:v2:daily:coverage:{redis_locale(locale)}:{symbol}")
 
     def market_status_latest(self):
         return self.key("market:status:latest")

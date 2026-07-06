@@ -197,6 +197,12 @@ panel의 symbol/interval/coverage 상태와 연결하지 않는다. 응답의 `r
 `cacheStatus`, `warning`, `items[]`를 사용해 자동 새로고침, stale 표시, 행별 가격과
 변동률을 렌더링한다.
 
+popular stocks panel은 `panelType="popularStocks"`/`kind="popular"`로 표현한다.
+현재 `gops-frontend`는 App이 이미 폴링 중인 `GET /api/market/heatmap?universe=sp500`
+items를 패널로 전달해 S&P500 거래대금순 Top10을 렌더링한다. 별도 heatmap 요청은
+추가하지 않고, 금액 표시는 `GET /api/market/indices`의 `KRW=X` 환율을 사용해
+조원/억원 단위로 환산한다.
+
 지원하지 않는 경우 정책:
 
 ```text

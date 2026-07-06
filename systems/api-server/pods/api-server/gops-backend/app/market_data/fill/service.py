@@ -20,7 +20,7 @@ from alfaka.serving.intervals import (
     source_interval_for,
 )
 from alfaka.serving.provider import requested_window_for_interval
-from alfaka.storage.clickhouse_loader import ClickHouseHttpClient
+from alfaka.storage.clickhouse_loader import ClickHouseHttpClient, should_ensure_schema_on_start
 from alfaka.storage.processed_s3_sink import flush_buffer
 from alfaka.storage.s3_manifest import DEFAULT_MANIFEST_PREFIX
 from alfaka.storage.s3_materializer import materialize_s3_processed_objects
@@ -328,7 +328,7 @@ class OnDemandFillService:
             user=os.getenv("CLICKHOUSE_USER", "alfaka"),
             password=os.getenv("CLICKHOUSE_PASSWORD", "alfaka"),
         )
-        if hasattr(self.clickhouse_client, "ensure_market_data_schema"):
+        if should_ensure_schema_on_start() and hasattr(self.clickhouse_client, "ensure_market_data_schema"):
             self.clickhouse_client.ensure_market_data_schema()
         return self.clickhouse_client
 

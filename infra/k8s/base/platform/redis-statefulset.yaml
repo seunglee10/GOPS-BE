@@ -23,6 +23,13 @@ spec:
       labels:
         app: redis
     spec:
+      nodeSelector:
+        karpenter.sh/nodepool: platform-core
+      tolerations:
+        - key: gops.io/dedicated
+          operator: Equal
+          value: platform-core
+          effect: NoSchedule
       containers:
         - name: redis
           image: redis:7-alpine
@@ -35,6 +42,10 @@ spec:
             - ""
             - --dir
             - /tmp
+            - --maxmemory
+            - 3gb
+            - --maxmemory-policy
+            - volatile-lru
           ports:
             - name: redis
               containerPort: 6379
@@ -71,10 +82,10 @@ spec:
           resources:
             requests:
               cpu: 250m
-              memory: 512Mi
+              memory: 1Gi
             limits:
               cpu: "1"
-              memory: 2Gi
+              memory: 4Gi
   volumeClaimTemplates:
     - metadata:
         name: redis-data

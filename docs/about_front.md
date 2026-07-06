@@ -29,7 +29,7 @@ Vite dev proxy는 `apps/gops-frontend/vite.config.ts`에 있다. 현재 프론�
 
 첫 화면은 S&P500 TreeMap이다. TreeMap에서 종목을 선택하면 chart view로 전환된다.
 
-chart view는 패널 workspace로 구성된다. 기본 패널은 `뉴스`, `온톨로지`, `기업분석`, `차트`이며, `거래`와 추가 `차트` 패널도 panel add 메뉴에서 생성될 수 있다.
+chart view는 패널 workspace로 구성된다. 기본 패널은 `뉴스`, `온톨로지`, `차트`이며, `인기종목`, `지수`, `포트폴리오`, `거래`, 추가 `차트` 패널도 panel add 메뉴에서 생성될 수 있다.
 
 차트 패널은 좌우 page edge에 붙을 때 gutter 없이 flush된다. 내부 경계에서는 일반 패널과 같은 gutter 규칙을 따른다. 패널 위치, 크기, 추가, 삭제, content swap 로직은 `apps/gops-frontend/src/layout/panelLayout.ts`와 `apps/gops-frontend/src/components/PanelWorkspace.tsx`가 담당한다.
 
@@ -64,7 +64,7 @@ chart view는 패널 workspace로 구성된다. 기본 패널은 `뉴스`, `온�
 
 ## 새 패널과 버튼 연결 위치
 
-새 패널 content는 `PanelContentKind`에 kind를 추가하고, `panelContentTitle`, `insertablePanelKinds`, `PanelContentRenderer`에 연결한다. 패널의 위치/크기 규칙은 가능한 한 `panelLayout.ts`의 공통 규칙을 따른다.
+새 패널 content는 `PanelContentKind`에 kind를 추가하고, `panelContentTitle`, `insertablePanelKinds`, `PanelContentRenderer`에 연결한다. Agent layout과도 연결되는 패널이면 `AgentLayoutPanelType`, `kindToPanelType`, `panelTypeToKind`를 함께 갱신한다. 패널의 위치/크기 규칙은 가능한 한 `panelLayout.ts`의 공통 규칙을 따른다.
 
 하단 I-VI 메뉴는 `BottomCommandBar.tsx`에 있다. 현재 I 버튼에는 TreeMap 복귀 기능이 연결되어 있고, 나머지는 메뉴 panel shell만 준비되어 있다.
 

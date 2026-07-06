@@ -114,34 +114,69 @@ class FakeClickHouseProvider:
 
 
 class FakeLocalizedClickHouseProvider(FakeClickHouseProvider):
-    def __init__(self, rows, localized_rows=None):
+    def __init__(self, rows, localized_rows=None, daily_rows=None, candles=None):
         super().__init__(rows)
         self.localized_rows = localized_rows or []
+        self.daily_rows = daily_rows or []
+        self.candle_rows = candles or []
         self.localized_calls = 0
         self.localized_requested_symbols = []
+        self.daily_calls = 0
+        self.daily_requested_symbols = []
+        self.daily_requested_days = []
 
     def localized_news_articles_for_symbols(self, symbols, limit, days, locale="ko-KR"):
         self.localized_calls += 1
         self.localized_requested_symbols.append(list(symbols))
         return self.localized_rows[:limit]
 
+    def company_daily_news_summaries(self, symbol, limit=5, days=30, locale="ko-KR"):
+        self.daily_calls += 1
+        self.daily_requested_symbols.append(symbol)
+        self.daily_requested_days.append(days)
+        return self.daily_rows[:limit]
+
 
 class FakeLocalizedRedisProvider:
-    def __init__(self, rows, daily_rows=None):
+    def __init__(self, rows, daily_rows=None, daily_coverage=None):
         self.rows = rows
         self.daily_rows = daily_rows or []
+        self.daily_coverage = daily_coverage
         self.calls = 0
         self.requested_symbols = []
         self.daily_calls = 0
+        self.localized_warm_calls = []
+        self.daily_warm_calls = []
 
     def localized_news_articles_for_symbols(self, symbols, limit, locale="ko-KR"):
         self.calls += 1
         self.requested_symbols.append(list(symbols))
         return self.rows[:limit]
 
+    def warm_localized_news_articles(self, rows, locale="ko-KR"):
+        self.localized_warm_calls.append({"rows": list(rows), "locale": locale})
+        self.rows = list(rows)
+        return len(rows)
+
     def company_daily_news_summaries(self, symbol, limit=5, locale="ko-KR"):
         self.daily_calls += 1
         return self.daily_rows[:limit]
+
+    def company_daily_news_coverage(self, symbol, locale="ko-KR"):
+        return self.daily_coverage
+
+    def warm_company_daily_news_summaries(self, symbol, rows, days=30, limit=30, locale="ko-KR"):
+        self.daily_warm_calls.append({"symbol": symbol, "rows": list(rows), "days": days, "limit": limit, "locale": locale})
+        self.daily_rows = list(rows)[:limit]
+        self.daily_coverage = {
+            "symbol": symbol,
+            "locale": locale,
+            "days": days,
+            "limit": limit,
+            "rowCount": len(self.daily_rows),
+            "coverageType": "complete",
+        }
+        return self.daily_rows
 
 
 class ThemeClickHouseProvider:
@@ -1790,28 +1825,84 @@ class AgentOrchestrationTests(unittest.TestCase):
 
         self.assertEqual(clickhouse.requested_symbols, ["UNKNOWN"])
 
-    def test_news_provider_reads_prelocalized_redis_before_clickhouse_originals(self):
+    def test_news_provider_uses_prelocalized_redis_when_cache_has_enough_rows(self):
         redis = FakeLocalizedRedisProvider([
             {
-                "articleId": "ko-aapl-1",
+                "articleId": "redis-aapl-1",
                 "symbol": "AAPL",
                 "symbols": ["AAPL"],
-                "headline": "Apple supplier expands",
-                "summary": "Apple supplier plans expansion.",
-                "localizedHeadline": "애플 공급사, 사업 확장 추진",
-                "localizedSummary": "애플 공급사가 사업 확장을 추진한다는 내용입니다.",
+                "headline": "Redis Apple supplier expands",
+                "summary": "Redis Apple supplier plans expansion.",
+                "localizedHeadline": "Redis 애플 공급사",
+                "localizedSummary": "Redis hot cache 요약입니다.",
                 "publishedAt": utc_now_iso(),
-                "url": "https://example.com/aapl-ko",
-                "eventType": "corporate-action",
-                "sentiment": "neutral",
-                "impactDirection": "neutral",
-                "keyPoints": ["애플 공급망 관련 뉴스"],
-                "positivePoints": [],
-                "concerns": [],
-                "whyItMatters": "애플 공급망 이슈입니다.",
             }
         ])
-        clickhouse = FakeClickHouseProvider([])
+        clickhouse = FakeLocalizedClickHouseProvider(
+            [],
+            localized_rows=[
+                {
+                    "articleId": "ko-aapl-1",
+                    "symbol": "AAPL",
+                    "symbols": ["AAPL"],
+                    "headline": "Apple supplier expands",
+                    "summary": "Apple supplier plans expansion.",
+                    "localizedHeadline": "애플 공급사, 사업 확장 추진",
+                    "localizedSummary": "애플 공급사가 사업 확장을 추진한다는 내용입니다.",
+                    "publishedAt": utc_now_iso(),
+                }
+            ],
+        )
+        provider = ClickHouseNewsProvider(
+            clickhouse_provider=clickhouse,
+            redis_provider=redis,
+            limit=1,
+            direct_fallback=False,
+        )
+
+        evidence = provider.fetch(ProviderRequest("AAPL", "애플 뉴스 보여줘"))
+
+        self.assertEqual(redis.calls, 1)
+        self.assertEqual(clickhouse.localized_calls, 0)
+        self.assertEqual(clickhouse.calls, 0)
+        self.assertEqual(evidence[0].title, "Redis 애플 공급사")
+
+    def test_news_provider_uses_clickhouse_when_prelocalized_redis_is_insufficient(self):
+        redis = FakeLocalizedRedisProvider([
+            {
+                "articleId": "redis-aapl-1",
+                "symbol": "AAPL",
+                "symbols": ["AAPL"],
+                "headline": "Redis Apple supplier expands",
+                "summary": "Redis Apple supplier plans expansion.",
+                "localizedHeadline": "Redis 애플 공급사",
+                "localizedSummary": "Redis hot cache 요약입니다.",
+                "publishedAt": utc_now_iso(),
+            }
+        ])
+        clickhouse = FakeLocalizedClickHouseProvider(
+            [],
+            localized_rows=[
+                {
+                    "articleId": "ko-aapl-1",
+                    "symbol": "AAPL",
+                    "symbols": ["AAPL"],
+                    "headline": "Apple supplier expands",
+                    "summary": "Apple supplier plans expansion.",
+                    "localizedHeadline": "애플 공급사, 사업 확장 추진",
+                    "localizedSummary": "애플 공급사가 사업 확장을 추진한다는 내용입니다.",
+                    "publishedAt": utc_now_iso(),
+                    "url": "https://example.com/aapl-ko",
+                    "eventType": "corporate-action",
+                    "sentiment": "neutral",
+                    "impactDirection": "neutral",
+                    "keyPoints": ["애플 공급망 관련 뉴스"],
+                    "positivePoints": [],
+                    "concerns": [],
+                    "whyItMatters": "애플 공급망 이슈입니다.",
+                }
+            ],
+        )
         provider = ClickHouseNewsProvider(
             clickhouse_provider=clickhouse,
             redis_provider=redis,
@@ -1821,7 +1912,10 @@ class AgentOrchestrationTests(unittest.TestCase):
 
         evidence = provider.fetch(ProviderRequest("AAPL", "애플 뉴스 보여줘"))
 
+        self.assertEqual(clickhouse.localized_calls, 1)
+        self.assertEqual(clickhouse.localized_requested_symbols, [["AAPL"]])
         self.assertEqual(redis.calls, 1)
+        self.assertEqual(len(redis.localized_warm_calls[0]["rows"]), 1)
         self.assertEqual(clickhouse.calls, 0)
         self.assertEqual(evidence[0].title, "애플 공급사, 사업 확장 추진")
         self.assertEqual(evidence[0].raw["localizedTitle"], "애플 공급사, 사업 확장 추진")
@@ -1876,27 +1970,27 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(evidence[0].title, "Cached Apple news")
         self.assertEqual(evidence[0].raw["articleId"], "cached-aapl-1")
 
-    def test_news_provider_reads_prelocalized_clickhouse_when_redis_misses(self):
-        redis = FakeLocalizedRedisProvider([])
+    def test_news_provider_falls_back_to_redis_when_prelocalized_clickhouse_misses(self):
+        redis = FakeLocalizedRedisProvider([
+            {
+                "articleId": "ko-ddog-1",
+                "symbol": "DDOG",
+                "symbols": ["DDOG"],
+                "headline": "Datadog launches observability feature",
+                "summary": "Datadog announced a new feature.",
+                "localizedHeadline": "데이터독, 관측성 기능 출시",
+                "localizedSummary": "데이터독이 새 관측성 기능을 발표했습니다.",
+                "publishedAt": utc_now_iso(),
+                "url": "https://example.com/ddog-ko",
+                "eventType": "product-market",
+                "sentiment": "positive",
+                "impactDirection": "positive",
+                "whyItMatters": "제품 경쟁력과 관련된 뉴스입니다.",
+            }
+        ])
         clickhouse = FakeLocalizedClickHouseProvider(
             [],
-            localized_rows=[
-                {
-                    "articleId": "ko-ddog-1",
-                    "symbol": "DDOG",
-                    "symbols": ["DDOG"],
-                    "headline": "Datadog launches observability feature",
-                    "summary": "Datadog announced a new feature.",
-                    "localizedHeadline": "데이터독, 관측성 기능 출시",
-                    "localizedSummary": "데이터독이 새 관측성 기능을 발표했습니다.",
-                    "publishedAt": utc_now_iso(),
-                    "url": "https://example.com/ddog-ko",
-                    "eventType": "product-market",
-                    "sentiment": "positive",
-                    "impactDirection": "positive",
-                    "whyItMatters": "제품 경쟁력과 관련된 뉴스입니다.",
-                }
-            ],
+            localized_rows=[],
         )
         provider = ClickHouseNewsProvider(
             clickhouse_provider=clickhouse,
@@ -1907,12 +2001,55 @@ class AgentOrchestrationTests(unittest.TestCase):
 
         evidence = provider.fetch(ProviderRequest("DDOG", "DDOG 뉴스 알려줘"))
 
-        self.assertEqual(redis.calls, 1)
         self.assertEqual(clickhouse.localized_calls, 1)
+        self.assertEqual(redis.calls, 1)
         self.assertEqual(clickhouse.calls, 0)
         self.assertEqual(evidence[0].title, "데이터독, 관측성 기능 출시")
         self.assertEqual(evidence[0].raw["eventType"], "product-market")
         self.assertEqual(evidence[0].raw["impactDirection"], "positive")
+
+    def test_news_provider_uses_redis_daily_summary_when_coverage_is_valid(self):
+        redis = FakeLocalizedRedisProvider(
+            [],
+            daily_rows=[
+                {
+                    "date": "2026-07-01",
+                    "symbol": "AAPL",
+                    "summary": "Redis coverage 일일 요약입니다.",
+                    "articleIds": ["redis-daily-1"],
+                    "articleCount": 1,
+                }
+            ],
+            daily_coverage={
+                "symbol": "AAPL",
+                "locale": "ko-KR",
+                "days": 30,
+                "limit": 5,
+                "rowCount": 1,
+                "coverageType": "complete",
+            },
+        )
+        clickhouse = FakeLocalizedClickHouseProvider(
+            [],
+            daily_rows=[
+                {
+                    "date": "2026-07-01",
+                    "symbol": "AAPL",
+                    "summary": "ClickHouse 일일 요약입니다.",
+                }
+            ],
+        )
+        provider = ClickHouseNewsProvider(
+            clickhouse_provider=clickhouse,
+            redis_provider=redis,
+            direct_fallback=False,
+        )
+
+        summaries = provider.fetch_daily_summaries(ProviderRequest("AAPL", "애플 뉴스 보여줘"))
+
+        self.assertEqual(redis.daily_calls, 1)
+        self.assertEqual(clickhouse.daily_calls, 0)
+        self.assertEqual(summaries[0]["summary"], "Redis coverage 일일 요약입니다.")
 
     def test_news_provider_keeps_direct_subject_news_before_metadata_mentions(self):
         redis = FakeLocalizedRedisProvider([
@@ -3297,6 +3434,17 @@ class AgentOrchestrationTests(unittest.TestCase):
             [],
             daily_rows=[
                 {
+                    "date": "2026-07-02",
+                    "symbol": "AAPL",
+                    "summary": "Redis hot cache 일일 뉴스 요약입니다.",
+                    "articleIds": ["redis-daily-1"],
+                }
+            ],
+        )
+        clickhouse = FakeLocalizedClickHouseProvider(
+            [],
+            daily_rows=[
+                {
                     "date": "2026-07-01",
                     "symbol": "AAPL",
                     "summary": "애플 관련 일일 뉴스 요약입니다.",
@@ -3321,15 +3469,13 @@ class AgentOrchestrationTests(unittest.TestCase):
                     ],
                 }
             ],
+            candles=[
+                {"timestamp": "2026-06-30T00:00:00.000Z", "close": 199.85},
+                {"timestamp": "2026-07-01T00:00:00.000Z", "close": 200.00},
+            ],
         )
         provider = ClickHouseNewsProvider(
-            clickhouse_provider=FakeClickHouseProvider(
-                [],
-                candles=[
-                    {"timestamp": "2026-06-30T00:00:00.000Z", "close": 199.85},
-                    {"timestamp": "2026-07-01T00:00:00.000Z", "close": 200.00},
-                ],
-            ),
+            clickhouse_provider=clickhouse,
             redis_provider=redis,
             publish_fallback=False,
         )
@@ -3343,6 +3489,10 @@ class AgentOrchestrationTests(unittest.TestCase):
         })
 
         self.assertEqual(report.symbol, "AAPL")
+        self.assertEqual(clickhouse.daily_calls, 1)
+        self.assertEqual(clickhouse.daily_requested_days, [30])
+        self.assertEqual(redis.daily_calls, 1)
+        self.assertEqual(redis.daily_warm_calls[0]["days"], 30)
         self.assertEqual(report.dailySummaries[0]["summary"], "애플 관련 일일 뉴스 요약입니다.")
         self.assertIn("일일 뉴스 요약", report.finalAnswer.summary)
         self.assertIsNone(report.layoutProposal)

@@ -5,6 +5,7 @@ metadata:
   name: alfaka-news-backfill
   namespace: alfaka-market-data
 spec:
+  ttlSecondsAfterFinished: 86400
   backoffLimit: 2
   template:
     metadata:
@@ -12,6 +13,13 @@ spec:
         app: alfaka-news-backfill
     spec:
       restartPolicy: OnFailure
+      nodeSelector:
+        karpenter.sh/nodepool: batch
+      tolerations:
+        - key: gops.io/dedicated
+          operator: Equal
+          value: batch
+          effect: NoSchedule
       serviceAccountName: alfaka-market-data-sa
       containers:
         - name: news-backfill

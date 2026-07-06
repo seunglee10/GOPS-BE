@@ -1,17 +1,25 @@
-# 역할: 기존 30일 뉴스 localization row에 relevance v2 필드를 재계산합니다.
+# 역할: 기존 30일 뉴스 localization row에 relevance v2를 재계산하고 Redis 30일 cache를 warm-up합니다.
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: alfaka-news-intelligence-rebuild
   namespace: alfaka-market-data
 spec:
+  ttlSecondsAfterFinished: 86400
   backoffLimit: 2
   template:
     metadata:
       labels:
         app: alfaka-news-intelligence-rebuild
     spec:
-      restartPolicy: OnFailure
+      restartPolicy: Never
+      nodeSelector:
+        karpenter.sh/nodepool: batch
+      tolerations:
+        - key: gops.io/dedicated
+          operator: Equal
+          value: batch
+          effect: NoSchedule
       serviceAccountName: alfaka-market-data-sa
       containers:
         - name: news-intelligence-rebuild

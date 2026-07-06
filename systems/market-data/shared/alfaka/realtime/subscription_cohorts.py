@@ -37,6 +37,7 @@ class RealtimeSubscriptionCohortService:
         user_id = normalize_user_id(user_id)
         next_symbols = normalize_symbol_list(symbols)
         self._replace_set(self.keys.user_watchlist_symbols(user_id), next_symbols)
+        self._replace_list(self.keys.user_watchlist_symbol_order(user_id), next_symbols)
         self._sadd(self.keys.subscription_users(WATCHLIST_SOURCE), user_id)
         self._after_source_state_changed()
         return next_symbols
@@ -118,7 +119,11 @@ class RealtimeSubscriptionCohortService:
         return records
 
     def user_watchlist_symbols(self, user_id: str) -> list[str]:
-        return normalize_symbol_list(self._smembers(self.keys.user_watchlist_symbols(normalize_user_id(user_id))))
+        normalized_user_id = normalize_user_id(user_id)
+        ordered = normalize_symbol_list(self._lrange(self.keys.user_watchlist_symbol_order(normalized_user_id)))
+        if ordered:
+            return ordered
+        return normalize_symbol_list(self._smembers(self.keys.user_watchlist_symbols(normalized_user_id)))
 
     def user_portfolio_symbols(self, user_id: str) -> list[str]:
         return normalize_symbol_list(self._smembers(self.keys.user_portfolio_symbols(normalize_user_id(user_id))))
@@ -259,6 +264,11 @@ class RealtimeSubscriptionCohortService:
         self._delete(key)
         self._sadd_many(key, next_values)
 
+    def _replace_list(self, key: str, values: Iterable[str]) -> None:
+        next_values = list(values)
+        self._delete(key)
+        self._rpush_many(key, next_values)
+
     def _hgetall(self, key: str) -> dict[str, str]:
         method = getattr(self.redis, "hgetall", None) if self.redis else None
         if not callable(method):
@@ -287,6 +297,18 @@ class RealtimeSubscriptionCohortService:
         method = getattr(self.redis, "sadd", None) if self.redis else None
         if callable(method) and values:
             method(key, *values)
+
+    def _rpush_many(self, key: str, values: Iterable[str]) -> None:
+        values = list(values)
+        method = getattr(self.redis, "rpush", None) if self.redis else None
+        if callable(method) and values:
+            method(key, *values)
+
+    def _lrange(self, key: str) -> list[str]:
+        method = getattr(self.redis, "lrange", None) if self.redis else None
+        if not callable(method):
+            return []
+        return [decode(value) for value in method(key, 0, -1) or []]
 
     def _srem(self, key: str, value: str) -> None:
         method = getattr(self.redis, "srem", None) if self.redis else None

@@ -212,9 +212,20 @@ Storage boundaries:
 - S3 keeps the Alpaca raw payload, preferably with `include_content=true`, as one canonical object per `articleId`.
 - S3 symbol indexes point to canonical raw objects; they do not duplicate full article bodies per symbol.
 - ClickHouse keeps recent app-serving rows, currently 30 days, with localized summaries, key points, relevance v2, sentiment, and links.
-- Redis keeps only latest N hot-cache summaries and metadata. It must not store article body/raw payload.
+- Redis keeps the 30-day article hot cache (`news:v2:latest:*`, `news:v2:topic:*`) and 30 daily summaries per symbol. It stores localized summaries, links, relevance metadata, and daily coverage metadata, but not article body/raw payload.
 
-The Kubernetes `alfaka-news-backfill` and `alfaka-news-intelligence-rebuild` Jobs are safe by default: they render with dry-run env values. Set `NEWS_BACKFILL_DRY_RUN=false` or `NEWS_INTELLIGENCE_REBUILD_DRY_RUN=false` only for an intentional one-shot run after reviewing scope and API cost.
+The Kubernetes `alfaka-news-backfill`, `alfaka-news-intelligence-rebuild`, and
+`alfaka-news-daily-summary-rebuild` Jobs are safe by default: they render with
+dry-run env values. Set `NEWS_BACKFILL_DRY_RUN=false`,
+`NEWS_INTELLIGENCE_REBUILD_DRY_RUN=false`, or
+`NEWS_DAILY_SUMMARY_REBUILD_DRY_RUN=false` only for an intentional one-shot run
+after reviewing scope and API/OpenAI cost. `news-intelligence-rebuild` also
+warms Redis by default from the recent ClickHouse localization rows without
+rewriting ClickHouse. Set `NEWS_INTELLIGENCE_REBUILD_REWRITE_CLICKHOUSE=true`
+only for an intentional relevance-row rewrite maintenance run.
+GitHub Actions dev/test deploys run the two news rebuild Jobs automatically
+after a successful `market-storage` rollout so pushed Redis cache changes also
+warm the existing 30-day ClickHouse news window.
 
 Local small smoke:
 

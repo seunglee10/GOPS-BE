@@ -46,6 +46,7 @@ metadata:
   name: ${JOB_NAME}
   namespace: ${NAMESPACE}
 spec:
+  ttlSecondsAfterFinished: 86400
   backoffLimit: 2
   template:
     metadata:
@@ -53,6 +54,13 @@ spec:
         app: ${JOB_NAME}
     spec:
       restartPolicy: Never
+      nodeSelector:
+        karpenter.sh/nodepool: batch
+      tolerations:
+        - key: gops.io/dedicated
+          operator: Equal
+          value: batch
+          effect: NoSchedule
       serviceAccountName: alfaka-market-data-sa
       containers:
         - name: news-backfill
