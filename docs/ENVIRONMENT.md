@@ -413,12 +413,19 @@ visible regular-session gap into a hidden full-range preload.
 
 ## On-Demand Fill
 
-`GET /api/charts/candles` is the chart read and fill entrypoint. The API checks
-the requested `symbol + interval + limit/before/from/to` window in order:
-Redis, ClickHouse, S3 final/manifest, then Alpaca historical. It does not enqueue
-a Redis Stream worker and it does not run broad preload jobs from a chart request.
+`GET /api/charts/candles` is the chart read entrypoint. The foreground API path
+checks the requested `symbol + interval + limit/before/from/to` window in Redis
+and ClickHouse only, then returns the best renderable payload immediately. If the
+window is incomplete, the response includes a `fill.backgroundFill` trace and the
+API process queues a bounded background repair that checks S3 final/manifest and
+then Alpaca historical for that exact range. It does not enqueue a Redis Stream
+worker and it does not run broad preload jobs from a chart request.
 
 ```text
+CHART_API_MAX_LIMIT
+ON_DEMAND_FILL_BACKGROUND_ENABLED
+ON_DEMAND_FILL_BACKGROUND_WORKERS
+ON_DEMAND_FILL_BACKGROUND_TIMEOUT_SECONDS
 ON_DEMAND_FILL_TIMEOUT_SECONDS
 HISTORICAL_ADJUSTMENT
 ALLOW_NON_CANONICAL_HISTORICAL_ADJUSTMENT

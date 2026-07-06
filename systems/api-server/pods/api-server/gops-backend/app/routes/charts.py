@@ -1,3 +1,4 @@
+import os
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -30,6 +31,18 @@ from alfaka.serving.intervals import MAX_CHART_CANDLE_LIMIT
 
 CHART_INTERVAL_PATTERN = "^(1m|5m|10m|1D|1W|1M|1d|1w|1mo|1MO|1month)$"
 
+
+def positive_int_env(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    try:
+        value = int(raw) if raw is not None else default
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+PUBLIC_CHART_CANDLE_LIMIT = min(MAX_CHART_CANDLE_LIMIT, positive_int_env("CHART_API_MAX_LIMIT", 2000))
+
 router = APIRouter()
 
 
@@ -51,13 +64,23 @@ def chart_candles(
     symbol: str = Query(min_length=1, max_length=12),
     interval: str = Query(default="1m", pattern=CHART_INTERVAL_PATTERN),
     ma: str = Query(default=""),
-    limit: int | None = Query(default=None, ge=1, le=MAX_CHART_CANDLE_LIMIT),
+    limit: int | None = Query(default=None, ge=1, le=PUBLIC_CHART_CANDLE_LIMIT),
     before: str | None = Query(default=None),
     from_time: str | None = Query(default=None, alias="from"),
     to_time: str | None = Query(default=None, alias="to"),
+    include_previous_close: bool = Query(default=False, alias="includePreviousClose"),
 ) -> dict[str, Any]:
     try:
-        return get_query_service().candle_snapshot(symbol, interval, ma, limit, before=before, from_time=from_time, to_time=to_time)
+        return get_query_service().candle_snapshot(
+            symbol,
+            interval,
+            ma,
+            limit,
+            before=before,
+            from_time=from_time,
+            to_time=to_time,
+            include_previous_close=include_previous_close,
+        )
     except HTTPException:
         raise
     except Exception as exc:

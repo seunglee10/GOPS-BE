@@ -777,16 +777,6 @@ def make_fill_candles(count):
     ]
 
 
-class ReloadingFillProvider:
-    def __init__(self, refreshed_payload):
-        self.refreshed_payload = refreshed_payload
-        self.calls = []
-
-    def candle_snapshot(self, symbol, interval, limit, before=None, from_time=None, to_time=None, ma_windows=None):
-        self.calls.append((symbol, interval, limit, before, from_time, to_time))
-        return dict(self.refreshed_payload)
-
-
 class FakeDerivedClient:
     def __init__(self):
         self.requests = []
@@ -858,10 +848,15 @@ class FakeDerivedClient:
 
 class RecordingOnDemandFillService(OnDemandFillService):
     def __init__(self, *, provider=None, s3_result=False, alpaca_result=False):
-        super().__init__(provider=provider, timeout_seconds=8)
+        super().__init__(provider=provider, timeout_seconds=8, background_enabled=False)
         self.s3_result = s3_result
         self.alpaca_result = alpaca_result
         self.calls = []
+        self.queued = []
+
+    def _enqueue_background_fill(self, **kwargs):
+        self.queued.append(kwargs)
+        return {"queued": True, "state": "queued", "requestId": "test-fill", "reason": "range repair queued"}
 
     def _fill_from_s3(self, symbol, interval, ranges, trace, started):
         self.calls.append(("s3", symbol, interval, list(ranges)))
@@ -1427,6 +1422,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
 
         self.assertEqual(result["fill"]["status"], "not_needed")
         self.assertEqual(service.calls, [])
+        self.assertEqual(service.queued, [])
         self.assertTrue(result["fill"]["sources"]["redis"]["hit"])
         self.assertFalse(result["fill"]["sources"]["s3"]["checked"])
         self.assertFalse(result["fill"]["sources"]["alpaca"]["checked"])
@@ -1455,11 +1451,12 @@ class MarketDataQueryServiceTest(unittest.TestCase):
 
         self.assertEqual(result["fill"]["status"], "not_needed")
         self.assertEqual(service.calls, [])
+        self.assertEqual(service.queued, [])
         self.assertTrue(result["fill"]["sources"]["clickhouse"]["hit"])
         self.assertFalse(result["fill"]["sources"]["s3"]["checked"])
         self.assertFalse(result["fill"]["sources"]["alpaca"]["checked"])
 
-    def test_on_demand_fill_continues_when_returned_window_is_sparse_at_limit(self):
+    def test_on_demand_fill_queues_background_when_returned_window_is_sparse_at_limit(self):
         early_start = datetime.fromisoformat("2026-06-25T13:30:00+00:00")
         late_start = datetime.fromisoformat("2026-06-25T18:00:00+00:00")
         candles = [
@@ -1493,90 +1490,68 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         )
 
         self.assertEqual(result["fill"]["status"], "partial")
-        self.assertEqual([call[0] for call in service.calls], ["s3", "alpaca"])
-        self.assertTrue(result["fill"]["sources"]["alpaca"]["hit"])
-
-    def test_on_demand_fill_materializes_s3_before_alpaca(self):
-        refreshed = {
-            "symbol": "CSCO",
-            "interval": "1m",
-            "candles": make_fill_candles(30),
-            "_sourceTrace": {
-                "redis": {"checked": True, "hit": False, "rowCount": 0},
-                "clickhouse": {"checked": True, "hit": True, "rowCount": 30},
-            },
-        }
-        service = RecordingOnDemandFillService(provider=ReloadingFillProvider(refreshed), s3_result=True, alpaca_result=True)
-
-        result = service.fill_if_needed(
-            symbol="CSCO",
-            interval="1m",
-            limit=30,
-            before="2026-06-25T14:00:00.000Z",
-            from_time=None,
-            to_time=None,
-            payload={"symbol": "CSCO", "interval": "1m", "candles": []},
-        )
-
-        self.assertEqual(result["fill"]["status"], "filled")
-        self.assertEqual([call[0] for call in service.calls], ["s3"])
-        self.assertTrue(result["fill"]["sources"]["s3"]["hit"])
+        self.assertEqual(service.calls, [])
+        self.assertEqual(len(service.queued), 1)
+        self.assertTrue(result["fill"]["backgroundFill"]["queued"])
+        self.assertFalse(result["fill"]["sources"]["s3"]["checked"])
         self.assertFalse(result["fill"]["sources"]["alpaca"]["checked"])
 
-    def test_on_demand_fill_falls_back_to_alpaca_when_s3_misses(self):
-        refreshed = {
-            "symbol": "CSCO",
-            "interval": "1m",
-            "candles": make_fill_candles(30),
-            "_sourceTrace": {
-                "redis": {"checked": True, "hit": False, "rowCount": 0},
-                "clickhouse": {"checked": True, "hit": True, "rowCount": 30},
-            },
-        }
-        service = RecordingOnDemandFillService(provider=ReloadingFillProvider(refreshed), s3_result=False, alpaca_result=True)
+    def test_background_fill_materializes_s3_before_alpaca(self):
+        service = RecordingOnDemandFillService(s3_result=True, alpaca_result=True)
 
-        result = service.fill_if_needed(
-            symbol="CSCO",
-            interval="1m",
-            limit=30,
-            before="2026-06-25T14:00:00.000Z",
-            from_time=None,
-            to_time=None,
-            payload={"symbol": "CSCO", "interval": "1m", "candles": []},
+        service._run_background_fill(
+            "test-fill",
+            "CSCO",
+            "1m",
+            "1m",
+            30,
+            "2026-06-25T14:00:00.000Z",
+            None,
+            None,
+            "2026-06-25T13:00:00.000Z",
+            "2026-06-25T14:00:00.000Z",
+            [{"start": "2026-06-25T13:00:00.000Z", "end": "2026-06-25T14:00:00.000Z"}],
         )
 
-        self.assertEqual(result["fill"]["status"], "filled")
-        self.assertEqual([call[0] for call in service.calls], ["s3", "alpaca"])
-        self.assertFalse(result["fill"]["sources"]["s3"]["hit"])
-        self.assertTrue(result["fill"]["sources"]["alpaca"]["hit"])
+        self.assertEqual([call[0] for call in service.calls], ["s3"])
 
-    def test_on_demand_fill_returns_refreshed_candles_when_alpaca_finishes_after_deadline(self):
-        refreshed = {
-            "symbol": "CSCO",
-            "interval": "1m",
-            "candles": make_fill_candles(30),
-            "_sourceTrace": {
-                "redis": {"checked": True, "hit": False, "rowCount": 0},
-                "clickhouse": {"checked": True, "hit": True, "rowCount": 30},
-            },
-        }
-        provider = ReloadingFillProvider(refreshed)
-        service = DeadlineAfterAlpacaFillService(provider=provider)
+    def test_background_fill_falls_back_to_alpaca_when_s3_misses(self):
+        service = RecordingOnDemandFillService(s3_result=False, alpaca_result=True)
 
-        result = service.fill_if_needed(
-            symbol="CSCO",
-            interval="1m",
-            limit=30,
-            before="2026-06-25T14:00:00.000Z",
-            from_time=None,
-            to_time=None,
-            payload={"symbol": "CSCO", "interval": "1m", "candles": []},
+        service._run_background_fill(
+            "test-fill",
+            "CSCO",
+            "1m",
+            "1m",
+            30,
+            "2026-06-25T14:00:00.000Z",
+            None,
+            None,
+            "2026-06-25T13:00:00.000Z",
+            "2026-06-25T14:00:00.000Z",
+            [{"start": "2026-06-25T13:00:00.000Z", "end": "2026-06-25T14:00:00.000Z"}],
         )
 
-        self.assertEqual(result["fill"]["status"], "filled")
-        self.assertEqual(len(result["candles"]), 30)
         self.assertEqual([call[0] for call in service.calls], ["s3", "alpaca"])
-        self.assertEqual(len(provider.calls), 1)
+
+    def test_background_fill_allows_alpaca_completion_before_deadline_recheck(self):
+        service = DeadlineAfterAlpacaFillService()
+
+        service._run_background_fill(
+            "test-fill",
+            "CSCO",
+            "1m",
+            "1m",
+            30,
+            "2026-06-25T14:00:00.000Z",
+            None,
+            None,
+            "2026-06-25T13:00:00.000Z",
+            "2026-06-25T14:00:00.000Z",
+            [{"start": "2026-06-25T13:00:00.000Z", "end": "2026-06-25T14:00:00.000Z"}],
+        )
+
+        self.assertEqual([call[0] for call in service.calls], ["s3", "alpaca"])
 
     def test_configured_symbols_uses_alpaca_symbols_watchlist_seed(self):
         previous = os.environ.get("ALPACA_SYMBOLS")

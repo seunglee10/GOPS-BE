@@ -87,9 +87,10 @@ Derived intervals fill their canonical source interval first:
 1M  -> 1D, then aggregate
 ```
 
-Minimum renderability is separate from full coverage. If the bounded 30-second
-fill window obtains enough candles to render, the frontend may show partial data
-with the `fill` trace instead of blocking the chart.
+Minimum renderability is separate from full coverage. The foreground chart
+request returns Redis/ClickHouse candles immediately when they are renderable,
+even if full coverage still needs repair. Missing ranges are queued as bounded
+background fill and surfaced in the `fill.backgroundFill` trace.
 
 ## Runtime Flow
 
@@ -100,19 +101,17 @@ flowchart LR
   Redis -->|enough| Done["return candles + fill.not_needed"]
   Redis -->|miss/insufficient| CH["ClickHouse"]
   CH -->|enough| Done
-  CH -->|miss/insufficient| S3["S3 final/manifest"]
+  CH -->|miss/insufficient| Partial["return partial/empty + backgroundFill"]
+  Partial --> S3["background: S3 final/manifest"]
   S3 -->|hit| Mat["materialize requested range to ClickHouse"]
-  Mat --> Reload["reload candles"]
-  Reload --> Done
   S3 -->|miss| Alpaca["Alpaca historical requested range"]
   Alpaca --> Write["write S3 final/manifest + ClickHouse"]
-  Write --> Reload
 ```
 
-The API returns the best available payload if the bounded fill exceeds
-`ON_DEMAND_FILL_TIMEOUT_SECONDS` or an upstream source fails. Source errors must
-be visible in `fill.sources.<source>.error`; Alpaca no-data is an `empty` or
-`partial` fill result, not a backend crash.
+The API foreground path does not wait on S3 or Alpaca. Background fill is bounded
+by `ON_DEMAND_FILL_BACKGROUND_TIMEOUT_SECONDS` and writes source failures to
+logs/monitoring; the initiating response shows that repair was queued. Alpaca
+no-data remains an `empty` or `partial` fill result, not a backend crash.
 
 ## Frontend Contract
 
