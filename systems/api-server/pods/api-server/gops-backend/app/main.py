@@ -1,10 +1,12 @@
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.contracts.chart import AgentChatMessage, AgentChatRequest, ChartProposalRequest
 from app.core.config import CORS_ORIGINS, read_dotenv_value
+from app.market_data.indices.service import start_market_indices_warmer
 from app.market_data.monitor.routes import router as market_monitor_router
 from app.market_data.query.routes import router as market_query_router
 from app.routes.account import account_holdings, router as account_router
@@ -23,7 +25,14 @@ from gops_agents.query_understanding import warm_entity_catalog_cache
 @asynccontextmanager
 async def app_lifespan(app: FastAPI):
     warm_entity_catalog_cache()
-    yield
+    indices_warmer_task = start_market_indices_warmer()
+    try:
+        yield
+    finally:
+        if indices_warmer_task is not None:
+            indices_warmer_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await indices_warmer_task
 
 
 def create_app() -> FastAPI:

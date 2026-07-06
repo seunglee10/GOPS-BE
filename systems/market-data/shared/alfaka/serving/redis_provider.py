@@ -11,7 +11,16 @@ from alfaka.common.redis_keys import RedisKeyBuilder
 from alfaka.serving.dto import snapshot, websocket_event
 from alfaka.serving.intervals import normalize_chart_interval, resolve_candle_limit
 from alfaka.serving.moving_average import attach_moving_averages
-from alfaka.serving.news_hot_cache import read_company_daily_summaries_from_redis, read_localized_news_from_redis
+from alfaka.serving.news_hot_cache import (
+    DEFAULT_NEWS_MAX_ITEMS,
+    DEFAULT_NEWS_RETENTION_DAYS,
+    DEFAULT_NEWS_TTL_SECONDS,
+    read_company_daily_summaries_from_redis,
+    read_company_daily_summary_coverage_from_redis,
+    read_localized_news_from_redis,
+    write_company_daily_summaries_to_redis,
+    write_localized_news_to_redis,
+)
 
 
 class RedisMarketDataProvider:
@@ -106,5 +115,37 @@ class RedisMarketDataProvider:
                 rows.append(row)
         return sorted(rows, key=lambda item: str(item.get("publishedAt") or ""), reverse=True)[: int(limit)]
 
+    def warm_localized_news_articles(self, rows, *, locale="ko-KR"):
+        ttl_seconds = int(os.getenv("NEWS_REDIS_TTL_SECONDS", str(DEFAULT_NEWS_TTL_SECONDS)))
+        max_items = int(os.getenv("NEWS_REDIS_MAX_ITEMS", str(DEFAULT_NEWS_MAX_ITEMS)))
+        retention_days = int(os.getenv("NEWS_REDIS_RETENTION_DAYS", str(DEFAULT_NEWS_RETENTION_DAYS)))
+        warmed = 0
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+            write_localized_news_to_redis(
+                self.redis,
+                row,
+                ttl_seconds=ttl_seconds,
+                max_items=max_items,
+                retention_days=retention_days,
+                locale=locale,
+            )
+            warmed += 1
+        return warmed
+
     def company_daily_news_summaries(self, symbol, limit=5, locale="ko-KR"):
         return read_company_daily_summaries_from_redis(self.redis, symbol, limit=limit, locale=locale)
+
+    def company_daily_news_coverage(self, symbol, locale="ko-KR"):
+        return read_company_daily_summary_coverage_from_redis(self.redis, symbol, locale=locale)
+
+    def warm_company_daily_news_summaries(self, symbol, rows, *, days=30, limit=30, locale="ko-KR"):
+        return write_company_daily_summaries_to_redis(
+            self.redis,
+            rows,
+            symbol=symbol,
+            days=days,
+            limit=limit,
+            locale=locale,
+        )

@@ -7,7 +7,7 @@ from alfaka.alpaca.feed_profiles import market_session_for_timestamp
 from alfaka.common.canonical import candle_metadata, is_historical_canonical
 from alfaka.common.env import load_dotenv
 from alfaka.serving.intervals import intraday_preload_min_start_iso, normalize_chart_interval
-from alfaka.storage.clickhouse_loader import ClickHouseHttpClient, candle_to_clickhouse_row
+from alfaka.storage.clickhouse_loader import ClickHouseHttpClient, candle_to_clickhouse_row, should_ensure_schema_on_start
 from alfaka.storage.candle_validation import invalid_candle_reason
 
 
@@ -26,7 +26,8 @@ def main():
         user=os.getenv("CLICKHOUSE_USER", "alfaka"),
         password=os.getenv("CLICKHOUSE_PASSWORD", "alfaka"),
     )
-    client.ensure_market_data_schema()
+    if should_ensure_schema_on_start():
+        client.ensure_market_data_schema()
     keys = materialize_keys_from_env(s3, bucket, prefix)
     result = materialize_s3_processed_objects(client, s3, bucket, keys)
     print(json.dumps(result, ensure_ascii=False), flush=True)

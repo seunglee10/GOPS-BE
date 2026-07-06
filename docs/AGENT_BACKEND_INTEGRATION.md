@@ -57,13 +57,16 @@ WS   /ws/agent-alerts
 ```
 
 news 패널과 news agent가 일자별 요약을 렌더링할 때 market-data query route
-`GET /api/market/news/daily?symbol={SYMBOL}&limit=5&locale=ko-KR`를 사용할 수
+`GET /api/market/news/daily?symbol={SYMBOL}&limit=30&locale=ko-KR`를 사용할 수
 있다. 응답은 `displayMode="dailySummary"`와 `dailySummaries[]`를 포함하며,
 각 summary의 `sources[]`는 실제 기사 `url`, 표시용 `title`, 선택적 `name`을
 가진다. 가능한 경우 각 summary에는 같은 날짜의 1D 종가와 직전 거래일 1D 종가
 차이를 나타내는 `priceChange`를 포함한다. 이 public payload에는
 `source="redis"` 또는 `source="clickhouse"` 같은 내부 저장소 provenance를 넣지
 않는다.
+읽기 경로는 Redis 30일 article/daily hot cache를 먼저 사용하고, Redis coverage
+metadata가 최근 30일 요청을 보장하지 못할 때만 ClickHouse에서 보강한 뒤 Redis를
+다시 warm-up한다.
 
 지수 패널은 market-data query route `GET /api/market/indices`를 사용한다. 이
 route는 차트 candle coverage/backfill/read-through 경로를 타지 않고 Yahoo

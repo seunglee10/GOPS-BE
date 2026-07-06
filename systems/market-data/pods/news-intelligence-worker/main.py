@@ -9,8 +9,13 @@ import redis
 
 from alfaka.common.env import load_dotenv
 from alfaka.common.kafka_io import create_json_consumer
-from alfaka.serving.news_hot_cache import write_localized_news_to_redis
-from alfaka.storage.clickhouse_loader import ClickHouseHttpClient
+from alfaka.serving.news_hot_cache import (
+    DEFAULT_NEWS_MAX_ITEMS,
+    DEFAULT_NEWS_RETENTION_DAYS,
+    DEFAULT_NEWS_TTL_SECONDS,
+    write_localized_news_to_redis,
+)
+from alfaka.storage.clickhouse_loader import ClickHouseHttpClient, should_ensure_schema_on_start
 from alfaka.storage.news_intelligence import (
     build_news_intelligence_record,
     deterministic_news_intelligence,
@@ -35,7 +40,8 @@ def main():
         user=os.getenv("CLICKHOUSE_USER", "alfaka"),
         password=os.getenv("CLICKHOUSE_PASSWORD", "alfaka"),
     )
-    clickhouse.ensure_market_data_schema()
+    if should_ensure_schema_on_start():
+        clickhouse.ensure_market_data_schema()
     redis_client = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True)
     daily_summary_producer = None
     if bool_env("NEWS_DAILY_SUMMARY_ENABLED", True):
@@ -103,8 +109,9 @@ def process_news_event(
     write_localized_news_to_redis(
         redis_client,
         record,
-        ttl_seconds=int(ttl_seconds if ttl_seconds is not None else os.getenv("NEWS_REDIS_TTL_SECONDS", "1800")),
-        max_items=int(max_items if max_items is not None else os.getenv("NEWS_REDIS_MAX_ITEMS", "20")),
+        ttl_seconds=int(ttl_seconds if ttl_seconds is not None else os.getenv("NEWS_REDIS_TTL_SECONDS", str(DEFAULT_NEWS_TTL_SECONDS))),
+        max_items=int(max_items if max_items is not None else os.getenv("NEWS_REDIS_MAX_ITEMS", str(DEFAULT_NEWS_MAX_ITEMS))),
+        retention_days=int(os.getenv("NEWS_REDIS_RETENTION_DAYS", str(DEFAULT_NEWS_RETENTION_DAYS))),
         locale=locale,
         topics=event_topics(event),
     )

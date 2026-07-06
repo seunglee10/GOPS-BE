@@ -29,6 +29,11 @@ flowchart LR
 GitHub Actions dev/test deploy entrypoint is `.github/workflows/deploy-dev.yml`.
 It deploys to the shared dev EKS environment on pushes to `dev`, `kimheejun`,
 `helix/front-chart`, `deploy/**`, and `test/**`, or by manual dispatch.
+When `market-storage` is selected, the workflow also runs
+`scripts/aws/run-news-cache-rebuild-jobs.sh` after a healthy rollout. That
+one-shot run uses the newly pushed `gops-market-storage` image to warm the
+30-day Redis news article cache and daily summary cache from ClickHouse without
+running ClickHouse rewrite mutations.
 
 ## Image
 
@@ -284,8 +289,13 @@ market_data.sec_frames
 market_data.sec_collection_runs
 ```
 
-News provider는 ClickHouse의 recent serving rows와 Redis latest summaries를
-우선 사용한다. `market_data.agent_graph_expansions`는 GraphDB에서 미리 계산한
+News provider는 Redis 30일 article/daily hot cache를 우선 사용하고, daily coverage
+metadata가 최근 30일 요청을 보장하지 못할 때 ClickHouse serving rows로 보강해
+Redis를 다시 warm-up한다.
+News cache rebuild Jobs warm Redis from ClickHouse rows by default and keep
+ClickHouse rewrite/mutation disabled unless
+`NEWS_INTELLIGENCE_REBUILD_REWRITE_CLICKHOUSE=true` is set intentionally.
+`market_data.agent_graph_expansions`는 GraphDB에서 미리 계산한
 관계 hint를 warm/deep path에서 재사용하기 위한 table이다.
 
 ## SEC Fundamentals
@@ -417,6 +427,8 @@ S3_ENDPOINT_URL
 NEWS_BACKFILL_PUBLISH_RECENT_TO_KAFKA
 NEWS_CLICKHOUSE_DAYS
 NEWS_INTELLIGENCE_REBUILD_DRY_RUN
+NEWS_INTELLIGENCE_REBUILD_REWRITE_CLICKHOUSE
+CLICKHOUSE_ENSURE_SCHEMA_ON_START
 ```
 
 Policy:
