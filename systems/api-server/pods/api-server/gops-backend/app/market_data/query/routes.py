@@ -53,8 +53,33 @@ def chart_volume_profile_bins(
     from_time: str = Query(alias="from"),
     to_time: str = Query(alias="to"),
     price_bin_size: str = Query(default="auto", alias="priceBinSize"),
+    target_bins: int = Query(default=10, ge=4, le=48, alias="targetBins"),
+    price_min: float | None = Query(default=None, alias="priceMin"),
+    price_max: float | None = Query(default=None, alias="priceMax"),
 ) -> dict[str, Any]:
-    return get_query_service().volume_profile_bins(symbol, from_time, to_time, price_bin_size)
+    return get_query_service().volume_profile_bins(symbol, from_time, to_time, price_bin_size, target_bins, price_min, price_max)
+
+
+@router.get("/api/charts/indicators")
+def chart_indicators(
+    symbol: str = Query(min_length=1, max_length=12),
+    interval: str = Query(default="1m", pattern=CHART_INTERVAL_PATTERN),
+    from_time: str | None = Query(default=None, alias="from"),
+    to_time: str | None = Query(default=None, alias="to"),
+    layers: str = Query(default="sma:5,sma:20,sma:60", max_length=256),
+    limit: int = Query(default=300, ge=1, le=5000),
+) -> dict[str, Any]:
+    return get_query_service().indicator_series(symbol, interval, from_time, to_time, layers, limit)
+
+
+@router.get("/api/charts/footprint")
+def chart_footprint(
+    symbol: str = Query(min_length=1, max_length=12),
+    from_time: str = Query(alias="from"),
+    to_time: str = Query(alias="to"),
+    limit: int = Query(default=20000, ge=1, le=100000),
+) -> dict[str, Any]:
+    return get_query_service().footprint_series(symbol, from_time, to_time, limit)
 
 
 @router.get("/api/market/status")

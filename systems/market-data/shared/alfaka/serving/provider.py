@@ -24,10 +24,10 @@ class MarketDataProvider:
         self.clickhouse_provider = clickhouse_provider or ClickHouseMarketDataProvider()
         self.symbol_registry = SymbolRegistry(self.clickhouse_provider, self.redis_provider)
 
-    def candle_snapshot(self, symbol, interval, limit=None, before=None, from_time=None, to_time=None):
+    def candle_snapshot(self, symbol, interval, limit=None, before=None, from_time=None, to_time=None, ma_windows=MA_WINDOWS):
         interval = normalize_chart_interval(interval)
         limit = resolve_candle_limit(interval, limit)
-        query_limit = moving_average_query_limit(interval, limit)
+        query_limit = moving_average_query_limit(interval, limit, ma_windows)
         if from_time and to_time:
             clickhouse_from_time = from_time
         elif before and not from_time:
@@ -42,7 +42,7 @@ class MarketDataProvider:
             merged_redis = merge_candles(redis_candles, [live_candle] if live_candle else [])
             coverage = self._coverage(symbol, interval)
             if not candles_are_behind_coverage(merged_redis, coverage):
-                payload = snapshot(symbol=symbol, interval=interval, candles=attach_moving_averages(merged_redis)[-limit:])
+                payload = snapshot(symbol=symbol, interval=interval, candles=attach_moving_averages(merged_redis, windows=ma_windows)[-limit:])
                 payload["_sourceTrace"] = {
                     "redis": {"checked": True, "hit": len(merged_redis) > 0, "rowCount": len(merged_redis)},
                     "clickhouse": {"checked": False, "hit": False, "rowCount": 0},
@@ -67,7 +67,7 @@ class MarketDataProvider:
                 clickhouse_candles = latest_candles
         live_group = [live_candle] if live_candle else []
         merged = merge_candles(clickhouse_candles, redis_candles, live_group)
-        candles = attach_moving_averages(merged)[-limit:]
+        candles = attach_moving_averages(merged, windows=ma_windows)[-limit:]
         feed = first_value(candles, "feed", "sip")
         source = first_value(candles, "source", "alpaca")
         payload = snapshot(symbol=symbol, interval=interval, candles=candles, source=source, feed=feed)
@@ -166,6 +166,20 @@ class MarketDataProvider:
             "feed": first_value(bins, "feed", "unknown"),
             "bins": bins,
         }
+
+    def footprint_ticks(self, symbol, from_time, to_time, limit=20000):
+        try:
+            return self.clickhouse_provider.footprint_ticks(symbol, from_time, to_time, limit=limit)
+        except Exception:
+            logger.warning("ClickHouse footprint_ticks failed.", exc_info=True)
+            return {
+                "symbol": symbol,
+                "from": from_time,
+                "to": to_time,
+                "source": "clickhouse",
+                "trades": [],
+                "quotes": [],
+            }
 
     def agent_chart_context(self, symbol, interval, from_time, to_time, include):
         interval = normalize_chart_interval(interval)
@@ -404,6 +418,8 @@ def is_stock_weekday_candle(candle):
     return parsed.weekday() < 5
 
 
-def moving_average_query_limit(interval, requested_limit):
-    lookback = max(MA_WINDOWS)
+def moving_average_query_limit(interval, requested_limit, windows=MA_WINDOWS):
+    if not windows:
+        return resolve_candle_limit(interval, requested_limit)
+    lookback = max(windows)
     return resolve_candle_limit(interval, int(requested_limit) + lookback)

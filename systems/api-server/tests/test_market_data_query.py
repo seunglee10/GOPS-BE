@@ -96,8 +96,9 @@ class FakeProvider:
         self.fail_snapshot = fail_snapshot
         self.last_limit = None
 
-    def candle_snapshot(self, symbol, interval, limit, before=None, from_time=None, to_time=None):
+    def candle_snapshot(self, symbol, interval, limit, before=None, from_time=None, to_time=None, ma_windows=None):
         self.last_limit = limit
+        self.last_ma_windows = ma_windows
         if self.fail_snapshot:
             raise RuntimeError("clickhouse unavailable")
         return {
@@ -129,6 +130,122 @@ class FakeProvider:
             "interval": interval,
             "visibleRange": {"from": from_time, "to": to_time},
             "include": sorted(include),
+        }
+
+
+class FakeIndicatorRedis:
+    def __init__(self):
+        self.values = {}
+        self.ttls = {}
+
+    def get(self, key):
+        return self.values.get(key)
+
+    def setex(self, key, ttl, value):
+        self.values[key] = value
+        self.ttls[key] = ttl
+
+
+class FakeIndicatorRedisProvider:
+    def __init__(self):
+        self.redis = FakeIndicatorRedis()
+
+
+class FakeIndicatorProvider(FakeProvider):
+    def __init__(self):
+        super().__init__()
+        self.redis_provider = FakeIndicatorRedisProvider()
+        self.calls = []
+
+    def candle_snapshot(self, symbol, interval, limit, before=None, from_time=None, to_time=None, ma_windows=None):
+        self.calls.append({
+            "symbol": symbol,
+            "interval": interval,
+            "limit": limit,
+            "before": before,
+            "fromTime": from_time,
+            "toTime": to_time,
+            "maWindows": ma_windows,
+        })
+        start = datetime(2026, 6, 25, 13, 0, tzinfo=timezone.utc)
+        parsed_from = datetime.fromisoformat(from_time.replace("Z", "+00:00")) if from_time else start
+        candles = []
+        for index in range(limit):
+            timestamp = parsed_from + timedelta(minutes=index)
+            close = index + 1
+            candles.append({
+                "timestamp": timestamp.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                "open": close - 0.2,
+                "high": close + 1,
+                "low": close - 1,
+                "close": close,
+                "volume": 100 + index,
+            })
+        return {
+            "symbol": symbol,
+            "interval": interval,
+            "source": "unit",
+            "feed": "test",
+            "snapshotCursor": "indicator-cursor",
+            "dataStatus": "ready",
+            "candles": candles,
+        }
+
+
+class FakeVolumeProfileProvider(FakeProvider):
+    def __init__(self):
+        super().__init__()
+        self.redis_provider = FakeIndicatorRedisProvider()
+        self.calls = []
+
+    def volume_profile_bins(self, symbol, from_time, to_time, price_bin_size):
+        self.calls.append({
+            "symbol": symbol,
+            "fromTime": from_time,
+            "toTime": to_time,
+            "priceBinSize": price_bin_size,
+        })
+        return {
+            "symbol": symbol,
+            "from": from_time,
+            "to": to_time,
+            "priceBinSize": 0.25,
+            "source": "unit",
+            "feed": "sip",
+            "bins": [
+                {"priceBin": 100.0, "priceBinSize": 0.25, "volume": 10, "tradeCount": 1, "vwap": 100.1},
+                {"priceBin": 100.5, "priceBinSize": 0.25, "volume": 45, "tradeCount": 4, "vwap": 100.6},
+                {"priceBin": 101.0, "priceBinSize": 0.25, "volume": 25, "tradeCount": 3, "vwap": 101.1},
+            ],
+        }
+
+
+class FakeFootprintProvider(FakeProvider):
+    def __init__(self):
+        super().__init__()
+        self.redis_provider = FakeIndicatorRedisProvider()
+        self.calls = []
+
+    def footprint_ticks(self, symbol, from_time, to_time, limit=20000):
+        self.calls.append({
+            "symbol": symbol,
+            "fromTime": from_time,
+            "toTime": to_time,
+            "limit": limit,
+        })
+        return {
+            "symbol": symbol,
+            "from": from_time,
+            "to": to_time,
+            "source": "unit",
+            "feed": "sip",
+            "quotes": [
+                {"timestamp": "2026-06-25T13:30:00.000Z", "bidPrice": 100.0, "askPrice": 100.1},
+            ],
+            "trades": [
+                {"timestamp": "2026-06-25T13:30:01.000Z", "price": 100.1, "size": 10},
+                {"timestamp": "2026-06-25T13:30:02.000Z", "price": 100.0, "size": 4},
+            ],
         }
 
 
@@ -482,7 +599,7 @@ class FakeFundamentalsAdapter(FundamentalsAdapter):
 
 
 class EmptyFakeProvider(FakeProvider):
-    def candle_snapshot(self, symbol, interval, limit, before=None, from_time=None, to_time=None):
+    def candle_snapshot(self, symbol, interval, limit, before=None, from_time=None, to_time=None, ma_windows=None):
         return {
             "symbol": symbol,
             "interval": interval,
@@ -555,9 +672,73 @@ class ReloadingFillProvider:
         self.refreshed_payload = refreshed_payload
         self.calls = []
 
-    def candle_snapshot(self, symbol, interval, limit, before=None, from_time=None, to_time=None):
+    def candle_snapshot(self, symbol, interval, limit, before=None, from_time=None, to_time=None, ma_windows=None):
         self.calls.append((symbol, interval, limit, before, from_time, to_time))
         return dict(self.refreshed_payload)
+
+
+class FakeDerivedClient:
+    def __init__(self):
+        self.requests = []
+
+    def resolve(self, request):
+        self.requests.append(request)
+        if request["kind"] == "indicators":
+            layers = str((request.get("parameters") or {}).get("layers") or "")
+            series = {layer: [] for layer in layers.split(",") if layer}
+            return {
+                "symbol": request["symbol"],
+                "interval": request["interval"],
+                "calculationVersion": request["calculationVersion"],
+                "dataStatus": "ready",
+                "indicators": [{"id": layer, "kind": layer.split(":")[0], "placement": "overlay", "parameters": {}, "points": []} for layer in series],
+                "series": series,
+                "cache": {"hit": False, "ttlSeconds": 300, "keyVersion": request["calculationVersion"]},
+                "derived": {"state": "ready", "source": "worker", "requestHash": request["requestHash"], "artifactStored": True},
+            }
+        if request["kind"] == "volumeProfile":
+            return {
+                "symbol": request["symbol"],
+                "from": request["from"],
+                "to": request["to"],
+                "timeBucket": "1m",
+                "targetBins": int((request.get("parameters") or {}).get("targetBins") or 10),
+                "bucketCount": 0,
+                "priceBinSize": 0,
+                "sourceBinCount": 0,
+                "source": "worker",
+                "feed": "test",
+                "calculationVersion": request["calculationVersion"],
+                "dataStatus": "ready",
+                "priceRange": {"min": None, "max": None, "requestedMin": None, "requestedMax": None},
+                "totalVolume": 0,
+                "totalTradeCount": 0,
+                "bins": [],
+                "poc": None,
+                "valueArea": None,
+                "cache": {"hit": False, "ttlSeconds": 30, "keyVersion": request["calculationVersion"]},
+                "derived": {"state": "ready", "source": "worker", "requestHash": request["requestHash"], "artifactStored": True},
+            }
+        return {
+            "symbol": request["symbol"],
+            "interval": "footprint",
+            "sourceInterval": "1m",
+            "from": request["from"],
+            "to": request["to"],
+            "timeBucket": "1m",
+            "source": "worker",
+            "feed": "test",
+            "dataStatus": "ready",
+            "sideClassification": "estimated",
+            "classificationVersion": request["calculationVersion"],
+            "calculationVersion": request["calculationVersion"],
+            "tradeCount": 0,
+            "quoteCount": 0,
+            "requestedLimit": request.get("limit"),
+            "buckets": [],
+            "cache": {"hit": False, "ttlSeconds": 15, "keyVersion": request["calculationVersion"]},
+            "derived": {"state": "ready", "source": "worker", "requestHash": request["requestHash"], "artifactStored": True},
+        }
 
 
 class RecordingOnDemandFillService(OnDemandFillService):
@@ -627,7 +808,12 @@ class RecordingBackfillStore:
 
 class FakeQueryService:
     def __init__(self, provider=None):
-        self.service = MarketDataQueryService(provider or FakeProvider(), backfill_service=FakeBackfillService(), fill_service=FakeFillService())
+        self.service = MarketDataQueryService(
+            provider or FakeProvider(),
+            backfill_service=FakeBackfillService(),
+            fill_service=FakeFillService(),
+            derived_client=FakeDerivedClient(),
+        )
 
     def symbol_search(self, query, limit):
         return self.service.symbol_search(query, limit)
@@ -637,6 +823,9 @@ class FakeQueryService:
 
     def volume_profile_bins(self, symbol, from_time, to_time, price_bin_size):
         return self.service.volume_profile_bins(symbol, from_time, to_time, price_bin_size)
+
+    def indicator_series(self, symbol, interval, from_time=None, to_time=None, layers=None, limit=None):
+        return self.service.indicator_series(symbol, interval, from_time, to_time, layers, limit)
 
     def latest_status(self, symbol=None):
         return self.service.latest_status(symbol)
@@ -666,7 +855,41 @@ class MarketDataQueryServiceTest(unittest.TestCase):
 
         self.assertEqual(payload["symbol"], "AAPL")
         self.assertEqual(provider.last_limit, 120)
+        self.assertEqual(provider.last_ma_windows, (5, 60))
         self.assertEqual(payload["indicators"], {"ma": [5, 60], "volume": True})
+
+    def test_candle_snapshot_omits_moving_averages_by_default(self):
+        class MovingAverageProvider(FakeProvider):
+            def candle_snapshot(self, symbol, interval, limit, before=None, from_time=None, to_time=None, ma_windows=None):
+                self.last_limit = limit
+                self.last_ma_windows = ma_windows
+                return {
+                    "symbol": symbol,
+                    "interval": interval,
+                    "snapshotCursor": "cursor-1",
+                    "candles": [{
+                        "timestamp": "2026-06-25T10:15:00.000Z",
+                        "open": 99,
+                        "high": 101,
+                        "low": 98,
+                        "close": 100,
+                        "volume": 1000,
+                        "ma5": 99.5,
+                        "ma20": 98.5,
+                        "ma60": 97.5,
+                    }],
+                }
+
+        provider = MovingAverageProvider()
+        service = MarketDataQueryService(provider, backfill_service=FakeBackfillService(), fill_service=FakeFillService())
+
+        payload = service.candle_snapshot("aapl", "1m", "", None)
+
+        self.assertEqual(provider.last_ma_windows, ())
+        self.assertEqual(payload["indicators"], {"ma": [], "volume": True})
+        self.assertNotIn("ma5", payload["candles"][0])
+        self.assertNotIn("ma20", payload["candles"][0])
+        self.assertNotIn("ma60", payload["candles"][0])
 
     def test_candle_snapshot_accepts_canonical_and_legacy_intervals(self):
         provider = FakeProvider()
@@ -690,7 +913,12 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertIn("Market data provider failed", str(raised.exception.detail))
 
     def test_query_service_routes_core_market_context(self):
-        service = MarketDataQueryService(FakeProvider(), backfill_service=FakeBackfillService(), fill_service=FakeFillService())
+        service = MarketDataQueryService(
+            FakeProvider(),
+            backfill_service=FakeBackfillService(),
+            fill_service=FakeFillService(),
+            derived_client=FakeDerivedClient(),
+        )
 
         self.assertEqual(service.symbol_search("aa", 10)["symbols"][0]["symbol"], "AAPL")
         self.assertEqual(service.symbol_detail("aapl")["symbol"], "AAPL")
@@ -699,6 +927,107 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(service.volume_profile_bins("aapl", "from", "to", "auto")["symbol"], "AAPL")
         context = service.agent_chart_context("aapl", "1m", "from", "to", "status,volumeProfile")
         self.assertEqual(context["include"], ["status", "volumeProfile"])
+
+    def test_volume_profile_bins_uses_display_buckets_and_redis_cache(self):
+        provider = FakeVolumeProfileProvider()
+        derived_client = FakeDerivedClient()
+        service = MarketDataQueryService(provider, backfill_service=FakeBackfillService(), fill_service=FakeFillService(), derived_client=derived_client)
+
+        with mock.patch.dict(os.environ, {"CHART_VOLUME_PROFILE_CACHE_TTL_SECONDS": "44"}):
+            payload = service.volume_profile_bins(
+                "aapl",
+                "2026-06-25T13:30:00.000Z",
+                "2026-06-25T14:00:00.000Z",
+                "auto",
+                target_bins=4,
+                price_min=100,
+                price_max=102,
+            )
+
+        self.assertEqual(payload["symbol"], "AAPL")
+        self.assertEqual(payload["calculationVersion"], "volume-profile-v1")
+        self.assertEqual(payload["targetBins"], 4)
+        self.assertEqual(payload["derived"]["state"], "ready")
+        self.assertEqual(provider.calls, [])
+        self.assertEqual(derived_client.requests[0]["kind"], "volumeProfile")
+        self.assertEqual(derived_client.requests[0]["parameters"]["targetBins"], 4)
+        self.assertEqual(derived_client.requests[0]["parameters"]["priceMin"], 100)
+        self.assertEqual(derived_client.requests[0]["parameters"]["priceMax"], 102)
+
+    def test_volume_profile_bins_rejects_reversed_price_range(self):
+        service = MarketDataQueryService(FakeVolumeProfileProvider(), backfill_service=FakeBackfillService(), fill_service=FakeFillService())
+
+        with self.assertRaises(HTTPException) as raised:
+            service.volume_profile_bins("aapl", "from", "to", "auto", target_bins=10, price_min=102, price_max=100)
+
+        self.assertEqual(raised.exception.status_code, 400)
+
+    def test_footprint_series_uses_estimated_calculation_and_redis_cache(self):
+        provider = FakeFootprintProvider()
+        derived_client = FakeDerivedClient()
+        service = MarketDataQueryService(provider, backfill_service=FakeBackfillService(), fill_service=FakeFillService(), derived_client=derived_client)
+
+        with mock.patch.dict(os.environ, {"CHART_FOOTPRINT_CACHE_TTL_SECONDS": "22"}):
+            payload = service.footprint_series(
+                "aapl",
+                "2026-06-25T13:30:00.000Z",
+                "2026-06-25T13:31:00.000Z",
+                limit=100,
+            )
+
+        self.assertEqual(payload["symbol"], "AAPL")
+        self.assertEqual(payload["interval"], "footprint")
+        self.assertEqual(payload["sourceInterval"], "1m")
+        self.assertEqual(payload["sideClassification"], "estimated")
+        self.assertEqual(payload["derived"]["state"], "ready")
+        self.assertEqual(provider.calls, [])
+        self.assertEqual(derived_client.requests[0]["kind"], "footprint")
+        self.assertEqual(derived_client.requests[0]["limit"], 100)
+
+    def test_indicator_series_uses_candle_snapshot_lookback_and_redis_cache(self):
+        provider = FakeIndicatorProvider()
+        derived_client = FakeDerivedClient()
+        service = MarketDataQueryService(provider, backfill_service=FakeBackfillService(), fill_service=FakeFillService(), derived_client=derived_client)
+
+        payload = service.indicator_series(
+            "aapl",
+            "1m",
+            "2026-06-25T13:30:00.000Z",
+            "2026-06-25T13:39:00.000Z",
+            "ma5,ema:5,rsi:14",
+            30,
+        )
+
+        self.assertEqual(payload["symbol"], "AAPL")
+        self.assertEqual(payload["interval"], "1m")
+        self.assertEqual([item["id"] for item in payload["indicators"]], ["sma:5", "ema:5", "rsi:14"])
+        self.assertEqual(provider.calls[0]["fromTime"], "2026-06-25T13:00:00.000Z")
+        self.assertEqual(provider.calls[0]["limit"], 45)
+        self.assertEqual(provider.calls[0]["maWindows"], ())
+        self.assertEqual(len(provider.calls), 1)
+        self.assertEqual(derived_client.requests[0]["kind"], "indicators")
+        self.assertEqual(derived_client.requests[0]["parameters"]["layers"], "sma:5,ema:5,rsi:14")
+        self.assertEqual(derived_client.requests[0]["limit"], 30)
+
+    def test_indicator_series_rejects_unsupported_layer(self):
+        service = MarketDataQueryService(FakeIndicatorProvider(), backfill_service=FakeBackfillService(), fill_service=FakeFillService())
+
+        with self.assertRaises(HTTPException) as raised:
+            service.indicator_series("AAPL", "1m", layers="unknown:10", limit=30)
+
+        self.assertEqual(raised.exception.status_code, 400)
+        self.assertIn("Unsupported indicator layer", str(raised.exception.detail))
+
+    def test_indicator_route_delegates_to_query_service(self):
+        previous = query_routes.get_query_service
+        query_routes.get_query_service = lambda: FakeQueryService(FakeIndicatorProvider())
+        try:
+            payload = query_routes.chart_indicators("aapl", "1m", None, None, "sma:5", 10)
+        finally:
+            query_routes.get_query_service = previous
+
+        self.assertEqual(payload["symbol"], "AAPL")
+        self.assertIn("sma:5", payload["series"])
 
     def test_latest_news_uses_redis_cache_and_normalizes_response_shape(self):
         service = MarketDataQueryService(FakeNewsProvider(redis_rows=[{

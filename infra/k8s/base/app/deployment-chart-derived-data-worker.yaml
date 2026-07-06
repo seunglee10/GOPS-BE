@@ -1,0 +1,28 @@
+# 역할: 차트 derived data 요청을 계산해 Redis cache와 ClickHouse artifact에 저장합니다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alfaka-chart-derived-data-worker
+  namespace: alfaka-market-data
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: alfaka-chart-derived-data-worker
+  template:
+    metadata:
+      labels:
+        app: alfaka-chart-derived-data-worker
+    spec:
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: chart-derived-data-worker
+          image: YOUR_ECR_REPOSITORY/gops-market-storage:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "systems/market-data/pods/chart-derived-data-worker/main.py"]
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-clickhouse-secret
+                optional: true

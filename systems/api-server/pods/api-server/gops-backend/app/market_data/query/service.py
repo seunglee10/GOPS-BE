@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 from fastapi import HTTPException
@@ -9,15 +10,33 @@ from app.market_data.fill.service import get_on_demand_fill_service
 from app.market_data.heatmap.service import get_heatmap_service
 from app.market_data.indices.service import get_indices_service
 from app.services.alfaka_market_data import get_market_data_provider, normalize_market_symbol, requested_ma_from_csv
+from alfaka.serving.chart_derived_data import (
+    ChartDerivedArtifactStore,
+    ChartDerivedDataClient,
+    build_footprint_request,
+    build_indicator_request,
+    build_volume_profile_request,
+    clickhouse_client_from_env,
+    indicator_fetch_from_time,
+)
+from alfaka.serving.indicators import (
+    indicator_required_lookback_bars,
+    indicator_specs_from_csv,
+)
 from alfaka.serving.intervals import normalize_chart_interval, resolve_candle_limit
+from alfaka.serving.volume_profile import (
+    DEFAULT_VOLUME_PROFILE_TARGET_BINS,
+    normalize_target_bins,
+)
 from alfaka.storage.news_daily_summary import attach_price_changes_to_daily_summaries, clickhouse_row_to_daily_summary
 
 
 class MarketDataQueryService:
-    def __init__(self, provider=None, backfill_service=None, fill_service=None):
+    def __init__(self, provider=None, backfill_service=None, fill_service=None, derived_client=None):
         self.provider = provider or get_market_data_provider()
         self.backfill_service = backfill_service or get_backfill_service(self.provider)
         self.fill_service = fill_service or get_on_demand_fill_service(self.provider)
+        self.derived_client = derived_client or build_chart_derived_client(self.provider)
 
     def candle_snapshot(
         self,
@@ -34,7 +53,16 @@ class MarketDataQueryService:
         requested_ma = requested_ma_from_csv(ma)
         resolved_limit = resolve_candle_limit(interval, limit)
         try:
-            payload = self.provider.candle_snapshot(symbol, interval, resolved_limit, before=before, from_time=from_time, to_time=to_time)
+            payload = provider_candle_snapshot(
+                self.provider,
+                symbol,
+                interval,
+                resolved_limit,
+                before=before,
+                from_time=from_time,
+                to_time=to_time,
+                ma_windows=tuple(requested_ma),
+            )
         except Exception as exc:
             raise HTTPException(status_code=503, detail=f"Market data provider failed: {exc}") from exc
         payload = self.fill_service.fill_if_needed(
@@ -46,6 +74,7 @@ class MarketDataQueryService:
             to_time=to_time,
             payload=payload,
         )
+        filter_candle_moving_average_fields(payload, requested_ma)
         payload["indicators"] = {"ma": requested_ma, "volume": True}
         metadata = self.backfill_service.snapshot_metadata(symbol, interval, payload)
         payload.update(metadata)
@@ -123,9 +152,80 @@ class MarketDataQueryService:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    def volume_profile_bins(self, symbol: str, from_time: str, to_time: str, price_bin_size: str) -> dict[str, Any]:
+    def volume_profile_bins(
+        self,
+        symbol: str,
+        from_time: str,
+        to_time: str,
+        price_bin_size: str,
+        target_bins: int = DEFAULT_VOLUME_PROFILE_TARGET_BINS,
+        price_min: float | None = None,
+        price_max: float | None = None,
+    ) -> dict[str, Any]:
         symbol = normalize_market_symbol(symbol)
-        return self.provider.volume_profile_bins(symbol, from_time, to_time, price_bin_size)
+        if price_min is not None and price_max is not None and price_max <= price_min:
+            raise HTTPException(status_code=400, detail="priceMax must be greater than priceMin.")
+        resolved_target_bins = normalize_target_bins(target_bins)
+        request = build_volume_profile_request(
+            symbol=symbol,
+            from_time=from_time,
+            to_time=to_time,
+            price_bin_size=price_bin_size,
+            target_bins=resolved_target_bins,
+            price_min=price_min,
+            price_max=price_max,
+        )
+        return self.derived_client.resolve(request)
+
+    def indicator_series(
+        self,
+        symbol: str,
+        interval: str,
+        from_time: str | None = None,
+        to_time: str | None = None,
+        layers: str | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        symbol = normalize_market_symbol(symbol)
+        interval = normalize_chart_interval(interval)
+        try:
+            specs = indicator_specs_from_csv(layers)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        requested_limit = resolve_candle_limit(interval, limit)
+
+        lookback = indicator_required_lookback_bars(specs)
+        fetch_limit = requested_limit + lookback
+        fetch_from_time = indicator_fetch_from_time(interval, from_time, lookback)
+        self.candle_snapshot(
+            symbol,
+            interval,
+            "",
+            fetch_limit,
+            from_time=fetch_from_time,
+            to_time=to_time,
+        )
+        request = build_indicator_request(
+            symbol=symbol,
+            interval=interval,
+            from_time=from_time,
+            to_time=to_time,
+            specs=specs,
+            limit=requested_limit,
+        )
+        return self.derived_client.resolve(request)
+
+    def footprint_series(
+        self,
+        symbol: str,
+        from_time: str,
+        to_time: str,
+        limit: int = 20000,
+    ) -> dict[str, Any]:
+        symbol = normalize_market_symbol(symbol)
+        resolved_limit = max(1, min(int(limit), 100000))
+        request = build_footprint_request(symbol=symbol, from_time=from_time, to_time=to_time, limit=resolved_limit)
+        return self.derived_client.resolve(request)
 
     def latest_status(self, symbol: str | None = None) -> dict[str, Any]:
         normalized = normalize_market_symbol(symbol) if symbol else None
@@ -236,6 +336,16 @@ def get_query_service() -> MarketDataQueryService:
     return MarketDataQueryService()
 
 
+def build_chart_derived_client(provider: Any) -> ChartDerivedDataClient:
+    clickhouse = getattr(provider, "clickhouse_provider", None)
+    if clickhouse is None:
+        clickhouse = clickhouse_client_from_env()
+    return ChartDerivedDataClient(
+        redis_client=redis_client_for_provider(provider),
+        artifact_store=ChartDerivedArtifactStore(clickhouse),
+    )
+
+
 def normalize_fill_status(fill: dict[str, Any], metadata: dict[str, Any]) -> str:
     status = fill.get("status")
     data_status = metadata.get("dataStatus")
@@ -248,6 +358,57 @@ def normalize_fill_status(fill: dict[str, Any], metadata: dict[str, Any]) -> str
     if data_status == "empty":
         return "empty" if status in {"not_needed", "empty"} else status or "empty"
     return status or "partial"
+
+
+def redis_client_for_provider(provider: Any):
+    redis_provider = getattr(provider, "redis_provider", None)
+    return getattr(redis_provider, "redis", None)
+
+
+def filter_candle_moving_average_fields(payload: dict[str, Any], requested_ma: list[int]) -> None:
+    allowed_keys = {f"ma{window}" for window in requested_ma}
+    for candle in payload.get("candles") or []:
+        if not isinstance(candle, dict):
+            continue
+        for key in ("ma5", "ma20", "ma60"):
+            if key not in allowed_keys:
+                candle.pop(key, None)
+        nested = candle.get("ma")
+        if isinstance(nested, dict):
+            for key in list(nested.keys()):
+                if key in {"ma5", "ma20", "ma60"} and key not in allowed_keys:
+                    nested.pop(key, None)
+
+
+def provider_candle_snapshot(
+    provider: Any,
+    symbol: str,
+    interval: str,
+    limit: int,
+    *,
+    before: str | None = None,
+    from_time: str | None = None,
+    to_time: str | None = None,
+    ma_windows: tuple[int, ...] = (),
+) -> dict[str, Any]:
+    if provider_accepts_ma_windows(provider):
+        return provider.candle_snapshot(
+            symbol,
+            interval,
+            limit,
+            before=before,
+            from_time=from_time,
+            to_time=to_time,
+            ma_windows=ma_windows,
+        )
+    return provider.candle_snapshot(symbol, interval, limit, before=before, from_time=from_time, to_time=to_time)
+
+
+def provider_accepts_ma_windows(provider: Any) -> bool:
+    try:
+        return "ma_windows" in inspect.signature(provider.candle_snapshot).parameters
+    except (TypeError, ValueError):
+        return False
 
 
 def normalize_news_item(row: dict[str, Any], fallback_symbol: str) -> dict[str, Any]:
