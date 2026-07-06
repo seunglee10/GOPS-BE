@@ -25,7 +25,8 @@ def normalize_request_state(state: dict[str, Any]) -> dict[str, Any]:
     analysis_mode = resolve_analysis_mode(request, intent)
     layout_context = request.get("layoutContext") if isinstance(request.get("layoutContext"), dict) else {}
     ui_context = request.get("uiContext") if isinstance(request.get("uiContext"), dict) else {}
-    references = normalize_operation_references(request.get("references", []), ui_context)
+    chart_context_raw = request.get("chartContext") if isinstance(request.get("chartContext"), dict) else {}
+    references = normalize_operation_references(request.get("references", []), ui_context, chart_context_raw)
     query_understanding, entity_resolution = build_query_understanding(
         intent,
         agent_ids=request.get("agentIds"),

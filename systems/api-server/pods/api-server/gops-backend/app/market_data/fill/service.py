@@ -24,6 +24,7 @@ from alfaka.storage.clickhouse_loader import ClickHouseHttpClient, should_ensure
 from alfaka.storage.processed_s3_sink import flush_buffer
 from alfaka.storage.s3_manifest import DEFAULT_MANIFEST_PREFIX
 from alfaka.storage.s3_materializer import materialize_s3_processed_objects
+from app.market_data.backfill.service import renderability_payload
 
 
 FILL_TIMEOUT_SECONDS = 30.0
@@ -153,18 +154,16 @@ class OnDemandFillService:
         candles = payload.get("candles") or []
         if payload.get("missingRanges"):
             return True
-        if len(candles) >= limit:
-            return False
-        return not self._is_renderable(payload, interval, source_interval)
+        if not self._is_renderable(payload, interval, source_interval):
+            return True
+        return len(candles) < limit
 
     def _is_renderable(self, payload: dict[str, Any], interval: str, source_interval: str) -> bool:
         returned = int(payload.get("returnedCount") or len(payload.get("candles") or []))
         stored = int(payload.get("storedCandleCount") or returned)
-        return (
-            returned >= minimum_renderable_returned_bars(interval)
-            and stored >= minimum_renderable_source_bars(source_interval)
-            and not payload.get("missingRanges")
-        )
+        if payload.get("missingRanges"):
+            return False
+        return bool(renderability_payload(interval, source_interval, payload.get("candles") or [], returned, stored).get("renderable"))
 
     def _fill_ranges(self, payload: dict[str, Any], requested_start: str, requested_end: str) -> list[dict[str, Any]]:
         ranges = payload.get("missingRanges") or []

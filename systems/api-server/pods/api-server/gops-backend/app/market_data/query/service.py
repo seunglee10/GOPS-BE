@@ -231,15 +231,32 @@ class MarketDataQueryService:
 
         lookback = indicator_required_lookback_bars(specs)
         fetch_limit = requested_limit + lookback
-        fetch_from_time = indicator_fetch_from_time(interval, from_time, lookback)
-        self.candle_snapshot(
-            symbol,
-            interval,
-            "",
-            fetch_limit,
-            from_time=fetch_from_time,
-            to_time=to_time,
-        )
+        if from_time and lookback > 0:
+            self.candle_snapshot(
+                symbol,
+                interval,
+                "",
+                lookback,
+                before=from_time,
+            )
+            self.candle_snapshot(
+                symbol,
+                interval,
+                "",
+                requested_limit,
+                from_time=from_time,
+                to_time=to_time,
+            )
+        else:
+            fetch_from_time = indicator_fetch_from_time(interval, from_time, lookback)
+            self.candle_snapshot(
+                symbol,
+                interval,
+                "",
+                fetch_limit,
+                from_time=fetch_from_time,
+                to_time=to_time,
+            )
         request = build_indicator_request(
             symbol=symbol,
             interval=interval,

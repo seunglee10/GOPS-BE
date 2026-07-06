@@ -37,6 +37,10 @@ class FinalAnswerSynthesizer:
         synthesis_input: SynthesisInput | None = None,
         runtime_context: Any | None = None,
     ) -> FinalAnswer:
+        if isinstance(timing, dict):
+            timing["synthesisProvider"] = "deterministic"
+            timing.pop("synthesisSkippedReason", None)
+            timing.pop("synthesisFallbackReason", None)
         if is_news_route(route):
             return self._synthesize_deterministic(
                 symbol=symbol,
@@ -85,7 +89,13 @@ class FinalAnswerSynthesizer:
                 runtime_context=runtime_context,
             )
         if openai_answer:
+            if is_status_only_summary(openai_answer.summary):
+                openai_answer.summary = build_summary(symbol, route, findings, provider_evidence)
+            if isinstance(timing, dict):
+                timing["synthesisProvider"] = "openai"
             return openai_answer
+        if isinstance(timing, dict) and not timing.get("synthesisFallbackReason"):
+            timing["synthesisFallbackReason"] = "openai_unavailable"
         return self._synthesize_deterministic(
             symbol=symbol,
             intent=intent,
@@ -111,7 +121,7 @@ class FinalAnswerSynthesizer:
             return sanitize_final_answer(build_ontology_final_answer(symbol, findings, provider_evidence))
         if is_financial_route(route):
             return sanitize_final_answer(build_financial_final_answer(symbol, findings, provider_evidence))
-        if "market-move" in intent_types:
+        if intent_types & {"market-move", "explain_price_move", "link_news_to_price_move"}:
             return sanitize_final_answer(build_market_move_final_answer(symbol, findings, provider_evidence))
         return sanitize_final_answer(build_general_final_answer(symbol, route, findings, provider_evidence))
 
@@ -128,14 +138,20 @@ class FinalAnswerSynthesizer:
         runtime_context: Any | None = None,
     ) -> FinalAnswer | None:
         api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key or os.getenv("AGENT_FINAL_ANSWER_PROVIDER") == "deterministic":
+        if not api_key:
+            mark_synthesis_fallback(timing, "missing_openai_api_key", skipped=True)
+            return None
+        if os.getenv("AGENT_FINAL_ANSWER_PROVIDER") == "deterministic":
+            mark_synthesis_fallback(timing, "provider_deterministic", skipped=True)
             return None
         if runtime_context is not None and hasattr(runtime_context, "acquire_llm"):
             if not runtime_context.acquire_llm("synthesis"):
+                mark_synthesis_fallback(timing, "synthesis_skipped_budget", skipped=True)
                 return None
         try:
             if runtime_context is None and isinstance(timing, dict):
                 timing["llmCalls"] = int(timing.get("llmCalls") or 0) + 1
+                timing["llmCallLabels"] = [*list(timing.get("llmCallLabels") or []), "synthesis"]
             payload = {
                 "model": os.getenv("AGENT_SYNTHESIZER_MODEL", os.getenv("OPENAI_MODEL", "gpt-5.2")),
                 "input": [
@@ -146,6 +162,7 @@ class FinalAnswerSynthesizer:
                             "Do not invent facts, prices, news, macro data, relationships, citations, or recommendations. "
                             "Write Korean report-style prose. Hide internal route, provider, and guardrail diagnostics from users. "
                             "Never mention JSON field names such as providerEvidence, findings, route, selectedRoles, or guardrail. "
+                            "The summary must start with the integrated judgment or conclusion, not with a statement that evidence was retrieved. "
                             "If evidence is missing, put it in limitations. Return strict JSON only."
                         ),
                     },
@@ -221,8 +238,12 @@ class FinalAnswerSynthesizer:
                 timeout_seconds = 12.0
             with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
                 data = json.loads(response.read().decode("utf-8"))
-            return final_answer_from_openai_json(parse_openai_text_json(data))
-        except Exception:
+            answer = final_answer_from_openai_json(parse_openai_text_json(data))
+            if answer is None:
+                mark_synthesis_fallback(timing, "openai_invalid_response")
+            return answer
+        except Exception as exc:
+            mark_synthesis_fallback(timing, f"openai_{exc.__class__.__name__}")
             return None
 
     def _synthesize_financial_with_openai(
@@ -238,7 +259,11 @@ class FinalAnswerSynthesizer:
         runtime_context: Any | None = None,
     ) -> FinalAnswer | None:
         api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key or os.getenv("AGENT_FINAL_ANSWER_PROVIDER") == "deterministic":
+        if not api_key:
+            mark_synthesis_fallback(timing, "missing_openai_api_key", skipped=True)
+            return None
+        if os.getenv("AGENT_FINAL_ANSWER_PROVIDER") == "deterministic":
+            mark_synthesis_fallback(timing, "provider_deterministic", skipped=True)
             return None
         payload_data = financial_synthesis_payload(
             symbol=symbol,
@@ -258,10 +283,12 @@ class FinalAnswerSynthesizer:
             timing["financialFinalAnswerCacheHit"] = False
         if runtime_context is not None and hasattr(runtime_context, "acquire_llm"):
             if not runtime_context.acquire_llm("financial-synthesis"):
+                mark_synthesis_fallback(timing, "synthesis_skipped_budget", skipped=True)
                 return None
         try:
             if runtime_context is None and isinstance(timing, dict):
                 timing["llmCalls"] = int(timing.get("llmCalls") or 0) + 1
+                timing["llmCallLabels"] = [*list(timing.get("llmCallLabels") or []), "financial-synthesis"]
             payload = {
                 "model": os.getenv(
                     "AGENT_FINANCIAL_SYNTHESIZER_MODEL",
@@ -275,6 +302,7 @@ class FinalAnswerSynthesizer:
                             "Use only the supplied formatted facts and rule-based signals. "
                             "Do not calculate new numbers, infer missing metrics, mention raw JSON fields, or add prices, PER, PBR, PSR, forecasts, news, or buy/sell recommendations. "
                             "Explain what each important metric means, then state cautious interpretation and next metrics to check. "
+                            "The summary must start with the integrated judgment or conclusion, not with a statement that evidence was retrieved. "
                             "Return strict JSON only."
                         ),
                     },
@@ -313,8 +341,11 @@ class FinalAnswerSynthesizer:
             answer = final_answer_from_openai_json(parse_openai_text_json(data))
             if answer is not None:
                 set_cached_financial_final_answer(cache_key, answer)
+            else:
+                mark_synthesis_fallback(timing, "openai_invalid_response")
             return answer
-        except Exception:
+        except Exception as exc:
+            mark_synthesis_fallback(timing, f"openai_{exc.__class__.__name__}")
             return None
 
     def synthesize_agent_answer(
@@ -454,12 +485,70 @@ def is_financial_route(route: IntentRoute) -> bool:
     return "financial" in intent_type or route.selectedRoles == ["financial"] or "financial" in route.selectedRoles
 
 
+def mark_synthesis_fallback(timing: dict[str, Any] | None, reason: str, *, skipped: bool = False) -> None:
+    if not isinstance(timing, dict):
+        return
+    if skipped:
+        timing["synthesisSkippedReason"] = reason
+    timing["synthesisFallbackReason"] = reason
+
+
 def build_summary(symbol: str, route: IntentRoute, findings: list[AgentFinding], evidence: list[EvidenceItem]) -> str:
-    if evidence:
-        return f"{symbol} 분석에 사용할 외부 근거를 확인했습니다."
-    if findings:
-        return f"{symbol} 분석을 완료했지만 외부 근거는 아직 충분하지 않습니다."
-    return f"{symbol} 요청을 처리할 에이전트 근거가 아직 충분하지 않습니다."
+    if evidence or findings:
+        sources = evidence_source_label(evidence)
+        direction = infer_price_direction(findings, evidence)
+        return (
+            f"{symbol}{direction}에 대해서는 {sources} 근거를 함께 보더라도 단일 원인으로 확정하기는 어렵습니다. "
+            "현재 결론은 확인된 신호의 관련 가능성을 먼저 평가하고, 부족한 데이터는 한계로 분리해 보는 것입니다."
+        )
+    return f"{symbol} 요청은 현재 확보된 데이터만으로 결론을 내리기 어렵습니다."
+
+
+def is_status_only_summary(summary: str) -> bool:
+    normalized = str(summary or "").replace(" ", "")
+    return any(
+        pattern in normalized
+        for pattern in (
+            "근거를확인했습니다",
+            "외부근거를확인했습니다",
+            "분석에사용할",
+            "확인된근거를바탕으로요약했습니다",
+        )
+    )
+
+
+def evidence_source_label(evidence: list[EvidenceItem]) -> str:
+    labels = {
+        "chart": "차트",
+        "market": "시장",
+        "news": "뉴스",
+        "ontology": "기업 관계",
+        "financial": "재무",
+        "macro": "거시",
+    }
+    providers: list[str] = []
+    for item in evidence:
+        provider = str(item.provider or "").strip().lower()
+        if provider and provider not in providers:
+            providers.append(provider)
+    if not providers:
+        return "역할별 분석"
+    return ", ".join(labels.get(provider, provider) for provider in providers[:4])
+
+
+def infer_price_direction(findings: list[AgentFinding], evidence: list[EvidenceItem]) -> str:
+    text = " ".join(
+        [
+            *[str(item.summary or "") for item in findings[:6]],
+            *[str(item.summary or "") for item in evidence[:8]],
+            *[str((item.raw or {}).get("impactDirection") or "") for item in evidence[:8] if isinstance(item.raw, dict)],
+        ]
+    ).lower()
+    if any(token in text for token in ("하락", "내려", "negative", "bearish", "decline", "down")):
+        return " 하락"
+    if any(token in text for token in ("상승", "올랐", "positive", "bullish", "rise", "up")):
+        return " 상승"
+    return "의 가격 움직임"
 
 
 def compact_findings(findings: list[AgentFinding]) -> list[dict[str, Any]]:
@@ -965,7 +1054,7 @@ def build_market_move_final_answer(symbol: str, findings: list[AgentFinding], pr
         limitations = ["차트, 뉴스, 거시, 기업 관계 provider에 현재 조회된 근거 기준으로 분석했습니다."]
     return FinalAnswer(
         title=f"{symbol} 주가 변동 원인 분석",
-        summary=f"차트, 뉴스, 거시, 기업 관계 근거를 종합해 {symbol}의 변동 원인을 정리했습니다.",
+        summary=market_move_summary_text(symbol, visible_findings, available),
         sections=sections,
         citations=citations_from_evidence(available),
         limitations=limitations,
@@ -1002,6 +1091,22 @@ def build_general_final_answer(
         citations=citations_from_evidence(available),
         limitations=limitations,
     )
+
+
+def market_move_summary_text(symbol: str, findings: list[AgentFinding], evidence: list[EvidenceItem]) -> str:
+    direction = infer_price_direction(findings, evidence)
+    if evidence:
+        sources = evidence_source_label(evidence)
+        return (
+            f"{symbol}{direction}은 현재 근거만으로 단일 원인으로 확정하기는 어렵지만, "
+            f"{sources} 신호와의 관련 가능성을 우선 평가해야 합니다."
+        )
+    if findings:
+        return (
+            f"{symbol}{direction}은 역할별 분석 신호만으로는 원인을 확정하기 어렵습니다. "
+            "현재 결론은 차트 변화와 외부 이벤트를 추가로 대조해야 한다는 것입니다."
+        )
+    return f"{symbol}의 가격 움직임은 현재 확보된 근거만으로 원인을 판단하기 어렵습니다."
 
 
 def visible_role_findings(findings: list[AgentFinding]) -> list[AgentFinding]:

@@ -774,6 +774,9 @@ class AgentOrchestrator:
         agent_trace["analysisMode"] = str(state.get("analysis_mode") or "auto")
         if state.get("input_safety_warnings"):
             agent_trace["inputGuardrail"] = {"warnings": list(state.get("input_safety_warnings", []))}
+        synthesis_trace = synthesis_trace_from_timing(timing)
+        if synthesis_trace:
+            agent_trace["synthesis"] = synthesis_trace
         if state.get("analysis_mode") == "multi_agent":
             agent_trace["multiAgent"] = {
                 "answerCount": len(state.get("agent_answers", [])),
@@ -916,6 +919,24 @@ def layout_resolve_trace_for_state(state: dict[str, Any]) -> dict[str, Any]:
     agent_trace["analysisMode"] = str(state.get("analysis_mode") or "auto")
     agent_trace["uiLayoutFastAck"] = False
     return agent_trace
+
+
+def synthesis_trace_from_timing(timing: dict[str, Any]) -> dict[str, Any]:
+    trace: dict[str, Any] = {}
+    provider = timing.get("synthesisProvider")
+    if provider:
+        trace["provider"] = str(provider)
+    skipped = timing.get("synthesisSkippedReason")
+    if skipped:
+        trace["skippedReason"] = str(skipped)
+    fallback = timing.get("synthesisFallbackReason")
+    if fallback:
+        trace["fallbackReason"] = str(fallback)
+    labels = timing.get("llmCallLabels")
+    if isinstance(labels, list):
+        trace["llmCallLabels"] = [str(item) for item in labels]
+        trace["llmSynthesisAttempted"] = any(str(item) in {"synthesis", "financial-synthesis"} for item in labels)
+    return trace
 
 
 def ui_layout_preflight_response(request: dict[str, Any]) -> dict[str, Any] | None:
@@ -1066,6 +1087,8 @@ def allow_role_answer_llm_calls(runtime_context: Any, selected_role_count: int) 
     budget = runtime_context.llm_budget
     current = int(getattr(budget, "max_calls", 0) or 0)
     used = int(getattr(budget, "used_calls", 0) or 0)
+    if hasattr(budget, "reserved_synthesis_calls"):
+        budget.reserved_synthesis_calls = 0
     budget.max_calls = max(current, used + max(1, selected_role_count))
 
 
