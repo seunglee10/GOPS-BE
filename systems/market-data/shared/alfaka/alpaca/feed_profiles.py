@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from datetime import datetime, time, timezone as datetime_timezone
+from datetime import datetime, time, timedelta, timezone as datetime_timezone
 from zoneinfo import ZoneInfo
 
 from alfaka.common.env import parse_csv
@@ -132,26 +132,61 @@ def market_session_for_datetime(value: datetime, timezone=MARKET_TIMEZONE, close
         value = value.replace(tzinfo=datetime_timezone.utc)
     local = value.astimezone(timezone)
     closed_dates = configured_closed_dates() if closed_dates is None else closed_dates
-    if local.date().isoformat() in closed_dates:
-        return "closed"
-    weekday = local.weekday()
     local_time = local.time()
-    if weekday >= 5:
-        return "closed"
+
     if PRE_MARKET_OPEN <= local_time < REGULAR_OPEN:
-        return "pre"
-    if REGULAR_OPEN <= local_time < REGULAR_CLOSE:
-        return "regular"
-    if REGULAR_CLOSE <= local_time < AFTER_MARKET_CLOSE:
-        return "after"
-    if weekday < 5:
-        return "overnight"
-    return "closed"
+        session = "pre"
+        trading_date = local.date()
+    elif REGULAR_OPEN <= local_time < REGULAR_CLOSE:
+        session = "regular"
+        trading_date = local.date()
+    elif REGULAR_CLOSE <= local_time < AFTER_MARKET_CLOSE:
+        session = "after"
+        trading_date = local.date()
+    elif local_time >= AFTER_MARKET_CLOSE:
+        session = "overnight"
+        trading_date = local.date() + timedelta(days=1)
+    else:
+        session = "overnight"
+        trading_date = local.date()
+
+    if trading_date.isoformat() in closed_dates or trading_date.weekday() >= 5:
+        return "closed"
+    return session
 
 
 def market_session_for_now(now: datetime | None = None, timezone=MARKET_TIMEZONE) -> str:
     """현재 시각 기준의 미국 주식장 세션을 계산합니다."""
     return market_session_for_datetime(now or datetime.now(datetime_timezone.utc), timezone=timezone)
+
+
+def active_extended_session_window(now: datetime | None = None, timezone=MARKET_TIMEZONE):
+    """현재 진행 중인 pre/after/overnight 세션의 UTC 범위를 반환합니다."""
+    current = now or datetime.now(datetime_timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=datetime_timezone.utc)
+    session = market_session_for_datetime(current, timezone=timezone)
+    if session not in {"pre", "after", "overnight"}:
+        return None
+
+    local = current.astimezone(timezone)
+    if session == "pre":
+        start = datetime.combine(local.date(), PRE_MARKET_OPEN, tzinfo=timezone)
+        end = datetime.combine(local.date(), REGULAR_OPEN, tzinfo=timezone)
+    elif session == "after":
+        start = datetime.combine(local.date(), REGULAR_CLOSE, tzinfo=timezone)
+        end = datetime.combine(local.date(), AFTER_MARKET_CLOSE, tzinfo=timezone)
+    elif local.time() >= AFTER_MARKET_CLOSE:
+        start = datetime.combine(local.date(), AFTER_MARKET_CLOSE, tzinfo=timezone)
+        end = datetime.combine(local.date() + timedelta(days=1), PRE_MARKET_OPEN, tzinfo=timezone)
+    else:
+        start = datetime.combine(local.date() - timedelta(days=1), AFTER_MARKET_CLOSE, tzinfo=timezone)
+        end = datetime.combine(local.date(), PRE_MARKET_OPEN, tzinfo=timezone)
+    return (
+        session,
+        start.astimezone(datetime_timezone.utc),
+        end.astimezone(datetime_timezone.utc),
+    )
 
 
 def configured_closed_dates(environ=None) -> frozenset[str]:

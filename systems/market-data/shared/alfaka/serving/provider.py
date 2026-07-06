@@ -4,6 +4,7 @@
 import logging
 from datetime import datetime, timedelta, timezone
 
+from alfaka.alpaca.feed_profiles import active_extended_session_window, market_session_for_timestamp
 from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
 from alfaka.serving.cursors import timestamp_from_cursor
 from alfaka.serving.dto import cursor_for, snapshot
@@ -35,7 +36,7 @@ class MarketDataProvider:
         else:
             clickhouse_from_time = target_floor_from_time(interval, from_time, limit)
         range_query = bool(before or from_time or to_time)
-        redis_candles = [] if range_query else filter_stock_weekdays(self.redis_provider.recent_candles(symbol, interval, query_limit))
+        redis_candles = [] if range_query else filter_stock_chart_candles(self.redis_provider.recent_candles(symbol, interval, query_limit))
         live_candle = None if range_query else self._live_candle(symbol, interval)
         coverage = None
         if len(redis_candles) >= query_limit:
@@ -49,7 +50,7 @@ class MarketDataProvider:
                 }
                 return with_coverage_metadata(payload, coverage, limit, before=before, from_time=from_time, to_time=to_time)
 
-        clickhouse_candles = filter_stock_weekdays(self.clickhouse_provider.candles(
+        clickhouse_candles = filter_stock_chart_candles(self.clickhouse_provider.candles(
             symbol,
             interval,
             query_limit,
@@ -58,7 +59,7 @@ class MarketDataProvider:
             to_time=to_time,
         ))
         if interval in {"1m", "5m", "10m"} and not range_query and len(clickhouse_candles) < query_limit and clickhouse_from_time:
-            latest_candles = filter_stock_weekdays(self.clickhouse_provider.candles(
+            latest_candles = filter_stock_chart_candles(self.clickhouse_provider.candles(
                 symbol,
                 interval,
                 query_limit,
@@ -91,7 +92,7 @@ class MarketDataProvider:
             candle for candle in self.redis_provider.recent_candles(symbol, interval, limit)
             if candle_after_cursor(symbol, interval, candle, cursor, timestamp)
         ]
-        redis_candles = filter_stock_weekdays(redis_candles)
+        redis_candles = filter_stock_chart_candles(redis_candles)
         live_candle = self._live_candle(symbol, interval)
         live_candles = [live_candle] if live_candle and candle_after_cursor(symbol, interval, live_candle, cursor, timestamp) else []
         try:
@@ -99,7 +100,7 @@ class MarketDataProvider:
         except Exception:
             logger.warning("ClickHouse candles_since failed; falling back to Redis recent candles.", exc_info=True)
             clickhouse_candles = []
-        filtered_clickhouse = filter_stock_weekdays([
+        filtered_clickhouse = filter_stock_chart_candles([
             candle for candle in clickhouse_candles
             if candle_after_cursor(symbol, interval, candle, cursor, timestamp)
         ])
@@ -401,10 +402,18 @@ def first_value(rows, key, fallback):
 
 
 def filter_stock_weekdays(candles):
-    return [candle for candle in candles if is_stock_weekday_candle(candle)]
+    return filter_stock_chart_candles(candles)
 
 
 def is_stock_weekday_candle(candle):
+    return is_stock_chart_visible_candle(candle)
+
+
+def filter_stock_chart_candles(candles, now=None):
+    return [candle for candle in candles if is_stock_chart_visible_candle(candle, now=now)]
+
+
+def is_stock_chart_visible_candle(candle, now=None):
     try:
         interval = normalize_chart_interval(candle.get("interval", "1m"))
     except ValueError:
@@ -415,7 +424,25 @@ def is_stock_weekday_candle(candle):
     parsed = parse_iso_time(timestamp)
     if not parsed:
         return True
-    return parsed.weekday() < 5
+    session = normalized_market_session(candle.get("marketSession"))
+    if not session:
+        return market_session_for_timestamp(timestamp) != "closed"
+    if session == "closed":
+        return False
+    if session == "regular":
+        return True
+    window = active_extended_session_window(now)
+    if not window:
+        return False
+    active_session, start, end = window
+    return session == active_session and start <= parsed < end
+
+
+def normalized_market_session(value):
+    normalized = str(value or "").strip().lower()
+    if normalized in {"pre", "regular", "after", "overnight", "closed"}:
+        return normalized
+    return None
 
 
 def moving_average_query_limit(interval, requested_limit, windows=MA_WINDOWS):
