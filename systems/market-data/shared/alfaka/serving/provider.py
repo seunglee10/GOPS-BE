@@ -74,7 +74,7 @@ class MarketDataProvider:
             from_time=clickhouse_from_time,
             to_time=to_time,
         ))
-        if interval in {"1m", "5m", "10m"} and not range_query and len(clickhouse_candles) < query_limit and clickhouse_from_time:
+        if interval in {"1m", "5m", "10m"} and not range_query and len(clickhouse_candles) < query_limit and clickhouse_from_time and not clickhouse_candles:
             latest_candles = filter_stock_chart_candles(self.clickhouse_provider.candles(
                 symbol,
                 interval,

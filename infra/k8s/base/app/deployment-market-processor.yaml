@@ -6,7 +6,7 @@ metadata:
   name: alfaka-market-processor
   namespace: alfaka-market-data
 spec:
-  replicas: 1
+  replicas: 3
   selector:
     matchLabels:
       app: alfaka-market-processor
@@ -24,3 +24,10 @@ spec:
           envFrom:
             - configMapRef:
                 name: alfaka-market-data-config
+          resources:
+            requests:
+              cpu: 200m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi

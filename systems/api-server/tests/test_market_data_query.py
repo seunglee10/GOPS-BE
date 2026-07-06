@@ -1458,6 +1458,43 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertFalse(result["fill"]["sources"]["s3"]["checked"])
         self.assertFalse(result["fill"]["sources"]["alpaca"]["checked"])
 
+    def test_on_demand_fill_continues_when_returned_window_is_sparse_at_limit(self):
+        early_start = datetime.fromisoformat("2026-06-25T13:30:00+00:00")
+        late_start = datetime.fromisoformat("2026-06-25T18:00:00+00:00")
+        candles = [
+            {"timestamp": (early_start + timedelta(minutes=index)).strftime("%Y-%m-%dT%H:%M:%S.000Z")}
+            for index in range(10)
+        ] + [
+            {"timestamp": (late_start + timedelta(minutes=index)).strftime("%Y-%m-%dT%H:%M:%S.000Z")}
+            for index in range(10)
+        ]
+        payload = {
+            "symbol": "AMD",
+            "interval": "1m",
+            "candles": candles,
+            "returnedCount": 20,
+            "storedCandleCount": 30,
+            "_sourceTrace": {
+                "redis": {"checked": True, "hit": False, "rowCount": 0},
+                "clickhouse": {"checked": True, "hit": True, "rowCount": 20},
+            },
+        }
+        service = RecordingOnDemandFillService(s3_result=False, alpaca_result=True)
+
+        result = service.fill_if_needed(
+            symbol="AMD",
+            interval="1m",
+            limit=20,
+            before="2026-06-25T19:00:00.000Z",
+            from_time=None,
+            to_time=None,
+            payload=payload,
+        )
+
+        self.assertEqual(result["fill"]["status"], "partial")
+        self.assertEqual([call[0] for call in service.calls], ["s3", "alpaca"])
+        self.assertTrue(result["fill"]["sources"]["alpaca"]["hit"])
+
     def test_on_demand_fill_materializes_s3_before_alpaca(self):
         refreshed = {
             "symbol": "CSCO",

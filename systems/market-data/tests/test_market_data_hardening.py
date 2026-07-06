@@ -5414,6 +5414,50 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIsNotNone(clickhouse.calls[0]["from_time"])
         self.assertIsNone(clickhouse.calls[1]["from_time"])
 
+    def test_provider_does_not_mix_previous_session_when_default_window_has_current_rows(self):
+        previous_start = datetime(2026, 7, 2, 14, 0, tzinfo=timezone.utc)
+        current_start = datetime(2026, 7, 6, 13, 30, tzinfo=timezone.utc)
+        previous_candles = [
+            {
+                "timestamp": (previous_start + timedelta(minutes=minute)).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                "open": minute + 1,
+                "high": minute + 2,
+                "low": minute,
+                "close": minute + 1,
+                "volume": 100,
+                "isClosed": True,
+            }
+            for minute in range(65)
+        ]
+        current_candles = [
+            {
+                "timestamp": (current_start + timedelta(minutes=minute)).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                "open": 100 + minute,
+                "high": 101 + minute,
+                "low": 99 + minute,
+                "close": 100 + minute,
+                "volume": 100,
+                "isClosed": True,
+            }
+            for minute in range(10)
+        ]
+        clickhouse = RecordingRangeClickHouseProvider(candles=[*previous_candles, *current_candles])
+        provider = MarketDataProvider(
+            redis_provider=FakeRedisProvider(),
+            clickhouse_provider=clickhouse,
+        )
+
+        with mock.patch("alfaka.serving.provider.datetime") as fake_datetime:
+            fake_datetime.now.return_value = datetime(2026, 7, 6, 14, 47, tzinfo=timezone.utc)
+            fake_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+            payload = provider.candle_snapshot("AAPL", "1m", 20)
+
+        self.assertEqual(len(payload["candles"]), 10)
+        self.assertEqual(payload["candles"][0]["timestamp"], "2026-07-06T13:30:00.000Z")
+        self.assertEqual(payload["candles"][-1]["timestamp"], "2026-07-06T13:39:00.000Z")
+        self.assertEqual(len(clickhouse.calls), 1)
+        self.assertIsNotNone(clickhouse.calls[0]["from_time"])
+
     def test_provider_merges_redis_live_candle_into_snapshot_without_duplicate_bucket(self):
         closed = {
             "timestamp": "2026-06-25T10:15:00Z",

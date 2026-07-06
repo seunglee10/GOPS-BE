@@ -31,7 +31,7 @@ Current chart rebuild contract:
 ALFAKA_REQUEST_CONFIG=systems/market-data/config/market-data-request.json
 ALPACA_UNIVERSE=sp500
 ALPACA_UNIVERSE_REGISTRY_PATH=systems/market-data/config/sp500-universe.json
-ALPACA_COLLECTION_SYMBOL_SOURCE=universe
+ALPACA_COLLECTION_SYMBOL_SOURCE=on-demand
 ALPACA_CHANNELS=bars,updatedBars,dailyBars,statuses
 ALPACA_ACTIVE_CHANNELS=trades,quotes
 ALPACA_MAX_TRADE_SYMBOLS=
@@ -48,12 +48,12 @@ HOT_TIER_SIZE=10
 HOT_TIER_FALLBACK_SCAN_LIMIT=20
 ```
 
-S&P500 baseline collection subscribes to `bars`, `updatedBars`, `dailyBars`, and
-`statuses` only. It does not subscribe every S&P500 symbol to high-frequency
-`trades` or `quotes`. `trades` and `quotes` follow the exact same explicit
-symbol set as realtime cohorts: watchlist, portfolio, rankings, active chart
-sessions, and manual admin subscriptions. Quotes are never a separate all-symbol
-feed.
+Baseline collection is on-demand: ingestors do not subscribe the whole S&P500
+universe on startup. `ALPACA_CHANNELS` remains the channel template for any
+explicit collection seed, while runtime `trades` and `quotes` follow the exact
+same explicit symbol set as realtime cohorts: watchlist, portfolio, rankings,
+active chart sessions, and manual admin subscriptions. Quotes are never a
+separate all-symbol feed.
 Set `ALPACA_MAX_TRADE_SYMBOLS` only when an Alpaca subscription cap requires an
 operational limit; explicit active chart subscriptions remain the priority.
 
