@@ -5,12 +5,20 @@ metadata:
   name: answer-grounding-eval
   namespace: alfaka-market-data
 spec:
+  ttlSecondsAfterFinished: 3600
   template:
     metadata:
       labels:
         app: answer-grounding-eval
     spec:
       restartPolicy: Never
+      nodeSelector:
+        karpenter.sh/nodepool: batch
+      tolerations:
+        - key: gops.io/dedicated
+          operator: Equal
+          value: batch
+          effect: NoSchedule
       serviceAccountName: alfaka-market-data-sa
       containers:
         - name: answer-grounding-eval

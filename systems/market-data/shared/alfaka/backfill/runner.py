@@ -13,7 +13,7 @@ from alfaka.alpaca.feed_profiles import market_session_for_timestamp
 from alfaka.serving.intervals import is_derived_interval, normalize_chart_interval, source_interval_for
 from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
 from alfaka.serving.moving_average import attach_moving_averages
-from alfaka.storage.clickhouse_loader import ClickHouseHttpClient
+from alfaka.storage.clickhouse_loader import ClickHouseHttpClient, should_ensure_schema_on_start
 from alfaka.storage.processed_s3_sink import flush_buffer
 from alfaka.storage.s3_manifest import (
     DEFAULT_MANIFEST_PREFIX,
@@ -47,7 +47,7 @@ class BackfillRunner:
             user=os.getenv("CLICKHOUSE_USER", "alfaka"),
             password=os.getenv("CLICKHOUSE_PASSWORD", "alfaka"),
         )
-        if hasattr(self.clickhouse_client, "ensure_market_data_schema"):
+        if should_ensure_schema_on_start() and hasattr(self.clickhouse_client, "ensure_market_data_schema"):
             self.clickhouse_client.ensure_market_data_schema()
         self.coverage_provider = coverage_provider or ClickHouseMarketDataProvider(
             url=os.getenv("CLICKHOUSE_HTTP_URL", "http://localhost:8123"),

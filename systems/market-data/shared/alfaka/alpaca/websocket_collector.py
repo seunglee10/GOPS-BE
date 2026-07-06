@@ -25,7 +25,6 @@ async def main():
     load_dotenv()
 
     credential_source = resolve_alpaca_credential_source()
-    alpaca_key, alpaca_secret = load_alpaca_credentials(credential_source)
     feed_profile = resolve_feed_profile()
     alpaca_feed = feed_profile.feed
     symbols, channels = load_symbols_and_channels()
@@ -45,15 +44,6 @@ async def main():
         "kafka_servers": kafka_servers,
         "raw_topic_prefix": raw_topic_prefix,
     })
-
-    if not alpaca_key or not alpaca_secret:
-        print(
-            "Alpaca credential error: category=missing_env "
-            f"credentialSource={credential_source} keyId={presence(alpaca_key)} secretKey={presence(alpaca_secret)}",
-            file=sys.stderr,
-            flush=True,
-        )
-        sys.exit(1)
 
     alpaca_url = feed_profile.websocket_url
     producer = create_json_producer(kafka_servers, kafka_client_id)
@@ -75,8 +65,8 @@ async def main():
     print(f"Alpaca profile: {feed_profile.profile_id} feed={alpaca_feed} sessions={','.join(feed_profile.sessions)}", flush=True)
     print(
         "Alpaca credential: "
-        f"source={credential_source} keyId={presence(alpaca_key)} secretKey={presence(alpaca_secret)} "
-        f"secretName={presence(os.getenv('ALPACA_SECRET_NAME'))}",
+        f"source={credential_source} secretName={presence(os.getenv('ALPACA_SECRET_NAME'))} "
+        "refresh=before-connect",
         flush=True,
     )
     print(f"Alpaca 연결: {alpaca_url}", flush=True)
@@ -103,6 +93,26 @@ async def main():
                 flush=True,
             )
             await asyncio.sleep(session_idle_poll_seconds)
+            continue
+
+        alpaca_key, alpaca_secret = load_alpaca_credentials(credential_source)
+        if not alpaca_key or not alpaca_secret:
+            write_ingestor_health(
+                redis_client,
+                feed_profile,
+                status="error",
+                alpacaFeed=alpaca_feed,
+                websocketUrl=alpaca_url,
+                errorCategory="missing_credentials",
+            )
+            print(
+                "Alpaca credential error: category=missing_credentials "
+                f"credentialSource={credential_source} keyId={presence(alpaca_key)} secretKey={presence(alpaca_secret)}",
+                file=sys.stderr,
+                flush=True,
+            )
+            await asyncio.sleep(delay)
+            delay = min(reconnect_backoff_max, delay * 2)
             continue
 
         try:

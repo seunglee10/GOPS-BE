@@ -12,6 +12,9 @@ resources:
   - redis-statefulset.yaml
   - postgres-service.yaml
   - postgres-statefulset.yaml
+  - nodepool-app-agent.yaml
+  - nodepool-batch.yaml
+  - nodepool-platform-core.yaml
   - clickhouse-service.yaml
   - clickhouse-statefulset.yaml
 

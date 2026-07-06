@@ -32,6 +32,15 @@ def market_heatmap(
     return get_query_service().heatmap(universe)
 
 
+@router.get("/api/market/fundamentals/{symbol}/series")
+def market_fundamentals_series(
+    symbol: str,
+    years: int = Query(default=3, ge=1, le=10),
+    period: str = Query(default="quarterly", pattern="^(quarterly|annual)$"),
+) -> dict[str, Any]:
+    return get_query_service().financial_series(symbol, years=years, period=period)
+
+
 @router.get("/api/market/indices")
 def market_indices(background_tasks: BackgroundTasks) -> dict[str, Any]:
     return get_query_service().indices(background_tasks=background_tasks)
@@ -50,6 +59,7 @@ def market_symbol_detail(symbol: str) -> dict[str, Any]:
 @router.get("/api/charts/volume-profile-bins")
 def chart_volume_profile_bins(
     symbol: str = Query(min_length=1, max_length=12),
+    interval: str = Query(default="1m", pattern=CHART_INTERVAL_PATTERN),
     from_time: str = Query(alias="from"),
     to_time: str = Query(alias="to"),
     price_bin_size: str = Query(default="auto", alias="priceBinSize"),
@@ -57,7 +67,7 @@ def chart_volume_profile_bins(
     price_min: float | None = Query(default=None, alias="priceMin"),
     price_max: float | None = Query(default=None, alias="priceMax"),
 ) -> dict[str, Any]:
-    return get_query_service().volume_profile_bins(symbol, from_time, to_time, price_bin_size, target_bins, price_min, price_max)
+    return get_query_service().volume_profile_bins(symbol, from_time, to_time, price_bin_size, target_bins, price_min, price_max, interval=interval)
 
 
 @router.get("/api/charts/indicators")

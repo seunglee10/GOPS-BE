@@ -35,6 +35,7 @@ from alfaka.serving.indicators import (
 from alfaka.serving.intervals import normalize_chart_interval, resolve_candle_limit
 from alfaka.serving.provider import MarketDataProvider
 from alfaka.serving.volume_profile import compute_volume_profile_payload, normalize_target_bins
+from alfaka.storage.clickhouse_loader import should_ensure_schema_on_start
 
 
 def main() -> None:
@@ -59,7 +60,8 @@ def main() -> None:
     producer = create_json_producer(kafka_servers, "alfaka-chart-derived-data-worker")
     redis_client = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True)
     clickhouse = clickhouse_client_from_env()
-    clickhouse.ensure_market_data_schema()
+    if should_ensure_schema_on_start():
+        clickhouse.ensure_market_data_schema()
     artifact_store = ChartDerivedArtifactStore(clickhouse)
     provider = MarketDataProvider()
     print(f"Chart derived data worker 시작: topic={request_topic} group={group_id}", flush=True)
@@ -158,16 +160,24 @@ def compute_indicator_request(request: dict[str, Any], *, provider: Any) -> dict
 def compute_volume_profile_request(request: dict[str, Any], *, provider: Any) -> dict[str, Any]:
     params = request.get("parameters") or {}
     symbol = str(request["symbol"]).upper()
+    interval = normalize_chart_interval(str(request.get("interval") or "1m"))
     from_time = str(request.get("from") or "")
     to_time = str(request.get("to") or "")
-    price_bin_size = str(params.get("priceBinSize") or "auto")
     target_bins = normalize_target_bins(params.get("targetBins"))
     price_min = number_or_none(params.get("priceMin"))
     price_max = number_or_none(params.get("priceMax"))
-    raw_payload = provider.volume_profile_bins(symbol, from_time, to_time, price_bin_size)
+    candle_payload = provider_candle_snapshot(
+        provider,
+        symbol,
+        interval,
+        resolve_candle_limit(interval, request.get("limit")),
+        from_time=from_time,
+        to_time=to_time,
+    )
     result = compute_volume_profile_payload(
-        raw_payload,
+        candle_payload,
         symbol=symbol,
+        interval=interval,
         from_time=from_time,
         to_time=to_time,
         target_bins=target_bins,

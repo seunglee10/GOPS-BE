@@ -11,10 +11,11 @@ import redis
 from alfaka.common.env import load_dotenv
 from alfaka.common.kafka_io import create_json_consumer
 from alfaka.serving.news_hot_cache import write_company_daily_summary_to_redis
-from alfaka.storage.clickhouse_loader import ClickHouseHttpClient
+from alfaka.storage.clickhouse_loader import ClickHouseHttpClient, should_ensure_schema_on_start
 from alfaka.storage.news_daily_summary import (
     article_ids_hash,
     build_daily_summary_record,
+    clickhouse_row_to_daily_summary,
     canonical_article_ids,
     daily_summary_to_clickhouse_row,
     utc_now_iso,
@@ -37,7 +38,8 @@ def main():
         user=os.getenv("CLICKHOUSE_USER", "alfaka"),
         password=os.getenv("CLICKHOUSE_PASSWORD", "alfaka"),
     )
-    clickhouse.ensure_market_data_schema()
+    if should_ensure_schema_on_start():
+        clickhouse.ensure_market_data_schema()
     redis_client = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True)
     consumer = create_json_consumer(
         [topic],
@@ -86,9 +88,20 @@ def process_dirty_event(
     if not article_ids:
         return None
 
+    redis_ttl_seconds = int(ttl_seconds if ttl_seconds is not None else os.getenv("NEWS_DAILY_REDIS_TTL_SECONDS", "2592000"))
+    redis_max_items = int(max_items if max_items is not None else os.getenv("NEWS_DAILY_REDIS_MAX_ITEMS", "30"))
     digest = article_ids_hash(article_ids)
     existing = read_existing_daily_summary(clickhouse_client, symbol=symbol, date=date, locale=locale)
     if existing and str(existing.get("articleIdsHash") or existing.get("article_ids_hash") or "") == digest:
+        existing_record = clickhouse_row_to_daily_summary(existing)
+        if redis_client is not None and existing_record.get("date") and existing_record.get("symbol") and existing_record.get("summary"):
+            write_company_daily_summary_to_redis(
+                redis_client,
+                existing_record,
+                ttl_seconds=redis_ttl_seconds,
+                max_items=redis_max_items,
+                locale=locale,
+            )
         return None
 
     intelligence, model_used = build_daily_summary_intelligence(
@@ -114,8 +127,8 @@ def process_dirty_event(
     write_company_daily_summary_to_redis(
         redis_client,
         record,
-        ttl_seconds=int(ttl_seconds if ttl_seconds is not None else os.getenv("NEWS_DAILY_REDIS_TTL_SECONDS", "86400")),
-        max_items=int(max_items if max_items is not None else os.getenv("NEWS_DAILY_REDIS_MAX_ITEMS", "30")),
+        ttl_seconds=redis_ttl_seconds,
+        max_items=redis_max_items,
         locale=locale,
     )
     return record
@@ -161,13 +174,29 @@ def read_daily_candidate_rows(client, *, symbol, date, locale):
 def read_existing_daily_summary(client, *, symbol, date, locale):
     query = f"""
     SELECT
-      article_ids_hash AS articleIdsHash,
-      formatDateTime(generated_at, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS generatedAt
-    FROM {client.database}.news_company_daily_summaries
-    WHERE symbol = {{symbol:String}}
-      AND locale = {{locale:String}}
-      AND date = toDate({{date:String}})
-    ORDER BY generated_at DESC
+      toString(summaries.date) AS date,
+      summaries.symbol,
+      summaries.locale,
+      summaries.summary,
+      summaries.key_points AS keyPoints,
+      summaries.positive_points AS positivePoints,
+      summaries.concerns,
+      summaries.impact_direction AS impactDirection,
+      summaries.sentiment,
+      summaries.article_ids AS articleIds,
+      summaries.article_ids_hash AS articleIdsHash,
+      summaries.article_count AS articleCount,
+      summaries.mention_count AS mentionCount,
+      summaries.status,
+      summaries.model,
+      formatDateTime(summaries.generated_at, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS generatedAt,
+      summaries.version,
+      summaries.raw
+    FROM {client.database}.news_company_daily_summaries AS summaries
+    WHERE summaries.symbol = {{symbol:String}}
+      AND summaries.locale = {{locale:String}}
+      AND summaries.date = {{date:Date}}
+    ORDER BY summaries.generated_at DESC
     LIMIT 1
     FORMAT JSONEachRow
     """

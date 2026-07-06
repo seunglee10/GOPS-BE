@@ -121,13 +121,13 @@ gops_deployments_for_service() {
       printf '%s\n' kis-broker-adapter
       ;;
     market-ingestor)
-      printf '%s\n' alfaka-alpaca-ingestor-sip alfaka-alpaca-ingestor-boats alfaka-alpaca-news-ingestor
+      printf '%s\n' alfaka-alpaca-ingestor-sip alfaka-alpaca-ingestor-boats alfaka-alpaca-ingestor-crypto alfaka-alpaca-news-ingestor
       ;;
     market-processor)
       printf '%s\n' alfaka-market-processor alfaka-feed-session-controller alfaka-subscription-controller
       ;;
     market-storage)
-      printf '%s\n' alfaka-clickhouse-loader alfaka-s3-sink alfaka-news-intelligence-worker
+      printf '%s\n' alfaka-clickhouse-loader alfaka-s3-sink alfaka-raw-s3-archive alfaka-news-intelligence-worker alfaka-news-daily-summary-worker
       ;;
     order-worker)
       printf '%s\n' order-outbox-publisher

@@ -250,15 +250,43 @@ class FakeFootprintProvider(FakeProvider):
 
 
 class FakeNewsRedisProvider:
-    def __init__(self, rows=None, daily_rows=None):
+    def __init__(self, rows=None, daily_rows=None, daily_coverage=None):
         self.rows = rows or []
         self.daily_rows = daily_rows or []
+        self.daily_coverage = daily_coverage
+        self.localized_calls = []
+        self.daily_calls = []
+        self.localized_warm_calls = []
+        self.daily_warm_calls = []
 
     def localized_news_articles_for_symbols(self, symbols, limit=10, locale="ko-KR"):
+        self.localized_calls.append({"symbols": list(symbols), "limit": limit, "locale": locale})
         return self.rows[:limit]
 
+    def warm_localized_news_articles(self, rows, locale="ko-KR"):
+        self.localized_warm_calls.append({"rows": list(rows), "locale": locale})
+        self.rows = list(rows)
+        return len(rows)
+
     def company_daily_news_summaries(self, symbol, limit=5, locale="ko-KR"):
+        self.daily_calls.append({"symbol": symbol, "limit": limit, "locale": locale})
         return self.daily_rows[:limit]
+
+    def company_daily_news_coverage(self, symbol, locale="ko-KR"):
+        return self.daily_coverage
+
+    def warm_company_daily_news_summaries(self, symbol, rows, days=30, limit=30, locale="ko-KR"):
+        self.daily_warm_calls.append({"symbol": symbol, "rows": list(rows), "days": days, "limit": limit, "locale": locale})
+        self.daily_rows = list(rows)[:limit]
+        self.daily_coverage = {
+            "symbol": symbol,
+            "locale": locale,
+            "days": days,
+            "limit": limit,
+            "rowCount": len(self.daily_rows),
+            "coverageType": "complete",
+        }
+        return self.daily_rows
 
 
 class FakeNewsClickHouseProvider:
@@ -266,11 +294,15 @@ class FakeNewsClickHouseProvider:
         self.rows = rows or []
         self.daily_rows = daily_rows or []
         self.candle_rows = candles or []
+        self.localized_calls = []
+        self.daily_calls = []
 
-    def localized_news_articles_for_symbols(self, symbols, limit=10, locale="ko-KR"):
+    def localized_news_articles_for_symbols(self, symbols, limit=10, days=7, locale="ko-KR"):
+        self.localized_calls.append({"symbols": list(symbols), "limit": limit, "days": days, "locale": locale})
         return self.rows[:limit]
 
-    def company_daily_news_summaries(self, symbol, limit=5, locale="ko-KR"):
+    def company_daily_news_summaries(self, symbol, limit=5, days=30, locale="ko-KR"):
+        self.daily_calls.append({"symbol": symbol, "limit": limit, "days": days, "locale": locale})
         return self.daily_rows[:limit]
 
     def candles(self, symbol, interval, limit):
@@ -278,8 +310,8 @@ class FakeNewsClickHouseProvider:
 
 
 class FakeNewsProvider:
-    def __init__(self, redis_rows=None, clickhouse_rows=None, redis_daily_rows=None, clickhouse_daily_rows=None, candle_rows=None):
-        self.redis_provider = FakeNewsRedisProvider(redis_rows, redis_daily_rows)
+    def __init__(self, redis_rows=None, clickhouse_rows=None, redis_daily_rows=None, clickhouse_daily_rows=None, candle_rows=None, redis_daily_coverage=None):
+        self.redis_provider = FakeNewsRedisProvider(redis_rows, redis_daily_rows, redis_daily_coverage)
         self.clickhouse_provider = FakeNewsClickHouseProvider(clickhouse_rows, clickhouse_daily_rows, candle_rows)
 
 
@@ -569,12 +601,77 @@ class FakeHeatmapClickHouseProvider:
             return [
                 {"symbol": "MSFT", "cik": "0000789019", "companyName": "Microsoft Corporation"},
             ]
+        if "sec_derived_metrics" in query:
+            return [
+                {
+                    "symbol": "MSFT",
+                    "metric": "free_cash_flow",
+                    "value": 25000,
+                    "fiscalYear": 2026,
+                    "fiscalPeriod": "Q1",
+                    "periodEndDate": "2026-03-31",
+                    "filedAt": "2026-04-25",
+                },
+            ]
+        if "yahoo_earnings_estimates" in query:
+            return [
+                {
+                    "symbol": "MSFT",
+                    "metric": "eps",
+                    "value": 4.5,
+                    "fiscalYear": 2026,
+                    "fiscalPeriod": "Q1",
+                    "periodEndDate": "2026-03-31",
+                    "collectedAt": "2026-04-20T00:00:00Z",
+                },
+                {
+                    "symbol": "MSFT",
+                    "metric": "revenue",
+                    "value": 95000,
+                    "fiscalYear": 2026,
+                    "fiscalPeriod": "Q1",
+                    "periodEndDate": "2026-03-31",
+                    "collectedAt": "2026-04-20T00:00:00Z",
+                },
+            ]
         if "sec_financial_facts" in query:
             return [
                 {
                     "symbol": "MSFT",
                     "cik": "0000789019",
-                    "sharesOutstanding": 7500,
+                    "metric": "shares_outstanding",
+                    "value": 7500,
+                    "fiscalYear": 2026,
+                    "fiscalPeriod": "Q1",
+                    "periodEndDate": "2026-03-31",
+                    "filedAt": "2026-04-25",
+                },
+                {
+                    "symbol": "MSFT",
+                    "cik": "0000789019",
+                    "metric": "revenue",
+                    "value": 100000,
+                    "fiscalYear": 2026,
+                    "fiscalPeriod": "Q1",
+                    "periodEndDate": "2026-03-31",
+                    "filedAt": "2026-04-25",
+                },
+                {
+                    "symbol": "MSFT",
+                    "cik": "0000789019",
+                    "metric": "equity",
+                    "value": 50000,
+                    "fiscalYear": 2026,
+                    "fiscalPeriod": "Q1",
+                    "periodEndDate": "2026-03-31",
+                    "filedAt": "2026-04-25",
+                },
+                {
+                    "symbol": "MSFT",
+                    "cik": "0000789019",
+                    "metric": "eps",
+                    "value": 4,
+                    "fiscalYear": 2026,
                     "fiscalPeriod": "Q1",
                     "periodEndDate": "2026-03-31",
                     "filedAt": "2026-04-25",
@@ -711,9 +808,11 @@ class FakeDerivedClient:
         if request["kind"] == "volumeProfile":
             return {
                 "symbol": request["symbol"],
+                "interval": request["interval"],
+                "sourceInterval": request["interval"],
                 "from": request["from"],
                 "to": request["to"],
-                "timeBucket": "1m",
+                "timeBucket": request["interval"],
                 "targetBins": int((request.get("parameters") or {}).get("targetBins") or 10),
                 "bucketCount": 0,
                 "priceBinSize": 0,
@@ -721,6 +820,9 @@ class FakeDerivedClient:
                 "source": "worker",
                 "feed": "test",
                 "calculationVersion": request["calculationVersion"],
+                "classificationVersion": request["calculationVersion"],
+                "sideClassification": "estimated",
+                "estimationMethod": "candle-range-volume-overlap",
                 "dataStatus": "ready",
                 "priceRange": {"min": None, "max": None, "requestedMin": None, "requestedMax": None},
                 "totalVolume": 0,
@@ -962,9 +1064,22 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(payload["derived"]["state"], "ready")
         self.assertEqual(provider.calls, [])
         self.assertEqual(derived_client.requests[0]["kind"], "volumeProfile")
+        self.assertEqual(derived_client.requests[0]["interval"], "1m")
         self.assertEqual(derived_client.requests[0]["parameters"]["targetBins"], 4)
         self.assertEqual(derived_client.requests[0]["parameters"]["priceMin"], 100)
         self.assertEqual(derived_client.requests[0]["parameters"]["priceMax"], 102)
+        payload_5m = service.volume_profile_bins(
+            "aapl",
+            "2026-06-25T13:30:00.000Z",
+            "2026-06-25T14:00:00.000Z",
+            "auto",
+            target_bins=4,
+            price_min=100,
+            price_max=102,
+            interval="5m",
+        )
+        self.assertEqual(payload_5m["interval"], "5m")
+        self.assertNotEqual(derived_client.requests[0]["requestHash"], derived_client.requests[1]["requestHash"])
 
     def test_volume_profile_bins_rejects_reversed_price_range(self):
         service = MarketDataQueryService(FakeVolumeProfileProvider(), backfill_service=FakeBackfillService(), fill_service=FakeFillService())
@@ -1041,8 +1156,36 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(payload["symbol"], "AAPL")
         self.assertIn("sma:5", payload["series"])
 
-    def test_latest_news_uses_redis_cache_and_normalizes_response_shape(self):
+    def test_latest_news_uses_redis_when_cache_has_enough_rows(self):
         service = MarketDataQueryService(FakeNewsProvider(redis_rows=[{
+            "targetSymbol": "NVDA",
+            "symbols": ["NVDA"],
+            "localizedHeadline": "Redis 엔비디아 뉴스",
+            "localizedSummary": "Redis hot cache 요약입니다.",
+            "publishedAt": "2026-07-02T12:00:00.000Z",
+        }], clickhouse_rows=[{
+            "targetSymbol": "NVDA",
+            "symbols": ["NVDA"],
+            "localizedHeadline": "ClickHouse 엔비디아 뉴스",
+            "localizedSummary": "ClickHouse 요약입니다.",
+            "publishedAt": "2026-07-01T12:00:00.000Z",
+        }]), backfill_service=FakeBackfillService())
+
+        payload = service.latest_news("nvda", limit=1)
+
+        self.assertEqual(payload["source"], "redis")
+        self.assertEqual(payload["items"][0]["title"], "Redis 엔비디아 뉴스")
+        self.assertEqual(service.provider.redis_provider.localized_calls[0]["limit"], 1)
+        self.assertEqual(service.provider.clickhouse_provider.localized_calls, [])
+
+    def test_latest_news_uses_clickhouse_when_redis_cache_is_insufficient(self):
+        service = MarketDataQueryService(FakeNewsProvider(redis_rows=[{
+            "targetSymbol": "NVDA",
+            "symbols": ["NVDA"],
+            "localizedHeadline": "Redis 엔비디아 뉴스",
+            "localizedSummary": "Redis hot cache 요약입니다.",
+            "publishedAt": "2026-07-02T12:00:00.000Z",
+        }], clickhouse_rows=[{
             "targetSymbol": "NVDA",
             "symbols": ["NVDA", "AMD"],
             "localizedHeadline": "엔비디아 최신 뉴스",
@@ -1056,13 +1199,16 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         payload = service.latest_news("nvda", limit=5)
 
         self.assertEqual(payload["symbol"], "NVDA")
-        self.assertEqual(payload["source"], "redis")
+        self.assertEqual(payload["source"], "clickhouse")
         self.assertEqual(payload["items"][0]["title"], "엔비디아 최신 뉴스")
         self.assertEqual(payload["items"][0]["summary"], "데이터센터 수요가 강합니다.")
         self.assertEqual(payload["items"][0]["impactDirection"], "positive")
+        self.assertEqual(service.provider.redis_provider.localized_calls[0]["limit"], 5)
+        self.assertEqual(service.provider.clickhouse_provider.localized_calls[0]["days"], 30)
+        self.assertEqual(len(service.provider.redis_provider.localized_warm_calls[0]["rows"]), 1)
 
-    def test_latest_news_falls_back_to_clickhouse_when_redis_empty(self):
-        service = MarketDataQueryService(FakeNewsProvider(clickhouse_rows=[{
+    def test_latest_news_falls_back_to_redis_when_clickhouse_empty(self):
+        service = MarketDataQueryService(FakeNewsProvider(redis_rows=[{
             "target_symbol": "AAPL",
             "headline": "Apple headline",
             "summary": "Apple summary",
@@ -1071,9 +1217,11 @@ class MarketDataQueryServiceTest(unittest.TestCase):
 
         payload = service.latest_news("aapl", limit=5)
 
-        self.assertEqual(payload["source"], "clickhouse")
+        self.assertEqual(payload["source"], "redis")
         self.assertEqual(payload["items"][0]["symbol"], "AAPL")
         self.assertEqual(payload["items"][0]["title"], "Apple headline")
+        self.assertEqual(service.provider.redis_provider.localized_calls[0]["limit"], 5)
+        self.assertEqual(service.provider.clickhouse_provider.localized_calls[0]["days"], 30)
 
     def test_latest_news_route_delegates_to_query_service(self):
         previous = query_routes.get_query_service
@@ -1090,36 +1238,91 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(payload["symbol"], "NVDA")
         self.assertEqual(payload["items"][0]["title"], "NVIDIA")
 
-    def test_daily_news_returns_real_source_links_without_internal_source(self):
+    def test_daily_news_uses_redis_when_thirty_day_coverage_is_valid(self):
         service = MarketDataQueryService(FakeNewsProvider(redis_daily_rows=[{
             "date": "2026-07-01",
             "symbol": "NVDA",
-            "summary": "엔비디아 일일 뉴스 요약입니다.",
-            "keyPoints": ["데이터센터 수요"],
-            "articleIds": ["nvda-daily-1"],
+            "summary": "Redis 30일 coverage 요약입니다.",
+            "articleIds": ["redis-daily-1"],
             "articleCount": 1,
-            "sources": [
-                {
-                    "articleId": "nvda-daily-1",
-                    "title": "NVIDIA shares rise",
-                    "name": "Example News",
-                    "url": "https://example.com/nvda-daily",
-                    "publishedAt": "2026-07-01T12:00:00.000Z",
-                }
-            ],
-        }], candle_rows=[
+        }], redis_daily_coverage={
+            "symbol": "NVDA",
+            "locale": "ko-KR",
+            "days": 30,
+            "limit": 30,
+            "rowCount": 1,
+            "coverageType": "complete",
+        }, clickhouse_daily_rows=[{
+            "date": "2026-07-01",
+            "symbol": "NVDA",
+            "summary": "ClickHouse 요약입니다.",
+        }]), backfill_service=FakeBackfillService())
+
+        payload = service.daily_news("nvda", limit=30)
+
+        self.assertEqual(payload["dailySummaries"][0]["summary"], "Redis 30일 coverage 요약입니다.")
+        self.assertEqual(service.provider.redis_provider.daily_calls[0]["limit"], 30)
+        self.assertEqual(service.provider.clickhouse_provider.daily_calls, [])
+
+    def test_daily_news_warms_redis_from_clickhouse_when_coverage_is_missing(self):
+        clickhouse_daily_rows = [
+            {
+                "date": f"2026-07-{day:02d}",
+                "symbol": "NVDA",
+                "summary": f"엔비디아 {day}일 뉴스 요약입니다.",
+                "keyPoints": ["데이터센터 수요"],
+                "articleIds": [f"nvda-daily-{day}"],
+                "articleCount": 1,
+                "sources": [
+                    {
+                        "articleId": f"nvda-daily-{day}",
+                        "title": "NVIDIA shares rise",
+                        "name": "Example News",
+                        "url": "https://example.com/nvda-daily",
+                        "publishedAt": f"2026-07-{day:02d}T12:00:00.000Z",
+                    }
+                ],
+            }
+            for day in range(1, 31)
+        ]
+        service = MarketDataQueryService(FakeNewsProvider(redis_daily_rows=[{
+            "date": "2026-07-31",
+            "symbol": "NVDA",
+            "summary": "Redis hot cache 요약입니다.",
+        }], clickhouse_daily_rows=clickhouse_daily_rows, candle_rows=[
             {"timestamp": "2026-06-30T00:00:00.000Z", "close": 158.35},
             {"timestamp": "2026-07-01T00:00:00.000Z", "close": 158.50},
         ]), backfill_service=FakeBackfillService())
 
-        payload = service.daily_news("nvda", limit=5)
+        payload = service.daily_news("nvda", limit=30)
 
         self.assertEqual(payload["symbol"], "NVDA")
         self.assertEqual(payload["displayMode"], "dailySummary")
         self.assertNotIn("source", payload)
+        self.assertEqual(len(payload["dailySummaries"]), 30)
+        self.assertEqual(payload["dailySummaries"][0]["summary"], "엔비디아 1일 뉴스 요약입니다.")
         self.assertEqual(payload["dailySummaries"][0]["sources"][0]["url"], "https://example.com/nvda-daily")
         self.assertEqual(payload["dailySummaries"][0]["sources"][0]["name"], "Example News")
         self.assertEqual(payload["dailySummaries"][0]["priceChange"]["change"], 0.15)
+        self.assertEqual(service.provider.redis_provider.daily_calls[0]["limit"], 30)
+        self.assertEqual(service.provider.clickhouse_provider.daily_calls[0]["days"], 30)
+        self.assertEqual(service.provider.redis_provider.daily_warm_calls[0]["days"], 30)
+        self.assertEqual(len(service.provider.redis_provider.daily_warm_calls[0]["rows"]), 30)
+
+    def test_daily_news_falls_back_to_redis_when_clickhouse_empty(self):
+        service = MarketDataQueryService(FakeNewsProvider(redis_daily_rows=[{
+            "date": "2026-07-01",
+            "symbol": "NVDA",
+            "summary": "Redis 일일 뉴스 요약입니다.",
+            "articleIds": ["redis-daily-1"],
+            "articleCount": 1,
+        }]), backfill_service=FakeBackfillService())
+
+        payload = service.daily_news("nvda", limit=30)
+
+        self.assertEqual(payload["dailySummaries"][0]["summary"], "Redis 일일 뉴스 요약입니다.")
+        self.assertEqual(service.provider.clickhouse_provider.daily_calls[0]["days"], 30)
+        self.assertEqual(service.provider.redis_provider.daily_calls[0]["limit"], 30)
 
     def test_agent_chat_without_openai_key_returns_503(self):
         request = AgentChatRequest(
@@ -1440,6 +1643,20 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual([item["symbol"] for item in brk["symbols"]], ["BRK.B"])
         self.assertEqual([item["symbol"] for item in adbe["symbols"]], ["ADBE"])
 
+    def test_chart_symbols_route_applies_limit_without_query(self):
+        provider = FakeWatchlistProvider()
+        previous_provider = market_data_service.get_market_data_provider
+        previous_universe = market_data_service.configured_universe_symbols
+        market_data_service.get_market_data_provider = lambda: provider
+        market_data_service.configured_universe_symbols = lambda: ["AAPL", "BRK.B", "JPM"]
+        try:
+            payload = chart_routes.chart_symbols(query=None, limit=1)
+        finally:
+            market_data_service.get_market_data_provider = previous_provider
+            market_data_service.configured_universe_symbols = previous_universe
+
+        self.assertEqual([item["symbol"] for item in payload["symbols"]], ["AAPL"])
+
     def test_watchlist_change_percent_uses_previous_close_not_intraday_open(self):
         provider = FakeWatchlistProvider()
         previous = market_data_service.get_market_data_provider
@@ -1591,6 +1808,10 @@ class MarketDataQueryServiceTest(unittest.TestCase):
                 sector="Technology",
                 industry="Technology Hardware",
                 sharesOutstanding=1000,
+                revenue=100000,
+                eps=5,
+                totalEquity=50000,
+                freeCashFlow=10000,
                 source="sec",
                 asOf="2026-07-05",
                 periodEndDate="2026-04-30",
@@ -1626,6 +1847,10 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(payload["items"][0]["marketCap"], 200000)
         self.assertEqual(payload["items"][0]["marketCapSource"], "fundamentals")
         self.assertEqual(payload["items"][0]["layoutPrice"], 200)
+        self.assertEqual(payload["items"][0]["eps"], 5)
+        self.assertEqual(payload["items"][0]["revenue"], 100000)
+        self.assertEqual(payload["items"][0]["totalEquity"], 50000)
+        self.assertEqual(payload["items"][0]["freeCashFlow"], 10000)
         self.assertEqual(payload["items"][0]["layoutMarketCap"], 200000)
         self.assertEqual(payload["items"][0]["layoutMarketCapSource"], "fundamentals")
         self.assertEqual(payload["items"][0]["fundamentalsAsOf"], "2026-07-05")
@@ -1802,6 +2027,31 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(failed_payload["cacheStatus"], "stale")
         self.assertIn("Yahoo Finance refresh failed", failed_payload["warning"])
 
+    def test_market_indices_refresh_forces_cache_warm_without_panel_request(self):
+        provider = FakeHeatmapProvider()
+        calls = []
+
+        def fetcher(**kwargs):
+            calls.append(kwargs)
+            latest_close = 100 + len(calls)
+            return {
+                "^GSPC": [
+                    {"timestamp": "2026-07-02T20:00:00Z", "Close": 100},
+                    {"timestamp": "2026-07-03T20:00:00Z", "Close": latest_close},
+                ],
+            }
+
+        service = indices_service.MarketIndicesService(provider=provider, fetcher=fetcher)
+        first_payload = service.snapshot()
+        warmed_payload = service.refresh()
+        cached_payload = service.snapshot()
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(first_payload["items"][0]["price"], 101)
+        self.assertEqual(warmed_payload["items"][0]["price"], 102)
+        self.assertEqual(cached_payload["items"][0]["price"], 102)
+        self.assertEqual(provider.redis_provider.redis.expirations[indices_service.indices_cache_key()], indices_service.DEFAULT_CACHE_TTL_SECONDS)
+
     def test_market_heatmap_keeps_layout_cap_stable_within_layout_bucket(self):
         seed_items = [{
             "symbol": "AAPL",
@@ -1921,12 +2171,40 @@ class MarketDataQueryServiceTest(unittest.TestCase):
                 "periodEnd": "2026-04-30",
                 "filedAt": "2026-05-01",
                 "unit": "shares",
+            }, {
+                "metric": "eps",
+                "value": 3.5,
+                "fiscalPeriod": "Q2",
+                "periodEnd": "2026-04-30",
+                "filedAt": "2026-05-01",
+            }, {
+                "metric": "revenue",
+                "value": 90000,
+                "fiscalPeriod": "Q2",
+                "periodEnd": "2026-04-30",
+                "filedAt": "2026-05-01",
+            }, {
+                "metric": "equity",
+                "value": 45000,
+                "fiscalPeriod": "Q2",
+                "periodEnd": "2026-04-30",
+                "filedAt": "2026-05-01",
+            }, {
+                "metric": "free_cash_flow",
+                "value": 12000,
+                "fiscalPeriod": "Q2",
+                "periodEnd": "2026-04-30",
+                "filedAt": "2026-05-01",
             }],
         })
 
         records = StoreFundamentalsAdapter(provider=provider).latest_for_symbols(["AAPL"])
 
         self.assertEqual(records["AAPL"].sharesOutstanding, 1000)
+        self.assertEqual(records["AAPL"].eps, 3.5)
+        self.assertEqual(records["AAPL"].revenue, 90000)
+        self.assertEqual(records["AAPL"].totalEquity, 45000)
+        self.assertEqual(records["AAPL"].freeCashFlow, 12000)
         self.assertEqual(records["AAPL"].cik, "0000320193")
         self.assertEqual(records["AAPL"].source, "sec_companyfacts:redis")
         self.assertEqual(records["AAPL"].asOf, "2026-04-30")
@@ -1936,8 +2214,34 @@ class MarketDataQueryServiceTest(unittest.TestCase):
 
         self.assertEqual(records["MSFT"].companyName, "Microsoft Corporation")
         self.assertEqual(records["MSFT"].sharesOutstanding, 7500)
+        self.assertEqual(records["MSFT"].eps, 4)
+        self.assertEqual(records["MSFT"].revenue, 100000)
+        self.assertEqual(records["MSFT"].totalEquity, 50000)
+        self.assertEqual(records["MSFT"].freeCashFlow, 25000)
         self.assertEqual(records["MSFT"].source, "sec_companyfacts")
         self.assertEqual(records["MSFT"].periodEndDate, "2026-03-31")
+
+    def test_store_fundamentals_adapter_returns_sec_financial_series(self):
+        series = StoreFundamentalsAdapter(provider=FakeHeatmapProvider()).financial_series("MSFT")
+
+        self.assertEqual(series[0].period, "2026Q1")
+        self.assertEqual(series[0].periodEndDate, "2026-03-31")
+        self.assertEqual(series[0].revenue, 100000)
+        self.assertEqual(series[0].netIncome, None)
+        self.assertEqual(series[0].eps, 4)
+        self.assertEqual(series[0].totalEquity, 50000)
+        self.assertEqual(series[0].freeCashFlow, 25000)
+        self.assertEqual(series[0].source, "sec")
+
+    def test_query_service_returns_sec_financial_series_payload(self):
+        payload = MarketDataQueryService(provider=FakeHeatmapProvider()).financial_series("MSFT", years=3, period="quarterly")
+
+        self.assertEqual(payload["source"], "sec")
+        self.assertEqual(payload["symbol"], "MSFT")
+        self.assertEqual(payload["period"], "quarterly")
+        self.assertEqual(payload["items"][0]["period"], "2026Q1")
+        self.assertEqual(payload["items"][0]["revenue"], 100000)
+        self.assertEqual(payload["items"][0]["freeCashFlow"], 25000)
 
     def test_fundamentals_adapter_accepts_symbol_keyed_latest_payload(self):
         records = records_from_payload({

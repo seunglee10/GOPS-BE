@@ -13,36 +13,42 @@ def compute_volume_profile_payload(
     raw_payload: dict[str, Any] | list[dict[str, Any]],
     *,
     symbol: str,
+    interval: str = "1m",
     from_time: str,
     to_time: str,
     target_bins: int = DEFAULT_VOLUME_PROFILE_TARGET_BINS,
     price_min: float | None = None,
     price_max: float | None = None,
 ) -> dict[str, Any]:
-    source_bins = raw_payload.get("bins") if isinstance(raw_payload, dict) else raw_payload
-    rows = normalize_source_bins(source_bins if isinstance(source_bins, list) else [])
+    source_rows = raw_payload.get("candles") if isinstance(raw_payload, dict) else raw_payload
+    candles = normalize_source_candles(source_rows if isinstance(source_rows, list) else [])
     requested_target = normalize_target_bins(target_bins)
-    source_price_bin_size = first_number(rows, "priceBinSize")
-    source = first_string(raw_payload, rows, "source") or "clickhouse"
-    feed = first_string(raw_payload, rows, "feed") or "unknown"
-    feed_profile = first_string(raw_payload, rows, "feedProfile")
+    source = first_string(raw_payload, candles, "source") or "candles"
+    feed = first_string(raw_payload, candles, "feed") or "unknown"
+    feed_profile = first_string(raw_payload, candles, "feedProfile")
 
-    bucket_range = resolve_bucket_range(rows, price_min, price_max)
+    bucket_range = resolve_bucket_range(candles, price_min, price_max)
     if bucket_range is None:
         return {
             "symbol": symbol,
+            "interval": interval,
+            "sourceInterval": interval,
             "from": from_time,
             "to": to_time,
-            "timeBucket": "1m",
+            "timeBucket": interval,
             "targetBins": requested_target,
             "bucketCount": 0,
-            "priceBinSize": source_price_bin_size or 0,
-            "sourcePriceBinSize": source_price_bin_size,
-            "sourceBinCount": len(rows),
+            "priceBinSize": 0,
+            "sourcePriceBinSize": None,
+            "sourceBinCount": len(candles),
+            "sourceCandleCount": len(candles),
             "source": source,
             "feed": feed,
             "feedProfile": feed_profile,
             "calculationVersion": VOLUME_PROFILE_CALCULATION_VERSION,
+            "classificationVersion": VOLUME_PROFILE_CALCULATION_VERSION,
+            "sideClassification": "estimated",
+            "estimationMethod": "candle-range-volume-overlap",
             "dataStatus": "empty",
             "priceRange": {
                 "min": price_min,
@@ -58,7 +64,7 @@ def compute_volume_profile_payload(
         }
 
     domain_min, domain_max, step = nice_display_domain(bucket_range[0], bucket_range[1], requested_target)
-    buckets = build_display_buckets(domain_min, domain_max, step, rows)
+    buckets = build_display_buckets(domain_min, domain_max, step, candles)
     total_volume = sum(bucket["volume"] for bucket in buckets)
     total_trade_count = sum(bucket["tradeCount"] for bucket in buckets)
     poc = poc_payload(buckets)
@@ -72,18 +78,24 @@ def compute_volume_profile_payload(
 
     return {
         "symbol": symbol,
+        "interval": interval,
+        "sourceInterval": interval,
         "from": from_time,
         "to": to_time,
-        "timeBucket": "1m",
+        "timeBucket": interval,
         "targetBins": requested_target,
         "bucketCount": len(buckets),
         "priceBinSize": rounded(step),
-        "sourcePriceBinSize": source_price_bin_size,
-        "sourceBinCount": len(rows),
+        "sourcePriceBinSize": None,
+        "sourceBinCount": len(candles),
+        "sourceCandleCount": len(candles),
         "source": source,
         "feed": feed,
         "feedProfile": feed_profile,
         "calculationVersion": VOLUME_PROFILE_CALCULATION_VERSION,
+        "classificationVersion": VOLUME_PROFILE_CALCULATION_VERSION,
+        "sideClassification": "estimated",
+        "estimationMethod": "candle-range-volume-overlap",
         "dataStatus": "ready" if total_volume > 0 else "empty",
         "priceRange": {
             "min": rounded(domain_min),
@@ -99,29 +111,35 @@ def compute_volume_profile_payload(
     }
 
 
-def normalize_source_bins(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def normalize_source_candles(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     for row in rows:
         if not isinstance(row, dict):
             continue
-        price = number_or_none(row.get("priceBin"))
-        if price is None:
+        low = number_or_none(row.get("low"))
+        high = number_or_none(row.get("high"))
+        close = number_or_none(row.get("close"))
+        open_price = number_or_none(row.get("open"))
+        fallback_price = first_present_number(close, open_price, low, high)
+        if low is None:
+            low = fallback_price
+        if high is None:
+            high = fallback_price
+        if low is None or high is None:
             continue
-        size = number_or_none(row.get("priceBinSize")) or 0
         volume = number_or_none(row.get("volume")) or 0
-        trade_count = int(number_or_none(row.get("tradeCount")) or 0)
         if volume < 0:
             continue
+        if high < low:
+            low, high = high, low
+        typical = typical_price(high, low, close, fallback_price)
         normalized.append({
             **row,
-            "priceBin": price,
-            "priceBinSize": size,
-            "priceMin": price,
-            "priceMax": price + size if size > 0 else price,
-            "priceMid": price + (size / 2 if size > 0 else 0),
+            "priceLow": low,
+            "priceHigh": high,
+            "priceMid": typical,
             "volume": volume,
-            "tradeCount": trade_count,
-            "vwap": number_or_none(row.get("vwap")),
+            "vwap": typical,
         })
     return normalized
 
@@ -143,8 +161,8 @@ def resolve_bucket_range(rows: list[dict[str, Any]], price_min: float | None, pr
         if requested_max <= requested_min:
             return None
         return requested_min, requested_max
-    min_price = requested_min if requested_min is not None else min(row["priceMin"] for row in rows)
-    max_price = requested_max if requested_max is not None else max(row["priceMax"] for row in rows)
+    min_price = requested_min if requested_min is not None else min(row["priceLow"] for row in rows)
+    max_price = requested_max if requested_max is not None else max(row["priceHigh"] for row in rows)
     if max_price <= min_price:
         max_price = min_price + max(0.01, abs(min_price) * 0.001)
     return min_price, max_price
@@ -192,24 +210,58 @@ def build_display_buckets(domain_min: float, domain_max: float, step: float, row
             "volumePercent": 0,
             "isPoc": False,
             "inValueArea": False,
+            "sourceCandleCount": 0,
         })
-    for row in rows:
-        center = row["priceMid"]
-        if center < domain_min or center > domain_max:
+    for candle in rows:
+        volume = candle["volume"]
+        if volume <= 0:
             continue
-        index = min(count - 1, max(0, int((center - domain_min) / step)))
-        bucket = buckets[index]
-        volume = row["volume"]
-        bucket["volume"] += volume
-        bucket["tradeCount"] += row["tradeCount"]
-        if row["vwap"] is not None and volume > 0:
-            weighted_vwap[index] += row["vwap"] * volume
+        allocations = candle_bucket_allocations(candle, buckets, domain_min, domain_max, step)
+        for index, allocated_volume in allocations:
+            if allocated_volume <= 0:
+                continue
+            bucket = buckets[index]
+            bucket["volume"] += allocated_volume
+            bucket["sourceCandleCount"] += 1
+            weighted_vwap[index] += candle["priceMid"] * allocated_volume
     for index, bucket in enumerate(buckets):
         volume = bucket["volume"]
         bucket["volume"] = rounded(volume)
         bucket["tradeCount"] = int(bucket["tradeCount"])
         bucket["vwap"] = rounded(weighted_vwap[index] / volume) if volume > 0 and weighted_vwap[index] > 0 else None
     return buckets
+
+
+def candle_bucket_allocations(
+    candle: dict[str, Any],
+    buckets: list[dict[str, Any]],
+    domain_min: float,
+    domain_max: float,
+    step: float,
+) -> list[tuple[int, float]]:
+    low = candle["priceLow"]
+    high = candle["priceHigh"]
+    volume = candle["volume"]
+    if high > low:
+        overlaps: list[tuple[int, float]] = []
+        total_overlap = 0.0
+        for index, bucket in enumerate(buckets):
+            overlap = max(0.0, min(high, bucket["priceMax"]) - max(low, bucket["priceMin"]))
+            if overlap > 0:
+                overlaps.append((index, overlap))
+                total_overlap += overlap
+        if total_overlap > 0:
+            return [(index, volume * (overlap / total_overlap)) for index, overlap in overlaps]
+    index = bucket_index_for_price(candle["priceMid"], domain_min, domain_max, step, len(buckets))
+    return [(index, volume)] if index is not None else []
+
+
+def bucket_index_for_price(price: float | None, domain_min: float, domain_max: float, step: float, count: int) -> int | None:
+    if price is None or not math.isfinite(price) or price < domain_min or price > domain_max:
+        return None
+    if price == domain_max:
+        return count - 1
+    return min(count - 1, max(0, int((price - domain_min) / step)))
 
 
 def poc_payload(buckets: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -291,12 +343,19 @@ def first_string(raw_payload: dict[str, Any] | list[dict[str, Any]], rows: list[
     return None
 
 
-def first_number(rows: list[dict[str, Any]], key: str) -> float | None:
-    for row in rows:
-        value = number_or_none(row.get(key))
+def first_present_number(*values: float | None) -> float | None:
+    for value in values:
         if value is not None:
             return value
     return None
+
+
+def typical_price(high: float, low: float, close: float | None, fallback: float | None) -> float:
+    if close is not None:
+        return (high + low + close) / 3
+    if fallback is not None:
+        return fallback
+    return (high + low) / 2
 
 
 def number_or_none(value: Any) -> float | None:

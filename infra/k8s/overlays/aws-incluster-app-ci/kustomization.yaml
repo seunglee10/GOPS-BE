@@ -8,6 +8,18 @@ resources:
 
 patches:
   - target:
+      group: apps
+      version: v1
+      kind: StatefulSet
+      name: graphdb
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: graphdb
+        namespace: alfaka-market-data
+      $patch: delete
+  - target:
       group: external-secrets.io
       version: v1beta1
       kind: SecretStore

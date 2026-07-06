@@ -130,4 +130,24 @@ CREATE TABLE IF NOT EXISTS market_data.sec_collection_runs
 ENGINE = ReplacingMergeTree(inserted_at)
 ORDER BY (job_type, run_id)
 """,
+    "yahoo_earnings_estimates": """
+CREATE TABLE IF NOT EXISTS market_data.yahoo_earnings_estimates
+(
+    symbol LowCardinality(String),
+    metric LowCardinality(String),
+    fiscal_year UInt16,
+    fiscal_period LowCardinality(String),
+    period_end Date,
+    average Nullable(Float64),
+    low Nullable(Float64),
+    high Nullable(Float64),
+    analyst_count Nullable(UInt16),
+    source LowCardinality(String),
+    collected_at DateTime64(3, 'UTC'),
+    raw String,
+    inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(collected_at)
+ORDER BY (symbol, metric, fiscal_year, fiscal_period, period_end)
+""",
 }

@@ -155,7 +155,7 @@ jobs:
             smoke_url https://stargops.com/
           fi
           if [[ "$SMOKE_BACKEND" == "true" ]]; then
-            smoke_url https://stargops.com/api/charts/symbols
+            smoke_url https://stargops.com/api/health
           fi
 
       - name: Roll back failed app rollout
@@ -170,3 +170,7 @@ jobs:
               -n "$K8S_NAMESPACE" \
               --timeout=600s
           done
+
+      - name: Rebuild news Redis cache
+        if: steps.changes.outputs.news_cache_rebuild == 'true'
+        run: ./scripts/aws/run-news-cache-rebuild-jobs.sh

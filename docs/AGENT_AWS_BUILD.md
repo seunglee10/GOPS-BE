@@ -29,6 +29,11 @@ flowchart LR
 GitHub Actions dev/test deploy entrypoint is `.github/workflows/deploy-dev.yml`.
 It deploys to the shared dev EKS environment on pushes to `dev`, `kimheejun`,
 `helix/front-chart`, `deploy/**`, and `test/**`, or by manual dispatch.
+When `market-storage` is selected, the workflow also runs
+`scripts/aws/run-news-cache-rebuild-jobs.sh` after a healthy rollout. That
+one-shot run uses the newly pushed `gops-market-storage` image to warm the
+30-day Redis news article cache and daily summary cache from ClickHouse without
+running ClickHouse rewrite mutations.
 
 ## Image
 
@@ -107,6 +112,9 @@ image: gops-market-storage
 계산 결과는 Redis hot cache와 ClickHouse
 `market_data.chart_derived_artifacts`에 함께 저장하며, 향후 Agent가 같은
 request hash로 동일 결과를 재참조하는 기준이 된다.
+Volume profile v1은 요청 chart interval의 candle OHLCV로 계산하는
+`estimated` 결과이며, trade tick 또는 `volume_profile_bins_1m` 적재에
+의존하지 않는다.
 
 ## Kubernetes Resources
 
@@ -140,6 +148,42 @@ infra/k8s/base/job-fanout-policy-benchmark.yaml
 infra/k8s/base/job-answer-grounding-eval.yaml
 ```
 
+In-cluster clean rebuild sizing:
+
+```text
+app-agent:     2 x m5a/m6a large class, 2 vCPU / 8 GiB, system add-ons + app + agent + workers
+platform-core: 1 x m5a/m6a 2xlarge class, 8 vCPU / 32 GiB, ClickHouse + Kafka + GraphDB + Redis + Postgres
+batch:         0->1 x 2-4 vCPU on-demand node, memory varies by available family, ad hoc Jobs
+```
+
+This 16 vCPU profile trades strict stateful isolation for quota fit. Drain old
+`general-purpose` nodes after the new NodePools are ready so steady state uses
+12 vCPU (`app-agent` 4 + `platform-core` 8). Batch Jobs may add one 2-4 vCPU
+node, reaching 14-16 vCPU. Because the batch pool is intentionally relaxed to fit
+quota and current capacity, keep it for short bootstrap and smoke Jobs only. Do
+not run heavy backfills while the app is under load in this profile.
+
+`app-agent` and `platform-core` use static `spec.replicas` to hold the intended
+node count. `batch` remains dynamic so it scales from 0 only when a Job is
+pending. If older dedicated NodePools were applied during a previous attempt,
+delete stale `clickhouse`, `cache-db`, `streaming`, and `graphdb` NodePools after
+their pods are drained.
+
+Stateful platform rebuilds intentionally do not reuse partially populated PVCs.
+After service shutdown, recreate ClickHouse `50Gi`, Kafka `30Gi`, GraphDB
+`10Gi`, Redis `10Gi`, and Postgres `10Gi` PVCs. Kafka/Redis/Postgres/ClickHouse
+start fresh; GraphDB is restored from the current `/opt/graphdb/home` tar
+archive to preserve the `nasdaq-fibo` repository/runtime bootstrap structure.
+This profile is intended to fit the current 16 vCPU EC2 on-demand quota after
+old nodes are drained. Applying it before old capacity is gone may temporarily
+hit the quota and leave new nodes Pending.
+
+Approval-time order: scale app/agent/market/order Deployments to 0, suspend
+CronJobs, delete active Jobs, archive GraphDB, scale down and delete platform
+StatefulSets and PVCs, apply NodePools and platform manifests, restore GraphDB,
+run Kafka topic init and order migrations, then restore app workloads and resume
+CronJobs.
+
 Config and overlay references:
 
 ```text
@@ -149,7 +193,16 @@ infra/k8s/overlays/aws/configmap-aws-patch.yaml
 infra/k8s/overlays/aws/kustomization.yaml
 infra/k8s/overlays/aws-incluster-app/configmap-incluster-patch.yaml
 infra/k8s/overlays/aws-incluster-app/kustomization.yaml
+infra/k8s/overlays/aws-incluster-app-ci/kustomization.yaml
+infra/k8s/overlays/aws-incluster-app-rebuild/kustomization.yaml
 ```
+
+GitHub Actions uses `aws-incluster-app-ci` for routine `dev` pushes. That CI
+overlay deliberately deletes the GraphDB StatefulSet from the rendered app
+bundle so immutable PVC template changes cannot break ordinary app deploys.
+It does not apply the `app-agent` NodePool placement or perform the clean
+rebuild. During the 16 vCPU rebuild, apply platform first, then apply
+`aws-incluster-app-rebuild` after the `app-agent` NodePool exists.
 
 ## Kafka
 
@@ -255,6 +308,13 @@ ClickHouse stale checks on the hot path.
 Agent providers read ClickHouse serving tables. ClickHouse must be reachable
 before worker smoke checks are considered valid.
 
+`dev` merge/pull is not the ClickHouse migration boundary. Local ClickHouse and
+AWS ClickHouse are separate runtimes, so merge conflict resolution should only
+preserve code contracts and DDL files. Switching to a new AWS ClickHouse,
+initializing schemas, rebuilding Redis projections, and S3 prefix cleanup are
+push/deploy maintenance tasks that run against the AWS environment after the
+merged image set is ready.
+
 ```text
 CLICKHOUSE_HTTP_URL
 CLICKHOUSE_DATABASE
@@ -282,11 +342,26 @@ market_data.sec_financial_facts
 market_data.sec_derived_metrics
 market_data.sec_frames
 market_data.sec_collection_runs
+market_data.yahoo_earnings_estimates
 ```
 
-News provider는 ClickHouse의 recent serving rows와 Redis latest summaries를
-우선 사용한다. `market_data.agent_graph_expansions`는 GraphDB에서 미리 계산한
+News provider는 Redis 30일 article/daily hot cache를 우선 사용하고, daily coverage
+metadata가 최근 30일 요청을 보장하지 못할 때 ClickHouse serving rows로 보강해
+Redis를 다시 warm-up한다.
+News cache rebuild Jobs warm Redis from ClickHouse rows by default and keep
+ClickHouse rewrite/mutation disabled unless
+`NEWS_INTELLIGENCE_REBUILD_REWRITE_CLICKHOUSE=true` is set intentionally.
+`market_data.agent_graph_expansions`는 GraphDB에서 미리 계산한
 관계 hint를 warm/deep path에서 재사용하기 위한 table이다.
+
+When AWS ClickHouse is replaced, do not migrate rows from the broken instance.
+Create the schema from `infra/clickhouse/initdb/01-market-data.sql` and
+`infra/clickhouse/initdb/02-sec-fundamentals.sql`, then rebuild projections from
+the official sources: S3 final/manifest for chart history, SEC companyfacts for
+actual fundamentals, and the separate Yahoo estimates collector for consensus
+data. Redis reset must be targeted to fundamentals summary/peer keys and chart
+live/latest/coverage keys; do not flush agent reports, sessions, or unrelated
+caches.
 
 ## SEC Fundamentals
 
@@ -387,9 +462,10 @@ provider는 `status="no-data"` evidence로 degrade하고 market/news analysis를
 .local-artifacts/graphdb/graphdb-volume.tgz
 ```
 
-초기 PVC restore가 필요할 때만 검토 후 다음 script를 사용한다.
+Clean rebuild 직전 bootstrap archive를 만들고, 새 `10Gi` PVC에 복원한다.
 
 ```sh
+scripts/aws/backup-graphdb-pvc.sh --force
 scripts/aws/restore-graphdb-pvc.sh --replace-pending-pvc
 ```
 
@@ -417,6 +493,8 @@ S3_ENDPOINT_URL
 NEWS_BACKFILL_PUBLISH_RECENT_TO_KAFKA
 NEWS_CLICKHOUSE_DAYS
 NEWS_INTELLIGENCE_REBUILD_DRY_RUN
+NEWS_INTELLIGENCE_REBUILD_REWRITE_CLICKHOUSE
+CLICKHOUSE_ENSURE_SCHEMA_ON_START
 ```
 
 Policy:

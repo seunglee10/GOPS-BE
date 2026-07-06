@@ -160,6 +160,9 @@ class RedisKeyBuilder:
     def news_daily_v2(self, locale, symbol):
         return self.key(f"news:v2:daily:{redis_locale(locale)}:{symbol}")
 
+    def news_daily_coverage_v2(self, locale, symbol):
+        return self.key(f"news:v2:daily:coverage:{redis_locale(locale)}:{symbol}")
+
     def market_status_latest(self):
         return self.key("market:status:latest")
 

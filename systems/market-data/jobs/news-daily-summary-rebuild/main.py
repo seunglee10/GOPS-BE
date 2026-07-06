@@ -7,7 +7,7 @@ from pathlib import Path
 import redis
 
 from alfaka.common.env import load_dotenv
-from alfaka.storage.clickhouse_loader import ClickHouseHttpClient
+from alfaka.storage.clickhouse_loader import ClickHouseHttpClient, should_ensure_schema_on_start
 
 
 def main():
@@ -18,7 +18,8 @@ def main():
         user=os.getenv("CLICKHOUSE_USER", "alfaka"),
         password=os.getenv("CLICKHOUSE_PASSWORD", "alfaka"),
     )
-    client.ensure_market_data_schema()
+    if should_ensure_schema_on_start():
+        client.ensure_market_data_schema()
     days = int(os.getenv("NEWS_DAILY_SUMMARY_REBUILD_DAYS", "30"))
     max_groups = int(os.getenv("NEWS_DAILY_SUMMARY_REBUILD_MAX_GROUPS", "1000"))
     dry_run = bool_env(os.getenv("NEWS_DAILY_SUMMARY_REBUILD_DRY_RUN"), default=False)

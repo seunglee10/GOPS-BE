@@ -7,6 +7,7 @@ from fastapi import HTTPException
 
 from app.market_data.backfill.service import get_backfill_service
 from app.market_data.fill.service import get_on_demand_fill_service
+from app.market_data.fundamentals.service import build_fundamentals_adapter
 from app.market_data.heatmap.service import get_heatmap_service
 from app.market_data.indices.service import get_indices_service
 from app.services.alfaka_market_data import get_market_data_provider, normalize_market_symbol, requested_ma_from_csv
@@ -28,6 +29,7 @@ from alfaka.serving.volume_profile import (
     DEFAULT_VOLUME_PROFILE_TARGET_BINS,
     normalize_target_bins,
 )
+from alfaka.serving.news_hot_cache import company_daily_summary_coverage_valid
 from alfaka.storage.news_daily_summary import attach_price_changes_to_daily_summaries, clickhouse_row_to_daily_summary
 
 
@@ -138,6 +140,22 @@ class MarketDataQueryService:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    def financial_series(self, symbol: str, years: int, period: str) -> dict[str, Any]:
+        try:
+            normalized = normalize_market_symbol(symbol)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        normalized_period = "annual" if period.lower() in {"annual", "year", "fy"} else "quarterly"
+        adapter = build_fundamentals_adapter(self.provider)
+        series = adapter.financial_series(normalized, years=years, period=normalized_period)
+        return {
+            "source": "sec",
+            "symbol": normalized,
+            "period": normalized_period,
+            "years": years,
+            "items": [point.to_public_dict() for point in series],
+        }
+
     def indices(self, background_tasks=None) -> dict[str, Any]:
         try:
             return get_indices_service(self.provider).snapshot(background_tasks=background_tasks)
@@ -161,13 +179,16 @@ class MarketDataQueryService:
         target_bins: int = DEFAULT_VOLUME_PROFILE_TARGET_BINS,
         price_min: float | None = None,
         price_max: float | None = None,
+        interval: str = "1m",
     ) -> dict[str, Any]:
         symbol = normalize_market_symbol(symbol)
+        interval = normalize_chart_interval(interval)
         if price_min is not None and price_max is not None and price_max <= price_min:
             raise HTTPException(status_code=400, detail="priceMax must be greater than priceMin.")
         resolved_target_bins = normalize_target_bins(target_bins)
         request = build_volume_profile_request(
             symbol=symbol,
+            interval=interval,
             from_time=from_time,
             to_time=to_time,
             price_bin_size=price_bin_size,
@@ -263,51 +284,107 @@ class MarketDataQueryService:
     def _latest_news_rows(self, symbol: str, limit: int, locale: str) -> tuple[list[dict[str, Any]], str]:
         redis_provider = getattr(self.provider, "redis_provider", None)
         clickhouse_provider = getattr(self.provider, "clickhouse_provider", None)
-        for provider, source in ((redis_provider, "redis"), (clickhouse_provider, "clickhouse")):
-            if provider is None:
-                continue
-            method = getattr(provider, "localized_news_articles_for_symbols", None)
-            if not callable(method):
-                method = getattr(provider, "localized_news_articles", None)
-                if not callable(method):
-                    continue
-                try:
-                    rows = method(symbol, limit=limit, locale=locale)
-                except TypeError:
-                    rows = method(symbol, limit=limit)
-                except Exception:
-                    rows = []
-            else:
-                try:
-                    rows = method([symbol], limit=limit, locale=locale)
-                except TypeError:
-                    rows = method([symbol], limit=limit)
-                except Exception:
-                    rows = []
-            normalized_rows = [row for row in rows or [] if isinstance(row, dict)]
-            if normalized_rows:
-                return normalized_rows[:limit], source
+        redis_rows = self._localized_news_rows_from_provider(redis_provider, symbol, limit, locale, use_days=False)
+        if len(redis_rows) >= limit:
+            return redis_rows[:limit], "redis"
+
+        clickhouse_rows = self._localized_news_rows_from_provider(clickhouse_provider, symbol, limit, locale, use_days=True)
+        if clickhouse_rows:
+            self._warm_localized_news_redis(redis_provider, clickhouse_rows, locale)
+            return clickhouse_rows[:limit], "clickhouse"
+        if redis_rows:
+            return redis_rows[:limit], "redis"
         return [], "no-data"
 
-    def _daily_news_rows(self, symbol: str, limit: int, locale: str) -> list[dict[str, Any]]:
-        redis_provider = getattr(self.provider, "redis_provider", None)
-        clickhouse_provider = getattr(self.provider, "clickhouse_provider", None)
-        for provider in (redis_provider, clickhouse_provider):
-            if provider is None:
-                continue
-            method = getattr(provider, "company_daily_news_summaries", None)
+    def _localized_news_rows_from_provider(self, provider, symbol: str, limit: int, locale: str, *, use_days: bool) -> list[dict[str, Any]]:
+        if provider is None:
+            return []
+        method = getattr(provider, "localized_news_articles_for_symbols", None)
+        if not callable(method):
+            method = getattr(provider, "localized_news_articles", None)
             if not callable(method):
-                continue
+                return []
             try:
-                rows = method(symbol, limit=limit, locale=locale)
+                if use_days:
+                    rows = method(symbol, limit=limit, days=30, locale=locale)
+                else:
+                    rows = method(symbol, limit=limit, locale=locale)
             except TypeError:
                 rows = method(symbol, limit=limit)
             except Exception:
                 rows = []
-            normalized_rows = [row for row in rows or [] if isinstance(row, dict)]
-            if normalized_rows:
-                return normalized_rows[:limit]
+        else:
+            try:
+                if use_days:
+                    rows = method([symbol], limit=limit, days=30, locale=locale)
+                else:
+                    rows = method([symbol], limit=limit, locale=locale)
+            except TypeError:
+                rows = method([symbol], limit=limit)
+            except Exception:
+                rows = []
+        return [row for row in rows or [] if isinstance(row, dict)]
+
+    def _warm_localized_news_redis(self, redis_provider, rows: list[dict[str, Any]], locale: str) -> None:
+        method = getattr(redis_provider, "warm_localized_news_articles", None)
+        if not callable(method):
+            return
+        try:
+            method(rows, locale=locale)
+        except Exception:
+            return
+
+    def _daily_news_rows(self, symbol: str, limit: int, locale: str) -> list[dict[str, Any]]:
+        redis_provider = getattr(self.provider, "redis_provider", None)
+        clickhouse_provider = getattr(self.provider, "clickhouse_provider", None)
+        days = 30
+        redis_rows = self._daily_news_rows_from_provider(redis_provider, symbol, limit, locale, use_days=False)
+        if self._daily_news_redis_coverage_valid(redis_provider, symbol, days, limit, locale, redis_rows):
+            return redis_rows[:limit]
+
+        clickhouse_rows = self._daily_news_rows_from_provider(clickhouse_provider, symbol, limit, locale, use_days=True)
+        if clickhouse_rows:
+            self._warm_daily_news_redis(redis_provider, symbol, clickhouse_rows, days, limit, locale)
+            return clickhouse_rows[:limit]
+        if redis_rows:
+            return redis_rows[:limit]
         return []
+
+    def _daily_news_rows_from_provider(self, provider, symbol: str, limit: int, locale: str, *, use_days: bool) -> list[dict[str, Any]]:
+        if provider is None:
+            return []
+        method = getattr(provider, "company_daily_news_summaries", None)
+        if not callable(method):
+            return []
+        try:
+            if use_days:
+                rows = method(symbol, limit=limit, days=30, locale=locale)
+            else:
+                rows = method(symbol, limit=limit, locale=locale)
+        except TypeError:
+            rows = method(symbol, limit=limit)
+        except Exception:
+            rows = []
+        return [row for row in rows or [] if isinstance(row, dict)]
+
+    def _daily_news_redis_coverage_valid(self, redis_provider, symbol: str, days: int, limit: int, locale: str, rows: list[dict[str, Any]]) -> bool:
+        method = getattr(redis_provider, "company_daily_news_coverage", None)
+        if not callable(method):
+            return False
+        try:
+            coverage = method(symbol, locale=locale)
+        except Exception:
+            return False
+        return company_daily_summary_coverage_valid(coverage, symbol=symbol, days=days, limit=limit, locale=locale, rows=rows)
+
+    def _warm_daily_news_redis(self, redis_provider, symbol: str, rows: list[dict[str, Any]], days: int, limit: int, locale: str) -> None:
+        method = getattr(redis_provider, "warm_company_daily_news_summaries", None)
+        if not callable(method):
+            return
+        try:
+            method(symbol, rows, days=days, limit=limit, locale=locale)
+        except Exception:
+            return
 
     def _daily_news_price_candles(self, symbol: str, limit: int) -> list[dict[str, Any]]:
         clickhouse_provider = getattr(self.provider, "clickhouse_provider", None)
@@ -327,7 +404,14 @@ class MarketDataQueryService:
         interval = normalize_chart_interval(interval)
         include_set = {item.strip() for item in include.split(",") if item.strip()}
         try:
-            return self.provider.agent_chart_context(symbol, interval, from_time, to_time, include_set)
+            provider_include = set(include_set)
+            needs_volume_profile = "volumeProfile" in provider_include
+            provider_include.discard("volumeProfile")
+            context = self.provider.agent_chart_context(symbol, interval, from_time, to_time, provider_include)
+            if needs_volume_profile:
+                context["volumeProfile"] = self.volume_profile_bins(symbol, from_time, to_time, "auto", interval=interval)
+            context["include"] = sorted(include_set)
+            return context
         except Exception as exc:
             raise HTTPException(status_code=503, detail=f"Market context provider failed: {exc}") from exc
 
