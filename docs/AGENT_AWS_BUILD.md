@@ -95,6 +95,19 @@ SEC companyfacts backfill은 `gops-agent-orchestrator`가 아니라
 `gops-market-storage` image에서 실행한다. 해당 image에는
 `systems/fundamentals`와 `systems/market-data/shared`가 포함되어야 한다.
 
+Chart derived data worker:
+
+```text
+chart-derived-data-worker
+systems/market-data/pods/chart-derived-data-worker/main.py
+image: gops-market-storage
+```
+
+이 worker는 indicator, volume profile, footprint 계산을 API server에서 분리한다.
+계산 결과는 Redis hot cache와 ClickHouse
+`market_data.chart_derived_artifacts`에 함께 저장하며, 향후 Agent가 같은
+request hash로 동일 결과를 재참조하는 기준이 된다.
+
 ## Kubernetes Resources
 
 Required deployments:
@@ -112,6 +125,7 @@ infra/k8s/base/app/deployment-agent-intent-classifier.yaml
 infra/k8s/base/app/deployment-deep-analysis-worker.yaml
 infra/k8s/base/app/deployment-agent-event-detector.yaml
 infra/k8s/base/app/deployment-agent-notification-publisher.yaml
+infra/k8s/base/app/deployment-chart-derived-data-worker.yaml
 ```
 
 Optional jobs:
@@ -149,6 +163,27 @@ agents.analysis-results.v1
 agents.query-understanding-events.v1
 agents.notification-decisions.v1
 agents.dlq.v1
+```
+
+Chart derived topics:
+
+```text
+market.chart-derived.requests.v1
+market.chart-derived.dlq.v1
+```
+
+Chart derived env:
+
+```text
+CHART_DERIVED_REQUEST_TOPIC
+CHART_DERIVED_DLQ_TOPIC
+CHART_DERIVED_WORKER_GROUP_ID
+CHART_DERIVED_API_WAIT_MS
+CHART_DERIVED_API_POLL_MS
+CHART_DERIVED_RETRY_AFTER_MS
+CHART_INDICATOR_ARTIFACT_RETENTION_SECONDS
+CHART_VOLUME_PROFILE_ARTIFACT_RETENTION_SECONDS
+CHART_FOOTPRINT_ARTIFACT_RETENTION_SECONDS
 ```
 
 Kafka bootstrap env:
@@ -235,6 +270,7 @@ Tables used by agent providers:
 
 ```text
 market_data.symbols
+market_data.chart_derived_artifacts
 market_data.news_articles
 market_data.news_article_localizations
 market_data.news_company_daily_summaries

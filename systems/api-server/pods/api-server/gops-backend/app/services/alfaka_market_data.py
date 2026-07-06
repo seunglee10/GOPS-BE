@@ -94,7 +94,7 @@ def requested_ma_from_csv(value: str) -> list[int]:
         item = item.strip()
         if item.isdigit() and int(item) in {5, 20, 60}:
             requested.append(int(item))
-    return requested or [5, 20, 60]
+    return requested
 
 
 @lru_cache(maxsize=1)
