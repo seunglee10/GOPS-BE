@@ -4786,9 +4786,21 @@ class MarketDataHardeningContractTest(unittest.TestCase):
 
         self.assertIn("toStartOfDay(event_time) AS bucket", provider.queries[0][0])
         self.assertIn("AND interval IN ('1D', '1d')", provider.queries[0][0])
+        self.assertNotIn("market_session = 'regular'", provider.queries[0][0])
+        self.assertIn("'regular' AS marketSession", provider.queries[0][0])
         self.assertIn("row_number() OVER", provider.queries[0][0])
         self.assertEqual(daily[-1]["interval"], "1D")
         self.assertEqual(daily[-1]["ma5"], 3.0)
+
+    def test_clickhouse_weekly_monthly_aggregation_does_not_filter_daily_sessions(self):
+        provider = RecordingClickHouseProviderForAggregation([])
+
+        provider.candles("AAPL", "1W", 5)
+
+        query = provider.queries[0][0]
+        self.assertIn("AND interval IN ('1D', '1d')", query)
+        self.assertNotIn("market_session = 'regular'", query)
+        self.assertIn("'regular' AS marketSession", query)
 
     def test_clickhouse_hot_ranking_uses_deduped_minute_source(self):
         provider = RecordingClickHouseProviderForAggregation([])
@@ -5484,6 +5496,25 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             [candle["timestamp"] for candle in visible],
             ["2026-07-02T14:30:00.000Z", "2026-07-06T02:15:00.000Z"],
         )
+
+    def test_daily_candles_are_visible_even_when_stored_with_non_regular_session(self):
+        candles = [
+            {
+                "interval": "1D",
+                "timestamp": "2026-07-02T04:00:00.000Z",
+                "open": 101,
+                "high": 102,
+                "low": 100,
+                "close": 101,
+                "volume": 100,
+                "isClosed": True,
+                "marketSession": "overnight",
+            }
+        ]
+
+        visible = filter_stock_chart_candles(candles, now=datetime(2026, 7, 6, 2, 30, tzinfo=timezone.utc))
+
+        self.assertEqual(visible, candles)
 
     def test_empty_cursor_does_not_trigger_clickhouse_timestamp_query(self):
         provider = MarketDataProvider(

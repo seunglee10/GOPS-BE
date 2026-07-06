@@ -410,7 +410,7 @@ def is_stock_chart_visible_candle(candle, now=None):
         interval = normalize_chart_interval(candle.get("interval", "1m"))
     except ValueError:
         interval = "1m"
-    if interval in {"1W", "1M"}:
+    if interval in {"1D", "1W", "1M"}:
         return True
     timestamp = candle.get("timestamp") or candle.get("eventTime")
     parsed = parse_iso_time(timestamp)

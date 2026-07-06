@@ -1,0 +1,29 @@
+# 역할: 사용자 가격 알림 조건을 Kafka 실시간 체결 스트림에서 평가합니다.
+# 사용: 팀 AWS MSK/Redis/RDS 설정은 alfaka-market-data-config와 Secret에서 주입합니다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alert-evaluator
+  namespace: alfaka-market-data
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alert-evaluator
+  template:
+    metadata:
+      labels:
+        app: alert-evaluator
+    spec:
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: alert-evaluator
+          image: YOUR_ECR_REPOSITORY/gops-api-server:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "-m", "app.alerts.evaluator"]
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-order-db-secret
+                optional: true

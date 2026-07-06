@@ -23,3 +23,24 @@ def test_repository_does_not_auto_create_schema():
     from kis_trader.persistence.postgres import PostgresOrderRepository
 
     assert not hasattr(PostgresOrderRepository, "init_schema")
+
+
+def test_alert_migration_declares_alert_and_notification_tables():
+    [migration] = [path for path in migration_files() if path.name == "0002_alerts.sql"]
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "CREATE TABLE IF NOT EXISTS alerts" in sql
+    assert "CREATE TABLE IF NOT EXISTS notifications" in sql
+    assert "CONSTRAINT alerts_price_cross_shape" in sql
+    assert "CONSTRAINT alerts_spike_shape" in sql
+    assert "event_id TEXT NOT NULL UNIQUE" in sql
+
+
+def test_alert_repeat_limit_migration_tracks_trigger_counts():
+    [migration] = [path for path in migration_files() if path.name == "0003_alert_repeat_limits.sql"]
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "ADD COLUMN IF NOT EXISTS repeat_limit INTEGER" in sql
+    assert "ADD COLUMN IF NOT EXISTS triggered_count INTEGER NOT NULL DEFAULT 0" in sql
+    assert "CONSTRAINT alerts_repeat_limit_check" in sql
+    assert "CONSTRAINT alerts_triggered_count_check" in sql
