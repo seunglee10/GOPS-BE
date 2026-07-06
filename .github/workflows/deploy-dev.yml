@@ -155,7 +155,7 @@ jobs:
             smoke_url https://stargops.com/
           fi
           if [[ "$SMOKE_BACKEND" == "true" ]]; then
-            smoke_url https://stargops.com/api/charts/symbols
+            smoke_url https://stargops.com/api/health
           fi
 
       - name: Roll back failed app rollout

@@ -19,6 +19,15 @@ class FundamentalsRecord:
     sector: str | None = None
     industry: str | None = None
     sharesOutstanding: float | None = None
+    revenue: float | None = None
+    operatingIncome: float | None = None
+    netIncome: float | None = None
+    eps: float | None = None
+    totalAssets: float | None = None
+    totalLiabilities: float | None = None
+    totalEquity: float | None = None
+    operatingCashFlow: float | None = None
+    freeCashFlow: float | None = None
     currency: str | None = None
     fiscalPeriod: str | None = None
     periodEndDate: str | None = None
@@ -35,6 +44,15 @@ class FundamentalsRecord:
             "sector": self.sector,
             "industry": self.industry,
             "sharesOutstanding": self.sharesOutstanding,
+            "revenue": self.revenue,
+            "operatingIncome": self.operatingIncome,
+            "netIncome": self.netIncome,
+            "eps": self.eps,
+            "totalAssets": self.totalAssets,
+            "totalLiabilities": self.totalLiabilities,
+            "totalEquity": self.totalEquity,
+            "operatingCashFlow": self.operatingCashFlow,
+            "freeCashFlow": self.freeCashFlow,
             "currency": self.currency,
             "fiscalPeriod": self.fiscalPeriod,
             "periodEndDate": self.periodEndDate,
@@ -106,6 +124,7 @@ class StoreFundamentalsAdapter(FundamentalsAdapter):
         if not callable(query_json_each_row):
             return {}
         facts_table = provider.table("sec_financial_facts") if hasattr(provider, "table") else "market_data.sec_financial_facts"
+        derived_table = provider.table("sec_derived_metrics") if hasattr(provider, "table") else "market_data.sec_derived_metrics"
         tickers_table = provider.table("sec_company_tickers") if hasattr(provider, "table") else "market_data.sec_company_tickers"
         try:
             fact_rows = query_json_each_row(
@@ -113,7 +132,8 @@ class StoreFundamentalsAdapter(FundamentalsAdapter):
                 SELECT
                   symbol,
                   cik,
-                  value AS sharesOutstanding,
+                  metric,
+                  value,
                   fiscal_year AS fiscalYear,
                   fiscal_period AS fiscalPeriod,
                   period_end AS periodEndDate,
@@ -122,16 +142,41 @@ class StoreFundamentalsAdapter(FundamentalsAdapter):
                   raw
                 FROM {facts_table}
                 WHERE symbol IN {{symbols:Array(String)}}
-                  AND metric = 'shares_outstanding'
+                  AND metric IN {{metrics:Array(String)}}
                   AND value IS NOT NULL
-                ORDER BY symbol ASC, version_filed_at DESC, fiscal_year DESC, period_end DESC
-                LIMIT 1 BY symbol
+                ORDER BY symbol ASC, metric ASC, version_filed_at DESC, fiscal_year DESC, period_end DESC
+                LIMIT 1 BY symbol, metric
                 FORMAT JSONEachRow
                 """,
-                {"symbols": symbols},
+                {"symbols": symbols, "metrics": list(FUNDAMENTAL_FACT_METRICS)},
             )
         except Exception:
             fact_rows = []
+        try:
+            derived_rows = query_json_each_row(
+                f"""
+                SELECT
+                  symbol,
+                  metric,
+                  value,
+                  fiscal_year AS fiscalYear,
+                  fiscal_period AS fiscalPeriod,
+                  period_end AS periodEndDate,
+                  filed_at AS filedAt,
+                  version_filed_at AS versionFiledAt,
+                  raw
+                FROM {derived_table}
+                WHERE symbol IN {{symbols:Array(String)}}
+                  AND metric IN {{metrics:Array(String)}}
+                  AND value IS NOT NULL
+                ORDER BY symbol ASC, metric ASC, version_filed_at DESC, fiscal_year DESC, period_end DESC
+                LIMIT 1 BY symbol, metric
+                FORMAT JSONEachRow
+                """,
+                {"symbols": symbols, "metrics": list(FUNDAMENTAL_DERIVED_METRICS)},
+            )
+        except Exception:
+            derived_rows = []
         try:
             ticker_rows = query_json_each_row(
                 f"""
@@ -156,23 +201,22 @@ class StoreFundamentalsAdapter(FundamentalsAdapter):
             if isinstance(row, dict) and isinstance(row.get("symbol"), str)
         }
         records: dict[str, FundamentalsRecord] = {}
-        for row in fact_rows or []:
-            if not isinstance(row, dict) or not isinstance(row.get("symbol"), str):
-                continue
-            symbol = normalize_market_symbol(row["symbol"])
+        metrics_by_symbol = group_metric_rows([*(fact_rows or []), *(derived_rows or [])])
+        for symbol, metric_rows in metrics_by_symbol.items():
             ticker = tickers.get(symbol) or {}
+            anchor = metric_rows.get("shares_outstanding") or first_metric_row(metric_rows)
             record = record_from_row({
                 "symbol": symbol,
-                "cik": row.get("cik") or ticker.get("cik"),
+                "cik": (anchor or {}).get("cik") or ticker.get("cik"),
                 "companyName": ticker.get("companyName"),
-                "sharesOutstanding": row.get("sharesOutstanding"),
+                **record_values_from_metric_rows(metric_rows),
                 "currency": "USD",
-                "fiscalPeriod": row.get("fiscalPeriod"),
-                "periodEndDate": row.get("periodEndDate"),
-                "filedAt": row.get("filedAt"),
+                "fiscalPeriod": (anchor or {}).get("fiscalPeriod"),
+                "periodEndDate": (anchor or {}).get("periodEndDate"),
+                "filedAt": (anchor or {}).get("filedAt"),
                 "source": "sec_companyfacts",
-                "asOf": row.get("periodEndDate"),
-                "raw": row.get("raw"),
+                "asOf": (anchor or {}).get("periodEndDate"),
+                "raw": {"metrics": list(metric_rows.values())},
             })
             if record is not None:
                 records[symbol] = record
@@ -305,6 +349,36 @@ def payload_rows(payload: Any) -> list[dict[str, Any]]:
     return []
 
 
+FUNDAMENTAL_FACT_METRICS = (
+    "shares_outstanding",
+    "revenue",
+    "operating_income",
+    "net_income",
+    "eps",
+    "assets",
+    "liabilities",
+    "equity",
+    "operating_cash_flow",
+)
+
+FUNDAMENTAL_DERIVED_METRICS = (
+    "free_cash_flow",
+)
+
+METRIC_FIELD_MAP = {
+    "shares_outstanding": "sharesOutstanding",
+    "revenue": "revenue",
+    "operating_income": "operatingIncome",
+    "net_income": "netIncome",
+    "eps": "eps",
+    "assets": "totalAssets",
+    "liabilities": "totalLiabilities",
+    "equity": "totalEquity",
+    "operating_cash_flow": "operatingCashFlow",
+    "free_cash_flow": "freeCashFlow",
+}
+
+
 def record_from_row(row: dict[str, Any]) -> FundamentalsRecord | None:
     raw_symbol = read_string(row.get("symbol") or row.get("ticker"))
     if not raw_symbol:
@@ -324,6 +398,15 @@ def record_from_row(row: dict[str, Any]) -> FundamentalsRecord | None:
         sector=read_string(row.get("sector")),
         industry=read_string(row.get("industry")),
         sharesOutstanding=shares_outstanding if shares_outstanding and shares_outstanding > 0 else None,
+        revenue=read_float(row.get("revenue")),
+        operatingIncome=read_float(row.get("operatingIncome") or row.get("operating_income")),
+        netIncome=read_float(row.get("netIncome") or row.get("net_income")),
+        eps=read_float(row.get("eps")),
+        totalAssets=read_float(row.get("totalAssets") or row.get("total_assets") or row.get("assets")),
+        totalLiabilities=read_float(row.get("totalLiabilities") or row.get("total_liabilities") or row.get("liabilities")),
+        totalEquity=read_float(row.get("totalEquity") or row.get("total_equity") or row.get("equity")),
+        operatingCashFlow=read_float(row.get("operatingCashFlow") or row.get("operating_cash_flow")),
+        freeCashFlow=read_float(row.get("freeCashFlow") or row.get("free_cash_flow")),
         currency=read_string(row.get("currency")),
         fiscalPeriod=read_string(row.get("fiscalPeriod") or row.get("fiscal_period")),
         periodEndDate=read_string(row.get("periodEndDate") or row.get("period_end_date")),
@@ -338,26 +421,44 @@ def record_from_summary_payload(payload: dict[str, Any], *, fallback_symbol: str
     symbol = read_string(payload.get("symbol")) or fallback_symbol
     metrics = payload.get("metrics") if isinstance(payload.get("metrics"), list) else []
     shares_metric = latest_metric(metrics, "shares_outstanding")
-    if not shares_metric:
+    metric_values = values_from_summary_metrics(metrics)
+    if not metric_values:
         return None
-    source = read_string(payload.get("source")) or read_string(shares_metric.get("source")) or "sec_companyfacts"
+    anchor_metric = shares_metric or first_summary_metric(metrics)
+    source = read_string(payload.get("source")) or read_string((anchor_metric or {}).get("source")) or "sec_companyfacts"
     if source_hint:
         source = f"{source}:{source_hint}"
     return record_from_row({
         "symbol": symbol,
-        "cik": payload.get("cik") or shares_metric.get("cik"),
+        "cik": payload.get("cik") or (anchor_metric or {}).get("cik"),
         "companyName": payload.get("companyName") or payload.get("company_name"),
         "sector": payload.get("sector"),
         "industry": payload.get("industry"),
-        "sharesOutstanding": shares_metric.get("value"),
+        **metric_values,
         "currency": payload.get("currency") or "USD",
-        "fiscalPeriod": shares_metric.get("fiscalPeriod") or payload.get("latest_period"),
-        "periodEndDate": shares_metric.get("periodEnd") or shares_metric.get("asOf") or payload.get("as_of"),
-        "filedAt": shares_metric.get("filedAt") or payload.get("source_filed_at"),
+        "fiscalPeriod": (anchor_metric or {}).get("fiscalPeriod") or payload.get("latest_period"),
+        "periodEndDate": (anchor_metric or {}).get("periodEnd") or (anchor_metric or {}).get("asOf") or payload.get("as_of"),
+        "filedAt": (anchor_metric or {}).get("filedAt") or payload.get("source_filed_at"),
         "source": source,
-        "asOf": payload.get("as_of") or shares_metric.get("asOf") or shares_metric.get("periodEnd"),
+        "asOf": payload.get("as_of") or (anchor_metric or {}).get("asOf") or (anchor_metric or {}).get("periodEnd"),
         "raw": payload,
     })
+
+
+def values_from_summary_metrics(metrics: list[Any]) -> dict[str, Any]:
+    values: dict[str, Any] = {}
+    for metric_name, field_name in METRIC_FIELD_MAP.items():
+        metric = latest_metric(metrics, metric_name)
+        if metric:
+            values[field_name] = metric.get("value")
+    return values
+
+
+def first_summary_metric(metrics: list[Any]) -> dict[str, Any] | None:
+    for metric in metrics:
+        if isinstance(metric, dict) and read_float(metric.get("value")) is not None:
+            return metric
+    return None
 
 
 def latest_metric(metrics: list[Any], metric_name: str) -> dict[str, Any] | None:
@@ -366,6 +467,36 @@ def latest_metric(metrics: list[Any], metric_name: str) -> dict[str, Any] | None
             continue
         if read_string(metric.get("metric")) == metric_name and read_float(metric.get("value")) is not None:
             return metric
+    return None
+
+
+def group_metric_rows(rows: list[Any]) -> dict[str, dict[str, dict[str, Any]]]:
+    grouped: dict[str, dict[str, dict[str, Any]]] = {}
+    for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get("symbol"), str):
+            continue
+        metric = read_string(row.get("metric"))
+        value = read_float(row.get("value"))
+        if not metric or value is None:
+            continue
+        symbol = normalize_market_symbol(row["symbol"])
+        grouped.setdefault(symbol, {})
+        grouped[symbol].setdefault(metric, row)
+    return grouped
+
+
+def record_values_from_metric_rows(metric_rows: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    values: dict[str, Any] = {}
+    for metric_name, field_name in METRIC_FIELD_MAP.items():
+        row = metric_rows.get(metric_name)
+        if row:
+            values[field_name] = row.get("value")
+    return values
+
+
+def first_metric_row(metric_rows: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+    for row in metric_rows.values():
+        return row
     return None
 
 

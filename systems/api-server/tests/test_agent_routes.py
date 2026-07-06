@@ -44,6 +44,12 @@ class AgentRoutesTest(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(create_app())
 
+    def test_api_health_alias_returns_backend_health(self):
+        response = self.client.get("/api/health")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ok", "service": "gops-backend"})
+
     def test_analyze_agents_delegates_to_orchestrator_gateway(self):
         expected = {"analysisId": "analysis-1", "symbol": "NVDA", "status": "completed"}
         with patch("app.routes.agents.request_agent_analysis", return_value=expected) as gateway:

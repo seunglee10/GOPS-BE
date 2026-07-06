@@ -1702,6 +1702,20 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn("systems/market-data/jobs/news-backfill/*", detector)
         self.assertIn("systems/market-data/jobs/news-intelligence-rebuild/*", detector)
 
+    def test_market_ingestor_rollout_targets_all_feed_deployments(self):
+        lib = (REPO_ROOT / "scripts/aws/lib-gops-images.sh").read_text(encoding="utf-8")
+
+        self.assertIn("alfaka-alpaca-ingestor-sip", lib)
+        self.assertIn("alfaka-alpaca-ingestor-boats", lib)
+        self.assertIn("alfaka-alpaca-ingestor-crypto", lib)
+        self.assertIn("alfaka-alpaca-news-ingestor", lib)
+
+    def test_deploy_smoke_uses_lightweight_health_endpoint(self):
+        workflow = (REPO_ROOT / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8")
+
+        self.assertIn("smoke_url https://stargops.com/api/health", workflow)
+        self.assertNotIn("smoke_url https://stargops.com/api/charts/symbols", workflow)
+
     def test_initial_load_compose_uses_on_demand_universe_contract(self):
         compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 
