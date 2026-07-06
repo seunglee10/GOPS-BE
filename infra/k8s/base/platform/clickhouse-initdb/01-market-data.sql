@@ -122,7 +122,7 @@ CREATE TABLE IF NOT EXISTS market_data.chart_derived_artifacts
 ENGINE = ReplacingMergeTree(inserted_at)
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (kind, symbol, request_hash)
-TTL expires_at DELETE;
+TTL toDateTime(expires_at) DELETE;
 
 CREATE TABLE IF NOT EXISTS market_data.market_status_events
 (

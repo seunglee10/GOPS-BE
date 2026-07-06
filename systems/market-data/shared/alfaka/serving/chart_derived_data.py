@@ -5,7 +5,7 @@ import json
 import os
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable
+from typing import Any
 
 from alfaka.serving.footprint import FOOTPRINT_CALCULATION_VERSION
 from alfaka.serving.indicators import INDICATOR_CALCULATION_VERSION, IndicatorSpec
@@ -334,8 +334,8 @@ class ChartDerivedArtifactStore:
             "payload_json": json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
             "source": payload.get("source") or "chart-derived-data-worker",
             "feed": payload.get("feed") or "unknown",
-            "created_at": clickhouse_time(now),
-            "expires_at": clickhouse_time(expires_at),
+            "created_at": clickhouse_json_time(now),
+            "expires_at": clickhouse_json_time(expires_at),
         }
         self.client.insert_json_each_row("chart_derived_artifacts", [row])
 
@@ -548,14 +548,19 @@ def clickhouse_client_from_env():
 
 
 def utc_now_iso() -> str:
-    return clickhouse_time(datetime.now(timezone.utc))
+    return iso_time(datetime.now(timezone.utc))
 
 
-def clickhouse_time(value: datetime) -> str:
+def iso_time(value: datetime) -> str:
     return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:23] + "Z"
+
+
+def clickhouse_json_time(value: datetime) -> str:
+    return value.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:23]
 
 
 def clickhouse_time_or_none(value: Any) -> str | None:
     if not value:
         return None
-    return str(value)
+    parsed = parse_utc_time(value)
+    return clickhouse_json_time(parsed) if parsed else None

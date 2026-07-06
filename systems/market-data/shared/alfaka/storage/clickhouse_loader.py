@@ -611,7 +611,7 @@ class ClickHouseHttpClient:
             ENGINE = ReplacingMergeTree(inserted_at)
             PARTITION BY toYYYYMM(created_at)
             ORDER BY (kind, symbol, request_hash)
-            TTL expires_at DELETE
+            TTL toDateTime(expires_at) DELETE
         """)
         self.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.database}.quote_ticks

@@ -211,7 +211,12 @@ def publish_dlq(request: dict[str, Any], error: str, producer: Any | None) -> No
         "retentionSeconds": artifact_retention_seconds(str(request.get("kind") or "")),
     }
     try:
-        producer.send(topic, key=str(request.get("requestHash") or "unknown"), value=payload)
+        future = producer.send(topic, key=str(request.get("requestHash") or "unknown"), value=payload)
+        timeout = float(os.getenv("CHART_DERIVED_PRODUCE_TIMEOUT_SECONDS", "1.5"))
+        if hasattr(future, "get"):
+            future.get(timeout=timeout)
+        elif hasattr(producer, "flush"):
+            producer.flush(timeout=timeout)
     except Exception:
         return
 

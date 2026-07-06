@@ -10,6 +10,7 @@ if str(MARKET_SHARED) not in sys.path:
     sys.path.insert(0, str(MARKET_SHARED))
 
 from alfaka.serving.chart_derived_data import (  # noqa: E402
+    ChartDerivedArtifactStore,
     build_footprint_request,
     build_indicator_request,
     build_volume_profile_request,
@@ -53,6 +54,34 @@ class FakeArtifactStore:
 
     def write(self, request, payload):
         self.rows.append((request, payload))
+
+
+class FakeClickHouseArtifactClient:
+    database = "market_data"
+
+    def __init__(self):
+        self.rows = []
+
+    def insert_json_each_row(self, table, rows):
+        self.rows.append((table, rows))
+
+
+class FakeFuture:
+    def __init__(self):
+        self.timeout = None
+
+    def get(self, timeout=None):
+        self.timeout = timeout
+
+
+class FakeProducer:
+    def __init__(self):
+        self.sent = []
+        self.future = FakeFuture()
+
+    def send(self, topic, key=None, value=None):
+        self.sent.append({"topic": topic, "key": key, "value": value})
+        return self.future
 
 
 class FakeProvider:
@@ -113,7 +142,30 @@ class FakeProvider:
         }
 
 
+class FailingVolumeProfileProvider(FakeProvider):
+    def volume_profile_bins(self, symbol, from_time, to_time, price_bin_size):
+        raise RuntimeError("volume profile source unavailable")
+
+
 class ChartDerivedDataWorkerTest(unittest.TestCase):
+    def test_artifact_store_writes_clickhouse_json_time_format(self):
+        client = FakeClickHouseArtifactClient()
+        store = ChartDerivedArtifactStore(client)
+        request = build_footprint_request(
+            symbol="AAPL",
+            from_time="2026-06-25T13:30:00.000Z",
+            to_time="2026-06-25T13:31:00.000Z",
+            limit=100,
+        )
+
+        store.write(request, {"dataStatus": "empty", "source": "unit", "feed": "test"})
+
+        row = client.rows[0][1][0]
+        self.assertEqual(row["from_time"], "2026-06-25 13:30:00.000")
+        self.assertEqual(row["to_time"], "2026-06-25 13:31:00.000")
+        self.assertNotIn("T", row["created_at"])
+        self.assertFalse(row["expires_at"].endswith("Z"))
+
     def test_indicator_request_hash_and_worker_result_are_shared(self):
         worker = load_worker_module()
         provider = FakeProvider()
@@ -171,6 +223,38 @@ class ChartDerivedDataWorkerTest(unittest.TestCase):
         self.assertEqual(payload["sourceInterval"], "1m")
         self.assertEqual(payload["sideClassification"], "estimated")
         self.assertEqual(payload["buckets"][0]["delta"], 6)
+
+    def test_worker_failure_records_status_and_dlq(self):
+        worker = load_worker_module()
+        redis_client = FakeRedis()
+        producer = FakeProducer()
+        request = build_volume_profile_request(
+            symbol="AAPL",
+            from_time="2026-06-25T13:30:00.000Z",
+            to_time="2026-06-25T14:00:00.000Z",
+            price_bin_size="auto",
+            target_bins=10,
+            price_min=None,
+            price_max=None,
+        )
+
+        payload = worker.process_request(
+            request,
+            provider=FailingVolumeProfileProvider(),
+            redis_client=redis_client,
+            artifact_store=FakeArtifactStore(),
+            dlq_producer=producer,
+        )
+
+        status = read_json_cache(redis_client, request["statusKey"])
+        self.assertIsNone(payload)
+        self.assertEqual(status["state"], "failed")
+        self.assertIn("RuntimeError", status["error"])
+        self.assertEqual(len(producer.sent), 1)
+        self.assertEqual(producer.sent[0]["key"], request["requestHash"])
+        self.assertEqual(producer.sent[0]["value"]["eventType"], "CHART_DERIVED_FAILED")
+        self.assertIn("RuntimeError", producer.sent[0]["value"]["error"])
+        self.assertEqual(producer.future.timeout, 1.5)
 
 
 if __name__ == "__main__":
