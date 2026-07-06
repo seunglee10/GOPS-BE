@@ -145,6 +145,40 @@ infra/k8s/base/job-fanout-policy-benchmark.yaml
 infra/k8s/base/job-answer-grounding-eval.yaml
 ```
 
+In-cluster clean rebuild sizing:
+
+```text
+app-agent:     2 x m5a/m6a large class, 2 vCPU / 8 GiB, app + agent + workers
+platform-core: 1 x m5a/m6a 2xlarge class, 8 vCPU / 32 GiB, ClickHouse + Kafka + GraphDB + Redis + Postgres
+batch:         0->1 x m5a/m6a xlarge class, 4 vCPU / 16 GiB, ad hoc Jobs
+```
+
+This 16 vCPU profile trades strict stateful isolation for quota fit. Steady
+state uses 12 vCPU (`app-agent` 4 + `platform-core` 8). Batch Jobs may add one
+4 vCPU node, reaching 16 vCPU. Do not run heavy backfills while the app is under
+load in this profile.
+
+`app-agent` and `platform-core` use static `spec.replicas` to hold the intended
+node count. `batch` remains dynamic so it scales from 0 only when a Job is
+pending. If older dedicated NodePools were applied during a previous attempt,
+delete stale `clickhouse`, `cache-db`, `streaming`, and `graphdb` NodePools after
+their pods are drained.
+
+Stateful platform rebuilds intentionally do not reuse partially populated PVCs.
+After service shutdown, recreate ClickHouse `50Gi`, Kafka `30Gi`, GraphDB
+`10Gi`, Redis `10Gi`, and Postgres `10Gi` PVCs. Kafka/Redis/Postgres/ClickHouse
+start fresh; GraphDB is restored from the current `/opt/graphdb/home` tar
+archive to preserve the `nasdaq-fibo` repository/runtime bootstrap structure.
+This profile is intended to fit the current 16 vCPU EC2 on-demand quota after
+old nodes are drained. Applying it before old capacity is gone may temporarily
+hit the quota and leave new nodes Pending.
+
+Approval-time order: scale app/agent/market/order Deployments to 0, suspend
+CronJobs, delete active Jobs, archive GraphDB, scale down and delete platform
+StatefulSets and PVCs, apply NodePools and platform manifests, restore GraphDB,
+run Kafka topic init and order migrations, then restore app workloads and resume
+CronJobs.
+
 Config and overlay references:
 
 ```text
@@ -154,7 +188,16 @@ infra/k8s/overlays/aws/configmap-aws-patch.yaml
 infra/k8s/overlays/aws/kustomization.yaml
 infra/k8s/overlays/aws-incluster-app/configmap-incluster-patch.yaml
 infra/k8s/overlays/aws-incluster-app/kustomization.yaml
+infra/k8s/overlays/aws-incluster-app-ci/kustomization.yaml
+infra/k8s/overlays/aws-incluster-app-rebuild/kustomization.yaml
 ```
+
+GitHub Actions uses `aws-incluster-app-ci` for routine `dev` pushes. That CI
+overlay deliberately deletes the GraphDB StatefulSet from the rendered app
+bundle so immutable PVC template changes cannot break ordinary app deploys.
+It does not apply the `app-agent` NodePool placement or perform the clean
+rebuild. During the 16 vCPU rebuild, apply platform first, then apply
+`aws-incluster-app-rebuild` after the `app-agent` NodePool exists.
 
 ## Kafka
 
@@ -397,9 +440,10 @@ provider는 `status="no-data"` evidence로 degrade하고 market/news analysis를
 .local-artifacts/graphdb/graphdb-volume.tgz
 ```
 
-초기 PVC restore가 필요할 때만 검토 후 다음 script를 사용한다.
+Clean rebuild 직전 bootstrap archive를 만들고, 새 `10Gi` PVC에 복원한다.
 
 ```sh
+scripts/aws/backup-graphdb-pvc.sh --force
 scripts/aws/restore-graphdb-pvc.sh --replace-pending-pvc
 ```
 

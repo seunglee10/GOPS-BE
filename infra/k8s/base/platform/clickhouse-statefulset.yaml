@@ -14,6 +14,13 @@ spec:
       labels:
         app: clickhouse
     spec:
+      nodeSelector:
+        karpenter.sh/nodepool: platform-core
+      tolerations:
+        - key: gops.io/dedicated
+          operator: Equal
+          value: platform-core
+          effect: NoSchedule
       containers:
         - name: clickhouse
           image: clickhouse/clickhouse-server:24.12-alpine
@@ -64,7 +71,7 @@ spec:
             failureThreshold: 6
           resources:
             requests:
-              cpu: "1"
+              cpu: "4"
               memory: 6Gi
             limits:
               cpu: "4"
@@ -82,4 +89,4 @@ spec:
         storageClassName: eks-auto-ebs
         resources:
           requests:
-            storage: 20Gi
+            storage: 50Gi

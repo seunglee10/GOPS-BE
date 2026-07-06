@@ -11,7 +11,7 @@ PVC_NAME="${PVC_NAME:-graphdb-data-graphdb-0}"
 RESTORE_POD_NAME="${RESTORE_POD_NAME:-graphdb-volume-restore}"
 ARTIFACT_PATH="${GRAPHDB_VOLUME_TGZ:-${REPO_ROOT}/.local-artifacts/graphdb/graphdb-volume.tgz}"
 STORAGE_CLASS_NAME="${STORAGE_CLASS_NAME:-eks-auto-ebs}"
-STORAGE_SIZE="${STORAGE_SIZE:-30Gi}"
+STORAGE_SIZE="${STORAGE_SIZE:-10Gi}"
 RESTORE_IMAGE="${RESTORE_IMAGE:-alpine:3.20}"
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-300s}"
 REPLACE_PENDING_PVC=false
@@ -208,6 +208,13 @@ metadata:
     instrumentation.opentelemetry.io/inject-python: "false"
 spec:
   restartPolicy: Never
+  nodeSelector:
+    karpenter.sh/nodepool: platform-core
+  tolerations:
+    - key: gops.io/dedicated
+      operator: Equal
+      value: platform-core
+      effect: NoSchedule
   containers:
     - name: restore
       image: ${RESTORE_IMAGE}

@@ -23,6 +23,13 @@ spec:
       labels:
         app: kafka
     spec:
+      nodeSelector:
+        karpenter.sh/nodepool: platform-core
+      tolerations:
+        - key: gops.io/dedicated
+          operator: Equal
+          value: platform-core
+          effect: NoSchedule
       securityContext:
         fsGroup: 1000
       containers:
@@ -61,6 +68,8 @@ spec:
           env:
             - name: CLUSTER_ID
               value: MkU3OEVBNTcwNTJENDM2Qk
+            - name: KAFKA_HEAP_OPTS
+              value: -Xms1g -Xmx2g
           volumeMounts:
             - name: kafka-data
               mountPath: /var/lib/kafka
@@ -84,11 +93,11 @@ spec:
             failureThreshold: 6
           resources:
             requests:
-              cpu: 250m
-              memory: 768Mi
-            limits:
               cpu: "1"
-              memory: 1536Mi
+              memory: 2Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
   volumeClaimTemplates:
     - metadata:
         name: kafka-data
@@ -98,4 +107,4 @@ spec:
         storageClassName: eks-auto-ebs
         resources:
           requests:
-            storage: 10Gi
+            storage: 30Gi

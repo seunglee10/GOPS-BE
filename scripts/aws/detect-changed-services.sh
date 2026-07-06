@@ -166,7 +166,7 @@ select_services_for_path() {
     infra/docker/Dockerfile.gops-order-worker)
       add_service order-worker
       ;;
-    infra/k8s/base/platform/* | infra/k8s/overlays/aws-incluster-platform/*)
+    infra/k8s/base/platform/* | infra/k8s/overlays/aws-incluster-platform/* | infra/k8s/overlays/aws-incluster-app-rebuild/*)
       ;;
     infra/docker/* | infra/k8s/base/* | infra/k8s/base/stream-processor/* | infra/k8s/overlays/aws-incluster-app/* | infra/k8s/overlays/aws-incluster-app-ci/* | .github/workflows/deploy-dev.yml | scripts/aws/*)
       add_all_services

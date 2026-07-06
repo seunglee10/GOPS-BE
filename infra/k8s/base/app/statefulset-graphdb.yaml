@@ -25,6 +25,13 @@ spec:
       labels:
         app: graphdb
     spec:
+      nodeSelector:
+        karpenter.sh/nodepool: platform-core
+      tolerations:
+        - key: gops.io/dedicated
+          operator: Equal
+          value: platform-core
+          effect: NoSchedule
       containers:
         - name: graphdb
           image: ontotext/graphdb:11.4.0
@@ -62,4 +69,4 @@ spec:
         storageClassName: eks-auto-ebs
         resources:
           requests:
-            storage: 30Gi
+            storage: 10Gi
