@@ -77,6 +77,7 @@ sys.modules.setdefault("redis", types.SimpleNamespace(from_url=lambda *args, **k
 
 from app.market_data.query.service import MarketDataQueryService  # noqa: E402
 from app.market_data.backfill.service import BackfillService  # noqa: E402
+from app.market_data.compare.service import ChartCompareService  # noqa: E402
 from app.market_data.fill.service import OnDemandFillService  # noqa: E402
 from app.market_data.fundamentals.service import FundamentalsAdapter, FundamentalsRecord, StoreFundamentalsAdapter, records_from_payload  # noqa: E402
 from app.market_data.heatmap import service as heatmap_service  # noqa: E402
@@ -132,6 +133,32 @@ class FakeProvider:
             "visibleRange": {"from": from_time, "to": to_time},
             "include": sorted(include),
         }
+
+
+class FakeCompareRedis:
+    def __init__(self):
+        self.values = {}
+        self.ttls = {}
+
+    def get(self, key):
+        return self.values.get(key)
+
+    def set(self, key, value, ex=None):
+        self.values[key] = value
+        if ex is not None:
+            self.ttls[key] = ex
+
+    def expire(self, key, ttl):
+        self.ttls[key] = ttl
+
+
+class FakeCompareProvider(FakeProvider):
+    def __init__(self):
+        super().__init__()
+        self.redis_provider = types.SimpleNamespace(redis=FakeCompareRedis())
+
+    def symbol_detail(self, symbol):
+        return {"symbol": symbol, "name": f"{symbol} Corporation", "exchange": "NASDAQ"}
 
 
 class FakeIndicatorRedis:
@@ -3007,6 +3034,88 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertIn("s3_canonical_manifest_filter_disabled", payload["warnings"])
         self.assertIn("invalid_alpaca_credential_source", payload["warnings"])
         self.assertNotIn("semiconductor-100", str(payload))
+
+
+class ChartCompareServiceTest(unittest.TestCase):
+    def setUp(self):
+        self.provider = FakeCompareProvider()
+        self.calls = []
+
+    def make_service(self, bars_by_symbol):
+        def fetcher(symbol, start, end, feed, timeframe):
+            self.calls.append({"symbol": symbol, "start": start, "end": end, "feed": feed, "timeframe": timeframe})
+            value = bars_by_symbol.get(symbol)
+            if isinstance(value, Exception):
+                raise value
+            return value or []
+
+        return ChartCompareService(
+            provider=self.provider,
+            fetcher=fetcher,
+            now=lambda: datetime(2026, 7, 6, 21, 0, tzinfo=timezone.utc),
+        )
+
+    def test_compare_1d_uses_minute_bars_and_first_close_return(self):
+        service = self.make_service({
+            "NVDA": [
+                {"t": "2026-07-03T14:30:00Z", "c": 90},
+                {"t": "2026-07-06T13:30:00Z", "c": 100},
+                {"t": "2026-07-06T14:30:00Z", "c": 110},
+            ],
+            "AMD": [
+                {"t": "2026-07-06T13:30:00Z", "c": 50},
+                {"t": "2026-07-06T14:30:00Z", "c": 55},
+            ],
+        })
+
+        payload = service.snapshot(["NVDA", "AMD"], "1D")
+
+        self.assertEqual({call["timeframe"] for call in self.calls}, {"1Min"})
+        nvda = next(item for item in payload["items"] if item["symbol"] == "NVDA")
+        self.assertEqual([point["time"] for point in nvda["points"]], ["2026-07-06T13:30:00Z", "2026-07-06T14:30:00Z"])
+        self.assertEqual(nvda["basePrice"], 100)
+        self.assertEqual(nvda["lastPrice"], 110)
+        self.assertAlmostEqual(nvda["changePercent"], 10.0)
+        self.assertAlmostEqual(nvda["points"][-1]["returnPercent"], 10.0)
+
+    def test_compare_range_timeframe_mapping(self):
+        for range_value, expected_timeframe in {
+            "1M": "1Hour",
+            "6M": "1Day",
+            "1Y": "1Day",
+            "5Y": "1Week",
+        }.items():
+            self.calls = []
+            service = self.make_service({"NVDA": [{"t": "2026-07-06T14:30:00Z", "c": 100}, {"t": "2026-07-06T15:30:00Z", "c": 101}]})
+            payload = service.snapshot(["NVDA"], range_value)
+            self.assertEqual(payload["timeframe"], expected_timeframe)
+            self.assertEqual(self.calls[0]["timeframe"], expected_timeframe)
+
+    def test_compare_returns_partial_payload_when_one_symbol_fails(self):
+        service = self.make_service({
+            "NVDA": [{"t": "2026-07-06T13:30:00Z", "c": 100}, {"t": "2026-07-06T14:30:00Z", "c": 101}],
+            "MLM": RuntimeError("alpaca unavailable"),
+        })
+
+        payload = service.snapshot(["NVDA", "MLM"], "1D")
+
+        self.assertEqual(payload["items"][0]["symbol"], "NVDA")
+        failed = next(item for item in payload["items"] if item["symbol"] == "MLM")
+        self.assertEqual(failed["error"], "provider_error")
+        self.assertTrue(payload["warnings"])
+
+    def test_compare_cache_hit_skips_alpaca_fetcher(self):
+        with mock.patch.dict(os.environ, {"CHART_COMPARE_CACHE_ENABLED": "true", "CHART_COMPARE_CACHE_TTL_1D_SECONDS": "60"}, clear=False):
+            service = self.make_service({
+                "NVDA": [{"t": "2026-07-06T13:30:00Z", "c": 100}, {"t": "2026-07-06T14:30:00Z", "c": 102}],
+            })
+
+            first = service.snapshot(["NVDA"], "1D")
+            second = service.snapshot(["NVDA"], "1D")
+
+        self.assertFalse(first["cache"]["hit"])
+        self.assertTrue(second["cache"]["hit"])
+        self.assertEqual(len(self.calls), 1)
 
 
 if __name__ == "__main__":
