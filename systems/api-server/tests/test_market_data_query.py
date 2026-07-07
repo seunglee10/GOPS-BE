@@ -1238,6 +1238,22 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(service.provider.clickhouse_provider.localized_calls[0]["days"], 30)
         self.assertEqual(len(service.provider.redis_provider.localized_warm_calls[0]["rows"]), 1)
 
+    def test_latest_news_prefers_localized_text_when_raw_text_is_present(self):
+        service = MarketDataQueryService(FakeNewsProvider(clickhouse_rows=[{
+            "targetSymbol": "NVDA",
+            "symbols": ["NVDA"],
+            "headline": "NVIDIA English headline",
+            "localizedHeadline": "엔비디아 한국어 제목",
+            "summary": "English raw summary should not be displayed.",
+            "localizedSummary": "한국어 번역 요약이 먼저 표시되어야 합니다.",
+            "publishedAt": "2026-07-01T12:00:00.000Z",
+        }]), backfill_service=FakeBackfillService())
+
+        payload = service.latest_news("nvda", limit=5)
+
+        self.assertEqual(payload["items"][0]["title"], "엔비디아 한국어 제목")
+        self.assertEqual(payload["items"][0]["summary"], "한국어 번역 요약이 먼저 표시되어야 합니다.")
+
     def test_latest_news_falls_back_to_redis_when_clickhouse_empty(self):
         service = MarketDataQueryService(FakeNewsProvider(redis_rows=[{
             "target_symbol": "AAPL",

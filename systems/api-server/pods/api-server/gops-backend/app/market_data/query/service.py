@@ -654,8 +654,8 @@ def provider_accepts_ma_windows(provider: Any) -> bool:
 
 
 def normalize_news_item(row: dict[str, Any], fallback_symbol: str) -> dict[str, Any]:
-    title = read_string(row.get("title")) or read_string(row.get("localizedTitle")) or read_string(row.get("localizedHeadline")) or read_string(row.get("headline")) or "Untitled news"
-    summary = read_string(row.get("summary")) or read_string(row.get("localizedSummary")) or read_string(row.get("localized_summary")) or ""
+    title = read_string(row.get("localizedTitle")) or read_string(row.get("localizedHeadline")) or read_string(row.get("title")) or read_string(row.get("headline")) or "Untitled news"
+    summary = read_string(row.get("localizedSummary")) or read_string(row.get("localized_summary")) or read_string(row.get("summary")) or ""
     symbols = read_string_list(row.get("symbols"))
     symbol = read_string(row.get("targetSymbol")) or read_string(row.get("target_symbol")) or read_string(row.get("symbol")) or fallback_symbol
     return {
