@@ -18,13 +18,17 @@ from alfaka.backfill.runner import (
     raw_bars_to_processed_candles,
     repair_daily_bar_outliers,
 )
+from alfaka.serving.dto import candle_to_gops, cursor_for
 from alfaka.serving.intervals import (
+    alpaca_timeframe_for_interval,
+    interval_seconds,
     minimum_renderable_returned_bars,
     minimum_renderable_source_bars,
     normalize_chart_interval,
     source_interval_for,
 )
-from alfaka.serving.provider import requested_window_for_interval
+from alfaka.serving.moving_average import attach_moving_averages
+from alfaka.serving.provider import merge_candles, requested_source_bar_target, requested_window_for_interval
 from alfaka.storage.clickhouse_loader import ClickHouseHttpClient, should_ensure_schema_on_start
 from alfaka.storage.processed_s3_sink import flush_buffer
 from alfaka.storage.s3_manifest import DEFAULT_MANIFEST_PREFIX
@@ -67,6 +71,8 @@ class OnDemandFillService:
             if background_enabled is not None
             else os.getenv("ON_DEMAND_FILL_BACKGROUND_ENABLED", "true").lower() not in {"0", "false", "off", "no"}
         )
+        self.foreground_enabled = os.getenv("ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED", "true").lower() not in {"0", "false", "off", "no"}
+        self.foreground_max_bars = max(1, int(os.getenv("ON_DEMAND_FILL_FOREGROUND_MAX_BARS", os.getenv("HISTORICAL_LIMIT", "10000"))))
         self.background_executor = background_executor
 
     def fill_if_needed(
@@ -81,7 +87,7 @@ class OnDemandFillService:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         interval = normalize_chart_interval(interval)
-        source_interval = source_interval_for(interval)
+        source_interval = normalize_chart_interval(payload.get("sourceInterval") or source_interval_for(interval))
         started = time.monotonic()
         requested_start, requested_end = requested_window_for_interval(
             interval,
@@ -102,10 +108,45 @@ class OnDemandFillService:
 
         fill_ranges = self._fill_ranges(payload, requested_start, requested_end)
         trace["missingRanges"] = fill_ranges
+        foreground_filled = self._fill_foreground_from_alpaca(
+            symbol=symbol,
+            interval=interval,
+            limit=limit,
+            before=before,
+            from_time=from_time,
+            to_time=to_time,
+            requested_start=requested_start,
+            requested_end=requested_end,
+            ranges=fill_ranges,
+            payload=payload,
+            trace=trace,
+            started=started,
+        )
+        if foreground_filled:
+            source_interval = normalize_chart_interval(payload.get("sourceInterval") or interval)
+            trace["sourceInterval"] = source_interval
+            trace["minimumRenderableSourceBars"] = minimum_renderable_source_bars(source_interval)
+            trace["renderable"] = self._is_renderable(payload, interval, source_interval)
+            trace["backgroundFill"] = self._enqueue_background_fill(
+                symbol=symbol,
+                interval=interval,
+                source_interval=interval,
+                limit=limit,
+                before=before,
+                from_time=from_time,
+                to_time=to_time,
+                requested_start=requested_start,
+                requested_end=requested_end,
+                fill_ranges=fill_ranges,
+            )
+            trace["status"] = "filled" if trace["renderable"] else "partial"
+            trace["durationMs"] = elapsed_ms(started)
+            payload["fill"] = trace
+            return payload
         trace["backgroundFill"] = self._enqueue_background_fill(
             symbol=symbol,
             interval=interval,
-            source_interval=source_interval,
+            source_interval=interval,
             limit=limit,
             before=before,
             from_time=from_time,
@@ -118,6 +159,105 @@ class OnDemandFillService:
         trace["durationMs"] = elapsed_ms(started)
         payload["fill"] = trace
         return payload
+
+    def _fill_foreground_from_alpaca(
+        self,
+        *,
+        symbol: str,
+        interval: str,
+        limit: int,
+        before: str | None,
+        from_time: str | None,
+        to_time: str | None,
+        requested_start: str,
+        requested_end: str,
+        ranges: list[dict[str, Any]],
+        payload: dict[str, Any],
+        trace: dict[str, Any],
+        started: float,
+    ) -> bool:
+        source = trace["sources"]["alpaca"]
+        trace["foregroundFill"] = {"attempted": False, "source": "alpaca-rest-direct", "rowCount": 0, "state": "not_needed", "reason": None}
+        if not self.foreground_enabled:
+            trace["foregroundFill"].update({"state": "disabled", "reason": "foreground Alpaca fill disabled"})
+            return False
+        estimated_bars = estimated_bar_count(interval, ranges)
+        if estimated_bars > self.foreground_max_bars:
+            trace["foregroundFill"].update({
+                "state": "skipped",
+                "reason": f"estimated bar count {estimated_bars} exceeds foreground cap {self.foreground_max_bars}",
+            })
+            return False
+        if self._deadline_exceeded(started):
+            trace["foregroundFill"].update({"state": "timeout", "reason": "fill deadline exceeded before foreground request"})
+            return False
+        source_started = time.monotonic()
+        source["checked"] = True
+        trace["foregroundFill"]["attempted"] = True
+        try:
+            timeframe = alpaca_timeframe_for_interval(interval)
+            feed = historical_feed_for_symbol(symbol, os.getenv("HISTORICAL_FEED", os.getenv("ALPACA_FEED", "sip")))
+            raw_rows: list[dict[str, Any]] = []
+            for fill_range in ranges:
+                if self._deadline_exceeded(started):
+                    break
+                raw_rows.extend(fetch_alpaca_bars(symbol, fill_range["start"], fill_range["end"], feed, timeframe))
+            source["rowCount"] = len(raw_rows)
+            source["hit"] = bool(raw_rows)
+            trace["foregroundFill"]["rowCount"] = len(raw_rows)
+            if not raw_rows:
+                trace["foregroundFill"].update({"state": "empty", "reason": "Alpaca returned no bars for requested range"})
+                return False
+            processed_source = repair_daily_bar_outliers(symbol, raw_rows, feed) if interval == "1D" else raw_rows
+            processed = raw_bars_to_processed_candles(symbol, processed_source, feed=feed, interval=interval)
+            direct_candles = [
+                {
+                    **candle_to_gops(candle),
+                    "symbol": symbol,
+                    "timeframe": interval,
+                    "sourceInterval": interval,
+                }
+                for candle in processed
+            ]
+            direct_candles = [
+                candle for candle in direct_candles
+                if candle_in_window(candle, before=before, from_time=from_time or requested_start, to_time=to_time or requested_end)
+            ]
+            if not direct_candles:
+                trace["foregroundFill"].update({"state": "empty", "reason": "Alpaca bars fell outside requested chart window"})
+                return False
+            merged = merge_candles(direct_candles, payload.get("candles") or [])
+            candles = attach_moving_averages(merged)[-limit:]
+            payload.update({
+                "source": "alpaca",
+                "feed": feed,
+                "sourceInterval": interval,
+                "snapshotCursor": cursor_for(symbol, interval, candles[-1]) if candles else None,
+                "candles": candles,
+                "returnedCount": len(candles),
+                "storedCandleCount": len(candles),
+                "targetStoredCount": requested_source_bar_target(interval, limit, source_interval=interval),
+                "availableFrom": candles[0].get("timestamp") if candles else None,
+                "availableTo": candles[-1].get("timestamp") if candles else None,
+                "oldestTimestamp": candles[0].get("timestamp") if candles else None,
+                "newestTimestamp": candles[-1].get("timestamp") if candles else None,
+                "hasMoreBefore": len(candles) >= limit,
+                "hasMoreAfter": False,
+                "missingRanges": [],
+                "_foregroundAlpacaFilled": True,
+            })
+            trace["foregroundFill"].update({"state": "filled", "reason": None})
+            return True
+        except BackfillUnavailable as exc:
+            source["error"] = str(exc)
+            trace["foregroundFill"].update({"state": "failed", "reason": str(exc)})
+            return False
+        except Exception as exc:
+            source["error"] = str(exc)
+            trace["foregroundFill"].update({"state": "failed", "reason": str(exc)})
+            return False
+        finally:
+            source["durationMs"] = elapsed_ms(source_started)
 
     def _initial_trace(self, symbol: str, interval: str, source_interval: str, limit: int, start: str, end: str) -> dict[str, Any]:
         return {
@@ -325,11 +465,7 @@ class OnDemandFillService:
             source["error"] = "S3_BUCKET is required before Alpaca historical rows can be canonicalized."
             source["durationMs"] = elapsed_ms(source_started)
             return False
-        if interval not in {"1m", "1D"}:
-            source["error"] = f"On-demand Alpaca fill supports source intervals only: {interval}."
-            source["durationMs"] = elapsed_ms(source_started)
-            return False
-        timeframe = "1Day" if interval == "1D" else "1Min"
+        timeframe = alpaca_timeframe_for_interval(interval)
         feed = historical_feed_for_symbol(symbol, os.getenv("HISTORICAL_FEED", os.getenv("ALPACA_FEED", "sip")))
         try:
             raw_rows = []
@@ -455,6 +591,34 @@ def unique_ordered(values: list[str]) -> list[str]:
 def background_request_id(symbol: str, interval: str, ranges: list[dict[str, Any]]) -> str:
     body = json.dumps({"symbol": symbol, "interval": interval, "ranges": ranges}, sort_keys=True, separators=(",", ":"))
     return hashlib.sha1(body.encode("utf-8")).hexdigest()[:20]
+
+
+def estimated_bar_count(interval: str, ranges: list[dict[str, Any]]) -> int:
+    seconds = max(1, interval_seconds(interval))
+    count = 0
+    for fill_range in ranges:
+        start = parse_time(fill_range.get("start"))
+        end = parse_time(fill_range.get("end"))
+        if not start or not end or end <= start:
+            continue
+        count += int((end - start).total_seconds() // seconds) + 1
+    return count
+
+
+def candle_in_window(candle: dict[str, Any], *, before: str | None, from_time: str | None, to_time: str | None) -> bool:
+    timestamp = parse_time(candle.get("timestamp"))
+    if not timestamp:
+        return False
+    before_time = parse_time(before) if before else None
+    start_time = parse_time(from_time) if from_time else None
+    end_time = parse_time(to_time) if to_time else None
+    if before_time and timestamp >= before_time:
+        return False
+    if start_time and timestamp < start_time:
+        return False
+    if end_time and timestamp > end_time:
+        return False
+    return True
 
 
 def background_executor() -> ThreadPoolExecutor:

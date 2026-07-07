@@ -33,6 +33,7 @@ class BackfillService:
         interval = normalize_chart_interval(interval)
         source_interval = source_interval_for(interval)
         if isinstance(payload_or_has_candles, dict):
+            source_interval = normalize_chart_interval(payload_or_has_candles.get("sourceInterval") or source_interval)
             returned_count = int(payload_or_has_candles.get("returnedCount") or len(payload_or_has_candles.get("candles") or []))
             requested_limit = int(payload_or_has_candles.get("requestedLimit") or returned_count)
             stored_count = int(payload_or_has_candles.get("storedCandleCount") or returned_count)

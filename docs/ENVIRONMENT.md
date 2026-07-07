@@ -429,17 +429,21 @@ visible regular-session gap into a hidden full-range preload.
 
 `GET /api/charts/candles` is the chart read entrypoint. The foreground API path
 checks the requested `symbol + interval + limit/before/from/to` window in Redis
-and ClickHouse only, then returns the best renderable payload immediately. If the
-window is incomplete, the response includes a `fill.backgroundFill` trace and the
-API process queues a bounded background repair that checks S3 final/manifest and
-then Alpaca historical for that exact range. It does not enqueue a Redis Stream
-worker and it does not run broad preload jobs from a chart request.
+and ClickHouse first. If stored data is not renderable, it may fetch Alpaca REST
+bars for the requested interval directly, merge them with the latest Redis
+live/provisional candle, and return that payload immediately. The response also
+includes a `fill.backgroundFill` trace while the API process queues bounded
+background repair that checks S3 final/manifest and then Alpaca historical for
+that same interval/range. It does not enqueue a Redis Stream worker and it does
+not run broad preload jobs from a chart request.
 
 ```text
 CHART_API_MAX_LIMIT
 ON_DEMAND_FILL_BACKGROUND_ENABLED
 ON_DEMAND_FILL_BACKGROUND_WORKERS
 ON_DEMAND_FILL_BACKGROUND_TIMEOUT_SECONDS
+ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED
+ON_DEMAND_FILL_FOREGROUND_MAX_BARS
 ON_DEMAND_FILL_TIMEOUT_SECONDS
 HISTORICAL_ADJUSTMENT
 ALLOW_NON_CANONICAL_HISTORICAL_ADJUSTMENT
@@ -453,11 +457,15 @@ DAILY_BAR_1M_REPAIR_RATIO
 ```
 
 Canonical Alpaca historical fill uses `adjustment=split` and writes
-`priceAdjustment=split`, `canonicalVersion=v2`. `5m`, `10m`, `1h`, and `4h`
-fill through `1m` source bars; `1W` and `1M` fill through `1D` source bars and
-are then aggregated for serving. Raw S3 backup objects are not a fill source. Retry
-settings are used for transient Alpaca historical API failures such as rate
-limits and 5xx responses. Deprecated `POST /api/charts/backfill`,
+`priceAdjustment=split`, `canonicalVersion=v2`. Historical fill now uses direct
+Alpaca REST timeframes for every canonical interval: `1Min`, `5Min`, `10Min`,
+`1Hour`, `4Hour`, `1Day`, `1Week`, and `1Month`. Realtime live/provisional
+candles are still locally aggregated from live source bars where needed.
+ClickHouse serving prefers stored direct interval rows and falls back to
+query-time aggregation from `1m` or `1D` only when direct rows are missing. Raw
+S3 backup objects are not a fill source. Retry settings are used for transient
+Alpaca historical API failures such as rate limits and 5xx responses.
+Deprecated `POST /api/charts/backfill`,
 `GET /api/charts/backfill/status`, and `GET /api/charts/backfill/queue` return
 `410 Gone`.
 

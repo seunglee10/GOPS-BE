@@ -92,8 +92,10 @@ Runtime policy:
 - no preset universe chart preload
 - realtime trades/quotes/bars/events only for explicit active subscriptions
 - Redis keeps only the frontend-requested recent chart window per `symbol + timeframe`
-- older confirmed candles come from ClickHouse
-- ClickHouse misses check S3 final/manifest before Alpaca historical
+- older confirmed candles come from ClickHouse direct interval rows when present
+- ClickHouse direct misses can fall back to query-time aggregation from `1m` or `1D`
+- incomplete foreground chart windows may use Alpaca REST direct bars for the requested interval
+- background misses check S3 final/manifest before Alpaca historical direct fill
 - raw S3 archives are backup-only and not an active read/materialization source
 
 The ingestor should read the resolved tier state from Redis/control-plane keys, not hardcode symbol lists.
@@ -155,21 +157,26 @@ report the resulting `fill` trace.
 COVERAGE_REPAIR_DRY_RUN=false docker compose --profile repair run --rm coverage-repair
 ```
 
-The job talks to the API server rather than Redis or ClickHouse directly, so
-derived intervals keep the same source-interval rules as the frontend:
-`5m/10m/1h/4h` fill through `1m`, and `1W/1M` fill through `1D`.
+The job talks to the API server rather than Redis or ClickHouse directly, so it
+uses the same serving rules as the frontend: realtime derived candles still use
+local `1m`/`1D` aggregation, while historical repair uses Alpaca direct bars for
+the requested interval.
 
 ## On-Demand Historical Fill
 
 Normal chart expansion is:
 
 ```text
-Redis recent requested window -> ClickHouse -> S3 final/manifest -> Alpaca historical
+Redis recent requested window -> ClickHouse -> foreground Alpaca REST direct
+-> background S3 final/manifest -> background Alpaca historical direct
 ```
 
 Canonical historical candles use Alpaca `adjustment=split` and are stored as
 `priceAdjustment=split`, `canonicalVersion=v2`; chart serving excludes
 legacy/raw/unknown rows.
+Historical direct fill maps canonical intervals to Alpaca REST timeframes:
+`1m=1Min`, `5m=5Min`, `10m=10Min`, `1h=1Hour`, `4h=4Hour`, `1D=1Day`,
+`1W=1Week`, and `1M=1Month`.
 
 Before deleting or quarantining suspect ClickHouse candle rows, run `python -m alfaka.tools.canonical_candle_audit` with optional `CANONICAL_AUDIT_SYMBOL`, `CANONICAL_AUDIT_INTERVAL`, and `CANONICAL_AUDIT_LIMIT` to get duplicate/non-canonical/invalid OHLC row counts.
 Explicit operator repair may bypass existing canonical S3 processed objects and fetch Alpaca again when a previously materialized canonical object is known to contain bad values. For `1D`, suspicious split-day high/low outliers are validated against same-day split-adjusted `1m` bars; only the outlier high/low is repaired, while daily open/close/volume remain from dailyBars.
@@ -188,7 +195,9 @@ rebuild contract.
 
 Chart entry and drag-left history use the candles API first. The frontend owns
 the requested `interval`, `limit`, and `start`/`end` or `before` window. The API
-checks Redis, ClickHouse, S3 final/manifest, then Alpaca historical for that
+checks Redis and ClickHouse first. If they are not renderable, the API may return
+foreground Alpaca REST bars immediately and still queue background
+materialization through S3 final/manifest and Alpaca historical for that
 requested window. The response includes `dataStatus`, `coverage`, and a `fill`
 trace that shows where Redis/ClickHouse/S3/Alpaca hit, missed, timed out, or
 failed. Do not convert a sparse chart window into a full-range preload.
