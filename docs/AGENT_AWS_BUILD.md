@@ -37,6 +37,14 @@ one-shot run uses the newly pushed `gops-market-storage` image to warm the
 30-day Redis news article cache and daily summary cache from ClickHouse without
 running ClickHouse rewrite mutations.
 
+The frontend Logo.dev ticker logo key is a Vite build-time value. Set the
+GitHub Actions environment secret `LOGODEV_PUB_KEY` before running the manual
+workflow if production should show Logo.dev images instead of local ticker
+monograms. `LOGODEV_SECRET_KEY` is not embedded in frontend assets. The optional
+GitHub Actions variable `LOGO_DEV_ATTRIBUTION` defaults to `true`; set it to
+`false` only when the active Logo.dev plan permits removing the visible
+attribution.
+
 ## Image
 
 Agent runtime image:

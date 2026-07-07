@@ -84,6 +84,8 @@ jobs:
         if: steps.changes.outputs.has_services == 'true'
         env:
           SERVICES: ${{ steps.changes.outputs.services }}
+          VITE_LOGO_DEV_PUBLISHABLE_KEY: ${{ secrets.LOGODEV_PUB_KEY || secrets.LOGO_DEV_PUBLISHABLE_KEY || '' }}
+          VITE_LOGO_DEV_ATTRIBUTION: ${{ vars.LOGO_DEV_ATTRIBUTION || 'true' }}
         run: ./scripts/aws/build-and-push-images.sh
 
       - name: Set up kubectl

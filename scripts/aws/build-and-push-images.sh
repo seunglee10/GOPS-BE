@@ -97,11 +97,21 @@ service_selected() {
 build_image() {
   local dockerfile="$1"
   local image="$2"
+  local build_args=()
+
+  if [[ "${dockerfile}" == "infra/docker/Dockerfile.gops-frontend" ]]; then
+    local logo_dev_publishable_key="${LOGODEV_PUB_KEY:-${VITE_LOGO_DEV_PUBLISHABLE_KEY:-}}"
+    build_args+=(--build-arg "VITE_LOGO_DEV_ATTRIBUTION=${VITE_LOGO_DEV_ATTRIBUTION:-true}")
+    if [[ -n "${logo_dev_publishable_key}" ]]; then
+      build_args+=(--build-arg "LOGODEV_PUB_KEY=${logo_dev_publishable_key}")
+      build_args+=(--build-arg "VITE_LOGO_DEV_PUBLISHABLE_KEY=${logo_dev_publishable_key}")
+    fi
+  fi
 
   if docker buildx version >/dev/null 2>&1; then
-    docker buildx build --platform "${DOCKER_PLATFORM}" --load -f "${dockerfile}" -t "${image}:${IMAGE_TAG}" .
+    docker buildx build --platform "${DOCKER_PLATFORM}" --load "${build_args[@]}" -f "${dockerfile}" -t "${image}:${IMAGE_TAG}" .
   else
-    docker build --platform "${DOCKER_PLATFORM}" -f "${dockerfile}" -t "${image}:${IMAGE_TAG}" .
+    docker build --platform "${DOCKER_PLATFORM}" "${build_args[@]}" -f "${dockerfile}" -t "${image}:${IMAGE_TAG}" .
   fi
 }
 
