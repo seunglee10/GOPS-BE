@@ -27,5 +27,6 @@ Retired chart assumptions that must not be reintroduced:
 The current chart rebuild starts with empty history, may use a SIP S&P500
 bars/statuses baseline for recent 1m entry, subscribes only explicit realtime
 trade/quote symbols, attaches quotes only to the same realtime trade symbols,
-keeps quotes in Redis/WebSocket only, and serves history through Redis latest
-120 candles, ClickHouse, S3 final/manifest, then Alpaca backfill.
+writes quote live state to Redis/WebSocket, persists canonical quote payloads
+through `market.layer.quotes.v1`, and serves history through Redis latest 120
+candles, ClickHouse, S3 final/manifest, then Alpaca backfill.

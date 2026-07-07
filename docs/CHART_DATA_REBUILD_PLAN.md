@@ -121,6 +121,12 @@ Each message still carries its canonical `interval` payload field. The legacy
 `market.layer.candles.closed.v1` topic remains listed in platform topic files
 for compatibility but is not the default processor output.
 
+The hot raw path is split by input class. `alfaka-market-processor` consumes
+trades, bars, updated bars, daily bars, and events; `alfaka-market-quote-processor`
+consumes quotes in its own consumer group. `market.input.realtime.trades.v1` and
+`market.input.realtime.quotes.v1` should have 12 partitions so consumer pods can
+scale independently behind Kafka's partition assignment.
+
 Minimum renderability is separate from full coverage. The foreground chart
 request returns Redis/ClickHouse candles immediately when they are renderable,
 even if full coverage still needs repair. If they are not renderable, bounded

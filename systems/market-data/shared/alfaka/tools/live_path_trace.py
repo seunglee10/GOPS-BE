@@ -23,14 +23,18 @@ DEFAULT_INTERVAL = "1m"
 DEFAULT_API_TIMEOUT_SECONDS = 10
 
 
-def expected_raw_topics(raw_prefix):
+def expected_raw_topics(raw_prefix, environ=None):
+    environ = os.environ if environ is None else environ
+    configured = parse_csv(environ.get("KAFKA_PROCESSOR_RAW_TOPICS", ""))
+    if configured:
+        return configured
     return [
-        "market.input.realtime.trades.v1",
-        "market.input.realtime.quotes.v1",
-        "market.input.realtime.events.v1",
-        "market.input.realtime.bars.1m.v1",
-        "market.input.realtime.updated-bars.1m.v1",
-        "market.input.realtime.daily-bars.v1",
+        f"{raw_prefix}.realtime.trades.v1",
+        f"{raw_prefix}.realtime.quotes.v1",
+        f"{raw_prefix}.realtime.events.v1",
+        f"{raw_prefix}.realtime.bars.1m.v1",
+        f"{raw_prefix}.realtime.updated-bars.1m.v1",
+        f"{raw_prefix}.realtime.daily-bars.v1",
     ]
 
 
@@ -96,7 +100,7 @@ def collect_trace(
         "symbol": symbol,
         "interval": interval,
         "status": overall_status(checks),
-        "path": "Alpaca -> input Kafka -> tick fanout topics -> Kubernetes market-processor -> Redis/layer Kafka -> ClickHouse/S3/API/WebSocket -> browser",
+        "path": "Alpaca -> input Kafka raw trade/quote topics -> Kubernetes market/quote processors -> Redis/layer Kafka -> ClickHouse/S3/API/WebSocket -> browser",
         "config": {
             "apiBaseUrl": api_base_url,
             "redisUrl": redact_url(redis_url),

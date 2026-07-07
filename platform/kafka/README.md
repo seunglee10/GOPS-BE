@@ -26,6 +26,12 @@ market.input.realtime.daily-bars.v1
 to Redis/WebSocket live state, and republished as `market.layer.quotes.v1` for
 canonical S3/ClickHouse storage.
 
+`market.input.realtime.trades.v1` and `market.input.realtime.quotes.v1` are the
+hot raw streams. Creation helpers default them to 12 partitions so trade/candle
+and quote processors can scale independently. Existing Kafka topics do not
+change partition count just because the helper uses `--if-not-exists`; operators
+must alter existing topics explicitly during a live cluster migration.
+
 ## Tick Fanout Topics
 
 ```text

@@ -41,7 +41,7 @@
     "activeChartRealtime": "subscribe-trades-and-quotes-for-the-same-explicit-symbol-set",
     "tradeSubscriptionPlan": "explicit subscription control-plane symbols only",
     "quoteSubscriptionPlan": "quotes are attached only to symbols that already subscribe to realtime trades",
-    "todayTickStorage": "Redis/WebSocket live state plus optional backup-only raw archive; quotes stay Redis/WebSocket only"
+    "todayTickStorage": "Redis/WebSocket live state plus optional raw archive; quote payloads also flow through market.layer.quotes.v1 to S3 final and ClickHouse"
   },
   "storage": {
     "s3": {
@@ -49,19 +49,19 @@
       "finalPrefix": "market-data/rebuild-20260702-lazy-v1/final",
       "format": "parquet",
       "rawArchiveRole": "backup-only, never queried by chart serving or materialization",
-      "quoteStorage": "disabled; quote payloads are Redis/WebSocket only",
+      "quoteStorage": "enabled through market.layer.quotes.v1 under final/quotes",
       "partitionKeys": ["dataset", "interval", "symbol", "year", "month", "day", "hour"]
     },
     "clickhouse": {
       "database": "market_data",
       "primaryQueryTable": "chart_candles",
       "optionalTickTable": "trade_ticks",
-      "quoteTable": null,
+      "quoteTable": "quote_ticks",
       "symbolTable": "symbols",
       "statusTable": "market_status_events",
       "volumeProfileTable": "volume_profile_bins_1m",
       "loadTradesByDefault": true,
-      "loadQuotesByDefault": false
+      "loadQuotesByDefault": true
     },
     "redis": {
       "keyPrefixEnv": "REDIS_KEY_PREFIX",

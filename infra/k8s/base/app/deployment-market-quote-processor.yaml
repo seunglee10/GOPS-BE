@@ -1,29 +1,31 @@
-# 역할: Kafka Raw Topic을 차트용 Processed Topic과 Redis realtime state로 변환합니다.
-# 사용: 현재 AWS 배포 단계의 Python stream processor runtime입니다.
+# 역할: Kafka raw quote topic만 읽어 quote layer topic과 Redis realtime quote state로 변환합니다.
+# 사용: quote 폭주가 trade/candle processor를 막지 않도록 별도 consumer group으로 실행합니다.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: alfaka-market-processor
+  name: alfaka-market-quote-processor
   namespace: alfaka-market-data
 spec:
   replicas: 3
   selector:
     matchLabels:
-      app: alfaka-market-processor
+      app: alfaka-market-quote-processor
   template:
     metadata:
       labels:
-        app: alfaka-market-processor
+        app: alfaka-market-quote-processor
     spec:
       serviceAccountName: alfaka-market-data-sa
       containers:
-        - name: market-processor
+        - name: market-quote-processor
           image: YOUR_ECR_REPOSITORY/gops-market-processor:latest
           imagePullPolicy: IfNotPresent
           command: ["python", "-u", "systems/market-data/pods/market-processor/local_main.py"]
           env:
+            - name: KAFKA_PROCESSOR_GROUP_ID
+              value: alfaka-market-quote-processor
             - name: KAFKA_PROCESSOR_RAW_TOPICS
-              value: market.input.realtime.trades.v1,market.input.realtime.bars.1m.v1,market.input.realtime.updated-bars.1m.v1,market.input.realtime.daily-bars.v1,market.input.realtime.events.v1
+              value: market.input.realtime.quotes.v1
           envFrom:
             - configMapRef:
                 name: alfaka-market-data-config

@@ -7,6 +7,7 @@ set -euo pipefail
 KAFKA_BOOTSTRAP_SERVERS="${KAFKA_BOOTSTRAP_SERVERS:?KAFKA_BOOTSTRAP_SERVERS를 넣어주세요}"
 KAFKA_TOPICS_FILE="${KAFKA_TOPICS_FILE:-platform/kafka/topics.txt}"
 PARTITIONS="${PARTITIONS:-6}"
+HOT_TOPIC_PARTITIONS="${HOT_TOPIC_PARTITIONS:-12}"
 REPLICATION_FACTOR="${REPLICATION_FACTOR:-3}"
 CLIENT_CONFIG_ARG=()
 
@@ -18,6 +19,12 @@ while IFS= read -r topic; do
   if [[ -z "${topic}" || "${topic}" == \#* ]]; then
     continue
   fi
+  topic_partitions="${PARTITIONS}"
+  case "${topic}" in
+    market.input.realtime.trades.v1|market.input.realtime.quotes.v1)
+      topic_partitions="${HOT_TOPIC_PARTITIONS}"
+      ;;
+  esac
 
   kafka-topics.sh \
     --bootstrap-server "${KAFKA_BOOTSTRAP_SERVERS}" \
@@ -25,7 +32,7 @@ while IFS= read -r topic; do
     --create \
     --if-not-exists \
     --topic "${topic}" \
-    --partitions "${PARTITIONS}" \
+    --partitions "${topic_partitions}" \
     --replication-factor "${REPLICATION_FACTOR}"
 done < "${KAFKA_TOPICS_FILE}"
 

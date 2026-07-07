@@ -1287,6 +1287,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "KAFKA_LIVE_CANDLE_TOPIC": "market.layer.candles.live.v1",
             "KAFKA_CLOSED_CANDLE_TOPIC": "market.layer.candles.closed.v1",
             "KAFKA_STATUS_TOPIC": "market.layer.events.v1",
+            "KAFKA_PROCESSOR_RAW_TOPICS": "market.input.realtime.trades.v1,market.input.realtime.bars.1m.v1",
         }):
             with mock.patch.object(live_path_trace, "check_api", return_value=live_path_trace.trace_check("api", "ok")):
                 with mock.patch.object(live_path_trace, "check_redis", return_value=live_path_trace.trace_check("redis", "warn")):
@@ -1296,8 +1297,16 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(trace["symbol"], "NVDA")
         self.assertEqual(trace["status"], "warn")
         self.assertEqual(trace["config"]["processorGroupId"], "alfaka-market-processor")
-        self.assertIn("Alpaca -> input Kafka -> tick fanout topics", trace["path"])
-        self.assertEqual(live_path_trace.expected_raw_topics("market.input")[0], "market.input.realtime.trades.v1")
+        self.assertIn("input Kafka raw trade/quote topics", trace["path"])
+        self.assertEqual(live_path_trace.expected_raw_topics("market.input", {})[0], "market.input.realtime.trades.v1")
+        self.assertEqual(
+            live_path_trace.expected_raw_topics(
+                "unused",
+                {"KAFKA_PROCESSOR_RAW_TOPICS": "market.input.realtime.quotes.v1"},
+            ),
+            ["market.input.realtime.quotes.v1"],
+        )
+        self.assertEqual(live_path_trace.expected_raw_topics("custom.input", {})[0], "custom.input.realtime.trades.v1")
         self.assertEqual(live_path_trace.expected_processed_topics({})[0], "market.layer.trades.v1")
         self.assertEqual(live_path_trace.overall_status([live_path_trace.trace_check("x", "ok")]), "ok")
         self.assertEqual(live_path_trace.overall_status([live_path_trace.trace_check("x", "fail")]), "fail")
@@ -1799,6 +1808,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         lib = (REPO_ROOT / "scripts/aws/lib-gops-images.sh").read_text(encoding="utf-8")
         detector = (REPO_ROOT / "scripts/aws/detect-changed-services.sh").read_text(encoding="utf-8")
 
+        self.assertIn("alfaka-market-quote-processor", lib)
         self.assertIn("alfaka-news-intelligence-worker", lib)
         self.assertIn("systems/market-data/pods/news-intelligence-worker/*", detector)
         self.assertIn("systems/market-data/jobs/news-backfill/*", detector)
@@ -5239,7 +5249,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             self.assertIn(topic, local_script)
         self.assertIn("hot_topics", local_script)
         self.assertIn("--topic \"${topic}\"", local_script)
-        self.assertIn("--partitions 12", local_script)
+        self.assertIn('create_topic "${topic}" 12', local_script)
         self.assertIn("hot_topics", docker_compose)
         self.assertIn("--partitions 12", docker_compose)
         self.assertIn("--partitions 12", kafka_init_job)

@@ -215,6 +215,12 @@ automatically. For one-off maintenance during a manual build, set
 `scripts/aws/run-order-migrations-job.sh` directly only when SQL migrations must
 be applied outside the deploy workflow.
 
+Market processor deploys as two runtime units from the same
+`gops-market-processor` image. `alfaka-market-processor` handles trades, bars,
+updated bars, daily bars, and events. `alfaka-market-quote-processor` handles
+quotes in a separate consumer group. Select `market-processor` in the deploy
+workflow to roll both Deployments together.
+
 Config and overlay references:
 
 ```text

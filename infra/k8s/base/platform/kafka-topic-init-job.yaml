@@ -37,13 +37,23 @@ spec:
                 if [[ -z "${topic}" || "${topic}" == \#* ]]; then
                   continue
                 fi
-                /opt/kafka/bin/kafka-topics.sh \
-                  --bootstrap-server kafka:29092 \
-                  --create \
-                  --if-not-exists \
-                  --topic "${topic}" \
-                  --partitions 3 \
-                  --replication-factor 1
+                if [[ "${topic}" == "market.input.realtime.trades.v1" || "${topic}" == "market.input.realtime.quotes.v1" ]]; then
+                  /opt/kafka/bin/kafka-topics.sh \
+                    --bootstrap-server kafka:29092 \
+                    --create \
+                    --if-not-exists \
+                    --topic "${topic}" \
+                    --partitions 12 \
+                    --replication-factor 1
+                else
+                  /opt/kafka/bin/kafka-topics.sh \
+                    --bootstrap-server kafka:29092 \
+                    --create \
+                    --if-not-exists \
+                    --topic "${topic}" \
+                    --partitions 3 \
+                    --replication-factor 1
+                fi
               done < /etc/alfaka-kafka/topics.txt
 
               /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --list

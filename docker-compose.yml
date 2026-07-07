@@ -43,49 +43,56 @@ services:
       - /bin/bash
       - -ec
       - |
-        for topic in \
-          market.input.realtime.trades.v1 \
-          market.input.realtime.quotes.v1 \
-          market.input.realtime.bars.1m.v1 \
-          market.input.realtime.updated-bars.1m.v1 \
-          market.input.realtime.daily-bars.v1 \
-          market.input.realtime.events.v1 \
-          market.realtime.ticks.to.1m.v1 \
-          market.realtime.ticks.to.5m.v1 \
-          market.realtime.ticks.to.10m.v1 \
-          market.realtime.ticks.to.1d.v1 \
-          market.realtime.ticks.to.1w.v1 \
-          market.realtime.ticks.to.1mo.v1 \
-          market.layer.candles.live.v1 \
-          market.layer.candles.closed.v1 \
-          market.layer.candles.1m.closed.v1 \
-          market.layer.candles.5m.closed.v1 \
-          market.layer.candles.10m.closed.v1 \
-          market.layer.candles.1h.closed.v1 \
-          market.layer.candles.4h.closed.v1 \
-          market.layer.candles.1d.closed.v1 \
-          market.layer.candles.1w.closed.v1 \
-          market.layer.candles.1mo.closed.v1 \
-          market.layer.trades.v1 \
-          market.layer.quotes.v1 \
-          market.layer.events.v1 \
-          market.news.alpaca.v1 \
-          market.news.daily-summary-dirty.v1 \
-          market.chart-derived.requests.v1 \
-          market.chart-derived.dlq.v1 \
-          orders.commands.v1 \
-          broker.submit-results.v1 \
-          broker.order-events.v1 \
-          orders.dlq.v1 \
-          alerts.triggered.v1 \
-          alerts.dlq.v1 \
-          agents.market-events.v1 \
-          agents.analysis-requests.v1 \
-          agents.deep-analysis-requests.v1 \
-          agents.analysis-results.v1 \
-          agents.query-understanding-events.v1 \
-          agents.notification-decisions.v1 \
-          agents.dlq.v1; do
+        hot_topics=(
+          market.input.realtime.trades.v1
+          market.input.realtime.quotes.v1
+        )
+        standard_topics=(
+          market.input.realtime.bars.1m.v1
+          market.input.realtime.updated-bars.1m.v1
+          market.input.realtime.daily-bars.v1
+          market.input.realtime.events.v1
+          market.realtime.ticks.to.1m.v1
+          market.realtime.ticks.to.5m.v1
+          market.realtime.ticks.to.10m.v1
+          market.realtime.ticks.to.1d.v1
+          market.realtime.ticks.to.1w.v1
+          market.realtime.ticks.to.1mo.v1
+          market.layer.candles.live.v1
+          market.layer.candles.closed.v1
+          market.layer.candles.1m.closed.v1
+          market.layer.candles.5m.closed.v1
+          market.layer.candles.10m.closed.v1
+          market.layer.candles.1h.closed.v1
+          market.layer.candles.4h.closed.v1
+          market.layer.candles.1d.closed.v1
+          market.layer.candles.1w.closed.v1
+          market.layer.candles.1mo.closed.v1
+          market.layer.trades.v1
+          market.layer.quotes.v1
+          market.layer.events.v1
+          market.news.alpaca.v1
+          market.news.daily-summary-dirty.v1
+          market.chart-derived.requests.v1
+          market.chart-derived.dlq.v1
+          orders.commands.v1
+          broker.submit-results.v1
+          broker.order-events.v1
+          orders.dlq.v1
+          alerts.triggered.v1
+          alerts.dlq.v1
+          agents.market-events.v1
+          agents.analysis-requests.v1
+          agents.deep-analysis-requests.v1
+          agents.analysis-results.v1
+          agents.query-understanding-events.v1
+          agents.notification-decisions.v1
+          agents.dlq.v1
+        )
+        for topic in "$${hot_topics[@]}"; do
+          /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic "$${topic}" --partitions 12 --replication-factor 1
+        done
+        for topic in "$${standard_topics[@]}"; do
           /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic "$${topic}" --partitions 3 --replication-factor 1
         done
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --list
@@ -516,6 +523,7 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
       KAFKA_INPUT_TOPIC_PREFIX: "market.input"
       KAFKA_PROCESSOR_GROUP_ID: "alfaka-local-stream-processor"
+      KAFKA_PROCESSOR_RAW_TOPICS: "market.input.realtime.trades.v1,market.input.realtime.bars.1m.v1,market.input.realtime.updated-bars.1m.v1,market.input.realtime.daily-bars.v1,market.input.realtime.events.v1"
       KAFKA_INPUT_TRADES_TOPIC: "market.input.realtime.trades.v1"
       KAFKA_INPUT_QUOTES_TOPIC: "market.input.realtime.quotes.v1"
       KAFKA_INPUT_EVENTS_TOPIC: "market.input.realtime.events.v1"
@@ -549,6 +557,39 @@ services:
       LIVE_CANDLE_PUBLISH_MIN_INTERVAL_SECONDS: "1"
       PROCESSOR_ACTIVE_FEED_CACHE_SECONDS: "1"
       VOLUME_PROFILE_PRICE_BIN_SIZE: "0.05"
+      PROCESSOR_LOG_EVERY_N: "500"
+      COMPONENT_HEALTH_TTL_SECONDS: "300"
+      REDIS_URL: "redis://redis:6379/0"
+      REDIS_KEY_PREFIX: "gops:market:on-demand:v1"
+    command: ["python", "-u", "systems/market-data/pods/market-processor/local_main.py"]
+    restart: unless-stopped
+    networks:
+      - app_net
+      - streaming_net
+      - data_net
+
+  local-quote-processor:
+    image: gops-market-processor
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-market-processor
+    container_name: alfaka-local-quote-processor
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      KAFKA_INPUT_TOPIC_PREFIX: "market.input"
+      KAFKA_PROCESSOR_GROUP_ID: "alfaka-local-quote-processor"
+      KAFKA_PROCESSOR_RAW_TOPICS: "market.input.realtime.quotes.v1"
+      KAFKA_QUOTES_LAYER_TOPIC: "market.layer.quotes.v1"
+      KAFKA_EVENTS_LAYER_TOPIC: "market.layer.events.v1"
+      KAFKA_TICK_FANOUT_INTERVALS: ""
+      KAFKA_PUBLISH_TICK_FANOUT: "false"
+      KAFKA_LIVE_CANDLE_TOPIC: "market.layer.candles.live.v1"
+      KAFKA_PROCESSOR_ENABLE_AUTO_COMMIT: "false"
       PROCESSOR_LOG_EVERY_N: "500"
       COMPONENT_HEALTH_TTL_SECONDS: "300"
       REDIS_URL: "redis://redis:6379/0"

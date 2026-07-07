@@ -104,6 +104,7 @@ data:
   KAFKA_INPUT_TOPIC_PREFIX: market.input
   KAFKA_RAW_S3_GROUP_ID: alfaka-raw-s3-archive
   KAFKA_PROCESSOR_GROUP_ID: alfaka-market-processor
+  KAFKA_PROCESSOR_RAW_TOPICS: ""
   KAFKA_INPUT_TRADES_TOPIC: market.input.realtime.trades.v1
   KAFKA_INPUT_QUOTES_TOPIC: market.input.realtime.quotes.v1
   KAFKA_INPUT_EVENTS_TOPIC: market.input.realtime.events.v1

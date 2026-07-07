@@ -16,7 +16,8 @@ Active chart-data rules:
 - Store confirmed candles in ClickHouse and S3 final/manifest.
 - Keep raw Alpaca S3 backup out of chart-serving and materialization logic.
 - Subscribe quotes only for the same explicit symbols that receive realtime
-  trades; keep quotes in Redis/WebSocket only.
+  trades; quote payloads also flow through `market.layer.quotes.v1` to S3 final
+  and ClickHouse `quote_ticks`.
 - Preserve Kafka `key=symbol` ordering and avoid splitting one symbol partition
   across multiple pods.
 

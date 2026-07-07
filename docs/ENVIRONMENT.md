@@ -126,6 +126,10 @@ agents.dlq.v1
 `market.layer.candles.closed.v1` is retained as a legacy compatibility topic.
 New market-processor config publishes closed candles to the interval-specific
 `market.layer.candles.<interval>.closed.v1` topics.
+`market.input.realtime.trades.v1` and `market.input.realtime.quotes.v1` are hot
+raw topics and should be created with more partitions than the rest of the
+topic set. Local and AWS helpers default them to 12 partitions; standard topics
+remain 3 locally and use the normal AWS `PARTITIONS` value.
 
 Do not force MSK as the next step. The staged path is:
 
@@ -140,12 +144,13 @@ Current repository stage:
 ```text
 systems/market-data/pods/market-processor/local_main.py
 infra/k8s/base/app/deployment-market-processor.yaml
+infra/k8s/base/app/deployment-market-quote-processor.yaml
 ```
 
 Runtime path:
 
 ```text
-local Python processor -> explicit Kubernetes processor pod
+local Python processors -> explicit Kubernetes processor pods
 ```
 
 Common stream processor env:
@@ -154,6 +159,7 @@ Common stream processor env:
 KAFKA_BOOTSTRAP_SERVERS
 KAFKA_INPUT_TOPIC_PREFIX
 KAFKA_PROCESSOR_GROUP_ID
+KAFKA_PROCESSOR_RAW_TOPICS
 KAFKA_PROCESSOR_ENABLE_AUTO_COMMIT
 CANDLE_WATERMARK_GRACE_SECONDS
 CANDLE_FLUSH_INTERVAL_SECONDS
@@ -180,6 +186,13 @@ processor recovery should still avoid broad ClickHouse recovery unless an
 operator explicitly enables it.
 
 `PROCESSOR_RECOVERY_CLICKHOUSE_ENABLED=false` by default. Keep Redis-first recovery on by default; enable ClickHouse recovery only when the processor should rebuild missing startup state from deterministic canonical `1m`/`1D` rows and ClickHouse is known healthy.
+
+`KAFKA_PROCESSOR_RAW_TOPICS` optionally narrows one processor runtime to a
+comma-separated raw topic list. AWS/EKS uses this to run
+`alfaka-market-processor` on trades/bars/events and
+`alfaka-market-quote-processor` on quotes in separate consumer groups. When the
+override is present, the processor does not subscribe to legacy tick fanout
+topics even if `KAFKA_TICK_FANOUT_INTERVALS` is set.
 
 `COMPONENT_HEALTH_TTL_SECONDS` controls how long Redis keeps lightweight component freshness heartbeats such as `pipeline:health:market-processor`.
 The processor also writes scoped health keys such as

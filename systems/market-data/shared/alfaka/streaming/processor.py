@@ -104,6 +104,7 @@ def processor_runtime_config(environ=None):
     group_id = environ.get("KAFKA_PROCESSOR_GROUP_ID") or "alfaka-market-processor"
     input_prefix = environ.get("KAFKA_INPUT_TOPIC_PREFIX", "market.input")
     realtime_prefix = environ.get("KAFKA_REALTIME_TICK_TOPIC_PREFIX", "market.realtime.ticks.to")
+    raw_topic_override = parse_csv(environ.get("KAFKA_PROCESSOR_RAW_TOPICS", ""))
     tick_fanout_topics = {
         "1m": environ.get("KAFKA_REALTIME_TICKS_TO_1M_TOPIC", f"{realtime_prefix}.1m.v1"),
         "5m": environ.get("KAFKA_REALTIME_TICKS_TO_5M_TOPIC", f"{realtime_prefix}.5m.v1"),
@@ -112,7 +113,7 @@ def processor_runtime_config(environ=None):
         "1W": environ.get("KAFKA_REALTIME_TICKS_TO_1W_TOPIC", f"{realtime_prefix}.1w.v1"),
         "1M": environ.get("KAFKA_REALTIME_TICKS_TO_1MO_TOPIC", f"{realtime_prefix}.1mo.v1"),
     }
-    enabled_tick_fanout_intervals = parse_tick_fanout_intervals(
+    enabled_tick_fanout_intervals = [] if raw_topic_override else parse_tick_fanout_intervals(
         environ.get("KAFKA_TICK_FANOUT_INTERVALS", ""),
         tick_fanout_topics,
     )
@@ -140,15 +141,18 @@ def processor_runtime_config(environ=None):
         "recovery_symbols": processor_recovery_symbols(environ),
         "clickhouse_recovery_enabled": parse_bool(environ.get("PROCESSOR_RECOVERY_CLICKHOUSE_ENABLED", "false")),
     }
-    config["raw_topics"] = [
-        environ.get("KAFKA_INPUT_TRADES_TOPIC", f"{input_prefix}.realtime.trades.v1"),
-        environ.get("KAFKA_INPUT_QUOTES_TOPIC", f"{input_prefix}.realtime.quotes.v1"),
-        environ.get("KAFKA_INPUT_BARS_1M_TOPIC", f"{input_prefix}.realtime.bars.1m.v1"),
-        environ.get("KAFKA_INPUT_UPDATED_BARS_1M_TOPIC", f"{input_prefix}.realtime.updated-bars.1m.v1"),
-        environ.get("KAFKA_INPUT_DAILY_BARS_TOPIC", f"{input_prefix}.realtime.daily-bars.v1"),
-        environ.get("KAFKA_INPUT_EVENTS_TOPIC", f"{input_prefix}.realtime.events.v1"),
-        *config["tick_fanout_topics"].values(),
-    ]
+    if raw_topic_override:
+        config["raw_topics"] = raw_topic_override
+    else:
+        config["raw_topics"] = [
+            environ.get("KAFKA_INPUT_TRADES_TOPIC", f"{input_prefix}.realtime.trades.v1"),
+            environ.get("KAFKA_INPUT_QUOTES_TOPIC", f"{input_prefix}.realtime.quotes.v1"),
+            environ.get("KAFKA_INPUT_BARS_1M_TOPIC", f"{input_prefix}.realtime.bars.1m.v1"),
+            environ.get("KAFKA_INPUT_UPDATED_BARS_1M_TOPIC", f"{input_prefix}.realtime.updated-bars.1m.v1"),
+            environ.get("KAFKA_INPUT_DAILY_BARS_TOPIC", f"{input_prefix}.realtime.daily-bars.v1"),
+            environ.get("KAFKA_INPUT_EVENTS_TOPIC", f"{input_prefix}.realtime.events.v1"),
+            *config["tick_fanout_topics"].values(),
+        ]
     validate_processor_runtime_config(config)
     return config
 
@@ -189,6 +193,7 @@ def validate_processor_runtime_config(config):
         "status_topic": config.get("status_topic"),
         "live_candle_topic": config.get("live_candle_topic"),
         "closed_candle_topic": config.get("closed_candle_topic"),
+        "raw_topics": config.get("raw_topics"),
         "redis_url": config.get("redis_url"),
     })
 
