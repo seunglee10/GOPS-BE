@@ -9,6 +9,7 @@ from typing import Any
 from ..contracts import AnalysisReport, utc_now_iso
 from ..orchestrator import AgentOrchestrator
 from ..query_understanding import warm_entity_catalog_cache
+from ..synthesis import log_synthesis_runtime_diagnostics
 from .queues import AnalysisRequestQueue, build_deep_analysis_request_queue_from_env
 from .report_store import ReportStore, build_report_store_from_env
 from .envelope import (
@@ -255,6 +256,7 @@ def run_kafka_worker(
     from alfaka.common.kafka_io import create_json_consumer
 
     warm_entity_catalog_cache()
+    log_synthesis_runtime_diagnostics(default_client)
     topic = os.getenv(topic_env, default_topic)
     group_id = os.getenv(group_env, default_group)
     consumer = create_json_consumer(

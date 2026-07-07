@@ -23,6 +23,90 @@ from ..runtime.analysis_cache import final_answer_from_dict
 from ..security import sanitize_text, sanitize_url, sanitize_value
 
 
+PROHIBITED_FOLLOWUP_SECTION_PATTERNS = (
+    "다음확인",
+    "추가확인",
+    "확인포인트",
+    "확인할점",
+    "체크포인트",
+    "nextsteps",
+    "nextchecks",
+    "followup",
+    "follow-up",
+)
+FOLLOWUP_DELEGATION_VERBS = (
+    "비교",
+    "확인",
+    "검토",
+    "살펴",
+    "체크",
+    "조회",
+    "대조",
+    "맞춰",
+    "추적",
+    "보완",
+)
+FOLLOWUP_DELEGATION_ENDINGS = (
+    "하세요",
+    "하십시오",
+    "해보세요",
+    "해보십시오",
+    "해야합니다",
+    "필요합니다",
+    "권합니다",
+    "보세요",
+)
+ENGLISH_FOLLOWUP_DELEGATION_PREFIXES = (
+    "check ",
+    "compare ",
+    "verify ",
+    "look up ",
+    "review ",
+)
+
+
+def synthesis_runtime_diagnostics(runtime_context: Any | None = None) -> dict[str, Any]:
+    timeout_seconds = parse_float(os.getenv("AGENT_SYNTHESIZER_TIMEOUT_SECONDS"))
+    if timeout_seconds is None and runtime_context is not None:
+        policy = getattr(runtime_context, "policy", None)
+        timeout_ms = getattr(policy, "synthesis_timeout_ms", None)
+        if isinstance(timeout_ms, (int, float)) and timeout_ms > 0:
+            timeout_seconds = round(float(timeout_ms) / 1000, 3)
+    if timeout_seconds is None:
+        timeout_seconds = 12.0
+    return {
+        "providerEnv": os.getenv("AGENT_FINAL_ANSWER_PROVIDER", "openai"),
+        "financialProviderEnv": os.getenv("AGENT_FINANCIAL_FINAL_ANSWER_PROVIDER", ""),
+        "openaiKeyConfigured": bool(os.getenv("OPENAI_API_KEY")),
+        "model": os.getenv("AGENT_SYNTHESIZER_MODEL", os.getenv("OPENAI_MODEL", "gpt-5.2")),
+        "timeoutSeconds": timeout_seconds,
+    }
+
+
+def record_synthesis_runtime_diagnostics(timing: dict[str, Any], *, runtime_context: Any | None = None) -> None:
+    diagnostics = synthesis_runtime_diagnostics(runtime_context)
+    timing["synthesisProviderEnv"] = diagnostics["providerEnv"]
+    timing["financialSynthesisProviderEnv"] = diagnostics["financialProviderEnv"]
+    timing["synthesisOpenAIKeyConfigured"] = diagnostics["openaiKeyConfigured"]
+    timing["synthesisModel"] = diagnostics["model"]
+    timing["synthesisTimeoutSeconds"] = diagnostics["timeoutSeconds"]
+
+
+def log_synthesis_runtime_diagnostics(service: str, *, runtime_context: Any | None = None) -> None:
+    diagnostics = synthesis_runtime_diagnostics(runtime_context)
+    print(
+        (
+            f"{service} final-answer synthesis config: "
+            f"provider={diagnostics['providerEnv']} "
+            f"financialProvider={diagnostics['financialProviderEnv'] or 'default'} "
+            f"openaiKeyConfigured={diagnostics['openaiKeyConfigured']} "
+            f"model={diagnostics['model']} "
+            f"timeoutSeconds={diagnostics['timeoutSeconds']}"
+        ),
+        flush=True,
+    )
+
+
 class FinalAnswerSynthesizer:
     def synthesize(
         self,
@@ -41,6 +125,7 @@ class FinalAnswerSynthesizer:
             timing["synthesisProvider"] = "deterministic"
             timing.pop("synthesisSkippedReason", None)
             timing.pop("synthesisFallbackReason", None)
+            record_synthesis_runtime_diagnostics(timing, runtime_context=runtime_context)
         if is_news_route(route):
             return self._synthesize_deterministic(
                 symbol=symbol,
@@ -134,6 +219,8 @@ class FinalAnswerSynthesizer:
                 findings=findings,
                 provider_evidence=provider_evidence,
                 analysis_query_type=analysis_query_type,
+                intent=intent,
+                synthesis_input=synthesis_input,
             ))
         intent_types = {part.strip() for part in str(route.intentType or "").lower().split("+") if part.strip()}
         if route.intentType == "news" or route.selectedRoles == ["news"]:
@@ -143,7 +230,7 @@ class FinalAnswerSynthesizer:
         if is_financial_route(route):
             return sanitize_final_answer(build_financial_final_answer(symbol, findings, provider_evidence))
         if intent_types & {"market-move", "explain_price_move", "link_news_to_price_move"}:
-            return sanitize_final_answer(build_market_move_final_answer(symbol, findings, provider_evidence))
+            return sanitize_final_answer(build_market_move_final_answer(symbol, findings, provider_evidence, intent=intent))
         return sanitize_final_answer(build_general_final_answer(symbol, route, findings, provider_evidence))
 
     def _synthesize_with_openai(
@@ -183,9 +270,14 @@ class FinalAnswerSynthesizer:
                             "Do not invent facts, prices, news, macro data, relationships, citations, or recommendations. "
                             "Write Korean report-style prose. Hide internal route, provider, and guardrail diagnostics from users. "
                             "Never mention JSON field names such as providerEvidence, findings, route, selectedRoles, or guardrail. "
-                            "The summary must start with the integrated judgment or conclusion, not with a statement that evidence was retrieved. "
+                            "The summary must begin with the Korean phrase '제 의견은'. "
                             "Use only two or three short sections and keep evidence bullets to at most three total user-facing bullets. "
-                            "If evidence is missing, put it in limitations. Return strict JSON only."
+                            "Do not create action-item, checklist, or user-to-do sections. "
+                            "Do not tell users to compare, check, verify, or look up data themselves. "
+                            "Do not explain missing evidence in the user-facing answer. "
+                            "Use '판단 근거' for the evidence section title. "
+                            "Include a '분석한 지표' section listing only the user-friendly data categories actually used. "
+                            "If evidence is missing, omit that missing item from the user-facing answer. Return strict JSON only."
                         ),
                     },
                     {
@@ -263,7 +355,8 @@ class FinalAnswerSynthesizer:
             answer = final_answer_from_openai_json(parse_openai_text_json(data))
             if answer is None:
                 mark_synthesis_fallback(timing, "openai_invalid_response")
-            return answer
+                return None
+            return enforce_non_delegating_final_answer(answer)
         except Exception as exc:
             mark_synthesis_fallback(timing, f"openai_{exc.__class__.__name__}")
             return None
@@ -323,7 +416,7 @@ class FinalAnswerSynthesizer:
                             "You write beginner-friendly Korean SEC financial statement analysis. "
                             "Use only the supplied formatted facts and rule-based signals. "
                             "Do not calculate new numbers, infer missing metrics, mention raw JSON fields, or add prices, PER, PBR, PSR, forecasts, news, or buy/sell recommendations. "
-                            "Explain what each important metric means, then state cautious interpretation and next metrics to check. "
+                            "Explain what each important metric means, then state cautious interpretation and data limitations. "
                             "The summary must start with the integrated judgment or conclusion, not with a statement that evidence was retrieved. "
                             "Return strict JSON only."
                         ),
@@ -521,7 +614,7 @@ def build_summary(symbol: str, route: IntentRoute, findings: list[AgentFinding],
         direction = infer_price_direction(findings, evidence)
         return (
             f"{symbol}{direction}에 대해서는 {sources} 근거를 함께 보더라도 단일 원인으로 확정하기는 어렵습니다. "
-            "현재 결론은 확인된 신호의 관련 가능성을 먼저 평가하고, 부족한 데이터는 한계로 분리해 보는 것입니다."
+            "현재 결론은 확인된 신호를 종합해 가장 가능성 높은 설명을 제시하는 것입니다."
         )
     return f"{symbol} 요청은 현재 확보된 데이터만으로 결론을 내리기 어렵습니다."
 
@@ -558,17 +651,12 @@ def evidence_source_label(evidence: list[EvidenceItem]) -> str:
     return ", ".join(labels.get(provider, provider) for provider in providers[:4])
 
 
-def infer_price_direction(findings: list[AgentFinding], evidence: list[EvidenceItem]) -> str:
-    text = " ".join(
-        [
-            *[str(item.summary or "") for item in findings[:6]],
-            *[str(item.summary or "") for item in evidence[:8]],
-            *[str((item.raw or {}).get("impactDirection") or "") for item in evidence[:8] if isinstance(item.raw, dict)],
-        ]
-    ).lower()
-    if any(token in text for token in ("하락", "내려", "negative", "bearish", "decline", "down")):
+def infer_price_direction(findings: list[AgentFinding], evidence: list[EvidenceItem], *, intent: str = "") -> str:
+    chart_move = extract_chart_move(findings, evidence)
+    direction = price_direction_from_chart_or_intent(chart_move, intent, findings)
+    if direction == "하락":
         return " 하락"
-    if any(token in text for token in ("상승", "올랐", "positive", "bullish", "rise", "up")):
+    if direction == "상승":
         return " 상승"
     return "의 가격 움직임"
 
@@ -749,6 +837,65 @@ def sanitize_final_answer(answer: FinalAnswer) -> FinalAnswer:
     )
 
 
+def enforce_non_delegating_final_answer(answer: FinalAnswer) -> FinalAnswer:
+    sections: list[FinalAnswerSection] = []
+    for section in answer.sections:
+        if is_prohibited_followup_section_title(section.title):
+            continue
+        bullets = [
+            bullet
+            for bullet in section.bullets
+            if not is_followup_delegation_text(bullet)
+            and not is_prohibited_followup_section_title(bullet)
+        ]
+        if bullets or not section.bullets:
+            sections.append(FinalAnswerSection(title=normalize_analysis_section_title(section.title), bullets=bullets))
+    summary = ensure_opinion_summary(answer.summary)
+    if is_prohibited_followup_section_title(summary):
+        summary = re.sub(r"다음\s*확인\s*포인트[:：]?", "", summary)
+        summary = re.sub(r"확인할\s*점[:：]?", "", summary)
+        summary = re.sub(r"체크\s*포인트[:：]?", "", summary)
+    return sanitize_final_answer(FinalAnswer(
+        title=answer.title,
+        summary=summary,
+        sections=sections,
+        citations=answer.citations,
+        limitations=[],
+    ))
+
+
+def is_prohibited_followup_section_title(value: str) -> bool:
+    compacted = re.sub(r"\s+", "", str(value or "")).lower()
+    return any(pattern in compacted for pattern in PROHIBITED_FOLLOWUP_SECTION_PATTERNS)
+
+
+def normalize_analysis_section_title(value: str) -> str:
+    text = str(value or "").strip()
+    compacted = re.sub(r"\s+", "", text)
+    if compacted in {"왜그렇게보나", "왜그런가", "왜그렇게봤나"}:
+        return "판단 근거"
+    return text
+
+
+def ensure_opinion_summary(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "제 의견은 확인된 신호를 종합해 판단해야 한다는 것입니다."
+    text = re.sub(r"^제\s*의견은\s*[,，]\s*", "제 의견은 ", text)
+    text = re.sub(r"^제\s*의견은\s+", "제 의견은 ", text)
+    if text.startswith("제 의견은"):
+        return text
+    return f"제 의견은 {text}"
+
+
+def is_followup_delegation_text(value: str) -> bool:
+    text = re.sub(r"\s+", "", str(value or ""))
+    if any(verb in text and ending in text for verb in FOLLOWUP_DELEGATION_VERBS for ending in FOLLOWUP_DELEGATION_ENDINGS):
+        return True
+    lowered = str(value or "").strip().lower()
+    return any(lowered.startswith(prefix) for prefix in ENGLISH_FOLLOWUP_DELEGATION_PREFIXES)
+
+
 def sanitize_final_answer_citation(citation: FinalAnswerCitation) -> FinalAnswerCitation:
     title_result = sanitize_text(citation.title)
     url_result = sanitize_url(citation.url)
@@ -784,6 +931,10 @@ def clean_user_text(value: str) -> str:
         "GraphDB": "관계 데이터",
         "ClickHouse": "저장 데이터",
         "Redis": "캐시 데이터",
+        "스냅샷": "자료",
+        "snapshot": "자료",
+        "Snapshot": "자료",
+        "OHLCV": "시가·고가·저가·종가·거래량",
         "evidence": "근거",
         "Evidence": "근거",
         "Agent findings": "역할별 분석",
@@ -794,6 +945,10 @@ def clean_user_text(value: str) -> str:
     }
     for source, target in replacements.items():
         text = text.replace(source, target)
+    text = re.sub(r"자료이\b", "자료가", text)
+    text = re.sub(r"자료은\b", "자료는", text)
+    text = re.sub(r"자료을\b", "자료를", text)
+    text = text.replace("거래량를", "거래량을")
     text = re.sub(r"증거\((근거|evidence)\)", "근거", text)
     text = re.sub(r"근거\((근거|evidence)\)", "근거", text)
     return sanitize_text(text).value
@@ -1036,7 +1191,7 @@ def build_financial_final_answer(symbol: str, findings: list[AgentFinding], prov
         interpretation = financial_interpretation_bullets(summary_item)
         if interpretation:
             sections.append(FinalAnswerSection(title="해석 포인트", bullets=interpretation[:5]))
-        sections.append(FinalAnswerSection(title="다음 확인 포인트", bullets=financial_next_step_bullets()))
+        sections.append(FinalAnswerSection(title="해석 한계", bullets=financial_next_step_bullets()))
     if peer_items:
         sections.append(FinalAnswerSection(
             title="Peer 비교",
@@ -1065,6 +1220,368 @@ def analysis_query_type_from_synthesis_input(synthesis_input: SynthesisInput | N
     return str(value or "general")
 
 
+def deterministic_evidence_items(
+    findings: list[AgentFinding],
+    provider_evidence: list[EvidenceItem],
+    synthesis_input: SynthesisInput | None = None,
+) -> list[EvidenceItem]:
+    items: list[EvidenceItem] = []
+    items.extend(provider_evidence)
+    for finding in findings:
+        items.extend(list(getattr(finding, "evidence", []) or []))
+    if synthesis_input is not None:
+        for snapshot in list(getattr(synthesis_input, "snapshots", []) or []):
+            items.extend(list(getattr(snapshot, "evidence", []) or []))
+    return dedupe_evidence_items(items)
+
+
+def dedupe_evidence_items(items: list[EvidenceItem]) -> list[EvidenceItem]:
+    seen: set[tuple[str, str, str, str, str]] = set()
+    deduped: list[EvidenceItem] = []
+    for item in items:
+        key = (
+            str(item.provider or ""),
+            str(item.status or ""),
+            str(item.title or ""),
+            str(item.summary or ""),
+            str(item.url or ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
+
+
+def deterministic_policy_context(
+    symbol: str,
+    intent: str,
+    findings: list[AgentFinding],
+    provider_evidence: list[EvidenceItem],
+    synthesis_input: SynthesisInput | None = None,
+) -> dict[str, Any]:
+    evidence = deterministic_evidence_items(findings, provider_evidence, synthesis_input)
+    available = [item for item in evidence if item.status == "available"]
+    chart_move = extract_chart_move(findings, available)
+    direction = price_direction_from_chart_or_intent(chart_move, intent, findings)
+    news_items = sorted(
+        [item for item in available if str(item.provider or "").lower() == "news"],
+        key=news_sort_key,
+        reverse=True,
+    )
+    peer_items = [
+        item
+        for item in available
+        if str(item.provider or "").lower() in {"market", "market-data", "chart"}
+        and isinstance(item.raw, dict)
+        and (item.raw.get("peerSummary") or item.raw.get("peerSymbol"))
+    ]
+    relationship_items = [
+        item
+        for item in available
+        if str(item.provider or "").lower() in {"ontology", "relationship"}
+    ]
+    financial_items = [item for item in available if str(item.provider or "").lower() == "financial"]
+    return {
+        "evidence": evidence,
+        "available": available,
+        "chartMove": chart_move,
+        "direction": direction,
+        "newsItems": news_items,
+        "peerItems": peer_items,
+        "relationshipItems": relationship_items,
+        "financialItems": financial_items,
+        "warnings": verification_warnings(findings),
+        "usedIndicators": used_indicator_bullets(evidence, synthesis_input),
+    }
+
+
+def used_indicator_bullets(evidence: list[EvidenceItem], synthesis_input: SynthesisInput | None = None) -> list[str]:
+    labels: list[str] = []
+    if synthesis_input is not None:
+        for snapshot in list(getattr(synthesis_input, "snapshots", []) or []):
+            if getattr(snapshot, "snapshot_type", "") == "risk_policy_snapshot":
+                continue
+            if getattr(snapshot, "status", "") not in {"success", "partial"}:
+                continue
+            if not list(getattr(snapshot, "evidence", []) or []):
+                continue
+            append_unique(labels, indicator_label_for_snapshot(getattr(snapshot, "snapshot_type", "")))
+    for item in evidence:
+        if item.status != "available":
+            continue
+        append_unique(labels, indicator_label_for_evidence(item))
+    return [label for label in labels if label][:5]
+
+
+def indicator_label_for_snapshot(snapshot_type: str) -> str:
+    mapping = {
+        "market_snapshot": "차트 가격·일자별 거래량",
+        "news_snapshot": "뉴스",
+        "relationship_snapshot": "기업 관계·테마",
+        "financial_snapshot": "SEC 재무 지표",
+        "financial_peer_snapshot": "재무 peer 비교",
+    }
+    return mapping.get(str(snapshot_type or ""), "")
+
+
+def indicator_label_for_evidence(item: EvidenceItem) -> str:
+    provider = str(item.provider or "").lower()
+    raw = item.raw if isinstance(item.raw, dict) else {}
+    if provider in {"chart", "market", "market-data"}:
+        if raw.get("peerSummary") or raw.get("peerSymbol"):
+            return "peer/섹터 가격 비교"
+        return "차트 가격·일자별 거래량"
+    if provider == "news":
+        return "뉴스"
+    if provider in {"ontology", "relationship"}:
+        return "기업 관계·테마"
+    if provider == "financial":
+        return "SEC 재무 지표"
+    if provider == "macro":
+        return "시장·거시 지표"
+    return ""
+
+
+def append_used_indicators_section(
+    sections: list[FinalAnswerSection],
+    context: dict[str, Any],
+    *,
+    max_sections: int = 3,
+) -> list[FinalAnswerSection]:
+    indicators = [str(item) for item in context.get("usedIndicators", []) if str(item).strip()]
+    if not indicators:
+        return sections[:max_sections]
+    section = FinalAnswerSection(title="분석한 지표", bullets=indicators[:5])
+    if len(sections) >= max_sections:
+        return [*sections[: max_sections - 1], section]
+    return [*sections, section]
+
+
+def append_unique(values: list[str], value: str) -> None:
+    text = str(value or "").strip()
+    if text and text not in values:
+        values.append(text)
+
+
+def extract_chart_move(findings: list[AgentFinding], evidence: list[EvidenceItem]) -> dict[str, Any]:
+    for item in evidence:
+        raw = item.raw if isinstance(item.raw, dict) else {}
+        provider = str(item.provider or "").lower()
+        if provider not in {"chart", "market", "market-data"}:
+            continue
+        visible = raw.get("visibleSummary") if isinstance(raw.get("visibleSummary"), dict) else {}
+        price_move = raw.get("priceMove") if isinstance(raw.get("priceMove"), dict) else {}
+        peer_summary = raw.get("peerSummary") if isinstance(raw.get("peerSummary"), dict) else {}
+        if peer_summary and not visible and not price_move:
+            continue
+        change = first_present(
+            visible.get("change"),
+            visible.get("changePercent"),
+            visible.get("percentChange"),
+            price_move.get("change"),
+            price_move.get("changePercent"),
+            price_move.get("percentChange"),
+        )
+        last_price = first_present(
+            visible.get("lastPrice"),
+            visible.get("close"),
+            visible.get("latestClose"),
+            price_move.get("lastPrice"),
+            price_move.get("close"),
+        )
+        volume = first_present(visible.get("volume"), price_move.get("volume"))
+        if change is not None or last_price is not None:
+            return {
+                "changeText": format_change_value(change),
+                "changeNumber": parse_change_number(change),
+                "lastPrice": last_price,
+                "volume": volume,
+                "sourceTitle": display_title(item),
+            }
+    for finding in findings:
+        if getattr(finding, "role", "") != "chart-analysis":
+            continue
+        match = re.search(r"([+-]?\d+(?:\.\d+)?)\s*%", str(finding.summary or ""))
+        if match:
+            change = f"{match.group(1)}%"
+            return {
+                "changeText": change,
+                "changeNumber": parse_change_number(change),
+                "lastPrice": None,
+                "volume": None,
+                "sourceTitle": "Chart analysis",
+            }
+    return {"changeText": "", "changeNumber": None, "lastPrice": None, "volume": None, "sourceTitle": ""}
+
+
+def price_direction_from_chart_or_intent(
+    chart_move: dict[str, Any],
+    intent: str,
+    findings: list[AgentFinding],
+) -> str:
+    change_number = chart_move.get("changeNumber")
+    if isinstance(change_number, (int, float)):
+        if change_number < 0:
+            return "하락"
+        if change_number > 0:
+            return "상승"
+    text = " ".join([str(intent or ""), *[str(item.summary or "") for item in findings if getattr(item, "role", "") == "chart-analysis"]]).lower()
+    if any(token in text for token in ("내려", "떨어", "하락", "빠졌", "밀렸", "lower", "down", "decline")):
+        return "하락"
+    if any(token in text for token in ("올랐", "상승", "급등", "rise", "up", "higher")):
+        return "상승"
+    return "가격 움직임"
+
+
+def chart_move_bullet(symbol: str, context: dict[str, Any]) -> str | None:
+    chart_move = context.get("chartMove") if isinstance(context.get("chartMove"), dict) else {}
+    change = str(chart_move.get("changeText") or "").strip()
+    if not change:
+        return None
+    details = [f"보이는 차트 구간 변화는 {change}"]
+    last_price = chart_move.get("lastPrice")
+    if last_price is not None and str(last_price).strip():
+        details.append(f"마지막 가격은 {last_price}")
+    return f"{symbol} {', '.join(details)}입니다."
+
+
+def policy_news_bullets(context: dict[str, Any], *, limit: int = 2) -> list[str]:
+    direction = str(context.get("direction") or "")
+    bullets: list[str] = []
+    for item in context.get("newsItems", [])[:limit]:
+        raw = item.raw if isinstance(item.raw, dict) else {}
+        impact = str(raw.get("impactDirection") or "").lower()
+        title = display_title(item)
+        summary = display_summary(item)
+        if direction == "하락" and impact in {"positive", "bullish"}:
+            bullet = (
+                f"{title}: 확인된 뉴스는 긍정 신호에 가까워, 이 뉴스 하나로 하락을 설명하기보다 "
+                "기대 선반영, 차익 실현, 시장/섹터 압력 가능성을 함께 봐야 합니다."
+            )
+        elif direction == "상승" and impact in {"negative", "bearish"}:
+            bullet = (
+                f"{title}: 확인된 뉴스는 부정 신호에 가까워, 상승 원인으로 단정하기 어렵고 "
+                "다른 가격·시장 신호와의 불일치로 봐야 합니다."
+            )
+        else:
+            bullet = f"{title}: {summary}"
+        if bullet not in bullets:
+            bullets.append(bullet)
+    return bullets
+
+
+def peer_market_bullets(context: dict[str, Any], *, limit: int = 2) -> list[str]:
+    main_direction = str(context.get("direction") or "")
+    bullets: list[str] = []
+    for item in context.get("peerItems", [])[:limit]:
+        raw = item.raw if isinstance(item.raw, dict) else {}
+        peer_summary = raw.get("peerSummary") if isinstance(raw.get("peerSummary"), dict) else {}
+        symbol = str(raw.get("peerSymbol") or peer_summary.get("symbol") or peer_summary.get("ticker") or "").upper()
+        change = first_present(peer_summary.get("change"), peer_summary.get("changePercent"), peer_summary.get("percentChange"))
+        change_text = format_change_value(change)
+        change_number = parse_change_number(change)
+        peer_direction = "하락" if isinstance(change_number, (int, float)) and change_number < 0 else "상승" if isinstance(change_number, (int, float)) and change_number > 0 else "변동"
+        if symbol and change_text:
+            if main_direction in {"하락", "상승"} and peer_direction == main_direction:
+                bullet = f"{symbol}도 같은 구간 {change_text}로 {peer_direction}해 공통 시장/섹터 요인 가능성을 높입니다."
+            else:
+                bullet = f"{symbol} peer 움직임은 {change_text}입니다."
+        else:
+            bullet = f"{display_title(item)}: {display_summary(item)}"
+        if bullet not in bullets:
+            bullets.append(bullet)
+    return bullets
+
+
+def relationship_policy_bullets(context: dict[str, Any], *, limit: int = 2) -> list[str]:
+    bullets: list[str] = []
+    for item in [*context.get("relationshipItems", []), *context.get("financialItems", [])][:limit]:
+        bullet = f"{display_title(item)}: {display_summary(item)}"
+        if bullet not in bullets:
+            bullets.append(bullet)
+    return bullets
+
+
+def integrated_price_move_summary(symbol: str, context: dict[str, Any]) -> str:
+    direction = str(context.get("direction") or "가격 움직임")
+    chart_move = context.get("chartMove") if isinstance(context.get("chartMove"), dict) else {}
+    change = str(chart_move.get("changeText") or "").strip()
+    news_bullets = policy_news_bullets(context, limit=1)
+    peer_bullets = peer_market_bullets(context, limit=1)
+    if direction == "하락" and news_bullets and any(token in news_bullets[0] for token in ("긍정", "불일치")):
+        return (
+            f"제 의견은 {symbol} 하락이 확인된 긍정 뉴스 자체보다 기대 선반영, 차익 실현, "
+            "또는 시장/섹터 압력 가능성과 더 잘 맞습니다."
+        )
+    if direction in {"하락", "상승"} and change:
+        source = "뉴스/관계 신호"
+        if peer_bullets:
+            source = "peer 움직임과 뉴스/관계 신호"
+        return f"제 의견은 {symbol} {direction}을 차트상 {change} 움직임과 {source}를 함께 본 결과로 해석하는 것입니다."
+    return f"제 의견은 {symbol} 가격 움직임을 확인된 차트·뉴스·관계 신호를 종합해 해석해야 한다는 것입니다."
+
+
+def policy_core_bullets(symbol: str, context: dict[str, Any], *, limit: int = 3) -> list[str]:
+    bullets: list[str] = []
+    chart_bullet = chart_move_bullet(symbol, context)
+    if chart_bullet:
+        bullets.append(chart_bullet)
+    bullets.extend(policy_news_bullets(context, limit=2))
+    bullets.extend(peer_market_bullets(context, limit=2))
+    bullets.extend(relationship_policy_bullets(context, limit=2))
+    return unique_strings(bullets)[:limit]
+
+
+def parse_float(value: Any) -> float | None:
+    try:
+        return float(str(value).strip())
+    except Exception:
+        return None
+
+
+def parse_change_number(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip().replace(",", "").replace("%", "").replace("+", "").replace("−", "-")
+    match = re.search(r"-?\d+(?:\.\d+)?", text)
+    if not match:
+        return None
+    return parse_float(match.group(0))
+
+
+def format_change_value(value: Any) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if not text:
+        return ""
+    if isinstance(value, (int, float)):
+        return f"{value:+.2f}%"
+    return text
+
+
+def first_present(*values: Any) -> Any | None:
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        return value
+    return None
+
+
+def news_sort_key(item: EvidenceItem) -> tuple[float, float, float]:
+    raw = item.raw if isinstance(item.raw, dict) else {}
+    relevance = parse_float(raw.get("relevanceScoreV2")) or parse_float(raw.get("relevanceScore")) or 0.0
+    importance = parse_float(raw.get("importanceScore")) or 0.0
+    subject = str(raw.get("subjectRelevance") or "").lower()
+    direct_bonus = 1.0 if subject in {"primary", "direct", "exact"} else 0.0
+    return (direct_bonus, relevance, importance)
+
+
 def build_policy_final_answer(
     *,
     symbol: str,
@@ -1072,103 +1589,118 @@ def build_policy_final_answer(
     findings: list[AgentFinding],
     provider_evidence: list[EvidenceItem],
     analysis_query_type: str,
+    intent: str = "",
+    synthesis_input: SynthesisInput | None = None,
 ) -> FinalAnswer:
     if analysis_query_type == "news_price_mismatch":
-        return build_news_price_mismatch_final_answer(symbol, findings, provider_evidence)
+        return build_news_price_mismatch_final_answer(symbol, findings, provider_evidence, intent=intent, synthesis_input=synthesis_input)
     if analysis_query_type == "factor_decomposition":
-        return build_factor_decomposition_final_answer(symbol, findings, provider_evidence)
+        return build_factor_decomposition_final_answer(symbol, findings, provider_evidence, intent=intent, synthesis_input=synthesis_input)
     if analysis_query_type == "reference_anchor_analysis":
-        return build_reference_anchor_final_answer(symbol, route, findings, provider_evidence)
+        return build_reference_anchor_final_answer(symbol, route, findings, provider_evidence, intent=intent, synthesis_input=synthesis_input)
     if analysis_query_type == "impact_mapping":
         return build_impact_mapping_final_answer(symbol, findings, provider_evidence)
     if analysis_query_type == "earnings_reaction":
         return build_earnings_reaction_final_answer(symbol, findings, provider_evidence)
-    return build_price_move_cause_final_answer(symbol, findings, provider_evidence)
+    return build_price_move_cause_final_answer(symbol, findings, provider_evidence, intent=intent, synthesis_input=synthesis_input)
 
 
-def build_price_move_cause_final_answer(symbol: str, findings: list[AgentFinding], provider_evidence: list[EvidenceItem]) -> FinalAnswer:
-    available = [item for item in provider_evidence if item.status == "available"]
-    warnings = verification_warnings(findings)
+def build_price_move_cause_final_answer(
+    symbol: str,
+    findings: list[AgentFinding],
+    provider_evidence: list[EvidenceItem],
+    *,
+    intent: str = "",
+    synthesis_input: SynthesisInput | None = None,
+) -> FinalAnswer:
+    context = deterministic_policy_context(symbol, intent, findings, provider_evidence, synthesis_input)
+    available = list(context["available"])
+    warnings = list(context["warnings"])
+    core_bullets = policy_core_bullets(symbol, context, limit=4)
     sections = [
         FinalAnswerSection(
             title="핵심 판단",
-            bullets=policy_evidence_bullets(findings, available, limit=3) or ["현재 근거만으로는 단일 원인을 확정하기 어렵습니다."],
+            bullets=core_bullets or ["현재 snapshot 근거만으로는 단일 원인을 확정하기 어렵습니다."],
         )
     ]
+    reason_bullets = [
+        *peer_market_bullets(context, limit=2),
+        *relationship_policy_bullets(context, limit=2),
+    ]
+    reason_bullets = [item for item in unique_strings(reason_bullets) if item not in sections[0].bullets]
+    if reason_bullets:
+        sections.append(FinalAnswerSection(title="판단 근거", bullets=reason_bullets[:3]))
     if warnings:
         sections.append(FinalAnswerSection(title="반대로 볼 점", bullets=warnings[:3]))
-    sections.append(FinalAnswerSection(
-        title="다음 확인 포인트",
-        bullets=next_check_bullets("price_move_cause"),
-    ))
     return FinalAnswer(
         title=f"{symbol} 주가 변동 원인 분석",
-        summary=market_move_summary_text(symbol, visible_role_findings(findings), available),
-        sections=sections[:3],
+        summary=integrated_price_move_summary(symbol, context),
+        sections=append_used_indicators_section(sections, context, max_sections=3),
         citations=citations_from_evidence(available),
-        limitations=policy_limitations(provider_evidence, warnings),
+        limitations=[],
     )
 
 
-def build_news_price_mismatch_final_answer(symbol: str, findings: list[AgentFinding], provider_evidence: list[EvidenceItem]) -> FinalAnswer:
-    available = [item for item in provider_evidence if item.status == "available"]
+def build_news_price_mismatch_final_answer(
+    symbol: str,
+    findings: list[AgentFinding],
+    provider_evidence: list[EvidenceItem],
+    *,
+    intent: str = "",
+    synthesis_input: SynthesisInput | None = None,
+) -> FinalAnswer:
+    context = deterministic_policy_context(symbol, intent, findings, provider_evidence, synthesis_input)
+    available = list(context["available"])
+    chart_bullet = chart_move_bullet(symbol, context)
+    mismatch_bullets = policy_news_bullets(context, limit=3)
+    core_bullets = unique_strings([*([chart_bullet] if chart_bullet else []), *mismatch_bullets])
     sections = [
         FinalAnswerSection(
             title="핵심 판단",
-            bullets=[
-                "뉴스의 headline 감성보다 실제 가격 반응과 같은 시간대 시장/섹터 흐름을 우선해야 합니다.",
-                "긍정적 뉴스와 하락 반응이 같이 보이면 기대 선반영, 숫자 부족, 섹터 약세, 차익 실현을 먼저 의심합니다.",
-            ],
+            bullets=core_bullets[:3] or ["뉴스 headline 감성과 실제 가격 반응을 직접 대조할 snapshot이 제한적입니다."],
         ),
         FinalAnswerSection(
-            title="왜 그렇게 보나",
-            bullets=policy_evidence_bullets(findings, available, limit=3) or ["선택 뉴스와 가격 반응을 직접 연결할 데이터가 제한적입니다."],
-        ),
-        FinalAnswerSection(
-            title="다음 확인 포인트",
-            bullets=next_check_bullets("news_price_mismatch"),
+            title="판단 근거",
+            bullets=peer_market_bullets(context, limit=2) or relationship_policy_bullets(context, limit=2) or ["선택 뉴스와 가격 반응을 직접 연결할 추가 비교 근거가 제한적입니다."],
         ),
     ]
     return FinalAnswer(
         title=f"{symbol} 뉴스-가격 반응 불일치 분석",
-        summary=(
-            "가장 그럴듯한 해석은 뉴스 자체가 나쁘다기보다 기대 선반영, 숫자 부족, "
-            "또는 시장/섹터 압력이 가격 반응을 눌렀다는 것입니다."
-        ),
-        sections=sections,
+        summary=integrated_price_move_summary(symbol, context),
+        sections=append_used_indicators_section(sections, context, max_sections=3),
         citations=citations_from_evidence(available),
-        limitations=policy_limitations(provider_evidence, verification_warnings(findings)),
+        limitations=[],
     )
 
 
-def build_factor_decomposition_final_answer(symbol: str, findings: list[AgentFinding], provider_evidence: list[EvidenceItem]) -> FinalAnswer:
-    available = [item for item in provider_evidence if item.status == "available"]
+def build_factor_decomposition_final_answer(
+    symbol: str,
+    findings: list[AgentFinding],
+    provider_evidence: list[EvidenceItem],
+    *,
+    intent: str = "",
+    synthesis_input: SynthesisInput | None = None,
+) -> FinalAnswer:
+    context = deterministic_policy_context(symbol, intent, findings, provider_evidence, synthesis_input)
+    available = list(context["available"])
+    core_bullets = policy_core_bullets(symbol, context, limit=4)
+    peer_bullets = peer_market_bullets(context, limit=3)
     sections = [
         FinalAnswerSection(
             title="핵심 판단",
-            bullets=policy_evidence_bullets(findings, available, limit=3) or ["시장/섹터/개별 요인을 나눌 비교 근거가 충분하지 않습니다."],
-        ),
-        FinalAnswerSection(
-            title="반대로 볼 점",
-            bullets=[
-                "관련 종목도 같은 방향이면 개별 악재보다 공통 요인일 가능성이 커집니다.",
-                "종목만 다르게 움직였고 직접 뉴스가 있으면 개별 이슈 가능성이 커집니다.",
-            ],
-        ),
-        FinalAnswerSection(
-            title="다음 확인 포인트",
-            bullets=next_check_bullets("factor_decomposition"),
+            bullets=core_bullets or ["시장/섹터/개별 요인을 나눌 비교 근거가 충분하지 않습니다."],
         ),
     ]
+    if peer_bullets:
+        sections.append(FinalAnswerSection(title="시장/peer 비교", bullets=peer_bullets[:3]))
+    if context["warnings"]:
+        sections.append(FinalAnswerSection(title="반대로 볼 점", bullets=list(context["warnings"])[:3]))
     return FinalAnswer(
         title=f"{symbol} 시장/섹터/개별 요인 분해",
-        summary=(
-            "가장 그럴듯한 해석은 가격 움직임을 바로 개별 이슈로 단정하기보다 "
-            "시장, 섹터, 관련 종목 동조 여부로 먼저 분해해야 한다는 것입니다."
-        ),
-        sections=sections,
+        summary=integrated_price_move_summary(symbol, context),
+        sections=append_used_indicators_section(sections, context, max_sections=3),
         citations=citations_from_evidence(available),
-        limitations=policy_limitations(provider_evidence, verification_warnings(findings)),
+        limitations=[],
     )
 
 
@@ -1177,94 +1709,101 @@ def build_reference_anchor_final_answer(
     route: IntentRoute,
     findings: list[AgentFinding],
     provider_evidence: list[EvidenceItem],
+    *,
+    intent: str = "",
+    synthesis_input: SynthesisInput | None = None,
 ) -> FinalAnswer:
-    available = [item for item in provider_evidence if item.status == "available"]
+    context = deterministic_policy_context(symbol, intent, findings, provider_evidence, synthesis_input)
+    available = list(context["available"])
     anchor = selected_reference_label(provider_evidence)
+    core_bullets = policy_core_bullets(symbol, context, limit=3)
     sections = [
         FinalAnswerSection(
             title="핵심 판단",
-            bullets=policy_evidence_bullets(findings, available, limit=3) or [f"{anchor}를 기준으로 볼 직접 근거가 제한적입니다."],
-        ),
-        FinalAnswerSection(
-            title="다음 확인 포인트",
-            bullets=next_check_bullets("reference_anchor_analysis"),
+            bullets=core_bullets or [f"{anchor}를 기준으로 볼 직접 근거가 제한적입니다."],
         ),
     ]
+    peer_bullets = peer_market_bullets(context, limit=2)
+    if peer_bullets:
+        sections.append(FinalAnswerSection(title="기준점 주변 비교", bullets=peer_bullets))
     return FinalAnswer(
         title=f"{symbol} 선택 기준 분석",
-        summary=f"가장 그럴듯한 해석은 일반 종목 요약보다 {anchor}를 먼저 기준점으로 삼아 가격과 뉴스를 맞춰 봐야 한다는 것입니다.",
-        sections=sections,
+        summary=f"{anchor} 기준으로 보면 {integrated_price_move_summary(symbol, context)}",
+        sections=append_used_indicators_section(sections, context, max_sections=3),
         citations=citations_from_evidence(available),
-        limitations=policy_limitations(provider_evidence, verification_warnings(findings)) or [f"{route.intentType} 기준의 선택 맥락만 사용했습니다."],
+        limitations=[],
     )
 
 
 def build_impact_mapping_final_answer(symbol: str, findings: list[AgentFinding], provider_evidence: list[EvidenceItem]) -> FinalAnswer:
-    available = [item for item in provider_evidence if item.status == "available"]
+    context = deterministic_policy_context(symbol, "", findings, provider_evidence)
+    available = list(context["available"])
     candidates = impact_mapping_candidates(provider_evidence)
     candidate_bullets = candidates[:5] or ["관련 종목/섹터 후보를 좁힐 관계 근거가 제한적입니다."]
     sections = [
         FinalAnswerSection(title="핵심 판단", bullets=candidate_bullets[:3]),
         FinalAnswerSection(
-            title="왜 그렇게 보나",
+            title="판단 근거",
             bullets=policy_evidence_bullets(findings, available, limit=3) or ["뉴스 직접 언급과 관계/테마 신호를 함께 봐야 합니다."],
         ),
-        FinalAnswerSection(title="다음 확인 포인트", bullets=next_check_bullets("impact_mapping")),
     ]
     return FinalAnswer(
         title=f"{symbol} 뉴스 영향 후보 매핑",
         summary="가장 그럴듯한 해석은 직접 언급 종목과 관계/테마로 연결된 종목을 먼저 제한해서 보는 것입니다.",
-        sections=sections,
+        sections=append_used_indicators_section(sections, context, max_sections=3),
         citations=citations_from_evidence(available),
-        limitations=policy_limitations(provider_evidence, verification_warnings(findings)),
+        limitations=[],
     )
 
 
 def build_earnings_reaction_final_answer(symbol: str, findings: list[AgentFinding], provider_evidence: list[EvidenceItem]) -> FinalAnswer:
-    available = [item for item in provider_evidence if item.status == "available"]
+    context = deterministic_policy_context(symbol, "", findings, provider_evidence)
+    available = list(context["available"])
+    core_bullets = policy_core_bullets(symbol, context, limit=3)
     sections = [
         FinalAnswerSection(
             title="핵심 판단",
-            bullets=policy_evidence_bullets(findings, available, limit=3) or ["실적 숫자, 가이던스, 가격 반응을 함께 볼 근거가 충분하지 않습니다."],
+            bullets=core_bullets or policy_evidence_bullets(findings, available, limit=3) or ["실적 숫자, 가이던스, 가격 반응을 함께 볼 근거가 충분하지 않습니다."],
         ),
-        FinalAnswerSection(title="다음 확인 포인트", bullets=next_check_bullets("earnings_reaction")),
     ]
+    news_bullets = [item for item in policy_news_bullets(context, limit=2) if item not in sections[0].bullets]
+    if news_bullets:
+        sections.append(FinalAnswerSection(title="실적/뉴스 반응", bullets=news_bullets))
     return FinalAnswer(
         title=f"{symbol} 실적 반응 분석",
         summary="가장 그럴듯한 해석은 실적 headline만으로 반응을 단정할 수 없고 숫자, 가이던스, 가격 반응의 불일치를 함께 봐야 한다는 것입니다.",
-        sections=sections,
+        sections=append_used_indicators_section(sections, context, max_sections=3),
         citations=citations_from_evidence(available),
-        limitations=policy_limitations(provider_evidence, verification_warnings(findings)),
+        limitations=[],
     )
 
 
-def build_market_move_final_answer(symbol: str, findings: list[AgentFinding], provider_evidence: list[EvidenceItem]) -> FinalAnswer:
+def build_market_move_final_answer(
+    symbol: str,
+    findings: list[AgentFinding],
+    provider_evidence: list[EvidenceItem],
+    *,
+    intent: str = "",
+) -> FinalAnswer:
     visible_findings = visible_role_findings(findings)
-    available = [item for item in provider_evidence if item.status == "available"]
-    no_data = [item for item in provider_evidence if item.status == "no-data"]
+    available = [item for item in deterministic_evidence_items(findings, provider_evidence) if item.status == "available"]
     warnings = verification_warnings(findings)
+    context = deterministic_policy_context(symbol, intent, findings, provider_evidence)
+    core_bullets = policy_core_bullets(symbol, context, limit=3)
     sections = [
         FinalAnswerSection(
             title="주가 변동 원인",
-            bullets=[finding.summary for finding in visible_findings[:3]] or ["현재 확인 가능한 역할별 근거가 충분하지 않습니다."],
+            bullets=core_bullets or [finding.summary for finding in visible_findings[:3]] or ["현재 확인 가능한 역할별 근거가 충분하지 않습니다."],
         )
     ]
-    if available:
-        sections.append(FinalAnswerSection(
-            title="핵심 근거",
-            bullets=[f"{display_title(item)}: {display_summary(item)}" for item in available[:3]],
-        ))
     if warnings:
         sections.append(FinalAnswerSection(title="반대 근거 또는 불일치", bullets=warnings[:3]))
-    limitations = [*warnings, *[item.summary for item in no_data[:6]]]
-    if not limitations:
-        limitations = ["차트, 뉴스, 거시, 기업 관계 데이터에 현재 조회된 근거 기준으로 분석했습니다."]
     return FinalAnswer(
         title=f"{symbol} 주가 변동 원인 분석",
-        summary=market_move_summary_text(symbol, visible_findings, available),
-        sections=sections,
+        summary=market_move_summary_text(symbol, visible_findings, available, intent=intent),
+        sections=append_used_indicators_section(sections, context, max_sections=3),
         citations=citations_from_evidence(available),
-        limitations=limitations,
+        limitations=[],
     )
 
 
@@ -1300,20 +1839,18 @@ def build_general_final_answer(
     )
 
 
-def market_move_summary_text(symbol: str, findings: list[AgentFinding], evidence: list[EvidenceItem]) -> str:
-    direction = infer_price_direction(findings, evidence)
+def market_move_summary_text(symbol: str, findings: list[AgentFinding], evidence: list[EvidenceItem], *, intent: str = "") -> str:
+    direction = infer_price_direction(findings, evidence, intent=intent)
     if evidence:
         sources = evidence_source_label(evidence)
         return (
-            f"{symbol}{direction}은 현재 근거만으로 단일 원인으로 확정하기는 어렵지만, "
-            f"{sources} 신호와의 관련 가능성을 우선 평가해야 합니다."
+            f"제 의견은 {symbol}{direction}을 {sources} 신호를 종합해 해석해야 한다는 것입니다."
         )
     if findings:
         return (
-            f"{symbol}{direction}은 역할별 분석 신호만으로는 원인을 확정하기 어렵습니다. "
-            "현재 결론은 차트 변화와 외부 이벤트를 추가로 대조해야 한다는 것입니다."
+            f"제 의견은 {symbol}{direction}을 역할별 분석 신호를 종합해 해석해야 한다는 것입니다."
         )
-    return f"{symbol}의 가격 움직임은 현재 확보된 근거만으로 원인을 판단하기 어렵습니다."
+    return f"제 의견은 {symbol}의 가격 움직임을 먼저 차트와 뉴스 신호 중심으로 해석해야 한다는 것입니다."
 
 
 def policy_evidence_bullets(findings: list[AgentFinding], evidence: list[EvidenceItem], *, limit: int = 3) -> list[str]:
@@ -1376,37 +1913,7 @@ def impact_mapping_candidates(provider_evidence: list[EvidenceItem]) -> list[str
         controlled = str(raw.get("controlledName") or raw.get("companyName") or "").strip()
         if controlled and controlled.upper() not in values and controlled not in values:
             values.append(controlled)
-    return [f"{item}: 뉴스 영향 후보로 우선 확인할 대상입니다." for item in values[:5]]
-
-
-def next_check_bullets(analysis_query_type: str) -> list[str]:
-    mapping = {
-        "price_move_cause": [
-            "같은 구간의 지수/섹터 ETF/주요 peer 수익률을 비교하세요.",
-            "뉴스 발생 시각과 선택 봉의 가격·거래량 변화를 맞춰 보세요.",
-        ],
-        "news_price_mismatch": [
-            "뉴스 직전 기대가 이미 가격에 반영됐는지 확인하세요.",
-            "같은 시간대 섹터와 주요 peer가 같이 밀렸는지 비교하세요.",
-        ],
-        "factor_decomposition": [
-            "종목 수익률을 시장 지수, 섹터, 관련 종목 순서로 나눠 비교하세요.",
-            "직접 뉴스가 있는지와 같은 방향 peer 움직임이 있는지 같이 확인하세요.",
-        ],
-        "reference_anchor_analysis": [
-            "선택 기준점 전후의 가격·거래량 변화와 인접 뉴스를 함께 확인하세요.",
-            "보이는 차트 구간 밖의 선행 뉴스나 선반영 여부를 확인하세요.",
-        ],
-        "impact_mapping": [
-            "후보 종목의 같은 날짜 가격 반응과 후속 뉴스를 확인하세요.",
-            "직접 언급, 공급망/경쟁 관계, 테마 노출을 분리해 보세요.",
-        ],
-        "earnings_reaction": [
-            "매출·이익·가이던스 중 어느 항목이 기대와 달랐는지 확인하세요.",
-            "발표 직후 가격 반응과 다음 거래일 반응을 분리해 보세요.",
-        ],
-    }
-    return mapping.get(analysis_query_type, ["추가 가격 반응과 뉴스 타이밍을 확인하세요."])[:3]
+    return [f"{item}: 뉴스 영향 후보입니다." for item in values[:5]]
 
 
 def visible_role_findings(findings: list[AgentFinding]) -> list[AgentFinding]:
@@ -1775,7 +2282,7 @@ def financial_synthesis_payload(
             "제공된 facts와 signals만 사용합니다.",
             "숫자를 새로 계산하지 않습니다.",
             "매수/매도/목표가 같은 투자 행동 조언을 하지 않습니다.",
-            "초보 투자자가 이해할 수 있게 지표 의미와 다음 확인 포인트를 설명합니다.",
+            "초보 투자자가 이해할 수 있게 지표 의미와 해석 한계를 설명합니다.",
         ],
         "fallbackSummary": financial_summary_text(symbol, summary_item) if summary_item else "",
         "findingSummaries": [finding.summary for finding in findings if finding.role == "financial-analysis"][:3],
@@ -1890,16 +2397,24 @@ def verification_warnings(findings: list[AgentFinding]) -> list[str]:
 
 
 def citations_from_evidence(items: list[EvidenceItem]) -> list[FinalAnswerCitation]:
-    return [
-        FinalAnswerCitation(
+    citations: list[FinalAnswerCitation] = []
+    seen: set[str] = set()
+    for item in items:
+        if not item.url:
+            continue
+        key = str(item.url).strip().lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        citations.append(FinalAnswerCitation(
             provider=item.provider,
             title=display_title(item),
             url=item.url,
             publishedAt=item.raw.get("publishedAt") if isinstance(item.raw, dict) else None,
-        )
-        for item in items[:8]
-        if item.url
-    ]
+        ))
+        if len(citations) >= 5:
+            break
+    return citations
 
 
 def raw_text(item: EvidenceItem, key: str, fallback: str) -> str:
@@ -1926,6 +2441,10 @@ def hide_internal_terms(value: str) -> str:
         .replace("GraphDB", "관계 데이터")
         .replace("ClickHouse", "저장 데이터")
         .replace("Redis", "캐시 데이터")
+        .replace("스냅샷", "자료")
+        .replace("snapshot", "자료")
+        .replace("Snapshot", "자료")
+        .replace("OHLCV", "시가·고가·저가·종가·거래량")
         .replace("providerEvidence", "근거")
         .replace("Provider status", "데이터 상태")
         .replace("provider", "데이터")

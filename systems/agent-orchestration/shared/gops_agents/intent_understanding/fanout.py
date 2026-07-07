@@ -36,6 +36,18 @@ ANALYSIS_INTENT_TERMS = (
     "why",
     "risk",
 )
+CONTENT_TASK_TERMS = (
+    "뉴스",
+    "거시",
+    "관계",
+    "재무",
+    "실적",
+    "news",
+    "macro",
+    "relationship",
+    "financial",
+    "earnings",
+)
 
 
 def build_query_understanding(
@@ -256,6 +268,8 @@ def should_return_ui_only_early(*, query: str, results: dict[str, Any]) -> bool:
         return False
     if has_analysis_intent_signal(query):
         return False
+    if has_content_task_signal(query):
+        return False
     if "content_rules" in results:
         content_tasks = list(results.get("content_rules") or [])
         if content_tasks and not content_tasks_are_only_panel_references(
@@ -270,6 +284,15 @@ def should_return_ui_only_early(*, query: str, results: dict[str, Any]) -> bool:
 def has_analysis_intent_signal(query: Any) -> bool:
     compacted = "".join(str(query or "").lower().split())
     return any(term in compacted for term in ANALYSIS_INTENT_TERMS)
+
+
+def has_content_task_signal(query: Any) -> bool:
+    compacted = "".join(str(query or "").lower().split())
+    if "뉴스" in compacted and "뉴스패널" not in compacted:
+        return True
+    if "news" in compacted and "newspanel" not in compacted:
+        return True
+    return any(term in compacted for term in CONTENT_TASK_TERMS if term not in {"뉴스", "news"})
 
 
 def classify_with_provider(

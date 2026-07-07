@@ -203,6 +203,10 @@ deterministic fallback으로 degrade하되 `timing.synthesisProvider`,
 `timing.synthesisSkippedReason`, `timing.synthesisFallbackReason`와
 `agentTrace.synthesis`에 이유를 남긴다. `finalAnswer.summary`는 근거 조회 상태가
 아니라 종합 판단/결론 문장이어야 한다.
+분석형 최종 답변은 사용자에게 추가 비교나 확인을 넘기는 checklist/to-do 섹션을
+만들지 않는다. OpenAI synthesis가 사용자에게 직접 작업을 지시하는 문장을
+반환해도 서버 후처리에서 제거한다. 사용자-facing 본문에는 실제 사용한
+snapshot/지표 종류를 `분석한 지표` 섹션으로만 보여준다.
 
 Route mode:
 
