@@ -254,7 +254,7 @@ class FinancialAgent(ProviderBackedAgent):
             agentId=self.agent_id,
             role=self.role,
             summary=summary,
-            rationale="Financial agent uses precomputed SEC fundamentals snapshots from Redis/ClickHouse only.",
+            rationale="Financial agent uses precomputed SEC fundamentals snapshots only.",
             confidence=confidence,
             evidence=evidence,
             tags=["financial", "sec", "fundamentals"],
@@ -1739,16 +1739,16 @@ def analyze_ontology_evidence(context: AgentContext, evidence: list[EvidenceItem
     no_direct = any(news_raw_value(item, "relationType", "") == "no-direct-control" for item in no_data)
 
     if graphdb_unavailable:
-        detail = no_data[0].summary if no_data else "GraphDB 온톨로지 조회에 실패했습니다."
+        detail = (no_data[0].summary if no_data else "기업 관계 데이터 조회에 실패했습니다.").replace("GraphDB", "기업 관계 데이터")
         return {
             "summary": f"{context.symbol} 기업 관계 분석을 완료하지 못했습니다.",
-            "rationale": f"GraphDB 연결 실패: {detail}",
+            "rationale": f"기업 관계 데이터 연결 실패: {detail}",
             "confidence": 0.25,
             "tags": ["ontology", "graphdb-unavailable"],
         }
 
     if not available:
-        detail = next((item.summary for item in no_data if item.summary), f"{context.symbol} 관계 근거가 없습니다.")
+        detail = next((item.summary for item in no_data if item.summary), f"{context.symbol} 관계 근거가 없습니다.").replace("GraphDB", "기업 관계 데이터")
         return {
             "summary": f"{context.symbol} 관련 온톨로지 관계 근거를 확인하지 못했습니다.",
             "rationale": detail,
@@ -1764,11 +1764,11 @@ def analyze_ontology_evidence(context: AgentContext, evidence: list[EvidenceItem
             if isinstance(item.raw, dict) and item.raw.get("controlledName")
         )
         control_text = ", ".join(controlled_names[:3]) if controlled_names else "확인된 기업"
-        summary = f"GraphDB 기준으로 {context.symbol}는 {theme_text} 관계와 {control_text} 직접 지배/자회사 관계 근거가 있습니다."
+        summary = f"관계 데이터 기준으로 {context.symbol}는 {theme_text} 관계와 {control_text} 직접 지배/자회사 관계 근거가 있습니다."
     elif no_direct:
-        summary = f"GraphDB 기준으로 {context.symbol}는 {theme_text} 테마에 속합니다. 직접 지배/자회사 관계 근거는 확인되지 않았습니다."
+        summary = f"관계 데이터 기준으로 {context.symbol}는 {theme_text} 테마에 속합니다. 직접 지배/자회사 관계 근거는 확인되지 않았습니다."
     else:
-        summary = f"GraphDB 기준으로 {context.symbol}는 {theme_text} 관계 근거가 있습니다."
+        summary = f"관계 데이터 기준으로 {context.symbol}는 {theme_text} 관계 근거가 있습니다."
 
     evidence_lines = [item.summary for item in available[:4]]
     if no_direct:

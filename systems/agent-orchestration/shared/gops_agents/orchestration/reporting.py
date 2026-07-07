@@ -52,6 +52,7 @@ def build_agent_trace(
     entity_resolution: dict[str, Any] | None = None,
     query_understanding: dict[str, Any] | None = None,
     operation_ir: dict[str, Any] | None = None,
+    route_plan: Any | None = None,
 ) -> dict[str, Any]:
     visible = [
         snapshot
@@ -78,6 +79,14 @@ def build_agent_trace(
         trace["queryUnderstanding"] = dict(query_understanding)
     if operation_ir:
         trace["operationIR"] = dict(operation_ir)
+    if route_plan is not None:
+        trace["analysisPolicy"] = {
+            "analysisQueryType": getattr(route_plan, "analysisQueryType", "general"),
+            "priority": getattr(route_plan, "priority", "P3"),
+            "anchorMode": getattr(route_plan, "anchorMode", "symbol"),
+            "compositionStrategy": getattr(route_plan, "compositionStrategy", "general_synthesis"),
+            "snapshotBundle": list(getattr(route_plan, "snapshot_bundle", []) or []),
+        }
     return trace
 
 

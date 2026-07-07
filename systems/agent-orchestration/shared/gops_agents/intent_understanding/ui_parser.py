@@ -27,8 +27,15 @@ CONTENT_PANEL_TYPES = {
     "ontology": "ontologyGraph",
 }
 CONTENT_DISPLAY_ANALYSIS_TERMS = (
+    "주가",
+    "가격",
+    "변동",
     "왜",
     "원인",
+    "이유",
+    "떨어",
+    "빠져",
+    "빠졌",
     "급등",
     "급락",
     "상승",
@@ -57,6 +64,49 @@ CONTENT_DISPLAY_ANALYSIS_TERMS = (
     "summary",
     "explain",
     "search",
+)
+UI_SURFACE_TERMS = (
+    "패널",
+    "페널",
+    "창",
+    "화면",
+    "레이아웃",
+    "영역",
+    "섹션",
+    "카드",
+    "뷰",
+    "위젯",
+    "박스",
+    "탭",
+    "ui",
+    "panel",
+    "window",
+    "layout",
+    "view",
+    "screen",
+    "section",
+    "card",
+    "widget",
+    "box",
+)
+ANALYSIS_ACTION_FALSE_POSITIVE_STEMS = (
+    "주가",
+    "가격",
+    "변동",
+    "왜",
+    "원인",
+    "이유",
+    "떨어",
+    "빠져",
+    "빠졌",
+    "하락",
+    "상승",
+    "급락",
+    "급등",
+    "영향",
+    "분석",
+    "알려",
+    "설명",
 )
 
 
@@ -207,8 +257,17 @@ def content_display_should_be_layout_only(intent: str, content_tasks: list[Conte
 
 
 def has_content_analysis_signal(intent: str) -> bool:
+    return has_analysis_intent_signal(intent)
+
+
+def has_analysis_intent_signal(intent: Any) -> bool:
     compacted = "".join(str(intent or "").lower().split())
     return any(term in compacted for term in CONTENT_DISPLAY_ANALYSIS_TERMS)
+
+
+def has_explicit_ui_surface_signal(intent: Any) -> bool:
+    compacted = compact_text(intent)
+    return any(term in compacted for term in UI_SURFACE_TERMS)
 
 
 def layout_context_has_panels(layout_context: dict[str, Any] | None) -> bool:
@@ -221,17 +280,21 @@ def parse_ui_clause(clause: Clause, panels: list[dict[str, Any]], lexicon: dict[
         return UiParseResult()
 
     panel_matches = panel_matches_for_clause(clause, panels, lexicon)
-    action_matches = value_matches(clause, lexicon.get("actions", {}), allow_short_fuzzy=True)
     size_matches = filter_size_matches(clause, value_matches(clause, lexicon.get("sizes", {}), allow_short_fuzzy=True))
     position_matches = value_matches(clause, lexicon.get("positions", {}), allow_short_fuzzy=False)
     surface_matches = term_matches(clause, lexicon.get("surfaceNouns", []), allow_short_fuzzy=True)
     multi_matches = term_matches(clause, lexicon.get("multiPanelHints", []), allow_short_fuzzy=False)
     keep_only_matches = term_matches(clause, lexicon.get("keepOnlyHints", []), allow_short_fuzzy=False)
     content_only_matches = term_matches(clause, lexicon.get("contentOnlyVerbs", []), allow_short_fuzzy=False)
-    action_matches = merge_alias_matches([
-        *action_matches,
-        *korean_semantic_action_matches(clause, surface_matches, keep_only_matches, position_matches),
-    ])
+    action_matches = action_matches_for_clause(
+        clause,
+        lexicon,
+        surface_matches=surface_matches,
+        keep_only_matches=keep_only_matches,
+        position_matches=position_matches,
+        size_matches=size_matches,
+        multi_matches=multi_matches,
+    )
 
     explicit_operation = has_layout_operation(action_matches, size_matches, position_matches, surface_matches, multi_matches, keep_only_matches)
     if is_content_only_clause(action_matches, size_matches, position_matches, surface_matches, multi_matches, keep_only_matches, content_only_matches):
@@ -266,9 +329,10 @@ def parse_ui_clause(clause: Clause, panels: list[dict[str, Any]], lexicon: dict[
     if task is not None:
         return UiParseResult(tasks=[task], confidence=task.confidence)
 
+    exact_strong_actions = [match for match in action_matches if match.strength == "strong" and match.score >= 0.95]
     strong_ui_signals = bool(
         surface_matches
-        or any(match.strength == "strong" for match in action_matches)
+        or exact_strong_actions
         or size_matches
         or position_matches
         or multi_matches
@@ -501,6 +565,68 @@ def value_matches(clause: Clause, group: Any, *, allow_short_fuzzy: bool) -> lis
     return sorted(matches, key=lambda item: (-item.score, item.token_index, item.value))
 
 
+def action_matches_for_clause(
+    clause: Clause,
+    lexicon: dict[str, Any],
+    *,
+    surface_matches: list[AliasMatch],
+    keep_only_matches: list[AliasMatch],
+    position_matches: list[AliasMatch],
+    size_matches: list[AliasMatch] | None = None,
+    multi_matches: list[AliasMatch] | None = None,
+) -> list[AliasMatch]:
+    action_matches = value_matches(clause, lexicon.get("actions", {}), allow_short_fuzzy=True)
+    action_matches = merge_alias_matches([
+        *action_matches,
+        *korean_semantic_action_matches(clause, surface_matches, keep_only_matches, position_matches),
+    ])
+    return filter_analysis_false_positive_action_matches(
+        clause,
+        action_matches,
+        surface_matches=surface_matches,
+        keep_only_matches=keep_only_matches,
+        position_matches=position_matches,
+        size_matches=size_matches or [],
+        multi_matches=multi_matches or [],
+    )
+
+
+def filter_analysis_false_positive_action_matches(
+    clause: Clause,
+    action_matches: list[AliasMatch],
+    *,
+    surface_matches: list[AliasMatch],
+    keep_only_matches: list[AliasMatch],
+    position_matches: list[AliasMatch],
+    size_matches: list[AliasMatch],
+    multi_matches: list[AliasMatch],
+) -> list[AliasMatch]:
+    if not action_matches:
+        return []
+    has_layout_context = bool(surface_matches or keep_only_matches or position_matches or size_matches or multi_matches)
+    clause_has_analysis = has_analysis_intent_signal(clause.text)
+    filtered = []
+    for match in action_matches:
+        if is_analysis_false_positive_action_match(clause, match, clause_has_analysis, has_layout_context):
+            continue
+        filtered.append(match)
+    return filtered
+
+
+def is_analysis_false_positive_action_match(
+    clause: Clause,
+    match: AliasMatch,
+    clause_has_analysis: bool,
+    has_layout_context: bool,
+) -> bool:
+    if match.source == "morph" or match.score >= 0.95:
+        return False
+    token = clause.tokens[match.token_index] if 0 <= match.token_index < len(clause.tokens) else None
+    if token is not None and token_matches_stems(token, ANALYSIS_ACTION_FALSE_POSITIVE_STEMS):
+        return True
+    return clause_has_analysis and not has_layout_context
+
+
 def korean_semantic_action_matches(
     clause: Clause,
     surface_matches: list[AliasMatch],
@@ -692,16 +818,20 @@ def has_ui_operation_signal(query: Any) -> bool:
     lexicon = load_ui_lexicon()
     analyzer = DefaultMorphAnalyzer()
     for clause in analyzer.clauses(query):
-        action_matches = value_matches(clause, lexicon.get("actions", {}), allow_short_fuzzy=True)
         size_matches = filter_size_matches(clause, value_matches(clause, lexicon.get("sizes", {}), allow_short_fuzzy=True))
         position_matches = value_matches(clause, lexicon.get("positions", {}), allow_short_fuzzy=False)
         surface_matches = term_matches(clause, lexicon.get("surfaceNouns", []), allow_short_fuzzy=True)
         multi_matches = term_matches(clause, lexicon.get("multiPanelHints", []), allow_short_fuzzy=False)
         keep_only_matches = term_matches(clause, lexicon.get("keepOnlyHints", []), allow_short_fuzzy=False)
-        action_matches = merge_alias_matches([
-            *action_matches,
-            *korean_semantic_action_matches(clause, surface_matches, keep_only_matches, position_matches),
-        ])
+        action_matches = action_matches_for_clause(
+            clause,
+            lexicon,
+            surface_matches=surface_matches,
+            keep_only_matches=keep_only_matches,
+            position_matches=position_matches,
+            size_matches=size_matches,
+            multi_matches=multi_matches,
+        )
         if has_layout_operation(action_matches, size_matches, position_matches, surface_matches, multi_matches, keep_only_matches):
             return True
     return False
@@ -711,14 +841,16 @@ def has_display_visibility_signal(query: Any) -> bool:
     lexicon = load_ui_lexicon()
     analyzer = DefaultMorphAnalyzer()
     for clause in analyzer.clauses(query):
-        action_matches = value_matches(clause, lexicon.get("actions", {}), allow_short_fuzzy=True)
         position_matches = value_matches(clause, lexicon.get("positions", {}), allow_short_fuzzy=False)
         surface_matches = term_matches(clause, lexicon.get("surfaceNouns", []), allow_short_fuzzy=True)
         keep_only_matches = term_matches(clause, lexicon.get("keepOnlyHints", []), allow_short_fuzzy=False)
-        action_matches = merge_alias_matches([
-            *action_matches,
-            *korean_semantic_action_matches(clause, surface_matches, keep_only_matches, position_matches),
-        ])
+        action_matches = action_matches_for_clause(
+            clause,
+            lexicon,
+            surface_matches=surface_matches,
+            keep_only_matches=keep_only_matches,
+            position_matches=position_matches,
+        )
         if any(match.value in {"focus", "open"} for match in action_matches):
             return True
     return False
@@ -728,15 +860,18 @@ def infer_action_size_and_position_from_query(query: Any) -> tuple[str, str | No
     lexicon = load_ui_lexicon()
     analyzer = DefaultMorphAnalyzer()
     for clause in analyzer.clauses(query):
-        action_matches = value_matches(clause, lexicon.get("actions", {}), allow_short_fuzzy=True)
         size = best_size_match(filter_size_matches(clause, value_matches(clause, lexicon.get("sizes", {}), allow_short_fuzzy=True)))
         position = best_match(value_matches(clause, lexicon.get("positions", {}), allow_short_fuzzy=False))
         surface_matches = term_matches(clause, lexicon.get("surfaceNouns", []), allow_short_fuzzy=True)
         keep_only_matches = term_matches(clause, lexicon.get("keepOnlyHints", []), allow_short_fuzzy=False)
-        action_matches = merge_alias_matches([
-            *action_matches,
-            *korean_semantic_action_matches(clause, surface_matches, keep_only_matches, [position] if position else []),
-        ])
+        action_matches = action_matches_for_clause(
+            clause,
+            lexicon,
+            surface_matches=surface_matches,
+            keep_only_matches=keep_only_matches,
+            position_matches=[position] if position else [],
+            size_matches=[size] if size else [],
+        )
         strong_action = best_match([match for match in action_matches if match.strength == "strong"])
         weak_action = best_match([match for match in action_matches if match.strength != "strong"])
         action = infer_action(strong_action, weak_action, size, position, multi_panel=False)

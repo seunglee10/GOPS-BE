@@ -7,14 +7,18 @@ repo-wide Codex rules live in root `AGENTS.md`; deeper project docs live here.
 flowchart TD
   README["docs/README.md"]
   ARCH["AGENT_ARCHITECTURE.md<br/>에이전트 자체 설명"]
+  POLICY["AGENT_ANALYSIS_QUERY_POLICY.md<br/>분석 쿼리/응답 정책"]
   BE["AGENT_BACKEND_INTEGRATION.md<br/>백엔드 연동"]
   FE["AGENT_FRONTEND_INTEGRATION.md<br/>프런트 연동"]
   AWS["AGENT_AWS_BUILD.md<br/>AWS 빌드/배포"]
 
   README --> ARCH
+  README --> POLICY
   README --> BE
   README --> FE
   README --> AWS
+  POLICY --> ARCH
+  POLICY --> FE
   FE --> BE
   BE --> ARCH
   ARCH --> AWS
@@ -30,6 +34,7 @@ flowchart TD
 | `ENVIRONMENT.md` | Env, secret, and platform contracts. |
 | `AGENT_ORCHESTRATION_IMPLEMENTATION.md` | Summary of the role-based multi-agent implementation and Docker validation. |
 | `AGENT_ARCHITECTURE.md` | `AgentOrchestrator`, role agents, snapshots, synthesis, provider boundary, `EvidenceItem` 계약. |
+| `AGENT_ANALYSIS_QUERY_POLICY.md` | 우선 처리할 분석 쿼리 종류, 결론 중심 답변 형식, 신뢰도 표시, 내부 GraphDB 사용 정책. |
 | `AGENT_BACKEND_INTEGRATION.md` | Backend API, idempotency, Kafka async path, Redis report store, polling/SSE/WebSocket 계약. |
 | `AGENT_FRONTEND_INTEGRATION.md` | 프런트 request shape, `analysisId`, polling/SSE, report rendering, layout/chart proposal 처리. |
 | `AGENT_AWS_BUILD.md` | `gops-agent-orchestrator` image, ECR/EKS, Kafka, Redis/Valkey, ClickHouse, GraphDB, S3, secrets, smoke checks. |
@@ -37,8 +42,8 @@ flowchart TD
 
 Old long-form specs were removed to avoid stale, conflicting guidance.
 If a future long-form spec is needed, add it under `docs/` with a clear owner
-and date. Agent-specific handoff content should stay in the four `AGENT_*`
-documents listed above.
+and date. Agent-specific handoff content should stay in the `AGENT_*` documents
+listed above.
 
 For chart data work, do not follow older notes that require a preset symbol
 universe preload, S&P500-wide collection, raw S3 replay as a normal read path,

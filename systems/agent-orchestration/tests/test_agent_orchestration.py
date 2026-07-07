@@ -929,6 +929,19 @@ class AgentOrchestrationTests(unittest.TestCase):
         parsed = parse_ui_query("차트 빼고 분석해줘", layout_context())
         self.assertEqual(parsed.tasks, [])
 
+    def test_ui_parser_does_not_treat_market_analysis_phrasing_as_layout(self):
+        cases = [
+            "오늘 왜 떨어졌어?",
+            "오늘 주가 왜 떨어졌어>",
+            "주가 변동 원인 알려줘",
+            "이 뉴스랑 여기 봉 하락이 연결된 거야?",
+        ]
+        for query in cases:
+            with self.subTest(query=query):
+                parsed = parse_ui_query(query, layout_context())
+                self.assertEqual(parsed.tasks, [])
+                self.assertFalse(parsed.needs_classifier)
+
     def test_mixed_ui_news_and_ontology_scopes_ui_clause(self):
         query = "뉴스 패널 크게 띄워주고 엔비디아 뉴스 불러와줘. 그리고 온톨로지 분석해줘"
         with patch("gops_agents.intent_understanding.fanout.classify_with_provider", side_effect=AssertionError("clear mixed route should not call classifier")):
@@ -1706,9 +1719,38 @@ class AgentOrchestrationTests(unittest.TestCase):
                 self.assertNotIn("대상 패널을 찾지 못했습니다", proposal["rationale"])
 
     def test_layout_resolve_returns_not_ui_for_analysis_request(self):
+        cases = [
+            "NVDA 뉴스 분석해줘",
+            "오늘 왜 떨어졌어?",
+            "오늘 주가 왜 떨어졌어>",
+            "주가 변동 원인 알려줘",
+        ]
+        for query in cases:
+            with self.subTest(query=query):
+                response = AgentOrchestrator().resolve_layout({
+                    "symbol": "NVDA",
+                    "intent": query,
+                    "layoutContext": layout_context(),
+                })
+
+                self.assertEqual(response["status"], "not_ui")
+                self.assertIsNone(response["layoutProposal"])
+                self.assertFalse(response["agentTrace"]["uiLayoutFastAck"])
+
+    def test_layout_resolve_returns_not_ui_for_reference_anchored_analysis_request(self):
         response = AgentOrchestrator().resolve_layout({
             "symbol": "NVDA",
-            "intent": "NVDA 뉴스 분석해줘",
+            "intent": "이 뉴스랑 여기 봉 하락이 연결된 거야?",
+            "references": [
+                {
+                    "type": "chart.candle",
+                    "data": {"symbol": "NVDA", "interval": "1D", "timestamp": "2026-07-04T00:00:00Z", "close": 145.5},
+                },
+                {
+                    "type": "news.article",
+                    "data": {"symbol": "NVDA", "title": "NVDA supply headline", "publishedAt": "2026-07-04T13:30:00Z"},
+                },
+            ],
             "layoutContext": layout_context(),
         })
 
@@ -1825,6 +1867,24 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(report.route.intentType, "market-move")
         self.assertEqual(report.route.selectedRoles, ["chart", "news", "macro", "ontology"])
 
+    def test_conductor_uses_subject_fallback_for_market_move_without_query_symbol(self):
+        report = AgentOrchestrator().analyze({
+            "symbol": "NVDA",
+            "intent": "주가 변동 원인 알려줘",
+            "chartContext": {
+                "chartDocument": {"symbol": "NVDA", "timeframe": "1D"},
+                "dataStatus": {"candleCount": 20, "state": "ready"},
+                "visibleSummary": {"lastPrice": 145.5, "change": "-2.10%"},
+            },
+            "layoutContext": layout_context(),
+        })
+
+        self.assertEqual(report.route.intentType, "market-move")
+        self.assertEqual(report.route.selectedRoles, ["chart", "news", "macro", "ontology"])
+        self.assertIsNotNone(report.routePlan)
+        assert report.routePlan is not None
+        self.assertEqual(report.routePlan.analysisQueryType, "price_move_cause")
+
     def test_conductor_preserves_news_based_market_question_as_composite_intent(self):
         report = AgentOrchestrator().analyze({
             "symbol": "NVDA",
@@ -1835,6 +1895,45 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(report.route.intentType, "market-move+news")
         self.assertEqual(report.route.selectedRoles, ["chart", "news", "macro", "ontology"])
         self.assertEqual(report.routePlan.intent, "investment_opinion")
+
+    def test_analysis_query_policy_examples_select_expected_snapshot_bundles(self):
+        cases = [
+            ("NVDA 왜 떨어졌어?", [], "price_move_cause", {"market_snapshot", "news_snapshot", "relationship_snapshot", "risk_policy_snapshot"}),
+            ("뉴스는 좋은데 왜 주가는 빠져?", [], "news_price_mismatch", {"news_snapshot", "market_snapshot", "relationship_snapshot", "risk_policy_snapshot"}),
+            ("이거 개별 이슈야 시장 이슈야?", [], "factor_decomposition", {"market_snapshot", "relationship_snapshot", "news_snapshot", "risk_policy_snapshot"}),
+            (
+                "이 뉴스 영향받는 종목 뭐야?",
+                [{"type": "news.article", "data": {"symbol": "NVDA", "title": "NVDA supply headline", "publishedAt": "2026-07-04T13:30:00Z"}}],
+                "impact_mapping",
+                {"news_snapshot", "relationship_snapshot", "market_snapshot", "risk_policy_snapshot"},
+            ),
+            (
+                "선택한 봉 왜 저렇게 움직였어?",
+                [{"type": "chart.candle", "data": {"symbol": "NVDA", "interval": "1D", "timestamp": "2026-07-04T00:00:00Z", "close": 145.5}}],
+                "reference_anchor_analysis",
+                {"market_snapshot", "news_snapshot", "risk_policy_snapshot"},
+            ),
+        ]
+
+        for intent, references, query_type, expected_bundle in cases:
+            with self.subTest(intent=intent):
+                report = AgentOrchestrator(analysis_cache=MemoryAgentAnalysisCache()).analyze({
+                    "symbol": "NVDA",
+                    "intent": intent,
+                    "references": references,
+                    "chartContext": {
+                        "chartDocument": {"symbol": "NVDA", "timeframe": "1D"},
+                        "dataStatus": {"candleCount": 20, "state": "ready"},
+                        "visibleSummary": {"lastPrice": 145.5, "change": "-2.10%"},
+                    },
+                })
+
+                self.assertEqual(report.routePlan.analysisQueryType, query_type)
+                self.assertEqual(set(report.routePlan.snapshot_bundle), expected_bundle)
+                self.assertEqual(report.agentTrace["analysisPolicy"]["analysisQueryType"], query_type)
+                self.assertEqual(report.synthesisInput.output_policy["analysis_query_type"], query_type)
+                final_answer_text = json.dumps(report.finalAnswer.to_dict(), ensure_ascii=False, default=str)
+                self.assertNotRegex(final_answer_text, r"GraphDB|ClickHouse|Redis|providerEvidence|Provider status")
 
     def test_multi_agent_mode_posts_independent_role_answers_without_merge_synthesis(self):
         synthesizer = RoleAnswerOnlySynthesizer()
@@ -4099,7 +4198,7 @@ class AgentOrchestrationTests(unittest.TestCase):
                 finding = OntologyAgent(FakeOntologyProvider(evidence)).analyze(AgentContext(symbol="NVDA", intent="관계 분석"))
 
         self.assertEqual(openai.call_count, 0)
-        self.assertIn("GraphDB 기준", finding.summary)
+        self.assertIn("관계 데이터 기준", finding.summary)
         self.assertNotIn("CUDA 공급망", finding.summary)
 
     def test_legacy_agent_ids_do_not_route_unclear_query_to_role(self):
@@ -4437,7 +4536,7 @@ class AgentOrchestrationTests(unittest.TestCase):
                 )
 
         self.assertEqual(openai.call_count, 0)
-        self.assertIn("GraphDB 기준", answer.summary)
+        self.assertIn("관계 데이터 기준", answer.summary)
         self.assertNotIn("CUDA 공급망", answer.summary)
 
     def test_openai_synthesizer_accepts_strict_json_response(self):
@@ -4567,7 +4666,7 @@ class AgentOrchestrationTests(unittest.TestCase):
                     provider_evidence=evidence,
                 )
 
-        self.assertIn("GraphDB 기준", answer.summary)
+        self.assertIn("관계 데이터 기준", answer.summary)
 
     def test_synthesizer_records_fallback_reason_when_openai_key_missing(self):
         timing = {}

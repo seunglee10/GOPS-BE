@@ -6,7 +6,7 @@ import time
 from typing import Any
 
 from ..contracts import AnalysisReport, FinalAnswer, IntentRoute, stable_id, utc_now_iso
-from ..intent_understanding.ui_parser import has_ui_operation_signal, parse_ui_query
+from ..intent_understanding.ui_parser import has_analysis_intent_signal, has_explicit_ui_surface_signal, parse_ui_query
 from ..retrieval.context import build_primary_retrieval_context
 from ..retrieval.cross_signal import CrossSignal, build_cross_signals
 from ..retrieval.snapshots import (
@@ -583,6 +583,7 @@ class AgentOrchestrator:
                 entities=list(state.get("resolved_entities", [])),
                 snapshots=list(state.get("snapshots", [])),
                 policy=state.get("runtime_policy") or self.runtime_policy,
+                route_plan=route_plan,
                 cross_signals=[item.to_dict() if isinstance(item, CrossSignal) else dict(item) for item in state.get("cross_signals", [])],
             )
         analysis_id = stable_id(
@@ -770,6 +771,7 @@ class AgentOrchestrator:
             state.get("entity_resolution"),
             state.get("query_understanding"),
             state.get("operation_ir"),
+            route_plan,
         )
         agent_trace["analysisMode"] = str(state.get("analysis_mode") or "auto")
         if state.get("input_safety_warnings"):
@@ -949,11 +951,15 @@ def ui_layout_preflight_response(request: dict[str, Any]) -> dict[str, Any] | No
             intent = str(latest.get("content") or "")
     if not intent.strip():
         return None
+    if request_has_selected_reference(request) and has_analysis_intent_signal(intent):
+        return None
     layout_context = request.get("layoutContext") if isinstance(request.get("layoutContext"), dict) else {}
     parsed = parse_ui_query(intent, layout_context)
     if parsed.tasks:
         return None
-    if not parsed.needs_classifier and not has_ui_operation_signal(intent):
+    if not parsed.needs_classifier:
+        return None
+    if not has_explicit_ui_surface_signal(intent):
         return None
     analysis_id = str(
         request.get("analysisId")
@@ -1003,6 +1009,17 @@ def ui_layout_preflight_response(request: dict[str, Any]) -> dict[str, Any] | No
             "uiLayoutFastAck": False,
         },
     }
+
+
+def request_has_selected_reference(request: dict[str, Any]) -> bool:
+    references = request.get("references")
+    if isinstance(references, list) and bool(references):
+        return True
+    ui_context = request.get("uiContext") if isinstance(request.get("uiContext"), dict) else {}
+    if isinstance(ui_context.get("selectedReference"), dict):
+        return True
+    chart_context = request.get("chartContext") if isinstance(request.get("chartContext"), dict) else {}
+    return isinstance(chart_context.get("selectedReference"), dict)
 
 
 def layout_ack_message(layout: Any) -> str:

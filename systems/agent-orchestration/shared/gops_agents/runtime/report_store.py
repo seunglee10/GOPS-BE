@@ -372,6 +372,11 @@ def route_plan_from_dict(value: Any) -> RoutePlan | None:
             snapshot_bundle=[str(item) for item in value.get("snapshot_bundle", []) if isinstance(item, (str, int, float))],
             execution_mode=str(value.get("execution_mode") or "parallel_snapshots"),
             llm_calls_allowed=int(value.get("llm_calls_allowed") or 0),
+            analysisQueryType=str(value.get("analysisQueryType") or value.get("analysis_query_type") or "general"),
+            priority=str(value.get("priority") or "P3"),
+            anchorMode=str(value.get("anchorMode") or value.get("anchor_mode") or "symbol"),
+            compositionStrategy=str(value.get("compositionStrategy") or value.get("composition_strategy") or "general_synthesis"),
+            answerPolicy=value.get("answerPolicy") if isinstance(value.get("answerPolicy"), dict) else {},
         )
     except Exception:
         return None
