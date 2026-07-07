@@ -1185,7 +1185,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(derived_client.requests[0]["kind"], "footprint")
         self.assertEqual(derived_client.requests[0]["limit"], 100)
 
-    def test_indicator_series_uses_candle_snapshot_lookback_and_redis_cache(self):
+    def test_indicator_series_uses_filled_candle_snapshot_lookback_inline(self):
         provider = FakeIndicatorProvider()
         derived_client = FakeDerivedClient()
         service = MarketDataQueryService(provider, backfill_service=FakeBackfillService(), fill_service=FakeFillService(), derived_client=derived_client)
@@ -1202,6 +1202,10 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(payload["symbol"], "AAPL")
         self.assertEqual(payload["interval"], "1m")
         self.assertEqual([item["id"] for item in payload["indicators"]], ["sma:5", "ema:5", "rsi:14"])
+        self.assertEqual(payload["derived"]["source"], "api-inline")
+        self.assertFalse(payload["derived"]["artifactStored"])
+        self.assertEqual(len(payload["series"]["sma:5"]), 10)
+        self.assertIsNotNone(payload["series"]["sma:5"][0]["value"])
         self.assertEqual(provider.calls[0]["before"], "2026-06-25T13:30:00.000Z")
         self.assertEqual(provider.calls[0]["limit"], 15)
         self.assertEqual(provider.calls[0]["maWindows"], ())
@@ -1209,9 +1213,69 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(provider.calls[1]["limit"], 30)
         self.assertEqual(provider.calls[1]["maWindows"], ())
         self.assertEqual(len(provider.calls), 2)
-        self.assertEqual(derived_client.requests[0]["kind"], "indicators")
-        self.assertEqual(derived_client.requests[0]["parameters"]["layers"], "sma:5,ema:5,rsi:14")
-        self.assertEqual(derived_client.requests[0]["limit"], 30)
+        self.assertEqual(derived_client.requests, [])
+
+    def test_indicator_series_uses_foreground_fill_candles(self):
+        class DirectFillService(FakeFillService):
+            def fill_if_needed(self, *, symbol, interval, limit, before, from_time, to_time, payload):
+                if before:
+                    end = datetime.fromisoformat(before.replace("Z", "+00:00"))
+                    start = end - timedelta(hours=limit)
+                else:
+                    start = datetime.fromisoformat((from_time or "2026-06-25T13:00:00.000Z").replace("Z", "+00:00"))
+                candles = []
+                for index in range(limit):
+                    timestamp = start + timedelta(hours=index)
+                    close = 100 + index
+                    candles.append({
+                        "timestamp": timestamp.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                        "open": close - 0.2,
+                        "high": close + 1,
+                        "low": close - 1,
+                        "close": close,
+                        "volume": 1000 + index,
+                        "sourceInterval": interval,
+                    })
+                payload.update({
+                    "source": "alpaca",
+                    "feed": "sip",
+                    "dataStatus": "ready",
+                    "candles": candles,
+                })
+                return super().fill_if_needed(
+                    symbol=symbol,
+                    interval=interval,
+                    limit=limit,
+                    before=before,
+                    from_time=from_time,
+                    to_time=to_time,
+                    payload=payload,
+                )
+
+        derived_client = FakeDerivedClient()
+        service = MarketDataQueryService(
+            EmptyFakeProvider(),
+            backfill_service=FakeBackfillService(),
+            fill_service=DirectFillService(),
+            derived_client=derived_client,
+        )
+
+        payload = service.indicator_series(
+            "bac",
+            "1h",
+            "2026-06-25T13:00:00.000Z",
+            "2026-06-25T20:00:00.000Z",
+            "sma:5",
+            8,
+        )
+
+        self.assertEqual(payload["symbol"], "BAC")
+        self.assertEqual(payload["interval"], "1h")
+        self.assertEqual(payload["derived"]["source"], "api-inline")
+        self.assertEqual(payload["returnedCandleCount"], 13)
+        self.assertEqual(len(payload["series"]["sma:5"]), 8)
+        self.assertIsNotNone(payload["series"]["sma:5"][0]["value"])
+        self.assertEqual(derived_client.requests, [])
 
     def test_indicator_series_rejects_unsupported_layer(self):
         service = MarketDataQueryService(FakeIndicatorProvider(), backfill_service=FakeBackfillService(), fill_service=FakeFillService())

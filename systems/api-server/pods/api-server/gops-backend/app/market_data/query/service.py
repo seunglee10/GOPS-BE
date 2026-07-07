@@ -15,13 +15,17 @@ from app.services.alfaka_market_data import get_market_data_provider, normalize_
 from alfaka.serving.chart_derived_data import (
     ChartDerivedArtifactStore,
     ChartDerivedDataClient,
+    DERIVED_KIND_INDICATORS,
     build_footprint_request,
     build_indicator_request,
     build_volume_profile_request,
     clickhouse_client_from_env,
     indicator_fetch_from_time,
+    redis_ttl_seconds,
+    with_derived_metadata,
 )
 from alfaka.serving.indicators import (
+    compute_indicator_payload,
     indicator_required_lookback_bars,
     indicator_specs_from_csv,
 )
@@ -244,14 +248,14 @@ class MarketDataQueryService:
         lookback = indicator_required_lookback_bars(specs)
         fetch_limit = requested_limit + lookback
         if from_time and lookback > 0:
-            self.candle_snapshot(
+            warmup_payload = self.candle_snapshot(
                 symbol,
                 interval,
                 "",
                 lookback,
                 before=from_time,
             )
-            self.candle_snapshot(
+            range_payload = self.candle_snapshot(
                 symbol,
                 interval,
                 "",
@@ -259,9 +263,10 @@ class MarketDataQueryService:
                 from_time=from_time,
                 to_time=to_time,
             )
+            candle_payload = merge_candle_payloads(warmup_payload, range_payload)
         else:
             fetch_from_time = indicator_fetch_from_time(interval, from_time, lookback)
-            self.candle_snapshot(
+            candle_payload = self.candle_snapshot(
                 symbol,
                 interval,
                 "",
@@ -277,7 +282,15 @@ class MarketDataQueryService:
             specs=specs,
             limit=requested_limit,
         )
-        return self.derived_client.resolve(request)
+        return inline_indicator_payload(
+            request,
+            candle_payload,
+            specs,
+            from_time=from_time,
+            to_time=to_time,
+            requested_limit=requested_limit,
+            lookback=lookback,
+        )
 
     def footprint_series(
         self,
@@ -745,6 +758,60 @@ def provider_candle_snapshot(
             ma_windows=ma_windows,
         )
     return provider.candle_snapshot(symbol, interval, limit, before=before, from_time=from_time, to_time=to_time)
+
+
+def inline_indicator_payload(
+    request: dict[str, Any],
+    candle_payload: dict[str, Any],
+    specs,
+    *,
+    from_time: str | None,
+    to_time: str | None,
+    requested_limit: int,
+    lookback: int,
+) -> dict[str, Any]:
+    candles = candle_payload.get("candles") or []
+    computed = compute_indicator_payload(
+        candles,
+        specs,
+        from_time=from_time,
+        to_time=to_time,
+    )
+    payload = {
+        "symbol": request["symbol"],
+        "interval": request["interval"],
+        "from": from_time,
+        "to": to_time,
+        "requestedLimit": requested_limit,
+        "lookbackBars": lookback,
+        "returnedCandleCount": len(candles),
+        "source": candle_payload.get("source", "alpaca"),
+        "feed": candle_payload.get("feed", "unknown"),
+        "dataStatus": candle_payload.get("dataStatus", "ready" if candles else "empty"),
+        "cache": {"hit": False, "ttlSeconds": redis_ttl_seconds(DERIVED_KIND_INDICATORS), "keyVersion": request["calculationVersion"]},
+        **computed,
+    }
+    return with_derived_metadata(payload, request, state="ready", source="api-inline", artifact_stored=False)
+
+
+def merge_candle_payloads(*payloads: dict[str, Any]) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    by_timestamp: dict[str, dict[str, Any]] = {}
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            continue
+        if not merged:
+            merged = dict(payload)
+        else:
+            merged.update({key: value for key, value in payload.items() if key != "candles"})
+        for candle in payload.get("candles") or []:
+            if not isinstance(candle, dict):
+                continue
+            timestamp = str(candle.get("timestamp") or "")
+            if timestamp:
+                by_timestamp[timestamp] = candle
+    merged["candles"] = [by_timestamp[key] for key in sorted(by_timestamp)]
+    return merged
 
 
 def previous_close_from_provider(provider: Any, symbol: str) -> float | None:
