@@ -14,6 +14,7 @@ from alfaka.alpaca.feed_profiles import (
     market_session_for_datetime,
 )
 from alfaka.common.env import load_dotenv, parse_csv
+from alfaka.common.kafka_topics import closed_candle_topic_values
 from alfaka.common.redis_keys import RedisKeyBuilder
 from alfaka.common.symbols import is_crypto_symbol
 
@@ -22,14 +23,18 @@ DEFAULT_INTERVAL = "1m"
 DEFAULT_API_TIMEOUT_SECONDS = 10
 
 
-def expected_raw_topics(raw_prefix):
+def expected_raw_topics(raw_prefix, environ=None):
+    environ = os.environ if environ is None else environ
+    configured = parse_csv(environ.get("KAFKA_PROCESSOR_RAW_TOPICS", ""))
+    if configured:
+        return configured
     return [
-        "market.input.realtime.trades.v1",
-        "market.input.realtime.quotes.v1",
-        "market.input.realtime.events.v1",
-        "market.input.realtime.bars.1m.v1",
-        "market.input.realtime.updated-bars.1m.v1",
-        "market.input.realtime.daily-bars.v1",
+        f"{raw_prefix}.realtime.trades.v1",
+        f"{raw_prefix}.realtime.quotes.v1",
+        f"{raw_prefix}.realtime.events.v1",
+        f"{raw_prefix}.realtime.bars.1m.v1",
+        f"{raw_prefix}.realtime.updated-bars.1m.v1",
+        f"{raw_prefix}.realtime.daily-bars.v1",
     ]
 
 
@@ -38,7 +43,7 @@ def expected_processed_topics(environ=None):
     configured = parse_csv(environ.get("KAFKA_PROCESSED_TOPICS", ""))
     canonical = [
         environ.get("KAFKA_TRADES_LAYER_TOPIC", "market.layer.trades.v1"),
-        environ.get("KAFKA_CLOSED_CANDLE_TOPIC", "market.layer.candles.closed.v1"),
+        *closed_candle_topic_values(environ),
         environ.get("KAFKA_LIVE_CANDLE_TOPIC", "market.layer.candles.live.v1"),
         environ.get("KAFKA_QUOTES_LAYER_TOPIC", "market.layer.quotes.v1"),
         environ.get("KAFKA_EVENTS_LAYER_TOPIC", "market.layer.events.v1"),
@@ -95,7 +100,7 @@ def collect_trace(
         "symbol": symbol,
         "interval": interval,
         "status": overall_status(checks),
-        "path": "Alpaca -> input Kafka -> tick fanout topics -> Kubernetes market-processor -> Redis/layer Kafka -> ClickHouse/S3/API/WebSocket -> browser",
+        "path": "Alpaca -> input Kafka raw trade/quote topics -> Kubernetes market/quote processors -> Redis/layer Kafka -> ClickHouse/S3/API/WebSocket -> browser",
         "config": {
             "apiBaseUrl": api_base_url,
             "redisUrl": redact_url(redis_url),

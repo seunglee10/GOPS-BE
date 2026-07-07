@@ -7,6 +7,8 @@ from fastapi.encoders import jsonable_encoder
 
 from app.auth.dependencies import require_current_user
 from app.auth.models import AuthenticatedUser
+from app.core.sectors import sector_payload_fields
+from app.services.alpaca_corporate_actions import enrich_holdings_with_alpaca_dividends
 from kis_trader.kis.config import KisConfigError
 from kis_trader.kis.fake import KisConnectionReset, KisExplicitReject, KisHttpError, KisTimeout, KisTokenExpired
 
@@ -36,6 +38,9 @@ def account_holdings(
     except KisHttpError as exc:
         status_code = status.HTTP_503_SERVICE_UNAVAILABLE if exc.safe_to_retry else status.HTTP_502_BAD_GATEWAY
         raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    payload = _enrich_portfolio_holdings_sectors(request.app, payload)
+    if market == "overseas":
+        payload = enrich_holdings_with_alpaca_dividends(payload)
     _remember_portfolio_holdings_snapshot(request.app, user.sub, payload)
     return jsonable_encoder(payload)
 
@@ -72,3 +77,54 @@ def _remember_portfolio_holdings_snapshot(app: Any, user_sub: str, payload: dict
             upsert_snapshot(user_sub, payload)
     except Exception:
         return
+
+
+def _enrich_portfolio_holdings_sectors(app: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return payload
+    positions = payload.get("positions")
+    if not isinstance(positions, list):
+        return payload
+    sector_by_symbol = _portfolio_sector_map(app)
+    enriched_positions = []
+    for position in positions:
+        if not isinstance(position, dict):
+            continue
+        symbol = str(position.get("symbol") or "").strip().upper()
+        sector_source = sector_by_symbol.get(symbol) or position.get("sector")
+        enriched_positions.append({**position, **sector_payload_fields(sector_source)})
+    return {**payload, "positions": enriched_positions}
+
+
+def _portfolio_sector_map(app: Any) -> dict[str, str]:
+    provider = getattr(app.state, "portfolio_sector_provider", None)
+    if callable(provider):
+        try:
+            return _sector_map_from_items(provider())
+        except Exception:
+            return {}
+    try:
+        from app.market_data.heatmap.service import get_heatmap_service
+
+        payload = get_heatmap_service().snapshot("sp500")
+        return _sector_map_from_items(payload.get("items") if isinstance(payload, dict) else [])
+    except Exception:
+        try:
+            from app.market_data.heatmap.service import load_heatmap_seed_items
+
+            return _sector_map_from_items(load_heatmap_seed_items("sp500"))
+        except Exception:
+            return {}
+
+
+def _sector_map_from_items(items: Any) -> dict[str, str]:
+    if not isinstance(items, list):
+        return {}
+    result: dict[str, str] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        symbol = str(item.get("symbol") or "").strip().upper()
+        if symbol:
+            result[symbol] = str(item.get("sector") or "")
+    return result

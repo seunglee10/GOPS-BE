@@ -100,6 +100,14 @@ market.realtime.ticks.to.1w.v1
 market.realtime.ticks.to.1mo.v1
 market.layer.candles.live.v1
 market.layer.candles.closed.v1
+market.layer.candles.1m.closed.v1
+market.layer.candles.5m.closed.v1
+market.layer.candles.10m.closed.v1
+market.layer.candles.1h.closed.v1
+market.layer.candles.4h.closed.v1
+market.layer.candles.1d.closed.v1
+market.layer.candles.1w.closed.v1
+market.layer.candles.1mo.closed.v1
 market.layer.trades.v1
 market.layer.quotes.v1
 market.layer.events.v1
@@ -115,6 +123,14 @@ agents.notification-decisions.v1
 agents.dlq.v1
 ```
 
+`market.layer.candles.closed.v1` is retained as a legacy compatibility topic.
+New market-processor config publishes closed candles to the interval-specific
+`market.layer.candles.<interval>.closed.v1` topics.
+`market.input.realtime.trades.v1` and `market.input.realtime.quotes.v1` are hot
+raw topics and should be created with more partitions than the rest of the
+topic set. Local and AWS helpers default them to 12 partitions; standard topics
+remain 3 locally and use the normal AWS `PARTITIONS` value.
+
 Do not force MSK as the next step. The staged path is:
 
 ```text
@@ -128,12 +144,13 @@ Current repository stage:
 ```text
 systems/market-data/pods/market-processor/local_main.py
 infra/k8s/base/app/deployment-market-processor.yaml
+infra/k8s/base/app/deployment-market-quote-processor.yaml
 ```
 
 Runtime path:
 
 ```text
-local Python processor -> explicit Kubernetes processor pod
+local Python processors -> explicit Kubernetes processor pods
 ```
 
 Common stream processor env:
@@ -142,14 +159,18 @@ Common stream processor env:
 KAFKA_BOOTSTRAP_SERVERS
 KAFKA_INPUT_TOPIC_PREFIX
 KAFKA_PROCESSOR_GROUP_ID
+KAFKA_PROCESSOR_RAW_TOPICS
 KAFKA_PROCESSOR_ENABLE_AUTO_COMMIT
 CANDLE_WATERMARK_GRACE_SECONDS
 CANDLE_FLUSH_INTERVAL_SECONDS
+LIVE_CANDLE_PUBLISH_MIN_INTERVAL_SECONDS
+PROCESSOR_ACTIVE_FEED_CACHE_SECONDS
 REDIS_URL
 PROCESSOR_RECOVERY_SYMBOLS
 PROCESSOR_RECOVERY_CLICKHOUSE_ENABLED
 COMPONENT_HEALTH_TTL_SECONDS
 KAFKA_TICK_FANOUT_INTERVALS
+KAFKA_PUBLISH_TICK_FANOUT
 LIVE_CANDLE_TTL_SECONDS
 LIVE_TRADE_TTL_SECONDS
 LIVE_CANDLE_STALE_SECONDS
@@ -166,16 +187,30 @@ operator explicitly enables it.
 
 `PROCESSOR_RECOVERY_CLICKHOUSE_ENABLED=false` by default. Keep Redis-first recovery on by default; enable ClickHouse recovery only when the processor should rebuild missing startup state from deterministic canonical `1m`/`1D` rows and ClickHouse is known healthy.
 
+`KAFKA_PROCESSOR_RAW_TOPICS` optionally narrows one processor runtime to a
+comma-separated raw topic list. AWS/EKS uses this to run
+`alfaka-market-processor` on trades/bars/events and
+`alfaka-market-quote-processor` on quotes in separate consumer groups. When the
+override is present, the processor does not subscribe to legacy tick fanout
+topics even if `KAFKA_TICK_FANOUT_INTERVALS` is set.
+
 `COMPONENT_HEALTH_TTL_SECONDS` controls how long Redis keeps lightweight component freshness heartbeats such as `pipeline:health:market-processor`.
 The processor also writes scoped health keys such as
 `pipeline:health:market-processor:symbol:NVDA` and
 `pipeline:health:market-processor:feed:sip` so one noisy feed or symbol does not
 hide another symbol's live-path diagnosis.
 
-`KAFKA_TICK_FANOUT_INTERVALS` should normally stay `1m` in AWS/EKS. The
-processor derives 5m, 10m, 1h, 4h, 1D, 1W, and 1M live candles from the 1m stream, so
-consuming every tick fanout topic in the same processor creates avoidable lag.
-Use `all` only when separate interval-specific processors are deployed.
+`KAFKA_TICK_FANOUT_INTERVALS` should normally stay empty in AWS/EKS. The
+processor now handles raw trade ticks directly on the 1m/live path and derives
+5m, 10m, 1h, 4h, 1D, 1W, and 1M provisional candles from local 1m state. Tick
+fanout topics are retained for legacy/debug use only; set
+`KAFKA_PUBLISH_TICK_FANOUT=true` deliberately if another consumer group needs
+that stream.
+
+`LIVE_CANDLE_PUBLISH_MIN_INTERVAL_SECONDS` throttles Redis/WebSocket/Kafka live
+candle publish per `symbol + interval` while still updating in-memory candle
+state on every accepted trade. `PROCESSOR_ACTIVE_FEED_CACHE_SECONDS` avoids a
+Redis active-feed lookup for every single tick.
 
 `ACTIVE_CHART_TTL_SECONDS` keeps the symbol currently open in the chart inside
 the explicit realtime cohort even when the visible chart interval is 1h, 4h,
@@ -215,7 +250,8 @@ AWS/EKS may later point `REDIS_URL` at ElastiCache, Valkey, or another Redis-com
 For local compose and the in-cluster Redis StatefulSet, Redis is runtime
 chart/live/feed-control state. It stores newest 120 confirmed candles
 per `symbol + timeframe`, current provisional candles, latest closed candles,
-live trade/quote/event values, and SIP/BOATS feed state.
+per-interval closed watermarks that suppress stale live candles, live
+trade/quote/event values, and SIP/BOATS feed state.
 Durable historical candles live in ClickHouse and S3 final/manifest.
 Run the in-cluster Redis StatefulSet as an ephemeral cache/control-plane store.
 Do not make Redis replay large AOF/RDB files on restart; large market-data cache
@@ -628,6 +664,10 @@ AGENT_DLQ_TOPIC
 AGENT_PUBLISH_TO_KAFKA
 ```
 
+`AGENT_EVENT_INPUT_TOPICS` should include `market.layer.trades.v1`, every
+interval-specific `market.layer.candles.<interval>.closed.v1` topic, and
+`market.layer.events.v1` if agent/event detection needs closed-candle context.
+
 News and macro providers are staged adapters in v1. The ontology provider can
 query a GraphDB repository when the GraphDB runtime is restored and reachable.
 
@@ -768,6 +808,40 @@ gops-order-worker
 gops-kis-adapter
 gops-agent-orchestrator
 ```
+
+## Frontend Logo Integration
+
+The React frontend can render stock logos from Logo.dev by ticker symbol.
+Because `gops-frontend` is built into static Vite assets and served by nginx,
+these `VITE_*` values are build-time inputs, not Kubernetes runtime env vars:
+
+```text
+LOGODEV_PUB_KEY=
+LOGODEV_SECRET_KEY=
+VITE_LOGO_DEV_ATTRIBUTION=true
+```
+
+Leave `LOGODEV_PUB_KEY` empty to show local ticker monograms without calling
+Logo.dev. When set, the frontend uses
+`https://img.logo.dev/ticker/{SYMBOL}` directly from browser image tags.
+`VITE_LOGO_DEV_ATTRIBUTION=true` keeps the visible Logo.dev attribution required
+for commercial free-plan use. Set it to `false` only when the active Logo.dev
+plan permits removing attribution.
+`LOGODEV_SECRET_KEY` may exist in local or CI secrets for future server-side
+Logo.dev operations, but this browser-rendered logo path intentionally does not
+embed it in frontend assets.
+
+GitHub Actions dev/test deploy reads the frontend publishable key from AWS
+Secrets Manager secret `icon/logodev` when `frontend` is selected. Recommended
+secret JSON shape:
+
+```json
+{"LOGODEV_PUB_KEY":"pk_...","LOGODEV_SECRET_KEY":"sk_..."}
+```
+
+Only `LOGODEV_PUB_KEY` is passed to the Vite build. If the AWS secret value is
+rotated without code changes, run the manual deploy with `services=frontend` so
+the static frontend image is rebuilt with the new key.
 
 ## Future Dependencies
 

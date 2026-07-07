@@ -30,12 +30,29 @@ GitHub Actions dev/test deploy entrypoint is `.github/workflows/deploy-dev.yml`.
 It deploys to the shared dev EKS environment only when an operator runs the
 workflow manually from GitHub Actions (`workflow_dispatch`). Pushing to `dev`,
 `kimheejun`, `helix/front-chart`, `deploy/**`, or `test/**` must not start a
-deployment by itself.
+deployment by itself. When the manual `services` input is empty, the workflow
+compares the current commit with the latest successful run of the same workflow
+on the same branch and builds only the app services touched by that diff. Use a
+comma-separated service list such as `frontend,backend` to override detection,
+or `all` to force every app image to rebuild.
 When `market-storage` is selected, the workflow also runs
 `scripts/aws/run-news-cache-rebuild-jobs.sh` after a healthy rollout. That
 one-shot run uses the newly pushed `gops-market-storage` image to warm the
 30-day Redis news article cache and daily summary cache from ClickHouse without
 running ClickHouse rewrite mutations.
+
+The frontend Logo.dev ticker logo key is a Vite build-time value. When
+`frontend` is selected, the manual workflow reads AWS Secrets Manager secret
+`icon/logodev` and injects only the `LOGODEV_PUB_KEY` publishable key into the
+frontend Docker build. The secret may be a JSON object such as
+`{"LOGODEV_PUB_KEY":"pk_...","LOGODEV_SECRET_KEY":"sk_..."}`; the build helper
+rejects non-`pk_` values and never embeds `LOGODEV_SECRET_KEY` in frontend
+assets. The GitHub Actions AWS role must be allowed to call
+`secretsmanager:GetSecretValue` on `icon/logodev`. If only the Logo.dev secret
+value changes, run the manual workflow with `services=frontend` because Git diff
+cannot detect secret rotations. The optional GitHub Actions variable
+`LOGO_DEV_ATTRIBUTION` defaults to `true`; set it to `false` only when the active
+Logo.dev plan permits removing the visible attribution.
 
 ## Image
 
@@ -190,6 +207,19 @@ CronJobs, delete active Jobs, archive GraphDB, scale down and delete platform
 StatefulSets and PVCs, apply NodePools and platform manifests, restore GraphDB,
 run Kafka topic init and order migrations, then restore app workloads and resume
 CronJobs.
+
+The dev deploy workflow does not run cache rebuilds or SQL migrations
+automatically. For one-off maintenance during a manual build, set
+`run_order_migrations=true` with `order-worker` in `services`, or
+`rebuild_news_cache=true` with `market-storage` in `services`. Run
+`scripts/aws/run-order-migrations-job.sh` directly only when SQL migrations must
+be applied outside the deploy workflow.
+
+Market processor deploys as two runtime units from the same
+`gops-market-processor` image. `alfaka-market-processor` handles trades, bars,
+updated bars, daily bars, and events. `alfaka-market-quote-processor` handles
+quotes in a separate consumer group. Select `market-processor` in the deploy
+workflow to roll both Deployments together.
 
 Config and overlay references:
 

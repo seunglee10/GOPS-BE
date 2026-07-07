@@ -76,21 +76,22 @@ CI/CD는 Continuous Integration/Continuous Delivery의 줄임말이다. 코드�
 흐름:
 
 1. GitHub Actions 화면에서 `.github/workflows/deploy-dev.yml`을 `Run workflow`로 수동 실행한다. `workflow_dispatch`는 GitHub Actions의 수동 실행 트리거이며, branch push는 배포를 시작하지 않는다.
-2. `scripts/aws/detect-changed-services.sh`가 변경된 service를 감지한다.
+2. `scripts/aws/detect-changed-services.sh`가 변경된 service를 감지한다. `services` 입력값을 비우면 같은 branch의 마지막 성공 배포 workflow SHA부터 현재 SHA까지의 diff로 자동 감지하고, `frontend,backend`처럼 직접 입력하면 그 service만 선택한다. `all`을 입력하면 전체 app image를 강제로 다시 빌드한다.
 3. AWS OIDC role을 assume한다.
 4. ECR repository를 확인하거나 생성한다.
-5. Amazon ECR에 로그인한다.
-6. Docker Buildx를 설정한다.
-7. commit SHA 기반 image tag를 만든다.
-8. `scripts/aws/build-and-push-images.sh`로 선택된 image를 build/push한다.
-9. `aws eks update-kubeconfig`로 cluster 접근을 설정한다.
-10. `scripts/aws/update-ci-image-tags.sh`가 CI overlay image tag를 갱신한다.
-11. `kubectl apply -k` server-side dry run을 실행한다.
-12. `kubectl apply -k`로 app workload를 배포한다.
-13. `kubectl rollout status`로 rollout을 확인한다.
-14. `market-storage`가 선택된 배포에서는 `scripts/aws/run-news-cache-rebuild-jobs.sh`가 뉴스 Redis cache rebuild Job을 실행한다.
-14. frontend/backend public endpoint smoke test를 실행한다.
-15. 실패하면 `kubectl rollout undo`로 rollback한다.
+5. `frontend`가 선택되면 `scripts/aws/load-logodev-build-env.sh`가 AWS Secrets Manager `icon/logodev`에서 `LOGODEV_PUB_KEY`만 읽어 frontend build env에 넣는다.
+6. Amazon ECR에 로그인한다.
+7. Docker Buildx를 설정한다.
+8. commit SHA 기반 image tag를 만든다.
+9. `scripts/aws/build-and-push-images.sh`로 선택된 image를 build/push한다.
+10. `aws eks update-kubeconfig`로 cluster 접근을 설정한다.
+11. `scripts/aws/update-ci-image-tags.sh`가 CI overlay image tag를 갱신한다.
+12. `kubectl apply -k` server-side dry run을 실행한다.
+13. `kubectl apply -k`로 app workload를 배포한다.
+14. `kubectl rollout status`로 rollout을 확인한다.
+15. `market-storage`가 선택된 배포에서는 `scripts/aws/run-news-cache-rebuild-jobs.sh`가 뉴스 Redis cache rebuild Job을 실행한다.
+16. frontend/backend public endpoint smoke test를 실행한다.
+17. 실패하면 `kubectl rollout undo`로 rollback한다.
 
 ECR은 Amazon Elastic Container Registry의 줄임말이다. Docker image를 저장하는 AWS registry다. GitHub Actions에서 image를 build한 뒤 ECR에 push하고, EKS pod는 그 image를 pull해서 실행한다.
 

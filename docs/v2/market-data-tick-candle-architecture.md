@@ -12,19 +12,22 @@ Current rebuild rules:
 - The active runtime may keep a SIP S&P500 bars/statuses baseline, but not
   S&P500-wide trades/quotes.
 - Kafka input topics use `market.input.realtime.*.v1`.
-- Realtime tick fanout uses per-timeframe topics such as
-  `market.realtime.ticks.to.1m.v1`.
-- Candle layer topics are timeframe-specific:
-  `market.layer.candles.live.v1` and
-  `market.layer.candles.closed.v1`.
+- Realtime tick fanout topics such as `market.realtime.ticks.to.1m.v1` are
+  retained for legacy/debug use, but the default processor hot path handles raw
+  trades directly and does not re-consume tick fanout.
+- Live candles use `market.layer.candles.live.v1`; closed candles use
+  interval-specific topics such as `market.layer.candles.1m.closed.v1`,
+  `market.layer.candles.1h.closed.v1`, and
+  `market.layer.candles.1mo.closed.v1`.
 - Kafka messages use `key=symbol`; one partition is handled by one consumer pod
   at a time.
 - Redis keeps latest 120 candles per `symbol + timeframe`, live provisional
   candles, latest closed candles, live trades, live quotes, live events,
   backfill state, subscription state, and SIP/BOATS feed state.
 - Quotes are subscribed only for symbols that already receive realtime trades.
-  Quotes are Redis/WebSocket only; there is no quote layer topic, ClickHouse
-  quote table, or S3 quote archive in the active path.
+  The quote processor writes Redis/WebSocket live state and republishes
+  canonical quote payloads to `market.layer.quotes.v1` for S3 final and
+  ClickHouse `quote_ticks` storage.
 - S3 raw is backup-only. Chart serving and materialization use ClickHouse and
   S3 final/manifest, never raw backup.
 - SIP and BOATS are mutually exclusive by feed session.

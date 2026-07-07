@@ -20,6 +20,7 @@ resources:
   - deployment-subscription-controller.yaml
   - deployment-alpaca-news-ingestor.yaml
   - deployment-market-processor.yaml
+  - deployment-market-quote-processor.yaml
   - deployment-s3-sink.yaml
   - deployment-raw-s3-archive.yaml
   - deployment-clickhouse-loader.yaml

@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from alfaka.alpaca.feed_profiles import active_extended_session_window, market_session_for_timestamp
+from alfaka.serving.closed_watermark import live_candle_after_latest_closed
 from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
 from alfaka.serving.cursors import timestamp_from_cursor
 from alfaka.serving.dto import cursor_for, snapshot
@@ -39,14 +40,17 @@ class MarketDataProvider:
         limit = resolve_candle_limit(interval, limit)
         query_limit = moving_average_query_limit(interval, limit, ma_windows)
         if from_time and to_time:
-            clickhouse_from_time = from_time
+            clickhouse_from_time = moving_average_query_from_time(interval, from_time, ma_windows)
         elif before and not from_time:
             clickhouse_from_time = None
         else:
             clickhouse_from_time = target_floor_from_time(interval, from_time, limit)
+            if from_time and not before:
+                clickhouse_from_time = moving_average_query_from_time(interval, clickhouse_from_time, ma_windows)
         range_query = bool(before or from_time or to_time)
         redis_candles = filter_stock_chart_candles(self.redis_provider.recent_candles(symbol, interval, query_limit))
         live_candle = self._live_candle(symbol, interval)
+        closed_watermark = self._closed_watermark(symbol, interval)
         if range_query:
             redis_candles = filter_candles_for_requested_window(
                 redis_candles,
@@ -62,8 +66,9 @@ class MarketDataProvider:
             ) else None
         coverage = None
         if len(redis_candles) >= query_limit and redis_recent_window_is_current(redis_candles, clickhouse_from_time, range_query):
+            live_candle = live_candle_after_latest_closed(live_candle, redis_candles, watermark=closed_watermark)
             merged_redis = merge_candles(redis_candles, [live_candle] if live_candle else [])
-            payload = snapshot(symbol=symbol, interval=interval, candles=attach_moving_averages(merged_redis, windows=ma_windows)[-limit:])
+            payload = snapshot(symbol=symbol, interval=interval, candles=attach_moving_averages(merged_redis, windows=ma_windows, overwrite=True)[-limit:])
             payload["_sourceTrace"] = {
                 "redis": {"checked": True, "hit": len(merged_redis) > 0, "rowCount": len(merged_redis)},
                 "clickhouse": {"checked": False, "hit": False, "rowCount": 0},
@@ -93,9 +98,18 @@ class MarketDataProvider:
             ))
             if len(latest_candles) > len(clickhouse_candles):
                 clickhouse_candles = latest_candles
+        live_candle = live_candle_after_latest_closed(live_candle, clickhouse_candles, redis_candles, watermark=closed_watermark)
         live_group = [live_candle] if live_candle else []
         merged = merge_candles(clickhouse_candles, redis_candles, live_group)
-        candles = attach_moving_averages(merged, windows=ma_windows)[-limit:]
+        computed = attach_moving_averages(merged, windows=ma_windows, overwrite=True)
+        if range_query:
+            computed = filter_candles_for_requested_window(
+                computed,
+                before=before,
+                from_time=from_time,
+                to_time=to_time,
+            )
+        candles = computed[-limit:]
         feed = first_value(candles, "feed", "sip")
         source = first_value(candles, "source", "alpaca")
         payload = snapshot(symbol=symbol, interval=interval, candles=candles, source=source, feed=feed)
@@ -121,7 +135,7 @@ class MarketDataProvider:
         ]
         redis_candles = filter_stock_chart_candles(redis_candles)
         live_candle = self._live_candle(symbol, interval)
-        live_candles = [live_candle] if live_candle and candle_after_cursor(symbol, interval, live_candle, cursor, timestamp) else []
+        closed_watermark = self._closed_watermark(symbol, interval)
         try:
             clickhouse_candles = self._clickhouse_candles_since_cursor(symbol, interval, timestamp, limit)
         except Exception:
@@ -131,6 +145,8 @@ class MarketDataProvider:
             candle for candle in clickhouse_candles
             if candle_after_cursor(symbol, interval, candle, cursor, timestamp)
         ])
+        live_candle = live_candle_after_latest_closed(live_candle, filtered_clickhouse, redis_candles, watermark=closed_watermark)
+        live_candles = [live_candle] if live_candle and candle_after_cursor(symbol, interval, live_candle, cursor, timestamp) else []
         return merge_candles(filtered_clickhouse, redis_candles, live_candles)[-limit:]
 
     def _clickhouse_candles_since_cursor(self, symbol, interval, timestamp, limit):
@@ -164,6 +180,16 @@ class MarketDataProvider:
             return method(symbol, interval)
         except Exception:
             logger.warning("Redis live candle lookup failed for %s %s.", symbol, interval, exc_info=True)
+            return None
+
+    def _closed_watermark(self, symbol, interval):
+        method = getattr(self.redis_provider, "closed_candle_watermark", None)
+        if not callable(method):
+            return None
+        try:
+            return method(symbol, interval)
+        except Exception:
+            logger.warning("Redis closed candle watermark lookup failed for %s %s.", symbol, interval, exc_info=True)
             return None
 
     def search_symbols(self, query, limit=20):
@@ -518,3 +544,14 @@ def moving_average_query_limit(interval, requested_limit, windows=MA_WINDOWS):
         return resolve_candle_limit(interval, requested_limit)
     lookback = max(windows)
     return resolve_candle_limit(interval, int(requested_limit) + lookback)
+
+
+def moving_average_query_from_time(interval, from_time, windows=MA_WINDOWS):
+    if not windows:
+        return from_time
+    parsed = parse_iso_time(from_time)
+    if not parsed:
+        return from_time
+    lookback = max(windows)
+    start = parsed - requested_window_delta(interval, lookback)
+    return start.strftime("%Y-%m-%dT%H:%M:%S.000Z")

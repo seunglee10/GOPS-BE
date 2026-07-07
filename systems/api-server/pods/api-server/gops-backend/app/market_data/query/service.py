@@ -11,17 +11,23 @@ from app.market_data.fundamentals.service import build_fundamentals_adapter
 from app.market_data.heatmap.service import get_heatmap_service
 from app.market_data.indices.service import get_indices_service
 from app.market_data.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
-from app.services.alfaka_market_data import get_market_data_provider, normalize_market_symbol, requested_ma_from_csv
+from app.services.alfaka_market_data import get_market_data_provider, normalize_market_symbol, requested_ma_from_csv, sp500_universe_symbols
 from alfaka.serving.chart_derived_data import (
     ChartDerivedArtifactStore,
     ChartDerivedDataClient,
+    DERIVED_KIND_INDICATORS,
     build_footprint_request,
     build_indicator_request,
     build_volume_profile_request,
     clickhouse_client_from_env,
     indicator_fetch_from_time,
+    read_json_cache,
+    redis_ttl_seconds,
+    with_derived_metadata,
+    write_json_cache,
 )
 from alfaka.serving.indicators import (
+    compute_indicator_payload,
     indicator_required_lookback_bars,
     indicator_specs_from_csv,
 )
@@ -32,6 +38,14 @@ from alfaka.serving.volume_profile import (
 )
 from alfaka.serving.news_hot_cache import company_daily_summary_coverage_valid
 from alfaka.storage.news_daily_summary import attach_price_changes_to_daily_summaries, clickhouse_row_to_daily_summary
+
+
+WATCHLIST_NEWS_MODES = {"watchlist", "hot", "recommended"}
+HOT_NEWS_RANKING_KINDS = (
+    ("gainers", "급등"),
+    ("losers", "급락"),
+    ("dollar-volume", "거래대금"),
+)
 
 
 class MarketDataQueryService:
@@ -232,35 +246,6 @@ class MarketDataQueryService:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         requested_limit = resolve_candle_limit(interval, limit)
-
-        lookback = indicator_required_lookback_bars(specs)
-        fetch_limit = requested_limit + lookback
-        if from_time and lookback > 0:
-            self.candle_snapshot(
-                symbol,
-                interval,
-                "",
-                lookback,
-                before=from_time,
-            )
-            self.candle_snapshot(
-                symbol,
-                interval,
-                "",
-                requested_limit,
-                from_time=from_time,
-                to_time=to_time,
-            )
-        else:
-            fetch_from_time = indicator_fetch_from_time(interval, from_time, lookback)
-            self.candle_snapshot(
-                symbol,
-                interval,
-                "",
-                fetch_limit,
-                from_time=fetch_from_time,
-                to_time=to_time,
-            )
         request = build_indicator_request(
             symbol=symbol,
             interval=interval,
@@ -269,7 +254,49 @@ class MarketDataQueryService:
             specs=specs,
             limit=requested_limit,
         )
-        return self.derived_client.resolve(request)
+        cached_payload = cached_inline_indicator_payload(self.derived_client, request)
+        if cached_payload is not None:
+            return cached_payload
+        lookback = indicator_required_lookback_bars(specs)
+        fetch_limit = requested_limit + lookback
+        if from_time and lookback > 0:
+            warmup_payload = self.candle_snapshot(
+                symbol,
+                interval,
+                "",
+                lookback,
+                before=from_time,
+            )
+            range_payload = self.candle_snapshot(
+                symbol,
+                interval,
+                "",
+                requested_limit,
+                from_time=from_time,
+                to_time=to_time,
+            )
+            candle_payload = merge_candle_payloads(warmup_payload, range_payload)
+        else:
+            fetch_from_time = indicator_fetch_from_time(interval, from_time, lookback)
+            candle_payload = self.candle_snapshot(
+                symbol,
+                interval,
+                "",
+                fetch_limit,
+                from_time=fetch_from_time,
+                to_time=to_time,
+            )
+        payload = inline_indicator_payload(
+            request,
+            candle_payload,
+            specs,
+            from_time=from_time,
+            to_time=to_time,
+            requested_limit=requested_limit,
+            lookback=lookback,
+        )
+        write_inline_indicator_cache(self.derived_client, request, payload)
+        return payload
 
     def footprint_series(
         self,
@@ -316,16 +343,71 @@ class MarketDataQueryService:
             "dailySummaries": summaries,
         }
 
-    def watchlist_news(self, user_sub: str, limit: int = 30, locale: str = "ko-KR") -> dict[str, Any]:
+    def watchlist_news(
+        self,
+        user_sub: str,
+        limit: int = 30,
+        locale: str = "ko-KR",
+        mode: str = "watchlist",
+        recommendation_repository: Any | None = None,
+    ) -> dict[str, Any]:
         limit = max(1, min(int(limit), 50))
+        normalized_mode = normalize_watchlist_news_mode(mode)
+        if normalized_mode == "hot":
+            symbols, reasons_by_symbol = self._hot_news_symbols(limit)
+            return self._symbol_group_news(
+                symbols,
+                limit,
+                locale,
+                display_mode="hotNews",
+                empty_source="hot",
+                empty_message="인기순 기준 종목을 찾지 못했습니다.",
+                no_news_message="인기순 종목 관련 저장 뉴스가 없습니다.",
+                reasons_by_symbol=reasons_by_symbol,
+            )
+        if normalized_mode == "recommended":
+            symbols, reasons_by_symbol = self._recommended_news_symbols(user_sub, recommendation_repository)
+            return self._symbol_group_news(
+                symbols,
+                limit,
+                locale,
+                display_mode="recommendedNews",
+                empty_source="recommendations",
+                empty_message="추천 기업이 생성되면 관련 뉴스가 표시됩니다.",
+                no_news_message="추천 기업 관련 저장 뉴스가 없습니다.",
+                reasons_by_symbol=reasons_by_symbol,
+            )
+
         symbols = self._user_watchlist_symbols(user_sub)
+        return self._symbol_group_news(
+            symbols,
+            limit,
+            locale,
+            display_mode="watchlistNews",
+            empty_source="watchlist",
+            empty_message="관심종목을 추가하면 관련 뉴스가 표시됩니다.",
+            no_news_message="관심종목 관련 저장 뉴스가 없습니다.",
+        )
+
+    def _symbol_group_news(
+        self,
+        symbols: list[str],
+        limit: int,
+        locale: str,
+        *,
+        display_mode: str,
+        empty_source: str,
+        empty_message: str,
+        no_news_message: str,
+        reasons_by_symbol: dict[str, list[str]] | None = None,
+    ) -> dict[str, Any]:
         if not symbols:
             return {
-                "source": "watchlist",
-                "displayMode": "watchlistNews",
+                "source": empty_source,
+                "displayMode": display_mode,
                 "symbols": [],
                 "items": [],
-                "message": "관심종목을 추가하면 관련 뉴스가 표시됩니다.",
+                "message": empty_message,
             }
 
         rows, source = self._watchlist_news_rows(symbols, limit, locale)
@@ -333,18 +415,78 @@ class MarketDataQueryService:
         company_names = self._watchlist_company_names(symbols)
         items = []
         for row in rows[:limit]:
-            matches = watchlist_news_matches(row, symbols, company_names)
+            matches = watchlist_news_matches(row, symbols, company_names, reasons_by_symbol)
             fallback_symbol = matches[0]["symbol"] if matches else symbols[0]
             item = normalize_news_item(row, fallback_symbol)
             item["matches"] = matches
             items.append(item)
         return {
             "source": source,
-            "displayMode": "watchlistNews",
+            "displayMode": display_mode,
             "symbols": symbols,
             "items": items,
-            "message": "" if items else "관심종목 관련 저장 뉴스가 없습니다.",
+            "message": "" if items else no_news_message,
         }
+
+    def _hot_news_symbols(self, limit: int) -> tuple[list[str], dict[str, list[str]]]:
+        universe = sp500_universe_symbols()
+        if not universe:
+            return [], {}
+        symbols: list[str] = []
+        reasons_by_symbol: dict[str, list[str]] = {}
+        rank_limit = min(10, max(1, int(limit)))
+        for kind, reason in HOT_NEWS_RANKING_KINDS:
+            for row in self._ranked_symbol_rows(universe, kind=kind, limit=rank_limit):
+                symbol = normalized_symbol_from_value(row.get("symbol"))
+                if not symbol:
+                    continue
+                if symbol not in symbols:
+                    symbols.append(symbol)
+                reasons = reasons_by_symbol.setdefault(symbol, [])
+                if reason not in reasons:
+                    reasons.append(reason)
+        return symbols[:30], reasons_by_symbol
+
+    def _ranked_symbol_rows(self, universe: list[str], *, kind: str, limit: int) -> list[dict[str, Any]]:
+        clickhouse_provider = getattr(self.provider, "clickhouse_provider", None)
+        rank_symbols = getattr(clickhouse_provider, "rank_symbols", None)
+        rows: list[dict[str, Any]] = []
+        if callable(rank_symbols):
+            try:
+                rows = rank_symbols(universe, kind=kind, limit=limit)
+            except Exception:
+                rows = []
+        if rows or kind != "dollar-volume":
+            return [row for row in rows or [] if isinstance(row, dict)]
+
+        hot_symbols = getattr(clickhouse_provider, "hot_symbols_by_dollar_volume", None)
+        if not callable(hot_symbols):
+            return []
+        try:
+            rows = hot_symbols(universe, limit=limit)
+        except Exception:
+            rows = []
+        return [row for row in rows or [] if isinstance(row, dict)]
+
+    def _recommended_news_symbols(self, user_sub: str, recommendation_repository: Any | None) -> tuple[list[str], dict[str, list[str]]]:
+        if recommendation_repository is None:
+            return [], {}
+        latest_run = getattr(recommendation_repository, "latest_run", None)
+        if not callable(latest_run):
+            return [], {}
+        try:
+            run = latest_run(user_sub)
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=f"Recommendation read failed: {exc}") from exc
+        items = run.get("items") if isinstance(run, dict) else []
+        symbols: list[str] = []
+        for item in items if isinstance(items, list) else []:
+            if not isinstance(item, dict):
+                continue
+            symbol = normalized_symbol_from_value(item.get("symbol"))
+            if symbol and symbol not in symbols:
+                symbols.append(symbol)
+        return symbols, {symbol: ["추천"] for symbol in symbols}
 
     def _latest_news_rows(self, symbol: str, limit: int, locale: str) -> tuple[list[dict[str, Any]], str]:
         redis_provider = getattr(self.provider, "redis_provider", None)
@@ -624,6 +766,97 @@ def provider_candle_snapshot(
     return provider.candle_snapshot(symbol, interval, limit, before=before, from_time=from_time, to_time=to_time)
 
 
+def cached_inline_indicator_payload(derived_client: Any, request: dict[str, Any]) -> dict[str, Any] | None:
+    redis_client = getattr(derived_client, "redis_client", None)
+    cached = read_json_cache(redis_client, request["cacheKey"])
+    if not cached:
+        return None
+    payload = dict(cached)
+    payload["cache"] = {
+        **(payload.get("cache") if isinstance(payload.get("cache"), dict) else {}),
+        "hit": True,
+        "ttlSeconds": redis_ttl_seconds(DERIVED_KIND_INDICATORS),
+        "keyVersion": request["calculationVersion"],
+    }
+    return with_derived_metadata(
+        payload,
+        request,
+        state="ready",
+        source="redis",
+        artifact_stored=bool(payload.get("derived", {}).get("artifactStored")),
+    )
+
+
+def write_inline_indicator_cache(derived_client: Any, request: dict[str, Any], payload: dict[str, Any]) -> None:
+    if payload.get("dataStatus") != "ready" or not payload.get("returnedCandleCount"):
+        return
+    redis_client = getattr(derived_client, "redis_client", None)
+    if redis_client is None:
+        return
+    cache_payload = dict(payload)
+    cache_payload["cache"] = {
+        **(cache_payload.get("cache") if isinstance(cache_payload.get("cache"), dict) else {}),
+        "hit": False,
+        "ttlSeconds": redis_ttl_seconds(DERIVED_KIND_INDICATORS),
+        "keyVersion": request["calculationVersion"],
+    }
+    write_json_cache(redis_client, request["cacheKey"], cache_payload, redis_ttl_seconds(DERIVED_KIND_INDICATORS))
+
+
+def inline_indicator_payload(
+    request: dict[str, Any],
+    candle_payload: dict[str, Any],
+    specs,
+    *,
+    from_time: str | None,
+    to_time: str | None,
+    requested_limit: int,
+    lookback: int,
+) -> dict[str, Any]:
+    candles = candle_payload.get("candles") or []
+    computed = compute_indicator_payload(
+        candles,
+        specs,
+        from_time=from_time,
+        to_time=to_time,
+    )
+    payload = {
+        "symbol": request["symbol"],
+        "interval": request["interval"],
+        "from": from_time,
+        "to": to_time,
+        "requestedLimit": requested_limit,
+        "lookbackBars": lookback,
+        "returnedCandleCount": len(candles),
+        "source": candle_payload.get("source", "alpaca"),
+        "feed": candle_payload.get("feed", "unknown"),
+        "dataStatus": candle_payload.get("dataStatus", "ready" if candles else "empty"),
+        "cache": {"hit": False, "ttlSeconds": redis_ttl_seconds(DERIVED_KIND_INDICATORS), "keyVersion": request["calculationVersion"]},
+        **computed,
+    }
+    return with_derived_metadata(payload, request, state="ready", source="api-inline", artifact_stored=False)
+
+
+def merge_candle_payloads(*payloads: dict[str, Any]) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    by_timestamp: dict[str, dict[str, Any]] = {}
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            continue
+        if not merged:
+            merged = dict(payload)
+        else:
+            merged.update({key: value for key, value in payload.items() if key != "candles"})
+        for candle in payload.get("candles") or []:
+            if not isinstance(candle, dict):
+                continue
+            timestamp = str(candle.get("timestamp") or "")
+            if timestamp:
+                by_timestamp[timestamp] = candle
+    merged["candles"] = [by_timestamp[key] for key in sorted(by_timestamp)]
+    return merged
+
+
 def previous_close_from_provider(provider: Any, symbol: str) -> float | None:
     try:
         payload = provider_candle_snapshot(provider, symbol, "1D", 5, ma_windows=())
@@ -708,16 +941,50 @@ def watchlist_news_symbols(row: dict[str, Any]) -> set[str]:
     return values
 
 
-def watchlist_news_matches(row: dict[str, Any], watchlist_symbols: list[str], company_names: dict[str, str]) -> list[dict[str, str]]:
+def watchlist_news_matches(
+    row: dict[str, Any],
+    watchlist_symbols: list[str],
+    company_names: dict[str, str],
+    reasons_by_symbol: dict[str, list[str]] | None = None,
+) -> list[dict[str, str]]:
     row_symbols = watchlist_news_symbols(row)
-    return [
-        {
+    matches: list[dict[str, str]] = []
+    for symbol in watchlist_symbols:
+        if symbol not in row_symbols:
+            continue
+        reasons = (reasons_by_symbol or {}).get(symbol) or []
+        match = {
             "symbol": symbol,
             **({"companyName": company_names[symbol]} if symbol in company_names else {}),
+            **({"reason": "·".join(reasons)} if reasons else {}),
         }
-        for symbol in watchlist_symbols
-        if symbol in row_symbols
-    ]
+        matches.append(match)
+    return matches
+
+
+def normalize_watchlist_news_mode(mode: str) -> str:
+    normalized = str(mode or "watchlist").strip().lower().replace("_", "-")
+    aliases = {
+        "watchlist": "watchlist",
+        "interest": "watchlist",
+        "hot": "hot",
+        "popular": "hot",
+        "recommended": "recommended",
+        "recommendation": "recommended",
+    }
+    if normalized not in aliases:
+        raise HTTPException(status_code=400, detail=f"Unsupported watchlist news mode: {mode}")
+    return aliases[normalized]
+
+
+def normalized_symbol_from_value(value: Any) -> str | None:
+    text = read_string(value)
+    if not text:
+        return None
+    try:
+        return normalize_market_symbol(text)
+    except ValueError:
+        return None
 
 
 def read_string(value: Any) -> str | None:

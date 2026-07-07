@@ -10,6 +10,7 @@ BASE_SHA="${BASE_SHA:-${GITHUB_EVENT_BEFORE:-}}"
 HEAD_SHA="${HEAD_SHA:-${GITHUB_SHA:-HEAD}}"
 EVENT_NAME="${EVENT_NAME:-${GITHUB_EVENT_NAME:-}}"
 REQUESTED_SERVICES="${REQUESTED_SERVICES:-${SERVICES:-}}"
+WORKFLOW_FILE="${WORKFLOW_FILE:-deploy-dev.yml}"
 
 declare -A SELECTED=()
 declare -A DEPLOYMENT_SELECTED=()
@@ -81,8 +82,57 @@ select_requested_services() {
     if [[ -z "${requested_service}" ]]; then
       continue
     fi
+    if [[ "${requested_service}" == "all" || "${requested_service}" == "*" ]]; then
+      add_all_services
+      continue
+    fi
     add_service "${requested_service}"
   done
+}
+
+latest_successful_workflow_sha() {
+  local repository="${GITHUB_REPOSITORY:-}"
+  local ref_name="${GITHUB_REF_NAME:-}"
+  local token="${GITHUB_TOKEN:-}"
+  local api_url
+
+  if [[ -z "${repository}" || -z "${ref_name}" || -z "${token}" ]]; then
+    return 1
+  fi
+
+  api_url="https://api.github.com/repos/${repository}/actions/workflows/${WORKFLOW_FILE}/runs?branch=${ref_name}&status=success&per_page=20"
+  curl -fsSL \
+    -H "Accept: application/vnd.github+json" \
+    -H "Authorization: Bearer ${token}" \
+    -H "X-GitHub-Api-Version: 2022-11-28" \
+    "${api_url}" \
+    | python3 -c 'import json, sys
+payload = json.load(sys.stdin)
+for run in payload.get("workflow_runs", []):
+    head_sha = run.get("head_sha")
+    if head_sha:
+        print(head_sha)
+        raise SystemExit(0)
+raise SystemExit(1)'
+}
+
+resolve_base_sha() {
+  local detected_base
+
+  if [[ -n "${BASE_SHA}" && ! "${BASE_SHA}" =~ ^0+$ ]]; then
+    return 0
+  fi
+  if [[ "${EVENT_NAME}" != "workflow_dispatch" ]]; then
+    return 1
+  fi
+
+  if detected_base="$(latest_successful_workflow_sha)"; then
+    BASE_SHA="${detected_base}"
+    echo "Manual workflow dispatch without service input: comparing from last successful deploy ${BASE_SHA}."
+    return 0
+  fi
+
+  return 1
 }
 
 select_services_for_path() {
@@ -168,7 +218,9 @@ select_services_for_path() {
       ;;
     infra/k8s/base/platform/* | infra/k8s/overlays/aws-incluster-platform/* | infra/k8s/overlays/aws-incluster-app-rebuild/*)
       ;;
-    infra/docker/* | infra/k8s/base/* | infra/k8s/base/stream-processor/* | infra/k8s/overlays/aws-incluster-app/* | infra/k8s/overlays/aws-incluster-app-ci/* | .github/workflows/deploy-dev.yml | scripts/aws/*)
+    .github/workflows/deploy-dev.yml | scripts/aws/*)
+      ;;
+    infra/docker/* | infra/k8s/base/* | infra/k8s/base/stream-processor/* | infra/k8s/overlays/aws-incluster-app/* | infra/k8s/overlays/aws-incluster-app-ci/*)
       add_all_services
       ;;
   esac
@@ -177,8 +229,8 @@ select_services_for_path() {
 if [[ -n "${REQUESTED_SERVICES}" ]]; then
   echo "Manual service selection: ${REQUESTED_SERVICES}"
   select_requested_services
-elif [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
-  echo "Manual workflow dispatch without service input: selecting all app services."
+elif ! resolve_base_sha; then
+  echo "No automatic diff base SHA found: selecting all app services."
   add_all_services
 elif [[ -z "${BASE_SHA}" || "${BASE_SHA}" =~ ^0+$ ]]; then
   echo "No usable base SHA: selecting all app services."
@@ -201,8 +253,6 @@ deployments="$(join_by_space "${SELECTED_DEPLOYMENTS[@]}")"
 has_services="false"
 smoke_frontend="false"
 smoke_backend="false"
-news_cache_rebuild="false"
-
 if [[ "${#SELECTED_KEYS[@]}" -gt 0 ]]; then
   has_services="true"
 fi
@@ -212,13 +262,8 @@ fi
 if [[ -n "${SELECTED[backend]:-}" ]]; then
   smoke_backend="true"
 fi
-if [[ -n "${SELECTED[market-storage]:-}" ]]; then
-  news_cache_rebuild="true"
-fi
-
 write_output "has_services" "${has_services}"
 write_output "services" "${services}"
 write_output "deployments" "${deployments}"
 write_output "smoke_frontend" "${smoke_frontend}"
 write_output "smoke_backend" "${smoke_backend}"
-write_output "news_cache_rebuild" "${news_cache_rebuild}"

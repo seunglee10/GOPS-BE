@@ -79,7 +79,9 @@ except Exception:
 
 sys.modules.setdefault("redis", types.SimpleNamespace(from_url=lambda *args, **kwargs: None))
 
+from app.market_data.query import service as query_service_module  # noqa: E402
 from app.market_data.query.service import MarketDataQueryService  # noqa: E402
+from app.market_data.calendar.service import next_market_open_payload, us_equity_holidays  # noqa: E402
 from app.market_data.backfill.service import BackfillService  # noqa: E402
 from app.market_data.compare.service import ChartCompareService  # noqa: E402
 from app.market_data.fill.service import OnDemandFillService  # noqa: E402
@@ -323,12 +325,14 @@ class FakeNewsRedisProvider:
 
 
 class FakeNewsClickHouseProvider:
-    def __init__(self, rows=None, daily_rows=None, candles=None):
+    def __init__(self, rows=None, daily_rows=None, candles=None, ranking_rows_by_kind=None):
         self.rows = rows or []
         self.daily_rows = daily_rows or []
         self.candle_rows = candles or []
+        self.ranking_rows_by_kind = ranking_rows_by_kind or {}
         self.localized_calls = []
         self.daily_calls = []
+        self.ranking_calls = []
 
     def localized_news_articles_for_symbols(self, symbols, limit=10, days=7, locale="ko-KR"):
         self.localized_calls.append({"symbols": list(symbols), "limit": limit, "days": days, "locale": locale})
@@ -341,11 +345,20 @@ class FakeNewsClickHouseProvider:
     def candles(self, symbol, interval, limit):
         return self.candle_rows[-limit:]
 
+    def rank_symbols(self, symbols, kind="dollar-volume", limit=10):
+        self.ranking_calls.append({"symbols": list(symbols), "kind": kind, "limit": limit})
+        allowed = set(symbols)
+        rows = [
+            row for row in self.ranking_rows_by_kind.get(kind, [])
+            if row.get("symbol") in allowed
+        ]
+        return rows[:limit]
+
 
 class FakeNewsProvider:
-    def __init__(self, redis_rows=None, clickhouse_rows=None, redis_daily_rows=None, clickhouse_daily_rows=None, candle_rows=None, redis_daily_coverage=None):
+    def __init__(self, redis_rows=None, clickhouse_rows=None, redis_daily_rows=None, clickhouse_daily_rows=None, candle_rows=None, redis_daily_coverage=None, ranking_rows_by_kind=None):
         self.redis_provider = FakeNewsRedisProvider(redis_rows, redis_daily_rows, redis_daily_coverage)
-        self.clickhouse_provider = FakeNewsClickHouseProvider(clickhouse_rows, clickhouse_daily_rows, candle_rows)
+        self.clickhouse_provider = FakeNewsClickHouseProvider(clickhouse_rows, clickhouse_daily_rows, candle_rows, ranking_rows_by_kind)
 
     def symbol_detail(self, symbol):
         names = {
@@ -818,8 +831,9 @@ def make_fill_candles(count):
 
 
 class FakeDerivedClient:
-    def __init__(self):
+    def __init__(self, redis_client=None):
         self.requests = []
+        self.redis_client = redis_client
 
     def resolve(self, request):
         self.requests.append(request)
@@ -987,8 +1001,14 @@ class FakeQueryService:
     def latest_news(self, symbol, limit=10, locale="ko-KR"):
         return self.service.latest_news(symbol, limit=limit, locale=locale)
 
-    def watchlist_news(self, user_sub, limit=30, locale="ko-KR"):
-        return self.service.watchlist_news(user_sub, limit=limit, locale=locale)
+    def watchlist_news(self, user_sub, limit=30, locale="ko-KR", mode="watchlist", recommendation_repository=None):
+        return self.service.watchlist_news(
+            user_sub,
+            limit=limit,
+            locale=locale,
+            mode=mode,
+            recommendation_repository=recommendation_repository,
+        )
 
     def request_backfill(self, symbol, interval, start=None, end=None, mode="default", force=False):
         return self.service.request_backfill(symbol, interval, start=start, end=end, mode=mode, force=force)
@@ -1167,7 +1187,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(derived_client.requests[0]["kind"], "footprint")
         self.assertEqual(derived_client.requests[0]["limit"], 100)
 
-    def test_indicator_series_uses_candle_snapshot_lookback_and_redis_cache(self):
+    def test_indicator_series_uses_filled_candle_snapshot_lookback_inline(self):
         provider = FakeIndicatorProvider()
         derived_client = FakeDerivedClient()
         service = MarketDataQueryService(provider, backfill_service=FakeBackfillService(), fill_service=FakeFillService(), derived_client=derived_client)
@@ -1184,6 +1204,10 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(payload["symbol"], "AAPL")
         self.assertEqual(payload["interval"], "1m")
         self.assertEqual([item["id"] for item in payload["indicators"]], ["sma:5", "ema:5", "rsi:14"])
+        self.assertEqual(payload["derived"]["source"], "api-inline")
+        self.assertFalse(payload["derived"]["artifactStored"])
+        self.assertEqual(len(payload["series"]["sma:5"]), 10)
+        self.assertIsNotNone(payload["series"]["sma:5"][0]["value"])
         self.assertEqual(provider.calls[0]["before"], "2026-06-25T13:30:00.000Z")
         self.assertEqual(provider.calls[0]["limit"], 15)
         self.assertEqual(provider.calls[0]["maWindows"], ())
@@ -1191,9 +1215,99 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(provider.calls[1]["limit"], 30)
         self.assertEqual(provider.calls[1]["maWindows"], ())
         self.assertEqual(len(provider.calls), 2)
-        self.assertEqual(derived_client.requests[0]["kind"], "indicators")
-        self.assertEqual(derived_client.requests[0]["parameters"]["layers"], "sma:5,ema:5,rsi:14")
-        self.assertEqual(derived_client.requests[0]["limit"], 30)
+        self.assertEqual(derived_client.requests, [])
+
+    def test_indicator_series_uses_foreground_fill_candles(self):
+        class DirectFillService(FakeFillService):
+            def fill_if_needed(self, *, symbol, interval, limit, before, from_time, to_time, payload):
+                if before:
+                    end = datetime.fromisoformat(before.replace("Z", "+00:00"))
+                    start = end - timedelta(hours=limit)
+                else:
+                    start = datetime.fromisoformat((from_time or "2026-06-25T13:00:00.000Z").replace("Z", "+00:00"))
+                candles = []
+                for index in range(limit):
+                    timestamp = start + timedelta(hours=index)
+                    close = 100 + index
+                    candles.append({
+                        "timestamp": timestamp.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                        "open": close - 0.2,
+                        "high": close + 1,
+                        "low": close - 1,
+                        "close": close,
+                        "volume": 1000 + index,
+                        "sourceInterval": interval,
+                    })
+                payload.update({
+                    "source": "alpaca",
+                    "feed": "sip",
+                    "dataStatus": "ready",
+                    "candles": candles,
+                })
+                return super().fill_if_needed(
+                    symbol=symbol,
+                    interval=interval,
+                    limit=limit,
+                    before=before,
+                    from_time=from_time,
+                    to_time=to_time,
+                    payload=payload,
+                )
+
+        derived_client = FakeDerivedClient()
+        service = MarketDataQueryService(
+            EmptyFakeProvider(),
+            backfill_service=FakeBackfillService(),
+            fill_service=DirectFillService(),
+            derived_client=derived_client,
+        )
+
+        payload = service.indicator_series(
+            "bac",
+            "1h",
+            "2026-06-25T13:00:00.000Z",
+            "2026-06-25T20:00:00.000Z",
+            "sma:5",
+            8,
+        )
+
+        self.assertEqual(payload["symbol"], "BAC")
+        self.assertEqual(payload["interval"], "1h")
+        self.assertEqual(payload["derived"]["source"], "api-inline")
+        self.assertEqual(payload["returnedCandleCount"], 13)
+        self.assertEqual(len(payload["series"]["sma:5"]), 8)
+        self.assertIsNotNone(payload["series"]["sma:5"][0]["value"])
+        self.assertEqual(derived_client.requests, [])
+
+    def test_indicator_series_reuses_inline_redis_cache(self):
+        provider = FakeIndicatorProvider()
+        redis_client = FakeIndicatorRedis()
+        derived_client = FakeDerivedClient(redis_client)
+        service = MarketDataQueryService(provider, backfill_service=FakeBackfillService(), fill_service=FakeFillService(), derived_client=derived_client)
+
+        first = service.indicator_series(
+            "aapl",
+            "1m",
+            "2026-06-25T13:30:00.000Z",
+            "2026-06-25T13:39:00.000Z",
+            "ema:5,rsi:14",
+            30,
+        )
+        provider_call_count = len(provider.calls)
+        second = service.indicator_series(
+            "aapl",
+            "1m",
+            "2026-06-25T13:30:00.000Z",
+            "2026-06-25T13:39:00.000Z",
+            "ema:5,rsi:14",
+            30,
+        )
+
+        self.assertEqual(first["derived"]["source"], "api-inline")
+        self.assertEqual(second["derived"]["source"], "redis")
+        self.assertTrue(second["cache"]["hit"])
+        self.assertEqual(len(provider.calls), provider_call_count)
+        self.assertEqual(derived_client.requests, [])
 
     def test_indicator_series_rejects_unsupported_layer(self):
         service = MarketDataQueryService(FakeIndicatorProvider(), backfill_service=FakeBackfillService(), fill_service=FakeFillService())
@@ -1373,6 +1487,101 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(provider.clickhouse_provider.localized_calls[0]["symbols"], ["NVDA", "AMD"])
         self.assertEqual(provider.clickhouse_provider.localized_calls[0]["days"], 30)
 
+    def test_watchlist_news_hot_mode_uses_ranked_symbols(self):
+        provider = FakeNewsProvider(clickhouse_rows=[
+            {
+                "articleId": "nvda-hot",
+                "targetSymbol": "NVDA",
+                "symbols": ["NVDA"],
+                "localizedHeadline": "엔비디아 인기 뉴스",
+                "localizedSummary": "급등 종목 관련 뉴스입니다.",
+                "publishedAt": "2026-07-03T12:00:00.000Z",
+            },
+            {
+                "articleId": "amd-hot",
+                "targetSymbol": "AMD",
+                "symbols": ["AMD"],
+                "localizedHeadline": "AMD 인기 뉴스",
+                "localizedSummary": "급락 종목 관련 뉴스입니다.",
+                "publishedAt": "2026-07-02T12:00:00.000Z",
+            },
+            {
+                "articleId": "aapl-hot",
+                "targetSymbol": "AAPL",
+                "symbols": ["AAPL"],
+                "localizedHeadline": "애플 인기 뉴스",
+                "localizedSummary": "거래대금 상위 종목 관련 뉴스입니다.",
+                "publishedAt": "2026-07-01T12:00:00.000Z",
+            },
+        ], ranking_rows_by_kind={
+            "gainers": [{"symbol": "NVDA"}],
+            "losers": [{"symbol": "AMD"}],
+            "dollar-volume": [{"symbol": "AAPL"}],
+        })
+        service = MarketDataQueryService(provider, backfill_service=FakeBackfillService())
+
+        with mock.patch.object(query_service_module, "sp500_universe_symbols", return_value=["NVDA", "AMD", "AAPL", "MSFT"]):
+            payload = service.watchlist_news("user-a", limit=10, mode="hot")
+
+        self.assertEqual(payload["displayMode"], "hotNews")
+        self.assertEqual(payload["symbols"], ["NVDA", "AMD", "AAPL"])
+        self.assertEqual(provider.clickhouse_provider.localized_calls[0]["symbols"], ["NVDA", "AMD", "AAPL"])
+        reasons = {item["symbol"]: item["matches"][0]["reason"] for item in payload["items"]}
+        self.assertEqual(reasons["NVDA"], "급등")
+        self.assertEqual(reasons["AMD"], "급락")
+        self.assertEqual(reasons["AAPL"], "거래대금")
+
+    def test_watchlist_news_recommended_mode_reads_latest_recommendation_symbols(self):
+        provider = FakeNewsProvider(clickhouse_rows=[
+            {
+                "articleId": "msft-rec",
+                "targetSymbol": "MSFT",
+                "symbols": ["MSFT"],
+                "localizedHeadline": "마이크로소프트 추천 뉴스",
+                "localizedSummary": "추천 기업 관련 뉴스입니다.",
+                "publishedAt": "2026-07-03T12:00:00.000Z",
+            },
+            {
+                "articleId": "avgo-rec",
+                "targetSymbol": "AVGO",
+                "symbols": ["AVGO"],
+                "localizedHeadline": "브로드컴 추천 뉴스",
+                "localizedSummary": "추천 기업 관련 뉴스입니다.",
+                "publishedAt": "2026-07-02T12:00:00.000Z",
+            },
+        ])
+        repository = types.SimpleNamespace(
+            calls=[],
+            latest_run=lambda user_sub: {
+                "items": [
+                    {"symbol": "MSFT", "rank": 1},
+                    {"symbol": "AVGO", "rank": 2},
+                ]
+            },
+        )
+        service = MarketDataQueryService(provider, backfill_service=FakeBackfillService())
+
+        payload = service.watchlist_news("user-a", limit=10, mode="recommended", recommendation_repository=repository)
+
+        self.assertEqual(payload["displayMode"], "recommendedNews")
+        self.assertEqual(payload["symbols"], ["MSFT", "AVGO"])
+        self.assertEqual(provider.clickhouse_provider.localized_calls[0]["symbols"], ["MSFT", "AVGO"])
+        self.assertEqual(payload["items"][0]["matches"][0]["reason"], "추천")
+
+    def test_watchlist_news_recommended_mode_is_empty_without_latest_run(self):
+        provider = FakeNewsProvider()
+        repository = types.SimpleNamespace(latest_run=lambda user_sub: None)
+        service = MarketDataQueryService(provider, backfill_service=FakeBackfillService())
+
+        payload = service.watchlist_news("user-a", limit=10, mode="recommended", recommendation_repository=repository)
+
+        self.assertEqual(payload["displayMode"], "recommendedNews")
+        self.assertEqual(payload["symbols"], [])
+        self.assertEqual(payload["items"], [])
+        self.assertIn("추천 기업", payload["message"])
+        self.assertEqual(provider.redis_provider.localized_calls, [])
+        self.assertEqual(provider.clickhouse_provider.localized_calls, [])
+
     def test_watchlist_news_route_delegates_authenticated_user(self):
         provider = FakeNewsProvider(redis_rows=[{
             "articleId": "redis-1",
@@ -1390,6 +1599,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         query_routes.get_query_service = lambda: FakeQueryService(provider)
         try:
             payload = query_routes.market_watchlist_news(
+                request=types.SimpleNamespace(app=types.SimpleNamespace(state=types.SimpleNamespace())),
                 limit=3,
                 user=AuthenticatedUser(sub="user-a", email="user@example.com", email_verified=True),
             )
@@ -2253,6 +2463,8 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(payload["coverage"]["layoutMarketCapFromSeed"], 1)
         self.assertEqual(payload["items"][0]["marketCap"], 200000)
         self.assertEqual(payload["items"][0]["marketCapSource"], "fundamentals")
+        self.assertEqual(payload["items"][0]["sector"], "Information Technology")
+        self.assertEqual(payload["items"][0]["sectorLabelKo"], "정보기술")
         self.assertEqual(payload["items"][0]["layoutPrice"], 200)
         self.assertEqual(payload["items"][0]["eps"], 5)
         self.assertEqual(payload["items"][0]["revenue"], 100000)
@@ -3136,6 +3348,52 @@ class MarketDataQueryServiceTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["symbols"][0]["symbol"], "AAPL")
+
+    def test_next_market_open_skips_us_equity_holiday(self):
+        with mock.patch.dict(os.environ, {
+            "MARKET_TIMEZONE": "America/New_York",
+            "MARKET_OPEN_TIME": "09:30",
+            "MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS": "true",
+            "MARKET_CLOSED_DATES": "",
+            "MARKET_EARLY_CLOSES": "",
+        }, clear=False):
+            payload = next_market_open_payload(
+                datetime(2026, 7, 3, 12, 0, tzinfo=timezone.utc),
+                clock_provider=lambda: None,
+            )
+
+        self.assertEqual(payload["source"], "configured-nyse")
+        self.assertEqual(payload["marketDate"], "2026-07-06")
+        self.assertEqual(payload["nextOpenAt"], "2026-07-06T13:30:00+00:00")
+        self.assertIn("2026-07-03", us_equity_holidays(2026))
+
+    def test_next_market_open_prefers_alpaca_clock_payload(self):
+        payload = next_market_open_payload(
+            datetime(2026, 7, 7, 1, 0, tzinfo=timezone.utc),
+            clock_provider=lambda: {
+                "is_open": False,
+                "next_open": "2026-07-07T13:30:00Z",
+                "next_close": "2026-07-07T20:00:00Z",
+            },
+        )
+
+        self.assertEqual(payload["source"], "alpaca-clock")
+        self.assertEqual(payload["marketDate"], "2026-07-07")
+        self.assertEqual(payload["nextOpenAt"], "2026-07-07T13:30:00+00:00")
+
+    @unittest.skipUnless(FASTAPI_TESTCLIENT_AVAILABLE, "fastapi TestClient dependency is not installed")
+    def test_fastapi_next_market_open_route_is_public(self):
+        from app.main import create_app
+
+        app = create_app()
+        app.state.market_clock_provider = lambda: {
+            "is_open": False,
+            "next_open": "2099-07-07T13:30:00Z",
+        }
+        response = TestClient(app).get("/api/market/next-open")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["nextOpenAt"], "2099-07-07T13:30:00+00:00")
 
     @unittest.skipUnless(FASTAPI_TESTCLIENT_AVAILABLE, "fastapi TestClient dependency is not installed")
     def test_chart_mutation_routes_require_authenticated_user_when_auth_enabled(self):

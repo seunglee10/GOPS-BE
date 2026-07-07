@@ -4,12 +4,23 @@ on:
   workflow_dispatch:
     inputs:
       services:
-        description: "Optional service keys to deploy, e.g. frontend,backend"
+        description: "Optional service keys to deploy, e.g. frontend,backend. Use all to force every app image."
         required: false
         type: string
+      run_order_migrations:
+        description: "Run SQL migrations using the built order-worker image"
+        required: false
+        default: false
+        type: boolean
+      rebuild_news_cache:
+        description: "Rebuild news Redis cache using the built market-storage image"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
+  actions: read
   id-token: write
 
 concurrency:
@@ -51,6 +62,8 @@ jobs:
           HEAD_SHA: ${{ github.sha }}
           EVENT_NAME: ${{ github.event_name }}
           REQUESTED_SERVICES: ${{ github.event.inputs.services || '' }}
+          GITHUB_TOKEN: ${{ github.token }}
+          WORKFLOW_FILE: deploy-dev.yml
         run: ./scripts/aws/detect-changed-services.sh
 
       - name: Skip app deploy
@@ -68,6 +81,12 @@ jobs:
         if: steps.changes.outputs.has_services == 'true'
         run: ./scripts/aws/ensure-ecr-repositories.sh
 
+      - name: Load Logo.dev build key from AWS Secrets Manager
+        if: steps.changes.outputs.has_services == 'true' && contains(steps.changes.outputs.services, 'frontend')
+        env:
+          LOGODEV_SECRET_NAME: icon/logodev
+        run: ./scripts/aws/load-logodev-build-env.sh
+
       - name: Login to Amazon ECR
         if: steps.changes.outputs.has_services == 'true'
         uses: aws-actions/amazon-ecr-login@v2
@@ -80,10 +99,27 @@ jobs:
         if: steps.changes.outputs.has_services == 'true'
         run: echo "IMAGE_TAG=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
 
+      - name: Validate optional build tasks
+        if: steps.changes.outputs.has_services == 'true'
+        env:
+          SERVICES: ${{ steps.changes.outputs.services }}
+          RUN_ORDER_MIGRATIONS: ${{ github.event.inputs.run_order_migrations || 'false' }}
+          REBUILD_NEWS_CACHE: ${{ github.event.inputs.rebuild_news_cache || 'false' }}
+        run: |
+          if [[ "$RUN_ORDER_MIGRATIONS" == "true" && " ${SERVICES} " != *" order-worker "* ]]; then
+            echo "run_order_migrations=true requires services to include order-worker." >&2
+            exit 1
+          fi
+          if [[ "$REBUILD_NEWS_CACHE" == "true" && " ${SERVICES} " != *" market-storage "* ]]; then
+            echo "rebuild_news_cache=true requires services to include market-storage." >&2
+            exit 1
+          fi
+
       - name: Build and push images
         if: steps.changes.outputs.has_services == 'true'
         env:
           SERVICES: ${{ steps.changes.outputs.services }}
+          VITE_LOGO_DEV_ATTRIBUTION: ${{ vars.LOGO_DEV_ATTRIBUTION || 'true' }}
         run: ./scripts/aws/build-and-push-images.sh
 
       - name: Set up kubectl
@@ -99,6 +135,10 @@ jobs:
         env:
           SERVICES: ${{ steps.changes.outputs.services }}
         run: ./scripts/aws/update-ci-image-tags.sh
+
+      - name: Run order database migrations
+        if: steps.changes.outputs.has_services == 'true' && github.event.inputs.run_order_migrations == 'true'
+        run: ./scripts/aws/run-order-migrations-job.sh
 
       - name: Server-side dry run
         if: steps.changes.outputs.has_services == 'true'
@@ -150,6 +190,10 @@ jobs:
             smoke_url https://stargops.com/api/health
           fi
 
+      - name: Rebuild news Redis cache
+        if: steps.changes.outputs.has_services == 'true' && github.event.inputs.rebuild_news_cache == 'true'
+        run: ./scripts/aws/run-news-cache-rebuild-jobs.sh
+
       - name: Roll back failed app rollout
         if: failure() && steps.changes.outputs.has_services == 'true' && steps.deploy_app.outcome == 'success'
         env:
@@ -162,7 +206,3 @@ jobs:
               -n "$K8S_NAMESPACE" \
               --timeout=600s
           done
-
-      - name: Rebuild news Redis cache
-        if: steps.changes.outputs.news_cache_rebuild == 'true'
-        run: ./scripts/aws/run-news-cache-rebuild-jobs.sh

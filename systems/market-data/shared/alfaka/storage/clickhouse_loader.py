@@ -11,6 +11,7 @@ from alfaka.alpaca.feed_profiles import market_session_for_timestamp
 from alfaka.common.canonical import candle_metadata
 from alfaka.common.env import load_dotenv, parse_csv
 from alfaka.common.kafka_io import create_json_consumer
+from alfaka.common.kafka_topics import closed_candle_topic_values
 from alfaka.common.runtime_config import validate_required_values
 from alfaka.common.symbols import is_crypto_symbol
 from alfaka.storage.candle_validation import invalid_candle_reason
@@ -65,7 +66,7 @@ def main():
 def clickhouse_topics_from_env(environ=None, load_trades=False, load_quotes=True):
     environ = environ or os.environ
     default_topics = [
-        environ.get("KAFKA_CLOSED_CANDLE_TOPIC", "market.layer.candles.closed.v1"),
+        *closed_candle_topic_values(environ),
         environ.get("KAFKA_TRADES_LAYER_TOPIC", "market.layer.trades.v1"),
         environ.get("KAFKA_EVENTS_LAYER_TOPIC", "market.layer.events.v1"),
         environ.get("KAFKA_NEWS_TOPIC", "market.news.alpaca.v1"),

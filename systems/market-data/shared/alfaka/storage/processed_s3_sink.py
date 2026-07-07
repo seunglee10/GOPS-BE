@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 from alfaka.common.canonical import CANONICAL_VERSION, is_historical_canonical
 from alfaka.common.env import load_dotenv, parse_csv
 from alfaka.common.kafka_io import create_json_consumer
+from alfaka.common.kafka_topics import closed_candle_topic_values
 from alfaka.common.runtime_config import validate_required_values
 from alfaka.storage.s3_manifest import DEFAULT_MANIFEST_PREFIX, write_processed_candle_manifest
 
@@ -80,7 +81,7 @@ def main():
 def processed_topics_from_env(environ=None):
     environ = os.environ if environ is None else environ
     return parse_csv(environ.get("KAFKA_PROCESSED_TOPICS", ",".join([
-        environ.get("KAFKA_CLOSED_CANDLE_TOPIC", "market.layer.candles.closed.v1"),
+        *closed_candle_topic_values(environ),
         environ.get("KAFKA_TRADES_LAYER_TOPIC", "market.layer.trades.v1"),
         environ.get("KAFKA_QUOTES_LAYER_TOPIC", "market.layer.quotes.v1"),
         environ.get("KAFKA_EVENTS_LAYER_TOPIC", "market.layer.events.v1"),

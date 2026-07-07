@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sys
 import types
 import unittest
@@ -26,6 +27,7 @@ sys.path.insert(0, str(ROOT / "systems" / "api-server" / "pods" / "api-server" /
 
 from app.market_data.realtime.session_manager import WebSocketSessionManager  # noqa: E402
 from app.market_data.realtime.stream_hub import StreamSession, SymbolStreamHub  # noqa: E402
+from alfaka.common.redis_keys import RedisKeyBuilder  # noqa: E402
 from alfaka.serving.cursors import timestamp_from_cursor  # noqa: E402
 
 WebSocketDisconnect = TestWebSocketDisconnect
@@ -73,6 +75,38 @@ class FakeProvider:
             "isClosed": True,
             "sourceEventId": "gap-fill",
         }]
+
+
+class PipelineRedis:
+    def __init__(self):
+        self.values = {}
+        self.hashes = {}
+
+    def pipeline(self):
+        return Pipeline(self)
+
+
+class Pipeline:
+    def __init__(self, redis):
+        self.redis = redis
+        self.operations = []
+
+    def get(self, key):
+        self.operations.append(("get", key))
+        return self
+
+    def hgetall(self, key):
+        self.operations.append(("hgetall", key))
+        return self
+
+    def execute(self):
+        values = []
+        for kind, key in self.operations:
+            if kind == "get":
+                values.append(self.redis.values.get(key))
+            elif kind == "hgetall":
+                values.append(dict(self.redis.hashes.get(key, {})))
+        return values
 
 
 class RaceHub:
@@ -226,6 +260,25 @@ class RealtimeBoundaryTest(unittest.TestCase):
             self.assertEqual(aapl_1m.queue.qsize(), 1)
 
         asyncio.run(run())
+
+    def test_stream_hub_drops_live_candle_at_or_before_closed_watermark(self):
+        redis = PipelineRedis()
+        keys = RedisKeyBuilder()
+        redis.values[keys.live_candle("AAPL", "1m")] = json.dumps({
+            "timestamp": "2026-06-25T10:15:00.000Z",
+            "open": 100,
+            "high": 101,
+            "low": 99,
+            "close": 100.5,
+            "volume": 10,
+            "isClosed": False,
+        })
+        redis.values[keys.closed_candle_watermark("AAPL", "1m")] = "2026-06-25T10:15:00.000Z"
+        hub = TestableHub(redis_client=redis, provider=FakeProvider())
+
+        events = hub._read_latest_live_events_batch({"AAPL": ["1m"]})
+
+        self.assertEqual(events, [])
 
     def test_duplicate_pubsub_event_is_not_enqueued_twice(self):
         async def run():

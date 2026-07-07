@@ -96,6 +96,7 @@ data:
   KAFKA_INPUT_TOPIC_PREFIX: market.input
   KAFKA_RAW_S3_GROUP_ID: alfaka-raw-s3-archive
   KAFKA_PROCESSOR_GROUP_ID: alfaka-market-processor
+  KAFKA_PROCESSOR_RAW_TOPICS: ""
   KAFKA_INPUT_TRADES_TOPIC: market.input.realtime.trades.v1
   KAFKA_INPUT_QUOTES_TOPIC: market.input.realtime.quotes.v1
   KAFKA_INPUT_EVENTS_TOPIC: market.input.realtime.events.v1
@@ -111,9 +112,18 @@ data:
   KAFKA_REALTIME_TICKS_TO_1D_TOPIC: market.realtime.ticks.to.1d.v1
   KAFKA_REALTIME_TICKS_TO_1W_TOPIC: market.realtime.ticks.to.1w.v1
   KAFKA_REALTIME_TICKS_TO_1MO_TOPIC: market.realtime.ticks.to.1mo.v1
-  KAFKA_TICK_FANOUT_INTERVALS: 1m
+  KAFKA_TICK_FANOUT_INTERVALS: ""
+  KAFKA_PUBLISH_TICK_FANOUT: "false"
   KAFKA_LIVE_CANDLE_TOPIC: market.layer.candles.live.v1
   KAFKA_CLOSED_CANDLE_TOPIC: market.layer.candles.closed.v1
+  KAFKA_CLOSED_CANDLE_1M_TOPIC: market.layer.candles.1m.closed.v1
+  KAFKA_CLOSED_CANDLE_5M_TOPIC: market.layer.candles.5m.closed.v1
+  KAFKA_CLOSED_CANDLE_10M_TOPIC: market.layer.candles.10m.closed.v1
+  KAFKA_CLOSED_CANDLE_1H_TOPIC: market.layer.candles.1h.closed.v1
+  KAFKA_CLOSED_CANDLE_4H_TOPIC: market.layer.candles.4h.closed.v1
+  KAFKA_CLOSED_CANDLE_1D_TOPIC: market.layer.candles.1d.closed.v1
+  KAFKA_CLOSED_CANDLE_1W_TOPIC: market.layer.candles.1w.closed.v1
+  KAFKA_CLOSED_CANDLE_1MO_TOPIC: market.layer.candles.1mo.closed.v1
   KAFKA_NEWS_TOPIC: market.news.alpaca.v1
   KAFKA_NEWS_DAILY_SUMMARY_DIRTY_TOPIC: market.news.daily-summary-dirty.v1
   CHART_DERIVED_REQUEST_TOPIC: market.chart-derived.requests.v1
@@ -137,14 +147,16 @@ data:
   PROCESSOR_LOG_EVERY_N: "500"
   CANDLE_WATERMARK_GRACE_SECONDS: "5"
   CANDLE_FLUSH_INTERVAL_SECONDS: "1"
+  LIVE_CANDLE_PUBLISH_MIN_INTERVAL_SECONDS: "1"
+  PROCESSOR_ACTIVE_FEED_CACHE_SECONDS: "1"
   KAFKA_PROCESSOR_ENABLE_AUTO_COMMIT: "false"
   PROCESSOR_RECOVERY_SYMBOLS: ""
   PROCESSOR_RECOVERY_CLICKHOUSE_ENABLED: "false"
   COMPONENT_HEALTH_TTL_SECONDS: "300"
-  KAFKA_PROCESSED_TOPICS: market.layer.candles.closed.v1,market.layer.trades.v1,market.layer.quotes.v1,market.layer.events.v1
+  KAFKA_PROCESSED_TOPICS: market.layer.candles.1m.closed.v1,market.layer.candles.5m.closed.v1,market.layer.candles.10m.closed.v1,market.layer.candles.1h.closed.v1,market.layer.candles.4h.closed.v1,market.layer.candles.1d.closed.v1,market.layer.candles.1w.closed.v1,market.layer.candles.1mo.closed.v1,market.layer.trades.v1,market.layer.quotes.v1,market.layer.events.v1
   KAFKA_S3_ENABLE_AUTO_COMMIT: "false"
   KAFKA_CLICKHOUSE_ENABLE_AUTO_COMMIT: "false"
-  KAFKA_CLICKHOUSE_TOPICS: market.layer.candles.closed.v1,market.layer.trades.v1,market.layer.quotes.v1,market.layer.events.v1,market.news.alpaca.v1
+  KAFKA_CLICKHOUSE_TOPICS: market.layer.candles.1m.closed.v1,market.layer.candles.5m.closed.v1,market.layer.candles.10m.closed.v1,market.layer.candles.1h.closed.v1,market.layer.candles.4h.closed.v1,market.layer.candles.1d.closed.v1,market.layer.candles.1w.closed.v1,market.layer.candles.1mo.closed.v1,market.layer.trades.v1,market.layer.quotes.v1,market.layer.events.v1,market.news.alpaca.v1
   CLICKHOUSE_HTTP_URL: http://YOUR_CLICKHOUSE_ENDPOINT:8123
   CLICKHOUSE_DATABASE: market_data
   CLICKHOUSE_USER: alfaka
@@ -250,7 +262,7 @@ data:
   AGENT_PROVIDER_BULKHEAD_NEWS_MAX_CONCURRENCY: "100"
   AGENT_PROVIDER_BULKHEAD_RELATIONSHIP_MAX_CONCURRENCY: "20"
   AGENT_PROVIDER_BULKHEAD_ACQUIRE_TIMEOUT_MS: "25"
-  AGENT_EVENT_INPUT_TOPICS: market.layer.trades.v1,market.layer.candles.closed.v1,market.layer.events.v1
+  AGENT_EVENT_INPUT_TOPICS: market.layer.trades.v1,market.layer.candles.1m.closed.v1,market.layer.candles.5m.closed.v1,market.layer.candles.10m.closed.v1,market.layer.candles.1h.closed.v1,market.layer.candles.4h.closed.v1,market.layer.candles.1d.closed.v1,market.layer.candles.1w.closed.v1,market.layer.candles.1mo.closed.v1,market.layer.events.v1
   AGENT_MARKET_EVENTS_TOPIC: agents.market-events.v1
   AGENT_ANALYSIS_REQUESTS_TOPIC: agents.analysis-requests.v1
   AGENT_DEEP_ANALYSIS_REQUESTS_TOPIC: agents.deep-analysis-requests.v1

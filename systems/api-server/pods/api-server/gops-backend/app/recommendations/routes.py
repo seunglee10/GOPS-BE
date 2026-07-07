@@ -5,12 +5,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field
 
 from app.auth.dependencies import auth_is_enabled, require_current_user
 from app.auth.models import AuthenticatedUser
+from app.core.sectors import normalize_sector_list
 
 from .repository import (
     HORIZONS,
@@ -18,6 +19,7 @@ from .repository import (
     InMemoryRecommendationRepository,
     InvestmentProfileUpsert,
     PostgresRecommendationRepository,
+    RecommendationSchemaUnavailable,
 )
 from .service import RecommendationDataSource, RecommendationService
 
@@ -28,7 +30,7 @@ router = APIRouter(tags=["recommendations"])
 class InvestmentProfileBody(BaseModel):
     riskLevel: str = Field(min_length=1, max_length=24)
     horizon: str = "intraday"
-    maxDrawdownPct: float = Field(gt=0, le=50)
+    maxDrawdownPct: float = Field(default=6, gt=0, le=50)
     preferredSectors: list[str] = Field(default_factory=list)
     excludedSectors: list[str] = Field(default_factory=list)
     excludedSymbols: list[str] = Field(default_factory=list)
@@ -36,11 +38,12 @@ class InvestmentProfileBody(BaseModel):
 
 class RefreshBody(BaseModel):
     activeSymbol: str | None = Field(default=None, max_length=12)
+    sessionMode: str = Field(default="regular", pattern="^(pre|regular)$")
 
 
 @router.get("/api/recommendations/profile")
 def get_recommendation_profile(request: Request, user: AuthenticatedUser = Depends(require_current_user)) -> dict[str, Any]:
-    profile = _repository_from_app(request.app).get_profile(user.sub)
+    profile = _call_recommendation_storage(lambda: _repository_from_app(request.app).get_profile(user.sub))
     return {"status": "ready" if profile else "profile_required", "profile": _public_profile(profile) if profile else None}
 
 
@@ -56,23 +59,29 @@ def upsert_recommendation_profile(
         raise HTTPException(status_code=422, detail="riskLevel must be conservative, balanced, or aggressive")
     if horizon not in HORIZONS:
         raise HTTPException(status_code=422, detail="v1 recommendations only support intraday horizon")
-    profile = _repository_from_app(request.app).upsert_profile(
-        InvestmentProfileUpsert(
-            user_sub=user.sub,
-            risk_level=risk_level,
-            horizon=horizon,
-            max_drawdown_pct=float(body.maxDrawdownPct),
-            preferred_sectors=clean_text_list(body.preferredSectors, max_items=12),
-            excluded_sectors=clean_text_list(body.excludedSectors, max_items=12),
-            excluded_symbols=clean_symbol_list(body.excludedSymbols, max_items=50),
+    profile = _call_recommendation_storage(
+        lambda: _repository_from_app(request.app).upsert_profile(
+            InvestmentProfileUpsert(
+                user_sub=user.sub,
+                risk_level=risk_level,
+                horizon=horizon,
+                max_drawdown_pct=float(body.maxDrawdownPct),
+                preferred_sectors=clean_sector_list(body.preferredSectors, max_items=12),
+                excluded_sectors=clean_sector_list(body.excludedSectors, max_items=12),
+                excluded_symbols=clean_symbol_list(body.excludedSymbols, max_items=50),
+            )
         )
     )
     return {"status": "ready", "profile": _public_profile(profile)}
 
 
 @router.get("/api/recommendations/stocks/latest")
-def latest_stock_recommendations(request: Request, user: AuthenticatedUser = Depends(require_current_user)) -> dict[str, Any]:
-    return jsonable_encoder(_service_from_app(request.app).latest(user.sub))
+def latest_stock_recommendations(
+    request: Request,
+    sessionMode: str = Query(default="regular", pattern="^(pre|regular)$"),
+    user: AuthenticatedUser = Depends(require_current_user),
+) -> dict[str, Any]:
+    return jsonable_encoder(_call_recommendation_storage(lambda: _service_from_app(request.app).latest(user.sub, session_mode=sessionMode)))
 
 
 @router.post("/api/recommendations/stocks/refresh")
@@ -83,7 +92,23 @@ def refresh_stock_recommendations(
 ) -> dict[str, Any]:
     now_provider = getattr(request.app.state, "recommendation_now_provider", None)
     now = now_provider() if callable(now_provider) else datetime.now(timezone.utc)
-    return jsonable_encoder(_service_from_app(request.app).refresh(user.sub, now=now, active_symbol=body.activeSymbol if body else None))
+    return jsonable_encoder(
+        _call_recommendation_storage(
+            lambda: _service_from_app(request.app).refresh(
+                user.sub,
+                now=now,
+                active_symbol=body.activeSymbol if body else None,
+                session_mode=body.sessionMode if body else "regular",
+            )
+        )
+    )
+
+
+def _call_recommendation_storage(callback):
+    try:
+        return callback()
+    except RecommendationSchemaUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 def _service_from_app(app: Any) -> RecommendationService:
@@ -133,7 +158,9 @@ def _install_demo_recommendation_providers(app: Any) -> None:
         {"symbol": "LLY", "name": "Eli Lilly", "sector": "Healthcare", "industry": "Drug Manufacturers", "sessionDollarVolume": 130_000_000, "changePercent": 2.6, "lastPrice": 920},
     ]
     app.state.recommendation_candles_provider = _demo_candles
-    app.state.recommendation_news_provider = lambda symbol: [{"sentiment": "positive"}] if symbol in {"MSFT", "AVGO", "LLY"} else []
+    app.state.recommendation_news_provider = lambda symbol, now=None: [
+        {"sentiment": "positive", "publishedAt": (now or datetime.now(timezone.utc)).isoformat()}
+    ] if symbol in {"MSFT", "AVGO", "LLY"} else []
 
 
 def _demo_candles(symbol: str, _now: datetime) -> list[dict[str, Any]]:
@@ -167,22 +194,15 @@ def _public_profile(profile: dict[str, Any] | None) -> dict[str, Any] | None:
         "riskLevel": profile.get("risk_level"),
         "horizon": profile.get("horizon"),
         "maxDrawdownPct": profile.get("max_drawdown_pct"),
-        "preferredSectors": profile.get("preferred_sectors") or [],
-        "excludedSectors": profile.get("excluded_sectors") or [],
+        "preferredSectors": normalize_sector_list(profile.get("preferred_sectors") or []),
+        "excludedSectors": normalize_sector_list(profile.get("excluded_sectors") or []),
         "excludedSymbols": profile.get("excluded_symbols") or [],
         "updatedAt": profile.get("updated_at"),
     }
 
 
-def clean_text_list(values: list[str], *, max_items: int) -> list[str]:
-    cleaned: list[str] = []
-    for value in values:
-        text = value.strip()
-        if text and text not in cleaned:
-            cleaned.append(text)
-        if len(cleaned) >= max_items:
-            break
-    return cleaned
+def clean_sector_list(values: list[str], *, max_items: int) -> list[str]:
+    return normalize_sector_list(values, max_items=max_items)
 
 
 def clean_symbol_list(values: list[str], *, max_items: int) -> list[str]:
