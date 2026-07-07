@@ -27,8 +27,10 @@ flowchart LR
 ```
 
 GitHub Actions dev/test deploy entrypoint is `.github/workflows/deploy-dev.yml`.
-It deploys to the shared dev EKS environment on pushes to `dev`, `kimheejun`,
-`helix/front-chart`, `deploy/**`, and `test/**`, or by manual dispatch.
+It deploys to the shared dev EKS environment only when an operator runs the
+workflow manually from GitHub Actions (`workflow_dispatch`). Pushing to `dev`,
+`kimheejun`, `helix/front-chart`, `deploy/**`, or `test/**` must not start a
+deployment by itself.
 When `market-storage` is selected, the workflow also runs
 `scripts/aws/run-news-cache-rebuild-jobs.sh` after a healthy rollout. That
 one-shot run uses the newly pushed `gops-market-storage` image to warm the
@@ -197,7 +199,7 @@ infra/k8s/overlays/aws-incluster-app-ci/kustomization.yaml
 infra/k8s/overlays/aws-incluster-app-rebuild/kustomization.yaml
 ```
 
-GitHub Actions uses `aws-incluster-app-ci` for routine `dev` pushes. That CI
+GitHub Actions uses `aws-incluster-app-ci` for manual dev/test deploys. That CI
 overlay deliberately deletes the GraphDB StatefulSet from the rendered app
 bundle so immutable PVC template changes cannot break ordinary app deploys.
 It does not apply the `app-agent` NodePool placement or perform the clean

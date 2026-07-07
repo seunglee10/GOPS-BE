@@ -3,9 +3,9 @@
 Owns Alpaca ingest, stream processing, market-data storage, on-demand fill, and serving helpers.
 
 For chart-data rebuild work, `docs/CHART_DATA_REBUILD_PLAN.md` is the source of
-truth. Older notes in this system that describe a fixed preset universe,
-S&P500-wide chart collection, broad initial preload, raw S3 replay as a normal
-source, or non-Mermaid Kafka topic layouts are superseded.
+truth. Older notes in this system that describe a fixed preset chart preload,
+S&P500-wide tick/quote collection, broad initial preload, raw S3 replay as a
+normal source, or non-Mermaid Kafka topic layouts are superseded.
 
 ## Folders
 
@@ -82,15 +82,19 @@ Raw envelopes, normalized streaming events, Redis latest/live state, ClickHouse 
 
 ## On-Demand Chart Scope
 
-The chart rebuild starts with no preloaded chart data. The runtime loads only
-the `symbol + timeframe + range + layer` requested by the chart or an explicit
-subscription. Symbol registry data may help validation/search, but it is not a
-chart-data preload plan.
+The chart rebuild starts with no preloaded historical chart data. The API loads
+only the `symbol + timeframe + range + layer` requested by the chart or an
+explicit subscription. The SIP ingestor is allowed to keep an S&P500
+`bars/updatedBars/dailyBars/statuses` baseline for fresh 1m entry, but that is
+not a historical chart preload and does not include all-symbol `trades/quotes`.
+Symbol registry data may help validation/search, but it is not a chart-data
+preload plan.
 
 Runtime policy:
 
-- no preset universe chart preload
-- realtime trades/quotes/bars/events only for explicit active subscriptions
+- no preset historical universe chart preload
+- SIP S&P500 baseline is bars/updatedBars/dailyBars/statuses only
+- realtime trades/quotes only for explicit active subscriptions
 - Redis keeps only the frontend-requested recent chart window per `symbol + timeframe`
 - older confirmed candles come from ClickHouse direct interval rows when present
 - ClickHouse direct misses can fall back to query-time aggregation from `1m` or `1D`

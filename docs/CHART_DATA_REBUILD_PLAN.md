@@ -8,7 +8,10 @@ universes, or raw S3 replay as a normal chart source are superseded.
 
 차트 데이터는 이제 `GET /api/charts/candles` 하나로 읽고 채운다. 프런트가
 요청한 `symbol + interval + limit/before/from/to` 범위만 처리하며, 숨은
-6년 preload나 S&P500 전체 chart backfill은 하지 않는다.
+6년 preload나 S&P500 전체 chart backfill은 하지 않는다. 단, SIP 런타임은
+S&P500 전체 `bars/updatedBars/dailyBars/statuses`를 baseline으로 구독해 최신
+1분봉 진입성을 높인다. `trades/quotes` tick은 active chart, watchlist,
+portfolio, ranking, manual admin 같은 명시 cohort로 제한한다.
 
 조회 순서는 고정이다.
 
@@ -138,7 +141,9 @@ blank or partial, it displays `dataStatus`, response `message`, and the `fill`
 trace so CSCO 1D or similar failures show which source missed or failed.
 
 Opening WebSocket for 1D remains a separate realtime subscription concern and is
-not part of on-demand fill.
+not part of on-demand fill. Opening any S&P500 chart may promote that symbol to
+the explicit realtime `trades/quotes` cohort while the chart is active; the
+S&P500 baseline itself is bars/statuses only.
 
 ## Runtime Units
 

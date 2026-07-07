@@ -364,8 +364,11 @@ def has_subscription_payload(request):
 def read_realtime_subscription_symbols_by_channel(redis_client, channels):
     keys = RedisKeyBuilder()
     result = {channel: set() for channel in channels}
+    records_by_symbol = {}
     for symbol in read_symbol_set(redis_client, keys.subscription_symbols()):
-        layers = read_subscription_layers(redis_client, keys, symbol)
+        record = read_subscription_record(redis_client, keys, symbol)
+        records_by_symbol[symbol] = record
+        layers = read_subscription_layers_from_record(record)
         if "trades" in layers and "trades" in result:
             result["trades"].add(symbol)
         if "quotes" in layers and "quotes" in result and "trades" in layers:
@@ -375,7 +378,7 @@ def read_realtime_subscription_symbols_by_channel(redis_client, channels):
     cap = parse_positive_int(os.getenv("ALPACA_MAX_TRADE_SYMBOLS"), default=None)
     if cap:
         for channel, symbols in list(result.items()):
-            result[channel] = set(sorted(symbols)[:cap])
+            result[channel] = limit_realtime_symbols(symbols, records_by_symbol, cap)
     return result
 
 
@@ -384,18 +387,83 @@ def read_trade_subscription_symbols(redis_client):
 
 
 def read_subscription_layers(redis_client, keys, symbol):
+    return read_subscription_layers_from_record(read_subscription_record(redis_client, keys, symbol))
+
+
+def read_subscription_record(redis_client, keys, symbol):
     try:
         hgetall = getattr(redis_client, "hgetall", None)
         if callable(hgetall):
-            record = hgetall(keys.subscription_symbol(symbol)) or {}
+            return hgetall(keys.subscription_symbol(symbol)) or {}
         else:
-            record = getattr(redis_client, "hashes", {}).get(keys.subscription_symbol(symbol), {})
+            return getattr(redis_client, "hashes", {}).get(keys.subscription_symbol(symbol), {})
+    except Exception:
+        return {}
+
+
+def read_subscription_layers_from_record(record):
+    try:
+        record = record or {}
+        raw_layers = record.get("layers", "")
+        if isinstance(raw_layers, bytes):
+            raw_layers = raw_layers.decode("utf-8")
+        return {item.strip() for item in str(raw_layers).split(",") if item.strip()}
     except Exception:
         return set()
-    raw_layers = record.get("layers", "")
-    if isinstance(raw_layers, bytes):
-        raw_layers = raw_layers.decode("utf-8")
-    return {item.strip() for item in str(raw_layers).split(",") if item.strip()}
+
+
+def limit_realtime_symbols(symbols, records_by_symbol, cap):
+    ranked = sorted(
+        set(symbols),
+        key=lambda symbol: realtime_subscription_priority(symbol, records_by_symbol.get(symbol, {})),
+    )
+    return set(ranked[:cap])
+
+
+def realtime_subscription_priority(symbol, record):
+    sources = read_record_csv(record, "sources")
+    source_priority = min((source_rank(source) for source in sources), default=99)
+    active_count = read_record_int(record, "activeChartSessionCount")
+    portfolio_count = read_record_int(record, "portfolioUserCount")
+    watchlist_count = read_record_int(record, "watchlistUserCount")
+    return (
+        source_priority,
+        -active_count,
+        -portfolio_count,
+        -watchlist_count,
+        symbol,
+    )
+
+
+def source_rank(source):
+    if source == "active-chart":
+        return 0
+    if source == "manual":
+        return 1
+    if source == "portfolio":
+        return 2
+    if source == "watchlist":
+        return 3
+    if str(source).startswith("rank:"):
+        return 4
+    return 9
+
+
+def read_record_csv(record, field):
+    raw_value = (record or {}).get(field, "")
+    if isinstance(raw_value, bytes):
+        raw_value = raw_value.decode("utf-8")
+    return {item.strip() for item in str(raw_value or "").split(",") if item.strip()}
+
+
+def read_record_int(record, field):
+    raw_value = (record or {}).get(field, 0)
+    if isinstance(raw_value, bytes):
+        raw_value = raw_value.decode("utf-8")
+    try:
+        return int(raw_value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def attach_feed_epoch(redis_client, envelope):
