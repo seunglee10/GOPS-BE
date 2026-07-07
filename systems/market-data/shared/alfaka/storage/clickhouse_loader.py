@@ -22,6 +22,7 @@ def main():
 
     kafka_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
     group_id = os.getenv("KAFKA_CLICKHOUSE_GROUP_ID", "alfaka-clickhouse-loader")
+    client_id = os.getenv("KAFKA_CLICKHOUSE_CLIENT_ID", "alfaka-clickhouse-consumer")
     load_trades = os.getenv("CLICKHOUSE_LOAD_TRADES", "true").lower() in {"1", "true", "yes"}
     load_quotes = os.getenv("CLICKHOUSE_LOAD_QUOTES", "true").lower() in {"1", "true", "yes"}
     topics = clickhouse_topics_from_env(os.environ, load_trades=load_trades, load_quotes=load_quotes)
@@ -47,7 +48,7 @@ def main():
         topics,
         kafka_servers,
         group_id,
-        "alfaka-clickhouse-consumer",
+        client_id,
         enable_auto_commit=enable_auto_commit,
     )
     print(f"ClickHouse loader 시작: topics={topics}", flush=True)

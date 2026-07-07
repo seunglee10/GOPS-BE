@@ -248,6 +248,13 @@ KAFKA_S3_ENABLE_AUTO_COMMIT=false
 KAFKA_CLICKHOUSE_ENABLE_AUTO_COMMIT=false
 ```
 
+AWS/EKS splits ClickHouse projection consumers by topic pressure. The baseline
+`alfaka-clickhouse-loader` consumes closed candle, event, and news topics only.
+`alfaka-clickhouse-tick-loader` runs multiple replicas in the same
+`alfaka-clickhouse-loader` consumer group and consumes
+`market.layer.trades.v1,market.layer.quotes.v1`, so footprint tick persistence
+can catch up without blocking candle/news persistence.
+
 ## Redis
 
 Current chart rebuild Redis env:

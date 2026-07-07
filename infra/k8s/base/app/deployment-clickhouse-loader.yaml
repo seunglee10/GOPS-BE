@@ -1,5 +1,5 @@
-# 역할: Kafka closed candle topic을 ClickHouse 조회 테이블에 적재합니다.
-# 사용: GOPS backend가 과거/최근 1분봉을 ClickHouse에서 읽을 수 있게 합니다.
+# 역할: Kafka closed candle/news/event topic을 ClickHouse 조회 테이블에 적재합니다.
+# 사용: tick 적재는 별도 loader가 처리하고, 이 loader는 candle 조회 경로를 안정적으로 유지합니다.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -27,3 +27,51 @@ spec:
             - secretRef:
                 name: alfaka-clickhouse-secret
                 optional: true
+          env:
+            - name: KAFKA_CLICKHOUSE_TOPICS
+              value: market.layer.candles.1m.closed.v1,market.layer.candles.5m.closed.v1,market.layer.candles.10m.closed.v1,market.layer.candles.1h.closed.v1,market.layer.candles.4h.closed.v1,market.layer.candles.1d.closed.v1,market.layer.candles.1w.closed.v1,market.layer.candles.1mo.closed.v1,market.layer.events.v1,market.news.alpaca.v1
+            - name: CLICKHOUSE_LOAD_TRADES
+              value: "false"
+            - name: CLICKHOUSE_LOAD_QUOTES
+              value: "false"
+---
+# 역할: Kafka trade/quote layer topic을 ClickHouse tick 테이블에 적재합니다.
+# 사용: footprint/틱 조회가 candle/news 적재 backlog와 서로 막히지 않도록 별도 consumer들로 분리합니다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alfaka-clickhouse-tick-loader
+  namespace: alfaka-market-data
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: alfaka-clickhouse-tick-loader
+  template:
+    metadata:
+      labels:
+        app: alfaka-clickhouse-tick-loader
+    spec:
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: clickhouse-loader
+          image: YOUR_ECR_REPOSITORY/gops-market-storage:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "systems/market-data/pods/clickhouse-loader/processed_loader.py"]
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-clickhouse-secret
+                optional: true
+          env:
+            - name: KAFKA_CLICKHOUSE_GROUP_ID
+              value: alfaka-clickhouse-loader
+            - name: KAFKA_CLICKHOUSE_CLIENT_ID
+              value: alfaka-clickhouse-tick-loader
+            - name: KAFKA_CLICKHOUSE_TOPICS
+              value: market.layer.trades.v1,market.layer.quotes.v1
+            - name: CLICKHOUSE_LOAD_TRADES
+              value: "true"
+            - name: CLICKHOUSE_LOAD_QUOTES
+              value: "true"
