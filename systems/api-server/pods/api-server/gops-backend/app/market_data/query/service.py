@@ -21,8 +21,10 @@ from alfaka.serving.chart_derived_data import (
     build_volume_profile_request,
     clickhouse_client_from_env,
     indicator_fetch_from_time,
+    read_json_cache,
     redis_ttl_seconds,
     with_derived_metadata,
+    write_json_cache,
 )
 from alfaka.serving.indicators import (
     compute_indicator_payload,
@@ -244,7 +246,17 @@ class MarketDataQueryService:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         requested_limit = resolve_candle_limit(interval, limit)
-
+        request = build_indicator_request(
+            symbol=symbol,
+            interval=interval,
+            from_time=from_time,
+            to_time=to_time,
+            specs=specs,
+            limit=requested_limit,
+        )
+        cached_payload = cached_inline_indicator_payload(self.derived_client, request)
+        if cached_payload is not None:
+            return cached_payload
         lookback = indicator_required_lookback_bars(specs)
         fetch_limit = requested_limit + lookback
         if from_time and lookback > 0:
@@ -274,15 +286,7 @@ class MarketDataQueryService:
                 from_time=fetch_from_time,
                 to_time=to_time,
             )
-        request = build_indicator_request(
-            symbol=symbol,
-            interval=interval,
-            from_time=from_time,
-            to_time=to_time,
-            specs=specs,
-            limit=requested_limit,
-        )
-        return inline_indicator_payload(
+        payload = inline_indicator_payload(
             request,
             candle_payload,
             specs,
@@ -291,6 +295,8 @@ class MarketDataQueryService:
             requested_limit=requested_limit,
             lookback=lookback,
         )
+        write_inline_indicator_cache(self.derived_client, request, payload)
+        return payload
 
     def footprint_series(
         self,
@@ -758,6 +764,43 @@ def provider_candle_snapshot(
             ma_windows=ma_windows,
         )
     return provider.candle_snapshot(symbol, interval, limit, before=before, from_time=from_time, to_time=to_time)
+
+
+def cached_inline_indicator_payload(derived_client: Any, request: dict[str, Any]) -> dict[str, Any] | None:
+    redis_client = getattr(derived_client, "redis_client", None)
+    cached = read_json_cache(redis_client, request["cacheKey"])
+    if not cached:
+        return None
+    payload = dict(cached)
+    payload["cache"] = {
+        **(payload.get("cache") if isinstance(payload.get("cache"), dict) else {}),
+        "hit": True,
+        "ttlSeconds": redis_ttl_seconds(DERIVED_KIND_INDICATORS),
+        "keyVersion": request["calculationVersion"],
+    }
+    return with_derived_metadata(
+        payload,
+        request,
+        state="ready",
+        source="redis",
+        artifact_stored=bool(payload.get("derived", {}).get("artifactStored")),
+    )
+
+
+def write_inline_indicator_cache(derived_client: Any, request: dict[str, Any], payload: dict[str, Any]) -> None:
+    if payload.get("dataStatus") != "ready" or not payload.get("returnedCandleCount"):
+        return
+    redis_client = getattr(derived_client, "redis_client", None)
+    if redis_client is None:
+        return
+    cache_payload = dict(payload)
+    cache_payload["cache"] = {
+        **(cache_payload.get("cache") if isinstance(cache_payload.get("cache"), dict) else {}),
+        "hit": False,
+        "ttlSeconds": redis_ttl_seconds(DERIVED_KIND_INDICATORS),
+        "keyVersion": request["calculationVersion"],
+    }
+    write_json_cache(redis_client, request["cacheKey"], cache_payload, redis_ttl_seconds(DERIVED_KIND_INDICATORS))
 
 
 def inline_indicator_payload(

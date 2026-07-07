@@ -5,15 +5,17 @@
 
 ## 현재 범위
 
-v1은 미국 정규장 장중 매수 추천만 다룬다.
+v1은 미국 주식의 장전/데이장 추천과 본장 추천만 다룬다.
 
-- 대상 시간: 미국 동부시간 기준 평일 09:30 이상 16:00 미만
-- 생성 슬롯: 09:45, 12:45, 15:45 ET
+- 추천 모드: `pre`, `regular`
+- `pre`: 미국 동부시간 기준 평일 04:00 이상 09:30 미만
+- `regular`: 미국 동부시간 기준 평일 09:30 이상 16:00 미만
+- 생성 슬롯: 30분 bucket. `runKey`에 추천 모드가 포함되어 장전/데이장과 본장 run을 분리한다.
 - 추천 종류: `buy` only
 - 추천 수: 최대 5개
 - 섹터 분산: 같은 섹터 최대 2개
 - 자동 주문: 없음. 추천 행 클릭은 차트 종목 전환만 수행한다.
-- 장 전/장 외 추천: 보류. 장 외에는 새 추천을 만들지 않고 `market_closed`를 반환한다.
+- 장 외 추천: 보류. 선택한 모드의 시간이 아니면 새 추천을 만들지 않고 `market_closed`를 반환한다.
 
 추천은 LLM이 고르는 방식이 아니다. 현재 구현은 결정론적 점수화 로직으로 후보를 만들고, 필터를 통과한 종목만 점수와 근거를 붙여 저장한다. 관심종목, 보유종목, 현재 보고 있는 종목은 새 추천 대상이 아니라 사용자 맥락과 제외 조건으로만 쓴다.
 
@@ -31,7 +33,9 @@ v1은 미국 정규장 장중 매수 추천만 다룬다.
 | `excludedSectors` | 추천에서 제외할 섹터 |
 | `excludedSymbols` | 추천에서 제외할 종목 |
 
-프론트 설정 UI는 등록된 S&P500 유니버스에서만 값을 선택하게 한다. `preferredSectors`와 `excludedSectors`는 검색창 focus 이후 GICS 섹터 목록을 띄워 추가하고, 같은 섹터가 선호/제외에 동시에 들어가지 않도록 한쪽을 선택하면 반대쪽에서 제거한다. `excludedSymbols`도 검색창 focus 이후 등록 종목 목록을 필터링한 뒤 선택하며, 임의 섹터명이나 티커 문자열은 저장하지 않는다. 기존 API/DB 호환을 위해 `maxDrawdownPct`는 내부 기본값 `6`으로 저장하지만 사용자 입력으로 받지 않는다.
+섹터 값은 AWS GraphDB의 `gops:sector` literal을 기준으로 한 canonical GICS 11개 값으로 저장한다. 화면에는 canonical 값의 한글 별칭을 표시한다. 기존 `Technology`, `Healthcare`, `Financial Services`, `Basic Materials` 같은 seed/API alias는 저장·계산 경계에서 `Information Technology`, `Health Care`, `Financials`, `Materials`로 정규화한다.
+
+프론트 설정 UI는 canonical GICS 섹터 목록만 선택하게 한다. `preferredSectors`와 `excludedSectors`는 검색창 focus 이후 섹터 목록을 띄워 추가하고, 같은 섹터가 선호/제외에 동시에 들어가지 않도록 한쪽을 선택하면 반대쪽에서 제거한다. `excludedSymbols`도 검색창 focus 이후 등록 종목 목록을 필터링한 뒤 선택하며, 임의 섹터명이나 티커 문자열은 저장하지 않는다. 기존 API/DB 호환을 위해 `maxDrawdownPct`는 내부 기본값 `6`으로 저장하지만 사용자 입력으로 받지 않는다.
 
 프로필이 없으면 추천 API는 `profile_required`를 반환하고, 프론트 패널은 설정의 추천 설정 탭에서 설정을 저장하라는 상태를 보여준다.
 
@@ -49,7 +53,7 @@ flowchart TD
   Watchlist["관심종목"] --> DataSource["RecommendationDataSource"]
   Heatmap["시장 heatmap"] --> DataSource
   Candles["Redis/ClickHouse 1m candles"] --> DataSource
-  News["뉴스 provider optional"] --> DataSource
+  News["Redis 7일 뉴스 + Alpaca fallback"] --> DataSource
   DataSource --> Scoring["score_recommendations"]
   Scoring --> Runs["stock_recommendation_runs"]
   Scoring --> Items["stock_recommendation_items"]
@@ -75,7 +79,7 @@ flowchart TD
 | --- | --- |
 | `apps/gops-frontend/src/recommendations/recommendationApi.ts` | 추천 API client와 응답 정규화 |
 | `apps/gops-frontend/src/recommendations/InvestmentProfileForm.tsx` | 설정 > 추천 설정 탭의 필수 설정 폼 |
-| `apps/gops-frontend/src/recommendations/StockRecommendationsPanel.tsx` | 장중 매수 추천 패널 |
+| `apps/gops-frontend/src/recommendations/StockRecommendationsPanel.tsx` | 장전/본장 토글이 포함된 추천 패널 |
 | `apps/gops-frontend/src/components/BottomCommandBar.tsx` | 설정 탭에 계정/추천 설정 연결 |
 | `apps/gops-frontend/src/components/PanelContentRenderer.tsx` | `kind="recommendations"` 렌더링 |
 | `apps/gops-frontend/src/layout/*` | 추천 패널 insert/layout kind 등록 |
@@ -95,7 +99,7 @@ flowchart TD
     "riskLevel": "balanced",
     "horizon": "intraday",
     "maxDrawdownPct": 6,
-    "preferredSectors": ["Technology"],
+    "preferredSectors": ["Information Technology"],
     "excludedSectors": [],
     "excludedSymbols": [],
     "updatedAt": "2026-07-07T10:00:00Z"
@@ -107,9 +111,9 @@ flowchart TD
 
 추천 필수 설정을 저장한다. `riskLevel`은 세 가지 값만 허용하고, `horizon`은 `intraday`만 허용한다. `maxDrawdownPct`는 과거 계약 호환 필드이며 요청에서 빠지면 서버가 기본값 `6`을 사용한다.
 
-### `GET /api/recommendations/stocks/latest`
+### `GET /api/recommendations/stocks/latest?sessionMode=pre|regular`
 
-마지막 추천 run을 반환한다. 프로필이 없으면 `profile_required`, 저장된 run이 없으면 `empty`를 반환한다.
+선택한 추천 모드의 마지막 추천 run을 반환한다. 프로필이 없으면 `profile_required`, 저장된 run이 없으면 `empty`를 반환한다. `sessionMode` 기본값은 기존 호출 호환을 위해 `regular`다.
 
 ### `POST /api/recommendations/stocks/refresh`
 
@@ -119,21 +123,25 @@ flowchart TD
 
 ```json
 {
-  "activeSymbol": "AAPL"
+  "activeSymbol": "AAPL",
+  "sessionMode": "regular"
 }
 ```
 
-`activeSymbol`은 사용자가 현재 보고 있는 종목이다. 새 아이디어 추천에서는 해당 종목을 추천 대상에서 제외한다.
+`activeSymbol`은 사용자가 현재 보고 있는 종목이다. 새 아이디어 추천에서는 해당 종목을 추천 대상에서 제외한다. `sessionMode`는 `pre` 또는 `regular`만 허용하며, 빠지면 `regular`로 처리한다.
 
 응답 핵심 필드:
 
 | 필드 | 설명 |
 | --- | --- |
 | `status` | `completed`, `empty`, `profile_required`, `market_closed` |
-| `runKey` | `{user}:{marketDate}:{slotStart}` |
-| `slotStart` | 09:45/12:45/15:45 중 현재 슬롯 |
+| `runKey` | `{user}:{marketDate}:{sessionMode}:{slotStart}` |
+| `slotStart` | 30분 bucket 시작 시각 |
 | `items` | 추천 종목 배열 |
 | `idempotentReplay` | 같은 슬롯에서 이미 생성된 결과를 재사용했는지 |
+| `summary.sessionMode` | `pre` 또는 `regular` |
+| `summary.newsSource` | `redis_alpaca_fallback`. Redis 뉴스가 없으면 Alpaca 외부 API fallback을 사용 |
+| `summary.emptyReason` | 빈 결과 원인. 예: `insufficient_session_data`, `no_candidates_after_filters` |
 
 ## DB 테이블
 
@@ -144,7 +152,7 @@ flowchart TD
 | `stock_recommendation_runs` | 추천 실행 단위. 사용자와 슬롯별로 unique |
 | `stock_recommendation_items` | run 안의 추천 종목, 점수, 근거, 리스크 |
 
-`stock_recommendation_runs`는 `(user_sub, run_key)` unique 제약을 가진다. 그래서 worker가 30분마다 데이터를 받아와도 같은 3시간 슬롯에서는 같은 추천을 다시 만들지 않는다.
+`stock_recommendation_runs`는 `(user_sub, run_key)` unique 제약을 가진다. `run_key`에 모드가 들어가므로 장전/데이장 추천과 본장 추천은 서로 덮어쓰지 않는다.
 
 ## worker 동작
 
@@ -159,25 +167,25 @@ python -u -m app.recommendations.worker
 동작 방식:
 
 1. `RECOMMENDATION_WORKER_POLL_SECONDS` 간격으로 polling한다. 기본값은 1800초, 즉 30분이다.
-2. 미국 정규장이 아니면 아무 것도 하지 않는다.
-3. 09:45 ET 이전이면 아무 것도 하지 않는다.
+2. 현재 세션이 `pre` 또는 `regular`가 아니면 아무 것도 하지 않는다.
+3. 현재 세션에 맞는 `sessionMode`로 추천 생성을 요청한다.
 4. 프로필이 저장된 사용자 목록을 가져온다.
 5. 각 사용자에 대해 `RecommendationService.refresh()`를 호출한다.
-6. 서비스의 `runKey` 멱등성 때문에 09:45, 12:45, 15:45 슬롯마다 사용자별 1회만 새 run이 저장된다.
+6. 서비스의 `runKey` 멱등성 때문에 같은 30분 bucket에서는 사용자별/모드별 1회만 새 run이 저장된다.
 
-즉 "3시간마다 실행"은 별도 cron이 아니라, worker는 30분마다 데이터를 받아오고 추천 생성은 슬롯 key가 제어한다.
+데이터 부족으로 인한 빈 결과는 `retryable` 응답으로 처리해 DB에 고정하지 않는다. 다음 refresh 또는 worker tick에서 다시 계산할 수 있다.
 
 ## 추천 생성 흐름
 
 `RecommendationService.refresh()`의 흐름은 다음과 같다.
 
 1. 사용자 프로필을 조회한다.
-2. 현재 시간으로 추천 슬롯을 계산한다.
+2. 요청된 `sessionMode`와 현재 시간으로 추천 슬롯을 계산한다.
 3. 같은 `runKey`가 이미 있으면 기존 결과를 반환한다.
-4. 정규장이 아니면 새 run을 만들지 않고 `market_closed`를 반환한다.
-5. 데이터 소스에서 관심종목, 포트폴리오, 시장 후보, 캔들, 뉴스 optional 데이터를 모은다.
+4. 선택한 추천 모드의 시간이 아니면 새 run을 만들지 않고 `market_closed`를 반환한다.
+5. 데이터 소스에서 관심종목, 포트폴리오, 시장 후보, 캔들, Redis/Alpaca 뉴스 데이터를 모은다.
 6. `score_recommendations()`로 후보를 필터링하고 점수화한다.
-7. run과 item을 DB에 저장한다.
+7. 추천이 있거나 확정 빈 결과이면 run과 item을 DB에 저장한다. 데이터 부족 빈 결과는 저장하지 않는다.
 8. 상위 추천 변화가 의미 있으면 기존 notifications 경로로 알림을 만든다.
 
 ## 데이터 소스
@@ -190,13 +198,13 @@ python -u -m app.recommendations.worker
 | heatmap market items | 시장 상위 거래대금/변동률 후보 |
 | 1분봉 candles | 수익률, 상대강도, 거래량, 돌파, 변동성 계산 |
 | SPY candles | 시장 대비 상대강도 계산 |
-| 뉴스 optional | 뉴스/이벤트 근거와 가점 |
+| Redis 7일 뉴스 + Alpaca fallback | 뉴스/이벤트 근거와 가점. Redis에 7일 뉴스가 없으면 Alpaca 외부 API를 fallback으로 조회한다. ClickHouse 뉴스 fallback은 사용하지 않는다. |
 
 포트폴리오 스냅샷은 `GET /api/account/holdings`가 성공할 때 저장된다. 추천 worker는 API 서버와 다른 프로세스이므로 메모리가 아니라 DB의 `user_portfolio_snapshots`도 읽을 수 있게 되어 있다.
 
 ## 후보 생성 로직
 
-후보는 최대 50개까지 만든다. 보유종목, 관심종목, 현재 보고 있는 종목, `SPY`는 추천 대상에서 제외한다.
+후보는 최대 50개까지 만든다. 보유종목, 관심종목, 현재 보고 있는 종목, `SPY`는 추천 대상에서 제외한다. 캔들은 실제 추천 후보와 `SPY` 기준으로만 가져와 관심종목/보유종목이 fetch 한도를 소모하지 않게 한다.
 
 우선순위:
 
@@ -220,9 +228,10 @@ python -u -m app.recommendations.worker
 | 보유/관심/현재 조회 종목 | 이미 알고 있거나 보유한 종목은 새 매수 아이디어에서 제외 |
 | excluded symbol/sector | 사용자가 제외한 종목 또는 섹터 |
 | SPY | 상대강도 계산 기준으로만 사용 |
-| candle 60개 미만 | 장중 판단에 필요한 최소 데이터 부족 |
-| 세션 거래대금 1천만 달러 미만 | 유동성 부족 |
-| 장중 변동폭 과다 | 기본 변동성 가드레일 초과 |
+| `pre` candle 10개 미만 | 장전/데이장 판단에 필요한 최소 데이터 부족 |
+| `regular` candle 30/60개 미만 | 본장 초반은 30개, 이후는 60개 미만이면 데이터 부족 |
+| `regular` 세션 거래대금 1천만 달러 미만 | 본장 유동성 부족 |
+| `regular` 장중 변동폭 과다 | 기본 변동성 가드레일 초과 |
 | 후보 섹터 hard cap 초과 | 보수형 45%, 균형형 55%, 공격형 65% 이상이면 제외 |
 | 보수형 + 최근 3시간 수익률 5% 초과 | 보수형에서 단기 급등 추격 방지 |
 
@@ -232,10 +241,10 @@ python -u -m app.recommendations.worker
 
 | 지표 | 설명 |
 | --- | --- |
-| `return3hPct` | 입력 캔들 첫 close 대비 마지막 close 수익률 |
+| `return3hPct` | 선택 세션의 입력 캔들 첫 close 대비 마지막 close 수익률 |
 | `relativeStrength` | `return3hPct - SPY return` |
-| `volumeRatio` | 최근 60분 거래량 / 직전 60분 거래량 |
-| `breakout` | 최근 15개 캔들을 제외한 이전 고점 돌파 여부 |
+| `volumeRatio` | 최근 구간 거래량 / 직전 구간 거래량 |
+| `breakout` | 최근 15개 캔들을 제외한 선택 세션 이전 고점 돌파 여부 |
 | `intradayRangePct` | 세션 high-low 범위 / 세션 open |
 | `sessionDollarVolume` | heatmap 거래대금 또는 candle 기반 추정 거래대금 |
 | `candleCount` | 사용된 candle 수 |
@@ -257,19 +266,20 @@ score =
 
 | 조건 | 점수 |
 | --- | --- |
-| 3시간 수익률 양수 | 최대 18점 |
+| 선택 세션 수익률 양수 | 최대 18점 |
 | SPY 대비 상대강도 양수 | 최대 18점 |
-| 최근 60분 거래량이 직전 구간 대비 1.2배 이상 | 최대 12점 |
-| 3시간 전고점 돌파 | 12점 |
+| 최근 구간 거래량이 직전 구간 대비 1.2배 이상 | 최대 12점 |
+| 선택 세션 전고점 돌파 | 12점 |
 
 ### Catalyst score
 
 | 조건 | 점수 |
 | --- | --- |
 | 뉴스 없음 | 0점 |
-| 뉴스 있음 | 기본 8점 |
-| 뉴스 + 거래량 1.5배 이상 | 추가 5점 |
-| 부정/약세 뉴스가 아님 | 추가 2점 |
+| `regular` 최근 7일 뉴스 있음 | 기본 8점 |
+| `pre` 최근 7일 뉴스 있음 | 기본 12점 |
+| 뉴스 + 거래량 1.5배 이상 | `regular` 5점, `pre` 6점 |
+| 부정/약세 뉴스가 아님 | `regular` 2점, `pre` 3점 |
 | 부정/약세 뉴스 | 5점 감점 |
 
 ### Execution score
@@ -277,9 +287,9 @@ score =
 | 조건 | 점수 |
 | --- | --- |
 | 장중 변동폭 4% 이하 | 8점 |
-| 세션 거래대금 5천만 달러 이상 | 7점 |
+| 세션 거래대금 충분 | 7점 |
 | 데이터 freshness 있음 | 5점 |
-| 3시간 수익률 6% 이하 | 5점 |
+| 선택 세션 수익률 6% 이하 | 5점 |
 
 ### Portfolio risk penalty
 
@@ -305,16 +315,18 @@ score =
 다음 조건을 모두 만족해야 패널에 보인다.
 
 ```text
-score >= 75
-confidence >= 0.7
+pre: score >= 60, confidence >= 0.5
+regular opening: score >= 65, confidence >= 0.55
+regular full: score >= 75, confidence >= 0.7
 reason count >= 2
 ```
 
 신뢰도는 다음 기준으로 계산한다.
 
 - 기본값 0.45
-- candle 수가 60개를 초과할수록 최대 0.2 추가
-- 세션 거래대금이 5천만 달러 이상이면 0.15, 아니면 0.08 추가
+- `pre`는 10개 이후 candle 수가 늘수록 최대 0.2 추가
+- `regular`는 60개 이후 candle 수가 늘수록 최대 0.2 추가
+- 세션 거래대금이 충분하면 유동성 신뢰도 가점
 - 근거 개수에 따라 최대 0.2 추가
 - 최종 최대값은 0.95
 
@@ -329,12 +341,13 @@ reason count >= 2
 | `rank` | 1부터 시작 |
 | `score` | 추천 점수 |
 | `confidence` | 신뢰도 |
-| `sector` | 섹터 |
+| `sector` | GraphDB `gops:sector` 기준 canonical 섹터 |
+| `sectorLabelKo` | 화면 표시용 한글 섹터명 |
 | `reasons` | 사용자에게 보여줄 추천 근거 |
 | `riskWarnings` | 리스크 문구 |
 | `metricsSnapshot` | 추천 시점 지표, 섹터 비중, `excludedReason`, 점수 breakdown |
 
-프론트는 상위 2개 근거와 첫 번째 리스크 경고를 추천 행에 표시한다.
+프론트는 중복 리스크 문구를 제외한 근거와 첫 번째 리스크 경고를 추천 행에 표시한다. 리스크 경고는 별도 색상을 유지한다. 섹터는 종목 아래가 아니라 추천 행 가장 오른쪽 컬럼에 `sectorLabelKo` 한글 라벨로 표시한다. 사용자에게 점수 숫자를 상시 노출하지 않고, 종목 심볼 옆 작은 동그라미 hover에서만 점수를 보여준다. 동그라미는 `score`와 `confidence`를 함께 본 추천도 표시다. `score >= 80` 그리고 `confidence >= 0.75`이면 초록, `score >= 70` 그리고 `confidence >= 0.5`이면 노랑, 그 외는 빨강으로 표시한다.
 
 ## 알림 로직
 
@@ -377,6 +390,8 @@ reason count >= 2
 | 변수 | 기본값 | 설명 |
 | --- | --- | --- |
 | `RECOMMENDATION_WORKER_POLL_SECONDS` | `1800` | worker polling 간격. 최소 10초로 보정 |
+| `RECOMMENDATION_ALPACA_NEWS_FALLBACK_LIMIT` | batch 크기에 따라 최대 `50` | Redis miss 심볼을 Alpaca 뉴스 API로 조회할 때 요청 article limit |
+| `RECOMMENDATION_ALPACA_NEWS_INCLUDE_CONTENT` | `false` | 추천 fallback 뉴스 조회에서 원문 content 포함 여부 |
 
 worker는 `gops-api-server` image를 사용한다. API 서버 코드와 같은 추천 service/repository를 재사용하기 때문이다.
 
@@ -388,7 +403,8 @@ worker는 `gops-api-server` image를 사용한다. API 서버 코드와 같은 �
 .venv/bin/python -m compileall ...
 npm run build
 git diff --check
-FastAPI TestClient smoke: 프로필 저장 -> worker 첫 tick 생성 -> 같은 슬롯 두 번째 tick 멱등 재사용 -> latest 추천 조회
+FastAPI TestClient smoke: 프로필 저장 -> pre/regular run key 분리 -> regular 장전 차단 -> Redis 우선/Alpaca fallback 뉴스 조회
+FastAPI TestClient smoke: 본장 초반 데이터 부족 empty retryable 응답 -> run 미저장
 ```
 
 주의: 현재 로컬 `.venv`에는 `pytest`가 설치되어 있지 않아 pytest suite는 실행하지 못했다.
@@ -397,18 +413,16 @@ FastAPI TestClient smoke: 프로필 저장 -> worker 첫 tick 생성 -> 같은 �
 
 현재 구현은 v1 범위에 맞춰 의도적으로 제한되어 있다.
 
-- 장 전 추천은 아직 만들지 않는다.
+- 장 외/야간 추천은 아직 만들지 않는다.
 - 추천은 자동 주문과 연결하지 않는다.
-- 뉴스 provider는 optional이다. 뉴스가 없으면 작은 기본 점수만 준다.
-- 포트폴리오 sector 정보가 없으면 섹터 보완 점수는 `Unclassified` 기준으로 계산될 수 있다.
-- 공휴일/반장 같은 미국 시장 캘린더 세부 예외는 아직 반영하지 않았다. 현재는 평일 09:30~16:00 ET 기준이다.
+- 추천 뉴스 점수는 Redis 저장 뉴스를 우선 사용하고, Redis에 최근 7일 뉴스가 없으면 Alpaca 외부 API를 fallback으로 조회한다. 둘 다 없으면 뉴스 점수는 0점이다.
+- 포트폴리오 sector 정보는 holdings API가 heatmap/seed 기준으로 보강한다. 매핑할 수 없는 종목만 `Unclassified` 기준으로 계산될 수 있다.
+- 공휴일/반장 같은 미국 시장 캘린더 세부 예외는 아직 반영하지 않았다. 현재는 평일 `pre`/`regular` 시간 기준이다.
 - 현금 사용 가능 여부는 현재 보수적으로 항상 true처럼 동작한다. 계좌 현금 필드가 안정화되면 실제 현금 조건으로 바꾸는 게 맞다.
 
 다음 단계로 확장한다면 우선순위는 다음이 좋다.
 
 1. 미국 시장 휴장/반장 calendar 반영
 2. 포트폴리오 position에 sector enrichment 적용
-3. 뉴스/이벤트 provider 실제 연결
-4. 장 전 추천용 별도 모드 추가
-5. 추천 성과 추적 테이블 추가
-6. 추천 cutoff와 가중치를 config로 분리
+3. 추천 성과 추적 테이블 추가
+4. 추천 cutoff와 가중치를 config로 분리

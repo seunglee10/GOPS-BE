@@ -3,22 +3,19 @@ from __future__ import annotations
 import os
 import time
 import traceback
-from datetime import datetime, time as day_time, timezone
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from app.alerts.notifications import RedisNotificationBroker
 from app.alerts.repository import PostgresAlertRepository
 
 from .repository import PostgresRecommendationRepository, RecommendationRepository
 from .service import RecommendationDataSource, RecommendationService
-from .scoring import is_regular_market_open
+from .scoring import market_session
 
 
-MARKET_TZ = ZoneInfo("America/New_York")
 DEFAULT_POLL_SECONDS = 30 * 60
-FIRST_RECOMMENDATION_TIME = day_time(9, 45)
 
 
 class RecommendationWorker:
@@ -42,7 +39,8 @@ class RecommendationWorker:
 
     def run_once(self, *, now: datetime | None = None) -> dict[str, Any]:
         now = now or datetime.now(timezone.utc)
-        if not _slot_due(now):
+        session_mode = _worker_session_mode(now)
+        if not session_mode:
             return {"status": "not_due", "processed": 0, "generated": 0}
 
         service = getattr(self.app.state, "recommendation_service", None)
@@ -60,11 +58,11 @@ class RecommendationWorker:
         for user_sub in self.repository.list_profile_user_subs():
             processed += 1
             try:
-                result = service.refresh(user_sub, now=now)
+                result = service.refresh(user_sub, now=now, session_mode=session_mode)
             except Exception as exc:
                 failures.append({"userSub": user_sub, "error": str(exc)})
                 continue
-            if result.get("status") in {"completed", "empty"} and not result.get("idempotentReplay"):
+            if result.get("status") in {"completed", "empty"} and not result.get("idempotentReplay") and not result.get("retryable"):
                 generated += 1
         return {
             "status": "ok" if not failures else "partial",
@@ -88,11 +86,9 @@ def run() -> None:
         time.sleep(poll_seconds)
 
 
-def _slot_due(now: datetime) -> bool:
-    if not is_regular_market_open(now):
-        return False
-    local = now.astimezone(MARKET_TZ)
-    return local.time() >= FIRST_RECOMMENDATION_TIME
+def _worker_session_mode(now: datetime) -> str | None:
+    session = market_session(now)
+    return session if session in {"pre", "regular"} else None
 
 
 if __name__ == "__main__":

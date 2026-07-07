@@ -243,14 +243,18 @@ popular stocks panel은 `panelType="popularStocks"`/`kind="popular"`로 표현�
 현재 `gops-frontend`는 App이 이미 폴링 중인 `GET /api/market/heatmap?universe=sp500`
 items를 패널로 전달해 S&P500 거래대금순 Top10을 렌더링한다. 별도 heatmap 요청은
 추가하지 않고, 금액 표시는 `GET /api/market/indices`의 `KRW=X` 환율을 사용해
-조원/억원 단위로 환산한다.
+조원/억원 단위로 환산한다. Top10의 섹터 컬럼은 GraphDB `gops:sector` canonical
+값의 `sectorLabelKo` 한글 라벨을 표시하며, 산업명과 섞어 표시하지 않는다.
+히트맵/트리맵도 grouping key는 canonical `sector`를 유지하고, 섹터 타일과 hover
+표시는 같은 `sectorLabelKo` 한글 라벨을 사용한다.
 
 stock recommendations panel은 `panelType="stockRecommendations"`/`kind="recommendations"`로
 표현한다. 패널은 `GET /api/recommendations/stocks/latest`로 마지막 장중 추천을
 읽고, 새로고침 버튼은 `POST /api/recommendations/stocks/refresh`에 현재 active
 symbol을 보낸다. 필수 투자 설정은 하단 `VI: 설정`의 `추천 설정` 탭에 있는
 `PUT /api/recommendations/profile` 폼에서만 받는다. 추천 행 클릭은 차트 symbol
-전환까지만 수행하고 주문 실행으로 연결하지 않는다.
+전환까지만 수행하고 주문 실행으로 연결하지 않는다. 추천 행의 섹터도
+`sectorLabelKo` 한글 라벨을 사용한다.
 
 지원하지 않는 경우 정책:
 

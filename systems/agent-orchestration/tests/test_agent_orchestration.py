@@ -4042,6 +4042,7 @@ class AgentOrchestrationTests(unittest.TestCase):
                     {
                         "ticker": {"value": "NVDA"},
                         "companyName": {"value": "NVIDIA Corp"},
+                        "sector": {"value": "Information Technology"},
                         "themeName": {"value": "AI/반도체/데이터센터"},
                         "themeCategory": {"value": "growth"},
                         "controlledName": {"value": "Mellanox Technologies"},
@@ -4061,6 +4062,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(evidence[0].status, "available")
         self.assertEqual(evidence[0].raw["relationType"], "theme")
         self.assertEqual(evidence[0].raw["themeName"], "AI/반도체/데이터센터")
+        self.assertEqual(evidence[0].raw["sector"], "Information Technology")
         self.assertEqual(evidence[0].raw["controlledName"], "Mellanox Technologies")
         self.assertEqual(evidence[0].raw["accession"], "0001045810-24-000001")
         self.assertEqual(evidence[0].url, "https://www.sec.gov/example")
