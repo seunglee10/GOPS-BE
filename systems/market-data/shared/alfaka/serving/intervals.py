@@ -12,6 +12,16 @@ INTRADAY_PRELOAD_MIN_START_ENV = "BACKFILL_INITIAL_LOAD_1M_MIN_START"
 DEFAULT_INTRADAY_PRELOAD_MIN_START = "2020-07-01T00:00:00Z"
 
 CHART_INTERVALS = ("1m", "5m", "10m", "1h", "4h", "1D", "1W", "1M")
+ALPACA_REST_TIMEFRAMES = {
+    "1m": "1Min",
+    "5m": "5Min",
+    "10m": "10Min",
+    "1h": "1Hour",
+    "4h": "4Hour",
+    "1D": "1Day",
+    "1W": "1Week",
+    "1M": "1Month",
+}
 INTRADAY_INTERVAL_MINUTES = {
     "1m": 1,
     "5m": 5,
@@ -169,7 +179,7 @@ def minimum_renderable_returned_bars(interval):
 
 
 def minimum_renderable_source_bars(interval):
-    source_interval = source_interval_for(interval)
+    source_interval = normalize_chart_interval(interval)
     return MIN_RENDERABLE_SOURCE_BARS.get(source_interval, minimum_renderable_returned_bars(source_interval))
 
 
@@ -184,6 +194,14 @@ def source_interval_for(interval):
     if interval in {"1W", "1M"}:
         return "1D"
     return interval
+
+
+def alpaca_timeframe_for_interval(interval):
+    return ALPACA_REST_TIMEFRAMES[normalize_chart_interval(interval)]
+
+
+def historical_source_interval_for(interval):
+    return normalize_chart_interval(interval)
 
 
 def is_derived_interval(interval):

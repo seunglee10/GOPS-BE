@@ -876,6 +876,7 @@ class FakeDerivedClient:
 class RecordingOnDemandFillService(OnDemandFillService):
     def __init__(self, *, provider=None, s3_result=False, alpaca_result=False):
         super().__init__(provider=provider, timeout_seconds=8, background_enabled=False)
+        self.foreground_enabled = False
         self.s3_result = s3_result
         self.alpaca_result = alpaca_result
         self.calls = []
@@ -1538,6 +1539,107 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertTrue(result["fill"]["backgroundFill"]["queued"])
         self.assertFalse(result["fill"]["sources"]["s3"]["checked"])
         self.assertFalse(result["fill"]["sources"]["alpaca"]["checked"])
+
+    def test_on_demand_fill_uses_foreground_alpaca_direct_interval_for_missing_history(self):
+        payload = {
+            "symbol": "BAC",
+            "interval": "1h",
+            "candles": [],
+            "returnedCount": 0,
+            "storedCandleCount": 0,
+            "sourceInterval": "1m",
+            "_sourceTrace": {
+                "redis": {"checked": True, "hit": False, "rowCount": 0},
+                "clickhouse": {"checked": True, "hit": False, "rowCount": 0},
+            },
+        }
+        raw_rows = [
+            {
+                "t": f"2026-06-25T{hour:02d}:00:00Z",
+                "o": 100 + index,
+                "h": 101 + index,
+                "l": 99 + index,
+                "c": 100.5 + index,
+                "v": 1000 + index,
+                "n": 10 + index,
+                "vw": 100.25 + index,
+            }
+            for index, hour in enumerate(range(13, 21))
+        ]
+        service = OnDemandFillService(timeout_seconds=8, background_enabled=False)
+
+        with mock.patch("app.market_data.fill.service.fetch_alpaca_bars", return_value=raw_rows) as fetch:
+            result = service.fill_if_needed(
+                symbol="BAC",
+                interval="1h",
+                limit=8,
+                before=None,
+                from_time="2026-06-25T13:00:00.000Z",
+                to_time="2026-06-25T20:00:00.000Z",
+                payload=payload,
+            )
+
+        self.assertEqual(fetch.call_args.args[4], "1Hour")
+        self.assertEqual(result["sourceInterval"], "1h")
+        self.assertEqual(result["fill"]["sourceInterval"], "1h")
+        self.assertEqual(result["fill"]["status"], "filled")
+        self.assertEqual(result["fill"]["foregroundFill"]["state"], "filled")
+        self.assertTrue(result["fill"]["sources"]["alpaca"]["hit"])
+        self.assertEqual(len(result["candles"]), 8)
+        self.assertEqual(result["candles"][0]["timestamp"], "2026-06-25T13:00:00.000Z")
+        self.assertIn(":1h:2026-06-25T20:00:00.000Z:", result["snapshotCursor"])
+        self.assertTrue(result["fill"]["renderable"])
+
+    def test_on_demand_fill_keeps_live_candle_over_alpaca_current_bucket(self):
+        live = {
+            "symbol": "BAC",
+            "timeframe": "1h",
+            "timestamp": "2026-06-25T20:00:00.000Z",
+            "open": 200,
+            "high": 201,
+            "low": 199,
+            "close": 200.75,
+            "volume": 2000,
+            "isClosed": False,
+            "sourceInterval": "trades",
+        }
+        payload = {
+            "symbol": "BAC",
+            "interval": "1h",
+            "candles": [live],
+            "returnedCount": 1,
+            "storedCandleCount": 1,
+        }
+        raw_rows = [
+            {
+                "t": f"2026-06-25T{hour:02d}:00:00Z",
+                "o": 100 + index,
+                "h": 101 + index,
+                "l": 99 + index,
+                "c": 100.5 + index,
+                "v": 1000 + index,
+                "n": 10 + index,
+                "vw": 100.25 + index,
+            }
+            for index, hour in enumerate(range(13, 21))
+        ]
+        service = OnDemandFillService(timeout_seconds=8, background_enabled=False)
+
+        with mock.patch("app.market_data.fill.service.fetch_alpaca_bars", return_value=raw_rows):
+            result = service.fill_if_needed(
+                symbol="BAC",
+                interval="1h",
+                limit=8,
+                before=None,
+                from_time="2026-06-25T13:00:00.000Z",
+                to_time="2026-06-25T20:00:00.000Z",
+                payload=payload,
+            )
+
+        self.assertEqual(len(result["candles"]), 8)
+        self.assertEqual(result["candles"][-1]["timestamp"], "2026-06-25T20:00:00.000Z")
+        self.assertEqual(result["candles"][-1]["close"], 200.75)
+        self.assertFalse(result["candles"][-1]["isClosed"])
 
     def test_background_fill_materializes_s3_before_alpaca(self):
         service = RecordingOnDemandFillService(s3_result=True, alpaca_result=True)
@@ -2596,6 +2698,31 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(metadata["sourceInterval"], "1m")
         self.assertEqual(metadata["coverage"]["sourceInterval"], "1m")
         self.assertEqual(metadata["coverage"]["minimumReturnedCount"], 8)
+
+    def test_snapshot_metadata_respects_direct_alpaca_source_interval(self):
+        service = BackfillService(store=RecordingBackfillStore())
+        candles = [
+            {"timestamp": f"2026-06-25T{13 + index:02d}:00:00.000Z"}
+            for index in range(8)
+        ]
+
+        metadata = service.snapshot_metadata("AAPL", "1h", {
+            "candles": candles,
+            "returnedCount": 8,
+            "requestedLimit": 8,
+            "storedCandleCount": 8,
+            "targetStoredCount": 8,
+            "sourceInterval": "1h",
+            "availableFrom": candles[0]["timestamp"],
+            "availableTo": candles[-1]["timestamp"],
+            "targetRangeFrom": candles[0]["timestamp"],
+            "targetRangeTo": candles[-1]["timestamp"],
+        })
+
+        self.assertEqual(metadata["dataStatus"], "ready")
+        self.assertEqual(metadata["sourceInterval"], "1h")
+        self.assertEqual(metadata["coverage"]["sourceInterval"], "1h")
+        self.assertEqual(metadata["coverage"]["minimumRenderableSourceBars"], 8)
 
     def test_succeeded_backfill_without_stored_coverage_is_not_ready(self):
         store = RecordingBackfillStore()

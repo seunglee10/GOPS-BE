@@ -143,8 +143,9 @@ The chart rebuild is on-demand:
 Frontend chart request
   -> API Redis latest 120 check
   -> ClickHouse confirmed history
-  -> S3 final/manifest evidence
-  -> Alpaca historical on-demand fill only after all stores miss
+  -> foreground Alpaca REST direct bars when stored data is not renderable
+  -> background S3 final/manifest evidence
+  -> background Alpaca historical direct fill for the requested interval/range
 ```
 
 Realtime data is feed-guarded and symbol-keyed:

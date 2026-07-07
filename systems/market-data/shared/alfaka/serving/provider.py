@@ -276,7 +276,7 @@ def candle_in_requested_window(candle, before=None, from_time=None, to_time=None
 
 def with_coverage_metadata(payload, coverage, requested_limit, before=None, from_time=None, to_time=None):
     interval = normalize_chart_interval(payload.get("interval"))
-    source_interval = source_interval_for(interval)
+    source_interval = normalize_chart_interval((coverage or {}).get("sourceInterval") or source_interval_for(interval))
     candles = payload.get("candles") or []
     oldest = candles[0].get("timestamp") if candles else None
     newest = candles[-1].get("timestamp") if candles else None
@@ -285,7 +285,7 @@ def with_coverage_metadata(payload, coverage, requested_limit, before=None, from
     row_count = coverage.get("rowCount") if coverage else None
     invalid_row_count = coverage.get("invalidRowCount") if coverage else None
     stored_count = int(row_count) if row_count is not None else len(candles)
-    target_stored_count = requested_source_bar_target(interval, requested_limit)
+    target_stored_count = requested_source_bar_target(interval, requested_limit, source_interval=source_interval)
     target_range_from, target_range_to = requested_window_for_interval(
         interval,
         requested_limit,
@@ -402,9 +402,12 @@ def requested_window_delta(interval, requested_limit):
     return timedelta(minutes=limit * 4)
 
 
-def requested_source_bar_target(interval, requested_limit):
+def requested_source_bar_target(interval, requested_limit, source_interval=None):
     interval = normalize_chart_interval(interval)
     limit = max(1, int(requested_limit or 1))
+    source_interval = normalize_chart_interval(source_interval or source_interval_for(interval))
+    if source_interval == interval:
+        return limit
     if interval in INTRADAY_DERIVED_INTERVALS:
         return limit * INTRADAY_INTERVAL_MINUTES[interval]
     if interval == "1W":

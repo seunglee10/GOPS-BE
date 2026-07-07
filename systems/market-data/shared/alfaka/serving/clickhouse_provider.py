@@ -31,11 +31,43 @@ class ClickHouseMarketDataProvider:
         interval = normalize_chart_interval(interval)
         limit = resolve_candle_limit(interval, limit)
         if interval in INTRADAY_DERIVED_INTERVALS:
-            return self.aggregated_minute_candles(symbol, interval, limit, before=before, from_time=from_time, to_time=to_time)
+            return self.direct_or_aggregated_candles(
+                symbol,
+                interval,
+                limit,
+                aggregate=self.aggregated_minute_candles,
+                before=before,
+                from_time=from_time,
+                to_time=to_time,
+            )
         if interval == "1D":
             return self.daily_candles(symbol, interval, limit, before=before, from_time=from_time, to_time=to_time)
         if interval in {"1W", "1M"}:
-            return self.aggregated_daily_candles(symbol, interval, limit, before=before, from_time=from_time, to_time=to_time)
+            return self.direct_or_aggregated_candles(
+                symbol,
+                interval,
+                limit,
+                aggregate=self.aggregated_daily_candles,
+                before=before,
+                from_time=from_time,
+                to_time=to_time,
+            )
+        return self.stored_interval_candles(symbol, interval, limit, before=before, from_time=from_time, to_time=to_time)
+
+    def direct_or_aggregated_candles(self, symbol, interval, limit=None, aggregate=None, before=None, from_time=None, to_time=None):
+        """저장된 direct interval 캔들을 우선 쓰고, 비어 있으면 기존 source 집계로 보강합니다."""
+        interval = normalize_chart_interval(interval)
+        limit = resolve_candle_limit(interval, limit)
+        direct_rows = self.stored_interval_candles(symbol, interval, limit, before=before, from_time=from_time, to_time=to_time)
+        if len(direct_rows) >= limit:
+            return attach_moving_averages(direct_rows[-limit:])
+        aggregate_rows = aggregate(symbol, interval, limit, before=before, from_time=from_time, to_time=to_time) if aggregate else []
+        return attach_moving_averages(merge_candle_rows(aggregate_rows, direct_rows)[-limit:])
+
+    def stored_interval_candles(self, symbol, interval, limit=None, before=None, from_time=None, to_time=None):
+        """ClickHouse chart_candles에 저장된 요청 interval row를 그대로 조회합니다."""
+        interval = normalize_chart_interval(interval)
+        limit = resolve_candle_limit(interval, limit)
         time_filter = ""
         params = {"symbol": symbol, "limit": int(limit)}
         interval_filter = "interval IN ('1D', '1d')" if interval == "1D" else "interval = {interval:String}"
@@ -84,6 +116,8 @@ class ClickHouseMarketDataProvider:
         FORMAT JSONEachRow
         """
         rows = self.query_json_each_row(query, params)
+        for row in rows:
+            row["interval"] = interval
         return list(reversed(rows))
 
     def daily_candles(self, symbol, interval="1D", limit=None, before=None, from_time=None, to_time=None):
@@ -339,7 +373,15 @@ class ClickHouseMarketDataProvider:
     def candle_coverage(self, symbol, interval):
         """backfill 판단에 필요한 저장 캔들 개수와 가용 기간을 계산합니다."""
         interval = normalize_chart_interval(interval)
+        if interval in {*INTRADAY_DERIVED_INTERVALS, "1W", "1M"}:
+            direct = self.stored_interval_coverage(symbol, interval)
+            if int(direct.get("rowCount") or 0) > 0:
+                return {**direct, "sourceInterval": interval}
         stored_interval = "1m" if interval in INTRADAY_DERIVED_INTERVALS else "1D" if interval in {"1W", "1M"} else interval
+        return {**self.stored_interval_coverage(symbol, stored_interval), "sourceInterval": stored_interval}
+
+    def stored_interval_coverage(self, symbol, stored_interval):
+        stored_interval = normalize_chart_interval(stored_interval)
         interval_filter = "interval IN ('1D', '1d')" if stored_interval == "1D" else "interval = {interval:String}"
         params = {"symbol": symbol}
         if stored_interval != "1D":
@@ -393,7 +435,7 @@ class ClickHouseMarketDataProvider:
     def candle_timestamps(self, symbol, interval, from_time, to_time, limit=200000):
         """gapfill 비교에 사용할 저장 candle timestamp 목록을 조회합니다."""
         interval = normalize_chart_interval(interval)
-        stored_interval = "1m" if interval in INTRADAY_DERIVED_INTERVALS else "1D" if interval in {"1W", "1M"} else interval
+        stored_interval = interval
         interval_filter = "interval IN ('1D', '1d')" if stored_interval == "1D" else "interval = {interval:String}"
         params = {
             "symbol": symbol,
@@ -1135,6 +1177,18 @@ def first_value(rows, key, fallback):
         if value:
             return value
     return fallback
+
+
+def merge_candle_rows(*groups):
+    """같은 timestamp는 뒤쪽 그룹 값을 우선하는 방식으로 합칩니다."""
+    by_timestamp = {}
+    for group in groups:
+        for row in group or []:
+            timestamp = row.get("timestamp")
+            if not timestamp:
+                continue
+            by_timestamp[timestamp] = {**row, "timestamp": timestamp}
+    return [by_timestamp[key] for key in sorted(by_timestamp)]
 
 
 def clickhouse_identifier(value):

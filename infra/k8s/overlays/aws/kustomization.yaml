@@ -15,6 +15,33 @@ resources:
 patches:
   - path: configmap-aws-patch.yaml
   - path: serviceaccount-irsa-aws-patch.yaml
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: agent-orchestrator
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/envFrom/2/secretRef/optional
+        value: false
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: agent-analysis-worker
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/envFrom/2/secretRef/optional
+        value: false
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: deep-analysis-worker
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/envFrom/2/secretRef/optional
+        value: false
 
 images:
   - name: YOUR_ECR_REPOSITORY/gops-market-ingestor

@@ -70,8 +70,6 @@ def materialize_manifest_keys_from_env(s3, bucket):
         raise ValueError("S3_MATERIALIZE_SYMBOL, S3_MATERIALIZE_INTERVAL, S3_MATERIALIZE_START, and S3_MATERIALIZE_END must be set together.")
 
     interval = normalize_chart_interval(interval)
-    if interval not in {"1m", "1D"}:
-        raise ValueError(f"S3 materialization supports canonical source intervals only: {interval}")
     validate_materialize_range(interval, start)
 
     from alfaka.storage.s3_manifest import DEFAULT_MANIFEST_PREFIX, processed_candle_keys_from_manifest
@@ -180,9 +178,6 @@ def materialize_processed_rows(client, object_path, rows, source_name="s3-proces
         try:
             source_interval = normalize_chart_interval(candle.get("interval"))
         except ValueError:
-            skipped_invalid += 1
-            continue
-        if source_interval not in {"1m", "1D"}:
             skipped_invalid += 1
             continue
         if require_historical_canonical_materialization() and not is_historical_canonical(
