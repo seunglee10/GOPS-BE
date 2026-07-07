@@ -3388,12 +3388,12 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         app = create_app()
         app.state.market_clock_provider = lambda: {
             "is_open": False,
-            "next_open": "2026-07-07T13:30:00Z",
+            "next_open": "2099-07-07T13:30:00Z",
         }
         response = TestClient(app).get("/api/market/next-open")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["nextOpenAt"], "2026-07-07T13:30:00+00:00")
+        self.assertEqual(response.json()["nextOpenAt"], "2099-07-07T13:30:00+00:00")
 
     @unittest.skipUnless(FASTAPI_TESTCLIENT_AVAILABLE, "fastapi TestClient dependency is not installed")
     def test_chart_mutation_routes_require_authenticated_user_when_auth_enabled(self):
