@@ -8,22 +8,28 @@ universes, or raw S3 replay as a normal chart source are superseded.
 
 차트 데이터는 이제 `GET /api/charts/candles` 하나로 읽고 채운다. 프런트가
 요청한 `symbol + interval + limit/before/from/to` 범위만 처리하며, 숨은
-6년 preload나 S&P500 전체 chart backfill은 하지 않는다.
+6년 preload나 S&P500 전체 chart backfill은 하지 않는다. 단, SIP 런타임은
+S&P500 전체 `bars/updatedBars/dailyBars/statuses`를 baseline으로 구독해 최신
+1분봉 진입성을 높인다. `trades/quotes` tick은 active chart, watchlist,
+portfolio, ranking, manual admin 같은 명시 cohort로 제한한다.
 
 조회 순서는 고정이다.
 
 ```text
 Redis recent/live window
 -> ClickHouse canonical chart_candles
--> S3 final objects and manifests
--> Alpaca historical
+-> foreground Alpaca REST direct bars for the requested interval when stored data is not renderable
+-> background S3 final objects and manifests
+-> background Alpaca historical direct bars
 ```
 
-S3에 final/manifest가 있으면 해당 요청 범위만 ClickHouse에 materialize한
-뒤 다시 조회한다. S3에도 없으면 Alpaca historical에서 요청 범위만 받아 S3
-final/manifest와 ClickHouse에 저장한 뒤 다시 조회한다. Raw S3 archive는
-감사/백업용이며 chart serving, coverage, fill decision, ClickHouse
-materialization source로 쓰지 않는다.
+Redis/ClickHouse 데이터가 renderable이면 즉시 반환한다. 부족하면 API
+foreground path가 Alpaca REST에서 요청 interval 그대로 closed historical bars를
+가져와 현재 Redis live/provisional candle과 병합해 반환한다. 같은 timestamp는
+live/provisional candle이 우선한다. 동시에 background fill은 같은 요청 범위를
+S3 final/manifest와 ClickHouse에 저장한다. Raw S3 archive는 감사/백업용이며
+chart serving, coverage, fill decision, ClickHouse materialization source로 쓰지
+않는다.
 
 ## API Contract
 
@@ -55,7 +61,7 @@ adds a `fill` trace:
     "status": "not_needed | filled | partial | timeout | failed | empty",
     "requestedRange": {"start": "...", "end": "..."},
     "requestedLimit": 120,
-    "sourceInterval": "1m",
+    "sourceInterval": "1h",
     "sources": {
       "redis": {"checked": true, "hit": true, "rowCount": 120, "durationMs": 1, "error": null},
       "clickhouse": {"checked": false, "hit": false, "rowCount": 0, "durationMs": 0, "error": null},
@@ -76,23 +82,30 @@ control fields. Coverage may still include diagnostic `repairStatus`.
 
 ## Source Interval Rules
 
-Derived intervals fill their canonical source interval first:
+Historical REST fill fetches the requested canonical interval directly:
 
 ```text
-1m  -> 1m
-5m  -> 1m, then aggregate
-10m -> 1m, then aggregate
-1h  -> 1m, then aggregate
-4h  -> 1m, then aggregate
-1D  -> 1D
-1W  -> 1D, then aggregate
-1M  -> 1D, then aggregate
+1m  -> Alpaca 1Min
+5m  -> Alpaca 5Min
+10m -> Alpaca 10Min
+1h  -> Alpaca 1Hour
+4h  -> Alpaca 4Hour
+1D  -> Alpaca 1Day
+1W  -> Alpaca 1Week
+1M  -> Alpaca 1Month
 ```
+
+Realtime live/provisional candles still use local aggregation: `5m/10m/1h/4h`
+from `1m`, `1D` from intraday live state, and `1W/1M` from daily state. ClickHouse
+serving prefers stored direct interval rows; if none exist yet, it falls back to
+the older query-time aggregation from `1m` or `1D`.
 
 Minimum renderability is separate from full coverage. The foreground chart
 request returns Redis/ClickHouse candles immediately when they are renderable,
-even if full coverage still needs repair. Missing ranges are queued as bounded
-background fill and surfaced in the `fill.backgroundFill` trace.
+even if full coverage still needs repair. If they are not renderable, bounded
+foreground Alpaca direct fill may return a renderable payload immediately.
+Missing ranges are still queued as bounded background fill and surfaced in the
+`fill.backgroundFill` trace.
 
 ## Runtime Flow
 
@@ -103,17 +116,22 @@ flowchart LR
   Redis -->|enough| Done["return candles + fill.not_needed"]
   Redis -->|miss/insufficient| CH["ClickHouse"]
   CH -->|enough| Done
-  CH -->|miss/insufficient| Partial["return partial/empty + backgroundFill"]
+  CH -->|miss/insufficient| AlpacaDirect["foreground: Alpaca requested interval"]
+  AlpacaDirect -->|hit| Overlay["return REST bars + live candle + backgroundFill"]
+  AlpacaDirect -->|miss/timeout| Partial["return partial/empty + backgroundFill"]
   Partial --> S3["background: S3 final/manifest"]
+  Overlay --> S3
   S3 -->|hit| Mat["materialize requested range to ClickHouse"]
-  S3 -->|miss| Alpaca["Alpaca historical requested range"]
+  S3 -->|miss| Alpaca["Alpaca historical requested interval/range"]
   Alpaca --> Write["write S3 final/manifest + ClickHouse"]
 ```
 
-The API foreground path does not wait on S3 or Alpaca. Background fill is bounded
-by `ON_DEMAND_FILL_BACKGROUND_TIMEOUT_SECONDS` and writes source failures to
-logs/monitoring; the initiating response shows that repair was queued. Alpaca
-no-data remains an `empty` or `partial` fill result, not a backend crash.
+The API foreground path does not wait on S3 writes, but it may wait on Alpaca
+REST direct bars up to `ON_DEMAND_FILL_FOREGROUND_MAX_BARS` estimated bars when
+`ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED=true`. Background fill is bounded by
+`ON_DEMAND_FILL_BACKGROUND_TIMEOUT_SECONDS` and writes source failures to
+logs/monitoring; the initiating response shows foreground and background state.
+Alpaca no-data remains an `empty` or `partial` fill result, not a backend crash.
 
 ## Frontend Contract
 
@@ -123,7 +141,9 @@ blank or partial, it displays `dataStatus`, response `message`, and the `fill`
 trace so CSCO 1D or similar failures show which source missed or failed.
 
 Opening WebSocket for 1D remains a separate realtime subscription concern and is
-not part of on-demand fill.
+not part of on-demand fill. Opening any S&P500 chart may promote that symbol to
+the explicit realtime `trades/quotes` cohort while the chart is active; the
+S&P500 baseline itself is bars/statuses only.
 
 ## Runtime Units
 
@@ -174,6 +194,7 @@ Core cases:
 - Redis hit does not call ClickHouse/S3/Alpaca.
 - Redis miss and ClickHouse hit does not call S3/Alpaca.
 - ClickHouse miss and S3 hit materializes only the requested range.
-- S3 miss calls Alpaca historical only for the requested range.
-- 5m/10m/1h/4h/1W/1M fill source intervals before aggregation.
+- S3 miss calls Alpaca historical only for the requested interval and range.
+- 5m/10m/1h/4h/1W/1M direct interval rows are preferred; source aggregation is a fallback.
+- Foreground Alpaca direct fill merges historical bars with the latest live candle and never appends a duplicate current bucket.
 - Timeout returns partial candles plus source-level trace.

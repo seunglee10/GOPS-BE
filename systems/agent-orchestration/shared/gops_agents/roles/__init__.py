@@ -1701,7 +1701,7 @@ def analyze_news_evidence(context: AgentContext, evidence: list[EvidenceItem]) -
         detail = evidence[0].summary if evidence else "뉴스 provider에서 반환된 근거가 없습니다."
         return {
             "summary": summary,
-            "rationale": f"데이터 한계: {detail}",
+            "rationale": f"뉴스 근거 상태: {detail}",
             "confidence": 0.35,
             "tags": ["news", "no-data"],
         }

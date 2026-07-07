@@ -31,10 +31,10 @@ Current chart rebuild contract:
 ALFAKA_REQUEST_CONFIG=systems/market-data/config/market-data-request.json
 ALPACA_UNIVERSE=sp500
 ALPACA_UNIVERSE_REGISTRY_PATH=systems/market-data/config/sp500-universe.json
-ALPACA_COLLECTION_SYMBOL_SOURCE=on-demand
+ALPACA_COLLECTION_SYMBOL_SOURCE=universe
 ALPACA_CHANNELS=bars,updatedBars,dailyBars,statuses
 ALPACA_ACTIVE_CHANNELS=trades,quotes
-ALPACA_MAX_TRADE_SYMBOLS=
+ALPACA_MAX_TRADE_SYMBOLS=100
 ALPACA_FEED_PROFILE=sip
 ALPACA_FEED_PROFILES=sip,boats,crypto-us
 ALPACA_CRYPTO_LOCATION=us
@@ -48,14 +48,19 @@ HOT_TIER_SIZE=10
 HOT_TIER_FALLBACK_SCAN_LIMIT=20
 ```
 
-Baseline collection is on-demand: ingestors do not subscribe the whole S&P500
-universe on startup. `ALPACA_CHANNELS` remains the channel template for any
-explicit collection seed, while runtime `trades` and `quotes` follow the exact
-same explicit symbol set as realtime cohorts: watchlist, portfolio, rankings,
-active chart sessions, and manual admin subscriptions. Quotes are never a
-separate all-symbol feed.
-Set `ALPACA_MAX_TRADE_SYMBOLS` only when an Alpaca subscription cap requires an
-operational limit; explicit active chart subscriptions remain the priority.
+Baseline collection is SIP-only and bars/statuses-only: the SIP ingestor
+subscribes the S&P500 universe for `bars`, `updatedBars`, `dailyBars`, and
+`statuses` so every S&P500 chart has a fast recent 1m entry path. Runtime
+`trades` and `quotes` still follow the exact same explicit symbol set as
+realtime cohorts: watchlist, portfolio, rankings, active chart sessions, and
+manual admin subscriptions. Quotes are never a separate all-symbol feed.
+`ALPACA_MAX_TRADE_SYMBOLS` caps the realtime tick cohort and the ingestor
+prioritizes active chart, manual, portfolio, watchlist, then ranking symbols
+when the cap is reached.
+
+BOATS/overnight keeps `ALPACA_COLLECTION_SYMBOL_SOURCE=on-demand` at the
+deployment level. Overnight liquidity is sparse and the BOATS stream should not
+fan out a 500-symbol baseline until feed support and traffic are measured.
 
 `ALPACA_FEED_PROFILE` selects one ingestor runtime feed (`sip`, `boats`, or `crypto-us`). The live contract is session-routed: SIP is primary for `04:00-20:00 ET` (`pre`, `regular`, `after`), BOATS is primary for `20:00-04:00 ET` (`overnight`), and `crypto-us` is the 24/7 Alpaca crypto feed. Sunday `20:00 ET` opens the Monday overnight slice; Friday `20:00 ET` closes the equity 24/5 window. Local compose and k8s run one ingestor per active profile, and `/health/config` reports the expected profile set from `ALPACA_FEED_PROFILES`. Market-data envelopes, Redis live state, ClickHouse candle rows, API candles, and chart snapshots preserve `feedProfile` and `marketSession` so daytime, BOATS/overnight, and crypto data are diagnosable instead of collapsing into an anonymous stream.
 
@@ -429,17 +434,21 @@ visible regular-session gap into a hidden full-range preload.
 
 `GET /api/charts/candles` is the chart read entrypoint. The foreground API path
 checks the requested `symbol + interval + limit/before/from/to` window in Redis
-and ClickHouse only, then returns the best renderable payload immediately. If the
-window is incomplete, the response includes a `fill.backgroundFill` trace and the
-API process queues a bounded background repair that checks S3 final/manifest and
-then Alpaca historical for that exact range. It does not enqueue a Redis Stream
-worker and it does not run broad preload jobs from a chart request.
+and ClickHouse first. If stored data is not renderable, it may fetch Alpaca REST
+bars for the requested interval directly, merge them with the latest Redis
+live/provisional candle, and return that payload immediately. The response also
+includes a `fill.backgroundFill` trace while the API process queues bounded
+background repair that checks S3 final/manifest and then Alpaca historical for
+that same interval/range. It does not enqueue a Redis Stream worker and it does
+not run broad preload jobs from a chart request.
 
 ```text
 CHART_API_MAX_LIMIT
 ON_DEMAND_FILL_BACKGROUND_ENABLED
 ON_DEMAND_FILL_BACKGROUND_WORKERS
 ON_DEMAND_FILL_BACKGROUND_TIMEOUT_SECONDS
+ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED
+ON_DEMAND_FILL_FOREGROUND_MAX_BARS
 ON_DEMAND_FILL_TIMEOUT_SECONDS
 HISTORICAL_ADJUSTMENT
 ALLOW_NON_CANONICAL_HISTORICAL_ADJUSTMENT
@@ -453,13 +462,48 @@ DAILY_BAR_1M_REPAIR_RATIO
 ```
 
 Canonical Alpaca historical fill uses `adjustment=split` and writes
-`priceAdjustment=split`, `canonicalVersion=v2`. `5m`, `10m`, `1h`, and `4h`
-fill through `1m` source bars; `1W` and `1M` fill through `1D` source bars and
-are then aggregated for serving. Raw S3 backup objects are not a fill source. Retry
-settings are used for transient Alpaca historical API failures such as rate
-limits and 5xx responses. Deprecated `POST /api/charts/backfill`,
+`priceAdjustment=split`, `canonicalVersion=v2`. Historical fill now uses direct
+Alpaca REST timeframes for every canonical interval: `1Min`, `5Min`, `10Min`,
+`1Hour`, `4Hour`, `1Day`, `1Week`, and `1Month`. Realtime live/provisional
+candles are still locally aggregated from live source bars where needed.
+ClickHouse serving prefers stored direct interval rows and falls back to
+query-time aggregation from `1m` or `1D` only when direct rows are missing. Raw
+S3 backup objects are not a fill source. Retry settings are used for transient
+Alpaca historical API failures such as rate limits and 5xx responses.
+Deprecated `POST /api/charts/backfill`,
 `GET /api/charts/backfill/status`, and `GET /api/charts/backfill/queue` return
 `410 Gone`.
+
+## Chart Compare
+
+`GET /api/charts/compare` is a REST-only multi-symbol comparison path. It is not
+an active chart session and must not add WebSocket clients, Redis live-candle
+readers, Kafka subscriptions, or tick fanout load. The frontend sends a bounded
+symbol list and a range; the API fetches Alpaca historical bars server-side,
+normalizes each symbol to first-close return percent, and caches the projection
+in Redis.
+
+```text
+1D -> Alpaca 1Min bars, latest regular-session trading day
+1M -> Alpaca 1Hour bars
+6M -> Alpaca 1Day bars
+1Y -> Alpaca 1Day bars
+5Y -> Alpaca 1Week bars
+```
+
+```text
+CHART_COMPARE_CACHE_ENABLED
+CHART_COMPARE_MAX_SYMBOLS
+CHART_COMPARE_CACHE_TTL_1D_SECONDS
+CHART_COMPARE_CACHE_TTL_1M_SECONDS
+CHART_COMPARE_CACHE_TTL_6M_SECONDS
+CHART_COMPARE_CACHE_TTL_1Y_SECONDS
+CHART_COMPARE_CACHE_TTL_5Y_SECONDS
+```
+
+Alpaca credentials stay server-side and use the same credential source as the
+historical fill path (`ALPACA_CREDENTIAL_SOURCE`, `ALPACA_SECRET_NAME`, or local
+APCA env vars). The frontend never calls Alpaca directly.
 
 ## Market Heatmap
 

@@ -4,9 +4,10 @@ This is the current repository and runtime architecture.
 For placement rules, read `STRUCTURE_GUIDE.md`.
 
 Chart-data rebuild work must use `CHART_DATA_REBUILD_PLAN.md` as the
-source-of-truth. Older market-data notes that describe preset universe preload,
-non-Mermaid Kafka topic layouts, raw S3 replay as an active read path, or Redis
-as historical storage are superseded.
+source-of-truth. Older market-data notes that describe preset historical
+universe preload, S&P500-wide tick/quote collection, non-Mermaid Kafka topic
+layouts, raw S3 replay as an active read path, or Redis as historical storage
+are superseded.
 
 ## Repository Shape
 
@@ -143,8 +144,9 @@ The chart rebuild is on-demand:
 Frontend chart request
   -> API Redis latest 120 check
   -> ClickHouse confirmed history
-  -> S3 final/manifest evidence
-  -> Alpaca historical on-demand fill only after all stores miss
+  -> foreground Alpaca REST direct bars when stored data is not renderable
+  -> background S3 final/manifest evidence
+  -> background Alpaca historical direct fill for the requested interval/range
 ```
 
 Realtime data is feed-guarded and symbol-keyed:

@@ -43,7 +43,14 @@ from gops_agents.retrieval.graph_expansion import (
     build_graph_expansion_from_evidence,
     graph_expansion_cache_key,
 )
-from gops_agents.retrieval.snapshots import apply_rule_guardrail, chart_reference_evidence, news_reference_evidence, trim_cross_signals
+from gops_agents.retrieval.snapshots import (
+    ANALYSIS_ANSWER_POLICY,
+    apply_rule_guardrail,
+    build_synthesis_input,
+    chart_reference_evidence,
+    news_reference_evidence,
+    trim_cross_signals,
+)
 from gops_agents.roles import AgentContext, NewsAgent, OntologyAgent, VerificationGuardrailAgent
 from gops_agents.runtime.admission import AdmissionPolicy, admit_analysis_request
 from gops_agents.runtime.analysis_cache import MemoryAgentAnalysisCache, RedisAgentAnalysisCache
@@ -4615,8 +4622,8 @@ class AgentOrchestrationTests(unittest.TestCase):
         response = {
             "output_text": json.dumps({
                 "title": "NVDA 통합 분석",
-                "summary": "snapshot 근거를 바탕으로 요약했습니다.",
-                "sections": [{"title": "근거", "bullets": ["뉴스 snapshot이 있습니다."]}],
+                "summary": "제 의견은, snapshot 근거를 바탕으로 요약했습니다.",
+                "sections": [{"title": "근거", "bullets": ["뉴스 snapshot이 있습니다.", "차트 OHLCV를 사용했습니다."]}],
                 "citations": [],
                 "limitations": [],
             })
@@ -4666,9 +4673,108 @@ class AgentOrchestrationTests(unittest.TestCase):
         request_payload = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
         user_payload = json.loads(request_payload["input"][1]["content"])
         self.assertEqual(answer.title, "NVDA 통합 분석")
+        self.assertEqual(answer.summary, "제 의견은 자료 근거를 바탕으로 요약했습니다.")
+        self.assertEqual(answer.sections[0].bullets[0], "뉴스 자료가 있습니다.")
+        self.assertEqual(answer.sections[0].bullets[1], "차트 시가·고가·저가·종가·거래량을 사용했습니다.")
         self.assertIn("synthesisInput", user_payload)
         self.assertNotIn("providerEvidence", user_payload)
         self.assertNotIn("findings", user_payload)
+
+    def test_analysis_synthesis_policy_forbids_delegated_followups(self):
+        synthesis_input = build_synthesis_input(
+            run_id="run-policy",
+            intent="price_move_cause",
+            original_prompt="GE 주가 왜 내려갔어?",
+            entities=[],
+            snapshots=[],
+            policy=RuntimePolicy(max_synthesis_output_tokens=350),
+            route_plan=None,
+        )
+
+        policy = synthesis_input.output_policy
+        delegated_section_title = "다음 " + "확인 " + "포인트"
+        self.assertNotIn(delegated_section_title, policy["allowed_sections"])
+        self.assertNotIn("데이터 한계", policy["allowed_sections"])
+        self.assertIn("판단 근거", policy["allowed_sections"])
+        self.assertIn("분석한 지표", policy["allowed_sections"])
+        self.assertNotIn("prohibited_sections", policy)
+        self.assertTrue(policy["forbid_user_todo_sections"])
+        self.assertTrue(policy["do_not_delegate_missing_data"])
+        self.assertTrue(policy["show_used_indicators"])
+        self.assertEqual(ANALYSIS_ANSWER_POLICY["allowed_sections"], policy["allowed_sections"])
+
+    def test_openai_synthesizer_filters_delegated_followup_sections(self):
+        delegated_section_title = "다음 " + "확인 " + "포인트"
+        legacy_evidence_title = "왜 " + "그렇게 " + "보나"
+        response = {
+            "output_text": json.dumps({
+                "title": "GE 주가 변동 원인 분석",
+                "summary": "GE 하락은 단일 뉴스보다 선택 구간 가격 흐름과 뉴스 성격을 함께 봐야 합니다.",
+                "sections": [
+                    {
+                        "title": "핵심 판단",
+                        "bullets": ["GE 하락은 확인된 뉴스만으로 단일 원인으로 확정하기 어렵습니다."],
+                    },
+                    {
+                        "title": delegated_section_title,
+                        "bullets": ["같은 구간의 지수/섹터 ETF/주요 peer 수익률을 비교하세요."],
+                    },
+                    {
+                        "title": legacy_evidence_title,
+                        "bullets": [
+                            "장기 수익률 소개 뉴스는 선택 봉 하락의 직접 원인으로 보기 어렵습니다.",
+                            "뉴스 발생 시각과 선택 봉의 가격·거래량 변화를 맞춰 보세요.",
+                        ],
+                    },
+                ],
+                "citations": [],
+                "limitations": ["거래량 snapshot은 제공되지 않았습니다.", "추가 공시는 확인하세요."],
+            })
+        }
+        evidence = [
+            EvidenceItem(
+                provider="market-data",
+                status="available",
+                title="GE selected chart",
+                summary="GE selected range changed -1.23%.",
+                raw={"visibleSummary": {"change": "-1.23%"}},
+            ),
+            EvidenceItem(
+                provider="news",
+                status="available",
+                title="GE long-term return",
+                summary="GE five-year return article.",
+            ),
+        ]
+        timing = {}
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key", "AGENT_FINAL_ANSWER_PROVIDER": "openai"}, clear=False):
+            with patch("urllib.request.urlopen", return_value=FakeOpenAIResponse(response)) as urlopen:
+                answer = FinalAnswerSynthesizer().synthesize(
+                    symbol="GE",
+                    intent="GE 주가 왜 내려갔어?",
+                    route=IntentRoute("rule", "market-move", ["chart", "news"], 0.9, "test"),
+                    findings=[],
+                    provider_evidence=evidence,
+                    timing=timing,
+                )
+
+        request_payload = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+        system_prompt = request_payload["input"][0]["content"]
+        section_titles = [section.title for section in answer.sections]
+        all_bullets = [bullet for section in answer.sections for bullet in section.bullets]
+
+        self.assertEqual(timing["synthesisProvider"], "openai")
+        self.assertIn("Do not create action-item, checklist, or user-to-do sections", system_prompt)
+        self.assertIn("분석한 지표", system_prompt)
+        self.assertNotIn("snapshot types", system_prompt)
+        self.assertNotIn("missing snapshots", system_prompt)
+        self.assertNotIn(delegated_section_title, system_prompt)
+        self.assertNotIn(delegated_section_title, section_titles)
+        self.assertIn("판단 근거", section_titles)
+        self.assertNotIn(legacy_evidence_title, section_titles)
+        self.assertFalse(any("비교하세요" in bullet or "맞춰 보세요" in bullet for bullet in all_bullets))
+        self.assertEqual(answer.limitations, [])
 
     def test_openai_synthesizer_falls_back_on_invalid_json(self):
         evidence = [
@@ -4750,8 +4856,118 @@ class AgentOrchestrationTests(unittest.TestCase):
             )
 
         self.assertEqual(answer.title, "NVDA 주가 변동 원인 분석")
-        self.assertIn("관련 가능성", answer.summary)
+        self.assertTrue(answer.summary.startswith("제 의견은"))
+        self.assertIn("종합", answer.summary)
         self.assertNotIn("근거를 확인했습니다", answer.summary)
+
+    def test_price_move_policy_fallback_uses_chart_direction_not_positive_news(self):
+        chart_evidence = EvidenceItem(
+            provider="market-data",
+            status="available",
+            title="Chart market snapshot",
+            summary="GE chart snapshot is available.",
+            raw={"visibleSummary": {"change": "-2.10%", "lastPrice": 263.14}, "dataStatus": {"candleCount": 120}},
+        )
+        news_evidence = EvidenceItem(
+            provider="news",
+            status="available",
+            title="GE Aerospace five-year return highlighted",
+            summary="A $100 investment five years ago would be worth $590.98 today.",
+            url="https://example.com/ge-five-year-return",
+            raw={
+                "localizedTitle": "GE 에어로스페이스 5년 수익률 소개",
+                "localizedSummary": "5년 전 100달러 투자 가치는 590.98달러로 증가했습니다.",
+                "impactDirection": "positive",
+                "subjectRelevance": "primary",
+                "relevanceScore": 0.92,
+                "publishedAt": "2026-07-07T00:00:00Z",
+            },
+        )
+        duplicate_news = EvidenceItem(
+            provider="news",
+            status="available",
+            title="Duplicate GE return article",
+            summary="Duplicate article.",
+            url="https://example.com/ge-five-year-return",
+        )
+        synthesis_input = SynthesisInput(
+            run_id="run-ge",
+            original_prompt="주가 왜 내려갔어?",
+            intent="주가 왜 내려갔어?",
+            snapshots=[
+                DataSnapshot(
+                    snapshot_id="snapshot-ge-market",
+                    run_id="run-ge",
+                    snapshot_type="market_snapshot",
+                    status="success",
+                    source="computed",
+                    cache_hit=False,
+                    summary="GE market snapshot.",
+                    evidence=[chart_evidence],
+                )
+            ],
+            output_policy={"analysis_query_type": "price_move_cause"},
+        )
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key", "AGENT_FINAL_ANSWER_PROVIDER": "deterministic"}, clear=False):
+            answer = FinalAnswerSynthesizer().synthesize(
+                symbol="GE",
+                intent="주가 왜 내려갔어?",
+                route=IntentRoute("rule", "market-move", ["chart", "news", "ontology"], 0.9, "test"),
+                findings=[],
+                provider_evidence=[news_evidence, duplicate_news],
+                synthesis_input=synthesis_input,
+            )
+
+        all_bullets = [bullet for section in answer.sections for bullet in section.bullets]
+        delegated_section_title = "다음 " + "확인 " + "포인트"
+        self.assertIn("하락", answer.summary)
+        self.assertTrue(answer.summary.startswith("제 의견은"))
+        self.assertNotIn("상승은", answer.summary)
+        self.assertFalse(any(section.title == delegated_section_title for section in answer.sections))
+        self.assertTrue(any(section.title == "분석한 지표" for section in answer.sections))
+        self.assertFalse(any("비교하세요" in bullet or "확인하세요" in bullet for bullet in all_bullets))
+        self.assertTrue(any("-2.10%" in bullet for bullet in all_bullets))
+        self.assertIn("뉴스", all_bullets)
+        self.assertIn("차트 가격·일자별 거래량", all_bullets)
+        self.assertEqual(answer.limitations, [])
+        self.assertEqual(len(answer.citations), 1)
+
+    def test_analysis_cache_skips_missing_openai_key_fallback(self):
+        provider = ClickHouseNewsProvider(
+            clickhouse_provider=FakeClickHouseProvider([
+                {
+                    "articleId": "openai-cache-skip-1",
+                    "headline": "NVDA shares rise after strong earnings",
+                    "summary": "NVDA revenue beat expectations.",
+                    "publishedAt": utc_now_iso(),
+                    "url": "https://example.com/openai-cache-skip",
+                    "symbols": ["NVDA"],
+                    "source": "alpaca",
+                }
+            ]),
+            publish_fallback=False,
+        )
+        orchestrator = AgentOrchestrator(analysis_cache=MemoryAgentAnalysisCache())
+        orchestrator.news_agent = NewsAgent(provider)
+        request = {
+            "symbol": "NVDA",
+            "intent": "NVDA 주가 왜 내려갔어?",
+            "agentIds": ["agent-01", "agent-02"],
+            "chartContext": {
+                "visibleSummary": {"change": "-1.20%", "lastPrice": 100.0},
+                "dataStatus": {"candleCount": 20},
+            },
+        }
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "", "AGENT_FINAL_ANSWER_PROVIDER": "openai"}, clear=False):
+            first = orchestrator.analyze(request)
+            second = orchestrator.analyze(request)
+
+        self.assertFalse(first.timing["cacheHit"])
+        self.assertFalse(second.timing["cacheHit"])
+        self.assertEqual(first.timing["synthesisFallbackReason"], "missing_openai_api_key")
+        self.assertEqual(second.timing["synthesisFallbackReason"], "missing_openai_api_key")
 
     def test_verification_conflict_is_reflected_in_market_move_answer(self):
         context = AgentContext(symbol="NVDA", intent="NVDA 왜 올랐어?")
@@ -4796,7 +5012,8 @@ class AgentOrchestrationTests(unittest.TestCase):
 
         self.assertIn("불일치", verification.summary)
         self.assertTrue(any("불일치" in bullet for section in answer.sections for bullet in section.bullets))
-        self.assertTrue(any("불일치" in limitation for limitation in answer.limitations))
+        self.assertEqual(answer.limitations, [])
+        self.assertTrue(any(section.title == "분석한 지표" for section in answer.sections))
 
 
 if __name__ == "__main__":

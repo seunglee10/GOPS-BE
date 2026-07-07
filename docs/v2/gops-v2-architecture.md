@@ -15,7 +15,8 @@ For active contracts, use:
 
 Retired chart assumptions that must not be reintroduced:
 
-- fixed legacy symbol set or broad S&P500 chart preload
+- fixed legacy symbol set or broad S&P500 historical chart preload
+- broad S&P500 trades/quotes tick collection
 - legacy raw/tick/candle topic families from the pre-rebuild design
   chart topics
 - Redis keys such as `price:{symbol}:latest`,
@@ -23,7 +24,8 @@ Retired chart assumptions that must not be reintroduced:
 - S3 live prefixes or raw S3 as a chart-serving/materialization source
 - quotes as all-symbol durable storage
 
-The current chart rebuild starts empty, subscribes only explicit realtime
-symbols, attaches quotes only to the same realtime trade symbols, keeps quotes
-in Redis/WebSocket only, and serves history through Redis latest 120 candles,
-ClickHouse, S3 final/manifest, then Alpaca backfill.
+The current chart rebuild starts with empty history, may use a SIP S&P500
+bars/statuses baseline for recent 1m entry, subscribes only explicit realtime
+trade/quote symbols, attaches quotes only to the same realtime trade symbols,
+keeps quotes in Redis/WebSocket only, and serves history through Redis latest
+120 candles, ClickHouse, S3 final/manifest, then Alpaca backfill.

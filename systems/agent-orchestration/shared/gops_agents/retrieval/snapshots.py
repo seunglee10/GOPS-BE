@@ -91,8 +91,11 @@ ANALYSIS_QUERY_POLICY_BY_TYPE = {
 ANALYSIS_ANSWER_POLICY = {
     "start_with_conclusion": True,
     "max_evidence_bullets": 3,
-    "allowed_sections": ["핵심 판단", "왜 그렇게 보나", "반대로 볼 점", "다음 확인 포인트"],
-    "hide_internal_terms": ["GraphDB", "ClickHouse", "Redis", "providerEvidence", "Provider status"],
+    "allowed_sections": ["핵심 판단", "판단 근거", "반대로 볼 점", "분석한 지표"],
+    "forbid_user_todo_sections": True,
+    "do_not_delegate_missing_data": True,
+    "show_used_indicators": True,
+    "hide_internal_terms": ["GraphDB", "ClickHouse", "Redis", "providerEvidence", "Provider status", "snapshot", "스냅샷"],
     "prohibit_direct_investment_command": True,
 }
 

@@ -81,6 +81,7 @@ sys.modules.setdefault("redis", types.SimpleNamespace(from_url=lambda *args, **k
 
 from app.market_data.query.service import MarketDataQueryService  # noqa: E402
 from app.market_data.backfill.service import BackfillService  # noqa: E402
+from app.market_data.compare.service import ChartCompareService  # noqa: E402
 from app.market_data.fill.service import OnDemandFillService  # noqa: E402
 from app.market_data.fundamentals.service import FundamentalsAdapter, FundamentalsRecord, StoreFundamentalsAdapter, records_from_payload  # noqa: E402
 from app.market_data.heatmap import service as heatmap_service  # noqa: E402
@@ -137,6 +138,32 @@ class FakeProvider:
             "visibleRange": {"from": from_time, "to": to_time},
             "include": sorted(include),
         }
+
+
+class FakeCompareRedis:
+    def __init__(self):
+        self.values = {}
+        self.ttls = {}
+
+    def get(self, key):
+        return self.values.get(key)
+
+    def set(self, key, value, ex=None):
+        self.values[key] = value
+        if ex is not None:
+            self.ttls[key] = ex
+
+    def expire(self, key, ttl):
+        self.ttls[key] = ttl
+
+
+class FakeCompareProvider(FakeProvider):
+    def __init__(self):
+        super().__init__()
+        self.redis_provider = types.SimpleNamespace(redis=FakeCompareRedis())
+
+    def symbol_detail(self, symbol):
+        return {"symbol": symbol, "name": f"{symbol} Corporation", "exchange": "NASDAQ"}
 
 
 class FakeIndicatorRedis:
@@ -862,6 +889,7 @@ class FakeDerivedClient:
 class RecordingOnDemandFillService(OnDemandFillService):
     def __init__(self, *, provider=None, s3_result=False, alpaca_result=False):
         super().__init__(provider=provider, timeout_seconds=8, background_enabled=False)
+        self.foreground_enabled = False
         self.s3_result = s3_result
         self.alpaca_result = alpaca_result
         self.calls = []
@@ -1630,6 +1658,107 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertTrue(result["fill"]["backgroundFill"]["queued"])
         self.assertFalse(result["fill"]["sources"]["s3"]["checked"])
         self.assertFalse(result["fill"]["sources"]["alpaca"]["checked"])
+
+    def test_on_demand_fill_uses_foreground_alpaca_direct_interval_for_missing_history(self):
+        payload = {
+            "symbol": "BAC",
+            "interval": "1h",
+            "candles": [],
+            "returnedCount": 0,
+            "storedCandleCount": 0,
+            "sourceInterval": "1m",
+            "_sourceTrace": {
+                "redis": {"checked": True, "hit": False, "rowCount": 0},
+                "clickhouse": {"checked": True, "hit": False, "rowCount": 0},
+            },
+        }
+        raw_rows = [
+            {
+                "t": f"2026-06-25T{hour:02d}:00:00Z",
+                "o": 100 + index,
+                "h": 101 + index,
+                "l": 99 + index,
+                "c": 100.5 + index,
+                "v": 1000 + index,
+                "n": 10 + index,
+                "vw": 100.25 + index,
+            }
+            for index, hour in enumerate(range(13, 21))
+        ]
+        service = OnDemandFillService(timeout_seconds=8, background_enabled=False)
+
+        with mock.patch("app.market_data.fill.service.fetch_alpaca_bars", return_value=raw_rows) as fetch:
+            result = service.fill_if_needed(
+                symbol="BAC",
+                interval="1h",
+                limit=8,
+                before=None,
+                from_time="2026-06-25T13:00:00.000Z",
+                to_time="2026-06-25T20:00:00.000Z",
+                payload=payload,
+            )
+
+        self.assertEqual(fetch.call_args.args[4], "1Hour")
+        self.assertEqual(result["sourceInterval"], "1h")
+        self.assertEqual(result["fill"]["sourceInterval"], "1h")
+        self.assertEqual(result["fill"]["status"], "filled")
+        self.assertEqual(result["fill"]["foregroundFill"]["state"], "filled")
+        self.assertTrue(result["fill"]["sources"]["alpaca"]["hit"])
+        self.assertEqual(len(result["candles"]), 8)
+        self.assertEqual(result["candles"][0]["timestamp"], "2026-06-25T13:00:00.000Z")
+        self.assertIn(":1h:2026-06-25T20:00:00.000Z:", result["snapshotCursor"])
+        self.assertTrue(result["fill"]["renderable"])
+
+    def test_on_demand_fill_keeps_live_candle_over_alpaca_current_bucket(self):
+        live = {
+            "symbol": "BAC",
+            "timeframe": "1h",
+            "timestamp": "2026-06-25T20:00:00.000Z",
+            "open": 200,
+            "high": 201,
+            "low": 199,
+            "close": 200.75,
+            "volume": 2000,
+            "isClosed": False,
+            "sourceInterval": "trades",
+        }
+        payload = {
+            "symbol": "BAC",
+            "interval": "1h",
+            "candles": [live],
+            "returnedCount": 1,
+            "storedCandleCount": 1,
+        }
+        raw_rows = [
+            {
+                "t": f"2026-06-25T{hour:02d}:00:00Z",
+                "o": 100 + index,
+                "h": 101 + index,
+                "l": 99 + index,
+                "c": 100.5 + index,
+                "v": 1000 + index,
+                "n": 10 + index,
+                "vw": 100.25 + index,
+            }
+            for index, hour in enumerate(range(13, 21))
+        ]
+        service = OnDemandFillService(timeout_seconds=8, background_enabled=False)
+
+        with mock.patch("app.market_data.fill.service.fetch_alpaca_bars", return_value=raw_rows):
+            result = service.fill_if_needed(
+                symbol="BAC",
+                interval="1h",
+                limit=8,
+                before=None,
+                from_time="2026-06-25T13:00:00.000Z",
+                to_time="2026-06-25T20:00:00.000Z",
+                payload=payload,
+            )
+
+        self.assertEqual(len(result["candles"]), 8)
+        self.assertEqual(result["candles"][-1]["timestamp"], "2026-06-25T20:00:00.000Z")
+        self.assertEqual(result["candles"][-1]["close"], 200.75)
+        self.assertFalse(result["candles"][-1]["isClosed"])
 
     def test_background_fill_materializes_s3_before_alpaca(self):
         service = RecordingOnDemandFillService(s3_result=True, alpaca_result=True)
@@ -2689,6 +2818,31 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(metadata["coverage"]["sourceInterval"], "1m")
         self.assertEqual(metadata["coverage"]["minimumReturnedCount"], 8)
 
+    def test_snapshot_metadata_respects_direct_alpaca_source_interval(self):
+        service = BackfillService(store=RecordingBackfillStore())
+        candles = [
+            {"timestamp": f"2026-06-25T{13 + index:02d}:00:00.000Z"}
+            for index in range(8)
+        ]
+
+        metadata = service.snapshot_metadata("AAPL", "1h", {
+            "candles": candles,
+            "returnedCount": 8,
+            "requestedLimit": 8,
+            "storedCandleCount": 8,
+            "targetStoredCount": 8,
+            "sourceInterval": "1h",
+            "availableFrom": candles[0]["timestamp"],
+            "availableTo": candles[-1]["timestamp"],
+            "targetRangeFrom": candles[0]["timestamp"],
+            "targetRangeTo": candles[-1]["timestamp"],
+        })
+
+        self.assertEqual(metadata["dataStatus"], "ready")
+        self.assertEqual(metadata["sourceInterval"], "1h")
+        self.assertEqual(metadata["coverage"]["sourceInterval"], "1h")
+        self.assertEqual(metadata["coverage"]["minimumRenderableSourceBars"], 8)
+
     def test_succeeded_backfill_without_stored_coverage_is_not_ready(self):
         store = RecordingBackfillStore()
         service = BackfillService(store=store)
@@ -3126,6 +3280,88 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertIn("s3_canonical_manifest_filter_disabled", payload["warnings"])
         self.assertIn("invalid_alpaca_credential_source", payload["warnings"])
         self.assertNotIn("semiconductor-100", str(payload))
+
+
+class ChartCompareServiceTest(unittest.TestCase):
+    def setUp(self):
+        self.provider = FakeCompareProvider()
+        self.calls = []
+
+    def make_service(self, bars_by_symbol):
+        def fetcher(symbol, start, end, feed, timeframe):
+            self.calls.append({"symbol": symbol, "start": start, "end": end, "feed": feed, "timeframe": timeframe})
+            value = bars_by_symbol.get(symbol)
+            if isinstance(value, Exception):
+                raise value
+            return value or []
+
+        return ChartCompareService(
+            provider=self.provider,
+            fetcher=fetcher,
+            now=lambda: datetime(2026, 7, 6, 21, 0, tzinfo=timezone.utc),
+        )
+
+    def test_compare_1d_uses_minute_bars_and_first_close_return(self):
+        service = self.make_service({
+            "NVDA": [
+                {"t": "2026-07-03T14:30:00Z", "c": 90},
+                {"t": "2026-07-06T13:30:00Z", "c": 100},
+                {"t": "2026-07-06T14:30:00Z", "c": 110},
+            ],
+            "AMD": [
+                {"t": "2026-07-06T13:30:00Z", "c": 50},
+                {"t": "2026-07-06T14:30:00Z", "c": 55},
+            ],
+        })
+
+        payload = service.snapshot(["NVDA", "AMD"], "1D")
+
+        self.assertEqual({call["timeframe"] for call in self.calls}, {"1Min"})
+        nvda = next(item for item in payload["items"] if item["symbol"] == "NVDA")
+        self.assertEqual([point["time"] for point in nvda["points"]], ["2026-07-06T13:30:00Z", "2026-07-06T14:30:00Z"])
+        self.assertEqual(nvda["basePrice"], 100)
+        self.assertEqual(nvda["lastPrice"], 110)
+        self.assertAlmostEqual(nvda["changePercent"], 10.0)
+        self.assertAlmostEqual(nvda["points"][-1]["returnPercent"], 10.0)
+
+    def test_compare_range_timeframe_mapping(self):
+        for range_value, expected_timeframe in {
+            "1M": "1Hour",
+            "6M": "1Day",
+            "1Y": "1Day",
+            "5Y": "1Week",
+        }.items():
+            self.calls = []
+            service = self.make_service({"NVDA": [{"t": "2026-07-06T14:30:00Z", "c": 100}, {"t": "2026-07-06T15:30:00Z", "c": 101}]})
+            payload = service.snapshot(["NVDA"], range_value)
+            self.assertEqual(payload["timeframe"], expected_timeframe)
+            self.assertEqual(self.calls[0]["timeframe"], expected_timeframe)
+
+    def test_compare_returns_partial_payload_when_one_symbol_fails(self):
+        service = self.make_service({
+            "NVDA": [{"t": "2026-07-06T13:30:00Z", "c": 100}, {"t": "2026-07-06T14:30:00Z", "c": 101}],
+            "MLM": RuntimeError("alpaca unavailable"),
+        })
+
+        payload = service.snapshot(["NVDA", "MLM"], "1D")
+
+        self.assertEqual(payload["items"][0]["symbol"], "NVDA")
+        failed = next(item for item in payload["items"] if item["symbol"] == "MLM")
+        self.assertEqual(failed["error"], "provider_error")
+        self.assertTrue(payload["warnings"])
+
+    def test_compare_cache_hit_skips_alpaca_fetcher(self):
+        with mock.patch.dict(os.environ, {"CHART_COMPARE_CACHE_ENABLED": "true", "CHART_COMPARE_CACHE_TTL_1D_SECONDS": "60"}, clear=False):
+            service = self.make_service({
+                "NVDA": [{"t": "2026-07-06T13:30:00Z", "c": 100}, {"t": "2026-07-06T14:30:00Z", "c": 102}],
+            })
+
+            first = service.snapshot(["NVDA"], "1D")
+            second = service.snapshot(["NVDA"], "1D")
+
+        self.assertFalse(first["cache"]["hit"])
+        self.assertTrue(second["cache"]["hit"])
+        self.assertEqual(len(self.calls), 1)
 
 
 if __name__ == "__main__":

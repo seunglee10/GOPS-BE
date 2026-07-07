@@ -27,8 +27,10 @@ flowchart LR
 ```
 
 GitHub Actions dev/test deploy entrypoint is `.github/workflows/deploy-dev.yml`.
-It deploys to the shared dev EKS environment on pushes to `dev`, `kimheejun`,
-`helix/front-chart`, `deploy/**`, and `test/**`, or by manual dispatch.
+It deploys to the shared dev EKS environment only when an operator runs the
+workflow manually from GitHub Actions (`workflow_dispatch`). Pushing to `dev`,
+`kimheejun`, `helix/front-chart`, `deploy/**`, or `test/**` must not start a
+deployment by itself.
 When `market-storage` is selected, the workflow also runs
 `scripts/aws/run-news-cache-rebuild-jobs.sh` after a healthy rollout. That
 one-shot run uses the newly pushed `gops-market-storage` image to warm the
@@ -197,7 +199,7 @@ infra/k8s/overlays/aws-incluster-app-ci/kustomization.yaml
 infra/k8s/overlays/aws-incluster-app-rebuild/kustomization.yaml
 ```
 
-GitHub Actions uses `aws-incluster-app-ci` for routine `dev` pushes. That CI
+GitHub Actions uses `aws-incluster-app-ci` for manual dev/test deploys. That CI
 overlay deliberately deletes the GraphDB StatefulSet from the rendered app
 bundle so immutable PVC template changes cannot break ordinary app deploys.
 It does not apply the `app-agent` NodePool placement or perform the clean
@@ -596,14 +598,28 @@ generated financial report is cached in Redis under
 available.
 
 General final-answer synthesis is enabled with `AGENT_FINAL_ANSWER_PROVIDER=openai`.
-Production config should keep `AGENT_MAX_REALTIME_LLM_CALLS=2`,
-`AGENT_SYNTHESIZER_TIMEOUT_SECONDS=5`, and `AGENT_SYNTHESIS_TIMEOUT_MS=5000` so
-one LLM call remains reserved for final answer synthesis. A completed report whose
-`timing.llmCallLabels` does not contain `synthesis` or `financial-synthesis` did
-not even attempt the final synthesis LLM call. A report whose
+Production config should keep `AGENT_MAX_REALTIME_LLM_CALLS=2` so one LLM call
+remains reserved for final answer synthesis. The final-answer LLM is only a
+Korean prose rewrite layer, so production should use a fast mini model via
+`AGENT_SYNTHESIZER_MODEL=gpt-5.4-mini` and keep
+`AGENT_SYNTHESIZER_TIMEOUT_SECONDS=3.5` / `AGENT_SYNTHESIS_TIMEOUT_MS=3500`.
+This preserves the 5-second hot-path response target by falling back quickly when
+OpenAI is slow. A completed report whose `timing.llmCallLabels` does not contain
+`synthesis` or `financial-synthesis` did not even attempt the final synthesis LLM
+call. A report whose
 `timing.synthesisProvider` is not `openai` used deterministic fallback for the final
 answer; check `synthesisSkippedReason` and `synthesisFallbackReason` in `timing` or
 `agentTrace.synthesis`.
+
+AWS overlays make `alfaka-openai-secret` mandatory for the agent orchestrator and
+analysis workers. If the secret is missing, the pod should fail scheduling/startup
+instead of silently serving deterministic final-answer fallback. Startup logs also
+print non-secret synthesis diagnostics: provider env, model, timeout, and whether
+`OPENAI_API_KEY` is visible inside that pod. Reports mirror the same fields under
+`agentTrace.synthesis`. Do not cache analysis reports produced after infra fallback
+reasons such as `missing_openai_api_key`, `synthesis_skipped_budget`, or
+`openai_*`; rerunning after the secret or provider recovers should attempt OpenAI
+synthesis again.
 
 Interactive OperationIR planner fallback is enabled with
 `AGENT_OPERATION_PLANNER_PROVIDER=openai`. Leave it unset for deterministic-only

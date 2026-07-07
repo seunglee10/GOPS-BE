@@ -10,7 +10,7 @@ from alfaka.common.env import load_dotenv, utc_now_iso
 from alfaka.common.market_messages import source_event_id
 from alfaka.common.symbols import alpaca_provider_symbol, is_crypto_symbol, normalize_provider_symbol
 from alfaka.alpaca.feed_profiles import market_session_for_timestamp
-from alfaka.serving.intervals import is_derived_interval, normalize_chart_interval, source_interval_for
+from alfaka.serving.intervals import alpaca_timeframe_for_interval, normalize_chart_interval
 from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
 from alfaka.serving.moving_average import attach_moving_averages
 from alfaka.storage.clickhouse_loader import ClickHouseHttpClient, should_ensure_schema_on_start
@@ -94,13 +94,6 @@ class BackfillRunner:
 
         if job_type not in {"initial_load", "gapfill", "replay_repair", "correction_replay"}:
             raise BackfillUnavailable(f"Unsupported backfill job type: {job_type}.")
-        if is_derived_interval(interval):
-            source_interval = source_interval_for(interval)
-            raise BackfillUnavailable(
-                f"Backfill for {interval} is derived from {source_interval}; request {source_interval} backfill first."
-            )
-        if interval not in {"1m", "1D"}:
-            raise BackfillUnavailable("Backfill v1 supports direct 1m and 1D historical bars.")
         if job_type in {"replay_repair", "correction_replay"}:
             return self._run_replay_job(bucket, symbol, interval, start, end, job_type, source_preference)
 
@@ -160,7 +153,7 @@ class BackfillRunner:
             if source_preference == "s3-only":
                 raise BackfillUnavailable("No S3 final candle objects are available for the requested symbol and interval.")
 
-        timeframe = "1Day" if interval == "1D" else "1Min"
+        timeframe = alpaca_timeframe_for_interval(interval)
         adjustment = historical_adjustment_from_env(os.environ)
         raw_bars = []
         for repair_range in repair_ranges:

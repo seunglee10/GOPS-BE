@@ -46,6 +46,7 @@ and date. Agent-specific handoff content should stay in the `AGENT_*` documents
 listed above.
 
 For chart data work, do not follow older notes that require a preset symbol
-universe preload, S&P500-wide collection, raw S3 replay as a normal read path,
-or a Kafka topic layout that differs from the Mermaid. Use
-`CHART_DATA_REBUILD_PLAN.md`.
+universe chart preload, S&P500-wide tick/quote collection, raw S3 replay as a
+normal read path, or a Kafka topic layout that differs from the Mermaid. SIP
+S&P500 bars/statuses baseline collection is the narrow runtime exception
+documented in `CHART_DATA_REBUILD_PLAN.md`.

@@ -1722,6 +1722,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         news_rebuild_job = (REPO_ROOT / "infra/k8s/base/job-news-intelligence-rebuild.yaml").read_text(encoding="utf-8")
         news_rebuild_script = (REPO_ROOT / "scripts/aws/run-news-cache-rebuild-jobs.sh").read_text(encoding="utf-8")
         configmap = (REPO_ROOT / "infra/k8s/base/app/configmap.yaml").read_text(encoding="utf-8")
+        alpaca_ingestor_deployment = (REPO_ROOT / "infra/k8s/base/app/deployment-alpaca-ingestor.yaml").read_text(encoding="utf-8")
         aws_overlay = (REPO_ROOT / "infra/k8s/overlays/aws/kustomization.yaml").read_text(encoding="utf-8")
         aws_ci_overlay = (REPO_ROOT / "infra/k8s/overlays/aws-incluster-app-ci/kustomization.yaml").read_text(encoding="utf-8")
 
@@ -1756,6 +1757,11 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertNotIn("name: alfaka-news-intelligence-rebuild", aws_ci_overlay)
         self.assertIn("KAFKA_PROCESSOR_GROUP_ID: alfaka-market-processor", configmap)
         self.assertIn("KAFKA_RAW_S3_GROUP_ID: alfaka-raw-s3-archive", configmap)
+        self.assertIn("ALPACA_COLLECTION_SYMBOL_SOURCE: universe", configmap)
+        self.assertIn('ALPACA_MAX_TRADE_SYMBOLS: "100"', configmap)
+        self.assertIn("name: alfaka-alpaca-ingestor-boats", alpaca_ingestor_deployment)
+        self.assertIn("name: ALPACA_COLLECTION_SYMBOL_SOURCE", alpaca_ingestor_deployment)
+        self.assertIn("value: on-demand", alpaca_ingestor_deployment)
         self.assertIn('CLICKHOUSE_PROVIDER_TIMEOUT_SECONDS: "8"', configmap)
         self.assertIn('CLICKHOUSE_PROVIDER_RETRY_ATTEMPTS: "2"', configmap)
         self.assertIn('NEWS_BACKFILL_DAYS: "365"', configmap)
@@ -1796,6 +1802,8 @@ class MarketDataHardeningContractTest(unittest.TestCase):
     def test_deploy_smoke_uses_lightweight_health_endpoint(self):
         workflow = (REPO_ROOT / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8")
 
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertNotIn("  push:", workflow)
         self.assertIn("smoke_url https://stargops.com/api/health", workflow)
         self.assertNotIn("smoke_url https://stargops.com/api/charts/symbols", workflow)
 
@@ -4051,6 +4059,38 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(result["source"], "alpaca")
         self.assertEqual(result["gapRanges"], [{"start": "2026-06-25T13:31:00.000Z", "end": "2026-06-25T13:33:00.000Z", "missingCount": 2}])
 
+    def test_backfill_runner_fetches_direct_hourly_bars_for_hourly_interval(self):
+        record = {
+            "requestId": "backfill:AAPL:1h:test",
+            "symbol": "AAPL",
+            "interval": "1h",
+            "range": {"start": "2026-06-25T13:00:00.000Z", "end": "2026-06-25T16:00:00.000Z"},
+            "jobType": "gapfill",
+            "sourcePreference": "coverage-first",
+        }
+        calls = []
+
+        def fake_fetch(symbol, start, end, feed, timeframe):
+            calls.append({"symbol": symbol, "start": start, "end": end, "timeframe": timeframe})
+            return [
+                alpaca_raw_bar("2026-06-25T13:00:00.000Z", open_price=10, index=1),
+                alpaca_raw_bar("2026-06-25T14:00:00.000Z", open_price=11, index=2),
+            ]
+
+        runner = BackfillRunner(
+            s3=S3ObjectStore(),
+            clickhouse_client=RecordingClickHouseClient(),
+            coverage_provider=StaticCoverageProvider({"rowCount": 0, "availableFrom": None, "availableTo": None}),
+        )
+
+        with mock.patch.dict(os.environ, {"S3_BUCKET": "bucket", "S3_FINAL_PREFIX": "market-data/rebuild-20260702-lazy-v1/final", "S3_PROCESSED_FORMAT": "jsonl"}):
+            with mock.patch("alfaka.backfill.runner.fetch_alpaca_bars", side_effect=fake_fetch):
+                result = runner._run(record)
+
+        self.assertEqual(calls[0]["timeframe"], "1Hour")
+        self.assertEqual(result["source"], "alpaca")
+        self.assertIn("/interval=1h/", result["processedObjects"][0])
+
     def test_fetch_alpaca_bars_forces_split_adjustment_and_retries_rate_limits(self):
         responses = [
             FakeHttpResponse(status_code=429, text="rate limited", headers={"Retry-After": "0"}),
@@ -4459,7 +4499,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
 
         candles = provider.candles("AAPL", "1m", 5)
 
-        query = provider.queries[0][0]
+        query = provider.queries[-1][0]
         self.assertIn("row_number() OVER", query)
         self.assertIn("PARTITION BY symbol, if(interval = '1d', '1D', interval), event_time", query)
         self.assertIn("multiIf(price_adjustment = 'split', 1, 0) DESC", query)
@@ -4485,7 +4525,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
 
         candles = provider.candles("BTCUSD", "1m", 5)
 
-        query = provider.queries[0][0]
+        query = provider.queries[-1][0]
         self.assertNotIn("toDayOfWeek(event_time) BETWEEN 1 AND 5", query)
         self.assertEqual(candles[-1]["timestamp"], "2026-06-28T13:30:00.000Z")
 
@@ -4562,14 +4602,14 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         ]
         provider = RecordingClickHouseProviderForAggregation(rows)
 
-        candles = provider.candles("AAPL", "5m", 5)
+        candles = provider.aggregated_minute_candles("AAPL", "5m", 5)
 
         self.assertIn("AND interval = '1m'", provider.queries[0][0])
         self.assertIn("row_number() OVER", provider.queries[0][0])
         self.assertEqual(candles[-1]["interval"], "5m")
         self.assertEqual(candles[-1]["ma5"], 3.0)
 
-        provider.candles("AAPL", "1h", 5)
+        provider.aggregated_minute_candles("AAPL", "1h", 5)
         self.assertIn("INTERVAL 60 minute", provider.queries[-1][0])
 
     def test_clickhouse_query_time_weekly_monthly_aggregation_uses_daily_source(self):
@@ -4589,8 +4629,8 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         ]
         provider = RecordingClickHouseProviderForAggregation(rows)
 
-        weekly = provider.candles("AAPL", "1W", 5)
-        monthly = provider.candles("AAPL", "1M", 5)
+        weekly = provider.aggregated_daily_candles("AAPL", "1W", 5)
+        monthly = provider.aggregated_daily_candles("AAPL", "1M", 5)
 
         self.assertIn("AND interval IN ('1D', '1d')", provider.queries[0][0])
         self.assertIn("AND interval IN ('1D', '1d')", provider.queries[1][0])
@@ -4599,6 +4639,30 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(weekly[-1]["interval"], "1W")
         self.assertEqual(monthly[-1]["interval"], "1M")
         self.assertEqual(weekly[-1]["ma5"], 3.0)
+
+    def test_clickhouse_prefers_direct_interval_rows_before_source_aggregation(self):
+        rows = [
+            {
+                "timestamp": f"2026-06-25T{13 + index:02d}:00:00.000Z",
+                "open": index + 1,
+                "high": index + 1,
+                "low": index + 1,
+                "close": index + 1,
+                "volume": 100 + index,
+                "isClosed": 1,
+                "source": "alpaca.bars",
+                "feed": "sip",
+            }
+            for index in range(5)
+        ]
+        provider = RecordingClickHouseProviderForAggregation(rows)
+
+        candles = provider.candles("AAPL", "1h", 5)
+
+        self.assertIn("interval = {interval:String}", provider.queries[0][0])
+        self.assertEqual(provider.queries[0][1]["interval"], "1h")
+        self.assertEqual(len(provider.queries), 1)
+        self.assertEqual(candles[-1]["interval"], "1h")
 
     def test_monthly_bucket_candles_are_not_removed_when_month_starts_on_weekend(self):
         rows = [
@@ -4915,7 +4979,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
 
         provider.candles("AAPL", "1W", 5)
 
-        query = provider.queries[0][0]
+        query = provider.queries[-1][0]
         self.assertIn("AND interval IN ('1D', '1d')", query)
         self.assertNotIn("market_session = 'regular'", query)
         self.assertIn("'regular' AS marketSession", query)
@@ -5860,6 +5924,43 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(client.inserts[1][1][0]["interval"], "1m")
         self.assertEqual(client.inserts[2][0], "load_audit")
         self.assertEqual(client.inserts[2][1][0]["object_path"], "s3://bucket/market-data/rebuild-20260702-lazy-v1/final/candles/part-1.jsonl")
+
+    def test_s3_materializer_accepts_direct_intraday_intervals(self):
+        client = RecordingClickHouseClient()
+        rows = []
+        for interval, timestamp in (
+            ("1h", "2026-06-25T13:00:00.000Z"),
+            ("4h", "2026-06-25T16:00:00.000Z"),
+        ):
+            rows.append({
+                **canonical_candle_fields(),
+                "eventType": "CANDLE",
+                "symbol": "BAC",
+                "interval": interval,
+                "timestamp": timestamp,
+                "open": 10,
+                "high": 11,
+                "low": 9,
+                "close": 10.5,
+                "volume": 100,
+                "isClosed": True,
+                "source": "alpaca.bars",
+                "feed": "sip",
+                "feedProfile": "sip",
+                "marketSession": "regular",
+                "sourceEventId": f"event-{interval}",
+            })
+
+        result = materialize_processed_rows(
+            client,
+            "s3://bucket/market-data/rebuild-20260702-lazy-v1/final/candles/direct-intraday.jsonl",
+            rows,
+        )
+
+        self.assertEqual(result["rowCount"], 2)
+        self.assertEqual(result["skippedInvalidRowCount"], 0)
+        self.assertEqual(client.inserts[0][0], "chart_candles")
+        self.assertEqual([row["interval"] for row in client.inserts[0][1]], ["1h", "4h"])
 
     def test_s3_materializer_prefers_canonical_duplicate_over_legacy_row(self):
         client = RecordingClickHouseClient()
@@ -6931,6 +7032,23 @@ class RealtimeChartSubscriptionContractTest(unittest.TestCase):
         record = redis_client.hgetall(keys.subscription_symbol("NVDA"))
         self.assertEqual(record["sources"], "watchlist")
         self.assertEqual(redis_client.smembers(keys.subscription_symbols()), {"NVDA"})
+
+    def test_realtime_symbol_cap_prioritizes_active_chart_symbols(self):
+        redis_client = MemoryRedis()
+        controller = RealtimeSubscriptionCohortService(redis_client)
+        keys = RedisKeyBuilder()
+
+        controller.replace_user_watchlist("user-a", ["AAPL", "MSFT", "NVDA"])
+        controller.refresh_active_chart("user-a", "session-1", "MSFT", 90)
+        controller.refresh_active_chart("user-a", "session-2", "TSLA", 90)
+
+        with mock.patch.dict(os.environ, {"ALPACA_MAX_TRADE_SYMBOLS": "2"}, clear=False):
+            desired = read_realtime_subscription_symbols_by_channel(redis_client, ["trades", "quotes"])
+
+        self.assertEqual(desired["trades"], {"MSFT", "TSLA"})
+        self.assertEqual(desired["quotes"], {"MSFT", "TSLA"})
+        self.assertEqual(redis_client.hgetall(keys.subscription_symbol("MSFT"))["sources"], "active-chart,watchlist")
+        self.assertEqual(redis_client.hgetall(keys.subscription_symbol("TSLA"))["sources"], "active-chart")
 
 
 if __name__ == "__main__":

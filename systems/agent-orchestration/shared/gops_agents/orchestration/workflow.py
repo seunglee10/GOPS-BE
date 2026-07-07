@@ -851,6 +851,12 @@ class AgentOrchestrator:
     def _store_analysis_cache(self, state: dict[str, Any]) -> None:
         if state.get("analysis_cache_hit") or not state.get("analysis_cacheable") or not state.get("analysis_cache_key"):
             return
+        if should_skip_analysis_cache_for_synthesis_fallback(state.get("timing")):
+            print(
+                f"Agent analysis cache skipped after synthesis fallback: symbol={state.get('symbol')} reason={state.get('timing', {}).get('synthesisFallbackReason')}",
+                flush=True,
+            )
+            return
         route = state.get("route")
         final_answer = state.get("final_answer")
         if not isinstance(route, IntentRoute) or not isinstance(final_answer, FinalAnswer):
@@ -925,6 +931,20 @@ def layout_resolve_trace_for_state(state: dict[str, Any]) -> dict[str, Any]:
 
 def synthesis_trace_from_timing(timing: dict[str, Any]) -> dict[str, Any]:
     trace: dict[str, Any] = {}
+    provider_env = timing.get("synthesisProviderEnv")
+    if provider_env:
+        trace["providerEnv"] = str(provider_env)
+    financial_provider_env = timing.get("financialSynthesisProviderEnv")
+    if financial_provider_env:
+        trace["financialProviderEnv"] = str(financial_provider_env)
+    if "synthesisOpenAIKeyConfigured" in timing:
+        trace["openaiKeyConfigured"] = bool(timing.get("synthesisOpenAIKeyConfigured"))
+    model = timing.get("synthesisModel")
+    if model:
+        trace["model"] = str(model)
+    timeout_seconds = timing.get("synthesisTimeoutSeconds")
+    if timeout_seconds is not None:
+        trace["timeoutSeconds"] = timeout_seconds
     provider = timing.get("synthesisProvider")
     if provider:
         trace["provider"] = str(provider)
@@ -939,6 +959,17 @@ def synthesis_trace_from_timing(timing: dict[str, Any]) -> dict[str, Any]:
         trace["llmCallLabels"] = [str(item) for item in labels]
         trace["llmSynthesisAttempted"] = any(str(item) in {"synthesis", "financial-synthesis"} for item in labels)
     return trace
+
+
+def should_skip_analysis_cache_for_synthesis_fallback(timing: Any) -> bool:
+    if not isinstance(timing, dict):
+        return False
+    reason = str(timing.get("synthesisFallbackReason") or timing.get("synthesisSkippedReason") or "")
+    if not reason or reason == "provider_deterministic":
+        return False
+    if reason in {"missing_openai_api_key", "synthesis_skipped_budget", "openai_unavailable"}:
+        return True
+    return reason.startswith("openai_")
 
 
 def ui_layout_preflight_response(request: dict[str, Any]) -> dict[str, Any] | None:
