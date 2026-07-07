@@ -2462,6 +2462,8 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(payload["coverage"]["layoutMarketCapFromSeed"], 1)
         self.assertEqual(payload["items"][0]["marketCap"], 200000)
         self.assertEqual(payload["items"][0]["marketCapSource"], "fundamentals")
+        self.assertEqual(payload["items"][0]["sector"], "Information Technology")
+        self.assertEqual(payload["items"][0]["sectorLabelKo"], "정보기술")
         self.assertEqual(payload["items"][0]["layoutPrice"], 200)
         self.assertEqual(payload["items"][0]["eps"], 5)
         self.assertEqual(payload["items"][0]["revenue"], 100000)

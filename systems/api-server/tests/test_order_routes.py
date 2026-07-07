@@ -80,6 +80,7 @@ class IntegratedOrderRoutesTest(unittest.TestCase):
 
         fake_client = FakeKisClient()
         self.app.state.kis_client = fake_client
+        self.app.state.portfolio_sector_provider = lambda: [{"symbol": "MU", "sector": "Technology"}]
 
         response = self.client.get("/api/account/holdings?market=overseas&currency=USD")
 
@@ -87,6 +88,8 @@ class IntegratedOrderRoutesTest(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["source"], "kis-demo")
         self.assertEqual(payload["positions"][0]["symbol"], "MU")
+        self.assertEqual(payload["positions"][0]["sector"], "Information Technology")
+        self.assertEqual(payload["positions"][0]["sectorLabelKo"], "정보기술")
         self.assertEqual(fake_client.request, {"market": "overseas", "currency": "USD", "exchange": ""})
 
     def test_submit_order_requires_idempotency_key(self):

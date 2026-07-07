@@ -7,6 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from app.core.sectors import sector_payload_fields
 from app.market_data.fundamentals.service import FundamentalsAdapter, FundamentalsRecord, build_fundamentals_adapter
 from app.services.alfaka_market_data import normalize_market_symbol
 
@@ -38,7 +39,7 @@ class MarketHeatmapService:
         stale_cache_key = heatmap_stale_cache_key(universe_name)
         cached = self._cache_get(fresh_cache_key)
         if cached:
-            return cached
+            return normalize_heatmap_sector_fields(cached)
 
         previous = self._cache_get(stale_cache_key) or {}
         previous_items = items_by_symbol(previous.get("items"))
@@ -76,7 +77,7 @@ class MarketHeatmapService:
         }
         self._cache_set(fresh_cache_key, payload, read_positive_int("HEATMAP_CACHE_TTL_SECONDS", DEFAULT_CACHE_TTL_SECONDS))
         self._cache_set(stale_cache_key, payload, read_positive_int("HEATMAP_STALE_CACHE_TTL_SECONDS", DEFAULT_STALE_CACHE_TTL_SECONDS))
-        return payload
+        return normalize_heatmap_sector_fields(payload)
 
     def _redis(self):
         redis_provider = getattr(self.provider, "redis_provider", None)
@@ -179,10 +180,11 @@ def build_heatmap_item(
         change_percent = read_float(seed_item.get("changePercent"))
 
     public_fundamentals = fundamentals.to_public_dict() if fundamentals else {}
+    sector_fields = sector_payload_fields(public_fundamentals.get("sector") or seed_item.get("sector") or "Unclassified")
     return {
         "symbol": symbol,
         "companyName": public_fundamentals.get("companyName") or seed_item.get("companyName") or symbol,
-        "sector": public_fundamentals.get("sector") or seed_item.get("sector") or "Unclassified",
+        **sector_fields,
         "industry": public_fundamentals.get("industry") or seed_item.get("industry") or "Unclassified",
         "cik": public_fundamentals.get("cik"),
         "lastPrice": last_price,
@@ -215,6 +217,19 @@ def build_heatmap_item(
         "priceSource": price_source,
         "priceUpdatedAt": price_updated_at,
     }
+
+
+def normalize_heatmap_sector_fields(payload: dict[str, Any]) -> dict[str, Any]:
+    items = payload.get("items")
+    if not isinstance(items, list):
+        return payload
+    normalized_items = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        normalized_items.append({**item, **sector_payload_fields(item.get("sector"))})
+    payload["items"] = normalized_items
+    return payload
 
 
 def should_keep_previous_layout(previous_item: dict[str, Any], current_market_cap_source: str) -> bool:
