@@ -4664,6 +4664,29 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(len(provider.queries), 1)
         self.assertEqual(candles[-1]["interval"], "1h")
 
+    def test_clickhouse_recomputes_stored_direct_interval_moving_averages(self):
+        rows = [
+            {
+                "timestamp": f"2026-06-25T{13 + index:02d}:00:00.000Z",
+                "open": index + 1,
+                "high": index + 1,
+                "low": index + 1,
+                "close": index + 1,
+                "volume": 100 + index,
+                "isClosed": 1,
+                "ma5": 999,
+                "source": "alpaca.bars",
+                "feed": "sip",
+            }
+            for index in range(5)
+        ]
+        provider = RecordingClickHouseProviderForAggregation(rows)
+
+        candles = provider.candles("AAPL", "1h", 5)
+
+        self.assertEqual(candles[-1]["interval"], "1h")
+        self.assertEqual(candles[-1]["ma5"], 3.0)
+
     def test_monthly_bucket_candles_are_not_removed_when_month_starts_on_weekend(self):
         rows = [
             {
@@ -4893,7 +4916,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
                 to_time="2020-01-03T00:00:00.000Z",
             )
 
-        self.assertEqual(clickhouse.calls[-1]["from_time"], "2020-01-02T00:00:00.000Z")
+        self.assertLess(clickhouse.calls[-1]["from_time"], "2020-01-02T00:00:00.000Z")
         self.assertEqual([candle["timestamp"] for candle in payload["candles"]], [
             "2020-01-02T14:30:00.000Z",
             "2020-01-02T14:31:00.000Z",
@@ -5518,6 +5541,37 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         payload = provider.candle_snapshot("AAPL", "1m", 5)
 
         self.assertEqual(len(payload["candles"]), 5)
+        self.assertEqual(payload["candles"][-1]["ma60"], 35.5)
+
+    def test_provider_uses_lookback_rows_for_explicit_range_moving_averages(self):
+        start = datetime(2026, 6, 25, 10, 0, tzinfo=timezone.utc)
+        candles = [
+            {
+                "timestamp": (start + timedelta(hours=hour)).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                "interval": "1h",
+                "open": hour + 1,
+                "high": hour + 2,
+                "low": hour,
+                "close": hour + 1,
+                "volume": 100,
+                "isClosed": True,
+                "marketSession": "regular",
+            }
+            for hour in range(65)
+        ]
+        provider = MarketDataProvider(
+            redis_provider=FakeRedisProvider(),
+            clickhouse_provider=RecordingRangeClickHouseProvider(candles=candles),
+        )
+        requested_from = (start + timedelta(hours=60)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        requested_to = (start + timedelta(hours=64)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+        payload = provider.candle_snapshot("AAPL", "1h", 10, from_time=requested_from, to_time=requested_to)
+
+        self.assertLess(provider.clickhouse_provider.calls[-1]["from_time"], requested_from)
+        self.assertEqual(len(payload["candles"]), 5)
+        self.assertEqual(payload["candles"][0]["timestamp"], requested_from)
+        self.assertEqual(payload["candles"][-1]["timestamp"], requested_to)
         self.assertEqual(payload["candles"][-1]["ma60"], 35.5)
 
     def test_provider_does_not_let_stale_redis_recent_hide_newer_clickhouse_rows(self):

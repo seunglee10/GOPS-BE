@@ -57,7 +57,7 @@ class RedisMarketDataProvider:
 
     def candle_snapshot(self, symbol, interval, limit=None):
         interval = normalize_chart_interval(interval)
-        candles = attach_moving_averages(self.recent_candles(symbol, interval, limit))
+        candles = attach_moving_averages(self.recent_candles(symbol, interval, limit), overwrite=True)
         return snapshot(symbol=symbol, interval=interval, candles=candles)
 
     def live_event(self, symbol, interval="1m"):

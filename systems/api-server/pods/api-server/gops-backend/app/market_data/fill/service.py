@@ -227,7 +227,7 @@ class OnDemandFillService:
                 trace["foregroundFill"].update({"state": "empty", "reason": "Alpaca bars fell outside requested chart window"})
                 return False
             merged = merge_candles(direct_candles, payload.get("candles") or [])
-            candles = attach_moving_averages(merged)[-limit:]
+            candles = attach_moving_averages(merged, overwrite=True)[-limit:]
             payload.update({
                 "source": "alpaca",
                 "feed": feed,

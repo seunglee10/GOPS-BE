@@ -60,9 +60,9 @@ class ClickHouseMarketDataProvider:
         limit = resolve_candle_limit(interval, limit)
         direct_rows = self.stored_interval_candles(symbol, interval, limit, before=before, from_time=from_time, to_time=to_time)
         if len(direct_rows) >= limit:
-            return attach_moving_averages(direct_rows[-limit:])
+            return attach_moving_averages(direct_rows[-limit:], overwrite=True)
         aggregate_rows = aggregate(symbol, interval, limit, before=before, from_time=from_time, to_time=to_time) if aggregate else []
-        return attach_moving_averages(merge_candle_rows(aggregate_rows, direct_rows)[-limit:])
+        return attach_moving_averages(merge_candle_rows(aggregate_rows, direct_rows)[-limit:], overwrite=True)
 
     def stored_interval_candles(self, symbol, interval, limit=None, before=None, from_time=None, to_time=None):
         """ClickHouse chart_candles에 저장된 요청 interval row를 그대로 조회합니다."""
@@ -183,7 +183,7 @@ class ClickHouseMarketDataProvider:
         rows = self.query_json_each_row(query, params)
         for row in rows:
             row["interval"] = "1D"
-        return attach_moving_averages(list(reversed(rows)))
+        return attach_moving_averages(list(reversed(rows)), overwrite=True)
 
     def aggregated_minute_candles(self, symbol, interval, limit=None, before=None, from_time=None, to_time=None):
         """1분봉을 intraday 파생 주기로 묶어 차트용 캔들을 만듭니다."""
@@ -250,7 +250,7 @@ class ClickHouseMarketDataProvider:
         rows = self.query_json_each_row(query, params)
         for row in rows:
             row["interval"] = interval
-        return attach_moving_averages(list(reversed(rows)))
+        return attach_moving_averages(list(reversed(rows)), overwrite=True)
 
     def aggregated_daily_candles(self, symbol, interval, limit=None, before=None, from_time=None, to_time=None):
         """일봉을 주봉/월봉으로 묶어 차트용 캔들을 만듭니다."""
@@ -317,7 +317,7 @@ class ClickHouseMarketDataProvider:
         rows = self.query_json_each_row(query, params)
         for row in rows:
             row["interval"] = interval
-        return attach_moving_averages(list(reversed(rows)))
+        return attach_moving_averages(list(reversed(rows)), overwrite=True)
 
     def candles_since(self, symbol, interval, timestamp, limit=500, include_from=False):
         """WebSocket gap 보정용으로 특정 timestamp 이후의 캔들을 조회합니다."""
@@ -365,7 +365,7 @@ class ClickHouseMarketDataProvider:
 
     def candle_snapshot(self, symbol, interval, limit=None):
         interval = normalize_chart_interval(interval)
-        candles = attach_moving_averages(self.candles(symbol, interval, limit))
+        candles = attach_moving_averages(self.candles(symbol, interval, limit), overwrite=True)
         feed = first_value(candles, "feed", "sip")
         source = first_value(candles, "source", "alpaca")
         return snapshot(symbol=symbol, interval=interval, candles=candles, source=source, feed=feed)
