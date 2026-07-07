@@ -73,3 +73,5 @@ real credentials
 - Prefer one clear README at each system or platform boundary.
 - Update the relevant agent architecture, backend, frontend, and AWS docs in the same change when their contracts change.
 - Agent architecture docs guide direction; they are not permission to implement missing features without a task.
+
+## Imported Claude Cowork project instructions
