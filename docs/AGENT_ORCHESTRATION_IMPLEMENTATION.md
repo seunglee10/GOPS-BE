@@ -41,7 +41,7 @@ flowchart LR
 
   Kafka["Kafka"]
   Redis["Redis"]
-  MarketTopics["market.layer.trades.v1<br/>market.layer.candles.live.v1<br/>market.layer.candles.closed.v1"]
+  MarketTopics["market.layer.trades.v1<br/>market.layer.candles.live.v1<br/>market.layer.candles.*.closed.v1"]
   AgentTopics["agents.market-events.v1<br/>agents.analysis-results.v1<br/>agents.notification-decisions.v1"]
 
   Frontend --> Backend

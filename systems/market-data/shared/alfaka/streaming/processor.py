@@ -12,6 +12,7 @@ from alfaka.alpaca.subscription import configured_collection_symbols
 from alfaka.common.env import load_dotenv
 from alfaka.common.env import parse_csv
 from alfaka.common.kafka_io import create_json_consumer, create_json_producer
+from alfaka.common.kafka_topics import closed_candle_topics_from_env, default_closed_candle_topics
 from alfaka.common.redis_keys import RedisKeyBuilder
 from alfaka.common.runtime_health import write_component_health
 from alfaka.common.runtime_config import validate_required_values
@@ -59,7 +60,12 @@ def main():
     redis_client = redis.from_url(redis_url, decode_responses=True)
     redis_keys = RedisKeyBuilder()
 
-    state = ProcessorState(price_bin_size=price_bin_size, watermark_grace_seconds=config["watermark_grace_seconds"])
+    state = ProcessorState(
+        price_bin_size=price_bin_size,
+        watermark_grace_seconds=config["watermark_grace_seconds"],
+        live_publish_min_interval_seconds=config["live_publish_min_interval_seconds"],
+        active_feed_cache_seconds=config["active_feed_cache_seconds"],
+    )
     recover_processor_state_from_redis(redis_client, redis_keys, state, config["recovery_symbols"])
     if config["clickhouse_recovery_enabled"]:
         recover_processor_state_from_clickhouse(state, config["recovery_symbols"])
@@ -71,6 +77,7 @@ def main():
         "live_candles": config["live_candle_topic"],
         "status": status_topic,
         "events": config["events_topic"],
+        "tick_fanout_enabled": config["publish_tick_fanout"],
     }
 
     print(f"Stream processor 시작: raw_topics={raw_topics}", flush=True)
@@ -106,7 +113,7 @@ def processor_runtime_config(environ=None):
         "1M": environ.get("KAFKA_REALTIME_TICKS_TO_1MO_TOPIC", f"{realtime_prefix}.1mo.v1"),
     }
     enabled_tick_fanout_intervals = parse_tick_fanout_intervals(
-        environ.get("KAFKA_TICK_FANOUT_INTERVALS", "1m"),
+        environ.get("KAFKA_TICK_FANOUT_INTERVALS", ""),
         tick_fanout_topics,
     )
     config = {
@@ -119,14 +126,17 @@ def processor_runtime_config(environ=None):
         "status_topic": environ.get("KAFKA_STATUS_TOPIC", "market.layer.events.v1"),
         "tick_fanout_topics": {interval: tick_fanout_topics[interval] for interval in enabled_tick_fanout_intervals},
         "live_candle_topic": environ.get("KAFKA_LIVE_CANDLE_TOPIC", "market.layer.candles.live.v1"),
-        "closed_candle_topic": environ.get("KAFKA_CLOSED_CANDLE_TOPIC", "market.layer.candles.closed.v1"),
+        "closed_candle_topic": closed_candle_topics_from_env(environ),
         "redis_url": environ.get("REDIS_URL", "redis://localhost:6379/0"),
         "log_every_n": parse_positive_int(environ.get("PROCESSOR_LOG_EVERY_N", "500"), default=500),
         "price_bin_size": parse_positive_float(environ.get("VOLUME_PROFILE_PRICE_BIN_SIZE", "0.05"), default=0.05),
         "watermark_grace_seconds": parse_positive_float(environ.get("CANDLE_WATERMARK_GRACE_SECONDS", "5"), default=5),
         "flush_interval_seconds": parse_positive_float(environ.get("CANDLE_FLUSH_INTERVAL_SECONDS", "1"), default=1),
+        "live_publish_min_interval_seconds": parse_non_negative_float(environ.get("LIVE_CANDLE_PUBLISH_MIN_INTERVAL_SECONDS", "0"), default=0),
+        "active_feed_cache_seconds": parse_non_negative_float(environ.get("PROCESSOR_ACTIVE_FEED_CACHE_SECONDS", "1"), default=1),
         "poll_timeout_ms": parse_positive_int(environ.get("PROCESSOR_POLL_TIMEOUT_MS", "1000"), default=1000),
         "enable_auto_commit": parse_bool(environ.get("KAFKA_PROCESSOR_ENABLE_AUTO_COMMIT", "false")),
+        "publish_tick_fanout": parse_bool(environ.get("KAFKA_PUBLISH_TICK_FANOUT", "false")),
         "recovery_symbols": processor_recovery_symbols(environ),
         "clickhouse_recovery_enabled": parse_bool(environ.get("PROCESSOR_RECOVERY_CLICKHOUSE_ENABLED", "false")),
     }
@@ -144,9 +154,9 @@ def processor_runtime_config(environ=None):
 
 
 def parse_tick_fanout_intervals(value, available_topics):
-    requested = [normalize_tick_fanout_interval(item) for item in parse_csv(value or "1m")]
+    requested = [normalize_tick_fanout_interval(item) for item in parse_csv(value or "")]
     if not requested:
-        requested = ["1m"]
+        return []
     if requested == ["all"]:
         return list(available_topics)
     return [interval for interval in requested if interval in available_topics]
@@ -184,7 +194,13 @@ def validate_processor_runtime_config(config):
 
 
 class ProcessorState:
-    def __init__(self, price_bin_size=0.05, watermark_grace_seconds=5):
+    def __init__(
+        self,
+        price_bin_size=0.05,
+        watermark_grace_seconds=5,
+        live_publish_min_interval_seconds=0,
+        active_feed_cache_seconds=1,
+    ):
         self.live_builder = LiveCandleBuilder()
         self.window_builder = TickWindowCandleBuilder(grace_seconds=watermark_grace_seconds)
         self.provisional_state = ProvisionalCandleState()
@@ -195,6 +211,46 @@ class ProcessorState:
         self.ma_state = MovingAverageState()
         self.deduper = SourceEventDeduper()
         self.profile_builder = VolumeProfileBinBuilder(price_bin_size=price_bin_size)
+        self.live_publish_throttle = LiveCandlePublishThrottle(live_publish_min_interval_seconds)
+        self.active_feed_cache = ActiveFeedCache(active_feed_cache_seconds)
+
+
+class LiveCandlePublishThrottle:
+    def __init__(self, min_interval_seconds=0):
+        self.min_interval_seconds = max(0.0, float(min_interval_seconds or 0))
+        self.last_published = {}
+
+    def should_publish(self, candle):
+        if self.min_interval_seconds <= 0:
+            return True
+        key = (candle.get("symbol"), candle.get("interval"))
+        bucket = candle.get("timestamp")
+        event_time = candle.get("updatedAt") or candle.get("timestamp")
+        try:
+            event_score = parse_time(event_time).timestamp()
+        except Exception:
+            event_score = datetime.now(timezone.utc).timestamp()
+        last = self.last_published.get(key)
+        if not last or last["bucket"] != bucket or event_score - last["event_score"] >= self.min_interval_seconds:
+            self.last_published[key] = {"bucket": bucket, "event_score": event_score}
+            return True
+        return False
+
+
+class ActiveFeedCache:
+    def __init__(self, ttl_seconds=1):
+        self.ttl_seconds = max(0.0, float(ttl_seconds or 0))
+        self.loaded_at = None
+        self.value = None
+
+    def get(self, loader):
+        if self.ttl_seconds <= 0:
+            return loader()
+        now = datetime.now(timezone.utc).timestamp()
+        if self.loaded_at is None or now - self.loaded_at >= self.ttl_seconds:
+            self.value = loader()
+            self.loaded_at = now
+        return self.value
 
 
 def processor_recovery_symbols(environ=None):
@@ -384,7 +440,7 @@ def flush_reference_time(state, now=None, allow_wall_clock=False):
 def process_raw_envelope(envelope, producer, redis_client, redis_keys, state, topics, log_every_n=500):
     topics = normalize_processor_topics(topics)
     channel = envelope.get("channel")
-    feed_guard_result = enforce_active_feed(redis_client, redis_keys, envelope)
+    feed_guard_result = enforce_active_feed(redis_client, redis_keys, envelope, cache=getattr(state, "active_feed_cache", None))
     if feed_guard_result != "accepted":
         write_processor_health(redis_client, redis_keys, envelope, result=feed_guard_result)
         return feed_guard_result
@@ -397,22 +453,32 @@ def process_raw_envelope(envelope, producer, redis_client, redis_keys, state, to
     if channel == "trades":
         trade = normalize_trade(envelope)
         publish_processed(producer, topics["trades"], {**trade, "layer": "trades"}, log_every_n)
-        publish_tick_fanout(producer, topics["tick_fanout"], trade, log_every_n)
+        if topics.get("tick_fanout_enabled"):
+            publish_tick_fanout(producer, topics["tick_fanout"], trade, log_every_n)
         write_trade_to_redis(redis_client, redis_keys, trade)
-        write_processor_health(redis_client, redis_keys, envelope, result="trades_fanout")
-        return "trades_fanout"
+        result = process_trade_live_path(
+            trade,
+            producer,
+            redis_client,
+            redis_keys,
+            state,
+            topics,
+            log_every_n=log_every_n,
+        )
+        write_processor_health(redis_client, redis_keys, envelope, result=result)
+        return result
 
     if channel == "tickFanout":
         trade = normalized_trade_from_fanout(envelope)
-        accepted_for_window = state.window_builder.update(trade)
-        live_candle = state.live_builder.update(trade) if accepted_for_window else None
-        profile_bin = state.profile_builder.update(trade)
-        if live_candle:
-            publish_live_candle(producer, redis_client, redis_keys, topics, live_candle, feed=trade.get("feed") or "unknown", log_every_n=log_every_n)
-        write_volume_profile_bin_to_redis(redis_client, redis_keys, profile_bin)
-        if live_candle:
-            publish_derived_live_candles(producer, redis_client, redis_keys, state, topics, trade["symbol"], live_1m=live_candle, log_every_n=log_every_n)
-        result = "trades" if accepted_for_window else "trades_late_after_closed"
+        result = process_trade_live_path(
+            trade,
+            producer,
+            redis_client,
+            redis_keys,
+            state,
+            topics,
+            log_every_n=log_every_n,
+        )
         write_processor_health(redis_client, redis_keys, envelope, result=result)
         return result
 
@@ -451,6 +517,27 @@ def process_raw_envelope(envelope, producer, redis_client, redis_keys, state, to
     return "ignored"
 
 
+def process_trade_live_path(trade, producer, redis_client, redis_keys, state, topics, log_every_n=500):
+    accepted_for_window = state.window_builder.update(trade)
+    live_candle = state.live_builder.update(trade) if accepted_for_window else None
+    profile_bin = state.profile_builder.update(trade)
+    if live_candle:
+        publish_live_candle(
+            producer,
+            redis_client,
+            redis_keys,
+            topics,
+            live_candle,
+            feed=trade.get("feed") or "unknown",
+            log_every_n=log_every_n,
+            throttle=getattr(state, "live_publish_throttle", None),
+        )
+    write_volume_profile_bin_to_redis(redis_client, redis_keys, profile_bin)
+    if live_candle:
+        publish_derived_live_candles(producer, redis_client, redis_keys, state, topics, trade["symbol"], live_1m=live_candle, log_every_n=log_every_n)
+    return "trades" if accepted_for_window else "trades_late_after_closed"
+
+
 def flush_ready_closed_candles(producer, redis_client, redis_keys, state, topics, reference_time=None, log_every_n=500):
     topics = normalize_processor_topics(topics)
     published = 0
@@ -486,8 +573,8 @@ def flush_ready_closed_candles(producer, redis_client, redis_keys, state, topics
 
 def normalize_processor_topics(topics):
     if "trades" in topics and "closed_candles" in topics and "live_candles" in topics:
-        return topics
-    closed_topic = topics.get("closed_candles") or "market.layer.candles.closed.v1"
+        return {"tick_fanout_enabled": False, **topics}
+    closed_topic = topics.get("closed_candles") or default_closed_candle_topics()
     live_topic = topics.get("live_candles") or "market.layer.candles.live.v1"
     trades_topic = topics.get("trades") or "market.layer.trades.v1"
     events_topic = topics.get("events") or topics.get("status") or "market.layer.events.v1"
@@ -507,6 +594,7 @@ def normalize_processor_topics(topics):
         "live_candles": live_topic,
         "events": events_topic,
         "status": topics.get("status") or events_topic,
+        "tick_fanout_enabled": bool(topics.get("tick_fanout_enabled")),
     }
 
 
@@ -620,7 +708,9 @@ def write_live_candle_to_redis(redis_client, redis_keys, candle):
     redis_client.expire(key, live_candle_ttl_seconds())
 
 
-def publish_live_candle(producer, redis_client, redis_keys, topics, candle, feed="unknown", log_every_n=500):
+def publish_live_candle(producer, redis_client, redis_keys, topics, candle, feed="unknown", log_every_n=500, throttle=None):
+    if throttle is not None and not throttle.should_publish(candle):
+        return False
     write_live_candle_to_redis(redis_client, redis_keys, candle)
     publish_processed(
         producer,
@@ -640,6 +730,7 @@ def publish_live_candle(producer, redis_client, redis_keys, topics, candle, feed
             feed=feed or candle.get("feed") or "unknown",
         ),
     )
+    return True
 
 
 def publish_derived_live_candles(producer, redis_client, redis_keys, state, topics, symbol, live_1m=None, anchor_1m_timestamp=None, log_every_n=500):
@@ -653,7 +744,16 @@ def publish_derived_live_candles(producer, redis_client, redis_keys, state, topi
         )
         if not candle:
             continue
-        publish_live_candle(producer, redis_client, redis_keys, topics, candle, feed=candle.get("feed") or "unknown", log_every_n=log_every_n)
+        publish_live_candle(
+            producer,
+            redis_client,
+            redis_keys,
+            topics,
+            candle,
+            feed=candle.get("feed") or "unknown",
+            log_every_n=log_every_n,
+            throttle=getattr(state, "live_publish_throttle", None),
+        )
         if interval == "1D":
             provisional_1d = candle
     if provisional_1d:
@@ -669,7 +769,16 @@ def publish_daily_derived_live_candles(producer, redis_client, redis_keys, state
             provisional_1d=provisional_1d,
         )
         if candle:
-            publish_live_candle(producer, redis_client, redis_keys, topics, candle, feed=candle.get("feed") or "unknown", log_every_n=log_every_n)
+            publish_live_candle(
+                producer,
+                redis_client,
+                redis_keys,
+                topics,
+                candle,
+                feed=candle.get("feed") or "unknown",
+                log_every_n=log_every_n,
+                throttle=getattr(state, "live_publish_throttle", None),
+            )
 
 
 def write_closed_candle_to_redis(redis_client, redis_keys, candle):
@@ -732,8 +841,8 @@ def quote_event(quote):
     }
 
 
-def enforce_active_feed(redis_client, redis_keys, envelope):
-    active = read_active_feed(redis_client, redis_keys)
+def enforce_active_feed(redis_client, redis_keys, envelope, cache=None):
+    active = cache.get(lambda: read_active_feed(redis_client, redis_keys)) if cache else read_active_feed(redis_client, redis_keys)
     if not active:
         return "accepted"
     expected_profile = active.get("activeFeedProfile") or active.get("feedProfile") or active.get("profile")
@@ -860,6 +969,14 @@ def parse_positive_float(value, default):
     except (TypeError, ValueError):
         return default
     return parsed if parsed > 0 else default
+
+
+def parse_non_negative_float(value, default):
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed >= 0 else default
 
 
 def parse_bool(value):

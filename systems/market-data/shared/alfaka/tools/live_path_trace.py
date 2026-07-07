@@ -14,6 +14,7 @@ from alfaka.alpaca.feed_profiles import (
     market_session_for_datetime,
 )
 from alfaka.common.env import load_dotenv, parse_csv
+from alfaka.common.kafka_topics import closed_candle_topic_values
 from alfaka.common.redis_keys import RedisKeyBuilder
 from alfaka.common.symbols import is_crypto_symbol
 
@@ -38,7 +39,7 @@ def expected_processed_topics(environ=None):
     configured = parse_csv(environ.get("KAFKA_PROCESSED_TOPICS", ""))
     canonical = [
         environ.get("KAFKA_TRADES_LAYER_TOPIC", "market.layer.trades.v1"),
-        environ.get("KAFKA_CLOSED_CANDLE_TOPIC", "market.layer.candles.closed.v1"),
+        *closed_candle_topic_values(environ),
         environ.get("KAFKA_LIVE_CANDLE_TOPIC", "market.layer.candles.live.v1"),
         environ.get("KAFKA_QUOTES_LAYER_TOPIC", "market.layer.quotes.v1"),
         environ.get("KAFKA_EVENTS_LAYER_TOPIC", "market.layer.events.v1"),

@@ -100,6 +100,27 @@ from `1m`, `1D` from intraday live state, and `1W/1M` from daily state. ClickHou
 serving prefers stored direct interval rows; if none exist yet, it falls back to
 the older query-time aggregation from `1m` or `1D`.
 
+Realtime raw trades are processed directly by the market processor. The
+processor no longer publishes a tick fanout message and waits for its own
+consumer group to re-read it on the normal hot path. Tick fanout topics remain
+available only for legacy/debug consumers. Closed candles are published to
+interval-specific layer topics:
+
+```text
+market.layer.candles.1m.closed.v1
+market.layer.candles.5m.closed.v1
+market.layer.candles.10m.closed.v1
+market.layer.candles.1h.closed.v1
+market.layer.candles.4h.closed.v1
+market.layer.candles.1d.closed.v1
+market.layer.candles.1w.closed.v1
+market.layer.candles.1mo.closed.v1
+```
+
+Each message still carries its canonical `interval` payload field. The legacy
+`market.layer.candles.closed.v1` topic remains listed in platform topic files
+for compatibility but is not the default processor output.
+
 Minimum renderability is separate from full coverage. The foreground chart
 request returns Redis/ClickHouse candles immediately when they are renderable,
 even if full coverage still needs repair. If they are not renderable, bounded

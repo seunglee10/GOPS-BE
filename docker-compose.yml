@@ -58,6 +58,14 @@ services:
           market.realtime.ticks.to.1mo.v1 \
           market.layer.candles.live.v1 \
           market.layer.candles.closed.v1 \
+          market.layer.candles.1m.closed.v1 \
+          market.layer.candles.5m.closed.v1 \
+          market.layer.candles.10m.closed.v1 \
+          market.layer.candles.1h.closed.v1 \
+          market.layer.candles.4h.closed.v1 \
+          market.layer.candles.1d.closed.v1 \
+          market.layer.candles.1w.closed.v1 \
+          market.layer.candles.1mo.closed.v1 \
           market.layer.trades.v1 \
           market.layer.quotes.v1 \
           market.layer.events.v1 \
@@ -523,11 +531,23 @@ services:
       KAFKA_REALTIME_TICKS_TO_1D_TOPIC: "market.realtime.ticks.to.1d.v1"
       KAFKA_REALTIME_TICKS_TO_1W_TOPIC: "market.realtime.ticks.to.1w.v1"
       KAFKA_REALTIME_TICKS_TO_1MO_TOPIC: "market.realtime.ticks.to.1mo.v1"
+      KAFKA_TICK_FANOUT_INTERVALS: ""
+      KAFKA_PUBLISH_TICK_FANOUT: "false"
       KAFKA_LIVE_CANDLE_TOPIC: "market.layer.candles.live.v1"
       KAFKA_CLOSED_CANDLE_TOPIC: "market.layer.candles.closed.v1"
+      KAFKA_CLOSED_CANDLE_1M_TOPIC: "market.layer.candles.1m.closed.v1"
+      KAFKA_CLOSED_CANDLE_5M_TOPIC: "market.layer.candles.5m.closed.v1"
+      KAFKA_CLOSED_CANDLE_10M_TOPIC: "market.layer.candles.10m.closed.v1"
+      KAFKA_CLOSED_CANDLE_1H_TOPIC: "market.layer.candles.1h.closed.v1"
+      KAFKA_CLOSED_CANDLE_4H_TOPIC: "market.layer.candles.4h.closed.v1"
+      KAFKA_CLOSED_CANDLE_1D_TOPIC: "market.layer.candles.1d.closed.v1"
+      KAFKA_CLOSED_CANDLE_1W_TOPIC: "market.layer.candles.1w.closed.v1"
+      KAFKA_CLOSED_CANDLE_1MO_TOPIC: "market.layer.candles.1mo.closed.v1"
       KAFKA_PROCESSOR_ENABLE_AUTO_COMMIT: "false"
       CANDLE_WATERMARK_GRACE_SECONDS: "5"
       CANDLE_FLUSH_INTERVAL_SECONDS: "1"
+      LIVE_CANDLE_PUBLISH_MIN_INTERVAL_SECONDS: "1"
+      PROCESSOR_ACTIVE_FEED_CACHE_SECONDS: "1"
       VOLUME_PROFILE_PRICE_BIN_SIZE: "0.05"
       PROCESSOR_LOG_EVERY_N: "500"
       COMPONENT_HEALTH_TTL_SECONDS: "300"
@@ -573,7 +593,7 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
       KAFKA_S3_GROUP_ID: "alfaka-processed-s3-sink"
       KAFKA_S3_ENABLE_AUTO_COMMIT: "false"
-      KAFKA_PROCESSED_TOPICS: "market.layer.candles.closed.v1,market.layer.trades.v1,market.layer.quotes.v1,market.layer.events.v1"
+      KAFKA_PROCESSED_TOPICS: "market.layer.candles.1m.closed.v1,market.layer.candles.5m.closed.v1,market.layer.candles.10m.closed.v1,market.layer.candles.1h.closed.v1,market.layer.candles.4h.closed.v1,market.layer.candles.1d.closed.v1,market.layer.candles.1w.closed.v1,market.layer.candles.1mo.closed.v1,market.layer.trades.v1,market.layer.quotes.v1,market.layer.events.v1"
       AWS_REGION: "${AWS_REGION:-ap-northeast-2}"
       AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-ap-northeast-2}"
       AWS_EC2_METADATA_DISABLED: "${AWS_EC2_METADATA_DISABLED:-true}"
@@ -651,7 +671,7 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
       KAFKA_CLICKHOUSE_GROUP_ID: "alfaka-clickhouse-loader"
       KAFKA_CLICKHOUSE_ENABLE_AUTO_COMMIT: "false"
-      KAFKA_CLICKHOUSE_TOPICS: "market.layer.candles.closed.v1,market.layer.trades.v1,market.layer.quotes.v1,market.layer.events.v1,market.news.alpaca.v1"
+      KAFKA_CLICKHOUSE_TOPICS: "market.layer.candles.1m.closed.v1,market.layer.candles.5m.closed.v1,market.layer.candles.10m.closed.v1,market.layer.candles.1h.closed.v1,market.layer.candles.4h.closed.v1,market.layer.candles.1d.closed.v1,market.layer.candles.1w.closed.v1,market.layer.candles.1mo.closed.v1,market.layer.trades.v1,market.layer.quotes.v1,market.layer.events.v1,market.news.alpaca.v1"
       KAFKA_NEWS_TOPIC: "market.news.alpaca.v1"
       CLICKHOUSE_LOAD_TRADES: "true"
       CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
@@ -923,7 +943,7 @@ services:
       AGENT_ANALYSIS_RESULTS_TOPIC: "agents.analysis-results.v1"
       AGENT_NOTIFICATION_DECISIONS_TOPIC: "agents.notification-decisions.v1"
       AGENT_DLQ_TOPIC: "agents.dlq.v1"
-      AGENT_EVENT_INPUT_TOPICS: "market.layer.trades.v1,market.layer.candles.closed.v1,market.layer.events.v1"
+      AGENT_EVENT_INPUT_TOPICS: "market.layer.trades.v1,market.layer.candles.1m.closed.v1,market.layer.candles.5m.closed.v1,market.layer.candles.10m.closed.v1,market.layer.candles.1h.closed.v1,market.layer.candles.4h.closed.v1,market.layer.candles.1d.closed.v1,market.layer.candles.1w.closed.v1,market.layer.candles.1mo.closed.v1,market.layer.events.v1"
       AGENT_PUBLISH_TO_KAFKA: "true"
       KAFKA_NEWS_TOPIC: "market.news.alpaca.v1"
       AGENT_QUERY_UNDERSTANDING_EVENTS_TOPIC: "agents.query-understanding-events.v1"
@@ -1326,7 +1346,7 @@ services:
         condition: service_completed_successfully
     environment:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
-      AGENT_EVENT_INPUT_TOPICS: "market.layer.trades.v1,market.layer.candles.closed.v1,market.layer.events.v1"
+      AGENT_EVENT_INPUT_TOPICS: "market.layer.trades.v1,market.layer.candles.1m.closed.v1,market.layer.candles.5m.closed.v1,market.layer.candles.10m.closed.v1,market.layer.candles.1h.closed.v1,market.layer.candles.4h.closed.v1,market.layer.candles.1d.closed.v1,market.layer.candles.1w.closed.v1,market.layer.candles.1mo.closed.v1,market.layer.events.v1"
       AGENT_MARKET_EVENTS_TOPIC: "agents.market-events.v1"
     command: ["python", "-u", "/app/systems/agent-orchestration/pods/event-detector/main.py"]
     restart: unless-stopped

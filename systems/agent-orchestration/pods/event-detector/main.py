@@ -5,13 +5,27 @@ import os
 from gops_agents.events.detector import MarketEventDetector
 
 
+DEFAULT_EVENT_INPUT_TOPICS = ",".join([
+    "market.layer.trades.v1",
+    "market.layer.candles.1m.closed.v1",
+    "market.layer.candles.5m.closed.v1",
+    "market.layer.candles.10m.closed.v1",
+    "market.layer.candles.1h.closed.v1",
+    "market.layer.candles.4h.closed.v1",
+    "market.layer.candles.1d.closed.v1",
+    "market.layer.candles.1w.closed.v1",
+    "market.layer.candles.1mo.closed.v1",
+    "market.layer.events.v1",
+])
+
+
 def main() -> None:
     from alfaka.common.kafka_io import create_json_consumer, create_json_producer
 
     kafka_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
     input_topics = parse_csv(os.getenv(
         "AGENT_EVENT_INPUT_TOPICS",
-        "market.layer.trades.v1,market.layer.candles.closed.v1,market.layer.events.v1",
+        DEFAULT_EVENT_INPUT_TOPICS,
     ))
     output_topic = os.getenv("AGENT_MARKET_EVENTS_TOPIC", "agents.market-events.v1")
     group_id = os.getenv("AGENT_EVENT_DETECTOR_GROUP_ID", "gops-agent-event-detector")

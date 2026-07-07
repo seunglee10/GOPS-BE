@@ -100,6 +100,14 @@ market.realtime.ticks.to.1w.v1
 market.realtime.ticks.to.1mo.v1
 market.layer.candles.live.v1
 market.layer.candles.closed.v1
+market.layer.candles.1m.closed.v1
+market.layer.candles.5m.closed.v1
+market.layer.candles.10m.closed.v1
+market.layer.candles.1h.closed.v1
+market.layer.candles.4h.closed.v1
+market.layer.candles.1d.closed.v1
+market.layer.candles.1w.closed.v1
+market.layer.candles.1mo.closed.v1
 market.layer.trades.v1
 market.layer.quotes.v1
 market.layer.events.v1
@@ -114,6 +122,10 @@ agents.analysis-results.v1
 agents.notification-decisions.v1
 agents.dlq.v1
 ```
+
+`market.layer.candles.closed.v1` is retained as a legacy compatibility topic.
+New market-processor config publishes closed candles to the interval-specific
+`market.layer.candles.<interval>.closed.v1` topics.
 
 Do not force MSK as the next step. The staged path is:
 
@@ -145,11 +157,14 @@ KAFKA_PROCESSOR_GROUP_ID
 KAFKA_PROCESSOR_ENABLE_AUTO_COMMIT
 CANDLE_WATERMARK_GRACE_SECONDS
 CANDLE_FLUSH_INTERVAL_SECONDS
+LIVE_CANDLE_PUBLISH_MIN_INTERVAL_SECONDS
+PROCESSOR_ACTIVE_FEED_CACHE_SECONDS
 REDIS_URL
 PROCESSOR_RECOVERY_SYMBOLS
 PROCESSOR_RECOVERY_CLICKHOUSE_ENABLED
 COMPONENT_HEALTH_TTL_SECONDS
 KAFKA_TICK_FANOUT_INTERVALS
+KAFKA_PUBLISH_TICK_FANOUT
 LIVE_CANDLE_TTL_SECONDS
 LIVE_TRADE_TTL_SECONDS
 LIVE_CANDLE_STALE_SECONDS
@@ -172,10 +187,17 @@ The processor also writes scoped health keys such as
 `pipeline:health:market-processor:feed:sip` so one noisy feed or symbol does not
 hide another symbol's live-path diagnosis.
 
-`KAFKA_TICK_FANOUT_INTERVALS` should normally stay `1m` in AWS/EKS. The
-processor derives 5m, 10m, 1h, 4h, 1D, 1W, and 1M live candles from the 1m stream, so
-consuming every tick fanout topic in the same processor creates avoidable lag.
-Use `all` only when separate interval-specific processors are deployed.
+`KAFKA_TICK_FANOUT_INTERVALS` should normally stay empty in AWS/EKS. The
+processor now handles raw trade ticks directly on the 1m/live path and derives
+5m, 10m, 1h, 4h, 1D, 1W, and 1M provisional candles from local 1m state. Tick
+fanout topics are retained for legacy/debug use only; set
+`KAFKA_PUBLISH_TICK_FANOUT=true` deliberately if another consumer group needs
+that stream.
+
+`LIVE_CANDLE_PUBLISH_MIN_INTERVAL_SECONDS` throttles Redis/WebSocket/Kafka live
+candle publish per `symbol + interval` while still updating in-memory candle
+state on every accepted trade. `PROCESSOR_ACTIVE_FEED_CACHE_SECONDS` avoids a
+Redis active-feed lookup for every single tick.
 
 `ACTIVE_CHART_TTL_SECONDS` keeps the symbol currently open in the chart inside
 the explicit realtime cohort even when the visible chart interval is 1h, 4h,
@@ -627,6 +649,10 @@ AGENT_NOTIFICATION_DECISIONS_TOPIC
 AGENT_DLQ_TOPIC
 AGENT_PUBLISH_TO_KAFKA
 ```
+
+`AGENT_EVENT_INPUT_TOPICS` should include `market.layer.trades.v1`, every
+interval-specific `market.layer.candles.<interval>.closed.v1` topic, and
+`market.layer.events.v1` if agent/event detection needs closed-candle context.
 
 News and macro providers are staged adapters in v1. The ontology provider can
 query a GraphDB repository when the GraphDB runtime is restored and reachable.
