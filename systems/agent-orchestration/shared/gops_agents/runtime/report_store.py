@@ -455,6 +455,37 @@ def synthesis_input_from_dict(value: Any) -> SynthesisInput | None:
 def final_response_from_dict(value: Any) -> FinalResponse | None:
     if not isinstance(value, dict):
         return None
+    try:
+        return FinalResponse(
+            run_id=str(value.get("run_id") or value.get("runId") or ""),
+            answer_type=str(value.get("answer_type") or value.get("answerType") or "general_answer"),
+            summary=str(value.get("summary") or ""),
+            key_points=string_list(value.get("key_points") or value.get("keyPoints") or []),
+            bullish_points=string_list(value.get("bullish_points") or value.get("bullishPoints") or []),
+            bearish_points=string_list(value.get("bearish_points") or value.get("bearishPoints") or []),
+            relationship_impacts=string_list(value.get("relationship_impacts") or value.get("relationshipImpacts") or []),
+            risk_warnings=string_list(value.get("risk_warnings") or value.get("riskWarnings") or []),
+            data_freshness_warnings=string_list(value.get("data_freshness_warnings") or value.get("dataFreshnessWarnings") or []),
+            partial_data_used=bool(value.get("partial_data_used") if "partial_data_used" in value else value.get("partialDataUsed")),
+            confidence=float(value.get("confidence") if isinstance(value.get("confidence"), (int, float)) else 0.5),
+            final_stance=str(value.get("final_stance") or value.get("finalStance") or "not_applicable"),
+            latency_ms=float(
+                value.get("latency_ms")
+                if isinstance(value.get("latency_ms"), (int, float))
+                else value.get("latencyMs")
+                if isinstance(value.get("latencyMs"), (int, float))
+                else 0.0
+            ),
+            llm_calls_used=int(
+                value.get("llm_calls_used")
+                if isinstance(value.get("llm_calls_used"), (int, float))
+                else value.get("llmCallsUsed")
+                if isinstance(value.get("llmCallsUsed"), (int, float))
+                else 0
+            ),
+        )
+    except Exception:
+        return None
 
 
 def agent_answer_from_dict(value: Any) -> AgentAnswer | None:
@@ -472,25 +503,10 @@ def agent_answer_from_dict(value: Any) -> AgentAnswer | None:
         )
     except Exception:
         return None
-    try:
-        return FinalResponse(
-            run_id=str(value.get("run_id") or ""),
-            answer_type=str(value.get("answer_type") or "general_answer"),
-            summary=str(value.get("summary") or ""),
-            key_points=[str(item) for item in value.get("key_points", []) if isinstance(item, (str, int, float))],
-            bullish_points=[str(item) for item in value.get("bullish_points", []) if isinstance(item, (str, int, float))],
-            bearish_points=[str(item) for item in value.get("bearish_points", []) if isinstance(item, (str, int, float))],
-            relationship_impacts=[str(item) for item in value.get("relationship_impacts", []) if isinstance(item, (str, int, float))],
-            risk_warnings=[str(item) for item in value.get("risk_warnings", []) if isinstance(item, (str, int, float))],
-            data_freshness_warnings=[str(item) for item in value.get("data_freshness_warnings", []) if isinstance(item, (str, int, float))],
-            partial_data_used=bool(value.get("partial_data_used")),
-            confidence=float(value.get("confidence") if isinstance(value.get("confidence"), (int, float)) else 0.5),
-            final_stance=str(value.get("final_stance") or "not_applicable"),
-            latency_ms=float(value.get("latency_ms") if isinstance(value.get("latency_ms"), (int, float)) else 0.0),
-            llm_calls_used=int(value.get("llm_calls_used") if isinstance(value.get("llm_calls_used"), (int, float)) else 0),
-        )
-    except Exception:
-        return None
+
+
+def string_list(value: Any) -> list[str]:
+    return [str(item) for item in value if isinstance(item, (str, int, float))] if isinstance(value, list) else []
 
 
 def latency_trace_from_dict(value: Any) -> LatencyTrace | None:

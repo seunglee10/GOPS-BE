@@ -50,7 +50,7 @@ from gops_agents.runtime.analysis_cache import MemoryAgentAnalysisCache, RedisAg
 from gops_agents.runtime.delivery_gateway import AgentDeliveryGateway
 from gops_agents.runtime.envelope import build_request_envelope
 from gops_agents.runtime.queues import AnalysisQueueMetrics
-from gops_agents.runtime.report_store import InMemoryReportStore, RedisReportStore
+from gops_agents.runtime.report_store import InMemoryReportStore, RedisReportStore, final_response_from_dict
 from gops_agents.runtime import RuntimeRunContext
 from gops_agents.runtime.workers import AgentAnalysisWorker
 from gops_agents.orchestration.routing import route_intent
@@ -1088,12 +1088,39 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertIsNotNone(stored)
         self.assertEqual(stored.analysisId, report.analysisId)
         self.assertEqual(stored.symbol, "NVDA")
+        self.assertIsNotNone(stored.finalResponse)
+        self.assertIsNotNone(report.finalResponse)
+        self.assertEqual(stored.finalResponse.confidence, report.finalResponse.confidence)
+        self.assertEqual(stored.finalResponse.answer_type, report.finalResponse.answer_type)
+        self.assertEqual(stored.finalResponse.risk_warnings, report.finalResponse.risk_warnings)
+        self.assertEqual(stored.finalResponse.data_freshness_warnings, report.finalResponse.data_freshness_warnings)
         keys = {key for key, _ttl, _value in redis.setex_calls}
         ttls = {ttl for _key, ttl, _value in redis.setex_calls}
         self.assertIn(f"agent:report:{report.analysisId}", keys)
         self.assertIn("agent:report:latest:NVDA", keys)
         self.assertIn("agent:report:latest", keys)
         self.assertEqual(ttls, {43200})
+
+    def test_final_response_from_dict_preserves_confidence(self):
+        final_response = final_response_from_dict({
+            "run_id": "run-test",
+            "answer_type": "news_impact_summary",
+            "summary": "요약",
+            "key_points": ["핵심"],
+            "risk_warnings": ["partial_data_used"],
+            "data_freshness_warnings": ["no_relevant_news_found"],
+            "partial_data_used": True,
+            "confidence": 0.72,
+            "final_stance": "watch",
+            "latency_ms": 12.5,
+            "llm_calls_used": 1,
+        })
+
+        self.assertIsNotNone(final_response)
+        self.assertEqual(final_response.confidence, 0.72)
+        self.assertEqual(final_response.answer_type, "news_impact_summary")
+        self.assertEqual(final_response.risk_warnings, ["partial_data_used"])
+        self.assertEqual(final_response.data_freshness_warnings, ["no_relevant_news_found"])
 
     def test_redis_report_store_fail_open_when_redis_fails(self):
         store = RedisReportStore(BrokenRedisClient(), ttl_seconds=43200)
