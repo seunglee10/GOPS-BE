@@ -1,0 +1,1 @@
+"""Intraday stock recommendation boundary."""
