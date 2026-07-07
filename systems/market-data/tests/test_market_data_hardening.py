@@ -1999,6 +1999,17 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn("smoke_url https://stargops.com/api/health", workflow)
         self.assertNotIn("smoke_url https://stargops.com/api/charts/symbols", workflow)
 
+    def test_deploy_workflow_prunes_retired_sip_tick_ingestor(self):
+        workflow = (REPO_ROOT / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8")
+
+        self.assertIn("Delete retired app workloads", workflow)
+        self.assertIn("kubectl delete deployment alfaka-alpaca-tick-ingestor-sip", workflow)
+        self.assertIn("--ignore-not-found=true", workflow)
+        self.assertLess(
+            workflow.index("Delete retired app workloads"),
+            workflow.index("Deploy app workloads"),
+        )
+
     def test_initial_load_compose_uses_on_demand_universe_contract(self):
         compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 

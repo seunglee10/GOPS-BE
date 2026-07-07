@@ -144,6 +144,13 @@ jobs:
         if: steps.changes.outputs.has_services == 'true'
         run: kubectl apply -k "$KUSTOMIZE_OVERLAY" --dry-run=server
 
+      - name: Delete retired app workloads
+        if: steps.changes.outputs.has_services == 'true'
+        run: |
+          kubectl delete deployment alfaka-alpaca-tick-ingestor-sip \
+            -n "$K8S_NAMESPACE" \
+            --ignore-not-found=true
+
       - name: Deploy app workloads
         id: deploy_app
         if: steps.changes.outputs.has_services == 'true'
