@@ -30,8 +30,51 @@ spec:
           env:
             - name: ALPACA_FEED_PROFILE
               value: sip
+            - name: ALPACA_ACTIVE_CHANNELS
+              value: ""
             - name: KAFKA_CLIENT_ID
               value: alfaka-alpaca-ingestor-sip
+---
+# 역할: Alpaca SIP active tick WebSocket 수집기를 EKS에 배포합니다.
+# 사용: 차트가 켜진 종목의 trades/quotes만 SIP baseline feed와 분리해 Kafka Raw Topic으로 보냅니다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alfaka-alpaca-tick-ingestor-sip
+  namespace: alfaka-market-data
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alfaka-alpaca-tick-ingestor-sip
+  template:
+    metadata:
+      labels:
+        app: alfaka-alpaca-tick-ingestor-sip
+    spec:
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: alpaca-ingestor
+          image: YOUR_ECR_REPOSITORY/gops-market-ingestor:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "systems/market-data/pods/market-ingestor/market_stream.py"]
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-alpaca-secret
+                optional: true
+          env:
+            - name: ALPACA_FEED_PROFILE
+              value: sip
+            - name: ALPACA_COLLECTION_SYMBOL_SOURCE
+              value: on-demand
+            - name: ALPACA_CHANNELS
+              value: ""
+            - name: ALPACA_ACTIVE_CHANNELS
+              value: trades,quotes
+            - name: KAFKA_CLIENT_ID
+              value: alfaka-alpaca-tick-ingestor-sip
 ---
 # 역할: Alpaca BOATS/overnight WebSocket 수집기를 EKS에 배포합니다.
 # 사용: 20:00-04:00 ET overnight feed를 SIP daytime feed와 분리해 관측합니다.

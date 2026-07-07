@@ -221,6 +221,14 @@ updated bars, daily bars, and events. `alfaka-market-quote-processor` handles
 quotes in a separate consumer group. Select `market-processor` in the deploy
 workflow to roll both Deployments together.
 
+Market ingestor deploys multiple runtime units from the same
+`gops-market-ingestor` image. `alfaka-alpaca-ingestor-sip` handles SIP baseline
+bars/statuses, `alfaka-alpaca-tick-ingestor-sip` handles active SIP
+trades/quotes, `alfaka-alpaca-ingestor-boats` handles overnight BOATS,
+`alfaka-alpaca-ingestor-crypto` handles crypto, and
+`alfaka-alpaca-news-ingestor` handles Alpaca news. Select `market-ingestor` in
+the deploy workflow to roll all of them together.
+
 Config and overlay references:
 
 ```text
