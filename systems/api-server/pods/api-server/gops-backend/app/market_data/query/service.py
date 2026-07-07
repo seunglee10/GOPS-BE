@@ -10,6 +10,7 @@ from app.market_data.fill.service import get_on_demand_fill_service
 from app.market_data.fundamentals.service import build_fundamentals_adapter
 from app.market_data.heatmap.service import get_heatmap_service
 from app.market_data.indices.service import get_indices_service
+from app.market_data.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
 from app.services.alfaka_market_data import get_market_data_provider, normalize_market_symbol, requested_ma_from_csv
 from alfaka.serving.chart_derived_data import (
     ChartDerivedArtifactStore,
@@ -315,6 +316,36 @@ class MarketDataQueryService:
             "dailySummaries": summaries,
         }
 
+    def watchlist_news(self, user_sub: str, limit: int = 30, locale: str = "ko-KR") -> dict[str, Any]:
+        limit = max(1, min(int(limit), 50))
+        symbols = self._user_watchlist_symbols(user_sub)
+        if not symbols:
+            return {
+                "source": "watchlist",
+                "displayMode": "watchlistNews",
+                "symbols": [],
+                "items": [],
+                "message": "관심종목을 추가하면 관련 뉴스가 표시됩니다.",
+            }
+
+        rows, source = self._watchlist_news_rows(symbols, limit, locale)
+        rows = dedupe_news_rows(rows, symbols)
+        company_names = self._watchlist_company_names(symbols)
+        items = []
+        for row in rows[:limit]:
+            matches = watchlist_news_matches(row, symbols, company_names)
+            fallback_symbol = matches[0]["symbol"] if matches else symbols[0]
+            item = normalize_news_item(row, fallback_symbol)
+            item["matches"] = matches
+            items.append(item)
+        return {
+            "source": source,
+            "displayMode": "watchlistNews",
+            "symbols": symbols,
+            "items": items,
+            "message": "" if items else "관심종목 관련 저장 뉴스가 없습니다.",
+        }
+
     def _latest_news_rows(self, symbol: str, limit: int, locale: str) -> tuple[list[dict[str, Any]], str]:
         redis_provider = getattr(self.provider, "redis_provider", None)
         clickhouse_provider = getattr(self.provider, "clickhouse_provider", None)
@@ -367,6 +398,77 @@ class MarketDataQueryService:
             method(rows, locale=locale)
         except Exception:
             return
+
+    def _watchlist_news_rows(self, symbols: list[str], limit: int, locale: str) -> tuple[list[dict[str, Any]], str]:
+        redis_provider = getattr(self.provider, "redis_provider", None)
+        clickhouse_provider = getattr(self.provider, "clickhouse_provider", None)
+        redis_rows = self._localized_news_rows_for_symbols_from_provider(redis_provider, symbols, limit, locale, use_days=False)
+        if len(dedupe_news_rows(redis_rows, symbols)) >= limit:
+            return redis_rows, "redis"
+
+        clickhouse_rows = self._localized_news_rows_for_symbols_from_provider(clickhouse_provider, symbols, limit, locale, use_days=True)
+        if clickhouse_rows:
+            self._warm_localized_news_redis(redis_provider, clickhouse_rows, locale)
+            return clickhouse_rows, "clickhouse"
+        if redis_rows:
+            return redis_rows, "redis"
+        return [], "no-data"
+
+    def _localized_news_rows_for_symbols_from_provider(
+        self,
+        provider,
+        symbols: list[str],
+        limit: int,
+        locale: str,
+        *,
+        use_days: bool,
+    ) -> list[dict[str, Any]]:
+        if provider is None or not symbols:
+            return []
+        method = getattr(provider, "localized_news_articles_for_symbols", None)
+        if callable(method):
+            try:
+                if use_days:
+                    rows = method(symbols, limit=limit, days=30, locale=locale)
+                else:
+                    rows = method(symbols, limit=limit, locale=locale)
+            except TypeError:
+                rows = method(symbols, limit=limit)
+            except Exception:
+                rows = []
+            return [row for row in rows or [] if isinstance(row, dict)]
+
+        rows: list[dict[str, Any]] = []
+        for symbol in symbols:
+            rows.extend(self._localized_news_rows_from_provider(provider, symbol, limit, locale, use_days=use_days))
+        return dedupe_news_rows(rows, symbols)[:limit]
+
+    def _user_watchlist_symbols(self, user_sub: str) -> list[str]:
+        redis_provider = getattr(self.provider, "redis_provider", None)
+        redis_client = getattr(redis_provider, "redis", None)
+        if redis_client is None:
+            return []
+        try:
+            return RealtimeSubscriptionCohortService(redis_client, auto_reconcile=False).user_watchlist_symbols(user_sub)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=f"Watch List read failed: {exc}") from exc
+
+    def _watchlist_company_names(self, symbols: list[str]) -> dict[str, str]:
+        names: dict[str, str] = {}
+        method = getattr(self.provider, "symbol_detail", None)
+        if not callable(method):
+            return names
+        for symbol in symbols:
+            try:
+                detail = method(symbol)
+            except Exception:
+                continue
+            name = read_string(detail.get("name")) if isinstance(detail, dict) else None
+            if name:
+                names[symbol] = name
+        return names
 
     def _daily_news_rows(self, symbol: str, limit: int, locale: str) -> list[dict[str, Any]]:
         redis_provider = getattr(self.provider, "redis_provider", None)
@@ -552,11 +654,12 @@ def provider_accepts_ma_windows(provider: Any) -> bool:
 
 
 def normalize_news_item(row: dict[str, Any], fallback_symbol: str) -> dict[str, Any]:
-    title = read_string(row.get("title")) or read_string(row.get("localizedTitle")) or read_string(row.get("localizedHeadline")) or read_string(row.get("headline")) or "Untitled news"
-    summary = read_string(row.get("summary")) or read_string(row.get("localizedSummary")) or read_string(row.get("localized_summary")) or ""
+    title = read_string(row.get("localizedTitle")) or read_string(row.get("localizedHeadline")) or read_string(row.get("title")) or read_string(row.get("headline")) or "Untitled news"
+    summary = read_string(row.get("localizedSummary")) or read_string(row.get("localized_summary")) or read_string(row.get("summary")) or ""
     symbols = read_string_list(row.get("symbols"))
     symbol = read_string(row.get("targetSymbol")) or read_string(row.get("target_symbol")) or read_string(row.get("symbol")) or fallback_symbol
     return {
+        "articleId": read_string(row.get("articleId")) or read_string(row.get("article_id")),
         "symbol": symbol.upper(),
         "symbols": symbols or [symbol.upper()],
         "title": title,
@@ -566,6 +669,55 @@ def normalize_news_item(row: dict[str, Any], fallback_symbol: str) -> dict[str, 
         "publishedAt": read_string(row.get("publishedAt")) or read_string(row.get("published_at")),
         "impactDirection": read_string(row.get("impactDirection")) or read_string(row.get("impact_direction")),
     }
+
+
+def dedupe_news_rows(rows: list[dict[str, Any]], watchlist_symbols: list[str]) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    deduped: list[dict[str, Any]] = []
+    for row in sorted(rows or [], key=news_published_at, reverse=True):
+        key = news_dedupe_key(row)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    watchlist = set(watchlist_symbols)
+    return [row for row in deduped if watchlist_news_symbols(row) & watchlist]
+
+
+def news_dedupe_key(row: dict[str, Any]) -> str:
+    article_id = read_string(row.get("articleId")) or read_string(row.get("article_id"))
+    if article_id:
+        return f"id:{article_id}"
+    url = read_string(row.get("url"))
+    if url:
+        return f"url:{url}"
+    title = read_string(row.get("title")) or read_string(row.get("localizedTitle")) or read_string(row.get("localizedHeadline")) or read_string(row.get("headline")) or ""
+    return f"text:{news_published_at(row)}:{title}"
+
+
+def news_published_at(row: dict[str, Any]) -> str:
+    return read_string(row.get("publishedAt")) or read_string(row.get("published_at")) or ""
+
+
+def watchlist_news_symbols(row: dict[str, Any]) -> set[str]:
+    values = set(read_string_list(row.get("symbols")))
+    for key in ("targetSymbol", "target_symbol", "symbol"):
+        value = read_string(row.get(key))
+        if value:
+            values.add(value.upper())
+    return values
+
+
+def watchlist_news_matches(row: dict[str, Any], watchlist_symbols: list[str], company_names: dict[str, str]) -> list[dict[str, str]]:
+    row_symbols = watchlist_news_symbols(row)
+    return [
+        {
+            "symbol": symbol,
+            **({"companyName": company_names[symbol]} if symbol in company_names else {}),
+        }
+        for symbol in watchlist_symbols
+        if symbol in row_symbols
+    ]
 
 
 def read_string(value: Any) -> str | None:

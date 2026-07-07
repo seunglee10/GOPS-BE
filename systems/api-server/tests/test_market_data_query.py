@@ -49,8 +49,12 @@ except Exception:
     def Query(default=None, **kwargs):
         return default
 
+    def Depends(value=None, **kwargs):
+        return value
+
     sys.modules["fastapi"] = types.SimpleNamespace(
         APIRouter=APIRouter,
+        Depends=Depends,
         HTTPException=HTTPException,
         Query=Query,
         WebSocket=object,
@@ -77,6 +81,7 @@ sys.modules.setdefault("redis", types.SimpleNamespace(from_url=lambda *args, **k
 
 from app.market_data.query.service import MarketDataQueryService  # noqa: E402
 from app.market_data.backfill.service import BackfillService  # noqa: E402
+from app.market_data.compare.service import ChartCompareService  # noqa: E402
 from app.market_data.fill.service import OnDemandFillService  # noqa: E402
 from app.market_data.fundamentals.service import FundamentalsAdapter, FundamentalsRecord, StoreFundamentalsAdapter, records_from_payload  # noqa: E402
 from app.market_data.heatmap import service as heatmap_service  # noqa: E402
@@ -84,6 +89,7 @@ from app.market_data.indices import service as indices_service  # noqa: E402
 from app.market_data.monitor import routes as monitor_routes  # noqa: E402
 from app.market_data.query import routes as query_routes  # noqa: E402
 from app.contracts.chart import AgentChatMessage, AgentChatRequest  # noqa: E402
+from app.auth.models import AuthenticatedUser  # noqa: E402
 from app.routes import charts as chart_routes  # noqa: E402
 from app.routes.health import runtime_config  # noqa: E402
 from app.services import alfaka_market_data as market_data_service  # noqa: E402
@@ -132,6 +138,32 @@ class FakeProvider:
             "visibleRange": {"from": from_time, "to": to_time},
             "include": sorted(include),
         }
+
+
+class FakeCompareRedis:
+    def __init__(self):
+        self.values = {}
+        self.ttls = {}
+
+    def get(self, key):
+        return self.values.get(key)
+
+    def set(self, key, value, ex=None):
+        self.values[key] = value
+        if ex is not None:
+            self.ttls[key] = ex
+
+    def expire(self, key, ttl):
+        self.ttls[key] = ttl
+
+
+class FakeCompareProvider(FakeProvider):
+    def __init__(self):
+        super().__init__()
+        self.redis_provider = types.SimpleNamespace(redis=FakeCompareRedis())
+
+    def symbol_detail(self, symbol):
+        return {"symbol": symbol, "name": f"{symbol} Corporation", "exchange": "NASDAQ"}
 
 
 class FakeIndicatorRedis:
@@ -314,6 +346,14 @@ class FakeNewsProvider:
     def __init__(self, redis_rows=None, clickhouse_rows=None, redis_daily_rows=None, clickhouse_daily_rows=None, candle_rows=None, redis_daily_coverage=None):
         self.redis_provider = FakeNewsRedisProvider(redis_rows, redis_daily_rows, redis_daily_coverage)
         self.clickhouse_provider = FakeNewsClickHouseProvider(clickhouse_rows, clickhouse_daily_rows, candle_rows)
+
+    def symbol_detail(self, symbol):
+        names = {
+            "NVDA": "NVIDIA Corporation",
+            "AMD": "Advanced Micro Devices, Inc.",
+            "AAPL": "Apple Inc.",
+        }
+        return {"symbol": symbol, "name": names.get(symbol, symbol), "market": "NASDAQ"}
 
 
 class NoMutationRedis:
@@ -947,6 +987,9 @@ class FakeQueryService:
     def latest_news(self, symbol, limit=10, locale="ko-KR"):
         return self.service.latest_news(symbol, limit=limit, locale=locale)
 
+    def watchlist_news(self, user_sub, limit=30, locale="ko-KR"):
+        return self.service.watchlist_news(user_sub, limit=limit, locale=locale)
+
     def request_backfill(self, symbol, interval, start=None, end=None, mode="default", force=False):
         return self.service.request_backfill(symbol, interval, start=start, end=end, mode=mode, force=force)
 
@@ -1223,6 +1266,22 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(service.provider.clickhouse_provider.localized_calls[0]["days"], 30)
         self.assertEqual(len(service.provider.redis_provider.localized_warm_calls[0]["rows"]), 1)
 
+    def test_latest_news_prefers_localized_text_when_raw_text_is_present(self):
+        service = MarketDataQueryService(FakeNewsProvider(clickhouse_rows=[{
+            "targetSymbol": "NVDA",
+            "symbols": ["NVDA"],
+            "headline": "NVIDIA English headline",
+            "localizedHeadline": "엔비디아 한국어 제목",
+            "summary": "English raw summary should not be displayed.",
+            "localizedSummary": "한국어 번역 요약이 먼저 표시되어야 합니다.",
+            "publishedAt": "2026-07-01T12:00:00.000Z",
+        }]), backfill_service=FakeBackfillService())
+
+        payload = service.latest_news("nvda", limit=5)
+
+        self.assertEqual(payload["items"][0]["title"], "엔비디아 한국어 제목")
+        self.assertEqual(payload["items"][0]["summary"], "한국어 번역 요약이 먼저 표시되어야 합니다.")
+
     def test_latest_news_falls_back_to_redis_when_clickhouse_empty(self):
         service = MarketDataQueryService(FakeNewsProvider(redis_rows=[{
             "target_symbol": "AAPL",
@@ -1253,6 +1312,93 @@ class MarketDataQueryServiceTest(unittest.TestCase):
 
         self.assertEqual(payload["symbol"], "NVDA")
         self.assertEqual(payload["items"][0]["title"], "NVIDIA")
+
+    def test_watchlist_news_returns_empty_payload_for_empty_watchlist(self):
+        provider = FakeNewsProvider()
+        provider.redis_provider.redis = FakeWatchlistRedis()
+        service = MarketDataQueryService(provider, backfill_service=FakeBackfillService())
+
+        payload = service.watchlist_news("user-a", limit=10)
+
+        self.assertEqual(payload["displayMode"], "watchlistNews")
+        self.assertEqual(payload["symbols"], [])
+        self.assertEqual(payload["items"], [])
+        self.assertIn("관심종목", payload["message"])
+        self.assertEqual(provider.redis_provider.localized_calls, [])
+        self.assertEqual(provider.clickhouse_provider.localized_calls, [])
+
+    def test_watchlist_news_uses_batch_lookup_and_dedupes_articles(self):
+        provider = FakeNewsProvider(clickhouse_rows=[
+            {
+                "articleId": "shared-1",
+                "targetSymbol": "NVDA",
+                "symbols": ["NVDA", "AMD"],
+                "localizedHeadline": "반도체 수요 뉴스",
+                "localizedSummary": "엔비디아와 AMD가 함께 언급됐습니다.",
+                "url": "https://example.com/shared",
+                "publishedAt": "2026-07-02T12:00:00.000Z",
+                "impactDirection": "positive",
+            },
+            {
+                "articleId": "shared-1",
+                "targetSymbol": "AMD",
+                "symbols": ["NVDA", "AMD"],
+                "localizedHeadline": "반도체 수요 뉴스",
+                "localizedSummary": "중복 기사입니다.",
+                "url": "https://example.com/shared",
+                "publishedAt": "2026-07-02T12:00:00.000Z",
+            },
+            {
+                "articleId": "amd-2",
+                "targetSymbol": "AMD",
+                "symbols": ["AMD"],
+                "headline": "AMD 신제품 뉴스",
+                "summary": "신제품 출시 일정입니다.",
+                "publishedAt": "2026-07-01T12:00:00.000Z",
+            },
+        ])
+        provider.redis_provider.redis = FakeWatchlistRedis()
+        from alfaka.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
+
+        RealtimeSubscriptionCohortService(provider.redis_provider.redis, auto_reconcile=False).replace_user_watchlist("user-a", ["NVDA", "AMD"])
+        service = MarketDataQueryService(provider, backfill_service=FakeBackfillService())
+
+        payload = service.watchlist_news("user-a", limit=10)
+
+        self.assertEqual(payload["source"], "clickhouse")
+        self.assertEqual(payload["symbols"], ["NVDA", "AMD"])
+        self.assertEqual([item["articleId"] for item in payload["items"]], ["shared-1", "amd-2"])
+        self.assertEqual([match["symbol"] for match in payload["items"][0]["matches"]], ["NVDA", "AMD"])
+        self.assertEqual(payload["items"][0]["matches"][0]["companyName"], "NVIDIA Corporation")
+        self.assertEqual(provider.clickhouse_provider.localized_calls[0]["symbols"], ["NVDA", "AMD"])
+        self.assertEqual(provider.clickhouse_provider.localized_calls[0]["days"], 30)
+
+    def test_watchlist_news_route_delegates_authenticated_user(self):
+        provider = FakeNewsProvider(redis_rows=[{
+            "articleId": "redis-1",
+            "targetSymbol": "AAPL",
+            "symbols": ["AAPL"],
+            "headline": "Apple watchlist news",
+            "summary": "Watchlist summary",
+            "publishedAt": "2026-07-02T12:00:00.000Z",
+        }])
+        provider.redis_provider.redis = FakeWatchlistRedis()
+        from alfaka.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
+
+        RealtimeSubscriptionCohortService(provider.redis_provider.redis, auto_reconcile=False).replace_user_watchlist("user-a", ["AAPL"])
+        previous = query_routes.get_query_service
+        query_routes.get_query_service = lambda: FakeQueryService(provider)
+        try:
+            payload = query_routes.market_watchlist_news(
+                limit=3,
+                user=AuthenticatedUser(sub="user-a", email="user@example.com", email_verified=True),
+            )
+        finally:
+            query_routes.get_query_service = previous
+
+        self.assertEqual(payload["source"], "redis")
+        self.assertEqual(payload["symbols"], ["AAPL"])
+        self.assertEqual(payload["items"][0]["title"], "Apple watchlist news")
 
     def test_daily_news_uses_redis_when_thirty_day_coverage_is_valid(self):
         service = MarketDataQueryService(FakeNewsProvider(redis_daily_rows=[{
@@ -3134,6 +3280,88 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertIn("s3_canonical_manifest_filter_disabled", payload["warnings"])
         self.assertIn("invalid_alpaca_credential_source", payload["warnings"])
         self.assertNotIn("semiconductor-100", str(payload))
+
+
+class ChartCompareServiceTest(unittest.TestCase):
+    def setUp(self):
+        self.provider = FakeCompareProvider()
+        self.calls = []
+
+    def make_service(self, bars_by_symbol):
+        def fetcher(symbol, start, end, feed, timeframe):
+            self.calls.append({"symbol": symbol, "start": start, "end": end, "feed": feed, "timeframe": timeframe})
+            value = bars_by_symbol.get(symbol)
+            if isinstance(value, Exception):
+                raise value
+            return value or []
+
+        return ChartCompareService(
+            provider=self.provider,
+            fetcher=fetcher,
+            now=lambda: datetime(2026, 7, 6, 21, 0, tzinfo=timezone.utc),
+        )
+
+    def test_compare_1d_uses_minute_bars_and_first_close_return(self):
+        service = self.make_service({
+            "NVDA": [
+                {"t": "2026-07-03T14:30:00Z", "c": 90},
+                {"t": "2026-07-06T13:30:00Z", "c": 100},
+                {"t": "2026-07-06T14:30:00Z", "c": 110},
+            ],
+            "AMD": [
+                {"t": "2026-07-06T13:30:00Z", "c": 50},
+                {"t": "2026-07-06T14:30:00Z", "c": 55},
+            ],
+        })
+
+        payload = service.snapshot(["NVDA", "AMD"], "1D")
+
+        self.assertEqual({call["timeframe"] for call in self.calls}, {"1Min"})
+        nvda = next(item for item in payload["items"] if item["symbol"] == "NVDA")
+        self.assertEqual([point["time"] for point in nvda["points"]], ["2026-07-06T13:30:00Z", "2026-07-06T14:30:00Z"])
+        self.assertEqual(nvda["basePrice"], 100)
+        self.assertEqual(nvda["lastPrice"], 110)
+        self.assertAlmostEqual(nvda["changePercent"], 10.0)
+        self.assertAlmostEqual(nvda["points"][-1]["returnPercent"], 10.0)
+
+    def test_compare_range_timeframe_mapping(self):
+        for range_value, expected_timeframe in {
+            "1M": "1Hour",
+            "6M": "1Day",
+            "1Y": "1Day",
+            "5Y": "1Week",
+        }.items():
+            self.calls = []
+            service = self.make_service({"NVDA": [{"t": "2026-07-06T14:30:00Z", "c": 100}, {"t": "2026-07-06T15:30:00Z", "c": 101}]})
+            payload = service.snapshot(["NVDA"], range_value)
+            self.assertEqual(payload["timeframe"], expected_timeframe)
+            self.assertEqual(self.calls[0]["timeframe"], expected_timeframe)
+
+    def test_compare_returns_partial_payload_when_one_symbol_fails(self):
+        service = self.make_service({
+            "NVDA": [{"t": "2026-07-06T13:30:00Z", "c": 100}, {"t": "2026-07-06T14:30:00Z", "c": 101}],
+            "MLM": RuntimeError("alpaca unavailable"),
+        })
+
+        payload = service.snapshot(["NVDA", "MLM"], "1D")
+
+        self.assertEqual(payload["items"][0]["symbol"], "NVDA")
+        failed = next(item for item in payload["items"] if item["symbol"] == "MLM")
+        self.assertEqual(failed["error"], "provider_error")
+        self.assertTrue(payload["warnings"])
+
+    def test_compare_cache_hit_skips_alpaca_fetcher(self):
+        with mock.patch.dict(os.environ, {"CHART_COMPARE_CACHE_ENABLED": "true", "CHART_COMPARE_CACHE_TTL_1D_SECONDS": "60"}, clear=False):
+            service = self.make_service({
+                "NVDA": [{"t": "2026-07-06T13:30:00Z", "c": 100}, {"t": "2026-07-06T14:30:00Z", "c": 102}],
+            })
+
+            first = service.snapshot(["NVDA"], "1D")
+            second = service.snapshot(["NVDA"], "1D")
+
+        self.assertFalse(first["cache"]["hit"])
+        self.assertTrue(second["cache"]["hit"])
+        self.assertEqual(len(self.calls), 1)
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ except Exception:
 
 from app.auth.dependencies import optional_current_user, require_current_user
 from app.auth.models import AuthenticatedUser
+from app.market_data.compare.service import get_chart_compare_service
 from app.market_data.realtime.active_symbols import ActiveSymbolManager
 from app.market_data.query.service import get_query_service
 from app.services.alfaka_market_data import (
@@ -33,6 +34,7 @@ from app.services.alfaka_market_data import (
 from alfaka.serving.intervals import MAX_CHART_CANDLE_LIMIT
 
 CHART_INTERVAL_PATTERN = "^(1m|5m|10m|1h|4h|1D|1W|1M|1d|1w|1mo|1MO|1month)$"
+CHART_COMPARE_RANGE_PATTERN = "^(1D|1M|6M|1Y|5Y|1d|1m|6m|1y|5y)$"
 
 
 def positive_int_env(name: str, default: int) -> int:
@@ -120,6 +122,31 @@ def chart_active_symbol_heartbeat(
         "layers": ["trades", "quotes"],
         "pendingReconcile": True,
     }
+
+
+@router.get("/api/charts/compare")
+def chart_compare(
+    symbols: str = Query(min_length=1, max_length=160),
+    range_value: str = Query(default="1D", alias="range", pattern=CHART_COMPARE_RANGE_PATTERN),
+    base_mode: str = Query(default="first_close", alias="baseMode", pattern="^(first_close)$"),
+    adjustment: str = Query(default="split", pattern="^(split)$"),
+    session: str = Query(default="regular", pattern="^(regular)$"),
+) -> dict[str, Any]:
+    try:
+        requested_symbols = parse_symbol_csv(symbols)
+        return get_chart_compare_service().snapshot(
+            requested_symbols,
+            range_value,
+            base_mode=base_mode,
+            adjustment=adjustment,
+            session=session,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Chart comparison provider failed: {exc}") from exc
 
 
 @router.post("/api/charts/backfill")

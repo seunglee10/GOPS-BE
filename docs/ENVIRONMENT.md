@@ -474,6 +474,37 @@ Deprecated `POST /api/charts/backfill`,
 `GET /api/charts/backfill/status`, and `GET /api/charts/backfill/queue` return
 `410 Gone`.
 
+## Chart Compare
+
+`GET /api/charts/compare` is a REST-only multi-symbol comparison path. It is not
+an active chart session and must not add WebSocket clients, Redis live-candle
+readers, Kafka subscriptions, or tick fanout load. The frontend sends a bounded
+symbol list and a range; the API fetches Alpaca historical bars server-side,
+normalizes each symbol to first-close return percent, and caches the projection
+in Redis.
+
+```text
+1D -> Alpaca 1Min bars, latest regular-session trading day
+1M -> Alpaca 1Hour bars
+6M -> Alpaca 1Day bars
+1Y -> Alpaca 1Day bars
+5Y -> Alpaca 1Week bars
+```
+
+```text
+CHART_COMPARE_CACHE_ENABLED
+CHART_COMPARE_MAX_SYMBOLS
+CHART_COMPARE_CACHE_TTL_1D_SECONDS
+CHART_COMPARE_CACHE_TTL_1M_SECONDS
+CHART_COMPARE_CACHE_TTL_6M_SECONDS
+CHART_COMPARE_CACHE_TTL_1Y_SECONDS
+CHART_COMPARE_CACHE_TTL_5Y_SECONDS
+```
+
+Alpaca credentials stay server-side and use the same credential source as the
+historical fill path (`ALPACA_CREDENTIAL_SOURCE`, `ALPACA_SECRET_NAME`, or local
+APCA env vars). The frontend never calls Alpaca directly.
+
 ## Market Heatmap
 
 `GET /api/market/heatmap?universe=sp500` builds a serving projection for the
