@@ -1,7 +1,9 @@
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
+from app.auth.dependencies import require_current_user
+from app.auth.models import AuthenticatedUser
 from app.market_data.query.service import get_query_service
 
 router = APIRouter()
@@ -126,6 +128,15 @@ def market_daily_news(
     locale: str = Query(default="ko-KR", max_length=16),
 ) -> dict[str, Any]:
     return get_query_service().daily_news(symbol, limit=limit, locale=locale)
+
+
+@router.get("/api/market/news/watchlist")
+def market_watchlist_news(
+    limit: int = Query(default=30, ge=1, le=50),
+    locale: str = Query(default="ko-KR", max_length=16),
+    user: AuthenticatedUser = Depends(require_current_user),
+) -> dict[str, Any]:
+    return get_query_service().watchlist_news(user.sub, limit=limit, locale=locale)
 
 
 @router.get("/api/agent/context/chart")
