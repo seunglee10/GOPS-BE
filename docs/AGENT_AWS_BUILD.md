@@ -596,14 +596,28 @@ generated financial report is cached in Redis under
 available.
 
 General final-answer synthesis is enabled with `AGENT_FINAL_ANSWER_PROVIDER=openai`.
-Production config should keep `AGENT_MAX_REALTIME_LLM_CALLS=2`,
-`AGENT_SYNTHESIZER_TIMEOUT_SECONDS=5`, and `AGENT_SYNTHESIS_TIMEOUT_MS=5000` so
-one LLM call remains reserved for final answer synthesis. A completed report whose
-`timing.llmCallLabels` does not contain `synthesis` or `financial-synthesis` did
-not even attempt the final synthesis LLM call. A report whose
+Production config should keep `AGENT_MAX_REALTIME_LLM_CALLS=2` so one LLM call
+remains reserved for final answer synthesis. The final-answer LLM is only a
+Korean prose rewrite layer, so production should use a fast mini model via
+`AGENT_SYNTHESIZER_MODEL=gpt-5.4-mini` and keep
+`AGENT_SYNTHESIZER_TIMEOUT_SECONDS=1.5` / `AGENT_SYNTHESIS_TIMEOUT_MS=1500`.
+This preserves the 5-second hot-path response target by falling back quickly when
+OpenAI is slow. A completed report whose `timing.llmCallLabels` does not contain
+`synthesis` or `financial-synthesis` did not even attempt the final synthesis LLM
+call. A report whose
 `timing.synthesisProvider` is not `openai` used deterministic fallback for the final
 answer; check `synthesisSkippedReason` and `synthesisFallbackReason` in `timing` or
 `agentTrace.synthesis`.
+
+AWS overlays make `alfaka-openai-secret` mandatory for the agent orchestrator and
+analysis workers. If the secret is missing, the pod should fail scheduling/startup
+instead of silently serving deterministic final-answer fallback. Startup logs also
+print non-secret synthesis diagnostics: provider env, model, timeout, and whether
+`OPENAI_API_KEY` is visible inside that pod. Reports mirror the same fields under
+`agentTrace.synthesis`. Do not cache analysis reports produced after infra fallback
+reasons such as `missing_openai_api_key`, `synthesis_skipped_budget`, or
+`openai_*`; rerunning after the secret or provider recovers should attempt OpenAI
+synthesis again.
 
 Interactive OperationIR planner fallback is enabled with
 `AGENT_OPERATION_PLANNER_PROVIDER=openai`. Leave it unset for deterministic-only
