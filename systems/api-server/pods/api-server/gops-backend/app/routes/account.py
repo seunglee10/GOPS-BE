@@ -8,6 +8,7 @@ from fastapi.encoders import jsonable_encoder
 from app.auth.dependencies import require_current_user
 from app.auth.models import AuthenticatedUser
 from app.core.sectors import sector_payload_fields
+from app.services.alpaca_corporate_actions import enrich_holdings_with_alpaca_dividends
 from kis_trader.kis.config import KisConfigError
 from kis_trader.kis.fake import KisConnectionReset, KisExplicitReject, KisHttpError, KisTimeout, KisTokenExpired
 
@@ -38,6 +39,8 @@ def account_holdings(
         status_code = status.HTTP_503_SERVICE_UNAVAILABLE if exc.safe_to_retry else status.HTTP_502_BAD_GATEWAY
         raise HTTPException(status_code=status_code, detail=str(exc)) from exc
     payload = _enrich_portfolio_holdings_sectors(request.app, payload)
+    if market == "overseas":
+        payload = enrich_holdings_with_alpaca_dividends(payload)
     _remember_portfolio_holdings_snapshot(request.app, user.sub, payload)
     return jsonable_encoder(payload)
 

@@ -85,6 +85,8 @@ def _normalize_position(row: dict[str, Any], market: str, default_currency: str)
         "market": market,
         "exchange": _text(_first(row, ("ovrs_excg_cd", "OVRS_EXCG_CD", "excg_cd", "exchange"))),
         "currency": _text(_first(row, ("tr_crcy_cd", "TR_CRCY_CD", "currency"))) or ("KRW" if market == "domestic" else default_currency.upper()),
+        "sector": _text(_first(row, ("sector", "sector_name", "gics_sector"))) or None,
+        "industry": _text(_first(row, ("industry", "industry_name", "gics_industry"))) or None,
         "quantity": quantity,
         "availableQuantity": _number(_first(row, ("ord_psbl_qty", "sellable_qty", "available_quantity"))),
         "averagePrice": _number(_first(row, ("pchs_avg_pric", "pchs_avg_pric2", "average_price"))),
@@ -96,6 +98,11 @@ def _normalize_position(row: dict[str, Any], market: str, default_currency: str)
         "unrealizedPnlKrw": _number(_first(row, ("evlu_pfls_amt", "unrealized_pnl_krw"))),
         "unrealizedPnlForeign": _number(_first(row, ("frcr_evlu_pfls_amt", "unrealized_pnl_foreign"))),
         "unrealizedPnlRate": _number(_first(row, ("evlu_pfls_rt", "evlu_erng_rt", "unrealized_pnl_rate"))),
+        "dayPnlForeign": _number(_first(row, ("day_pnl_foreign", "dayPnlForeign"))),
+        "dayPnlRate": _number(_first(row, ("day_pnl_rate", "dayPnlRate"))),
+        "dividendYield": _number(_first(row, ("dividend_yield", "dividendYield", "dvdn_yld"))),
+        "dividendPerShare": _number(_first(row, ("dividend_per_share", "dividendPerShare", "dps"))),
+        "annualDividend": _number(_first(row, ("annual_dividend", "annualDividend"))),
     }
 
 
