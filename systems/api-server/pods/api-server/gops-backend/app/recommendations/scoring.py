@@ -107,7 +107,7 @@ def score_recommendations(payload: RecommendationInput) -> list[dict[str, Any]]:
         if item is not None:
             scored.append(item)
     scored.sort(key=lambda item: (item["score"], item["confidence"]), reverse=True)
-    selected = scored[:3]
+    selected = scored[:15]
     for index, item in enumerate(selected, start=1):
         item["rank"] = index
     return selected
@@ -251,6 +251,7 @@ def score_candidate(
     confidence = confidence_for(metrics, reasons, session_mode=session_mode)
     metrics_snapshot = {
         **metrics,
+        "changePercent": candidate.change_percent,
         "source": candidate.source,
         "sessionMode": session_mode,
         "sectorWeight": round(sector_weight, 6),
@@ -263,6 +264,7 @@ def score_candidate(
         "rank": 0,
         "score": score,
         "confidence": confidence,
+        "changePercent": candidate.change_percent,
         **sector_payload_fields(candidate.sector),
         "reasons": reasons[:5],
         "riskWarnings": risks,

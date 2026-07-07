@@ -488,16 +488,19 @@ def response_for_run(run: dict[str, Any] | None, *, profile: dict[str, Any] | No
 def normalize_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     normalized = []
     for item in items:
+        metrics_snapshot = item.get("metricsSnapshot") or item.get("metrics_snapshot") or {}
+        change_percent = item.get("changePercent")
         normalized.append({
             "symbol": item.get("symbol"),
             "action": item.get("action", "buy"),
             "rank": item.get("rank"),
             "score": item.get("score"),
             "confidence": item.get("confidence"),
+            "changePercent": change_percent if change_percent is not None else metrics_snapshot.get("changePercent"),
             **sector_payload_fields(item.get("sector")),
             "reasons": item.get("reasons") or [],
             "riskWarnings": item.get("riskWarnings") or item.get("risk_warnings") or [],
-            "metricsSnapshot": item.get("metricsSnapshot") or item.get("metrics_snapshot") or {},
+            "metricsSnapshot": metrics_snapshot,
         })
     return normalized
 
