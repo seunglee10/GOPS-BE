@@ -1590,6 +1590,46 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         health = read_component_health(redis, keys, "market-processor")
         self.assertEqual(health["lastResult"], "bars_confirmed_replace")
 
+    def test_closed_candle_watermark_blocks_late_live_candle_update(self):
+        producer = RecordingProducer()
+        redis = MemoryRedis()
+        keys = RedisKeyBuilder()
+        topics = mermaid_processor_topics()
+        state = ProcessorState()
+
+        first_trade = build_raw_envelope(
+            {"T": "t", "S": "AAPL", "i": 123, "p": 195.2, "s": 10, "t": "2026-06-25T10:15:20.100Z"},
+            "sip",
+        )
+        closed_bar = build_raw_envelope(
+            {"T": "b", "S": "AAPL", "t": "2026-06-25T10:15:00.000Z", "o": 195, "h": 196, "l": 194, "c": 195.5, "v": 100},
+            "sip",
+        )
+        late_trade = build_raw_envelope(
+            {"T": "t", "S": "AAPL", "i": 124, "p": 196.2, "s": 5, "t": "2026-06-25T10:15:45.000Z"},
+            "sip",
+        )
+
+        self.assertEqual(process_raw_envelope(first_trade, producer, redis, keys, state, topics), "trades")
+        self.assertIn(keys.live_candle("AAPL", "1m"), redis.values)
+        self.assertEqual(process_raw_envelope(closed_bar, producer, redis, keys, state, topics), "bars_confirmed_replace")
+        self.assertEqual(redis.values[keys.closed_candle_watermark("AAPL", "1m")], "2026-06-25T10:15:00.000Z")
+        self.assertNotIn(keys.live_candle("AAPL", "1m"), redis.values)
+
+        live_events_before = [
+            message
+            for _channel, message in redis.published
+            if json.loads(message).get("type") == "LIVE_CANDLE_UPDATE"
+        ]
+        self.assertEqual(process_raw_envelope(late_trade, producer, redis, keys, state, topics), "trades_blocked_by_closed_watermark")
+        self.assertNotIn(keys.live_candle("AAPL", "1m"), redis.values)
+        live_events_after = [
+            message
+            for _channel, message in redis.published
+            if json.loads(message).get("type") == "LIVE_CANDLE_UPDATE"
+        ]
+        self.assertEqual(live_events_after, live_events_before)
+
     def test_processor_flushes_tick_window_to_closed_candle_and_pubsub(self):
         producer = RecordingProducer()
         redis = MemoryRedis()
@@ -5745,8 +5785,8 @@ class MarketDataHardeningContractTest(unittest.TestCase):
 
         self.assertEqual(len(payload["candles"]), 1)
         self.assertEqual(payload["candles"][0]["timestamp"], "2026-06-25T10:15:00.000Z")
-        self.assertEqual(payload["candles"][0]["close"], 101.25)
-        self.assertFalse(payload["candles"][0]["isClosed"])
+        self.assertEqual(payload["candles"][0]["close"], 100.5)
+        self.assertTrue(payload["candles"][0]["isClosed"])
 
     def test_provider_includes_redis_live_candles_in_from_to_snapshot(self):
         start = datetime(2026, 7, 6, 13, 30, tzinfo=timezone.utc)
