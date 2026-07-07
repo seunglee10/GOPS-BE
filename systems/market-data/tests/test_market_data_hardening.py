@@ -1069,6 +1069,20 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         )
         self.assertIn("market.realtime.ticks.to.1mo.v1", config["raw_topics"])
 
+    def test_processor_runtime_config_can_select_raw_topics_for_split_processors(self):
+        config = processor_runtime_config({
+            "KAFKA_BOOTSTRAP_SERVERS": "kafka:29092",
+            "KAFKA_PROCESSOR_GROUP_ID": "alfaka-market-quote-processor",
+            "KAFKA_INPUT_TOPIC_PREFIX": "market.input",
+            "REDIS_URL": "redis://redis:6379/0",
+            "KAFKA_PROCESSOR_RAW_TOPICS": "market.input.realtime.quotes.v1",
+            "KAFKA_TICK_FANOUT_INTERVALS": "all",
+        })
+
+        self.assertEqual(config["group_id"], "alfaka-market-quote-processor")
+        self.assertEqual(config["raw_topics"], ["market.input.realtime.quotes.v1"])
+        self.assertEqual(config["tick_fanout_topics"], {})
+
     def test_clickhouse_topic_defaults_append_ticks_only_when_trade_load_enabled(self):
         environ = {
             "KAFKA_CLICKHOUSE_TOPICS": "market.layer.candles.closed.v1,market.layer.events.v1",
@@ -1698,6 +1712,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         base_kustomization = (REPO_ROOT / "infra/k8s/base/kustomization.yaml").read_text(encoding="utf-8")
         app_kustomization = (REPO_ROOT / "infra/k8s/base/app/kustomization.yaml").read_text(encoding="utf-8")
         deployment = (REPO_ROOT / "infra/k8s/base/app/deployment-market-processor.yaml").read_text(encoding="utf-8")
+        quote_deployment = (REPO_ROOT / "infra/k8s/base/app/deployment-market-quote-processor.yaml").read_text(encoding="utf-8")
         agent_orchestrator_deployment = (
             REPO_ROOT / "infra/k8s/base/app/deployment-agent-orchestrator.yaml"
         ).read_text(encoding="utf-8")
@@ -1718,11 +1733,20 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn("  - app", base_kustomization)
         self.assertIn("job-news-backfill.yaml", base_kustomization)
         self.assertIn("deployment-market-processor.yaml", app_kustomization)
+        self.assertIn("deployment-market-quote-processor.yaml", app_kustomization)
         self.assertIn("deployment-raw-s3-archive.yaml", app_kustomization)
         self.assertIn("name: alfaka-market-processor", deployment)
         self.assertIn("app: alfaka-market-processor", deployment)
         self.assertIn("gops-market-processor:latest", deployment)
         self.assertIn("systems/market-data/pods/market-processor/local_main.py", deployment)
+        self.assertIn("KAFKA_PROCESSOR_RAW_TOPICS", deployment)
+        self.assertIn("market.input.realtime.trades.v1,market.input.realtime.bars.1m.v1", deployment)
+        self.assertNotIn("market.input.realtime.quotes.v1", deployment)
+        self.assertIn("name: alfaka-market-quote-processor", quote_deployment)
+        self.assertIn("app: alfaka-market-quote-processor", quote_deployment)
+        self.assertIn("KAFKA_PROCESSOR_GROUP_ID", quote_deployment)
+        self.assertIn("value: alfaka-market-quote-processor", quote_deployment)
+        self.assertIn("value: market.input.realtime.quotes.v1", quote_deployment)
         self.assertIn("name: alfaka-raw-s3-archive", raw_archive_deployment)
         self.assertIn("systems/market-data/pods/s3-sink/raw_archive_sink.py", raw_archive_deployment)
         self.assertIn("gops-market-storage:latest", raw_archive_deployment)
@@ -5207,10 +5231,18 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             if line.strip() and not line.startswith("#")
         }
         local_script = (root / "scripts" / "local" / "create-kafka-topics.sh").read_text(encoding="utf-8")
+        docker_compose = (root / "docker-compose.yml").read_text(encoding="utf-8")
+        kafka_init_job = (root / "infra/k8s/base/platform/kafka-topic-init-job.yaml").read_text(encoding="utf-8")
 
         self.assertTrue(required_topics.issubset(aws_topics))
         for topic in required_topics:
             self.assertIn(topic, local_script)
+        self.assertIn("hot_topics", local_script)
+        self.assertIn("--topic \"${topic}\"", local_script)
+        self.assertIn("--partitions 12", local_script)
+        self.assertIn("hot_topics", docker_compose)
+        self.assertIn("--partitions 12", docker_compose)
+        self.assertIn("--partitions 12", kafka_init_job)
 
     def test_gap_fill_includes_same_timestamp_correction_after_cursor(self):
         original = {
