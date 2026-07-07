@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import sys
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -64,6 +65,16 @@ class FakeClickHouseArtifactClient:
 
     def insert_json_each_row(self, table, rows):
         self.rows.append((table, rows))
+
+
+class FakeClickHouseReadArtifactClient:
+    database = "market_data"
+
+    def __init__(self, payload):
+        self.payload = payload
+
+    def query_json_each_row(self, query, params):
+        return [{"payloadJson": json.dumps(self.payload)}]
 
 
 class FakeFuture:
@@ -136,6 +147,20 @@ class FailingVolumeProfileProvider(FakeProvider):
         raise RuntimeError("volume profile candle source unavailable")
 
 
+class EmptyFootprintProvider(FakeProvider):
+    def footprint_ticks(self, symbol, from_time, to_time, limit=20000):
+        self.calls.append({"kind": "footprint", "symbol": symbol, "limit": limit})
+        return {
+            "symbol": symbol,
+            "from": from_time,
+            "to": to_time,
+            "source": "unit",
+            "feed": "test",
+            "quotes": [],
+            "trades": [],
+        }
+
+
 class WarmupIndicatorProvider:
     def __init__(self):
         self.calls = []
@@ -188,6 +213,25 @@ class ChartDerivedDataWorkerTest(unittest.TestCase):
         self.assertEqual(row["to_time"], "2026-06-25 13:31:00.000")
         self.assertNotIn("T", row["created_at"])
         self.assertFalse(row["expires_at"].endswith("Z"))
+
+    def test_artifact_store_ignores_empty_footprint_artifacts(self):
+        request = build_footprint_request(
+            symbol="AAPL",
+            from_time="2026-06-25T13:30:00.000Z",
+            to_time="2026-06-25T13:31:00.000Z",
+            limit=100,
+        )
+        empty_payload = {
+            "symbol": "AAPL",
+            "interval": "footprint",
+            "dataStatus": "empty",
+            "tradeCount": 0,
+            "quoteCount": 0,
+            "buckets": [],
+        }
+        store = ChartDerivedArtifactStore(FakeClickHouseReadArtifactClient(empty_payload))
+
+        self.assertIsNone(store.read(request))
 
     def test_indicator_request_hash_and_worker_result_are_shared(self):
         worker = load_worker_module()
@@ -292,6 +336,29 @@ class ChartDerivedDataWorkerTest(unittest.TestCase):
         self.assertEqual(payload["sourceInterval"], "1m")
         self.assertEqual(payload["sideClassification"], "estimated")
         self.assertEqual(payload["buckets"][0]["delta"], 6)
+
+    def test_empty_footprint_result_is_not_persisted_as_artifact(self):
+        worker = load_worker_module()
+        redis_client = FakeRedis()
+        artifact_store = FakeArtifactStore()
+        request = build_footprint_request(
+            symbol="AAPL",
+            from_time="2026-06-25T13:30:00.000Z",
+            to_time="2026-06-25T13:31:00.000Z",
+            limit=100,
+        )
+
+        payload = worker.process_request(
+            request,
+            provider=EmptyFootprintProvider(),
+            redis_client=redis_client,
+            artifact_store=artifact_store,
+        )
+
+        self.assertEqual(payload["dataStatus"], "empty")
+        self.assertFalse(payload["derived"]["artifactStored"])
+        self.assertEqual(artifact_store.rows, [])
+        self.assertFalse(read_json_cache(redis_client, request["cacheKey"])["derived"]["artifactStored"])
 
     def test_worker_failure_records_status_and_dlq(self):
         worker = load_worker_module()

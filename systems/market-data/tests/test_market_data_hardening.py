@@ -1842,6 +1842,9 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         app_kustomization = (REPO_ROOT / "infra/k8s/base/app/kustomization.yaml").read_text(encoding="utf-8")
         deployment = (REPO_ROOT / "infra/k8s/base/app/deployment-market-processor.yaml").read_text(encoding="utf-8")
         quote_deployment = (REPO_ROOT / "infra/k8s/base/app/deployment-market-quote-processor.yaml").read_text(encoding="utf-8")
+        clickhouse_loader_deployment = (
+            REPO_ROOT / "infra/k8s/base/app/deployment-clickhouse-loader.yaml"
+        ).read_text(encoding="utf-8")
         agent_orchestrator_deployment = (
             REPO_ROOT / "infra/k8s/base/app/deployment-agent-orchestrator.yaml"
         ).read_text(encoding="utf-8")
@@ -1876,6 +1879,12 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn("KAFKA_PROCESSOR_GROUP_ID", quote_deployment)
         self.assertIn("value: alfaka-market-quote-processor", quote_deployment)
         self.assertIn("value: market.input.realtime.quotes.v1", quote_deployment)
+        self.assertIn("name: alfaka-clickhouse-loader", clickhouse_loader_deployment)
+        self.assertIn("name: alfaka-clickhouse-tick-loader", clickhouse_loader_deployment)
+        self.assertIn("replicas: 3", clickhouse_loader_deployment)
+        self.assertIn("value: market.layer.trades.v1,market.layer.quotes.v1", clickhouse_loader_deployment)
+        self.assertIn("value: market.layer.candles.1m.closed.v1,market.layer.candles.5m.closed.v1,market.layer.candles.10m.closed.v1,market.layer.candles.1h.closed.v1,market.layer.candles.4h.closed.v1,market.layer.candles.1d.closed.v1,market.layer.candles.1w.closed.v1,market.layer.candles.1mo.closed.v1,market.layer.events.v1,market.news.alpaca.v1", clickhouse_loader_deployment)
+        self.assertIn("value: alfaka-clickhouse-tick-loader", clickhouse_loader_deployment)
         self.assertIn("name: alfaka-raw-s3-archive", raw_archive_deployment)
         self.assertIn("systems/market-data/pods/s3-sink/raw_archive_sink.py", raw_archive_deployment)
         self.assertIn("gops-market-storage:latest", raw_archive_deployment)
@@ -1933,6 +1942,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         detector = (REPO_ROOT / "scripts/aws/detect-changed-services.sh").read_text(encoding="utf-8")
 
         self.assertIn("alfaka-market-quote-processor", lib)
+        self.assertIn("alfaka-clickhouse-tick-loader", lib)
         self.assertIn("alfaka-news-intelligence-worker", lib)
         self.assertIn("systems/market-data/pods/news-intelligence-worker/*", detector)
         self.assertIn("systems/market-data/jobs/news-backfill/*", detector)
