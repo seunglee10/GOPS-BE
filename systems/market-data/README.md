@@ -157,7 +157,7 @@ COVERAGE_REPAIR_DRY_RUN=false docker compose --profile repair run --rm coverage-
 
 The job talks to the API server rather than Redis or ClickHouse directly, so
 derived intervals keep the same source-interval rules as the frontend:
-`5m/10m` fill through `1m`, and `1W/1M` fill through `1D`.
+`5m/10m/1h/4h` fill through `1m`, and `1W/1M` fill through `1D`.
 
 ## On-Demand Historical Fill
 

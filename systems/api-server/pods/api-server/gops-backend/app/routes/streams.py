@@ -6,7 +6,7 @@ from app.services.alfaka_market_data import normalize_market_symbol
 from alfaka.serving.intervals import normalize_chart_interval
 
 router = APIRouter()
-CHART_INTERVAL_PATTERN = "^(1m|5m|10m|1D|1W|1M|1d|1w|1mo|1MO|1month)$"
+CHART_INTERVAL_PATTERN = "^(1m|5m|10m|1h|4h|1D|1W|1M|1d|1w|1mo|1MO|1month)$"
 
 
 @router.websocket("/ws/charts")

@@ -11,7 +11,7 @@ from alfaka.common.env import load_dotenv
 from alfaka.common.canonical import CANONICAL_VERSION, HISTORICAL_SERVING_PRICE_ADJUSTMENTS, SERVING_PRICE_ADJUSTMENTS
 from alfaka.common.symbols import is_crypto_symbol
 from alfaka.serving.dto import snapshot
-from alfaka.serving.intervals import normalize_chart_interval, resolve_candle_limit
+from alfaka.serving.intervals import INTRADAY_DERIVED_INTERVALS, INTRADAY_INTERVAL_MINUTES, normalize_chart_interval, resolve_candle_limit
 from alfaka.serving.moving_average import attach_moving_averages
 
 
@@ -30,7 +30,7 @@ class ClickHouseMarketDataProvider:
         """요청 interval에 맞는 캔들 목록을 ClickHouse에서 조회합니다."""
         interval = normalize_chart_interval(interval)
         limit = resolve_candle_limit(interval, limit)
-        if interval in {"5m", "10m"}:
+        if interval in INTRADAY_DERIVED_INTERVALS:
             return self.aggregated_minute_candles(symbol, interval, limit, before=before, from_time=from_time, to_time=to_time)
         if interval == "1D":
             return self.daily_candles(symbol, interval, limit, before=before, from_time=from_time, to_time=to_time)
@@ -152,10 +152,10 @@ class ClickHouseMarketDataProvider:
         return attach_moving_averages(list(reversed(rows)))
 
     def aggregated_minute_candles(self, symbol, interval, limit=None, before=None, from_time=None, to_time=None):
-        """1분봉을 5분/10분봉으로 묶어 차트용 캔들을 만듭니다."""
+        """1분봉을 intraday 파생 주기로 묶어 차트용 캔들을 만듭니다."""
         interval = normalize_chart_interval(interval)
         limit = resolve_candle_limit(interval, limit)
-        bucket_minutes = {"5m": 5, "10m": 10}[interval]
+        bucket_minutes = INTRADAY_INTERVAL_MINUTES[interval]
         time_filter = ""
         params = {"symbol": symbol, "limit": int(limit)}
         if from_time:
@@ -288,7 +288,7 @@ class ClickHouseMarketDataProvider:
     def candles_since(self, symbol, interval, timestamp, limit=500, include_from=False):
         """WebSocket gap 보정용으로 특정 timestamp 이후의 캔들을 조회합니다."""
         interval = normalize_chart_interval(interval)
-        if interval in {"5m", "10m", "1W", "1M"}:
+        if interval in {*INTRADAY_DERIVED_INTERVALS, "1W", "1M"}:
             return self.candles(symbol, interval, limit, from_time=timestamp)
         operator = ">=" if include_from else ">"
         interval_filter = "interval IN ('1D', '1d')" if interval == "1D" else "interval = {interval:String}"
@@ -339,7 +339,7 @@ class ClickHouseMarketDataProvider:
     def candle_coverage(self, symbol, interval):
         """backfill 판단에 필요한 저장 캔들 개수와 가용 기간을 계산합니다."""
         interval = normalize_chart_interval(interval)
-        stored_interval = "1m" if interval in {"5m", "10m"} else "1D" if interval in {"1W", "1M"} else interval
+        stored_interval = "1m" if interval in INTRADAY_DERIVED_INTERVALS else "1D" if interval in {"1W", "1M"} else interval
         interval_filter = "interval IN ('1D', '1d')" if stored_interval == "1D" else "interval = {interval:String}"
         params = {"symbol": symbol}
         if stored_interval != "1D":
@@ -393,7 +393,7 @@ class ClickHouseMarketDataProvider:
     def candle_timestamps(self, symbol, interval, from_time, to_time, limit=200000):
         """gapfill 비교에 사용할 저장 candle timestamp 목록을 조회합니다."""
         interval = normalize_chart_interval(interval)
-        stored_interval = "1m" if interval in {"5m", "10m"} else "1D" if interval in {"1W", "1M"} else interval
+        stored_interval = "1m" if interval in INTRADAY_DERIVED_INTERVALS else "1D" if interval in {"1W", "1M"} else interval
         interval_filter = "interval IN ('1D', '1d')" if stored_interval == "1D" else "interval = {interval:String}"
         params = {
             "symbol": symbol,

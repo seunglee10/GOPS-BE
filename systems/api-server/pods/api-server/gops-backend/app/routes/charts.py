@@ -32,7 +32,7 @@ from app.services.alfaka_market_data import (
 )
 from alfaka.serving.intervals import MAX_CHART_CANDLE_LIMIT
 
-CHART_INTERVAL_PATTERN = "^(1m|5m|10m|1D|1W|1M|1d|1w|1mo|1MO|1month)$"
+CHART_INTERVAL_PATTERN = "^(1m|5m|10m|1h|4h|1D|1W|1M|1d|1w|1mo|1MO|1month)$"
 
 
 def positive_int_env(name: str, default: int) -> int:

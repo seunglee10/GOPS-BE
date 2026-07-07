@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from alfaka.common.canonical import candle_metadata
+from alfaka.serving.intervals import INTRADAY_DERIVED_INTERVALS, INTRADAY_INTERVAL_MINUTES
 
 MARKET_TIMEZONE = ZoneInfo("America/New_York")
 
@@ -33,6 +34,10 @@ def floor_minute(value):
 
 def floor_interval(value, minutes):
     dt = parse_time(value) if isinstance(value, str) else value
+    if minutes >= 60:
+        bucket_hours = max(1, minutes // 60)
+        bucket_hour = (dt.hour // bucket_hours) * bucket_hours
+        return dt.replace(hour=bucket_hour, minute=0, second=0, microsecond=0)
     bucket_minute = (dt.minute // minutes) * minutes
     return dt.replace(minute=bucket_minute, second=0, microsecond=0)
 
@@ -230,8 +235,8 @@ class ProvisionalCandleState:
         anchor = anchor_timestamp or (live_1m or {}).get("timestamp")
         if not anchor:
             return None
-        if target_interval in {"5m", "10m"}:
-            minutes = int(target_interval.removesuffix("m"))
+        if target_interval in INTRADAY_DERIVED_INTERVALS:
+            minutes = INTRADAY_INTERVAL_MINUTES[target_interval]
             bucket = floor_interval(anchor, minutes)
             end = bucket + timedelta(minutes=minutes)
         elif target_interval == "1D":
@@ -358,8 +363,9 @@ class CandleAggregator:
         self.windows = defaultdict(dict)
 
     def update(self, candle_1m, interval_minutes):
+        interval = intraday_interval_for_minutes(interval_minutes)
         bucket = floor_interval(candle_1m["timestamp"], interval_minutes)
-        key = (candle_1m["symbol"], interval_minutes, to_iso(bucket))
+        key = (candle_1m["symbol"], interval, to_iso(bucket))
         window = self.windows[key]
         window[candle_1m["timestamp"]] = candle_1m
 
@@ -370,7 +376,7 @@ class CandleAggregator:
         return {
             "eventType": "CANDLE",
             "symbol": candle_1m["symbol"],
-            "interval": f"{interval_minutes}m",
+            "interval": interval,
             "timestamp": to_iso(bucket),
             "open": candles[0]["open"],
             "high": max(candle["high"] for candle in candles),
@@ -390,6 +396,14 @@ class CandleAggregator:
             "createdAt": candle_1m.get("createdAt"),
             **candle_metadata(candle_1m.get("priceAdjustment"), candle_1m.get("canonicalVersion")),
         }
+
+
+def intraday_interval_for_minutes(interval_minutes):
+    minutes = int(interval_minutes)
+    for interval, candidate in INTRADAY_INTERVAL_MINUTES.items():
+        if candidate == minutes:
+            return interval
+    return f"{minutes}m"
 
 
 class TickWindowCandleBuilder:

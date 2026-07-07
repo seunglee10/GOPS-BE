@@ -168,13 +168,13 @@ The processor also writes scoped health keys such as
 hide another symbol's live-path diagnosis.
 
 `KAFKA_TICK_FANOUT_INTERVALS` should normally stay `1m` in AWS/EKS. The
-processor derives 5m, 10m, 1D, 1W, and 1M live candles from the 1m stream, so
+processor derives 5m, 10m, 1h, 4h, 1D, 1W, and 1M live candles from the 1m stream, so
 consuming every tick fanout topic in the same processor creates avoidable lag.
 Use `all` only when separate interval-specific processors are deployed.
 
 `ACTIVE_CHART_TTL_SECONDS` keeps the symbol currently open in the chart inside
-the explicit realtime cohort even when the visible chart interval is 1D, 1W, or
-1M. WebSocket delivery can still be interval-specific, but trades/quotes
+the explicit realtime cohort even when the visible chart interval is 1h, 4h,
+1D, 1W, or 1M. WebSocket delivery can still be interval-specific, but trades/quotes
 subscription state must not depend on whether an intraday socket is open.
 `REALTIME_REDIS_POLL_SECONDS` controls the API WebSocket hub's Redis batch poll
 period. The hub uses one global `market.events` listener plus batched live
@@ -453,9 +453,9 @@ DAILY_BAR_1M_REPAIR_RATIO
 ```
 
 Canonical Alpaca historical fill uses `adjustment=split` and writes
-`priceAdjustment=split`, `canonicalVersion=v2`. `5m` and `10m` fill through
-`1m` source bars; `1W` and `1M` fill through `1D` source bars and are then
-aggregated for serving. Raw S3 backup objects are not a fill source. Retry
+`priceAdjustment=split`, `canonicalVersion=v2`. `5m`, `10m`, `1h`, and `4h`
+fill through `1m` source bars; `1W` and `1M` fill through `1D` source bars and
+are then aggregated for serving. Raw S3 backup objects are not a fill source. Retry
 settings are used for transient Alpaca historical API failures such as rate
 limits and 5xx responses. Deprecated `POST /api/charts/backfill`,
 `GET /api/charts/backfill/status`, and `GET /api/charts/backfill/queue` return

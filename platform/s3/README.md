@@ -22,7 +22,7 @@ Redis/WebSocket state, not S3. Quote layer payloads are stored under
 ## Final Objects
 
 ```text
-market-data/rebuild-20260702-lazy-v1/final/candles/feed={feed}/interval={1m|5m|10m|1D|1W|1M}/symbol={symbol}/year=YYYY/month=MM/day=DD/*.parquet
+market-data/rebuild-20260702-lazy-v1/final/candles/feed={feed}/interval={1m|5m|10m|1h|4h|1D|1W|1M}/symbol={symbol}/year=YYYY/month=MM/day=DD/*.parquet
 market-data/rebuild-20260702-lazy-v1/final/trades/symbol={symbol}/year=YYYY/month=MM/day=DD/feed={feed}/*.parquet
 market-data/rebuild-20260702-lazy-v1/final/quotes/symbol={symbol}/year=YYYY/month=MM/day=DD/feed={feed}/*.parquet
 market-data/rebuild-20260702-lazy-v1/final/events/event_type={status|unknown}/symbol={symbol}/year=YYYY/month=MM/day=DD/*.parquet

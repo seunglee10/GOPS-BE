@@ -459,7 +459,7 @@ def flush_ready_closed_candles(producer, redis_client, redis_keys, state, topics
         publish_closed_candle(producer, redis_client, redis_keys, state, topics, candle, log_every_n=log_every_n)
         published += 1
 
-        for interval_minutes in (5, 10):
+        for interval_minutes in (5, 10, 60, 240):
             aggregated = state.aggregator.update(candle, interval_minutes)
             if aggregated:
                 publish_closed_candle(producer, redis_client, redis_keys, state, topics, aggregated, log_every_n=log_every_n)
@@ -644,7 +644,7 @@ def publish_live_candle(producer, redis_client, redis_keys, topics, candle, feed
 
 def publish_derived_live_candles(producer, redis_client, redis_keys, state, topics, symbol, live_1m=None, anchor_1m_timestamp=None, log_every_n=500):
     provisional_1d = None
-    for interval in ("5m", "10m", "1D"):
+    for interval in ("5m", "10m", "1h", "4h", "1D"):
         candle = state.provisional_state.build_from_1m(
             symbol,
             interval,

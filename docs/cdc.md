@@ -71,7 +71,7 @@ Bollinger Bands, RSI, MACD, and most price/volume indicators.
 | --- | --- | --- | --- |
 | `layer` | Payload layer name. Always `candles` | Routing to candle layer | Yes |
 | `symbol` | Market symbol | Instrument selection | Yes |
-| `timeframe` | Candle interval, e.g. `1m`, `5m`, `10m`, `1D`, `1W`, `1M` | Chart interval | Yes |
+| `timeframe` | Candle interval, e.g. `1m`, `5m`, `10m`, `1h`, `4h`, `1D`, `1W`, `1M` | Chart interval | Yes |
 | `timestamp` | Candle bucket start time | X-axis / candle identity | Yes |
 | `open` | First price in candle bucket | Candle body | Yes |
 | `high` | Highest price in candle bucket | Candle wick / indicators | Yes |

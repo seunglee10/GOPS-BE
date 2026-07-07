@@ -21,7 +21,7 @@ Rules:
 - UI and agents use the same `ChartCommand` vocabulary.
 - Command payloads must be JSON-serializable.
 - Invalid commands must not change chart state.
-- Canonical intervals are `1m`, `5m`, `10m`, `1D`, `1W`, `1M`.
+- Canonical intervals are `1m`, `5m`, `10m`, `1h`, `4h`, `1D`, `1W`, `1M`.
 - Candle readiness uses both `dataStatus` and detailed `coverage`.
 - Backfill success does not mean a chart is renderable unless stored candle coverage is sufficient.
 - Chart data layers are consumed independently: `candles`, `trades`, `quotes`,

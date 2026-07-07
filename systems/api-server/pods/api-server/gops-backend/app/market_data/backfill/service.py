@@ -9,6 +9,7 @@ from fastapi import HTTPException
 
 from alfaka.backfill.gapfill import TradingCalendar
 from alfaka.serving.intervals import (
+    INTRADAY_INTERVAL_MINUTES,
     backfill_target_bars,
     interval_seconds,
     minimum_renderable_returned_bars,
@@ -468,7 +469,7 @@ def sparse_returned_window(
 ) -> bool:
     if returned_count < 2 or span_seconds is None or max_span_seconds is None:
         return False
-    if interval in {"1m", "5m", "10m"}:
+    if interval in INTRADAY_INTERVAL_MINUTES:
         return has_intraday_sparse_gap(interval, candles)
     return span_seconds > max_span_seconds
 
@@ -478,7 +479,7 @@ def has_intraday_sparse_gap(interval: str, candles: list[dict[str, Any]]) -> boo
 
 
 def gap_ranges_for_returned_window(interval: str, source_interval: str, candles: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    if interval in {"1m", "5m", "10m"}:
+    if interval in INTRADAY_INTERVAL_MINUTES:
         return intraday_gap_ranges(interval, candles)
     if source_interval == "1D" and interval == "1D":
         return daily_gap_ranges(candles)
@@ -571,7 +572,7 @@ def same_market_session_date(left: datetime, right: datetime, market_timezone: Z
 def max_renderable_span_seconds(interval: str, returned_count: int) -> int | None:
     if returned_count < 2:
         return None
-    factor = 3 if interval in {"1m", "5m", "10m"} else 2
+    factor = 3 if interval in INTRADAY_INTERVAL_MINUTES else 2
     return int(interval_seconds(interval) * max(1, returned_count - 1) * factor)
 
 
