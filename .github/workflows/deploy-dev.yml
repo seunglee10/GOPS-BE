@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       services:
-        description: "Optional service keys to deploy, e.g. frontend,backend"
+        description: "Optional service keys to deploy, e.g. frontend,backend. Use all to force every app image."
         required: false
         type: string
       run_order_migrations:
@@ -20,6 +20,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
   id-token: write
 
 concurrency:
@@ -61,6 +62,8 @@ jobs:
           HEAD_SHA: ${{ github.sha }}
           EVENT_NAME: ${{ github.event_name }}
           REQUESTED_SERVICES: ${{ github.event.inputs.services || '' }}
+          GITHUB_TOKEN: ${{ github.token }}
+          WORKFLOW_FILE: deploy-dev.yml
         run: ./scripts/aws/detect-changed-services.sh
 
       - name: Skip app deploy
@@ -77,6 +80,12 @@ jobs:
       - name: Ensure Amazon ECR repositories
         if: steps.changes.outputs.has_services == 'true'
         run: ./scripts/aws/ensure-ecr-repositories.sh
+
+      - name: Load Logo.dev build key from AWS Secrets Manager
+        if: steps.changes.outputs.has_services == 'true' && contains(steps.changes.outputs.services, 'frontend')
+        env:
+          LOGODEV_SECRET_NAME: icon/logodev
+        run: ./scripts/aws/load-logodev-build-env.sh
 
       - name: Login to Amazon ECR
         if: steps.changes.outputs.has_services == 'true'
@@ -110,7 +119,6 @@ jobs:
         if: steps.changes.outputs.has_services == 'true'
         env:
           SERVICES: ${{ steps.changes.outputs.services }}
-          VITE_LOGO_DEV_PUBLISHABLE_KEY: ${{ secrets.LOGODEV_PUB_KEY || secrets.LOGO_DEV_PUBLISHABLE_KEY || '' }}
           VITE_LOGO_DEV_ATTRIBUTION: ${{ vars.LOGO_DEV_ATTRIBUTION || 'true' }}
         run: ./scripts/aws/build-and-push-images.sh
 

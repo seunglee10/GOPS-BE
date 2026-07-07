@@ -791,6 +791,18 @@ plan permits removing attribution.
 Logo.dev operations, but this browser-rendered logo path intentionally does not
 embed it in frontend assets.
 
+GitHub Actions dev/test deploy reads the frontend publishable key from AWS
+Secrets Manager secret `icon/logodev` when `frontend` is selected. Recommended
+secret JSON shape:
+
+```json
+{"LOGODEV_PUB_KEY":"pk_...","LOGODEV_SECRET_KEY":"sk_..."}
+```
+
+Only `LOGODEV_PUB_KEY` is passed to the Vite build. If the AWS secret value is
+rotated without code changes, run the manual deploy with `services=frontend` so
+the static frontend image is rebuilt with the new key.
+
 ## Future Dependencies
 
 Future ontology, GraphRAG, news/context ingestion, or UI composition may add GraphDB, vector indexes, vendor APIs, trace storage, or schedulers.

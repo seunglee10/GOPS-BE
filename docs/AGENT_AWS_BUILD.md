@@ -30,20 +30,29 @@ GitHub Actions dev/test deploy entrypoint is `.github/workflows/deploy-dev.yml`.
 It deploys to the shared dev EKS environment only when an operator runs the
 workflow manually from GitHub Actions (`workflow_dispatch`). Pushing to `dev`,
 `kimheejun`, `helix/front-chart`, `deploy/**`, or `test/**` must not start a
-deployment by itself.
+deployment by itself. When the manual `services` input is empty, the workflow
+compares the current commit with the latest successful run of the same workflow
+on the same branch and builds only the app services touched by that diff. Use a
+comma-separated service list such as `frontend,backend` to override detection,
+or `all` to force every app image to rebuild.
 When `market-storage` is selected, the workflow also runs
 `scripts/aws/run-news-cache-rebuild-jobs.sh` after a healthy rollout. That
 one-shot run uses the newly pushed `gops-market-storage` image to warm the
 30-day Redis news article cache and daily summary cache from ClickHouse without
 running ClickHouse rewrite mutations.
 
-The frontend Logo.dev ticker logo key is a Vite build-time value. Set the
-GitHub Actions environment secret `LOGODEV_PUB_KEY` before running the manual
-workflow if production should show Logo.dev images instead of local ticker
-monograms. `LOGODEV_SECRET_KEY` is not embedded in frontend assets. The optional
-GitHub Actions variable `LOGO_DEV_ATTRIBUTION` defaults to `true`; set it to
-`false` only when the active Logo.dev plan permits removing the visible
-attribution.
+The frontend Logo.dev ticker logo key is a Vite build-time value. When
+`frontend` is selected, the manual workflow reads AWS Secrets Manager secret
+`icon/logodev` and injects only the `LOGODEV_PUB_KEY` publishable key into the
+frontend Docker build. The secret may be a JSON object such as
+`{"LOGODEV_PUB_KEY":"pk_...","LOGODEV_SECRET_KEY":"sk_..."}`; the build helper
+rejects non-`pk_` values and never embeds `LOGODEV_SECRET_KEY` in frontend
+assets. The GitHub Actions AWS role must be allowed to call
+`secretsmanager:GetSecretValue` on `icon/logodev`. If only the Logo.dev secret
+value changes, run the manual workflow with `services=frontend` because Git diff
+cannot detect secret rotations. The optional GitHub Actions variable
+`LOGO_DEV_ATTRIBUTION` defaults to `true`; set it to `false` only when the active
+Logo.dev plan permits removing the visible attribution.
 
 ## Image
 
