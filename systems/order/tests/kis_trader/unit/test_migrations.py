@@ -44,3 +44,14 @@ def test_alert_repeat_limit_migration_tracks_trigger_counts():
     assert "ADD COLUMN IF NOT EXISTS triggered_count INTEGER NOT NULL DEFAULT 0" in sql
     assert "CONSTRAINT alerts_repeat_limit_check" in sql
     assert "CONSTRAINT alerts_triggered_count_check" in sql
+
+
+def test_recommendation_migration_declares_profile_runs_and_items():
+    [migration] = [path for path in migration_files() if path.name == "0004_recommendations.sql"]
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "CREATE TABLE IF NOT EXISTS user_investment_profiles" in sql
+    assert "CREATE TABLE IF NOT EXISTS stock_recommendation_runs" in sql
+    assert "CREATE TABLE IF NOT EXISTS stock_recommendation_items" in sql
+    assert "CREATE TABLE IF NOT EXISTS user_portfolio_snapshots" in sql
+    assert "stock_recommendation_runs_user_key_unique" in sql

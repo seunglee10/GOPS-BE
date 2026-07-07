@@ -106,6 +106,10 @@ systems/api-server/pods/api-server/gops-backend
 `systems/agent-orchestration/config`가 빠지면 backend가 bootstrap seed로 degrade해
 운영 alias catalog에만 있는 회사명/한글명 shortcut을 놓칠 수 있다.
 
+같은 `gops-api-server` image는 `app.recommendations.worker`도 실행한다. 이 worker는
+프로필이 저장된 사용자에 대해 정규장 09:45/12:45/15:45 ET 추천 슬롯을 멱등
+생성하고, 기존 notifications Redis/WebSocket 경로로 추천 변경 알림을 발행한다.
+
 SEC companyfacts backfill은 `gops-agent-orchestrator`가 아니라
 `gops-market-storage` image에서 실행한다. 해당 image에는
 `systems/fundamentals`와 `systems/market-data/shared`가 포함되어야 한다.
@@ -144,6 +148,7 @@ infra/k8s/base/app/deployment-deep-analysis-worker.yaml
 infra/k8s/base/app/deployment-agent-event-detector.yaml
 infra/k8s/base/app/deployment-agent-notification-publisher.yaml
 infra/k8s/base/app/deployment-chart-derived-data-worker.yaml
+infra/k8s/base/app/deployment-recommendation-worker.yaml
 ```
 
 Optional jobs:

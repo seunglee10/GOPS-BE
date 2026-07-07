@@ -9,7 +9,7 @@ from typing import Any
 from .routing import parse_openai_text_json
 
 
-PANEL_TYPES = ("chart", "newsFeed", "indicatorCompare", "orderTicket", "portfolioHoldings", "aiSummary", "ontologyGraph")
+PANEL_TYPES = ("chart", "newsFeed", "indicatorCompare", "orderTicket", "portfolioHoldings", "stockRecommendations", "aiSummary", "ontologyGraph")
 UI_ACTIONS = ("focus", "resize", "move", "open", "close", "arrange", "keep", "unknown")
 UI_SIZE_INTENTS = ("max", "large", "small", "min")
 UI_POSITION_INTENTS = ("top", "bottom", "left", "right", "center")

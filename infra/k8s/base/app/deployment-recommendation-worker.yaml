@@ -1,0 +1,29 @@
+# 역할: 장중 매수 추천을 정규장 슬롯마다 사용자별로 생성하고 알림으로 발행합니다.
+# 사용: 팀 AWS Redis/RDS 설정은 alfaka-market-data-config와 Secret에서 주입합니다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: recommendation-worker
+  namespace: alfaka-market-data
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: recommendation-worker
+  template:
+    metadata:
+      labels:
+        app: recommendation-worker
+    spec:
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: recommendation-worker
+          image: YOUR_ECR_REPOSITORY/gops-api-server:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "-m", "app.recommendations.worker"]
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-order-db-secret
+                optional: true

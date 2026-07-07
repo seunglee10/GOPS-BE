@@ -1119,7 +1119,7 @@ def multi_ui_target_panel_types(tasks: list[UiTask], panels: list[dict[str, Any]
 
 
 def unique_panel_types(panel_types: list[str]) -> list[str]:
-    order = ["chart", "newsFeed", "aiSummary", "ontologyGraph", "indicatorCompare", "portfolioHoldings", "orderTicket"]
+    order = ["chart", "newsFeed", "aiSummary", "ontologyGraph", "indicatorCompare", "portfolioHoldings", "stockRecommendations", "orderTicket"]
     selected = {panel_type for panel_type in panel_types if panel_type in order}
     return [panel_type for panel_type in order if panel_type in selected]
 
@@ -1440,10 +1440,11 @@ def supporting_panel_sort_key(panel: dict[str, Any]) -> tuple[int, int, str]:
         "chart": 0,
         "orderTicket": 1,
         "portfolioHoldings": 2,
-        "ontologyGraph": 3,
-        "indicatorCompare": 4,
-        "newsFeed": 5,
-        "aiSummary": 6,
+        "stockRecommendations": 3,
+        "ontologyGraph": 4,
+        "indicatorCompare": 5,
+        "newsFeed": 6,
+        "aiSummary": 7,
     }.get(panel["type"], 9)
     return (-int(read_float(panel.get("layoutWeight"), 0.0)), type_rank, panel["id"])
 
@@ -1506,13 +1507,14 @@ def default_panel_title(panel_type: str) -> str:
         "indicatorCompare": "지표 비교",
         "orderTicket": "주문",
         "portfolioHoldings": "내 투자",
+        "stockRecommendations": "추천",
         "aiSummary": "AI 요약",
         "ontologyGraph": "온톨로지",
     }.get(panel_type, panel_type)
 
 
 def default_min_span(panel_type: str) -> dict[str, int]:
-    return {"colSpan": 1, "rowSpan": 2 if panel_type in {"orderTicket", "portfolioHoldings"} else 1}
+    return {"colSpan": 1, "rowSpan": 2 if panel_type in {"orderTicket", "portfolioHoldings", "stockRecommendations"} else 1}
 
 
 def default_max_span(panel_type: str) -> dict[str, int]:
@@ -1528,6 +1530,8 @@ def default_panel_placement(panel_type: str) -> dict[str, Any]:
         return workspace_placement(4, 4, 1, 2)
     if panel_type == "portfolioHoldings":
         return workspace_placement(1, 4, 1, 2)
+    if panel_type == "stockRecommendations":
+        return workspace_placement(2, 4, 1, 2)
     return workspace_placement(4, 1, 1, 1)
 
 
@@ -1552,6 +1556,8 @@ def primary_panel_type_for_route(route, context: AgentContext) -> str:
         return "ontologyGraph"
     if any(token in intent_text for token in ("portfolio", "holdings", "balance", "보유종목", "잔고", "내 투자", "계좌")):
         return "portfolioHoldings"
+    if any(token in intent_text for token in ("recommendation", "recommend", "buy idea", "종목 추천", "매수 추천", "추천 종목", "장중 추천")):
+        return "stockRecommendations"
     if "macro" in intent_type or "macro" in selected_roles or any(token in intent_text for token in ("macro", "rate", "inflation", "거시", "금리")):
         return "indicatorCompare"
     return "chart"
@@ -1580,6 +1586,7 @@ def panel_priorities_for_route(
         "indicatorCompare": 48,
         "ontologyGraph": 48,
         "portfolioHoldings": 44,
+        "stockRecommendations": 46,
         "aiSummary": 50,
         "orderTicket": 5,
     }

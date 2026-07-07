@@ -21,6 +21,10 @@
       "title": "내 투자",
       "aliases": ["내 투자", "보유종목", "잔고", "계좌", "포트폴리오", "portfolio", "holdings", "balance"]
     },
+    "stockRecommendations": {
+      "title": "추천",
+      "aliases": ["추천", "종목 추천", "매수 추천", "추천 종목", "장중 추천", "recommendation", "recommendations", "stock recommendation", "buy recommendation"]
+    },
     "aiSummary": {
       "title": "AI 요약",
       "aliases": ["AI 요약", "요약", "AI 어시스턴트", "어시스턴트", "assistant", "summary"]

@@ -27,6 +27,7 @@ resources:
   - deployment-news-daily-summary-worker.yaml
   - deployment-chart-derived-data-worker.yaml
   - deployment-alert-evaluator.yaml
+  - deployment-recommendation-worker.yaml
   - deployment-order-outbox-publisher.yaml
   - deployment-kis-broker-adapter.yaml
   - deployment-gops-backend.yaml
