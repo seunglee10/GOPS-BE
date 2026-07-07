@@ -7,9 +7,10 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from app.market_data.fill.service import FILL_TIMEOUT_SECONDS
+from app.market_data.fill.service import BACKGROUND_FILL_TIMEOUT_SECONDS
 from app.market_data.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
 from app.services.alfaka_market_data import get_market_data_provider, normalize_market_symbol
+from alfaka.common.env import parse_csv
 from alfaka.common.redis_keys import RedisKeyBuilder
 from alfaka.serving.intervals import DEFAULT_VISIBLE_BARS
 
@@ -20,10 +21,13 @@ DEFAULT_SUBSCRIPTION_TTL_SECONDS = 3600
 
 def on_demand_fill_timeout_seconds() -> float:
     try:
-        value = float(os.getenv("ON_DEMAND_FILL_TIMEOUT_SECONDS", FILL_TIMEOUT_SECONDS))
+        value = float(os.getenv(
+            "ON_DEMAND_FILL_BACKGROUND_TIMEOUT_SECONDS",
+            os.getenv("ON_DEMAND_FILL_TIMEOUT_SECONDS", BACKGROUND_FILL_TIMEOUT_SECONDS),
+        ))
     except (TypeError, ValueError):
-        return FILL_TIMEOUT_SECONDS
-    return value if value > 0 else FILL_TIMEOUT_SECONDS
+        return BACKGROUND_FILL_TIMEOUT_SECONDS
+    return value if value > 0 else BACKGROUND_FILL_TIMEOUT_SECONDS
 
 
 class MarketDataMonitorService:
@@ -115,10 +119,11 @@ class MarketDataMonitorService:
 
     def fill(self) -> dict[str, Any]:
         return {
-            "mode": "bounded-sync",
+            "mode": "fast-response-background-fill",
             "timeoutSeconds": on_demand_fill_timeout_seconds(),
             "sourceIntervals": {"1m": ["1m", "5m", "10m"], "1D": ["1D", "1W", "1M"]},
-            "coverageOrder": ["redis", "clickhouse", "s3-final-manifest", "alpaca-historical"],
+            "foregroundOrder": ["redis", "clickhouse"],
+            "backgroundOrder": ["s3-final-manifest", "alpaca-historical"],
             "deprecatedEndpoints": [
                 "POST /api/charts/backfill",
                 "GET /api/charts/backfill/status",
@@ -149,6 +154,59 @@ class MarketDataMonitorService:
             "version": self._get(self.keys.subscription_version()) or "0",
             "symbols": records,
         }
+
+    def realtime(self, symbol: str | None = None, interval: str = "1m") -> dict[str, Any]:
+        normalized_symbol = normalize_market_symbol(symbol) if symbol else None
+        subscription_symbols = self._set_members(self.keys.subscription_symbols())
+        active_chart_symbols = self._set_members(self.keys.active_symbols())
+        global_processor_health = self._component_health("market-processor")
+        symbol_health = self._component_health(f"market-processor:symbol:{normalized_symbol}") if normalized_symbol else None
+        feed_profile = (
+            (symbol_health or {}).get("lastFeedProfile")
+            or (global_processor_health or {}).get("lastFeedProfile")
+        )
+        feed_health = self._component_health(f"market-processor:feed:{feed_profile}") if feed_profile else None
+        payload: dict[str, Any] = {
+            "checkedAt": now_iso(),
+            "subscriptionVersion": self._get(self.keys.subscription_version()) or "0",
+            "subscriptionSymbolCount": len(subscription_symbols),
+            "activeChartSymbolCount": len(active_chart_symbols),
+            "globalProcessorHealth": global_processor_health,
+            "symbolProcessorHealth": symbol_health,
+            "feedProcessorHealth": feed_health,
+            "kafka": self._kafka_lag(),
+        }
+        if normalized_symbol:
+            live_trade_key = self.keys.live_trade(normalized_symbol)
+            live_quote_key = self.keys.live_quote(normalized_symbol)
+            live_candle_key = self.keys.live_candle(normalized_symbol, interval or "1m")
+            subscription_record = self._subscription_record(normalized_symbol)
+            live_trade = self._read_json_or_hash(live_trade_key)
+            live_quote = self._read_json_or_hash(live_quote_key)
+            live_candle = self._read_json_or_hash(live_candle_key)
+            payload["symbol"] = {
+                "symbol": normalized_symbol,
+                "interval": interval or "1m",
+                "subscribed": normalized_symbol in subscription_symbols,
+                "activeChart": normalized_symbol in active_chart_symbols,
+                "subscription": subscription_record,
+                "liveTradeKey": live_trade_key,
+                "liveQuoteKey": live_quote_key,
+                "liveCandleKey": live_candle_key,
+                "liveTradePresent": bool(live_trade),
+                "liveQuotePresent": bool(live_quote),
+                "liveCandlePresent": bool(live_candle),
+                "liveTradeAgeSeconds": event_age_seconds(live_trade),
+                "liveQuoteAgeSeconds": event_age_seconds(live_quote),
+                "liveCandleAgeSeconds": event_age_seconds(live_candle),
+                "liveTradeTtlSeconds": self._ttl(live_trade_key),
+                "liveQuoteTtlSeconds": self._ttl(live_quote_key),
+                "liveCandleTtlSeconds": self._ttl(live_candle_key),
+                "liveTradeTimestamp": first_present(live_trade, ("updatedAt", "receivedAt", "timestamp", "eventTime")),
+                "liveQuoteTimestamp": first_present(live_quote, ("updatedAt", "receivedAt", "timestamp", "eventTime")),
+                "liveCandleTimestamp": first_present(live_candle, ("updatedAt", "timestamp", "eventTime")),
+            }
+        return payload
 
     def add_subscription(self, symbol: str, layers: list[str], reason: str | None = None, ttl_seconds: int | None = None) -> dict[str, Any]:
         symbol = normalize_market_symbol(symbol)
@@ -185,7 +243,10 @@ class MarketDataMonitorService:
         method = getattr(self.redis, "get", None)
         if not callable(method):
             return None
-        value = method(key)
+        try:
+            value = method(key)
+        except Exception:
+            return None
         return value.decode("utf-8") if isinstance(value, bytes) else value
 
     def _read_json_or_hash(self, key: str) -> dict[str, Any]:
@@ -203,8 +264,93 @@ class MarketDataMonitorService:
         method = getattr(self.redis, "hgetall", None)
         if not callable(method):
             return {}
-        raw = method(key) or {}
+        try:
+            raw = method(key) or {}
+        except Exception:
+            return {}
         return {decode(k): decode(v) for k, v in raw.items()}
+
+    def _ttl(self, key: str) -> int | None:
+        if not self.redis:
+            return None
+        method = getattr(self.redis, "ttl", None)
+        if not callable(method):
+            return None
+        try:
+            return int(method(key))
+        except Exception:
+            return None
+
+    def _component_health(self, component: str) -> dict[str, Any] | None:
+        value = self._get(self.keys.component_health(component))
+        if not value:
+            return None
+        try:
+            parsed = json.loads(value)
+        except Exception:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+    def _kafka_lag(self) -> dict[str, Any]:
+        bootstrap_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS")
+        if not bootstrap_servers:
+            return {"enabled": False, "reason": "KAFKA_BOOTSTRAP_SERVERS is not configured"}
+        processor_group_id = os.getenv("KAFKA_PROCESSOR_GROUP_ID", "alfaka-market-processor")
+        raw_topics = {
+            "rawTrades": os.getenv("KAFKA_TRADES_TOPIC", "market.input.realtime.trades.v1"),
+            "rawQuotes": os.getenv("KAFKA_QUOTES_TOPIC", "market.input.realtime.quotes.v1"),
+            "rawEvents": os.getenv("KAFKA_EVENTS_TOPIC", "market.input.realtime.events.v1"),
+        }
+        layer_topics = {
+            "tickFanoutTrades": os.getenv("KAFKA_TRADES_LAYER_TOPIC", "market.layer.trades.v1"),
+            "tickFanoutQuotes": os.getenv("KAFKA_QUOTES_LAYER_TOPIC", "market.layer.quotes.v1"),
+            "tickFanoutLiveCandles": os.getenv("KAFKA_LIVE_CANDLE_TOPIC", "market.layer.candles.live.v1"),
+        }
+        try:
+            from kafka import KafkaConsumer, TopicPartition
+
+            consumer = KafkaConsumer(
+                bootstrap_servers=parse_csv(bootstrap_servers),
+                group_id=processor_group_id,
+                enable_auto_commit=False,
+                consumer_timeout_ms=750,
+            )
+            topics = {**raw_topics, **layer_topics}
+            all_topics = consumer.topics()
+            missing = sorted(topic for topic in topics.values() if topic not in all_topics)
+            partitions: list[TopicPartition] = []
+            labels_by_topic = {topic: label for label, topic in topics.items()}
+            for topic in topics.values():
+                partitions.extend(TopicPartition(topic, partition) for partition in consumer.partitions_for_topic(topic) or [])
+            result = {label: {"topic": topic, "lag": None, "partitions": {}} for label, topic in topics.items()}
+            if partitions:
+                consumer.assign(partitions)
+                end_offsets = consumer.end_offsets(partitions)
+                for partition in partitions:
+                    committed = consumer.committed(partition)
+                    end_offset = end_offsets.get(partition, 0)
+                    lag = None if committed is None else max(0, end_offset - committed)
+                    label = labels_by_topic.get(partition.topic, partition.topic)
+                    result[label]["partitions"][str(partition.partition)] = {
+                        "committed": committed,
+                        "endOffset": end_offset,
+                        "lag": lag,
+                    }
+                    if lag is not None:
+                        current = result[label]["lag"]
+                        result[label]["lag"] = int(lag) if current is None else int(current) + int(lag)
+            consumer.close()
+            return {
+                "enabled": True,
+                "processorGroupId": processor_group_id,
+                "missingTopics": missing,
+                "rawTradesLag": result["rawTrades"]["lag"],
+                "rawQuotesLag": result["rawQuotes"]["lag"],
+                "tickFanoutLag": sum_lag([result["rawTrades"]["lag"], result["rawQuotes"]["lag"]]),
+                "topics": result,
+            }
+        except Exception as exc:
+            return {"enabled": False, "error": str(exc), "processorGroupId": processor_group_id}
 
     def _hset(self, key: str, values: dict[str, Any]) -> None:
         if not self.redis:
@@ -280,6 +426,46 @@ def encode_hash_value(value: Any) -> str:
 
 def decode(value: Any) -> str:
     return value.decode("utf-8") if isinstance(value, bytes) else str(value)
+
+
+def first_present(payload: dict[str, Any], names: tuple[str, ...]) -> Any:
+    if not isinstance(payload, dict):
+        return None
+    for name in names:
+        value = payload.get(name)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def event_age_seconds(payload: dict[str, Any]) -> float | None:
+    value = first_present(payload, ("updatedAt", "receivedAt", "timestamp", "eventTime", "t"))
+    parsed = parse_timestamp(value)
+    if not parsed:
+        return None
+    return max(0.0, (datetime.now(timezone.utc) - parsed).total_seconds())
+
+
+def parse_timestamp(value: Any) -> datetime | None:
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def sum_lag(values: list[int | None]) -> int | None:
+    present = [int(value) for value in values if value is not None]
+    if not present:
+        return None
+    return sum(present)
 
 
 def now_iso() -> str:

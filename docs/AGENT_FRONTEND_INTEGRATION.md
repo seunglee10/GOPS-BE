@@ -194,6 +194,7 @@ terminal report를 유지할 수 있다.
 Report에서 우선 렌더링할 영역:
 
 - final answer
+- agent answers as detailed evidence after final answer
 - status and timestamps
 - primary symbol
 - evidence items
@@ -205,6 +206,10 @@ Report에서 우선 렌더링할 영역:
 Provider가 `status="no-data"` evidence를 반환하는 것은 정상적인 partial analysis다.
 예를 들어 GraphDB가 없으면 ontology evidence만 no-data가 되고 market/news 기반
 답변은 계속 표시될 수 있다.
+
+`finalAnswer`가 있으면 `agentAnswers`보다 먼저 렌더링해야 한다. 멀티 에이전트
+role 답변이 함께 온 경우에도 사용자 화면의 첫 문장은 `finalAnswer.summary`의 종합
+판단이어야 하며, role별 답변은 세부 근거로 뒤에 붙인다.
 
 ## Layout And Chart Proposals
 

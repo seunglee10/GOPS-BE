@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 try:
     from pydantic import BaseModel, Field
 except Exception:
@@ -80,6 +80,14 @@ def market_data_monitor_backfill() -> dict[str, Any]:
 @router.get("/api/monitor/market-data/subscriptions")
 def market_data_monitor_subscriptions() -> dict[str, Any]:
     return get_monitor_service().subscriptions()
+
+
+@router.get("/api/monitor/market-data/realtime")
+def market_data_monitor_realtime(
+    symbol: str | None = Query(default=None, min_length=1, max_length=12),
+    interval: str = Query(default="1m", max_length=8),
+) -> dict[str, Any]:
+    return get_monitor_service().realtime(symbol=symbol, interval=interval)
 
 
 @router.post("/api/monitor/market-data/subscriptions")

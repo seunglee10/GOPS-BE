@@ -135,10 +135,17 @@ permissive하게 유지한다.
 백엔드는 모르는 agent context field를 임의로 제거하지 말고 worker envelope로
 전달해야 한다.
 
-`references`와 `uiContext`는 worker payload에 보존되어 agent runtime의
-`OperationIR` extractor로 전달된다. reference가 포함된 분석 요청은 선택한 뉴스,
-차트 봉, 차트 구간이 cache key에 반영되어야 하며, 같은 자연어 질문이라도 anchor가
-다르면 cached analysis를 재사용하지 않는다.
+`references`, `uiContext`, `chartContext`의 선택/hover reference는 worker payload에
+보존되어 agent runtime의 `OperationIR` extractor로 전달된다. runtime은 같은
+reference가 여러 필드에 중복 포함돼도 fingerprint로 dedupe한다. reference가 포함된
+분석 요청은 선택한 뉴스, 차트 봉, 차트 구간이 cache key에 반영되어야 하며, 같은
+자연어 질문이라도 anchor가 다르면 cached analysis를 재사용하지 않는다.
+
+완료 report의 `timing`은 synthesis 진단을 포함할 수 있다.
+`llmCallLabels`에 `synthesis` 또는 `financial-synthesis`가 있으면 최종 종합 답변용
+LLM 호출을 획득/시도한 것이다. 최종 답변이 실제 OpenAI 결과인지 여부는
+`synthesisProvider="openai"`로 판단한다. `synthesisSkippedReason` 또는
+`synthesisFallbackReason`이 있으면 deterministic fallback 답변으로 degrade된 것이다.
 
 ## Entity Resolve Shortcut
 

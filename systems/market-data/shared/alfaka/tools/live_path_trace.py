@@ -19,6 +19,7 @@ from alfaka.common.symbols import is_crypto_symbol
 
 
 DEFAULT_INTERVAL = "1m"
+DEFAULT_API_TIMEOUT_SECONDS = 10
 
 
 def expected_raw_topics(raw_prefix):
@@ -70,7 +71,7 @@ def collect_trace(
     processor_group_id=None,
     raw_prefix=None,
     require_live=False,
-    timeout_seconds=5,
+    timeout_seconds=DEFAULT_API_TIMEOUT_SECONDS,
 ):
     """API, Redis, Kafka, ClickHouse/S3 경로가 살아 있는지 한 번에 점검합니다."""
     symbol = symbol.upper()
@@ -222,6 +223,7 @@ def check_redis(redis_url, symbol, interval, require_live):
         active_symbols_key = keys.active_symbols()
         active_chart_source_key = keys.subscription_source_active_chart(symbol)
         processor_health_key = keys.component_health("market-processor")
+        symbol_processor_health_key = keys.component_health(f"market-processor:symbol:{symbol}")
         price = client.hgetall(price_key) if client.exists(price_key) else {}
         live = client.get(live_key)
         latest = client.get(latest_key)
@@ -231,6 +233,7 @@ def check_redis(redis_url, symbol, interval, require_live):
         active_symbols = sorted(client.smembers(active_symbols_key) or [])
         active_chart_source_members = sorted(client.smembers(active_chart_source_key) or [])
         processor_health = parse_json_value(client.get(processor_health_key))
+        symbol_processor_health = parse_json_value(client.get(symbol_processor_health_key))
         has_runtime_evidence = bool(price or live or processor_health)
         if require_live and not live:
             status = "fail"
@@ -267,6 +270,11 @@ def check_redis(redis_url, symbol, interval, require_live):
             processorUpdatedAt=(processor_health or {}).get("updatedAt"),
             processorLastChannel=(processor_health or {}).get("lastChannel"),
             processorLastSymbol=(processor_health or {}).get("lastSymbol"),
+            symbolProcessorHealthKey=symbol_processor_health_key,
+            symbolProcessorHeartbeatPresent=bool(symbol_processor_health),
+            symbolProcessorUpdatedAt=(symbol_processor_health or {}).get("updatedAt"),
+            symbolProcessorLastChannel=(symbol_processor_health or {}).get("lastChannel"),
+            symbolProcessorLastSymbol=(symbol_processor_health or {}).get("lastSymbol"),
         )
     except Exception as exc:
         return trace_check("redis", "fail", error=str(exc), redisUrl=redact_url(redis_url))
@@ -373,7 +381,7 @@ def main():
     parser.add_argument("--kafka-bootstrap-servers", default=None)
     parser.add_argument("--processor-group-id", default=None)
     parser.add_argument("--raw-prefix", default=None)
-    parser.add_argument("--timeout-seconds", type=float, default=5)
+    parser.add_argument("--timeout-seconds", type=float, default=DEFAULT_API_TIMEOUT_SECONDS)
     parser.add_argument("--require-live", action="store_true", help="현재가/live candle이 없으면 실패로 처리합니다.")
     parser.add_argument("--json", action="store_true", help="JSON으로 출력합니다.")
     parser.add_argument("--strict", action="store_true", help="status가 ok가 아니면 exit 1을 반환합니다.")

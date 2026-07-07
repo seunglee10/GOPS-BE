@@ -89,6 +89,7 @@ from app.routes.health import runtime_config  # noqa: E402
 from app.services import alfaka_market_data as market_data_service  # noqa: E402
 from app.services.alfaka_market_data import configured_symbols  # noqa: E402
 from app.services.ai_agents import build_agent_market_analysis_context, chart_context_for_agent_prompt, is_live_feed_status_request, openai_agent_chat  # noqa: E402
+from alfaka.common.redis_keys import RedisKeyBuilder  # noqa: E402
 
 
 class FakeProvider:
@@ -776,16 +777,6 @@ def make_fill_candles(count):
     ]
 
 
-class ReloadingFillProvider:
-    def __init__(self, refreshed_payload):
-        self.refreshed_payload = refreshed_payload
-        self.calls = []
-
-    def candle_snapshot(self, symbol, interval, limit, before=None, from_time=None, to_time=None, ma_windows=None):
-        self.calls.append((symbol, interval, limit, before, from_time, to_time))
-        return dict(self.refreshed_payload)
-
-
 class FakeDerivedClient:
     def __init__(self):
         self.requests = []
@@ -857,10 +848,15 @@ class FakeDerivedClient:
 
 class RecordingOnDemandFillService(OnDemandFillService):
     def __init__(self, *, provider=None, s3_result=False, alpaca_result=False):
-        super().__init__(provider=provider, timeout_seconds=8)
+        super().__init__(provider=provider, timeout_seconds=8, background_enabled=False)
         self.s3_result = s3_result
         self.alpaca_result = alpaca_result
         self.calls = []
+        self.queued = []
+
+    def _enqueue_background_fill(self, **kwargs):
+        self.queued.append(kwargs)
+        return {"queued": True, "state": "queued", "requestId": "test-fill", "reason": "range repair queued"}
 
     def _fill_from_s3(self, symbol, interval, ranges, trace, started):
         self.calls.append(("s3", symbol, interval, list(ranges)))
@@ -1426,6 +1422,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
 
         self.assertEqual(result["fill"]["status"], "not_needed")
         self.assertEqual(service.calls, [])
+        self.assertEqual(service.queued, [])
         self.assertTrue(result["fill"]["sources"]["redis"]["hit"])
         self.assertFalse(result["fill"]["sources"]["s3"]["checked"])
         self.assertFalse(result["fill"]["sources"]["alpaca"]["checked"])
@@ -1454,11 +1451,12 @@ class MarketDataQueryServiceTest(unittest.TestCase):
 
         self.assertEqual(result["fill"]["status"], "not_needed")
         self.assertEqual(service.calls, [])
+        self.assertEqual(service.queued, [])
         self.assertTrue(result["fill"]["sources"]["clickhouse"]["hit"])
         self.assertFalse(result["fill"]["sources"]["s3"]["checked"])
         self.assertFalse(result["fill"]["sources"]["alpaca"]["checked"])
 
-    def test_on_demand_fill_continues_when_returned_window_is_sparse_at_limit(self):
+    def test_on_demand_fill_queues_background_when_returned_window_is_sparse_at_limit(self):
         early_start = datetime.fromisoformat("2026-06-25T13:30:00+00:00")
         late_start = datetime.fromisoformat("2026-06-25T18:00:00+00:00")
         candles = [
@@ -1492,90 +1490,68 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         )
 
         self.assertEqual(result["fill"]["status"], "partial")
-        self.assertEqual([call[0] for call in service.calls], ["s3", "alpaca"])
-        self.assertTrue(result["fill"]["sources"]["alpaca"]["hit"])
-
-    def test_on_demand_fill_materializes_s3_before_alpaca(self):
-        refreshed = {
-            "symbol": "CSCO",
-            "interval": "1m",
-            "candles": make_fill_candles(30),
-            "_sourceTrace": {
-                "redis": {"checked": True, "hit": False, "rowCount": 0},
-                "clickhouse": {"checked": True, "hit": True, "rowCount": 30},
-            },
-        }
-        service = RecordingOnDemandFillService(provider=ReloadingFillProvider(refreshed), s3_result=True, alpaca_result=True)
-
-        result = service.fill_if_needed(
-            symbol="CSCO",
-            interval="1m",
-            limit=30,
-            before="2026-06-25T14:00:00.000Z",
-            from_time=None,
-            to_time=None,
-            payload={"symbol": "CSCO", "interval": "1m", "candles": []},
-        )
-
-        self.assertEqual(result["fill"]["status"], "filled")
-        self.assertEqual([call[0] for call in service.calls], ["s3"])
-        self.assertTrue(result["fill"]["sources"]["s3"]["hit"])
+        self.assertEqual(service.calls, [])
+        self.assertEqual(len(service.queued), 1)
+        self.assertTrue(result["fill"]["backgroundFill"]["queued"])
+        self.assertFalse(result["fill"]["sources"]["s3"]["checked"])
         self.assertFalse(result["fill"]["sources"]["alpaca"]["checked"])
 
-    def test_on_demand_fill_falls_back_to_alpaca_when_s3_misses(self):
-        refreshed = {
-            "symbol": "CSCO",
-            "interval": "1m",
-            "candles": make_fill_candles(30),
-            "_sourceTrace": {
-                "redis": {"checked": True, "hit": False, "rowCount": 0},
-                "clickhouse": {"checked": True, "hit": True, "rowCount": 30},
-            },
-        }
-        service = RecordingOnDemandFillService(provider=ReloadingFillProvider(refreshed), s3_result=False, alpaca_result=True)
+    def test_background_fill_materializes_s3_before_alpaca(self):
+        service = RecordingOnDemandFillService(s3_result=True, alpaca_result=True)
 
-        result = service.fill_if_needed(
-            symbol="CSCO",
-            interval="1m",
-            limit=30,
-            before="2026-06-25T14:00:00.000Z",
-            from_time=None,
-            to_time=None,
-            payload={"symbol": "CSCO", "interval": "1m", "candles": []},
+        service._run_background_fill(
+            "test-fill",
+            "CSCO",
+            "1m",
+            "1m",
+            30,
+            "2026-06-25T14:00:00.000Z",
+            None,
+            None,
+            "2026-06-25T13:00:00.000Z",
+            "2026-06-25T14:00:00.000Z",
+            [{"start": "2026-06-25T13:00:00.000Z", "end": "2026-06-25T14:00:00.000Z"}],
         )
 
-        self.assertEqual(result["fill"]["status"], "filled")
-        self.assertEqual([call[0] for call in service.calls], ["s3", "alpaca"])
-        self.assertFalse(result["fill"]["sources"]["s3"]["hit"])
-        self.assertTrue(result["fill"]["sources"]["alpaca"]["hit"])
+        self.assertEqual([call[0] for call in service.calls], ["s3"])
 
-    def test_on_demand_fill_returns_refreshed_candles_when_alpaca_finishes_after_deadline(self):
-        refreshed = {
-            "symbol": "CSCO",
-            "interval": "1m",
-            "candles": make_fill_candles(30),
-            "_sourceTrace": {
-                "redis": {"checked": True, "hit": False, "rowCount": 0},
-                "clickhouse": {"checked": True, "hit": True, "rowCount": 30},
-            },
-        }
-        provider = ReloadingFillProvider(refreshed)
-        service = DeadlineAfterAlpacaFillService(provider=provider)
+    def test_background_fill_falls_back_to_alpaca_when_s3_misses(self):
+        service = RecordingOnDemandFillService(s3_result=False, alpaca_result=True)
 
-        result = service.fill_if_needed(
-            symbol="CSCO",
-            interval="1m",
-            limit=30,
-            before="2026-06-25T14:00:00.000Z",
-            from_time=None,
-            to_time=None,
-            payload={"symbol": "CSCO", "interval": "1m", "candles": []},
+        service._run_background_fill(
+            "test-fill",
+            "CSCO",
+            "1m",
+            "1m",
+            30,
+            "2026-06-25T14:00:00.000Z",
+            None,
+            None,
+            "2026-06-25T13:00:00.000Z",
+            "2026-06-25T14:00:00.000Z",
+            [{"start": "2026-06-25T13:00:00.000Z", "end": "2026-06-25T14:00:00.000Z"}],
         )
 
-        self.assertEqual(result["fill"]["status"], "filled")
-        self.assertEqual(len(result["candles"]), 30)
         self.assertEqual([call[0] for call in service.calls], ["s3", "alpaca"])
-        self.assertEqual(len(provider.calls), 1)
+
+    def test_background_fill_allows_alpaca_completion_before_deadline_recheck(self):
+        service = DeadlineAfterAlpacaFillService()
+
+        service._run_background_fill(
+            "test-fill",
+            "CSCO",
+            "1m",
+            "1m",
+            30,
+            "2026-06-25T14:00:00.000Z",
+            None,
+            None,
+            "2026-06-25T13:00:00.000Z",
+            "2026-06-25T14:00:00.000Z",
+            [{"start": "2026-06-25T13:00:00.000Z", "end": "2026-06-25T14:00:00.000Z"}],
+        )
+
+        self.assertEqual([call[0] for call in service.calls], ["s3", "alpaca"])
 
     def test_configured_symbols_uses_alpaca_symbols_watchlist_seed(self):
         previous = os.environ.get("ALPACA_SYMBOLS")
@@ -1648,6 +1624,86 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(fake_redis.hashes["gops:market:on-demand:v1:subscription:symbol:AAPL"]["layers"], "candles,quotes,trades")
         self.assertEqual(payload["subscription"]["symbol"], "AAPL")
         self.assertEqual(subscriptions["symbols"][0]["layers"], ["candles", "quotes", "trades"])
+
+    def test_active_chart_heartbeat_writes_source_without_websocket(self):
+        fake_redis = FakeMonitorRedis()
+        fake_provider = types.SimpleNamespace(redis_provider=types.SimpleNamespace(redis=fake_redis))
+        previous_provider = chart_routes.get_market_data_provider
+        chart_routes.get_market_data_provider = lambda: fake_provider
+        try:
+            payload = chart_routes.chart_active_symbol_heartbeat(
+                chart_routes.ActiveChartHeartbeatBody(symbol="mlm", sessionId="panel-1", ttlSeconds=45),
+                user=None,
+            )
+        finally:
+            chart_routes.get_market_data_provider = previous_provider
+
+        from alfaka.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
+
+        self.assertEqual(payload["symbol"], "MLM")
+        self.assertTrue(payload["pendingReconcile"])
+        self.assertIn("anonymous", fake_redis.sets["gops:market:on-demand:v1:subscription:users:active-chart"])
+        self.assertEqual(
+            fake_redis.hashes["gops:market:on-demand:v1:user:anonymous:active-chart:panel-1"]["symbol"],
+            "MLM",
+        )
+
+        RealtimeSubscriptionCohortService(fake_redis).reconcile()
+        self.assertEqual(fake_redis.sets["gops:market:on-demand:v1:subscription:symbols"], {"MLM"})
+        self.assertEqual(
+            fake_redis.hashes["gops:market:on-demand:v1:subscription:symbol:MLM"]["sources"],
+            "active-chart",
+        )
+
+    def test_realtime_monitor_reports_symbol_live_age_and_scoped_health(self):
+        fake_redis = FakeMonitorRedis()
+        keys = __import__("alfaka.common.redis_keys", fromlist=["RedisKeyBuilder"]).RedisKeyBuilder()
+        fake_redis.sadd(keys.subscription_symbols(), "MLM")
+        fake_redis.sadd(keys.active_symbols(), "MLM")
+        fake_redis.hset(keys.subscription_symbol("MLM"), mapping={
+            "symbol": "MLM",
+            "enabled": "true",
+            "layers": "quotes,trades",
+            "sources": "active-chart",
+            "ttlSeconds": "45",
+        })
+        fake_redis.hset(keys.live_trade("MLM"), mapping={
+            "symbol": "MLM",
+            "price": "547.10",
+            "timestamp": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+        })
+        fake_redis.set(keys.live_quote("MLM"), json.dumps({
+            "symbol": "MLM",
+            "bidPrice": 547.0,
+            "askPrice": 547.2,
+            "updatedAt": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+        }))
+        fake_redis.set(keys.live_candle("MLM", "1m"), json.dumps({
+            "symbol": "MLM",
+            "interval": "1m",
+            "close": 547.1,
+            "updatedAt": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+        }))
+        fake_redis.set(keys.component_health("market-processor:symbol:MLM"), json.dumps({
+            "component": "market-processor:symbol:MLM",
+            "status": "ok",
+            "lastSymbol": "MLM",
+            "lastFeedProfile": "sip",
+        }))
+        service_mod = __import__("app.market_data.monitor.service", fromlist=["MarketDataMonitorService"])
+        service = service_mod.MarketDataMonitorService(redis_client=fake_redis)
+        with mock.patch.dict(os.environ, {"KAFKA_BOOTSTRAP_SERVERS": ""}):
+            payload = service.realtime(symbol="MLM", interval="1m")
+
+        self.assertEqual(payload["subscriptionVersion"], "0")
+        self.assertEqual(payload["symbol"]["symbol"], "MLM")
+        self.assertTrue(payload["symbol"]["subscribed"])
+        self.assertTrue(payload["symbol"]["liveTradePresent"])
+        self.assertTrue(payload["symbol"]["liveQuotePresent"])
+        self.assertTrue(payload["symbol"]["liveCandlePresent"])
+        self.assertIsNotNone(payload["symbol"]["liveCandleAgeSeconds"])
+        self.assertEqual(payload["symbolProcessorHealth"]["lastSymbol"], "MLM")
+        self.assertFalse(payload["kafka"]["enabled"])
 
     def test_monitor_subscription_rejects_quotes_without_trades(self):
         fake_redis = FakeMonitorRedis()
@@ -1735,6 +1791,53 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(payload[0]["lastPrice"], 354.5)
         self.assertEqual(payload[0]["priceSource"], "clickhouse")
         self.assertIsNone(payload[0]["changePercent"])
+
+    def test_symbol_summary_ignores_stale_redis_live_state(self):
+        class StaleRedisProvider:
+            def __init__(self):
+                self.redis = FakeWatchlistRedis()
+                keys = RedisKeyBuilder()
+                self.redis.set(keys.latest_closed_candle("MLM", "1m"), json.dumps({
+                    "symbol": "MLM",
+                    "interval": "1m",
+                    "timestamp": "2000-01-01T13:15:00.000Z",
+                    "close": 602.94,
+                }))
+
+            def latest_price(self, symbol):
+                return {
+                    "symbol": symbol,
+                    "price": "602.94",
+                    "timestamp": "2000-01-01T13:15:20.000Z",
+                }
+
+        class FreshClickHouseProvider:
+            def candles(self, symbol, interval, limit):
+                if interval != "1D":
+                    return []
+                return [{
+                    "symbol": symbol,
+                    "interval": "1D",
+                    "timestamp": "2026-07-06T04:00:00.000Z",
+                    "close": 599.11,
+                }]
+
+        class Provider:
+            def __init__(self):
+                self.redis_provider = StaleRedisProvider()
+                self.clickhouse_provider = FreshClickHouseProvider()
+
+            def symbol_detail(self, symbol):
+                return {"symbol": symbol, "name": "Martin Marietta Materials", "market": "NYSE"}
+
+        with mock.patch.dict(os.environ, {
+            "SYMBOL_LIVE_PRICE_STALE_SECONDS": "180",
+            "SYMBOL_REDIS_INTRADAY_STALE_SECONDS": "300",
+        }):
+            summary = market_data_service.build_symbol_summary("MLM", provider=Provider())
+
+        self.assertEqual(summary["lastPrice"], 599.11)
+        self.assertEqual(summary["priceSource"], "clickhouse")
 
     def test_watchlist_replace_uses_user_key_until_controller_reconciles(self):
         provider = FakeWatchlistProvider()

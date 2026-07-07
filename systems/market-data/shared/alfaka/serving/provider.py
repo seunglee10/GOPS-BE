@@ -55,16 +55,21 @@ class MarketDataProvider:
                 to_time=to_time,
             ) else None
         coverage = None
-        if len(redis_candles) >= query_limit:
+        if len(redis_candles) >= query_limit and redis_recent_window_is_current(redis_candles, clickhouse_from_time, range_query):
             merged_redis = merge_candles(redis_candles, [live_candle] if live_candle else [])
-            coverage = self._coverage(symbol, interval)
-            if not candles_are_behind_coverage(merged_redis, coverage):
-                payload = snapshot(symbol=symbol, interval=interval, candles=attach_moving_averages(merged_redis, windows=ma_windows)[-limit:])
-                payload["_sourceTrace"] = {
-                    "redis": {"checked": True, "hit": len(merged_redis) > 0, "rowCount": len(merged_redis)},
-                    "clickhouse": {"checked": False, "hit": False, "rowCount": 0},
-                }
-                return with_coverage_metadata(payload, coverage, limit, before=before, from_time=from_time, to_time=to_time)
+            payload = snapshot(symbol=symbol, interval=interval, candles=attach_moving_averages(merged_redis, windows=ma_windows)[-limit:])
+            payload["_sourceTrace"] = {
+                "redis": {"checked": True, "hit": len(merged_redis) > 0, "rowCount": len(merged_redis)},
+                "clickhouse": {"checked": False, "hit": False, "rowCount": 0},
+            }
+            return with_coverage_metadata(
+                payload,
+                coverage_from_loaded_candles(payload.get("candles") or []),
+                limit,
+                before=before,
+                from_time=from_time,
+                to_time=to_time,
+            )
 
         clickhouse_candles = filter_stock_chart_candles(self.clickhouse_provider.candles(
             symbol,
@@ -94,7 +99,7 @@ class MarketDataProvider:
         }
         return with_coverage_metadata(
             payload,
-            coverage or self._coverage(symbol, interval, candles),
+            coverage or coverage_from_loaded_candles(candles),
             limit,
             before=before,
             from_time=from_time,
@@ -308,6 +313,28 @@ def with_coverage_metadata(payload, coverage, requested_limit, before=None, from
     return payload
 
 
+def coverage_from_loaded_candles(candles):
+    if not candles:
+        return {"rowCount": 0, "availableFrom": None, "availableTo": None}
+    return {
+        "rowCount": len(candles),
+        "availableFrom": candles[0].get("timestamp"),
+        "availableTo": candles[-1].get("timestamp"),
+    }
+
+
+def redis_recent_window_is_current(candles, target_from_time, range_query):
+    if range_query or not target_from_time:
+        return True
+    if not candles:
+        return False
+    newest = parse_iso_time(candles[-1].get("timestamp"))
+    target = parse_iso_time(target_from_time)
+    if not newest or not target:
+        return True
+    return newest >= target
+
+
 def has_more_before_target(oldest, available_from, target_range_from):
     oldest_time = parse_iso_time(oldest)
     if not oldest_time:
@@ -319,20 +346,6 @@ def has_more_before_target(oldest, available_from, target_range_from):
     if target_start and oldest_time - target_start > TARGET_FLOOR_TOLERANCE:
         return True
     return False
-
-
-def candles_are_behind_coverage(candles, coverage):
-    if not candles or not coverage:
-        return False
-    available_to = parse_iso_time(coverage.get("availableTo"))
-    if not available_to:
-        return False
-    newest = None
-    for candle in reversed(candles):
-        newest = parse_iso_time(candle.get("timestamp"))
-        if newest:
-            break
-    return bool(newest and available_to > newest)
 
 
 def one_year_target_from(reference_timestamp=None):

@@ -49,6 +49,7 @@ class MarketDataQueryService:
         before: str | None = None,
         from_time: str | None = None,
         to_time: str | None = None,
+        include_previous_close: bool = False,
     ) -> dict[str, Any]:
         symbol = normalize_market_symbol(symbol)
         interval = normalize_chart_interval(interval)
@@ -80,6 +81,8 @@ class MarketDataQueryService:
         payload["indicators"] = {"ma": requested_ma, "volume": True}
         metadata = self.backfill_service.snapshot_metadata(symbol, interval, payload)
         payload.update(metadata)
+        if include_previous_close:
+            payload["previousClose"] = previous_close_from_provider(self.provider, symbol)
         if isinstance(payload.get("fill"), dict):
             coverage = metadata.get("coverage") or {}
             payload["fill"] = {
@@ -87,7 +90,7 @@ class MarketDataQueryService:
                 "status": normalize_fill_status(payload["fill"], metadata),
                 "missingRanges": coverage.get("missingRanges") or payload["fill"].get("missingRanges") or [],
                 "gapRanges": coverage.get("gapRanges") or payload["fill"].get("gapRanges") or [],
-                "renderable": bool(coverage.get("renderable")),
+                "renderable": bool(coverage.get("renderable") or payload["fill"].get("renderable")),
                 "minimumReturnedCount": coverage.get("minimumReturnedCount") or payload["fill"].get("minimumReturnedCount"),
                 "minimumRenderableSourceBars": coverage.get("minimumRenderableSourceBars") or payload["fill"].get("minimumRenderableSourceBars"),
             }
@@ -517,6 +520,28 @@ def provider_candle_snapshot(
             ma_windows=ma_windows,
         )
     return provider.candle_snapshot(symbol, interval, limit, before=before, from_time=from_time, to_time=to_time)
+
+
+def previous_close_from_provider(provider: Any, symbol: str) -> float | None:
+    try:
+        payload = provider_candle_snapshot(provider, symbol, "1D", 5, ma_windows=())
+    except Exception:
+        return None
+    candles = payload.get("candles") if isinstance(payload, dict) else None
+    if not isinstance(candles, list):
+        return None
+    for candle in reversed(candles):
+        if not isinstance(candle, dict):
+            continue
+        if candle.get("isClosed") is False:
+            continue
+        try:
+            value = float(candle.get("close"))
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return value
+    return None
 
 
 def provider_accepts_ma_windows(provider: Any) -> bool:

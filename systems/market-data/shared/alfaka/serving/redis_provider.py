@@ -3,6 +3,7 @@
 # 계약: CHART_DATA_REBUILD_PLAN.md의 Redis recent-window/live state key를 읽습니다.
 import json
 import os
+from datetime import datetime, timezone
 
 import redis
 
@@ -21,6 +22,7 @@ from alfaka.serving.news_hot_cache import (
     write_company_daily_summaries_to_redis,
     write_localized_news_to_redis,
 )
+from alfaka.serving.time_utils import parse_utc_time
 
 
 class RedisMarketDataProvider:
@@ -41,7 +43,10 @@ class RedisMarketDataProvider:
     def live_candle(self, symbol, interval="1m"):
         interval = normalize_chart_interval(interval)
         value = self.redis.get(self.keys.live_candle(symbol, interval))
-        return json.loads(value) if value else None
+        if not value:
+            return None
+        candle = json.loads(value)
+        return candle if live_candle_is_fresh(candle) else None
 
     def recent_candles(self, symbol, interval, limit=None):
         interval = normalize_chart_interval(interval)
@@ -149,3 +154,28 @@ class RedisMarketDataProvider:
             limit=limit,
             locale=locale,
         )
+
+
+def live_candle_is_fresh(candle, *, now=None):
+    if not isinstance(candle, dict):
+        return False
+    max_age_seconds = read_non_negative_int_env("LIVE_CANDLE_STALE_SECONDS", default=180)
+    if max_age_seconds == 0:
+        return True
+    timestamp = candle.get("updatedAt") or candle.get("createdAt") or candle.get("timestamp")
+    if not timestamp:
+        return True
+    parsed = parse_utc_time(timestamp)
+    if not parsed:
+        return True
+    current = now or datetime.now(timezone.utc)
+    age_seconds = (current - parsed).total_seconds()
+    return age_seconds <= max_age_seconds or age_seconds < 0
+
+
+def read_non_negative_int_env(name, *, default):
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+    return value if value >= 0 else default
