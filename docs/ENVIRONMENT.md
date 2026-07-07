@@ -35,9 +35,15 @@ ALPACA_COLLECTION_SYMBOL_SOURCE=universe
 ALPACA_CHANNELS=bars,updatedBars,dailyBars,statuses
 ALPACA_ACTIVE_CHANNELS=trades,quotes
 ALPACA_MAX_TRADE_SYMBOLS=100
-ALPACA_KAFKA_PUBLISH_QUEUE_MAXSIZE=5000
-ALPACA_KAFKA_QUEUE_PUT_TIMEOUT_SECONDS=0.05
-ALPACA_KAFKA_PUBLISH_STOP_TIMEOUT_SECONDS=2
+ALPACA_KAFKA_PUBLISH_WORKERS=4
+ALPACA_KAFKA_PUBLISH_QUEUE_MAXSIZE=20000
+ALPACA_KAFKA_QUEUE_PUT_TIMEOUT_SECONDS=0.25
+ALPACA_KAFKA_PUBLISH_STOP_TIMEOUT_SECONDS=5
+KAFKA_PRODUCER_LINGER_MS=20
+KAFKA_PRODUCER_BATCH_SIZE=65536
+KAFKA_PRODUCER_BUFFER_MEMORY=67108864
+KAFKA_PRODUCER_MAX_BLOCK_MS=100
+KAFKA_PRODUCER_ACKS=1
 ALPACA_FEED_PROFILE=sip
 ALPACA_FEED_PROFILES=sip,boats,crypto-us
 ALPACA_CRYPTO_LOCATION=us
@@ -51,24 +57,27 @@ HOT_TIER_SIZE=10
 HOT_TIER_FALLBACK_SCAN_LIMIT=20
 ```
 
-Baseline collection is SIP-only and bars/statuses-only: the SIP ingestor
-subscribes the S&P500 universe for `bars`, `updatedBars`, `dailyBars`, and
-`statuses` so every S&P500 chart has a fast recent 1m entry path. Runtime
-`trades` and `quotes` still follow the exact same explicit symbol set as
-realtime cohorts: watchlist, portfolio, rankings, active chart sessions, and
-manual admin subscriptions. Quotes are never a separate all-symbol feed.
-AWS/EKS runs those two SIP responsibilities as separate Deployments:
-`alfaka-alpaca-ingestor-sip` keeps the baseline bar/status feed, while
-`alfaka-alpaca-tick-ingestor-sip` keeps only active-chart `trades`/`quotes`.
+Baseline collection is SIP-only and bars/statuses-only, with active ticks on
+the same SIP WebSocket: the SIP ingestor subscribes the S&P500 universe for
+`bars`, `updatedBars`, `dailyBars`, and `statuses` so every S&P500 chart has a
+fast recent 1m entry path. Runtime `trades` and `quotes` still follow the exact
+same explicit symbol set as realtime cohorts: watchlist, portfolio, rankings,
+active chart sessions, and manual admin subscriptions. Quotes are never a
+separate all-symbol feed. AWS/EKS keeps these SIP responsibilities inside
+`alfaka-alpaca-ingestor-sip` so Alpaca SIP connection limits are not consumed by
+two simultaneous WebSocket clients.
 `ALPACA_MAX_TRADE_SYMBOLS` caps the realtime tick cohort and the ingestor
 prioritizes active chart, manual, portfolio, watchlist, then ranking symbols
 when the cap is reached.
 
 Alpaca raw Kafka publishing is decoupled from WebSocket receive by an async
-queue. `ALPACA_KAFKA_PUBLISH_QUEUE_MAXSIZE` limits in-process buffering,
-`ALPACA_KAFKA_QUEUE_PUT_TIMEOUT_SECONDS` bounds how long the receive loop waits
-when Kafka is unhealthy, and `ALPACA_KAFKA_PUBLISH_STOP_TIMEOUT_SECONDS` bounds
-shutdown drain time.
+queue. `ALPACA_KAFKA_PUBLISH_WORKERS` controls how many background publisher
+tasks drain that queue, `ALPACA_KAFKA_PUBLISH_QUEUE_MAXSIZE` limits in-process
+buffering, `ALPACA_KAFKA_QUEUE_PUT_TIMEOUT_SECONDS` bounds how long the receive
+loop waits when Kafka is unhealthy, and
+`ALPACA_KAFKA_PUBLISH_STOP_TIMEOUT_SECONDS` bounds shutdown drain time. Kafka
+producer batching is tuned with `KAFKA_PRODUCER_LINGER_MS`,
+`KAFKA_PRODUCER_BATCH_SIZE`, and related `KAFKA_PRODUCER_*` env vars.
 
 BOATS/overnight keeps `ALPACA_COLLECTION_SYMBOL_SOURCE=on-demand` at the
 deployment level. Overnight liquidity is sparse and the BOATS stream should not

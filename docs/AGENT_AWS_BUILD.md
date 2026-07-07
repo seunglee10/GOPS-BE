@@ -232,9 +232,9 @@ workflow to roll both Deployments together.
 
 Market ingestor deploys multiple runtime units from the same
 `gops-market-ingestor` image. `alfaka-alpaca-ingestor-sip` handles SIP baseline
-bars/statuses, `alfaka-alpaca-tick-ingestor-sip` handles active SIP
-trades/quotes, `alfaka-alpaca-ingestor-boats` handles overnight BOATS,
-`alfaka-alpaca-ingestor-crypto` handles crypto, and
+bars/statuses and active SIP trades/quotes on one WebSocket connection so the
+runtime stays within Alpaca SIP connection limits. `alfaka-alpaca-ingestor-boats`
+handles overnight BOATS, `alfaka-alpaca-ingestor-crypto` handles crypto, and
 `alfaka-alpaca-news-ingestor` handles Alpaca news. Select `market-ingestor` in
 the deploy workflow to roll all of them together.
 

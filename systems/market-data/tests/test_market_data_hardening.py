@@ -1311,7 +1311,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(captured["batch_size"], 65536)
         self.assertEqual(captured["buffer_memory"], 67108864)
         self.assertEqual(captured["max_block_ms"], 100)
-        self.assertEqual(captured["acks"], "1")
+        self.assertEqual(captured["acks"], 1)
 
     def test_alpaca_publish_worker_count_is_configurable_and_never_zero(self):
         self.assertEqual(publish_worker_count_from_env({"ALPACA_KAFKA_PUBLISH_WORKERS": "4"}), 4)

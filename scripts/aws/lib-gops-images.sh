@@ -121,7 +121,7 @@ gops_deployments_for_service() {
       printf '%s\n' kis-broker-adapter
       ;;
     market-ingestor)
-      printf '%s\n' alfaka-alpaca-ingestor-sip alfaka-alpaca-tick-ingestor-sip alfaka-alpaca-ingestor-boats alfaka-alpaca-ingestor-crypto alfaka-alpaca-news-ingestor
+      printf '%s\n' alfaka-alpaca-ingestor-sip alfaka-alpaca-ingestor-boats alfaka-alpaca-ingestor-crypto alfaka-alpaca-news-ingestor
       ;;
     market-processor)
       printf '%s\n' alfaka-market-processor alfaka-market-quote-processor alfaka-feed-session-controller alfaka-subscription-controller

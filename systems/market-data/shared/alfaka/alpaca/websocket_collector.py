@@ -191,14 +191,18 @@ async def run_stream_session(
     publish_queue = asyncio.Queue(maxsize=parse_positive_int(os.getenv("ALPACA_KAFKA_PUBLISH_QUEUE_MAXSIZE", "5000"), default=5000))
     publish_put_timeout = parse_positive_float(os.getenv("ALPACA_KAFKA_QUEUE_PUT_TIMEOUT_SECONDS", "0.05"), default=0.05)
     publish_stop_timeout = parse_positive_float(os.getenv("ALPACA_KAFKA_PUBLISH_STOP_TIMEOUT_SECONDS", "2"), default=2.0)
-    publisher_task = asyncio.create_task(
-        kafka_publish_worker(
-            producer=producer,
-            publish_queue=publish_queue,
-            redis_client=redis_client,
-            feed_profile=feed_profile,
+    publisher_tasks = [
+        asyncio.create_task(
+            kafka_publish_worker(
+                producer=producer,
+                publish_queue=publish_queue,
+                redis_client=redis_client,
+                feed_profile=feed_profile,
+                worker_id=index,
+            )
         )
-    )
+        for index in range(publish_worker_count_from_env())
+    ]
     try:
         async with websockets.connect(alpaca_url, ping_interval=ws_ping_interval, ping_timeout=ws_ping_timeout) as ws:
             await ws.send(json.dumps({"action": "auth", "key": alpaca_key, "secret": alpaca_secret}))
@@ -352,7 +356,7 @@ async def run_stream_session(
                     )
                     last_active_sync = time.monotonic()
     finally:
-        await stop_kafka_publish_worker(publish_queue, publisher_task, timeout_seconds=publish_stop_timeout)
+        await stop_kafka_publish_workers(publish_queue, publisher_tasks, timeout_seconds=publish_stop_timeout)
 
 
 async def enqueue_kafka_publish(publish_queue, item, *, redis_client, feed_profile, timeout_seconds):
@@ -365,6 +369,8 @@ async def enqueue_kafka_publish(publish_queue, item, *, redis_client, feed_profi
             feed_profile,
             status="error",
             errorCategory="kafka_publish_queue_full",
+            publishQueueSize=publish_queue.qsize(),
+            publishQueueMaxSize=publish_queue.maxsize,
             lastChannel=item.get("channel"),
             lastSymbol=item.get("symbol"),
             lastSourceEventId=item.get("sourceEventId"),
@@ -378,7 +384,7 @@ async def enqueue_kafka_publish(publish_queue, item, *, redis_client, feed_profi
         return False
 
 
-async def kafka_publish_worker(*, producer, publish_queue, redis_client, feed_profile):
+async def kafka_publish_worker(*, producer, publish_queue, redis_client, feed_profile, worker_id=0):
     while True:
         item = await publish_queue.get()
         try:
@@ -397,6 +403,7 @@ async def kafka_publish_worker(*, producer, publish_queue, redis_client, feed_pr
                 status="error",
                 errorCategory="kafka_publish_failed",
                 error=str(exc),
+                kafkaPublishWorkerId=worker_id,
                 lastChannel=item.get("channel") if isinstance(item, dict) else None,
                 lastSymbol=item.get("symbol") if isinstance(item, dict) else None,
                 lastSourceEventId=item.get("sourceEventId") if isinstance(item, dict) else None,
@@ -412,20 +419,39 @@ async def kafka_publish_worker(*, producer, publish_queue, redis_client, feed_pr
             publish_queue.task_done()
 
 
-async def stop_kafka_publish_worker(publish_queue, publisher_task, *, timeout_seconds):
+async def stop_kafka_publish_workers(publish_queue, publisher_tasks, *, timeout_seconds):
+    tasks = list(publisher_tasks or [])
     try:
-        await asyncio.wait_for(publish_queue.put(_PUBLISH_STOP), timeout=timeout_seconds)
-        await asyncio.wait_for(publisher_task, timeout=timeout_seconds)
+        for _ in tasks:
+            await asyncio.wait_for(publish_queue.put(_PUBLISH_STOP), timeout=timeout_seconds)
+        if tasks:
+            await asyncio.wait_for(asyncio.gather(*tasks), timeout=timeout_seconds)
     except asyncio.TimeoutError:
-        publisher_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await publisher_task
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
         print("Kafka Raw 전송 worker 종료 대기 시간 초과", file=sys.stderr, flush=True)
     except asyncio.CancelledError:
-        publisher_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await publisher_task
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
         raise
+
+
+async def stop_kafka_publish_worker(publish_queue, publisher_task, *, timeout_seconds):
+    await stop_kafka_publish_workers(publish_queue, [publisher_task], timeout_seconds=timeout_seconds)
+
+
+def publish_worker_count_from_env(environ=None):
+    environ = os.environ if environ is None else environ
+    try:
+        return max(1, int(environ.get("ALPACA_KAFKA_PUBLISH_WORKERS", "1")))
+    except (TypeError, ValueError):
+        return 1
 
 
 def notify_session_healthy(callback, reason):

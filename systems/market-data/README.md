@@ -94,7 +94,7 @@ Runtime policy:
 
 - no preset historical universe chart preload
 - SIP S&P500 baseline is bars/updatedBars/dailyBars/statuses only
-- realtime trades/quotes only for explicit active subscriptions
+- realtime trades/quotes only for explicit active subscriptions on the same SIP WebSocket
 - Redis keeps only the frontend-requested recent chart window per `symbol + timeframe`
 - older confirmed candles come from ClickHouse direct interval rows when present
 - ClickHouse direct misses can fall back to query-time aggregation from `1m` or `1D`
