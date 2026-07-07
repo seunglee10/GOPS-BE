@@ -4,6 +4,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 
 from app.auth.dependencies import require_current_user
 from app.auth.models import AuthenticatedUser
+from app.market_data.calendar.service import next_market_open_payload
 from app.market_data.query.service import get_query_service
 
 router = APIRouter()
@@ -54,6 +55,12 @@ def market_fundamentals_earnings(
 @router.get("/api/market/indices")
 def market_indices(background_tasks: BackgroundTasks) -> dict[str, Any]:
     return get_query_service().indices(background_tasks=background_tasks)
+
+
+@router.get("/api/market/next-open")
+def market_next_open(request: Request) -> dict[str, Any]:
+    clock_provider = getattr(request.app.state, "market_clock_provider", None)
+    return next_market_open_payload(clock_provider=clock_provider if callable(clock_provider) else None)
 
 
 @router.get("/api/market/symbols/{symbol}")

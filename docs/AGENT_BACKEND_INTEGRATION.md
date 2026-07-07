@@ -81,7 +81,9 @@ Finance snapshot을 Redis에 fresh/stale 캐시한다. 백엔드는 fresh 캐시
 정규장 장중 추천만 반환한다. 추천 worker는 프로필이 있는 사용자 목록을 순회하고,
 09:45/12:45/15:45 ET 슬롯 run key로 멱등 실행한다. 종목 선정은 결정론적 점수화
 로직이 담당하며, 알림은 기존 notifications 저장소와 `WS /ws/notifications`
-브로커만 재사용한다.
+브로커만 재사용한다. 추천 profile, heatmap item, recommendation item, holdings
+snapshot의 `sector`는 GraphDB `gops:sector` canonical 값을 사용하고, 화면 표시용
+한글 라벨은 `sectorLabelKo`로 함께 내려준다.
 
 `POST /api/agents/analyze`는 다음 header를 읽는다.
 

@@ -1327,10 +1327,11 @@ def themes_by_company_query(ticker: str, limit: int) -> str:
 PREFIX gops: <urn:gops:ontology:>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 
-SELECT ?ticker ?companyName ?theme ?themeName ?themeCategory
+SELECT ?ticker ?companyName ?sector ?theme ?themeName ?themeCategory
 WHERE {{
   ?company gops:ticker ?ticker ;
            rdfs:label ?companyName .
+  OPTIONAL {{ ?company gops:sector ?sector . }}
   FILTER (UCASE(STR(?ticker)) = {sparql_string_literal(ticker)})
   GRAPH <urn:gops:graph:themes:current> {{
     ?company gops:hasTheme ?theme .

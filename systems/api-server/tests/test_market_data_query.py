@@ -81,6 +81,7 @@ sys.modules.setdefault("redis", types.SimpleNamespace(from_url=lambda *args, **k
 
 from app.market_data.query import service as query_service_module  # noqa: E402
 from app.market_data.query.service import MarketDataQueryService  # noqa: E402
+from app.market_data.calendar.service import next_market_open_payload, us_equity_holidays  # noqa: E402
 from app.market_data.backfill.service import BackfillService  # noqa: E402
 from app.market_data.compare.service import ChartCompareService  # noqa: E402
 from app.market_data.fill.service import OnDemandFillService  # noqa: E402
@@ -2462,6 +2463,8 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(payload["coverage"]["layoutMarketCapFromSeed"], 1)
         self.assertEqual(payload["items"][0]["marketCap"], 200000)
         self.assertEqual(payload["items"][0]["marketCapSource"], "fundamentals")
+        self.assertEqual(payload["items"][0]["sector"], "Information Technology")
+        self.assertEqual(payload["items"][0]["sectorLabelKo"], "정보기술")
         self.assertEqual(payload["items"][0]["layoutPrice"], 200)
         self.assertEqual(payload["items"][0]["eps"], 5)
         self.assertEqual(payload["items"][0]["revenue"], 100000)
@@ -3345,6 +3348,52 @@ class MarketDataQueryServiceTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["symbols"][0]["symbol"], "AAPL")
+
+    def test_next_market_open_skips_us_equity_holiday(self):
+        with mock.patch.dict(os.environ, {
+            "MARKET_TIMEZONE": "America/New_York",
+            "MARKET_OPEN_TIME": "09:30",
+            "MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS": "true",
+            "MARKET_CLOSED_DATES": "",
+            "MARKET_EARLY_CLOSES": "",
+        }, clear=False):
+            payload = next_market_open_payload(
+                datetime(2026, 7, 3, 12, 0, tzinfo=timezone.utc),
+                clock_provider=lambda: None,
+            )
+
+        self.assertEqual(payload["source"], "configured-nyse")
+        self.assertEqual(payload["marketDate"], "2026-07-06")
+        self.assertEqual(payload["nextOpenAt"], "2026-07-06T13:30:00+00:00")
+        self.assertIn("2026-07-03", us_equity_holidays(2026))
+
+    def test_next_market_open_prefers_alpaca_clock_payload(self):
+        payload = next_market_open_payload(
+            datetime(2026, 7, 7, 1, 0, tzinfo=timezone.utc),
+            clock_provider=lambda: {
+                "is_open": False,
+                "next_open": "2026-07-07T13:30:00Z",
+                "next_close": "2026-07-07T20:00:00Z",
+            },
+        )
+
+        self.assertEqual(payload["source"], "alpaca-clock")
+        self.assertEqual(payload["marketDate"], "2026-07-07")
+        self.assertEqual(payload["nextOpenAt"], "2026-07-07T13:30:00+00:00")
+
+    @unittest.skipUnless(FASTAPI_TESTCLIENT_AVAILABLE, "fastapi TestClient dependency is not installed")
+    def test_fastapi_next_market_open_route_is_public(self):
+        from app.main import create_app
+
+        app = create_app()
+        app.state.market_clock_provider = lambda: {
+            "is_open": False,
+            "next_open": "2099-07-07T13:30:00Z",
+        }
+        response = TestClient(app).get("/api/market/next-open")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["nextOpenAt"], "2099-07-07T13:30:00+00:00")
 
     @unittest.skipUnless(FASTAPI_TESTCLIENT_AVAILABLE, "fastapi TestClient dependency is not installed")
     def test_chart_mutation_routes_require_authenticated_user_when_auth_enabled(self):

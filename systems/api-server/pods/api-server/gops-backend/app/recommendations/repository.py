@@ -64,6 +64,9 @@ class RecommendationRepository:
     def latest_run(self, user_sub: str) -> dict[str, Any] | None:
         raise NotImplementedError
 
+    def latest_run_for_session(self, user_sub: str, session_mode: str) -> dict[str, Any] | None:
+        raise NotImplementedError
+
     def get_run_by_key(self, user_sub: str, run_key: str) -> dict[str, Any] | None:
         raise NotImplementedError
 
@@ -194,6 +197,23 @@ class PostgresRecommendationRepository(RecommendationRepository):
         except UndefinedTable as exc:
             raise RecommendationSchemaUnavailable("recommendation database migration required") from exc
 
+    def latest_run_for_session(self, user_sub: str, session_mode: str) -> dict[str, Any] | None:
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT * FROM stock_recommendation_runs
+                    WHERE user_sub = %s
+                      AND COALESCE(summary->>'sessionMode', 'regular') = %s
+                    ORDER BY generated_at DESC, id DESC
+                    LIMIT 1
+                    """,
+                    (user_sub, session_mode),
+                ).fetchone()
+                return self._run_with_items(conn, dict(row)) if row else None
+        except UndefinedTable as exc:
+            raise RecommendationSchemaUnavailable("recommendation database migration required") from exc
+
     def get_run_by_key(self, user_sub: str, run_key: str) -> dict[str, Any] | None:
         try:
             with self._connect() as conn:
@@ -318,6 +338,14 @@ class InMemoryRecommendationRepository(RecommendationRepository):
 
     def latest_run(self, user_sub: str) -> dict[str, Any] | None:
         rows = [row for row in self.runs.values() if row["user_sub"] == user_sub]
+        rows.sort(key=lambda item: (item["generated_at"], item["id"]), reverse=True)
+        return self._with_items(rows[0]) if rows else None
+
+    def latest_run_for_session(self, user_sub: str, session_mode: str) -> dict[str, Any] | None:
+        rows = [
+            row for row in self.runs.values()
+            if row["user_sub"] == user_sub and (row.get("summary") or {}).get("sessionMode", "regular") == session_mode
+        ]
         rows.sort(key=lambda item: (item["generated_at"], item["id"]), reverse=True)
         return self._with_items(rows[0]) if rows else None
 
