@@ -37,7 +37,7 @@ from alfaka.alpaca.websocket_collector import (
 )
 from alfaka.alpaca.assets import asset_to_symbol_metadata
 from alfaka.alpaca.news import build_news_events, iter_alpaca_news_pages
-from alfaka.common.kafka_io import create_json_consumer, create_json_producer
+from alfaka.common.kafka_io import create_json_consumer, create_json_producer, producer_options_from_env
 from alfaka.common.market_messages import build_raw_envelope, raw_topic_name, source_event_id
 from alfaka.common.redis_keys import RedisKeyBuilder
 from alfaka.common.runtime_health import read_component_health, write_component_health
@@ -1312,6 +1312,26 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(captured["buffer_memory"], 67108864)
         self.assertEqual(captured["max_block_ms"], 100)
         self.assertEqual(captured["acks"], 1)
+
+    def test_json_producer_tuning_options_are_supported_by_kafka_python(self):
+        from kafka import KafkaProducer
+
+        options = producer_options_from_env(
+            {
+                "KAFKA_PRODUCER_LINGER_MS": "20",
+                "KAFKA_PRODUCER_BATCH_SIZE": "65536",
+                "KAFKA_PRODUCER_BUFFER_MEMORY": "67108864",
+                "KAFKA_PRODUCER_MAX_BLOCK_MS": "100",
+                "KAFKA_PRODUCER_ACKS": "1",
+            }
+        )
+
+        self.assertNotIn("buffer_memory", options)
+        self.assertEqual(options["linger_ms"], 20)
+        self.assertEqual(options["batch_size"], 65536)
+        self.assertEqual(options["max_block_ms"], 100)
+        self.assertEqual(options["acks"], 1)
+        self.assertTrue(set(options).issubset(KafkaProducer.DEFAULT_CONFIG))
 
     def test_alpaca_publish_worker_count_is_configurable_and_never_zero(self):
         self.assertEqual(publish_worker_count_from_env({"ALPACA_KAFKA_PUBLISH_WORKERS": "4"}), 4)
