@@ -258,7 +258,7 @@ def test_watchlist_holding_and_active_symbol_are_not_recommended(recommendation_
     assert "AVGO" not in symbols
 
 
-def test_refresh_registers_top_three_without_score_cutoff(recommendation_app) -> None:
+def test_refresh_registers_top_fifteen_without_score_cutoff(recommendation_app) -> None:
     recommendation_app.state.recommendation_watchlist_provider = lambda user_sub: []
     recommendation_app.state.recommendation_market_provider = lambda: [
         {
@@ -270,10 +270,8 @@ def test_refresh_registers_top_three_without_score_cutoff(recommendation_app) ->
             "lastPrice": 100,
         }
         for symbol, volume, change in [
-            ("LOW1", 400_000_000, 0.4),
-            ("LOW2", 300_000_000, 0.3),
-            ("LOW3", 200_000_000, 0.2),
-            ("LOW4", 100_000_000, 0.1),
+            (f"LOW{index:02d}", 500_000_000 - index * 10_000_000, round(1.6 - index * 0.1, 2))
+            for index in range(1, 17)
         ]
     ]
     recommendation_app.state.recommendation_candles_provider = flat_candles
@@ -289,8 +287,10 @@ def test_refresh_registers_top_three_without_score_cutoff(recommendation_app) ->
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] == "completed"
-    assert [item["symbol"] for item in payload["items"]] == ["LOW1", "LOW2", "LOW3"]
-    assert len(payload["items"]) == 3
+    assert [item["symbol"] for item in payload["items"]] == [f"LOW{index:02d}" for index in range(1, 16)]
+    assert len(payload["items"]) == 15
+    assert payload["items"][0]["changePercent"] == 1.5
+    assert payload["items"][0]["metricsSnapshot"]["changePercent"] == 1.5
     assert all(item["score"] < 75 for item in payload["items"])
 
 
