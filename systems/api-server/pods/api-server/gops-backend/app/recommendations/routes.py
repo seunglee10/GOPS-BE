@@ -18,6 +18,7 @@ from .repository import (
     InMemoryRecommendationRepository,
     InvestmentProfileUpsert,
     PostgresRecommendationRepository,
+    RecommendationSchemaUnavailable,
 )
 from .service import RecommendationDataSource, RecommendationService
 
@@ -28,7 +29,7 @@ router = APIRouter(tags=["recommendations"])
 class InvestmentProfileBody(BaseModel):
     riskLevel: str = Field(min_length=1, max_length=24)
     horizon: str = "intraday"
-    maxDrawdownPct: float = Field(gt=0, le=50)
+    maxDrawdownPct: float = Field(default=6, gt=0, le=50)
     preferredSectors: list[str] = Field(default_factory=list)
     excludedSectors: list[str] = Field(default_factory=list)
     excludedSymbols: list[str] = Field(default_factory=list)
@@ -40,7 +41,7 @@ class RefreshBody(BaseModel):
 
 @router.get("/api/recommendations/profile")
 def get_recommendation_profile(request: Request, user: AuthenticatedUser = Depends(require_current_user)) -> dict[str, Any]:
-    profile = _repository_from_app(request.app).get_profile(user.sub)
+    profile = _call_recommendation_storage(lambda: _repository_from_app(request.app).get_profile(user.sub))
     return {"status": "ready" if profile else "profile_required", "profile": _public_profile(profile) if profile else None}
 
 
@@ -56,15 +57,17 @@ def upsert_recommendation_profile(
         raise HTTPException(status_code=422, detail="riskLevel must be conservative, balanced, or aggressive")
     if horizon not in HORIZONS:
         raise HTTPException(status_code=422, detail="v1 recommendations only support intraday horizon")
-    profile = _repository_from_app(request.app).upsert_profile(
-        InvestmentProfileUpsert(
-            user_sub=user.sub,
-            risk_level=risk_level,
-            horizon=horizon,
-            max_drawdown_pct=float(body.maxDrawdownPct),
-            preferred_sectors=clean_text_list(body.preferredSectors, max_items=12),
-            excluded_sectors=clean_text_list(body.excludedSectors, max_items=12),
-            excluded_symbols=clean_symbol_list(body.excludedSymbols, max_items=50),
+    profile = _call_recommendation_storage(
+        lambda: _repository_from_app(request.app).upsert_profile(
+            InvestmentProfileUpsert(
+                user_sub=user.sub,
+                risk_level=risk_level,
+                horizon=horizon,
+                max_drawdown_pct=float(body.maxDrawdownPct),
+                preferred_sectors=clean_text_list(body.preferredSectors, max_items=12),
+                excluded_sectors=clean_text_list(body.excludedSectors, max_items=12),
+                excluded_symbols=clean_symbol_list(body.excludedSymbols, max_items=50),
+            )
         )
     )
     return {"status": "ready", "profile": _public_profile(profile)}
@@ -72,7 +75,7 @@ def upsert_recommendation_profile(
 
 @router.get("/api/recommendations/stocks/latest")
 def latest_stock_recommendations(request: Request, user: AuthenticatedUser = Depends(require_current_user)) -> dict[str, Any]:
-    return jsonable_encoder(_service_from_app(request.app).latest(user.sub))
+    return jsonable_encoder(_call_recommendation_storage(lambda: _service_from_app(request.app).latest(user.sub)))
 
 
 @router.post("/api/recommendations/stocks/refresh")
@@ -83,7 +86,16 @@ def refresh_stock_recommendations(
 ) -> dict[str, Any]:
     now_provider = getattr(request.app.state, "recommendation_now_provider", None)
     now = now_provider() if callable(now_provider) else datetime.now(timezone.utc)
-    return jsonable_encoder(_service_from_app(request.app).refresh(user.sub, now=now, active_symbol=body.activeSymbol if body else None))
+    return jsonable_encoder(
+        _call_recommendation_storage(lambda: _service_from_app(request.app).refresh(user.sub, now=now, active_symbol=body.activeSymbol if body else None))
+    )
+
+
+def _call_recommendation_storage(callback):
+    try:
+        return callback()
+    except RecommendationSchemaUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 def _service_from_app(app: Any) -> RecommendationService:

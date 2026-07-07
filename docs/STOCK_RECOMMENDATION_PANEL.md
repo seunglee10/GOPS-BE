@@ -19,7 +19,7 @@ v1은 미국 정규장 장중 매수 추천만 다룬다.
 
 ## 사용자 설정
 
-사용자는 하단 메뉴 `V: 로그인/프로필`에서 장중 추천 설정을 저장해야 한다.
+사용자는 하단 메뉴 `VI: 설정`의 `추천 설정` 탭에서 장중 추천 설정을 저장해야 한다.
 
 저장되는 필드는 다음과 같다.
 
@@ -27,20 +27,19 @@ v1은 미국 정규장 장중 매수 추천만 다룬다.
 | --- | --- |
 | `riskLevel` | `conservative`, `balanced`, `aggressive` |
 | `horizon` | v1은 `intraday`만 허용 |
-| `maxDrawdownPct` | 장중 변동폭 허용 기준. 1 초과 50 이하 |
 | `preferredSectors` | 선호 섹터. 점수 가점이 아니라 후보 유니버스 anchor로 사용 |
 | `excludedSectors` | 추천에서 제외할 섹터 |
 | `excludedSymbols` | 추천에서 제외할 종목 |
 
-프론트 설정 UI는 등록된 S&P500 유니버스에서만 값을 선택하게 한다. `preferredSectors`와 `excludedSectors`는 GICS 섹터 목록을 검색해 추가하고, 같은 섹터가 선호/제외에 동시에 들어가지 않도록 한쪽을 선택하면 반대쪽에서 제거한다. `excludedSymbols`도 검색어로 등록 종목 목록을 필터링한 뒤 선택하며, 임의 섹터명이나 티커 문자열은 저장하지 않는다.
+프론트 설정 UI는 등록된 S&P500 유니버스에서만 값을 선택하게 한다. `preferredSectors`와 `excludedSectors`는 검색창 focus 이후 GICS 섹터 목록을 띄워 추가하고, 같은 섹터가 선호/제외에 동시에 들어가지 않도록 한쪽을 선택하면 반대쪽에서 제거한다. `excludedSymbols`도 검색창 focus 이후 등록 종목 목록을 필터링한 뒤 선택하며, 임의 섹터명이나 티커 문자열은 저장하지 않는다. 기존 API/DB 호환을 위해 `maxDrawdownPct`는 내부 기본값 `6`으로 저장하지만 사용자 입력으로 받지 않는다.
 
-프로필이 없으면 추천 API는 `profile_required`를 반환하고, 프론트 패널은 로그인/프로필에서 설정을 저장하라는 상태를 보여준다.
+프로필이 없으면 추천 API는 `profile_required`를 반환하고, 프론트 패널은 설정의 추천 설정 탭에서 설정을 저장하라는 상태를 보여준다.
 
 ## 전체 구조
 
 ```mermaid
 flowchart TD
-  Profile["로그인/프로필<br/>투자 설정 저장"] --> ProfileAPI["PUT /api/recommendations/profile"]
+  Profile["설정 > 추천 설정<br/>투자 설정 저장"] --> ProfileAPI["PUT /api/recommendations/profile"]
   Holdings["내 투자 패널<br/>/api/account/holdings"] --> Snapshot["user_portfolio_snapshots"]
   Worker["recommendation-worker<br/>30분 polling"] --> Service["RecommendationService.refresh"]
   Panel["추천 패널<br/>latest/refresh"] --> Service
@@ -75,9 +74,9 @@ flowchart TD
 | 파일 | 역할 |
 | --- | --- |
 | `apps/gops-frontend/src/recommendations/recommendationApi.ts` | 추천 API client와 응답 정규화 |
-| `apps/gops-frontend/src/recommendations/InvestmentProfileForm.tsx` | 로그인/프로필 안의 필수 설정 폼 |
+| `apps/gops-frontend/src/recommendations/InvestmentProfileForm.tsx` | 설정 > 추천 설정 탭의 필수 설정 폼 |
 | `apps/gops-frontend/src/recommendations/StockRecommendationsPanel.tsx` | 장중 매수 추천 패널 |
-| `apps/gops-frontend/src/components/BottomCommandBar.tsx` | `V` 패널에 설정 폼 연결 |
+| `apps/gops-frontend/src/components/BottomCommandBar.tsx` | 설정 탭에 계정/추천 설정 연결 |
 | `apps/gops-frontend/src/components/PanelContentRenderer.tsx` | `kind="recommendations"` 렌더링 |
 | `apps/gops-frontend/src/layout/*` | 추천 패널 insert/layout kind 등록 |
 
@@ -95,7 +94,7 @@ flowchart TD
   "profile": {
     "riskLevel": "balanced",
     "horizon": "intraday",
-    "maxDrawdownPct": 8,
+    "maxDrawdownPct": 6,
     "preferredSectors": ["Technology"],
     "excludedSectors": [],
     "excludedSymbols": [],
@@ -106,7 +105,7 @@ flowchart TD
 
 ### `PUT /api/recommendations/profile`
 
-추천 필수 설정을 저장한다. `riskLevel`은 세 가지 값만 허용하고, `horizon`은 `intraday`만 허용한다.
+추천 필수 설정을 저장한다. `riskLevel`은 세 가지 값만 허용하고, `horizon`은 `intraday`만 허용한다. `maxDrawdownPct`는 과거 계약 호환 필드이며 요청에서 빠지면 서버가 기본값 `6`을 사용한다.
 
 ### `GET /api/recommendations/stocks/latest`
 
@@ -223,7 +222,7 @@ python -u -m app.recommendations.worker
 | SPY | 상대강도 계산 기준으로만 사용 |
 | candle 60개 미만 | 장중 판단에 필요한 최소 데이터 부족 |
 | 세션 거래대금 1천만 달러 미만 | 유동성 부족 |
-| 장중 변동폭 > `maxDrawdownPct * 1.5` | 사용자 손실 허용 대비 변동성 과다 |
+| 장중 변동폭 과다 | 기본 변동성 가드레일 초과 |
 | 후보 섹터 hard cap 초과 | 보수형 45%, 균형형 55%, 공격형 65% 이상이면 제외 |
 | 보수형 + 최근 3시간 수익률 5% 초과 | 보수형에서 단기 급등 추격 방지 |
 

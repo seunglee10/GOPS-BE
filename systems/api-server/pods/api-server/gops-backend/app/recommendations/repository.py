@@ -8,6 +8,7 @@ from typing import Any
 
 import psycopg
 from psycopg.conninfo import make_conninfo
+from psycopg.errors import UndefinedTable
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
@@ -15,6 +16,10 @@ from psycopg.types.json import Jsonb
 RISK_LEVELS = {"conservative", "balanced", "aggressive"}
 HORIZONS = {"intraday"}
 RUN_TERMINAL_STATUSES = {"completed", "empty", "market_closed", "profile_required", "failed"}
+
+
+class RecommendationSchemaUnavailable(RuntimeError):
+    """Raised when recommendation tables have not been migrated yet."""
 
 
 @dataclass(frozen=True)
@@ -84,155 +89,179 @@ class PostgresRecommendationRepository(RecommendationRepository):
         return cls(conninfo)
 
     def get_profile(self, user_sub: str) -> dict[str, Any] | None:
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM user_investment_profiles WHERE user_sub = %s",
-                (user_sub,),
-            ).fetchone()
-            return _json_ready(dict(row)) if row else None
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT * FROM user_investment_profiles WHERE user_sub = %s",
+                    (user_sub,),
+                ).fetchone()
+                return _json_ready(dict(row)) if row else None
+        except UndefinedTable as exc:
+            raise RecommendationSchemaUnavailable("recommendation database migration required") from exc
 
     def list_profile_user_subs(self) -> list[str]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT user_sub FROM user_investment_profiles ORDER BY updated_at DESC, user_sub ASC",
-            ).fetchall()
-            return [str(row["user_sub"]) for row in rows if row.get("user_sub")]
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    "SELECT user_sub FROM user_investment_profiles ORDER BY updated_at DESC, user_sub ASC",
+                ).fetchall()
+                return [str(row["user_sub"]) for row in rows if row.get("user_sub")]
+        except UndefinedTable as exc:
+            raise RecommendationSchemaUnavailable("recommendation database migration required") from exc
 
     def upsert_profile(self, profile: InvestmentProfileUpsert) -> dict[str, Any]:
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                INSERT INTO user_investment_profiles (
-                    user_sub, risk_level, horizon, max_drawdown_pct,
-                    preferred_sectors, excluded_sectors, excluded_symbols, updated_at
-                )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, now())
-                ON CONFLICT (user_sub) DO UPDATE
-                SET risk_level = EXCLUDED.risk_level,
-                    horizon = EXCLUDED.horizon,
-                    max_drawdown_pct = EXCLUDED.max_drawdown_pct,
-                    preferred_sectors = EXCLUDED.preferred_sectors,
-                    excluded_sectors = EXCLUDED.excluded_sectors,
-                    excluded_symbols = EXCLUDED.excluded_symbols,
-                    updated_at = now()
-                RETURNING *
-                """,
-                (
-                    profile.user_sub,
-                    profile.risk_level,
-                    profile.horizon,
-                    profile.max_drawdown_pct,
-                    Jsonb(profile.preferred_sectors),
-                    Jsonb(profile.excluded_sectors),
-                    Jsonb(profile.excluded_symbols),
-                ),
-            ).fetchone()
-            conn.commit()
-            return _json_ready(dict(row))
-
-    def get_portfolio_snapshot(self, user_sub: str) -> dict[str, Any] | None:
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM user_portfolio_snapshots WHERE user_sub = %s",
-                (user_sub,),
-            ).fetchone()
-            if not row:
-                return None
-            payload = dict(row)
-            payload["payload"] = _json_ready(payload.get("payload") or {})
-            return _json_ready(payload)
-
-    def upsert_portfolio_snapshot(self, user_sub: str, payload: dict[str, Any]) -> dict[str, Any]:
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                INSERT INTO user_portfolio_snapshots (user_sub, payload, updated_at)
-                VALUES (%s, %s, now())
-                ON CONFLICT (user_sub) DO UPDATE
-                SET payload = EXCLUDED.payload,
-                    updated_at = now()
-                RETURNING *
-                """,
-                (user_sub, Jsonb(payload)),
-            ).fetchone()
-            conn.commit()
-            return _json_ready(dict(row))
-
-    def latest_run(self, user_sub: str) -> dict[str, Any] | None:
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT * FROM stock_recommendation_runs
-                WHERE user_sub = %s
-                ORDER BY generated_at DESC, id DESC
-                LIMIT 1
-                """,
-                (user_sub,),
-            ).fetchone()
-            return self._run_with_items(conn, dict(row)) if row else None
-
-    def get_run_by_key(self, user_sub: str, run_key: str) -> dict[str, Any] | None:
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM stock_recommendation_runs WHERE user_sub = %s AND run_key = %s",
-                (user_sub, run_key),
-            ).fetchone()
-            return self._run_with_items(conn, dict(row)) if row else None
-
-    def create_or_replace_run(self, run: RecommendationRunCreate, items: list[dict[str, Any]]) -> dict[str, Any]:
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                INSERT INTO stock_recommendation_runs (
-                    user_sub, run_key, slot_start, market_date, status,
-                    profile_snapshot, market_snapshot_time, summary, generated_at
-                )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, now())
-                ON CONFLICT (user_sub, run_key) DO UPDATE
-                SET status = EXCLUDED.status,
-                    profile_snapshot = EXCLUDED.profile_snapshot,
-                    market_snapshot_time = EXCLUDED.market_snapshot_time,
-                    summary = EXCLUDED.summary,
-                    generated_at = now()
-                RETURNING *
-                """,
-                (
-                    run.user_sub,
-                    run.run_key,
-                    run.slot_start,
-                    run.market_date,
-                    run.status,
-                    Jsonb(run.profile_snapshot),
-                    run.market_snapshot_time,
-                    Jsonb(run.summary),
-                ),
-            ).fetchone()
-            run_id = int(row["id"])
-            conn.execute("DELETE FROM stock_recommendation_items WHERE run_id = %s", (run_id,))
-            for item in items:
-                conn.execute(
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
                     """
-                    INSERT INTO stock_recommendation_items (
-                        run_id, symbol, action, rank, score, confidence, sector,
-                        reasons, risk_warnings, metrics_snapshot
+                    INSERT INTO user_investment_profiles (
+                        user_sub, risk_level, horizon, max_drawdown_pct,
+                        preferred_sectors, excluded_sectors, excluded_symbols, updated_at
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, now())
+                    ON CONFLICT (user_sub) DO UPDATE
+                    SET risk_level = EXCLUDED.risk_level,
+                        horizon = EXCLUDED.horizon,
+                        max_drawdown_pct = EXCLUDED.max_drawdown_pct,
+                        preferred_sectors = EXCLUDED.preferred_sectors,
+                        excluded_sectors = EXCLUDED.excluded_sectors,
+                        excluded_symbols = EXCLUDED.excluded_symbols,
+                        updated_at = now()
+                    RETURNING *
                     """,
                     (
-                        run_id,
-                        item["symbol"],
-                        item.get("action", "buy"),
-                        item["rank"],
-                        item["score"],
-                        item["confidence"],
-                        item.get("sector"),
-                        Jsonb(item.get("reasons") or []),
-                        Jsonb(item.get("riskWarnings") or item.get("risk_warnings") or []),
-                        Jsonb(item.get("metricsSnapshot") or item.get("metrics_snapshot") or {}),
+                        profile.user_sub,
+                        profile.risk_level,
+                        profile.horizon,
+                        profile.max_drawdown_pct,
+                        Jsonb(profile.preferred_sectors),
+                        Jsonb(profile.excluded_sectors),
+                        Jsonb(profile.excluded_symbols),
                     ),
-                )
-            conn.commit()
-            return self._run_with_items(conn, dict(row)) or _json_ready(dict(row))
+                ).fetchone()
+                conn.commit()
+                return _json_ready(dict(row))
+        except UndefinedTable as exc:
+            raise RecommendationSchemaUnavailable("recommendation database migration required") from exc
+
+    def get_portfolio_snapshot(self, user_sub: str) -> dict[str, Any] | None:
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT * FROM user_portfolio_snapshots WHERE user_sub = %s",
+                    (user_sub,),
+                ).fetchone()
+                if not row:
+                    return None
+                payload = dict(row)
+                payload["payload"] = _json_ready(payload.get("payload") or {})
+                return _json_ready(payload)
+        except UndefinedTable as exc:
+            raise RecommendationSchemaUnavailable("recommendation database migration required") from exc
+
+    def upsert_portfolio_snapshot(self, user_sub: str, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    """
+                    INSERT INTO user_portfolio_snapshots (user_sub, payload, updated_at)
+                    VALUES (%s, %s, now())
+                    ON CONFLICT (user_sub) DO UPDATE
+                    SET payload = EXCLUDED.payload,
+                        updated_at = now()
+                    RETURNING *
+                    """,
+                    (user_sub, Jsonb(payload)),
+                ).fetchone()
+                conn.commit()
+                return _json_ready(dict(row))
+        except UndefinedTable as exc:
+            raise RecommendationSchemaUnavailable("recommendation database migration required") from exc
+
+    def latest_run(self, user_sub: str) -> dict[str, Any] | None:
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT * FROM stock_recommendation_runs
+                    WHERE user_sub = %s
+                    ORDER BY generated_at DESC, id DESC
+                    LIMIT 1
+                    """,
+                    (user_sub,),
+                ).fetchone()
+                return self._run_with_items(conn, dict(row)) if row else None
+        except UndefinedTable as exc:
+            raise RecommendationSchemaUnavailable("recommendation database migration required") from exc
+
+    def get_run_by_key(self, user_sub: str, run_key: str) -> dict[str, Any] | None:
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT * FROM stock_recommendation_runs WHERE user_sub = %s AND run_key = %s",
+                    (user_sub, run_key),
+                ).fetchone()
+                return self._run_with_items(conn, dict(row)) if row else None
+        except UndefinedTable as exc:
+            raise RecommendationSchemaUnavailable("recommendation database migration required") from exc
+
+    def create_or_replace_run(self, run: RecommendationRunCreate, items: list[dict[str, Any]]) -> dict[str, Any]:
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    """
+                    INSERT INTO stock_recommendation_runs (
+                        user_sub, run_key, slot_start, market_date, status,
+                        profile_snapshot, market_snapshot_time, summary, generated_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, now())
+                    ON CONFLICT (user_sub, run_key) DO UPDATE
+                    SET status = EXCLUDED.status,
+                        profile_snapshot = EXCLUDED.profile_snapshot,
+                        market_snapshot_time = EXCLUDED.market_snapshot_time,
+                        summary = EXCLUDED.summary,
+                        generated_at = now()
+                    RETURNING *
+                    """,
+                    (
+                        run.user_sub,
+                        run.run_key,
+                        run.slot_start,
+                        run.market_date,
+                        run.status,
+                        Jsonb(run.profile_snapshot),
+                        run.market_snapshot_time,
+                        Jsonb(run.summary),
+                    ),
+                ).fetchone()
+                run_id = int(row["id"])
+                conn.execute("DELETE FROM stock_recommendation_items WHERE run_id = %s", (run_id,))
+                for item in items:
+                    conn.execute(
+                        """
+                        INSERT INTO stock_recommendation_items (
+                            run_id, symbol, action, rank, score, confidence, sector,
+                            reasons, risk_warnings, metrics_snapshot
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            run_id,
+                            item["symbol"],
+                            item.get("action", "buy"),
+                            item["rank"],
+                            item["score"],
+                            item["confidence"],
+                            item.get("sector"),
+                            Jsonb(item.get("reasons") or []),
+                            Jsonb(item.get("riskWarnings") or item.get("risk_warnings") or []),
+                            Jsonb(item.get("metricsSnapshot") or item.get("metrics_snapshot") or {}),
+                        ),
+                    )
+                conn.commit()
+                return self._run_with_items(conn, dict(row)) or _json_ready(dict(row))
+        except UndefinedTable as exc:
+            raise RecommendationSchemaUnavailable("recommendation database migration required") from exc
 
     def _run_with_items(self, conn: psycopg.Connection, run: dict[str, Any]) -> dict[str, Any]:
         rows = conn.execute(

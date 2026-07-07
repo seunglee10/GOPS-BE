@@ -31,7 +31,7 @@ try:
     from app.alerts.notifications import InMemoryNotificationBroker
     from app.alerts.repository import InMemoryAlertRepository
     from app.main import create_app
-    from app.recommendations.repository import InMemoryRecommendationRepository
+    from app.recommendations.repository import InMemoryRecommendationRepository, RecommendationSchemaUnavailable
     from app.recommendations.worker import RecommendationWorker
 except Exception as exc:  # pragma: no cover - dependency guard for lean envs
     pytest.skip(f"FastAPI recommendation route tests are unavailable: {exc}", allow_module_level=True)
@@ -131,6 +131,31 @@ def test_refresh_is_idempotent_within_same_market_slot(recommendation_app) -> No
 
     assert first["runKey"] == second["runKey"]
     assert second["idempotentReplay"] is True
+
+
+def test_profile_upsert_defaults_max_drawdown_when_omitted(recommendation_app) -> None:
+    client = TestClient(recommendation_app)
+
+    response = client.put(
+        "/api/recommendations/profile",
+        json={"riskLevel": "balanced", "horizon": "intraday"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["profile"]["maxDrawdownPct"] == 6
+
+
+def test_missing_recommendation_schema_returns_503(recommendation_app) -> None:
+    class MissingSchemaRepository(InMemoryRecommendationRepository):
+        def get_profile(self, user_sub: str):
+            raise RecommendationSchemaUnavailable("recommendation database migration required")
+
+    recommendation_app.state.recommendation_repository = MissingSchemaRepository()
+
+    response = TestClient(recommendation_app).get("/api/recommendations/stocks/latest")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "recommendation database migration required"
 
 
 def test_market_closed_does_not_create_new_run(recommendation_app) -> None:

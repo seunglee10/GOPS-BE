@@ -248,7 +248,7 @@ items를 패널로 전달해 S&P500 거래대금순 Top10을 렌더링한다. �
 stock recommendations panel은 `panelType="stockRecommendations"`/`kind="recommendations"`로
 표현한다. 패널은 `GET /api/recommendations/stocks/latest`로 마지막 장중 추천을
 읽고, 새로고침 버튼은 `POST /api/recommendations/stocks/refresh`에 현재 active
-symbol을 보낸다. 필수 투자 설정은 하단 `V: 로그인/프로필` 패널의
+symbol을 보낸다. 필수 투자 설정은 하단 `VI: 설정`의 `추천 설정` 탭에 있는
 `PUT /api/recommendations/profile` 폼에서만 받는다. 추천 행 클릭은 차트 symbol
 전환까지만 수행하고 주문 실행으로 연결하지 않는다.
 

@@ -201,8 +201,6 @@ deployments="$(join_by_space "${SELECTED_DEPLOYMENTS[@]}")"
 has_services="false"
 smoke_frontend="false"
 smoke_backend="false"
-news_cache_rebuild="false"
-
 if [[ "${#SELECTED_KEYS[@]}" -gt 0 ]]; then
   has_services="true"
 fi
@@ -212,13 +210,8 @@ fi
 if [[ -n "${SELECTED[backend]:-}" ]]; then
   smoke_backend="true"
 fi
-if [[ -n "${SELECTED[market-storage]:-}" ]]; then
-  news_cache_rebuild="true"
-fi
-
 write_output "has_services" "${has_services}"
 write_output "services" "${services}"
 write_output "deployments" "${deployments}"
 write_output "smoke_frontend" "${smoke_frontend}"
 write_output "smoke_backend" "${smoke_backend}"
-write_output "news_cache_rebuild" "${news_cache_rebuild}"
