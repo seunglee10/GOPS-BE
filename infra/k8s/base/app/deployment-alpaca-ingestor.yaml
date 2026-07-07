@@ -65,6 +65,8 @@ spec:
           env:
             - name: ALPACA_FEED_PROFILE
               value: boats
+            - name: ALPACA_COLLECTION_SYMBOL_SOURCE
+              value: on-demand
             - name: KAFKA_CLIENT_ID
               value: alfaka-alpaca-ingestor-boats
 ---

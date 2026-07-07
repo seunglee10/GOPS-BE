@@ -1722,6 +1722,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         news_rebuild_job = (REPO_ROOT / "infra/k8s/base/job-news-intelligence-rebuild.yaml").read_text(encoding="utf-8")
         news_rebuild_script = (REPO_ROOT / "scripts/aws/run-news-cache-rebuild-jobs.sh").read_text(encoding="utf-8")
         configmap = (REPO_ROOT / "infra/k8s/base/app/configmap.yaml").read_text(encoding="utf-8")
+        alpaca_ingestor_deployment = (REPO_ROOT / "infra/k8s/base/app/deployment-alpaca-ingestor.yaml").read_text(encoding="utf-8")
         aws_overlay = (REPO_ROOT / "infra/k8s/overlays/aws/kustomization.yaml").read_text(encoding="utf-8")
         aws_ci_overlay = (REPO_ROOT / "infra/k8s/overlays/aws-incluster-app-ci/kustomization.yaml").read_text(encoding="utf-8")
 
@@ -1756,6 +1757,11 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertNotIn("name: alfaka-news-intelligence-rebuild", aws_ci_overlay)
         self.assertIn("KAFKA_PROCESSOR_GROUP_ID: alfaka-market-processor", configmap)
         self.assertIn("KAFKA_RAW_S3_GROUP_ID: alfaka-raw-s3-archive", configmap)
+        self.assertIn("ALPACA_COLLECTION_SYMBOL_SOURCE: universe", configmap)
+        self.assertIn('ALPACA_MAX_TRADE_SYMBOLS: "100"', configmap)
+        self.assertIn("name: alfaka-alpaca-ingestor-boats", alpaca_ingestor_deployment)
+        self.assertIn("name: ALPACA_COLLECTION_SYMBOL_SOURCE", alpaca_ingestor_deployment)
+        self.assertIn("value: on-demand", alpaca_ingestor_deployment)
         self.assertIn('CLICKHOUSE_PROVIDER_TIMEOUT_SECONDS: "8"', configmap)
         self.assertIn('CLICKHOUSE_PROVIDER_RETRY_ATTEMPTS: "2"', configmap)
         self.assertIn('NEWS_BACKFILL_DAYS: "365"', configmap)
@@ -1796,6 +1802,8 @@ class MarketDataHardeningContractTest(unittest.TestCase):
     def test_deploy_smoke_uses_lightweight_health_endpoint(self):
         workflow = (REPO_ROOT / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8")
 
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertNotIn("  push:", workflow)
         self.assertIn("smoke_url https://stargops.com/api/health", workflow)
         self.assertNotIn("smoke_url https://stargops.com/api/charts/symbols", workflow)
 
@@ -7024,6 +7032,23 @@ class RealtimeChartSubscriptionContractTest(unittest.TestCase):
         record = redis_client.hgetall(keys.subscription_symbol("NVDA"))
         self.assertEqual(record["sources"], "watchlist")
         self.assertEqual(redis_client.smembers(keys.subscription_symbols()), {"NVDA"})
+
+    def test_realtime_symbol_cap_prioritizes_active_chart_symbols(self):
+        redis_client = MemoryRedis()
+        controller = RealtimeSubscriptionCohortService(redis_client)
+        keys = RedisKeyBuilder()
+
+        controller.replace_user_watchlist("user-a", ["AAPL", "MSFT", "NVDA"])
+        controller.refresh_active_chart("user-a", "session-1", "MSFT", 90)
+        controller.refresh_active_chart("user-a", "session-2", "TSLA", 90)
+
+        with mock.patch.dict(os.environ, {"ALPACA_MAX_TRADE_SYMBOLS": "2"}, clear=False):
+            desired = read_realtime_subscription_symbols_by_channel(redis_client, ["trades", "quotes"])
+
+        self.assertEqual(desired["trades"], {"MSFT", "TSLA"})
+        self.assertEqual(desired["quotes"], {"MSFT", "TSLA"})
+        self.assertEqual(redis_client.hgetall(keys.subscription_symbol("MSFT"))["sources"], "active-chart,watchlist")
+        self.assertEqual(redis_client.hgetall(keys.subscription_symbol("TSLA"))["sources"], "active-chart")
 
 
 if __name__ == "__main__":

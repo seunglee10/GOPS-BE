@@ -25,7 +25,7 @@ GOPS v2가 AWS/EKS에서 안전하게 빌드, 배포, 운영되도록 platform�
 - GitHub Actions workflow
 - CI/CD rollout, smoke test, rollback
 
-GitHub Actions는 GitHub 저장소 안의 `.github/workflows/*.yml` 파일로 빌드, 테스트, 배포 같은 자동화를 실행하는 기능이다. 이 프로젝트는 현재 `.github/workflows/deploy-dev.yml`에서 dev/test 브랜치 배포를 처리한다.
+GitHub Actions는 GitHub 저장소 안의 `.github/workflows/*.yml` 파일로 빌드, 테스트, 배포 같은 자동화를 실행하는 기능이다. 이 프로젝트는 현재 `.github/workflows/deploy-dev.yml`에서 dev/test 배포를 처리하되, push 자동 실행이 아니라 GitHub Actions 화면의 수동 실행 버튼으로만 시작한다.
 
 CI/CD는 Continuous Integration/Continuous Delivery의 줄임말이다. 코드를 합치고 검증하고 배포하는 과정을 자동화한다는 뜻이다.
 
@@ -75,7 +75,7 @@ CI/CD는 Continuous Integration/Continuous Delivery의 줄임말이다. 코드�
 
 흐름:
 
-1. `dev`, `kimheejun`, `helix/front-chart`, `deploy/**`, `test/**` branch push 또는 manual dispatch로 시작한다.
+1. GitHub Actions 화면에서 `.github/workflows/deploy-dev.yml`을 `Run workflow`로 수동 실행한다. `workflow_dispatch`는 GitHub Actions의 수동 실행 트리거이며, branch push는 배포를 시작하지 않는다.
 2. `scripts/aws/detect-changed-services.sh`가 변경된 service를 감지한다.
 3. AWS OIDC role을 assume한다.
 4. ECR repository를 확인하거나 생성한다.
@@ -95,7 +95,7 @@ CI/CD는 Continuous Integration/Continuous Delivery의 줄임말이다. 코드�
 ECR은 Amazon Elastic Container Registry의 줄임말이다. Docker image를 저장하는 AWS registry다. GitHub Actions에서 image를 build한 뒤 ECR에 push하고, EKS pod는 그 image를 pull해서 실행한다.
 
 Kustomize는 Kubernetes manifest를 base와 overlay로 나눠 관리하는 도구다. GOPS는 `infra/k8s/base`에 공통 manifest를 두고, `infra/k8s/overlays/*`에서 AWS/dev/CI 환경 차이를 반영한다.
-자동 앱 배포 overlay는 `infra/k8s/base/app`만 상속해야 한다. `infra/k8s/base`의 one-shot/smoke/eval Job은 수동 실행 대상이며, CI apply 경로에 포함하면 기존 Job의 immutable `spec.template` 때문에 dry-run/apply가 실패할 수 있다.
+수동 앱 배포 overlay는 `infra/k8s/base/app`만 상속해야 한다. `infra/k8s/base`의 one-shot/smoke/eval Job은 별도 수동 실행 대상이며, deploy workflow apply 경로에 포함하면 기존 Job의 immutable `spec.template` 때문에 dry-run/apply가 실패할 수 있다.
 
 IRSA는 IAM Roles for Service Accounts의 줄임말이다. EKS pod가 AWS credential을 직접 들고 있지 않아도 특정 AWS 권한을 가진 IAM role로 동작하게 해준다.
 

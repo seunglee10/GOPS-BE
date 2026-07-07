@@ -8,7 +8,9 @@ SIP/BOATS routing, and frontend monitoring scope.
 
 Current rebuild rules:
 
-- Chart data starts empty; no preset S&P500, legacy fixed symbol set, or preload collection.
+- Chart history starts empty; no preset historical S&P500, legacy fixed symbol set, or preload collection.
+- The active runtime may keep a SIP S&P500 bars/statuses baseline, but not
+  S&P500-wide trades/quotes.
 - Kafka input topics use `market.input.realtime.*.v1`.
 - Realtime tick fanout uses per-timeframe topics such as
   `market.realtime.ticks.to.1m.v1`.

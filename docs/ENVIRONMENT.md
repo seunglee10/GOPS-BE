@@ -31,10 +31,10 @@ Current chart rebuild contract:
 ALFAKA_REQUEST_CONFIG=systems/market-data/config/market-data-request.json
 ALPACA_UNIVERSE=sp500
 ALPACA_UNIVERSE_REGISTRY_PATH=systems/market-data/config/sp500-universe.json
-ALPACA_COLLECTION_SYMBOL_SOURCE=on-demand
+ALPACA_COLLECTION_SYMBOL_SOURCE=universe
 ALPACA_CHANNELS=bars,updatedBars,dailyBars,statuses
 ALPACA_ACTIVE_CHANNELS=trades,quotes
-ALPACA_MAX_TRADE_SYMBOLS=
+ALPACA_MAX_TRADE_SYMBOLS=100
 ALPACA_FEED_PROFILE=sip
 ALPACA_FEED_PROFILES=sip,boats,crypto-us
 ALPACA_CRYPTO_LOCATION=us
@@ -48,14 +48,19 @@ HOT_TIER_SIZE=10
 HOT_TIER_FALLBACK_SCAN_LIMIT=20
 ```
 
-Baseline collection is on-demand: ingestors do not subscribe the whole S&P500
-universe on startup. `ALPACA_CHANNELS` remains the channel template for any
-explicit collection seed, while runtime `trades` and `quotes` follow the exact
-same explicit symbol set as realtime cohorts: watchlist, portfolio, rankings,
-active chart sessions, and manual admin subscriptions. Quotes are never a
-separate all-symbol feed.
-Set `ALPACA_MAX_TRADE_SYMBOLS` only when an Alpaca subscription cap requires an
-operational limit; explicit active chart subscriptions remain the priority.
+Baseline collection is SIP-only and bars/statuses-only: the SIP ingestor
+subscribes the S&P500 universe for `bars`, `updatedBars`, `dailyBars`, and
+`statuses` so every S&P500 chart has a fast recent 1m entry path. Runtime
+`trades` and `quotes` still follow the exact same explicit symbol set as
+realtime cohorts: watchlist, portfolio, rankings, active chart sessions, and
+manual admin subscriptions. Quotes are never a separate all-symbol feed.
+`ALPACA_MAX_TRADE_SYMBOLS` caps the realtime tick cohort and the ingestor
+prioritizes active chart, manual, portfolio, watchlist, then ranking symbols
+when the cap is reached.
+
+BOATS/overnight keeps `ALPACA_COLLECTION_SYMBOL_SOURCE=on-demand` at the
+deployment level. Overnight liquidity is sparse and the BOATS stream should not
+fan out a 500-symbol baseline until feed support and traffic are measured.
 
 `ALPACA_FEED_PROFILE` selects one ingestor runtime feed (`sip`, `boats`, or `crypto-us`). The live contract is session-routed: SIP is primary for `04:00-20:00 ET` (`pre`, `regular`, `after`), BOATS is primary for `20:00-04:00 ET` (`overnight`), and `crypto-us` is the 24/7 Alpaca crypto feed. Sunday `20:00 ET` opens the Monday overnight slice; Friday `20:00 ET` closes the equity 24/5 window. Local compose and k8s run one ingestor per active profile, and `/health/config` reports the expected profile set from `ALPACA_FEED_PROFILES`. Market-data envelopes, Redis live state, ClickHouse candle rows, API candles, and chart snapshots preserve `feedProfile` and `marketSession` so daytime, BOATS/overnight, and crypto data are diagnosable instead of collapsing into an anonymous stream.
 
