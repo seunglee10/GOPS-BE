@@ -82,6 +82,8 @@ Derived intervals fill their canonical source interval first:
 1m  -> 1m
 5m  -> 1m, then aggregate
 10m -> 1m, then aggregate
+1h  -> 1m, then aggregate
+4h  -> 1m, then aggregate
 1D  -> 1D
 1W  -> 1D, then aggregate
 1M  -> 1D, then aggregate
@@ -173,5 +175,5 @@ Core cases:
 - Redis miss and ClickHouse hit does not call S3/Alpaca.
 - ClickHouse miss and S3 hit materializes only the requested range.
 - S3 miss calls Alpaca historical only for the requested range.
-- 5m/10m/1W/1M fill source intervals before aggregation.
+- 5m/10m/1h/4h/1W/1M fill source intervals before aggregation.
 - Timeout returns partial candles plus source-level trace.

@@ -1006,9 +1006,13 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         service = MarketDataQueryService(provider, backfill_service=FakeBackfillService(), fill_service=FakeFillService())
 
         daily_payload = service.candle_snapshot("aapl", "1d", "5,20,60", None)
+        hourly_payload = service.candle_snapshot("aapl", "1h", "5,20,60", None)
+        four_hour_payload = service.candle_snapshot("aapl", "4h", "5,20,60", None)
         weekly_payload = service.candle_snapshot("aapl", "1W", "5,20,60", None)
         monthly_payload = service.candle_snapshot("aapl", "1M", "5,20,60", None)
 
+        self.assertEqual(hourly_payload["interval"], "1h")
+        self.assertEqual(four_hour_payload["interval"], "4h")
         self.assertEqual(daily_payload["interval"], "1D")
         self.assertEqual(weekly_payload["interval"], "1W")
         self.assertEqual(monthly_payload["interval"], "1M")
@@ -1076,6 +1080,18 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         )
         self.assertEqual(payload_5m["interval"], "5m")
         self.assertNotEqual(derived_client.requests[0]["requestHash"], derived_client.requests[1]["requestHash"])
+        payload_1h = service.volume_profile_bins(
+            "aapl",
+            "2026-06-25T13:30:00.000Z",
+            "2026-06-25T17:30:00.000Z",
+            "auto",
+            target_bins=4,
+            price_min=100,
+            price_max=102,
+            interval="1h",
+        )
+        self.assertEqual(payload_1h["interval"], "1h")
+        self.assertEqual(derived_client.requests[2]["interval"], "1h")
 
     def test_volume_profile_bins_rejects_reversed_price_range(self):
         service = MarketDataQueryService(FakeVolumeProfileProvider(), backfill_service=FakeBackfillService(), fill_service=FakeFillService())
@@ -2538,6 +2554,22 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(metadata["coverage"]["reasonCode"], "no_stored_candles")
         self.assertEqual(metadata["coverage"]["repairStatus"], "gapfill_required")
 
+    def test_intraday_derived_snapshot_metadata_uses_1m_source_interval(self):
+        service = BackfillService(store=RecordingBackfillStore())
+
+        metadata = service.snapshot_metadata("AAPL", "1h", {
+            "candles": [],
+            "returnedCount": 0,
+            "requestedLimit": 120,
+            "storedCandleCount": 0,
+            "targetStoredCount": 7200,
+        })
+
+        self.assertEqual(metadata["dataStatus"], "empty")
+        self.assertEqual(metadata["sourceInterval"], "1m")
+        self.assertEqual(metadata["coverage"]["sourceInterval"], "1m")
+        self.assertEqual(metadata["coverage"]["minimumReturnedCount"], 8)
+
     def test_succeeded_backfill_without_stored_coverage_is_not_ready(self):
         store = RecordingBackfillStore()
         service = BackfillService(store=store)
@@ -2871,6 +2903,8 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             "1m": 120,
             "5m": 120,
             "10m": 120,
+            "1h": 120,
+            "4h": 120,
             "1D": 120,
             "1W": 104,
             "1M": 36,

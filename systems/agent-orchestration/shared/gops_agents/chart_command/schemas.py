@@ -55,7 +55,7 @@ def chart_command_payload_schema(supported_symbols: list[str]) -> dict[str, Any]
         ],
         "properties": {
             "symbol": {"type": ["string", "null"], "enum": [*supported_symbols, None]},
-            "timeframe": {"type": ["string", "null"], "enum": ["1m", "5m", "10m", "1D", "1W", "1M", None]},
+            "timeframe": {"type": ["string", "null"], "enum": ["1m", "5m", "10m", "1h", "4h", "1D", "1W", "1M", None]},
             "visibleCount": {"type": ["number", "null"], "minimum": 6, "maximum": 525600},
             "rightOffset": {"type": ["number", "null"]},
             "layer": {"type": ["string", "null"], "enum": ["candles", "volume", "ma5", "ma20", "ma60", None]},

@@ -11,13 +11,31 @@ INTRADAY_PRELOAD_TARGET_BARS = TRADING_MINUTES_PER_DAY * INTRADAY_PRELOAD_TARGET
 INTRADAY_PRELOAD_MIN_START_ENV = "BACKFILL_INITIAL_LOAD_1M_MIN_START"
 DEFAULT_INTRADAY_PRELOAD_MIN_START = "2020-07-01T00:00:00Z"
 
-CHART_INTERVALS = ("1m", "5m", "10m", "1D", "1W", "1M")
-LEGACY_INTERVALS = {"1d": "1D", "1w": "1W", "1mo": "1M", "1MO": "1M", "1month": "1M"}
+CHART_INTERVALS = ("1m", "5m", "10m", "1h", "4h", "1D", "1W", "1M")
+INTRADAY_INTERVAL_MINUTES = {
+    "1m": 1,
+    "5m": 5,
+    "10m": 10,
+    "1h": 60,
+    "4h": 240,
+}
+INTRADAY_DERIVED_INTERVALS = frozenset(interval for interval in INTRADAY_INTERVAL_MINUTES if interval != "1m")
+LEGACY_INTERVALS = {
+    "1d": "1D",
+    "1w": "1W",
+    "1mo": "1M",
+    "1MO": "1M",
+    "1month": "1M",
+    "1H": "1h",
+    "4H": "4h",
+}
 
 DEFAULT_VISIBLE_BARS = {
     "1m": 120,
     "5m": 120,
     "10m": 120,
+    "1h": 120,
+    "4h": 120,
     "1D": 120,
     "1W": 104,
     "1M": 36,
@@ -39,6 +57,8 @@ HISTORICAL_TARGET_BARS = {
     "1m": INTRADAY_PRELOAD_TARGET_BARS,
     "5m": (INTRADAY_PRELOAD_TARGET_BARS + 4) // 5,
     "10m": (INTRADAY_PRELOAD_TARGET_BARS + 9) // 10,
+    "1h": (INTRADAY_PRELOAD_TARGET_BARS + 59) // 60,
+    "4h": (INTRADAY_PRELOAD_TARGET_BARS + 239) // 240,
     **BACKFILL_TARGET_BARS,
 }
 
@@ -46,6 +66,8 @@ REDIS_CLOSED_CANDLE_CAPS = {
     "1m": TRADING_MINUTES_PER_DAY * 2,
     "5m": (TRADING_MINUTES_PER_DAY * 2 + 4) // 5,
     "10m": (TRADING_MINUTES_PER_DAY * 2 + 9) // 10,
+    "1h": (TRADING_MINUTES_PER_DAY * 2 + 59) // 60,
+    "4h": (TRADING_MINUTES_PER_DAY * 2 + 239) // 240,
     "1D": TRADING_DAYS_PER_YEAR * HISTORICAL_TARGET_YEARS,
     "1W": 52 * HISTORICAL_TARGET_YEARS,
     "1M": 12 * HISTORICAL_TARGET_YEARS,
@@ -55,6 +77,8 @@ MIN_RENDERABLE_RETURNED_BARS = {
     "1m": 20,
     "5m": 10,
     "10m": 8,
+    "1h": 8,
+    "4h": 6,
     "1D": 30,
     "1W": 12,
     "1M": 6,
@@ -69,6 +93,8 @@ INTERVAL_SECONDS = {
     "1m": 60,
     "5m": 5 * 60,
     "10m": 10 * 60,
+    "1h": 60 * 60,
+    "4h": 4 * 60 * 60,
     "1D": 24 * 60 * 60,
     "1W": 7 * 24 * 60 * 60,
     "1M": 31 * 24 * 60 * 60,
@@ -98,7 +124,7 @@ def backfill_target_bars(interval):
     interval = normalize_chart_interval(interval)
     if source_interval_for(interval) == "1m":
         bars = int(TRADING_MINUTES_PER_DAY * intraday_gapfill_target_days())
-        divisor = 1 if interval == "1m" else 5 if interval == "5m" else 10
+        divisor = INTRADAY_INTERVAL_MINUTES[interval]
         return (bars + divisor - 1) // divisor
     return BACKFILL_TARGET_BARS[interval]
 
@@ -153,7 +179,7 @@ def interval_seconds(interval):
 
 def source_interval_for(interval):
     interval = normalize_chart_interval(interval)
-    if interval in {"5m", "10m"}:
+    if interval in INTRADAY_DERIVED_INTERVALS:
         return "1m"
     if interval in {"1W", "1M"}:
         return "1D"
@@ -161,7 +187,7 @@ def source_interval_for(interval):
 
 
 def is_derived_interval(interval):
-    return normalize_chart_interval(interval) in {"5m", "10m", "1W", "1M"}
+    return normalize_chart_interval(interval) in {*INTRADAY_DERIVED_INTERVALS, "1W", "1M"}
 
 
 def candle_count_for_24h(interval):

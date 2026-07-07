@@ -9,7 +9,13 @@ from alfaka.alpaca.feed_profiles import active_extended_session_window, market_s
 from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
 from alfaka.serving.cursors import timestamp_from_cursor
 from alfaka.serving.dto import cursor_for, snapshot
-from alfaka.serving.intervals import normalize_chart_interval, resolve_candle_limit, source_interval_for
+from alfaka.serving.intervals import (
+    INTRADAY_DERIVED_INTERVALS,
+    INTRADAY_INTERVAL_MINUTES,
+    normalize_chart_interval,
+    resolve_candle_limit,
+    source_interval_for,
+)
 from alfaka.serving.moving_average import MA_WINDOWS, attach_moving_averages
 from alfaka.serving.redis_provider import RedisMarketDataProvider
 from alfaka.serving.symbol_registry import SymbolRegistry
@@ -79,7 +85,7 @@ class MarketDataProvider:
             from_time=clickhouse_from_time,
             to_time=to_time,
         ))
-        if interval in {"1m", "5m", "10m"} and not range_query and len(clickhouse_candles) < query_limit and clickhouse_from_time and not clickhouse_candles:
+        if interval in {"1m", *INTRADAY_DERIVED_INTERVALS} and not range_query and len(clickhouse_candles) < query_limit and clickhouse_from_time and not clickhouse_candles:
             latest_candles = filter_stock_chart_candles(self.clickhouse_provider.candles(
                 symbol,
                 interval,
@@ -385,12 +391,8 @@ def requested_window_for_interval(interval, requested_limit, before=None, from_t
 def requested_window_delta(interval, requested_limit):
     interval = normalize_chart_interval(interval)
     limit = max(1, int(requested_limit or 1))
-    if interval == "1m":
-        return timedelta(minutes=limit * 4)
-    if interval == "5m":
-        return timedelta(minutes=limit * 5 * 4)
-    if interval == "10m":
-        return timedelta(minutes=limit * 10 * 4)
+    if interval in INTRADAY_INTERVAL_MINUTES:
+        return timedelta(minutes=limit * INTRADAY_INTERVAL_MINUTES[interval] * 4)
     if interval == "1D":
         return timedelta(days=limit * 2)
     if interval == "1W":
@@ -403,10 +405,8 @@ def requested_window_delta(interval, requested_limit):
 def requested_source_bar_target(interval, requested_limit):
     interval = normalize_chart_interval(interval)
     limit = max(1, int(requested_limit or 1))
-    if interval == "5m":
-        return limit * 5
-    if interval == "10m":
-        return limit * 10
+    if interval in INTRADAY_DERIVED_INTERVALS:
+        return limit * INTRADAY_INTERVAL_MINUTES[interval]
     if interval == "1W":
         return limit * 5
     if interval == "1M":

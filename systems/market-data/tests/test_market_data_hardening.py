@@ -1414,6 +1414,8 @@ class MarketDataHardeningContractTest(unittest.TestCase):
 
         live_5m = json.loads(redis.values[keys.live_candle("AAPL", "5m")])
         live_10m = json.loads(redis.values[keys.live_candle("AAPL", "10m")])
+        live_1h = json.loads(redis.values[keys.live_candle("AAPL", "1h")])
+        live_4h = json.loads(redis.values[keys.live_candle("AAPL", "4h")])
         live_1d = json.loads(redis.values[keys.live_candle("AAPL", "1D")])
         live_1w = json.loads(redis.values[keys.live_candle("AAPL", "1W")])
         live_1month = json.loads(redis.values[keys.live_candle("AAPL", "1M")])
@@ -1427,6 +1429,10 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(live_5m["sourceInterval"], "1m")
         self.assertFalse(live_5m["isClosed"])
         self.assertEqual(live_10m["timestamp"], "2026-06-25T10:10:00.000Z")
+        self.assertEqual(live_1h["timestamp"], "2026-06-25T10:00:00.000Z")
+        self.assertEqual(live_1h["sourceInterval"], "1m")
+        self.assertEqual(live_4h["timestamp"], "2026-06-25T08:00:00.000Z")
+        self.assertEqual(live_4h["sourceInterval"], "1m")
         self.assertEqual(live_1d["timestamp"], "2026-06-25T04:00:00.000Z")
         self.assertEqual(live_1d["sourceInterval"], "1m")
         self.assertEqual(live_1w["timestamp"], "2026-06-22T00:00:00.000Z")
@@ -1440,7 +1446,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             if json.loads(value).get("type") == "LIVE_CANDLE_UPDATE"
         ]
         intervals = {event["interval"] for event in live_events}
-        self.assertTrue({"1m", "5m", "10m", "1D", "1W", "1M"}.issubset(intervals))
+        self.assertTrue({"1m", "5m", "10m", "1h", "4h", "1D", "1W", "1M"}.issubset(intervals))
         latest_5m_event = [event for event in live_events if event["interval"] == "5m"][-1]
         self.assertEqual(latest_5m_event["source"], "derived.live")
         self.assertEqual(latest_5m_event["sourceInterval"], "1m")
@@ -2370,6 +2376,35 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(aggregated["open"], 100)
         self.assertEqual(aggregated["close"], 104.5)
         self.assertEqual(aggregated["volume"], 510)
+
+    def test_candle_aggregator_builds_hourly_contract(self):
+        aggregator = CandleAggregator()
+        aggregated = None
+        for minute in range(60):
+            aggregated = aggregator.update({
+                "eventType": "CANDLE",
+                "symbol": "AAPL",
+                "interval": "1m",
+                "timestamp": f"2026-06-25T10:{minute:02d}:00.000Z",
+                "open": 100 + minute,
+                "high": 101 + minute,
+                "low": 99 + minute,
+                "close": 100.5 + minute,
+                "volume": 100,
+                "tradeCount": 1,
+                "vwap": 100.25 + minute,
+                "correctionType": "NONE",
+                "feed": "sip",
+                "sourceEventId": f"event-{minute}",
+                "createdAt": "2026-06-25T10:00:01.000Z",
+            }, 60)
+
+        self.assertIsNotNone(aggregated)
+        self.assertEqual(aggregated["interval"], "1h")
+        self.assertEqual(aggregated["timestamp"], "2026-06-25T10:00:00.000Z")
+        self.assertEqual(aggregated["open"], 100)
+        self.assertEqual(aggregated["close"], 159.5)
+        self.assertEqual(aggregated["volume"], 6000)
 
     def test_redis_key_prefix_keeps_contract_namespaced(self):
         keys = RedisKeyBuilder("gops-prod")
@@ -4257,10 +4292,14 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(candle_count_for_24h("1m"), 120)
         self.assertEqual(candle_count_for_24h("5m"), 120)
         self.assertEqual(candle_count_for_24h("10m"), 120)
+        self.assertEqual(candle_count_for_24h("1h"), 120)
+        self.assertEqual(candle_count_for_24h("4h"), 120)
         self.assertEqual(candle_count_for_24h("1d"), 120)
         self.assertEqual(candle_count_for_24h("1W"), 104)
         self.assertEqual(candle_count_for_24h("1M"), 36)
         self.assertEqual(historical_target_bars("1m"), 589680)
+        self.assertEqual(historical_target_bars("1h"), 9828)
+        self.assertEqual(historical_target_bars("4h"), 2457)
         self.assertEqual(historical_target_bars("1D"), 1512)
         self.assertEqual(historical_target_bars("1M"), 72)
         self.assertEqual(candle_count_for_1y("1m"), 589680)
@@ -4271,6 +4310,8 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(redis_closed_candle_cap("1m"), 780)
         self.assertEqual(redis_closed_candle_cap("5m"), 156)
         self.assertEqual(redis_closed_candle_cap("10m"), 78)
+        self.assertEqual(redis_closed_candle_cap("1h"), 13)
+        self.assertEqual(redis_closed_candle_cap("4h"), 4)
         self.assertEqual(redis_closed_candle_cap("1D"), 1512)
         self.assertEqual(redis_closed_candle_cap("1W"), 312)
         self.assertEqual(redis_closed_candle_cap("1M"), 72)
@@ -4527,6 +4568,9 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn("row_number() OVER", provider.queries[0][0])
         self.assertEqual(candles[-1]["interval"], "5m")
         self.assertEqual(candles[-1]["ma5"], 3.0)
+
+        provider.candles("AAPL", "1h", 5)
+        self.assertIn("INTERVAL 60 minute", provider.queries[-1][0])
 
     def test_clickhouse_query_time_weekly_monthly_aggregation_uses_daily_source(self):
         rows = [

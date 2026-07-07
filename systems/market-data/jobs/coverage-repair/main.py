@@ -10,7 +10,7 @@ import urllib.parse
 import urllib.request
 
 
-DEFAULT_INTERVALS = ("1m", "5m", "10m", "1D", "1W", "1M")
+DEFAULT_INTERVALS = ("1m", "5m", "10m", "1h", "4h", "1D", "1W", "1M")
 def main() -> None:
     base_url = os.getenv("GOPS_API_BASE_URL", "http://gops-backend:8000").rstrip("/")
     symbols = parse_symbols(os.getenv("COVERAGE_REPAIR_SYMBOLS") or os.getenv("ALPACA_SYMBOLS"))

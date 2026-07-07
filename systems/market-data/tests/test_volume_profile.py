@@ -39,7 +39,7 @@ class VolumeProfileCalculationTest(unittest.TestCase):
         self.assertTrue(any(bucket["inValueArea"] for bucket in payload["bins"]))
 
     def test_estimates_volume_profile_for_all_chart_intervals(self):
-        for interval in ("1m", "5m", "10m", "1D", "1W", "1M"):
+        for interval in ("1m", "5m", "10m", "1h", "4h", "1D", "1W", "1M"):
             with self.subTest(interval=interval):
                 payload = compute_volume_profile_payload(
                     {"candles": [{"low": 10, "high": 11, "close": 10.5, "volume": 7}]},

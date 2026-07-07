@@ -121,7 +121,7 @@ class MarketDataMonitorService:
         return {
             "mode": "fast-response-background-fill",
             "timeoutSeconds": on_demand_fill_timeout_seconds(),
-            "sourceIntervals": {"1m": ["1m", "5m", "10m"], "1D": ["1D", "1W", "1M"]},
+            "sourceIntervals": {"1m": ["1m", "5m", "10m", "1h", "4h"], "1D": ["1D", "1W", "1M"]},
             "foregroundOrder": ["redis", "clickhouse"],
             "backgroundOrder": ["s3-final-manifest", "alpaca-historical"],
             "deprecatedEndpoints": [
