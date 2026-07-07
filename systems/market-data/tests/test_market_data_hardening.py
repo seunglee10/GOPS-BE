@@ -755,6 +755,16 @@ class RecordingProducer:
         self.flush_count += 1
 
 
+class FailingProducer:
+    def __init__(self, error):
+        self.error = error
+        self.sent = []
+
+    def send(self, topic, key, value):
+        self.sent.append({"topic": topic, "key": key, "value": value})
+        raise RuntimeError(self.error)
+
+
 def feed_fanout_messages(producer, redis, keys, state, topics, interval="1m"):
     fanout = [
         sent["value"]
@@ -985,6 +995,76 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(websocket.sent[0]["action"], "auth")
         self.assertEqual(websocket.sent[1], {"action": "subscribe", "bars": ["AAPL"]})
         self.assertEqual(websocket.sent[2], {"action": "subscribe", "trades": ["AAPL"]})
+
+    def test_alpaca_stream_session_reports_healthy_events_for_backoff_reset(self):
+        import asyncio
+        from alfaka.alpaca import websocket_collector
+
+        profile = resolve_feed_profile({"ALPACA_FEED_PROFILE": "sip"})
+        websocket = FakeWebSocket([
+            {"T": "success", "msg": "connected"},
+            {"T": "success", "msg": "authenticated"},
+            {"T": "subscription", "bars": ["AAPL"]},
+            {"T": "t", "S": "AAPL", "i": 123, "p": 195.2, "s": 10, "t": "2026-06-25T10:15:20.100Z"},
+            "stop",
+        ])
+        healthy_events = []
+
+        with mock.patch.object(websocket_collector.websockets, "connect", return_value=FakeWebSocketConnect(websocket)):
+            with self.assertRaisesRegex(RuntimeError, "stop"):
+                asyncio.run(websocket_collector.run_stream_session(
+                    alpaca_url=profile.websocket_url,
+                    alpaca_key="key",
+                    alpaca_secret="secret",
+                    alpaca_feed=profile.feed,
+                    feed_profile=profile,
+                    producer=RecordingProducer(),
+                    subscribe_request={"action": "subscribe", "bars": ["AAPL"]},
+                    redis_client=MemoryRedis(),
+                    active_channels=[],
+                    active_poll_seconds=0.01,
+                    raw_topic_prefix="market.input",
+                    enforce_session_window=False,
+                    on_session_healthy=lambda reason: healthy_events.append(reason),
+                ))
+
+        self.assertIn("authenticated", healthy_events)
+        self.assertIn("subscribed", healthy_events)
+        self.assertIn("data", healthy_events)
+
+    def test_kafka_publish_failure_does_not_block_alpaca_websocket_receive_loop(self):
+        import asyncio
+        from alfaka.alpaca import websocket_collector
+
+        profile = resolve_feed_profile({"ALPACA_FEED_PROFILE": "sip"})
+        websocket = FakeWebSocket([
+            {"T": "success", "msg": "connected"},
+            {"T": "success", "msg": "authenticated"},
+            {"T": "t", "S": "AAPL", "i": 123, "p": 195.2, "s": 10, "t": "2026-06-25T10:15:20.100Z"},
+            "stop",
+        ])
+        redis = MemoryRedis()
+
+        with mock.patch.object(websocket_collector.websockets, "connect", return_value=FakeWebSocketConnect(websocket)):
+            with self.assertRaisesRegex(RuntimeError, "stop"):
+                asyncio.run(websocket_collector.run_stream_session(
+                    alpaca_url=profile.websocket_url,
+                    alpaca_key="key",
+                    alpaca_secret="secret",
+                    alpaca_feed=profile.feed,
+                    feed_profile=profile,
+                    producer=FailingProducer("kafka blocked"),
+                    subscribe_request={"action": "subscribe"},
+                    redis_client=redis,
+                    active_channels=[],
+                    active_poll_seconds=0.01,
+                    raw_topic_prefix="market.input",
+                    enforce_session_window=False,
+                ))
+
+        health = read_component_health(redis, RedisKeyBuilder(), "market-ingestor-sip")
+        self.assertEqual(health["status"], "error")
+        self.assertEqual(health["errorCategory"], "kafka_publish_failed")
 
     def test_raw_envelope_and_rows_preserve_feed_profile_and_session(self):
         payload = {"T": "t", "S": "AAPL", "t": "2026-06-30T02:00:00.000Z", "p": 200.5, "s": 10, "i": 42}
@@ -1822,8 +1902,12 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn("ALPACA_COLLECTION_SYMBOL_SOURCE: universe", configmap)
         self.assertIn('ALPACA_MAX_TRADE_SYMBOLS: "100"', configmap)
         self.assertIn("name: alfaka-alpaca-ingestor-boats", alpaca_ingestor_deployment)
+        self.assertIn("name: alfaka-alpaca-tick-ingestor-sip", alpaca_ingestor_deployment)
         self.assertIn("name: ALPACA_COLLECTION_SYMBOL_SOURCE", alpaca_ingestor_deployment)
         self.assertIn("value: on-demand", alpaca_ingestor_deployment)
+        self.assertIn("value: alfaka-alpaca-tick-ingestor-sip", alpaca_ingestor_deployment)
+        self.assertIn("value: trades,quotes", alpaca_ingestor_deployment)
+        self.assertIn('value: ""', alpaca_ingestor_deployment)
         self.assertIn('CLICKHOUSE_PROVIDER_TIMEOUT_SECONDS: "8"', configmap)
         self.assertIn('CLICKHOUSE_PROVIDER_RETRY_ATTEMPTS: "2"', configmap)
         self.assertIn('NEWS_BACKFILL_DAYS: "365"', configmap)
@@ -1858,6 +1942,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         lib = (REPO_ROOT / "scripts/aws/lib-gops-images.sh").read_text(encoding="utf-8")
 
         self.assertIn("alfaka-alpaca-ingestor-sip", lib)
+        self.assertIn("alfaka-alpaca-tick-ingestor-sip", lib)
         self.assertIn("alfaka-alpaca-ingestor-boats", lib)
         self.assertIn("alfaka-alpaca-ingestor-crypto", lib)
         self.assertIn("alfaka-alpaca-news-ingestor", lib)
