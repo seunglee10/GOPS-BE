@@ -43,6 +43,59 @@ SNAPSHOT_BUNDLE_BY_INTENT = {
     "general_question": ["risk_policy_snapshot"],
 }
 
+ANALYSIS_QUERY_POLICY_BY_TYPE = {
+    "price_move_cause": {
+        "priority": "P0",
+        "anchor_mode": "price_move",
+        "composition_strategy": "price_news_market_relationship",
+        "snapshot_bundle": ["market_snapshot", "news_snapshot", "relationship_snapshot", "risk_policy_snapshot"],
+    },
+    "news_price_mismatch": {
+        "priority": "P1",
+        "anchor_mode": "news_price_reaction",
+        "composition_strategy": "mismatch_expectations_sector_valuation",
+        "snapshot_bundle": ["news_snapshot", "market_snapshot", "relationship_snapshot", "risk_policy_snapshot"],
+    },
+    "factor_decomposition": {
+        "priority": "P1",
+        "anchor_mode": "market_sector_single_name",
+        "composition_strategy": "decompose_market_sector_single_name",
+        "snapshot_bundle": ["market_snapshot", "relationship_snapshot", "news_snapshot", "risk_policy_snapshot"],
+    },
+    "reference_anchor_analysis": {
+        "priority": "P2",
+        "anchor_mode": "selected_reference",
+        "composition_strategy": "reference_first_context_join",
+        "snapshot_bundle": ["market_snapshot", "news_snapshot", "relationship_snapshot", "risk_policy_snapshot"],
+    },
+    "impact_mapping": {
+        "priority": "P2",
+        "anchor_mode": "selected_news_or_theme",
+        "composition_strategy": "bounded_related_symbols_and_sectors",
+        "snapshot_bundle": ["news_snapshot", "relationship_snapshot", "market_snapshot", "risk_policy_snapshot"],
+    },
+    "earnings_reaction": {
+        "priority": "P4",
+        "anchor_mode": "earnings_event",
+        "composition_strategy": "financial_news_price_reaction",
+        "snapshot_bundle": ["financial_snapshot", "news_snapshot", "market_snapshot", "risk_policy_snapshot"],
+    },
+    "general": {
+        "priority": "P3",
+        "anchor_mode": "symbol",
+        "composition_strategy": "general_synthesis",
+        "snapshot_bundle": [],
+    },
+}
+
+ANALYSIS_ANSWER_POLICY = {
+    "start_with_conclusion": True,
+    "max_evidence_bullets": 3,
+    "allowed_sections": ["핵심 판단", "왜 그렇게 보나", "반대로 볼 점", "다음 확인 포인트"],
+    "hide_internal_terms": ["GraphDB", "ClickHouse", "Redis", "providerEvidence", "Provider status"],
+    "prohibit_direct_investment_command": True,
+}
+
 
 def runtime_policy_from_env() -> RuntimePolicy:
     return RuntimePolicy(
@@ -61,7 +114,8 @@ def runtime_policy_from_env() -> RuntimePolicy:
 
 def build_route_plan(run_id: str, route: IntentRoute, context: Any, policy: RuntimePolicy) -> RoutePlan:
     intent = route_plan_intent(route)
-    bundle = list(SNAPSHOT_BUNDLE_BY_INTENT.get(intent, SNAPSHOT_BUNDLE_BY_INTENT["investment_opinion"]))
+    analysis_policy = analysis_query_policy(route, context, intent)
+    bundle = snapshot_bundle_for_analysis_policy(intent, context, analysis_policy)
     candidates = [str(context.symbol)] if getattr(context, "symbol", None) else []
     candidates.extend(str(item) for item in getattr(context, "newsSymbols", []) if str(item) not in candidates)
     execution_mode = "parallel_snapshots"
@@ -75,7 +129,179 @@ def build_route_plan(run_id: str, route: IntentRoute, context: Any, policy: Runt
         snapshot_bundle=bundle,
         execution_mode=execution_mode,
         llm_calls_allowed=policy.max_realtime_llm_calls,
+        analysisQueryType=str(analysis_policy["analysis_query_type"]),
+        priority=str(analysis_policy["priority"]),
+        anchorMode=str(analysis_policy["anchor_mode"]),
+        compositionStrategy=str(analysis_policy["composition_strategy"]),
+        answerPolicy=dict(analysis_policy["answer_policy"]),
     )
+
+
+def analysis_query_policy(route: IntentRoute, context: Any, route_plan_intent_value: str) -> dict[str, Any]:
+    query_type = classify_analysis_query_type(route, context, route_plan_intent_value)
+    policy = dict(ANALYSIS_QUERY_POLICY_BY_TYPE.get(query_type, ANALYSIS_QUERY_POLICY_BY_TYPE["general"]))
+    return {
+        "analysis_query_type": query_type,
+        "priority": policy["priority"],
+        "anchor_mode": policy["anchor_mode"],
+        "composition_strategy": policy["composition_strategy"],
+        "snapshot_bundle": list(policy["snapshot_bundle"]),
+        "answer_policy": {
+            **ANALYSIS_ANSWER_POLICY,
+            "analysis_query_type": query_type,
+            "composition_strategy": policy["composition_strategy"],
+        },
+    }
+
+
+def classify_analysis_query_type(route: IntentRoute, context: Any, route_plan_intent_value: str) -> str:
+    text = str(getattr(context, "intent", "") or "").lower()
+    compacted = re.sub(r"\s+", "", text)
+    references = context_references(context)
+    ref_types = {str(item.get("type") or "") for item in references}
+    operation_types = operation_types_for_context(context)
+    intent_type = str(route.intentType or "").lower()
+
+    if is_impact_mapping_query(text, compacted, ref_types):
+        return "impact_mapping"
+    if is_factor_decomposition_query(text, compacted):
+        return "factor_decomposition"
+    if is_news_price_mismatch_query(text, compacted, ref_types):
+        return "news_price_mismatch"
+    if is_earnings_reaction_query(text, compacted):
+        return "earnings_reaction"
+    if is_reference_anchor_query(text, compacted, ref_types, operation_types):
+        return "reference_anchor_analysis"
+    if is_price_move_cause_query(text, compacted, operation_types, intent_type, route_plan_intent_value):
+        return "price_move_cause"
+    return "general"
+
+
+def operation_types_for_context(context: Any) -> set[str]:
+    operation_ir = getattr(context, "operationIR", {})
+    if not isinstance(operation_ir, dict):
+        return set()
+    operations = operation_ir.get("operations") if isinstance(operation_ir.get("operations"), list) else []
+    return {str(item.get("type") or "") for item in operations if isinstance(item, dict)}
+
+
+def is_impact_mapping_query(text: str, compacted: str, ref_types: set[str]) -> bool:
+    has_news_anchor = "news.article" in ref_types or "news.dailySummary" in ref_types or has_any_text(text, ("뉴스", "기사", "headline", "news"))
+    return has_news_anchor and has_any_text(
+        compacted,
+        ("영향받", "영향받는", "관련종목", "관련주", "수혜주", "피해주", "어떤종목", "무슨종목", "관련섹터", "섹터뭐"),
+    )
+
+
+def is_factor_decomposition_query(text: str, compacted: str) -> bool:
+    return (
+        has_any_text(compacted, ("개별이슈", "시장이슈", "섹터이슈", "공통요인", "개별요인", "시장요인", "섹터요인"))
+        or ("개별" in compacted and has_any_text(compacted, ("시장", "섹터", "공통")))
+        or has_any_text(text, ("single-name", "market issue", "sector issue"))
+    )
+
+
+def is_news_price_mismatch_query(text: str, compacted: str, ref_types: set[str]) -> bool:
+    has_news_anchor = "news.article" in ref_types or "news.dailySummary" in ref_types or has_any_text(text, ("뉴스", "기사", "호재", "headline", "news"))
+    positive_news = has_any_text(compacted, ("좋은데", "호재인데", "긍정적인데", "positive", "bullish", "goodnews"))
+    negative_price = has_any_text(compacted, ("빠져", "빠졌", "하락", "내려", "떨어", "약세", "down", "drop", "fall"))
+    return has_news_anchor and positive_news and negative_price
+
+
+def is_earnings_reaction_query(text: str, compacted: str) -> bool:
+    return has_any_text(text, ("실적", "earnings", "guidance", "가이던스", "eps", "revenue")) and has_any_text(
+        compacted,
+        ("반응", "왜", "원인", "하락", "상승", "빠져", "올랐", "reaction"),
+    )
+
+
+def is_reference_anchor_query(text: str, compacted: str, ref_types: set[str], operation_types: set[str]) -> bool:
+    if not ref_types:
+        return False
+    if operation_types & {"explain_news", "explain_price_move", "link_news_to_price_move"}:
+        return True
+    return has_any_text(compacted, ("이뉴스", "이기사", "이봉", "선택한", "여기", "이거", "저거"))
+
+
+def is_price_move_cause_query(
+    text: str,
+    compacted: str,
+    operation_types: set[str],
+    intent_type: str,
+    route_plan_intent_value: str,
+) -> bool:
+    if operation_types & {"explain_price_move", "link_news_to_price_move"}:
+        return True
+    if "market-move" in intent_type or route_plan_intent_value == "investment_opinion":
+        return has_any_text(compacted, ("왜", "원인", "이유", "급등", "급락", "올랐", "떨어", "하락", "상승", "빠져"))
+    return has_any_text(text, ("why up", "why down", "price move", "surge", "selloff"))
+
+
+def snapshot_bundle_for_analysis_policy(intent: str, context: Any, analysis_policy: dict[str, Any]) -> list[str]:
+    query_type = str(analysis_policy.get("analysis_query_type") or "general")
+    if query_type == "general":
+        bundle = list(SNAPSHOT_BUNDLE_BY_INTENT.get(intent, SNAPSHOT_BUNDLE_BY_INTENT["investment_opinion"]))
+    else:
+        bundle = list(analysis_policy.get("snapshot_bundle") or [])
+    required = operation_required_snapshots(context)
+    if required:
+        if query_type == "reference_anchor_analysis":
+            bundle = required
+        else:
+            bundle = unique_strings([*bundle, *required])
+    return normalize_snapshot_bundle(bundle)
+
+
+def operation_required_snapshots(context: Any) -> list[str]:
+    operation_ir = getattr(context, "operationIR", {})
+    if not isinstance(operation_ir, dict):
+        return []
+    context_window = operation_ir.get("contextWindow") if isinstance(operation_ir.get("contextWindow"), dict) else {}
+    required = [
+        str(item)
+        for item in context_window.get("requiredSnapshots", [])
+        if isinstance(item, (str, int, float))
+    ]
+    operations = operation_ir.get("operations") if isinstance(operation_ir.get("operations"), list) else []
+    for operation in operations:
+        if not isinstance(operation, dict):
+            continue
+        for source in operation.get("requiredSources", []) or []:
+            snapshot_type = snapshot_type_for_required_source(str(source))
+            if snapshot_type:
+                required.append(snapshot_type)
+    return normalize_snapshot_bundle(required)
+
+
+def snapshot_type_for_required_source(source: str) -> str | None:
+    return {
+        "market": "market_snapshot",
+        "chart": "market_snapshot",
+        "macro": "market_snapshot",
+        "news": "news_snapshot",
+        "ontology": "relationship_snapshot",
+        "relationship": "relationship_snapshot",
+        "financial": "financial_snapshot",
+    }.get(source.strip().lower())
+
+
+def normalize_snapshot_bundle(bundle: list[str]) -> list[str]:
+    normalized = []
+    for item in bundle:
+        value = {
+            "macro_snapshot": "market_snapshot",
+            "chart_snapshot": "market_snapshot",
+            "ontology_snapshot": "relationship_snapshot",
+        }.get(str(item), str(item))
+        if value and value not in normalized:
+            normalized.append(value)
+    if normalized and "risk_policy_snapshot" not in normalized:
+        normalized.append("risk_policy_snapshot")
+    return normalized
+
+
+def has_any_text(text: str, tokens: tuple[str, ...]) -> bool:
+    return any(str(token).lower() in text for token in tokens)
 
 
 def route_plan_intent(route: IntentRoute) -> str:
@@ -558,6 +784,7 @@ def build_synthesis_input(
     entities: list[ResolvedEntity],
     snapshots: list[DataSnapshot],
     policy: RuntimePolicy,
+    route_plan: RoutePlan | None = None,
     cross_signals: list[dict[str, Any]] | None = None,
 ) -> SynthesisInput:
     missing_data = unique_strings(
@@ -582,6 +809,11 @@ def build_synthesis_input(
         missing_data=missing_data,
         risk_warnings=risk_warnings,
         output_policy={
+            **(dict(route_plan.answerPolicy) if route_plan is not None else ANALYSIS_ANSWER_POLICY),
+            "analysis_query_type": getattr(route_plan, "analysisQueryType", "general") if route_plan is not None else "general",
+            "priority": getattr(route_plan, "priority", "P3") if route_plan is not None else "P3",
+            "anchor_mode": getattr(route_plan, "anchorMode", "symbol") if route_plan is not None else "symbol",
+            "composition_strategy": getattr(route_plan, "compositionStrategy", "general_synthesis") if route_plan is not None else "general_synthesis",
             "max_output_tokens": policy.max_synthesis_output_tokens,
             "require_uncertainty_disclosure": True,
             "prohibit_direct_investment_command": True,

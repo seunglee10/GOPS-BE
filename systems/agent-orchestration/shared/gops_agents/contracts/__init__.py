@@ -92,6 +92,11 @@ class RoutePlan:
     snapshot_bundle: list[str] = field(default_factory=list)
     execution_mode: str = "parallel_snapshots"
     llm_calls_allowed: int = 1
+    analysisQueryType: str = "general"
+    priority: str = "P3"
+    anchorMode: str = "symbol"
+    compositionStrategy: str = "general_synthesis"
+    answerPolicy: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

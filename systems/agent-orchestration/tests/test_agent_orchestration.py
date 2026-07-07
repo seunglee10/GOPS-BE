@@ -1836,6 +1836,45 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(report.route.selectedRoles, ["chart", "news", "macro", "ontology"])
         self.assertEqual(report.routePlan.intent, "investment_opinion")
 
+    def test_analysis_query_policy_examples_select_expected_snapshot_bundles(self):
+        cases = [
+            ("NVDA 왜 떨어졌어?", [], "price_move_cause", {"market_snapshot", "news_snapshot", "relationship_snapshot", "risk_policy_snapshot"}),
+            ("뉴스는 좋은데 왜 주가는 빠져?", [], "news_price_mismatch", {"news_snapshot", "market_snapshot", "relationship_snapshot", "risk_policy_snapshot"}),
+            ("이거 개별 이슈야 시장 이슈야?", [], "factor_decomposition", {"market_snapshot", "relationship_snapshot", "news_snapshot", "risk_policy_snapshot"}),
+            (
+                "이 뉴스 영향받는 종목 뭐야?",
+                [{"type": "news.article", "data": {"symbol": "NVDA", "title": "NVDA supply headline", "publishedAt": "2026-07-04T13:30:00Z"}}],
+                "impact_mapping",
+                {"news_snapshot", "relationship_snapshot", "market_snapshot", "risk_policy_snapshot"},
+            ),
+            (
+                "선택한 봉 왜 저렇게 움직였어?",
+                [{"type": "chart.candle", "data": {"symbol": "NVDA", "interval": "1D", "timestamp": "2026-07-04T00:00:00Z", "close": 145.5}}],
+                "reference_anchor_analysis",
+                {"market_snapshot", "news_snapshot", "risk_policy_snapshot"},
+            ),
+        ]
+
+        for intent, references, query_type, expected_bundle in cases:
+            with self.subTest(intent=intent):
+                report = AgentOrchestrator(analysis_cache=MemoryAgentAnalysisCache()).analyze({
+                    "symbol": "NVDA",
+                    "intent": intent,
+                    "references": references,
+                    "chartContext": {
+                        "chartDocument": {"symbol": "NVDA", "timeframe": "1D"},
+                        "dataStatus": {"candleCount": 20, "state": "ready"},
+                        "visibleSummary": {"lastPrice": 145.5, "change": "-2.10%"},
+                    },
+                })
+
+                self.assertEqual(report.routePlan.analysisQueryType, query_type)
+                self.assertEqual(set(report.routePlan.snapshot_bundle), expected_bundle)
+                self.assertEqual(report.agentTrace["analysisPolicy"]["analysisQueryType"], query_type)
+                self.assertEqual(report.synthesisInput.output_policy["analysis_query_type"], query_type)
+                final_answer_text = json.dumps(report.finalAnswer.to_dict(), ensure_ascii=False, default=str)
+                self.assertNotRegex(final_answer_text, r"GraphDB|ClickHouse|Redis|providerEvidence|Provider status")
+
     def test_multi_agent_mode_posts_independent_role_answers_without_merge_synthesis(self):
         synthesizer = RoleAnswerOnlySynthesizer()
         orchestrator = AgentOrchestrator()
@@ -4099,7 +4138,7 @@ class AgentOrchestrationTests(unittest.TestCase):
                 finding = OntologyAgent(FakeOntologyProvider(evidence)).analyze(AgentContext(symbol="NVDA", intent="관계 분석"))
 
         self.assertEqual(openai.call_count, 0)
-        self.assertIn("GraphDB 기준", finding.summary)
+        self.assertIn("관계 데이터 기준", finding.summary)
         self.assertNotIn("CUDA 공급망", finding.summary)
 
     def test_legacy_agent_ids_do_not_route_unclear_query_to_role(self):
@@ -4437,7 +4476,7 @@ class AgentOrchestrationTests(unittest.TestCase):
                 )
 
         self.assertEqual(openai.call_count, 0)
-        self.assertIn("GraphDB 기준", answer.summary)
+        self.assertIn("관계 데이터 기준", answer.summary)
         self.assertNotIn("CUDA 공급망", answer.summary)
 
     def test_openai_synthesizer_accepts_strict_json_response(self):
@@ -4567,7 +4606,7 @@ class AgentOrchestrationTests(unittest.TestCase):
                     provider_evidence=evidence,
                 )
 
-        self.assertIn("GraphDB 기준", answer.summary)
+        self.assertIn("관계 데이터 기준", answer.summary)
 
     def test_synthesizer_records_fallback_reason_when_openai_key_missing(self):
         timing = {}

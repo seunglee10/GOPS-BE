@@ -583,6 +583,7 @@ class AgentOrchestrator:
                 entities=list(state.get("resolved_entities", [])),
                 snapshots=list(state.get("snapshots", [])),
                 policy=state.get("runtime_policy") or self.runtime_policy,
+                route_plan=route_plan,
                 cross_signals=[item.to_dict() if isinstance(item, CrossSignal) else dict(item) for item in state.get("cross_signals", [])],
             )
         analysis_id = stable_id(
@@ -770,6 +771,7 @@ class AgentOrchestrator:
             state.get("entity_resolution"),
             state.get("query_understanding"),
             state.get("operation_ir"),
+            route_plan,
         )
         agent_trace["analysisMode"] = str(state.get("analysis_mode") or "auto")
         if state.get("input_safety_warnings"):
