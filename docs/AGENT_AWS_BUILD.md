@@ -600,7 +600,7 @@ Production config should keep `AGENT_MAX_REALTIME_LLM_CALLS=2` so one LLM call
 remains reserved for final answer synthesis. The final-answer LLM is only a
 Korean prose rewrite layer, so production should use a fast mini model via
 `AGENT_SYNTHESIZER_MODEL=gpt-5.4-mini` and keep
-`AGENT_SYNTHESIZER_TIMEOUT_SECONDS=1.5` / `AGENT_SYNTHESIS_TIMEOUT_MS=1500`.
+`AGENT_SYNTHESIZER_TIMEOUT_SECONDS=3.5` / `AGENT_SYNTHESIS_TIMEOUT_MS=3500`.
 This preserves the 5-second hot-path response target by falling back quickly when
 OpenAI is slow. A completed report whose `timing.llmCallLabels` does not contain
 `synthesis` or `financial-synthesis` did not even attempt the final synthesis LLM
