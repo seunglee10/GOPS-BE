@@ -164,6 +164,9 @@ data:
   KAFKA_PROCESSED_TOPICS: market.layer.candles.1m.closed.v1,market.layer.candles.5m.closed.v1,market.layer.candles.10m.closed.v1,market.layer.candles.1h.closed.v1,market.layer.candles.4h.closed.v1,market.layer.candles.1d.closed.v1,market.layer.candles.1w.closed.v1,market.layer.candles.1mo.closed.v1,market.layer.trades.v1,market.layer.quotes.v1,market.layer.events.v1
   KAFKA_S3_ENABLE_AUTO_COMMIT: "false"
   KAFKA_CLICKHOUSE_ENABLE_AUTO_COMMIT: "false"
+  KAFKA_CLICKHOUSE_MAX_POLL_RECORDS: "1000"
+  CLICKHOUSE_INSERT_BATCH_SIZE: "1000"
+  CLICKHOUSE_FLUSH_INTERVAL_SECONDS: "1"
   KAFKA_CLICKHOUSE_TOPICS: market.layer.candles.1m.closed.v1,market.layer.candles.5m.closed.v1,market.layer.candles.10m.closed.v1,market.layer.candles.1h.closed.v1,market.layer.candles.4h.closed.v1,market.layer.candles.1d.closed.v1,market.layer.candles.1w.closed.v1,market.layer.candles.1mo.closed.v1,market.layer.trades.v1,market.layer.quotes.v1,market.layer.events.v1,market.news.alpaca.v1
   CLICKHOUSE_HTTP_URL: http://YOUR_CLICKHOUSE_ENDPOINT:8123
   CLICKHOUSE_DATABASE: market_data
@@ -212,6 +215,8 @@ data:
   ON_DEMAND_FILL_BACKGROUND_ENABLED: "true"
   ON_DEMAND_FILL_BACKGROUND_WORKERS: "2"
   ON_DEMAND_FILL_BACKGROUND_TIMEOUT_SECONDS: "60"
+  ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED: "false"
+  ON_DEMAND_FILL_FOREGROUND_MAX_BARS: "120"
   ON_DEMAND_FILL_TIMEOUT_SECONDS: "30"
   FUNDAMENTALS_SOURCE: auto
   FUNDAMENTALS_LATEST_FILE: ""

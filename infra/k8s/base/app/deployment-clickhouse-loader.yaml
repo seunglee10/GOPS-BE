@@ -34,6 +34,13 @@ spec:
               value: "false"
             - name: CLICKHOUSE_LOAD_QUOTES
               value: "false"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
 ---
 # 역할: Kafka trade/quote layer topic을 ClickHouse tick 테이블에 적재합니다.
 # 사용: footprint/틱 조회가 candle/news 적재 backlog와 서로 막히지 않도록 별도 consumer들로 분리합니다.
@@ -75,3 +82,10 @@ spec:
               value: "true"
             - name: CLICKHOUSE_LOAD_QUOTES
               value: "true"
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 768Mi

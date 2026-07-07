@@ -254,6 +254,9 @@ Critical storage consumers may disable Kafka auto commit and commit after succes
 KAFKA_PROCESSOR_ENABLE_AUTO_COMMIT=false
 KAFKA_S3_ENABLE_AUTO_COMMIT=false
 KAFKA_CLICKHOUSE_ENABLE_AUTO_COMMIT=false
+KAFKA_CLICKHOUSE_MAX_POLL_RECORDS=1000
+CLICKHOUSE_INSERT_BATCH_SIZE=1000
+CLICKHOUSE_FLUSH_INTERVAL_SECONDS=1
 ```
 
 AWS/EKS splits ClickHouse projection consumers by topic pressure. The baseline
@@ -262,6 +265,9 @@ AWS/EKS splits ClickHouse projection consumers by topic pressure. The baseline
 `alfaka-clickhouse-loader` consumer group and consumes
 `market.layer.trades.v1,market.layer.quotes.v1`, so footprint tick persistence
 can catch up without blocking candle/news persistence.
+The ClickHouse loader batches Kafka payloads by table before HTTP insert and
+commits offsets after the batch side effects succeed. Keep batch sizes bounded
+in the 16 vCPU profile so ClickHouse can catch up without starving API pods.
 
 ## Redis
 
@@ -497,13 +503,14 @@ visible regular-session gap into a hidden full-range preload.
 
 `GET /api/charts/candles` is the chart read entrypoint. The foreground API path
 checks the requested `symbol + interval + limit/before/from/to` window in Redis
-and ClickHouse first. If stored data is not renderable, it may fetch Alpaca REST
-bars for the requested interval directly, merge them with the latest Redis
-live/provisional candle, and return that payload immediately. The response also
-includes a `fill.backgroundFill` trace while the API process queues bounded
-background repair that checks S3 final/manifest and then Alpaca historical for
-that same interval/range. It does not enqueue a Redis Stream worker and it does
-not run broad preload jobs from a chart request.
+and ClickHouse first. If stored data is not renderable, the default behavior is
+to return the current partial/empty payload immediately with a
+`fill.backgroundFill` trace while the API process queues bounded background
+repair that checks S3 final/manifest and then Alpaca historical for that same
+interval/range. Set `ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED=true` only when
+small requests should wait for direct Alpaca REST bars before responding. It
+does not enqueue a Redis Stream worker and it does not run broad preload jobs
+from a chart request.
 
 ```text
 CHART_API_MAX_LIMIT

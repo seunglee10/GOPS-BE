@@ -147,6 +147,11 @@ Market storage image also runs ClickHouse projection loaders. The baseline
 `alfaka-clickhouse-tick-loader` consumes `market.layer.trades.v1` and
 `market.layer.quotes.v1` with multiple replicas in the same consumer group so
 footprint tick tables can catch up independently from candle/news persistence.
+The loaders batch Kafka payloads before ClickHouse HTTP insert
+(`CLICKHOUSE_INSERT_BATCH_SIZE`, `CLICKHOUSE_FLUSH_INTERVAL_SECONDS`,
+`KAFKA_CLICKHOUSE_MAX_POLL_RECORDS`). In the 16 vCPU profile, prefer bounded
+batching over adding replicas because a hot Kafka partition is still owned by
+one consumer at a time.
 
 ## Kubernetes Resources
 

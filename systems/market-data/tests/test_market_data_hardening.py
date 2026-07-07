@@ -69,7 +69,9 @@ from alfaka.storage.clickhouse_loader import (
     candle_to_clickhouse_row,
     clickhouse_param_value as storage_clickhouse_param_value,
     clickhouse_topics_from_env,
+    flush_clickhouse_buffer,
     load_payload,
+    load_payload_batch,
     market_event_to_clickhouse_row,
     news_to_clickhouse_row,
     status_to_clickhouse_row,
@@ -1182,6 +1184,48 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "market.layer.trades.v1",
         ])
 
+    def test_clickhouse_batch_loader_groups_tick_rows_and_commits_once(self):
+        client = RecordingClickHouseClient()
+
+        class CommitRecordingConsumer:
+            def __init__(self):
+                self.commits = 0
+
+            def commit(self):
+                self.commits += 1
+
+        payloads = [
+            {"eventType": "TRADE", "symbol": "AAPL", "timestamp": "2026-06-25T10:15:01.000Z", "tradeId": 1, "price": 100, "size": 2},
+            {"eventType": "TRADE", "symbol": "AAPL", "timestamp": "2026-06-25T10:15:02.000Z", "tradeId": 2, "price": 101, "size": 3},
+            {"eventType": "QUOTE", "symbol": "AAPL", "timestamp": "2026-06-25T10:15:03.000Z", "bidPrice": 100, "askPrice": 101},
+        ]
+
+        consumer = CommitRecordingConsumer()
+        inserted = flush_clickhouse_buffer(
+            consumer,
+            client,
+            payloads,
+            load_trades=True,
+            load_quotes=True,
+            enable_auto_commit=False,
+        )
+
+        self.assertEqual(inserted, 3)
+        self.assertEqual(consumer.commits, 1)
+        self.assertEqual([(table, len(rows)) for table, rows in client.inserts], [("trade_ticks", 2), ("quote_ticks", 1)])
+
+    def test_clickhouse_batch_insert_skips_disabled_quote_rows(self):
+        client = RecordingClickHouseClient()
+        inserted = load_payload_batch(
+            client,
+            [{"eventType": "QUOTE", "symbol": "AAPL", "timestamp": "2026-06-25T10:15:03.000Z", "bidPrice": 100, "askPrice": 101}],
+            load_trades=True,
+            load_quotes=False,
+        )
+
+        self.assertEqual(inserted, 0)
+        self.assertEqual(client.inserts, [])
+
     def test_clickhouse_schema_ensure_is_opt_in_for_runtime_starts(self):
         self.assertFalse(should_ensure_schema_on_start({}))
         self.assertFalse(should_ensure_schema_on_start({"CLICKHOUSE_ENSURE_SCHEMA_ON_START": "false"}))
@@ -1936,6 +1980,10 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn("value: market.layer.trades.v1,market.layer.quotes.v1", clickhouse_loader_deployment)
         self.assertIn("value: market.layer.candles.1m.closed.v1,market.layer.candles.5m.closed.v1,market.layer.candles.10m.closed.v1,market.layer.candles.1h.closed.v1,market.layer.candles.4h.closed.v1,market.layer.candles.1d.closed.v1,market.layer.candles.1w.closed.v1,market.layer.candles.1mo.closed.v1,market.layer.events.v1,market.news.alpaca.v1", clickhouse_loader_deployment)
         self.assertIn("value: alfaka-clickhouse-tick-loader", clickhouse_loader_deployment)
+        self.assertIn("requests:\n              cpu: 100m\n              memory: 128Mi", clickhouse_loader_deployment)
+        self.assertIn("limits:\n              cpu: 500m\n              memory: 512Mi", clickhouse_loader_deployment)
+        self.assertIn("requests:\n              cpu: 250m\n              memory: 256Mi", clickhouse_loader_deployment)
+        self.assertIn('limits:\n              cpu: "1"\n              memory: 768Mi', clickhouse_loader_deployment)
         self.assertIn("name: alfaka-raw-s3-archive", raw_archive_deployment)
         self.assertIn("systems/market-data/pods/s3-sink/raw_archive_sink.py", raw_archive_deployment)
         self.assertIn("gops-market-storage:latest", raw_archive_deployment)
@@ -1974,6 +2022,9 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertNotIn("KAFKA_PRODUCER_BUFFER_MEMORY", configmap)
         self.assertIn('CLICKHOUSE_PROVIDER_TIMEOUT_SECONDS: "8"', configmap)
         self.assertIn('CLICKHOUSE_PROVIDER_RETRY_ATTEMPTS: "2"', configmap)
+        self.assertIn('KAFKA_CLICKHOUSE_MAX_POLL_RECORDS: "1000"', configmap)
+        self.assertIn('CLICKHOUSE_INSERT_BATCH_SIZE: "1000"', configmap)
+        self.assertIn('CLICKHOUSE_FLUSH_INTERVAL_SECONDS: "1"', configmap)
         self.assertIn('NEWS_BACKFILL_DAYS: "365"', configmap)
         self.assertIn('NEWS_BACKFILL_SHARD_INDEX: "0"', configmap)
         self.assertIn('NEWS_BACKFILL_SHARD_COUNT: "1"', configmap)
@@ -1984,6 +2035,8 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn('CLICKHOUSE_HTTP_TIMEOUT_SECONDS: "10"', configmap)
         self.assertIn('S3_RAW_FLUSH_INTERVAL_SECONDS: "60"', configmap)
         self.assertIn('KAFKA_CLICKHOUSE_ENABLE_AUTO_COMMIT: "false"', configmap)
+        self.assertIn('ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED: "false"', configmap)
+        self.assertIn('ON_DEMAND_FILL_FOREGROUND_MAX_BARS: "120"', configmap)
         self.assertIn("wait_for_rebuild_job", news_rebuild_script)
         self.assertIn('status.conditions[?(@.type=="Failed")].status', news_rebuild_script)
         self.assertIn("--previous=true", news_rebuild_script)
