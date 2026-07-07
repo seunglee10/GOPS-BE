@@ -4,6 +4,7 @@ import os
 import sys
 import types
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -31,7 +32,7 @@ try:
     from app.alerts.notifications import InMemoryNotificationBroker
     from app.alerts.repository import InMemoryAlertRepository
     from app.main import create_app
-    from app.recommendations.repository import InMemoryRecommendationRepository, RecommendationSchemaUnavailable
+    from app.recommendations.repository import InMemoryRecommendationRepository, RecommendationSchemaUnavailable, _json_ready
     from app.recommendations.service import RecommendationDataSource
     from app.recommendations.worker import RecommendationWorker
 except Exception as exc:  # pragma: no cover - dependency guard for lean envs
@@ -257,6 +258,48 @@ def test_watchlist_holding_and_active_symbol_are_not_recommended(recommendation_
     assert "AVGO" not in symbols
 
 
+def test_refresh_registers_top_three_without_score_cutoff(recommendation_app) -> None:
+    recommendation_app.state.recommendation_watchlist_provider = lambda user_sub: []
+    recommendation_app.state.recommendation_market_provider = lambda: [
+        {
+            "symbol": symbol,
+            "sector": "Technology",
+            "industry": "Software",
+            "sessionDollarVolume": volume,
+            "changePercent": change,
+            "lastPrice": 100,
+        }
+        for symbol, volume, change in [
+            ("LOW1", 400_000_000, 0.4),
+            ("LOW2", 300_000_000, 0.3),
+            ("LOW3", 200_000_000, 0.2),
+            ("LOW4", 100_000_000, 0.1),
+        ]
+    ]
+    recommendation_app.state.recommendation_candles_provider = flat_candles
+    recommendation_app.state.recommendation_news_provider = lambda symbol, now=None: []
+    client = TestClient(recommendation_app)
+    client.put(
+        "/api/recommendations/profile",
+        json={"riskLevel": "balanced", "horizon": "intraday", "maxDrawdownPct": 6},
+    )
+
+    response = client.post("/api/recommendations/stocks/refresh", json={})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "completed"
+    assert [item["symbol"] for item in payload["items"]] == ["LOW1", "LOW2", "LOW3"]
+    assert len(payload["items"]) == 3
+    assert all(item["score"] < 75 for item in payload["items"])
+
+
+def test_recommendation_json_ready_converts_postgres_numeric_decimal() -> None:
+    payload = _json_ready({"max_drawdown_pct": Decimal("6.00"), "nested": [Decimal("1.25")]})
+
+    assert payload == {"max_drawdown_pct": 6.0, "nested": [1.25]}
+
+
 def test_recommendation_worker_processes_profiled_users_once_per_slot(recommendation_app) -> None:
     client = TestClient(recommendation_app)
     client.put(
@@ -388,6 +431,23 @@ def fake_candles(symbol: str, _now: datetime) -> list[dict]:
                 "low": close - 0.2,
                 "close": close,
                 "volume": volume,
+            }
+        )
+    return candles
+
+
+def flat_candles(symbol: str, _now: datetime) -> list[dict]:
+    candles = []
+    for index in range(180):
+        close = 500.0 if symbol == "SPY" else 100.0
+        candles.append(
+            {
+                "timestamp": f"2026-07-07T{13 + index // 60:02d}:{index % 60:02d}:00Z",
+                "open": close,
+                "high": close + 0.05,
+                "low": close - 0.05,
+                "close": close,
+                "volume": 10_000,
             }
         )
     return candles

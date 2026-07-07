@@ -4,6 +4,7 @@ import os
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any
 
 import psycopg
@@ -390,6 +391,8 @@ class InMemoryRecommendationRepository(RecommendationRepository):
 def _json_ready(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.isoformat()
+    if isinstance(value, Decimal):
+        return float(value)
     if isinstance(value, dict):
         return {key: _json_ready(item) for key, item in value.items()}
     if isinstance(value, list):

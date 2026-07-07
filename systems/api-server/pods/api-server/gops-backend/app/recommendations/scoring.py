@@ -107,10 +107,10 @@ def score_recommendations(payload: RecommendationInput) -> list[dict[str, Any]]:
         if item is not None:
             scored.append(item)
     scored.sort(key=lambda item: (item["score"], item["confidence"]), reverse=True)
-    diversified = enforce_sector_diversity(scored, max_items=5, max_per_sector=2)
-    for index, item in enumerate(diversified, start=1):
+    selected = scored[:3]
+    for index, item in enumerate(selected, start=1):
         item["rank"] = index
-    return diversified
+    return selected
 
 
 def build_candidates(
@@ -249,9 +249,6 @@ def score_candidate(
     }
     score = round(max(0.0, min(100.0, alpha_score + catalyst_score + execution_score - risk_penalty)), 2)
     confidence = confidence_for(metrics, reasons, session_mode=session_mode)
-    cutoffs = recommendation_cutoffs(session_mode, metrics)
-    if score < cutoffs["score"] or confidence < cutoffs["confidence"] or len(reasons) < 2:
-        return None
     metrics_snapshot = {
         **metrics,
         "source": candidate.source,
