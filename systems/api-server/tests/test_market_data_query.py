@@ -79,6 +79,7 @@ except Exception:
 
 sys.modules.setdefault("redis", types.SimpleNamespace(from_url=lambda *args, **kwargs: None))
 
+from app.market_data.query import service as query_service_module  # noqa: E402
 from app.market_data.query.service import MarketDataQueryService  # noqa: E402
 from app.market_data.backfill.service import BackfillService  # noqa: E402
 from app.market_data.compare.service import ChartCompareService  # noqa: E402
@@ -323,12 +324,14 @@ class FakeNewsRedisProvider:
 
 
 class FakeNewsClickHouseProvider:
-    def __init__(self, rows=None, daily_rows=None, candles=None):
+    def __init__(self, rows=None, daily_rows=None, candles=None, ranking_rows_by_kind=None):
         self.rows = rows or []
         self.daily_rows = daily_rows or []
         self.candle_rows = candles or []
+        self.ranking_rows_by_kind = ranking_rows_by_kind or {}
         self.localized_calls = []
         self.daily_calls = []
+        self.ranking_calls = []
 
     def localized_news_articles_for_symbols(self, symbols, limit=10, days=7, locale="ko-KR"):
         self.localized_calls.append({"symbols": list(symbols), "limit": limit, "days": days, "locale": locale})
@@ -341,11 +344,20 @@ class FakeNewsClickHouseProvider:
     def candles(self, symbol, interval, limit):
         return self.candle_rows[-limit:]
 
+    def rank_symbols(self, symbols, kind="dollar-volume", limit=10):
+        self.ranking_calls.append({"symbols": list(symbols), "kind": kind, "limit": limit})
+        allowed = set(symbols)
+        rows = [
+            row for row in self.ranking_rows_by_kind.get(kind, [])
+            if row.get("symbol") in allowed
+        ]
+        return rows[:limit]
+
 
 class FakeNewsProvider:
-    def __init__(self, redis_rows=None, clickhouse_rows=None, redis_daily_rows=None, clickhouse_daily_rows=None, candle_rows=None, redis_daily_coverage=None):
+    def __init__(self, redis_rows=None, clickhouse_rows=None, redis_daily_rows=None, clickhouse_daily_rows=None, candle_rows=None, redis_daily_coverage=None, ranking_rows_by_kind=None):
         self.redis_provider = FakeNewsRedisProvider(redis_rows, redis_daily_rows, redis_daily_coverage)
-        self.clickhouse_provider = FakeNewsClickHouseProvider(clickhouse_rows, clickhouse_daily_rows, candle_rows)
+        self.clickhouse_provider = FakeNewsClickHouseProvider(clickhouse_rows, clickhouse_daily_rows, candle_rows, ranking_rows_by_kind)
 
     def symbol_detail(self, symbol):
         names = {
@@ -987,8 +999,14 @@ class FakeQueryService:
     def latest_news(self, symbol, limit=10, locale="ko-KR"):
         return self.service.latest_news(symbol, limit=limit, locale=locale)
 
-    def watchlist_news(self, user_sub, limit=30, locale="ko-KR"):
-        return self.service.watchlist_news(user_sub, limit=limit, locale=locale)
+    def watchlist_news(self, user_sub, limit=30, locale="ko-KR", mode="watchlist", recommendation_repository=None):
+        return self.service.watchlist_news(
+            user_sub,
+            limit=limit,
+            locale=locale,
+            mode=mode,
+            recommendation_repository=recommendation_repository,
+        )
 
     def request_backfill(self, symbol, interval, start=None, end=None, mode="default", force=False):
         return self.service.request_backfill(symbol, interval, start=start, end=end, mode=mode, force=force)
@@ -1373,6 +1391,101 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(provider.clickhouse_provider.localized_calls[0]["symbols"], ["NVDA", "AMD"])
         self.assertEqual(provider.clickhouse_provider.localized_calls[0]["days"], 30)
 
+    def test_watchlist_news_hot_mode_uses_ranked_symbols(self):
+        provider = FakeNewsProvider(clickhouse_rows=[
+            {
+                "articleId": "nvda-hot",
+                "targetSymbol": "NVDA",
+                "symbols": ["NVDA"],
+                "localizedHeadline": "엔비디아 인기 뉴스",
+                "localizedSummary": "급등 종목 관련 뉴스입니다.",
+                "publishedAt": "2026-07-03T12:00:00.000Z",
+            },
+            {
+                "articleId": "amd-hot",
+                "targetSymbol": "AMD",
+                "symbols": ["AMD"],
+                "localizedHeadline": "AMD 인기 뉴스",
+                "localizedSummary": "급락 종목 관련 뉴스입니다.",
+                "publishedAt": "2026-07-02T12:00:00.000Z",
+            },
+            {
+                "articleId": "aapl-hot",
+                "targetSymbol": "AAPL",
+                "symbols": ["AAPL"],
+                "localizedHeadline": "애플 인기 뉴스",
+                "localizedSummary": "거래대금 상위 종목 관련 뉴스입니다.",
+                "publishedAt": "2026-07-01T12:00:00.000Z",
+            },
+        ], ranking_rows_by_kind={
+            "gainers": [{"symbol": "NVDA"}],
+            "losers": [{"symbol": "AMD"}],
+            "dollar-volume": [{"symbol": "AAPL"}],
+        })
+        service = MarketDataQueryService(provider, backfill_service=FakeBackfillService())
+
+        with mock.patch.object(query_service_module, "sp500_universe_symbols", return_value=["NVDA", "AMD", "AAPL", "MSFT"]):
+            payload = service.watchlist_news("user-a", limit=10, mode="hot")
+
+        self.assertEqual(payload["displayMode"], "hotNews")
+        self.assertEqual(payload["symbols"], ["NVDA", "AMD", "AAPL"])
+        self.assertEqual(provider.clickhouse_provider.localized_calls[0]["symbols"], ["NVDA", "AMD", "AAPL"])
+        reasons = {item["symbol"]: item["matches"][0]["reason"] for item in payload["items"]}
+        self.assertEqual(reasons["NVDA"], "급등")
+        self.assertEqual(reasons["AMD"], "급락")
+        self.assertEqual(reasons["AAPL"], "거래대금")
+
+    def test_watchlist_news_recommended_mode_reads_latest_recommendation_symbols(self):
+        provider = FakeNewsProvider(clickhouse_rows=[
+            {
+                "articleId": "msft-rec",
+                "targetSymbol": "MSFT",
+                "symbols": ["MSFT"],
+                "localizedHeadline": "마이크로소프트 추천 뉴스",
+                "localizedSummary": "추천 기업 관련 뉴스입니다.",
+                "publishedAt": "2026-07-03T12:00:00.000Z",
+            },
+            {
+                "articleId": "avgo-rec",
+                "targetSymbol": "AVGO",
+                "symbols": ["AVGO"],
+                "localizedHeadline": "브로드컴 추천 뉴스",
+                "localizedSummary": "추천 기업 관련 뉴스입니다.",
+                "publishedAt": "2026-07-02T12:00:00.000Z",
+            },
+        ])
+        repository = types.SimpleNamespace(
+            calls=[],
+            latest_run=lambda user_sub: {
+                "items": [
+                    {"symbol": "MSFT", "rank": 1},
+                    {"symbol": "AVGO", "rank": 2},
+                ]
+            },
+        )
+        service = MarketDataQueryService(provider, backfill_service=FakeBackfillService())
+
+        payload = service.watchlist_news("user-a", limit=10, mode="recommended", recommendation_repository=repository)
+
+        self.assertEqual(payload["displayMode"], "recommendedNews")
+        self.assertEqual(payload["symbols"], ["MSFT", "AVGO"])
+        self.assertEqual(provider.clickhouse_provider.localized_calls[0]["symbols"], ["MSFT", "AVGO"])
+        self.assertEqual(payload["items"][0]["matches"][0]["reason"], "추천")
+
+    def test_watchlist_news_recommended_mode_is_empty_without_latest_run(self):
+        provider = FakeNewsProvider()
+        repository = types.SimpleNamespace(latest_run=lambda user_sub: None)
+        service = MarketDataQueryService(provider, backfill_service=FakeBackfillService())
+
+        payload = service.watchlist_news("user-a", limit=10, mode="recommended", recommendation_repository=repository)
+
+        self.assertEqual(payload["displayMode"], "recommendedNews")
+        self.assertEqual(payload["symbols"], [])
+        self.assertEqual(payload["items"], [])
+        self.assertIn("추천 기업", payload["message"])
+        self.assertEqual(provider.redis_provider.localized_calls, [])
+        self.assertEqual(provider.clickhouse_provider.localized_calls, [])
+
     def test_watchlist_news_route_delegates_authenticated_user(self):
         provider = FakeNewsProvider(redis_rows=[{
             "articleId": "redis-1",
@@ -1390,6 +1503,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         query_routes.get_query_service = lambda: FakeQueryService(provider)
         try:
             payload = query_routes.market_watchlist_news(
+                request=types.SimpleNamespace(app=types.SimpleNamespace(state=types.SimpleNamespace())),
                 limit=3,
                 user=AuthenticatedUser(sub="user-a", email="user@example.com", email_verified=True),
             )

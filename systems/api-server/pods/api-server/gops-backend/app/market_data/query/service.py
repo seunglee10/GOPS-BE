@@ -11,7 +11,7 @@ from app.market_data.fundamentals.service import build_fundamentals_adapter
 from app.market_data.heatmap.service import get_heatmap_service
 from app.market_data.indices.service import get_indices_service
 from app.market_data.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
-from app.services.alfaka_market_data import get_market_data_provider, normalize_market_symbol, requested_ma_from_csv
+from app.services.alfaka_market_data import get_market_data_provider, normalize_market_symbol, requested_ma_from_csv, sp500_universe_symbols
 from alfaka.serving.chart_derived_data import (
     ChartDerivedArtifactStore,
     ChartDerivedDataClient,
@@ -32,6 +32,14 @@ from alfaka.serving.volume_profile import (
 )
 from alfaka.serving.news_hot_cache import company_daily_summary_coverage_valid
 from alfaka.storage.news_daily_summary import attach_price_changes_to_daily_summaries, clickhouse_row_to_daily_summary
+
+
+WATCHLIST_NEWS_MODES = {"watchlist", "hot", "recommended"}
+HOT_NEWS_RANKING_KINDS = (
+    ("gainers", "급등"),
+    ("losers", "급락"),
+    ("dollar-volume", "거래대금"),
+)
 
 
 class MarketDataQueryService:
@@ -316,16 +324,71 @@ class MarketDataQueryService:
             "dailySummaries": summaries,
         }
 
-    def watchlist_news(self, user_sub: str, limit: int = 30, locale: str = "ko-KR") -> dict[str, Any]:
+    def watchlist_news(
+        self,
+        user_sub: str,
+        limit: int = 30,
+        locale: str = "ko-KR",
+        mode: str = "watchlist",
+        recommendation_repository: Any | None = None,
+    ) -> dict[str, Any]:
         limit = max(1, min(int(limit), 50))
+        normalized_mode = normalize_watchlist_news_mode(mode)
+        if normalized_mode == "hot":
+            symbols, reasons_by_symbol = self._hot_news_symbols(limit)
+            return self._symbol_group_news(
+                symbols,
+                limit,
+                locale,
+                display_mode="hotNews",
+                empty_source="hot",
+                empty_message="인기순 기준 종목을 찾지 못했습니다.",
+                no_news_message="인기순 종목 관련 저장 뉴스가 없습니다.",
+                reasons_by_symbol=reasons_by_symbol,
+            )
+        if normalized_mode == "recommended":
+            symbols, reasons_by_symbol = self._recommended_news_symbols(user_sub, recommendation_repository)
+            return self._symbol_group_news(
+                symbols,
+                limit,
+                locale,
+                display_mode="recommendedNews",
+                empty_source="recommendations",
+                empty_message="추천 기업이 생성되면 관련 뉴스가 표시됩니다.",
+                no_news_message="추천 기업 관련 저장 뉴스가 없습니다.",
+                reasons_by_symbol=reasons_by_symbol,
+            )
+
         symbols = self._user_watchlist_symbols(user_sub)
+        return self._symbol_group_news(
+            symbols,
+            limit,
+            locale,
+            display_mode="watchlistNews",
+            empty_source="watchlist",
+            empty_message="관심종목을 추가하면 관련 뉴스가 표시됩니다.",
+            no_news_message="관심종목 관련 저장 뉴스가 없습니다.",
+        )
+
+    def _symbol_group_news(
+        self,
+        symbols: list[str],
+        limit: int,
+        locale: str,
+        *,
+        display_mode: str,
+        empty_source: str,
+        empty_message: str,
+        no_news_message: str,
+        reasons_by_symbol: dict[str, list[str]] | None = None,
+    ) -> dict[str, Any]:
         if not symbols:
             return {
-                "source": "watchlist",
-                "displayMode": "watchlistNews",
+                "source": empty_source,
+                "displayMode": display_mode,
                 "symbols": [],
                 "items": [],
-                "message": "관심종목을 추가하면 관련 뉴스가 표시됩니다.",
+                "message": empty_message,
             }
 
         rows, source = self._watchlist_news_rows(symbols, limit, locale)
@@ -333,18 +396,78 @@ class MarketDataQueryService:
         company_names = self._watchlist_company_names(symbols)
         items = []
         for row in rows[:limit]:
-            matches = watchlist_news_matches(row, symbols, company_names)
+            matches = watchlist_news_matches(row, symbols, company_names, reasons_by_symbol)
             fallback_symbol = matches[0]["symbol"] if matches else symbols[0]
             item = normalize_news_item(row, fallback_symbol)
             item["matches"] = matches
             items.append(item)
         return {
             "source": source,
-            "displayMode": "watchlistNews",
+            "displayMode": display_mode,
             "symbols": symbols,
             "items": items,
-            "message": "" if items else "관심종목 관련 저장 뉴스가 없습니다.",
+            "message": "" if items else no_news_message,
         }
+
+    def _hot_news_symbols(self, limit: int) -> tuple[list[str], dict[str, list[str]]]:
+        universe = sp500_universe_symbols()
+        if not universe:
+            return [], {}
+        symbols: list[str] = []
+        reasons_by_symbol: dict[str, list[str]] = {}
+        rank_limit = min(10, max(1, int(limit)))
+        for kind, reason in HOT_NEWS_RANKING_KINDS:
+            for row in self._ranked_symbol_rows(universe, kind=kind, limit=rank_limit):
+                symbol = normalized_symbol_from_value(row.get("symbol"))
+                if not symbol:
+                    continue
+                if symbol not in symbols:
+                    symbols.append(symbol)
+                reasons = reasons_by_symbol.setdefault(symbol, [])
+                if reason not in reasons:
+                    reasons.append(reason)
+        return symbols[:30], reasons_by_symbol
+
+    def _ranked_symbol_rows(self, universe: list[str], *, kind: str, limit: int) -> list[dict[str, Any]]:
+        clickhouse_provider = getattr(self.provider, "clickhouse_provider", None)
+        rank_symbols = getattr(clickhouse_provider, "rank_symbols", None)
+        rows: list[dict[str, Any]] = []
+        if callable(rank_symbols):
+            try:
+                rows = rank_symbols(universe, kind=kind, limit=limit)
+            except Exception:
+                rows = []
+        if rows or kind != "dollar-volume":
+            return [row for row in rows or [] if isinstance(row, dict)]
+
+        hot_symbols = getattr(clickhouse_provider, "hot_symbols_by_dollar_volume", None)
+        if not callable(hot_symbols):
+            return []
+        try:
+            rows = hot_symbols(universe, limit=limit)
+        except Exception:
+            rows = []
+        return [row for row in rows or [] if isinstance(row, dict)]
+
+    def _recommended_news_symbols(self, user_sub: str, recommendation_repository: Any | None) -> tuple[list[str], dict[str, list[str]]]:
+        if recommendation_repository is None:
+            return [], {}
+        latest_run = getattr(recommendation_repository, "latest_run", None)
+        if not callable(latest_run):
+            return [], {}
+        try:
+            run = latest_run(user_sub)
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=f"Recommendation read failed: {exc}") from exc
+        items = run.get("items") if isinstance(run, dict) else []
+        symbols: list[str] = []
+        for item in items if isinstance(items, list) else []:
+            if not isinstance(item, dict):
+                continue
+            symbol = normalized_symbol_from_value(item.get("symbol"))
+            if symbol and symbol not in symbols:
+                symbols.append(symbol)
+        return symbols, {symbol: ["추천"] for symbol in symbols}
 
     def _latest_news_rows(self, symbol: str, limit: int, locale: str) -> tuple[list[dict[str, Any]], str]:
         redis_provider = getattr(self.provider, "redis_provider", None)
@@ -708,16 +831,50 @@ def watchlist_news_symbols(row: dict[str, Any]) -> set[str]:
     return values
 
 
-def watchlist_news_matches(row: dict[str, Any], watchlist_symbols: list[str], company_names: dict[str, str]) -> list[dict[str, str]]:
+def watchlist_news_matches(
+    row: dict[str, Any],
+    watchlist_symbols: list[str],
+    company_names: dict[str, str],
+    reasons_by_symbol: dict[str, list[str]] | None = None,
+) -> list[dict[str, str]]:
     row_symbols = watchlist_news_symbols(row)
-    return [
-        {
+    matches: list[dict[str, str]] = []
+    for symbol in watchlist_symbols:
+        if symbol not in row_symbols:
+            continue
+        reasons = (reasons_by_symbol or {}).get(symbol) or []
+        match = {
             "symbol": symbol,
             **({"companyName": company_names[symbol]} if symbol in company_names else {}),
+            **({"reason": "·".join(reasons)} if reasons else {}),
         }
-        for symbol in watchlist_symbols
-        if symbol in row_symbols
-    ]
+        matches.append(match)
+    return matches
+
+
+def normalize_watchlist_news_mode(mode: str) -> str:
+    normalized = str(mode or "watchlist").strip().lower().replace("_", "-")
+    aliases = {
+        "watchlist": "watchlist",
+        "interest": "watchlist",
+        "hot": "hot",
+        "popular": "hot",
+        "recommended": "recommended",
+        "recommendation": "recommended",
+    }
+    if normalized not in aliases:
+        raise HTTPException(status_code=400, detail=f"Unsupported watchlist news mode: {mode}")
+    return aliases[normalized]
+
+
+def normalized_symbol_from_value(value: Any) -> str | None:
+    text = read_string(value)
+    if not text:
+        return None
+    try:
+        return normalize_market_symbol(text)
+    except ValueError:
+        return None
 
 
 def read_string(value: Any) -> str | None:

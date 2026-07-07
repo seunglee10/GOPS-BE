@@ -1,6 +1,6 @@
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 
 from app.auth.dependencies import require_current_user
 from app.auth.models import AuthenticatedUser
@@ -132,11 +132,25 @@ def market_daily_news(
 
 @router.get("/api/market/news/watchlist")
 def market_watchlist_news(
+    request: Request,
     limit: int = Query(default=30, ge=1, le=50),
     locale: str = Query(default="ko-KR", max_length=16),
+    mode: str = Query(default="watchlist", pattern="^(watchlist|hot|popular|recommended|recommendation)$"),
     user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
-    return get_query_service().watchlist_news(user.sub, limit=limit, locale=locale)
+    resolved_mode = mode if isinstance(mode, str) else "watchlist"
+    recommendation_repository = None
+    if resolved_mode.strip().lower().replace("_", "-") in {"recommended", "recommendation"}:
+        from app.recommendations.routes import _repository_from_app
+
+        recommendation_repository = _repository_from_app(request.app)
+    return get_query_service().watchlist_news(
+        user.sub,
+        limit=limit,
+        locale=locale,
+        mode=resolved_mode,
+        recommendation_repository=recommendation_repository,
+    )
 
 
 @router.get("/api/agent/context/chart")
