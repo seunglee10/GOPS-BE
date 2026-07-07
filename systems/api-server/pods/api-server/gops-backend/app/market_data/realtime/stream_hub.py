@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
 from alfaka.common.redis_keys import RedisKeyBuilder
 from alfaka.serving.dto import websocket_event
 from alfaka.serving.redis_provider import live_candle_is_fresh
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(eq=False)
@@ -70,8 +74,10 @@ class SymbolStreamHub:
         self.keys = RedisKeyBuilder()
         self.sessions_by_symbol: dict[str, set[StreamSession]] = {}
         self.tasks: dict[str, asyncio.Task] = {}
-        self.last_markers: dict[tuple[str, str], str] = {}
+        self.last_markers: dict[tuple[Any, ...], str] = {}
         self.poll_seconds = read_positive_float_env("REALTIME_REDIS_POLL_SECONDS", 0.25)
+        self.error_log_interval_seconds = read_positive_float_env("REALTIME_REDIS_ERROR_LOG_INTERVAL_SECONDS", 30.0)
+        self._last_redis_error_log = 0.0
 
     async def subscribe(self, session: StreamSession) -> None:
         sessions = self.sessions_by_symbol.setdefault(session.symbol, set())
@@ -97,19 +103,28 @@ class SymbolStreamHub:
         if self.redis is None:
             await self._idle_until_cancelled()
             return
-        pubsub = self.redis.pubsub(ignore_subscribe_messages=True)
-        pubsub.subscribe(self.keys.market_events())
-        try:
-            while True:
-                message = await asyncio.to_thread(pubsub.get_message, timeout=max(0.1, self.poll_seconds))
-                event = parse_pubsub_event(message)
-                if event:
-                    await self._broadcast_event(event)
-                await self._broadcast_latest_redis_live_events()
-        except asyncio.CancelledError:
-            return
-        finally:
-            pubsub.close()
+        while True:
+            pubsub = None
+            try:
+                pubsub = self.redis.pubsub(ignore_subscribe_messages=True)
+                pubsub.subscribe(self.keys.market_events())
+                while True:
+                    message = await asyncio.to_thread(pubsub.get_message, timeout=max(0.1, self.poll_seconds))
+                    event = parse_pubsub_event(message)
+                    if event:
+                        await self._broadcast_event(event)
+                    await self._broadcast_latest_redis_live_events()
+            except asyncio.CancelledError:
+                return
+            except Exception as exc:
+                self._log_redis_error("global_listener", exc)
+                await asyncio.sleep(max(0.1, min(self.poll_seconds, 1.0)))
+            finally:
+                if pubsub is not None:
+                    try:
+                        pubsub.close()
+                    except Exception:
+                        pass
 
     async def _idle_until_cancelled(self) -> None:
         try:
@@ -149,9 +164,16 @@ class SymbolStreamHub:
         }
         if not active or self.redis is None:
             return
-        events = await asyncio.to_thread(self._read_latest_live_events_batch, active)
+        try:
+            events = await asyncio.to_thread(self._read_latest_live_events_batch, active)
+        except Exception as exc:
+            self._log_redis_error("live_batch_read", exc)
+            return
         for event in events:
-            await self._broadcast_event(event)
+            try:
+                await self._broadcast_event(event)
+            except Exception as exc:
+                self._log_redis_error("live_event_broadcast", exc)
 
     def _read_latest_live_events_batch(self, active: dict[str, list[str]]) -> list[dict[str, Any]]:
         pipeline = self.redis.pipeline()
@@ -166,7 +188,8 @@ class SymbolStreamHub:
             operations.append(("quote", symbol, None))
         try:
             values = pipeline.execute()
-        except Exception:
+        except Exception as exc:
+            self._log_redis_error("live_pipeline_execute", exc)
             return []
         events: list[dict[str, Any]] = []
         for operation, value in zip(operations, values):
@@ -201,6 +224,13 @@ class SymbolStreamHub:
         if quote:
             events.append({"type": "LIVE_QUOTE_UPDATE", "symbol": symbol, "interval": "quotes", "data": quote})
         return events
+
+    def _log_redis_error(self, operation: str, exc: Exception) -> None:
+        now = time.monotonic()
+        if now - self._last_redis_error_log < self.error_log_interval_seconds:
+            return
+        self._last_redis_error_log = now
+        logger.warning("Realtime Redis operation skipped: operation=%s error=%s", operation, exc)
 
     async def _broadcast_event(self, event: dict[str, Any]) -> None:
         symbol = event.get("symbol")

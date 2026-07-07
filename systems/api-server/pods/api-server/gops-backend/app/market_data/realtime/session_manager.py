@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
 import uuid
@@ -10,6 +11,8 @@ from fastapi import WebSocket, WebSocketDisconnect
 from app.market_data.realtime.active_symbols import ActiveSymbolManager
 from app.market_data.realtime.stream_hub import StreamSession, get_stream_hub
 from app.services.alfaka_market_data import get_market_data_provider
+
+logger = logging.getLogger(__name__)
 
 
 class WebSocketSessionManager:
@@ -30,10 +33,7 @@ class WebSocketSessionManager:
         try:
             await self._send_gap_fill(websocket, symbol, interval, cursor)
             while True:
-                try:
-                    self.active_symbols.refresh(user_id, session_id, symbol)
-                except TypeError:
-                    self.active_symbols.refresh(symbol)
+                self._refresh_active_symbol(user_id, session_id, symbol)
                 try:
                     event = await asyncio.wait_for(session.queue.get(), timeout=1.0)
                     await websocket.send_json(event)
@@ -52,6 +52,20 @@ class WebSocketSessionManager:
             if callable(close):
                 close(user_id, session_id)
             await self.hub.unsubscribe(session)
+
+    def _refresh_active_symbol(self, user_id: str, session_id: str, symbol: str) -> None:
+        refresh = getattr(self.active_symbols, "refresh", None)
+        if not callable(refresh):
+            return
+        try:
+            refresh(user_id, session_id, symbol)
+        except TypeError:
+            try:
+                refresh(symbol)
+            except Exception as exc:
+                logger.warning("Realtime active symbol legacy refresh skipped: symbol=%s error=%s", symbol, exc)
+        except Exception as exc:
+            logger.warning("Realtime active symbol refresh skipped: symbol=%s error=%s", symbol, exc)
 
     async def _send_gap_fill(self, websocket: WebSocket, symbol: str, interval: str, cursor: str | None) -> None:
         if not cursor:

@@ -45,6 +45,19 @@ class FakeActiveSymbols:
         return None
 
 
+class FailingActiveSymbols:
+    def __init__(self):
+        self.refresh_attempted = False
+        self.closed = False
+
+    def refresh(self, user_id, session_id, symbol):
+        self.refresh_attempted = True
+        raise TimeoutError("redis timeout")
+
+    def close(self, user_id, session_id):
+        self.closed = True
+
+
 class FakeProvider:
     def __init__(self):
         self.redis_provider = type("RedisProvider", (), {"redis": None})()
@@ -106,6 +119,18 @@ class RaceWebSocket:
             return
         if event.get("type") == "LIVE_CANDLE_UPDATE":
             raise WebSocketDisconnect(code=1000)
+
+
+class QueuedEventHub:
+    def __init__(self, event):
+        self.event = event
+        self.unsubscribed = False
+
+    async def subscribe(self, session):
+        await session.enqueue(self.event)
+
+    async def unsubscribe(self, session):
+        self.unsubscribed = True
 
 
 class RealtimeBoundaryTest(unittest.TestCase):
@@ -230,6 +255,35 @@ class RealtimeBoundaryTest(unittest.TestCase):
             queued = [await session.queue.get(), await session.queue.get()]
             self.assertEqual([item["type"] for item in queued], ["LIVE_CANDLE_UPDATE", "CANDLE_CLOSED"])
             self.assertEqual(queued[-1]["data"]["timestamp"], "t3")
+
+        asyncio.run(run())
+
+    def test_active_symbol_refresh_timeout_does_not_close_chart_stream(self):
+        async def run():
+            event = {
+                "type": "LIVE_CANDLE_UPDATE",
+                "eventId": "live-1",
+                "cursor": "cursor-1",
+                "symbol": "AAPL",
+                "interval": "1m",
+                "data": {"timestamp": "2026-06-25T10:15:30.000Z", "close": 101.0},
+            }
+            hub = QueuedEventHub(event)
+            manager = WebSocketSessionManager(provider=FakeProvider())
+            active_symbols = FailingActiveSymbols()
+            manager.hub = hub
+            manager.active_symbols = active_symbols
+            manager.heartbeat_seconds = 999
+            websocket = RaceWebSocket(hub)
+
+            await manager.serve_chart(websocket, "AAPL", "1m", user_id="test-user")
+
+            event_types = [item.get("type") for item in websocket.sent]
+            self.assertTrue(websocket.accepted)
+            self.assertTrue(active_symbols.refresh_attempted)
+            self.assertTrue(active_symbols.closed)
+            self.assertTrue(hub.unsubscribed)
+            self.assertIn("LIVE_CANDLE_UPDATE", event_types)
 
         asyncio.run(run())
 
