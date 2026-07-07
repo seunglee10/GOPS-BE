@@ -830,8 +830,9 @@ def make_fill_candles(count):
 
 
 class FakeDerivedClient:
-    def __init__(self):
+    def __init__(self, redis_client=None):
         self.requests = []
+        self.redis_client = redis_client
 
     def resolve(self, request):
         self.requests.append(request)
@@ -1275,6 +1276,36 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(payload["returnedCandleCount"], 13)
         self.assertEqual(len(payload["series"]["sma:5"]), 8)
         self.assertIsNotNone(payload["series"]["sma:5"][0]["value"])
+        self.assertEqual(derived_client.requests, [])
+
+    def test_indicator_series_reuses_inline_redis_cache(self):
+        provider = FakeIndicatorProvider()
+        redis_client = FakeIndicatorRedis()
+        derived_client = FakeDerivedClient(redis_client)
+        service = MarketDataQueryService(provider, backfill_service=FakeBackfillService(), fill_service=FakeFillService(), derived_client=derived_client)
+
+        first = service.indicator_series(
+            "aapl",
+            "1m",
+            "2026-06-25T13:30:00.000Z",
+            "2026-06-25T13:39:00.000Z",
+            "ema:5,rsi:14",
+            30,
+        )
+        provider_call_count = len(provider.calls)
+        second = service.indicator_series(
+            "aapl",
+            "1m",
+            "2026-06-25T13:30:00.000Z",
+            "2026-06-25T13:39:00.000Z",
+            "ema:5,rsi:14",
+            30,
+        )
+
+        self.assertEqual(first["derived"]["source"], "api-inline")
+        self.assertEqual(second["derived"]["source"], "redis")
+        self.assertTrue(second["cache"]["hit"])
+        self.assertEqual(len(provider.calls), provider_call_count)
         self.assertEqual(derived_client.requests, [])
 
     def test_indicator_series_rejects_unsupported_layer(self):
