@@ -2,6 +2,13 @@
 # 연결: /api, /ws 요청은 nginx 또는 ingress 규칙으로 gops-backend에 연결합니다.
 FROM node:22-alpine AS builder
 
+ARG VITE_LOGO_DEV_PUBLISHABLE_KEY=
+ARG LOGODEV_PUB_KEY=
+ARG VITE_LOGO_DEV_ATTRIBUTION=true
+ENV VITE_LOGO_DEV_PUBLISHABLE_KEY=${VITE_LOGO_DEV_PUBLISHABLE_KEY}
+ENV LOGODEV_PUB_KEY=${LOGODEV_PUB_KEY}
+ENV VITE_LOGO_DEV_ATTRIBUTION=${VITE_LOGO_DEV_ATTRIBUTION}
+
 WORKDIR /app/apps/gops-frontend
 
 COPY apps/gops-frontend/package*.json ./

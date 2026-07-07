@@ -769,6 +769,28 @@ gops-kis-adapter
 gops-agent-orchestrator
 ```
 
+## Frontend Logo Integration
+
+The React frontend can render stock logos from Logo.dev by ticker symbol.
+Because `gops-frontend` is built into static Vite assets and served by nginx,
+these `VITE_*` values are build-time inputs, not Kubernetes runtime env vars:
+
+```text
+LOGODEV_PUB_KEY=
+LOGODEV_SECRET_KEY=
+VITE_LOGO_DEV_ATTRIBUTION=true
+```
+
+Leave `LOGODEV_PUB_KEY` empty to show local ticker monograms without calling
+Logo.dev. When set, the frontend uses
+`https://img.logo.dev/ticker/{SYMBOL}` directly from browser image tags.
+`VITE_LOGO_DEV_ATTRIBUTION=true` keeps the visible Logo.dev attribution required
+for commercial free-plan use. Set it to `false` only when the active Logo.dev
+plan permits removing attribution.
+`LOGODEV_SECRET_KEY` may exist in local or CI secrets for future server-side
+Logo.dev operations, but this browser-rendered logo path intentionally does not
+embed it in frontend assets.
+
 ## Future Dependencies
 
 Future ontology, GraphRAG, news/context ingestion, or UI composition may add GraphDB, vector indexes, vendor APIs, trace storage, or schedulers.

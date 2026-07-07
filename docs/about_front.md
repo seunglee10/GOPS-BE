@@ -16,8 +16,16 @@
 | 차트 데이터 프록시 | `VITE_BACKEND_TARGET`, 기본 `http://127.0.0.1:8000` |
 | 에이전트 프록시 | `/api` same-origin proxy |
 | 온톨로지 리포트 경로 | `VITE_ONTOLOGY_REPORT_URL`, 기본 `/api/agents/analyze` |
+| 주식 로고 | 선택적 `LOGODEV_PUB_KEY`, 없으면 티커 모노그램 표시 |
 
 Vite dev proxy는 `apps/gops-frontend/vite.config.ts`에 있다. 현재 프론트는 같은 origin의 `/api/charts`, `/ws/charts`, `/api/llm/chat`, `/api/agents/analyze`, `/api/agents/reports/{analysisId}`를 사용한다.
+
+S&P500 인기종목, 관심종목, 보유종목, 종목 검색, 기업정보 패널은
+`apps/gops-frontend/src/components/StockLogo.tsx`를 통해 회사 로고를 렌더링한다.
+Logo.dev 키가 없으면 외부 요청 없이 로컬 모노그램을 보여준다. 키가 있으면
+Vite build 시점에 값이 정적 asset 안으로 들어가며, free/commercial plan의 link-back
+요구를 위해 `VITE_LOGO_DEV_ATTRIBUTION=true`가 기본값이다.
+`LOGODEV_SECRET_KEY`는 브라우저 번들에 넣으면 안 되므로 이 경로에서는 사용하지 않는다.
 
 ## 로컬 데모 자산
 

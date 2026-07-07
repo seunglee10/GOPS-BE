@@ -1659,6 +1659,10 @@ services:
     build:
       context: .
       dockerfile: infra/docker/Dockerfile.gops-frontend
+      args:
+        VITE_LOGO_DEV_PUBLISHABLE_KEY: ${VITE_LOGO_DEV_PUBLISHABLE_KEY:-}
+        LOGODEV_PUB_KEY: ${LOGODEV_PUB_KEY:-}
+        VITE_LOGO_DEV_ATTRIBUTION: ${VITE_LOGO_DEV_ATTRIBUTION:-true}
     container_name: alfaka-gops-frontend
     depends_on:
       - gops-backend
