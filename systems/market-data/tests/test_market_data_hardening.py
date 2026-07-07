@@ -30,13 +30,14 @@ from alfaka.alpaca.feed_profiles import feed_profile_active_for_session, market_
 from alfaka.alpaca.trade_tiers import resolve_trade_subscription_plan
 from alfaka.alpaca.websocket_collector import (
     classify_alpaca_error,
+    publish_worker_count_from_env,
     read_realtime_subscription_symbols_by_channel,
     read_trade_subscription_symbols,
     summarize_subscription_request,
 )
 from alfaka.alpaca.assets import asset_to_symbol_metadata
 from alfaka.alpaca.news import build_news_events, iter_alpaca_news_pages
-from alfaka.common.kafka_io import create_json_consumer
+from alfaka.common.kafka_io import create_json_consumer, create_json_producer
 from alfaka.common.market_messages import build_raw_envelope, raw_topic_name, source_event_id
 from alfaka.common.redis_keys import RedisKeyBuilder
 from alfaka.common.runtime_health import read_component_health, write_component_health
@@ -1287,6 +1288,36 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(classify_alpaca_error({"msg": "auth timeout"}), "auth_timeout")
         self.assertEqual(classify_alpaca_error({"msg": "auth failed"}), "auth_failed")
 
+    def test_json_producer_uses_burst_tuning_env(self):
+        captured = {}
+
+        class FakeKafkaProducer:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+        fake_kafka = types.SimpleNamespace(KafkaProducer=FakeKafkaProducer)
+        with mock.patch.dict(sys.modules, {"kafka": fake_kafka}):
+            with mock.patch.dict(os.environ, {
+                "KAFKA_PRODUCER_LINGER_MS": "20",
+                "KAFKA_PRODUCER_BATCH_SIZE": "65536",
+                "KAFKA_PRODUCER_BUFFER_MEMORY": "67108864",
+                "KAFKA_PRODUCER_MAX_BLOCK_MS": "100",
+                "KAFKA_PRODUCER_ACKS": "1",
+            }, clear=False):
+                producer = create_json_producer("kafka:29092", "alpaca-sip")
+
+        self.assertIsInstance(producer, FakeKafkaProducer)
+        self.assertEqual(captured["linger_ms"], 20)
+        self.assertEqual(captured["batch_size"], 65536)
+        self.assertEqual(captured["buffer_memory"], 67108864)
+        self.assertEqual(captured["max_block_ms"], 100)
+        self.assertEqual(captured["acks"], "1")
+
+    def test_alpaca_publish_worker_count_is_configurable_and_never_zero(self):
+        self.assertEqual(publish_worker_count_from_env({"ALPACA_KAFKA_PUBLISH_WORKERS": "4"}), 4)
+        self.assertEqual(publish_worker_count_from_env({"ALPACA_KAFKA_PUBLISH_WORKERS": "0"}), 1)
+        self.assertEqual(publish_worker_count_from_env({"ALPACA_KAFKA_PUBLISH_WORKERS": "not-a-number"}), 1)
+
     def test_alpaca_aws_secret_supports_canonical_and_legacy_field_names(self):
         class FakeSecretsManager:
             def get_secret_value(self, SecretId):
@@ -1910,13 +1941,16 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn("KAFKA_RAW_S3_GROUP_ID: alfaka-raw-s3-archive", configmap)
         self.assertIn("ALPACA_COLLECTION_SYMBOL_SOURCE: universe", configmap)
         self.assertIn('ALPACA_MAX_TRADE_SYMBOLS: "100"', configmap)
+        self.assertIn("name: alfaka-alpaca-ingestor-sip", alpaca_ingestor_deployment)
         self.assertIn("name: alfaka-alpaca-ingestor-boats", alpaca_ingestor_deployment)
-        self.assertIn("name: alfaka-alpaca-tick-ingestor-sip", alpaca_ingestor_deployment)
-        self.assertIn("name: ALPACA_COLLECTION_SYMBOL_SOURCE", alpaca_ingestor_deployment)
-        self.assertIn("value: on-demand", alpaca_ingestor_deployment)
-        self.assertIn("value: alfaka-alpaca-tick-ingestor-sip", alpaca_ingestor_deployment)
+        self.assertNotIn("name: alfaka-alpaca-tick-ingestor-sip", alpaca_ingestor_deployment)
+        self.assertNotIn("value: alfaka-alpaca-tick-ingestor-sip", alpaca_ingestor_deployment)
+        self.assertIn("name: ALPACA_ACTIVE_CHANNELS", alpaca_ingestor_deployment)
         self.assertIn("value: trades,quotes", alpaca_ingestor_deployment)
-        self.assertIn('value: ""', alpaca_ingestor_deployment)
+        self.assertIn('ALPACA_KAFKA_PUBLISH_WORKERS: "4"', configmap)
+        self.assertIn('ALPACA_KAFKA_PUBLISH_QUEUE_MAXSIZE: "20000"', configmap)
+        self.assertIn('KAFKA_PRODUCER_LINGER_MS: "20"', configmap)
+        self.assertIn('KAFKA_PRODUCER_BATCH_SIZE: "65536"', configmap)
         self.assertIn('CLICKHOUSE_PROVIDER_TIMEOUT_SECONDS: "8"', configmap)
         self.assertIn('CLICKHOUSE_PROVIDER_RETRY_ATTEMPTS: "2"', configmap)
         self.assertIn('NEWS_BACKFILL_DAYS: "365"', configmap)
@@ -1952,7 +1986,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         lib = (REPO_ROOT / "scripts/aws/lib-gops-images.sh").read_text(encoding="utf-8")
 
         self.assertIn("alfaka-alpaca-ingestor-sip", lib)
-        self.assertIn("alfaka-alpaca-tick-ingestor-sip", lib)
+        self.assertNotIn("alfaka-alpaca-tick-ingestor-sip", lib)
         self.assertIn("alfaka-alpaca-ingestor-boats", lib)
         self.assertIn("alfaka-alpaca-ingestor-crypto", lib)
         self.assertIn("alfaka-alpaca-news-ingestor", lib)
