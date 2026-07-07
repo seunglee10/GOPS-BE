@@ -250,7 +250,8 @@ AWS/EKS may later point `REDIS_URL` at ElastiCache, Valkey, or another Redis-com
 For local compose and the in-cluster Redis StatefulSet, Redis is runtime
 chart/live/feed-control state. It stores newest 120 confirmed candles
 per `symbol + timeframe`, current provisional candles, latest closed candles,
-live trade/quote/event values, and SIP/BOATS feed state.
+per-interval closed watermarks that suppress stale live candles, live
+trade/quote/event values, and SIP/BOATS feed state.
 Durable historical candles live in ClickHouse and S3 final/manifest.
 Run the in-cluster Redis StatefulSet as an ephemeral cache/control-plane store.
 Do not make Redis replay large AOF/RDB files on restart; large market-data cache

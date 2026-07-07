@@ -17,6 +17,12 @@ from alfaka.common.redis_keys import RedisKeyBuilder
 from alfaka.common.runtime_health import write_component_health
 from alfaka.common.runtime_config import validate_required_values
 from alfaka.serving.dto import market_status_event, websocket_event
+from alfaka.serving.closed_watermark import (
+    candle_at_or_before_watermark,
+    candle_watermark_value,
+    latest_watermark_value,
+    watermark_after,
+)
 from alfaka.serving.intervals import redis_closed_candle_cap
 from alfaka.streaming.transforms import (
     CalendarCandleAggregator,
@@ -31,7 +37,9 @@ from alfaka.streaming.transforms import (
     normalize_quote,
     normalize_status,
     normalize_trade,
+    floor_minute,
     parse_time,
+    to_iso,
 )
 
 
@@ -523,6 +531,8 @@ def process_raw_envelope(envelope, producer, redis_client, redis_keys, state, to
 
 
 def process_trade_live_path(trade, producer, redis_client, redis_keys, state, topics, log_every_n=500):
+    if trade_bucket_blocked_by_closed_watermark(redis_client, redis_keys, trade):
+        return "trades_blocked_by_closed_watermark"
     accepted_for_window = state.window_builder.update(trade)
     live_candle = state.live_builder.update(trade) if accepted_for_window else None
     profile_bin = state.profile_builder.update(trade)
@@ -541,6 +551,19 @@ def process_trade_live_path(trade, producer, redis_client, redis_keys, state, to
     if live_candle:
         publish_derived_live_candles(producer, redis_client, redis_keys, state, topics, trade["symbol"], live_1m=live_candle, log_every_n=log_every_n)
     return "trades" if accepted_for_window else "trades_late_after_closed"
+
+
+def trade_bucket_blocked_by_closed_watermark(redis_client, redis_keys, trade):
+    try:
+        bucket_candle = {
+            "symbol": trade["symbol"],
+            "interval": "1m",
+            "timestamp": to_iso(floor_minute(trade["timestamp"])),
+        }
+        return candle_at_or_before_watermark(bucket_candle, read_closed_candle_watermark(redis_client, redis_keys, trade["symbol"], "1m"))
+    except Exception as exc:
+        print(f"Closed watermark trade guard skipped: symbol={trade.get('symbol')} error={exc}", flush=True)
+        return False
 
 
 def flush_ready_closed_candles(producer, redis_client, redis_keys, state, topics, reference_time=None, log_every_n=500):
@@ -707,16 +730,64 @@ def write_event_to_redis(redis_client, redis_keys, event):
     redis_client.expire(key, 86400)
 
 
+def read_closed_candle_watermark(redis_client, redis_keys, symbol, interval):
+    watermark = redis_client.get(redis_keys.closed_candle_watermark(symbol, interval))
+    if watermark:
+        return watermark
+    latest = redis_client.get(redis_keys.latest_closed_candle(symbol, interval))
+    if not latest:
+        return None
+    try:
+        candle = json.loads(latest)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    return candle_watermark_value(candle)
+
+
+def write_closed_candle_watermark_to_redis(redis_client, redis_keys, candle):
+    value = candle_watermark_value(candle)
+    if not value:
+        return None
+    key = redis_keys.closed_candle_watermark(candle["symbol"], candle["interval"])
+    existing = redis_client.get(key)
+    watermark = latest_watermark_value(existing, value)
+    if watermark_after(existing, value):
+        redis_client.set(key, value)
+    redis_client.expire(key, 604800)
+    return watermark
+
+
+def delete_stale_live_candle(redis_client, redis_keys, symbol, interval, watermark):
+    key = redis_keys.live_candle(symbol, interval)
+    value = redis_client.get(key)
+    if not value:
+        return False
+    try:
+        candle = json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return False
+    if not candle_at_or_before_watermark(candle, watermark):
+        return False
+    redis_client.delete(key)
+    return True
+
+
 def write_live_candle_to_redis(redis_client, redis_keys, candle):
+    watermark = read_closed_candle_watermark(redis_client, redis_keys, candle["symbol"], candle.get("interval", "1m"))
+    if candle_at_or_before_watermark(candle, watermark):
+        redis_client.delete(redis_keys.live_candle(candle["symbol"], candle.get("interval", "1m")))
+        return False
     key = redis_keys.live_candle(candle["symbol"], candle.get("interval", "1m"))
     redis_client.set(key, json.dumps(candle, ensure_ascii=False, separators=(",", ":")))
     redis_client.expire(key, live_candle_ttl_seconds())
+    return True
 
 
 def publish_live_candle(producer, redis_client, redis_keys, topics, candle, feed="unknown", log_every_n=500, throttle=None):
     if throttle is not None and not throttle.should_publish(candle):
         return False
-    write_live_candle_to_redis(redis_client, redis_keys, candle)
+    if not write_live_candle_to_redis(redis_client, redis_keys, candle):
+        return False
     publish_processed(
         producer,
         candle_topic(topics["live_candles"], candle["interval"]),
@@ -801,6 +872,8 @@ def write_closed_candle_to_redis(redis_client, redis_keys, candle):
     redis_client.zremrangebyrank(series_key, 0, -cap - 1)
     redis_client.expire(latest_key, 86400)
     redis_client.expire(series_key, 604800)
+    watermark = write_closed_candle_watermark_to_redis(redis_client, redis_keys, candle)
+    delete_stale_live_candle(redis_client, redis_keys, candle["symbol"], candle["interval"], watermark)
 
 
 def write_status_to_redis(redis_client, redis_keys, status):

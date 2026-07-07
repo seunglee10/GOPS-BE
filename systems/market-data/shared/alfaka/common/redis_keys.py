@@ -21,6 +21,9 @@ class RedisKeyBuilder:
     def latest_closed_candle(self, symbol, interval):
         return self.key(f"latest:closed:candle:{symbol}:{interval}")
 
+    def closed_candle_watermark(self, symbol, interval):
+        return self.key(f"latest:closed:watermark:{symbol}:{interval}")
+
     def recent_candles(self, symbol, interval):
         return self.candle_cache(symbol, interval)
 

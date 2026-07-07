@@ -25,8 +25,9 @@ Redis recent/live window
 
 Redis/ClickHouse 데이터가 renderable이면 즉시 반환한다. 부족하면 API
 foreground path가 Alpaca REST에서 요청 interval 그대로 closed historical bars를
-가져와 현재 Redis live/provisional candle과 병합해 반환한다. 같은 timestamp는
-live/provisional candle이 우선한다. 동시에 background fill은 같은 요청 범위를
+가져와 현재 Redis live/provisional candle과 병합해 반환한다. 단, Redis의
+`symbol + interval` closed watermark 이하 timestamp는 closed candle이 우선하며
+live/provisional candle을 반환하지 않는다. 동시에 background fill은 같은 요청 범위를
 S3 final/manifest와 ClickHouse에 저장한다. Raw S3 archive는 감사/백업용이며
 chart serving, coverage, fill decision, ClickHouse materialization source로 쓰지
 않는다.
@@ -134,6 +135,12 @@ foreground Alpaca direct fill may return a renderable payload immediately.
 Missing ranges are still queued as bounded background fill and surfaced in the
 `fill.backgroundFill` trace.
 
+Closed candles update a Redis closed watermark per `symbol + interval`. The
+processor deletes stale live candles at or before that watermark, rejects late
+tick buckets before they enter provisional builders, and the API/WebSocket paths
+drop `LIVE_CANDLE_UPDATE` payloads that are not newer than the latest closed
+timestamp.
+
 ## Runtime Flow
 
 ```mermaid
@@ -223,5 +230,5 @@ Core cases:
 - ClickHouse miss and S3 hit materializes only the requested range.
 - S3 miss calls Alpaca historical only for the requested interval and range.
 - 5m/10m/1h/4h/1W/1M direct interval rows are preferred; source aggregation is a fallback.
-- Foreground Alpaca direct fill merges historical bars with the latest live candle and never appends a duplicate current bucket.
+- Foreground Alpaca direct fill merges historical bars with the latest live candle only when the live candle is newer than the closed watermark.
 - Timeout returns partial candles plus source-level trace.

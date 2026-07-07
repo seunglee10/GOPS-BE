@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from alfaka.common.redis_keys import RedisKeyBuilder
+from alfaka.serving.closed_watermark import candle_at_or_before_watermark, latest_watermark_value
 from alfaka.serving.dto import websocket_event
 from alfaka.serving.redis_provider import live_candle_is_fresh
 
@@ -75,6 +76,7 @@ class SymbolStreamHub:
         self.sessions_by_symbol: dict[str, set[StreamSession]] = {}
         self.tasks: dict[str, asyncio.Task] = {}
         self.last_markers: dict[tuple[Any, ...], str] = {}
+        self.closed_watermarks: dict[tuple[str, str], str] = {}
         self.poll_seconds = read_positive_float_env("REALTIME_REDIS_POLL_SECONDS", 0.25)
         self.error_log_interval_seconds = read_positive_float_env("REALTIME_REDIS_ERROR_LOG_INTERVAL_SECONDS", 30.0)
         self._last_redis_error_log = 0.0
@@ -181,6 +183,7 @@ class SymbolStreamHub:
         for symbol, intervals in active.items():
             for interval in intervals:
                 pipeline.get(self.keys.live_candle(symbol, interval))
+                pipeline.get(self.keys.closed_candle_watermark(symbol, interval))
                 operations.append(("candle", symbol, interval))
             pipeline.hgetall(self.keys.live_trade(symbol))
             operations.append(("trade", symbol, None))
@@ -192,17 +195,28 @@ class SymbolStreamHub:
             self._log_redis_error("live_pipeline_execute", exc)
             return []
         events: list[dict[str, Any]] = []
-        for operation, value in zip(operations, values):
+        value_index = 0
+        for operation in operations:
             kind, symbol, interval = operation
-            event = self._event_from_live_value(kind, symbol, interval, value)
+            if kind == "candle":
+                value = values[value_index] if value_index < len(values) else None
+                watermark = values[value_index + 1] if value_index + 1 < len(values) else None
+                value_index += 2
+            else:
+                value = values[value_index] if value_index < len(values) else None
+                watermark = None
+                value_index += 1
+            event = self._event_from_live_value(kind, symbol, interval, value, watermark)
             if event:
                 events.append(event)
         return events
 
-    def _event_from_live_value(self, kind: str, symbol: str, interval: str | None, value: Any) -> dict[str, Any] | None:
+    def _event_from_live_value(self, kind: str, symbol: str, interval: str | None, value: Any, watermark: Any = None) -> dict[str, Any] | None:
         if kind == "candle":
             candle = parse_json_value(value)
             if not candle or not live_candle_is_fresh(candle):
+                return None
+            if candle_at_or_before_watermark(candle, watermark or self.closed_watermarks.get((symbol, interval or candle.get("interval") or "1m"))):
                 return None
             return websocket_event("LIVE_CANDLE_UPDATE", symbol, interval or candle.get("interval") or "1m", candle)
         if kind == "trade" and isinstance(value, dict) and value:
@@ -233,6 +247,9 @@ class SymbolStreamHub:
         logger.warning("Realtime Redis operation skipped: operation=%s error=%s", operation, exc)
 
     async def _broadcast_event(self, event: dict[str, Any]) -> None:
+        event = self._event_after_closed_watermark(event)
+        if not event:
+            return
         symbol = event.get("symbol")
         if symbol == "_MARKET":
             for subscribed_symbol in list(self.sessions_by_symbol):
@@ -252,6 +269,25 @@ class SymbolStreamHub:
         for session in sessions:
             if should_deliver_to_session(event, session):
                 await session.enqueue(event)
+
+    def _event_after_closed_watermark(self, event: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not event:
+            return None
+        event_type = event.get("type")
+        symbol = event.get("symbol")
+        interval = event.get("interval")
+        data = event.get("data") or {}
+        if not isinstance(symbol, str) or not isinstance(interval, str) or not isinstance(data, dict):
+            return event
+        marker_key = (symbol, interval)
+        if event_type in {"CANDLE_CLOSED", "CANDLE_CORRECTED"}:
+            watermark = latest_watermark_value(self.closed_watermarks.get(marker_key), data.get("timestamp"))
+            if watermark:
+                self.closed_watermarks[marker_key] = watermark
+            return event
+        if event_type == "LIVE_CANDLE_UPDATE" and candle_at_or_before_watermark(data, self.closed_watermarks.get(marker_key)):
+            return None
+        return event
 
 
 def should_deliver_to_session(event: dict[str, Any], session: StreamSession) -> bool:

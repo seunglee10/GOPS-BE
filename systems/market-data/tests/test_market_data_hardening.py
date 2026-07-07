@@ -1698,7 +1698,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         flush_ready_closed_candles(producer, redis, keys, state, topics, reference_time="2026-06-25T10:16:06.000Z")
         result = process_raw_envelope(build_raw_envelope({"T": "t", "S": "AAPL", "i": 2, "p": 99, "s": 1, "t": "2026-06-25T10:15:10.000Z"}, "sip"), producer, redis, keys, state, topics)
 
-        self.assertEqual(result, "trades_late_after_closed")
+        self.assertEqual(result, "trades_blocked_by_closed_watermark")
         self.assertEqual(flush_ready_closed_candles(producer, redis, keys, state, topics, reference_time="2026-06-25T10:17:00.000Z"), 0)
 
     def test_processor_commits_after_produce_and_flush_success(self):

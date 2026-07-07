@@ -9,6 +9,7 @@ import redis
 
 from alfaka.common.env import load_dotenv
 from alfaka.common.redis_keys import RedisKeyBuilder
+from alfaka.serving.closed_watermark import candle_at_or_before_watermark, candle_watermark_value
 from alfaka.serving.dto import snapshot, websocket_event
 from alfaka.serving.intervals import normalize_chart_interval, resolve_candle_limit
 from alfaka.serving.moving_average import attach_moving_averages
@@ -46,7 +47,20 @@ class RedisMarketDataProvider:
         if not value:
             return None
         candle = json.loads(value)
-        return candle if live_candle_is_fresh(candle) else None
+        if not live_candle_is_fresh(candle):
+            return None
+        return None if candle_at_or_before_watermark(candle, self.closed_candle_watermark(symbol, interval)) else candle
+
+    def closed_candle_watermark(self, symbol, interval):
+        interval = normalize_chart_interval(interval)
+        value = self.redis.get(self.keys.closed_candle_watermark(symbol, interval))
+        if value:
+            return value
+        latest = self.redis.get(self.keys.latest_closed_candle(symbol, interval))
+        if not latest:
+            return None
+        candle = json.loads(latest)
+        return candle_watermark_value(candle)
 
     def recent_candles(self, symbol, interval, limit=None):
         interval = normalize_chart_interval(interval)
