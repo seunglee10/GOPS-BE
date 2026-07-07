@@ -1309,7 +1309,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIsInstance(producer, FakeKafkaProducer)
         self.assertEqual(captured["linger_ms"], 20)
         self.assertEqual(captured["batch_size"], 65536)
-        self.assertEqual(captured["buffer_memory"], 67108864)
+        self.assertNotIn("buffer_memory", captured)
         self.assertEqual(captured["max_block_ms"], 100)
         self.assertEqual(captured["acks"], 1)
 
@@ -1971,6 +1971,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn('ALPACA_KAFKA_PUBLISH_QUEUE_MAXSIZE: "20000"', configmap)
         self.assertIn('KAFKA_PRODUCER_LINGER_MS: "20"', configmap)
         self.assertIn('KAFKA_PRODUCER_BATCH_SIZE: "65536"', configmap)
+        self.assertNotIn("KAFKA_PRODUCER_BUFFER_MEMORY", configmap)
         self.assertIn('CLICKHOUSE_PROVIDER_TIMEOUT_SECONDS: "8"', configmap)
         self.assertIn('CLICKHOUSE_PROVIDER_RETRY_ATTEMPTS: "2"', configmap)
         self.assertIn('NEWS_BACKFILL_DAYS: "365"', configmap)

@@ -16,24 +16,30 @@ def create_json_producer(bootstrap_servers, client_id):
         "key_serializer": lambda value: value.encode("utf-8"),
         "value_serializer": lambda value: json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
     }
+    options.update(producer_options_from_env())
+    return KafkaProducer(**options)
+
+
+def producer_options_from_env(environ=None):
+    env = os.environ if environ is None else environ
+    options = {}
     for option_name, env_name in {
         "linger_ms": "KAFKA_PRODUCER_LINGER_MS",
         "batch_size": "KAFKA_PRODUCER_BATCH_SIZE",
-        "buffer_memory": "KAFKA_PRODUCER_BUFFER_MEMORY",
         "max_block_ms": "KAFKA_PRODUCER_MAX_BLOCK_MS",
         "request_timeout_ms": "KAFKA_PRODUCER_REQUEST_TIMEOUT_MS",
         "retries": "KAFKA_PRODUCER_RETRIES",
     }.items():
-        parsed = optional_positive_int(os.getenv(env_name))
+        parsed = optional_positive_int(env.get(env_name))
         if parsed is not None:
             options[option_name] = parsed
-    compression_type = (os.getenv("KAFKA_PRODUCER_COMPRESSION_TYPE") or "").strip()
+    compression_type = (env.get("KAFKA_PRODUCER_COMPRESSION_TYPE") or "").strip()
     if compression_type:
         options["compression_type"] = compression_type
-    acks = producer_acks(os.getenv("KAFKA_PRODUCER_ACKS"))
+    acks = producer_acks(env.get("KAFKA_PRODUCER_ACKS"))
     if acks is not None:
         options["acks"] = acks
-    return KafkaProducer(**options)
+    return options
 
 
 def create_json_consumer(
