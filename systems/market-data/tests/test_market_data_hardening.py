@@ -2136,6 +2136,8 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn('KAFKA_CLICKHOUSE_ENABLE_AUTO_COMMIT: "false"', configmap)
         self.assertIn('ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED: "false"', configmap)
         self.assertIn('ON_DEMAND_FILL_FOREGROUND_MAX_BARS: "120"', configmap)
+        self.assertIn('ON_DEMAND_FILL_FOREGROUND_AUTO_INTERVALS: "1D,1W,1M"', configmap)
+        self.assertIn('ON_DEMAND_FILL_FOREGROUND_AUTO_MAX_BARS: "500"', configmap)
         self.assertIn("wait_for_rebuild_job", news_rebuild_script)
         self.assertIn('status.conditions[?(@.type=="Failed")].status', news_rebuild_script)
         self.assertIn("--previous=true", news_rebuild_script)

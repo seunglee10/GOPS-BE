@@ -2037,6 +2037,59 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(len(result["candles"]), 60)
         self.assertEqual(result["candles"][0]["timestamp"], "2026-01-01T00:00:00.000Z")
 
+    def test_on_demand_fill_auto_foreground_uses_auto_cap_over_global_cap(self):
+        payload = {
+            "symbol": "NVDA",
+            "interval": "1D",
+            "candles": [],
+            "returnedCount": 0,
+            "storedCandleCount": 0,
+            "sourceInterval": "1D",
+            "missingRanges": [
+                {"start": "2025-11-10T04:00:00.000Z", "end": "2026-07-02T04:00:00.000Z"}
+            ],
+            "_sourceTrace": {
+                "redis": {"checked": True, "hit": False, "rowCount": 0},
+                "clickhouse": {"checked": True, "hit": False, "rowCount": 0},
+            },
+        }
+        raw_rows = [
+            {
+                "t": (datetime(2025, 11, 10, tzinfo=timezone.utc) + timedelta(days=index)).strftime("%Y-%m-%dT04:00:00Z"),
+                "o": 180 + index,
+                "h": 181 + index,
+                "l": 179 + index,
+                "c": 180.5 + index,
+                "v": 10_000_000 + index,
+                "n": 100 + index,
+                "vw": 180.25 + index,
+            }
+            for index in range(120)
+        ]
+        with mock.patch.dict(os.environ, {
+            "ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED": "",
+            "ON_DEMAND_FILL_FOREGROUND_MAX_BARS": "120",
+            "ON_DEMAND_FILL_FOREGROUND_AUTO_INTERVALS": "1D",
+            "ON_DEMAND_FILL_FOREGROUND_AUTO_MAX_BARS": "500",
+        }, clear=False):
+            service = OnDemandFillService(timeout_seconds=8, background_enabled=False)
+
+        with mock.patch("app.market_data.fill.service.fetch_alpaca_bars", return_value=raw_rows) as fetch:
+            result = service.fill_if_needed(
+                symbol="NVDA",
+                interval="1D",
+                limit=120,
+                before=None,
+                from_time="2025-11-10T04:00:00.000Z",
+                to_time="2026-07-02T04:00:00.000Z",
+                payload=payload,
+            )
+
+        fetch.assert_called_once()
+        self.assertEqual(result["fill"]["foregroundFill"]["state"], "filled")
+        self.assertNotIn("exceeds foreground cap 120", result["fill"]["foregroundFill"].get("reason") or "")
+        self.assertEqual(len(result["candles"]), 120)
+
     def test_on_demand_fill_keeps_live_candle_over_alpaca_current_bucket(self):
         live = {
             "symbol": "BAC",

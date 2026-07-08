@@ -187,10 +187,13 @@ class OnDemandFillService:
         if not self.foreground_enabled and not foreground_auto_enabled:
             trace["foregroundFill"].update({"state": "disabled", "reason": "foreground Alpaca fill disabled"})
             return False
-        if estimated_bars > self.foreground_max_bars:
+        foreground_cap = self.foreground_max_bars
+        if foreground_auto_enabled:
+            foreground_cap = max(foreground_cap, self.foreground_auto_max_bars)
+        if estimated_bars > foreground_cap:
             trace["foregroundFill"].update({
                 "state": "skipped",
-                "reason": f"estimated bar count {estimated_bars} exceeds foreground cap {self.foreground_max_bars}",
+                "reason": f"estimated bar count {estimated_bars} exceeds foreground cap {foreground_cap}",
             })
             return False
         if self._deadline_exceeded(started):
