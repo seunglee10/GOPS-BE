@@ -6,6 +6,7 @@ from app.auth.dependencies import require_current_user
 from app.auth.models import AuthenticatedUser
 from app.market_data.calendar.service import next_market_open_payload
 from app.market_data.query.service import get_query_service
+from alfaka.serving.intervals import MAX_CHART_CANDLE_LIMIT
 
 router = APIRouter()
 CHART_INTERVAL_PATTERN = "^(1m|5m|10m|1h|4h|1D|1W|1M|1d|1w|1mo|1MO|1month)$"
@@ -94,7 +95,7 @@ def chart_indicators(
     from_time: str | None = Query(default=None, alias="from"),
     to_time: str | None = Query(default=None, alias="to"),
     layers: str = Query(default="sma:5,sma:20,sma:60", max_length=256),
-    limit: int = Query(default=300, ge=1, le=5000),
+    limit: int = Query(default=300, ge=1, le=MAX_CHART_CANDLE_LIMIT),
 ) -> dict[str, Any]:
     return get_query_service().indicator_series(symbol, interval, from_time, to_time, layers, limit)
 
