@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from alfaka.common.redis_keys import RedisKeyBuilder
-from alfaka.serving.closed_watermark import candle_at_or_before_watermark, latest_watermark_value
+from alfaka.serving.closed_watermark import latest_watermark_value, live_candle_at_or_before_watermark
 from alfaka.serving.dto import websocket_event
 from alfaka.serving.redis_provider import live_candle_is_fresh
 
@@ -184,6 +184,7 @@ class SymbolStreamHub:
             for interval in intervals:
                 pipeline.get(self.keys.live_candle(symbol, interval))
                 pipeline.get(self.keys.closed_candle_watermark(symbol, interval))
+                pipeline.get(self.keys.latest_closed_candle(symbol, interval))
                 operations.append(("candle", symbol, interval))
             pipeline.hgetall(self.keys.live_trade(symbol))
             operations.append(("trade", symbol, None))
@@ -201,22 +202,37 @@ class SymbolStreamHub:
             if kind == "candle":
                 value = values[value_index] if value_index < len(values) else None
                 watermark = values[value_index + 1] if value_index + 1 < len(values) else None
-                value_index += 2
+                latest_closed = values[value_index + 2] if value_index + 2 < len(values) else None
+                value_index += 3
             else:
                 value = values[value_index] if value_index < len(values) else None
                 watermark = None
+                latest_closed = None
                 value_index += 1
-            event = self._event_from_live_value(kind, symbol, interval, value, watermark)
+            event = self._event_from_live_value(kind, symbol, interval, value, watermark, latest_closed)
             if event:
                 events.append(event)
         return events
 
-    def _event_from_live_value(self, kind: str, symbol: str, interval: str | None, value: Any, watermark: Any = None) -> dict[str, Any] | None:
+    def _event_from_live_value(
+        self,
+        kind: str,
+        symbol: str,
+        interval: str | None,
+        value: Any,
+        watermark: Any = None,
+        latest_closed: Any = None,
+    ) -> dict[str, Any] | None:
         if kind == "candle":
             candle = parse_json_value(value)
             if not candle or not live_candle_is_fresh(candle):
                 return None
-            if candle_at_or_before_watermark(candle, watermark or self.closed_watermarks.get((symbol, interval or candle.get("interval") or "1m"))):
+            latest_closed_candle = parse_json_value(latest_closed)
+            if live_candle_at_or_before_watermark(
+                candle,
+                watermark or self.closed_watermarks.get((symbol, interval or candle.get("interval") or "1m")),
+                latest_closed_candle,
+            ):
                 return None
             return websocket_event("LIVE_CANDLE_UPDATE", symbol, interval or candle.get("interval") or "1m", candle)
         if kind == "trade" and isinstance(value, dict) and value:
@@ -285,7 +301,7 @@ class SymbolStreamHub:
             if watermark:
                 self.closed_watermarks[marker_key] = watermark
             return event
-        if event_type == "LIVE_CANDLE_UPDATE" and candle_at_or_before_watermark(data, self.closed_watermarks.get(marker_key)):
+        if event_type == "LIVE_CANDLE_UPDATE" and live_candle_at_or_before_watermark(data, self.closed_watermarks.get(marker_key)):
             return None
         return event
 

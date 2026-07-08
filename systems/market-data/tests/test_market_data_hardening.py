@@ -1561,6 +1561,105 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(redis.expirations[keys.live_trade("MLM")], 90)
         self.assertEqual(redis.expirations[keys.live_candle("MLM", "1m")], 120)
 
+    def test_processor_allows_newer_daily_live_candle_for_same_closed_bucket(self):
+        redis = MemoryRedis()
+        keys = RedisKeyBuilder()
+        closed = {
+            "eventType": "CANDLE",
+            "symbol": "NVDA",
+            "interval": "1D",
+            "timestamp": "2026-07-07T04:00:00.000Z",
+            "open": 190,
+            "high": 198,
+            "low": 189,
+            "close": 196,
+            "volume": 1000,
+            "isClosed": True,
+            "createdAt": "2026-07-07T20:05:00.000Z",
+        }
+        live = {
+            **closed,
+            "eventType": "LIVE_CANDLE",
+            "close": 197.64,
+            "volume": 1250,
+            "isClosed": False,
+            "source": "derived.live",
+            "sourceInterval": "1m",
+            "updatedAt": "2026-07-08T01:26:50.000Z",
+        }
+
+        write_closed_candle_to_redis(redis, keys, closed)
+        stored = write_live_candle_to_redis(redis, keys, live)
+
+        self.assertTrue(stored)
+        stored_live = json.loads(redis.values[keys.live_candle("NVDA", "1D")])
+        self.assertEqual(stored_live["close"], 197.64)
+        self.assertFalse(stored_live["isClosed"])
+
+    def test_processor_blocks_older_daily_live_candle_for_same_closed_bucket(self):
+        redis = MemoryRedis()
+        keys = RedisKeyBuilder()
+        closed = {
+            "eventType": "CANDLE",
+            "symbol": "NVDA",
+            "interval": "1D",
+            "timestamp": "2026-07-07T04:00:00.000Z",
+            "open": 190,
+            "high": 198,
+            "low": 189,
+            "close": 196,
+            "volume": 1000,
+            "isClosed": True,
+            "createdAt": "2026-07-07T20:05:00.000Z",
+        }
+        live = {
+            **closed,
+            "eventType": "LIVE_CANDLE",
+            "close": 195,
+            "isClosed": False,
+            "source": "derived.live",
+            "sourceInterval": "1m",
+            "updatedAt": "2026-07-07T19:59:00.000Z",
+        }
+
+        write_closed_candle_to_redis(redis, keys, closed)
+        stored = write_live_candle_to_redis(redis, keys, live)
+
+        self.assertFalse(stored)
+        self.assertNotIn(keys.live_candle("NVDA", "1D"), redis.values)
+
+    def test_processor_still_blocks_same_bucket_intraday_live_after_closed_candle(self):
+        redis = MemoryRedis()
+        keys = RedisKeyBuilder()
+        closed = {
+            "eventType": "CANDLE",
+            "symbol": "NVDA",
+            "interval": "1m",
+            "timestamp": "2026-07-07T20:05:00.000Z",
+            "open": 196,
+            "high": 197,
+            "low": 195,
+            "close": 196.5,
+            "volume": 100,
+            "isClosed": True,
+            "createdAt": "2026-07-07T20:06:00.000Z",
+        }
+        live = {
+            **closed,
+            "eventType": "LIVE_CANDLE",
+            "close": 197,
+            "isClosed": False,
+            "source": "alpaca.trades",
+            "sourceInterval": "trades",
+            "updatedAt": "2026-07-07T20:06:30.000Z",
+        }
+
+        write_closed_candle_to_redis(redis, keys, closed)
+        stored = write_live_candle_to_redis(redis, keys, live)
+
+        self.assertFalse(stored)
+        self.assertNotIn(keys.live_candle("NVDA", "1m"), redis.values)
+
     def test_processor_emits_provisional_live_candles_for_all_chart_intervals(self):
         producer = RecordingProducer()
         redis = MemoryRedis()
@@ -2544,6 +2643,45 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(event["source"], "derived.live")
         self.assertEqual(event["sourceInterval"], "1m")
         self.assertEqual(event["data"]["updatedAt"], "2026-06-25T10:17:20.250Z")
+
+    def test_redis_provider_allows_newer_daily_live_candle_for_same_closed_bucket(self):
+        redis = MemoryRedis()
+        keys = RedisKeyBuilder()
+        closed = {
+            "eventType": "CANDLE",
+            "symbol": "NVDA",
+            "interval": "1D",
+            "timestamp": "2026-07-07T04:00:00.000Z",
+            "open": 190,
+            "high": 198,
+            "low": 189,
+            "close": 196,
+            "volume": 1000,
+            "isClosed": True,
+            "createdAt": "2026-07-07T20:05:00.000Z",
+        }
+        redis.set(keys.latest_closed_candle("NVDA", "1D"), json.dumps(closed))
+        redis.set(keys.closed_candle_watermark("NVDA", "1D"), closed["timestamp"])
+        redis.set(keys.live_candle("NVDA", "1D"), json.dumps({
+            **closed,
+            "eventType": "LIVE_CANDLE",
+            "close": 197.64,
+            "volume": 1250,
+            "isClosed": False,
+            "source": "derived.live",
+            "sourceInterval": "1m",
+            "updatedAt": "2026-07-08T01:26:50.000Z",
+        }))
+        provider = RedisMarketDataProvider.__new__(RedisMarketDataProvider)
+        provider.redis = redis
+        provider.keys = keys
+
+        with mock.patch.dict(os.environ, {"LIVE_CANDLE_STALE_SECONDS": "0"}):
+            event = provider.live_event("NVDA", "1D")
+
+        self.assertEqual(event["interval"], "1D")
+        self.assertEqual(event["data"]["close"], 197.64)
+        self.assertFalse(event["data"]["isClosed"])
 
     def test_redis_provider_ignores_stale_live_candle(self):
         redis = MemoryRedis()
@@ -6001,6 +6139,38 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(payload["candles"][0]["timestamp"], "2026-06-25T10:15:00.000Z")
         self.assertEqual(payload["candles"][0]["close"], 100.5)
         self.assertTrue(payload["candles"][0]["isClosed"])
+
+    def test_provider_merges_newer_daily_live_candle_for_same_closed_bucket(self):
+        closed = {
+            "interval": "1D",
+            "timestamp": "2026-07-07T04:00:00.000Z",
+            "open": 190,
+            "high": 198,
+            "low": 189,
+            "close": 196,
+            "volume": 1000,
+            "isClosed": True,
+            "createdAt": "2026-07-07T20:05:00.000Z",
+        }
+        live = {
+            **closed,
+            "close": 197.64,
+            "volume": 1250,
+            "isClosed": False,
+            "sourceInterval": "1m",
+            "updatedAt": "2026-07-08T01:26:50.000Z",
+        }
+        provider = MarketDataProvider(
+            redis_provider=FakeRedisProvider(candles=[closed], live_candle=live),
+            clickhouse_provider=FakeClickHouseProvider(candles=[closed]),
+        )
+
+        payload = provider.candle_snapshot("NVDA", "1D", 5)
+
+        self.assertEqual(len(payload["candles"]), 1)
+        self.assertEqual(payload["candles"][0]["timestamp"], "2026-07-07T04:00:00.000Z")
+        self.assertEqual(payload["candles"][0]["close"], 197.64)
+        self.assertFalse(payload["candles"][0]["isClosed"])
 
     def test_provider_includes_redis_live_candles_in_from_to_snapshot(self):
         start = datetime(2026, 7, 6, 13, 30, tzinfo=timezone.utc)

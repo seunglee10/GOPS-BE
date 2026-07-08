@@ -280,6 +280,42 @@ class RealtimeBoundaryTest(unittest.TestCase):
 
         self.assertEqual(events, [])
 
+    def test_stream_hub_allows_newer_daily_live_candle_for_same_closed_bucket(self):
+        redis = PipelineRedis()
+        keys = RedisKeyBuilder()
+        closed = {
+            "timestamp": "2026-07-07T04:00:00.000Z",
+            "open": 190,
+            "high": 198,
+            "low": 189,
+            "close": 196,
+            "volume": 1000,
+            "isClosed": True,
+            "createdAt": "2999-01-01T00:05:00.000Z",
+        }
+        redis.values[keys.live_candle("NVDA", "1D")] = json.dumps({
+            **closed,
+            "eventType": "LIVE_CANDLE",
+            "symbol": "NVDA",
+            "interval": "1D",
+            "close": 197.64,
+            "volume": 1250,
+            "isClosed": False,
+            "source": "derived.live",
+            "sourceInterval": "1m",
+            "updatedAt": "2999-01-01T00:10:00.000Z",
+        })
+        redis.values[keys.closed_candle_watermark("NVDA", "1D")] = closed["timestamp"]
+        redis.values[keys.latest_closed_candle("NVDA", "1D")] = json.dumps(closed)
+        hub = TestableHub(redis_client=redis, provider=FakeProvider())
+
+        events = hub._read_latest_live_events_batch({"NVDA": ["1D"]})
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["type"], "LIVE_CANDLE_UPDATE")
+        self.assertEqual(events[0]["interval"], "1D")
+        self.assertEqual(events[0]["data"]["close"], 197.64)
+
     def test_duplicate_pubsub_event_is_not_enqueued_twice(self):
         async def run():
             hub = TestableHub(redis_client=None, provider=None)
