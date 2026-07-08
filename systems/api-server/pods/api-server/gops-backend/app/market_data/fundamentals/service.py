@@ -222,7 +222,7 @@ class StoreFundamentalsAdapter(FundamentalsAdapter):
                   AND fiscal_period IN ('Q1', 'Q2', 'Q3', 'Q4')
                   AND period_end >= addMonths(today(), -30)
                 ORDER BY symbol ASC, metric ASC, period_end DESC, version_filed_at DESC
-                LIMIT 12 BY symbol, metric
+                LIMIT 1 BY symbol, metric, fiscal_year, fiscal_period
                 FORMAT JSONEachRow
                 """,
                 {"symbols": symbols, "metrics": list(EARNINGS_SERIES_METRICS)},
@@ -251,7 +251,7 @@ class StoreFundamentalsAdapter(FundamentalsAdapter):
                   AND fiscal_period IN ('Q1', 'Q2', 'Q3', 'Q4')
                   AND period_end >= addMonths(today(), -30)
                 ORDER BY symbol ASC, metric ASC, period_end DESC, collected_at DESC
-                LIMIT 12 BY symbol, metric
+                LIMIT 1 BY symbol, metric, fiscal_year, fiscal_period
                 FORMAT JSONEachRow
                 """,
                 {"symbols": symbols, "metrics": list(EARNINGS_SERIES_METRICS)},
@@ -274,7 +274,6 @@ class StoreFundamentalsAdapter(FundamentalsAdapter):
         derived_table = provider.table("sec_derived_metrics") if hasattr(provider, "table") else "market_data.sec_derived_metrics"
         fiscal_periods = ("FY",) if period == "annual" else ("Q1", "Q2", "Q3", "Q4")
         months = max(12, min(120, int(years) * 12 + 6))
-        limit_by_metric = 12 if period == "annual" else 20
         try:
             fact_rows = query_json_each_row(
                 f"""
@@ -295,7 +294,7 @@ class StoreFundamentalsAdapter(FundamentalsAdapter):
                   AND value IS NOT NULL
                   AND period_end >= addMonths(today(), -{{months:UInt16}})
                 ORDER BY metric ASC, period_end DESC, version_filed_at DESC
-                LIMIT {{limitByMetric:UInt16}} BY metric
+                LIMIT 1 BY metric, fiscal_year, fiscal_period
                 FORMAT JSONEachRow
                 """,
                 {
@@ -303,7 +302,6 @@ class StoreFundamentalsAdapter(FundamentalsAdapter):
                     "metrics": list(FINANCIAL_SERIES_METRICS),
                     "fiscalPeriods": list(fiscal_periods),
                     "months": months,
-                    "limitByMetric": limit_by_metric,
                 },
             )
         except Exception:
@@ -327,7 +325,7 @@ class StoreFundamentalsAdapter(FundamentalsAdapter):
                   AND value IS NOT NULL
                   AND period_end >= addMonths(today(), -{{months:UInt16}})
                 ORDER BY metric ASC, period_end DESC, version_filed_at DESC
-                LIMIT {{limitByMetric:UInt16}} BY metric
+                LIMIT 1 BY metric, fiscal_year, fiscal_period
                 FORMAT JSONEachRow
                 """,
                 {
@@ -335,7 +333,6 @@ class StoreFundamentalsAdapter(FundamentalsAdapter):
                     "metrics": list(FINANCIAL_DERIVED_SERIES_METRICS),
                     "fiscalPeriods": list(fiscal_periods),
                     "months": months,
-                    "limitByMetric": limit_by_metric,
                 },
             )
         except Exception:
@@ -823,9 +820,9 @@ def earnings_series_from_rows(actual_rows: list[Any], estimate_rows: list[Any]) 
             "source": "sec",
             "filedAt": read_string(row.get("filedAt")),
         })
-        if metric == "eps":
+        if metric == "eps" and "actualEps" not in point:
             point["actualEps"] = value
-        elif metric == "revenue":
+        elif metric == "revenue" and "actualRevenue" not in point:
             point["actualRevenue"] = value
 
     for row in estimate_rows:
@@ -846,9 +843,9 @@ def earnings_series_from_rows(actual_rows: list[Any], estimate_rows: list[Any]) 
         point.setdefault("periodEndDate", read_string(row.get("periodEndDate")))
         point["estimateSource"] = "yahoo"
         point["collectedAt"] = read_string(row.get("collectedAt"))
-        if metric == "eps":
+        if metric == "eps" and "estimatedEps" not in point:
             point["estimatedEps"] = value
-        elif metric == "revenue":
+        elif metric == "revenue" and "estimatedRevenue" not in point:
             point["estimatedRevenue"] = value
 
     return {
@@ -882,7 +879,7 @@ def financial_series_from_rows(rows: list[Any]) -> dict[str, list[FinancialSerie
             "source": "sec",
             "filedAt": read_string(row.get("filedAt")),
         })
-        point[field] = value
+        point.setdefault(field, value)
     return {
         symbol: [
             point for point in (
