@@ -39,14 +39,21 @@ class MarketDataProvider:
         interval = normalize_chart_interval(interval)
         limit = resolve_candle_limit(interval, limit)
         query_limit = moving_average_query_limit(interval, limit, ma_windows)
+        implicit_from_time = None
         if from_time and to_time:
             clickhouse_from_time = moving_average_query_from_time(interval, from_time, ma_windows)
         elif before and not from_time:
-            clickhouse_from_time = None
+            implicit_from_time = before_pagination_window_from_time(interval, before, limit)
+            clickhouse_from_time = (
+                moving_average_query_from_time(interval, implicit_from_time, ma_windows)
+                if implicit_from_time
+                else None
+            )
         else:
             clickhouse_from_time = target_floor_from_time(interval, from_time, limit)
             if from_time and not before:
                 clickhouse_from_time = moving_average_query_from_time(interval, clickhouse_from_time, ma_windows)
+        filter_from_time = from_time or implicit_from_time
         range_query = bool(before or from_time or to_time)
         redis_candles = filter_stock_chart_candles(self.redis_provider.recent_candles(symbol, interval, query_limit))
         live_candle = self._live_candle(symbol, interval)
@@ -55,13 +62,13 @@ class MarketDataProvider:
             redis_candles = filter_candles_for_requested_window(
                 redis_candles,
                 before=before,
-                from_time=from_time,
+                from_time=filter_from_time,
                 to_time=to_time,
             )
             live_candle = live_candle if candle_in_requested_window(
                 live_candle,
                 before=before,
-                from_time=from_time,
+                from_time=filter_from_time,
                 to_time=to_time,
             ) else None
         coverage = None
@@ -106,7 +113,7 @@ class MarketDataProvider:
             computed = filter_candles_for_requested_window(
                 computed,
                 before=before,
-                from_time=from_time,
+                from_time=filter_from_time,
                 to_time=to_time,
             )
         candles = computed[-limit:]
@@ -122,7 +129,7 @@ class MarketDataProvider:
             coverage or coverage_from_loaded_candles(candles),
             limit,
             before=before,
-            from_time=from_time,
+            from_time=filter_from_time,
             to_time=to_time,
         )
 
@@ -412,6 +419,17 @@ def requested_window_for_interval(interval, requested_limit, before=None, from_t
         start.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
         end.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
     )
+
+
+def before_pagination_window_from_time(interval, before, requested_limit):
+    before_time = parse_iso_time(before)
+    if not before_time:
+        return None
+    target_floor = parse_iso_time(target_range_from_for_interval(interval, requested_limit=requested_limit))
+    if target_floor and before_time <= target_floor:
+        return None
+    start, _ = requested_window_for_interval(interval, requested_limit, before=before)
+    return start
 
 
 def requested_window_delta(interval, requested_limit):

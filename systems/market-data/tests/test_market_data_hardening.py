@@ -2136,6 +2136,8 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn('KAFKA_CLICKHOUSE_ENABLE_AUTO_COMMIT: "false"', configmap)
         self.assertIn('ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED: "false"', configmap)
         self.assertIn('ON_DEMAND_FILL_FOREGROUND_MAX_BARS: "120"', configmap)
+        self.assertIn('ON_DEMAND_FILL_FOREGROUND_AUTO_INTERVALS: "1D,1W,1M"', configmap)
+        self.assertIn('ON_DEMAND_FILL_FOREGROUND_AUTO_MAX_BARS: "500"', configmap)
         self.assertIn("wait_for_rebuild_job", news_rebuild_script)
         self.assertIn('status.conditions[?(@.type=="Failed")].status', news_rebuild_script)
         self.assertIn("--previous=true", news_rebuild_script)
@@ -5292,6 +5294,51 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "2018-01-01T00:00:00.000Z",
             "2019-01-01T00:00:00.000Z",
         ])
+
+    def test_chart_snapshot_before_pagination_rejects_stale_gap_jump(self):
+        rows = [
+            {
+                "timestamp": "2025-09-15T04:00:00.000Z",
+                "interval": "1D",
+                "open": 175,
+                "high": 178,
+                "low": 174,
+                "close": 177,
+                "volume": 147_000_000,
+                "isClosed": True,
+                "marketSession": "regular",
+            },
+            {
+                "timestamp": "2025-10-10T04:00:00.000Z",
+                "interval": "1D",
+                "open": 193,
+                "high": 195,
+                "low": 182,
+                "close": 183,
+                "volume": 268_000_000,
+                "isClosed": True,
+                "marketSession": "regular",
+            },
+        ]
+        clickhouse = RecordingRangeClickHouseProvider(rows)
+        provider = MarketDataProvider(
+            redis_provider=FakeRedisProvider(),
+            clickhouse_provider=clickhouse,
+        )
+
+        with mock.patch("alfaka.serving.provider.target_range_from_for_interval", return_value="2026-05-23T04:00:00.000Z"):
+            payload = provider.candle_snapshot(
+                "NVDA",
+                "1D",
+                20,
+                before="2026-07-02T04:00:00.000Z",
+                ma_windows=(),
+            )
+
+        self.assertEqual(clickhouse.calls[-1]["from_time"], "2026-05-23T04:00:00.000Z")
+        self.assertEqual(payload["targetRangeFrom"], "2026-05-23T04:00:00.000Z")
+        self.assertEqual(payload["targetRangeTo"], "2026-07-02T04:00:00.000Z")
+        self.assertEqual(payload["candles"], [])
 
     def test_chart_snapshot_explicit_range_can_read_before_target_floor(self):
         rows = [
