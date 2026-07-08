@@ -12,6 +12,7 @@ from app.services.alfaka_market_data import get_market_data_provider, read_watch
 
 from .repository import RecommendationRunCreate, RecommendationRepository
 from .scoring import (
+    MARKET_TZ,
     NEWS_LOOKBACK_DAYS,
     RecommendationInput,
     build_candidates,
@@ -74,9 +75,19 @@ class RecommendationDataSource:
             market_provider = get_market_data_provider()
             redis_candles = market_provider.redis_provider.recent_candles(symbol, "1m", 240)
             clickhouse_candles: list[dict[str, Any]] = []
-            if len(redis_candles or []) < 120:
+            session_mode = market_session(now)
+            if session_mode in {"pre", "regular"}:
+                session_candles = filter_candles_for_session(redis_candles or [], session_mode, now)
+                if len(session_candles) < min_candle_count(session_mode, now):
+                    clickhouse_candles = market_provider.clickhouse_provider.candles(
+                        symbol,
+                        "1m",
+                        720,
+                        **session_candle_window(now, session_mode),
+                    )
+            elif len(redis_candles or []) < 120:
                 clickhouse_candles = market_provider.clickhouse_provider.candles(symbol, "1m", 240)
-            return merge_candles([*(clickhouse_candles or []), *(redis_candles or [])])[-240:]
+            return candles_not_after(merge_candles([*(clickhouse_candles or []), *(redis_candles or [])]), now)[-240:]
         except Exception:
             return []
 
@@ -431,6 +442,27 @@ def positive_int_env(name: str, *, default: int, maximum: int | None = None) -> 
         value = default
     value = max(1, value)
     return min(value, maximum) if maximum else value
+
+
+def session_candle_window(now: datetime, session_mode: str) -> dict[str, str]:
+    local = now.astimezone(MARKET_TZ)
+    if normalize_session_mode(session_mode) == "pre":
+        start_local = local.replace(hour=4, minute=0, second=0, microsecond=0)
+    else:
+        start_local = local.replace(hour=9, minute=30, second=0, microsecond=0)
+    return {
+        "from_time": iso_z(start_local.astimezone(timezone.utc)),
+        "to_time": iso_z(now),
+    }
+
+
+def candles_not_after(candles: list[dict[str, Any]], now: datetime) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for candle in candles:
+        observed = parse_datetime(candle.get("timestamp") or candle.get("eventTime") or candle.get("updatedAt"))
+        if observed is None or observed <= now:
+            rows.append(candle)
+    return rows
 
 
 def iso_z(value: datetime) -> str:
