@@ -1357,7 +1357,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             query_routes.get_query_service = previous
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["limit"], 36477)
+        self.assertEqual(response.json()["limit"], 1512)
 
     def test_latest_news_uses_redis_when_cache_has_enough_rows(self):
         service = MarketDataQueryService(FakeNewsProvider(redis_rows=[{
@@ -1858,6 +1858,35 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertTrue(result["fill"]["sources"]["clickhouse"]["hit"])
         self.assertFalse(result["fill"]["sources"]["s3"]["checked"])
         self.assertFalse(result["fill"]["sources"]["alpaca"]["checked"])
+
+    def test_on_demand_fill_does_not_queue_for_satisfied_tiny_live_window(self):
+        payload = {
+            "symbol": "NVDA",
+            "interval": "1m",
+            "candles": make_fill_candles(5),
+            "returnedCount": 5,
+            "storedCandleCount": 5,
+            "_sourceTrace": {
+                "redis": {"checked": True, "hit": True, "rowCount": 5},
+                "clickhouse": {"checked": False, "hit": False, "rowCount": 0},
+            },
+        }
+        service = RecordingOnDemandFillService(s3_result=False, alpaca_result=True)
+
+        result = service.fill_if_needed(
+            symbol="NVDA",
+            interval="1m",
+            limit=5,
+            before=None,
+            from_time=None,
+            to_time=None,
+            payload=payload,
+        )
+
+        self.assertEqual(result["fill"]["status"], "not_needed")
+        self.assertEqual(service.calls, [])
+        self.assertEqual(service.queued, [])
+        self.assertFalse(result["fill"]["backgroundFill"]["queued"])
 
     def test_on_demand_fill_queues_background_when_returned_window_is_sparse_at_limit(self):
         early_start = datetime.fromisoformat("2026-06-25T13:30:00+00:00")

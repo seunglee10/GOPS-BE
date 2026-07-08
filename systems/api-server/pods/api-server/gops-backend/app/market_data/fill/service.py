@@ -308,9 +308,18 @@ class OnDemandFillService:
         candles = payload.get("candles") or []
         if payload.get("missingRanges"):
             return True
+        if self._requested_tiny_window_is_satisfied(payload, interval, limit):
+            return False
         if not self._is_renderable(payload, interval, source_interval):
             return True
         return len(candles) < limit
+
+    def _requested_tiny_window_is_satisfied(self, payload: dict[str, Any], interval: str, limit: int) -> bool:
+        if limit >= minimum_renderable_returned_bars(interval):
+            return False
+        candles = payload.get("candles") or []
+        returned = int(payload.get("returnedCount") or len(candles))
+        return returned >= limit and len(candles) >= limit
 
     def _is_renderable(self, payload: dict[str, Any], interval: str, source_interval: str) -> bool:
         returned = int(payload.get("returnedCount") or len(payload.get("candles") or []))

@@ -138,6 +138,10 @@ even if full coverage still needs repair. If they are not renderable, bounded
 foreground Alpaca direct fill may return a renderable payload immediately.
 Missing ranges are still queued as bounded background fill and surfaced in the
 `fill.backgroundFill` trace.
+Tiny latest-window reads below the interval renderability minimum, such as
+health checks or live snapshots asking for five `1m` candles, do not enqueue
+background fill when the requested count is already returned and no explicit
+missing range is present.
 
 Closed candles update a Redis closed watermark per `symbol + interval`. The
 processor deletes stale live candles at or before that watermark, rejects late
