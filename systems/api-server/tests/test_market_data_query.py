@@ -1869,6 +1869,39 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertFalse(result["fill"]["sources"]["s3"]["checked"])
         self.assertFalse(result["fill"]["sources"]["alpaca"]["checked"])
 
+    def test_on_demand_fill_disables_foreground_alpaca_by_default(self):
+        payload = {
+            "symbol": "BAC",
+            "interval": "1h",
+            "candles": [],
+            "returnedCount": 0,
+            "storedCandleCount": 0,
+            "sourceInterval": "1m",
+            "_sourceTrace": {
+                "redis": {"checked": True, "hit": False, "rowCount": 0},
+                "clickhouse": {"checked": True, "hit": False, "rowCount": 0},
+            },
+        }
+        service = RecordingOnDemandFillService(s3_result=False, alpaca_result=True)
+        with mock.patch.dict(os.environ, {"ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED": ""}):
+            service.foreground_enabled = OnDemandFillService(timeout_seconds=8, background_enabled=False).foreground_enabled
+
+        with mock.patch("app.market_data.fill.service.fetch_alpaca_bars") as fetch:
+            result = service.fill_if_needed(
+                symbol="BAC",
+                interval="1h",
+                limit=8,
+                before=None,
+                from_time="2026-06-25T13:00:00.000Z",
+                to_time="2026-06-25T20:00:00.000Z",
+                payload=payload,
+            )
+
+        fetch.assert_not_called()
+        self.assertEqual(result["fill"]["foregroundFill"]["state"], "disabled")
+        self.assertEqual(result["fill"]["status"], "empty")
+        self.assertEqual(len(service.queued), 1)
+
     def test_on_demand_fill_uses_foreground_alpaca_direct_interval_for_missing_history(self):
         payload = {
             "symbol": "BAC",
@@ -1895,7 +1928,8 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             }
             for index, hour in enumerate(range(13, 21))
         ]
-        service = OnDemandFillService(timeout_seconds=8, background_enabled=False)
+        with mock.patch.dict(os.environ, {"ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED": "true"}):
+            service = OnDemandFillService(timeout_seconds=8, background_enabled=False)
 
         with mock.patch("app.market_data.fill.service.fetch_alpaca_bars", return_value=raw_rows) as fetch:
             result = service.fill_if_needed(
@@ -1952,7 +1986,8 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             }
             for index, hour in enumerate(range(13, 21))
         ]
-        service = OnDemandFillService(timeout_seconds=8, background_enabled=False)
+        with mock.patch.dict(os.environ, {"ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED": "true"}):
+            service = OnDemandFillService(timeout_seconds=8, background_enabled=False)
 
         with mock.patch("app.market_data.fill.service.fetch_alpaca_bars", return_value=raw_rows):
             result = service.fill_if_needed(

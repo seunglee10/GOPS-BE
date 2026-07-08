@@ -35,6 +35,14 @@ ALPACA_COLLECTION_SYMBOL_SOURCE=universe
 ALPACA_CHANNELS=bars,updatedBars,dailyBars,statuses
 ALPACA_ACTIVE_CHANNELS=trades,quotes
 ALPACA_MAX_TRADE_SYMBOLS=100
+ALPACA_KAFKA_PUBLISH_WORKERS=4
+ALPACA_KAFKA_PUBLISH_QUEUE_MAXSIZE=20000
+ALPACA_KAFKA_QUEUE_PUT_TIMEOUT_SECONDS=0.25
+ALPACA_KAFKA_PUBLISH_STOP_TIMEOUT_SECONDS=5
+KAFKA_PRODUCER_LINGER_MS=20
+KAFKA_PRODUCER_BATCH_SIZE=65536
+KAFKA_PRODUCER_MAX_BLOCK_MS=100
+KAFKA_PRODUCER_ACKS=1
 ALPACA_FEED_PROFILE=sip
 ALPACA_FEED_PROFILES=sip,boats,crypto-us
 ALPACA_CRYPTO_LOCATION=us
@@ -48,15 +56,27 @@ HOT_TIER_SIZE=10
 HOT_TIER_FALLBACK_SCAN_LIMIT=20
 ```
 
-Baseline collection is SIP-only and bars/statuses-only: the SIP ingestor
-subscribes the S&P500 universe for `bars`, `updatedBars`, `dailyBars`, and
-`statuses` so every S&P500 chart has a fast recent 1m entry path. Runtime
-`trades` and `quotes` still follow the exact same explicit symbol set as
-realtime cohorts: watchlist, portfolio, rankings, active chart sessions, and
-manual admin subscriptions. Quotes are never a separate all-symbol feed.
+Baseline collection is SIP-only and bars/statuses-only, with active ticks on
+the same SIP WebSocket: the SIP ingestor subscribes the S&P500 universe for
+`bars`, `updatedBars`, `dailyBars`, and `statuses` so every S&P500 chart has a
+fast recent 1m entry path. Runtime `trades` and `quotes` still follow the exact
+same explicit symbol set as realtime cohorts: watchlist, portfolio, rankings,
+active chart sessions, and manual admin subscriptions. Quotes are never a
+separate all-symbol feed. AWS/EKS keeps these SIP responsibilities inside
+`alfaka-alpaca-ingestor-sip` so Alpaca SIP connection limits are not consumed by
+two simultaneous WebSocket clients.
 `ALPACA_MAX_TRADE_SYMBOLS` caps the realtime tick cohort and the ingestor
 prioritizes active chart, manual, portfolio, watchlist, then ranking symbols
 when the cap is reached.
+
+Alpaca raw Kafka publishing is decoupled from WebSocket receive by an async
+queue. `ALPACA_KAFKA_PUBLISH_WORKERS` controls how many background publisher
+tasks drain that queue, `ALPACA_KAFKA_PUBLISH_QUEUE_MAXSIZE` limits in-process
+buffering, `ALPACA_KAFKA_QUEUE_PUT_TIMEOUT_SECONDS` bounds how long the receive
+loop waits when Kafka is unhealthy, and
+`ALPACA_KAFKA_PUBLISH_STOP_TIMEOUT_SECONDS` bounds shutdown drain time. Kafka
+producer batching is tuned with `KAFKA_PRODUCER_LINGER_MS`,
+`KAFKA_PRODUCER_BATCH_SIZE`, and related `KAFKA_PRODUCER_*` env vars.
 
 BOATS/overnight keeps `ALPACA_COLLECTION_SYMBOL_SOURCE=on-demand` at the
 deployment level. Overnight liquidity is sparse and the BOATS stream should not
@@ -234,7 +254,20 @@ Critical storage consumers may disable Kafka auto commit and commit after succes
 KAFKA_PROCESSOR_ENABLE_AUTO_COMMIT=false
 KAFKA_S3_ENABLE_AUTO_COMMIT=false
 KAFKA_CLICKHOUSE_ENABLE_AUTO_COMMIT=false
+KAFKA_CLICKHOUSE_MAX_POLL_RECORDS=1000
+CLICKHOUSE_INSERT_BATCH_SIZE=1000
+CLICKHOUSE_FLUSH_INTERVAL_SECONDS=1
 ```
+
+AWS/EKS splits ClickHouse projection consumers by topic pressure. The baseline
+`alfaka-clickhouse-loader` consumes closed candle, event, and news topics only.
+`alfaka-clickhouse-tick-loader` runs multiple replicas in the same
+`alfaka-clickhouse-loader` consumer group and consumes
+`market.layer.trades.v1,market.layer.quotes.v1`, so footprint tick persistence
+can catch up without blocking candle/news persistence.
+The ClickHouse loader batches Kafka payloads by table before HTTP insert and
+commits offsets after the batch side effects succeed. Keep batch sizes bounded
+in the 16 vCPU profile so ClickHouse can catch up without starving API pods.
 
 ## Redis
 
@@ -470,13 +503,14 @@ visible regular-session gap into a hidden full-range preload.
 
 `GET /api/charts/candles` is the chart read entrypoint. The foreground API path
 checks the requested `symbol + interval + limit/before/from/to` window in Redis
-and ClickHouse first. If stored data is not renderable, it may fetch Alpaca REST
-bars for the requested interval directly, merge them with the latest Redis
-live/provisional candle, and return that payload immediately. The response also
-includes a `fill.backgroundFill` trace while the API process queues bounded
-background repair that checks S3 final/manifest and then Alpaca historical for
-that same interval/range. It does not enqueue a Redis Stream worker and it does
-not run broad preload jobs from a chart request.
+and ClickHouse first. If stored data is not renderable, the default behavior is
+to return the current partial/empty payload immediately with a
+`fill.backgroundFill` trace while the API process queues bounded background
+repair that checks S3 final/manifest and then Alpaca historical for that same
+interval/range. Set `ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED=true` only when
+small requests should wait for direct Alpaca REST bars before responding. It
+does not enqueue a Redis Stream worker and it does not run broad preload jobs
+from a chart request.
 
 ```text
 CHART_API_MAX_LIMIT

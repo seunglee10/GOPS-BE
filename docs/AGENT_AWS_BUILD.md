@@ -135,9 +135,23 @@ image: gops-market-storage
 계산 결과는 Redis hot cache와 ClickHouse
 `market_data.chart_derived_artifacts`에 함께 저장하며, 향후 Agent가 같은
 request hash로 동일 결과를 재참조하는 기준이 된다.
+Footprint 결과가 비어 있으면 Redis hot cache에만 짧게 남기고 ClickHouse artifact로
+저장하지 않는다. Tick loader lag가 해소된 뒤 같은 request가 빈 artifact에 갇히지
+않게 하기 위해서다.
 Volume profile v1은 요청 chart interval의 candle OHLCV로 계산하는
 `estimated` 결과이며, trade tick 또는 `volume_profile_bins_1m` 적재에
 의존하지 않는다.
+
+Market storage image also runs ClickHouse projection loaders. The baseline
+`alfaka-clickhouse-loader` consumes closed candle, event, and news topics.
+`alfaka-clickhouse-tick-loader` consumes `market.layer.trades.v1` and
+`market.layer.quotes.v1` with multiple replicas in the same consumer group so
+footprint tick tables can catch up independently from candle/news persistence.
+The loaders batch Kafka payloads before ClickHouse HTTP insert
+(`CLICKHOUSE_INSERT_BATCH_SIZE`, `CLICKHOUSE_FLUSH_INTERVAL_SECONDS`,
+`KAFKA_CLICKHOUSE_MAX_POLL_RECORDS`). In the 16 vCPU profile, prefer bounded
+batching over adding replicas because a hot Kafka partition is still owned by
+one consumer at a time.
 
 ## Kubernetes Resources
 
@@ -220,6 +234,14 @@ Market processor deploys as two runtime units from the same
 updated bars, daily bars, and events. `alfaka-market-quote-processor` handles
 quotes in a separate consumer group. Select `market-processor` in the deploy
 workflow to roll both Deployments together.
+
+Market ingestor deploys multiple runtime units from the same
+`gops-market-ingestor` image. `alfaka-alpaca-ingestor-sip` handles SIP baseline
+bars/statuses and active SIP trades/quotes on one WebSocket connection so the
+runtime stays within Alpaca SIP connection limits. `alfaka-alpaca-ingestor-boats`
+handles overnight BOATS, `alfaka-alpaca-ingestor-crypto` handles crypto, and
+`alfaka-alpaca-news-ingestor` handles Alpaca news. Select `market-ingestor` in
+the deploy workflow to roll all of them together.
 
 Config and overlay references:
 

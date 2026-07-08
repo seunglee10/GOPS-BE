@@ -2,6 +2,7 @@
 # 사용: ALPACA_FEED_PROFILE 또는 ALPACA_FEED를 설정하면 해당 feed runtime이 Kafka input topic에 적재합니다.
 # 출력: market.input.realtime.*.v1.
 import asyncio
+import contextlib
 import json
 import os
 import sys
@@ -19,6 +20,9 @@ from alfaka.common.redis_keys import RedisKeyBuilder
 from alfaka.common.runtime_health import write_component_health
 from alfaka.common.runtime_config import validate_required_values
 from alfaka.common.secrets import load_alpaca_credentials, resolve_alpaca_credential_source
+
+
+_PUBLISH_STOP = object()
 
 
 async def main():
@@ -78,6 +82,13 @@ async def main():
     print(f"Kafka Input Topic Prefix: {raw_topic_prefix}", flush=True)
 
     delay = reconnect_backoff
+
+    def reset_reconnect_delay(reason):
+        nonlocal delay
+        if delay != reconnect_backoff:
+            print(f"Alpaca reconnect backoff reset: reason={reason}", flush=True)
+        delay = reconnect_backoff
+
     while True:
         current_session = market_session_for_now()
         if enforce_session_window and not feed_profile_active_for_session(feed_profile, current_session):
@@ -134,6 +145,7 @@ async def main():
                 raw_log_every_n=raw_log_every_n,
                 ws_ping_interval=ws_ping_interval,
                 ws_ping_timeout=ws_ping_timeout,
+                on_session_healthy=reset_reconnect_delay,
             )
             delay = reconnect_backoff
         except asyncio.CancelledError:
@@ -169,37 +181,173 @@ async def run_stream_session(
     raw_log_every_n=0,
     ws_ping_interval=30.0,
     ws_ping_timeout=60.0,
+    on_session_healthy=None,
 ):
     """Alpaca WebSocket 세션 하나를 열고 인증, 구독, raw Kafka 발행을 처리합니다."""
     active_subscribed_symbols = {channel: set() for channel in active_channels}
     last_active_sync = 0.0
     authenticated = False
     raw_event_count = 0
-    async with websockets.connect(alpaca_url, ping_interval=ws_ping_interval, ping_timeout=ws_ping_timeout) as ws:
-        await ws.send(json.dumps({"action": "auth", "key": alpaca_key, "secret": alpaca_secret}))
+    publish_queue = asyncio.Queue(maxsize=parse_positive_int(os.getenv("ALPACA_KAFKA_PUBLISH_QUEUE_MAXSIZE", "5000"), default=5000))
+    publish_put_timeout = parse_positive_float(os.getenv("ALPACA_KAFKA_QUEUE_PUT_TIMEOUT_SECONDS", "0.05"), default=0.05)
+    publish_stop_timeout = parse_positive_float(os.getenv("ALPACA_KAFKA_PUBLISH_STOP_TIMEOUT_SECONDS", "2"), default=2.0)
+    publisher_tasks = [
+        asyncio.create_task(
+            kafka_publish_worker(
+                producer=producer,
+                publish_queue=publish_queue,
+                redis_client=redis_client,
+                feed_profile=feed_profile,
+                worker_id=index,
+            )
+        )
+        for index in range(publish_worker_count_from_env())
+    ]
+    try:
+        async with websockets.connect(alpaca_url, ping_interval=ws_ping_interval, ping_timeout=ws_ping_timeout) as ws:
+            await ws.send(json.dumps({"action": "auth", "key": alpaca_key, "secret": alpaca_secret}))
 
-        while True:
-            current_session = market_session_for_now()
-            if enforce_session_window and not feed_profile_active_for_session(feed_profile, current_session):
-                write_ingestor_health(
-                    redis_client,
-                    feed_profile,
-                    status="idle",
-                    alpacaFeed=alpaca_feed,
-                    websocketUrl=alpaca_url,
-                    currentMarketSession=current_session,
-                )
-                print(
-                    f"Alpaca profile {feed_profile.profile_id} leaving stream: "
-                    f"currentSession={current_session}, supportedSessions={','.join(feed_profile.sessions)}",
-                    flush=True,
-                )
-                return
+            while True:
+                current_session = market_session_for_now()
+                if enforce_session_window and not feed_profile_active_for_session(feed_profile, current_session):
+                    write_ingestor_health(
+                        redis_client,
+                        feed_profile,
+                        status="idle",
+                        alpacaFeed=alpaca_feed,
+                        websocketUrl=alpaca_url,
+                        currentMarketSession=current_session,
+                    )
+                    print(
+                        f"Alpaca profile {feed_profile.profile_id} leaving stream: "
+                        f"currentSession={current_session}, supportedSessions={','.join(feed_profile.sessions)}",
+                        flush=True,
+                    )
+                    return
 
-            try:
-                raw_frame = await asyncio.wait_for(ws.recv(), timeout=max(1.0, active_poll_seconds))
-            except asyncio.TimeoutError:
-                if authenticated:
+                try:
+                    raw_frame = await asyncio.wait_for(ws.recv(), timeout=max(1.0, active_poll_seconds))
+                except asyncio.TimeoutError:
+                    if authenticated:
+                        active_subscribed_symbols = await sync_active_chart_subscriptions(
+                            ws,
+                            redis_client,
+                            active_channels,
+                            active_subscribed_symbols,
+                        )
+                        last_active_sync = time.monotonic()
+                    continue
+
+                messages = json.loads(raw_frame)
+
+                for message in messages:
+                    message_type = message.get("T")
+
+                    if message_type == "success":
+                        print(message, flush=True)
+                        if message.get("msg") == "connected":
+                            notify_session_healthy(on_session_healthy, "connected")
+                        if message.get("msg") == "authenticated":
+                            authenticated = True
+                            notify_session_healthy(on_session_healthy, "authenticated")
+                            write_ingestor_health(
+                                redis_client,
+                                feed_profile,
+                                status="authenticated",
+                                alpacaFeed=alpaca_feed,
+                                channels=list(subscribe_request.keys()),
+                            )
+                            if has_subscription_payload(subscribe_request):
+                                print("구독 요청:", summarize_subscription_request(subscribe_request), flush=True)
+                                await ws.send(json.dumps(subscribe_request))
+                            else:
+                                print("초기 구독 요청 생략: 요청 종목 없음", flush=True)
+                            active_subscribed_symbols = await sync_active_chart_subscriptions(
+                                ws,
+                                redis_client,
+                                active_channels,
+                                {},
+                            )
+                            last_active_sync = time.monotonic()
+                        continue
+
+                    if message_type == "subscription":
+                        notify_session_healthy(on_session_healthy, "subscribed")
+                        write_ingestor_health(
+                            redis_client,
+                            feed_profile,
+                            status="subscribed",
+                            alpacaFeed=alpaca_feed,
+                            subscription=message,
+                        )
+                        print("현재 구독:", summarize_subscription_request(message), flush=True)
+                        continue
+
+                    if message_type == "error":
+                        category = classify_alpaca_error(message)
+                        write_ingestor_health(
+                            redis_client,
+                            feed_profile,
+                            status="error",
+                            alpacaFeed=alpaca_feed,
+                            alpacaError=message,
+                            errorCategory=category,
+                        )
+                        print(
+                            "Alpaca 에러: "
+                            f"category={category} code={message.get('code')} msg={message.get('msg')}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                        continue
+
+                    if message_type in CONTROL_MESSAGE_TYPES:
+                        continue
+
+                    envelope = build_raw_envelope(
+                        message=message,
+                        feed=alpaca_feed,
+                        feed_profile=feed_profile.profile_id,
+                    )
+                    attach_feed_epoch(redis_client, envelope)
+                    kafka_topic = raw_topic_name(raw_topic_prefix, message_type)
+                    kafka_key = envelope["symbol"]
+                    raw_event_count += 1
+                    write_ingestor_health(
+                        redis_client,
+                        feed_profile,
+                        status="ok",
+                        alpacaFeed=alpaca_feed,
+                        lastChannel=envelope["channel"],
+                        lastSymbol=envelope["symbol"],
+                        lastEventTime=envelope.get("eventTime"),
+                        lastMarketSession=envelope.get("marketSession"),
+                        lastSourceEventId=envelope.get("sourceEventId"),
+                    )
+                    queued = await enqueue_kafka_publish(
+                        publish_queue,
+                        {
+                            "topic": kafka_topic,
+                            "key": kafka_key,
+                            "value": envelope,
+                            "channel": envelope["channel"],
+                            "symbol": envelope["symbol"],
+                            "sourceEventId": envelope.get("sourceEventId"),
+                        },
+                        redis_client=redis_client,
+                        feed_profile=feed_profile,
+                        timeout_seconds=publish_put_timeout,
+                    )
+                    if queued:
+                        notify_session_healthy(on_session_healthy, "data")
+                    if raw_log_every_n and raw_event_count % raw_log_every_n == 0:
+                        print(
+                            f"Kafka Raw 전송 대기열 적재: count={raw_event_count}, topic={kafka_topic}, "
+                            f"key={kafka_key}, channel={envelope['channel']}",
+                            flush=True,
+                        )
+
+                if authenticated and time.monotonic() - last_active_sync >= active_poll_seconds:
                     active_subscribed_symbols = await sync_active_chart_subscriptions(
                         ws,
                         redis_client,
@@ -207,106 +355,112 @@ async def run_stream_session(
                         active_subscribed_symbols,
                     )
                     last_active_sync = time.monotonic()
-                continue
+    finally:
+        await stop_kafka_publish_workers(publish_queue, publisher_tasks, timeout_seconds=publish_stop_timeout)
 
-            messages = json.loads(raw_frame)
 
-            for message in messages:
-                message_type = message.get("T")
+async def enqueue_kafka_publish(publish_queue, item, *, redis_client, feed_profile, timeout_seconds):
+    try:
+        await asyncio.wait_for(publish_queue.put(item), timeout=timeout_seconds)
+        return True
+    except asyncio.TimeoutError:
+        write_ingestor_health(
+            redis_client,
+            feed_profile,
+            status="error",
+            errorCategory="kafka_publish_queue_full",
+            publishQueueSize=publish_queue.qsize(),
+            publishQueueMaxSize=publish_queue.maxsize,
+            lastChannel=item.get("channel"),
+            lastSymbol=item.get("symbol"),
+            lastSourceEventId=item.get("sourceEventId"),
+        )
+        print(
+            "Kafka Raw 전송 대기열 포화: "
+            f"topic={item.get('topic')} key={item.get('key')} sourceEventId={item.get('sourceEventId')}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return False
 
-                if message_type == "success":
-                    print(message, flush=True)
-                    if message.get("msg") == "authenticated":
-                        authenticated = True
-                        write_ingestor_health(
-                            redis_client,
-                            feed_profile,
-                            status="authenticated",
-                            alpacaFeed=alpaca_feed,
-                            channels=list(subscribe_request.keys()),
-                        )
-                        if has_subscription_payload(subscribe_request):
-                            print("구독 요청:", summarize_subscription_request(subscribe_request), flush=True)
-                            await ws.send(json.dumps(subscribe_request))
-                        else:
-                            print("초기 구독 요청 생략: 요청 종목 없음", flush=True)
-                        active_subscribed_symbols = await sync_active_chart_subscriptions(
-                            ws,
-                            redis_client,
-                            active_channels,
-                            {},
-                        )
-                        last_active_sync = time.monotonic()
-                    continue
 
-                if message_type == "subscription":
-                    write_ingestor_health(
-                        redis_client,
-                        feed_profile,
-                        status="subscribed",
-                        alpacaFeed=alpaca_feed,
-                        subscription=message,
-                    )
-                    print("현재 구독:", summarize_subscription_request(message), flush=True)
-                    continue
+async def kafka_publish_worker(*, producer, publish_queue, redis_client, feed_profile, worker_id=0):
+    while True:
+        item = await publish_queue.get()
+        try:
+            if item is _PUBLISH_STOP:
+                return
+            await asyncio.to_thread(
+                producer.send,
+                item["topic"],
+                key=item["key"],
+                value=item["value"],
+            )
+        except Exception as exc:
+            write_ingestor_health(
+                redis_client,
+                feed_profile,
+                status="error",
+                errorCategory="kafka_publish_failed",
+                error=str(exc),
+                kafkaPublishWorkerId=worker_id,
+                lastChannel=item.get("channel") if isinstance(item, dict) else None,
+                lastSymbol=item.get("symbol") if isinstance(item, dict) else None,
+                lastSourceEventId=item.get("sourceEventId") if isinstance(item, dict) else None,
+            )
+            print(
+                "Kafka Raw 전송 실패: "
+                f"topic={item.get('topic') if isinstance(item, dict) else 'unknown'} "
+                f"key={item.get('key') if isinstance(item, dict) else 'unknown'} error={exc}",
+                file=sys.stderr,
+                flush=True,
+            )
+        finally:
+            publish_queue.task_done()
 
-                if message_type == "error":
-                    category = classify_alpaca_error(message)
-                    write_ingestor_health(
-                        redis_client,
-                        feed_profile,
-                        status="error",
-                        alpacaFeed=alpaca_feed,
-                        alpacaError=message,
-                        errorCategory=category,
-                    )
-                    print(
-                        "Alpaca 에러: "
-                        f"category={category} code={message.get('code')} msg={message.get('msg')}",
-                        file=sys.stderr,
-                        flush=True,
-                    )
-                    continue
 
-                if message_type in CONTROL_MESSAGE_TYPES:
-                    continue
+async def stop_kafka_publish_workers(publish_queue, publisher_tasks, *, timeout_seconds):
+    tasks = list(publisher_tasks or [])
+    try:
+        for _ in tasks:
+            await asyncio.wait_for(publish_queue.put(_PUBLISH_STOP), timeout=timeout_seconds)
+        if tasks:
+            await asyncio.wait_for(asyncio.gather(*tasks), timeout=timeout_seconds)
+    except asyncio.TimeoutError:
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        print("Kafka Raw 전송 worker 종료 대기 시간 초과", file=sys.stderr, flush=True)
+    except asyncio.CancelledError:
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        raise
 
-                envelope = build_raw_envelope(
-                    message=message,
-                    feed=alpaca_feed,
-                    feed_profile=feed_profile.profile_id,
-                )
-                attach_feed_epoch(redis_client, envelope)
-                kafka_topic = raw_topic_name(raw_topic_prefix, message_type)
-                kafka_key = envelope["symbol"]
-                producer.send(kafka_topic, key=kafka_key, value=envelope)
-                raw_event_count += 1
-                write_ingestor_health(
-                    redis_client,
-                    feed_profile,
-                    status="ok",
-                    alpacaFeed=alpaca_feed,
-                    lastChannel=envelope["channel"],
-                    lastSymbol=envelope["symbol"],
-                    lastEventTime=envelope.get("eventTime"),
-                    lastMarketSession=envelope.get("marketSession"),
-                    lastSourceEventId=envelope.get("sourceEventId"),
-                )
-                if raw_log_every_n and raw_event_count % raw_log_every_n == 0:
-                    print(
-                        f"Kafka Raw 전송: count={raw_event_count}, topic={kafka_topic}, "
-                        f"key={kafka_key}, channel={envelope['channel']}",
-                        flush=True,
-                    )
 
-            if authenticated and time.monotonic() - last_active_sync >= active_poll_seconds:
-                active_subscribed_symbols = await sync_active_chart_subscriptions(
-                    ws,
-                    redis_client,
-                    active_channels,
-                    active_subscribed_symbols,
-                )
-                last_active_sync = time.monotonic()
+async def stop_kafka_publish_worker(publish_queue, publisher_task, *, timeout_seconds):
+    await stop_kafka_publish_workers(publish_queue, [publisher_task], timeout_seconds=timeout_seconds)
+
+
+def publish_worker_count_from_env(environ=None):
+    environ = os.environ if environ is None else environ
+    try:
+        return max(1, int(environ.get("ALPACA_KAFKA_PUBLISH_WORKERS", "1")))
+    except (TypeError, ValueError):
+        return 1
+
+
+def notify_session_healthy(callback, reason):
+    if not callable(callback):
+        return
+    try:
+        callback(reason)
+    except Exception as exc:
+        print(f"Alpaca healthy callback skipped: reason={reason} error={exc}", file=sys.stderr, flush=True)
 
 
 def run():

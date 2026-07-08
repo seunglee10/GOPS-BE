@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sys
+import time
 from datetime import datetime, timezone
 
 from alfaka.alpaca.feed_profiles import market_session_for_timestamp
@@ -22,10 +23,15 @@ def main():
 
     kafka_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
     group_id = os.getenv("KAFKA_CLICKHOUSE_GROUP_ID", "alfaka-clickhouse-loader")
+    client_id = os.getenv("KAFKA_CLICKHOUSE_CLIENT_ID", "alfaka-clickhouse-consumer")
     load_trades = os.getenv("CLICKHOUSE_LOAD_TRADES", "true").lower() in {"1", "true", "yes"}
     load_quotes = os.getenv("CLICKHOUSE_LOAD_QUOTES", "true").lower() in {"1", "true", "yes"}
     topics = clickhouse_topics_from_env(os.environ, load_trades=load_trades, load_quotes=load_quotes)
     enable_auto_commit = os.getenv("KAFKA_CLICKHOUSE_ENABLE_AUTO_COMMIT", "false").lower() in {"1", "true", "yes"}
+    batch_size = positive_int_env("CLICKHOUSE_INSERT_BATCH_SIZE", 500)
+    max_poll_records = positive_int_env("KAFKA_CLICKHOUSE_MAX_POLL_RECORDS", batch_size)
+    poll_timeout_ms = positive_int_env("KAFKA_CLICKHOUSE_POLL_TIMEOUT_MS", 1000)
+    flush_interval_seconds = non_negative_float_env("CLICKHOUSE_FLUSH_INTERVAL_SECONDS", 1.0)
     validate_required_values("clickhouse loader", {
         "kafka_servers": kafka_servers,
         "clickhouse_topics": topics,
@@ -47,20 +53,95 @@ def main():
         topics,
         kafka_servers,
         group_id,
-        "alfaka-clickhouse-consumer",
+        client_id,
         enable_auto_commit=enable_auto_commit,
+        max_poll_records=max_poll_records,
     )
     print(f"ClickHouse loader 시작: topics={topics}", flush=True)
     print(f"ClickHouse 연결: {client.url}/{client.database}", flush=True)
+    print(
+        "ClickHouse loader batch config: "
+        f"batchSize={batch_size} maxPollRecords={max_poll_records} flushIntervalSeconds={flush_interval_seconds}",
+        flush=True,
+    )
 
-    for record in consumer:
-        payload = record.value
-        try:
-            load_payload(client, payload, load_trades=load_trades, load_quotes=load_quotes)
-            if not enable_auto_commit:
-                consumer.commit()
-        except Exception as exc:
-            print(f"ClickHouse 적재 실패: {exc}; payload={json.dumps(payload, ensure_ascii=False)}", file=sys.stderr, flush=True)
+    run_clickhouse_loader(
+        consumer,
+        client,
+        load_trades=load_trades,
+        load_quotes=load_quotes,
+        enable_auto_commit=enable_auto_commit,
+        batch_size=batch_size,
+        flush_interval_seconds=flush_interval_seconds,
+        poll_timeout_ms=poll_timeout_ms,
+    )
+
+
+def run_clickhouse_loader(
+    consumer,
+    client,
+    *,
+    load_trades=False,
+    load_quotes=True,
+    enable_auto_commit=False,
+    batch_size=500,
+    flush_interval_seconds=1.0,
+    poll_timeout_ms=1000,
+):
+    batch_size = max(1, int(batch_size or 1))
+    flush_interval_seconds = max(0.0, float(flush_interval_seconds or 0))
+    buffer = []
+    last_flush_at = time.monotonic()
+    try:
+        while True:
+            batches = consumer.poll(timeout_ms=poll_timeout_ms)
+            now = time.monotonic()
+            had_records = False
+            for records in batches.values():
+                for record in records:
+                    had_records = True
+                    buffer.append(record.value)
+                    if len(buffer) >= batch_size:
+                        flush_clickhouse_buffer(
+                            consumer,
+                            client,
+                            buffer,
+                            load_trades=load_trades,
+                            load_quotes=load_quotes,
+                            enable_auto_commit=enable_auto_commit,
+                        )
+                        buffer.clear()
+                        last_flush_at = now
+            if buffer and (not had_records or now - last_flush_at >= flush_interval_seconds):
+                flush_clickhouse_buffer(
+                    consumer,
+                    client,
+                    buffer,
+                    load_trades=load_trades,
+                    load_quotes=load_quotes,
+                    enable_auto_commit=enable_auto_commit,
+                )
+                buffer.clear()
+                last_flush_at = now
+    except KeyboardInterrupt:
+        if buffer:
+            flush_clickhouse_buffer(
+                consumer,
+                client,
+                buffer,
+                load_trades=load_trades,
+                load_quotes=load_quotes,
+                enable_auto_commit=enable_auto_commit,
+            )
+
+
+def flush_clickhouse_buffer(consumer, client, payloads, *, load_trades=False, load_quotes=True, enable_auto_commit=False):
+    if not payloads:
+        return 0
+    inserted = load_payload_batch(client, payloads, load_trades=load_trades, load_quotes=load_quotes)
+    if not enable_auto_commit:
+        consumer.commit()
+    return inserted
 
 
 def clickhouse_topics_from_env(environ=None, load_trades=False, load_quotes=True):
@@ -83,50 +164,100 @@ def clickhouse_topics_from_env(environ=None, load_trades=False, load_quotes=True
     return topics
 
 
+def positive_int_env(name, default):
+    value = os.getenv(name)
+    if value in {None, ""}:
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+def non_negative_float_env(name, default):
+    value = os.getenv(name)
+    if value in {None, ""}:
+        return default
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed >= 0 else default
+
+
 def load_payload(client, payload, load_trades=False, load_quotes=True):
+    actions = clickhouse_actions_for_payload(payload, load_trades=load_trades, load_quotes=load_quotes)
+    for table, row, message in actions:
+        client.insert_json_each_row(table, [row])
+        print(message, flush=True)
+
+
+def load_payload_batch(client, payloads, load_trades=False, load_quotes=True):
+    table_rows = {}
+    table_order = []
+    skipped = 0
+    for payload in payloads:
+        try:
+            actions = clickhouse_actions_for_payload(payload, load_trades=load_trades, load_quotes=load_quotes)
+        except Exception as exc:
+            skipped += 1
+            print(f"ClickHouse batch row 변환 실패: {exc}; payload={json.dumps(payload, ensure_ascii=False)}", file=sys.stderr, flush=True)
+            continue
+        if not actions:
+            skipped += 1
+            continue
+        for table, row, _message in actions:
+            if table not in table_rows:
+                table_rows[table] = []
+                table_order.append(table)
+            table_rows[table].append(row)
+
+    inserted = 0
+    for table in table_order:
+        rows = table_rows[table]
+        client.insert_json_each_row(table, rows)
+        inserted += len(rows)
+        print(f"ClickHouse batch 적재: table={table} rows={len(rows)}", flush=True)
+    if skipped:
+        print(f"ClickHouse batch 제외: rows={skipped}", flush=True)
+    return inserted
+
+
+def clickhouse_actions_for_payload(payload, load_trades=False, load_quotes=True):
     event_type = payload.get("eventType")
     if event_type == "QUOTE" or payload.get("layer") == "quotes":
         if not load_quotes:
             print(f"ClickHouse quote 적재 제외: symbol={payload.get('symbol', 'UNKNOWN')}", flush=True)
-            return
+            return []
         row = quote_to_clickhouse_row(payload)
-        client.insert_json_each_row("quote_ticks", [row])
-        print(f"ClickHouse quote 적재: symbol={row['symbol']} time={row['event_time']}", flush=True)
-        return
+        return [("quote_ticks", row, f"ClickHouse quote 적재: symbol={row['symbol']} time={row['event_time']}")]
     if event_type == "TRADE":
         if not load_trades:
             print(f"ClickHouse trade 적재 제외: symbol={payload.get('symbol', 'UNKNOWN')}", flush=True)
-            return
+            return []
         row = trade_to_clickhouse_row(payload)
-        client.insert_json_each_row("trade_ticks", [row])
-        print(f"ClickHouse trade 적재: symbol={row['symbol']} time={row['event_time']}", flush=True)
-        return
+        return [("trade_ticks", row, f"ClickHouse trade 적재: symbol={row['symbol']} time={row['event_time']}")]
 
     if event_type == "MARKET_STATUS":
         event_row = market_event_to_clickhouse_row(payload)
-        client.insert_json_each_row("market_events", [event_row])
         row = status_to_clickhouse_row(payload)
-        client.insert_json_each_row("market_status_events", [row])
-        print(f"ClickHouse status 적재: symbol={row['symbol']} status={row['status']} time={row['event_time']}", flush=True)
-        return
+        return [
+            ("market_events", event_row, f"ClickHouse event 적재: symbol={event_row['symbol']} type={event_row['event_type']} time={event_row['event_time']}"),
+            ("market_status_events", row, f"ClickHouse status 적재: symbol={row['symbol']} status={row['status']} time={row['event_time']}"),
+        ]
 
     if event_type == "VOLUME_PROFILE_BIN":
         row = volume_profile_bin_to_clickhouse_row(payload)
-        client.insert_json_each_row("volume_profile_bins_1m", [row])
-        print(f"ClickHouse volume profile 적재: symbol={row['symbol']} minute={row['event_minute']}", flush=True)
-        return
+        return [("volume_profile_bins_1m", row, f"ClickHouse volume profile 적재: symbol={row['symbol']} minute={row['event_minute']}")]
 
     if event_type == "SYMBOL_METADATA":
         row = symbol_to_clickhouse_row(payload)
-        client.insert_json_each_row("symbols", [row])
-        print(f"ClickHouse symbol 적재: symbol={row['symbol']}", flush=True)
-        return
+        return [("symbols", row, f"ClickHouse symbol 적재: symbol={row['symbol']}")]
 
     if event_type == "NEWS_ARTICLE":
         row = news_to_clickhouse_row(payload)
-        client.insert_json_each_row("news_articles", [row])
-        print(f"ClickHouse news 적재: symbol={row['symbol']} article={row['article_id']}", flush=True)
-        return
+        return [("news_articles", row, f"ClickHouse news 적재: symbol={row['symbol']} article={row['article_id']}")]
 
     if event_type == "CANDLE" and payload.get("isClosed", True):
         reason = invalid_candle_reason(payload)
@@ -136,19 +267,16 @@ def load_payload(client, payload, load_trades=False, load_quotes=True):
                 f"interval={payload.get('interval', 'unknown')} reason={reason}",
                 flush=True,
             )
-            return
+            return []
         row = candle_to_clickhouse_row(payload)
-        client.insert_json_each_row("chart_candles", [row])
-        print(f"ClickHouse candle 적재: symbol={row['symbol']} interval={row['interval']} time={row['event_time']}", flush=True)
-        return
+        return [("chart_candles", row, f"ClickHouse candle 적재: symbol={row['symbol']} interval={row['interval']} time={row['event_time']}")]
 
     if payload.get("layer") == "events" or event_type:
         row = market_event_to_clickhouse_row(payload)
-        client.insert_json_each_row("market_events", [row])
-        print(f"ClickHouse event 적재: symbol={row['symbol']} type={row['event_type']} time={row['event_time']}", flush=True)
-        return
+        return [("market_events", row, f"ClickHouse event 적재: symbol={row['symbol']} type={row['event_type']} time={row['event_time']}")]
 
     print(f"ClickHouse 적재 제외 eventType={event_type}", flush=True)
+    return []
 
 
 def trade_to_clickhouse_row(payload):

@@ -1,5 +1,5 @@
-# 역할: Alpaca WebSocket 수집기를 EKS에 배포합니다.
-# 사용: Alpaca 데이터를 Kafka Raw Topic으로 보냅니다.
+# 역할: Alpaca SIP WebSocket 수집기를 EKS에 배포합니다.
+# 사용: baseline bars와 active chart trades/quotes를 한 SIP 연결에서 Kafka Raw Topic으로 보냅니다.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -30,6 +30,8 @@ spec:
           env:
             - name: ALPACA_FEED_PROFILE
               value: sip
+            - name: ALPACA_ACTIVE_CHANNELS
+              value: trades,quotes
             - name: KAFKA_CLIENT_ID
               value: alfaka-alpaca-ingestor-sip
 ---

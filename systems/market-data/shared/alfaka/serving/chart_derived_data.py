@@ -317,6 +317,8 @@ class ChartDerivedArtifactStore:
             payload = json.loads(payload_json)
         except ValueError:
             return None
+        if not should_store_derived_artifact(request, payload):
+            return None
         return with_derived_metadata(payload, request, state="ready", source="clickhouse", artifact_stored=True)
 
     def write(self, request: dict[str, Any], payload: dict[str, Any]) -> None:
@@ -501,6 +503,25 @@ def enqueue_derived_request(request: dict[str, Any], producer: Any | None = None
         future.get(timeout=float(os.getenv("CHART_DERIVED_PRODUCE_TIMEOUT_SECONDS", "1.5")))
     elif hasattr(producer, "flush"):
         producer.flush(timeout=float(os.getenv("CHART_DERIVED_PRODUCE_TIMEOUT_SECONDS", "1.5")))
+
+
+def should_store_derived_artifact(request: dict[str, Any], payload: dict[str, Any]) -> bool:
+    return not is_empty_footprint_payload(request, payload)
+
+
+def is_empty_footprint_payload(request: dict[str, Any], payload: dict[str, Any]) -> bool:
+    if request.get("kind") != DERIVED_KIND_FOOTPRINT:
+        return False
+    buckets = payload.get("buckets")
+    trade_count = int_or_zero(payload.get("tradeCount"))
+    return payload.get("dataStatus") == "empty" or trade_count <= 0 or not buckets
+
+
+def int_or_zero(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def kafka_producer(client_id: str):

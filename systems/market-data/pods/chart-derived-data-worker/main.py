@@ -22,6 +22,7 @@ from alfaka.serving.chart_derived_data import (
     clickhouse_client_from_env,
     indicator_fetch_from_time,
     redis_ttl_seconds,
+    should_store_derived_artifact,
     write_json_cache,
     write_status,
     with_derived_metadata,
@@ -94,8 +95,10 @@ def process_request(
     try:
         write_status(redis_client, request, "running")
         payload = compute_request_payload(request, provider=provider)
-        payload = with_derived_metadata(payload, request, state="ready", source="worker", artifact_stored=True)
-        artifact_store.write(request, payload)
+        artifact_stored = should_store_derived_artifact(request, payload)
+        payload = with_derived_metadata(payload, request, state="ready", source="worker", artifact_stored=artifact_stored)
+        if artifact_stored:
+            artifact_store.write(request, payload)
         write_json_cache(redis_client, request["cacheKey"], payload, redis_ttl_seconds(request["kind"]))
         write_status(redis_client, request, "ready")
         return payload

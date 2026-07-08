@@ -10,12 +10,36 @@ from alfaka.common.env import parse_csv
 def create_json_producer(bootstrap_servers, client_id):
     from kafka import KafkaProducer
 
-    return KafkaProducer(
-        bootstrap_servers=parse_csv(bootstrap_servers),
-        client_id=client_id,
-        key_serializer=lambda value: value.encode("utf-8"),
-        value_serializer=lambda value: json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
-    )
+    options = {
+        "bootstrap_servers": parse_csv(bootstrap_servers),
+        "client_id": client_id,
+        "key_serializer": lambda value: value.encode("utf-8"),
+        "value_serializer": lambda value: json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
+    }
+    options.update(producer_options_from_env())
+    return KafkaProducer(**options)
+
+
+def producer_options_from_env(environ=None):
+    env = os.environ if environ is None else environ
+    options = {}
+    for option_name, env_name in {
+        "linger_ms": "KAFKA_PRODUCER_LINGER_MS",
+        "batch_size": "KAFKA_PRODUCER_BATCH_SIZE",
+        "max_block_ms": "KAFKA_PRODUCER_MAX_BLOCK_MS",
+        "request_timeout_ms": "KAFKA_PRODUCER_REQUEST_TIMEOUT_MS",
+        "retries": "KAFKA_PRODUCER_RETRIES",
+    }.items():
+        parsed = optional_positive_int(env.get(env_name))
+        if parsed is not None:
+            options[option_name] = parsed
+    compression_type = (env.get("KAFKA_PRODUCER_COMPRESSION_TYPE") or "").strip()
+    if compression_type:
+        options["compression_type"] = compression_type
+    acks = producer_acks(env.get("KAFKA_PRODUCER_ACKS"))
+    if acks is not None:
+        options["acks"] = acks
+    return options
 
 
 def create_json_consumer(
@@ -61,3 +85,12 @@ def optional_positive_int(value):
         return None
     parsed = int(value)
     return parsed if parsed > 0 else None
+
+
+def producer_acks(value):
+    if value is None or value == "":
+        return None
+    raw = str(value).strip().lower()
+    if raw == "all":
+        return "all"
+    return int(raw)

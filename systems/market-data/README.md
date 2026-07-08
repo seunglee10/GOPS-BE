@@ -94,7 +94,7 @@ Runtime policy:
 
 - no preset historical universe chart preload
 - SIP S&P500 baseline is bars/updatedBars/dailyBars/statuses only
-- realtime trades/quotes only for explicit active subscriptions
+- realtime trades/quotes only for explicit active subscriptions on the same SIP WebSocket
 - Redis keeps only the frontend-requested recent chart window per `symbol + timeframe`
 - older confirmed candles come from ClickHouse direct interval rows when present
 - ClickHouse direct misses can fall back to query-time aggregation from `1m` or `1D`
@@ -171,7 +171,7 @@ the requested interval.
 Normal chart expansion is:
 
 ```text
-Redis recent requested window -> ClickHouse -> foreground Alpaca REST direct
+Redis recent requested window -> ClickHouse -> optional foreground Alpaca REST direct
 -> background S3 final/manifest -> background Alpaca historical direct
 ```
 
@@ -200,11 +200,13 @@ rebuild contract.
 Chart entry and drag-left history use the candles API first. The frontend owns
 the requested `interval`, `limit`, and `start`/`end` or `before` window. The API
 checks Redis and ClickHouse first. If they are not renderable, the API may return
-foreground Alpaca REST bars immediately and still queue background
-materialization through S3 final/manifest and Alpaca historical for that
-requested window. The response includes `dataStatus`, `coverage`, and a `fill`
-trace that shows where Redis/ClickHouse/S3/Alpaca hit, missed, timed out, or
-failed. Do not convert a sparse chart window into a full-range preload.
+the partial/empty payload immediately and still queue background materialization
+through S3 final/manifest and Alpaca historical for that requested window.
+Set `ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED=true` only when small requests
+should wait for direct Alpaca REST bars before responding. The response includes
+`dataStatus`, `coverage`, and a `fill` trace that shows where
+Redis/ClickHouse/S3/Alpaca hit, missed, timed out, or failed. Do not convert a
+sparse chart window into a full-range preload.
 
 Before any operator-approved bootstrap, prove S3-to-ClickHouse materialization
 with one explicit final candle object:

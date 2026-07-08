@@ -102,15 +102,25 @@ def score_recommendations(payload: RecommendationInput) -> list[dict[str, Any]]:
     portfolio = portfolio_summary(payload.portfolio_positions)
     excluded_symbols = candidate_exclusion_symbols(payload)
     scored: list[dict[str, Any]] = []
+    scored_symbols: set[str] = set()
     for candidate in candidates:
         item = score_candidate(candidate, payload, spy_return, portfolio, excluded_symbols)
         if item is not None:
             scored.append(item)
+            scored_symbols.add(candidate.symbol)
+    if len(scored) < 15:
+        for candidate in candidates:
+            if candidate.symbol in scored_symbols:
+                continue
+            item = score_candidate_from_market_snapshot(candidate, payload, portfolio, excluded_symbols)
+            if item is not None:
+                scored.append(item)
+                scored_symbols.add(candidate.symbol)
     scored.sort(key=lambda item: (item["score"], item["confidence"]), reverse=True)
-    diversified = enforce_sector_diversity(scored, max_items=5, max_per_sector=2)
-    for index, item in enumerate(diversified, start=1):
+    selected = scored[:15]
+    for index, item in enumerate(selected, start=1):
         item["rank"] = index
-    return diversified
+    return selected
 
 
 def build_candidates(
@@ -249,11 +259,9 @@ def score_candidate(
     }
     score = round(max(0.0, min(100.0, alpha_score + catalyst_score + execution_score - risk_penalty)), 2)
     confidence = confidence_for(metrics, reasons, session_mode=session_mode)
-    cutoffs = recommendation_cutoffs(session_mode, metrics)
-    if score < cutoffs["score"] or confidence < cutoffs["confidence"] or len(reasons) < 2:
-        return None
     metrics_snapshot = {
         **metrics,
+        "changePercent": candidate.change_percent,
         "source": candidate.source,
         "sessionMode": session_mode,
         "sectorWeight": round(sector_weight, 6),
@@ -266,11 +274,141 @@ def score_candidate(
         "rank": 0,
         "score": score,
         "confidence": confidence,
+        "changePercent": candidate.change_percent,
         **sector_payload_fields(candidate.sector),
         "reasons": reasons[:5],
         "riskWarnings": risks,
         "metricsSnapshot": metrics_snapshot,
     }
+
+
+def score_candidate_from_market_snapshot(
+    candidate: Candidate,
+    payload: RecommendationInput,
+    portfolio: dict[str, Any],
+    excluded_symbols: set[str],
+) -> dict[str, Any] | None:
+    profile = payload.profile
+    session_mode = normalize_session_mode(payload.session_mode)
+    excluded_sectors = set(normalize_sector_list(list(profile.excluded_sectors)))
+    if candidate.symbol in excluded_symbols or normalize_sector(candidate.sector) in excluded_sectors:
+        return None
+
+    sector_weight = portfolio["sector_weights"].get(candidate.sector, 0.0)
+    sector_caps = sector_risk_caps(profile.risk_level)
+    if sector_weight >= sector_caps["hard"]:
+        return None
+
+    reasons: list[dict[str, Any]] = []
+    score_breakdown = fallback_score_breakdown(candidate, payload, reasons, session_mode=session_mode)
+    score = round(max(0.0, min(100.0, sum(score_breakdown.values()))), 2)
+    confidence = fallback_confidence(candidate, reasons)
+    candles = filter_candles_for_session(payload.candles_by_symbol.get(candidate.symbol) or [], session_mode, payload.now)
+    metrics_snapshot = {
+        "latestClose": candidate.last_price,
+        "return3hPct": candidate.change_percent or 0.0,
+        "relativeStrength": 0.0,
+        "volumeRatio": 0.0,
+        "breakout": False,
+        "intradayRangePct": 0.0,
+        "sessionDollarVolume": round(candidate.session_dollar_volume or 0.0, 2),
+        "candleCount": len(candles),
+        "dataFreshness": "",
+        "changePercent": candidate.change_percent,
+        "source": candidate.source,
+        "sessionMode": session_mode,
+        "sectorWeight": round(sector_weight, 6),
+        "excludedReason": None,
+        "scoreBreakdown": {key: round(value, 4) for key, value in score_breakdown.items()},
+        "fallback": True,
+        "fallbackReason": "session_candle_snapshot_fill",
+    }
+    return {
+        "symbol": candidate.symbol,
+        "action": "buy",
+        "rank": 0,
+        "score": score,
+        "confidence": confidence,
+        "changePercent": candidate.change_percent,
+        **sector_payload_fields(candidate.sector),
+        "reasons": reasons[:5],
+        "riskWarnings": [],
+        "metricsSnapshot": metrics_snapshot,
+    }
+
+
+def fallback_score_breakdown(
+    candidate: Candidate,
+    payload: RecommendationInput,
+    reasons: list[dict[str, Any]],
+    *,
+    session_mode: str,
+) -> dict[str, float]:
+    change = candidate.change_percent
+    liquidity = candidate.session_dollar_volume or 0.0
+    momentum = 0.0
+    liquidity_score = 0.0
+    context = 0.0
+    catalyst = 0.0
+
+    if change is not None:
+        if change > 0:
+            momentum = min(28.0, change / 4.0 * 28.0)
+            reasons.append(reason("market_momentum", f"오늘 등락률이 {change:+.2f}%로 시장 내 모멘텀이 있습니다.", momentum))
+        elif change < 0:
+            momentum = min(12.0, abs(change) / 4.0 * 12.0)
+            reasons.append(reason("market_mover", f"오늘 등락률이 {change:.2f}%로 변동성이 커 관찰 우선순위에 올렸습니다.", momentum))
+        else:
+            reasons.append(reason("market_stability", "오늘 가격 변동이 제한적이라 진입 가격 관리가 쉽습니다.", 4.0))
+            momentum = 4.0
+
+    if liquidity >= 250_000_000:
+        liquidity_score = 22.0
+        reasons.append(reason("liquidity", "세션 거래대금이 상위권이라 체결 부담이 낮습니다.", liquidity_score))
+    elif liquidity >= 50_000_000:
+        liquidity_score = 16.0
+        reasons.append(reason("liquidity", "세션 거래대금이 충분해 매수 후보로 유지했습니다.", liquidity_score))
+    elif liquidity >= 10_000_000:
+        liquidity_score = 10.0
+        reasons.append(reason("liquidity", "기본 유동성 기준을 충족해 후보로 유지했습니다.", liquidity_score))
+    elif liquidity > 0:
+        liquidity_score = 5.0
+        reasons.append(reason("liquidity_watch", "거래대금이 관측돼 보조 후보로 유지했습니다.", liquidity_score))
+
+    if candidate.source == "related_sector":
+        context = 8.0
+        reasons.append(reason("sector_context", f"{sector_label_ko(candidate.sector)} 섹터 노출을 고려한 관련 후보입니다.", context))
+    else:
+        context = 6.0
+        reasons.append(reason("market_rank", "S&P 500 heatmap 상위 유동성/변동성 후보입니다.", context))
+
+    news_items = recent_news_items(payload.news_by_symbol.get(candidate.symbol) or [], now=payload.now)
+    if news_items:
+        catalyst = 8.0 if session_mode == "regular" else 10.0
+        reasons.append(reason("catalyst", "최근 7일 뉴스 또는 이벤트 근거가 있습니다.", catalyst))
+
+    if not reasons:
+        context = 6.0
+        reasons.append(reason("market_snapshot", "시장 스냅샷 기준으로 보조 추천 후보에 포함했습니다.", context))
+
+    return {
+        "momentum": momentum,
+        "liquidity": liquidity_score,
+        "context": context,
+        "catalyst": catalyst,
+    }
+
+
+def fallback_confidence(candidate: Candidate, reasons: list[dict[str, Any]]) -> float:
+    confidence = 0.48
+    if candidate.change_percent is not None:
+        confidence += 0.08
+    if candidate.session_dollar_volume >= 50_000_000:
+        confidence += 0.1
+    elif candidate.session_dollar_volume > 0:
+        confidence += 0.05
+    confidence += min(0.12, len(reasons) * 0.03)
+    return round(min(0.75, confidence), 4)
 
 
 def calculate_metrics(candles: list[dict[str, Any]], spy_return: float, candidate: Candidate) -> dict[str, Any]:

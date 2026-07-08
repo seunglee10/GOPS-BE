@@ -30,13 +30,14 @@ from alfaka.alpaca.feed_profiles import feed_profile_active_for_session, market_
 from alfaka.alpaca.trade_tiers import resolve_trade_subscription_plan
 from alfaka.alpaca.websocket_collector import (
     classify_alpaca_error,
+    publish_worker_count_from_env,
     read_realtime_subscription_symbols_by_channel,
     read_trade_subscription_symbols,
     summarize_subscription_request,
 )
 from alfaka.alpaca.assets import asset_to_symbol_metadata
 from alfaka.alpaca.news import build_news_events, iter_alpaca_news_pages
-from alfaka.common.kafka_io import create_json_consumer
+from alfaka.common.kafka_io import create_json_consumer, create_json_producer, producer_options_from_env
 from alfaka.common.market_messages import build_raw_envelope, raw_topic_name, source_event_id
 from alfaka.common.redis_keys import RedisKeyBuilder
 from alfaka.common.runtime_health import read_component_health, write_component_health
@@ -68,7 +69,9 @@ from alfaka.storage.clickhouse_loader import (
     candle_to_clickhouse_row,
     clickhouse_param_value as storage_clickhouse_param_value,
     clickhouse_topics_from_env,
+    flush_clickhouse_buffer,
     load_payload,
+    load_payload_batch,
     market_event_to_clickhouse_row,
     news_to_clickhouse_row,
     status_to_clickhouse_row,
@@ -755,6 +758,16 @@ class RecordingProducer:
         self.flush_count += 1
 
 
+class FailingProducer:
+    def __init__(self, error):
+        self.error = error
+        self.sent = []
+
+    def send(self, topic, key, value):
+        self.sent.append({"topic": topic, "key": key, "value": value})
+        raise RuntimeError(self.error)
+
+
 def feed_fanout_messages(producer, redis, keys, state, topics, interval="1m"):
     fanout = [
         sent["value"]
@@ -986,6 +999,76 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(websocket.sent[1], {"action": "subscribe", "bars": ["AAPL"]})
         self.assertEqual(websocket.sent[2], {"action": "subscribe", "trades": ["AAPL"]})
 
+    def test_alpaca_stream_session_reports_healthy_events_for_backoff_reset(self):
+        import asyncio
+        from alfaka.alpaca import websocket_collector
+
+        profile = resolve_feed_profile({"ALPACA_FEED_PROFILE": "sip"})
+        websocket = FakeWebSocket([
+            {"T": "success", "msg": "connected"},
+            {"T": "success", "msg": "authenticated"},
+            {"T": "subscription", "bars": ["AAPL"]},
+            {"T": "t", "S": "AAPL", "i": 123, "p": 195.2, "s": 10, "t": "2026-06-25T10:15:20.100Z"},
+            "stop",
+        ])
+        healthy_events = []
+
+        with mock.patch.object(websocket_collector.websockets, "connect", return_value=FakeWebSocketConnect(websocket)):
+            with self.assertRaisesRegex(RuntimeError, "stop"):
+                asyncio.run(websocket_collector.run_stream_session(
+                    alpaca_url=profile.websocket_url,
+                    alpaca_key="key",
+                    alpaca_secret="secret",
+                    alpaca_feed=profile.feed,
+                    feed_profile=profile,
+                    producer=RecordingProducer(),
+                    subscribe_request={"action": "subscribe", "bars": ["AAPL"]},
+                    redis_client=MemoryRedis(),
+                    active_channels=[],
+                    active_poll_seconds=0.01,
+                    raw_topic_prefix="market.input",
+                    enforce_session_window=False,
+                    on_session_healthy=lambda reason: healthy_events.append(reason),
+                ))
+
+        self.assertIn("authenticated", healthy_events)
+        self.assertIn("subscribed", healthy_events)
+        self.assertIn("data", healthy_events)
+
+    def test_kafka_publish_failure_does_not_block_alpaca_websocket_receive_loop(self):
+        import asyncio
+        from alfaka.alpaca import websocket_collector
+
+        profile = resolve_feed_profile({"ALPACA_FEED_PROFILE": "sip"})
+        websocket = FakeWebSocket([
+            {"T": "success", "msg": "connected"},
+            {"T": "success", "msg": "authenticated"},
+            {"T": "t", "S": "AAPL", "i": 123, "p": 195.2, "s": 10, "t": "2026-06-25T10:15:20.100Z"},
+            "stop",
+        ])
+        redis = MemoryRedis()
+
+        with mock.patch.object(websocket_collector.websockets, "connect", return_value=FakeWebSocketConnect(websocket)):
+            with self.assertRaisesRegex(RuntimeError, "stop"):
+                asyncio.run(websocket_collector.run_stream_session(
+                    alpaca_url=profile.websocket_url,
+                    alpaca_key="key",
+                    alpaca_secret="secret",
+                    alpaca_feed=profile.feed,
+                    feed_profile=profile,
+                    producer=FailingProducer("kafka blocked"),
+                    subscribe_request={"action": "subscribe"},
+                    redis_client=redis,
+                    active_channels=[],
+                    active_poll_seconds=0.01,
+                    raw_topic_prefix="market.input",
+                    enforce_session_window=False,
+                ))
+
+        health = read_component_health(redis, RedisKeyBuilder(), "market-ingestor-sip")
+        self.assertEqual(health["status"], "error")
+        self.assertEqual(health["errorCategory"], "kafka_publish_failed")
+
     def test_raw_envelope_and_rows_preserve_feed_profile_and_session(self):
         payload = {"T": "t", "S": "AAPL", "t": "2026-06-30T02:00:00.000Z", "p": 200.5, "s": 10, "i": 42}
         envelope = build_raw_envelope(payload, "boats", feed_profile="boats")
@@ -1101,6 +1184,48 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "market.layer.trades.v1",
         ])
 
+    def test_clickhouse_batch_loader_groups_tick_rows_and_commits_once(self):
+        client = RecordingClickHouseClient()
+
+        class CommitRecordingConsumer:
+            def __init__(self):
+                self.commits = 0
+
+            def commit(self):
+                self.commits += 1
+
+        payloads = [
+            {"eventType": "TRADE", "symbol": "AAPL", "timestamp": "2026-06-25T10:15:01.000Z", "tradeId": 1, "price": 100, "size": 2},
+            {"eventType": "TRADE", "symbol": "AAPL", "timestamp": "2026-06-25T10:15:02.000Z", "tradeId": 2, "price": 101, "size": 3},
+            {"eventType": "QUOTE", "symbol": "AAPL", "timestamp": "2026-06-25T10:15:03.000Z", "bidPrice": 100, "askPrice": 101},
+        ]
+
+        consumer = CommitRecordingConsumer()
+        inserted = flush_clickhouse_buffer(
+            consumer,
+            client,
+            payloads,
+            load_trades=True,
+            load_quotes=True,
+            enable_auto_commit=False,
+        )
+
+        self.assertEqual(inserted, 3)
+        self.assertEqual(consumer.commits, 1)
+        self.assertEqual([(table, len(rows)) for table, rows in client.inserts], [("trade_ticks", 2), ("quote_ticks", 1)])
+
+    def test_clickhouse_batch_insert_skips_disabled_quote_rows(self):
+        client = RecordingClickHouseClient()
+        inserted = load_payload_batch(
+            client,
+            [{"eventType": "QUOTE", "symbol": "AAPL", "timestamp": "2026-06-25T10:15:03.000Z", "bidPrice": 100, "askPrice": 101}],
+            load_trades=True,
+            load_quotes=False,
+        )
+
+        self.assertEqual(inserted, 0)
+        self.assertEqual(client.inserts, [])
+
     def test_clickhouse_schema_ensure_is_opt_in_for_runtime_starts(self):
         self.assertFalse(should_ensure_schema_on_start({}))
         self.assertFalse(should_ensure_schema_on_start({"CLICKHOUSE_ENSURE_SCHEMA_ON_START": "false"}))
@@ -1206,6 +1331,56 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(classify_alpaca_error({"code": 406, "msg": "connection limit exceeded"}), "connection_limit")
         self.assertEqual(classify_alpaca_error({"msg": "auth timeout"}), "auth_timeout")
         self.assertEqual(classify_alpaca_error({"msg": "auth failed"}), "auth_failed")
+
+    def test_json_producer_uses_burst_tuning_env(self):
+        captured = {}
+
+        class FakeKafkaProducer:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+        fake_kafka = types.SimpleNamespace(KafkaProducer=FakeKafkaProducer)
+        with mock.patch.dict(sys.modules, {"kafka": fake_kafka}):
+            with mock.patch.dict(os.environ, {
+                "KAFKA_PRODUCER_LINGER_MS": "20",
+                "KAFKA_PRODUCER_BATCH_SIZE": "65536",
+                "KAFKA_PRODUCER_BUFFER_MEMORY": "67108864",
+                "KAFKA_PRODUCER_MAX_BLOCK_MS": "100",
+                "KAFKA_PRODUCER_ACKS": "1",
+            }, clear=False):
+                producer = create_json_producer("kafka:29092", "alpaca-sip")
+
+        self.assertIsInstance(producer, FakeKafkaProducer)
+        self.assertEqual(captured["linger_ms"], 20)
+        self.assertEqual(captured["batch_size"], 65536)
+        self.assertNotIn("buffer_memory", captured)
+        self.assertEqual(captured["max_block_ms"], 100)
+        self.assertEqual(captured["acks"], 1)
+
+    def test_json_producer_tuning_options_are_supported_by_kafka_python(self):
+        from kafka import KafkaProducer
+
+        options = producer_options_from_env(
+            {
+                "KAFKA_PRODUCER_LINGER_MS": "20",
+                "KAFKA_PRODUCER_BATCH_SIZE": "65536",
+                "KAFKA_PRODUCER_BUFFER_MEMORY": "67108864",
+                "KAFKA_PRODUCER_MAX_BLOCK_MS": "100",
+                "KAFKA_PRODUCER_ACKS": "1",
+            }
+        )
+
+        self.assertNotIn("buffer_memory", options)
+        self.assertEqual(options["linger_ms"], 20)
+        self.assertEqual(options["batch_size"], 65536)
+        self.assertEqual(options["max_block_ms"], 100)
+        self.assertEqual(options["acks"], 1)
+        self.assertTrue(set(options).issubset(KafkaProducer.DEFAULT_CONFIG))
+
+    def test_alpaca_publish_worker_count_is_configurable_and_never_zero(self):
+        self.assertEqual(publish_worker_count_from_env({"ALPACA_KAFKA_PUBLISH_WORKERS": "4"}), 4)
+        self.assertEqual(publish_worker_count_from_env({"ALPACA_KAFKA_PUBLISH_WORKERS": "0"}), 1)
+        self.assertEqual(publish_worker_count_from_env({"ALPACA_KAFKA_PUBLISH_WORKERS": "not-a-number"}), 1)
 
     def test_alpaca_aws_secret_supports_canonical_and_legacy_field_names(self):
         class FakeSecretsManager:
@@ -1385,6 +1560,105 @@ class MarketDataHardeningContractTest(unittest.TestCase):
 
         self.assertEqual(redis.expirations[keys.live_trade("MLM")], 90)
         self.assertEqual(redis.expirations[keys.live_candle("MLM", "1m")], 120)
+
+    def test_processor_allows_newer_daily_live_candle_for_same_closed_bucket(self):
+        redis = MemoryRedis()
+        keys = RedisKeyBuilder()
+        closed = {
+            "eventType": "CANDLE",
+            "symbol": "NVDA",
+            "interval": "1D",
+            "timestamp": "2026-07-07T04:00:00.000Z",
+            "open": 190,
+            "high": 198,
+            "low": 189,
+            "close": 196,
+            "volume": 1000,
+            "isClosed": True,
+            "createdAt": "2026-07-07T20:05:00.000Z",
+        }
+        live = {
+            **closed,
+            "eventType": "LIVE_CANDLE",
+            "close": 197.64,
+            "volume": 1250,
+            "isClosed": False,
+            "source": "derived.live",
+            "sourceInterval": "1m",
+            "updatedAt": "2026-07-08T01:26:50.000Z",
+        }
+
+        write_closed_candle_to_redis(redis, keys, closed)
+        stored = write_live_candle_to_redis(redis, keys, live)
+
+        self.assertTrue(stored)
+        stored_live = json.loads(redis.values[keys.live_candle("NVDA", "1D")])
+        self.assertEqual(stored_live["close"], 197.64)
+        self.assertFalse(stored_live["isClosed"])
+
+    def test_processor_blocks_older_daily_live_candle_for_same_closed_bucket(self):
+        redis = MemoryRedis()
+        keys = RedisKeyBuilder()
+        closed = {
+            "eventType": "CANDLE",
+            "symbol": "NVDA",
+            "interval": "1D",
+            "timestamp": "2026-07-07T04:00:00.000Z",
+            "open": 190,
+            "high": 198,
+            "low": 189,
+            "close": 196,
+            "volume": 1000,
+            "isClosed": True,
+            "createdAt": "2026-07-07T20:05:00.000Z",
+        }
+        live = {
+            **closed,
+            "eventType": "LIVE_CANDLE",
+            "close": 195,
+            "isClosed": False,
+            "source": "derived.live",
+            "sourceInterval": "1m",
+            "updatedAt": "2026-07-07T19:59:00.000Z",
+        }
+
+        write_closed_candle_to_redis(redis, keys, closed)
+        stored = write_live_candle_to_redis(redis, keys, live)
+
+        self.assertFalse(stored)
+        self.assertNotIn(keys.live_candle("NVDA", "1D"), redis.values)
+
+    def test_processor_still_blocks_same_bucket_intraday_live_after_closed_candle(self):
+        redis = MemoryRedis()
+        keys = RedisKeyBuilder()
+        closed = {
+            "eventType": "CANDLE",
+            "symbol": "NVDA",
+            "interval": "1m",
+            "timestamp": "2026-07-07T20:05:00.000Z",
+            "open": 196,
+            "high": 197,
+            "low": 195,
+            "close": 196.5,
+            "volume": 100,
+            "isClosed": True,
+            "createdAt": "2026-07-07T20:06:00.000Z",
+        }
+        live = {
+            **closed,
+            "eventType": "LIVE_CANDLE",
+            "close": 197,
+            "isClosed": False,
+            "source": "alpaca.trades",
+            "sourceInterval": "trades",
+            "updatedAt": "2026-07-07T20:06:30.000Z",
+        }
+
+        write_closed_candle_to_redis(redis, keys, closed)
+        stored = write_live_candle_to_redis(redis, keys, live)
+
+        self.assertFalse(stored)
+        self.assertNotIn(keys.live_candle("NVDA", "1m"), redis.values)
 
     def test_processor_emits_provisional_live_candles_for_all_chart_intervals(self):
         producer = RecordingProducer()
@@ -1762,6 +2036,9 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         app_kustomization = (REPO_ROOT / "infra/k8s/base/app/kustomization.yaml").read_text(encoding="utf-8")
         deployment = (REPO_ROOT / "infra/k8s/base/app/deployment-market-processor.yaml").read_text(encoding="utf-8")
         quote_deployment = (REPO_ROOT / "infra/k8s/base/app/deployment-market-quote-processor.yaml").read_text(encoding="utf-8")
+        clickhouse_loader_deployment = (
+            REPO_ROOT / "infra/k8s/base/app/deployment-clickhouse-loader.yaml"
+        ).read_text(encoding="utf-8")
         agent_orchestrator_deployment = (
             REPO_ROOT / "infra/k8s/base/app/deployment-agent-orchestrator.yaml"
         ).read_text(encoding="utf-8")
@@ -1796,6 +2073,16 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn("KAFKA_PROCESSOR_GROUP_ID", quote_deployment)
         self.assertIn("value: alfaka-market-quote-processor", quote_deployment)
         self.assertIn("value: market.input.realtime.quotes.v1", quote_deployment)
+        self.assertIn("name: alfaka-clickhouse-loader", clickhouse_loader_deployment)
+        self.assertIn("name: alfaka-clickhouse-tick-loader", clickhouse_loader_deployment)
+        self.assertIn("replicas: 3", clickhouse_loader_deployment)
+        self.assertIn("value: market.layer.trades.v1,market.layer.quotes.v1", clickhouse_loader_deployment)
+        self.assertIn("value: market.layer.candles.1m.closed.v1,market.layer.candles.5m.closed.v1,market.layer.candles.10m.closed.v1,market.layer.candles.1h.closed.v1,market.layer.candles.4h.closed.v1,market.layer.candles.1d.closed.v1,market.layer.candles.1w.closed.v1,market.layer.candles.1mo.closed.v1,market.layer.events.v1,market.news.alpaca.v1", clickhouse_loader_deployment)
+        self.assertIn("value: alfaka-clickhouse-tick-loader", clickhouse_loader_deployment)
+        self.assertIn("requests:\n              cpu: 100m\n              memory: 128Mi", clickhouse_loader_deployment)
+        self.assertIn("limits:\n              cpu: 500m\n              memory: 512Mi", clickhouse_loader_deployment)
+        self.assertIn("requests:\n              cpu: 250m\n              memory: 256Mi", clickhouse_loader_deployment)
+        self.assertIn('limits:\n              cpu: "1"\n              memory: 768Mi', clickhouse_loader_deployment)
         self.assertIn("name: alfaka-raw-s3-archive", raw_archive_deployment)
         self.assertIn("systems/market-data/pods/s3-sink/raw_archive_sink.py", raw_archive_deployment)
         self.assertIn("gops-market-storage:latest", raw_archive_deployment)
@@ -1821,11 +2108,22 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn("KAFKA_RAW_S3_GROUP_ID: alfaka-raw-s3-archive", configmap)
         self.assertIn("ALPACA_COLLECTION_SYMBOL_SOURCE: universe", configmap)
         self.assertIn('ALPACA_MAX_TRADE_SYMBOLS: "100"', configmap)
+        self.assertIn("name: alfaka-alpaca-ingestor-sip", alpaca_ingestor_deployment)
         self.assertIn("name: alfaka-alpaca-ingestor-boats", alpaca_ingestor_deployment)
-        self.assertIn("name: ALPACA_COLLECTION_SYMBOL_SOURCE", alpaca_ingestor_deployment)
-        self.assertIn("value: on-demand", alpaca_ingestor_deployment)
+        self.assertNotIn("name: alfaka-alpaca-tick-ingestor-sip", alpaca_ingestor_deployment)
+        self.assertNotIn("value: alfaka-alpaca-tick-ingestor-sip", alpaca_ingestor_deployment)
+        self.assertIn("name: ALPACA_ACTIVE_CHANNELS", alpaca_ingestor_deployment)
+        self.assertIn("value: trades,quotes", alpaca_ingestor_deployment)
+        self.assertIn('ALPACA_KAFKA_PUBLISH_WORKERS: "4"', configmap)
+        self.assertIn('ALPACA_KAFKA_PUBLISH_QUEUE_MAXSIZE: "20000"', configmap)
+        self.assertIn('KAFKA_PRODUCER_LINGER_MS: "20"', configmap)
+        self.assertIn('KAFKA_PRODUCER_BATCH_SIZE: "65536"', configmap)
+        self.assertNotIn("KAFKA_PRODUCER_BUFFER_MEMORY", configmap)
         self.assertIn('CLICKHOUSE_PROVIDER_TIMEOUT_SECONDS: "8"', configmap)
         self.assertIn('CLICKHOUSE_PROVIDER_RETRY_ATTEMPTS: "2"', configmap)
+        self.assertIn('KAFKA_CLICKHOUSE_MAX_POLL_RECORDS: "1000"', configmap)
+        self.assertIn('CLICKHOUSE_INSERT_BATCH_SIZE: "1000"', configmap)
+        self.assertIn('CLICKHOUSE_FLUSH_INTERVAL_SECONDS: "1"', configmap)
         self.assertIn('NEWS_BACKFILL_DAYS: "365"', configmap)
         self.assertIn('NEWS_BACKFILL_SHARD_INDEX: "0"', configmap)
         self.assertIn('NEWS_BACKFILL_SHARD_COUNT: "1"', configmap)
@@ -1836,6 +2134,8 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn('CLICKHOUSE_HTTP_TIMEOUT_SECONDS: "10"', configmap)
         self.assertIn('S3_RAW_FLUSH_INTERVAL_SECONDS: "60"', configmap)
         self.assertIn('KAFKA_CLICKHOUSE_ENABLE_AUTO_COMMIT: "false"', configmap)
+        self.assertIn('ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED: "false"', configmap)
+        self.assertIn('ON_DEMAND_FILL_FOREGROUND_MAX_BARS: "120"', configmap)
         self.assertIn("wait_for_rebuild_job", news_rebuild_script)
         self.assertIn('status.conditions[?(@.type=="Failed")].status', news_rebuild_script)
         self.assertIn("--previous=true", news_rebuild_script)
@@ -1849,6 +2149,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         detector = (REPO_ROOT / "scripts/aws/detect-changed-services.sh").read_text(encoding="utf-8")
 
         self.assertIn("alfaka-market-quote-processor", lib)
+        self.assertIn("alfaka-clickhouse-tick-loader", lib)
         self.assertIn("alfaka-news-intelligence-worker", lib)
         self.assertIn("systems/market-data/pods/news-intelligence-worker/*", detector)
         self.assertIn("systems/market-data/jobs/news-backfill/*", detector)
@@ -1858,6 +2159,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         lib = (REPO_ROOT / "scripts/aws/lib-gops-images.sh").read_text(encoding="utf-8")
 
         self.assertIn("alfaka-alpaca-ingestor-sip", lib)
+        self.assertNotIn("alfaka-alpaca-tick-ingestor-sip", lib)
         self.assertIn("alfaka-alpaca-ingestor-boats", lib)
         self.assertIn("alfaka-alpaca-ingestor-crypto", lib)
         self.assertIn("alfaka-alpaca-news-ingestor", lib)
@@ -1869,6 +2171,17 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertNotIn("  push:", workflow)
         self.assertIn("smoke_url https://stargops.com/api/health", workflow)
         self.assertNotIn("smoke_url https://stargops.com/api/charts/symbols", workflow)
+
+    def test_deploy_workflow_prunes_retired_sip_tick_ingestor(self):
+        workflow = (REPO_ROOT / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8")
+
+        self.assertIn("Delete retired app workloads", workflow)
+        self.assertIn("kubectl delete deployment alfaka-alpaca-tick-ingestor-sip", workflow)
+        self.assertIn("--ignore-not-found=true", workflow)
+        self.assertLess(
+            workflow.index("Delete retired app workloads"),
+            workflow.index("Deploy app workloads"),
+        )
 
     def test_initial_load_compose_uses_on_demand_universe_contract(self):
         compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
@@ -2330,6 +2643,45 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(event["source"], "derived.live")
         self.assertEqual(event["sourceInterval"], "1m")
         self.assertEqual(event["data"]["updatedAt"], "2026-06-25T10:17:20.250Z")
+
+    def test_redis_provider_allows_newer_daily_live_candle_for_same_closed_bucket(self):
+        redis = MemoryRedis()
+        keys = RedisKeyBuilder()
+        closed = {
+            "eventType": "CANDLE",
+            "symbol": "NVDA",
+            "interval": "1D",
+            "timestamp": "2026-07-07T04:00:00.000Z",
+            "open": 190,
+            "high": 198,
+            "low": 189,
+            "close": 196,
+            "volume": 1000,
+            "isClosed": True,
+            "createdAt": "2026-07-07T20:05:00.000Z",
+        }
+        redis.set(keys.latest_closed_candle("NVDA", "1D"), json.dumps(closed))
+        redis.set(keys.closed_candle_watermark("NVDA", "1D"), closed["timestamp"])
+        redis.set(keys.live_candle("NVDA", "1D"), json.dumps({
+            **closed,
+            "eventType": "LIVE_CANDLE",
+            "close": 197.64,
+            "volume": 1250,
+            "isClosed": False,
+            "source": "derived.live",
+            "sourceInterval": "1m",
+            "updatedAt": "2026-07-08T01:26:50.000Z",
+        }))
+        provider = RedisMarketDataProvider.__new__(RedisMarketDataProvider)
+        provider.redis = redis
+        provider.keys = keys
+
+        with mock.patch.dict(os.environ, {"LIVE_CANDLE_STALE_SECONDS": "0"}):
+            event = provider.live_event("NVDA", "1D")
+
+        self.assertEqual(event["interval"], "1D")
+        self.assertEqual(event["data"]["close"], 197.64)
+        self.assertFalse(event["data"]["isClosed"])
 
     def test_redis_provider_ignores_stale_live_candle(self):
         redis = MemoryRedis()
@@ -5787,6 +6139,38 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(payload["candles"][0]["timestamp"], "2026-06-25T10:15:00.000Z")
         self.assertEqual(payload["candles"][0]["close"], 100.5)
         self.assertTrue(payload["candles"][0]["isClosed"])
+
+    def test_provider_merges_newer_daily_live_candle_for_same_closed_bucket(self):
+        closed = {
+            "interval": "1D",
+            "timestamp": "2026-07-07T04:00:00.000Z",
+            "open": 190,
+            "high": 198,
+            "low": 189,
+            "close": 196,
+            "volume": 1000,
+            "isClosed": True,
+            "createdAt": "2026-07-07T20:05:00.000Z",
+        }
+        live = {
+            **closed,
+            "close": 197.64,
+            "volume": 1250,
+            "isClosed": False,
+            "sourceInterval": "1m",
+            "updatedAt": "2026-07-08T01:26:50.000Z",
+        }
+        provider = MarketDataProvider(
+            redis_provider=FakeRedisProvider(candles=[closed], live_candle=live),
+            clickhouse_provider=FakeClickHouseProvider(candles=[closed]),
+        )
+
+        payload = provider.candle_snapshot("NVDA", "1D", 5)
+
+        self.assertEqual(len(payload["candles"]), 1)
+        self.assertEqual(payload["candles"][0]["timestamp"], "2026-07-07T04:00:00.000Z")
+        self.assertEqual(payload["candles"][0]["close"], 197.64)
+        self.assertFalse(payload["candles"][0]["isClosed"])
 
     def test_provider_includes_redis_live_candles_in_from_to_snapshot(self):
         start = datetime(2026, 7, 6, 13, 30, tzinfo=timezone.utc)

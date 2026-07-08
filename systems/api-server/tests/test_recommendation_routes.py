@@ -4,6 +4,7 @@ import os
 import sys
 import types
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -31,7 +32,7 @@ try:
     from app.alerts.notifications import InMemoryNotificationBroker
     from app.alerts.repository import InMemoryAlertRepository
     from app.main import create_app
-    from app.recommendations.repository import InMemoryRecommendationRepository, RecommendationSchemaUnavailable
+    from app.recommendations.repository import InMemoryRecommendationRepository, RecommendationSchemaUnavailable, _json_ready
     from app.recommendations.service import RecommendationDataSource
     from app.recommendations.worker import RecommendationWorker
 except Exception as exc:  # pragma: no cover - dependency guard for lean envs
@@ -257,6 +258,122 @@ def test_watchlist_holding_and_active_symbol_are_not_recommended(recommendation_
     assert "AVGO" not in symbols
 
 
+def test_refresh_registers_top_fifteen_without_score_cutoff(recommendation_app) -> None:
+    recommendation_app.state.recommendation_watchlist_provider = lambda user_sub: []
+    recommendation_app.state.recommendation_market_provider = lambda: [
+        {
+            "symbol": symbol,
+            "sector": "Technology",
+            "industry": "Software",
+            "sessionDollarVolume": volume,
+            "changePercent": change,
+            "lastPrice": 100,
+        }
+        for symbol, volume, change in [
+            (f"LOW{index:02d}", 500_000_000 - index * 10_000_000, round(1.6 - index * 0.1, 2))
+            for index in range(1, 17)
+        ]
+    ]
+    recommendation_app.state.recommendation_candles_provider = flat_candles
+    recommendation_app.state.recommendation_news_provider = lambda symbol, now=None: []
+    client = TestClient(recommendation_app)
+    client.put(
+        "/api/recommendations/profile",
+        json={"riskLevel": "balanced", "horizon": "intraday", "maxDrawdownPct": 6},
+    )
+
+    response = client.post("/api/recommendations/stocks/refresh", json={})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "completed"
+    assert [item["symbol"] for item in payload["items"]] == [f"LOW{index:02d}" for index in range(1, 16)]
+    assert len(payload["items"]) == 15
+    assert payload["items"][0]["changePercent"] == 1.5
+    assert payload["items"][0]["metricsSnapshot"]["changePercent"] == 1.5
+    assert all(item["score"] < 75 for item in payload["items"])
+
+
+def test_refresh_fills_top_fifteen_with_market_snapshot_reasons(recommendation_app) -> None:
+    recommendation_app.state.recommendation_watchlist_provider = lambda user_sub: []
+    recommendation_app.state.recommendation_market_provider = lambda: [
+        {
+            "symbol": f"FILL{index:02d}",
+            "sector": "Technology",
+            "industry": "Software",
+            "sessionDollarVolume": 500_000_000 - index * 10_000_000,
+            "changePercent": round(3.0 - index * 0.1, 2),
+            "lastPrice": 100 + index,
+        }
+        for index in range(1, 21)
+    ]
+    recommendation_app.state.recommendation_candles_provider = lambda symbol, now: []
+    recommendation_app.state.recommendation_news_provider = lambda symbol, now=None: []
+    client = TestClient(recommendation_app)
+    client.put(
+        "/api/recommendations/profile",
+        json={"riskLevel": "balanced", "horizon": "intraday", "maxDrawdownPct": 6},
+    )
+
+    response = client.post("/api/recommendations/stocks/refresh", json={})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "completed"
+    assert len(payload["items"]) == 15
+    assert payload["summary"]["recommendedCount"] == 15
+    assert all(item["reasons"] for item in payload["items"])
+    assert all(item["metricsSnapshot"]["fallback"] is True for item in payload["items"])
+
+
+def test_recommendation_candles_backfills_session_from_clickhouse(monkeypatch: pytest.MonkeyPatch) -> None:
+    future_redis_rows = [
+        {
+            "timestamp": f"2026-07-07T22:{index % 60:02d}:00Z",
+            "open": 100,
+            "high": 101,
+            "low": 99,
+            "close": 100,
+            "volume": 100,
+        }
+        for index in range(120)
+    ]
+    clickhouse_calls: list[dict] = []
+
+    class RedisProvider:
+        def recent_candles(self, symbol: str, interval: str, limit: int) -> list[dict]:
+            return future_redis_rows
+
+    class ClickHouseProvider:
+        def candles(self, symbol: str, interval: str, limit: int, **kwargs) -> list[dict]:
+            clickhouse_calls.append({"symbol": symbol, "interval": interval, "limit": limit, **kwargs})
+            return fake_candles(symbol, REGULAR_MARKET_TIME)
+
+    provider = types.SimpleNamespace(redis_provider=RedisProvider(), clickhouse_provider=ClickHouseProvider())
+    monkeypatch.setattr("app.recommendations.service.get_market_data_provider", lambda: provider)
+
+    rows = RecommendationDataSource(types.SimpleNamespace(state=types.SimpleNamespace())).candles("MSFT", REGULAR_MARKET_TIME)
+
+    assert clickhouse_calls == [
+        {
+            "symbol": "MSFT",
+            "interval": "1m",
+            "limit": 720,
+            "from_time": "2026-07-07T13:30:00Z",
+            "to_time": "2026-07-07T16:00:00Z",
+        }
+    ]
+    assert rows
+    assert all(str(row["timestamp"]) <= "2026-07-07T16:00:00Z" for row in rows)
+    assert rows[-1]["timestamp"] == "2026-07-07T15:59:00Z"
+
+
+def test_recommendation_json_ready_converts_postgres_numeric_decimal() -> None:
+    payload = _json_ready({"max_drawdown_pct": Decimal("6.00"), "nested": [Decimal("1.25")]})
+
+    assert payload == {"max_drawdown_pct": 6.0, "nested": [1.25]}
+
+
 def test_recommendation_worker_processes_profiled_users_once_per_slot(recommendation_app) -> None:
     client = TestClient(recommendation_app)
     client.put(
@@ -388,6 +505,23 @@ def fake_candles(symbol: str, _now: datetime) -> list[dict]:
                 "low": close - 0.2,
                 "close": close,
                 "volume": volume,
+            }
+        )
+    return candles
+
+
+def flat_candles(symbol: str, _now: datetime) -> list[dict]:
+    candles = []
+    for index in range(180):
+        close = 500.0 if symbol == "SPY" else 100.0
+        candles.append(
+            {
+                "timestamp": f"2026-07-07T{13 + index // 60:02d}:{index % 60:02d}:00Z",
+                "open": close,
+                "high": close + 0.05,
+                "low": close - 0.05,
+                "close": close,
+                "volume": 10_000,
             }
         )
     return candles

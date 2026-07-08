@@ -71,7 +71,7 @@ class OnDemandFillService:
             if background_enabled is not None
             else os.getenv("ON_DEMAND_FILL_BACKGROUND_ENABLED", "true").lower() not in {"0", "false", "off", "no"}
         )
-        self.foreground_enabled = os.getenv("ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED", "true").lower() not in {"0", "false", "off", "no"}
+        self.foreground_enabled = os.getenv("ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
         self.foreground_max_bars = max(1, int(os.getenv("ON_DEMAND_FILL_FOREGROUND_MAX_BARS", os.getenv("HISTORICAL_LIMIT", "10000"))))
         self.background_executor = background_executor
 

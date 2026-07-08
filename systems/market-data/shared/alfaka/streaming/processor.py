@@ -21,6 +21,7 @@ from alfaka.serving.closed_watermark import (
     candle_at_or_before_watermark,
     candle_watermark_value,
     latest_watermark_value,
+    live_candle_at_or_before_watermark,
     watermark_after,
 )
 from alfaka.serving.intervals import redis_closed_candle_cap
@@ -734,14 +735,18 @@ def read_closed_candle_watermark(redis_client, redis_keys, symbol, interval):
     watermark = redis_client.get(redis_keys.closed_candle_watermark(symbol, interval))
     if watermark:
         return watermark
+    candle = read_latest_closed_candle(redis_client, redis_keys, symbol, interval)
+    return candle_watermark_value(candle)
+
+
+def read_latest_closed_candle(redis_client, redis_keys, symbol, interval):
     latest = redis_client.get(redis_keys.latest_closed_candle(symbol, interval))
     if not latest:
         return None
     try:
-        candle = json.loads(latest)
+        return json.loads(latest)
     except (TypeError, json.JSONDecodeError):
         return None
-    return candle_watermark_value(candle)
 
 
 def write_closed_candle_watermark_to_redis(redis_client, redis_keys, candle):
@@ -757,7 +762,7 @@ def write_closed_candle_watermark_to_redis(redis_client, redis_keys, candle):
     return watermark
 
 
-def delete_stale_live_candle(redis_client, redis_keys, symbol, interval, watermark):
+def delete_stale_live_candle(redis_client, redis_keys, symbol, interval, watermark, latest_closed_candle=None):
     key = redis_keys.live_candle(symbol, interval)
     value = redis_client.get(key)
     if not value:
@@ -766,18 +771,20 @@ def delete_stale_live_candle(redis_client, redis_keys, symbol, interval, waterma
         candle = json.loads(value)
     except (TypeError, json.JSONDecodeError):
         return False
-    if not candle_at_or_before_watermark(candle, watermark):
+    if not live_candle_at_or_before_watermark(candle, watermark, latest_closed_candle):
         return False
     redis_client.delete(key)
     return True
 
 
 def write_live_candle_to_redis(redis_client, redis_keys, candle):
-    watermark = read_closed_candle_watermark(redis_client, redis_keys, candle["symbol"], candle.get("interval", "1m"))
-    if candle_at_or_before_watermark(candle, watermark):
+    interval = candle.get("interval", "1m")
+    latest_closed_candle = read_latest_closed_candle(redis_client, redis_keys, candle["symbol"], interval)
+    watermark = read_closed_candle_watermark(redis_client, redis_keys, candle["symbol"], interval)
+    if live_candle_at_or_before_watermark(candle, watermark, latest_closed_candle):
         redis_client.delete(redis_keys.live_candle(candle["symbol"], candle.get("interval", "1m")))
         return False
-    key = redis_keys.live_candle(candle["symbol"], candle.get("interval", "1m"))
+    key = redis_keys.live_candle(candle["symbol"], interval)
     redis_client.set(key, json.dumps(candle, ensure_ascii=False, separators=(",", ":")))
     redis_client.expire(key, live_candle_ttl_seconds())
     return True
@@ -873,7 +880,7 @@ def write_closed_candle_to_redis(redis_client, redis_keys, candle):
     redis_client.expire(latest_key, 86400)
     redis_client.expire(series_key, 604800)
     watermark = write_closed_candle_watermark_to_redis(redis_client, redis_keys, candle)
-    delete_stale_live_candle(redis_client, redis_keys, candle["symbol"], candle["interval"], watermark)
+    delete_stale_live_candle(redis_client, redis_keys, candle["symbol"], candle["interval"], watermark, candle)
 
 
 def write_status_to_redis(redis_client, redis_keys, status):
