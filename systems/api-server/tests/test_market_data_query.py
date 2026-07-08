@@ -1329,6 +1329,36 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(payload["symbol"], "AAPL")
         self.assertIn("sma:5", payload["series"])
 
+    @unittest.skipUnless(FASTAPI_TESTCLIENT_AVAILABLE, "fastapi TestClient dependency is not installed")
+    def test_indicator_route_accepts_large_client_limit_for_service_clamp(self):
+        from app.main import create_app
+
+        class LargeLimitQueryService:
+            def indicator_series(self, symbol, interval, from_time=None, to_time=None, layers=None, limit=None):
+                return {
+                    "symbol": symbol.upper(),
+                    "interval": interval,
+                    "from": from_time,
+                    "to": to_time,
+                    "layers": layers,
+                    "limit": limit,
+                    "series": {},
+                }
+
+        previous = query_routes.get_query_service
+        query_routes.get_query_service = lambda: LargeLimitQueryService()
+        try:
+            client = TestClient(create_app())
+            response = client.get(
+                "/api/charts/indicators?symbol=nvda&interval=1D&layers=sma:5&limit=36477"
+                "&from=2026-07-02T04:00:00.000Z&to=2026-07-08T03:40:49.000Z"
+            )
+        finally:
+            query_routes.get_query_service = previous
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["limit"], 1512)
+
     def test_latest_news_uses_redis_when_cache_has_enough_rows(self):
         service = MarketDataQueryService(FakeNewsProvider(redis_rows=[{
             "targetSymbol": "NVDA",
@@ -1829,6 +1859,35 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertFalse(result["fill"]["sources"]["s3"]["checked"])
         self.assertFalse(result["fill"]["sources"]["alpaca"]["checked"])
 
+    def test_on_demand_fill_does_not_queue_for_satisfied_tiny_live_window(self):
+        payload = {
+            "symbol": "NVDA",
+            "interval": "1m",
+            "candles": make_fill_candles(5),
+            "returnedCount": 5,
+            "storedCandleCount": 5,
+            "_sourceTrace": {
+                "redis": {"checked": True, "hit": True, "rowCount": 5},
+                "clickhouse": {"checked": False, "hit": False, "rowCount": 0},
+            },
+        }
+        service = RecordingOnDemandFillService(s3_result=False, alpaca_result=True)
+
+        result = service.fill_if_needed(
+            symbol="NVDA",
+            interval="1m",
+            limit=5,
+            before=None,
+            from_time=None,
+            to_time=None,
+            payload=payload,
+        )
+
+        self.assertEqual(result["fill"]["status"], "not_needed")
+        self.assertEqual(service.calls, [])
+        self.assertEqual(service.queued, [])
+        self.assertFalse(result["fill"]["backgroundFill"]["queued"])
+
     def test_on_demand_fill_queues_background_when_returned_window_is_sparse_at_limit(self):
         early_start = datetime.fromisoformat("2026-06-25T13:30:00+00:00")
         late_start = datetime.fromisoformat("2026-06-25T18:00:00+00:00")
@@ -1952,6 +2011,113 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(result["candles"][0]["timestamp"], "2026-06-25T13:00:00.000Z")
         self.assertIn(":1h:2026-06-25T20:00:00.000Z:", result["snapshotCursor"])
         self.assertTrue(result["fill"]["renderable"])
+
+    def test_on_demand_fill_auto_foreground_repairs_daily_sparse_window(self):
+        payload = {
+            "symbol": "NVDA",
+            "interval": "1D",
+            "candles": [],
+            "returnedCount": 0,
+            "storedCandleCount": 0,
+            "sourceInterval": "1D",
+            "missingRanges": [
+                {"start": "2026-01-01T00:00:00.000Z", "end": "2026-03-01T00:00:00.000Z"}
+            ],
+            "_sourceTrace": {
+                "redis": {"checked": True, "hit": False, "rowCount": 0},
+                "clickhouse": {"checked": True, "hit": False, "rowCount": 0},
+            },
+        }
+        raw_rows = [
+            {
+                "t": (datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(days=index)).strftime("%Y-%m-%dT00:00:00Z"),
+                "o": 180 + index,
+                "h": 181 + index,
+                "l": 179 + index,
+                "c": 180.5 + index,
+                "v": 10_000_000 + index,
+                "n": 100 + index,
+                "vw": 180.25 + index,
+            }
+            for index in range(60)
+        ]
+        with mock.patch.dict(os.environ, {
+            "ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED": "",
+            "ON_DEMAND_FILL_FOREGROUND_AUTO_INTERVALS": "1D",
+            "ON_DEMAND_FILL_FOREGROUND_AUTO_MAX_BARS": "100",
+        }, clear=False):
+            service = OnDemandFillService(timeout_seconds=8, background_enabled=False)
+
+        with mock.patch("app.market_data.fill.service.fetch_alpaca_bars", return_value=raw_rows) as fetch:
+            result = service.fill_if_needed(
+                symbol="NVDA",
+                interval="1D",
+                limit=60,
+                before=None,
+                from_time="2026-01-01T00:00:00.000Z",
+                to_time="2026-03-01T00:00:00.000Z",
+                payload=payload,
+            )
+
+        self.assertEqual(fetch.call_args.args[4], "1Day")
+        self.assertEqual(result["fill"]["foregroundFill"]["state"], "filled")
+        self.assertEqual(result["fill"]["status"], "filled")
+        self.assertEqual(result["sourceInterval"], "1D")
+        self.assertEqual(len(result["candles"]), 60)
+        self.assertEqual(result["candles"][0]["timestamp"], "2026-01-01T00:00:00.000Z")
+
+    def test_on_demand_fill_auto_foreground_uses_auto_cap_over_global_cap(self):
+        payload = {
+            "symbol": "NVDA",
+            "interval": "1D",
+            "candles": [],
+            "returnedCount": 0,
+            "storedCandleCount": 0,
+            "sourceInterval": "1D",
+            "missingRanges": [
+                {"start": "2025-11-10T04:00:00.000Z", "end": "2026-07-02T04:00:00.000Z"}
+            ],
+            "_sourceTrace": {
+                "redis": {"checked": True, "hit": False, "rowCount": 0},
+                "clickhouse": {"checked": True, "hit": False, "rowCount": 0},
+            },
+        }
+        raw_rows = [
+            {
+                "t": (datetime(2025, 11, 10, tzinfo=timezone.utc) + timedelta(days=index)).strftime("%Y-%m-%dT04:00:00Z"),
+                "o": 180 + index,
+                "h": 181 + index,
+                "l": 179 + index,
+                "c": 180.5 + index,
+                "v": 10_000_000 + index,
+                "n": 100 + index,
+                "vw": 180.25 + index,
+            }
+            for index in range(120)
+        ]
+        with mock.patch.dict(os.environ, {
+            "ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED": "",
+            "ON_DEMAND_FILL_FOREGROUND_MAX_BARS": "120",
+            "ON_DEMAND_FILL_FOREGROUND_AUTO_INTERVALS": "1D",
+            "ON_DEMAND_FILL_FOREGROUND_AUTO_MAX_BARS": "500",
+        }, clear=False):
+            service = OnDemandFillService(timeout_seconds=8, background_enabled=False)
+
+        with mock.patch("app.market_data.fill.service.fetch_alpaca_bars", return_value=raw_rows) as fetch:
+            result = service.fill_if_needed(
+                symbol="NVDA",
+                interval="1D",
+                limit=120,
+                before=None,
+                from_time="2025-11-10T04:00:00.000Z",
+                to_time="2026-07-02T04:00:00.000Z",
+                payload=payload,
+            )
+
+        fetch.assert_called_once()
+        self.assertEqual(result["fill"]["foregroundFill"]["state"], "filled")
+        self.assertNotIn("exceeds foreground cap 120", result["fill"]["foregroundFill"].get("reason") or "")
+        self.assertEqual(len(result["candles"]), 120)
 
     def test_on_demand_fill_keeps_live_candle_over_alpaca_current_bucket(self):
         live = {

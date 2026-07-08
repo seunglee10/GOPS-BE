@@ -18,16 +18,18 @@ portfolio, ranking, manual admin 같은 명시 cohort로 제한한다.
 ```text
 Redis recent/live window
 -> ClickHouse canonical chart_candles
--> optional foreground Alpaca REST direct bars only when explicitly enabled
+-> bounded auto/general foreground Alpaca REST direct bars
 -> background S3 final objects and manifests
 -> background Alpaca historical direct bars
 ```
 
 Redis/ClickHouse 데이터가 renderable이면 즉시 반환한다. 부족하면 API
-foreground path는 기본적으로 Alpaca REST를 기다리지 않고 partial/empty payload와
-background fill trace를 반환한다. `ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED=true`일
-때만 요청 interval 그대로 closed historical bars를 가져와 현재 Redis
-live/provisional candle과 병합해 반환할 수 있다. 단, Redis의
+foreground path는 일반 interval에 대해 기본적으로 Alpaca REST를 기다리지 않고
+partial/empty payload와 background fill trace를 반환한다. `1D/1W/1M`은 작은
+결손 범위에서 자동 foreground REST를 허용하고, 그 외 일반 foreground는
+`ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED=true`일 때 요청 interval 그대로 closed
+historical bars를 가져와 현재 Redis live/provisional candle과 병합해 반환할 수
+있다. 단, Redis의
 `symbol + interval` closed watermark 이하 timestamp는 closed candle이 우선하며
 live/provisional candle을 반환하지 않는다. 동시에 background fill은 같은 요청 범위를
 S3 final/manifest와 ClickHouse에 저장한다. Raw S3 archive는 감사/백업용이며
@@ -136,6 +138,10 @@ even if full coverage still needs repair. If they are not renderable, bounded
 foreground Alpaca direct fill may return a renderable payload immediately.
 Missing ranges are still queued as bounded background fill and surfaced in the
 `fill.backgroundFill` trace.
+Tiny latest-window reads below the interval renderability minimum, such as
+health checks or live snapshots asking for five `1m` candles, do not enqueue
+background fill when the requested count is already returned and no explicit
+missing range is present.
 
 Closed candles update a Redis closed watermark per `symbol + interval`. The
 processor deletes stale live candles at or before that watermark, rejects late
@@ -162,9 +168,12 @@ flowchart LR
   Alpaca --> Write["write S3 final/manifest + ClickHouse"]
 ```
 
-The API foreground path does not wait on S3 writes. By default it also does not
-wait on Alpaca REST; set `ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED=true` to allow
-REST direct bars up to `ON_DEMAND_FILL_FOREGROUND_MAX_BARS` estimated bars.
+The API foreground path does not wait on S3 writes. By default it does not wait
+on Alpaca REST for every interval. `1D/1W/1M` use bounded auto foreground REST up
+to `ON_DEMAND_FILL_FOREGROUND_AUTO_MAX_BARS` estimated bars so sparse daily-like
+chart openings can render immediately. Set
+`ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED=true` to allow the general foreground
+path up to `ON_DEMAND_FILL_FOREGROUND_MAX_BARS` estimated bars.
 Background fill is bounded by `ON_DEMAND_FILL_BACKGROUND_TIMEOUT_SECONDS` and
 writes source failures to logs/monitoring; the initiating response shows
 foreground and background state. Alpaca no-data remains an `empty` or `partial`

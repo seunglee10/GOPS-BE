@@ -171,7 +171,7 @@ the requested interval.
 Normal chart expansion is:
 
 ```text
-Redis recent requested window -> ClickHouse -> optional foreground Alpaca REST direct
+Redis recent requested window -> ClickHouse -> bounded auto/general foreground Alpaca REST direct
 -> background S3 final/manifest -> background Alpaca historical direct
 ```
 

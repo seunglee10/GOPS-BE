@@ -73,6 +73,10 @@ class OnDemandFillService:
         )
         self.foreground_enabled = os.getenv("ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
         self.foreground_max_bars = max(1, int(os.getenv("ON_DEMAND_FILL_FOREGROUND_MAX_BARS", os.getenv("HISTORICAL_LIMIT", "10000"))))
+        self.foreground_auto_intervals = parse_interval_set(
+            os.getenv("ON_DEMAND_FILL_FOREGROUND_AUTO_INTERVALS", "1D,1W,1M")
+        )
+        self.foreground_auto_max_bars = max(1, int(os.getenv("ON_DEMAND_FILL_FOREGROUND_AUTO_MAX_BARS", "500")))
         self.background_executor = background_executor
 
     def fill_if_needed(
@@ -178,14 +182,18 @@ class OnDemandFillService:
     ) -> bool:
         source = trace["sources"]["alpaca"]
         trace["foregroundFill"] = {"attempted": False, "source": "alpaca-rest-direct", "rowCount": 0, "state": "not_needed", "reason": None}
-        if not self.foreground_enabled:
+        estimated_bars = estimated_bar_count(interval, ranges)
+        foreground_auto_enabled = interval in self.foreground_auto_intervals and estimated_bars <= self.foreground_auto_max_bars
+        if not self.foreground_enabled and not foreground_auto_enabled:
             trace["foregroundFill"].update({"state": "disabled", "reason": "foreground Alpaca fill disabled"})
             return False
-        estimated_bars = estimated_bar_count(interval, ranges)
-        if estimated_bars > self.foreground_max_bars:
+        foreground_cap = self.foreground_max_bars
+        if foreground_auto_enabled:
+            foreground_cap = max(foreground_cap, self.foreground_auto_max_bars)
+        if estimated_bars > foreground_cap:
             trace["foregroundFill"].update({
                 "state": "skipped",
-                "reason": f"estimated bar count {estimated_bars} exceeds foreground cap {self.foreground_max_bars}",
+                "reason": f"estimated bar count {estimated_bars} exceeds foreground cap {foreground_cap}",
             })
             return False
         if self._deadline_exceeded(started):
@@ -300,9 +308,18 @@ class OnDemandFillService:
         candles = payload.get("candles") or []
         if payload.get("missingRanges"):
             return True
+        if self._requested_tiny_window_is_satisfied(payload, interval, limit):
+            return False
         if not self._is_renderable(payload, interval, source_interval):
             return True
         return len(candles) < limit
+
+    def _requested_tiny_window_is_satisfied(self, payload: dict[str, Any], interval: str, limit: int) -> bool:
+        if limit >= minimum_renderable_returned_bars(interval):
+            return False
+        candles = payload.get("candles") or []
+        returned = int(payload.get("returnedCount") or len(candles))
+        return returned >= limit and len(candles) >= limit
 
     def _is_renderable(self, payload: dict[str, Any], interval: str, source_interval: str) -> bool:
         returned = int(payload.get("returnedCount") or len(payload.get("candles") or []))
@@ -586,6 +603,19 @@ def unique_ordered(values: list[str]) -> list[str]:
         seen.add(value)
         result.append(value)
     return result
+
+
+def parse_interval_set(value: str | None) -> set[str]:
+    intervals: set[str] = set()
+    for item in str(value or "").split(","):
+        trimmed = item.strip()
+        if not trimmed:
+            continue
+        try:
+            intervals.add(normalize_chart_interval(trimmed))
+        except ValueError:
+            continue
+    return intervals
 
 
 def background_request_id(symbol: str, interval: str, ranges: list[dict[str, Any]]) -> str:

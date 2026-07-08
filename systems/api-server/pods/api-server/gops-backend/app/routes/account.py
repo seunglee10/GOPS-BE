@@ -9,6 +9,7 @@ from app.auth.dependencies import require_current_user
 from app.auth.models import AuthenticatedUser
 from app.core.sectors import sector_payload_fields
 from app.services.alpaca_corporate_actions import enrich_holdings_with_alpaca_dividends
+from app.services.portfolio_market_enrichment import enrich_holdings_with_market_stats
 from kis_trader.kis.config import KisConfigError
 from kis_trader.kis.fake import KisConnectionReset, KisExplicitReject, KisHttpError, KisTimeout, KisTokenExpired
 
@@ -41,6 +42,7 @@ def account_holdings(
     payload = _enrich_portfolio_holdings_sectors(request.app, payload)
     if market == "overseas":
         payload = enrich_holdings_with_alpaca_dividends(payload)
+        payload = enrich_holdings_with_market_stats(request.app, payload)
     _remember_portfolio_holdings_snapshot(request.app, user.sub, payload)
     return jsonable_encoder(payload)
 
