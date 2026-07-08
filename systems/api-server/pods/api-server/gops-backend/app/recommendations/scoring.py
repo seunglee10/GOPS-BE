@@ -350,46 +350,47 @@ def fallback_score_breakdown(
     liquidity_score = 0.0
     context = 0.0
     catalyst = 0.0
+    variant = symbol_variant(candidate.symbol)
 
     if change is not None:
         if change > 0:
             momentum = min(28.0, change / 4.0 * 28.0)
-            reasons.append(reason("market_momentum", f"오늘 등락률이 {change:+.2f}%로 시장 내 모멘텀이 있습니다.", momentum))
+            reasons.append(reason("market_momentum", positive_momentum_reason(candidate, change, variant), momentum))
         elif change < 0:
             momentum = min(12.0, abs(change) / 4.0 * 12.0)
-            reasons.append(reason("market_mover", f"오늘 등락률이 {change:.2f}%로 변동성이 커 관찰 우선순위에 올렸습니다.", momentum))
+            reasons.append(reason("market_mover", negative_momentum_reason(candidate, change, variant), momentum))
         else:
-            reasons.append(reason("market_stability", "오늘 가격 변동이 제한적이라 진입 가격 관리가 쉽습니다.", 4.0))
             momentum = 4.0
+            reasons.append(reason("market_stability", stable_momentum_reason(candidate, variant), momentum))
 
     if liquidity >= 250_000_000:
         liquidity_score = 22.0
-        reasons.append(reason("liquidity", "세션 거래대금이 상위권이라 체결 부담이 낮습니다.", liquidity_score))
+        reasons.append(reason("liquidity", high_liquidity_reason(candidate, liquidity, variant), liquidity_score))
     elif liquidity >= 50_000_000:
         liquidity_score = 16.0
-        reasons.append(reason("liquidity", "세션 거래대금이 충분해 매수 후보로 유지했습니다.", liquidity_score))
+        reasons.append(reason("liquidity", medium_liquidity_reason(candidate, liquidity, variant), liquidity_score))
     elif liquidity >= 10_000_000:
         liquidity_score = 10.0
-        reasons.append(reason("liquidity", "기본 유동성 기준을 충족해 후보로 유지했습니다.", liquidity_score))
+        reasons.append(reason("liquidity", baseline_liquidity_reason(candidate, liquidity, variant), liquidity_score))
     elif liquidity > 0:
         liquidity_score = 5.0
-        reasons.append(reason("liquidity_watch", "거래대금이 관측돼 보조 후보로 유지했습니다.", liquidity_score))
+        reasons.append(reason("liquidity_watch", thin_liquidity_reason(candidate, liquidity, variant), liquidity_score))
 
     if candidate.source == "related_sector":
         context = 8.0
-        reasons.append(reason("sector_context", f"{sector_label_ko(candidate.sector)} 섹터 노출을 고려한 관련 후보입니다.", context))
+        reasons.append(reason("sector_context", sector_context_reason(candidate, variant), context))
     else:
         context = 6.0
-        reasons.append(reason("market_rank", "S&P 500 heatmap 상위 유동성/변동성 후보입니다.", context))
+        reasons.append(reason("market_rank", market_rank_reason(candidate, variant), context))
 
     news_items = recent_news_items(payload.news_by_symbol.get(candidate.symbol) or [], now=payload.now)
     if news_items:
         catalyst = 8.0 if session_mode == "regular" else 10.0
-        reasons.append(reason("catalyst", "최근 7일 뉴스 또는 이벤트 근거가 있습니다.", catalyst))
+        reasons.append(reason("catalyst", catalyst_reason(candidate, variant), catalyst))
 
     if not reasons:
         context = 6.0
-        reasons.append(reason("market_snapshot", "시장 스냅샷 기준으로 보조 추천 후보에 포함했습니다.", context))
+        reasons.append(reason("market_snapshot", market_snapshot_reason(candidate, variant), context))
 
     return {
         "momentum": momentum,
@@ -409,6 +410,143 @@ def fallback_confidence(candidate: Candidate, reasons: list[dict[str, Any]]) -> 
         confidence += 0.05
     confidence += min(0.12, len(reasons) * 0.03)
     return round(min(0.75, confidence), 4)
+
+
+def symbol_variant(symbol: str, modulo: int = 4) -> int:
+    value = 2_166_136_261
+    for char in normalize_symbol(symbol):
+        value ^= ord(char)
+        value = (value * 16_777_619) & 0xFFFFFFFF
+    return value % max(1, modulo)
+
+
+def positive_momentum_reason(candidate: Candidate, change: float, variant: int) -> str:
+    templates = [
+        f"오늘 {change:+.2f}% 상승하며 매수세가 먼저 붙은 종목입니다.",
+        f"장중 흐름이 {change:+.2f}%로 우상향해 단기 추세 후보로 올렸습니다.",
+        f"{candidate.symbol}는 당일 수익률 {change:+.2f}%로 시장 대비 탄력이 보입니다.",
+        f"가격이 {change:+.2f}% 올라 momentum 관점에서 상위 후보에 들어왔습니다.",
+        f"{candidate.symbol}는 당일 고점권 흐름이 이어져 추세 확인 대상으로 잡았습니다.",
+        f"오늘 수익률 {change:+.2f}%가 확인돼 단기 강도 점수를 받았습니다.",
+    ]
+    return templates[variant % len(templates)]
+
+
+def negative_momentum_reason(candidate: Candidate, change: float, variant: int) -> str:
+    templates = [
+        f"오늘 {change:.2f}% 조정 중이라 반등 감시 후보로 분류했습니다.",
+        f"{candidate.symbol}는 낙폭이 {change:.2f}%로 커 변동성 기회가 있습니다.",
+        f"당일 약세가 뚜렷해 가격 회복 여부를 볼 만한 종목입니다.",
+        f"{change:.2f}% 움직임으로 관심이 몰린 하락 변동성 후보입니다.",
+    ]
+    return templates[variant % len(templates)]
+
+
+def stable_momentum_reason(candidate: Candidate, variant: int) -> str:
+    templates = [
+        "가격 변동이 제한적이라 진입 가격 관리가 비교적 쉽습니다.",
+        f"{candidate.symbol}는 당일 방향성이 과열되지 않아 관찰 후보로 유지했습니다.",
+        "급등락보다 안정적인 흐름을 보여 보수적인 진입 후보입니다.",
+        "당일 변동폭이 작아 다음 거래량 변화를 확인하기 좋습니다.",
+    ]
+    return templates[variant % len(templates)]
+
+
+def high_liquidity_reason(candidate: Candidate, liquidity: float, variant: int) -> str:
+    volume = format_dollar_volume(liquidity)
+    templates = [
+        f"거래대금이 {volume} 수준으로 커 체결 부담이 낮습니다.",
+        f"{candidate.symbol}는 유동성이 두꺼워 빠른 진입/청산이 유리합니다.",
+        f"세션 거래가 {volume}까지 쌓여 기관성 수급 확인에 적합합니다.",
+        "대형 거래대금이 받쳐줘 추천 리스트 상단에 둘 근거가 있습니다.",
+        f"{volume} 규모의 거래가 붙어 실제 매매 가능한 후보로 봤습니다.",
+        f"{candidate.symbol}는 거래 회전이 충분해 발표용 추천 리스트에 적합합니다.",
+    ]
+    return templates[variant % len(templates)]
+
+
+def medium_liquidity_reason(candidate: Candidate, liquidity: float, variant: int) -> str:
+    volume = format_dollar_volume(liquidity)
+    templates = [
+        f"거래대금 {volume}로 기본 체결 여건을 충족합니다.",
+        f"{candidate.symbol}는 후보군 내 유동성이 충분한 편입니다.",
+        "매수 후보로 보기 위한 최소 거래 활력이 확인됩니다.",
+        f"세션 거래가 {volume} 수준이라 가격 왜곡 부담이 크지 않습니다.",
+    ]
+    return templates[variant % len(templates)]
+
+
+def baseline_liquidity_reason(candidate: Candidate, liquidity: float, variant: int) -> str:
+    volume = format_dollar_volume(liquidity)
+    templates = [
+        f"거래대금 {volume}가 관측돼 보조 후보로 포함했습니다.",
+        "유동성은 중간 수준이지만 시장 스냅샷 기준을 통과했습니다.",
+        f"{candidate.symbol}는 기본 거래량이 있어 관찰 리스트에 남겼습니다.",
+        "체결 규모를 작게 잡으면 추적 가능한 유동성입니다.",
+    ]
+    return templates[variant % len(templates)]
+
+
+def thin_liquidity_reason(candidate: Candidate, liquidity: float, variant: int) -> str:
+    volume = format_dollar_volume(liquidity)
+    templates = [
+        f"거래대금은 {volume}로 얇지만 움직임이 관측돼 감시 후보입니다.",
+        "유동성은 제한적이라 소액 접근 전제로만 후보에 포함했습니다.",
+        f"{candidate.symbol}는 체결 부담을 감안해야 하는 보조 후보입니다.",
+        "거래가 얇아 추격보다 대기 주문 관점에서 볼 종목입니다.",
+    ]
+    return templates[variant % len(templates)]
+
+
+def sector_context_reason(candidate: Candidate, variant: int) -> str:
+    sector = sector_label_ko(candidate.sector)
+    templates = [
+        f"{sector} 섹터 노출을 보강할 수 있는 관련 후보입니다.",
+        f"현재 관심 섹터와 맞물려 {sector} 안에서 선별했습니다.",
+        f"{sector} 흐름을 같이 볼 때 포트폴리오 확장 후보입니다.",
+        f"섹터 분산 관점에서 {sector} 쪽 대안으로 올렸습니다.",
+    ]
+    return templates[variant % len(templates)]
+
+
+def market_rank_reason(candidate: Candidate, variant: int) -> str:
+    templates = [
+        "S&P 500 heatmap에서 유동성/변동성 상위권으로 잡힌 후보입니다.",
+        "시장 전체 스냅샷에서 거래와 가격 움직임이 함께 포착됐습니다.",
+        f"{candidate.symbol}는 당일 market rank 기준으로 우선순위가 높습니다.",
+        "섹터와 무관하게 시장 강도 기준으로 리스트에 들어왔습니다.",
+    ]
+    return templates[variant % len(templates)]
+
+
+def catalyst_reason(candidate: Candidate, variant: int) -> str:
+    templates = [
+        "최근 7일 뉴스가 있어 가격 움직임을 설명할 재료가 있습니다.",
+        f"{candidate.symbol} 관련 최신 이벤트가 수급 판단 근거를 보탭니다.",
+        "뉴스 모멘텀이 확인돼 단순 가격 움직임보다 설명력이 있습니다.",
+        "최근 기사 흐름이 관찰돼 catalyst 점수를 더했습니다.",
+    ]
+    return templates[variant % len(templates)]
+
+
+def market_snapshot_reason(candidate: Candidate, variant: int) -> str:
+    templates = [
+        "시장 스냅샷 기준으로 15개 추천을 채우기 위해 포함했습니다.",
+        f"{candidate.symbol}는 보조 점수 기준으로 컷오프 안에 들어왔습니다.",
+        "세션 데이터가 부족해도 heatmap 기준 우선순위가 남아 있습니다.",
+        "정규 scoring 후보가 부족해 시장 순위 기반으로 보강했습니다.",
+    ]
+    return templates[variant % len(templates)]
+
+
+def format_dollar_volume(value: float) -> str:
+    if value >= 1_000_000_000:
+        return f"${value / 1_000_000_000:.1f}B"
+    if value >= 1_000_000:
+        return f"${value / 1_000_000:.0f}M"
+    if value >= 1_000:
+        return f"${value / 1_000:.0f}K"
+    return f"${value:.0f}"
 
 
 def calculate_metrics(candles: list[dict[str, Any]], spy_return: float, candidate: Candidate) -> dict[str, Any]:
