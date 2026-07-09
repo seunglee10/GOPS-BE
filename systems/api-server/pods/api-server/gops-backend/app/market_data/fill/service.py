@@ -111,7 +111,9 @@ class OnDemandFillService:
         )
         trace = self._initial_trace(symbol, interval, source_interval, limit, requested_start, requested_end)
         self._record_initial_store_hits(trace, payload)
-        trace["renderable"] = self._is_renderable(payload, interval, source_interval)
+        renderability = self._renderability(payload, interval, source_interval)
+        trace["renderable"] = bool(renderability.get("renderable"))
+        trace["gapRanges"] = renderability.get("gapRanges") or []
 
         if not self._needs_fill(payload, interval, source_interval, limit):
             trace["status"] = "not_needed"
@@ -119,7 +121,7 @@ class OnDemandFillService:
             payload["fill"] = trace
             return payload
 
-        fill_ranges = self._fill_ranges(payload, requested_start, requested_end)
+        fill_ranges = self._fill_ranges(payload, requested_start, requested_end, interval, source_interval)
         trace["missingRanges"] = fill_ranges
         trace["feedRoutes"] = historical_fill_routes(
             symbol,
@@ -358,17 +360,32 @@ class OnDemandFillService:
         return returned >= limit and len(candles) >= limit
 
     def _is_renderable(self, payload: dict[str, Any], interval: str, source_interval: str) -> bool:
+        return bool(self._renderability(payload, interval, source_interval).get("renderable"))
+
+    def _renderability(self, payload: dict[str, Any], interval: str, source_interval: str) -> dict[str, Any]:
         returned = int(payload.get("returnedCount") or len(payload.get("candles") or []))
         stored = int(payload.get("storedCandleCount") or returned)
-        return bool(renderability_payload(interval, source_interval, payload.get("candles") or [], returned, stored).get("renderable"))
+        return renderability_payload(interval, source_interval, payload.get("candles") or [], returned, stored)
 
-    def _fill_ranges(self, payload: dict[str, Any], requested_start: str, requested_end: str) -> list[dict[str, Any]]:
-        ranges = payload.get("missingRanges") or []
-        valid = [
+    def _fill_ranges(
+        self,
+        payload: dict[str, Any],
+        requested_start: str,
+        requested_end: str,
+        interval: str,
+        source_interval: str,
+    ) -> list[dict[str, Any]]:
+        ranges = list(payload.get("missingRanges") or [])
+        ranges.extend(payload.get("gapRanges") or [])
+        coverage = payload.get("coverage") or {}
+        ranges.extend(coverage.get("missingRanges") or [])
+        ranges.extend(coverage.get("gapRanges") or [])
+        ranges.extend(self._renderability(payload, interval, source_interval).get("gapRanges") or [])
+        valid = unique_ranges([
             {"start": item["start"], "end": item["end"], "missingCount": item.get("missingCount")}
             for item in ranges
-            if item.get("start") and item.get("end")
-        ]
+            if item.get("start") and item.get("end") and item.get("start") < item.get("end")
+        ])
         if valid:
             return valid
         return [{"start": requested_start, "end": requested_end, "missingCount": None}]
@@ -653,6 +670,18 @@ def unique_ordered(values: list[str]) -> list[str]:
             continue
         seen.add(value)
         result.append(value)
+    return result
+
+
+def unique_ranges(ranges: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[tuple[str, str]] = set()
+    result: list[dict[str, Any]] = []
+    for item in sorted(ranges, key=lambda value: (value["start"], value["end"])):
+        key = (item["start"], item["end"])
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
     return result
 
 

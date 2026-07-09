@@ -2224,6 +2224,73 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(result["sourceInterval"], "1h")
         self.assertEqual(len(result["candles"]), 8)
 
+    def test_on_demand_fill_repairs_intraday_sparse_gap_range(self):
+        existing = [
+            {
+                "timestamp": f"2026-07-06T{hour:02d}:00:00.000Z",
+                "open": 100 + index,
+                "high": 101 + index,
+                "low": 99 + index,
+                "close": 100.5 + index,
+                "volume": 1000 + index,
+                "isClosed": True,
+                "marketSession": "regular",
+            }
+            for index, hour in enumerate([13, 14, 18, 19, 20])
+        ]
+        payload = {
+            "symbol": "MSFT",
+            "interval": "1h",
+            "candles": existing,
+            "returnedCount": len(existing),
+            "storedCandleCount": len(existing),
+            "sourceInterval": "1h",
+            "missingRanges": [],
+            "_sourceTrace": {
+                "redis": {"checked": True, "hit": False, "rowCount": 0},
+                "clickhouse": {"checked": True, "hit": True, "rowCount": len(existing)},
+            },
+        }
+        raw_rows = [
+            {
+                "t": f"2026-07-06T{hour:02d}:00:00Z",
+                "o": 100 + index,
+                "h": 101 + index,
+                "l": 99 + index,
+                "c": 100.5 + index,
+                "v": 1000 + index,
+                "n": 10 + index,
+                "vw": 100.25 + index,
+            }
+            for index, hour in enumerate([15, 16, 17])
+        ]
+        with mock.patch.dict(os.environ, {
+            "ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED": "",
+            "ON_DEMAND_FILL_FOREGROUND_AUTO_INTERVALS": "1h",
+            "ON_DEMAND_FILL_FOREGROUND_AUTO_MAX_BARS": "500",
+        }, clear=False):
+            service = OnDemandFillService(timeout_seconds=8, background_enabled=False)
+
+        with mock.patch("app.market_data.fill.service.fetch_alpaca_bars", return_value=raw_rows) as fetch:
+            result = service.fill_if_needed(
+                symbol="MSFT",
+                interval="1h",
+                limit=8,
+                before=None,
+                from_time="2026-07-06T13:00:00.000Z",
+                to_time="2026-07-06T21:00:00.000Z",
+                payload=payload,
+            )
+
+        fetch.assert_called_once()
+        self.assertEqual(fetch.call_args.args[1], "2026-07-06T15:00:00.000Z")
+        self.assertEqual(fetch.call_args.args[2], "2026-07-06T18:00:00.000Z")
+        self.assertEqual(fetch.call_args.args[4], "1Hour")
+        self.assertEqual(result["fill"]["foregroundFill"]["state"], "filled")
+        self.assertEqual(result["fill"]["status"], "filled")
+        self.assertEqual(len(result["candles"]), 8)
+        self.assertEqual(result["candles"][2]["timestamp"], "2026-07-06T15:00:00.000Z")
+
     def test_on_demand_fill_auto_foreground_uses_auto_cap_over_global_cap(self):
         payload = {
             "symbol": "NVDA",
