@@ -149,9 +149,8 @@ Market storage image also runs ClickHouse projection loaders. The baseline
 footprint tick tables can catch up independently from candle/news persistence.
 The loaders batch Kafka payloads before ClickHouse HTTP insert
 (`CLICKHOUSE_INSERT_BATCH_SIZE`, `CLICKHOUSE_FLUSH_INTERVAL_SECONDS`,
-`KAFKA_CLICKHOUSE_MAX_POLL_RECORDS`). In the 16 vCPU profile, prefer bounded
-batching over adding replicas because a hot Kafka partition is still owned by
-one consumer at a time.
+`KAFKA_CLICKHOUSE_MAX_POLL_RECORDS`). Prefer bounded batching over adding
+replicas because a hot Kafka partition is still owned by one consumer at a time.
 
 ## Kubernetes Resources
 
@@ -174,6 +173,12 @@ infra/k8s/base/app/deployment-chart-derived-data-worker.yaml
 infra/k8s/base/app/deployment-recommendation-worker.yaml
 ```
 
+The AWS in-cluster overlay keeps `recommendation-worker` and
+`alert-evaluator` at 0 replicas until the deployed `gops-api-server` image
+includes `app.recommendations.worker` and `app.alerts.evaluator`. Remove those
+overlay patches only after rebuilding and rolling out an API image that contains
+the recommendations and alerts packages.
+
 Optional jobs:
 
 ```text
@@ -186,41 +191,58 @@ infra/k8s/base/job-fanout-policy-benchmark.yaml
 infra/k8s/base/job-answer-grounding-eval.yaml
 ```
 
-In-cluster clean rebuild sizing:
+In-cluster dedicated rebuild sizing:
 
 ```text
-app-agent:     2 x m5a/m6a large class, 2 vCPU / 8 GiB, system add-ons + app + agent + workers
-platform-core: 1 x m5a/m6a 2xlarge class, 8 vCPU / 32 GiB, ClickHouse + Kafka + GraphDB + Redis + Postgres
-batch:         0->1 x 2-4 vCPU on-demand node, memory varies by available family, ad hoc Jobs
+app-agent:  2 x m5a/m6a large class, 2 vCPU / 8 GiB, app + agent + workers
+cache-db:   1 x m5a/m6a xlarge class, 4 vCPU / 16 GiB, Redis + Postgres
+streaming:  1 x m5a/m6a xlarge class, 4 vCPU / 16 GiB, Kafka
+graphdb:    1 x m5a/m6a xlarge class, 4 vCPU / 16 GiB, GraphDB
+clickhouse: 1 x m5a/m6a 2xlarge class, 8 vCPU / 32 GiB, ClickHouse
+batch:      0->1 x m5a/m6a xlarge class, 4 vCPU / 16 GiB, ad hoc Jobs
 ```
 
-This 16 vCPU profile trades strict stateful isolation for quota fit. Drain old
-`general-purpose` nodes after the new NodePools are ready so steady state uses
-12 vCPU (`app-agent` 4 + `platform-core` 8). Batch Jobs may add one 2-4 vCPU
-node, reaching 14-16 vCPU. Because the batch pool is intentionally relaxed to fit
-quota and current capacity, keep it for short bootstrap and smoke Jobs only. Do
-not run heavy backfills while the app is under load in this profile.
+This profile uses 24 vCPU in steady state and 28 vCPU when one batch node is
+active, excluding cluster add-ons. The live cluster may also keep one small
+`general-purpose` node for CoreDNS, AWS Load Balancer Controller, EBS CSI,
+metrics-server, and external-secrets unless those controllers are moved to a
+dedicated system NodePool. Apply it only after AWS EC2 on-demand vCPU quota is
+approved. Drain old workload nodes or legacy `platform-core` nodes after the
+dedicated NodePools are ready and stateful pods have been restored and
+validated.
 
-`app-agent` and `platform-core` use static `spec.replicas` to hold the intended
-node count. `batch` remains dynamic so it scales from 0 only when a Job is
-pending. If older dedicated NodePools were applied during a previous attempt,
-delete stale `clickhouse`, `cache-db`, `streaming`, and `graphdb` NodePools after
-their pods are drained.
+`app-agent`, `cache-db`, `streaming`, `graphdb`, and `clickhouse` use static
+`spec.replicas` to hold the intended node count. `batch` remains dynamic so it
+scales from 0 only when a Job is pending. If the old `platform-core` NodePool was
+applied during the 16 vCPU attempt, delete it only after all pods are drained
+from that node.
 
-Stateful platform rebuilds intentionally do not reuse partially populated PVCs.
-After service shutdown, recreate ClickHouse `50Gi`, Kafka `30Gi`, GraphDB
-`10Gi`, Redis `10Gi`, and Postgres `10Gi` PVCs. Kafka/Redis/Postgres/ClickHouse
-start fresh; GraphDB is restored from the current `/opt/graphdb/home` tar
-archive to preserve the `nasdaq-fibo` repository/runtime bootstrap structure.
-This profile is intended to fit the current 16 vCPU EC2 on-demand quota after
-old nodes are drained. Applying it before old capacity is gone may temporarily
-hit the quota and leave new nodes Pending.
+Stateful platform rebuilds must preserve DB data. Do not use a blank fresh PVC
+for Postgres, ClickHouse, or GraphDB. A fresh PVC in a rebuild means a new volume
+restored from a verified backup or snapshot. Redis and Kafka are preserved by
+default unless the owning pipeline explicitly approves a reset. See
+`docs/EKS_DATA_PRESERVING_REBUILD_PLAN.md` for the dedicated NodePool rebuild
+runbook, restore validation, and rollback guardrails.
 
 Approval-time order: scale app/agent/market/order Deployments to 0, suspend
-CronJobs, delete active Jobs, archive GraphDB, scale down and delete platform
-StatefulSets and PVCs, apply NodePools and platform manifests, restore GraphDB,
-run Kafka topic init and order migrations, then restore app workloads and resume
-CronJobs.
+CronJobs, delete active Jobs after recording them, create and verify stateful
+backups, scale down platform StatefulSets, apply NodePools and platform
+manifests, restore data into new PVCs, validate Postgres/ClickHouse/GraphDB and
+any preserved Redis/Kafka state, then restore app workloads and resume CronJobs.
+
+Prepared backup helpers:
+
+```text
+scripts/aws/prepare-rebuild-shutdown.sh
+scripts/aws/collect-platform-backup-inventory.sh
+scripts/aws/backup-postgres-logical.sh
+scripts/aws/restore-postgres-logical.sh
+scripts/aws/backup-redis-rdb.sh
+scripts/aws/restore-redis-rdb.sh
+scripts/aws/backup-graphdb-pvc.sh
+scripts/aws/create-pvc-ebs-snapshots.sh
+scripts/aws/restore-graphdb-pvc.sh
+```
 
 The dev deploy workflow does not run cache rebuilds or SQL migrations
 automatically. For one-off maintenance during a manual build, set
@@ -259,9 +281,9 @@ infra/k8s/overlays/aws-incluster-app-rebuild/kustomization.yaml
 GitHub Actions uses `aws-incluster-app-ci` for manual dev/test deploys. That CI
 overlay deliberately deletes the GraphDB StatefulSet from the rendered app
 bundle so immutable PVC template changes cannot break ordinary app deploys.
-It does not apply the `app-agent` NodePool placement or perform the clean
-rebuild. During the 16 vCPU rebuild, apply platform first, then apply
-`aws-incluster-app-rebuild` after the `app-agent` NodePool exists.
+It does not apply platform NodePools or perform the clean rebuild. During the
+dedicated rebuild, apply platform first, restore and validate stateful services,
+then apply app workloads after the `app-agent` NodePool exists.
 
 ## Kafka
 

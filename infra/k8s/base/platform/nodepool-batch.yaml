@@ -20,21 +20,19 @@ spec:
           operator: In
           values:
             - on-demand
-        - key: eks.amazonaws.com/instance-category
+        - key: eks.amazonaws.com/instance-family
           operator: In
           values:
-            - c
-            - m
-            - r
+            - m5a
+            - m6a
         - key: eks.amazonaws.com/instance-cpu
           operator: In
           values:
-            - "2"
             - "4"
-        - key: eks.amazonaws.com/instance-generation
-          operator: Gt
+        - key: eks.amazonaws.com/instance-memory
+          operator: In
           values:
-            - "4"
+            - "16384"
         - key: kubernetes.io/arch
           operator: In
           values:

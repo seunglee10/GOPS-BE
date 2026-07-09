@@ -21,11 +21,11 @@ patches:
       $patch: delete
   - target:
       group: external-secrets.io
-      version: v1beta1
+      version: v1
       kind: SecretStore
       name: aws-secrets-manager
     patch: |-
-      apiVersion: external-secrets.io/v1beta1
+      apiVersion: external-secrets.io/v1
       kind: SecretStore
       metadata:
         name: aws-secrets-manager
@@ -33,11 +33,11 @@ patches:
       $patch: delete
   - target:
       group: external-secrets.io
-      version: v1beta1
+      version: v1
       kind: ExternalSecret
       name: alfaka-openai-secret
     patch: |-
-      apiVersion: external-secrets.io/v1beta1
+      apiVersion: external-secrets.io/v1
       kind: ExternalSecret
       metadata:
         name: alfaka-openai-secret

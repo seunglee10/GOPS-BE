@@ -26,11 +26,11 @@ spec:
         app: graphdb
     spec:
       nodeSelector:
-        karpenter.sh/nodepool: platform-core
+        karpenter.sh/nodepool: graphdb
       tolerations:
         - key: gops.io/dedicated
           operator: Equal
-          value: platform-core
+          value: graphdb
           effect: NoSchedule
       containers:
         - name: graphdb

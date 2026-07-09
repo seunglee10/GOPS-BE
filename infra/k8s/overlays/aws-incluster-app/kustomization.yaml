@@ -65,7 +65,7 @@ patches:
         value:
           type: RollingUpdate
           rollingUpdate:
-            maxUnavailable: 50%
+            maxUnavailable: 0
             maxSurge: 1
       - op: add
         path: /spec/template/metadata/annotations
@@ -83,6 +83,13 @@ patches:
         value:
           karpenter.sh/nodepool: app-agent
           kubernetes.io/arch: amd64
+      - op: add
+        path: /spec/template/spec/tolerations
+        value:
+          - key: gops.io/dedicated
+            operator: Equal
+            value: app-agent
+            effect: NoSchedule
       - op: add
         path: /spec/template/spec/topologySpreadConstraints
         value:
@@ -195,6 +202,20 @@ patches:
           limits:
             cpu: "1"
             memory: 512Mi
+  - target:
+      kind: Deployment
+      name: recommendation-worker
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 0
+  - target:
+      kind: Deployment
+      name: alert-evaluator
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 0
 images:
   - name: YOUR_ECR_REPOSITORY/gops-market-ingestor
     newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-ingestor

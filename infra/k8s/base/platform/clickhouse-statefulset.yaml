@@ -15,11 +15,11 @@ spec:
         app: clickhouse
     spec:
       nodeSelector:
-        karpenter.sh/nodepool: platform-core
+        karpenter.sh/nodepool: clickhouse
       tolerations:
         - key: gops.io/dedicated
           operator: Equal
-          value: platform-core
+          value: clickhouse
           effect: NoSchedule
       containers:
         - name: clickhouse

@@ -267,7 +267,7 @@ AWS/EKS splits ClickHouse projection consumers by topic pressure. The baseline
 can catch up without blocking candle/news persistence.
 The ClickHouse loader batches Kafka payloads by table before HTTP insert and
 commits offsets after the batch side effects succeed. Keep batch sizes bounded
-in the 16 vCPU profile so ClickHouse can catch up without starving API pods.
+so ClickHouse can catch up without starving API pods.
 
 ## Redis
 
@@ -740,14 +740,19 @@ use only formatted facts and rule-based financial signals; metric calculation
 and missing-value handling remain deterministic. Redis final-answer caching is
 enabled by default when `REDIS_URL` is configured.
 
-Local GraphDB restore artifact:
+Local restore and backup artifacts:
 
 ```text
+.local-artifacts/platform-backup/
+.local-artifacts/postgres/
+.local-artifacts/redis/
+.local-artifacts/ebs-snapshots/
 .local-artifacts/graphdb/graphdb-volume.tgz
 ```
 
-`graphdb-volume.tgz` is a local restore artifact and must not be committed. To
-restore it into the EKS PVC, place the file at the path above and run:
+Files under `.local-artifacts/` may contain DB data, Kafka offsets, Redis keys,
+or license material and must not be committed. To restore the GraphDB archive
+into the EKS PVC, place the file at the path above and run:
 
 ```sh
 scripts/aws/restore-graphdb-pvc.sh --replace-pending-pvc

@@ -24,11 +24,11 @@ spec:
         app: kafka
     spec:
       nodeSelector:
-        karpenter.sh/nodepool: platform-core
+        karpenter.sh/nodepool: streaming
       tolerations:
         - key: gops.io/dedicated
           operator: Equal
-          value: platform-core
+          value: streaming
           effect: NoSchedule
       securityContext:
         fsGroup: 1000

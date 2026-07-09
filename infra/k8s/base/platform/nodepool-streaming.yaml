@@ -1,9 +1,9 @@
 apiVersion: karpenter.sh/v1
 kind: NodePool
 metadata:
-  name: app-agent
+  name: streaming
 spec:
-  replicas: 2
+  replicas: 1
   disruption:
     budgets:
       - nodes: 10%
@@ -29,11 +29,11 @@ spec:
         - key: eks.amazonaws.com/instance-cpu
           operator: In
           values:
-            - "2"
+            - "4"
         - key: eks.amazonaws.com/instance-memory
           operator: In
           values:
-            - "8192"
+            - "16384"
         - key: kubernetes.io/arch
           operator: In
           values:
@@ -44,6 +44,6 @@ spec:
             - linux
       taints:
         - key: gops.io/dedicated
-          value: app-agent
+          value: streaming
           effect: NoSchedule
       terminationGracePeriod: 24h0m0s
