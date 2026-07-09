@@ -65,6 +65,18 @@ CONTENT_DISPLAY_ANALYSIS_TERMS = (
     "explain",
     "search",
 )
+CHART_ADD_SIGNAL_TERMS = (
+    "도",
+    "추가",
+    "추가로",
+    "하나더",
+    "같이",
+    "함께",
+    "두개",
+    "2개",
+    "나란히",
+    "비교",
+)
 UI_SURFACE_TERMS = (
     "패널",
     "페널",
@@ -419,6 +431,7 @@ def build_single_panel_task(
         targetPanelId=target.source.removeprefix("panel:") if target.source.startswith("panel:") else None,
         sizeIntent=size.value if size else None,
         positionIntent=position.value if position else None,
+        chartAction="add" if target.value == "chart" and has_chart_add_signal(clause) else None,
         confidence=ui_task_confidence([target, strong_action, weak_action, size, position, *surface_matches, *multi_matches]),
         source="ui-parser",
         reason=f"UI parser matched panel '{target.alias}' with layout operation in clause '{clause.text}'.",
@@ -508,6 +521,10 @@ def has_layout_operation(
     if any(match.strength == "strong" for match in action_matches):
         return True
     return bool(surface_matches and action_matches)
+
+
+def has_chart_add_signal(clause: Clause) -> bool:
+    return any(term in clause.compact for term in CHART_ADD_SIGNAL_TERMS)
 
 
 def is_content_only_clause(
