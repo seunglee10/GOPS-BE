@@ -236,7 +236,10 @@ publishes `ORDER_FLOW_BINS_UPDATE`; the EOD job
 `systems/market-data/jobs/order-flow-daily-rollup/main.py` materializes daily
 rows into `market_data.order_flow_profile_daily`. Local compose exposes the
 `order-flow-daily-rollup` jobs-profile service, and AWS uses
-`infra/k8s/overlays/aws/cronjob-order-flow-daily-rollup.yaml`.
+`infra/k8s/overlays/aws/cronjob-order-flow-daily-rollup.yaml`. The shared dev
+`aws-incluster-app-ci` deploy path also includes that scheduled CronJob via the
+in-cluster app overlay. Keep both overlay CronJob manifests in sync; ad hoc
+backfills stay manual.
 
 Derived result retention is intentionally shorter than candle history:
 

@@ -10,12 +10,15 @@ from .classification import (
     normalize_quotes,
     normalize_trade,
     normalize_trades,
+    quote_is_fresh_for_trade,
 )
 from .config import (
     live_ttl_seconds_from_env,
     pinned_symbols_from_env,
     price_bin_size_from_env,
     publish_throttle_ms_from_env,
+    quote_future_tolerance_ms_from_env,
+    quote_max_age_ms_from_env,
     quote_refresh_ms_from_env,
 )
 from .quote_cache import PinnedQuoteCache
@@ -37,5 +40,8 @@ __all__ = [
     "pinned_symbols_from_env",
     "price_bin_size_from_env",
     "publish_throttle_ms_from_env",
+    "quote_future_tolerance_ms_from_env",
+    "quote_is_fresh_for_trade",
+    "quote_max_age_ms_from_env",
     "quote_refresh_ms_from_env",
 ]

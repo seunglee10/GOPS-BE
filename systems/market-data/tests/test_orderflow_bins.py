@@ -7,6 +7,7 @@ from alfaka.common.redis_keys import RedisKeyBuilder
 from alfaka.orderflow import OrderFlowBinBuilder, PinnedQuoteCache
 from alfaka.streaming.processor import (
     maybe_publish_order_flow_event,
+    process_order_flow_live_path,
     write_order_flow_bin_to_redis,
 )
 
@@ -29,7 +30,7 @@ class OrderFlowBinBuilderTest(unittest.TestCase):
         self.assertEqual(third["unknownTradeCount"], 1)
         self.assertEqual(third["volume"], 16)
         self.assertEqual(third["tradeCount"], 3)
-        self.assertEqual(third["classificationVersion"], "orderflow-estimated-v1")
+        self.assertEqual(third["classificationVersion"], "orderflow-estimated-v2")
         self.assertEqual(third["sideClassification"], "estimated")
 
     def test_skips_unpinned_non_regular_and_invalid_trades(self):
@@ -78,6 +79,34 @@ class OrderFlowBinBuilderTest(unittest.TestCase):
         self.assertEqual(first["bidPrice"], 158.33)
         self.assertEqual(cached["askPrice"], 158.35)
         self.assertEqual(refreshed["bidPrice"], 158.34)
+
+    def test_live_path_marks_stale_quote_unknown_for_any_pinned_symbol(self):
+        redis = _MemoryRedis()
+        keys = RedisKeyBuilder(prefix="")
+        redis.set(keys.live_quote("NVDA"), json.dumps({
+            "timestamp": "2026-07-09T13:30:00.000Z",
+            "bidPrice": 158.33,
+            "askPrice": 158.35,
+        }))
+        state = types.SimpleNamespace(
+            order_flow_builder=OrderFlowBinBuilder(price_bin_size=0.01, pinned_symbols=frozenset({"NVDA", "AAPL"})),
+            order_flow_quote_cache=PinnedQuoteCache(redis, keys, refresh_ms=150),
+            order_flow_quote_max_age_ms=2000,
+            order_flow_quote_future_tolerance_ms=250,
+            order_flow_publish_state={},
+        )
+
+        of_bin = process_order_flow_live_path(
+            _trade(timestamp="2026-07-09T13:30:10.000Z", price=159.0, size=7),
+            redis,
+            keys,
+            state,
+        )
+
+        self.assertEqual(of_bin["askVolume"], 0)
+        self.assertEqual(of_bin["bidVolume"], 0)
+        self.assertEqual(of_bin["unknownVolume"], 7)
+        self.assertEqual(of_bin["unknownTradeCount"], 1)
 
     def test_redis_hash_write_field_format_ttl_and_session_rollover_delete(self):
         redis = _MemoryRedis()

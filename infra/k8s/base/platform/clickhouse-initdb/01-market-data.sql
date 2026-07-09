@@ -328,7 +328,7 @@ CREATE TABLE IF NOT EXISTS market_data.order_flow_profile_daily
     unknown_trade_count UInt64,
     trade_count         UInt64,
     volume              Float64,
-    classification_version LowCardinality(String) DEFAULT 'orderflow-estimated-v1',
+    classification_version LowCardinality(String) DEFAULT 'orderflow-estimated-v2',
     source              LowCardinality(String) DEFAULT 'clickhouse-rollup',
     feed                LowCardinality(String) DEFAULT 'sip',
     feed_profile        LowCardinality(String) DEFAULT feed,

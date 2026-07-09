@@ -25,6 +25,8 @@ from alfaka.orderflow import (
     pinned_symbols_from_env,
     price_bin_size_from_env,
     publish_throttle_ms_from_env,
+    quote_future_tolerance_ms_from_env,
+    quote_max_age_ms_from_env,
     quote_refresh_ms_from_env,
 )
 from alfaka.serving.dto import market_status_event, order_flow_event, websocket_event
@@ -241,6 +243,8 @@ class ProcessorState:
         self.active_feed_cache = ActiveFeedCache(active_feed_cache_seconds)
         self.order_flow_builder = None
         self.order_flow_quote_cache = None
+        self.order_flow_quote_max_age_ms = None
+        self.order_flow_quote_future_tolerance_ms = 0
         self.order_flow_publish_state = {}
 
 
@@ -257,6 +261,8 @@ def configure_order_flow_state(state, redis_client, redis_keys):
         redis_keys,
         refresh_ms=quote_refresh_ms_from_env(),
     )
+    state.order_flow_quote_max_age_ms = quote_max_age_ms_from_env()
+    state.order_flow_quote_future_tolerance_ms = quote_future_tolerance_ms_from_env()
     state.order_flow_publish_state = {}
     return state
 
@@ -594,7 +600,12 @@ def process_order_flow_live_path(trade, redis_client, redis_keys, state):
         return None
     quote_cache = getattr(state, "order_flow_quote_cache", None)
     quote = quote_cache.quote_for(trade["symbol"]) if quote_cache is not None else None
-    side = classify_trade_side(trade, quote)
+    side = classify_trade_side(
+        trade,
+        quote,
+        max_quote_age_ms=getattr(state, "order_flow_quote_max_age_ms", None),
+        future_tolerance_ms=getattr(state, "order_flow_quote_future_tolerance_ms", 0),
+    )
     of_bin = builder.update(trade, side)
     if of_bin is None:
         return None

@@ -160,7 +160,10 @@ rollup job이 담당한다. Live path는 pinned symbol trade/quote를 Redis
 팬아웃한다. Daily rows는
 `systems/market-data/jobs/order-flow-daily-rollup/main.py`와
 `infra/k8s/overlays/aws/cronjob-order-flow-daily-rollup.yaml`이 ClickHouse
-`market_data.order_flow_profile_daily`에 적재한다.
+`market_data.order_flow_profile_daily`에 적재한다. Shared dev deploys that use
+`aws-incluster-app-ci` inherit this scheduled CronJob through the in-cluster app
+overlay. Keep the mirrored CronJob manifests under `aws/` and
+`aws-incluster-app/` in sync; one-off backfill Jobs remain manual.
 
 Market storage image also runs ClickHouse projection loaders. The baseline
 `alfaka-clickhouse-loader` consumes closed candle, event, and news topics.
@@ -307,6 +310,8 @@ infra/k8s/overlays/aws-incluster-app-rebuild/kustomization.yaml
 GitHub Actions uses `aws-incluster-app-ci` for manual dev/test deploys. That CI
 overlay deliberately deletes the GraphDB StatefulSet from the rendered app
 bundle so immutable PVC template changes cannot break ordinary app deploys.
+It still includes scheduled app-runtime CronJobs such as the order-flow daily
+rollup; one-shot Jobs remain outside the automatic apply path.
 By default it does not apply platform NodePools or perform the clean rebuild.
 Set the workflow input `apply_platform_manifests=true` only after the
 data-preserving rebuild has been approved or completed; that path applies the

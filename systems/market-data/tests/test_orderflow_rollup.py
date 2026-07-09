@@ -40,7 +40,7 @@ class OrderFlowRollupTest(unittest.TestCase):
         self.assertEqual(sum(row["bid_volume"] for row in rows), 4)
         self.assertEqual(sum(row["unknown_volume"] for row in rows), 2)
         self.assertTrue(all(row["market_session"] == "regular" for row in rows))
-        self.assertTrue(all(row["classification_version"] == "orderflow-estimated-v1" for row in rows))
+        self.assertTrue(all(row["classification_version"] == "orderflow-estimated-v2" for row in rows))
 
     def test_hourly_window_carries_quote_into_next_window(self):
         client = FakeClickHouseClient(
