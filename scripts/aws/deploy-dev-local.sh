@@ -22,6 +22,7 @@ VITE_LOGO_DEV_ATTRIBUTION="${VITE_LOGO_DEV_ATTRIBUTION:-${LOGO_DEV_ATTRIBUTION:-
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 WORKTREE_PARENT="${LOCAL_DEPLOY_WORKTREE_PARENT:-${TMPDIR:-/tmp}}"
 WORKTREE_DIR=""
+DEPLOY_STATE_JSON_FILE=""
 TARGET_SHA=""
 SELECTED_SERVICES=""
 SELECTED_DEPLOYMENTS=""
@@ -69,6 +70,9 @@ cleanup() {
     git -C "${REPO_ROOT}" worktree remove --force "${WORKTREE_DIR}" >/dev/null 2>&1 \
       || rm -rf "${WORKTREE_DIR}"
   fi
+  if [[ -n "${DEPLOY_STATE_JSON_FILE}" ]]; then
+    rm -f "${DEPLOY_STATE_JSON_FILE}"
+  fi
 }
 
 rollback_on_error() {
@@ -114,21 +118,56 @@ write_state_configmap() {
   local mode="$1"
   local actor
   local deployed_at
+  local patch_payload
 
   actor="${DEPLOY_ACTOR:-$(git -C "${REPO_ROOT}" config user.email 2>/dev/null || whoami)}"
   deployed_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
-  kubectl create configmap "${DEPLOY_STATE_CONFIGMAP}" \
+  if ! kubectl get configmap "${DEPLOY_STATE_CONFIGMAP}" -n "${K8S_NAMESPACE}" >/dev/null 2>&1; then
+    kubectl create configmap "${DEPLOY_STATE_CONFIGMAP}" -n "${K8S_NAMESPACE}" >/dev/null
+  fi
+
+  patch_payload="$(
+    python3 - "${TARGET_SHA}" "${IMAGE_TAG}" "${deployed_at}" "${actor}" "${SELECTED_SERVICES}" "${mode}" "${REMOTE_NAME}/${REMOTE_BRANCH}" <<'PY'
+import json
+import sys
+
+target_sha, image_tag, deployed_at, actor, services_raw, mode, target_ref = sys.argv[1:]
+services = [service for service in services_raw.split() if service]
+
+data = {"targetRef": target_ref}
+if services:
+    data.update({
+        "lastSuccessfulSha": target_sha,
+        "lastSuccessfulImageTag": image_tag,
+        "lastSuccessfulAt": deployed_at,
+        "lastSuccessfulActor": actor,
+        "lastSuccessfulServices": " ".join(services),
+        "lastSuccessfulMode": mode,
+    })
+    for service in services:
+        prefix = f"service.{service}."
+        data[f"{prefix}lastSuccessfulSha"] = target_sha
+        data[f"{prefix}lastSuccessfulImageTag"] = image_tag
+        data[f"{prefix}lastSuccessfulAt"] = deployed_at
+        data[f"{prefix}lastSuccessfulActor"] = actor
+        data[f"{prefix}lastSuccessfulMode"] = mode
+else:
+    data.update({
+        "lastCheckedSha": target_sha,
+        "lastCheckedAt": deployed_at,
+        "lastCheckedActor": actor,
+        "lastCheckedMode": mode,
+    })
+
+print(json.dumps({"data": data}, separators=(",", ":")))
+PY
+  )"
+
+  kubectl patch configmap "${DEPLOY_STATE_CONFIGMAP}" \
     -n "${K8S_NAMESPACE}" \
-    --from-literal="lastSuccessfulSha=${TARGET_SHA}" \
-    --from-literal="lastSuccessfulAt=${deployed_at}" \
-    --from-literal="lastSuccessfulActor=${actor}" \
-    --from-literal="lastSuccessfulServices=${SELECTED_SERVICES}" \
-    --from-literal="lastSuccessfulMode=${mode}" \
-    --from-literal="targetRef=${REMOTE_NAME}/${REMOTE_BRANCH}" \
-    --dry-run=client \
-    -o yaml \
-    | kubectl apply -f -
+    --type merge \
+    -p "${patch_payload}" >/dev/null
 }
 
 preflight() {
@@ -178,59 +217,201 @@ configure_cluster() {
   kubectl get namespace "${K8S_NAMESPACE}" >/dev/null
 }
 
-read_last_successful_sha() {
-  kubectl get configmap "${DEPLOY_STATE_CONFIGMAP}" \
-    -n "${K8S_NAMESPACE}" \
-    -o jsonpath='{.data.lastSuccessfulSha}' 2>/dev/null || true
+read_deploy_state() {
+  DEPLOY_STATE_JSON_FILE="$(mktemp)"
+  if ! kubectl get configmap "${DEPLOY_STATE_CONFIGMAP}" -n "${K8S_NAMESPACE}" -o json > "${DEPLOY_STATE_JSON_FILE}" 2>/dev/null; then
+    printf '{"data":{}}\n' > "${DEPLOY_STATE_JSON_FILE}"
+  fi
 }
 
-detect_services() {
-  local last_successful_sha="$1"
-  local requested_services=""
+deploy_state_value() {
+  local key="$1"
+
+  python3 - "${DEPLOY_STATE_JSON_FILE}" "${key}" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as state_file:
+    payload = json.load(state_file)
+print((payload.get("data") or {}).get(sys.argv[2], ""))
+PY
+}
+
+list_all_services() {
+  (
+    cd "${WORKTREE_DIR}"
+    # shellcheck source=scripts/aws/lib-gops-images.sh
+    source scripts/aws/lib-gops-images.sh
+    while IFS=$'\t' read -r key _repository _env_var _dockerfile; do
+      printf '%s\n' "${key}"
+    done < <(gops_image_entries)
+  )
+}
+
+normalize_service_key() {
+  local service="$1"
+  (
+    cd "${WORKTREE_DIR}"
+    # shellcheck source=scripts/aws/lib-gops-images.sh
+    source scripts/aws/lib-gops-images.sh
+    gops_normalize_service_key "${service}"
+  )
+}
+
+primary_deployment_for_service() {
+  local service="$1"
+  (
+    cd "${WORKTREE_DIR}"
+    # shellcheck source=scripts/aws/lib-gops-images.sh
+    source scripts/aws/lib-gops-images.sh
+    gops_primary_deployment_for_service "${service}"
+  )
+}
+
+service_list_contains() {
+  local expected_service="$1"
+  local raw_services="$2"
+  local service
+  local normalized
+  local services=()
+
+  read -r -a services <<< "${raw_services//,/ }"
+  for service in "${services[@]}"; do
+    if [[ -z "${service}" ]]; then
+      continue
+    fi
+    if [[ "${service}" == "all" || "${service}" == "*" ]]; then
+      return 0
+    fi
+    normalized="$(normalize_service_key "${service}")"
+    if [[ "${normalized}" == "${expected_service}" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+live_deployment_sha_for_service() {
+  local service="$1"
+  local deployment
+  local image
+  local tag
+
+  deployment="$(primary_deployment_for_service "${service}" 2>/dev/null || true)"
+  if [[ -z "${deployment}" ]]; then
+    return 0
+  fi
+
+  image="$(kubectl get deployment "${deployment}" \
+    -n "${K8S_NAMESPACE}" \
+    -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)"
+  if [[ -z "${image}" || "${image}" != *:* ]]; then
+    return 0
+  fi
+
+  tag="${image##*:}"
+  git -C "${WORKTREE_DIR}" rev-parse --verify "${tag}^{commit}" 2>/dev/null || true
+}
+
+baseline_sha_for_service() {
+  local service="$1"
+  local service_sha
+  local legacy_sha
+  local legacy_services
+  local live_sha
+
+  service_sha="$(deploy_state_value "service.${service}.lastSuccessfulSha")"
+  if [[ -n "${service_sha}" ]]; then
+    printf '%s\n' "${service_sha}"
+    return 0
+  fi
+
+  legacy_sha="$(deploy_state_value "lastSuccessfulSha")"
+  legacy_services="$(deploy_state_value "lastSuccessfulServices")"
+  if [[ -n "${legacy_sha}" ]] && service_list_contains "${service}" "${legacy_services}"; then
+    printf '%s\n' "${legacy_sha}"
+    return 0
+  fi
+
+  live_sha="$(live_deployment_sha_for_service "${service}")"
+  if [[ -n "${live_sha}" ]]; then
+    printf '%s\n' "${live_sha}"
+  fi
+}
+
+changed_services_between() {
+  local base_sha="$1"
+  local detect_output
+  local services
+
+  detect_output="$(mktemp)"
+  (
+    cd "${WORKTREE_DIR}"
+    BASE_SHA="${base_sha}" \
+      HEAD_SHA="${TARGET_SHA}" \
+      EVENT_NAME="local-dev-deploy" \
+      scripts/aws/detect-changed-services.sh
+  ) > "${detect_output}"
+  services="$(sed -n 's/^services=//p' "${detect_output}" | tail -n 1)"
+  rm -f "${detect_output}"
+  printf '%s\n' "${services}"
+}
+
+service_needs_deploy() {
+  local service="$1"
+  local base_sha="$2"
+  local changed_services
+
+  if [[ -z "${base_sha}" ]]; then
+    printf 'Service %s has no deploy baseline; selecting it.\n' "${service}"
+    return 0
+  fi
+  if [[ "${base_sha}" == "${TARGET_SHA}" ]]; then
+    printf 'Service %s already at target SHA %s.\n' "${service}" "${TARGET_SHA}"
+    return 1
+  fi
+  if ! git -C "${WORKTREE_DIR}" rev-parse --verify "${base_sha}^{commit}" >/dev/null 2>&1; then
+    printf 'Service %s baseline SHA is not available locally; selecting it: %s\n' "${service}" "${base_sha}"
+    return 0
+  fi
+  if ! git -C "${WORKTREE_DIR}" merge-base --is-ancestor "${base_sha}" "${TARGET_SHA}"; then
+    printf 'Service %s baseline is not an ancestor of origin/dev; selecting it: %s\n' "${service}" "${base_sha}"
+    return 0
+  fi
+
+  changed_services="$(changed_services_between "${base_sha}")"
+  if service_list_contains "${service}" "${changed_services}"; then
+    printf 'Service %s changed since deployed baseline %s.\n' "${service}" "${base_sha}"
+    return 0
+  fi
+
+  printf 'Service %s has no service-owned changes since %s.\n' "${service}" "${base_sha}"
+  return 1
+}
+
+resolve_selected_services() {
+  local requested_services="$1"
   local detect_output
   local has_services
   local smoke_frontend
   local smoke_backend
 
-  detect_output="$(mktemp)"
-
-  if [[ -n "${FORCE_SERVICES}" ]]; then
-    requested_services="${FORCE_SERVICES}"
-    printf 'Forced service selection: %s\n' "${requested_services}"
-  elif [[ -z "${last_successful_sha}" ]]; then
-    requested_services="all"
-    printf 'No %s ConfigMap state found; selecting all services for first local deploy.\n' "${DEPLOY_STATE_CONFIGMAP}"
-  elif [[ "${last_successful_sha}" == "${TARGET_SHA}" ]]; then
-    printf 'origin/dev is already recorded as deployed: %s\n' "${TARGET_SHA}"
+  if [[ -z "${requested_services}" ]]; then
     SELECTED_SERVICES=""
     SELECTED_DEPLOYMENTS=""
-    rm -f "${detect_output}"
+    export LOCAL_DEPLOY_SMOKE_FRONTEND="false"
+    export LOCAL_DEPLOY_SMOKE_BACKEND="false"
     return 0
-  elif ! git -C "${WORKTREE_DIR}" rev-parse --verify "${last_successful_sha}^{commit}" >/dev/null 2>&1; then
-    requested_services="all"
-    printf 'Last successful SHA is not available locally; selecting all services: %s\n' "${last_successful_sha}"
-  elif ! git -C "${WORKTREE_DIR}" merge-base --is-ancestor "${last_successful_sha}" "${TARGET_SHA}"; then
-    requested_services="all"
-    printf 'Last successful SHA is not an ancestor of origin/dev; selecting all services: %s\n' "${last_successful_sha}"
   fi
 
-  if [[ -n "${requested_services}" ]]; then
-    (
-      cd "${WORKTREE_DIR}"
-      REQUESTED_SERVICES="${requested_services}" \
-        EVENT_NAME="local-dev-deploy" \
-        HEAD_SHA="${TARGET_SHA}" \
-        scripts/aws/detect-changed-services.sh
-    ) | tee "${detect_output}"
-  else
-    (
-      cd "${WORKTREE_DIR}"
-      BASE_SHA="${last_successful_sha}" \
-        HEAD_SHA="${TARGET_SHA}" \
-        EVENT_NAME="local-dev-deploy" \
-        scripts/aws/detect-changed-services.sh
-    ) | tee "${detect_output}"
-  fi
+  detect_output="$(mktemp)"
+  (
+    cd "${WORKTREE_DIR}"
+    REQUESTED_SERVICES="${requested_services}" \
+      EVENT_NAME="local-dev-deploy" \
+      HEAD_SHA="${TARGET_SHA}" \
+      scripts/aws/detect-changed-services.sh
+  ) | tee "${detect_output}"
 
   has_services="$(sed -n 's/^has_services=//p' "${detect_output}" | tail -n 1)"
   SELECTED_SERVICES="$(sed -n 's/^services=//p' "${detect_output}" | tail -n 1)"
@@ -245,6 +426,30 @@ detect_services() {
     SELECTED_SERVICES=""
     SELECTED_DEPLOYMENTS=""
   fi
+}
+
+detect_services() {
+  local requested_services=""
+  local service
+  local base_sha
+  local selected_services=()
+
+  if [[ -n "${FORCE_SERVICES}" ]]; then
+    requested_services="${FORCE_SERVICES}"
+    printf 'Forced service selection: %s\n' "${requested_services}"
+    resolve_selected_services "${requested_services}"
+    return 0
+  fi
+
+  while IFS= read -r service; do
+    base_sha="$(baseline_sha_for_service "${service}")"
+    if service_needs_deploy "${service}" "${base_sha}"; then
+      selected_services+=("${service}")
+    fi
+  done < <(list_all_services)
+
+  requested_services="${selected_services[*]}"
+  resolve_selected_services "${requested_services}"
 }
 
 validate_optional_tasks() {
@@ -460,12 +665,13 @@ main() {
   IMAGE_TAG="${IMAGE_TAG:-${TARGET_SHA:0:7}}"
   export AWS_ACCOUNT_ID AWS_REGION DOCKER_PLATFORM IMAGE_TAG K8S_NAMESPACE VITE_LOGO_DEV_ATTRIBUTION
 
-  last_successful_sha="$(read_last_successful_sha)"
+  read_deploy_state
+  last_successful_sha="$(deploy_state_value "lastSuccessfulSha")"
   if [[ -n "${last_successful_sha}" ]]; then
-    printf 'Last successful local deploy SHA: %s\n' "${last_successful_sha}"
+    printf 'Last successful local deploy SHA (legacy/global): %s\n' "${last_successful_sha}"
   fi
 
-  detect_services "${last_successful_sha}"
+  detect_services
   apply_platform_if_requested
 
   if [[ -z "${SELECTED_SERVICES}" ]]; then

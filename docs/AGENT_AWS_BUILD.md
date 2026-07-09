@@ -28,9 +28,14 @@ flowchart LR
 
 The default dev deploy entrypoint is `scripts/aws/deploy-dev-local.sh`. It runs
 from an operator's local machine but always deploys the latest remote
-`origin/dev` commit, not local uncommitted changes. It compares that target SHA
-with EKS `ConfigMap/gops-dev-deploy-state` and builds only the app services
-touched by the diff. Use `FORCE_SERVICES=frontend,backend` to override
+`origin/dev` commit, not local uncommitted changes. It records successful
+deploy state per app image in EKS `ConfigMap/gops-dev-deploy-state` using
+`service.<name>.lastSuccessfulSha`, then compares each service's own deployed
+baseline with `origin/dev`. This prevents a backend-only deploy from hiding an
+older undeployed frontend change. For legacy state migration, the script falls
+back to the old global `lastSuccessfulSha` only when `lastSuccessfulServices`
+included that service, and otherwise reads the live primary Deployment image
+tag as the baseline. Use `FORCE_SERVICES=frontend,backend` to override
 detection, or `FORCE_SERVICES=all` to force every app image to rebuild. See
 `docs/LOCAL_EKS_DEPLOY.md` for the team runbook.
 
