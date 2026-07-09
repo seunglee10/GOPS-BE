@@ -1,329 +1,544 @@
 ---
-version: beta
-name: gops-coinbase-glass-market-workspace
-description: "Current GOPS website design system for the implemented market workspace: Coinbase trust colors, a white-to-blue glass app canvas, S&P 500 treemap home, tiled chart panels, a left company rail, and a fixed bottom agent command bar."
-
-sourceOfTruth:
-  tokens: "apps/gops-frontend/src/styles.css"
-  frontendThemeBridge: "apps/gops-frontend/src/theme/colors.ts"
-  chartFallbackTheme: "apps/chart-engine/src/theme.ts"
-  treemapToneLogic: "apps/gops-frontend/src/treemap/treemapColors.ts"
+version: alpha
+name: Framer-design-analysis
+description: "A confident dark-canvas builder marketing site that treats the page like a working artboard — pure black surfaces, white display type set in GT Walsheim Medium with aggressive negative tracking, and a single confident blue (#0099ff) reserved for hyperlinks and selection states. The page rhythm is broken by oversized vibrant gradient atmosphere panels — magenta, violet, orange spotlights — that act as living showcase tiles, not decoration. Every CTA is a white pill on dark; every card is a translucent or charcoal surface; every section title pulls letter-spacing tight enough to feel like a poster."
 
 colors:
-  brand-blue: "#0052ff"
-  brand-blue-active: "#003ecc"
-  brand-blue-soft: "#e7efff"
-  brand-blue-disabled: "#b9c0ca"
-  ink: "#0a0b0d"
-  ink-soft: "#242832"
-  body: "#5b616e"
-  muted: "#8c939f"
-  muted-soft: "#b9c0ca"
-  canvas: "#ffffff"
-  canvas-oklch: "oklch(100% 0 0)"
-  canvas-mid: "#fbfdff"
-  canvas-mid-oklch: "oklch(99.6% 0.002 247)"
-  canvas-end: "#eff6ff"
-  canvas-end-oklch: "oklch(98.4% 0.010 250)"
-  panel-glass: "rgba(255, 255, 255, 0.05)"
-  panel-glass-strong: "rgba(255, 255, 255, 0.08)"
-  glass-border: "rgba(255, 255, 255, 0.30)"
-  glass-edge: "rgba(255, 255, 255, 0.80)"
-  glass-edge-soft: "rgba(255, 255, 255, 0.30)"
-  hairline: "rgba(10, 11, 13, 0.08)"
-  hairline-strong: "rgba(10, 11, 13, 0.14)"
-  button-surface: "transparent / same as background"
-  button-pressed-shadow: "inset 7px 7px 7px rgba(184, 198, 216, 0.50), inset -7px -7px 7px rgba(255, 255, 255, 0.92)"
-  positive: "#05b169"
-  positive-glow: "#6cff5f"
-  negative: "#cf202f"
-  negative-glow: "#ff5f7a"
-  warning: "#f4b000"
-  warning-glow: "#ffe45f"
-  on-primary: "#ffffff"
-  on-dark: "#ffffff"
+  primary: "#ffffff"
+  on-primary: "#000000"
+  accent-blue: "#0099ff"
+  ink: "#ffffff"
+  ink-muted: "#999999"
+  canvas: "#090909"
+  surface-1: "#141414"
+  surface-2: "#1c1c1c"
+  hairline: "#262626"
+  hairline-soft: "#1a1a1a"
+  inverse-canvas: "#ffffff"
+  inverse-ink: "#000000"
+  gradient-magenta: "#d44df0"
+  gradient-violet: "#6a4cf5"
+  gradient-orange: "#ff7a3d"
+  gradient-coral: "#ff5577"
+  semantic-success: "#22c55e"
 
 typography:
-  ui:
-    fontFamily: "'Coinbase Sans', Inter, Arial, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
-    baseSize: "14px"
-    letterSpacing: 0
-  compact-label:
-    fontSize: "10px-13px"
-    fontWeight: "700-820"
-    lineHeight: 1
-    letterSpacing: 0
-  data-control:
-    fontSize: "11px-12px"
-    fontWeight: "700-760"
-    lineHeight: 1
-    letterSpacing: 0
-  body:
-    fontSize: "12px-14px"
+  display-xxl:
+    fontFamily: GT Walsheim Framer Medium
+    fontSize: 110px
+    fontWeight: 500
+    lineHeight: 0.85
+    letterSpacing: -5.5px
+  display-xl:
+    fontFamily: GT Walsheim Medium
+    fontSize: 85px
+    fontWeight: 500
+    lineHeight: 0.95
+    letterSpacing: -4.25px
+    fontFeature: ss02
+  display-lg:
+    fontFamily: GT Walsheim Medium
+    fontSize: 62px
+    fontWeight: 500
+    lineHeight: 1.00
+    letterSpacing: -3.1px
+    fontFeature: ss02
+  display-md:
+    fontFamily: GT Walsheim Medium
+    fontSize: 32px
+    fontWeight: 500
+    lineHeight: 1.13
+    letterSpacing: -1.0px
+  headline:
+    fontFamily: Inter
+    fontSize: 22px
+    fontWeight: 700
+    lineHeight: 1.20
+    letterSpacing: -0.8px
+    fontFeature: cv05
+  subhead:
+    fontFamily: Inter Variable
+    fontSize: 24px
     fontWeight: 400
-    lineHeight: "1.4-1.56"
-    letterSpacing: 0
+    lineHeight: 1.30
+    letterSpacing: -0.01px
+    fontFeature: cv11
+  body-lg:
+    fontFamily: Inter Variable
+    fontSize: 18px
+    fontWeight: 400
+    lineHeight: 1.30
+    letterSpacing: -0.18px
+    fontFeature: cv11
+  body:
+    fontFamily: Inter Variable
+    fontSize: 15px
+    fontWeight: 400
+    lineHeight: 1.30
+    letterSpacing: -0.15px
+    fontFeature: cv11
+  body-sm:
+    fontFamily: Inter Variable
+    fontSize: 14px
+    fontWeight: 500
+    lineHeight: 1.40
+    letterSpacing: -0.14px
+    fontFeature: cv11
+  caption:
+    fontFamily: Inter Variable
+    fontSize: 13px
+    fontWeight: 500
+    lineHeight: 1.20
+    letterSpacing: -0.13px
+    fontFeature: cv11
+  micro:
+    fontFamily: Inter Variable
+    fontSize: 12px
+    fontWeight: 400
+    lineHeight: 1.20
+    letterSpacing: -0.12px
+    fontFeature: cv11
+  button:
+    fontFamily: Inter Variable
+    fontSize: 14px
+    fontWeight: 500
+    lineHeight: 1.0
+    letterSpacing: -0.14px
+    fontFeature: cv11
 
-layout:
-  gutter: "24px"
-  top-nav-height: "48px"
-  workspace-top-inset: "52px"
-  bottom-nav-height: "64px"
-  bottom-control-size: "36px"
-  surface-radius: "16px"
-  app-glass-radius: "20px"
-  side-overlay-radius: "28px"
-  heatmap-cell-radius: "16px"
-  heatmap-band-radius: "7px"
-  chart-candle-radius: "3px"
-  panel-padding: "8px"
-  panel-gap: "12px"
-  mobile-breakpoint: "640px"
+rounded:
+  xs: 4px
+  sm: 6px
+  md: 10px
+  lg: 15px
+  xl: 20px
+  xxl: 30px
+  pill: 100px
+  full: 9999px
 
-effects:
-  app-canvas: "White canvas with a very low blue horizon glow: layered bottom-centered radial gradients over #ffffff -> #fbfdff -> #eff6ff."
-  glass-surface:
-    background: "top white edge gradient + left white edge gradient + panel glass"
-    border: "1px solid rgba(255, 255, 255, 0.30)"
-    backdropFilter: "blur(10px)"
-    boxShadow: "7px 7px 7px rgba(184, 198, 216, 0.48), inset 0 1px 0 rgba(255, 255, 255, 0.50), inset 0 -1px 0 rgba(255, 255, 255, 0.10), inset 0 0 4px 2px rgba(255, 255, 255, 0.20)"
-  strong-glass:
-    background: "same edge treatment over rgba(255, 255, 255, 0.08)"
-  bottom-command-band:
-    background: "transparent-to-white vertical gradient with blur(18px); chrome inside the band remains mostly transparent."
-  command-buttons:
-    default: "No visible fill or raised shadow; button blends into the background."
-    active: "Same background with inset 7px paired shadows, creating a pressed control state."
+spacing:
+  hair: 1px
+  xxs: 4px
+  xs: 8px
+  sm: 12px
+  md: 15px
+  lg: 20px
+  xl: 30px
+  xxl: 40px
+  section: 96px
+
+components:
+  button-primary:
+    backgroundColor: "{colors.primary}"
+    textColor: "{colors.on-primary}"
+    typography: "{typography.button}"
+    rounded: "{rounded.pill}"
+    padding: 10px 15px
+  button-primary-pressed:
+    backgroundColor: "{colors.primary}"
+    textColor: "{colors.on-primary}"
+    typography: "{typography.button}"
+    rounded: "{rounded.pill}"
+  button-secondary:
+    backgroundColor: "{colors.surface-1}"
+    textColor: "{colors.ink}"
+    typography: "{typography.button}"
+    rounded: "{rounded.pill}"
+    padding: 10px 15px
+  button-translucent:
+    backgroundColor: "{colors.surface-2}"
+    textColor: "{colors.ink}"
+    typography: "{typography.button}"
+    rounded: "{rounded.xxl}"
+    padding: 8px 14px
+  button-icon-circular:
+    backgroundColor: "{colors.surface-1}"
+    textColor: "{colors.ink}"
+    typography: "{typography.button}"
+    rounded: "{rounded.full}"
+    size: 40px
+  pricing-tab-default:
+    backgroundColor: "{colors.canvas}"
+    textColor: "{colors.ink-muted}"
+    typography: "{typography.button}"
+    rounded: "{rounded.pill}"
+    padding: 8px 14px
+  pricing-tab-selected:
+    backgroundColor: "{colors.surface-2}"
+    textColor: "{colors.ink}"
+    typography: "{typography.button}"
+    rounded: "{rounded.pill}"
+    padding: 8px 14px
+  text-input:
+    backgroundColor: "{colors.surface-1}"
+    textColor: "{colors.ink}"
+    typography: "{typography.body}"
+    rounded: "{rounded.md}"
+    padding: 10px 14px
+  text-input-focused:
+    backgroundColor: "{colors.surface-1}"
+    textColor: "{colors.ink}"
+    typography: "{typography.body}"
+    rounded: "{rounded.md}"
+    padding: 10px 14px
+  pricing-card:
+    backgroundColor: "{colors.surface-1}"
+    textColor: "{colors.ink}"
+    typography: "{typography.body}"
+    rounded: "{rounded.xl}"
+    padding: 24px
+  pricing-card-featured:
+    backgroundColor: "{colors.surface-2}"
+    textColor: "{colors.ink}"
+    typography: "{typography.body}"
+    rounded: "{rounded.xl}"
+    padding: 24px
+  template-card:
+    backgroundColor: "{colors.surface-1}"
+    textColor: "{colors.ink}"
+    typography: "{typography.body-sm}"
+    rounded: "{rounded.lg}"
+    padding: 12px
+  gradient-spotlight-card:
+    backgroundColor: "{colors.gradient-violet}"
+    textColor: "{colors.ink}"
+    typography: "{typography.subhead}"
+    rounded: "{rounded.xl}"
+    padding: 32px
+  gradient-spotlight-card-magenta:
+    backgroundColor: "{colors.gradient-magenta}"
+    textColor: "{colors.ink}"
+    typography: "{typography.subhead}"
+    rounded: "{rounded.xl}"
+    padding: 32px
+  gradient-spotlight-card-orange:
+    backgroundColor: "{colors.gradient-orange}"
+    textColor: "{colors.ink}"
+    typography: "{typography.subhead}"
+    rounded: "{rounded.xl}"
+    padding: 32px
+  product-mockup-tile:
+    backgroundColor: "{colors.surface-1}"
+    textColor: "{colors.ink}"
+    typography: "{typography.body-sm}"
+    rounded: "{rounded.xl}"
+    padding: 16px
+  feature-row:
+    backgroundColor: "{colors.canvas}"
+    textColor: "{colors.ink}"
+    typography: "{typography.body}"
+    rounded: "{rounded.xs}"
+  comparison-row:
+    backgroundColor: "{colors.canvas}"
+    textColor: "{colors.ink-muted}"
+    typography: "{typography.body-sm}"
+    rounded: "{rounded.xs}"
+  top-nav:
+    backgroundColor: "{colors.canvas}"
+    textColor: "{colors.ink}"
+    typography: "{typography.body-sm}"
+    rounded: "{rounded.xs}"
+    height: 56px
+  faq-row:
+    backgroundColor: "{colors.canvas}"
+    textColor: "{colors.ink}"
+    typography: "{typography.body}"
+    rounded: "{rounded.md}"
+    padding: 24px
+  footer:
+    backgroundColor: "{colors.canvas}"
+    textColor: "{colors.ink-muted}"
+    typography: "{typography.caption}"
+    rounded: "{rounded.xs}"
+    padding: 64px 32px
 ---
 
 ## Overview
 
-GOPS is a dense market workspace, not a landing page and not a generic personal finance dashboard. The first viewport is the product: an S&P 500 treemap home or a tiled analysis workspace with charts, market panels, an agent command input, and company-specific side actions.
+Framer's marketing canvas is a near-pure black artboard. The dominant surface is `{colors.canvas}` — almost pure black with a faint warmth — and on top of it sits oversized white display type set in **GT Walsheim Medium** with letter-spacing pulled to extreme negative values (-5.5px on the 110px display, -4.25px on the 85px hero). The page reads like a poster: one assertive statement per band, generous breathing room above and below.
 
-The visual direction is Coinbase-inspired trust UI: white canvas, crisp black ink, blue as the primary action color, green/red/yellow only for financial state, and very light glass surfaces. The implementation is deliberately quieter than a trading terminal. Panels are translucent and low contrast, while market data, chart marks, and active controls carry the emphasis.
+The single accent is `{colors.accent-blue}` — used scarcely, mostly for hyperlinks, selection halos, and a subtle blue-tinted shadow ring on focused inputs. The brand chrome itself is monochrome: white pill buttons, charcoal cards, gray secondary text. What makes Framer distinctive is the rhythm break — every few sections the page drops in a **vibrant gradient atmosphere card**: a magenta-violet spotlight, a sunset-orange wash, a coral-pink panel. These aren't section backgrounds; they're individual cards arranged in a card grid, each one a small living poster that shows what Framer can produce.
 
-## Design Principles
+Body type is **Inter Variable**, with Framer leaning hard into Inter's character variants (`cv01`, `cv05`, `cv09`, `cv11`, `ss03`, `ss07`, `dlig`) — the result is a body voice that feels custom-tuned, with single-storey "a", straight-leg "l", and tabular figures. There's no light mode on the marketing site; the brand IS dark.
 
-- Keep the app operational and scan-dense. Avoid marketing hero structure, oversized editorial headings, and explanatory in-app copy.
-- Treat the canvas as a full-viewport workspace. Navigation, commands, panels, and docks float over the same market surface.
-- Use glass sparingly but consistently: panel borders are white glass edges, not dark card outlines.
-- Use blue for primary actions, selected submits, active tabs, and focused interaction states.
-- Use green, red, and yellow only for market movement, alert severity, chart indicators, and financial status.
-- Keep text compact. Panel names are secondary chrome and should appear only on hover or in layout-edit mode.
+**Key Characteristics:**
+- Black-canvas marketing system: `{colors.canvas}` is the surface for hero, body, pricing, FAQ, and footer alike — no light interludes.
+- Massive negative letter-spacing on display sizes (-5.5px / -4.25px / -3.1px) creates a poster-grade headline cadence.
+- White pill (`{components.button-primary}`) is the only primary CTA shape across the site; secondary actions live as charcoal pills (`{components.button-secondary}`) or text links.
+- Oversized **gradient spotlight cards** (violet, magenta, orange, coral) act as showcase tiles inside the dark grid; they are individual cards, not section backgrounds.
+- Inter Variable with bespoke OpenType character variants (`cv01/05/09/11`, `ss03/ss07`, `dlig`) used everywhere body type appears — the typographic voice is unmistakable.
+- Border radius scale runs from 4px utility chips up to 100px pills and full circles, with 15–20px the default for cards and 30px for atmospheric gradient cards.
+- A single chromatic accent `{colors.accent-blue}` reserved for hyperlinks, focus, and selection — never decorative.
 
-## Token Contract
+## Colors
 
-The active tokens live in `apps/gops-frontend/src/styles.css` under `:root`. New components should consume the existing `--coinbase-*`, `--color-*`, and `--gops-*` variables instead of introducing local palettes.
+> Source pages: framer.com (home), /ai/, /startups/, /marketplace/templates/nudge/, /gallery/a16z-speedrun-×-tonik, /pricing.
 
-Important aliases:
+### Brand & Accent
+- **Pure White** ({colors.primary}): The brand primary surface. Every primary CTA pill, every display headline, every body line on canvas.
+- **Sky Blue** ({colors.accent-blue}): The single chromatic accent. Hyperlinks, focused-input rings, and a few selection states. Never used for backgrounds or as a brand fill.
 
-- `--coinbase-primary`: primary blue.
-- `--coinbase-ink`: default text and chart ink.
-- `--coinbase-body`, `--coinbase-muted`, `--coinbase-muted-soft`: text hierarchy.
-- `--coinbase-panel-glass`, `--coinbase-panel-glass-strong`, `--coinbase-rail-glass`: transparent surface fills.
-- `--coinbase-glass-border`, `--coinbase-glass-edge`, `--coinbase-glass-shadow`: shared glass treatment.
-- `--color-up`, `--color-down`, `--color-caution`: semantic finance colors.
-- `--layout-gutter`, `--bottom-nav-height`, `--bottom-control-size`, `--surface-radius`: shared sizing rhythm.
-- `--heatmap-cell-radius`, `--heatmap-band-radius`, `--chart-candle-radius`: market-shape radius values, visually derived from the white canvas and `--surface-radius`.
+### Surface
+- **Canvas** ({colors.canvas}): Default page background — near-black with a faint warmth. Footer, pricing, hero, and FAQ all sit on it.
+- **Surface 1** ({colors.surface-1}): One step above canvas — pricing cards, secondary buttons, mockup tiles.
+- **Surface 2** ({colors.surface-2}): Two steps above — featured pricing card, hero pill backdrop, selected pricing tab.
+- **Hairline** ({colors.hairline}): 1px borders on input groups, comparison-table dividers.
+- **Hairline Soft** ({colors.hairline-soft}): Subtler dividers — between FAQ rows and footer column rules.
+- **Inverse Canvas** ({colors.inverse-canvas}): Pure white — used as the surface of light-on-dark pill CTAs and a small set of light-mode template thumbnails embedded in the showcase grid.
 
-When adding a new theme token, also update the theme bridge in `apps/gops-frontend/src/theme/colors.ts` if chart, treemap, ontology, or canvas code needs to read it.
+### Text
+- **Ink** ({colors.ink}): All headline and emphasized body type — pure white.
+- **Ink Muted** ({colors.ink-muted}): Secondary type — gray (#999999) used for meta info, footer columns, comparison-row labels, deselected pricing tabs. Hierarchy on the dark canvas is carried by ink → ink-muted contrast, not by weight changes.
 
-## App Canvas
+### Semantic
+- **Success Green** ({colors.semantic-success}): Pricing comparison-table checkmarks. Glyph fill, not surface.
 
-The page floor is `--coinbase-app-canvas`: a white background with a blue atmospheric horizon concentrated near the bottom of the viewport. It uses layered radial gradients plus a white-to-blue vertical gradient. Keep the top area mostly white so chart panels and treemap labels stay readable.
+### Brand Gradient (signature)
+- **Gradient Magenta** ({colors.gradient-magenta}): Spotlight card variant.
+- **Gradient Violet** ({colors.gradient-violet}): Spotlight card variant — most common.
+- **Gradient Orange** ({colors.gradient-orange}): Spotlight card variant — sunset wash.
+- **Gradient Coral** ({colors.gradient-coral}): Spotlight card variant — coral/pink.
 
-`app-shell` owns the full viewport and isolates layers. A fixed `heatmap-background-layer` adds subtle bottom-depth effects; its treemap child is currently hidden for the decorative layer, while the visible home treemap is rendered in the workspace.
+These four sit as oversized atmospheric tiles inside otherwise monochrome card grids — a dark canvas with one or two glowing spotlight cards is a recurring page signature.
 
-Avoid:
+## Typography
 
-- Pure white body without the blue horizon glow.
-- Dark hero sections.
-- Purple or multi-hue marketing gradients.
-- Decorative blobs or unrelated illustrations.
+### Font Family
 
-## Primary Screens
+- **GT Walsheim Framer Medium** / **GT Walsheim Medium** — Framer's display typeface. Geometric, slightly humanist, very confident at large sizes with extreme negative tracking. Fallbacks: `GT Walsheim Medium Placeholder` system font.
+- **Inter Variable** — System body typeface. Used with extensive OpenType character variants: `cv01` (alternate "1"), `cv05` (alternate "g"), `cv09` (alternate "i" / "l"), `cv11` (alternate "0"), `ss03` / `ss07` stylistic sets, `dlig` discretionary ligatures, and `tnum` for numerics in tabular contexts. The result is a body voice that feels bespoke without commissioning a custom face.
+- **Inter** — Used selectively for `{typography.headline}` (the 22px / 20px tier). The non-variable cut catches small tracking targets that the variable file rounds.
 
-### Treemap Home
+### Hierarchy
 
-The home view is a full workspace `TreeMapCanvas` for the S&P 500 universe. Tiles use area for market weight and green/red/muted ink for movement. Change intensity is encoded by opacity, not by switching to a saturated background for every tile.
+| Token | Size | Weight | Line Height | Letter Spacing | Use |
+|---|---|---|---|---|---|
+| `{typography.display-xxl}` | 110px | 500 | 0.85 | -5.5px | Largest hero headline (home, AI page) |
+| `{typography.display-xl}` | 85px | 500 | 0.95 | -4.25px | Section opener headlines |
+| `{typography.display-lg}` | 62px | 500 | 1.00 | -3.1px | Sub-section openers |
+| `{typography.display-md}` | 32px | 500 | 1.13 | -1.0px | Card titles, smaller display |
+| `{typography.headline}` | 22px | 700 | 1.20 | -0.8px | Pricing tier headlines, FAQ category titles |
+| `{typography.subhead}` | 24px | 400 | 1.30 | -0.01px | Lead body next to display headlines |
+| `{typography.body-lg}` | 18px | 400 | 1.30 | -0.18px | Hero subhead, lead paragraphs |
+| `{typography.body}` | 15px | 400 | 1.30 | -0.15px | Default body, card descriptions |
+| `{typography.body-sm}` | 14px | 500 | 1.40 | -0.14px | Pricing comparison rows, dense data |
+| `{typography.caption}` | 13px | 500 | 1.20 | -0.13px | Eyebrows, footer columns, meta |
+| `{typography.micro}` | 12px | 400 | 1.20 | -0.12px | Disclaimer, footnote |
+| `{typography.button}` | 14px | 500 | 1.0 | -0.14px | Pill buttons |
 
-Treemap panel treatment:
+### Principles
 
-- Absolute positioned inside the workspace.
-- `16px` radius by default.
-- Symbol cells use `--heatmap-cell-radius`; industry bands use `--heatmap-band-radius`, clamped by tile size so small tiles stay continuous rather than pill-shaped.
-- Glass border and edge highlights.
-- Transparent canvas.
-- Hover metadata sits as a compact glass strip near the bottom-left of the symbol tile column.
+- **Letter-spacing scales with size, hard.** Display-xxl pulls -5.5px (5% of size); body sticks to about -1% (-0.15px on 15px). The result: posters at the top, comfortable reading at body.
+- **OpenType character variants are the brand voice.** Switching off `cv11`, `ss03`, etc. visibly changes the body voice — the brand depends on them.
+- **Weight stays in a narrow band.** Display sits at 500, body at 400, body-sm/caption at 500. Hierarchy is carried by size + tracking, not by 700/900 ramps.
+- **Tight line-heights everywhere.** Even body runs at 1.30 — Framer's editorial tone is denser than typical SaaS marketing.
 
-### Chart Workspace
+### Note on Font Substitutes
 
-The chart workspace is a tiled grid managed by `PanelWorkspace`. Panels are absolute workspace surfaces, not page sections. The layout can be resized, edited, saved as presets, and populated with chart, company, news, indices, recommendation, portfolio, order, and ontology panels.
+If implementing without GT Walsheim Medium, suitable open-source substitutes include **Mona Sans**, **Geist**, or **Inter** at weight 600–700 with manually tightened tracking. Mona Sans's hairline weights at 100–300 are particularly close to Framer's cleaner section openers. Inter Variable is open-source — keep it as-is and preserve the documented OpenType variants.
 
-Workspace panels:
+## Layout
 
-- Use `workspace-panel-surface` glass.
-- Use `--surface-radius` unless chart lanes join across internal boundaries.
-- Avoid permanent title bars. `workspace-panel-nav` is a small hover overlay only.
-- Keep panel content inside the `--panel-padding` and `--panel-gap` contract unless the panel is intentionally full-bleed, such as a chart canvas.
+### Spacing System
 
-Chart lanes can remove internal radius so adjacent chart panels read as one analysis strip. Boundary hover and active states should remain subtle, using ink opacity rather than heavy resize handles.
+- **Base unit**: 5px (Framer uses non-standard 5/10/15/20/30 increments rather than the more common 4/8/16/24).
+- **Tokens (front matter)**: `{spacing.hair}` 1px · `{spacing.xxs}` 4px · `{spacing.xs}` 8px · `{spacing.sm}` 12px · `{spacing.md}` 15px · `{spacing.lg}` 20px · `{spacing.xl}` 30px · `{spacing.xxl}` 40px · `{spacing.section}` 96px.
+- Card interior padding: `{spacing.lg}` 20px on pricing cards; `{spacing.xl}` 30px on gradient spotlight cards.
+- Pill button padding: 10px vertical · 15px horizontal — `{components.button-primary}`.
+- Section padding (vertical): roughly `{spacing.section}` 96px on home; tighter (~64px) on pricing comparison.
 
-## Navigation And Commands
+### Grid & Container
 
-### Bottom Command Bar
+- Max content width sits around the 1199px breakpoint, with side gutters that scale toward `{spacing.xl}` on desktop.
+- Card grids on the home gallery use 2-up at desktop, collapsing to 1-up below 810px.
+- Pricing tier grid is 4-up across the documented breakpoints; comparison table beneath it uses fixed-width left column with horizontally scrolling tier columns at narrow widths.
 
-`workspace-bottom-nav` is fixed at the bottom and is not part of the customizable panel grid. It uses a transparent-to-white blurred band. The central `agent-box` is the main command surface and should stay visually lighter than a card.
+### Whitespace Philosophy
 
-Command bar behavior:
+The dark canvas IS the whitespace. Where lighter brands lean on white air to separate sections, Framer leans on long stretches of black with a single oversized statement floating in the middle. Sections separate by mode change: a band of charcoal cards, then a band of black with a gradient spotlight, then back to charcoal — like cuts in a dark film.
 
-- Center column holds the agent input, fluid from about `280px` to `560px`.
-- Side action buttons are icon-first `36px` circles.
-- Base buttons inside the bottom band are transparent; active and hover states turn blue.
-- The stop action uses semantic red.
-- The chat panel slides up from the bottom center and stays wider than the input.
+## Elevation & Depth
 
-### Left Company Rail
+| Level | Treatment | Use |
+|---|---|---|
+| 0 (flat) | No shadow, no border | Default for canvas-mounted display type, FAQ rows, footer |
+| 1 (charcoal) | `{colors.surface-1}` lift on canvas | Pricing cards, mockup tiles, secondary buttons |
+| 2 (light-edge) | `rgba(255,255,255,0.10)` 0.5px top edge + `rgba(0,0,0,0.25)` 0px 10px 30px drop | Floating product cards, modal cards |
+| 3 (selected) | `rgba(0,153,255,0.15)` 0px 0px 0px 1px ring | Focused inputs, selected option |
 
-`index-side-rail` is a compact pill rail pinned to the left side around mid-viewport. It is partially tucked off-canvas until hover/focus, then slides into view. It contains the selected company logo and side actions for alerts, watchlist/news, and settings/account flows.
+Four shadow signatures recur across the homepage: a 1px subtle drop, a translucent blue ring, a thick near-black 2px outline (used as the active-element marker on sub-nav), and the layered light-edge + drop-shadow used for floating cards.
 
-Rail behavior:
+### Decorative Depth
 
-- Company logo button is the top active item.
-- Action buttons are circular glass controls.
-- Active side action uses dark ink fill with white icon.
-- The rail stays visible on touch devices because hover is unavailable.
+- **Gradient spotlight cards** are the dominant depth device — color saturation against black canvas substitutes for shadow-driven elevation.
+- **Layered product mockups** (browser frames containing live Framer-built sites) sit inside `{colors.surface-1}` cards with the level-2 light-edge treatment.
+- **Subtle blue ring (focus / selected)** is the only chromatic depth signal — used to mark the active state of input groups and pricing tier toggles without changing the underlying surface.
 
-### Side Overlay Menus
+## Shapes
 
-Side menus open from the left rail as `bottom-menu-panel side-overlay`. They use stronger glass, `28px` radius on desktop, and sit left of the content without replacing the workspace. On mobile, they shrink between the rail and the right viewport edge.
+### Border Radius Scale
 
-## Panels And Surfaces
+Framer's extracted radius set is unusually granular (1px, 4px, 5px, 6px, 8px, 10px, 12px, 15px, 20px, 30px, 40px, 100px). The named scale below picks the levels the marketing surface actually consumes.
 
-The default surface recipe is:
+| Token | Value | Use |
+|---|---|---|
+| `{rounded.xs}` | 4px | Small chip / utility radius |
+| `{rounded.sm}` | 6px | Inline tag, badge |
+| `{rounded.md}` | 10px | Form input, list item |
+| `{rounded.lg}` | 15px | Template card thumbnails |
+| `{rounded.xl}` | 20px | Pricing cards, mockup tiles |
+| `{rounded.xxl}` | 30px | Gradient spotlight cards, oversized panels |
+| `{rounded.pill}` | 100px | All primary text CTAs |
+| `{rounded.full}` | 9999px | Circular icon buttons, avatar circles |
 
-```css
-border: 1px solid var(--coinbase-glass-border);
-border-radius: 20px;
-background:
-  linear-gradient(90deg, transparent, var(--coinbase-glass-edge), transparent) top / 100% 1px no-repeat,
-  linear-gradient(180deg, var(--coinbase-glass-edge), transparent, var(--coinbase-glass-edge-soft)) left / 1px 100% no-repeat,
-  var(--coinbase-panel-glass);
-box-shadow: var(--coinbase-glass-shadow);
-backdrop-filter: var(--coinbase-glass-filter);
-```
+### Photography & Illustration Geometry
 
-Use this treatment for workspace panels, menu panels, chat panels, alerts, symbol search menus, ontology panels, and market cards. For repeated rows inside a panel, use lighter `--coinbase-surface-card` or `--coinbase-surface-soft` states instead of nesting another heavy card.
+- Embedded site mockups (browser-chromed previews of Framer-built sites) sit in `{rounded.xl}` 20px tiles with `{spacing.md}` 15px interior padding.
+- Gradient spotlight cards use `{rounded.xxl}` 30px corners — softer than the 20px content cards by design, to make them feel like atmospheric panels rather than tighter UI.
+- Icon glyphs and sub-nav glyphs render in `{rounded.full}` circles at 32–40px sizes.
 
-Scrollbar styling is part of the visual identity. Panel scrollbars use a thin black stem on the right or bottom edge with the thumb mostly buried in the rule. Do not replace this with wide browser-default scrollbars in panel content.
+## Components
 
-## Chart UI
+### Buttons
 
-Charts inherit colors through `readThemeColors()` and `chartDocumentStyleFromTheme()`. The chart engine fallback theme mirrors the CSS tokens, so chart rendering remains consistent before CSS sync completes.
+**`button-primary`** — White pill on dark canvas. The primary CTA across home, pricing, AI, and gallery pages.
+- Background `{colors.primary}`, text `{colors.on-primary}`, type `{typography.button}`, padding 10px 15px, rounded `{rounded.pill}`.
+- Pressed state lives in `button-primary-pressed` (the live site uses a transform-scale shrink rather than a darkened fill).
 
-Chart conventions:
+**`button-secondary`** — Charcoal pill. Used for secondary navigation actions ("Sign in", "Talk to sales") and as the visual counterpart to the primary pill.
+- Background `{colors.surface-1}`, text `{colors.ink}`, type `{typography.button}`, padding 10px 15px, rounded `{rounded.pill}`.
 
-- Canvas and chart wrappers are transparent over the glass panel.
-- The chart topbar is an overlay, not a permanent toolbar block.
-- Symbol search, page-sync, interval, and chart-type controls reveal on chart hover or focus.
-- Select controls start visually quiet and become bordered only when interactive.
-- MA colors are blue, green, and yellow. Volume and grid use low-opacity ink.
-- Drawings, crosshair, and preview marks use ink unless a specific layer color is required.
-- Candle bodies use a compact rounded rectangle treatment matching `--chart-candle-radius`, with rounded wicks, so chart marks share the same softened market-shape language as the treemap.
+**`button-translucent`** — Translucent / lifted secondary used on top of busy backgrounds (gallery hero, gradient cards).
+- Background `{colors.surface-2}`, text `{colors.ink}`, type `{typography.button}`, rounded `{rounded.xxl}`, padding 8px 14px.
 
-## Tool Docks And Presets
+**`button-icon-circular`** — 40px circle for inline icon actions (carousel arrows, social links).
+- Background `{colors.surface-1}`, text `{colors.ink}`, rounded `{rounded.full}`, size 40px.
 
-Layout presets, drawing tools, and add-layer tools sit above the bottom command band. They are fixed docks, not panel content.
+### Pricing Tabs
 
-Preset dock:
+**`pricing-tab-default`** + **`pricing-tab-selected`** — The pill-toggle that switches between Basic / Pro / Business / Enterprise on `/pricing`.
+- Default: `{colors.canvas}` background, `{colors.ink-muted}` text, rounded `{rounded.pill}`.
+- Selected: `{colors.surface-2}` background, `{colors.ink}` text — selected = lift, not color. Surface depth communicates "active" without needing a chromatic fill.
 
-- Centered above the command bar.
-- Pill buttons with light raised surfaces.
-- Active or hovered preset changes text weight, not fill.
-- Save, delete, and edit are icon buttons.
+### Inputs & Forms
 
-Drawing/add docks:
+**`text-input`** + **`text-input-focused`** — Form fields on `/pricing` (seat-count, currency switcher) and the in-product preview surfaces.
+- Background `{colors.surface-1}`, text `{colors.ink}`, type `{typography.body}`, rounded `{rounded.md}`, padding 10px 14px.
+- Focused state retains the same surface; the focus ring is the level-3 blue-tinted shadow `rgba(0,153,255,0.15)` 0 0 0 1px.
 
-- Compact icon controls.
-- Active drawing/add targets use primary blue.
-- Layer buttons may use their layer accent color when active.
+### Cards & Containers
 
-## Controls
+**`pricing-card`** — Each tier on `/pricing`.
+- Background `{colors.surface-1}`, text `{colors.ink}`, type `{typography.body}`, rounded `{rounded.xl}`, padding 24px.
 
-Buttons and controls are compact and icon-first where possible.
+**`pricing-card-featured`** — The Pro tier (visually emphasized).
+- Background `{colors.surface-2}`, otherwise identical structure. The lift is one surface step up — no chromatic outline.
 
-Default control:
+**`template-card`** — Thumbnail tile in the home "Built with Framer" gallery and `/marketplace`.
+- Background `{colors.surface-1}`, text `{colors.ink}`, type `{typography.body-sm}`, rounded `{rounded.lg}`, padding 12px.
 
-- `36px` minimum touch/control size for nav buttons.
-- `4px` radius for many form-like controls after the Coinbase application layer.
-- Transparent or glass background by default.
-- Blue border/fill for primary active states.
+**`product-mockup-tile`** — Larger tile that frames a live product UI mock (Framer canvas, Workshop video, AI translate panel).
+- Background `{colors.surface-1}`, text `{colors.ink}`, type `{typography.body-sm}`, rounded `{rounded.xl}`, padding 16px.
 
-Input controls:
+### Gradient Spotlight Cards (signature)
 
-- White canvas fill.
-- `4px` radius.
-- Hairline border.
-- Ink border on focus.
+The defining decorative surface of Framer's marketing — oversized atmospheric tiles dropped into otherwise monochrome card grids. Variants:
 
-Semantic states:
+**`gradient-spotlight-card`** — violet ground (most common).
+- Background `{colors.gradient-violet}`, text `{colors.ink}`, type `{typography.subhead}`, rounded `{rounded.xl}`, padding 32px. (The on-site card often pushes to `{rounded.xxl}` 30px when it spans a wider tile.)
 
-- Positive: `#05b169`.
-- Negative/danger: `#cf202f`.
-- Warning/caution: `#f4b000`.
-- Do not use semantic colors as broad page backgrounds.
+**`gradient-spotlight-card-magenta`** — magenta-pink ground.
+- Background `{colors.gradient-magenta}`, otherwise identical.
 
-## Content Panels
+**`gradient-spotlight-card-orange`** — sunset-orange wash.
+- Background `{colors.gradient-orange}`, otherwise identical.
 
-Market, news, recommendation, company, portfolio, order, and ontology panels should follow the same density:
+(Coral pink follows the same shape with `{colors.gradient-coral}`.)
 
-- Small headings, usually `12px-13px`.
-- Strong labels at medium weight rather than oversized bold.
-- Rows with compact vertical rhythm.
-- Ellipsis for long symbols, company names, and source labels.
-- Data status, empty, and error rows use soft glass and muted text.
-- Actions remain local and icon-led when the action is obvious.
+### Comparison & FAQ
 
-Chart and treemap content can be full-bleed. Text-heavy panels should preserve `--panel-padding` and avoid adding another outer card inside the workspace panel.
+**`feature-row`** + **`comparison-row`** — Single rows inside the pricing comparison table.
+- `feature-row`: `{colors.canvas}` background, `{colors.ink}` text. Header rows.
+- `comparison-row`: `{colors.canvas}` background, `{colors.ink-muted}` text. Data rows with `{typography.body-sm}` and 1px `{colors.hairline-soft}` underlines.
 
-## Responsive Rules
+**`faq-row`** — Each accordion line in the pricing-page FAQ.
+- Background `{colors.canvas}`, text `{colors.ink}`, type `{typography.body}`, rounded `{rounded.md}`, padding 24px.
 
-At `max-width: 640px`:
+### Navigation
 
-- Bottom nav becomes an agent column plus compact right actions.
-- The right action group stays near the command bar and can scroll horizontally.
-- Side overlays use `left: 54px` and `right: 8px`.
-- The side rail remains visible.
-- Preset dock is centered above the command band with `calc(100vw - 16px)` max width.
+**`top-nav`** — Sticky bar on `{colors.canvas}` with the Framer wordmark left, primary nav links centered, and a `button-secondary` ("Sign in") + `button-primary` ("Get started for free") pair right.
+- Background `{colors.canvas}`, text `{colors.ink}`, type `{typography.body-sm}`, height 56px.
+- Mobile: collapses primary links into a hamburger; the two pill CTAs collapse into a single primary pill on the bar.
 
-Maintain stable dimensions for panels, controls, and docks so hover, loading, and selected states do not shift layout.
+### Footer
 
-## Do
+**`footer`** — Dense link grid on `{colors.canvas}` with the Framer wordmark left and 5–6 columns of caption-sized links.
+- Background `{colors.canvas}`, text `{colors.ink-muted}`, type `{typography.caption}`, padding 64px 32px.
 
-- Build on the existing root CSS tokens.
-- Keep the first screen as the usable market workspace.
-- Use glass edge highlights and subtle blur consistently.
-- Let charts, treemap tiles, and market rows carry the color intensity.
-- Use lucide icons for command and navigation controls.
-- Keep all letter spacing at `0`.
-- Keep panel title chrome hidden until hover/edit mode.
+## Do's and Don'ts
 
-## Do Not
+### Do
 
-- Reintroduce the old personal-finance/credit-score dashboard concept into GOPS.
-- Add a landing-page hero or marketing card stack.
-- Make every panel opaque white.
-- Use saturated blue as the full app background.
-- Use green/red/yellow outside financial state.
-- Add nested cards inside cards for basic layout.
-- Add duplicate local palettes that bypass `styles.css` tokens.
+- Reserve `{colors.primary}` (white) and `{colors.canvas}` (near-black) as the system's two anchor surfaces. Every band of the page chooses one or the other.
+- Push display-size letter-spacing aggressively negative — `{typography.display-xxl}` at -5.5px is the brand signature, not a stylistic accident.
+- Use `{colors.accent-blue}` only for hyperlinks, focus rings, and selected indicators. Never as a background or button fill.
+- Drop one or two `gradient-spotlight-card` variants into a card grid; they are the brand's atmosphere device. Don't overdo it — three or more in the same viewport reads as a moodboard, not a system.
+- Compose every CTA as a pill (`{rounded.pill}`); secondary actions live as charcoal pills, never as bordered ghost buttons.
+- Keep body type Inter Variable with character variants `cv01`, `cv05`, `cv09`, `cv11`, `ss03`, `ss07` enabled — the brand voice depends on them.
+- Use surface lift (canvas → surface-1 → surface-2) to mark hierarchy on dark, not opacity changes on white type.
 
-## Implementation Checklist
+### Don't
 
-Before merging a design change:
+- Don't ship a light-mode marketing page. Framer's identity is dark.
+- Don't introduce mid-tone gray text outside `{colors.ink-muted}`. The hierarchy is binary: `ink` or `ink-muted`.
+- Don't use `{colors.accent-blue}` as a brand fill (e.g., a blue CTA pill). The blue is a signal color, not a surface.
+- Don't square off CTAs. Pill (`{rounded.pill}`) or full circle is the brand vocabulary.
+- Don't reduce the negative letter-spacing on display sizes "for accessibility". The compression is intrinsic to the brand voice; reduce the SIZE if needed, but keep the percentage.
+- Don't apply gradient backgrounds to whole sections. Gradients are CARDS, not section grounds.
+- Don't combine more than one chromatic accent. The palette is monochrome plus one blue plus the gradient family — not "blue, green, and red".
 
-1. Confirm new colors are expressed as root tokens or existing semantic aliases.
-2. Confirm chart/treemap/ontology rendering still reads from the theme bridge when needed.
-3. Check desktop and mobile widths around the `640px` breakpoint.
-4. Verify bottom command controls, side rail menus, and tool docks do not overlap.
-5. Keep `DESIGN.md`, `styles.css`, and theme bridge notes aligned when the visual contract changes.
+## Responsive Behavior
+
+### Breakpoints
+
+| Name | Width | Key Changes |
+|---|---|---|
+| Desktop | 1199px | Default desktop layout |
+| Tablet | 810px | Card grids collapse 4-up → 2-up; nav becomes hamburger |
+| Mobile-Lg | 809px | Pricing comparison table becomes per-tier accordion |
+| Mobile-XS | 98px | Smallest documented breakpoint — single-column everything |
+
+### Touch Targets
+
+- Pill buttons (`button-primary`, `button-secondary`) maintain a minimum 44px tap height across all viewports — combine `{typography.button}` 14px line-height with the documented 10px vertical padding.
+- Circular icon buttons (`button-icon-circular`) are 40px on desktop and grow to 44px on touch viewports.
+- Pricing-tab pills hold ≥40px tap height; below 810px they may collapse into a horizontal-scroll row instead of stacking.
+
+### Collapsing Strategy
+
+- **Nav**: horizontal nav with a centered link group + right-anchored pill pair collapses to a hamburger overlay below 810px. The `button-primary` stays visible on the bar.
+- **Card grids**: the gallery and template-card grids go 2-up on desktop → 1-up on mobile. Gradient spotlight cards retain `{rounded.xxl}` corners at every viewport — they don't bleed.
+- **Pricing comparison table**: collapses into per-tier accordions below 810px to avoid horizontal scroll.
+- **Display type**: `{typography.display-xxl}` 110px scales down toward `{typography.display-lg}` 62px on tablet and `{typography.display-md}` 32px on mobile, preserving the percentage-negative letter-spacing.
+
+### Image Behavior
+
+- Embedded product mockups (browser frames containing live Framer-built sites) maintain their aspect ratio and never crop.
+- Gradient spotlight cards keep their gradient orientations across breakpoints — the gradient direction is part of the brand spec.
+
+## Iteration Guide
+
+1. Focus on ONE component at a time and reference it by its `components:` token name (e.g., `{components.button-primary}`, `{components.gradient-spotlight-card}`).
+2. When introducing a new section on the dark canvas, decide first which surface lift it lives on — `{colors.canvas}` for hero/FAQ, `{colors.surface-1}` for cards, `{colors.surface-2}` for featured cards. The depth choice is the most consequential decision.
+3. Default body to `{typography.body}` with all the documented OpenType variants; reach for `{typography.subhead}` only inside spotlight cards.
+4. Run `npx @google/design.md lint DESIGN.md` after edits — `broken-ref`, `contrast-ratio`, and `orphaned-tokens` warnings flag issues automatically.
+5. Add new variants as separate component entries (`-pressed`, `-featured`, `-selected`) — do not bury them in prose.
+6. Treat `{colors.accent-blue}` as a single-shot signal color: hyperlinks, focus, and selection — that's it. If you find yourself reaching for a second blue, the brand is drifting.
+7. Gradient spotlight cards are scarce by design. One or two per long page is the spec; three is a moodboard.
+
+## Known Gaps
+
+- The exact gradient stops for the spotlight cards are derived from screenshot pixels rather than from CSS variables — the production gradients are likely defined as `linear-gradient` strings on individual elements rather than as design tokens. Treat the documented `{colors.gradient-*}` hex values as base anchors, not as exact gradient specs.
+- Form-field validation / error styling is not visible on the inspected pages because no error states render in the static screenshots.
+- Dark mode is the only mode — no light-mode adaptation is documented because the marketing site does not ship one.
+- The marketplace template detail page returned sparser CSS variable data than the other pages; surface tokens for that page were inferred from the matching home / gallery treatment rather than extracted directly.
