@@ -25,7 +25,12 @@ GOPS v2가 AWS/EKS에서 안전하게 빌드, 배포, 운영되도록 platform�
 - GitHub Actions workflow
 - CI/CD rollout, smoke test, rollback
 
-GitHub Actions는 GitHub 저장소 안의 `.github/workflows/*.yml` 파일로 빌드, 테스트, 배포 같은 자동화를 실행하는 기능이다. 이 프로젝트는 현재 `.github/workflows/deploy-dev.yml`에서 dev/test 배포를 처리하되, push 자동 실행이 아니라 GitHub Actions 화면의 수동 실행 버튼으로만 시작한다.
+기본 dev/test 배포는 `scripts/aws/deploy-dev-local.sh`를 사용한다. 이 스크립트는
+팀원 로컬 컴퓨터에서 Docker build를 실행하지만, 배포 기준은 항상 원격
+`origin/dev` 최신 commit이다. 로컬 미커밋 변경이나 현재 checkout 브랜치는 배포에
+섞이지 않는다. GitHub Actions는 GitHub 저장소 안의 `.github/workflows/*.yml`
+파일로 빌드, 테스트, 배포 같은 자동화를 실행하는 기능이며, 이 프로젝트에서는
+`.github/workflows/deploy-dev.yml`을 비상용 수동 배포 경로로 유지한다.
 
 CI/CD는 Continuous Integration/Continuous Delivery의 줄임말이다. 코드를 합치고 검증하고 배포하는 과정을 자동화한다는 뜻이다.
 
@@ -69,32 +74,37 @@ CI/CD는 Continuous Integration/Continuous Delivery의 줄임말이다. 코드�
 - `29.4 Pod And Job Map`
 - `29.5 Platform Contracts To Add Or Keep Current`
 
-## Existing GitHub Actions Flow
+## Local Dev Deploy Flow
 
-현재 dev/test 배포 workflow는 `.github/workflows/deploy-dev.yml`을 기준으로 한다.
+현재 기본 dev/test 배포는 `scripts/aws/deploy-dev-local.sh`를 기준으로 한다.
 
 흐름:
 
-1. GitHub Actions 화면에서 `.github/workflows/deploy-dev.yml`을 `Run workflow`로 수동 실행한다. `workflow_dispatch`는 GitHub Actions의 수동 실행 트리거이며, branch push는 배포를 시작하지 않는다.
-2. `scripts/aws/detect-changed-services.sh`가 변경된 service를 감지한다. `services` 입력값을 비우면 같은 branch의 마지막 성공 배포 workflow SHA부터 현재 SHA까지의 diff로 자동 감지하고, `frontend,backend`처럼 직접 입력하면 그 service만 선택한다. `all`을 입력하면 전체 app image를 강제로 다시 빌드한다.
-3. `apply_platform_manifests=true`이면 전용 NodePool과 in-cluster platform
+1. 팀원이 로컬에서 `AWS_PROFILE=gops-dev ./scripts/aws/deploy-dev-local.sh`를 실행한다.
+2. 스크립트가 `git fetch origin dev`로 원격 최신 commit을 가져오고, 임시
+   `git worktree`에서 그 SHA를 checkout한다.
+3. EKS `ConfigMap/gops-dev-deploy-state`의 `lastSuccessfulSha`부터
+   `origin/dev`까지의 diff를 `scripts/aws/detect-changed-services.sh`가 분석한다.
+   상태가 없으면 첫 실행으로 보고 전체 app image를 선택한다.
+4. `FORCE_SERVICES=frontend,backend`를 넣으면 그 service만 선택하고,
+   `FORCE_SERVICES=all`을 넣으면 전체 app image를 강제로 다시 빌드한다.
+5. `APPLY_PLATFORM_MANIFESTS=true`이면 전용 NodePool과 in-cluster platform
    manifest를 함께 적용할 준비를 한다. 기본값은 `false`라 일반 앱 배포는
    platform을 건드리지 않는다.
-4. AWS OIDC role을 assume한다.
-5. ECR repository를 확인하거나 생성한다.
-6. `frontend`가 선택되면 `scripts/aws/load-logodev-build-env.sh`가 AWS Secrets Manager `icon/logodev`에서 `LOGODEV_PUB_KEY`만 읽어 frontend build env에 넣는다.
-7. Amazon ECR에 로그인한다.
-8. Docker Buildx를 설정한다.
-9. commit SHA 기반 image tag를 만든다.
-10. `scripts/aws/build-and-push-images.sh`로 선택된 image를 build/push한다.
-11. `aws eks update-kubeconfig`로 cluster 접근을 설정한다.
-12. `apply_platform_manifests=true`이면 `infra/k8s/base/platform`과 GraphDB
+6. 팀원별 AWS profile로 `aws sts get-caller-identity`와
+   `aws eks update-kubeconfig`를 실행해 cluster 접근을 설정한다.
+7. ECR repository를 확인하거나 생성한다.
+8. `frontend`가 선택되면 `scripts/aws/load-logodev-build-env.sh`가 AWS Secrets Manager `icon/logodev`에서 `LOGODEV_PUB_KEY`만 읽어 frontend build env에 넣는다.
+9. Amazon ECR에 로그인한다.
+10. commit SHA 기반 image tag를 만든다.
+11. `scripts/aws/build-and-push-images.sh`로 선택된 image를 로컬 Docker에서 build/push한다.
+12. `APPLY_PLATFORM_MANIFESTS=true`이면 `infra/k8s/base/platform`과 GraphDB
     StatefulSet을 server-side dry-run 후 apply하고, StatefulSet rollout을
     기다린다.
 13. `scripts/aws/validate-dedicated-platform.sh`가 `app-agent`, `cache-db`,
     `streaming`, `graphdb`, `clickhouse`, `batch` NodePool과 Stateful pod
     배치를 확인한다.
-14. `scripts/aws/update-ci-image-tags.sh`가 CI overlay image tag를 갱신한다.
+14. 임시 worktree 안에서 `scripts/aws/update-ci-image-tags.sh`가 CI overlay image tag를 갱신한다. 원래 작업 폴더의 tracked manifest는 수정하지 않는다.
 15. `scripts/aws/enable-ci-api-workers.sh`가 backend image 선택 여부에 따라
     `alert-evaluator`와 `recommendation-worker` replica를 새 backend image로
     켜거나, 현재 live replica 수로 보존한다.
@@ -104,7 +114,12 @@ CI/CD는 Continuous Integration/Continuous Delivery의 줄임말이다. 코드�
     rollout을 확인한다.
 19. `market-storage`가 선택된 배포에서는 `scripts/aws/run-news-cache-rebuild-jobs.sh`가 뉴스 Redis cache rebuild Job을 실행한다.
 20. frontend/backend public endpoint smoke test를 실행한다.
-21. 실패하면 `kubectl rollout undo`로 rollback한다.
+21. 성공하면 `gops-dev-deploy-state`에 target SHA, 서비스 목록, 배포자, 시간을 기록한다.
+22. 실패하면 `kubectl rollout undo`로 rollback하고 deploy state는 갱신하지 않는다.
+
+GitHub Actions `.github/workflows/deploy-dev.yml`은 비상용 수동 배포 경로다.
+`workflow_dispatch`는 GitHub Actions의 수동 실행 트리거이며, branch push는 배포를
+시작하지 않는다.
 
 ECR은 Amazon Elastic Container Registry의 줄임말이다. Docker image를 저장하는 AWS registry다. GitHub Actions에서 image를 build한 뒤 ECR에 push하고, EKS pod는 그 image를 pull해서 실행한다.
 
