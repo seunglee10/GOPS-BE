@@ -109,10 +109,17 @@ gops_deployments_for_service() {
 
   case "${key}" in
     agent-orchestrator)
-      printf '%s\n' agent-event-detector agent-notification-publisher agent-orchestrator
+      printf '%s\n' \
+        agent-analysis-worker \
+        agent-delivery-gateway \
+        agent-event-detector \
+        agent-intent-classifier \
+        agent-notification-publisher \
+        agent-orchestrator \
+        deep-analysis-worker
       ;;
     backend)
-      printf '%s\n' gops-backend
+      printf '%s\n' alert-evaluator gops-backend recommendation-worker
       ;;
     frontend)
       printf '%s\n' gops-frontend
@@ -127,7 +134,14 @@ gops_deployments_for_service() {
       printf '%s\n' alfaka-market-processor alfaka-market-quote-processor alfaka-feed-session-controller alfaka-subscription-controller
       ;;
     market-storage)
-      printf '%s\n' alfaka-clickhouse-loader alfaka-clickhouse-tick-loader alfaka-s3-sink alfaka-raw-s3-archive alfaka-news-intelligence-worker alfaka-news-daily-summary-worker
+      printf '%s\n' \
+        alfaka-chart-derived-data-worker \
+        alfaka-clickhouse-loader \
+        alfaka-clickhouse-tick-loader \
+        alfaka-news-daily-summary-worker \
+        alfaka-news-intelligence-worker \
+        alfaka-raw-s3-archive \
+        alfaka-s3-sink
       ;;
     order-worker)
       printf '%s\n' order-outbox-publisher

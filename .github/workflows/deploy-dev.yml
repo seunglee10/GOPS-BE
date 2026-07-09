@@ -17,6 +17,11 @@ on:
         required: false
         default: false
         type: boolean
+      apply_platform_manifests:
+        description: "Apply dedicated NodePools and in-cluster platform manifests before app workloads. Does not delete PVCs."
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -33,6 +38,7 @@ env:
   DOCKER_PLATFORM: linux/amd64
   EKS_CLUSTER_NAME: gops-eks-cluster
   K8S_NAMESPACE: alfaka-market-data
+  PLATFORM_KUSTOMIZE_OVERLAY: infra/k8s/base/platform
   KUSTOMIZE_OVERLAY: infra/k8s/overlays/aws-incluster-app-ci
   ECR_FRONTEND_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-frontend
   ECR_API_SERVER_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-api-server
@@ -71,7 +77,7 @@ jobs:
         run: echo "No app service changes detected; skipping EKS app deploy."
 
       - name: Configure AWS credentials
-        if: steps.changes.outputs.has_services == 'true'
+        if: steps.changes.outputs.has_services == 'true' || github.event.inputs.apply_platform_manifests == 'true'
         uses: aws-actions/configure-aws-credentials@v6.1.0
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
@@ -123,18 +129,54 @@ jobs:
         run: ./scripts/aws/build-and-push-images.sh
 
       - name: Set up kubectl
-        if: steps.changes.outputs.has_services == 'true'
+        if: steps.changes.outputs.has_services == 'true' || github.event.inputs.apply_platform_manifests == 'true'
         uses: azure/setup-kubectl@v4
 
       - name: Configure kubeconfig
-        if: steps.changes.outputs.has_services == 'true'
+        if: steps.changes.outputs.has_services == 'true' || github.event.inputs.apply_platform_manifests == 'true'
         run: aws eks update-kubeconfig --name "$EKS_CLUSTER_NAME" --region "$AWS_REGION"
+
+      - name: Server-side dry run platform manifests
+        if: github.event.inputs.apply_platform_manifests == 'true'
+        run: |
+          kubectl apply -k "$PLATFORM_KUSTOMIZE_OVERLAY" --dry-run=server
+          kubectl apply \
+            -f infra/k8s/base/app/service-graphdb.yaml \
+            -f infra/k8s/base/app/statefulset-graphdb.yaml \
+            --dry-run=server
+
+      - name: Apply dedicated platform manifests
+        if: github.event.inputs.apply_platform_manifests == 'true'
+        run: |
+          kubectl apply -k "$PLATFORM_KUSTOMIZE_OVERLAY"
+          kubectl apply \
+            -f infra/k8s/base/app/service-graphdb.yaml \
+            -f infra/k8s/base/app/statefulset-graphdb.yaml
+
+      - name: Wait for dedicated platform rollout
+        if: github.event.inputs.apply_platform_manifests == 'true'
+        run: |
+          for statefulset in clickhouse kafka postgres redis graphdb; do
+            kubectl rollout status "statefulset/${statefulset}" \
+              -n "$K8S_NAMESPACE" \
+              --timeout=900s
+          done
+
+      - name: Validate dedicated platform
+        if: steps.changes.outputs.has_services == 'true' || github.event.inputs.apply_platform_manifests == 'true'
+        run: ./scripts/aws/validate-dedicated-platform.sh
 
       - name: Point selected CI images at this commit image tag
         if: steps.changes.outputs.has_services == 'true'
         env:
           SERVICES: ${{ steps.changes.outputs.services }}
         run: ./scripts/aws/update-ci-image-tags.sh
+
+      - name: Sync API image worker replicas
+        if: steps.changes.outputs.has_services == 'true'
+        env:
+          SERVICES: ${{ steps.changes.outputs.services }}
+        run: ./scripts/aws/enable-ci-api-workers.sh
 
       - name: Run order database migrations
         if: steps.changes.outputs.has_services == 'true' && github.event.inputs.run_order_migrations == 'true'

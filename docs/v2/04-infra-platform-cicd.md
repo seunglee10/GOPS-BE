@@ -77,21 +77,34 @@ CI/CD는 Continuous Integration/Continuous Delivery의 줄임말이다. 코드�
 
 1. GitHub Actions 화면에서 `.github/workflows/deploy-dev.yml`을 `Run workflow`로 수동 실행한다. `workflow_dispatch`는 GitHub Actions의 수동 실행 트리거이며, branch push는 배포를 시작하지 않는다.
 2. `scripts/aws/detect-changed-services.sh`가 변경된 service를 감지한다. `services` 입력값을 비우면 같은 branch의 마지막 성공 배포 workflow SHA부터 현재 SHA까지의 diff로 자동 감지하고, `frontend,backend`처럼 직접 입력하면 그 service만 선택한다. `all`을 입력하면 전체 app image를 강제로 다시 빌드한다.
-3. AWS OIDC role을 assume한다.
-4. ECR repository를 확인하거나 생성한다.
-5. `frontend`가 선택되면 `scripts/aws/load-logodev-build-env.sh`가 AWS Secrets Manager `icon/logodev`에서 `LOGODEV_PUB_KEY`만 읽어 frontend build env에 넣는다.
-6. Amazon ECR에 로그인한다.
-7. Docker Buildx를 설정한다.
-8. commit SHA 기반 image tag를 만든다.
-9. `scripts/aws/build-and-push-images.sh`로 선택된 image를 build/push한다.
-10. `aws eks update-kubeconfig`로 cluster 접근을 설정한다.
-11. `scripts/aws/update-ci-image-tags.sh`가 CI overlay image tag를 갱신한다.
-12. `kubectl apply -k` server-side dry run을 실행한다.
-13. `kubectl apply -k`로 app workload를 배포한다.
-14. `kubectl rollout status`로 rollout을 확인한다.
-15. `market-storage`가 선택된 배포에서는 `scripts/aws/run-news-cache-rebuild-jobs.sh`가 뉴스 Redis cache rebuild Job을 실행한다.
-16. frontend/backend public endpoint smoke test를 실행한다.
-17. 실패하면 `kubectl rollout undo`로 rollback한다.
+3. `apply_platform_manifests=true`이면 전용 NodePool과 in-cluster platform
+   manifest를 함께 적용할 준비를 한다. 기본값은 `false`라 일반 앱 배포는
+   platform을 건드리지 않는다.
+4. AWS OIDC role을 assume한다.
+5. ECR repository를 확인하거나 생성한다.
+6. `frontend`가 선택되면 `scripts/aws/load-logodev-build-env.sh`가 AWS Secrets Manager `icon/logodev`에서 `LOGODEV_PUB_KEY`만 읽어 frontend build env에 넣는다.
+7. Amazon ECR에 로그인한다.
+8. Docker Buildx를 설정한다.
+9. commit SHA 기반 image tag를 만든다.
+10. `scripts/aws/build-and-push-images.sh`로 선택된 image를 build/push한다.
+11. `aws eks update-kubeconfig`로 cluster 접근을 설정한다.
+12. `apply_platform_manifests=true`이면 `infra/k8s/base/platform`과 GraphDB
+    StatefulSet을 server-side dry-run 후 apply하고, StatefulSet rollout을
+    기다린다.
+13. `scripts/aws/validate-dedicated-platform.sh`가 `app-agent`, `cache-db`,
+    `streaming`, `graphdb`, `clickhouse`, `batch` NodePool과 Stateful pod
+    배치를 확인한다.
+14. `scripts/aws/update-ci-image-tags.sh`가 CI overlay image tag를 갱신한다.
+15. `scripts/aws/enable-ci-api-workers.sh`가 backend image 선택 여부에 따라
+    `alert-evaluator`와 `recommendation-worker` replica를 새 backend image로
+    켜거나, 현재 live replica 수로 보존한다.
+16. `kubectl apply -k` server-side dry run을 실행한다.
+17. `kubectl apply -k`로 app workload를 배포한다.
+18. `kubectl rollout status`로 선택된 image가 사용하는 모든 Deployment
+    rollout을 확인한다.
+19. `market-storage`가 선택된 배포에서는 `scripts/aws/run-news-cache-rebuild-jobs.sh`가 뉴스 Redis cache rebuild Job을 실행한다.
+20. frontend/backend public endpoint smoke test를 실행한다.
+21. 실패하면 `kubectl rollout undo`로 rollback한다.
 
 ECR은 Amazon Elastic Container Registry의 줄임말이다. Docker image를 저장하는 AWS registry다. GitHub Actions에서 image를 build한 뒤 ECR에 push하고, EKS pod는 그 image를 pull해서 실행한다.
 
@@ -108,6 +121,9 @@ IRSA는 IAM Roles for Service Accounts의 줄임말이다. EKS pod가 AWS creden
 - EKS stateful clean rebuild는 `docs/EKS_DATA_PRESERVING_REBUILD_PLAN.md`를
   따른다. Postgres, ClickHouse, GraphDB 데이터 손실은 허용하지 않으며,
   Redis/Kafka reset도 component owner의 명시 승인 없이는 기본값이 아니다.
+- GitHub Actions의 `apply_platform_manifests`는 PVC 삭제/복원을 수행하지
+  않는다. 승인된 데이터 보존 작업 이후 dedicated NodePool/StatefulSet
+  manifest를 현재 상태로 수렴시키는 용도다.
 - KIS/Alpaca/Google OAuth/OpenAI credential은 image나 ConfigMap에 넣지 않는다.
 - secret은 AWS Secrets Manager 또는 Kubernetes Secret으로 주입한다.
 - production namespace에서도 KIS demo endpoint만 허용한다.

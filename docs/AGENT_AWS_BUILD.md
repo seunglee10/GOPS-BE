@@ -281,9 +281,17 @@ infra/k8s/overlays/aws-incluster-app-rebuild/kustomization.yaml
 GitHub Actions uses `aws-incluster-app-ci` for manual dev/test deploys. That CI
 overlay deliberately deletes the GraphDB StatefulSet from the rendered app
 bundle so immutable PVC template changes cannot break ordinary app deploys.
-It does not apply platform NodePools or perform the clean rebuild. During the
-dedicated rebuild, apply platform first, restore and validate stateful services,
-then apply app workloads after the `app-agent` NodePool exists.
+By default it does not apply platform NodePools or perform the clean rebuild.
+Set the workflow input `apply_platform_manifests=true` only after the
+data-preserving rebuild has been approved or completed; that path applies the
+dedicated NodePools, in-cluster platform StatefulSets, and GraphDB StatefulSet
+without deleting PVCs, then validates stateful pod placement before app rollout.
+
+The CI overlay also patches `alert-evaluator` and `recommendation-worker`
+replicas dynamically during the workflow. When `backend` is selected, it enables
+them for the freshly built API image. When `backend` is not selected, it
+preserves their current live replica counts so unrelated app deploys do not
+silently turn those workers on or off.
 
 ## Kafka
 
