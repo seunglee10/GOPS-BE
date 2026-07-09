@@ -16,6 +16,8 @@ sys.modules.setdefault("botocore.config", types.SimpleNamespace(Config=lambda **
 sys.modules.setdefault("redis", types.SimpleNamespace(from_url=lambda *args, **kwargs: None))
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(REPO_ROOT / "systems" / "market-data" / "shared"))
+sys.path.insert(0, str(REPO_ROOT / "systems" / "api-server" / "pods" / "api-server" / "gops-backend"))
 
 from alfaka.alpaca.subscription import (
     build_subscription_request,
