@@ -1806,6 +1806,8 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             "symbol": "NVDA",
             "interval": "1m",
             "candles": make_fill_candles(30),
+            "availableFrom": "2026-06-25T12:40:00.000Z",
+            "availableTo": "2026-06-25T14:00:00.000Z",
             "_sourceTrace": {
                 "redis": {"checked": True, "hit": True, "rowCount": 30},
                 "clickhouse": {"checked": False, "hit": False, "rowCount": 0},
@@ -1835,6 +1837,8 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             "symbol": "AMD",
             "interval": "1m",
             "candles": make_fill_candles(30),
+            "availableFrom": "2026-06-25T12:40:00.000Z",
+            "availableTo": "2026-06-25T14:00:00.000Z",
             "_sourceTrace": {
                 "redis": {"checked": True, "hit": False, "rowCount": 0},
                 "clickhouse": {"checked": True, "hit": True, "rowCount": 30},
@@ -1858,6 +1862,56 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertTrue(result["fill"]["sources"]["clickhouse"]["hit"])
         self.assertFalse(result["fill"]["sources"]["s3"]["checked"])
         self.assertFalse(result["fill"]["sources"]["alpaca"]["checked"])
+
+    def test_on_demand_fill_queues_before_window_shortfall_even_when_limit_is_satisfied(self):
+        start = datetime(2026, 7, 6, 15, 0, tzinfo=timezone.utc)
+        candles = [
+            {
+                "timestamp": (start + timedelta(minutes=index)).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                "open": 100 + index,
+                "high": 101 + index,
+                "low": 99 + index,
+                "close": 100.5 + index,
+                "volume": 1000 + index,
+                "marketSession": "regular",
+            }
+            for index in range(20)
+        ]
+        payload = {
+            "symbol": "MU",
+            "interval": "1m",
+            "sourceInterval": "1m",
+            "candles": candles,
+            "returnedCount": 20,
+            "storedCandleCount": 20,
+            "availableFrom": "2026-07-06T15:00:00.000Z",
+            "availableTo": "2026-07-06T15:19:00.000Z",
+            "missingRanges": [],
+            "_sourceTrace": {
+                "redis": {"checked": True, "hit": True, "rowCount": 20},
+                "clickhouse": {"checked": True, "hit": True, "rowCount": 20},
+            },
+        }
+        service = RecordingOnDemandFillService(s3_result=False, alpaca_result=False)
+
+        result = service.fill_if_needed(
+            symbol="MU",
+            interval="1m",
+            limit=20,
+            before="2026-07-06T15:20:00.000Z",
+            from_time=None,
+            to_time=None,
+            payload=payload,
+        )
+
+        self.assertEqual(result["fill"]["status"], "partial")
+        self.assertEqual(len(service.queued), 1)
+        self.assertIn({
+            "start": "2026-07-06T14:00:00.000Z",
+            "end": "2026-07-06T15:00:00.000Z",
+            "missingCount": None,
+        }, service.queued[0]["fill_ranges"])
+        self.assertTrue(result["fill"]["backgroundFill"]["queued"])
 
     def test_on_demand_fill_does_not_queue_for_satisfied_tiny_live_window(self):
         payload = {

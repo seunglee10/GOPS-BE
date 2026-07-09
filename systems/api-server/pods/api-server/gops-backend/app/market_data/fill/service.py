@@ -109,19 +109,32 @@ class OnDemandFillService:
             from_time=from_time,
             to_time=to_time,
         )
+        range_query = bool(before or from_time or to_time)
+        requested_shortfalls = (
+            requested_window_shortfall_ranges(payload, requested_start, requested_end, interval)
+            if range_query
+            else []
+        )
         trace = self._initial_trace(symbol, interval, source_interval, limit, requested_start, requested_end)
         self._record_initial_store_hits(trace, payload)
         renderability = self._renderability(payload, interval, source_interval)
         trace["renderable"] = bool(renderability.get("renderable"))
         trace["gapRanges"] = renderability.get("gapRanges") or []
 
-        if not self._needs_fill(payload, interval, source_interval, limit):
+        if not self._needs_fill(payload, interval, source_interval, limit, requested_shortfalls):
             trace["status"] = "not_needed"
             trace["durationMs"] = elapsed_ms(started)
             payload["fill"] = trace
             return payload
 
-        fill_ranges = self._fill_ranges(payload, requested_start, requested_end, interval, source_interval, limit)
+        fill_ranges = self._fill_ranges(
+            payload,
+            requested_start,
+            requested_end,
+            interval,
+            source_interval,
+            requested_shortfalls,
+        )
         trace["missingRanges"] = fill_ranges
         trace["feedRoutes"] = historical_fill_routes(
             symbol,
@@ -345,11 +358,20 @@ class OnDemandFillService:
             trace["sources"]["redis"].update({"checked": True, "hit": row_count > 0, "rowCount": row_count})
         trace["sources"]["clickhouse"].update({"checked": True, "hit": row_count > 0, "rowCount": row_count})
 
-    def _needs_fill(self, payload: dict[str, Any], interval: str, source_interval: str, limit: int) -> bool:
+    def _needs_fill(
+        self,
+        payload: dict[str, Any],
+        interval: str,
+        source_interval: str,
+        limit: int,
+        requested_shortfalls: list[dict[str, Any]],
+    ) -> bool:
         candles = payload.get("candles") or []
         if payload.get("missingRanges"):
             return True
         if opportunistic_intraday_gap_ranges(interval, candles):
+            return True
+        if requested_shortfalls:
             return True
         if self._requested_tiny_window_is_satisfied(payload, interval, limit):
             return False
@@ -379,7 +401,7 @@ class OnDemandFillService:
         requested_end: str,
         interval: str,
         source_interval: str,
-        limit: int,
+        requested_shortfalls: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
         ranges = list(payload.get("missingRanges") or [])
         ranges.extend(payload.get("gapRanges") or [])
@@ -388,7 +410,7 @@ class OnDemandFillService:
         ranges.extend(coverage.get("gapRanges") or [])
         ranges.extend(self._renderability(payload, interval, source_interval).get("gapRanges") or [])
         ranges.extend(opportunistic_intraday_gap_ranges(interval, payload.get("candles") or []))
-        ranges.extend(target_shortfall_ranges(payload, requested_start, limit))
+        ranges.extend(requested_shortfalls)
         valid = unique_ranges([
             {"start": item["start"], "end": item["end"], "missingCount": item.get("missingCount")}
             for item in ranges
@@ -818,22 +840,37 @@ def opportunistic_intraday_gap_ranges(interval: str, candles: list[dict[str, Any
     return ranges
 
 
-def target_shortfall_ranges(payload: dict[str, Any], requested_start: str, limit: int) -> list[dict[str, Any]]:
+def requested_window_shortfall_ranges(
+    payload: dict[str, Any],
+    requested_start: str,
+    requested_end: str,
+    interval: str,
+) -> list[dict[str, Any]]:
     candles = payload.get("candles") or []
     if not candles:
         return []
-    returned = int(payload.get("returnedCount") or len(candles))
-    if returned >= limit:
-        return []
     start = safe_parse_time(requested_start)
+    end = safe_parse_time(requested_end)
     available_from = safe_parse_time(payload.get("availableFrom") or candles[0].get("timestamp"))
-    if start is None or available_from is None or start >= available_from:
+    available_to = safe_parse_time(payload.get("availableTo") or candles[-1].get("timestamp"))
+    if start is None or end is None or available_from is None or available_to is None:
         return []
-    return [{
-        "start": iso_utc(start),
-        "end": iso_utc(available_from),
-        "missingCount": None,
-    }]
+
+    ranges = []
+    if start < available_from:
+        ranges.append({
+            "start": iso_utc(start),
+            "end": iso_utc(min(available_from, end)),
+            "missingCount": None,
+        })
+    available_to_coverage_end = available_to + timedelta(seconds=interval_seconds(interval))
+    if available_to_coverage_end < end:
+        ranges.append({
+            "start": iso_utc(max(available_to_coverage_end, start)),
+            "end": iso_utc(end),
+            "missingCount": None,
+        })
+    return [item for item in ranges if item["start"] < item["end"]]
 
 
 def next_us_equity_session_boundary(value: datetime) -> datetime:
