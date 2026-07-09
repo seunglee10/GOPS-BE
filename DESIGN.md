@@ -22,9 +22,9 @@ colors:
   canvas: "#ffffff"
   canvas-oklch: "oklch(100% 0 0)"
   canvas-mid: "#fbfdff"
-  canvas-mid-oklch: "oklch(99.3% 0.004 247)"
-  canvas-end: "#dbeaff"
-  canvas-end-oklch: "oklch(96.4% 0.026 250)"
+  canvas-mid-oklch: "oklch(99.6% 0.002 247)"
+  canvas-end: "#eff6ff"
+  canvas-end-oklch: "oklch(98.4% 0.010 250)"
   panel-glass: "rgba(255, 255, 255, 0.05)"
   panel-glass-strong: "rgba(255, 255, 255, 0.08)"
   glass-border: "rgba(255, 255, 255, 0.30)"
@@ -32,6 +32,8 @@ colors:
   glass-edge-soft: "rgba(255, 255, 255, 0.30)"
   hairline: "rgba(10, 11, 13, 0.08)"
   hairline-strong: "rgba(10, 11, 13, 0.14)"
+  button-surface: "transparent / same as background"
+  button-pressed-shadow: "inset 7px 7px 7px rgba(184, 198, 216, 0.50), inset -7px -7px 7px rgba(255, 255, 255, 0.92)"
   positive: "#05b169"
   positive-glow: "#6cff5f"
   negative: "#cf202f"
@@ -64,7 +66,8 @@ typography:
 
 layout:
   gutter: "24px"
-  top-nav-height: "64px"
+  top-nav-height: "48px"
+  workspace-top-inset: "52px"
   bottom-nav-height: "64px"
   bottom-control-size: "36px"
   surface-radius: "16px"
@@ -78,16 +81,19 @@ layout:
   mobile-breakpoint: "640px"
 
 effects:
-  app-canvas: "White canvas with a low blue horizon glow: layered bottom-centered radial gradients over #ffffff -> #fbfdff -> #dbeaff."
+  app-canvas: "White canvas with a very low blue horizon glow: layered bottom-centered radial gradients over #ffffff -> #fbfdff -> #eff6ff."
   glass-surface:
     background: "top white edge gradient + left white edge gradient + panel glass"
     border: "1px solid rgba(255, 255, 255, 0.30)"
     backdropFilter: "blur(10px)"
-    boxShadow: "0 8px 32px rgba(10, 11, 13, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.50), inset 0 -1px 0 rgba(255, 255, 255, 0.10), inset 0 0 4px 2px rgba(255, 255, 255, 0.20)"
+    boxShadow: "7px 7px 7px rgba(184, 198, 216, 0.48), inset 0 1px 0 rgba(255, 255, 255, 0.50), inset 0 -1px 0 rgba(255, 255, 255, 0.10), inset 0 0 4px 2px rgba(255, 255, 255, 0.20)"
   strong-glass:
     background: "same edge treatment over rgba(255, 255, 255, 0.08)"
   bottom-command-band:
     background: "transparent-to-white vertical gradient with blur(18px); chrome inside the band remains mostly transparent."
+  command-buttons:
+    default: "No visible fill or raised shadow; button blends into the background."
+    active: "Same background with inset 7px paired shadows, creating a pressed control state."
 ---
 
 ## Overview
