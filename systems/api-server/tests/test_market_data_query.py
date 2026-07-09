@@ -1928,6 +1928,53 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertFalse(result["fill"]["sources"]["s3"]["checked"])
         self.assertFalse(result["fill"]["sources"]["alpaca"]["checked"])
 
+    def test_on_demand_fill_queues_target_shortfall_with_sparse_gap(self):
+        candles = [
+            {"timestamp": f"2026-07-02T{hour:02d}:00:00.000Z"}
+            for hour in range(13, 21)
+        ]
+        payload = {
+            "symbol": "MSFT",
+            "interval": "1h",
+            "sourceInterval": "1h",
+            "candles": candles,
+            "returnedCount": len(candles),
+            "storedCandleCount": len(candles),
+            "availableFrom": "2026-07-02T13:00:00.000Z",
+            "gapRanges": [
+                {"start": "2026-07-06T15:00:00.000Z", "end": "2026-07-06T18:00:00.000Z", "missingCount": 3}
+            ],
+            "_sourceTrace": {
+                "redis": {"checked": True, "hit": False, "rowCount": 0},
+                "clickhouse": {"checked": True, "hit": True, "rowCount": len(candles)},
+            },
+        }
+        service = RecordingOnDemandFillService(s3_result=False, alpaca_result=False)
+
+        result = service.fill_if_needed(
+            symbol="MSFT",
+            interval="1h",
+            limit=48,
+            before=None,
+            from_time="2026-07-01T06:00:00.000Z",
+            to_time="2026-07-09T06:00:00.000Z",
+            payload=payload,
+        )
+
+        self.assertEqual(result["fill"]["status"], "partial")
+        self.assertEqual(len(service.queued), 1)
+        fill_ranges = service.queued[0]["fill_ranges"]
+        self.assertIn({
+            "start": "2026-07-01T06:00:00.000Z",
+            "end": "2026-07-02T13:00:00.000Z",
+            "missingCount": None,
+        }, fill_ranges)
+        self.assertIn({
+            "start": "2026-07-06T15:00:00.000Z",
+            "end": "2026-07-06T18:00:00.000Z",
+            "missingCount": 3,
+        }, fill_ranges)
+
     def test_on_demand_fill_disables_foreground_alpaca_by_default(self):
         payload = {
             "symbol": "BAC",

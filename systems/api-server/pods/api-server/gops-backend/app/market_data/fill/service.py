@@ -121,7 +121,7 @@ class OnDemandFillService:
             payload["fill"] = trace
             return payload
 
-        fill_ranges = self._fill_ranges(payload, requested_start, requested_end, interval, source_interval)
+        fill_ranges = self._fill_ranges(payload, requested_start, requested_end, interval, source_interval, limit)
         trace["missingRanges"] = fill_ranges
         trace["feedRoutes"] = historical_fill_routes(
             symbol,
@@ -147,7 +147,10 @@ class OnDemandFillService:
             source_interval = normalize_chart_interval(payload.get("sourceInterval") or interval)
             trace["sourceInterval"] = source_interval
             trace["minimumRenderableSourceBars"] = minimum_renderable_source_bars(source_interval)
-            trace["renderable"] = self._is_renderable(payload, interval, source_interval)
+            post_renderability = self._renderability(payload, interval, source_interval)
+            trace["renderable"] = bool(post_renderability.get("renderable"))
+            trace["gapRanges"] = post_renderability.get("gapRanges") or []
+            trace["missingRanges"] = trace["gapRanges"]
             trace["backgroundFill"] = self._enqueue_background_fill(
                 symbol=symbol,
                 interval=interval,
@@ -376,6 +379,7 @@ class OnDemandFillService:
         requested_end: str,
         interval: str,
         source_interval: str,
+        limit: int,
     ) -> list[dict[str, Any]]:
         ranges = list(payload.get("missingRanges") or [])
         ranges.extend(payload.get("gapRanges") or [])
@@ -384,6 +388,7 @@ class OnDemandFillService:
         ranges.extend(coverage.get("gapRanges") or [])
         ranges.extend(self._renderability(payload, interval, source_interval).get("gapRanges") or [])
         ranges.extend(opportunistic_intraday_gap_ranges(interval, payload.get("candles") or []))
+        ranges.extend(target_shortfall_ranges(payload, requested_start, limit))
         valid = unique_ranges([
             {"start": item["start"], "end": item["end"], "missingCount": item.get("missingCount")}
             for item in ranges
@@ -811,6 +816,24 @@ def opportunistic_intraday_gap_ranges(interval: str, candles: list[dict[str, Any
             "missingCount": missing_count,
         })
     return ranges
+
+
+def target_shortfall_ranges(payload: dict[str, Any], requested_start: str, limit: int) -> list[dict[str, Any]]:
+    candles = payload.get("candles") or []
+    if not candles:
+        return []
+    returned = int(payload.get("returnedCount") or len(candles))
+    if returned >= limit:
+        return []
+    start = safe_parse_time(requested_start)
+    available_from = safe_parse_time(payload.get("availableFrom") or candles[0].get("timestamp"))
+    if start is None or available_from is None or start >= available_from:
+        return []
+    return [{
+        "start": iso_utc(start),
+        "end": iso_utc(available_from),
+        "missingCount": None,
+    }]
 
 
 def next_us_equity_session_boundary(value: datetime) -> datetime:
