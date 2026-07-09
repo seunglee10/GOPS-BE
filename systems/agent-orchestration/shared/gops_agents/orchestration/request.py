@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 from typing import Any
 
@@ -7,6 +8,7 @@ from ..contracts import MarketEvent, stable_id, utc_now_iso
 from ..intent_understanding import build_query_understanding, fallback_news_topic
 from ..operations import build_agent_operation_ir, maybe_plan_operation_ir, normalize_operation_references
 from ..query_understanding import is_supported_company_symbol, relationship_symbols_for_context, supported_company_catalog_payload
+from ..query_understanding.seeds import COMPANY_SYMBOL_ALIASES
 from ..retrieval.snapshots import runtime_policy_from_env
 from ..roles import AgentContext
 from ..runtime import RuntimeRunContext
@@ -68,6 +70,7 @@ def normalize_request_state(state: dict[str, Any]) -> dict[str, Any]:
     query_understanding.newsSymbols = list(news_topic["symbols"]) if news_topic else []
     query_understanding_payload = query_understanding.to_dict()
     query_understanding_payload = apply_chart_action_ui_task(request, query_understanding_payload, symbol)
+    query_understanding_payload = apply_chart_ui_task_symbols(request, query_understanding_payload, symbol, intent)
     query_understanding_payload["subjectValidation"] = dict(subject_validation)
     operation_ir = build_agent_operation_ir(
         intent=intent,
@@ -177,6 +180,117 @@ def apply_chart_action_ui_task(
     next_payload["resolvedSymbol"] = target_symbol
     next_payload["resolvedSymbolSource"] = "chart_shortcut"
     return next_payload
+
+
+def apply_chart_ui_task_symbols(
+    request: dict[str, Any],
+    query_understanding: dict[str, Any],
+    symbol: str,
+    intent: str,
+) -> dict[str, Any]:
+    existing_tasks = query_understanding.get("uiTasks") if isinstance(query_understanding.get("uiTasks"), list) else []
+    if not existing_tasks:
+        return query_understanding
+    chart_task_indexes = [
+        index
+        for index, task in enumerate(existing_tasks)
+        if isinstance(task, dict) and task.get("targetPanelType") == "chart" and str(task.get("action") or "") in {"open", "focus"}
+    ]
+    if not chart_task_indexes:
+        return query_understanding
+
+    symbols = chart_symbols_from_intent(intent)
+    request_symbol = normalize_symbol(request.get("chartTargetSymbol") or symbol)
+    if request_symbol and request_symbol != "UNKNOWN" and request_symbol not in symbols:
+        symbols.append(request_symbol)
+    symbols = unique_symbols(symbols)
+    add_signal = chart_add_signal(intent)
+
+    next_tasks = list(existing_tasks)
+    if len(symbols) >= 2:
+        base_task = dict(existing_tasks[chart_task_indexes[0]])
+        generated = [
+            {
+                **base_task,
+                "action": "open",
+                "targetPanelType": "chart",
+                "targetPanelTypes": ["chart"],
+                "targetPanelId": None,
+                "targetPanelIds": [],
+                "chartAction": "add",
+                "symbol": symbol_value,
+                "reason": f"Chart symbol '{symbol_value}' was resolved from a multi-symbol natural language request.",
+            }
+            for symbol_value in symbols[:2]
+        ]
+        other_tasks = [task for index, task in enumerate(existing_tasks) if index not in chart_task_indexes]
+        next_payload = dict(query_understanding)
+        next_payload["routeMode"] = "ui_layout"
+        next_payload["intentType"] = "ui-layout"
+        next_payload["selectedRoles"] = []
+        next_payload["contentTasks"] = []
+        next_payload["uiTasks"] = [*generated, *other_tasks]
+        next_payload["resolvedSymbol"] = generated[0]["symbol"]
+        next_payload["resolvedSymbolSource"] = "query_company"
+        return next_payload
+
+    target_symbol = symbols[0] if symbols else None
+    if not target_symbol:
+        return query_understanding
+
+    for index in chart_task_indexes:
+        task = next_tasks[index]
+        if not isinstance(task, dict):
+            continue
+        updated = dict(task)
+        updated["symbol"] = normalize_symbol(updated.get("symbol") or target_symbol)
+        if add_signal and not updated.get("chartAction"):
+            updated["chartAction"] = "add"
+        next_tasks[index] = updated
+    next_payload = dict(query_understanding)
+    next_payload["uiTasks"] = next_tasks
+    next_payload["resolvedSymbol"] = target_symbol
+    if str(next_payload.get("resolvedSymbolSource") or "") in {"", "unresolved"}:
+        next_payload["resolvedSymbolSource"] = "query_company"
+    return next_payload
+
+
+def chart_symbols_from_intent(intent: str) -> list[str]:
+    normalized = str(intent or "").lower()
+    compact = "".join(normalized.split())
+    matches: list[tuple[int, str]] = []
+    for alias, symbol in COMPANY_SYMBOL_ALIASES:
+        alias_text = str(alias or "").lower()
+        if not alias_text:
+            continue
+        use_compact = any("가" <= ch <= "힣" for ch in alias_text)
+        haystack = compact if use_compact else normalized
+        needle = "".join(alias_text.split()) if use_compact else alias_text
+        index = haystack.find(needle)
+        if index >= 0:
+            matches.append((index, normalize_symbol(symbol)))
+    for match in re.finditer(r"\b[A-Z]{1,5}(?:\.[A-Z])?\b", str(intent or "").upper()):
+        token = normalize_symbol(match.group(0))
+        if is_supported_company_symbol(token):
+            matches.append((match.start(), token))
+    return unique_symbols([symbol for _, symbol in sorted(matches, key=lambda item: item[0])])
+
+
+def chart_add_signal(intent: str) -> bool:
+    compact = "".join(str(intent or "").lower().split())
+    return any(token in compact for token in ("도", "추가", "추가로", "하나더", "같이", "함께", "두개", "2개", "나란히", "비교"))
+
+
+def unique_symbols(symbols: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for symbol in symbols:
+        normalized = normalize_symbol(symbol)
+        if not normalized or normalized == "UNKNOWN" or normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+    return result
 
 
 def apply_operation_ir_to_query_understanding(

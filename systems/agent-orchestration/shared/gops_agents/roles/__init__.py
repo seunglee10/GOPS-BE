@@ -42,6 +42,31 @@ class AgentContext:
     subjectValidation: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class WorkspaceGridSpec:
+    cols: int = 8
+    rows: int = 5
+
+
+@dataclass
+class BandPackResult:
+    placements: list[dict[str, Any]]
+    unplaceable: list[dict[str, Any]]
+
+
+@dataclass
+class ChartArrangement:
+    placements: list[dict[str, Any]]
+    unplaceable: list[dict[str, Any]]
+
+    @property
+    def valid(self) -> bool:
+        return not self.unplaceable
+
+
+DEFAULT_WORKSPACE_GRID = WorkspaceGridSpec()
+
+
 class ChartAgent:
     agent_id = "chart-agent"
     role = "chart-analysis"
@@ -443,9 +468,11 @@ class UIAgent:
         if not tasks:
             return self.propose(context, UIIntent(False, "non-ui", None, None, "unknown", None, None, 0.0, "No UI tasks were supplied."))
         panels = normalize_layout_panels(context.layoutContext)
-        chart_add_task = next((task for task in tasks if is_chart_add_task(task)), None)
-        if chart_add_task is not None:
-            return propose_chart_add_layout(context, panels, chart_add_task)
+        chart_tasks = [task for task in tasks if is_chart_task(task)]
+        if len(chart_tasks) >= 2:
+            return propose_chart_pair_layout(context, panels, chart_tasks)
+        if chart_tasks:
+            return propose_chart_add_layout(context, panels, chart_tasks[0])
         keep_task = next((task for task in tasks if task.action == "keep"), None)
         if keep_task is not None:
             return propose_keep_only_layout(panels, keep_task)
@@ -530,6 +557,10 @@ class UIAgent:
                 autoApply=False,
                 panelPriorities=[],
             )
+
+        task = ui_task_from_intent(ui_intent)
+        if task is not None and is_chart_task(task):
+            return propose_chart_add_layout(context, panels, task)
 
         target_panel = resolve_ui_target_panel(panels, ui_intent)
         if not target_panel:
@@ -648,6 +679,21 @@ def ui_task_from_payload(value: Any) -> UiTask | None:
     )
 
 
+def ui_task_from_intent(ui_intent: UIIntent) -> UiTask | None:
+    if not ui_intent.isUiIntent:
+        return None
+    return UiTask(
+        action=ui_intent.action or "focus",
+        targetPanelType=ui_intent.targetPanelType,
+        targetPanelId=ui_intent.targetPanelId,
+        sizeIntent=ui_intent.sizeIntent,
+        positionIntent=ui_intent.positionIntent,
+        confidence=ui_intent.confidence,
+        source=ui_intent.source or "ui-intent",
+        reason=ui_intent.reason or "UI intent converted to a UI task.",
+    )
+
+
 def optional_text(value: Any) -> str | None:
     text = str(value or "").strip()
     return text or None
@@ -657,8 +703,9 @@ def is_multi_ui_task(task: UiTask) -> bool:
     return bool(task.action == "keep" or task.chartAction == "add" or task.layoutPreset or len(task.targetPanelTypes) > 1 or len(task.targetPanelIds) > 1)
 
 
-def is_chart_add_task(task: UiTask) -> bool:
-    return task.chartAction == "add" and task.targetPanelType == "chart"
+def is_chart_task(task: UiTask) -> bool:
+    multi_target = task.layoutPreset or len(task.targetPanelTypes) > 1 or len(task.targetPanelIds) > 1
+    return not multi_target and task.action in {"open", "focus"} and task.targetPanelType == "chart"
 
 
 def propose_remove_panels_layout(panels: list[dict[str, Any]], tasks: list[UiTask]) -> LayoutProposal:
@@ -783,6 +830,7 @@ def propose_missing_panel_layout(context: AgentContext, panels: list[dict[str, A
 
     panel_type = ui_intent.targetPanelType
     panel_id = proposed_panel_id(panel_type)
+    grid = grid_for_panels(panels)
     target_panel = {
         "id": panel_id,
         "type": panel_type,
@@ -791,7 +839,8 @@ def propose_missing_panel_layout(context: AgentContext, panels: list[dict[str, A
         "layoutPinned": False,
         "layoutWeight": 100,
         "minSpan": default_min_span(panel_type),
-        "maxSpan": default_max_span(panel_type),
+        "maxSpan": {"colSpan": grid.cols, "rowSpan": grid.rows},
+        "_grid": grid,
     }
     placements = arrange_panel_set(panels, [target_panel], ui_intent.positionIntent)
     placement_by_id = {item["panelId"]: item["placement"] for item in placements or []}
@@ -859,6 +908,7 @@ def propose_chart_add_layout(context: AgentContext, panels: list[dict[str, Any]]
             panelPriorities=[],
         )
 
+    is_add_intent = task.chartAction == "add"
     existing_same_symbol = first_chart_panel_for_symbol(panels, symbol)
     if existing_same_symbol:
         return LayoutProposal(
@@ -878,6 +928,38 @@ def propose_chart_add_layout(context: AgentContext, panels: list[dict[str, Any]]
 
     chart_panels = [panel for panel in panels if panel["type"] == "chart"]
     anchor_chart = chart_panels[0] if chart_panels else None
+    if len(chart_panels) == 1 and not is_add_intent:
+        replace_panel = chart_panels[0]
+        updated_panels = [
+            {**panel, "symbol": symbol, "layoutWeight": 120}
+            if panel["id"] == replace_panel["id"]
+            else panel
+            for panel in panels
+        ]
+        return LayoutProposal(
+            title="UI layout request",
+            rationale=f"{symbol} 차트를 기존 차트 패널에 표시했습니다.",
+            commands=[
+                layout_command(
+                    "layout.panel.props.update",
+                    {
+                        "panelId": replace_panel["id"],
+                        "props": {"symbol": symbol},
+                        "layoutWeight": 120,
+                    },
+                    {"panelId": replace_panel["id"]},
+                ),
+                layout_command(
+                    "layout.panel.priority.set",
+                    {"panelId": replace_panel["id"], "layoutWeight": 120},
+                    {"panelId": replace_panel["id"]},
+                ),
+                layout_command("layout.reflow", {"reason": "chart-replace-existing-panel"}),
+            ],
+            autoApply=True,
+            panelPriorities=chart_add_panel_priorities(updated_panels, replace_panel["id"], None),
+        )
+
     if len(chart_panels) >= 2:
         replace_panel = chart_panel_to_replace(chart_panels, anchor_chart["id"] if anchor_chart else None)
         updated_panels = [
@@ -887,7 +969,9 @@ def propose_chart_add_layout(context: AgentContext, panels: list[dict[str, Any]]
             for panel in panels
         ]
         anchor = next((panel for panel in updated_panels if panel["type"] == "chart" and panel["id"] != replace_panel["id"]), None)
-        placements = arrange_chart_comparison(updated_panels, anchor, next(panel for panel in updated_panels if panel["id"] == replace_panel["id"]), task.positionIntent)
+        arrangement = arrange_chart_comparison(updated_panels, anchor, next(panel for panel in updated_panels if panel["id"] == replace_panel["id"]), task.positionIntent)
+        if not arrangement.valid:
+            return chart_placement_pick_proposal(context, updated_panels, task, symbol, replace_panel["id"], "차트 비교 배치를 적용할 빈 공간을 찾지 못했습니다.")
         return LayoutProposal(
             title="UI layout request",
             rationale=f"{symbol} 차트를 기존 비교 차트 패널에 표시했습니다.",
@@ -908,8 +992,8 @@ def propose_chart_add_layout(context: AgentContext, panels: list[dict[str, Any]]
                 ),
                 layout_command(
                     "layout.panels.arrange",
-                    {"reason": "chart-add-priority-reflow", "placements": placements},
-                    {"panelIds": [item["panelId"] for item in placements]},
+                    {"reason": "chart-add-priority-reflow", "placements": arrangement.placements},
+                    {"panelIds": [item["panelId"] for item in arrangement.placements]},
                 ),
                 layout_command("layout.reflow", {"reason": "chart-add-priority-reflow"}),
             ],
@@ -930,8 +1014,10 @@ def propose_chart_add_layout(context: AgentContext, panels: list[dict[str, Any]]
         "maxSpan": default_max_span("chart"),
     }
     combined_panels = [*panels, new_panel]
-    placements = arrange_chart_comparison(combined_panels, anchor_chart, new_panel, task.positionIntent)
-    placement_by_id = {item["panelId"]: item["placement"] for item in placements}
+    arrangement = arrange_chart_comparison(combined_panels, anchor_chart if is_add_intent else None, new_panel, task.positionIntent)
+    if not arrangement.valid:
+        return chart_placement_pick_proposal(context, combined_panels, task, symbol, panel_id, "하단 차트 영역에 바로 배치할 수 없어 배치 후보를 준비했습니다.")
+    placement_by_id = {item["panelId"]: item["placement"] for item in arrangement.placements}
     return LayoutProposal(
         title="UI layout request",
         rationale=f"{symbol} 차트 패널을 추가했습니다.",
@@ -955,8 +1041,8 @@ def propose_chart_add_layout(context: AgentContext, panels: list[dict[str, Any]]
             ),
             layout_command(
                 "layout.panels.arrange",
-                {"reason": "chart-add-priority-reflow", "placements": placements},
-                {"panelIds": [item["panelId"] for item in placements]},
+                {"reason": "chart-add-priority-reflow", "placements": arrangement.placements},
+                {"panelIds": [item["panelId"] for item in arrangement.placements]},
             ),
             layout_command("layout.reflow", {"reason": "chart-add-priority-reflow"}),
         ],
@@ -965,8 +1051,117 @@ def propose_chart_add_layout(context: AgentContext, panels: list[dict[str, Any]]
     )
 
 
+def propose_chart_pair_layout(context: AgentContext, panels: list[dict[str, Any]], tasks: list[UiTask]) -> LayoutProposal:
+    symbols = unique_texts([
+        symbol
+        for symbol in [chart_task_symbol(context, task) for task in tasks]
+        if symbol
+    ])
+    if len(symbols) < 2:
+        return propose_chart_add_layout(context, panels, tasks[0])
+
+    chart_panels = [panel for panel in panels if panel["type"] == "chart"]
+    updates: list[dict[str, Any]] = []
+    additions: list[dict[str, Any]] = []
+    working_panels = list(panels)
+    chart_a: dict[str, Any] | None = None
+    chart_b: dict[str, Any] | None = None
+
+    if chart_panels:
+        chart_a = {**chart_panels[0], "symbol": symbols[0], "layoutWeight": 110}
+        updates.append({"panelId": chart_panels[0]["id"], "symbol": symbols[0], "layoutWeight": 110})
+        working_panels = [chart_a if panel["id"] == chart_panels[0]["id"] else panel for panel in working_panels]
+    else:
+        chart_a = new_chart_panel(symbols[0], working_panels, layout_weight=110)
+        additions.append(chart_a)
+        working_panels = [*working_panels, chart_a]
+
+    if len(chart_panels) >= 2:
+        second = chart_panels[1]
+        chart_b = {**second, "symbol": symbols[1], "layoutWeight": 120}
+        updates.append({"panelId": second["id"], "symbol": symbols[1], "layoutWeight": 120})
+        working_panels = [chart_b if panel["id"] == second["id"] else panel for panel in working_panels]
+    else:
+        chart_b = new_chart_panel(symbols[1], working_panels, layout_weight=120)
+        additions.append(chart_b)
+        working_panels = [*working_panels, chart_b]
+
+    arrangement = arrange_chart_comparison(working_panels, chart_a, chart_b, tasks[0].positionIntent)
+    if not arrangement.valid:
+        return LayoutProposal(
+            title="UI layout request",
+            rationale="두 차트를 동시에 배치할 공간을 찾지 못했습니다.",
+            commands=[],
+            autoApply=False,
+            panelPriorities=chart_add_panel_priorities(working_panels, chart_b["id"], chart_a["id"]),
+        )
+
+    placement_by_id = {item["panelId"]: item["placement"] for item in arrangement.placements}
+    commands: list[dict[str, Any]] = []
+    for item in additions:
+        commands.append(layout_command(
+            "layout.panel.add",
+            {
+                "panelId": item["id"],
+                "panelType": "chart",
+                "props": {"symbol": item["symbol"]},
+                "symbol": item["symbol"],
+                "layoutWeight": item["layoutWeight"],
+                "placement": placement_by_id.get(item["id"], item["placement"]),
+            },
+            {"panelId": item["id"]},
+        ))
+    for item in updates:
+        commands.append(layout_command(
+            "layout.panel.props.update",
+            {
+                "panelId": item["panelId"],
+                "props": {"symbol": item["symbol"]},
+                "layoutWeight": item["layoutWeight"],
+            },
+            {"panelId": item["panelId"]},
+        ))
+    for panel in (chart_a, chart_b):
+        commands.append(layout_command(
+            "layout.panel.priority.set",
+            {"panelId": panel["id"], "layoutWeight": panel["layoutWeight"]},
+            {"panelId": panel["id"]},
+        ))
+    commands.append(layout_command(
+        "layout.panels.arrange",
+        {"reason": "chart-pair-priority-reflow", "placements": arrangement.placements},
+        {"panelIds": [item["panelId"] for item in arrangement.placements]},
+    ))
+    commands.append(layout_command("layout.reflow", {"reason": "chart-pair-priority-reflow"}))
+    extra_notice = " 처음 두 종목만 배치했습니다." if len(symbols) > 2 else ""
+    return LayoutProposal(
+        title="UI layout request",
+        rationale=f"{symbols[0]}와 {symbols[1]} 차트를 같이 표시했습니다.{extra_notice}",
+        commands=commands,
+        autoApply=True,
+        panelPriorities=chart_add_panel_priorities(working_panels, chart_b["id"], chart_a["id"]),
+    )
+
+
+def new_chart_panel(symbol: str, panels: list[dict[str, Any]], *, layout_weight: int) -> dict[str, Any]:
+    panel_id = proposed_chart_panel_id(symbol, panels)
+    return {
+        "id": panel_id,
+        "type": "chart",
+        "title": default_panel_title("chart"),
+        "symbol": symbol,
+        "placement": default_chart_add_placement(None),
+        "layoutPinned": False,
+        "layoutWeight": layout_weight,
+        "minSpan": {"colSpan": 2, "rowSpan": 2},
+        "maxSpan": default_max_span("chart"),
+        "_grid": grid_for_panels(panels),
+    }
+
+
 def chart_task_symbol(context: AgentContext, task: UiTask) -> str:
-    return str(task.symbol or context.symbol or "").strip().upper()
+    symbol = str(task.symbol or context.symbol or "").strip().upper()
+    return "" if symbol == "UNKNOWN" else symbol
 
 
 def first_chart_panel_for_symbol(panels: list[dict[str, Any]], symbol: str) -> dict[str, Any] | None:
@@ -999,13 +1194,14 @@ def proposed_chart_panel_id(symbol: str, panels: list[dict[str, Any]]) -> str:
 
 
 def default_chart_add_placement(position_intent: str | None) -> dict[str, Any]:
+    grid = DEFAULT_WORKSPACE_GRID
     if position_intent == "top":
-        return workspace_placement(1, 2, 4, 2)
+        return workspace_placement(1, 1, grid.cols, 2, grid)
     if position_intent == "left":
-        return workspace_placement(1, 2, 2, 4)
+        return workspace_placement(1, 1, grid.cols // 2, grid.rows, grid)
     if position_intent in {"right", "center"}:
-        return workspace_placement(3, 2, 2, 4)
-    return workspace_placement(1, 4, 4, 2)
+        return workspace_placement(grid.cols // 2 + 1, 1, grid.cols // 2, grid.rows, grid)
+    return workspace_placement(1, 4, grid.cols, 2, grid)
 
 
 def arrange_chart_comparison(
@@ -1013,50 +1209,275 @@ def arrange_chart_comparison(
     anchor_chart: dict[str, Any] | None,
     target_chart: dict[str, Any],
     position_intent: str | None,
-) -> list[dict[str, Any]]:
-    placements: list[dict[str, Any]] = []
+) -> ChartArrangement:
+    grid = grid_for_panels(panels)
+    placements: list[dict[str, Any]] = pinned_panel_placements(panels)
     support = [panel for panel in panels if panel["type"] != "chart" and not panel.get("layoutPinned")]
-    support.sort(key=supporting_panel_sort_key)
-    for index, panel in enumerate(support[:4]):
-        placements.append({
-            "panelId": panel["id"],
-            "placement": workspace_placement(index + 1, 1, 1, 1),
-            "layoutWeight": max(20, min(50, int(read_float(panel.get("layoutWeight"), 35.0)))),
-        })
-
-    pinned_support = [panel for panel in panels if panel["type"] != "chart" and panel.get("layoutPinned")]
-    for panel in pinned_support:
-        placements.append({
-            "panelId": panel["id"],
-            "placement": panel["placement"],
-            "layoutWeight": max(20, min(80, int(read_float(panel.get("layoutWeight"), 50.0)))),
-        })
+    unplaceable: list[dict[str, Any]] = []
 
     anchor_id = anchor_chart["id"] if anchor_chart else None
     target_id = target_chart["id"]
-    if anchor_chart and position_intent == "top":
+    if anchor_chart:
+        if support:
+            support_pack = pack_support_band(support, 1, 1, grid)
+            placements.extend(support_pack.placements)
+            unplaceable.extend(support_pack.unplaceable)
+            top_row = 2
+            top_rows = 2
+        else:
+            top_row = 1
+            top_rows = 3
+        first_chart_id = target_id if position_intent == "top" else anchor_id
+        second_chart_id = anchor_id if position_intent == "top" else target_id
         placements.extend([
-            {"panelId": target_id, "placement": workspace_placement(1, 2, 4, 2), "layoutWeight": 120},
-            {"panelId": anchor_id, "placement": workspace_placement(1, 4, 4, 2), "layoutWeight": chart_anchor_weight(anchor_chart)},
-        ])
-    elif anchor_chart and position_intent == "left":
-        placements.extend([
-            {"panelId": target_id, "placement": workspace_placement(1, 2, 2, 4), "layoutWeight": 120},
-            {"panelId": anchor_id, "placement": workspace_placement(3, 2, 2, 4), "layoutWeight": chart_anchor_weight(anchor_chart)},
-        ])
-    elif anchor_chart and position_intent in {"right", "center"}:
-        placements.extend([
-            {"panelId": anchor_id, "placement": workspace_placement(1, 2, 2, 4), "layoutWeight": chart_anchor_weight(anchor_chart)},
-            {"panelId": target_id, "placement": workspace_placement(3, 2, 2, 4), "layoutWeight": 120},
-        ])
-    elif anchor_chart:
-        placements.extend([
-            {"panelId": anchor_id, "placement": workspace_placement(1, 2, 4, 2), "layoutWeight": chart_anchor_weight(anchor_chart)},
-            {"panelId": target_id, "placement": workspace_placement(1, 4, 4, 2), "layoutWeight": 120},
+            {
+                "panelId": first_chart_id,
+                "placement": workspace_placement(1, top_row, grid.cols, top_rows, grid),
+                "layoutWeight": 120 if first_chart_id == target_id else chart_anchor_weight(anchor_chart),
+            },
+            {
+                "panelId": second_chart_id,
+                "placement": workspace_placement(1, 4, grid.cols, 2, grid),
+                "layoutWeight": 120 if second_chart_id == target_id else chart_anchor_weight(anchor_chart),
+            },
         ])
     else:
-        placements.append({"panelId": target_id, "placement": workspace_placement(1, 2, 4, 4), "layoutWeight": 120})
-    return placements
+        if support:
+            support_pack = pack_support_band(support, 1, 3, grid)
+            placements.extend(support_pack.placements)
+            unplaceable.extend(support_pack.unplaceable)
+            placements.append({"panelId": target_id, "placement": workspace_placement(1, 4, grid.cols, 2, grid), "layoutWeight": 120})
+        else:
+            placements.append({"panelId": target_id, "placement": workspace_placement(1, 1, grid.cols, grid.rows, grid), "layoutWeight": 120})
+
+    if unplaceable or layout_has_gaps_or_overlaps(placements, grid):
+        return ChartArrangement(placements, [*unplaceable, *layout_validation_failures(placements, grid)])
+    return ChartArrangement(placements, [])
+
+
+def chart_placement_pick_proposal(
+    context: AgentContext,
+    panels: list[dict[str, Any]],
+    task: UiTask,
+    symbol: str,
+    panel_id: str,
+    reason: str,
+) -> LayoutProposal:
+    candidates = chart_placement_candidates(panels, symbol, panel_id)
+    return LayoutProposal(
+        title="UI layout request",
+        rationale=reason,
+        commands=[
+            layout_command(
+                "layout.placement.pick",
+                {
+                    "panelType": "chart",
+                    "panelId": panel_id,
+                    "symbol": symbol,
+                    "positionIntent": task.positionIntent,
+                    "candidates": candidates,
+                },
+                {"panelId": panel_id},
+            )
+        ] if candidates else [],
+        autoApply=False,
+        panelPriorities=chart_add_panel_priorities(panels, panel_id, None),
+    )
+
+
+def chart_placement_candidates(panels: list[dict[str, Any]], symbol: str, panel_id: str) -> list[dict[str, Any]]:
+    grid = grid_for_panels(panels)
+    candidate_rows = [
+        ("bottom", "맨 아래", 4),
+        ("top", "맨 위", 1),
+        ("middle", "가운데", 2),
+        ("upper", "위쪽", 3),
+    ]
+    candidates = []
+    chart_panel = next((panel for panel in panels if panel["id"] == panel_id), None) or new_chart_panel(symbol, panels, layout_weight=120)
+    for candidate_id, label, row in candidate_rows:
+        placement = workspace_placement(1, row, grid.cols, 2, grid)
+        arrangement = build_chart_candidate_arrangement(panels, {**chart_panel, "placement": placement}, grid)
+        if not arrangement.valid:
+            continue
+        candidates.append({
+            "id": candidate_id,
+            "label": label,
+            "placement": placement,
+            "arrangement": arrangement.placements,
+        })
+        if len(candidates) >= 3:
+            break
+    if not candidates:
+        full_placement = workspace_placement(1, 1, grid.cols, grid.rows, grid)
+        arrangement = build_chart_candidate_arrangement(panels, {**chart_panel, "placement": full_placement}, grid)
+        if arrangement.valid:
+            candidates.append({
+                "id": "full",
+                "label": "전체 영역",
+                "placement": full_placement,
+                "arrangement": arrangement.placements,
+            })
+    return candidates
+
+
+def build_chart_candidate_arrangement(
+    panels: list[dict[str, Any]],
+    chart_panel: dict[str, Any],
+    grid: WorkspaceGridSpec,
+) -> ChartArrangement:
+    placements = pinned_panel_placements(panels)
+    chart_placement = chart_panel["placement"]
+    if any(overlaps(chart_placement, item["placement"]) for item in placements):
+        return ChartArrangement(placements, [{"panelId": chart_panel["id"], "reason": "chart-overlaps-pinned"}])
+    placements.append({"panelId": chart_panel["id"], "placement": chart_placement, "layoutWeight": 120})
+    occupied = occupied_cells([item["placement"] for item in placements], grid)
+    partial_blocked_rows = [
+        row
+        for row in range(1, grid.rows + 1)
+        if 0 < len([col for col in range(1, grid.cols + 1) if (col, row) in occupied]) < grid.cols
+    ]
+    if partial_blocked_rows:
+        return ChartArrangement(placements, [{"panelId": chart_panel["id"], "reason": "partial-row-blocked"}])
+
+    support = [panel for panel in panels if panel["type"] != "chart" and not panel.get("layoutPinned")]
+    free_rows = [
+        row
+        for row in range(1, grid.rows + 1)
+        if all((col, row) not in occupied for col in range(1, grid.cols + 1))
+    ]
+    if support:
+        bands = contiguous_row_bands(free_rows)
+        if not bands:
+            return ChartArrangement(placements, [{"panelId": panel["id"], "reason": "no-support-band"} for panel in support])
+        start_row, row_span = max(bands, key=lambda band: (band[1], -band[0]))
+        support_pack = pack_support_band(support, start_row, row_span, grid)
+        placements.extend(support_pack.placements)
+        if support_pack.unplaceable:
+            return ChartArrangement(placements, support_pack.unplaceable)
+    if layout_has_gaps_or_overlaps(placements, grid):
+        return ChartArrangement(placements, layout_validation_failures(placements, grid))
+    return ChartArrangement(placements, [])
+
+
+def contiguous_row_bands(rows: list[int]) -> list[tuple[int, int]]:
+    if not rows:
+        return []
+    bands: list[tuple[int, int]] = []
+    start = rows[0]
+    previous = rows[0]
+    for row in rows[1:]:
+        if row == previous + 1:
+            previous = row
+            continue
+        bands.append((start, previous - start + 1))
+        start = row
+        previous = row
+    bands.append((start, previous - start + 1))
+    return bands
+
+
+def pack_support_band(
+    panels: list[dict[str, Any]],
+    start_row: int,
+    row_span: int,
+    grid: WorkspaceGridSpec,
+) -> BandPackResult:
+    ordered = sorted(panels, key=supporting_panel_sort_key)
+    if not ordered:
+        return BandPackResult([], [])
+    if row_span <= 0:
+        return BandPackResult([], [{"panelId": panel["id"], "reason": "no-band"} for panel in ordered])
+
+    rows_needed = max(1, min(row_span, (len(ordered) + grid.cols - 1) // grid.cols))
+    if len(ordered) > grid.cols * rows_needed:
+        return BandPackResult([], [{"panelId": panel["id"], "reason": "support-band-full"} for panel in ordered[grid.cols * rows_needed:]])
+
+    placements: list[dict[str, Any]] = []
+    unplaceable: list[dict[str, Any]] = []
+    cursor = 0
+    row_heights = distribute_units(row_span, rows_needed)
+    for row_index, row_height in enumerate(row_heights):
+        remaining = len(ordered) - cursor
+        rows_left = rows_needed - row_index
+        count = min(grid.cols, max(1, remaining - grid.cols * (rows_left - 1)))
+        widths = distribute_units(grid.cols, count)
+        col = 1
+        for width in widths:
+            panel = ordered[cursor]
+            min_span = panel.get("minSpan") if isinstance(panel.get("minSpan"), dict) else default_min_span(panel["type"])
+            min_cols = read_int(min_span.get("colSpan"), 1)
+            min_rows = read_int(min_span.get("rowSpan"), 1)
+            if width < min_cols or row_height < min_rows:
+                unplaceable.append({"panelId": panel["id"], "reason": "min-span-too-large"})
+            else:
+                placements.append({
+                    "panelId": panel["id"],
+                    "placement": workspace_placement(col, start_row + sum(row_heights[:row_index]), width, row_height, grid),
+                    "layoutWeight": max(20, min(60, int(read_float(panel.get("layoutWeight"), 35.0)))),
+                })
+            col += width
+            cursor += 1
+    return BandPackResult(placements, unplaceable)
+
+
+def distribute_units(total: int, count: int) -> list[int]:
+    if count <= 0:
+        return []
+    base = total // count
+    remainder = total % count
+    return [base + (1 if index < remainder else 0) for index in range(count)]
+
+
+def pinned_panel_placements(panels: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "panelId": panel["id"],
+            "placement": panel["placement"],
+            "layoutWeight": max(20, min(80, int(read_float(panel.get("layoutWeight"), 50.0)))),
+        }
+        for panel in panels
+        if panel.get("layoutPinned")
+    ]
+
+
+def layout_has_gaps_or_overlaps(placements: list[dict[str, Any]], grid: WorkspaceGridSpec) -> bool:
+    counts = occupied_cell_counts([item["placement"] for item in placements], grid)
+    if any(count > 1 for count in counts.values()):
+        return True
+    return len(counts) != grid.cols * grid.rows
+
+
+def layout_validation_failures(placements: list[dict[str, Any]], grid: WorkspaceGridSpec) -> list[dict[str, Any]]:
+    counts = occupied_cell_counts([item["placement"] for item in placements], grid)
+    failures: list[dict[str, Any]] = []
+    if any(count > 1 for count in counts.values()):
+        failures.append({"reason": "overlap"})
+    missing = grid.cols * grid.rows - len(counts)
+    if missing:
+        failures.append({"reason": "gap", "cells": missing})
+    for item in placements:
+        if not placement_within_grid(item["placement"], grid):
+            failures.append({"panelId": item["panelId"], "reason": "out-of-grid"})
+    return failures
+
+
+def occupied_cell_counts(placements: list[dict[str, Any]], grid: WorkspaceGridSpec) -> dict[tuple[int, int], int]:
+    counts: dict[tuple[int, int], int] = {}
+    for placement in placements:
+        for cell in cells_for_placement(placement, grid):
+            counts[cell] = counts.get(cell, 0) + 1
+    return counts
+
+
+def placement_within_grid(placement: dict[str, Any], grid: WorkspaceGridSpec) -> bool:
+    if placement.get("group") != "workspace":
+        return True
+    col = read_int(placement.get("col"), 1)
+    row = read_int(placement.get("row"), 1)
+    col_span = read_int(placement.get("colSpan"), 1)
+    row_span = read_int(placement.get("rowSpan"), 1)
+    return col >= 1 and row >= 1 and col + col_span - 1 <= grid.cols and row + row_span - 1 <= grid.rows
 
 
 def chart_anchor_weight(panel: dict[str, Any]) -> int:
@@ -1118,6 +1539,18 @@ def multi_ui_target_panel_types(tasks: list[UiTask], panels: list[dict[str, Any]
     return unique_panel_types(selected)
 
 
+def unique_texts(values: list[str]) -> list[str]:
+    unique: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        unique.append(text)
+    return unique
+
+
 def unique_panel_types(panel_types: list[str]) -> list[str]:
     order = ["chart", "newsFeed", "aiSummary", "ontologyGraph", "indicatorCompare", "portfolioHoldings", "stockRecommendations", "orderTicket"]
     selected = {panel_type for panel_type in panel_types if panel_type in order}
@@ -1125,6 +1558,7 @@ def unique_panel_types(panel_types: list[str]) -> list[str]:
 
 
 def materialize_target_panels(panels: list[dict[str, Any]], panel_types: list[str]) -> tuple[list[dict[str, Any]], list[str]]:
+    grid = grid_for_panels(panels)
     targets = []
     add_panel_types = []
     for panel_type in panel_types:
@@ -1141,7 +1575,8 @@ def materialize_target_panels(panels: list[dict[str, Any]], panel_types: list[st
             "layoutPinned": False,
             "layoutWeight": 50,
             "minSpan": default_min_span(panel_type),
-            "maxSpan": default_max_span(panel_type),
+            "maxSpan": {"colSpan": grid.cols, "rowSpan": grid.rows},
+            "_grid": grid,
         })
     return targets, add_panel_types
 
@@ -1163,21 +1598,22 @@ def arrange_panel_set(
     target_panels: list[dict[str, Any]],
     position_intent: str | None,
 ) -> list[dict[str, Any]] | None:
+    grid = grid_for_panels([*panels, *target_panels])
     target_ids = {panel["id"] for panel in target_panels}
     pinned = [panel for panel in panels if panel.get("layoutPinned")]
-    occupied = occupied_cells([panel["placement"] for panel in pinned])
+    occupied = occupied_cells([panel["placement"] for panel in pinned], grid)
     placements = [
         {"panelId": panel["id"], "placement": panel["placement"], "layoutWeight": 100}
         for panel in target_panels
         if panel.get("layoutPinned")
     ]
-    occupied.update(occupied_cells([item["placement"] for item in placements]))
+    occupied.update(occupied_cells([item["placement"] for item in placements], grid))
 
     for panel in [item for item in target_panels if not item.get("layoutPinned")]:
-        placement = best_panel_set_placement(occupied, panel, position_intent)
+        placement = best_panel_set_placement(occupied, panel, position_intent, grid)
         if not placement:
             return None
-        occupied.update(cells_for_placement(placement))
+        occupied.update(cells_for_placement(placement, grid))
         placements.append({"panelId": panel["id"], "placement": placement, "layoutWeight": 100})
 
     support = [
@@ -1187,10 +1623,10 @@ def arrange_panel_set(
     ]
     support.sort(key=supporting_panel_sort_key)
     for panel in support:
-        placement = compact_supporting_placement(occupied, panel)
+        placement = compact_supporting_placement(occupied, panel, grid)
         if not placement:
             continue
-        occupied.update(cells_for_placement(placement))
+        occupied.update(cells_for_placement(placement, grid))
         placements.append({
             "panelId": panel["id"],
             "placement": placement,
@@ -1199,11 +1635,11 @@ def arrange_panel_set(
     return placements
 
 
-def best_panel_set_placement(occupied: set[tuple[int, int]], panel: dict[str, Any], position_intent: str | None) -> dict[str, Any] | None:
+def best_panel_set_placement(occupied: set[tuple[int, int]], panel: dict[str, Any], position_intent: str | None, grid: WorkspaceGridSpec) -> dict[str, Any] | None:
     for col_span, row_span in preferred_panel_set_spans(panel):
-        for col, row in workspace_positions(col_span, row_span, position_intent):
-            placement = workspace_placement(col, row, col_span, row_span)
-            if not cells_for_placement(placement).intersection(occupied):
+        for col, row in workspace_positions(col_span, row_span, position_intent, grid):
+            placement = workspace_placement(col, row, col_span, row_span, grid)
+            if not cells_for_placement(placement, grid).intersection(occupied):
                 return placement
     return None
 
@@ -1222,7 +1658,7 @@ def preferred_panel_set_spans(panel: dict[str, Any]) -> list[tuple[int, int]]:
     min_cols = read_int(min_span.get("colSpan"), 1)
     min_rows = read_int(min_span.get("rowSpan"), 1)
     max_span = panel.get("maxSpan") if isinstance(panel.get("maxSpan"), dict) else default_max_span(panel["type"])
-    max_cols = read_int(max_span.get("colSpan"), 4)
+    max_cols = read_int(max_span.get("colSpan"), DEFAULT_WORKSPACE_GRID.cols)
     max_rows = read_int(max_span.get("rowSpan"), 5)
     preferred_cols = min(max_cols, max(min_cols, preferred[0]))
     preferred_rows = min(max_rows, max(min_rows, preferred[1]))
@@ -1252,6 +1688,7 @@ def normalize_layout_panels(layout_context: dict[str, Any]) -> list[dict[str, An
     if not isinstance(panels, list):
         return []
 
+    grid = layout_grid_spec(layout_context)
     normalized = []
     for item in panels:
         if not isinstance(item, dict):
@@ -1278,7 +1715,8 @@ def normalize_layout_panels(layout_context: dict[str, Any]) -> list[dict[str, An
             "layoutPinned": bool(item.get("layoutPinned")),
             "layoutWeight": read_float(item.get("layoutWeight"), 0.0),
             "minSpan": read_span(item.get("minSpan"), default_min_span(panel_type)),
-            "maxSpan": read_span(item.get("maxSpan"), default_max_span(panel_type)),
+            "maxSpan": read_span(item.get("maxSpan"), {"colSpan": grid.cols, "rowSpan": grid.rows}),
+            "_grid": grid,
         }
         if panel_type == "chart" and symbol:
             panel["symbol"] = symbol
@@ -1286,6 +1724,32 @@ def normalize_layout_panels(layout_context: dict[str, Any]) -> list[dict[str, An
             panel["props"] = props
         normalized.append(panel)
     return normalized
+
+
+def layout_grid_spec(layout_context: dict[str, Any]) -> WorkspaceGridSpec:
+    grid = layout_context.get("grid") if isinstance(layout_context, dict) else None
+    if not isinstance(grid, dict):
+        grid = layout_context.get("workspaceGrid") if isinstance(layout_context, dict) else None
+    if not isinstance(grid, dict):
+        if str(layout_context.get("version") or "") == "1":
+            return WorkspaceGridSpec(cols=4, rows=5)
+        return DEFAULT_WORKSPACE_GRID
+    cols = max(1, read_int(grid.get("cols"), DEFAULT_WORKSPACE_GRID.cols))
+    rows = max(1, read_int(grid.get("rows"), DEFAULT_WORKSPACE_GRID.rows))
+    return WorkspaceGridSpec(cols=cols, rows=rows)
+
+
+def grid_for_panels(panels: list[dict[str, Any]]) -> WorkspaceGridSpec:
+    for panel in panels:
+        grid = panel.get("_grid")
+        if isinstance(grid, WorkspaceGridSpec):
+            return grid
+    return DEFAULT_WORKSPACE_GRID
+
+
+def grid_for_panel(panel: dict[str, Any]) -> WorkspaceGridSpec:
+    grid = panel.get("_grid")
+    return grid if isinstance(grid, WorkspaceGridSpec) else DEFAULT_WORKSPACE_GRID
 
 
 def resolve_ui_target_panel(panels: list[dict[str, Any]], ui_intent: UIIntent) -> dict[str, Any] | None:
@@ -1328,6 +1792,7 @@ def arrange_ui_panels(
     target_panel: dict[str, Any],
     ui_intent: UIIntent,
 ) -> list[dict[str, Any]] | None:
+    grid = grid_for_panels(panels)
     pinned_panels = [
         panel
         for panel in panels
@@ -1345,7 +1810,7 @@ def arrange_ui_panels(
         if any(overlaps(target_placement, panel["placement"]) for panel in pinned_panels):
             continue
 
-        occupied = occupied_cells([panel["placement"] for panel in pinned_panels] + [target_placement])
+        occupied = occupied_cells([panel["placement"] for panel in pinned_panels] + [target_placement], grid)
         placements = [{
             "panelId": target_panel["id"],
             "placement": target_placement,
@@ -1354,11 +1819,11 @@ def arrange_ui_panels(
         packed = True
 
         for panel in movable:
-            placement = compact_supporting_placement(occupied, panel)
+            placement = compact_supporting_placement(occupied, panel, grid)
             if not placement:
                 packed = False
                 break
-            occupied.update(cells_for_placement(placement))
+            occupied.update(cells_for_placement(placement, grid))
             placements.append({
                 "panelId": panel["id"],
                 "placement": placement,
@@ -1372,19 +1837,20 @@ def arrange_ui_panels(
 
 
 def target_ui_placement_candidates(panel: dict[str, Any], ui_intent: UIIntent) -> list[dict[str, Any]]:
+    grid = grid_for_panel(panel)
     min_span = panel.get("minSpan") if isinstance(panel.get("minSpan"), dict) else default_min_span(panel["type"])
     max_span = panel.get("maxSpan") if isinstance(panel.get("maxSpan"), dict) else default_max_span(panel["type"])
     min_cols = read_int(min_span.get("colSpan"), 1)
     min_rows = read_int(min_span.get("rowSpan"), 1)
-    max_cols = read_int(max_span.get("colSpan"), 4)
-    max_rows = read_int(max_span.get("rowSpan"), 5)
+    max_cols = read_int(max_span.get("colSpan"), grid.cols)
+    max_rows = read_int(max_span.get("rowSpan"), grid.rows)
 
     current = panel["placement"]
     if ui_intent.sizeIntent == "max":
-        desired_cols = min(max_cols, max(min_cols, 3))
-        desired_rows = min(max_rows, max(min_rows, 5))
+        desired_cols = min(max_cols, max(min_cols, grid.cols - 1 if grid.cols > 1 else grid.cols))
+        desired_rows = min(max_rows, max(min_rows, grid.rows))
     elif ui_intent.sizeIntent == "large" or ui_intent.action in {"focus", "open"}:
-        desired_cols = min(max_cols, max(3, min_cols))
+        desired_cols = min(max_cols, max(grid.cols if panel["type"] == "chart" else 3, min_cols))
         desired_rows = min(max_rows, max(3, min_rows))
     elif ui_intent.sizeIntent in {"small", "min"}:
         desired_cols = min_cols
@@ -1402,20 +1868,20 @@ def target_ui_placement_candidates(panel: dict[str, Any], ui_intent: UIIntent) -
     candidates: list[dict[str, Any]] = []
     seen: set[tuple[int, int, int, int]] = set()
     for col_span, row_span in spans:
-        for col, row in workspace_positions(col_span, row_span, ui_intent.positionIntent):
+        for col, row in workspace_positions(col_span, row_span, ui_intent.positionIntent, grid):
             key = (col, row, col_span, row_span)
             if key in seen:
                 continue
             seen.add(key)
-            candidates.append(workspace_placement(col, row, col_span, row_span))
+            candidates.append(workspace_placement(col, row, col_span, row_span, grid))
     return candidates
 
 
-def workspace_positions(col_span: int, row_span: int, position_intent: str | None) -> list[tuple[int, int]]:
+def workspace_positions(col_span: int, row_span: int, position_intent: str | None, grid: WorkspaceGridSpec = DEFAULT_WORKSPACE_GRID) -> list[tuple[int, int]]:
     positions = [
         (col, row)
-        for row in range(1, 5 - row_span + 2)
-        for col in range(1, 4 - col_span + 2)
+        for row in range(1, grid.rows - row_span + 2)
+        for col in range(1, grid.cols - col_span + 2)
     ]
     if position_intent == "bottom":
         return sorted(positions, key=lambda item: (-item[1], item[0]))
@@ -1424,15 +1890,17 @@ def workspace_positions(col_span: int, row_span: int, position_intent: str | Non
     if position_intent == "left":
         return sorted(positions, key=lambda item: (item[0], item[1]))
     if position_intent == "center":
-        return sorted(positions, key=lambda item: (abs((item[0] + (col_span - 1) / 2) - 2.5) + abs((item[1] + (row_span - 1) / 2) - 3), item[1], item[0]))
+        center_col = (grid.cols + 1) / 2
+        center_row = (grid.rows + 1) / 2
+        return sorted(positions, key=lambda item: (abs((item[0] + (col_span - 1) / 2) - center_col) + abs((item[1] + (row_span - 1) / 2) - center_row), item[1], item[0]))
     return sorted(positions, key=lambda item: (item[1], item[0]))
 
 
-def compact_supporting_placement(occupied: set[tuple[int, int]], panel: dict[str, Any]) -> dict[str, Any] | None:
+def compact_supporting_placement(occupied: set[tuple[int, int]], panel: dict[str, Any], grid: WorkspaceGridSpec = DEFAULT_WORKSPACE_GRID) -> dict[str, Any] | None:
     span = panel.get("minSpan") if isinstance(panel.get("minSpan"), dict) else default_min_span(panel["type"])
     col_span = read_int(span.get("colSpan"), 1)
     row_span = read_int(span.get("rowSpan"), 1)
-    return first_available_placement(occupied, col_span, row_span)
+    return first_available_placement(occupied, col_span, row_span, grid)
 
 
 def supporting_panel_sort_key(panel: dict[str, Any]) -> tuple[int, int, str]:
@@ -1449,24 +1917,24 @@ def supporting_panel_sort_key(panel: dict[str, Any]) -> tuple[int, int, str]:
     return (-int(read_float(panel.get("layoutWeight"), 0.0)), type_rank, panel["id"])
 
 
-def first_available_placement(occupied: set[tuple[int, int]], col_span: int, row_span: int) -> dict[str, Any] | None:
-    for row in range(1, 6 - row_span + 1):
-        for col in range(1, 5 - col_span + 1):
-            placement = workspace_placement(col, row, col_span, row_span)
-            cells = cells_for_placement(placement)
+def first_available_placement(occupied: set[tuple[int, int]], col_span: int, row_span: int, grid: WorkspaceGridSpec = DEFAULT_WORKSPACE_GRID) -> dict[str, Any] | None:
+    for row in range(1, grid.rows - row_span + 2):
+        for col in range(1, grid.cols - col_span + 2):
+            placement = workspace_placement(col, row, col_span, row_span, grid)
+            cells = cells_for_placement(placement, grid)
             if not cells.intersection(occupied):
                 return placement
     return None
 
 
-def occupied_cells(placements: list[dict[str, Any]]) -> set[tuple[int, int]]:
+def occupied_cells(placements: list[dict[str, Any]], grid: WorkspaceGridSpec = DEFAULT_WORKSPACE_GRID) -> set[tuple[int, int]]:
     cells: set[tuple[int, int]] = set()
     for placement in placements:
-        cells.update(cells_for_placement(placement))
+        cells.update(cells_for_placement(placement, grid))
     return cells
 
 
-def cells_for_placement(placement: dict[str, Any]) -> set[tuple[int, int]]:
+def cells_for_placement(placement: dict[str, Any], grid: WorkspaceGridSpec = DEFAULT_WORKSPACE_GRID) -> set[tuple[int, int]]:
     if placement.get("group") != "workspace":
         return set()
     col = read_int(placement.get("col"), 1)
@@ -1477,14 +1945,14 @@ def cells_for_placement(placement: dict[str, Any]) -> set[tuple[int, int]]:
         (cell_col, cell_row)
         for cell_col in range(col, col + col_span)
         for cell_row in range(row, row + row_span)
-        if 1 <= cell_col <= 4 and 1 <= cell_row <= 5
+        if 1 <= cell_col <= grid.cols and 1 <= cell_row <= grid.rows
     }
 
 
-def workspace_placement(col: int, row: int, col_span: int, row_span: int) -> dict[str, Any]:
+def workspace_placement(col: int, row: int, col_span: int, row_span: int, grid: WorkspaceGridSpec = DEFAULT_WORKSPACE_GRID) -> dict[str, Any]:
     return {
         "group": "workspace",
-        "zone": workspace_zone(col, col_span),
+        "zone": workspace_zone(col, col_span, grid),
         "col": col,
         "row": row,
         "colSpan": col_span,
@@ -1492,10 +1960,12 @@ def workspace_placement(col: int, row: int, col_span: int, row_span: int) -> dic
     }
 
 
-def workspace_zone(col: int, col_span: int) -> str:
-    if col == 4 and col_span == 1:
+def workspace_zone(col: int, col_span: int, grid: WorkspaceGridSpec = DEFAULT_WORKSPACE_GRID) -> str:
+    context_start = max(1, grid.cols - 1)
+    main_end = max(1, context_start - 1)
+    if col >= context_start:
         return "context"
-    if col + col_span - 1 <= 3:
+    if col + col_span - 1 <= main_end:
         return "main"
     return "mainContext"
 
@@ -1514,25 +1984,25 @@ def default_panel_title(panel_type: str) -> str:
 
 
 def default_min_span(panel_type: str) -> dict[str, int]:
-    return {"colSpan": 1, "rowSpan": 2 if panel_type in {"orderTicket", "portfolioHoldings", "stockRecommendations"} else 1}
+    return {"colSpan": 1, "rowSpan": 1}
 
 
 def default_max_span(panel_type: str) -> dict[str, int]:
-    return {"colSpan": 4, "rowSpan": 5}
+    return {"colSpan": DEFAULT_WORKSPACE_GRID.cols, "rowSpan": DEFAULT_WORKSPACE_GRID.rows}
 
 
 def default_panel_placement(panel_type: str) -> dict[str, Any]:
     if panel_type == "chart":
-        return workspace_placement(1, 1, 3, 3)
+        return workspace_placement(1, 4, DEFAULT_WORKSPACE_GRID.cols, 2)
     if panel_type == "ontologyGraph":
-        return workspace_placement(4, 1, 1, 2)
+        return workspace_placement(5, 1, 4, 2)
     if panel_type == "orderTicket":
-        return workspace_placement(4, 4, 1, 2)
+        return workspace_placement(7, 1, 2, 1)
     if panel_type == "portfolioHoldings":
-        return workspace_placement(1, 4, 1, 2)
+        return workspace_placement(1, 1, 4, 1)
     if panel_type == "stockRecommendations":
-        return workspace_placement(2, 4, 1, 2)
-    return workspace_placement(4, 1, 1, 1)
+        return workspace_placement(5, 1, 4, 1)
+    return workspace_placement(1, 1, 4, 1)
 
 
 def read_span(value: Any, fallback: dict[str, int]) -> dict[str, int]:

@@ -430,6 +430,53 @@ def chart_only_layout_context(symbol="AAPL"):
     }
 
 
+def grid_v2_layout_context(*, chart_symbol="AAPL", include_support=True, pinned_bottom=False):
+    panels = []
+    if include_support:
+        panels.extend([
+            {
+                "id": "panel-news",
+                "type": "newsFeed",
+                "placement": {"group": "workspace", "zone": "main", "col": 1, "row": 1, "colSpan": 4, "rowSpan": 2},
+                "layoutPinned": False,
+                "layoutWeight": 50,
+            },
+            {
+                "id": "panel-ontology",
+                "type": "ontologyGraph",
+                "placement": {"group": "workspace", "zone": "mainContext", "col": 5, "row": 1, "colSpan": 4, "rowSpan": 2},
+                "layoutPinned": False,
+                "layoutWeight": 45,
+            },
+        ])
+    if chart_symbol:
+        panels.append({
+            "id": "panel-chart-primary",
+            "type": "chart",
+            "placement": {"group": "workspace", "zone": "mainContext", "col": 1, "row": 3, "colSpan": 8, "rowSpan": 3},
+            "layoutPinned": False,
+            "layoutWeight": 100,
+            "minSpan": {"colSpan": 2, "rowSpan": 2},
+            "maxSpan": {"colSpan": 8, "rowSpan": 5},
+            "symbol": chart_symbol,
+            "props": {"symbol": chart_symbol},
+        })
+    if pinned_bottom:
+        panels.append({
+            "id": "panel-pinned-summary",
+            "type": "aiSummary",
+            "placement": {"group": "workspace", "zone": "mainContext", "col": 1, "row": 4, "colSpan": 8, "rowSpan": 2},
+            "layoutPinned": True,
+            "layoutWeight": 70,
+        })
+    return {
+        "version": 2,
+        "grid": {"cols": 8, "rows": 5},
+        "selectedPanelId": "panel-chart-primary" if chart_symbol else "panel-news",
+        "panels": panels,
+    }
+
+
 def placements_overlap(left, right):
     left_col_end = left["col"] + left["colSpan"] - 1
     right_col_end = right["col"] + right["colSpan"] - 1
@@ -441,6 +488,23 @@ def placements_overlap(left, right):
         left_row_end < right["row"] or
         right_row_end < left["row"]
     )
+
+
+def assert_no_grid_gaps(testcase, placements, *, cols=8, rows=5):
+    cells = {}
+    for item in placements:
+        placement = item["placement"]
+        if placement.get("group") != "workspace":
+            continue
+        for col in range(placement["col"], placement["col"] + placement["colSpan"]):
+            for row in range(placement["row"], placement["row"] + placement["rowSpan"]):
+                testcase.assertGreaterEqual(col, 1)
+                testcase.assertLessEqual(col, cols)
+                testcase.assertGreaterEqual(row, 1)
+                testcase.assertLessEqual(row, rows)
+                cells[(col, row)] = cells.get((col, row), 0) + 1
+    testcase.assertFalse([cell for cell, count in cells.items() if count > 1])
+    testcase.assertEqual(len(cells), cols * rows)
 
 
 class AgentOrchestrationTests(unittest.TestCase):
@@ -4540,6 +4604,78 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(placements["panel-chart-primary"]["row"], 2)
         self.assertEqual(placements[add_command["payload"]["panelId"]]["row"], 4)
         self.assertEqual(response["agentTrace"]["queryUnderstanding"]["routeMode"], "ui_layout")
+
+    def test_chart_open_replaces_existing_single_chart_symbol_without_reflow(self):
+        response = AgentOrchestrator().resolve_layout({
+            "symbol": "TSLA",
+            "intent": "테슬라 차트 띄워줘",
+            "layoutContext": grid_v2_layout_context(chart_symbol="AAPL", include_support=True),
+        })
+
+        proposal = response["layoutProposal"]
+        command_types = [command["type"] for command in proposal["commands"]]
+        self.assertIn("layout.panel.props.update", command_types)
+        self.assertNotIn("layout.panel.add", command_types)
+        self.assertFalse(any(command["type"] == "layout.panels.arrange" for command in proposal["commands"]))
+        props_command = next(command for command in proposal["commands"] if command["type"] == "layout.panel.props.update")
+        self.assertEqual(props_command["payload"]["panelId"], "panel-chart-primary")
+        self.assertEqual(props_command["payload"]["props"]["symbol"], "TSLA")
+
+    def test_chart_open_without_existing_chart_uses_bottom_chart_and_no_gaps(self):
+        response = AgentOrchestrator().resolve_layout({
+            "symbol": "TSLA",
+            "intent": "테슬라 차트 띄워줘",
+            "layoutContext": grid_v2_layout_context(chart_symbol=None, include_support=True),
+        })
+
+        proposal = response["layoutProposal"]
+        add_command = next(command for command in proposal["commands"] if command["type"] == "layout.panel.add")
+        arrange_command = next(command for command in proposal["commands"] if command["type"] == "layout.panels.arrange")
+        placements = {item["panelId"]: item["placement"] for item in arrange_command["payload"]["placements"]}
+        chart_id = add_command["payload"]["panelId"]
+        self.assertEqual(placements[chart_id], {"group": "workspace", "zone": "mainContext", "col": 1, "row": 4, "colSpan": 8, "rowSpan": 2})
+        self.assertEqual(placements["panel-news"], {"group": "workspace", "zone": "main", "col": 1, "row": 1, "colSpan": 4, "rowSpan": 3})
+        self.assertEqual(placements["panel-ontology"], {"group": "workspace", "zone": "mainContext", "col": 5, "row": 1, "colSpan": 4, "rowSpan": 3})
+        assert_no_grid_gaps(self, arrange_command["payload"]["placements"])
+
+    def test_multi_symbol_chart_request_creates_pair_layout(self):
+        response = AgentOrchestrator().resolve_layout({
+            "symbol": "TSLA",
+            "intent": "테슬라랑 엔비디아 차트 보여줘",
+            "layoutContext": grid_v2_layout_context(chart_symbol=None, include_support=True),
+        })
+
+        understanding = response["agentTrace"]["queryUnderstanding"]
+        self.assertEqual([task["symbol"] for task in understanding["uiTasks"][:2]], ["TSLA", "NVDA"])
+        proposal = response["layoutProposal"]
+        add_commands = [command for command in proposal["commands"] if command["type"] == "layout.panel.add"]
+        self.assertEqual([command["payload"]["props"]["symbol"] for command in add_commands], ["TSLA", "NVDA"])
+        arrange_command = next(command for command in proposal["commands"] if command["type"] == "layout.panels.arrange")
+        placements = {item["panelId"]: item["placement"] for item in arrange_command["payload"]["placements"]}
+        self.assertEqual(placements[add_commands[0]["payload"]["panelId"]]["row"], 2)
+        self.assertEqual(placements[add_commands[0]["payload"]["panelId"]]["rowSpan"], 2)
+        self.assertEqual(placements[add_commands[1]["payload"]["panelId"]]["row"], 4)
+        self.assertEqual(placements[add_commands[1]["payload"]["panelId"]]["rowSpan"], 2)
+        self.assertEqual(placements["panel-news"]["row"], 1)
+        self.assertEqual(placements["panel-ontology"]["row"], 1)
+        self.assertEqual(placements["panel-news"]["colSpan"] + placements["panel-ontology"]["colSpan"], 8)
+        assert_no_grid_gaps(self, arrange_command["payload"]["placements"])
+
+    def test_chart_open_with_bottom_blocked_returns_placement_picker(self):
+        response = AgentOrchestrator().resolve_layout({
+            "symbol": "TSLA",
+            "intent": "테슬라 차트 띄워줘",
+            "layoutContext": grid_v2_layout_context(chart_symbol=None, include_support=True, pinned_bottom=True),
+        })
+
+        proposal = response["layoutProposal"]
+        self.assertFalse(proposal["autoApply"])
+        pick_command = next(command for command in proposal["commands"] if command["type"] == "layout.placement.pick")
+        self.assertEqual(pick_command["payload"]["panelType"], "chart")
+        self.assertEqual(pick_command["payload"]["symbol"], "TSLA")
+        self.assertGreaterEqual(len(pick_command["payload"]["candidates"]), 2)
+        for candidate in pick_command["payload"]["candidates"]:
+            assert_no_grid_gaps(self, candidate["arrangement"])
 
     def test_ontology_final_answer_defaults_to_deterministic_even_with_openai_key(self):
         response = {
