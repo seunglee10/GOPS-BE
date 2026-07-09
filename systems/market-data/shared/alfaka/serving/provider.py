@@ -13,6 +13,8 @@ from alfaka.serving.dto import cursor_for, snapshot
 from alfaka.serving.intervals import (
     INTRADAY_DERIVED_INTERVALS,
     INTRADAY_INTERVAL_MINUTES,
+    backfill_target_days,
+    intraday_preload_min_start_iso,
     normalize_chart_interval,
     resolve_candle_limit,
     source_interval_for,
@@ -343,7 +345,7 @@ def with_coverage_metadata(payload, coverage, requested_limit, before=None, from
         "availableTo": available_to,
         "oldestTimestamp": oldest,
         "newestTimestamp": newest,
-        "hasMoreBefore": has_more_before_target(oldest, available_from, target_range_from),
+        "hasMoreBefore": has_more_before_target(oldest, available_from, target_range_from, interval=interval),
         "hasMoreAfter": bool(newest and available_to and available_to > newest),
         "storedCandleCount": stored_count,
         "invalidRowCount": int(invalid_row_count or 0),
@@ -374,10 +376,14 @@ def redis_recent_window_is_current(candles, target_from_time, range_query):
     return newest >= target
 
 
-def has_more_before_target(oldest, available_from, target_range_from):
+def has_more_before_target(oldest, available_from, target_range_from, interval=None):
     oldest_time = parse_iso_time(oldest)
     if not oldest_time:
         return False
+    if interval:
+        floor_time = parse_iso_time(pagination_floor_for_interval(interval))
+        if floor_time:
+            return oldest_time > floor_time
     target_start = parse_iso_time(target_range_from)
     available_start = parse_iso_time(available_from)
     if available_start and oldest_time - available_start > TARGET_FLOOR_TOLERANCE:
@@ -385,6 +391,14 @@ def has_more_before_target(oldest, available_from, target_range_from):
     if target_start and oldest_time - target_start > TARGET_FLOOR_TOLERANCE:
         return True
     return False
+
+
+def pagination_floor_for_interval(interval):
+    interval = normalize_chart_interval(interval)
+    if interval in INTRADAY_INTERVAL_MINUTES:
+        return intraday_preload_min_start_iso()
+    target = datetime.now(timezone.utc) - timedelta(days=backfill_target_days(interval))
+    return target.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
 def one_year_target_from(reference_timestamp=None):

@@ -50,14 +50,21 @@ AWS_PROFILE=gops-dev ./scripts/aws/deploy-dev-local.sh
 스크립트 동작:
 
 1. `origin/dev` 최신 SHA를 고정한다.
-2. EKS `ConfigMap/gops-dev-deploy-state`의 마지막 성공 SHA와 비교한다.
-3. 바뀐 파일을 기존 service mapping으로 분석한다.
+2. EKS `ConfigMap/gops-dev-deploy-state`에서 서비스별 마지막 성공 SHA를 읽는다.
+3. 서비스별 baseline과 `origin/dev` 사이의 diff를 기존 service mapping으로 분석한다.
 4. 변경된 서비스 image만 로컬 Docker로 빌드해 ECR에 push한다.
 5. 임시 worktree의 kustomize overlay만 수정해 EKS에 server-side dry-run/apply한다.
 6. 선택된 Deployment rollout과 frontend/backend smoke test를 확인한다.
-7. 성공하면 `gops-dev-deploy-state`를 최신 SHA로 갱신한다.
+7. 성공하면 선택된 서비스의 `service.<name>.lastSuccessfulSha`를 최신 SHA로 갱신한다.
 
-첫 실행이거나 deploy state가 없으면 전체 app image를 빌드/배포한다.
+서비스별 deploy state가 없으면 먼저 legacy `lastSuccessfulSha`를 확인한다. 단,
+legacy `lastSuccessfulServices`에 해당 서비스가 들어 있을 때만 그 SHA를 baseline으로
+사용한다. 그래도 baseline이 없으면 현재 EKS primary Deployment의 image tag를 읽어
+baseline으로 사용한다. 이 fallback도 실패하면 해당 서비스는 안전하게 재빌드 대상이
+된다.
+
+이 구조에서는 backend만 성공 배포해도 frontend의 미배포 변경이 사라지지 않는다.
+다음 실행 때 frontend의 서비스별 baseline부터 다시 diff를 계산하기 때문이다.
 
 ## Dry Run
 

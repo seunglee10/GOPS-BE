@@ -5482,6 +5482,20 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "2020-07-01T00:00:00.000Z",
         ))
 
+    def test_has_more_before_keeps_intraday_pagination_open_until_historical_floor(self):
+        self.assertTrue(has_more_before_target(
+            "2026-07-09T08:50:00.000Z",
+            "2026-07-09T08:50:00.000Z",
+            "2026-07-09T02:49:53.000Z",
+            interval="1m",
+        ))
+        self.assertFalse(has_more_before_target(
+            "2020-07-01T00:00:00.000Z",
+            "2020-07-01T00:00:00.000Z",
+            "2020-07-01T00:00:00.000Z",
+            interval="1m",
+        ))
+
     def test_intraday_target_floor_uses_requested_visible_window(self):
         self.assertEqual(
             target_range_from_for_interval("1m", "2026-06-30T11:15:09.000Z"),
