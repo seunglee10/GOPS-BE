@@ -178,6 +178,10 @@ to `ON_DEMAND_FILL_FOREGROUND_AUTO_MAX_BARS` estimated bars so sparse daily-like
 chart openings can render immediately. Set
 `ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED=true` to allow the general foreground
 path up to `ON_DEMAND_FILL_FOREGROUND_MAX_BARS` estimated bars.
+Intraday equity fill splits each requested range by market session before
+calling Alpaca REST. `pre`, `regular`, and `after` slices are historical
+REST-fetchable, while `overnight` slices are BOATS live/on-demand subscription
+only and are recorded as skipped `fill.feedRoutes` entries.
 Background fill is bounded by `ON_DEMAND_FILL_BACKGROUND_TIMEOUT_SECONDS` and
 writes source failures to logs/monitoring; the initiating response shows
 foreground and background state. Alpaca no-data remains an `empty` or `partial`
@@ -191,9 +195,10 @@ blank or partial, it displays `dataStatus`, response `message`, and the `fill`
 trace so CSCO 1D or similar failures show which source missed or failed.
 
 Opening WebSocket for 1D remains a separate realtime subscription concern and is
-not part of on-demand fill. Opening any S&P500 chart may promote that symbol to
-the explicit realtime `trades/quotes` cohort while the chart is active; the
-S&P500 baseline itself is bars/statuses only.
+not part of on-demand fill. Opening any valid chart symbol may promote that
+symbol to the explicit realtime `trades/quotes` cohort while the chart is active;
+the S&P500 baseline itself is bars/statuses only, so ETF symbols such as QQQ rely
+on explicit on-demand chart subscription rather than S&P500 membership.
 
 ## Runtime Units
 

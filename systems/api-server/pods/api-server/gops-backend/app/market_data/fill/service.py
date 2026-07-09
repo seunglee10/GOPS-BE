@@ -7,9 +7,10 @@ import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, time as datetime_time, timedelta, timezone
 from typing import Any
 
+from alfaka.alpaca.feed_profiles import MARKET_TIMEZONE, market_session_for_datetime
 from alfaka.backfill.runner import (
     BackfillUnavailable,
     fetch_alpaca_bars,
@@ -27,6 +28,7 @@ from alfaka.serving.intervals import (
     normalize_chart_interval,
     source_interval_for,
 )
+from alfaka.common.symbols import is_crypto_symbol
 from alfaka.serving.moving_average import attach_moving_averages
 from alfaka.serving.provider import merge_candles, requested_source_bar_target, requested_window_for_interval
 from alfaka.storage.clickhouse_loader import ClickHouseHttpClient, should_ensure_schema_on_start
@@ -39,6 +41,13 @@ from app.market_data.backfill.service import renderability_payload
 FILL_TIMEOUT_SECONDS = 30.0
 BACKGROUND_FILL_TIMEOUT_SECONDS = 60.0
 FILL_SOURCES = ("redis", "clickhouse", "s3", "alpaca")
+INTRADAY_HISTORICAL_ROUTE_INTERVALS = {"1m", "5m", "10m", "1h", "4h"}
+US_EQUITY_SESSION_BOUNDARY_TIMES = (
+    datetime_time(4, 0),
+    datetime_time(9, 30),
+    datetime_time(16, 0),
+    datetime_time(20, 0),
+)
 logger = logging.getLogger(__name__)
 
 _BACKGROUND_EXECUTOR: ThreadPoolExecutor | None = None
@@ -112,6 +121,12 @@ class OnDemandFillService:
 
         fill_ranges = self._fill_ranges(payload, requested_start, requested_end)
         trace["missingRanges"] = fill_ranges
+        trace["feedRoutes"] = historical_fill_routes(
+            symbol,
+            interval,
+            fill_ranges,
+            os.getenv("HISTORICAL_FEED", os.getenv("ALPACA_FEED", "sip")),
+        )
         foreground_filled = self._fill_foreground_from_alpaca(
             symbol=symbol,
             interval=interval,
@@ -182,8 +197,22 @@ class OnDemandFillService:
     ) -> bool:
         source = trace["sources"]["alpaca"]
         trace["foregroundFill"] = {"attempted": False, "source": "alpaca-rest-direct", "rowCount": 0, "state": "not_needed", "reason": None}
-        estimated_bars = estimated_bar_count(interval, ranges)
+        routes = trace.get("feedRoutes") or historical_fill_routes(
+            symbol,
+            interval,
+            ranges,
+            os.getenv("HISTORICAL_FEED", os.getenv("ALPACA_FEED", "sip")),
+        )
+        trace["feedRoutes"] = routes
+        fetch_routes = [route for route in routes if route.get("state") == "fetchable"]
+        estimated_bars = estimated_bar_count(interval, fetch_ranges_from_routes(fetch_routes))
         foreground_auto_enabled = interval in self.foreground_auto_intervals and estimated_bars <= self.foreground_auto_max_bars
+        if not fetch_routes:
+            trace["foregroundFill"].update({
+                "state": "skipped",
+                "reason": "requested range has no historical REST fillable session",
+            })
+            return False
         if not self.foreground_enabled and not foreground_auto_enabled:
             trace["foregroundFill"].update({"state": "disabled", "reason": "foreground Alpaca fill disabled"})
             return False
@@ -204,20 +233,26 @@ class OnDemandFillService:
         trace["foregroundFill"]["attempted"] = True
         try:
             timeframe = alpaca_timeframe_for_interval(interval)
-            feed = historical_feed_for_symbol(symbol, os.getenv("HISTORICAL_FEED", os.getenv("ALPACA_FEED", "sip")))
-            raw_rows: list[dict[str, Any]] = []
-            for fill_range in ranges:
+            raw_by_feed: list[tuple[str, list[dict[str, Any]]]] = []
+            for route in fetch_routes:
                 if self._deadline_exceeded(started):
                     break
-                raw_rows.extend(fetch_alpaca_bars(symbol, fill_range["start"], fill_range["end"], feed, timeframe))
-            source["rowCount"] = len(raw_rows)
-            source["hit"] = bool(raw_rows)
-            trace["foregroundFill"]["rowCount"] = len(raw_rows)
-            if not raw_rows:
+                route_rows = fetch_alpaca_bars(symbol, route["start"], route["end"], route["feed"], timeframe)
+                route["rowCount"] = len(route_rows)
+                raw_by_feed.append((route["feed"], route_rows))
+            source["rowCount"] = sum(len(rows) for _, rows in raw_by_feed)
+            source["hit"] = source["rowCount"] > 0
+            trace["foregroundFill"]["rowCount"] = source["rowCount"]
+            if source["rowCount"] <= 0:
                 trace["foregroundFill"].update({"state": "empty", "reason": "Alpaca returned no bars for requested range"})
                 return False
-            processed_source = repair_daily_bar_outliers(symbol, raw_rows, feed) if interval == "1D" else raw_rows
-            processed = raw_bars_to_processed_candles(symbol, processed_source, feed=feed, interval=interval)
+            processed = []
+            first_feed = fetch_routes[0]["feed"]
+            for feed, raw_rows in raw_by_feed:
+                if not raw_rows:
+                    continue
+                processed_source = repair_daily_bar_outliers(symbol, raw_rows, feed) if interval == "1D" else raw_rows
+                processed.extend(raw_bars_to_processed_candles(symbol, processed_source, feed=feed, interval=interval))
             direct_candles = [
                 {
                     **candle_to_gops(candle),
@@ -238,7 +273,7 @@ class OnDemandFillService:
             candles = attach_moving_averages(merged, overwrite=True)[-limit:]
             payload.update({
                 "source": "alpaca",
-                "feed": feed,
+                "feed": first_feed,
                 "sourceInterval": interval,
                 "snapshotCursor": cursor_for(symbol, interval, candles[-1]) if candles else None,
                 "candles": candles,
@@ -278,6 +313,7 @@ class OnDemandFillService:
             "sources": {source: {"checked": False, "hit": False, "rowCount": 0, "durationMs": 0, "error": None} for source in FILL_SOURCES},
             "missingRanges": [],
             "gapRanges": [],
+            "feedRoutes": [],
             "renderable": False,
             "minimumReturnedCount": minimum_renderable_returned_bars(interval),
             "minimumRenderableSourceBars": minimum_renderable_source_bars(source_interval),
@@ -483,28 +519,40 @@ class OnDemandFillService:
             source["durationMs"] = elapsed_ms(source_started)
             return False
         timeframe = alpaca_timeframe_for_interval(interval)
-        feed = historical_feed_for_symbol(symbol, os.getenv("HISTORICAL_FEED", os.getenv("ALPACA_FEED", "sip")))
+        routes = historical_fill_routes(symbol, interval, ranges, os.getenv("HISTORICAL_FEED", os.getenv("ALPACA_FEED", "sip")))
+        trace["feedRoutes"] = routes
+        fetch_routes = [route for route in routes if route.get("state") == "fetchable"]
+        if not fetch_routes:
+            source["durationMs"] = elapsed_ms(source_started)
+            return False
         try:
-            raw_rows = []
-            for fill_range in ranges:
+            raw_by_feed: list[tuple[str, list[dict[str, Any]]]] = []
+            for route in fetch_routes:
                 if self._deadline_exceeded(started):
                     break
-                raw_rows.extend(fetch_alpaca_bars(symbol, fill_range["start"], fill_range["end"], feed, timeframe))
-            source["rowCount"] = len(raw_rows)
-            source["hit"] = bool(raw_rows)
-            if not raw_rows:
+                route_rows = fetch_alpaca_bars(symbol, route["start"], route["end"], route["feed"], timeframe)
+                route["rowCount"] = len(route_rows)
+                raw_by_feed.append((route["feed"], route_rows))
+            source["rowCount"] = sum(len(rows) for _, rows in raw_by_feed)
+            source["hit"] = source["rowCount"] > 0
+            if source["rowCount"] <= 0:
                 return False
             s3 = self._s3_client()
             final_prefix = os.getenv("S3_FINAL_PREFIX", os.getenv("S3_PROCESSED_PREFIX", "market-data/rebuild-20260702-lazy-v1/final"))
             manifest_prefix = os.getenv("S3_MANIFEST_PREFIX", DEFAULT_MANIFEST_PREFIX)
             output_format = os.getenv("S3_PROCESSED_FORMAT", "parquet").lower()
-            processed_source = repair_daily_bar_outliers(symbol, raw_rows, feed) if interval == "1D" else raw_rows
-            processed = raw_bars_to_processed_candles(symbol, processed_source, feed=feed, interval=interval)
+            processed = []
+            first_feed = fetch_routes[0]["feed"]
+            for feed, raw_rows in raw_by_feed:
+                if not raw_rows:
+                    continue
+                processed_source = repair_daily_bar_outliers(symbol, raw_rows, feed) if interval == "1D" else raw_rows
+                processed.extend(raw_bars_to_processed_candles(symbol, processed_source, feed=feed, interval=interval))
             if not processed:
                 return False
             first_event_time = parse_time(processed[0]["timestamp"])
             partition_key = (
-                f"{final_prefix}/candles/feed={feed or 'unknown'}/interval={interval}/symbol={symbol}"
+                f"{final_prefix}/candles/feed={first_feed or 'unknown'}/interval={interval}/symbol={symbol}"
                 f"/year={first_event_time:%Y}/month={first_event_time:%m}/day={first_event_time:%d}"
                 f"/source=on-demand-fill"
             )
@@ -594,6 +642,10 @@ def elapsed_ms(started: float) -> int:
     return max(0, int((time.monotonic() - started) * 1000))
 
 
+def iso_utc(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
 def unique_ordered(values: list[str]) -> list[str]:
     seen: set[str] = set()
     result: list[str] = []
@@ -633,6 +685,97 @@ def estimated_bar_count(interval: str, ranges: list[dict[str, Any]]) -> int:
             continue
         count += int((end - start).total_seconds() // seconds) + 1
     return count
+
+
+def historical_fill_routes(symbol: str, interval: str, ranges: list[dict[str, Any]], default_feed: str) -> list[dict[str, Any]]:
+    interval = normalize_chart_interval(interval)
+    feed = historical_feed_for_symbol(symbol, default_feed)
+    if is_crypto_symbol(symbol) or interval not in INTRADAY_HISTORICAL_ROUTE_INTERVALS:
+        return [
+            {
+                "start": item["start"],
+                "end": item["end"],
+                "feed": feed,
+                "session": "all",
+                "state": "fetchable",
+                "reason": None,
+            }
+            for item in ranges
+            if item.get("start") and item.get("end")
+        ]
+
+    routes: list[dict[str, Any]] = []
+    for item in ranges:
+        start_raw = item.get("start")
+        end_raw = item.get("end")
+        if not start_raw or not end_raw:
+            continue
+        start = parse_time(start_raw)
+        end = parse_time(end_raw)
+        if end <= start:
+            continue
+        cursor = start
+        while cursor < end:
+            segment_end = min(next_us_equity_session_boundary(cursor), end)
+            if segment_end <= cursor:
+                break
+            session = market_session_for_datetime(cursor)
+            if session in {"pre", "regular", "after"}:
+                route_feed = feed
+                state = "fetchable"
+                reason = None
+            elif session == "overnight":
+                route_feed = "boats"
+                state = "skipped"
+                reason = "overnight equity candles require BOATS live/on-demand subscription"
+            else:
+                route_feed = None
+                state = "skipped"
+                reason = "market is closed for this range"
+            routes.append({
+                "start": iso_utc(cursor),
+                "end": iso_utc(segment_end),
+                "feed": route_feed,
+                "session": session,
+                "state": state,
+                "reason": reason,
+            })
+            cursor = segment_end
+    return merge_adjacent_routes(routes)
+
+
+def next_us_equity_session_boundary(value: datetime) -> datetime:
+    local = value.astimezone(MARKET_TIMEZONE)
+    candidates: list[datetime] = []
+    for day_offset in (0, 1):
+        local_date = local.date() + timedelta(days=day_offset)
+        for boundary_time in US_EQUITY_SESSION_BOUNDARY_TIMES:
+            candidate = datetime.combine(local_date, boundary_time, tzinfo=MARKET_TIMEZONE).astimezone(timezone.utc)
+            if candidate > value:
+                candidates.append(candidate)
+    return min(candidates) if candidates else value + timedelta(days=1)
+
+
+def merge_adjacent_routes(routes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    for route in routes:
+        previous = merged[-1] if merged else None
+        if (
+            previous
+            and previous.get("end") == route.get("start")
+            and previous.get("feed") == route.get("feed")
+            and previous.get("session") == route.get("session")
+            and previous.get("state") == route.get("state")
+            and previous.get("reason") == route.get("reason")
+        ):
+            previous["end"] = route["end"]
+            continue
+        merged.append(dict(route))
+    return merged
+
+
+def fetch_ranges_from_routes(routes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [{"start": route["start"], "end": route["end"]} for route in routes if route.get("start") and route.get("end")]
 
 
 def candle_in_window(candle: dict[str, Any], *, before: str | None, from_time: str | None, to_time: str | None) -> bool:

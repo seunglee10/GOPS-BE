@@ -184,6 +184,11 @@ and historical canonical materialization remain `split` only.
 Historical direct fill maps canonical intervals to Alpaca REST timeframes:
 `1m=1Min`, `5m=5Min`, `10m=10Min`, `1h=1Hour`, `4h=4Hour`, `1D=1Day`,
 `1W=1Week`, and `1M=1Month`.
+For intraday equities, direct fill is split by market session before any Alpaca
+REST call. `pre`, `regular`, and `after` slices use the configured historical
+feed; `overnight` slices are BOATS live/on-demand only and appear as skipped
+routes in `fill.feedRoutes` until the active chart subscription produces live
+overnight candles.
 
 Before deleting or quarantining suspect ClickHouse candle rows, run `python -m alfaka.tools.canonical_candle_audit` with optional `CANONICAL_AUDIT_SYMBOL`, `CANONICAL_AUDIT_INTERVAL`, and `CANONICAL_AUDIT_LIMIT` to get duplicate/non-canonical/invalid OHLC row counts.
 Explicit operator repair may bypass existing canonical S3 processed objects and fetch Alpaca again when a previously materialized canonical object is known to contain bad values. For `1D`, suspicious split-day high/low outliers are validated against same-day split-adjusted `1m` bars; only the outlier high/low is repaired, while daily open/close/volume remain from dailyBars.

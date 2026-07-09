@@ -538,6 +538,12 @@ Canonical Alpaca historical fill uses `adjustment=split` and writes
 Alpaca REST timeframes for every canonical interval: `1Min`, `5Min`, `10Min`,
 `1Hour`, `4Hour`, `1Day`, `1Week`, and `1Month`. Realtime live/provisional
 candles are still locally aggregated from live source bars where needed.
+Intraday equity historical fill is session-routed before calling Alpaca REST:
+`pre`, `regular`, and `after` ranges are fetched from the configured historical
+feed, while `overnight` ranges are marked as BOATS-only and are not fetched
+through the SIP historical path. The per-request `fill.feedRoutes` trace shows
+which sub-ranges were `fetchable` and which were skipped because they require
+the live/on-demand BOATS subscription path.
 ClickHouse serving prefers stored direct interval rows and falls back to
 query-time aggregation from `1m` or `1D` only when direct rows are missing.
 Stored `1m` serving includes `priceAdjustment=live` closed realtime bars in
