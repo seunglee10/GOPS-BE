@@ -178,6 +178,9 @@ Redis recent requested window -> ClickHouse -> bounded auto/general foreground A
 Canonical historical candles use Alpaca `adjustment=split` and are stored as
 `priceAdjustment=split`, `canonicalVersion=v2`; chart serving excludes
 legacy/raw/unknown rows.
+Stored `1m` serving also accepts `priceAdjustment=live` closed realtime Alpaca
+bars so current-session baseline rows are not hidden from the chart API. Daily
+and historical canonical materialization remain `split` only.
 Historical direct fill maps canonical intervals to Alpaca REST timeframes:
 `1m=1Min`, `5m=5Min`, `10m=10Min`, `1h=1Hour`, `4h=4Hour`, `1D=1Day`,
 `1W=1Week`, and `1M=1Month`.

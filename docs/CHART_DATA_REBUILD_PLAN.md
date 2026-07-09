@@ -29,7 +29,11 @@ partial/empty payload와 background fill trace를 반환한다. `1D/1W/1M`은 �
 결손 범위에서 자동 foreground REST를 허용하고, 그 외 일반 foreground는
 `ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED=true`일 때 요청 interval 그대로 closed
 historical bars를 가져와 현재 Redis live/provisional candle과 병합해 반환할 수
-있다. 단, Redis의
+있다. ClickHouse serving은 stored `1m` row에 한해 `priceAdjustment=live`인
+closed realtime Alpaca bars도 허용한다. 이는 SIP baseline/active session에서
+이미 저장된 최신 1분봉이 차트 API에서 숨겨지는 것을 막기 위한 serving 예외이며,
+`1D`와 historical canonical materialization은 계속 `priceAdjustment=split`을
+기준으로 한다. 단, Redis의
 `symbol + interval` closed watermark 이하 timestamp는 closed candle이 우선하며
 live/provisional candle을 반환하지 않는다. 동시에 background fill은 같은 요청 범위를
 S3 final/manifest와 ClickHouse에 저장한다. Raw S3 archive는 감사/백업용이며

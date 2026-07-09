@@ -4624,7 +4624,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         query, params = provider.queries[-1]
         self.assertIn("row_number() OVER", query)
         self.assertIn("canonical_version = 'v2'", query)
-        self.assertIn("price_adjustment IN ('split')", query)
+        self.assertIn("price_adjustment IN ('split', 'live')", query)
         self.assertIn("event_time >= parseDateTimeBestEffort", query)
         self.assertEqual(params["from"], "2026-06-25T13:30:00.000Z")
         self.assertEqual(params["to"], "2026-06-25T13:32:00.000Z")
@@ -4923,7 +4923,30 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn("inserted_at DESC", query)
         self.assertIn("ifNull(source_event_id, '') DESC", query)
         self.assertIn("canonical_version = 'v2'", query)
+        self.assertIn("price_adjustment IN ('split', 'live')", query)
         self.assertEqual(candles[-1]["timestamp"], "2026-06-25T13:30:00.000Z")
+
+    def test_clickhouse_daily_direct_candles_keep_historical_canonical_filter(self):
+        provider = RecordingClickHouseProviderForAggregation([])
+
+        provider.candles("AAPL", "1D", 5)
+
+        query = provider.queries[-1][0]
+        self.assertIn("AND interval IN ('1D', '1d')", query)
+        self.assertIn("price_adjustment IN ('split')", query)
+        self.assertNotIn("'live'", query)
+
+    def test_clickhouse_intraday_aggregation_includes_live_minute_source(self):
+        provider = RecordingClickHouseProviderForAggregation([])
+
+        provider.candles("AAPL", "5m", 5)
+
+        direct_query = provider.queries[0][0]
+        aggregate_query = provider.queries[1][0]
+        self.assertIn("interval = {interval:String}", direct_query)
+        self.assertIn("price_adjustment IN ('split')", direct_query)
+        self.assertIn("AND interval = '1m'", aggregate_query)
+        self.assertIn("price_adjustment IN ('split', 'live')", aggregate_query)
 
     def test_clickhouse_provider_does_not_weekday_filter_crypto_candles(self):
         """BTCUSD 조회 SQL에는 주식용 평일 필터가 들어가지 않는지 검증한다."""

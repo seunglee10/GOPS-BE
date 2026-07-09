@@ -68,6 +68,7 @@ class ClickHouseMarketDataProvider:
         """ClickHouse chart_candles에 저장된 요청 interval row를 그대로 조회합니다."""
         interval = normalize_chart_interval(interval)
         limit = resolve_candle_limit(interval, limit)
+        include_live = include_live_stored_candles(interval)
         time_filter = ""
         params = {"symbol": symbol, "limit": int(limit)}
         interval_filter = "interval IN ('1D', '1d')" if interval == "1D" else "interval = {interval:String}"
@@ -89,7 +90,7 @@ class ClickHouseMarketDataProvider:
             AND {interval_filter}
             AND {session_filter}
             {time_filter}
-        """)
+        """, include_live=include_live)
         query = f"""
         SELECT
           formatDateTime(event_time, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS timestamp,
@@ -208,7 +209,7 @@ class ClickHouseMarketDataProvider:
             AND interval = '1m'
             AND {session_filter}
             {time_filter}
-        """)
+        """, include_live=include_live_stored_candles("1m"))
         query = f"""
         SELECT
           formatDateTime(bucket, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS timestamp,
@@ -335,7 +336,7 @@ class ClickHouseMarketDataProvider:
             AND {interval_filter}
             AND {session_filter}
             AND event_time {operator} parseDateTime64BestEffort({{timestamp:String}})
-        """)
+        """, include_live=include_live_stored_candles(interval))
         query = f"""
         SELECT
           formatDateTime(event_time, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS timestamp,
@@ -408,7 +409,7 @@ class ClickHouseMarketDataProvider:
         source_query = self.latest_chart_candles_source(f"""
             symbol = {{symbol:String}}
             AND {interval_filter}
-        """)
+        """, include_live=include_live_stored_candles(stored_interval))
         query = f"""
         SELECT
           {row_count_expr} AS rowCount,
@@ -451,7 +452,7 @@ class ClickHouseMarketDataProvider:
             AND {interval_filter}
             AND event_time >= parseDateTimeBestEffort({{from:String}})
             AND event_time < parseDateTimeBestEffort({{to:String}})
-        """)
+        """, include_live=include_live_stored_candles(stored_interval))
         query = f"""
         SELECT
           formatDateTime(event_time, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS timestamp
@@ -1177,6 +1178,11 @@ def first_value(rows, key, fallback):
         if value:
             return value
     return fallback
+
+
+def include_live_stored_candles(interval):
+    """Serve closed realtime 1m bars without treating live daily/derived rows as historical."""
+    return normalize_chart_interval(interval) == "1m"
 
 
 def merge_candle_rows(*groups):

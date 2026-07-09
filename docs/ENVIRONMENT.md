@@ -539,9 +539,12 @@ Alpaca REST timeframes for every canonical interval: `1Min`, `5Min`, `10Min`,
 `1Hour`, `4Hour`, `1Day`, `1Week`, and `1Month`. Realtime live/provisional
 candles are still locally aggregated from live source bars where needed.
 ClickHouse serving prefers stored direct interval rows and falls back to
-query-time aggregation from `1m` or `1D` only when direct rows are missing. Raw
-S3 backup objects are not a fill source. Retry settings are used for transient
-Alpaca historical API failures such as rate limits and 5xx responses.
+query-time aggregation from `1m` or `1D` only when direct rows are missing.
+Stored `1m` serving includes `priceAdjustment=live` closed realtime bars in
+addition to `split`; `1D` and historical canonical materialization remain
+`split` only. Raw S3 backup objects are not a fill source. Retry settings are
+used for transient Alpaca historical API failures such as rate limits and 5xx
+responses.
 Deprecated `POST /api/charts/backfill`,
 `GET /api/charts/backfill/status`, and `GET /api/charts/backfill/queue` return
 `410 Gone`.
