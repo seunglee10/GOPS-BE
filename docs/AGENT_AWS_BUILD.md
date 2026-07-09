@@ -194,7 +194,7 @@ infra/k8s/base/job-answer-grounding-eval.yaml
 In-cluster dedicated rebuild sizing:
 
 ```text
-app-agent:  2 x m5a/m6a large class, 2 vCPU / 8 GiB, app + agent + workers
+app-agent:  3 x m5a/m6a large class, 2 vCPU / 8 GiB, app + agent + workers
 cache-db:   1 x m5a/m6a xlarge class, 4 vCPU / 16 GiB, Redis + Postgres
 streaming:  1 x m5a/m6a xlarge class, 4 vCPU / 16 GiB, Kafka
 graphdb:    1 x m5a/m6a xlarge class, 4 vCPU / 16 GiB, GraphDB
@@ -202,7 +202,7 @@ clickhouse: 1 x m5a/m6a 2xlarge class, 8 vCPU / 32 GiB, ClickHouse
 batch:      0->1 x m5a/m6a xlarge class, 4 vCPU / 16 GiB, ad hoc Jobs
 ```
 
-This profile uses 24 vCPU in steady state and 28 vCPU when one batch node is
+This profile uses 26 vCPU in steady state and 30 vCPU when one batch node is
 active, excluding cluster add-ons. The live cluster may also keep one small
 `general-purpose` node for CoreDNS, AWS Load Balancer Controller, EBS CSI,
 metrics-server, and external-secrets unless those controllers are moved to a
@@ -216,6 +216,11 @@ validated.
 scales from 0 only when a Job is pending. If the old `platform-core` NodePool was
 applied during the 16 vCPU attempt, delete it only after all pods are drained
 from that node.
+
+The app overlay uses `maxUnavailable=1` and `maxSurge=0` for Deployment rolling
+updates. That intentionally allows one old pod to stop before a replacement pod
+is scheduled, which avoids rollout deadlocks on the fixed-size `app-agent`
+NodePool.
 
 Stateful platform rebuilds must preserve DB data. Do not use a blank fresh PVC
 for Postgres, ClickHouse, or GraphDB. A fresh PVC in a rebuild means a new volume

@@ -3,7 +3,7 @@ kind: NodePool
 metadata:
   name: app-agent
 spec:
-  replicas: 2
+  replicas: 3
   disruption:
     budgets:
       - nodes: 10%

@@ -116,7 +116,10 @@ IRSA는 IAM Roles for Service Accounts의 줄임말이다. EKS pod가 AWS creden
 ## Deployment Rules
 
 - 모든 Deployment는 readiness/liveness/startup probe를 가진다.
-- rolling update 기본값은 `maxUnavailable=0`, `maxSurge=1`이다.
+- EKS in-cluster app overlay의 rolling update는 `maxUnavailable=1`,
+  `maxSurge=0`이다. 고정 크기 `app-agent` NodePool에서 새 Pod를 먼저
+  띄우다가 capacity deadlock이 나는 것을 피하기 위해, 기존 Pod 하나를 먼저
+  내릴 수 있게 한다.
 - resource request/limit을 명시한다.
 - EKS stateful clean rebuild는 `docs/EKS_DATA_PRESERVING_REBUILD_PLAN.md`를
   따른다. Postgres, ClickHouse, GraphDB 데이터 손실은 허용하지 않으며,
