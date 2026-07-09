@@ -5,7 +5,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from alfaka.alpaca.feed_profiles import active_extended_session_window, market_session_for_timestamp
+from alfaka.alpaca.feed_profiles import market_session_for_timestamp, visible_extended_session_windows
 from alfaka.serving.closed_watermark import live_candle_after_latest_closed
 from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
 from alfaka.serving.cursors import timestamp_from_cursor
@@ -543,11 +543,10 @@ def is_stock_chart_visible_candle(candle, now=None):
         return False
     if session == "regular":
         return True
-    window = active_extended_session_window(now)
-    if not window:
-        return False
-    active_session, start, end = window
-    return session == active_session and start <= parsed < end
+    for active_session, start, end in visible_extended_session_windows(now):
+        if session == active_session and start <= parsed < end:
+            return True
+    return False
 
 
 def normalized_market_session(value):

@@ -456,16 +456,15 @@ class OnDemandFillService:
             trace["status"] = status
             trace["durationMs"] = elapsed_ms(started)
             logger.info(
-                "On-demand chart background fill finished.",
-                extra={
-                    "request_id": request_id,
-                    "symbol": symbol,
-                    "interval": interval,
-                    "source_interval": source_interval,
-                    "status": status,
-                    "duration_ms": trace["durationMs"],
-                    "sources": trace["sources"],
-                },
+                "On-demand chart background fill finished: request_id=%s symbol=%s interval=%s source_interval=%s status=%s duration_ms=%s sources=%s feed_routes=%s",
+                request_id,
+                symbol,
+                interval,
+                source_interval,
+                status,
+                trace["durationMs"],
+                json.dumps(trace["sources"], sort_keys=True),
+                json.dumps(trace.get("feedRoutes") or [], sort_keys=True),
             )
             with _BACKGROUND_LOCK:
                 _BACKGROUND_ACTIVE.discard(request_id)

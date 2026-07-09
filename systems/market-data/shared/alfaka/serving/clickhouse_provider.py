@@ -6,7 +6,7 @@ import os
 import re
 import time
 
-from alfaka.alpaca.feed_profiles import active_extended_session_window
+from alfaka.alpaca.feed_profiles import visible_extended_session_windows
 from alfaka.common.env import load_dotenv
 from alfaka.common.canonical import CANONICAL_VERSION, HISTORICAL_SERVING_PRICE_ADJUSTMENTS, SERVING_PRICE_ADJUSTMENTS
 from alfaka.common.symbols import is_crypto_symbol
@@ -911,23 +911,24 @@ class ClickHouseMarketDataProvider:
         ):
             self.execute(f"ALTER TABLE {self.table(table)} MODIFY COLUMN IF EXISTS {column} {column_type}")
 
-    def market_session_filter_sql(self, symbol, column="event_time"):
-        """주식은 정규장과 현재 extended 세션만, crypto는 24/7 캔들을 통과시킵니다."""
+    def market_session_filter_sql(self, symbol, column="event_time", now=None):
+        """주식은 정규장과 현재 live extended window만, crypto는 24/7 캔들을 통과시킵니다."""
         if is_crypto_symbol(symbol):
             return "1 = 1"
-        window = active_extended_session_window()
-        if not window:
+        windows = visible_extended_session_windows(now)
+        if not windows:
             return "market_session = 'regular'"
-        session, start, end = window
-        start_literal = clickhouse_string_literal(start.strftime("%Y-%m-%dT%H:%M:%S.000Z"))
-        end_literal = clickhouse_string_literal(end.strftime("%Y-%m-%dT%H:%M:%S.000Z"))
-        session_literal = clickhouse_string_literal(session)
-        return (
-            "(market_session = 'regular' OR "
-            f"(market_session = {session_literal} "
-            f"AND {column} >= parseDateTime64BestEffort({start_literal}) "
-            f"AND {column} < parseDateTime64BestEffort({end_literal})))"
-        )
+        clauses = ["market_session = 'regular'"]
+        for session, start, end in windows:
+            start_literal = clickhouse_string_literal(start.strftime("%Y-%m-%dT%H:%M:%S.000Z"))
+            end_literal = clickhouse_string_literal(end.strftime("%Y-%m-%dT%H:%M:%S.000Z"))
+            session_literal = clickhouse_string_literal(session)
+            clauses.append(
+                f"(market_session = {session_literal} "
+                f"AND {column} >= parseDateTime64BestEffort({start_literal}) "
+                f"AND {column} < parseDateTime64BestEffort({end_literal}))"
+            )
+        return f"({' OR '.join(clauses)})"
 
     def canonical_candle_filter_sql(self, *, include_live=False):
         if os.getenv("CLICKHOUSE_REQUIRE_CANONICAL_CANDLES", "true").lower() not in {"1", "true", "yes"}:

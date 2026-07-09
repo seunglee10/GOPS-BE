@@ -98,7 +98,7 @@ Runtime policy:
 - Redis keeps only the frontend-requested recent chart window per `symbol + timeframe`
 - older confirmed candles come from ClickHouse direct interval rows when present
 - ClickHouse direct misses can fall back to query-time aggregation from `1m` or `1D`
-- incomplete foreground chart windows may use Alpaca REST direct bars for the requested interval
+- small incomplete foreground chart windows may use Alpaca REST direct bars for the requested interval, including intraday intervals enabled by `ON_DEMAND_FILL_FOREGROUND_AUTO_INTERVALS`
 - background misses check S3 final/manifest before Alpaca historical direct fill
 - raw S3 archives are backup-only and not an active read/materialization source
 

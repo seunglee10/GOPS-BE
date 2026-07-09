@@ -507,10 +507,13 @@ and ClickHouse first. If stored data is not renderable, the default behavior is
 to return the current partial/empty payload immediately with a
 `fill.backgroundFill` trace while the API process queues bounded background
 repair that checks S3 final/manifest and then Alpaca historical for that same
-interval/range. Set `ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED=true` only when
-small requests should wait for direct Alpaca REST bars before responding. It
-does not enqueue a Redis Stream worker and it does not run broad preload jobs
-from a chart request.
+interval/range. `ON_DEMAND_FILL_FOREGROUND_AUTO_INTERVALS` allows bounded
+small-window foreground repair for chart intervals such as
+`1m,5m,10m,1h,4h,1D,1W,1M` even when the general foreground switch is false.
+Set `ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED=true` only when all eligible small
+requests should wait for direct Alpaca REST bars before responding. It does not
+enqueue a Redis Stream worker and it does not run broad preload jobs from a
+chart request.
 
 ```text
 CHART_API_MAX_LIMIT

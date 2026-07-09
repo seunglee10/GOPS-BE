@@ -26,7 +26,7 @@ from alfaka.alpaca.subscription import (
     load_symbols_and_channels,
     resolve_request_config_path,
 )
-from alfaka.alpaca.feed_profiles import feed_profile_active_for_session, market_session_for_timestamp, resolve_feed_profile
+from alfaka.alpaca.feed_profiles import feed_profile_active_for_session, market_session_for_timestamp, resolve_feed_profile, visible_extended_session_windows
 from alfaka.alpaca.trade_tiers import resolve_trade_subscription_plan
 from alfaka.alpaca.websocket_collector import (
     classify_alpaca_error,
@@ -928,6 +928,12 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             active_feed_profile_for(datetime(2026, 7, 6, 2, 0, tzinfo=timezone.utc)),
             "boats",
         )
+        overnight_windows = visible_extended_session_windows(datetime(2026, 6, 30, 2, 0, tzinfo=timezone.utc))
+        self.assertEqual([session for session, _, _ in overnight_windows], ["after", "overnight"])
+        self.assertEqual(overnight_windows[0][1], datetime(2026, 6, 29, 20, 0, tzinfo=timezone.utc))
+        self.assertEqual(overnight_windows[0][2], datetime(2026, 6, 30, 0, 0, tzinfo=timezone.utc))
+        pre_windows = visible_extended_session_windows(datetime(2026, 6, 29, 8, 30, tzinfo=timezone.utc))
+        self.assertEqual([session for session, _, _ in pre_windows], ["overnight", "pre"])
         self.assertIsNone(active_feed_profile_for(datetime(2026, 6, 27, 2, 0, tzinfo=timezone.utc)))
         with mock.patch.dict(os.environ, {
             "MARKET_CLOSED_DATES": "2026-07-06",
@@ -2136,7 +2142,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn('KAFKA_CLICKHOUSE_ENABLE_AUTO_COMMIT: "false"', configmap)
         self.assertIn('ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED: "false"', configmap)
         self.assertIn('ON_DEMAND_FILL_FOREGROUND_MAX_BARS: "120"', configmap)
-        self.assertIn('ON_DEMAND_FILL_FOREGROUND_AUTO_INTERVALS: "1D,1W,1M"', configmap)
+        self.assertIn('ON_DEMAND_FILL_FOREGROUND_AUTO_INTERVALS: "1m,5m,10m,1h,4h,1D,1W,1M"', configmap)
         self.assertIn('ON_DEMAND_FILL_FOREGROUND_AUTO_MAX_BARS: "500"', configmap)
         self.assertIn("wait_for_rebuild_job", news_rebuild_script)
         self.assertIn('status.conditions[?(@.type=="Failed")].status', news_rebuild_script)
@@ -4973,20 +4979,51 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         provider = RecordingClickHouseProviderForAggregation([])
 
         with mock.patch(
-            "alfaka.serving.clickhouse_provider.active_extended_session_window",
-            return_value=(
-                "overnight",
-                datetime(2026, 7, 6, 0, 0, tzinfo=timezone.utc),
-                datetime(2026, 7, 6, 8, 0, tzinfo=timezone.utc),
-            ),
+            "alfaka.serving.clickhouse_provider.visible_extended_session_windows",
+            return_value=[
+                (
+                    "after",
+                    datetime(2026, 7, 5, 20, 0, tzinfo=timezone.utc),
+                    datetime(2026, 7, 6, 0, 0, tzinfo=timezone.utc),
+                ),
+                (
+                    "overnight",
+                    datetime(2026, 7, 6, 0, 0, tzinfo=timezone.utc),
+                    datetime(2026, 7, 6, 8, 0, tzinfo=timezone.utc),
+                ),
+            ],
         ):
             provider.candles("AAPL", "1m", 5)
 
         query = provider.queries[0][0]
         self.assertIn("market_session = 'regular'", query)
+        self.assertIn("market_session = 'after'", query)
         self.assertIn("market_session = 'overnight'", query)
+        self.assertIn("2026-07-05T20:00:00.000Z", query)
         self.assertIn("2026-07-06T00:00:00.000Z", query)
         self.assertIn("2026-07-06T08:00:00.000Z", query)
+
+    def test_stock_chart_visibility_keeps_adjacent_extended_session(self):
+        candles = [
+            {"timestamp": "2026-07-08T19:30:00.000Z", "marketSession": "regular"},
+            {"timestamp": "2026-07-08T21:30:00.000Z", "marketSession": "after"},
+            {"timestamp": "2026-07-09T02:30:00.000Z", "marketSession": "overnight"},
+            {"timestamp": "2026-07-07T21:30:00.000Z", "marketSession": "after"},
+        ]
+
+        visible = filter_stock_chart_candles(
+            candles,
+            now=datetime(2026, 7, 9, 5, 0, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(
+            [candle["timestamp"] for candle in visible],
+            [
+                "2026-07-08T19:30:00.000Z",
+                "2026-07-08T21:30:00.000Z",
+                "2026-07-09T02:30:00.000Z",
+            ],
+        )
 
     def test_crypto_weekend_candle_is_valid_and_keeps_decimal_sizes(self):
         """crypto 주말 캔들과 소수 단위 거래량/수량이 적재 변환에서 유지되는지 검증한다."""

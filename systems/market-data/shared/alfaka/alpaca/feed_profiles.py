@@ -189,6 +189,45 @@ def active_extended_session_window(now: datetime | None = None, timezone=MARKET_
     )
 
 
+def visible_extended_session_windows(now: datetime | None = None, timezone=MARKET_TIMEZONE):
+    """Chart serving에서 현재 live window로 함께 보여줄 extended 세션 범위를 반환합니다."""
+    window = active_extended_session_window(now, timezone=timezone)
+    if not window:
+        return []
+    session, start, end = window
+    windows = []
+    previous = previous_contiguous_extended_session_window(session, start, timezone=timezone)
+    if previous:
+        windows.append(previous)
+    windows.append((session, start, end))
+    return windows
+
+
+def previous_contiguous_extended_session_window(session: str, start: datetime, timezone=MARKET_TIMEZONE):
+    """Overnight/pre로 넘어간 직후에도 바로 직전 extended 세션을 숨기지 않게 합니다."""
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=datetime_timezone.utc)
+    local_start = start.astimezone(timezone)
+    if session == "overnight":
+        previous_start = datetime.combine(local_start.date(), REGULAR_CLOSE, tzinfo=timezone)
+        previous_end = datetime.combine(local_start.date(), AFTER_MARKET_CLOSE, tzinfo=timezone)
+        expected_session = "after"
+    elif session == "pre":
+        previous_start = datetime.combine(local_start.date() - timedelta(days=1), AFTER_MARKET_CLOSE, tzinfo=timezone)
+        previous_end = datetime.combine(local_start.date(), PRE_MARKET_OPEN, tzinfo=timezone)
+        expected_session = "overnight"
+    else:
+        return None
+    probe = previous_end.astimezone(datetime_timezone.utc) - timedelta(minutes=1)
+    if market_session_for_datetime(probe, timezone=timezone) != expected_session:
+        return None
+    return (
+        expected_session,
+        previous_start.astimezone(datetime_timezone.utc),
+        previous_end.astimezone(datetime_timezone.utc),
+    )
+
+
 def configured_closed_dates(environ=None) -> frozenset[str]:
     """환경변수와 기본 휴장일을 합쳐 주식장 휴장일 집합을 반환합니다."""
     environ = environ or os.environ
