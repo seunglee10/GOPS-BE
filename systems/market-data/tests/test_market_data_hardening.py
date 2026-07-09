@@ -2119,7 +2119,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertNotIn("name: alfaka-alpaca-tick-ingestor-sip", alpaca_ingestor_deployment)
         self.assertNotIn("value: alfaka-alpaca-tick-ingestor-sip", alpaca_ingestor_deployment)
         self.assertIn("name: ALPACA_ACTIVE_CHANNELS", alpaca_ingestor_deployment)
-        self.assertIn("value: trades,quotes", alpaca_ingestor_deployment)
+        self.assertIn("value: bars,updatedBars,dailyBars,trades,quotes", alpaca_ingestor_deployment)
         self.assertIn('ALPACA_KAFKA_PUBLISH_WORKERS: "4"', configmap)
         self.assertIn('ALPACA_KAFKA_PUBLISH_QUEUE_MAXSIZE: "20000"', configmap)
         self.assertIn('KAFKA_PRODUCER_LINGER_MS: "20"', configmap)
@@ -7622,9 +7622,15 @@ class RealtimeChartSubscriptionContractTest(unittest.TestCase):
         self.assertEqual(record["reason"], "active-chart-session")
         self.assertEqual(record["enabled"], "true")
         self.assertEqual(record["source"], "subscription-controller")
-        self.assertEqual(set(record["layers"].split(",")), {"trades", "quotes"})
+        self.assertEqual(set(record["layers"].split(",")), {"candles", "trades", "quotes"})
 
-        desired = read_realtime_subscription_symbols_by_channel(redis_client, ["trades", "quotes"])
+        desired = read_realtime_subscription_symbols_by_channel(
+            redis_client,
+            ["bars", "updatedBars", "dailyBars", "trades", "quotes"],
+        )
+        self.assertEqual(desired["bars"], {"AAPL"})
+        self.assertEqual(desired["updatedBars"], {"AAPL"})
+        self.assertEqual(desired["dailyBars"], {"AAPL"})
         self.assertEqual(desired["trades"], {"AAPL"})
         self.assertEqual(desired["quotes"], {"AAPL"})
 

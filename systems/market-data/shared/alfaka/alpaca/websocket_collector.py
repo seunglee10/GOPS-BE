@@ -523,6 +523,10 @@ def read_realtime_subscription_symbols_by_channel(redis_client, channels):
         record = read_subscription_record(redis_client, keys, symbol)
         records_by_symbol[symbol] = record
         layers = read_subscription_layers_from_record(record)
+        if "candles" in layers:
+            for channel in ("bars", "updatedBars", "dailyBars"):
+                if channel in result:
+                    result[channel].add(symbol)
         if "trades" in layers and "trades" in result:
             result["trades"].add(symbol)
         if "quotes" in layers and "quotes" in result and "trades" in layers:

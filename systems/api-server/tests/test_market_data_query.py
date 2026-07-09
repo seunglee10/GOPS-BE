@@ -2058,21 +2058,25 @@ class MarketDataQueryServiceTest(unittest.TestCase):
                 payload=payload,
             )
 
-        fetch.assert_called_once()
-        self.assertEqual(fetch.call_args.args[1], "2026-07-08T20:30:00.000Z")
-        self.assertEqual(fetch.call_args.args[2], "2026-07-09T00:00:00.000Z")
-        self.assertEqual(fetch.call_args.args[3], "sip")
-        self.assertEqual(fetch.call_args.args[4], "1Min")
+        self.assertEqual(fetch.call_count, 2)
+        self.assertEqual(fetch.call_args_list[0].args[1], "2026-07-08T20:30:00.000Z")
+        self.assertEqual(fetch.call_args_list[0].args[2], "2026-07-09T00:00:00.000Z")
+        self.assertEqual(fetch.call_args_list[0].args[3], "sip")
+        self.assertEqual(fetch.call_args_list[0].args[4], "1Min")
+        self.assertEqual(fetch.call_args_list[1].args[1], "2026-07-09T00:00:00.000Z")
+        self.assertEqual(fetch.call_args_list[1].args[2], "2026-07-09T04:30:00.000Z")
+        self.assertEqual(fetch.call_args_list[1].args[3], "boats")
+        self.assertEqual(fetch.call_args_list[1].args[4], "1Min")
         self.assertEqual(result["fill"]["status"], "partial")
         self.assertEqual(result["fill"]["foregroundFill"]["state"], "filled")
         self.assertEqual(result["fill"]["feedRoutes"][0]["session"], "after")
         self.assertEqual(result["fill"]["feedRoutes"][0]["state"], "fetchable")
         self.assertEqual(result["fill"]["feedRoutes"][0]["feed"], "sip")
         self.assertEqual(result["fill"]["feedRoutes"][1]["session"], "overnight")
-        self.assertEqual(result["fill"]["feedRoutes"][1]["state"], "skipped")
+        self.assertEqual(result["fill"]["feedRoutes"][1]["state"], "fetchable")
         self.assertEqual(result["fill"]["feedRoutes"][1]["feed"], "boats")
 
-    def test_on_demand_fill_skips_all_overnight_historical_route(self):
+    def test_on_demand_fill_uses_boats_for_overnight_historical_route(self):
         payload = {
             "symbol": "BAC",
             "interval": "1m",
@@ -2094,7 +2098,17 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         }, clear=False):
             service = OnDemandFillService(timeout_seconds=8, background_enabled=False)
 
-        with mock.patch("app.market_data.fill.service.fetch_alpaca_bars") as fetch:
+        raw_rows = [{
+            "t": "2026-07-09T01:00:00Z",
+            "o": 100,
+            "h": 101,
+            "l": 99,
+            "c": 100.5,
+            "v": 1000,
+            "n": 10,
+            "vw": 100.25,
+        }]
+        with mock.patch("app.market_data.fill.service.fetch_alpaca_bars", return_value=raw_rows) as fetch:
             result = service.fill_if_needed(
                 symbol="BAC",
                 interval="1m",
@@ -2105,11 +2119,13 @@ class MarketDataQueryServiceTest(unittest.TestCase):
                 payload=payload,
             )
 
-        fetch.assert_not_called()
-        self.assertEqual(result["fill"]["status"], "empty")
-        self.assertEqual(result["fill"]["foregroundFill"]["state"], "skipped")
+        fetch.assert_called_once()
+        self.assertEqual(fetch.call_args.args[3], "boats")
+        self.assertEqual(fetch.call_args.args[4], "1Min")
+        self.assertEqual(result["fill"]["status"], "partial")
+        self.assertEqual(result["fill"]["foregroundFill"]["state"], "filled")
         self.assertEqual(result["fill"]["feedRoutes"][0]["session"], "overnight")
-        self.assertEqual(result["fill"]["feedRoutes"][0]["state"], "skipped")
+        self.assertEqual(result["fill"]["feedRoutes"][0]["state"], "fetchable")
         self.assertEqual(result["fill"]["feedRoutes"][0]["feed"], "boats")
 
     def test_on_demand_fill_auto_foreground_repairs_daily_sparse_window(self):
@@ -2290,6 +2306,80 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(result["fill"]["status"], "filled")
         self.assertEqual(len(result["candles"]), 8)
         self.assertEqual(result["candles"][2]["timestamp"], "2026-07-06T15:00:00.000Z")
+
+    def test_on_demand_fill_repairs_overnight_sparse_gap_from_boats(self):
+        existing_times = [
+            "2026-07-09T05:47:00.000Z",
+            "2026-07-09T05:48:00.000Z",
+            "2026-07-09T05:55:00.000Z",
+            "2026-07-09T05:56:00.000Z",
+            "2026-07-09T05:57:00.000Z",
+        ]
+        existing = [
+            {
+                "timestamp": timestamp,
+                "open": 100 + index,
+                "high": 101 + index,
+                "low": 99 + index,
+                "close": 100.5 + index,
+                "volume": 1000 + index,
+                "isClosed": True,
+                "marketSession": "overnight",
+            }
+            for index, timestamp in enumerate(existing_times)
+        ]
+        payload = {
+            "symbol": "MSFT",
+            "interval": "1m",
+            "candles": existing,
+            "returnedCount": len(existing),
+            "storedCandleCount": len(existing),
+            "sourceInterval": "1m",
+            "missingRanges": [],
+            "_sourceTrace": {
+                "redis": {"checked": True, "hit": True, "rowCount": len(existing)},
+                "clickhouse": {"checked": True, "hit": True, "rowCount": len(existing)},
+            },
+        }
+        raw_rows = [
+            {
+                "t": f"2026-07-09T05:{minute:02d}:00Z",
+                "o": 100 + minute,
+                "h": 101 + minute,
+                "l": 99 + minute,
+                "c": 100.5 + minute,
+                "v": 1000 + minute,
+                "n": 10,
+                "vw": 100.25 + minute,
+            }
+            for minute in range(50, 55)
+        ]
+        with mock.patch.dict(os.environ, {
+            "HISTORICAL_FEED": "sip",
+            "ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED": "",
+            "ON_DEMAND_FILL_FOREGROUND_AUTO_INTERVALS": "1m",
+            "ON_DEMAND_FILL_FOREGROUND_AUTO_MAX_BARS": "500",
+        }, clear=False):
+            service = OnDemandFillService(timeout_seconds=8, background_enabled=False)
+
+        with mock.patch("app.market_data.fill.service.fetch_alpaca_bars", return_value=raw_rows) as fetch:
+            result = service.fill_if_needed(
+                symbol="MSFT",
+                interval="1m",
+                limit=8,
+                before=None,
+                from_time="2026-07-09T05:47:00.000Z",
+                to_time="2026-07-09T05:58:00.000Z",
+                payload=payload,
+            )
+
+        fetch.assert_called_once()
+        self.assertEqual(fetch.call_args.args[1], "2026-07-09T05:49:00.000Z")
+        self.assertEqual(fetch.call_args.args[2], "2026-07-09T05:55:00.000Z")
+        self.assertEqual(fetch.call_args.args[3], "boats")
+        self.assertEqual(fetch.call_args.args[4], "1Min")
+        self.assertEqual(result["fill"]["foregroundFill"]["state"], "filled")
+        self.assertIn("2026-07-09T05:54:00.000Z", [candle["timestamp"] for candle in result["candles"]])
 
     def test_on_demand_fill_auto_foreground_uses_auto_cap_over_global_cap(self):
         payload = {

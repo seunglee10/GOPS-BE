@@ -31,7 +31,7 @@ spec:
             - name: ALPACA_FEED_PROFILE
               value: sip
             - name: ALPACA_ACTIVE_CHANNELS
-              value: trades,quotes
+              value: bars,updatedBars,dailyBars,trades,quotes
             - name: KAFKA_CLIENT_ID
               value: alfaka-alpaca-ingestor-sip
 ---

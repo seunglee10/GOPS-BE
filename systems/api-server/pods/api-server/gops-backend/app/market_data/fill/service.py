@@ -346,6 +346,8 @@ class OnDemandFillService:
         candles = payload.get("candles") or []
         if payload.get("missingRanges"):
             return True
+        if opportunistic_intraday_gap_ranges(interval, candles):
+            return True
         if self._requested_tiny_window_is_satisfied(payload, interval, limit):
             return False
         if not self._is_renderable(payload, interval, source_interval):
@@ -381,6 +383,7 @@ class OnDemandFillService:
         ranges.extend(coverage.get("missingRanges") or [])
         ranges.extend(coverage.get("gapRanges") or [])
         ranges.extend(self._renderability(payload, interval, source_interval).get("gapRanges") or [])
+        ranges.extend(opportunistic_intraday_gap_ranges(interval, payload.get("candles") or []))
         valid = unique_ranges([
             {"start": item["start"], "end": item["end"], "missingCount": item.get("missingCount")}
             for item in ranges
@@ -654,6 +657,13 @@ def parse_time(value: str) -> datetime:
     return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(timezone.utc)
 
 
+def safe_parse_time(value: Any) -> datetime | None:
+    try:
+        return parse_time(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def elapsed_ms(started: float) -> int:
     return max(0, int((time.monotonic() - started) * 1000))
 
@@ -754,8 +764,8 @@ def historical_fill_routes(symbol: str, interval: str, ranges: list[dict[str, An
                 reason = None
             elif session == "overnight":
                 route_feed = "boats"
-                state = "skipped"
-                reason = "overnight equity candles require BOATS live/on-demand subscription"
+                state = "fetchable"
+                reason = None
             else:
                 route_feed = None
                 state = "skipped"
@@ -770,6 +780,37 @@ def historical_fill_routes(symbol: str, interval: str, ranges: list[dict[str, An
             })
             cursor = segment_end
     return merge_adjacent_routes(routes)
+
+
+def opportunistic_intraday_gap_ranges(interval: str, candles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    interval = normalize_chart_interval(interval)
+    if interval not in INTRADAY_HISTORICAL_ROUTE_INTERVALS:
+        return []
+    timestamps = sorted(
+        timestamp
+        for timestamp in (safe_parse_time(candle.get("timestamp")) for candle in candles if candle.get("timestamp"))
+        if timestamp is not None
+    )
+    if len(timestamps) < 2:
+        return []
+    allowed_gap = interval_seconds(interval) * 3
+    bucket_delta = timedelta(seconds=interval_seconds(interval))
+    ranges = []
+    for previous, current in zip(timestamps, timestamps[1:]):
+        gap_seconds = (current - previous).total_seconds()
+        if gap_seconds <= allowed_gap:
+            continue
+        previous_session = market_session_for_datetime(previous)
+        current_session = market_session_for_datetime(current)
+        if previous_session != current_session or previous_session not in {"pre", "regular", "after", "overnight"}:
+            continue
+        missing_count = max(1, int(gap_seconds // interval_seconds(interval)) - 1)
+        ranges.append({
+            "start": iso_utc(previous + bucket_delta),
+            "end": iso_utc(current),
+            "missingCount": missing_count,
+        })
+    return ranges
 
 
 def next_us_equity_session_boundary(value: datetime) -> datetime:

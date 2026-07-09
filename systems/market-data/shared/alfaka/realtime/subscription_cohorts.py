@@ -253,6 +253,8 @@ class RealtimeSubscriptionCohortService:
         records = {}
         for symbol, sources in sorted(by_symbol.items()):
             layers = set(DEFAULT_REALTIME_LAYERS)
+            if ACTIVE_CHART_SOURCE in sources:
+                layers.add("candles")
             if MANUAL_SOURCE in sources:
                 for member in self._smembers(self.keys.subscription_source_manual(symbol)):
                     layers.update(read_csv_set(member))
