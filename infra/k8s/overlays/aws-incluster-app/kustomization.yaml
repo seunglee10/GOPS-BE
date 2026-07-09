@@ -111,6 +111,19 @@ patches:
             memory: 512Mi
   - target:
       kind: Deployment
+      name: alfaka-alpaca-ingestor-sip
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 300m
+            memory: 192Mi
+          limits:
+            cpu: 1500m
+            memory: 512Mi
+  - target:
+      kind: Deployment
       name: gops-backend
     patch: |-
       - op: replace
@@ -139,11 +152,20 @@ patches:
         path: /spec/template/spec/containers/0/resources
         value:
           requests:
-            cpu: 150m
+            cpu: 500m
             memory: 384Mi
           limits:
             cpu: "2"
             memory: 1Gi
+      - op: replace
+        path: /spec/template/spec/topologySpreadConstraints
+        value:
+          - maxSkew: 1
+            topologyKey: kubernetes.io/hostname
+            whenUnsatisfiable: ScheduleAnyway
+            labelSelector:
+              matchLabels:
+                app: gops-backend
   - target:
       kind: Deployment
       name: gops-frontend
@@ -151,6 +173,15 @@ patches:
       - op: replace
         path: /spec/replicas
         value: 1
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 25m
+            memory: 64Mi
+          limits:
+            cpu: 250m
+            memory: 256Mi
   - target:
       kind: Deployment
       name: agent-orchestrator
@@ -181,11 +212,107 @@ patches:
         path: /spec/template/spec/containers/0/resources
         value:
           requests:
-            cpu: 100m
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+      - op: replace
+        path: /spec/template/spec/topologySpreadConstraints
+        value:
+          - maxSkew: 1
+            topologyKey: kubernetes.io/hostname
+            whenUnsatisfiable: ScheduleAnyway
+            labelSelector:
+              matchLabels:
+                app: agent-orchestrator
+  - target:
+      kind: Deployment
+      name: agent-event-detector
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 150m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+  - target:
+      kind: Deployment
+      name: alfaka-raw-s3-archive
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 200m
+            memory: 128Mi
+          limits:
+            cpu: 750m
+            memory: 512Mi
+  - target:
+      kind: Deployment
+      name: alfaka-s3-sink
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 150m
             memory: 256Mi
           limits:
             cpu: 750m
+            memory: 512Mi
+  - target:
+      kind: Deployment
+      name: alfaka-clickhouse-loader
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+  - target:
+      kind: Deployment
+      name: alfaka-clickhouse-tick-loader
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 250m
+            memory: 256Mi
+          limits:
+            cpu: "1"
             memory: 768Mi
+      - op: replace
+        path: /spec/template/spec/topologySpreadConstraints
+        value:
+          - maxSkew: 1
+            topologyKey: kubernetes.io/hostname
+            whenUnsatisfiable: ScheduleAnyway
+            labelSelector:
+              matchLabels:
+                app: alfaka-clickhouse-tick-loader
+  - target:
+      kind: Deployment
+      name: alfaka-chart-derived-data-worker
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/topologySpreadConstraints
+        value:
+          - maxSkew: 1
+            topologyKey: kubernetes.io/hostname
+            whenUnsatisfiable: ScheduleAnyway
+            labelSelector:
+              matchLabels:
+                app: alfaka-chart-derived-data-worker
   - target:
       kind: Deployment
       name: alfaka-market-processor
@@ -197,11 +324,68 @@ patches:
         path: /spec/template/spec/containers/0/resources
         value:
           requests:
+            cpu: 400m
+            memory: 384Mi
+          limits:
+            cpu: "1"
+            memory: 768Mi
+      - op: replace
+        path: /spec/template/spec/topologySpreadConstraints
+        value:
+          - maxSkew: 1
+            topologyKey: kubernetes.io/hostname
+            whenUnsatisfiable: ScheduleAnyway
+            labelSelector:
+              matchLabels:
+                app: alfaka-market-processor
+  - target:
+      kind: Deployment
+      name: alfaka-market-quote-processor
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
             cpu: 200m
-            memory: 128Mi
+            memory: 320Mi
           limits:
             cpu: "1"
             memory: 512Mi
+      - op: replace
+        path: /spec/template/spec/topologySpreadConstraints
+        value:
+          - maxSkew: 1
+            topologyKey: kubernetes.io/hostname
+            whenUnsatisfiable: ScheduleAnyway
+            labelSelector:
+              matchLabels:
+                app: alfaka-market-quote-processor
+  - target:
+      kind: Deployment
+      name: alfaka-news-daily-summary-worker
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/topologySpreadConstraints
+        value:
+          - maxSkew: 1
+            topologyKey: kubernetes.io/hostname
+            whenUnsatisfiable: ScheduleAnyway
+            labelSelector:
+              matchLabels:
+                app: alfaka-news-daily-summary-worker
+  - target:
+      kind: Deployment
+      name: alfaka-news-intelligence-worker
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/topologySpreadConstraints
+        value:
+          - maxSkew: 1
+            topologyKey: kubernetes.io/hostname
+            whenUnsatisfiable: ScheduleAnyway
+            labelSelector:
+              matchLabels:
+                app: alfaka-news-intelligence-worker
   - target:
       kind: Deployment
       name: recommendation-worker
