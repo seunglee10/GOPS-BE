@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import inspect
+from collections import OrderedDict
+from datetime import date, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 
@@ -16,7 +19,6 @@ from alfaka.serving.chart_derived_data import (
     ChartDerivedArtifactStore,
     ChartDerivedDataClient,
     DERIVED_KIND_INDICATORS,
-    build_footprint_request,
     build_indicator_request,
     build_volume_profile_request,
     clickhouse_client_from_env,
@@ -32,6 +34,12 @@ from alfaka.serving.indicators import (
     indicator_specs_from_csv,
 )
 from alfaka.serving.intervals import normalize_chart_interval, resolve_candle_limit
+from alfaka.orderflow import (
+    ORDER_FLOW_CLASSIFICATION_VERSION,
+    ORDER_FLOW_SIDE_CLASSIFICATION,
+    pinned_symbols_from_env,
+    price_bin_size_from_env,
+)
 from alfaka.serving.volume_profile import (
     DEFAULT_VOLUME_PROFILE_TARGET_BINS,
     normalize_target_bins,
@@ -46,6 +54,7 @@ HOT_NEWS_RANKING_KINDS = (
     ("losers", "급락"),
     ("dollar-volume", "거래대금"),
 )
+MARKET_TIMEZONE = ZoneInfo("America/New_York")
 
 
 class MarketDataQueryService:
@@ -298,17 +307,129 @@ class MarketDataQueryService:
         write_inline_indicator_cache(self.derived_client, request, payload)
         return payload
 
-    def footprint_series(
+    def order_flow_symbols(self) -> dict[str, Any]:
+        return {
+            "symbols": sorted(pinned_symbols_from_env()),
+            "priceBinSize": price_bin_size_from_env(),
+            "sideClassification": ORDER_FLOW_SIDE_CLASSIFICATION,
+            "classificationVersion": ORDER_FLOW_CLASSIFICATION_VERSION,
+        }
+
+    def order_flow_daily(self, symbol: str, from_date: str, to_date: str, limit_days: int = 60) -> dict[str, Any]:
+        """Reads tiny immutable daily order-flow rows directly from ClickHouse; no cache in MVP."""
+        symbol = normalize_market_symbol(symbol)
+        supported = sorted(pinned_symbols_from_env())
+        if symbol not in set(supported):
+            return self._unsupported_order_flow_payload(symbol, days=True, supported=supported, from_date=from_date, to_date=to_date)
+        start = parse_date_arg(from_date, "from")
+        end = parse_date_arg(to_date, "to")
+        if end < start:
+            raise ValueError("to must be on or after from.")
+        limit_days = max(1, min(int(limit_days), 250))
+        clickhouse_provider = getattr(self.provider, "clickhouse_provider", None)
+        method = getattr(clickhouse_provider, "order_flow_daily_profiles", None)
+        if not callable(method):
+            raise HTTPException(status_code=503, detail="Order-flow ClickHouse provider is unavailable.")
+        row_limit = max(1000, limit_days * 5000)
+        query_limit = row_limit + 1
+        try:
+            rows = list(method(symbol, start.isoformat(), end.isoformat(), limit=query_limit) or [])
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=f"Market data provider failed: {exc}") from exc
+        if len(rows) > query_limit:
+            rows = rows[:query_limit]
+        hit_limit = len(rows) > row_limit
+        today = datetime.now(MARKET_TIMEZONE).date().isoformat()
+        grouped: "OrderedDict[str, list[dict[str, Any]]]" = OrderedDict()
+        for row in rows:
+            session_date = str(row.get("sessionDate") or row.get("session_date") or "")
+            if not session_date or session_date >= today:
+                continue
+            grouped.setdefault(session_date, []).append(row)
+        if hit_limit and grouped:
+            grouped.popitem(last=True)
+        selected_dates = list(grouped)[:limit_days]
+        days = [
+            order_flow_day_payload(session_date, grouped[session_date])
+            for session_date in sorted(selected_dates)
+        ]
+        return {
+            "symbol": symbol,
+            "priceBinSize": price_bin_size_from_env(),
+            "sideClassification": ORDER_FLOW_SIDE_CLASSIFICATION,
+            "classificationVersion": ORDER_FLOW_CLASSIFICATION_VERSION,
+            "marketSession": "regular",
+            "from": start.isoformat(),
+            "to": end.isoformat(),
+            "dataStatus": "ready" if days else "empty",
+            "days": days,
+        }
+
+    def order_flow_intraday(self, symbol: str) -> dict[str, Any]:
+        symbol = normalize_market_symbol(symbol)
+        supported = sorted(pinned_symbols_from_env())
+        if symbol not in set(supported):
+            return self._unsupported_order_flow_payload(symbol, days=False, supported=supported)
+        redis_provider = getattr(self.provider, "redis_provider", None)
+        method = getattr(redis_provider, "order_flow_live_bins", None)
+        if not callable(method):
+            raise HTTPException(status_code=503, detail="Order-flow Redis provider is unavailable.")
+        current_session_date = datetime.now(MARKET_TIMEZONE).date().isoformat()
+        try:
+            bins = [
+                bin_payload for bin_payload in method(symbol) or []
+                if str(bin_payload.get("sessionDate") or "") == current_session_date
+            ]
+            live_quote = redis_provider.live_quote(symbol) if callable(getattr(redis_provider, "live_quote", None)) else None
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=f"Market data provider failed: {exc}") from exc
+        grouped: "OrderedDict[str, list[dict[str, Any]]]" = OrderedDict()
+        for bin_payload in bins:
+            minute = str(bin_payload.get("eventMinute") or "")
+            if minute:
+                grouped.setdefault(minute, []).append(bin_payload)
+        minutes = [
+            {
+                "eventMinute": minute,
+                "bins": [order_flow_level_payload(item) for item in sorted(items, key=lambda row: float(row.get("priceBin") or 0))],
+            }
+            for minute, items in sorted(grouped.items())
+        ]
+        return {
+            "symbol": symbol,
+            "sessionDate": current_session_date,
+            "priceBinSize": price_bin_size_from_env(),
+            "sideClassification": ORDER_FLOW_SIDE_CLASSIFICATION,
+            "classificationVersion": ORDER_FLOW_CLASSIFICATION_VERSION,
+            "marketSession": "regular",
+            "dataStatus": "ready" if minutes else "empty",
+            "minutes": minutes,
+            "liveQuote": live_quote,
+        }
+
+    def _unsupported_order_flow_payload(
         self,
         symbol: str,
-        from_time: str,
-        to_time: str,
-        limit: int = 20000,
+        *,
+        days: bool,
+        supported: list[str],
+        from_date: str | None = None,
+        to_date: str | None = None,
     ) -> dict[str, Any]:
-        symbol = normalize_market_symbol(symbol)
-        resolved_limit = max(1, min(int(limit), 100000))
-        request = build_footprint_request(symbol=symbol, from_time=from_time, to_time=to_time, limit=resolved_limit)
-        return self.derived_client.resolve(request)
+        payload = {
+            "symbol": symbol,
+            "priceBinSize": price_bin_size_from_env(),
+            "sideClassification": ORDER_FLOW_SIDE_CLASSIFICATION,
+            "classificationVersion": ORDER_FLOW_CLASSIFICATION_VERSION,
+            "marketSession": "regular",
+            "dataStatus": "unsupported",
+            "supportedSymbols": supported,
+        }
+        if days:
+            payload.update({"from": from_date, "to": to_date, "days": []})
+        else:
+            payload.update({"sessionDate": datetime.now(MARKET_TIMEZONE).date().isoformat(), "minutes": [], "liveQuote": None})
+        return payload
 
     def latest_status(self, symbol: str | None = None) -> dict[str, Any]:
         normalized = normalize_market_symbol(symbol) if symbol else None
@@ -684,10 +805,19 @@ class MarketDataQueryService:
         try:
             provider_include = set(include_set)
             needs_volume_profile = "volumeProfile" in provider_include
+            needs_order_flow_daily = "orderFlowDaily" in provider_include
             provider_include.discard("volumeProfile")
+            provider_include.discard("orderFlowDaily")
             context = self.provider.agent_chart_context(symbol, interval, from_time, to_time, provider_include)
             if needs_volume_profile:
                 context["volumeProfile"] = self.volume_profile_bins(symbol, from_time, to_time, "auto", interval=interval)
+            if needs_order_flow_daily:
+                context["orderFlowDaily"] = order_flow_daily_totals_only(self.order_flow_daily(
+                    symbol,
+                    _agent_context_date(from_time),
+                    _agent_context_date(to_time),
+                    limit_days=5,
+                ))
             context["include"] = sorted(include_set)
             return context
         except Exception as exc:
@@ -698,6 +828,24 @@ def get_query_service() -> MarketDataQueryService:
     return MarketDataQueryService()
 
 
+def _agent_context_date(value: str) -> str:
+    return str(value)[:10]
+
+
+def order_flow_daily_totals_only(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **payload,
+        "days": [
+            {
+                "sessionDate": day.get("sessionDate"),
+                "totals": day.get("totals", {}),
+            }
+            for day in payload.get("days", [])
+            if isinstance(day, dict)
+        ],
+    }
+
+
 def build_chart_derived_client(provider: Any) -> ChartDerivedDataClient:
     clickhouse = getattr(provider, "clickhouse_provider", None)
     if clickhouse is None:
@@ -706,6 +854,46 @@ def build_chart_derived_client(provider: Any) -> ChartDerivedDataClient:
         redis_client=redis_client_for_provider(provider),
         artifact_store=ChartDerivedArtifactStore(clickhouse),
     )
+
+
+def parse_date_arg(value: str, name: str) -> date:
+    try:
+        return date.fromisoformat(str(value))
+    except ValueError as exc:
+        raise ValueError(f"{name} must be YYYY-MM-DD.") from exc
+
+
+def order_flow_day_payload(session_date: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    levels = [order_flow_level_payload(row) for row in rows]
+    ask = sum(level["askVolume"] for level in levels)
+    bid = sum(level["bidVolume"] for level in levels)
+    unknown = sum(level["unknownVolume"] for level in levels)
+    trade_count = sum(int(level.get("askTradeCount", 0) + level.get("bidTradeCount", 0) + level.get("unknownTradeCount", 0)) for level in levels)
+    volume = ask + bid + unknown
+    return {
+        "sessionDate": session_date,
+        "totals": {
+            "askVolume": ask,
+            "bidVolume": bid,
+            "unknownVolume": unknown,
+            "delta": ask - bid,
+            "tradeCount": trade_count,
+            "volume": volume,
+        },
+        "levels": levels,
+    }
+
+
+def order_flow_level_payload(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "priceBin": float(row.get("priceBin", row.get("price_bin", 0)) or 0),
+        "askVolume": float(row.get("askVolume", row.get("ask_volume", 0)) or 0),
+        "bidVolume": float(row.get("bidVolume", row.get("bid_volume", 0)) or 0),
+        "unknownVolume": float(row.get("unknownVolume", row.get("unknown_volume", 0)) or 0),
+        "askTradeCount": int(row.get("askTradeCount", row.get("ask_trade_count", 0)) or 0),
+        "bidTradeCount": int(row.get("bidTradeCount", row.get("bid_trade_count", 0)) or 0),
+        "unknownTradeCount": int(row.get("unknownTradeCount", row.get("unknown_trade_count", 0)) or 0),
+    }
 
 
 def normalize_fill_status(fill: dict[str, Any], metadata: dict[str, Any]) -> str:

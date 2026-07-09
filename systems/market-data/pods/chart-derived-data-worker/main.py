@@ -1,4 +1,4 @@
-# 역할: 차트 렌더링용 derived data(indicators, volume profile, footprint)를 계산해 Redis와 ClickHouse artifact에 저장합니다.
+# 역할: 차트 렌더링용 derived data(indicators, volume profile)를 계산해 Redis와 ClickHouse artifact에 저장합니다.
 # 사용: Kafka market.chart-derived.requests.v1 요청을 소비하는 장기 실행 worker입니다.
 from __future__ import annotations
 
@@ -13,7 +13,6 @@ from alfaka.common.env import load_dotenv
 from alfaka.common.kafka_io import create_json_consumer, create_json_producer
 from alfaka.serving.chart_derived_data import (
     DERIVED_DLQ_TOPIC,
-    DERIVED_KIND_FOOTPRINT,
     DERIVED_KIND_INDICATORS,
     DERIVED_KIND_VOLUME_PROFILE,
     DERIVED_REQUEST_TOPIC,
@@ -27,7 +26,6 @@ from alfaka.serving.chart_derived_data import (
     write_status,
     with_derived_metadata,
 )
-from alfaka.serving.footprint import compute_footprint_payload
 from alfaka.serving.indicators import (
     compute_indicator_payload,
     indicator_required_lookback_bars,
@@ -115,8 +113,6 @@ def compute_request_payload(request: dict[str, Any], *, provider: Any) -> dict[s
         return compute_indicator_request(request, provider=provider)
     if kind == DERIVED_KIND_VOLUME_PROFILE:
         return compute_volume_profile_request(request, provider=provider)
-    if kind == DERIVED_KIND_FOOTPRINT:
-        return compute_footprint_request(request, provider=provider)
     raise ValueError(f"Unsupported chart derived kind: {kind}")
 
 
@@ -211,21 +207,6 @@ def compute_volume_profile_request(request: dict[str, Any], *, provider: Any) ->
         price_max=price_max,
     )
     result["cache"] = {"hit": False, "ttlSeconds": redis_ttl_seconds(DERIVED_KIND_VOLUME_PROFILE), "keyVersion": request["calculationVersion"]}
-    return result
-
-
-def compute_footprint_request(request: dict[str, Any], *, provider: Any) -> dict[str, Any]:
-    method = getattr(provider, "footprint_ticks", None)
-    if not callable(method):
-        raise RuntimeError("Footprint provider is unavailable.")
-    symbol = str(request["symbol"]).upper()
-    from_time = str(request.get("from") or "")
-    to_time = str(request.get("to") or "")
-    resolved_limit = max(1, min(int(request.get("limit") or 20000), 100000))
-    raw_payload = method(symbol, from_time, to_time, limit=resolved_limit)
-    result = compute_footprint_payload(raw_payload, symbol=symbol, from_time=from_time, to_time=to_time)
-    result["requestedLimit"] = resolved_limit
-    result["cache"] = {"hit": False, "ttlSeconds": redis_ttl_seconds(DERIVED_KIND_FOOTPRINT), "keyVersion": request["calculationVersion"]}
     return result
 
 

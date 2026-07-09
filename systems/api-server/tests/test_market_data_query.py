@@ -255,35 +255,6 @@ class FakeVolumeProfileProvider(FakeProvider):
         }
 
 
-class FakeFootprintProvider(FakeProvider):
-    def __init__(self):
-        super().__init__()
-        self.redis_provider = FakeIndicatorRedisProvider()
-        self.calls = []
-
-    def footprint_ticks(self, symbol, from_time, to_time, limit=20000):
-        self.calls.append({
-            "symbol": symbol,
-            "fromTime": from_time,
-            "toTime": to_time,
-            "limit": limit,
-        })
-        return {
-            "symbol": symbol,
-            "from": from_time,
-            "to": to_time,
-            "source": "unit",
-            "feed": "sip",
-            "quotes": [
-                {"timestamp": "2026-06-25T13:30:00.000Z", "bidPrice": 100.0, "askPrice": 100.1},
-            ],
-            "trades": [
-                {"timestamp": "2026-06-25T13:30:01.000Z", "price": 100.1, "size": 10},
-                {"timestamp": "2026-06-25T13:30:02.000Z", "price": 100.0, "size": 4},
-            ],
-        }
-
-
 class FakeNewsRedisProvider:
     def __init__(self, rows=None, daily_rows=None, daily_coverage=None):
         self.rows = rows or []
@@ -878,26 +849,7 @@ class FakeDerivedClient:
                 "cache": {"hit": False, "ttlSeconds": 30, "keyVersion": request["calculationVersion"]},
                 "derived": {"state": "ready", "source": "worker", "requestHash": request["requestHash"], "artifactStored": True},
             }
-        return {
-            "symbol": request["symbol"],
-            "interval": "footprint",
-            "sourceInterval": "1m",
-            "from": request["from"],
-            "to": request["to"],
-            "timeBucket": "1m",
-            "source": "worker",
-            "feed": "test",
-            "dataStatus": "ready",
-            "sideClassification": "estimated",
-            "classificationVersion": request["calculationVersion"],
-            "calculationVersion": request["calculationVersion"],
-            "tradeCount": 0,
-            "quoteCount": 0,
-            "requestedLimit": request.get("limit"),
-            "buckets": [],
-            "cache": {"hit": False, "ttlSeconds": 15, "keyVersion": request["calculationVersion"]},
-            "derived": {"state": "ready", "source": "worker", "requestHash": request["requestHash"], "artifactStored": True},
-        }
+        raise AssertionError(f"Unexpected derived kind: {request['kind']}")
 
 
 class RecordingOnDemandFillService(OnDemandFillService):
@@ -1106,6 +1058,62 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         context = service.agent_chart_context("aapl", "1m", "from", "to", "status,volumeProfile")
         self.assertEqual(context["include"], ["status", "volumeProfile"])
 
+    def test_agent_chart_context_can_include_order_flow_daily(self):
+        class AgentOrderFlowClickHouse:
+            def order_flow_daily_profiles(self, symbol, from_date, to_date, limit=1000):
+                self.request = {
+                    "symbol": symbol,
+                    "from": from_date,
+                    "to": to_date,
+                    "limit": limit,
+                }
+                return [
+                    {
+                        "session_date": "2026-07-08",
+                        "price_bin": 100.0,
+                        "ask_volume": 12,
+                        "bid_volume": 5,
+                        "unknown_volume": 1,
+                        "ask_trade_count": 2,
+                        "bid_trade_count": 1,
+                        "unknown_trade_count": 0,
+                    }
+                ]
+
+        class AgentOrderFlowProvider(FakeProvider):
+            def __init__(self):
+                super().__init__()
+                self.clickhouse_provider = AgentOrderFlowClickHouse()
+
+            def agent_chart_context(self, symbol, interval, from_time, to_time, include):
+                self.agent_include = sorted(include)
+                return super().agent_chart_context(symbol, interval, from_time, to_time, include)
+
+        provider = AgentOrderFlowProvider()
+        service = MarketDataQueryService(
+            provider,
+            backfill_service=FakeBackfillService(),
+            fill_service=FakeFillService(),
+            derived_client=FakeDerivedClient(),
+        )
+
+        context = service.agent_chart_context(
+            "aapl",
+            "1D",
+            "2026-07-07T13:30:00.000Z",
+            "2026-07-08T20:00:00.000Z",
+            "status,orderFlowDaily",
+        )
+
+        self.assertEqual(provider.agent_include, ["status"])
+        self.assertEqual(context["include"], ["orderFlowDaily", "status"])
+        self.assertEqual(context["orderFlowDaily"]["symbol"], "AAPL")
+        self.assertEqual(context["orderFlowDaily"]["dataStatus"], "ready")
+        self.assertEqual(context["orderFlowDaily"]["days"][0]["totals"]["delta"], 7.0)
+        self.assertNotIn("levels", context["orderFlowDaily"]["days"][0])
+        self.assertEqual(provider.clickhouse_provider.request["from"], "2026-07-07")
+        self.assertEqual(provider.clickhouse_provider.request["limit"], 25001)
+
     def test_volume_profile_bins_uses_display_buckets_and_redis_cache(self):
         provider = FakeVolumeProfileProvider()
         derived_client = FakeDerivedClient()
@@ -1164,28 +1172,6 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             service.volume_profile_bins("aapl", "from", "to", "auto", target_bins=10, price_min=102, price_max=100)
 
         self.assertEqual(raised.exception.status_code, 400)
-
-    def test_footprint_series_uses_estimated_calculation_and_redis_cache(self):
-        provider = FakeFootprintProvider()
-        derived_client = FakeDerivedClient()
-        service = MarketDataQueryService(provider, backfill_service=FakeBackfillService(), fill_service=FakeFillService(), derived_client=derived_client)
-
-        with mock.patch.dict(os.environ, {"CHART_FOOTPRINT_CACHE_TTL_SECONDS": "22"}):
-            payload = service.footprint_series(
-                "aapl",
-                "2026-06-25T13:30:00.000Z",
-                "2026-06-25T13:31:00.000Z",
-                limit=100,
-            )
-
-        self.assertEqual(payload["symbol"], "AAPL")
-        self.assertEqual(payload["interval"], "footprint")
-        self.assertEqual(payload["sourceInterval"], "1m")
-        self.assertEqual(payload["sideClassification"], "estimated")
-        self.assertEqual(payload["derived"]["state"], "ready")
-        self.assertEqual(provider.calls, [])
-        self.assertEqual(derived_client.requests[0]["kind"], "footprint")
-        self.assertEqual(derived_client.requests[0]["limit"], 100)
 
     def test_indicator_series_uses_filled_candle_snapshot_lookback_inline(self):
         provider = FakeIndicatorProvider()

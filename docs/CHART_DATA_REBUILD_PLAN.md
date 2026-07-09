@@ -52,10 +52,17 @@ Active chart routes:
 GET  /api/charts/candles
 GET  /api/charts/indicators
 GET  /api/charts/volume-profile-bins
-GET  /api/charts/footprint
+GET  /api/charts/order-flow/symbols
+GET  /api/charts/order-flow/daily
+GET  /api/charts/order-flow/intraday
 GET  /api/charts/symbols
 WS   /ws/charts
 ```
+
+`/ws/charts` delivers candle/trade/quote/event updates plus
+`ORDER_FLOW_BINS_UPDATE` for order-flow live minute replacements. The removed
+legacy `GET /api/charts/footprint` route is intentionally not part of the active
+contract.
 
 Deprecated queue routes are preserved as `410 Gone`:
 
@@ -214,7 +221,7 @@ and reports the returned fill trace.
 Chart-derived rendering data is separate from candle fill. The API server owns
 request normalization, candle source fill for indicator requests, Redis/ClickHouse
 artifact lookup, Kafka enqueue, and short wait/pending responses. The
-`chart-derived-data-worker` owns indicator, volume profile, and footprint
+`chart-derived-data-worker` owns indicator and candle-based volume profile
 calculation. It consumes `market.chart-derived.requests.v1`, writes hot results
 to Redis, and materializes request artifacts into
 `market_data.chart_derived_artifacts` so the frontend and future Agent flows can
@@ -223,11 +230,19 @@ Volume profile v1 is always candle OHLCV based `estimated` data for the
 requested chart interval; it does not depend on trade ticks or
 `volume_profile_bins_1m` materialization.
 
+Bid/ask order-flow profile is a separate trade+quote path. The live processor
+writes `order-flow:{symbol}:live` Redis hash fields for pinned symbols and
+publishes `ORDER_FLOW_BINS_UPDATE`; the EOD job
+`systems/market-data/jobs/order-flow-daily-rollup/main.py` materializes daily
+rows into `market_data.order_flow_profile_daily`. Local compose exposes the
+`order-flow-daily-rollup` jobs-profile service, and AWS uses
+`infra/k8s/overlays/aws/cronjob-order-flow-daily-rollup.yaml`.
+
 Derived result retention is intentionally shorter than candle history:
 
 ```text
-Redis: indicators 300s, volume profile 30s, footprint 15s
-ClickHouse artifacts: indicators 7d, volume profile 1d, footprint 6h
+Redis: indicators 300s, volume profile 30s
+ClickHouse artifacts: indicators 7d, volume profile 1d
 ```
 
 News historical collection remains a separate news-domain job and may still use

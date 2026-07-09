@@ -146,22 +146,28 @@ systems/market-data/pods/chart-derived-data-worker/main.py
 image: gops-market-storage
 ```
 
-이 worker는 indicator, volume profile, footprint 계산을 API server에서 분리한다.
+이 worker는 indicator와 candle 기반 volume profile 계산을 API server에서 분리한다.
 계산 결과는 Redis hot cache와 ClickHouse
 `market_data.chart_derived_artifacts`에 함께 저장하며, 향후 Agent가 같은
 request hash로 동일 결과를 재참조하는 기준이 된다.
-Footprint 결과가 비어 있으면 Redis hot cache에만 짧게 남기고 ClickHouse artifact로
-저장하지 않는다. Tick loader lag가 해소된 뒤 같은 request가 빈 artifact에 갇히지
-않게 하기 위해서다.
 Volume profile v1은 요청 chart interval의 candle OHLCV로 계산하는
 `estimated` 결과이며, trade tick 또는 `volume_profile_bins_1m` 적재에
 의존하지 않는다.
+
+Bid/ask order-flow profile은 derived-worker가 아니라 market processor와 EOD
+rollup job이 담당한다. Live path는 pinned symbol trade/quote를 Redis
+`order-flow:{symbol}:live` hash에 적고 `ORDER_FLOW_BINS_UPDATE`를 WebSocket에
+팬아웃한다. Daily rows는
+`systems/market-data/jobs/order-flow-daily-rollup/main.py`와
+`infra/k8s/overlays/aws/cronjob-order-flow-daily-rollup.yaml`이 ClickHouse
+`market_data.order_flow_profile_daily`에 적재한다.
 
 Market storage image also runs ClickHouse projection loaders. The baseline
 `alfaka-clickhouse-loader` consumes closed candle, event, and news topics.
 `alfaka-clickhouse-tick-loader` consumes `market.layer.trades.v1` and
 `market.layer.quotes.v1` with multiple replicas in the same consumer group so
-footprint tick tables can catch up independently from candle/news persistence.
+trade/quote tick tables used by order-flow rollups can catch up independently
+from candle/news persistence.
 The loaders batch Kafka payloads before ClickHouse HTTP insert
 (`CLICKHOUSE_INSERT_BATCH_SIZE`, `CLICKHOUSE_FLUSH_INTERVAL_SECONDS`,
 `KAFKA_CLICKHOUSE_MAX_POLL_RECORDS`). Prefer bounded batching over adding
@@ -345,7 +351,11 @@ CHART_DERIVED_API_POLL_MS
 CHART_DERIVED_RETRY_AFTER_MS
 CHART_INDICATOR_ARTIFACT_RETENTION_SECONDS
 CHART_VOLUME_PROFILE_ARTIFACT_RETENTION_SECONDS
-CHART_FOOTPRINT_ARTIFACT_RETENTION_SECONDS
+ORDER_FLOW_PINNED_SYMBOLS
+ORDER_FLOW_PRICE_BIN_SIZE
+ORDER_FLOW_QUOTE_REFRESH_MS
+ORDER_FLOW_PUBLISH_THROTTLE_MS
+ORDER_FLOW_LIVE_TTL_SECONDS
 ```
 
 Kafka bootstrap env:

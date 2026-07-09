@@ -11,6 +11,7 @@ resources:
   - externalsecret-sec-fundamentals.yaml
   - cronjob-sec-fundamentals-sync.yaml
   - cronjob-yahoo-estimates-sync.yaml
+  - cronjob-order-flow-daily-rollup.yaml
 
 patches:
   - path: configmap-aws-patch.yaml

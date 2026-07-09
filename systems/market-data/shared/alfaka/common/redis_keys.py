@@ -42,6 +42,9 @@ class RedisKeyBuilder:
     def live_quote(self, symbol):
         return self.key(f"live:quote:{symbol}")
 
+    def order_flow_live(self, symbol):
+        return self.key(f"order-flow:{symbol}:live")
+
     def live_event(self, symbol):
         return self.key(f"live:event:{symbol}")
 

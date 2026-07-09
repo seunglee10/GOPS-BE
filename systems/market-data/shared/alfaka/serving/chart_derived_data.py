@@ -7,7 +7,6 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from alfaka.serving.footprint import FOOTPRINT_CALCULATION_VERSION
 from alfaka.serving.indicators import INDICATOR_CALCULATION_VERSION, IndicatorSpec
 from alfaka.serving.intervals import normalize_chart_interval
 from alfaka.serving.time_utils import parse_utc_time
@@ -16,7 +15,6 @@ from alfaka.serving.volume_profile import VOLUME_PROFILE_CALCULATION_VERSION
 
 DERIVED_KIND_INDICATORS = "indicators"
 DERIVED_KIND_VOLUME_PROFILE = "volumeProfile"
-DERIVED_KIND_FOOTPRINT = "footprint"
 
 DERIVED_REQUEST_TOPIC = "market.chart-derived.requests.v1"
 DERIVED_DLQ_TOPIC = "market.chart-derived.dlq.v1"
@@ -97,28 +95,6 @@ def build_volume_profile_request(
     )
 
 
-def build_footprint_request(*, symbol: str, from_time: str, to_time: str, limit: int) -> dict[str, Any]:
-    identity = {
-        "version": FOOTPRINT_CALCULATION_VERSION,
-        "symbol": symbol,
-        "from": from_time,
-        "to": to_time,
-        "limit": int(limit),
-    }
-    return build_request(
-        DERIVED_KIND_FOOTPRINT,
-        symbol=symbol,
-        interval="footprint",
-        from_time=from_time,
-        to_time=to_time,
-        limit=int(limit),
-        parameters={},
-        calculation_version=FOOTPRINT_CALCULATION_VERSION,
-        identity=identity,
-        cache_key=footprint_cache_key_from_identity(symbol, identity),
-    )
-
-
 def build_request(
     kind: str,
     *,
@@ -164,10 +140,6 @@ def volume_profile_cache_key_from_identity(symbol: str, identity: dict[str, Any]
     return f"chart:volume-profile:{VOLUME_PROFILE_CALCULATION_VERSION}:{symbol}:{digest_json(identity)}"
 
 
-def footprint_cache_key_from_identity(symbol: str, identity: dict[str, Any]) -> str:
-    return f"chart:footprint:{FOOTPRINT_CALCULATION_VERSION}:{symbol}:{digest_json(identity)}"
-
-
 def digest_json(value: dict[str, Any]) -> str:
     encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:24]
@@ -186,8 +158,6 @@ def redis_ttl_seconds(kind: str) -> int:
         return int_env("CHART_INDICATOR_CACHE_TTL_SECONDS", 300)
     if kind == DERIVED_KIND_VOLUME_PROFILE:
         return int_env("CHART_VOLUME_PROFILE_CACHE_TTL_SECONDS", 30)
-    if kind == DERIVED_KIND_FOOTPRINT:
-        return int_env("CHART_FOOTPRINT_CACHE_TTL_SECONDS", 15)
     return 60
 
 
@@ -196,8 +166,6 @@ def artifact_retention_seconds(kind: str) -> int:
         return int_env("CHART_INDICATOR_ARTIFACT_RETENTION_SECONDS", 604800)
     if kind == DERIVED_KIND_VOLUME_PROFILE:
         return int_env("CHART_VOLUME_PROFILE_ARTIFACT_RETENTION_SECONDS", 86400)
-    if kind == DERIVED_KIND_FOOTPRINT:
-        return int_env("CHART_FOOTPRINT_ARTIFACT_RETENTION_SECONDS", 21600)
     return 86400
 
 
@@ -466,25 +434,7 @@ def pending_payload(request: dict[str, Any], *, error: str | None = None, state:
             "cache": {"hit": False, "ttlSeconds": redis_ttl_seconds(kind), "keyVersion": request["calculationVersion"]},
         }
     else:
-        payload = {
-            "symbol": request["symbol"],
-            "interval": "footprint",
-            "sourceInterval": "1m",
-            "from": request.get("from"),
-            "to": request.get("to"),
-            "timeBucket": "1m",
-            "source": "worker",
-            "feed": "unknown",
-            "dataStatus": state,
-            "sideClassification": "estimated",
-            "classificationVersion": request["calculationVersion"],
-            "calculationVersion": request["calculationVersion"],
-            "tradeCount": 0,
-            "quoteCount": 0,
-            "requestedLimit": int(request.get("limit") or 0),
-            "buckets": [],
-            "cache": {"hit": False, "ttlSeconds": redis_ttl_seconds(kind), "keyVersion": request["calculationVersion"]},
-        }
+        raise ValueError(f"Unsupported chart derived kind: {kind}")
     return with_derived_metadata(
         payload,
         request,
@@ -506,22 +456,7 @@ def enqueue_derived_request(request: dict[str, Any], producer: Any | None = None
 
 
 def should_store_derived_artifact(request: dict[str, Any], payload: dict[str, Any]) -> bool:
-    return not is_empty_footprint_payload(request, payload)
-
-
-def is_empty_footprint_payload(request: dict[str, Any], payload: dict[str, Any]) -> bool:
-    if request.get("kind") != DERIVED_KIND_FOOTPRINT:
-        return False
-    buckets = payload.get("buckets")
-    trade_count = int_or_zero(payload.get("tradeCount"))
-    return payload.get("dataStatus") == "empty" or trade_count <= 0 or not buckets
-
-
-def int_or_zero(value: Any) -> int:
-    try:
-        return int(value or 0)
-    except (TypeError, ValueError):
-        return 0
+    return bool(request and payload)
 
 
 def kafka_producer(client_id: str):

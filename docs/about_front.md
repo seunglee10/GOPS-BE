@@ -37,7 +37,7 @@ Vite build 시점에 값이 정적 asset 안으로 들어가며, free/commercial
 
 첫 화면은 S&P500 TreeMap이다. TreeMap에서 종목을 선택하면 chart view로 전환된다.
 
-chart view는 패널 workspace로 구성된다. 기본 패널은 `뉴스`, `온톨로지`, `차트`이며, `인기종목`, `지수`, `포트폴리오`, `거래`, 추가 `차트` 패널도 panel add 메뉴에서 생성될 수 있다.
+chart view는 패널 workspace로 구성된다. 기본 패널은 `뉴스`, `온톨로지`, `차트`이며, `인기종목`, `지수`, `포트폴리오`, `거래`, `오더플로우`, 추가 `차트` 패널도 panel add 메뉴에서 생성될 수 있다.
 
 차트 패널은 좌우 page edge에 붙을 때 gutter 없이 flush된다. 내부 경계에서는 일반 패널과 같은 gutter 규칙을 따른다. 패널 위치, 크기, 추가, 삭제, content swap 로직은 `apps/gops-frontend/src/layout/panelLayout.ts`와 `apps/gops-frontend/src/components/PanelWorkspace.tsx`가 담당한다.
 
@@ -50,6 +50,7 @@ chart view는 패널 workspace로 구성된다. 기본 패널은 `뉴스`, `온�
 | 패널 shell/render orchestration | `apps/gops-frontend/src/components/PanelWorkspace.tsx` |
 | 패널 content 연결 | `apps/gops-frontend/src/components/PanelContentRenderer.tsx` |
 | 차트 데이터 client | `apps/gops-frontend/src/chart/cdcClient.ts` |
+| 오더플로우 데이터/렌더러 | `apps/gops-frontend/src/chart/orderFlow.ts`, `apps/gops-frontend/src/chart/orderFlowClient.ts`, `apps/gops-frontend/src/chart/orderFlowRender.ts` |
 | 차트 DTO/type | `apps/gops-frontend/src/chart/types.ts` |
 | 온톨로지 client/mapper | `apps/gops-frontend/src/ontology/` |
 | 하단 I-VI 메뉴와 중앙 채팅 dock | `apps/gops-frontend/src/components/BottomCommandBar.tsx` |

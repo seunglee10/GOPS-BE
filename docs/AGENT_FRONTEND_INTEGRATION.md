@@ -128,6 +128,12 @@ selection 같은 화면 상태 hint만 담고, provider 조회나 최종 판단�
 `uiContext.selectedReference`/`hoverReference`를 보낼 수 있지만, 명시 선택 chip이나
 row selection이 있으면 그것을 우선한다.
 
+Bid/Ask chart type or the 오더플로우 panel can send `chart.orderFlow`
+references. The reference data should include the selected symbol/session date,
+daily or intraday bid/ask totals when available, and
+`sideClassification="estimated"` because Alpaca trade aggressor side is inferred
+from trades plus top-of-book quotes.
+
 차트 명령의 v1 fast path는 `ChartCommand[]`로 변환되는 영구 변경과
 `AgentVisualOverlay[]` 임시 강조를 분리한다. 예를 들어 선택된 봉 기준 수평선은
 drawing command로 저장하고, 해당 봉은 canvas에서 만료 시간이 있는 highlight overlay로

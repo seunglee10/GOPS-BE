@@ -36,7 +36,7 @@ Current delivery scope:
   the same `symbol + timeframe + timestamp` arrives with `isClosed=true`.
 - `trades` and `quotes` are realtime-heavy layers. Keep them bounded in memory.
 - Alpaca stock quotes are top-of-book bid/ask only, not a 10-level order book.
-- Alpaca trades do not provide a guaranteed aggressor side. Bid/ask footprint
+- Alpaca trades do not provide a guaranteed aggressor side. Bid/ask order-flow
   delta can only be estimated by combining `trades` and `quotes`.
 
 ---
@@ -148,7 +148,7 @@ price-level volume analysis.
 | Latest price marker | Latest `price` | Chart engine |
 | Volume profile | `price`, `size` | Chart engine |
 | Price-level volume | `price`, `size` | Chart engine |
-| Footprint-like view | `trades` + `quotes` | Chart engine, estimated only |
+| Order-flow profile | `trades` + `quotes` | `alfaka.orderflow`, estimated only |
 
 ### Other Notes
 
@@ -273,7 +273,7 @@ They should not be interpreted as price data.
 | Volume profile | `trades` |
 | Bid/ask spread | `quotes` |
 | Mid price | `quotes` |
-| Footprint-like estimated delta | `trades`, `quotes` |
+| Order-flow estimated delta | `trades`, `quotes` |
 | Halt/LULD markers | `events` |
 
 ---

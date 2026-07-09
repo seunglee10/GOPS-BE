@@ -107,14 +107,29 @@ def chart_indicators(
     )
 
 
-@router.get("/api/charts/footprint")
-def chart_footprint(
+@router.get("/api/charts/order-flow/symbols")
+def chart_order_flow_symbols() -> dict[str, Any]:
+    return get_query_service().order_flow_symbols()
+
+
+@router.get("/api/charts/order-flow/daily")
+def chart_order_flow_daily(
     symbol: str = Query(min_length=1, max_length=12),
-    from_time: str = Query(alias="from"),
-    to_time: str = Query(alias="to"),
-    limit: int = Query(default=20000, ge=1, le=100000),
+    from_date: str = Query(alias="from"),
+    to_date: str = Query(alias="to"),
+    limit_days: int = Query(default=60, ge=1, le=250, alias="limitDays"),
 ) -> dict[str, Any]:
-    return get_query_service().footprint_series(symbol, from_time, to_time, limit)
+    try:
+        return get_query_service().order_flow_daily(symbol, from_date, to_date, limit_days)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/api/charts/order-flow/intraday")
+def chart_order_flow_intraday(
+    symbol: str = Query(min_length=1, max_length=12),
+) -> dict[str, Any]:
+    return get_query_service().order_flow_intraday(symbol)
 
 
 @router.get("/api/market/status")

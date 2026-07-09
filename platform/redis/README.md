@@ -35,6 +35,7 @@ gops:market:on-demand:v1:pending:replace:{symbol}:{interval}:{timestamp}
 gops:market:on-demand:v1:live:trade:{symbol}
 gops:market:on-demand:v1:live:quote:{symbol}
 gops:market:on-demand:v1:live:event:{symbol}
+gops:market:on-demand:v1:order-flow:{symbol}:live
 gops:market:on-demand:v1:subscription:symbols
 gops:market:on-demand:v1:subscription:symbol:{symbol}
 gops:market:on-demand:v1:subscription:version
@@ -47,8 +48,14 @@ gops:market:on-demand:v1:feed:switch:state
 gops:market:on-demand:v1:feed:quarantine:{date}
 ```
 
-Legacy keys such as `price:*`, `candle:*`, `candles:*`, and `market.events*`
-are reset targets only; do not add new chart code that depends on them.
+`order-flow:{symbol}:live` is a Redis hash for today's pinned-symbol bid/ask
+profile minute bins. Writers refresh `ORDER_FLOW_LIVE_TTL_SECONDS`; readers
+combine it with ClickHouse `market_data.order_flow_profile_daily`, and
+`ORDER_FLOW_BINS_UPDATE` is published through the existing market events fanout.
+
+Legacy keys such as `price:*`, `candle:*`, and `candles:*` are reset targets
+only; do not add new chart state that depends on them. `market.events*` remains
+the existing pub/sub fanout path for live updates, not durable Redis state.
 
 The feed controller may also maintain compatibility helper keys
 `feed:active:profile` and `feed:active:epoch`, but `feed:active` is the

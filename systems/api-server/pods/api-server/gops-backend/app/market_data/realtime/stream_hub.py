@@ -30,7 +30,7 @@ class StreamSession:
         if not self.queue.full():
             await self.queue.put(event)
             return
-        if event.get("type") in {"LIVE_CANDLE_UPDATE", "LIVE_TRADE_UPDATE", "LIVE_QUOTE_UPDATE"}:
+        if event.get("type") in {"LIVE_CANDLE_UPDATE", "LIVE_TRADE_UPDATE", "LIVE_QUOTE_UPDATE", "ORDER_FLOW_BINS_UPDATE"}:
             await self._drop_one_droppable_update()
             if not self.queue.full():
                 await self.queue.put(event)
@@ -46,7 +46,7 @@ class StreamSession:
         dropped = False
         while not self.queue.empty():
             item = self.queue.get_nowait()
-            if not dropped and item.get("type") in {"LIVE_CANDLE_UPDATE", "LIVE_TRADE_UPDATE", "LIVE_QUOTE_UPDATE", "VOLUME_PROFILE_BINS_UPDATE", "HEARTBEAT"}:
+            if not dropped and item.get("type") in {"LIVE_CANDLE_UPDATE", "LIVE_TRADE_UPDATE", "LIVE_QUOTE_UPDATE", "VOLUME_PROFILE_BINS_UPDATE", "ORDER_FLOW_BINS_UPDATE", "HEARTBEAT"}:
                 dropped = True
                 continue
             retained.append(item)
@@ -309,7 +309,7 @@ class SymbolStreamHub:
 def should_deliver_to_session(event: dict[str, Any], session: StreamSession) -> bool:
     if event.get("type") == "MARKET_STATUS_UPDATE":
         return event.get("symbol") in {session.symbol, "_MARKET"}
-    if event.get("type") in {"LIVE_TRADE_UPDATE", "LIVE_QUOTE_UPDATE"}:
+    if event.get("type") in {"LIVE_TRADE_UPDATE", "LIVE_QUOTE_UPDATE", "ORDER_FLOW_BINS_UPDATE"}:
         return event.get("symbol") == session.symbol
     return event.get("symbol") == session.symbol and event.get("interval") == session.interval
 

@@ -150,6 +150,9 @@ permissive하게 유지한다.
 reference가 여러 필드에 중복 포함돼도 fingerprint로 dedupe한다. reference가 포함된
 분석 요청은 선택한 뉴스, 차트 봉, 차트 구간이 cache key에 반영되어야 하며, 같은
 자연어 질문이라도 anchor가 다르면 cached analysis를 재사용하지 않는다.
+`chart.orderFlow` references are valid chart references and must be preserved
+the same way as `chart.candle`; their bid/ask side classification is estimated,
+not provider-confirmed.
 
 완료 report의 `timing`은 synthesis 진단을 포함할 수 있다.
 `llmCallLabels`에 `synthesis` 또는 `financial-synthesis`가 있으면 최종 종합 답변용
