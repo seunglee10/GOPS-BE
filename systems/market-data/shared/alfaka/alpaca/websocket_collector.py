@@ -20,6 +20,7 @@ from alfaka.common.redis_keys import RedisKeyBuilder
 from alfaka.common.runtime_health import write_component_health
 from alfaka.common.runtime_config import validate_required_values
 from alfaka.common.secrets import load_alpaca_credentials, resolve_alpaca_credential_source
+from alfaka.realtime.subscription_cohorts import ORDER_FLOW_SOURCE
 
 
 _PUBLISH_STOP = object()
@@ -594,16 +595,18 @@ def realtime_subscription_priority(symbol, record):
 
 
 def source_rank(source):
-    if source == "active-chart":
+    if source == ORDER_FLOW_SOURCE:
         return 0
-    if source == "manual":
+    if source == "active-chart":
         return 1
-    if source == "portfolio":
+    if source == "manual":
         return 2
-    if source == "watchlist":
+    if source == "portfolio":
         return 3
-    if str(source).startswith("rank:"):
+    if source == "watchlist":
         return 4
+    if str(source).startswith("rank:"):
+        return 5
     return 9
 
 

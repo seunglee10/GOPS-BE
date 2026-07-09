@@ -115,6 +115,21 @@ class RedisMarketDataProvider:
         rows = self.redis.zrangebyscore(self.keys.volume_profile_live(symbol), from_score, to_score, start=0, num=limit)
         return [json.loads(row) for row in rows]
 
+    def order_flow_live_bins(self, symbol):
+        values = self.redis.hgetall(self.keys.order_flow_live(symbol)) or {}
+        bins = []
+        for value in values.values():
+            if isinstance(value, bytes):
+                value = value.decode("utf-8")
+            try:
+                parsed = json.loads(value) if isinstance(value, str) else value
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if isinstance(parsed, dict):
+                bins.append(parsed)
+        bins.sort(key=lambda item: (str(item.get("eventMinute") or ""), float(item.get("priceBin") or 0)))
+        return bins
+
     def symbol_metadata(self, symbol):
         value = self.redis.get(self.keys.symbol_metadata(symbol))
         return json.loads(value) if value else None

@@ -198,6 +198,11 @@ SYMBOL_LIVE_PRICE_STALE_SECONDS
 SYMBOL_REDIS_INTRADAY_STALE_SECONDS
 ACTIVE_CHART_TTL_SECONDS
 REALTIME_REDIS_POLL_SECONDS
+ORDER_FLOW_PINNED_SYMBOLS
+ORDER_FLOW_PRICE_BIN_SIZE
+ORDER_FLOW_QUOTE_REFRESH_MS
+ORDER_FLOW_PUBLISH_THROTTLE_MS
+ORDER_FLOW_LIVE_TTL_SECONDS
 ```
 
 `PROCESSOR_RECOVERY_SYMBOLS` is optional. Keep it empty unless an incident repair
@@ -232,6 +237,14 @@ candle publish per `symbol + interval` while still updating in-memory candle
 state on every accepted trade. `PROCESSOR_ACTIVE_FEED_CACHE_SECONDS` avoids a
 Redis active-feed lookup for every single tick.
 
+Order-flow profile env controls the pinned bid/ask volume profile path.
+`ORDER_FLOW_PINNED_SYMBOLS` defaults to `NVDA,AMZN,MU,AAPL,GOOGL` and is the
+only v1 live/EOD coverage set. `ORDER_FLOW_PRICE_BIN_SIZE` defaults to `0.01`.
+`ORDER_FLOW_QUOTE_REFRESH_MS` gates quote cache refresh, and
+`ORDER_FLOW_PUBLISH_THROTTLE_MS` throttles `ORDER_FLOW_BINS_UPDATE` fanout per
+symbol. `ORDER_FLOW_LIVE_TTL_SECONDS` keeps the Redis live hash available for
+today's chart and intraday panel until the EOD rollup has run.
+
 `ACTIVE_CHART_TTL_SECONDS` keeps the symbol currently open in the chart inside
 the explicit realtime cohort even when the visible chart interval is 1h, 4h,
 1D, 1W, or 1M. WebSocket delivery can still be interval-specific, but trades/quotes
@@ -263,8 +276,9 @@ AWS/EKS splits ClickHouse projection consumers by topic pressure. The baseline
 `alfaka-clickhouse-loader` consumes closed candle, event, and news topics only.
 `alfaka-clickhouse-tick-loader` runs multiple replicas in the same
 `alfaka-clickhouse-loader` consumer group and consumes
-`market.layer.trades.v1,market.layer.quotes.v1`, so footprint tick persistence
-can catch up without blocking candle/news persistence.
+`market.layer.trades.v1,market.layer.quotes.v1`, so trade/quote tick
+persistence for order-flow rollups can catch up without blocking candle/news
+persistence.
 The ClickHouse loader batches Kafka payloads by table before HTTP insert and
 commits offsets after the batch side effects succeed. Keep batch sizes bounded
 so ClickHouse can catch up without starving API pods.

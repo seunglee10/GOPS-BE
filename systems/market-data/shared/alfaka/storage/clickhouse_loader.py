@@ -768,6 +768,31 @@ class ClickHouseHttpClient:
             PARTITION BY toYYYYMM(event_time)
             ORDER BY (symbol, event_time, feed_profile)
         """)
+        self.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.database}.order_flow_profile_daily
+            (
+                session_date        Date,
+                symbol              LowCardinality(String),
+                price_bin           Float64,
+                price_bin_size      Float64,
+                ask_volume          Float64,
+                bid_volume          Float64,
+                unknown_volume      Float64,
+                ask_trade_count     UInt64,
+                bid_trade_count     UInt64,
+                unknown_trade_count UInt64,
+                trade_count         UInt64,
+                volume              Float64,
+                classification_version LowCardinality(String) DEFAULT 'orderflow-estimated-v1',
+                source              LowCardinality(String) DEFAULT 'clickhouse-rollup',
+                feed                LowCardinality(String) DEFAULT 'sip',
+                feed_profile        LowCardinality(String) DEFAULT feed,
+                market_session      LowCardinality(String) DEFAULT 'regular',
+                inserted_at         DateTime64(3, 'UTC') DEFAULT now64(3)
+            ) ENGINE = ReplacingMergeTree(inserted_at)
+            PARTITION BY toYYYYMM(session_date)
+            ORDER BY (symbol, session_date, price_bin_size, price_bin)
+        """)
         for table, after_column in (
             ("trade_ticks", "feed"),
             ("quote_ticks", "feed"),

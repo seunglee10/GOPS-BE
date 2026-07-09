@@ -16,6 +16,7 @@ PORTFOLIO_SOURCE = "portfolio"
 ACTIVE_CHART_SOURCE = "active-chart"
 RANK_SOURCE_PREFIX = "rank:"
 MANUAL_SOURCE = "manual"
+ORDER_FLOW_SOURCE = "orderflow"
 ACTIVE_CHART_REASON = "active-chart-session"
 RANKING_KINDS = ("dollar-volume", "volume", "gainers", "losers")
 
@@ -77,6 +78,12 @@ class RealtimeSubscriptionCohortService:
         normalized_kind = normalize_rank_kind(kind)
         next_symbols = normalize_symbol_list(symbols)
         self._replace_set(self.keys.rank_symbols(normalized_kind), next_symbols)
+        self._after_source_state_changed()
+        return next_symbols
+
+    def replace_order_flow_source(self, symbols: Iterable[str]) -> list[str]:
+        next_symbols = normalize_symbol_list(symbols)
+        self._replace_set(self.keys.subscription_source_symbols(ORDER_FLOW_SOURCE), next_symbols)
         self._after_source_state_changed()
         return next_symbols
 
@@ -142,6 +149,7 @@ class RealtimeSubscriptionCohortService:
             PORTFOLIO_SOURCE: defaultdict(set),
             ACTIVE_CHART_SOURCE: defaultdict(set),
             MANUAL_SOURCE: defaultdict(set),
+            ORDER_FLOW_SOURCE: defaultdict(set),
         }
         for kind in RANKING_KINDS:
             by_source[f"{RANK_SOURCE_PREFIX}{kind}"] = defaultdict(set)
@@ -153,6 +161,7 @@ class RealtimeSubscriptionCohortService:
         self._collect_legacy_portfolio_fallback(by_source[PORTFOLIO_SOURCE])
         self._collect_ranking_sources(by_source)
         self._collect_manual_sources(by_source[MANUAL_SOURCE])
+        self._collect_order_flow_sources(by_source[ORDER_FLOW_SOURCE])
         return {source: dict(symbols) for source, symbols in by_source.items()}
 
     def _collect_user_symbol_source(self, source: str, key_fn, target: dict[str, set[str]]) -> None:
@@ -214,6 +223,13 @@ class RealtimeSubscriptionCohortService:
             except ValueError:
                 continue
 
+    def _collect_order_flow_sources(self, target: dict[str, set[str]]) -> None:
+        for symbol in self._smembers(self.keys.subscription_source_symbols(ORDER_FLOW_SOURCE)):
+            try:
+                target[normalize_market_symbol(symbol)].add("orderflow-pin")
+            except ValueError:
+                continue
+
     def _write_aggregate_source_keys(self, source_members: dict[str, dict[str, set[str]]]) -> None:
         source_key_fns = {
             WATCHLIST_SOURCE: self.keys.subscription_source_watchlist,
@@ -225,6 +241,7 @@ class RealtimeSubscriptionCohortService:
         for kind in RANKING_KINDS:
             source = f"{RANK_SOURCE_PREFIX}{kind}"
             self._replace_aggregate_source(source, lambda symbol, kind=kind: self.keys.subscription_source_ranking(kind, symbol), source_members.get(source, {}))
+        self._replace_set(self.keys.subscription_source_symbols(ORDER_FLOW_SOURCE), sorted(source_members.get(ORDER_FLOW_SOURCE, {})))
 
     def _replace_aggregate_source(self, source: str, key_fn, members_by_symbol: dict[str, set[str]]) -> None:
         index_key = self.keys.subscription_source_symbols(source)
@@ -377,6 +394,8 @@ def reason_for_sources(sources: set[str]) -> str:
         return source
     if source == MANUAL_SOURCE:
         return "manual-monitor"
+    if source == ORDER_FLOW_SOURCE:
+        return "orderflow"
     return source or "unknown"
 
 

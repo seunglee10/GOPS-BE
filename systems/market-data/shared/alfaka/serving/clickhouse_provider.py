@@ -793,62 +793,34 @@ class ClickHouseMarketDataProvider:
             params["priceBinSize"] = float(price_bin_size)
         return self.query_json_each_row(query, params)
 
-    def footprint_ticks(self, symbol, from_time, to_time, limit=20000):
-        trade_query = f"""
+    def order_flow_daily_profiles(self, symbol, from_date, to_date, limit=100000):
+        query = f"""
         SELECT
-          formatDateTime(event_time, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS timestamp,
-          price,
-          size,
-          exchange,
-          conditions,
-          tape,
-          source,
-          feed,
-          feed_profile AS feedProfile,
-          market_session AS marketSession,
-          source_event_id AS sourceEventId
-        FROM {self.table('trade_ticks')}
+          toString(session_date) AS sessionDate,
+          price_bin AS priceBin,
+          price_bin_size AS priceBinSize,
+          ask_volume AS askVolume,
+          bid_volume AS bidVolume,
+          unknown_volume AS unknownVolume,
+          ask_trade_count AS askTradeCount,
+          bid_trade_count AS bidTradeCount,
+          unknown_trade_count AS unknownTradeCount,
+          trade_count AS tradeCount,
+          volume
+        FROM {self.table('order_flow_profile_daily')} FINAL
         WHERE symbol = {{symbol:String}}
-          AND event_time >= parseDateTime64BestEffort({{fromTime:String}})
-          AND event_time < parseDateTime64BestEffort({{toTime:String}})
-        ORDER BY event_time ASC
+          AND session_date >= toDate({{fromDate:String}})
+          AND session_date <= toDate({{toDate:String}})
+        ORDER BY session_date DESC, price_bin ASC
         LIMIT {{limit:UInt32}}
         FORMAT JSONEachRow
         """
-        quote_query = f"""
-        SELECT
-          formatDateTime(event_time, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS timestamp,
-          bid_price AS bidPrice,
-          bid_size AS bidSize,
-          ask_price AS askPrice,
-          ask_size AS askSize,
-          bid_exchange AS bidExchange,
-          ask_exchange AS askExchange,
-          conditions,
-          source,
-          feed,
-          feed_profile AS feedProfile,
-          market_session AS marketSession,
-          source_event_id AS sourceEventId
-        FROM {self.table('quote_ticks')}
-        WHERE symbol = {{symbol:String}}
-          AND event_time >= parseDateTime64BestEffort({{fromTime:String}}) - INTERVAL 5 MINUTE
-          AND event_time < parseDateTime64BestEffort({{toTime:String}})
-        ORDER BY event_time ASC
-        LIMIT {{quoteLimit:UInt32}}
-        FORMAT JSONEachRow
-        """
-        params = {"symbol": symbol, "fromTime": from_time, "toTime": to_time, "limit": int(limit)}
-        trades = self.query_json_each_row(trade_query, params)
-        quotes = self.query_json_each_row(quote_query, {**params, "quoteLimit": int(limit)})
-        return {
+        return self.query_json_each_row(query, {
             "symbol": symbol,
-            "from": from_time,
-            "to": to_time,
-            "source": "clickhouse",
-            "trades": trades,
-            "quotes": quotes,
-        }
+            "fromDate": from_date,
+            "toDate": to_date,
+            "limit": int(limit),
+        })
 
     def ensure_market_data_schema(self):
         """조회 전에 필요한 ClickHouse 컬럼과 타입이 준비되어 있는지 보정합니다."""
@@ -886,6 +858,33 @@ class ClickHouseMarketDataProvider:
             PARTITION BY toYYYYMM(date)
             ORDER BY (symbol, locale, date, version)
             TTL toDate(date) + INTERVAL 366 DAY DELETE
+            """
+        )
+        self.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {self.table('order_flow_profile_daily')}
+            (
+                session_date        Date,
+                symbol              LowCardinality(String),
+                price_bin           Float64,
+                price_bin_size      Float64,
+                ask_volume          Float64,
+                bid_volume          Float64,
+                unknown_volume      Float64,
+                ask_trade_count     UInt64,
+                bid_trade_count     UInt64,
+                unknown_trade_count UInt64,
+                trade_count         UInt64,
+                volume              Float64,
+                classification_version LowCardinality(String) DEFAULT 'orderflow-estimated-v1',
+                source              LowCardinality(String) DEFAULT 'clickhouse-rollup',
+                feed                LowCardinality(String) DEFAULT 'sip',
+                feed_profile        LowCardinality(String) DEFAULT feed,
+                market_session      LowCardinality(String) DEFAULT 'regular',
+                inserted_at         DateTime64(3, 'UTC') DEFAULT now64(3)
+            ) ENGINE = ReplacingMergeTree(inserted_at)
+            PARTITION BY toYYYYMM(session_date)
+            ORDER BY (symbol, session_date, price_bin_size, price_bin)
             """
         )
         self.execute(

@@ -1,5 +1,4 @@
 import importlib.util
-import json
 import sys
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -12,7 +11,6 @@ if str(MARKET_SHARED) not in sys.path:
 
 from alfaka.serving.chart_derived_data import (  # noqa: E402
     ChartDerivedArtifactStore,
-    build_footprint_request,
     build_indicator_request,
     build_volume_profile_request,
     read_json_cache,
@@ -67,16 +65,6 @@ class FakeClickHouseArtifactClient:
         self.rows.append((table, rows))
 
 
-class FakeClickHouseReadArtifactClient:
-    database = "market_data"
-
-    def __init__(self, payload):
-        self.payload = payload
-
-    def query_json_each_row(self, query, params):
-        return [{"payloadJson": json.dumps(self.payload)}]
-
-
 class FakeFuture:
     def __init__(self):
         self.timeout = None
@@ -126,39 +114,10 @@ class FakeProvider:
     def volume_profile_bins(self, symbol, from_time, to_time, price_bin_size):
         raise AssertionError("Volume Profile v1 must use candle snapshots, not materialized bins.")
 
-    def footprint_ticks(self, symbol, from_time, to_time, limit=20000):
-        self.calls.append({"kind": "footprint", "symbol": symbol, "limit": limit})
-        return {
-            "symbol": symbol,
-            "from": from_time,
-            "to": to_time,
-            "source": "unit",
-            "feed": "test",
-            "quotes": [{"timestamp": "2026-06-25T13:30:00.000Z", "bidPrice": 100.0, "askPrice": 100.1}],
-            "trades": [
-                {"timestamp": "2026-06-25T13:30:01.000Z", "price": 100.1, "size": 10},
-                {"timestamp": "2026-06-25T13:30:02.000Z", "price": 100.0, "size": 4},
-            ],
-        }
-
 
 class FailingVolumeProfileProvider(FakeProvider):
     def candle_snapshot(self, symbol, interval, limit, before=None, from_time=None, to_time=None, ma_windows=None):
         raise RuntimeError("volume profile candle source unavailable")
-
-
-class EmptyFootprintProvider(FakeProvider):
-    def footprint_ticks(self, symbol, from_time, to_time, limit=20000):
-        self.calls.append({"kind": "footprint", "symbol": symbol, "limit": limit})
-        return {
-            "symbol": symbol,
-            "from": from_time,
-            "to": to_time,
-            "source": "unit",
-            "feed": "test",
-            "quotes": [],
-            "trades": [],
-        }
 
 
 class WarmupIndicatorProvider:
@@ -199,11 +158,15 @@ class ChartDerivedDataWorkerTest(unittest.TestCase):
     def test_artifact_store_writes_clickhouse_json_time_format(self):
         client = FakeClickHouseArtifactClient()
         store = ChartDerivedArtifactStore(client)
-        request = build_footprint_request(
+        request = build_volume_profile_request(
             symbol="AAPL",
+            interval="1m",
             from_time="2026-06-25T13:30:00.000Z",
             to_time="2026-06-25T13:31:00.000Z",
-            limit=100,
+            price_bin_size="auto",
+            target_bins=10,
+            price_min=None,
+            price_max=None,
         )
 
         store.write(request, {"dataStatus": "empty", "source": "unit", "feed": "test"})
@@ -213,25 +176,6 @@ class ChartDerivedDataWorkerTest(unittest.TestCase):
         self.assertEqual(row["to_time"], "2026-06-25 13:31:00.000")
         self.assertNotIn("T", row["created_at"])
         self.assertFalse(row["expires_at"].endswith("Z"))
-
-    def test_artifact_store_ignores_empty_footprint_artifacts(self):
-        request = build_footprint_request(
-            symbol="AAPL",
-            from_time="2026-06-25T13:30:00.000Z",
-            to_time="2026-06-25T13:31:00.000Z",
-            limit=100,
-        )
-        empty_payload = {
-            "symbol": "AAPL",
-            "interval": "footprint",
-            "dataStatus": "empty",
-            "tradeCount": 0,
-            "quoteCount": 0,
-            "buckets": [],
-        }
-        store = ChartDerivedArtifactStore(FakeClickHouseReadArtifactClient(empty_payload))
-
-        self.assertIsNone(store.read(request))
 
     def test_indicator_request_hash_and_worker_result_are_shared(self):
         worker = load_worker_module()
@@ -320,45 +264,6 @@ class ChartDerivedDataWorkerTest(unittest.TestCase):
         self.assertNotEqual(one_minute["requestHash"], five_minute["requestHash"])
         self.assertNotEqual(one_minute["cacheKey"], five_minute["cacheKey"])
         self.assertEqual(five_minute["interval"], "5m")
-
-    def test_footprint_request_is_1m_estimated(self):
-        worker = load_worker_module()
-        request = build_footprint_request(
-            symbol="AAPL",
-            from_time="2026-06-25T13:30:00.000Z",
-            to_time="2026-06-25T13:31:00.000Z",
-            limit=100,
-        )
-
-        payload = worker.process_request(request, provider=FakeProvider(), redis_client=FakeRedis(), artifact_store=FakeArtifactStore())
-
-        self.assertEqual(payload["interval"], "footprint")
-        self.assertEqual(payload["sourceInterval"], "1m")
-        self.assertEqual(payload["sideClassification"], "estimated")
-        self.assertEqual(payload["buckets"][0]["delta"], 6)
-
-    def test_empty_footprint_result_is_not_persisted_as_artifact(self):
-        worker = load_worker_module()
-        redis_client = FakeRedis()
-        artifact_store = FakeArtifactStore()
-        request = build_footprint_request(
-            symbol="AAPL",
-            from_time="2026-06-25T13:30:00.000Z",
-            to_time="2026-06-25T13:31:00.000Z",
-            limit=100,
-        )
-
-        payload = worker.process_request(
-            request,
-            provider=EmptyFootprintProvider(),
-            redis_client=redis_client,
-            artifact_store=artifact_store,
-        )
-
-        self.assertEqual(payload["dataStatus"], "empty")
-        self.assertFalse(payload["derived"]["artifactStored"])
-        self.assertEqual(artifact_store.rows, [])
-        self.assertFalse(read_json_cache(redis_client, request["cacheKey"])["derived"]["artifactStored"])
 
     def test_worker_failure_records_status_and_dlq(self):
         worker = load_worker_module()

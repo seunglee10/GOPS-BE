@@ -13,9 +13,18 @@ market_data.quote_ticks
 market_data.market_events
 market_data.market_status_events
 market_data.volume_profile_bins_1m
+market_data.order_flow_profile_daily
 market_data.backfill_jobs
 market_data.storage_object_audit
 market_data.load_audit
+```
+
+`market_data.order_flow_profile_daily` is the additive daily bid/ask
+order-flow profile table. DDL is maintained in both local and EKS init paths:
+
+```text
+infra/clickhouse/initdb/03-market-data.sql
+infra/k8s/base/platform/clickhouse-initdb/03-market-data.sql
 ```
 
 ## SEC Fundamentals Tables

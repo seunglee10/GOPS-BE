@@ -219,20 +219,6 @@ class MarketDataProvider:
             to_time=to_time,
         )
 
-    def footprint_ticks(self, symbol, from_time, to_time, limit=20000):
-        try:
-            return self.clickhouse_provider.footprint_ticks(symbol, from_time, to_time, limit=limit)
-        except Exception:
-            logger.warning("ClickHouse footprint_ticks failed.", exc_info=True)
-            return {
-                "symbol": symbol,
-                "from": from_time,
-                "to": to_time,
-                "source": "clickhouse",
-                "trades": [],
-                "quotes": [],
-            }
-
     def agent_chart_context(self, symbol, interval, from_time, to_time, include):
         interval = normalize_chart_interval(interval)
         candles = self.clickhouse_provider.candles_since(symbol, interval, from_time, 500)

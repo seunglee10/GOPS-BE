@@ -43,7 +43,7 @@ spec:
               memory: 512Mi
 ---
 # 역할: Kafka trade/quote layer topic을 ClickHouse tick 테이블에 적재합니다.
-# 사용: footprint/틱 조회가 candle/news 적재 backlog와 서로 막히지 않도록 별도 consumer들로 분리합니다.
+# 사용: order-flow/tick 조회가 candle/news 적재 backlog와 서로 막히지 않도록 별도 consumer들로 분리합니다.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

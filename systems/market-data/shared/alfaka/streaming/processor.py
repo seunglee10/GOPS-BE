@@ -3,6 +3,7 @@
 # 출력: CHART_DATA_REBUILD_PLAN.md의 layer topic과 Redis live/cache state.
 import json
 import os
+import time
 from collections import defaultdict
 from datetime import datetime, timezone
 
@@ -16,7 +17,17 @@ from alfaka.common.kafka_topics import closed_candle_topics_from_env, default_cl
 from alfaka.common.redis_keys import RedisKeyBuilder
 from alfaka.common.runtime_health import write_component_health
 from alfaka.common.runtime_config import validate_required_values
-from alfaka.serving.dto import market_status_event, websocket_event
+from alfaka.orderflow import (
+    OrderFlowBinBuilder,
+    PinnedQuoteCache,
+    classify_trade_side,
+    live_ttl_seconds_from_env,
+    pinned_symbols_from_env,
+    price_bin_size_from_env,
+    publish_throttle_ms_from_env,
+    quote_refresh_ms_from_env,
+)
+from alfaka.serving.dto import market_status_event, order_flow_event, websocket_event
 from alfaka.serving.closed_watermark import (
     candle_at_or_before_watermark,
     candle_watermark_value,
@@ -75,6 +86,7 @@ def main():
         live_publish_min_interval_seconds=config["live_publish_min_interval_seconds"],
         active_feed_cache_seconds=config["active_feed_cache_seconds"],
     )
+    configure_order_flow_state(state, redis_client, redis_keys)
     recover_processor_state_from_redis(redis_client, redis_keys, state, config["recovery_symbols"])
     if config["clickhouse_recovery_enabled"]:
         recover_processor_state_from_clickhouse(state, config["recovery_symbols"])
@@ -227,6 +239,26 @@ class ProcessorState:
         self.profile_builder = VolumeProfileBinBuilder(price_bin_size=price_bin_size)
         self.live_publish_throttle = LiveCandlePublishThrottle(live_publish_min_interval_seconds)
         self.active_feed_cache = ActiveFeedCache(active_feed_cache_seconds)
+        self.order_flow_builder = None
+        self.order_flow_quote_cache = None
+        self.order_flow_publish_state = {}
+
+
+def configure_order_flow_state(state, redis_client, redis_keys):
+    pinned_symbols = pinned_symbols_from_env()
+    if not pinned_symbols:
+        return state
+    state.order_flow_builder = OrderFlowBinBuilder(
+        price_bin_size=price_bin_size_from_env(),
+        pinned_symbols=pinned_symbols,
+    )
+    state.order_flow_quote_cache = PinnedQuoteCache(
+        redis_client,
+        redis_keys,
+        refresh_ms=quote_refresh_ms_from_env(),
+    )
+    state.order_flow_publish_state = {}
+    return state
 
 
 class LiveCandlePublishThrottle:
@@ -549,9 +581,26 @@ def process_trade_live_path(trade, producer, redis_client, redis_keys, state, to
             throttle=getattr(state, "live_publish_throttle", None),
         )
     write_volume_profile_bin_to_redis(redis_client, redis_keys, profile_bin)
+    process_order_flow_live_path(trade, redis_client, redis_keys, state)
     if live_candle:
         publish_derived_live_candles(producer, redis_client, redis_keys, state, topics, trade["symbol"], live_1m=live_candle, log_every_n=log_every_n)
     return "trades" if accepted_for_window else "trades_late_after_closed"
+
+
+def process_order_flow_live_path(trade, redis_client, redis_keys, state):
+    builder = getattr(state, "order_flow_builder", None)
+    symbol = str(trade.get("symbol") or "").upper()
+    if builder is None or symbol not in builder.pinned_symbols:
+        return None
+    quote_cache = getattr(state, "order_flow_quote_cache", None)
+    quote = quote_cache.quote_for(trade["symbol"]) if quote_cache is not None else None
+    side = classify_trade_side(trade, quote)
+    of_bin = builder.update(trade, side)
+    if of_bin is None:
+        return None
+    write_order_flow_bin_to_redis(redis_client, redis_keys, of_bin, state=state)
+    maybe_publish_order_flow_event(redis_client, redis_keys, state, of_bin)
+    return of_bin
 
 
 def trade_bucket_blocked_by_closed_watermark(redis_client, redis_keys, trade):
@@ -900,6 +949,49 @@ def write_volume_profile_bin_to_redis(redis_client, redis_keys, profile_bin):
     score = timestamp_score(profile_bin["eventMinute"])
     redis_client.zadd(key, {member: score})
     redis_client.expire(key, 86400)
+
+
+def write_order_flow_bin_to_redis(redis_client, redis_keys, of_bin, state=None):
+    key = redis_keys.order_flow_live(of_bin["symbol"])
+    builder = getattr(state, "order_flow_builder", None)
+    if builder is not None and callable(getattr(builder, "consume_session_rollover", None)):
+        if builder.consume_session_rollover(of_bin["symbol"]):
+            redis_client.delete(key)
+    field = f"{of_bin['eventMinute']}|{of_bin['priceBin']:.2f}"
+    value = json.dumps(of_bin, ensure_ascii=False, separators=(",", ":"))
+    try:
+        redis_client.hset(key, field, value)
+    except TypeError:
+        redis_client.hset(key, mapping={field: value})
+    redis_client.expire(key, live_ttl_seconds_from_env())
+
+
+def maybe_publish_order_flow_event(redis_client, redis_keys, state, of_bin):
+    builder = getattr(state, "order_flow_builder", None)
+    if builder is None:
+        return
+    publish_state = getattr(state, "order_flow_publish_state", None)
+    if publish_state is None:
+        state.order_flow_publish_state = {}
+        publish_state = state.order_flow_publish_state
+    symbol = of_bin["symbol"]
+    event_minute = of_bin["eventMinute"]
+    now = time.monotonic()
+    entry = publish_state.get(symbol)
+    minute_changed = entry is not None and entry.get("minute") != event_minute
+    throttled = entry is not None and (now - float(entry.get("lastPublish", 0))) * 1000 < publish_throttle_ms_from_env()
+    if throttled and not minute_changed:
+        return
+    seq = int(entry.get("seq", 0)) if entry is not None else 0
+    if minute_changed:
+        previous_minute = entry.get("minute")
+        previous_bins = builder.bins_for_minute(symbol, previous_minute)
+        seq += 1
+        publish_chart_event(redis_client, redis_keys, order_flow_event(symbol, previous_minute, previous_bins, sequence=seq))
+    current_bins = builder.bins_for_minute(symbol, event_minute)
+    seq += 1
+    publish_chart_event(redis_client, redis_keys, order_flow_event(symbol, event_minute, current_bins, sequence=seq))
+    publish_state[symbol] = {"lastPublish": now, "minute": event_minute, "seq": seq}
 
 
 def publish_chart_event(redis_client, redis_keys, event):

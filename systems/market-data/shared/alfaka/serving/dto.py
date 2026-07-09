@@ -2,10 +2,11 @@
 # 사용: REST CandleSnapshot과 WebSocket CandleEvent 응답에서 공통으로 씁니다.
 # 주의: 프론트는 ma5/ma20/ma60 flat field를 기대합니다.
 import hashlib
+from datetime import datetime, timezone
 
 from alfaka.alpaca.feed_profiles import market_session_for_timestamp
+from alfaka.orderflow import ORDER_FLOW_CLASSIFICATION_VERSION, ORDER_FLOW_SIDE_CLASSIFICATION
 from alfaka.serving.time_utils import canonical_utc_timestamp
-
 
 def candle_to_gops(candle):
     ma = candle.get("ma") or {}
@@ -137,6 +138,46 @@ def volume_profile_event(symbol, profile_bin):
     }
 
 
+def order_flow_event(symbol, event_minute, bins, *, updated_at=None, sequence=None):
+    updated_at = updated_at or now_iso()
+    interval = "1m"
+    marker = sequence if sequence is not None else updated_at
+    return {
+        "type": "ORDER_FLOW_BINS_UPDATE",
+        "eventId": f"delta/ORDER_FLOW_BINS_UPDATE/{symbol}/{interval}/{event_minute}/{marker}",
+        "cursor": f"v1:{symbol}:orderflow:{event_minute}",
+        "symbol": symbol,
+        "interval": interval,
+        "source": "alpaca",
+        "feed": bins[0].get("feed", "unknown") if bins else "unknown",
+        "data": {
+            "symbol": symbol,
+            "eventMinute": event_minute,
+            "sessionDate": bins[0].get("sessionDate") if bins else None,
+            "priceBinSize": bins[0].get("priceBinSize", 0.01) if bins else 0.01,
+            "sideClassification": ORDER_FLOW_SIDE_CLASSIFICATION,
+            "classificationVersion": ORDER_FLOW_CLASSIFICATION_VERSION,
+            "marketSession": "regular",
+            "bins": [_order_flow_bin_payload(bin_payload) for bin_payload in bins],
+            "updatedAt": updated_at,
+        },
+    }
+
+
+def _order_flow_bin_payload(bin_payload):
+    return {
+        "priceBin": bin_payload.get("priceBin"),
+        "askVolume": number_or_zero(bin_payload.get("askVolume")),
+        "bidVolume": number_or_zero(bin_payload.get("bidVolume")),
+        "unknownVolume": number_or_zero(bin_payload.get("unknownVolume")),
+        "askTradeCount": int(bin_payload.get("askTradeCount") or 0),
+        "bidTradeCount": int(bin_payload.get("bidTradeCount") or 0),
+        "unknownTradeCount": int(bin_payload.get("unknownTradeCount") or 0),
+        "volume": number_or_zero(bin_payload.get("volume")),
+        "tradeCount": int(bin_payload.get("tradeCount") or 0),
+    }
+
+
 def fallback_market_session(candle, timestamp):
     interval = str(candle.get("interval") or "")
     if interval in {"1D", "1d", "1W", "1M"}:
@@ -156,3 +197,7 @@ def cursor_for(symbol, interval, payload, time_field="timestamp"):
 
 def number_or_zero(value):
     return float(value or 0)
+
+
+def now_iso():
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")

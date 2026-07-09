@@ -302,6 +302,33 @@ ENGINE = ReplacingMergeTree(inserted_at)
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (object_path, dataset, layer);
 
+CREATE TABLE IF NOT EXISTS market_data.order_flow_profile_daily
+(
+    session_date        Date,
+    symbol              LowCardinality(String),
+    price_bin           Float64,
+    price_bin_size      Float64,
+    ask_volume          Float64,
+    bid_volume          Float64,
+    unknown_volume      Float64,
+    ask_trade_count     UInt64,
+    bid_trade_count     UInt64,
+    unknown_trade_count UInt64,
+    trade_count         UInt64,
+    volume              Float64,
+    classification_version LowCardinality(String) DEFAULT 'orderflow-estimated-v1',
+    source              LowCardinality(String) DEFAULT 'clickhouse-rollup',
+    feed                LowCardinality(String) DEFAULT 'sip',
+    feed_profile        LowCardinality(String) DEFAULT feed,
+    market_session      LowCardinality(String) DEFAULT 'regular',
+    inserted_at         DateTime64(3, 'UTC') DEFAULT now64(3)
+) ENGINE = ReplacingMergeTree(inserted_at)
+PARTITION BY toYYYYMM(session_date)
+ORDER BY (symbol, session_date, price_bin_size, price_bin);
+
+-- NOTE: trade_ticks / quote_ticks keep No TTL in this rollout. Pinned symbols
+-- increase raw tick volume, but retention needs a separate dependency audit.
+
 -- Existing local/production volumes may have been initialized before source_event_id
 -- and hardening tables existed. Keep these migrations idempotent.
 ALTER TABLE market_data.chart_candles
