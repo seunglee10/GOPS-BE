@@ -105,6 +105,9 @@ IRSA는 IAM Roles for Service Accounts의 줄임말이다. EKS pod가 AWS creden
 - 모든 Deployment는 readiness/liveness/startup probe를 가진다.
 - rolling update 기본값은 `maxUnavailable=0`, `maxSurge=1`이다.
 - resource request/limit을 명시한다.
+- EKS stateful clean rebuild는 `docs/EKS_DATA_PRESERVING_REBUILD_PLAN.md`를
+  따른다. Postgres, ClickHouse, GraphDB 데이터 손실은 허용하지 않으며,
+  Redis/Kafka reset도 component owner의 명시 승인 없이는 기본값이 아니다.
 - KIS/Alpaca/Google OAuth/OpenAI credential은 image나 ConfigMap에 넣지 않는다.
 - secret은 AWS Secrets Manager 또는 Kubernetes Secret으로 주입한다.
 - production namespace에서도 KIS demo endpoint만 허용한다.

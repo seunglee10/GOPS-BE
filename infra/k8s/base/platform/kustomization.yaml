@@ -14,7 +14,10 @@ resources:
   - postgres-statefulset.yaml
   - nodepool-app-agent.yaml
   - nodepool-batch.yaml
-  - nodepool-platform-core.yaml
+  - nodepool-cache-db.yaml
+  - nodepool-streaming.yaml
+  - nodepool-graphdb.yaml
+  - nodepool-clickhouse.yaml
   - clickhouse-service.yaml
   - clickhouse-statefulset.yaml
 

@@ -24,11 +24,11 @@ spec:
         app: postgres
     spec:
       nodeSelector:
-        karpenter.sh/nodepool: platform-core
+        karpenter.sh/nodepool: cache-db
       tolerations:
         - key: gops.io/dedicated
           operator: Equal
-          value: platform-core
+          value: cache-db
           effect: NoSchedule
       containers:
         - name: postgres

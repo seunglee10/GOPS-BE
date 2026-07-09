@@ -13,6 +13,7 @@ ARTIFACT_PATH="${GRAPHDB_VOLUME_TGZ:-${REPO_ROOT}/.local-artifacts/graphdb/graph
 STORAGE_CLASS_NAME="${STORAGE_CLASS_NAME:-eks-auto-ebs}"
 STORAGE_SIZE="${STORAGE_SIZE:-10Gi}"
 RESTORE_IMAGE="${RESTORE_IMAGE:-alpine:3.20}"
+RESTORE_NODEPOOL="${RESTORE_NODEPOOL:-graphdb}"
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-300s}"
 REPLACE_PENDING_PVC=false
 FORCE_RESTORE=false
@@ -34,6 +35,7 @@ Environment:
   GRAPHDB_VOLUME_TGZ       Same as --artifact.
   STORAGE_CLASS_NAME       PVC storage class. Default: ${STORAGE_CLASS_NAME}
   STORAGE_SIZE             PVC size. Default: ${STORAGE_SIZE}
+  RESTORE_NODEPOOL         NodePool used by the restore pod. Default: ${RESTORE_NODEPOOL}
 USAGE
 }
 
@@ -209,11 +211,11 @@ metadata:
 spec:
   restartPolicy: Never
   nodeSelector:
-    karpenter.sh/nodepool: platform-core
+    karpenter.sh/nodepool: ${RESTORE_NODEPOOL}
   tolerations:
     - key: gops.io/dedicated
       operator: Equal
-      value: platform-core
+      value: ${RESTORE_NODEPOOL}
       effect: NoSchedule
   containers:
     - name: restore

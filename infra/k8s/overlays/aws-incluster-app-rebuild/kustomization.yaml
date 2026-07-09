@@ -1,23 +1,9 @@
 # Clean-rebuild overlay for moving app workloads onto the app-agent NodePool.
 # Do not use this for routine GitHub Actions deploys; apply it only after
-# app-agent/platform-core NodePools exist during the 16 vCPU rebuild runbook.
+# the dedicated NodePools exist during the data-preserving rebuild runbook.
+# The parent aws-incluster-app overlay now carries the app-agent placement.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
   - ../aws-incluster-app
-
-patches:
-  - target:
-      kind: Deployment
-    patch: |-
-      - op: add
-        path: /spec/template/spec/nodeSelector/karpenter.sh~1nodepool
-        value: app-agent
-      - op: add
-        path: /spec/template/spec/tolerations
-        value:
-          - key: gops.io/dedicated
-            operator: Equal
-            value: app-agent
-            effect: NoSchedule

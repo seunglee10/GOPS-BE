@@ -32,6 +32,7 @@ flowchart TD
 | `ARCHITECTURE.md` | Current system, pod/job, and platform relationships. |
 | `IMAGE_STRATEGY.md` | Docker image boundaries and naming rules. |
 | `ENVIRONMENT.md` | Env, secret, and platform contracts. |
+| `EKS_DATA_PRESERVING_REBUILD_PLAN.md` | Data-preserving EKS clean rebuild runbook for dedicated NodePools and restored PVCs. |
 | `AGENT_ORCHESTRATION_IMPLEMENTATION.md` | Summary of the role-based multi-agent implementation and Docker validation. |
 | `STOCK_RECOMMENDATION_PANEL.md` | 장중 매수 추천 패널 구현 흐름, 점수화 로직, API/DB/worker/프런트 계약. |
 | `AGENT_ARCHITECTURE.md` | `AgentOrchestrator`, role agents, snapshots, synthesis, provider boundary, `EvidenceItem` 계약. |
