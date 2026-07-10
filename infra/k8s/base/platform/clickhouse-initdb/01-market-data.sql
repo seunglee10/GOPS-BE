@@ -296,6 +296,22 @@ CREATE TABLE IF NOT EXISTS market_data.order_flow_profile_daily
 PARTITION BY toYYYYMM(session_date)
 ORDER BY (symbol, session_date, price_bin_size, price_bin);
 
+CREATE TABLE IF NOT EXISTS market_data.chart_analysis_assets
+(
+    symbol         LowCardinality(String),
+    interval       LowCardinality(String),
+    as_of          DateTime64(3, 'UTC'),
+    generated_at   DateTime64(3, 'UTC'),
+    asset_version  LowCardinality(String),
+    kernel_version LowCardinality(String),
+    prompt_version LowCardinality(String) DEFAULT '',
+    status         LowCardinality(String),
+    payload        String,
+    inserted_at    DateTime64(3, 'UTC') DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(inserted_at)
+ORDER BY (symbol, interval);
+
 ALTER TABLE market_data.chart_candles
     ADD COLUMN IF NOT EXISTS source_event_id Nullable(String) AFTER feed;
 

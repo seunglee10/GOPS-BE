@@ -1,6 +1,10 @@
 # GOPS Shared Chart Contract
 
-Shared chart-command contract for frontend runtime and backend/agent code.
+Shared chart-command and chart-analysis-asset contracts for frontend runtime and backend/agent code.
+
+`chart-analysis-asset.schema.json` defines the prebuilt v1 asset stored per
+`(symbol, interval)`. Builders persist complete `DrawingEntity` objects and the
+frontend applies them without a second compiler.
 
 Chart data storage and transport semantics are defined by
 `docs/CHART_DATA_ARCHITECTURE.md`. This contract covers UI/chart command shape;

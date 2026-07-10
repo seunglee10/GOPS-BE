@@ -1,0 +1,8 @@
+{
+  "uptrend": {"count": 96, "base": 100, "drift": 0.42, "amplitude": 4.5, "expectedRegime": "up", "expectedTrend": "up"},
+  "downtrend": {"count": 96, "base": 150, "drift": -0.38, "amplitude": 4.5, "expectedRegime": "down", "expectedTrend": "down"},
+  "range": {"count": 96, "base": 100, "drift": 0, "amplitude": 3.5, "expectedRegime": "range", "expectedTrend": "range"},
+  "gap": {"count": 80, "base": 90, "drift": 0.12, "amplitude": 3.5, "gapIndex": 55, "expectedEvent": "gap"},
+  "short_history": {"count": 40, "base": 80, "drift": 0.15, "amplitude": 2.5, "expectedCount": 40},
+  "missing_bars": {"count": 90, "base": 120, "drift": 0.1, "amplitude": 3, "missingIndexes": [9, 10, 33, 61], "expectedCount": 86}
+}

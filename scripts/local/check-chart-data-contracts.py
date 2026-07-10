@@ -206,12 +206,13 @@ def collect_errors() -> list[str]:
     if normalized_market_ddl(local_sql) != normalized_market_ddl(k8s_sql):
         errors.append("ClickHouse init DDL copies differ outside declared headers/local-only agent table")
 
-    tick_ttl = "TTL event_time + INTERVAL 21 DAY DELETE"
+    tick_ttl = "TTL toDateTime(event_time) + INTERVAL 21 DAY DELETE"
+    migration_tick_ttl = "TTL event_time + INTERVAL 21 DAY DELETE"
     for label, sql in (("local", local_sql), ("k8s", k8s_sql)):
         for table in ("trade_ticks", "quote_ticks"):
             if tick_ttl not in table_ddl(sql, table):
                 errors.append(f"{label} {table} is missing the 21-day delete TTL")
-        for table in ("chart_candles", "order_flow_profile_daily"):
+        for table in ("chart_candles", "order_flow_profile_daily", "chart_analysis_assets"):
             ddl = table_ddl(sql, table)
             if not ddl:
                 errors.append(f"{label} {table} DDL is missing")
@@ -317,7 +318,7 @@ def collect_errors() -> list[str]:
 
     migration = read(ROOT / "scripts/local/migrate-chart-tick-retention.sql")
     for table in ("trade_ticks", "quote_ticks"):
-        if f"ALTER TABLE market_data.{table}" not in migration or tick_ttl not in migration:
+        if f"ALTER TABLE market_data.{table}" not in migration or migration_tick_ttl not in migration:
             errors.append(f"Operator TTL migration is missing for {table}")
 
     return errors

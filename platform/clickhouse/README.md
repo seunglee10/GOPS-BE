@@ -13,13 +13,17 @@ market_data.quote_ticks
 market_data.market_events
 market_data.market_status_events
 market_data.order_flow_profile_daily
+market_data.chart_analysis_assets
 market_data.backfill_jobs
 market_data.storage_object_audit
 market_data.load_audit
 ```
 
 `trade_ticks` and `quote_ticks` retain 21 days. `chart_candles` and
-`order_flow_profile_daily` have no deletion TTL. Existing environments apply
+`order_flow_profile_daily` and `chart_analysis_assets` have no deletion TTL.
+`chart_analysis_assets` uses `ReplacingMergeTree(inserted_at)` ordered by
+`(symbol, interval)`; readers use `FINAL` or `argMax` so each pair serves only
+the latest prebuilt asset. Existing environments apply
 the TTL through the operator-reviewed, idempotent migration:
 
 ```text
