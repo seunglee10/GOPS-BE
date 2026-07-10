@@ -41,6 +41,7 @@ class IntegratedOrderRoutesTest(unittest.TestCase):
         os.environ["IDEMPOTENCY_HASH_SECRET"] = "test-secret"
         self.repository = InMemoryOrderRepository()
         self.app = create_app()
+        self.app.state.simulator_gateway = SimpleNamespace(status=lambda: {"mode": "live"})
         self.app.state.order_repository = self.repository
         self.app.state.portfolio_market_data_provider = None
         self.app.state.portfolio_fundamentals_adapter = None
