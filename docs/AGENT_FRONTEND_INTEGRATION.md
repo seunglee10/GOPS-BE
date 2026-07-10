@@ -231,6 +231,26 @@ instance의 symbol이다. `layout.panel.priority.set`과 `layout.panels.arrange`
 `layoutWeight`는 다음 요청의 `layoutContext`에 보존되어, 직전 요청 panel과 chart
 panel이 더 크게 배치되고 낮은 priority support panel은 축소/이동될 수 있다.
 
+Rule-based UI parser는 단일 패널 open/close/move/resize 외에도 tidy, close-all,
+resize-all, undo, default restore, swap, relative placement, replace, pin/unpin,
+save, panel group open을 `layoutProposal.commands`로 반환한다. 프런트는
+`layout.undo`용 최근 agent layout 이력을 유지하고, `layout.panel.pin/unpin`을
+slot의 `layoutPinned`에 보존하며, `layout.save`는 현재 layout을 custom preset으로
+저장한다. `layout.panels.arrange`가 충돌 때문에 일부 생략되거나 readable span으로
+정규화되면 적용 결과의 `appliedWithChanges/reason`을 채팅에 표시해야 하며 backend
+rationale만으로 성공을 단정하면 안 된다.
+
+UI-only layout 명령이 프런트에 정상 적용되면 assistant 성공 메시지는 채팅에
+추가하지 않는다. 사용자 명령만 기록하고, `ui_clarify`, `autoApply=false`, undo
+이력 없음, placement 선택 필요, 충돌·부분 적용처럼 사용자의 확인이나 조치가
+필요한 경우에만 assistant 메시지를 표시한다. Placement picker에서 후보 적용이
+성공한 뒤에도 별도의 "적용했습니다" 메시지를 만들지 않는다.
+
+`layoutContext.selectedPanelId`는 "이거", "이 패널", "여기" 같은 지시어의 대상이다.
+선택된 패널이 없으면 backend는 임의 패널을 고르지 않고 clarification을 반환한다.
+`layoutContext.canUndo`는 "원래대로"가 직전 agent 변경 취소인지 기본 layout
+복원인지 결정하는 hint다.
+
 news panel은 `panelType="newsFeed"`와 `props.displayMode="dailySummary"`를
 받으면 일자별 요약 전용으로 렌더링한다. 이때 `props.dailySummaries[]`는
 `date`, `summary`, `sources[]`를 포함해야 하며, source 항목은 실제 기사

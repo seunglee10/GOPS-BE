@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..contracts import AgentFinding, EvidenceItem, LayoutProposal, MarketEvent, NotificationDecision, stable_id, utc_now_iso
-from ..intent_understanding.schema import UiTask
+from ..intent_understanding.schema import UI_PANEL_TYPES, UiTask
 from ..orchestration.routing import parse_openai_text_json
 from ..orchestration.ui_intent import UIIntent
 from ..providers import ClickHouseFinancialProvider, ClickHouseNewsProvider, EmptyMacroProvider, GraphDBOntologyProvider, ProviderRequest
@@ -471,6 +471,33 @@ class UIAgent:
         if preset_task is not None:
             return propose_preset_load_layout(preset_task)
         panels = normalize_layout_panels(context.layoutContext)
+        command_task = next((task for task in tasks if task.action in {"undo", "reset", "save"}), None)
+        if command_task is not None:
+            return propose_workspace_command(command_task)
+        tidy_task = next((task for task in tasks if task.action == "tidy"), None)
+        if tidy_task is not None:
+            return propose_tidy_layout(panels)
+        pin_task = next((task for task in tasks if task.action in {"pin", "unpin"}), None)
+        if pin_task is not None:
+            return propose_panel_pin_layout(panels, pin_task)
+        replace_task = next((task for task in tasks if task.action == "replace"), None)
+        if replace_task is not None:
+            return propose_replace_panel_layout(context, panels, replace_task)
+        swap_task = next((task for task in tasks if task.action == "swap"), None)
+        if swap_task is not None:
+            return propose_swap_panels_layout(panels, swap_task)
+        relative_task = next((task for task in tasks if task.anchorPanelType or task.anchorPanelId), None)
+        if relative_task is not None:
+            return propose_relative_panel_layout(panels, relative_task)
+        resize_all_task = next((task for task in tasks if task.action == "resize" and task.targetAll), None)
+        if resize_all_task is not None:
+            return propose_resize_all_layout(panels, resize_all_task)
+        fractional_task = next((task for task in tasks if task.action == "resize" and task.sizeFraction is not None), None)
+        if fractional_task is not None:
+            return propose_fractional_resize_layout(panels, fractional_task)
+        close_all_task = next((task for task in tasks if task.action == "close" and task.targetAll), None)
+        if close_all_task is not None:
+            return propose_remove_panels_layout(panels, [close_all_task])
         chart_tasks = [task for task in tasks if is_chart_task(task)]
         if len(chart_tasks) >= 2:
             return propose_chart_pair_layout(context, panels, chart_tasks)
@@ -498,6 +525,23 @@ class UIAgent:
         target_panels, add_panel_types = materialize_target_panels(panels, target_panel_types)
         position_intent = next((task.positionIntent for task in tasks if task.positionIntent), None)
         placements = arrange_panel_set(panels, target_panels, position_intent)
+        skipped_panel_types: list[str] = []
+        if not placements and len(target_panels) > 1:
+            ranked_targets = sorted(
+                target_panels,
+                key=lambda panel: (-read_float(panel.get("layoutWeight"), 0.0), panel["id"]),
+            )
+            for keep_count in range(len(ranked_targets) - 1, 0, -1):
+                candidate_targets = ranked_targets[:keep_count]
+                candidate_placements = arrange_panel_set(panels, candidate_targets, position_intent)
+                if not candidate_placements:
+                    continue
+                kept_ids = {panel["id"] for panel in candidate_targets}
+                skipped_panel_types = [panel["type"] for panel in target_panels if panel["id"] not in kept_ids]
+                target_panels = candidate_targets
+                add_panel_types = [panel_type for panel_type in add_panel_types if any(panel["type"] == panel_type for panel in candidate_targets)]
+                placements = candidate_placements
+                break
         if not placements:
             return LayoutProposal(
                 title="UI layout request",
@@ -542,9 +586,13 @@ class UIAgent:
             {"panelIds": [panel["id"] for panel in target_panels]},
         ))
         commands.append(layout_command("layout.reflow", {"reason": "ui-agent-multi-panel-layout-intent"}))
+        rationale = "요청한 패널들을 다시 배치했습니다."
+        if skipped_panel_types:
+            skipped_labels = ", ".join(default_panel_title(panel_type) for panel_type in skipped_panel_types)
+            rationale = f"공간에 맞는 패널들을 배치했습니다. {skipped_labels} 패널은 공간이 부족해 열지 않았습니다."
         return LayoutProposal(
             title="UI layout request",
-            rationale="요청한 패널들을 다시 배치했습니다.",
+            rationale=rationale,
             commands=commands,
             autoApply=True,
             panelPriorities=multi_ui_panel_priorities([*panels, *[panel for panel in target_panels if panel["id"] not in {item["id"] for item in panels}]], [panel["id"] for panel in target_panels]),
@@ -609,6 +657,17 @@ class UIAgent:
                 panelPriorities=multi_ui_panel_priorities(remaining_panels, []),
             )
 
+        if ui_intent.action == "resize":
+            noop_rationale = resize_noop_message(target_panel, ui_intent)
+            if noop_rationale:
+                return LayoutProposal(
+                    title="UI layout request",
+                    rationale=noop_rationale,
+                    commands=[],
+                    autoApply=False,
+                    panelPriorities=ui_panel_priorities(panels, target_panel["id"]),
+                )
+
         placements = arrange_ui_panels(panels, target_panel, ui_intent)
         if not placements:
             return LayoutProposal(
@@ -671,11 +730,18 @@ def ui_task_from_payload(value: Any) -> UiTask | None:
         targetPanelId=optional_text(value.get("targetPanelId")),
         targetPanelTypes=[str(item) for item in value.get("targetPanelTypes", []) if isinstance(item, str)] if isinstance(value.get("targetPanelTypes"), list) else [],
         targetPanelIds=[str(item) for item in value.get("targetPanelIds", []) if isinstance(item, str)] if isinstance(value.get("targetPanelIds"), list) else [],
+        targetAll=bool(value.get("targetAll")),
+        replacePanelType=optional_text(value.get("replacePanelType")),
+        replacePanelId=optional_text(value.get("replacePanelId")),
+        anchorPanelType=optional_text(value.get("anchorPanelType")),
+        anchorPanelId=optional_text(value.get("anchorPanelId")),
+        relationIntent=optional_text(value.get("relationIntent")),
         layoutPreset=optional_text(value.get("layoutPreset")),
         presetId=optional_text(value.get("presetId")),
         presetName=optional_text(value.get("presetName")),
         presetKind=optional_text(value.get("presetKind")),
         sizeIntent=optional_text(value.get("sizeIntent")),
+        sizeFraction=read_optional_float(value.get("sizeFraction")),
         positionIntent=optional_text(value.get("positionIntent")),
         chartAction=optional_text(value.get("chartAction")),
         symbol=optional_text(value.get("symbol")),
@@ -705,8 +771,28 @@ def optional_text(value: Any) -> str | None:
     return text or None
 
 
+def read_optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def is_multi_ui_task(task: UiTask) -> bool:
-    return bool(task.action in {"keep", "load"} or task.chartAction == "add" or task.layoutPreset or task.presetId or len(task.targetPanelTypes) > 1 or len(task.targetPanelIds) > 1)
+    return bool(
+        task.action in {"keep", "load", "tidy", "undo", "reset", "swap", "replace", "pin", "unpin", "save"}
+        or task.targetAll
+        or task.sizeFraction is not None
+        or task.anchorPanelType
+        or task.anchorPanelId
+        or task.chartAction == "add"
+        or task.layoutPreset
+        or task.presetId
+        or len(task.targetPanelTypes) > 1
+        or len(task.targetPanelIds) > 1
+    )
 
 
 def is_chart_task(task: UiTask) -> bool:
@@ -740,6 +826,357 @@ def propose_preset_load_layout(task: UiTask) -> LayoutProposal:
     )
 
 
+def propose_workspace_command(task: UiTask) -> LayoutProposal:
+    if task.action == "undo":
+        command_type = "layout.undo"
+        rationale = "직전 레이아웃 변경을 되돌렸습니다."
+        payload: dict[str, Any] = {}
+    elif task.action == "reset":
+        command_type = "layout.default.restore"
+        rationale = "기본 레이아웃으로 복원했습니다."
+        payload = {}
+    else:
+        command_type = "layout.save"
+        name = optional_text(task.presetName) or f"저장 레이아웃 {utc_now_iso()[:16].replace('T', ' ')}"
+        rationale = f"현재 배치를 '{name}' 이름으로 저장했습니다."
+        payload = {"presetName": name}
+    return LayoutProposal(
+        title="UI layout request",
+        rationale=rationale,
+        commands=[layout_command(command_type, payload)],
+        autoApply=True,
+        panelPriorities=[],
+    )
+
+
+def propose_tidy_layout(panels: list[dict[str, Any]]) -> LayoutProposal:
+    movable = [panel for panel in panels if not panel.get("layoutPinned")]
+    if not movable:
+        return LayoutProposal(
+            title="UI layout request",
+            rationale="정리할 수 있는 패널이 없습니다. 고정된 패널은 먼저 고정을 풀어 주세요.",
+            commands=[],
+            autoApply=False,
+            panelPriorities=multi_ui_panel_priorities(panels, []),
+        )
+    placements = arrange_panel_set(panels, [], None)
+    if not placements:
+        return LayoutProposal(
+            title="UI layout request",
+            rationale="현재 고정 패널을 유지하면서 빈 공간 없이 정리할 수 없습니다.",
+            commands=[],
+            autoApply=False,
+            panelPriorities=multi_ui_panel_priorities(panels, []),
+        )
+    current_by_id = {panel["id"]: panel["placement"] for panel in movable}
+    changed = any(
+        not same_workspace_rect(item["placement"], current_by_id.get(item["panelId"], {}))
+        for item in placements
+    )
+    if not changed:
+        return LayoutProposal(
+            title="UI layout request",
+            rationale="이미 정리된 상태입니다.",
+            commands=[],
+            autoApply=False,
+            panelPriorities=multi_ui_panel_priorities(panels, []),
+        )
+    return arrangement_layout_proposal(
+        panels,
+        placements,
+        "빈 공간 없이 패널을 정리했습니다.",
+        "ui-agent-tidy",
+    )
+
+
+def propose_panel_pin_layout(panels: list[dict[str, Any]], task: UiTask) -> LayoutProposal:
+    panel = resolve_task_panel(panels, task.targetPanelId, task.targetPanelType)
+    if not panel:
+        return unavailable_panel_proposal("고정 상태를 바꿀 패널을 찾지 못했습니다.")
+    should_pin = task.action == "pin"
+    if bool(panel.get("layoutPinned")) == should_pin:
+        state = "고정되어" if should_pin else "고정이 해제되어"
+        return unavailable_panel_proposal(f"{panel.get('title') or panel['id']} 패널은 이미 {state} 있습니다.")
+    command_type = "layout.panel.pin" if should_pin else "layout.panel.unpin"
+    rationale = (
+        f"{panel.get('title') or panel['id']} 패널을 고정했습니다."
+        if should_pin
+        else f"{panel.get('title') or panel['id']} 패널의 고정을 풀었습니다."
+    )
+    return LayoutProposal(
+        title="UI layout request",
+        rationale=rationale,
+        commands=[layout_command(command_type, {"panelId": panel["id"]}, {"panelId": panel["id"]})],
+        autoApply=True,
+        panelPriorities=ui_panel_priorities(panels, panel["id"]),
+    )
+
+
+def propose_replace_panel_layout(context: AgentContext, panels: list[dict[str, Any]], task: UiTask) -> LayoutProposal:
+    source = resolve_task_panel(panels, task.replacePanelId, task.replacePanelType)
+    replacement_type = task.targetPanelType
+    if not source or not replacement_type:
+        return unavailable_panel_proposal("교체할 기존 패널과 새 패널을 확정하지 못했습니다.")
+    if source.get("layoutPinned"):
+        return unavailable_panel_proposal(f"{source.get('title') or source['id']} 패널은 고정되어 있어 교체하지 않았습니다.")
+    if source["type"] == replacement_type:
+        return unavailable_panel_proposal("이미 같은 종류의 패널이 표시되어 있습니다.")
+    spec = panel_spec_for(replacement_type, context.layoutContext)
+    placement = dict(source["placement"])
+    min_span = spec["minSpan"]
+    needs_resize = (
+        read_int(placement.get("colSpan"), 1) < read_int(min_span.get("colSpan"), 1)
+        or read_int(placement.get("rowSpan"), 1) < read_int(min_span.get("rowSpan"), 1)
+    )
+    commands: list[dict[str, Any]] = []
+    payload: dict[str, Any] = {
+        "panelId": source["id"],
+        "panelType": replacement_type,
+        "placement": placement,
+    }
+    props = panel_props_for_context(context, replacement_type)
+    if props:
+        payload["props"] = props
+        if "symbol" in props:
+            payload["symbol"] = props["symbol"]
+    commands.append(layout_command("layout.panel.replace", payload, {"panelId": source["id"]}))
+    if needs_resize:
+        replacement = {
+            **source,
+            "type": replacement_type,
+            "title": spec["title"],
+            "minSpan": dict(spec["minSpan"]),
+            "maxSpan": dict(spec.get("maxSpan") or source["maxSpan"]),
+        }
+        placements = arrange_panel_set(panels, [replacement], None)
+        if not placements:
+            return unavailable_panel_proposal("새 패널의 최소 크기를 확보할 수 없어 교체하지 않았습니다.")
+        commands.append(layout_command("layout.panels.arrange", {"placements": placements, "reason": "ui-agent-panel-replace"}))
+    commands.append(layout_command("layout.reflow", {"reason": "ui-agent-panel-replace"}))
+    return LayoutProposal(
+        title="UI layout request",
+        rationale=f"{source.get('title') or source['id']} 대신 {spec['title']} 패널을 같은 자리에 열었습니다.",
+        commands=commands,
+        autoApply=True,
+        panelPriorities=ui_panel_priorities(panels, source["id"]),
+    )
+
+
+def propose_swap_panels_layout(panels: list[dict[str, Any]], task: UiTask) -> LayoutProposal:
+    targets = resolve_task_panels(panels, task)
+    if len(targets) < 2:
+        return unavailable_panel_proposal("위치를 바꿀 두 패널을 찾지 못했습니다.")
+    first, second = targets[:2]
+    if first.get("layoutPinned") or second.get("layoutPinned"):
+        return unavailable_panel_proposal("고정된 패널이 포함되어 있어 위치를 바꾸지 않았습니다.")
+    if not placement_fits_panel(second["placement"], first) or not placement_fits_panel(first["placement"], second):
+        return unavailable_panel_proposal("두 패널의 크기 제한이 달라 위치를 그대로 맞바꿀 수 없습니다.")
+    placements = [
+        {"panelId": first["id"], "placement": dict(second["placement"]), "layoutWeight": first["layoutWeight"]},
+        {"panelId": second["id"], "placement": dict(first["placement"]), "layoutWeight": second["layoutWeight"]},
+    ]
+    return arrangement_layout_proposal(
+        panels,
+        placements,
+        f"{first.get('title') or first['id']}와 {second.get('title') or second['id']} 패널의 위치를 바꿨습니다.",
+        "ui-agent-panel-swap",
+    )
+
+
+def propose_fractional_resize_layout(panels: list[dict[str, Any]], task: UiTask) -> LayoutProposal:
+    panel = resolve_task_panel(panels, task.targetPanelId, task.targetPanelType)
+    if not panel:
+        return unavailable_panel_proposal("크기를 바꿀 패널을 찾지 못했습니다.")
+    if panel.get("layoutPinned"):
+        return unavailable_panel_proposal(f"{panel.get('title') or panel['id']} 패널은 고정되어 있어 크기를 바꾸지 않았습니다.")
+    intent = task_ui_intent(task)
+    noop = resize_noop_message(panel, intent, task.sizeFraction)
+    if noop:
+        return unavailable_panel_proposal(noop)
+    placements = arrange_ui_panels(panels, panel, intent, task.sizeFraction)
+    if not placements:
+        return unavailable_panel_proposal("요청한 비율로 패널 크기를 바꿀 공간을 찾지 못했습니다.")
+    return arrangement_layout_proposal(panels, placements, "패널 크기를 요청한 비율로 조정했습니다.", "ui-agent-fractional-resize")
+
+
+def propose_resize_all_layout(panels: list[dict[str, Any]], task: UiTask) -> LayoutProposal:
+    movable = [panel for panel in panels if not panel.get("layoutPinned")]
+    if not movable:
+        return unavailable_panel_proposal("크기를 바꿀 수 있는 패널이 없습니다.")
+    targets: list[dict[str, Any]] = []
+    for panel in movable:
+        size_intent = task.sizeIntent
+        if size_intent == "max" and len(movable) > 1:
+            size_intent = "large"
+        intent = UIIntent(True, "layout", panel["type"], panel["id"], "resize", size_intent, None, task.confidence, task.reason)
+        span = resolved_target_span(panel, intent, task.sizeFraction)
+        if not span:
+            continue
+        placement = {**panel["placement"], "colSpan": span[0], "rowSpan": span[1]}
+        targets.append({**panel, "placement": placement, "minSpan": {"colSpan": span[0], "rowSpan": span[1]}, "maxSpan": {"colSpan": span[0], "rowSpan": span[1]}})
+    placements = arrange_panel_set(panels, targets, None)
+    if not placements:
+        return unavailable_panel_proposal("모든 패널의 크기를 함께 바꿀 공간을 찾지 못했습니다.")
+    current_by_id = {panel["id"]: panel["placement"] for panel in panels}
+    if not any(not same_workspace_rect(item["placement"], current_by_id.get(item["panelId"], {})) for item in placements):
+        return unavailable_panel_proposal("모든 패널이 이미 요청한 크기입니다.")
+    return arrangement_layout_proposal(panels, placements, "모든 패널의 크기를 조정하고 다시 정리했습니다.", "ui-agent-resize-all")
+
+
+def propose_relative_panel_layout(panels: list[dict[str, Any]], task: UiTask) -> LayoutProposal:
+    target = resolve_task_panel(panels, task.targetPanelId, task.targetPanelType)
+    anchor = resolve_task_panel(panels, task.anchorPanelId, task.anchorPanelType)
+    if not target or not anchor or target["id"] == anchor["id"]:
+        return unavailable_panel_proposal("옮길 패널과 기준 패널을 확정하지 못했습니다.")
+    if target.get("layoutPinned"):
+        return unavailable_panel_proposal(f"{target.get('title') or target['id']} 패널은 고정되어 있어 옮기지 않았습니다.")
+    candidates = adjacent_placements(target, anchor, task.relationIntent)
+    grid = grid_for_panels(panels)
+    for candidate in candidates:
+        fixed_panels = [
+            panel
+            for panel in panels
+            if panel["id"] not in {target["id"]} and (panel["id"] == anchor["id"] or panel.get("layoutPinned"))
+        ]
+        if any(overlaps(candidate, panel["placement"]) for panel in fixed_panels):
+            continue
+        occupied = occupied_cells([candidate, *[panel["placement"] for panel in fixed_panels]], grid)
+        placements = [{"panelId": target["id"], "placement": candidate, "layoutWeight": 100}]
+        movable = [
+            panel for panel in panels
+            if panel["id"] not in {target["id"], anchor["id"]} and not panel.get("layoutPinned")
+        ]
+        movable.sort(key=supporting_panel_sort_key)
+        packed = True
+        for panel in movable:
+            placement = compact_supporting_placement(occupied, panel, grid)
+            if not placement:
+                packed = False
+                break
+            occupied.update(cells_for_placement(placement, grid))
+            placements.append({"panelId": panel["id"], "placement": placement, "layoutWeight": panel["layoutWeight"]})
+        if packed:
+            relation_label = {"left": "왼쪽", "right": "오른쪽", "above": "위", "below": "아래", "beside": "옆"}.get(task.relationIntent, "옆")
+            return arrangement_layout_proposal(
+                panels,
+                placements,
+                f"{target.get('title') or target['id']} 패널을 {anchor.get('title') or anchor['id']} 패널 {relation_label}에 배치했습니다.",
+                "ui-agent-relative-placement",
+            )
+    return unavailable_panel_proposal("기준 패널 옆에 요청한 크기로 배치할 공간을 찾지 못했습니다.")
+
+
+def adjacent_placements(target: dict[str, Any], anchor: dict[str, Any], relation: str | None) -> list[dict[str, Any]]:
+    grid = grid_for_panels([target, anchor])
+    target_placement = target["placement"]
+    anchor_placement = anchor["placement"]
+    col_span = read_int(target_placement.get("colSpan"), 1)
+    row_span = read_int(target_placement.get("rowSpan"), 1)
+    anchor_col = read_int(anchor_placement.get("col"), 1)
+    anchor_row = read_int(anchor_placement.get("row"), 1)
+    anchor_cols = read_int(anchor_placement.get("colSpan"), 1)
+    anchor_rows = read_int(anchor_placement.get("rowSpan"), 1)
+    relations = [relation] if relation and relation != "beside" else ["right", "left"]
+    candidates: list[dict[str, Any]] = []
+    for current_relation in relations:
+        if current_relation == "left":
+            col, row = anchor_col - col_span, anchor_row
+        elif current_relation == "right":
+            col, row = anchor_col + anchor_cols, anchor_row
+        elif current_relation == "above":
+            col, row = anchor_col, anchor_row - row_span
+        else:
+            col, row = anchor_col, anchor_row + anchor_rows
+        if col < 1 or row < 1 or col + col_span - 1 > grid.cols or row + row_span - 1 > grid.rows:
+            continue
+        candidates.append(workspace_placement(col, row, col_span, row_span, grid))
+    return candidates
+
+
+def task_ui_intent(task: UiTask) -> UIIntent:
+    return UIIntent(
+        isUiIntent=True,
+        intentKind="layout",
+        targetPanelType=task.targetPanelType,
+        targetPanelId=task.targetPanelId,
+        action=task.action,
+        sizeIntent=task.sizeIntent,
+        positionIntent=task.positionIntent,
+        confidence=task.confidence,
+        reason=task.reason,
+        source=task.source,
+    )
+
+
+def resolve_task_panel(
+    panels: list[dict[str, Any]],
+    panel_id: str | None,
+    panel_type: str | None,
+) -> dict[str, Any] | None:
+    if panel_id:
+        panel = next((item for item in panels if item["id"] == panel_id), None)
+        if panel:
+            return panel
+    return first_panel_of_type(panels, panel_type) if panel_type else None
+
+
+def resolve_task_panels(panels: list[dict[str, Any]], task: UiTask) -> list[dict[str, Any]]:
+    resolved: list[dict[str, Any]] = []
+    for panel_id in task.targetPanelIds:
+        panel = resolve_task_panel(panels, panel_id, None)
+        if panel and panel not in resolved:
+            resolved.append(panel)
+    for panel_type in task.targetPanelTypes:
+        panel = resolve_task_panel(panels, None, panel_type)
+        if panel and panel not in resolved:
+            resolved.append(panel)
+    return resolved
+
+
+def placement_fits_panel(placement: dict[str, Any], panel: dict[str, Any]) -> bool:
+    min_span = panel.get("minSpan") if isinstance(panel.get("minSpan"), dict) else default_min_span(panel["type"])
+    max_span = panel.get("maxSpan") if isinstance(panel.get("maxSpan"), dict) else default_max_span(panel["type"])
+    cols = read_int(placement.get("colSpan"), 1)
+    rows = read_int(placement.get("rowSpan"), 1)
+    return (
+        read_int(min_span.get("colSpan"), 1) <= cols <= read_int(max_span.get("colSpan"), grid_for_panel(panel).cols)
+        and read_int(min_span.get("rowSpan"), 1) <= rows <= read_int(max_span.get("rowSpan"), grid_for_panel(panel).rows)
+    )
+
+
+def same_workspace_rect(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    return all(read_int(left.get(key), 0) == read_int(right.get(key), 0) for key in ("col", "row", "colSpan", "rowSpan"))
+
+
+def arrangement_layout_proposal(
+    panels: list[dict[str, Any]],
+    placements: list[dict[str, Any]],
+    rationale: str,
+    reason: str,
+) -> LayoutProposal:
+    target_ids = [str(item.get("panelId") or "") for item in placements if str(item.get("panelId") or "")]
+    return LayoutProposal(
+        title="UI layout request",
+        rationale=rationale,
+        commands=[
+            layout_command("layout.panels.arrange", {"placements": placements, "reason": reason}, {"panelIds": target_ids}),
+            layout_command("layout.reflow", {"reason": reason}),
+        ],
+        autoApply=True,
+        panelPriorities=multi_ui_panel_priorities(panels, target_ids),
+    )
+
+
+def unavailable_panel_proposal(rationale: str) -> LayoutProposal:
+    return LayoutProposal(
+        title="UI layout request",
+        rationale=rationale,
+        commands=[],
+        autoApply=False,
+        panelPriorities=[],
+    )
+
+
 def propose_remove_panels_layout(panels: list[dict[str, Any]], tasks: list[UiTask]) -> LayoutProposal:
     remove_ids: list[str] = []
     remove_types: list[str] = []
@@ -748,15 +1185,22 @@ def propose_remove_panels_layout(panels: list[dict[str, Any]], tasks: list[UiTas
         remove_types.extend(task.targetPanelTypes or ([task.targetPanelType] if task.targetPanelType else []))
     remove_id_set = set(remove_ids)
     remove_type_set = set(remove_types)
+    target_all = any(task.targetAll for task in tasks)
     remove_panels = [
         panel
         for panel in panels
-        if panel["id"] in remove_id_set or panel["type"] in remove_type_set
+        if not panel.get("layoutPinned") and (
+            target_all or panel["id"] in remove_id_set or panel["type"] in remove_type_set
+        )
     ]
     if not remove_panels:
         return LayoutProposal(
             title="UI layout request",
-            rationale="숨길 패널을 찾지 못했습니다. 차트, 뉴스, 주문처럼 패널 이름을 포함해 주세요.",
+            rationale=(
+                "닫을 수 있는 패널이 없습니다. 고정된 패널은 먼저 고정을 풀어 주세요."
+                if target_all
+                else "숨길 패널을 찾지 못했습니다. 차트, 뉴스, 주문처럼 패널 이름을 포함해 주세요."
+            ),
             commands=[],
             autoApply=False,
             panelPriorities=multi_ui_panel_priorities(panels, []),
@@ -773,9 +1217,16 @@ def propose_remove_panels_layout(panels: list[dict[str, Any]], tasks: list[UiTas
     commands.append(layout_command("layout.reflow", {"reason": "ui-agent-panel-remove"}))
     remove_label = panel_set_label(remove_panels)
     remaining_ids = [panel["id"] for panel in panels if panel["id"] not in {item["id"] for item in remove_panels}]
+    pinned_survivors = [panel for panel in panels if panel.get("layoutPinned")]
+    if target_all:
+        rationale = "모든 패널을 닫았습니다. '되돌려줘'로 복구할 수 있습니다."
+        if pinned_survivors:
+            rationale = f"고정된 {panel_set_label(pinned_survivors)} 패널은 남겨두었습니다. '되돌려줘'로 복구할 수 있습니다."
+    else:
+        rationale = f"{remove_label} 패널을 숨겼습니다."
     return LayoutProposal(
         title="UI layout request",
-        rationale=f"{remove_label} 패널을 숨겼습니다.",
+        rationale=rationale,
         commands=commands,
         autoApply=True,
         panelPriorities=multi_ui_panel_priorities(panels, remaining_ids),
@@ -859,59 +1310,229 @@ def panel_action_message(panel: dict[str, Any], action: str) -> str:
 def propose_missing_panel_layout(context: AgentContext, panels: list[dict[str, Any]], ui_intent: UIIntent) -> LayoutProposal | None:
     if not ui_intent.targetPanelType or not is_visibility_panel_action(ui_intent.action):
         return None
+    return propose_panel_add_layout(context, panels, ui_intent.targetPanelType, ui_intent.positionIntent)
 
-    panel_type = ui_intent.targetPanelType
+
+def propose_panel_add_layout(
+    context: AgentContext,
+    panels: list[dict[str, Any]],
+    panel_type: str,
+    position_intent: str | None = None,
+) -> LayoutProposal:
+    """Place any panel type without moving existing panels when possible.
+
+    1. Fit the panel's default span into currently-empty grid cells.
+    2. Shrink toward its minimum span if the default does not fit.
+    3. Offer reflow-based placement candidates for the user to pick.
+    4. Reject with an actionable message when even the minimum span cannot fit.
+    """
+    grid = grid_for_panels(panels) if panels else layout_grid_spec(context.layoutContext)
+    spec = panel_spec_for(panel_type, context.layoutContext)
+    title = spec["title"] or panel_type
     panel_id = proposed_panel_id(panel_type)
-    grid = grid_for_panels(panels)
-    target_panel = {
-        "id": panel_id,
-        "type": panel_type,
-        "title": default_panel_title(panel_type),
-        "placement": default_panel_placement(panel_type),
-        "layoutPinned": False,
-        "layoutWeight": 100,
-        "minSpan": default_min_span(panel_type),
-        "maxSpan": {"colSpan": grid.cols, "rowSpan": grid.rows},
-        "_grid": grid,
-    }
-    placements = arrange_panel_set(panels, [target_panel], ui_intent.positionIntent)
-    placement_by_id = {item["panelId"]: item["placement"] for item in placements or []}
-    payload = {
-        "panelId": panel_id,
-        "panelType": panel_type,
-        "placement": placement_by_id.get(panel_id, target_panel["placement"]),
-        "layoutWeight": 100,
-    }
-    props = panel_props_for_context(context, panel_type)
-    if props:
-        payload["props"] = props
-        if "symbol" in props:
-            payload["symbol"] = props["symbol"]
-    commands = [
-        layout_command("layout.panel.add", payload, {"panelId": panel_id}),
-        layout_command(
-            "layout.panel.priority.set",
-            {"panelId": panel_id, "layoutWeight": 100},
-            {"panelId": panel_id},
-        ),
-    ]
-    if placements:
-        commands.append(layout_command(
-            "layout.panels.arrange",
-            {
-                "reason": "ui-agent-panel-restore",
-                "placements": placements,
-            },
-            {"panelId": panel_id},
-        ))
-    commands.append(layout_command("layout.reflow", {"reason": "ui-agent-panel-restore"}))
+    occupied = occupied_cells([panel["placement"] for panel in panels], grid)
+
+    fit = find_free_space_placement(occupied, spec, position_intent, grid)
+    if fit:
+        placement, degraded = fit
+        payload: dict[str, Any] = {
+            "panelId": panel_id,
+            "panelType": panel_type,
+            "placement": placement,
+            "layoutWeight": 100,
+        }
+        props = panel_props_for_context(context, panel_type)
+        if props:
+            payload["props"] = props
+            if "symbol" in props:
+                payload["symbol"] = props["symbol"]
+        target_panel = {
+            "id": panel_id,
+            "type": panel_type,
+            "title": title,
+            "placement": placement,
+            "layoutPinned": False,
+            "layoutWeight": 100,
+            "minSpan": dict(spec["minSpan"]),
+            "maxSpan": dict(spec.get("maxSpan") or {"colSpan": grid.cols, "rowSpan": grid.rows}),
+            "_grid": grid,
+        }
+        rationale = (
+            f"빈 공간이 좁아 {title} 패널을 최소 크기로 배치했습니다."
+            if degraded
+            else f"{title} 패널을 빈 공간에 배치했습니다."
+        )
+        return LayoutProposal(
+            title="UI layout request",
+            rationale=rationale,
+            commands=[
+                layout_command("layout.panel.add", payload, {"panelId": panel_id}),
+                layout_command(
+                    "layout.panel.priority.set",
+                    {"panelId": panel_id, "layoutWeight": 100},
+                    {"panelId": panel_id},
+                ),
+                layout_command("layout.reflow", {"reason": "ui-agent-panel-add-free-space"}),
+            ],
+            autoApply=True,
+            panelPriorities=multi_ui_panel_priorities([*panels, target_panel], [panel_id]),
+        )
+
+    candidates = panel_placement_pick_candidates(panels, panel_type, panel_id, spec, position_intent, grid)
+    if candidates:
+        pick_payload: dict[str, Any] = {
+            "panelType": panel_type,
+            "panelId": panel_id,
+            "positionIntent": position_intent,
+            "candidates": candidates,
+        }
+        pick_props = panel_props_for_context(context, panel_type)
+        if pick_props:
+            pick_payload["props"] = pick_props
+            if "symbol" in pick_props:
+                pick_payload["symbol"] = pick_props["symbol"]
+        return LayoutProposal(
+            title="UI layout request",
+            rationale=f"빈 공간이 부족합니다. 기존 패널을 정리해 {title} 패널을 놓을 위치를 선택해 주세요.",
+            commands=[
+                layout_command(
+                    "layout.placement.pick",
+                    pick_payload,
+                    {"panelId": panel_id},
+                )
+            ],
+            autoApply=False,
+            panelPriorities=multi_ui_panel_priorities(panels, []),
+        )
+
+    min_cols = read_int(spec["minSpan"].get("colSpan"), 1)
+    min_rows = read_int(spec["minSpan"].get("rowSpan"), 1)
+    closable = sorted(
+        [panel for panel in panels if not panel.get("layoutPinned")],
+        key=lambda panel: (read_float(panel.get("layoutWeight"), 0.0), panel["id"]),
+    )
+    hint = (
+        f" '{closable[0].get('title') or default_panel_title(closable[0]['type'])}' 패널을 닫으면 공간을 확보할 수 있습니다."
+        if closable
+        else ""
+    )
     return LayoutProposal(
         title="UI layout request",
-        rationale=f"{default_panel_title(panel_type)} 패널을 열었습니다.",
-        commands=commands,
-        autoApply=True,
-        panelPriorities=multi_ui_panel_priorities([*panels, target_panel], [panel_id]),
+        rationale=(
+            f"{title} 패널을 배치할 수 없습니다. 최소 {min_cols}×{min_rows} 칸이 필요하지만 "
+            f"기존 패널을 정리해도 남는 공간이 없습니다.{hint}"
+        ),
+        commands=[],
+        autoApply=False,
+        panelPriorities=multi_ui_panel_priorities(panels, []),
     )
+
+
+def find_free_space_placement(
+    occupied: set[tuple[int, int]],
+    spec: dict[str, Any],
+    position_intent: str | None,
+    grid: WorkspaceGridSpec,
+) -> tuple[dict[str, Any], bool] | None:
+    """Find a placement inside currently-empty cells only.
+
+    Tries spans from the panel's default span down to its minimum span.
+    Returns (placement, degraded) where degraded=True means the panel had to
+    shrink below its default span. Returns None when even the minimum span
+    does not fit into free space.
+    """
+    min_cols = max(1, min(grid.cols, read_int(spec["minSpan"].get("colSpan"), 1)))
+    min_rows = max(1, min(grid.rows, read_int(spec["minSpan"].get("rowSpan"), 1)))
+    default_cols = max(min_cols, min(grid.cols, read_int(spec["defaultSpan"].get("colSpan"), min_cols)))
+    default_rows = max(min_rows, min(grid.rows, read_int(spec["defaultSpan"].get("rowSpan"), min_rows)))
+
+    spans = sorted(
+        {
+            (col_span, row_span)
+            for col_span in range(default_cols, min_cols - 1, -1)
+            for row_span in range(default_rows, min_rows - 1, -1)
+        },
+        key=lambda span: (
+            -span[0] * span[1],
+            abs(span[0] - default_cols) + abs(span[1] - default_rows),
+            -span[0],
+        ),
+    )
+    for col_span, row_span in spans:
+        for col, row in workspace_positions(col_span, row_span, position_intent, grid):
+            placement = workspace_placement(col, row, col_span, row_span, grid)
+            if cells_for_placement(placement, grid).intersection(occupied):
+                continue
+            degraded = (col_span, row_span) != (default_cols, default_rows)
+            return placement, degraded
+    return None
+
+
+PLACEMENT_PICK_LABELS: dict[str | None, str] = {
+    None: "자동 정리 후 배치",
+    "top": "맨 위",
+    "bottom": "맨 아래",
+    "left": "왼쪽",
+    "right": "오른쪽",
+    "center": "가운데",
+}
+
+
+def panel_placement_pick_candidates(
+    panels: list[dict[str, Any]],
+    panel_type: str,
+    panel_id: str,
+    spec: dict[str, Any],
+    position_intent: str | None,
+    grid: WorkspaceGridSpec,
+) -> list[dict[str, Any]]:
+    """Build user-selectable placement candidates that reflow existing panels.
+
+    Each candidate carries a ready-to-apply arrangement (existing panels
+    compacted to their minimum spans) so the frontend can apply the choice
+    without another agent round-trip.
+    """
+    target_template = {
+        "id": panel_id,
+        "type": panel_type,
+        "title": spec["title"] or panel_type,
+        "placement": workspace_placement(1, 1, read_int(spec["defaultSpan"].get("colSpan"), 2), read_int(spec["defaultSpan"].get("rowSpan"), 2), grid),
+        "layoutPinned": False,
+        "layoutWeight": 100,
+        "minSpan": dict(spec["minSpan"]),
+        "maxSpan": dict(spec.get("maxSpan") or {"colSpan": grid.cols, "rowSpan": grid.rows}),
+        "_grid": grid,
+    }
+    intents: list[str | None] = [position_intent] if position_intent else []
+    intents.extend(intent for intent in (None, "top", "bottom", "left", "right") if intent not in intents)
+
+    candidates: list[dict[str, Any]] = []
+    seen: set[tuple[int, int, int, int]] = set()
+    for intent in intents:
+        placements = arrange_panel_set(panels, [dict(target_template)], intent)
+        if not placements:
+            continue
+        target_placement = next((item["placement"] for item in placements if item["panelId"] == panel_id), None)
+        if not target_placement:
+            continue
+        key = (
+            read_int(target_placement.get("col"), 0),
+            read_int(target_placement.get("row"), 0),
+            read_int(target_placement.get("colSpan"), 0),
+            read_int(target_placement.get("rowSpan"), 0),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append({
+            "id": intent or "auto",
+            "label": PLACEMENT_PICK_LABELS.get(intent, intent or "자동 정리 후 배치"),
+            "placement": target_placement,
+            "arrangement": placements,
+        })
+        if len(candidates) >= 3:
+            break
+    return candidates
 
 
 def is_visibility_panel_action(action: str) -> bool:
@@ -1584,7 +2205,7 @@ def unique_texts(values: list[str]) -> list[str]:
 
 
 def unique_panel_types(panel_types: list[str]) -> list[str]:
-    order = ["chart", "newsFeed", "aiSummary", "ontologyGraph", "indicatorCompare", "portfolioHoldings", "stockRecommendations", "orderTicket"]
+    order = list(UI_PANEL_TYPES)
     selected = {panel_type for panel_type in panel_types if panel_type in order}
     return [panel_type for panel_type in order if panel_type in selected]
 
@@ -1598,16 +2219,17 @@ def materialize_target_panels(panels: list[dict[str, Any]], panel_types: list[st
         if existing:
             targets.append(existing)
             continue
+        spec = panel_spec_for(panel_type)
         add_panel_types.append(panel_type)
         targets.append({
             "id": proposed_panel_id(panel_type),
             "type": panel_type,
-            "title": default_panel_title(panel_type),
+            "title": str(spec.get("title") or default_panel_title(panel_type)),
             "placement": default_panel_placement(panel_type),
             "layoutPinned": False,
-            "layoutWeight": 50,
-            "minSpan": default_min_span(panel_type),
-            "maxSpan": {"colSpan": grid.cols, "rowSpan": grid.rows},
+            "layoutWeight": read_float(spec.get("layoutWeight"), 50.0),
+            "minSpan": dict(spec.get("minSpan") or default_min_span(panel_type)),
+            "maxSpan": dict(spec.get("maxSpan") or {"colSpan": grid.cols, "rowSpan": grid.rows}),
             "_grid": grid,
         })
     return targets, add_panel_types
@@ -1657,7 +2279,11 @@ def arrange_panel_set(
     for panel in support:
         placement = compact_supporting_placement(occupied, panel, grid)
         if not placement:
-            continue
+            # An incomplete arrangement would leave the omitted panel at its
+            # old rect and can make the frontend reject a target placement as
+            # conflicting. Refuse this candidate so callers can try a smaller
+            # target set or report that the workspace cannot be packed.
+            return None
         occupied.update(cells_for_placement(placement, grid))
         placements.append({
             "panelId": panel["id"],
@@ -1677,7 +2303,7 @@ def best_panel_set_placement(occupied: set[tuple[int, int]], panel: dict[str, An
 
 
 def preferred_panel_set_spans(panel: dict[str, Any]) -> list[tuple[int, int]]:
-    preferred = {
+    legacy_preferred = {
         "chart": (3, 3),
         "newsFeed": (2, 2),
         "aiSummary": (2, 2),
@@ -1685,7 +2311,11 @@ def preferred_panel_set_spans(panel: dict[str, Any]) -> list[tuple[int, int]]:
         "indicatorCompare": (2, 2),
         "portfolioHoldings": (1, 2),
         "orderTicket": (1, 2),
-    }.get(panel["type"], (1, 1))
+    }
+    preferred = legacy_preferred.get(panel["type"])
+    if preferred is None:
+        spec_default = panel_spec_for(panel["type"])["defaultSpan"]
+        preferred = (read_int(spec_default.get("colSpan"), 2), read_int(spec_default.get("rowSpan"), 2))
     min_span = panel.get("minSpan") if isinstance(panel.get("minSpan"), dict) else default_min_span(panel["type"])
     min_cols = read_int(min_span.get("colSpan"), 1)
     min_rows = read_int(min_span.get("rowSpan"), 1)
@@ -1823,6 +2453,7 @@ def arrange_ui_panels(
     panels: list[dict[str, Any]],
     target_panel: dict[str, Any],
     ui_intent: UIIntent,
+    size_fraction: float | None = None,
 ) -> list[dict[str, Any]] | None:
     grid = grid_for_panels(panels)
     pinned_panels = [
@@ -1838,7 +2469,7 @@ def arrange_ui_panels(
     ]
     movable.sort(key=supporting_panel_sort_key)
 
-    for target_placement in target_ui_placement_candidates(target_panel, ui_intent):
+    for target_placement in target_ui_placement_candidates(target_panel, ui_intent, size_fraction):
         if any(overlaps(target_placement, panel["placement"]) for panel in pinned_panels):
             continue
 
@@ -1868,7 +2499,11 @@ def arrange_ui_panels(
     return None
 
 
-def target_ui_placement_candidates(panel: dict[str, Any], ui_intent: UIIntent) -> list[dict[str, Any]]:
+def target_ui_placement_candidates(
+    panel: dict[str, Any],
+    ui_intent: UIIntent,
+    size_fraction: float | None = None,
+) -> list[dict[str, Any]]:
     grid = grid_for_panel(panel)
     min_span = panel.get("minSpan") if isinstance(panel.get("minSpan"), dict) else default_min_span(panel["type"])
     max_span = panel.get("maxSpan") if isinstance(panel.get("maxSpan"), dict) else default_max_span(panel["type"])
@@ -1878,23 +2513,46 @@ def target_ui_placement_candidates(panel: dict[str, Any], ui_intent: UIIntent) -
     max_rows = read_int(max_span.get("rowSpan"), grid.rows)
 
     current = panel["placement"]
-    if ui_intent.sizeIntent == "max":
-        desired_cols = min(max_cols, max(min_cols, grid.cols - 1 if grid.cols > 1 else grid.cols))
+    current_cols = min(max_cols, max(min_cols, read_int(current.get("colSpan"), min_cols)))
+    current_rows = min(max_rows, max(min_rows, read_int(current.get("rowSpan"), min_rows)))
+    if size_fraction is not None:
+        fraction = max(0.05, min(1.0, float(size_fraction)))
+        if ui_intent.sizeIntent == "small":
+            desired_cols = round(current_cols * fraction)
+            desired_rows = round(current_rows * fraction)
+        else:
+            desired_cols = round(grid.cols * fraction)
+            desired_rows = round(grid.rows * fraction)
+        desired_cols = min(max_cols, max(min_cols, desired_cols))
+        desired_rows = min(max_rows, max(min_rows, desired_rows))
+    elif ui_intent.sizeIntent == "max":
+        desired_cols = min(max_cols, max(min_cols, grid.cols))
         desired_rows = min(max_rows, max(min_rows, grid.rows))
     elif ui_intent.sizeIntent == "large" or ui_intent.action in {"focus", "open"}:
-        desired_cols = min(max_cols, max(grid.cols if panel["type"] == "chart" else 3, min_cols))
-        desired_rows = min(max_rows, max(3, min_rows))
-    elif ui_intent.sizeIntent in {"small", "min"}:
+        desired_cols = min(max_cols, max(min_cols, current_cols + 1))
+        desired_rows = min(max_rows, max(min_rows, current_rows + 1))
+    elif ui_intent.sizeIntent == "small":
+        desired_cols = min(max_cols, max(min_cols, current_cols - 1))
+        desired_rows = min(max_rows, max(min_rows, current_rows - 1))
+    elif ui_intent.sizeIntent == "min":
         desired_cols = min_cols
         desired_rows = min_rows
     else:
-        desired_cols = min(max_cols, max(min_cols, read_int(current.get("colSpan"), min_cols)))
-        desired_rows = min(max_rows, max(min_rows, read_int(current.get("rowSpan"), min_rows)))
+        desired_cols = current_cols
+        desired_rows = current_rows
 
     spans: list[tuple[int, int]] = []
-    for col_span in range(desired_cols, min_cols - 1, -1):
-        for row_span in range(desired_rows, min_rows - 1, -1):
-            spans.append((col_span, row_span))
+    if ui_intent.sizeIntent == "max":
+        # Max is an exact contract: never quietly downgrade a full-workspace
+        # request to a merely-large span when supporting panels cannot reflow.
+        spans = [(desired_cols, desired_rows)]
+    else:
+        for col_span in range(desired_cols, min_cols - 1, -1):
+            for row_span in range(desired_rows, min_rows - 1, -1):
+                spans.append((col_span, row_span))
+    if ui_intent.sizeIntent == "large":
+        current_area = current_cols * current_rows
+        spans = [span for span in spans if span[0] * span[1] >= current_area]
     spans = sorted(set(spans), key=lambda span: (-span[0] * span[1], abs(span[0] - desired_cols) + abs(span[1] - desired_rows), -span[0]))
 
     candidates: list[dict[str, Any]] = []
@@ -1907,6 +2565,34 @@ def target_ui_placement_candidates(panel: dict[str, Any], ui_intent: UIIntent) -
             seen.add(key)
             candidates.append(workspace_placement(col, row, col_span, row_span, grid))
     return candidates
+
+
+def resolved_target_span(
+    panel: dict[str, Any],
+    ui_intent: UIIntent,
+    size_fraction: float | None = None,
+) -> tuple[int, int] | None:
+    candidates = target_ui_placement_candidates(panel, ui_intent, size_fraction)
+    if not candidates:
+        return None
+    first = candidates[0]
+    return read_int(first.get("colSpan"), 1), read_int(first.get("rowSpan"), 1)
+
+
+def resize_noop_message(panel: dict[str, Any], ui_intent: UIIntent, size_fraction: float | None = None) -> str | None:
+    target_span = resolved_target_span(panel, ui_intent, size_fraction)
+    if target_span is None:
+        return None
+    current = panel["placement"]
+    current_span = (read_int(current.get("colSpan"), 1), read_int(current.get("rowSpan"), 1))
+    if target_span != current_span:
+        return None
+    label = str(panel.get("title") or default_panel_title(panel["type"]) or panel["id"])
+    if ui_intent.sizeIntent in {"max", "large"}:
+        return f"{label} 패널은 이미 최대 크기입니다."
+    if ui_intent.sizeIntent in {"min", "small"} or size_fraction is not None:
+        return f"{label} 패널은 이미 최소 크기입니다."
+    return f"{label} 패널은 이미 요청한 크기입니다."
 
 
 def workspace_positions(col_span: int, row_span: int, position_intent: str | None, grid: WorkspaceGridSpec = DEFAULT_WORKSPACE_GRID) -> list[tuple[int, int]]:
@@ -2003,16 +2689,76 @@ def workspace_zone(col: int, col_span: int, grid: WorkspaceGridSpec = DEFAULT_WO
 
 
 def default_panel_title(panel_type: str) -> str:
-    return {
-        "chart": "차트",
-        "newsFeed": "시장 뉴스",
-        "indicatorCompare": "지표 비교",
-        "orderTicket": "주문",
-        "portfolioHoldings": "내 투자",
-        "stockRecommendations": "추천",
-        "aiSummary": "AI 요약",
-        "ontologyGraph": "온톨로지",
-    }.get(panel_type, panel_type)
+    spec = DEFAULT_PANEL_SPECS.get(panel_type)
+    if spec:
+        return spec["title"]
+    return panel_type
+
+
+# Mirrors gops-frontend/src/layout/panelRegistry.ts (readableMinSpan → minSpan).
+# The frontend can override these at request time via layoutContext.panelCatalog.
+DEFAULT_PANEL_SPECS: dict[str, dict[str, Any]] = {
+    "chart": {"title": "차트", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 2, "rowSpan": 2}, "layoutWeight": 100},
+    "compareChart": {"title": "비교 차트", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 4, "rowSpan": 2}, "layoutWeight": 80},
+    "newsFeed": {"title": "시장 뉴스", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 2, "rowSpan": 2}, "layoutWeight": 50},
+    "marketIndices": {"title": "지수", "minSpan": {"colSpan": 1, "rowSpan": 1}, "defaultSpan": {"colSpan": 2, "rowSpan": 2}, "layoutWeight": 50},
+    "popularStocks": {"title": "인기종목", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 2, "rowSpan": 2}, "layoutWeight": 50},
+    "stockRecommendations": {"title": "추천", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 2, "rowSpan": 2}, "layoutWeight": 45},
+    "themeRadar": {"title": "분야추천", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 3, "rowSpan": 2}, "layoutWeight": 58},
+    "companyProfile": {"title": "기업정보", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 2, "rowSpan": 2}, "layoutWeight": 50},
+    "companyMulti": {"title": "기업 멀티", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 2, "rowSpan": 3}, "layoutWeight": 72},
+    "companyValuation": {"title": "가치평가", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 2, "rowSpan": 3}, "layoutWeight": 58},
+    "companyProfitability": {"title": "수익성", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 3, "rowSpan": 3}, "layoutWeight": 58},
+    "companyStability": {"title": "안정성", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 3, "rowSpan": 3}, "layoutWeight": 58},
+    "ontologyGraph": {"title": "온톨로지", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 2, "rowSpan": 2}, "layoutWeight": 50},
+    "portfolioDashboard": {"title": "포트폴리오", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 2, "rowSpan": 2}, "layoutWeight": 35},
+    "portfolioHoldings": {"title": "내 투자", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 5, "rowSpan": 3}, "layoutWeight": 40},
+    "portfolioHoldingsCards": {"title": "보유종목 카드", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 4, "rowSpan": 2}, "layoutWeight": 39},
+    "portfolioMulti": {"title": "듀얼 포트폴리오", "minSpan": {"colSpan": 2, "rowSpan": 3}, "defaultSpan": {"colSpan": 2, "rowSpan": 3}, "maxSpan": {"colSpan": 2, "rowSpan": 3}, "layoutWeight": 90},
+    "portfolioInvestment": {"title": "US 포트폴리오", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 2, "rowSpan": 2}, "layoutWeight": 38},
+    "portfolioPerformance": {"title": "수익률", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 3, "rowSpan": 2}, "layoutWeight": 42},
+    "portfolioInvested": {"title": "투자금", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 2, "rowSpan": 3}, "layoutWeight": 36},
+    "portfolioDividend": {"title": "배당", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 3, "rowSpan": 2}, "layoutWeight": 34},
+    "portfolioDiversification": {"title": "분산투자", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 2, "rowSpan": 2}, "layoutWeight": 36},
+    "orderFlowProfile": {"title": "오더플로우", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 2, "rowSpan": 2}, "layoutWeight": 45},
+    "orderTicket": {"title": "주문", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 2, "rowSpan": 2}, "layoutWeight": 35},
+    "indicatorCompare": {"title": "지표 비교", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 2, "rowSpan": 2}, "layoutWeight": 50},
+    "aiSummary": {"title": "AI 요약", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 2, "rowSpan": 2}, "layoutWeight": 50},
+}
+
+FALLBACK_PANEL_SPEC: dict[str, Any] = {
+    "title": "",
+    "minSpan": {"colSpan": 1, "rowSpan": 1},
+    "defaultSpan": {"colSpan": 2, "rowSpan": 2},
+    "layoutWeight": 50,
+}
+
+
+def panel_spec_for(panel_type: str, layout_context: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Resolve size constraints for a panel type.
+
+    Prefers a frontend-supplied catalog (layoutContext.panelCatalog) so the
+    frontend registry stays the single source of truth, then falls back to the
+    mirrored DEFAULT_PANEL_SPECS table.
+    """
+    fallback = DEFAULT_PANEL_SPECS.get(panel_type) or {**FALLBACK_PANEL_SPEC, "title": panel_type}
+    catalog = layout_context.get("panelCatalog") if isinstance(layout_context, dict) else None
+    if isinstance(catalog, list):
+        for item in catalog:
+            if not isinstance(item, dict) or str(item.get("panelType") or "") != panel_type:
+                continue
+            spec = {
+                "title": str(item.get("title") or fallback["title"] or panel_type),
+                "minSpan": read_span(item.get("minSpan"), fallback["minSpan"]),
+                "defaultSpan": read_span(item.get("defaultSpan"), fallback["defaultSpan"]),
+                "layoutWeight": read_int(item.get("layoutWeight"), fallback["layoutWeight"]),
+            }
+            if isinstance(item.get("maxSpan"), dict):
+                spec["maxSpan"] = read_span(item.get("maxSpan"), fallback.get("maxSpan") or {"colSpan": DEFAULT_WORKSPACE_GRID.cols, "rowSpan": DEFAULT_WORKSPACE_GRID.rows})
+            elif fallback.get("maxSpan"):
+                spec["maxSpan"] = dict(fallback["maxSpan"])
+            return spec
+    return {**fallback, "title": fallback["title"] or panel_type}
 
 
 def default_min_span(panel_type: str) -> dict[str, int]:
@@ -2020,6 +2766,9 @@ def default_min_span(panel_type: str) -> dict[str, int]:
 
 
 def default_max_span(panel_type: str) -> dict[str, int]:
+    spec = DEFAULT_PANEL_SPECS.get(panel_type)
+    if spec and isinstance(spec.get("maxSpan"), dict):
+        return dict(spec["maxSpan"])
     return {"colSpan": DEFAULT_WORKSPACE_GRID.cols, "rowSpan": DEFAULT_WORKSPACE_GRID.rows}
 
 

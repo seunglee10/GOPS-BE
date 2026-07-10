@@ -1908,10 +1908,19 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(response["agentTrace"]["queryUnderstanding"]["routeMode"], "ui_layout")
         self.assertEqual(response["agentTrace"]["queryUnderstanding"]["resolvedSymbol"], "NVDA")
         proposal = response["layoutProposal"]
-        add_command = next(command for command in proposal["commands"] if command["type"] == "layout.panel.add")
-        self.assertEqual(add_command["payload"]["panelType"], "newsFeed")
-        self.assertEqual(add_command["payload"]["panelId"], "panel-news")
-        self.assertEqual(add_command["payload"]["props"]["symbol"], "NVDA")
+        # The 4x5 grid is dominated by a 4x4 chart, so the news panel's minimum
+        # span cannot fit into free space: the agent must offer reflow-based
+        # placement candidates for the user to pick instead of force-placing.
+        open_command = next(
+            command
+            for command in proposal["commands"]
+            if command["type"] in {"layout.panel.add", "layout.placement.pick"}
+        )
+        self.assertEqual(open_command["payload"]["panelType"], "newsFeed")
+        self.assertEqual(open_command["payload"]["panelId"], "panel-news")
+        self.assertEqual(open_command["payload"]["props"]["symbol"], "NVDA")
+        if open_command["type"] == "layout.placement.pick":
+            self.assertTrue(open_command["payload"]["candidates"])
         self.assertNotIn("대상 패널을 찾지 못했습니다", proposal["rationale"])
 
     def test_layout_resolve_loads_named_preset_without_snapshots(self):
@@ -1981,9 +1990,17 @@ class AgentOrchestrationTests(unittest.TestCase):
 
                 self.assertEqual(response["status"], "ui_layout")
                 proposal = response["layoutProposal"]
-                add_command = next(command for command in proposal["commands"] if command["type"] == "layout.panel.add")
-                self.assertEqual(add_command["payload"]["panelType"], panel_type)
-                self.assertEqual(add_command["payload"]["panelId"], panel_id)
+                # Direct add when the panel fits into free space, otherwise a
+                # placement pick offering reflow-based candidates.
+                open_command = next(
+                    command
+                    for command in proposal["commands"]
+                    if command["type"] in {"layout.panel.add", "layout.placement.pick"}
+                )
+                self.assertEqual(open_command["payload"]["panelType"], panel_type)
+                self.assertEqual(open_command["payload"]["panelId"], panel_id)
+                if open_command["type"] == "layout.placement.pick":
+                    self.assertTrue(open_command["payload"]["candidates"])
                 self.assertNotIn("대상 패널을 찾지 못했습니다", proposal["rationale"])
 
     def test_layout_resolve_returns_not_ui_for_analysis_request(self):
@@ -4542,20 +4559,12 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(report.route.selectedRoles, [])
         self.assertEqual(report.findings, [])
         self.assertEqual(report.providerEvidence, [])
-        self.assertEqual(
-            [command["type"] for command in report.layoutProposal.commands],
-            ["layout.panel.priority.set", "layout.panels.arrange", "layout.panel.move", "layout.reflow"],
-        )
-        arrange_command = next(command for command in report.layoutProposal.commands if command["type"] == "layout.panels.arrange")
-        order_placement = next(
-            item["placement"]
-            for item in arrange_command["payload"]["placements"]
-            if item["panelId"] == "panel-order"
-        )
-        self.assertEqual(order_placement["col"], 1)
-        self.assertEqual(order_placement["row"], 1)
-        self.assertEqual(order_placement["colSpan"], 3)
-        self.assertEqual(order_placement["rowSpan"], 5)
+        # max is now an exact full-grid request. This legacy 4x5 fixture has
+        # three supporting panels, so the agent refuses instead of silently
+        # downgrading to the former 3x5 cap or a merely-large 4x4 span.
+        self.assertFalse(report.layoutProposal.autoApply)
+        self.assertEqual(report.layoutProposal.commands, [])
+        self.assertIn("공간", report.layoutProposal.rationale)
 
     def test_ui_fallback_handles_informal_order_panel_resize_when_llm_unavailable(self):
         report = AgentOrchestrator().analyze({
@@ -4569,7 +4578,9 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(report.route.intentType, "ui-layout")
         self.assertEqual(report.route.selectedRoles, [])
         self.assertEqual(report.findings, [])
-        self.assertTrue(any(command["type"] == "layout.panels.arrange" for command in report.layoutProposal.commands))
+        self.assertFalse(report.layoutProposal.autoApply)
+        self.assertEqual(report.layoutProposal.commands, [])
+        self.assertIn("공간", report.layoutProposal.rationale)
 
     def test_mixed_news_and_ui_query_runs_analysis_and_ui_agent(self):
         clickhouse = FakeClickHouseProvider([
@@ -4685,16 +4696,9 @@ class AgentOrchestrationTests(unittest.TestCase):
             "layoutContext": context,
         })
 
-        arrange_command = next(command for command in report.layoutProposal.commands if command["type"] == "layout.panels.arrange")
-        news_placement = next(
-            item["placement"]
-            for item in arrange_command["payload"]["placements"]
-            if item["panelId"] == "panel-news"
-        )
-        pinned_chart_placement = context["panels"][0]["placement"]
-        self.assertFalse(placements_overlap(news_placement, pinned_chart_placement))
-        self.assertGreater(news_placement["colSpan"] * news_placement["rowSpan"], 2)
-        self.assertEqual(report.layoutProposal.autoApply, True)
+        self.assertFalse(report.layoutProposal.autoApply)
+        self.assertEqual(report.layoutProposal.commands, [])
+        self.assertIn("공간", report.layoutProposal.rationale)
 
     def test_ui_fallback_keeps_explicit_news_panel_placement_request(self):
         report = AgentOrchestrator().analyze({

@@ -9,8 +9,54 @@ from typing import Any
 from .routing import parse_openai_text_json
 
 
-PANEL_TYPES = ("chart", "newsFeed", "indicatorCompare", "orderTicket", "portfolioHoldings", "stockRecommendations", "aiSummary", "ontologyGraph")
-UI_ACTIONS = ("focus", "resize", "move", "open", "close", "arrange", "keep", "unknown")
+# Keep in sync with UI_PANEL_TYPES in intent_understanding/schema.py.
+PANEL_TYPES = (
+    "chart",
+    "compareChart",
+    "marketIndices",
+    "companyProfile",
+    "companyMulti",
+    "companyValuation",
+    "companyProfitability",
+    "companyStability",
+    "popularStocks",
+    "newsFeed",
+    "indicatorCompare",
+    "orderTicket",
+    "orderFlowProfile",
+    "portfolioDashboard",
+    "portfolioHoldings",
+    "portfolioHoldingsCards",
+    "portfolioMulti",
+    "portfolioInvestment",
+    "portfolioPerformance",
+    "portfolioInvested",
+    "portfolioDividend",
+    "portfolioDiversification",
+    "stockRecommendations",
+    "themeRadar",
+    "aiSummary",
+    "ontologyGraph",
+)
+UI_ACTIONS = (
+    "focus",
+    "resize",
+    "move",
+    "open",
+    "close",
+    "arrange",
+    "keep",
+    "load",
+    "tidy",
+    "undo",
+    "reset",
+    "swap",
+    "replace",
+    "pin",
+    "unpin",
+    "save",
+    "unknown",
+)
 UI_SIZE_INTENTS = ("max", "large", "small", "min")
 UI_POSITION_INTENTS = ("top", "bottom", "left", "right", "center")
 

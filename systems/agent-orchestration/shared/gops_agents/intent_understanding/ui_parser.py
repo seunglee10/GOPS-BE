@@ -264,13 +264,15 @@ def parse_ui_query(query: Any, layout_context: dict[str, Any] | None = None) -> 
     context = layout_context if isinstance(layout_context, dict) else {}
     panels = compact_layout_panels_for_parser(context, lexicon)
     presets = compact_layout_presets_for_parser(context)
+    selected_panel_id = str(context.get("selectedPanelId") or context.get("activePanelId") or "").strip() or None
+    can_undo = bool(context.get("canUndo") or context.get("previousAgentProposal"))
     analyzer = DefaultMorphAnalyzer()
     tasks: list[UiTask] = []
     warnings: list[str] = []
     needs_classifier = False
     max_confidence = 0.0
     for clause in analyzer.clauses(query):
-        clause_result = parse_ui_clause(clause, panels, presets, lexicon)
+        clause_result = parse_ui_clause(clause, panels, presets, lexicon, selected_panel_id, can_undo)
         tasks.extend(clause_result.tasks)
         warnings.extend(clause_result.warnings)
         needs_classifier = needs_classifier or clause_result.needs_classifier
@@ -340,7 +342,14 @@ def layout_context_has_panels(layout_context: dict[str, Any] | None) -> bool:
     return isinstance(panels, list) and bool(panels)
 
 
-def parse_ui_clause(clause: Clause, panels: list[dict[str, Any]], presets: list[dict[str, Any]], lexicon: dict[str, Any]) -> UiParseResult:
+def parse_ui_clause(
+    clause: Clause,
+    panels: list[dict[str, Any]],
+    presets: list[dict[str, Any]],
+    lexicon: dict[str, Any],
+    selected_panel_id: str | None = None,
+    can_undo: bool = False,
+) -> UiParseResult:
     if not clause.compact:
         return UiParseResult()
 
@@ -349,8 +358,28 @@ def parse_ui_clause(clause: Clause, panels: list[dict[str, Any]], presets: list[
         return preset_result
 
     panel_matches = panel_matches_for_clause(clause, panels, lexicon)
-    size_matches = filter_size_matches(clause, value_matches(clause, lexicon.get("sizes", {}), allow_short_fuzzy=True))
+    deictic_matches = term_matches(clause, lexicon.get("deicticReferences", []), allow_short_fuzzy=False)
+    selected_panel = next((panel for panel in panels if panel.get("id") == selected_panel_id), None)
+    if deictic_matches and selected_panel:
+        deictic = best_match(deictic_matches)
+        if deictic:
+            panel_matches = best_panel_matches([*panel_matches, AliasMatch(
+                str(selected_panel.get("type") or ""),
+                deictic.alias,
+                0.99,
+                deictic.token_index,
+                f"panel:{selected_panel_id}",
+            )])
+    raw_size_matches = value_matches(clause, lexicon.get("sizes", {}), allow_short_fuzzy=True)
+    fraction_matches = [match for match in raw_size_matches if match.value == "fraction" and match.score >= 0.95]
+    size_matches = filter_size_matches(clause, [match for match in raw_size_matches if match.value != "fraction"])
     position_matches = value_matches(clause, lexicon.get("positions", {}), allow_short_fuzzy=False)
+    relation_matches = [
+        match
+        for match in value_matches(clause, lexicon.get("relations", {}), allow_short_fuzzy=False)
+        if compact_text(match.alias) in clause.compact
+    ]
+    group_matches = value_matches(clause, lexicon.get("panelGroups", {}), allow_short_fuzzy=False)
     surface_matches = term_matches(clause, lexicon.get("surfaceNouns", []), allow_short_fuzzy=True)
     multi_matches = term_matches(clause, lexicon.get("multiPanelHints", []), allow_short_fuzzy=False)
     keep_only_matches = term_matches(clause, lexicon.get("keepOnlyHints", []), allow_short_fuzzy=False)
@@ -365,19 +394,48 @@ def parse_ui_clause(clause: Clause, panels: list[dict[str, Any]], presets: list[
         multi_matches=multi_matches,
     )
 
-    explicit_operation = has_layout_operation(action_matches, size_matches, position_matches, surface_matches, multi_matches, keep_only_matches)
-    if is_content_only_clause(action_matches, size_matches, position_matches, surface_matches, multi_matches, keep_only_matches, content_only_matches):
-        return UiParseResult(confidence=max_match_score(content_only_matches))
+    if deictic_matches and not selected_panel and action_matches:
+        return UiParseResult(
+            needs_classifier=True,
+            warnings=["ui_selected_panel_required"],
+            confidence=max_match_score([*deictic_matches, *action_matches]),
+        )
+
+    group_task = build_panel_group_task(clause, group_matches, action_matches, multi_matches, lexicon)
+    if group_task is not None:
+        return UiParseResult(tasks=[group_task], confidence=group_task.confidence)
 
     keep_task = build_keep_only_task(clause, panel_matches, action_matches, surface_matches, multi_matches, keep_only_matches)
     if keep_task is not None:
         return UiParseResult(tasks=[keep_task], confidence=keep_task.confidence)
+
+    global_task = build_global_ui_task(
+        clause,
+        action_matches,
+        size_matches,
+        fraction_matches,
+        surface_matches,
+        multi_matches,
+        lexicon,
+        can_undo,
+    )
+    if global_task is not None:
+        return UiParseResult(tasks=[global_task], confidence=global_task.confidence)
+
+    special_task = build_panel_relation_task(clause, panel_matches, action_matches, relation_matches)
+    if special_task is not None:
+        return UiParseResult(tasks=[special_task], confidence=special_task.confidence)
+
+    explicit_operation = has_layout_operation(action_matches, size_matches, position_matches, surface_matches, multi_matches, keep_only_matches)
+    if is_content_only_clause(action_matches, size_matches, position_matches, surface_matches, multi_matches, keep_only_matches, content_only_matches):
+        return UiParseResult(confidence=max_match_score(content_only_matches))
 
     multi_task = build_multi_panel_task(
         clause,
         panel_matches,
         action_matches,
         size_matches,
+        fraction_matches,
         position_matches,
         surface_matches,
         multi_matches,
@@ -391,6 +449,7 @@ def parse_ui_clause(clause: Clause, panels: list[dict[str, Any]], presets: list[
         panel_matches,
         action_matches,
         size_matches,
+        fraction_matches,
         position_matches,
         surface_matches,
         multi_matches,
@@ -510,6 +569,137 @@ def preset_aliases_for_match(preset: dict[str, Any]) -> list[str]:
     return unique_texts(aliases)
 
 
+def build_global_ui_task(
+    clause: Clause,
+    action_matches: list[AliasMatch],
+    size_matches: list[AliasMatch],
+    fraction_matches: list[AliasMatch],
+    surface_matches: list[AliasMatch],
+    multi_matches: list[AliasMatch],
+    lexicon: dict[str, Any],
+    can_undo: bool,
+) -> UiTask | None:
+    global_actions = {"undo", "reset", "tidy", "save"}
+    action_match = best_match([
+        match for match in action_matches
+        if match.strength == "strong" and match.value in global_actions and match.score >= 0.95
+    ]) or best_match([match for match in action_matches if match.strength == "strong" and match.score >= 0.95])
+    action = action_match.value if action_match else None
+    universal_matches = term_matches(clause, lexicon.get("universalQuantifiers", []), allow_short_fuzzy=False)
+    target_all = bool(universal_matches) or "빈화면" in clause.compact
+    if action == "reset" and "원래대로" in clause.compact and can_undo:
+        action = "undo"
+    if action in {"undo", "reset", "tidy", "save"}:
+        preset_name = None
+        if action == "save":
+            named = re.search(r"(.+?)(?:라는|이란|란)\s*이름으로\s*저장", clause.text)
+            if named:
+                preset_name = named.group(1).strip()
+        return UiTask(
+            action=action,
+            presetName=preset_name,
+            confidence=ui_task_confidence([action_match, *surface_matches, *multi_matches]),
+            source="ui-parser",
+            reason=f"UI parser matched target-less '{action}' operation in clause '{clause.text}'.",
+        )
+    if action == "close" and target_all:
+        return UiTask(
+            action="close",
+            targetAll=True,
+            confidence=ui_task_confidence([action_match, *universal_matches, *surface_matches]),
+            source="ui-parser",
+            reason=f"UI parser matched close-all operation in clause '{clause.text}'.",
+        )
+    if target_all and (size_matches or fraction_matches):
+        size = best_size_match(size_matches)
+        return UiTask(
+            action="resize",
+            targetAll=True,
+            sizeIntent=size.value if size else None,
+            sizeFraction=0.5 if fraction_matches else None,
+            confidence=ui_task_confidence([size, *fraction_matches, *universal_matches, *surface_matches]),
+            source="ui-parser",
+            reason=f"UI parser matched resize-all operation in clause '{clause.text}'.",
+        )
+    return None
+
+
+def build_panel_group_task(
+    clause: Clause,
+    group_matches: list[AliasMatch],
+    action_matches: list[AliasMatch],
+    multi_matches: list[AliasMatch],
+    lexicon: dict[str, Any],
+) -> UiTask | None:
+    group = best_match(group_matches)
+    action_match = best_match(action_matches)
+    if not group or not action_match or action_match.value not in {"open", "focus", "arrange"}:
+        return None
+    spec = lexicon.get("panelGroups", {}).get(group.value, {}) if isinstance(lexicon.get("panelGroups"), dict) else {}
+    panel_types = [
+        str(item)
+        for item in spec.get("panelTypes", [])
+        if isinstance(item, str) and item in UI_PANEL_TYPES
+    ] if isinstance(spec, dict) else []
+    if not panel_types:
+        return None
+    return UiTask(
+        action="open",
+        targetPanelTypes=panel_types,
+        confidence=ui_task_confidence([group, action_match, *multi_matches]),
+        source="ui-parser",
+        reason=f"UI parser matched panel group '{group.value}' in clause '{clause.text}'.",
+    )
+
+
+def build_panel_relation_task(
+    clause: Clause,
+    panel_matches: list[AliasMatch],
+    action_matches: list[AliasMatch],
+    relation_matches: list[AliasMatch],
+) -> UiTask | None:
+    ordered = sorted(panel_matches, key=lambda item: (item.token_index, -len(compact_text(item.alias))))
+    action_match = best_match([match for match in action_matches if match.strength == "strong"])
+    action = action_match.value if action_match else None
+    if action == "swap" and len(ordered) >= 2:
+        targets = ordered[:2]
+        return UiTask(
+            action="swap",
+            targetPanelTypes=[item.value for item in targets],
+            targetPanelIds=[item.source.removeprefix("panel:") for item in targets if item.source.startswith("panel:")],
+            confidence=ui_task_confidence([*targets, action_match]),
+            source="ui-parser",
+            reason=f"UI parser matched a two-panel swap in clause '{clause.text}'.",
+        )
+    if action == "replace" and len(ordered) >= 2:
+        replaced, replacement = ordered[0], ordered[1]
+        return UiTask(
+            action="replace",
+            targetPanelType=replacement.value,
+            targetPanelId=replacement.source.removeprefix("panel:") if replacement.source.startswith("panel:") else None,
+            replacePanelType=replaced.value,
+            replacePanelId=replaced.source.removeprefix("panel:") if replaced.source.startswith("panel:") else None,
+            confidence=ui_task_confidence([replaced, replacement, action_match]),
+            source="ui-parser",
+            reason=f"UI parser matched panel replacement in clause '{clause.text}'.",
+        )
+    relation = best_match(relation_matches)
+    if relation and len(ordered) >= 2:
+        target, anchor = ordered[0], ordered[1]
+        return UiTask(
+            action="move",
+            targetPanelType=target.value,
+            targetPanelId=target.source.removeprefix("panel:") if target.source.startswith("panel:") else None,
+            anchorPanelType=anchor.value,
+            anchorPanelId=anchor.source.removeprefix("panel:") if anchor.source.startswith("panel:") else None,
+            relationIntent=relation.value,
+            confidence=ui_task_confidence([target, anchor, relation, action_match]),
+            source="ui-parser",
+            reason=f"UI parser matched relative panel placement in clause '{clause.text}'.",
+        )
+    return None
+
+
 def build_keep_only_task(
     clause: Clause,
     panel_matches: list[AliasMatch],
@@ -550,6 +740,7 @@ def build_single_panel_task(
     panel_matches: list[AliasMatch],
     action_matches: list[AliasMatch],
     size_matches: list[AliasMatch],
+    fraction_matches: list[AliasMatch],
     position_matches: list[AliasMatch],
     surface_matches: list[AliasMatch],
     multi_matches: list[AliasMatch],
@@ -560,14 +751,15 @@ def build_single_panel_task(
     strong_action = best_match([match for match in action_matches if match.strength == "strong"])
     weak_action = best_match([match for match in action_matches if match.strength != "strong"])
     size = best_size_match(size_matches)
+    fraction = best_match(fraction_matches)
     position = best_match(position_matches)
-    has_surface_or_layout_hint = bool(surface_matches or multi_matches or position or size)
+    has_surface_or_layout_hint = bool(surface_matches or multi_matches or position or size or fraction)
     if not strong_action and not has_surface_or_layout_hint:
         return None
     if weak_action and not strong_action and not has_surface_or_layout_hint:
         return None
 
-    action = infer_action(strong_action, weak_action, size, position, multi_panel=False)
+    action = "resize" if fraction else infer_action(strong_action, weak_action, size, position, multi_panel=False)
     if action is None:
         return None
     return UiTask(
@@ -575,9 +767,10 @@ def build_single_panel_task(
         targetPanelType=target.value,
         targetPanelId=target.source.removeprefix("panel:") if target.source.startswith("panel:") else None,
         sizeIntent=size.value if size else None,
+        sizeFraction=0.5 if fraction else None,
         positionIntent=position.value if position else None,
         chartAction="add" if target.value == "chart" and has_chart_add_signal(clause) else None,
-        confidence=ui_task_confidence([target, strong_action, weak_action, size, position, *surface_matches, *multi_matches]),
+        confidence=ui_task_confidence([target, strong_action, weak_action, size, fraction, position, *surface_matches, *multi_matches]),
         source="ui-parser",
         reason=f"UI parser matched panel '{target.alias}' with layout operation in clause '{clause.text}'.",
     )
@@ -588,6 +781,7 @@ def build_multi_panel_task(
     panel_matches: list[AliasMatch],
     action_matches: list[AliasMatch],
     size_matches: list[AliasMatch],
+    fraction_matches: list[AliasMatch],
     position_matches: list[AliasMatch],
     surface_matches: list[AliasMatch],
     multi_matches: list[AliasMatch],
@@ -601,7 +795,7 @@ def build_multi_panel_task(
     weak_action = best_match([match for match in action_matches if match.strength != "strong"])
     size = best_size_match(size_matches)
     position = best_match(position_matches)
-    if not has_layout_operation(action_matches, size_matches, position_matches, surface_matches, multi_matches):
+    if not has_layout_operation(action_matches, [*size_matches, *fraction_matches], position_matches, surface_matches, multi_matches):
         return None
     action = infer_action(strong_action, weak_action, size, position, multi_panel=True) or "arrange"
     if action == "focus":
@@ -615,6 +809,7 @@ def build_multi_panel_task(
         targetPanelIds=target_panel_ids,
         layoutPreset=layout_preset,
         sizeIntent=size.value if size else None,
+        sizeFraction=0.5 if fraction_matches else None,
         positionIntent=position.value if position else None,
         confidence=ui_task_confidence([*panel_matches, strong_action, weak_action, size, position, *surface_matches, *multi_matches]),
         source="ui-parser",
@@ -724,7 +919,29 @@ def value_matches(clause: Clause, group: Any, *, allow_short_fuzzy: bool) -> lis
             if str(value) == "close" and match.score < 0.9:
                 continue
             matches.append(AliasMatch(str(value), match.alias, match.score, match.token_index, "lexicon", strength))
-    return sorted(matches, key=lambda item: (-item.score, item.token_index, item.value))
+    return sorted(suppress_shadowed_value_matches(matches), key=lambda item: (-item.score, item.token_index, item.value))
+
+
+def suppress_shadowed_value_matches(matches: list[AliasMatch]) -> list[AliasMatch]:
+    """Prefer a longer exact action/size phrase over its substring alias.
+
+    This keeps "고정 풀어" from also becoming pin and "위치 바꿔" from
+    also becoming the generic arrange action.
+    """
+    result: list[AliasMatch] = []
+    for match in matches:
+        alias = compact_text(match.alias)
+        shadowed = any(
+            other is not match
+            and other.score >= 0.95
+            and match.score >= 0.95
+            and len(compact_text(other.alias)) > len(alias)
+            and alias in compact_text(other.alias)
+            for other in matches
+        )
+        if not shadowed:
+            result.append(match)
+    return result
 
 
 def action_matches_for_clause(
@@ -1110,7 +1327,28 @@ def best_panel_matches(matches: list[AliasMatch]) -> list[AliasMatch]:
         current = best.get(match.value)
         if current is None or panel_match_rank(match) > panel_match_rank(current):
             best[match.value] = match
-    return sorted(best.values(), key=lambda item: (-item.score, item.token_index, item.value))
+    pruned = suppress_shadowed_panel_matches(list(best.values()))
+    return sorted(pruned, key=lambda item: (-item.score, item.token_index, item.value))
+
+
+def suppress_shadowed_panel_matches(matches: list[AliasMatch]) -> list[AliasMatch]:
+    """Drop matches whose alias is a strict substring of another match's alias
+    at the same token (e.g. orderTicket's "오더" shadowed by orderFlowProfile's
+    "오더플로우", or chart's "차트" shadowed by compareChart's "비교 차트")."""
+    result: list[AliasMatch] = []
+    for match in matches:
+        alias = compact_text(match.alias)
+        shadowed = any(
+            other is not match
+            and other.token_index == match.token_index
+            and other.score >= match.score
+            and len(compact_text(other.alias)) > len(alias)
+            and alias in compact_text(other.alias)
+            for other in matches
+        )
+        if not shadowed:
+            result.append(match)
+    return result
 
 
 def panel_match_rank(match: AliasMatch) -> tuple[float, int, int]:
@@ -1129,7 +1367,7 @@ def max_match_score(matches: Iterable[AliasMatch | None]) -> float:
 
 
 def dedupe_ui_tasks(tasks: list[UiTask]) -> list[UiTask]:
-    best: dict[tuple[str, str, str, tuple[str, ...], str, str], UiTask] = {}
+    best: dict[tuple[Any, ...], UiTask] = {}
     for task in tasks:
         key = (
             task.action,
@@ -1138,6 +1376,14 @@ def dedupe_ui_tasks(tasks: list[UiTask]) -> list[UiTask]:
             tuple(task.targetPanelTypes),
             task.layoutPreset or "",
             task.presetId or "",
+            task.targetAll,
+            task.replacePanelType or "",
+            task.replacePanelId or "",
+            task.anchorPanelType or "",
+            task.anchorPanelId or "",
+            task.relationIntent or "",
+            task.sizeFraction,
+            task.presetName or "",
         )
         current = best.get(key)
         if current is None or task.confidence > current.confidence:

@@ -8,10 +8,57 @@ CONTENT_TASK_TYPES = ("news", "chart", "macro", "ontology", "financial", "financ
 ROUTE_MODES = ("analysis", "ui_layout", "hybrid", "clarify")
 ROLE_ORDER = ("chart", "news", "macro", "ontology", "financial")
 DEFAULT_ANALYSIS_ROLES = ("chart", "news", "macro", "ontology")
-UI_ACTIONS = ("focus", "resize", "move", "open", "close", "arrange", "keep", "load")
-UI_PANEL_TYPES = ("chart", "newsFeed", "indicatorCompare", "orderTicket", "portfolioHoldings", "stockRecommendations", "aiSummary", "ontologyGraph")
+UI_ACTIONS = (
+    "focus",
+    "resize",
+    "move",
+    "open",
+    "close",
+    "arrange",
+    "keep",
+    "load",
+    "tidy",
+    "undo",
+    "reset",
+    "swap",
+    "replace",
+    "pin",
+    "unpin",
+    "save",
+)
+# Keep in sync with AgentLayoutPanelType (gops-frontend/src/layout/agentLayoutTypes.ts)
+# and PANEL_TYPES in orchestration/ui_intent.py.
+UI_PANEL_TYPES = (
+    "chart",
+    "compareChart",
+    "marketIndices",
+    "companyProfile",
+    "companyMulti",
+    "companyValuation",
+    "companyProfitability",
+    "companyStability",
+    "popularStocks",
+    "newsFeed",
+    "indicatorCompare",
+    "orderTicket",
+    "orderFlowProfile",
+    "portfolioDashboard",
+    "portfolioHoldings",
+    "portfolioHoldingsCards",
+    "portfolioMulti",
+    "portfolioInvestment",
+    "portfolioPerformance",
+    "portfolioInvested",
+    "portfolioDividend",
+    "portfolioDiversification",
+    "stockRecommendations",
+    "themeRadar",
+    "aiSummary",
+    "ontologyGraph",
+)
 UI_SIZE_INTENTS = ("max", "large", "small", "min")
 UI_POSITION_INTENTS = ("top", "bottom", "left", "right", "center")
+UI_RELATION_INTENTS = ("left", "right", "above", "below", "beside")
 UI_LAYOUT_PRESETS = ("default_workspace", "visible_workspace")
 
 ROLES_BY_CONTENT_TASK = {
@@ -72,11 +119,18 @@ class UiTask:
     targetPanelId: str | None = None
     targetPanelTypes: list[str] = field(default_factory=list)
     targetPanelIds: list[str] = field(default_factory=list)
+    targetAll: bool = False
+    replacePanelType: str | None = None
+    replacePanelId: str | None = None
+    anchorPanelType: str | None = None
+    anchorPanelId: str | None = None
+    relationIntent: str | None = None
     layoutPreset: str | None = None
     presetId: str | None = None
     presetName: str | None = None
     presetKind: str | None = None
     sizeIntent: str | None = None
+    sizeFraction: float | None = None
     positionIntent: str | None = None
     chartAction: str | None = None
     symbol: str | None = None
@@ -96,6 +150,15 @@ class UiTask:
             self.targetPanelIds.insert(0, self.targetPanelId)
         if self.targetPanelIds and not self.targetPanelId:
             self.targetPanelId = self.targetPanelIds[0]
+        self.targetAll = bool(self.targetAll)
+        if self.replacePanelType not in UI_PANEL_TYPES:
+            self.replacePanelType = None
+        self.replacePanelId = str(self.replacePanelId or "").strip() or None
+        if self.anchorPanelType not in UI_PANEL_TYPES:
+            self.anchorPanelType = None
+        self.anchorPanelId = str(self.anchorPanelId or "").strip() or None
+        if self.relationIntent not in UI_RELATION_INTENTS:
+            self.relationIntent = None
         if self.layoutPreset not in UI_LAYOUT_PRESETS:
             self.layoutPreset = None
         self.presetId = str(self.presetId or "").strip() or None
@@ -104,6 +167,11 @@ class UiTask:
             self.presetKind = None
         if self.sizeIntent not in UI_SIZE_INTENTS:
             self.sizeIntent = None
+        if self.sizeFraction is not None:
+            try:
+                self.sizeFraction = max(0.05, min(1.0, float(self.sizeFraction)))
+            except (TypeError, ValueError):
+                self.sizeFraction = None
         if self.positionIntent not in UI_POSITION_INTENTS:
             self.positionIntent = None
         if self.chartAction not in {"add", "replace"}:
