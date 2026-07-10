@@ -108,6 +108,44 @@ class DeploymentContractsTest(unittest.TestCase):
             self.assertEqual(constraint["minDomains"], 3)
             self.assertEqual(constraint["whenUnsatisfiable"], "DoNotSchedule")
 
+    def test_market_processors_receive_clickhouse_credentials(self):
+        processor_names = {"alfaka-market-processor", "alfaka-market-quote-processor"}
+        for path in (
+            "infra/k8s/base/app/deployment-market-processor.yaml",
+            "infra/k8s/base/app/deployment-market-quote-processor.yaml",
+        ):
+            with self.subTest(path=path):
+                deployment = load_yaml(path)
+                container = deployment["spec"]["template"]["spec"]["containers"][0]
+                clickhouse_secret = next(
+                    (
+                        item["secretRef"]
+                        for item in container["envFrom"]
+                        if item.get("secretRef", {}).get("name") == "alfaka-clickhouse-secret"
+                    ),
+                    None,
+                )
+                self.assertIsNotNone(clickhouse_secret)
+                self.assertTrue(clickhouse_secret["optional"])
+
+        overlay = load_yaml("infra/k8s/overlays/aws-incluster-app/kustomization.yaml")
+        required_secret_patches = set()
+        for patch in overlay["patches"]:
+            target = patch.get("target") or {}
+            name = target.get("name")
+            if name not in processor_names:
+                continue
+            operations = yaml.safe_load(patch["patch"])
+            if any(
+                operation["path"]
+                == "/spec/template/spec/containers/0/envFrom/1/secretRef/optional"
+                and operation["value"] is False
+                for operation in operations
+            ):
+                required_secret_patches.add(name)
+
+        self.assertEqual(required_secret_patches, processor_names)
+
     def test_order_workers_have_loop_heartbeat_probes(self):
         for path in (
             "infra/k8s/base/app/deployment-order-outbox-publisher.yaml",

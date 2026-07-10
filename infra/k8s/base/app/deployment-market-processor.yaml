@@ -37,6 +37,9 @@ spec:
           envFrom:
             - configMapRef:
                 name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-clickhouse-secret
+                optional: true
           startupProbe:
             exec:
               command: ["python", "-m", "alfaka.common.heartbeat", "--max-age-seconds", "300"]

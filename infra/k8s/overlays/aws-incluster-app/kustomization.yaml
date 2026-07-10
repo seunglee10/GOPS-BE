@@ -309,6 +309,9 @@ patches:
         path: /spec/replicas
         value: 3
       - op: replace
+        path: /spec/template/spec/containers/0/envFrom/1/secretRef/optional
+        value: false
+      - op: replace
         path: /spec/template/spec/containers/0/resources
         value:
           requests:
@@ -331,6 +334,9 @@ patches:
       kind: Deployment
       name: alfaka-market-quote-processor
     patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/envFrom/1/secretRef/optional
+        value: false
       - op: replace
         path: /spec/template/spec/containers/0/resources
         value:

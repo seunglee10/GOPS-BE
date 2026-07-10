@@ -460,6 +460,13 @@ ClickHouse stale checks on the hot path.
 Agent providers read ClickHouse serving tables. ClickHouse must be reachable
 before worker smoke checks are considered valid.
 
+`alfaka-market-processor` and `alfaka-market-quote-processor` initialize the
+canonical candle correction loader at startup, so both runtimes also consume
+`CLICKHOUSE_PASSWORD` from Kubernetes Secret `alfaka-clickhouse-secret`. The
+base manifests keep this Secret optional for portable local deployments, while
+the AWS in-cluster overlay makes it mandatory so a missing credential blocks
+Pod creation instead of falling back to an invalid default password.
+
 `dev` merge/pull is not the ClickHouse migration boundary. Local ClickHouse and
 AWS ClickHouse are separate runtimes, so merge conflict resolution should only
 preserve code contracts and DDL files. Switching to a new AWS ClickHouse,
