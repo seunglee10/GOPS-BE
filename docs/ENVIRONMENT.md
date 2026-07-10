@@ -94,6 +94,26 @@ Alpaca WebSocket keepalive behavior. AWS/EKS defaults to `30` and `60` seconds
 to avoid unnecessary reconnect loops when the SIP stream is busy. Set either to
 `off` only for a controlled incident mitigation.
 
+## Local Saturday Demo Simulator
+
+The five-minute local demonstration uses the safe values in
+`config/demo-simulator.env`. `GOPS_SIMULATOR_URL` connects the GOPS backend to
+the dummy account and order ledger, while `ALPACA_STREAM_BASE_URL` points the
+market ingestor at the Alpaca-compatible simulator WebSocket. The demo profile
+subscribes only `NVDA,AMD,AVGO,MU,TSM,XOM,CVX,COP` and disables the live-market
+session window so the recorded ticks can play at any rehearsal time.
+
+Start and stop the integrated stack from the sibling simulator repository:
+
+```text
+../gops_simul/scripts/run_demo_stack.sh
+../gops_simul/scripts/stop_demo_stack.sh
+```
+
+The values in this profile are local test credentials. Do not replace them
+with broker credentials: SIM orders must stay inside the simulator ledger and
+must never create a KIS order outbox entry.
+
 ## Kafka
 
 Current local stage:

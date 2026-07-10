@@ -19,6 +19,11 @@
 - final answer, evidence, role findings rendering
 - optional chart/layout proposal preview and apply flow
 
+로컬 시연에서는 상단 LIVE/SIM 토글이 `/api/simulator/*`를 사용한다. SIM 전환 후
+5초 속보는 기사 링크만 열 수 있으며 차트를 자동 배치하지 않는다. 주문 패널의
+반도체 매도/에너지 매수 바스켓은 사용자가 해당 버튼을 직접 누를 때만 전송하고,
+SIM 표시가 있는 주문은 실제 브로커 WebSocket에 연결하지 않는다.
+
 프런트가 담당하지 않는 것:
 
 - provider 직접 호출
