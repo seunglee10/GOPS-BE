@@ -78,6 +78,12 @@ Kafka queue, worker, Redis report store를 쓰는 async path다.
 | report store | `analysisId`별 리포트, latest report, idempotency mapping, cancel marker를 저장한다. |
 | delivery gateway | result topic을 Redis update channel로 fanout한다. |
 
+UI-only layout 명령은 LLM 없이 `intent_understanding/ui_parser.py`의 lexicon/rule
+경로에서 먼저 판정한다. 새 action은 `intent_understanding/schema.py`와
+`orchestration/ui_intent.py`의 action 집합을 함께 갱신하고, proposer는 실제 상태
+변경이 불가능한 경우 `autoApply=false`와 구체적인 이유를 반환한다. Lexicon은
+backend process 안에서 cache되므로 alias 변경을 배포한 뒤 process restart가 필요하다.
+
 `shared/gops_agents/orchestrator.py`는 compatibility import shim이고, 실제
 workflow 구현은 `shared/gops_agents/orchestration/` 아래에 있다.
 
