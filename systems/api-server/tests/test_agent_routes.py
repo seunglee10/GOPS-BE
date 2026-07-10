@@ -248,6 +248,28 @@ class AgentAuthenticatedRoutesTest(unittest.TestCase):
 
 class AgentRouteHelperTest(unittest.TestCase):
     @unittest.skipUnless(AGENT_ROUTE_HELPERS_AVAILABLE, "agent routes module is not importable")
+    def test_agent_rate_limiter_rejects_requests_above_user_limit(self):
+        from types import SimpleNamespace
+
+        from fastapi import HTTPException
+        from app.services.agent_rate_limit import enforce_agent_rate_limit
+
+        redis = FakeRateLimitRedis()
+        app = SimpleNamespace(state=SimpleNamespace(agent_rate_limit_redis=redis))
+        with patch.dict(os.environ, {
+            "AGENT_RATE_LIMIT_ENABLED": "true",
+            "AGENT_RATE_LIMIT_REQUESTS": "2",
+            "AGENT_RATE_LIMIT_WINDOW_SECONDS": "60",
+        }, clear=False):
+            enforce_agent_rate_limit(app, "user-1", now=120.0)
+            enforce_agent_rate_limit(app, "user-1", now=120.0)
+            with self.assertRaises(HTTPException) as raised:
+                enforce_agent_rate_limit(app, "user-1", now=120.0)
+
+        self.assertEqual(raised.exception.status_code, 429)
+        self.assertEqual(raised.exception.headers["Retry-After"], "60")
+
+    @unittest.skipUnless(AGENT_ROUTE_HELPERS_AVAILABLE, "agent routes module is not importable")
     def test_parse_pubsub_payload_accepts_json_string(self):
         self.assertEqual(parse_pubsub_payload('{"type":"AGENT_ALERT"}')["type"], "AGENT_ALERT")
 
@@ -670,6 +692,19 @@ class FakeAnalysisQueue:
         from gops_agents.runtime.queues import AnalysisQueueMetrics
 
         return AnalysisQueueMetrics(backend="fake", queue_depth=self.queue_depth, consumer_lag=0)
+
+
+class FakeRateLimitRedis:
+    def __init__(self):
+        self.values = {}
+        self.expirations = {}
+
+    def incr(self, key):
+        self.values[key] = self.values.get(key, 0) + 1
+        return self.values[key]
+
+    def expire(self, key, seconds):
+        self.expirations[key] = seconds
 
 
 class CompletingFakeAnalysisQueue(FakeAnalysisQueue):
