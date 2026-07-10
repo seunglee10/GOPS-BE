@@ -40,7 +40,7 @@ spec:
             - /bin/bash
             - -ec
             - |
-              mkdir -p /var/lib/kafka/data
+              mkdir -p /var/lib/kafka/data/data
               cat >/tmp/kraft-server.properties <<'EOF'
               node.id=1
               process.roles=broker,controller
@@ -56,7 +56,7 @@ spec:
               group.initial.rebalance.delay.ms=0
               num.partitions=3
               auto.create.topics.enable=true
-              log.dirs=/var/lib/kafka/data
+              log.dirs=/var/lib/kafka/data/data
               EOF
               /opt/kafka/bin/kafka-storage.sh format --ignore-formatted --cluster-id "${CLUSTER_ID}" --config /tmp/kraft-server.properties
               exec /opt/kafka/bin/kafka-server-start.sh /tmp/kraft-server.properties
@@ -72,8 +72,8 @@ spec:
               value: -Xms1g -Xmx2g
           volumeMounts:
             - name: kafka-data
-              # The apache/kafka image declares /var/lib/kafka/data as an image
-              # volume, so mounting only its parent leaves broker logs ephemeral.
+              # Mount the PVC at the image data path. Existing broker logs from
+              # the former parent mount remain in the PVC's data/ child.
               mountPath: /var/lib/kafka/data
           startupProbe:
             exec:

@@ -42,6 +42,9 @@ detection, or `FORCE_SERVICES=all` to force every app image to rebuild. See
 GitHub Actions dev/test deploy entrypoint `.github/workflows/deploy-dev.yml`
 remains a backup path. It deploys to the shared dev EKS environment only when an
 operator runs the workflow manually from GitHub Actions (`workflow_dispatch`).
+The deploy job depends on a quality job that runs the unified Python test suite,
+chart tests, TypeScript/Vite build, JavaScript bundle budget, and Kustomize
+rendering before AWS credentials or ECR push are used.
 Pushing to `dev`, `kimheejun`, `helix/front-chart`, `deploy/**`, or `test/**`
 must not start a deployment by itself. When the manual `services` input is
 empty, the workflow compares the current commit with the latest successful run
@@ -159,11 +162,11 @@ rollup job이 담당한다. Live path는 pinned symbol trade/quote를 Redis
 `order-flow:{symbol}:live` hash에 적고 `ORDER_FLOW_BINS_UPDATE`를 WebSocket에
 팬아웃한다. Daily rows는
 `systems/market-data/jobs/order-flow-daily-rollup/main.py`와
-`infra/k8s/overlays/aws/cronjob-order-flow-daily-rollup.yaml`이 ClickHouse
+`infra/k8s/overlays/aws/scheduled/cronjob-order-flow-daily-rollup.yaml`이 ClickHouse
 `market_data.order_flow_profile_daily`에 적재한다. Shared dev deploys that use
 `aws-incluster-app-ci` inherit this scheduled CronJob through the in-cluster app
-overlay. Keep the mirrored CronJob manifests under `aws/` and
-`aws-incluster-app/` in sync; one-off backfill Jobs remain manual.
+overlay by referencing the same AWS manifest; there is no mirrored CronJob copy
+to drift. One-off backfill Jobs remain manual.
 
 Market storage image also runs ClickHouse projection loaders. The baseline
 `alfaka-clickhouse-loader` consumes closed candle, event, and news topics.
@@ -218,28 +221,31 @@ infra/k8s/base/job-answer-grounding-eval.yaml
 In-cluster dedicated rebuild sizing:
 
 ```text
-app-agent:  3 x m5a/m6a large class, 2 vCPU / 8 GiB, app + agent + workers
+app-agent:  4 x m5a/m6a large class, 2 vCPU / 8 GiB, app + agent + workers
 cache-db:   1 x m5a/m6a xlarge class, 4 vCPU / 16 GiB, Redis + Postgres
 streaming:  1 x m5a/m6a xlarge class, 4 vCPU / 16 GiB, Kafka
 graphdb:    1 x m5a/m6a xlarge class, 4 vCPU / 16 GiB, GraphDB
 clickhouse: 1 x m5a/m6a 2xlarge class, 8 vCPU / 32 GiB, ClickHouse
-batch:      0->1 x m5a/m6a xlarge class, 4 vCPU / 16 GiB, ad hoc Jobs
+batch-warm: 1 x m5a/m6a large class, 2 vCPU / 8 GiB, scheduled Jobs
+batch:      0 steady nodes, dynamic capacity for ad hoc Jobs
 ```
 
-This profile uses 26 vCPU in steady state and 30 vCPU when one batch node is
-active, excluding cluster add-ons. The live cluster may also keep one small
+This profile uses 30 vCPU in steady state, excluding cluster add-ons. The live
+cluster keeps one 2 vCPU
 `general-purpose` node for CoreDNS, AWS Load Balancer Controller, EBS CSI,
-metrics-server, and external-secrets unless those controllers are moved to a
-dedicated system NodePool. Apply it only after AWS EC2 on-demand vCPU quota is
-approved. Drain old workload nodes or legacy `platform-core` nodes after the
-dedicated NodePools are ready and stateful pods have been restored and
+metrics-server, and external-secrets, bringing the current total to the 32 vCPU
+on-demand quota. Drain old workload nodes or legacy `platform-core` nodes after
+the dedicated NodePools are ready and stateful pods have been restored and
 validated.
 
-`app-agent`, `cache-db`, `streaming`, `graphdb`, and `clickhouse` use static
-`spec.replicas` to hold the intended node count. `batch` remains dynamic so it
-scales from 0 only when a Job is pending. If the old `platform-core` NodePool was
-applied during the 16 vCPU attempt, delete it only after all pods are drained
-from that node.
+`app-agent`, `cache-db`, `streaming`, `graphdb`, `clickhouse`, and `batch-warm`
+use static `spec.replicas` to hold the intended node count. The existing
+dynamic `batch` pool remains available for ad hoc Jobs because Karpenter does
+not allow an existing NodePool to transition between dynamic and static modes.
+Scheduled Jobs select `batch-warm`, which stays at one node so they do not
+consume their entire active deadline waiting for scale-from-zero. If the old
+`platform-core` NodePool was applied during the 16 vCPU attempt, delete it only
+after all pods are drained from that node.
 
 The app overlay uses `maxUnavailable=1` and `maxSurge=0` for Deployment rolling
 updates. That intentionally allows one old pod to stop before a replacement pod
@@ -318,11 +324,20 @@ data-preserving rebuild has been approved or completed; that path applies the
 dedicated NodePools, in-cluster platform StatefulSets, and GraphDB StatefulSet
 without deleting PVCs, then validates stateful pod placement before app rollout.
 
-The CI overlay also patches `alert-evaluator` and `recommendation-worker`
-replicas dynamically during the workflow. When `backend` is selected, it enables
-them for the freshly built API image. When `backend` is not selected, it
-preserves their current live replica counts so unrelated app deploys do not
-silently turn those workers on or off.
+The app overlay declaratively keeps `alert-evaluator` and
+`recommendation-worker` at one replica. CI does not read live replica counts or
+rewrite desired replicas; Git is the source of truth for both workers.
+
+The market and quote processors use per-workload `DoNotSchedule` topology spread
+constraints with `minDomains=3`, so their three replicas cannot collapse onto
+one node. Their
+readiness/liveness probes check a local heartbeat updated after every bounded
+Kafka poll. The order outbox and KIS adapter use the same loop-heartbeat pattern.
+
+Scheduled batch Jobs declare resource requests/limits. Failed Job and Pod
+evidence is retained for seven days. The `batch-warm` NodePool is static with
+one node, and both the SEC fundamentals and order-flow CronJobs select it so
+they can start without depending on a scale-from-zero event.
 
 ## Kafka
 
@@ -388,10 +403,12 @@ AWS stage는 MSK를 강제하지 않는다. 현 구조는 다음 staged path를 
 local compose -> single Kafka pod candidate -> MSK candidate
 ```
 
-The single-pod Kafka StatefulSet must mount its PVC directly at
-`/var/lib/kafka/data`. The official `apache/kafka` image declares that exact
-path as an image volume, so mounting only `/var/lib/kafka` allows the image
-volume to shadow the PVC and leaves broker logs on ephemeral node storage.
+The single-pod Kafka StatefulSet mounts its PVC directly at
+`/var/lib/kafka/data` and uses `/var/lib/kafka/data/data` as `log.dirs`. The
+official `apache/kafka` image declares the parent path as an image volume, so
+mounting only `/var/lib/kafka` allows the image volume to shadow the PVC. The
+child log directory preserves the layout created by that former parent mount
+and keeps filesystem metadata such as `lost+found` outside Kafka's log scan.
 
 Short-retention market topics must set `segment.ms` and `segment.bytes` together
 with `retention.ms`. Kafka deletes only closed segments; `retention.ms` alone can
@@ -429,6 +446,7 @@ Required report keys/channels:
 agent:report:{analysisId}
 agent:report:latest:{SYMBOL}
 agent:report:latest
+agent:report:owner:{analysisId}
 agent:request:idempotency:{userHash}:{keyHash}
 agent.reports
 agent.reports:{analysisId}
@@ -541,8 +559,8 @@ to at most 8 requests per second. S&P 500 membership comes from
 AWS scheduled sync:
 
 ```text
-infra/k8s/overlays/aws/externalsecret-sec-fundamentals.yaml
-infra/k8s/overlays/aws/cronjob-sec-fundamentals-sync.yaml
+infra/k8s/overlays/aws/scheduled/externalsecret-sec-fundamentals.yaml
+infra/k8s/overlays/aws/scheduled/cronjob-sec-fundamentals-sync.yaml
 ```
 
 The AWS overlay syncs property `SEC_USER_AGENT` from
@@ -698,6 +716,10 @@ AGENT_SHARED_REPORT_STORE_ENABLED
 AGENT_ANALYSIS_QUEUE_BACKEND
 AGENT_REPORT_STORE_BACKEND
 AGENT_REPORT_STREAM_REDIS_ENABLED
+AGENT_REPORT_OWNER_KEY_PREFIX
+AGENT_RATE_LIMIT_ENABLED
+AGENT_RATE_LIMIT_REQUESTS
+AGENT_RATE_LIMIT_WINDOW_SECONDS
 ```
 
 Provider and LLM:
@@ -787,8 +809,10 @@ Local static checks:
 
 ```sh
 git diff --check
-.venv/bin/python -m unittest discover -s systems/agent-orchestration/tests -p 'test_*.py'
-.venv/bin/python -m unittest discover -s systems/fundamentals/tests -p 'test_*.py'
+.venv/bin/python -m pytest
+npm run test:chart --prefix apps/gops-frontend
+npm run build --prefix apps/gops-frontend
+npm run test:bundle-size --prefix apps/gops-frontend
 ```
 
 Kubernetes manifests:

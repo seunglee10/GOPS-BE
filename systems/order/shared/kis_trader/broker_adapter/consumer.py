@@ -13,6 +13,7 @@ from kis_trader.domain.topics import ORDERS_COMMANDS_TOPIC
 from kis_trader.kis.client import DemoKisHttpClient
 from kis_trader.kis.fake import FakeKisClient
 from kis_trader.persistence.postgres import PostgresOrderRepository
+from kis_trader.runtime_heartbeat import touch_heartbeat
 
 from .adapter import BrokerProcessResult, KisBrokerAdapter
 
@@ -88,8 +89,10 @@ class KafkaBrokerAdapterConsumer:
         processed = 0
         retry_kafka_errors = max_messages is None if retry_kafka_errors is None else retry_kafka_errors
         retry_seconds = float(os.getenv("KIS_ADAPTER_KAFKA_RETRY_SECONDS", "5"))
+        touch_heartbeat()
         try:
             while max_messages is None or processed < max_messages:
+                touch_heartbeat()
                 try:
                     result = self.consume_once(timeout_seconds=timeout_seconds)
                 except KafkaException as exc:

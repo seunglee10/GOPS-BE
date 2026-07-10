@@ -10,10 +10,10 @@ spec:
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 3600
   successfulJobsHistoryLimit: 3
-  failedJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 7
   jobTemplate:
     spec:
-      ttlSecondsAfterFinished: 86400
+      ttlSecondsAfterFinished: 604800
       backoffLimit: 2
       activeDeadlineSeconds: 3600
       template:
@@ -23,7 +23,7 @@ spec:
         spec:
           restartPolicy: Never
           nodeSelector:
-            karpenter.sh/nodepool: batch
+            karpenter.sh/nodepool: batch-warm
           tolerations:
             - key: gops.io/dedicated
               operator: Equal
@@ -41,3 +41,10 @@ spec:
                 - secretRef:
                     name: alfaka-clickhouse-secret
                     optional: true
+              resources:
+                requests:
+                  cpu: 500m
+                  memory: 512Mi
+                limits:
+                  cpu: "2"
+                  memory: 2Gi

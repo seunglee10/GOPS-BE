@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from kis_trader.operations.guardrails import TradingGuardrails, can_reprocess_dlq
 
-from tests.kis_trader.fixtures.orders import sample_command
+from systems.order.tests.kis_trader.fixtures.orders import sample_command
 
 
 def test_dlq_reprocess_is_admin_only():

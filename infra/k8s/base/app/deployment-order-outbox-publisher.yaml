@@ -27,3 +27,18 @@ spec:
             - secretRef:
                 name: alfaka-order-db-secret
                 optional: true
+          startupProbe:
+            exec:
+              command: ["python", "-m", "kis_trader.runtime_heartbeat", "--max-age-seconds", "120"]
+            periodSeconds: 5
+            failureThreshold: 24
+          readinessProbe:
+            exec:
+              command: ["python", "-m", "kis_trader.runtime_heartbeat", "--max-age-seconds", "30"]
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            exec:
+              command: ["python", "-m", "kis_trader.runtime_heartbeat", "--max-age-seconds", "60"]
+            periodSeconds: 20
+            failureThreshold: 3

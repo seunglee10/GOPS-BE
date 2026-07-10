@@ -45,13 +45,64 @@ env:
   ECR_MARKET_INGESTOR_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-ingestor
   ECR_MARKET_PROCESSOR_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-processor
   ECR_MARKET_STORAGE_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-storage
-  ECR_BACKFILL_WORKER_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-backfill-worker
   ECR_ORDER_WORKER_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-order-worker
   ECR_KIS_ADAPTER_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-kis-adapter
 
 jobs:
+  quality:
+    name: Test and validate deploy inputs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+            systems/api-server/pods/api-server/gops-backend/requirements.txt
+
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements.txt -r requirements-dev.txt -r systems/api-server/pods/api-server/gops-backend/requirements.txt
+
+      - name: Run Python tests
+        run: python -m pytest
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/gops-frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix apps/gops-frontend
+
+      - name: Run chart tests
+        run: npm run test:chart --prefix apps/gops-frontend
+
+      - name: Build frontend
+        run: npm run build --prefix apps/gops-frontend
+
+      - name: Enforce frontend bundle budget
+        run: npm run test:bundle-size --prefix apps/gops-frontend
+
+      - name: Set up kubectl for manifest rendering
+        uses: azure/setup-kubectl@v4
+
+      - name: Render Kubernetes manifests
+        run: |
+          kubectl kustomize infra/k8s/base >/tmp/gops-k8s-base.yaml
+          kubectl kustomize infra/k8s/base/platform >/tmp/gops-k8s-platform.yaml
+          kubectl kustomize infra/k8s/overlays/aws-incluster-app-ci >/tmp/gops-k8s-app-ci.yaml
+
   deploy:
     name: Build images and deploy app workloads
+    needs: quality
     runs-on: ubuntu-latest
     environment: dev
 
@@ -103,7 +154,7 @@ jobs:
 
       - name: Set image tag
         if: steps.changes.outputs.has_services == 'true'
-        run: echo "IMAGE_TAG=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+        run: echo "IMAGE_TAG=${GITHUB_SHA::7}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
 
       - name: Validate optional build tasks
         if: steps.changes.outputs.has_services == 'true'
@@ -171,12 +222,6 @@ jobs:
         env:
           SERVICES: ${{ steps.changes.outputs.services }}
         run: ./scripts/aws/update-ci-image-tags.sh
-
-      - name: Sync API image worker replicas
-        if: steps.changes.outputs.has_services == 'true'
-        env:
-          SERVICES: ${{ steps.changes.outputs.services }}
-        run: ./scripts/aws/enable-ci-api-workers.sh
 
       - name: Run order database migrations
         if: steps.changes.outputs.has_services == 'true' && github.event.inputs.run_order_migrations == 'true'

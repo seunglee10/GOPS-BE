@@ -6,9 +6,11 @@ import time
 import traceback
 
 from kis_trader.cli import main as kis_trader_main
+from kis_trader.runtime_heartbeat import touch_heartbeat
 
 
 def main() -> int:
+    touch_heartbeat()
     while True:
         try:
             exit_code = kis_trader_main(["outbox-publish", "--limit", "100"])
@@ -16,6 +18,7 @@ def main() -> int:
                 print(f"order-outbox publish exited with code {exit_code}", flush=True)
         except Exception:
             traceback.print_exc()
+        touch_heartbeat()
         time.sleep(2)
 
 

@@ -64,11 +64,11 @@ SEC_USER_AGENT="GOPS fundamentals contact@example.com" \
 ```
 
 In AWS/EKS, scheduled refresh is handled by
-`infra/k8s/overlays/aws/cronjob-sec-fundamentals-sync.yaml`. The CronJob reads
+`infra/k8s/overlays/aws/scheduled/cronjob-sec-fundamentals-sync.yaml`. The CronJob reads
 `SEC_USER_AGENT` from Kubernetes Secret `alfaka-sec-fundamentals-secret`, which
 is synced from AWS Secrets Manager path
 `/gops/prod/fundamentals/sec-user-agent` property `SEC_USER_AGENT` by
-`infra/k8s/overlays/aws/externalsecret-sec-fundamentals.yaml`. Once those
+`infra/k8s/overlays/aws/scheduled/externalsecret-sec-fundamentals.yaml`. Once those
 resources are applied, the daily SEC refresh runs in EKS without a local laptop
 session.
 

@@ -43,10 +43,14 @@ flowchart TD
 | `AGENT_AWS_BUILD.md` | `gops-agent-orchestrator` image, ECR/EKS, Kafka, Redis/Valkey, ClickHouse, GraphDB, S3, secrets, smoke checks. |
 | `../AGENTS.md` | Codex/contributor rules for this repo. |
 
-Old long-form specs were removed to avoid stale, conflicting guidance.
-If a future long-form spec is needed, add it under `docs/` with a clear owner
-and date. Agent-specific handoff content should stay in the `AGENT_*` documents
-listed above.
+Supplementary current documents include `ALERT_SYSTEM_DESIGN.md`, `ODC.md`,
+`ONBOARDING_LOCAL_DOCKER.md`, `about_front.md`, and `cdc.md`. They explain a
+narrow subsystem and do not override the source-of-truth documents in the table.
+
+`docs/v2/` is retained as historical team-planning material. Its own README
+marks it superseded; current code, `AGENTS.md`, this index, and the canonical
+documents above win when the historical text conflicts. Keeping this status
+explicit avoids treating an unindexed long-form document as an active contract.
 
 For chart data work, do not follow older notes that require a preset symbol
 universe chart preload, S&P500-wide tick/quote collection, raw S3 replay as a

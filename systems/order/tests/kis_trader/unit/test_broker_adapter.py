@@ -4,7 +4,7 @@ from kis_trader.domain.status import OrderStatus
 from kis_trader.kis.fake import FakeKisClient
 from kis_trader.operations.guardrails import TradingGuardrails
 
-from tests.kis_trader.fixtures.orders import repository_with_published_order, sample_envelope
+from systems.order.tests.kis_trader.fixtures.orders import repository_with_published_order, sample_envelope
 
 
 def make_adapter(outcomes=None, guardrails=None):

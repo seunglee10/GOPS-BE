@@ -48,7 +48,7 @@ from alfaka.common.s3_client import create_s3_client
 from alfaka.common.secrets import load_alpaca_credentials, resolve_alpaca_credential_source
 from alfaka.backfill.runner import BackfillRunner, BackfillUnavailable, fetch_alpaca_bars, raw_bar_to_processed_candle, raw_bars_to_processed_candles, repair_daily_bar_outliers
 from alfaka.backfill.gapfill import TradingCalendar, detect_gapfill_ranges
-from alfaka.backfill.status import RedisBackfillStore, default_backfill_range
+from alfaka.backfill.status import RedisBackfillStore, default_backfill_range, redis_response_error_type
 from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider, clickhouse_param_value
 from alfaka.serving.cursors import timestamp_from_cursor
 from alfaka.serving.dto import cursor_for, market_status_event, snapshot, websocket_event
@@ -456,7 +456,7 @@ class MemoryRedis:
     def xgroup_create(self, key, group, id="0", mkstream=False):
         group_key = (key, group)
         if group_key in self.stream_groups:
-            raise Exception("BUSYGROUP Consumer Group name already exists")
+            raise redis_response_error_type()("BUSYGROUP Consumer Group name already exists")
         if mkstream:
             self.streams.setdefault(key, [])
         self.stream_groups[group_key] = {"last_id": id, "pending": {}}

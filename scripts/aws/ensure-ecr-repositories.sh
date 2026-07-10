@@ -22,6 +22,10 @@ while IFS=$'\t' read -r _key repository env_var dockerfile; do
   fi
 
   if aws ecr describe-repositories --region "${AWS_REGION}" --repository-names "${repository_name}" >/dev/null 2>&1; then
+    aws ecr put-image-tag-mutability \
+      --region "${AWS_REGION}" \
+      --repository-name "${repository_name}" \
+      --image-tag-mutability IMMUTABLE >/dev/null
     echo "exists: ${repository_name} (${dockerfile})"
     existing_count=$((existing_count + 1))
     continue
@@ -31,7 +35,7 @@ while IFS=$'\t' read -r _key repository env_var dockerfile; do
     --region "${AWS_REGION}" \
     --repository-name "${repository_name}" \
     --image-scanning-configuration scanOnPush=true \
-    --image-tag-mutability MUTABLE \
+    --image-tag-mutability IMMUTABLE \
     --tags Key=Project,Value="${PROJECT_NAME}" Key=Environment,Value="${ENVIRONMENT}" Key=ManagedBy,Value=github-actions
   echo "created: ${repository_name} (${dockerfile})"
   created_count=$((created_count + 1))

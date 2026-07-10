@@ -72,16 +72,22 @@ def build_request_envelope(
     request_id: str | None = None,
 ) -> AgentAnalysisRequestEnvelope:
     clean_payload = {key: value for key, value in dict(payload or {}).items() if value is not None}
-    submitted_at = str(clean_payload.pop("submittedAt", "") or utc_now_iso())
-    user = str(clean_payload.pop("userId", "") or user_id or "anonymous")
+    clean_payload.pop("userId", None)
+    clean_payload.pop("submittedAt", None)
+    user = str(user_id or "anonymous")
+    submitted_at = utc_now_iso()
     idem_key = clean_string(idempotency_key) or clean_string(clean_payload.pop("idempotencyKey", None))
     mode = normalize_choice(clean_payload.pop("mode", None), {"hot", "deep", "background-refresh"}, "hot")
     priority = normalize_choice(clean_payload.pop("priority", None), {"interactive", "normal", "batch"}, "interactive")
     response_mode = normalize_choice(clean_payload.pop("responseMode", None), {"immediate", "poll", "stream"}, "poll")
-    max_llm_calls = parse_positive_int(clean_payload.pop("maxLlmCalls", None), default=1)
-    max_input_tokens = parse_optional_positive_int(clean_payload.pop("maxInputTokens", None))
-    max_output_tokens = parse_optional_positive_int(clean_payload.pop("maxOutputTokens", None))
-    budget_owner = normalize_choice(clean_payload.pop("llmBudgetOwner", None), {"platform", "user"}, "platform")
+    clean_payload.pop("maxLlmCalls", None)
+    clean_payload.pop("maxInputTokens", None)
+    clean_payload.pop("maxOutputTokens", None)
+    clean_payload.pop("llmBudgetOwner", None)
+    max_llm_calls = 1
+    max_input_tokens = None
+    max_output_tokens = None
+    budget_owner = "platform"
     resolved_request_id = clean_string(request_id) or clean_string(clean_payload.pop("requestId", None))
     payload_result = sanitize_value(clean_payload)
     clean_payload = payload_result.value if isinstance(payload_result.value, dict) else {}

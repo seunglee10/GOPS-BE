@@ -96,18 +96,19 @@ CI/CD는 Continuous Integration/Continuous Delivery의 줄임말이다. 코드�
 7. ECR repository를 확인하거나 생성한다.
 8. `frontend`가 선택되면 `scripts/aws/load-logodev-build-env.sh`가 AWS Secrets Manager `icon/logodev`에서 `LOGODEV_PUB_KEY`만 읽어 frontend build env에 넣는다.
 9. Amazon ECR에 로그인한다.
-10. commit SHA 기반 image tag를 만든다.
+10. CI는 commit SHA, 실행 ID, 재시도 번호를 포함하고 로컬 배포는 commit SHA와
+    UTC timestamp를 포함하는 고유 image tag를 만든다. ECR tag는 immutable이라
+    같은 tag를 덮어쓰지 않는다.
 11. `scripts/aws/build-and-push-images.sh`로 선택된 image를 로컬 Docker에서 build/push한다.
 12. `APPLY_PLATFORM_MANIFESTS=true`이면 `infra/k8s/base/platform`과 GraphDB
     StatefulSet을 server-side dry-run 후 apply하고, StatefulSet rollout을
     기다린다.
 13. `scripts/aws/validate-dedicated-platform.sh`가 `app-agent`, `cache-db`,
-    `streaming`, `graphdb`, `clickhouse`, `batch` NodePool과 Stateful pod
+    `streaming`, `graphdb`, `clickhouse`, `batch-warm`, 동적 `batch` NodePool과 Stateful pod
     배치를 확인한다.
 14. 임시 worktree 안에서 `scripts/aws/update-ci-image-tags.sh`가 CI overlay image tag를 갱신한다. 원래 작업 폴더의 tracked manifest는 수정하지 않는다.
-15. `scripts/aws/enable-ci-api-workers.sh`가 backend image 선택 여부에 따라
-    `alert-evaluator`와 `recommendation-worker` replica를 새 backend image로
-    켜거나, 현재 live replica 수로 보존한다.
+15. Git에 선언된 `alert-evaluator`와 `recommendation-worker` replica를 그대로
+    사용한다. live cluster 값을 읽어 manifest를 수정하지 않는다.
 16. `kubectl apply -k` server-side dry run을 실행한다.
 17. `kubectl apply -k`로 app workload를 배포한다.
 18. `kubectl rollout status`로 선택된 image가 사용하는 모든 Deployment
