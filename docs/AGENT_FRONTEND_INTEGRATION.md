@@ -300,6 +300,12 @@ symbol을 보낸다. 필수 투자 설정은 하단 `VI: 설정`의 `추천 설�
 전환까지만 수행하고 주문 실행으로 연결하지 않는다. 추천 행의 섹터도
 `sectorLabelKo` 한글 라벨을 사용한다.
 
+chart analysis asset 운영 패널은 `kind="chartAssetOps"`, 화면 표시는
+`작도 자산(개발)`로 표현한다. 이름의 `(개발)`은 수동 운영 도구임을 나타내는 라벨일
+뿐 표시 게이트가 아니다. 로컬 Vite, Docker production build, 실제 배포 환경 모두
+레이아웃 수정 모드의 패널 추가 팔레트에 항상 노출하며 URL query나 localStorage로
+숨기지 않는다.
+
 지원하지 않는 경우 정책:
 
 ```text

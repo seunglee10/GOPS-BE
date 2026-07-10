@@ -193,7 +193,6 @@ class ChartAssetBuilder:
             llm_suggestions = []
         quality_flags: list[str] = []
         if len(candles) < DISPLAY_BARS[interval]: quality_flags.append("short_history")
-        if missing_higher: quality_flags.append("no_higher_tf_context")
         higher_context = {source: {"asOf": asset.get("asOf")} for source, asset in higher_assets.items()}
         existing_recommendations = existing.get("chartSetup", {}).get("recommended") if existing else None
         recommendations = (

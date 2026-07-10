@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import logging
 import os
 
 from alfaka.common.kafka_io import create_json_consumer
 from gops_agents.chart_assets.builder import ChartAssetBuilder
+from gops_agents.chart_assets.envelope import envelope_from_dict
 from gops_agents.chart_assets.queue import DEFAULT_TOPIC
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 def run() -> None:
@@ -19,11 +24,21 @@ def run() -> None:
     )
     builder = ChartAssetBuilder()
     try:
-        for message in consumer:
-            builder.process_message(message.value)
-            consumer.commit()
+        consume_messages(consumer, builder)
     finally:
         consumer.close()
+
+
+def consume_messages(consumer, builder) -> None:
+    for message in consumer:
+        try:
+            envelope = envelope_from_dict(message.value)
+        except (TypeError, ValueError) as exc:
+            LOGGER.error("discarding invalid chart asset build envelope: %s", exc)
+            consumer.commit()
+            continue
+        builder.run(envelope)
+        consumer.commit()
 
 
 if __name__ == "__main__":

@@ -14,6 +14,7 @@ if str(MARKET_SHARED) not in sys.path:
     sys.path.insert(0, str(MARKET_SHARED))
 
 from alfaka.analytics import KERNEL_VERSION, compute_feature_pack, normalize_candles  # noqa: E402
+from alfaka.analytics.trends import compute_trends  # noqa: E402
 
 
 FIXTURES = json.loads((Path(__file__).parent / "fixtures" / "scenarios.json").read_text(encoding="utf-8"))
@@ -51,6 +52,11 @@ class FeaturePackGoldenTest(unittest.TestCase):
         self.assertEqual(KERNEL_VERSION, "kernel-v1")
 
     def test_golden_trend_scenarios(self):
+        expected_prices = {
+            "uptrend": {"pivot": 98.8, "level": 132.16},
+            "downtrend": {"pivot": 154.56, "level": 127.2},
+            "range": {"pivot": 104.7, "level": 104.7},
+        }
         for name in ("uptrend", "downtrend", "range"):
             with self.subTest(name=name):
                 spec = FIXTURES[name]
@@ -63,6 +69,8 @@ class FeaturePackGoldenTest(unittest.TestCase):
                     self.assertIn(spec["expectedTrend"], kinds)
                 self.assertGreaterEqual(len(features["pivots"]), 4)
                 self.assertGreaterEqual(len(features["levels"]), 2)
+                self.assertAlmostEqual(features["pivots"][0]["price"], expected_prices[name]["pivot"], delta=0.01)
+                self.assertAlmostEqual(features["levels"][0]["price"], expected_prices[name]["level"], delta=0.01)
 
     def test_gap_event_golden(self):
         spec = FIXTURES["gap"]
@@ -89,6 +97,17 @@ class FeaturePackGoldenTest(unittest.TestCase):
             self.assertGreaterEqual(pivot["confirmedAt"], pivot["timestamp"])
         for level in features["levels"]:
             self.assertEqual(level["price"], round(level["price"], 2))
+
+    def test_full_lookback_is_bounded_and_range_uses_display_tail(self):
+        spec = {**FIXTURES["range"], "count": 540}
+        rows = normalize_candles(scenario_candles(spec), "1D")
+        self.assertEqual(len(rows), 500)
+        display = rows[-120:]
+
+        trends = compute_trends(rows, [], display_from=display[0]["timestamp"], atr=2.0)
+
+        self.assertEqual(trends[0]["kind"], "range")
+        self.assertEqual(trends[0]["rangeFrom"], display[-48]["timestamp"])
 
 
 if __name__ == "__main__":

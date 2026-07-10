@@ -33,7 +33,15 @@ class FakeStorage:
 
 
 class FailingQueue:
-    def submit(self, envelope): raise RuntimeError("kafka unavailable")
+    def __init__(self): self.envelope = None
+    def submit(self, envelope):
+        self.envelope = envelope
+        raise RuntimeError("kafka unavailable")
+
+
+class FailingStorage:
+    def get_symbol_assets(self, _symbol): raise RuntimeError("clickhouse unavailable")
+    def coverage(self, _symbols=None): raise RuntimeError("clickhouse unavailable")
 
 
 class ChartAssetsRoutesTest(unittest.TestCase):
@@ -82,11 +90,56 @@ class ChartAssetsRoutesTest(unittest.TestCase):
         self.assertEqual(stream.status_code, 200)
         self.assertIn("event: status", stream.text)
 
+    def test_sp500_build_expands_registry_and_preserves_envelope_options(self):
+        response = self.client.post("/api/charts/analysis-assets/build", json={
+            "symbols": "sp500", "intervals": ["1W", "1D"], "llmEnabled": True, "skipFreshHours": 12,
+        })
+
+        self.assertEqual(response.status_code, 202)
+        envelope = self.queue.items[-1]
+        self.assertEqual(envelope["symbols"], ["NVDA", "AAPL"])
+        self.assertEqual(envelope["intervals"], ["1W", "1D"])
+        self.assertTrue(envelope["llmEnabled"])
+        self.assertEqual(envelope["skipFreshHours"], 12)
+
+    def test_sp500_build_rejects_missing_registry_instead_of_using_fallback(self):
+        with patch("app.routes.chart_assets.sp500_universe_symbols", return_value=[]):
+            response = self.client.post("/api/charts/analysis-assets/build", json={
+                "symbols": "sp500", "llmEnabled": False,
+            })
+        self.assertEqual(response.status_code, 503)
+
+    def test_rejects_invalid_intervals(self):
+        response = self.client.post("/api/charts/analysis-assets/build", json={
+            "symbols": ["NVDA"], "intervals": ["1h"], "llmEnabled": False,
+        })
+        self.assertEqual(response.status_code, 422)
+
+    def test_build_route_requires_session_when_auth_is_enabled(self):
+        from app.auth.config import AuthConfig
+        from app.auth.session_store import MemorySessionStore
+
+        with patch.dict(os.environ, {"AUTH_ENABLED": "true", "AUTH_SESSION_SECRET": "test-session-secret"}, clear=False):
+            self.client.app.state.auth_session_store = MemorySessionStore(AuthConfig.from_env())
+            response = self.client.post("/api/charts/analysis-assets/build", json={
+                "symbols": ["NVDA"], "llmEnabled": False,
+            })
+
+        self.assertEqual(response.status_code, 401)
+
+    def test_storage_failures_return_503(self):
+        with patch("app.routes.chart_assets.chart_asset_storage", return_value=FailingStorage()):
+            asset = self.client.get("/api/charts/analysis-assets", params={"symbol": "NVDA"})
+            coverage = self.client.get("/api/charts/analysis-assets/coverage")
+        self.assertEqual(asset.status_code, 503)
+        self.assertEqual(coverage.status_code, 503)
+
     def test_enqueue_failure_is_not_reported_as_queued(self):
-        with patch("app.routes.chart_assets.chart_asset_build_queue", return_value=FailingQueue()):
+        queue = FailingQueue()
+        with patch("app.routes.chart_assets.chart_asset_build_queue", return_value=queue):
             response = self.client.post("/api/charts/analysis-assets/build", json={"symbols": ["NVDA"], "llmEnabled": False})
         self.assertEqual(response.status_code, 503)
-        state = next(iter(self.progress._states.values()))
+        state = self.progress.get(queue.envelope.job_id)
         self.assertEqual(state["status"], "failed")
 
     def test_rejects_unregistered_symbol(self):

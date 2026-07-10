@@ -11,7 +11,7 @@ from alfaka.common.env import load_dotenv
 from alfaka.common.canonical import CANONICAL_VERSION, HISTORICAL_SERVING_PRICE_ADJUSTMENTS, SERVING_PRICE_ADJUSTMENTS
 from alfaka.common.symbols import is_crypto_symbol
 from alfaka.serving.dto import snapshot
-from alfaka.serving.intervals import INTRADAY_DERIVED_INTERVALS, INTRADAY_INTERVAL_MINUTES, normalize_chart_interval, resolve_candle_limit
+from alfaka.serving.intervals import INTRADAY_DERIVED_INTERVALS, INTRADAY_INTERVAL_MINUTES, max_request_bars, normalize_chart_interval, resolve_candle_limit
 from alfaka.serving.moving_average import attach_moving_averages
 
 
@@ -253,12 +253,13 @@ class ClickHouseMarketDataProvider:
             row["interval"] = interval
         return attach_moving_averages(list(reversed(rows)), overwrite=True)
 
-    def aggregated_daily_candles(self, symbol, interval, limit=None, before=None, from_time=None, to_time=None):
+    def aggregated_daily_candles(self, symbol, interval, limit=None, before=None, from_time=None, to_time=None, limit_buffer=0):
         """일봉을 주봉/월봉으로 묶어 차트용 캔들을 만듭니다."""
         # V1 serves higher timeframes as query-time aggregation from stored daily candles.
         # The long-term contract is to materialize these interval candles into chart_candles.
         interval = normalize_chart_interval(interval)
         limit = resolve_candle_limit(interval, limit)
+        limit = min(limit + max(0, int(limit_buffer or 0)), max_request_bars(interval) + 1)
         bucket_expr = "toMonday(event_time)" if interval == "1W" else "toStartOfMonth(event_time)"
         time_filter = ""
         params = {"symbol": symbol, "limit": int(limit)}

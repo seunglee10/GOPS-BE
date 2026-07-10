@@ -249,8 +249,9 @@ def _event_label(event: dict[str, Any] | None) -> str:
     kind = event.get("kind")
     detail = event.get("detail") or {}
     if kind == "breakout":
-        return f"저항 돌파 · 거래량 {float(detail.get('volumeZ') or 0):.1f}×"
-    if kind == "retest": return "지지 리테스트 확인"
+        action = "지지 이탈" if detail.get("direction") == "down" else "저항 돌파"
+        return f"{action} · 거래량 {float(detail.get('volumeZ') or 0):.1f}×"
+    if kind == "retest": return "저항 리테스트 확인" if detail.get("direction") == "down" else "지지 리테스트 확인"
     if kind == "52wHigh": return "52주 신고가"
     if kind == "52wLow": return "52주 신저가"
     if kind == "gap": return f"갭 {'상승' if detail.get('direction') == 'up' else '하락'}{'(미채움)' if detail.get('unfilled') else ''}"

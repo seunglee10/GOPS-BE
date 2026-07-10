@@ -93,7 +93,7 @@ def build_higher_timeframe_context(higher_assets: dict[str, dict[str, Any]]) -> 
             "regime": str(asset.get("features", {}).get("regime", {}).get("trend") or "range"),
             "trend": _higher_trend_label(asset),
             "keyLevels": [
-                f"레벨 {float(item['price']):.2f} (score {float(item.get('score') or 0):.2f})"
+                _higher_level_label(asset, item)
                 for item in levels if item.get("price") is not None
             ],
             "commentaryGist": _first_sentence(str(asset.get("commentary", {}).get("text") or "")),
@@ -189,6 +189,24 @@ def _higher_trend_label(asset: dict[str, Any]) -> str:
     if labels:
         return labels[0]
     return str(trend_layer.get("meta", {}).get("kind") or "range")
+
+
+def _higher_level_label(asset: dict[str, Any], level: dict[str, Any]) -> str:
+    price = float(level["price"])
+    side = "레벨"
+    for drawing in asset.get("layers", {}).get("structure", {}).get("drawings", []):
+        if drawing.get("type") != "horizontalLine":
+            continue
+        anchor = (drawing.get("anchors") or [{}])[0]
+        if anchor.get("price") is None or abs(float(anchor["price"]) - price) >= 0.005:
+            continue
+        label = str(drawing.get("label") or "")
+        if "지지" in label:
+            side = "지지"
+        elif "저항" in label:
+            side = "저항"
+        break
+    return f"{side} {price:.2f} (score {float(level.get('score') or 0):.2f})"
 
 
 def _first_sentence(text: str) -> str:

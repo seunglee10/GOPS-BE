@@ -152,12 +152,12 @@ async def _stream_build_updates(job_id: str):
 
 
 def _requested_symbols(value: list[str] | str) -> list[str]:
-    registry = set(sp500_universe_symbols()) | set(configured_universe_symbols())
     if value == "sp500":
-        symbols = list(sp500_universe_symbols())
+        symbols = list(sp500_universe_symbols(fallback_to_configured=False))
         if not symbols:
             raise HTTPException(status_code=503, detail="S&P 500 universe registry is unavailable.")
         return symbols
+    registry = set(sp500_universe_symbols()) | set(configured_universe_symbols())
     symbols = list(dict.fromkeys(normalize_market_symbol(item) for item in value))
     if not symbols:
         raise HTTPException(status_code=400, detail="At least one symbol is required.")
@@ -189,9 +189,11 @@ def chart_asset_storage() -> ChartAssetStorage:
     return ChartAssetStorage()
 
 
+@lru_cache(maxsize=1)
 def chart_asset_progress_store():
     return build_progress_store_from_env()
 
 
+@lru_cache(maxsize=1)
 def chart_asset_build_queue():
     return build_chart_asset_queue_from_env()

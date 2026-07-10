@@ -8,7 +8,7 @@ import unittest
 import urllib.error
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -192,6 +192,19 @@ class ChartAssetLLMTest(unittest.TestCase):
         self.assertEqual(sleeps, [0.5])
         self.assertFalse(result["agentLayer"]["degraded"])
 
+    def test_compiler_failure_is_not_retried_or_mislabeled_as_openai_failure(self):
+        opener = Mock(return_value=FakeResponse({"output_text": json.dumps(valid_output(), ensure_ascii=False)}))
+        service = ChartAssetLLMService(api_key="test", opener=opener)
+
+        with patch("gops_agents.chart_assets.llm.compile_agent_layer", side_effect=RuntimeError("compiler bug")):
+            with self.assertRaisesRegex(RuntimeError, "compiler bug"):
+                service.build(
+                    symbol="NVDA", interval="1D", candles=candles(), features=features(),
+                    rule_layers=rule_layers(), higher_assets={}, generated_at=NOW,
+                )
+
+        self.assertEqual(opener.call_count, 1)
+
     def test_missing_api_key_degrades_without_network_call(self):
         opener = Mock(side_effect=AssertionError("network should not be called"))
         result = ChartAssetLLMService(api_key="", opener=opener).build(
@@ -260,7 +273,7 @@ class ChartAssetLLMTest(unittest.TestCase):
         self.assertEqual(list(one_day["higherTimeframeContext"]), ["1M", "1W"])
         self.assertEqual(one_day["higherTimeframeContext"]["1M"], {
             "regime": "up", "trend": "상승 추세선",
-            "keyLevels": ["레벨 110.00 (score 0.90)", "레벨 100.00 (score 0.80)"],
+            "keyLevels": ["저항 110.00 (score 0.90)", "지지 100.00 (score 0.80)"],
             "commentaryGist": "월봉 상승 추세입니다.",
         })
         monthly_input = build_llm_input(
@@ -300,6 +313,7 @@ class ChartAssetLLMTest(unittest.TestCase):
         ).run(request)
         self.assertEqual(service.calls, [("NVDA", "1D", ())])
         self.assertEqual(storage.saved[0]["buildContext"]["flags"], ["no_higher_tf_context"])
+        self.assertNotIn("no_higher_tf_context", storage.saved[0]["coverage"]["qualityFlags"])
 
 
 def candles():
@@ -367,7 +381,13 @@ def higher_asset(interval):
                 {"id": "l3", "price": 90.0, "score": 0.5},
             ],
         },
-        "layers": {"trend": {"drawings": [{"label": "상승 추세선"}], "meta": {"kind": "trendline"}}},
+        "layers": {
+            "structure": {"drawings": [
+                {"type": "horizontalLine", "anchors": [{"price": 110.0}], "label": "저항 110.00"},
+                {"type": "horizontalLine", "anchors": [{"price": 100.0}], "label": "지지 100.00"},
+            ]},
+            "trend": {"drawings": [{"label": "상승 추세선"}], "meta": {"kind": "trendline"}},
+        },
         "commentary": {"text": "월봉 상승 추세입니다. 두 번째 문장입니다."},
     }
 

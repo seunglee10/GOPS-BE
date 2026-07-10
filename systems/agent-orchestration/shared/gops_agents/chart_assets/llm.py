@@ -62,35 +62,38 @@ class ChartAssetLLMService:
             higher_assets=higher_assets,
         )
         last_reason = "openai_failed"
+        output: dict[str, Any] | None = None
         for attempt in range(2):
             try:
                 with self.semaphore:
                     output = validate_output_shape(self._request(prompt_input))
-                agent_layer = compile_agent_layer(
-                    symbol=symbol,
-                    interval=interval,
-                    intents=output["intents"],
-                    features=features,
-                    rule_layers=rule_layers,
-                    generated_at=generated_at,
-                    model=self.model,
-                )
-                flags = grounding_flags(output["commentary"]["text"], prompt_input)
-                agent_layer["meta"]["groundingFlags"] = flags
-                commentary = dict(output["commentary"])
-                commentary["confidence"] = float(commentary["confidence"])
-                commentary["enrichment"] = None
-                return {
-                    "agentLayer": agent_layer,
-                    "indicatorSuggestions": output["indicatorSuggestions"],
-                    "commentary": commentary,
-                    "promptVersion": PROMPT_VERSION,
-                }
+                break
             except Exception as exc:
                 last_reason = f"openai_{exc.__class__.__name__}"
                 if attempt == 0 and _needs_backoff(exc):
                     self.sleeper(0.5 * (2 ** attempt))
-        return self._degraded(symbol, interval, features, candles, last_reason)
+        if output is None:
+            return self._degraded(symbol, interval, features, candles, last_reason)
+        agent_layer = compile_agent_layer(
+            symbol=symbol,
+            interval=interval,
+            intents=output["intents"],
+            features=features,
+            rule_layers=rule_layers,
+            generated_at=generated_at,
+            model=self.model,
+        )
+        flags = grounding_flags(output["commentary"]["text"], prompt_input)
+        agent_layer["meta"]["groundingFlags"] = flags
+        commentary = dict(output["commentary"])
+        commentary["confidence"] = float(commentary["confidence"])
+        commentary["enrichment"] = None
+        return {
+            "agentLayer": agent_layer,
+            "indicatorSuggestions": output["indicatorSuggestions"],
+            "commentary": commentary,
+            "promptVersion": PROMPT_VERSION,
+        }
 
     def _request(self, prompt_input: dict[str, Any]) -> dict[str, Any]:
         payload = {

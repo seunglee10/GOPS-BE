@@ -88,6 +88,19 @@ class ChartAssetCompilerTest(unittest.TestCase):
         self.assertIsNone(commentary["enrichment"])
         self.assertIn("무효", commentary["invalidation"])
 
+    def test_event_labels_preserve_breakout_direction(self):
+        features = feature_pack()
+        features["events"] = [{
+            "id": "e-down", "timestamp": "2026-03-01T00:00:00.000Z", "kind": "breakout",
+            "price": 101, "refIds": ["l1"], "detail": {"volumeZ": 2.1, "direction": "down"},
+        }]
+
+        structure = compile_rule_layers(
+            symbol="NVDA", interval="1D", features=features, candles=candles(), generated_at=GENERATED_AT,
+        )["structure"]
+
+        self.assertIn("지지 이탈", [drawing["label"] for drawing in structure["drawings"]][-1])
+
     def _assert_shared_schema_shape(self, drawing: dict) -> None:
         schema = json.loads((ROOT / "shared" / "chart-contract" / "chart-command.schema.json").read_text(encoding="utf-8"))["$defs"]["drawingEntity"]
         self.assertTrue(set(schema["required"]).issubset(drawing))

@@ -47,13 +47,22 @@ repository contracts differ.
   workspace contract. `PanelWorkspace` therefore supplies the first active
   chart document and its candles as explicit read-only context to the
   commentary and operations panels. No extra chart document is created.
-- The existing local Agent debug gate was private to `App.tsx`. Its unchanged
-  URL/local-storage behavior was moved to `localAgentDebug.ts` so both the app
-  and panel palette use one gate; production builds still keep the development
-  panel hidden.
+- `chartAssetOps` is always present in the panel palette and renders in local
+  Vite, Docker production builds, and deployed production. Its `(개발)` suffix
+  identifies a manual operations tool and is not a visibility gate. The
+  separate `localAgentDebug.ts` helper remains scoped only to Agent request
+  payload diagnostics.
 - The repository already has a custom chart test runner but no general React
   unit-test framework. Glossary matching and asset command behavior are pure
   modules imported by that runner, avoiding a new test dependency.
+- The three chart-analysis layer toggles are icon-only and sit above the time
+  axis. Their user-facing meanings are support/resistance, trend, and insight;
+  the third keeps the canonical internal `agent` layer key without presenting
+  an `AI` badge.
+- Applying system-owned chart-analysis drawings restores the chart's prior
+  interaction mode after the add batch. Initial asset loading therefore stays
+  in Pan, while user-created drawings retain the existing temporary Select
+  behavior.
 
 ## Bundle 4 — Agent layer and Korean commentary
 
@@ -83,3 +92,42 @@ repository contracts differ.
   repository path. The test now adds the same backend root used by neighboring
   market-data tests, so the documented command runs without a caller-provided
   `PYTHONPATH`; production imports and behavior are unchanged.
+
+## Refine review
+
+- Adopted P1 and R1: the builder requests one extra aggregate and removes 1W/1M
+  buckets whose calendar period has not ended; range fallback now measures the
+  final 40% of the display window instead of the full lookback. Boundary,
+  full-lookback, pivot-price, and level-price tests cover both corrections.
+- Adopted R2 and R3: OpenAI retry scope ends after remote response validation,
+  so deterministic compiler/grounding defects surface without a second API
+  call. Invalid Kafka envelopes are logged, committed, and skipped, while a
+  valid job runtime failure stays uncommitted for redelivery.
+- Adopted R4 through R6: asset-cache invalidation uses generation guards so an
+  old in-flight response cannot repopulate the cache; ambiguous bare Korean
+  glossary aliases were replaced by explicit 양봉/음봉 entries; API-side Redis
+  progress and Kafka producer factories are process-cached.
+- Adopted the actionable portion of R7/R8: golden prices and display/lookback
+  separation are fixed in tests, and route coverage now includes auth 401,
+  storage 503, strict S&P 500 expansion, invalid intervals, envelope options,
+  and public progress lookup after enqueue failure. Live Redis pubsub relay is
+  retained as an integration check rather than simulated by private state.
+- Adopted M1, M2, M8–M13, and M15–M17 where behavior was unambiguous: higher-TF
+  absence lives only in `buildContext.flags`; event labels preserve direction;
+  recommendations are defensively capped; candle-close updates do not reapply
+  assets; clear-all preserves asset drawings; stale/as-of presentation is
+  shared; operations polling and numeric input are stable; empty layers disable
+  toggles; S&P 500 loading is strict and single-pass; typography uses its role
+  token; higher-timeframe prompt levels include support/resistance when known.
+- M3 was not changed because the approved contract intentionally defines 1D
+  regime 52-week statistics separately from 1W/1M event lookback semantics.
+  M5 was not changed because the builder rejects fewer than 20 candles and an
+  empty range would require invented anchors. M6 remains the specified
+  low-support/high-resistance candidate model. M7 remains uncapped so every
+  failed item is retryable; the list is bounded by the 1,500-item job contract
+  and the Redis key has a one-day TTL.
+- M4 is documented rather than moved: ATR remains analytics-owned so the
+  deterministic kernel does not alter the existing serving indicator contract.
+  M14's fallback remains available to existing general market-data callers,
+  while the chart-asset `"sp500"` build explicitly disables that fallback and
+  returns 503 when the registry file is unavailable.

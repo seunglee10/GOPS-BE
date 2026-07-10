@@ -78,7 +78,8 @@ def compute_trends(
             trend["id"] = f"t{index}"
         return selected
 
-    window = candles[max(0, len(candles) - max(2, int(len(candles) * 0.4))):]
+    display = [candle for candle in candles if candle["timestamp"] >= display_from] or candles
+    window = display[max(0, len(display) - max(2, int(len(display) * 0.4))):]
     return [{
         "id": "t1",
         "kind": "range",
