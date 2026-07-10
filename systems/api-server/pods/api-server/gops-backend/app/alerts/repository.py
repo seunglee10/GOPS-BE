@@ -53,6 +53,9 @@ class AlertRepository:
     def delete_alert(self, user_sub: str, alert_id: int) -> dict[str, Any] | None:
         raise NotImplementedError
 
+    def delete_alerts(self, user_sub: str) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
     def active_alerts(self) -> list[dict[str, Any]]:
         raise NotImplementedError
 
@@ -194,6 +197,15 @@ class PostgresAlertRepository(AlertRepository):
             ).fetchone()
             conn.commit()
             return _json_ready(dict(row)) if row else None
+
+    def delete_alerts(self, user_sub: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "DELETE FROM alerts WHERE user_sub = %s RETURNING *",
+                (user_sub,),
+            ).fetchall()
+            conn.commit()
+            return [_json_ready(dict(row)) for row in rows]
 
     def active_alerts(self) -> list[dict[str, Any]]:
         with self._connect() as conn:
@@ -372,6 +384,10 @@ class InMemoryAlertRepository(AlertRepository):
         if not row or row["user_sub"] != user_sub:
             return None
         return _json_ready(self.alerts.pop(alert_id))
+
+    def delete_alerts(self, user_sub: str) -> list[dict[str, Any]]:
+        alert_ids = sorted(alert_id for alert_id, row in self.alerts.items() if row["user_sub"] == user_sub)
+        return [_json_ready(self.alerts.pop(alert_id)) for alert_id in alert_ids]
 
     def active_alerts(self) -> list[dict[str, Any]]:
         now = datetime.now(timezone.utc)

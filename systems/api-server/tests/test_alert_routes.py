@@ -207,6 +207,39 @@ def test_read_notification_can_be_deleted(alert_app) -> None:
     assert client.get("/api/notifications").json()["notifications"] == []
 
 
+def test_delete_all_alerts_only_removes_current_users_alerts(alert_app) -> None:
+    repo = alert_app.state.alert_repository
+    client = TestClient(alert_app)
+    first = client.post(
+        "/api/alerts",
+        json={"symbol": "NVDA", "type": "price_cross", "targetPrice": "110"},
+    ).json()["alert"]
+    second = client.post(
+        "/api/alerts",
+        json={"symbol": "AAPL", "type": "price_cross", "targetPrice": "90"},
+    ).json()["alert"]
+    other_user_alert = repo.create_alert(
+        AlertCreate(
+            user_sub="other-user",
+            symbol="MSFT",
+            type="price_cross",
+            direction="above",
+            target_price=Decimal("120"),
+        )
+    )
+
+    response = client.delete("/api/alerts")
+
+    assert response.status_code == 200
+    assert response.json() == {"deleted": 2, "projectionStatus": "synced"}
+    assert client.get("/api/alerts").json()["alerts"] == []
+    assert repo.list_alerts("other-user") == [other_user_alert]
+    assert set(alert_app.state.alert_projection.deleted) == {
+        (first["id"], "NVDA"),
+        (second["id"], "AAPL"),
+    }
+
+
 def test_notification_websocket_requires_session(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AUTH_ENABLED", "true")
     monkeypatch.setenv("AUTH_SESSION_SECRET", "test-session-secret")
