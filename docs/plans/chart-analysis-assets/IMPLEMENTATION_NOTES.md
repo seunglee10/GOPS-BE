@@ -54,3 +54,32 @@ repository contracts differ.
 - The repository already has a custom chart test runner but no general React
   unit-test framework. Glossary matching and asset command behavior are pure
   modules imported by that runner, avoiding a new test dependency.
+
+## Bundle 4 — Agent layer and Korean commentary
+
+- The independent builder now constructs its own `ChartAssetLLMService`; this
+  keeps the worker executable with the documented environment variables and
+  does not modify or call orchestrator workflows, roles, providers, or legacy
+  chart-command code.
+- Strict Responses API validation is mirrored locally before intent
+  compilation. This keeps mock tests deterministic and records rejected
+  anchors, duplicate rule lines, and visual-budget overflow in
+  `layers.agent.droppedIntents` without accepting invented coordinates.
+- The plan reserves agent-layer metadata without prescribing a warning field.
+  Numeric grounding warnings and degraded failure reasons are stored in the
+  schema-compatible `layers.agent.meta` object as `groundingFlags` and
+  `failureReason`.
+- Rule-only rebuilds preserve the complete existing recommendation list along
+  with the existing agent layer, prompt version, and commentary; fresh LLM
+  builds merge rule and LLM recommendations deterministically with a two-item
+  cap.
+- The local environment has no `OPENAI_API_KEY`, so Bundle 4 used strict mocked
+  Responses API tests plus a real-candle Kafka-to-worker-to-ClickHouse run. The
+  run finished `completed_with_errors` and stored NVDA 1D as `degraded` with
+  `prompt-v1`, no agent drawings, `missing_openai_api_key`, and deterministic
+  Korean fallback commentary; its failed item remains available for retry.
+- The exact market-data validation command in 07 §2 discovered that the
+  pre-existing derived-service test imported backend `app` without adding its
+  repository path. The test now adds the same backend root used by neighboring
+  market-data tests, so the documented command runs without a caller-provided
+  `PYTHONPATH`; production imports and behavior are unchanged.

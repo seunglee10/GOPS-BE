@@ -10,6 +10,8 @@ from alfaka.analytics import DISPLAY_BARS, KERNEL_VERSION, LOOKBACK_BARS, comput
 from .candles import ChartAssetCandleLoader
 from .compilers import compile_rule_layers, fallback_commentary, recommended_indicators
 from .envelope import BUILD_INTERVAL_ORDER, ChartAssetBuildEnvelope, utc_now_iso
+from .intent_compiler import merge_indicator_suggestions
+from .llm import ChartAssetLLMService, degraded_result
 from .progress import InMemoryChartAssetProgressStore, build_progress_store_from_env
 from .storage import ChartAssetStorage
 
@@ -30,7 +32,7 @@ class ChartAssetBuilder:
         self.candle_loader = candle_loader or ChartAssetCandleLoader()
         self.storage = storage or ChartAssetStorage()
         self.progress = progress or build_progress_store_from_env()
-        self.llm_service = llm_service
+        self.llm_service = llm_service if llm_service is not None else ChartAssetLLMService()
         self.concurrency = max(1, concurrency or int(os.getenv("CHART_ASSET_BUILD_CONCURRENCY", "4")))
 
     def process_message(self, message: dict[str, Any]) -> dict[str, Any]:
@@ -112,7 +114,19 @@ class ChartAssetBuilder:
                 stage = "save"
                 self.storage.save(asset)
                 built_assets[interval] = asset
-                self.progress.record_item(envelope.job_id, _item(symbol, interval, "saved", stage, None, _elapsed(started)))
+                if envelope.llm_enabled and asset.get("status") == "degraded":
+                    errors += 1
+                    failure_reason = str(
+                        asset.get("layers", {}).get("agent", {}).get("meta", {}).get("failureReason")
+                        or "llm_degraded"
+                    )
+                    self.progress.add_log(envelope.job_id, f"{symbol}:{interval} llm degraded: {failure_reason}")
+                    self.progress.record_item(
+                        envelope.job_id,
+                        _item(symbol, interval, "failed", "llm", failure_reason, _elapsed(started)),
+                    )
+                else:
+                    self.progress.record_item(envelope.job_id, _item(symbol, interval, "saved", stage, None, _elapsed(started)))
             except Exception as exc:
                 errors += 1
                 error = f"{exc.__class__.__name__}: {exc}"
@@ -136,36 +150,57 @@ class ChartAssetBuilder:
     ) -> dict[str, Any]:
         display = candles[-DISPLAY_BARS[interval]:]
         if envelope.llm_enabled:
-            if self.llm_service is None:
-                raise RuntimeError("chart asset LLM service is not configured")
-            agent_result = self.llm_service.build(
-                symbol=symbol,
-                interval=interval,
-                candles=candles,
-                features=features,
-                rule_layers=layers,
-                higher_assets=higher_assets,
-                generated_at=generated_at,
-            )
+            try:
+                agent_result = self.llm_service.build(
+                    symbol=symbol,
+                    interval=interval,
+                    candles=candles,
+                    features=features,
+                    rule_layers=layers,
+                    higher_assets=higher_assets,
+                    generated_at=generated_at,
+                )
+            except Exception as exc:
+                model = getattr(self.llm_service, "model", None)
+                agent_result = degraded_result(
+                    symbol=symbol,
+                    interval=interval,
+                    features=features,
+                    candles=candles,
+                    reason=f"llm_{exc.__class__.__name__}",
+                    model=model if isinstance(model, str) else None,
+                )
             agent_layer = agent_result["agentLayer"]
             commentary = {**agent_result["commentary"], "enrichment": None}
             prompt_version = agent_result.get("promptVersion")
             status = "degraded" if agent_layer.get("degraded") else "ready"
+            llm_suggestions = agent_result.get("indicatorSuggestions") or []
         elif existing:
             agent_layer = existing.get("layers", {}).get("agent") or _empty_agent_layer()
             commentary = existing.get("commentary") or fallback_commentary(symbol, interval, features, float(candles[-1]["close"]))
             commentary["enrichment"] = None
             prompt_version = existing.get("promptVersion")
             status = existing.get("status") or "degraded"
+            llm_suggestions = [
+                item for item in existing.get("chartSetup", {}).get("recommended", [])
+                if item.get("source") == "llm"
+            ]
         else:
             agent_layer = _empty_agent_layer()
             commentary = fallback_commentary(symbol, interval, features, float(candles[-1]["close"]))
             prompt_version = None
             status = "degraded"
+            llm_suggestions = []
         quality_flags: list[str] = []
         if len(candles) < DISPLAY_BARS[interval]: quality_flags.append("short_history")
         if missing_higher: quality_flags.append("no_higher_tf_context")
         higher_context = {source: {"asOf": asset.get("asOf")} for source, asset in higher_assets.items()}
+        existing_recommendations = existing.get("chartSetup", {}).get("recommended") if existing else None
+        recommendations = (
+            [dict(item) for item in existing_recommendations]
+            if not envelope.llm_enabled and isinstance(existing_recommendations, list)
+            else merge_indicator_suggestions(recommended_indicators(features), llm_suggestions)
+        )
         return {
             "assetVersion": ASSET_VERSION,
             "kernelVersion": KERNEL_VERSION,
@@ -185,7 +220,10 @@ class ChartAssetBuilder:
             },
             "features": features,
             "layers": {"structure": layers["structure"], "trend": layers["trend"], "agent": agent_layer},
-            "chartSetup": {"alwaysOn": ["volume-profile", "volume"], "recommended": recommended_indicators(features)},
+            "chartSetup": {
+                "alwaysOn": ["volume-profile", "volume"],
+                "recommended": recommendations,
+            },
             "commentary": commentary,
             "buildContext": {"higherTf": higher_context or None, "flags": ["no_higher_tf_context"] if missing_higher else []},
         }

@@ -74,7 +74,11 @@ class ChartAssetBuilderTest(unittest.TestCase):
 
     def test_rule_only_rebuild_preserves_existing_agent_layer(self):
         existing_agent = {"drawings": [{"id": "kept"}], "intents": [], "rationale": "kept", "degraded": False, "model": "mock", "droppedIntents": []}
-        existing = {("NVDA", "1D"): {"promptVersion": "prompt-v1", "status": "ready", "layers": {"agent": existing_agent}, "commentary": {"text": "기존", "keyLevels": [], "invalidation": "기존", "confidence": 0.5, "enrichment": None}}}
+        existing = {("NVDA", "1D"): {
+            "promptVersion": "prompt-v1", "status": "ready", "layers": {"agent": existing_agent},
+            "chartSetup": {"recommended": [{"layer": "ema:20", "reason": "기존 LLM 제안", "source": "llm"}]},
+            "commentary": {"text": "기존", "keyLevels": [], "invalidation": "기존", "confidence": 0.5, "enrichment": None},
+        }}
         request = envelope(symbols=("NVDA",), intervals=("1D",), job_id="cab-12345678-preserve")
         progress = InMemoryChartAssetProgressStore(); progress.initialize(request); storage = FakeStorage(existing)
         ChartAssetBuilder(candle_loader=FakeCandleLoader(), storage=storage, progress=progress, concurrency=1).run(request)
@@ -82,6 +86,9 @@ class ChartAssetBuilderTest(unittest.TestCase):
         self.assertEqual(rebuilt["layers"]["agent"], existing_agent)
         self.assertEqual(rebuilt["commentary"]["text"], "기존")
         self.assertEqual(rebuilt["promptVersion"], "prompt-v1")
+        self.assertEqual(rebuilt["chartSetup"]["recommended"], [
+            {"layer": "ema:20", "reason": "기존 LLM 제안", "source": "llm"},
+        ])
 
     def test_standalone_1d_uses_stored_higher_timeframes(self):
         higher = {
