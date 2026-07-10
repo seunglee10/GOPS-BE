@@ -4,7 +4,7 @@ import pytest
 
 from kis_trader.kis.payload import build_kis_order_payload
 
-from tests.kis_trader.fixtures.orders import sample_command
+from systems.order.tests.kis_trader.fixtures.orders import sample_command
 
 
 def test_overseas_payload_is_converted_inside_adapter_boundary():

@@ -6,7 +6,7 @@ from kis_trader.broker_adapter.adapter import KisBrokerAdapter
 from kis_trader.broker_adapter.consumer import KafkaBrokerAdapterConsumer, build_broker_adapter_consumer_config
 from kis_trader.kis.fake import FakeKisClient
 
-from tests.kis_trader.fixtures.orders import repository_with_published_order
+from systems.order.tests.kis_trader.fixtures.orders import repository_with_published_order
 
 
 class FakeKafkaMessage:

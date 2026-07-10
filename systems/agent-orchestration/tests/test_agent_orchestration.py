@@ -231,6 +231,12 @@ class FakeRedisClient:
         self.setex_calls.append((key, ttl, value))
         self.items[key] = (ttl, value)
 
+    def set(self, key, value, *, nx=False, ex=None):
+        if nx and key in self.items:
+            return False
+        self.items[key] = (ex, value)
+        return True
+
 
 class FakePublishRedisClient(FakeRedisClient):
     def __init__(self):
@@ -1296,6 +1302,15 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertTrue(store.is_owner("agent-request-1", "user-1"))
         self.assertFalse(store.is_owner("agent-request-1", "user-2"))
         self.assertFalse(store.is_owner("missing", "user-1"))
+
+    def test_redis_report_store_owner_mapping_is_atomic_and_user_scoped(self):
+        store = RedisReportStore(FakeRedisClient(), ttl_seconds=43200)
+
+        self.assertTrue(store.save_owner_mapping("user-1", "agent-request-1"))
+        self.assertTrue(store.save_owner_mapping("user-1", "agent-request-1"))
+        self.assertFalse(store.save_owner_mapping("user-2", "agent-request-1"))
+        self.assertTrue(store.is_owner("agent-request-1", "user-1"))
+        self.assertFalse(store.is_owner("agent-request-1", "user-2"))
 
     def test_request_envelope_ignores_client_supplied_identity_and_budget(self):
         envelope = build_request_envelope(

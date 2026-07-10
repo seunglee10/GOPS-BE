@@ -46,18 +46,26 @@ def request_agent_analysis(payload: dict[str, Any], *, idempotency_key: str | No
     if async_analysis_enabled():
         response = submit_agent_analysis(payload, idempotency_key=idempotency_key, user_id=user_id)
         if sync_compat_wait_enabled() and int(response.get("_status_code") or 202) == 202:
-            return wait_for_agent_report(str(response.get("request_id") or response.get("analysisId") or ""))
+            return wait_for_agent_report(str(response.get("request_id") or response.get("analysisId") or ""), user_id=user_id)
         return response
-    return request_orchestrator_json("POST", "/analyze", payload)
+    response = request_orchestrator_json("POST", "/analyze", payload)
+    analysis_id = str(response.get("analysisId") or response.get("request_id") or "").strip()
+    if analysis_id and user_id:
+        store = build_report_store_from_env()
+        if not store.save_owner_mapping(user_id, analysis_id):
+            raise HTTPException(status_code=409, detail="Agent analysis id is already owned by another user.")
+    return response
 
 
 def request_agent_layout_resolution(payload: dict[str, Any]) -> dict[str, Any]:
     return request_orchestrator_json("POST", "/layout/resolve", payload)
 
 
-def get_agent_report(analysis_id: str) -> dict[str, Any]:
+def get_agent_report(analysis_id: str, *, user_id: str | None = None) -> dict[str, Any]:
+    store = build_report_store_from_env()
+    require_report_owner(store, analysis_id, user_id)
     if async_analysis_enabled() or shared_report_store_enabled():
-        report = build_report_store_from_env().get(analysis_id)
+        report = store.get(analysis_id)
         if report:
             return report.to_dict()
     return request_orchestrator_json("GET", f"/reports/{analysis_id}", None)
@@ -69,6 +77,7 @@ def cancel_agent_analysis(analysis_id: str, *, user_id: str | None = None) -> di
         raise HTTPException(status_code=400, detail="Agent analysis id is required.")
     if async_analysis_enabled() or shared_report_store_enabled():
         store = build_report_store_from_env()
+        require_report_owner(store, request_id, user_id)
         report = store.mark_canceled(request_id, reason="canceled by user", user_id=user_id)
         payload = report.to_dict()
         payload["cancelAccepted"] = report.status == REQUEST_STATUS_CANCELED
@@ -80,6 +89,8 @@ def cancel_agent_analysis(analysis_id: str, *, user_id: str | None = None) -> di
 def submit_agent_analysis(payload: dict[str, Any], *, idempotency_key: str | None = None, user_id: str | None = None) -> dict[str, Any]:
     store = build_report_store_from_env()
     envelope = build_request_envelope(payload, idempotency_key=idempotency_key, user_id=user_id)
+    if not store.save_owner_mapping(envelope.user_id, envelope.request_id):
+        raise HTTPException(status_code=409, detail="Agent analysis id is already owned by another user.")
     if store.is_canceled(envelope.request_id):
         canceled = store.mark_canceled(envelope.request_id, reason="canceled before submit acknowledgement", user_id=envelope.user_id)
         publish_report_update(canceled.to_dict(), store=store)
@@ -143,13 +154,14 @@ def bool_config(name: str, default: bool) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
-def wait_for_agent_report(request_id: str) -> dict[str, Any]:
+def wait_for_agent_report(request_id: str, *, user_id: str | None = None) -> dict[str, Any]:
     if not request_id:
         raise HTTPException(status_code=500, detail="Agent request id is missing.")
     timeout_seconds = positive_float_config("AGENT_SYNC_COMPAT_WAIT_TIMEOUT_SECONDS", 3.0)
     poll_seconds = positive_float_config("AGENT_SYNC_COMPAT_WAIT_POLL_SECONDS", 0.1)
     deadline = time.monotonic() + timeout_seconds
     store = build_report_store_from_env()
+    require_report_owner(store, request_id, user_id)
     latest = None
     terminal_statuses = {REQUEST_STATUS_COMPLETED, REQUEST_STATUS_DEEP_COMPLETED, REQUEST_STATUS_CANCELED, "failed"}
     while time.monotonic() <= deadline:
@@ -162,6 +174,11 @@ def wait_for_agent_report(request_id: str) -> dict[str, Any]:
     if latest is not None:
         return accepted_response_for_report(latest, status_code=202)
     raise HTTPException(status_code=504, detail="Agent analysis result was not available before the compatibility wait timeout.")
+
+
+def require_report_owner(store, analysis_id: str, user_id: str | None) -> None:
+    if not user_id or not store.is_owner(str(analysis_id), str(user_id)):
+        raise HTTPException(status_code=404, detail="Agent report not found.")
 
 
 def positive_float_config(name: str, default: float) -> float:

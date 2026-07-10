@@ -65,7 +65,7 @@ class AgentRoutesTest(unittest.TestCase):
         self.assertEqual(gateway.call_args.args[0]["symbol"], "NVDA")
         self.assertEqual(gateway.call_args.args[0]["routerMode"], "hybrid")
         self.assertEqual(gateway.call_args.kwargs["idempotency_key"], "idem-1")
-        self.assertEqual(gateway.call_args.kwargs["user_id"], "user-1")
+        self.assertEqual(gateway.call_args.kwargs["user_id"], "dev-auth-disabled")
 
     def test_analyze_agents_preserves_interactive_context_fields(self):
         expected = {"analysisId": "analysis-1", "symbol": "NVDA", "status": "completed"}
@@ -135,7 +135,7 @@ class AgentRoutesTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), expected)
         self.assertEqual(gateway.call_args.args[0], "analysis-1")
-        self.assertEqual(gateway.call_args.kwargs["user_id"], "user-1")
+        self.assertEqual(gateway.call_args.kwargs["user_id"], "dev-auth-disabled")
 
     def test_resolve_agent_entity_returns_chart_shortcut(self):
         response = self.client.get("/api/agents/entities/resolve", params={"q": "엔비디아", "mode": "chartShortcut"})
@@ -237,8 +237,22 @@ class AgentAuthenticatedRoutesTest(unittest.TestCase):
                 json={"symbol": "NVDA", "intent": "analysis", "futureContext": {"blob": "x" * 70000}},
             )
 
-        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.status_code, 413)
         gateway.assert_not_called()
+
+    def test_layout_resolution_uses_authenticated_user_rate_limit(self):
+        self.authenticate("trusted-user")
+        with (
+            patch("app.routes.agents.enforce_agent_rate_limit") as rate_limit,
+            patch("app.routes.agents.request_agent_layout_resolution", return_value={"status": "ui_layout"}),
+        ):
+            response = self.client.post(
+                "/api/agents/layout/resolve",
+                json={"symbol": "NVDA", "intent": "차트를 크게 보여줘"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(rate_limit.call_args.args[1], "trusted-user")
 
     def test_agent_alert_websocket_requires_session(self):
         with self.client.websocket_connect("/ws/agent-alerts") as websocket:
@@ -508,6 +522,7 @@ class AgentRouteHelperTest(unittest.TestCase):
         from gops_agents.runtime.report_store import InMemoryReportStore
 
         store = InMemoryReportStore()
+        store.save_owner_mapping("user-1", "agent-request-cancel")
         with patch(
             "app.services.agent_gateway.read_dotenv_value",
             side_effect=lambda name: {"AGENT_ASYNC_ANALYSIS_ENABLED": "true"}.get(name),
@@ -559,6 +574,7 @@ class AgentRouteHelperTest(unittest.TestCase):
             summary="done",
             rationale="test",
         ))
+        store.save_owner_mapping("user-1", "agent-request-completed")
         with patch(
             "app.services.agent_gateway.read_dotenv_value",
             side_effect=lambda name: {"AGENT_ASYNC_ANALYSIS_ENABLED": "true"}.get(name),

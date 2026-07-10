@@ -5,7 +5,7 @@ from kis_trader.domain.status import OrderStatus
 from kis_trader.kis.fake import FakeKisClient
 from kis_trader.reconciliation.reconciler import build_reconciliation_report, match_order_row, reconcile_orders, status_from_order_row
 
-from tests.kis_trader.fixtures.orders import repository_with_published_order
+from systems.order.tests.kis_trader.fixtures.orders import repository_with_published_order
 
 
 def make_unknown_repo():

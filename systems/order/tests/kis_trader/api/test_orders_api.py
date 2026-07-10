@@ -6,7 +6,7 @@ from kis_trader.domain.status import OrderStatus
 from kis_trader.persistence.memory import InMemoryOrderRepository
 from kis_trader.api.app import create_app
 
-from tests.kis_trader.fixtures.orders import sample_order_request
+from systems.order.tests.kis_trader.fixtures.orders import sample_order_request
 
 
 HEADERS = {"Idempotency-Key": "idem-1"}

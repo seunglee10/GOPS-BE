@@ -6,7 +6,7 @@ from kis_trader.domain.status import OrderStatus
 from kis_trader.outbox.producer import KafkaJsonProducer, RecordingProducer
 from kis_trader.outbox.publisher import publish_pending_outbox
 
-from tests.kis_trader.fixtures.orders import repository_with_received_order
+from systems.order.tests.kis_trader.fixtures.orders import repository_with_received_order
 
 
 def test_command_outbox_publish_marks_published_and_records_status_event():

@@ -540,10 +540,6 @@ prepare_kustomize_overlay() {
       KUSTOMIZE_OVERLAY="${KUSTOMIZE_OVERLAY}" \
       scripts/aws/update-ci-image-tags.sh
 
-    SERVICES="${SELECTED_SERVICES}" \
-      K8S_NAMESPACE="${K8S_NAMESPACE}" \
-      KUSTOMIZE_OVERLAY="${KUSTOMIZE_OVERLAY}" \
-      scripts/aws/enable-ci-api-workers.sh
   )
 }
 
@@ -662,7 +658,7 @@ main() {
   create_target_worktree
   configure_cluster
 
-  IMAGE_TAG="${IMAGE_TAG:-${TARGET_SHA:0:7}}"
+  IMAGE_TAG="${IMAGE_TAG:-${TARGET_SHA:0:7}-$(date -u +%Y%m%d%H%M%S)}"
   export AWS_ACCOUNT_ID AWS_REGION DOCKER_PLATFORM IMAGE_TAG K8S_NAMESPACE VITE_LOGO_DEV_ATTRIBUTION
 
   read_deploy_state

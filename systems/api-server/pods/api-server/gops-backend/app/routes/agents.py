@@ -5,14 +5,23 @@ import time
 from functools import lru_cache
 from typing import Any
 
-from fastapi import APIRouter, Query, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 
 from app.contracts.agents import AgentAnalysisRequest, AgentLayoutResolveRequest
+from app.auth.dependencies import (
+    WebSocketAuthRequired,
+    WebSocketAuthUnavailable,
+    auth_is_enabled,
+    require_current_user,
+    require_websocket_user,
+)
+from app.auth.models import AuthenticatedUser
 from app.core.config import read_dotenv_value
 from app.services.agent_alert_payloads import parse_pubsub_payload
 from app.services.alfaka_market_data import get_market_data_provider, normalize_market_symbol, sp500_universe_symbols
 from app.services.agent_gateway import cancel_agent_analysis, get_agent_report, request_agent_analysis, request_agent_layout_resolution
+from app.services.agent_rate_limit import enforce_agent_rate_limit
 from gops_agents.query_understanding import EntityResolution, KoreanEntityResolver, extract_relationship_symbols_from_intent
 from gops_agents.query_understanding.korean_text import compact_text
 
@@ -20,6 +29,16 @@ router = APIRouter()
 AGENT_ALERTS_CHANNEL = "agent.alerts"
 AGENT_REPORTS_CHANNEL = "agent.reports"
 CHART_SHORTCUT_MODE = "chartShortcut"
+AGENT_ANALYSIS_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+CLIENT_CONTROLLED_AGENT_FIELDS = {
+    "idempotencyKey",
+    "llmBudgetOwner",
+    "maxInputTokens",
+    "maxLlmCalls",
+    "maxOutputTokens",
+    "submittedAt",
+    "userId",
+}
 
 CHART_SHORTCUT_CONTENT_BLOCKING_KEYWORDS = (
     "뉴스",
@@ -166,42 +185,69 @@ CHART_SHORTCUT_FILLER_KEYWORDS = (
 
 
 @router.post("/api/agents/analyze")
-def analyze_agents(request: AgentAnalysisRequest, http_request: Request, response: Response) -> dict[str, Any]:
+def analyze_agents(
+    request: AgentAnalysisRequest,
+    http_request: Request,
+    response: Response,
+    user: AuthenticatedUser = Depends(require_current_user),
+) -> dict[str, Any]:
+    if auth_is_enabled():
+        enforce_agent_rate_limit(http_request.app, user.sub)
+    idempotency_key = http_request.headers.get("Idempotency-Key")
+    if idempotency_key is not None and len(idempotency_key) > 128:
+        raise HTTPException(status_code=400, detail="Idempotency-Key must be 128 characters or fewer.")
     result = request_agent_analysis(
-        request.model_dump(),
-        idempotency_key=http_request.headers.get("Idempotency-Key"),
-        user_id=http_request.headers.get("X-GOPS-User-Id"),
+        trusted_agent_payload(request),
+        idempotency_key=idempotency_key,
+        user_id=user.sub,
     )
     response.status_code = int(result.pop("_status_code", 200))
     return result
 
 
 @router.post("/api/agents/layout/resolve")
-def resolve_agent_layout(request: AgentLayoutResolveRequest) -> dict[str, Any]:
-    return request_agent_layout_resolution(request.model_dump())
+def resolve_agent_layout(
+    request: AgentLayoutResolveRequest,
+    http_request: Request,
+    user: AuthenticatedUser = Depends(require_current_user),
+) -> dict[str, Any]:
+    if auth_is_enabled():
+        enforce_agent_rate_limit(http_request.app, user.sub)
+    return request_agent_layout_resolution(trusted_agent_payload(request))
 
 
 @router.get("/api/agents/entities/resolve")
 def resolve_agent_entity(
     q: str = Query(default="", max_length=128),
     mode: str = Query(default=CHART_SHORTCUT_MODE, max_length=32),
+    _user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
     return resolve_agent_entity_for_chart_shortcut(q, mode=mode)
 
 
 @router.get("/api/agents/reports/{analysis_id}")
-def agent_report(analysis_id: str) -> dict[str, Any]:
-    return get_agent_report(analysis_id)
+def agent_report(
+    analysis_id: str = Path(min_length=1, max_length=128, pattern=AGENT_ANALYSIS_ID_PATTERN),
+    user: AuthenticatedUser = Depends(require_current_user),
+) -> dict[str, Any]:
+    return get_agent_report(analysis_id, user_id=user.sub)
 
 
 @router.post("/api/agents/reports/{analysis_id}/cancel")
-def cancel_agent_report(analysis_id: str, http_request: Request) -> dict[str, Any]:
-    return cancel_agent_analysis(analysis_id, user_id=http_request.headers.get("X-GOPS-User-Id"))
+def cancel_agent_report(
+    analysis_id: str = Path(min_length=1, max_length=128, pattern=AGENT_ANALYSIS_ID_PATTERN),
+    user: AuthenticatedUser = Depends(require_current_user),
+) -> dict[str, Any]:
+    return cancel_agent_analysis(analysis_id, user_id=user.sub)
 
 
 @router.get("/api/agents/reports/{analysis_id}/stream")
-async def agent_report_stream(analysis_id: str) -> StreamingResponse:
-    return StreamingResponse(stream_agent_report_updates(analysis_id), media_type="text/event-stream")
+async def agent_report_stream(
+    analysis_id: str = Path(min_length=1, max_length=128, pattern=AGENT_ANALYSIS_ID_PATTERN),
+    user: AuthenticatedUser = Depends(require_current_user),
+) -> StreamingResponse:
+    get_agent_report(analysis_id, user_id=user.sub)
+    return StreamingResponse(stream_agent_report_updates(analysis_id, user_id=user.sub), media_type="text/event-stream")
 
 
 @router.websocket("/ws/agent-alerts")
@@ -209,6 +255,18 @@ async def agent_alerts(
     websocket: WebSocket,
     symbol: str | None = Query(default=None, min_length=1, max_length=12),
 ) -> None:
+    try:
+        require_websocket_user(websocket)
+    except WebSocketAuthRequired as exc:
+        await websocket.accept()
+        await websocket.send_json({"type": "error", "detail": str(exc)})
+        await websocket.close(code=1008)
+        return
+    except WebSocketAuthUnavailable as exc:
+        await websocket.accept()
+        await websocket.send_json({"type": "error", "detail": str(exc)})
+        await websocket.close(code=1011)
+        return
     await websocket.accept()
     try:
         await websocket.send_json({"type": "AGENT_ALERTS_READY", "symbol": symbol})
@@ -242,7 +300,7 @@ async def stream_agent_alerts(websocket: WebSocket, symbol: str | None) -> None:
         pubsub.close()
 
 
-async def stream_agent_report_updates(analysis_id: str):
+async def stream_agent_report_updates(analysis_id: str, *, user_id: str):
     max_seconds = int(read_dotenv_value("AGENT_REPORT_STREAM_MAX_SECONDS") or "60")
     poll_seconds = float(read_dotenv_value("AGENT_REPORT_STREAM_POLL_SECONDS") or "1")
     deadline = time.monotonic() + max(1, max_seconds)
@@ -270,7 +328,7 @@ async def stream_agent_report_updates(analysis_id: str):
                 continue
             last_poll_at = now
             try:
-                report = get_agent_report(analysis_id)
+                report = get_agent_report(analysis_id, user_id=user_id)
             except Exception as exc:
                 yield sse_event("error", {"analysisId": analysis_id, "detail": str(exc)})
                 return
@@ -288,6 +346,13 @@ async def stream_agent_report_updates(analysis_id: str):
 
 def sse_event(event: str, payload: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}\n\n"
+
+
+def trusted_agent_payload(request: AgentAnalysisRequest) -> dict[str, Any]:
+    payload = request.model_dump(mode="python")
+    for field in CLIENT_CONTROLLED_AGENT_FIELDS:
+        payload.pop(field, None)
+    return payload
 
 
 def report_update_pubsub(analysis_id: str):

@@ -15,14 +15,17 @@ def load_yaml(relative_path: str):
 
 class DeploymentContractsTest(unittest.TestCase):
     def test_batch_nodepool_stays_warm_for_scheduled_jobs(self):
-        nodepool = load_yaml("infra/k8s/base/platform/nodepool-batch.yaml")
+        dynamic_nodepool = load_yaml("infra/k8s/base/platform/nodepool-batch.yaml")
+        warm_nodepool = load_yaml("infra/k8s/base/platform/nodepool-batch-warm.yaml")
 
-        self.assertEqual(nodepool["spec"]["replicas"], 1)
+        self.assertNotIn("replicas", dynamic_nodepool["spec"])
+        self.assertEqual(warm_nodepool["metadata"]["name"], "batch-warm")
+        self.assertEqual(warm_nodepool["spec"]["replicas"], 1)
 
     def test_scheduled_jobs_have_resources_and_retain_failure_evidence(self):
         for path in (
-            "infra/k8s/overlays/aws-incluster-app/cronjob-order-flow-daily-rollup.yaml",
-            "infra/k8s/overlays/aws/cronjob-sec-fundamentals-sync.yaml",
+            "infra/k8s/overlays/aws/scheduled/cronjob-order-flow-daily-rollup.yaml",
+            "infra/k8s/overlays/aws/scheduled/cronjob-sec-fundamentals-sync.yaml",
         ):
             with self.subTest(path=path):
                 cronjob = load_yaml(path)
@@ -33,6 +36,13 @@ class DeploymentContractsTest(unittest.TestCase):
                 self.assertTrue(container["resources"]["requests"]["cpu"])
                 self.assertTrue(container["resources"]["requests"]["memory"])
                 self.assertTrue(container["resources"]["limits"]["memory"])
+                self.assertEqual(
+                    job_spec["template"]["spec"]["nodeSelector"]["karpenter.sh/nodepool"],
+                    "batch-warm",
+                )
+
+        app_overlay = load_yaml("infra/k8s/overlays/aws-incluster-app/kustomization.yaml")
+        self.assertIn("../aws/scheduled", app_overlay["resources"])
 
     def test_replicated_market_processors_have_strict_spread_and_health_probes(self):
         for path in (
@@ -46,11 +56,32 @@ class DeploymentContractsTest(unittest.TestCase):
                 constraint = pod_spec["topologySpreadConstraints"][0]
                 container = pod_spec["containers"][0]
                 self.assertEqual(constraint["maxSkew"], 1)
+                self.assertEqual(constraint["minDomains"], 3)
                 self.assertEqual(constraint["whenUnsatisfiable"], "DoNotSchedule")
                 self.assertEqual(constraint["labelSelector"]["matchLabels"]["app"], label)
                 self.assertIn("startupProbe", container)
                 self.assertIn("readinessProbe", container)
                 self.assertIn("livenessProbe", container)
+
+        overlay = load_yaml("infra/k8s/overlays/aws-incluster-app/kustomization.yaml")
+        processor_names = {"alfaka-market-processor", "alfaka-market-quote-processor"}
+        constraints = {}
+        for patch in overlay["patches"]:
+            target = patch.get("target") or {}
+            name = target.get("name")
+            if name not in processor_names:
+                continue
+            operations = yaml.safe_load(patch["patch"])
+            operation = next(
+                item for item in operations
+                if item["path"] == "/spec/template/spec/topologySpreadConstraints"
+            )
+            constraints[name] = operation["value"][0]
+
+        self.assertEqual(set(constraints), processor_names)
+        for constraint in constraints.values():
+            self.assertEqual(constraint["minDomains"], 3)
+            self.assertEqual(constraint["whenUnsatisfiable"], "DoNotSchedule")
 
     def test_order_workers_have_loop_heartbeat_probes(self):
         for path in (
@@ -81,9 +112,11 @@ class DeploymentContractsTest(unittest.TestCase):
 
     def test_deploy_waits_for_quality_gate(self):
         workflow = load_yaml(".github/workflows/deploy-dev.yml")
+        workflow_text = (REPO_ROOT / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8")
 
         self.assertIn("quality", workflow["jobs"])
         self.assertEqual(workflow["jobs"]["deploy"]["needs"], "quality")
+        self.assertIn("kubectl kustomize infra/k8s/base/platform", workflow_text)
 
     def test_terraform_covers_all_current_images_with_immutable_tags(self):
         terraform = (REPO_ROOT / "infra/aws/terraform/main.tf").read_text(encoding="utf-8")

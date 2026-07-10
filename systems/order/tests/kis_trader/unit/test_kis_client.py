@@ -14,7 +14,7 @@ from kis_trader.kis.client import DemoKisHttpClient
 from kis_trader.kis.config import KisConfigError, load_kis_config
 from kis_trader.kis.fake import KisExplicitReject
 
-from tests.kis_trader.fixtures.orders import sample_envelope
+from systems.order.tests.kis_trader.fixtures.orders import sample_envelope
 
 
 class FakeResponse:
