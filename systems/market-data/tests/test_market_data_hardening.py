@@ -936,6 +936,10 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertTrue(feed_profile_active_for_session(sip, "regular"))
         self.assertFalse(feed_profile_active_for_session(sip, "overnight"))
 
+        with mock.patch.dict(os.environ, {"ALPACA_STREAM_BASE_URL": "ws://host.docker.internal:8765"}):
+            simulator_sip = resolve_feed_profile({"ALPACA_FEED_PROFILE": "sip"})
+            self.assertEqual(simulator_sip.websocket_url, "ws://host.docker.internal:8765/v2/sip")
+
         with self.assertRaises(ValueError):
             resolve_feed_profile({"ALPACA_FEED": "iex"})
 

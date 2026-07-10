@@ -159,6 +159,9 @@ select_services_for_path() {
     systems/agent-orchestration/*)
       add_service agent-orchestrator
       ;;
+    systems/simulator/*)
+      add_service simulator
+      ;;
     systems/market-data/config/*)
       add_service backend
       add_service market-ingestor
@@ -215,6 +218,9 @@ select_services_for_path() {
       ;;
     infra/docker/Dockerfile.gops-order-worker)
       add_service order-worker
+      ;;
+    infra/docker/Dockerfile.gops-simulator)
+      add_service simulator
       ;;
     infra/k8s/base/platform/* | infra/k8s/overlays/aws-incluster-platform/* | infra/k8s/overlays/aws-incluster-app-rebuild/*)
       ;;

@@ -50,6 +50,9 @@ gops_normalize_service_key() {
     agent | agent-orchestrator | gops-agent-orchestrator)
       echo "agent-orchestrator"
       ;;
+    simulator | gops-simulator)
+      echo "simulator"
+      ;;
     *)
       echo "${service}"
       ;;
@@ -145,6 +148,9 @@ gops_deployments_for_service() {
     order-worker)
       printf '%s\n' order-outbox-publisher
       ;;
+    simulator)
+      printf '%s\n' gops-simulator
+      ;;
     *)
       printf 'Unknown service: %s\n' "${key}" >&2
       return 1
@@ -179,6 +185,9 @@ gops_primary_deployment_for_service() {
       ;;
     order-worker)
       echo "order-outbox-publisher"
+      ;;
+    simulator)
+      echo "gops-simulator"
       ;;
     *)
       printf 'Unknown service: %s\n' "${key}" >&2

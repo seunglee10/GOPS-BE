@@ -19,6 +19,14 @@
 않는다. sync compatibility가 필요하면 `agent-orchestrator` HTTP endpoint를
 호출한다.
 
+## Local Demo Simulator Boundary
+
+토요일 시연에서는 `GOPS_SIMULATOR_URL`이 가리키는 로컬 시뮬레이터를
+`/api/simulator/*` route로 프록시한다. SIM 모드일 때만 계좌 조회와 주문을
+시뮬레이터의 메모리 원장으로 보내며, 이 경로에서는 KIS 주문 outbox를 만들지 않는다.
+바스켓 주문도 사용자의 명시적인 버튼 입력과 `Idempotency-Key`가 있어야 실행한다.
+속보 수신은 주문이나 차트 레이아웃 변경을 자동으로 실행하지 않는다.
+
 ## Runtime Flow
 
 ```mermaid
