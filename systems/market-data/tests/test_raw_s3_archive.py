@@ -13,6 +13,20 @@ from alfaka.storage.raw_s3_archive_sink import (
 
 
 class RawS3ArchiveV2Test(unittest.TestCase):
+    def test_default_topics_exclude_high_volume_trade_and_quote_streams(self):
+        config = raw_s3_archive_runtime_config({
+            "KAFKA_BOOTSTRAP_SERVERS": "kafka:29092",
+            "KAFKA_RAW_S3_GROUP_ID": "raw-s3",
+            "S3_BUCKET": "bucket",
+        })
+
+        self.assertEqual(config["topics"], [
+            "market.input.realtime.events.v1",
+            "market.input.realtime.bars.1m.v1",
+            "market.input.realtime.updated-bars.1m.v1",
+            "market.input.realtime.daily-bars.v1",
+        ])
+
     def test_entrypoint_disables_auto_commit_and_wires_layout_mode(self):
         config = raw_s3_archive_runtime_config({
             "KAFKA_BOOTSTRAP_SERVERS": "kafka:29092",
