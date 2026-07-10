@@ -14,6 +14,17 @@ def load_yaml(relative_path: str):
 
 
 class DeploymentContractsTest(unittest.TestCase):
+    def test_kafka_uses_persistent_child_log_directory(self):
+        kafka = load_yaml("infra/k8s/base/platform/kafka-statefulset.yaml")
+        container = kafka["spec"]["template"]["spec"]["containers"][0]
+        command = container["command"][2]
+        mount = container["volumeMounts"][0]
+
+        self.assertEqual(mount["mountPath"], "/var/lib/kafka/data")
+        self.assertIn("mkdir -p /var/lib/kafka/data/data", command)
+        self.assertIn("log.dirs=/var/lib/kafka/data/data", command)
+        self.assertNotIn("rm -rf", command)
+
     def test_batch_nodepool_stays_warm_for_scheduled_jobs(self):
         dynamic_nodepool = load_yaml("infra/k8s/base/platform/nodepool-batch.yaml")
         warm_nodepool = load_yaml("infra/k8s/base/platform/nodepool-batch-warm.yaml")

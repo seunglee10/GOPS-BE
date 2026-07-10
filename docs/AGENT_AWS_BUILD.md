@@ -404,10 +404,12 @@ AWS stage는 MSK를 강제하지 않는다. 현 구조는 다음 staged path를 
 local compose -> single Kafka pod candidate -> MSK candidate
 ```
 
-The single-pod Kafka StatefulSet must mount its PVC directly at
-`/var/lib/kafka/data`. The official `apache/kafka` image declares that exact
-path as an image volume, so mounting only `/var/lib/kafka` allows the image
-volume to shadow the PVC and leaves broker logs on ephemeral node storage.
+The single-pod Kafka StatefulSet mounts its PVC directly at
+`/var/lib/kafka/data` and uses `/var/lib/kafka/data/data` as `log.dirs`. The
+official `apache/kafka` image declares the parent path as an image volume, so
+mounting only `/var/lib/kafka` allows the image volume to shadow the PVC. The
+child log directory preserves the layout created by that former parent mount
+and keeps filesystem metadata such as `lost+found` outside Kafka's log scan.
 
 Short-retention market topics must set `segment.ms` and `segment.bytes` together
 with `retention.ms`. Kafka deletes only closed segments; `retention.ms` alone can
