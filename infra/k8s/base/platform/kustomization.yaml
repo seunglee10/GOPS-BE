@@ -14,6 +14,7 @@ resources:
   - postgres-statefulset.yaml
   - nodepool-app-agent.yaml
   - nodepool-batch.yaml
+  - nodepool-batch-warm.yaml
   - nodepool-cache-db.yaml
   - nodepool-streaming.yaml
   - nodepool-graphdb.yaml

@@ -33,6 +33,7 @@ flowchart TD
 | `ARCHITECTURE.md` | Current system, pod/job, and platform relationships. |
 | `IMAGE_STRATEGY.md` | Docker image boundaries and naming rules. |
 | `ENVIRONMENT.md` | Env, secret, and platform contracts. |
+| `KAFKA_ARCHITECTURE.md` | Current EKS Kafka broker, partition, topic, producer, consumer-group, offset, and retention topology. |
 | `LOCAL_EKS_DEPLOY.md` | One-command local deploy runbook for origin/dev to shared dev EKS. |
 | `EKS_DATA_PRESERVING_REBUILD_PLAN.md` | Data-preserving EKS clean rebuild runbook for dedicated NodePools and restored PVCs. |
 | `AGENT_ORCHESTRATION_IMPLEMENTATION.md` | Summary of the role-based multi-agent implementation and Docker validation. |
@@ -44,10 +45,14 @@ flowchart TD
 | `AGENT_AWS_BUILD.md` | `gops-agent-orchestrator` image, ECR/EKS, Kafka, Redis/Valkey, ClickHouse, GraphDB, S3, secrets, smoke checks. |
 | `../AGENTS.md` | Codex/contributor rules for this repo. |
 
-Old long-form specs were removed to avoid stale, conflicting guidance.
-If a future long-form spec is needed, add it under `docs/` with a clear owner
-and date. Agent-specific handoff content should stay in the `AGENT_*` documents
-listed above.
+Supplementary current documents include `ALERT_SYSTEM_DESIGN.md`, `ODC.md`,
+`ONBOARDING_LOCAL_DOCKER.md`, `about_front.md`, and `cdc.md`. They explain a
+narrow subsystem and do not override the source-of-truth documents in the table.
+
+`docs/v2/` is retained as historical team-planning material. Its own README
+marks it superseded; current code, `AGENTS.md`, this index, and the canonical
+documents above win when the historical text conflicts. Keeping this status
+explicit avoids treating an unindexed long-form document as an active contract.
 
 For chart data work, start with `CHART_DATA_ARCHITECTURE.md`, then read the
 relevant platform README and current code. Do not restore preset historical

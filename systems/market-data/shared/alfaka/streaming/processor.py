@@ -15,6 +15,7 @@ from alfaka.common.env import load_dotenv
 from alfaka.common.env import parse_csv
 from alfaka.common.kafka_io import create_json_consumer, create_json_producer
 from alfaka.common.kafka_topics import closed_candle_topics_from_env, default_closed_candle_topics
+from alfaka.common.heartbeat import touch_heartbeat
 from alfaka.common.redis_keys import RedisKeyBuilder
 from alfaka.common.runtime_health import write_component_health
 from alfaka.common.runtime_config import validate_required_values
@@ -74,6 +75,7 @@ ORDER_FLOW_MARKET_TIMEZONE = ZoneInfo("America/New_York")
 
 def main():
     load_dotenv()
+    touch_heartbeat()
     config = processor_runtime_config()
     kafka_servers = config["kafka_servers"]
     group_id = config["group_id"]
@@ -453,6 +455,7 @@ def run_stream_processor(
     try:
         while True:
             batches = consumer.poll(timeout_ms=poll_timeout_ms)
+            touch_heartbeat()
             had_records = False
             for records in batches.values():
                 for record in records:

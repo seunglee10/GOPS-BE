@@ -11,20 +11,21 @@ locals {
     ManagedBy   = "terraform"
   }
   custom_image_repositories = {
-    frontend         = "gops-frontend"
-    api_server       = "gops-api-server"
-    market_ingestor  = "gops-market-ingestor"
-    market_processor = "gops-market-processor"
-    market_storage   = "gops-market-storage"
-    order_worker     = "gops-order-worker"
-    kis_adapter      = "gops-kis-adapter"
+    frontend           = "gops-frontend"
+    api_server         = "gops-api-server"
+    market_ingestor    = "gops-market-ingestor"
+    market_processor   = "gops-market-processor"
+    market_storage     = "gops-market-storage"
+    order_worker       = "gops-order-worker"
+    kis_adapter        = "gops-kis-adapter"
+    agent_orchestrator = "gops-agent-orchestrator"
   }
 }
 
 resource "aws_ecr_repository" "custom_images" {
   for_each             = local.custom_image_repositories
   name                 = "${local.name_prefix}-${each.value}"
-  image_tag_mutability = "MUTABLE"
+  image_tag_mutability = "IMMUTABLE"
   force_delete         = false
 
   image_scanning_configuration {
@@ -157,8 +158,8 @@ locals {
     aws_secretsmanager_secret.alpaca_api[*].name,
     data.aws_secretsmanager_secret.alpaca_api[*].name
   ))
-  kis_secret_arn = data.aws_secretsmanager_secret.kis_api.arn
-  openai_secret_arn = data.aws_secretsmanager_secret.openai_api_key.arn
+  kis_secret_arn           = data.aws_secretsmanager_secret.kis_api.arn
+  openai_secret_arn        = data.aws_secretsmanager_secret.openai_api_key.arn
   google_oauth_secret_arns = data.aws_secretsmanager_secret.google_oauth[*].arn
   pod_secret_arns = concat(
     [

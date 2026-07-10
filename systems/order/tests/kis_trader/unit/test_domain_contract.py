@@ -14,7 +14,7 @@ from kis_trader.domain import (
 )
 from kis_trader.domain.status import OrderContractError
 
-from tests.kis_trader.fixtures.orders import sample_envelope
+from systems.order.tests.kis_trader.fixtures.orders import sample_envelope
 
 
 def test_statuses_are_exactly_the_doc_canonical_set():

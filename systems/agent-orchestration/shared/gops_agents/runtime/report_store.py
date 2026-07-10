@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import hashlib
+import secrets
 from typing import Any
 
 from .analysis_cache import agent_finding_from_dict, evidence_item_from_dict, final_answer_citation_from_dict, final_answer_from_dict, intent_route_from_dict
@@ -28,6 +29,7 @@ DEFAULT_REPORT_KEY_PREFIX = "agent:report"
 DEFAULT_REPORT_TTL_SECONDS = 43200
 DEFAULT_IDEMPOTENCY_KEY_PREFIX = "agent:request:idempotency"
 DEFAULT_CANCEL_KEY_PREFIX = "agent:report:cancel"
+DEFAULT_OWNER_KEY_PREFIX = "agent:report:owner"
 CANCELED_REPORT_STATUS = "canceled"
 TERMINAL_REPORT_STATUSES = {"completed", "deep_completed", "failed", CANCELED_REPORT_STATUS}
 
@@ -51,12 +53,19 @@ class ReportStore:
     def get_idempotency_request_id(self, user_id: str, idempotency_key: str) -> str | None:
         return None
 
+    def save_owner_mapping(self, user_id: str, analysis_id: str, ttl_seconds: int | None = None) -> bool:
+        return False
+
+    def is_owner(self, analysis_id: str, user_id: str) -> bool:
+        return False
+
 
 class InMemoryReportStore(ReportStore):
     def __init__(self):
         self._reports: dict[str, AnalysisReport] = {}
         self._idempotency: dict[tuple[str, str], str] = {}
         self._canceled: dict[str, dict[str, Any]] = {}
+        self._owners: dict[str, str] = {}
 
     def save(self, report: AnalysisReport) -> AnalysisReport:
         if report.status != CANCELED_REPORT_STATUS and self.is_canceled(report.analysisId):
@@ -97,6 +106,21 @@ class InMemoryReportStore(ReportStore):
     def get_idempotency_request_id(self, user_id: str, idempotency_key: str) -> str | None:
         return self._idempotency.get((str(user_id), str(idempotency_key)))
 
+    def save_owner_mapping(self, user_id: str, analysis_id: str, ttl_seconds: int | None = None) -> bool:
+        del ttl_seconds
+        if not user_id or not analysis_id:
+            return False
+        owner_hash = stable_idempotency_part(user_id)
+        existing = self._owners.get(str(analysis_id))
+        if existing is not None:
+            return secrets.compare_digest(existing, owner_hash)
+        self._owners[str(analysis_id)] = owner_hash
+        return True
+
+    def is_owner(self, analysis_id: str, user_id: str) -> bool:
+        existing = self._owners.get(str(analysis_id))
+        return bool(existing and user_id and secrets.compare_digest(existing, stable_idempotency_part(user_id)))
+
 
 class RedisReportStore(ReportStore):
     def __init__(
@@ -117,6 +141,7 @@ class RedisReportStore(ReportStore):
         self.key_prefix = key_prefix or os.getenv("AGENT_REPORT_KEY_PREFIX", DEFAULT_REPORT_KEY_PREFIX)
         self.idempotency_key_prefix = os.getenv("AGENT_IDEMPOTENCY_KEY_PREFIX", DEFAULT_IDEMPOTENCY_KEY_PREFIX)
         self.cancel_key_prefix = os.getenv("AGENT_REPORT_CANCEL_KEY_PREFIX", DEFAULT_CANCEL_KEY_PREFIX)
+        self.owner_key_prefix = os.getenv("AGENT_REPORT_OWNER_KEY_PREFIX", DEFAULT_OWNER_KEY_PREFIX)
 
     def save(self, report: AnalysisReport) -> AnalysisReport:
         if self.ttl_seconds <= 0:
@@ -192,6 +217,39 @@ class RedisReportStore(ReportStore):
             payload = payload.decode("utf-8")
         return str(payload) if payload else None
 
+    def save_owner_mapping(self, user_id: str, analysis_id: str, ttl_seconds: int | None = None) -> bool:
+        ttl = int(ttl_seconds if ttl_seconds is not None else self.ttl_seconds)
+        if ttl <= 0 or not user_id or not analysis_id:
+            return False
+        key = self._owner_key(analysis_id)
+        owner_hash = stable_idempotency_part(user_id)
+        try:
+            existing = self.redis.get(key)
+            if isinstance(existing, bytes):
+                existing = existing.decode("utf-8")
+            if existing:
+                return secrets.compare_digest(str(existing), owner_hash)
+            claimed = self.redis.set(key, owner_hash, nx=True, ex=ttl)
+            if claimed:
+                return True
+            existing = self.redis.get(key)
+            if isinstance(existing, bytes):
+                existing = existing.decode("utf-8")
+            return bool(existing and secrets.compare_digest(str(existing), owner_hash))
+        except Exception:
+            return False
+
+    def is_owner(self, analysis_id: str, user_id: str) -> bool:
+        if not analysis_id or not user_id:
+            return False
+        try:
+            existing = self.redis.get(self._owner_key(analysis_id))
+        except Exception:
+            return False
+        if isinstance(existing, bytes):
+            existing = existing.decode("utf-8")
+        return bool(existing and secrets.compare_digest(str(existing), stable_idempotency_part(user_id)))
+
     def _report_key(self, analysis_id: str) -> str:
         return f"{self.key_prefix}:{analysis_id}"
 
@@ -205,6 +263,9 @@ class RedisReportStore(ReportStore):
 
     def _cancel_key(self, analysis_id: str) -> str:
         return f"{self.cancel_key_prefix}:{analysis_id}"
+
+    def _owner_key(self, analysis_id: str) -> str:
+        return f"{self.owner_key_prefix}:{analysis_id}"
 
 
 def cancellation_marker(*, reason: str | None, user_id: str | None, canceled_at: str) -> dict[str, Any]:

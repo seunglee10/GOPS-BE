@@ -9,7 +9,7 @@ from kis_trader.persistence.migrations import reset_public_schema, run_migration
 from kis_trader.persistence.postgres import PostgresOrderRepository
 from kis_trader.security.idempotency import hash_idempotency_key, stable_body_hash
 
-from tests.kis_trader.fixtures.orders import sample_command, sample_order_request
+from systems.order.tests.kis_trader.fixtures.orders import sample_command, sample_order_request
 
 
 pytestmark = pytest.mark.skipif(

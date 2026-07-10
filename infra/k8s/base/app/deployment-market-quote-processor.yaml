@@ -16,6 +16,14 @@ spec:
         app: alfaka-market-quote-processor
     spec:
       serviceAccountName: alfaka-market-data-sa
+      topologySpreadConstraints:
+        - maxSkew: 1
+          minDomains: 3
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: alfaka-market-quote-processor
       containers:
         - name: market-quote-processor
           image: YOUR_ECR_REPOSITORY/gops-market-processor:latest
@@ -29,6 +37,21 @@ spec:
           envFrom:
             - configMapRef:
                 name: alfaka-market-data-config
+          startupProbe:
+            exec:
+              command: ["python", "-m", "alfaka.common.heartbeat", "--max-age-seconds", "300"]
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            exec:
+              command: ["python", "-m", "alfaka.common.heartbeat", "--max-age-seconds", "60"]
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            exec:
+              command: ["python", "-m", "alfaka.common.heartbeat", "--max-age-seconds", "120"]
+            periodSeconds: 30
+            failureThreshold: 3
           resources:
             requests:
               cpu: 200m

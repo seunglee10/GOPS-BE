@@ -1,0 +1,7 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - externalsecret-sec-fundamentals.yaml
+  - cronjob-order-flow-daily-rollup.yaml
+  - cronjob-sec-fundamentals-sync.yaml

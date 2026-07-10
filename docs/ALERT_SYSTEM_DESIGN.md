@@ -164,6 +164,7 @@ evaluator가 죽어도 차트는 정상 동작하고, 그 반대도 같다.
 ```text
 POST   /api/alerts                     조건 등록 (Postgres + Redis ZSET)
 GET    /api/alerts                     내 조건 목록
+DELETE /api/alerts                     내 조건 전체 삭제 (양쪽 제거)
 DELETE /api/alerts/{id}                조건 삭제 (양쪽 제거)
 PATCH  /api/alerts/{id}                활성/비활성 토글
 

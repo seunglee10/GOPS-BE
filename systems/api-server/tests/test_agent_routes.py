@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import unittest
 import urllib.error
@@ -64,7 +65,7 @@ class AgentRoutesTest(unittest.TestCase):
         self.assertEqual(gateway.call_args.args[0]["symbol"], "NVDA")
         self.assertEqual(gateway.call_args.args[0]["routerMode"], "hybrid")
         self.assertEqual(gateway.call_args.kwargs["idempotency_key"], "idem-1")
-        self.assertEqual(gateway.call_args.kwargs["user_id"], "user-1")
+        self.assertEqual(gateway.call_args.kwargs["user_id"], "dev-auth-disabled")
 
     def test_analyze_agents_preserves_interactive_context_fields(self):
         expected = {"analysisId": "analysis-1", "symbol": "NVDA", "status": "completed"}
@@ -134,7 +135,7 @@ class AgentRoutesTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), expected)
         self.assertEqual(gateway.call_args.args[0], "analysis-1")
-        self.assertEqual(gateway.call_args.kwargs["user_id"], "user-1")
+        self.assertEqual(gateway.call_args.kwargs["user_id"], "dev-auth-disabled")
 
     def test_resolve_agent_entity_returns_chart_shortcut(self):
         response = self.client.get("/api/agents/entities/resolve", params={"q": "엔비디아", "mode": "chartShortcut"})
@@ -143,7 +144,145 @@ class AgentRoutesTest(unittest.TestCase):
         self.assertEqual(response.json()["chartShortcut"], True)
         self.assertEqual(response.json()["symbol"], "NVDA")
 
+
+@unittest.skipUnless(FASTAPI_TESTCLIENT_AVAILABLE, "FastAPI TestClient is not available")
+class AgentAuthenticatedRoutesTest(unittest.TestCase):
+    def setUp(self):
+        from app.auth.config import AuthConfig
+        from app.auth.session_store import MemorySessionStore
+
+        self.env = patch.dict(os.environ, {
+            "AUTH_ENABLED": "true",
+            "AUTH_SESSION_SECRET": "test-session-secret",
+            "AGENT_RATE_LIMIT_ENABLED": "false",
+        }, clear=False)
+        self.env.start()
+        self.app = create_app()
+        self.config = AuthConfig.from_env()
+        self.store = MemorySessionStore(self.config)
+        self.app.state.auth_session_store = self.store
+        self.client = TestClient(self.app)
+
+    def tearDown(self):
+        self.client.close()
+        self.env.stop()
+
+    def authenticate(self, sub: str = "trusted-user") -> None:
+        from app.auth.models import AuthenticatedUser
+
+        session_id = self.store.create_session(AuthenticatedUser(sub, f"{sub}@example.com", True))
+        self.client.cookies.set(self.config.session_cookie_name, session_id)
+
+    def test_every_agent_http_route_requires_session(self):
+        with (
+            patch("app.routes.agents.request_agent_analysis", return_value={"status": "queued"}),
+            patch("app.routes.agents.request_agent_layout_resolution", return_value={"status": "not_ui"}),
+            patch("app.routes.agents.get_agent_report", return_value={"status": "completed"}),
+            patch("app.routes.agents.cancel_agent_analysis", return_value={"status": "canceled"}),
+        ):
+            responses = [
+                self.client.post("/api/agents/analyze", json={"symbol": "NVDA", "intent": "analysis"}),
+                self.client.post("/api/agents/layout/resolve", json={"symbol": "NVDA", "intent": "패널 추가"}),
+                self.client.get("/api/agents/entities/resolve", params={"q": "NVDA"}),
+                self.client.get("/api/agents/reports/analysis-1"),
+                self.client.post("/api/agents/reports/analysis-1/cancel"),
+                self.client.get("/api/agents/reports/analysis-1/stream"),
+            ]
+
+        self.assertEqual([response.status_code for response in responses], [401] * len(responses))
+
+    def test_analyze_uses_session_identity_and_removes_client_identity_controls(self):
+        self.authenticate("trusted-user")
+        expected = {"analysisId": "analysis-1", "status": "queued"}
+        with patch("app.routes.agents.request_agent_analysis", return_value=expected) as gateway:
+            response = self.client.post(
+                "/api/agents/analyze",
+                headers={"X-GOPS-User-Id": "header-attacker", "Idempotency-Key": "idem-1"},
+                json={
+                    "symbol": "NVDA",
+                    "intent": "analysis",
+                    "userId": "body-attacker",
+                    "maxLlmCalls": 999,
+                    "llmBudgetOwner": "user",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(gateway.call_args.kwargs["user_id"], "trusted-user")
+        payload = gateway.call_args.args[0]
+        self.assertNotIn("userId", payload)
+        self.assertNotIn("maxLlmCalls", payload)
+        self.assertNotIn("llmBudgetOwner", payload)
+
+    def test_report_and_cancel_pass_session_owner_to_gateway(self):
+        self.authenticate("trusted-user")
+        with patch("app.routes.agents.get_agent_report", return_value={"analysisId": "analysis-1", "status": "completed"}) as get_report:
+            response = self.client.get("/api/agents/reports/analysis-1")
+        with patch("app.routes.agents.cancel_agent_analysis", return_value={"analysisId": "analysis-1", "status": "canceled"}) as cancel:
+            cancel_response = self.client.post(
+                "/api/agents/reports/analysis-1/cancel",
+                headers={"X-GOPS-User-Id": "header-attacker"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(cancel_response.status_code, 200)
+        self.assertEqual(get_report.call_args.kwargs["user_id"], "trusted-user")
+        self.assertEqual(cancel.call_args.kwargs["user_id"], "trusted-user")
+
+    def test_agent_request_rejects_oversized_extensible_context(self):
+        self.authenticate()
+        with patch("app.routes.agents.request_agent_analysis", return_value={"status": "queued"}) as gateway:
+            response = self.client.post(
+                "/api/agents/analyze",
+                json={"symbol": "NVDA", "intent": "analysis", "futureContext": {"blob": "x" * 70000}},
+            )
+
+        self.assertEqual(response.status_code, 413)
+        gateway.assert_not_called()
+
+    def test_layout_resolution_uses_authenticated_user_rate_limit(self):
+        self.authenticate("trusted-user")
+        with (
+            patch("app.routes.agents.enforce_agent_rate_limit") as rate_limit,
+            patch("app.routes.agents.request_agent_layout_resolution", return_value={"status": "ui_layout"}),
+        ):
+            response = self.client.post(
+                "/api/agents/layout/resolve",
+                json={"symbol": "NVDA", "intent": "차트를 크게 보여줘"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(rate_limit.call_args.args[1], "trusted-user")
+
+    def test_agent_alert_websocket_requires_session(self):
+        with self.client.websocket_connect("/ws/agent-alerts") as websocket:
+            message = websocket.receive_json()
+
+        self.assertEqual(message, {"type": "error", "detail": "authentication required"})
+
 class AgentRouteHelperTest(unittest.TestCase):
+    @unittest.skipUnless(AGENT_ROUTE_HELPERS_AVAILABLE, "agent routes module is not importable")
+    def test_agent_rate_limiter_rejects_requests_above_user_limit(self):
+        from types import SimpleNamespace
+
+        from fastapi import HTTPException
+        from app.services.agent_rate_limit import enforce_agent_rate_limit
+
+        redis = FakeRateLimitRedis()
+        app = SimpleNamespace(state=SimpleNamespace(agent_rate_limit_redis=redis))
+        with patch.dict(os.environ, {
+            "AGENT_RATE_LIMIT_ENABLED": "true",
+            "AGENT_RATE_LIMIT_REQUESTS": "2",
+            "AGENT_RATE_LIMIT_WINDOW_SECONDS": "60",
+        }, clear=False):
+            enforce_agent_rate_limit(app, "user-1", now=120.0)
+            enforce_agent_rate_limit(app, "user-1", now=120.0)
+            with self.assertRaises(HTTPException) as raised:
+                enforce_agent_rate_limit(app, "user-1", now=120.0)
+
+        self.assertEqual(raised.exception.status_code, 429)
+        self.assertEqual(raised.exception.headers["Retry-After"], "60")
+
     @unittest.skipUnless(AGENT_ROUTE_HELPERS_AVAILABLE, "agent routes module is not importable")
     def test_parse_pubsub_payload_accepts_json_string(self):
         self.assertEqual(parse_pubsub_payload('{"type":"AGENT_ALERT"}')["type"], "AGENT_ALERT")
@@ -313,6 +452,51 @@ class AgentRouteHelperTest(unittest.TestCase):
         request_id = response["request_id"]
         self.assertEqual(store.get(request_id).status, "queued")
         self.assertEqual(store.get_idempotency_request_id("user-1", "idem-1"), request_id)
+        self.assertTrue(store.is_owner(request_id, "user-1"))
+
+    @unittest.skipUnless(AGENT_ROUTE_HELPERS_AVAILABLE, "agent gateway module is not importable")
+    def test_agent_gateway_rejects_report_access_for_non_owner(self):
+        from fastapi import HTTPException
+        from gops_agents.contracts import AnalysisReport, utc_now_iso
+        from gops_agents.runtime.report_store import InMemoryReportStore
+
+        store = InMemoryReportStore()
+        store.save(AnalysisReport(
+            analysisId="agent-request-owned",
+            symbol="NVDA",
+            intent="analysis",
+            status="completed",
+            createdAt=utc_now_iso(),
+            summary="done",
+            rationale="done",
+        ))
+        store.save_owner_mapping("user-1", "agent-request-owned")
+
+        with patch("app.services.agent_gateway.build_report_store_from_env", return_value=store):
+            with patch("app.services.agent_gateway.read_dotenv_value", side_effect=lambda name: {
+                "AGENT_SHARED_REPORT_STORE_ENABLED": "true",
+            }.get(name)):
+                with self.assertRaises(HTTPException) as raised:
+                    agent_gateway.get_agent_report("agent-request-owned", user_id="user-2")
+
+        self.assertEqual(raised.exception.status_code, 404)
+
+    @unittest.skipUnless(AGENT_ROUTE_HELPERS_AVAILABLE, "agent gateway module is not importable")
+    def test_agent_gateway_rejects_cancel_for_non_owner(self):
+        from fastapi import HTTPException
+        from gops_agents.runtime.report_store import InMemoryReportStore
+
+        store = InMemoryReportStore()
+        store.save_owner_mapping("user-1", "agent-request-owned")
+        with patch("app.services.agent_gateway.build_report_store_from_env", return_value=store):
+            with patch("app.services.agent_gateway.read_dotenv_value", side_effect=lambda name: {
+                "AGENT_ASYNC_ANALYSIS_ENABLED": "true",
+            }.get(name)):
+                with self.assertRaises(HTTPException) as raised:
+                    agent_gateway.cancel_agent_analysis("agent-request-owned", user_id="user-2")
+
+        self.assertEqual(raised.exception.status_code, 404)
+        self.assertFalse(store.is_canceled("agent-request-owned"))
 
     @unittest.skipUnless(AGENT_ROUTE_HELPERS_AVAILABLE, "agent gateway module is not importable")
     def test_agent_gateway_async_submit_reuses_idempotent_report(self):
@@ -338,6 +522,7 @@ class AgentRouteHelperTest(unittest.TestCase):
         from gops_agents.runtime.report_store import InMemoryReportStore
 
         store = InMemoryReportStore()
+        store.save_owner_mapping("user-1", "agent-request-cancel")
         with patch(
             "app.services.agent_gateway.read_dotenv_value",
             side_effect=lambda name: {"AGENT_ASYNC_ANALYSIS_ENABLED": "true"}.get(name),
@@ -389,6 +574,7 @@ class AgentRouteHelperTest(unittest.TestCase):
             summary="done",
             rationale="test",
         ))
+        store.save_owner_mapping("user-1", "agent-request-completed")
         with patch(
             "app.services.agent_gateway.read_dotenv_value",
             side_effect=lambda name: {"AGENT_ASYNC_ANALYSIS_ENABLED": "true"}.get(name),
@@ -522,6 +708,19 @@ class FakeAnalysisQueue:
         from gops_agents.runtime.queues import AnalysisQueueMetrics
 
         return AnalysisQueueMetrics(backend="fake", queue_depth=self.queue_depth, consumer_lag=0)
+
+
+class FakeRateLimitRedis:
+    def __init__(self):
+        self.values = {}
+        self.expirations = {}
+
+    def incr(self, key):
+        self.values[key] = self.values.get(key, 0) + 1
+        return self.values[key]
+
+    def expire(self, key, seconds):
+        self.expirations[key] = seconds
 
 
 class CompletingFakeAnalysisQueue(FakeAnalysisQueue):

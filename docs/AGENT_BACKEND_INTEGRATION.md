@@ -85,15 +85,22 @@ Finance snapshot을 Redis에 fresh/stale 캐시한다. 백엔드는 fresh 캐시
 snapshot의 `sector`는 GraphDB `gops:sector` canonical 값을 사용하고, 화면 표시용
 한글 라벨은 `sectorLabelKo`로 함께 내려준다.
 
-`POST /api/agents/analyze`는 다음 header를 읽는다.
+`POST /api/agents/analyze`는 로그인 session cookie로 사용자를 확인하고 다음 header만
+클라이언트 입력으로 읽는다.
 
 ```text
 Idempotency-Key
-X-GOPS-User-Id
 ```
 
-`Idempotency-Key`가 있으면 같은 user/key 조합은 같은 `analysisId`를 재사용해야
-한다. 이미 완료된 report가 있으면 completed report를 반환할 수 있다.
+`X-GOPS-User-Id`와 body의 `userId`는 신뢰하지 않는다. 백엔드는
+`Depends(require_current_user)`가 반환한 session `sub`를 canonical user id로
+사용한다. `Idempotency-Key`가 있으면 같은 session user/key 조합은 같은
+`analysisId`를 재사용해야 한다. 이미 완료된 report가 있으면 completed report를
+반환할 수 있다.
+
+인증이 활성화된 환경에서는 analyze와 layout resolve를 session 사용자별 기본
+10회/60초로 제한한다. rate-limit Redis를 확인할 수 없으면 제한을 우회하지 않고
+`503`을 반환하며, 한도를 넘으면 `Retry-After`와 함께 `429`를 반환한다.
 
 `POST /api/agents/layout/resolve`는 UI-only layout command preflight다. 이 route는
 Kafka queue와 report polling을 타지 않고 `agent-orchestrator`의 `/layout/resolve`
@@ -118,8 +125,11 @@ compat endpoint를 동기로 호출한다. 응답은 다음 shape를 유지한�
 
 ## Request Shape
 
-요청 body는 프런트와 차트 엔진이 context를 추가해도 깨지지 않도록
-permissive하게 유지한다.
+요청 body는 프런트와 차트 엔진이 context를 추가할 수 있도록 확장 필드를
+허용하되 raw HTTP body와 검증된 전체 JSON을 각각 64 KiB 이하로 제한한다. raw
+body 초과는 JSON 파싱 전에 `413`을 반환한다. `messages`는 최대 50개,
+`references`와 `marketEvents`는 각각 최대 100개다. 문자열과 ID에도 필드별 길이
+제한을 적용한다.
 
 ```json
 {
@@ -142,8 +152,9 @@ permissive하게 유지한다.
 }
 ```
 
-백엔드는 모르는 agent context field를 임의로 제거하지 말고 worker envelope로
-전달해야 한다.
+백엔드는 모르는 agent context field를 worker envelope로 전달하되 `userId`,
+`idempotencyKey`, `submittedAt`, `maxLlmCalls`, `maxInputTokens`,
+`maxOutputTokens`, `llmBudgetOwner` 같은 서버 소유 필드는 제거한다.
 
 `references`, `uiContext`, `chartContext`의 선택/hover reference는 worker payload에
 보존되어 agent runtime의 `OperationIR` extractor로 전달된다. runtime은 같은
@@ -222,6 +233,11 @@ Async submit은 기본적으로 `202`를 반환한다.
 중단할 때 호출한다. 프런트가 submit 전에 `requestId`를 생성해 body에 넣으면
 submit 응답이 오기 전에도 같은 값을 `analysis_id`로 cancel할 수 있다.
 
+백엔드는 submit 시 `agent:report:owner:{analysisId}`에 session user의 hash를
+저장한다. report 조회, cancel, SSE stream은 owner가 일치하지 않으면 존재 여부를
+노출하지 않도록 `404`를 반환한다. client request id 충돌은 다른 사용자의 owner
+mapping을 덮어쓰지 않고 `409`로 거절한다.
+
 Cancel은 cooperative cancellation이다. 백엔드는 report store에 `canceled`
 terminal report와 cancel marker를 저장하고 Redis update channel로 publish한다.
 queued Kafka message는 삭제하지 않으며, worker는 message를 소비할 때 marker를
@@ -256,6 +272,7 @@ agent:report:latest:{SYMBOL}
 agent:report:latest
 agent:request:idempotency:{userHash}:{keyHash}
 agent:report:cancel:{analysisId}
+agent:report:owner:{analysisId}
 agent.reports
 agent.reports:{analysisId}
 ```
@@ -287,6 +304,10 @@ AGENT_ANALYSIS_QUEUE_BACKEND
 AGENT_REPORT_STORE_BACKEND
 AGENT_REPORT_TTL_SECONDS
 AGENT_REPORT_CANCEL_KEY_PREFIX
+AGENT_REPORT_OWNER_KEY_PREFIX
+AGENT_RATE_LIMIT_ENABLED
+AGENT_RATE_LIMIT_REQUESTS
+AGENT_RATE_LIMIT_WINDOW_SECONDS
 AGENT_REPORT_STREAM_REDIS_ENABLED
 AGENT_REPORT_UPDATES_CHANNEL
 AGENT_IDEMPOTENCY_TTL_SECONDS
