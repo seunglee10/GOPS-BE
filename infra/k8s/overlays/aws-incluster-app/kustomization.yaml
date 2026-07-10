@@ -185,6 +185,19 @@ patches:
             memory: 256Mi
   - target:
       kind: Deployment
+      name: gops-simulator
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 250m
+            memory: 128Mi
+  - target:
+      kind: Deployment
       name: agent-orchestrator
     patch: |-
       - op: replace
@@ -420,4 +433,7 @@ images:
     newTag: 0c876e9
   - name: YOUR_ECR_REPOSITORY/gops-agent-orchestrator
     newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-agent-orchestrator
+    newTag: 0c876e9
+  - name: YOUR_ECR_REPOSITORY/gops-simulator
+    newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-simulator
     newTag: 0c876e9

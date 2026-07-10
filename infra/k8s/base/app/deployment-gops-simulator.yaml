@@ -1,0 +1,71 @@
+# 역할: 토요일 시연 때만 켜는 Alpaca 호환 틱/뉴스 시뮬레이터입니다.
+# 기본 replicas=0이며 scripts/aws/start-dev-simulator.sh가 시연 직전에 1로 올립니다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gops-simulator
+  namespace: alfaka-market-data
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: gops-simulator
+  template:
+    metadata:
+      labels:
+        app: gops-simulator
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: gops-simulator
+          image: YOUR_ECR_REPOSITORY/gops-simulator:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8765
+          env:
+            - name: SIM_AUTH_MODE
+              value: dev
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 16Mi

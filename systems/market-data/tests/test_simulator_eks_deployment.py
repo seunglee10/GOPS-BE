@@ -66,7 +66,10 @@ class SimulatorEksDeploymentContractTests(unittest.TestCase):
             capture_output=True,
             text=True,
         )
-        self.assertEqual(completed.stdout.splitlines(), ["simulator"] * 3)
+        self.assertEqual(
+            completed.stdout.splitlines(),
+            ["simulator", "gops-simulator", "gops-simulator"],
+        )
 
         detector = (REPO_ROOT / "scripts" / "aws" / "detect-changed-services.sh").read_text(
             encoding="utf-8"
@@ -85,6 +88,8 @@ class SimulatorEksDeploymentContractTests(unittest.TestCase):
         self.assertIn("gops-simulator --replicas=1", start_script)
         self.assertIn("GOPS_SIMULATOR_URL=http://gops-simulator:8765", start_script)
         self.assertIn("ALPACA_STREAM_BASE_URL=ws://gops-simulator:8765", start_script)
+        self.assertIn("/api/control/mode", start_script)
+        self.assertIn('{"mode":"live"}', start_script)
         self.assertIn("NVDA,AMD,AVGO,MU,TSM,XOM,CVX,COP", start_script)
         self.assertIn("alfaka-alpaca-ingestor-sip", start_script)
         self.assertNotIn("alfaka-alpaca-ingestor-boats", start_script)
@@ -92,6 +97,11 @@ class SimulatorEksDeploymentContractTests(unittest.TestCase):
 
         self.assertIn("GOPS_SIMULATOR_URL-", stop_script)
         self.assertIn("ALPACA_STREAM_BASE_URL-", stop_script)
+        self.assertIn(
+            "ALPACA_ACTIVE_CHANNELS=bars,updatedBars,dailyBars,trades,quotes",
+            stop_script,
+        )
+        self.assertNotIn("ALPACA_ACTIVE_CHANNELS-", stop_script)
         self.assertIn("gops-simulator --replicas=0", stop_script)
 
         for script in ("start-dev-simulator.sh", "stop-dev-simulator.sh"):

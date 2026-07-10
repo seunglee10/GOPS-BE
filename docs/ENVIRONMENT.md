@@ -94,7 +94,7 @@ Alpaca WebSocket keepalive behavior. AWS/EKS defaults to `30` and `60` seconds
 to avoid unnecessary reconnect loops when the SIP stream is busy. Set either to
 `off` only for a controlled incident mitigation.
 
-## Local Saturday Demo Simulator
+## Saturday Demo Simulator
 
 The five-minute local demonstration uses the safe values in
 `config/demo-simulator.env`. `GOPS_SIMULATOR_URL` connects the GOPS backend to
@@ -103,7 +103,7 @@ market ingestor at the Alpaca-compatible simulator WebSocket. The demo profile
 subscribes only `NVDA,AMD,AVGO,MU,TSM,XOM,CVX,COP` and disables the live-market
 session window so the recorded ticks can play at any rehearsal time.
 
-Start and stop the integrated stack from the sibling simulator repository:
+로컬 통합 스택은 sibling simulator repository에서 시작하고 종료한다:
 
 ```text
 ../gops_simul/scripts/run_demo_stack.sh
@@ -113,6 +113,25 @@ Start and stop the integrated stack from the sibling simulator repository:
 The values in this profile are local test credentials. Do not replace them
 with broker credentials: SIM orders must stay inside the simulator ledger and
 must never create a KIS order outbox entry.
+
+dev EKS에서는 시뮬레이터를 내부 `ClusterIP` Service로만 배포한다. 기본
+`replicas`는 0이라서 평소에는 Pod CPU/메모리를 사용하지 않는다. 시연 직전에
+다음 명령으로 시뮬레이터 Pod 하나를 켜고, GOPS backend와 주식 SIP 수집기만
+시뮬레이터로 전환한다. BOATS와 crypto 수집기는 건드리지 않는다.
+
+```bash
+AWS_PROFILE=gops-dev ./scripts/aws/start-dev-simulator.sh
+```
+
+시연 종료 직후 실제 Alpaca SIP 경로를 복구하고 Pod를 다시 0개로 내린다.
+
+```bash
+AWS_PROFILE=gops-dev ./scripts/aws/stop-dev-simulator.sh
+```
+
+실행 중 resource request는 CPU `50m`(코어의 5%)와 메모리 `64Mi`, limit은
+CPU `250m`와 메모리 `128Mi`다. 이미지나 manifest를 다시 배포해도 기본값인
+0개로 돌아가므로 다음 시연 전에는 start 명령을 다시 실행해야 한다.
 
 ## Kafka
 

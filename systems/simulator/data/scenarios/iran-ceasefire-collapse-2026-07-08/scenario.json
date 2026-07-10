@@ -1,0 +1,57 @@
+{
+  "scenarioId": "iran-ceasefire-collapse-2026-07-08",
+  "title": "Iran ceasefire collapse · semiconductor to energy rotation",
+  "durationSeconds": 300,
+  "breakingNewsAtSeconds": 5,
+  "seedPrices": {
+    "NVDA": 196.93,
+    "AMD": 516.17,
+    "AVGO": 370.79,
+    "MU": 938.94,
+    "TSM": 432.63,
+    "XOM": 141.645,
+    "CVX": 173.97,
+    "COP": 108.44
+  },
+  "symbols": [
+    "NVDA",
+    "AMD",
+    "AVGO",
+    "MU",
+    "TSM",
+    "XOM",
+    "CVX",
+    "COP"
+  ],
+  "source": {
+    "provider": "Alpaca Market Data API",
+    "feed": "sip",
+    "preEventWindow": {
+      "start": "2026-07-07T19:58:00Z",
+      "end": "2026-07-07T20:00:00Z"
+    },
+    "postEventWindow": {
+      "start": "2026-07-08T13:18:00Z",
+      "end": "2026-07-08T13:30:00Z"
+    },
+    "timeCompression": "2 minutes to 5 seconds; 12 minutes to 295 seconds",
+    "generatedEventCount": 4076
+  },
+  "breakingNews": {
+    "id": "iran-ceasefire-over-2026-07-08",
+    "headline": "[속보] 이란 휴전 붕괴 우려…유가 급등·글로벌 증시 흔들",
+    "summary": "미국 대통령이 이란과의 휴전이 끝났다고 언급하면서 유가가 뛰고 위험자산 변동성이 확대됐습니다.",
+    "source": "AP",
+    "url": "https://apnews.com/article/671d9c94b302f7db533f46baa18387d3",
+    "symbols": [
+      "NVDA",
+      "AMD",
+      "AVGO",
+      "MU",
+      "TSM",
+      "XOM",
+      "CVX",
+      "COP"
+    ]
+  }
+}

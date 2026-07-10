@@ -58,6 +58,9 @@ normalize_service_key() {
     agent | agent-orchestrator | gops-agent-orchestrator)
       echo "agent-orchestrator"
       ;;
+    simulator | gops-simulator)
+      echo "simulator"
+      ;;
     *)
       echo "${service}"
       ;;

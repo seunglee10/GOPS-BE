@@ -62,3 +62,5 @@ images:
     newTag: "ci-placeholder"
   - name: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-agent-orchestrator
     newTag: "ci-placeholder"
+  - name: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-simulator
+    newTag: "ci-placeholder"
