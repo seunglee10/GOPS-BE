@@ -13,16 +13,20 @@ from alfaka.storage.processed_s3_sink import (
     flush_all_buffers,
     flush_due_buffers,
     parse_non_negative_float,
+    parse_boolean,
     parse_positive_int,
     put_object_with_retry,
     increment_metric,
     normalize_realtime_layout_mode,
+    s3_object_exists,
 )
 from alfaka.storage.s3_manifest import DEFAULT_MANIFEST_PREFIX, normalize_raw_channel, write_raw_manifest
 from alfaka.storage.s3_realtime_layout import (
     canonical_rows_with_duplicate_count,
     deterministic_realtime_object_key,
+    partition_key_from_buffer_identity,
     raw_v2_partition_key,
+    realtime_buffer_identity,
 )
 
 
@@ -39,23 +43,30 @@ RAW_ARCHIVE_TOPICS = (
 def main():
     load_dotenv()
     config = raw_s3_archive_runtime_config()
-    consumer = create_json_consumer(
+    start_raw_s3_archive_sink(config)
+
+
+def start_raw_s3_archive_sink(config, consumer_factory=create_json_consumer, s3_factory=None, sink_runner=None):
+    if s3_factory is None:
+        from alfaka.common.s3_client import create_s3_client
+
+        s3_factory = create_s3_client
+    sink_runner = sink_runner or run_raw_s3_archive_sink
+    consumer = consumer_factory(
         config["topics"],
         config["kafka_servers"],
         config["group_id"],
         "alfaka-raw-s3-archive-consumer",
+        enable_auto_commit=config["enable_auto_commit"],
     )
-
-    from alfaka.common.s3_client import create_s3_client
-
-    s3 = create_s3_client()
+    s3 = s3_factory()
     print(f"Raw S3 archive 시작: topics={config['topics']}", flush=True)
     print(f"Raw S3 archive 위치: s3://{config['s3_bucket']}/{config['raw_prefix']}", flush=True)
-    run_raw_s3_archive_sink(consumer, s3, **config)
+    sink_runner(consumer, s3, **config)
 
 
 def raw_s3_archive_runtime_config(environ=None):
-    environ = environ or os.environ
+    environ = os.environ if environ is None else environ
     kafka_servers = environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
     configured_topics = parse_csv(environ.get("KAFKA_RAW_ARCHIVE_TOPICS", ""))
     topics = configured_topics or list(RAW_ARCHIVE_TOPICS)
@@ -71,6 +82,7 @@ def raw_s3_archive_runtime_config(environ=None):
         "poll_timeout_ms": parse_positive_int(environ.get("S3_SINK_POLL_TIMEOUT_MS", "1000"), default=1000),
         "put_max_attempts": parse_positive_int(environ.get("S3_PUT_MAX_ATTEMPTS", "3"), default=3),
         "put_retry_sleep_seconds": parse_non_negative_float(environ.get("S3_PUT_RETRY_SLEEP_SECONDS", "1"), default=1),
+        "enable_auto_commit": parse_boolean(environ.get("KAFKA_RAW_S3_ENABLE_AUTO_COMMIT", "false")),
         "realtime_layout_mode": normalize_realtime_layout_mode(environ.get("S3_REALTIME_LAYOUT_MODE", "v2")),
     }
     validate_required_values("raw s3 archive", {
@@ -98,12 +110,14 @@ def run_raw_s3_archive_sink(
     put_max_attempts=3,
     put_retry_sleep_seconds=1,
     now_fn=None,
+    enable_auto_commit=False,
     realtime_layout_mode="v1",
     metrics=None,
 ):
     buffers = defaultdict(list)
     last_updated_at = {}
     now_fn = now_fn or (lambda: datetime.now(timezone.utc))
+    failed = False
     try:
         while True:
             batches = consumer.poll(timeout_ms=poll_timeout_ms)
@@ -111,28 +125,29 @@ def run_raw_s3_archive_sink(
                 for record in records:
                     archive_row = raw_archive_row(record.value, now_fn=now_fn)
                     for partition_key in raw_realtime_partition_keys(raw_prefix, archive_row, realtime_layout_mode):
-                        buffers[partition_key].append(archive_row)
-                        last_updated_at[partition_key] = now_fn()
-                        if len(buffers[partition_key]) >= flush_count:
+                        buffer_key = realtime_buffer_identity(partition_key, archive_row)
+                        buffers[buffer_key].append(archive_row)
+                        last_updated_at[buffer_key] = now_fn()
+                        if len(buffers[buffer_key]) >= flush_count:
                             flush_raw_buffer(
                                 s3,
                                 s3_bucket,
                                 partition_key,
-                                buffers[partition_key],
+                                buffers[buffer_key],
                                 manifest_prefix=manifest_prefix,
                                 max_attempts=put_max_attempts,
                                 retry_sleep_seconds=put_retry_sleep_seconds,
                                 metrics=metrics,
                             )
-                            buffers[partition_key].clear()
-                            last_updated_at.pop(partition_key, None)
+                            buffers[buffer_key].clear()
+                            last_updated_at.pop(buffer_key, None)
             flush_due_buffers(
                 buffers,
                 last_updated_at,
-                lambda partition_key, rows: flush_raw_buffer(
+                lambda buffer_key, rows: flush_raw_buffer(
                     s3,
                     s3_bucket,
-                    partition_key,
+                    partition_key_from_buffer_identity(buffer_key),
                     rows,
                     manifest_prefix=manifest_prefix,
                     max_attempts=put_max_attempts,
@@ -142,23 +157,37 @@ def run_raw_s3_archive_sink(
                 flush_interval_seconds,
                 now_fn(),
             )
+            if not enable_auto_commit and not any(buffers.values()):
+                commit_consumer(consumer)
     except KeyboardInterrupt:
         print("Raw S3 archive 종료 신호 수신: 남은 buffer를 flush합니다.", flush=True)
+    except Exception:
+        failed = True
+        raise
     finally:
-        flush_all_buffers(
-            buffers,
-            last_updated_at,
-            lambda partition_key, rows: flush_raw_buffer(
-                s3,
-                s3_bucket,
-                partition_key,
-                rows,
-                manifest_prefix=manifest_prefix,
-                max_attempts=put_max_attempts,
-                retry_sleep_seconds=put_retry_sleep_seconds,
-                metrics=metrics,
-            ),
-        )
+        if not failed:
+            flush_all_buffers(
+                buffers,
+                last_updated_at,
+                lambda buffer_key, rows: flush_raw_buffer(
+                    s3,
+                    s3_bucket,
+                    partition_key_from_buffer_identity(buffer_key),
+                    rows,
+                    manifest_prefix=manifest_prefix,
+                    max_attempts=put_max_attempts,
+                    retry_sleep_seconds=put_retry_sleep_seconds,
+                    metrics=metrics,
+                ),
+            )
+            if not enable_auto_commit:
+                commit_consumer(consumer)
+
+
+def commit_consumer(consumer):
+    commit = getattr(consumer, "commit", None)
+    if callable(commit):
+        commit()
 
 
 def flush_raw_buffer(s3, bucket, partition_key, rows, manifest_prefix=None, max_attempts=3, retry_sleep_seconds=1, metrics=None):
@@ -168,6 +197,10 @@ def flush_raw_buffer(s3, bucket, partition_key, rows, manifest_prefix=None, max_
         storage_rows, duplicate_count = canonical_rows_with_duplicate_count(storage_rows)
         increment_metric(metrics, "duplicateRows", duplicate_count)
         object_key = deterministic_realtime_object_key(partition_key, storage_rows, "jsonl")
+        if s3_object_exists(s3, bucket, object_key):
+            increment_metric(metrics, "exactReplaySkips", 1)
+            print(f"S3 raw canonical 중복 업로드 skip: s3://{bucket}/{object_key} rows={len(rows)}", flush=True)
+            return object_key
     else:
         object_key = f"{partition_key}/part-{now:%Y%m%dT%H%M%S%f}.jsonl"
     body = ("\n".join(json.dumps(row, ensure_ascii=False, separators=(",", ":")) for row in storage_rows) + "\n").encode("utf-8")

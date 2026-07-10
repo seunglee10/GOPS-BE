@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import threading
 import time
@@ -15,6 +14,7 @@ from alfaka.serving.chart_derived_data import (
     with_derived_metadata,
     write_json_cache,
 )
+from app.market_data.redis_atomic import compare_and_delete
 
 
 _INFLIGHT_LOCK = threading.Lock()
@@ -98,7 +98,6 @@ class DerivedCalculationService:
                 request,
                 state="ready",
                 source="api-compute",
-                artifact_stored=False,
             )
         except Exception:
             self._increment("failure")
@@ -117,6 +116,9 @@ class DerivedCalculationService:
         payload = read_json_cache(self.redis, request["cacheKey"])
         if not payload:
             return None
+        cached_metadata = payload.get("derived") if isinstance(payload.get("derived"), dict) else {}
+        if cached_metadata.get("state") not in {None, "ready"}:
+            return None
         payload["cache"] = {
             **(payload.get("cache") if isinstance(payload.get("cache"), dict) else {}),
             "hit": True,
@@ -128,7 +130,6 @@ class DerivedCalculationService:
             request,
             state="ready",
             source="redis",
-            artifact_stored=False,
         )
 
     def _acquire_lock(self, request: dict[str, Any]) -> str | bool | None:
@@ -151,14 +152,7 @@ class DerivedCalculationService:
     def _release_lock(self, request: dict[str, Any], owner_token: str | bool | None) -> None:
         if not isinstance(owner_token, str) or self.redis is None:
             return
-        try:
-            current = self.redis.get(request["lockKey"])
-            if isinstance(current, bytes):
-                current = current.decode("utf-8")
-            if current == owner_token:
-                self.redis.delete(request["lockKey"])
-        except Exception:
-            return
+        compare_and_delete(self.redis, request["lockKey"], owner_token)
 
     def _increment(self, name: str) -> None:
         with self._metric_lock:
@@ -171,12 +165,3 @@ def inline_wait_seconds() -> float:
     except (TypeError, ValueError):
         milliseconds = 500
     return milliseconds / 1000
-
-
-def normalized_payload(payload: dict[str, Any]) -> str:
-    value = json.loads(json.dumps(payload))
-    value.pop("cache", None)
-    derived = value.pop("derived", None)
-    if isinstance(derived, dict):
-        derived.pop("generatedAt", None)
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)

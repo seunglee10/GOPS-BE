@@ -1,6 +1,6 @@
 # 역할: Kafka Raw Topic을 읽어 차트용 Processed Topic과 Redis 최신값으로 변환합니다.
 # 사용: 로컬 Docker와 현재 AWS 배포에서는 Python market-processor runtime으로 실행합니다.
-# 출력: CHART_DATA_REBUILD_PLAN.md의 layer topic과 Redis live/cache state.
+# 출력: docs/CHART_DATA_ARCHITECTURE.md의 layer topic과 Redis live/cache state.
 import json
 import os
 import time
@@ -1432,23 +1432,6 @@ def live_trade_ttl_seconds():
 
 def live_candle_ttl_seconds():
     return parse_positive_int(os.getenv("LIVE_CANDLE_TTL_SECONDS", "180"), default=180)
-
-
-def volume_profile_live_window_seconds():
-    return parse_positive_int(os.getenv("VOLUME_PROFILE_LIVE_WINDOW_SECONDS", "7200"), default=7200)
-
-
-def volume_profile_live_ttl_seconds():
-    default_ttl = volume_profile_live_window_seconds()
-    return parse_positive_int(os.getenv("VOLUME_PROFILE_LIVE_TTL_SECONDS", str(default_ttl)), default=default_ttl)
-
-
-def volume_profile_live_max_bins():
-    return parse_positive_int(os.getenv("VOLUME_PROFILE_LIVE_MAX_BINS", "50000"), default=50000)
-
-
-def volume_profile_live_trim_batch_size():
-    return parse_positive_int(os.getenv("VOLUME_PROFILE_LIVE_TRIM_BATCH_SIZE", "1000"), default=1000)
 
 
 def parse_positive_int(value, default):

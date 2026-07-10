@@ -2,10 +2,6 @@ import importlib.util
 import unittest
 from pathlib import Path
 
-from alfaka.common.redis_keys import RedisKeyBuilder
-from alfaka.serving.redis_provider import RedisMarketDataProvider
-
-
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -23,12 +19,6 @@ class StorageContractsTest(unittest.TestCase):
         checker = load_contract_checker()
 
         self.assertEqual(checker.collect_errors(), [])
-
-    def test_retired_redis_key_builders_and_readers_are_absent(self):
-        self.assertFalse(hasattr(RedisKeyBuilder, "volume_profile_live"))
-        self.assertFalse(hasattr(RedisKeyBuilder, "order_flow_live"))
-        self.assertFalse(hasattr(RedisMarketDataProvider, "volume_profile_bins"))
-        self.assertFalse(hasattr(RedisMarketDataProvider, "_legacy_order_flow_live_bins"))
 
     def test_s3_lifecycle_expires_only_raw_prefixes(self):
         terraform = (ROOT / "infra/aws/terraform/main.tf").read_text(encoding="utf-8")

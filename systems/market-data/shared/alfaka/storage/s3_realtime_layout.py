@@ -47,9 +47,43 @@ def raw_v2_partition_key(raw_prefix: str, row: dict[str, Any]) -> str:
 
 def deterministic_realtime_object_key(partition_key: str, rows: Iterable[dict[str, Any]], extension: str) -> str:
     canonical_rows, _duplicates = canonical_rows_with_duplicate_count(rows)
-    window = minute_window(event_time_for_row(canonical_rows[0]) if canonical_rows else None)
+    if not canonical_rows:
+        raise ValueError("realtime S3 object에는 최소 한 행이 필요합니다")
+    window = minute_window(event_time_for_row(canonical_rows[0]))
+    if any(minute_window(event_time_for_row(row)) != window for row in canonical_rows[1:]):
+        raise ValueError("realtime S3 object의 모든 행은 같은 UTC minute에 속해야 합니다")
     digest = hashlib.sha256(canonical_json_bytes(canonical_rows)).hexdigest()[:20]
     return f"{partition_key}/part-{window:%Y%m%dT%H%MZ}-{digest}.{extension}"
+
+
+def realtime_buffer_identity(partition_key: str, row: dict[str, Any]) -> str | tuple[str, datetime]:
+    if "/final-v2/" not in f"/{partition_key.strip('/')}" and "/raw-v2/" not in f"/{partition_key.strip('/')}":
+        return partition_key
+    return partition_key, minute_window(event_time_for_row(row))
+
+
+def partition_key_from_buffer_identity(identity: str | tuple[str, datetime]) -> str:
+    return identity[0] if isinstance(identity, tuple) else identity
+
+
+def realtime_object_minute(object_key: str) -> datetime | None:
+    name = str(object_key or "").rsplit("/", 1)[-1]
+    if not name.startswith("part-"):
+        return None
+    token = name[5:].split("-", 1)[0]
+    try:
+        return datetime.strptime(token, "%Y%m%dT%H%MZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def realtime_object_overlaps_range(object_key: str, start: Any, end: Any) -> bool:
+    minute = realtime_object_minute(object_key)
+    if minute is None:
+        return False
+    start_dt = parse_time(start)
+    end_dt = parse_time(end)
+    return minute < end_dt and minute + timedelta(minutes=1) > start_dt
 
 
 def canonical_rows_with_duplicate_count(rows: Iterable[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
@@ -120,7 +154,7 @@ def utc_hours_in_range(start: Any, end: Any) -> list[datetime]:
 
 def parse_time(value: Any) -> datetime:
     if value is None:
-        return datetime.now(timezone.utc)
+        raise ValueError("realtime S3 row에 event timestamp가 필요합니다")
     if isinstance(value, datetime):
         return value.astimezone(timezone.utc)
     parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))

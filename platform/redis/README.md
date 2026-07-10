@@ -1,6 +1,6 @@
 # Redis Platform Contract
 
-Current local stage:
+Current local runtime:
 
 ```text
 docker-compose redis
@@ -61,7 +61,10 @@ pub/sub fanout.
 
 Indicator and candle-volume-profile results are API-owned request-time caches.
 Their result keys expire after 300s/30s by default. The singleflight lock uses
-`SET NX EX` and defaults to 30s. There is no durable derived-result Redis state.
+`SET NX EX` and defaults to 30s. Release and fill terminal transitions use
+compare-and-mutate Lua so an expired owner cannot change a new owner's lock.
+`EVAL` failure leaves the key untouched for TTL expiry. There is no durable
+derived-result Redis state.
 
 | Family | Writer | Reader | Bound | Version |
 | --- | --- | --- | --- | --- |

@@ -197,23 +197,22 @@ def with_derived_metadata(
     *,
     state: str,
     source: str,
-    artifact_stored: bool = False,
-    retry_after_ms_value: int | None = None,
     error: str | None = None,
 ) -> dict[str, Any]:
+    if state not in {"ready", "failed"}:
+        raise ValueError(f"Unsupported derived response state: {state}")
+    if source not in {"api-compute", "redis"}:
+        raise ValueError(f"Unsupported derived response source: {source}")
     next_payload = dict(payload)
     metadata = {
         "state": state,
         "source": source,
         "requestHash": request["requestHash"],
-        "artifactStored": bool(artifact_stored),
         "generatedAt": utc_now_iso(),
     }
-    if retry_after_ms_value is not None:
-        metadata["retryAfterMs"] = retry_after_ms_value
     if error:
         metadata["error"] = error
-    next_payload["derived"] = {**next_payload.get("derived", {}), **metadata}
+    next_payload["derived"] = metadata
     return next_payload
 
 

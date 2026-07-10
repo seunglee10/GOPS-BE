@@ -38,10 +38,10 @@ class MarketDataMonitorService:
 
     def overview(self) -> dict[str, Any]:
         return {
-            "sourceOfTruth": "docs/CHART_DATA_REBUILD_PLAN.md",
+            "sourceOfTruth": "docs/CHART_DATA_ARCHITECTURE.md",
             "mode": "on-demand",
             "redisCandleCacheLimit": dict(DEFAULT_VISIBLE_BARS),
-            "quotesPersistence": "redis-websocket-s3-clickhouse",
+            "quotesPersistence": "redis-websocket-clickhouse-raw-s3-backup",
             "rawS3Role": "backup-only",
             "feedPolicy": "sip-04:00-20:00-ET-boats-20:00-04:00-ET-exclusive",
             "subscriptions": self.subscriptions(),
@@ -90,12 +90,14 @@ class MarketDataMonitorService:
             "finalPrefixes": [
                 "market-data/rebuild-20260702-lazy-v1/final/candles/feed={feed}/interval={interval}/symbol={symbol}/year=YYYY/month=MM/day=DD/*.parquet",
                 "market-data/rebuild-20260702-lazy-v1/final/events/event_type={type}/symbol={symbol}/year=YYYY/month=MM/day=DD/*.parquet",
+                "market-data/rebuild-20260702-lazy-v1/final-v2/candles/interval={interval}/date=YYYY-MM-DD/hour=HH/shard=NN/part-{minute}-{digest}.parquet",
             ],
             "manifestPrefixes": [
                 "market-data/rebuild-20260702-lazy-v1/manifest/candles/interval={interval}/symbol={symbol}/objects/{digest}.json",
             ],
             "rawBackupPrefixes": [
                 "market-data/rebuild-20260702-lazy-v1/raw/alpaca/source=alpaca/channel={channel}/symbol={symbol}/year=YYYY/month=MM/day=DD/*.jsonl",
+                "market-data/rebuild-20260702-lazy-v1/raw-v2/alpaca/channel={channel}/date=YYYY-MM-DD/hour=HH/shard=NN/part-{minute}-{digest}.jsonl",
             ],
             "rawBackupParticipatesInReadPath": False,
         }
@@ -108,6 +110,7 @@ class MarketDataMonitorService:
                 "market_data.quote_ticks",
                 "market_data.market_events",
                 "market_data.market_status_events",
+                "market_data.order_flow_profile_daily",
                 "market_data.storage_object_audit",
                 "market_data.load_audit",
             ],

@@ -1,15 +1,50 @@
 import json
+import types
 import unittest
 from collections import defaultdict
 
 from alfaka.storage.processed_s3_sink import (
     flush_buffer,
     processed_realtime_partition_keys,
+    processed_s3_runtime_config,
+    run_processed_s3_sink,
+    start_processed_s3_sink,
 )
 from alfaka.storage.s3_realtime_layout import canonical_rows_with_duplicate_count, symbol_shard
 
 
 class ProcessedS3SinkV2Test(unittest.TestCase):
+    def test_entrypoint_wires_consumer_and_layout_mode_to_sink(self):
+        config = processed_s3_runtime_config({
+            "KAFKA_BOOTSTRAP_SERVERS": "kafka:29092",
+            "KAFKA_S3_GROUP_ID": "processed-s3",
+            "KAFKA_S3_ENABLE_AUTO_COMMIT": "false",
+            "S3_BUCKET": "bucket",
+            "S3_PROCESSED_FORMAT": "jsonl",
+            "S3_REALTIME_LAYOUT_MODE": "dual",
+        })
+        consumer = object()
+        calls = {}
+
+        def consumer_factory(*args, **kwargs):
+            calls["consumer"] = (args, kwargs)
+            return consumer
+
+        def sink_runner(*args, **kwargs):
+            calls["sink"] = (args, kwargs)
+
+        start_processed_s3_sink(
+            config,
+            consumer_factory=consumer_factory,
+            s3_factory=lambda: "s3",
+            sink_runner=sink_runner,
+        )
+
+        self.assertEqual(calls["consumer"][1], {"enable_auto_commit": False})
+        self.assertEqual(calls["sink"][0][:2], (consumer, "s3"))
+        self.assertEqual(calls["sink"][1]["realtime_layout_mode"], "dual")
+        self.assertFalse(calls["sink"][1]["enable_auto_commit"])
+
     def test_crc32_shard_fixtures_are_stable(self):
         self.assertEqual({symbol: symbol_shard(symbol) for symbol in ["AAPL", "NVDA", "MSFT", "_MARKET", "BTCUSD"]}, {
             "AAPL": "28",
@@ -40,7 +75,7 @@ class ProcessedS3SinkV2Test(unittest.TestCase):
 
     def test_identical_replay_is_deterministic_and_duplicate_rows_are_removed(self):
         rows = [
-            _candle("AAPL", minute=31, source_event_id="aapl-31"),
+            _candle("AAPL", minute=30, source_event_id="aapl-31"),
             _candle("AAPL", minute=30, source_event_id="aapl-30"),
         ]
         partition = processed_realtime_partition_keys(_final_prefix(), rows[0], "v2")[0]
@@ -48,13 +83,59 @@ class ProcessedS3SinkV2Test(unittest.TestCase):
         first_metrics = {}
         first = flush_buffer(s3, "bucket", partition, [rows[0], rows[1], rows[0]], "jsonl", metrics=first_metrics)
         first_body = s3.objects[first]
-        second = flush_buffer(s3, "bucket", partition, list(reversed(rows)), "jsonl")
+        second_metrics = {}
+        second = flush_buffer(s3, "bucket", partition, list(reversed(rows)), "jsonl", metrics=second_metrics)
 
         self.assertEqual(first, second)
         self.assertEqual(first_body, s3.objects[second])
+        self.assertEqual(s3.put_calls, 1)
         self.assertEqual(first_metrics["duplicateRows"], 1)
+        self.assertEqual(second_metrics["exactReplaySkips"], 1)
         reconstructed = [json.loads(line) for line in first_body.decode().splitlines()]
         self.assertEqual([row["sourceEventId"] for row in reconstructed], ["aapl-30", "aapl-31"])
+
+    def test_v2_runtime_separates_adjacent_utc_minutes(self):
+        consumer = _BatchThenInterruptConsumer([
+            _candle("AAPL", minute=30, source_event_id="minute-30"),
+            _candle("AAPL", minute=31, source_event_id="minute-31"),
+        ])
+        s3 = _S3()
+
+        run_processed_s3_sink(
+            consumer,
+            s3,
+            "bucket",
+            _final_prefix(),
+            "jsonl",
+            flush_count=100,
+            realtime_layout_mode="v2",
+        )
+
+        self.assertEqual(len(s3.objects), 2)
+        object_minutes = [
+            {json.loads(line)["timestamp"][11:16] for line in body.decode().splitlines()}
+            for body in s3.objects.values()
+        ]
+        self.assertCountEqual(object_minutes, [{"13:30"}, {"13:31"}])
+        self.assertEqual(consumer.commits, 1)
+
+    def test_missing_processed_timestamp_fails_without_commit(self):
+        row = _candle("AAPL")
+        row.pop("timestamp")
+        consumer = _BatchThenInterruptConsumer([row])
+
+        with self.assertRaises(ValueError):
+            run_processed_s3_sink(
+                consumer,
+                _S3(),
+                "bucket",
+                _final_prefix(),
+                "jsonl",
+                flush_count=1,
+                realtime_layout_mode="v2",
+            )
+
+        self.assertEqual(consumer.commits, 0)
 
     def test_v1_v2_and_mixed_rows_reconstruct_identically(self):
         rows = [_candle("AAPL", minute=30, source_event_id="one"), _candle("AAPL", minute=31, source_event_id="two")]
@@ -70,11 +151,36 @@ class ProcessedS3SinkV2Test(unittest.TestCase):
 class _S3:
     def __init__(self):
         self.objects = {}
+        self.put_calls = 0
 
     def put_object(self, Bucket, Key, Body, **_kwargs):
         del Bucket
+        self.put_calls += 1
         self.objects[Key] = Body
         return {"ETag": "fixture"}
+
+    def head_object(self, Bucket, Key):
+        del Bucket
+        if Key not in self.objects:
+            raise KeyError(Key)
+        return {"ETag": "fixture"}
+
+
+class _BatchThenInterruptConsumer:
+    def __init__(self, rows):
+        self.rows = rows
+        self.polls = 0
+        self.commits = 0
+
+    def poll(self, timeout_ms=1000):
+        del timeout_ms
+        self.polls += 1
+        if self.polls > 1:
+            raise KeyboardInterrupt()
+        return {None: [types.SimpleNamespace(value=row) for row in self.rows]}
+
+    def commit(self):
+        self.commits += 1
 
 
 def _final_prefix():

@@ -1,8 +1,8 @@
 # ClickHouse Platform Contract
 
 ClickHouse is the confirmed historical serving store for chart data.
-Redis keeps only latest 120 candles and live state; S3 final/manifest is the
-durable rebuild source.
+Redis keeps only latest 120 candles and live state; S3 final/manifest is
+durable recovery evidence.
 
 ## Current Chart Tables
 
@@ -80,7 +80,7 @@ Recommended engine for fact/metric projections is a replacing table keyed by
 symbol, metric/concept, unit, fiscal period, period end, accession or synthetic
 source hash, with `version_filed_at` as the revision version.
 
-## Excluded From The Rebuild Contract
+## Excluded From The Chart Contract
 
 ```text
 market_data.market_quotes

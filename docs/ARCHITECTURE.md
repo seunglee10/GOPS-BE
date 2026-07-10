@@ -3,11 +3,9 @@
 This is the current repository and runtime architecture.
 For placement rules, read `STRUCTURE_GUIDE.md`.
 
-Chart-data rebuild work must use `CHART_DATA_REBUILD_PLAN.md` as the
-source-of-truth. Older market-data notes that describe preset historical
-universe preload, S&P500-wide tick/quote collection, non-Mermaid Kafka topic
-layouts, raw S3 replay as an active read path, or Redis as historical storage
-are superseded.
+Chart-data work must use `CHART_DATA_ARCHITECTURE.md` for current ownership and
+query contracts and `CHART_DATA_OPERATIONS.md` for rollout/recovery. Platform
+details remain in `platform/*/README.md`.
 
 ## Repository Shape
 
@@ -136,7 +134,7 @@ flowchart LR
   Reconciler --> KIS
 ```
 
-## Chart Data Rebuild Boundary
+## Chart Data Boundary
 
 The chart rebuild is on-demand:
 

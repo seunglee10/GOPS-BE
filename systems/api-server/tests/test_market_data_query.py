@@ -801,57 +801,6 @@ def make_fill_candles(count):
     ]
 
 
-class FakeDerivedClient:
-    def __init__(self, redis_client=None):
-        self.requests = []
-        self.redis_client = redis_client
-
-    def resolve(self, request):
-        self.requests.append(request)
-        if request["kind"] == "indicators":
-            layers = str((request.get("parameters") or {}).get("layers") or "")
-            series = {layer: [] for layer in layers.split(",") if layer}
-            return {
-                "symbol": request["symbol"],
-                "interval": request["interval"],
-                "calculationVersion": request["calculationVersion"],
-                "dataStatus": "ready",
-                "indicators": [{"id": layer, "kind": layer.split(":")[0], "placement": "overlay", "parameters": {}, "points": []} for layer in series],
-                "series": series,
-                "cache": {"hit": False, "ttlSeconds": 300, "keyVersion": request["calculationVersion"]},
-                "derived": {"state": "ready", "source": "worker", "requestHash": request["requestHash"], "artifactStored": True},
-            }
-        if request["kind"] == "volumeProfile":
-            return {
-                "symbol": request["symbol"],
-                "interval": request["interval"],
-                "sourceInterval": request["interval"],
-                "from": request["from"],
-                "to": request["to"],
-                "timeBucket": request["interval"],
-                "targetBins": int((request.get("parameters") or {}).get("targetBins") or 10),
-                "bucketCount": 0,
-                "priceBinSize": 0,
-                "sourceBinCount": 0,
-                "source": "worker",
-                "feed": "test",
-                "calculationVersion": request["calculationVersion"],
-                "classificationVersion": request["calculationVersion"],
-                "sideClassification": "estimated",
-                "estimationMethod": "candle-range-volume-overlap",
-                "dataStatus": "ready",
-                "priceRange": {"min": None, "max": None, "requestedMin": None, "requestedMax": None},
-                "totalVolume": 0,
-                "totalTradeCount": 0,
-                "bins": [],
-                "poc": None,
-                "valueArea": None,
-                "cache": {"hit": False, "ttlSeconds": 30, "keyVersion": request["calculationVersion"]},
-                "derived": {"state": "ready", "source": "worker", "requestHash": request["requestHash"], "artifactStored": True},
-            }
-        raise AssertionError(f"Unexpected derived kind: {request['kind']}")
-
-
 class RecordingOnDemandFillService(OnDemandFillService):
     def __init__(self, *, provider=None, s3_result=False, alpaca_result=False):
         super().__init__(provider=provider, timeout_seconds=8, background_enabled=False)
@@ -929,7 +878,6 @@ class FakeQueryService:
             provider or FakeProvider(),
             backfill_service=FakeBackfillService(),
             fill_service=FakeFillService(),
-            derived_client=FakeDerivedClient(),
         )
 
     def symbol_search(self, query, limit):
@@ -1047,7 +995,6 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             FakeProvider(),
             backfill_service=FakeBackfillService(),
             fill_service=FakeFillService(),
-            derived_client=FakeDerivedClient(),
         )
 
         self.assertEqual(service.symbol_search("aa", 10)["symbols"][0]["symbol"], "AAPL")
@@ -1094,7 +1041,6 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             provider,
             backfill_service=FakeBackfillService(),
             fill_service=FakeFillService(),
-            derived_client=FakeDerivedClient(),
         )
 
         context = service.agent_chart_context(
@@ -1116,8 +1062,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
 
     def test_volume_profile_bins_uses_display_buckets_and_redis_cache(self):
         provider = FakeVolumeProfileProvider()
-        derived_client = FakeDerivedClient()
-        service = MarketDataQueryService(provider, backfill_service=FakeBackfillService(), fill_service=FakeFillService(), derived_client=derived_client)
+        service = MarketDataQueryService(provider, backfill_service=FakeBackfillService(), fill_service=FakeFillService())
 
         with mock.patch.dict(os.environ, {"CHART_VOLUME_PROFILE_CACHE_TTL_SECONDS": "44"}):
             payload = service.volume_profile_bins(
@@ -1135,8 +1080,8 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(payload["targetBins"], 4)
         self.assertEqual(payload["derived"]["state"], "ready")
         self.assertEqual(payload["derived"]["source"], "api-compute")
+        self.assertEqual(set(payload["derived"]), {"state", "source", "requestHash", "generatedAt"})
         self.assertEqual(provider.calls, [])
-        self.assertEqual(derived_client.requests, [])
         payload_5m = service.volume_profile_bins(
             "aapl",
             "2026-06-25T13:30:00.000Z",
@@ -1172,8 +1117,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
 
     def test_indicator_series_uses_filled_candle_snapshot_lookback_inline(self):
         provider = FakeIndicatorProvider()
-        derived_client = FakeDerivedClient()
-        service = MarketDataQueryService(provider, backfill_service=FakeBackfillService(), fill_service=FakeFillService(), derived_client=derived_client)
+        service = MarketDataQueryService(provider, backfill_service=FakeBackfillService(), fill_service=FakeFillService())
 
         payload = service.indicator_series(
             "aapl",
@@ -1188,7 +1132,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(payload["interval"], "1m")
         self.assertEqual([item["id"] for item in payload["indicators"]], ["sma:5", "ema:5", "rsi:14"])
         self.assertEqual(payload["derived"]["source"], "api-compute")
-        self.assertFalse(payload["derived"]["artifactStored"])
+        self.assertEqual(set(payload["derived"]), {"state", "source", "requestHash", "generatedAt"})
         self.assertEqual(len(payload["series"]["sma:5"]), 10)
         self.assertIsNotNone(payload["series"]["sma:5"][0]["value"])
         self.assertEqual(provider.calls[0]["before"], "2026-06-25T13:30:00.000Z")
@@ -1198,7 +1142,6 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(provider.calls[1]["limit"], 30)
         self.assertEqual(provider.calls[1]["maWindows"], ())
         self.assertEqual(len(provider.calls), 2)
-        self.assertEqual(derived_client.requests, [])
 
     def test_indicator_series_uses_foreground_fill_candles(self):
         class DirectFillService(FakeFillService):
@@ -1237,12 +1180,10 @@ class MarketDataQueryServiceTest(unittest.TestCase):
                     payload=payload,
                 )
 
-        derived_client = FakeDerivedClient()
         service = MarketDataQueryService(
             EmptyFakeProvider(),
             backfill_service=FakeBackfillService(),
             fill_service=DirectFillService(),
-            derived_client=derived_client,
         )
 
         payload = service.indicator_series(
@@ -1260,13 +1201,11 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(payload["returnedCandleCount"], 13)
         self.assertEqual(len(payload["series"]["sma:5"]), 8)
         self.assertIsNotNone(payload["series"]["sma:5"][0]["value"])
-        self.assertEqual(derived_client.requests, [])
 
     def test_indicator_series_reuses_inline_redis_cache(self):
         provider = FakeIndicatorProvider()
         redis_client = FakeIndicatorRedis()
-        derived_client = FakeDerivedClient(redis_client)
-        service = MarketDataQueryService(provider, backfill_service=FakeBackfillService(), fill_service=FakeFillService(), derived_client=derived_client)
+        service = MarketDataQueryService(provider, backfill_service=FakeBackfillService(), fill_service=FakeFillService(), redis_client=redis_client)
 
         first = service.indicator_series(
             "aapl",
@@ -1290,7 +1229,6 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(second["derived"]["source"], "redis")
         self.assertTrue(second["cache"]["hit"])
         self.assertEqual(len(provider.calls), provider_call_count)
-        self.assertEqual(derived_client.requests, [])
 
     def test_indicator_series_rejects_unsupported_layer(self):
         service = MarketDataQueryService(FakeIndicatorProvider(), backfill_service=FakeBackfillService(), fill_service=FakeFillService())
@@ -4028,7 +3966,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         finally:
             monitor_routes.get_monitor_service = previous
 
-        self.assertEqual(payload["quotesPersistence"], "redis-websocket-s3-clickhouse")
+        self.assertEqual(payload["quotesPersistence"], "redis-websocket-clickhouse-raw-s3-backup")
         self.assertEqual(payload["rawS3Role"], "backup-only")
         self.assertEqual(payload["redisCandleCacheLimit"], {
             "1m": 120,

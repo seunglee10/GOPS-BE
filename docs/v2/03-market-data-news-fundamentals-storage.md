@@ -1,8 +1,7 @@
-# Retired Market Data / News / Fundamentals / Storage Role Notes
+# Market Data / News / Fundamentals / Storage Role Notes
 
-This role document is retired for chart-data implementation details.
-
-Use `../CHART_DATA_REBUILD_PLAN.md` as the active chart-data rebuild contract.
+Use `../CHART_DATA_ARCHITECTURE.md` as the active chart-data contract and
+`../CHART_DATA_OPERATIONS.md` for operational procedures.
 Use current `systems/market-data/`, `platform/`, and `infra/` files for runtime
 behavior.
 

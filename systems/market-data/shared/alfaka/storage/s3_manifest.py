@@ -4,7 +4,7 @@ import os
 from datetime import datetime, timedelta, timezone
 
 from alfaka.common.canonical import is_historical_canonical
-from alfaka.storage.s3_realtime_layout import realtime_v2_prefix, symbol_shard, utc_hours_in_range
+from alfaka.storage.s3_realtime_layout import realtime_object_overlaps_range, realtime_v2_prefix, symbol_shard, utc_hours_in_range
 from alfaka.common.env import utc_now_iso
 from alfaka.storage.s3_materializer import list_s3_objects
 
@@ -214,7 +214,9 @@ def bounded_v2_processed_candle_keys(s3, bucket, final_prefix, symbol, interval,
             f"{root}/candles/interval={interval}/date={hour:%Y-%m-%d}"
             f"/hour={hour:%H}/shard={shard}/"
         )
-        keys.extend(key for key in list_s3_objects(s3, bucket, prefix, metrics=metrics) if key.endswith((".parquet", ".jsonl", ".ndjson")))
+        candidates = [key for key in list_s3_objects(s3, bucket, prefix, metrics=metrics) if key.endswith((".parquet", ".jsonl", ".ndjson"))]
+        keys.extend(key for key in candidates if realtime_object_overlaps_range(key, start, end))
+        increment_metric(metrics, "objectsOutsideRange", sum(1 for key in candidates if not realtime_object_overlaps_range(key, start, end)))
     return unique_ordered(keys)
 
 
@@ -229,7 +231,9 @@ def bounded_v2_raw_keys(s3, bucket, raw_prefix, symbol, channels, start, end, me
                 f"{root}/channel={normalized_channel}/date={hour:%Y-%m-%d}"
                 f"/hour={hour:%H}/shard={shard}/"
             )
-            keys.extend(key for key in list_s3_objects(s3, bucket, prefix, metrics=metrics) if key.endswith((".jsonl", ".ndjson", ".parquet")))
+            candidates = [key for key in list_s3_objects(s3, bucket, prefix, metrics=metrics) if key.endswith((".jsonl", ".ndjson", ".parquet"))]
+            keys.extend(key for key in candidates if realtime_object_overlaps_range(key, start, end))
+            increment_metric(metrics, "objectsOutsideRange", sum(1 for key in candidates if not realtime_object_overlaps_range(key, start, end)))
     return unique_ordered(keys)
 
 
@@ -432,3 +436,8 @@ def single_or_mixed(values, default):
 
 def require_canonical_processed_manifest():
     return os.getenv("S3_REQUIRE_CANONICAL_PROCESSED_CANDLES", "true").lower() in {"1", "true", "yes"}
+
+
+def increment_metric(metrics, name, amount=1):
+    if metrics is not None and amount:
+        metrics[name] = int(metrics.get(name, 0)) + int(amount)

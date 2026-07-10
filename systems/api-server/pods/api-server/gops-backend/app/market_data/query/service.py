@@ -53,13 +53,11 @@ MARKET_TIMEZONE = ZoneInfo("America/New_York")
 
 
 class MarketDataQueryService:
-    def __init__(self, provider=None, backfill_service=None, fill_service=None, derived_client=None, canonical_query=None, derived_service=None):
+    def __init__(self, provider=None, backfill_service=None, fill_service=None, redis_client=None, canonical_query=None, derived_service=None):
         self.provider = provider or get_market_data_provider()
         self.backfill_service = backfill_service or get_backfill_service(self.provider)
         self.fill_service = fill_service or get_on_demand_fill_service(self.provider)
         self.canonical_query = canonical_query or CanonicalCandleQuery(self.provider, self.fill_service)
-        self.derived_client = derived_client
-        redis_client = getattr(self.derived_client, "redis_client", None)
         if redis_client is None:
             redis_client = redis_client_for_provider(self.provider)
         self.derived_service = derived_service or DerivedCalculationService(

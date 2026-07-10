@@ -197,6 +197,18 @@ class _ExpiringRedis:
     def expire(self, key, ttl):
         self.expires[key] = self.now + ttl
 
+    def eval(self, _script, numkeys, key, *args):
+        if numkeys != 1:
+            raise AssertionError("fixture supports one key")
+        if self.get(key) != args[0]:
+            return 0
+        if len(args) == 1:
+            self.delete(key)
+            return 1
+        self.values[key] = args[1]
+        self.expires[key] = self.now + float(args[2])
+        return 1
+
     def advance(self, seconds):
         self.now += seconds
 

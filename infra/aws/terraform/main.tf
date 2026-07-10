@@ -71,6 +71,13 @@ resource "aws_s3_bucket_lifecycle_configuration" "market_data" {
   count  = var.manage_s3_chart_data_lifecycle ? 1 : 0
   bucket = local.market_data_bucket_name
 
+  lifecycle {
+    precondition {
+      condition     = var.create_s3_bucket || var.acknowledge_s3_lifecycle_document_ownership
+      error_message = "Existing S3 buckets require acknowledge_s3_lifecycle_document_ownership=true because this resource owns the complete lifecycle document."
+    }
+  }
+
   rule {
     id     = "expire-chart-raw-v1"
     status = "Enabled"

@@ -182,6 +182,33 @@ class RedisLeanHotPathTest(unittest.TestCase):
         self.assertEqual(redis.counts["expire"], 20)
         self.assertEqual(redis.counts["publish"], 10)
 
+    def test_reproduced_legacy_trade_and_health_baselines_match_documented_table(self):
+        keys = RedisKeyBuilder(prefix="")
+        trade_redis = _SpyRedis()
+        health_redis = _SpyRedis()
+
+        for index in range(5):
+            _legacy_write_trade(trade_redis, keys, _trade(trade_id=index))
+            _legacy_write_health(health_redis, keys, _quote_envelope(index, symbol="AAPL"))
+
+        self.assertEqual(trade_redis.total_commands(), 10)
+        self.assertEqual(trade_redis.counts["hset"], 5)
+        self.assertEqual(trade_redis.counts["expire"], 5)
+        self.assertEqual(health_redis.total_commands(), 30)
+        self.assertEqual(health_redis.counts["set"], 15)
+        self.assertEqual(health_redis.counts["expire"], 15)
+
+    def test_reproduced_legacy_order_flow_baseline_matches_documented_table(self):
+        redis = _SpyRedis()
+        keys = RedisKeyBuilder(prefix="")
+
+        for index in range(8):
+            _legacy_write_order_flow_bin(redis, keys, _trade(trade_id=index))
+
+        self.assertEqual(redis.total_commands(), 16)
+        self.assertEqual(redis.counts["hset"], 8)
+        self.assertEqual(redis.counts["expire"], 8)
+
 
 class _SpyRedis:
     def __init__(self):
@@ -303,6 +330,18 @@ def _legacy_write_quote(redis, keys, quote):
     key = keys.live_quote(quote["symbol"])
     redis.set(key, json.dumps(quote, ensure_ascii=False, separators=(",", ":")))
     redis.expire(key, 300)
+
+
+def _legacy_write_trade(redis, keys, trade):
+    key = keys.live_trade(trade["symbol"])
+    redis.hset(key, mapping=trade)
+    redis.expire(key, 300)
+
+
+def _legacy_write_order_flow_bin(redis, keys, trade):
+    key = keys.order_flow_live_minute(trade["symbol"])
+    redis.hset(key, mapping={str(trade["tradeId"]): json.dumps(trade, separators=(",", ":"))})
+    redis.expire(key, 86400)
 
 
 def _legacy_publish_quote(redis, keys, quote):

@@ -3,7 +3,7 @@ import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 
-from app.market_data.derived.service import DerivedCalculationService, normalized_payload
+from app.market_data.derived.service import DerivedCalculationService
 from alfaka.serving.chart_derived_data import build_indicator_request, build_volume_profile_request
 from alfaka.serving.indicators import compute_indicator_payload, indicator_specs_from_csv
 from alfaka.serving.volume_profile import compute_volume_profile_payload
@@ -38,7 +38,8 @@ class DerivedCalculationServiceTest(unittest.TestCase):
 
         self.assertEqual(calculate_count, 1)
         self.assertEqual(canonical.reads, 1)
-        self.assertTrue(all(normalized_payload(result) == normalized_payload(results[0]) for result in results))
+        self.assertTrue(all(result["bins"] == results[0]["bins"] for result in results))
+        self.assertTrue(all(result["derived"]["requestHash"] == results[0]["derived"]["requestHash"] for result in results))
         self.assertEqual(service.metrics()["calculate"], 1)
         self.assertEqual(service.metrics()["singleflight_wait"], 9)
 
@@ -63,13 +64,26 @@ class DerivedCalculationServiceTest(unittest.TestCase):
         self.assertEqual(warm["derived"]["source"], "redis")
         self.assertEqual(service.metrics()["cache_hit"], 1)
 
-    def test_inline_algorithms_match_worker_fixture_payloads_after_metadata_normalization(self):
+    def test_indicator_and_volume_profile_algorithms_match_numeric_golden_fixture(self):
         candles = _candles()
-        indicator_request = _indicator_request()
         specs = indicator_specs_from_csv("sma:5,ema:5,rsi:14")
-        inline_indicator = _indicator_payload(indicator_request, {"candles": candles, "source": "fixture", "feed": "sip"})
-        worker_indicator = _indicator_payload(indicator_request, {"candles": candles, "source": "fixture", "feed": "sip"})
-        self.assertEqual(normalized_payload(inline_indicator), normalized_payload(worker_indicator))
+        indicator = compute_indicator_payload(candles, specs)
+        timestamps = [f"2026-07-08T13:{30 + index:02d}:00.000Z" for index in range(20)]
+
+        self.assertEqual([item["id"] for item in indicator["indicators"]], ["sma:5", "ema:5", "rsi:14"])
+        self.assertEqual([point["timestamp"] for point in indicator["series"]["sma:5"]], timestamps)
+        self.assertEqual(
+            [point["value"] for point in indicator["series"]["sma:5"]],
+            [None, None, None, None, 100.7, 100.8, 100.9, 101.0, 101.1, 101.2, 101.3, 101.4, 101.5, 101.6, 101.7, 101.8, 101.9, 102.0, 102.1, 102.2],
+        )
+        self.assertEqual(
+            [None if point["value"] is None else round(point["value"], 6) for point in indicator["series"]["ema:5"]],
+            [None, None, None, None, 100.7, 100.8, 100.9, 101.0, 101.1, 101.2, 101.3, 101.4, 101.5, 101.6, 101.7, 101.8, 101.9, 102.0, 102.1, 102.2],
+        )
+        self.assertEqual(
+            [point["value"] for point in indicator["series"]["rsi:14"]],
+            [None] * 14 + [100.0] * 6,
+        )
 
         volume_request = _volume_request()
         kwargs = {
@@ -81,10 +95,29 @@ class DerivedCalculationServiceTest(unittest.TestCase):
             "price_min": 99.5,
             "price_max": 103.0,
         }
-        inline_volume = compute_volume_profile_payload({"candles": candles, "source": "fixture", "feed": "sip"}, **kwargs)
-        worker_volume = compute_volume_profile_payload({"candles": candles, "source": "fixture", "feed": "sip"}, **kwargs)
-        self.assertEqual(normalized_payload(inline_volume), normalized_payload(worker_volume))
-        self.assertEqual([item["id"] for item in compute_indicator_payload(candles, specs)["indicators"]], ["sma:5", "ema:5", "rsi:14"])
+        volume = compute_volume_profile_payload({"candles": candles, "source": "fixture", "feed": "sip"}, **kwargs)
+        self.assertEqual(volume["totalVolume"], 2190.0)
+        self.assertEqual(volume["poc"], {
+            "index": 3,
+            "priceMin": 101.0,
+            "priceMax": 101.5,
+            "priceMid": 101.25,
+            "volume": 550.0,
+            "tradeCount": 0,
+        })
+        self.assertEqual(volume["valueArea"]["bucketIndexes"], [1, 2, 3, 4])
+        self.assertEqual(
+            [(row["index"], row["priceMin"], row["volume"], row["volumePercent"], row["isPoc"], row["inValueArea"]) for row in volume["bins"]],
+            [
+                (0, 99.5, 101.33333333, 0.04627093, False, False),
+                (1, 100.0, 276.33333333, 0.1261796, False, True),
+                (2, 100.5, 459.66666667, 0.20989346, False, True),
+                (3, 101.0, 550.0, 0.25114155, True, True),
+                (4, 101.5, 453.66666667, 0.20715373, False, True),
+                (5, 102.0, 270.33333333, 0.12343988, False, False),
+                (6, 102.5, 78.66666667, 0.03592085, False, False),
+            ],
+        )
 
     def test_request_time_service_has_no_queue_or_artifact_dependencies(self):
         service = DerivedCalculationService(
@@ -95,6 +128,7 @@ class DerivedCalculationServiceTest(unittest.TestCase):
         result = service.resolve(_volume_request(), lambda: {"dataStatus": "ready", "bins": []})
 
         self.assertEqual(result["derived"]["source"], "api-compute")
+        self.assertEqual(set(result["derived"]), {"state", "source", "requestHash", "generatedAt"})
         self.assertFalse(hasattr(service, "worker_client"))
 
 
@@ -123,6 +157,18 @@ class _Redis:
     def delete(self, key):
         with self.lock:
             self.values.pop(key, None)
+
+    def eval(self, _script, numkeys, key, *args):
+        if numkeys != 1:
+            raise AssertionError("fixture supports one key")
+        with self.lock:
+            if self.values.get(key) != args[0]:
+                return 0
+            if len(args) == 1:
+                self.values.pop(key, None)
+                return 1
+            self.values[key] = args[1]
+            return 1
 
 
 class _CanonicalQuery:

@@ -29,8 +29,14 @@ variable "create_s3_bucket" {
 
 variable "manage_s3_chart_data_lifecycle" {
   type        = bool
-  default     = true
-  description = "Manage the chart raw/raw-v2 lifecycle rules on the configured market-data bucket. Disable only when an external module owns the bucket lifecycle document."
+  default     = false
+  description = "Manage the complete lifecycle document for the configured market-data bucket. Enable only for a module-created bucket or after explicitly accepting ownership of every lifecycle rule."
+}
+
+variable "acknowledge_s3_lifecycle_document_ownership" {
+  type        = bool
+  default     = false
+  description = "Required with manage_s3_chart_data_lifecycle for an existing bucket. Confirms this module owns the bucket's complete lifecycle document, not only chart prefixes."
 }
 
 variable "s3_chart_data_root_prefix" {

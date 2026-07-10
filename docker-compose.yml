@@ -43,56 +43,43 @@ services:
       - /bin/bash
       - -ec
       - |
-        hot_topics=(
-          market.input.realtime.trades.v1
-          market.input.realtime.quotes.v1
-        )
-        standard_topics=(
-          market.input.realtime.bars.1m.v1
-          market.input.realtime.updated-bars.1m.v1
-          market.input.realtime.daily-bars.v1
-          market.input.realtime.events.v1
-          market.realtime.ticks.to.1m.v1
-          market.realtime.ticks.to.5m.v1
-          market.realtime.ticks.to.10m.v1
-          market.realtime.ticks.to.1d.v1
-          market.realtime.ticks.to.1w.v1
-          market.realtime.ticks.to.1mo.v1
-          market.layer.candles.closed.v1
-          market.layer.candles.1m.closed.v1
-          market.layer.candles.5m.closed.v1
-          market.layer.candles.10m.closed.v1
-          market.layer.candles.1h.closed.v1
-          market.layer.candles.4h.closed.v1
-          market.layer.candles.1d.closed.v1
-          market.layer.candles.1w.closed.v1
-          market.layer.candles.1mo.closed.v1
-          market.layer.trades.v1
-          market.layer.quotes.v1
-          market.layer.events.v1
-          market.news.alpaca.v1
-          market.news.daily-summary-dirty.v1
-          orders.commands.v1
-          broker.submit-results.v1
-          broker.order-events.v1
-          orders.dlq.v1
-          alerts.triggered.v1
-          alerts.dlq.v1
-          agents.market-events.v1
-          agents.analysis-requests.v1
-          agents.deep-analysis-requests.v1
-          agents.analysis-results.v1
-          agents.query-understanding-events.v1
-          agents.notification-decisions.v1
-          agents.dlq.v1
-        )
-        for topic in "$${hot_topics[@]}"; do
-          /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic "$${topic}" --partitions 12 --replication-factor 1
-        done
-        for topic in "$${standard_topics[@]}"; do
-          /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic "$${topic}" --partitions 3 --replication-factor 1
-        done
+        while IFS= read -r topic; do
+          if [[ -z "$${topic}" || "$${topic}" == \#* ]]; then
+            continue
+          fi
+          partitions=3
+          if [[ "$${topic}" == "market.input.realtime.trades.v1" || "$${topic}" == "market.input.realtime.quotes.v1" ]]; then
+            partitions=12
+          fi
+          /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic "$${topic}" --partitions "$${partitions}" --replication-factor 1
+
+          retention_ms=""
+          segment_ms=""
+          segment_bytes=""
+          case "$${topic}" in
+            agents.market-events.v1)
+              retention_ms="3600000"
+              segment_ms="600000"
+              segment_bytes="134217728"
+              ;;
+            market.input.realtime.trades.v1|market.input.realtime.quotes.v1|market.layer.trades.v1|market.layer.quotes.v1)
+              retention_ms="7200000"
+              segment_ms="900000"
+              segment_bytes="268435456"
+              ;;
+          esac
+          if [[ -n "$${retention_ms}" ]]; then
+            /opt/kafka/bin/kafka-configs.sh \
+              --bootstrap-server kafka:29092 \
+              --entity-type topics \
+              --entity-name "$${topic}" \
+              --alter \
+              --add-config "retention.ms=$${retention_ms},segment.ms=$${segment_ms},segment.bytes=$${segment_bytes}"
+          fi
+        done < /etc/alfaka-kafka/topics.txt
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --list
+    volumes:
+      - ./platform/kafka/topics.txt:/etc/alfaka-kafka/topics.txt:ro
     restart: "no"
     networks:
       - streaming_net
@@ -688,6 +675,7 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
       KAFKA_RAW_ARCHIVE_TOPICS: "market.input.realtime.trades.v1,market.input.realtime.quotes.v1,market.input.realtime.events.v1,market.input.realtime.bars.1m.v1,market.input.realtime.updated-bars.1m.v1,market.input.realtime.daily-bars.v1"
       KAFKA_RAW_S3_GROUP_ID: "alfaka-raw-s3-archive"
+      KAFKA_RAW_S3_ENABLE_AUTO_COMMIT: "false"
       AWS_REGION: "${AWS_REGION:-ap-northeast-2}"
       AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-ap-northeast-2}"
       AWS_EC2_METADATA_DISABLED: "${AWS_EC2_METADATA_DISABLED:-true}"

@@ -11,6 +11,15 @@ LOCAL_DDL = ROOT / "infra/clickhouse/initdb/01-market-data.sql"
 K8S_DDL = ROOT / "infra/k8s/base/platform/clickhouse-initdb/01-market-data.sql"
 LOCAL_TOPICS = ROOT / "platform/kafka/topics.txt"
 K8S_TOPICS = ROOT / "infra/k8s/base/platform/kafka/topics.txt"
+TEXT_SCAN_EXCLUDED_DIRS = {
+    ".git",
+    ".terraform",
+    ".venv",
+    "dist",
+    "node_modules",
+    "playwright-report",
+    "test-results",
+}
 
 
 def read(path: Path) -> str:
@@ -52,6 +61,54 @@ def env_csv(path: Path, name: str) -> list[str]:
     return [item.strip() for item in matches[-1].split(",") if item.strip()]
 
 
+def terraform_variable_default(terraform: str, name: str) -> str | None:
+    match = re.search(
+        rf'variable "{re.escape(name)}" \{{(.*?)\n\}}',
+        terraform,
+        flags=re.DOTALL,
+    )
+    if not match:
+        return None
+    default = re.search(r"^\s*default\s*=\s*([^\s#]+)", match.group(1), flags=re.MULTILINE)
+    return default.group(1) if default else None
+
+
+def repository_text_files():
+    for path in ROOT.rglob("*"):
+        if not path.is_file() or any(part in TEXT_SCAN_EXCLUDED_DIRS for part in path.parts):
+            continue
+        try:
+            body = path.read_bytes()
+        except OSError:
+            continue
+        if b"\x00" in body:
+            continue
+        try:
+            yield path, body.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+
+
+def retired_contract_tokens() -> tuple[str, ...]:
+    return (
+        "volume" + "ProfileLiveKey",
+        "artifact" + "Stored",
+        "VOLUME_PROFILE_" + "LIVE_",
+        "chart-derived-data-" + "worker",
+        ".".join(("market", "chart-derived", "requests", "v1")),
+        ".".join(("market", "chart-derived", "dlq", "v1")),
+        "CHART_DERIVED_" + "REQUEST_TOPIC",
+        "CHART_DERIVED_" + "DLQ_TOPIC",
+        "CHART_DERIVED_" + "WORKER_GROUP_ID",
+        "CHART_DATA_" + "REBUILD_PLAN.md",
+        "CHART_DATA_" + "CONTRACTS.md",
+        "alpaca-data-" + "pipeline-plan",
+        "chart-data-" + "efficiency",
+        "orderflow-bidask-" + "stabilization",
+        "market-data-tick-candle-" + "architecture.md",
+    )
+
+
 def collect_errors() -> list[str]:
     errors: list[str] = []
     local_sql = read(LOCAL_DDL)
@@ -86,6 +143,15 @@ def collect_errors() -> list[str]:
     if present:
         errors.append(f"Retired Kafka topics remain in inventory: {sorted(present)}")
 
+    compose = read(ROOT / "docker-compose.yml")
+    local_topic_script = read(ROOT / "scripts/local/create-kafka-topics.sh")
+    if "./platform/kafka/topics.txt:/etc/alfaka-kafka/topics.txt:ro" not in compose:
+        errors.append("Docker Compose kafka-init does not mount the canonical topic inventory")
+    if "done < /etc/alfaka-kafka/topics.txt" not in compose:
+        errors.append("Docker Compose kafka-init does not read the canonical topic inventory")
+    if 'done < "${TOPICS_FILE}"' not in local_topic_script:
+        errors.append("Local Kafka topic creation does not read platform/kafka/topics.txt")
+
     expected_processed = env_csv(ROOT / "docker-compose.yml", "KAFKA_PROCESSED_TOPICS")
     for path in (
         ROOT / "infra/k8s/base/app/configmap.yaml",
@@ -94,7 +160,17 @@ def collect_errors() -> list[str]:
         if env_csv(path, "KAFKA_PROCESSED_TOPICS") != expected_processed:
             errors.append(f"Processed S3 topic contract differs: {path.relative_to(ROOT)}")
 
+    for path in (
+        ROOT / "docker-compose.yml",
+        ROOT / "infra/k8s/base/app/configmap.yaml",
+        ROOT / "infra/k8s/overlays/aws/configmap-aws-patch.yaml",
+    ):
+        if not re.search(r'^\s*KAFKA_RAW_S3_ENABLE_AUTO_COMMIT:\s*["\']?false["\']?\s*$', read(path), flags=re.MULTILINE):
+            errors.append(f"Raw S3 consumer must disable auto commit: {path.relative_to(ROOT)}")
+
     terraform = read(ROOT / "infra/aws/terraform/main.tf")
+    terraform_variables = read(ROOT / "infra/aws/terraform/variables.tf")
+    terraform_example = read(ROOT / "infra/aws/terraform/terraform.tfvars.example")
     lifecycle = re.search(
         r'resource "aws_s3_bucket_lifecycle_configuration" "market_data" \{.*?\n\}',
         terraform,
@@ -111,6 +187,23 @@ def collect_errors() -> list[str]:
             errors.append("S3 lifecycle does not use the bounded raw retention variable")
         if "/final" in lifecycle_body:
             errors.append("Final candle evidence must not have an expiration rule")
+        ownership_guard = "var.create_s3_bucket || var.acknowledge_s3_lifecycle_document_ownership"
+        if ownership_guard not in lifecycle_body:
+            errors.append("Existing S3 bucket lifecycle ownership acknowledgement guard is missing")
+
+    if terraform_variable_default(terraform_variables, "manage_s3_chart_data_lifecycle") != "false":
+        errors.append("Terraform must default S3 lifecycle management to false")
+    if terraform_variable_default(terraform_variables, "acknowledge_s3_lifecycle_document_ownership") != "false":
+        errors.append("Terraform must default lifecycle ownership acknowledgement to false")
+    if not re.search(r"^manage_s3_chart_data_lifecycle\s*=\s*false$", terraform_example, flags=re.MULTILINE):
+        errors.append("Terraform example must leave S3 lifecycle management disabled")
+
+    retired_tokens = retired_contract_tokens()
+    for path, body in repository_text_files():
+        relative = path.relative_to(ROOT).as_posix()
+        for token in retired_tokens:
+            if token in relative or token in body:
+                errors.append(f"Retired chart-data contract remains: {token} in {relative}")
 
     migration = read(ROOT / "scripts/local/migrate-chart-tick-retention.sql")
     for table in ("trade_ticks", "quote_ticks"):

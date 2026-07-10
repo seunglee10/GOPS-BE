@@ -1,10 +1,9 @@
 # 역할: Kafka Processed Topic의 차트 데이터를 S3/MinIO에 장기 저장합니다.
 # 사용: 로컬은 MinIO, 운영은 AWS S3로 같은 코드가 동작합니다.
-# 출력: 확정 candle/trades/quotes/events를 final prefix에 저장합니다. live candle은 저장하지 않습니다.
+# 출력: 확정 candle/event를 final prefix에 저장합니다. live candle과 tick은 저장하지 않습니다.
 import io
 import json
 import os
-import sys
 import time
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -19,69 +18,79 @@ from alfaka.storage.s3_manifest import DEFAULT_MANIFEST_PREFIX, write_processed_
 from alfaka.storage.s3_realtime_layout import (
     canonical_rows_with_duplicate_count,
     deterministic_realtime_object_key,
+    partition_key_from_buffer_identity,
     processed_v2_partition_key,
+    realtime_buffer_identity,
 )
 
 
 def main():
     load_dotenv()
-    kafka_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
-    group_id = os.getenv("KAFKA_S3_GROUP_ID", "alfaka-processed-s3-sink")
-    s3_bucket = os.getenv("S3_BUCKET")
-    final_prefix = os.getenv("S3_FINAL_PREFIX", os.getenv("S3_PROCESSED_PREFIX", "market-data/rebuild-20260702-lazy-v1/final"))
-    manifest_prefix = os.getenv("S3_MANIFEST_PREFIX", DEFAULT_MANIFEST_PREFIX)
-    flush_count = int(os.getenv("S3_FLUSH_COUNT", "500"))
-    flush_interval_seconds = parse_non_negative_float(os.getenv("S3_FLUSH_INTERVAL_SECONDS", "60"), default=60)
-    poll_timeout_ms = parse_positive_int(os.getenv("S3_SINK_POLL_TIMEOUT_MS", "1000"), default=1000)
-    put_max_attempts = parse_positive_int(os.getenv("S3_PUT_MAX_ATTEMPTS", "3"), default=3)
-    put_retry_sleep_seconds = parse_non_negative_float(os.getenv("S3_PUT_RETRY_SLEEP_SECONDS", "1"), default=1)
-    output_format = os.getenv("S3_PROCESSED_FORMAT", "parquet").lower()
-    enable_auto_commit = os.getenv("KAFKA_S3_ENABLE_AUTO_COMMIT", "false").lower() in {"1", "true", "yes"}
-    realtime_layout_mode = normalize_realtime_layout_mode(os.getenv("S3_REALTIME_LAYOUT_MODE", "v2"))
+    config = processed_s3_runtime_config()
+    start_processed_s3_sink(config)
 
-    if not s3_bucket:
-        print("S3_BUCKET을 .env 또는 Kubernetes ConfigMap에 넣어주세요.", file=sys.stderr)
-        sys.exit(1)
-    if output_format not in {"parquet", "jsonl"}:
-        print("S3_PROCESSED_FORMAT은 parquet 또는 jsonl만 가능합니다.", file=sys.stderr)
-        sys.exit(1)
 
-    topics = processed_topics_from_env(os.environ)
+def processed_s3_runtime_config(environ=None):
+    environ = os.environ if environ is None else environ
+    config = {
+        "kafka_servers": environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"),
+        "group_id": environ.get("KAFKA_S3_GROUP_ID", "alfaka-processed-s3-sink"),
+        "topics": processed_topics_from_env(environ),
+        "s3_bucket": environ.get("S3_BUCKET"),
+        "final_prefix": environ.get("S3_FINAL_PREFIX", environ.get("S3_PROCESSED_PREFIX", "market-data/rebuild-20260702-lazy-v1/final")),
+        "manifest_prefix": environ.get("S3_MANIFEST_PREFIX", DEFAULT_MANIFEST_PREFIX),
+        "flush_count": parse_positive_int(environ.get("S3_FLUSH_COUNT", "500"), default=500),
+        "flush_interval_seconds": parse_non_negative_float(environ.get("S3_FLUSH_INTERVAL_SECONDS", "60"), default=60),
+        "poll_timeout_ms": parse_positive_int(environ.get("S3_SINK_POLL_TIMEOUT_MS", "1000"), default=1000),
+        "put_max_attempts": parse_positive_int(environ.get("S3_PUT_MAX_ATTEMPTS", "3"), default=3),
+        "put_retry_sleep_seconds": parse_non_negative_float(environ.get("S3_PUT_RETRY_SLEEP_SECONDS", "1"), default=1),
+        "output_format": str(environ.get("S3_PROCESSED_FORMAT", "parquet")).lower(),
+        "enable_auto_commit": parse_boolean(environ.get("KAFKA_S3_ENABLE_AUTO_COMMIT", "false")),
+        "realtime_layout_mode": normalize_realtime_layout_mode(environ.get("S3_REALTIME_LAYOUT_MODE", "v2")),
+    }
+    if config["output_format"] not in {"parquet", "jsonl"}:
+        raise ValueError("S3_PROCESSED_FORMAT은 parquet 또는 jsonl만 가능합니다")
     validate_required_values("processed s3 sink", {
-        "kafka_servers": kafka_servers,
-        "processed_topics": topics,
-        "s3_bucket": s3_bucket,
-        "final_prefix": final_prefix,
+        "kafka_servers": config["kafka_servers"],
+        "processed_topics": config["topics"],
+        "s3_bucket": config["s3_bucket"],
+        "final_prefix": config["final_prefix"],
     })
+    return config
 
-    consumer = create_json_consumer(
-        topics,
-        kafka_servers,
-        group_id,
+
+def start_processed_s3_sink(config, consumer_factory=create_json_consumer, s3_factory=None, sink_runner=None):
+    if s3_factory is None:
+        from alfaka.common.s3_client import create_s3_client
+
+        s3_factory = create_s3_client
+    sink_runner = sink_runner or run_processed_s3_sink
+
+    consumer = consumer_factory(
+        config["topics"],
+        config["kafka_servers"],
+        config["group_id"],
         "alfaka-processed-s3-consumer",
-        enable_auto_commit=enable_auto_commit,
-        realtime_layout_mode=realtime_layout_mode,
+        enable_auto_commit=config["enable_auto_commit"],
     )
-    from alfaka.common.s3_client import create_s3_client
-
-    s3 = create_s3_client()
-    print(f"S3 sink 시작: topics={topics}", flush=True)
-    print(f"S3 확정 저장 위치: s3://{s3_bucket}/{final_prefix}, format={output_format}", flush=True)
+    s3 = s3_factory()
+    print(f"S3 sink 시작: topics={config['topics']}", flush=True)
+    print(f"S3 확정 저장 위치: s3://{config['s3_bucket']}/{config['final_prefix']}, format={config['output_format']}", flush=True)
     print("S3 live candle 저장은 비활성화되어 있습니다. Tick성 trades/quotes는 raw S3/ClickHouse 경로를 사용합니다.", flush=True)
-
-    run_processed_s3_sink(
+    sink_runner(
         consumer,
         s3,
-        s3_bucket,
-        final_prefix,
-        output_format,
-        manifest_prefix=manifest_prefix,
-        flush_count=flush_count,
-        flush_interval_seconds=flush_interval_seconds,
-        poll_timeout_ms=poll_timeout_ms,
-        put_max_attempts=put_max_attempts,
-        put_retry_sleep_seconds=put_retry_sleep_seconds,
-        enable_auto_commit=enable_auto_commit,
+        config["s3_bucket"],
+        config["final_prefix"],
+        config["output_format"],
+        manifest_prefix=config["manifest_prefix"],
+        flush_count=config["flush_count"],
+        flush_interval_seconds=config["flush_interval_seconds"],
+        poll_timeout_ms=config["poll_timeout_ms"],
+        put_max_attempts=config["put_max_attempts"],
+        put_retry_sleep_seconds=config["put_retry_sleep_seconds"],
+        enable_auto_commit=config["enable_auto_commit"],
+        realtime_layout_mode=config["realtime_layout_mode"],
     )
 
 
@@ -121,29 +130,30 @@ def run_processed_s3_sink(
                 for record in records:
                     payload = record.value
                     for partition_key in processed_realtime_partition_keys(final_prefix, payload, realtime_layout_mode):
-                        buffers[partition_key].append(payload)
-                        last_updated_at[partition_key] = now_fn()
-                        if len(buffers[partition_key]) >= flush_count:
+                        buffer_key = realtime_buffer_identity(partition_key, payload)
+                        buffers[buffer_key].append(payload)
+                        last_updated_at[buffer_key] = now_fn()
+                        if len(buffers[buffer_key]) >= flush_count:
                             flush_buffer(
                                 s3,
                                 bucket,
                                 partition_key,
-                                buffers[partition_key],
+                                buffers[buffer_key],
                                 output_format,
                                 manifest_prefix=manifest_prefix,
                                 max_attempts=put_max_attempts,
                                 retry_sleep_seconds=put_retry_sleep_seconds,
                                 metrics=metrics,
                             )
-                            buffers[partition_key].clear()
-                            last_updated_at.pop(partition_key, None)
+                            buffers[buffer_key].clear()
+                            last_updated_at.pop(buffer_key, None)
             flush_due_buffers(
                 buffers,
                 last_updated_at,
-                lambda partition_key, rows: flush_buffer(
+                lambda buffer_key, rows: flush_buffer(
                     s3,
                     bucket,
-                    partition_key,
+                    partition_key_from_buffer_identity(buffer_key),
                     rows,
                     output_format,
                     manifest_prefix=manifest_prefix,
@@ -166,10 +176,10 @@ def run_processed_s3_sink(
             flush_all_buffers(
                 buffers,
                 last_updated_at,
-                lambda partition_key, rows: flush_buffer(
+                lambda buffer_key, rows: flush_buffer(
                     s3,
                     bucket,
-                    partition_key,
+                    partition_key_from_buffer_identity(buffer_key),
                     rows,
                     output_format,
                     manifest_prefix=manifest_prefix,
@@ -256,7 +266,8 @@ def flush_buffer(
         increment_metric(metrics, "duplicateRows", duplicate_count)
     object_key = s3_object_key(partition_key, storage_rows, output_format, now=now, force=force)
     content_type = content_type_for_format(output_format)
-    if is_deterministic_canonical_object_key(object_key) and not force and s3_object_exists(s3, bucket, object_key):
+    if (is_realtime_v2_partition(partition_key) or is_deterministic_canonical_object_key(object_key)) and not force and s3_object_exists(s3, bucket, object_key):
+        increment_metric(metrics, "exactReplaySkips", 1)
         if manifest_prefix and not is_realtime_v2_partition(partition_key) and is_processed_candle_partition(partition_key, rows):
             write_processed_candle_manifest(
                 s3,
@@ -458,7 +469,7 @@ def normalize_storage_row(row):
 
 def parse_event_time(value):
     if not value:
-        return datetime.now(timezone.utc)
+        raise ValueError("processed S3 event에 timestamp, eventTime 또는 eventMinute가 필요합니다")
     return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
 
 
@@ -494,3 +505,7 @@ def parse_non_negative_float(value, default):
     except (TypeError, ValueError):
         return default
     return parsed if parsed >= 0 else default
+
+
+def parse_boolean(value):
+    return str(value or "").strip().lower() in {"1", "true", "yes"}

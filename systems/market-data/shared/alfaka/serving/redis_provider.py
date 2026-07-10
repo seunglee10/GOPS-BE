@@ -1,6 +1,6 @@
 # 역할: GOPS API/WebSocket이 Redis에서 최신/최근 캔들을 읽는 adapter입니다.
 # 사용: 과거 API는 최근 구간 보강에, WebSocket은 live candle push에 사용합니다.
-# 계약: CHART_DATA_REBUILD_PLAN.md의 Redis recent-window/live state key를 읽습니다.
+# 계약: docs/CHART_DATA_ARCHITECTURE.md의 Redis recent-window/live state key를 읽습니다.
 import json
 import os
 from datetime import datetime, timezone

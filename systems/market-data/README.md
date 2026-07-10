@@ -2,10 +2,9 @@
 
 Owns Alpaca ingest, stream processing, market-data storage, on-demand fill, and serving helpers.
 
-For chart-data rebuild work, `docs/CHART_DATA_REBUILD_PLAN.md` is the source of
-truth. Older notes in this system that describe a fixed preset chart preload,
-S&P500-wide tick/quote collection, broad initial preload, raw S3 replay as a
-normal source, or non-Mermaid Kafka topic layouts are superseded.
+For chart-data work, `docs/CHART_DATA_ARCHITECTURE.md` is the current contract
+and `docs/CHART_DATA_OPERATIONS.md` is the runbook. Exact storage and transport
+details live in the platform READMEs.
 
 ## Folders
 
@@ -80,9 +79,9 @@ Live Alpaca ingest is profile-scoped. The default v1 runtime uses `sip` for `04:
 
 Raw envelopes, normalized streaming events, Redis latest/live state, ClickHouse rows, API candles, and chart snapshots carry `feedProfile` and `marketSession`. The session model is `pre`, `regular`, `after`, and `overnight`; daily/weekly/monthly candle serving falls back to `regular` when historical rows lack stored session metadata. Existing ClickHouse volumes can add the columns in place, but true multi-feed row preservation requires a table rebuild using the feed/session-aware `ORDER BY` from `infra/clickhouse/initdb/01-market-data.sql`.
 
-## On-Demand Chart Scope
+## Chart Scope
 
-The chart rebuild starts with no preloaded historical chart data. The API loads
+The chart path starts with no preloaded historical chart data. The API loads
 only the `symbol + timeframe + range + layer` requested by the chart or an
 explicit subscription. The SIP ingestor is allowed to keep an S&P500
 `bars/updatedBars/dailyBars/statuses` baseline for fresh 1m entry, but that is

@@ -1,4 +1,4 @@
-# Canonical Kafka topics for the on-demand chart data rebuild.
+# Canonical Kafka topics for local and deployed runtimes.
 # key=symbol for every market-data topic.
 market.input.realtime.trades.v1
 market.input.realtime.quotes.v1

@@ -1,6 +1,6 @@
 # Kafka Platform Contract
 
-Kafka is the ordered handoff layer for the on-demand chart data rebuild.
+Kafka is the ordered handoff layer for live chart facts and downstream projections.
 Market-data producers must use `key=symbol`; one partition is handled by one
 consumer pod at a time.
 
@@ -10,6 +10,10 @@ consumer pod at a time.
 platform/kafka/topics.txt
 infra/k8s/base/platform/kafka/topics.txt
 ```
+
+The platform copy is canonical for local scripts and Docker Compose. K8s keeps
+a deployment-local mirror because `configMapGenerator` cannot read outside its
+kustomization root; the contract checker requires equivalent topic values.
 
 ## Input Topics
 
@@ -24,13 +28,18 @@ market.input.realtime.daily-bars.v1
 
 `market.input.realtime.quotes.v1` is consumed by the quote processor, written
 to Redis/WebSocket live state, and republished as `market.layer.quotes.v1` for
-canonical S3/ClickHouse storage.
+ClickHouse tick storage. Raw S3 keeps backup evidence; processed S3 does not
+consume the quote layer topic.
 
 `market.input.realtime.trades.v1` and `market.input.realtime.quotes.v1` are the
 hot raw streams. Creation helpers default them to 12 partitions so trade/candle
 and quote processors can scale independently. Existing Kafka topics do not
 change partition count just because the helper uses `--if-not-exists`; operators
 must alter existing topics explicitly during a live cluster migration.
+
+Raw/layer trade and quote topics use 2-hour retention with bounded segments;
+`agents.market-events.v1` uses 1 hour. Local, Compose, and K8s creation paths
+apply the same policy.
 
 ## Tick Fanout Topics
 
@@ -93,5 +102,5 @@ agents.dlq.v1
 with completed reports. It is not used as request/reply transport inside the
 hot query-understanding fan-out.
 
-Any market-data topic not listed in the source-of-truth chart rebuild plan is
-outside the current chart-data contract.
+Current chart-data ownership and compatibility rules are in
+`docs/CHART_DATA_ARCHITECTURE.md`.

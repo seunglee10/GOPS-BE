@@ -27,9 +27,8 @@ flowchart TD
 | File | Purpose |
 | --- | --- |
 | `PRODUCT_CONTEXT.md` | Product direction and current/future scope boundary. |
-| `CHART_DATA_REBUILD_PLAN.md` | Source-of-truth plan for the on-demand chart data rebuild. This wins over older chart, market-data, preload, S3, Redis, and Kafka notes. |
-| `CHART_DATA_CONTRACTS.md` | Current chart fact/key/topic/table/prefix matrix plus retention migration and after-deploy operator runbook. |
-| `plans/orderflow-bidask-stabilization/README.md` | Bid/Ask 차트 당일 인트라데이 전환, 오더플로우 Redis 저장 모델(캔들형 append+덮어쓰기), 집계 검증, Redis 경량화 4개 워크스트림 실행 계획 (2026-07-10 결정 기록 포함). |
+| `CHART_DATA_ARCHITECTURE.md` | Current chart fact ownership, compute placement, query path, API/WS, order-flow, and S3 contracts. |
+| `CHART_DATA_OPERATIONS.md` | Validation, deployment observation, recovery, retention, Terraform ownership, and rollback runbook. |
 | `STRUCTURE_GUIDE.md` | Folder placement rules for future code. |
 | `ARCHITECTURE.md` | Current system, pod/job, and platform relationships. |
 | `IMAGE_STRATEGY.md` | Docker image boundaries and naming rules. |
@@ -50,8 +49,7 @@ If a future long-form spec is needed, add it under `docs/` with a clear owner
 and date. Agent-specific handoff content should stay in the `AGENT_*` documents
 listed above.
 
-For chart data work, do not follow older notes that require a preset symbol
-universe chart preload, S&P500-wide tick/quote collection, raw S3 replay as a
-normal read path, or a Kafka topic layout that differs from the Mermaid. SIP
-S&P500 bars/statuses baseline collection is the narrow runtime exception
-documented in `CHART_DATA_REBUILD_PLAN.md`.
+For chart data work, start with `CHART_DATA_ARCHITECTURE.md`, then read the
+relevant platform README and current code. Do not restore preset historical
+preload, broad all-symbol tick/quote collection, raw S3 materialization, or
+retired derived queues.

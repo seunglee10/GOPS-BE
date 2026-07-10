@@ -37,6 +37,7 @@ from alfaka.storage.processed_s3_sink import flush_buffer
 from alfaka.storage.s3_manifest import DEFAULT_MANIFEST_PREFIX
 from alfaka.storage.s3_materializer import materialize_s3_processed_objects
 from app.market_data.backfill.service import renderability_payload
+from app.market_data.redis_atomic import compare_and_delete, compare_and_set_ex
 
 
 FILL_TIMEOUT_SECONDS = 30.0
@@ -90,38 +91,24 @@ class DistributedFillSingleflight:
         return False, None, self._existing_state(request_id)
 
     def complete(self, request_id: str, owner_token: str | None, status: str) -> bool:
-        if not owner_token or self.redis is None or not self._owned(request_id, owner_token):
+        if not owner_token or self.redis is None:
             return False
-        value = self._value("terminal", owner_token, status=status)
-        try:
-            self.redis.set(self._key(request_id), value, ex=self.terminal_ttl_seconds)
-            return True
-        except TypeError:
-            try:
-                self.redis.set(self._key(request_id), value)
-                self.redis.expire(self._key(request_id), self.terminal_ttl_seconds)
-                return True
-            except Exception:
-                return False
-        except Exception:
-            return False
+        return compare_and_set_ex(
+            self.redis,
+            self._key(request_id),
+            self._value("running", owner_token),
+            self._value("terminal", owner_token, status=status),
+            self.terminal_ttl_seconds,
+        )
 
     def release(self, request_id: str, owner_token: str | None) -> bool:
-        if not owner_token or self.redis is None or not self._owned(request_id, owner_token):
+        if not owner_token or self.redis is None:
             return False
-        try:
-            self.redis.delete(self._key(request_id))
-            return True
-        except Exception:
-            return False
-
-    def _owned(self, request_id: str, owner_token: str) -> bool:
-        try:
-            value = self.redis.get(self._key(request_id))
-        except Exception:
-            return False
-        payload = parse_singleflight_value(value)
-        return payload.get("owner") == owner_token and payload.get("state") == "running"
+        return compare_and_delete(
+            self.redis,
+            self._key(request_id),
+            self._value("running", owner_token),
+        )
 
     def _existing_state(self, request_id: str) -> str:
         try:
@@ -658,13 +645,19 @@ class OnDemandFillService:
                     fill_range["end"],
                 ))
             keys = unique_ordered(keys)
-            source["hit"] = bool(keys)
-            source["rowCount"] = len(keys)
             if not keys:
                 return False
-            result = materialize_s3_processed_objects(self._clickhouse_client(), s3, bucket, keys, source_name="on-demand-fill-s3")
-            source["rowCount"] = int(result.get("rowCount") or 0)
-            return source["rowCount"] > 0 or bool(keys)
+            result = materialize_s3_processed_objects(
+                self._clickhouse_client(),
+                s3,
+                bucket,
+                keys,
+                source_name="on-demand-fill-s3",
+                selection={"symbol": symbol, "interval": interval, "ranges": ranges},
+            )
+            source["rowCount"] = int(result.get("matchedRowCount") or 0)
+            source["hit"] = source["rowCount"] > 0
+            return source["hit"]
         except Exception as exc:
             source["error"] = str(exc)
             return False

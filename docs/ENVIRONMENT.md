@@ -3,7 +3,8 @@
 This file documents platform dependencies and env contracts.
 Do not put real secrets here.
 
-For chart-data work, `docs/CHART_DATA_REBUILD_PLAN.md` is the source of truth.
+For chart-data work, `docs/CHART_DATA_ARCHITECTURE.md` is the source of truth;
+operator procedures live in `docs/CHART_DATA_OPERATIONS.md`.
 The current runtime uses a hybrid collection model: S&P500 baseline
 bars/updatedBars/dailyBars/statuses stay subscribed for list prices and fast
 chart entry, while realtime trades/quotes are limited to explicit cohorts such

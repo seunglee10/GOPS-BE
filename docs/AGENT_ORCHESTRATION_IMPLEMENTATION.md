@@ -2,8 +2,8 @@
 
 > Historical implementation note.
 >
-> Market-data topic names in this file may be stale. Current chart-data rebuild
-> work uses `docs/CHART_DATA_REBUILD_PLAN.md` and the `market.layer.*` topics.
+> Market-data topic names in this file may be stale. Current chart data follows
+> `docs/CHART_DATA_ARCHITECTURE.md` and `platform/kafka/README.md`.
 
 작성일: 2026-06-29
 대상 브랜치: `demulage`
