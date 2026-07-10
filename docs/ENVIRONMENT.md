@@ -202,7 +202,9 @@ ORDER_FLOW_PINNED_SYMBOLS
 ORDER_FLOW_PRICE_BIN_SIZE
 ORDER_FLOW_QUOTE_REFRESH_MS
 ORDER_FLOW_PUBLISH_THROTTLE_MS
+ORDER_FLOW_REDIS_FLUSH_MS
 ORDER_FLOW_LIVE_TTL_SECONDS
+ORDER_FLOW_LIVE_MINUTE_TTL_SECONDS
 ```
 
 `PROCESSOR_RECOVERY_SYMBOLS` is optional. Keep it empty unless an incident repair
@@ -242,8 +244,12 @@ Order-flow profile env controls the pinned bid/ask volume profile path.
 only v1 live/EOD coverage set. `ORDER_FLOW_PRICE_BIN_SIZE` defaults to `0.01`.
 `ORDER_FLOW_QUOTE_REFRESH_MS` gates quote cache refresh, and
 `ORDER_FLOW_PUBLISH_THROTTLE_MS` throttles `ORDER_FLOW_BINS_UPDATE` fanout per
-symbol. `ORDER_FLOW_LIVE_TTL_SECONDS` keeps the Redis live hash available for
-today's chart and intraday panel until the EOD rollup has run.
+symbol. `ORDER_FLOW_REDIS_FLUSH_MS` throttles writes of the current
+`order-flow:{symbol}:live-minute` blob, defaulting to 250ms. Closed minute
+blobs are appended to `order-flow:{symbol}:minutes`.
+`ORDER_FLOW_LIVE_TTL_SECONDS` keeps closed minute blobs available for today's
+intraday panel until the EOD rollup has run, and
+`ORDER_FLOW_LIVE_MINUTE_TTL_SECONDS` keeps the current in-progress minute fresh.
 
 `ACTIVE_CHART_TTL_SECONDS` keeps the symbol currently open in the chart inside
 the explicit realtime cohort even when the visible chart interval is 1h, 4h,

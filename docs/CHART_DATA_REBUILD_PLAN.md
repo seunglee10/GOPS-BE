@@ -231,7 +231,8 @@ requested chart interval; it does not depend on trade ticks or
 `volume_profile_bins_1m` materialization.
 
 Bid/ask order-flow profile is a separate trade+quote path. The live processor
-writes `order-flow:{symbol}:live` Redis hash fields for pinned symbols and
+writes closed minute blobs to `order-flow:{symbol}:minutes` and the current
+minute blob to `order-flow:{symbol}:live-minute` for pinned symbols, then
 publishes `ORDER_FLOW_BINS_UPDATE`; the EOD job
 `systems/market-data/jobs/order-flow-daily-rollup/main.py` materializes daily
 rows into `market_data.order_flow_profile_daily`. Local compose exposes the
@@ -239,7 +240,8 @@ rows into `market_data.order_flow_profile_daily`. Local compose exposes the
 `infra/k8s/overlays/aws/cronjob-order-flow-daily-rollup.yaml`. The shared dev
 `aws-incluster-app-ci` deploy path also includes that scheduled CronJob via the
 in-cluster app overlay. Keep both overlay CronJob manifests in sync; ad hoc
-backfills stay manual.
+backfills stay manual. `GET /api/charts/order-flow/daily` remains available for
+verification and audit, but Bid/Ask chart rendering uses the intraday live path.
 
 Derived result retention is intentionally shorter than candle history:
 

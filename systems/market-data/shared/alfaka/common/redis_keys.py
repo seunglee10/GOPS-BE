@@ -45,6 +45,12 @@ class RedisKeyBuilder:
     def order_flow_live(self, symbol):
         return self.key(f"order-flow:{symbol}:live")
 
+    def order_flow_minutes(self, symbol):
+        return self.key(f"order-flow:{symbol}:minutes")
+
+    def order_flow_live_minute(self, symbol):
+        return self.key(f"order-flow:{symbol}:live-minute")
+
     def live_event(self, symbol):
         return self.key(f"live:event:{symbol}")
 

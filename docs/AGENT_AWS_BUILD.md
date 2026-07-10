@@ -156,8 +156,9 @@ Volume profile v1은 요청 chart interval의 candle OHLCV로 계산하는
 
 Bid/ask order-flow profile은 derived-worker가 아니라 market processor와 EOD
 rollup job이 담당한다. Live path는 pinned symbol trade/quote를 Redis
-`order-flow:{symbol}:live` hash에 적고 `ORDER_FLOW_BINS_UPDATE`를 WebSocket에
-팬아웃한다. Daily rows는
+`order-flow:{symbol}:minutes` ZSET과 `order-flow:{symbol}:live-minute` string에
+캔들형 minute blob으로 적고 `ORDER_FLOW_BINS_UPDATE`를 WebSocket에 팬아웃한다.
+Daily rows는
 `systems/market-data/jobs/order-flow-daily-rollup/main.py`와
 `infra/k8s/overlays/aws/cronjob-order-flow-daily-rollup.yaml`이 ClickHouse
 `market_data.order_flow_profile_daily`에 적재한다. Shared dev deploys that use
@@ -360,7 +361,9 @@ ORDER_FLOW_PINNED_SYMBOLS
 ORDER_FLOW_PRICE_BIN_SIZE
 ORDER_FLOW_QUOTE_REFRESH_MS
 ORDER_FLOW_PUBLISH_THROTTLE_MS
+ORDER_FLOW_REDIS_FLUSH_MS
 ORDER_FLOW_LIVE_TTL_SECONDS
+ORDER_FLOW_LIVE_MINUTE_TTL_SECONDS
 ```
 
 Kafka bootstrap env:

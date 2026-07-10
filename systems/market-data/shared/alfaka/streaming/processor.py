@@ -6,6 +6,7 @@ import os
 import time
 from collections import defaultdict
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import redis
 
@@ -21,6 +22,7 @@ from alfaka.orderflow import (
     OrderFlowBinBuilder,
     PinnedQuoteCache,
     classify_trade_side,
+    live_minute_ttl_seconds_from_env,
     live_ttl_seconds_from_env,
     pinned_symbols_from_env,
     price_bin_size_from_env,
@@ -28,6 +30,12 @@ from alfaka.orderflow import (
     quote_future_tolerance_ms_from_env,
     quote_max_age_ms_from_env,
     quote_refresh_ms_from_env,
+    redis_flush_ms_from_env,
+)
+from alfaka.orderflow.redis_model import (
+    encode_order_flow_minute_blob,
+    order_flow_minute_blob,
+    order_flow_minute_score,
 )
 from alfaka.serving.dto import market_status_event, order_flow_event, websocket_event
 from alfaka.serving.closed_watermark import (
@@ -58,6 +66,7 @@ from alfaka.streaming.transforms import (
 
 
 _PUBLISH_COUNTS = defaultdict(int)
+ORDER_FLOW_MARKET_TIMEZONE = ZoneInfo("America/New_York")
 
 
 def main():
@@ -246,6 +255,7 @@ class ProcessorState:
         self.order_flow_quote_max_age_ms = None
         self.order_flow_quote_future_tolerance_ms = 0
         self.order_flow_publish_state = {}
+        self.order_flow_redis_flush_state = {}
 
 
 def configure_order_flow_state(state, redis_client, redis_keys):
@@ -264,6 +274,7 @@ def configure_order_flow_state(state, redis_client, redis_keys):
     state.order_flow_quote_max_age_ms = quote_max_age_ms_from_env()
     state.order_flow_quote_future_tolerance_ms = quote_future_tolerance_ms_from_env()
     state.order_flow_publish_state = {}
+    state.order_flow_redis_flush_state = {}
     return state
 
 
@@ -606,12 +617,41 @@ def process_order_flow_live_path(trade, redis_client, redis_keys, state):
         max_quote_age_ms=getattr(state, "order_flow_quote_max_age_ms", None),
         future_tolerance_ms=getattr(state, "order_flow_quote_future_tolerance_ms", 0),
     )
+    close_previous_order_flow_minute_before_update(redis_client, redis_keys, state, trade)
     of_bin = builder.update(trade, side)
     if of_bin is None:
         return None
     write_order_flow_bin_to_redis(redis_client, redis_keys, of_bin, state=state)
     maybe_publish_order_flow_event(redis_client, redis_keys, state, of_bin)
     return of_bin
+
+
+def close_previous_order_flow_minute_before_update(redis_client, redis_keys, state, trade):
+    builder = getattr(state, "order_flow_builder", None)
+    symbol = str(trade.get("symbol") or "").upper()
+    if builder is None or symbol not in builder.pinned_symbols:
+        return False
+    flush_state = _order_flow_redis_flush_state(state)
+    entry = dict(flush_state.get(symbol) or {})
+    previous_minute = entry.get("minute")
+    if not previous_minute:
+        return False
+    try:
+        minute_dt = floor_minute(trade["timestamp"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    event_minute = to_iso(minute_dt)
+    if previous_minute == event_minute:
+        return False
+    current_session = builder.current_session_date(symbol)
+    incoming_session = minute_dt.astimezone(ORDER_FLOW_MARKET_TIMEZONE).date().isoformat()
+    if current_session and current_session != incoming_session:
+        return False
+    if write_closed_order_flow_minute_to_redis(redis_client, redis_keys, symbol, previous_minute, builder):
+        entry["preClosedMinute"] = previous_minute
+        flush_state[symbol] = entry
+        return True
+    return False
 
 
 def trade_bucket_blocked_by_closed_watermark(redis_client, redis_keys, trade):
@@ -963,18 +1003,86 @@ def write_volume_profile_bin_to_redis(redis_client, redis_keys, profile_bin):
 
 
 def write_order_flow_bin_to_redis(redis_client, redis_keys, of_bin, state=None):
-    key = redis_keys.order_flow_live(of_bin["symbol"])
     builder = getattr(state, "order_flow_builder", None)
+    symbol = str(of_bin["symbol"]).upper()
+    event_minute = of_bin["eventMinute"]
+    flush_state = _order_flow_redis_flush_state(state)
+    entry = dict(flush_state.get(symbol) or {})
+
     if builder is not None and callable(getattr(builder, "consume_session_rollover", None)):
         if builder.consume_session_rollover(of_bin["symbol"]):
-            redis_client.delete(key)
-    field = f"{of_bin['eventMinute']}|{of_bin['priceBin']:.2f}"
-    value = json.dumps(of_bin, ensure_ascii=False, separators=(",", ":"))
-    try:
-        redis_client.hset(key, field, value)
-    except TypeError:
-        redis_client.hset(key, mapping={field: value})
+            _delete_order_flow_live_keys(redis_client, redis_keys, symbol)
+            flush_state.pop(symbol, None)
+            entry = {}
+
+    previous_minute = entry.get("minute")
+    minute_changed = bool(previous_minute and previous_minute != event_minute)
+    if minute_changed:
+        if entry.get("preClosedMinute") != previous_minute:
+            write_closed_order_flow_minute_to_redis(redis_client, redis_keys, symbol, previous_minute, builder)
+        entry = {}
+
+    now = time.monotonic()
+    last_flush = float(entry.get("lastFlush", 0.0) or 0.0)
+    force_flush = not entry or minute_changed
+    due = (now - last_flush) * 1000 >= redis_flush_ms_from_env()
+    if force_flush or due:
+        if write_live_order_flow_minute_to_redis(redis_client, redis_keys, symbol, event_minute, builder, fallback_bin=of_bin):
+            last_flush = now
+
+    flush_state[symbol] = {"minute": event_minute, "lastFlush": last_flush}
+
+
+def write_live_order_flow_minute_to_redis(redis_client, redis_keys, symbol, event_minute, builder=None, *, fallback_bin=None):
+    bins = _order_flow_bins_for_minute(builder, symbol, event_minute, fallback_bin=fallback_bin)
+    if not bins:
+        return False
+    key = redis_keys.order_flow_live_minute(symbol)
+    value = encode_order_flow_minute_blob(order_flow_minute_blob(symbol, event_minute, bins))
+    _redis_set_ex(redis_client, key, value, live_minute_ttl_seconds_from_env())
+    return True
+
+
+def write_closed_order_flow_minute_to_redis(redis_client, redis_keys, symbol, event_minute, builder=None):
+    bins = _order_flow_bins_for_minute(builder, symbol, event_minute)
+    if not bins:
+        return False
+    key = redis_keys.order_flow_minutes(symbol)
+    value = encode_order_flow_minute_blob(order_flow_minute_blob(symbol, event_minute, bins))
+    redis_client.zadd(key, {value: order_flow_minute_score(event_minute)})
     redis_client.expire(key, live_ttl_seconds_from_env())
+    return True
+
+
+def _order_flow_bins_for_minute(builder, symbol, event_minute, *, fallback_bin=None):
+    if builder is not None and callable(getattr(builder, "bins_for_minute", None)):
+        return builder.bins_for_minute(symbol, event_minute)
+    if fallback_bin and fallback_bin.get("eventMinute") == event_minute:
+        return [fallback_bin]
+    return []
+
+
+def _order_flow_redis_flush_state(state):
+    if state is None:
+        return {}
+    flush_state = getattr(state, "order_flow_redis_flush_state", None)
+    if flush_state is None:
+        state.order_flow_redis_flush_state = {}
+        flush_state = state.order_flow_redis_flush_state
+    return flush_state
+
+
+def _delete_order_flow_live_keys(redis_client, redis_keys, symbol):
+    redis_client.delete(redis_keys.order_flow_minutes(symbol))
+    redis_client.delete(redis_keys.order_flow_live_minute(symbol))
+
+
+def _redis_set_ex(redis_client, key, value, ttl_seconds):
+    try:
+        return redis_client.set(key, value, ex=ttl_seconds)
+    except TypeError:
+        redis_client.set(key, value)
+        return redis_client.expire(key, ttl_seconds)
 
 
 def maybe_publish_order_flow_event(redis_client, redis_keys, state, of_bin):

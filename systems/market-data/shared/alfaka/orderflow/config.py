@@ -9,7 +9,9 @@ DEFAULT_ORDER_FLOW_QUOTE_REFRESH_MS = 150
 DEFAULT_ORDER_FLOW_QUOTE_MAX_AGE_MS = 2000
 DEFAULT_ORDER_FLOW_QUOTE_FUTURE_TOLERANCE_MS = 250
 DEFAULT_ORDER_FLOW_PUBLISH_THROTTLE_MS = 250
+DEFAULT_ORDER_FLOW_REDIS_FLUSH_MS = 250
 DEFAULT_ORDER_FLOW_LIVE_TTL_SECONDS = 86400
+DEFAULT_ORDER_FLOW_LIVE_MINUTE_TTL_SECONDS = 300
 
 
 def pinned_symbols_from_env() -> frozenset[str]:
@@ -38,8 +40,16 @@ def publish_throttle_ms_from_env() -> int:
     return _int_env("ORDER_FLOW_PUBLISH_THROTTLE_MS", DEFAULT_ORDER_FLOW_PUBLISH_THROTTLE_MS)
 
 
+def redis_flush_ms_from_env() -> int:
+    return _int_env("ORDER_FLOW_REDIS_FLUSH_MS", DEFAULT_ORDER_FLOW_REDIS_FLUSH_MS)
+
+
 def live_ttl_seconds_from_env() -> int:
     return _int_env("ORDER_FLOW_LIVE_TTL_SECONDS", DEFAULT_ORDER_FLOW_LIVE_TTL_SECONDS)
+
+
+def live_minute_ttl_seconds_from_env() -> int:
+    return _int_env("ORDER_FLOW_LIVE_MINUTE_TTL_SECONDS", DEFAULT_ORDER_FLOW_LIVE_MINUTE_TTL_SECONDS)
 
 
 def _float_env(name: str, default: float) -> float:
