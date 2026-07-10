@@ -31,8 +31,6 @@ from alfaka.storage.s3_realtime_layout import (
 
 
 RAW_ARCHIVE_TOPICS = (
-    "market.input.realtime.trades.v1",
-    "market.input.realtime.quotes.v1",
     "market.input.realtime.events.v1",
     "market.input.realtime.bars.1m.v1",
     "market.input.realtime.updated-bars.1m.v1",

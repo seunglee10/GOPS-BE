@@ -76,7 +76,7 @@ def start_processed_s3_sink(config, consumer_factory=create_json_consumer, s3_fa
     s3 = s3_factory()
     print(f"S3 sink 시작: topics={config['topics']}", flush=True)
     print(f"S3 확정 저장 위치: s3://{config['s3_bucket']}/{config['final_prefix']}, format={config['output_format']}", flush=True)
-    print("S3 live candle 저장은 비활성화되어 있습니다. Tick성 trades/quotes는 raw S3/ClickHouse 경로를 사용합니다.", flush=True)
+    print("S3 live candle 저장은 비활성화되어 있습니다. Tick성 trades/quotes는 ClickHouse 경로를 사용합니다.", flush=True)
     sink_runner(
         consumer,
         s3,

@@ -657,7 +657,8 @@ CLICKHOUSE_ENSURE_SCHEMA_ON_START
 
 Policy:
 
-- raw market/news payload는 S3에 오래 보관한다.
+- 저용량 raw market event/bar와 news payload만 S3에 보관한다.
+- realtime trades/quotes는 raw S3에 보관하지 않고 ClickHouse tick table을 사용한다.
 - ClickHouse는 agent serving에 필요한 recent projection을 제공한다.
 - Redis는 latest summary/link/relevance metadata를 제공한다.
 - broad preload에서는 `S3_PROCESSED_FORMAT=parquet`을 사용한다.

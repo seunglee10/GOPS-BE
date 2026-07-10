@@ -117,6 +117,7 @@ data:
   KAFKA_BOOTSTRAP_SERVERS: YOUR_MSK_BOOTSTRAP_SERVERS
   KAFKA_INPUT_TOPIC_PREFIX: market.input
   KAFKA_RAW_S3_GROUP_ID: alfaka-raw-s3-archive
+  KAFKA_RAW_ARCHIVE_TOPICS: market.input.realtime.events.v1,market.input.realtime.bars.1m.v1,market.input.realtime.updated-bars.1m.v1,market.input.realtime.daily-bars.v1
   KAFKA_PROCESSOR_GROUP_ID: alfaka-market-processor
   KAFKA_PROCESSOR_RAW_TOPICS: ""
   KAFKA_INPUT_TRADES_TOPIC: market.input.realtime.trades.v1

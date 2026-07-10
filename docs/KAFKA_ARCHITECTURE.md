@@ -90,7 +90,7 @@ flowchart LR
   end
 
   subgraph ArchiveGroup["consumer group: alfaka-raw-s3-archive"]
-    Archive["raw archive pod<br/>all 12 trade partitions"]
+    Archive["raw archive pod<br/>low-volume event/bar topics"]
   end
 
   GroupOffsets["__consumer_offsets<br/>50 compacted partitions<br/>offset stored per group/topic/partition"]
@@ -221,8 +221,6 @@ flowchart LR
   RU --> MarketProcessor
   RD --> MarketProcessor
   RQ --> QuoteProcessor
-  RT --> RawArchive
-  RQ --> RawArchive
   RE --> RawArchive
   RB --> RawArchive
   RU --> RawArchive
@@ -305,8 +303,8 @@ flowchart LR
 
 Redis and the `market.events` pub/sub channel are the active live chart state;
 there is no live-candle Kafka topic. The processed S3 sink stores only interval
-closed candles and events. Trades and quotes are archived through raw S3 and
-loaded into ClickHouse by the tick loader.
+closed candles and events. Trades and quotes are loaded into ClickHouse by the
+tick loader and are intentionally excluded from the raw S3 archive.
 
 ## News, API Derived Data, And Alerts
 
@@ -428,8 +426,8 @@ override, so the broker default `log.retention.hours=168` applies.
 
 | # | Topic | Partitions | Retention | Producer | Current consumer group |
 | ---: | --- | ---: | ---: | --- | --- |
-| 1 | `market.input.realtime.trades.v1` | 12 | 2h | Alpaca ingestors | `alfaka-market-processor`, `alfaka-raw-s3-archive` |
-| 2 | `market.input.realtime.quotes.v1` | 12 | 2h | Alpaca ingestors | `alfaka-market-quote-processor`, `alfaka-raw-s3-archive` |
+| 1 | `market.input.realtime.trades.v1` | 12 | 2h | Alpaca ingestors | `alfaka-market-processor` |
+| 2 | `market.input.realtime.quotes.v1` | 12 | 2h | Alpaca ingestors | `alfaka-market-quote-processor` |
 | 3 | `market.input.realtime.events.v1` | 3 | 7d | Alpaca ingestors | `alfaka-market-processor`, `alfaka-raw-s3-archive` |
 | 4 | `market.input.realtime.bars.1m.v1` | 3 | 7d | Alpaca ingestors | `alfaka-market-processor`, `alfaka-raw-s3-archive` |
 | 5 | `market.input.realtime.updated-bars.1m.v1` | 3 | 7d | Alpaca ingestors | `alfaka-market-processor`, `alfaka-raw-s3-archive` |
@@ -480,7 +478,7 @@ Internal topic:
 | --- | ---: | --- | --- |
 | `alfaka-market-processor` | 3 | trade, bar, updated bar, daily bar, event raw topics | manual |
 | `alfaka-market-quote-processor` | 3 | raw quote | manual |
-| `alfaka-raw-s3-archive` | 1 | all six raw topics | manual after every S3 side effect succeeds |
+| `alfaka-raw-s3-archive` | 1 | raw events, 1m bars, updated bars, daily bars | manual after every S3 side effect succeeds |
 | `alfaka-processed-s3-sink` | 1 | eight closed candle topics and layer events | manual after S3 buffer flush |
 | `alfaka-clickhouse-loader` | 4 members | one candle/news loader plus three trade/quote loaders | manual after ClickHouse insert |
 | `alfaka-news-intelligence-worker` | 3 | Alpaca news | manual after Redis/ClickHouse side effects |

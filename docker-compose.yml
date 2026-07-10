@@ -676,7 +676,7 @@ services:
         condition: service_completed_successfully
     environment:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
-      KAFKA_RAW_ARCHIVE_TOPICS: "market.input.realtime.trades.v1,market.input.realtime.quotes.v1,market.input.realtime.events.v1,market.input.realtime.bars.1m.v1,market.input.realtime.updated-bars.1m.v1,market.input.realtime.daily-bars.v1"
+      KAFKA_RAW_ARCHIVE_TOPICS: "market.input.realtime.events.v1,market.input.realtime.bars.1m.v1,market.input.realtime.updated-bars.1m.v1,market.input.realtime.daily-bars.v1"
       KAFKA_RAW_S3_GROUP_ID: "alfaka-raw-s3-archive"
       KAFKA_RAW_S3_ENABLE_AUTO_COMMIT: "false"
       AWS_REGION: "${AWS_REGION:-ap-northeast-2}"

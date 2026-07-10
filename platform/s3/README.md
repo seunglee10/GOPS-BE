@@ -3,9 +3,10 @@
 S3 has two roles in the chart data path:
 
 - historical `final` and `manifest` are durable candle evidence and recovery sources;
-- realtime `final-v2` and `raw-v2` use minute/hour/32-shard objects to bound PUT count.
+- realtime `final-v2` and low-volume `raw-v2` use minute/hour/32-shard objects to bound PUT count.
 
-`raw` and `raw-v2` are backup-only and expire after 30 days through Terraform.
+`raw` and `raw-v2` are backup-only. Terraform can apply a 30-day lifecycle when
+explicit lifecycle ownership is enabled; it is not automatic for an existing bucket.
 No lifecycle rule expires `final`, `final-v2`, backfill, or manifest evidence.
 
 ## Prefix Contract
@@ -19,9 +20,8 @@ S3_REALTIME_LAYOUT_MODE=v2
 ```
 
 Do not configure `S3_LIVE_PREFIX`. Live candles belong in Redis/WebSocket
-state, not S3. Quote payloads are retained in raw/raw-v2 backup and
-`market_data.quote_ticks`; processed final/final-v2 stores closed candles and
-market events only.
+state, not S3. Trade and quote payloads are retained in ClickHouse tick tables,
+not raw/raw-v2. Processed final/final-v2 stores closed candles and market events only.
 
 ## Realtime V2 Objects
 
@@ -58,13 +58,14 @@ market-data/rebuild-20260702-lazy-v1/manifest/backfill/request={requestId}.json
 ## Raw Backup
 
 ```text
-market-data/rebuild-20260702-lazy-v1/raw/alpaca/source=alpaca/channel={trades|quotes|bars|updated-bars|daily-bars|events}/symbol={symbol}/year=YYYY/month=MM/day=DD/*.jsonl
+market-data/rebuild-20260702-lazy-v1/raw/alpaca/source=alpaca/channel={bars|updated-bars|daily-bars|events}/symbol={symbol}/year=YYYY/month=MM/day=DD/*.jsonl
 market-data/rebuild-20260702-lazy-v1/raw/alpaca/source=alpaca/channel={bars|daily-bars}/symbol={symbol}/request={requestId}/*.jsonl
 ```
 
 Raw backup objects must not participate in chart serving, coverage checks,
 backfill decisions, or ClickHouse loading. The raw archive consumer runs with
-`KAFKA_RAW_S3_ENABLE_AUTO_COMMIT=false`; it commits offsets only after every S3
+only low-volume event/bar input topics and excludes realtime trades/quotes. It
+runs with `KAFKA_RAW_S3_ENABLE_AUTO_COMMIT=false`; it commits offsets only after every S3
 side effect in the flush succeeds. Failed uploads and invalid canonical events
 must leave the offsets uncommitted for replay.
 
