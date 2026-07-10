@@ -60,7 +60,7 @@ def main():
     s3 = create_s3_client()
     print(f"S3 sink 시작: topics={topics}", flush=True)
     print(f"S3 확정 저장 위치: s3://{s3_bucket}/{final_prefix}, format={output_format}", flush=True)
-    print("S3 live candle 저장은 비활성화되어 있습니다. Quotes는 final/quotes에 저장됩니다.", flush=True)
+    print("S3 live candle 저장은 비활성화되어 있습니다. Tick성 trades/quotes는 raw S3/ClickHouse 경로를 사용합니다.", flush=True)
 
     run_processed_s3_sink(
         consumer,
@@ -82,8 +82,6 @@ def processed_topics_from_env(environ=None):
     environ = os.environ if environ is None else environ
     return parse_csv(environ.get("KAFKA_PROCESSED_TOPICS", ",".join([
         *closed_candle_topic_values(environ),
-        environ.get("KAFKA_TRADES_LAYER_TOPIC", "market.layer.trades.v1"),
-        environ.get("KAFKA_QUOTES_LAYER_TOPIC", "market.layer.quotes.v1"),
         environ.get("KAFKA_EVENTS_LAYER_TOPIC", "market.layer.events.v1"),
     ])))
 

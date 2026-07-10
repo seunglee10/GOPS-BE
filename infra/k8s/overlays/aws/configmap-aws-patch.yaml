@@ -179,7 +179,9 @@ data:
   PROCESSOR_ACTIVE_FEED_CACHE_SECONDS: "1"
   KAFKA_PROCESSOR_ENABLE_AUTO_COMMIT: "false"
   COMPONENT_HEALTH_TTL_SECONDS: "300"
-  KAFKA_PROCESSED_TOPICS: market.layer.candles.1m.closed.v1,market.layer.candles.5m.closed.v1,market.layer.candles.10m.closed.v1,market.layer.candles.1h.closed.v1,market.layer.candles.4h.closed.v1,market.layer.candles.1d.closed.v1,market.layer.candles.1w.closed.v1,market.layer.candles.1mo.closed.v1,market.layer.trades.v1,market.layer.quotes.v1,market.layer.events.v1
+  KAFKA_PROCESSED_TOPICS: market.layer.candles.1m.closed.v1,market.layer.candles.5m.closed.v1,market.layer.candles.10m.closed.v1,market.layer.candles.1h.closed.v1,market.layer.candles.4h.closed.v1,market.layer.candles.1d.closed.v1,market.layer.candles.1w.closed.v1,market.layer.candles.1mo.closed.v1,market.layer.events.v1
+  S3_FLUSH_COUNT: "100"
+  S3_FLUSH_INTERVAL_SECONDS: "10"
   KAFKA_S3_ENABLE_AUTO_COMMIT: "false"
   KAFKA_CLICKHOUSE_ENABLE_AUTO_COMMIT: "false"
   KAFKA_CLICKHOUSE_MAX_POLL_RECORDS: "1000"

@@ -5678,8 +5678,6 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "market.layer.candles.1d.closed.v1",
             "market.layer.candles.1w.closed.v1",
             "market.layer.candles.1mo.closed.v1",
-            "market.layer.trades.v1",
-            "market.layer.quotes.v1",
             "market.layer.events.v1",
         ])
         self.assertNotIn("market.layer.candles.live.v1", topics)

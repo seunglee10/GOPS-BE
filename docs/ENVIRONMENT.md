@@ -509,7 +509,9 @@ S3_MANIFEST_PREFIX final-object coverage evidence for on-demand fill
 
 Do not configure `S3_LIVE_PREFIX` for the rebuild path. Live candles belong in
 Redis/WebSocket state. Quote payloads also update Redis/WebSocket live state,
-then flow through `market.layer.quotes.v1` to S3 final and ClickHouse.
+then flow through `market.layer.quotes.v1` to ClickHouse tick tables.
+Processed S3 final keeps canonical candle/event artifacts; raw S3 archive is
+the backup path for trade/quote replay evidence.
 
 Chart API reads, coverage checks, fill decisions, and ClickHouse loaders
 must not query `S3_RAW_PREFIX`. S3 data becomes chart-serving data only from
