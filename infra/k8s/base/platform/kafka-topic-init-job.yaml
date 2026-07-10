@@ -56,12 +56,23 @@ spec:
                 fi
 
                 retention_ms=""
+                segment_ms=""
+                segment_bytes=""
                 case "${topic}" in
+                  market.layer.candles.live.v1)
+                    retention_ms="1800000"
+                    segment_ms="300000"
+                    segment_bytes="134217728"
+                    ;;
                   agents.market-events.v1)
                     retention_ms="3600000"
+                    segment_ms="600000"
+                    segment_bytes="134217728"
                     ;;
                   market.input.realtime.trades.v1|market.input.realtime.quotes.v1|market.layer.trades.v1|market.layer.quotes.v1)
                     retention_ms="7200000"
+                    segment_ms="900000"
+                    segment_bytes="268435456"
                     ;;
                 esac
                 if [[ -n "${retention_ms}" ]]; then
@@ -70,7 +81,7 @@ spec:
                     --entity-type topics \
                     --entity-name "${topic}" \
                     --alter \
-                    --add-config "retention.ms=${retention_ms}"
+                    --add-config "retention.ms=${retention_ms},segment.ms=${segment_ms},segment.bytes=${segment_bytes}"
                 fi
               done < /etc/alfaka-kafka/topics.txt
 

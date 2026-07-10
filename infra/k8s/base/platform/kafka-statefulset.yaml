@@ -72,7 +72,9 @@ spec:
               value: -Xms1g -Xmx2g
           volumeMounts:
             - name: kafka-data
-              mountPath: /var/lib/kafka
+              # The apache/kafka image declares /var/lib/kafka/data as an image
+              # volume, so mounting only its parent leaves broker logs ephemeral.
+              mountPath: /var/lib/kafka/data
           startupProbe:
             exec:
               command:

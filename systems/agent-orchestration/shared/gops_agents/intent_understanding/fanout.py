@@ -265,10 +265,11 @@ def should_return_ui_only_early(*, query: str, results: dict[str, Any]) -> bool:
     if max_confidence < UI_ONLY_EARLY_RETURN_CONFIDENCE:
         return False
     if not any(getattr(task, "source", None) == "ui-parser" for task in ui_tasks):
+        if not any(getattr(task, "source", None) == "ui-preset-parser" for task in ui_tasks):
+            return False
+    if has_analysis_intent_signal(query) and not has_preset_load_task(ui_tasks):
         return False
-    if has_analysis_intent_signal(query):
-        return False
-    if has_content_task_signal(query):
+    if has_content_task_signal(query) and not has_preset_load_task(ui_tasks):
         return False
     if "content_rules" in results:
         content_tasks = list(results.get("content_rules") or [])
@@ -360,6 +361,8 @@ def deterministic_understanding_is_sufficient(
     has_subject_fallback: bool,
 ) -> bool:
     has_confirmed_entity = getattr(entity_resolution, "status", None) == "confirmed"
+    if has_preset_load_task(rule_ui_tasks):
+        return True
     if rule_ui_tasks and not rule_content_tasks:
         return not has_analysis_intent_signal(query)
     if rule_ui_tasks and content_tasks_are_only_panel_references(
@@ -371,6 +374,10 @@ def deterministic_understanding_is_sufficient(
     if rule_content_tasks and (has_confirmed_entity or has_subject_fallback):
         return True
     return False
+
+
+def has_preset_load_task(tasks: list[Any]) -> bool:
+    return any(getattr(task, "action", None) == "load" and bool(getattr(task, "presetId", None)) for task in tasks)
 
 
 def has_subject_fallback(*, request_symbol: Any, chart_context: Any) -> bool:

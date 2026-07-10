@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from collections import defaultdict
 from datetime import UTC, datetime
@@ -19,6 +20,7 @@ MANUAL_SOURCE = "manual"
 ORDER_FLOW_SOURCE = "orderflow"
 ACTIVE_CHART_REASON = "active-chart-session"
 RANKING_KINDS = ("dollar-volume", "volume", "gainers", "losers")
+DEFAULT_SUBSCRIPTION_EVENTS_MAXLEN = 10000
 
 
 class RealtimeSubscriptionCohortService:
@@ -362,7 +364,11 @@ class RealtimeSubscriptionCohortService:
     def _xadd(self, key: str, fields: dict[str, Any]) -> None:
         method = getattr(self.redis, "xadd", None) if self.redis else None
         if callable(method):
-            method(key, {k: encode_record_value(v) for k, v in fields.items()})
+            payload = {k: encode_record_value(v) for k, v in fields.items()}
+            try:
+                method(key, payload, maxlen=subscription_events_maxlen_from_env(), approximate=True)
+            except TypeError:
+                method(key, payload)
 
 
 def subscription_record(symbol: str, layers: set[str], sources: set[str], counts: dict[str, int]) -> dict[str, str]:
@@ -451,6 +457,15 @@ def normalize_rank_kind(kind: str) -> str:
     if normalized not in aliases:
         raise ValueError(f"Unsupported ranking kind: {kind}")
     return aliases[normalized]
+
+
+def subscription_events_maxlen_from_env(environ=None) -> int:
+    environ = environ or os.environ
+    try:
+        parsed = int(environ.get("SUBSCRIPTION_EVENTS_MAXLEN", str(DEFAULT_SUBSCRIPTION_EVENTS_MAXLEN)))
+    except (TypeError, ValueError):
+        return DEFAULT_SUBSCRIPTION_EVENTS_MAXLEN
+    return parsed if parsed > 0 else DEFAULT_SUBSCRIPTION_EVENTS_MAXLEN
 
 
 def normalize_user_id(user_id: str) -> str:
