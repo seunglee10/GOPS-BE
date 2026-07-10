@@ -60,9 +60,10 @@ WS   /ws/charts
 ```
 
 `/ws/charts` delivers candle/trade/quote/event updates plus
-`ORDER_FLOW_BINS_UPDATE` for order-flow live minute replacements. The removed
-legacy `GET /api/charts/footprint` route is intentionally not part of the active
-contract.
+`ORDER_FLOW_BINS_UPDATE` for order-flow live minute replacements through the
+global Redis `market.events` channel. Symbol-scoped Redis pub/sub channels are
+not part of the active WebSocket fanout path. The removed legacy
+`GET /api/charts/footprint` route is intentionally not part of the active contract.
 
 Deprecated queue routes are preserved as `410 Gone`:
 
@@ -233,7 +234,10 @@ requested chart interval; it does not depend on trade ticks or
 Bid/ask order-flow profile is a separate trade+quote path. The live processor
 writes closed minute blobs to `order-flow:{symbol}:minutes` and the current
 minute blob to `order-flow:{symbol}:live-minute` for pinned symbols, then
-publishes `ORDER_FLOW_BINS_UPDATE`; the EOD job
+publishes `ORDER_FLOW_BINS_UPDATE`. The Redis hot path is bounded by
+`ORDER_FLOW_REDIS_FLUSH_MS`, `QUOTE_REDIS_WRITE_MIN_INTERVAL_MS`,
+`QUOTE_EVENT_PUBLISH_MIN_INTERVAL_MS`, `TRADE_REDIS_WRITE_MIN_INTERVAL_MS`, and
+`HEALTH_WRITE_MIN_INTERVAL_MS`; the EOD job
 `systems/market-data/jobs/order-flow-daily-rollup/main.py` materializes daily
 rows into `market_data.order_flow_profile_daily`. Local compose exposes the
 `order-flow-daily-rollup` jobs-profile service, and AWS uses

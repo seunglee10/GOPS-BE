@@ -1849,23 +1849,26 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         keys = RedisKeyBuilder()
         topics = mermaid_processor_topics()
         state = ProcessorState()
+        clock = [100.0]
 
-        process_raw_envelope(
-            build_raw_envelope({"T": "t", "S": "AAPL", "i": 123, "p": 195.2, "s": 10, "t": "2026-06-25T10:15:20.100Z"}, "sip"),
-            producer,
-            redis,
-            keys,
-            state,
-            topics,
-        )
-        process_raw_envelope(
-            build_raw_envelope({"T": "b", "S": "AAPL", "t": "2026-06-25T10:15:00.000Z", "o": 195, "h": 196, "l": 194, "c": 195.5, "v": 100}, "sip"),
-            producer,
-            redis,
-            keys,
-            state,
-            topics,
-        )
+        with mock.patch("alfaka.streaming.processor.time.monotonic", side_effect=lambda: clock[0]):
+            process_raw_envelope(
+                build_raw_envelope({"T": "t", "S": "AAPL", "i": 123, "p": 195.2, "s": 10, "t": "2026-06-25T10:15:20.100Z"}, "sip"),
+                producer,
+                redis,
+                keys,
+                state,
+                topics,
+            )
+            clock[0] = 101.0
+            process_raw_envelope(
+                build_raw_envelope({"T": "b", "S": "AAPL", "t": "2026-06-25T10:15:00.000Z", "o": 195, "h": 196, "l": 194, "c": 195.5, "v": 100}, "sip"),
+                producer,
+                redis,
+                keys,
+                state,
+                topics,
+            )
 
         self.assertIn("market.layer.candles.closed.v1", [sent["topic"] for sent in producer.sent])
         self.assertIn(keys.pending_replace_candle("AAPL", "1m", "2026-06-25T10:15:00.000Z"), redis.values)
@@ -2074,8 +2077,8 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn("gops-market-processor:latest", deployment)
         self.assertIn("systems/market-data/pods/market-processor/local_main.py", deployment)
         self.assertIn("KAFKA_PROCESSOR_RAW_TOPICS", deployment)
-        self.assertIn("market.input.realtime.trades.v1,market.input.realtime.bars.1m.v1", deployment)
-        self.assertNotIn("market.input.realtime.quotes.v1", deployment)
+        self.assertIn("market.input.realtime.trades.v1,market.input.realtime.quotes.v1,market.input.realtime.bars.1m.v1", deployment)
+        self.assertIn("ORDER_FLOW_QUOTE_CACHE_ONLY", deployment)
         self.assertIn("name: alfaka-market-quote-processor", quote_deployment)
         self.assertIn("app: alfaka-market-quote-processor", quote_deployment)
         self.assertIn("KAFKA_PROCESSOR_GROUP_ID", quote_deployment)

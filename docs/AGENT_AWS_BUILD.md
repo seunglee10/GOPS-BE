@@ -158,6 +158,10 @@ Bid/ask order-flow profile은 derived-worker가 아니라 market processor와 EO
 rollup job이 담당한다. Live path는 pinned symbol trade/quote를 Redis
 `order-flow:{symbol}:minutes` ZSET과 `order-flow:{symbol}:live-minute` string에
 캔들형 minute blob으로 적고 `ORDER_FLOW_BINS_UPDATE`를 WebSocket에 팬아웃한다.
+`alfaka-market-processor` also consumes raw quotes with
+`ORDER_FLOW_QUOTE_CACHE_ONLY=true` to keep pinned-symbol NBBO in process for
+classification, while `alfaka-market-quote-processor` remains responsible for
+quote layer publishing and Redis live quote state.
 Daily rows는
 `systems/market-data/jobs/order-flow-daily-rollup/main.py`와
 `infra/k8s/overlays/aws/cronjob-order-flow-daily-rollup.yaml`이 ClickHouse
@@ -364,6 +368,11 @@ ORDER_FLOW_PUBLISH_THROTTLE_MS
 ORDER_FLOW_REDIS_FLUSH_MS
 ORDER_FLOW_LIVE_TTL_SECONDS
 ORDER_FLOW_LIVE_MINUTE_TTL_SECONDS
+ORDER_FLOW_QUOTE_CACHE_ONLY
+QUOTE_REDIS_WRITE_MIN_INTERVAL_MS
+QUOTE_EVENT_PUBLISH_MIN_INTERVAL_MS
+TRADE_REDIS_WRITE_MIN_INTERVAL_MS
+HEALTH_WRITE_MIN_INTERVAL_MS
 ```
 
 Kafka bootstrap env:

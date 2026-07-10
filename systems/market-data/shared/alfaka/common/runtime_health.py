@@ -14,11 +14,13 @@ def write_component_health(redis_client, redis_keys, component, **fields):
         "updatedAt": utc_now_iso(),
         **fields,
     }
-    redis_client.set(
-        redis_keys.component_health(component),
-        json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
-    )
-    redis_client.expire(redis_keys.component_health(component), component_health_ttl_seconds())
+    key = redis_keys.component_health(component)
+    value = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    try:
+        redis_client.set(key, value, ex=component_health_ttl_seconds())
+    except TypeError:
+        redis_client.set(key, value)
+        redis_client.expire(key, component_health_ttl_seconds())
     return payload
 
 

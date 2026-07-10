@@ -12,6 +12,10 @@ DEFAULT_ORDER_FLOW_PUBLISH_THROTTLE_MS = 250
 DEFAULT_ORDER_FLOW_REDIS_FLUSH_MS = 250
 DEFAULT_ORDER_FLOW_LIVE_TTL_SECONDS = 86400
 DEFAULT_ORDER_FLOW_LIVE_MINUTE_TTL_SECONDS = 300
+DEFAULT_QUOTE_REDIS_WRITE_MIN_INTERVAL_MS = 100
+DEFAULT_QUOTE_EVENT_PUBLISH_MIN_INTERVAL_MS = 250
+DEFAULT_TRADE_REDIS_WRITE_MIN_INTERVAL_MS = 250
+DEFAULT_HEALTH_WRITE_MIN_INTERVAL_MS = 1000
 
 
 def pinned_symbols_from_env() -> frozenset[str]:
@@ -50,6 +54,22 @@ def live_ttl_seconds_from_env() -> int:
 
 def live_minute_ttl_seconds_from_env() -> int:
     return _int_env("ORDER_FLOW_LIVE_MINUTE_TTL_SECONDS", DEFAULT_ORDER_FLOW_LIVE_MINUTE_TTL_SECONDS)
+
+
+def quote_redis_write_min_interval_ms_from_env() -> int:
+    return _non_negative_int_env("QUOTE_REDIS_WRITE_MIN_INTERVAL_MS", DEFAULT_QUOTE_REDIS_WRITE_MIN_INTERVAL_MS)
+
+
+def quote_event_publish_min_interval_ms_from_env() -> int:
+    return _non_negative_int_env("QUOTE_EVENT_PUBLISH_MIN_INTERVAL_MS", DEFAULT_QUOTE_EVENT_PUBLISH_MIN_INTERVAL_MS)
+
+
+def trade_redis_write_min_interval_ms_from_env() -> int:
+    return _non_negative_int_env("TRADE_REDIS_WRITE_MIN_INTERVAL_MS", DEFAULT_TRADE_REDIS_WRITE_MIN_INTERVAL_MS)
+
+
+def health_write_min_interval_ms_from_env() -> int:
+    return _non_negative_int_env("HEALTH_WRITE_MIN_INTERVAL_MS", DEFAULT_HEALTH_WRITE_MIN_INTERVAL_MS)
 
 
 def _float_env(name: str, default: float) -> float:

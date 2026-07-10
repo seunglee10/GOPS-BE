@@ -205,6 +205,11 @@ ORDER_FLOW_PUBLISH_THROTTLE_MS
 ORDER_FLOW_REDIS_FLUSH_MS
 ORDER_FLOW_LIVE_TTL_SECONDS
 ORDER_FLOW_LIVE_MINUTE_TTL_SECONDS
+ORDER_FLOW_QUOTE_CACHE_ONLY
+QUOTE_REDIS_WRITE_MIN_INTERVAL_MS
+QUOTE_EVENT_PUBLISH_MIN_INTERVAL_MS
+TRADE_REDIS_WRITE_MIN_INTERVAL_MS
+HEALTH_WRITE_MIN_INTERVAL_MS
 ```
 
 `PROCESSOR_RECOVERY_SYMBOLS` is optional. Keep it empty unless an incident repair
@@ -250,6 +255,15 @@ blobs are appended to `order-flow:{symbol}:minutes`.
 `ORDER_FLOW_LIVE_TTL_SECONDS` keeps closed minute blobs available for today's
 intraday panel until the EOD rollup has run, and
 `ORDER_FLOW_LIVE_MINUTE_TTL_SECONDS` keeps the current in-progress minute fresh.
+`ORDER_FLOW_QUOTE_CACHE_ONLY=true` is set only on the trade/candle market
+processor role when it also consumes the raw quotes topic for pinned-symbol
+in-memory NBBO classification; the dedicated quote processor keeps the quote
+layer topic and Redis live quote responsibility. `QUOTE_REDIS_WRITE_MIN_INTERVAL_MS`,
+`QUOTE_EVENT_PUBLISH_MIN_INTERVAL_MS`, `TRADE_REDIS_WRITE_MIN_INTERVAL_MS`, and
+`HEALTH_WRITE_MIN_INTERVAL_MS` throttle Redis live quote writes, quote
+WebSocket fanout, live trade writes, and processor health writes respectively.
+Do not raise `QUOTE_REDIS_WRITE_MIN_INTERVAL_MS` above `100` while any live
+classification role still depends on Redis quote fallback.
 
 `ACTIVE_CHART_TTL_SECONDS` keeps the symbol currently open in the chart inside
 the explicit realtime cohort even when the visible chart interval is 1h, 4h,
