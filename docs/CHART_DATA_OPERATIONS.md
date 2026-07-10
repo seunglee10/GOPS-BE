@@ -12,6 +12,10 @@ rollback. Architecture and public contracts are in
 - Do not inject fake candles into a running local market pipeline.
 - Do not delete broker topics, tables, S3 objects, or Redis namespaces as part
   of validation.
+- Repository-root `.env.example` is the Docker Compose chart-data contract;
+  `systems/api-server/.env.example` is the backend-only contract. Real `.env`
+  files stay ignored. The contract checker fails when a documented tuning value
+  is missing, differs from Compose defaults, or is not forwarded to a service.
 
 ## Validation Gate
 

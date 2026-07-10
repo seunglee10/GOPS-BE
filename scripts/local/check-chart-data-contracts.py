@@ -11,6 +11,80 @@ LOCAL_DDL = ROOT / "infra/clickhouse/initdb/01-market-data.sql"
 K8S_DDL = ROOT / "infra/k8s/base/platform/clickhouse-initdb/01-market-data.sql"
 LOCAL_TOPICS = ROOT / "platform/kafka/topics.txt"
 K8S_TOPICS = ROOT / "infra/k8s/base/platform/kafka/topics.txt"
+ROOT_ENV_EXAMPLE = ROOT / ".env.example"
+API_ENV_EXAMPLE = ROOT / "systems/api-server/.env.example"
+ROOT_CHART_ENV = (
+    "REDIS_URL",
+    "REDIS_KEY_PREFIX",
+    "S3_BUCKET",
+    "S3_RAW_PREFIX",
+    "S3_FINAL_PREFIX",
+    "S3_MANIFEST_PREFIX",
+    "S3_PROCESSED_FORMAT",
+    "S3_REALTIME_LAYOUT_MODE",
+    "S3_FLUSH_COUNT",
+    "S3_FLUSH_INTERVAL_SECONDS",
+    "S3_RAW_FLUSH_COUNT",
+    "S3_RAW_FLUSH_INTERVAL_SECONDS",
+    "S3_PUT_MAX_ATTEMPTS",
+    "S3_PUT_RETRY_SLEEP_SECONDS",
+    "ORDER_FLOW_PINNED_SYMBOLS",
+    "ORDER_FLOW_PRICE_BIN_SIZE",
+    "ORDER_FLOW_QUOTE_REFRESH_MS",
+    "ORDER_FLOW_QUOTE_MAX_AGE_MS",
+    "ORDER_FLOW_QUOTE_FUTURE_TOLERANCE_MS",
+    "ORDER_FLOW_PUBLISH_THROTTLE_MS",
+    "ORDER_FLOW_REDIS_FLUSH_MS",
+    "ORDER_FLOW_LIVE_TTL_SECONDS",
+    "ORDER_FLOW_LIVE_MINUTE_TTL_SECONDS",
+    "QUOTE_REDIS_WRITE_MIN_INTERVAL_MS",
+    "QUOTE_EVENT_PUBLISH_MIN_INTERVAL_MS",
+    "TRADE_REDIS_WRITE_MIN_INTERVAL_MS",
+    "HEALTH_WRITE_MIN_INTERVAL_MS",
+    "CHART_INDICATOR_CACHE_TTL_SECONDS",
+    "CHART_VOLUME_PROFILE_CACHE_TTL_SECONDS",
+    "CHART_DERIVED_INLINE_LOCK_TTL_SECONDS",
+    "CHART_DERIVED_INLINE_WAIT_MS",
+    "ON_DEMAND_FILL_TIMEOUT_SECONDS",
+    "ON_DEMAND_FILL_BACKGROUND_ENABLED",
+    "ON_DEMAND_FILL_BACKGROUND_WORKERS",
+    "ON_DEMAND_FILL_BACKGROUND_TIMEOUT_SECONDS",
+    "ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED",
+    "ON_DEMAND_FILL_FOREGROUND_MAX_BARS",
+    "ON_DEMAND_FILL_FOREGROUND_AUTO_INTERVALS",
+    "ON_DEMAND_FILL_FOREGROUND_AUTO_MAX_BARS",
+    "ON_DEMAND_FILL_DISTRIBUTED_SINGLEFLIGHT_ENABLED",
+    "ON_DEMAND_FILL_SINGLEFLIGHT_LOCK_TTL_SECONDS",
+    "ON_DEMAND_FILL_SINGLEFLIGHT_TERMINAL_TTL_SECONDS",
+)
+COMPOSE_CHART_TUNABLES = tuple(
+    name for name in ROOT_CHART_ENV if name not in {"REDIS_URL", "REDIS_KEY_PREFIX", "S3_PROCESSED_FORMAT"}
+)
+API_MIRRORED_ENV = (
+    "REDIS_URL",
+    "REDIS_KEY_PREFIX",
+    "S3_BUCKET",
+    "S3_FINAL_PREFIX",
+    "S3_MANIFEST_PREFIX",
+    "S3_PROCESSED_FORMAT",
+    "ORDER_FLOW_PINNED_SYMBOLS",
+    "ORDER_FLOW_PRICE_BIN_SIZE",
+    "CHART_INDICATOR_CACHE_TTL_SECONDS",
+    "CHART_VOLUME_PROFILE_CACHE_TTL_SECONDS",
+    "CHART_DERIVED_INLINE_LOCK_TTL_SECONDS",
+    "CHART_DERIVED_INLINE_WAIT_MS",
+    "ON_DEMAND_FILL_TIMEOUT_SECONDS",
+    "ON_DEMAND_FILL_BACKGROUND_ENABLED",
+    "ON_DEMAND_FILL_BACKGROUND_WORKERS",
+    "ON_DEMAND_FILL_BACKGROUND_TIMEOUT_SECONDS",
+    "ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED",
+    "ON_DEMAND_FILL_FOREGROUND_MAX_BARS",
+    "ON_DEMAND_FILL_FOREGROUND_AUTO_INTERVALS",
+    "ON_DEMAND_FILL_FOREGROUND_AUTO_MAX_BARS",
+    "ON_DEMAND_FILL_DISTRIBUTED_SINGLEFLIGHT_ENABLED",
+    "ON_DEMAND_FILL_SINGLEFLIGHT_LOCK_TTL_SECONDS",
+    "ON_DEMAND_FILL_SINGLEFLIGHT_TERMINAL_TTL_SECONDS",
+)
 TEXT_SCAN_EXCLUDED_DIRS = {
     ".git",
     ".terraform",
@@ -59,6 +133,21 @@ def env_csv(path: Path, name: str) -> list[str]:
     if not matches:
         return []
     return [item.strip() for item in matches[-1].split(",") if item.strip()]
+
+
+def dotenv_values(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for raw_line in read(path).splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        values[name.strip()] = value.strip().strip("\"'")
+    return values
+
+
+def compose_defaults(compose: str, name: str) -> set[str]:
+    return set(re.findall(rf"\$\{{{re.escape(name)}:-([^}}]*)\}}", compose))
 
 
 def terraform_variable_default(terraform: str, name: str) -> str | None:
@@ -151,6 +240,27 @@ def collect_errors() -> list[str]:
         errors.append("Docker Compose kafka-init does not read the canonical topic inventory")
     if 'done < "${TOPICS_FILE}"' not in local_topic_script:
         errors.append("Local Kafka topic creation does not read platform/kafka/topics.txt")
+
+    root_env = dotenv_values(ROOT_ENV_EXAMPLE)
+    api_env = dotenv_values(API_ENV_EXAMPLE)
+    for name in ROOT_CHART_ENV:
+        if name not in root_env:
+            errors.append(f"Root .env.example is missing chart-data setting: {name}")
+    for name in COMPOSE_CHART_TUNABLES:
+        defaults = compose_defaults(compose, name)
+        if not defaults:
+            errors.append(f"Docker Compose does not forward chart-data setting: {name}")
+        elif root_env.get(name) not in defaults:
+            errors.append(
+                f"Root .env.example default differs from Docker Compose for {name}: "
+                f"example={root_env.get(name)!r} compose={sorted(defaults)!r}"
+            )
+    for name in API_MIRRORED_ENV:
+        if api_env.get(name) != root_env.get(name):
+            errors.append(
+                f"API .env.example differs from root chart-data setting {name}: "
+                f"api={api_env.get(name)!r} root={root_env.get(name)!r}"
+            )
 
     expected_processed = env_csv(ROOT / "docker-compose.yml", "KAFKA_PROCESSED_TOPICS")
     for path in (

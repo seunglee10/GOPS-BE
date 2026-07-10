@@ -201,6 +201,8 @@ REALTIME_REDIS_POLL_SECONDS
 ORDER_FLOW_PINNED_SYMBOLS
 ORDER_FLOW_PRICE_BIN_SIZE
 ORDER_FLOW_QUOTE_REFRESH_MS
+ORDER_FLOW_QUOTE_MAX_AGE_MS
+ORDER_FLOW_QUOTE_FUTURE_TOLERANCE_MS
 ORDER_FLOW_PUBLISH_THROTTLE_MS
 ORDER_FLOW_REDIS_FLUSH_MS
 ORDER_FLOW_LIVE_TTL_SECONDS
@@ -247,7 +249,9 @@ Redis active-feed lookup for every single tick.
 Order-flow profile env controls the pinned bid/ask volume profile path.
 `ORDER_FLOW_PINNED_SYMBOLS` defaults to `NVDA,AMZN,MU,AAPL,GOOGL` and is the
 only v1 live/EOD coverage set. `ORDER_FLOW_PRICE_BIN_SIZE` defaults to `0.01`.
-`ORDER_FLOW_QUOTE_REFRESH_MS` gates quote cache refresh, and
+`ORDER_FLOW_QUOTE_REFRESH_MS` gates quote cache refresh.
+`ORDER_FLOW_QUOTE_MAX_AGE_MS` and
+`ORDER_FLOW_QUOTE_FUTURE_TOLERANCE_MS` bound quote/trade matching, and
 `ORDER_FLOW_PUBLISH_THROTTLE_MS` throttles `ORDER_FLOW_BINS_UPDATE` fanout per
 symbol. `ORDER_FLOW_REDIS_FLUSH_MS` throttles writes of the current
 `order-flow:{symbol}:live-minute` blob, defaulting to 250ms. Closed minute
@@ -277,6 +281,18 @@ Live provisional candles are Redis state and are delivered through
 `market.events` pub/sub/WebSocket. There is no live-candle Kafka publication.
 Optional indicator and candle-volume-profile requests run in the API with Redis
 TTL cache/singleflight; there is no derived Kafka worker contract.
+
+API-owned derived calculation tuning is committed in both env examples:
+
+```text
+CHART_INDICATOR_CACHE_TTL_SECONDS
+CHART_VOLUME_PROFILE_CACHE_TTL_SECONDS
+CHART_DERIVED_INLINE_LOCK_TTL_SECONDS
+CHART_DERIVED_INLINE_WAIT_MS
+```
+
+These values are optional overrides. Code, Compose, and K8s all carry the same
+defaults, so a missing local `.env` does not disable chart calculation.
 
 `LIVE_CANDLE_TTL_SECONDS` and `LIVE_TRADE_TTL_SECONDS` keep Redis live state
 short-lived. AWS/EKS defaults to `180` seconds so a thinly traded symbol cannot
@@ -457,6 +473,7 @@ S3_RAW_PREFIX
 S3_FINAL_PREFIX
 S3_MANIFEST_PREFIX
 S3_PROCESSED_FORMAT
+S3_REALTIME_LAYOUT_MODE
 S3_HISTORICAL_RAW_PARTITION_MODE
 S3_HISTORICAL_PROCESSED_MANIFEST_LAYOUT
 S3_FLUSH_COUNT
@@ -474,11 +491,13 @@ S3_MATERIALIZE_INTERVAL
 S3_MATERIALIZE_START
 S3_MATERIALIZE_END
 S3_MATERIALIZE_MANIFEST_PREFIX
+KAFKA_S3_ENABLE_AUTO_COMMIT
+KAFKA_RAW_S3_ENABLE_AUTO_COMMIT
 ```
 
 Leave `S3_ENDPOINT_URL` empty for real AWS S3.
 
-Current local/AWS chart rebuild prefix contract:
+Current local/AWS chart-data prefix contract:
 
 ```text
 S3_RAW_PREFIX=market-data/rebuild-20260702-lazy-v1/raw/alpaca
@@ -487,10 +506,9 @@ S3_MANIFEST_PREFIX=market-data/rebuild-20260702-lazy-v1/manifest
 S3_MATERIALIZE_PREFIX=market-data/rebuild-20260702-lazy-v1/final
 ```
 
-Keep these prefixes aligned between local Docker Compose and AWS overlays while
-the on-demand chart rebuild is active. Pointing AWS at old dated rebuild
-prefixes or `market-data/v2/tick-candle` mixes legacy data with the new
-contract.
+Keep these prefixes aligned between local Docker Compose and AWS overlays.
+Pointing AWS at retired prefixes or `market-data/v2/tick-candle` mixes legacy
+data with the current contract.
 
 Local Docker services that read S3 can authenticate with direct
 `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` values, but the preferred local path
@@ -566,6 +584,9 @@ ON_DEMAND_FILL_FOREGROUND_MAX_BARS
 ON_DEMAND_FILL_FOREGROUND_AUTO_INTERVALS
 ON_DEMAND_FILL_FOREGROUND_AUTO_MAX_BARS
 ON_DEMAND_FILL_TIMEOUT_SECONDS
+ON_DEMAND_FILL_DISTRIBUTED_SINGLEFLIGHT_ENABLED
+ON_DEMAND_FILL_SINGLEFLIGHT_LOCK_TTL_SECONDS
+ON_DEMAND_FILL_SINGLEFLIGHT_TERMINAL_TTL_SECONDS
 HISTORICAL_ADJUSTMENT
 ALLOW_NON_CANONICAL_HISTORICAL_ADJUSTMENT
 HISTORICAL_1M_MINUTES_PER_TRADING_DAY
@@ -576,6 +597,14 @@ S3_REQUIRE_CANONICAL_PROCESSED_CANDLES
 DAILY_BAR_1M_REPAIR_ENABLED
 DAILY_BAR_1M_REPAIR_RATIO
 ```
+
+Distributed singleflight defaults to enabled. Its owner lock lives for 120
+seconds and terminal state for 300 seconds; compare-and-mutate Lua prevents an
+expired owner from deleting or overwriting a replacement owner's lock. Root and
+backend-local `.env.example` files carry these defaults, and Compose forwards
+all supported overrides. Role safety settings such as Kafka auto-commit and
+`ORDER_FLOW_QUOTE_CACHE_ONLY` remain pinned in committed manifests instead of
+being global `.env` knobs.
 
 Canonical Alpaca historical fill uses `adjustment=split` and writes
 `priceAdjustment=split`, `canonicalVersion=v2`. Historical fill now uses direct
