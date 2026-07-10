@@ -26,8 +26,9 @@ Current rebuild rules:
   backfill state, subscription state, and SIP/BOATS feed state.
 - Quotes are subscribed only for symbols that already receive realtime trades.
   The quote processor writes Redis/WebSocket live state and republishes
-  canonical quote payloads to `market.layer.quotes.v1` for S3 final and
-  ClickHouse `quote_ticks` storage.
+  canonical quote payloads to `market.layer.quotes.v1` for ClickHouse
+  `quote_ticks` storage. Processed S3 final keeps candles/events, while raw S3
+  archive remains the replay evidence path for high-volume trade/quote ticks.
 - S3 raw is backup-only. Chart serving and materialization use ClickHouse and
   S3 final/manifest, never raw backup.
 - SIP and BOATS are mutually exclusive by feed session.
