@@ -959,7 +959,24 @@ def write_volume_profile_bin_to_redis(redis_client, redis_keys, profile_bin):
     member = json.dumps(profile_bin, ensure_ascii=False, separators=(",", ":"))
     score = timestamp_score(profile_bin["eventMinute"])
     redis_client.zadd(key, {member: score})
-    redis_client.expire(key, 86400)
+    trim_volume_profile_live_cache(redis_client, key, score)
+    redis_client.expire(key, volume_profile_live_ttl_seconds())
+
+
+def trim_volume_profile_live_cache(redis_client, key, score):
+    batch_size = volume_profile_live_trim_batch_size()
+    cutoff_score = max(0, score - volume_profile_live_window_seconds() * 1000)
+    old_members = redis_client.zrangebyscore(key, 0, cutoff_score, start=0, num=batch_size)
+    if old_members:
+        redis_client.zrem(key, *old_members)
+
+    overflow = redis_client.zcard(key) - volume_profile_live_max_bins()
+    if overflow <= 0:
+        return
+    rank_trim_count = min(overflow, batch_size)
+    overflow_members = redis_client.zrange(key, 0, rank_trim_count - 1)
+    if overflow_members:
+        redis_client.zrem(key, *overflow_members)
 
 
 def write_order_flow_bin_to_redis(redis_client, redis_keys, of_bin, state=None):
@@ -1141,6 +1158,23 @@ def live_trade_ttl_seconds():
 
 def live_candle_ttl_seconds():
     return parse_positive_int(os.getenv("LIVE_CANDLE_TTL_SECONDS", "180"), default=180)
+
+
+def volume_profile_live_window_seconds():
+    return parse_positive_int(os.getenv("VOLUME_PROFILE_LIVE_WINDOW_SECONDS", "7200"), default=7200)
+
+
+def volume_profile_live_ttl_seconds():
+    default_ttl = volume_profile_live_window_seconds()
+    return parse_positive_int(os.getenv("VOLUME_PROFILE_LIVE_TTL_SECONDS", str(default_ttl)), default=default_ttl)
+
+
+def volume_profile_live_max_bins():
+    return parse_positive_int(os.getenv("VOLUME_PROFILE_LIVE_MAX_BINS", "50000"), default=50000)
+
+
+def volume_profile_live_trim_batch_size():
+    return parse_positive_int(os.getenv("VOLUME_PROFILE_LIVE_TRIM_BATCH_SIZE", "1000"), default=1000)
 
 
 def parse_positive_int(value, default):
