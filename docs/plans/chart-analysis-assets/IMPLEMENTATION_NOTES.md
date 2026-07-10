@@ -35,3 +35,22 @@ repository contracts differ.
 - The ClickHouse row adapter converts asset ISO timestamps to the database's
   `DateTime64` text format; timestamps inside the canonical JSON payload remain
   UTC ISO-8601 and unchanged.
+
+## Bundle 3 — Frontend asset application and commentary UX
+
+- The current `executeChartCommandGroup` implementation always recorded a
+  chart-panel history entry even when every command had
+  `historyScope="external"`. It now skips history only for all-external groups,
+  so asset application remains atomic without polluting user undo; existing
+  user and proposal groups retain their prior behavior.
+- Non-chart panel renderers do not receive a chart document in the current
+  workspace contract. `PanelWorkspace` therefore supplies the first active
+  chart document and its candles as explicit read-only context to the
+  commentary and operations panels. No extra chart document is created.
+- The existing local Agent debug gate was private to `App.tsx`. Its unchanged
+  URL/local-storage behavior was moved to `localAgentDebug.ts` so both the app
+  and panel palette use one gate; production builds still keep the development
+  panel hidden.
+- The repository already has a custom chart test runner but no general React
+  unit-test framework. Glossary matching and asset command behavior are pure
+  modules imported by that runner, avoiding a new test dependency.

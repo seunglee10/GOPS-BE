@@ -69,6 +69,8 @@ class InMemoryChartAssetProgressStore:
             if status == "skipped": progress["skipped"] += 1
             progress["current"] = f"{item.get('symbol')}:{item.get('interval')}"
             state["recentItems"] = [*state.get("recentItems", []), copy.deepcopy(item)][-50:]
+            if status == "failed":
+                state["failedItems"] = [*state.get("failedItems", []), copy.deepcopy(item)]
         self.mutate(job_id, mutate, event={"type": "item", **item})
 
     def pubsub(self, job_id: str):
@@ -154,7 +156,7 @@ def initial_state(envelope: ChartAssetBuildEnvelope) -> dict[str, Any]:
         "status": "queued",
         "requested": {"symbolCount": len(envelope.symbols), "intervals": list(envelope.intervals), "llmEnabled": envelope.llm_enabled},
         "progress": {"total": total, "done": 0, "failed": 0, "skipped": 0, "current": None},
-        "recentItems": [], "logs": [], "startedAt": None, "finishedAt": None, "cancelRequested": False,
+        "recentItems": [], "failedItems": [], "logs": [], "startedAt": None, "finishedAt": None, "cancelRequested": False,
     }
 
 

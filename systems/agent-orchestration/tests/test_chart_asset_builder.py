@@ -95,5 +95,17 @@ class ChartAssetBuilderTest(unittest.TestCase):
         self.assertEqual(set(context["higherTf"]), {"1M", "1W"})
         self.assertEqual(context["flags"], [])
 
+    def test_failure_list_is_not_truncated_with_recent_items(self):
+        request = envelope(symbols=tuple(f"S{index}" for index in range(60)), intervals=("1D",), job_id="cab-12345678-failures")
+        progress = InMemoryChartAssetProgressStore(); progress.initialize(request)
+        for index, symbol in enumerate(request.symbols):
+            progress.record_item(request.job_id, {
+                "symbol": symbol, "interval": "1D", "status": "failed",
+                "stage": "kernel", "error": f"failure-{index}", "elapsedMs": 1,
+            })
+        state = progress.get(request.job_id)
+        self.assertEqual(len(state["recentItems"]), 50)
+        self.assertEqual(len(state["failedItems"]), 60)
+
 
 if __name__ == "__main__": unittest.main()
