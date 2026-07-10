@@ -16,6 +16,7 @@ from app.routes.auth import router as auth_router
 from app.routes.agents import agent_alerts, agent_report, agent_report_stream, analyze_agents, router as agents_router
 from app.routes.charts import chart_candles, chart_symbols, router as charts_router
 from app.routes.chart_presets import router as chart_presets_router
+from app.routes.chart_assets import router as chart_assets_router
 from app.routes.health import health, log_runtime_config, router as health_router
 from app.routes.llm import agent_chat, chart_proposal, router as llm_router
 from app.routes.orders import order_contract, router as orders_router
@@ -54,6 +55,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_router)
     app.include_router(account_router)
     app.include_router(charts_router)
+    app.include_router(chart_assets_router)
     app.include_router(chart_presets_router)
     app.include_router(market_query_router)
     app.include_router(market_monitor_router)

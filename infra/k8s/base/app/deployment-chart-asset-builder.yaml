@@ -1,0 +1,34 @@
+# 역할: 수동 Chart Analysis Asset 빌드 요청을 독립적으로 처리합니다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chart-asset-builder
+  namespace: alfaka-market-data
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: chart-asset-builder
+  template:
+    metadata:
+      labels:
+        app: chart-asset-builder
+    spec:
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: chart-asset-builder
+          image: YOUR_ECR_REPOSITORY/gops-agent-orchestrator:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -u
+            - /app/systems/agent-orchestration/pods/chart-asset-builder/main.py
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-clickhouse-secret
+                optional: true
+            - secretRef:
+                name: alfaka-openai-secret
+                optional: true

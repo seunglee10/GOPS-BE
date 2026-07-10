@@ -91,12 +91,18 @@ Agent topics:
 
 ```text
 agents.analysis-requests.v1
+agents.chart-asset-build-requests.v1
 agents.deep-analysis-requests.v1
 agents.analysis-results.v1
 agents.query-understanding-events.v1
 agents.notification-decisions.v1
 agents.dlq.v1
 ```
+
+`agents.chart-asset-build-requests.v1` carries one manual chart-analysis asset
+job per message. The independent `gops-chart-asset-builder` consumer group uses
+`max_poll_records=1`, commits only after the job finishes, and does not share
+the interactive analysis request/result path.
 
 `agents.query-understanding-events.v1` is an observability/audit stream emitted
 with completed reports. It is not used as request/reply transport inside the

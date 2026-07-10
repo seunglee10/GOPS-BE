@@ -1116,6 +1116,40 @@ services:
       - data_net
       - streaming_net
 
+  chart-asset-builder:
+    image: gops-agent-orchestrator
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
+    container_name: alfaka-chart-asset-builder
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      REDIS_URL: "redis://redis:6379/0"
+      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
+      CLICKHOUSE_DATABASE: "market_data"
+      CLICKHOUSE_USER: "alfaka"
+      CLICKHOUSE_PASSWORD: "alfaka"
+      CHART_ASSET_BUILD_REQUESTS_TOPIC: "agents.chart-asset-build-requests.v1"
+      CHART_ASSET_BUILD_CONCURRENCY: "${CHART_ASSET_BUILD_CONCURRENCY:-4}"
+      CHART_ASSET_BUILD_MAX_POLL_INTERVAL_MS: "${CHART_ASSET_BUILD_MAX_POLL_INTERVAL_MS:-7200000}"
+      CHART_ASSET_LLM_ENABLED: "${CHART_ASSET_LLM_ENABLED:-true}"
+      CHART_ASSET_LLM_MODEL: "${CHART_ASSET_LLM_MODEL:-}"
+      CHART_ASSET_LLM_TIMEOUT_SECONDS: "${CHART_ASSET_LLM_TIMEOUT_SECONDS:-25}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      OPENAI_MODEL: "${OPENAI_MODEL:-gpt-5.2}"
+    command: ["python", "-u", "/app/systems/agent-orchestration/pods/chart-asset-builder/main.py"]
+    restart: unless-stopped
+    networks:
+      - data_net
+      - streaming_net
+
   deep-analysis-worker:
     image: gops-agent-orchestrator
     build:
@@ -1439,6 +1473,8 @@ services:
         condition: service_started
       agent-analysis-worker:
         condition: service_started
+      chart-asset-builder:
+        condition: service_started
     environment:
       REDIS_URL: "redis://redis:6379/0"
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
@@ -1471,6 +1507,7 @@ services:
       AGENT_REPORT_STREAM_REDIS_ENABLED: "${AGENT_REPORT_STREAM_REDIS_ENABLED:-true}"
       AGENT_REPORT_UPDATES_CHANNEL: "agent.reports"
       AGENT_ANALYSIS_REQUESTS_TOPIC: "agents.analysis-requests.v1"
+      CHART_ASSET_BUILD_REQUESTS_TOPIC: "agents.chart-asset-build-requests.v1"
       AGENT_ANALYSIS_RESULTS_TOPIC: "agents.analysis-results.v1"
       AGENT_NOTIFICATION_DECISIONS_TOPIC: "agents.notification-decisions.v1"
       AGENT_DLQ_TOPIC: "agents.dlq.v1"

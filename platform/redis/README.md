@@ -50,7 +50,13 @@ gops:market:on-demand:v1:feed:quarantine:{date}
 chart:indicators:{version}:{symbol}:{interval}:{requestHash}
 chart:volume-profile:{version}:{symbol}:{requestHash}
 chart:derived:lock:{requestHash}
+gops:chart-assets:build:{jobId}
 ```
+
+Chart-analysis assets themselves never enter Redis. The manual build pipeline
+uses only the 24-hour status document `gops:chart-assets:build:{jobId}` and the
+ephemeral pub/sub channel `chart-assets.build:{jobId}` for SSE updates and
+cooperative cancellation.
 
 `order-flow:{symbol}:minutes` stores closed minute blobs in a ZSET for at most
 `ORDER_FLOW_LIVE_TTL_SECONDS` (default 86400). `live-minute` stores one current
@@ -73,6 +79,7 @@ derived-result Redis state.
 | order-flow minute blobs | market processor | order-flow API | 86400s closed / 300s current | minute-blob v2 |
 | indicator/profile cache | API derived service | chart routes | 300s / 30s | calculation version in key |
 | derived lock | API derived service | API replicas | 30s | request hash |
+| chart-asset build status | API + chart-asset-builder | build API/SSE | one JSON key/job, 24h TTL + pub/sub | asset v1 |
 | subscription/feed state | API/controller | ingestors/processors | TTL or bounded symbol set | on-demand v1 |
 
 Legacy keys such as `price:*`, `candle:*`, and `candles:*` are reset targets

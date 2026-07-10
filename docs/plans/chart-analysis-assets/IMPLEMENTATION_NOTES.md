@@ -19,3 +19,19 @@ repository contracts differ.
   canonical DDL (`TTL toDateTime(event_time) ...`). This changes no schema or
   retention behavior; it makes the documented parity command validate the DDL
   form already present in both copies.
+
+## Bundle 2 — Rule compilers, build pipeline, and APIs
+
+- The API and worker share `gops_agents.chart_assets.storage` and
+  `gops_agents.chart_assets.progress` because the backend image already ships
+  the agent shared package for existing entity resolution. This does not call
+  or modify `AgentOrchestrator`, roles, providers, or legacy chart-command code.
+- A first-time rule-only build stores an empty degraded agent layer plus the
+  deterministic Korean fallback commentary. A rule-only rebuild preserves an
+  existing agent layer, prompt version, and commentary exactly as specified.
+- `coverage.missingBars` is the difference between the configured lookback and
+  valid returned closed bars. The existing candle provider does not expose an
+  exchange-calendar expected-row count at this boundary.
+- The ClickHouse row adapter converts asset ISO timestamps to the database's
+  `DateTime64` text format; timestamps inside the canonical JSON payload remain
+  UTC ISO-8601 and unchanged.
