@@ -2157,6 +2157,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn('ALPACA_KAFKA_PUBLISH_QUEUE_MAXSIZE: "20000"', configmap)
         self.assertIn('KAFKA_PRODUCER_LINGER_MS: "20"', configmap)
         self.assertIn('KAFKA_PRODUCER_BATCH_SIZE: "65536"', configmap)
+        self.assertIn('KAFKA_PRODUCER_MAX_BLOCK_MS: "3000"', configmap)
         self.assertNotIn("KAFKA_PRODUCER_BUFFER_MEMORY", configmap)
         self.assertIn('CLICKHOUSE_PROVIDER_TIMEOUT_SECONDS: "8"', configmap)
         self.assertIn('CLICKHOUSE_PROVIDER_RETRY_ATTEMPTS: "2"', configmap)
