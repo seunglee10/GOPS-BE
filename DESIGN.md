@@ -8,7 +8,7 @@ source:
   entry: apps/gops-frontend/index.html
 updatedFor:
   font: Asta Sans
-  typeScale: 5 semantic sizes
+  typeScale: unified semantic typography roles
   chrome: side rail removed
   build: split production chunks
 ---
@@ -82,7 +82,7 @@ layout:
   top-nav-height: 48px
   bottom-nav-height: 64px
   control-size: 36px
-  app-ui-scale: 1.6
+  app-ui-scale: 0.72
   grid-gutter: "clamped 6px to 10px, based on viewport width"
   workspace-top-inset: 52px
   workspace-bottom-inset: 64px
@@ -103,11 +103,20 @@ panel:
   note: "Glass intensity is reduced 60% from the previous stronger treatment."
 
 typography:
-  micro: 10px
-  compact: 12px
-  body: 14px
-  title: 18px
-  display: 32px
+  display-xl: "48px / 500 / 1.1 / 0"
+  display-lg: "40px / 400 / 1.2 / 0"
+  display-md: "32px / 400 / 1.2 / 0"
+  title-lg: "24px / 400 / 1.35 / 0.12px"
+  title-md: "20px / 400 / 1.5 / 0"
+  title-sm: "18px / 500 / 1.4 / 0"
+  label-md: "16px / 500 / 1.4 / 0"
+  button: "16px / 500 / 1.4 / 0"
+  body-md: "14px / 400 / 1.25 / 0"
+  caption: "14px / 500 / 1.35 / 0.16px"
+  legal: "13.12px / 600 / 1.2 / 0"
+  pricing-display: "44.8px / 475 / 1.1 / 0"
+  pricing-section: "28px / 475 / 1.2 / 0"
+  pricing-card-title: "20px / 475 / 1.3 / 0"
 ```
 
 ## Typography
@@ -121,58 +130,71 @@ All primary font variables resolve to Asta Sans:
 --font-data-sans: "Asta Sans", Arial, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 ```
 
-The entire website uses exactly five font sizes. Treat them as semantic tokens,
-not as a range from which to choose arbitrary intermediate values:
+The font family remains Asta Sans. The semantic roles below are the only
+approved typography contract for the product. Each role is a complete,
+indivisible style: size, weight, line height, letter spacing, and text transform
+must travel together.
 
-| Token | Size | Weight | Use |
-| --- | ---: | ---: | --- |
-| `--type-micro` | 10px | 600-800 | Chart ticks, timestamps, tertiary metadata, badges, and legal/attribution text |
-| `--type-compact` | 12px | 500-800 | Buttons, inputs, tabs, table cells, panel labels, symbols, and secondary values |
-| `--type-body` | 14px | 400-700 | Default workspace text, chat content, descriptions, and primary row values |
-| `--type-title` | 18px | 600-800 | Panel headings, card headings, important prices, and section totals |
-| `--type-display` | 32px | 600-800 | One dominant portfolio value, score, or empty-state number within a view |
+| Role | Size | Weight | Line height | Letter spacing | Transform | Reference example |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| `display-xl` | 48px | 500 | 1.1 | 0 | none | Article h2: `Build the workspace` |
+| `display-lg` | 40px | 400 | 1.2 | 0 | none | Homepage h1 hero: `All your teams, all their workflows` |
+| `display-md` | 32px | 400 | 1.2 | 0 | none | Platform feature head: `Conversational app building` |
+| `title-lg` | 24px | 400 | 1.35 | 0.12px | Section title: `Sophisticated workflows` |
+| `title-md` | 20px | 400 | 1.5 | 0 | none | Sub-section title: `Don't just talk. Deploy it.` |
+| `title-sm` | 18px | 500 | 1.4 | 0 | none | Article-card title: `10 best AI app builders for 2026` |
+| `label-md` | 16px | 500 | 1.4 | 0 | none | Demo-card title: `Production apps in prototype speed` |
+| `button` | 16px | 500 | 1.4 | 0 | none | CTA label: `Get started for free` |
+| `body-md` | 14px | 400 | 1.25 | 0 | none | `From scrappy startups to enterprise teams, Airtable adapts to whatever you need next without forcing a rebuild.` |
+| `caption` | 14px | 500 | 1.35 | 0.16px | Meta label: `AI PROJECT PLANNING` |
+| `legal` | 13.12px | 600 | 1.2 | 0 | none | Legal action: `Cookies Preferences` |
+| `pricing-display` | 44.8px | 475 | 1.1 | 0 | none | Pricing h1: `A plan for every organization's needs` |
+| `pricing-section` | 28px | 475 | 1.2 | 0 | none | Pricing section head: `Compare plans` |
+| `pricing-card-title` | 20px | 475 | 1.3 | 0 | none | Tier name: `Business` |
 
-CSS token contract:
+GOPS component mapping:
 
-```css
---type-micro: 10px;
---type-compact: 12px;
---type-body: 14px;
---type-title: 18px;
---type-display: 32px;
-```
-
-Canvas and SVG renderers use the matching numeric constants from
-`apps/gops-frontend/src/theme/typography.ts`.
-
-Component mapping:
-
-| Component content | Token |
+| Component content | Required role |
 | --- | --- |
-| Chart axes, tiny metadata, status badges | `--type-micro` |
-| Top actions, agent input, panel chrome, controls | `--type-compact` |
-| Chat messages, news summaries, default copy | `--type-body` |
-| Panel headings and emphasized market values | `--type-title` |
-| Primary account/portfolio metric only | `--type-display` |
+| Article or editorial h2 | `display-xl` |
+| Homepage hero h1 | `display-lg` |
+| Platform feature head or dominant workspace value | `display-md` |
+| Section title or featured instrument | `title-lg` |
+| Sub-section or major panel title | `title-md` |
+| Article-card or prominent result title | `title-sm` |
+| Demo-card, compact card, row, and utility title | `label-md` |
+| CTA, tab, and text-action label | `button` |
+| Body, footer, top navigation, input, and descriptive copy | `body-md` |
+| Captions, chart axes, timestamps, metadata, status, and category text | `caption` |
+| Cookie, attribution, and legal actions only | `legal` |
+| Pricing-page h1 only | `pricing-display` |
+| Pricing section heading only | `pricing-section` |
+| Pricing tier name only | `pricing-card-title` |
 
-Rules:
+Enforcement rules:
 
-- Use Asta Sans everywhere unless a canvas renderer needs its own numeric
-  drawing metrics.
-- Do not declare literal `font-size` values inside components. Use one of the
-  five tokens above, including for canvas text constants where practical.
-- Do not use intermediate sizes such as 11px, 13px, 15px, or 17px. Resolve
-  hierarchy with weight, color, and spacing before moving up to another token.
-- Each surface should normally use no more than three sizes: one default, one
-  supporting size, and one emphasis size.
-- Reserve `--type-display` for a single dominant metric. Operational panels
-  should usually top out at `--type-title`.
-- Keep letter spacing at `0` unless an existing component already has a
-  specific technical reason.
-- Keep headings compact inside panels. Do not use hero-scale type inside the
-  workspace.
-- Prefer tabular, legible numeric treatment in market-data rows and chart
-  readouts.
+- Asta Sans is mandatory for every role. Do not replace it or introduce a
+  secondary display, body, data, or monospace family.
+- Use the semantic role name through shared typography tokens, classes, or
+  mixins. Do not declare local `font-size`, `font-weight`, `line-height`,
+  `letter-spacing`, or `text-transform` values in a component.
+- Do not mix the metrics from different roles. A `title-md` must always be
+  `20px / 400 / 1.5 / 0`, for example.
+- Do not add aliases, one-off roles, fluid type with `clamp()`, or intermediate
+  values. A new role requires an explicit update to this document and the
+  shared typography implementation in the same change.
+- Canvas and SVG text must use matching shared numeric constants; renderer
+  constraints are not an exception to the scale.
+- Choose roles by meaning, not by the available size. Resolve hierarchy with
+  the component mapping before using color or spacing as secondary cues.
+- Keep the three `pricing-*` roles exclusive to pricing surfaces. Financial
+  market values are not pricing-page content.
+- `legal` is not a generic small-text role. Use it only for legal or attribution
+  content; compact operational text remains `body-md` or `caption`.
+- Preserve uppercase in source copy when the content requires it. No role
+  forces capitalization.
+- Prefer tabular numerals for market-data rows and chart readouts without
+  changing the role's prescribed metrics.
 
 ## Layout
 
@@ -182,6 +204,9 @@ The app is a fixed full-viewport shell:
 
 - `body`, `html`, and `#root` are `100vw`/`100vh` and `overflow: hidden`.
 - `canvas-workspace` fills the viewport.
+- The shell renders at `0.8` scale with an inverse-sized logical viewport,
+  matching the proportions of Firefox at roughly 72% zoom. Keep the runtime constant,
+  CSS fallback, and this document synchronized.
 - A heatmap background layer can sit behind the active workspace.
 - Top and bottom nav are fixed overlays with pointer events only on controls.
 
@@ -263,6 +288,11 @@ The treemap is a full visual surface, not a card gallery:
 - hover metadata appears top-left, compact and non-interactive;
 - cell/tile radius is currently `0px` for heatmap cell geometry;
 - up/down color uses semantic green/red, not decorative palette variants.
+- sector and industry header bands reserve at least the assigned role's line
+  box; labels are hidden when that height is unavailable;
+- Korean and Latin labels are clipped to their own band or symbol cell and use
+  a single Unicode ellipsis when width is constrained. Never shrink them below
+  the approved typography roles or let them overlap adjacent tiles.
 
 ### Chart Workspace
 
@@ -378,14 +408,14 @@ Mobile and narrow layouts:
 
 - bottom nav becomes a single-column command strip;
 - agent box fills available width;
-- agent input remains `--type-compact` (12px);
+- agent input remains `body-md` and text actions remain `button`;
 - side rail remains absent on all breakpoints;
 - panel text must stay inside its bounds.
 
-Do not scale fonts continuously with viewport or container width. Responsive
-components may step down to the next smaller token, but must still use one of
-the same five sizes. Prefer layout constraints and wrapping before reducing
-type size.
+Do not scale fonts continuously with viewport or container width and do not
+override a role's metrics at a breakpoint. Responsive components may switch to
+a different approved role only when their semantic hierarchy also changes.
+Prefer layout constraints and wrapping before changing roles.
 
 ## Build And Performance
 
@@ -422,6 +452,7 @@ Do not:
 - reintroduce the side rail or side overlay panels;
 - add marketing hero sections or decorative card-heavy pages;
 - use gradient orbs or decorative bokeh backgrounds;
-- use large display typography inside operational panels;
+- repurpose `legal` or any `pricing-*` role as a generic small or financial-value style;
+- introduce typography outside the approved semantic roles;
 - add visible instructions explaining how to use normal controls;
 - hide build-size issues by raising thresholds without a reason.
