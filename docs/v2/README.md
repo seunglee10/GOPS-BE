@@ -1,10 +1,7 @@
 # GOPS v2 Team Docs
 
-> Superseded for chart-data implementation.
->
-> The active chart-data rebuild source of truth is
-> `../CHART_DATA_REBUILD_PLAN.md`. Files in this directory are historical
-> planning notes; do not use them as the current market-data contract.
+> For current chart-data contracts, use `../CHART_DATA_ARCHITECTURE.md` and
+> `../CHART_DATA_OPERATIONS.md`. These role notes cover broader v2 ownership.
 
 이 디렉터리는 `docs/v2/gops-v2-architecture.md`를 팀원이 맡은 역할별로 읽기 쉽게 나눈 문서 모음이다.
 
@@ -27,10 +24,6 @@
 | 3 | Market Data / News / Fundamentals / Storage Pipeline | Alpaca/SEC 데이터 수집, Kafka 처리, Redis/ClickHouse/S3 저장, 차트용 projection |
 | 4 | Infra / Platform / CI-CD | AWS, EKS, Kubernetes, Docker image, GitHub Actions, ECR, 배포/rollback |
 | 5 | Backend API / Auth / Order / Integration | FastAPI API, Google OAuth2, session, Postgres, order, KIS demo, 시스템 통합 |
-
-## Detail Documents
-
-- `market-data-tick-candle-architecture.md`: tick 이벤트를 1분 단위 closed candle로 집계하고, live candle Kafka topic 없이 실시간 차트를 제공하는 v2 market-data 재설계안.
 
 ## Common Rules
 

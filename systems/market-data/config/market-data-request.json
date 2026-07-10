@@ -54,7 +54,7 @@
       "finalPrefix": "market-data/rebuild-20260702-lazy-v1/final",
       "format": "parquet",
       "rawArchiveRole": "backup-only, never queried by chart serving or materialization",
-            "quoteStorage": "enabled through market.layer.quotes.v1 into ClickHouse quote_ticks; raw S3 archive keeps replay evidence",
+      "quoteStorage": "enabled through market.layer.quotes.v1 into ClickHouse quote_ticks; raw S3 archive keeps replay evidence",
       "partitionKeys": ["dataset", "interval", "symbol", "year", "month", "day", "hour"]
     },
     "clickhouse": {
@@ -64,7 +64,6 @@
       "quoteTable": "quote_ticks",
       "symbolTable": "symbols",
       "statusTable": "market_status_events",
-      "volumeProfileTable": "volume_profile_bins_1m",
       "loadTradesByDefault": true,
       "loadQuotesByDefault": true
     },
@@ -89,8 +88,7 @@
       "feedLeaseKey": "feed:lease:{profile}",
       "feedSwitchStateKey": "feed:switch:state",
       "backfillCoverageKey": "backfill:coverage:{symbol}:{interval}",
-      "symbolMetadataKey": "symbols:metadata:{symbol}",
-      "volumeProfileLiveKey": "volume-profile:{symbol}:1m:live"
+      "symbolMetadataKey": "symbols:metadata:{symbol}"
     },
     "symbolRegistry": {
       "syncCommand": "python systems/market-data/jobs/symbol-registry-sync/main.py",

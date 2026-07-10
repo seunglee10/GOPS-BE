@@ -312,6 +312,7 @@ agent:report:latest:{SYMBOL}
 agent:report:latest
 agent:request:idempotency:{userHash}:{keyHash}
 agent:report:cancel:{analysisId}
+agent:report:owner:{analysisId}
 agent.reports
 agent.reports:{analysisId}
 gops:agent:graph-expansion:v1:{symbol}

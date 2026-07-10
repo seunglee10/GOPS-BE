@@ -247,10 +247,6 @@ def clickhouse_actions_for_payload(payload, load_trades=False, load_quotes=True)
             ("market_status_events", row, f"ClickHouse status 적재: symbol={row['symbol']} status={row['status']} time={row['event_time']}"),
         ]
 
-    if event_type == "VOLUME_PROFILE_BIN":
-        row = volume_profile_bin_to_clickhouse_row(payload)
-        return [("volume_profile_bins_1m", row, f"ClickHouse volume profile 적재: symbol={row['symbol']} minute={row['event_minute']}")]
-
     if event_type == "SYMBOL_METADATA":
         row = symbol_to_clickhouse_row(payload)
         return [("symbols", row, f"ClickHouse symbol 적재: symbol={row['symbol']}")]
@@ -384,25 +380,6 @@ def market_event_to_clickhouse_row(payload):
         "market_session": payload.get("marketSession") or market_session_for_symbol(symbol, event_time),
         "source_event_id": payload.get("sourceEventId"),
         "payload": json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
-    }
-
-
-def volume_profile_bin_to_clickhouse_row(payload):
-    """거래량 프로파일 bin payload를 volume_profile_bins_1m 테이블 row로 변환합니다."""
-    return {
-        "event_minute": clickhouse_time(payload.get("eventMinute")),
-        "symbol": payload.get("symbol", "UNKNOWN"),
-        "price_bin": float_or_zero(payload.get("priceBin")),
-        "price_bin_size": float_or_zero(payload.get("priceBinSize")),
-        "volume": float_or_zero(payload.get("volume")),
-        "trade_count": int_or_zero(payload.get("tradeCount")),
-        "vwap": float_or_none(payload.get("vwap")),
-        "source": payload.get("source", "alpaca"),
-        "feed": payload.get("feed") or "unknown",
-        "feed_profile": payload.get("feedProfile") or payload.get("feed") or "unknown",
-        "market_session": payload.get("marketSession") or market_session_for_symbol(payload.get("symbol"), payload.get("eventMinute")),
-        "source_event_id": payload.get("sourceEventId"),
-        "updated_at": clickhouse_time_or_none(payload.get("updatedAt")),
     }
 
 
@@ -721,30 +698,6 @@ class ClickHouseHttpClient:
             ORDER BY (object_path, dataset, layer)
         """)
         self.execute(f"""
-            CREATE TABLE IF NOT EXISTS {self.database}.chart_derived_artifacts
-            (
-                request_hash String,
-                kind LowCardinality(String),
-                symbol LowCardinality(String),
-                interval LowCardinality(String),
-                from_time Nullable(DateTime64(3, 'UTC')),
-                to_time Nullable(DateTime64(3, 'UTC')),
-                parameters_json String,
-                calculation_version LowCardinality(String),
-                data_status LowCardinality(String),
-                payload_json String,
-                source LowCardinality(String),
-                feed LowCardinality(String),
-                created_at DateTime64(3, 'UTC'),
-                expires_at DateTime64(3, 'UTC'),
-                inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
-            )
-            ENGINE = ReplacingMergeTree(inserted_at)
-            PARTITION BY toYYYYMM(created_at)
-            ORDER BY (kind, symbol, request_hash)
-            TTL toDateTime(expires_at) DELETE
-        """)
-        self.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.database}.quote_ticks
             (
                 event_time DateTime64(3, 'UTC'),
@@ -767,6 +720,7 @@ class ClickHouseHttpClient:
             ENGINE = MergeTree
             PARTITION BY toYYYYMM(event_time)
             ORDER BY (symbol, event_time, feed_profile)
+            TTL event_time + INTERVAL 21 DAY DELETE
         """)
         self.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.database}.order_flow_profile_daily
@@ -797,7 +751,6 @@ class ClickHouseHttpClient:
             ("trade_ticks", "feed"),
             ("quote_ticks", "feed"),
             ("chart_candles", "feed"),
-            ("volume_profile_bins_1m", "feed"),
             ("market_status_events", "feed"),
             ("market_events", "feed"),
         ):
@@ -819,7 +772,6 @@ class ClickHouseHttpClient:
             ("quote_ticks", "bid_size", "Nullable(Float64)"),
             ("quote_ticks", "ask_size", "Nullable(Float64)"),
             ("chart_candles", "volume", "Float64"),
-            ("volume_profile_bins_1m", "volume", "Float64"),
         ):
             table_name = f"{self.database}.{clickhouse_identifier(table)}"
             self.execute(f"ALTER TABLE {table_name} MODIFY COLUMN IF EXISTS {column} {column_type}")

@@ -21,7 +21,7 @@ try:
     from app.market_data.fundamentals.service import FundamentalsRecord
     from kis_trader.domain.status import OrderStatus
     from kis_trader.persistence.memory import InMemoryOrderRepository
-    from tests.kis_trader.fixtures.orders import sample_order_request
+    from systems.order.tests.kis_trader.fixtures.orders import sample_order_request
 
     FASTAPI_TESTCLIENT_AVAILABLE = True
 except Exception:

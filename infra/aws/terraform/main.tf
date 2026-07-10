@@ -11,20 +11,21 @@ locals {
     ManagedBy   = "terraform"
   }
   custom_image_repositories = {
-    frontend         = "gops-frontend"
-    api_server       = "gops-api-server"
-    market_ingestor  = "gops-market-ingestor"
-    market_processor = "gops-market-processor"
-    market_storage   = "gops-market-storage"
-    order_worker     = "gops-order-worker"
-    kis_adapter      = "gops-kis-adapter"
+    frontend           = "gops-frontend"
+    api_server         = "gops-api-server"
+    market_ingestor    = "gops-market-ingestor"
+    market_processor   = "gops-market-processor"
+    market_storage     = "gops-market-storage"
+    order_worker       = "gops-order-worker"
+    kis_adapter        = "gops-kis-adapter"
+    agent_orchestrator = "gops-agent-orchestrator"
   }
 }
 
 resource "aws_ecr_repository" "custom_images" {
   for_each             = local.custom_image_repositories
   name                 = "${local.name_prefix}-${each.value}"
-  image_tag_mutability = "MUTABLE"
+  image_tag_mutability = "IMMUTABLE"
   force_delete         = false
 
   image_scanning_configuration {
@@ -65,6 +66,54 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "market_data" {
       sse_algorithm = "AES256"
     }
   }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "market_data" {
+  count  = var.manage_s3_chart_data_lifecycle ? 1 : 0
+  bucket = local.market_data_bucket_name
+
+  lifecycle {
+    precondition {
+      condition     = var.create_s3_bucket || var.acknowledge_s3_lifecycle_document_ownership
+      error_message = "Existing S3 buckets require acknowledge_s3_lifecycle_document_ownership=true because this resource owns the complete lifecycle document."
+    }
+  }
+
+  rule {
+    id     = "expire-chart-raw-v1"
+    status = "Enabled"
+
+    filter {
+      prefix = "${trimsuffix(var.s3_chart_data_root_prefix, "/")}/raw/"
+    }
+
+    expiration {
+      days = var.s3_raw_retention_days
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = var.s3_raw_retention_days
+    }
+  }
+
+  rule {
+    id     = "expire-chart-raw-v2"
+    status = "Enabled"
+
+    filter {
+      prefix = "${trimsuffix(var.s3_chart_data_root_prefix, "/")}/raw-v2/"
+    }
+
+    expiration {
+      days = var.s3_raw_retention_days
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = var.s3_raw_retention_days
+    }
+  }
+
+  depends_on = [aws_s3_bucket_versioning.market_data]
 }
 
 data "aws_secretsmanager_secret" "alpaca_api" {
@@ -109,8 +158,8 @@ locals {
     aws_secretsmanager_secret.alpaca_api[*].name,
     data.aws_secretsmanager_secret.alpaca_api[*].name
   ))
-  kis_secret_arn = data.aws_secretsmanager_secret.kis_api.arn
-  openai_secret_arn = data.aws_secretsmanager_secret.openai_api_key.arn
+  kis_secret_arn           = data.aws_secretsmanager_secret.kis_api.arn
+  openai_secret_arn        = data.aws_secretsmanager_secret.openai_api_key.arn
   google_oauth_secret_arns = data.aws_secretsmanager_secret.google_oauth[*].arn
   pod_secret_arns = concat(
     [

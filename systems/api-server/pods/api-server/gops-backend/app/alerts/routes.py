@@ -110,6 +110,20 @@ def list_alerts(request: Request, user: AuthenticatedUser = Depends(require_curr
     return {"alerts": jsonable_encoder(repository.list_alerts(user.sub))}
 
 
+@router.delete("/api/alerts")
+def delete_alerts(
+    request: Request,
+    user: AuthenticatedUser = Depends(require_current_user),
+) -> dict[str, Any]:
+    repository = _repository_from_app(request.app)
+    deleted_alerts = repository.delete_alerts(user.sub)
+    projection_status = "synced"
+    for alert in deleted_alerts:
+        if _sync_projection(request.app, "delete", alert) != "synced":
+            projection_status = "pending"
+    return {"deleted": len(deleted_alerts), "projectionStatus": projection_status}
+
+
 @router.patch("/api/alerts/{alert_id}")
 def update_alert_status(
     alert_id: int,

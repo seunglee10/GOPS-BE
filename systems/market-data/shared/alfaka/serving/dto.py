@@ -123,21 +123,6 @@ def market_status_event(status):
     }
 
 
-def volume_profile_event(symbol, profile_bin):
-    interval = "1m"
-    cursor = cursor_for(symbol, interval, profile_bin, time_field="eventMinute")
-    return {
-        "type": "VOLUME_PROFILE_BINS_UPDATE",
-        "eventId": f"delta/VOLUME_PROFILE_BINS_UPDATE/{symbol}/{interval}/{cursor}",
-        "cursor": cursor,
-        "symbol": symbol,
-        "interval": interval,
-        "source": profile_bin.get("source", "alpaca"),
-        "feed": profile_bin.get("feed") or "unknown",
-        "data": profile_bin,
-    }
-
-
 def order_flow_event(symbol, event_minute, bins, *, updated_at=None, sequence=None):
     updated_at = updated_at or now_iso()
     interval = "1m"

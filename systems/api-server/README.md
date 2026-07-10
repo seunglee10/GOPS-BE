@@ -20,6 +20,20 @@ docker:  infra/docker/Dockerfile.gops-backend
 command: uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
+For a backend-only local process, start from the repository root and pass the
+ignored local file explicitly so every chart module receives the same process
+environment:
+
+```bash
+PYTHONPATH=systems/market-data/shared:systems/order/shared:systems/order:systems/api-server/pods/api-server/gops-backend \
+  .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 \
+  --env-file systems/api-server/.env
+```
+
+`systems/api-server/.env.example` is the committed contract. Docker Compose
+uses the repository-root `.env.example` contract instead; real `.env` files
+remain untracked.
+
 ## Auth
 
 Google OAuth login is owned by this API server. When `AUTH_ENABLED=true`, the

@@ -3,7 +3,7 @@
 Shared chart-command contract for frontend runtime and backend/agent code.
 
 Chart data storage and transport semantics are defined by
-`docs/CHART_DATA_REBUILD_PLAN.md`. This contract covers UI/chart command shape;
+`docs/CHART_DATA_ARCHITECTURE.md`. This contract covers UI/chart command shape;
 it must not reintroduce preset-universe preload, fake candle rendering, or direct
 frontend access to Redis, S3, or ClickHouse.
 

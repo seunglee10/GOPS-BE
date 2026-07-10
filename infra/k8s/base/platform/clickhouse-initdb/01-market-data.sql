@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS market_data.trade_ticks
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(event_time)
-ORDER BY (symbol, event_time, feed_profile, trade_id);
+ORDER BY (symbol, event_time, feed_profile, trade_id)
+TTL event_time + INTERVAL 21 DAY DELETE;
 
 CREATE TABLE IF NOT EXISTS market_data.quote_ticks
 (
@@ -47,7 +48,8 @@ CREATE TABLE IF NOT EXISTS market_data.quote_ticks
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(event_time)
-ORDER BY (symbol, event_time, feed_profile);
+ORDER BY (symbol, event_time, feed_profile)
+TTL event_time + INTERVAL 21 DAY DELETE;
 
 CREATE TABLE IF NOT EXISTS market_data.chart_candles
 (
@@ -79,50 +81,6 @@ CREATE TABLE IF NOT EXISTS market_data.chart_candles
 ENGINE = ReplacingMergeTree(inserted_at)
 PARTITION BY toYYYYMM(event_time)
 ORDER BY (symbol, interval, event_time, feed_profile, market_session);
-
-CREATE TABLE IF NOT EXISTS market_data.volume_profile_bins_1m
-(
-    event_minute DateTime64(3, 'UTC'),
-    symbol LowCardinality(String),
-    price_bin Float64,
-    price_bin_size Float64,
-    volume Float64,
-    trade_count UInt64,
-    vwap Nullable(Float64),
-    source LowCardinality(String),
-    feed LowCardinality(String),
-    feed_profile LowCardinality(String) DEFAULT feed,
-    market_session LowCardinality(String) DEFAULT 'unknown',
-    source_event_id Nullable(String),
-    updated_at Nullable(DateTime64(3, 'UTC')),
-    inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
-)
-ENGINE = ReplacingMergeTree(inserted_at)
-PARTITION BY toYYYYMM(event_minute)
-ORDER BY (symbol, event_minute, feed_profile, price_bin_size, price_bin);
-
-CREATE TABLE IF NOT EXISTS market_data.chart_derived_artifacts
-(
-    request_hash String,
-    kind LowCardinality(String),
-    symbol LowCardinality(String),
-    interval LowCardinality(String),
-    from_time Nullable(DateTime64(3, 'UTC')),
-    to_time Nullable(DateTime64(3, 'UTC')),
-    parameters_json String,
-    calculation_version LowCardinality(String),
-    data_status LowCardinality(String),
-    payload_json String,
-    source LowCardinality(String),
-    feed LowCardinality(String),
-    created_at DateTime64(3, 'UTC'),
-    expires_at DateTime64(3, 'UTC'),
-    inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
-)
-ENGINE = ReplacingMergeTree(inserted_at)
-PARTITION BY toYYYYMM(created_at)
-ORDER BY (kind, symbol, request_hash)
-TTL toDateTime(expires_at) DELETE;
 
 CREATE TABLE IF NOT EXISTS market_data.market_status_events
 (
@@ -338,9 +296,6 @@ CREATE TABLE IF NOT EXISTS market_data.order_flow_profile_daily
 PARTITION BY toYYYYMM(session_date)
 ORDER BY (symbol, session_date, price_bin_size, price_bin);
 
--- NOTE: trade_ticks / quote_ticks keep No TTL in this rollout. Pinned symbols
--- increase raw tick volume, but retention needs a separate dependency audit.
-
 ALTER TABLE market_data.chart_candles
     ADD COLUMN IF NOT EXISTS source_event_id Nullable(String) AFTER feed;
 
@@ -363,10 +318,6 @@ ALTER TABLE market_data.quote_ticks
     ADD COLUMN IF NOT EXISTS feed_profile LowCardinality(String) DEFAULT feed AFTER feed,
     ADD COLUMN IF NOT EXISTS market_session LowCardinality(String) DEFAULT 'unknown' AFTER feed_profile;
 
-ALTER TABLE market_data.volume_profile_bins_1m
-    ADD COLUMN IF NOT EXISTS feed_profile LowCardinality(String) DEFAULT feed AFTER feed,
-    ADD COLUMN IF NOT EXISTS market_session LowCardinality(String) DEFAULT 'unknown' AFTER feed_profile;
-
 ALTER TABLE market_data.market_status_events
     ADD COLUMN IF NOT EXISTS feed_profile LowCardinality(String) DEFAULT feed AFTER feed,
     ADD COLUMN IF NOT EXISTS market_session LowCardinality(String) DEFAULT 'unknown' AFTER feed_profile;
@@ -379,4 +330,3 @@ ALTER TABLE market_data.trade_ticks MODIFY COLUMN IF EXISTS size Nullable(Float6
 ALTER TABLE market_data.quote_ticks MODIFY COLUMN IF EXISTS bid_size Nullable(Float64);
 ALTER TABLE market_data.quote_ticks MODIFY COLUMN IF EXISTS ask_size Nullable(Float64);
 ALTER TABLE market_data.chart_candles MODIFY COLUMN IF EXISTS volume Float64;
-ALTER TABLE market_data.volume_profile_bins_1m MODIFY COLUMN IF EXISTS volume Float64;

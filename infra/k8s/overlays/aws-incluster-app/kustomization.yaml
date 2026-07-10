@@ -6,8 +6,8 @@ resources:
   - ../../base/app
   - secretstore-aws-secrets-manager.yaml
   - externalsecret-openai.yaml
+  - ../aws/scheduled
   - ingress.yaml
-  - cronjob-order-flow-daily-rollup.yaml
   - retired-alpaca-ingestor.yaml
 
 patches:
@@ -303,19 +303,6 @@ patches:
                 app: alfaka-clickhouse-tick-loader
   - target:
       kind: Deployment
-      name: alfaka-chart-derived-data-worker
-    patch: |-
-      - op: replace
-        path: /spec/template/spec/topologySpreadConstraints
-        value:
-          - maxSkew: 1
-            topologyKey: kubernetes.io/hostname
-            whenUnsatisfiable: ScheduleAnyway
-            labelSelector:
-              matchLabels:
-                app: alfaka-chart-derived-data-worker
-  - target:
-      kind: Deployment
       name: alfaka-market-processor
     patch: |-
       - op: replace
@@ -334,8 +321,9 @@ patches:
         path: /spec/template/spec/topologySpreadConstraints
         value:
           - maxSkew: 1
+            minDomains: 3
             topologyKey: kubernetes.io/hostname
-            whenUnsatisfiable: ScheduleAnyway
+            whenUnsatisfiable: DoNotSchedule
             labelSelector:
               matchLabels:
                 app: alfaka-market-processor
@@ -356,8 +344,9 @@ patches:
         path: /spec/template/spec/topologySpreadConstraints
         value:
           - maxSkew: 1
+            minDomains: 3
             topologyKey: kubernetes.io/hostname
-            whenUnsatisfiable: ScheduleAnyway
+            whenUnsatisfiable: DoNotSchedule
             labelSelector:
               matchLabels:
                 app: alfaka-market-quote-processor
@@ -393,14 +382,14 @@ patches:
     patch: |-
       - op: replace
         path: /spec/replicas
-        value: 0
+        value: 1
   - target:
       kind: Deployment
       name: alert-evaluator
     patch: |-
       - op: replace
         path: /spec/replicas
-        value: 0
+        value: 1
 images:
   - name: YOUR_ECR_REPOSITORY/gops-market-ingestor
     newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-ingestor

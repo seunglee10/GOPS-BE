@@ -22,6 +22,8 @@ dist/
 **/dist/
 .tmp/
 **/.tmp/
+**/test-results/
+**/playwright-report/
 *.tsbuildinfo
 
 # Terraform local state and secret inputs.

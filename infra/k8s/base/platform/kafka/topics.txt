@@ -1,5 +1,5 @@
-# Canonical Kafka topics for GOPS in-cluster dev/test deployments.
-# Market-data topics use key=symbol. Quotes flow through input, Redis/WebSocket, S3 final, and ClickHouse.
+# Canonical Kafka topics for local and deployed runtimes.
+# key=symbol for every market-data topic.
 market.input.realtime.trades.v1
 market.input.realtime.quotes.v1
 market.input.realtime.events.v1
@@ -12,7 +12,6 @@ market.realtime.ticks.to.10m.v1
 market.realtime.ticks.to.1d.v1
 market.realtime.ticks.to.1w.v1
 market.realtime.ticks.to.1mo.v1
-market.layer.candles.live.v1
 market.layer.candles.closed.v1
 market.layer.candles.1m.closed.v1
 market.layer.candles.5m.closed.v1
@@ -27,8 +26,6 @@ market.layer.quotes.v1
 market.layer.events.v1
 market.news.alpaca.v1
 market.news.daily-summary-dirty.v1
-market.chart-derived.requests.v1
-market.chart-derived.dlq.v1
 orders.commands.v1
 broker.submit-results.v1
 broker.order-events.v1

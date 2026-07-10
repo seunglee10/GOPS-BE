@@ -765,34 +765,6 @@ class ClickHouseMarketDataProvider:
         WHERE rn = 1
         """
 
-    def volume_profile_bins(self, symbol, from_time, to_time, price_bin_size=None, limit=10000):
-        size_filter = "AND price_bin_size = {priceBinSize:Float64}" if price_bin_size else ""
-        query = f"""
-        SELECT
-          formatDateTime(event_minute, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS minute,
-          price_bin AS priceBin,
-          price_bin_size AS priceBinSize,
-          volume,
-          trade_count AS tradeCount,
-          vwap,
-          source,
-          feed,
-          feed_profile AS feedProfile,
-          market_session AS marketSession
-        FROM {self.table('volume_profile_bins_1m')}
-        WHERE symbol = {{symbol:String}}
-          AND event_minute >= parseDateTime64BestEffort({{fromTime:String}})
-          AND event_minute <= parseDateTime64BestEffort({{toTime:String}})
-          {size_filter}
-        ORDER BY event_minute ASC, price_bin ASC
-        LIMIT {{limit:UInt32}}
-        FORMAT JSONEachRow
-        """
-        params = {"symbol": symbol, "fromTime": from_time, "toTime": to_time, "limit": int(limit)}
-        if price_bin_size:
-            params["priceBinSize"] = float(price_bin_size)
-        return self.query_json_each_row(query, params)
-
     def order_flow_daily_profiles(self, symbol, from_date, to_date, limit=100000):
         query = f"""
         SELECT
@@ -824,7 +796,7 @@ class ClickHouseMarketDataProvider:
 
     def ensure_market_data_schema(self):
         """조회 전에 필요한 ClickHouse 컬럼과 타입이 준비되어 있는지 보정합니다."""
-        for table in ("trade_ticks", "chart_candles", "volume_profile_bins_1m", "market_status_events"):
+        for table in ("trade_ticks", "chart_candles", "market_status_events"):
             self.execute(
                 f"ALTER TABLE {self.table(table)} "
                 "ADD COLUMN IF NOT EXISTS feed_profile LowCardinality(String) DEFAULT feed AFTER feed, "
@@ -906,7 +878,6 @@ class ClickHouseMarketDataProvider:
             ("quote_ticks", "bid_size", "Nullable(Float64)"),
             ("quote_ticks", "ask_size", "Nullable(Float64)"),
             ("chart_candles", "volume", "Float64"),
-            ("volume_profile_bins_1m", "volume", "Float64"),
         ):
             self.execute(f"ALTER TABLE {self.table(table)} MODIFY COLUMN IF EXISTS {column} {column_type}")
 

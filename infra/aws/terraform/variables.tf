@@ -27,6 +27,35 @@ variable "create_s3_bucket" {
   description = "true면 S3 bucket을 만들고, false면 기존 s3_bucket_name bucket을 참조합니다."
 }
 
+variable "manage_s3_chart_data_lifecycle" {
+  type        = bool
+  default     = false
+  description = "Manage the complete lifecycle document for the configured market-data bucket. Enable only for a module-created bucket or after explicitly accepting ownership of every lifecycle rule."
+}
+
+variable "acknowledge_s3_lifecycle_document_ownership" {
+  type        = bool
+  default     = false
+  description = "Required with manage_s3_chart_data_lifecycle for an existing bucket. Confirms this module owns the bucket's complete lifecycle document, not only chart prefixes."
+}
+
+variable "s3_chart_data_root_prefix" {
+  type        = string
+  default     = "market-data/rebuild-20260702-lazy-v1"
+  description = "Root prefix containing raw, raw-v2, final, and final-v2 chart data."
+}
+
+variable "s3_raw_retention_days" {
+  type        = number
+  default     = 30
+  description = "Retention in days for raw and raw-v2 chart backup objects. Final candle evidence has no expiration rule."
+
+  validation {
+    condition     = var.s3_raw_retention_days >= 1
+    error_message = "s3_raw_retention_days must be at least 1."
+  }
+}
+
 variable "alpaca_secret_name" {
   type    = string
   default = "dev/alpaca"

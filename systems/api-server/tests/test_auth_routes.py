@@ -34,7 +34,7 @@ try:
 
     from app.main import create_app
     from kis_trader.persistence.memory import InMemoryOrderRepository
-    from tests.kis_trader.fixtures.orders import sample_order_request
+    from systems.order.tests.kis_trader.fixtures.orders import sample_order_request
 
     FASTAPI_TESTCLIENT_AVAILABLE = True
 except Exception:

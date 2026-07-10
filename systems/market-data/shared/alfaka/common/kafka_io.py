@@ -52,6 +52,7 @@ def create_json_consumer(
     max_poll_records=None,
     session_timeout_ms=None,
     heartbeat_interval_ms=None,
+    partition_assignment_strategy=None,
 ):
     from kafka import KafkaConsumer
 
@@ -67,6 +68,11 @@ def create_json_consumer(
         "key_deserializer": lambda value: value.decode("utf-8") if value else None,
         "value_deserializer": lambda value: json.loads(value.decode("utf-8")),
     }
+    if partition_assignment_strategy == "range":
+        from kafka.coordinator.assignors.range import RangePartitionAssignor
+        options["partition_assignment_strategy"] = (RangePartitionAssignor,)
+    elif partition_assignment_strategy is not None:
+        options["partition_assignment_strategy"] = tuple(partition_assignment_strategy)
     for key, value in {
         "max_poll_interval_ms": max_poll_interval_ms,
         "max_poll_records": max_poll_records,

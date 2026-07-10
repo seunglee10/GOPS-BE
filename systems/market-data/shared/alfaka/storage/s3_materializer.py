@@ -72,10 +72,17 @@ def materialize_manifest_keys_from_env(s3, bucket):
     interval = normalize_chart_interval(interval)
     validate_materialize_range(interval, start)
 
-    from alfaka.storage.s3_manifest import DEFAULT_MANIFEST_PREFIX, processed_candle_keys_from_manifest
+    from alfaka.storage.s3_manifest import (
+        DEFAULT_MANIFEST_PREFIX,
+        bounded_v2_processed_candle_keys,
+        processed_candle_keys_from_manifest,
+    )
 
     manifest_prefix = os.getenv("S3_MATERIALIZE_MANIFEST_PREFIX") or os.getenv("S3_MANIFEST_PREFIX", DEFAULT_MANIFEST_PREFIX)
-    return processed_candle_keys_from_manifest(s3, bucket, manifest_prefix, symbol, interval, start, end)
+    manifest_keys = processed_candle_keys_from_manifest(s3, bucket, manifest_prefix, symbol, interval, start, end)
+    final_prefix = os.getenv("S3_MATERIALIZE_PREFIX") or os.getenv("S3_FINAL_PREFIX", "market-data/rebuild-20260702-lazy-v1/final")
+    v2_keys = bounded_v2_processed_candle_keys(s3, bucket, final_prefix, symbol, interval, start, end)
+    return list(dict.fromkeys([*manifest_keys, *v2_keys]))
 
 
 def validate_materialize_range(interval, start):
@@ -97,12 +104,14 @@ def parse_csv(value):
     return [item.strip() for item in (value or "").split(",") if item.strip()]
 
 
-def list_s3_objects(s3, bucket, prefix):
+def list_s3_objects(s3, bucket, prefix, metrics=None):
     keys = []
     if hasattr(s3, "get_paginator"):
         paginator = s3.get_paginator("list_objects_v2")
         for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-            keys.extend(item["Key"] for item in page.get("Contents", []) if item.get("Key"))
+            contents = page.get("Contents", [])
+            increment_list_metrics(metrics, contents)
+            keys.extend(item["Key"] for item in contents if item.get("Key"))
         return keys
 
     token = None
@@ -111,10 +120,19 @@ def list_s3_objects(s3, bucket, prefix):
         if token:
             kwargs["ContinuationToken"] = token
         page = s3.list_objects_v2(**kwargs)
-        keys.extend(item["Key"] for item in page.get("Contents", []) if item.get("Key"))
+        contents = page.get("Contents", [])
+        increment_list_metrics(metrics, contents)
+        keys.extend(item["Key"] for item in contents if item.get("Key"))
         if not page.get("IsTruncated"):
             return keys
         token = page.get("NextContinuationToken")
+
+
+def increment_list_metrics(metrics, contents):
+    if metrics is None:
+        return
+    metrics["listCalls"] = int(metrics.get("listCalls", 0)) + 1
+    metrics["objectsListed"] = int(metrics.get("objectsListed", 0)) + len(contents)
 
 
 def detect_s3_object_format(key, content_type=None):
@@ -146,16 +164,50 @@ def read_parquet_rows(body):
     return pq.read_table(io.BytesIO(body)).to_pylist()
 
 
-def materialize_s3_processed_objects(client, s3, bucket, keys, source_name="s3-processed-final"):
+def materialize_s3_processed_objects(client, s3, bucket, keys, source_name="s3-processed-final", selection=None):
     results = []
+    pending_objects = []
+    all_rows = []
     for key in keys:
         object_path = f"s3://{bucket}/{key}"
         if s3_object_already_materialized(client, object_path):
             results.append({"objectPath": object_path, "rowCount": 0, "skippedAlreadyMaterialized": True})
             continue
         rows = read_s3_rows(s3, bucket, key)
-        results.append(materialize_processed_rows(client, object_path, rows, source_name=source_name))
-    return {"objects": results, "rowCount": sum(item["rowCount"] for item in results)}
+        normalized, skipped_invalid = normalize_materializable_rows(rows)
+        pending_objects.append({
+            "objectPath": object_path,
+            "rows": normalized,
+            "skippedInvalidRowCount": skipped_invalid,
+        })
+        all_rows.extend(normalized)
+
+    deduped = dedupe_candles(all_rows)
+    clickhouse_rows = [candle_to_clickhouse_row(row) for row in deduped]
+    if clickhouse_rows:
+        client.insert_json_each_row("chart_candles", clickhouse_rows)
+
+    for item in pending_objects:
+        object_rows = dedupe_candles(item["rows"])
+        object_clickhouse_rows = [candle_to_clickhouse_row(row) for row in object_rows]
+        write_materialization_audits(
+            client,
+            item["objectPath"],
+            object_clickhouse_rows,
+            source_name=source_name,
+            skipped_invalid=item["skippedInvalidRowCount"],
+        )
+        results.append({
+            "objectPath": item["objectPath"],
+            "rowCount": len(object_clickhouse_rows),
+            "skippedInvalidRowCount": item["skippedInvalidRowCount"],
+        })
+
+    return {
+        "objects": results,
+        "rowCount": len(clickhouse_rows),
+        "matchedRowCount": matched_candle_count(deduped, selection),
+    }
 
 
 def s3_object_already_materialized(client, object_path):
@@ -169,6 +221,23 @@ def s3_object_already_materialized(client, object_path):
 
 
 def materialize_processed_rows(client, object_path, rows, source_name="s3-processed-final"):
+    normalized, skipped_invalid = normalize_materializable_rows(rows)
+    deduped = dedupe_candles(normalized)
+    clickhouse_rows = [candle_to_clickhouse_row(row) for row in deduped]
+    if clickhouse_rows:
+        client.insert_json_each_row("chart_candles", clickhouse_rows)
+
+    write_materialization_audits(
+        client,
+        object_path,
+        clickhouse_rows,
+        source_name=source_name,
+        skipped_invalid=skipped_invalid,
+    )
+    return {"objectPath": object_path, "rowCount": len(clickhouse_rows), "skippedInvalidRowCount": skipped_invalid}
+
+
+def normalize_materializable_rows(rows):
     normalized = []
     skipped_invalid = 0
     for row in rows:
@@ -190,12 +259,10 @@ def materialize_processed_rows(client, object_path, rows, source_name="s3-proces
             skipped_invalid += 1
             continue
         normalized.append(candle)
+    return normalized, skipped_invalid
 
-    deduped = dedupe_candles(normalized)
-    clickhouse_rows = [candle_to_clickhouse_row(row) for row in deduped]
-    if clickhouse_rows:
-        client.insert_json_each_row("chart_candles", clickhouse_rows)
 
+def write_materialization_audits(client, object_path, clickhouse_rows, source_name="s3-processed-final", skipped_invalid=0):
     client.insert_json_each_row("storage_object_audit", [storage_object_audit_row(
         object_path,
         clickhouse_rows,
@@ -207,7 +274,26 @@ def materialize_processed_rows(client, object_path, rows, source_name="s3-proces
         "row_count": len(clickhouse_rows),
         "note": f"S3 processed/final chart candle materialization; skipped_invalid={skipped_invalid}",
     }])
-    return {"objectPath": object_path, "rowCount": len(clickhouse_rows), "skippedInvalidRowCount": skipped_invalid}
+
+
+def matched_candle_count(rows, selection):
+    if not selection:
+        return len(rows)
+    symbol = str(selection.get("symbol") or "").strip().upper()
+    interval = normalize_chart_interval(selection.get("interval"))
+    ranges = selection.get("ranges") or [{"start": selection.get("start"), "end": selection.get("end")}]
+    parsed_ranges = [
+        (parse_timestamp(item.get("start")), parse_timestamp(item.get("end")))
+        for item in ranges
+        if item.get("start") and item.get("end")
+    ]
+    return sum(
+        1
+        for row in rows
+        if str(row.get("symbol") or "").strip().upper() == symbol
+        and normalize_chart_interval(row.get("interval")) == interval
+        and any(start <= parse_timestamp(row.get("timestamp")) < end for start, end in parsed_ranges)
+    )
 
 
 def storage_object_audit_row(object_path, rows, source_name="s3-processed-final"):

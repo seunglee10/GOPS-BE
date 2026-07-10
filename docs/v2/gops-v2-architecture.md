@@ -1,12 +1,12 @@
-# Retired GOPS v2 Architecture Notes
+# GOPS v2 Architecture Notes
 
-This historical v2 architecture file is retired as an implementation source for
-the current rebuild.
+Chart-data details have moved to short current contracts so this broader v2
+document cannot override runtime behavior.
 
 For active contracts, use:
 
-- `../CHART_DATA_REBUILD_PLAN.md` for chart data, realtime market data,
-  Redis/S3/ClickHouse/Kafka/backfill, SIP/BOATS, and frontend monitoring.
+- `../CHART_DATA_ARCHITECTURE.md` for chart data ownership and query contracts.
+- `../CHART_DATA_OPERATIONS.md` for validation, recovery, and rollout.
 - `../PRODUCT_CONTEXT.md` for product direction.
 - `../STRUCTURE_GUIDE.md` for repository structure.
 - `../ARCHITECTURE.md`, `../ENVIRONMENT.md`, and `../IMAGE_STRATEGY.md` for

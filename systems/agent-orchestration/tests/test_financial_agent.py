@@ -445,7 +445,7 @@ class FinancialAgentIntegrationTests(unittest.TestCase):
         self.assertEqual(openai.call_count, 1)
         self.assertEqual(len(redis_client.setex_calls), 1)
         self.assertEqual(redis_client.setex_calls[0][1], 600)
-        self.assertEqual(first.summary, "LLM이 재무 snapshot을 쉬운 한국어로 설명했습니다.")
+        self.assertEqual(first.summary, "LLM이 재무 자료를 쉬운 한국어로 설명했습니다.")
         self.assertEqual(second.summary, first.summary)
 
 

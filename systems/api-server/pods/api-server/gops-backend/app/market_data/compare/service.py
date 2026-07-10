@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterable
 
+from app.market_data.fill.service import get_on_demand_fill_service
+from app.market_data.query.canonical import CanonicalCandleQuery
 from app.services.alfaka_market_data import get_market_data_provider, normalize_market_symbol
 from alfaka.alpaca.feed_profiles import MARKET_TIMEZONE, market_session_for_timestamp
-from alfaka.backfill.runner import fetch_alpaca_bars, historical_feed_for_symbol
 
 
 COMPARE_RANGE_VALUES = {"1D", "1M", "6M", "1Y", "5Y"}
@@ -50,10 +52,15 @@ class ChartCompareService:
         provider: Any | None = None,
         fetcher: Callable[[str, str, str, str, str], list[dict[str, Any]]] | None = None,
         now: Callable[[], datetime] | None = None,
+        candle_query: CanonicalCandleQuery | None = None,
     ):
         self.provider = provider or get_market_data_provider()
-        self.fetcher = fetcher or fetch_alpaca_bars
+        self.fetcher = fetcher
         self.now = now or (lambda: datetime.now(timezone.utc))
+        self.candle_query = candle_query or CanonicalCandleQuery(
+            self.provider,
+            get_on_demand_fill_service(self.provider),
+        )
 
     def snapshot(
         self,
@@ -89,15 +96,30 @@ class ChartCompareService:
 
         end = ensure_utc(self.now())
         start = end - config.lookback
-        default_feed = os.getenv("HISTORICAL_FEED", os.getenv("ALPACA_FEED", "sip"))
         items: list[dict[str, Any]] = []
         warnings: list[dict[str, Any]] = []
 
-        for index, symbol in enumerate(normalized_symbols):
+        query_interval, query_limit = compare_query_contract(range_id)
+        max_workers = min(3, len(normalized_symbols))
+        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="chart-compare") as executor:
+            futures = [
+                executor.submit(
+                    self.candle_query.query,
+                    symbol,
+                    query_interval,
+                    query_limit,
+                    from_time=isoformat_z(start),
+                    to_time=isoformat_z(end),
+                    ma_windows=(),
+                )
+                for symbol in normalized_symbols
+            ]
+
+        for index, (symbol, future) in enumerate(zip(normalized_symbols, futures)):
             metadata = symbol_metadata(self.provider, symbol)
             try:
-                feed = historical_feed_for_symbol(symbol, default_feed)
-                raw_bars = self.fetcher(symbol, isoformat_z(start), isoformat_z(end), feed, config.timeframe)
+                candle_payload = future.result()
+                raw_bars = candle_payload.get("candles") or []
                 points = compare_points_from_bars(raw_bars, config)
                 item = build_compare_item(symbol, metadata, points, COMPARE_COLORS[index % len(COMPARE_COLORS)])
                 if item.get("error"):
@@ -164,6 +186,16 @@ class ChartCompareService:
 
 def get_chart_compare_service(provider=None) -> ChartCompareService:
     return ChartCompareService(provider=provider)
+
+
+def compare_query_contract(range_id: str) -> tuple[str, int]:
+    return {
+        "1D": ("1m", 10_000),
+        "1M": ("1h", 1_000),
+        "6M": ("1D", 250),
+        "1Y": ("1D", 500),
+        "5Y": ("1W", 300),
+    }[range_id]
 
 
 def normalize_compare_symbols(symbols: list[str]) -> list[str]:

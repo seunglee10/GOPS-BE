@@ -1,11 +1,12 @@
 # 역할: Kafka Raw Topic을 읽어 차트용 Processed Topic과 Redis 최신값으로 변환합니다.
 # 사용: 로컬 Docker와 현재 AWS 배포에서는 Python market-processor runtime으로 실행합니다.
-# 출력: CHART_DATA_REBUILD_PLAN.md의 layer topic과 Redis live/cache state.
+# 출력: docs/CHART_DATA_ARCHITECTURE.md의 layer topic과 Redis live/cache state.
 import json
 import os
 import time
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import redis
 
@@ -14,6 +15,7 @@ from alfaka.common.env import load_dotenv
 from alfaka.common.env import parse_csv
 from alfaka.common.kafka_io import create_json_consumer, create_json_producer
 from alfaka.common.kafka_topics import closed_candle_topics_from_env, default_closed_candle_topics
+from alfaka.common.heartbeat import touch_heartbeat
 from alfaka.common.redis_keys import RedisKeyBuilder
 from alfaka.common.runtime_health import write_component_health
 from alfaka.common.runtime_config import validate_required_values
@@ -21,13 +23,24 @@ from alfaka.orderflow import (
     OrderFlowBinBuilder,
     PinnedQuoteCache,
     classify_trade_side,
+    health_write_min_interval_ms_from_env,
+    live_minute_ttl_seconds_from_env,
     live_ttl_seconds_from_env,
     pinned_symbols_from_env,
     price_bin_size_from_env,
     publish_throttle_ms_from_env,
+    quote_event_publish_min_interval_ms_from_env,
     quote_future_tolerance_ms_from_env,
     quote_max_age_ms_from_env,
     quote_refresh_ms_from_env,
+    quote_redis_write_min_interval_ms_from_env,
+    redis_flush_ms_from_env,
+    trade_redis_write_min_interval_ms_from_env,
+)
+from alfaka.orderflow.redis_model import (
+    encode_order_flow_minute_blob,
+    order_flow_minute_blob,
+    order_flow_minute_score,
 )
 from alfaka.serving.dto import market_status_event, order_flow_event, websocket_event
 from alfaka.serving.closed_watermark import (
@@ -46,7 +59,6 @@ from alfaka.streaming.transforms import (
     ProvisionalCandleState,
     SourceEventDeduper,
     TickWindowCandleBuilder,
-    VolumeProfileBinBuilder,
     normalize_bar,
     normalize_quote,
     normalize_status,
@@ -58,17 +70,18 @@ from alfaka.streaming.transforms import (
 
 
 _PUBLISH_COUNTS = defaultdict(int)
+ORDER_FLOW_MARKET_TIMEZONE = ZoneInfo("America/New_York")
 
 
 def main():
     load_dotenv()
+    touch_heartbeat()
     config = processor_runtime_config()
     kafka_servers = config["kafka_servers"]
     group_id = config["group_id"]
     status_topic = config["status_topic"]
     redis_url = config["redis_url"]
     log_every_n = config["log_every_n"]
-    price_bin_size = config["price_bin_size"]
     raw_topics = config["raw_topics"]
 
     consumer = create_json_consumer(
@@ -77,17 +90,19 @@ def main():
         group_id,
         "alfaka-stream-processor",
         enable_auto_commit=config["enable_auto_commit"],
+        partition_assignment_strategy="range",
     )
     producer = create_json_producer(kafka_servers, "alfaka-processed-producer")
     redis_client = redis.from_url(redis_url, decode_responses=True)
     redis_keys = RedisKeyBuilder()
 
     state = ProcessorState(
-        price_bin_size=price_bin_size,
         watermark_grace_seconds=config["watermark_grace_seconds"],
         live_publish_min_interval_seconds=config["live_publish_min_interval_seconds"],
         active_feed_cache_seconds=config["active_feed_cache_seconds"],
+        order_flow_quote_cache_only=config["order_flow_quote_cache_only"],
     )
+    state.canonical_candle_loader = clickhouse_canonical_candle_loader()
     configure_order_flow_state(state, redis_client, redis_keys)
     recover_processor_state_from_redis(redis_client, redis_keys, state, config["recovery_symbols"])
     if config["clickhouse_recovery_enabled"]:
@@ -97,7 +112,6 @@ def main():
         "quotes": config["quotes_topic"],
         "tick_fanout": config["tick_fanout_topics"],
         "closed_candles": config["closed_candle_topic"],
-        "live_candles": config["live_candle_topic"],
         "status": status_topic,
         "events": config["events_topic"],
         "tick_fanout_enabled": config["publish_tick_fanout"],
@@ -149,15 +163,14 @@ def processor_runtime_config(environ=None):
         "events_topic": environ.get("KAFKA_EVENTS_LAYER_TOPIC", "market.layer.events.v1"),
         "status_topic": environ.get("KAFKA_STATUS_TOPIC", "market.layer.events.v1"),
         "tick_fanout_topics": {interval: tick_fanout_topics[interval] for interval in enabled_tick_fanout_intervals},
-        "live_candle_topic": environ.get("KAFKA_LIVE_CANDLE_TOPIC", "market.layer.candles.live.v1"),
         "closed_candle_topic": closed_candle_topics_from_env(environ),
         "redis_url": environ.get("REDIS_URL", "redis://localhost:6379/0"),
         "log_every_n": parse_positive_int(environ.get("PROCESSOR_LOG_EVERY_N", "500"), default=500),
-        "price_bin_size": parse_positive_float(environ.get("VOLUME_PROFILE_PRICE_BIN_SIZE", "0.05"), default=0.05),
         "watermark_grace_seconds": parse_positive_float(environ.get("CANDLE_WATERMARK_GRACE_SECONDS", "5"), default=5),
         "flush_interval_seconds": parse_positive_float(environ.get("CANDLE_FLUSH_INTERVAL_SECONDS", "1"), default=1),
         "live_publish_min_interval_seconds": parse_non_negative_float(environ.get("LIVE_CANDLE_PUBLISH_MIN_INTERVAL_SECONDS", "0"), default=0),
         "active_feed_cache_seconds": parse_non_negative_float(environ.get("PROCESSOR_ACTIVE_FEED_CACHE_SECONDS", "1"), default=1),
+        "order_flow_quote_cache_only": parse_bool(environ.get("ORDER_FLOW_QUOTE_CACHE_ONLY", "false")),
         "poll_timeout_ms": parse_positive_int(environ.get("PROCESSOR_POLL_TIMEOUT_MS", "1000"), default=1000),
         "enable_auto_commit": parse_bool(environ.get("KAFKA_PROCESSOR_ENABLE_AUTO_COMMIT", "false")),
         "publish_tick_fanout": parse_bool(environ.get("KAFKA_PUBLISH_TICK_FANOUT", "false")),
@@ -214,7 +227,6 @@ def validate_processor_runtime_config(config):
         "quotes_topic": config.get("quotes_topic"),
         "events_topic": config.get("events_topic"),
         "status_topic": config.get("status_topic"),
-        "live_candle_topic": config.get("live_candle_topic"),
         "closed_candle_topic": config.get("closed_candle_topic"),
         "raw_topics": config.get("raw_topics"),
         "redis_url": config.get("redis_url"),
@@ -224,10 +236,10 @@ def validate_processor_runtime_config(config):
 class ProcessorState:
     def __init__(
         self,
-        price_bin_size=0.05,
         watermark_grace_seconds=5,
         live_publish_min_interval_seconds=0,
         active_feed_cache_seconds=1,
+        order_flow_quote_cache_only=False,
     ):
         self.live_builder = LiveCandleBuilder()
         self.window_builder = TickWindowCandleBuilder(grace_seconds=watermark_grace_seconds)
@@ -238,14 +250,22 @@ class ProcessorState:
         self.monthly_aggregator = CalendarCandleAggregator("1D", "1M")
         self.ma_state = MovingAverageState()
         self.deduper = SourceEventDeduper()
-        self.profile_builder = VolumeProfileBinBuilder(price_bin_size=price_bin_size)
         self.live_publish_throttle = LiveCandlePublishThrottle(live_publish_min_interval_seconds)
         self.active_feed_cache = ActiveFeedCache(active_feed_cache_seconds)
         self.order_flow_builder = None
         self.order_flow_quote_cache = None
+        self.order_flow_quote_cache_only = bool(order_flow_quote_cache_only)
         self.order_flow_quote_max_age_ms = None
         self.order_flow_quote_future_tolerance_ms = 0
         self.order_flow_publish_state = {}
+        self.order_flow_redis_flush_state = {}
+        self.order_flow_minutes_ttl_state = set()
+        self.quote_redis_write_state = {}
+        self.quote_event_publish_state = {}
+        self.trade_redis_write_state = {}
+        self.health_write_state = {}
+        self.canonical_candle_loader = None
+        self.correction_recompute_failures = 0
 
 
 def configure_order_flow_state(state, redis_client, redis_keys):
@@ -260,10 +280,14 @@ def configure_order_flow_state(state, redis_client, redis_keys):
         redis_client,
         redis_keys,
         refresh_ms=quote_refresh_ms_from_env(),
+        redis_fallback=not getattr(state, "order_flow_quote_cache_only", False),
+        pinned_symbols=pinned_symbols,
     )
     state.order_flow_quote_max_age_ms = quote_max_age_ms_from_env()
     state.order_flow_quote_future_tolerance_ms = quote_future_tolerance_ms_from_env()
     state.order_flow_publish_state = {}
+    state.order_flow_redis_flush_state = {}
+    state.order_flow_minutes_ttl_state = set()
     return state
 
 
@@ -431,6 +455,7 @@ def run_stream_processor(
     try:
         while True:
             batches = consumer.poll(timeout_ms=poll_timeout_ms)
+            touch_heartbeat()
             had_records = False
             for records in batches.values():
                 for record in records:
@@ -494,12 +519,12 @@ def process_raw_envelope(envelope, producer, redis_client, redis_keys, state, to
     channel = envelope.get("channel")
     feed_guard_result = enforce_active_feed(redis_client, redis_keys, envelope, cache=getattr(state, "active_feed_cache", None))
     if feed_guard_result != "accepted":
-        write_processor_health(redis_client, redis_keys, envelope, result=feed_guard_result)
+        write_processor_health(redis_client, redis_keys, envelope, result=feed_guard_result, state=state)
         return feed_guard_result
 
     if state.deduper.is_duplicate(envelope.get("sourceEventId")):
         print(f"중복 Raw event 제외: sourceEventId={envelope.get('sourceEventId')}", flush=True)
-        write_processor_health(redis_client, redis_keys, envelope, result="duplicate")
+        write_processor_health(redis_client, redis_keys, envelope, result="duplicate", state=state)
         return "duplicate"
 
     if channel == "trades":
@@ -507,7 +532,7 @@ def process_raw_envelope(envelope, producer, redis_client, redis_keys, state, to
         publish_processed(producer, topics["trades"], {**trade, "layer": "trades"}, log_every_n)
         if topics.get("tick_fanout_enabled"):
             publish_tick_fanout(producer, topics["tick_fanout"], trade, log_every_n)
-        write_trade_to_redis(redis_client, redis_keys, trade)
+        write_trade_to_redis(redis_client, redis_keys, trade, state=state)
         result = process_trade_live_path(
             trade,
             producer,
@@ -517,7 +542,7 @@ def process_raw_envelope(envelope, producer, redis_client, redis_keys, state, to
             topics,
             log_every_n=log_every_n,
         )
-        write_processor_health(redis_client, redis_keys, envelope, result=result)
+        write_processor_health(redis_client, redis_keys, envelope, result=result, state=state)
         return result
 
     if channel == "tickFanout":
@@ -531,22 +556,36 @@ def process_raw_envelope(envelope, producer, redis_client, redis_keys, state, to
             topics,
             log_every_n=log_every_n,
         )
-        write_processor_health(redis_client, redis_keys, envelope, result=result)
+        write_processor_health(redis_client, redis_keys, envelope, result=result, state=state)
         return result
 
     if channel == "quotes":
         quote = normalize_quote(envelope)
-        write_quote_to_redis(redis_client, redis_keys, quote)
+        update_order_flow_quote_cache(state, quote)
+        if getattr(state, "order_flow_quote_cache_only", False):
+            write_processor_health(redis_client, redis_keys, envelope, result="quotes_cached", state=state)
+            return "quotes_cached"
+        write_quote_to_redis(redis_client, redis_keys, quote, state=state)
         publish_processed(producer, topics["quotes"], quote, log_every_n)
-        publish_chart_event(redis_client, redis_keys, quote_event(quote))
-        write_processor_health(redis_client, redis_keys, envelope, result="quotes")
+        maybe_publish_quote_chart_event(redis_client, redis_keys, quote, state=state)
+        write_processor_health(redis_client, redis_keys, envelope, result="quotes", state=state)
         return "quotes"
 
     if channel in {"bars", "updatedBars", "dailyBars"}:
         candle = normalize_bar(envelope, correction_type="UPDATED" if channel == "updatedBars" else "NONE")
         publish_closed_candle(producer, redis_client, redis_keys, state, topics, candle, log_every_n=log_every_n)
+        if channel == "updatedBars" and candle["interval"] == "1m":
+            publish_corrected_intraday_aggregates(
+                producer,
+                redis_client,
+                redis_keys,
+                state,
+                topics,
+                candle,
+                log_every_n=log_every_n,
+            )
         result = f"{channel}_confirmed_replace"
-        write_processor_health(redis_client, redis_keys, envelope, result=result)
+        write_processor_health(redis_client, redis_keys, envelope, result=result, state=state)
         return result
 
     if channel in {"statuses", "events"}:
@@ -556,16 +595,16 @@ def process_raw_envelope(envelope, producer, redis_client, redis_keys, state, to
         if status.get("symbol") and status.get("symbol") != "_MARKET":
             write_event_to_redis(redis_client, redis_keys, status)
         publish_chart_event(redis_client, redis_keys, market_status_event(status))
-        write_processor_health(redis_client, redis_keys, envelope, result=channel)
+        write_processor_health(redis_client, redis_keys, envelope, result=channel, state=state)
         return channel
 
     if channel in {"corrections", "cancelErrors"}:
         print(f"Raw correction/cancel event 격리: channel={channel}", flush=True)
-        write_processor_health(redis_client, redis_keys, envelope, result=f"{channel}_quarantined")
+        write_processor_health(redis_client, redis_keys, envelope, result=f"{channel}_quarantined", state=state)
         return f"{channel}_quarantined"
 
     print(f"처리하지 않는 Raw channel입니다: {channel}", flush=True)
-    write_processor_health(redis_client, redis_keys, envelope, result="ignored")
+    write_processor_health(redis_client, redis_keys, envelope, result="ignored", state=state)
     return "ignored"
 
 
@@ -574,7 +613,6 @@ def process_trade_live_path(trade, producer, redis_client, redis_keys, state, to
         return "trades_blocked_by_closed_watermark"
     accepted_for_window = state.window_builder.update(trade)
     live_candle = state.live_builder.update(trade) if accepted_for_window else None
-    profile_bin = state.profile_builder.update(trade)
     if live_candle:
         publish_live_candle(
             producer,
@@ -586,7 +624,6 @@ def process_trade_live_path(trade, producer, redis_client, redis_keys, state, to
             log_every_n=log_every_n,
             throttle=getattr(state, "live_publish_throttle", None),
         )
-    write_volume_profile_bin_to_redis(redis_client, redis_keys, profile_bin)
     process_order_flow_live_path(trade, redis_client, redis_keys, state)
     if live_candle:
         publish_derived_live_candles(producer, redis_client, redis_keys, state, topics, trade["symbol"], live_1m=live_candle, log_every_n=log_every_n)
@@ -606,12 +643,48 @@ def process_order_flow_live_path(trade, redis_client, redis_keys, state):
         max_quote_age_ms=getattr(state, "order_flow_quote_max_age_ms", None),
         future_tolerance_ms=getattr(state, "order_flow_quote_future_tolerance_ms", 0),
     )
+    close_previous_order_flow_minute_before_update(redis_client, redis_keys, state, trade)
     of_bin = builder.update(trade, side)
     if of_bin is None:
         return None
     write_order_flow_bin_to_redis(redis_client, redis_keys, of_bin, state=state)
     maybe_publish_order_flow_event(redis_client, redis_keys, state, of_bin)
     return of_bin
+
+
+def update_order_flow_quote_cache(state, quote):
+    quote_cache = getattr(state, "order_flow_quote_cache", None)
+    if quote_cache is None or not callable(getattr(quote_cache, "update", None)):
+        return None
+    return quote_cache.update(quote)
+
+
+def close_previous_order_flow_minute_before_update(redis_client, redis_keys, state, trade):
+    builder = getattr(state, "order_flow_builder", None)
+    symbol = str(trade.get("symbol") or "").upper()
+    if builder is None or symbol not in builder.pinned_symbols:
+        return False
+    flush_state = _order_flow_redis_flush_state(state)
+    entry = dict(flush_state.get(symbol) or {})
+    previous_minute = entry.get("minute")
+    if not previous_minute:
+        return False
+    try:
+        minute_dt = floor_minute(trade["timestamp"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    event_minute = to_iso(minute_dt)
+    if previous_minute == event_minute:
+        return False
+    current_session = builder.current_session_date(symbol)
+    incoming_session = minute_dt.astimezone(ORDER_FLOW_MARKET_TIMEZONE).date().isoformat()
+    if current_session and current_session != incoming_session:
+        return False
+    if write_closed_order_flow_minute_to_redis(redis_client, redis_keys, symbol, previous_minute, builder, state=state):
+        entry["preClosedMinute"] = previous_minute
+        flush_state[symbol] = entry
+        return True
+    return False
 
 
 def trade_bucket_blocked_by_closed_watermark(redis_client, redis_keys, trade):
@@ -660,11 +733,71 @@ def flush_ready_closed_candles(producer, redis_client, redis_keys, state, topics
     return published
 
 
+def clickhouse_canonical_candle_loader(provider=None):
+    if provider is None:
+        from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
+        provider = ClickHouseMarketDataProvider()
+
+    def load(symbol, from_time, to_time):
+        return provider.candles(
+            symbol,
+            "1m",
+            limit=500,
+            from_time=to_iso(from_time),
+            to_time=to_iso(to_time),
+        )
+
+    return load
+
+
+def publish_corrected_intraday_aggregates(
+    producer,
+    redis_client,
+    redis_keys,
+    state,
+    topics,
+    corrected_candle,
+    log_every_n=500,
+):
+    loader = getattr(state, "canonical_candle_loader", None)
+    if not callable(loader):
+        return 0
+    anchor = parse_time(corrected_candle["timestamp"])
+    from_time = anchor.replace(hour=(anchor.hour // 4) * 4, minute=0, second=0, microsecond=0)
+    to_time = from_time + timedelta(minutes=240)
+    try:
+        source_candles = loader(corrected_candle["symbol"], from_time, to_time) or []
+    except Exception as exc:
+        state.correction_recompute_failures += 1
+        print(
+            f"Canonical correction recompute skipped: symbol={corrected_candle.get('symbol')} "
+            f"timestamp={corrected_candle.get('timestamp')} error={exc}",
+            flush=True,
+        )
+        return 0
+
+    published = 0
+    for interval_minutes in (5, 10, 60, 240):
+        aggregated = state.aggregator.recompute(corrected_candle, interval_minutes, source_candles)
+        if aggregated is None:
+            continue
+        publish_closed_candle(
+            producer,
+            redis_client,
+            redis_keys,
+            state,
+            topics,
+            aggregated,
+            log_every_n=log_every_n,
+        )
+        published += 1
+    return published
+
+
 def normalize_processor_topics(topics):
-    if "trades" in topics and "closed_candles" in topics and "live_candles" in topics:
+    if "trades" in topics and "closed_candles" in topics:
         return {"tick_fanout_enabled": False, **topics}
     closed_topic = topics.get("closed_candles") or default_closed_candle_topics()
-    live_topic = topics.get("live_candles") or "market.layer.candles.live.v1"
     trades_topic = topics.get("trades") or "market.layer.trades.v1"
     events_topic = topics.get("events") or topics.get("status") or "market.layer.events.v1"
     return {
@@ -680,7 +813,6 @@ def normalize_processor_topics(topics):
             "1M": "market.realtime.ticks.to.1mo.v1",
         },
         "closed_candles": closed_topic,
-        "live_candles": live_topic,
         "events": events_topic,
         "status": topics.get("status") or events_topic,
         "tick_fanout_enabled": bool(topics.get("tick_fanout_enabled")),
@@ -721,6 +853,8 @@ def publish_tick_fanout(producer, topics_by_interval, trade, log_every_n=500, sk
 
 
 def candle_topic(topics_by_interval, interval):
+    if topics_by_interval is None:
+        return None
     if isinstance(topics_by_interval, str):
         return topics_by_interval
     if interval in topics_by_interval:
@@ -763,9 +897,12 @@ def publish_processed(producer, topic, payload, log_every_n=500):
         print(f"Processed Kafka 전송: topic={topic}, key={key}, count={_PUBLISH_COUNTS[topic]}", flush=True)
 
 
-def write_trade_to_redis(redis_client, redis_keys, trade):
+def write_trade_to_redis(redis_client, redis_keys, trade, state=None):
+    symbol = trade["symbol"]
+    if not _throttle_allows(state, "trade_redis_write_state", symbol, trade_redis_write_min_interval_ms_from_env()):
+        return False
     key = redis_keys.live_trade(trade["symbol"])
-    redis_client.hset(key, mapping={
+    _redis_hset_expire(redis_client, key, {
         "symbol": trade["symbol"],
         "layer": "trades",
         "price": trade["price"],
@@ -775,20 +912,22 @@ def write_trade_to_redis(redis_client, redis_keys, trade):
         "feed": trade.get("feed") or "unknown",
         "feedProfile": trade.get("feedProfile") or trade.get("feed") or "unknown",
         "marketSession": trade.get("marketSession") or "unknown",
-    })
-    redis_client.expire(key, live_trade_ttl_seconds())
+    }, live_trade_ttl_seconds())
+    return True
 
 
-def write_quote_to_redis(redis_client, redis_keys, quote):
+def write_quote_to_redis(redis_client, redis_keys, quote, state=None):
+    symbol = quote["symbol"]
+    if not _throttle_allows(state, "quote_redis_write_state", symbol, quote_redis_write_min_interval_ms_from_env()):
+        return False
     key = redis_keys.live_quote(quote["symbol"])
-    redis_client.set(key, json.dumps(quote, ensure_ascii=False, separators=(",", ":")))
-    redis_client.expire(key, 300)
+    _redis_set_ex(redis_client, key, json.dumps(quote, ensure_ascii=False, separators=(",", ":")), 300)
+    return True
 
 
 def write_event_to_redis(redis_client, redis_keys, event):
     key = redis_keys.live_event(event["symbol"])
-    redis_client.set(key, json.dumps(event, ensure_ascii=False, separators=(",", ":")))
-    redis_client.expire(key, 86400)
+    _redis_set_ex(redis_client, key, json.dumps(event, ensure_ascii=False, separators=(",", ":")), 86400)
 
 
 def read_closed_candle_watermark(redis_client, redis_keys, symbol, interval):
@@ -855,12 +994,6 @@ def publish_live_candle(producer, redis_client, redis_keys, topics, candle, feed
         return False
     if not write_live_candle_to_redis(redis_client, redis_keys, candle):
         return False
-    publish_processed(
-        producer,
-        candle_topic(topics["live_candles"], candle["interval"]),
-        {**candle, "layer": "candles", "state": "live"},
-        log_every_n,
-    )
     publish_chart_event(
         redis_client,
         redis_keys,
@@ -945,53 +1078,142 @@ def write_closed_candle_to_redis(redis_client, redis_keys, candle):
 
 def write_status_to_redis(redis_client, redis_keys, status):
     status_json = json.dumps(status, ensure_ascii=False, separators=(",", ":"))
-    redis_client.set(redis_keys.market_status_latest(), status_json)
-    redis_client.expire(redis_keys.market_status_latest(), 86400)
+    _redis_set_ex(redis_client, redis_keys.market_status_latest(), status_json, 86400)
     symbol = status.get("symbol")
     if symbol and symbol != "_MARKET":
         key = redis_keys.market_status_symbol_latest(symbol)
-        redis_client.set(key, status_json)
-        redis_client.expire(key, 86400)
-
-
-def write_volume_profile_bin_to_redis(redis_client, redis_keys, profile_bin):
-    key = redis_keys.volume_profile_live(profile_bin["symbol"])
-    member = json.dumps(profile_bin, ensure_ascii=False, separators=(",", ":"))
-    score = timestamp_score(profile_bin["eventMinute"])
-    redis_client.zadd(key, {member: score})
-    trim_volume_profile_live_cache(redis_client, key, score)
-    redis_client.expire(key, volume_profile_live_ttl_seconds())
-
-
-def trim_volume_profile_live_cache(redis_client, key, score):
-    batch_size = volume_profile_live_trim_batch_size()
-    cutoff_score = max(0, score - volume_profile_live_window_seconds() * 1000)
-    old_members = redis_client.zrangebyscore(key, 0, cutoff_score, start=0, num=batch_size)
-    if old_members:
-        redis_client.zrem(key, *old_members)
-
-    overflow = redis_client.zcard(key) - volume_profile_live_max_bins()
-    if overflow <= 0:
-        return
-    rank_trim_count = min(overflow, batch_size)
-    overflow_members = redis_client.zrange(key, 0, rank_trim_count - 1)
-    if overflow_members:
-        redis_client.zrem(key, *overflow_members)
+        _redis_set_ex(redis_client, key, status_json, 86400)
 
 
 def write_order_flow_bin_to_redis(redis_client, redis_keys, of_bin, state=None):
-    key = redis_keys.order_flow_live(of_bin["symbol"])
     builder = getattr(state, "order_flow_builder", None)
+    symbol = str(of_bin["symbol"]).upper()
+    event_minute = of_bin["eventMinute"]
+    flush_state = _order_flow_redis_flush_state(state)
+    entry = dict(flush_state.get(symbol) or {})
+
     if builder is not None and callable(getattr(builder, "consume_session_rollover", None)):
         if builder.consume_session_rollover(of_bin["symbol"]):
-            redis_client.delete(key)
-    field = f"{of_bin['eventMinute']}|{of_bin['priceBin']:.2f}"
-    value = json.dumps(of_bin, ensure_ascii=False, separators=(",", ":"))
+            _delete_order_flow_live_keys(redis_client, redis_keys, symbol)
+            flush_state.pop(symbol, None)
+            _order_flow_minutes_ttl_state(state).discard(symbol)
+            entry = {}
+
+    previous_minute = entry.get("minute")
+    minute_changed = bool(previous_minute and previous_minute != event_minute)
+    if minute_changed:
+        if entry.get("preClosedMinute") != previous_minute:
+            write_closed_order_flow_minute_to_redis(redis_client, redis_keys, symbol, previous_minute, builder, state=state)
+        entry = {}
+
+    now = time.monotonic()
+    last_flush = float(entry.get("lastFlush", 0.0) or 0.0)
+    force_flush = not entry or minute_changed
+    due = (now - last_flush) * 1000 >= redis_flush_ms_from_env()
+    if force_flush or due:
+        if write_live_order_flow_minute_to_redis(redis_client, redis_keys, symbol, event_minute, builder, fallback_bin=of_bin):
+            last_flush = now
+
+    flush_state[symbol] = {"minute": event_minute, "lastFlush": last_flush}
+
+
+def write_live_order_flow_minute_to_redis(redis_client, redis_keys, symbol, event_minute, builder=None, *, fallback_bin=None):
+    bins = _order_flow_bins_for_minute(builder, symbol, event_minute, fallback_bin=fallback_bin)
+    if not bins:
+        return False
+    key = redis_keys.order_flow_live_minute(symbol)
+    value = encode_order_flow_minute_blob(order_flow_minute_blob(symbol, event_minute, bins))
+    _redis_set_ex(redis_client, key, value, live_minute_ttl_seconds_from_env())
+    return True
+
+
+def write_closed_order_flow_minute_to_redis(redis_client, redis_keys, symbol, event_minute, builder=None, state=None):
+    bins = _order_flow_bins_for_minute(builder, symbol, event_minute)
+    if not bins:
+        return False
+    key = redis_keys.order_flow_minutes(symbol)
+    value = encode_order_flow_minute_blob(order_flow_minute_blob(symbol, event_minute, bins))
+    redis_client.zadd(key, {value: order_flow_minute_score(event_minute)})
+    if state is None:
+        redis_client.expire(key, live_ttl_seconds_from_env())
+        return True
+    ttl_state = _order_flow_minutes_ttl_state(state)
+    normalized_symbol = str(symbol or "").upper()
+    if normalized_symbol not in ttl_state:
+        redis_client.expire(key, live_ttl_seconds_from_env())
+        ttl_state.add(normalized_symbol)
+    return True
+
+
+def _order_flow_bins_for_minute(builder, symbol, event_minute, *, fallback_bin=None):
+    if builder is not None and callable(getattr(builder, "bins_for_minute", None)):
+        return builder.bins_for_minute(symbol, event_minute)
+    if fallback_bin and fallback_bin.get("eventMinute") == event_minute:
+        return [fallback_bin]
+    return []
+
+
+def _order_flow_redis_flush_state(state):
+    if state is None:
+        return {}
+    flush_state = getattr(state, "order_flow_redis_flush_state", None)
+    if flush_state is None:
+        state.order_flow_redis_flush_state = {}
+        flush_state = state.order_flow_redis_flush_state
+    return flush_state
+
+
+def _order_flow_minutes_ttl_state(state):
+    if state is None:
+        return set()
+    ttl_state = getattr(state, "order_flow_minutes_ttl_state", None)
+    if ttl_state is None:
+        state.order_flow_minutes_ttl_state = set()
+        ttl_state = state.order_flow_minutes_ttl_state
+    return ttl_state
+
+
+def _delete_order_flow_live_keys(redis_client, redis_keys, symbol):
+    redis_client.delete(redis_keys.order_flow_minutes(symbol))
+    redis_client.delete(redis_keys.order_flow_live_minute(symbol))
+
+
+def _redis_set_ex(redis_client, key, value, ttl_seconds):
     try:
-        redis_client.hset(key, field, value)
+        return redis_client.set(key, value, ex=ttl_seconds)
     except TypeError:
-        redis_client.hset(key, mapping={field: value})
-    redis_client.expire(key, live_ttl_seconds_from_env())
+        redis_client.set(key, value)
+        return redis_client.expire(key, ttl_seconds)
+
+
+def _redis_hset_expire(redis_client, key, mapping, ttl_seconds):
+    pipeline_factory = getattr(redis_client, "pipeline", None)
+    if callable(pipeline_factory):
+        try:
+            pipe = pipeline_factory(transaction=False)
+        except TypeError:
+            pipe = pipeline_factory()
+        pipe.hset(key, mapping=mapping)
+        pipe.expire(key, ttl_seconds)
+        return pipe.execute()
+    redis_client.hset(key, mapping=mapping)
+    return redis_client.expire(key, ttl_seconds)
+
+
+def _throttle_allows(state, attr, key, min_interval_ms):
+    if state is None or min_interval_ms <= 0:
+        return True
+    throttle_state = getattr(state, attr, None)
+    if throttle_state is None:
+        throttle_state = {}
+        setattr(state, attr, throttle_state)
+    normalized_key = str(key or "_UNKNOWN").upper()
+    now = time.monotonic()
+    previous = throttle_state.get(normalized_key)
+    if previous is not None and (now - float(previous)) * 1000 < min_interval_ms:
+        return False
+    throttle_state[normalized_key] = now
+    return True
 
 
 def maybe_publish_order_flow_event(redis_client, redis_keys, state, of_bin):
@@ -1022,9 +1244,15 @@ def maybe_publish_order_flow_event(redis_client, redis_keys, state, of_bin):
     publish_state[symbol] = {"lastPublish": now, "minute": event_minute, "seq": seq}
 
 
+def maybe_publish_quote_chart_event(redis_client, redis_keys, quote, state=None):
+    if not _throttle_allows(state, "quote_event_publish_state", quote["symbol"], quote_event_publish_min_interval_ms_from_env()):
+        return False
+    publish_chart_event(redis_client, redis_keys, quote_event(quote))
+    return True
+
+
 def publish_chart_event(redis_client, redis_keys, event):
     event_json = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
-    redis_client.publish(redis_keys.market_events_symbol(event["symbol"]), event_json)
     redis_client.publish(redis_keys.market_events(), event_json)
 
 
@@ -1107,7 +1335,9 @@ def quarantine_feed_payload(redis_client, redis_keys, feed_profile, symbol, enve
         print(f"Feed quarantine write skipped: reason={reason} error={exc}", flush=True)
 
 
-def write_processor_health(redis_client, redis_keys, envelope, result):
+def write_processor_health(redis_client, redis_keys, envelope, result, state=None):
+    if not _throttle_allows(state, "health_write_state", "market-processor", health_write_min_interval_ms_from_env()):
+        return False
     try:
         health_fields = {
             "status": "ok",
@@ -1119,6 +1349,7 @@ def write_processor_health(redis_client, redis_keys, envelope, result):
             "lastFeedProfile": envelope.get("feedProfile"),
             "lastMarketSession": envelope.get("marketSession"),
             "lastSourceEventId": envelope.get("sourceEventId"),
+            "stateSizes": processor_state_sizes(state),
         }
         write_component_health(
             redis_client,
@@ -1142,8 +1373,54 @@ def write_processor_health(redis_client, redis_keys, envelope, result):
                 f"market-processor:feed:{str(feed_profile).lower()}",
                 **health_fields,
             )
+        return True
     except Exception as exc:
         print(f"Processor health heartbeat write skipped: error={exc}", flush=True)
+        return False
+
+
+def processor_state_sizes(state):
+    if state is None:
+        return {}
+    provisional = getattr(getattr(state, "provisional_state", None), "closed", {})
+    aggregate_windows = getattr(getattr(state, "aggregator", None), "windows", {})
+    calendar_aggregators = [
+        getattr(state, "daily_aggregator", None),
+        getattr(state, "weekly_aggregator", None),
+        getattr(state, "monthly_aggregator", None),
+    ]
+    live_builder = getattr(state, "live_builder", None)
+    window_builder = getattr(state, "window_builder", None)
+    aggregator = getattr(state, "aggregator", None)
+    moving_average = getattr(state, "ma_state", None)
+    return {
+        "liveCandles": len(getattr(live_builder, "candles", {})),
+        "tickWindows": len(getattr(window_builder, "windows", {})),
+        "tickClosedKeys": len(getattr(window_builder, "closed_keys", ())),
+        "provisionalCandles": sum(len(rows) for rows in provisional.values()),
+        "aggregateWindows": len(aggregate_windows),
+        "aggregateRows": sum(len(rows) for rows in aggregate_windows.values()),
+        "aggregateClosedKeys": len(getattr(aggregator, "closed_keys", ())),
+        "calendarWindows": sum(len(getattr(builder, "windows", {})) for builder in calendar_aggregators if builder is not None),
+        "calendarClosedKeys": sum(len(getattr(builder, "closed_keys", ())) for builder in calendar_aggregators if builder is not None),
+        "movingAverageCloses": sum(len(rows) for rows in getattr(moving_average, "closes", {}).values()),
+        "dedupeEntries": len(getattr(getattr(state, "deduper", None), "seen", ())),
+        "evictions": {
+            "liveCandles": getattr(live_builder, "evictions", 0),
+            "movingAverageCloses": getattr(moving_average, "evictions", 0),
+            "tickClosedKeys": getattr(getattr(window_builder, "closed_keys", None), "evictions", 0),
+            "aggregateClosedKeys": getattr(getattr(aggregator, "closed_keys", None), "evictions", 0),
+            "calendarClosedKeys": sum(
+                getattr(getattr(builder, "closed_keys", None), "evictions", 0)
+                for builder in calendar_aggregators
+                if builder is not None
+            ),
+        },
+        "recomputes": {
+            "aggregateWindows": getattr(aggregator, "recomputes", 0),
+            "failures": getattr(state, "correction_recompute_failures", 0),
+        },
+    }
 
 
 def timestamp_score(timestamp):
@@ -1158,23 +1435,6 @@ def live_trade_ttl_seconds():
 
 def live_candle_ttl_seconds():
     return parse_positive_int(os.getenv("LIVE_CANDLE_TTL_SECONDS", "180"), default=180)
-
-
-def volume_profile_live_window_seconds():
-    return parse_positive_int(os.getenv("VOLUME_PROFILE_LIVE_WINDOW_SECONDS", "7200"), default=7200)
-
-
-def volume_profile_live_ttl_seconds():
-    default_ttl = volume_profile_live_window_seconds()
-    return parse_positive_int(os.getenv("VOLUME_PROFILE_LIVE_TTL_SECONDS", str(default_ttl)), default=default_ttl)
-
-
-def volume_profile_live_max_bins():
-    return parse_positive_int(os.getenv("VOLUME_PROFILE_LIVE_MAX_BINS", "50000"), default=50000)
-
-
-def volume_profile_live_trim_batch_size():
-    return parse_positive_int(os.getenv("VOLUME_PROFILE_LIVE_TRIM_BATCH_SIZE", "1000"), default=1000)
 
 
 def parse_positive_int(value, default):

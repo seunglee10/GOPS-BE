@@ -21,6 +21,7 @@ from app.routes.llm import agent_chat, chart_proposal, router as llm_router
 from app.routes.orders import order_contract, router as orders_router
 from app.routes.streams import chart_stream, router as streams_router
 from app.services.ai_agents import openai_agent_chat, openai_chart_proposal
+from app.services.agent_request_limit import AgentRequestBodyLimitMiddleware
 from app.services.alfaka_market_data import configured_symbols, get_market_data_provider, symbol_summaries
 from gops_agents.query_understanding import warm_entity_catalog_cache
 
@@ -47,6 +48,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
         allow_credentials=True,
     )
+    app.add_middleware(AgentRequestBodyLimitMiddleware)
     app.include_router(health_router)
     app.include_router(auth_router)
     app.include_router(account_router)

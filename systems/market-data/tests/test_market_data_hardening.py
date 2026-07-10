@@ -48,7 +48,7 @@ from alfaka.common.s3_client import create_s3_client
 from alfaka.common.secrets import load_alpaca_credentials, resolve_alpaca_credential_source
 from alfaka.backfill.runner import BackfillRunner, BackfillUnavailable, fetch_alpaca_bars, raw_bar_to_processed_candle, raw_bars_to_processed_candles, repair_daily_bar_outliers
 from alfaka.backfill.gapfill import TradingCalendar, detect_gapfill_ranges
-from alfaka.backfill.status import RedisBackfillStore, default_backfill_range
+from alfaka.backfill.status import RedisBackfillStore, default_backfill_range, redis_response_error_type
 from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider, clickhouse_param_value
 from alfaka.serving.cursors import timestamp_from_cursor
 from alfaka.serving.dto import cursor_for, market_status_event, snapshot, websocket_event
@@ -103,10 +103,10 @@ from alfaka.storage.news_s3_archive import (
     write_news_symbol_index_to_s3,
 )
 from alfaka.storage.s3_manifest import processed_candle_keys_from_manifest, raw_keys_from_manifest
-from alfaka.streaming.processor import ProcessorState, flush_ready_closed_candles, process_raw_envelope, processor_runtime_config, recover_processor_state_from_clickhouse, recover_processor_state_from_redis, run_stream_processor, write_closed_candle_to_redis, write_live_candle_to_redis, write_trade_to_redis, write_volume_profile_bin_to_redis
+from alfaka.storage.s3_realtime_layout import symbol_shard
+from alfaka.streaming.processor import ProcessorState, flush_ready_closed_candles, process_raw_envelope, processor_runtime_config, recover_processor_state_from_clickhouse, recover_processor_state_from_redis, run_stream_processor, write_closed_candle_to_redis, write_live_candle_to_redis, write_trade_to_redis
 from alfaka.streaming.transforms import (
     CandleAggregator,
-    VolumeProfileBinBuilder,
     normalize_bar,
     normalize_status,
     normalize_trade,
@@ -456,7 +456,7 @@ class MemoryRedis:
     def xgroup_create(self, key, group, id="0", mkstream=False):
         group_key = (key, group)
         if group_key in self.stream_groups:
-            raise Exception("BUSYGROUP Consumer Group name already exists")
+            raise redis_response_error_type()("BUSYGROUP Consumer Group name already exists")
         if mkstream:
             self.streams.setdefault(key, [])
         self.stream_groups[group_key] = {"last_id": id, "pending": {}}
@@ -826,7 +826,6 @@ def mermaid_processor_topics():
             "1W": "market.realtime.ticks.to.1w.v1",
             "1M": "market.realtime.ticks.to.1mo.v1",
         },
-        "live_candles": "market.layer.candles.live.v1",
         "closed_candles": "market.layer.candles.closed.v1",
     }
 
@@ -1175,6 +1174,8 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(config["closed_candle_topic"]["1M"], "market.layer.candles.1mo.closed.v1")
         self.assertEqual(config["recovery_symbols"], ["AAPL", "MSFT"])
         self.assertTrue(config["clickhouse_recovery_enabled"])
+        self.assertNotIn("publish_live_candle_topic", config)
+        self.assertNotIn("live_candle_topic", config)
 
     def test_processor_runtime_config_can_enable_all_tick_fanout_topics(self):
         config = processor_runtime_config({
@@ -1493,12 +1494,30 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(consumer.kwargs["max_poll_interval_ms"], 900000)
         self.assertEqual(consumer.kwargs["max_poll_records"], 1)
 
+    def test_market_processor_consumer_uses_range_assignment_for_cross_topic_key_colocation(self):
+        from kafka.coordinator.assignors.range import RangePartitionAssignor
+        from kafka.partitioner.default import murmur2
+
+        RecordingKafkaConsumer.calls = []
+        with mock.patch("kafka.KafkaConsumer", RecordingKafkaConsumer):
+            consumer = create_json_consumer(
+                ["market.input.realtime.trades.v1", "market.input.realtime.quotes.v1"],
+                "kafka:29092",
+                "alfaka-market-processor",
+                "alfaka-market-processor",
+                partition_assignment_strategy="range",
+            )
+
+        self.assertEqual(consumer.kwargs["partition_assignment_strategy"], (RangePartitionAssignor,))
+        trade_partition = (murmur2(b"NVDA") & 0x7FFFFFFF) % 12
+        quote_partition = (murmur2(b"NVDA") & 0x7FFFFFFF) % 12
+        self.assertEqual(trade_partition, quote_partition)
+
     def test_live_path_trace_builds_read_only_contract(self):
         with mock.patch.dict(os.environ, {
             "KAFKA_INPUT_TOPIC_PREFIX": "market.input",
             "KAFKA_PROCESSOR_GROUP_ID": "alfaka-market-processor",
             "KAFKA_TRADES_LAYER_TOPIC": "market.layer.trades.v1",
-            "KAFKA_LIVE_CANDLE_TOPIC": "market.layer.candles.live.v1",
             "KAFKA_CLOSED_CANDLE_TOPIC": "market.layer.candles.closed.v1",
             "KAFKA_STATUS_TOPIC": "market.layer.events.v1",
             "KAFKA_PROCESSOR_RAW_TOPICS": "market.input.realtime.trades.v1,market.input.realtime.bars.1m.v1",
@@ -1548,10 +1567,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         result = process_raw_envelope(envelope, producer, redis, keys, state, topics)
 
         self.assertEqual(result, "trades")
-        self.assertEqual([sent["topic"] for sent in producer.sent[:2]], [
-            "market.layer.trades.v1",
-            "market.layer.candles.live.v1",
-        ])
+        self.assertEqual([sent["topic"] for sent in producer.sent], ["market.layer.trades.v1"])
         self.assertNotIn("market.realtime.ticks.to.1m.v1", [sent["topic"] for sent in producer.sent])
         self.assertEqual(redis.hashes[keys.price_latest("AAPL")]["price"], 195.2)
         live_candle = json.loads(redis.values[keys.live_candle("AAPL")])
@@ -1564,6 +1580,22 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(health["lastChannel"], "trades")
         self.assertEqual(health["lastSymbol"], "AAPL")
         self.assertEqual(health["lastSourceEventId"], envelope["sourceEventId"])
+
+    def test_live_candle_uses_redis_events_without_kafka_publication(self):
+        producer = RecordingProducer()
+        redis = MemoryRedis()
+        keys = RedisKeyBuilder()
+        topics = mermaid_processor_topics()
+        envelope = build_raw_envelope(
+            {"T": "t", "S": "AAPL", "i": 124, "p": 195.2, "s": 10, "t": "2026-06-25T10:15:20.100Z"},
+            "sip",
+        )
+
+        process_raw_envelope(envelope, producer, redis, keys, ProcessorState(), topics)
+
+        self.assertEqual([sent["topic"] for sent in producer.sent], ["market.layer.trades.v1"])
+        published_events = [json.loads(value) for _, value in redis.published]
+        self.assertTrue(any(event["type"] == "LIVE_CANDLE_UPDATE" for event in published_events))
 
     def test_processor_live_redis_state_uses_short_ttl(self):
         redis = MemoryRedis()
@@ -1880,23 +1912,26 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         keys = RedisKeyBuilder()
         topics = mermaid_processor_topics()
         state = ProcessorState()
+        clock = [100.0]
 
-        process_raw_envelope(
-            build_raw_envelope({"T": "t", "S": "AAPL", "i": 123, "p": 195.2, "s": 10, "t": "2026-06-25T10:15:20.100Z"}, "sip"),
-            producer,
-            redis,
-            keys,
-            state,
-            topics,
-        )
-        process_raw_envelope(
-            build_raw_envelope({"T": "b", "S": "AAPL", "t": "2026-06-25T10:15:00.000Z", "o": 195, "h": 196, "l": 194, "c": 195.5, "v": 100}, "sip"),
-            producer,
-            redis,
-            keys,
-            state,
-            topics,
-        )
+        with mock.patch("alfaka.streaming.processor.time.monotonic", side_effect=lambda: clock[0]):
+            process_raw_envelope(
+                build_raw_envelope({"T": "t", "S": "AAPL", "i": 123, "p": 195.2, "s": 10, "t": "2026-06-25T10:15:20.100Z"}, "sip"),
+                producer,
+                redis,
+                keys,
+                state,
+                topics,
+            )
+            clock[0] = 101.0
+            process_raw_envelope(
+                build_raw_envelope({"T": "b", "S": "AAPL", "t": "2026-06-25T10:15:00.000Z", "o": 195, "h": 196, "l": 194, "c": 195.5, "v": 100}, "sip"),
+                producer,
+                redis,
+                keys,
+                state,
+                topics,
+            )
 
         self.assertIn("market.layer.candles.closed.v1", [sent["topic"] for sent in producer.sent])
         self.assertIn(keys.pending_replace_candle("AAPL", "1m", "2026-06-25T10:15:00.000Z"), redis.values)
@@ -2036,7 +2071,10 @@ class MarketDataHardeningContractTest(unittest.TestCase):
 
         self.assertGreaterEqual(consumer.commits, 1)
         self.assertGreaterEqual(producer.flush_count, 1)
-        self.assertIn("market.layer.candles.live.v1", [sent["topic"] for sent in producer.sent])
+        self.assertEqual(
+            set(sent["topic"] for sent in producer.sent),
+            {"market.layer.trades.v1", "market.layer.candles.closed.v1"},
+        )
         self.assertNotIn("market.realtime.ticks.to.1m.v1", [sent["topic"] for sent in producer.sent])
         self.assertIn("market.layer.candles.closed.v1", [sent["topic"] for sent in producer.sent])
 
@@ -2105,8 +2143,8 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn("gops-market-processor:latest", deployment)
         self.assertIn("systems/market-data/pods/market-processor/local_main.py", deployment)
         self.assertIn("KAFKA_PROCESSOR_RAW_TOPICS", deployment)
-        self.assertIn("market.input.realtime.trades.v1,market.input.realtime.bars.1m.v1", deployment)
-        self.assertNotIn("market.input.realtime.quotes.v1", deployment)
+        self.assertIn("market.input.realtime.trades.v1,market.input.realtime.quotes.v1,market.input.realtime.bars.1m.v1", deployment)
+        self.assertIn("ORDER_FLOW_QUOTE_CACHE_ONLY", deployment)
         self.assertIn("name: alfaka-market-quote-processor", quote_deployment)
         self.assertIn("app: alfaka-market-quote-processor", quote_deployment)
         self.assertIn("KAFKA_PROCESSOR_GROUP_ID", quote_deployment)
@@ -2626,13 +2664,11 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(candle["correctionType"], "UPDATED")
         self.assertEqual(candle["sourceEventId"], envelope["sourceEventId"])
 
-    def test_trade_profile_bin_and_live_delta_have_cursor(self):
+    def test_live_delta_has_cursor(self):
         envelope = build_raw_envelope(
             {"T": "t", "S": "AAPL", "i": 123, "p": 195.22, "s": 10, "t": "2026-06-25T10:15:20.100Z"},
             "sip",
         )
-        trade = normalize_trade(envelope)
-        profile_bin = VolumeProfileBinBuilder(price_bin_size=0.05).update(trade)
         event = websocket_event("LIVE_CANDLE_UPDATE", "AAPL", "1m", {
             "timestamp": "2026-06-25T10:15:00.000Z",
             "open": 195.22,
@@ -2647,46 +2683,12 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "updatedAt": "2026-06-25T10:15:20.250Z",
         })
 
-        self.assertEqual(profile_bin["eventType"], "VOLUME_PROFILE_BIN")
-        self.assertEqual(profile_bin["priceBinSize"], 0.05)
         self.assertIn("eventId", event)
         self.assertIn("cursor", event)
         self.assertEqual(event["source"], "alpaca.trades")
         self.assertEqual(event["sourceInterval"], "trades")
         self.assertEqual(event["data"]["sourceInterval"], "trades")
         self.assertEqual(event["data"]["updatedAt"], "2026-06-25T10:15:20.250Z")
-
-    def test_volume_profile_live_redis_cache_is_bounded(self):
-        redis = MemoryRedis()
-        keys = RedisKeyBuilder()
-
-        with mock.patch.dict(os.environ, {
-            "VOLUME_PROFILE_LIVE_WINDOW_SECONDS": "120",
-            "VOLUME_PROFILE_LIVE_TTL_SECONDS": "120",
-            "VOLUME_PROFILE_LIVE_MAX_BINS": "2",
-        }, clear=False):
-            for minute, price in (
-                ("2026-06-25T10:00:00.000Z", 195.00),
-                ("2026-06-25T10:02:00.000Z", 195.05),
-                ("2026-06-25T10:03:00.000Z", 195.10),
-                ("2026-06-25T10:04:00.000Z", 195.15),
-            ):
-                write_volume_profile_bin_to_redis(redis, keys, {
-                    "eventType": "VOLUME_PROFILE_BIN",
-                    "symbol": "AAPL",
-                    "eventMinute": minute,
-                    "priceBin": price,
-                    "priceBinSize": 0.05,
-                    "volume": 10,
-                })
-
-        key = keys.volume_profile_live("AAPL")
-        rows = [json.loads(row) for row in redis.zrange(key, 0, -1)]
-        self.assertEqual([row["eventMinute"] for row in rows], [
-            "2026-06-25T10:03:00.000Z",
-            "2026-06-25T10:04:00.000Z",
-        ])
-        self.assertEqual(redis.expirations[key], 120)
 
     def test_redis_provider_reads_interval_specific_live_candle(self):
         redis = MemoryRedis()
@@ -4233,6 +4235,63 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(result["source"], "alpaca")
         self.assertEqual(client.inserts[0][1][0]["open"], 12)
 
+    def test_backfill_runner_ignores_shared_shard_object_without_matching_rows(self):
+        s3 = S3ObjectStore()
+        shard = symbol_shard("AAPL")
+        object_key = (
+            "market-data/rebuild-20260702-lazy-v1/final-v2/candles/interval=1m/"
+            f"date=2026-06-25/hour=13/shard={shard}/part-20260625T1330Z-collision.jsonl"
+        )
+        unrelated_row = {
+            "eventType": "CANDLE",
+            "symbol": "MSFT",
+            "interval": "1m",
+            "timestamp": "2026-06-25T13:30:00.000Z",
+            "open": 10,
+            "high": 11,
+            "low": 9,
+            "close": 10.5,
+            "volume": 1000,
+            "sourceEventId": "msft-collision",
+            **canonical_candle_fields(),
+        }
+        s3.put_object(
+            Bucket="bucket",
+            Key=object_key,
+            Body=(json.dumps(unrelated_row, separators=(",", ":")) + "\n").encode(),
+            ContentType="application/x-ndjson",
+        )
+        record = {
+            "requestId": "backfill:AAPL:1m:shared-shard",
+            "symbol": "AAPL",
+            "interval": "1m",
+            "range": {"start": "2026-06-25T13:30:00.000Z", "end": "2026-06-25T13:31:00.000Z"},
+            "jobType": "gapfill",
+            "sourcePreference": "coverage-first",
+        }
+        client = RecordingClickHouseClient()
+        runner = BackfillRunner(
+            s3=s3,
+            clickhouse_client=client,
+            coverage_provider=StaticCoverageProvider({"rowCount": 0, "availableFrom": None, "availableTo": None}),
+        )
+
+        with mock.patch.dict(os.environ, {
+            "S3_BUCKET": "bucket",
+            "S3_FINAL_PREFIX": "market-data/rebuild-20260702-lazy-v1/final",
+            "S3_PROCESSED_FORMAT": "jsonl",
+        }):
+            with mock.patch("alfaka.backfill.runner.fetch_alpaca_bars", return_value=[
+                alpaca_raw_bar("2026-06-25T13:30:00.000Z", open_price=12),
+            ]) as fetch:
+                result = runner._run(record)
+
+        self.assertEqual(result["source"], "alpaca")
+        fetch.assert_called_once()
+        inserted_symbols = [row["symbol"] for table, rows in client.inserts if table == "chart_candles" for row in rows]
+        self.assertIn("MSFT", inserted_symbols)
+        self.assertIn("AAPL", inserted_symbols)
+
     def test_backfill_runner_replay_repair_materializes_processed_s3(self):
         s3 = S3ObjectStore()
         source_row = {
@@ -5712,17 +5771,11 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "timestamp": "2026-01-02T10:15:00.000Z",
             "symbol": "AAPL",
         })
-        profile_key = s3_partition_key(final_prefix, {
-            "eventType": "VOLUME_PROFILE_BIN",
-            "eventMinute": "2026-01-02T10:15:00.000Z",
-            "symbol": "AAPL",
-        })
         storage_row = normalize_storage_row({"ma": {"ma5": 1.0}, "raw": {"T": "s"}})
 
         self.assertEqual(candle_key, "market-data/rebuild-20260702-lazy-v1/final/candles/feed=unknown/interval=1m/symbol=AAPL/year=2026/month=01/day=02")
         self.assertEqual(tick_key, "market-data/rebuild-20260702-lazy-v1/final/trades/symbol=AAPL/year=2026/month=01/day=02/feed=unknown")
         self.assertEqual(quote_key, "market-data/rebuild-20260702-lazy-v1/final/quotes/symbol=AAPL/year=2026/month=01/day=02/feed=unknown")
-        self.assertEqual(profile_key, "market-data/rebuild-20260702-lazy-v1/final/volume-profile-bins/timeBucket=1m/symbol=AAPL/year=2026/month=01/day=02")
         self.assertEqual(storage_row["ma5"], 1.0)
         self.assertIsNone(storage_row["ma20"])
         self.assertEqual(storage_row["raw"], "{\"T\":\"s\"}")
@@ -5741,7 +5794,6 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "market.layer.candles.1mo.closed.v1",
             "market.layer.events.v1",
         ])
-        self.assertNotIn("market.layer.candles.live.v1", topics)
 
     def test_s3_sink_commits_after_successful_flush(self):
         class OneBatchConsumer:
@@ -5817,19 +5869,27 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             for line in (root / "platform" / "kafka" / "topics.txt").read_text(encoding="utf-8").splitlines()
             if line.strip() and not line.startswith("#")
         }
+        k8s_topics = {
+            line.strip()
+            for line in (root / "infra" / "k8s" / "base" / "platform" / "kafka" / "topics.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()
+            if line.strip() and not line.startswith("#")
+        }
         local_script = (root / "scripts" / "local" / "create-kafka-topics.sh").read_text(encoding="utf-8")
         docker_compose = (root / "docker-compose.yml").read_text(encoding="utf-8")
         kafka_init_job = (root / "infra/k8s/base/platform/kafka-topic-init-job.yaml").read_text(encoding="utf-8")
         kafka_statefulset = (root / "infra/k8s/base/platform/kafka-statefulset.yaml").read_text(encoding="utf-8")
 
         self.assertTrue(required_topics.issubset(aws_topics))
-        for topic in required_topics:
-            self.assertIn(topic, local_script)
-        self.assertIn("hot_topics", local_script)
+        self.assertEqual(aws_topics, k8s_topics)
+        self.assertIn("platform/kafka/topics.txt", local_script)
+        self.assertIn('done < "${TOPICS_FILE}"', local_script)
         self.assertIn("--topic \"${topic}\"", local_script)
-        self.assertIn('create_topic "${topic}" 12', local_script)
-        self.assertIn("hot_topics", docker_compose)
-        self.assertIn("--partitions 12", docker_compose)
+        self.assertIn("partitions=12", local_script)
+        self.assertIn("retention_ms=\"7200000\"", local_script)
+        self.assertIn("./platform/kafka/topics.txt:/etc/alfaka-kafka/topics.txt:ro", docker_compose)
+        self.assertIn("done < /etc/alfaka-kafka/topics.txt", docker_compose)
         self.assertIn("--partitions 12", kafka_init_job)
         self.assertIn("mountPath: /var/lib/kafka/data", kafka_statefulset)
         self.assertIn("segment.ms=${segment_ms}", kafka_init_job)
@@ -6780,6 +6840,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
 
         self.assertEqual(client.audit_checks, [object_path])
         self.assertEqual(result["rowCount"], 0)
+        self.assertEqual(result["matchedRowCount"], 0)
         self.assertEqual(result["objects"], [{
             "objectPath": object_path,
             "rowCount": 0,

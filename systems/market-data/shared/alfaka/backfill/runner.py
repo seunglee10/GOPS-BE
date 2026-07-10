@@ -8,7 +8,7 @@ from alfaka.backfill.gapfill import TradingCalendar, detect_gapfill_ranges, pars
 from alfaka.common.canonical import CANONICAL_VERSION, candle_metadata, historical_adjustment_from_env
 from alfaka.common.env import load_dotenv, utc_now_iso
 from alfaka.common.market_messages import source_event_id
-from alfaka.common.symbols import alpaca_provider_symbol, is_crypto_symbol, normalize_provider_symbol
+from alfaka.common.symbols import alpaca_provider_symbol, is_crypto_symbol
 from alfaka.alpaca.feed_profiles import market_session_for_timestamp
 from alfaka.serving.intervals import alpaca_timeframe_for_interval, normalize_chart_interval
 from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
@@ -17,13 +17,11 @@ from alfaka.storage.clickhouse_loader import ClickHouseHttpClient, should_ensure
 from alfaka.storage.processed_s3_sink import flush_buffer
 from alfaka.storage.s3_manifest import (
     DEFAULT_MANIFEST_PREFIX,
-    bounded_raw_partition_keys,
     bounded_processed_candle_partition_keys,
     processed_candle_keys_from_manifest,
     require_canonical_processed_manifest,
-    raw_keys_from_manifest,
 )
-from alfaka.storage.s3_materializer import materialize_processed_rows, materialize_s3_processed_objects, read_s3_rows, s3_object_already_materialized
+from alfaka.storage.s3_materializer import materialize_s3_processed_objects
 from alfaka.streaming.transforms import normalize_bar
 
 
@@ -141,17 +139,25 @@ class BackfillRunner:
                 ))
             processed_keys = unique_ordered(processed_keys)
             if processed_keys:
-                materialized = materialize_s3_processed_objects(self.clickhouse_client, self.s3, bucket, processed_keys, source_name="backfill-worker-s3-processed")
-                return {
-                    "jobType": job_type,
-                    "sourcePreference": source_preference,
-                    "source": "s3-processed",
-                    "gapRanges": repair_ranges,
-                    "processedObjects": [f"s3://{bucket}/{key}" for key in processed_keys],
-                    "materializedRowCount": materialized["rowCount"],
-                }
+                materialized = materialize_s3_processed_objects(
+                    self.clickhouse_client,
+                    self.s3,
+                    bucket,
+                    processed_keys,
+                    source_name="backfill-worker-s3-processed",
+                    selection={"symbol": symbol, "interval": interval, "ranges": repair_ranges},
+                )
+                if int(materialized.get("matchedRowCount") or 0) > 0:
+                    return {
+                        "jobType": job_type,
+                        "sourcePreference": source_preference,
+                        "source": "s3-processed",
+                        "gapRanges": repair_ranges,
+                        "processedObjects": [f"s3://{bucket}/{key}" for key in processed_keys],
+                        "materializedRowCount": materialized["rowCount"],
+                    }
             if source_preference == "s3-only":
-                raise BackfillUnavailable("No S3 final candle objects are available for the requested symbol and interval.")
+                raise BackfillUnavailable("No S3 final candle objects with matching rows are available for the requested symbol, interval, and range.")
 
         timeframe = alpaca_timeframe_for_interval(interval)
         adjustment = historical_adjustment_from_env(os.environ)
@@ -276,16 +282,18 @@ class BackfillRunner:
                 bucket,
                 processed_keys,
                 source_name=f"backfill-worker-{job_type}-processed",
+                selection={"symbol": symbol, "interval": interval, "start": start, "end": end},
             )
-            return {
-                "jobType": job_type,
-                "sourcePreference": source_preference,
-                "source": "s3-processed-replay",
-                "processedObjects": [f"s3://{bucket}/{key}" for key in processed_keys],
-                "materializedRowCount": materialized["rowCount"],
-            }
+            if int(materialized.get("matchedRowCount") or 0) > 0:
+                return {
+                    "jobType": job_type,
+                    "sourcePreference": source_preference,
+                    "source": "s3-processed-replay",
+                    "processedObjects": [f"s3://{bucket}/{key}" for key in processed_keys],
+                    "materializedRowCount": materialized["rowCount"],
+                }
 
-        raise BackfillUnavailable(f"No S3 final candle objects are available for {job_type}.")
+        raise BackfillUnavailable(f"No S3 final candle objects with matching rows are available for {job_type}.")
 
 
 def fetch_alpaca_bars(symbol, start, end, feed, timeframe="1Min"):
@@ -461,51 +469,6 @@ def calendar_for_symbol(symbol):
     return TradingCalendar.crypto_24x7() if is_crypto_symbol(symbol) else None
 
 
-def materialize_raw_s3_candle_objects(client, s3, bucket, raw_keys, interval, job_type, source_preference, gap_ranges=None, source_name="backfill-worker-raw"):
-    object_path = raw_replay_object_path(bucket, raw_keys)
-    raw_object_paths = [f"s3://{bucket}/{key}" for key in raw_keys]
-    if s3_object_already_materialized(client, object_path):
-        payload = {
-            "jobType": job_type,
-            "sourcePreference": source_preference,
-            "source": "s3-raw-replay",
-            "rawObjects": raw_object_paths,
-            "processedRowCount": 0,
-            "materializedRowCount": 0,
-            "skippedAlreadyMaterialized": True,
-        }
-        if gap_ranges is not None:
-            payload["gapRanges"] = gap_ranges
-        return payload
-    raw_rows = []
-    for key in raw_keys:
-        raw_rows.extend(read_s3_rows(s3, bucket, key))
-    processed = raw_archive_rows_to_processed_candles(raw_rows, interval)
-    if not processed:
-        raise BackfillUnavailable(f"S3 raw objects did not contain replayable {interval} candle rows.")
-    result = materialize_processed_rows(
-        client,
-        object_path,
-        processed,
-        source_name=source_name,
-    )
-    payload = {
-        "jobType": job_type,
-        "sourcePreference": source_preference,
-        "source": "s3-raw-replay",
-        "rawObjects": raw_object_paths,
-        "processedRowCount": len(processed),
-        "materializedRowCount": result["rowCount"],
-    }
-    if gap_ranges is not None:
-        payload["gapRanges"] = gap_ranges
-    return payload
-
-
-def raw_replay_object_path(bucket, raw_keys):
-    return f"s3://{bucket}/{raw_keys[0]}..{len(raw_keys)}-raw-objects"
-
-
 def range_is_covered_by_clickhouse(coverage, start, end):
     if not coverage:
         return False
@@ -518,33 +481,16 @@ def range_is_covered_by_clickhouse(coverage, start, end):
 
 
 def find_processed_candle_objects(s3, bucket, final_prefix, symbol, interval, start, end):
+    from alfaka.storage.s3_manifest import bounded_v2_processed_candle_keys
+
     manifest_prefix = os.getenv("S3_MANIFEST_PREFIX", DEFAULT_MANIFEST_PREFIX)
     manifest_keys = processed_candle_keys_from_manifest(s3, bucket, manifest_prefix, symbol, interval, start, end)
-    if manifest_keys:
-        return manifest_keys
+    v2_keys = bounded_v2_processed_candle_keys(s3, bucket, final_prefix, symbol, interval, start, end)
+    if manifest_keys or v2_keys:
+        return list(dict.fromkeys([*manifest_keys, *v2_keys]))
     if require_canonical_processed_manifest():
         return []
     return bounded_processed_candle_partition_keys(s3, bucket, final_prefix, symbol, interval, start, end)
-
-
-def find_raw_candle_objects(s3, bucket, raw_prefix, symbol, interval, start, end, job_type="replay_repair"):
-    manifest_prefix = os.getenv("S3_MANIFEST_PREFIX", DEFAULT_MANIFEST_PREFIX)
-    channels = raw_channels_for_interval(interval, job_type)
-    manifest_keys = raw_keys_from_manifest(s3, bucket, manifest_prefix, symbol, channels, start, end)
-    if manifest_keys:
-        return manifest_keys
-    if require_canonical_processed_manifest():
-        return []
-    return bounded_raw_partition_keys(s3, bucket, raw_prefix, symbol, channels, start, end)
-
-
-def raw_channels_for_interval(interval, job_type="replay_repair"):
-    interval = normalize_chart_interval(interval)
-    if interval == "1D":
-        return ["daily-bars"]
-    if job_type == "correction_replay":
-        return ["updated-bars", "bars"]
-    return ["bars"]
 
 
 def internal_gap_detection_allowed(interval, start, end):
@@ -627,50 +573,6 @@ def write_empty_initial_load_marker(s3, bucket, manifest_prefix, symbol, interva
     ).encode("utf-8")
     s3.put_object(Bucket=bucket, Key=key, Body=body, ContentType="application/json")
     return key
-
-
-def raw_archive_rows_to_processed_candles(rows, interval):
-    """raw archive row들을 stream processor와 같은 processed candle 형태로 변환합니다."""
-    interval = normalize_chart_interval(interval)
-    candles = []
-    for row in sorted(rows, key=lambda item: item.get("eventTime") or (item.get("raw") or {}).get("t") or ""):
-        channel = raw_archive_channel_to_envelope_channel(row.get("channel"))
-        if interval == "1D" and channel != "dailyBars":
-            continue
-        if interval == "1m" and channel not in {"bars", "updatedBars"}:
-            continue
-        raw = row.get("raw") or {}
-        feed = row.get("feed") or "unknown"
-        feed_profile = row.get("feedProfile") or row.get("feed_profile") or feed
-        symbol = normalize_provider_symbol(row.get("symbol") or raw.get("S"))
-        market_session = row.get("marketSession") or row.get("market_session") or ("crypto" if is_crypto_symbol(symbol) else market_session_for_timestamp(row.get("eventTime") or raw.get("t")))
-        received_at = row.get("receivedAt") or utc_now_iso()
-        envelope = {
-            "source": row.get("source", "alpaca"),
-            "feed": feed,
-            "feedProfile": feed_profile,
-            "marketSession": market_session,
-            "channel": channel,
-            "symbol": symbol,
-            "eventTime": row.get("eventTime") or raw.get("t"),
-            "receivedAt": received_at,
-            "sourceEventId": row.get("sourceEventId") or source_event_id(raw, feed, channel, symbol, received_at),
-            "raw": raw,
-            "priceAdjustment": row.get("priceAdjustment") or row.get("price_adjustment"),
-            "canonicalVersion": row.get("canonicalVersion") or row.get("canonical_version"),
-        }
-        candle = normalize_bar(envelope, correction_type="UPDATED" if channel == "updatedBars" else "NONE")
-        candle["interval"] = interval
-        candles.append(candle)
-    return attach_moving_averages(candles)
-
-
-def raw_archive_channel_to_envelope_channel(channel):
-    value = str(channel or "")
-    return {
-        "daily-bars": "dailyBars",
-        "updated-bars": "updatedBars",
-    }.get(value, value)
 
 
 def raw_bar_to_processed_candle(symbol, raw_bar, feed="sip", received_at=None, interval="1m", price_adjustment=None):

@@ -1,6 +1,6 @@
 # Redis Platform Contract
 
-Current local stage:
+Current local runtime:
 
 ```text
 docker-compose redis
@@ -35,7 +35,8 @@ gops:market:on-demand:v1:pending:replace:{symbol}:{interval}:{timestamp}
 gops:market:on-demand:v1:live:trade:{symbol}
 gops:market:on-demand:v1:live:quote:{symbol}
 gops:market:on-demand:v1:live:event:{symbol}
-gops:market:on-demand:v1:order-flow:{symbol}:live
+gops:market:on-demand:v1:order-flow:{symbol}:minutes
+gops:market:on-demand:v1:order-flow:{symbol}:live-minute
 gops:market:on-demand:v1:subscription:symbols
 gops:market:on-demand:v1:subscription:symbol:{symbol}
 gops:market:on-demand:v1:subscription:version
@@ -46,12 +47,33 @@ gops:market:on-demand:v1:feed:lease:sip
 gops:market:on-demand:v1:feed:lease:boats
 gops:market:on-demand:v1:feed:switch:state
 gops:market:on-demand:v1:feed:quarantine:{date}
+chart:indicators:{version}:{symbol}:{interval}:{requestHash}
+chart:volume-profile:{version}:{symbol}:{requestHash}
+chart:derived:lock:{requestHash}
 ```
 
-`order-flow:{symbol}:live` is a Redis hash for today's pinned-symbol bid/ask
-profile minute bins. Writers refresh `ORDER_FLOW_LIVE_TTL_SECONDS`; readers
-combine it with ClickHouse `market_data.order_flow_profile_daily`, and
-`ORDER_FLOW_BINS_UPDATE` is published through the existing market events fanout.
+`order-flow:{symbol}:minutes` stores closed minute blobs in a ZSET for at most
+`ORDER_FLOW_LIVE_TTL_SECONDS` (default 86400). `live-minute` stores one current
+minute blob for `ORDER_FLOW_LIVE_MINUTE_TTL_SECONDS` (default 300); it replaces
+the same minute read from the ZSET. The API combines those keys with ClickHouse
+daily rows, and `ORDER_FLOW_BINS_UPDATE` uses the existing `market.events`
+pub/sub fanout.
+
+Indicator and candle-volume-profile results are API-owned request-time caches.
+Their result keys expire after 300s/30s by default. The singleflight lock uses
+`SET NX EX` and defaults to 30s. Release and fill terminal transitions use
+compare-and-mutate Lua so an expired owner cannot change a new owner's lock.
+`EVAL` failure leaves the key untouched for TTL expiry. There is no durable
+derived-result Redis state.
+
+| Family | Writer | Reader | Bound | Version |
+| --- | --- | --- | --- | --- |
+| recent/closed candles | market processor | canonical candle provider | 120 rows per symbol/interval + 7d watermark TTL | on-demand v1 |
+| live candle/trade/quote/event | market/quote processors | API/WS/realtime cohorts | 180s or explicit live TTL | on-demand v1 |
+| order-flow minute blobs | market processor | order-flow API | 86400s closed / 300s current | minute-blob v2 |
+| indicator/profile cache | API derived service | chart routes | 300s / 30s | calculation version in key |
+| derived lock | API derived service | API replicas | 30s | request hash |
+| subscription/feed state | API/controller | ingestors/processors | TTL or bounded symbol set | on-demand v1 |
 
 Legacy keys such as `price:*`, `candle:*`, and `candles:*` are reset targets
 only; do not add new chart state that depends on them. `market.events*` remains

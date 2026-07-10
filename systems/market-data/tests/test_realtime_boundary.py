@@ -5,7 +5,7 @@ import types
 import unittest
 from pathlib import Path
 
-class TestWebSocketDisconnect(Exception):
+class FakeWebSocketDisconnect(Exception):
     def __init__(self, code=None):
         super().__init__(code)
         self.code = code
@@ -16,7 +16,7 @@ sys.modules.setdefault(
     types.SimpleNamespace(
         HTTPException=Exception,
         WebSocket=object,
-        WebSocketDisconnect=TestWebSocketDisconnect,
+        WebSocketDisconnect=FakeWebSocketDisconnect,
     ),
 )
 sys.modules.setdefault("redis", types.SimpleNamespace(from_url=lambda *args, **kwargs: None))
@@ -25,15 +25,17 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "systems" / "market-data" / "shared"))
 sys.path.insert(0, str(ROOT / "systems" / "api-server" / "pods" / "api-server" / "gops-backend"))
 
+from app.market_data.realtime import session_manager as session_manager_module  # noqa: E402
 from app.market_data.realtime.session_manager import WebSocketSessionManager  # noqa: E402
 from app.market_data.realtime.stream_hub import StreamSession, SymbolStreamHub  # noqa: E402
 from alfaka.common.redis_keys import RedisKeyBuilder  # noqa: E402
 from alfaka.serving.cursors import timestamp_from_cursor  # noqa: E402
 
-WebSocketDisconnect = TestWebSocketDisconnect
+WebSocketDisconnect = FakeWebSocketDisconnect
+session_manager_module.WebSocketDisconnect = FakeWebSocketDisconnect
 
 
-class TestableHub(SymbolStreamHub):
+class FakeHub(SymbolStreamHub):
     async def _listen_symbol(self, symbol):
         try:
             while True:
@@ -172,17 +174,17 @@ class RealtimeBoundaryTest(unittest.TestCase):
         cursor = "v1:AAPL:1m:2026-06-25T10:15:00.000Z:abc123"
         self.assertEqual(timestamp_from_cursor(cursor), "2026-06-25T10:15:00.000Z")
 
-    def test_same_symbol_sessions_share_one_hub_task(self):
+    def test_sessions_share_one_global_listener_and_recovery_task_pair(self):
         async def run():
-            hub = TestableHub(redis_client=None, provider=None)
+            hub = FakeHub(redis_client=None, provider=None)
             first = StreamSession("AAPL", "1m")
             second = StreamSession("AAPL", "1m")
             await hub.subscribe(first)
             await hub.subscribe(second)
-            self.assertEqual(len(hub.tasks), 1)
+            self.assertEqual(set(hub.tasks), {"pubsub", "recovery"})
             self.assertEqual(len(hub.sessions_by_symbol["AAPL"]), 2)
             await hub.unsubscribe(first)
-            self.assertEqual(len(hub.tasks), 1)
+            self.assertEqual(set(hub.tasks), {"pubsub", "recovery"})
             await hub.unsubscribe(second)
             self.assertEqual(len(hub.tasks), 0)
 
@@ -190,7 +192,7 @@ class RealtimeBoundaryTest(unittest.TestCase):
 
     def test_broadcast_filters_by_symbol_and_interval(self):
         async def run():
-            hub = TestableHub(redis_client=None, provider=None)
+            hub = FakeHub(redis_client=None, provider=None)
             aapl_1m = StreamSession("AAPL", "1m")
             aapl_5m = StreamSession("AAPL", "5m")
             hub.sessions_by_symbol["AAPL"] = {aapl_1m, aapl_5m}
@@ -231,7 +233,7 @@ class RealtimeBoundaryTest(unittest.TestCase):
                     return None
 
             provider = types.SimpleNamespace(redis_provider=FakeRedisProvider())
-            hub = TestableHub(redis_client=None, provider=provider)
+            hub = FakeHub(redis_client=None, provider=provider)
             aapl_1m = StreamSession("AAPL", "1m")
             aapl_5m = StreamSession("AAPL", "5m")
             hub.sessions_by_symbol["AAPL"] = {aapl_1m, aapl_5m}
@@ -247,7 +249,7 @@ class RealtimeBoundaryTest(unittest.TestCase):
 
     def test_market_status_delivers_to_symbol_session_without_interval_match(self):
         async def run():
-            hub = TestableHub(redis_client=None, provider=None)
+            hub = FakeHub(redis_client=None, provider=None)
             aapl_1m = StreamSession("AAPL", "1m")
             hub.sessions_by_symbol["AAPL"] = {aapl_1m}
             await hub._broadcast("AAPL", {
@@ -274,7 +276,7 @@ class RealtimeBoundaryTest(unittest.TestCase):
             "isClosed": False,
         })
         redis.values[keys.closed_candle_watermark("AAPL", "1m")] = "2026-06-25T10:15:00.000Z"
-        hub = TestableHub(redis_client=redis, provider=FakeProvider())
+        hub = FakeHub(redis_client=redis, provider=FakeProvider())
 
         events = hub._read_latest_live_events_batch({"AAPL": ["1m"]})
 
@@ -307,7 +309,7 @@ class RealtimeBoundaryTest(unittest.TestCase):
         })
         redis.values[keys.closed_candle_watermark("NVDA", "1D")] = closed["timestamp"]
         redis.values[keys.latest_closed_candle("NVDA", "1D")] = json.dumps(closed)
-        hub = TestableHub(redis_client=redis, provider=FakeProvider())
+        hub = FakeHub(redis_client=redis, provider=FakeProvider())
 
         events = hub._read_latest_live_events_batch({"NVDA": ["1D"]})
 
@@ -318,7 +320,7 @@ class RealtimeBoundaryTest(unittest.TestCase):
 
     def test_duplicate_pubsub_event_is_not_enqueued_twice(self):
         async def run():
-            hub = TestableHub(redis_client=None, provider=None)
+            hub = FakeHub(redis_client=None, provider=None)
             aapl_1m = StreamSession("AAPL", "1m")
             hub.sessions_by_symbol["AAPL"] = {aapl_1m}
             event = {

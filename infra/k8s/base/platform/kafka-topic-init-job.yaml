@@ -13,7 +13,7 @@ spec:
     spec:
       restartPolicy: OnFailure
       nodeSelector:
-        karpenter.sh/nodepool: batch
+        karpenter.sh/nodepool: batch-warm
       tolerations:
         - key: gops.io/dedicated
           operator: Equal
@@ -59,11 +59,6 @@ spec:
                 segment_ms=""
                 segment_bytes=""
                 case "${topic}" in
-                  market.layer.candles.live.v1)
-                    retention_ms="1800000"
-                    segment_ms="300000"
-                    segment_bytes="134217728"
-                    ;;
                   agents.market-events.v1)
                     retention_ms="3600000"
                     segment_ms="600000"

@@ -1,6 +1,6 @@
 # 역할: GOPS API/WebSocket이 Redis에서 최신/최근 캔들을 읽는 adapter입니다.
 # 사용: 과거 API는 최근 구간 보강에, WebSocket은 live candle push에 사용합니다.
-# 계약: CHART_DATA_REBUILD_PLAN.md의 Redis recent-window/live state key를 읽습니다.
+# 계약: docs/CHART_DATA_ARCHITECTURE.md의 Redis recent-window/live state key를 읽습니다.
 import json
 import os
 from datetime import datetime, timezone
@@ -9,6 +9,7 @@ import redis
 
 from alfaka.common.env import load_dotenv
 from alfaka.common.redis_keys import RedisKeyBuilder
+from alfaka.orderflow.redis_model import order_flow_blob_to_bins, parse_order_flow_minute_blob
 from alfaka.serving.closed_watermark import candle_watermark_value, live_candle_at_or_before_watermark
 from alfaka.serving.dto import snapshot, websocket_event
 from alfaka.serving.intervals import normalize_chart_interval, resolve_candle_limit
@@ -111,22 +112,19 @@ class RedisMarketDataProvider:
         value = self.redis.get(key)
         return json.loads(value) if value else None
 
-    def volume_profile_bins(self, symbol, from_score="-inf", to_score="+inf", limit=5000):
-        rows = self.redis.zrangebyscore(self.keys.volume_profile_live(symbol), from_score, to_score, start=0, num=limit)
-        return [json.loads(row) for row in rows]
-
     def order_flow_live_bins(self, symbol):
-        values = self.redis.hgetall(self.keys.order_flow_live(symbol)) or {}
+        blobs_by_minute = {}
+        values = self.redis.zrangebyscore(self.keys.order_flow_minutes(symbol), "-inf", "+inf") or []
+        for value in values:
+            blob = parse_order_flow_minute_blob(value)
+            if blob and blob.get("eventMinute"):
+                blobs_by_minute[str(blob["eventMinute"])] = blob
+        live_blob = parse_order_flow_minute_blob(self.redis.get(self.keys.order_flow_live_minute(symbol)))
+        if live_blob and live_blob.get("eventMinute"):
+            blobs_by_minute[str(live_blob["eventMinute"])] = live_blob
         bins = []
-        for value in values.values():
-            if isinstance(value, bytes):
-                value = value.decode("utf-8")
-            try:
-                parsed = json.loads(value) if isinstance(value, str) else value
-            except (TypeError, json.JSONDecodeError):
-                continue
-            if isinstance(parsed, dict):
-                bins.append(parsed)
+        for minute in sorted(blobs_by_minute):
+            bins.extend(order_flow_blob_to_bins(blobs_by_minute[minute]))
         bins.sort(key=lambda item: (str(item.get("eventMinute") or ""), float(item.get("priceBin") or 0)))
         return bins
 
