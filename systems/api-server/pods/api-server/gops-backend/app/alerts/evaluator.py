@@ -210,13 +210,17 @@ class AlertOutboxSender:
         self.stream = stream
         self.group = group
         self.consumer_name = consumer_name
+        self._group_ready = False
 
     def ensure_group(self) -> None:
+        if self._group_ready:
+            return
         try:
             self.redis.xgroup_create(self.stream, self.group, id="0", mkstream=True)
         except Exception as exc:
             if "BUSYGROUP" not in str(exc):
                 raise
+        self._group_ready = True
 
     def process_once(self, *, count: int = 100, block_ms: int = 100) -> int:
         self.ensure_group()

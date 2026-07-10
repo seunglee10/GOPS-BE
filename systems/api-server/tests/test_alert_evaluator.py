@@ -235,6 +235,33 @@ def test_outbox_sender_publishes_even_when_notification_event_is_duplicate() -> 
     assert len(producer.sent) == 2
 
 
+def test_outbox_sender_ensures_group_once_after_busygroup() -> None:
+    class Redis:
+        def __init__(self):
+            self.calls = 0
+
+        def xgroup_create(self, stream, group, id="0", mkstream=False):
+            self.calls += 1
+            raise Exception("BUSYGROUP Consumer Group name already exists")
+
+    redis = Redis()
+    sender = AlertOutboxSender(
+        redis_client=redis,
+        repository=FakeRepository(),
+        broker=object(),
+        producer=object(),
+        triggered_topic="alerts.triggered.v1",
+        stream="alerts:outbox",
+        group="group",
+        consumer_name="consumer",
+    )
+
+    sender.ensure_group()
+    sender.ensure_group()
+
+    assert redis.calls == 1
+
+
 def test_xautoclaim_entries_are_read_from_redis_py_list_response() -> None:
     entries = [("1-0", {"payload": "{}"})]
 

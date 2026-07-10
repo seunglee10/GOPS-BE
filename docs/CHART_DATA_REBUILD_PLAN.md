@@ -241,6 +241,13 @@ rows into `market_data.order_flow_profile_daily`. Local compose exposes the
 in-cluster app overlay. Keep both overlay CronJob manifests in sync; ad hoc
 backfills stay manual.
 
+The trade-derived live `volume-profile:{symbol}:1m:live` Redis zset is a bounded
+hot cache, not historical storage. The processor trims it by
+`VOLUME_PROFILE_LIVE_WINDOW_SECONDS` and `VOLUME_PROFILE_LIVE_MAX_BINS`, then
+expires idle keys with `VOLUME_PROFILE_LIVE_TTL_SECONDS`. Trimming is batched by
+`VOLUME_PROFILE_LIVE_TRIM_BATCH_SIZE` so existing oversized keys shrink
+incrementally instead of being deleted in one blocking Redis command.
+
 Derived result retention is intentionally shorter than candle history:
 
 ```text
