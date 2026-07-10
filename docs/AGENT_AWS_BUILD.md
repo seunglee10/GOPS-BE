@@ -169,6 +169,10 @@ Daily rows는
 `aws-incluster-app-ci` inherit this scheduled CronJob through the in-cluster app
 overlay. Keep the mirrored CronJob manifests under `aws/` and
 `aws-incluster-app/` in sync; one-off backfill Jobs remain manual.
+For skew investigations, operators can run
+`PYTHONPATH=systems/market-data/shared .venv/bin/python scripts/local/orderflow_verify.py --symbol NVDA --date YYYY-MM-DD --json`
+against the target ClickHouse/API environment. The script is read-only and
+compares live intraday data, as-of tick recomputation, and daily rollup rows.
 
 Market storage image also runs ClickHouse projection loaders. The baseline
 `alfaka-clickhouse-loader` consumes closed candle, event, and news topics.

@@ -246,6 +246,11 @@ rows into `market_data.order_flow_profile_daily`. Local compose exposes the
 in-cluster app overlay. Keep both overlay CronJob manifests in sync; ad hoc
 backfills stay manual. `GET /api/charts/order-flow/daily` remains available for
 verification and audit, but Bid/Ask chart rendering uses the intraday live path.
+To diagnose whether a live Bid/Ask skew is market behavior or a quote-join
+artifact, run
+`PYTHONPATH=systems/market-data/shared .venv/bin/python scripts/local/orderflow_verify.py --symbol NVDA --date YYYY-MM-DD --json`;
+it compares live intraday API data, ClickHouse as-of tick recomputation, and
+the daily row without writing market data.
 
 Derived result retention is intentionally shorter than candle history:
 
