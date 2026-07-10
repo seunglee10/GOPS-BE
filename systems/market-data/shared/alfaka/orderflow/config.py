@@ -6,6 +6,8 @@ import os
 DEFAULT_ORDER_FLOW_PINNED_SYMBOLS = "NVDA,AMZN,MU,AAPL,GOOGL"
 DEFAULT_ORDER_FLOW_PRICE_BIN_SIZE = 0.01
 DEFAULT_ORDER_FLOW_QUOTE_REFRESH_MS = 150
+DEFAULT_ORDER_FLOW_QUOTE_MAX_AGE_MS = 2000
+DEFAULT_ORDER_FLOW_QUOTE_FUTURE_TOLERANCE_MS = 250
 DEFAULT_ORDER_FLOW_PUBLISH_THROTTLE_MS = 250
 DEFAULT_ORDER_FLOW_LIVE_TTL_SECONDS = 86400
 
@@ -22,6 +24,14 @@ def price_bin_size_from_env() -> float:
 
 def quote_refresh_ms_from_env() -> int:
     return _int_env("ORDER_FLOW_QUOTE_REFRESH_MS", DEFAULT_ORDER_FLOW_QUOTE_REFRESH_MS)
+
+
+def quote_max_age_ms_from_env() -> int:
+    return _int_env("ORDER_FLOW_QUOTE_MAX_AGE_MS", DEFAULT_ORDER_FLOW_QUOTE_MAX_AGE_MS)
+
+
+def quote_future_tolerance_ms_from_env() -> int:
+    return _non_negative_int_env("ORDER_FLOW_QUOTE_FUTURE_TOLERANCE_MS", DEFAULT_ORDER_FLOW_QUOTE_FUTURE_TOLERANCE_MS)
 
 
 def publish_throttle_ms_from_env() -> int:
@@ -46,3 +56,11 @@ def _int_env(name: str, default: int) -> int:
     except (TypeError, ValueError):
         return default
     return value if value > 0 else default
+
+
+def _non_negative_int_env(name: str, default: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+    return value if value >= 0 else default

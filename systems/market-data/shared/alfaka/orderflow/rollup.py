@@ -19,7 +19,12 @@ from alfaka.orderflow.classification import (
     normalize_quotes,
     normalize_trades,
 )
-from alfaka.orderflow.config import pinned_symbols_from_env, price_bin_size_from_env
+from alfaka.orderflow.config import (
+    pinned_symbols_from_env,
+    price_bin_size_from_env,
+    quote_future_tolerance_ms_from_env,
+    quote_max_age_ms_from_env,
+)
 from alfaka.serving.time_utils import canonical_utc_timestamp, parse_utc_time
 from alfaka.storage.clickhouse_loader import ClickHouseHttpClient
 
@@ -179,6 +184,8 @@ class OrderFlowDailyAggregate:
         self.market_session_counts = Counter()
         self.feed_profile_counts = Counter()
         self.feed_counts = Counter()
+        self.quote_max_age_ms = quote_max_age_ms_from_env()
+        self.quote_future_tolerance_ms = quote_future_tolerance_ms_from_env()
 
     def add_trade(self, trade: dict[str, Any], quote: dict[str, Any] | None) -> None:
         try:
@@ -188,7 +195,12 @@ class OrderFlowDailyAggregate:
             return
         if size <= 0:
             return
-        side = classify_trade_side(trade, quote)
+        side = classify_trade_side(
+            trade,
+            quote,
+            max_quote_age_ms=self.quote_max_age_ms,
+            future_tolerance_ms=self.quote_future_tolerance_ms,
+        )
         price_bin = round(round(price / self.price_bin_size) * self.price_bin_size, 6)
         bucket = self.bins.setdefault(price_bin, new_daily_bucket(price_bin, self.price_bin_size))
         volume_key, count_key = side_keys(side)

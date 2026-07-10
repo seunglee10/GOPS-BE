@@ -160,7 +160,10 @@ rollup job이 담당한다. Live path는 pinned symbol trade/quote를 Redis
 팬아웃한다. Daily rows는
 `systems/market-data/jobs/order-flow-daily-rollup/main.py`와
 `infra/k8s/overlays/aws/cronjob-order-flow-daily-rollup.yaml`이 ClickHouse
-`market_data.order_flow_profile_daily`에 적재한다.
+`market_data.order_flow_profile_daily`에 적재한다. Shared dev deploys that use
+`aws-incluster-app-ci` inherit this scheduled CronJob through the in-cluster app
+overlay. Keep the mirrored CronJob manifests under `aws/` and
+`aws-incluster-app/` in sync; one-off backfill Jobs remain manual.
 
 Market storage image also runs ClickHouse projection loaders. The baseline
 `alfaka-clickhouse-loader` consumes closed candle, event, and news topics.
@@ -307,6 +310,8 @@ infra/k8s/overlays/aws-incluster-app-rebuild/kustomization.yaml
 GitHub Actions uses `aws-incluster-app-ci` for manual dev/test deploys. That CI
 overlay deliberately deletes the GraphDB StatefulSet from the rendered app
 bundle so immutable PVC template changes cannot break ordinary app deploys.
+It still includes scheduled app-runtime CronJobs such as the order-flow daily
+rollup; one-shot Jobs remain outside the automatic apply path.
 By default it does not apply platform NodePools or perform the clean rebuild.
 Set the workflow input `apply_platform_manifests=true` only after the
 data-preserving rebuild has been approved or completed; that path applies the
@@ -351,11 +356,16 @@ CHART_DERIVED_API_POLL_MS
 CHART_DERIVED_RETRY_AFTER_MS
 CHART_INDICATOR_ARTIFACT_RETENTION_SECONDS
 CHART_VOLUME_PROFILE_ARTIFACT_RETENTION_SECONDS
+SUBSCRIPTION_EVENTS_MAXLEN
 ORDER_FLOW_PINNED_SYMBOLS
 ORDER_FLOW_PRICE_BIN_SIZE
 ORDER_FLOW_QUOTE_REFRESH_MS
 ORDER_FLOW_PUBLISH_THROTTLE_MS
 ORDER_FLOW_LIVE_TTL_SECONDS
+VOLUME_PROFILE_LIVE_WINDOW_SECONDS
+VOLUME_PROFILE_LIVE_TTL_SECONDS
+VOLUME_PROFILE_LIVE_MAX_BINS
+VOLUME_PROFILE_LIVE_TRIM_BATCH_SIZE
 ```
 
 Kafka bootstrap env:
@@ -377,6 +387,16 @@ AWS stage는 MSK를 강제하지 않는다. 현 구조는 다음 staged path를 
 ```text
 local compose -> single Kafka pod candidate -> MSK candidate
 ```
+
+The single-pod Kafka StatefulSet must mount its PVC directly at
+`/var/lib/kafka/data`. The official `apache/kafka` image declares that exact
+path as an image volume, so mounting only `/var/lib/kafka` allows the image
+volume to shadow the PVC and leaves broker logs on ephemeral node storage.
+
+Short-retention market topics must set `segment.ms` and `segment.bytes` together
+with `retention.ms`. Kafka deletes only closed segments; `retention.ms` alone can
+retain an active default 1 GiB/7-day segment far beyond the intended 30-minute
+or 2-hour window.
 
 Topic 이름을 바꾸려면 backend queue submitter, worker consumer, delivery gateway,
 platform topic creation을 같이 바꿔야 한다.

@@ -25,7 +25,7 @@ class OrderFlowClassificationTest(unittest.TestCase):
         merged = list(merge_trades_with_quotes(trades, quotes))
         sides = [classify_trade_side(trade, quote) for trade, quote in merged]
 
-        self.assertEqual(ORDER_FLOW_CLASSIFICATION_VERSION, "orderflow-estimated-v1")
+        self.assertEqual(ORDER_FLOW_CLASSIFICATION_VERSION, "orderflow-estimated-v2")
         self.assertEqual(sides, ["ask", "bid", "unknown", "ask"])
         self.assertEqual(sum(trade["size"] for (trade, _), side in zip(merged, sides) if side == "ask"), 15)
         self.assertEqual(sum(trade["size"] for (trade, _), side in zip(merged, sides) if side == "bid"), 4)
@@ -54,6 +54,41 @@ class OrderFlowClassificationTest(unittest.TestCase):
 
         self.assertIs(merged[0][1], initial_quote)
         self.assertEqual(classify_trade_side(*merged[0]), "ask")
+
+    def test_quote_age_guard_marks_stale_quote_unknown(self):
+        quote = normalize_quotes([
+            {"timestamp": "2026-06-25T13:30:00.000Z", "bidPrice": 100.0, "askPrice": 100.1},
+        ])[0]
+        trade = normalize_trades([
+            {"timestamp": "2026-06-25T13:30:10.000Z", "price": 100.2, "size": 5},
+        ])[0]
+
+        stale_side = classify_trade_side(trade, quote, max_quote_age_ms=2000, future_tolerance_ms=250)
+        fresh_side = classify_trade_side(trade, quote, max_quote_age_ms=11000, future_tolerance_ms=250)
+
+        self.assertEqual(stale_side, "unknown")
+        self.assertEqual(fresh_side, "ask")
+
+    def test_quote_age_guard_accepts_alpaca_nanosecond_timestamps(self):
+        quote = normalize_quotes([
+            {"timestamp": "2026-06-25T13:30:00.928442175Z", "bidPrice": 100.0, "askPrice": 100.1},
+        ])[0]
+        trade = normalize_trades([
+            {"timestamp": "2026-06-25T13:30:01.000Z", "price": 100.2, "size": 5},
+        ])[0]
+
+        self.assertEqual(classify_trade_side(trade, quote, max_quote_age_ms=2000, future_tolerance_ms=250), "ask")
+
+    def test_quote_age_guard_allows_small_future_tolerance(self):
+        quote = normalize_quotes([
+            {"timestamp": "2026-06-25T13:30:02.000Z", "bidPrice": 100.0, "askPrice": 100.1},
+        ])[0]
+        trade = normalize_trades([
+            {"timestamp": "2026-06-25T13:30:00.000Z", "price": 100.2, "size": 5},
+        ])[0]
+
+        self.assertEqual(classify_trade_side(trade, quote, max_quote_age_ms=2000, future_tolerance_ms=2500), "ask")
+        self.assertEqual(classify_trade_side(trade, quote, max_quote_age_ms=2000, future_tolerance_ms=250), "unknown")
 
 
 if __name__ == "__main__":

@@ -16,6 +16,8 @@ sys.modules.setdefault("botocore.config", types.SimpleNamespace(Config=lambda **
 sys.modules.setdefault("redis", types.SimpleNamespace(from_url=lambda *args, **kwargs: None))
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(REPO_ROOT / "systems" / "market-data" / "shared"))
+sys.path.insert(0, str(REPO_ROOT / "systems" / "api-server" / "pods" / "api-server" / "gops-backend"))
 
 from alfaka.alpaca.subscription import (
     build_subscription_request,
@@ -101,7 +103,7 @@ from alfaka.storage.news_s3_archive import (
     write_news_symbol_index_to_s3,
 )
 from alfaka.storage.s3_manifest import processed_candle_keys_from_manifest, raw_keys_from_manifest
-from alfaka.streaming.processor import ProcessorState, flush_ready_closed_candles, process_raw_envelope, processor_runtime_config, recover_processor_state_from_clickhouse, recover_processor_state_from_redis, run_stream_processor, write_closed_candle_to_redis, write_live_candle_to_redis, write_trade_to_redis
+from alfaka.streaming.processor import ProcessorState, flush_ready_closed_candles, process_raw_envelope, processor_runtime_config, recover_processor_state_from_clickhouse, recover_processor_state_from_redis, run_stream_processor, write_closed_candle_to_redis, write_live_candle_to_redis, write_trade_to_redis, write_volume_profile_bin_to_redis
 from alfaka.streaming.transforms import (
     CandleAggregator,
     VolumeProfileBinBuilder,
@@ -572,6 +574,18 @@ class MemoryRedis:
         self.zsets.setdefault(key, {}).update(mapping)
         return len(mapping)
 
+    def zrem(self, key, *members):
+        values = self.zsets.get(key, {})
+        removed = 0
+        for member in members:
+            if member in values:
+                values.pop(member, None)
+                removed += 1
+        return removed
+
+    def zcard(self, key):
+        return len(self.zsets.get(key, {}))
+
     def zrange(self, key, start, end):
         ordered = [member for member, _score in sorted(self.zsets.get(key, {}).items(), key=lambda item: (item[1], item[0]))]
         length = len(ordered)
@@ -584,6 +598,25 @@ class MemoryRedis:
         if start > end or length == 0:
             return []
         return ordered[start:end + 1]
+
+    def zrangebyscore(self, key, min_score, max_score, start=0, num=None):
+        def normalize_bound(value):
+            if value == "-inf":
+                return float("-inf")
+            if value == "+inf":
+                return float("inf")
+            return float(value)
+
+        lower = normalize_bound(min_score)
+        upper = normalize_bound(max_score)
+        ordered = [
+            member
+            for member, score in sorted(self.zsets.get(key, {}).items(), key=lambda item: (item[1], item[0]))
+            if lower <= score <= upper
+        ]
+        if num is None:
+            return ordered[start:]
+        return ordered[start:start + num]
 
     def zrevrange(self, key, start, end):
         ordered = list(reversed([member for member, _score in sorted(self.zsets.get(key, {}).items(), key=lambda item: (item[1], item[0]))]))
@@ -2124,6 +2157,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn('ALPACA_KAFKA_PUBLISH_QUEUE_MAXSIZE: "20000"', configmap)
         self.assertIn('KAFKA_PRODUCER_LINGER_MS: "20"', configmap)
         self.assertIn('KAFKA_PRODUCER_BATCH_SIZE: "65536"', configmap)
+        self.assertIn('KAFKA_PRODUCER_MAX_BLOCK_MS: "3000"', configmap)
         self.assertNotIn("KAFKA_PRODUCER_BUFFER_MEMORY", configmap)
         self.assertIn('CLICKHOUSE_PROVIDER_TIMEOUT_SECONDS: "8"', configmap)
         self.assertIn('CLICKHOUSE_PROVIDER_RETRY_ATTEMPTS: "2"', configmap)
@@ -2621,6 +2655,38 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(event["sourceInterval"], "trades")
         self.assertEqual(event["data"]["sourceInterval"], "trades")
         self.assertEqual(event["data"]["updatedAt"], "2026-06-25T10:15:20.250Z")
+
+    def test_volume_profile_live_redis_cache_is_bounded(self):
+        redis = MemoryRedis()
+        keys = RedisKeyBuilder()
+
+        with mock.patch.dict(os.environ, {
+            "VOLUME_PROFILE_LIVE_WINDOW_SECONDS": "120",
+            "VOLUME_PROFILE_LIVE_TTL_SECONDS": "120",
+            "VOLUME_PROFILE_LIVE_MAX_BINS": "2",
+        }, clear=False):
+            for minute, price in (
+                ("2026-06-25T10:00:00.000Z", 195.00),
+                ("2026-06-25T10:02:00.000Z", 195.05),
+                ("2026-06-25T10:03:00.000Z", 195.10),
+                ("2026-06-25T10:04:00.000Z", 195.15),
+            ):
+                write_volume_profile_bin_to_redis(redis, keys, {
+                    "eventType": "VOLUME_PROFILE_BIN",
+                    "symbol": "AAPL",
+                    "eventMinute": minute,
+                    "priceBin": price,
+                    "priceBinSize": 0.05,
+                    "volume": 10,
+                })
+
+        key = keys.volume_profile_live("AAPL")
+        rows = [json.loads(row) for row in redis.zrange(key, 0, -1)]
+        self.assertEqual([row["eventMinute"] for row in rows], [
+            "2026-06-25T10:03:00.000Z",
+            "2026-06-25T10:04:00.000Z",
+        ])
+        self.assertEqual(redis.expirations[key], 120)
 
     def test_redis_provider_reads_interval_specific_live_candle(self):
         redis = MemoryRedis()
@@ -5673,8 +5739,6 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "market.layer.candles.1d.closed.v1",
             "market.layer.candles.1w.closed.v1",
             "market.layer.candles.1mo.closed.v1",
-            "market.layer.trades.v1",
-            "market.layer.quotes.v1",
             "market.layer.events.v1",
         ])
         self.assertNotIn("market.layer.candles.live.v1", topics)
@@ -5756,6 +5820,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         local_script = (root / "scripts" / "local" / "create-kafka-topics.sh").read_text(encoding="utf-8")
         docker_compose = (root / "docker-compose.yml").read_text(encoding="utf-8")
         kafka_init_job = (root / "infra/k8s/base/platform/kafka-topic-init-job.yaml").read_text(encoding="utf-8")
+        kafka_statefulset = (root / "infra/k8s/base/platform/kafka-statefulset.yaml").read_text(encoding="utf-8")
 
         self.assertTrue(required_topics.issubset(aws_topics))
         for topic in required_topics:
@@ -5766,6 +5831,9 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn("hot_topics", docker_compose)
         self.assertIn("--partitions 12", docker_compose)
         self.assertIn("--partitions 12", kafka_init_job)
+        self.assertIn("mountPath: /var/lib/kafka/data", kafka_statefulset)
+        self.assertIn("segment.ms=${segment_ms}", kafka_init_job)
+        self.assertIn("segment.bytes=${segment_bytes}", kafka_init_job)
 
     def test_gap_fill_includes_same_timestamp_correction_after_cursor(self):
         original = {
@@ -7647,6 +7715,20 @@ class RealtimeChartSubscriptionContractTest(unittest.TestCase):
         self.assertEqual(desired["dailyBars"], {"AAPL"})
         self.assertEqual(desired["trades"], {"AAPL"})
         self.assertEqual(desired["quotes"], {"AAPL"})
+
+    def test_subscription_reconcile_events_are_bounded(self):
+        redis_client = MemoryRedis()
+        controller = RealtimeSubscriptionCohortService(redis_client)
+        keys = RedisKeyBuilder()
+
+        with mock.patch.dict(os.environ, {"SUBSCRIPTION_EVENTS_MAXLEN": "2"}, clear=False):
+            controller.replace_user_watchlist("user-a", ["AAPL"])
+            controller.replace_user_watchlist("user-a", ["AAPL", "MSFT"])
+            controller.replace_user_watchlist("user-a", ["AAPL", "MSFT", "NVDA"])
+
+        self.assertEqual(len(redis_client.streams[keys.subscription_events()]), 2)
+        stream_ids = [entry[0] for entry in redis_client.streams[keys.subscription_events()]]
+        self.assertEqual(stream_ids, ["2-0", "3-0"])
 
     def test_multi_user_watchlists_aggregate_without_overwriting_each_other(self):
         redis_client = MemoryRedis()

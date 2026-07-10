@@ -7,6 +7,7 @@ from typing import Any
 
 from ...orchestration.routing import parse_openai_text_json
 from ...orchestration.ui_intent import compact_layout_panels
+from ..ui_parser import compact_layout_presets_for_parser
 from ..classifier import ClassifierResult, classifier_result_from_payload
 from ..schema import CONTENT_TASK_TYPES, ROUTE_MODES, UI_ACTIONS, UI_PANEL_TYPES, UI_POSITION_INTENTS, UI_SIZE_INTENTS
 
@@ -26,6 +27,7 @@ class HostedLlmIntentClassifier:
                         "Handle typos and informal wording. Return strict JSON only. "
                         "For multi-panel UI commands, return one uiTask with targetPanelTypes or layoutPreset. "
                         "Use layoutPreset=default_workspace when the user asks for several panels without naming them. "
+                        "For preset load requests, use action=load and choose presetId only from availablePresets. "
                         "Do not invent ticker symbols; put unresolved names in targetEntityText."
                     ),
                 },
@@ -36,6 +38,7 @@ class HostedLlmIntentClassifier:
                             "query": query,
                             "entityResolution": entity_resolution or {},
                             "availablePanels": compact_layout_panels(layout_context if isinstance(layout_context, dict) else {}),
+                            "availablePresets": compact_layout_presets_for_parser(layout_context if isinstance(layout_context, dict) else {}),
                             "contentTaskTypes": CONTENT_TASK_TYPES,
                             "uiActions": UI_ACTIONS,
                             "uiPanelTypes": UI_PANEL_TYPES,
@@ -67,6 +70,9 @@ class HostedLlmIntentClassifier:
                                         "targetPanelTypes": {"type": "array"},
                                         "targetPanelIds": {"type": "array"},
                                         "layoutPreset": {"type": "string"},
+                                        "presetId": {"type": "string"},
+                                        "presetName": {"type": "string"},
+                                        "presetKind": {"type": "string"},
                                         "sizeIntent": {"type": "string"},
                                         "positionIntent": {"type": "string"},
                                         "confidence": {"type": "number"},

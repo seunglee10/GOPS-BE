@@ -89,8 +89,6 @@ class MarketDataMonitorService:
         return {
             "finalPrefixes": [
                 "market-data/rebuild-20260702-lazy-v1/final/candles/feed={feed}/interval={interval}/symbol={symbol}/year=YYYY/month=MM/day=DD/*.parquet",
-                "market-data/rebuild-20260702-lazy-v1/final/trades/symbol={symbol}/year=YYYY/month=MM/day=DD/feed={feed}/*.parquet",
-                "market-data/rebuild-20260702-lazy-v1/final/quotes/symbol={symbol}/year=YYYY/month=MM/day=DD/feed={feed}/*.parquet",
                 "market-data/rebuild-20260702-lazy-v1/final/events/event_type={type}/symbol={symbol}/year=YYYY/month=MM/day=DD/*.parquet",
             ],
             "manifestPrefixes": [

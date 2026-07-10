@@ -410,6 +410,16 @@ def layout_context(*, pinned_news=False):
     }
 
 
+def preset_layout_context():
+    context = layout_context()
+    context["presets"] = [
+        {"id": "market", "kind": "default", "name": "시장분석", "aliases": ["시장분석", "시장분석 프리셋"]},
+        {"id": "stock", "kind": "default", "name": "종목분석", "aliases": ["종목분석"]},
+        {"id": "custom-taste", "kind": "custom", "name": "내 입맛", "aliases": ["내입맛", "내 입맛 프리셋"]},
+    ]
+    return context
+
+
 def chart_only_layout_context(symbol="AAPL"):
     return {
         "version": 1,
@@ -903,6 +913,74 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(result.uiTasks[0].targetPanelTypes, ["chart", "newsFeed", "aiSummary"])
         self.assertEqual(result.uiTasks[0].layoutPreset, "default_workspace")
         self.assertEqual(result.routeMode, "ui_layout")
+
+    def test_ui_parser_loads_named_default_layout_preset(self):
+        parsed = parse_ui_query("시장분석 프리셋 띄워줘", preset_layout_context())
+
+        self.assertEqual(len(parsed.tasks), 1)
+        self.assertEqual(parsed.tasks[0].action, "load")
+        self.assertEqual(parsed.tasks[0].presetId, "market")
+        self.assertEqual(parsed.tasks[0].presetName, "시장분석")
+
+    def test_ui_parser_loads_default_layout_preset_without_preset_word(self):
+        for query in ("시장분석 보여줘", "시장분석창 보여줘", "시장분석 대시보드 열어줘"):
+            with self.subTest(query=query):
+                parsed = parse_ui_query(query, preset_layout_context())
+
+                self.assertEqual(len(parsed.tasks), 1)
+                self.assertEqual(parsed.tasks[0].action, "load")
+                self.assertEqual(parsed.tasks[0].presetId, "market")
+                self.assertEqual(parsed.tasks[0].presetName, "시장분석")
+
+    def test_ui_parser_loads_custom_layout_preset_without_llm(self):
+        with patch("gops_agents.intent_understanding.fanout.classify_with_provider", side_effect=AssertionError("preset load should not call classifier")):
+            understanding, _ = build_query_understanding(
+                "내입맛 띠워줘",
+                layout_context=preset_layout_context(),
+            )
+
+        self.assertEqual(understanding.routeMode, "ui_layout")
+        self.assertEqual(understanding.contentTasks, [])
+        self.assertEqual(understanding.uiTasks[0].action, "load")
+        self.assertEqual(understanding.uiTasks[0].presetId, "custom-taste")
+
+    def test_ui_parser_loads_any_runtime_custom_preset_name_without_llm(self):
+        context = preset_layout_context()
+        context["presets"].append({"id": "custom-preopen", "kind": "custom", "name": "장전 체크", "aliases": []})
+
+        with patch("gops_agents.intent_understanding.fanout.classify_with_provider", side_effect=AssertionError("runtime custom preset load should not call classifier")):
+            understanding, _ = build_query_understanding(
+                "장전 체크 대시보드 열어줘",
+                layout_context=context,
+            )
+
+        self.assertEqual(understanding.routeMode, "ui_layout")
+        self.assertEqual(understanding.contentTasks, [])
+        self.assertEqual(understanding.uiTasks[0].action, "load")
+        self.assertEqual(understanding.uiTasks[0].presetId, "custom-preopen")
+        self.assertEqual(understanding.uiTasks[0].presetName, "장전 체크")
+
+    def test_ui_parser_does_not_treat_analysis_request_as_preset_load(self):
+        parsed = parse_ui_query("시장 분석해줘", preset_layout_context())
+
+        self.assertEqual(parsed.tasks, [])
+
+        compact_preset_name = parse_ui_query("시장분석 해줘", preset_layout_context())
+
+        self.assertEqual(compact_preset_name.tasks, [])
+
+    def test_ui_parser_marks_ambiguous_preset_names_for_clarification(self):
+        context = preset_layout_context()
+        context["presets"] = [
+            {"id": "taste-1", "kind": "custom", "name": "내 입맛", "aliases": ["내입맛"]},
+            {"id": "taste-2", "kind": "custom", "name": "내입맛", "aliases": ["내 입맛"]},
+        ]
+
+        parsed = parse_ui_query("내입맛 프리셋 띄워줘", context)
+
+        self.assertEqual(parsed.tasks, [])
+        self.assertTrue(parsed.needs_classifier)
+        self.assertIn("ui_preset_match_ambiguous", parsed.warnings)
 
     def test_clear_query_understanding_does_not_call_llm_classifier(self):
         with patch("gops_agents.intent_understanding.fanout.classify_with_provider", side_effect=AssertionError("clear route should not call classifier")):
@@ -1793,6 +1871,56 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(add_command["payload"]["panelId"], "panel-news")
         self.assertEqual(add_command["payload"]["props"]["symbol"], "NVDA")
         self.assertNotIn("대상 패널을 찾지 못했습니다", proposal["rationale"])
+
+    def test_layout_resolve_loads_named_preset_without_snapshots(self):
+        orchestrator = AgentOrchestrator()
+
+        with patch.object(
+            orchestrator,
+            "_build_snapshot_plan",
+            side_effect=AssertionError("Preset layout resolve must not build snapshots"),
+        ):
+            response = orchestrator.resolve_layout({
+                "symbol": "NVDA",
+                "intent": "시장분석 프리셋 띄워줘",
+                "layoutContext": preset_layout_context(),
+            })
+
+        self.assertEqual(response["status"], "ui_layout")
+        self.assertEqual(response["agentTrace"]["queryUnderstanding"]["routeMode"], "ui_layout")
+        proposal = response["layoutProposal"]
+        self.assertEqual(proposal["commands"][0]["type"], "layout.load")
+        self.assertEqual(proposal["commands"][0]["payload"]["presetId"], "market")
+        self.assertEqual(proposal["commands"][0]["payload"]["presetName"], "시장분석")
+
+    def test_layout_resolve_loads_named_preset_without_preset_word(self):
+        response = AgentOrchestrator().resolve_layout({
+            "symbol": "NVDA",
+            "intent": "시장분석창 보여줘",
+            "layoutContext": preset_layout_context(),
+        })
+
+        self.assertEqual(response["status"], "ui_layout")
+        proposal = response["layoutProposal"]
+        self.assertEqual(proposal["commands"][0]["type"], "layout.load")
+        self.assertEqual(proposal["commands"][0]["payload"]["presetId"], "market")
+
+    def test_layout_resolve_clarifies_ambiguous_preset_names(self):
+        context = preset_layout_context()
+        context["presets"] = [
+            {"id": "taste-1", "kind": "custom", "name": "내 입맛", "aliases": ["내입맛"]},
+            {"id": "taste-2", "kind": "custom", "name": "내입맛", "aliases": ["내 입맛"]},
+        ]
+
+        response = AgentOrchestrator().resolve_layout({
+            "symbol": "NVDA",
+            "intent": "내입맛 프리셋 띄워줘",
+            "layoutContext": context,
+        })
+
+        self.assertEqual(response["status"], "ui_clarify")
+        self.assertIsNone(response["layoutProposal"])
+        self.assertIn("ui_preset_match_ambiguous", response["agentTrace"]["warnings"])
 
     def test_layout_resolve_reopens_closed_named_panels_from_korean_show_variants(self):
         cases = [

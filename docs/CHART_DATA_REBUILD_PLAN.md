@@ -236,7 +236,17 @@ publishes `ORDER_FLOW_BINS_UPDATE`; the EOD job
 `systems/market-data/jobs/order-flow-daily-rollup/main.py` materializes daily
 rows into `market_data.order_flow_profile_daily`. Local compose exposes the
 `order-flow-daily-rollup` jobs-profile service, and AWS uses
-`infra/k8s/overlays/aws/cronjob-order-flow-daily-rollup.yaml`.
+`infra/k8s/overlays/aws/cronjob-order-flow-daily-rollup.yaml`. The shared dev
+`aws-incluster-app-ci` deploy path also includes that scheduled CronJob via the
+in-cluster app overlay. Keep both overlay CronJob manifests in sync; ad hoc
+backfills stay manual.
+
+The trade-derived live `volume-profile:{symbol}:1m:live` Redis zset is a bounded
+hot cache, not historical storage. The processor trims it by
+`VOLUME_PROFILE_LIVE_WINDOW_SECONDS` and `VOLUME_PROFILE_LIVE_MAX_BINS`, then
+expires idle keys with `VOLUME_PROFILE_LIVE_TTL_SECONDS`. Trimming is batched by
+`VOLUME_PROFILE_LIVE_TRIM_BATCH_SIZE` so existing oversized keys shrink
+incrementally instead of being deleted in one blocking Redis command.
 
 Derived result retention is intentionally shorter than candle history:
 

@@ -3,6 +3,7 @@ import sys
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[3]
 MARKET_SHARED = ROOT / "systems" / "market-data" / "shared"
@@ -13,6 +14,7 @@ from alfaka.serving.chart_derived_data import (  # noqa: E402
     ChartDerivedArtifactStore,
     build_indicator_request,
     build_volume_profile_request,
+    kafka_producer,
     read_json_cache,
 )
 from alfaka.serving.indicators import indicator_specs_from_csv  # noqa: E402
@@ -155,6 +157,17 @@ class WarmupIndicatorProvider:
 
 
 class ChartDerivedDataWorkerTest(unittest.TestCase):
+    def test_api_reuses_chart_derived_kafka_producer(self):
+        producer = object()
+        with mock.patch.dict("os.environ", {"KAFKA_BOOTSTRAP_SERVERS": "kafka:29092"}):
+            with mock.patch("alfaka.common.kafka_io.create_json_producer", return_value=producer) as create_producer:
+                first = kafka_producer("gops-chart-derived-api-reuse-test")
+                second = kafka_producer("gops-chart-derived-api-reuse-test")
+
+        self.assertIs(first, producer)
+        self.assertIs(second, producer)
+        create_producer.assert_called_once_with("kafka:29092", "gops-chart-derived-api-reuse-test")
+
     def test_artifact_store_writes_clickhouse_json_time_format(self):
         client = FakeClickHouseArtifactClient()
         store = ChartDerivedArtifactStore(client)

@@ -5,6 +5,7 @@ import json
 import os
 import time
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from typing import Any
 
 from alfaka.serving.indicators import INDICATOR_CALCULATION_VERSION, IndicatorSpec
@@ -459,6 +460,7 @@ def should_store_derived_artifact(request: dict[str, Any], payload: dict[str, An
     return bool(request and payload)
 
 
+@lru_cache(maxsize=8)
 def kafka_producer(client_id: str):
     from alfaka.common.kafka_io import create_json_producer
 

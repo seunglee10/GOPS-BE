@@ -1,5 +1,6 @@
 # GitHub Actions 전용 overlay입니다.
-# 앱 Deployment/Service/Ingress만 자동 배포하고, Job은 수동 실행 대상으로 남깁니다.
+# 앱 Deployment/Service/Ingress와 scheduled runtime CronJob을 자동 배포합니다.
+# 일회성 Job은 수동 실행 대상으로 남깁니다.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 

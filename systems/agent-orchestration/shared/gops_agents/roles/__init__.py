@@ -467,6 +467,9 @@ class UIAgent:
         tasks = [task for task in tasks if task is not None]
         if not tasks:
             return self.propose(context, UIIntent(False, "non-ui", None, None, "unknown", None, None, 0.0, "No UI tasks were supplied."))
+        preset_task = next((task for task in tasks if task.action == "load" or task.presetId), None)
+        if preset_task is not None:
+            return propose_preset_load_layout(preset_task)
         panels = normalize_layout_panels(context.layoutContext)
         chart_tasks = [task for task in tasks if is_chart_task(task)]
         if len(chart_tasks) >= 2:
@@ -669,6 +672,9 @@ def ui_task_from_payload(value: Any) -> UiTask | None:
         targetPanelTypes=[str(item) for item in value.get("targetPanelTypes", []) if isinstance(item, str)] if isinstance(value.get("targetPanelTypes"), list) else [],
         targetPanelIds=[str(item) for item in value.get("targetPanelIds", []) if isinstance(item, str)] if isinstance(value.get("targetPanelIds"), list) else [],
         layoutPreset=optional_text(value.get("layoutPreset")),
+        presetId=optional_text(value.get("presetId")),
+        presetName=optional_text(value.get("presetName")),
+        presetKind=optional_text(value.get("presetKind")),
         sizeIntent=optional_text(value.get("sizeIntent")),
         positionIntent=optional_text(value.get("positionIntent")),
         chartAction=optional_text(value.get("chartAction")),
@@ -700,12 +706,38 @@ def optional_text(value: Any) -> str | None:
 
 
 def is_multi_ui_task(task: UiTask) -> bool:
-    return bool(task.action == "keep" or task.chartAction == "add" or task.layoutPreset or len(task.targetPanelTypes) > 1 or len(task.targetPanelIds) > 1)
+    return bool(task.action in {"keep", "load"} or task.chartAction == "add" or task.layoutPreset or task.presetId or len(task.targetPanelTypes) > 1 or len(task.targetPanelIds) > 1)
 
 
 def is_chart_task(task: UiTask) -> bool:
     multi_target = task.layoutPreset or len(task.targetPanelTypes) > 1 or len(task.targetPanelIds) > 1
     return not multi_target and task.action in {"open", "focus"} and task.targetPanelType == "chart"
+
+
+def propose_preset_load_layout(task: UiTask) -> LayoutProposal:
+    preset_id = optional_text(task.presetId)
+    preset_name = optional_text(task.presetName) or "요청한"
+    if not preset_id:
+        return LayoutProposal(
+            title="UI preset request",
+            rationale="어떤 프리셋을 열지 확정하지 못했습니다. 프리셋 이름을 조금 더 구체적으로 말해 주세요.",
+            commands=[],
+            autoApply=False,
+            panelPriorities=[],
+        )
+    payload: dict[str, Any] = {
+        "presetId": preset_id,
+        "presetName": preset_name,
+    }
+    if task.presetKind:
+        payload["presetKind"] = task.presetKind
+    return LayoutProposal(
+        title="UI preset request",
+        rationale=f"{preset_name} 프리셋을 열었습니다.",
+        commands=[layout_command("layout.load", payload)],
+        autoApply=True,
+        panelPriorities=[],
+    )
 
 
 def propose_remove_panels_layout(panels: list[dict[str, Any]], tasks: list[UiTask]) -> LayoutProposal:

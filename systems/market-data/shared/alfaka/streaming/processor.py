@@ -25,6 +25,8 @@ from alfaka.orderflow import (
     pinned_symbols_from_env,
     price_bin_size_from_env,
     publish_throttle_ms_from_env,
+    quote_future_tolerance_ms_from_env,
+    quote_max_age_ms_from_env,
     quote_refresh_ms_from_env,
 )
 from alfaka.serving.dto import market_status_event, order_flow_event, websocket_event
@@ -241,6 +243,8 @@ class ProcessorState:
         self.active_feed_cache = ActiveFeedCache(active_feed_cache_seconds)
         self.order_flow_builder = None
         self.order_flow_quote_cache = None
+        self.order_flow_quote_max_age_ms = None
+        self.order_flow_quote_future_tolerance_ms = 0
         self.order_flow_publish_state = {}
 
 
@@ -257,6 +261,8 @@ def configure_order_flow_state(state, redis_client, redis_keys):
         redis_keys,
         refresh_ms=quote_refresh_ms_from_env(),
     )
+    state.order_flow_quote_max_age_ms = quote_max_age_ms_from_env()
+    state.order_flow_quote_future_tolerance_ms = quote_future_tolerance_ms_from_env()
     state.order_flow_publish_state = {}
     return state
 
@@ -594,7 +600,12 @@ def process_order_flow_live_path(trade, redis_client, redis_keys, state):
         return None
     quote_cache = getattr(state, "order_flow_quote_cache", None)
     quote = quote_cache.quote_for(trade["symbol"]) if quote_cache is not None else None
-    side = classify_trade_side(trade, quote)
+    side = classify_trade_side(
+        trade,
+        quote,
+        max_quote_age_ms=getattr(state, "order_flow_quote_max_age_ms", None),
+        future_tolerance_ms=getattr(state, "order_flow_quote_future_tolerance_ms", 0),
+    )
     of_bin = builder.update(trade, side)
     if of_bin is None:
         return None
@@ -948,7 +959,24 @@ def write_volume_profile_bin_to_redis(redis_client, redis_keys, profile_bin):
     member = json.dumps(profile_bin, ensure_ascii=False, separators=(",", ":"))
     score = timestamp_score(profile_bin["eventMinute"])
     redis_client.zadd(key, {member: score})
-    redis_client.expire(key, 86400)
+    trim_volume_profile_live_cache(redis_client, key, score)
+    redis_client.expire(key, volume_profile_live_ttl_seconds())
+
+
+def trim_volume_profile_live_cache(redis_client, key, score):
+    batch_size = volume_profile_live_trim_batch_size()
+    cutoff_score = max(0, score - volume_profile_live_window_seconds() * 1000)
+    old_members = redis_client.zrangebyscore(key, 0, cutoff_score, start=0, num=batch_size)
+    if old_members:
+        redis_client.zrem(key, *old_members)
+
+    overflow = redis_client.zcard(key) - volume_profile_live_max_bins()
+    if overflow <= 0:
+        return
+    rank_trim_count = min(overflow, batch_size)
+    overflow_members = redis_client.zrange(key, 0, rank_trim_count - 1)
+    if overflow_members:
+        redis_client.zrem(key, *overflow_members)
 
 
 def write_order_flow_bin_to_redis(redis_client, redis_keys, of_bin, state=None):
@@ -1130,6 +1158,23 @@ def live_trade_ttl_seconds():
 
 def live_candle_ttl_seconds():
     return parse_positive_int(os.getenv("LIVE_CANDLE_TTL_SECONDS", "180"), default=180)
+
+
+def volume_profile_live_window_seconds():
+    return parse_positive_int(os.getenv("VOLUME_PROFILE_LIVE_WINDOW_SECONDS", "7200"), default=7200)
+
+
+def volume_profile_live_ttl_seconds():
+    default_ttl = volume_profile_live_window_seconds()
+    return parse_positive_int(os.getenv("VOLUME_PROFILE_LIVE_TTL_SECONDS", str(default_ttl)), default=default_ttl)
+
+
+def volume_profile_live_max_bins():
+    return parse_positive_int(os.getenv("VOLUME_PROFILE_LIVE_MAX_BINS", "50000"), default=50000)
+
+
+def volume_profile_live_trim_batch_size():
+    return parse_positive_int(os.getenv("VOLUME_PROFILE_LIVE_TRIM_BATCH_SIZE", "1000"), default=1000)
 
 
 def parse_positive_int(value, default):

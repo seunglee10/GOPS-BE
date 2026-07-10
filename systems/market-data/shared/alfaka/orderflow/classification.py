@@ -8,7 +8,7 @@ from typing import Any
 from alfaka.serving.time_utils import canonical_utc_timestamp, parse_utc_time
 
 
-ORDER_FLOW_CLASSIFICATION_VERSION = "orderflow-estimated-v1"
+ORDER_FLOW_CLASSIFICATION_VERSION = "orderflow-estimated-v2"
 ORDER_FLOW_SIDE_CLASSIFICATION = "estimated"
 
 
@@ -112,8 +112,21 @@ def merge_trades_with_quotes(
         yield trade, active_quote
 
 
-def classify_trade_side(trade: dict[str, Any], quote: dict[str, Any] | None) -> str:
+def classify_trade_side(
+    trade: dict[str, Any],
+    quote: dict[str, Any] | None,
+    *,
+    max_quote_age_ms: int | None = None,
+    future_tolerance_ms: int = 0,
+) -> str:
     if not quote:
+        return "unknown"
+    if max_quote_age_ms is not None and not quote_is_fresh_for_trade(
+        trade,
+        quote,
+        max_quote_age_ms=max_quote_age_ms,
+        future_tolerance_ms=future_tolerance_ms,
+    ):
         return "unknown"
     price = trade.get("price")
     if price is None or not isinstance(price, (int, float)):
@@ -131,6 +144,25 @@ def classify_trade_side(trade: dict[str, Any], quote: dict[str, Any] | None) -> 
         if price < mid:
             return "bid"
     return "unknown"
+
+
+def quote_is_fresh_for_trade(
+    trade: dict[str, Any],
+    quote: dict[str, Any] | None,
+    *,
+    max_quote_age_ms: int,
+    future_tolerance_ms: int = 0,
+) -> bool:
+    if not quote:
+        return False
+    trade_time = row_time(trade)
+    quote_time = row_time(quote)
+    if trade_time is None or quote_time is None:
+        return False
+    age_ms = (trade_time - quote_time).total_seconds() * 1000
+    if age_ms < -max(0, future_tolerance_ms):
+        return False
+    return age_ms <= max(0, max_quote_age_ms)
 
 
 def row_time(row: dict[str, Any] | None) -> datetime | None:
