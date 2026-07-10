@@ -78,6 +78,7 @@ CHART_ADD_SIGNAL_TERMS = (
     "비교",
 )
 UI_SURFACE_TERMS = (
+    "프리셋",
     "패널",
     "페널",
     "창",
@@ -100,6 +101,46 @@ UI_SURFACE_TERMS = (
     "card",
     "widget",
     "box",
+    "preset",
+)
+PRESET_LOAD_SIGNAL_TERMS = (
+    "프리셋",
+    "창",
+    "화면",
+    "모드",
+    "레이아웃",
+    "뷰",
+    "대시보드",
+    "페이지",
+    "워크스페이스",
+    "띄워",
+    "띠워",
+    "열어",
+    "보여",
+    "표시",
+    "불러",
+    "적용",
+    "바꿔",
+    "전환",
+    "로드",
+    "가줘",
+    "넘겨",
+    "이동",
+    "preset",
+    "window",
+    "screen",
+    "mode",
+    "layout",
+    "view",
+    "dashboard",
+    "page",
+    "workspace",
+    "open",
+    "show",
+    "load",
+    "apply",
+    "switch",
+    "change",
 )
 ANALYSIS_ACTION_FALSE_POSITIVE_STEMS = (
     "주가",
@@ -181,6 +222,16 @@ class AliasMatch:
     strength: str = "strong"
 
 
+@dataclass(frozen=True)
+class PresetMatch:
+    preset_id: str
+    name: str
+    kind: str | None
+    alias: str
+    score: float
+    token_index: int
+
+
 class DefaultMorphAnalyzer:
     def clauses(self, query: Any) -> list[Clause]:
         text = normalize_query_text(query)
@@ -210,14 +261,16 @@ class DefaultMorphAnalyzer:
 
 def parse_ui_query(query: Any, layout_context: dict[str, Any] | None = None) -> UiParseResult:
     lexicon = load_ui_lexicon()
-    panels = compact_layout_panels_for_parser(layout_context if isinstance(layout_context, dict) else {}, lexicon)
+    context = layout_context if isinstance(layout_context, dict) else {}
+    panels = compact_layout_panels_for_parser(context, lexicon)
+    presets = compact_layout_presets_for_parser(context)
     analyzer = DefaultMorphAnalyzer()
     tasks: list[UiTask] = []
     warnings: list[str] = []
     needs_classifier = False
     max_confidence = 0.0
     for clause in analyzer.clauses(query):
-        clause_result = parse_ui_clause(clause, panels, lexicon)
+        clause_result = parse_ui_clause(clause, panels, presets, lexicon)
         tasks.extend(clause_result.tasks)
         warnings.extend(clause_result.warnings)
         needs_classifier = needs_classifier or clause_result.needs_classifier
@@ -287,9 +340,13 @@ def layout_context_has_panels(layout_context: dict[str, Any] | None) -> bool:
     return isinstance(panels, list) and bool(panels)
 
 
-def parse_ui_clause(clause: Clause, panels: list[dict[str, Any]], lexicon: dict[str, Any]) -> UiParseResult:
+def parse_ui_clause(clause: Clause, panels: list[dict[str, Any]], presets: list[dict[str, Any]], lexicon: dict[str, Any]) -> UiParseResult:
     if not clause.compact:
         return UiParseResult()
+
+    preset_result = parse_preset_load_clause(clause, presets)
+    if preset_result is not None:
+        return preset_result
 
     panel_matches = panel_matches_for_clause(clause, panels, lexicon)
     size_matches = filter_size_matches(clause, value_matches(clause, lexicon.get("sizes", {}), allow_short_fuzzy=True))
@@ -363,6 +420,94 @@ def parse_ui_clause(clause: Clause, panels: list[dict[str, Any]], lexicon: dict[
             *keep_only_matches,
         ]))
     return UiParseResult(confidence=max_match_score(panel_matches))
+
+
+def parse_preset_load_clause(clause: Clause, presets: list[dict[str, Any]]) -> UiParseResult | None:
+    if not presets or not has_preset_load_signal(clause):
+        return None
+    matches = preset_matches_for_clause(clause, presets)
+    if not matches:
+        return None
+    top = matches[0]
+    competitors = [match for match in matches[1:] if match.preset_id != top.preset_id and top.score - match.score <= 0.025]
+    if competitors:
+        return UiParseResult(
+            needs_classifier=True,
+            warnings=["ui_preset_match_ambiguous"],
+            confidence=top.score,
+        )
+    task = UiTask(
+        action="load",
+        presetId=top.preset_id,
+        presetName=top.name,
+        presetKind=top.kind,
+        confidence=min(0.96, max(0.82, top.score)),
+        source="ui-preset-parser",
+        reason=f"UI parser matched layout preset '{top.name}' in clause '{clause.text}'.",
+    )
+    return UiParseResult(tasks=[task], confidence=task.confidence)
+
+
+def has_preset_load_signal(clause: Clause) -> bool:
+    return any(compact_text(term) in clause.compact for term in PRESET_LOAD_SIGNAL_TERMS)
+
+
+def preset_matches_for_clause(clause: Clause, presets: list[dict[str, Any]]) -> list[PresetMatch]:
+    matches: list[PresetMatch] = []
+    for preset in presets:
+        preset_id = str(preset.get("id") or "").strip()
+        name = str(preset.get("name") or "").strip()
+        if not preset_id or not name:
+            continue
+        match = best_alias_match(clause, preset_aliases_for_match(preset), allow_short_fuzzy=True)
+        if not match or match.score < 0.78:
+            continue
+        kind = str(preset.get("kind") or "").strip()
+        matches.append(PresetMatch(
+            preset_id=preset_id,
+            name=name,
+            kind=kind if kind in {"default", "custom"} else None,
+            alias=match.alias,
+            score=match.score,
+            token_index=match.token_index,
+        ))
+    best_by_id: dict[str, PresetMatch] = {}
+    for match in matches:
+        current = best_by_id.get(match.preset_id)
+        if current is None or (match.score, -match.token_index) > (current.score, -current.token_index):
+            best_by_id[match.preset_id] = match
+    return sorted(best_by_id.values(), key=lambda item: (-item.score, item.token_index, item.name))
+
+
+def preset_aliases_for_match(preset: dict[str, Any]) -> list[str]:
+    name = str(preset.get("name") or "").strip()
+    supplied = preset.get("aliases")
+    aliases = [name]
+    if isinstance(supplied, list):
+        aliases.extend(str(item) for item in supplied if isinstance(item, str))
+    suffixes = (
+        "프리셋",
+        "창",
+        "화면",
+        "모드",
+        "레이아웃",
+        "뷰",
+        "대시보드",
+        "페이지",
+        "워크스페이스",
+        "preset",
+        "window",
+        "screen",
+        "mode",
+        "layout",
+        "view",
+        "dashboard",
+        "page",
+        "workspace",
+    )
+    aliases.extend(f"{name} {suffix}" for suffix in suffixes if name)
+    aliases.extend(f"{name}{suffix}" for suffix in suffixes if name)
+    return unique_texts(aliases)
 
 
 def build_keep_only_task(
@@ -810,6 +955,29 @@ def compact_layout_panels_for_parser(layout_context: dict[str, Any], lexicon: di
     return compacted
 
 
+def compact_layout_presets_for_parser(layout_context: dict[str, Any]) -> list[dict[str, Any]]:
+    presets = layout_context.get("presets") if isinstance(layout_context, dict) else None
+    if not isinstance(presets, list):
+        return []
+    compacted = []
+    for item in presets:
+        if not isinstance(item, dict):
+            continue
+        preset_id = str(item.get("id") or "").strip()
+        name = str(item.get("name") or "").strip()
+        if not preset_id or not name:
+            continue
+        kind = str(item.get("kind") or "").strip()
+        aliases = [str(alias).strip() for alias in item.get("aliases", []) if isinstance(alias, str) and str(alias).strip()] if isinstance(item.get("aliases"), list) else []
+        compacted.append({
+            "id": preset_id,
+            "name": name,
+            "kind": kind if kind in {"default", "custom"} else "",
+            "aliases": unique_texts(aliases),
+        })
+    return compacted[:50]
+
+
 def panel_aliases_for_type(panel_type: str, lexicon: dict[str, Any] | None = None, supplied: Any = None) -> list[str]:
     payload = lexicon or load_ui_lexicon()
     panels = payload.get("panels") if isinstance(payload, dict) else {}
@@ -961,7 +1129,7 @@ def max_match_score(matches: Iterable[AliasMatch | None]) -> float:
 
 
 def dedupe_ui_tasks(tasks: list[UiTask]) -> list[UiTask]:
-    best: dict[tuple[str, str, str, tuple[str, ...], str], UiTask] = {}
+    best: dict[tuple[str, str, str, tuple[str, ...], str, str], UiTask] = {}
     for task in tasks:
         key = (
             task.action,
@@ -969,6 +1137,7 @@ def dedupe_ui_tasks(tasks: list[UiTask]) -> list[UiTask]:
             task.targetPanelId or "",
             tuple(task.targetPanelTypes),
             task.layoutPreset or "",
+            task.presetId or "",
         )
         current = best.get(key)
         if current is None or task.confidence > current.confidence:

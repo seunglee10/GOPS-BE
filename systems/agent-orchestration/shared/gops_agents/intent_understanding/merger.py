@@ -33,7 +33,9 @@ def merge_understanding(
     ui_tasks = merge_ui_tasks([*rule_ui_tasks, *classifier_ui])
     ui_tasks = merge_ui_tasks([*ui_tasks, *content_display_ui_tasks(query, content_tasks, ui_tasks, layout_context, allow_content_display_ui)])
     has_confirmed_entity = getattr(entity_resolution, "status", None) == "confirmed"
-    if allow_content_display_ui and content_display_should_be_layout_only(query, content_tasks, ui_tasks):
+    if has_preset_load_task(ui_tasks):
+        content_tasks = []
+    elif allow_content_display_ui and content_display_should_be_layout_only(query, content_tasks, ui_tasks):
         content_tasks = []
     elif content_tasks_are_only_panel_references(content_tasks, ui_tasks, has_confirmed_entity):
         content_tasks = []
@@ -74,7 +76,7 @@ def merge_content_tasks(tasks: list[ContentTask]) -> list[ContentTask]:
 
 
 def merge_ui_tasks(tasks: list[UiTask]) -> list[UiTask]:
-    best: dict[tuple[str, str, str, tuple[str, ...], tuple[str, ...], str], UiTask] = {}
+    best: dict[tuple[str, str, str, tuple[str, ...], tuple[str, ...], str, str], UiTask] = {}
     for task in tasks:
         key = (
             task.action,
@@ -83,11 +85,16 @@ def merge_ui_tasks(tasks: list[UiTask]) -> list[UiTask]:
             tuple(task.targetPanelTypes),
             tuple(task.targetPanelIds),
             task.layoutPreset or "",
+            task.presetId or "",
         )
         current = best.get(key)
         if current is None or task.confidence > current.confidence:
             best[key] = task
     return sorted(best.values(), key=lambda item: item.confidence, reverse=True)[:3]
+
+
+def has_preset_load_task(tasks: list[UiTask]) -> bool:
+    return any(task.action == "load" and bool(task.presetId) for task in tasks)
 
 
 def route_mode_for_tasks(content_tasks: list[ContentTask], ui_tasks: list[UiTask], classifier_result: ClassifierResult | None) -> str:

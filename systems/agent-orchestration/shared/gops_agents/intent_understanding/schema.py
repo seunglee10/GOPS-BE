@@ -8,7 +8,7 @@ CONTENT_TASK_TYPES = ("news", "chart", "macro", "ontology", "financial", "financ
 ROUTE_MODES = ("analysis", "ui_layout", "hybrid", "clarify")
 ROLE_ORDER = ("chart", "news", "macro", "ontology", "financial")
 DEFAULT_ANALYSIS_ROLES = ("chart", "news", "macro", "ontology")
-UI_ACTIONS = ("focus", "resize", "move", "open", "close", "arrange", "keep")
+UI_ACTIONS = ("focus", "resize", "move", "open", "close", "arrange", "keep", "load")
 UI_PANEL_TYPES = ("chart", "newsFeed", "indicatorCompare", "orderTicket", "portfolioHoldings", "stockRecommendations", "aiSummary", "ontologyGraph")
 UI_SIZE_INTENTS = ("max", "large", "small", "min")
 UI_POSITION_INTENTS = ("top", "bottom", "left", "right", "center")
@@ -73,6 +73,9 @@ class UiTask:
     targetPanelTypes: list[str] = field(default_factory=list)
     targetPanelIds: list[str] = field(default_factory=list)
     layoutPreset: str | None = None
+    presetId: str | None = None
+    presetName: str | None = None
+    presetKind: str | None = None
     sizeIntent: str | None = None
     positionIntent: str | None = None
     chartAction: str | None = None
@@ -95,6 +98,10 @@ class UiTask:
             self.targetPanelId = self.targetPanelIds[0]
         if self.layoutPreset not in UI_LAYOUT_PRESETS:
             self.layoutPreset = None
+        self.presetId = str(self.presetId or "").strip() or None
+        self.presetName = str(self.presetName or "").strip() or None
+        if self.presetKind not in {"default", "custom"}:
+            self.presetKind = None
         if self.sizeIntent not in UI_SIZE_INTENTS:
             self.sizeIntent = None
         if self.positionIntent not in UI_POSITION_INTENTS:
