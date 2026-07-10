@@ -388,6 +388,16 @@ AWS stage는 MSK를 강제하지 않는다. 현 구조는 다음 staged path를 
 local compose -> single Kafka pod candidate -> MSK candidate
 ```
 
+The single-pod Kafka StatefulSet must mount its PVC directly at
+`/var/lib/kafka/data`. The official `apache/kafka` image declares that exact
+path as an image volume, so mounting only `/var/lib/kafka` allows the image
+volume to shadow the PVC and leaves broker logs on ephemeral node storage.
+
+Short-retention market topics must set `segment.ms` and `segment.bytes` together
+with `retention.ms`. Kafka deletes only closed segments; `retention.ms` alone can
+retain an active default 1 GiB/7-day segment far beyond the intended 30-minute
+or 2-hour window.
+
 Topic 이름을 바꾸려면 backend queue submitter, worker consumer, delivery gateway,
 platform topic creation을 같이 바꿔야 한다.
 

@@ -5819,6 +5819,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         local_script = (root / "scripts" / "local" / "create-kafka-topics.sh").read_text(encoding="utf-8")
         docker_compose = (root / "docker-compose.yml").read_text(encoding="utf-8")
         kafka_init_job = (root / "infra/k8s/base/platform/kafka-topic-init-job.yaml").read_text(encoding="utf-8")
+        kafka_statefulset = (root / "infra/k8s/base/platform/kafka-statefulset.yaml").read_text(encoding="utf-8")
 
         self.assertTrue(required_topics.issubset(aws_topics))
         for topic in required_topics:
@@ -5829,6 +5830,9 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn("hot_topics", docker_compose)
         self.assertIn("--partitions 12", docker_compose)
         self.assertIn("--partitions 12", kafka_init_job)
+        self.assertIn("mountPath: /var/lib/kafka/data", kafka_statefulset)
+        self.assertIn("segment.ms=${segment_ms}", kafka_init_job)
+        self.assertIn("segment.bytes=${segment_bytes}", kafka_init_job)
 
     def test_gap_fill_includes_same_timestamp_correction_after_cursor(self):
         original = {
