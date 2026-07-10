@@ -171,6 +171,17 @@ GOPS component mapping:
 | Pricing section heading only | `pricing-section` |
 | Pricing tier name only | `pricing-card-title` |
 
+Workspace panel sizing policy:
+
+- Panel content and shared application chrome use the same compact local role
+  scale. New panel content maps its role names onto those existing tokens rather
+  than promoting every role globally.
+- Headlines in flip-style news cards use the local `title-lg` role and wrap
+  naturally up to three lines when the title exceeds the card width. Padding keeps
+  the text clear of both the chart line and the bottom flip-progress strip;
+  the chart is subdued beneath the headline region.
+- The bottom Agent composer retains the existing compact control dimensions.
+
 Enforcement rules:
 
 - Asta Sans is mandatory for every role. Do not replace it or introduce a
