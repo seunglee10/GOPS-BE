@@ -46,7 +46,7 @@ class StreamSession:
         dropped = False
         while not self.queue.empty():
             item = self.queue.get_nowait()
-            if not dropped and item.get("type") in {"LIVE_CANDLE_UPDATE", "LIVE_TRADE_UPDATE", "LIVE_QUOTE_UPDATE", "VOLUME_PROFILE_BINS_UPDATE", "ORDER_FLOW_BINS_UPDATE", "HEARTBEAT"}:
+            if not dropped and item.get("type") in {"LIVE_CANDLE_UPDATE", "LIVE_TRADE_UPDATE", "LIVE_QUOTE_UPDATE", "ORDER_FLOW_BINS_UPDATE", "HEARTBEAT"}:
                 dropped = True
                 continue
             retained.append(item)
@@ -69,7 +69,7 @@ class StreamSession:
 
 
 class SymbolStreamHub:
-    def __init__(self, redis_client, provider):
+    def __init__(self, redis_client, provider, sleep_fn=None):
         self.redis = redis_client
         self.provider = provider
         self.keys = RedisKeyBuilder()
@@ -77,15 +77,19 @@ class SymbolStreamHub:
         self.tasks: dict[str, asyncio.Task] = {}
         self.last_markers: dict[tuple[Any, ...], str] = {}
         self.closed_watermarks: dict[tuple[str, str], str] = {}
-        self.poll_seconds = read_positive_float_env("REALTIME_REDIS_POLL_SECONDS", 0.25)
+        self.recovery_seconds = read_positive_float_env("REALTIME_REDIS_POLL_SECONDS", 5.0)
+        self.pubsub_timeout_seconds = read_positive_float_env("REALTIME_REDIS_PUBSUB_TIMEOUT_SECONDS", 0.25)
         self.error_log_interval_seconds = read_positive_float_env("REALTIME_REDIS_ERROR_LOG_INTERVAL_SECONDS", 30.0)
         self._last_redis_error_log = 0.0
+        self._sleep = sleep_fn or asyncio.sleep
 
     async def subscribe(self, session: StreamSession) -> None:
         sessions = self.sessions_by_symbol.setdefault(session.symbol, set())
         sessions.add(session)
+        await self._send_initial_snapshot(session)
         if not self.tasks:
-            self.tasks["__global__"] = asyncio.create_task(self._listen_global())
+            self.tasks["pubsub"] = asyncio.create_task(self._listen_global())
+            self.tasks["recovery"] = asyncio.create_task(self._recover_missed_events())
 
     async def unsubscribe(self, session: StreamSession) -> None:
         sessions = self.sessions_by_symbol.get(session.symbol)
@@ -97,8 +101,9 @@ class SymbolStreamHub:
         self.sessions_by_symbol.pop(session.symbol, None)
         if self.sessions_by_symbol:
             return
-        task = self.tasks.pop("__global__", None)
-        if task:
+        tasks = list(self.tasks.values())
+        self.tasks.clear()
+        for task in tasks:
             task.cancel()
 
     async def _listen_global(self) -> None:
@@ -111,16 +116,18 @@ class SymbolStreamHub:
                 pubsub = self.redis.pubsub(ignore_subscribe_messages=True)
                 pubsub.subscribe(self.keys.market_events())
                 while True:
-                    message = await asyncio.to_thread(pubsub.get_message, timeout=max(0.1, self.poll_seconds))
+                    message = await asyncio.to_thread(
+                        pubsub.get_message,
+                        timeout=max(0.1, self.pubsub_timeout_seconds),
+                    )
                     event = parse_pubsub_event(message)
                     if event:
                         await self._broadcast_event(event)
-                    await self._broadcast_latest_redis_live_events()
             except asyncio.CancelledError:
                 return
             except Exception as exc:
                 self._log_redis_error("global_listener", exc)
-                await asyncio.sleep(max(0.1, min(self.poll_seconds, 1.0)))
+                await asyncio.sleep(max(0.1, min(self.pubsub_timeout_seconds, 1.0)))
             finally:
                 if pubsub is not None:
                     try:
@@ -134,6 +141,42 @@ class SymbolStreamHub:
                 await asyncio.sleep(60)
         except asyncio.CancelledError:
             return
+
+    async def _recover_missed_events(self) -> None:
+        try:
+            while True:
+                await self._sleep(self.recovery_seconds)
+                await self._broadcast_latest_redis_live_events()
+        except asyncio.CancelledError:
+            return
+
+    async def _send_initial_snapshot(self, session: StreamSession) -> None:
+        if self.redis is None:
+            await self._send_provider_snapshot(session)
+            return
+        active = {session.symbol: [session.interval]}
+        try:
+            events = await asyncio.to_thread(self._read_latest_live_events_batch, active)
+        except Exception as exc:
+            self._log_redis_error("initial_snapshot", exc)
+            return
+        for event in events:
+            event = self._event_after_closed_watermark(event)
+            if event and should_deliver_to_session(event, session):
+                self._remember_event_marker(session.symbol, event)
+                await session.enqueue(event)
+
+    async def _send_provider_snapshot(self, session: StreamSession) -> None:
+        if self.provider is None:
+            return
+        live_event = self.provider.redis_provider.live_event(session.symbol, session.interval)
+        events = [live_event] if live_event else []
+        events.extend(self._live_trade_quote_events(session.symbol))
+        for event in events:
+            event = self._event_after_closed_watermark(event)
+            if event and should_deliver_to_session(event, session):
+                self._remember_event_marker(session.symbol, event)
+                await session.enqueue(event)
 
     async def _broadcast_latest_redis_live_event(self, symbol: str) -> None:
         if self.redis is not None:
@@ -276,7 +319,7 @@ class SymbolStreamHub:
 
     async def _broadcast(self, symbol: str, event: dict[str, Any]) -> None:
         marker = event_marker(event)
-        marker_key = (symbol, event.get("type", ""), event.get("symbol", ""), event.get("interval", ""))
+        marker_key = self._marker_key(symbol, event)
         if marker:
             if marker == self.last_markers.get(marker_key):
                 return
@@ -285,6 +328,15 @@ class SymbolStreamHub:
         for session in sessions:
             if should_deliver_to_session(event, session):
                 await session.enqueue(event)
+
+    def _remember_event_marker(self, symbol: str, event: dict[str, Any]) -> None:
+        marker = event_marker(event)
+        if marker:
+            self.last_markers[self._marker_key(symbol, event)] = marker
+
+    @staticmethod
+    def _marker_key(symbol: str, event: dict[str, Any]) -> tuple[str, str, str, str]:
+        return (symbol, event.get("type", ""), event.get("symbol", ""), event.get("interval", ""))
 
     def _event_after_closed_watermark(self, event: dict[str, Any] | None) -> dict[str, Any] | None:
         if not event:

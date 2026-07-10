@@ -15,8 +15,15 @@ from alfaka.storage.processed_s3_sink import (
     parse_non_negative_float,
     parse_positive_int,
     put_object_with_retry,
+    increment_metric,
+    normalize_realtime_layout_mode,
 )
 from alfaka.storage.s3_manifest import DEFAULT_MANIFEST_PREFIX, normalize_raw_channel, write_raw_manifest
+from alfaka.storage.s3_realtime_layout import (
+    canonical_rows_with_duplicate_count,
+    deterministic_realtime_object_key,
+    raw_v2_partition_key,
+)
 
 
 RAW_ARCHIVE_TOPICS = (
@@ -64,6 +71,7 @@ def raw_s3_archive_runtime_config(environ=None):
         "poll_timeout_ms": parse_positive_int(environ.get("S3_SINK_POLL_TIMEOUT_MS", "1000"), default=1000),
         "put_max_attempts": parse_positive_int(environ.get("S3_PUT_MAX_ATTEMPTS", "3"), default=3),
         "put_retry_sleep_seconds": parse_non_negative_float(environ.get("S3_PUT_RETRY_SLEEP_SECONDS", "1"), default=1),
+        "realtime_layout_mode": normalize_realtime_layout_mode(environ.get("S3_REALTIME_LAYOUT_MODE", "v2")),
     }
     validate_required_values("raw s3 archive", {
         "kafka_servers": config["kafka_servers"],
@@ -90,6 +98,8 @@ def run_raw_s3_archive_sink(
     put_max_attempts=3,
     put_retry_sleep_seconds=1,
     now_fn=None,
+    realtime_layout_mode="v1",
+    metrics=None,
 ):
     buffers = defaultdict(list)
     last_updated_at = {}
@@ -100,21 +110,22 @@ def run_raw_s3_archive_sink(
             for records in batches.values():
                 for record in records:
                     archive_row = raw_archive_row(record.value, now_fn=now_fn)
-                    partition_key = raw_envelope_partition_key(raw_prefix, archive_row)
-                    buffers[partition_key].append(archive_row)
-                    last_updated_at[partition_key] = now_fn()
-                    if len(buffers[partition_key]) >= flush_count:
-                        flush_raw_buffer(
-                            s3,
-                            s3_bucket,
-                            partition_key,
-                            buffers[partition_key],
-                            manifest_prefix=manifest_prefix,
-                            max_attempts=put_max_attempts,
-                            retry_sleep_seconds=put_retry_sleep_seconds,
-                        )
-                        buffers[partition_key].clear()
-                        last_updated_at.pop(partition_key, None)
+                    for partition_key in raw_realtime_partition_keys(raw_prefix, archive_row, realtime_layout_mode):
+                        buffers[partition_key].append(archive_row)
+                        last_updated_at[partition_key] = now_fn()
+                        if len(buffers[partition_key]) >= flush_count:
+                            flush_raw_buffer(
+                                s3,
+                                s3_bucket,
+                                partition_key,
+                                buffers[partition_key],
+                                manifest_prefix=manifest_prefix,
+                                max_attempts=put_max_attempts,
+                                retry_sleep_seconds=put_retry_sleep_seconds,
+                                metrics=metrics,
+                            )
+                            buffers[partition_key].clear()
+                            last_updated_at.pop(partition_key, None)
             flush_due_buffers(
                 buffers,
                 last_updated_at,
@@ -126,6 +137,7 @@ def run_raw_s3_archive_sink(
                     manifest_prefix=manifest_prefix,
                     max_attempts=put_max_attempts,
                     retry_sleep_seconds=put_retry_sleep_seconds,
+                    metrics=metrics,
                 ),
                 flush_interval_seconds,
                 now_fn(),
@@ -144,21 +156,31 @@ def run_raw_s3_archive_sink(
                 manifest_prefix=manifest_prefix,
                 max_attempts=put_max_attempts,
                 retry_sleep_seconds=put_retry_sleep_seconds,
+                metrics=metrics,
             ),
         )
 
 
-def flush_raw_buffer(s3, bucket, partition_key, rows, manifest_prefix=None, max_attempts=3, retry_sleep_seconds=1):
+def flush_raw_buffer(s3, bucket, partition_key, rows, manifest_prefix=None, max_attempts=3, retry_sleep_seconds=1, metrics=None):
     now = datetime.now(timezone.utc)
-    object_key = f"{partition_key}/part-{now:%Y%m%dT%H%M%S%f}.jsonl"
-    body = ("\n".join(json.dumps(row, ensure_ascii=False, separators=(",", ":")) for row in rows) + "\n").encode("utf-8")
+    storage_rows = list(rows)
+    if is_raw_v2_partition(partition_key):
+        storage_rows, duplicate_count = canonical_rows_with_duplicate_count(storage_rows)
+        increment_metric(metrics, "duplicateRows", duplicate_count)
+        object_key = deterministic_realtime_object_key(partition_key, storage_rows, "jsonl")
+    else:
+        object_key = f"{partition_key}/part-{now:%Y%m%dT%H%M%S%f}.jsonl"
+    body = ("\n".join(json.dumps(row, ensure_ascii=False, separators=(",", ":")) for row in storage_rows) + "\n").encode("utf-8")
     put_object_with_retry(
         s3,
         {"Bucket": bucket, "Key": object_key, "Body": body, "ContentType": "application/x-ndjson"},
         max_attempts=max_attempts,
         retry_sleep_seconds=retry_sleep_seconds,
+        metrics=metrics,
     )
-    if manifest_prefix:
+    increment_metric(metrics, "objects", 1)
+    increment_metric(metrics, "rows", len(storage_rows))
+    if manifest_prefix and not is_raw_v2_partition(partition_key):
         write_raw_manifest(
             s3,
             bucket,
@@ -170,10 +192,25 @@ def flush_raw_buffer(s3, bucket, partition_key, rows, manifest_prefix=None, max_
                 kwargs,
                 max_attempts=max_attempts,
                 retry_sleep_seconds=retry_sleep_seconds,
+                metrics=metrics,
             ),
         )
     print(f"S3 raw archive upload: s3://{bucket}/{object_key} rows={len(rows)}", flush=True)
     return object_key
+
+
+def raw_realtime_partition_keys(raw_prefix, archive_row, mode="v1"):
+    normalized_mode = normalize_realtime_layout_mode(mode)
+    keys = []
+    if normalized_mode in {"v1", "dual"}:
+        keys.append(raw_envelope_partition_key(raw_prefix, archive_row))
+    if normalized_mode in {"v2", "dual"}:
+        keys.append(raw_v2_partition_key(raw_prefix, archive_row))
+    return keys
+
+
+def is_raw_v2_partition(partition_key):
+    return "/raw-v2/" in f"/{str(partition_key).strip('/')}"
 
 
 def raw_archive_row(envelope, now_fn=None):

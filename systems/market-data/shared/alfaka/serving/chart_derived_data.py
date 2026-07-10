@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -15,10 +14,6 @@ from alfaka.serving.volume_profile import VOLUME_PROFILE_CALCULATION_VERSION
 
 DERIVED_KIND_INDICATORS = "indicators"
 DERIVED_KIND_VOLUME_PROFILE = "volumeProfile"
-
-DERIVED_REQUEST_TOPIC = "market.chart-derived.requests.v1"
-DERIVED_DLQ_TOPIC = "market.chart-derived.dlq.v1"
-
 
 def build_indicator_request(
     *,
@@ -121,7 +116,6 @@ def build_request(
         "parameters": parameters,
         "calculationVersion": calculation_version,
         "cacheKey": cache_key,
-        "statusKey": status_key(request_hash),
         "lockKey": lock_key(request_hash),
         "requestedAt": utc_now_iso(),
     }
@@ -145,10 +139,6 @@ def digest_json(value: dict[str, Any]) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:24]
 
 
-def status_key(request_hash: str) -> str:
-    return f"chart:derived:status:{request_hash}"
-
-
 def lock_key(request_hash: str) -> str:
     return f"chart:derived:lock:{request_hash}"
 
@@ -159,26 +149,6 @@ def redis_ttl_seconds(kind: str) -> int:
     if kind == DERIVED_KIND_VOLUME_PROFILE:
         return int_env("CHART_VOLUME_PROFILE_CACHE_TTL_SECONDS", 30)
     return 60
-
-
-def artifact_retention_seconds(kind: str) -> int:
-    if kind == DERIVED_KIND_INDICATORS:
-        return int_env("CHART_INDICATOR_ARTIFACT_RETENTION_SECONDS", 604800)
-    if kind == DERIVED_KIND_VOLUME_PROFILE:
-        return int_env("CHART_VOLUME_PROFILE_ARTIFACT_RETENTION_SECONDS", 86400)
-    return 86400
-
-
-def api_wait_ms() -> int:
-    return int_env("CHART_DERIVED_API_WAIT_MS", 1200)
-
-
-def api_poll_ms() -> int:
-    return max(25, int_env("CHART_DERIVED_API_POLL_MS", 100))
-
-
-def retry_after_ms() -> int:
-    return int_env("CHART_DERIVED_RETRY_AFTER_MS", 1000)
 
 
 def int_env(name: str, default: int) -> int:
@@ -221,143 +191,6 @@ def write_json_cache(redis_client: Any, key: str, payload: dict[str, Any], ttl_s
         return
 
 
-def write_status(redis_client: Any, request: dict[str, Any], state: str, *, error: str | None = None) -> None:
-    payload = {
-        "state": state,
-        "requestHash": request["requestHash"],
-        "kind": request["kind"],
-        "updatedAt": utc_now_iso(),
-        **({"error": error} if error else {}),
-    }
-    write_json_cache(redis_client, request["statusKey"], payload, max(60, redis_ttl_seconds(request["kind"]) * 2))
-
-
-def read_status(redis_client: Any, request: dict[str, Any]) -> dict[str, Any] | None:
-    return read_json_cache(redis_client, request["statusKey"])
-
-
-def acquire_enqueue_lock(redis_client: Any, request: dict[str, Any]) -> bool:
-    if redis_client is None:
-        return True
-    ttl = max(5, int_env("CHART_DERIVED_ENQUEUE_LOCK_TTL_SECONDS", 30))
-    try:
-        return bool(redis_client.set(request["lockKey"], "1", ex=ttl, nx=True))
-    except TypeError:
-        try:
-            existing = redis_client.get(request["lockKey"])
-            if existing:
-                return False
-            redis_client.setex(request["lockKey"], ttl, "1")
-            return True
-        except Exception:
-            return True
-    except Exception:
-        return True
-
-
-class ChartDerivedArtifactStore:
-    def __init__(self, clickhouse_client: Any):
-        self.client = clickhouse_client
-
-    def read(self, request: dict[str, Any]) -> dict[str, Any] | None:
-        if self.client is None:
-            return None
-        query = f"""
-        SELECT
-          payload_json AS payloadJson
-        FROM {self.client.database}.chart_derived_artifacts
-        WHERE request_hash = {{requestHash:String}}
-          AND expires_at > now64(3)
-        ORDER BY inserted_at DESC
-        LIMIT 1
-        FORMAT JSONEachRow
-        """
-        try:
-            rows = self.client.query_json_each_row(query, {"requestHash": request["requestHash"]})
-        except Exception:
-            return None
-        if not rows:
-            return None
-        payload_json = rows[0].get("payloadJson")
-        if not isinstance(payload_json, str) or not payload_json:
-            return None
-        try:
-            payload = json.loads(payload_json)
-        except ValueError:
-            return None
-        if not should_store_derived_artifact(request, payload):
-            return None
-        return with_derived_metadata(payload, request, state="ready", source="clickhouse", artifact_stored=True)
-
-    def write(self, request: dict[str, Any], payload: dict[str, Any]) -> None:
-        if self.client is None:
-            return
-        now = datetime.now(timezone.utc)
-        expires_at = now + timedelta(seconds=max(1, artifact_retention_seconds(request["kind"])))
-        row = {
-            "request_hash": request["requestHash"],
-            "kind": request["kind"],
-            "symbol": request["symbol"],
-            "interval": request.get("interval") or "",
-            "from_time": clickhouse_time_or_none(request.get("from")),
-            "to_time": clickhouse_time_or_none(request.get("to")),
-            "parameters_json": json.dumps(request.get("parameters") or {}, ensure_ascii=False, separators=(",", ":")),
-            "calculation_version": request["calculationVersion"],
-            "data_status": payload.get("dataStatus") or payload.get("status") or "unknown",
-            "payload_json": json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
-            "source": payload.get("source") or "chart-derived-data-worker",
-            "feed": payload.get("feed") or "unknown",
-            "created_at": clickhouse_json_time(now),
-            "expires_at": clickhouse_json_time(expires_at),
-        }
-        self.client.insert_json_each_row("chart_derived_artifacts", [row])
-
-
-class ChartDerivedDataClient:
-    def __init__(
-        self,
-        *,
-        redis_client: Any = None,
-        artifact_store: ChartDerivedArtifactStore | None = None,
-        producer: Any = None,
-        wait_ms: int | None = None,
-        poll_ms: int | None = None,
-    ):
-        self.redis_client = redis_client
-        self.artifact_store = artifact_store
-        self.producer = producer
-        self.wait_ms = api_wait_ms() if wait_ms is None else wait_ms
-        self.poll_ms = api_poll_ms() if poll_ms is None else poll_ms
-
-    def resolve(self, request: dict[str, Any]) -> dict[str, Any]:
-        cached = read_json_cache(self.redis_client, request["cacheKey"])
-        if cached:
-            return with_derived_metadata(cached, request, state="ready", source="redis", artifact_stored=bool(cached.get("derived", {}).get("artifactStored")))
-
-        artifact = self.artifact_store.read(request) if self.artifact_store else None
-        if artifact:
-            write_json_cache(self.redis_client, request["cacheKey"], artifact, redis_ttl_seconds(request["kind"]))
-            return artifact
-
-        try:
-            if acquire_enqueue_lock(self.redis_client, request):
-                write_status(self.redis_client, request, "queued")
-                enqueue_derived_request(request, self.producer)
-        except Exception as exc:
-            error = f"{exc.__class__.__name__}: {exc}"
-            write_status(self.redis_client, request, "failed", error=error)
-            return pending_payload(request, state="failed", error=error)
-
-        waited = wait_for_result(self.redis_client, request, self.wait_ms, self.poll_ms)
-        if waited:
-            return with_derived_metadata(waited, request, state="ready", source="worker", artifact_stored=bool(waited.get("derived", {}).get("artifactStored")))
-
-        status = read_status(self.redis_client, request)
-        if isinstance(status, dict) and status.get("state") == "failed":
-            return pending_payload(request, state="failed", error=str(status.get("error") or "Derived worker failed."))
-        return pending_payload(request)
-
-
 def with_derived_metadata(
     payload: dict[str, Any],
     request: dict[str, Any],
@@ -384,100 +217,6 @@ def with_derived_metadata(
     return next_payload
 
 
-def pending_payload(request: dict[str, Any], *, error: str | None = None, state: str = "pending") -> dict[str, Any]:
-    kind = request["kind"]
-    if kind == DERIVED_KIND_INDICATORS:
-        payload = {
-            "symbol": request["symbol"],
-            "interval": request["interval"],
-            "from": request.get("from"),
-            "to": request.get("to"),
-            "requestedLimit": int(request.get("limit") or 0),
-            "lookbackBars": 0,
-            "returnedCandleCount": 0,
-            "source": "worker",
-            "feed": "unknown",
-            "dataStatus": state,
-            "calculationVersion": request["calculationVersion"],
-            "indicators": [],
-            "series": {},
-            "cache": {"hit": False, "ttlSeconds": redis_ttl_seconds(kind), "keyVersion": request["calculationVersion"]},
-        }
-    elif kind == DERIVED_KIND_VOLUME_PROFILE:
-        params = request.get("parameters") or {}
-        payload = {
-            "symbol": request["symbol"],
-            "interval": request.get("interval") or "1m",
-            "sourceInterval": request.get("interval") or "1m",
-            "from": request.get("from"),
-            "to": request.get("to"),
-            "timeBucket": request.get("interval") or "1m",
-            "targetBins": int(params.get("targetBins") or 10),
-            "bucketCount": 0,
-            "priceBinSize": 0,
-            "sourcePriceBinSize": None,
-            "sourceBinCount": 0,
-            "sourceCandleCount": 0,
-            "source": "worker",
-            "feed": "unknown",
-            "calculationVersion": request["calculationVersion"],
-            "classificationVersion": request["calculationVersion"],
-            "sideClassification": "estimated",
-            "estimationMethod": "candle-range-volume-overlap",
-            "dataStatus": state,
-            "priceRange": {"min": None, "max": None, "requestedMin": params.get("priceMin"), "requestedMax": params.get("priceMax")},
-            "totalVolume": 0,
-            "totalTradeCount": 0,
-            "bins": [],
-            "poc": None,
-            "valueArea": None,
-            "cache": {"hit": False, "ttlSeconds": redis_ttl_seconds(kind), "keyVersion": request["calculationVersion"]},
-        }
-    else:
-        raise ValueError(f"Unsupported chart derived kind: {kind}")
-    return with_derived_metadata(
-        payload,
-        request,
-        state=state,
-        source="queued" if state == "pending" else "worker",
-        retry_after_ms_value=retry_after_ms() if state == "pending" else None,
-        error=error,
-    )
-
-
-def enqueue_derived_request(request: dict[str, Any], producer: Any | None = None) -> None:
-    producer = producer or kafka_producer("gops-chart-derived-api")
-    topic = os.getenv("CHART_DERIVED_REQUEST_TOPIC", DERIVED_REQUEST_TOPIC)
-    future = producer.send(topic, key=request["requestHash"], value=request)
-    if hasattr(future, "get"):
-        future.get(timeout=float(os.getenv("CHART_DERIVED_PRODUCE_TIMEOUT_SECONDS", "1.5")))
-    elif hasattr(producer, "flush"):
-        producer.flush(timeout=float(os.getenv("CHART_DERIVED_PRODUCE_TIMEOUT_SECONDS", "1.5")))
-
-
-def should_store_derived_artifact(request: dict[str, Any], payload: dict[str, Any]) -> bool:
-    return bool(request and payload)
-
-
-def kafka_producer(client_id: str):
-    from alfaka.common.kafka_io import create_json_producer
-
-    return create_json_producer(os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"), client_id)
-
-
-def wait_for_result(redis_client: Any, request: dict[str, Any], wait_ms: int | None = None, poll_ms: int | None = None) -> dict[str, Any] | None:
-    if redis_client is None:
-        return None
-    deadline = time.monotonic() + ((api_wait_ms() if wait_ms is None else wait_ms) / 1000)
-    interval = (api_poll_ms() if poll_ms is None else max(25, poll_ms)) / 1000
-    while time.monotonic() < deadline:
-        cached = read_json_cache(redis_client, request["cacheKey"])
-        if cached:
-            return cached
-        time.sleep(interval)
-    return read_json_cache(redis_client, request["cacheKey"])
-
-
 def indicator_fetch_from_time(interval: str, from_time: str | None, lookback_bars: int) -> str | None:
     parsed = parse_utc_time(from_time)
     if not parsed or lookback_bars <= 0:
@@ -501,31 +240,9 @@ def indicator_lookback_delta(interval: str, lookback_bars: int) -> timedelta:
     return timedelta(minutes=bars * 2)
 
 
-def clickhouse_client_from_env():
-    from alfaka.storage.clickhouse_loader import ClickHouseHttpClient
-
-    return ClickHouseHttpClient(
-        url=os.getenv("CLICKHOUSE_HTTP_URL", "http://localhost:8123"),
-        database=os.getenv("CLICKHOUSE_DATABASE", "market_data"),
-        user=os.getenv("CLICKHOUSE_USER", "alfaka"),
-        password=os.getenv("CLICKHOUSE_PASSWORD", "alfaka"),
-    )
-
-
 def utc_now_iso() -> str:
     return iso_time(datetime.now(timezone.utc))
 
 
 def iso_time(value: datetime) -> str:
     return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:23] + "Z"
-
-
-def clickhouse_json_time(value: datetime) -> str:
-    return value.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:23]
-
-
-def clickhouse_time_or_none(value: Any) -> str | None:
-    if not value:
-        return None
-    parsed = parse_utc_time(value)
-    return clickhouse_json_time(parsed) if parsed else None

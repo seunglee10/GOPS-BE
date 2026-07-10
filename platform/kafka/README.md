@@ -49,7 +49,6 @@ does not re-consume them; raw trades update 1m/live state directly.
 ## Layer Topics
 
 ```text
-market.layer.candles.live.v1
 market.layer.candles.closed.v1
 market.layer.candles.1m.closed.v1
 market.layer.candles.5m.closed.v1
@@ -63,6 +62,11 @@ market.layer.trades.v1
 market.layer.quotes.v1
 market.layer.events.v1
 ```
+
+Live provisional candles are stored in Redis and delivered through
+`market.events` pub/sub/WebSocket. They are not published to a Kafka layer
+topic. Optional indicator and candle-volume-profile requests execute inside the
+API and likewise do not use Kafka request/DLQ topics.
 
 Closed candle layer topics are interval-specific so storage and future
 interval-specific processors can be scaled independently. The payload still

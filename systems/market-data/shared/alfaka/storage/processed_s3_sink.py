@@ -16,6 +16,11 @@ from alfaka.common.kafka_io import create_json_consumer
 from alfaka.common.kafka_topics import closed_candle_topic_values
 from alfaka.common.runtime_config import validate_required_values
 from alfaka.storage.s3_manifest import DEFAULT_MANIFEST_PREFIX, write_processed_candle_manifest
+from alfaka.storage.s3_realtime_layout import (
+    canonical_rows_with_duplicate_count,
+    deterministic_realtime_object_key,
+    processed_v2_partition_key,
+)
 
 
 def main():
@@ -32,6 +37,7 @@ def main():
     put_retry_sleep_seconds = parse_non_negative_float(os.getenv("S3_PUT_RETRY_SLEEP_SECONDS", "1"), default=1)
     output_format = os.getenv("S3_PROCESSED_FORMAT", "parquet").lower()
     enable_auto_commit = os.getenv("KAFKA_S3_ENABLE_AUTO_COMMIT", "false").lower() in {"1", "true", "yes"}
+    realtime_layout_mode = normalize_realtime_layout_mode(os.getenv("S3_REALTIME_LAYOUT_MODE", "v2"))
 
     if not s3_bucket:
         print("S3_BUCKET을 .env 또는 Kubernetes ConfigMap에 넣어주세요.", file=sys.stderr)
@@ -54,6 +60,7 @@ def main():
         group_id,
         "alfaka-processed-s3-consumer",
         enable_auto_commit=enable_auto_commit,
+        realtime_layout_mode=realtime_layout_mode,
     )
     from alfaka.common.s3_client import create_s3_client
 
@@ -100,6 +107,8 @@ def run_processed_s3_sink(
     put_retry_sleep_seconds=1,
     enable_auto_commit=False,
     now_fn=None,
+    realtime_layout_mode="v1",
+    metrics=None,
 ):
     buffers = defaultdict(list)
     last_updated_at = {}
@@ -111,24 +120,23 @@ def run_processed_s3_sink(
             for records in batches.values():
                 for record in records:
                     payload = record.value
-                    partition_key = s3_partition_key(final_prefix, payload)
-                    if partition_key is None:
-                        continue
-                    buffers[partition_key].append(payload)
-                    last_updated_at[partition_key] = now_fn()
-                    if len(buffers[partition_key]) >= flush_count:
-                        flush_buffer(
-                            s3,
-                            bucket,
-                            partition_key,
-                            buffers[partition_key],
-                            output_format,
-                            manifest_prefix=manifest_prefix,
-                            max_attempts=put_max_attempts,
-                            retry_sleep_seconds=put_retry_sleep_seconds,
-                        )
-                        buffers[partition_key].clear()
-                        last_updated_at.pop(partition_key, None)
+                    for partition_key in processed_realtime_partition_keys(final_prefix, payload, realtime_layout_mode):
+                        buffers[partition_key].append(payload)
+                        last_updated_at[partition_key] = now_fn()
+                        if len(buffers[partition_key]) >= flush_count:
+                            flush_buffer(
+                                s3,
+                                bucket,
+                                partition_key,
+                                buffers[partition_key],
+                                output_format,
+                                manifest_prefix=manifest_prefix,
+                                max_attempts=put_max_attempts,
+                                retry_sleep_seconds=put_retry_sleep_seconds,
+                                metrics=metrics,
+                            )
+                            buffers[partition_key].clear()
+                            last_updated_at.pop(partition_key, None)
             flush_due_buffers(
                 buffers,
                 last_updated_at,
@@ -141,6 +149,7 @@ def run_processed_s3_sink(
                     manifest_prefix=manifest_prefix,
                     max_attempts=put_max_attempts,
                     retry_sleep_seconds=put_retry_sleep_seconds,
+                    metrics=metrics,
                 ),
                 flush_interval_seconds,
                 now_fn(),
@@ -166,6 +175,7 @@ def run_processed_s3_sink(
                     manifest_prefix=manifest_prefix,
                     max_attempts=put_max_attempts,
                     retry_sleep_seconds=put_retry_sleep_seconds,
+                    metrics=metrics,
                 ),
             )
             if not enable_auto_commit:
@@ -194,8 +204,6 @@ def s3_partition_key(final_prefix, live_prefix_or_payload, payload=None):
         interval = payload.get("interval", "unknown")
         return f"{final_prefix}/candles/feed={feed}/interval={interval}/symbol={symbol}/year={event_time:%Y}/month={event_time:%m}/day={event_time:%d}"
 
-    if event_type == "VOLUME_PROFILE_BIN":
-        return f"{final_prefix}/volume-profile-bins/timeBucket=1m/symbol={symbol}/year={event_time:%Y}/month={event_time:%m}/day={event_time:%d}"
 
     if event_type == "MARKET_STATUS":
         return f"{final_prefix}/events/event_type=status/symbol={symbol or '_MARKET'}/year={event_time:%Y}/month={event_time:%m}/day={event_time:%d}"
@@ -209,6 +217,25 @@ def s3_partition_key(final_prefix, live_prefix_or_payload, payload=None):
     return f"{final_prefix}/events/event_type=unknown/symbol={symbol}/year={event_time:%Y}/month={event_time:%m}/day={event_time:%d}"
 
 
+def processed_realtime_partition_keys(final_prefix, payload, mode="v1"):
+    normalized_mode = normalize_realtime_layout_mode(mode)
+    keys = []
+    if normalized_mode in {"v1", "dual"}:
+        v1_key = s3_partition_key(final_prefix, payload)
+        if v1_key is not None:
+            keys.append(v1_key)
+    if normalized_mode in {"v2", "dual"}:
+        v2_key = processed_v2_partition_key(final_prefix, payload)
+        if v2_key is not None:
+            keys.append(v2_key)
+    return keys
+
+
+def normalize_realtime_layout_mode(value):
+    normalized = str(value or "v1").strip().lower()
+    return normalized if normalized in {"v1", "dual", "v2"} else "v1"
+
+
 def flush_buffer(
     s3,
     bucket,
@@ -220,13 +247,17 @@ def flush_buffer(
     retry_sleep_seconds=1,
     manifest_layout="daily",
     force=False,
+    metrics=None,
 ):
     now = datetime.now(timezone.utc)
     storage_rows = [normalize_storage_row(row) for row in rows]
+    if is_realtime_v2_partition(partition_key):
+        storage_rows, duplicate_count = canonical_rows_with_duplicate_count(storage_rows)
+        increment_metric(metrics, "duplicateRows", duplicate_count)
     object_key = s3_object_key(partition_key, storage_rows, output_format, now=now, force=force)
     content_type = content_type_for_format(output_format)
     if is_deterministic_canonical_object_key(object_key) and not force and s3_object_exists(s3, bucket, object_key):
-        if manifest_prefix and is_processed_candle_partition(partition_key, rows):
+        if manifest_prefix and not is_realtime_v2_partition(partition_key) and is_processed_candle_partition(partition_key, rows):
             write_processed_candle_manifest(
                 s3,
                 bucket,
@@ -239,6 +270,7 @@ def flush_buffer(
                     kwargs,
                     max_attempts=max_attempts,
                     retry_sleep_seconds=retry_sleep_seconds,
+                    metrics=metrics,
                 ),
             )
         print(f"S3 canonical 중복 업로드 skip: s3://{bucket}/{object_key} rows={len(rows)}", flush=True)
@@ -254,8 +286,11 @@ def flush_buffer(
         {"Bucket": bucket, "Key": object_key, "Body": body, "ContentType": content_type},
         max_attempts=max_attempts,
         retry_sleep_seconds=retry_sleep_seconds,
+        metrics=metrics,
     )
-    if manifest_prefix and is_processed_candle_partition(partition_key, rows):
+    increment_metric(metrics, "objects", 1)
+    increment_metric(metrics, "rows", len(storage_rows))
+    if manifest_prefix and not is_realtime_v2_partition(partition_key) and is_processed_candle_partition(partition_key, rows):
         write_processed_candle_manifest(
             s3,
             bucket,
@@ -268,6 +303,7 @@ def flush_buffer(
                 kwargs,
                 max_attempts=max_attempts,
                 retry_sleep_seconds=retry_sleep_seconds,
+                metrics=metrics,
             ),
         )
     print(f"S3 업로드: s3://{bucket}/{object_key} rows={len(rows)}", flush=True)
@@ -277,6 +313,8 @@ def flush_buffer(
 def s3_object_key(partition_key, rows, output_format, now=None, force=False):
     now = now or datetime.now(timezone.utc)
     ext = "parquet" if output_format == "parquet" else "jsonl"
+    if is_realtime_v2_partition(partition_key):
+        return deterministic_realtime_object_key(partition_key, rows, ext)
     deterministic_key = deterministic_canonical_candle_object_key(partition_key, rows, ext, now=now, force=force)
     if deterministic_key:
         return deterministic_key
@@ -373,7 +411,7 @@ def flush_all_buffers(buffers, last_updated_at, flush_fn):
     return flushed
 
 
-def put_object_with_retry(s3, put_kwargs, max_attempts=3, retry_sleep_seconds=1):
+def put_object_with_retry(s3, put_kwargs, max_attempts=3, retry_sleep_seconds=1, metrics=None):
     max_attempts = max(1, int(max_attempts or 1))
     for attempt in range(1, max_attempts + 1):
         try:
@@ -381,7 +419,17 @@ def put_object_with_retry(s3, put_kwargs, max_attempts=3, retry_sleep_seconds=1)
         except Exception:
             if attempt >= max_attempts:
                 raise
+            increment_metric(metrics, "putRetries", 1)
             time.sleep(retry_sleep_seconds)
+
+
+def is_realtime_v2_partition(partition_key):
+    return "/final-v2/" in f"/{str(partition_key).strip('/')}"
+
+
+def increment_metric(metrics, name, amount=1):
+    if metrics is not None and amount:
+        metrics[name] = int(metrics.get(name, 0)) + int(amount)
 
 
 def is_processed_candle_partition(partition_key, rows):

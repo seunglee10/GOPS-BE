@@ -147,7 +147,8 @@ class OrderFlowRollupTest(unittest.TestCase):
             sql = path.read_text()
             self.assertIn("CREATE TABLE IF NOT EXISTS market_data.order_flow_profile_daily", sql)
             self.assertIn("ORDER BY (symbol, session_date, price_bin_size, price_bin)", sql)
-            self.assertIn("No TTL", sql)
+            table_ddl = sql.split("CREATE TABLE IF NOT EXISTS market_data.order_flow_profile_daily", 1)[1].split(";", 1)[0]
+            self.assertNotIn("TTL ", table_ddl)
 
 
 class FakeClickHouseClient:

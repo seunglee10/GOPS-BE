@@ -303,19 +303,6 @@ patches:
                 app: alfaka-clickhouse-tick-loader
   - target:
       kind: Deployment
-      name: alfaka-chart-derived-data-worker
-    patch: |-
-      - op: replace
-        path: /spec/template/spec/topologySpreadConstraints
-        value:
-          - maxSkew: 1
-            topologyKey: kubernetes.io/hostname
-            whenUnsatisfiable: ScheduleAnyway
-            labelSelector:
-              matchLabels:
-                app: alfaka-chart-derived-data-worker
-  - target:
-      kind: Deployment
       name: alfaka-market-processor
     patch: |-
       - op: replace

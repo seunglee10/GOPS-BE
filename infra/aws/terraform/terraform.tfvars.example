@@ -7,6 +7,9 @@ aws_region   = "ap-northeast-2"
 
 s3_bucket_name = "gops-market-data-<aws-account-id>-ap-northeast-2-an"
 create_s3_bucket = false
+manage_s3_chart_data_lifecycle = true
+s3_chart_data_root_prefix      = "market-data/rebuild-20260702-lazy-v1"
+s3_raw_retention_days          = 30
 alpaca_secret_name = "dev/alpaca"
 create_alpaca_secret = false
 openai_secret_name = "/gops/prod/agent-orchestrator/openai/api-key"

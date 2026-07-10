@@ -118,7 +118,6 @@ market.realtime.ticks.to.10m.v1
 market.realtime.ticks.to.1d.v1
 market.realtime.ticks.to.1w.v1
 market.realtime.ticks.to.1mo.v1
-market.layer.candles.live.v1
 market.layer.candles.closed.v1
 market.layer.candles.1m.closed.v1
 market.layer.candles.5m.closed.v1
@@ -269,9 +268,14 @@ classification role still depends on Redis quote fallback.
 the explicit realtime cohort even when the visible chart interval is 1h, 4h,
 1D, 1W, or 1M. WebSocket delivery can still be interval-specific, but trades/quotes
 subscription state must not depend on whether an intraday socket is open.
-`REALTIME_REDIS_POLL_SECONDS` controls the API WebSocket hub's Redis batch poll
-period. The hub uses one global `market.events` listener plus batched live
-candle/trade/quote Redis reads instead of one Redis pubsub listener per symbol.
+`REALTIME_REDIS_POLL_SECONDS` controls the API WebSocket hub's missed-event
+recovery period and defaults to five seconds. A subscription receives one Redis
+snapshot, then the hub uses `market.events` pub/sub as its steady-state path and
+performs batched live candle/trade/quote reads only for recovery.
+Live provisional candles are Redis state and are delivered through
+`market.events` pub/sub/WebSocket. There is no live-candle Kafka publication.
+Optional indicator and candle-volume-profile requests run in the API with Redis
+TTL cache/singleflight; there is no derived Kafka worker contract.
 
 `LIVE_CANDLE_TTL_SECONDS` and `LIVE_TRADE_TTL_SECONDS` keep Redis live state
 short-lived. AWS/EKS defaults to `180` seconds so a thinly traded symbol cannot

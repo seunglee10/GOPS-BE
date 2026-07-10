@@ -518,21 +518,27 @@ def range_is_covered_by_clickhouse(coverage, start, end):
 
 
 def find_processed_candle_objects(s3, bucket, final_prefix, symbol, interval, start, end):
+    from alfaka.storage.s3_manifest import bounded_v2_processed_candle_keys
+
     manifest_prefix = os.getenv("S3_MANIFEST_PREFIX", DEFAULT_MANIFEST_PREFIX)
     manifest_keys = processed_candle_keys_from_manifest(s3, bucket, manifest_prefix, symbol, interval, start, end)
-    if manifest_keys:
-        return manifest_keys
+    v2_keys = bounded_v2_processed_candle_keys(s3, bucket, final_prefix, symbol, interval, start, end)
+    if manifest_keys or v2_keys:
+        return list(dict.fromkeys([*manifest_keys, *v2_keys]))
     if require_canonical_processed_manifest():
         return []
     return bounded_processed_candle_partition_keys(s3, bucket, final_prefix, symbol, interval, start, end)
 
 
 def find_raw_candle_objects(s3, bucket, raw_prefix, symbol, interval, start, end, job_type="replay_repair"):
+    from alfaka.storage.s3_manifest import bounded_v2_raw_keys
+
     manifest_prefix = os.getenv("S3_MANIFEST_PREFIX", DEFAULT_MANIFEST_PREFIX)
     channels = raw_channels_for_interval(interval, job_type)
     manifest_keys = raw_keys_from_manifest(s3, bucket, manifest_prefix, symbol, channels, start, end)
-    if manifest_keys:
-        return manifest_keys
+    v2_keys = bounded_v2_raw_keys(s3, bucket, raw_prefix, symbol, channels, start, end)
+    if manifest_keys or v2_keys:
+        return list(dict.fromkeys([*manifest_keys, *v2_keys]))
     if require_canonical_processed_manifest():
         return []
     return bounded_raw_partition_keys(s3, bucket, raw_prefix, symbol, channels, start, end)

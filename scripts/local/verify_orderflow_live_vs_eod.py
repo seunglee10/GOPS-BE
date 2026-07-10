@@ -16,6 +16,7 @@ if str(shared_path) not in sys.path:
     sys.path.insert(0, str(shared_path))
 
 from alfaka.common.redis_keys import RedisKeyBuilder  # noqa: E402
+from alfaka.orderflow.redis_model import order_flow_blob_to_bins, parse_order_flow_minute_blob  # noqa: E402
 from alfaka.storage.clickhouse_loader import ClickHouseHttpClient  # noqa: E402
 
 
@@ -30,7 +31,7 @@ def main() -> int:
     args = parser.parse_args()
     symbol = args.symbol.strip().upper()
     try:
-        live_bins = redis_hgetall_json(args.redis_url, RedisKeyBuilder().order_flow_live(symbol))
+        live_bins = redis_order_flow_bins(args.redis_url, RedisKeyBuilder(), symbol)
         live_totals = side_totals(row for row in live_bins if row.get("sessionDate") == args.date)
         eod_totals = eod_side_totals(symbol, args.date)
         payload = diff_payload(symbol, args.date, live_totals, eod_totals)
@@ -47,20 +48,7 @@ def main() -> int:
     return 0
 
 
-def redis_hgetall_json(redis_url: str, key: str) -> list[dict[str, object]]:
-    values = redis_hgetall(redis_url, key).values()
-    rows = []
-    for value in values:
-        try:
-            parsed = json.loads(value)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(parsed, dict):
-            rows.append(parsed)
-    return rows
-
-
-def redis_hgetall(redis_url: str, key: str) -> dict[str, str]:
+def redis_order_flow_bins(redis_url: str, keys: RedisKeyBuilder, symbol: str) -> list[dict[str, object]]:
     parsed = urlparse(redis_url)
     host = parsed.hostname or "localhost"
     port = parsed.port or 6379
@@ -71,11 +59,17 @@ def redis_hgetall(redis_url: str, key: str) -> dict[str, str]:
             redis_command(sock, "AUTH", password)
         if db:
             redis_command(sock, "SELECT", db)
-        response = redis_command(sock, "HGETALL", key)
-    if not isinstance(response, list):
-        return {}
-    it = iter(response)
-    return {str(k): str(v) for k, v in zip(it, it)}
+        closed = redis_command(sock, "ZRANGEBYSCORE", keys.order_flow_minutes(symbol), "-inf", "+inf")
+        live = redis_command(sock, "GET", keys.order_flow_live_minute(symbol))
+    blobs_by_minute = {}
+    for value in [*(closed if isinstance(closed, list) else []), live]:
+        blob = parse_order_flow_minute_blob(value)
+        if blob and blob.get("eventMinute"):
+            blobs_by_minute[str(blob["eventMinute"])] = blob
+    bins = []
+    for minute in sorted(blobs_by_minute):
+        bins.extend(order_flow_blob_to_bins(blobs_by_minute[minute]))
+    return bins
 
 
 def redis_command(sock: socket.socket, *parts: str) -> object:

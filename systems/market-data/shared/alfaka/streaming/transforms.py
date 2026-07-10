@@ -1,7 +1,7 @@
 # 역할: Raw Envelope를 차트용 Trade/Candle 데이터로 변환합니다.
 # 사용: stream_processor가 현재가, 실시간 1분봉, 확정 1/5/10분봉, 이동평균을 계산합니다.
 # 주의: 운영에서는 이 로직을 Python/Kubernetes processor pod에서 실행합니다.
-from collections import defaultdict
+from collections import OrderedDict, defaultdict, deque
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -9,6 +9,27 @@ from alfaka.common.canonical import candle_metadata
 from alfaka.serving.intervals import INTRADAY_DERIVED_INTERVALS, INTRADAY_INTERVAL_MINUTES
 
 MARKET_TIMEZONE = ZoneInfo("America/New_York")
+DEFAULT_CLOSED_KEY_CAP = 2048
+
+
+class BoundedKeySet:
+    def __init__(self, max_items=DEFAULT_CLOSED_KEY_CAP):
+        self.max_items = max(1, int(max_items))
+        self._items = OrderedDict()
+        self.evictions = 0
+
+    def add(self, key):
+        self._items.pop(key, None)
+        self._items[key] = None
+        while len(self._items) > self.max_items:
+            self._items.popitem(last=False)
+            self.evictions += 1
+
+    def __contains__(self, key):
+        return key in self._items
+
+    def __len__(self):
+        return len(self._items)
 
 
 def parse_time(value):
@@ -162,8 +183,10 @@ def normalize_status(envelope):
 
 
 class LiveCandleBuilder:
-    def __init__(self):
+    def __init__(self, max_minutes_per_symbol=2):
         self.candles = {}
+        self.max_minutes_per_symbol = max(1, int(max_minutes_per_symbol))
+        self.evictions = 0
 
     def seed(self, candle):
         if candle.get("interval") != "1m" or candle.get("isClosed"):
@@ -173,6 +196,7 @@ class LiveCandleBuilder:
         if not timestamp or not symbol:
             return False
         self.candles[(symbol, timestamp)] = dict(candle)
+        self._prune_symbol(symbol)
         return True
 
     def update(self, trade):
@@ -215,7 +239,17 @@ class LiveCandleBuilder:
             candle["updatedAt"] = trade.get("receivedAt")
 
         self.candles[key] = candle
+        self._prune_symbol(trade["symbol"])
         return candle
+
+    def _prune_symbol(self, symbol):
+        keys = sorted(
+            (key for key in self.candles if key[0] == symbol),
+            key=lambda key: parse_time(key[1]),
+        )
+        for key in keys[:-self.max_minutes_per_symbol]:
+            if self.candles.pop(key, None) is not None:
+                self.evictions += 1
 
 
 class ProvisionalCandleState:
@@ -343,11 +377,16 @@ def build_provisional_candle(symbol, interval, bucket, rows, source_interval):
 class MovingAverageState:
     def __init__(self):
         self.closes = defaultdict(dict)
+        self.evictions = 0
 
     def attach_ma(self, candle):
         key = (candle["symbol"], candle["interval"])
         self.closes[key][candle["timestamp"]] = candle["close"]
-        timestamps = sorted(self.closes[key], key=parse_time)[-60:]
+        timestamps = sorted(self.closes[key], key=parse_time)
+        for timestamp in timestamps[:-60]:
+            if self.closes[key].pop(timestamp, None) is not None:
+                self.evictions += 1
+        timestamps = timestamps[-60:]
         closes = [self.closes[key][timestamp] for timestamp in timestamps]
         ma = {}
         for window in (5, 20, 60):
@@ -359,25 +398,72 @@ class MovingAverageState:
 
 
 class CandleAggregator:
-    def __init__(self):
+    def __init__(self, max_closed_keys=DEFAULT_CLOSED_KEY_CAP):
         self.windows = defaultdict(dict)
+        self.closed_keys = BoundedKeySet(max_closed_keys)
+        self.recomputes = 0
 
     def update(self, candle_1m, interval_minutes):
         interval = intraday_interval_for_minutes(interval_minutes)
         bucket = floor_interval(candle_1m["timestamp"], interval_minutes)
         key = (candle_1m["symbol"], interval, to_iso(bucket))
+        if key in self.closed_keys:
+            return None
         window = self.windows[key]
         window[candle_1m["timestamp"]] = candle_1m
 
         if len(window) < interval_minutes:
             return None
 
-        candles = [window[timestamp] for timestamp in sorted(window, key=parse_time)]
+        result = self._aggregate(key, window.values())
+        self.windows.pop(key, None)
+        self.closed_keys.add(key)
+        return result
+
+    def recompute(self, corrected_candle, interval_minutes, source_candles):
+        interval = intraday_interval_for_minutes(interval_minutes)
+        bucket = floor_interval(corrected_candle["timestamp"], interval_minutes)
+        key = (corrected_candle["symbol"], interval, to_iso(bucket))
+        end = bucket + timedelta(minutes=interval_minutes)
+        rows = {
+            candle["timestamp"]: dict(candle)
+            for candle in source_candles
+            if candle.get("symbol", corrected_candle["symbol"]) == corrected_candle["symbol"]
+            and candle.get("timestamp")
+            and bucket <= parse_time(candle["timestamp"]) < end
+        }
+        rows[corrected_candle["timestamp"]] = dict(corrected_candle)
+        if len(rows) < interval_minutes:
+            return None
+        result = self._aggregate(key, rows.values())
+        result["correctionType"] = "UPDATED"
+        result["sourceEventId"] = corrected_candle.get("sourceEventId")
+        result["createdAt"] = corrected_candle.get("createdAt")
+        self.recomputes += 1
+        return result
+
+    def has_open_window(self, candle_1m, interval_minutes):
+        key = self._key(candle_1m, interval_minutes)
+        return key in self.windows
+
+    def is_closed_window(self, candle_1m, interval_minutes):
+        return self._key(candle_1m, interval_minutes) in self.closed_keys
+
+    @staticmethod
+    def _key(candle_1m, interval_minutes):
+        interval = intraday_interval_for_minutes(interval_minutes)
+        bucket = floor_interval(candle_1m["timestamp"], interval_minutes)
+        return (candle_1m["symbol"], interval, to_iso(bucket))
+
+    @staticmethod
+    def _aggregate(key, source_candles):
+        candles = sorted(source_candles, key=lambda candle: parse_time(candle["timestamp"]))
+        latest = candles[-1]
         return {
             "eventType": "CANDLE",
-            "symbol": candle_1m["symbol"],
-            "interval": interval,
-            "timestamp": to_iso(bucket),
+            "symbol": key[0],
+            "interval": key[1],
+            "timestamp": key[2],
             "open": candles[0]["open"],
             "high": max(candle["high"] for candle in candles),
             "low": min(candle["low"] for candle in candles),
@@ -387,14 +473,14 @@ class CandleAggregator:
             "vwap": candles[-1].get("vwap"),
             "ma": {},
             "isClosed": True,
-            "correctionType": candle_1m.get("correctionType", "NONE"),
+            "correctionType": latest.get("correctionType", "NONE"),
             "source": "stream-processor",
-            "feed": candle_1m.get("feed"),
-            "feedProfile": candle_1m.get("feedProfile"),
-            "marketSession": candle_1m.get("marketSession"),
-            "sourceEventId": candle_1m.get("sourceEventId"),
-            "createdAt": candle_1m.get("createdAt"),
-            **candle_metadata(candle_1m.get("priceAdjustment"), candle_1m.get("canonicalVersion")),
+            "feed": latest.get("feed"),
+            "feedProfile": latest.get("feedProfile"),
+            "marketSession": latest.get("marketSession"),
+            "sourceEventId": latest.get("sourceEventId"),
+            "createdAt": latest.get("createdAt"),
+            **candle_metadata(latest.get("priceAdjustment"), latest.get("canonicalVersion")),
         }
 
 
@@ -407,10 +493,10 @@ def intraday_interval_for_minutes(interval_minutes):
 
 
 class TickWindowCandleBuilder:
-    def __init__(self, grace_seconds=5):
+    def __init__(self, grace_seconds=5, max_closed_keys=DEFAULT_CLOSED_KEY_CAP):
         self.grace = timedelta(seconds=max(0, int(grace_seconds)))
         self.windows = {}
-        self.closed_keys = set()
+        self.closed_keys = BoundedKeySet(max_closed_keys)
         self.max_event_time = None
 
     def update(self, trade):
@@ -507,11 +593,11 @@ class TickWindowCandleBuilder:
 
 
 class CalendarCandleAggregator:
-    def __init__(self, source_interval, target_interval):
+    def __init__(self, source_interval, target_interval, max_closed_keys=DEFAULT_CLOSED_KEY_CAP):
         self.source_interval = source_interval
         self.target_interval = target_interval
         self.windows = defaultdict(dict)
-        self.closed_keys = set()
+        self.closed_keys = BoundedKeySet(max_closed_keys)
 
     def update(self, candle):
         bucket, end = self._bucket(candle["timestamp"])
@@ -583,7 +669,7 @@ class SourceEventDeduper:
     def __init__(self, max_seen=10000):
         self.max_seen = max_seen
         self.seen = set()
-        self.order = []
+        self.order = deque()
 
     def is_duplicate(self, source_event_id):
         if not source_event_id:
@@ -593,44 +679,6 @@ class SourceEventDeduper:
         self.seen.add(source_event_id)
         self.order.append(source_event_id)
         if len(self.order) > self.max_seen:
-            oldest = self.order.pop(0)
+            oldest = self.order.popleft()
             self.seen.discard(oldest)
         return False
-
-
-class VolumeProfileBinBuilder:
-    def __init__(self, price_bin_size=0.05):
-        self.price_bin_size = price_bin_size
-        self.bins = {}
-
-    def update(self, trade):
-        minute = to_iso(floor_minute(trade["timestamp"]))
-        price = float(trade["price"])
-        size = float_or_zero(trade.get("size"))
-        price_bin = round(round(price / self.price_bin_size) * self.price_bin_size, 6)
-        key = (trade["symbol"], minute, price_bin)
-        current = self.bins.get(key)
-        if current is None:
-            current = {
-                "eventType": "VOLUME_PROFILE_BIN",
-                "eventMinute": minute,
-                "symbol": trade["symbol"],
-                "priceBin": price_bin,
-                "priceBinSize": self.price_bin_size,
-                "volume": 0,
-                "tradeCount": 0,
-                "notional": 0.0,
-                "vwap": None,
-                "source": "alpaca",
-                "feed": trade.get("feed"),
-                "sourceEventId": trade.get("sourceEventId"),
-                "updatedAt": trade.get("receivedAt"),
-            }
-        current["volume"] += size
-        current["tradeCount"] += 1
-        current["notional"] += price * size
-        current["vwap"] = current["notional"] / current["volume"] if current["volume"] else price
-        current["sourceEventId"] = trade.get("sourceEventId")
-        current["updatedAt"] = trade.get("receivedAt")
-        self.bins[key] = current
-        return {key: value for key, value in current.items() if key != "notional"}

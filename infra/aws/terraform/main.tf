@@ -67,6 +67,47 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "market_data" {
   }
 }
 
+resource "aws_s3_bucket_lifecycle_configuration" "market_data" {
+  count  = var.manage_s3_chart_data_lifecycle ? 1 : 0
+  bucket = local.market_data_bucket_name
+
+  rule {
+    id     = "expire-chart-raw-v1"
+    status = "Enabled"
+
+    filter {
+      prefix = "${trimsuffix(var.s3_chart_data_root_prefix, "/")}/raw/"
+    }
+
+    expiration {
+      days = var.s3_raw_retention_days
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = var.s3_raw_retention_days
+    }
+  }
+
+  rule {
+    id     = "expire-chart-raw-v2"
+    status = "Enabled"
+
+    filter {
+      prefix = "${trimsuffix(var.s3_chart_data_root_prefix, "/")}/raw-v2/"
+    }
+
+    expiration {
+      days = var.s3_raw_retention_days
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = var.s3_raw_retention_days
+    }
+  }
+
+  depends_on = [aws_s3_bucket_versioning.market_data]
+}
+
 data "aws_secretsmanager_secret" "alpaca_api" {
   count = var.create_alpaca_secret ? 0 : 1
   name  = var.alpaca_secret_name

@@ -172,17 +172,17 @@ class RealtimeBoundaryTest(unittest.TestCase):
         cursor = "v1:AAPL:1m:2026-06-25T10:15:00.000Z:abc123"
         self.assertEqual(timestamp_from_cursor(cursor), "2026-06-25T10:15:00.000Z")
 
-    def test_same_symbol_sessions_share_one_hub_task(self):
+    def test_sessions_share_one_global_listener_and_recovery_task_pair(self):
         async def run():
             hub = TestableHub(redis_client=None, provider=None)
             first = StreamSession("AAPL", "1m")
             second = StreamSession("AAPL", "1m")
             await hub.subscribe(first)
             await hub.subscribe(second)
-            self.assertEqual(len(hub.tasks), 1)
+            self.assertEqual(set(hub.tasks), {"pubsub", "recovery"})
             self.assertEqual(len(hub.sessions_by_symbol["AAPL"]), 2)
             await hub.unsubscribe(first)
-            self.assertEqual(len(hub.tasks), 1)
+            self.assertEqual(set(hub.tasks), {"pubsub", "recovery"})
             await hub.unsubscribe(second)
             self.assertEqual(len(hub.tasks), 0)
 

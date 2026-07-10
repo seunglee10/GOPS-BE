@@ -135,7 +135,6 @@ gops_deployments_for_service() {
       ;;
     market-storage)
       printf '%s\n' \
-        alfaka-chart-derived-data-worker \
         alfaka-clickhouse-loader \
         alfaka-clickhouse-tick-loader \
         alfaka-news-daily-summary-worker \

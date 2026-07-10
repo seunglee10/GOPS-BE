@@ -19,7 +19,6 @@ standard_topics=(
   market.realtime.ticks.to.1d.v1
   market.realtime.ticks.to.1w.v1
   market.realtime.ticks.to.1mo.v1
-  market.layer.candles.live.v1
   market.layer.candles.closed.v1
   market.layer.candles.1m.closed.v1
   market.layer.candles.5m.closed.v1
@@ -34,8 +33,6 @@ standard_topics=(
   market.layer.events.v1
   market.news.alpaca.v1
   market.news.daily-summary-dirty.v1
-  market.chart-derived.requests.v1
-  market.chart-derived.dlq.v1
   orders.commands.v1
   broker.submit-results.v1
   broker.order-events.v1

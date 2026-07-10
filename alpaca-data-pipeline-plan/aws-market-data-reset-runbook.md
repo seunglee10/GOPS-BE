@@ -74,7 +74,6 @@ ClickHouse reset tables:
 
 ```text
 market_data.chart_candles
-market_data.volume_profile_bins_1m
 market_data.trade_ticks
 market_data.market_status_events
 market_data.load_audit

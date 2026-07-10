@@ -75,12 +75,26 @@ class OrderFlowBinBuilderTest(unittest.TestCase):
         first = cache.quote_for("nvda")
         redis.set(keys.live_quote("NVDA"), json.dumps({"bidPrice": 158.34, "askPrice": 158.36}))
         cached = cache.quote_for("NVDA")
-        now[0] = 10.2
+        now[0] = 11.0
         refreshed = cache.quote_for("NVDA")
 
         self.assertEqual(first["bidPrice"], 158.33)
         self.assertEqual(cached["askPrice"], 158.35)
         self.assertEqual(refreshed["bidPrice"], 158.34)
+
+    def test_quote_cache_miss_loads_redis_once_per_symbol_per_second(self):
+        redis = _MemoryRedis()
+        keys = RedisKeyBuilder(prefix="")
+        now = [10.0]
+        cache = PinnedQuoteCache(redis, keys, refresh_ms=150, clock=lambda: now[0])
+
+        for _index in range(100):
+            self.assertIsNone(cache.quote_for("NVDA"))
+        self.assertEqual(redis.get_calls, 1)
+
+        now[0] = 11.0
+        self.assertIsNone(cache.quote_for("NVDA"))
+        self.assertEqual(redis.get_calls, 2)
 
     def test_live_path_marks_stale_quote_unknown_for_any_pinned_symbol(self):
         redis = _MemoryRedis()
@@ -199,8 +213,6 @@ class OrderFlowBinBuilderTest(unittest.TestCase):
         ])
         redis.zadd(keys.order_flow_minutes("NVDA"), {encode_order_flow_minute_blob(closed): 1780000000})
         redis.set(keys.order_flow_live_minute("NVDA"), encode_order_flow_minute_blob(live), ex=300)
-        redis.hset(keys.order_flow_live("NVDA"), "legacy", json.dumps(_bin("2026-07-09T13:29:00.000Z", "2026-07-09", 99.0, unknown=9)))
-
         bins = provider.order_flow_live_bins("NVDA")
 
         self.assertEqual(len(bins), 1)
@@ -208,19 +220,17 @@ class OrderFlowBinBuilderTest(unittest.TestCase):
         self.assertEqual(bins[0]["askVolume"], 2)
         self.assertEqual(bins[0]["bidVolume"], 3)
 
-    def test_redis_provider_falls_back_to_legacy_hash_when_new_keys_empty(self):
+    def test_redis_provider_does_not_read_retired_hash_when_minute_keys_are_empty(self):
         redis = _MemoryRedis()
         keys = RedisKeyBuilder(prefix="")
         provider = RedisMarketDataProvider.__new__(RedisMarketDataProvider)
         provider.redis = redis
         provider.keys = keys
-        redis.hset(keys.order_flow_live("NVDA"), "legacy", json.dumps(_bin("2026-07-09T13:29:00.000Z", "2026-07-09", 99.0, unknown=9)))
 
         bins = provider.order_flow_live_bins("NVDA")
 
-        self.assertEqual(len(bins), 1)
-        self.assertEqual(bins[0]["eventMinute"], "2026-07-09T13:29:00.000Z")
-        self.assertEqual(bins[0]["unknownVolume"], 9)
+        self.assertEqual(bins, [])
+        self.assertEqual(redis.hgetall_calls, 0)
 
     def test_publish_throttle_and_minute_rollover_flush(self):
         redis = _MemoryRedis()
@@ -298,6 +308,8 @@ class _MemoryRedis:
         self.published = []
         self.deleted = []
         self.set_calls = []
+        self.get_calls = 0
+        self.hgetall_calls = 0
 
     def set(self, key, value, ex=None):
         self.values[key] = value
@@ -306,6 +318,7 @@ class _MemoryRedis:
             self.expirations[key] = ex
 
     def get(self, key):
+        self.get_calls += 1
         return self.values.get(key)
 
     def hset(self, key, *args, mapping=None, **kwargs):
@@ -319,6 +332,7 @@ class _MemoryRedis:
         return len(values)
 
     def hgetall(self, key):
+        self.hgetall_calls += 1
         return dict(self.hashes.get(key, {}))
 
     def zadd(self, key, mapping):

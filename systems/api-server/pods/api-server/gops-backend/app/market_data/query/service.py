@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import inspect
+import os
 from collections import OrderedDict
 from datetime import date, datetime
 from typing import Any
@@ -10,23 +10,17 @@ from fastapi import HTTPException
 
 from app.market_data.backfill.service import get_backfill_service
 from app.market_data.fill.service import get_on_demand_fill_service
+from app.market_data.derived.service import DerivedCalculationService
 from app.market_data.fundamentals.service import build_fundamentals_adapter
 from app.market_data.heatmap.service import get_heatmap_service
 from app.market_data.indices.service import get_indices_service
+from app.market_data.query.canonical import CanonicalCandleQuery
 from app.market_data.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
 from app.services.alfaka_market_data import get_market_data_provider, normalize_market_symbol, requested_ma_from_csv, sp500_universe_symbols
 from alfaka.serving.chart_derived_data import (
-    ChartDerivedArtifactStore,
-    ChartDerivedDataClient,
-    DERIVED_KIND_INDICATORS,
     build_indicator_request,
     build_volume_profile_request,
-    clickhouse_client_from_env,
     indicator_fetch_from_time,
-    read_json_cache,
-    redis_ttl_seconds,
-    with_derived_metadata,
-    write_json_cache,
 )
 from alfaka.serving.indicators import (
     compute_indicator_payload,
@@ -42,6 +36,7 @@ from alfaka.orderflow import (
 )
 from alfaka.serving.volume_profile import (
     DEFAULT_VOLUME_PROFILE_TARGET_BINS,
+    compute_volume_profile_payload,
     normalize_target_bins,
 )
 from alfaka.serving.news_hot_cache import company_daily_summary_coverage_valid
@@ -58,11 +53,19 @@ MARKET_TIMEZONE = ZoneInfo("America/New_York")
 
 
 class MarketDataQueryService:
-    def __init__(self, provider=None, backfill_service=None, fill_service=None, derived_client=None):
+    def __init__(self, provider=None, backfill_service=None, fill_service=None, derived_client=None, canonical_query=None, derived_service=None):
         self.provider = provider or get_market_data_provider()
         self.backfill_service = backfill_service or get_backfill_service(self.provider)
         self.fill_service = fill_service or get_on_demand_fill_service(self.provider)
-        self.derived_client = derived_client or build_chart_derived_client(self.provider)
+        self.canonical_query = canonical_query or CanonicalCandleQuery(self.provider, self.fill_service)
+        self.derived_client = derived_client
+        redis_client = getattr(self.derived_client, "redis_client", None)
+        if redis_client is None:
+            redis_client = redis_client_for_provider(self.provider)
+        self.derived_service = derived_service or DerivedCalculationService(
+            canonical_query=self.canonical_query,
+            redis_client=redis_client,
+        )
 
     def candle_snapshot(
         self,
@@ -80,8 +83,7 @@ class MarketDataQueryService:
         requested_ma = requested_ma_from_csv(ma)
         resolved_limit = resolve_candle_limit(interval, limit)
         try:
-            payload = provider_candle_snapshot(
-                self.provider,
+            payload = self.canonical_query.query(
                 symbol,
                 interval,
                 resolved_limit,
@@ -92,21 +94,12 @@ class MarketDataQueryService:
             )
         except Exception as exc:
             raise HTTPException(status_code=503, detail=f"Market data provider failed: {exc}") from exc
-        payload = self.fill_service.fill_if_needed(
-            symbol=symbol,
-            interval=interval,
-            limit=resolved_limit,
-            before=before,
-            from_time=from_time,
-            to_time=to_time,
-            payload=payload,
-        )
         filter_candle_moving_average_fields(payload, requested_ma)
         payload["indicators"] = {"ma": requested_ma, "volume": True}
         metadata = self.backfill_service.snapshot_metadata(symbol, interval, payload)
         payload.update(metadata)
         if include_previous_close:
-            payload["previousClose"] = previous_close_from_provider(self.provider, symbol)
+            payload["previousClose"] = previous_close_from_query(self.canonical_query, symbol)
         if isinstance(payload.get("fill"), dict):
             coverage = metadata.get("coverage") or {}
             payload["fill"] = {
@@ -237,7 +230,29 @@ class MarketDataQueryService:
             price_min=price_min,
             price_max=price_max,
         )
-        return self.derived_client.resolve(request)
+        params = request.get("parameters") or {}
+
+        def calculate():
+            candle_payload = self.derived_service.query_candles(
+                symbol,
+                interval,
+                resolve_candle_limit(interval),
+                from_time=from_time,
+                to_time=to_time,
+                ma_windows=(),
+            )
+            return compute_volume_profile_payload(
+                candle_payload,
+                symbol=symbol,
+                interval=interval,
+                from_time=from_time,
+                to_time=to_time,
+                target_bins=int(params.get("targetBins") or resolved_target_bins),
+                price_min=params.get("priceMin"),
+                price_max=params.get("priceMax"),
+            )
+
+        return self.derived_service.resolve(request, calculate)
 
     def indicator_series(
         self,
@@ -263,49 +278,48 @@ class MarketDataQueryService:
             specs=specs,
             limit=requested_limit,
         )
-        cached_payload = cached_inline_indicator_payload(self.derived_client, request)
-        if cached_payload is not None:
-            return cached_payload
         lookback = indicator_required_lookback_bars(specs)
         fetch_limit = requested_limit + lookback
-        if from_time and lookback > 0:
-            warmup_payload = self.candle_snapshot(
-                symbol,
-                interval,
-                "",
-                lookback,
-                before=from_time,
-            )
-            range_payload = self.candle_snapshot(
-                symbol,
-                interval,
-                "",
-                requested_limit,
+
+        def calculate():
+            if from_time and lookback > 0:
+                warmup_payload = self.derived_service.query_candles(
+                    symbol,
+                    interval,
+                    lookback,
+                    before=from_time,
+                    ma_windows=(),
+                )
+                range_payload = self.derived_service.query_candles(
+                    symbol,
+                    interval,
+                    requested_limit,
+                    from_time=from_time,
+                    to_time=to_time,
+                    ma_windows=(),
+                )
+                candle_payload = merge_candle_payloads(warmup_payload, range_payload)
+            else:
+                fetch_from_time = indicator_fetch_from_time(interval, from_time, lookback)
+                candle_payload = self.derived_service.query_candles(
+                    symbol,
+                    interval,
+                    fetch_limit,
+                    from_time=fetch_from_time,
+                    to_time=to_time,
+                    ma_windows=(),
+                )
+            return inline_indicator_payload(
+                request,
+                candle_payload,
+                specs,
                 from_time=from_time,
                 to_time=to_time,
+                requested_limit=requested_limit,
+                lookback=lookback,
             )
-            candle_payload = merge_candle_payloads(warmup_payload, range_payload)
-        else:
-            fetch_from_time = indicator_fetch_from_time(interval, from_time, lookback)
-            candle_payload = self.candle_snapshot(
-                symbol,
-                interval,
-                "",
-                fetch_limit,
-                from_time=fetch_from_time,
-                to_time=to_time,
-            )
-        payload = inline_indicator_payload(
-            request,
-            candle_payload,
-            specs,
-            from_time=from_time,
-            to_time=to_time,
-            requested_limit=requested_limit,
-            lookback=lookback,
-        )
-        write_inline_indicator_cache(self.derived_client, request, payload)
-        return payload
+
+        return self.derived_service.resolve(request, calculate)
 
     def order_flow_symbols(self) -> dict[str, Any]:
         return {
@@ -803,12 +817,29 @@ class MarketDataQueryService:
         interval = normalize_chart_interval(interval)
         include_set = {item.strip() for item in include.split(",") if item.strip()}
         try:
-            provider_include = set(include_set)
-            needs_volume_profile = "volumeProfile" in provider_include
-            needs_order_flow_daily = "orderFlowDaily" in provider_include
-            provider_include.discard("volumeProfile")
-            provider_include.discard("orderFlowDaily")
-            context = self.provider.agent_chart_context(symbol, interval, from_time, to_time, provider_include)
+            needs_volume_profile = "volumeProfile" in include_set
+            needs_order_flow_daily = "orderFlowDaily" in include_set
+            visible = self.canonical_query.query(
+                symbol,
+                interval,
+                500,
+                from_time=from_time,
+                to_time=to_time,
+                ma_windows=(),
+            )
+            daily = self.canonical_query.query(symbol, "1D", 2, ma_windows=())
+            daily_candles = daily.get("candles") or []
+            context = {
+                "symbol": symbol,
+                "interval": interval,
+                "visibleRange": {"from": from_time, "to": to_time},
+                "candles": visible.get("candles") or [],
+                "latestDailyCandle": daily_candles[-1] if daily_candles else None,
+                "previousDailyCandle": daily_candles[-2] if len(daily_candles) > 1 else None,
+                "marketStatus": self.provider.latest_status(symbol) if "status" in include_set else None,
+                "volumeProfile": None,
+                "comparisonCandidates": self.provider.search_symbols(symbol[:2], 5),
+            }
             if needs_volume_profile:
                 context["volumeProfile"] = self.volume_profile_bins(symbol, from_time, to_time, "auto", interval=interval)
             if needs_order_flow_daily:
@@ -844,16 +875,6 @@ def order_flow_daily_totals_only(payload: dict[str, Any]) -> dict[str, Any]:
             if isinstance(day, dict)
         ],
     }
-
-
-def build_chart_derived_client(provider: Any) -> ChartDerivedDataClient:
-    clickhouse = getattr(provider, "clickhouse_provider", None)
-    if clickhouse is None:
-        clickhouse = clickhouse_client_from_env()
-    return ChartDerivedDataClient(
-        redis_client=redis_client_for_provider(provider),
-        artifact_store=ChartDerivedArtifactStore(clickhouse),
-    )
 
 
 def parse_date_arg(value: str, name: str) -> date:
@@ -930,67 +951,6 @@ def filter_candle_moving_average_fields(payload: dict[str, Any], requested_ma: l
                     nested.pop(key, None)
 
 
-def provider_candle_snapshot(
-    provider: Any,
-    symbol: str,
-    interval: str,
-    limit: int,
-    *,
-    before: str | None = None,
-    from_time: str | None = None,
-    to_time: str | None = None,
-    ma_windows: tuple[int, ...] = (),
-) -> dict[str, Any]:
-    if provider_accepts_ma_windows(provider):
-        return provider.candle_snapshot(
-            symbol,
-            interval,
-            limit,
-            before=before,
-            from_time=from_time,
-            to_time=to_time,
-            ma_windows=ma_windows,
-        )
-    return provider.candle_snapshot(symbol, interval, limit, before=before, from_time=from_time, to_time=to_time)
-
-
-def cached_inline_indicator_payload(derived_client: Any, request: dict[str, Any]) -> dict[str, Any] | None:
-    redis_client = getattr(derived_client, "redis_client", None)
-    cached = read_json_cache(redis_client, request["cacheKey"])
-    if not cached:
-        return None
-    payload = dict(cached)
-    payload["cache"] = {
-        **(payload.get("cache") if isinstance(payload.get("cache"), dict) else {}),
-        "hit": True,
-        "ttlSeconds": redis_ttl_seconds(DERIVED_KIND_INDICATORS),
-        "keyVersion": request["calculationVersion"],
-    }
-    return with_derived_metadata(
-        payload,
-        request,
-        state="ready",
-        source="redis",
-        artifact_stored=bool(payload.get("derived", {}).get("artifactStored")),
-    )
-
-
-def write_inline_indicator_cache(derived_client: Any, request: dict[str, Any], payload: dict[str, Any]) -> None:
-    if payload.get("dataStatus") != "ready" or not payload.get("returnedCandleCount"):
-        return
-    redis_client = getattr(derived_client, "redis_client", None)
-    if redis_client is None:
-        return
-    cache_payload = dict(payload)
-    cache_payload["cache"] = {
-        **(cache_payload.get("cache") if isinstance(cache_payload.get("cache"), dict) else {}),
-        "hit": False,
-        "ttlSeconds": redis_ttl_seconds(DERIVED_KIND_INDICATORS),
-        "keyVersion": request["calculationVersion"],
-    }
-    write_json_cache(redis_client, request["cacheKey"], cache_payload, redis_ttl_seconds(DERIVED_KIND_INDICATORS))
-
-
 def inline_indicator_payload(
     request: dict[str, Any],
     candle_payload: dict[str, Any],
@@ -1019,10 +979,9 @@ def inline_indicator_payload(
         "source": candle_payload.get("source", "alpaca"),
         "feed": candle_payload.get("feed", "unknown"),
         "dataStatus": candle_payload.get("dataStatus", "ready" if candles else "empty"),
-        "cache": {"hit": False, "ttlSeconds": redis_ttl_seconds(DERIVED_KIND_INDICATORS), "keyVersion": request["calculationVersion"]},
         **computed,
     }
-    return with_derived_metadata(payload, request, state="ready", source="api-inline", artifact_stored=False)
+    return payload
 
 
 def merge_candle_payloads(*payloads: dict[str, Any]) -> dict[str, Any]:
@@ -1045,9 +1004,9 @@ def merge_candle_payloads(*payloads: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
-def previous_close_from_provider(provider: Any, symbol: str) -> float | None:
+def previous_close_from_query(canonical_query: CanonicalCandleQuery, symbol: str) -> float | None:
     try:
-        payload = provider_candle_snapshot(provider, symbol, "1D", 5, ma_windows=())
+        payload = canonical_query.query(symbol, "1D", 5, ma_windows=())
     except Exception:
         return None
     candles = payload.get("candles") if isinstance(payload, dict) else None
@@ -1065,13 +1024,6 @@ def previous_close_from_provider(provider: Any, symbol: str) -> float | None:
         if value > 0:
             return value
     return None
-
-
-def provider_accepts_ma_windows(provider: Any) -> bool:
-    try:
-        return "ma_windows" in inspect.signature(provider.candle_snapshot).parameters
-    except (TypeError, ValueError):
-        return False
 
 
 def normalize_news_item(row: dict[str, Any], fallback_symbol: str) -> dict[str, Any]:

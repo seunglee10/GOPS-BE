@@ -12,20 +12,36 @@ market_data.trade_ticks
 market_data.quote_ticks
 market_data.market_events
 market_data.market_status_events
-market_data.volume_profile_bins_1m
 market_data.order_flow_profile_daily
 market_data.backfill_jobs
 market_data.storage_object_audit
 market_data.load_audit
 ```
 
-`market_data.order_flow_profile_daily` is the additive daily bid/ask
-order-flow profile table. DDL is maintained in both local and EKS init paths:
+`trade_ticks` and `quote_ticks` retain 21 days. `chart_candles` and
+`order_flow_profile_daily` have no deletion TTL. Existing environments apply
+the TTL through the operator-reviewed, idempotent migration:
 
 ```text
-infra/clickhouse/initdb/03-market-data.sql
-infra/k8s/base/platform/clickhouse-initdb/03-market-data.sql
+scripts/local/migrate-chart-tick-retention.sql
 ```
+
+Optional indicators and candle volume profile are calculated by the API and
+cached in Redis; ClickHouse does not store request-hash artifacts. The retired
+tick-volume-profile and derived-artifact tables are not created in fresh
+environments. Existing tables are not dropped automatically.
+
+`market_data.order_flow_profile_daily` is the daily bid/ask order-flow table.
+DDL is maintained in both local and EKS init paths:
+
+```text
+infra/clickhouse/initdb/01-market-data.sql
+infra/k8s/base/platform/clickhouse-initdb/01-market-data.sql
+```
+
+`scripts/local/check-chart-data-contracts.py` enforces normalized equality of
+the two market-data DDL copies. Environment headers and the declared local-only
+agent table are the only allowed difference.
 
 ## SEC Fundamentals Tables
 

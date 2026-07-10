@@ -106,7 +106,6 @@ from alfaka.storage.s3_manifest import processed_candle_keys_from_manifest, raw_
 from alfaka.streaming.processor import ProcessorState, flush_ready_closed_candles, process_raw_envelope, processor_runtime_config, recover_processor_state_from_clickhouse, recover_processor_state_from_redis, run_stream_processor, write_closed_candle_to_redis, write_live_candle_to_redis, write_trade_to_redis
 from alfaka.streaming.transforms import (
     CandleAggregator,
-    VolumeProfileBinBuilder,
     normalize_bar,
     normalize_status,
     normalize_trade,
@@ -795,7 +794,6 @@ def mermaid_processor_topics():
             "1W": "market.realtime.ticks.to.1w.v1",
             "1M": "market.realtime.ticks.to.1mo.v1",
         },
-        "live_candles": "market.layer.candles.live.v1",
         "closed_candles": "market.layer.candles.closed.v1",
     }
 
@@ -1144,6 +1142,8 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(config["closed_candle_topic"]["1M"], "market.layer.candles.1mo.closed.v1")
         self.assertEqual(config["recovery_symbols"], ["AAPL", "MSFT"])
         self.assertTrue(config["clickhouse_recovery_enabled"])
+        self.assertNotIn("publish_live_candle_topic", config)
+        self.assertNotIn("live_candle_topic", config)
 
     def test_processor_runtime_config_can_enable_all_tick_fanout_topics(self):
         config = processor_runtime_config({
@@ -1462,12 +1462,30 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(consumer.kwargs["max_poll_interval_ms"], 900000)
         self.assertEqual(consumer.kwargs["max_poll_records"], 1)
 
+    def test_market_processor_consumer_uses_range_assignment_for_cross_topic_key_colocation(self):
+        from kafka.coordinator.assignors.range import RangePartitionAssignor
+        from kafka.partitioner.default import murmur2
+
+        RecordingKafkaConsumer.calls = []
+        with mock.patch("kafka.KafkaConsumer", RecordingKafkaConsumer):
+            consumer = create_json_consumer(
+                ["market.input.realtime.trades.v1", "market.input.realtime.quotes.v1"],
+                "kafka:29092",
+                "alfaka-market-processor",
+                "alfaka-market-processor",
+                partition_assignment_strategy="range",
+            )
+
+        self.assertEqual(consumer.kwargs["partition_assignment_strategy"], (RangePartitionAssignor,))
+        trade_partition = (murmur2(b"NVDA") & 0x7FFFFFFF) % 12
+        quote_partition = (murmur2(b"NVDA") & 0x7FFFFFFF) % 12
+        self.assertEqual(trade_partition, quote_partition)
+
     def test_live_path_trace_builds_read_only_contract(self):
         with mock.patch.dict(os.environ, {
             "KAFKA_INPUT_TOPIC_PREFIX": "market.input",
             "KAFKA_PROCESSOR_GROUP_ID": "alfaka-market-processor",
             "KAFKA_TRADES_LAYER_TOPIC": "market.layer.trades.v1",
-            "KAFKA_LIVE_CANDLE_TOPIC": "market.layer.candles.live.v1",
             "KAFKA_CLOSED_CANDLE_TOPIC": "market.layer.candles.closed.v1",
             "KAFKA_STATUS_TOPIC": "market.layer.events.v1",
             "KAFKA_PROCESSOR_RAW_TOPICS": "market.input.realtime.trades.v1,market.input.realtime.bars.1m.v1",
@@ -1517,10 +1535,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         result = process_raw_envelope(envelope, producer, redis, keys, state, topics)
 
         self.assertEqual(result, "trades")
-        self.assertEqual([sent["topic"] for sent in producer.sent[:2]], [
-            "market.layer.trades.v1",
-            "market.layer.candles.live.v1",
-        ])
+        self.assertEqual([sent["topic"] for sent in producer.sent], ["market.layer.trades.v1"])
         self.assertNotIn("market.realtime.ticks.to.1m.v1", [sent["topic"] for sent in producer.sent])
         self.assertEqual(redis.hashes[keys.price_latest("AAPL")]["price"], 195.2)
         live_candle = json.loads(redis.values[keys.live_candle("AAPL")])
@@ -1533,6 +1548,22 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(health["lastChannel"], "trades")
         self.assertEqual(health["lastSymbol"], "AAPL")
         self.assertEqual(health["lastSourceEventId"], envelope["sourceEventId"])
+
+    def test_live_candle_uses_redis_events_without_kafka_publication(self):
+        producer = RecordingProducer()
+        redis = MemoryRedis()
+        keys = RedisKeyBuilder()
+        topics = mermaid_processor_topics()
+        envelope = build_raw_envelope(
+            {"T": "t", "S": "AAPL", "i": 124, "p": 195.2, "s": 10, "t": "2026-06-25T10:15:20.100Z"},
+            "sip",
+        )
+
+        process_raw_envelope(envelope, producer, redis, keys, ProcessorState(), topics)
+
+        self.assertEqual([sent["topic"] for sent in producer.sent], ["market.layer.trades.v1"])
+        published_events = [json.loads(value) for _, value in redis.published]
+        self.assertTrue(any(event["type"] == "LIVE_CANDLE_UPDATE" for event in published_events))
 
     def test_processor_live_redis_state_uses_short_ttl(self):
         redis = MemoryRedis()
@@ -2008,7 +2039,10 @@ class MarketDataHardeningContractTest(unittest.TestCase):
 
         self.assertGreaterEqual(consumer.commits, 1)
         self.assertGreaterEqual(producer.flush_count, 1)
-        self.assertIn("market.layer.candles.live.v1", [sent["topic"] for sent in producer.sent])
+        self.assertEqual(
+            set(sent["topic"] for sent in producer.sent),
+            {"market.layer.trades.v1", "market.layer.candles.closed.v1"},
+        )
         self.assertNotIn("market.realtime.ticks.to.1m.v1", [sent["topic"] for sent in producer.sent])
         self.assertIn("market.layer.candles.closed.v1", [sent["topic"] for sent in producer.sent])
 
@@ -2597,13 +2631,11 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(candle["correctionType"], "UPDATED")
         self.assertEqual(candle["sourceEventId"], envelope["sourceEventId"])
 
-    def test_trade_profile_bin_and_live_delta_have_cursor(self):
+    def test_live_delta_has_cursor(self):
         envelope = build_raw_envelope(
             {"T": "t", "S": "AAPL", "i": 123, "p": 195.22, "s": 10, "t": "2026-06-25T10:15:20.100Z"},
             "sip",
         )
-        trade = normalize_trade(envelope)
-        profile_bin = VolumeProfileBinBuilder(price_bin_size=0.05).update(trade)
         event = websocket_event("LIVE_CANDLE_UPDATE", "AAPL", "1m", {
             "timestamp": "2026-06-25T10:15:00.000Z",
             "open": 195.22,
@@ -2618,8 +2650,6 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "updatedAt": "2026-06-25T10:15:20.250Z",
         })
 
-        self.assertEqual(profile_bin["eventType"], "VOLUME_PROFILE_BIN")
-        self.assertEqual(profile_bin["priceBinSize"], 0.05)
         self.assertIn("eventId", event)
         self.assertIn("cursor", event)
         self.assertEqual(event["source"], "alpaca.trades")
@@ -5651,17 +5681,11 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "timestamp": "2026-01-02T10:15:00.000Z",
             "symbol": "AAPL",
         })
-        profile_key = s3_partition_key(final_prefix, {
-            "eventType": "VOLUME_PROFILE_BIN",
-            "eventMinute": "2026-01-02T10:15:00.000Z",
-            "symbol": "AAPL",
-        })
         storage_row = normalize_storage_row({"ma": {"ma5": 1.0}, "raw": {"T": "s"}})
 
         self.assertEqual(candle_key, "market-data/rebuild-20260702-lazy-v1/final/candles/feed=unknown/interval=1m/symbol=AAPL/year=2026/month=01/day=02")
         self.assertEqual(tick_key, "market-data/rebuild-20260702-lazy-v1/final/trades/symbol=AAPL/year=2026/month=01/day=02/feed=unknown")
         self.assertEqual(quote_key, "market-data/rebuild-20260702-lazy-v1/final/quotes/symbol=AAPL/year=2026/month=01/day=02/feed=unknown")
-        self.assertEqual(profile_key, "market-data/rebuild-20260702-lazy-v1/final/volume-profile-bins/timeBucket=1m/symbol=AAPL/year=2026/month=01/day=02")
         self.assertEqual(storage_row["ma5"], 1.0)
         self.assertIsNone(storage_row["ma20"])
         self.assertEqual(storage_row["raw"], "{\"T\":\"s\"}")
@@ -5680,7 +5704,6 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "market.layer.candles.1mo.closed.v1",
             "market.layer.events.v1",
         ])
-        self.assertNotIn("market.layer.candles.live.v1", topics)
 
     def test_s3_sink_commits_after_successful_flush(self):
         class OneBatchConsumer:

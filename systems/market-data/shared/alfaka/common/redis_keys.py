@@ -42,9 +42,6 @@ class RedisKeyBuilder:
     def live_quote(self, symbol):
         return self.key(f"live:quote:{symbol}")
 
-    def order_flow_live(self, symbol):
-        return self.key(f"order-flow:{symbol}:live")
-
     def order_flow_minutes(self, symbol):
         return self.key(f"order-flow:{symbol}:minutes")
 
@@ -186,9 +183,6 @@ class RedisKeyBuilder:
 
     def symbols_search_index(self):
         return self.key("symbols:search:index")
-
-    def volume_profile_live(self, symbol):
-        return self.key(f"volume-profile:{symbol}:1m:live")
 
     def backfill_lock(self, symbol, interval, range_digest):
         return self.key(f"backfill:lock:{range_digest}")

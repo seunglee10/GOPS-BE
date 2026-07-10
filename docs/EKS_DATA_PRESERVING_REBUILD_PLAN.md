@@ -242,8 +242,8 @@ Operations checks:
 
 - GitHub Actions rollout time is recorded.
 - Job TTL cleanup works.
-- `chart-derived-data-worker` CrashLoop, if still present, is tracked as a
-  separate incident and not hidden inside the rebuild.
+- The API request-time derived calculation path is healthy; no separate chart
+  derived worker deployment is expected.
 - `recommendation-worker` and `alert-evaluator` stay at 0 replicas in the AWS
   in-cluster overlay until the deployed API image contains
   `app.recommendations.worker` and `app.alerts.evaluator`.

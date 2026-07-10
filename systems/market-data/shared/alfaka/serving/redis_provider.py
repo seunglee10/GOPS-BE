@@ -112,17 +112,7 @@ class RedisMarketDataProvider:
         value = self.redis.get(key)
         return json.loads(value) if value else None
 
-    def volume_profile_bins(self, symbol, from_score="-inf", to_score="+inf", limit=5000):
-        rows = self.redis.zrangebyscore(self.keys.volume_profile_live(symbol), from_score, to_score, start=0, num=limit)
-        return [json.loads(row) for row in rows]
-
     def order_flow_live_bins(self, symbol):
-        new_layout_bins = self._order_flow_live_bins_from_minute_keys(symbol)
-        if new_layout_bins:
-            return new_layout_bins
-        return self._legacy_order_flow_live_bins(symbol)
-
-    def _order_flow_live_bins_from_minute_keys(self, symbol):
         blobs_by_minute = {}
         values = self.redis.zrangebyscore(self.keys.order_flow_minutes(symbol), "-inf", "+inf") or []
         for value in values:
@@ -135,21 +125,6 @@ class RedisMarketDataProvider:
         bins = []
         for minute in sorted(blobs_by_minute):
             bins.extend(order_flow_blob_to_bins(blobs_by_minute[minute]))
-        bins.sort(key=lambda item: (str(item.get("eventMinute") or ""), float(item.get("priceBin") or 0)))
-        return bins
-
-    def _legacy_order_flow_live_bins(self, symbol):
-        values = self.redis.hgetall(self.keys.order_flow_live(symbol)) or {}
-        bins = []
-        for value in values.values():
-            if isinstance(value, bytes):
-                value = value.decode("utf-8")
-            try:
-                parsed = json.loads(value) if isinstance(value, str) else value
-            except (TypeError, json.JSONDecodeError):
-                continue
-            if isinstance(parsed, dict):
-                bins.append(parsed)
         bins.sort(key=lambda item: (str(item.get("eventMinute") or ""), float(item.get("priceBin") or 0)))
         return bins
 

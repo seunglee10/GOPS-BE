@@ -57,9 +57,6 @@ spec:
 
                 retention_ms=""
                 case "${topic}" in
-                  market.layer.candles.live.v1)
-                    retention_ms="1800000"
-                    ;;
                   agents.market-events.v1)
                     retention_ms="3600000"
                     ;;

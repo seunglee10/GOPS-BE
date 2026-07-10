@@ -28,6 +28,8 @@ flowchart TD
 | --- | --- |
 | `PRODUCT_CONTEXT.md` | Product direction and current/future scope boundary. |
 | `CHART_DATA_REBUILD_PLAN.md` | Source-of-truth plan for the on-demand chart data rebuild. This wins over older chart, market-data, preload, S3, Redis, and Kafka notes. |
+| `CHART_DATA_CONTRACTS.md` | Current chart fact/key/topic/table/prefix matrix plus retention migration and after-deploy operator runbook. |
+| `plans/orderflow-bidask-stabilization/README.md` | Bid/Ask 차트 당일 인트라데이 전환, 오더플로우 Redis 저장 모델(캔들형 append+덮어쓰기), 집계 검증, Redis 경량화 4개 워크스트림 실행 계획 (2026-07-10 결정 기록 포함). |
 | `STRUCTURE_GUIDE.md` | Folder placement rules for future code. |
 | `ARCHITECTURE.md` | Current system, pod/job, and platform relationships. |
 | `IMAGE_STRATEGY.md` | Docker image boundaries and naming rules. |

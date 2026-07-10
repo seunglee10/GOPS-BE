@@ -64,7 +64,6 @@
       "quoteTable": "quote_ticks",
       "symbolTable": "symbols",
       "statusTable": "market_status_events",
-      "volumeProfileTable": "volume_profile_bins_1m",
       "loadTradesByDefault": true,
       "loadQuotesByDefault": true
     },

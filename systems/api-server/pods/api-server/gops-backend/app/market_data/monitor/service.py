@@ -302,7 +302,6 @@ class MarketDataMonitorService:
         layer_topics = {
             "tickFanoutTrades": os.getenv("KAFKA_TRADES_LAYER_TOPIC", "market.layer.trades.v1"),
             "tickFanoutQuotes": os.getenv("KAFKA_QUOTES_LAYER_TOPIC", "market.layer.quotes.v1"),
-            "tickFanoutLiveCandles": os.getenv("KAFKA_LIVE_CANDLE_TOPIC", "market.layer.candles.live.v1"),
         }
         try:
             from kafka import KafkaConsumer, TopicPartition

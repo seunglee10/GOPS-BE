@@ -138,21 +138,11 @@ SEC companyfacts backfill은 `gops-agent-orchestrator`가 아니라
 `gops-market-storage` image에서 실행한다. 해당 image에는
 `systems/fundamentals`와 `systems/market-data/shared`가 포함되어야 한다.
 
-Chart derived data worker:
-
-```text
-chart-derived-data-worker
-systems/market-data/pods/chart-derived-data-worker/main.py
-image: gops-market-storage
-```
-
-이 worker는 indicator와 candle 기반 volume profile 계산을 API server에서 분리한다.
-계산 결과는 Redis hot cache와 ClickHouse
-`market_data.chart_derived_artifacts`에 함께 저장하며, 향후 Agent가 같은
-request hash로 동일 결과를 재참조하는 기준이 된다.
-Volume profile v1은 요청 chart interval의 candle OHLCV로 계산하는
-`estimated` 결과이며, trade tick 또는 `volume_profile_bins_1m` 적재에
-의존하지 않는다.
+Chart derived data is calculated in `gops-backend`. Indicators and candle-based
+volume profile share the canonical candle facade, Redis TTL cache, and bounded
+singleflight. There is no separate worker, Kafka request queue, or ClickHouse
+request-hash artifact. Volume profile v1 remains an `estimated` candle OHLCV
+result for the requested chart interval.
 
 Bid/ask order-flow profile은 derived-worker가 아니라 market processor와 EOD
 rollup job이 담당한다. Live path는 pinned symbol trade/quote를 Redis
@@ -202,7 +192,6 @@ infra/k8s/base/app/deployment-agent-intent-classifier.yaml
 infra/k8s/base/app/deployment-deep-analysis-worker.yaml
 infra/k8s/base/app/deployment-agent-event-detector.yaml
 infra/k8s/base/app/deployment-agent-notification-publisher.yaml
-infra/k8s/base/app/deployment-chart-derived-data-worker.yaml
 infra/k8s/base/app/deployment-recommendation-worker.yaml
 ```
 
@@ -347,24 +336,13 @@ agents.notification-decisions.v1
 agents.dlq.v1
 ```
 
-Chart derived topics:
-
-```text
-market.chart-derived.requests.v1
-market.chart-derived.dlq.v1
-```
-
 Chart derived env:
 
 ```text
-CHART_DERIVED_REQUEST_TOPIC
-CHART_DERIVED_DLQ_TOPIC
-CHART_DERIVED_WORKER_GROUP_ID
-CHART_DERIVED_API_WAIT_MS
-CHART_DERIVED_API_POLL_MS
-CHART_DERIVED_RETRY_AFTER_MS
-CHART_INDICATOR_ARTIFACT_RETENTION_SECONDS
-CHART_VOLUME_PROFILE_ARTIFACT_RETENTION_SECONDS
+CHART_INDICATOR_CACHE_TTL_SECONDS
+CHART_VOLUME_PROFILE_CACHE_TTL_SECONDS
+CHART_DERIVED_INLINE_LOCK_TTL_SECONDS
+CHART_DERIVED_INLINE_WAIT_MS
 ORDER_FLOW_PINNED_SYMBOLS
 ORDER_FLOW_PRICE_BIN_SIZE
 ORDER_FLOW_QUOTE_REFRESH_MS
@@ -470,7 +448,6 @@ Tables used by agent providers:
 
 ```text
 market_data.symbols
-market_data.chart_derived_artifacts
 market_data.news_articles
 market_data.news_article_localizations
 market_data.news_company_daily_summaries

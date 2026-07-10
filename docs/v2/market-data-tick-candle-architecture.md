@@ -15,8 +15,8 @@ Current rebuild rules:
 - Realtime tick fanout topics such as `market.realtime.ticks.to.1m.v1` are
   retained for legacy/debug use, but the default processor hot path handles raw
   trades directly and does not re-consume tick fanout.
-- Live candles use `market.layer.candles.live.v1`; closed candles use
-  interval-specific topics such as `market.layer.candles.1m.closed.v1`,
+- Live candles use Redis plus `market.events` pub/sub/WebSocket; closed candles
+  use interval-specific topics such as `market.layer.candles.1m.closed.v1`,
   `market.layer.candles.1h.closed.v1`, and
   `market.layer.candles.1mo.closed.v1`.
 - Kafka messages use `key=symbol`; one partition is handled by one consumer pod

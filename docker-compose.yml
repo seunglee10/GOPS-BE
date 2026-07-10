@@ -58,7 +58,6 @@ services:
           market.realtime.ticks.to.1d.v1
           market.realtime.ticks.to.1w.v1
           market.realtime.ticks.to.1mo.v1
-          market.layer.candles.live.v1
           market.layer.candles.closed.v1
           market.layer.candles.1m.closed.v1
           market.layer.candles.5m.closed.v1
@@ -73,8 +72,6 @@ services:
           market.layer.events.v1
           market.news.alpaca.v1
           market.news.daily-summary-dirty.v1
-          market.chart-derived.requests.v1
-          market.chart-derived.dlq.v1
           orders.commands.v1
           broker.submit-results.v1
           broker.order-events.v1
@@ -541,7 +538,6 @@ services:
       KAFKA_REALTIME_TICKS_TO_1MO_TOPIC: "market.realtime.ticks.to.1mo.v1"
       KAFKA_TICK_FANOUT_INTERVALS: ""
       KAFKA_PUBLISH_TICK_FANOUT: "false"
-      KAFKA_LIVE_CANDLE_TOPIC: "market.layer.candles.live.v1"
       KAFKA_CLOSED_CANDLE_TOPIC: "market.layer.candles.closed.v1"
       KAFKA_CLOSED_CANDLE_1M_TOPIC: "market.layer.candles.1m.closed.v1"
       KAFKA_CLOSED_CANDLE_5M_TOPIC: "market.layer.candles.5m.closed.v1"
@@ -602,7 +598,6 @@ services:
       KAFKA_EVENTS_LAYER_TOPIC: "market.layer.events.v1"
       KAFKA_TICK_FANOUT_INTERVALS: ""
       KAFKA_PUBLISH_TICK_FANOUT: "false"
-      KAFKA_LIVE_CANDLE_TOPIC: "market.layer.candles.live.v1"
       KAFKA_PROCESSOR_ENABLE_AUTO_COMMIT: "false"
       PROCESSOR_LOG_EVERY_N: "500"
       COMPONENT_HEALTH_TTL_SECONDS: "300"
@@ -653,7 +648,8 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
       KAFKA_S3_GROUP_ID: "alfaka-processed-s3-sink"
       KAFKA_S3_ENABLE_AUTO_COMMIT: "false"
-      KAFKA_PROCESSED_TOPICS: "market.layer.candles.1m.closed.v1,market.layer.candles.5m.closed.v1,market.layer.candles.10m.closed.v1,market.layer.candles.1h.closed.v1,market.layer.candles.4h.closed.v1,market.layer.candles.1d.closed.v1,market.layer.candles.1w.closed.v1,market.layer.candles.1mo.closed.v1,market.layer.trades.v1,market.layer.quotes.v1,market.layer.events.v1"
+      KAFKA_PROCESSED_TOPICS: "market.layer.candles.1m.closed.v1,market.layer.candles.5m.closed.v1,market.layer.candles.10m.closed.v1,market.layer.candles.1h.closed.v1,market.layer.candles.4h.closed.v1,market.layer.candles.1d.closed.v1,market.layer.candles.1w.closed.v1,market.layer.candles.1mo.closed.v1,market.layer.events.v1"
+      S3_REALTIME_LAYOUT_MODE: "${S3_REALTIME_LAYOUT_MODE:-v2}"
       AWS_REGION: "${AWS_REGION:-ap-northeast-2}"
       AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-ap-northeast-2}"
       AWS_EC2_METADATA_DISABLED: "${AWS_EC2_METADATA_DISABLED:-true}"
@@ -704,6 +700,7 @@ services:
       S3_SESSION_TOKEN: "${S3_SESSION_TOKEN:-}"
       S3_BUCKET: "${S3_BUCKET:-gops-market-data-<aws-account-id>-ap-northeast-2-an}"
       S3_RAW_PREFIX: "${S3_RAW_PREFIX:-market-data/rebuild-20260702-lazy-v1/raw/alpaca}"
+      S3_REALTIME_LAYOUT_MODE: "${S3_REALTIME_LAYOUT_MODE:-v2}"
       S3_MANIFEST_PREFIX: "${S3_MANIFEST_PREFIX:-market-data/rebuild-20260702-lazy-v1/manifest}"
       S3_RAW_FLUSH_COUNT: "1000"
       S3_RAW_FLUSH_INTERVAL_SECONDS: "60"
@@ -829,40 +826,6 @@ services:
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       OPENAI_MODEL: "${OPENAI_MODEL:-gpt-5.4-mini}"
     command: ["python", "-u", "systems/market-data/pods/news-daily-summary-worker/main.py"]
-    restart: unless-stopped
-    networks:
-      - app_net
-      - streaming_net
-      - data_net
-
-  chart-derived-data-worker:
-    image: gops-market-storage
-    build:
-      context: .
-      dockerfile: infra/docker/Dockerfile.gops-market-storage
-    container_name: alfaka-chart-derived-data-worker
-    depends_on:
-      kafka-init:
-        condition: service_completed_successfully
-      clickhouse:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    environment:
-      CHART_DERIVED_WORKER_ENABLED: "${CHART_DERIVED_WORKER_ENABLED:-true}"
-      CHART_DERIVED_REQUEST_TOPIC: "market.chart-derived.requests.v1"
-      CHART_DERIVED_DLQ_TOPIC: "market.chart-derived.dlq.v1"
-      CHART_DERIVED_WORKER_GROUP_ID: "alfaka-chart-derived-data-worker"
-      CHART_DERIVED_ENABLE_AUTO_COMMIT: "${CHART_DERIVED_ENABLE_AUTO_COMMIT:-false}"
-      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
-      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
-      CLICKHOUSE_DATABASE: "market_data"
-      CLICKHOUSE_USER: "alfaka"
-      CLICKHOUSE_PASSWORD: "alfaka"
-      CLICKHOUSE_PROVIDER_ENSURE_SESSION_COLUMNS: "true"
-      REDIS_URL: "redis://redis:6379/0"
-      REDIS_KEY_PREFIX: "gops:market:on-demand:v1"
-    command: ["python", "-u", "systems/market-data/pods/chart-derived-data-worker/main.py"]
     restart: unless-stopped
     networks:
       - app_net
@@ -1519,10 +1482,10 @@ services:
       AGENT_ANALYSIS_RESULTS_TOPIC: "agents.analysis-results.v1"
       AGENT_NOTIFICATION_DECISIONS_TOPIC: "agents.notification-decisions.v1"
       AGENT_DLQ_TOPIC: "agents.dlq.v1"
-      CHART_DERIVED_REQUEST_TOPIC: "market.chart-derived.requests.v1"
-      CHART_DERIVED_DLQ_TOPIC: "market.chart-derived.dlq.v1"
-      CHART_DERIVED_API_WAIT_MS: "${CHART_DERIVED_API_WAIT_MS:-1200}"
-      CHART_DERIVED_RETRY_AFTER_MS: "${CHART_DERIVED_RETRY_AFTER_MS:-1000}"
+      CHART_INDICATOR_CACHE_TTL_SECONDS: "${CHART_INDICATOR_CACHE_TTL_SECONDS:-300}"
+      CHART_VOLUME_PROFILE_CACHE_TTL_SECONDS: "${CHART_VOLUME_PROFILE_CACHE_TTL_SECONDS:-30}"
+      CHART_DERIVED_INLINE_LOCK_TTL_SECONDS: "${CHART_DERIVED_INLINE_LOCK_TTL_SECONDS:-30}"
+      CHART_DERIVED_INLINE_WAIT_MS: "${CHART_DERIVED_INLINE_WAIT_MS:-500}"
       ALERT_EVALUATOR_INPUT_TOPIC: "market.layer.trades.v1"
       ALERT_TRIGGERED_TOPIC: "alerts.triggered.v1"
       ALERT_DLQ_TOPIC: "alerts.dlq.v1"

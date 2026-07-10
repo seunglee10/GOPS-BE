@@ -1105,7 +1105,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             "status,orderFlowDaily",
         )
 
-        self.assertEqual(provider.agent_include, ["status"])
+        self.assertEqual(context["marketStatus"]["status"], "active")
         self.assertEqual(context["include"], ["orderFlowDaily", "status"])
         self.assertEqual(context["orderFlowDaily"]["symbol"], "AAPL")
         self.assertEqual(context["orderFlowDaily"]["dataStatus"], "ready")
@@ -1134,12 +1134,9 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(payload["calculationVersion"], "volume-profile-v1")
         self.assertEqual(payload["targetBins"], 4)
         self.assertEqual(payload["derived"]["state"], "ready")
+        self.assertEqual(payload["derived"]["source"], "api-compute")
         self.assertEqual(provider.calls, [])
-        self.assertEqual(derived_client.requests[0]["kind"], "volumeProfile")
-        self.assertEqual(derived_client.requests[0]["interval"], "1m")
-        self.assertEqual(derived_client.requests[0]["parameters"]["targetBins"], 4)
-        self.assertEqual(derived_client.requests[0]["parameters"]["priceMin"], 100)
-        self.assertEqual(derived_client.requests[0]["parameters"]["priceMax"], 102)
+        self.assertEqual(derived_client.requests, [])
         payload_5m = service.volume_profile_bins(
             "aapl",
             "2026-06-25T13:30:00.000Z",
@@ -1151,7 +1148,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             interval="5m",
         )
         self.assertEqual(payload_5m["interval"], "5m")
-        self.assertNotEqual(derived_client.requests[0]["requestHash"], derived_client.requests[1]["requestHash"])
+        self.assertNotEqual(payload["derived"]["requestHash"], payload_5m["derived"]["requestHash"])
         payload_1h = service.volume_profile_bins(
             "aapl",
             "2026-06-25T13:30:00.000Z",
@@ -1163,7 +1160,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             interval="1h",
         )
         self.assertEqual(payload_1h["interval"], "1h")
-        self.assertEqual(derived_client.requests[2]["interval"], "1h")
+        self.assertNotEqual(payload_5m["derived"]["requestHash"], payload_1h["derived"]["requestHash"])
 
     def test_volume_profile_bins_rejects_reversed_price_range(self):
         service = MarketDataQueryService(FakeVolumeProfileProvider(), backfill_service=FakeBackfillService(), fill_service=FakeFillService())
@@ -1190,7 +1187,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(payload["symbol"], "AAPL")
         self.assertEqual(payload["interval"], "1m")
         self.assertEqual([item["id"] for item in payload["indicators"]], ["sma:5", "ema:5", "rsi:14"])
-        self.assertEqual(payload["derived"]["source"], "api-inline")
+        self.assertEqual(payload["derived"]["source"], "api-compute")
         self.assertFalse(payload["derived"]["artifactStored"])
         self.assertEqual(len(payload["series"]["sma:5"]), 10)
         self.assertIsNotNone(payload["series"]["sma:5"][0]["value"])
@@ -1259,7 +1256,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
 
         self.assertEqual(payload["symbol"], "BAC")
         self.assertEqual(payload["interval"], "1h")
-        self.assertEqual(payload["derived"]["source"], "api-inline")
+        self.assertEqual(payload["derived"]["source"], "api-compute")
         self.assertEqual(payload["returnedCandleCount"], 13)
         self.assertEqual(len(payload["series"]["sma:5"]), 8)
         self.assertIsNotNone(payload["series"]["sma:5"][0]["value"])
@@ -1289,7 +1286,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             30,
         )
 
-        self.assertEqual(first["derived"]["source"], "api-inline")
+        self.assertEqual(first["derived"]["source"], "api-compute")
         self.assertEqual(second["derived"]["source"], "redis")
         self.assertTrue(second["cache"]["hit"])
         self.assertEqual(len(provider.calls), provider_call_count)
@@ -4149,16 +4146,17 @@ class ChartCompareServiceTest(unittest.TestCase):
         self.calls = []
 
     def make_service(self, bars_by_symbol):
-        def fetcher(symbol, start, end, feed, timeframe):
-            self.calls.append({"symbol": symbol, "start": start, "end": end, "feed": feed, "timeframe": timeframe})
-            value = bars_by_symbol.get(symbol)
-            if isinstance(value, Exception):
-                raise value
-            return value or []
+        class FakeCompareCandleQuery:
+            def query(_self, symbol, interval, limit, **kwargs):
+                self.calls.append({"symbol": symbol, "interval": interval, "limit": limit, **kwargs})
+                value = bars_by_symbol.get(symbol)
+                if isinstance(value, Exception):
+                    raise value
+                return {"symbol": symbol, "interval": interval, "candles": value or []}
 
         return ChartCompareService(
             provider=self.provider,
-            fetcher=fetcher,
+            candle_query=FakeCompareCandleQuery(),
             now=lambda: datetime(2026, 7, 6, 21, 0, tzinfo=timezone.utc),
         )
 
@@ -4177,7 +4175,7 @@ class ChartCompareServiceTest(unittest.TestCase):
 
         payload = service.snapshot(["NVDA", "AMD"], "1D")
 
-        self.assertEqual({call["timeframe"] for call in self.calls}, {"1Min"})
+        self.assertEqual({call["interval"] for call in self.calls}, {"1m"})
         nvda = next(item for item in payload["items"] if item["symbol"] == "NVDA")
         self.assertEqual([point["time"] for point in nvda["points"]], ["2026-07-06T13:30:00Z", "2026-07-06T14:30:00Z"])
         self.assertEqual(nvda["basePrice"], 100)
@@ -4186,17 +4184,17 @@ class ChartCompareServiceTest(unittest.TestCase):
         self.assertAlmostEqual(nvda["points"][-1]["returnPercent"], 10.0)
 
     def test_compare_range_timeframe_mapping(self):
-        for range_value, expected_timeframe in {
-            "1M": "1Hour",
-            "6M": "1Day",
-            "1Y": "1Day",
-            "5Y": "1Week",
-        }.items():
+        for range_value, expected_timeframe, expected_interval in [
+            ("1M", "1Hour", "1h"),
+            ("6M", "1Day", "1D"),
+            ("1Y", "1Day", "1D"),
+            ("5Y", "1Week", "1W"),
+        ]:
             self.calls = []
             service = self.make_service({"NVDA": [{"t": "2026-07-06T14:30:00Z", "c": 100}, {"t": "2026-07-06T15:30:00Z", "c": 101}]})
             payload = service.snapshot(["NVDA"], range_value)
             self.assertEqual(payload["timeframe"], expected_timeframe)
-            self.assertEqual(self.calls[0]["timeframe"], expected_timeframe)
+            self.assertEqual(self.calls[0]["interval"], expected_interval)
 
     def test_compare_returns_partial_payload_when_one_symbol_fails(self):
         service = self.make_service({

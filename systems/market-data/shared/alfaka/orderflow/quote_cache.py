@@ -25,6 +25,7 @@ class PinnedQuoteCache:
         self.redis = redis_client
         self.keys = redis_keys
         self.refresh_seconds = max(1, int(refresh_ms)) / 1000
+        self.redis_fallback_refresh_seconds = max(1.0, self.refresh_seconds)
         self.clock = clock or time.monotonic
         self.redis_fallback = redis_fallback
         self.pinned_symbols = frozenset(str(symbol).upper() for symbol in (pinned_symbols or []) if str(symbol).strip())
@@ -47,7 +48,7 @@ class PinnedQuoteCache:
             return self.memory_quotes[normalized]
         now = self.clock()
         cached = self.redis_cache.get(normalized)
-        if cached is not None and now - cached[1] < self.refresh_seconds:
+        if cached is not None and now - cached[1] < self.redis_fallback_refresh_seconds:
             return cached[0]
         if not self.redis_fallback:
             return None

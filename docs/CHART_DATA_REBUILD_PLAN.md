@@ -219,17 +219,12 @@ deployment, `initial-load` job, and chart backfill queue env are not part of the
 current runtime. Coverage repair is an audit job that calls the candles endpoint
 and reports the returned fill trace.
 
-Chart-derived rendering data is separate from candle fill. The API server owns
-request normalization, candle source fill for indicator requests, Redis/ClickHouse
-artifact lookup, Kafka enqueue, and short wait/pending responses. The
-`chart-derived-data-worker` owns indicator and candle-based volume profile
-calculation. It consumes `market.chart-derived.requests.v1`, writes hot results
-to Redis, and materializes request artifacts into
-`market_data.chart_derived_artifacts` so the frontend and future Agent flows can
-reference the same derived result by request hash.
-Volume profile v1 is always candle OHLCV based `estimated` data for the
-requested chart interval; it does not depend on trade ticks or
-`volume_profile_bins_1m` materialization.
+Chart-derived rendering data is separate from candle fill. One API-owned
+`DerivedCalculationService` normalizes indicator and candle volume-profile
+requests, reads through the canonical candle facade, applies Redis TTL cache +
+`SET NX EX` singleflight, and returns a ready result. Kafka request queues and
+ClickHouse request-hash artifacts are not part of this path. Volume profile v1
+remains candle OHLCV based `estimated` data for the requested chart interval.
 
 Bid/ask order-flow profile is a separate trade+quote path. The live processor
 writes closed minute blobs to `order-flow:{symbol}:minutes` and the current
@@ -256,8 +251,12 @@ Derived result retention is intentionally shorter than candle history:
 
 ```text
 Redis: indicators 300s, volume profile 30s
-ClickHouse artifacts: indicators 7d, volume profile 1d
+Redis singleflight lock: 30s
+ClickHouse artifacts: none
 ```
+
+The complete producer/storage/reader/retention matrix and operator migration
+procedure are in `docs/CHART_DATA_CONTRACTS.md`.
 
 News historical collection remains a separate news-domain job and may still use
 `NEWS_BACKFILL_*` env names.

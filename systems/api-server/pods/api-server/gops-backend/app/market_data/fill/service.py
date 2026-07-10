@@ -6,6 +6,7 @@ import logging
 import os
 import threading
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, time as datetime_time, timedelta, timezone
 from typing import Any
@@ -55,6 +56,107 @@ _BACKGROUND_ACTIVE: set[str] = set()
 _BACKGROUND_LOCK = threading.Lock()
 
 
+class DistributedFillSingleflight:
+    def __init__(self, redis_client, *, lock_ttl_seconds: int | None = None, terminal_ttl_seconds: int | None = None):
+        self.redis = redis_client
+        self.enabled = os.getenv("ON_DEMAND_FILL_DISTRIBUTED_SINGLEFLIGHT_ENABLED", "true").lower() not in {
+            "0", "false", "off", "no"
+        }
+        self.lock_ttl_seconds = lock_ttl_seconds or max(
+            1, int(os.getenv("ON_DEMAND_FILL_SINGLEFLIGHT_LOCK_TTL_SECONDS", "120"))
+        )
+        self.terminal_ttl_seconds = terminal_ttl_seconds or max(
+            1, int(os.getenv("ON_DEMAND_FILL_SINGLEFLIGHT_TERMINAL_TTL_SECONDS", "300"))
+        )
+
+    def acquire(self, request_id: str) -> tuple[bool, str | None, str]:
+        if not self.enabled or self.redis is None:
+            return True, None, "local_only"
+        owner_token = uuid.uuid4().hex
+        value = self._value("running", owner_token)
+        try:
+            acquired = self.redis.set(
+                self._key(request_id),
+                value,
+                nx=True,
+                ex=self.lock_ttl_seconds,
+            )
+        except TypeError:
+            return True, None, "local_only"
+        except Exception:
+            return True, None, "local_only"
+        if acquired:
+            return True, owner_token, "queued"
+        return False, None, self._existing_state(request_id)
+
+    def complete(self, request_id: str, owner_token: str | None, status: str) -> bool:
+        if not owner_token or self.redis is None or not self._owned(request_id, owner_token):
+            return False
+        value = self._value("terminal", owner_token, status=status)
+        try:
+            self.redis.set(self._key(request_id), value, ex=self.terminal_ttl_seconds)
+            return True
+        except TypeError:
+            try:
+                self.redis.set(self._key(request_id), value)
+                self.redis.expire(self._key(request_id), self.terminal_ttl_seconds)
+                return True
+            except Exception:
+                return False
+        except Exception:
+            return False
+
+    def release(self, request_id: str, owner_token: str | None) -> bool:
+        if not owner_token or self.redis is None or not self._owned(request_id, owner_token):
+            return False
+        try:
+            self.redis.delete(self._key(request_id))
+            return True
+        except Exception:
+            return False
+
+    def _owned(self, request_id: str, owner_token: str) -> bool:
+        try:
+            value = self.redis.get(self._key(request_id))
+        except Exception:
+            return False
+        payload = parse_singleflight_value(value)
+        return payload.get("owner") == owner_token and payload.get("state") == "running"
+
+    def _existing_state(self, request_id: str) -> str:
+        try:
+            payload = parse_singleflight_value(self.redis.get(self._key(request_id)))
+        except Exception:
+            payload = {}
+        return "terminal" if payload.get("state") == "terminal" else "already_queued"
+
+    @staticmethod
+    def _value(state: str, owner_token: str, *, status: str | None = None) -> str:
+        return json.dumps(
+            {"state": state, "owner": owner_token, "status": status},
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+
+    @staticmethod
+    def _key(request_id: str) -> str:
+        prefix = os.getenv("REDIS_KEY_PREFIX", "gops:market:on-demand:v1").strip().strip(":")
+        namespace = f"{prefix}:" if prefix else ""
+        return f"{namespace}fill:singleflight:v1:{request_id}"
+
+
+def parse_singleflight_value(value: Any) -> dict[str, Any]:
+    if isinstance(value, bytes):
+        value = value.decode("utf-8")
+    if not isinstance(value, str):
+        return {}
+    try:
+        payload = json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 class OnDemandFillService:
     """Queues historical repair for only the frontend-requested chart window."""
 
@@ -87,6 +189,8 @@ class OnDemandFillService:
         )
         self.foreground_auto_max_bars = max(1, int(os.getenv("ON_DEMAND_FILL_FOREGROUND_AUTO_MAX_BARS", "500")))
         self.background_executor = background_executor
+        redis_provider = getattr(provider, "redis_provider", None)
+        self.singleflight = DistributedFillSingleflight(getattr(redis_provider, "redis", None))
 
     def fill_if_needed(
         self,
@@ -440,6 +544,14 @@ class OnDemandFillService:
         with _BACKGROUND_LOCK:
             if request_id in _BACKGROUND_ACTIVE:
                 return {"queued": True, "state": "already_queued", "requestId": request_id, "reason": "matching fill already running"}
+            acquired, owner_token, distributed_state = self.singleflight.acquire(request_id)
+            if not acquired:
+                return {
+                    "queued": True,
+                    "state": distributed_state,
+                    "requestId": request_id,
+                    "reason": "matching fill is owned by another API replica",
+                }
             _BACKGROUND_ACTIVE.add(request_id)
         try:
             executor = self.background_executor or background_executor()
@@ -456,10 +568,12 @@ class OnDemandFillService:
                 requested_start,
                 requested_end,
                 fill_ranges,
+                owner_token,
             )
         except Exception as exc:
             with _BACKGROUND_LOCK:
                 _BACKGROUND_ACTIVE.discard(request_id)
+            self.singleflight.release(request_id, owner_token)
             return {"queued": False, "state": "failed", "requestId": request_id, "reason": str(exc)}
         return {"queued": True, "state": "queued", "requestId": request_id, "reason": "range repair queued"}
 
@@ -476,6 +590,7 @@ class OnDemandFillService:
         requested_start: str,
         requested_end: str,
         fill_ranges: list[dict[str, Any]],
+        owner_token: str | None = None,
     ) -> None:
         started = time.monotonic()
         trace = self._initial_trace(symbol, interval, source_interval, limit, requested_start, requested_end)
@@ -515,6 +630,7 @@ class OnDemandFillService:
             )
             with _BACKGROUND_LOCK:
                 _BACKGROUND_ACTIVE.discard(request_id)
+            self.singleflight.complete(request_id, owner_token, status)
 
     def _fill_from_s3(self, symbol: str, interval: str, ranges: list[dict[str, Any]], trace: dict[str, Any], started: float) -> bool:
         source = trace["sources"]["s3"]

@@ -268,7 +268,6 @@ def _topics():
         "trades": "market.layer.trades.v1",
         "quotes": "market.layer.quotes.v1",
         "events": "market.layer.events.v1",
-        "live_candles": "market.layer.candles.live.v1",
         "closed_candles": "market.layer.candles.closed.v1",
     }
 

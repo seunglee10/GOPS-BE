@@ -223,8 +223,17 @@ class MarketDataProvider:
 
     def agent_chart_context(self, symbol, interval, from_time, to_time, include):
         interval = normalize_chart_interval(interval)
-        candles = self.clickhouse_provider.candles_since(symbol, interval, from_time, 500)
-        daily = self.clickhouse_provider.candles(symbol, "1D", 2)
+        visible = self.candle_snapshot(
+            symbol,
+            interval,
+            500,
+            from_time=from_time,
+            to_time=to_time,
+            ma_windows=(),
+        )
+        daily_snapshot = self.candle_snapshot(symbol, "1D", 2, ma_windows=())
+        candles = visible.get("candles") or []
+        daily = daily_snapshot.get("candles") or []
         return {
             "symbol": symbol,
             "interval": interval,
