@@ -102,12 +102,19 @@ ClickHouse artifact contract.
 
 - The `bidask` chart type reads intraday minute rows and supports `1m`, `10m`,
   and `1h` display buckets.
-- `OrderFlowPanel` reads intraday Redis data for today and the daily endpoint
-  for a selected prior day or fallback when today is empty.
+- `OrderFlowPanel` reads only today's intraday Redis data and owns its symbol,
+  aggregation window, and display resolution independently from chart panels.
 - Daily rows are also retained for audit and existing agent chart context.
-  They are not the Bid/Ask chart's source.
+  They are not the Bid/Ask chart or `OrderFlowPanel` source.
 - Side classification is fixed by the order-flow API metadata. Candle volume
   profile remains estimated candle-range allocation and is a separate feature.
+
+The processor restores an unexpired Redis `live-minute` blob on restart so the
+current minute can continue accumulating or be promoted to a closed minute.
+Longer processor outages are not reconstructed by the intraday API. A future
+coverage project must rebuild missing minute profiles from retained ClickHouse
+trade/quote ticks and add minute-level `no-trades` versus `not-collected`
+metadata; the frontend must not manufacture zero-volume rows in the meantime.
 
 ## S3 Durability
 

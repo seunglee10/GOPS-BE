@@ -10,6 +10,7 @@ from alfaka.serving.redis_provider import RedisMarketDataProvider
 from alfaka.streaming.processor import (
     maybe_publish_order_flow_event,
     process_order_flow_live_path,
+    restore_order_flow_live_minutes,
     write_order_flow_bin_to_redis,
 )
 
@@ -198,6 +199,59 @@ class OrderFlowBinBuilderTest(unittest.TestCase):
         self.assertNotIn(keys.order_flow_minutes("NVDA"), redis.zsets)
         live_blob = json.loads(redis.values[keys.order_flow_live_minute("NVDA")])
         self.assertEqual(live_blob["sessionDate"], "2026-07-10")
+
+    def test_restart_restore_continues_the_same_live_minute(self):
+        redis = _MemoryRedis()
+        keys = RedisKeyBuilder(prefix="")
+        minute = "2026-07-09T13:30:00.000Z"
+        live = order_flow_minute_blob("NVDA", minute, [
+            _bin(minute, "2026-07-09", 158.34, ask=10),
+        ])
+        redis.set(keys.order_flow_live_minute("NVDA"), encode_order_flow_minute_blob(live), ex=300)
+        builder = OrderFlowBinBuilder(price_bin_size=0.01, pinned_symbols=frozenset({"NVDA"}))
+        state = types.SimpleNamespace(order_flow_builder=builder, order_flow_redis_flush_state={})
+
+        self.assertEqual(restore_order_flow_live_minutes(state, redis, keys), 1)
+        next_bin = builder.update(_trade(timestamp="2026-07-09T13:30:40.000Z", price=158.34, size=5), "bid")
+        write_order_flow_bin_to_redis(redis, keys, next_bin, state=state)
+
+        restored_live = json.loads(redis.values[keys.order_flow_live_minute("NVDA")])
+        self.assertEqual(sum(item["askVolume"] for item in restored_live["bins"]), 10)
+        self.assertEqual(sum(item["bidVolume"] for item in restored_live["bins"]), 5)
+
+    def test_restart_restore_closes_previous_live_minute_before_next_trade(self):
+        redis = _MemoryRedis()
+        keys = RedisKeyBuilder(prefix="")
+        minute = "2026-07-09T13:30:00.000Z"
+        live = order_flow_minute_blob("NVDA", minute, [
+            _bin(minute, "2026-07-09", 158.34, ask=10),
+        ])
+        redis.set(keys.order_flow_live_minute("NVDA"), encode_order_flow_minute_blob(live), ex=300)
+        builder = OrderFlowBinBuilder(price_bin_size=0.01, pinned_symbols=frozenset({"NVDA"}))
+        state = types.SimpleNamespace(
+            order_flow_builder=builder,
+            order_flow_quote_cache=None,
+            order_flow_quote_max_age_ms=2000,
+            order_flow_quote_future_tolerance_ms=250,
+            order_flow_publish_state={},
+            order_flow_redis_flush_state={},
+            order_flow_minutes_ttl_state=set(),
+        )
+
+        self.assertEqual(restore_order_flow_live_minutes(state, redis, keys), 1)
+        process_order_flow_live_path(
+            _trade(timestamp="2026-07-09T13:31:05.000Z", price=158.35, size=3),
+            redis,
+            keys,
+            state,
+        )
+
+        closed_values = redis.zsets[keys.order_flow_minutes("NVDA")]
+        closed_blob = json.loads(next(iter(closed_values)))
+        self.assertEqual(closed_blob["eventMinute"], minute)
+        self.assertEqual(sum(item["askVolume"] for item in closed_blob["bins"]), 10)
+        current_live = json.loads(redis.values[keys.order_flow_live_minute("NVDA")])
+        self.assertEqual(current_live["eventMinute"], "2026-07-09T13:31:00.000Z")
 
     def test_redis_provider_reads_new_layout_first_and_live_minute_overrides_closed(self):
         redis = _MemoryRedis()

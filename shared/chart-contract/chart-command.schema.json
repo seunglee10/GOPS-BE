@@ -46,6 +46,16 @@
     "payload": {
       "type": "object",
       "additionalProperties": true,
+      "allOf": [
+        {
+          "if": { "required": ["drawingType"], "properties": { "drawingType": { "const": "riskRewardBox" } } },
+          "then": { "properties": { "anchors": { "minItems": 3, "maxItems": 3 } } }
+        },
+        {
+          "if": { "required": ["drawingType"], "properties": { "drawingType": { "const": "fibonacciRetracement" } } },
+          "then": { "properties": { "anchors": { "minItems": 2, "maxItems": 2 } } }
+        }
+      ],
       "properties": {
         "symbol": { "type": "string" },
         "timeframe": { "type": "string", "enum": ["1m", "5m", "10m", "1h", "4h", "1D", "1W", "1M"] },
@@ -60,10 +70,13 @@
           "type": "string",
           "enum": [
             "horizontalLine",
+            "horizontalParallelLines",
             "trendLine",
+            "trendParallelLines",
             "verticalMarker",
+            "verticalParallelLines",
             "textLabel",
-            "pointMarker",
+            "flagMarker",
             "arrow",
             "rangeBox",
             "measurement",
@@ -76,6 +89,8 @@
           "type": "array",
           "items": { "$ref": "#/$defs/drawingAnchor" }
         },
+        "sourceInterval": { "type": "string", "enum": ["1m", "5m", "10m", "1h", "4h", "1D", "1W", "1M"] },
+        "parallelLineCount": { "type": "integer", "minimum": 2, "maximum": 10 },
         "style": { "$ref": "#/$defs/drawingStyle" },
         "label": { "type": "string" },
         "preview": {
@@ -116,7 +131,8 @@
         "paneId": { "type": "string" },
         "symbol": { "type": "string" },
         "logicalIndex": { "type": "number" },
-        "value": { "type": "number" }
+        "value": { "type": "number" },
+        "interval": { "type": "string", "enum": ["1m", "5m", "10m", "1h", "4h", "1D", "1W", "1M"] }
       }
     },
     "drawingStyle": {
@@ -124,13 +140,17 @@
       "additionalProperties": true,
       "properties": {
         "color": { "type": "string" },
+        "colorToken": { "type": "string" },
         "lineWidth": { "type": "number", "minimum": 1 },
         "lineDash": {
           "type": "array",
           "items": { "type": "number", "minimum": 0 }
         },
         "fillColor": { "type": "string" },
+        "fillToken": { "type": "string" },
+        "fillOpacity": { "type": "number", "minimum": 0, "maximum": 1 },
         "textColor": { "type": "string" },
+        "textToken": { "type": "string" },
         "fontSize": { "type": "number", "minimum": 8 },
         "opacity": { "type": "number", "minimum": 0, "maximum": 1 },
         "extension": { "type": "string", "enum": ["segment", "ray", "line"] }
@@ -140,16 +160,29 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["id", "type", "anchors", "style", "visible", "createdBy"],
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "riskRewardBox" } } },
+          "then": { "properties": { "anchors": { "minItems": 3, "maxItems": 3 } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "fibonacciRetracement" } } },
+          "then": { "properties": { "anchors": { "minItems": 2, "maxItems": 2 } } }
+        }
+      ],
       "properties": {
         "id": { "type": "string" },
         "type": {
           "type": "string",
           "enum": [
             "horizontalLine",
+            "horizontalParallelLines",
             "trendLine",
+            "trendParallelLines",
             "verticalMarker",
+            "verticalParallelLines",
             "textLabel",
-            "pointMarker",
+            "flagMarker",
             "arrow",
             "rangeBox",
             "measurement",
@@ -162,8 +195,10 @@
           "type": "array",
           "items": { "$ref": "#/$defs/drawingAnchor" }
         },
+        "sourceInterval": { "type": "string", "enum": ["1m", "5m", "10m", "1h", "4h", "1D", "1W", "1M"] },
         "style": { "$ref": "#/$defs/drawingStyle" },
         "label": { "type": "string" },
+        "parallelLineCount": { "type": "integer", "minimum": 2, "maximum": 10 },
         "locked": { "type": "boolean" },
         "visible": { "type": "boolean" },
         "createdBy": { "type": "string", "enum": ["user", "llm", "system"] },

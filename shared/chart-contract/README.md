@@ -32,5 +32,13 @@ Rules:
   Redis, S3, or ClickHouse.
 - One accepted proposal should become one undo/redo unit.
 - Drawing proposals are preview-first; applying a preview turns it into an editable drawing.
+- Drawing `anchor.interval` and `sourceInterval` use canonical chart intervals.
+- `parallelLineCount` is an integer from 2 through 10, and drawing `fillOpacity`
+  is a number from 0 through 1.
+- `riskRewardBox` uses exactly three canonical anchors in `[entry, stop, target]`
+  order. Target time is normalized to Stop time; Stop and Target must remain on
+  opposite sides of Entry.
+- `fibonacciRetracement` uses exactly two canonical swing anchors and fixed v1
+  levels `0, 0.236, 0.382, 0.5, 0.618, 0.786, 1`.
 
 Update every mirror in the same change when this contract changes.

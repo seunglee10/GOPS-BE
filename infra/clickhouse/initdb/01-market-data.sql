@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS market_data.trade_ticks
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(event_time)
 ORDER BY (symbol, event_time, feed_profile, trade_id)
-TTL event_time + INTERVAL 21 DAY DELETE;
+TTL toDateTime(event_time) + INTERVAL 21 DAY DELETE;
 
 CREATE TABLE IF NOT EXISTS market_data.quote_ticks
 (
@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS market_data.quote_ticks
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(event_time)
 ORDER BY (symbol, event_time, feed_profile)
-TTL event_time + INTERVAL 21 DAY DELETE;
+TTL toDateTime(event_time) + INTERVAL 21 DAY DELETE;
 
 CREATE TABLE IF NOT EXISTS market_data.chart_candles
 (

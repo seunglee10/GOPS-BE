@@ -154,6 +154,7 @@ class RedisLeanHotPathTest(unittest.TestCase):
 
         with mock.patch.dict(os.environ, {"ORDER_FLOW_PINNED_SYMBOLS": "NVDA"}):
             configure_order_flow_state(state, redis, keys)
+            startup_get_count = redis.counts["get"]
             result = process_raw_envelope(_quote_envelope(1, symbol="NVDA"), producer, redis, keys, state, _topics())
             process_raw_envelope(_quote_envelope(2, symbol="AAPL"), producer, redis, keys, state, _topics())
 
@@ -162,7 +163,8 @@ class RedisLeanHotPathTest(unittest.TestCase):
         self.assertEqual(quote["bidPrice"], 100.01)
         self.assertEqual(quote["askPrice"], 100.11)
         self.assertIsNone(state.order_flow_quote_cache.quote_for("AAPL"))
-        self.assertEqual(redis.counts["get"], 0)
+        self.assertEqual(startup_get_count, 1)
+        self.assertEqual(redis.counts["get"], startup_get_count)
         self.assertEqual(redis.counts["publish"], 0)
         self.assertEqual(redis.command_count("set", keys.live_quote("NVDA")), 0)
         self.assertEqual(producer.sent, [])

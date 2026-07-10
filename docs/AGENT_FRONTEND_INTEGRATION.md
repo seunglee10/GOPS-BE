@@ -139,6 +139,19 @@ from trades plus top-of-book quotes.
 drawing command로 저장하고, 해당 봉은 canvas에서 만료 시간이 있는 highlight overlay로
 잠깐 표시한다.
 
+Drawing anchor는 pixel이 아니라 canonical `timestamp`/`price`를 사용하고
+`logicalIndex`는 현재 candle 배열에서 계산 가능한 보조 cache로만 취급한다. 지원하는
+평행선 계약은 2-anchor `horizontalParallelLines`/`verticalParallelLines`, 3-anchor
+`trendParallelLines`이며 추세 평행선의 `parallelLineCount`는 2..10이다. 이벤트 설명은
+`flagMarker`의 editable label을 사용한다. `rangeBox`와 평행선 band fill은 candle/지표
+아래에서, outline·label·selection handle은 chart layer 위에서 렌더링해야 한다.
+추세 평행선은 기준선 기준 `0,+1,-1,+2,-2…` 의미 순서로 확장하고 화면 geometry는
+공간 순으로 정렬한다. `riskRewardBox`는 `[entry, stop, target]` 세 anchor를 사용하며
+target time은 stop time과 같아야 한다. `fibonacciRetracement`는 두 swing anchor와 고정
+레벨 `0, 0.236, 0.382, 0.5, 0.618, 0.786, 1`만 사용한다.
+모든 fill은 시각 레이어일 뿐 hit-test 대상이 아니며, selection은 line·outline·handle·label로만
+수행한다.
+
 Headers:
 
 ```text

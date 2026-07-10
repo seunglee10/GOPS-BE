@@ -73,6 +73,63 @@ class OrderFlowBinBuilder:
         bins.sort(key=lambda item: item["priceBin"])
         return bins
 
+    def restore_minute(self, symbol: str, event_minute: str, bins: list[dict[str, Any]]) -> int:
+        normalized_symbol = str(symbol or "").upper()
+        if normalized_symbol not in self.pinned_symbols or not event_minute:
+            return 0
+        try:
+            minute_dt = datetime.fromisoformat(str(event_minute).replace("Z", "+00:00")).astimezone(timezone.utc)
+        except (TypeError, ValueError):
+            return 0
+        minute_epoch = int(minute_dt.timestamp())
+        restored = 0
+        session_date = minute_dt.astimezone(MARKET_TIMEZONE).date().isoformat()
+        for source in bins or []:
+            if not isinstance(source, dict):
+                continue
+            if str(source.get("symbol") or normalized_symbol).upper() != normalized_symbol:
+                continue
+            if str(source.get("eventMinute") or event_minute) != event_minute:
+                continue
+            try:
+                price_bin = round(float(source["priceBin"]), 6)
+            except (KeyError, TypeError, ValueError):
+                continue
+            ask_volume = _nonnegative_number(source.get("askVolume"))
+            bid_volume = _nonnegative_number(source.get("bidVolume"))
+            unknown_volume = _nonnegative_number(source.get("unknownVolume"))
+            ask_count = _nonnegative_int(source.get("askTradeCount"))
+            bid_count = _nonnegative_int(source.get("bidTradeCount"))
+            unknown_count = _nonnegative_int(source.get("unknownTradeCount"))
+            value = {
+                "eventType": "ORDER_FLOW_BIN",
+                "eventMinute": event_minute,
+                "sessionDate": str(source.get("sessionDate") or session_date),
+                "symbol": normalized_symbol,
+                "priceBin": price_bin,
+                "priceBinSize": self.price_bin_size,
+                "askVolume": ask_volume,
+                "bidVolume": bid_volume,
+                "unknownVolume": unknown_volume,
+                "askTradeCount": ask_count,
+                "bidTradeCount": bid_count,
+                "unknownTradeCount": unknown_count,
+                "volume": ask_volume + bid_volume + unknown_volume,
+                "tradeCount": ask_count + bid_count + unknown_count,
+                "sideClassification": source.get("sideClassification") or ORDER_FLOW_SIDE_CLASSIFICATION,
+                "classificationVersion": source.get("classificationVersion") or ORDER_FLOW_CLASSIFICATION_VERSION,
+                "source": source.get("source") or "alpaca",
+                "feed": source.get("feed") or "unknown",
+                "marketSession": "regular",
+                "updatedAt": source.get("updatedAt") or _now_iso(),
+            }
+            self.bins[(normalized_symbol, minute_epoch, price_bin)] = value
+            restored += 1
+        if restored:
+            self.last_session_date_by_symbol[normalized_symbol] = session_date
+            self._drop_stale(minute_epoch)
+        return restored
+
     def current_session_date(self, symbol: str) -> str | None:
         return self.last_session_date_by_symbol.get(str(symbol or "").upper())
 
@@ -120,6 +177,20 @@ def _side_keys(side: str) -> tuple[str, str]:
     if side == "bid":
         return "bidVolume", "bidTradeCount"
     return "unknownVolume", "unknownTradeCount"
+
+
+def _nonnegative_number(value: Any) -> float:
+    try:
+        return max(0.0, float(value or 0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _nonnegative_int(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _now_iso() -> str:
