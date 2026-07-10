@@ -28,8 +28,8 @@ market.input.realtime.daily-bars.v1
 
 `market.input.realtime.quotes.v1` is consumed by the quote processor, written
 to Redis/WebSocket live state, and republished as `market.layer.quotes.v1` for
-ClickHouse tick storage. Raw S3 keeps backup evidence; processed S3 does not
-consume the quote layer topic.
+ClickHouse tick storage. The raw S3 sink intentionally excludes high-volume
+trade and quote topics; processed S3 also does not consume the quote layer topic.
 
 `market.input.realtime.trades.v1` and `market.input.realtime.quotes.v1` are the
 hot raw streams. Creation helpers default them to 12 partitions so trade/candle

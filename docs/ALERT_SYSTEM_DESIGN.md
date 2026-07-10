@@ -328,7 +328,7 @@ tradeId가 없는 틱은 `{symbol}:{tickTimestamp}`로 대체 (Alpaca 틱 타임
 ### 6.5 테스트
 
 - evaluator 단위 테스트: 크로싱(갭 포함), 히스테리시스 re-arm, 쿨다운, 윈도우 계산.
-- 리플레이 테스트: 과거 틱 데이터(S3 raw archive 활용)를 토픽에 재생해
+- 리플레이 테스트: 과거 틱 데이터(ClickHouse tick table 또는 고정 fixture 활용)를 토픽에 재생해
   기대 발화 목록과 대조 — 실배포 전 오발화/미발화 검증에 가장 효과적.
 - 부하 테스트: 장중 최대 틱 레이트 × 알림 걸린 심볼 수로 Redis QPS 확인.
 

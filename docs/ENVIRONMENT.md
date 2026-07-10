@@ -511,6 +511,7 @@ Common env:
 ```text
 S3_BUCKET
 KAFKA_RAW_S3_GROUP_ID
+KAFKA_RAW_ARCHIVE_TOPICS
 S3_RAW_PREFIX
 S3_FINAL_PREFIX
 S3_MANIFEST_PREFIX
@@ -561,8 +562,8 @@ Secrets Manager with `ALPACA_CREDENTIAL_SOURCE=local-env`; AWS-contract runs set
 `ALPACA_CREDENTIAL_SOURCE=aws-secrets-manager`.
 
 The processed S3 sink writes canonical layer artifacts under `S3_FINAL_PREFIX`.
-The raw S3 archive sink may copy Alpaca payload envelopes under `S3_RAW_PREFIX`
-for backup/audit only.
+The raw S3 archive sink copies only low-volume event/bar Alpaca envelopes under
+`S3_RAW_PREFIX` for backup/audit. Realtime trades and quotes are excluded.
 
 S3 prefixes have different serving roles:
 
@@ -575,8 +576,8 @@ S3_MANIFEST_PREFIX final-object coverage evidence for on-demand fill
 Do not configure `S3_LIVE_PREFIX` for the rebuild path. Live candles belong in
 Redis/WebSocket state. Quote payloads also update Redis/WebSocket live state,
 then flow through `market.layer.quotes.v1` to ClickHouse tick tables.
-Processed S3 final keeps canonical candle/event artifacts; raw S3 archive is
-the backup path for trade/quote replay evidence.
+Processed S3 final keeps canonical candle/event artifacts. ClickHouse tick
+tables, not raw S3, retain realtime trade/quote history.
 
 Chart API reads, coverage checks, fill decisions, and ClickHouse loaders
 must not query `S3_RAW_PREFIX`. S3 data becomes chart-serving data only from

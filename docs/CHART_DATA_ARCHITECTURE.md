@@ -12,7 +12,8 @@ in `platform/{kafka,redis,clickhouse,s3}/README.md`.
   ClickHouse, or S3 directly.
 - Historical candles are canonical only when `priceAdjustment=split` and
   `canonicalVersion=v2`.
-- Raw S3 is backup evidence, not chart serving or ClickHouse materialization input.
+- Raw S3 keeps low-volume event/bar backup evidence only; realtime trades/quotes
+  are excluded and raw S3 is never chart serving or ClickHouse materialization input.
 - Local runtime never injects fake market candles. `?orderFlowDemo=1` is a
   browser fixture path only.
 - Orders, KIS, and agent APIs are outside this data-plane contract.
@@ -23,7 +24,7 @@ in `platform/{kafka,redis,clickhouse,s3}/README.md`.
 flowchart LR
   Alpaca["Alpaca WebSocket / REST"] --> Ingestor["market ingestors"]
   Ingestor --> RawKafka["Kafka market.input.realtime.*"]
-  RawKafka --> RawS3["S3 raw/raw-v2 backup"]
+  RawKafka --> RawS3["S3 raw/raw-v2 low-volume event/bar backup"]
   RawKafka --> Processor["market and quote processors"]
   Processor --> Redis["Redis recent/live/control state"]
   Processor --> LayerKafka["Kafka market.layer.*"]
@@ -46,7 +47,7 @@ there is no live-candle Kafka topic.
 | Data | Compute owner | Runtime store | Durable store | Load curve |
 | --- | --- | --- | --- | --- |
 | Closed candles | stream processor | Redis newest window | ClickHouse + S3 final | market activity |
-| Live candle/trade/quote | stream/quote processor | bounded Redis keys | ticks in ClickHouse; raw S3 backup | throttled market activity |
+| Live candle/trade/quote | stream/quote processor | bounded Redis keys | ticks in ClickHouse | throttled market activity |
 | Candle indicators | API request | Redis TTL cache | none | unique requests |
 | Candle volume profile | API request | Redis TTL cache | none | unique requests |
 | Bid/Ask intraday minutes | stream processor | Redis closed/current minute blobs | trade/quote ticks in ClickHouse | flush interval, not trade count |
@@ -130,7 +131,7 @@ layout migration. See `platform/s3/README.md` for exact prefixes.
 - Redis live keys and order-flow minute blobs: explicit TTLs.
 - Derived cache and locks: versioned keys with short TTLs and atomic Lua owner checks.
 - ClickHouse trade/quote ticks: 21-day TTL.
-- S3 raw/raw-v2: 30-day operator-owned lifecycle; final evidence has no expiry.
+- S3 raw/raw-v2 low-volume backups: operator-owned lifecycle; final evidence has no expiry.
 - Processor maps, frontend inactive candle caches, and order-flow bucket caches
   have tested upper bounds.
 

@@ -4137,9 +4137,10 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         })
 
         self.assertEqual(config["group_id"], "raw-archive")
-        self.assertEqual(config["topics"][0], "market.input.realtime.trades.v1")
+        self.assertEqual(config["topics"][0], "market.input.realtime.events.v1")
         self.assertIn("market.input.realtime.events.v1", config["topics"])
-        self.assertIn("market.input.realtime.quotes.v1", config["topics"])
+        self.assertNotIn("market.input.realtime.trades.v1", config["topics"])
+        self.assertNotIn("market.input.realtime.quotes.v1", config["topics"])
         self.assertEqual(config["flush_count"], 10)
         self.assertEqual(config["flush_interval_seconds"], 15)
 

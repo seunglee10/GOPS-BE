@@ -3966,8 +3966,8 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         finally:
             monitor_routes.get_monitor_service = previous
 
-        self.assertEqual(payload["quotesPersistence"], "redis-websocket-clickhouse-raw-s3-backup")
-        self.assertEqual(payload["rawS3Role"], "backup-only")
+        self.assertEqual(payload["quotesPersistence"], "redis-websocket-clickhouse")
+        self.assertEqual(payload["rawS3Role"], "low-volume-event-bar-backup-only")
         self.assertEqual(payload["redisCandleCacheLimit"], {
             "1m": 120,
             "5m": 120,

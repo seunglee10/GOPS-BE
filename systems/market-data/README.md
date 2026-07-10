@@ -99,7 +99,8 @@ Runtime policy:
 - ClickHouse direct misses can fall back to query-time aggregation from `1m` or `1D`
 - small incomplete foreground chart windows may use Alpaca REST direct bars for the requested interval, including intraday intervals enabled by `ON_DEMAND_FILL_FOREGROUND_AUTO_INTERVALS`
 - background misses check S3 final/manifest before Alpaca historical direct fill
-- raw S3 archives are backup-only and not an active read/materialization source
+- raw S3 archives keep only low-volume event/bar backup data, exclude realtime
+  trades/quotes, and are not an active read/materialization source
 
 The ingestor should read the resolved tier state from Redis/control-plane keys, not hardcode symbol lists.
 

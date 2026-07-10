@@ -46,15 +46,15 @@
     "activeChartRealtime": "subscribe-trades-and-quotes-for-the-same-explicit-symbol-set",
     "tradeSubscriptionPlan": "explicit subscription control-plane symbols only",
     "quoteSubscriptionPlan": "quotes are attached only to symbols that already subscribe to realtime trades",
-    "todayTickStorage": "Redis/WebSocket live state plus raw archive; quote payloads flow through market.layer.quotes.v1 to ClickHouse, while processed S3 final stores candles/events"
+    "todayTickStorage": "Redis/WebSocket live state plus ClickHouse tick tables; processed S3 final stores candles/events and raw S3 excludes realtime trades/quotes"
   },
   "storage": {
     "s3": {
       "rawPrefix": "market-data/rebuild-20260702-lazy-v1/raw/alpaca",
       "finalPrefix": "market-data/rebuild-20260702-lazy-v1/final",
       "format": "parquet",
-      "rawArchiveRole": "backup-only, never queried by chart serving or materialization",
-      "quoteStorage": "enabled through market.layer.quotes.v1 into ClickHouse quote_ticks; raw S3 archive keeps replay evidence",
+      "rawArchiveRole": "low-volume event/bar backup only, never queried by chart serving or materialization",
+      "quoteStorage": "enabled through market.layer.quotes.v1 into ClickHouse quote_ticks; raw S3 archive excludes realtime quotes",
       "partitionKeys": ["dataset", "interval", "symbol", "year", "month", "day", "hour"]
     },
     "clickhouse": {
