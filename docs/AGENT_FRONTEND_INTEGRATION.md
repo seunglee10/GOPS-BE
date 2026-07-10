@@ -278,6 +278,31 @@ ignore한 proposal 때문에 report 자체를 실패 처리하지 않는다.
 차트 조작은 프런트/차트 엔진의 command contract를 따라야 하며, 에이전트
 provider가 직접 UI panel command를 만들면 안 된다.
 
+## Responsive Workspace Layout
+
+`gops-frontend`의 workspace 좌표 계약은 `8 cols x 6 rows`로 유지한다. 화면 폭에
+따라 열/행 개수를 연속적으로 바꾸지 않는다. 저장 preset과 agent
+`layoutContext.grid`, `placement.col/row/colSpan/rowSpan`이 같은 좌표계를 공유하기
+때문이다.
+
+화면 대응은 좌표 개수 변경이 아니라 다음 세 단계 presentation mode로 처리한다.
+
+```text
+wide     충분한 셀 크기, 기존 배치 그대로 사용
+standard 읽기 가능한 셀 크기, 기존 배치와 panel container query 사용
+compact  셀을 더 축소하지 않고 최소 160x110 rendered px를 보장하며 workspace scroll 허용
+```
+
+`panelRegistry.ts`는 저장 계약용 `minSpan`과 실제 UI 가독성용
+`readableMinSpan`/`minSizePx`를 분리한다. 새 패널 추가, 직접 resize, agent layout
+proposal 적용에는 `readableMinSpan`을 사용한다. 예전 저장 layout은 기존 좌표를
+복원할 수 있어야 하므로 `minSpan`은 하위 호환 검증 경계로 남긴다.
+
+각 panel frame은 size container다. 좁거나 낮은 패널은 container query로 제목과
+padding을 줄이고, non-chart panel body는 필요한 경우 내부 scroll로 degrade한다.
+전체 app의 `uiScale`은 layout metric에 전달되어 rendered pixel minimum과 logical
+workspace 좌표를 변환한다.
+
 ## Alert WebSocket
 
 `WS /ws/agent-alerts`는 notification publisher가 Redis에 publish한 alert를
