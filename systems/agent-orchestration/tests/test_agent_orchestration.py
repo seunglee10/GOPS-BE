@@ -1288,6 +1288,33 @@ class AgentOrchestrationTests(unittest.TestCase):
 
         self.assertEqual(store.get_idempotency_request_id("user-1", "idem-1"), "agent-request-1")
 
+    def test_report_store_owner_mapping_is_user_scoped(self):
+        store = InMemoryReportStore()
+
+        store.save_owner_mapping("user-1", "agent-request-1")
+
+        self.assertTrue(store.is_owner("agent-request-1", "user-1"))
+        self.assertFalse(store.is_owner("agent-request-1", "user-2"))
+        self.assertFalse(store.is_owner("missing", "user-1"))
+
+    def test_request_envelope_ignores_client_supplied_identity_and_budget(self):
+        envelope = build_request_envelope(
+            {
+                "symbol": "NVDA",
+                "intent": "analysis",
+                "userId": "body-attacker",
+                "maxLlmCalls": 999,
+                "maxInputTokens": 999999,
+                "llmBudgetOwner": "user",
+            },
+            user_id="trusted-user",
+        )
+
+        self.assertEqual(envelope.user_id, "trusted-user")
+        self.assertEqual(envelope.quota_policy.max_llm_calls, 1)
+        self.assertIsNone(envelope.quota_policy.max_input_tokens)
+        self.assertEqual(envelope.quota_policy.llm_budget_owner, "platform")
+
     def test_report_store_cancel_marker_prevents_completed_overwrite(self):
         store = InMemoryReportStore()
 
