@@ -7,6 +7,7 @@ from typing import Any
 
 from ...orchestration.ui_intent import compact_layout_panels
 from ..classifier import ClassifierResult, classifier_result_from_payload
+from ..ui_parser import compact_layout_presets_for_parser
 
 
 class LocalHttpIntentClassifier:
@@ -18,6 +19,7 @@ class LocalHttpIntentClassifier:
             "query": query,
             "entityResolution": entity_resolution or {},
             "availablePanels": compact_layout_panels(layout_context if isinstance(layout_context, dict) else {}),
+            "availablePresets": compact_layout_presets_for_parser(layout_context if isinstance(layout_context, dict) else {}),
         }
         request = urllib.request.Request(
             self.url,

@@ -20,7 +20,11 @@ def health() -> dict[str, str]:
 @app.post("/classify")
 def classify(request: dict[str, Any]) -> dict[str, Any]:
     query = str(request.get("query") or "")
-    layout_context = {"panels": request.get("availablePanels")} if isinstance(request.get("availablePanels"), list) else {}
+    layout_context = {}
+    if isinstance(request.get("availablePanels"), list):
+        layout_context["panels"] = request.get("availablePanels")
+    if isinstance(request.get("availablePresets"), list):
+        layout_context["presets"] = request.get("availablePresets")
     provider = os.getenv("AGENT_INTENT_CLASSIFIER_POD_PROVIDER", "openai" if os.getenv("OPENAI_API_KEY") else "deterministic").strip().lower()
     result = None
     if provider in {"openai", "hosted", "hosted-llm"}:
