@@ -32,6 +32,7 @@ flowchart TD
 | `ARCHITECTURE.md` | Current system, pod/job, and platform relationships. |
 | `IMAGE_STRATEGY.md` | Docker image boundaries and naming rules. |
 | `ENVIRONMENT.md` | Env, secret, and platform contracts. |
+| `KAFKA_ARCHITECTURE.md` | Current EKS Kafka broker, partition, topic, producer, consumer-group, offset, and retention topology. |
 | `LOCAL_EKS_DEPLOY.md` | One-command local deploy runbook for origin/dev to shared dev EKS. |
 | `EKS_DATA_PRESERVING_REBUILD_PLAN.md` | Data-preserving EKS clean rebuild runbook for dedicated NodePools and restored PVCs. |
 | `AGENT_ORCHESTRATION_IMPLEMENTATION.md` | Summary of the role-based multi-agent implementation and Docker validation. |
