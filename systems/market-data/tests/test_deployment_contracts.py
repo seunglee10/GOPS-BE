@@ -39,6 +39,12 @@ class DeploymentContractsTest(unittest.TestCase):
         self.assertEqual(requirements["eks.amazonaws.com/instance-cpu"], ["2"])
         self.assertEqual(requirements["eks.amazonaws.com/instance-memory"], ["8192"])
 
+        topic_init = load_yaml("infra/k8s/base/platform/kafka-topic-init-job.yaml")
+        self.assertEqual(
+            topic_init["spec"]["template"]["spec"]["nodeSelector"]["karpenter.sh/nodepool"],
+            "batch-warm",
+        )
+
     def test_scheduled_jobs_have_resources_and_retain_failure_evidence(self):
         for path in (
             "infra/k8s/overlays/aws/scheduled/cronjob-order-flow-daily-rollup.yaml",
