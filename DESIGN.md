@@ -8,6 +8,7 @@ source:
   entry: apps/gops-frontend/index.html
 updatedFor:
   font: Asta Sans
+  typeScale: 5 semantic sizes
   chrome: side rail removed
   build: split production chunks
 ---
@@ -100,6 +101,13 @@ panel:
   shadow: "0 8px 26px rgb(0 0 0 / 0.064), inset 0 0 0 1px rgb(255 255 255 / 0.010)"
   filter: "blur(3px) saturate(107%)"
   note: "Glass intensity is reduced 60% from the previous stronger treatment."
+
+typography:
+  micro: 10px
+  compact: 12px
+  body: 14px
+  title: 18px
+  display: 32px
 ```
 
 ## Typography
@@ -113,22 +121,52 @@ All primary font variables resolve to Asta Sans:
 --font-data-sans: "Asta Sans", Arial, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 ```
 
-Type usage:
+The entire website uses exactly five font sizes. Treat them as semantic tokens,
+not as a range from which to choose arbitrary intermediate values:
 
-| Role | Size | Weight | Use |
+| Token | Size | Weight | Use |
 | --- | ---: | ---: | --- |
-| Workspace base | 14px | 400-700 | Root UI and default text |
-| Top login/action | 11px | 760 | Compact top chrome |
-| Agent input | 11px | normal | Bottom command text |
-| Panel title | 12px | 760 | Hover-only panel label |
-| Treemap symbol | 13px | 700 | Hover metadata symbol |
-| Treemap metadata | 10-11px | 700-800 | Hover detail |
-| Dense market data | 11-13px | 600-800 | Tables, labels, ticks, controls |
+| `--type-micro` | 10px | 600-800 | Chart ticks, timestamps, tertiary metadata, badges, and legal/attribution text |
+| `--type-compact` | 12px | 500-800 | Buttons, inputs, tabs, table cells, panel labels, symbols, and secondary values |
+| `--type-body` | 14px | 400-700 | Default workspace text, chat content, descriptions, and primary row values |
+| `--type-title` | 18px | 600-800 | Panel headings, card headings, important prices, and section totals |
+| `--type-display` | 32px | 600-800 | One dominant portfolio value, score, or empty-state number within a view |
+
+CSS token contract:
+
+```css
+--type-micro: 10px;
+--type-compact: 12px;
+--type-body: 14px;
+--type-title: 18px;
+--type-display: 32px;
+```
+
+Canvas and SVG renderers use the matching numeric constants from
+`apps/gops-frontend/src/theme/typography.ts`.
+
+Component mapping:
+
+| Component content | Token |
+| --- | --- |
+| Chart axes, tiny metadata, status badges | `--type-micro` |
+| Top actions, agent input, panel chrome, controls | `--type-compact` |
+| Chat messages, news summaries, default copy | `--type-body` |
+| Panel headings and emphasized market values | `--type-title` |
+| Primary account/portfolio metric only | `--type-display` |
 
 Rules:
 
 - Use Asta Sans everywhere unless a canvas renderer needs its own numeric
   drawing metrics.
+- Do not declare literal `font-size` values inside components. Use one of the
+  five tokens above, including for canvas text constants where practical.
+- Do not use intermediate sizes such as 11px, 13px, 15px, or 17px. Resolve
+  hierarchy with weight, color, and spacing before moving up to another token.
+- Each surface should normally use no more than three sizes: one default, one
+  supporting size, and one emphasis size.
+- Reserve `--type-display` for a single dominant metric. Operational panels
+  should usually top out at `--type-title`.
 - Keep letter spacing at `0` unless an existing component already has a
   specific technical reason.
 - Keep headings compact inside panels. Do not use hero-scale type inside the
@@ -340,12 +378,14 @@ Mobile and narrow layouts:
 
 - bottom nav becomes a single-column command strip;
 - agent box fills available width;
-- agent input font can reduce to 12px;
+- agent input remains `--type-compact` (12px);
 - side rail remains absent on all breakpoints;
 - panel text must stay inside its bounds.
 
-Do not scale fonts with viewport width. Use layout constraints, wrapping, or
-component-specific size reductions.
+Do not scale fonts continuously with viewport or container width. Responsive
+components may step down to the next smaller token, but must still use one of
+the same five sizes. Prefer layout constraints and wrapping before reducing
+type size.
 
 ## Build And Performance
 
