@@ -19,6 +19,7 @@ from app.routes.chart_presets import router as chart_presets_router
 from app.routes.health import health, log_runtime_config, router as health_router
 from app.routes.llm import agent_chat, chart_proposal, router as llm_router
 from app.routes.orders import order_contract, router as orders_router
+from app.routes.simulator import router as simulator_router
 from app.routes.streams import chart_stream, router as streams_router
 from app.services.ai_agents import openai_agent_chat, openai_chart_proposal
 from app.services.agent_request_limit import AgentRequestBodyLimitMiddleware
@@ -59,6 +60,7 @@ def create_app() -> FastAPI:
     app.include_router(agents_router)
     app.include_router(llm_router)
     app.include_router(orders_router)
+    app.include_router(simulator_router)
     app.include_router(alerts_router)
     app.include_router(recommendations_router)
     app.include_router(streams_router)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -10,6 +11,7 @@ from app.auth.models import AuthenticatedUser
 from app.core.sectors import sector_payload_fields
 from app.services.alpaca_corporate_actions import enrich_holdings_with_alpaca_dividends
 from app.services.portfolio_market_enrichment import enrich_holdings_with_market_stats
+from app.routes.simulator import simulator_gateway_from_app, simulator_mode_active
 from kis_trader.kis.config import KisConfigError
 from kis_trader.kis.fake import KisConnectionReset, KisExplicitReject, KisHttpError, KisTimeout, KisTokenExpired
 
@@ -25,6 +27,14 @@ def account_holdings(
     exchange: str = Query(default="", max_length=8),
     user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
+    if simulator_mode_active(request.app):
+        try:
+            payload = _normalize_simulator_holdings(simulator_gateway_from_app(request.app).account(user.sub))
+        except Exception as exc:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+        payload = _enrich_portfolio_holdings_sectors(request.app, payload)
+        _remember_portfolio_holdings_snapshot(request.app, user.sub, payload)
+        return jsonable_encoder(payload)
     try:
         client = _kis_client_from_app(request.app)
         payload = client.fetch_holdings(market=market, currency=currency, exchange=exchange)
@@ -45,6 +55,21 @@ def account_holdings(
         payload = enrich_holdings_with_market_stats(request.app, payload)
     _remember_portfolio_holdings_snapshot(request.app, user.sub, payload)
     return jsonable_encoder(payload)
+
+
+def _normalize_simulator_holdings(payload: dict[str, Any]) -> dict[str, Any]:
+    positions = payload.get("positions")
+    if isinstance(positions, dict):
+        rendered_positions = [value for value in positions.values() if isinstance(value, dict)]
+    elif isinstance(positions, list):
+        rendered_positions = [value for value in positions if isinstance(value, dict)]
+    else:
+        rendered_positions = []
+    return {
+        **payload,
+        "asOf": datetime.now(timezone.utc).isoformat(),
+        "positions": rendered_positions,
+    }
 
 
 def _kis_client_from_app(app: Any) -> Any:
