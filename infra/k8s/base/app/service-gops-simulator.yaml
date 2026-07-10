@@ -1,0 +1,14 @@
+# 클러스터 내부 backend/market-ingestor만 접근하며 외부 Ingress에는 연결하지 않습니다.
+apiVersion: v1
+kind: Service
+metadata:
+  name: gops-simulator
+  namespace: alfaka-market-data
+spec:
+  type: ClusterIP
+  selector:
+    app: gops-simulator
+  ports:
+    - name: http
+      port: 8765
+      targetPort: http

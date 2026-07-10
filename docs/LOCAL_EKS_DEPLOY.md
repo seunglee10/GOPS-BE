@@ -88,6 +88,19 @@ FORCE_SERVICES=all AWS_PROFILE=gops-dev ./scripts/aws/deploy-dev-local.sh
 FORCE_SERVICES=frontend,backend AWS_PROFILE=gops-dev ./scripts/aws/deploy-dev-local.sh
 ```
 
+시뮬레이터 image와 기본 0-replica Deployment만 배포할 수도 있다.
+
+```bash
+FORCE_SERVICES=simulator AWS_PROFILE=gops-dev ./scripts/aws/deploy-dev-local.sh
+```
+
+배포 후 실제 시연 경로를 켜고 끄는 명령은 별도다.
+
+```bash
+AWS_PROFILE=gops-dev ./scripts/aws/start-dev-simulator.sh
+AWS_PROFILE=gops-dev ./scripts/aws/stop-dev-simulator.sh
+```
+
 Order migration이나 news cache rebuild는 관련 image가 선택될 때만 허용된다.
 
 ```bash

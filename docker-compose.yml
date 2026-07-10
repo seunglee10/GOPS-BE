@@ -230,13 +230,16 @@ services:
       ALPACA_SECRET_NAME: "${ALPACA_SECRET_NAME:-}"
       ALFAKA_REQUEST_CONFIG: "systems/market-data/config/market-data-request.json"
       ALPACA_FEED_PROFILE: "sip"
+      ALPACA_STREAM_BASE_URL: "${ALPACA_STREAM_BASE_URL:-wss://stream.data.alpaca.markets}"
       ALPACA_UNIVERSE: "${ALPACA_UNIVERSE:-sp500}"
       ALPACA_UNIVERSE_REGISTRY_PATH: "${ALPACA_UNIVERSE_REGISTRY_PATH:-systems/market-data/config/sp500-universe.json}"
       ALPACA_COLLECTION_SYMBOL_SOURCE: "${ALPACA_COLLECTION_SYMBOL_SOURCE:-universe}"
-      ALPACA_CHANNELS: "bars,updatedBars,dailyBars,statuses"
+      ALPACA_COLLECTION_SYMBOLS: "${ALPACA_COLLECTION_SYMBOLS:-}"
+      ALPACA_CHANNELS: "${ALPACA_CHANNELS:-bars,updatedBars,dailyBars,statuses}"
       ALPACA_ACTIVE_CHANNELS: "${ALPACA_ACTIVE_CHANNELS:-trades,quotes}"
       ALPACA_MAX_TRADE_SYMBOLS: "${ALPACA_MAX_TRADE_SYMBOLS:-100}"
       ALPACA_ACTIVE_TICK_SUBSCRIPTION: "true"
+      ALPACA_ENFORCE_FEED_SESSION_WINDOW: "${ALPACA_ENFORCE_FEED_SESSION_WINDOW:-true}"
     command: ["python", "-u", "systems/market-data/pods/market-ingestor/market_stream.py"]
     restart: unless-stopped
     volumes:
@@ -1448,6 +1451,7 @@ services:
       AUTH_REDIS_KEY_PREFIX: "${AUTH_REDIS_KEY_PREFIX:-gops:auth}"
       AUTH_COOKIE_SECURE: "${AUTH_COOKIE_SECURE:-false}"
       AUTH_COOKIE_SAMESITE: "${AUTH_COOKIE_SAMESITE:-lax}"
+      GOPS_SIMULATOR_URL: "${GOPS_SIMULATOR_URL:-http://host.docker.internal:8765}"
       GOOGLE_OAUTH_CLIENT_ID: "${GOOGLE_OAUTH_CLIENT_ID:-}"
       GOOGLE_OAUTH_CLIENT_SECRET: "${GOOGLE_OAUTH_CLIENT_SECRET:-}"
       GOOGLE_OAUTH_SECRET_NAME: "${GOOGLE_OAUTH_SECRET_NAME:-}"

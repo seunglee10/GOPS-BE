@@ -16,6 +16,7 @@ from app.auth.dependencies import (
     WebSocketAuthUnavailable,
 )
 from app.auth.models import AuthenticatedUser
+from app.routes.simulator import simulator_gateway_from_app, simulator_mode_active
 from kis_trader.domain.commands import validate_order_request_payload
 from kis_trader.domain.envelope import build_order_command_envelope, validate_order_envelope
 from kis_trader.domain.status import CANONICAL_STATUSES, OrderContractError
@@ -86,6 +87,20 @@ async def create_order(
             "role": payload.get("role") or "trader",
         }
     order_request = _validate_order_request(payload)
+    if simulator_mode_active(request.app):
+        try:
+            result = simulator_gateway_from_app(request.app).individual_order(
+                user_id=current_user.sub,
+                symbol=str(payload["symbol"]).upper(),
+                side=str(payload["side"]).lower(),
+                quantity=int(payload["qty"]),
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        order = result.get("order") if isinstance(result, dict) else None
+        if not isinstance(order, dict):
+            raise HTTPException(status_code=502, detail="simulator returned an invalid order")
+        return jsonable_encoder(order)
     envelope = build_order_command_envelope(
         order_request,
         occurred_at=datetime.now(timezone.utc).isoformat(),
@@ -110,11 +125,29 @@ async def create_order(
 
 @router.get("/api/orders/balance")
 def get_order_balance(
+    request: Request,
     symbol: str = "AAPL",
     exchange: str = "NASD",
     price: str = "0",
     _user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
+    if simulator_mode_active(request.app):
+        try:
+            payload = simulator_gateway_from_app(request.app).account(_user.sub)
+            account = payload.get("account") if isinstance(payload, dict) else {}
+            cash = account.get("cashForeign", 0) if isinstance(account, dict) else 0
+            numeric_price = float(price or 0)
+            return {
+                "env": "simulation",
+                "market": "overseas",
+                "symbol": symbol.upper(),
+                "exchange": exchange.upper(),
+                "currency": "USD",
+                "orderable_cash": str(cash),
+                "orderable_qty": str(int(float(cash) / numeric_price)) if numeric_price > 0 else None,
+            }
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
     try:
         balance = DemoKisHttpClient.from_env().fetch_orderable_cash(
             symbol=symbol,

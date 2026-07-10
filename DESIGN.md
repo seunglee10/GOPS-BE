@@ -171,6 +171,22 @@ GOPS component mapping:
 | Pricing section heading only | `pricing-section` |
 | Pricing tier name only | `pricing-card-title` |
 
+Workspace panel sizing policy:
+
+- Panel content is rendered one visual role larger than shared application
+  chrome: `display-lg -> display-xl`, `display-md -> display-lg`,
+  `title-lg -> display-md`, `title-md -> title-lg`, `title-sm -> title-md`,
+  `label-md/button -> title-sm`, `body-md/caption -> label-md`, and
+  `legal -> caption`.
+- The `지수` and `분야추천` panels retain the base application type scale.
+- Dates in news-list panels retain `title-md` metrics.
+- Headlines in flip-style news cards use `display-lg` and wrap naturally up
+  to three lines when the title exceeds the card width. Headline padding keeps
+  the text clear of both the chart line and the bottom flip-progress strip;
+  the chart is subdued beneath the headline region.
+- The bottom Agent composer uses the promoted panel-sized label, button, body,
+  and caption roles with 50px primary controls.
+
 Enforcement rules:
 
 - Asta Sans is mandatory for every role. Do not replace it or introduce a
