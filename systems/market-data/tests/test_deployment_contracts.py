@@ -32,6 +32,12 @@ class DeploymentContractsTest(unittest.TestCase):
         self.assertNotIn("replicas", dynamic_nodepool["spec"])
         self.assertEqual(warm_nodepool["metadata"]["name"], "batch-warm")
         self.assertEqual(warm_nodepool["spec"]["replicas"], 1)
+        requirements = {
+            item["key"]: item["values"]
+            for item in warm_nodepool["spec"]["template"]["spec"]["requirements"]
+        }
+        self.assertEqual(requirements["eks.amazonaws.com/instance-cpu"], ["2"])
+        self.assertEqual(requirements["eks.amazonaws.com/instance-memory"], ["8192"])
 
     def test_scheduled_jobs_have_resources_and_retain_failure_evidence(self):
         for path in (
@@ -51,6 +57,8 @@ class DeploymentContractsTest(unittest.TestCase):
                     job_spec["template"]["spec"]["nodeSelector"]["karpenter.sh/nodepool"],
                     "batch-warm",
                 )
+                if cronjob["metadata"]["name"] == "alfaka-sec-fundamentals-sync":
+                    self.assertEqual(container["resources"]["limits"], {"cpu": "2", "memory": "6Gi"})
 
         app_overlay = load_yaml("infra/k8s/overlays/aws-incluster-app/kustomization.yaml")
         self.assertIn("../aws/scheduled", app_overlay["resources"])

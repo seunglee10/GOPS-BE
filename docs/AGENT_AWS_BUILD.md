@@ -226,17 +226,16 @@ cache-db:   1 x m5a/m6a xlarge class, 4 vCPU / 16 GiB, Redis + Postgres
 streaming:  1 x m5a/m6a xlarge class, 4 vCPU / 16 GiB, Kafka
 graphdb:    1 x m5a/m6a xlarge class, 4 vCPU / 16 GiB, GraphDB
 clickhouse: 1 x m5a/m6a 2xlarge class, 8 vCPU / 32 GiB, ClickHouse
-batch-warm: 1 x m5a/m6a xlarge class, 4 vCPU / 16 GiB, scheduled Jobs
+batch-warm: 1 x m5a/m6a large class, 2 vCPU / 8 GiB, scheduled Jobs
 batch:      0 steady nodes, dynamic capacity for ad hoc Jobs
 ```
 
-This profile uses 32 vCPU in steady state, excluding cluster add-ons. The live
-cluster may also keep one small
+This profile uses 30 vCPU in steady state, excluding cluster add-ons. The live
+cluster keeps one 2 vCPU
 `general-purpose` node for CoreDNS, AWS Load Balancer Controller, EBS CSI,
-metrics-server, and external-secrets unless those controllers are moved to a
-dedicated system NodePool. Apply it only after AWS EC2 on-demand vCPU quota is
-approved. Drain old workload nodes or legacy `platform-core` nodes after the
-dedicated NodePools are ready and stateful pods have been restored and
+metrics-server, and external-secrets, bringing the current total to the 32 vCPU
+on-demand quota. Drain old workload nodes or legacy `platform-core` nodes after
+the dedicated NodePools are ready and stateful pods have been restored and
 validated.
 
 `app-agent`, `cache-db`, `streaming`, `graphdb`, `clickhouse`, and `batch-warm`
