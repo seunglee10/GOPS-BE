@@ -19,12 +19,16 @@ market_data.storage_object_audit
 market_data.load_audit
 ```
 
-`trade_ticks` and `quote_ticks` retain 21 days. `chart_candles` and
-`order_flow_profile_daily` and `chart_analysis_assets` have no deletion TTL.
+`trade_ticks` and `quote_ticks` retain 21 days and keep the newest 100,000
+non-replicated insert-deduplication tokens per table. The tick loader derives a
+token from Kafka topic/partition/offset metadata, commits only offsets included
+in a successful insert, and keeps a bounded recent `sourceEventId` cache for
+short replays that cross insert batch boundaries. `chart_candles`,
+`order_flow_profile_daily`, and `chart_analysis_assets` have no deletion TTL.
 `chart_analysis_assets` uses `ReplacingMergeTree(inserted_at)` ordered by
 `(symbol, interval)`; readers use `FINAL` or `argMax` so each pair serves only
-the latest prebuilt asset. Existing environments apply
-the TTL through the operator-reviewed, idempotent migration:
+the latest prebuilt asset. Existing environments apply the tick TTL and
+deduplication window through the operator-reviewed, idempotent migration:
 
 ```text
 scripts/local/migrate-chart-tick-retention.sql

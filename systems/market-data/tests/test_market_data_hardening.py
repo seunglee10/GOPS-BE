@@ -68,7 +68,9 @@ from alfaka.serving.symbol_registry import SymbolRegistry
 from alfaka.realtime.feed_control import active_feed_profile_for
 from alfaka.storage.clickhouse_loader import (
     ClickHouseHttpClient,
+    RecentSourceEventIds,
     candle_to_clickhouse_row,
+    clickhouse_insert_deduplication_token,
     clickhouse_param_value as storage_clickhouse_param_value,
     clickhouse_topics_from_env,
     flush_clickhouse_buffer,
@@ -271,10 +273,12 @@ class FakeClickHouseRecoveryProvider:
 class RecordingClickHouseClient:
     def __init__(self):
         self.inserts = []
+        self.deduplication_tokens = []
         self.executions = []
 
-    def insert_json_each_row(self, table, rows):
+    def insert_json_each_row(self, table, rows, deduplication_token=None):
         self.inserts.append((table, list(rows)))
+        self.deduplication_tokens.append((table, deduplication_token))
 
     def execute(self, query, parameters=None):
         self.executions.append((query, parameters or {}))
@@ -1270,6 +1274,124 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(inserted, 0)
         self.assertEqual(client.inserts, [])
 
+    def test_clickhouse_tick_loader_deduplicates_recent_source_ids_and_commits_exact_offsets(self):
+        client = RecordingClickHouseClient()
+        recent_source_ids = RecentSourceEventIds(max_seen=10)
+
+        class CommitRecordingConsumer:
+            def __init__(self):
+                self.commits = []
+
+            def commit(self, offsets=None):
+                self.commits.append(offsets)
+
+        records = [
+            types.SimpleNamespace(
+                topic="market.layer.quotes.v1",
+                partition=2,
+                offset=40,
+                value={
+                    "eventType": "QUOTE",
+                    "symbol": "AAPL",
+                    "timestamp": "2026-07-11T05:10:00.000001Z",
+                    "bidPrice": 100,
+                    "askPrice": 101,
+                    "sourceEventId": "alpaca/sip/quotes/AAPL/2026-07-11T05:10:00.000001Z",
+                },
+            ),
+            types.SimpleNamespace(
+                topic="market.layer.quotes.v1",
+                partition=2,
+                offset=41,
+                value={
+                    "eventType": "QUOTE",
+                    "symbol": "AAPL",
+                    "timestamp": "2026-07-11T05:10:00.000002Z",
+                    "bidPrice": 100,
+                    "askPrice": 101,
+                    "sourceEventId": "alpaca/sip/quotes/AAPL/2026-07-11T05:10:00.000002Z",
+                },
+            ),
+        ]
+        consumer = CommitRecordingConsumer()
+
+        first_inserted = flush_clickhouse_buffer(
+            consumer,
+            client,
+            records,
+            load_quotes=True,
+            recent_source_ids=recent_source_ids,
+        )
+        replay_inserted = flush_clickhouse_buffer(
+            consumer,
+            client,
+            records,
+            load_quotes=True,
+            recent_source_ids=recent_source_ids,
+        )
+
+        self.assertEqual(first_inserted, 2)
+        self.assertEqual(replay_inserted, 0)
+        self.assertEqual(len(client.inserts), 1)
+        token = client.deduplication_tokens[0][1]
+        self.assertTrue(token.startswith("gops-kafka-v1-"))
+        self.assertEqual(len(consumer.commits), 2)
+        for offsets in consumer.commits:
+            [(topic_partition, offset_metadata)] = offsets.items()
+            self.assertEqual((topic_partition.topic, topic_partition.partition), ("market.layer.quotes.v1", 2))
+            self.assertEqual(offset_metadata.offset, 42)
+
+    def test_clickhouse_insert_deduplication_token_is_order_independent(self):
+        identities = ["kafka/quotes/2/41", "kafka/quotes/2/40"]
+
+        token = clickhouse_insert_deduplication_token("quote_ticks", identities)
+
+        self.assertEqual(token, clickhouse_insert_deduplication_token("quote_ticks", reversed(identities)))
+        self.assertNotEqual(token, clickhouse_insert_deduplication_token("trade_ticks", identities))
+        self.assertIsNone(clickhouse_insert_deduplication_token("quote_ticks", ["kafka/quotes/2/40", ""]))
+
+    def test_clickhouse_failed_insert_does_not_cache_source_id_or_commit_offset(self):
+        source_event_id = "alpaca/sip/quotes/AAPL/2026-07-11T05:10:00.000001Z"
+        record = types.SimpleNamespace(
+            topic="market.layer.quotes.v1",
+            partition=2,
+            offset=40,
+            value={
+                "eventType": "QUOTE",
+                "symbol": "AAPL",
+                "timestamp": "2026-07-11T05:10:00.000001Z",
+                "bidPrice": 100,
+                "askPrice": 101,
+                "sourceEventId": source_event_id,
+            },
+        )
+        recent_source_ids = RecentSourceEventIds(max_seen=10)
+
+        class FailingClient:
+            def insert_json_each_row(self, table, rows, deduplication_token=None):
+                raise RuntimeError("clickhouse unavailable")
+
+        class CommitRecordingConsumer:
+            def __init__(self):
+                self.commits = 0
+
+            def commit(self, offsets=None):
+                self.commits += 1
+
+        consumer = CommitRecordingConsumer()
+
+        with self.assertRaisesRegex(RuntimeError, "clickhouse unavailable"):
+            flush_clickhouse_buffer(
+                consumer,
+                FailingClient(),
+                [record],
+                load_quotes=True,
+                recent_source_ids=recent_source_ids,
+            )
+
+        self.assertFalse(recent_source_ids.contains("quote_ticks", source_event_id))
+        self.assertEqual(consumer.commits, 0)
+
     def test_clickhouse_schema_ensure_is_opt_in_for_runtime_starts(self):
         self.assertFalse(should_ensure_schema_on_start({}))
         self.assertFalse(should_ensure_schema_on_start({"CLICKHOUSE_ENSURE_SCHEMA_ON_START": "false"}))
@@ -2191,6 +2313,9 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn('ALPACA_MAX_TRADE_SYMBOLS: "100"', configmap)
         self.assertIn("name: alfaka-alpaca-ingestor-sip", alpaca_ingestor_deployment)
         self.assertIn("name: alfaka-alpaca-ingestor-boats", alpaca_ingestor_deployment)
+        self.assertNotIn("name: alfaka-alpaca-ingestor-crypto", alpaca_ingestor_deployment)
+        self.assertIn("ALPACA_FEED_PROFILES: sip,boats", configmap)
+        self.assertNotIn("ALPACA_CRYPTO_SYMBOLS", configmap)
         self.assertNotIn("name: alfaka-alpaca-tick-ingestor-sip", alpaca_ingestor_deployment)
         self.assertNotIn("value: alfaka-alpaca-tick-ingestor-sip", alpaca_ingestor_deployment)
         self.assertIn("name: ALPACA_ACTIVE_CHANNELS", alpaca_ingestor_deployment)
@@ -2206,6 +2331,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn('KAFKA_CLICKHOUSE_MAX_POLL_RECORDS: "1000"', configmap)
         self.assertIn('CLICKHOUSE_INSERT_BATCH_SIZE: "1000"', configmap)
         self.assertIn('CLICKHOUSE_FLUSH_INTERVAL_SECONDS: "1"', configmap)
+        self.assertIn('CLICKHOUSE_RECENT_SOURCE_EVENT_IDS: "100000"', configmap)
         self.assertIn('NEWS_BACKFILL_DAYS: "365"', configmap)
         self.assertIn('NEWS_BACKFILL_SHARD_INDEX: "0"', configmap)
         self.assertIn('NEWS_BACKFILL_SHARD_COUNT: "1"', configmap)
@@ -2245,7 +2371,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn("alfaka-alpaca-ingestor-sip", lib)
         self.assertNotIn("alfaka-alpaca-tick-ingestor-sip", lib)
         self.assertIn("alfaka-alpaca-ingestor-boats", lib)
-        self.assertIn("alfaka-alpaca-ingestor-crypto", lib)
+        self.assertNotIn("alfaka-alpaca-ingestor-crypto", lib)
         self.assertIn("alfaka-alpaca-news-ingestor", lib)
 
     def test_deploy_smoke_uses_lightweight_health_endpoint(self):
@@ -4979,6 +5105,35 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(params["param_symbols"], "['AAPL','O\\'Reilly']")
         self.assertEqual(params["param_limit"], "50")
 
+    def test_storage_clickhouse_insert_sends_deduplication_token(self):
+        calls = []
+
+        class FakeResponse:
+            status_code = 200
+            text = ""
+
+        def fake_post(url, **kwargs):
+            calls.append((url, kwargs))
+            return FakeResponse()
+
+        client = ClickHouseHttpClient(
+            url="http://clickhouse:8123",
+            database="market_data",
+            user="alfaka",
+            password="secret",
+        )
+        with mock.patch("requests.post", side_effect=fake_post):
+            client.insert_json_each_row(
+                "quote_ticks",
+                [{"symbol": "AAPL"}],
+                deduplication_token="gops-kafka-v1-test",
+            )
+
+        params = calls[0][1]["params"]
+        self.assertEqual(params["insert_deduplicate"], "1")
+        self.assertEqual(params["insert_deduplication_token"], "gops-kafka-v1-test")
+        self.assertIn("INSERT INTO market_data.quote_ticks", params["query"])
+
     def test_storage_clickhouse_client_execute_params_use_typed_http_values(self):
         calls = []
 
@@ -5960,21 +6115,16 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         with self.assertRaises(LookupError):
             registry.detail("ZZZZ")
 
-    def test_symbol_registry_includes_configured_btcusd_metadata(self):
-        """기본 on-demand 설정에서도 extraSymbols의 BTCUSD 메타데이터가 노출되는지 검증한다."""
+    def test_symbol_registry_does_not_expose_retired_btcusd_metadata(self):
+        """retired BTCUSD가 기본 심볼 카탈로그에 다시 노출되지 않는지 검증한다."""
         registry = SymbolRegistry(
             clickhouse_provider=FakeClickHouseProvider(symbols={}),
             redis_provider=FakeRedisProvider(symbol_metadata={}),
         )
 
-        detail = registry.detail("BTCUSD")
-        search_results = registry.search("btc", 5)
-
-        self.assertEqual(detail["symbol"], "BTCUSD")
-        self.assertEqual(detail["assetClass"], "crypto")
-        self.assertEqual(detail["market"], "CRYPTO")
-        self.assertFalse(detail["tradable"])
-        self.assertEqual([item["symbol"] for item in search_results], ["BTCUSD"])
+        with self.assertRaises(LookupError):
+            registry.detail("BTCUSD")
+        self.assertEqual(registry.search("btc", 5), [])
 
     def test_on_demand_config_has_no_default_symbols_but_accepts_explicit_seed(self):
         """on-demand 수집은 기본 구독을 비우되 UI 검색용 extraSymbols는 유지하는지 검증한다."""
@@ -5996,7 +6146,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             with self.assertRaises(LookupError):
                 registry.detail("IBM")
             self.assertEqual(registry.search("ibm", 5), [])
-            self.assertEqual([item["symbol"] for item in registry.search("", 5)], ["BTCUSD", "XLV"])
+            self.assertEqual([item["symbol"] for item in registry.search("", 5)], ["XLV"])
         finally:
             if previous_universe is None:
                 os.environ.pop("ALPACA_UNIVERSE", None)

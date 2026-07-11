@@ -1,11 +1,13 @@
 # 역할: Kafka Processed Topic을 읽어 ClickHouse 조회 테이블에 적재합니다.
 # 사용: GOPS API Server가 과거 캔들을 ClickHouse에서 읽을 수 있게 만드는 연결 job입니다.
 # 입력: closed candle/trades/quotes/events layer topic을 적재합니다.
+import hashlib
 import json
 import os
 import re
 import sys
 import time
+from collections import deque
 from datetime import datetime, timezone
 
 from alfaka.alpaca.feed_profiles import market_session_for_timestamp
@@ -32,6 +34,7 @@ def main():
     max_poll_records = positive_int_env("KAFKA_CLICKHOUSE_MAX_POLL_RECORDS", batch_size)
     poll_timeout_ms = positive_int_env("KAFKA_CLICKHOUSE_POLL_TIMEOUT_MS", 1000)
     flush_interval_seconds = non_negative_float_env("CLICKHOUSE_FLUSH_INTERVAL_SECONDS", 1.0)
+    recent_source_event_ids = positive_int_env("CLICKHOUSE_RECENT_SOURCE_EVENT_IDS", 100000)
     validate_required_values("clickhouse loader", {
         "kafka_servers": kafka_servers,
         "clickhouse_topics": topics,
@@ -61,7 +64,8 @@ def main():
     print(f"ClickHouse 연결: {client.url}/{client.database}", flush=True)
     print(
         "ClickHouse loader batch config: "
-        f"batchSize={batch_size} maxPollRecords={max_poll_records} flushIntervalSeconds={flush_interval_seconds}",
+        f"batchSize={batch_size} maxPollRecords={max_poll_records} "
+        f"flushIntervalSeconds={flush_interval_seconds} recentSourceEventIds={recent_source_event_ids}",
         flush=True,
     )
 
@@ -74,6 +78,7 @@ def main():
         batch_size=batch_size,
         flush_interval_seconds=flush_interval_seconds,
         poll_timeout_ms=poll_timeout_ms,
+        recent_source_ids=RecentSourceEventIds(recent_source_event_ids),
     )
 
 
@@ -87,6 +92,7 @@ def run_clickhouse_loader(
     batch_size=500,
     flush_interval_seconds=1.0,
     poll_timeout_ms=1000,
+    recent_source_ids=None,
 ):
     batch_size = max(1, int(batch_size or 1))
     flush_interval_seconds = max(0.0, float(flush_interval_seconds or 0))
@@ -100,7 +106,7 @@ def run_clickhouse_loader(
             for records in batches.values():
                 for record in records:
                     had_records = True
-                    buffer.append(record.value)
+                    buffer.append(record)
                     if len(buffer) >= batch_size:
                         flush_clickhouse_buffer(
                             consumer,
@@ -109,6 +115,7 @@ def run_clickhouse_loader(
                             load_trades=load_trades,
                             load_quotes=load_quotes,
                             enable_auto_commit=enable_auto_commit,
+                            recent_source_ids=recent_source_ids,
                         )
                         buffer.clear()
                         last_flush_at = now
@@ -120,6 +127,7 @@ def run_clickhouse_loader(
                     load_trades=load_trades,
                     load_quotes=load_quotes,
                     enable_auto_commit=enable_auto_commit,
+                    recent_source_ids=recent_source_ids,
                 )
                 buffer.clear()
                 last_flush_at = now
@@ -132,15 +140,31 @@ def run_clickhouse_loader(
                 load_trades=load_trades,
                 load_quotes=load_quotes,
                 enable_auto_commit=enable_auto_commit,
+                recent_source_ids=recent_source_ids,
             )
 
 
-def flush_clickhouse_buffer(consumer, client, payloads, *, load_trades=False, load_quotes=True, enable_auto_commit=False):
-    if not payloads:
+def flush_clickhouse_buffer(
+    consumer,
+    client,
+    records,
+    *,
+    load_trades=False,
+    load_quotes=True,
+    enable_auto_commit=False,
+    recent_source_ids=None,
+):
+    if not records:
         return 0
-    inserted = load_payload_batch(client, payloads, load_trades=load_trades, load_quotes=load_quotes)
+    inserted = load_payload_batch(
+        client,
+        records,
+        load_trades=load_trades,
+        load_quotes=load_quotes,
+        recent_source_ids=recent_source_ids,
+    )
     if not enable_auto_commit:
-        consumer.commit()
+        commit_processed_records(consumer, records)
     return inserted
 
 
@@ -193,35 +217,132 @@ def load_payload(client, payload, load_trades=False, load_quotes=True):
         print(message, flush=True)
 
 
-def load_payload_batch(client, payloads, load_trades=False, load_quotes=True):
-    table_rows = {}
+class RecentSourceEventIds:
+    def __init__(self, max_seen=100000):
+        self.max_seen = max(1, int(max_seen or 1))
+        self.seen = set()
+        self.order = deque()
+
+    def contains(self, table, source_event_id):
+        return bool(source_event_id) and (table, source_event_id) in self.seen
+
+    def record_many(self, table, source_event_ids):
+        for source_event_id in source_event_ids:
+            if not source_event_id:
+                continue
+            key = (table, source_event_id)
+            if key in self.seen:
+                continue
+            self.seen.add(key)
+            self.order.append(key)
+            if len(self.order) > self.max_seen:
+                self.seen.discard(self.order.popleft())
+
+
+def load_payload_batch(client, records, load_trades=False, load_quotes=True, recent_source_ids=None):
+    table_entries = {}
     table_order = []
     skipped = 0
-    for payload in payloads:
+    deduplicated = 0
+    batch_source_ids = {}
+    for record in records:
         try:
+            payload = clickhouse_record_payload(record)
             actions = clickhouse_actions_for_payload(payload, load_trades=load_trades, load_quotes=load_quotes)
         except Exception as exc:
             skipped += 1
-            print(f"ClickHouse batch row 변환 실패: {exc}; payload={json.dumps(payload, ensure_ascii=False)}", file=sys.stderr, flush=True)
+            raw_payload = getattr(record, "value", record)
+            print(f"ClickHouse batch row 변환 실패: {exc}; payload={json.dumps(raw_payload, ensure_ascii=False)}", file=sys.stderr, flush=True)
             continue
         if not actions:
             skipped += 1
             continue
         for table, row, _message in actions:
-            if table not in table_rows:
-                table_rows[table] = []
+            source_event_id = str(row.get("source_event_id") or "")
+            table_seen = batch_source_ids.setdefault(table, set())
+            if source_event_id and (
+                source_event_id in table_seen
+                or (recent_source_ids is not None and recent_source_ids.contains(table, source_event_id))
+            ):
+                deduplicated += 1
+                continue
+            if source_event_id:
+                table_seen.add(source_event_id)
+            if table not in table_entries:
+                table_entries[table] = []
                 table_order.append(table)
-            table_rows[table].append(row)
+            table_entries[table].append((row, source_event_id, clickhouse_record_identity(record, payload)))
 
     inserted = 0
     for table in table_order:
-        rows = table_rows[table]
-        client.insert_json_each_row(table, rows)
+        entries = table_entries[table]
+        rows = [entry[0] for entry in entries]
+        token = clickhouse_insert_deduplication_token(table, [entry[2] for entry in entries])
+        client.insert_json_each_row(table, rows, deduplication_token=token)
+        if recent_source_ids is not None:
+            recent_source_ids.record_many(table, [entry[1] for entry in entries])
         inserted += len(rows)
         print(f"ClickHouse batch 적재: table={table} rows={len(rows)}", flush=True)
     if skipped:
         print(f"ClickHouse batch 제외: rows={skipped}", flush=True)
+    if deduplicated:
+        print(f"ClickHouse batch 중복 제외: rows={deduplicated}", flush=True)
     return inserted
+
+
+def clickhouse_record_payload(record):
+    value = getattr(record, "value", record)
+    if not isinstance(value, dict):
+        raise TypeError(f"ClickHouse payload must be a dict, got {type(value).__name__}")
+    return value
+
+
+def clickhouse_record_identity(record, payload):
+    topic = getattr(record, "topic", None)
+    partition = getattr(record, "partition", None)
+    offset = getattr(record, "offset", None)
+    if topic is not None and partition is not None and offset is not None:
+        return f"kafka/{topic}/{partition}/{offset}"
+    source_event_id = payload.get("sourceEventId") or payload.get("source_event_id")
+    if source_event_id:
+        return f"source/{source_event_id}"
+    return ""
+
+
+def clickhouse_insert_deduplication_token(table, identities):
+    identity_values = list(identities)
+    stable_identities = sorted(identity for identity in identity_values if identity)
+    if not stable_identities or len(stable_identities) != len(identity_values):
+        return None
+    digest = hashlib.sha256((table + "\n" + "\n".join(stable_identities)).encode("utf-8")).hexdigest()
+    return f"gops-kafka-v1-{digest}"
+
+
+def commit_processed_records(consumer, records):
+    offsets = processed_record_offsets(records)
+    if not offsets:
+        consumer.commit()
+        return
+
+    from kafka import OffsetAndMetadata, TopicPartition
+
+    consumer.commit(offsets={
+        TopicPartition(topic, partition): OffsetAndMetadata(offset, None)
+        for (topic, partition), offset in offsets.items()
+    })
+
+
+def processed_record_offsets(records):
+    offsets = {}
+    for record in records:
+        topic = getattr(record, "topic", None)
+        partition = getattr(record, "partition", None)
+        offset = getattr(record, "offset", None)
+        if topic is None or partition is None or offset is None:
+            continue
+        key = (str(topic), int(partition))
+        offsets[key] = max(offsets.get(key, 0), int(offset) + 1)
+    return offsets
 
 
 def clickhouse_actions_for_payload(payload, load_trades=False, load_quotes=True):
@@ -478,7 +599,7 @@ class ClickHouseHttpClient:
         self.password = password
         self.timeout_seconds = float(os.getenv("CLICKHOUSE_HTTP_TIMEOUT_SECONDS", "10"))
 
-    def insert_json_each_row(self, table, rows):
+    def insert_json_each_row(self, table, rows, deduplication_token=None):
         if not rows:
             return
 
@@ -486,9 +607,13 @@ class ClickHouseHttpClient:
 
         query = f"INSERT INTO {self.database}.{clickhouse_identifier(table)} FORMAT JSONEachRow"
         body = "\n".join(json.dumps(row, ensure_ascii=False, separators=(",", ":")) for row in rows) + "\n"
+        params = {"user": self.user, "password": self.password, "database": self.database, "query": query}
+        if deduplication_token:
+            params["insert_deduplicate"] = "1"
+            params["insert_deduplication_token"] = deduplication_token
         response = requests.post(
             self.url,
-            params={"user": self.user, "password": self.password, "database": self.database, "query": query},
+            params=params,
             data=body.encode("utf-8"),
             timeout=self.timeout_seconds,
         )
@@ -721,6 +846,7 @@ class ClickHouseHttpClient:
             PARTITION BY toYYYYMM(event_time)
             ORDER BY (symbol, event_time, feed_profile)
             TTL event_time + INTERVAL 21 DAY DELETE
+            SETTINGS non_replicated_deduplication_window = 100000
         """)
         self.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.database}.order_flow_profile_daily
