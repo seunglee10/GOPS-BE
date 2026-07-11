@@ -50,7 +50,16 @@ gops:market:on-demand:v1:feed:quarantine:{date}
 chart:indicators:{version}:{symbol}:{interval}:{requestHash}
 chart:volume-profile:{version}:{symbol}:{requestHash}
 chart:derived:lock:{requestHash}
+gops:chart-assets:build:{jobId}
 ```
+
+Chart-analysis assets themselves never enter Redis. The manual build pipeline
+uses only the 24-hour status document `gops:chart-assets:build:{jobId}` and the
+ephemeral pub/sub channel `chart-assets.build:{jobId}` for SSE updates and
+cooperative cancellation.
+Build log messages use that pub/sub channel only: they are never appended to
+the status document, a Redis List/Stream, or any other key. The browser keeps
+at most 200 received lines in memory while the development panel is open.
 
 `order-flow:{symbol}:minutes` stores closed minute blobs in a ZSET for at most
 `ORDER_FLOW_LIVE_TTL_SECONDS` (default 86400). `live-minute` stores one current
@@ -73,11 +82,17 @@ derived-result Redis state.
 | order-flow minute blobs | market processor | order-flow API | 86400s closed / 300s current | minute-blob v2 |
 | indicator/profile cache | API derived service | chart routes | 300s / 30s | calculation version in key |
 | derived lock | API derived service | API replicas | 30s | request hash |
+| chart-asset build status | API + chart-asset-builder | build API/SSE | one JSON key/job, 24h TTL + pub/sub | asset v1/v2 |
 | subscription/feed state | API/controller | ingestors/processors | TTL or bounded symbol set | on-demand v1 |
 
 Legacy keys such as `price:*`, `candle:*`, and `candles:*` are reset targets
 only; do not add new chart state that depends on them. `market.events*` remains
 the existing pub/sub fanout path for live updates, not durable Redis state.
+
+Chart asset v2 adds `completed_with_warnings`, `saved_with_warning`, and
+`unchanged` to the existing job/item status vocabulary. Digests, candidate
+palettes, prompts, responses, and asset bodies remain ClickHouse/worker memory
+data and must not be copied into Redis.
 
 The feed controller may also maintain compatibility helper keys
 `feed:active:profile` and `feed:active:epoch`, but `feed:active` is the

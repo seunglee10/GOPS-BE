@@ -1,7 +1,15 @@
+import sys
 import threading
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+BACKEND_ROOT = REPO_ROOT / "systems" / "api-server" / "pods" / "api-server" / "gops-backend"
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.market_data.derived.service import DerivedCalculationService
 from alfaka.serving.chart_derived_data import build_indicator_request, build_volume_profile_request

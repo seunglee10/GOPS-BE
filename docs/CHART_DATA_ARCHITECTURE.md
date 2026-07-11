@@ -103,12 +103,19 @@ ClickHouse artifact contract.
 
 - The `bidask` chart type reads intraday minute rows and supports `1m`, `10m`,
   and `1h` display buckets.
-- `OrderFlowPanel` reads intraday Redis data for today and the daily endpoint
-  for a selected prior day or fallback when today is empty.
+- `OrderFlowPanel` reads only today's intraday Redis data and owns its symbol,
+  aggregation window, and display resolution independently from chart panels.
 - Daily rows are also retained for audit and existing agent chart context.
-  They are not the Bid/Ask chart's source.
+  They are not the Bid/Ask chart or `OrderFlowPanel` source.
 - Side classification is fixed by the order-flow API metadata. Candle volume
   profile remains estimated candle-range allocation and is a separate feature.
+
+The processor restores an unexpired Redis `live-minute` blob on restart so the
+current minute can continue accumulating or be promoted to a closed minute.
+Longer processor outages are not reconstructed by the intraday API. A future
+coverage project must rebuild missing minute profiles from retained ClickHouse
+trade/quote ticks and add minute-level `no-trades` versus `not-collected`
+metadata; the frontend must not manufacture zero-volume rows in the meantime.
 
 ## S3 Durability
 
@@ -127,6 +134,14 @@ layout migration. See `platform/s3/README.md` for exact prefixes.
 - S3 raw/raw-v2 low-volume backups: operator-owned lifecycle; final evidence has no expiry.
 - Processor maps, frontend inactive candle caches, and order-flow bucket caches
   have tested upper bounds.
+
+Persisted chart-analysis assets are an offline manual-build projection, not an
+API request-derived cache. The independent builder reads canonical ClickHouse
+daily candles once per symbol, derives completed 1D/1W/1M analysis candles with
+the shared identity/aggregation functions, and writes only compact final v2
+assets. Redis is limited to the existing job status key and pub/sub channel.
+The development-only delete route issues a synchronous ClickHouse mutation for
+explicit symbol/interval pairs; it is not a retention policy or automatic cleanup.
 
 ## Retained Compatibility
 

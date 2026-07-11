@@ -39,8 +39,10 @@ from alfaka.orderflow import (
 )
 from alfaka.orderflow.redis_model import (
     encode_order_flow_minute_blob,
+    order_flow_blob_to_bins,
     order_flow_minute_blob,
     order_flow_minute_score,
+    parse_order_flow_minute_blob,
 )
 from alfaka.serving.dto import market_status_event, order_flow_event, websocket_event
 from alfaka.serving.closed_watermark import (
@@ -288,7 +290,32 @@ def configure_order_flow_state(state, redis_client, redis_keys):
     state.order_flow_publish_state = {}
     state.order_flow_redis_flush_state = {}
     state.order_flow_minutes_ttl_state = set()
+    restore_order_flow_live_minutes(state, redis_client, redis_keys)
     return state
+
+
+def restore_order_flow_live_minutes(state, redis_client, redis_keys):
+    builder = getattr(state, "order_flow_builder", None)
+    if builder is None:
+        return 0
+    flush_state = _order_flow_redis_flush_state(state)
+    restored = 0
+    for symbol in sorted(builder.pinned_symbols):
+        try:
+            blob = parse_order_flow_minute_blob(redis_client.get(redis_keys.order_flow_live_minute(symbol)))
+        except Exception as exc:
+            print(f"Order-flow live-minute restore skipped: symbol={symbol} error={exc}", flush=True)
+            continue
+        if not blob or str(blob.get("symbol") or "").upper() != symbol:
+            continue
+        event_minute = str(blob.get("eventMinute") or "")
+        bins = order_flow_blob_to_bins(blob)
+        restored_count = builder.restore_minute(symbol, event_minute, bins)
+        if restored_count <= 0:
+            continue
+        flush_state[symbol] = {"minute": event_minute, "lastFlush": 0.0}
+        restored += 1
+    return restored
 
 
 class LiveCandlePublishThrottle:

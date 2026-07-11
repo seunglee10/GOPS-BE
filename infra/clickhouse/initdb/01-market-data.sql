@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS market_data.trade_ticks
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(event_time)
 ORDER BY (symbol, event_time, feed_profile, trade_id)
-TTL event_time + INTERVAL 21 DAY DELETE;
+TTL toDateTime(event_time) + INTERVAL 21 DAY DELETE;
 
 CREATE TABLE IF NOT EXISTS market_data.quote_ticks
 (
@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS market_data.quote_ticks
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(event_time)
 ORDER BY (symbol, event_time, feed_profile)
-TTL event_time + INTERVAL 21 DAY DELETE;
+TTL toDateTime(event_time) + INTERVAL 21 DAY DELETE;
 
 CREATE TABLE IF NOT EXISTS market_data.chart_candles
 (
@@ -306,6 +306,22 @@ CREATE TABLE IF NOT EXISTS market_data.order_flow_profile_daily
 ) ENGINE = ReplacingMergeTree(inserted_at)
 PARTITION BY toYYYYMM(session_date)
 ORDER BY (symbol, session_date, price_bin_size, price_bin);
+
+CREATE TABLE IF NOT EXISTS market_data.chart_analysis_assets
+(
+    symbol         LowCardinality(String),
+    interval       LowCardinality(String),
+    as_of          DateTime64(3, 'UTC'),
+    generated_at   DateTime64(3, 'UTC'),
+    asset_version  LowCardinality(String),
+    kernel_version LowCardinality(String),
+    prompt_version LowCardinality(String) DEFAULT '',
+    status         LowCardinality(String),
+    payload        String,
+    inserted_at    DateTime64(3, 'UTC') DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(inserted_at)
+ORDER BY (symbol, interval);
 
 -- Existing local/production volumes may have been initialized before source_event_id
 -- and hardening tables existed. Keep these migrations idempotent.

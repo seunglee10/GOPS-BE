@@ -13,13 +13,17 @@ market_data.quote_ticks
 market_data.market_events
 market_data.market_status_events
 market_data.order_flow_profile_daily
+market_data.chart_analysis_assets
 market_data.backfill_jobs
 market_data.storage_object_audit
 market_data.load_audit
 ```
 
 `trade_ticks` and `quote_ticks` retain 21 days. `chart_candles` and
-`order_flow_profile_daily` have no deletion TTL. Existing environments apply
+`order_flow_profile_daily` and `chart_analysis_assets` have no deletion TTL.
+`chart_analysis_assets` uses `ReplacingMergeTree(inserted_at)` ordered by
+`(symbol, interval)`; readers use `FINAL` or `argMax` so each pair serves only
+the latest prebuilt asset. Existing environments apply
 the TTL through the operator-reviewed, idempotent migration:
 
 ```text
@@ -42,6 +46,18 @@ infra/k8s/base/platform/clickhouse-initdb/01-market-data.sql
 `scripts/local/check-chart-data-contracts.py` enforces normalized equality of
 the two market-data DDL copies. Environment headers and the declared local-only
 agent table are the only allowed difference.
+
+## Chart Analysis Assets
+
+`market_data.chart_analysis_assets` stores compact final v1 or v2 JSON payloads.
+The v2 rollout reuses the existing `asset_version` column and table: there is no
+new table, TTL, or candidate ledger. A builder insert is skipped when the final
+`assetContentDigest` is unchanged; raw candles, rejected candidates, prompts,
+and provider responses are never persisted here. Latest reads continue to use
+`argMax(payload, inserted_at)` during mixed v1/v2 rollout.
+The authenticated development route can explicitly delete selected
+`(symbol, interval)` histories with a synchronous mutation. This exists for
+iteration and recovery only; it does not add a TTL or background cleanup.
 
 ## SEC Fundamentals Tables
 

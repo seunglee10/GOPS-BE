@@ -298,6 +298,9 @@ blobs are appended to `order-flow:{symbol}:minutes`.
 `ORDER_FLOW_LIVE_TTL_SECONDS` keeps closed minute blobs available for today's
 intraday panel until the EOD rollup has run, and
 `ORDER_FLOW_LIVE_MINUTE_TTL_SECONDS` keeps the current in-progress minute fresh.
+At processor startup, each pinned symbol performs one bounded live-minute read
+so an unexpired in-progress aggregate can resume without losing pre-restart
+trades; this read is not part of the quote/trade hot path.
 `ORDER_FLOW_QUOTE_CACHE_ONLY=true` is set only on the trade/candle market
 processor role when it also consumes the raw quotes topic for pinned-symbol
 in-memory NBBO classification; the dedicated quote processor keeps the quote

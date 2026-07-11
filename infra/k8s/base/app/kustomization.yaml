@@ -11,6 +11,7 @@ resources:
   - deployment-agent-orchestrator.yaml
   - deployment-agent-intent-classifier.yaml
   - deployment-agent-analysis-worker.yaml
+  - deployment-chart-asset-builder.yaml
   - deployment-deep-analysis-worker.yaml
   - deployment-agent-delivery-gateway.yaml
   - deployment-agent-event-detector.yaml

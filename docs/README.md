@@ -8,16 +8,21 @@ flowchart TD
   README["docs/README.md"]
   ARCH["AGENT_ARCHITECTURE.md<br/>에이전트 자체 설명"]
   POLICY["AGENT_ANALYSIS_QUERY_POLICY.md<br/>분석 쿼리/응답 정책"]
+  CHARTAGENT["CHART_AGENT_STRATEGY.md<br/>차트 지능/에이전트 전략"]
   BE["AGENT_BACKEND_INTEGRATION.md<br/>백엔드 연동"]
   FE["AGENT_FRONTEND_INTEGRATION.md<br/>프런트 연동"]
   AWS["AGENT_AWS_BUILD.md<br/>AWS 빌드/배포"]
 
   README --> ARCH
   README --> POLICY
+  README --> CHARTAGENT
   README --> BE
   README --> FE
   README --> AWS
   POLICY --> ARCH
+  CHARTAGENT --> ARCH
+  CHARTAGENT --> FE
+  CHARTAGENT --> AWS
   POLICY --> FE
   FE --> BE
   BE --> ARCH
@@ -28,6 +33,9 @@ flowchart TD
 | --- | --- |
 | `PRODUCT_CONTEXT.md` | Product direction and current/future scope boundary. |
 | `CHART_DATA_ARCHITECTURE.md` | Current chart fact ownership, compute placement, query path, API/WS, order-flow, and S3 contracts. |
+| `CHART_AGENT_STRATEGY.md` | 차트 지능의 투자적 역할, deterministic kernel, rule/LLM 경계, 작도 compiler, 데이터 사전 계산, orchestrator 통합, 단계별 구현 전략. |
+| `CHART_ANALYSIS_ASSETS.md` | 현재 작도 제안 로직, 품질 기준, LLM 경계, 저장·화면 흐름을 Mermaid 중심으로 설명하는 사람용 문서. |
+| `CHART_ANALYSIS_ASSETS_CODEX.md` | 이후 Codex 변경을 위한 불변 조건, 파일 책임, threshold, digest, 검증 절차 기술 기준서. |
 | `CHART_DATA_OPERATIONS.md` | Validation, deployment observation, recovery, retention, Terraform ownership, and rollback runbook. |
 | `STRUCTURE_GUIDE.md` | Folder placement rules for future code. |
 | `ARCHITECTURE.md` | Current system, pod/job, and platform relationships. |

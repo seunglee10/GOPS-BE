@@ -5246,6 +5246,8 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(weekly[-1]["interval"], "1W")
         self.assertEqual(monthly[-1]["interval"], "1M")
         self.assertEqual(weekly[-1]["ma5"], 3.0)
+        provider.aggregated_daily_candles("AAPL", "1W", 5, limit_buffer=1)
+        self.assertEqual(provider.queries[-1][1]["limit"], 6)
 
     def test_clickhouse_prefers_direct_interval_rows_before_source_aggregation(self):
         rows = [

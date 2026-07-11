@@ -144,6 +144,19 @@ from trades plus top-of-book quotes.
 drawing command로 저장하고, 해당 봉은 canvas에서 만료 시간이 있는 highlight overlay로
 잠깐 표시한다.
 
+Drawing anchor는 pixel이 아니라 canonical `timestamp`/`price`를 사용하고
+`logicalIndex`는 현재 candle 배열에서 계산 가능한 보조 cache로만 취급한다. 지원하는
+평행선 계약은 2-anchor `horizontalParallelLines`/`verticalParallelLines`, 3-anchor
+`trendParallelLines`이며 추세 평행선의 `parallelLineCount`는 2..10이다. 이벤트 설명은
+`flagMarker`의 editable label을 사용한다. `rangeBox`와 평행선 band fill은 candle/지표
+아래에서, outline·label·selection handle은 chart layer 위에서 렌더링해야 한다.
+추세 평행선은 기준선 기준 `0,+1,-1,+2,-2…` 의미 순서로 확장하고 화면 geometry는
+공간 순으로 정렬한다. `riskRewardBox`는 `[entry, stop, target]` 세 anchor를 사용하며
+target time은 stop time과 같아야 한다. `fibonacciRetracement`는 두 swing anchor와 고정
+레벨 `0, 0.236, 0.382, 0.5, 0.618, 0.786, 1`만 사용한다.
+모든 fill은 시각 레이어일 뿐 hit-test 대상이 아니며, selection은 line·outline·handle·label로만
+수행한다.
+
 Headers:
 
 ```text
@@ -286,6 +299,24 @@ symbol을 보낸다. 필수 투자 설정은 하단 `VI: 설정`의 `추천 설�
 `PUT /api/recommendations/profile` 폼에서만 받는다. 추천 행 클릭은 차트 symbol
 전환까지만 수행하고 주문 실행으로 연결하지 않는다. 추천 행의 섹터도
 `sectorLabelKo` 한글 라벨을 사용한다.
+
+chart analysis asset 운영 패널은 `kind="chartAssetOps"`, 화면 표시는
+`작도 자산(개발)`로 표현한다. 이름의 `(개발)`은 수동 운영 도구임을 나타내는 라벨일
+뿐 표시 게이트가 아니다. 로컬 Vite, Docker production build, 실제 배포 환경 모두
+레이아웃 수정 모드의 패널 추가 팔레트에 항상 노출하며 URL query나 localStorage로
+숨기지 않는다.
+
+Asset v2도 기존 GET/build/poll/SSE route를 사용한다. timed anchor는 chart
+candle timestamp에 정확히 존재해야 하며 프런트는 실패한 anchor를 보간하지 않는다.
+`commentary.focusItems[].drawingIds`는 실제 적용 drawing을 가리키고 선택 시 해당
+drawing을 강조한다. v1은 기존 렌더를 유지하며 v2의 정상 빈 layer는 오류가 아니다.
+빌드 완료와 개발 패널 삭제는 analysis asset cache invalidation event를 발생시키며,
+열려 있는 chart/commentary panel은 같은 symbol을 즉시 다시 조회한다. 운영 현황은
+최종 drawing 수를 표시해 `ready`이지만 정상 무작도인 asset을 구분한다. 행별 `삭제`
+버튼은 확인 후 해당 symbol/interval의 ClickHouse 저장 이력을 실제로 제거한다.
+개발 패널의 build log는 SSE `log` 이벤트를 수신하는 동안 브라우저 메모리에만 최대
+200줄 유지한다. polling/status 응답에 로그 이력을 기대하지 않으며, 연결 전·후 유실은
+허용한다. 최종 생성량은 `createdEntities`로 별도 표시한다.
 
 지원하지 않는 경우 정책:
 

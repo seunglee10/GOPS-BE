@@ -251,6 +251,7 @@ catalog를 image/runtime filesystem에 포함해야 한다.
 | --- | --- | --- |
 | `agent-orchestrator` | yes | HTTP compatibility endpoint and direct report lookup. |
 | `agent-analysis-worker` | yes | hot analysis request를 소비하고 report를 저장한다. |
+| `chart-asset-builder` | no | 수동 chart-analysis asset 요청을 symbol 단위로 소비한다. canonical 1D 1회 조회, quality-gated S/T kernel, 검증 후보 ID만 고르는 MTF curator 1회를 거쳐 compact v2 asset을 ClickHouse에 저장한다. Interactive orchestrator와 독립이다. |
 | `agent-delivery-gateway` | yes for async/SSE | result event를 Redis report update로 mirror한다. |
 | `agent-intent-classifier` | no | ambiguous query를 위한 optional cheap classifier. |
 | `deep-analysis-worker` | no | opt-in deep analysis request를 처리한다. |
@@ -303,6 +304,7 @@ Kafka topics:
 ```text
 agents.market-events.v1
 agents.analysis-requests.v1
+agents.chart-asset-build-requests.v1
 agents.deep-analysis-requests.v1
 agents.analysis-results.v1
 agents.query-understanding-events.v1
@@ -326,6 +328,8 @@ gops:agent:graph-path:{...}
 gops:fundamentals:summary:v1:{SYMBOL}
 gops:fundamentals:peer:v1:{SYMBOL}:latest
 gops:fundamentals:peer:v1:{SYMBOL}:{FRAME_PERIOD}
+gops:chart-assets:build:{jobId}
+chart-assets.build:{jobId}
 ```
 
 Fundamentals Redis cache is trusted on the agent hot path. Stale detection is
@@ -347,6 +351,7 @@ market_data.sec_financial_facts
 market_data.sec_derived_metrics
 market_data.sec_frames
 market_data.sec_collection_runs
+market_data.chart_analysis_assets
 ```
 
 Financial role contract:

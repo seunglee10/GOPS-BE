@@ -34,6 +34,7 @@ alerts.triggered.v1
 alerts.dlq.v1
 agents.market-events.v1
 agents.analysis-requests.v1
+agents.chart-asset-build-requests.v1
 agents.deep-analysis-requests.v1
 agents.analysis-results.v1
 agents.query-understanding-events.v1
