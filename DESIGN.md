@@ -108,6 +108,7 @@ typography:
   display-lg: "40px / 400 / 1.2 / 0"
   display-md: "32px / 400 / 1.2 / 0"
   title-lg: "24px / 400 / 1.35 / 0.12px"
+  instrument-name: "24px / 700 / 1.2 / 0"
   title-md: "20px / 400 / 1.5 / 0"
   title-sm: "18px / 500 / 1.4 / 0"
   label-md: "16px / 500 / 1.4 / 0"
@@ -142,6 +143,7 @@ must travel together.
 | `display-lg` | 40px | 400 | 1.2 | 0 | none | Homepage h1 hero: `All your teams, all their workflows` |
 | `display-md` | 32px | 400 | 1.2 | 0 | none | Platform feature head: `Conversational app building` |
 | `title-lg` | 24px | 400 | 1.35 | 0.12px | Section title: `Sophisticated workflows` |
+| `instrument-name` | 24px | 700 | 1.2 | 0 | none | File-tab ticker or company name: `LLY` |
 | `title-md` | 20px | 400 | 1.5 | 0 | none | Sub-section title: `Don't just talk. Deploy it.` |
 | `title-sm` | 18px | 500 | 1.4 | 0 | none | Article-card title: `10 best AI app builders for 2026` |
 | `label-md` | 16px | 500 | 1.4 | 0 | none | Demo-card title: `Production apps in prototype speed` |
@@ -161,6 +163,7 @@ GOPS component mapping:
 | Homepage hero h1 | `display-lg` |
 | Platform feature head or dominant workspace value | `display-md` |
 | Section title or featured instrument | `title-lg` |
+| File-tab ticker or company name | `instrument-name` |
 | Sub-section or major panel title | `title-md` |
 | Article-card or prominent result title | `title-sm` |
 | Demo-card, compact card, row, and utility title | `label-md` |
