@@ -251,7 +251,7 @@ catalog를 image/runtime filesystem에 포함해야 한다.
 | --- | --- | --- |
 | `agent-orchestrator` | yes | HTTP compatibility endpoint and direct report lookup. |
 | `agent-analysis-worker` | yes | hot analysis request를 소비하고 report를 저장한다. |
-| `chart-asset-builder` | no | 수동 chart-analysis asset 요청을 symbol 단위로 소비한다. 요청 수명 안에서 exact canonical 1D lookback을 감사하고 S3→Alpaca 순으로 결측만 materialize한 뒤, quality-gated S/T kernel과 검증 후보 ID만 고르는 MTF curator 1회를 거쳐 compact v2 asset을 ClickHouse에 저장한다. 자동 순회 없이 interactive orchestrator와 독립이다. |
+| `chart-asset-builder` | no | 수동 chart-analysis asset 요청을 symbol 단위로 소비한다. 요청 수명 안에서 exact canonical 1D lookback을 감사하고 manifest-indexed S3→Alpaca 순으로 결측만 ClickHouse에 materialize한 뒤, 단일 confirmed S/T kernel과 검증 후보 ID만 고르는 MTF curator 1회를 거쳐 compact v2 asset을 저장한다. 최신 JSON은 ClickHouse 기본 또는 guarded PostgreSQL dual-write를 사용하며 자동 순회 없이 interactive orchestrator와 독립이다. |
 | `agent-delivery-gateway` | yes for async/SSE | result event를 Redis report update로 mirror한다. |
 | `agent-intent-classifier` | no | ambiguous query를 위한 optional cheap classifier. |
 | `deep-analysis-worker` | no | opt-in deep analysis request를 처리한다. |
@@ -351,7 +351,7 @@ market_data.sec_financial_facts
 market_data.sec_derived_metrics
 market_data.sec_frames
 market_data.sec_collection_runs
-market_data.chart_analysis_assets
+market_data.chart_analysis_assets  # PostgreSQL cutover 전 compatibility/rollback projection
 ```
 
 Financial role contract:

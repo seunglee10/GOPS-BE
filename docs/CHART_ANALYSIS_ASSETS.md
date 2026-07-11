@@ -33,17 +33,21 @@ sequenceDiagram
   participant Kafka as build topic
   participant Worker as chart-asset-builder
   participant CH as ClickHouse
+  participant S3 as S3 canonical final
+  participant Store as Active asset store
   participant Kernel as analytics kernel
   participant LLM as OpenAI curator
   participant UI as Chart frontend
 
   Operator->>API: symbol/interval/LLM 옵션으로 수동 빌드
   API->>Kafka: symbol 중심 job 발행
-  Worker->>CH: 기존 1D/1W/1M asset snapshot 1회 조회
+  Worker->>Store: 기존 1D/1W/1M asset snapshot 1회 조회
   Worker->>Worker: freshness/input/version digest 검사
   Worker->>CH: 요청 interval의 정확한 canonical 1D 범위 감사
   opt 결측 구간 존재
-    Worker->>CH: S3 canonical final 우선 materialize
+    Worker->>S3: symbol inventory LIST 1회 후 관련 object manifest 조회
+    S3-->>Worker: 요청 범위 object를 memory에 prepare (DB write 없음)
+    Worker->>CH: deadline 안에 끝난 prepare만 caller thread가 commit
     Worker->>CH: 남은 구간만 Alpaca split 1D로 materialize
     Worker->>CH: canonical 1D 재감사
   end
@@ -57,10 +61,10 @@ sequenceDiagram
       LLM-->>Worker: 선택 ID와 서술 참조 ID만 반환
     end
     Worker->>Worker: 좌표 materialize + 해설 조립 + schema 검증
-    Worker->>CH: content가 바뀐 asset만 INSERT
+    Worker->>Store: content가 바뀐 asset만 저장
   end
   UI->>API: GET /api/charts/analysis-assets
-  API->>CH: interval별 최신 v1/v2 asset
+  API->>Store: interval별 최신 v1/v2 asset
   API-->>UI: 호환 응답
   UI->>UI: 구조/추세/인사이트 토글 및 해설 focus
 ```
@@ -74,8 +78,8 @@ sequenceDiagram
 ### 1. 실제 봉을 하나의 시간 격자로 만든다
 
 분석은 ClickHouse의 실제 시장 데이터만 사용한다. 1D를 기준으로 1W와 1M을
-결정론적으로 집계하며, 아직 닫히지 않은 주·월 봉은 제외한다. 타임스탬프는
-`candleKey`와 거래 세션 규칙으로 정규화한다.
+결정론적으로 집계하며, NYSE의 마지막 실제 세션 종료 전인 주·월 봉은 제외한다.
+Identity는 `candleKey`이고, 1D 좌표는 뉴욕 자정, 1W·1M 좌표는 UTC bucket start다.
 
 빌드 전 감사 범위는 요청 interval의 lookback에서 정확히 계산한다. 1D는 완료 거래일
 500개, 1W는 완료 312주, 1M은 완료 72개월을 구성하는 일봉이다. 휴장일과 특별
@@ -104,9 +108,9 @@ flowchart TD
 | 구조 | 최소 증거 | 현재 관련성 | 화면 예산 |
 | --- | --- | --- | --- |
 | 지지·저항 | 독립 touch episode 3회, reaction 2회 | 현재가에서 2 ATR 이내, role 확정 | 지지 1 + 저항 1 |
-| 추세선 | 독립 접점 3회, 충분한 span, violation 1회 이하 | 2.25 ATR 이내, 최근 접점이 display bars의 15% 이내 | 1개 |
-| 채널 | 양 경계의 유효 추세와 유사 기울기, 충분한 폭 | 기반 추세의 현재 관련성 통과 | 추세 예산과 공유 |
-| 박스권 | 상·하단 각 2회 이상, 합산 6회, 교대 반응, 검증 구간 containment | 현재가가 박스에서 1 ATR 이내 | 추세 예산과 공유 |
+| 추세선 | structural anchor 2개, raw 고·저가 독립 접점 3회, 0.75 ATR 반응 2회 | 2.25 ATR 이내, 최근 접점 20% 이내, active invalidation 없음 | 1개 |
+| 채널 | confirmed 기준선 + 반대 경계 접점 2회, 평행 오차 20% 이하, containment 80% | 기반 추세의 현재 관련성 통과 | 추세 예산과 공유 |
+| 박스권 | 상·하단 각 2회, 합산 5회, 최근 양 경계와 교대 반응, containment 85% | 현재가가 박스에서 0.75 ATR 이내 | 추세 예산과 공유 |
 | 이벤트 | breakout/retest/gap/52주 extreme 등의 상태와 impact 검증 | interval별 age와 current impact 통과 | Flag 최대 1개 |
 
 ATR은 종목 가격대와 변동성 차이를 정규화한다. 단순히 오래된 두 점을 연결하거나
@@ -122,10 +126,11 @@ flowchart TD
 
   Pivot --> Hypothesis["같은 종류 pivot 쌍 가설"]
   Hypothesis --> Inlier["ATR residual inlier cluster"]
-  Inlier --> TrendGate{"3 touch + span + recency + distance"}
+  Inlier --> Reaction["raw 접점 뒤 0.75 ATR 반응"]
+  Reaction --> TrendGate{"3 touch + 2 reaction + active validity"}
 
   Pivot --> Range["상·하단 반응과 containment"]
-  Range --> RangeGate{"합산 6 touch + ≤1 ATR"}
+  Range --> RangeGate{"합산 5 touch + 85% containment + ≤0.75 ATR"}
 
   LevelGate --> Candidate["hardPass 후보"]
   TrendGate --> Candidate
@@ -179,7 +184,8 @@ flowchart TB
   Geometry --> Materialize
 ```
 
-LLM은 좌표, 가격, 선 종류, 자유 문장을 만들지 않는다. 후보 ID, 사실 ID, 확인 조건
+LLM은 좌표, 가격, 선 종류, 자유 문장을 만들지 않는다. 후보 ID가 하나도 없으면 호출도
+하지 않는다. 후보 ID, 사실 ID, 확인 조건
 ID, 상위 주기 관계 ID만 선택한다. 존재하지 않는 candidate/fact/condition/evidence
 참조는 validator가 거부한다. API key 부재나 OpenAI 실패는 빌드 실패가 아니라
 rule layer를 보존한 degraded asset이다.
@@ -218,12 +224,14 @@ flowchart TD
   IntentDigest -- "아니오" --> Curate["symbol당 LLM 최대 1회"]
   Curate --> ContentDigest{"표시 content 동일?"}
   ContentDigest -- "예" --> NoInsert["INSERT 0"]
-  ContentDigest -- "아니오" --> Save["ClickHouse append"]
+  ContentDigest -- "아니오" --> Save["active latest-asset store write"]
 ```
 
 - 기존 asset은 심볼당 1회 snapshot query로 1D/1W/1M을 함께 읽는다.
 - raw candle과 전체 후보는 저장하지 않고, 선택된 evidence와 regime만 compact하게
   투영한다.
+- Canonical candle과 repair materialization은 ClickHouse에 남는다. 최신 asset JSON은
+  기본 ClickHouse에서 parity-guarded dual-write를 거쳐 PostgreSQL 한 행으로 이전할 수 있다.
 - asset hard cap은 20 KiB, 운영 목표 p95는 12 KiB다.
 - Redis에는 asset 본문을 저장하지 않는다. 24시간 build job 상태 문자열과 pub/sub
   채널만 사용한다.
@@ -239,7 +247,8 @@ flowchart TD
 ```mermaid
 flowchart TD
   API["analysis-assets response"] --> Normalize["v1/v2 discriminator 정규화"]
-  Normalize --> Stale{"asOf가 현재 candle보다 오래됐는가?"}
+  Normalize --> Snap["interval candleKey로 실제 봉 timestamp에 snap"]
+  Snap --> Stale{"완료 candleKey가 asset보다 새 개인가?"}
   Stale -- "예" --> Hide["자동 적용하지 않음"]
   Stale -- "아니오" --> Apply["drawing sourceProposalId로 적용"]
   Apply --> ToggleS["구조"]
@@ -249,23 +258,40 @@ flowchart TD
   Panel --> Highlight["연결 drawing 강조"]
 ```
 
-운영 패널은 S&P 500 전체 또는 콤마로 구분한 심볼을 수동 빌드한다. 자동 갱신,
+운영 패널은 저장·현재 차트 적용·제외 수와 이유를 구분한다. 적용 수는 자산 payload가
+아니라 active chart document에 실제 존재하는 drawing ID 교집합으로 계산한다. S&P 500 전체 또는 콤마로
+구분한 심볼을 수동 빌드한다. 자동 갱신,
 질문창 연동, candle-closed 구독은 현재 범위가 아니다.
 
 빌드가 끝나거나 개발 패널에서 자산을 삭제하면 cache invalidation을 구독한 열린 차트와
 해설 패널이 같은 symbol을 즉시 다시 조회한다. 자산 현황은 최종 작도 수를 함께 보여
 `ready · eligible · 작도 없음`과 저장 오류를 구분한다. 행별 삭제는 확인 후 해당
-symbol/interval의 ClickHouse 전체 자산 이력을 동기 mutation으로 제거한다.
+symbol/interval을 active asset store에서 제거하며 dual mode는 양쪽 성공을 요구한다.
 
 ## 현재 검증 상태
 
-- 13개 실제 Nasdaq 일봉 series와 172개 as-of episode를 재사용한다.
+- 15개 실제 Nasdaq 일봉 series와 207개 as-of episode를 재사용하며, active
+  `blind-investor-holdout-v1` round는 35개 chronological episode다.
 - AAPL, AMZN, GOOGL, NVDA, MU는 로컬 데이터가 상대적으로 충분한 통합 표본이다.
-  품질 로직은 이 종목들에 특화하지 않는다.
+  각 표본은 7년·1,759개 일봉을 가지며 품질 로직은 이 종목들에 특화하지 않는다.
 - golden corpus에서 anchor 불일치와 H-Line 가격 라벨 위반은 0건이다.
-- 실제 OpenAI smoke, 12-case pilot, 동일 bundle 반복 안정성을 확인했다.
+- 최신 rules run의 deterministic kernel p95는 25.9ms, symbol bundle p95는 48.9ms,
+  작도 median은 2, p95는 4다. 주기별 `must_draw` ready recall은 1M 87.5%,
+  1W·1D 100%이고 전체 ready false-zero는 4.3%다.
+- 자동 reviewer estimate는 precision 99.1%, clearly meaningless 0%였지만 human
+  precision으로 부르지 않는다. 독립 재감사에서 임의로 만든 strict-empty 5건을
+  false-empty로 판정해 제거했으며, active `must_not_draw` denominator는 0이다.
+  semantic recall도 35/59(59.3%)로 목표에 못 미쳐 quality gate 전체는 미통과다.
+- 현재 compact inventory는 symbol prefix LIST를 한 번만 하지만 기존 per-object
+  manifest JSON은 항목별 GET한다. 시간별 `final-v2` scan은 0회지만, 장기 이력을
+  단일 aggregate index 한 번으로 읽는 성능 gate는 아직 rollout blocker다.
+- `.env` key를 process memory에서만 읽은 AAPL·AMZN·GOOGL·NVDA·MU 실제 OpenAI
+  5-call canary는 strict output으로 모두 non-degraded 완료됐다. LLM latency는 약
+  4.7~6.6초로 deterministic 350ms budget과 분리한다.
 - ClickHouse → builder → ClickHouse → FastAPI serving 관통과 동일 입력 no-op을
   확인했다.
+- PostgreSQL schema/dual-write/sync/parity 기능은 구현했지만 실제 schema 적용,
+  backfill, 7일 관찰, read-primary cutover는 수행하지 않았고 기본은 ClickHouse다.
 - 자동 rubric 결과는 회귀 신호일 뿐 전문가 평가를 대신하지 않는다. production
   rollout 전 human blind review가 필요하다.
 - 로컬 Alpaca API는 사용할 수 없는 환경을 전제로 하며, 검증은 기존 ClickHouse
@@ -283,5 +309,5 @@ symbol/interval의 ClickHouse 전체 자산 이력을 동기 mutation으로 제�
 | symbol 중심 빌드 | `systems/agent-orchestration/shared/gops_agents/chart_assets/builder.py` |
 | 저장·API | `chart_assets/storage.py`, `systems/api-server/.../routes/chart_assets.py` |
 | 프런트 | `apps/gops-frontend/src/chart/analysisAssetsApi.ts`, `analysisAssetPresentation.ts` |
-| 계약 | `shared/chart-contract/chart-analysis-asset.schema.json` |
+| 계약 | `shared/chart-contract/chart-analysis-asset-v2.schema.json` |
 | 평가 | `scripts/local/eval-chart-assets-v2.py` |

@@ -19,12 +19,21 @@ market_data.storage_object_audit
 market_data.load_audit
 ```
 
-`trade_ticks` and `quote_ticks` retain 21 days. `chart_candles` and
-`order_flow_profile_daily` and `chart_analysis_assets` have no deletion TTL.
+`trade_ticks` and `quote_ticks` retain 21 days and keep the newest 100,000
+non-replicated insert-deduplication tokens per table. The tick loader derives a
+token from Kafka topic/partition/offset metadata, commits only offsets included
+in a successful insert, and keeps a bounded recent `sourceEventId` cache for
+short replays that cross insert batch boundaries. `chart_candles` and
+`order_flow_profile_daily` have no deletion TTL. The compatibility
+`chart_analysis_assets` table also has no TTL while the PostgreSQL latest-row
+migration is in progress.
 `chart_analysis_assets` uses `ReplacingMergeTree(inserted_at)` ordered by
 `(symbol, interval)`; readers use `FINAL` or `argMax` so each pair serves only
-the latest prebuilt asset. Existing environments apply
-the TTL through the operator-reviewed, idempotent migration:
+the latest prebuilt asset. The current single-replica builder serializes
+`generatedAt + canonical payload digest` compare-and-insert so a delayed older
+build is suppressed; dual modes also warn if a monotonic no-op leaves the two
+stores divergent. Existing environments apply the tick TTL and deduplication
+window through the operator-reviewed, idempotent migration:
 
 ```text
 scripts/local/migrate-chart-tick-retention.sql
@@ -49,12 +58,16 @@ agent table are the only allowed difference.
 
 ## Chart Analysis Assets
 
-`market_data.chart_analysis_assets` stores compact final v1 or v2 JSON payloads.
+`market_data.chart_analysis_assets` stores compact final v1 or v2 JSON payloads
+as the default and rollback source until the guarded PostgreSQL cutover finishes.
 The v2 rollout reuses the existing `asset_version` column and table: there is no
 new table, TTL, or candidate ledger. A builder insert is skipped when the final
 `assetContentDigest` is unchanged; raw candles, rejected candidates, prompts,
 and provider responses are never persisted here. Latest reads continue to use
 `argMax(payload, inserted_at)` during mixed v1/v2 rollout.
+In `dual_clickhouse_read` and `dual_postgres_read`, writes are mirrored while
+only one store serves reads. Canonical candles and request-scoped repair
+materialization always stay in ClickHouse; only the latest final asset JSON moves.
 The authenticated development route can explicitly delete selected
 `(symbol, interval)` histories with a synchronous mutation. This exists for
 iteration and recovery only; it does not add a TTL or background cleanup.

@@ -4,8 +4,10 @@ from typing import Any
 
 from alfaka.serving.time_utils import canonical_utc_timestamp
 from alfaka.serving.volume_profile import VOLUME_PROFILE_CALCULATION_VERSION, compute_volume_profile_payload
+from alfaka.storage.candle_validation import invalid_candle_numeric_reason
 
-from .atr import atr_quality_flags, latest_atr
+from .atr import abnormal_true_range_indices, latest_atr
+from .config import QUALITY_CONFIG
 from .events import compute_events
 from .levels import compute_levels
 from .pivots import compute_pivots
@@ -23,7 +25,17 @@ def normalize_candles(candles: list[dict[str, Any]], interval: str) -> list[dict
     for source in candles:
         if source.get("isClosed") is False or source.get("is_closed") is False:
             continue
-        timestamp = canonical_utc_timestamp(source.get("timestamp"))
+        if invalid_candle_numeric_reason(source, require=True):
+            continue
+        raw_timestamp = source.get("timestamp")
+        trusted_analysis_row = (
+            source.get("candleKey") is not None
+            and source.get("barIndex") is not None
+            and source.get("interval") == interval
+            and isinstance(raw_timestamp, str)
+            and raw_timestamp.endswith("Z")
+        )
+        timestamp = raw_timestamp if trusted_analysis_row else canonical_utc_timestamp(raw_timestamp)
         if not timestamp:
             continue
         try:
@@ -53,12 +65,42 @@ def normalize_candles(candles: list[dict[str, Any]], interval: str) -> list[dict
 
 
 def assemble_feature_pack(candles: list[dict[str, Any]], interval: str) -> dict[str, Any]:
-    rows = normalize_candles(candles, interval)
+    closed_sources = [
+        source for source in candles
+        if source.get("isClosed") is not False and source.get("is_closed") is not False
+    ]
+    invalid_positions = [
+        index for index, source in enumerate(closed_sources)
+        if invalid_candle_numeric_reason(source, require=True)
+    ]
+    quality_flags: list[str] = []
+    source_rows = closed_sources
+    if invalid_positions:
+        quality_flags.append("invalid_ohlcv")
+        source_rows = closed_sources[invalid_positions[-1] + 1:]
+        minimum = QUALITY_CONFIG[interval].display_bars + QUALITY_CONFIG[interval].extra_anchor_bars
+        if len(normalize_candles(source_rows, interval)) < minimum:
+            return {**_empty_features(), "qualityFlags": [*quality_flags, "data_quality_blocked"]}
+        quality_flags.append("invalid_ohlcv_trimmed")
+    rows = normalize_candles(source_rows, interval)
     if not rows:
-        return _empty_features()
-    display = rows[-DISPLAY_BARS[interval]:]
+        return {**_empty_features(), "qualityFlags": quality_flags}
+    analysis_rows = rows
+    abnormal = abnormal_true_range_indices(rows)
+    if abnormal:
+        quality_flags.append("abnormal_true_range")
+        clean_rows = rows[abnormal[-1] + 1:]
+        minimum = QUALITY_CONFIG[interval].display_bars + QUALITY_CONFIG[interval].extra_anchor_bars
+        if len(clean_rows) >= minimum:
+            analysis_rows = clean_rows
+            quality_flags.append("abnormal_true_range_trimmed")
+        else:
+            quality_flags.append("data_quality_blocked")
+    if not analysis_rows:
+        return {**_empty_features(), "qualityFlags": quality_flags}
+    display = analysis_rows[-DISPLAY_BARS[interval]:]
     display_from = display[0]["timestamp"]
-    atr = latest_atr(rows)
+    atr = latest_atr(analysis_rows)
     profile = compute_volume_profile_payload(
         display,
         symbol="FEATURE_PACK",
@@ -67,18 +109,26 @@ def assemble_feature_pack(candles: list[dict[str, Any]], interval: str) -> dict[
         to_time=display[-1]["timestamp"],
         target_bins=24,
     )
-    pivots = compute_pivots(rows, display_from=display_from, interval=interval)
+    pivots = compute_pivots(analysis_rows, display_from=display_from, interval=interval)
+    if "data_quality_blocked" in quality_flags:
+        regime = compute_regime(analysis_rows, [])
+        return {
+            **_empty_features(),
+            "vp": _feature_volume_profile(profile),
+            "regime": regime,
+            "qualityFlags": quality_flags,
+        }
     levels = compute_levels(
-        rows,
+        analysis_rows,
         pivots,
         atr=atr,
         volume_profile=profile,
         expected_bars=LOOKBACK_BARS[interval],
         interval=interval,
     )
-    trends = compute_trends(rows, pivots, display_from=display_from, atr=atr, interval=interval)
-    regime = compute_regime(rows, trends)
-    events = compute_events(rows, levels, atr=atr, display_from=display_from, interval=interval)
+    trends = compute_trends(analysis_rows, pivots, display_from=display_from, atr=atr, interval=interval)
+    regime = compute_regime(analysis_rows, trends)
+    events = compute_events(analysis_rows, levels, atr=atr, display_from=display_from, interval=interval)
     return {
         "pivots": pivots,
         "levels": levels,
@@ -86,8 +136,8 @@ def assemble_feature_pack(candles: list[dict[str, Any]], interval: str) -> dict[
         "vp": _feature_volume_profile(profile),
         "regime": regime,
         "events": events,
-        "fibCandidates": _fib_candidates(pivots, rows[-1]["close"], atr),
-        "qualityFlags": atr_quality_flags(rows),
+        "fibCandidates": _fib_candidates(pivots, analysis_rows, atr, interval),
+        "qualityFlags": quality_flags,
     }
 
 
@@ -112,23 +162,63 @@ def _feature_volume_profile(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _fib_candidates(pivots: list[dict[str, Any]], current_price: float, atr: float) -> list[dict[str, Any]]:
+def _fib_candidates(
+    pivots: list[dict[str, Any]], candles: list[dict[str, Any]], atr: float, interval: str,
+) -> list[dict[str, Any]]:
+    structural = [item for item in pivots if item.get("grade") == "structural"]
+    pairs = [
+        (first, second, abs(float(second["price"]) - float(first["price"])))
+        for first, second in zip(structural, structural[1:])
+        if first["kind"] != second["kind"]
+    ]
+    if not pairs:
+        return []
+    dominant_floor = 0.75 * max(span for _first, _second, span in pairs)
+    current_price = float(candles[-1]["close"])
+    reaction_horizon = QUALITY_CONFIG[interval].reaction_horizon
     candidates: list[dict[str, Any]] = []
-    for first, second in zip(pivots, pivots[1:]):
-        if first["kind"] == second["kind"]:
-            continue
-        span = abs(float(second["price"]) - float(first["price"]))
-        if span < 4 * atr:
+    for first, second, span in pairs:
+        if span < 5 * atr or span < dominant_floor:
             continue
         low, high = sorted((float(first["price"]), float(second["price"])))
-        progress = (current_price - low) / span if span else 0.0
-        if 0.25 <= progress <= 0.85:
-            candidates.append({
-                "fromPivotId": first["id"],
-                "toPivotId": second["id"],
-                "quality": round(min(1.0, span / max(8 * atr, 0.01)), 4),
-            })
+        upward = first["kind"] == "L" and second["kind"] == "H"
+        retracement = (high - current_price) / span if upward else (current_price - low) / span
+        if not 0.236 <= retracement <= 0.786:
+            continue
+        levels = [high - span * ratio if upward else low + span * ratio for ratio in (0.382, 0.5, 0.618)]
+        current_distance = min(abs(current_price - price) for price in levels) / max(atr, 1e-12)
+        if current_distance > 2:
+            continue
+        reaction = _fib_reaction(candles, second["barIndex"] + 1, levels, upward, atr, reaction_horizon)
+        if reaction is None:
+            continue
+        candidates.append({
+            "fromPivotId": first["id"],
+            "toPivotId": second["id"],
+            "quality": round(min(1.0, 0.55 + 0.25 * min(1, span / max(10 * atr, .01)) + 0.20 * (1 - min(1, current_distance / 2))), 4),
+            "hardPass": True,
+            "impulseAtr": round(span / max(atr, 1e-12), 4),
+            "retracementRatio": round(retracement, 4),
+            "currentDistanceAtr": round(current_distance, 4),
+            "reactionAt": reaction,
+        })
     return sorted(candidates, key=lambda item: -item["quality"])
+
+
+def _fib_reaction(candles, start, levels, upward, atr, horizon):
+    for index in range(start, len(candles)):
+        row = candles[index]
+        touch_price = float(row["low"] if upward else row["high"])
+        if min(abs(touch_price - price) for price in levels) > .35 * atr:
+            continue
+        future = candles[index + 1:min(len(candles), index + 1 + horizon)]
+        if upward:
+            reaction = max([float(item["high"]) - touch_price for item in future] or [0])
+        else:
+            reaction = max([touch_price - float(item["low"]) for item in future] or [0])
+        if reaction >= .75 * atr:
+            return row["timestamp"]
+    return None
 
 
 def _empty_features() -> dict[str, Any]:

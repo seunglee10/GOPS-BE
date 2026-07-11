@@ -8,17 +8,18 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
 for path in (ROOT / "systems" / "agent-orchestration" / "shared", ROOT / "systems" / "market-data" / "shared"):
     if str(path) not in sys.path: sys.path.insert(0, str(path))
 
-from gops_agents.chart_assets.builder import ChartAssetBuilder  # noqa: E402
+from gops_agents.chart_assets.builder import ChartAssetBuilder, _asset_content_digest  # noqa: E402
 from gops_agents.chart_assets.envelope import ChartAssetBuildEnvelope  # noqa: E402
 from gops_agents.chart_assets.progress import InMemoryChartAssetProgressStore, RedisChartAssetProgressStore  # noqa: E402
 from gops_agents.chart_assets.curation import deterministic_curation  # noqa: E402
-from alfaka.analytics.analysis_candles import analysis_input_digest  # noqa: E402
+from alfaka.analytics.analysis_candles import CANDLE_CONTRACT_VERSION, analysis_input_digest  # noqa: E402
 
 
 class FakeCandleLoader:
@@ -44,6 +45,23 @@ class FakeCandleLoader:
         return SimpleNamespace(rows=rows, coverage=coverage, digests={interval: analysis_input_digest(symbol, interval, values) for interval, values in rows.items()})
 
 
+class PartiallyInsufficientCandleLoader(FakeCandleLoader):
+    def load_symbol(self, symbol, intervals):
+        bundle = super().load_symbol(symbol, intervals)
+        if "1W" in bundle.rows:
+            bundle.rows["1W"] = bundle.rows["1W"][:5]
+            bundle.coverage["1W"] = {
+                **bundle.coverage["1W"],
+                "actualBars": 5,
+                "missingBars": 67,
+                "coverageRatio": 5 / 72,
+                "renderable": False,
+                "qualityFlags": ["recent_contiguous_below_threshold"],
+            }
+            bundle.digests["1W"] = analysis_input_digest(symbol, "1W", bundle.rows["1W"])
+        return bundle
+
+
 class FakeStorage:
     def __init__(self, initial=None, cancel_after=None, progress=None, job_id=None):
         self.assets = copy.deepcopy(initial or {})
@@ -62,12 +80,57 @@ class FakeStorage:
         if self.cancel_after and len(self.saved) == self.cancel_after: self.progress.request_cancel(self.job_id)
 
 
+class ShadowWarningStorage(FakeStorage):
+    def __init__(self):
+        super().__init__()
+        self.warnings = []
+    def save(self, asset):
+        super().save(asset)
+        self.warnings.append("chart_asset_shadow_write_failed:dual_clickhouse_read:TimeoutError")
+    def pop_warnings(self):
+        current = list(self.warnings)
+        self.warnings.clear()
+        return current
+
+
 class FakeCurator:
     model = "mock-model"
     def __init__(self): self.calls = 0
     def curate_symbol(self, bundle):
         self.calls += 1
         return {"output": deterministic_curation(bundle), "degraded": False, "reason": None, "model": self.model, "usage": {}}
+
+
+class SelectingCurator:
+    model = "mock-model"
+    def __init__(self): self.calls = 0
+    def curate_symbol(self, bundle):
+        self.calls += 1
+        selections = []
+        for palette in bundle["intervals"]:
+            candidates = palette["visualCandidates"]
+            if candidates:
+                candidate = candidates[0]
+                selections.append({
+                    "interval": palette["interval"], "selectedCandidateIds": [candidate["candidateId"]],
+                    "headlineFactIds": [candidate["factIds"][0]],
+                    "focusNarratives": [{"refType": "visualCandidate", "refId": candidate["candidateId"], "factIds": [candidate["factIds"][0]], "watchConditionRef": candidate["confirmationConditionRef"], "priority": 1}],
+                    "counterEvidenceRefs": [], "higherTimeframeRelationIds": [], "emphasisCode": "STRUCTURE_FIRST",
+                })
+            else:
+                selections.append({
+                    "interval": palette["interval"], "selectedCandidateIds": [], "headlineFactIds": [],
+                    "focusNarratives": [], "counterEvidenceRefs": [], "higherTimeframeRelationIds": [], "emphasisCode": "STRUCTURE_FIRST",
+                })
+        return {"output": {"intervalSelections": selections}, "degraded": False, "reason": None, "model": self.model, "usage": {}}
+
+
+class FailingCurator:
+    model = "mock-model"
+    def __init__(self): self.calls = 0
+    def curate_symbol(self, _bundle):
+        self.calls += 1
+        raise TimeoutError("curator unavailable")
 
 
 class FakeRepairResult:
@@ -93,7 +156,6 @@ class FakeRepairService:
         kwargs["on_event"]("audit", {"missingBars": 0, "actualBars": 500, "expectedBars": 500, "ranges": []})
         return self.result
 
-
 class RecordingProgressStore(InMemoryChartAssetProgressStore):
     def __init__(self):
         super().__init__()
@@ -116,6 +178,25 @@ def envelope(symbols=("NVDA", "AAPL"), intervals=("1D", "1W", "1M"), job_id="cab
 
 
 class ChartAssetBuilderTest(unittest.TestCase):
+    def test_content_digest_tracks_presentation_freshness_but_not_audit_time(self):
+        base = {
+            "asOf": "2026-07-09T04:00:00.000Z",
+            "generatedAt": "2026-07-11T00:00:00.000Z",
+            "window": {"displayFrom": "2026-01-01T00:00:00.000Z", "displayTo": "2026-07-09T04:00:00.000Z"},
+            "input": {"digest": "sha256:old", "candleContractVersion": CANDLE_CONTRACT_VERSION},
+            "status": "ready", "quality": {}, "features": {}, "layers": {},
+            "chartSetup": {}, "commentary": {}, "buildContext": {},
+            "build": {"assemblerVersion": "chart-asset-assembler-v3", "agentOutcome": "not_requested_empty"},
+        }
+        audit_only = {**copy.deepcopy(base), "generatedAt": "2026-07-11T01:00:00.000Z"}
+        next_candle = copy.deepcopy(base)
+        next_candle.update({"asOf": "2026-07-10T04:00:00.000Z"})
+        next_candle["window"]["displayTo"] = next_candle["asOf"]
+        next_candle["input"]["digest"] = "sha256:new"
+
+        self.assertEqual(_asset_content_digest(base), _asset_content_digest(audit_only))
+        self.assertNotEqual(_asset_content_digest(base), _asset_content_digest(next_candle))
+
     def test_requested_symbol_runs_inline_repair_before_candle_load(self):
         request = envelope(symbols=("NVDA",), intervals=("1D",), job_id="cab-12345678-repair")
         progress = RecordingProgressStore(); progress.initialize(request)
@@ -130,9 +211,35 @@ class ChartAssetBuilderTest(unittest.TestCase):
         self.assertEqual(state["repair"]["checkedSymbols"], 1)
         self.assertTrue(any("repair audit" in line for line in progress.emitted_logs))
 
+    def test_incomplete_repair_reason_is_compact_status_and_interval_warning(self):
+        request = envelope(
+            symbols=("NVDA",), intervals=("1D",),
+            job_id="cab-12345678-repair-reason",
+        )
+        progress = RecordingProgressStore(); progress.initialize(request)
+        repair = FakeRepairService(FakeRepairResult(
+            unavailable=True,
+            reason="alpaca_unavailable",
+        ))
+
+        storage = FakeStorage()
+        state = ChartAssetBuilder(
+            candle_loader=FakeCandleLoader(), storage=storage,
+            progress=progress, repair_service=repair, concurrency=1,
+        ).run(request)
+
+        self.assertEqual(state["status"], "completed_with_warnings")
+        self.assertEqual(state["repair"]["reasonCodes"], {"alpaca_unavailable": 1})
+        self.assertIn("alpaca_unavailable", state["recentItems"][0]["warning"])
+        asset = storage.assets[("NVDA", "1D")]
+        self.assertEqual(asset["status"], "degraded")
+        self.assertEqual(asset["quality"]["state"], "insufficient_data")
+        self.assertEqual(sum(len(layer["drawings"]) for layer in asset["layers"].values()), 0)
+
     def test_freshness_skip_does_not_run_repair_or_load_candles(self):
         existing = {("NVDA", "1D"): {
             "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "input": {"candleContractVersion": CANDLE_CONTRACT_VERSION},
             "layers": {"structure": {"drawings": []}, "trend": {"drawings": []}, "agent": {"drawings": []}},
         }}
         request = envelope(
@@ -149,6 +256,21 @@ class ChartAssetBuilderTest(unittest.TestCase):
         self.assertEqual(loader.bundle_calls, 0)
         self.assertEqual(state["progress"]["skipped"], 1)
 
+    def test_old_candle_contract_is_not_fresh(self):
+        existing = {("NVDA", "1D"): {
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "input": {"candleContractVersion": "analysis-candles-old"},
+            "layers": {"structure": {"drawings": []}, "trend": {"drawings": []}, "agent": {"drawings": []}},
+        }}
+        request = envelope(symbols=("NVDA",), intervals=("1D",), job_id="cab-12345678-old-contract", skip_fresh_hours=24)
+        progress = RecordingProgressStore(); progress.initialize(request)
+        repair = FakeRepairService(); loader = FakeCandleLoader()
+
+        ChartAssetBuilder(candle_loader=loader, storage=FakeStorage(existing), progress=progress, repair_service=repair, concurrency=1).run(request)
+
+        self.assertEqual(repair.calls, [("NVDA", ("1D",))])
+        self.assertEqual(loader.bundle_calls, 1)
+
     def test_redis_logs_are_pubsub_only_and_not_job_state(self):
         redis = PublishOnlyRedis()
         store = RedisChartAssetProgressStore(redis_client=redis)
@@ -157,6 +279,49 @@ class ChartAssetBuilderTest(unittest.TestCase):
         self.assertEqual(json.loads(redis.published[0][1]), {
             "type": "log", "jobId": "cab-12345678-log", "message": "NVDA:1D saved; entities=2",
         })
+
+    def test_s3_metrics_are_emitted_only_in_ephemeral_log(self):
+        progress = RecordingProgressStore()
+        builder = ChartAssetBuilder(candle_loader=FakeCandleLoader(), storage=FakeStorage(), progress=progress, concurrency=1)
+
+        builder._log_repair_event("cab-12345678-metrics", "NVDA", "s3", {
+            "status": "completed", "materializedRows": 12,
+            "metrics": {"listCalls": 2, "objectsListed": 5, "manifestObjectsRead": 1, "objectsSelected": 2, "objectGets": 2, "elapsedMs": 41, "manifestSource": "compact"},
+        })
+
+        self.assertIn("metrics(listCalls=2 objectsListed=5", progress.emitted_logs[0])
+        self.assertIn("manifestSource=compact", progress.emitted_logs[0])
+
+    def test_shadow_write_warning_is_nonfatal_and_visible(self):
+        request = envelope(symbols=("NVDA",), intervals=("1D",), job_id="cab-12345678-shadow")
+        progress = RecordingProgressStore(); progress.initialize(request)
+        storage = ShadowWarningStorage()
+
+        state = ChartAssetBuilder(candle_loader=FakeCandleLoader(), storage=storage, progress=progress, concurrency=1).run(request)
+
+        self.assertEqual(state["status"], "completed_with_warnings")
+        self.assertEqual(state["progress"]["failed"], 0)
+        self.assertTrue(any("shadow_write_failed" in line for line in progress.emitted_logs))
+
+    def test_preflight_warning_is_counted_and_shadow_warning_is_drained(self):
+        request = envelope(
+            symbols=("NVDA",), intervals=("1D", "1W"),
+            job_id="cab-12345678-preflight-shadow",
+        )
+        progress = RecordingProgressStore(); progress.initialize(request)
+        storage = ShadowWarningStorage()
+
+        state = ChartAssetBuilder(
+            candle_loader=PartiallyInsufficientCandleLoader(), storage=storage,
+            progress=progress, concurrency=1,
+        ).run(request)
+
+        self.assertEqual(state["status"], "completed_with_warnings")
+        self.assertGreaterEqual(state["progress"]["warnings"], 1)
+        weekly = next(item for item in state["recentItems"] if item["interval"] == "1W")
+        self.assertIn("shadow_write_failed", weekly["warning"])
+        self.assertEqual(storage.warnings, [])
+        self.assertTrue(any("1W warning=chart_asset_shadow" in line for line in progress.emitted_logs))
 
     def test_rule_only_job_builds_six_assets_and_completes(self):
         progress = RecordingProgressStore(); request = envelope(); progress.initialize(request)
@@ -255,6 +420,60 @@ class ChartAssetBuilderTest(unittest.TestCase):
         self.assertEqual(service.calls, 2, "force evaluates curator once")
         self.assertEqual(len(storage.saved), saved_count, "audit timestamps do not change content digest")
         self.assertEqual({item.get("reason") for item in forced_state["recentItems"]}, {"unchanged_after_force"})
+
+    def test_empty_visual_palette_skips_llm_call(self):
+        request = envelope(symbols=("NVDA",), intervals=("1D",), job_id="cab-12345678-empty-llm", llm_enabled=True)
+        progress = InMemoryChartAssetProgressStore(); progress.initialize(request)
+        storage = FakeStorage(); curator = FakeCurator()
+        empty_features = {
+            "pivots": [], "levels": [], "trends": [], "events": [], "fibCandidates": [],
+            "vp": {}, "regime": {"trend": "range", "atr14": 1}, "qualityFlags": [],
+        }
+
+        with patch("gops_agents.chart_assets.builder.compute_feature_pack", return_value=empty_features):
+            ChartAssetBuilder(candle_loader=FakeCandleLoader(), storage=storage, progress=progress, llm_service=curator, concurrency=1).run(request)
+
+        self.assertEqual(curator.calls, 0)
+        self.assertEqual(storage.saved[0]["build"]["llmSkippedReason"], "no_visual_candidates")
+        self.assertIn("quality_empty", storage.saved[0]["quality"]["reasons"])
+
+    def test_recent_data_outlier_saves_explicit_degraded_empty_asset(self):
+        request = envelope(symbols=("NVDA",), intervals=("1D",), job_id="cab-12345678-data-blocked")
+        progress = InMemoryChartAssetProgressStore(); progress.initialize(request)
+        storage = FakeStorage()
+        blocked_features = {
+            "pivots": [], "levels": [], "trends": [], "events": [], "fibCandidates": [],
+            "vp": {}, "regime": {"trend": "range", "atr14": 1},
+            "qualityFlags": ["abnormal_true_range", "data_quality_blocked"],
+        }
+
+        with patch("gops_agents.chart_assets.builder.compute_feature_pack", return_value=blocked_features):
+            state = ChartAssetBuilder(candle_loader=FakeCandleLoader(), storage=storage, progress=progress, concurrency=1).run(request)
+
+        asset = storage.saved[0]
+        self.assertEqual(state["status"], "completed_with_warnings")
+        self.assertEqual(asset["status"], "degraded")
+        self.assertEqual(asset["quality"]["state"], "insufficient_data")
+        self.assertEqual(asset["commentary"]["emptyState"], "data_degraded")
+
+    def test_llm_failure_preserves_valid_same_input_agent_layer(self):
+        storage = FakeStorage(); selecting = SelectingCurator(); loader = FakeCandleLoader()
+        first = envelope(symbols=("NVDA",), intervals=("1W",), job_id="cab-12345678-agent-first", llm_enabled=True)
+        progress = InMemoryChartAssetProgressStore(); progress.initialize(first)
+        ChartAssetBuilder(candle_loader=loader, storage=storage, progress=progress, llm_service=selecting, concurrency=1).run(first)
+        original = copy.deepcopy(storage.assets[("NVDA", "1W")]["layers"]["agent"])
+        self.assertTrue(original["drawings"])
+
+        failing = FailingCurator()
+        second = envelope(symbols=("NVDA",), intervals=("1W",), job_id="cab-12345678-agent-failure", llm_enabled=True, force=True)
+        progress = InMemoryChartAssetProgressStore(); progress.initialize(second)
+        ChartAssetBuilder(candle_loader=loader, storage=storage, progress=progress, llm_service=failing, concurrency=1).run(second)
+        preserved = storage.assets[("NVDA", "1W")]["layers"]["agent"]
+
+        self.assertEqual(failing.calls, 1)
+        self.assertEqual(preserved["drawings"], original["drawings"])
+        self.assertTrue(preserved["meta"]["preservedOnFailure"])
+        self.assertEqual(preserved["meta"]["failureReason"], "llm_TimeoutError")
 
     def test_late_identical_intent_skips_llm_and_write_after_kernel(self):
         storage = FakeStorage(); service = FakeCurator(); loader = FakeCandleLoader()

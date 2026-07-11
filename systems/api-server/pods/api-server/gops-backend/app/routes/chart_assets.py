@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import re
 import time
 from functools import lru_cache
@@ -18,7 +19,7 @@ from app.services.alfaka_market_data import configured_universe_symbols, normali
 from gops_agents.chart_assets.envelope import ALLOWED_INTERVALS, ChartAssetBuildEnvelope, utc_now_iso
 from gops_agents.chart_assets.progress import TERMINAL_STATUSES, build_progress_store_from_env
 from gops_agents.chart_assets.queue import build_chart_asset_queue_from_env
-from gops_agents.chart_assets.storage import ChartAssetStorage
+from gops_agents.chart_assets.storage import build_chart_asset_storage_from_env
 
 
 router = APIRouter()
@@ -67,6 +68,8 @@ def delete_chart_analysis_assets(
     intervals: str = Query(default="1D,1W,1M", min_length=2, max_length=32),
     _user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
+    if _storage_maintenance_enabled():
+        raise HTTPException(status_code=503, detail="Chart analysis asset storage migration is in progress.")
     selected_symbols = _parse_symbol_csv(symbols)
     selected_intervals = _parse_intervals_csv(intervals)
     if len(selected_symbols) > 100:
@@ -84,6 +87,8 @@ def build_chart_analysis_assets(
     response: Response,
     user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
+    if _storage_maintenance_enabled():
+        raise HTTPException(status_code=503, detail="Chart analysis asset storage migration is in progress.")
     symbols = _requested_symbols(request.symbols)
     envelope = ChartAssetBuildEnvelope.create(
         requested_by=hashlib.sha256(user.sub.encode("utf-8")).hexdigest()[:24],
@@ -212,8 +217,8 @@ def _sse(event: str, payload: dict[str, Any]) -> str:
 
 
 @lru_cache(maxsize=1)
-def chart_asset_storage() -> ChartAssetStorage:
-    return ChartAssetStorage()
+def chart_asset_storage():
+    return build_chart_asset_storage_from_env()
 
 
 @lru_cache(maxsize=1)
@@ -224,3 +229,7 @@ def chart_asset_progress_store():
 @lru_cache(maxsize=1)
 def chart_asset_build_queue():
     return build_chart_asset_queue_from_env()
+
+
+def _storage_maintenance_enabled() -> bool:
+    return os.getenv("CHART_ASSET_STORAGE_MAINTENANCE", "false").strip().lower() in {"1", "true", "yes", "on"}

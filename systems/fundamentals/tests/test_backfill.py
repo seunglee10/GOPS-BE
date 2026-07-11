@@ -20,7 +20,9 @@ from fundamentals.backfill import (
     build_summary_payload,
     default_frame_periods,
     derive_metric_rows,
+    effective_source,
     fetch_sec_frame_api_rows,
+    iter_companyfacts_api_payloads,
     iter_companyfacts_payloads,
     normalize_companyfacts_payload,
     parse_company_tickers_exchange,
@@ -65,6 +67,27 @@ class FakeSecClient:
                 }
             ],
         }
+
+
+class FakeCompanyFactsClient:
+    def __init__(self, payloads, errors=()):
+        self.payloads = payloads
+        self.errors = set(errors)
+        self.requests = []
+
+    def companyfacts(self, cik):
+        self.requests.append(cik)
+        if cik in self.errors:
+            raise RuntimeError("boom")
+        return self.payloads[cik]
+
+
+class FakeS3:
+    def __init__(self):
+        self.objects = {}
+
+    def put_object(self, *, Bucket, Key, Body, **_kwargs):
+        self.objects[(Bucket, Key)] = Body
 
 
 def sec_fact(value, *, fy=2024, fp="FY", end="2024-12-31", filed="2025-02-01", accn=None, form="10-K"):
@@ -288,6 +311,47 @@ class FundamentalsBackfillTests(unittest.TestCase):
         self.assertIn(("us-gaap", "Revenues", "USD", "CY2025Q4"), client.requests)
         flattened = [row for batch in rows for row in batch]
         self.assertEqual({row["symbol"] for row in flattened}, {"AAPL"})
+
+    def test_effective_source_defaults_to_api_and_falls_back_to_zip_for_explicit_paths(self):
+        self.assertEqual(effective_source(FundamentalsBackfillConfig()), "api")
+        self.assertEqual(effective_source(FundamentalsBackfillConfig(source="zip")), "zip")
+        self.assertEqual(effective_source(FundamentalsBackfillConfig(source="api", local_zip_path="/tmp/companyfacts.zip")), "zip")
+        self.assertEqual(effective_source(FundamentalsBackfillConfig(source="api", s3_zip_key="fundamentals/sec/companyfacts/2026-07-10/companyfacts.zip")), "zip")
+        self.assertEqual(effective_source(FundamentalsBackfillConfig(source="unknown")), "api")
+
+    def test_iter_companyfacts_api_payloads_uploads_json_and_counts_failures(self):
+        company_map = {
+            "GOOG": CompanyTicker(symbol="GOOG", cik="0001652044"),
+            "GOOGL": CompanyTicker(symbol="GOOGL", cik="0001652044"),
+            "AAPL": CompanyTicker(symbol="AAPL", cik="0000320193"),
+        }
+        client = FakeCompanyFactsClient(
+            payloads={"0001652044": {"facts": {"us-gaap": {}}}},
+            errors={"0000320193"},
+        )
+        s3 = FakeS3()
+        config = FundamentalsBackfillConfig(dry_run=False, s3_bucket="test-bucket")
+        stats = BackfillStats(run_id="test", dry_run=False)
+
+        with redirect_stdout(StringIO()):
+            rows = list(iter_companyfacts_api_payloads(client, company_map, config=config, stats=stats, s3_client=s3))
+
+        self.assertEqual(sorted(company.symbol for company, _payload in rows), ["GOOG", "GOOGL"])
+        self.assertEqual(stats.companies_failed, 1)
+        self.assertEqual(client.requests, ["0000320193", "0001652044"])
+        self.assertIn(("test-bucket", "fundamentals/sec/companyfacts/api/CIK0001652044.json"), s3.objects)
+        self.assertNotIn(("test-bucket", "fundamentals/sec/companyfacts/api/CIK0000320193.json"), s3.objects)
+
+    def test_iter_companyfacts_api_payloads_skips_upload_in_dry_run(self):
+        company_map = {"GOOG": CompanyTicker(symbol="GOOG", cik="0001652044")}
+        client = FakeCompanyFactsClient(payloads={"0001652044": {"facts": {"us-gaap": {}}}})
+        s3 = FakeS3()
+        config = FundamentalsBackfillConfig(dry_run=True, s3_bucket="test-bucket")
+
+        rows = list(iter_companyfacts_api_payloads(client, company_map, config=config, s3_client=s3))
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(s3.objects, {})
 
     def test_dry_run_without_download_returns_without_network_clients(self):
         config = FundamentalsBackfillConfig(dry_run=True, symbols=["AAPL"], download_in_dry_run=False)

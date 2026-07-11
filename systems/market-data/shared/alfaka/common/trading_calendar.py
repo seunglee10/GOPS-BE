@@ -85,6 +85,22 @@ def is_us_equity_session_date(
     return True
 
 
+def is_us_equity_early_close_date(value: date) -> bool:
+    """Return whether the regular NYSE session conventionally closes at 13:00 ET."""
+    if not is_us_equity_session_date(value):
+        return False
+    thanksgiving = nth_weekday(value.year, 11, 3, 4)
+    if value == thanksgiving + timedelta(days=1):
+        return True
+    if value.month == 12 and value.day == 24:
+        return True
+    independence_day = date(value.year, 7, 4)
+    if value.month == 7 and value.day == 3:
+        return True
+    observed_independence_day = observed_date(independence_day)
+    return observed_independence_day.weekday() == 4 and value == observed_independence_day - timedelta(days=1)
+
+
 def observed_date(value: date) -> date:
     if value.weekday() == 5:
         return value - timedelta(days=1)

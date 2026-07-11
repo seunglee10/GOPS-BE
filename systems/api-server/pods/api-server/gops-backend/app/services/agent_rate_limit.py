@@ -10,11 +10,15 @@ from fastapi import HTTPException, status
 from app.core.config import read_dotenv_value
 
 
+DEFAULT_AGENT_RATE_LIMIT_REQUESTS = 30
+DEFAULT_AGENT_RATE_LIMIT_WINDOW_SECONDS = 60
+
+
 def enforce_agent_rate_limit(app: Any, user_id: str, *, now: float | None = None) -> None:
     if not bool_config("AGENT_RATE_LIMIT_ENABLED", True):
         return
-    limit = positive_int_config("AGENT_RATE_LIMIT_REQUESTS", 10)
-    window_seconds = positive_int_config("AGENT_RATE_LIMIT_WINDOW_SECONDS", 60)
+    limit = positive_int_config("AGENT_RATE_LIMIT_REQUESTS", DEFAULT_AGENT_RATE_LIMIT_REQUESTS)
+    window_seconds = positive_int_config("AGENT_RATE_LIMIT_WINDOW_SECONDS", DEFAULT_AGENT_RATE_LIMIT_WINDOW_SECONDS)
     current = time.time() if now is None else now
     window = int(current // window_seconds)
     user_hash = hashlib.sha256(str(user_id).encode("utf-8")).hexdigest()[:24]

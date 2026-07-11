@@ -55,6 +55,17 @@ market-data/rebuild-20260702-lazy-v1/manifest/candles/interval={interval}/symbol
 market-data/rebuild-20260702-lazy-v1/manifest/backfill/request={requestId}.json
 ```
 
+Chart-analysis repair is a stricter request-scoped reader. It receives every
+missing daily range for one symbol, lists the compact symbol manifest once,
+filters all ranges in memory, and only when compact entries do not match performs
+one legacy symbol-root manifest pass. It never scans the hourly `final-v2`
+prefix. The S3 stage has a 45-second default deadline; remaining gaps may move to
+the deployment-enabled Alpaca daily path. S3 list/get/normalize is a no-write
+prepare phase. Only a preparation accepted before the deadline is committed to
+ClickHouse by the caller thread, so a timed-out background read cannot write
+candles or load audits later. `listCalls`, listed/selected objects,
+GET count, matched rows, and elapsed time are ephemeral SSE diagnostics only.
+
 ## Raw Backup
 
 ```text

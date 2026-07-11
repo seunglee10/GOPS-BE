@@ -91,8 +91,9 @@ the existing pub/sub fanout path for live updates, not durable Redis state.
 
 Chart asset v2 adds `completed_with_warnings`, `saved_with_warning`, and
 `unchanged` to the existing job/item status vocabulary. Digests, candidate
-palettes, prompts, responses, and asset bodies remain ClickHouse/worker memory
-data and must not be copied into Redis.
+palettes, prompts, responses, and asset bodies remain active asset-store/worker
+memory data and must not be copied into Redis. During guarded migration the
+active store is ClickHouse or PostgreSQL; Redis behavior does not change.
 
 The feed controller may also maintain compatibility helper keys
 `feed:active:profile` and `feed:active:epoch`, but `feed:active` is the

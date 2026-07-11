@@ -3,11 +3,10 @@
 # 결과: GOPS CandleSnapshot 형식으로 반환합니다.
 import logging
 from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
 
 from alfaka.alpaca.feed_profiles import market_session_for_timestamp, visible_extended_session_windows
 from alfaka.serving.closed_watermark import live_candle_after_latest_closed
-from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
+from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider, with_higher_timeframe_closed_state
 from alfaka.serving.cursors import timestamp_from_cursor
 from alfaka.serving.dto import cursor_for, snapshot
 from alfaka.serving.intervals import (
@@ -28,7 +27,6 @@ from alfaka.serving.volume_profile import compute_volume_profile_payload
 
 logger = logging.getLogger(__name__)
 TARGET_FLOOR_TOLERANCE = timedelta(days=3)
-MARKET_TIMEZONE = ZoneInfo("America/New_York")
 
 
 class MarketDataProvider:
@@ -247,11 +245,12 @@ class MarketDataProvider:
         }
 
 
-def merge_candles(*groups):
+def merge_candles(*groups, now=None):
     rows = [candle for group in groups for candle in group if candle]
     intervals = {normalize_chart_interval(row.get("interval", "1m")) for row in rows}
-    if rows and intervals.issubset({"1D"}):
+    if rows and len(intervals) == 1 and intervals.issubset({"1D", "1W", "1M"}):
         from alfaka.analytics.analysis_candles import merge_canonical_candles
+        interval = next(iter(intervals))
         classified = []
         for index, group in enumerate(groups):
             if index == len(groups) - 1:
@@ -264,7 +263,8 @@ def merge_candles(*groups):
                 {**candle, "sourceClass": candle.get("sourceClass") or source_class}
                 for candle in group if candle
             ])
-        return merge_canonical_candles(*classified, interval="1D", view="chart_current")
+        merged = merge_canonical_candles(*classified, interval=interval, view="chart_current")
+        return with_higher_timeframe_closed_state(merged, interval, now=now)
     by_timestamp = {}
     for group in groups:
         for candle in group:
@@ -284,16 +284,12 @@ def merge_timestamp_key(candle):
         interval = normalize_chart_interval(candle.get("interval", "1m"))
     except ValueError:
         interval = "1m"
-    if interval != "1D":
+    if interval not in {"1D", "1W", "1M"}:
         return timestamp
-    parsed = parse_iso_time(timestamp)
-    if not parsed:
-        return timestamp
-    if parsed.hour == 0 and parsed.minute == 0 and parsed.second == 0 and parsed.microsecond == 0:
-        market_day = datetime(parsed.year, parsed.month, parsed.day, tzinfo=MARKET_TIMEZONE)
-    else:
-        market_day = parsed.astimezone(MARKET_TIMEZONE).replace(hour=0, minute=0, second=0, microsecond=0)
-    return market_day.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    from alfaka.analytics.analysis_candles import canonicalize_candle_identity
+
+    normalized = canonicalize_candle_identity(candle, interval)
+    return normalized.get("timestamp") if normalized else timestamp
 
 
 def filter_candles_for_requested_window(candles, before=None, from_time=None, to_time=None):

@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import statistics
 from typing import Any
 
 
@@ -41,7 +42,8 @@ def build_interval_palette(
             facts.append({"factId": fact_id, "ownerRef": candidate_id, "clauseCode": "ACTIVE_STRUCTURE", "renderedKo": _rule_fact(layer_name, selected)})
             findings.append({"findingId": candidate_id, "drawingIds": drawings, "evidenceRefs": selected.get("evidenceRefs") or [], "factIds": [fact_id], "quality": selected.get("quality") or {}})
     for level in features.get("levels", []):
-        if not level.get("hardPass") or float(level.get("score") or 0) < .65 or float(level.get("currentDistanceAtr") or 99) > 2 or not level.get("vpConfluence"):
+        level_distance = float(level["currentDistanceAtr"]) if level.get("currentDistanceAtr") is not None else 99.0
+        if not level.get("hardPass") or float(level.get("score") or 0) < .65 or level_distance > 2 or not level.get("vpConfluence"):
             continue
         if float(level.get("zoneHigh", level["price"])) - float(level.get("zoneLow", level["price"])) < .25 * float(features.get("regime", {}).get("atr14") or 0):
             continue
@@ -60,8 +62,14 @@ def build_interval_palette(
     for fib in features.get("fibCandidates", [])[:2]:
         pivots = {item["id"]: item for item in features.get("pivots", [])}
         first, second = pivots.get(fib.get("fromPivotId")), pivots.get(fib.get("toPivotId"))
-        if not first or not second or float(fib.get("quality") or 0) < .65: continue
-        candidate = _candidate(symbol, interval, input_digest, "retracement", [first["id"], second["id"]], f"{first['id']}:{second['id']}", fib["quality"], 1, {
+        if (
+            not first or not second or not fib.get("hardPass")
+            or float(fib.get("quality") or 0) < .65
+            or float(fib.get("impulseAtr") or 0) < 5
+            or not fib.get("reactionAt")
+            or (float(fib["currentDistanceAtr"]) if fib.get("currentDistanceAtr") is not None else 99.0) > 2
+        ): continue
+        candidate = _candidate(symbol, interval, input_digest, "retracement", [first["id"], second["id"]], f"{first['id']}:{second['id']}", fib["quality"], fib["currentDistanceAtr"], {
             "type": "fibonacciRetracement", "anchors": [{"timestamp": first["timestamp"], "price": float(first["price"])}, {"timestamp": second["timestamp"], "price": float(second["price"])}], "label": "검증된 되돌림 구간",
         }, generated_at)
         candidates.append(candidate)
@@ -94,7 +102,7 @@ def build_symbol_bundle(symbol: str, interval_palettes: list[dict[str, Any]], cr
     compact = [_compact_palette(item) for item in palettes]
     allowed: set[str] = set()
     for rank in range(6):
-        for palette in reversed(compact):
+        for palette in compact:
             if rank < len(palette["visualCandidates"]) and len(allowed) < 10:
                 allowed.add(palette["visualCandidates"][rank]["candidateId"])
     for palette in compact:
@@ -114,6 +122,10 @@ def validate_curation_output(value: Any, bundle: dict[str, Any]) -> dict[str, An
         if not isinstance(selection, dict) or set(selection) != required: raise ValueError("invalid interval selection")
         interval = selection["interval"]
         if interval not in palettes or interval in seen_intervals: raise ValueError("invalid interval reference")
+        for key in ("selectedCandidateIds", "headlineFactIds", "focusNarratives", "counterEvidenceRefs", "higherTimeframeRelationIds"):
+            if not isinstance(selection[key], list): raise ValueError(f"invalid {key}")
+        for key in ("selectedCandidateIds", "headlineFactIds", "counterEvidenceRefs", "higherTimeframeRelationIds"):
+            if any(not isinstance(item, str) for item in selection[key]): raise ValueError(f"invalid {key}")
         seen_intervals.add(interval); palette = palettes[interval]
         candidates = {item["candidateId"]: item for item in palette["visualCandidates"]}
         findings = {item["findingId"]: item for item in palette["ruleFindings"]}
@@ -129,15 +141,19 @@ def validate_curation_output(value: Any, bundle: dict[str, Any]) -> dict[str, An
         selected = selection["selectedCandidateIds"]
         if len(selected) > 2 or len(selected) != len(set(selected)) or any(item not in candidates for item in selected): raise ValueError("invalid candidate selection")
         total += len(selected)
-        focus_ids = [item.get("refId") for item in selection["focusNarratives"] if item.get("refType") == "visualCandidate"]
-        if sorted(focus_ids) != sorted(selected): raise ValueError("focus candidate mismatch")
         for focus in selection["focusNarratives"]:
             if set(focus) != {"refType","refId","factIds","watchConditionRef","priority"}: raise ValueError("invalid focus narrative")
+            if focus["refType"] not in {"visualCandidate", "ruleFinding"}: raise ValueError("invalid focus ref type")
+            if not isinstance(focus["refId"], str) or not isinstance(focus["watchConditionRef"], str): raise ValueError("invalid focus reference")
+            if not isinstance(focus["factIds"], list) or any(not isinstance(item, str) for item in focus["factIds"]): raise ValueError("invalid focus fact")
+            if type(focus["priority"]) is not int or not 1 <= focus["priority"] <= 9: raise ValueError("invalid focus priority")
             owner = focus["refId"]
             allowed_owner = owner in candidates if focus["refType"] == "visualCandidate" else owner in findings
             if not allowed_owner or any(fact_owners.get(fact) != owner for fact in focus["factIds"]): raise ValueError("invalid focus fact")
             if focus["refType"] == "visualCandidate" and conditions.get(focus["watchConditionRef"]) != owner: raise ValueError("invalid focus condition")
             if focus["refType"] == "ruleFinding" and focus["watchConditionRef"]: raise ValueError("rule finding cannot invent condition")
+        focus_ids = [item["refId"] for item in selection["focusNarratives"] if item["refType"] == "visualCandidate"]
+        if sorted(focus_ids) != sorted(selected): raise ValueError("focus candidate mismatch")
         if len(selection["headlineFactIds"]) != len(set(selection["headlineFactIds"])) or any(item not in fact_owners for item in selection["headlineFactIds"]): raise ValueError("invalid headline fact")
         if len(selection["counterEvidenceRefs"]) != len(set(selection["counterEvidenceRefs"])) or any(item not in evidence_refs for item in selection["counterEvidenceRefs"]): raise ValueError("invalid counter evidence")
         if len(selection["higherTimeframeRelationIds"]) != len(set(selection["higherTimeframeRelationIds"])) or any(item not in relation_ids for item in selection["higherTimeframeRelationIds"]): raise ValueError("invalid relation")
@@ -149,19 +165,26 @@ def validate_curation_output(value: Any, bundle: dict[str, Any]) -> dict[str, An
 def materialize_curation(*, symbol: str, palettes: dict[str, dict[str, Any]], output: dict[str, Any], generated_at: str, model: str | None) -> dict[str, dict[str, Any]]:
     results = {}
     selections = {item["interval"]: item for item in output["intervalSelections"]}
-    for interval, palette in palettes.items():
+    accepted_candidates: list[dict[str, Any]] = []
+    for interval in sorted(palettes, key=lambda item: {"1M": 0, "1W": 1, "1D": 2}[item]):
+        palette = palettes[interval]
         selection = selections.get(interval) or {"selectedCandidateIds": [], "focusNarratives": []}
         candidates = {item["candidateId"]: item for item in palette["visualCandidates"]}
         drawings, selected_meta = [], []
+        rejected_by_reason: dict[str, int] = {}
         available_slots = max(0, 5 - int(palette.get("ruleDrawingCount") or 0))
         for candidate_id in selection["selectedCandidateIds"][:available_slots]:
             candidate = candidates[candidate_id]
+            if any(_cross_tf_redundant(candidate, accepted) for accepted in accepted_candidates):
+                rejected_by_reason["mtf_redundant"] = rejected_by_reason.get("mtf_redundant", 0) + 1
+                continue
             drawing = copy.deepcopy(candidate["drawingTemplate"])
             suffix = _suffix(candidate_id)
             drawing.update({"id": f"ca-{symbol}-{interval}-agent-{suffix}", "sourceInterval": interval, "createdBy": "llm", "sourceProposalId": f"chart-asset:{symbol}:{interval}:agent", "createdAt": generated_at, "updatedAt": generated_at, "locked": False, "visible": True})
             drawings.append(drawing)
             selected_meta.append({"candidateId": candidate_id, "drawingIds": [drawing["id"]], "evidenceRefs": candidate["evidenceRefs"], "quality": candidate["quality"], "geometryBy": "kernel", "selectedBy": "llm"})
-        results[interval] = {"drawings": drawings, "selected": selected_meta, "emptyReason": None if drawings else "curator_selected_none", "meta": {"candidateCount": len(candidates), "passedCount": len(candidates), "rejectedByReason": {}, "model": model, "degraded": False, "selection": selection}}
+            accepted_candidates.append(candidate)
+        results[interval] = {"drawings": drawings, "selected": selected_meta, "emptyReason": None if drawings else "curator_selected_none", "meta": {"candidateCount": len(candidates), "passedCount": len(candidates), "rejectedByReason": rejected_by_reason, "model": model, "degraded": False, "selection": selection}}
     return results
 
 
@@ -191,10 +214,35 @@ def _dedupe_candidates(items):
         key=item["redundancyKey"]; current=result.get(key)
         if current is None or (item["quality"]["score"],item["candidateId"])>(current["quality"]["score"],current["candidateId"]):result[key]=item
     return sorted(result.values(),key=lambda item:(-item["quality"]["score"],item["quality"]["currentDistanceAtr"],item["candidateId"]))
+
+
+def _cross_tf_redundant(candidate, accepted):
+    if candidate.get("semanticType") != accepted.get("semanticType"):
+        return False
+    left = candidate.get("drawingTemplate") or {}
+    right = accepted.get("drawingTemplate") or {}
+    if left.get("type") != right.get("type"):
+        return False
+    left_anchors, right_anchors = left.get("anchors") or [], right.get("anchors") or []
+    if left.get("type") == "horizontalParallelLines" and len(left_anchors) == len(right_anchors) == 2:
+        left_prices = sorted(float(item["price"]) for item in left_anchors)
+        right_prices = sorted(float(item["price"]) for item in right_anchors)
+        left_mid, right_mid = statistics.mean(left_prices), statistics.mean(right_prices)
+        tolerance = max(left_prices[1] - left_prices[0], right_prices[1] - right_prices[0], .005 * max(left_mid, right_mid))
+        return abs(left_mid - right_mid) <= tolerance
+    if left.get("type") == "fibonacciRetracement" and len(left_anchors) == len(right_anchors) == 2:
+        left_prices = [float(item["price"]) for item in left_anchors]
+        right_prices = [float(item["price"]) for item in right_anchors]
+        scale = max(*(abs(item) for item in (*left_prices, *right_prices)), 1.0)
+        return max(abs(a - b) for a, b in zip(left_prices, right_prices)) <= .01 * scale
+    if left.get("type") == "flagMarker" and left_anchors and right_anchors:
+        return str(left_anchors[0].get("timestamp"))[:10] == str(right_anchors[0].get("timestamp"))[:10]
+    return False
 def _suffix(value): return hashlib.sha256(value.encode()).hexdigest()[:10]
 def _stable_json(value): return json.dumps(value,ensure_ascii=False,sort_keys=True,separators=(",",":"),default=str)
 def _rule_fact(layer, selected): return "현재 가격과 가까운 검증된 가격 구조가 있습니다." if layer=="structure" else "세 번 이상 독립적으로 확인된 현재 관련 추세 구조가 있습니다."
 def _candidate_fact(candidate): return {"price_zone":"폭과 매물대 근거가 함께 확인된 가격 구간입니다.","retracement":"검증된 충격파의 주요 되돌림 구간이 현재와 가깝습니다.","single_event":"최근 상태 변화가 현재 구조에 영향을 주고 있습니다."}.get(candidate["semanticType"],"현재 구조를 설명하는 추가 근거입니다.")
 def _fact_code(semantic): return {"price_zone":"ACTIVE_ZONE_NEAR","retracement":"VALID_RETRACEMENT_NEAR","single_event":"CURRENT_EVENT_IMPACT"}.get(semantic,"ADDITIONAL_STRUCTURE")
 def _event_label(event):
+    if event.get("kind")=="breakout" and (event.get("detail") or {}).get("state")=="failed":return "구조 이탈 실패"
     return {"breakout":"구조 이탈","retest":"리테스트 확인","gap":"갭","52wHigh":"52주 신고가","52wLow":"52주 신저가"}.get(event.get("kind"),"주요 이벤트")

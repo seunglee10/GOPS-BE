@@ -19,7 +19,9 @@ class ChartAnalysisAssetContractTest(unittest.TestCase):
         v2 = json.loads((ROOT / "shared/chart-contract/chart-analysis-asset-v2.schema.json").read_text())
         self.assertEqual(v1["properties"]["assetVersion"]["const"], "v1")
         self.assertEqual(v2["properties"]["assetVersion"]["const"], "v2")
-        self.assertEqual(v2["properties"]["qualityPolicyVersion"]["const"], "chart-quality-v1")
+        self.assertEqual(v2["properties"]["kernelVersion"]["enum"], ["kernel-v2", "kernel-v3"])
+        self.assertEqual(v2["properties"]["qualityPolicyVersion"]["enum"], ["chart-quality-v1", "chart-quality-v2"])
+        self.assertEqual(v2["$defs"]["input"]["properties"]["candleContractVersion"]["enum"], ["analysis-candles-v1", "v2"])
 
 
 if __name__ == "__main__":
