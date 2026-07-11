@@ -262,6 +262,27 @@ class AgentAuthenticatedRoutesTest(unittest.TestCase):
 
 class AgentRouteHelperTest(unittest.TestCase):
     @unittest.skipUnless(AGENT_ROUTE_HELPERS_AVAILABLE, "agent routes module is not importable")
+    def test_agent_rate_limiter_defaults_to_thirty_requests_per_minute(self):
+        from types import SimpleNamespace
+
+        from fastapi import HTTPException
+        from app.services import agent_rate_limit
+
+        redis = FakeRateLimitRedis()
+        app = SimpleNamespace(state=SimpleNamespace(agent_rate_limit_redis=redis))
+        with (
+            patch.object(agent_rate_limit, "read_dotenv_value", return_value=None),
+            patch.dict(os.environ, {"AGENT_RATE_LIMIT_ENABLED": "true"}, clear=True),
+        ):
+            for _ in range(30):
+                agent_rate_limit.enforce_agent_rate_limit(app, "user-1", now=120.0)
+            with self.assertRaises(HTTPException) as raised:
+                agent_rate_limit.enforce_agent_rate_limit(app, "user-1", now=120.0)
+
+        self.assertEqual(raised.exception.status_code, 429)
+        self.assertEqual(raised.exception.headers["Retry-After"], "60")
+
+    @unittest.skipUnless(AGENT_ROUTE_HELPERS_AVAILABLE, "agent routes module is not importable")
     def test_agent_rate_limiter_rejects_requests_above_user_limit(self):
         from types import SimpleNamespace
 

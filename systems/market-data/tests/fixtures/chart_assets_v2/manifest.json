@@ -4,20 +4,20 @@
   "source": {
     "provider": "Nasdaq historical public API",
     "interval": "1D",
-    "from": "2024-07-15",
+    "from": "2019-07-11",
     "to": "2026-07-10",
-    "corporateActionPolicy": "split; selected source windows contain no known in-window split for the chosen symbols"
+    "corporateActionPolicy": "split-adjusted values returned by source; long windows span applicable corporate actions"
   },
   "series": [
     {
       "symbol": "NVDA",
       "file": "nvda-1d.json",
-      "bars": 498
+      "bars": 1759
     },
     {
       "symbol": "AAPL",
       "file": "aapl-1d.json",
-      "bars": 498
+      "bars": 1759
     },
     {
       "symbol": "MSFT",
@@ -27,7 +27,17 @@
     {
       "symbol": "AMZN",
       "file": "amzn-1d.json",
-      "bars": 498
+      "bars": 1759
+    },
+    {
+      "symbol": "GOOGL",
+      "file": "googl-1d.json",
+      "bars": 1759
+    },
+    {
+      "symbol": "MU",
+      "file": "mu-1d.json",
+      "bars": 1759
     },
     {
       "symbol": "TSLA",
@@ -3186,6 +3196,671 @@
         "lastTouchAgeBars": 5
       },
       "labelSource": "fixed-threshold holdout extension for offscreen denominator; independent raw-OHLC local-extrema prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "aapl-2025-10-31-chronological-blind-v1",
+      "symbol": "AAPL",
+      "series": "aapl-1d.json",
+      "asOf": "2025-10-31T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "blind-investor-holdout-v1",
+      "category": "strong_trend",
+      "samplingStratum": "chronological_blind_investor_review",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": ["trend", "event"],
+      "expectedByInterval": {
+        "1D": {"expectation": "must_draw", "semanticTypes": ["trend", "event"]},
+        "1W": {"expectation": "must_draw", "semanticTypes": ["trend", "event"]},
+        "1M": {"expectation": "must_draw", "semanticTypes": ["trend"]}
+      },
+      "labelRationale": "Second-pass strict-contract blind audit: repeated rising-line contacts and reactions confirm trend geometry, while the October 20/27 closes confirm the current breakout event; no horizontal level remains within the strict 2 ATR active-role contract.",
+      "labelSource": "blind pre-evaluation investor review; actual OHLCV fixtures only; kernel/rules/evaluator outputs unseen"
+    },
+    {
+      "episodeId": "amzn-2025-10-31-chronological-blind-v1",
+      "symbol": "AMZN",
+      "series": "amzn-1d.json",
+      "asOf": "2025-10-31T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "blind-investor-holdout-v1",
+      "category": "gap_high_volatility",
+      "samplingStratum": "chronological_blind_investor_review",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": ["event"],
+      "expectedByInterval": {
+        "1D": {"expectation": "must_draw", "semanticTypes": ["event"]},
+        "1W": {"expectation": "must_draw", "semanticTypes": ["event"]},
+        "1M": {"expectation": "must_draw", "semanticTypes": ["trend"]}
+      },
+      "labelRationale": "Second-pass strict-contract blind audit: the October 31 gap closes above the prior ceiling on 3.70x daily relative volume, so the daily and weekly event is confirmed; the untasted ceiling is break-pending rather than an active H-Line, while the completed monthly history retains a confirmed trend.",
+      "labelSource": "blind pre-evaluation investor review; actual OHLCV fixtures only; kernel/rules/evaluator outputs unseen"
+    },
+    {
+      "episodeId": "googl-2025-10-31-chronological-blind-v1",
+      "symbol": "GOOGL",
+      "series": "googl-1d.json",
+      "asOf": "2025-10-31T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "blind-investor-holdout-v1",
+      "category": "strong_trend",
+      "samplingStratum": "chronological_blind_investor_review",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": ["trend", "event"],
+      "expectedByInterval": {
+        "1D": {"expectation": "must_draw", "semanticTypes": ["trend", "event"]},
+        "1W": {"expectation": "must_draw", "semanticTypes": ["trend", "event"]},
+        "1M": {"expectation": "must_draw", "semanticTypes": ["trend", "event"]}
+      },
+      "labelRationale": "Second-pass strict-contract blind audit: the rising geometry has at least three independent contacts and two reactions on each horizon, and the October 29-30 expansion is a confirmed, current breakout event; former resistance is too remote or un-retested to require a level.",
+      "labelSource": "blind pre-evaluation investor review; actual OHLCV fixtures only; kernel/rules/evaluator outputs unseen"
+    },
+    {
+      "episodeId": "nvda-2025-10-31-chronological-blind-v1",
+      "symbol": "NVDA",
+      "series": "nvda-1d.json",
+      "asOf": "2025-10-31T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "blind-investor-holdout-v1",
+      "category": "strong_trend",
+      "samplingStratum": "chronological_blind_investor_review",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": ["trend", "event"],
+      "expectedByInterval": {
+        "1D": {"expectation": "must_draw", "semanticTypes": ["trend", "event"]},
+        "1W": {"expectation": "must_draw", "semanticTypes": ["trend"]},
+        "1M": {"expectation": "must_draw", "semanticTypes": ["trend"]}
+      },
+      "labelRationale": "Second-pass strict-contract blind audit: current trend geometry has three-plus independent contacts and two-plus reactions, and the October 28-29 daily expansion confirms an event; the old 184-195 shelves are beyond 2 ATR or not active levels on the broader horizons.",
+      "labelSource": "blind pre-evaluation investor review; actual OHLCV fixtures only; kernel/rules/evaluator outputs unseen"
+    },
+    {
+      "episodeId": "mu-2025-10-31-chronological-blind-v1",
+      "symbol": "MU",
+      "series": "mu-1d.json",
+      "asOf": "2025-10-31T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "blind-investor-holdout-v1",
+      "category": "strong_trend",
+      "samplingStratum": "chronological_blind_investor_review",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": ["trend", "event"],
+      "expectedByInterval": {
+        "1D": {"expectation": "must_draw", "semanticTypes": ["trend", "event"]},
+        "1W": {"expectation": "must_draw", "semanticTypes": ["event"]},
+        "1M": {"expectation": "must_draw", "semanticTypes": ["event"]}
+      },
+      "labelRationale": "Second-pass strict-contract blind audit: daily rising geometry passes the contact, reaction, span and current-distance gates, while the September-October breakouts are confirmed events on all horizons; cleared shelves are not active H-Lines and the broader trend lacks enough strict contacts.",
+      "labelSource": "blind pre-evaluation investor review; actual OHLCV fixtures only; kernel/rules/evaluator outputs unseen"
+    },
+    {
+      "episodeId": "amzn-2025-12-16-chronological-blind-v1",
+      "symbol": "AMZN",
+      "series": "amzn-1d.json",
+      "asOf": "2025-12-16T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "blind-investor-holdout-v1",
+      "category": "weak_noise",
+      "samplingStratum": "chronological_blind_investor_review",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": ["range"],
+      "expectedByInterval": {
+        "1D": {"expectation": "must_draw", "semanticTypes": ["range"]},
+        "1W": {"expectation": "must_draw", "semanticTypes": ["level"]},
+        "1M": {"expectation": "must_draw", "semanticTypes": ["trend"]}
+      },
+      "labelRationale": "Second-pass strict-contract blind audit: the daily 211-239 box has two boundary contacts per side, five total contacts, three alternations and 89% containment, so range is the minimum daily semantic; weekly active levels and monthly trend are selected separately without requiring redundant geometry.",
+      "labelSource": "blind pre-evaluation investor review; actual OHLCV fixtures only; kernel/rules/evaluator outputs unseen"
+    },
+    {
+      "episodeId": "aapl-2026-03-31-chronological-blind-v1",
+      "symbol": "AAPL",
+      "series": "aapl-1d.json",
+      "asOf": "2026-03-31T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "blind-investor-holdout-v1",
+      "category": "structure_transition",
+      "samplingStratum": "chronological_blind_investor_review",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": ["range"],
+      "expectedByInterval": {
+        "1D": {"expectation": "must_draw", "semanticTypes": ["range"]},
+        "1W": {"expectation": "may_draw", "semanticTypes": []},
+        "1M": {"expectation": "must_draw", "semanticTypes": ["trend"]}
+      },
+      "labelRationale": "Second-pass strict-contract blind audit: the daily 244-280 box has eight contacts, four alternations and 97% containment and is more actionable than competing line geometry, so range alone is required; completed weekly bars lack a strict structure, while the 72-month history retains a confirmed trend.",
+      "labelSource": "blind pre-evaluation investor review; actual OHLCV fixtures only; kernel/rules/evaluator outputs unseen"
+    },
+    {
+      "episodeId": "amzn-2026-03-31-chronological-blind-v1",
+      "symbol": "AMZN",
+      "series": "amzn-1d.json",
+      "asOf": "2026-03-31T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "blind-investor-holdout-v1",
+      "category": "range",
+      "samplingStratum": "chronological_blind_investor_review",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": ["range"],
+      "expectedByInterval": {
+        "1D": {"expectation": "must_draw", "semanticTypes": ["range"]},
+        "1W": {"expectation": "must_draw", "semanticTypes": ["range"]},
+        "1M": {"expectation": "must_draw", "semanticTypes": ["trend"]}
+      },
+      "labelRationale": "Second-pass strict-contract blind audit: the 200-216 rotation satisfies both-boundary, five-touch, alternation and containment gates on daily and weekly views and is the minimum actionable semantic instead of redundant trend/level drawings; monthly raw bars require only trend.",
+      "labelSource": "blind pre-evaluation investor review; actual OHLCV fixtures only; kernel/rules/evaluator outputs unseen"
+    },
+    {
+      "episodeId": "googl-2026-03-31-chronological-blind-v1",
+      "symbol": "GOOGL",
+      "series": "googl-1d.json",
+      "asOf": "2026-03-31T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "blind-investor-holdout-v1",
+      "category": "structure_transition",
+      "samplingStratum": "chronological_blind_investor_review",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": ["trend", "event"],
+      "expectedByInterval": {
+        "1D": {"expectation": "must_draw", "semanticTypes": ["trend", "event"]},
+        "1W": {"expectation": "may_draw", "semanticTypes": []},
+        "1M": {"expectation": "may_draw", "semanticTypes": []}
+      },
+      "labelRationale": "Second-pass strict-contract blind audit: daily falling geometry has three contacts and reactions, and the March 24-27 closes confirm a current downside event; the supposed demand level lacks three active-role contacts and completed weekly/monthly bars do not meet the strict geometry or level contract.",
+      "labelSource": "blind pre-evaluation investor review; actual OHLCV fixtures only; kernel/rules/evaluator outputs unseen"
+    },
+    {
+      "episodeId": "nvda-2026-03-31-chronological-blind-v1",
+      "symbol": "NVDA",
+      "series": "nvda-1d.json",
+      "asOf": "2026-03-31T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "blind-investor-holdout-v1",
+      "category": "strong_trend",
+      "samplingStratum": "chronological_blind_investor_review",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": ["range"],
+      "expectedByInterval": {
+        "1D": {"expectation": "must_draw", "semanticTypes": ["range"]},
+        "1W": {"expectation": "must_draw", "semanticTypes": ["range"]},
+        "1M": {"expectation": "must_draw", "semanticTypes": ["trend"]}
+      },
+      "labelRationale": "Second-pass strict-contract blind audit: the daily 171-199 and weekly 167-195 boxes pass both-boundary, alternation, containment and current-distance tests and are more actionable than overlapping lines, so range is the sole T-budget semantic; monthly evidence requires trend only.",
+      "labelSource": "blind pre-evaluation investor review; actual OHLCV fixtures only; kernel/rules/evaluator outputs unseen"
+    },
+    {
+      "episodeId": "mu-2026-03-31-chronological-blind-v1",
+      "symbol": "MU",
+      "series": "mu-1d.json",
+      "asOf": "2026-03-31T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "blind-investor-holdout-v1",
+      "category": "gap_high_volatility",
+      "samplingStratum": "chronological_blind_investor_review",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": ["event"],
+      "expectedByInterval": {
+        "1D": {"expectation": "must_draw", "semanticTypes": ["event"]},
+        "1W": {"expectation": "must_draw", "semanticTypes": ["event"]},
+        "1M": {"expectation": "must_draw", "semanticTypes": ["event"]}
+      },
+      "labelRationale": "Second-pass strict-contract blind audit: the March 30 close breaks 350 by more than 0.25 ATR on 1.79x relative volume and the March 31 close holds below it, preserving a confirmed event across horizons; the violent transition invalidates prior trend geometry and the response zone lacks three active-role contacts.",
+      "labelSource": "blind pre-evaluation investor review; actual OHLCV fixtures only; kernel/rules/evaluator outputs unseen"
+    },
+    {
+      "episodeId": "aapl-2026-04-06-chronological-blind-v1",
+      "symbol": "AAPL",
+      "series": "aapl-1d.json",
+      "asOf": "2026-04-06T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "blind-investor-holdout-v1",
+      "category": "weak_noise",
+      "samplingStratum": "chronological_blind_investor_review",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": ["range"],
+      "expectedByInterval": {
+        "1D": {"expectation": "must_draw", "semanticTypes": ["range"]},
+        "1W": {"expectation": "may_draw", "semanticTypes": []},
+        "1M": {"expectation": "must_draw", "semanticTypes": ["trend"]}
+      },
+      "labelRationale": "Second-pass strict-contract blind audit: the daily 245-278 box has seven-plus contacts, three alternations, over 90% containment and current boundary relevance, making range the minimum semantic without a redundant H-Line; completed weekly bars remain ambiguous and monthly history supports trend.",
+      "labelSource": "blind pre-evaluation investor review; actual OHLCV fixtures only; kernel/rules/evaluator outputs unseen"
+    },
+    {
+      "episodeId": "aapl-2026-06-30-chronological-blind-v1",
+      "symbol": "AAPL",
+      "series": "aapl-1d.json",
+      "asOf": "2026-06-30T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "blind-investor-holdout-v1",
+      "category": "structure_transition",
+      "samplingStratum": "chronological_blind_investor_review",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": ["trend", "event"],
+      "expectedByInterval": {
+        "1D": {"expectation": "must_draw", "semanticTypes": ["trend", "event"]},
+        "1W": {"expectation": "must_draw", "semanticTypes": ["trend"]},
+        "1M": {"expectation": "must_draw", "semanticTypes": ["trend"]}
+      },
+      "labelRationale": "Second-pass strict-contract blind audit: the June 25 close breaks the recent distribution by over 0.25 ATR on exceptional volume and June 26 holds the break, while three-plus current contacts and reactions confirm trend geometry; 274 has not accumulated the three contacts required for a level.",
+      "labelSource": "blind pre-evaluation investor review; actual OHLCV fixtures only; kernel/rules/evaluator outputs unseen"
+    },
+    {
+      "episodeId": "amzn-2026-06-30-chronological-blind-v1",
+      "symbol": "AMZN",
+      "series": "amzn-1d.json",
+      "asOf": "2026-06-30T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "blind-investor-holdout-v1",
+      "category": "structure_transition",
+      "samplingStratum": "chronological_blind_investor_review",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": ["level", "event"],
+      "expectedByInterval": {
+        "1D": {"expectation": "must_draw", "semanticTypes": ["level", "event"]},
+        "1W": {"expectation": "must_draw", "semanticTypes": ["trend"]},
+        "1M": {"expectation": "must_draw", "semanticTypes": ["trend"]}
+      },
+      "labelRationale": "Second-pass strict-contract blind audit: the five-touch 249 resistance and the confirmed high-volume June 25 break/recovery are the minimum current daily references, so overlapping daily trend geometry is not required; weekly/monthly raw bars retain trend only.",
+      "labelSource": "blind pre-evaluation investor review; actual OHLCV fixtures only; kernel/rules/evaluator outputs unseen"
+    },
+    {
+      "episodeId": "googl-2026-06-30-chronological-blind-v1",
+      "symbol": "GOOGL",
+      "series": "googl-1d.json",
+      "asOf": "2026-06-30T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "blind-investor-holdout-v1",
+      "category": "structure_transition",
+      "samplingStratum": "chronological_blind_investor_review",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": ["trend"],
+      "expectedByInterval": {
+        "1D": {"expectation": "must_draw", "semanticTypes": ["trend"]},
+        "1W": {"expectation": "must_draw", "semanticTypes": ["trend"]},
+        "1M": {"expectation": "must_draw", "semanticTypes": ["event"]}
+      },
+      "labelRationale": "Second-pass strict-contract blind audit: daily and weekly lines meet contact, reaction, span and recent-distance gates, but 330 lacks three active-role contacts; on monthly bars the April breakout is confirmed by May and remains current above its boundary, so event rather than level is required.",
+      "labelSource": "blind pre-evaluation investor review; actual OHLCV fixtures only; kernel/rules/evaluator outputs unseen"
+    },
+    {
+      "episodeId": "nvda-2026-06-30-chronological-blind-v1",
+      "symbol": "NVDA",
+      "series": "nvda-1d.json",
+      "asOf": "2026-06-30T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "blind-investor-holdout-v1",
+      "category": "range",
+      "samplingStratum": "chronological_blind_investor_review",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": ["level"],
+      "expectedByInterval": {
+        "1D": {"expectation": "must_draw", "semanticTypes": ["level"]},
+        "1W": {"expectation": "must_draw", "semanticTypes": ["trend", "level"]},
+        "1M": {"expectation": "must_draw", "semanticTypes": ["trend"]}
+      },
+      "labelRationale": "Second-pass strict-contract blind audit: daily 197 support has three independent contacts and reactions within 0.45 ATR, but the proposed daily box lacks five alternating boundary episodes; weekly trend and 170 support pass strict gates, while monthly evidence supports trend instead of a current H-Line.",
+      "labelSource": "blind pre-evaluation investor review; actual OHLCV fixtures only; kernel/rules/evaluator outputs unseen"
+    },
+    {
+      "episodeId": "mu-2026-06-30-chronological-blind-v1",
+      "symbol": "MU",
+      "series": "mu-1d.json",
+      "asOf": "2026-06-30T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "blind-investor-holdout-v1",
+      "category": "gap_high_volatility",
+      "samplingStratum": "chronological_blind_investor_review",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": ["event", "trend"],
+      "expectedByInterval": {
+        "1D": {"expectation": "must_draw", "semanticTypes": ["event", "trend"]},
+        "1W": {"expectation": "must_draw", "semanticTypes": ["event"]},
+        "1M": {"expectation": "must_draw", "semanticTypes": ["event"]}
+      },
+      "labelRationale": "Second-pass strict-contract blind audit: May-June breakouts are repeatedly confirmed and current on every horizon, and daily geometry has three-plus contacts, reactions and recent relevance; the broad weekly/monthly move lacks confirmed parallel geometry or three-touch active levels, so only event is required there.",
+      "labelSource": "blind pre-evaluation investor review; actual OHLCV fixtures only; kernel/rules/evaluator outputs unseen"
+    },
+    {
+      "episodeId": "mu-2021-05-06-active-invalidation-blind-v1",
+      "symbol": "MU",
+      "series": "mu-1d.json",
+      "asOf": "2021-05-06T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "blind-investor-holdout-v1",
+      "category": "structure_transition",
+      "samplingStratum": "chronological_blind_active_invalidation",
+      "expectation": "may_draw",
+      "expectedSemanticTypes": ["trend"],
+      "expectedByInterval": {
+        "1D": {"expectation": "may_draw", "semanticTypes": ["trend"]},
+        "1W": {"expectation": "may_draw", "semanticTypes": []},
+        "1M": {"expectation": "may_draw", "semanticTypes": []}
+      },
+      "labelRationale": "Second-pass strict-contract blind audit: the marginal range breach is not an event, but the 2020-12-11/2021-03-25 rising support line has nine independent contacts, eight reactions, 51% span, 0.172 ATR median residual and 0.095 ATR current distance without active invalidation; daily trend is therefore allowed.",
+      "labelSource": "blind pre-evaluation investor review; actual OHLCV fixtures only; kernel/rules/evaluator outputs unseen"
+    },
+    {
+      "episodeId": "aapl-2021-06-25-active-invalidation-blind-v1",
+      "symbol": "AAPL",
+      "series": "aapl-1d.json",
+      "asOf": "2021-06-25T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "blind-investor-holdout-v1",
+      "category": "structure_transition",
+      "samplingStratum": "chronological_blind_active_invalidation",
+      "expectation": "may_draw",
+      "expectedSemanticTypes": ["trend"],
+      "expectedByInterval": {
+        "1D": {"expectation": "may_draw", "semanticTypes": ["trend"]},
+        "1W": {"expectation": "may_draw", "semanticTypes": []},
+        "1M": {"expectation": "may_draw", "semanticTypes": []}
+      },
+      "labelRationale": "Second-pass strict-contract blind audit: the pending breakout itself remains non-drawable, but the 2020-12-29/2021-04-20 falling resistance line has seven contacts, five reactions, 61.5% span, 0.125 ATR residual and 0.199 ATR current distance with no active invalidation; daily trend is allowed.",
+      "labelSource": "blind pre-evaluation investor review; actual OHLCV fixtures only; kernel/rules/evaluator outputs unseen"
+    },
+    {
+      "episodeId": "amzn-2021-08-09-active-invalidation-blind-v1",
+      "symbol": "AMZN",
+      "series": "amzn-1d.json",
+      "asOf": "2021-08-09T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "blind-investor-holdout-v1",
+      "category": "weak_noise",
+      "samplingStratum": "chronological_blind_active_invalidation",
+      "expectation": "may_draw",
+      "expectedSemanticTypes": ["trend"],
+      "expectedByInterval": {
+        "1D": {"expectation": "may_draw", "semanticTypes": ["trend"]},
+        "1W": {"expectation": "may_draw", "semanticTypes": []},
+        "1M": {"expectation": "may_draw", "semanticTypes": []}
+      },
+      "labelRationale": "Second-pass strict-contract blind audit: the shallow undercut does not confirm a breakdown, yet the 2021-03-19/05-11 rising support geometry has ten contacts, nine reactions, 55% span, 0.122 ATR residual and 0.323 ATR current distance with no active invalidation; daily trend is allowed.",
+      "labelSource": "blind pre-evaluation investor review; actual OHLCV fixtures only; kernel/rules/evaluator outputs unseen"
+    },
+    {
+      "episodeId": "nvda-2022-08-02-active-invalidation-blind-v1",
+      "symbol": "NVDA",
+      "series": "nvda-1d.json",
+      "asOf": "2022-08-02T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "blind-investor-holdout-v1",
+      "category": "weak_noise",
+      "samplingStratum": "chronological_blind_active_invalidation",
+      "expectation": "may_draw",
+      "expectedSemanticTypes": ["event"],
+      "expectedByInterval": {
+        "1D": {"expectation": "may_draw", "semanticTypes": ["event"]},
+        "1W": {"expectation": "may_draw", "semanticTypes": []},
+        "1M": {"expectation": "may_draw", "semanticTypes": []}
+      },
+      "labelRationale": "Second-pass strict-contract blind audit: 18.14 resistance has three prior contacts and reactions, and closes on August 1 and 2 remain more than 0.25 ATR above it, satisfying next-bar hold confirmation; the H-Line stays hidden but a daily breakout event is allowed.",
+      "labelSource": "blind pre-evaluation investor review; actual OHLCV fixtures only; kernel/rules/evaluator outputs unseen"
+    },
+    {
+      "episodeId": "googl-2022-08-04-active-invalidation-blind-v1",
+      "symbol": "GOOGL",
+      "series": "googl-1d.json",
+      "asOf": "2022-08-04T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "blind-investor-holdout-v1",
+      "category": "weak_noise",
+      "samplingStratum": "chronological_blind_active_invalidation",
+      "expectation": "may_draw",
+      "expectedSemanticTypes": ["level"],
+      "expectedByInterval": {
+        "1D": {"expectation": "may_draw", "semanticTypes": ["level"]},
+        "1W": {"expectation": "may_draw", "semanticTypes": []},
+        "1M": {"expectation": "may_draw", "semanticTypes": []}
+      },
+      "labelRationale": "Second-pass strict-contract blind audit: the marginal move is not a confirmed event, but 118.58 resistance has four independent contacts, four 2.9-plus ATR reactions, a 0.095 ATR current distance and no active invalidation; a daily level is allowed without promoting a new trend.",
+      "labelSource": "blind pre-evaluation investor review; actual OHLCV fixtures only; kernel/rules/evaluator outputs unseen"
+    },
+    {
+      "episodeId": "aapl-2022-11-18-active-invalidation-blind-v1",
+      "symbol": "AAPL",
+      "series": "aapl-1d.json",
+      "asOf": "2022-11-18T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "blind-investor-holdout-v1",
+      "category": "structure_transition",
+      "samplingStratum": "chronological_blind_active_invalidation",
+      "expectation": "may_draw",
+      "expectedSemanticTypes": ["trend"],
+      "expectedByInterval": {
+        "1D": {"expectation": "may_draw", "semanticTypes": ["trend"]},
+        "1W": {"expectation": "may_draw", "semanticTypes": []},
+        "1M": {"expectation": "may_draw", "semanticTypes": []}
+      },
+      "labelRationale": "Second-pass strict-contract blind audit: the latest ceiling breach remains unconfirmed, while the 2022-08-26/11-15 falling resistance geometry has six contacts, five reactions, 33.5% span, 0.019 ATR residual and 0.248 ATR current distance with no active invalidation; daily trend is allowed.",
+      "labelSource": "blind pre-evaluation investor review; actual OHLCV fixtures only; kernel/rules/evaluator outputs unseen"
+    },
+    {
+      "episodeId": "amzn-2023-04-14-active-invalidation-blind-v1",
+      "symbol": "AMZN",
+      "series": "amzn-1d.json",
+      "asOf": "2023-04-14T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "blind-investor-holdout-v1",
+      "category": "weak_noise",
+      "samplingStratum": "chronological_blind_active_invalidation",
+      "expectation": "may_draw",
+      "expectedSemanticTypes": ["trend"],
+      "expectedByInterval": {
+        "1D": {"expectation": "may_draw", "semanticTypes": ["trend"]},
+        "1W": {"expectation": "may_draw", "semanticTypes": []},
+        "1M": {"expectation": "may_draw", "semanticTypes": []}
+      },
+      "labelRationale": "Second-pass strict-contract blind audit: the fractional ceiling move is not promoted, but the 2023-01-06/03-28 rising support geometry has seven independent contacts and reactions, 32% span, 0.124 ATR residual and 1.124 ATR current distance without active invalidation; daily trend is allowed.",
+      "labelSource": "blind pre-evaluation investor review; actual OHLCV fixtures only; kernel/rules/evaluator outputs unseen"
+    },
+    {
+      "episodeId": "mu-2023-07-07-active-invalidation-blind-v1",
+      "symbol": "MU",
+      "series": "mu-1d.json",
+      "asOf": "2023-07-07T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "blind-investor-holdout-v1",
+      "category": "structure_transition",
+      "samplingStratum": "chronological_blind_active_invalidation",
+      "expectation": "may_draw",
+      "expectedSemanticTypes": ["level"],
+      "expectedByInterval": {
+        "1D": {"expectation": "may_draw", "semanticTypes": ["level"]},
+        "1W": {"expectation": "may_draw", "semanticTypes": []},
+        "1M": {"expectation": "may_draw", "semanticTypes": []}
+      },
+      "labelRationale": "Second-pass strict-contract blind audit: the immediate breach is not a confirmed event, but 59.20 support has four independent structural contacts, four 1.45-plus ATR reactions, a 0.684 ATR current distance and no active invalidation; a daily level is allowed.",
+      "labelSource": "blind pre-evaluation investor review; actual OHLCV fixtures only; kernel/rules/evaluator outputs unseen"
+    },
+    {
+      "episodeId": "googl-2023-07-11-active-invalidation-blind-v1",
+      "symbol": "GOOGL",
+      "series": "googl-1d.json",
+      "asOf": "2023-07-11T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "blind-investor-holdout-v1",
+      "category": "structure_transition",
+      "samplingStratum": "chronological_blind_active_invalidation",
+      "expectation": "may_draw",
+      "expectedSemanticTypes": ["level"],
+      "expectedByInterval": {
+        "1D": {"expectation": "may_draw", "semanticTypes": ["level"]},
+        "1W": {"expectation": "may_draw", "semanticTypes": []},
+        "1M": {"expectation": "may_draw", "semanticTypes": []}
+      },
+      "labelRationale": "Second-pass strict-contract blind audit: the quiet floor breach is not an event, while 122.61 resistance has three structural contacts, three 2.56-plus ATR reactions, a 1.943 ATR current distance and a validation four bars ago without active invalidation; a daily level is allowed.",
+      "labelSource": "blind pre-evaluation investor review; actual OHLCV fixtures only; kernel/rules/evaluator outputs unseen"
+    },
+    {
+      "episodeId": "aapl-2024-01-05-active-invalidation-blind-v1",
+      "symbol": "AAPL",
+      "series": "aapl-1d.json",
+      "asOf": "2024-01-05T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "blind-investor-holdout-v1",
+      "category": "structure_transition",
+      "samplingStratum": "chronological_blind_active_invalidation",
+      "expectation": "may_draw",
+      "expectedSemanticTypes": ["event"],
+      "expectedByInterval": {
+        "1D": {"expectation": "may_draw", "semanticTypes": ["event"]},
+        "1W": {"expectation": "may_draw", "semanticTypes": []},
+        "1M": {"expectation": "may_draw", "semanticTypes": []}
+      },
+      "labelRationale": "Second-pass strict-contract blind audit: 192.30 has four prior contact/reaction episodes, and the January 2 close breaks it by 2.38 ATR before January 3 holds 2.87 ATR below; the level is now too remote, but the confirmed daily breakdown event remains drawable.",
+      "labelSource": "blind pre-evaluation investor review; actual OHLCV fixtures only; kernel/rules/evaluator outputs unseen"
+    },
+    {
+      "episodeId": "mu-2024-02-14-active-invalidation-blind-v1",
+      "symbol": "MU",
+      "series": "mu-1d.json",
+      "asOf": "2024-02-14T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "blind-investor-holdout-v1",
+      "category": "weak_noise",
+      "samplingStratum": "chronological_blind_active_invalidation",
+      "expectation": "may_draw",
+      "expectedSemanticTypes": ["event"],
+      "expectedByInterval": {
+        "1D": {"expectation": "may_draw", "semanticTypes": ["event"]},
+        "1W": {"expectation": "may_draw", "semanticTypes": []},
+        "1M": {"expectation": "may_draw", "semanticTypes": []}
+      },
+      "labelRationale": "Second-pass strict-contract blind audit: closes on February 13-14 hold below the evidenced 82.50 boundary, making the confirmed downside event more current than the now-breached 82.06-87.22 box; event alone is the minimum daily semantic.",
+      "labelSource": "blind pre-evaluation investor review; actual OHLCV fixtures only; kernel/rules/evaluator outputs unseen"
+    },
+    {
+      "episodeId": "googl-2024-03-01-active-invalidation-blind-v1",
+      "symbol": "GOOGL",
+      "series": "googl-1d.json",
+      "asOf": "2024-03-01T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "blind-investor-holdout-v1",
+      "category": "structure_transition",
+      "samplingStratum": "chronological_blind_active_invalidation",
+      "expectation": "may_draw",
+      "expectedSemanticTypes": ["level"],
+      "expectedByInterval": {
+        "1D": {"expectation": "may_draw", "semanticTypes": ["level"]},
+        "1W": {"expectation": "may_draw", "semanticTypes": []},
+        "1M": {"expectation": "may_draw", "semanticTypes": []}
+      },
+      "labelRationale": "Second-pass strict-contract blind audit: 137.30 has four resistance reactions plus a confirmed support retest and is only 0.05 ATR away; that active role-flip level is more immediately actionable than overlapping rising geometry and is the minimum daily semantic.",
+      "labelSource": "blind pre-evaluation investor review; actual OHLCV fixtures only; kernel/rules/evaluator outputs unseen"
+    },
+    {
+      "episodeId": "amzn-2024-07-25-active-invalidation-blind-v1",
+      "symbol": "AMZN",
+      "series": "amzn-1d.json",
+      "asOf": "2024-07-25T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "blind-investor-holdout-v1",
+      "category": "structure_transition",
+      "samplingStratum": "chronological_blind_active_invalidation",
+      "expectation": "may_draw",
+      "expectedSemanticTypes": ["range"],
+      "expectedByInterval": {
+        "1D": {"expectation": "may_draw", "semanticTypes": ["range"]},
+        "1W": {"expectation": "may_draw", "semanticTypes": []},
+        "1M": {"expectation": "may_draw", "semanticTypes": []}
+      },
+      "labelRationale": "Second-pass strict-contract blind audit: the 173.35-190.74 box has ten contacts, five alternations, 88% containment and current boundary relevance; it subsumes competing level/line context and is the single minimum T-budget semantic.",
+      "labelSource": "blind pre-evaluation investor review; actual OHLCV fixtures only; kernel/rules/evaluator outputs unseen"
+    },
+    {
+      "episodeId": "nvda-2024-12-10-active-invalidation-blind-v1",
+      "symbol": "NVDA",
+      "series": "nvda-1d.json",
+      "asOf": "2024-12-10T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "blind-investor-holdout-v1",
+      "category": "structure_transition",
+      "samplingStratum": "chronological_blind_active_invalidation",
+      "expectation": "may_draw",
+      "expectedSemanticTypes": ["range"],
+      "expectedByInterval": {
+        "1D": {"expectation": "may_draw", "semanticTypes": ["range"]},
+        "1W": {"expectation": "may_draw", "semanticTypes": []},
+        "1M": {"expectation": "may_draw", "semanticTypes": []}
+      },
+      "labelRationale": "Second-pass strict-contract blind audit: the 137.31-145.48 box has five contacts, four alternations, 90% containment and remains within the 0.75 ATR boundary allowance; range is more actionable than redundant support/trend drawings and is the minimum semantic.",
+      "labelSource": "blind pre-evaluation investor review; actual OHLCV fixtures only; kernel/rules/evaluator outputs unseen"
+    },
+    {
+      "episodeId": "amzn-2025-12-17-active-invalidation-blind-v1",
+      "symbol": "AMZN",
+      "series": "amzn-1d.json",
+      "asOf": "2025-12-17T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "blind-investor-holdout-v1",
+      "category": "structure_transition",
+      "samplingStratum": "chronological_blind_active_invalidation",
+      "expectation": "may_draw",
+      "expectedSemanticTypes": ["trend"],
+      "expectedByInterval": {
+        "1D": {"expectation": "may_draw", "semanticTypes": ["trend"]},
+        "1W": {"expectation": "may_draw", "semanticTypes": []},
+        "1M": {"expectation": "may_draw", "semanticTypes": []}
+      },
+      "labelRationale": "Second-pass strict-contract blind audit: the current rising support line has four contacts, three completed reactions, 97% span and only 0.05 ATR distance; it is more actionable than the 216.20 level 1.17 ATR away and is the minimum daily semantic.",
+      "labelSource": "blind pre-evaluation investor review; actual OHLCV fixtures only; kernel/rules/evaluator outputs unseen"
+    },
+    {
+      "episodeId": "nvda-2026-02-23-active-invalidation-blind-v1",
+      "symbol": "NVDA",
+      "series": "nvda-1d.json",
+      "asOf": "2026-02-23T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "blind-investor-holdout-v1",
+      "category": "weak_noise",
+      "samplingStratum": "chronological_blind_active_invalidation",
+      "expectation": "may_draw",
+      "expectedSemanticTypes": ["range"],
+      "expectedByInterval": {
+        "1D": {"expectation": "may_draw", "semanticTypes": ["range"]},
+        "1W": {"expectation": "may_draw", "semanticTypes": []},
+        "1M": {"expectation": "may_draw", "semanticTypes": []}
+      },
+      "labelRationale": "Second-pass strict-contract blind audit: the 171-194 box has ten contacts, four alternations, 100% containment and current upper-boundary relevance; range subsumes the nearby resistance and competing line and is the single minimum T-budget semantic.",
+      "labelSource": "blind pre-evaluation investor review; actual OHLCV fixtures only; kernel/rules/evaluator outputs unseen"
+    },
+    {
+      "episodeId": "googl-2026-02-26-active-invalidation-blind-v1",
+      "symbol": "GOOGL",
+      "series": "googl-1d.json",
+      "asOf": "2026-02-26T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "blind-investor-holdout-v1",
+      "category": "structure_transition",
+      "samplingStratum": "chronological_blind_active_invalidation",
+      "expectation": "may_draw",
+      "expectedSemanticTypes": ["event"],
+      "expectedByInterval": {
+        "1D": {"expectation": "may_draw", "semanticTypes": ["event"]},
+        "1W": {"expectation": "may_draw", "semanticTypes": []},
+        "1M": {"expectation": "may_draw", "semanticTypes": []}
+      },
+      "labelRationale": "Second-pass strict-contract blind audit: the February 20 reclaim of evidenced 309 support is held on February 23 and revalidated before one shallow adverse close; the reclaim event is more actionable than redundant level/trend drawings and is the minimum daily semantic.",
+      "labelSource": "blind pre-evaluation investor review; actual OHLCV fixtures only; kernel/rules/evaluator outputs unseen"
+    },
+    {
+      "episodeId": "aapl-2026-03-19-active-invalidation-blind-v1",
+      "symbol": "AAPL",
+      "series": "aapl-1d.json",
+      "asOf": "2026-03-19T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "blind-investor-holdout-v1",
+      "category": "structure_transition",
+      "samplingStratum": "chronological_blind_active_invalidation",
+      "expectation": "may_draw",
+      "expectedSemanticTypes": ["event"],
+      "expectedByInterval": {
+        "1D": {"expectation": "may_draw", "semanticTypes": ["event"]},
+        "1W": {"expectation": "may_draw", "semanticTypes": []},
+        "1M": {"expectation": "may_draw", "semanticTypes": []}
+      },
+      "labelRationale": "Second-pass strict-contract blind audit: closes on March 18-19 remain 0.77/0.95 ATR below the evidenced 254 support and confirm a breakdown event; that event is more actionable than the still-uninvalidated long support line and is the minimum daily semantic.",
+      "labelSource": "blind pre-evaluation investor review; actual OHLCV fixtures only; kernel/rules/evaluator outputs unseen"
     }
   ]
 }

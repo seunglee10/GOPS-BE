@@ -45,10 +45,7 @@ KAFKA_PRODUCER_BATCH_SIZE=65536
 KAFKA_PRODUCER_MAX_BLOCK_MS=3000
 KAFKA_PRODUCER_ACKS=1
 ALPACA_FEED_PROFILE=sip
-ALPACA_FEED_PROFILES=sip,boats,crypto-us
-ALPACA_CRYPTO_LOCATION=us
-ALPACA_CRYPTO_SYMBOLS=BTCUSD
-ALPACA_CRYPTO_CHANNELS=bars,updatedBars,dailyBars,trades,quotes
+ALPACA_FEED_PROFILES=sip,boats
 ALPACA_ENFORCE_FEED_SESSION_WINDOW=true
 ALPACA_SESSION_IDLE_POLL_SECONDS=60
 ALPACA_CREDENTIAL_SOURCE=local-env
@@ -83,9 +80,15 @@ BOATS/overnight keeps `ALPACA_COLLECTION_SYMBOL_SOURCE=on-demand` at the
 deployment level. Overnight liquidity is sparse and the BOATS stream should not
 fan out a 500-symbol baseline until feed support and traffic are measured.
 
-`ALPACA_FEED_PROFILE` selects one ingestor runtime feed (`sip`, `boats`, or `crypto-us`). The live contract is session-routed: SIP is primary for `04:00-20:00 ET` (`pre`, `regular`, `after`), BOATS is primary for `20:00-04:00 ET` (`overnight`), and `crypto-us` is the 24/7 Alpaca crypto feed. Sunday `20:00 ET` opens the Monday overnight slice; Friday `20:00 ET` closes the equity 24/5 window. Local compose and k8s run one ingestor per active profile, and `/health/config` reports the expected profile set from `ALPACA_FEED_PROFILES`. Market-data envelopes, Redis live state, ClickHouse candle rows, API candles, and chart snapshots preserve `feedProfile` and `marketSession` so daytime, BOATS/overnight, and crypto data are diagnosable instead of collapsing into an anonymous stream.
-
-Crypto uses `BTCUSD` inside GOPS and `BTC/USD` only when talking to Alpaca. It shares the existing Kafka topics; records are separated by Kafka key/message `symbol=BTCUSD`, not by a new topic.
+`ALPACA_FEED_PROFILE` selects one active ingestor runtime feed (`sip` or
+`boats`). The live contract is session-routed: SIP is primary for `04:00-20:00
+ET` (`pre`, `regular`, `after`), and BOATS is primary for `20:00-04:00 ET`
+(`overnight`). Sunday `20:00 ET` opens the Monday overnight slice; Friday
+`20:00 ET` closes the equity 24/5 window. Local compose and k8s run one ingestor
+per active profile, and `/health/config` reports the expected profile set from
+`ALPACA_FEED_PROFILES`. Market-data envelopes, Redis live state, ClickHouse
+candle rows, API candles, and chart snapshots preserve `feedProfile` and
+`marketSession` so daytime and BOATS/overnight data remain diagnosable.
 
 `ALPACA_CREDENTIAL_SOURCE` accepts `auto`, `aws-secrets-manager`, or `local-env`. Use `local-env` with `APCA_API_KEY_ID` and `APCA_API_SECRET_KEY` for explicit local Alpaca smoke runs while Secrets Manager is disconnected. AWS/EKS overlays set `aws-secrets-manager` and read the same canonical key names from the `dev/alpaca` JSON secret. Alpaca ingestors read credentials immediately before each WebSocket connect attempt, so a Secrets Manager rotation is picked up on the next reconnect or session open.
 
@@ -353,6 +356,7 @@ KAFKA_CLICKHOUSE_ENABLE_AUTO_COMMIT=false
 KAFKA_CLICKHOUSE_MAX_POLL_RECORDS=1000
 CLICKHOUSE_INSERT_BATCH_SIZE=1000
 CLICKHOUSE_FLUSH_INTERVAL_SECONDS=1
+CLICKHOUSE_RECENT_SOURCE_EVENT_IDS=100000
 ```
 
 AWS/EKS splits ClickHouse projection consumers by topic pressure. The baseline
@@ -362,9 +366,15 @@ AWS/EKS splits ClickHouse projection consumers by topic pressure. The baseline
 `market.layer.trades.v1,market.layer.quotes.v1`, so trade/quote tick
 persistence for order-flow rollups can catch up without blocking candle/news
 persistence.
-The ClickHouse loader batches Kafka payloads by table before HTTP insert and
-commits offsets after the batch side effects succeed. Keep batch sizes bounded
-so ClickHouse can catch up without starving API pods.
+The ClickHouse loader batches Kafka payloads by table while retaining each
+record's topic, partition, and offset. It sends a deterministic ClickHouse
+insert-deduplication token, then commits only the offsets represented by the
+successful batch. A bounded recent `sourceEventId` cache catches short replays
+whose records are regrouped into a different batch. Existing non-replicated
+MergeTree tables must apply `scripts/local/migrate-chart-tick-retention.sql`;
+without its deduplication-window setting ClickHouse does not retain insert
+tokens. Keep batch sizes bounded so ClickHouse can catch up without starving API
+pods.
 
 ## Redis
 
@@ -383,18 +393,17 @@ per `symbol + timeframe`, current provisional candles, latest closed candles,
 per-interval closed watermarks that suppress stale live candles, live
 trade/quote/event values, and SIP/BOATS feed state.
 Durable historical candles live in ClickHouse and S3 final/manifest.
-Run the in-cluster Redis StatefulSet as an ephemeral cache/control-plane store.
-Do not make Redis replay large AOF/RDB files on restart; large market-data cache
-snapshots can keep Redis in loading state and block Alpaca subscription control.
-Historical chart data remains durable in ClickHouse and S3 final/manifest.
+Run the in-cluster Redis StatefulSet as a bounded cache/control-plane store.
+Compose and Kubernetes currently keep AOF with `everysec`; RDB snapshots remain
+disabled. Historical chart data still lives in ClickHouse and S3 final/manifest,
+and Chart Asset logs remain pub/sub-only so they never enter the AOF.
 
 ```text
-redis-server --appendonly no --save "" --dir /tmp
+redis-server --appendonly yes --appendfsync everysec --save "" --dir /data
 ```
 
-This keeps live chart keys, feed control, and component health writable after a
-pod restart. Redis restarts may drop live cache and login sessions; live chart
-state is rebuilt by API/WebSocket activity. Chart resets must still use
+This bounds the acknowledged-write loss window while keeping snapshots off.
+Live chart state can still be rebuilt by API/WebSocket activity. Chart resets must use
 scan-delete for the documented market-data key patterns, not `FLUSHALL`.
 
 GOPS login sessions reuse Redis by default:
@@ -784,7 +793,19 @@ CHART_ASSET_REPAIR_ENABLED
 CHART_ASSET_REPAIR_ALPACA_ENABLED
 CHART_ASSET_REPAIR_CONCURRENCY
 CHART_ASSET_REPAIR_MAX_RANGES
+CHART_ASSET_REPAIR_S3_TIMEOUT_SECONDS
+CHART_ASSET_STORAGE_MODE
+CHART_ASSET_STORAGE_MAINTENANCE
 ```
+
+`CHART_ASSET_REPAIR_S3_TIMEOUT_SECONDS` defaults to `45`. Storage mode defaults
+to `clickhouse`; `dual_clickhouse_read`, `dual_postgres_read`, and `postgres`
+require the chart-owned PostgreSQL migration and exact parity verification.
+Maintenance mode leaves asset GET live while temporarily rejecting build/delete.
+The S3 timeout covers the no-write list/get/normalize preparation. Only a
+preparation accepted before the deadline is committed to ClickHouse; one S3
+socket read is additionally bounded to ten seconds so expired workers release
+promptly.
 
 ```text
 MARKET_CALENDAR_PROVIDER

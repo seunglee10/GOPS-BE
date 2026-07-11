@@ -17,11 +17,16 @@ from alfaka.storage.clickhouse_loader import ClickHouseHttpClient, should_ensure
 from alfaka.storage.processed_s3_sink import flush_buffer
 from alfaka.storage.s3_manifest import (
     DEFAULT_MANIFEST_PREFIX,
+    analysis_repair_processed_candle_keys,
     bounded_processed_candle_partition_keys,
     processed_candle_keys_from_manifest,
     require_canonical_processed_manifest,
 )
-from alfaka.storage.s3_materializer import materialize_s3_processed_objects
+from alfaka.storage.s3_materializer import (
+    commit_prepared_s3_processed_objects,
+    materialize_s3_processed_objects,
+    prepare_s3_processed_objects,
+)
 from alfaka.streaming.transforms import normalize_bar
 
 
@@ -29,14 +34,27 @@ class BackfillUnavailable(RuntimeError):
     pass
 
 
+class BackfillDeadlineExceeded(BackfillUnavailable):
+    def __init__(self, message, *, metrics=None):
+        super().__init__(message)
+        self.metrics = dict(metrics or {})
+
+
 class BackfillRunner:
-    def __init__(self, store=None, s3=None, clickhouse_client=None, coverage_provider=None):
+    def __init__(
+        self,
+        store=None,
+        s3=None,
+        clickhouse_client=None,
+        coverage_provider=None,
+        s3_operation_timeout_seconds=None,
+    ):
         """backfill 실행에 필요한 S3, ClickHouse, coverage 조회 의존성을 준비합니다."""
         load_dotenv()
         if s3 is None:
             from alfaka.common.s3_client import create_s3_client
 
-            s3 = create_s3_client()
+            s3 = create_s3_client(operation_timeout_seconds=s3_operation_timeout_seconds)
         self.store = store
         self.s3 = s3
         self.clickhouse_client = clickhouse_client or ClickHouseHttpClient(
@@ -74,6 +92,32 @@ class BackfillRunner:
             return self.store.update_status(current, "succeeded", result=result)
         return {**current, "status": "succeeded", "result": result}
 
+    def prepare_analysis_s3_repair(self, record):
+        """Finish every fallible S3 read before the caller's hard deadline."""
+        if self.store is not None:
+            raise BackfillUnavailable("Analysis repair preparation must stay request-local.")
+        return self.run({**record, "_analysisPrepareOnly": True})
+
+    def commit_analysis_s3_repair(self, outcome):
+        """Commit only a preparation that the request thread accepted in time."""
+        if not isinstance(outcome, dict) or not isinstance(outcome.get("result"), dict):
+            raise BackfillUnavailable("Invalid prepared analysis repair result.")
+        result = dict(outcome["result"])
+        prepared = result.pop("_preparedMaterialization", None)
+        if not isinstance(prepared, dict):
+            raise BackfillUnavailable("Analysis repair preparation is missing.")
+        committed = commit_prepared_s3_processed_objects(
+            self.clickhouse_client,
+            prepared,
+            source_name="chart-analysis-repair-s3-processed",
+            write_object_audits=False,
+        )
+        result.update({
+            "materializedRowCount": int(committed.get("matchedRowCount") or 0),
+            "materialization": committed,
+        })
+        return {**outcome, "result": result}
+
     def _run(self, record):
         """단일 backfill 요청을 sourcePreference와 jobType에 맞춰 처리합니다."""
         bucket = os.getenv("S3_BUCKET")
@@ -89,6 +133,21 @@ class BackfillRunner:
         force_refresh = bool(record.get("force"))
         source_preference = normalize_source_preference(record.get("sourcePreference", "coverage-first"))
         feed = historical_feed_for_symbol(symbol, os.getenv("HISTORICAL_FEED", os.getenv("ALPACA_FEED", "sip")))
+
+        analysis_repair_ranges = record.get("analysisRepairRanges")
+        if analysis_repair_ranges is not None:
+            if source_preference != "s3-only" or interval != "1D":
+                raise BackfillUnavailable("Analysis repair batching only supports sourcePreference=s3-only and interval=1D.")
+            return self._run_analysis_s3_repair(
+                bucket,
+                symbol,
+                interval,
+                analysis_repair_ranges,
+                deadline_monotonic=record.get("_deadlineMonotonic"),
+                cancel_check=record.get("_cancelCheck"),
+                lookup_metrics=record.get("_lookupMetrics"),
+                prepare_only=bool(record.get("_analysisPrepareOnly")),
+            )
 
         if job_type not in {"initial_load", "gapfill", "replay_repair", "correction_replay"}:
             raise BackfillUnavailable(f"Unsupported backfill job type: {job_type}.")
@@ -164,6 +223,22 @@ class BackfillRunner:
         raw_bars = []
         for repair_range in repair_ranges:
             raw_bars.extend(fetch_alpaca_bars(symbol, repair_range["start"], repair_range["end"], feed, timeframe))
+        analysis_missing_keys = {
+            str(item)
+            for item in (record.get("analysisMissingCandleKeys") or [])
+            if item
+        }
+        if interval == "1D" and analysis_missing_keys:
+            from alfaka.analytics.analysis_candles import canonicalize_candle_identity
+            raw_bars = [
+                row for row in raw_bars
+                if (
+                    (identity := canonicalize_candle_identity(
+                        {"timestamp": row.get("t") or row.get("timestamp")}, "1D",
+                    ))
+                    and identity["candleKey"] in analysis_missing_keys
+                )
+            ]
         if not raw_bars:
             if job_type == "initial_load":
                 manifest_prefix = os.getenv("S3_MANIFEST_PREFIX", DEFAULT_MANIFEST_PREFIX)
@@ -248,6 +323,128 @@ class BackfillRunner:
             "processedObjects": [f"s3://{bucket}/{processed_key}"],
             "dailyBarRepairCount": repair_count,
         }
+
+    def _run_analysis_s3_repair(
+        self,
+        bucket,
+        symbol,
+        interval,
+        repair_ranges,
+        *,
+        deadline_monotonic=None,
+        cancel_check=None,
+        lookup_metrics=None,
+        prepare_only=False,
+    ):
+        """Materialize one request-scoped daily repair batch from historical S3."""
+        started = time.monotonic()
+        metrics = lookup_metrics if isinstance(lookup_metrics, dict) else {}
+        for name in (
+            "listCalls", "objectsListed", "manifestObjectsRead",
+            "objectsSelected", "objectGets",
+        ):
+            metrics.setdefault(name, 0)
+        ranges = [
+            {"start": item.get("start"), "end": item.get("end"), "candleKeys": list(item.get("candleKeys") or [])}
+            for item in repair_ranges
+            if isinstance(item, dict) and item.get("start") and item.get("end")
+        ]
+        if not ranges:
+            raise BackfillUnavailable("Analysis repair requires at least one bounded range.")
+
+        def check_deadline():
+            if callable(cancel_check) and cancel_check():
+                exc = BackfillUnavailable("Analysis repair was canceled.")
+                exc.metrics = _finalize_lookup_metrics(metrics, started)
+                raise exc
+            if deadline_monotonic is not None and time.monotonic() >= float(deadline_monotonic):
+                raise BackfillDeadlineExceeded(
+                    "S3 analysis repair exceeded its stage deadline.",
+                    metrics=_finalize_lookup_metrics(metrics, started),
+                )
+
+        try:
+            check_deadline()
+            manifest_prefix = os.getenv("S3_MANIFEST_PREFIX", DEFAULT_MANIFEST_PREFIX)
+            processed_keys = analysis_repair_processed_candle_keys(
+                self.s3,
+                bucket,
+                manifest_prefix,
+                symbol,
+                interval,
+                ranges,
+                metrics=metrics,
+                deadline_check=check_deadline,
+            )
+            check_deadline()
+            if not processed_keys:
+                exc = BackfillUnavailable(
+                    "No S3 final candle objects with matching rows are available for the analysis repair ranges."
+                )
+                exc.metrics = _finalize_lookup_metrics(metrics, started)
+                raise exc
+            prepared = prepare_s3_processed_objects(
+                self.clickhouse_client,
+                self.s3,
+                bucket,
+                processed_keys,
+                selection={"symbol": symbol, "interval": interval, "ranges": ranges},
+                metrics=metrics,
+                deadline_check=check_deadline,
+                # A load-audit row proves that this object was handled before;
+                # it does not prove that every requested canonical candle is
+                # still present. Readiness repair exists specifically to heal
+                # rows that can be missing while that audit survives.
+                force_rematerialize=True,
+                # Shared compact objects can contain other symbols and dates.
+                # Request-scoped repair must never refresh rows outside the
+                # audited missing ranges from an older S3 snapshot.
+                filter_to_selection=True,
+            )
+            matched_rows = int(prepared.get("matchedRowCount") or 0)
+            if matched_rows <= 0:
+                exc = BackfillUnavailable(
+                    "No S3 final candle objects with matching rows are available for the analysis repair ranges."
+                )
+                exc.metrics = _finalize_lookup_metrics(metrics, started)
+                raise exc
+            finalized_metrics = _finalize_lookup_metrics(metrics, started)
+            result = {
+                "jobType": "gapfill",
+                "sourcePreference": "s3-only",
+                "source": "s3-processed",
+                "gapRanges": ranges,
+                "processedObjectCount": len(processed_keys),
+                "materializedRowCount": matched_rows,
+                "lookupMetrics": finalized_metrics,
+            }
+            if prepare_only:
+                result["_preparedMaterialization"] = prepared
+                return result
+            committed = commit_prepared_s3_processed_objects(
+                self.clickhouse_client,
+                prepared,
+                source_name="chart-analysis-repair-s3-processed",
+                write_object_audits=False,
+            )
+            result["materialization"] = committed
+            return result
+        except BackfillDeadlineExceeded:
+            raise
+        except BackfillUnavailable:
+            raise
+        except Exception as exc:
+            if (
+                (deadline_monotonic is not None and time.monotonic() >= float(deadline_monotonic))
+                or _is_timeout_exception(exc)
+            ):
+                raise BackfillDeadlineExceeded(
+                    "S3 analysis repair exceeded its stage deadline.",
+                    metrics=_finalize_lookup_metrics(metrics, started),
+                ) from exc
+            wrapped = BackfillUnavailable(f"S3 analysis repair failed: {exc}")
+            wrapped.metrics = _finalize_lookup_metrics(metrics, started)
+            raise wrapped from exc
 
     def detect_missing_ranges(self, symbol, interval, start, end, job_type):
         """ClickHouse에 이미 있는 timestamp를 보고 실제로 비어 있는 gap 구간만 계산합니다."""
@@ -513,6 +710,16 @@ def unique_ordered(values):
         seen.add(value)
         result.append(value)
     return result
+
+
+def _finalize_lookup_metrics(metrics, started):
+    result = dict(metrics or {})
+    result["elapsedMs"] = max(0, int(round((time.monotonic() - started) * 1000)))
+    return result
+
+
+def _is_timeout_exception(exc):
+    return "timeout" in exc.__class__.__name__.lower() or isinstance(exc, TimeoutError)
 
 
 def upload_raw_bars_to_s3(

@@ -107,9 +107,12 @@ After rollout:
 1. Check raw processor and quote processor lag separately.
 2. Check `putRetries`, `exactReplaySkips`, and S3 sink restarts.
 3. Compare ClickHouse candle/tick freshness with Redis live timestamps.
-4. Open `?orderFlowDemo=1` on desktop/mobile, then perform one operator-owned
+4. Confirm tick-loader logs report the configured recent source-ID window and
+   no repeating commit/rebalance errors; compare `count()` with unique
+   `source_event_id` over the rollout window.
+5. Open `?orderFlowDemo=1` on desktop/mobile, then perform one operator-owned
    market-hours live check without synthetic data.
-5. Run the Redis sample above and retain the result with the release.
+6. Run the Redis sample above and retain the result with the release.
 
 Existing Kafka topics are not repartitioned by `--if-not-exists`. Partition or
 retention changes on a live cluster require an explicit operator migration.
@@ -137,7 +140,10 @@ For an existing S3 object replay, use processed final/final-v2 only. A listed
 object with `matchedRowCount=0` is a miss and must fall through to Alpaca or
 fail `s3-only` mode. Object audits are written after ClickHouse insertion.
 
-Apply the idempotent tick TTL migration after reviewing both DDL copies:
+Apply the idempotent tick retention and insert-deduplication migration after
+reviewing both DDL copies. It keeps the existing table engine and data, adds the
+21-day TTL, and retains the newest 100,000 insert tokens so ClickHouse can ignore
+Kafka batch replays:
 
 ```bash
 clickhouse-client --multiquery < scripts/local/migrate-chart-tick-retention.sql
@@ -154,6 +160,35 @@ clickhouse-client --multiquery < scripts/local/migrate-chart-tick-retention.sql
 For an externally managed bucket, its owner must add both raw-prefix expiry
 rules. Never enable this module merely to append rules; the AWS lifecycle API
 treats the configuration as one bucket-wide document.
+
+## Chart Asset PostgreSQL Cutover
+
+Keep `CHART_ASSET_STORAGE_MODE=clickhouse` until the chart-owned migration job
+has created `chart_assets.analysis_assets`. Move to `dual_clickhouse_read` and
+drain the builder queue. Then set `CHART_ASSET_STORAGE_MAINTENANCE=true`, restart
+and verify `gops-backend` so build/delete return 503, restart the builder into its
+read-only maintenance guard, and scale `deployment/chart-asset-builder` to zero.
+Wait until no builder pod remains before running:
+
+```bash
+CHART_ASSET_MIGRATION_ACTION=sync CHART_ASSET_MIGRATION_PRUNE=true \
+  scripts/aws/run-chart-asset-migrations-job.sh
+CHART_ASSET_MIGRATION_ACTION=verify \
+  scripts/aws/run-chart-asset-migrations-job.sh
+```
+
+`run-chart-asset-migrations-job.sh`는 sync/verify 전에 실행 중인 모든
+`gops-backend` pod의 `CHART_ASSET_STORAGE_MAINTENANCE=true`를 직접 확인하고,
+builder replica 0과 남은 pod 0을 확인한다. ConfigMap만 바꾸고 backend rollout을
+생략한 상태에서는 fail closed로 실행하지 않는다.
+
+Unset maintenance only after pair and canonical payload digest parity is 100%.
+Then use `dual_postgres_read` for at least seven days/one release. Any missing,
+extra, mismatched, shadow-write, 5xx, or latency regression returns the read
+primary to ClickHouse. Switch to `postgres` only after the observation gate;
+do not drop the ClickHouse compatibility table in the same rollout. Restore the
+builder replica and restart both backend and builder only after the selected
+storage mode and maintenance=false have been deployed.
 
 ## Rollback
 

@@ -26,5 +26,5 @@ QUALITY_CONFIG = {
     "1M": IntervalQualityConfig(36, 18, 1, 2, 2, 3, 8, 14, 12, 2, 12, 1, 4),
 }
 
-KERNEL_VERSION = "kernel-v2"
-QUALITY_POLICY_VERSION = "chart-quality-v1"
+KERNEL_VERSION = "kernel-v3"
+QUALITY_POLICY_VERSION = "chart-quality-v2"

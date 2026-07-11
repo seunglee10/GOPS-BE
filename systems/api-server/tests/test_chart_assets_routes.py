@@ -151,6 +151,15 @@ class ChartAssetsRoutesTest(unittest.TestCase):
         self.assertEqual(coverage.status_code, 503)
         self.assertEqual(deleted.status_code, 503)
 
+    def test_storage_migration_maintenance_keeps_reads_live_and_blocks_mutations(self):
+        with patch.dict(os.environ, {"CHART_ASSET_STORAGE_MAINTENANCE": "true"}):
+            asset = self.client.get("/api/charts/analysis-assets", params={"symbol": "NVDA"})
+            build = self.client.post("/api/charts/analysis-assets/build", json={"symbols": ["NVDA"]})
+            deleted = self.client.delete("/api/charts/analysis-assets", params={"symbols": "NVDA"})
+        self.assertEqual(asset.status_code, 200)
+        self.assertEqual(build.status_code, 503)
+        self.assertEqual(deleted.status_code, 503)
+
     def test_enqueue_failure_is_not_reported_as_queued(self):
         queue = FailingQueue()
         with patch("app.routes.chart_assets.chart_asset_build_queue", return_value=queue):

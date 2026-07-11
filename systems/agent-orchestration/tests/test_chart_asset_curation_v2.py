@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import sys
 import unittest
@@ -43,6 +44,27 @@ class ChartAssetCurationV2Test(unittest.TestCase):
         self.assertNotIn("recentBars", encoded)
         self.assertLessEqual(len(self.bundle["intervals"][0]["visualCandidates"]), 6)
 
+    def test_symbol_candidate_budget_prefers_higher_timeframes(self):
+        palettes = []
+        for interval in ("1D", "1W", "1M"):
+            palette = copy.deepcopy(self.palette)
+            palette["interval"] = interval
+            palette["visualCandidates"] = []
+            for index in range(6):
+                candidate = copy.deepcopy(self.palette["visualCandidates"][0])
+                candidate["candidateId"] = f"{interval}:candidate:{index}"
+                candidate["interval"] = interval
+                palette["visualCandidates"].append(candidate)
+            palettes.append(palette)
+
+        bundle = build_symbol_bundle("NVDA", palettes)
+        counts = {
+            item["interval"]: len(item["visualCandidates"])
+            for item in bundle["intervals"]
+        }
+
+        self.assertEqual(counts, {"1M": 4, "1W": 3, "1D": 3})
+
     def test_validator_rejects_invented_candidate_fact_and_condition(self):
         output = valid_output(self.bundle)
         output["intervalSelections"][0]["selectedCandidateIds"] = ["1D:vc-invented"]
@@ -59,6 +81,18 @@ class ChartAssetCurationV2Test(unittest.TestCase):
         output = valid_output(self.bundle)
         output["intervalSelections"][0]["focusNarratives"][0]["refType"] = "ruleFinding"
         with self.assertRaisesRegex(ValueError, "focus"):
+            validate_curation_output(output, self.bundle)
+        output = valid_output(self.bundle)
+        output["intervalSelections"][0]["focusNarratives"][0]["refType"] = "invented"
+        with self.assertRaisesRegex(ValueError, "ref type"):
+            validate_curation_output(output, self.bundle)
+        output = valid_output(self.bundle)
+        output["intervalSelections"][0]["focusNarratives"][0]["priority"] = "1"
+        with self.assertRaisesRegex(ValueError, "priority"):
+            validate_curation_output(output, self.bundle)
+        output = valid_output(self.bundle)
+        output["intervalSelections"][0]["focusNarratives"][0]["priority"] = 10
+        with self.assertRaisesRegex(ValueError, "priority"):
             validate_curation_output(output, self.bundle)
 
     def test_materialized_geometry_is_kernel_template_and_focus_covers_it(self):
@@ -109,6 +143,30 @@ class ChartAssetCurationV2Test(unittest.TestCase):
         self.assertIn("현재 가격과의 거리", commentary["text"])
         self.assertIn("임의의 선을 만들지 않았습니다", commentary["text"])
         self.assertNotIn(commentary["headline"], commentary["text"])
+
+    def test_fibonacci_palette_requires_dominant_impulse_reaction_and_relevance(self):
+        current = features()
+        current["events"] = []
+        current["pivots"] = [
+            {"id": "p-low", "timestamp": candles()[0]["timestamp"], "price": 140, "kind": "L", "grade": "structural"},
+            {"id": "p-high", "timestamp": candles()[1]["timestamp"], "price": 180, "kind": "H", "grade": "structural"},
+        ]
+        current["fibCandidates"] = [{
+            "fromPivotId": "p-low", "toPivotId": "p-high", "quality": .9,
+            "hardPass": False, "impulseAtr": 10, "reactionAt": candles()[1]["timestamp"], "currentDistanceAtr": .5,
+        }]
+        weak = build_interval_palette(
+            symbol="NVDA", interval="1D", input_digest="sha256:"+"b"*64,
+            features=current, rule_layers=rule_layers(), candles=candles(), generated_at=NOW,
+        )
+        self.assertNotIn("retracement", {item["semanticType"] for item in weak["visualCandidates"]})
+
+        current["fibCandidates"][0]["hardPass"] = True
+        strong = build_interval_palette(
+            symbol="NVDA", interval="1D", input_digest="sha256:"+"b"*64,
+            features=current, rule_layers=rule_layers(), candles=candles(), generated_at=NOW,
+        )
+        self.assertIn("retracement", {item["semanticType"] for item in strong["visualCandidates"]})
 
 
 def valid_output(bundle):

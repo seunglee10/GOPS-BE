@@ -5,9 +5,9 @@ from typing import Any
 
 
 STYLE_TOKENS: dict[str, dict[str, Any]] = {
-    "asset-sr-strong": {"color": "#f5f5f5", "colorToken": "asset-sr-strong", "lineWidth": 2, "opacity": 0.95},
-    "asset-sr-medium": {"color": "#f5f5f5", "colorToken": "asset-sr-medium", "lineWidth": 1.5, "opacity": 0.75},
-    "asset-sr-weak": {"color": "#f5f5f5", "colorToken": "asset-sr-weak", "lineWidth": 1, "opacity": 0.55},
+    "asset-sr-strong": {"color": "#ffffff", "colorToken": "asset-sr-strong", "lineWidth": 2, "opacity": 0.95},
+    "asset-sr-medium": {"color": "#ffffff", "colorToken": "asset-sr-medium", "lineWidth": 1.5, "opacity": 0.75},
+    "asset-sr-weak": {"color": "#ffffff", "colorToken": "asset-sr-weak", "lineWidth": 1, "opacity": 0.55},
     "asset-flag": {"color": "#ff7a3d", "colorToken": "asset-flag", "lineWidth": 1, "opacity": 0.95},
     "asset-trend": {"color": "#0099ff", "colorToken": "asset-trend", "lineWidth": 1.5, "opacity": 0.9, "extension": "ray"},
     "asset-range": {"color": "#999999", "colorToken": "asset-range", "lineWidth": 1, "fillColor": "#999999", "fillToken": "asset-range", "fillOpacity": 0.06, "opacity": 0.8},
@@ -125,14 +125,18 @@ def compile_rule_layers(
         })
 
     structure_rejected = [item for item in (*all_levels, *all_events) if not item.get("hardPass")]
+    structure_empty_reason = _empty_reason(
+        [*all_levels, *all_events], features.get("qualityFlags") or [], structure_drawings,
+    )
     structure = {
         "drawings": structure_drawings,
         "selected": structure_selected,
-        "emptyReason": None if structure_drawings else "no_candidate_passed_current_relevance",
+        "emptyReason": structure_empty_reason,
         "meta": {
             "candidateCount": len(all_levels) + len(all_events),
             "passedCount": len(levels) + len(events),
             "rejectedByReason": _reason_counts(structure_rejected),
+            "qualityState": "ready" if structure_drawings else "quality_empty",
         },
     }
 
@@ -145,7 +149,7 @@ def compile_rule_layers(
             trends,
             key=lambda item: (
                 -float(item.get("score") or 0),
-                float(item.get("currentDistanceAtr") or 99),
+                float(item["currentDistanceAtr"]) if item.get("currentDistanceAtr") is not None else 99.0,
                 item["id"],
             ),
         )[0]
@@ -201,11 +205,12 @@ def compile_rule_layers(
     trend_layer = {
         "drawings": trend_drawings,
         "selected": trend_selected,
-        "emptyReason": None if trend_drawings else "no_candidate_passed_current_relevance",
+        "emptyReason": _empty_reason(all_trends, features.get("qualityFlags") or [], trend_drawings),
         "meta": {
             "candidateCount": len(all_trends),
             "passedCount": len(trends),
             "rejectedByReason": _reason_counts([item for item in all_trends if not item.get("hardPass")]),
+            "qualityState": "ready" if trend_drawings else "quality_empty",
         },
     }
     return {"structure": structure, "trend": trend_layer}
@@ -249,7 +254,7 @@ def _empty_layer(reason: str) -> dict[str, Any]:
         "drawings": [],
         "selected": [],
         "emptyReason": reason,
-        "meta": {"candidateCount": 0, "passedCount": 0, "rejectedByReason": {}},
+        "meta": {"candidateCount": 0, "passedCount": 0, "rejectedByReason": {}, "qualityState": "data_degraded" if reason == "data_quality_blocked" else "quality_empty"},
     }
 
 
@@ -258,9 +263,10 @@ def _stable_suffix(value: Any) -> str:
 
 
 def _level_rank(item: dict[str, Any]) -> tuple[int, float, int, str]:
-    distance = float(item.get("currentDistanceAtr") or 99)
+    distance = float(item["currentDistanceAtr"]) if item.get("currentDistanceAtr") is not None else 99.0
     band = 0 if distance <= 1.5 else 1
-    return band, -float(item.get("score") or 0), int(item.get("lastTouchAgeBars") or 999), str(item["id"])
+    age = int(item["lastTouchAgeBars"]) if item.get("lastTouchAgeBars") is not None else 999
+    return band, -float(item.get("score") or 0), age, str(item["id"])
 
 
 def _reason_counts(items: list[dict[str, Any]]) -> dict[str, int]:
@@ -269,6 +275,21 @@ def _reason_counts(items: list[dict[str, Any]]) -> dict[str, int]:
         for reason in item.get("rejectReasons") or ["hard_gate"]:
             result[reason] = result.get(reason, 0) + 1
     return result
+
+
+def _empty_reason(candidates, quality_flags, drawings):
+    if drawings:
+        return None
+    if "data_quality_blocked" in quality_flags:
+        return "data_quality_blocked"
+    if not candidates:
+        return "no_structural_evidence"
+    rejected = [item for item in candidates if not item.get("hardPass")]
+    if rejected and all("active_invalidation" in (item.get("rejectReasons") or []) for item in rejected):
+        return "active_invalidation"
+    if any(item.get("evidencePass") for item in rejected):
+        return "not_currently_actionable"
+    return "no_structural_evidence"
 
 
 def _level_style(score: float) -> str:
@@ -283,6 +304,8 @@ def _event_label(event: dict[str, Any]) -> str:
     kind = event.get("kind")
     detail = event.get("detail") or {}
     if kind == "breakout":
+        if detail.get("state") == "failed":
+            return "지지 이탈 실패" if detail.get("direction") == "down" else "저항 돌파 실패"
         return "지지 이탈" if detail.get("direction") == "down" else "저항 돌파"
     if kind == "retest":
         return "저항 리테스트 확인" if detail.get("direction") == "down" else "지지 리테스트 확인"

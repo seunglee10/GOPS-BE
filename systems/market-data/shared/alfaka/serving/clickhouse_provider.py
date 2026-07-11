@@ -5,6 +5,7 @@ import json
 import os
 import re
 import time
+from datetime import datetime, timezone
 
 from alfaka.alpaca.feed_profiles import visible_extended_session_windows
 from alfaka.common.env import load_dotenv
@@ -16,13 +17,14 @@ from alfaka.serving.moving_average import attach_moving_averages
 
 
 class ClickHouseMarketDataProvider:
-    def __init__(self, url=None, database=None, user=None, password=None):
+    def __init__(self, url=None, database=None, user=None, password=None, now_provider=None):
         """ClickHouse HTTP API 접속 정보를 환경변수 또는 인자로 초기화합니다."""
         load_dotenv()
         self.url = (url or os.getenv("CLICKHOUSE_HTTP_URL", "http://localhost:8123")).rstrip("/")
         self.database = database or os.getenv("CLICKHOUSE_DATABASE", "market_data")
         self.user = user or os.getenv("CLICKHOUSE_USER", "alfaka")
         self.password = password or os.getenv("CLICKHOUSE_PASSWORD", "alfaka")
+        self.now_provider = now_provider or (lambda: datetime.now(timezone.utc))
         if os.getenv("CLICKHOUSE_PROVIDER_ENSURE_SESSION_COLUMNS", "false").lower() in {"1", "true", "yes"}:
             self.ensure_market_data_schema()
 
@@ -58,11 +60,20 @@ class ClickHouseMarketDataProvider:
         """저장된 direct interval 캔들을 우선 쓰고, 비어 있으면 기존 source 집계로 보강합니다."""
         interval = normalize_chart_interval(interval)
         limit = resolve_candle_limit(interval, limit)
-        direct_rows = self.stored_interval_candles(symbol, interval, limit, before=before, from_time=from_time, to_time=to_time)
+        reference = self.now_provider()
+        direct_rows = merge_candle_rows(
+            self.stored_interval_candles(symbol, interval, limit, before=before, from_time=from_time, to_time=to_time),
+            interval=interval,
+        )
+        direct_rows = with_higher_timeframe_closed_state(direct_rows, interval, now=reference)
         if len(direct_rows) >= limit:
             return attach_moving_averages(direct_rows[-limit:], overwrite=True)
         aggregate_rows = aggregate(symbol, interval, limit, before=before, from_time=from_time, to_time=to_time) if aggregate else []
-        return attach_moving_averages(merge_candle_rows(aggregate_rows, direct_rows)[-limit:], overwrite=True)
+        aggregate_rows = with_higher_timeframe_closed_state(aggregate_rows, interval, now=reference)
+        return attach_moving_averages(
+            merge_candle_rows(aggregate_rows, direct_rows, interval=interval)[-limit:],
+            overwrite=True,
+        )
 
     def stored_interval_candles(self, symbol, interval, limit=None, before=None, from_time=None, to_time=None):
         """ClickHouse chart_candles에 저장된 요청 interval row를 그대로 조회합니다."""
@@ -137,47 +148,30 @@ class ClickHouseMarketDataProvider:
             time_filter += "\n          AND event_time < parseDateTime64BestEffort({before:String})"
             params["before"] = before
 
-        source_query = self.latest_chart_candles_source(f"""
+        source_query = self.latest_canonical_daily_source(f"""
             symbol = {{symbol:String}}
             AND interval IN ('1D', '1d')
             {time_filter}
         """)
         query = f"""
         SELECT
-          formatDateTime(bucket, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS timestamp,
-          argMin(open, event_time) AS open,
-          max(high) AS high,
-          min(low) AS low,
-          argMax(close, event_time) AS close,
-          sum(volume) AS volume,
-          min(is_closed) AS isClosed,
-          'NONE' AS correctionType,
-          anyLast(source) AS source,
-          anyLast(feed) AS feed,
-          anyLast(feed_profile) AS feedProfile,
+          formatDateTime(event_time, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS timestamp,
+          open,
+          high,
+          low,
+          close,
+          volume,
+          is_closed AS isClosed,
+          correction_type AS correctionType,
+          source,
+          feed,
+          feed_profile AS feedProfile,
           'regular' AS marketSession,
-          concat('agg/1D/', symbol, '/', formatDateTime(bucket, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC')) AS sourceEventId
+          source_event_id AS sourceEventId
         FROM (
-          SELECT
-            toStartOfDay(event_time) AS bucket,
-            event_time,
-            symbol,
-            open,
-            high,
-            low,
-            close,
-            volume,
-            is_closed,
-            source,
-            feed,
-            feed_profile,
-            market_session
-          FROM (
-            {source_query}
-          )
+          {source_query}
         )
-        GROUP BY symbol, bucket
-        ORDER BY bucket DESC
+        ORDER BY event_time DESC
         LIMIT {{limit:UInt32}}
         FORMAT JSONEachRow
         """
@@ -273,7 +267,7 @@ class ClickHouseMarketDataProvider:
             time_filter += "\n          AND event_time < parseDateTime64BestEffort({before:String})"
             params["before"] = before
 
-        source_query = self.latest_chart_candles_source(f"""
+        source_query = self.latest_canonical_daily_source(f"""
             symbol = {{symbol:String}}
             AND interval IN ('1D', '1d')
             {time_filter}
@@ -319,6 +313,7 @@ class ClickHouseMarketDataProvider:
         rows = self.query_json_each_row(query, params)
         for row in rows:
             row["interval"] = interval
+        rows = with_higher_timeframe_closed_state(rows, interval, now=self.now_provider())
         return attach_moving_averages(list(reversed(rows)), overwrite=True)
 
     def candles_since(self, symbol, interval, timestamp, limit=500, include_from=False):
@@ -332,7 +327,8 @@ class ClickHouseMarketDataProvider:
         if interval != "1D":
             params["interval"] = interval
         session_filter = "1 = 1" if interval == "1D" else self.market_session_filter_sql(symbol)
-        source_query = self.latest_chart_candles_source(f"""
+        source_factory = self.latest_canonical_daily_source if interval == "1D" else self.latest_chart_candles_source
+        source_query = source_factory(f"""
             symbol = {{symbol:String}}
             AND {interval_filter}
             AND {session_filter}
@@ -729,7 +725,8 @@ class ClickHouseMarketDataProvider:
           market_session,
           price_adjustment,
           canonical_version,
-          source_event_id
+          source_event_id,
+          inserted_at
         FROM (
           SELECT
             event_time,
@@ -752,6 +749,7 @@ class ClickHouseMarketDataProvider:
             price_adjustment,
             canonical_version,
             source_event_id,
+            inserted_at,
             row_number() OVER (
               PARTITION BY symbol, if(interval = '1d', '1D', interval), event_time
               ORDER BY
@@ -764,6 +762,55 @@ class ClickHouseMarketDataProvider:
             AND {self.canonical_candle_filter_sql(include_live=include_live)}
         )
         WHERE rn = 1
+        """
+
+    def latest_canonical_daily_source(self, where_sql):
+        """Choose one canonical 1D row per NY trading-date identity."""
+        source = self.latest_chart_candles_source(where_sql)
+        return f"""
+        SELECT
+          toDateTime(trading_date, 'America/New_York') AS event_time,
+          symbol,
+          '1D' AS interval,
+          open,
+          high,
+          low,
+          close,
+          volume,
+          is_closed,
+          ma5,
+          ma20,
+          ma60,
+          correction_type,
+          source,
+          feed,
+          feed_profile,
+          'regular' AS market_session,
+          price_adjustment,
+          canonical_version,
+          source_event_id,
+          inserted_at
+        FROM (
+          SELECT
+            normalized.*,
+            row_number() OVER (
+              PARTITION BY symbol, trading_date
+              ORDER BY inserted_at DESC, event_time DESC, ifNull(source_event_id, '') DESC
+            ) AS daily_rn
+          FROM (
+            SELECT
+              latest.*,
+              if(
+                formatDateTime(event_time, '%H:%i:%S', 'UTC') = '00:00:00',
+                toDate(event_time, 'UTC'),
+                toDate(event_time, 'America/New_York')
+              ) AS trading_date
+            FROM (
+              {source}
+            ) AS latest
+          ) AS normalized
+        )
+        WHERE daily_rn = 1
         """
 
     def order_flow_daily_profiles(self, symbol, from_date, to_date, limit=100000):
@@ -1157,16 +1204,45 @@ def include_live_stored_candles(interval):
     return normalize_chart_interval(interval) == "1m"
 
 
-def merge_candle_rows(*groups):
-    """같은 timestamp는 뒤쪽 그룹 값을 우선하는 방식으로 합칩니다."""
+def merge_candle_rows(*groups, interval=None):
+    """같은 candle identity는 뒤쪽 그룹 값을 우선하는 방식으로 합칩니다."""
+    normalized_interval = normalize_chart_interval(interval) if interval else None
     by_timestamp = {}
     for group in groups:
         for row in group or []:
-            timestamp = row.get("timestamp")
+            normalized = row
+            identity_key = None
+            if normalized_interval in {"1D", "1W", "1M"}:
+                from alfaka.analytics.analysis_candles import canonicalize_candle_identity
+
+                normalized = canonicalize_candle_identity(row, normalized_interval)
+                identity_key = normalized.get("candleKey") if normalized else None
+            timestamp = normalized.get("timestamp") if normalized else None
             if not timestamp:
                 continue
-            by_timestamp[timestamp] = {**row, "timestamp": timestamp}
-    return [by_timestamp[key] for key in sorted(by_timestamp)]
+            key = identity_key or timestamp
+            by_timestamp[key] = {**normalized, "timestamp": timestamp}
+    return sorted(by_timestamp.values(), key=lambda row: row["timestamp"])
+
+
+def with_higher_timeframe_closed_state(rows, interval, *, now=None):
+    normalized_interval = normalize_chart_interval(interval)
+    if normalized_interval not in {"1W", "1M"}:
+        return list(rows or [])
+    from alfaka.analytics.analysis_candles import is_analysis_candle_bucket_complete
+
+    reference = now or datetime.now(timezone.utc)
+    return [
+        {
+            **row,
+            "isClosed": is_analysis_candle_bucket_complete(
+                row.get("timestamp"),
+                normalized_interval,
+                now=reference,
+            ),
+        }
+        for row in rows or []
+    ]
 
 
 def clickhouse_identifier(value):

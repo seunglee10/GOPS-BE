@@ -18,8 +18,16 @@ normalization, missing-value repair, or metric calculation.
 
 ## Collection Shape
 
-- Initial load: SEC `companyfacts.zip` bulk data for company facts plus
-  bounded SEC frames API calls for peer-comparison frames.
+- Default source (`SEC_FUNDAMENTALS_SOURCE=api`): per-company
+  `data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json` calls for the universe
+  (~500 companies), plus bounded SEC frames API calls for peer-comparison
+  frames. Each API response is the company's full XBRL history, so no separate
+  initial load is needed. Raw JSON is overwritten in S3 at a stable per-CIK key
+  (`{prefix}/api/CIK{cik}.json`), so S3 does not accumulate daily snapshots.
+- Legacy source (`SEC_FUNDAMENTALS_SOURCE=zip`): SEC `companyfacts.zip` bulk
+  download (multi-GB, all SEC filers). Automatically selected when
+  `SEC_COMPANYFACTS_ZIP_PATH` or `SEC_COMPANYFACTS_S3_KEY` is set. Prefer this
+  only if the universe grows to thousands of companies.
 - Incremental detection: EDGAR latest filings RSS/full-index or submissions
   index.
 - Recompute trigger: new `10-K`, `10-Q`, `10-K/A`, or `10-Q/A`.
@@ -39,8 +47,10 @@ python -u systems/fundamentals/jobs/sec-companyfacts-backfill/main.py
 It runs in the `gops-market-storage` image so it can reuse the existing S3,
 ClickHouse, and Redis helpers. The job:
 
-- downloads SEC `companyfacts.zip`;
-- uploads the raw ZIP to S3 under `SEC_FUNDAMENTALS_S3_PREFIX`;
+- fetches per-company SEC companyfacts JSON (API mode, default) or downloads
+  SEC `companyfacts.zip` (zip mode);
+- uploads raw JSON per CIK (API mode, overwriting stable keys) or the raw ZIP
+  (zip mode, date-keyed) to S3 under `SEC_FUNDAMENTALS_S3_PREFIX`;
 - normalizes selected S&P 500 company facts into `market_data.sec_financial_facts`;
 - computes deterministic derived metrics into `market_data.sec_derived_metrics`;
 - fetches bounded SEC frames API periods into `market_data.sec_frames`;
@@ -81,8 +91,10 @@ SEC_FUNDAMENTALS_DRY_RUN=false \
 
 Use `SEC_FUNDAMENTALS_SYMBOLS=AAPL,NVDA` or
 `SEC_FUNDAMENTALS_MAX_COMPANIES=10` for limited test loads.
+Use `SEC_FUNDAMENTALS_SOURCE=zip` to force the legacy bulk-ZIP path.
 Use `SEC_COMPANYFACTS_S3_KEY=fundamentals/sec/companyfacts/YYYY-MM-DD/companyfacts.zip`
-to reuse an already archived SEC bulk ZIP during chunked replays.
+to reuse an already archived SEC bulk ZIP during chunked replays (implies zip
+mode).
 Use `SEC_FUNDAMENTALS_FRAME_PERIODS=CY2026Q1,CY2025Q4` to override the
 default recent comparable frame periods.
 Use `SEC_FUNDAMENTALS_LOAD_COMPANYFACTS=false` with
