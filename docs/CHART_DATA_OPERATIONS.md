@@ -107,9 +107,12 @@ After rollout:
 1. Check raw processor and quote processor lag separately.
 2. Check `putRetries`, `exactReplaySkips`, and S3 sink restarts.
 3. Compare ClickHouse candle/tick freshness with Redis live timestamps.
-4. Open `?orderFlowDemo=1` on desktop/mobile, then perform one operator-owned
+4. Confirm tick-loader logs report the configured recent source-ID window and
+   no repeating commit/rebalance errors; compare `count()` with unique
+   `source_event_id` over the rollout window.
+5. Open `?orderFlowDemo=1` on desktop/mobile, then perform one operator-owned
    market-hours live check without synthetic data.
-5. Run the Redis sample above and retain the result with the release.
+6. Run the Redis sample above and retain the result with the release.
 
 Existing Kafka topics are not repartitioned by `--if-not-exists`. Partition or
 retention changes on a live cluster require an explicit operator migration.
@@ -137,7 +140,10 @@ For an existing S3 object replay, use processed final/final-v2 only. A listed
 object with `matchedRowCount=0` is a miss and must fall through to Alpaca or
 fail `s3-only` mode. Object audits are written after ClickHouse insertion.
 
-Apply the idempotent tick TTL migration after reviewing both DDL copies:
+Apply the idempotent tick retention and insert-deduplication migration after
+reviewing both DDL copies. It keeps the existing table engine and data, adds the
+21-day TTL, and retains the newest 100,000 insert tokens so ClickHouse can ignore
+Kafka batch replays:
 
 ```bash
 clickhouse-client --multiquery < scripts/local/migrate-chart-tick-retention.sql

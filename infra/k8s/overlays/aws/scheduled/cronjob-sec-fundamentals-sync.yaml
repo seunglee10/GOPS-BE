@@ -1,4 +1,5 @@
 # 역할: AWS/EKS에서 SEC fundamentals를 주기적으로 수집해 S3, ClickHouse, Redis를 갱신합니다.
+# SEC_FUNDAMENTALS_SOURCE=api는 유니버스 기업별 companyfacts API를 호출해 S3 고정 키에 덮어씁니다 (bulk zip 미사용).
 # schedule은 Kubernetes controller 기준 UTC입니다. 20:30 UTC는 한국 시간 05:30입니다.
 apiVersion: batch/v1
 kind: CronJob
@@ -38,6 +39,8 @@ spec:
               env:
                 - name: SEC_FUNDAMENTALS_DRY_RUN
                   value: "false"
+                - name: SEC_FUNDAMENTALS_SOURCE
+                  value: "api"
                 - name: SEC_COMPANYFACTS_S3_KEY
                   value: ""
                 - name: SEC_FUNDAMENTALS_MAX_COMPANIES

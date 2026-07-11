@@ -156,7 +156,6 @@ class FakeRepairService:
         kwargs["on_event"]("audit", {"missingBars": 0, "actualBars": 500, "expectedBars": 500, "ranges": []})
         return self.result
 
-
 class RecordingProgressStore(InMemoryChartAssetProgressStore):
     def __init__(self):
         super().__init__()

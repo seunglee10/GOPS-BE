@@ -157,7 +157,6 @@ flowchart LR
   subgraph Ingestors["Producers"]
     SIP["alpaca-ingestor-sip"]
     BOATS["alpaca-ingestor-boats"]
-    Crypto["alpaca-ingestor-crypto"]
   end
 
   subgraph Raw["Raw input topics"]
@@ -209,12 +208,6 @@ flowchart LR
   BOATS --> RB
   BOATS --> RU
   BOATS --> RD
-  Crypto --> RT
-  Crypto --> RQ
-  Crypto --> RB
-  Crypto --> RU
-  Crypto --> RD
-
   RT --> MarketProcessor
   RE --> MarketProcessor
   RB --> MarketProcessor

@@ -12,6 +12,7 @@ NAMESPACE="${K8S_NAMESPACE:-alfaka-market-data}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 JOB_NAME="${JOB_NAME:-alfaka-sec-fundamentals-backfill-manual-$(date +%Y%m%d%H%M%S)}"
 SEC_FUNDAMENTALS_DRY_RUN="${SEC_FUNDAMENTALS_DRY_RUN:-true}"
+SEC_FUNDAMENTALS_SOURCE="${SEC_FUNDAMENTALS_SOURCE:-api}"
 SEC_COMPANYFACTS_ZIP_URL="${SEC_COMPANYFACTS_ZIP_URL:-https://www.sec.gov/Archives/edgar/daily-index/xbrl/companyfacts.zip}"
 SEC_COMPANYFACTS_S3_KEY="${SEC_COMPANYFACTS_S3_KEY:-}"
 SEC_FUNDAMENTALS_S3_PREFIX="${SEC_FUNDAMENTALS_S3_PREFIX:-fundamentals/sec/companyfacts}"
@@ -87,6 +88,8 @@ spec:
           env:
             - name: SEC_FUNDAMENTALS_DRY_RUN
               value: "${SEC_FUNDAMENTALS_DRY_RUN}"
+            - name: SEC_FUNDAMENTALS_SOURCE
+              value: "${SEC_FUNDAMENTALS_SOURCE}"
             - name: SEC_COMPANYFACTS_ZIP_URL
               value: "${SEC_COMPANYFACTS_ZIP_URL}"
             - name: SEC_COMPANYFACTS_S3_KEY

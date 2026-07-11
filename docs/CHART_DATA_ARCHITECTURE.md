@@ -42,6 +42,15 @@ flowchart LR
 quote/trade markers use Redis plus the global `market.events` pub/sub channel;
 there is no live-candle Kafka topic.
 
+ClickHouse tick persistence is at-least-once at the Kafka boundary and
+idempotent at the sink boundary. The loader keeps Kafka record metadata through
+the HTTP insert, supplies a deterministic `insert_deduplication_token` derived
+from `topic + partition + offset`, and commits only the offsets represented by
+the successful batch. A bounded per-process `sourceEventId` cache filters short
+replays even when Kafka returns the records in a different batch. Existing
+non-replicated MergeTree tables must enable their insert-deduplication window
+with the operator migration.
+
 ## Placement Rules
 
 | Data | Compute owner | Runtime store | Durable store | Load curve |
@@ -131,6 +140,8 @@ layout migration. See `platform/s3/README.md` for exact prefixes.
 - Redis live keys and order-flow minute blobs: explicit TTLs.
 - Derived cache and locks: versioned keys with short TTLs and atomic Lua owner checks.
 - ClickHouse trade/quote ticks: 21-day TTL.
+- ClickHouse tick insert tokens: newest 100,000 inserted blocks per table.
+- ClickHouse loader recent source IDs: newest 100,000 table/event pairs per pod.
 - S3 raw/raw-v2 low-volume backups: operator-owned lifecycle; final evidence has no expiry.
 - Processor maps, frontend inactive candle caches, and order-flow bucket caches
   have tested upper bounds.

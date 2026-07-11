@@ -177,8 +177,13 @@ trade/quote tick tables used by order-flow rollups can catch up independently
 from candle/news persistence.
 The loaders batch Kafka payloads before ClickHouse HTTP insert
 (`CLICKHOUSE_INSERT_BATCH_SIZE`, `CLICKHOUSE_FLUSH_INTERVAL_SECONDS`,
-`KAFKA_CLICKHOUSE_MAX_POLL_RECORDS`). Prefer bounded batching over adding
-replicas because a hot Kafka partition is still owned by one consumer at a time.
+`KAFKA_CLICKHOUSE_MAX_POLL_RECORDS`). Tick batches preserve Kafka
+topic/partition/offset metadata, use deterministic ClickHouse insert tokens,
+and commit only successfully inserted offsets. `CLICKHOUSE_RECENT_SOURCE_EVENT_IDS`
+adds a bounded per-pod replay guard; existing ClickHouse volumes also require
+the operator tick-retention migration to enable the non-replicated deduplication
+window. Prefer bounded batching over adding replicas because a hot Kafka
+partition is still owned by one consumer at a time.
 
 ## Kubernetes Resources
 
@@ -296,9 +301,9 @@ Market ingestor deploys multiple runtime units from the same
 `gops-market-ingestor` image. `alfaka-alpaca-ingestor-sip` handles SIP baseline
 bars/statuses and active SIP trades/quotes on one WebSocket connection so the
 runtime stays within Alpaca SIP connection limits. `alfaka-alpaca-ingestor-boats`
-handles overnight BOATS, `alfaka-alpaca-ingestor-crypto` handles crypto, and
-`alfaka-alpaca-news-ingestor` handles Alpaca news. Select `market-ingestor` in
-the deploy workflow to roll all of them together.
+handles overnight BOATS, and `alfaka-alpaca-news-ingestor` handles Alpaca news.
+The former BTC crypto ingestor is retired. Select `market-ingestor` in the
+deploy workflow to roll the active SIP, BOATS, and news Deployments together.
 
 Config and overlay references:
 

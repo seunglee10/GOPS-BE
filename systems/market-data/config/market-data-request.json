@@ -1,24 +1,13 @@
 {
-  "description": "S&P500 bars plus on-demand realtime tick/quote subscription policy, with BTCUSD as a configured Alpaca crypto chart symbol.",
+  "description": "S&P500 bars plus on-demand realtime tick/quote subscription policy.",
   "defaultUniverse": "sp500",
   "universeRegistryPath": "sp500-universe.json",
   "collectionSymbolSource": "universe",
   "defaultSeedSymbols": [],
   "defaultSymbols": [],
-  "extraSymbols": ["BTCUSD", "XLV"],
+  "extraSymbols": ["XLV"],
   "universes": {},
   "symbolMetadata": {
-    "BTCUSD": {
-      "name": "Bitcoin / US Dollar",
-      "exchange": "ALPACA_CRYPTO",
-      "market": "CRYPTO",
-      "assetClass": "crypto",
-      "tradable": false,
-      "status": "active",
-      "source": "alpaca",
-      "alpacaSymbol": "BTC/USD",
-      "cryptoLocation": "us"
-    },
     "XLV": {
       "name": "Health Care Select Sector SPDR Fund",
       "exchange": "NYSEARCA",

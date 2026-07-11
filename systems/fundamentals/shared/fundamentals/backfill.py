@@ -23,6 +23,7 @@ from .sec_client import SecClient, SecRateLimiter, normalize_cik
 
 SEC_COMPANYFACTS_ZIP_URL = "https://www.sec.gov/Archives/edgar/daily-index/xbrl/companyfacts.zip"
 DEFAULT_COMPANYFACTS_S3_PREFIX = "fundamentals/sec/companyfacts"
+DEFAULT_COMPANYFACTS_SOURCE = "api"
 DEFAULT_UNIVERSE_PATH = "systems/market-data/config/sp500-universe.json"
 SKIP_RAW_METRIC_GROUPS = {"debt_current_components", "debt_noncurrent_components"}
 FLOW_FACT_METRICS = {"revenue", "net_income", "operating_income", "operating_cash_flow", "capex"}
@@ -54,6 +55,7 @@ FRAME_CONCEPT_PRIORITY = {
 @dataclass
 class FundamentalsBackfillConfig:
     dry_run: bool = True
+    source: str = DEFAULT_COMPANYFACTS_SOURCE
     companyfacts_zip_url: str = SEC_COMPANYFACTS_ZIP_URL
     local_zip_path: str = ""
     s3_zip_key: str = ""
@@ -77,6 +79,7 @@ class FundamentalsBackfillConfig:
         environ = environ or os.environ
         return cls(
             dry_run=bool_env(environ.get("SEC_FUNDAMENTALS_DRY_RUN"), True),
+            source=(environ.get("SEC_FUNDAMENTALS_SOURCE") or DEFAULT_COMPANYFACTS_SOURCE).strip().lower(),
             companyfacts_zip_url=environ.get("SEC_COMPANYFACTS_ZIP_URL") or SEC_COMPANYFACTS_ZIP_URL,
             local_zip_path=environ.get("SEC_COMPANYFACTS_ZIP_PATH") or "",
             s3_zip_key=environ.get("SEC_COMPANYFACTS_S3_KEY") or "",
@@ -112,6 +115,7 @@ class BackfillStats:
     companies_requested: int = 0
     companies_matched: int = 0
     companies_loaded: int = 0
+    companies_failed: int = 0
     unmatched_symbols: list[str] = field(default_factory=list)
     fact_rows: int = 0
     derived_rows: int = 0
@@ -128,6 +132,7 @@ class BackfillStats:
             "companiesRequested": self.companies_requested,
             "companiesMatched": self.companies_matched,
             "companiesLoaded": self.companies_loaded,
+            "companiesFailed": self.companies_failed,
             "unmatchedSymbols": list(self.unmatched_symbols),
             "factRows": self.fact_rows,
             "derivedRows": self.derived_rows,
@@ -154,12 +159,15 @@ def run_companyfacts_backfill(config: FundamentalsBackfillConfig | None = None, 
         symbols = symbols[: config.max_companies]
     stats.companies_requested = len(symbols)
 
+    source = effective_source(config)
+
     if config.dry_run and not config.download_in_dry_run and not config.local_zip_path:
         print(json.dumps({
             "status": "dry-run",
             "message": "SEC fundamentals dry-run skipped network download. Set SEC_FUNDAMENTALS_DRY_RUN=false to ingest or SEC_FUNDAMENTALS_DOWNLOAD_IN_DRY_RUN=true to test download.",
             "symbols": symbols[:10],
             "symbolCount": len(symbols),
+            "source": source,
             "companyfactsZipUrl": config.companyfacts_zip_url,
         }, ensure_ascii=False), flush=True)
         return stats
@@ -172,7 +180,7 @@ def run_companyfacts_backfill(config: FundamentalsBackfillConfig | None = None, 
     stats.unmatched_symbols = unmatched
 
     zip_path: Path | None = None
-    if config.load_companyfacts:
+    if config.load_companyfacts and source == "zip":
         zip_path, checksum = resolve_companyfacts_zip(config, s3_client=s3_client)
         stats.checksum_sha256 = checksum
         if not config.dry_run:
@@ -180,6 +188,8 @@ def run_companyfacts_backfill(config: FundamentalsBackfillConfig | None = None, 
                 stats.raw_s3_object = config.s3_zip_key
             else:
                 stats.raw_s3_object = upload_companyfacts_zip_to_s3(config, zip_path, checksum, s3_client=s3_client)
+    elif config.load_companyfacts and source == "api" and not config.dry_run:
+        stats.raw_s3_object = f"{config.s3_prefix.strip('/')}/api/"
 
     if clickhouse_client is None:
         clickhouse_client = build_clickhouse_client()
@@ -191,11 +201,17 @@ def run_companyfacts_backfill(config: FundamentalsBackfillConfig | None = None, 
         insert_collection_run(clickhouse_client, stats, status="running", started_at=started_at, finished_at=None)
         insert_company_ticker_rows(clickhouse_client, company_map, symbols, ticker_payload, batch_size=config.batch_size)
         if config.load_companyfacts:
-            insert_raw_artifact_row(clickhouse_client, config, stats, started_at)
+            insert_raw_artifact_row(clickhouse_client, config, stats, started_at, source=source)
 
     all_frame_rows: list[dict[str, Any]] = []
-    if config.load_companyfacts and zip_path is not None:
-        for company, payload in iter_companyfacts_payloads(zip_path, company_map):
+    if config.load_companyfacts:
+        if source == "api":
+            payload_iter = iter_companyfacts_api_payloads(sec_client, company_map, config=config, stats=stats, s3_client=s3_client)
+        elif zip_path is not None:
+            payload_iter = iter_companyfacts_payloads(zip_path, company_map)
+        else:
+            payload_iter = iter([])
+        for company, payload in payload_iter:
             fact_rows = normalize_companyfacts_payload(company, payload)
             fact_rows = add_synthetic_q4_rows(fact_rows)
             derived_rows = derive_metric_rows(company, fact_rows)
@@ -234,6 +250,63 @@ def run_companyfacts_backfill(config: FundamentalsBackfillConfig | None = None, 
 
     print(json.dumps({"status": "success", **stats.to_dict()}, ensure_ascii=False, default=str), flush=True)
     return stats
+
+
+def effective_source(config: FundamentalsBackfillConfig) -> str:
+    if config.local_zip_path or config.s3_zip_key:
+        return "zip"
+    source = (config.source or DEFAULT_COMPANYFACTS_SOURCE).strip().lower()
+    return source if source in {"api", "zip"} else DEFAULT_COMPANYFACTS_SOURCE
+
+
+def iter_companyfacts_api_payloads(
+    sec_client: SecClient,
+    company_map: dict[str, CompanyTicker],
+    *,
+    config: FundamentalsBackfillConfig,
+    stats: BackfillStats | None = None,
+    s3_client=None,
+) -> Iterable[tuple[CompanyTicker, dict[str, Any]]]:
+    by_cik = companies_by_cik(company_map)
+    client = None
+    for cik in sorted(by_cik):
+        try:
+            payload = sec_client.companyfacts(cik)
+        except Exception as exc:
+            if stats is not None:
+                stats.companies_failed += 1
+            print(json.dumps({
+                "status": "warning",
+                "message": "SEC companyfacts API request failed.",
+                "cik": cik,
+                "symbols": [company.symbol for company in by_cik[cik]],
+                "error": f"HTTP {exc.code}" if isinstance(exc, urllib.error.HTTPError) else exc.__class__.__name__,
+            }, ensure_ascii=False), flush=True)
+            continue
+        if not isinstance(payload, dict) or "facts" not in payload:
+            continue
+        if not config.dry_run and config.s3_bucket:
+            if client is None:
+                client = s3_client or build_s3_client()
+            upload_companyfacts_json_to_s3(client, config, cik, payload)
+        for company in by_cik[cik]:
+            yield company, payload
+
+
+def upload_companyfacts_json_to_s3(s3_client: Any, config: FundamentalsBackfillConfig, cik: str, payload: dict[str, Any]) -> str:
+    body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    key = f"{config.s3_prefix.strip('/')}/api/CIK{cik}.json"
+    s3_client.put_object(
+        Bucket=config.s3_bucket,
+        Key=key,
+        Body=body,
+        ContentType="application/json",
+        Metadata={
+            "sha256": hashlib.sha256(body).hexdigest(),
+            "source": "sec-companyfacts-api",
+        },
+    )
+    return key
 
 
 def validate_write_config(config: FundamentalsBackfillConfig) -> None:
@@ -896,18 +969,19 @@ def insert_company_ticker_rows(clickhouse_client: Any, company_map: dict[str, Co
     insert_batches(clickhouse_client, "sec_company_tickers", rows, batch_size)
 
 
-def insert_raw_artifact_row(clickhouse_client: Any, config: FundamentalsBackfillConfig, stats: BackfillStats, collected_at: datetime) -> None:
+def insert_raw_artifact_row(clickhouse_client: Any, config: FundamentalsBackfillConfig, stats: BackfillStats, collected_at: datetime, *, source: str = "zip") -> None:
     if not stats.raw_s3_object:
         return
+    is_api = source == "api"
     clickhouse_client.insert_json_each_row("sec_raw_artifacts", [{
         "symbol": "_BULK",
         "cik": "",
-        "artifact_type": "companyfacts_zip",
+        "artifact_type": "companyfacts_api" if is_api else "companyfacts_zip",
         "object_path": stats.raw_s3_object,
         "checksum": stats.checksum_sha256,
-        "source_url": config.companyfacts_zip_url,
+        "source_url": "https://data.sec.gov/api/xbrl/companyfacts/" if is_api else config.companyfacts_zip_url,
         "collected_at": clickhouse_datetime(collected_at),
-        "raw": json.dumps({"bucket": config.s3_bucket, "source": "sec_bulk_companyfacts"}, ensure_ascii=False, separators=(",", ":")),
+        "raw": json.dumps({"bucket": config.s3_bucket, "source": "sec_companyfacts_api" if is_api else "sec_bulk_companyfacts"}, ensure_ascii=False, separators=(",", ":")),
     }])
 
 
