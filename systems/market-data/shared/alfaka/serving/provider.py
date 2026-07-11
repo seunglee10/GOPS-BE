@@ -248,6 +248,23 @@ class MarketDataProvider:
 
 
 def merge_candles(*groups):
+    rows = [candle for group in groups for candle in group if candle]
+    intervals = {normalize_chart_interval(row.get("interval", "1m")) for row in rows}
+    if rows and intervals.issubset({"1D"}):
+        from alfaka.analytics.analysis_candles import merge_canonical_candles
+        classified = []
+        for index, group in enumerate(groups):
+            if index == len(groups) - 1:
+                source_class = "active_live"
+            elif index == len(groups) - 2:
+                source_class = "redis_closed"
+            else:
+                source_class = "clickhouse_direct"
+            classified.append([
+                {**candle, "sourceClass": candle.get("sourceClass") or source_class}
+                for candle in group if candle
+            ])
+        return merge_canonical_candles(*classified, interval="1D", view="chart_current")
     by_timestamp = {}
     for group in groups:
         for candle in group:

@@ -39,8 +39,17 @@ def normalize_candles(candles: list[dict[str, Any]], interval: str) -> list[dict
             continue
         if row["high"] < row["low"] or min(row["open"], row["high"], row["low"], row["close"]) <= 0:
             continue
+        if source.get("candleKey") is not None:
+            row["candleKey"] = str(source["candleKey"])
+        if source.get("barIndex") is not None:
+            row["barIndex"] = int(source["barIndex"])
+        row["isClosed"] = True
+        row["interval"] = interval
         normalized[timestamp] = row
-    return [normalized[key] for key in sorted(normalized)][-LOOKBACK_BARS[interval]:]
+    result = [normalized[key] for key in sorted(normalized)][-LOOKBACK_BARS[interval]:]
+    for index, row in enumerate(result):
+        row.setdefault("barIndex", index)
+    return result
 
 
 def assemble_feature_pack(candles: list[dict[str, Any]], interval: str) -> dict[str, Any]:

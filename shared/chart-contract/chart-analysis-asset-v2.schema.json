@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gops.local/contracts/chart-analysis-asset-v2.schema.json",
+  "title": "GOPS Chart Analysis Asset v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["assetVersion", "kernelVersion", "qualityPolicyVersion", "promptVersion", "modelPolicyVersion", "symbol", "interval", "asOf", "generatedAt", "status", "window", "coverage", "input", "build", "quality", "features", "layers", "chartSetup", "commentary", "buildContext"],
+  "properties": {
+    "assetVersion": {"const": "v2"},
+    "kernelVersion": {"const": "kernel-v2"},
+    "qualityPolicyVersion": {"const": "chart-quality-v1"},
+    "promptVersion": {"type": ["string", "null"]},
+    "modelPolicyVersion": {"const": "chart-asset-model-v1"},
+    "symbol": {"type": "string", "pattern": "^[A-Z0-9.-]{1,20}$"},
+    "interval": {"enum": ["1D", "1W", "1M"]},
+    "asOf": {"type": "string", "format": "date-time"},
+    "generatedAt": {"type": "string", "format": "date-time"},
+    "status": {"enum": ["ready", "degraded"]},
+    "window": {"$ref": "#/$defs/window"},
+    "coverage": {"$ref": "#/$defs/coverage"},
+    "input": {"$ref": "#/$defs/input"},
+    "build": {"$ref": "#/$defs/build"},
+    "quality": {"$ref": "#/$defs/quality"},
+    "features": {"type": "object"},
+    "layers": {"$ref": "#/$defs/layers"},
+    "chartSetup": {"type": "object"},
+    "commentary": {"type": "object"},
+    "buildContext": {"type": "object"}
+  },
+  "$defs": {
+    "window": {
+      "type": "object", "additionalProperties": false,
+      "required": ["displayFrom", "displayTo", "displayBars", "lookbackBars"],
+      "properties": {
+        "displayFrom": {"type": "string", "format": "date-time"},
+        "displayTo": {"type": "string", "format": "date-time"},
+        "displayBars": {"type": "integer", "minimum": 1},
+        "lookbackBars": {"type": "integer", "minimum": 1}
+      }
+    },
+    "coverage": {
+      "type": "object", "additionalProperties": false,
+      "required": ["expectedBars", "actualBars", "missingBars", "coverageRatio", "recentContiguousBars", "largestGapBars", "lastExpectedClosedAt", "lastActualClosedAt", "renderable", "qualityFlags"],
+      "properties": {
+        "expectedBars": {"type": "integer", "minimum": 0},
+        "actualBars": {"type": "integer", "minimum": 0},
+        "missingBars": {"type": "integer", "minimum": 0},
+        "coverageRatio": {"type": "number", "minimum": 0, "maximum": 1},
+        "recentContiguousBars": {"type": "integer", "minimum": 0},
+        "largestGapBars": {"type": "integer", "minimum": 0},
+        "lastExpectedClosedAt": {"type": ["string", "null"], "format": "date-time"},
+        "lastActualClosedAt": {"type": ["string", "null"], "format": "date-time"},
+        "renderable": {"type": "boolean"},
+        "qualityFlags": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+      }
+    },
+    "input": {
+      "type": "object", "additionalProperties": false,
+      "required": ["digest", "canonicalDataVersion", "sessionPolicy", "adjustmentPolicy", "candleContractVersion"],
+      "properties": {
+        "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "canonicalDataVersion": {"const": "v2"},
+        "sessionPolicy": {"const": "us-equity-regular"},
+        "adjustmentPolicy": {"const": "split"},
+        "candleContractVersion": {"const": "analysis-candles-v1"}
+      }
+    },
+    "build": {
+      "type": "object", "additionalProperties": true,
+      "required": ["ruleDigest", "contextDigest", "buildIntentDigest", "assetContentDigest", "llmMode", "agentPreservationPolicy", "agentOutcome"],
+      "properties": {
+        "ruleDigest": {"type": "string"}, "contextDigest": {"type": "string"},
+        "buildIntentDigest": {"type": "string"}, "assetContentDigest": {"type": "string"},
+        "llmMode": {"enum": ["rule_only", "curate"]},
+        "agentPreservationPolicy": {"const": "preserve_valid_same_input"},
+        "agentOutcome": {"enum": ["not_requested_empty", "preserved", "ready", "ready_empty", "degraded"]}
+      }
+    },
+    "quality": {
+      "type": "object", "additionalProperties": false,
+      "required": ["state", "score", "reasons", "penalties"],
+      "properties": {
+        "state": {"enum": ["eligible", "insufficient_data", "stale_input", "contract_error"]},
+        "score": {"type": "number", "minimum": 0, "maximum": 1},
+        "reasons": {"type": "array", "items": {"type": "string"}},
+        "penalties": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "layer": {
+      "type": "object", "additionalProperties": false,
+      "required": ["drawings", "selected", "emptyReason", "meta"],
+      "properties": {
+        "drawings": {"type": "array", "items": {"type": "object"}},
+        "selected": {"type": "array", "items": {"type": "object"}},
+        "emptyReason": {"type": ["string", "null"]},
+        "meta": {"type": "object"}
+      }
+    },
+    "layers": {
+      "type": "object", "additionalProperties": false,
+      "required": ["structure", "trend", "agent"],
+      "properties": {"structure": {"$ref": "#/$defs/layer"}, "trend": {"$ref": "#/$defs/layer"}, "agent": {"$ref": "#/$defs/layer"}}
+    }
+  }
+}
