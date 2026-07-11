@@ -93,7 +93,6 @@ class FakeRepairService:
         kwargs["on_event"]("audit", {"missingBars": 0, "actualBars": 500, "expectedBars": 500, "ranges": []})
         return self.result
 
-
 class RecordingProgressStore(InMemoryChartAssetProgressStore):
     def __init__(self):
         super().__init__()
@@ -148,7 +147,6 @@ class ChartAssetBuilderTest(unittest.TestCase):
         self.assertEqual(repair.calls, [])
         self.assertEqual(loader.bundle_calls, 0)
         self.assertEqual(state["progress"]["skipped"], 1)
-
     def test_redis_logs_are_pubsub_only_and_not_job_state(self):
         redis = PublishOnlyRedis()
         store = RedisChartAssetProgressStore(redis_client=redis)

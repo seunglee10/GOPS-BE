@@ -1,4 +1,5 @@
-# 역할: SEC companyfacts bulk ZIP을 S3에 보관하고 ClickHouse/Redis fundamentals snapshot으로 적재합니다.
+# 역할: SEC companyfacts를 S3에 보관하고 ClickHouse/Redis fundamentals snapshot으로 적재합니다.
+# 기본 소스는 api(기업별 companyfacts API 호출)이며, SEC_FUNDAMENTALS_SOURCE=zip으로 bulk ZIP 방식을 사용할 수 있습니다.
 # 기본은 dry-run입니다. 실제 적재는 SEC_FUNDAMENTALS_DRY_RUN=false와 SEC_USER_AGENT를 명시해야 합니다.
 apiVersion: batch/v1
 kind: Job
@@ -30,6 +31,8 @@ spec:
           env:
             - name: SEC_FUNDAMENTALS_DRY_RUN
               value: "true"
+            - name: SEC_FUNDAMENTALS_SOURCE
+              value: "api"
             - name: SEC_COMPANYFACTS_S3_KEY
               value: ""
             - name: SEC_FUNDAMENTALS_MAX_COMPANIES
