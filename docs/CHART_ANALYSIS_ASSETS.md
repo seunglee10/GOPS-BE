@@ -215,9 +215,10 @@ flowchart TD
 - asset hard cap은 20 KiB, 운영 목표 p95는 12 KiB다.
 - Redis에는 asset 본문을 저장하지 않는다. 24시간 build job 상태 문자열과 pub/sub
   채널만 사용한다.
-- build log는 job status 안의 최근 200줄로 제한한다. interval별 S/T/I 생성 엔티티
-  수, 정상 무작도 탈락 사유, 입력 부족·보존·LLM degraded·실패 원인과 최종 합계를
-  보여주며 ClickHouse asset payload에는 넣지 않는다.
+- build log는 기존 pub/sub 채널로만 송출하고 Redis status 또는 ClickHouse에 저장하지
+  않는다. 열린 개발 패널의 브라우저 메모리가 최근 200줄만 보유한다. interval별 S/T/I
+  생성 엔티티 수, 정상 무작도 탈락 사유와 warning/failure 원인을 보여준다. 최종 생성
+  엔티티 수는 로그 유실과 무관하게 status의 작은 정수 필드로도 전달한다.
 
 ## 사용자 화면
 

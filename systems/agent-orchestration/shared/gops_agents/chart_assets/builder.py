@@ -57,7 +57,7 @@ class ChartAssetBuilder:
                     errors += current_errors; warnings += current_warnings; created_entities += current_entities
         except Exception as exc:
             self.progress.add_log(envelope.job_id, f"job failed: {exc.__class__.__name__}: {exc}")
-            return self.progress.set_status(envelope.job_id, "failed", finishedAt=utc_now_iso()) or {}
+            return self.progress.set_status(envelope.job_id, "failed", finishedAt=utc_now_iso(), createdEntities=created_entities) or {}
         state = self.progress.get(envelope.job_id) or {}
         status = "canceled" if state.get("cancelRequested") else "completed_with_errors" if errors or state.get("progress",{}).get("failed") else "completed_with_warnings" if warnings or state.get("progress",{}).get("warnings") else "completed"
         progress = state.get("progress", {})
@@ -67,7 +67,7 @@ class ChartAssetBuilder:
             f"done={progress.get('done', 0)}/{progress.get('total', 0)} "
             f"warnings={progress.get('warnings', 0)} failed={progress.get('failed', 0)} skipped={progress.get('skipped', 0)}",
         )
-        return self.progress.set_status(envelope.job_id, status, finishedAt=utc_now_iso()) or {}
+        return self.progress.set_status(envelope.job_id, status, finishedAt=utc_now_iso(), createdEntities=created_entities) or {}
 
     def _process_symbol(self, envelope, symbol):
         requested = [item for item in BUILD_INTERVAL_ORDER if item in envelope.intervals]

@@ -390,6 +390,9 @@ DELETE는 개발 패널의 명시적 정리 기능이다. 최대 100개 symbol�
 선택된 pair의 전체 ClickHouse history를 `mutations_sync=1`로 삭제한다. 자동 보존 정책,
 TTL 또는 broad cleanup으로 재사용하지 않는다. build 완료·삭제 후 프런트는 cache를
 무효화하고 열린 chart/commentary panel을 재조회한다.
+Build 상세 로그는 status JSON에 넣지 않고 기존 Redis pub/sub을 SSE `event: log`로
+그대로 전달한다. 별도 key/List/Stream을 만들지 않으며 구독하지 않은 로그는 유실된다.
+최종 생성량은 status의 작은 `createdEntities` 정수만 사용한다.
 
 ## Failure Policy
 

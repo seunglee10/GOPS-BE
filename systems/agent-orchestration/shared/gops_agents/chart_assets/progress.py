@@ -56,9 +56,9 @@ class InMemoryChartAssetProgressStore:
         return self.mutate(job_id, mutate, event={"type": "status", "status": status})
 
     def add_log(self, job_id: str, message: str) -> None:
-        def mutate(state: dict[str, Any]) -> None:
-            state["logs"] = [*state.get("logs", []), str(message)][-200:]
-        self.mutate(job_id, mutate, event={"type": "log", "message": str(message)})
+        # The in-memory fallback has no streaming transport. Do not retain logs in
+        # job state; operational details are intentionally ephemeral.
+        return None
 
     def record_item(self, job_id: str, item: dict[str, Any]) -> None:
         def mutate(state: dict[str, Any]) -> None:
@@ -98,6 +98,16 @@ class RedisChartAssetProgressStore(InMemoryChartAssetProgressStore):
         except ValueError:
             return None
         return state if isinstance(state, dict) else None
+
+    def add_log(self, job_id: str, message: str) -> None:
+        try:
+            self.redis.publish(
+                channel_name(job_id),
+                json.dumps({"type": "log", "jobId": job_id, "message": str(message)}, ensure_ascii=False, separators=(",", ":")),
+            )
+        except Exception:
+            # Logging must never add a storage write or fail the build.
+            return None
 
     def save(self, state: dict[str, Any], event: dict[str, Any] | None = None) -> dict[str, Any]:
         encoded = json.dumps(state, ensure_ascii=False, separators=(",", ":"))
@@ -157,7 +167,7 @@ def initial_state(envelope: ChartAssetBuildEnvelope) -> dict[str, Any]:
         "status": "queued",
         "requested": {"symbolCount": len(envelope.symbols), "intervals": list(envelope.intervals), "llmEnabled": envelope.llm_enabled, "force": envelope.force},
         "progress": {"total": total, "done": 0, "failed": 0, "skipped": 0, "warnings": 0, "current": None},
-        "recentItems": [], "failedItems": [], "logs": [], "startedAt": None, "finishedAt": None, "cancelRequested": False,
+        "recentItems": [], "failedItems": [], "startedAt": None, "finishedAt": None, "cancelRequested": False,
     }
 
 

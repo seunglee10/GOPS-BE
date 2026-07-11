@@ -57,6 +57,9 @@ Chart-analysis assets themselves never enter Redis. The manual build pipeline
 uses only the 24-hour status document `gops:chart-assets:build:{jobId}` and the
 ephemeral pub/sub channel `chart-assets.build:{jobId}` for SSE updates and
 cooperative cancellation.
+Build log messages use that pub/sub channel only: they are never appended to
+the status document, a Redis List/Stream, or any other key. The browser keeps
+at most 200 received lines in memory while the development panel is open.
 
 `order-flow:{symbol}:minutes` stores closed minute blobs in a ZSET for at most
 `ORDER_FLOW_LIVE_TTL_SECONDS` (default 86400). `live-minute` stores one current
