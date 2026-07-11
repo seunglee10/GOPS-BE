@@ -22,6 +22,7 @@ from gops_agents.chart_assets.intent_compiler import compile_agent_layer, merge_
 from gops_agents.chart_assets.llm import ChartAssetLLMService  # noqa: E402
 from gops_agents.chart_assets.progress import InMemoryChartAssetProgressStore  # noqa: E402
 from gops_agents.chart_assets.prompts import PROMPT_VERSION, build_llm_input  # noqa: E402
+from gops_agents.chart_assets.curation import deterministic_curation  # noqa: E402
 
 
 NOW = "2026-07-11T00:00:00.000Z"
@@ -59,26 +60,16 @@ class FakeStorage:
 class RecordingLLMService:
     def __init__(self):
         self.calls = []
-    def build(self, *, symbol, interval, candles, features, rule_layers, higher_assets, generated_at):
-        self.calls.append((symbol, interval, tuple(higher_assets)))
-        return {
-            "agentLayer": {
-                "drawings": [], "intents": [], "rationale": "", "degraded": False,
-                "model": "mock", "droppedIntents": [], "meta": {"groundingFlags": []},
-            },
-            "indicatorSuggestions": [],
-            "commentary": {
-                "text": f"{symbol} {interval} 구조입니다.", "keyLevels": ["지지 100.00"],
-                "invalidation": "100.00 종가 이탈 시 무효입니다.", "confidence": 0.5, "enrichment": None,
-            },
-            "promptVersion": PROMPT_VERSION,
-        }
+        self.model = "mock"
+    def curate_symbol(self, bundle):
+        self.calls.append((bundle["symbol"], tuple(item["interval"] for item in bundle["intervals"])))
+        return {"output": deterministic_curation(bundle), "degraded": False, "reason": None, "model": "mock", "usage": {}}
 
 
 class RaisingLLMService:
     model = "mock"
 
-    def build(self, **_kwargs):
+    def curate_symbol(self, _bundle):
         raise RuntimeError("injected failure")
 
 
@@ -229,12 +220,13 @@ class ChartAssetLLMTest(unittest.TestCase):
             llm_service=service, concurrency=1,
         ).run(request)
         self.assertEqual(opener.call_count, 2)
-        self.assertEqual(state["status"], "completed_with_errors")
-        self.assertEqual(state["progress"]["failed"], 1)
+        self.assertEqual(state["status"], "completed_with_warnings")
+        self.assertEqual(state["progress"]["failed"], 0)
+        self.assertEqual(state["progress"]["warnings"], 1)
         self.assertEqual(storage.saved[0]["status"], "degraded")
-        self.assertIn("NVDA 1D 기준", storage.saved[0]["commentary"]["text"])
+        self.assertIn("주요 관찰", storage.saved[0]["commentary"]["text"])
         self.assertEqual(storage.saved[0]["commentary"]["enrichment"], None)
-        self.assertEqual(storage.saved[0]["layers"]["agent"]["meta"]["failureReason"], "openai_TimeoutError")
+        self.assertEqual(storage.saved[0]["build"]["agentOutcome"], "degraded")
 
     def test_builder_catches_llm_exception_and_saves_degraded_asset(self):
         request = ChartAssetBuildEnvelope.create(
@@ -247,10 +239,10 @@ class ChartAssetLLMTest(unittest.TestCase):
             candle_loader=FakeCandleLoader(), storage=storage, progress=progress,
             llm_service=RaisingLLMService(), concurrency=1,
         ).run(request)
-        self.assertEqual(state["status"], "completed_with_errors")
-        self.assertEqual(state["failedItems"][0]["stage"], "llm")
+        self.assertEqual(state["status"], "completed_with_warnings")
+        self.assertEqual(state["failedItems"], [])
         self.assertEqual(storage.saved[0]["status"], "degraded")
-        self.assertEqual(storage.saved[0]["layers"]["agent"]["meta"]["failureReason"], "llm_RuntimeError")
+        self.assertEqual(storage.saved[0]["build"]["agentOutcome"], "degraded")
 
     def test_grounding_warning_is_recorded_without_rejecting_output(self):
         output = valid_output()
@@ -282,7 +274,7 @@ class ChartAssetLLMTest(unittest.TestCase):
         )
         self.assertIsNone(monthly_input["higherTimeframeContext"])
 
-    def test_builder_calls_llm_in_month_week_day_order_with_higher_context(self):
+    def test_builder_calls_llm_once_with_month_week_day_bundle(self):
         request = ChartAssetBuildEnvelope.create(
             requested_by="test", symbols=["NVDA"], intervals=["1D", "1W", "1M"], llm_enabled=True,
             job_id="cab-12345678-llm-order", submitted_at=NOW,
@@ -294,11 +286,7 @@ class ChartAssetLLMTest(unittest.TestCase):
             llm_service=service, concurrency=1,
         ).run(request)
         self.assertEqual(state["status"], "completed")
-        self.assertEqual(service.calls, [
-            ("NVDA", "1M", ()),
-            ("NVDA", "1W", ("1M",)),
-            ("NVDA", "1D", ("1M", "1W")),
-        ])
+        self.assertEqual(service.calls, [("NVDA", ("1M", "1W", "1D"))])
 
     def test_partial_one_day_build_marks_missing_higher_context(self):
         request = ChartAssetBuildEnvelope.create(
@@ -311,7 +299,7 @@ class ChartAssetLLMTest(unittest.TestCase):
             candle_loader=FakeCandleLoader(), storage=storage, progress=progress,
             llm_service=service, concurrency=1,
         ).run(request)
-        self.assertEqual(service.calls, [("NVDA", "1D", ())])
+        self.assertEqual(service.calls, [("NVDA", ("1D",))])
         self.assertEqual(storage.saved[0]["buildContext"]["flags"], ["no_higher_tf_context"])
         self.assertNotIn("no_higher_tf_context", storage.saved[0]["coverage"]["qualityFlags"])
 

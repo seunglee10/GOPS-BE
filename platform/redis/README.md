@@ -79,12 +79,17 @@ derived-result Redis state.
 | order-flow minute blobs | market processor | order-flow API | 86400s closed / 300s current | minute-blob v2 |
 | indicator/profile cache | API derived service | chart routes | 300s / 30s | calculation version in key |
 | derived lock | API derived service | API replicas | 30s | request hash |
-| chart-asset build status | API + chart-asset-builder | build API/SSE | one JSON key/job, 24h TTL + pub/sub | asset v1 |
+| chart-asset build status | API + chart-asset-builder | build API/SSE | one JSON key/job, 24h TTL + pub/sub | asset v1/v2 |
 | subscription/feed state | API/controller | ingestors/processors | TTL or bounded symbol set | on-demand v1 |
 
 Legacy keys such as `price:*`, `candle:*`, and `candles:*` are reset targets
 only; do not add new chart state that depends on them. `market.events*` remains
 the existing pub/sub fanout path for live updates, not durable Redis state.
+
+Chart asset v2 adds `completed_with_warnings`, `saved_with_warning`, and
+`unchanged` to the existing job/item status vocabulary. Digests, candidate
+palettes, prompts, responses, and asset bodies remain ClickHouse/worker memory
+data and must not be copied into Redis.
 
 The feed controller may also maintain compatibility helper keys
 `feed:active:profile` and `feed:active:epoch`, but `feed:active` is the

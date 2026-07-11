@@ -19,6 +19,7 @@ class ChartAssetBuildEnvelope:
     intervals: tuple[str, ...] = ALLOWED_INTERVALS
     llm_enabled: bool = True
     skip_fresh_hours: int = 0
+    force: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -29,6 +30,7 @@ class ChartAssetBuildEnvelope:
             "intervals": list(self.intervals),
             "llmEnabled": self.llm_enabled,
             "skipFreshHours": self.skip_fresh_hours,
+            "force": self.force,
         }
 
     @classmethod
@@ -42,6 +44,7 @@ class ChartAssetBuildEnvelope:
         skip_fresh_hours: int = 0,
         job_id: str | None = None,
         submitted_at: str | None = None,
+        force: bool = False,
     ) -> "ChartAssetBuildEnvelope":
         normalized_symbols = tuple(dict.fromkeys(str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()))
         normalized_intervals = tuple(dict.fromkeys(str(interval).strip() for interval in intervals))
@@ -58,6 +61,7 @@ class ChartAssetBuildEnvelope:
             intervals=normalized_intervals,
             llm_enabled=bool(llm_enabled),
             skip_fresh_hours=max(0, int(skip_fresh_hours or 0)),
+            force=bool(force),
         )
 
 
@@ -72,6 +76,7 @@ def envelope_from_dict(value: Any) -> ChartAssetBuildEnvelope:
         intervals=value.get("intervals") or ALLOWED_INTERVALS,
         llm_enabled=value.get("llmEnabled", True),
         skip_fresh_hours=value.get("skipFreshHours", 0),
+        force=value.get("force", False),
     )
 
 

@@ -306,6 +306,11 @@ chart analysis asset 운영 패널은 `kind="chartAssetOps"`, 화면 표시는
 레이아웃 수정 모드의 패널 추가 팔레트에 항상 노출하며 URL query나 localStorage로
 숨기지 않는다.
 
+Asset v2도 기존 GET/build/poll/SSE route를 사용한다. timed anchor는 chart
+candle timestamp에 정확히 존재해야 하며 프런트는 실패한 anchor를 보간하지 않는다.
+`commentary.focusItems[].drawingIds`는 실제 적용 drawing을 가리키고 선택 시 해당
+drawing을 강조한다. v1은 기존 렌더를 유지하며 v2의 정상 빈 layer는 오류가 아니다.
+
 지원하지 않는 경우 정책:
 
 ```text

@@ -92,7 +92,7 @@ class ChartAssetsRoutesTest(unittest.TestCase):
 
     def test_sp500_build_expands_registry_and_preserves_envelope_options(self):
         response = self.client.post("/api/charts/analysis-assets/build", json={
-            "symbols": "sp500", "intervals": ["1W", "1D"], "llmEnabled": True, "skipFreshHours": 12,
+            "symbols": "sp500", "intervals": ["1W", "1D"], "llmEnabled": True, "skipFreshHours": 12, "force": True,
         })
 
         self.assertEqual(response.status_code, 202)
@@ -101,6 +101,7 @@ class ChartAssetsRoutesTest(unittest.TestCase):
         self.assertEqual(envelope["intervals"], ["1W", "1D"])
         self.assertTrue(envelope["llmEnabled"])
         self.assertEqual(envelope["skipFreshHours"], 12)
+        self.assertTrue(envelope["force"])
 
     def test_sp500_build_rejects_missing_registry_instead_of_using_fallback(self):
         with patch("app.routes.chart_assets.sp500_universe_symbols", return_value=[]):

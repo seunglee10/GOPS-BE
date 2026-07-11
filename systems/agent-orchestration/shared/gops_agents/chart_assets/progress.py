@@ -12,7 +12,7 @@ from .envelope import ChartAssetBuildEnvelope, utc_now_iso
 STATUS_KEY_PREFIX = "gops:chart-assets:build"
 CHANNEL_PREFIX = "chart-assets.build"
 STATUS_TTL_SECONDS = 86400
-TERMINAL_STATUSES = {"completed", "completed_with_errors", "failed", "canceled"}
+TERMINAL_STATUSES = {"completed", "completed_with_warnings", "completed_with_errors", "failed", "canceled"}
 
 
 class InMemoryChartAssetProgressStore:
@@ -67,6 +67,7 @@ class InMemoryChartAssetProgressStore:
             progress["done"] += 1
             if status == "failed": progress["failed"] += 1
             if status == "skipped": progress["skipped"] += 1
+            if status == "saved_with_warning" or item.get("warning"): progress["warnings"] += 1
             progress["current"] = f"{item.get('symbol')}:{item.get('interval')}"
             state["recentItems"] = [*state.get("recentItems", []), copy.deepcopy(item)][-50:]
             if status == "failed":
@@ -154,8 +155,8 @@ def initial_state(envelope: ChartAssetBuildEnvelope) -> dict[str, Any]:
     return {
         "jobId": envelope.job_id,
         "status": "queued",
-        "requested": {"symbolCount": len(envelope.symbols), "intervals": list(envelope.intervals), "llmEnabled": envelope.llm_enabled},
-        "progress": {"total": total, "done": 0, "failed": 0, "skipped": 0, "current": None},
+        "requested": {"symbolCount": len(envelope.symbols), "intervals": list(envelope.intervals), "llmEnabled": envelope.llm_enabled, "force": envelope.force},
+        "progress": {"total": total, "done": 0, "failed": 0, "skipped": 0, "warnings": 0, "current": None},
         "recentItems": [], "failedItems": [], "logs": [], "startedAt": None, "finishedAt": None, "cancelRequested": False,
     }
 

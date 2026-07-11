@@ -6,6 +6,7 @@ import sys
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -15,10 +16,12 @@ for path in (ROOT / "systems" / "agent-orchestration" / "shared", ROOT / "system
 from gops_agents.chart_assets.builder import ChartAssetBuilder  # noqa: E402
 from gops_agents.chart_assets.envelope import ChartAssetBuildEnvelope  # noqa: E402
 from gops_agents.chart_assets.progress import InMemoryChartAssetProgressStore  # noqa: E402
+from gops_agents.chart_assets.curation import deterministic_curation  # noqa: E402
+from alfaka.analytics.analysis_candles import analysis_input_digest  # noqa: E402
 
 
 class FakeCandleLoader:
-    def __init__(self): self.calls = []
+    def __init__(self): self.calls = []; self.bundle_calls = 0
     def load(self, symbol, interval):
         self.calls.append((symbol, interval))
         start = datetime(2025, 1, 1, tzinfo=timezone.utc)
@@ -28,6 +31,16 @@ class FakeCandleLoader:
             "low": 98 + index * 0.2 + math.sin(index), "close": 100 + index * 0.2 + math.sin(index),
             "volume": 1000 + index,
         } for index in range(72)]
+    def load_symbol(self, symbol, intervals):
+        self.bundle_calls += 1
+        rows = {interval: self.load(symbol, interval) for interval in intervals}
+        coverage = {interval: {
+            "expectedBars": len(values), "actualBars": len(values), "missingBars": 0,
+            "coverageRatio": 1, "recentContiguousBars": len(values), "largestGapBars": 0,
+            "lastExpectedClosedAt": values[-1]["timestamp"], "lastActualClosedAt": values[-1]["timestamp"],
+            "renderable": True, "qualityFlags": [],
+        } for interval, values in rows.items()}
+        return SimpleNamespace(rows=rows, coverage=coverage, digests={interval: analysis_input_digest(symbol, interval, values) for interval, values in rows.items()})
 
 
 class FakeStorage:
@@ -45,8 +58,16 @@ class FakeStorage:
     def is_fresh(self, symbol, interval, hours): return False
 
 
-def envelope(symbols=("NVDA", "AAPL"), intervals=("1D", "1W", "1M"), job_id="cab-12345678-test"):
-    return ChartAssetBuildEnvelope.create(requested_by="test", symbols=symbols, intervals=intervals, llm_enabled=False, job_id=job_id, submitted_at="2026-07-11T00:00:00.000Z")
+class FakeCurator:
+    model = "mock-model"
+    def __init__(self): self.calls = 0
+    def curate_symbol(self, bundle):
+        self.calls += 1
+        return {"output": deterministic_curation(bundle), "degraded": False, "reason": None, "model": self.model, "usage": {}}
+
+
+def envelope(symbols=("NVDA", "AAPL"), intervals=("1D", "1W", "1M"), job_id="cab-12345678-test", llm_enabled=False):
+    return ChartAssetBuildEnvelope.create(requested_by="test", symbols=symbols, intervals=intervals, llm_enabled=llm_enabled, job_id=job_id, submitted_at="2026-07-11T00:00:00.000Z")
 
 
 class ChartAssetBuilderTest(unittest.TestCase):
@@ -55,13 +76,14 @@ class ChartAssetBuilderTest(unittest.TestCase):
         loader = FakeCandleLoader(); storage = FakeStorage()
         state = ChartAssetBuilder(candle_loader=loader, storage=storage, progress=progress, concurrency=2).run(request)
         self.assertEqual(state["status"], "completed")
-        self.assertEqual(state["progress"], {"total": 6, "done": 6, "failed": 0, "skipped": 0, "current": state["progress"]["current"]})
+        self.assertEqual(state["progress"], {"total": 6, "done": 6, "failed": 0, "skipped": 0, "warnings": 0, "current": state["progress"]["current"]})
         self.assertEqual(len(storage.saved), 6)
+        self.assertEqual(loader.bundle_calls, 2)
         for symbol in request.symbols:
             self.assertEqual([interval for current_symbol, interval in loader.calls if current_symbol == symbol], ["1M", "1W", "1D"])
         one_day = storage.assets[("NVDA", "1D")]
-        self.assertEqual(set(one_day["buildContext"]["higherTf"]), {"1M", "1W"})
-        self.assertTrue(one_day["layers"]["structure"]["drawings"])
+        self.assertEqual(one_day["assetVersion"], "v2")
+        self.assertEqual(one_day["build"]["agentOutcome"], "not_requested_empty")
 
     def test_cancel_marks_remaining_items_skipped(self):
         request = envelope(symbols=("NVDA",), job_id="cab-12345678-cancel")
@@ -72,7 +94,7 @@ class ChartAssetBuilderTest(unittest.TestCase):
         self.assertEqual(state["progress"]["done"], 3)
         self.assertEqual(state["progress"]["skipped"], 2)
 
-    def test_rule_only_rebuild_preserves_existing_agent_layer(self):
+    def test_rule_only_rebuild_does_not_copy_v1_agent_layer(self):
         existing_agent = {"drawings": [{"id": "kept"}], "intents": [], "rationale": "kept", "degraded": False, "model": "mock", "droppedIntents": []}
         existing = {("NVDA", "1D"): {
             "promptVersion": "prompt-v1", "status": "ready", "layers": {"agent": existing_agent},
@@ -83,17 +105,15 @@ class ChartAssetBuilderTest(unittest.TestCase):
         progress = InMemoryChartAssetProgressStore(); progress.initialize(request); storage = FakeStorage(existing)
         ChartAssetBuilder(candle_loader=FakeCandleLoader(), storage=storage, progress=progress, concurrency=1).run(request)
         rebuilt = storage.assets[("NVDA", "1D")]
-        self.assertEqual(rebuilt["layers"]["agent"], existing_agent)
-        self.assertEqual(rebuilt["commentary"]["text"], "기존")
-        self.assertEqual(rebuilt["promptVersion"], "prompt-v1")
-        self.assertEqual(rebuilt["chartSetup"]["recommended"], [
-            {"layer": "ema:20", "reason": "기존 LLM 제안", "source": "llm"},
-        ])
+        self.assertEqual(rebuilt["layers"]["agent"]["drawings"], [])
+        self.assertEqual(rebuilt["layers"]["agent"]["emptyReason"], "llm_not_requested")
+        self.assertEqual(rebuilt["promptVersion"], "prompt-v2")
+        self.assertEqual(rebuilt["build"]["agentOutcome"], "not_requested_empty")
 
     def test_standalone_1d_uses_stored_higher_timeframes(self):
         higher = {
-            ("NVDA", "1M"): {"asOf": "2026-06-01T00:00:00.000Z", "features": {"levels": []}},
-            ("NVDA", "1W"): {"asOf": "2026-07-06T00:00:00.000Z", "features": {"levels": []}},
+            ("NVDA", "1M"): {"assetVersion":"v2","asOf": "2026-06-01T00:00:00.000Z", "quality":{"state":"eligible"},"build":{"ruleDigest":"m"},"features": {"regime": {}}},
+            ("NVDA", "1W"): {"assetVersion":"v2","asOf": "2026-07-06T00:00:00.000Z", "quality":{"state":"eligible"},"build":{"ruleDigest":"w"},"features": {"regime": {}}},
         }
         request = envelope(symbols=("NVDA",), intervals=("1D",), job_id="cab-12345678-higher")
         progress = InMemoryChartAssetProgressStore(); progress.initialize(request); storage = FakeStorage(higher)
@@ -113,6 +133,19 @@ class ChartAssetBuilderTest(unittest.TestCase):
         state = progress.get(request.job_id)
         self.assertEqual(len(state["recentItems"]), 50)
         self.assertEqual(len(state["failedItems"]), 60)
+
+    def test_second_identical_symbol_build_skips_kernel_llm_and_write(self):
+        storage = FakeStorage(); service = FakeCurator(); loader = FakeCandleLoader()
+        first = envelope(symbols=("NVDA",), job_id="cab-12345678-noop-a", llm_enabled=True)
+        first_progress = InMemoryChartAssetProgressStore(); first_progress.initialize(first)
+        ChartAssetBuilder(candle_loader=loader, storage=storage, progress=first_progress, llm_service=service, concurrency=1).run(first)
+        saved_count = len(storage.saved)
+        second = envelope(symbols=("NVDA",), job_id="cab-12345678-noop-b", llm_enabled=True)
+        second_progress = InMemoryChartAssetProgressStore(); second_progress.initialize(second)
+        state = ChartAssetBuilder(candle_loader=loader, storage=storage, progress=second_progress, llm_service=service, concurrency=1).run(second)
+        self.assertEqual(service.calls, 1)
+        self.assertEqual(len(storage.saved), saved_count)
+        self.assertEqual({item["status"] for item in state["recentItems"]}, {"unchanged"})
 
 
 if __name__ == "__main__": unittest.main()

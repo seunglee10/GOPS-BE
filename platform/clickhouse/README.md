@@ -47,6 +47,15 @@ infra/k8s/base/platform/clickhouse-initdb/01-market-data.sql
 the two market-data DDL copies. Environment headers and the declared local-only
 agent table are the only allowed difference.
 
+## Chart Analysis Assets
+
+`market_data.chart_analysis_assets` stores compact final v1 or v2 JSON payloads.
+The v2 rollout reuses the existing `asset_version` column and table: there is no
+new table, TTL, or candidate ledger. A builder insert is skipped when the final
+`assetContentDigest` is unchanged; raw candles, rejected candidates, prompts,
+and provider responses are never persisted here. Latest reads continue to use
+`argMax(payload, inserted_at)` during mixed v1/v2 rollout.
+
 ## SEC Fundamentals Tables
 
 Financial Agent runtime reads the normalized SEC serving projection below. The

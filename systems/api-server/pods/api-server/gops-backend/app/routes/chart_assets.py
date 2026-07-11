@@ -30,6 +30,7 @@ class ChartAssetBuildRequest(BaseModel):
     intervals: list[str] = Field(default_factory=lambda: list(ALLOWED_INTERVALS))
     llmEnabled: bool = True
     skipFreshHours: int = Field(default=0, ge=0, le=24 * 365)
+    force: bool = False
 
     @field_validator("intervals")
     @classmethod
@@ -73,6 +74,7 @@ def build_chart_analysis_assets(
         intervals=request.intervals,
         llm_enabled=request.llmEnabled,
         skip_fresh_hours=request.skipFreshHours,
+        force=request.force,
     )
     progress = chart_asset_progress_store()
     progress.initialize(envelope)

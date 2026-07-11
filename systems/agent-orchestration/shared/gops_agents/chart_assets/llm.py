@@ -251,4 +251,6 @@ def _env_float(name: str, default: float) -> float:
 
 
 def _needs_backoff(exc: Exception) -> bool:
-    return isinstance(exc, urllib.error.HTTPError) and (exc.code == 429 or 500 <= exc.code < 600)
+    return isinstance(exc, (TimeoutError, urllib.error.URLError)) or (
+        isinstance(exc, urllib.error.HTTPError) and (exc.code == 429 or 500 <= exc.code < 600)
+    )

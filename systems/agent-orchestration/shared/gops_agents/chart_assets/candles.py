@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 from alfaka.analytics import LOOKBACK_BARS, normalize_candles
+from alfaka.analytics.analysis_candles import AnalysisCandleSource
 from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
 from alfaka.serving.time_utils import parse_utc_time
 
@@ -16,6 +17,10 @@ class ChartAssetCandleLoader:
     ):
         self.provider = provider or ClickHouseMarketDataProvider()
         self.now_provider = now_provider or (lambda: datetime.now(timezone.utc))
+        self.analysis_source = AnalysisCandleSource(self.provider, now_provider=self.now_provider)
+
+    def load_symbol(self, symbol: str, intervals: tuple[str, ...] | list[str]):
+        return self.analysis_source.load_symbol(symbol, intervals)
 
     def load(self, symbol: str, interval: str) -> list[dict[str, Any]]:
         limit = LOOKBACK_BARS[interval]

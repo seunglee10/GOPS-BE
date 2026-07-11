@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 
@@ -277,3 +278,53 @@ def _interval_label(interval: str) -> str:
 
 def _timestamp_rank(timestamp: str) -> int:
     return int("".join(character for character in timestamp if character.isdigit())[:14] or 0)
+
+
+def compile_rule_layers_v2(*, symbol: str, interval: str, features: dict[str, Any], candles: list[dict[str, Any]], generated_at: str, higher_assets: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+    candle_times = {item["timestamp"] for item in candles}; current = float(candles[-1]["close"])
+    levels = [item for item in features.get("levels", []) if item.get("hardPass") and item.get("role") in {"support", "resistance"} and float(item.get("currentDistanceAtr") or 99) <= 4]
+    supports = sorted((item for item in levels if float(item["price"]) <= current), key=_v2_level_rank)
+    resistances = sorted((item for item in levels if float(item["price"]) > current), key=_v2_level_rank)
+    chosen = (supports[:1] + resistances[:1])[:2]; structure_drawings = []; structure_selected = []
+    for level in chosen:
+        candidate_id = str(level["id"]); suffix = _stable_suffix(candidate_id)
+        label = ("지지" if level["role"] == "support" else "저항") + (" · 매물대" if level.get("vpConfluence") else "")
+        drawing = _drawing_v2(symbol, interval, "structure", suffix, "horizontalLine", [{"price": round(float(level["price"]), 2)}], _level_style(float(level["score"])), label, generated_at, "system")
+        structure_drawings.append(drawing); structure_selected.append({"candidateId": candidate_id, "drawingIds": [drawing["id"]], "evidenceRefs": level.get("memberPivotIds") or [], "quality": {"score": level["score"], "touchEpisodes": level.get("touches", 0), "lastTouchAgeBars": level.get("lastTouchAgeBars"), "currentDistanceAtr": level.get("currentDistanceAtr")}})
+    events = sorted((item for item in features.get("events", []) if item.get("hardPass") and item.get("timestamp") in candle_times), key=lambda item: ({"high": 0, "medium": 1}.get(item.get("currentImpact"), 2), int(item.get("ageBars") or 0), item["id"]))
+    for event in events:
+        if len(structure_drawings) >= 4 or sum(item["type"] == "flagMarker" for item in structure_drawings) >= 2: break
+        candidate_id = str(event["id"]); drawing = _drawing_v2(symbol, interval, "structure", _stable_suffix(candidate_id), "flagMarker", [{"timestamp": event["timestamp"], "price": round(float(event["price"]), 2)}], "asset-flag", _event_label(event), generated_at, "system")
+        structure_drawings.append(drawing); structure_selected.append({"candidateId": candidate_id, "drawingIds": [drawing["id"]], "evidenceRefs": [candidate_id, *event.get("refIds", [])], "quality": {"score": .8 if event.get("currentImpact") == "high" else .65, "ageBars": event.get("ageBars")}})
+    structure = {"drawings": structure_drawings, "selected": structure_selected, "emptyReason": None if structure_drawings else "no_candidate_passed_current_relevance", "meta": {"candidateCount": len(levels) + len(events), "passedCount": len(chosen) + len(events), "rejectedByReason": _reason_counts([item for item in features.get("levels", []) if not item.get("hardPass")])}}
+    trend_drawings = []; trend_selected = []; trends = [item for item in features.get("trends", []) if item.get("hardPass")]
+    if trends:
+        trend = sorted(trends, key=lambda item: (-float(item.get("score") or 0), float(item.get("currentDistanceAtr") or 99), item["id"]))[0]
+        pivots = {item["id"]: item for item in features.get("pivots", [])}; anchors = []; drawing_type = "trendLine"; label = "검증된 추세"
+        if trend["kind"] == "range":
+            drawing_type = "rangeBox"; label = "검증된 횡보 구간"; anchors = [{"timestamp": trend["rangeFrom"], "price": float(trend["rangeHigh"])}, {"timestamp": trend["rangeTo"], "price": float(trend["rangeLow"])}]
+        else:
+            ids = trend.get("anchorPivotIds", [])[:3 if trend["kind"] == "channel" else 2]
+            anchors = [{"timestamp": pivots[item]["timestamp"], "price": float(pivots[item]["price"])} for item in ids if item in pivots]
+            drawing_type = "trendParallelLines" if trend["kind"] == "channel" else "trendLine"; label = "검증된 채널" if trend["kind"] == "channel" else ("상승 추세" if trend["kind"] == "up" else "하락 추세")
+        required = 3 if drawing_type == "trendParallelLines" else 2
+        if len(anchors) == required and all(anchor["timestamp"] in candle_times for anchor in anchors):
+            drawing = _drawing_v2(symbol, interval, "trend", _stable_suffix(trend["id"]), drawing_type, anchors, "asset-trend" if drawing_type != "rangeBox" else "asset-range", label, generated_at, "system", parallel_line_count=2 if drawing_type == "trendParallelLines" else None)
+            trend_drawings = [drawing]; trend_selected = [{"candidateId": trend["id"], "drawingIds": [drawing["id"]], "evidenceRefs": trend.get("touchPivotIds") or trend.get("anchorPivotIds") or [], "quality": {key: trend.get(key) for key in ("score", "touches", "currentDistanceAtr", "lastTouchAgeBars", "spanBars", "medianResidualAtr", "violationCount")}}]
+    trend_layer = {"drawings": trend_drawings, "selected": trend_selected, "emptyReason": None if trend_drawings else "no_candidate_passed_current_relevance", "meta": {"candidateCount": len(features.get("trends", [])), "passedCount": len(trends), "rejectedByReason": _reason_counts([item for item in features.get("trends", []) if not item.get("hardPass")])}}
+    return {"structure": structure, "trend": trend_layer}
+
+
+def _drawing_v2(symbol, interval, layer, suffix, drawing_type, anchors, style_token, label, generated_at, created_by, parallel_line_count=None):
+    drawing = {"id": f"ca-{symbol}-{interval}-{layer}-{suffix}", "type": drawing_type, "anchors": anchors, "sourceInterval": interval, "style": dict(STYLE_TOKENS[style_token]), "label": label, "locked": False, "visible": True, "createdBy": created_by, "sourceProposalId": f"chart-asset:{symbol}:{interval}:{layer}", "createdAt": generated_at, "updatedAt": generated_at}
+    if parallel_line_count is not None: drawing["parallelLineCount"] = parallel_line_count
+    return drawing
+def _stable_suffix(value): return hashlib.sha256(str(value).encode()).hexdigest()[:10]
+def _v2_level_rank(item):
+    distance = float(item.get("currentDistanceAtr") or 99); band = 0 if distance <= 1.5 else 1 if distance <= 3 else 2
+    return band, -float(item.get("score") or 0), int(item.get("lastTouchAgeBars") or 999), item["id"]
+def _reason_counts(items):
+    result = {}
+    for item in items:
+        for reason in item.get("rejectReasons") or ["hard_gate"]: result[reason] = result.get(reason, 0) + 1
+    return result

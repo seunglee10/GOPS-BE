@@ -74,7 +74,10 @@ class ChartAssetStorage:
             f"""
             SELECT symbol, interval,
                    formatDateTime(argMax(generated_at, inserted_at), '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS generatedAt,
-                   argMax(status, inserted_at) AS status
+                   argMax(status, inserted_at) AS status,
+                   argMax(asset_version, inserted_at) AS assetVersion,
+                   length(argMax(payload, inserted_at)) AS payloadBytes,
+                   JSONExtractString(argMax(payload, inserted_at), 'quality', 'state') AS qualityState
             FROM market_data.chart_analysis_assets
             {where}
             GROUP BY symbol, interval
@@ -88,6 +91,11 @@ class ChartAssetStorage:
             "interval": str(row.get("interval") or ""),
             "generatedAt": str(row.get("generatedAt") or ""),
             "status": str(row.get("status") or ""),
+            "assetVersion": str(row.get("assetVersion") or ""),
+            "qualityState": str(row.get("qualityState") or "") or None,
+            "payloadBytes": int(row.get("payloadBytes") or 0),
+            "freshness": "unknown",
+            "staleByBars": None,
         } for row in rows]
 
     def is_fresh(self, symbol: str, interval: str, hours: int) -> bool:

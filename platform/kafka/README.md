@@ -103,6 +103,9 @@ agents.dlq.v1
 job per message. The independent `gops-chart-asset-builder` consumer group uses
 `max_poll_records=1`, commits only after the job finishes, and does not share
 the interactive analysis request/result path.
+Asset v2 keeps this topic and key unchanged. One job message is processed as
+symbol bundles: one canonical daily query and at most one multi-timeframe LLM
+curation call per symbol. No candidate or interval subtopic is created.
 
 `agents.query-understanding-events.v1` is an observability/audit stream emitted
 with completed reports. It is not used as request/reply transport inside the

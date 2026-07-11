@@ -135,6 +135,12 @@ layout migration. See `platform/s3/README.md` for exact prefixes.
 - Processor maps, frontend inactive candle caches, and order-flow bucket caches
   have tested upper bounds.
 
+Persisted chart-analysis assets are an offline manual-build projection, not an
+API request-derived cache. The independent builder reads canonical ClickHouse
+daily candles once per symbol, derives completed 1D/1W/1M analysis candles with
+the shared identity/aggregation functions, and writes only compact final v2
+assets. Redis is limited to the existing job status key and pub/sub channel.
+
 ## Retained Compatibility
 
 The generic closed-candle topic, tick-fanout topics, and raw manifest lookup

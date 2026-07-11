@@ -750,6 +750,22 @@ GRAPHDB_REPOSITORY
 SEC_USER_AGENT
 ```
 
+Chart-analysis asset builder (independent optional runtime):
+
+```text
+CHART_ASSET_BUILD_REQUESTS_TOPIC
+CHART_ASSET_BUILD_CONCURRENCY
+CHART_ASSET_BUILD_MAX_POLL_INTERVAL_MS
+CHART_ASSET_LLM_ENABLED
+CHART_ASSET_LLM_MODEL
+CHART_ASSET_LLM_TIMEOUT_SECONDS
+```
+
+`chart-asset-builder`는 `gops-agent-orchestrator` image를 공유하지만 interactive
+AgentOrchestrator workflow에 참여하지 않는다. Kafka job 하나를 symbol 중심으로
+처리하고 ClickHouse v2 asset을 저장한다. `alfaka-openai-secret`은 curator를 켤 때만
+필요하며, 키 부재·LLM 장애는 eligible S/T를 `saved_with_warning`으로 저장한다.
+
 Financial final-answer synthesis is enabled with
 `AGENT_FINANCIAL_FINAL_ANSWER_PROVIDER=openai`. The orchestrator still reads SEC
 fundamentals from Redis/ClickHouse snapshots only; OpenAI rewrites formatted
