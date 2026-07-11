@@ -39,13 +39,24 @@ def atr_series(candles: list[dict[str, Any]], period: int = 14) -> list[float | 
 
 
 def atr_quality_flags(candles: list[dict[str, Any]], period: int = 14) -> list[str]:
+    return ["abnormal_true_range"] if abnormal_true_range_indices(candles, period) else []
+
+
+def abnormal_true_range_indices(candles: list[dict[str, Any]], period: int = 14) -> list[int]:
+    """Locate split-like/outlier bars without letting them poison all later structure.
+
+    The comparison is point-in-time: each bar is compared with the ATR known before it.
+    Callers can therefore isolate a recent clean segment rather than deleting every
+    structure because of one historical bad bar.
+    """
     ranges = true_ranges(candles)
     values = atr_series(candles, period)
+    result: list[int] = []
     for index in range(1, len(ranges)):
         previous = values[index - 1]
         if previous and previous > 0 and ranges[index] > 12 * previous:
-            return ["abnormal_true_range"]
-    return []
+            result.append(index)
+    return result
 
 
 def latest_atr(candles: list[dict[str, Any]], period: int = 14) -> float:

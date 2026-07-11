@@ -104,22 +104,28 @@ def parse_csv(value):
     return [item.strip() for item in (value or "").split(",") if item.strip()]
 
 
-def list_s3_objects(s3, bucket, prefix, metrics=None):
+def list_s3_objects(s3, bucket, prefix, metrics=None, deadline_check=None):
     keys = []
+    check_deadline = deadline_check or (lambda: None)
+    check_deadline()
     if hasattr(s3, "get_paginator"):
         paginator = s3.get_paginator("list_objects_v2")
         for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+            check_deadline()
             contents = page.get("Contents", [])
             increment_list_metrics(metrics, contents)
             keys.extend(item["Key"] for item in contents if item.get("Key"))
+            check_deadline()
         return keys
 
     token = None
     while True:
+        check_deadline()
         kwargs = {"Bucket": bucket, "Prefix": prefix}
         if token:
             kwargs["ContinuationToken"] = token
         page = s3.list_objects_v2(**kwargs)
+        check_deadline()
         contents = page.get("Contents", [])
         increment_list_metrics(metrics, contents)
         keys.extend(item["Key"] for item in contents if item.get("Key"))
@@ -164,39 +170,105 @@ def read_parquet_rows(body):
     return pq.read_table(io.BytesIO(body)).to_pylist()
 
 
-def materialize_s3_processed_objects(client, s3, bucket, keys, source_name="s3-processed-final", selection=None):
+def materialize_s3_processed_objects(
+    client,
+    s3,
+    bucket,
+    keys,
+    source_name="s3-processed-final",
+    selection=None,
+    *,
+    metrics=None,
+    deadline_check=None,
+    force_rematerialize=False,
+    filter_to_selection=False,
+):
+    prepared = prepare_s3_processed_objects(
+        client,
+        s3,
+        bucket,
+        keys,
+        selection=selection,
+        metrics=metrics,
+        deadline_check=deadline_check,
+        force_rematerialize=force_rematerialize,
+        filter_to_selection=filter_to_selection,
+    )
+    (deadline_check or (lambda: None))()
+    return commit_prepared_s3_processed_objects(client, prepared, source_name=source_name)
+
+
+def prepare_s3_processed_objects(
+    client,
+    s3,
+    bucket,
+    keys,
+    selection=None,
+    *,
+    metrics=None,
+    deadline_check=None,
+    force_rematerialize=False,
+    filter_to_selection=False,
+):
+    """Read and normalize S3 objects without any durable ClickHouse write."""
     results = []
     pending_objects = []
     all_rows = []
+    check_deadline = deadline_check or (lambda: None)
     for key in keys:
+        check_deadline()
         object_path = f"s3://{bucket}/{key}"
-        if s3_object_already_materialized(client, object_path):
+        if not force_rematerialize and s3_object_already_materialized(client, object_path):
             results.append({"objectPath": object_path, "rowCount": 0, "skippedAlreadyMaterialized": True})
             continue
         rows = read_s3_rows(s3, bucket, key)
+        increment_metric(metrics, "objectGets")
+        check_deadline()
         normalized, skipped_invalid = normalize_materializable_rows(rows)
+        selected_rows = matching_candles(normalized, selection) if filter_to_selection else normalized
         pending_objects.append({
             "objectPath": object_path,
-            "rows": normalized,
+            "rows": selected_rows,
             "skippedInvalidRowCount": skipped_invalid,
         })
-        all_rows.extend(normalized)
+        all_rows.extend(selected_rows)
 
-    deduped = dedupe_candles(all_rows)
+    deduped = dedupe_candles(all_rows, canonical_daily_identity=filter_to_selection)
     clickhouse_rows = [candle_to_clickhouse_row(row) for row in deduped]
+    return {
+        "objects": results,
+        "pendingObjects": pending_objects,
+        "clickhouseRows": clickhouse_rows,
+        "rowCount": len(clickhouse_rows),
+        "matchedRowCount": matched_candle_count(deduped, selection),
+    }
+
+
+def commit_prepared_s3_processed_objects(
+    client,
+    prepared,
+    source_name="s3-processed-final",
+    *,
+    write_object_audits=True,
+):
+    """Commit a fully prepared batch; callers decide whether its deadline survived."""
+    clickhouse_rows = list(prepared.get("clickhouseRows") or [])
+    pending_objects = list(prepared.get("pendingObjects") or [])
+    results = list(prepared.get("objects") or [])
     if clickhouse_rows:
         client.insert_json_each_row("chart_candles", clickhouse_rows)
 
     for item in pending_objects:
         object_rows = dedupe_candles(item["rows"])
         object_clickhouse_rows = [candle_to_clickhouse_row(row) for row in object_rows]
-        write_materialization_audits(
-            client,
-            item["objectPath"],
-            object_clickhouse_rows,
-            source_name=source_name,
-            skipped_invalid=item["skippedInvalidRowCount"],
-        )
+        if write_object_audits:
+            write_materialization_audits(
+                client,
+                item["objectPath"],
+                object_clickhouse_rows,
+                source_name=source_name,
+                skipped_invalid=item["skippedInvalidRowCount"],
+            )
         results.append({
             "objectPath": item["objectPath"],
             "rowCount": len(object_clickhouse_rows),
@@ -205,9 +277,14 @@ def materialize_s3_processed_objects(client, s3, bucket, keys, source_name="s3-p
 
     return {
         "objects": results,
-        "rowCount": len(clickhouse_rows),
-        "matchedRowCount": matched_candle_count(deduped, selection),
+        "rowCount": int(prepared.get("rowCount") or 0),
+        "matchedRowCount": int(prepared.get("matchedRowCount") or 0),
     }
+
+
+def increment_metric(metrics, name, amount=1):
+    if metrics is not None and amount:
+        metrics[name] = int(metrics.get(name, 0)) + int(amount)
 
 
 def s3_object_already_materialized(client, object_path):
@@ -277,8 +354,12 @@ def write_materialization_audits(client, object_path, clickhouse_rows, source_na
 
 
 def matched_candle_count(rows, selection):
+    return len(matching_candles(rows, selection))
+
+
+def matching_candles(rows, selection):
     if not selection:
-        return len(rows)
+        return list(rows)
     symbol = str(selection.get("symbol") or "").strip().upper()
     interval = normalize_chart_interval(selection.get("interval"))
     ranges = selection.get("ranges") or [{"start": selection.get("start"), "end": selection.get("end")}]
@@ -287,13 +368,35 @@ def matched_candle_count(rows, selection):
         for item in ranges
         if item.get("start") and item.get("end")
     ]
-    return sum(
-        1
-        for row in rows
-        if str(row.get("symbol") or "").strip().upper() == symbol
-        and normalize_chart_interval(row.get("interval")) == interval
-        and any(start <= parse_timestamp(row.get("timestamp")) < end for start, end in parsed_ranges)
-    )
+    selected_candle_keys = {
+        str(key)
+        for item in ranges
+        for key in (item.get("candleKeys") or [])
+        if key
+    }
+    result = []
+    for row in rows:
+        if str(row.get("symbol") or "").strip().upper() != symbol:
+            continue
+        if normalize_chart_interval(row.get("interval")) != interval:
+            continue
+        timestamp = row.get("timestamp")
+        if interval == "1D":
+            # Historical daily objects can contain either legacy 00:00Z or NY
+            # market-midnight 04:00/05:00Z identities. Compare the canonical
+            # trading-date timestamp so an adjacent legacy row cannot leak
+            # into a bounded repair range.
+            from alfaka.analytics.analysis_candles import canonicalize_candle_identity
+            identity = canonicalize_candle_identity(row, "1D")
+            timestamp = identity.get("timestamp") if identity else None
+            if selected_candle_keys:
+                if identity and identity.get("candleKey") in selected_candle_keys:
+                    result.append(row)
+                continue
+        parsed = parse_timestamp(timestamp)
+        if parsed is not None and any(start <= parsed < end for start, end in parsed_ranges):
+            result.append(row)
+    return result
 
 
 def storage_object_audit_row(object_path, rows, source_name="s3-processed-final"):
@@ -357,12 +460,25 @@ def normalize_processed_candle_row(row):
     }
 
 
-def dedupe_candles(rows):
+def dedupe_candles(rows, *, canonical_daily_identity=False):
     by_key = {}
     ranks = {}
     for index, row in enumerate(rows):
-        key = (row["symbol"], row["interval"], row["timestamp"])
-        rank = (1 if is_historical_canonical(row.get("priceAdjustment"), row.get("canonicalVersion")) else 0, index)
+        identity = None
+        if canonical_daily_identity and normalize_chart_interval(row.get("interval")) == "1D":
+            from alfaka.analytics.analysis_candles import canonicalize_candle_identity
+            identity = canonicalize_candle_identity(row, "1D")
+        key = (
+            row["symbol"],
+            row["interval"],
+            identity["candleKey"] if identity else row["timestamp"],
+        )
+        rank = (
+            1 if is_historical_canonical(row.get("priceAdjustment"), row.get("canonicalVersion")) else 0,
+            str(row.get("updatedAt") or row.get("createdAt") or row.get("updated_at") or row.get("created_at") or ""),
+            str(row.get("sourceEventId") or row.get("source_event_id") or ""),
+            index,
+        )
         if key not in by_key or rank >= ranks[key]:
             by_key[key] = row
             ranks[key] = rank

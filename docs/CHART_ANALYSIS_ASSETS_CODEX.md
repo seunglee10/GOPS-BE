@@ -15,8 +15,9 @@
 5. 최종 drawing마다 근거·확인·무효화 해설이 연결된다.
 6. symbol당 조회·LLM·저장을 bounded하고 동일 입력을 no-op 처리한다.
 
-현재 상태는 automated quality gate와 실스택 검증을 통과한 canary 후보다. 전문가
-blind review 전 production-ready로 표시하지 않는다.
+현재 상태는 실제 데이터 blind holdout과 automated quality gate를 함께 실행하는 canary
+후보다. gate 미충족 항목을 숨기거나 label을 output에 맞춰 바꾸지 않으며, 전문가 blind
+review 전 production-ready로 표시하지 않는다.
 
 ## 2. 소스 오브 트루스와 읽기 순서
 
@@ -106,7 +107,7 @@ flowchart TD
 | `analytics/atr.py` | ATR 계열과 percentile |
 | `analytics/pivots.py` | tactical/structural pivot과 prominence |
 | `analytics/levels.py` | bounded cluster, touch episode, reaction, role state, level gate |
-| `analytics/trends.py` | trend hypothesis, touch cluster, channel, range, regime |
+| `analytics/trends.py` | structural anchor 가설, raw high/low 접점·반응, active invalidation, channel, range, regime |
 | `analytics/events.py` | breakout/retest/gap/volume/extreme episode와 current impact |
 | `analytics/schema.py` | feature pack 조립 및 품질 flag |
 
@@ -120,7 +121,7 @@ flowchart TD
 | `chart_assets/llm.py` | `store:false`인 symbol-level Responses 호출 1회와 degraded fallback |
 | `chart_assets/commentary_v2.py` | drawing-linked deterministic Korean commentary |
 | `chart_assets/builder.py` | snapshot/candle load, digest no-op, MTF order, save orchestration |
-| `chart_assets/storage.py` | ClickHouse append/read/coverage |
+| `chart_assets/storage.py` | ClickHouse/PostgreSQL latest asset와 guarded dual-read/write |
 | `chart_assets/progress.py` | Redis job status 1개와 pub/sub |
 | `chart_assets/queue.py` | 독립 Kafka topic producer |
 
@@ -149,21 +150,30 @@ state not unresolved / invalidated / break pending
 
 ```text
 same-side structural pivot hypothesis
-inlier residual <= 0.45 ATR
-independent touch clusters >= 3
+raw high/low contact residual <= 0.45 ATR
+independent contact episodes >= 3
+reaction episodes >= 2 (move away >= 0.75 ATR)
 span >= 0.25 * displayBars
+median residual <= 0.35 ATR
 current distance <= 2.25 ATR
-last touch age <= 0.15 * displayBars
-close violations <= 1
+last touch age <= 0.20 * displayBars
+active invalidation 없음
+adverse-close ratio <= 0.05
 abs(slope ATR per bar) >= 0.002
 ```
+
+Active invalidation은 반대편 0.5 ATR 초과 종가 2개 연속 또는 1 ATR 초과 종가
+1개다. 이후 새 접점과 0.75 ATR 반응이 확인되면 그 이전 breach는 revalidation
+경계 밖으로 밀려나며 영구 벌점이 되지 않는다. 두 점 선은 여전히 통과할 수 없다.
 
 ### Channel
 
 ```text
-both component lines already hardPass
+base line hardPass
+opposite boundary independent contacts >= 2
 slope difference ratio <= 0.20
-channel width > 1 median ATR
+channel width >= 1 median ATR
+containment >= 0.80
 ```
 
 ### Range
@@ -173,13 +183,20 @@ candidate windows: 30/40/50/60/70/80% of displayBars
 width >= 2 ATR
 lower touches >= 2
 upper touches >= 2
-total touches >= 6
-validation segment contains both boundaries
+total touches >= 5
+both boundaries appear in latest 50%
+at least one boundary appears in final 20%
 alternations >= 3
-containment >= 0.80
-current distance <= 1 ATR
+containment >= 0.85
+current distance <= 0.75 ATR
 directional efficiency rejection enabled
 ```
+
+모든 구조는 하나의 `hardPass`/confirmed 자격만 가진다. 보조 tier, 두 점 fallback,
+최소 수량 채우기는 없다. 후보가 없으면 `no_structural_evidence`,
+`not_currently_actionable`, `active_invalidation`, `data_quality_blocked` 중 하나로
+정상 무작도한다. 탈락 후보는 semantic별 상위 8개만 작업 메모리에 두고 asset에는
+reason count만 투영한다.
 
 ### Compiler budget
 
@@ -233,12 +250,12 @@ intervalSelections[]
 
 ```text
 assetVersion            v2
-kernelVersion           kernel-v2
-qualityPolicyVersion    chart-quality-v1
+kernelVersion           kernel-v3
+qualityPolicyVersion    chart-quality-v2
 promptVersion           prompt-v2
 modelPolicyVersion      chart-asset-model-v1
-assemblerVersion        chart-asset-assembler-v2.2
-candleContractVersion   analysis-candles-v1
+assemblerVersion        chart-asset-assembler-v3
+candleContractVersion   v2
 ```
 
 - `input.digest`: canonical candle input
@@ -267,14 +284,26 @@ LLM bundle은 모든 eligible interval을 한 번에 보내므로 symbol당 cura
 
 freshness skip을 통과한 symbol만 요청 수명 내 repair를 수행한다. 요청 interval의
 lookback을 구성하는 정확한 1D 거래일을 한 번 감사하고, 결측이 없으면 S3/Alpaca를
-호출하지 않는다. 1W/1M은 별도 저장 데이터를 repair하지 않고 canonical 1D에서만
-파생한다. S3와 Alpaca 결과는 기존 materializer를 거쳐 ClickHouse에 들어간 뒤 다시
-조회되며, Redis candle을 builder 입력에 직접 합치지 않는다.
+호출하지 않는다. 모든 결측 range는 symbol inventory LIST 한 번과 관련 object manifest
+조회로 찾고 inventory miss일 때만 legacy symbol-root를 한 번 조회한다. 이 경로는 시간별 `final-v2`를 scan하지
+않으며 S3 기본 deadline은 45초다. S3 list/get/normalize는 durable write가 없는
+prepare 단계이며 deadline 안에 성공한 결과만 요청 thread가 ClickHouse에 commit한다.
+timeout을 반환한 background prepare는 candle/audit table을 쓸 수 없다. 1W/1M은 별도 저장 데이터를 repair하지 않고
+canonical 1D에서만 파생한다. S3와 Alpaca 결과는 기존 materializer를 거쳐 ClickHouse에
+들어간 뒤 다시 조회되며, Redis candle을 builder 입력에 직접 합치지 않는다.
 
 ## 10. 저장·서빙 계약
 
-- ClickHouse table: `market_data.chart_analysis_assets`
-- 저장 방식: append + `argMax(..., inserted_at)` latest read
+- 기본/rollback table: ClickHouse `market_data.chart_analysis_assets`
+- 최종 latest projection: PostgreSQL `chart_assets.analysis_assets`
+- mode: `clickhouse|dual_clickhouse_read|dual_postgres_read|postgres`
+- dual mode는 primary read/write 실패를 hard failure로, shadow write 실패나 monotonic
+  no-op 뒤 payload divergence를 warning으로 다룬다. 동일 runtime의 ClickHouse save는
+  `generatedAt + canonical payload digest` 순서로 오래된 지연 write를 억제한다.
+- read primary 변경 전 canonical payload digest parity가 100%여야 한다.
+- PostgreSQL은 `(symbol, interval)` PK, JSONB payload, projected version/status/quality,
+  drawing count, payload bytes, content digest, canonical payload digest만 가진다. History나
+  후보 ledger는 만들지 않는다.
 - DDL 사본:
   - `infra/clickhouse/initdb/`
   - `infra/k8s/base/platform/clickhouse-initdb/`
@@ -301,11 +330,12 @@ reason을, warning/failure면 실제 reason과 coverage flag를 포함한다. �
 `createdEntities` 정수는 status에 남겨 로그 유실 시에도 전체 생성량은 확인할 수 있다.
 repair 상세 범위와 source 결과도 같은 pub/sub log로만 송출한다. status에는
 `checkedSymbols`, `attemptedSymbols`, `repairedSymbols`, `unavailableSymbols`,
-`missingBarsBefore/After`, `materializedRows` 합계만 남긴다.
+`missingBarsBefore/After`, 실제 결측 감소분인 `materializedRows` 합계와 작은
+`reasonCodes` 빈도만 남긴다. 공유 S3 object의 전체 행 수를 status에 더하지 않는다.
 
 DELETE는 인증된 개발 도구이며 최대 100개 symbol과 허용 interval만 받는다. 선택
-pair의 모든 historical row를 `ALTER TABLE ... DELETE ... SETTINGS mutations_sync=1`로
-삭제한다. 삭제 뒤 coverage 재조회와 프런트 cache invalidation이 완료되어야 한다.
+pair를 active store에서 삭제하고 dual mode에서는 양쪽 성공을 요구한다. 삭제 뒤
+coverage 재조회와 프런트 cache invalidation이 완료되어야 한다.
 
 ## 11. 변경 절차
 
@@ -349,6 +379,7 @@ npm run test:chart --prefix apps/gops-frontend
 npm run test:layout --prefix apps/gops-frontend
 npm run build --prefix apps/gops-frontend
 npm run test:bundle-size --prefix apps/gops-frontend
+npm run test:chart-visual --prefix apps/gops-frontend -- --project=desktop
 git diff --check
 ```
 
@@ -365,9 +396,20 @@ AAPL, AMZN, GOOGL, NVDA, MU
 
 ## 13. 평가 해석
 
-fixture는 실제 series를 episode별로 복제하지 않고 as-of로 재사용한다. 2 MiB 예산을
-유지한다. 현재 corpus는 13 series, 172 episodes이며 active holdout round는
-`post-extreme-gate-holdout-v3`다.
+fixture는 실제 series를 episode별로 복제하지 않고 as-of로 재사용한다. 전체 5 MiB
+예산을 유지한다. 현재 corpus는 15 series, 207 episodes이며 active holdout round는
+`blind-investor-holdout-v1`이다. 이 round의 label은 kernel output을 보기 전에
+고정하지만, 자동 gate를 맞추기 위해 불확실한 `must_not_draw`를 추가하지 않는다.
+
+최신 rules 측정은 kernel p95 25.9ms, symbol bundle p95 48.9ms, drawing
+median/p95 2/4, interval recall 45/47(95.7%), ready false-zero 2/47(4.3%)다.
+반면 semantic recall은 35/59(59.3%)이고 active must-not label은 0이라 전체 quality
+gate는 실패다. 이 상태를 완료나 전문가 precision으로 보고하지 않는다. raw-only
+감사에서 false-empty로 확인된 5개 비판정 episode는 corpus에서 제거했다.
+
+현재 S3 compact 경로는 symbol inventory를 한 번 LIST하지만 기존 object별 manifest를
+각각 GET한다. hourly `final-v2` scan은 금지되어 있으나 aggregate/versioned symbol
+index 한 번 읽기 전환은 남은 performance rollout blocker다.
 
 자동 평가가 확인하는 항목:
 
@@ -410,5 +452,6 @@ rg -n "chart_command|/api/llm|chartAgent|chartOperationCompiler" \
   apps/gops-frontend/src/chart apps/gops-frontend/src/components
 ```
 
-두 번째와 세 번째 검색은 결과가 없어야 한다. v1 schema와 프런트 discriminator는
-기존 저장 자산 read compatibility이므로 유지한다.
+두 번째와 세 번째 검색은 결과가 없어야 한다. schema의 구 kernel/quality/candle enum과
+v1 프런트 discriminator는 기존 저장 자산 read compatibility일 뿐 신규 emitter가
+사용해서는 안 된다.

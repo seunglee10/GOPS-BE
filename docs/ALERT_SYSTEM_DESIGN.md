@@ -77,9 +77,8 @@ Kafka 홉이 하나 빠져 발화→알림함 저장이 10~20ms 빨라진다. �
   재처리된다 (중복은 event_id 멱등성이 흡수, §6.2). Postgres outbox 대안은 발화
   시점 동기 INSERT(수~수십 ms)가 급등장 대량 발화 때 틱 루프를 막을 수 있어 기각.
   Redis AOF(everysec) 기준 최악 1초 유실 창은 v1에서 수용.
-  **주의: 현재 repo의 Redis는 compose·k8s 모두 `--appendonly no --save ""`(무영속)라
-  이 전제가 성립하지 않는다. `appendonly yes / appendfsync everysec / dir /data`
-  적용이 선행 조건이다 (§7-1).**
+  현재 repo의 compose·k8s Redis는 `appendonly yes / appendfsync everysec /
+  save "" / dir /data`로 이 전제를 충족한다.
 - `alerts.triggered.v1`은 계속 발행한다 (감사 로그·리플레이·추후 분리 대비).
   발화량이 커지거나 채널(이메일/푸시)이 늘면 이 토픽을 구독하는 dispatcher pod로
   sender 코드만 옮기면 된다.
@@ -348,10 +347,9 @@ tradeId가 없는 틱은 `{symbol}:{tickTimestamp}`로 대체 (Alpaca 틱 타임
      `infra/k8s/base/platform/kafka-topic-init-job.yaml`,
      `scripts/local/create-kafka-topics.sh` 네 곳에 모두 추가.
      evaluator용 configmap/env(브로커 주소, 토픽명)도 함께.
-   - Redis 영속화: `docker-compose.yml`(현재 `--appendonly no --dir /tmp`)과
-     `infra/k8s/base/platform/redis-statefulset.yaml`(현재 `--appendonly no`)을
-     `--appendonly yes --appendfsync everysec --dir /data`로 변경.
-     outbox 유실 방지(§1)의 선행 조건.
+   - Redis 영속화: `docker-compose.yml`과
+     `infra/k8s/base/platform/redis-statefulset.yaml`의 현재
+     `--appendonly yes --appendfsync everysec --dir /data` 계약을 유지한다.
 2. **Postgres 스키마 + alerts CRUD API** — UI 없이 curl로 검증 가능
 3. **alert-evaluator pod** — price_cross 감지(프리필터 포함) + outbox(XADD) +
    sender 코루틴(notifications INSERT, pub/sub, `alerts.triggered.v1` 발행) + 멱등성

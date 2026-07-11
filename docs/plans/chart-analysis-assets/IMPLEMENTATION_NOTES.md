@@ -1,7 +1,35 @@
 # Chart Analysis Assets — Implementation Notes
 
-This file records minimal adjustments made where the approved plan and current
-repository contracts differ.
+This is a historical implementation log. Current runtime truth lives in
+`docs/CHART_ANALYSIS_ASSETS.md` and `docs/CHART_ANALYSIS_ASSETS_CODEX.md`.
+Older bundle notes below describe the state at the time of each commit and are
+not current contracts.
+
+## Reliability v3 — current adjustments
+
+- The exact new candle contract value is `v2`; `analysis-candles-v1` remains
+  read-compatible only and can never pass freshness skip.
+- Evaluation fixtures now include five seven-year public Nasdaq histories and
+  reuse real series by chronological as-of. No runtime fake candle path was added.
+- S3 repair uses a hard no-write prepare/caller-commit boundary. Surviving S3
+  load audits do not suppress request-scoped rematerialization of missing rows.
+- Current-chart applied counts use the active chart document's actual drawing
+  IDs. Commentary suppresses stale/rejected drawing narratives and requires all
+  IDs of a focus item to be applied.
+- Latest asset PostgreSQL storage and guarded dual modes are implemented, but
+  ClickHouse remains the default. Schema/sync/verify are explicit maintenance
+  jobs; no production cutover or ClickHouse table deletion is automatic.
+- A five-symbol real OpenAI canary completed without degraded responses. Raw
+  prompts/responses and credentials were not stored in the repository.
+- Final static audit additionally made request repair commit only exact missing
+  candle keys, prefer correction revisions, dedupe 00:00/04:00 daily identity,
+  and reject invalid OHLCV and later-invalidated breakout flags. Incomplete
+  daily readiness now preserves an existing asset or writes a zero-drawing
+  degraded asset instead of hiding gaps inside weekly/monthly aggregation.
+- The honest 207-episode rules evaluation passes latency/drawing/interval
+  false-zero budgets but fails semantic and must-not denominator gates. The
+  per-object compact manifest GET fan-out is also still a rollout blocker; no
+  completion claim or PostgreSQL cutover was made.
 
 ## Bundle 1 — Asset contract and analytics kernel
 

@@ -19,7 +19,11 @@ for path in (ROOT / "systems/market-data/shared", ROOT / "systems/order/shared",
     if str(path) not in sys.path: sys.path.insert(0, str(path))
 
 from alfaka.analytics import DISPLAY_BARS, compute_feature_pack  # noqa: E402
-from alfaka.analytics.analysis_candles import aggregate_analysis_candles, analysis_input_digest  # noqa: E402
+from alfaka.analytics.analysis_candles import (  # noqa: E402
+    aggregate_analysis_candle_bundle,
+    aggregate_analysis_candles,
+    analysis_input_digest,
+)
 from gops_agents.chart_assets.commentary_v2 import assemble_commentary_v2  # noqa: E402
 from gops_agents.chart_assets.compilers import compile_rule_layers  # noqa: E402
 from gops_agents.chart_assets.curation import build_interval_palette, build_symbol_bundle, materialize_curation  # noqa: E402
@@ -30,6 +34,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", default="systems/market-data/tests/fixtures/chart_assets_v2/manifest.json")
     parser.add_argument("--symbols")
+    parser.add_argument("--episode-ids", help="comma-separated exact episode IDs")
     parser.add_argument("--intervals", default="1M,1W,1D")
     parser.add_argument("--mode", choices=("rules", "integration", "llm-canary"), required=True)
     parser.add_argument("--stratified-limit", type=int, default=0)
@@ -48,26 +53,54 @@ def main() -> int:
     if args.symbols:
         selected = {item.strip().upper() for item in args.symbols.split(",") if item.strip()}
         episodes = [item for item in episodes if item["symbol"] in selected]
+    if args.episode_ids:
+        selected_episode_ids = {item.strip() for item in args.episode_ids.split(",") if item.strip()}
+        episodes = [item for item in episodes if item["episodeId"] in selected_episode_ids]
+        missing_episode_ids = selected_episode_ids.difference(item["episodeId"] for item in episodes)
+        if missing_episode_ids:
+            print(f"unknown episode IDs: {','.join(sorted(missing_episode_ids))}", file=sys.stderr)
+            return 2
     if args.stratified_limit: episodes = stratified(episodes, args.stratified_limit)
     intervals = tuple(item for item in args.intervals.split(",") if item in {"1D","1W","1M"})
-    results=[]; invariant_failures=[]; stability_failures=[]; latencies=[]; calls=0; interval_latencies=[]; review_index=[]; drawing_reviews=[]
+    results=[]; invariant_failures=[]; stability_failures=[]; latencies=[]; bundle_compute_latencies=[]; calls=0; interval_latencies=[]; review_index=[]; drawing_reviews=[]
+    interval_latency_samples={interval:[] for interval in intervals}; aggregation_latencies=[]
     llm = ChartAssetLLMService() if args.mode == "llm-canary" else None
     for episode in episodes:
+        expected_by_interval = normalize_expected_by_interval(episode)
         raw = json.loads((manifest_path.parent / episode["series"]).read_text(encoding="utf-8"))
         raw = [row for row in raw if row["timestamp"] <= episode["asOf"]]
-        palettes={}; rules_by_interval={}; rows_by_interval={}; episode_started=time.perf_counter()
+        episode_started=time.perf_counter()
+        aggregation_started=time.perf_counter()
+        aggregated = aggregate_analysis_candle_bundle(
+            raw,
+            intervals,
+            now=_after_asof(episode["asOf"]),
+        )
+        aggregation_share_ms = (
+            (time.perf_counter() - aggregation_started) * 1000 / max(1, len(intervals))
+        )
+        aggregation_latencies.append(aggregation_share_ms * len(intervals))
+        palettes={}; rules_by_interval={}; rows_by_interval={}
+        interval_states = {
+            interval: {"evaluated": False, "qualityState": "unavailable", "emptyReasons": []}
+            for interval in intervals
+        }
         for interval in intervals:
             interval_started=time.perf_counter()
-            rows=aggregate_analysis_candles(raw,interval,now=_after_asof(episode["asOf"]))
+            rows=aggregated[interval]
             if len(rows)<20: continue
             features=compute_feature_pack(rows,interval); generated="2026-07-11T00:00:00.000Z"
             rules=compile_rule_layers(symbol=episode["symbol"],interval=interval,features=features,candles=rows,generated_at=generated)
             digest=analysis_input_digest(episode["symbol"],interval,rows)
             palette=build_interval_palette(symbol=episode["symbol"],interval=interval,input_digest=digest,features=features,rule_layers=rules,candles=rows,generated_at=generated)
             palettes[interval]=palette; rules_by_interval[interval]=rules; rows_by_interval[interval]=rows
+            interval_states[interval] = interval_evaluation_state(rules)
             invariant_failures.extend(check_rule_invariants(episode["episodeId"],rows,rules,features))
-            interval_latencies.append((time.perf_counter()-interval_started)*1000)
+            interval_elapsed=(time.perf_counter()-interval_started)*1000 + aggregation_share_ms
+            interval_latencies.append(interval_elapsed)
+            interval_latency_samples[interval].append(interval_elapsed)
         bundle=build_symbol_bundle(episode["symbol"],list(palettes.values()))
+        bundle_compute_latencies.append((time.perf_counter()-episode_started)*1000)
         call_result=None; drawing_count=sum(len(layer["drawings"]) for rules in rules_by_interval.values() for layer in rules.values())
         if llm and palettes:
             repeated=[llm.curate_symbol(bundle) for _ in range(max(1,args.repeat))]; calls+=len(repeated);call_result=repeated[0]
@@ -86,11 +119,14 @@ def main() -> int:
             review_index.append(card); drawing_reviews.extend(reviews)
         elapsed=(time.perf_counter()-episode_started)*1000; latencies.append(elapsed)
         per_interval={interval:sum(len(layer["drawings"]) for layer in rules_by_interval[interval].values()) for interval in rules_by_interval}
-        results.append({"episodeId":episode["episodeId"],"symbol":episode["symbol"],"asOf":episode["asOf"],"split":episode["split"],"evaluationRound":episode.get("evaluationRound"),"category":episode["category"],"expectation":episode["expectation"],"drawingCount":drawing_count,"drawingCounts":per_interval,"intervals":sorted(palettes),"candidateCount":sum(len(item["visualCandidates"]) for item in palettes.values()),"llm":{"degraded":call_result.get("degraded"),"reason":call_result.get("reason"),"model":call_result.get("model"),"usage":call_result.get("usage"),"latencyMs":call_result.get("latencyMs"),"repeatCount":max(1,args.repeat),"stable":stable,"selected":{item["interval"]:item["selectedCandidateIds"] for item in call_result["output"]["intervalSelections"]}} if call_result else None,"kernelMs":round(elapsed,3)})
+        results.append({"episodeId":episode["episodeId"],"symbol":episode["symbol"],"asOf":episode["asOf"],"split":episode["split"],"evaluationRound":episode.get("evaluationRound"),"category":episode["category"],"expectation":episode["expectation"],"expectedSemanticTypes":list(episode.get("expectedSemanticTypes") or []),"expectedByInterval":expected_by_interval,"drawingCount":drawing_count,"drawingCounts":per_interval,"drawingSemantics":{interval:sorted({drawing_semantic_type(drawing) for layer in rules_by_interval[interval].values() for drawing in layer["drawings"]}) for interval in rules_by_interval},"topRejectionReasons":{interval:_top_rejection_reasons(rules_by_interval[interval]) for interval in rules_by_interval},"intervalStates":interval_states,"intervals":sorted(palettes),"candidateCount":sum(len(item["visualCandidates"]) for item in palettes.values()),"llm":{"degraded":call_result.get("degraded"),"reason":call_result.get("reason"),"model":call_result.get("model"),"usage":call_result.get("usage"),"latencyMs":call_result.get("latencyMs"),"repeatCount":max(1,args.repeat),"stable":stable,"selected":{item["interval"]:item["selectedCandidateIds"] for item in call_result["output"]["intervalSelections"]}} if call_result else None,"kernelMs":round(elapsed,3)})
     drawing_counts=[count for item in results for count in item["drawingCounts"].values()]
-    quality=quality_summary(drawing_reviews,results)
+    quality=quality_summary(drawing_reviews,results,intervals)
     benchmark=benchmark_kernels(manifest_path,manifest,intervals) if args.mode=="rules" and not args.stratified_limit else None
-    report={"mode":args.mode,"fixtureVersion":manifest.get("fixtureVersion"),"episodeCount":len(results),"llmCalls":calls,"invariantFailures":invariant_failures,"stabilityFailures":stability_failures,"environment":{"python":platform.python_version(),"machine":platform.machine(),"processor":platform.processor() or "unknown","singleProcess":True,"singleThreadBenchmark":True},"metrics":{"kernelP50Ms":round(statistics.median(interval_latencies),3) if interval_latencies else None,"kernelP95Ms":round(percentile(interval_latencies,.95),3) if interval_latencies else None,"symbolBundleP95Ms":round(percentile(latencies,.95),3) if latencies else None,"drawingMedian":statistics.median(drawing_counts) if drawing_counts else None,"drawingP95":percentile(drawing_counts,.95) if drawing_counts else None},"benchmark":benchmark,"quality":{"label":"automated reviewer estimate","humanGate":"pending",**quality},"reviewIndex":{"blinding":"implementation version is omitted from review cards","reviewers":["evidence-gate-v1","recency-conservative-v1"],"cards":review_index},"results":results}
+    llm_latencies=[float(item["llm"]["latencyMs"]) for item in results if item.get("llm") and item["llm"].get("latencyMs") is not None]
+    metrics={"kernelP50Ms":round(statistics.median(interval_latencies),3) if interval_latencies else None,"kernelP95Ms":round(percentile(interval_latencies,.95),3) if interval_latencies else None,"kernelP95ByIntervalMs":{interval:round(percentile(values,.95),3) if values else None for interval,values in interval_latency_samples.items()},"aggregationP95Ms":round(percentile(aggregation_latencies,.95),3) if aggregation_latencies else None,"symbolBundleP95Ms":round(percentile(bundle_compute_latencies,.95),3) if bundle_compute_latencies else None,"endToEndP95Ms":round(percentile(latencies,.95),3) if latencies else None,"llmLatencyP95Ms":round(percentile(llm_latencies,.95),3) if llm_latencies else None,"drawingMedian":statistics.median(drawing_counts) if drawing_counts else None,"drawingP95":percentile(drawing_counts,.95) if drawing_counts else None}
+    metric_gates=metric_quality_gates(metrics)
+    report={"mode":args.mode,"fixtureVersion":manifest.get("fixtureVersion"),"episodeCount":len(results),"llmCalls":calls,"invariantFailures":invariant_failures,"stabilityFailures":stability_failures,"environment":{"python":platform.python_version(),"machine":platform.machine(),"processor":platform.processor() or "unknown","singleProcess":True,"singleThreadBenchmark":True},"metrics":{**metrics,"gates":metric_gates,"passed":all(metric_gates.values())},"benchmark":benchmark,"quality":{"label":"automated reviewer estimate","humanGate":"pending",**quality},"reviewIndex":{"blinding":"implementation version is omitted from review cards","reviewers":["evidence-gate-v1","recency-conservative-v1"],"cards":review_index},"results":results}
     Path(args.output).write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding="utf-8")
     print(json.dumps({key:report[key] for key in ("mode","episodeCount","llmCalls","metrics")},ensure_ascii=False))
     if invariant_failures:
@@ -126,6 +162,90 @@ def _empty_agent_layer():
     return {"drawings": [], "selected": [], "emptyReason": "rules_evaluation", "meta": {}}
 
 
+def normalize_expected_by_interval(episode: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Validate optional interval labels without deriving them from legacy labels."""
+    raw = episode.get("expectedByInterval")
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"{episode.get('episodeId')}: expectedByInterval must be an object")
+    normalized: dict[str, dict[str, Any]] = {}
+    for interval, label in raw.items():
+        if interval not in {"1D", "1W", "1M"}:
+            raise ValueError(f"{episode.get('episodeId')}: unsupported expected interval {interval!r}")
+        if not isinstance(label, dict):
+            raise ValueError(f"{episode.get('episodeId')}:{interval}: expected label must be an object")
+        expectation = label.get("expectation")
+        if expectation not in {"must_draw", "must_not_draw", "may_draw"}:
+            raise ValueError(f"{episode.get('episodeId')}:{interval}: invalid expectation {expectation!r}")
+        semantics = label.get("semanticTypes")
+        alias = label.get("expectedSemanticTypes")
+        if semantics is not None and alias is not None and semantics != alias:
+            raise ValueError(f"{episode.get('episodeId')}:{interval}: semantic label aliases disagree")
+        semantics = semantics if semantics is not None else alias
+        if semantics is None:
+            semantics = []
+        if not isinstance(semantics, list) or any(not isinstance(item, str) or not item for item in semantics):
+            raise ValueError(f"{episode.get('episodeId')}:{interval}: semanticTypes must be a string array")
+        if expectation == "must_not_draw" and semantics:
+            raise ValueError(f"{episode.get('episodeId')}:{interval}: must_not_draw cannot require semantics")
+        normalized[interval] = {
+            "expectation": expectation,
+            "semanticTypes": sorted(set(semantics)),
+        }
+    return normalized
+
+
+def interval_evaluation_state(rules: dict[str, Any]) -> dict[str, Any]:
+    empty_reasons = sorted({
+        str(layer["emptyReason"])
+        for layer in rules.values()
+        if layer.get("emptyReason")
+    })
+    degraded = any(
+        (layer.get("meta") or {}).get("qualityState") == "data_degraded"
+        or layer.get("emptyReason") == "data_quality_blocked"
+        for layer in rules.values()
+    )
+    return {
+        "evaluated": True,
+        "qualityState": "data_degraded" if degraded else "ready",
+        "emptyReasons": empty_reasons,
+    }
+
+
+def drawing_semantic_type(drawing: dict[str, Any]) -> str:
+    drawing_type = drawing.get("type")
+    if drawing_type == "horizontalLine":
+        return "level"
+    if drawing_type == "flagMarker":
+        return "event"
+    if drawing_type in {"trendLine", "trendParallelLines"}:
+        return "trend"
+    if drawing_type == "rangeBox":
+        return "range"
+    if drawing_type == "fibonacciRetracement":
+        return "retracement"
+    return "other"
+
+
+def _top_rejection_reasons(rules: dict[str, Any]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for layer in rules.values():
+        for reason, count in ((layer.get("meta") or {}).get("rejectedByReason") or {}).items():
+            counts[str(reason)] = counts.get(str(reason), 0) + int(count or 0)
+    return dict(sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:8])
+
+
+def metric_quality_gates(metrics: dict[str, Any]) -> dict[str, bool]:
+    return {
+        "drawingMedianAtMost2": metrics.get("drawingMedian") is not None and metrics["drawingMedian"] <= 2,
+        "drawingP95AtMost4": metrics.get("drawingP95") is not None and metrics["drawingP95"] <= 4,
+        "kernelP95AtMost130Ms": metrics.get("kernelP95Ms") is not None and metrics["kernelP95Ms"] <= 130,
+        "symbolBundleP95AtMost350Ms": metrics.get("symbolBundleP95Ms") is not None and metrics["symbolBundleP95Ms"] <= 350,
+    }
+
+
 def build_review_card(episode, interval, rows, rules, commentary):
     display_from = rows[-min(DISPLAY_BARS[interval], len(rows))]["timestamp"]
     focus = {drawing_id: item for item in commentary["focusItems"] for drawing_id in item["drawingIds"]}
@@ -150,6 +270,7 @@ def build_review_card(episode, interval, rows, rules, commentary):
         record = {
             "episodeId": episode["episodeId"], "split": episode["split"], "evaluationRound": episode.get("evaluationRound"), "expectation": episode["expectation"],
             "interval": interval, "drawingId": drawing["id"], "drawingType": drawing["type"],
+            "semanticType": drawing_semantic_type(drawing),
             "offscreen": offscreen, "meaningful": meaningful, "clearlyMeaningless": clearly_meaningless,
             "scores": scores,
         }
@@ -212,18 +333,22 @@ def automated_scores(drawing, selected, focus, rows):
     }
 
 
-def quality_summary(drawing_reviews, results):
+def quality_summary(drawing_reviews, results, requested_intervals=("1M", "1W", "1D")):
     rounds = [item.get("evaluationRound") for item in results if item.get("evaluationRound")]
     active_round = rounds[-1] if rounds else None
     holdout = [item for item in drawing_reviews if item["split"] == "holdout" and (not active_round or item.get("evaluationRound") == active_round)]
+    active_results = [
+        item for item in results
+        if item["split"] == "holdout" and (not active_round or item.get("evaluationRound") == active_round)
+    ]
     meaningful = [item for item in holdout if item["meaningful"]]
     meaningless = [item for item in holdout if item["clearlyMeaningless"]]
     offscreen = [item for item in holdout if item["offscreen"]]
     offscreen_relevant = [item for item in offscreen if all(score["currentRelevance"] >= 4 for score in item["scores"].values())]
     by_episode = {}
     for item in holdout: by_episode.setdefault(item["episodeId"], []).append(item)
-    must_draw = [item for item in results if item["split"] == "holdout" and (not active_round or item.get("evaluationRound") == active_round) and item["expectation"] == "must_draw"]
-    must_not = [item for item in results if item["split"] == "holdout" and (not active_round or item.get("evaluationRound") == active_round) and item["expectation"] == "must_not_draw"]
+    must_draw = [item for item in active_results if item["expectation"] == "must_draw"]
+    must_not = [item for item in active_results if item["expectation"] == "must_not_draw"]
     recalled = sum(any(review["meaningful"] for review in by_episode.get(item["episodeId"], [])) for item in must_draw)
     unnecessary = sum(any(not review["meaningful"] for review in by_episode.get(item["episodeId"], [])) for item in must_not)
     precision = _ratio(len(meaningful), len(holdout))
@@ -231,16 +356,196 @@ def quality_summary(drawing_reviews, results):
     offscreen_rate = _ratio(len(offscreen_relevant), len(offscreen))
     recall = _ratio(recalled, len(must_draw))
     unnecessary_rate = _ratio(unnecessary, len(must_not))
-    denominators = {"mustDrawEpisodes":len(must_draw),"mustNotDrawEpisodes":len(must_not),"finalDrawings":len(holdout),"offscreenDrawings":len(offscreen)}
+
+    meaningful_by_episode_interval: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for review in meaningful:
+        meaningful_by_episode_interval.setdefault((review["episodeId"], review["interval"]), []).append(review)
+
+    requested = tuple(dict.fromkeys(requested_intervals))
+    requested_set = set(requested)
+    explicit_labels: list[dict[str, Any]] = []
+    out_of_scope_labels = 0
+    for result in active_results:
+        for interval, expected in (result.get("expectedByInterval") or {}).items():
+            if interval not in requested_set:
+                out_of_scope_labels += 1
+                continue
+            current_reviews = meaningful_by_episode_interval.get((result["episodeId"], interval), [])
+            state = (result.get("intervalStates") or {}).get(interval) or {
+                "evaluated": False, "qualityState": "unavailable",
+            }
+            explicit_labels.append({
+                "episodeId": result["episodeId"],
+                "interval": interval,
+                "expectation": expected["expectation"],
+                "semanticTypes": list(expected.get("semanticTypes") or []),
+                "recalled": bool(current_reviews),
+                "meaningfulSemantics": {review["semanticType"] for review in current_reviews},
+                "drawingCount": int((result.get("drawingCounts") or {}).get(interval, 0)),
+                "qualityState": state.get("qualityState") or "unavailable",
+            })
+
+    explicit_must_draw = [item for item in explicit_labels if item["expectation"] == "must_draw"]
+    explicit_must_not = [item for item in explicit_labels if item["expectation"] == "must_not_draw"]
+    interval_recall = _ratio(sum(item["recalled"] for item in explicit_must_draw), len(explicit_must_draw))
+    interval_recall_by_interval = {
+        interval: _ratio(
+            sum(item["recalled"] for item in explicit_must_draw if item["interval"] == interval),
+            sum(item["interval"] == interval for item in explicit_must_draw),
+        )
+        for interval in requested
+    }
+    ready_must_draw = [item for item in explicit_must_draw if item["qualityState"] == "ready"]
+    false_zero = [item for item in ready_must_draw if item["drawingCount"] == 0]
+    false_zero_rate = _ratio(len(false_zero), len(ready_must_draw))
+    false_zero_by_interval = {
+        interval: _ratio(
+            sum(item["drawingCount"] == 0 for item in ready_must_draw if item["interval"] == interval),
+            sum(item["interval"] == interval for item in ready_must_draw),
+        )
+        for interval in requested
+    }
+    explicit_unnecessary_rate = _ratio(
+        sum(item["drawingCount"] > 0 for item in explicit_must_not),
+        len(explicit_must_not),
+    )
+    explicit_unnecessary_by_interval = {
+        interval: _ratio(
+            sum(item["drawingCount"] > 0 for item in explicit_must_not if item["interval"] == interval),
+            sum(item["interval"] == interval for item in explicit_must_not),
+        )
+        for interval in requested
+    }
+
+    semantic_labels = [
+        {
+            "interval": item["interval"],
+            "semanticType": semantic,
+            "recalled": semantic in item["meaningfulSemantics"],
+        }
+        for item in explicit_must_draw
+        for semantic in item["semanticTypes"]
+    ]
+    semantic_recall = _ratio(sum(item["recalled"] for item in semantic_labels), len(semantic_labels))
+    semantic_recall_by_interval = {
+        interval: _ratio(
+            sum(item["recalled"] for item in semantic_labels if item["interval"] == interval),
+            sum(item["interval"] == interval for item in semantic_labels),
+        )
+        for interval in requested
+    }
+    semantic_names = sorted({item["semanticType"] for item in semantic_labels})
+    semantic_recall_by_semantic = {
+        semantic: _ratio(
+            sum(item["recalled"] for item in semantic_labels if item["semanticType"] == semantic),
+            sum(item["semanticType"] == semantic for item in semantic_labels),
+        )
+        for semantic in semantic_names
+    }
+    interval_semantic_recall: dict[str, dict[str, Any]] = {}
+    for interval in requested:
+        current_semantics = sorted({item["semanticType"] for item in semantic_labels if item["interval"] == interval})
+        interval_semantic_recall[interval] = {
+            semantic: _ratio(
+                sum(item["recalled"] for item in semantic_labels if item["interval"] == interval and item["semanticType"] == semantic),
+                sum(item["interval"] == interval and item["semanticType"] == semantic for item in semantic_labels),
+            )
+            for semantic in current_semantics
+        }
+
+    legacy_semantic_labels = [
+        {
+            "semanticType": semantic,
+            "recalled": any(
+                review["meaningful"] and review["semanticType"] == semantic
+                for review in by_episode.get(result["episodeId"], [])
+            ),
+        }
+        for result in must_draw
+        for semantic in result.get("expectedSemanticTypes") or []
+    ]
+    legacy_semantic_names = sorted({item["semanticType"] for item in legacy_semantic_labels})
+    legacy_semantic_recall = {
+        "overall": _ratio(sum(item["recalled"] for item in legacy_semantic_labels), len(legacy_semantic_labels)),
+        "bySemantic": {
+            semantic: _ratio(
+                sum(item["recalled"] for item in legacy_semantic_labels if item["semanticType"] == semantic),
+                sum(item["semanticType"] == semantic for item in legacy_semantic_labels),
+            )
+            for semantic in legacy_semantic_names
+        },
+    }
+
+    interval_label_coverage = bool(requested) and all(
+        interval_recall_by_interval[interval]["denominator"] > 0 for interval in requested
+    )
+    semantic_label_coverage = bool(requested) and all(
+        semantic_recall_by_interval[interval]["denominator"] > 0 for interval in requested
+    )
+    interval_semantic_cells = [
+        ratio
+        for current in interval_semantic_recall.values()
+        for ratio in current.values()
+    ]
+    denominators = {
+        "mustDrawEpisodes":len(must_draw),"mustNotDrawEpisodes":len(must_not),"finalDrawings":len(holdout),"offscreenDrawings":len(offscreen),
+        "explicitIntervalLabels": len(explicit_labels),
+        "explicitMustDrawIntervalLabels": len(explicit_must_draw),
+        "explicitMustNotDrawIntervalLabels": len(explicit_must_not),
+        "explicitSemanticLabels": len(semantic_labels),
+        "readyMustDrawIntervalLabels": len(ready_must_draw),
+        "unavailableMustDrawIntervalLabels": sum(item["qualityState"] == "unavailable" for item in explicit_must_draw),
+        "dataDegradedMustDrawIntervalLabels": sum(item["qualityState"] == "data_degraded" for item in explicit_must_draw),
+        "outOfScopeIntervalLabels": out_of_scope_labels,
+    }
     gates = {
-        "minimumDenominators": denominators["mustDrawEpisodes"]>=20 and denominators["mustNotDrawEpisodes"]>=20 and denominators["finalDrawings"]>=40 and denominators["offscreenDrawings"]>=20,
+        "minimumDenominators": denominators["explicitMustDrawIntervalLabels"]>=30 and denominators["explicitMustNotDrawIntervalLabels"]>=20 and denominators["finalDrawings"]>=40 and denominators["offscreenDrawings"]>=20,
         "precision85": precision["point"] is not None and precision["point"]>=.85,
         "clearlyMeaningless5": meaningless_rate["point"] is not None and meaningless_rate["point"]<=.05,
         "offscreenRelevant95": len(offscreen)>=20 and offscreen_rate["point"]>=.95,
-        "mustNotDraw10": unnecessary_rate["point"] is not None and unnecessary_rate["point"]<=.10,
+        "mustNotDraw10": explicit_unnecessary_rate["point"] is not None and explicit_unnecessary_rate["point"]<=.10,
         "mustDrawRecall60": recall["point"] is not None and recall["point"]>=.60,
+        "mustDrawRecall85": recall["point"] is not None and recall["point"]>=.85,
+        "explicitIntervalLabelCoverage": interval_label_coverage,
+        "explicitSemanticLabelCoverage": semantic_label_coverage,
+        "explicitIntervalRecall85": interval_recall["point"] is not None and interval_recall["point"]>=.85,
+        "perIntervalRecall80": interval_label_coverage and all(
+            item["point"] is not None and item["point"] >= .80
+            for item in interval_recall_by_interval.values()
+        ),
+        "explicitSemanticRecall85": semantic_recall["point"] is not None and semantic_recall["point"]>=.85,
+        "intervalSemanticRecall80": semantic_label_coverage and bool(interval_semantic_cells) and all(
+            item["point"] is not None and item["point"] >= .80
+            for item in interval_semantic_cells
+        ),
+        "readyFalseZero15": false_zero_rate["point"] is not None and false_zero_rate["point"]<=.15,
     }
-    return {"evaluationRound":active_round,"denominators":denominators,"precision":precision,"clearlyMeaninglessRate":meaningless_rate,"offscreenCurrentRelevance":offscreen_rate,"mustNotDrawUnnecessaryRate":unnecessary_rate,"mustDrawRecall":recall,"gates":gates,"passed":all(gates.values())}
+    return {
+        "evaluationRound":active_round,"denominators":denominators,"precision":precision,"clearlyMeaninglessRate":meaningless_rate,"offscreenCurrentRelevance":offscreen_rate,"mustNotDrawUnnecessaryRate":unnecessary_rate,"mustDrawRecall":recall,
+        "explicitIntervalEvaluation": {
+            "labelContract": "expectedByInterval only; legacy expectation is never inferred per interval",
+            "requestedIntervals": list(requested),
+            "overallRecall": interval_recall,
+            "recallByInterval": interval_recall_by_interval,
+            "readyFalseZeroRate": false_zero_rate,
+            "readyFalseZeroRateByInterval": false_zero_by_interval,
+            "mustNotDrawUnnecessaryRate": explicit_unnecessary_rate,
+            "mustNotDrawUnnecessaryRateByInterval": explicit_unnecessary_by_interval,
+        },
+        "explicitSemanticEvaluation": {
+            "labelContract": "semanticTypes (or expectedSemanticTypes alias) inside expectedByInterval",
+            "overallRecall": semantic_recall,
+            "recallByInterval": semantic_recall_by_interval,
+            "recallBySemantic": semantic_recall_by_semantic,
+            "recallByIntervalSemantic": interval_semantic_recall,
+        },
+        "legacyExpectedSemanticEvaluation": legacy_semantic_recall,
+        "labelCoverage": {
+            "allRequestedIntervalsHaveMustDrawLabels": interval_label_coverage,
+            "allRequestedIntervalsHaveSemanticLabels": semantic_label_coverage,
+        },
+        "gates":gates,"passed":all(gates.values()),
+    }
 
 
 def _ratio(numerator, denominator):
@@ -379,7 +684,11 @@ def stratified(episodes,limit):
 
 def _after_asof(value):
     from datetime import datetime,timedelta,timezone
-    return datetime.fromisoformat(value.replace("Z","+00:00")).astimezone(timezone.utc)+timedelta(days=40)
+    # The fixture timestamp identifies a completed NYSE daily session.  Advance
+    # only to the following UTC midnight so week/month aggregation applies the
+    # same completion contract as production.  A large look-ahead would make a
+    # partial week or month appear complete even though no later candles exist.
+    return datetime.fromisoformat(value.replace("Z","+00:00")).astimezone(timezone.utc)+timedelta(days=1)
 def price_tokens(value):
     price=float(value);return {str(price),f"{price:.2f}",f"{price:g}"}
 def percentile(values,q):

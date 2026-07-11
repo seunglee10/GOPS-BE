@@ -96,6 +96,10 @@ class InMemoryChartAssetProgressStore:
             repair["missingBarsBefore"] += int(result.get("missing_before") or result.get("missingBefore") or 0)
             repair["missingBarsAfter"] += int(result.get("missing_after") or result.get("missingAfter") or 0)
             repair["materializedRows"] += int(result.get("materialized_rows") or result.get("materializedRows") or 0)
+            reason = str(result.get("reason") or "").strip()
+            if reason and reason not in {"coverage_complete", "repaired"}:
+                reason_codes = repair.setdefault("reasonCodes", {})
+                reason_codes[reason] = int(reason_codes.get(reason) or 0) + 1
         self.mutate(job_id, mutate, event={"type": "repair", "reason": result.get("reason")})
 
     def pubsub(self, job_id: str):
@@ -204,7 +208,7 @@ def channel_name(job_id: str) -> str:
     return f"{CHANNEL_PREFIX}:{job_id}"
 
 
-def initial_repair_state() -> dict[str, int]:
+def initial_repair_state() -> dict[str, Any]:
     return {
         "checkedSymbols": 0,
         "attemptedSymbols": 0,
@@ -213,4 +217,5 @@ def initial_repair_state() -> dict[str, int]:
         "missingBarsBefore": 0,
         "missingBarsAfter": 0,
         "materializedRows": 0,
+        "reasonCodes": {},
     }

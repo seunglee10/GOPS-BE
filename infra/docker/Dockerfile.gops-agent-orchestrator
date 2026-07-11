@@ -1,5 +1,5 @@
 # Builds the shared Python image for GOPS agent-orchestration pods.
-# Runtime command selects agent-orchestrator, agent-analysis-worker, deep-analysis-worker, event-detector, notification-publisher, or agent jobs.
+# Runtime command also selects chart-asset-builder and its one-shot migration job.
 FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \

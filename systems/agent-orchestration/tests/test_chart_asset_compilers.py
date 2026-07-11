@@ -82,6 +82,64 @@ class ChartAssetCompilerTest(unittest.TestCase):
         self.assertEqual([item["layer"] for item in recommendations], ["bollinger:20:2", "macd:12:26:9"])
         self.assertLessEqual(len(recommendations), 2)
 
+    def test_exactly_current_level_is_not_ranked_as_missing_distance(self):
+        features = feature_pack()
+        features["levels"] = [
+            {"id": "near", "price": 120, "score": .88, "hardPass": True, "role": "support", "currentDistanceAtr": 0, "lastTouchAgeBars": 0},
+            {"id": "far", "price": 110, "score": .62, "hardPass": True, "role": "support", "currentDistanceAtr": 1.2, "lastTouchAgeBars": 1},
+        ]
+
+        structure = compile_rule_layers(
+            symbol="NVDA", interval="1D", features=features,
+            candles=candles(), generated_at=GENERATED_AT,
+        )["structure"]
+
+        self.assertEqual(structure["selected"][0]["candidateId"], "near")
+
+    def test_break_pending_level_is_not_hline_but_confirmed_break_is_flag(self):
+        features = feature_pack()
+        features["levels"] = [{
+            "id": "pending", "price": 115, "score": .9, "hardPass": False,
+            "evidencePass": True, "activePass": False, "role": "unresolved",
+            "state": "break_up_pending", "rejectReasons": ["break_pending"],
+        }]
+        features["events"] = [{
+            "id": "confirmed-break", "timestamp": candles()[-1]["timestamp"], "kind": "breakout",
+            "price": 120, "refIds": ["pending"], "detail": {"direction": "up", "state": "hold_confirmed"},
+            "hardPass": True, "evidencePass": True, "activePass": True, "currentImpact": "high", "ageBars": 0,
+        }]
+
+        structure = compile_rule_layers(
+            symbol="NVDA", interval="1D", features=features,
+            candles=candles(), generated_at=GENERATED_AT,
+        )["structure"]
+
+        self.assertEqual([item["type"] for item in structure["drawings"]], ["flagMarker"])
+        self.assertEqual(structure["drawings"][0]["anchors"][0]["timestamp"], candles()[-1]["timestamp"])
+        self.assertEqual(structure["meta"]["rejectedByReason"], {"break_pending": 1})
+
+    def test_empty_reason_distinguishes_evidence_from_no_structure(self):
+        no_structure = feature_pack()
+        no_structure.update({"levels": [], "events": [], "trends": []})
+        empty = compile_rule_layers(symbol="NVDA", interval="1D", features=no_structure, candles=candles(), generated_at=GENERATED_AT)
+        self.assertEqual(empty["structure"]["emptyReason"], "no_structural_evidence")
+
+        inactive = feature_pack()
+        inactive.update({"events": [], "trends": [], "levels": [{
+            "id": "inactive", "hardPass": False, "evidencePass": True,
+            "rejectReasons": ["current_distance"],
+        }]})
+        empty = compile_rule_layers(symbol="NVDA", interval="1D", features=inactive, candles=candles(), generated_at=GENERATED_AT)
+        self.assertEqual(empty["structure"]["emptyReason"], "not_currently_actionable")
+
+        invalidated = feature_pack()
+        invalidated.update({"levels": [], "events": [], "trends": [{
+            "id": "invalidated", "hardPass": False, "evidencePass": True,
+            "rejectReasons": ["active_invalidation"],
+        }]})
+        empty = compile_rule_layers(symbol="NVDA", interval="1D", features=invalidated, candles=candles(), generated_at=GENERATED_AT)
+        self.assertEqual(empty["trend"]["emptyReason"], "active_invalidation")
+
     def _assert_shared_schema_shape(self, drawing: dict) -> None:
         schema = json.loads((ROOT / "shared" / "chart-contract" / "chart-command.schema.json").read_text(encoding="utf-8"))["$defs"]["drawingEntity"]
         self.assertTrue(set(schema["required"]).issubset(drawing))

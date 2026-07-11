@@ -20,10 +20,15 @@ market_data.load_audit
 ```
 
 `trade_ticks` and `quote_ticks` retain 21 days. `chart_candles` and
-`order_flow_profile_daily` and `chart_analysis_assets` have no deletion TTL.
+`order_flow_profile_daily` have no deletion TTL. The compatibility
+`chart_analysis_assets` table has no TTL while the PostgreSQL latest-row
+migration is in progress.
 `chart_analysis_assets` uses `ReplacingMergeTree(inserted_at)` ordered by
 `(symbol, interval)`; readers use `FINAL` or `argMax` so each pair serves only
-the latest prebuilt asset. Existing environments apply
+the latest prebuilt asset. The current single-replica builder serializes
+`generatedAt + canonical payload digest` compare-and-insert so a delayed older
+build is suppressed; dual modes also warn if a monotonic no-op leaves the two
+stores divergent. Existing environments apply
 the TTL through the operator-reviewed, idempotent migration:
 
 ```text
@@ -49,12 +54,16 @@ agent table are the only allowed difference.
 
 ## Chart Analysis Assets
 
-`market_data.chart_analysis_assets` stores compact final v1 or v2 JSON payloads.
+`market_data.chart_analysis_assets` stores compact final v1 or v2 JSON payloads
+as the default and rollback source until the guarded PostgreSQL cutover finishes.
 The v2 rollout reuses the existing `asset_version` column and table: there is no
 new table, TTL, or candidate ledger. A builder insert is skipped when the final
 `assetContentDigest` is unchanged; raw candles, rejected candidates, prompts,
 and provider responses are never persisted here. Latest reads continue to use
 `argMax(payload, inserted_at)` during mixed v1/v2 rollout.
+In `dual_clickhouse_read` and `dual_postgres_read`, writes are mirrored while
+only one store serves reads. Canonical candles and request-scoped repair
+materialization always stay in ClickHouse; only the latest final asset JSON moves.
 The authenticated development route can explicitly delete selected
 `(symbol, interval)` histories with a synchronous mutation. This exists for
 iteration and recovery only; it does not add a TTL or background cleanup.

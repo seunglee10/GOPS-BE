@@ -44,7 +44,14 @@ def compute_levels(
         relevance = 1 - min(1.0, distance_atr / 4)
         vp = any(abs(center - value) <= 0.5 * median_atr for value in vp_prices)
         score = 0.30 * touch_quality + 0.20 * recency + 0.15 * (statistics.median(reaction_values) if reaction_values else 0) + 0.15 * relevance + 0.15 * float(vp) + 0.05 * float(state.startswith("role_flip"))
-        hard_pass = state not in {"unresolved", "invalidated", "break_up_pending", "break_down_pending"} and len(episodes) >= 3 and len(valid) >= 2 and age <= config.level_last_touch_max_age and distance_atr <= 2
+        evidence_pass = len(episodes) >= 3 and len(valid) >= 2
+        evidence_confirmed_index = _evidence_confirmed_index(episodes)
+        active_pass = (
+            state not in {"unresolved", "invalidated", "break_up_pending", "break_down_pending"}
+            and age <= config.level_last_touch_max_age
+            and distance_atr <= 2
+        )
+        hard_pass = evidence_pass and active_pass
         local_id = hashlib.sha256(f"{interval}|{','.join(sorted(item['id'] for item in cluster))}".encode()).hexdigest()[:10]
         levels.append({
             "id": f"{interval}:level:{local_id}", "price": round(center, 2),
@@ -52,12 +59,17 @@ def compute_levels(
             "score": round(max(0.0, min(1.0, score)), 4), "touches": len(episodes),
             "touchEpisodes": episodes[-6:], "lastTestAt": candles[last_touch]["timestamp"],
             "lastTouchAgeBars": age, "currentDistanceAtr": round(distance_atr, 4),
-            "role": _public_role(state), "state": state, "hardPass": hard_pass,
+            "role": _public_role(state), "state": state,
+            "evidencePass": evidence_pass, "activePass": active_pass, "hardPass": hard_pass,
             "rejectReasons": [] if hard_pass else _reject_reasons(state, len(episodes), len(valid), age, distance_atr, config),
             "roleFlips": int(state.startswith("role_flip")), "vpConfluence": vp,
             "roundNumber": _is_round_number(center), "memberPivotIds": [item["id"] for item in cluster],
+            "evidenceConfirmedIndex": evidence_confirmed_index,
         })
-    return sorted(levels, key=lambda item: (-int(item["hardPass"]), -item["score"], item["currentDistanceAtr"], item["id"]))
+    ordered = sorted(levels, key=lambda item: (-int(item["hardPass"]), -item["score"], item["currentDistanceAtr"], item["id"]))
+    passed = [item for item in ordered if item["hardPass"]]
+    rejected = [item for item in ordered if not item["hardPass"]][:8]
+    return passed + rejected
 
 
 def _bounded_clusters(pivots, atr_values):
@@ -112,7 +124,12 @@ def _touch_episodes(candles, low, high, atr_values, config):
 
 
 def _role_state(candles, low, high, atr_values, episodes, config):
-    reactions = [item for item in episodes if item["outcome"] == "reaction" and item["mfeAtr"] >= 1]
+    # A reaction outcome already means the close moved at least 0.75 ATR away
+    # from the zone. Requiring another full ATR of future MFE here silently
+    # imposed a second, stricter gate and turned evidenced levels into false
+    # zeros. Role activation must use the same confirmed reaction contract as
+    # evidencePass.
+    reactions = [item for item in episodes if item["outcome"] == "reaction"]
     if not reactions: return "unresolved"
     state = "support_active" if reactions[-1]["approach"] == "above" else "resistance_active"
     start = reactions[-1]["endIndex"] + 1
@@ -138,6 +155,15 @@ def _reject_reasons(state, count, reaction_count, age, distance, config):
     if state in {"unresolved", "invalidated"}: reasons.append("unresolved_role")
     if state.startswith("break_"): reasons.append("break_pending")
     return reasons
+
+
+def _evidence_confirmed_index(episodes):
+    reactions = 0
+    for position, episode in enumerate(episodes, start=1):
+        reactions += episode.get("outcome") == "reaction"
+        if position >= 3 and reactions >= 2:
+            return int(episode["endIndex"])
+    return None
 
 
 def _weighted_median(values):

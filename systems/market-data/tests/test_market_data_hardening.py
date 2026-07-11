@@ -49,7 +49,7 @@ from alfaka.common.secrets import load_alpaca_credentials, resolve_alpaca_creden
 from alfaka.backfill.runner import BackfillRunner, BackfillUnavailable, fetch_alpaca_bars, raw_bar_to_processed_candle, raw_bars_to_processed_candles, repair_daily_bar_outliers
 from alfaka.backfill.gapfill import TradingCalendar, detect_gapfill_ranges
 from alfaka.backfill.status import RedisBackfillStore, default_backfill_range, redis_response_error_type
-from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider, clickhouse_param_value
+from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider, clickhouse_param_value, merge_candle_rows
 from alfaka.serving.cursors import timestamp_from_cursor
 from alfaka.serving.dto import cursor_for, market_status_event, snapshot, websocket_event
 from alfaka.serving.hot_symbols import build_hot_symbols_payload, dollar_volume_from_candle
@@ -3687,6 +3687,40 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn("/revisions/revision=", revision_key)
         self.assertEqual(len(data_keys), 2)
 
+    def test_analysis_alpaca_repair_materializes_only_exact_missing_daily_keys(self):
+        record = {
+            "requestId": "chart-analysis:AAPL:1D:missing",
+            "symbol": "AAPL",
+            "interval": "1D",
+            "range": {"start": "2026-07-08T04:00:00.000Z", "end": "2026-07-10T04:00:00.000Z"},
+            "analysisMissingCandleKeys": ["2026-07-08"],
+            "jobType": "gapfill",
+            "sourcePreference": "alpaca-only",
+            "mode": "inline",
+            "force": False,
+        }
+        s3 = S3ObjectStore()
+        client = RecordingClickHouseClient()
+        runner = BackfillRunner(s3=s3, clickhouse_client=client, coverage_provider=StaticCoverageProvider({}))
+
+        with mock.patch.dict(os.environ, {
+            "S3_BUCKET": "bucket",
+            "S3_RAW_PREFIX": "raw",
+            "S3_FINAL_PREFIX": "final",
+            "S3_MANIFEST_PREFIX": "manifest",
+            "S3_PROCESSED_FORMAT": "jsonl",
+        }):
+            with mock.patch("alfaka.backfill.runner.fetch_alpaca_bars", return_value=[
+                alpaca_raw_bar("2026-07-08T00:00:00.000Z", open_price=100),
+                alpaca_raw_bar("2026-07-09T00:00:00.000Z", open_price=200),
+            ]):
+                result = runner._run(record)
+
+        inserted = next(rows for table, rows in client.inserts if table == "chart_candles")
+        self.assertEqual(result["processedRowCount"], 1)
+        self.assertEqual(len(inserted), 1)
+        self.assertEqual(inserted[0]["close"], 100.5)
+
     def test_initial_load_fetches_even_when_clickhouse_is_covered_to_populate_s3(self):
         record = {
             "requestId": "backfill:AAPL:1D:covered",
@@ -5243,11 +5277,54 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn("AND interval IN ('1D', '1d')", provider.queries[1][0])
         self.assertIn("row_number() OVER", provider.queries[0][0])
         self.assertIn("row_number() OVER", provider.queries[1][0])
+        self.assertIn("PARTITION BY symbol, trading_date", provider.queries[0][0])
+        self.assertIn("PARTITION BY symbol, trading_date", provider.queries[1][0])
         self.assertEqual(weekly[-1]["interval"], "1W")
         self.assertEqual(monthly[-1]["interval"], "1M")
         self.assertEqual(weekly[-1]["ma5"], 3.0)
         provider.aggregated_daily_candles("AAPL", "1W", 5, limit_buffer=1)
         self.assertEqual(provider.queries[-1][1]["limit"], 6)
+
+    def test_higher_timeframe_rows_dedupe_by_candle_key_not_raw_timestamp(self):
+        aggregate = [{
+            "symbol": "AAPL",
+            "interval": "1W",
+            "timestamp": "2026-06-01T00:00:00.000Z",
+            "close": 200,
+        }]
+        direct = [{
+            "symbol": "AAPL",
+            "interval": "1W",
+            "timestamp": "2026-06-01T04:00:00.000Z",
+            "close": 201,
+        }]
+
+        merged = merge_candle_rows(aggregate, direct, interval="1W")
+
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0]["candleKey"], "2026-06-01")
+        self.assertEqual(merged[0]["timestamp"], "2026-06-01T00:00:00.000Z")
+        self.assertEqual(merged[0]["close"], 201)
+
+    def test_higher_timeframe_serving_marks_bucket_closed_only_after_last_session(self):
+        rows = [{
+            "timestamp": "2026-07-06T00:00:00.000Z",
+            "open": 100,
+            "high": 102,
+            "low": 99,
+            "close": 101,
+            "volume": 1000,
+            "isClosed": 1,
+        }]
+        provider = RecordingClickHouseProviderForAggregation(rows)
+        provider.now_provider = lambda: datetime(2026, 7, 8, 20, 0, tzinfo=timezone.utc)
+
+        current_week = provider.aggregated_daily_candles("AAPL", "1W", 1)
+
+        self.assertFalse(current_week[0]["isClosed"])
+        provider.now_provider = lambda: datetime(2026, 7, 10, 20, 1, tzinfo=timezone.utc)
+        completed_week = provider.aggregated_daily_candles("AAPL", "1W", 1)
+        self.assertTrue(completed_week[0]["isClosed"])
 
     def test_clickhouse_prefers_direct_interval_rows_before_source_aggregation(self):
         rows = [
@@ -5638,7 +5715,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "2026-06-28T19:15:09.000Z",
         )
 
-    def test_clickhouse_daily_snapshot_groups_daily_source_by_calendar_day(self):
+    def test_clickhouse_daily_snapshot_selects_one_canonical_trading_date_row(self):
         rows = [
             {
                 "timestamp": f"2026-06-{20 + index:02d}T00:00:00.000Z",
@@ -5657,7 +5734,10 @@ class MarketDataHardeningContractTest(unittest.TestCase):
 
         daily = provider.candles("AAPL", "1D", 5)
 
-        self.assertIn("toStartOfDay(event_time) AS bucket", provider.queries[0][0])
+        self.assertIn("PARTITION BY symbol, trading_date", provider.queries[0][0])
+        self.assertIn("toDate(event_time, 'America/New_York')", provider.queries[0][0])
+        self.assertIn("ORDER BY inserted_at DESC, event_time DESC", provider.queries[0][0])
+        self.assertNotIn("sum(volume) AS volume", provider.queries[0][0])
         self.assertIn("AND interval IN ('1D', '1d')", provider.queries[0][0])
         self.assertNotIn("market_session = 'regular'", provider.queries[0][0])
         self.assertIn("'regular' AS marketSession", provider.queries[0][0])
@@ -6601,6 +6681,41 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(merged[0]["timestamp"], "2026-07-06T04:00:00.000Z")
         self.assertEqual(merged[0]["state"], "live")
         self.assertEqual(merged[0]["close"], 196.43)
+
+    def test_weekly_chart_merge_dedupes_utc_and_market_midnight_rows(self):
+        merged = merge_candles(
+            [{
+                "symbol": "AAPL",
+                "interval": "1W",
+                "timestamp": "2026-06-01T00:00:00.000Z",
+                "close": 200,
+                "isClosed": True,
+            }],
+            [{
+                "symbol": "AAPL",
+                "interval": "1W",
+                "timestamp": "2026-06-01T04:00:00.000Z",
+                "close": 201,
+                "isClosed": True,
+            }],
+        )
+
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0]["candleKey"], "2026-06-01")
+        self.assertEqual(merged[0]["timestamp"], "2026-06-01T00:00:00.000Z")
+        self.assertEqual(merged[0]["close"], 201)
+
+        current = merge_candles(
+            [{
+                "symbol": "AAPL",
+                "interval": "1W",
+                "timestamp": "2026-07-06T00:00:00.000Z",
+                "close": 202,
+                "isClosed": True,
+            }],
+            now=datetime(2026, 7, 8, 20, 0, tzinfo=timezone.utc),
+        )
+        self.assertFalse(current[0]["isClosed"])
 
     def test_empty_cursor_does_not_trigger_clickhouse_timestamp_query(self):
         provider = MarketDataProvider(

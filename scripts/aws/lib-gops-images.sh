@@ -114,6 +114,7 @@ gops_deployments_for_service() {
     agent-orchestrator)
       printf '%s\n' \
         agent-analysis-worker \
+        chart-asset-builder \
         agent-delivery-gateway \
         agent-event-detector \
         agent-intent-classifier \

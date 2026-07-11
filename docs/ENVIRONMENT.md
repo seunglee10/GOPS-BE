@@ -383,18 +383,17 @@ per `symbol + timeframe`, current provisional candles, latest closed candles,
 per-interval closed watermarks that suppress stale live candles, live
 trade/quote/event values, and SIP/BOATS feed state.
 Durable historical candles live in ClickHouse and S3 final/manifest.
-Run the in-cluster Redis StatefulSet as an ephemeral cache/control-plane store.
-Do not make Redis replay large AOF/RDB files on restart; large market-data cache
-snapshots can keep Redis in loading state and block Alpaca subscription control.
-Historical chart data remains durable in ClickHouse and S3 final/manifest.
+Run the in-cluster Redis StatefulSet as a bounded cache/control-plane store.
+Compose and Kubernetes currently keep AOF with `everysec`; RDB snapshots remain
+disabled. Historical chart data still lives in ClickHouse and S3 final/manifest,
+and Chart Asset logs remain pub/sub-only so they never enter the AOF.
 
 ```text
-redis-server --appendonly no --save "" --dir /tmp
+redis-server --appendonly yes --appendfsync everysec --save "" --dir /data
 ```
 
-This keeps live chart keys, feed control, and component health writable after a
-pod restart. Redis restarts may drop live cache and login sessions; live chart
-state is rebuilt by API/WebSocket activity. Chart resets must still use
+This bounds the acknowledged-write loss window while keeping snapshots off.
+Live chart state can still be rebuilt by API/WebSocket activity. Chart resets must use
 scan-delete for the documented market-data key patterns, not `FLUSHALL`.
 
 GOPS login sessions reuse Redis by default:
@@ -784,7 +783,19 @@ CHART_ASSET_REPAIR_ENABLED
 CHART_ASSET_REPAIR_ALPACA_ENABLED
 CHART_ASSET_REPAIR_CONCURRENCY
 CHART_ASSET_REPAIR_MAX_RANGES
+CHART_ASSET_REPAIR_S3_TIMEOUT_SECONDS
+CHART_ASSET_STORAGE_MODE
+CHART_ASSET_STORAGE_MAINTENANCE
 ```
+
+`CHART_ASSET_REPAIR_S3_TIMEOUT_SECONDS` defaults to `45`. Storage mode defaults
+to `clickhouse`; `dual_clickhouse_read`, `dual_postgres_read`, and `postgres`
+require the chart-owned PostgreSQL migration and exact parity verification.
+Maintenance mode leaves asset GET live while temporarily rejecting build/delete.
+The S3 timeout covers the no-write list/get/normalize preparation. Only a
+preparation accepted before the deadline is committed to ClickHouse; one S3
+socket read is additionally bounded to ten seconds so expired workers release
+promptly.
 
 ```text
 MARKET_CALENDAR_PROVIDER
