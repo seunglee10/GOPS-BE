@@ -2,7 +2,8 @@ CREATE SCHEMA IF NOT EXISTS chart_assets;
 
 CREATE TABLE IF NOT EXISTS chart_assets.analysis_assets (
     symbol TEXT NOT NULL,
-    "interval" TEXT NOT NULL CHECK ("interval" IN ('1D', '1W', '1M')),
+    "interval" TEXT NOT NULL CONSTRAINT analysis_assets_interval_check
+        CHECK ("interval" IN ('1m', '5m', '10m', '1h', '4h', '1D', '1W', '1M')),
     as_of TIMESTAMPTZ NOT NULL,
     generated_at TIMESTAMPTZ NOT NULL,
     asset_version TEXT NOT NULL,
