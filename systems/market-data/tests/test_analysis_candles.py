@@ -20,6 +20,7 @@ from alfaka.analytics.analysis_candles import (  # noqa: E402
     canonicalize_candle_identity,
     choose_canonical_winner,
     compute_analysis_coverage,
+    is_analysis_candle_bucket_complete,
     merge_canonical_candles,
 )
 from alfaka.backfill.gapfill import TradingCalendar  # noqa: E402
@@ -40,6 +41,16 @@ class AnalysisCandleContractTest(unittest.TestCase):
         self.assertEqual(identity["candleKey"], "2026-07-10T13:35:00.000Z")
         self.assertEqual(identity["timestamp"], "2026-07-10T13:35:00.000Z")
         self.assertEqual(identity["interval"], "5m")
+
+    def test_intraday_bucket_is_complete_only_after_its_interval_end(self):
+        self.assertFalse(is_analysis_candle_bucket_complete(
+            "2026-07-10T13:35:00.000Z", "5m",
+            now=datetime(2026, 7, 10, 13, 39, 59, tzinfo=timezone.utc),
+        ))
+        self.assertTrue(is_analysis_candle_bucket_complete(
+            "2026-07-10T13:35:00.000Z", "5m",
+            now=datetime(2026, 7, 10, 13, 40, 0, tzinfo=timezone.utc),
+        ))
 
     def test_weekly_and_monthly_identity_use_utc_bucket_midnight(self):
         weekly_utc = canonicalize_candle_identity(candle("2026-07-06T00:00:00.000Z"), "1W")
