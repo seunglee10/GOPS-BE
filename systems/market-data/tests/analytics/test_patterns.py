@@ -113,6 +113,28 @@ def test_detects_three_forming_triangle_kinds() -> None:
         assert pattern["containment"] >= 0.85
 
 
+def test_detects_recent_triangle_when_older_pivots_distort_full_window_fit() -> None:
+    rows, pivots = _triangle("ascending_triangle")
+    distractors = (
+        (2, "H", 130.0),
+        (8, "H", 115.0),
+        (14, "H", 125.0),
+        (5, "L", 65.0),
+        (11, "L", 80.0),
+        (17, "L", 70.0),
+    )
+    for index, kind, price in distractors:
+        rows[index]["high" if kind == "H" else "low"] = price
+        pivots.append(_pivot(rows, index, kind, price))
+
+    pattern = _best(rows, pivots)
+
+    assert pattern["kind"] == "ascending_triangle"
+    assert pattern["state"] == "forming"
+    assert pattern["geometry"]["lower"]["start"]["timestamp"] == rows[30]["timestamp"]
+    assert pattern["convergenceRatio"] <= 0.80
+
+
 def test_expected_triangle_breakout_is_confirmed_but_wrong_direction_is_rejected() -> None:
     rows, pivots = _triangle("ascending_triangle", confirmed=True)
     confirmed = _best(rows, pivots)
