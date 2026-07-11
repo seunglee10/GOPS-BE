@@ -5,9 +5,9 @@ from typing import Any
 
 
 STYLE_TOKENS: dict[str, dict[str, Any]] = {
-    "asset-sr-strong": {"color": "#f5f5f5", "colorToken": "asset-sr-strong", "lineWidth": 2, "opacity": 0.95},
-    "asset-sr-medium": {"color": "#f5f5f5", "colorToken": "asset-sr-medium", "lineWidth": 1.5, "opacity": 0.75},
-    "asset-sr-weak": {"color": "#f5f5f5", "colorToken": "asset-sr-weak", "lineWidth": 1, "opacity": 0.55},
+    "asset-sr-strong": {"color": "#ffffff", "colorToken": "asset-sr-strong", "lineWidth": 2, "opacity": 0.95},
+    "asset-sr-medium": {"color": "#ffffff", "colorToken": "asset-sr-medium", "lineWidth": 1.5, "opacity": 0.75},
+    "asset-sr-weak": {"color": "#ffffff", "colorToken": "asset-sr-weak", "lineWidth": 1, "opacity": 0.55},
     "asset-flag": {"color": "#ff7a3d", "colorToken": "asset-flag", "lineWidth": 1, "opacity": 0.95},
     "asset-trend": {"color": "#0099ff", "colorToken": "asset-trend", "lineWidth": 1.5, "opacity": 0.9, "extension": "ray"},
     "asset-range": {"color": "#999999", "colorToken": "asset-range", "lineWidth": 1, "fillColor": "#999999", "fillToken": "asset-range", "fillOpacity": 0.06, "opacity": 0.8},
