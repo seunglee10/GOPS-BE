@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import sys
 from datetime import datetime, time, timedelta, timezone
@@ -24,8 +25,12 @@ from alfaka.backfill.runner import (
     raw_bar_to_processed_candle,
 )
 from alfaka.common.env import load_dotenv, utc_now_iso
-from alfaka.serving.intervals import alpaca_timeframe_for_interval, normalize_chart_interval
-from alfaka.serving.moving_average import attach_moving_averages
+from alfaka.serving.intervals import (
+    INTRADAY_INTERVAL_MINUTES,
+    alpaca_timeframe_for_interval,
+    normalize_chart_interval,
+)
+from alfaka.serving.moving_average import MA_WINDOWS, attach_moving_averages
 from alfaka.storage.candle_validation import invalid_candle_reason
 from alfaka.storage.clickhouse_loader import (
     ClickHouseHttpClient,
@@ -46,6 +51,9 @@ CORE_CLICKHOUSE_COLUMNS = frozenset({
     "low",
     "close",
     "volume",
+    "ma5",
+    "ma20",
+    "ma60",
     "is_closed",
     "source",
     "feed",
@@ -56,6 +64,8 @@ CORE_CLICKHOUSE_COLUMNS = frozenset({
 })
 MARKET_TIMEZONE = ZoneInfo("America/New_York")
 EXTENDED_SESSION_CLOSE = time(20, 0)
+REGULAR_SESSION_MINUTES = 390
+WARMUP_BARS = max(MA_WINDOWS) - 1
 
 
 def parse_intervals(value: str | None) -> tuple[str, ...]:
@@ -127,6 +137,22 @@ def resolve_bootstrap_range(
     return default_bootstrap_range(now, lookback_days=lookback_days)
 
 
+def moving_average_warmup_start(interval: str, target_start: str) -> str:
+    """Return a conservative fetch start that supplies 59 pre-range candles."""
+    interval = normalize_chart_interval(interval)
+    if interval in INTRADAY_INTERVALS:
+        interval_minutes = INTRADAY_INTERVAL_MINUTES[interval]
+        trading_days = math.ceil(WARMUP_BARS * interval_minutes / REGULAR_SESSION_MINUTES)
+        calendar_days = math.ceil(trading_days * 7 / 5) + 14
+    elif interval == "1D":
+        calendar_days = math.ceil(WARMUP_BARS * 7 / 5) + 14
+    elif interval == "1W":
+        calendar_days = WARMUP_BARS * 7 + 21
+    else:
+        calendar_days = WARMUP_BARS * 31 + 62
+    return to_iso(parse_time(target_start) - timedelta(days=calendar_days))
+
+
 def prepare_clickhouse_rows(
     symbol: str,
     interval: str,
@@ -136,6 +162,8 @@ def prepare_clickhouse_rows(
     table_columns: set[str] | frozenset[str],
     received_at: str | None = None,
     allowed_sessions: frozenset[str] = DEFAULT_ALLOWED_SESSIONS,
+    store_start: str | None = None,
+    store_end: str | None = None,
 ) -> list[dict[str, Any]]:
     """Convert Alpaca bars through the existing canonical ClickHouse contract."""
     interval = normalize_chart_interval(interval)
@@ -157,8 +185,16 @@ def prepare_clickhouse_rows(
         if invalid_candle_reason(candle):
             continue
         candles.append(candle)
+    candles.sort(key=lambda candle: parse_time(candle["timestamp"]))
+    store_start_time = parse_time(store_start) if store_start else None
+    store_end_time = parse_time(store_end) if store_end else None
     rows = []
     for candle in attach_moving_averages(candles, overwrite=True):
+        candle_time = parse_time(candle["timestamp"])
+        if store_start_time is not None and candle_time < store_start_time:
+            continue
+        if store_end_time is not None and candle_time >= store_end_time:
+            continue
         source_row = candle_to_clickhouse_row(candle)
         rows.append({key: value for key, value in source_row.items() if key in table_columns})
     return rows
@@ -192,6 +228,9 @@ def load_existing_timestamps(
     FROM (
       SELECT
         event_time,
+        ma5,
+        ma20,
+        ma60,
         row_number() OVER (
           PARTITION BY symbol, if(interval = '1d', '1D', interval), event_time
           ORDER BY inserted_at DESC, ifNull(source_event_id, '') DESC
@@ -205,6 +244,9 @@ def load_existing_timestamps(
         AND price_adjustment = 'split'
     )
     WHERE rn = 1
+      AND ma5 IS NOT NULL
+      AND ma20 IS NOT NULL
+      AND ma60 IS NOT NULL
     ORDER BY event_time ASC
     LIMIT {{limit:UInt32}}
     FORMAT JSONEachRow
@@ -309,9 +351,10 @@ def bootstrap(
                     limit=timestamp_limit,
                 )
                 symbol_feed = historical_feed_for_symbol(symbol, feed)
+                fetch_start = moving_average_warmup_start(interval, start)
                 raw_bars = fetcher(
                     symbol,
-                    start,
+                    fetch_start,
                     end,
                     symbol_feed,
                     alpaca_timeframe_for_interval(interval),
@@ -322,6 +365,8 @@ def bootstrap(
                     raw_bars,
                     feed=symbol_feed,
                     table_columns=table_columns,
+                    store_start=start,
+                    store_end=end,
                 )
                 inserted = insert_missing_rows(
                     client,

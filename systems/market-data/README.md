@@ -195,10 +195,17 @@ PYTHONPATH=systems/market-data/shared .venv/bin/python \
 
 The default range ends at the newest completed 20:00 ET extended session and
 starts 365 calendar days earlier. Existing canonical `v2`/`split` timestamps
-are skipped. Use `--start` and `--end` together for an explicit half-open range,
-and use `--max-symbols` for bounded rollout checks. Alpaca and ClickHouse
-credentials continue to come from the existing environment/Secrets Manager
-contract; never put credentials in command arguments.
+whose `ma5`/`ma20`/`ma60` values are complete are skipped. For each interval,
+the job fetches a conservative 59-candle warm-up before the requested start,
+uses those rows only to calculate moving averages from the first stored candle,
+and inserts only the requested half-open range. Existing rows with an incomplete
+moving average are inserted again so `ReplacingMergeTree` can retain the newer
+complete row. If the symbol itself has less than 60 bars of provider history,
+the unavailable moving average remains null rather than being fabricated. Use
+`--start` and `--end` together for an explicit half-open range, and use
+`--max-symbols` for bounded rollout checks. Alpaca and ClickHouse credentials
+continue to come from the existing environment/Secrets Manager contract; never
+put credentials in command arguments.
 
 ## On-Demand Historical Fill
 
