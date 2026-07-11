@@ -775,7 +775,16 @@ server refresh only asks Yahoo whether newer data is available.
 
 ## Market Calendar
 
-GapFill uses the configured market calendar to avoid false gaps on weekends, holidays, and early closes. Alpaca feed session gating reads `MARKET_CLOSED_DATES` plus the built-in 2026 NYSE/Nasdaq full-day holiday set by default; a full-market holiday reports `closed` instead of `pre`, `regular`, `after`, or `overnight`, so local smoke tests do not wait for live payloads on a known closed session. Set `MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS=false` only for a test that intentionally disables the built-in holiday set. The v1 provider is `configured-nyse`; it is an adapter boundary that can later be replaced by a managed exchange-calendar provider. Sunday `20:00 ET` through Friday `20:00 ET` is treated as the 24/5 equity window, with BOATS active only for the `overnight` slices. Intraday chart serving keeps historical views regular-session-only and allows the currently active `pre`, `after`, or `overnight` session to appear while it is live. Intraday chart renderability treats sparse gaps as blocking only when both candles are inside the regular session; sparse extended-hours 1m bars can still render because Alpaca may only emit bars for minutes with activity.
+GapFill and chart-analysis readiness share one year-aware US equity calendar to avoid false gaps on weekends, regular holidays, exceptional full-day closures, and early closes. `MARKET_CLOSED_DATES` remains an additive emergency override. Set `MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS=false` only for a test that intentionally disables built-in rules. The v1 provider is `configured-nyse`; it is an adapter boundary that can later be replaced by a managed exchange-calendar provider. Sunday `20:00 ET` through Friday `20:00 ET` is treated as the 24/5 equity window, with BOATS active only for the `overnight` slices. Intraday chart serving keeps historical views regular-session-only and allows the currently active `pre`, `after`, or `overnight` session to appear while it is live. Intraday chart renderability treats sparse gaps as blocking only when both candles are inside the regular session; sparse extended-hours 1m bars can still render because Alpaca may only emit bars for minutes with activity.
+
+Chart Asset build repair is trigger-only. Base/local config audits ClickHouse and S3 but keeps Alpaca disabled; the AWS overlay enables Alpaca historical repair. It creates no extra Redis key or durable log.
+
+```text
+CHART_ASSET_REPAIR_ENABLED
+CHART_ASSET_REPAIR_ALPACA_ENABLED
+CHART_ASSET_REPAIR_CONCURRENCY
+CHART_ASSET_REPAIR_MAX_RANGES
+```
 
 ```text
 MARKET_CALENDAR_PROVIDER

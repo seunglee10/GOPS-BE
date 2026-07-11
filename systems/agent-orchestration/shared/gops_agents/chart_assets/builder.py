@@ -14,6 +14,7 @@ from alfaka.analytics.analysis_candles import (
     ADJUSTMENT_POLICY, CANONICAL_DATA_VERSION, CANDLE_CONTRACT_VERSION, SESSION_POLICY,
     analysis_input_digest,
 )
+from alfaka.analytics.analysis_repair import AnalysisCandleRepairService
 
 from .candles import ChartAssetCandleLoader
 from .commentary_v2 import assemble_commentary_v2
@@ -35,9 +36,11 @@ MAX_ASSET_BYTES = 20 * 1024
 
 
 class ChartAssetBuilder:
-    def __init__(self, *, candle_loader=None, storage=None, progress=None, llm_service=None, concurrency=None):
+    def __init__(self, *, candle_loader=None, storage=None, progress=None, llm_service=None, repair_service=None, concurrency=None):
+        supplied_loader = candle_loader is not None
         self.candle_loader = candle_loader or ChartAssetCandleLoader(); self.storage = storage or ChartAssetStorage()
         self.progress = progress or build_progress_store_from_env(); self.llm_service = llm_service if llm_service is not None else ChartAssetLLMService()
+        self.repair_service = repair_service if repair_service is not None else None if supplied_loader else AnalysisCandleRepairService(provider=self.candle_loader.provider)
         self.concurrency = max(1, concurrency or int(os.getenv("CHART_ASSET_BUILD_CONCURRENCY", "4")))
 
     def process_message(self, message):
@@ -86,6 +89,32 @@ class ChartAssetBuilder:
                 self.progress.record_item(envelope.job_id, _item(symbol, interval, "skipped", "fresh", None, 0))
                 self._log_asset_result(envelope.job_id, symbol, interval, "skipped: fresh asset retained", existing[interval])
             return 0, 0, 0
+        repair_reason = None
+        if self.repair_service is not None:
+            self.progress.set_current(envelope.job_id, f"{symbol}:repair")
+            try:
+                repair = self.repair_service.ensure_ready(
+                    symbol,
+                    requested,
+                    request_id=f"{envelope.job_id}-{symbol}",
+                    on_event=lambda stage, payload: self._log_repair_event(envelope.job_id, symbol, stage, payload),
+                    is_cancel_requested=lambda: self.progress.is_cancel_requested(envelope.job_id),
+                )
+                self.progress.record_repair(envelope.job_id, repair.to_dict())
+                repair_reason = repair.reason if repair.unavailable else None
+            except Exception as exc:
+                repair_reason = "candle_repair_incomplete"
+                self.progress.record_repair(envelope.job_id, {
+                    "checked": False, "attempted": True, "repaired": False, "unavailable": True,
+                    "missing_before": 0, "missing_after": 0, "materialized_rows": 0,
+                    "reason": repair_reason,
+                })
+                self.progress.add_log(envelope.job_id, f"{symbol} repair failed: {exc.__class__.__name__}: {exc}")
+            if self.progress.is_cancel_requested(envelope.job_id):
+                for interval in requested:
+                    self.progress.record_item(envelope.job_id, _item(symbol, interval, "skipped", "cancel", None, 0))
+                    self.progress.add_log(envelope.job_id, f"{symbol}:{interval} skipped: cancel requested")
+                return 0, 0, 0
         started = time.monotonic()
         try:
             bundle = self._load_symbol(symbol, requested)
@@ -100,11 +129,13 @@ class ChartAssetBuilder:
             coverage = bundle.coverage[interval]
             if coverage.get("renderable") and len(bundle.rows[interval]) >= 20: eligible.append(interval)
             elif existing[interval]:
-                self.progress.record_item(envelope.job_id, _item(symbol, interval, "skipped", "preflight", None, _elapsed(started), warning="input_insufficient_existing_asset_preserved"))
+                warning = "candle_repair_incomplete_existing_asset_preserved" if repair_reason else "input_insufficient_existing_asset_preserved"
+                self.progress.record_item(envelope.job_id, _item(symbol, interval, "skipped", "preflight", None, _elapsed(started), warning=warning, reason=repair_reason))
                 self.progress.add_log(envelope.job_id, _preflight_log(symbol, interval, coverage, "input insufficient; existing asset preserved"))
             else:
                 asset = self._degraded_data_asset(symbol, interval, bundle.rows[interval], coverage, bundle.digests[interval])
-                self.storage.save(asset); self.progress.record_item(envelope.job_id, _item(symbol, interval, "saved_with_warning", "preflight", None, _elapsed(started), warning="input_insufficient"))
+                warning = repair_reason or "input_insufficient"
+                self.storage.save(asset); self.progress.record_item(envelope.job_id, _item(symbol, interval, "saved_with_warning", "preflight", None, _elapsed(started), warning=warning, reason=repair_reason))
                 self.progress.add_log(envelope.job_id, _preflight_log(symbol, interval, coverage, "input insufficient; degraded asset saved; entities=0"))
         if not eligible: return 0, len(requested), 0
         llm_mode = "curate" if envelope.llm_enabled else "rule_only"
@@ -196,6 +227,27 @@ class ChartAssetBuilder:
         if counts["total"] == 0:
             reasons = _asset_rejection_reasons(asset)
             message += f"; no-candidate reasons={reasons}" if reasons else "; no candidate passed current quality gates"
+        self.progress.add_log(job_id, message)
+
+    def _log_repair_event(self, job_id, symbol, stage, payload):
+        if stage in {"audit", "recheck", "final"}:
+            source = f" source={payload.get('source')}" if payload.get("source") else ""
+            self.progress.add_log(
+                job_id,
+                f"{symbol} repair {stage}:{source} missing={payload.get('missingBars', 0)} "
+                f"actual={payload.get('actualBars', 0)}/{payload.get('expectedBars', 0)} "
+                f"ranges={len(payload.get('ranges') or [])}",
+            )
+            return
+        repair_range = payload.get("range") or {}
+        message = (
+            f"{symbol} repair {stage}: status={payload.get('status')} "
+            f"kind={repair_range.get('kind')} missing={repair_range.get('missingCount')}"
+        )
+        if payload.get("materializedRows") is not None:
+            message += f" materialized={payload.get('materializedRows')}"
+        if payload.get("reason"):
+            message += f" reason={payload.get('reason')}"
         self.progress.add_log(job_id, message)
 
     def _assemble_asset(self,**value):

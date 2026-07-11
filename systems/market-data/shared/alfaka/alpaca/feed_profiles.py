@@ -6,6 +6,7 @@ from datetime import datetime, time, timedelta, timezone as datetime_timezone
 from zoneinfo import ZoneInfo
 
 from alfaka.common.env import parse_csv
+from alfaka.common.trading_calendar import configured_closed_dates as shared_configured_closed_dates
 from alfaka.serving.time_utils import parse_utc_time
 
 
@@ -14,20 +15,7 @@ REGULAR_OPEN = time(9, 30)
 REGULAR_CLOSE = time(16, 0)
 PRE_MARKET_OPEN = time(4, 0)
 AFTER_MARKET_CLOSE = time(20, 0)
-DEFAULT_US_EQUITY_CLOSED_DATES = frozenset({
-    # 2026 NYSE/Nasdaq full-day holidays. Keep MARKET_CLOSED_DATES additive for
-    # emergency closures or future schedule overrides.
-    "2026-01-01",
-    "2026-01-19",
-    "2026-02-16",
-    "2026-04-03",
-    "2026-05-25",
-    "2026-06-19",
-    "2026-07-03",
-    "2026-09-07",
-    "2026-11-26",
-    "2026-12-25",
-})
+DEFAULT_US_EQUITY_CLOSED_DATES = shared_configured_closed_dates(2026, 2026, {})
 
 
 @dataclass(frozen=True)
@@ -132,7 +120,7 @@ def market_session_for_datetime(value: datetime, timezone=MARKET_TIMEZONE, close
     if value.tzinfo is None:
         value = value.replace(tzinfo=datetime_timezone.utc)
     local = value.astimezone(timezone)
-    closed_dates = configured_closed_dates() if closed_dates is None else closed_dates
+    closed_dates = configured_closed_dates(year=local.year) if closed_dates is None else closed_dates
     local_time = local.time()
 
     if PRE_MARKET_OPEN <= local_time < REGULAR_OPEN:
@@ -229,14 +217,11 @@ def previous_contiguous_extended_session_window(session: str, start: datetime, t
     )
 
 
-def configured_closed_dates(environ=None) -> frozenset[str]:
+def configured_closed_dates(environ=None, *, year: int | None = None) -> frozenset[str]:
     """환경변수와 기본 휴장일을 합쳐 주식장 휴장일 집합을 반환합니다."""
     environ = environ or os.environ
-    configured = frozenset(parse_csv(environ.get("MARKET_CLOSED_DATES", "")))
-    include_defaults = str(environ.get("MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS", "true")).strip().lower()
-    if include_defaults in {"0", "false", "no", "off"}:
-        return configured
-    return DEFAULT_US_EQUITY_CLOSED_DATES | configured
+    selected_year = int(year or datetime.now(datetime_timezone.utc).astimezone(MARKET_TIMEZONE).year)
+    return shared_configured_closed_dates(selected_year, selected_year, environ)
 
 
 def next_local_date_is_closed(local: datetime, closed_dates: frozenset[str]) -> bool:

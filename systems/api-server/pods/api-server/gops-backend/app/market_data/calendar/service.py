@@ -9,6 +9,10 @@ from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from alfaka.common.secrets import load_alpaca_credentials
+from alfaka.common.trading_calendar import (
+    configured_closed_dates as shared_configured_closed_dates,
+    us_equity_holidays as shared_us_equity_holidays,
+)
 
 
 DEFAULT_MARKET_TIMEZONE = "America/New_York"
@@ -120,70 +124,11 @@ def is_session_date(value: date, closed_dates: set[str]) -> bool:
 
 
 def configured_closed_dates(start_year: int, end_year: int) -> set[str]:
-    configured = {item for item in parse_csv(os.getenv("MARKET_CLOSED_DATES")) if item}
-    include_defaults = str(os.getenv("MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS", "true")).strip().lower()
-    if include_defaults in {"0", "false", "no", "off"}:
-        return configured
-    holidays: set[str] = set(configured)
-    for year in range(start_year, end_year + 1):
-        holidays.update(us_equity_holidays(year))
-    return holidays
+    return set(shared_configured_closed_dates(start_year, end_year))
 
 
 def us_equity_holidays(year: int) -> set[str]:
-    holidays = {
-        observed_date(date(year, 1, 1)),
-        nth_weekday(year, 1, 0, 3),
-        nth_weekday(year, 2, 0, 3),
-        good_friday(year),
-        last_weekday(year, 5, 0),
-        observed_date(date(year, 6, 19)),
-        observed_date(date(year, 7, 4)),
-        nth_weekday(year, 9, 0, 1),
-        nth_weekday(year, 11, 3, 4),
-        observed_date(date(year, 12, 25)),
-    }
-    return {item.isoformat() for item in holidays}
-
-
-def observed_date(value: date) -> date:
-    if value.weekday() == 5:
-        return value - timedelta(days=1)
-    if value.weekday() == 6:
-        return value + timedelta(days=1)
-    return value
-
-
-def nth_weekday(year: int, month: int, weekday: int, occurrence: int) -> date:
-    cursor = date(year, month, 1)
-    while cursor.weekday() != weekday:
-        cursor += timedelta(days=1)
-    return cursor + timedelta(days=7 * (occurrence - 1))
-
-
-def last_weekday(year: int, month: int, weekday: int) -> date:
-    cursor = date(year, month + 1, 1) - timedelta(days=1) if month < 12 else date(year, 12, 31)
-    while cursor.weekday() != weekday:
-        cursor -= timedelta(days=1)
-    return cursor
-
-
-def good_friday(year: int) -> date:
-    a = year % 19
-    b = year // 100
-    c = year % 100
-    d = b // 4
-    e = b % 4
-    f = (b + 8) // 25
-    g = (b - f + 1) // 3
-    h = (19 * a + b - d - g + 15) % 30
-    i = c // 4
-    k = c % 4
-    l = (32 + 2 * e + 2 * i - h - k) % 7
-    m = (a + 11 * h + 22 * l) // 451
-    month = (h + l - 7 * m + 114) // 31
-    day = ((h + l - 7 * m + 114) % 31) + 1
-    return date(year, month, day) - timedelta(days=2)
+    return {item.isoformat() for item in shared_us_equity_holidays(year)}
 
 
 def parse_datetime(value: Any) -> datetime | None:

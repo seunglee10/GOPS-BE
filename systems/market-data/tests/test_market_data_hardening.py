@@ -6639,6 +6639,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
 
         self.assertEqual(candle["interval"], "1D")
         self.assertEqual(candle["source"], "alpaca.dailyBars")
+        self.assertEqual(candle["marketSession"], "regular")
         self.assertEqual(candle["priceAdjustment"], "split")
         self.assertEqual(row["interval"], "1D")
         self.assertEqual(row["price_adjustment"], "split")

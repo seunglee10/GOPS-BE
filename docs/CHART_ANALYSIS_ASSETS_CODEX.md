@@ -71,6 +71,11 @@ flowchart TD
   Envelope --> Queue["agents.chart-asset-build-requests.v1"]
   Queue --> Builder["ChartAssetBuilder.run"]
   Builder --> Existing["ChartAssetStorage.get_symbol_assets"]
+  Builder --> Repair["AnalysisCandleRepairService.ensure_ready"]
+  Repair --> Audit["exact canonical 1D readiness audit"]
+  Audit --> S3["S3 final materialize"]
+  S3 --> Alpaca["remaining ranges: Alpaca split 1D"]
+  Alpaca --> Audit
   Builder --> Candles["AnalysisCandleSource.load_symbol"]
   Candles --> Normalize["normalize / aggregate / coverage"]
   Builder --> Pack["compute_feature_pack"]
@@ -97,6 +102,7 @@ flowchart TD
 | --- | --- |
 | `analytics/config.py` | interval별 lookback/display/recency 기준과 version |
 | `analytics/analysis_candles.py` | canonical 1D, 완료된 1W/1M 집계, coverage, input digest |
+| `analytics/analysis_repair.py` | 요청 symbol의 exact 1D 감사, bounded S3→Alpaca repair, 재검증 |
 | `analytics/atr.py` | ATR 계열과 percentile |
 | `analytics/pivots.py` | tactical/structural pivot과 prominence |
 | `analytics/levels.py` | bounded cluster, touch episode, reaction, role state, level gate |
@@ -259,6 +265,12 @@ interval이 포함되면 방금 조립한 asset을 하위 interval의 `buildCont
 LLM bundle은 모든 eligible interval을 한 번에 보내므로 symbol당 curator 호출은 최대
 1회다.
 
+freshness skip을 통과한 symbol만 요청 수명 내 repair를 수행한다. 요청 interval의
+lookback을 구성하는 정확한 1D 거래일을 한 번 감사하고, 결측이 없으면 S3/Alpaca를
+호출하지 않는다. 1W/1M은 별도 저장 데이터를 repair하지 않고 canonical 1D에서만
+파생한다. S3와 Alpaca 결과는 기존 materializer를 거쳐 ClickHouse에 들어간 뒤 다시
+조회되며, Redis candle을 builder 입력에 직접 합치지 않는다.
+
 ## 10. 저장·서빙 계약
 
 - ClickHouse table: `market_data.chart_analysis_assets`
@@ -287,6 +299,9 @@ Redis List/Stream, ClickHouse에는 기록하지 않는다. 구독 전에 발생
 interval 로그는 `entities=<total> (S=<n>,T=<n>,I=<n>)`을 포함하고, 0개면 상위 reject
 reason을, warning/failure면 실제 reason과 coverage flag를 포함한다. 최종
 `createdEntities` 정수는 status에 남겨 로그 유실 시에도 전체 생성량은 확인할 수 있다.
+repair 상세 범위와 source 결과도 같은 pub/sub log로만 송출한다. status에는
+`checkedSymbols`, `attemptedSymbols`, `repairedSymbols`, `unavailableSymbols`,
+`missingBarsBefore/After`, `materializedRows` 합계만 남긴다.
 
 DELETE는 인증된 개발 도구이며 최대 100개 symbol과 허용 interval만 받는다. 선택
 pair의 모든 historical row를 `ALTER TABLE ... DELETE ... SETTINGS mutations_sync=1`로
@@ -372,6 +387,7 @@ fixture는 실제 series를 episode별로 복제하지 않고 as-of로 재사용
 
 - 질문창 또는 interactive orchestrator 연결
 - CronJob이나 candle-closed topic 자동 갱신
+- 요청과 무관한 universe-wide candle readiness 순회
 - commentary 실시간 enrichment
 - risk/reward LLM palette
 - touch tooltip/mobile 정밀 UX
