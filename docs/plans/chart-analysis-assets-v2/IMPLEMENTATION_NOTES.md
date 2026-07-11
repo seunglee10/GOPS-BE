@@ -11,3 +11,4 @@
 
 - 묶음 A: Python 3.12.13. `test_analysis_*.py` 8건, market-data 전체 374건(6 skipped), chart-data contract 검사를 통과했다. serving daily live/closed precedence 회귀 1건을 발견해 source class를 명시적으로 분류한 뒤 전체 회귀를 재통과했다.
 - 묶음 B: kernel version을 `kernel-v2`로 올리고 interval 설정을 `analytics/config.py` 한 곳에 모았다. pre-seed ATR, tactical/structural pivot과 prominence, bounded zone/touch episode/state, event episode, 3-touch/current-relevance trend, dual-boundary channel, 독립 range를 구현했다. 기존 “range는 항상 존재” 테스트는 v2 정상 무작도 계약과 충돌해 제거하고, 두 점/현재 무관 추세선 억제 테스트로 교체했다. market-data 375건(6 skipped), agent-orchestration 259건을 통과했다.
+- 묶음 C: v1 intent compiler는 rollout read 호환 테스트를 위해 보존하고, v2 `curation.py` 경계를 추가했다. compact bundle에는 raw candle과 drawing geometry를 보내지 않으며 LLM은 candidate/fact/condition/relation ID만 선택한다. materializer가 kernel template을 복사하고 `commentary_v2.py`가 검증된 clause와 실제 drawing ID로 rich commentary를 조립한다. Responses 요청은 `store:false`, strict schema, output 1,200 token hard cap을 적용한다.
