@@ -5,7 +5,7 @@ import json
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -90,6 +90,22 @@ class CandleBootstrapJobTest(unittest.TestCase):
                 end="2025-07-11T00:00:00Z",
                 lookback_days=365,
             )
+
+    def test_moving_average_warmup_start_extends_every_interval(self):
+        target_start = "2025-07-11T00:00:00.000Z"
+        target_time = MODULE.parse_time(target_start)
+
+        for interval in MODULE.DEFAULT_INTERVALS:
+            with self.subTest(interval=interval):
+                warmup_time = MODULE.parse_time(
+                    MODULE.moving_average_warmup_start(interval, target_start)
+                )
+                self.assertLess(warmup_time, target_time)
+
+        monthly_warmup = MODULE.parse_time(
+            MODULE.moving_average_warmup_start("1M", target_start)
+        )
+        self.assertLessEqual(monthly_warmup, target_time - timedelta(days=59 * 31))
 
     def test_prepare_rows_reuses_canonical_clickhouse_shape(self):
         raw_bars = [{
@@ -246,6 +262,60 @@ class CandleBootstrapJobTest(unittest.TestCase):
         self.assertEqual(summary["insertedRows"], 1)
         self.assertEqual(summary["skippedExistingRows"], 1)
         self.assertEqual(client.inserts[0][1][0]["event_time"], "2026-07-10 13:31:00.000")
+
+    def test_bootstrap_uses_warmup_bars_but_stores_only_target_range(self):
+        table_columns = {
+            "event_time", "symbol", "interval", "open", "high", "low", "close", "volume",
+            "trade_count", "vwap", "ma5", "ma20", "ma60", "is_closed", "correction_type",
+            "source", "feed", "feed_profile", "market_session", "price_adjustment",
+            "canonical_version", "source_event_id", "created_at",
+        }
+        client = BootstrapClickHouseClient(table_columns)
+        first_bar_time = datetime(2026, 7, 10, 13, 30, tzinfo=timezone.utc)
+        target_start_time = first_bar_time + timedelta(minutes=59)
+        target_start = target_start_time.isoformat().replace("+00:00", "Z")
+        target_end = (target_start_time + timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
+        raw_bars = [
+            {
+                "t": (first_bar_time + timedelta(minutes=index)).isoformat().replace("+00:00", "Z"),
+                "o": index + 1,
+                "h": index + 2,
+                "l": index + 0.5,
+                "c": index + 1,
+                "v": 1000,
+            }
+            for index in range(60)
+        ]
+        requested_ranges = []
+
+        def fetch(symbol, start, end, feed, timeframe):
+            requested_ranges.append((start, end))
+            return raw_bars
+
+        summary = MODULE.bootstrap(
+            symbols=("AAPL",),
+            intervals=("1m",),
+            start=target_start,
+            end=target_end,
+            feed="sip",
+            apply=True,
+            insert_batch_size=100,
+            timestamp_limit=500_000,
+            continue_on_error=False,
+            client=client,
+            fetcher=fetch,
+        )
+
+        self.assertLess(MODULE.parse_time(requested_ranges[0][0]), MODULE.parse_time(target_start))
+        self.assertEqual(requested_ranges[0][1], target_end)
+        self.assertEqual(summary["fetchedRows"], 1)
+        self.assertEqual(summary["insertedRows"], 1)
+        inserted_rows = client.inserts[0][1]
+        self.assertEqual(len(inserted_rows), 1)
+        self.assertEqual(inserted_rows[0]["event_time"], "2026-07-10 14:29:00.000")
+        self.assertEqual(inserted_rows[0]["ma5"], 58.0)
+        self.assertEqual(inserted_rows[0]["ma20"], 50.5)
+        self.assertEqual(inserted_rows[0]["ma60"], 30.5)
 
     def test_bootstrap_can_continue_after_one_symbol_fails(self):
         client = BootstrapClickHouseClient(set(MODULE.CORE_CLICKHOUSE_COLUMNS))
