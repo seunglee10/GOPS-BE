@@ -107,7 +107,7 @@ Idempotency-Key
 반환할 수 있다.
 
 인증이 활성화된 환경에서는 analyze와 layout resolve를 session 사용자별 기본
-10회/60초로 제한한다. rate-limit Redis를 확인할 수 없으면 제한을 우회하지 않고
+30회/60초로 제한한다. rate-limit Redis를 확인할 수 없으면 제한을 우회하지 않고
 `503`을 반환하며, 한도를 넘으면 `Retry-After`와 함께 `429`를 반환한다.
 
 `POST /api/agents/layout/resolve`는 UI-only layout command preflight다. 이 route는
