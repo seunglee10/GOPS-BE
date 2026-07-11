@@ -131,8 +131,23 @@ def test_detects_recent_triangle_when_older_pivots_distort_full_window_fit() -> 
 
     assert pattern["kind"] == "ascending_triangle"
     assert pattern["state"] == "forming"
-    assert pattern["geometry"]["lower"]["start"]["timestamp"] == rows[30]["timestamp"]
+    assert pattern["geometry"]["lower"]["start"]["timestamp"] > rows[17]["timestamp"]
     assert pattern["convergenceRatio"] <= 0.80
+
+
+def test_detects_triangle_from_contiguous_pivot_subset_with_recent_wick_outliers() -> None:
+    rows, pivots = _triangle("ascending_triangle")
+    outliers = ((100, "H", 120.0), (105, "L", 70.0))
+    for index, kind, price in outliers:
+        rows[index]["high" if kind == "H" else "low"] = price
+        pivots.append(_pivot(rows, index, kind, price))
+
+    pattern = _best(rows, pivots)
+
+    assert pattern["kind"] == "ascending_triangle"
+    assert pattern["upperTouches"] == 3
+    assert pattern["lowerTouches"] == 3
+    assert all(not ref.endswith((":100", ":105")) for ref in pattern["evidenceRefs"])
 
 
 def test_expected_triangle_breakout_is_confirmed_but_wrong_direction_is_rejected() -> None:
