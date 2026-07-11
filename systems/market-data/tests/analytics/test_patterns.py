@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -11,6 +12,7 @@ if str(MARKET_SHARED) not in sys.path:
     sys.path.insert(0, str(MARKET_SHARED))
 
 from alfaka.analytics.patterns import compute_patterns  # noqa: E402
+from alfaka.analytics import compute_feature_pack  # noqa: E402
 
 
 def _row(index: int, *, high: float, low: float, close: float, volume: float = 1_000) -> dict:
@@ -147,3 +149,24 @@ def test_non_converging_triangle_is_not_emitted() -> None:
     patterns = compute_patterns(rows, pivots, atr=1.0, interval="5m")
 
     assert not any(item["hardPass"] and item["kind"] == "ascending_triangle" for item in patterns)
+
+
+def test_recorded_public_market_episodes_keep_flag_state_and_direction() -> None:
+    fixture_root = ROOT / "systems" / "market-data" / "tests" / "fixtures" / "chart_assets_v2"
+    episodes = (
+        ("nvda-1d.json", 950, "bullish_flag", "confirmed"),
+        ("wmt-1d.json", 490, "bearish_flag", "confirmed"),
+        ("aapl-1d.json", 200, "bullish_flag", "forming"),
+        ("aapl-1d.json", 1440, "bearish_flag", "forming"),
+    )
+    for filename, end, expected_kind, expected_state in episodes:
+        rows = json.loads((fixture_root / filename).read_text(encoding="utf-8"))[:end]
+
+        patterns = compute_feature_pack(rows, "1D")["patterns"]
+        pattern = next(item for item in patterns if item["hardPass"])
+
+        assert (pattern["kind"], pattern["state"]) == (expected_kind, expected_state)
+        candle_times = {row["timestamp"] for row in rows[-500:]}
+        for geometry in pattern["geometry"].values():
+            for point in geometry.values():
+                assert point["timestamp"] in candle_times
