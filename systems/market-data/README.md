@@ -165,6 +165,41 @@ uses the same serving rules as the frontend: realtime derived candles still use
 local `1m`/`1D` aggregation, while historical repair uses Alpaca direct bars for
 the requested interval.
 
+## One-Year Candle Bootstrap
+
+`systems/market-data/jobs/candle-bootstrap/main.py` is an operator-run bootstrap
+for the repository S&P 500 universe. It is dry-run by default and writes only
+when `--apply` is present. Alpaca bars pass through the same processed-candle and
+ClickHouse-row converters as the streaming loader, and the script projects each
+row to the columns that exist on the target `chart_candles` table.
+
+Smoke-test two symbols and the monthly alias without writing:
+
+```bash
+PYTHONPATH=systems/market-data/shared .venv/bin/python \
+  systems/market-data/jobs/candle-bootstrap/main.py \
+  --symbols AAPL,NVDA \
+  --intervals 1m,1D,1mo
+```
+
+Write one year for the full configured universe after the dry-run and storage
+checks succeed:
+
+```bash
+PYTHONPATH=systems/market-data/shared .venv/bin/python \
+  systems/market-data/jobs/candle-bootstrap/main.py \
+  --intervals 1m,5m,10m,1h,4h,1D,1W,1M \
+  --continue-on-error \
+  --apply
+```
+
+The default range ends at the newest completed 20:00 ET extended session and
+starts 365 calendar days earlier. Existing canonical `v2`/`split` timestamps
+are skipped. Use `--start` and `--end` together for an explicit half-open range,
+and use `--max-symbols` for bounded rollout checks. Alpaca and ClickHouse
+credentials continue to come from the existing environment/Secrets Manager
+contract; never put credentials in command arguments.
+
 ## On-Demand Historical Fill
 
 Normal chart expansion is:

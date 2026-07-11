@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
+import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,12 +31,30 @@ class RecordingClickHouseClient:
         self.inserts.append((table, list(rows), deduplication_token))
 
 
+class BootstrapClickHouseClient(RecordingClickHouseClient):
+    def __init__(self, table_columns, existing=None):
+        super().__init__()
+        self.table_columns = set(table_columns)
+        self.existing = set(existing or [])
+
+    def query_json_each_row(self, query, parameters=None):
+        if query.lstrip().startswith("DESCRIBE TABLE"):
+            return [{"name": name} for name in sorted(self.table_columns | {"inserted_at"})]
+        if "AS eventTime" in query:
+            return [{"eventTime": value} for value in sorted(self.existing)]
+        raise AssertionError(f"Unexpected query: {query}")
+
+
 class CandleBootstrapJobTest(unittest.TestCase):
     def test_parse_intervals_normalizes_month_alias_and_deduplicates(self):
         self.assertEqual(
             MODULE.parse_intervals("1m,5m,1mo,1M"),
             ("1m", "5m", "1M"),
         )
+        self.assertEqual(MODULE.parse_intervals(None), MODULE.DEFAULT_INTERVALS)
+
+    def test_explicit_symbols_are_normalized_without_reading_universe(self):
+        self.assertEqual(MODULE.parse_symbols("aapl,NVDA,AAPL"), ("AAPL", "NVDA"))
 
     def test_default_range_uses_last_completed_extended_session(self):
         now = datetime(2026, 7, 11, 3, 0, tzinfo=timezone.utc)
@@ -43,6 +63,33 @@ class CandleBootstrapJobTest(unittest.TestCase):
 
         self.assertEqual(end, "2026-07-11T00:00:00.000Z")
         self.assertEqual(start, "2025-07-11T00:00:00.000Z")
+
+    def test_parse_symbols_reads_repository_shaped_universe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "universe.json"
+            path.write_text(json.dumps({"symbols": ["aapl", "NVDA", "AAPL"]}), encoding="utf-8")
+
+            symbols = MODULE.parse_symbols(None, universe_path=path)
+
+        self.assertEqual(symbols, ("AAPL", "NVDA"))
+
+    def test_resolve_bootstrap_range_validates_explicit_bounds(self):
+        self.assertEqual(
+            MODULE.resolve_bootstrap_range(
+                start="2025-07-11T00:00:00Z",
+                end="2026-07-11T00:00:00Z",
+                lookback_days=365,
+            ),
+            ("2025-07-11T00:00:00.000Z", "2026-07-11T00:00:00.000Z"),
+        )
+        with self.assertRaisesRegex(ValueError, "provided together"):
+            MODULE.resolve_bootstrap_range(start="2025-07-11T00:00:00Z", end=None, lookback_days=365)
+        with self.assertRaisesRegex(ValueError, "earlier"):
+            MODULE.resolve_bootstrap_range(
+                start="2026-07-11T00:00:00Z",
+                end="2025-07-11T00:00:00Z",
+                lookback_days=365,
+            )
 
     def test_prepare_rows_reuses_canonical_clickhouse_shape(self):
         raw_bars = [{
@@ -106,6 +153,24 @@ class CandleBootstrapJobTest(unittest.TestCase):
         self.assertEqual(inserted_rows, [rows[1]])
         self.assertTrue(token.startswith("bootstrap:AAPL:1m:"))
 
+    def test_insert_rows_flushes_multiple_batches(self):
+        client = RecordingClickHouseClient()
+        rows = [
+            {"event_time": f"2026-07-10 13:{minute:02d}:00.000", "symbol": "AAPL", "interval": "1m"}
+            for minute in range(5)
+        ]
+
+        inserted = MODULE.insert_missing_rows(
+            client,
+            rows,
+            existing_timestamps=set(),
+            batch_size=2,
+            token_prefix="bootstrap:AAPL:1m",
+        )
+
+        self.assertEqual(inserted, 5)
+        self.assertEqual([len(item[1]) for item in client.inserts], [2, 2, 1])
+
     def test_monthly_rows_are_marked_as_regular_session(self):
         rows = MODULE.prepare_clickhouse_rows(
             "AAPL",
@@ -118,6 +183,100 @@ class CandleBootstrapJobTest(unittest.TestCase):
 
         self.assertEqual(rows[0]["interval"], "1M")
         self.assertEqual(rows[0]["market_session"], "regular")
+
+    def test_bootstrap_dry_run_does_not_fetch_or_insert(self):
+        table_columns = set(MODULE.CORE_CLICKHOUSE_COLUMNS)
+        client = BootstrapClickHouseClient(table_columns)
+
+        def fail_fetch(*args, **kwargs):
+            raise AssertionError("dry-run must not call Alpaca")
+
+        summary = MODULE.bootstrap(
+            symbols=("AAPL",),
+            intervals=("1M",),
+            start="2025-07-11T00:00:00.000Z",
+            end="2026-07-11T00:00:00.000Z",
+            feed="sip",
+            apply=False,
+            insert_batch_size=100,
+            timestamp_limit=500_000,
+            continue_on_error=False,
+            client=client,
+            fetcher=fail_fetch,
+        )
+
+        self.assertEqual(summary["mode"], "dry-run")
+        self.assertEqual(summary["insertedRows"], 0)
+        self.assertEqual(client.inserts, [])
+
+    def test_bootstrap_apply_inserts_only_missing_canonical_rows(self):
+        table_columns = {
+            "event_time", "symbol", "interval", "open", "high", "low", "close", "volume",
+            "trade_count", "vwap", "ma5", "ma20", "ma60", "is_closed", "correction_type",
+            "source", "feed", "feed_profile", "market_session", "price_adjustment",
+            "canonical_version", "source_event_id", "created_at",
+        }
+        client = BootstrapClickHouseClient(
+            table_columns,
+            existing={"2026-07-10 13:30:00.000"},
+        )
+
+        def fetch(symbol, start, end, feed, timeframe):
+            self.assertEqual((symbol, feed, timeframe), ("AAPL", "sip", "1Min"))
+            return [
+                {"t": "2026-07-10T13:30:00Z", "o": 100, "h": 101, "l": 99, "c": 100.5, "v": 1000},
+                {"t": "2026-07-10T13:31:00Z", "o": 100.5, "h": 102, "l": 100, "c": 101, "v": 2000},
+            ]
+
+        summary = MODULE.bootstrap(
+            symbols=("AAPL",),
+            intervals=("1m",),
+            start="2025-07-11T00:00:00.000Z",
+            end="2026-07-11T00:00:00.000Z",
+            feed="sip",
+            apply=True,
+            insert_batch_size=100,
+            timestamp_limit=500_000,
+            continue_on_error=False,
+            client=client,
+            fetcher=fetch,
+        )
+
+        self.assertEqual(summary["fetchedRows"], 2)
+        self.assertEqual(summary["insertedRows"], 1)
+        self.assertEqual(summary["skippedExistingRows"], 1)
+        self.assertEqual(client.inserts[0][1][0]["event_time"], "2026-07-10 13:31:00.000")
+
+    def test_bootstrap_can_continue_after_one_symbol_fails(self):
+        client = BootstrapClickHouseClient(set(MODULE.CORE_CLICKHOUSE_COLUMNS))
+
+        def fetch(symbol, start, end, feed, timeframe):
+            if symbol == "AAPL":
+                raise RuntimeError("provider unavailable")
+            return []
+
+        summary = MODULE.bootstrap(
+            symbols=("AAPL", "NVDA"),
+            intervals=("1D",),
+            start="2025-07-11T00:00:00.000Z",
+            end="2026-07-11T00:00:00.000Z",
+            feed="sip",
+            apply=True,
+            insert_batch_size=100,
+            timestamp_limit=500_000,
+            continue_on_error=True,
+            client=client,
+            fetcher=fetch,
+        )
+
+        self.assertEqual(len(summary["failures"]), 1)
+        self.assertEqual(summary["failures"][0]["symbol"], "AAPL")
+
+    def test_parser_requires_apply_for_writes(self):
+        parser = MODULE.build_parser()
+
+        self.assertFalse(parser.parse_args([]).apply)
+        self.assertTrue(parser.parse_args(["--apply"]).apply)
 
 
 if __name__ == "__main__":
