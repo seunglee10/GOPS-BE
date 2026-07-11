@@ -53,7 +53,7 @@ def scenario_candles(spec: dict) -> list[dict]:
 
 class FeaturePackGoldenTest(unittest.TestCase):
     def test_kernel_version_is_fixed(self):
-        self.assertEqual(KERNEL_VERSION, "kernel-v3")
+        self.assertEqual(KERNEL_VERSION, "kernel-v4")
 
     def test_golden_trend_scenarios(self):
         for name in ("uptrend", "downtrend", "range"):

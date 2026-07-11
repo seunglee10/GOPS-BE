@@ -10,12 +10,13 @@ from .atr import abnormal_true_range_indices, latest_atr
 from .config import QUALITY_CONFIG
 from .events import compute_events
 from .levels import compute_levels
+from .patterns import compute_patterns
 from .pivots import compute_pivots
 from .trends import compute_regime, compute_trends
 
 
-DISPLAY_BARS = {"1D": 120, "1W": 104, "1M": 36}
-LOOKBACK_BARS = {"1D": 500, "1W": 312, "1M": 72}
+DISPLAY_BARS = {"1m": 120, "5m": 120, "10m": 120, "1h": 120, "4h": 120, "1D": 120, "1W": 104, "1M": 36}
+LOOKBACK_BARS = {"1m": 500, "5m": 500, "10m": 500, "1h": 500, "4h": 500, "1D": 500, "1W": 312, "1M": 72}
 
 
 def normalize_candles(candles: list[dict[str, Any]], interval: str) -> list[dict[str, Any]]:
@@ -129,6 +130,7 @@ def assemble_feature_pack(candles: list[dict[str, Any]], interval: str) -> dict[
     trends = compute_trends(analysis_rows, pivots, display_from=display_from, atr=atr, interval=interval)
     regime = compute_regime(analysis_rows, trends)
     events = compute_events(analysis_rows, levels, atr=atr, display_from=display_from, interval=interval)
+    patterns = compute_patterns(analysis_rows, pivots, atr=atr, interval=interval)
     return {
         "pivots": pivots,
         "levels": levels,
@@ -136,6 +138,7 @@ def assemble_feature_pack(candles: list[dict[str, Any]], interval: str) -> dict[
         "vp": _feature_volume_profile(profile),
         "regime": regime,
         "events": events,
+        "patterns": patterns,
         "fibCandidates": _fib_candidates(pivots, analysis_rows, atr, interval),
         "qualityFlags": quality_flags,
     }
@@ -234,6 +237,7 @@ def _empty_features() -> dict[str, Any]:
             "pctFrom52wHigh": 0.0,
         },
         "events": [],
+        "patterns": [],
         "fibCandidates": [],
         "qualityFlags": [],
     }
