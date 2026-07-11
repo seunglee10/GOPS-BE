@@ -32,16 +32,20 @@ class RecordingClickHouseClient:
 
 
 class BootstrapClickHouseClient(RecordingClickHouseClient):
-    def __init__(self, table_columns, existing=None):
+    def __init__(self, table_columns, existing=None, incomplete_existing=None):
         super().__init__()
         self.table_columns = set(table_columns)
         self.existing = set(existing or [])
+        self.incomplete_existing = set(incomplete_existing or [])
 
     def query_json_each_row(self, query, parameters=None):
         if query.lstrip().startswith("DESCRIBE TABLE"):
             return [{"name": name} for name in sorted(self.table_columns | {"inserted_at"})]
         if "AS eventTime" in query:
-            return [{"eventTime": value} for value in sorted(self.existing)]
+            values = self.existing
+            if all(f"{column} IS NOT NULL" in query for column in ("ma5", "ma20", "ma60")):
+                values = values - self.incomplete_existing
+            return [{"eventTime": value} for value in sorted(values)]
         raise AssertionError(f"Unexpected query: {query}")
 
 
@@ -186,6 +190,24 @@ class CandleBootstrapJobTest(unittest.TestCase):
 
         self.assertEqual(inserted, 5)
         self.assertEqual([len(item[1]) for item in client.inserts], [2, 2, 1])
+
+    def test_existing_rows_with_missing_moving_averages_are_not_skipped(self):
+        timestamp = "2026-07-10 13:30:00.000"
+        client = BootstrapClickHouseClient(
+            set(MODULE.CORE_CLICKHOUSE_COLUMNS),
+            existing={timestamp},
+            incomplete_existing={timestamp},
+        )
+
+        complete_timestamps = MODULE.load_existing_timestamps(
+            client,
+            symbol="AAPL",
+            interval="1m",
+            start="2026-07-10T13:30:00.000Z",
+            end="2026-07-10T13:31:00.000Z",
+        )
+
+        self.assertEqual(complete_timestamps, set())
 
     def test_monthly_rows_are_marked_as_regular_session(self):
         rows = MODULE.prepare_clickhouse_rows(
