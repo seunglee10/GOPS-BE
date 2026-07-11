@@ -30,6 +30,9 @@ class FakeStorage:
     def coverage(self, symbols=None):
         items = [{"symbol": "NVDA", "interval": "1D", "generatedAt": "2026-07-11T00:00:00.000Z", "status": "ready"}]
         return [item for item in items if not symbols or item["symbol"] in symbols]
+    def delete(self, symbols, intervals):
+        self.deleted = (symbols, intervals)
+        return 1
 
 
 class FailingQueue:
@@ -42,6 +45,7 @@ class FailingQueue:
 class FailingStorage:
     def get_symbol_assets(self, _symbol): raise RuntimeError("clickhouse unavailable")
     def coverage(self, _symbols=None): raise RuntimeError("clickhouse unavailable")
+    def delete(self, _symbols, _intervals): raise RuntimeError("clickhouse unavailable")
 
 
 class ChartAssetsRoutesTest(unittest.TestCase):
@@ -75,6 +79,16 @@ class ChartAssetsRoutesTest(unittest.TestCase):
         response = self.client.get("/api/charts/analysis-assets/coverage", params={"symbols": "NVDA,AAPL"})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["total"], 1)
+
+    def test_delete_removes_selected_asset_rows(self):
+        response = self.client.delete("/api/charts/analysis-assets", params={"symbols": "nvda", "intervals": "1D,1W"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"symbols": ["NVDA"], "intervals": ["1D", "1W"], "deleted": 1})
+        self.assertEqual(self.storage.deleted, (["NVDA"], ["1D", "1W"]))
+
+    def test_delete_rejects_invalid_interval(self):
+        response = self.client.delete("/api/charts/analysis-assets", params={"symbols": "NVDA", "intervals": "4H"})
+        self.assertEqual(response.status_code, 400)
 
     def test_build_returns_202_and_poll_cancel_stream_work(self):
         submitted = self.client.post("/api/charts/analysis-assets/build", json={"symbols": ["NVDA"], "intervals": ["1D", "1W", "1M"], "llmEnabled": False, "skipFreshHours": 0})
@@ -132,8 +146,10 @@ class ChartAssetsRoutesTest(unittest.TestCase):
         with patch("app.routes.chart_assets.chart_asset_storage", return_value=FailingStorage()):
             asset = self.client.get("/api/charts/analysis-assets", params={"symbol": "NVDA"})
             coverage = self.client.get("/api/charts/analysis-assets/coverage")
+            deleted = self.client.delete("/api/charts/analysis-assets", params={"symbols": "NVDA"})
         self.assertEqual(asset.status_code, 503)
         self.assertEqual(coverage.status_code, 503)
+        self.assertEqual(deleted.status_code, 503)
 
     def test_enqueue_failure_is_not_reported_as_queued(self):
         queue = FailingQueue()

@@ -310,6 +310,10 @@ Asset v2도 기존 GET/build/poll/SSE route를 사용한다. timed anchor는 cha
 candle timestamp에 정확히 존재해야 하며 프런트는 실패한 anchor를 보간하지 않는다.
 `commentary.focusItems[].drawingIds`는 실제 적용 drawing을 가리키고 선택 시 해당
 drawing을 강조한다. v1은 기존 렌더를 유지하며 v2의 정상 빈 layer는 오류가 아니다.
+빌드 완료와 개발 패널 삭제는 analysis asset cache invalidation event를 발생시키며,
+열려 있는 chart/commentary panel은 같은 symbol을 즉시 다시 조회한다. 운영 현황은
+최종 drawing 수를 표시해 `ready`이지만 정상 무작도인 asset을 구분한다. 행별 `삭제`
+버튼은 확인 후 해당 symbol/interval의 ClickHouse 저장 이력을 실제로 제거한다.
 
 지원하지 않는 경우 정책:
 

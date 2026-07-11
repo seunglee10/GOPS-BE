@@ -34,7 +34,8 @@ flowchart TD
 | `PRODUCT_CONTEXT.md` | Product direction and current/future scope boundary. |
 | `CHART_DATA_ARCHITECTURE.md` | Current chart fact ownership, compute placement, query path, API/WS, order-flow, and S3 contracts. |
 | `CHART_AGENT_STRATEGY.md` | 차트 지능의 투자적 역할, deterministic kernel, rule/LLM 경계, 작도 compiler, 데이터 사전 계산, orchestrator 통합, 단계별 구현 전략. |
-| `plans/chart-analysis-assets-v2/README.md` | Chart Analysis Assets v2의 검토 단계 활성 계획. 작도 품질 계약, 정규 캔들/anchor, 구조·추세·이벤트, 제한된 LLM curator, 해설, 저장·롤아웃 완료 기준. |
+| `CHART_ANALYSIS_ASSETS.md` | 현재 작도 제안 로직, 품질 기준, LLM 경계, 저장·화면 흐름을 Mermaid 중심으로 설명하는 사람용 문서. |
+| `CHART_ANALYSIS_ASSETS_CODEX.md` | 이후 Codex 변경을 위한 불변 조건, 파일 책임, threshold, digest, 검증 절차 기술 기준서. |
 | `CHART_DATA_OPERATIONS.md` | Validation, deployment observation, recovery, retention, Terraform ownership, and rollback runbook. |
 | `STRUCTURE_GUIDE.md` | Folder placement rules for future code. |
 | `ARCHITECTURE.md` | Current system, pod/job, and platform relationships. |

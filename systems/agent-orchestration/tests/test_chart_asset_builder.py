@@ -48,15 +48,18 @@ class FakeStorage:
     def __init__(self, initial=None, cancel_after=None, progress=None, job_id=None):
         self.assets = copy.deepcopy(initial or {})
         self.saved = []
+        self.snapshot_calls = []
         self.cancel_after = cancel_after
         self.progress = progress
         self.job_id = job_id
     def get(self, symbol, interval): return copy.deepcopy(self.assets.get((symbol, interval)))
+    def get_symbol_assets(self, symbol):
+        self.snapshot_calls.append(symbol)
+        return {interval: copy.deepcopy(self.assets.get((symbol, interval))) for interval in ("1D", "1W", "1M")}
     def save(self, asset):
         self.assets[(asset["symbol"], asset["interval"])] = copy.deepcopy(asset)
         self.saved.append(copy.deepcopy(asset))
         if self.cancel_after and len(self.saved) == self.cancel_after: self.progress.request_cancel(self.job_id)
-    def is_fresh(self, symbol, interval, hours): return False
 
 
 class FakeCurator:
@@ -80,6 +83,15 @@ class ChartAssetBuilderTest(unittest.TestCase):
         self.assertEqual(state["progress"], {"total": 6, "done": 6, "failed": 0, "skipped": 0, "warnings": 0, "current": state["progress"]["current"]})
         self.assertEqual(len(storage.saved), 6)
         self.assertEqual(loader.bundle_calls, 2)
+        self.assertCountEqual(storage.snapshot_calls, request.symbols)
+        created_entities = sum(
+            len(layer["drawings"])
+            for asset in storage.saved
+            for layer in asset["layers"].values()
+        )
+        self.assertTrue(any("entities=" in line and "(S=" in line for line in state["logs"]))
+        self.assertIn(f"created_entities={created_entities}", state["logs"][-1])
+        self.assertIn("done=6/6", state["logs"][-1])
         for symbol in request.symbols:
             self.assertEqual([interval for current_symbol, interval in loader.calls if current_symbol == symbol], ["1M", "1W", "1D"])
         one_day = storage.assets[("NVDA", "1D")]
@@ -176,6 +188,7 @@ class ChartAssetBuilderTest(unittest.TestCase):
         self.assertEqual(service.calls, 1, "late intent no-op skips the second curator call")
         self.assertEqual(len(storage.saved), saved_count)
         self.assertEqual({item.get("reason") for item in state["recentItems"]}, {"late_intent_unchanged"})
+        self.assertTrue(any("unchanged after kernel" in line and "entities=" in line for line in state["logs"]))
 
 
 if __name__ == "__main__": unittest.main()

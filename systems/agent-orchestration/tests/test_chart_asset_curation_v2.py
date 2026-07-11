@@ -50,7 +50,15 @@ class ChartAssetCurationV2Test(unittest.TestCase):
             validate_curation_output(output, self.bundle)
         output = valid_output(self.bundle)
         output["intervalSelections"][0]["focusNarratives"][0]["factIds"] = ["1D:fact:invented"]
-        with self.assertRaisesRegex(ValueError, "focus fact"):
+        with self.assertRaisesRegex(ValueError, "focus"):
+            validate_curation_output(output, self.bundle)
+        output = valid_output(self.bundle)
+        output["intervalSelections"][0]["counterEvidenceRefs"] = ["1D:pivot:invented"]
+        with self.assertRaisesRegex(ValueError, "counter evidence"):
+            validate_curation_output(output, self.bundle)
+        output = valid_output(self.bundle)
+        output["intervalSelections"][0]["focusNarratives"][0]["refType"] = "ruleFinding"
+        with self.assertRaisesRegex(ValueError, "focus"):
             validate_curation_output(output, self.bundle)
 
     def test_materialized_geometry_is_kernel_template_and_focus_covers_it(self):
@@ -87,6 +95,20 @@ class ChartAssetCurationV2Test(unittest.TestCase):
         self.assertTrue(result["degraded"])
         self.assertEqual(result["reason"], "missing_openai_api_key")
         self.assertEqual(opener.call_count, 0)
+
+    def test_empty_asset_explains_rejection_without_repeating_headline(self):
+        empty_rules = {
+            "structure": {"drawings": [], "selected": [], "meta": {"rejectedByReason": {"current_distance": 4, "stale": 2}}},
+            "trend": {"drawings": [], "selected": [], "meta": {"rejectedByReason": {}}},
+        }
+        commentary = assemble_commentary_v2(
+            interval="1D", palette=self.palette, rule_layers=empty_rules,
+            agent_layer={"drawings": [], "selected": []}, curation_selection=None,
+        )
+        self.assertEqual(commentary["confidence"], 0)
+        self.assertIn("현재 가격과의 거리", commentary["text"])
+        self.assertIn("임의의 선을 만들지 않았습니다", commentary["text"])
+        self.assertNotIn(commentary["headline"], commentary["text"])
 
 
 def valid_output(bundle):

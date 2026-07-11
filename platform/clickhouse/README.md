@@ -55,6 +55,9 @@ new table, TTL, or candidate ledger. A builder insert is skipped when the final
 `assetContentDigest` is unchanged; raw candles, rejected candidates, prompts,
 and provider responses are never persisted here. Latest reads continue to use
 `argMax(payload, inserted_at)` during mixed v1/v2 rollout.
+The authenticated development route can explicitly delete selected
+`(symbol, interval)` histories with a synchronous mutation. This exists for
+iteration and recovery only; it does not add a TTL or background cleanup.
 
 ## SEC Fundamentals Tables
 

@@ -32,18 +32,27 @@ def assemble_commentary_v2(*, interval: str, palette: dict[str, Any], rule_layer
         if drawing["id"] not in covered:
             confirmation, invalidation = _rule_conditions(drawing)
             focus.append({"drawingIds":[drawing["id"]],"candidateId":None,"featureIds":[],"whatItShows":drawing.get("label") or "검증된 차트 구조입니다.","whyItMatters":"현재 차트에서 우선 확인할 구조입니다.","whatToWatch":f"확인 조건: {confirmation} 무효화 조건: {invalidation}","confirmation":confirmation,"invalidation":invalidation,"horizon":_horizon(interval)})
-    headline = _headline(palette, bool(all_drawings))
+    drawn = bool(all_drawings)
+    headline = _headline(palette, drawn)
     key_levels = _key_levels(rule_layers)
     scores=[float(item.get("quality",{}).get("score") or 0) for layer in (rule_layers.get("structure") or {},rule_layers.get("trend") or {},agent_layer) for item in layer.get("selected",[])]
     coverage_ratio=float((coverage or {}).get("coverageRatio",1)); confidence=min(1,max(0,.65*(statistics.mean(scores) if scores else .6)+.35*coverage_ratio))
-    invalidation=next((item["invalidation"] for item in focus if item.get("invalidation")),"새 구조가 확인되면 현재 해석을 다시 평가하세요.")
-    text=" ".join([headline,*[f"주요 관찰: {item['whatItShows']} {item['whatToWatch']}" for item in focus[:3]],f"무효화 판단: {invalidation}"])
-    return {"headline":headline,"regimeSummary":_regime_summary(palette),"focusItems":focus,"keyLevelsV2":key_levels,"higherTimeframeContext":"상위 주기 구조는 동일 bundle의 검증된 관계만 반영합니다.","counterEvidence":[],"dataCaveats":list((coverage or {}).get("qualityFlags") or []),"confidenceV2":{"selection":{"score":round(confidence,4),"reasons":["verified_geometry","current_relevance"],"penalties":list((coverage or {}).get("qualityFlags") or [])},"marketDirection":{"score":None,"reasons":[],"penalties":[]}},"text":text,"keyLevels":[f"{item['role']} {item['price']:.2f} · {item['reason']}" for item in key_levels],"invalidation":invalidation,"confidence":round(confidence,4),"enrichment":None}
+    if drawn:
+        invalidation=next((item["invalidation"] for item in focus if item.get("invalidation")),"새 구조가 확인되면 현재 해석을 다시 평가하세요.")
+        text=" ".join([*[f"주요 관찰: {item['whatItShows']} {item['whatToWatch']}" for item in focus[:3]],f"무효화 판단: {invalidation}"])
+        confidence_reasons=["verified_geometry","current_relevance"]
+    else:
+        rejection_summary=_rejection_summary(rule_layers)
+        invalidation="새로운 구조가 품질 기준을 통과하면 다시 평가합니다."
+        text=f"후보 검토 결과 {rejection_summary} 품질 기준을 낮춰 임의의 선을 만들지 않았습니다."
+        confidence=0.0
+        confidence_reasons=["no_candidate_passed_current_relevance"]
+    return {"headline":headline,"regimeSummary":_regime_summary(palette),"focusItems":focus,"keyLevelsV2":key_levels,"higherTimeframeContext":"상위 주기 구조는 동일 bundle의 검증된 관계만 반영합니다.","counterEvidence":[],"dataCaveats":list((coverage or {}).get("qualityFlags") or []),"confidenceV2":{"selection":{"score":round(confidence,4),"reasons":confidence_reasons,"penalties":list((coverage or {}).get("qualityFlags") or [])},"marketDirection":{"score":None,"reasons":[],"penalties":[]}},"text":text,"keyLevels":[f"{item['role']} {item['price']:.2f} · {item['reason']}" for item in key_levels],"invalidation":invalidation,"confidence":round(confidence,4),"enrichment":None}
 
 
 def _headline(palette,drawn):
     trend=palette.get("regime",{}).get("trend","range"); label={"up":"상승","down":"하락","range":"횡보"}.get(trend,"혼조")
-    return f"{label} 구조에서 현재와 연결된 핵심 근거를 표시했습니다." if drawn else "현재 품질 기준을 통과한 작도는 표시하지 않았습니다."
+    return f"{label} 구조에서 현재와 연결된 핵심 근거를 표시했습니다." if drawn else "현재와 가까운 검증 구조가 없어 작도를 생략했습니다."
 def _regime_summary(palette): return f"현재 국면은 {palette.get('regime',{}).get('trend','range')}이며 변동성은 {palette.get('regime',{}).get('volatility','normal')}입니다."
 def _rule_what(layer): return "검증된 지지·저항 구조입니다." if layer=="structure" else "세 번 이상 독립 접점이 확인된 추세·범위 구조입니다."
 def _rule_conditions(drawing):
@@ -66,3 +75,23 @@ def _key_levels(rule_layers):
         anchor=(drawing.get("anchors") or [{}])[0]
         if anchor.get("price") is not None:result.append({"drawingId":drawing["id"],"role":"support" if "지지" in str(drawing.get("label")) else "resistance","price":float(anchor["price"]),"reason":drawing.get("label") or "검증된 가격 구조"})
     return result[:3]
+
+
+def _rejection_summary(rule_layers):
+    labels={
+        "current_distance":"현재 가격과의 거리",
+        "stale":"최근성",
+        "break_pending":"돌파 상태 확정",
+        "insufficient_touch_episodes":"독립 접촉 횟수",
+        "insufficient_reaction_episodes":"유효 반응 횟수",
+        "unresolved_role":"지지·저항 역할 확정",
+        "span":"구조 지속 구간",
+        "violation":"구조 이탈 횟수",
+    }
+    counts={}
+    for layer in (rule_layers.get("structure") or {},rule_layers.get("trend") or {}):
+        for reason,count in (layer.get("meta",{}).get("rejectedByReason") or {}).items():
+            counts[reason]=counts.get(reason,0)+int(count or 0)
+    if not counts:return "현재 관련성과 반복 검증 조건을 충족한 후보가 없었습니다."
+    ranked=sorted(counts.items(),key=lambda item:(-item[1],item[0]))[:3]
+    return f"{', '.join(labels.get(reason,reason) for reason,_count in ranked)} 기준을 충족한 후보가 없었습니다."

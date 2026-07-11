@@ -77,7 +77,10 @@ class ChartAssetStorage:
                    argMax(status, inserted_at) AS status,
                    argMax(asset_version, inserted_at) AS assetVersion,
                    length(argMax(payload, inserted_at)) AS payloadBytes,
-                   JSONExtractString(argMax(payload, inserted_at), 'quality', 'state') AS qualityState
+                   JSONExtractString(argMax(payload, inserted_at), 'quality', 'state') AS qualityState,
+                   JSONLength(JSONExtractRaw(argMax(payload, inserted_at), 'layers', 'structure'), 'drawings')
+                     + JSONLength(JSONExtractRaw(argMax(payload, inserted_at), 'layers', 'trend'), 'drawings')
+                     + JSONLength(JSONExtractRaw(argMax(payload, inserted_at), 'layers', 'agent'), 'drawings') AS drawingCount
             FROM market_data.chart_analysis_assets
             {where}
             GROUP BY symbol, interval
@@ -94,22 +97,36 @@ class ChartAssetStorage:
             "assetVersion": str(row.get("assetVersion") or ""),
             "qualityState": str(row.get("qualityState") or "") or None,
             "payloadBytes": int(row.get("payloadBytes") or 0),
+            "drawingCount": int(row.get("drawingCount") or 0),
             "freshness": "unknown",
             "staleByBars": None,
         } for row in rows]
 
-    def is_fresh(self, symbol: str, interval: str, hours: int) -> bool:
-        if hours <= 0:
-            return False
-        asset = self.get(symbol, interval)
-        if not asset:
-            return False
-        try:
-            generated = datetime.fromisoformat(str(asset["generatedAt"]).replace("Z", "+00:00"))
-        except (KeyError, ValueError):
-            return False
-        return (datetime.now(timezone.utc) - generated).total_seconds() < hours * 3600
-
+    def delete(self, symbols: list[str], intervals: list[str]) -> int:
+        normalized_symbols = list(dict.fromkeys(symbol.upper() for symbol in symbols))
+        normalized_intervals = list(dict.fromkeys(intervals))
+        if not normalized_symbols or not normalized_intervals:
+            return 0
+        parameters = {"symbols": normalized_symbols, "intervals": normalized_intervals}
+        rows = self.client.query_json_each_row(
+            """
+            SELECT uniqExact((symbol, interval)) AS assetCount
+            FROM market_data.chart_analysis_assets
+            WHERE symbol IN {symbols:Array(String)} AND interval IN {intervals:Array(String)}
+            FORMAT JSONEachRow
+            """,
+            parameters,
+        )
+        asset_count = int(rows[0].get("assetCount") or 0) if rows else 0
+        self.client.execute(
+            """
+            ALTER TABLE market_data.chart_analysis_assets
+            DELETE WHERE symbol IN {symbols:Array(String)} AND interval IN {intervals:Array(String)}
+            SETTINGS mutations_sync = 1
+            """,
+            parameters,
+        )
+        return asset_count
 
 def _decode_asset(value: Any) -> dict[str, Any] | None:
     if isinstance(value, dict):

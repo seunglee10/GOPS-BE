@@ -140,6 +140,8 @@ API request-derived cache. The independent builder reads canonical ClickHouse
 daily candles once per symbol, derives completed 1D/1W/1M analysis candles with
 the shared identity/aggregation functions, and writes only compact final v2
 assets. Redis is limited to the existing job status key and pub/sub channel.
+The development-only delete route issues a synchronous ClickHouse mutation for
+explicit symbol/interval pairs; it is not a retention policy or automatic cleanup.
 
 ## Retained Compatibility
 

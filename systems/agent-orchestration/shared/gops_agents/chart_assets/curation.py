@@ -116,9 +116,16 @@ def validate_curation_output(value: Any, bundle: dict[str, Any]) -> dict[str, An
         if interval not in palettes or interval in seen_intervals: raise ValueError("invalid interval reference")
         seen_intervals.add(interval); palette = palettes[interval]
         candidates = {item["candidateId"]: item for item in palette["visualCandidates"]}
+        findings = {item["findingId"]: item for item in palette["ruleFindings"]}
         fact_owners = {fact_id: item["candidateId"] for item in palette["visualCandidates"] for fact_id in item.get("factIds", [])}
         fact_owners.update({fact_id: item["findingId"] for item in palette["ruleFindings"] for fact_id in item.get("factIds", [])})
         conditions = {item["confirmationConditionRef"]: item["candidateId"] for item in palette["visualCandidates"]}
+        evidence_refs = {
+            ref
+            for item in (*palette["visualCandidates"], *palette["ruleFindings"])
+            for ref in item.get("evidenceRefs", [])
+        }
+        evidence_refs.update(bundle.get("crossTimeframe", {}).get("evidenceRefs") or [])
         selected = selection["selectedCandidateIds"]
         if len(selected) > 2 or len(selected) != len(set(selected)) or any(item not in candidates for item in selected): raise ValueError("invalid candidate selection")
         total += len(selected)
@@ -127,11 +134,13 @@ def validate_curation_output(value: Any, bundle: dict[str, Any]) -> dict[str, An
         for focus in selection["focusNarratives"]:
             if set(focus) != {"refType","refId","factIds","watchConditionRef","priority"}: raise ValueError("invalid focus narrative")
             owner = focus["refId"]
-            allowed_owner = owner in candidates or any(item["findingId"] == owner for item in palette["ruleFindings"])
+            allowed_owner = owner in candidates if focus["refType"] == "visualCandidate" else owner in findings
             if not allowed_owner or any(fact_owners.get(fact) != owner for fact in focus["factIds"]): raise ValueError("invalid focus fact")
             if focus["refType"] == "visualCandidate" and conditions.get(focus["watchConditionRef"]) != owner: raise ValueError("invalid focus condition")
-        if any(item not in fact_owners for item in selection["headlineFactIds"]): raise ValueError("invalid headline fact")
-        if any(item not in relation_ids for item in selection["higherTimeframeRelationIds"]): raise ValueError("invalid relation")
+            if focus["refType"] == "ruleFinding" and focus["watchConditionRef"]: raise ValueError("rule finding cannot invent condition")
+        if len(selection["headlineFactIds"]) != len(set(selection["headlineFactIds"])) or any(item not in fact_owners for item in selection["headlineFactIds"]): raise ValueError("invalid headline fact")
+        if len(selection["counterEvidenceRefs"]) != len(set(selection["counterEvidenceRefs"])) or any(item not in evidence_refs for item in selection["counterEvidenceRefs"]): raise ValueError("invalid counter evidence")
+        if len(selection["higherTimeframeRelationIds"]) != len(set(selection["higherTimeframeRelationIds"])) or any(item not in relation_ids for item in selection["higherTimeframeRelationIds"]): raise ValueError("invalid relation")
         if selection["emphasisCode"] not in EMPHASIS_CODES: raise ValueError("invalid emphasis")
     if total > 6: raise ValueError("symbol visual budget exceeded")
     return value
@@ -172,8 +181,8 @@ def _candidate(symbol, interval, digest, semantic, evidence, redundancy, score, 
     return {"candidateId":candidate_id,"interval":interval,"semanticType":semantic,"drawingTemplate":template,"evidenceRefs":evidence,"counterEvidenceRefs":[],"redundancyKey":redundancy,"quality":{"hardPass":True,"score":round(float(score),4),"currentDistanceAtr":round(float(distance),4)},"qualityBand":"high" if score>=.8 else "medium","currentRelevance":"near" if distance<=1.5 else "actionable"}
 def _compact_palette(item):
     compact = {key:item[key] for key in ("interval","regime")}
-    compact["ruleFindings"] = [{key:finding[key] for key in ("findingId","factIds")} for finding in item["ruleFindings"][:2]]
-    compact["visualCandidates"] = [{key:candidate[key] for key in ("candidateId","semanticType","factIds","qualityBand","currentRelevance","confirmationConditionRef","invalidationConditionRef")} for candidate in item["visualCandidates"]]
+    compact["ruleFindings"] = [{key:finding[key] for key in ("findingId","factIds","evidenceRefs")} for finding in item["ruleFindings"][:2]]
+    compact["visualCandidates"] = [{key:candidate[key] for key in ("candidateId","semanticType","factIds","evidenceRefs","qualityBand","currentRelevance","confirmationConditionRef","invalidationConditionRef")} for candidate in item["visualCandidates"]]
     return compact
 def _compact_regime(regime): return {"trend":regime.get("trend","range"),"volatility":"high" if float(regime.get("atrPercentile") or 0)>.8 else "low" if float(regime.get("atrPercentile") or 0)<.2 else "normal","momentum":"slowing" if regime.get("macdState")=="diverging" else "stable"}
 def _dedupe_candidates(items):

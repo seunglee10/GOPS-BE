@@ -21,7 +21,7 @@ for path in (ROOT / "systems/market-data/shared", ROOT / "systems/order/shared",
 from alfaka.analytics import DISPLAY_BARS, compute_feature_pack  # noqa: E402
 from alfaka.analytics.analysis_candles import aggregate_analysis_candles, analysis_input_digest  # noqa: E402
 from gops_agents.chart_assets.commentary_v2 import assemble_commentary_v2  # noqa: E402
-from gops_agents.chart_assets.compilers import compile_rule_layers, compile_rule_layers_v2  # noqa: E402
+from gops_agents.chart_assets.compilers import compile_rule_layers  # noqa: E402
 from gops_agents.chart_assets.curation import build_interval_palette, build_symbol_bundle, materialize_curation  # noqa: E402
 from gops_agents.chart_assets.llm import ChartAssetLLMService  # noqa: E402
 
@@ -55,17 +55,16 @@ def main() -> int:
     for episode in episodes:
         raw = json.loads((manifest_path.parent / episode["series"]).read_text(encoding="utf-8"))
         raw = [row for row in raw if row["timestamp"] <= episode["asOf"]]
-        palettes={}; rules_by_interval={}; rows_by_interval={}; v1_by_interval={}; episode_started=time.perf_counter()
+        palettes={}; rules_by_interval={}; rows_by_interval={}; episode_started=time.perf_counter()
         for interval in intervals:
             interval_started=time.perf_counter()
             rows=aggregate_analysis_candles(raw,interval,now=_after_asof(episode["asOf"]))
             if len(rows)<20: continue
             features=compute_feature_pack(rows,interval); generated="2026-07-11T00:00:00.000Z"
-            rules=compile_rule_layers_v2(symbol=episode["symbol"],interval=interval,features=features,candles=rows,generated_at=generated)
-            v1_rules=compile_rule_layers(symbol=episode["symbol"],interval=interval,features=features,candles=rows,generated_at=generated)
+            rules=compile_rule_layers(symbol=episode["symbol"],interval=interval,features=features,candles=rows,generated_at=generated)
             digest=analysis_input_digest(episode["symbol"],interval,rows)
             palette=build_interval_palette(symbol=episode["symbol"],interval=interval,input_digest=digest,features=features,rule_layers=rules,candles=rows,generated_at=generated)
-            palettes[interval]=palette; rules_by_interval[interval]=rules; rows_by_interval[interval]=rows; v1_by_interval[interval]=v1_rules
+            palettes[interval]=palette; rules_by_interval[interval]=rules; rows_by_interval[interval]=rows
             invariant_failures.extend(check_rule_invariants(episode["episodeId"],rows,rules,features))
             interval_latencies.append((time.perf_counter()-interval_started)*1000)
         bundle=build_symbol_bundle(episode["symbol"],list(palettes.values()))
@@ -83,7 +82,7 @@ def main() -> int:
                 invariant_failures.extend(check_focus_invariant(episode["episodeId"],rules_by_interval[interval],layers[interval],commentary))
         for interval,rules in rules_by_interval.items():
             commentary=assemble_commentary_v2(interval=interval,palette=palettes[interval],rule_layers=rules,agent_layer=_empty_agent_layer(),curation_selection=None)
-            card,reviews=build_review_card(episode,interval,rows_by_interval[interval],v1_by_interval[interval],rules,commentary)
+            card,reviews=build_review_card(episode,interval,rows_by_interval[interval],rules,commentary)
             review_index.append(card); drawing_reviews.extend(reviews)
         elapsed=(time.perf_counter()-episode_started)*1000; latencies.append(elapsed)
         per_interval={interval:sum(len(layer["drawings"]) for layer in rules_by_interval[interval].values()) for interval in rules_by_interval}
@@ -91,7 +90,7 @@ def main() -> int:
     drawing_counts=[count for item in results for count in item["drawingCounts"].values()]
     quality=quality_summary(drawing_reviews,results)
     benchmark=benchmark_kernels(manifest_path,manifest,intervals) if args.mode=="rules" and not args.stratified_limit else None
-    report={"mode":args.mode,"fixtureVersion":manifest.get("fixtureVersion"),"episodeCount":len(results),"llmCalls":calls,"invariantFailures":invariant_failures,"stabilityFailures":stability_failures,"environment":{"python":platform.python_version(),"machine":platform.machine(),"processor":platform.processor() or "unknown","singleProcess":True,"singleThreadBenchmark":True},"metrics":{"kernelP50Ms":round(statistics.median(interval_latencies),3) if interval_latencies else None,"kernelP95Ms":round(percentile(interval_latencies,.95),3) if interval_latencies else None,"symbolBundleP95Ms":round(percentile(latencies,.95),3) if latencies else None,"drawingMedian":statistics.median(drawing_counts) if drawing_counts else None,"drawingP95":percentile(drawing_counts,.95) if drawing_counts else None},"benchmark":benchmark,"quality":{"label":"automated reviewer estimate","humanGate":"pending",**quality},"reviewIndex":{"blinding":"variant order is deterministic and asset-version names are withheld from cards","reviewers":["evidence-gate-v1","recency-conservative-v1"],"cards":review_index},"results":results}
+    report={"mode":args.mode,"fixtureVersion":manifest.get("fixtureVersion"),"episodeCount":len(results),"llmCalls":calls,"invariantFailures":invariant_failures,"stabilityFailures":stability_failures,"environment":{"python":platform.python_version(),"machine":platform.machine(),"processor":platform.processor() or "unknown","singleProcess":True,"singleThreadBenchmark":True},"metrics":{"kernelP50Ms":round(statistics.median(interval_latencies),3) if interval_latencies else None,"kernelP95Ms":round(percentile(interval_latencies,.95),3) if interval_latencies else None,"symbolBundleP95Ms":round(percentile(latencies,.95),3) if latencies else None,"drawingMedian":statistics.median(drawing_counts) if drawing_counts else None,"drawingP95":percentile(drawing_counts,.95) if drawing_counts else None},"benchmark":benchmark,"quality":{"label":"automated reviewer estimate","humanGate":"pending",**quality},"reviewIndex":{"blinding":"implementation version is omitted from review cards","reviewers":["evidence-gate-v1","recency-conservative-v1"],"cards":review_index},"results":results}
     Path(args.output).write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding="utf-8")
     print(json.dumps({key:report[key] for key in ("mode","episodeCount","llmCalls","metrics")},ensure_ascii=False))
     if invariant_failures:
@@ -127,20 +126,19 @@ def _empty_agent_layer():
     return {"drawings": [], "selected": [], "emptyReason": "rules_evaluation", "meta": {}}
 
 
-def build_review_card(episode, interval, rows, v1_rules, v2_rules, commentary):
+def build_review_card(episode, interval, rows, rules, commentary):
     display_from = rows[-min(DISPLAY_BARS[interval], len(rows))]["timestamp"]
     focus = {drawing_id: item for item in commentary["focusItems"] for drawing_id in item["drawingIds"]}
     selected = {
         drawing_id: item
-        for layer in v2_rules.values()
+        for layer in rules.values()
         for item in layer.get("selected", [])
         for drawing_id in item.get("drawingIds", [])
     }
-    v2_drawings = [drawing for layer in v2_rules.values() for drawing in layer["drawings"]]
-    v1_drawings = [drawing for layer in v1_rules.values() for drawing in layer["drawings"]]
+    drawings = [drawing for layer in rules.values() for drawing in layer["drawings"]]
     reviews = []
     scored = []
-    for drawing in v2_drawings:
+    for drawing in drawings:
         evidence = selected.get(drawing["id"], {})
         scores = automated_scores(drawing, evidence, focus.get(drawing["id"]), rows)
         offscreen = any(anchor.get("timestamp", display_from) < display_from for anchor in drawing.get("anchors", []))
@@ -156,17 +154,11 @@ def build_review_card(episode, interval, rows, v1_rules, v2_rules, commentary):
             "scores": scores,
         }
         reviews.append(record); scored.append(record)
-    variant_a_is_v2 = int(hashlib.sha256(f"{episode['episodeId']}|{interval}".encode()).hexdigest(), 16) % 2 == 0
-    variants = [
-        _review_variant("A", v2_drawings if variant_a_is_v2 else v1_drawings, scored if variant_a_is_v2 else []),
-        _review_variant("B", v1_drawings if variant_a_is_v2 else v2_drawings, [] if variant_a_is_v2 else scored),
-    ]
     return ({
         "reviewId": "review-" + hashlib.sha256(f"{episode['episodeId']}|{interval}".encode()).hexdigest()[:12],
         "episodeId": episode["episodeId"], "symbol": episode["symbol"], "interval": interval,
         "asOf": episode["asOf"], "expectation": episode["expectation"], "displayFrom": display_from,
-        "variants": variants,
-        "answerKeyDigest": "sha256:" + hashlib.sha256(("A=v2" if variant_a_is_v2 else "B=v2").encode()).hexdigest(),
+        "variants": [_review_variant("candidate", drawings, scored)],
         "focusItems": commentary["focusItems"],
     }, reviews)
 
@@ -265,20 +257,14 @@ def benchmark_kernels(manifest_path, manifest, intervals):
     interval = "1D" if "1D" in intervals else intervals[-1]
     rows = aggregate_analysis_candles(raw, interval, now=_after_asof(raw[-1]["timestamp"]))
     generated = "2026-07-11T00:00:00.000Z"
-    def run(version):
+    def run():
         features=compute_feature_pack(rows,interval)
-        compiler=compile_rule_layers if version=="v1" else compile_rule_layers_v2
-        compiler(symbol=series["symbol"],interval=interval,features=features,candles=rows,generated_at=generated)
-    for _ in range(5): run("v1"); run("v2")
-    measured={}
-    for version in ("v1","v2"):
-        values=[]
-        for _ in range(30):
-            started=time.perf_counter();run(version);values.append((time.perf_counter()-started)*1000)
-        measured[version]={"p50Ms":round(statistics.median(values),3),"p95Ms":round(percentile(values,.95),3),"runs":30}
-    measured["relativeP95"]=round(measured["v2"]["p95Ms"]/max(measured["v1"]["p95Ms"],1e-9),4)
-    measured["baselineScope"]="retained v1 compiler on the shared current feature pack; historical pre-v2 feature implementation is not retained"
-    return measured
+        compile_rule_layers(symbol=series["symbol"],interval=interval,features=features,candles=rows,generated_at=generated)
+    for _ in range(5): run()
+    values=[]
+    for _ in range(30):
+        started=time.perf_counter();run();values.append((time.perf_counter()-started)*1000)
+    return {"current":{"p50Ms":round(statistics.median(values),3),"p95Ms":round(percentile(values,.95),3),"runs":30},"baselineScope":"canonical current compiler; compare reports across commits instead of retaining a runtime legacy compiler"}
 
 
 def run_integration(args):

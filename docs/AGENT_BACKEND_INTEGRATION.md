@@ -372,6 +372,25 @@ systems/api-server/tests/test_agent_routes.py
 새 백엔드는 구현을 바꿔도 되지만 route name, idempotency, async status,
 polling/SSE semantics는 보존해야 한다.
 
+## Chart Analysis Asset Routes
+
+Chart analysis asset은 interactive agent report와 별도인 수동 build projection이다.
+
+```text
+GET    /api/charts/analysis-assets
+DELETE /api/charts/analysis-assets?symbols=NVDA&intervals=1D
+GET    /api/charts/analysis-assets/coverage
+POST   /api/charts/analysis-assets/build
+GET    /api/charts/analysis-assets/build/{job_id}
+GET    /api/charts/analysis-assets/build/{job_id}/stream
+POST   /api/charts/analysis-assets/build/{job_id}/cancel
+```
+
+DELETE는 개발 패널의 명시적 정리 기능이다. 최대 100개 symbol과 1D/1W/1M만 받고,
+선택된 pair의 전체 ClickHouse history를 `mutations_sync=1`로 삭제한다. 자동 보존 정책,
+TTL 또는 broad cleanup으로 재사용하지 않는다. build 완료·삭제 후 프런트는 cache를
+무효화하고 열린 chart/commentary panel을 재조회한다.
+
 ## Failure Policy
 
 - Kafka enqueue 실패는 `202 queued`로 가장하면 안 된다.

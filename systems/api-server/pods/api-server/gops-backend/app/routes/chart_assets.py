@@ -61,6 +61,23 @@ def chart_analysis_asset_coverage(symbols: str | None = Query(default=None, max_
     return {"items": items, "total": len(items)}
 
 
+@router.delete("/api/charts/analysis-assets")
+def delete_chart_analysis_assets(
+    symbols: str = Query(min_length=1, max_length=4096),
+    intervals: str = Query(default="1D,1W,1M", min_length=2, max_length=32),
+    _user: AuthenticatedUser = Depends(require_current_user),
+) -> dict[str, Any]:
+    selected_symbols = _parse_symbol_csv(symbols)
+    selected_intervals = _parse_intervals_csv(intervals)
+    if len(selected_symbols) > 100:
+        raise HTTPException(status_code=400, detail="At most 100 symbols can be deleted at once.")
+    try:
+        deleted = chart_asset_storage().delete(selected_symbols, selected_intervals)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Chart analysis assets could not be deleted.") from exc
+    return {"symbols": selected_symbols, "intervals": selected_intervals, "deleted": deleted}
+
+
 @router.post("/api/charts/analysis-assets/build", status_code=202)
 def build_chart_analysis_assets(
     request: ChartAssetBuildRequest,
@@ -172,6 +189,13 @@ def _requested_symbols(value: list[str] | str) -> list[str]:
 def _parse_symbol_csv(value: str) -> list[str]:
     raw = [item for item in re.split(r"[\s,]+", value) if item]
     return list(dict.fromkeys(normalize_market_symbol(item) for item in raw))
+
+
+def _parse_intervals_csv(value: str) -> list[str]:
+    intervals = list(dict.fromkeys(item for item in re.split(r"[\s,]+", value) if item))
+    if not intervals or set(intervals).difference(ALLOWED_INTERVALS):
+        raise HTTPException(status_code=400, detail="intervals must contain only 1D, 1W, and 1M")
+    return intervals
 
 
 def _json_object(value: Any) -> dict[str, Any]:
