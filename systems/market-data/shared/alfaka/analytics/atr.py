@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import statistics
 from typing import Any
 
 
@@ -26,6 +27,8 @@ def atr_series(candles: list[dict[str, Any]], period: int = 14) -> list[float | 
     if not ranges:
         return result
     seed_length = min(period, len(ranges))
+    for index in range(seed_length - 1):
+        result[index] = statistics.median(ranges[:index + 1])
     seed = sum(ranges[:seed_length]) / seed_length
     result[seed_length - 1] = seed
     previous = seed
@@ -33,6 +36,16 @@ def atr_series(candles: list[dict[str, Any]], period: int = 14) -> list[float | 
         previous = ((previous * (period - 1)) + ranges[index]) / period
         result[index] = previous
     return result
+
+
+def atr_quality_flags(candles: list[dict[str, Any]], period: int = 14) -> list[str]:
+    ranges = true_ranges(candles)
+    values = atr_series(candles, period)
+    for index in range(1, len(ranges)):
+        previous = values[index - 1]
+        if previous and previous > 0 and ranges[index] > 12 * previous:
+            return ["abnormal_true_range"]
+    return []
 
 
 def latest_atr(candles: list[dict[str, Any]], period: int = 14) -> float:

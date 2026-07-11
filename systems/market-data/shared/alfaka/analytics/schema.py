@@ -5,7 +5,7 @@ from typing import Any
 from alfaka.serving.time_utils import canonical_utc_timestamp
 from alfaka.serving.volume_profile import VOLUME_PROFILE_CALCULATION_VERSION, compute_volume_profile_payload
 
-from .atr import latest_atr
+from .atr import atr_quality_flags, latest_atr
 from .events import compute_events
 from .levels import compute_levels
 from .pivots import compute_pivots
@@ -67,15 +67,16 @@ def assemble_feature_pack(candles: list[dict[str, Any]], interval: str) -> dict[
         to_time=display[-1]["timestamp"],
         target_bins=24,
     )
-    pivots = compute_pivots(rows, display_from=display_from)
+    pivots = compute_pivots(rows, display_from=display_from, interval=interval)
     levels = compute_levels(
         rows,
         pivots,
         atr=atr,
         volume_profile=profile,
         expected_bars=LOOKBACK_BARS[interval],
+        interval=interval,
     )
-    trends = compute_trends(rows, pivots, display_from=display_from, atr=atr)
+    trends = compute_trends(rows, pivots, display_from=display_from, atr=atr, interval=interval)
     regime = compute_regime(rows, trends)
     events = compute_events(rows, levels, atr=atr, display_from=display_from, interval=interval)
     return {
@@ -86,6 +87,7 @@ def assemble_feature_pack(candles: list[dict[str, Any]], interval: str) -> dict[
         "regime": regime,
         "events": events,
         "fibCandidates": _fib_candidates(pivots, rows[-1]["close"], atr),
+        "qualityFlags": atr_quality_flags(rows),
     }
 
 
@@ -143,4 +145,5 @@ def _empty_features() -> dict[str, Any]:
         },
         "events": [],
         "fibCandidates": [],
+        "qualityFlags": [],
     }

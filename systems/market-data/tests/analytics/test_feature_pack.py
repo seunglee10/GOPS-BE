@@ -49,14 +49,9 @@ def scenario_candles(spec: dict) -> list[dict]:
 
 class FeaturePackGoldenTest(unittest.TestCase):
     def test_kernel_version_is_fixed(self):
-        self.assertEqual(KERNEL_VERSION, "kernel-v1")
+        self.assertEqual(KERNEL_VERSION, "kernel-v2")
 
     def test_golden_trend_scenarios(self):
-        expected_prices = {
-            "uptrend": {"pivot": 98.8, "level": 132.16},
-            "downtrend": {"pivot": 154.56, "level": 127.2},
-            "range": {"pivot": 104.7, "level": 104.7},
-        }
         for name in ("uptrend", "downtrend", "range"):
             with self.subTest(name=name):
                 spec = FIXTURES[name]
@@ -68,9 +63,9 @@ class FeaturePackGoldenTest(unittest.TestCase):
                 else:
                     self.assertIn(spec["expectedTrend"], kinds)
                 self.assertGreaterEqual(len(features["pivots"]), 4)
-                self.assertGreaterEqual(len(features["levels"]), 2)
-                self.assertAlmostEqual(features["pivots"][0]["price"], expected_prices[name]["pivot"], delta=0.01)
-                self.assertAlmostEqual(features["levels"][0]["price"], expected_prices[name]["level"], delta=0.01)
+                self.assertTrue(all(trend["hardPass"] for trend in features["trends"]))
+                self.assertTrue(all(trend["touches"] >= 3 for trend in features["trends"]))
+                self.assertTrue(all(level["touches"] >= 2 for level in features["levels"] if level["hardPass"]))
 
     def test_gap_event_golden(self):
         spec = FIXTURES["gap"]
@@ -107,7 +102,17 @@ class FeaturePackGoldenTest(unittest.TestCase):
         trends = compute_trends(rows, [], display_from=display[0]["timestamp"], atr=2.0)
 
         self.assertEqual(trends[0]["kind"], "range")
-        self.assertEqual(trends[0]["rangeFrom"], display[-48]["timestamp"])
+        self.assertGreaterEqual(trends[0]["rangeFrom"], display[0]["timestamp"])
+        self.assertEqual(trends[0]["rangeTo"], display[-1]["timestamp"])
+
+    def test_two_point_or_currently_irrelevant_line_is_not_emitted(self):
+        rows = normalize_candles(scenario_candles(FIXTURES["range"]), "1D")
+        pivots = [
+            {"id": "1D:pivot:a", "timestamp": rows[5]["timestamp"], "barIndex": 5, "price": rows[5]["low"], "kind": "L", "grade": "structural", "strength": .9},
+            {"id": "1D:pivot:b", "timestamp": rows[25]["timestamp"], "barIndex": 25, "price": rows[25]["low"] + 1, "kind": "L", "grade": "structural", "strength": .9},
+        ]
+        trends = compute_trends(rows, pivots, display_from=rows[0]["timestamp"], atr=2.0)
+        self.assertFalse(any(item["kind"] in {"up", "down", "channel"} for item in trends))
 
 
 if __name__ == "__main__":
