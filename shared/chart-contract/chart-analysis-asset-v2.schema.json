@@ -7,7 +7,7 @@
   "required": ["assetVersion", "kernelVersion", "qualityPolicyVersion", "promptVersion", "modelPolicyVersion", "symbol", "interval", "asOf", "generatedAt", "status", "window", "coverage", "input", "build", "quality", "features", "layers", "chartSetup", "commentary", "buildContext"],
   "properties": {
     "assetVersion": {"const": "v2"},
-    "kernelVersion": {"enum": ["kernel-v2", "kernel-v3", "kernel-v4"]},
+    "kernelVersion": {"enum": ["kernel-v2", "kernel-v3", "kernel-v4", "kernel-v5"]},
     "qualityPolicyVersion": {"enum": ["chart-quality-v1", "chart-quality-v2", "chart-quality-v4"]},
     "promptVersion": {"type": ["string", "null"]},
     "modelPolicyVersion": {"const": "chart-asset-model-v1"},

@@ -10,6 +10,9 @@ from .config import QUALITY_CONFIG
 
 TRIANGLE_KINDS = {"ascending_triangle", "descending_triangle", "symmetrical_triangle"}
 FLAG_KINDS = {"bullish_flag", "bearish_flag"}
+TRIANGLE_SEARCH_SPANS = (20, 40, 60, 90, 120)
+TRIANGLE_MAX_PIVOTS_PER_SIDE = 6
+TRIANGLE_RETAINED_PER_STATE = 8
 
 
 def compute_patterns(
@@ -43,19 +46,72 @@ def compute_patterns(
 
 
 def _triangle_candidates(candles, pivots, *, atr, interval):
-    limit_from = max(0, len(candles) - 120)
+    candidates = [
+        candidate
+        for highs, lows, search_span in _triangle_pivot_groups(pivots, len(candles))
+        if (candidate := _triangle_candidate(
+            candles,
+            highs,
+            lows,
+            atr=atr,
+            interval=interval,
+            search_span=search_span,
+        )) is not None
+    ]
+    return _retain_triangle_candidates(candidates)
+
+
+def _triangle_pivot_groups(pivots, candle_count):
+    end_index = candle_count - 1
+    limit_from = max(0, end_index - max(TRIANGLE_SEARCH_SPANS))
     usable = sorted(
         (
             item for item in pivots
             if item.get("kind") in {"H", "L"}
-            and limit_from <= int(item.get("barIndex", -1)) < len(candles)
+            and limit_from <= int(item.get("barIndex", -1)) < candle_count
         ),
         key=lambda item: (int(item["barIndex"]), str(item.get("kind")), str(item.get("id"))),
     )
-    highs = [item for item in usable if item["kind"] == "H"][-6:]
-    lows = [item for item in usable if item["kind"] == "L"][-6:]
-    if len(highs) < 2 or len(lows) < 2 or len(highs) + len(lows) < 5:
+    groups = {}
+    for search_span in TRIANGLE_SEARCH_SPANS:
+        window_from = max(limit_from, end_index - search_span)
+        window = [item for item in usable if int(item["barIndex"]) >= window_from]
+        highs = [item for item in window if item["kind"] == "H"][-TRIANGLE_MAX_PIVOTS_PER_SIDE:]
+        lows = [item for item in window if item["kind"] == "L"][-TRIANGLE_MAX_PIVOTS_PER_SIDE:]
+        for high_subset in _recent_contiguous_subsets(highs):
+            for low_subset in _recent_contiguous_subsets(lows):
+                if len(high_subset) + len(low_subset) < 5:
+                    continue
+                start_index = min(int(item["barIndex"]) for item in (*high_subset, *low_subset))
+                if end_index - start_index < 20:
+                    continue
+                key = (
+                    tuple(_pivot_identity(item) for item in high_subset),
+                    tuple(_pivot_identity(item) for item in low_subset),
+                )
+                previous = groups.get(key)
+                if previous is None or search_span < previous[2]:
+                    groups[key] = (high_subset, low_subset, search_span)
+    return [groups[key] for key in sorted(groups)]
+
+
+def _recent_contiguous_subsets(points):
+    bounded = list(points)[-TRIANGLE_MAX_PIVOTS_PER_SIDE:]
+    if len(bounded) < 2:
         return []
+    # A still-forming pattern may have one newly confirmed wick pivot outside
+    # its fitted boundary. Evaluate the full recent sequence and, when possible,
+    # one variant without that newest pivot. Do not cherry-pick shorter lengths.
+    return [bounded, bounded[:-1]] if len(bounded) >= 3 else [bounded]
+
+
+def _pivot_identity(item):
+    return (int(item["barIndex"]), str(item.get("id")), float(item["price"]))
+
+
+def _triangle_candidate(candles, highs, lows, *, atr, interval, search_span):
+    if len(highs) < 2 or len(lows) < 2 or len(highs) + len(lows) < 5:
+        return None
 
     upper_slope, upper_intercept = _fit_points(highs)
     lower_slope, lower_intercept = _fit_points(lows)
@@ -63,12 +119,12 @@ def _triangle_candidates(candles, pivots, *, atr, interval):
     lower_slope_atr = lower_slope / atr
     kind = _triangle_kind(upper_slope_atr, lower_slope_atr)
     if kind is None:
-        return []
+        return None
 
     start_index = min(int(item["barIndex"]) for item in (*highs, *lows))
     end_index = len(candles) - 1
     if end_index - start_index < 20:
-        return []
+        return None
     upper_start = _line(upper_slope, upper_intercept, start_index)
     lower_start = _line(lower_slope, lower_intercept, start_index)
     upper_end = _line(upper_slope, upper_intercept, end_index)
@@ -132,8 +188,9 @@ def _triangle_candidates(candles, pivots, *, atr, interval):
         "upper": _boundary(candles, start_index, end_index, upper_slope, upper_intercept),
         "lower": _boundary(candles, start_index, end_index, lower_slope, lower_intercept),
     }
-    raw = f"{interval}|{kind}|{start_index}|{end_index}|{geometry['upper']}|{geometry['lower']}"
-    return [{
+    evidence_refs = [str(item.get("id")) for item in (*highs, *lows)]
+    raw = f"{interval}|{kind}|{start_index}|{end_index}|{evidence_refs}|{geometry['upper']}|{geometry['lower']}"
+    return {
         "id": f"{interval}:pattern:{hashlib.sha256(raw.encode()).hexdigest()[:10]}",
         "kind": kind,
         "state": state,
@@ -149,10 +206,21 @@ def _triangle_candidates(candles, pivots, *, atr, interval):
         "convergenceRatio": round(convergence, 4),
         "maxResidualAtr": round(max(contact_residuals, default=0.0), 4),
         "spanBars": end_index - start_index,
+        "searchWindowBars": search_span,
         "geometry": geometry,
-        "evidenceRefs": [str(item.get("id")) for item in (*highs, *lows)],
+        "evidenceRefs": evidence_refs,
         "rejectReasons": reasons,
-    }]
+    }
+
+
+def _retain_triangle_candidates(candidates):
+    ranked = lambda items: sorted(items, key=lambda item: (-float(item["score"]), item["id"]))
+    passed = ranked(item for item in candidates if item["hardPass"])
+    rejected = ranked(item for item in candidates if not item["hardPass"])
+    return [
+        *passed[:TRIANGLE_RETAINED_PER_STATE],
+        *rejected[:TRIANGLE_RETAINED_PER_STATE],
+    ]
 
 
 def _flag_candidates(candles, pivots, *, atr, interval):

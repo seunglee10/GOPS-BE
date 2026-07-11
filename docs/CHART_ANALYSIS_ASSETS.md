@@ -113,7 +113,7 @@ flowchart TD
 | 채널 | confirmed 기준선 + 반대 경계 접점 2회, 평행 오차 20% 이하, containment 80% | 기반 추세의 현재 관련성 통과 | 추세 예산과 공유 |
 | 박스권 | 상·하단 각 2회, 합산 5회, 최근 양 경계와 교대 반응, containment 85% | 현재가가 박스에서 0.75 ATR 이내 | 추세 예산과 공유 |
 | 이벤트 | breakout/retest/gap/52주 extreme 등의 상태와 impact 검증 | interval별 age와 current impact 통과 | Flag 최대 1개 |
-| 삼각형 | 상·하단 각 2회, 합산 5회, 수렴·containment·ATR residual 검증 | 형성 중 또는 예상 방향 돌파 확인 | 경계선 2개 |
+| 삼각형 | 최근 20·40·60·90·120봉의 연속 피벗 부분집합에서 상·하단 각 2회, 합산 5회, 수렴·containment·ATR residual 검증 | 형성 중 또는 예상 방향 돌파 확인 | 경계선 2개 |
 | 깃발 | 4 ATR 이상 깃대, 평행 채널 각 2회, 10~50% 되돌림 | 형성 중 또는 깃대 방향 돌파 확인 | 깃대 + 채널 |
 
 ATR은 종목 가격대와 변동성 차이를 정규화한다. 단순히 오래된 두 점을 연결하거나

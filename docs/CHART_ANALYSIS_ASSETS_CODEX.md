@@ -197,6 +197,8 @@ directional efficiency rejection enabled
 ```text
 triangle: upper/lower contacts >= 2, total >= 5, residual <= 0.35 ATR
 triangle: containment >= 0.85, current/start width ratio 0.20..0.80
+triangle search: current-relative 20/40/60/90/120-bar spans
+triangle subsets: per-side latest 6 pivots, full contiguous sequence plus at most newest pivot omitted
 flag pole: 3..20 bars, move >= 4 ATR, efficiency >= 0.70
 flag channel: 5..30 bars, boundary contacts >= 2, containment >= 0.80
 flag retracement: 0.10..0.50 of pole, parallel slope error <= 0.05 ATR/bar
@@ -269,7 +271,7 @@ intervalSelections[]
 
 ```text
 assetVersion            v2
-kernelVersion           kernel-v4
+kernelVersion           kernel-v5
 qualityPolicyVersion    chart-quality-v4
 promptVersion           prompt-v2
 modelPolicyVersion      chart-asset-model-v1
