@@ -30,7 +30,7 @@ from .storage import build_chart_asset_storage_from_env
 
 
 ASSET_VERSION = "v2"
-ASSEMBLER_VERSION = "chart-asset-assembler-v3"
+ASSEMBLER_VERSION = "chart-asset-assembler-v4"
 AGENT_PRESERVATION_POLICY = "preserve_valid_same_input"
 MAX_ASSET_BYTES = 20 * 1024
 
@@ -208,7 +208,7 @@ class ChartAssetBuilder:
             intent_digest=intent_digests[interval]
             higher = _higher_summaries(context_assets, [interval])
             asset=self._assemble_asset(symbol=symbol,interval=interval,rows=bundle.rows[interval],coverage=bundle.coverage[interval],input_digest=bundle.digests[interval],features=features_by_interval[interval],rules=rules_by_interval[interval],agent=agent_layers[interval],palette=palettes[interval],selection=selections.get(interval),generated_at=generated_at,rule_digest=rule_digests[interval],context_digest=context_digest,intent_digest=intent_digest,pre_kernel_digest=pre_kernel_digest,llm_mode=llm_mode,outcome=outcome,curation=curation,higher=higher)
-            required_higher = {"1W": {"1M"}, "1D": {"1M", "1W"}}.get(interval, set())
+            required_higher = set(BUILD_INTERVAL_ORDER[:BUILD_INTERVAL_ORDER.index(interval)])
             asset["buildContext"] = {"higherTf": higher or None, "flags": ["no_higher_tf_context"] if not required_higher.issubset(higher) else []}
             content_digest=_asset_content_digest(asset); asset["build"]["assetContentDigest"]=content_digest
             encoded=json.dumps(asset,ensure_ascii=False,sort_keys=True,separators=(",",":"))
@@ -314,7 +314,7 @@ class ChartAssetBuilder:
     def _degraded_data_asset(self,symbol,interval,rows,coverage,input_digest):
         generated=utc_now_iso(); placeholder=rows[-1]["timestamp"] if rows else generated; window_rows=rows[-DISPLAY_BARS[interval]:]
         empty=_empty_agent_layer("data_insufficient")
-        asset={"assetVersion":ASSET_VERSION,"kernelVersion":KERNEL_VERSION,"qualityPolicyVersion":QUALITY_POLICY_VERSION,"promptVersion":PROMPT_VERSION_V2,"modelPolicyVersion":MODEL_POLICY_VERSION,"symbol":symbol,"interval":interval,"asOf":placeholder,"generatedAt":generated,"status":"degraded","window":{"displayFrom":window_rows[0]["timestamp"] if window_rows else placeholder,"displayTo":placeholder,"displayBars":DISPLAY_BARS[interval],"lookbackBars":LOOKBACK_BARS[interval]},"coverage":coverage,"input":{"digest":input_digest,"canonicalDataVersion":CANONICAL_DATA_VERSION,"sessionPolicy":SESSION_POLICY,"adjustmentPolicy":ADJUSTMENT_POLICY,"candleContractVersion":CANDLE_CONTRACT_VERSION},"build":{"ruleDigest":_digest({}),"contextDigest":_digest({}),"buildIntentDigest":_digest({"data":"insufficient"}),"assetContentDigest":"sha256:"+"0"*64,"llmMode":"rule_only","agentPreservationPolicy":AGENT_PRESERVATION_POLICY,"agentOutcome":"not_requested_empty"},"quality":{"state":"stale_input" if "stale_input" in coverage.get("qualityFlags",[]) else "insufficient_data","score":0,"reasons":["data_degraded"],"penalties":coverage.get("qualityFlags",[])},"features":{"pivots":[],"levels":[],"trends":[],"events":[],"fibCandidates":[],"vp":{},"regime":{}},"layers":{"structure":_empty_rule_layer("data_insufficient"),"trend":_empty_rule_layer("data_insufficient"),"agent":empty},"chartSetup":{"alwaysOn":["volume-profile","volume"],"recommended":[]},"commentary":{"headline":"분석 데이터가 충분하지 않습니다.","regimeSummary":"","focusItems":[],"keyLevelsV2":[],"higherTimeframeContext":"","counterEvidence":[],"dataCaveats":coverage.get("qualityFlags",[]),"confidenceV2":{"selection":{"score":0,"reasons":["data_degraded"],"penalties":coverage.get("qualityFlags",[])},"marketDirection":{"score":None,"reasons":[],"penalties":[]}},"text":"분석 데이터 갱신 후 다시 확인하세요.","keyLevels":[],"invalidation":"데이터 갱신이 필요합니다.","confidence":0,"enrichment":None,"emptyState":"data_degraded","emptyReason":"data_insufficient"},"buildContext":{"higherTf":None,"flags":["data_insufficient"]}}
+        asset={"assetVersion":ASSET_VERSION,"kernelVersion":KERNEL_VERSION,"qualityPolicyVersion":QUALITY_POLICY_VERSION,"promptVersion":PROMPT_VERSION_V2,"modelPolicyVersion":MODEL_POLICY_VERSION,"symbol":symbol,"interval":interval,"asOf":placeholder,"generatedAt":generated,"status":"degraded","window":{"displayFrom":window_rows[0]["timestamp"] if window_rows else placeholder,"displayTo":placeholder,"displayBars":DISPLAY_BARS[interval],"lookbackBars":LOOKBACK_BARS[interval]},"coverage":coverage,"input":{"digest":input_digest,"canonicalDataVersion":CANONICAL_DATA_VERSION,"sessionPolicy":SESSION_POLICY,"adjustmentPolicy":ADJUSTMENT_POLICY,"candleContractVersion":CANDLE_CONTRACT_VERSION},"build":{"ruleDigest":_digest({}),"contextDigest":_digest({}),"buildIntentDigest":_digest({"data":"insufficient"}),"assetContentDigest":"sha256:"+"0"*64,"assemblerVersion":ASSEMBLER_VERSION,"llmMode":"rule_only","agentPreservationPolicy":AGENT_PRESERVATION_POLICY,"agentOutcome":"not_requested_empty"},"quality":{"state":"stale_input" if "stale_input" in coverage.get("qualityFlags",[]) else "insufficient_data","score":0,"reasons":["data_degraded"],"penalties":coverage.get("qualityFlags",[])},"features":{"pivots":[],"levels":[],"trends":[],"patterns":[],"events":[],"fibCandidates":[],"vp":{},"regime":{}},"layers":{"structure":_empty_rule_layer("data_insufficient"),"trend":_empty_rule_layer("data_insufficient"),"agent":empty},"chartSetup":{"alwaysOn":["volume-profile","volume"],"recommended":[]},"commentary":{"headline":"분석 데이터가 충분하지 않습니다.","regimeSummary":"","focusItems":[],"keyLevelsV2":[],"higherTimeframeContext":"","counterEvidence":[],"dataCaveats":coverage.get("qualityFlags",[]),"confidenceV2":{"selection":{"score":0,"reasons":["data_degraded"],"penalties":coverage.get("qualityFlags",[])},"marketDirection":{"score":None,"reasons":[],"penalties":[]}},"text":"분석 데이터 갱신 후 다시 확인하세요.","keyLevels":[],"invalidation":"데이터 갱신이 필요합니다.","confidence":0,"enrichment":None,"emptyState":"data_degraded","emptyReason":"data_insufficient"},"buildContext":{"higherTf":None,"flags":["data_insufficient"]}}
         asset["build"]["assetContentDigest"]=_asset_content_digest(asset); return asset
 
 def _fast_noop(asset,input_digest,llm_mode,requested_model,pre_kernel_digest):
@@ -352,7 +352,8 @@ def _compact_features(features,rules,agent):
         projected["state"]=(item.get("detail") or {}).get("state")
         events.append(projected)
     vp=features.get("vp") or {}
-    return {"pivots":pivots,"levels":levels,"trends":trends,"events":events[:4],"fibCandidates":[],"vp":_project(vp,("poc","valueArea")),"regime":_project(features.get("regime") or {},("trend","emaSlope20","atr14","atrPercentile","bbSqueeze","bbBandwidthPercentile","macdState","rsi14","volumeZLast","pctFrom52wHigh")),"qualityFlags":features.get("qualityFlags",[])}
+    patterns=[_project(item,("id","kind","state","breakoutDirection","score","touches","containment","convergenceRatio","poleAtr","retracementRatio","spanBars")) for item in features.get("patterns",[]) if item.get("id") in candidate_ids][:1]
+    return {"pivots":pivots,"levels":levels,"trends":trends,"patterns":patterns,"events":events[:4],"fibCandidates":[],"vp":_project(vp,("poc","valueArea")),"regime":_project(features.get("regime") or {},("trend","emaSlope20","atr14","atrPercentile","bbSqueeze","bbBandwidthPercentile","macdState","rsi14","volumeZLast","pctFrom52wHigh")),"qualityFlags":features.get("qualityFlags",[])}
 def _project(value,keys):return {key:value[key] for key in keys if key in value and value[key] is not None}
 def _cross_timeframe(palettes):
     trends={interval:item.get("regime",{}).get("trend") for interval,item in palettes.items()}; values=set(trends.values()); alignment="aligned" if len(values)==1 else "mixed"
@@ -385,10 +386,10 @@ def _higher_summaries(assets, intervals):
     result = {}
     needed = set()
     requested = set(intervals)
-    if "1D" in requested:
-        needed.update({"1M", "1W"}.difference(requested))
-    if "1W" in requested:
-        needed.update({"1M"}.difference(requested))
+    for interval in requested:
+        if interval not in BUILD_INTERVAL_ORDER:
+            continue
+        needed.update(set(BUILD_INTERVAL_ORDER[:BUILD_INTERVAL_ORDER.index(interval)]).difference(requested))
     for source in needed:
         asset = assets.get(source)
         if asset and asset.get("assetVersion") == "v2" and asset.get("quality", {}).get("state") == "eligible":
