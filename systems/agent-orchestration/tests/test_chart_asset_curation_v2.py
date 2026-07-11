@@ -177,6 +177,22 @@ class ChartAssetCurationV2Test(unittest.TestCase):
         )
         self.assertIn("retracement", {item["semanticType"] for item in strong["visualCandidates"]})
 
+    def test_legacy_gap_event_is_not_exposed_to_curation(self):
+        current = features()
+        current["events"] = [{
+            "id": "1D:event:legacy-gap", "timestamp": candles()[-1]["timestamp"],
+            "candleKey": "2026-07-10", "price": 160, "kind": "gap", "refIds": [],
+            "detail": {"direction": "up", "state": "unfilled"},
+            "hardPass": True, "currentImpact": "high",
+        }]
+
+        palette = build_interval_palette(
+            symbol="NVDA", interval="1D", input_digest="sha256:" + "c"*64,
+            features=current, rule_layers=rule_layers(), candles=candles(), generated_at=NOW,
+        )
+
+        self.assertEqual(palette["visualCandidates"], [])
+
 
 def valid_output(bundle):
     palette = bundle["intervals"][0]

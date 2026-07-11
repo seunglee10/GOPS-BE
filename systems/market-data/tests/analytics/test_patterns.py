@@ -150,6 +150,22 @@ def test_detects_triangle_from_contiguous_pivot_subset_with_recent_wick_outliers
     assert all(not ref.endswith((":100", ":105")) for ref in pattern["evidenceRefs"])
 
 
+def test_accepts_slightly_slower_triangle_convergence() -> None:
+    rows, pivots = _triangle("ascending_triangle")
+    for index, row in enumerate(rows):
+        lower = 90.0 + 0.017 * (index - 20)
+        row["low"] = lower
+        row["close"] = (row["high"] + lower) / 2
+    for pivot in pivots:
+        if pivot["kind"] == "L":
+            pivot["price"] = rows[pivot["barIndex"]]["low"]
+
+    pattern = _best(rows, pivots)
+
+    assert pattern["kind"] == "ascending_triangle"
+    assert 0.80 < pattern["convergenceRatio"] <= 0.85
+
+
 def test_expected_triangle_breakout_is_confirmed_but_wrong_direction_is_rejected() -> None:
     rows, pivots = _triangle("ascending_triangle", confirmed=True)
     confirmed = _best(rows, pivots)

@@ -154,6 +154,26 @@ class ChartAssetCompilerTest(unittest.TestCase):
         flag = next(item for item in structure["drawings"] if item["type"] == "flagMarker")
         self.assertEqual(flag["label"], "지지 이탈")
 
+    def test_legacy_gap_event_is_not_compiled(self):
+        features = feature_pack()
+        features.update({
+            "levels": [],
+            "trends": [],
+            "events": [{
+                "id": "legacy-gap", "timestamp": candles()[-1]["timestamp"], "kind": "gap",
+                "price": 120, "refIds": [], "detail": {"direction": "up", "state": "unfilled"},
+                "hardPass": True, "currentImpact": "high", "ageBars": 0,
+            }],
+        })
+
+        structure = compile_rule_layers(
+            symbol="NVDA", interval="1D", features=features,
+            candles=candles(), generated_at=GENERATED_AT,
+        )["structure"]
+
+        self.assertEqual(structure["drawings"], [])
+        self.assertEqual(structure["meta"]["passedCount"], 0)
+
     def test_indicator_rules_are_bounded(self):
         recommendations = recommended_indicators(feature_pack())
         self.assertEqual([item["layer"] for item in recommendations], ["bollinger:20:2", "macd:12:26:9"])

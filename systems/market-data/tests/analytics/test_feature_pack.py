@@ -73,10 +73,10 @@ class FeaturePackGoldenTest(unittest.TestCase):
                 self.assertTrue(all(level["touches"] >= 3 for level in features["levels"] if level["hardPass"]))
                 self.assertTrue(all(sum(episode["outcome"] == "reaction" for episode in level["touchEpisodes"]) >= 2 for level in features["levels"] if level["hardPass"]))
 
-    def test_gap_event_golden(self):
+    def test_gap_events_are_not_emitted(self):
         spec = FIXTURES["gap"]
         features = compute_feature_pack(scenario_candles(spec), "1D")
-        self.assertIn(spec["expectedEvent"], {event["kind"] for event in features["events"]})
+        self.assertNotIn("gap", {event["kind"] for event in features["events"]})
 
     def test_short_and_missing_history_are_deterministic(self):
         for name in ("short_history", "missing_bars"):
