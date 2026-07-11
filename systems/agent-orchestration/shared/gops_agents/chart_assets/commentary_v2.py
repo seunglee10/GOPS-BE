@@ -16,7 +16,7 @@ def assemble_commentary_v2(*, interval: str, palette: dict[str, Any], rule_layer
             if not item.get("drawingIds"): continue
             drawing = next((candidate for candidate in all_drawings if candidate["id"] in item["drawingIds"]), None)
             confirmation, invalidation = _rule_conditions(drawing)
-            focus.append({"drawingIds":item["drawingIds"],"candidateId":item.get("candidateId"),"featureIds":item.get("evidenceRefs") or [],"whatItShows":_rule_what(layer_name),"whyItMatters":"현재 가격과 연결된 검증 근거만 표시했습니다.","whatToWatch":f"확인 조건: {confirmation} 무효화 조건: {invalidation}","confirmation":confirmation,"invalidation":invalidation,"horizon":_horizon(interval)})
+            focus.append({"drawingIds":item["drawingIds"],"candidateId":item.get("candidateId"),"featureIds":item.get("evidenceRefs") or [],"whatItShows":_rule_what(layer_name,drawing),"whyItMatters":_why_it_matters(drawing),"whatToWatch":f"확인 조건: {confirmation} 무효화 조건: {invalidation}","confirmation":confirmation,"invalidation":invalidation,"horizon":_horizon(interval)})
     selection = curation_selection or {}
     for narrative in sorted(selection.get("focusNarratives") or [], key=lambda item:item.get("priority",9)):
         candidate_id=narrative.get("refId"); selected=selected_agent.get(candidate_id); candidate=candidates.get(candidate_id)
@@ -44,17 +44,33 @@ def assemble_commentary_v2(*, interval: str, palette: dict[str, Any], rule_layer
     else:
         rejection_summary=_rejection_summary(rule_layers)
         invalidation="새로운 구조가 품질 기준을 통과하면 다시 평가합니다."
-        text=f"후보 검토 결과 {rejection_summary} 품질 기준을 낮춰 임의의 선을 만들지 않았습니다."
+        empty_state, empty_reason = _empty_state(rule_layers, coverage)
+        headline = _empty_headline(empty_state, empty_reason)
+        text = _empty_text(empty_state, empty_reason, rejection_summary)
         confidence=0.0
-        confidence_reasons=["no_candidate_passed_current_relevance"]
-    return {"headline":headline,"regimeSummary":_regime_summary(palette),"focusItems":focus,"keyLevelsV2":key_levels,"higherTimeframeContext":"상위 주기 구조는 동일 bundle의 검증된 관계만 반영합니다.","counterEvidence":[],"dataCaveats":list((coverage or {}).get("qualityFlags") or []),"confidenceV2":{"selection":{"score":round(confidence,4),"reasons":confidence_reasons,"penalties":list((coverage or {}).get("qualityFlags") or [])},"marketDirection":{"score":None,"reasons":[],"penalties":[]}},"text":text,"keyLevels":[f"{item['role']} {item['price']:.2f} · {item['reason']}" for item in key_levels],"invalidation":invalidation,"confidence":round(confidence,4),"enrichment":None}
+        confidence_reasons=[empty_state,empty_reason]
+    return {"headline":headline,"regimeSummary":_regime_summary(palette),"focusItems":focus,"keyLevelsV2":key_levels,"higherTimeframeContext":"상위 주기 구조는 동일 bundle의 검증된 관계만 반영합니다.","counterEvidence":[],"dataCaveats":list((coverage or {}).get("qualityFlags") or []),"confidenceV2":{"selection":{"score":round(confidence,4),"reasons":confidence_reasons,"penalties":list((coverage or {}).get("qualityFlags") or [])},"marketDirection":{"score":None,"reasons":[],"penalties":[]}},"text":text,"keyLevels":[f"{item['role']} {item['price']:.2f} · {item['reason']}" for item in key_levels],"invalidation":invalidation,"confidence":round(confidence,4),"enrichment":None,"emptyState":None if drawn else empty_state,"emptyReason":None if drawn else empty_reason}
 
 
 def _headline(palette,drawn):
     trend=palette.get("regime",{}).get("trend","range"); label={"up":"상승","down":"하락","range":"횡보"}.get(trend,"혼조")
     return f"{label} 구조에서 현재와 연결된 핵심 근거를 표시했습니다." if drawn else "현재와 가까운 검증 구조가 없어 작도를 생략했습니다."
 def _regime_summary(palette): return f"현재 국면은 {palette.get('regime',{}).get('trend','range')}이며 변동성은 {palette.get('regime',{}).get('volatility','normal')}입니다."
-def _rule_what(layer): return "검증된 지지·저항 구조입니다." if layer=="structure" else "세 번 이상 독립 접점이 확인된 추세·범위 구조입니다."
+def _rule_what(layer,drawing):
+    drawing=drawing or {}; kind=drawing.get("type"); label=drawing.get("label") or "구조"
+    if kind=="horizontalLine":return f"{label}로 확인된 활성 가격 구조입니다."
+    if kind=="flagMarker":return f"{label} 사건이 발생한 실제 봉입니다."
+    if kind=="trendLine":return f"{label}선은 독립 접점과 반응이 반복 확인된 경계입니다."
+    if kind=="trendParallelLines":return f"{label}은 평행 경계와 내부 가격 수용이 함께 검증된 구조입니다."
+    if kind=="rangeBox":return f"{label}은 양 경계의 반복 반응과 교대가 검증된 구간입니다."
+    return "검증된 지지·저항 구조입니다." if layer=="structure" else "세 번 이상 독립 접점이 확인된 추세·범위 구조입니다."
+def _why_it_matters(drawing):
+    kind=(drawing or {}).get("type")
+    if kind=="horizontalLine":return "현재 가격이 반응하거나 역할이 전환될 가능성을 판단할 기준입니다."
+    if kind=="flagMarker":return "돌파의 유지·실패를 평가할 출발점이므로 후속 확정봉을 함께 봐야 합니다."
+    if kind in {"trendLine","trendParallelLines"}:return "현재 추세가 유지되는지와 구조적 무효화 시점을 한눈에 확인할 수 있습니다."
+    if kind=="rangeBox":return "범위 안 순환과 확정 이탈을 구분해 추격 판단을 줄이는 기준입니다."
+    return "현재 가격과 연결된 검증 근거만 표시했습니다."
 def _rule_conditions(drawing):
     drawing = drawing or {}; kind = drawing.get("type"); label = str(drawing.get("label") or "구조")
     if kind == "horizontalLine":
@@ -87,6 +103,12 @@ def _rejection_summary(rule_layers):
         "unresolved_role":"지지·저항 역할 확정",
         "span":"구조 지속 구간",
         "violation":"구조 이탈 횟수",
+        "no_current_relevance":"현재 가격과의 거리",
+        "active_invalidation":"최근 구조 무효화",
+        "adverse_close_ratio":"경계 반대편 종가 비율",
+        "breakout_unconfirmed":"돌파 후속 확인",
+        "high_residual":"접점 오차",
+        "low_containment":"구조 내부 수용률",
     }
     counts={}
     for layer in (rule_layers.get("structure") or {},rule_layers.get("trend") or {}):
@@ -95,3 +117,29 @@ def _rejection_summary(rule_layers):
     if not counts:return "현재 관련성과 반복 검증 조건을 충족한 후보가 없었습니다."
     ranked=sorted(counts.items(),key=lambda item:(-item[1],item[0]))[:3]
     return f"{', '.join(labels.get(reason,reason) for reason,_count in ranked)} 기준을 충족한 후보가 없었습니다."
+
+
+def _empty_state(rule_layers,coverage):
+    flags=set((coverage or {}).get("qualityFlags") or [])
+    reasons=[(rule_layers.get(name) or {}).get("emptyReason") for name in ("structure","trend")]
+    if "data_quality_blocked" in flags or "data_quality_blocked" in reasons or (coverage is not None and not coverage.get("renderable",True)):
+        return "data_degraded","data_quality_blocked"
+    if "active_invalidation" in reasons:
+        return "quality_empty","active_invalidation"
+    if "not_currently_actionable" in reasons:
+        return "quality_empty","not_currently_actionable"
+    return "quality_empty","no_structural_evidence"
+
+
+def _empty_headline(state,reason):
+    if state=="data_degraded":return "분석 데이터 품질이 충분하지 않아 작도를 보류했습니다."
+    if reason=="active_invalidation":return "확인됐던 구조가 최근 무효화되어 작도를 생략했습니다."
+    if reason=="not_currently_actionable":return "검토된 구조가 현재 가격 판단에 직접 영향을 주지 않아 작도를 생략했습니다."
+    return "반복 검증된 가격 구조가 없어 작도를 생략했습니다."
+
+
+def _empty_text(state,reason,rejection_summary):
+    if state=="data_degraded":return "canonical 봉의 최근 정상 연속 구간이 부족합니다. 데이터가 복구되기 전에는 좌표를 추정하지 않습니다."
+    if reason=="active_invalidation":return "최근 확정 종가가 후보 구조를 무효화했습니다. 새 접점과 반응이 다시 확인될 때까지 선을 표시하지 않습니다."
+    if reason=="not_currently_actionable":return f"후보 검토 결과 {rejection_summary} 현재 판단에 영향을 주지 않는 과거 선은 표시하지 않았습니다."
+    return f"후보 검토 결과 {rejection_summary} 품질 기준을 낮춰 임의의 선을 만들지 않았습니다."

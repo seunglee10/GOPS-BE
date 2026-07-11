@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from alfaka.common.trading_calendar import is_us_equity_session_date
+from alfaka.common.trading_calendar import is_us_equity_early_close_date, is_us_equity_session_date
 from alfaka.serving.intervals import normalize_chart_interval
 
 
@@ -58,7 +58,12 @@ class TradingCalendar:
     def session_close_for(self, session_date: date) -> time:
         """특정 날짜의 장 마감 시간을 조기폐장 설정까지 반영해 반환합니다."""
         early_closes = self.early_closes or {}
-        return early_closes.get(session_date.isoformat(), self.close_time)
+        configured = early_closes.get(session_date.isoformat())
+        if configured is not None:
+            return configured
+        if self.include_default_holidays and is_us_equity_early_close_date(session_date):
+            return time(13, 0)
+        return self.close_time
 
     def is_session_date(self, session_date: date) -> bool:
         """해당 날짜가 gapfill 대상 거래일인지 판단합니다."""

@@ -1,0 +1,43 @@
+# 역할: Chart Analysis Asset 최신 JSON 저장소의 PostgreSQL schema/sync/parity 작업을 1회 실행합니다.
+# 기본 action은 schema migrate이며 sync/verify는 운영자가 명시적으로 선택합니다.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: chart-asset-migrations
+  namespace: alfaka-market-data
+spec:
+  ttlSecondsAfterFinished: 86400
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: chart-asset-migrations
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        karpenter.sh/nodepool: batch
+      tolerations:
+        - key: gops.io/dedicated
+          operator: Equal
+          value: batch
+          effect: NoSchedule
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: chart-asset-migrations
+          image: YOUR_ECR_REPOSITORY/gops-agent-orchestrator:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "/app/systems/agent-orchestration/jobs/chart-asset-migrations/main.py"]
+          env:
+            - name: CHART_ASSET_MIGRATION_ACTION
+              value: migrate
+            - name: CHART_ASSET_MIGRATION_PRUNE
+              value: "false"
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-clickhouse-secret
+                optional: false
+            - secretRef:
+                name: alfaka-order-db-secret
+                optional: false

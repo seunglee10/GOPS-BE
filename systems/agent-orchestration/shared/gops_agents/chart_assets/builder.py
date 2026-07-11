@@ -26,11 +26,11 @@ from .curation import (
 from .envelope import BUILD_INTERVAL_ORDER, ChartAssetBuildEnvelope, utc_now_iso
 from .llm import ChartAssetLLMService
 from .progress import InMemoryChartAssetProgressStore, build_progress_store_from_env
-from .storage import ChartAssetStorage
+from .storage import build_chart_asset_storage_from_env
 
 
 ASSET_VERSION = "v2"
-ASSEMBLER_VERSION = "chart-asset-assembler-v2.2"
+ASSEMBLER_VERSION = "chart-asset-assembler-v3"
 AGENT_PRESERVATION_POLICY = "preserve_valid_same_input"
 MAX_ASSET_BYTES = 20 * 1024
 
@@ -38,7 +38,7 @@ MAX_ASSET_BYTES = 20 * 1024
 class ChartAssetBuilder:
     def __init__(self, *, candle_loader=None, storage=None, progress=None, llm_service=None, repair_service=None, concurrency=None):
         supplied_loader = candle_loader is not None
-        self.candle_loader = candle_loader or ChartAssetCandleLoader(); self.storage = storage or ChartAssetStorage()
+        self.candle_loader = candle_loader or ChartAssetCandleLoader(); self.storage = storage or build_chart_asset_storage_from_env()
         self.progress = progress or build_progress_store_from_env(); self.llm_service = llm_service if llm_service is not None else ChartAssetLLMService()
         self.repair_service = repair_service if repair_service is not None else None if supplied_loader else AnalysisCandleRepairService(provider=self.candle_loader.provider)
         self.concurrency = max(1, concurrency or int(os.getenv("CHART_ASSET_BUILD_CONCURRENCY", "4")))
@@ -125,19 +125,32 @@ class ChartAssetBuilder:
                 self.progress.add_log(envelope.job_id, f"{symbol}:{interval} failed at candle load: {error}")
             return len(requested), 0, 0
         eligible = []
+        preflight_warnings = 0
         for interval in requested:
             coverage = bundle.coverage[interval]
-            if coverage.get("renderable") and len(bundle.rows[interval]) >= 20: eligible.append(interval)
+            if not repair_reason and coverage.get("renderable") and len(bundle.rows[interval]) >= 20: eligible.append(interval)
             elif existing[interval]:
                 warning = "candle_repair_incomplete_existing_asset_preserved" if repair_reason else "input_insufficient_existing_asset_preserved"
+                preflight_warnings += 1
                 self.progress.record_item(envelope.job_id, _item(symbol, interval, "skipped", "preflight", None, _elapsed(started), warning=warning, reason=repair_reason))
                 self.progress.add_log(envelope.job_id, _preflight_log(symbol, interval, coverage, "input insufficient; existing asset preserved"))
             else:
                 asset = self._degraded_data_asset(symbol, interval, bundle.rows[interval], coverage, bundle.digests[interval])
-                warning = repair_reason or "input_insufficient"
-                self.storage.save(asset); self.progress.record_item(envelope.job_id, _item(symbol, interval, "saved_with_warning", "preflight", None, _elapsed(started), warning=warning, reason=repair_reason))
-                self.progress.add_log(envelope.job_id, _preflight_log(symbol, interval, coverage, "input insufficient; degraded asset saved; entities=0"))
-        if not eligible: return 0, len(requested), 0
+                write_result = self.storage.save(asset)
+                storage_warnings = self._pop_storage_warnings()
+                warning = "|".join(dict.fromkeys([
+                    repair_reason or "input_insufficient",
+                    *storage_warnings,
+                ]))
+                preflight_warnings += 1
+                status = "unchanged" if write_result is False else "saved_with_warning"
+                reason = "stale_write_suppressed" if write_result is False else repair_reason
+                self.progress.record_item(envelope.job_id, _item(symbol, interval, status, "preflight", None, _elapsed(started), warning=warning, reason=reason))
+                action = "newer asset retained" if write_result is False else "degraded asset saved; entities=0"
+                self.progress.add_log(envelope.job_id, _preflight_log(symbol, interval, coverage, f"input insufficient; {action}"))
+                for storage_warning in storage_warnings:
+                    self.progress.add_log(envelope.job_id, f"{symbol}:{interval} warning={storage_warning}")
+        if not eligible: return 0, preflight_warnings, 0
         llm_mode = "curate" if envelope.llm_enabled else "rule_only"
         requested_model = getattr(self.llm_service, "model", None) if envelope.llm_enabled else None
         stored_higher = _higher_summaries(existing_all, eligible)
@@ -150,8 +163,6 @@ class ChartAssetBuilder:
         generated_at = utc_now_iso(); features_by_interval={}; rules_by_interval={}; palettes={}; rule_digests={}
         for interval in eligible:
             rows=bundle.rows[interval]; features=compute_feature_pack(rows, interval)
-            if "abnormal_true_range" in features.get("qualityFlags",[]):
-                features["trends"]=[]; features["levels"]=[]
             rules=compile_rule_layers(symbol=symbol, interval=interval, features=features, candles=rows, generated_at=generated_at)
             rule_digest=_digest({"input":bundle.digests[interval],"kernel":KERNEL_VERSION,"quality":QUALITY_POLICY_VERSION,"selected":[item.get("candidateId") for layer in rules.values() for item in layer.get("selected",[])]})
             palette=build_interval_palette(symbol=symbol,interval=interval,input_digest=bundle.digests[interval],features=features,rule_layers=rules,candles=rows,generated_at=generated_at)
@@ -159,22 +170,34 @@ class ChartAssetBuilder:
         context_digest=_digest({"symbol":symbol,"rules":[[interval,rule_digests[interval]] for interval in eligible],"higher":stored_higher})
         symbol_bundle=build_symbol_bundle(symbol,list(palettes.values()),_cross_timeframe(palettes))
         intent_digests={interval:_build_intent_digest(rule_digest=rule_digests[interval],context_digest=context_digest,requested_model=requested_model,llm_mode=llm_mode) for interval in eligible}
-        if not envelope.force and all(_late_intent_noop(existing[interval],intent_digests[interval],llm_mode) for interval in eligible):
+        if not envelope.force and all(_late_intent_noop(existing[interval],intent_digests[interval],llm_mode,bundle.digests[interval]) for interval in eligible):
             for interval in eligible:
                 self.progress.record_item(envelope.job_id,_item(symbol,interval,"unchanged","digest",None,_elapsed(started),reason="late_intent_unchanged"))
                 self._log_asset_result(envelope.job_id, symbol, interval, "unchanged after kernel: build intent matched", existing[interval])
             return 0,0,0
-        if envelope.llm_enabled:
+        has_visual_candidates = any(palette.get("visualCandidates") for palette in palettes.values())
+        if envelope.llm_enabled and has_visual_candidates:
             try: curation=self.llm_service.curate_symbol(symbol_bundle)
             except Exception as exc: curation={"output":deterministic_curation(symbol_bundle),"degraded":True,"reason":f"llm_{exc.__class__.__name__}","model":requested_model,"usage":{}}
+        elif envelope.llm_enabled:
+            curation={"output":deterministic_curation(symbol_bundle),"degraded":False,"reason":"no_visual_candidates","model":None,"usage":{},"llmSkipped":True}
         else:
             curation={"output":deterministic_curation(symbol_bundle),"degraded":False,"reason":None,"model":None,"usage":{}}
         if envelope.llm_enabled:
             agent_layers=materialize_curation(symbol=symbol,palettes=palettes,output=curation["output"],generated_at=generated_at,model=curation.get("model"))
+            if curation.get("degraded"):
+                for interval in eligible:
+                    preserved = _preserved_agent(existing[interval], bundle.digests[interval], palettes[interval])
+                    if preserved:
+                        preserved.setdefault("meta", {}).update({"degraded": True, "failureReason": curation.get("reason"), "preservedOnFailure": True})
+                        agent_layers[interval] = preserved
+                    else:
+                        agent_layers[interval].setdefault("meta", {}).update({"degraded": True, "failureReason": curation.get("reason")})
+                        agent_layers[interval]["emptyReason"] = curation.get("reason") or "curator_unavailable"
         else:
             agent_layers={interval:_preserved_agent(existing[interval],bundle.digests[interval],palettes[interval]) or _empty_agent_layer("llm_not_requested") for interval in eligible}
         selections={item["interval"]:item for item in curation["output"].get("intervalSelections",[])}
-        warnings=created_entities=0; context_assets=dict(existing_all)
+        warnings=preflight_warnings; created_entities=0; context_assets=dict(existing_all)
         for position, interval in enumerate(eligible):
             if self.progress.is_cancel_requested(envelope.job_id):
                 for remaining in eligible[position:]:
@@ -191,19 +214,40 @@ class ChartAssetBuilder:
             encoded=json.dumps(asset,ensure_ascii=False,sort_keys=True,separators=(",",":"))
             if len(encoded.encode())>MAX_ASSET_BYTES: raise ValueError(f"chart asset payload exceeds {MAX_ASSET_BYTES} bytes")
             current=existing[interval]
+            data_warning = "data_quality_blocked" if "data_quality_blocked" in features_by_interval[interval].get("qualityFlags", []) else None
+            storage_warnings = []
             if current and current.get("build",{}).get("assetContentDigest")==content_digest:
                 status="unchanged"; reason="unchanged_after_force" if envelope.force else "content_unchanged"
             else:
-                self.storage.save(asset); status="saved_with_warning" if outcome=="degraded" else "saved"; reason=None
-                created_entities += _entity_counts(asset)["total"]
-            context_assets[interval] = asset
-            warning=curation.get("reason") if outcome=="degraded" else None
+                write_result = self.storage.save(asset)
+                storage_warnings = self._pop_storage_warnings()
+                if write_result is False:
+                    status = "unchanged"
+                    reason = "stale_write_suppressed"
+                else:
+                    status="saved_with_warning" if outcome=="degraded" or data_warning or storage_warnings else "saved"; reason=None
+                    created_entities += _entity_counts(asset)["total"]
+            context_assets[interval] = (
+                self.storage.get(symbol, interval) or current or asset
+                if reason == "stale_write_suppressed"
+                else asset
+            )
+            warning_parts = []
+            if outcome=="degraded" and curation.get("reason"): warning_parts.append(str(curation["reason"]))
+            if repair_reason: warning_parts.append(str(repair_reason))
+            if data_warning: warning_parts.append(data_warning)
+            warning_parts.extend(storage_warnings)
+            warning="|".join(dict.fromkeys(warning_parts)) or None
             if warning: warnings+=1
             self.progress.record_item(envelope.job_id,_item(symbol,interval,status,"save",None,_elapsed(started),warning=warning,reason=reason))
             result = status if not warning else f"{status}; warning={warning}"
             if reason: result += f"; reason={reason}"
             self._log_asset_result(envelope.job_id, symbol, interval, result, asset)
         return 0,warnings,created_entities
+
+    def _pop_storage_warnings(self):
+        pop_warnings = getattr(self.storage, "pop_warnings", None)
+        return [str(item) for item in pop_warnings() if item] if callable(pop_warnings) else []
 
     def _load_symbol(self,symbol,intervals):
         if hasattr(self.candle_loader,"load_symbol"): return self.candle_loader.load_symbol(symbol,intervals)
@@ -248,34 +292,46 @@ class ChartAssetBuilder:
             message += f" materialized={payload.get('materializedRows')}"
         if payload.get("reason"):
             message += f" reason={payload.get('reason')}"
+        metrics = payload.get("metrics") if isinstance(payload.get("metrics"), dict) else {}
+        if metrics and payload.get("status") != "started":
+            metric_names = (
+                "listCalls", "objectsListed", "manifestObjectsRead", "objectsSelected",
+                "objectGets", "elapsedMs", "manifestSource",
+            )
+            rendered = " ".join(f"{name}={metrics[name]}" for name in metric_names if metrics.get(name) is not None)
+            if rendered:
+                message += f" metrics({rendered})"
         self.progress.add_log(job_id, message)
 
     def _assemble_asset(self,**value):
         symbol=value["symbol"]; interval=value["interval"]; rows=value["rows"]; coverage=value["coverage"]; display=rows[-DISPLAY_BARS[interval]:]
         commentary=assemble_commentary_v2(interval=interval,palette=value["palette"],rule_layers=value["rules"],agent_layer=value["agent"],curation_selection=value["selection"],coverage=coverage)
-        curation=value["curation"]; status="degraded" if value["outcome"]=="degraded" else "ready"
-        return {"assetVersion":ASSET_VERSION,"kernelVersion":KERNEL_VERSION,"qualityPolicyVersion":QUALITY_POLICY_VERSION,"promptVersion":PROMPT_VERSION_V2,"modelPolicyVersion":MODEL_POLICY_VERSION,"symbol":symbol,"interval":interval,"asOf":rows[-1]["timestamp"],"generatedAt":value["generated_at"],"status":status,"window":{"displayFrom":display[0]["timestamp"],"displayTo":display[-1]["timestamp"],"displayBars":DISPLAY_BARS[interval],"lookbackBars":LOOKBACK_BARS[interval]},"coverage":coverage,"input":{"digest":value["input_digest"],"canonicalDataVersion":CANONICAL_DATA_VERSION,"sessionPolicy":SESSION_POLICY,"adjustmentPolicy":ADJUSTMENT_POLICY,"candleContractVersion":CANDLE_CONTRACT_VERSION},"build":{"ruleDigest":value["rule_digest"],"contextDigest":value["context_digest"],"preKernelDigest":value["pre_kernel_digest"],"buildIntentDigest":value["intent_digest"],"assetContentDigest":"sha256:"+"0"*64,"assemblerVersion":ASSEMBLER_VERSION,"llmMode":value["llm_mode"],"agentPreservationPolicy":AGENT_PRESERVATION_POLICY,"agentOutcome":value["outcome"],"requestedModel":getattr(self.llm_service,"model",None) if value["llm_mode"]=="curate" else None,"resolvedModel":curation.get("model"),"usage":curation.get("usage") or {},"latencyMs":curation.get("latencyMs")},"quality":{"state":"eligible","score":round(.7+.3*float(coverage.get("coverageRatio",0)),4),"reasons":["recent_contiguous_history","exact_anchor_membership"],"penalties":list(coverage.get("qualityFlags") or [])},"features":_compact_features(value["features"],value["rules"],value["agent"]),"layers":{"structure":value["rules"]["structure"],"trend":value["rules"]["trend"],"agent":value["agent"]},"chartSetup":{"alwaysOn":["volume-profile","volume"],"recommended":recommended_indicators(value["features"])},"commentary":commentary,"buildContext":{"higherTf":value["higher"] or None,"flags":[]}}
+        curation=value["curation"]; data_blocked="data_quality_blocked" in value["features"].get("qualityFlags",[]); status="degraded" if value["outcome"]=="degraded" or data_blocked else "ready"
+        drawing_count=sum(len(layer.get("drawings") or []) for layer in (*value["rules"].values(),value["agent"]))
+        quality_reasons=["data_degraded","data_quality_blocked"] if data_blocked else ["recent_contiguous_history","exact_anchor_membership"] if drawing_count else ["quality_empty",*_empty_reasons(value["rules"],value["agent"])]
+        return {"assetVersion":ASSET_VERSION,"kernelVersion":KERNEL_VERSION,"qualityPolicyVersion":QUALITY_POLICY_VERSION,"promptVersion":PROMPT_VERSION_V2,"modelPolicyVersion":MODEL_POLICY_VERSION,"symbol":symbol,"interval":interval,"asOf":rows[-1]["timestamp"],"generatedAt":value["generated_at"],"status":status,"window":{"displayFrom":display[0]["timestamp"],"displayTo":display[-1]["timestamp"],"displayBars":DISPLAY_BARS[interval],"lookbackBars":LOOKBACK_BARS[interval]},"coverage":coverage,"input":{"digest":value["input_digest"],"canonicalDataVersion":CANONICAL_DATA_VERSION,"sessionPolicy":SESSION_POLICY,"adjustmentPolicy":ADJUSTMENT_POLICY,"candleContractVersion":CANDLE_CONTRACT_VERSION},"build":{"ruleDigest":value["rule_digest"],"contextDigest":value["context_digest"],"preKernelDigest":value["pre_kernel_digest"],"buildIntentDigest":value["intent_digest"],"assetContentDigest":"sha256:"+"0"*64,"assemblerVersion":ASSEMBLER_VERSION,"llmMode":value["llm_mode"],"agentPreservationPolicy":AGENT_PRESERVATION_POLICY,"agentOutcome":value["outcome"],"requestedModel":getattr(self.llm_service,"model",None) if value["llm_mode"]=="curate" else None,"resolvedModel":curation.get("model"),"usage":curation.get("usage") or {},"latencyMs":curation.get("latencyMs"),"llmSkippedReason":curation.get("reason") if curation.get("llmSkipped") else None},"quality":{"state":"insufficient_data" if data_blocked else "eligible","score":0 if data_blocked else round(.7+.3*float(coverage.get("coverageRatio",0)),4) if drawing_count else 0,"reasons":quality_reasons,"penalties":list(dict.fromkeys([*(coverage.get("qualityFlags") or []),*(value["features"].get("qualityFlags") or [])]))},"features":_compact_features(value["features"],value["rules"],value["agent"]),"layers":{"structure":value["rules"]["structure"],"trend":value["rules"]["trend"],"agent":value["agent"]},"chartSetup":{"alwaysOn":["volume-profile","volume"],"recommended":recommended_indicators(value["features"])},"commentary":commentary,"buildContext":{"higherTf":value["higher"] or None,"flags":[]}}
 
     def _degraded_data_asset(self,symbol,interval,rows,coverage,input_digest):
         generated=utc_now_iso(); placeholder=rows[-1]["timestamp"] if rows else generated; window_rows=rows[-DISPLAY_BARS[interval]:]
         empty=_empty_agent_layer("data_insufficient")
-        asset={"assetVersion":ASSET_VERSION,"kernelVersion":KERNEL_VERSION,"qualityPolicyVersion":QUALITY_POLICY_VERSION,"promptVersion":PROMPT_VERSION_V2,"modelPolicyVersion":MODEL_POLICY_VERSION,"symbol":symbol,"interval":interval,"asOf":placeholder,"generatedAt":generated,"status":"degraded","window":{"displayFrom":window_rows[0]["timestamp"] if window_rows else placeholder,"displayTo":placeholder,"displayBars":DISPLAY_BARS[interval],"lookbackBars":LOOKBACK_BARS[interval]},"coverage":coverage,"input":{"digest":input_digest,"canonicalDataVersion":CANONICAL_DATA_VERSION,"sessionPolicy":SESSION_POLICY,"adjustmentPolicy":ADJUSTMENT_POLICY,"candleContractVersion":CANDLE_CONTRACT_VERSION},"build":{"ruleDigest":_digest({}),"contextDigest":_digest({}),"buildIntentDigest":_digest({"data":"insufficient"}),"assetContentDigest":"sha256:"+"0"*64,"llmMode":"rule_only","agentPreservationPolicy":AGENT_PRESERVATION_POLICY,"agentOutcome":"not_requested_empty"},"quality":{"state":"stale_input" if "stale_input" in coverage.get("qualityFlags",[]) else "insufficient_data","score":0,"reasons":[],"penalties":coverage.get("qualityFlags",[])},"features":{"pivots":[],"levels":[],"trends":[],"events":[],"fibCandidates":[],"vp":{},"regime":{}},"layers":{"structure":_empty_rule_layer("data_insufficient"),"trend":_empty_rule_layer("data_insufficient"),"agent":empty},"chartSetup":{"alwaysOn":["volume-profile","volume"],"recommended":[]},"commentary":{"headline":"분석 데이터가 충분하지 않습니다.","regimeSummary":"","focusItems":[],"keyLevelsV2":[],"higherTimeframeContext":"","counterEvidence":[],"dataCaveats":coverage.get("qualityFlags",[]),"confidenceV2":{"selection":{"score":0,"reasons":[],"penalties":coverage.get("qualityFlags",[])},"marketDirection":{"score":None,"reasons":[],"penalties":[]}},"text":"분석 데이터 갱신 후 다시 확인하세요.","keyLevels":[],"invalidation":"데이터 갱신이 필요합니다.","confidence":0,"enrichment":None},"buildContext":{"higherTf":None,"flags":["data_insufficient"]}}
+        asset={"assetVersion":ASSET_VERSION,"kernelVersion":KERNEL_VERSION,"qualityPolicyVersion":QUALITY_POLICY_VERSION,"promptVersion":PROMPT_VERSION_V2,"modelPolicyVersion":MODEL_POLICY_VERSION,"symbol":symbol,"interval":interval,"asOf":placeholder,"generatedAt":generated,"status":"degraded","window":{"displayFrom":window_rows[0]["timestamp"] if window_rows else placeholder,"displayTo":placeholder,"displayBars":DISPLAY_BARS[interval],"lookbackBars":LOOKBACK_BARS[interval]},"coverage":coverage,"input":{"digest":input_digest,"canonicalDataVersion":CANONICAL_DATA_VERSION,"sessionPolicy":SESSION_POLICY,"adjustmentPolicy":ADJUSTMENT_POLICY,"candleContractVersion":CANDLE_CONTRACT_VERSION},"build":{"ruleDigest":_digest({}),"contextDigest":_digest({}),"buildIntentDigest":_digest({"data":"insufficient"}),"assetContentDigest":"sha256:"+"0"*64,"llmMode":"rule_only","agentPreservationPolicy":AGENT_PRESERVATION_POLICY,"agentOutcome":"not_requested_empty"},"quality":{"state":"stale_input" if "stale_input" in coverage.get("qualityFlags",[]) else "insufficient_data","score":0,"reasons":["data_degraded"],"penalties":coverage.get("qualityFlags",[])},"features":{"pivots":[],"levels":[],"trends":[],"events":[],"fibCandidates":[],"vp":{},"regime":{}},"layers":{"structure":_empty_rule_layer("data_insufficient"),"trend":_empty_rule_layer("data_insufficient"),"agent":empty},"chartSetup":{"alwaysOn":["volume-profile","volume"],"recommended":[]},"commentary":{"headline":"분석 데이터가 충분하지 않습니다.","regimeSummary":"","focusItems":[],"keyLevelsV2":[],"higherTimeframeContext":"","counterEvidence":[],"dataCaveats":coverage.get("qualityFlags",[]),"confidenceV2":{"selection":{"score":0,"reasons":["data_degraded"],"penalties":coverage.get("qualityFlags",[])},"marketDirection":{"score":None,"reasons":[],"penalties":[]}},"text":"분석 데이터 갱신 후 다시 확인하세요.","keyLevels":[],"invalidation":"데이터 갱신이 필요합니다.","confidence":0,"enrichment":None,"emptyState":"data_degraded","emptyReason":"data_insufficient"},"buildContext":{"higherTf":None,"flags":["data_insufficient"]}}
         asset["build"]["assetContentDigest"]=_asset_content_digest(asset); return asset
 
 def _fast_noop(asset,input_digest,llm_mode,requested_model,pre_kernel_digest):
-    if not asset or asset.get("assetVersion")!="v2" or asset.get("input",{}).get("digest")!=input_digest or asset.get("kernelVersion")!=KERNEL_VERSION or asset.get("qualityPolicyVersion")!=QUALITY_POLICY_VERSION:return False
+    if not asset or asset.get("assetVersion")!="v2" or asset.get("input",{}).get("digest")!=input_digest or asset.get("input",{}).get("candleContractVersion")!=CANDLE_CONTRACT_VERSION or asset.get("kernelVersion")!=KERNEL_VERSION or asset.get("qualityPolicyVersion")!=QUALITY_POLICY_VERSION:return False
     build=asset.get("build",{}); outcome=build.get("agentOutcome")
     eligible=outcome in ({"ready","ready_empty"} if llm_mode=="curate" else {"not_requested_empty","preserved"})
     return eligible and build.get("llmMode")==llm_mode and build.get("preKernelDigest")==pre_kernel_digest and (llm_mode!="curate" or build.get("requestedModel")==requested_model)
 def _build_intent_digest(*,rule_digest,context_digest,requested_model,llm_mode):
     return _digest({"ruleDigest":rule_digest,"contextDigest":context_digest,"promptVersion":PROMPT_VERSION_V2,"modelPolicyVersion":MODEL_POLICY_VERSION,"requestedModel":requested_model,"assemblerVersion":ASSEMBLER_VERSION,"llmMode":llm_mode,"agentPreservationPolicy":AGENT_PRESERVATION_POLICY})
-def _late_intent_noop(asset,intent_digest,llm_mode):
-    if not asset or asset.get("assetVersion")!="v2":return False
+def _late_intent_noop(asset,intent_digest,llm_mode,input_digest):
+    if not asset or asset.get("assetVersion")!="v2" or asset.get("kernelVersion")!=KERNEL_VERSION or asset.get("qualityPolicyVersion")!=QUALITY_POLICY_VERSION:return False
+    if asset.get("input",{}).get("digest")!=input_digest or asset.get("input",{}).get("candleContractVersion")!=CANDLE_CONTRACT_VERSION:return False
     build=asset.get("build",{}); outcome=build.get("agentOutcome")
     eligible=outcome in ({"ready","ready_empty"} if llm_mode=="curate" else {"not_requested_empty","preserved"})
     return eligible and build.get("llmMode")==llm_mode and build.get("buildIntentDigest")==intent_digest
 def _preserved_agent(asset,input_digest,palette):
-    if not asset or asset.get("assetVersion")!="v2" or asset.get("input",{}).get("digest")!=input_digest or asset.get("kernelVersion")!=KERNEL_VERSION:return None
+    if not asset or asset.get("assetVersion")!="v2" or asset.get("input",{}).get("digest")!=input_digest or asset.get("input",{}).get("candleContractVersion")!=CANDLE_CONTRACT_VERSION or asset.get("kernelVersion")!=KERNEL_VERSION or asset.get("qualityPolicyVersion")!=QUALITY_POLICY_VERSION:return None
     agent=asset.get("layers",{}).get("agent") or {}; allowed={item["candidateId"] for item in palette.get("visualCandidates",[])}
     selected=agent.get("selected") or []
     if not selected or any(item.get("candidateId") not in allowed for item in selected):return None
@@ -287,8 +343,8 @@ def _compact_features(features,rules,agent):
     refs={str(ref) for item in selected for ref in item.get("evidenceRefs",[])}
     candidate_ids={str(item.get("candidateId")) for item in selected if item.get("candidateId")}
     pivots=[_project(item,("id","timestamp","price","kind","grade","strength")) for item in features.get("pivots",[]) if item.get("id") in refs][:16]
-    levels=[_project(item,("id","price","zoneLow","zoneHigh","score","touches","lastTestAt","lastTouchAgeBars","currentDistanceAtr","role","state","vpConfluence","memberPivotIds")) for item in features.get("levels",[]) if item.get("id") in candidate_ids][:4]
-    trends=[_project(item,("id","kind","anchorPivotIds","touchPivotIds","touches","slopePerBar","slopeAtrPerBar","currentDistanceAtr","lastTouchAgeBars","spanBars","medianResidualAtr","violationCount","rangeFrom","rangeTo","rangeHigh","rangeLow","score")) for item in features.get("trends",[]) if item.get("id") in candidate_ids][:2]
+    levels=[_project(item,("id","price","zoneLow","zoneHigh","score","touches","lastTestAt","lastTouchAgeBars","currentDistanceAtr","role","state","evidencePass","activePass","vpConfluence","memberPivotIds")) for item in features.get("levels",[]) if item.get("id") in candidate_ids][:4]
+    trends=[_project(item,("id","kind","anchorPivotIds","touchPivotIds","touchCandleKeys","touches","reactionCount","slopePerBar","slopeAtrPerBar","currentDistanceAtr","lastTouchAgeBars","spanBars","medianResidualAtr","violationCount","activeInvalidation","adverseCloseRatio","containment","parallelSlopeError","rangeFrom","rangeTo","rangeHigh","rangeLow","score")) for item in features.get("trends",[]) if item.get("id") in candidate_ids][:2]
     events=[]
     for item in features.get("events",[]):
         if item.get("id") not in candidate_ids and item.get("id") not in refs:continue
@@ -308,6 +364,10 @@ def _empty_agent_layer(reason):return {"drawings":[],"selected":[],"emptyReason"
 def _digest(value):return "sha256:"+hashlib.sha256(json.dumps(value,ensure_ascii=False,sort_keys=True,separators=(",",":"),default=str).encode()).hexdigest()
 def _asset_content_digest(asset):
     body={key:_without_audit_timestamps(asset[key]) for key in ("status","quality","features","layers","chartSetup","commentary","buildContext")}; body["assemblerVersion"]=asset["build"].get("assemblerVersion"); body["agentOutcome"]=asset["build"]["agentOutcome"]; body["resolvedModel"]=asset["build"].get("resolvedModel")
+    # Presentation freshness is content, not audit metadata.  A newly closed
+    # candle can leave rounded geometry unchanged; omitting this identity would
+    # keep the old asOf/input forever and make the frontend reject it as stale.
+    body["freshnessIdentity"]={"asOf":asset.get("asOf"),"window":asset.get("window"),"inputDigest":(asset.get("input") or {}).get("digest"),"candleContractVersion":(asset.get("input") or {}).get("candleContractVersion")}
     return _digest(body)
 def _without_audit_timestamps(value):
     if isinstance(value,dict):return {key:_without_audit_timestamps(item) for key,item in value.items() if key not in {"createdAt","updatedAt","generatedAt","latencyMs"}}
@@ -343,6 +403,8 @@ def _higher_summaries(assets, intervals):
 def _asset_is_fresh(asset, hours):
     if not asset or hours <= 0:
         return False
+    if asset.get("input", {}).get("candleContractVersion") != CANDLE_CONTRACT_VERSION:
+        return False
     try:
         generated = datetime.fromisoformat(str(asset["generatedAt"]).replace("Z", "+00:00"))
     except (KeyError, TypeError, ValueError):
@@ -374,3 +436,12 @@ def _preflight_log(symbol, interval, coverage, result):
         f"{symbol}:{interval} warning: {result}; "
         f"bars={coverage.get('actualBars', 0)}/{coverage.get('expectedBars', 0)} flags={flags}"
     )
+
+
+def _empty_reasons(rules, agent):
+    reasons = []
+    for layer in (*rules.values(), agent):
+        reason = layer.get("emptyReason")
+        if reason and reason not in {"curator_selected_none", "llm_not_requested"}:
+            reasons.append(str(reason))
+    return list(dict.fromkeys(reasons)) or ["no_structural_evidence"]

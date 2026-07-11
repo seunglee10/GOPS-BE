@@ -156,6 +156,10 @@ select_services_for_path() {
     systems/api-server/*)
       add_service backend
       ;;
+    systems/agent-orchestration/shared/* | systems/agent-orchestration/config/*)
+      add_service backend
+      add_service agent-orchestrator
+      ;;
     systems/agent-orchestration/*)
       add_service agent-orchestrator
       ;;

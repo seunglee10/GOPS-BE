@@ -7,8 +7,8 @@
   "required": ["assetVersion", "kernelVersion", "qualityPolicyVersion", "promptVersion", "modelPolicyVersion", "symbol", "interval", "asOf", "generatedAt", "status", "window", "coverage", "input", "build", "quality", "features", "layers", "chartSetup", "commentary", "buildContext"],
   "properties": {
     "assetVersion": {"const": "v2"},
-    "kernelVersion": {"const": "kernel-v2"},
-    "qualityPolicyVersion": {"const": "chart-quality-v1"},
+    "kernelVersion": {"enum": ["kernel-v2", "kernel-v3"]},
+    "qualityPolicyVersion": {"enum": ["chart-quality-v1", "chart-quality-v2"]},
     "promptVersion": {"type": ["string", "null"]},
     "modelPolicyVersion": {"const": "chart-asset-model-v1"},
     "symbol": {"type": "string", "pattern": "^[A-Z0-9.-]{1,20}$"},
@@ -62,7 +62,7 @@
         "canonicalDataVersion": {"const": "v2"},
         "sessionPolicy": {"const": "us-equity-regular"},
         "adjustmentPolicy": {"const": "split"},
-        "candleContractVersion": {"const": "analysis-candles-v1"}
+        "candleContractVersion": {"enum": ["analysis-candles-v1", "v2"]}
       }
     },
     "build": {

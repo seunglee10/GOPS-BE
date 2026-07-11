@@ -173,16 +173,20 @@ def build_envelope(job_id, intervals=("1D", "1W", "1M")):
 def candles():
     start = datetime(2026, 4, 1, tzinfo=timezone.utc)
     rows = []
+    previous_close = 100.0
     for index in range(72):
-        close = 100 + index * 0.15 + math.sin(index / 3)
+        step = 10 if index >= 71 else 5 if index >= 68 else 0
+        close = 100 + index * 0.15 + math.sin(index / 3) + step
+        open_price = previous_close + 4 if index in {68, 71} else close - 0.5
         rows.append({
             "timestamp": (start + timedelta(days=index)).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
-            "open": round(close - 0.5, 2),
-            "high": round(close + 1.0, 2),
-            "low": round(close - 1.0, 2),
+            "open": round(open_price, 2),
+            "high": round(max(open_price, close) + 1.0, 2),
+            "low": round(min(open_price, close) - 1.0, 2),
             "close": round(close, 2),
-            "volume": 1000 + index,
+            "volume": 5000 if index in {68, 71} else 1000 + index,
         })
+        previous_close = close
     return rows
 
 

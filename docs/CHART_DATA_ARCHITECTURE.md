@@ -149,16 +149,29 @@ layout migration. See `platform/s3/README.md` for exact prefixes.
 Persisted chart-analysis assets are an offline manual-build projection, not an
 API request-derived cache. The independent builder reads canonical ClickHouse
 daily candles once per requested symbol. Before the read, a request-scoped
-readiness step audits the exact 1D lookback, replays matching canonical S3 final
-objects, and fills only remaining ranges from Alpaca when the deployment enables
-that source. All repaired rows pass through the existing S3 materializer and are
-re-read from ClickHouse; Redis candles are never mixed into analysis input.
-Completed 1D/1W/1M analysis candles then use the shared identity/aggregation
-functions and only compact final v2 assets are written. This repair has no
-CronJob or candle-closed subscription. Redis is limited to the existing job
-status key and pub/sub channel.
-The development-only delete route issues a synchronous ClickHouse mutation for
-explicit symbol/interval pairs; it is not a retention policy or automatic cleanup.
+readiness step audits the exact 1D lookback, lists the compact S3 manifest once
+for every missing range, and fills only remaining ranges from Alpaca when the
+deployment enables that source. This analysis path never scans hourly
+`final-v2`; its S3 stage is deadline-bounded. All repaired rows pass through the
+existing materializer's no-write prepare phase; only a preparation accepted
+before the deadline is committed by the request thread and re-read from
+ClickHouse. A timed-out background read cannot later write candle/audit rows.
+Redis candles are never
+mixed into analysis input.
+
+Completed 1D/1W/1M candles use a shared `candleKey`. Daily chart coordinates use
+New York market midnight; weekly/monthly coordinates use their UTC bucket start.
+The last real NYSE session close, including early close, determines whether a
+higher-timeframe bucket is complete. Serving, analysis, stale checks, and drawing
+anchor snapping share this identity rather than comparing raw timestamps.
+
+Only compact final v2 assets are written. Default deployments still use the
+ClickHouse compatibility table; guarded dual-write modes can move the single
+latest `(symbol, interval)` JSON projection to PostgreSQL. Canonical candles and
+repair materialization never move. Repair has no CronJob or candle-closed
+subscription. Redis is limited to the existing job status key and pub/sub
+channel. The development delete route removes explicit pairs from every active
+asset store; it is not retention or automatic cleanup.
 
 ## Retained Compatibility
 
