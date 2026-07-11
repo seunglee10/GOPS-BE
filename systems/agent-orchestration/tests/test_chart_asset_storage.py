@@ -235,6 +235,12 @@ class ChartAssetStorageTest(unittest.TestCase):
         self.assertIn("payload JSONB NOT NULL", sql)
         self.assertNotIn("CREATE INDEX", sql)
         self.assertNotIn("TTL", sql.upper())
+        interval_sql = (
+            ROOT / "systems" / "agent-orchestration" / "jobs" / "chart-asset-migrations"
+            / "002_expand_chart_asset_intervals.sql"
+        ).read_text(encoding="utf-8")
+        self.assertIn("1m", interval_sql)
+        self.assertIn("1M", interval_sql)
 
 
 class MemoryStore:
