@@ -590,7 +590,11 @@ def raw_bar_to_processed_candle(symbol, raw_bar, feed="sip", received_at=None, i
         "source": "alpaca",
         "feed": feed,
         "feedProfile": feed,
-        "marketSession": "crypto" if is_crypto_symbol(symbol) else market_session_for_timestamp(raw_bar.get("t")),
+        "marketSession": (
+            "crypto" if is_crypto_symbol(symbol)
+            else "regular" if interval == "1D"
+            else market_session_for_timestamp(raw_bar.get("t"))
+        ),
         "channel": channel,
         "symbol": symbol,
         "eventTime": raw_bar.get("t"),

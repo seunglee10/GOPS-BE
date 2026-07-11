@@ -39,9 +39,15 @@ sequenceDiagram
 
   Operator->>API: symbol/interval/LLM 옵션으로 수동 빌드
   API->>Kafka: symbol 중심 job 발행
-  Worker->>CH: symbol당 canonical daily bundle 1회 조회
   Worker->>CH: 기존 1D/1W/1M asset snapshot 1회 조회
   Worker->>Worker: freshness/input/version digest 검사
+  Worker->>CH: 요청 interval의 정확한 canonical 1D 범위 감사
+  opt 결측 구간 존재
+    Worker->>CH: S3 canonical final 우선 materialize
+    Worker->>CH: 남은 구간만 Alpaca split 1D로 materialize
+    Worker->>CH: canonical 1D 재감사
+  end
+  Worker->>CH: 검증된 daily bundle 1회 조회
   alt 동일한 빌드 의도
     Worker-->>API: unchanged
   else 계산 필요
@@ -60,7 +66,8 @@ sequenceDiagram
 ```
 
 이 빌더는 대화형 `AgentOrchestrator`와 분리된 독립 워커다. 질문창, 주문, 기존
-차트 명령 경로를 호출하지 않는다.
+차트 명령 경로를 호출하지 않는다. readiness/repair도 수동 build 요청의 symbol에
+대해서만 그 요청 수명 안에서 실행되며 CronJob이나 candle-closed 구독은 없다.
 
 ## 데이터에서 작도까지
 
@@ -69,6 +76,11 @@ sequenceDiagram
 분석은 ClickHouse의 실제 시장 데이터만 사용한다. 1D를 기준으로 1W와 1M을
 결정론적으로 집계하며, 아직 닫히지 않은 주·월 봉은 제외한다. 타임스탬프는
 `candleKey`와 거래 세션 규칙으로 정규화한다.
+
+빌드 전 감사 범위는 요청 interval의 lookback에서 정확히 계산한다. 1D는 완료 거래일
+500개, 1W는 완료 312주, 1M은 완료 72개월을 구성하는 일봉이다. 휴장일과 특별
+휴장일을 포함한 공통 거래일 캘린더로 head/interior/tail 결측을 판정하고, S3로
+복원되지 않은 범위만 Alpaca에 요청한다. Redis candle은 분석 입력에 섞지 않는다.
 
 ```mermaid
 flowchart TD
@@ -263,7 +275,7 @@ symbol/interval의 ClickHouse 전체 자산 이력을 동기 mutation으로 제�
 
 | 책임 | 위치 |
 | --- | --- |
-| 정규 candle·coverage | `systems/market-data/shared/alfaka/analytics/analysis_candles.py` |
+| 정규 candle·coverage·repair | `systems/market-data/shared/alfaka/analytics/analysis_candles.py`, `analysis_repair.py` |
 | pivot·level·trend·event | `systems/market-data/shared/alfaka/analytics/` |
 | S/T compiler | `systems/agent-orchestration/shared/gops_agents/chart_assets/compilers.py` |
 | 후보·LLM 경계 | `systems/agent-orchestration/shared/gops_agents/chart_assets/curation.py`, `llm.py` |

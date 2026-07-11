@@ -74,6 +74,30 @@ class InMemoryChartAssetProgressStore:
                 state["failedItems"] = [*state.get("failedItems", []), copy.deepcopy(item)]
         self.mutate(job_id, mutate, event={"type": "item", **item})
 
+    def set_current(self, job_id: str, current: str) -> None:
+        self.mutate(
+            job_id,
+            lambda state: state["progress"].update(current=current),
+            event={"type": "status", "current": current},
+        )
+
+    def record_repair(self, job_id: str, result: dict[str, Any]) -> None:
+        def mutate(state: dict[str, Any]) -> None:
+            repair = state.setdefault("repair", initial_repair_state())
+            if result.get("checked"):
+                repair["checkedSymbols"] += 1
+            if result.get("attempted"):
+                repair["attemptedSymbols"] += 1
+            if result.get("repaired"):
+                repair["repairedSymbols"] += 1
+            if result.get("unavailable"):
+                repair["unavailableSymbols"] += 1
+                state["progress"]["warnings"] += 1
+            repair["missingBarsBefore"] += int(result.get("missing_before") or result.get("missingBefore") or 0)
+            repair["missingBarsAfter"] += int(result.get("missing_after") or result.get("missingAfter") or 0)
+            repair["materializedRows"] += int(result.get("materialized_rows") or result.get("materializedRows") or 0)
+        self.mutate(job_id, mutate, event={"type": "repair", "reason": result.get("reason")})
+
     def pubsub(self, job_id: str):
         return None
 
@@ -167,6 +191,7 @@ def initial_state(envelope: ChartAssetBuildEnvelope) -> dict[str, Any]:
         "status": "queued",
         "requested": {"symbolCount": len(envelope.symbols), "intervals": list(envelope.intervals), "llmEnabled": envelope.llm_enabled, "force": envelope.force},
         "progress": {"total": total, "done": 0, "failed": 0, "skipped": 0, "warnings": 0, "current": None},
+        "repair": initial_repair_state(),
         "recentItems": [], "failedItems": [], "startedAt": None, "finishedAt": None, "cancelRequested": False,
     }
 
@@ -177,3 +202,15 @@ def status_key(job_id: str) -> str:
 
 def channel_name(job_id: str) -> str:
     return f"{CHANNEL_PREFIX}:{job_id}"
+
+
+def initial_repair_state() -> dict[str, int]:
+    return {
+        "checkedSymbols": 0,
+        "attemptedSymbols": 0,
+        "repairedSymbols": 0,
+        "unavailableSymbols": 0,
+        "missingBarsBefore": 0,
+        "missingBarsAfter": 0,
+        "materializedRows": 0,
+    }

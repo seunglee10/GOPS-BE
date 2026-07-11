@@ -9,7 +9,7 @@ from decimal import Decimal
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
-from alfaka.alpaca.feed_profiles import market_session_for_datetime
+from alfaka.backfill.gapfill import TradingCalendar
 from alfaka.serving.time_utils import canonical_utc_timestamp, parse_utc_time
 
 
@@ -32,6 +32,13 @@ class AnalysisCandleBundle:
     rows: dict[str, list[dict[str, Any]]]
     coverage: dict[str, dict[str, Any]]
     digests: dict[str, str]
+
+
+@dataclass(frozen=True)
+class AnalysisDailyWindow:
+    start: str
+    end: str
+    expected_keys: tuple[str, ...]
 
 
 def canonicalize_candle_identity(
@@ -174,13 +181,70 @@ class AnalysisCandleSource:
         if not intervals or set(intervals).difference({"1D", "1W", "1M"}):
             raise ValueError("Unsupported analysis intervals")
         from .schema import DISPLAY_BARS, LOOKBACK_BARS
-        daily_limit = max(LOOKBACK_BARS[item] * {"1D": 1, "1W": 7, "1M": 31}[item] for item in intervals)
-        raw = self.provider.daily_candles(symbol, interval="1D", limit=daily_limit)
         now = self.now_provider()
+        window = analysis_daily_window(intervals, now=now)
+        raw = self.provider.daily_candles(
+            symbol,
+            interval="1D",
+            limit=max(1, len(window.expected_keys) + 16),
+            from_time=window.start,
+            before=window.end,
+        )
         rows = {item: aggregate_analysis_candles(raw, item, now=now)[-LOOKBACK_BARS[item]:] for item in intervals}
         coverage = {item: compute_analysis_coverage(rows[item], item, display_bars=DISPLAY_BARS[item], now=now) for item in intervals}
         digests = {item: analysis_input_digest(symbol, item, rows[item]) for item in intervals}
         return AnalysisCandleBundle(rows=rows, coverage=coverage, digests=digests)
+
+
+def analysis_daily_window(
+    requested_intervals: Iterable[str],
+    *,
+    now: datetime | None = None,
+    calendar: TradingCalendar | None = None,
+) -> AnalysisDailyWindow:
+    from .schema import LOOKBACK_BARS
+
+    intervals = tuple(dict.fromkeys(requested_intervals))
+    if not intervals or set(intervals).difference({"1D", "1W", "1M"}):
+        raise ValueError("Unsupported analysis intervals")
+    reference = now or datetime.now(timezone.utc)
+    candidates: list[tuple[date, date]] = []
+    if "1D" in intervals:
+        last_key = _last_expected_key("1D", reference)
+        if last_key:
+            sessions = _expected_keys_ending("1D", last_key, LOOKBACK_BARS["1D"], calendar=calendar)
+            candidates.append((date.fromisoformat(sessions[0]), date.fromisoformat(sessions[-1]) + timedelta(days=1)))
+    if "1W" in intervals:
+        last_key = _last_expected_key("1W", reference)
+        if last_key:
+            last_week = date.fromisoformat(last_key)
+            first_week = last_week - timedelta(days=7 * (LOOKBACK_BARS["1W"] - 1))
+            candidates.append((first_week, last_week + timedelta(days=7)))
+    if "1M" in intervals:
+        last_key = _last_expected_key("1M", reference)
+        if last_key:
+            last_month = date.fromisoformat(last_key + "-01")
+            first_month = _shift_month(last_month, -(LOOKBACK_BARS["1M"] - 1))
+            candidates.append((first_month, _shift_month(last_month, 1)))
+    if not candidates:
+        raise ValueError("Unable to resolve analysis daily window")
+    start_day = min(item[0] for item in candidates)
+    end_day = max(item[1] for item in candidates)
+    trading_calendar = calendar or TradingCalendar.from_environment()
+    expected: list[str] = []
+    cursor = start_day
+    while cursor < end_day:
+        if trading_calendar.is_session_date(cursor):
+            expected.append(cursor.isoformat())
+        cursor += timedelta(days=1)
+    return AnalysisDailyWindow(
+        # Query on UTC date boundaries so both legacy 00:00Z rows and current
+        # market-midnight rows for the same trading date remain visible. Candle
+        # identity is normalized separately after the read.
+        start=_utc_midnight(start_day),
+        end=_utc_midnight(end_day),
+        expected_keys=tuple(expected),
+    )
 
 
 def _analysis_row(row: dict[str, Any], interval: str, index: int) -> dict[str, Any]:
@@ -225,19 +289,25 @@ def _coverage_result(expected: list[str], actual: set[str], interval: str, refer
     }
 
 
-def _expected_keys_ending(interval: str, last_key: str, count: int) -> list[str]:
+def _expected_keys_ending(
+    interval: str,
+    last_key: str,
+    count: int,
+    *,
+    calendar: TradingCalendar | None = None,
+) -> list[str]:
     cursor = _bucket_date(last_key, interval)
+    trading_calendar = calendar or TradingCalendar.from_environment()
     result: list[str] = []
     while len(result) < count:
         if interval == "1D":
-            at_open = datetime.combine(cursor, time(10), tzinfo=MARKET_TIMEZONE).astimezone(timezone.utc)
-            if market_session_for_datetime(at_open) != "closed": result.append(cursor.isoformat())
+            if trading_calendar.is_session_date(cursor): result.append(cursor.isoformat())
             cursor -= timedelta(days=1)
         elif interval == "1W":
-            if any(_is_session(cursor + timedelta(days=day)) for day in range(5)): result.append(cursor.isoformat())
+            if any(trading_calendar.is_session_date(cursor + timedelta(days=day)) for day in range(5)): result.append(cursor.isoformat())
             cursor -= timedelta(days=7)
         else:
-            if any(_is_session(cursor + timedelta(days=day)) for day in range(_days_in_month(cursor))): result.append(cursor.strftime("%Y-%m"))
+            if any(trading_calendar.is_session_date(cursor + timedelta(days=day)) for day in range(_days_in_month(cursor))): result.append(cursor.strftime("%Y-%m"))
             cursor = (cursor - timedelta(days=1)).replace(day=1)
     return list(reversed(result))
 
@@ -260,12 +330,20 @@ def _last_expected_key(interval: str, now: datetime) -> str | None:
 
 
 def _is_session(day: date) -> bool:
-    at_open = datetime.combine(day, time(10), tzinfo=MARKET_TIMEZONE).astimezone(timezone.utc)
-    return market_session_for_datetime(at_open) != "closed"
+    return TradingCalendar.from_environment().is_session_date(day)
+
+
+def _shift_month(value: date, months: int) -> date:
+    index = value.year * 12 + value.month - 1 + months
+    return date(index // 12, index % 12 + 1, 1)
 
 
 def _market_midnight_utc(day: date) -> str:
     return datetime.combine(day, time.min, tzinfo=MARKET_TIMEZONE).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+def _utc_midnight(day: date) -> str:
+    return datetime.combine(day, time.min, tzinfo=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
 def _bucket_date(key: str, interval: str) -> date:

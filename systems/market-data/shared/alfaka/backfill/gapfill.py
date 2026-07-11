@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+from alfaka.common.trading_calendar import is_us_equity_session_date
 from alfaka.serving.intervals import normalize_chart_interval
 
 
@@ -16,6 +17,7 @@ class TradingCalendar:
     close_time: time = time(16, 0)
     closed_dates: frozenset[str] = frozenset()
     early_closes: dict[str, time] | None = None
+    include_default_holidays: bool = True
 
     @classmethod
     def from_environment(cls):
@@ -27,6 +29,7 @@ class TradingCalendar:
             close_time=parse_market_clock_time(os.getenv("MARKET_CLOSE_TIME"), time(16, 0)),
             closed_dates=parse_closed_dates(os.getenv("MARKET_CLOSED_DATES")),
             early_closes=parse_early_closes(os.getenv("MARKET_EARLY_CLOSES")),
+            include_default_holidays=os.getenv("MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS", "true").lower() not in {"0", "false", "no", "off"},
         )
 
     @classmethod
@@ -39,6 +42,7 @@ class TradingCalendar:
             close_time=time(0, 0),
             closed_dates=frozenset(),
             early_closes={},
+            include_default_holidays=False,
         )
 
     @property
@@ -60,7 +64,11 @@ class TradingCalendar:
         """해당 날짜가 gapfill 대상 거래일인지 판단합니다."""
         if self.is_24x7:
             return True
-        return session_date.weekday() < 5 and session_date.isoformat() not in self.closed_dates
+        return is_us_equity_session_date(
+            session_date,
+            configured_dates=self.closed_dates,
+            include_default_holidays=self.include_default_holidays,
+        )
 
 
 @dataclass(frozen=True)

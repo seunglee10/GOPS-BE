@@ -137,9 +137,15 @@ layout migration. See `platform/s3/README.md` for exact prefixes.
 
 Persisted chart-analysis assets are an offline manual-build projection, not an
 API request-derived cache. The independent builder reads canonical ClickHouse
-daily candles once per symbol, derives completed 1D/1W/1M analysis candles with
-the shared identity/aggregation functions, and writes only compact final v2
-assets. Redis is limited to the existing job status key and pub/sub channel.
+daily candles once per requested symbol. Before the read, a request-scoped
+readiness step audits the exact 1D lookback, replays matching canonical S3 final
+objects, and fills only remaining ranges from Alpaca when the deployment enables
+that source. All repaired rows pass through the existing S3 materializer and are
+re-read from ClickHouse; Redis candles are never mixed into analysis input.
+Completed 1D/1W/1M analysis candles then use the shared identity/aggregation
+functions and only compact final v2 assets are written. This repair has no
+CronJob or candle-closed subscription. Redis is limited to the existing job
+status key and pub/sub channel.
 The development-only delete route issues a synchronous ClickHouse mutation for
 explicit symbol/interval pairs; it is not a retention policy or automatic cleanup.
 

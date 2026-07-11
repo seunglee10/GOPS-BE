@@ -317,6 +317,10 @@ drawing을 강조한다. v1은 기존 렌더를 유지하며 v2의 정상 빈 la
 개발 패널의 build log는 SSE `log` 이벤트를 수신하는 동안 브라우저 메모리에만 최대
 200줄 유지한다. polling/status 응답에 로그 이력을 기대하지 않으며, 연결 전·후 유실은
 허용한다. 최종 생성량은 `createdEntities`로 별도 표시한다.
+요청 symbol의 candle readiness/repair는 같은 build job 안에서만 실행된다. 패널은
+SSE log로 audit/S3/Alpaca/recheck 단계를 표시하고, status의 작은 `repair` 집계로
+점검 symbol 수, 전후 결측 수, materialized row 수를 표시한다. 별도 자동 갱신 UI나
+주기 실행 상태는 만들지 않는다.
 
 지원하지 않는 경우 정책:
 

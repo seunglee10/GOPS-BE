@@ -756,6 +756,10 @@ Chart-analysis asset builder (independent optional runtime):
 CHART_ASSET_BUILD_REQUESTS_TOPIC
 CHART_ASSET_BUILD_CONCURRENCY
 CHART_ASSET_BUILD_MAX_POLL_INTERVAL_MS
+CHART_ASSET_REPAIR_ENABLED
+CHART_ASSET_REPAIR_ALPACA_ENABLED
+CHART_ASSET_REPAIR_CONCURRENCY
+CHART_ASSET_REPAIR_MAX_RANGES
 CHART_ASSET_LLM_ENABLED
 CHART_ASSET_LLM_MODEL
 CHART_ASSET_LLM_TIMEOUT_SECONDS
@@ -763,7 +767,12 @@ CHART_ASSET_LLM_TIMEOUT_SECONDS
 
 `chart-asset-builder`는 `gops-agent-orchestrator` image를 공유하지만 interactive
 AgentOrchestrator workflow에 참여하지 않는다. Kafka job 하나를 symbol 중심으로
-처리하고 ClickHouse v2 asset을 저장한다. `alfaka-openai-secret`은 curator를 켤 때만
+처리한다. freshness skip이 아니면 요청 symbol의 canonical 1D를 감사하고 S3 final을
+먼저 복원한 뒤 남은 범위만 Alpaca split historical data로 채운다. 복구된 행은 기존
+materializer를 거쳐 ClickHouse에서 재조회되며, 별도 CronJob/topic/Redis candle 입력은
+없다. AWS overlay는 `CHART_ASSET_REPAIR_ALPACA_ENABLED=true`, 동시성 2, 최대 repair
+range 8을 사용한다. ClickHouse v2 asset table은 runtime auto-create가 아니라 배포 전
+두 init DDL 사본의 idempotent schema를 적용해 준비한다. `alfaka-openai-secret`은 curator를 켤 때만
 필요하며, 키 부재·LLM 장애는 eligible S/T를 `saved_with_warning`으로 저장한다.
 
 Financial final-answer synthesis is enabled with

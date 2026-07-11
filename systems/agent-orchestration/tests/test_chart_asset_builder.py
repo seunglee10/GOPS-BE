@@ -70,6 +70,30 @@ class FakeCurator:
         return {"output": deterministic_curation(bundle), "degraded": False, "reason": None, "model": self.model, "usage": {}}
 
 
+class FakeRepairResult:
+    def __init__(self, *, unavailable=False, reason="coverage_complete"):
+        self.unavailable = unavailable
+        self.reason = reason
+
+    def to_dict(self):
+        return {
+            "checked": True, "attempted": self.reason != "coverage_complete", "repaired": False,
+            "unavailable": self.unavailable, "missing_before": 2 if self.unavailable else 0,
+            "missing_after": 2 if self.unavailable else 0, "materialized_rows": 0, "reason": self.reason,
+        }
+
+
+class FakeRepairService:
+    def __init__(self, result=None):
+        self.result = result or FakeRepairResult()
+        self.calls = []
+
+    def ensure_ready(self, symbol, intervals, **kwargs):
+        self.calls.append((symbol, tuple(intervals)))
+        kwargs["on_event"]("audit", {"missingBars": 0, "actualBars": 500, "expectedBars": 500, "ranges": []})
+        return self.result
+
+
 class RecordingProgressStore(InMemoryChartAssetProgressStore):
     def __init__(self):
         super().__init__()
@@ -87,11 +111,44 @@ class PublishOnlyRedis:
         self.published.append((channel, payload))
 
 
-def envelope(symbols=("NVDA", "AAPL"), intervals=("1D", "1W", "1M"), job_id="cab-12345678-test", llm_enabled=False, force=False):
-    return ChartAssetBuildEnvelope.create(requested_by="test", symbols=symbols, intervals=intervals, llm_enabled=llm_enabled, force=force, job_id=job_id, submitted_at="2026-07-11T00:00:00.000Z")
+def envelope(symbols=("NVDA", "AAPL"), intervals=("1D", "1W", "1M"), job_id="cab-12345678-test", llm_enabled=False, force=False, skip_fresh_hours=0):
+    return ChartAssetBuildEnvelope.create(requested_by="test", symbols=symbols, intervals=intervals, llm_enabled=llm_enabled, force=force, skip_fresh_hours=skip_fresh_hours, job_id=job_id, submitted_at="2026-07-11T00:00:00.000Z")
 
 
 class ChartAssetBuilderTest(unittest.TestCase):
+    def test_requested_symbol_runs_inline_repair_before_candle_load(self):
+        request = envelope(symbols=("NVDA",), intervals=("1D",), job_id="cab-12345678-repair")
+        progress = RecordingProgressStore(); progress.initialize(request)
+        repair = FakeRepairService()
+        loader = FakeCandleLoader()
+        state = ChartAssetBuilder(
+            candle_loader=loader, storage=FakeStorage(), progress=progress,
+            repair_service=repair, concurrency=1,
+        ).run(request)
+        self.assertEqual(repair.calls, [("NVDA", ("1D",))])
+        self.assertEqual(loader.bundle_calls, 1)
+        self.assertEqual(state["repair"]["checkedSymbols"], 1)
+        self.assertTrue(any("repair audit" in line for line in progress.emitted_logs))
+
+    def test_freshness_skip_does_not_run_repair_or_load_candles(self):
+        existing = {("NVDA", "1D"): {
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "layers": {"structure": {"drawings": []}, "trend": {"drawings": []}, "agent": {"drawings": []}},
+        }}
+        request = envelope(
+            symbols=("NVDA",), intervals=("1D",), job_id="cab-12345678-fresh",
+            skip_fresh_hours=24,
+        )
+        progress = RecordingProgressStore(); progress.initialize(request)
+        repair = FakeRepairService(); loader = FakeCandleLoader()
+        state = ChartAssetBuilder(
+            candle_loader=loader, storage=FakeStorage(existing), progress=progress,
+            repair_service=repair, concurrency=1,
+        ).run(request)
+        self.assertEqual(repair.calls, [])
+        self.assertEqual(loader.bundle_calls, 0)
+        self.assertEqual(state["progress"]["skipped"], 1)
+
     def test_redis_logs_are_pubsub_only_and_not_job_state(self):
         redis = PublishOnlyRedis()
         store = RedisChartAssetProgressStore(redis_client=redis)
