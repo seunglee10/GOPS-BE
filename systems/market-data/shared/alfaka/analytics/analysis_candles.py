@@ -152,13 +152,16 @@ def is_analysis_candle_bucket_complete(
     identity = canonicalize_candle_identity({"timestamp": timestamp}, interval)
     if identity is None:
         return False
+    reference = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    if interval in INTRADAY_ANALYSIS_INTERVALS:
+        bucket = parse_utc_time(identity["timestamp"])
+        return bucket is not None and bucket + timedelta(minutes=INTRADAY_INTERVAL_MINUTES[interval]) <= reference
     trading_calendar = calendar or TradingCalendar.from_environment()
     completed_at = _bucket_completed_at(
         _bucket_date(identity["candleKey"], interval),
         interval,
         trading_calendar,
     )
-    reference = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     return completed_at is not None and completed_at <= reference
 
 
