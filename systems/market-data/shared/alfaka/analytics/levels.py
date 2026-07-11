@@ -44,7 +44,7 @@ def compute_levels(
         relevance = 1 - min(1.0, distance_atr / 4)
         vp = any(abs(center - value) <= 0.5 * median_atr for value in vp_prices)
         score = 0.30 * touch_quality + 0.20 * recency + 0.15 * (statistics.median(reaction_values) if reaction_values else 0) + 0.15 * relevance + 0.15 * float(vp) + 0.05 * float(state.startswith("role_flip"))
-        hard_pass = state not in {"unresolved", "invalidated", "break_up_pending", "break_down_pending"} and len(episodes) >= 2 and age <= config.level_last_touch_max_age and distance_atr <= 4
+        hard_pass = state not in {"unresolved", "invalidated", "break_up_pending", "break_down_pending"} and len(episodes) >= 3 and len(valid) >= 2 and age <= config.level_last_touch_max_age and distance_atr <= 2
         local_id = hashlib.sha256(f"{interval}|{','.join(sorted(item['id'] for item in cluster))}".encode()).hexdigest()[:10]
         levels.append({
             "id": f"{interval}:level:{local_id}", "price": round(center, 2),
@@ -53,7 +53,7 @@ def compute_levels(
             "touchEpisodes": episodes[-6:], "lastTestAt": candles[last_touch]["timestamp"],
             "lastTouchAgeBars": age, "currentDistanceAtr": round(distance_atr, 4),
             "role": _public_role(state), "state": state, "hardPass": hard_pass,
-            "rejectReasons": [] if hard_pass else _reject_reasons(state, len(episodes), age, distance_atr, config),
+            "rejectReasons": [] if hard_pass else _reject_reasons(state, len(episodes), len(valid), age, distance_atr, config),
             "roleFlips": int(state.startswith("role_flip")), "vpConfluence": vp,
             "roundNumber": _is_round_number(center), "memberPivotIds": [item["id"] for item in cluster],
         })
@@ -129,11 +129,12 @@ def _public_role(state):
     return "support" if state in {"support_active", "role_flip_support"} else "resistance" if state in {"resistance_active", "role_flip_resistance"} else "unresolved"
 
 
-def _reject_reasons(state, count, age, distance, config):
+def _reject_reasons(state, count, reaction_count, age, distance, config):
     reasons = []
-    if count < 2: reasons.append("insufficient_touch_episodes")
+    if count < 3: reasons.append("insufficient_touch_episodes")
+    if reaction_count < 2: reasons.append("insufficient_reaction_episodes")
     if age > config.level_last_touch_max_age: reasons.append("stale")
-    if distance > 4: reasons.append("current_distance")
+    if distance > 2: reasons.append("current_distance")
     if state in {"unresolved", "invalidated"}: reasons.append("unresolved_role")
     if state.startswith("break_"): reasons.append("break_pending")
     return reasons

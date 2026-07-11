@@ -52,6 +52,7 @@ def build_interval_palette(
         if candidate["redundancyKey"] not in selected_rule_ids: candidates.append(candidate)
     for event in features.get("events", []):
         if not event.get("hardPass") or event.get("currentImpact") not in {"high", "medium"}: continue
+        if event["id"] in selected_rule_ids: continue
         candidate = _candidate(symbol, interval, input_digest, "single_event", [event["id"]], event["id"], .7 if event["currentImpact"] == "high" else .65, 0, {
             "type": "flagMarker", "anchors": [{"timestamp": event["timestamp"], "price": float(event["price"])}], "label": _event_label(event),
         }, generated_at)
@@ -83,13 +84,22 @@ def build_interval_palette(
         "regime": _compact_regime(features.get("regime") or {}),
         "ruleFindings": findings, "visualCandidates": candidates,
         "narrativeFacts": facts, "conditions": conditions,
+        "ruleDrawingCount": sum(len((rule_layers.get(key) or {}).get("drawings", [])) for key in ("structure", "trend")),
     }
 
 
 def build_symbol_bundle(symbol: str, interval_palettes: list[dict[str, Any]], cross_timeframe: dict[str, Any] | None = None) -> dict[str, Any]:
     palettes = sorted(interval_palettes, key=lambda item: {"1M": 0, "1W": 1, "1D": 2}[item["interval"]])
     digest = "sha256:" + hashlib.sha256(_stable_json({"symbol": symbol, "intervals": palettes, "cross": cross_timeframe or {}}).encode()).hexdigest()
-    return {"symbol": symbol, "symbolBundleDigest": digest, "intervals": [_compact_palette(item) for item in palettes], "crossTimeframe": cross_timeframe or {"alignment": "unknown", "relationIds": [], "evidenceRefs": []}}
+    compact = [_compact_palette(item) for item in palettes]
+    allowed: set[str] = set()
+    for rank in range(6):
+        for palette in reversed(compact):
+            if rank < len(palette["visualCandidates"]) and len(allowed) < 10:
+                allowed.add(palette["visualCandidates"][rank]["candidateId"])
+    for palette in compact:
+        palette["visualCandidates"] = [item for item in palette["visualCandidates"] if item["candidateId"] in allowed]
+    return {"symbol": symbol, "symbolBundleDigest": digest, "intervals": compact, "crossTimeframe": cross_timeframe or {"alignment": "unknown", "relationIds": [], "evidenceRefs": []}}
 
 
 def validate_curation_output(value: Any, bundle: dict[str, Any]) -> dict[str, Any]:
@@ -106,8 +116,9 @@ def validate_curation_output(value: Any, bundle: dict[str, Any]) -> dict[str, An
         if interval not in palettes or interval in seen_intervals: raise ValueError("invalid interval reference")
         seen_intervals.add(interval); palette = palettes[interval]
         candidates = {item["candidateId"]: item for item in palette["visualCandidates"]}
-        facts = {item["factId"]: item for item in palette["narrativeFacts"]}
-        conditions = {item["conditionId"]: item for item in palette.get("conditions", [])}
+        fact_owners = {fact_id: item["candidateId"] for item in palette["visualCandidates"] for fact_id in item.get("factIds", [])}
+        fact_owners.update({fact_id: item["findingId"] for item in palette["ruleFindings"] for fact_id in item.get("factIds", [])})
+        conditions = {item["confirmationConditionRef"]: item["candidateId"] for item in palette["visualCandidates"]}
         selected = selection["selectedCandidateIds"]
         if len(selected) > 2 or len(selected) != len(set(selected)) or any(item not in candidates for item in selected): raise ValueError("invalid candidate selection")
         total += len(selected)
@@ -117,10 +128,9 @@ def validate_curation_output(value: Any, bundle: dict[str, Any]) -> dict[str, An
             if set(focus) != {"refType","refId","factIds","watchConditionRef","priority"}: raise ValueError("invalid focus narrative")
             owner = focus["refId"]
             allowed_owner = owner in candidates or any(item["findingId"] == owner for item in palette["ruleFindings"])
-            if not allowed_owner or any(fact not in facts or facts[fact]["ownerRef"] != owner for fact in focus["factIds"]): raise ValueError("invalid focus fact")
-            condition = conditions.get(focus["watchConditionRef"])
-            if focus["refType"] == "visualCandidate" and (condition is None or condition["ownerRef"] != owner): raise ValueError("invalid focus condition")
-        if any(item not in facts for item in selection["headlineFactIds"]): raise ValueError("invalid headline fact")
+            if not allowed_owner or any(fact_owners.get(fact) != owner for fact in focus["factIds"]): raise ValueError("invalid focus fact")
+            if focus["refType"] == "visualCandidate" and conditions.get(focus["watchConditionRef"]) != owner: raise ValueError("invalid focus condition")
+        if any(item not in fact_owners for item in selection["headlineFactIds"]): raise ValueError("invalid headline fact")
         if any(item not in relation_ids for item in selection["higherTimeframeRelationIds"]): raise ValueError("invalid relation")
         if selection["emphasisCode"] not in EMPHASIS_CODES: raise ValueError("invalid emphasis")
     if total > 6: raise ValueError("symbol visual budget exceeded")
@@ -134,7 +144,8 @@ def materialize_curation(*, symbol: str, palettes: dict[str, dict[str, Any]], ou
         selection = selections.get(interval) or {"selectedCandidateIds": [], "focusNarratives": []}
         candidates = {item["candidateId"]: item for item in palette["visualCandidates"]}
         drawings, selected_meta = [], []
-        for candidate_id in selection["selectedCandidateIds"]:
+        available_slots = max(0, 5 - int(palette.get("ruleDrawingCount") or 0))
+        for candidate_id in selection["selectedCandidateIds"][:available_slots]:
             candidate = candidates[candidate_id]
             drawing = copy.deepcopy(candidate["drawingTemplate"])
             suffix = _suffix(candidate_id)
@@ -146,12 +157,12 @@ def materialize_curation(*, symbol: str, palettes: dict[str, dict[str, Any]], ou
 
 
 def deterministic_curation(bundle: dict[str, Any]) -> dict[str, Any]:
-    return {"intervalSelections": [{"interval": palette["interval"], "selectedCandidateIds": [], "headlineFactIds": [item["factId"] for item in palette["narrativeFacts"][:2]], "focusNarratives": [], "counterEvidenceRefs": [], "higherTimeframeRelationIds": [], "emphasisCode": "STRUCTURE_FIRST"} for palette in bundle["intervals"]]}
+    return {"intervalSelections": [{"interval": palette["interval"], "selectedCandidateIds": [], "headlineFactIds": [fact_id for item in palette["ruleFindings"][:2] for fact_id in item.get("factIds", [])][:2], "focusNarratives": [], "counterEvidenceRefs": [], "higherTimeframeRelationIds": [], "emphasisCode": "STRUCTURE_FIRST"} for palette in bundle["intervals"]]}
 
 
 def curation_output_schema() -> dict[str, Any]:
     focus = {"type":"object","additionalProperties":False,"properties":{"refType":{"enum":["visualCandidate","ruleFinding"]},"refId":{"type":"string"},"factIds":{"type":"array","items":{"type":"string"},"maxItems":3},"watchConditionRef":{"type":"string"},"priority":{"type":"integer","minimum":1,"maximum":9}},"required":["refType","refId","factIds","watchConditionRef","priority"]}
-    selection = {"type":"object","additionalProperties":False,"properties":{"interval":{"enum":["1D","1W","1M"]},"selectedCandidateIds":{"type":"array","items":{"type":"string"},"maxItems":2,"uniqueItems":True},"headlineFactIds":{"type":"array","items":{"type":"string"},"maxItems":3,"uniqueItems":True},"focusNarratives":{"type":"array","items":focus,"maxItems":5},"counterEvidenceRefs":{"type":"array","items":{"type":"string"},"maxItems":3,"uniqueItems":True},"higherTimeframeRelationIds":{"type":"array","items":{"type":"string"},"maxItems":3,"uniqueItems":True},"emphasisCode":{"enum":sorted(EMPHASIS_CODES)}},"required":["interval","selectedCandidateIds","headlineFactIds","focusNarratives","counterEvidenceRefs","higherTimeframeRelationIds","emphasisCode"]}
+    selection = {"type":"object","additionalProperties":False,"properties":{"interval":{"enum":["1D","1W","1M"]},"selectedCandidateIds":{"type":"array","items":{"type":"string"},"maxItems":2},"headlineFactIds":{"type":"array","items":{"type":"string"},"maxItems":3},"focusNarratives":{"type":"array","items":focus,"maxItems":5},"counterEvidenceRefs":{"type":"array","items":{"type":"string"},"maxItems":3},"higherTimeframeRelationIds":{"type":"array","items":{"type":"string"},"maxItems":3},"emphasisCode":{"enum":sorted(EMPHASIS_CODES)}},"required":["interval","selectedCandidateIds","headlineFactIds","focusNarratives","counterEvidenceRefs","higherTimeframeRelationIds","emphasisCode"]}
     return {"type":"object","additionalProperties":False,"properties":{"intervalSelections":{"type":"array","items":selection,"maxItems":3}},"required":["intervalSelections"]}
 
 
@@ -160,8 +171,9 @@ def _candidate(symbol, interval, digest, semantic, evidence, redundancy, score, 
     template = {**template, "style": {"colorToken": "insight-primary", "lineWidth": 2}, "sourceInterval": interval}
     return {"candidateId":candidate_id,"interval":interval,"semanticType":semantic,"drawingTemplate":template,"evidenceRefs":evidence,"counterEvidenceRefs":[],"redundancyKey":redundancy,"quality":{"hardPass":True,"score":round(float(score),4),"currentDistanceAtr":round(float(distance),4)},"qualityBand":"high" if score>=.8 else "medium","currentRelevance":"near" if distance<=1.5 else "actionable"}
 def _compact_palette(item):
-    compact = {key:item[key] for key in ("interval","inputDigest","asOf","quality","regime","ruleFindings","narrativeFacts","conditions")}
-    compact["visualCandidates"] = [{key:candidate[key] for key in ("candidateId","semanticType","evidenceRefs","counterEvidenceRefs","factIds","qualityBand","currentRelevance","confirmationConditionRef","invalidationConditionRef")} for candidate in item["visualCandidates"]]
+    compact = {key:item[key] for key in ("interval","regime")}
+    compact["ruleFindings"] = [{key:finding[key] for key in ("findingId","factIds")} for finding in item["ruleFindings"][:2]]
+    compact["visualCandidates"] = [{key:candidate[key] for key in ("candidateId","semanticType","factIds","qualityBand","currentRelevance","confirmationConditionRef","invalidationConditionRef")} for candidate in item["visualCandidates"]]
     return compact
 def _compact_regime(regime): return {"trend":regime.get("trend","range"),"volatility":"high" if float(regime.get("atrPercentile") or 0)>.8 else "low" if float(regime.get("atrPercentile") or 0)<.2 else "normal","momentum":"slowing" if regime.get("macdState")=="diverging" else "stable"}
 def _dedupe_candidates(items):

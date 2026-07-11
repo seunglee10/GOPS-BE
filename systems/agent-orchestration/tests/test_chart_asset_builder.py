@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import math
 import sys
 import unittest
@@ -66,8 +67,8 @@ class FakeCurator:
         return {"output": deterministic_curation(bundle), "degraded": False, "reason": None, "model": self.model, "usage": {}}
 
 
-def envelope(symbols=("NVDA", "AAPL"), intervals=("1D", "1W", "1M"), job_id="cab-12345678-test", llm_enabled=False):
-    return ChartAssetBuildEnvelope.create(requested_by="test", symbols=symbols, intervals=intervals, llm_enabled=llm_enabled, job_id=job_id, submitted_at="2026-07-11T00:00:00.000Z")
+def envelope(symbols=("NVDA", "AAPL"), intervals=("1D", "1W", "1M"), job_id="cab-12345678-test", llm_enabled=False, force=False):
+    return ChartAssetBuildEnvelope.create(requested_by="test", symbols=symbols, intervals=intervals, llm_enabled=llm_enabled, force=force, job_id=job_id, submitted_at="2026-07-11T00:00:00.000Z")
 
 
 class ChartAssetBuilderTest(unittest.TestCase):
@@ -84,6 +85,10 @@ class ChartAssetBuilderTest(unittest.TestCase):
         one_day = storage.assets[("NVDA", "1D")]
         self.assertEqual(one_day["assetVersion"], "v2")
         self.assertEqual(one_day["build"]["agentOutcome"], "not_requested_empty")
+        self.assertLessEqual(len(json.dumps(one_day, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()), 12 * 1024)
+        selected_ids = {item["candidateId"] for layer in one_day["layers"].values() for item in layer.get("selected", [])}
+        self.assertTrue({item["id"] for item in one_day["features"]["levels"]}.issubset(selected_ids))
+        self.assertTrue({item["id"] for item in one_day["features"]["trends"]}.issubset(selected_ids))
 
     def test_cancel_marks_remaining_items_skipped(self):
         request = envelope(symbols=("NVDA",), job_id="cab-12345678-cancel")
@@ -146,6 +151,31 @@ class ChartAssetBuilderTest(unittest.TestCase):
         self.assertEqual(service.calls, 1)
         self.assertEqual(len(storage.saved), saved_count)
         self.assertEqual({item["status"] for item in state["recentItems"]}, {"unchanged"})
+
+        forced = envelope(symbols=("NVDA",), job_id="cab-12345678-noop-force", llm_enabled=True, force=True)
+        forced_progress = InMemoryChartAssetProgressStore(); forced_progress.initialize(forced)
+        forced_state = ChartAssetBuilder(candle_loader=loader, storage=storage, progress=forced_progress, llm_service=service, concurrency=1).run(forced)
+        self.assertEqual(service.calls, 2, "force evaluates curator once")
+        self.assertEqual(len(storage.saved), saved_count, "audit timestamps do not change content digest")
+        self.assertEqual({item.get("reason") for item in forced_state["recentItems"]}, {"unchanged_after_force"})
+
+    def test_late_identical_intent_skips_llm_and_write_after_kernel(self):
+        storage = FakeStorage(); service = FakeCurator(); loader = FakeCandleLoader()
+        first = envelope(symbols=("NVDA",), job_id="cab-12345678-late-a", llm_enabled=True)
+        first_progress = InMemoryChartAssetProgressStore(); first_progress.initialize(first)
+        ChartAssetBuilder(candle_loader=loader, storage=storage, progress=first_progress, llm_service=service, concurrency=1).run(first)
+        saved_count = len(storage.saved)
+        for asset in storage.assets.values():
+            asset["build"]["preKernelDigest"] = "sha256:" + "f" * 64
+
+        second = envelope(symbols=("NVDA",), job_id="cab-12345678-late-b", llm_enabled=True)
+        second_progress = InMemoryChartAssetProgressStore(); second_progress.initialize(second)
+        state = ChartAssetBuilder(candle_loader=loader, storage=storage, progress=second_progress, llm_service=service, concurrency=1).run(second)
+
+        self.assertEqual(loader.bundle_calls, 2)
+        self.assertEqual(service.calls, 1, "late intent no-op skips the second curator call")
+        self.assertEqual(len(storage.saved), saved_count)
+        self.assertEqual({item.get("reason") for item in state["recentItems"]}, {"late_intent_unchanged"})
 
 
 if __name__ == "__main__": unittest.main()

@@ -53,7 +53,7 @@ def _materialize_line(candles, first, second, slope, touches, same, atr_values, 
     span = max(item["barIndex"] for item in touches) - min(item["barIndex"] for item in touches)
     median_atr = statistics.median([value for value in atr_values[start:] if value > 0])
     slope_atr = slope / median_atr if median_atr else 0
-    hard = len(touches) >= 3 and span >= 0.25 * config.display_bars and current_distance <= 3 and last_touch_age <= 0.35 * config.display_bars and violations <= 1 and abs(slope_atr) >= 0.002
+    hard = len(touches) >= 3 and span >= 0.25 * config.display_bars and current_distance <= 2.25 and last_touch_age <= 0.15 * config.display_bars and violations <= 1 and abs(slope_atr) >= 0.002
     score = 0.35 * min(1, (len(touches) - 2) / 3) + 0.20 * (1 - min(1, current_distance / 3)) + 0.15 * math.exp(-math.log(2) * last_touch_age / max(1, .2 * config.display_bars)) + 0.15 * (1 - min(1, statistics.median(residuals) / .35)) + 0.15 * min(1, span / (.6 * config.display_bars))
     raw = f"{interval}|{trend_kind}|{first['id']}|{second['id']}|{','.join(item['id'] for item in touches)}"
     return {
@@ -107,7 +107,7 @@ def _range_candidate(candles, pivots, atr_values, config, interval):
         if width < 2 * local_atr: continue
         lower_touches = _boundary_touches(window, lower, local_atr, "lower", config.min_touch_gap)
         upper_touches = _boundary_touches(window, upper, local_atr, "upper", config.min_touch_gap)
-        if len(lower_touches) < 2 or len(upper_touches) < 2: continue
+        if len(lower_touches) < 2 or len(upper_touches) < 2 or len(lower_touches) + len(upper_touches) < 6: continue
         if not any(index >= fit_count for index in lower_touches) or not any(index >= fit_count for index in upper_touches): continue
         sequence = sorted([(index, "L") for index in lower_touches] + [(index, "H") for index in upper_touches])
         alternations = sum(left[1] != right[1] for left, right in zip(sequence, sequence[1:]))
@@ -120,7 +120,7 @@ def _range_candidate(candles, pivots, atr_values, config, interval):
         ordered = sum((right["price"] > left["price"]) == (float(window[-1]["close"]) > float(window[0]["close"])) for left, right in zip(swings, swings[1:]))
         ordered_ratio = ordered / max(1, len(swings) - 1)
         if efficiency >= .45 and net >= .70 and ordered_ratio >= .70: continue
-        if containment < .80 or _zone_distance(float(candles[-1]["close"]), lower, upper) / local_atr > 2: continue
+        if containment < .80 or _zone_distance(float(candles[-1]["close"]), lower, upper) / local_atr > 1: continue
         raw = f"{interval}|range|{window[0].get('candleKey')}|{window[-1].get('candleKey')}|{lower}|{upper}"
         candidates.append({
             "id": f"{interval}:range:{hashlib.sha256(raw.encode()).hexdigest()[:10]}", "kind": "range",
@@ -158,8 +158,8 @@ def _line_reasons(touches,span,distance,age,violations,slope,config):
     result=[]
     if touches<3: result.append("two_point_only")
     if span<.25*config.display_bars: result.append("short_span")
-    if distance>3: result.append("no_current_relevance")
-    if age>.35*config.display_bars: result.append("stale")
+    if distance>2.25: result.append("no_current_relevance")
+    if age>.15*config.display_bars: result.append("stale")
     if violations>1: result.append("close_violation")
     if abs(slope)<.002: result.append("flat_slope")
     return result

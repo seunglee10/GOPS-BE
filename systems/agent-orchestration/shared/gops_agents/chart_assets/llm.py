@@ -67,7 +67,7 @@ class ChartAssetLLMService:
                 output = validate_curation_output(json.loads(_openai_output_text(data)), bundle)
                 return {"output": output, "degraded": False, "reason": None, "model": data.get("model") or self.model, "usage": data.get("usage") or {}, "latencyMs": round((time.perf_counter()-started)*1000), "promptVersion": PROMPT_VERSION_V2}
             except Exception as exc:
-                last_reason = f"openai_{exc.__class__.__name__}"
+                last_reason = f"openai_http_{exc.code}" if isinstance(exc, urllib.error.HTTPError) else f"openai_{exc.__class__.__name__}"
                 if attempt == 0 and _needs_backoff(exc):
                     self.sleeper(.5)
                     continue

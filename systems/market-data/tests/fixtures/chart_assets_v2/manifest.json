@@ -1,0 +1,3191 @@
+{
+  "fixtureVersion": "chart-assets-v2-real-v1",
+  "collectedAt": "2026-07-11",
+  "source": {
+    "provider": "Nasdaq historical public API",
+    "interval": "1D",
+    "from": "2024-07-15",
+    "to": "2026-07-10",
+    "corporateActionPolicy": "split; selected source windows contain no known in-window split for the chosen symbols"
+  },
+  "series": [
+    {
+      "symbol": "NVDA",
+      "file": "nvda-1d.json",
+      "bars": 498
+    },
+    {
+      "symbol": "AAPL",
+      "file": "aapl-1d.json",
+      "bars": 498
+    },
+    {
+      "symbol": "MSFT",
+      "file": "msft-1d.json",
+      "bars": 498
+    },
+    {
+      "symbol": "AMZN",
+      "file": "amzn-1d.json",
+      "bars": 498
+    },
+    {
+      "symbol": "TSLA",
+      "file": "tsla-1d.json",
+      "bars": 498
+    },
+    {
+      "symbol": "META",
+      "file": "meta-1d.json",
+      "bars": 498
+    },
+    {
+      "symbol": "JPM",
+      "file": "jpm-1d.json",
+      "bars": 498
+    },
+    {
+      "symbol": "XOM",
+      "file": "xom-1d.json",
+      "bars": 498
+    },
+    {
+      "symbol": "SPY",
+      "file": "spy-1d.json",
+      "bars": 498
+    },
+    {
+      "symbol": "AMD",
+      "file": "amd-1d.json",
+      "bars": 498
+    },
+    {
+      "symbol": "WMT",
+      "file": "wmt-1d.json",
+      "bars": 498
+    },
+    {
+      "symbol": "XLU",
+      "file": "xlu-1d.json",
+      "bars": 498
+    },
+    {
+      "symbol": "TLT",
+      "file": "tlt-1d.json",
+      "bars": 498
+    }
+  ],
+  "episodes": [
+    {
+      "episodeId": "nvda-2025-09-08-strong_trend",
+      "symbol": "NVDA",
+      "series": "nvda-1d.json",
+      "asOf": "2025-09-08T00:00:00.000Z",
+      "split": "development",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "labelSource": "pre-evaluation engineering hypothesis; human blind review pending"
+    },
+    {
+      "episodeId": "nvda-2026-01-30-range",
+      "symbol": "NVDA",
+      "series": "nvda-1d.json",
+      "asOf": "2026-01-30T00:00:00.000Z",
+      "split": "tuning",
+      "category": "range",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "range",
+        "level"
+      ],
+      "labelSource": "pre-evaluation engineering hypothesis; human blind review pending"
+    },
+    {
+      "episodeId": "nvda-2026-07-09-gap_high_volatility",
+      "symbol": "NVDA",
+      "series": "nvda-1d.json",
+      "asOf": "2026-07-09T00:00:00.000Z",
+      "split": "holdout",
+      "category": "gap_high_volatility",
+      "expectation": "may_draw",
+      "expectedSemanticTypes": [
+        "event",
+        "level"
+      ],
+      "labelSource": "pre-evaluation engineering hypothesis; human blind review pending"
+    },
+    {
+      "episodeId": "nvda-2026-07-09-known_regression",
+      "symbol": "NVDA",
+      "series": "nvda-1d.json",
+      "asOf": "2026-07-09T00:00:00.000Z",
+      "split": "holdout",
+      "category": "known_regression",
+      "expectation": "may_draw",
+      "expectedSemanticTypes": ["trend", "level"],
+      "forbiddenEvidence": {
+        "anchorWindow": ["2025-09-17", "2025-09-25"],
+        "reason": "two_point_only_and_no_current_relevance"
+      },
+      "labelSource": "recorded NVDA v1 regression; human blind review pending"
+    },
+    {
+      "episodeId": "aapl-2025-09-08-weak_noise",
+      "symbol": "AAPL",
+      "series": "aapl-1d.json",
+      "asOf": "2025-09-08T00:00:00.000Z",
+      "split": "tuning",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "labelSource": "pre-evaluation engineering hypothesis; human blind review pending"
+    },
+    {
+      "episodeId": "aapl-2026-01-30-structure_transition",
+      "symbol": "AAPL",
+      "series": "aapl-1d.json",
+      "asOf": "2026-01-30T00:00:00.000Z",
+      "split": "holdout",
+      "category": "structure_transition",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "event",
+        "level"
+      ],
+      "labelSource": "pre-evaluation engineering hypothesis; human blind review pending"
+    },
+    {
+      "episodeId": "aapl-2026-07-09-known_regression",
+      "symbol": "AAPL",
+      "series": "aapl-1d.json",
+      "asOf": "2026-07-09T00:00:00.000Z",
+      "split": "development",
+      "category": "known_regression",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "labelSource": "pre-evaluation engineering hypothesis; human blind review pending"
+    },
+    {
+      "episodeId": "msft-2025-09-08-strong_trend",
+      "symbol": "MSFT",
+      "series": "msft-1d.json",
+      "asOf": "2025-09-08T00:00:00.000Z",
+      "split": "holdout",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "labelSource": "pre-evaluation engineering hypothesis; human blind review pending"
+    },
+    {
+      "episodeId": "msft-2026-01-30-range",
+      "symbol": "MSFT",
+      "series": "msft-1d.json",
+      "asOf": "2026-01-30T00:00:00.000Z",
+      "split": "development",
+      "category": "range",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "range",
+        "level"
+      ],
+      "labelSource": "pre-evaluation engineering hypothesis; human blind review pending"
+    },
+    {
+      "episodeId": "msft-2026-07-09-gap_high_volatility",
+      "symbol": "MSFT",
+      "series": "msft-1d.json",
+      "asOf": "2026-07-09T00:00:00.000Z",
+      "split": "tuning",
+      "category": "gap_high_volatility",
+      "expectation": "may_draw",
+      "expectedSemanticTypes": [
+        "event",
+        "level"
+      ],
+      "labelSource": "pre-evaluation engineering hypothesis; human blind review pending"
+    },
+    {
+      "episodeId": "amzn-2025-09-08-weak_noise",
+      "symbol": "AMZN",
+      "series": "amzn-1d.json",
+      "asOf": "2025-09-08T00:00:00.000Z",
+      "split": "development",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "labelSource": "pre-evaluation engineering hypothesis; human blind review pending"
+    },
+    {
+      "episodeId": "amzn-2026-01-30-structure_transition",
+      "symbol": "AMZN",
+      "series": "amzn-1d.json",
+      "asOf": "2026-01-30T00:00:00.000Z",
+      "split": "tuning",
+      "category": "structure_transition",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "event",
+        "level"
+      ],
+      "labelSource": "pre-evaluation engineering hypothesis; human blind review pending"
+    },
+    {
+      "episodeId": "amzn-2026-07-09-known_regression",
+      "symbol": "AMZN",
+      "series": "amzn-1d.json",
+      "asOf": "2026-07-09T00:00:00.000Z",
+      "split": "holdout",
+      "category": "known_regression",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "labelSource": "pre-evaluation engineering hypothesis; human blind review pending"
+    },
+    {
+      "episodeId": "tsla-2025-09-08-strong_trend",
+      "symbol": "TSLA",
+      "series": "tsla-1d.json",
+      "asOf": "2025-09-08T00:00:00.000Z",
+      "split": "tuning",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "labelSource": "pre-evaluation engineering hypothesis; human blind review pending"
+    },
+    {
+      "episodeId": "tsla-2026-01-30-range",
+      "symbol": "TSLA",
+      "series": "tsla-1d.json",
+      "asOf": "2026-01-30T00:00:00.000Z",
+      "split": "holdout",
+      "category": "range",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "range",
+        "level"
+      ],
+      "labelSource": "pre-evaluation engineering hypothesis; human blind review pending"
+    },
+    {
+      "episodeId": "tsla-2026-07-09-gap_high_volatility",
+      "symbol": "TSLA",
+      "series": "tsla-1d.json",
+      "asOf": "2026-07-09T00:00:00.000Z",
+      "split": "development",
+      "category": "gap_high_volatility",
+      "expectation": "may_draw",
+      "expectedSemanticTypes": [
+        "event",
+        "level"
+      ],
+      "labelSource": "pre-evaluation engineering hypothesis; human blind review pending"
+    },
+    {
+      "episodeId": "meta-2025-09-08-weak_noise",
+      "symbol": "META",
+      "series": "meta-1d.json",
+      "asOf": "2025-09-08T00:00:00.000Z",
+      "split": "holdout",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "labelSource": "pre-evaluation engineering hypothesis; human blind review pending"
+    },
+    {
+      "episodeId": "meta-2026-01-30-structure_transition",
+      "symbol": "META",
+      "series": "meta-1d.json",
+      "asOf": "2026-01-30T00:00:00.000Z",
+      "split": "development",
+      "category": "structure_transition",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "event",
+        "level"
+      ],
+      "labelSource": "pre-evaluation engineering hypothesis; human blind review pending"
+    },
+    {
+      "episodeId": "meta-2026-07-09-known_regression",
+      "symbol": "META",
+      "series": "meta-1d.json",
+      "asOf": "2026-07-09T00:00:00.000Z",
+      "split": "tuning",
+      "category": "known_regression",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "labelSource": "pre-evaluation engineering hypothesis; human blind review pending"
+    },
+    {
+      "episodeId": "jpm-2025-09-08-strong_trend",
+      "symbol": "JPM",
+      "series": "jpm-1d.json",
+      "asOf": "2025-09-08T00:00:00.000Z",
+      "split": "development",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "labelSource": "pre-evaluation engineering hypothesis; human blind review pending"
+    },
+    {
+      "episodeId": "jpm-2026-01-30-range",
+      "symbol": "JPM",
+      "series": "jpm-1d.json",
+      "asOf": "2026-01-30T00:00:00.000Z",
+      "split": "tuning",
+      "category": "range",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "range",
+        "level"
+      ],
+      "labelSource": "pre-evaluation engineering hypothesis; human blind review pending"
+    },
+    {
+      "episodeId": "jpm-2026-07-09-gap_high_volatility",
+      "symbol": "JPM",
+      "series": "jpm-1d.json",
+      "asOf": "2026-07-09T00:00:00.000Z",
+      "split": "holdout",
+      "category": "gap_high_volatility",
+      "expectation": "may_draw",
+      "expectedSemanticTypes": [
+        "event",
+        "level"
+      ],
+      "labelSource": "pre-evaluation engineering hypothesis; human blind review pending"
+    },
+    {
+      "episodeId": "xom-2025-09-08-weak_noise",
+      "symbol": "XOM",
+      "series": "xom-1d.json",
+      "asOf": "2025-09-08T00:00:00.000Z",
+      "split": "tuning",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "labelSource": "pre-evaluation engineering hypothesis; human blind review pending"
+    },
+    {
+      "episodeId": "xom-2026-01-30-structure_transition",
+      "symbol": "XOM",
+      "series": "xom-1d.json",
+      "asOf": "2026-01-30T00:00:00.000Z",
+      "split": "holdout",
+      "category": "structure_transition",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "event",
+        "level"
+      ],
+      "labelSource": "pre-evaluation engineering hypothesis; human blind review pending"
+    },
+    {
+      "episodeId": "xom-2026-07-09-known_regression",
+      "symbol": "XOM",
+      "series": "xom-1d.json",
+      "asOf": "2026-07-09T00:00:00.000Z",
+      "split": "development",
+      "category": "known_regression",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "labelSource": "pre-evaluation engineering hypothesis; human blind review pending"
+    },
+    {
+      "episodeId": "aapl-2025-10-15-holdout-trend",
+      "symbol": "AAPL",
+      "series": "aapl-1d.json",
+      "asOf": "2025-10-15T00:00:00.000Z",
+      "split": "holdout",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "labelSource": "pre-evaluation raw-price regime hypothesis (60-bar efficiency/return only; v2 output unseen); automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "aapl-2025-06-06-holdout-noise",
+      "symbol": "AAPL",
+      "series": "aapl-1d.json",
+      "asOf": "2025-06-06T00:00:00.000Z",
+      "split": "holdout",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "labelSource": "pre-evaluation raw-price regime hypothesis (60-bar efficiency/return only; v2 output unseen); automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "amd-2026-04-30-holdout-trend",
+      "symbol": "AMD",
+      "series": "amd-1d.json",
+      "asOf": "2026-04-30T00:00:00.000Z",
+      "split": "holdout",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "labelSource": "pre-evaluation raw-price regime hypothesis (60-bar efficiency/return only; v2 output unseen); automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "amd-2026-02-25-holdout-noise",
+      "symbol": "AMD",
+      "series": "amd-1d.json",
+      "asOf": "2026-02-25T00:00:00.000Z",
+      "split": "holdout",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "labelSource": "pre-evaluation raw-price regime hypothesis (60-bar efficiency/return only; v2 output unseen); automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "amzn-2025-04-02-holdout-trend",
+      "symbol": "AMZN",
+      "series": "amzn-1d.json",
+      "asOf": "2025-04-02T00:00:00.000Z",
+      "split": "holdout",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "labelSource": "pre-evaluation raw-price regime hypothesis (60-bar efficiency/return only; v2 output unseen); automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "amzn-2026-07-07-holdout-noise",
+      "symbol": "AMZN",
+      "series": "amzn-1d.json",
+      "asOf": "2026-07-07T00:00:00.000Z",
+      "split": "holdout",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "labelSource": "pre-evaluation raw-price regime hypothesis (60-bar efficiency/return only; v2 output unseen); automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "jpm-2025-06-06-holdout-trend",
+      "symbol": "JPM",
+      "series": "jpm-1d.json",
+      "asOf": "2025-06-06T00:00:00.000Z",
+      "split": "holdout",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "labelSource": "pre-evaluation raw-price regime hypothesis (60-bar efficiency/return only; v2 output unseen); automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "jpm-2025-12-18-holdout-noise",
+      "symbol": "JPM",
+      "series": "jpm-1d.json",
+      "asOf": "2025-12-18T00:00:00.000Z",
+      "split": "holdout",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "labelSource": "pre-evaluation raw-price regime hypothesis (60-bar efficiency/return only; v2 output unseen); automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "meta-2025-08-12-holdout-trend",
+      "symbol": "META",
+      "series": "meta-1d.json",
+      "asOf": "2025-08-12T00:00:00.000Z",
+      "split": "holdout",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "labelSource": "pre-evaluation raw-price regime hypothesis (60-bar efficiency/return only; v2 output unseen); automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "meta-2025-10-15-holdout-noise",
+      "symbol": "META",
+      "series": "meta-1d.json",
+      "asOf": "2025-10-15T00:00:00.000Z",
+      "split": "holdout",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "labelSource": "pre-evaluation raw-price regime hypothesis (60-bar efficiency/return only; v2 output unseen); automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "msft-2025-08-12-holdout-trend",
+      "symbol": "MSFT",
+      "series": "msft-1d.json",
+      "asOf": "2025-08-12T00:00:00.000Z",
+      "split": "holdout",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "labelSource": "pre-evaluation raw-price regime hypothesis (60-bar efficiency/return only; v2 output unseen); automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "msft-2026-04-30-holdout-noise",
+      "symbol": "MSFT",
+      "series": "msft-1d.json",
+      "asOf": "2026-04-30T00:00:00.000Z",
+      "split": "holdout",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "labelSource": "pre-evaluation raw-price regime hypothesis (60-bar efficiency/return only; v2 output unseen); automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "nvda-2025-08-12-holdout-trend",
+      "symbol": "NVDA",
+      "series": "nvda-1d.json",
+      "asOf": "2025-08-12T00:00:00.000Z",
+      "split": "holdout",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "labelSource": "pre-evaluation raw-price regime hypothesis (60-bar efficiency/return only; v2 output unseen); automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "nvda-2025-12-18-holdout-noise",
+      "symbol": "NVDA",
+      "series": "nvda-1d.json",
+      "asOf": "2025-12-18T00:00:00.000Z",
+      "split": "holdout",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "labelSource": "pre-evaluation raw-price regime hypothesis (60-bar efficiency/return only; v2 output unseen); automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "spy-2025-08-12-holdout-trend",
+      "symbol": "SPY",
+      "series": "spy-1d.json",
+      "asOf": "2025-08-12T00:00:00.000Z",
+      "split": "holdout",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "labelSource": "pre-evaluation raw-price regime hypothesis (60-bar efficiency/return only; v2 output unseen); automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "spy-2026-02-25-holdout-noise",
+      "symbol": "SPY",
+      "series": "spy-1d.json",
+      "asOf": "2026-02-25T00:00:00.000Z",
+      "split": "holdout",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "labelSource": "pre-evaluation raw-price regime hypothesis (60-bar efficiency/return only; v2 output unseen); automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "tlt-2025-10-15-holdout-trend",
+      "symbol": "TLT",
+      "series": "tlt-1d.json",
+      "asOf": "2025-10-15T00:00:00.000Z",
+      "split": "holdout",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "labelSource": "pre-evaluation raw-price regime hypothesis (60-bar efficiency/return only; v2 output unseen); automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "tlt-2026-02-25-holdout-noise",
+      "symbol": "TLT",
+      "series": "tlt-1d.json",
+      "asOf": "2026-02-25T00:00:00.000Z",
+      "split": "holdout",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "labelSource": "pre-evaluation raw-price regime hypothesis (60-bar efficiency/return only; v2 output unseen); automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "tsla-2025-04-02-holdout-trend",
+      "symbol": "TSLA",
+      "series": "tsla-1d.json",
+      "asOf": "2025-04-02T00:00:00.000Z",
+      "split": "holdout",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "labelSource": "pre-evaluation raw-price regime hypothesis (60-bar efficiency/return only; v2 output unseen); automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "tsla-2025-08-12-holdout-noise",
+      "symbol": "TSLA",
+      "series": "tsla-1d.json",
+      "asOf": "2025-08-12T00:00:00.000Z",
+      "split": "holdout",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "labelSource": "pre-evaluation raw-price regime hypothesis (60-bar efficiency/return only; v2 output unseen); automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "wmt-2025-10-15-holdout-trend",
+      "symbol": "WMT",
+      "series": "wmt-1d.json",
+      "asOf": "2025-10-15T00:00:00.000Z",
+      "split": "holdout",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "labelSource": "pre-evaluation raw-price regime hypothesis (60-bar efficiency/return only; v2 output unseen); automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "wmt-2025-04-02-holdout-noise",
+      "symbol": "WMT",
+      "series": "wmt-1d.json",
+      "asOf": "2025-04-02T00:00:00.000Z",
+      "split": "holdout",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "labelSource": "pre-evaluation raw-price regime hypothesis (60-bar efficiency/return only; v2 output unseen); automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "xlu-2025-10-15-holdout-trend",
+      "symbol": "XLU",
+      "series": "xlu-1d.json",
+      "asOf": "2025-10-15T00:00:00.000Z",
+      "split": "holdout",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "labelSource": "pre-evaluation raw-price regime hypothesis (60-bar efficiency/return only; v2 output unseen); automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "xlu-2025-12-18-holdout-noise",
+      "symbol": "XLU",
+      "series": "xlu-1d.json",
+      "asOf": "2025-12-18T00:00:00.000Z",
+      "split": "holdout",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "labelSource": "pre-evaluation raw-price regime hypothesis (60-bar efficiency/return only; v2 output unseen); automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "xom-2026-02-25-holdout-trend",
+      "symbol": "XOM",
+      "series": "xom-1d.json",
+      "asOf": "2026-02-25T00:00:00.000Z",
+      "split": "holdout",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "labelSource": "pre-evaluation raw-price regime hypothesis (60-bar efficiency/return only; v2 output unseen); automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "xom-2025-12-18-holdout-noise",
+      "symbol": "XOM",
+      "series": "xom-1d.json",
+      "asOf": "2025-12-18T00:00:00.000Z",
+      "split": "holdout",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "labelSource": "pre-evaluation raw-price regime hypothesis (60-bar efficiency/return only; v2 output unseen); automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "amd-2026-06-12-holdout-trend-b",
+      "symbol": "AMD",
+      "series": "amd-1d.json",
+      "asOf": "2026-06-12T00:00:00.000Z",
+      "split": "holdout",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "labelSource": "pre-evaluation raw-price regime hypothesis (60-bar efficiency/return only; v2 output unseen); automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "amd-2025-05-15-holdout-noise-b",
+      "symbol": "AMD",
+      "series": "amd-1d.json",
+      "asOf": "2025-05-15T00:00:00.000Z",
+      "split": "holdout",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "labelSource": "pre-evaluation raw-price regime hypothesis (60-bar efficiency/return only; v2 output unseen); automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "wmt-2026-02-03-holdout-trend-b",
+      "symbol": "WMT",
+      "series": "wmt-1d.json",
+      "asOf": "2026-02-03T00:00:00.000Z",
+      "split": "holdout",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "labelSource": "pre-evaluation raw-price regime hypothesis (60-bar efficiency/return only; v2 output unseen); automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "wmt-2026-06-12-holdout-noise-b",
+      "symbol": "WMT",
+      "series": "wmt-1d.json",
+      "asOf": "2026-06-12T00:00:00.000Z",
+      "split": "holdout",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "labelSource": "pre-evaluation raw-price regime hypothesis (60-bar efficiency/return only; v2 output unseen); automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "xlu-2026-03-18-holdout-trend-b",
+      "symbol": "XLU",
+      "series": "xlu-1d.json",
+      "asOf": "2026-03-18T00:00:00.000Z",
+      "split": "holdout",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "labelSource": "pre-evaluation raw-price regime hypothesis (60-bar efficiency/return only; v2 output unseen); automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "xlu-2025-05-15-holdout-noise-b",
+      "symbol": "XLU",
+      "series": "xlu-1d.json",
+      "asOf": "2025-05-15T00:00:00.000Z",
+      "split": "holdout",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "labelSource": "pre-evaluation raw-price regime hypothesis (60-bar efficiency/return only; v2 output unseen); automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "tlt-2026-02-03-holdout-trend-b",
+      "symbol": "TLT",
+      "series": "tlt-1d.json",
+      "asOf": "2026-02-03T00:00:00.000Z",
+      "split": "holdout",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "labelSource": "pre-evaluation raw-price regime hypothesis (60-bar efficiency/return only; v2 output unseen); automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "tlt-2025-08-12-holdout-noise-b",
+      "symbol": "TLT",
+      "series": "tlt-1d.json",
+      "asOf": "2025-08-12T00:00:00.000Z",
+      "split": "holdout",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "labelSource": "pre-evaluation raw-price regime hypothesis (60-bar efficiency/return only; v2 output unseen); automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "spy-2025-05-15-holdout-noise-b",
+      "symbol": "SPY",
+      "series": "spy-1d.json",
+      "asOf": "2025-05-15T00:00:00.000Z",
+      "split": "holdout",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "labelSource": "pre-evaluation raw-price regime hypothesis (60-bar efficiency/return only; v2 output unseen); automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "aapl-2025-12-04-fresh-holdout-draw",
+      "symbol": "AAPL",
+      "series": "aapl-1d.json",
+      "asOf": "2025-12-04T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.347889,
+        "absoluteReturn": 0.220276
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "amd-2026-05-29-fresh-holdout-draw",
+      "symbol": "AMD",
+      "series": "amd-1d.json",
+      "asOf": "2026-05-29T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.487942,
+        "absoluteReturn": 1.587616
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "amzn-2026-05-12-fresh-holdout-draw",
+      "symbol": "AMZN",
+      "series": "amzn-1d.json",
+      "asOf": "2026-05-12T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.330472,
+        "absoluteReturn": 0.321501
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "jpm-2025-07-02-fresh-holdout-draw",
+      "symbol": "JPM",
+      "series": "jpm-1d.json",
+      "asOf": "2025-07-02T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.478234,
+        "absoluteReturn": 0.361686
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "meta-2025-07-21-fresh-holdout-draw",
+      "symbol": "META",
+      "series": "meta-1d.json",
+      "asOf": "2025-07-21T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.345668,
+        "absoluteReturn": 0.337269
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "msft-2025-07-21-fresh-holdout-draw",
+      "symbol": "MSFT",
+      "series": "msft-1d.json",
+      "asOf": "2025-07-21T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.594364,
+        "absoluteReturn": 0.316964
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "nvda-2025-07-21-fresh-holdout-draw",
+      "symbol": "NVDA",
+      "series": "nvda-1d.json",
+      "asOf": "2025-07-21T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.510172,
+        "absoluteReturn": 0.61026
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "spy-2025-07-02-fresh-holdout-draw",
+      "symbol": "SPY",
+      "series": "spy-1d.json",
+      "asOf": "2025-07-02T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.352143,
+        "absoluteReturn": 0.230124
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "tlt-2025-04-04-fresh-holdout-draw",
+      "symbol": "TLT",
+      "series": "tlt-1d.json",
+      "asOf": "2025-04-04T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.200706,
+        "absoluteReturn": 0.079275
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "tsla-2025-03-19-fresh-holdout-draw",
+      "symbol": "TSLA",
+      "series": "tsla-1d.json",
+      "asOf": "2025-03-19T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.286505,
+        "absoluteReturn": 0.459248
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "wmt-2026-02-13-fresh-holdout-draw",
+      "symbol": "WMT",
+      "series": "wmt-1d.json",
+      "asOf": "2026-02-13T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.3787,
+        "absoluteReturn": 0.320544
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "xlu-2025-07-02-fresh-holdout-draw",
+      "symbol": "XLU",
+      "series": "xlu-1d.json",
+      "asOf": "2025-07-02T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.206207,
+        "absoluteReturn": 0.106827
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "xom-2026-03-20-fresh-holdout-draw",
+      "symbol": "XOM",
+      "series": "xom-1d.json",
+      "asOf": "2026-03-20T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.345642,
+        "absoluteReturn": 0.337046
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "amd-2025-07-21-fresh-holdout-draw",
+      "symbol": "AMD",
+      "series": "amd-1d.json",
+      "asOf": "2025-07-21T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.425896,
+        "absoluteReturn": 0.661903
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "aapl-2026-05-29-fresh-holdout-draw",
+      "symbol": "AAPL",
+      "series": "aapl-1d.json",
+      "asOf": "2026-05-29T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.311024,
+        "absoluteReturn": 0.198894
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "msft-2026-03-20-fresh-holdout-draw",
+      "symbol": "MSFT",
+      "series": "msft-1d.json",
+      "asOf": "2026-03-20T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.304749,
+        "absoluteReturn": 0.215631
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "xom-2026-01-28-fresh-holdout-draw",
+      "symbol": "XOM",
+      "series": "xom-1d.json",
+      "asOf": "2026-01-28T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.298228,
+        "absoluteReturn": 0.203043
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "amzn-2025-07-21-fresh-holdout-draw",
+      "symbol": "AMZN",
+      "series": "amzn-1d.json",
+      "asOf": "2025-07-21T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.29136,
+        "absoluteReturn": 0.229227
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "meta-2025-11-17-fresh-holdout-draw",
+      "symbol": "META",
+      "series": "meta-1d.json",
+      "asOf": "2025-11-17T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.285152,
+        "absoluteReturn": 0.200836
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "amd-2025-10-30-fresh-holdout-draw",
+      "symbol": "AMD",
+      "series": "amd-1d.json",
+      "asOf": "2025-10-30T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "strong_trend",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.28148,
+        "absoluteReturn": 0.47819
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "aapl-2026-04-08-fresh-holdout-no-draw",
+      "symbol": "AAPL",
+      "series": "aapl-1d.json",
+      "asOf": "2026-04-08T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.007439,
+        "absoluteReturn": 0.005187
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "amd-2026-01-28-fresh-holdout-no-draw",
+      "symbol": "AMD",
+      "series": "amd-1d.json",
+      "asOf": "2026-01-28T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.01039,
+        "absoluteReturn": 0.013197
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "amzn-2025-10-30-fresh-holdout-no-draw",
+      "symbol": "AMZN",
+      "series": "amzn-1d.json",
+      "asOf": "2025-10-30T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.001619,
+        "absoluteReturn": 0.00121
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "jpm-2026-04-24-fresh-holdout-no-draw",
+      "symbol": "JPM",
+      "series": "jpm-1d.json",
+      "asOf": "2026-04-24T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.009233,
+        "absoluteReturn": 0.00607
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "meta-2025-05-28-fresh-holdout-no-draw",
+      "symbol": "META",
+      "series": "meta-1d.json",
+      "asOf": "2025-05-28T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.004377,
+        "absoluteReturn": 0.005594
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "msft-2025-11-17-fresh-holdout-no-draw",
+      "symbol": "MSFT",
+      "series": "msft-1d.json",
+      "asOf": "2025-11-17T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.013269,
+        "absoluteReturn": 0.006405
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "nvda-2026-03-04-fresh-holdout-no-draw",
+      "symbol": "NVDA",
+      "series": "nvda-1d.json",
+      "asOf": "2026-03-04T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.003453,
+        "absoluteReturn": 0.003454
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "spy-2026-03-04-fresh-holdout-no-draw",
+      "symbol": "SPY",
+      "series": "spy-1d.json",
+      "asOf": "2026-03-04T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.002631,
+        "absoluteReturn": 0.000817
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "tlt-2026-06-16-fresh-holdout-no-draw",
+      "symbol": "TLT",
+      "series": "tlt-1d.json",
+      "asOf": "2026-06-16T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.008364,
+        "absoluteReturn": 0.002257
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "tsla-2025-08-06-fresh-holdout-no-draw",
+      "symbol": "TSLA",
+      "series": "tsla-1d.json",
+      "asOf": "2025-08-06T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.002968,
+        "absoluteReturn": 0.004806
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "wmt-2025-07-21-fresh-holdout-no-draw",
+      "symbol": "WMT",
+      "series": "wmt-1d.json",
+      "asOf": "2025-07-21T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.003914,
+        "absoluteReturn": 0.001774
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "xlu-2026-06-16-fresh-holdout-no-draw",
+      "symbol": "XLU",
+      "series": "xlu-1d.json",
+      "asOf": "2026-06-16T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.01327,
+        "absoluteReturn": 0.006253
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "xom-2025-09-10-fresh-holdout-no-draw",
+      "symbol": "XOM",
+      "series": "xom-1d.json",
+      "asOf": "2025-09-10T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.000293,
+        "absoluteReturn": 0.000178
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "wmt-2026-06-16-fresh-holdout-no-draw",
+      "symbol": "WMT",
+      "series": "wmt-1d.json",
+      "asOf": "2026-06-16T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.00356,
+        "absoluteReturn": 0.002568
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "amzn-2025-05-28-fresh-holdout-no-draw",
+      "symbol": "AMZN",
+      "series": "amzn-1d.json",
+      "asOf": "2025-05-28T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.003766,
+        "absoluteReturn": 0.004514
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "amzn-2026-01-28-fresh-holdout-no-draw",
+      "symbol": "AMZN",
+      "series": "amzn-1d.json",
+      "asOf": "2026-01-28T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.006717,
+        "absoluteReturn": 0.004955
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "meta-2025-10-14-fresh-holdout-no-draw",
+      "symbol": "META",
+      "series": "meta-1d.json",
+      "asOf": "2025-10-14T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.006456,
+        "absoluteReturn": 0.005448
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "meta-2026-06-16-fresh-holdout-no-draw",
+      "symbol": "META",
+      "series": "meta-1d.json",
+      "asOf": "2026-06-16T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.005883,
+        "absoluteReturn": 0.006374
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "xom-2025-04-23-fresh-holdout-no-draw",
+      "symbol": "XOM",
+      "series": "xom-1d.json",
+      "asOf": "2025-04-23T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.006924,
+        "absoluteReturn": 0.006201
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "xom-2025-07-21-fresh-holdout-no-draw",
+      "symbol": "XOM",
+      "series": "xom-1d.json",
+      "asOf": "2025-07-21T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-gate-holdout-v2",
+      "category": "weak_noise",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.008365,
+        "absoluteReturn": 0.005339
+      },
+      "labelSource": "post-threshold fresh holdout; pre-evaluation raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "aapl-2026-04-09-offscreen-holdout-v3",
+      "symbol": "AAPL",
+      "series": "aapl-1d.json",
+      "asOf": "2026-04-09T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_candidate",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 5,
+        "currentDistanceAtr": 1.6956,
+        "firstAnchorAgeBars": 158,
+        "lastTouchAgeBars": 13
+      },
+      "labelSource": "post-threshold fresh holdout; independent raw-OHLC local-extrema line prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "amd-2025-12-04-offscreen-holdout-v3",
+      "symbol": "AMD",
+      "series": "amd-1d.json",
+      "asOf": "2025-12-04T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_candidate",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 8,
+        "currentDistanceAtr": 1.3207,
+        "firstAnchorAgeBars": 166,
+        "lastTouchAgeBars": 6
+      },
+      "labelSource": "post-threshold fresh holdout; independent raw-OHLC local-extrema line prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "amzn-2025-11-19-offscreen-holdout-v3",
+      "symbol": "AMZN",
+      "series": "amzn-1d.json",
+      "asOf": "2025-11-19T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_candidate",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 6,
+        "currentDistanceAtr": 0.1674,
+        "firstAnchorAgeBars": 120,
+        "lastTouchAgeBars": 14
+      },
+      "labelSource": "post-threshold fresh holdout; independent raw-OHLC local-extrema line prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "jpm-2026-02-25-offscreen-holdout-v3",
+      "symbol": "JPM",
+      "series": "jpm-1d.json",
+      "asOf": "2026-02-25T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_candidate",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 10,
+        "currentDistanceAtr": 0.2511,
+        "firstAnchorAgeBars": 160,
+        "lastTouchAgeBars": 7
+      },
+      "labelSource": "post-threshold fresh holdout; independent raw-OHLC local-extrema line prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "meta-2025-11-12-offscreen-holdout-v3",
+      "symbol": "META",
+      "series": "meta-1d.json",
+      "asOf": "2025-11-12T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_candidate",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 3,
+        "currentDistanceAtr": 0.2282,
+        "firstAnchorAgeBars": 152,
+        "lastTouchAgeBars": 3
+      },
+      "labelSource": "post-threshold fresh holdout; independent raw-OHLC local-extrema line prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "msft-2026-05-21-offscreen-holdout-v3",
+      "symbol": "MSFT",
+      "series": "msft-1d.json",
+      "asOf": "2026-05-21T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_candidate",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "high",
+        "touches": 5,
+        "currentDistanceAtr": 0.0824,
+        "firstAnchorAgeBars": 129,
+        "lastTouchAgeBars": 10
+      },
+      "labelSource": "post-threshold fresh holdout; independent raw-OHLC local-extrema line prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "nvda-2026-03-25-offscreen-holdout-v3",
+      "symbol": "NVDA",
+      "series": "nvda-1d.json",
+      "asOf": "2026-03-25T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_candidate",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 9,
+        "currentDistanceAtr": 0.8873,
+        "firstAnchorAgeBars": 170,
+        "lastTouchAgeBars": 3
+      },
+      "labelSource": "post-threshold fresh holdout; independent raw-OHLC local-extrema line prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "spy-2026-03-18-offscreen-holdout-v3",
+      "symbol": "SPY",
+      "series": "spy-1d.json",
+      "asOf": "2026-03-18T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_candidate",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 5,
+        "currentDistanceAtr": 0.141,
+        "firstAnchorAgeBars": 125,
+        "lastTouchAgeBars": 7
+      },
+      "labelSource": "post-threshold fresh holdout; independent raw-OHLC local-extrema line prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "tlt-2026-01-20-offscreen-holdout-v3",
+      "symbol": "TLT",
+      "series": "tlt-1d.json",
+      "asOf": "2026-01-20T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_candidate",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 6,
+        "currentDistanceAtr": 0.621,
+        "firstAnchorAgeBars": 159,
+        "lastTouchAgeBars": 9
+      },
+      "labelSource": "post-threshold fresh holdout; independent raw-OHLC local-extrema line prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "tsla-2025-11-26-offscreen-holdout-v3",
+      "symbol": "TSLA",
+      "series": "tsla-1d.json",
+      "asOf": "2025-11-26T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_candidate",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 9,
+        "currentDistanceAtr": 1.5811,
+        "firstAnchorAgeBars": 162,
+        "lastTouchAgeBars": 3
+      },
+      "labelSource": "post-threshold fresh holdout; independent raw-OHLC local-extrema line prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "wmt-2025-11-19-offscreen-holdout-v3",
+      "symbol": "WMT",
+      "series": "wmt-1d.json",
+      "asOf": "2025-11-19T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_candidate",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 6,
+        "currentDistanceAtr": 0.6118,
+        "firstAnchorAgeBars": 130,
+        "lastTouchAgeBars": 3
+      },
+      "labelSource": "post-threshold fresh holdout; independent raw-OHLC local-extrema line prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "xlu-2025-12-26-offscreen-holdout-v3",
+      "symbol": "XLU",
+      "series": "xlu-1d.json",
+      "asOf": "2025-12-26T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_candidate",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 6,
+        "currentDistanceAtr": 0.0452,
+        "firstAnchorAgeBars": 150,
+        "lastTouchAgeBars": 11
+      },
+      "labelSource": "post-threshold fresh holdout; independent raw-OHLC local-extrema line prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "xom-2025-12-26-offscreen-holdout-v3",
+      "symbol": "XOM",
+      "series": "xom-1d.json",
+      "asOf": "2025-12-26T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_candidate",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 9,
+        "currentDistanceAtr": 1.4398,
+        "firstAnchorAgeBars": 141,
+        "lastTouchAgeBars": 7
+      },
+      "labelSource": "post-threshold fresh holdout; independent raw-OHLC local-extrema line prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "nvda-2025-11-19-offscreen-holdout-v3",
+      "symbol": "NVDA",
+      "series": "nvda-1d.json",
+      "asOf": "2025-11-19T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_candidate",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 8,
+        "currentDistanceAtr": 0.1191,
+        "firstAnchorAgeBars": 120,
+        "lastTouchAgeBars": 8
+      },
+      "labelSource": "post-threshold fresh holdout; independent raw-OHLC local-extrema line prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "xom-2025-11-26-offscreen-holdout-v3",
+      "symbol": "XOM",
+      "series": "xom-1d.json",
+      "asOf": "2025-11-26T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_candidate",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 7,
+        "currentDistanceAtr": 0.2212,
+        "firstAnchorAgeBars": 159,
+        "lastTouchAgeBars": 16
+      },
+      "labelSource": "post-threshold fresh holdout; independent raw-OHLC local-extrema line prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "tsla-2026-02-03-offscreen-holdout-v3",
+      "symbol": "TSLA",
+      "series": "tsla-1d.json",
+      "asOf": "2026-02-03T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_candidate",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 7,
+        "currentDistanceAtr": 0.3332,
+        "firstAnchorAgeBars": 146,
+        "lastTouchAgeBars": 10
+      },
+      "labelSource": "post-threshold fresh holdout; independent raw-OHLC local-extrema line prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "amd-2026-01-12-offscreen-holdout-v3",
+      "symbol": "AMD",
+      "series": "amd-1d.json",
+      "asOf": "2026-01-12T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_candidate",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 6,
+        "currentDistanceAtr": 0.0578,
+        "firstAnchorAgeBars": 176,
+        "lastTouchAgeBars": 16
+      },
+      "labelSource": "post-threshold fresh holdout; independent raw-OHLC local-extrema line prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "xom-2025-10-15-offscreen-holdout-v3",
+      "symbol": "XOM",
+      "series": "xom-1d.json",
+      "asOf": "2025-10-15T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_candidate",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 6,
+        "currentDistanceAtr": 0.2031,
+        "firstAnchorAgeBars": 129,
+        "lastTouchAgeBars": 3
+      },
+      "labelSource": "post-threshold fresh holdout; independent raw-OHLC local-extrema line prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "xlu-2026-02-03-offscreen-holdout-v3",
+      "symbol": "XLU",
+      "series": "xlu-1d.json",
+      "asOf": "2026-02-03T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_candidate",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 7,
+        "currentDistanceAtr": 1.224,
+        "firstAnchorAgeBars": 163,
+        "lastTouchAgeBars": 7
+      },
+      "labelSource": "post-threshold fresh holdout; independent raw-OHLC local-extrema line prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "amd-2026-03-04-offscreen-holdout-v3",
+      "symbol": "AMD",
+      "series": "amd-1d.json",
+      "asOf": "2026-03-04T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_candidate",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 6,
+        "currentDistanceAtr": 0.3033,
+        "firstAnchorAgeBars": 166,
+        "lastTouchAgeBars": 11
+      },
+      "labelSource": "post-threshold fresh holdout; independent raw-OHLC local-extrema line prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "xom-2025-07-22-noise-holdout-v3",
+      "symbol": "XOM",
+      "series": "xom-1d.json",
+      "asOf": "2025-07-22T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "weak_noise",
+      "samplingStratum": "low_efficiency",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.00043,
+        "absoluteReturn": 0.000276
+      },
+      "labelSource": "post-threshold fresh holdout; raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "tlt-2026-06-22-noise-holdout-v3",
+      "symbol": "TLT",
+      "series": "tlt-1d.json",
+      "asOf": "2026-06-22T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "weak_noise",
+      "samplingStratum": "low_efficiency",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.000885,
+        "absoluteReturn": 0.000232
+      },
+      "labelSource": "post-threshold fresh holdout; raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "amzn-2025-09-24-noise-holdout-v3",
+      "symbol": "AMZN",
+      "series": "amzn-1d.json",
+      "asOf": "2025-09-24T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "weak_noise",
+      "samplingStratum": "low_efficiency",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.00153,
+        "absoluteReturn": 0.001134
+      },
+      "labelSource": "post-threshold fresh holdout; raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "aapl-2026-02-03-noise-holdout-v3",
+      "symbol": "AAPL",
+      "series": "aapl-1d.json",
+      "asOf": "2026-02-03T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "weak_noise",
+      "samplingStratum": "low_efficiency",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.002308,
+        "absoluteReturn": 0.001075
+      },
+      "labelSource": "post-threshold fresh holdout; raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "jpm-2026-04-09-noise-holdout-v3",
+      "symbol": "JPM",
+      "series": "jpm-1d.json",
+      "asOf": "2026-04-09T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "weak_noise",
+      "samplingStratum": "low_efficiency",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.002776,
+        "absoluteReturn": 0.001833
+      },
+      "labelSource": "post-threshold fresh holdout; raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "meta-2026-04-09-noise-holdout-v3",
+      "symbol": "META",
+      "series": "meta-1d.json",
+      "asOf": "2026-04-09T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "weak_noise",
+      "samplingStratum": "low_efficiency",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.003722,
+        "absoluteReturn": 0.004278
+      },
+      "labelSource": "post-threshold fresh holdout; raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "tlt-2026-03-11-noise-holdout-v3",
+      "symbol": "TLT",
+      "series": "tlt-1d.json",
+      "asOf": "2026-03-11T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "weak_noise",
+      "samplingStratum": "low_efficiency",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.008157,
+        "absoluteReturn": 0.00229
+      },
+      "labelSource": "post-threshold fresh holdout; raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "wmt-2025-07-29-noise-holdout-v3",
+      "symbol": "WMT",
+      "series": "wmt-1d.json",
+      "asOf": "2025-07-29T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "weak_noise",
+      "samplingStratum": "low_efficiency",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.009995,
+        "absoluteReturn": 0.004253
+      },
+      "labelSource": "post-threshold fresh holdout; raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "tlt-2025-07-29-noise-holdout-v3",
+      "symbol": "TLT",
+      "series": "tlt-1d.json",
+      "asOf": "2025-07-29T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "weak_noise",
+      "samplingStratum": "low_efficiency",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.012889,
+        "absoluteReturn": 0.004673
+      },
+      "labelSource": "post-threshold fresh holdout; raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "tsla-2026-06-05-noise-holdout-v3",
+      "symbol": "TSLA",
+      "series": "tsla-1d.json",
+      "asOf": "2026-06-05T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "weak_noise",
+      "samplingStratum": "low_efficiency",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.007909,
+        "absoluteReturn": 0.010152
+      },
+      "labelSource": "post-threshold fresh holdout; raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "nvda-2026-02-10-noise-holdout-v3",
+      "symbol": "NVDA",
+      "series": "nvda-1d.json",
+      "asOf": "2026-02-10T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "weak_noise",
+      "samplingStratum": "low_efficiency",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.009241,
+        "absoluteReturn": 0.008991
+      },
+      "labelSource": "post-threshold fresh holdout; raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "meta-2026-03-04-noise-holdout-v3",
+      "symbol": "META",
+      "series": "meta-1d.json",
+      "asOf": "2026-03-04T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "weak_noise",
+      "samplingStratum": "low_efficiency",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.010056,
+        "absoluteReturn": 0.008449
+      },
+      "labelSource": "post-threshold fresh holdout; raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "xlu-2026-06-29-noise-holdout-v3",
+      "symbol": "XLU",
+      "series": "xlu-1d.json",
+      "asOf": "2026-06-29T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "weak_noise",
+      "samplingStratum": "low_efficiency",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.014493,
+        "absoluteReturn": 0.006905
+      },
+      "labelSource": "post-threshold fresh holdout; raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "meta-2026-01-27-noise-holdout-v3",
+      "symbol": "META",
+      "series": "meta-1d.json",
+      "asOf": "2026-01-27T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "weak_noise",
+      "samplingStratum": "low_efficiency",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.012579,
+        "absoluteReturn": 0.009753
+      },
+      "labelSource": "post-threshold fresh holdout; raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "xom-2026-05-14-noise-holdout-v3",
+      "symbol": "XOM",
+      "series": "xom-1d.json",
+      "asOf": "2026-05-14T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "weak_noise",
+      "samplingStratum": "low_efficiency",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.01424,
+        "absoluteReturn": 0.011989
+      },
+      "labelSource": "post-threshold fresh holdout; raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "jpm-2026-05-21-noise-holdout-v3",
+      "symbol": "JPM",
+      "series": "jpm-1d.json",
+      "asOf": "2026-05-21T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "weak_noise",
+      "samplingStratum": "low_efficiency",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.017107,
+        "absoluteReturn": 0.010224
+      },
+      "labelSource": "post-threshold fresh holdout; raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "wmt-2026-05-07-noise-holdout-v3",
+      "symbol": "WMT",
+      "series": "wmt-1d.json",
+      "asOf": "2026-05-07T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "weak_noise",
+      "samplingStratum": "low_efficiency",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.015782,
+        "absoluteReturn": 0.011105
+      },
+      "labelSource": "post-threshold fresh holdout; raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "spy-2026-01-20-noise-holdout-v3",
+      "symbol": "SPY",
+      "series": "spy-1d.json",
+      "asOf": "2026-01-20T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "weak_noise",
+      "samplingStratum": "low_efficiency",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.025752,
+        "absoluteReturn": 0.008664
+      },
+      "labelSource": "post-threshold fresh holdout; raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "msft-2025-11-12-noise-holdout-v3",
+      "symbol": "MSFT",
+      "series": "msft-1d.json",
+      "asOf": "2025-11-12T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "weak_noise",
+      "samplingStratum": "low_efficiency",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.023218,
+        "absoluteReturn": 0.010717
+      },
+      "labelSource": "post-threshold fresh holdout; raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "jpm-2025-11-26-noise-holdout-v3",
+      "symbol": "JPM",
+      "series": "jpm-1d.json",
+      "asOf": "2025-11-26T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "weak_noise",
+      "samplingStratum": "low_efficiency",
+      "expectation": "must_not_draw",
+      "expectedSemanticTypes": [],
+      "prelabelEvidence": {
+        "trailingBars": 60,
+        "efficiencyRatio": 0.022212,
+        "absoluteReturn": 0.012573
+      },
+      "labelSource": "post-threshold fresh holdout; raw-price 60-bar efficiency/absolute-return label; v2 output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "tsla-2026-03-06-offscreen-extension-v3",
+      "symbol": "TSLA",
+      "series": "tsla-1d.json",
+      "asOf": "2026-03-06T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_denominator_extension",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 6,
+        "currentDistanceAtr": 0.2523,
+        "firstAnchorAgeBars": 168,
+        "lastTouchAgeBars": 9
+      },
+      "labelSource": "fixed-threshold holdout extension for offscreen denominator; independent raw-OHLC local-extrema prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "tsla-2026-01-16-offscreen-extension-v3",
+      "symbol": "TSLA",
+      "series": "tsla-1d.json",
+      "asOf": "2026-01-16T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_denominator_extension",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 6,
+        "currentDistanceAtr": 0.8314,
+        "firstAnchorAgeBars": 122,
+        "lastTouchAgeBars": 6
+      },
+      "labelSource": "fixed-threshold holdout extension for offscreen denominator; independent raw-OHLC local-extrema prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "amd-2025-12-24-offscreen-extension-v3",
+      "symbol": "AMD",
+      "series": "amd-1d.json",
+      "asOf": "2025-12-24T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_denominator_extension",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 7,
+        "currentDistanceAtr": 2.0795,
+        "firstAnchorAgeBars": 165,
+        "lastTouchAgeBars": 5
+      },
+      "labelSource": "fixed-threshold holdout extension for offscreen denominator; independent raw-OHLC local-extrema prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "xlu-2025-11-19-offscreen-extension-v3",
+      "symbol": "XLU",
+      "series": "xlu-1d.json",
+      "asOf": "2025-11-19T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_denominator_extension",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 5,
+        "currentDistanceAtr": 0.0826,
+        "firstAnchorAgeBars": 155,
+        "lastTouchAgeBars": 3
+      },
+      "labelSource": "fixed-threshold holdout extension for offscreen denominator; independent raw-OHLC local-extrema prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "xom-2025-11-03-offscreen-extension-v3",
+      "symbol": "XOM",
+      "series": "xom-1d.json",
+      "asOf": "2025-11-03T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_denominator_extension",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 6,
+        "currentDistanceAtr": 1.2213,
+        "firstAnchorAgeBars": 142,
+        "lastTouchAgeBars": 16
+      },
+      "labelSource": "fixed-threshold holdout extension for offscreen denominator; independent raw-OHLC local-extrema prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "jpm-2026-03-11-offscreen-extension-v3",
+      "symbol": "JPM",
+      "series": "jpm-1d.json",
+      "asOf": "2026-03-11T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_denominator_extension",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 5,
+        "currentDistanceAtr": 0.4945,
+        "firstAnchorAgeBars": 139,
+        "lastTouchAgeBars": 11
+      },
+      "labelSource": "fixed-threshold holdout extension for offscreen denominator; independent raw-OHLC local-extrema prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "tlt-2026-01-05-offscreen-extension-v3",
+      "symbol": "TLT",
+      "series": "tlt-1d.json",
+      "asOf": "2026-01-05T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_denominator_extension",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 5,
+        "currentDistanceAtr": 0.5988,
+        "firstAnchorAgeBars": 149,
+        "lastTouchAgeBars": 7
+      },
+      "labelSource": "fixed-threshold holdout extension for offscreen denominator; independent raw-OHLC local-extrema prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "amzn-2025-10-08-offscreen-extension-v3",
+      "symbol": "AMZN",
+      "series": "amzn-1d.json",
+      "asOf": "2025-10-08T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_denominator_extension",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "high",
+        "touches": 6,
+        "currentDistanceAtr": 1.7005,
+        "firstAnchorAgeBars": 170,
+        "lastTouchAgeBars": 16
+      },
+      "labelSource": "fixed-threshold holdout extension for offscreen denominator; independent raw-OHLC local-extrema prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "amd-2026-03-27-offscreen-extension-v3",
+      "symbol": "AMD",
+      "series": "amd-1d.json",
+      "asOf": "2026-03-27T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_denominator_extension",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 5,
+        "currentDistanceAtr": 0.7537,
+        "firstAnchorAgeBars": 139,
+        "lastTouchAgeBars": 10
+      },
+      "labelSource": "fixed-threshold holdout extension for offscreen denominator; independent raw-OHLC local-extrema prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "xlu-2026-01-16-offscreen-extension-v3",
+      "symbol": "XLU",
+      "series": "xlu-1d.json",
+      "asOf": "2026-01-16T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_denominator_extension",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 6,
+        "currentDistanceAtr": 1.7937,
+        "firstAnchorAgeBars": 152,
+        "lastTouchAgeBars": 17
+      },
+      "labelSource": "fixed-threshold holdout extension for offscreen denominator; independent raw-OHLC local-extrema prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "nvda-2025-10-13-offscreen-extension-v3",
+      "symbol": "NVDA",
+      "series": "nvda-1d.json",
+      "asOf": "2025-10-13T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_denominator_extension",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 5,
+        "currentDistanceAtr": 0.8377,
+        "firstAnchorAgeBars": 130,
+        "lastTouchAgeBars": 12
+      },
+      "labelSource": "fixed-threshold holdout extension for offscreen denominator; independent raw-OHLC local-extrema prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "msft-2026-01-13-offscreen-extension-v3",
+      "symbol": "MSFT",
+      "series": "msft-1d.json",
+      "asOf": "2026-01-13T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_denominator_extension",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 4,
+        "currentDistanceAtr": 0.0534,
+        "firstAnchorAgeBars": 160,
+        "lastTouchAgeBars": 6
+      },
+      "labelSource": "fixed-threshold holdout extension for offscreen denominator; independent raw-OHLC local-extrema prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "wmt-2025-10-29-offscreen-extension-v3",
+      "symbol": "WMT",
+      "series": "wmt-1d.json",
+      "asOf": "2025-10-29T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_denominator_extension",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 4,
+        "currentDistanceAtr": 0.0712,
+        "firstAnchorAgeBars": 142,
+        "lastTouchAgeBars": 14
+      },
+      "labelSource": "fixed-threshold holdout extension for offscreen denominator; independent raw-OHLC local-extrema prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "xom-2025-09-25-offscreen-extension-v3",
+      "symbol": "XOM",
+      "series": "xom-1d.json",
+      "asOf": "2025-09-25T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_denominator_extension",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "high",
+        "touches": 4,
+        "currentDistanceAtr": 0.1812,
+        "firstAnchorAgeBars": 123,
+        "lastTouchAgeBars": 6
+      },
+      "labelSource": "fixed-threshold holdout extension for offscreen denominator; independent raw-OHLC local-extrema prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "aapl-2026-03-16-offscreen-extension-v3",
+      "symbol": "AAPL",
+      "series": "aapl-1d.json",
+      "asOf": "2026-03-16T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_denominator_extension",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 4,
+        "currentDistanceAtr": 0.3431,
+        "firstAnchorAgeBars": 141,
+        "lastTouchAgeBars": 5
+      },
+      "labelSource": "fixed-threshold holdout extension for offscreen denominator; independent raw-OHLC local-extrema prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "xlu-2025-07-18-offscreen-extension-v3",
+      "symbol": "XLU",
+      "series": "xlu-1d.json",
+      "asOf": "2025-07-18T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_denominator_extension",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "high",
+        "touches": 4,
+        "currentDistanceAtr": 0.5532,
+        "firstAnchorAgeBars": 157,
+        "lastTouchAgeBars": 4
+      },
+      "labelSource": "fixed-threshold holdout extension for offscreen denominator; independent raw-OHLC local-extrema prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "amzn-2025-08-18-offscreen-extension-v3",
+      "symbol": "AMZN",
+      "series": "amzn-1d.json",
+      "asOf": "2025-08-18T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_denominator_extension",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "high",
+        "touches": 4,
+        "currentDistanceAtr": 0.6176,
+        "firstAnchorAgeBars": 139,
+        "lastTouchAgeBars": 12
+      },
+      "labelSource": "fixed-threshold holdout extension for offscreen denominator; independent raw-OHLC local-extrema prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "tlt-2025-12-11-offscreen-extension-v3",
+      "symbol": "TLT",
+      "series": "tlt-1d.json",
+      "asOf": "2025-12-11T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_denominator_extension",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 4,
+        "currentDistanceAtr": 0.7082,
+        "firstAnchorAgeBars": 140,
+        "lastTouchAgeBars": 3
+      },
+      "labelSource": "fixed-threshold holdout extension for offscreen denominator; independent raw-OHLC local-extrema prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "amzn-2025-12-08-offscreen-extension-v3",
+      "symbol": "AMZN",
+      "series": "amzn-1d.json",
+      "asOf": "2025-12-08T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_denominator_extension",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 5,
+        "currentDistanceAtr": 1.8789,
+        "firstAnchorAgeBars": 122,
+        "lastTouchAgeBars": 10
+      },
+      "labelSource": "fixed-threshold holdout extension for offscreen denominator; independent raw-OHLC local-extrema prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "amd-2025-09-30-offscreen-extension-v3",
+      "symbol": "AMD",
+      "series": "amd-1d.json",
+      "asOf": "2025-09-30T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_denominator_extension",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 4,
+        "currentDistanceAtr": 0.9581,
+        "firstAnchorAgeBars": 120,
+        "lastTouchAgeBars": 3
+      },
+      "labelSource": "fixed-threshold holdout extension for offscreen denominator; independent raw-OHLC local-extrema prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "tsla-2026-02-18-offscreen-extension2-v3",
+      "symbol": "TSLA",
+      "series": "tsla-1d.json",
+      "asOf": "2026-02-18T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_denominator_extension",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 6,
+        "currentDistanceAtr": 1.0682,
+        "firstAnchorAgeBars": 176,
+        "lastTouchAgeBars": 8
+      },
+      "labelSource": "fixed-threshold holdout extension for offscreen denominator; independent raw-OHLC local-extrema prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "tlt-2025-11-13-offscreen-extension2-v3",
+      "symbol": "TLT",
+      "series": "tlt-1d.json",
+      "asOf": "2025-11-13T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_denominator_extension",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 4,
+        "currentDistanceAtr": 0.3272,
+        "firstAnchorAgeBars": 121,
+        "lastTouchAgeBars": 6
+      },
+      "labelSource": "fixed-threshold holdout extension for offscreen denominator; independent raw-OHLC local-extrema prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "amd-2026-02-11-offscreen-extension2-v3",
+      "symbol": "AMD",
+      "series": "amd-1d.json",
+      "asOf": "2026-02-11T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_denominator_extension",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 5,
+        "currentDistanceAtr": 1.4317,
+        "firstAnchorAgeBars": 152,
+        "lastTouchAgeBars": 4
+      },
+      "labelSource": "fixed-threshold holdout extension for offscreen denominator; independent raw-OHLC local-extrema prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "spy-2025-11-17-offscreen-extension2-v3",
+      "symbol": "SPY",
+      "series": "spy-1d.json",
+      "asOf": "2025-11-17T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_denominator_extension",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 3,
+        "currentDistanceAtr": 0.0044,
+        "firstAnchorAgeBars": 122,
+        "lastTouchAgeBars": 6
+      },
+      "labelSource": "fixed-threshold holdout extension for offscreen denominator; independent raw-OHLC local-extrema prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "tsla-2026-04-06-offscreen-extension2-v3",
+      "symbol": "TSLA",
+      "series": "tsla-1d.json",
+      "asOf": "2026-04-06T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_denominator_extension",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 3,
+        "currentDistanceAtr": 0.0364,
+        "firstAnchorAgeBars": 175,
+        "lastTouchAgeBars": 4
+      },
+      "labelSource": "fixed-threshold holdout extension for offscreen denominator; independent raw-OHLC local-extrema prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "msft-2025-12-10-offscreen-extension2-v3",
+      "symbol": "MSFT",
+      "series": "msft-1d.json",
+      "asOf": "2025-12-10T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_denominator_extension",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 3,
+        "currentDistanceAtr": 0.0573,
+        "firstAnchorAgeBars": 171,
+        "lastTouchAgeBars": 5
+      },
+      "labelSource": "fixed-threshold holdout extension for offscreen denominator; independent raw-OHLC local-extrema prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "xom-2026-06-12-offscreen-extension2-v3",
+      "symbol": "XOM",
+      "series": "xom-1d.json",
+      "asOf": "2026-06-12T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_denominator_extension",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 3,
+        "currentDistanceAtr": 0.1009,
+        "firstAnchorAgeBars": 122,
+        "lastTouchAgeBars": 10
+      },
+      "labelSource": "fixed-threshold holdout extension for offscreen denominator; independent raw-OHLC local-extrema prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "msft-2025-09-30-offscreen-extension2-v3",
+      "symbol": "MSFT",
+      "series": "msft-1d.json",
+      "asOf": "2025-09-30T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_denominator_extension",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 3,
+        "currentDistanceAtr": 0.1986,
+        "firstAnchorAgeBars": 121,
+        "lastTouchAgeBars": 17
+      },
+      "labelSource": "fixed-threshold holdout extension for offscreen denominator; independent raw-OHLC local-extrema prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "spy-2026-02-05-offscreen-extension2-v3",
+      "symbol": "SPY",
+      "series": "spy-1d.json",
+      "asOf": "2026-02-05T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_denominator_extension",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 3,
+        "currentDistanceAtr": 0.3851,
+        "firstAnchorAgeBars": 176,
+        "lastTouchAgeBars": 12
+      },
+      "labelSource": "fixed-threshold holdout extension for offscreen denominator; independent raw-OHLC local-extrema prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "amzn-2025-12-22-offscreen-extension2-v3",
+      "symbol": "AMZN",
+      "series": "amzn-1d.json",
+      "asOf": "2025-12-22T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_denominator_extension",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 4,
+        "currentDistanceAtr": 1.5081,
+        "firstAnchorAgeBars": 163,
+        "lastTouchAgeBars": 3
+      },
+      "labelSource": "fixed-threshold holdout extension for offscreen denominator; independent raw-OHLC local-extrema prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "aapl-2026-03-02-offscreen-extension2-v3",
+      "symbol": "AAPL",
+      "series": "aapl-1d.json",
+      "asOf": "2026-03-02T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_denominator_extension",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "low",
+        "touches": 3,
+        "currentDistanceAtr": 0.6347,
+        "firstAnchorAgeBars": 145,
+        "lastTouchAgeBars": 10
+      },
+      "labelSource": "fixed-threshold holdout extension for offscreen denominator; independent raw-OHLC local-extrema prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    },
+    {
+      "episodeId": "meta-2026-04-24-offscreen-extension2-v3",
+      "symbol": "META",
+      "series": "meta-1d.json",
+      "asOf": "2026-04-24T00:00:00.000Z",
+      "split": "holdout",
+      "evaluationRound": "post-extreme-gate-holdout-v3",
+      "category": "strong_trend",
+      "samplingStratum": "offscreen_denominator_extension",
+      "expectation": "must_draw",
+      "expectedSemanticTypes": [
+        "trend",
+        "level"
+      ],
+      "prelabelEvidence": {
+        "method": "independent-local-extrema-line-v1",
+        "side": "high",
+        "touches": 3,
+        "currentDistanceAtr": 0.6766,
+        "firstAnchorAgeBars": 173,
+        "lastTouchAgeBars": 5
+      },
+      "labelSource": "fixed-threshold holdout extension for offscreen denominator; independent raw-OHLC local-extrema prefilter; v2 feature pack/output unseen; automated reviewer estimate; human blind review pending"
+    }
+  ]
+}

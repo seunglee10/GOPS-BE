@@ -14,6 +14,7 @@ if str(MARKET_SHARED) not in sys.path:
     sys.path.insert(0, str(MARKET_SHARED))
 
 from alfaka.analytics import KERNEL_VERSION, compute_feature_pack, normalize_candles  # noqa: E402
+from alfaka.analytics.analysis_candles import aggregate_analysis_candles  # noqa: E402
 from alfaka.analytics.trends import compute_trends  # noqa: E402
 
 
@@ -65,7 +66,8 @@ class FeaturePackGoldenTest(unittest.TestCase):
                 self.assertGreaterEqual(len(features["pivots"]), 4)
                 self.assertTrue(all(trend["hardPass"] for trend in features["trends"]))
                 self.assertTrue(all(trend["touches"] >= 3 for trend in features["trends"]))
-                self.assertTrue(all(level["touches"] >= 2 for level in features["levels"] if level["hardPass"]))
+                self.assertTrue(all(level["touches"] >= 3 for level in features["levels"] if level["hardPass"]))
+                self.assertTrue(all(sum(episode["outcome"] == "reaction" for episode in level["touchEpisodes"]) >= 2 for level in features["levels"] if level["hardPass"]))
 
     def test_gap_event_golden(self):
         spec = FIXTURES["gap"]
@@ -113,6 +115,17 @@ class FeaturePackGoldenTest(unittest.TestCase):
         ]
         trends = compute_trends(rows, pivots, display_from=rows[0]["timestamp"], atr=2.0)
         self.assertFalse(any(item["kind"] in {"up", "down", "channel"} for item in trends))
+
+    def test_stale_medium_52_week_extreme_is_not_hard_passed(self):
+        path = ROOT / "systems/market-data/tests/fixtures/chart_assets_v2/meta-1d.json"
+        rows = [row for row in json.loads(path.read_text(encoding="utf-8")) if row["timestamp"] <= "2025-05-28T00:00:00.000Z"]
+        weekly = aggregate_analysis_candles(rows, "1W")
+
+        features = compute_feature_pack(weekly, "1W")
+
+        stale_extremes = [event for event in features["events"] if event["kind"] in {"52wHigh", "52wLow"} and event["currentImpact"] == "medium"]
+        self.assertTrue(stale_extremes)
+        self.assertTrue(all(not event["hardPass"] for event in stale_extremes))
 
 
 if __name__ == "__main__":

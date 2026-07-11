@@ -28,7 +28,7 @@ from .storage import ChartAssetStorage
 
 
 ASSET_VERSION = "v2"
-ASSEMBLER_VERSION = "chart-asset-assembler-v2"
+ASSEMBLER_VERSION = "chart-asset-assembler-v2.1"
 AGENT_PRESERVATION_POLICY = "preserve_valid_same_input"
 MAX_ASSET_BYTES = 20 * 1024
 
@@ -104,6 +104,10 @@ class ChartAssetBuilder:
             palette["ruleDigest"]=rule_digest; features_by_interval[interval]=features; rules_by_interval[interval]=rules; palettes[interval]=palette; rule_digests[interval]=rule_digest
         context_digest=_digest({"symbol":symbol,"rules":[[interval,rule_digests[interval]] for interval in eligible],"higher":self._stored_higher_summaries(symbol, eligible)})
         symbol_bundle=build_symbol_bundle(symbol,list(palettes.values()),_cross_timeframe(palettes))
+        intent_digests={interval:_build_intent_digest(rule_digest=rule_digests[interval],context_digest=context_digest,requested_model=requested_model,llm_mode=llm_mode) for interval in eligible}
+        if not envelope.force and all(_late_intent_noop(existing[interval],intent_digests[interval],llm_mode) for interval in eligible):
+            for interval in eligible: self.progress.record_item(envelope.job_id,_item(symbol,interval,"unchanged","digest",None,_elapsed(started),reason="late_intent_unchanged"))
+            return 0,0
         if envelope.llm_enabled:
             try: curation=self.llm_service.curate_symbol(symbol_bundle)
             except Exception as exc: curation={"output":deterministic_curation(symbol_bundle),"degraded":True,"reason":f"llm_{exc.__class__.__name__}","model":requested_model,"usage":{}}
@@ -120,7 +124,7 @@ class ChartAssetBuilder:
                 for remaining in eligible[position:]: self.progress.record_item(envelope.job_id, _item(symbol, remaining, "skipped", "cancel", None, _elapsed(started)))
                 break
             outcome="degraded" if curation.get("degraded") and envelope.llm_enabled else "ready" if envelope.llm_enabled and agent_layers[interval]["drawings"] else "ready_empty" if envelope.llm_enabled else "preserved" if agent_layers[interval]["drawings"] else "not_requested_empty"
-            intent_digest=_digest({"ruleDigest":rule_digests[interval],"contextDigest":context_digest,"promptVersion":PROMPT_VERSION_V2,"modelPolicyVersion":MODEL_POLICY_VERSION,"requestedModel":requested_model,"assemblerVersion":ASSEMBLER_VERSION,"llmMode":llm_mode,"agentPreservationPolicy":AGENT_PRESERVATION_POLICY})
+            intent_digest=intent_digests[interval]
             asset=self._assemble_asset(symbol=symbol,interval=interval,rows=bundle.rows[interval],coverage=bundle.coverage[interval],input_digest=bundle.digests[interval],features=features_by_interval[interval],rules=rules_by_interval[interval],agent=agent_layers[interval],palette=palettes[interval],selection=selections.get(interval),generated_at=generated_at,rule_digest=rule_digests[interval],context_digest=context_digest,intent_digest=intent_digest,pre_kernel_digest=pre_kernel_digest,llm_mode=llm_mode,outcome=outcome,curation=curation)
             higher = self._stored_higher_summaries(symbol, [interval])
             required_higher = {"1W": {"1M"}, "1D": {"1M", "1W"}}.get(interval, set())
@@ -147,7 +151,7 @@ class ChartAssetBuilder:
         symbol=value["symbol"]; interval=value["interval"]; rows=value["rows"]; coverage=value["coverage"]; display=rows[-DISPLAY_BARS[interval]:]
         commentary=assemble_commentary_v2(interval=interval,palette=value["palette"],rule_layers=value["rules"],agent_layer=value["agent"],curation_selection=value["selection"],coverage=coverage)
         curation=value["curation"]; status="degraded" if value["outcome"]=="degraded" else "ready"
-        return {"assetVersion":ASSET_VERSION,"kernelVersion":KERNEL_VERSION,"qualityPolicyVersion":QUALITY_POLICY_VERSION,"promptVersion":PROMPT_VERSION_V2,"modelPolicyVersion":MODEL_POLICY_VERSION,"symbol":symbol,"interval":interval,"asOf":rows[-1]["timestamp"],"generatedAt":value["generated_at"],"status":status,"window":{"displayFrom":display[0]["timestamp"],"displayTo":display[-1]["timestamp"],"displayBars":DISPLAY_BARS[interval],"lookbackBars":LOOKBACK_BARS[interval]},"coverage":coverage,"input":{"digest":value["input_digest"],"canonicalDataVersion":CANONICAL_DATA_VERSION,"sessionPolicy":SESSION_POLICY,"adjustmentPolicy":ADJUSTMENT_POLICY,"candleContractVersion":CANDLE_CONTRACT_VERSION},"build":{"ruleDigest":value["rule_digest"],"contextDigest":value["context_digest"],"preKernelDigest":value["pre_kernel_digest"],"buildIntentDigest":value["intent_digest"],"assetContentDigest":"sha256:"+"0"*64,"llmMode":value["llm_mode"],"agentPreservationPolicy":AGENT_PRESERVATION_POLICY,"agentOutcome":value["outcome"],"requestedModel":getattr(self.llm_service,"model",None) if value["llm_mode"]=="curate" else None,"resolvedModel":curation.get("model"),"usage":curation.get("usage") or {},"latencyMs":curation.get("latencyMs")},"quality":{"state":"eligible","score":round(.7+.3*float(coverage.get("coverageRatio",0)),4),"reasons":["recent_contiguous_history","exact_anchor_membership"],"penalties":list(coverage.get("qualityFlags") or [])},"features":_compact_features(value["features"],value["rules"],value["agent"]),"layers":{"structure":value["rules"]["structure"],"trend":value["rules"]["trend"],"agent":value["agent"]},"chartSetup":{"alwaysOn":["volume-profile","volume"],"recommended":recommended_indicators(value["features"])},"commentary":commentary,"buildContext":{"higherTf":self._stored_higher_summaries(symbol,[interval]) or None,"flags":[]}}
+        return {"assetVersion":ASSET_VERSION,"kernelVersion":KERNEL_VERSION,"qualityPolicyVersion":QUALITY_POLICY_VERSION,"promptVersion":PROMPT_VERSION_V2,"modelPolicyVersion":MODEL_POLICY_VERSION,"symbol":symbol,"interval":interval,"asOf":rows[-1]["timestamp"],"generatedAt":value["generated_at"],"status":status,"window":{"displayFrom":display[0]["timestamp"],"displayTo":display[-1]["timestamp"],"displayBars":DISPLAY_BARS[interval],"lookbackBars":LOOKBACK_BARS[interval]},"coverage":coverage,"input":{"digest":value["input_digest"],"canonicalDataVersion":CANONICAL_DATA_VERSION,"sessionPolicy":SESSION_POLICY,"adjustmentPolicy":ADJUSTMENT_POLICY,"candleContractVersion":CANDLE_CONTRACT_VERSION},"build":{"ruleDigest":value["rule_digest"],"contextDigest":value["context_digest"],"preKernelDigest":value["pre_kernel_digest"],"buildIntentDigest":value["intent_digest"],"assetContentDigest":"sha256:"+"0"*64,"assemblerVersion":ASSEMBLER_VERSION,"llmMode":value["llm_mode"],"agentPreservationPolicy":AGENT_PRESERVATION_POLICY,"agentOutcome":value["outcome"],"requestedModel":getattr(self.llm_service,"model",None) if value["llm_mode"]=="curate" else None,"resolvedModel":curation.get("model"),"usage":curation.get("usage") or {},"latencyMs":curation.get("latencyMs")},"quality":{"state":"eligible","score":round(.7+.3*float(coverage.get("coverageRatio",0)),4),"reasons":["recent_contiguous_history","exact_anchor_membership"],"penalties":list(coverage.get("qualityFlags") or [])},"features":_compact_features(value["features"],value["rules"],value["agent"]),"layers":{"structure":value["rules"]["structure"],"trend":value["rules"]["trend"],"agent":value["agent"]},"chartSetup":{"alwaysOn":["volume-profile","volume"],"recommended":recommended_indicators(value["features"])},"commentary":commentary,"buildContext":{"higherTf":self._stored_higher_summaries(symbol,[interval]) or None,"flags":[]}}
 
     def _degraded_data_asset(self,symbol,interval,rows,coverage,input_digest):
         generated=utc_now_iso(); placeholder=rows[-1]["timestamp"] if rows else generated; window_rows=rows[-DISPLAY_BARS[interval]:]
@@ -172,6 +176,13 @@ def _fast_noop(asset,input_digest,llm_mode,requested_model,pre_kernel_digest):
     build=asset.get("build",{}); outcome=build.get("agentOutcome")
     eligible=outcome in ({"ready","ready_empty"} if llm_mode=="curate" else {"not_requested_empty","preserved"})
     return eligible and build.get("llmMode")==llm_mode and build.get("preKernelDigest")==pre_kernel_digest and (llm_mode!="curate" or build.get("requestedModel")==requested_model)
+def _build_intent_digest(*,rule_digest,context_digest,requested_model,llm_mode):
+    return _digest({"ruleDigest":rule_digest,"contextDigest":context_digest,"promptVersion":PROMPT_VERSION_V2,"modelPolicyVersion":MODEL_POLICY_VERSION,"requestedModel":requested_model,"assemblerVersion":ASSEMBLER_VERSION,"llmMode":llm_mode,"agentPreservationPolicy":AGENT_PRESERVATION_POLICY})
+def _late_intent_noop(asset,intent_digest,llm_mode):
+    if not asset or asset.get("assetVersion")!="v2":return False
+    build=asset.get("build",{}); outcome=build.get("agentOutcome")
+    eligible=outcome in ({"ready","ready_empty"} if llm_mode=="curate" else {"not_requested_empty","preserved"})
+    return eligible and build.get("llmMode")==llm_mode and build.get("buildIntentDigest")==intent_digest
 def _preserved_agent(asset,input_digest,palette):
     if not asset or asset.get("assetVersion")!="v2" or asset.get("input",{}).get("digest")!=input_digest or asset.get("kernelVersion")!=KERNEL_VERSION:return None
     agent=asset.get("layers",{}).get("agent") or {}; allowed={item["candidateId"] for item in palette.get("visualCandidates",[])}
@@ -181,9 +192,21 @@ def _preserved_agent(asset,input_digest,palette):
     if not drawing_ids or any(not set(item.get("drawingIds") or []).issubset(drawing_ids) for item in selected):return None
     return json.loads(json.dumps(agent))
 def _compact_features(features,rules,agent):
-    refs={ref for layer in (*rules.values(),agent) for item in layer.get("selected",[]) for ref in item.get("evidenceRefs",[])}
-    choose=lambda values,cap:[item for item in values if item.get("id") in refs][:cap] or values[:cap]
-    return {"pivots":choose(features.get("pivots",[]),16),"levels":choose(features.get("levels",[]),6),"trends":choose(features.get("trends",[]),2),"events":choose(features.get("events",[]),6),"fibCandidates":features.get("fibCandidates",[])[:3],"vp":features.get("vp",{}),"regime":features.get("regime",{}),"qualityFlags":features.get("qualityFlags",[])}
+    selected=[item for layer in (*rules.values(),agent) for item in layer.get("selected",[])]
+    refs={str(ref) for item in selected for ref in item.get("evidenceRefs",[])}
+    candidate_ids={str(item.get("candidateId")) for item in selected if item.get("candidateId")}
+    pivots=[_project(item,("id","timestamp","price","kind","grade","strength")) for item in features.get("pivots",[]) if item.get("id") in refs][:16]
+    levels=[_project(item,("id","price","zoneLow","zoneHigh","score","touches","lastTestAt","lastTouchAgeBars","currentDistanceAtr","role","state","vpConfluence","memberPivotIds")) for item in features.get("levels",[]) if item.get("id") in candidate_ids][:4]
+    trends=[_project(item,("id","kind","anchorPivotIds","touchPivotIds","touches","slopePerBar","slopeAtrPerBar","currentDistanceAtr","lastTouchAgeBars","spanBars","medianResidualAtr","violationCount","rangeFrom","rangeTo","rangeHigh","rangeLow","score")) for item in features.get("trends",[]) if item.get("id") in candidate_ids][:2]
+    events=[]
+    for item in features.get("events",[]):
+        if item.get("id") not in candidate_ids and item.get("id") not in refs:continue
+        projected=_project(item,("id","timestamp","candleKey","kind","price","refIds","currentImpact","ageBars"))
+        projected["state"]=(item.get("detail") or {}).get("state")
+        events.append(projected)
+    vp=features.get("vp") or {}
+    return {"pivots":pivots,"levels":levels,"trends":trends,"events":events[:4],"fibCandidates":[],"vp":_project(vp,("poc","valueArea")),"regime":_project(features.get("regime") or {},("trend","emaSlope20","atr14","atrPercentile","bbSqueeze","bbBandwidthPercentile","macdState","rsi14","volumeZLast","pctFrom52wHigh")),"qualityFlags":features.get("qualityFlags",[])}
+def _project(value,keys):return {key:value[key] for key in keys if key in value and value[key] is not None}
 def _cross_timeframe(palettes):
     trends={interval:item.get("regime",{}).get("trend") for interval,item in palettes.items()}; values=set(trends.values()); alignment="aligned" if len(values)==1 else "mixed"
     relation=[]
@@ -193,8 +216,12 @@ def _empty_rule_layer(reason):return {"drawings":[],"selected":[],"emptyReason":
 def _empty_agent_layer(reason):return {"drawings":[],"selected":[],"emptyReason":reason,"meta":{"candidateCount":0,"passedCount":0,"rejectedByReason":{},"degraded":False}}
 def _digest(value):return "sha256:"+hashlib.sha256(json.dumps(value,ensure_ascii=False,sort_keys=True,separators=(",",":"),default=str).encode()).hexdigest()
 def _asset_content_digest(asset):
-    body={key:asset[key] for key in ("status","quality","layers","chartSetup","commentary")}; body["agentOutcome"]=asset["build"]["agentOutcome"]; body["resolvedModel"]=asset["build"].get("resolvedModel")
+    body={key:_without_audit_timestamps(asset[key]) for key in ("status","quality","features","layers","chartSetup","commentary","buildContext")}; body["assemblerVersion"]=asset["build"].get("assemblerVersion"); body["agentOutcome"]=asset["build"]["agentOutcome"]; body["resolvedModel"]=asset["build"].get("resolvedModel")
     return _digest(body)
+def _without_audit_timestamps(value):
+    if isinstance(value,dict):return {key:_without_audit_timestamps(item) for key,item in value.items() if key not in {"createdAt","updatedAt","generatedAt","latencyMs"}}
+    if isinstance(value,list):return [_without_audit_timestamps(item) for item in value]
+    return value
 def _item(symbol,interval,status,stage,error,elapsed_ms,warning=None,reason=None):
     result={"symbol":symbol,"interval":interval,"status":status,"stage":stage,"error":error,"elapsedMs":elapsed_ms}
     if warning:result["warning"]=warning

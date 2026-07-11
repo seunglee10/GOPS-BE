@@ -64,6 +64,9 @@ class ChartAssetCurationV2Test(unittest.TestCase):
         accepted = {item["id"] for layer in (*rule_layers().values(), layers["1D"]) for item in layer["drawings"]}
         focused = {item for focus in commentary["focusItems"] for item in focus["drawingIds"]}
         self.assertEqual(accepted, focused)
+        self.assertTrue(all(item["confirmation"] and item["invalidation"] for item in commentary["focusItems"]))
+        self.assertIn("확정 종가", commentary["invalidation"])
+        self.assertIsNone(commentary["enrichment"])
         self.assertIsNone(commentary["confidenceV2"]["marketDirection"]["score"])
 
     def test_responses_request_is_one_strict_bounded_non_stored_call(self):

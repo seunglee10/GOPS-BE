@@ -69,7 +69,7 @@ def compute_events(candles, levels, *, atr, display_from, interval):
         state = event["detail"].get("state", "unresolved")
         event.setdefault("currentImpact", _impact(len(candles)-1-age,len(candles),float(candles[-1]["close"]),float(event["price"]),max(atr_values[-1],1e-12),config,state))
         event["ageBars"] = age
-        event["hardPass"] = event["currentImpact"] in {"high","medium"}
+        event["hardPass"] = event["currentImpact"] == "high" if event["kind"] in {"52wHigh", "52wLow"} else event["currentImpact"] in {"high","medium"}
     return sorted(_dedupe(events), key=lambda item:(item["timestamp"],item["kind"],item["id"]))
 
 
