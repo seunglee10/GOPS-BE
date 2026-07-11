@@ -8,7 +8,7 @@ import unittest
 import urllib.error
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -108,16 +108,17 @@ class ChartAssetLLMTest(unittest.TestCase):
         request = build_envelope("cab-12345678-llm-timeout", intervals=("1D",))
         progress = RecordingProgressStore(); progress.initialize(request)
         storage = FakeStorage()
-        state = ChartAssetBuilder(
-            candle_loader=FakeCandleLoader(), storage=storage, progress=progress,
-            llm_service=service, concurrency=1,
-        ).run(request)
+        with patch("gops_agents.chart_assets.builder.compute_feature_pack", return_value=llm_candidate_features()):
+            state = ChartAssetBuilder(
+                candle_loader=FakeCandleLoader(), storage=storage, progress=progress,
+                llm_service=service, concurrency=1,
+            ).run(request)
         self.assertEqual(opener.call_count, 2)
         self.assertEqual(state["status"], "completed_with_warnings")
         self.assertEqual(state["progress"]["failed"], 0)
         self.assertEqual(state["progress"]["warnings"], 1)
         self.assertEqual(storage.saved[0]["status"], "degraded")
-        self.assertIn("주요 관찰", storage.saved[0]["commentary"]["text"])
+        self.assertIn("임의의 선을 만들지 않았습니다", storage.saved[0]["commentary"]["text"])
         self.assertIsNone(storage.saved[0]["commentary"]["enrichment"])
         self.assertEqual(storage.saved[0]["build"]["agentOutcome"], "degraded")
         self.assertTrue(any("warning=openai_TimeoutError" in line and "entities=" in line for line in progress.emitted_logs))
@@ -126,10 +127,11 @@ class ChartAssetLLMTest(unittest.TestCase):
         request = build_envelope("cab-12345678-llm-exception", intervals=("1D",))
         progress = InMemoryChartAssetProgressStore(); progress.initialize(request)
         storage = FakeStorage()
-        state = ChartAssetBuilder(
-            candle_loader=FakeCandleLoader(), storage=storage, progress=progress,
-            llm_service=RaisingLLMService(), concurrency=1,
-        ).run(request)
+        with patch("gops_agents.chart_assets.builder.compute_feature_pack", return_value=llm_candidate_features()):
+            state = ChartAssetBuilder(
+                candle_loader=FakeCandleLoader(), storage=storage, progress=progress,
+                llm_service=RaisingLLMService(), concurrency=1,
+            ).run(request)
         self.assertEqual(state["status"], "completed_with_warnings")
         self.assertEqual(state["failedItems"], [])
         self.assertEqual(storage.saved[0]["status"], "degraded")
@@ -150,10 +152,11 @@ class ChartAssetLLMTest(unittest.TestCase):
         request = build_envelope("cab-12345678-llm-missing-higher", intervals=("1D",))
         progress = InMemoryChartAssetProgressStore(); progress.initialize(request)
         storage = FakeStorage(); service = RecordingLLMService()
-        ChartAssetBuilder(
-            candle_loader=FakeCandleLoader(), storage=storage, progress=progress,
-            llm_service=service, concurrency=1,
-        ).run(request)
+        with patch("gops_agents.chart_assets.builder.compute_feature_pack", return_value=llm_candidate_features()):
+            ChartAssetBuilder(
+                candle_loader=FakeCandleLoader(), storage=storage, progress=progress,
+                llm_service=service, concurrency=1,
+            ).run(request)
         self.assertEqual(service.calls, [("NVDA", ("1D",))])
         self.assertEqual(storage.saved[0]["buildContext"]["flags"], ["no_higher_tf_context"])
         self.assertNotIn("no_higher_tf_context", storage.saved[0]["coverage"]["qualityFlags"])
@@ -168,6 +171,26 @@ def build_envelope(job_id, intervals=("1D", "1W", "1M")):
         job_id=job_id,
         submitted_at=NOW,
     )
+
+
+def llm_candidate_features():
+    rows = candles()
+    first, last = rows[0], rows[-1]
+    return {
+        "pivots": [
+            {"id": "1D:pivot:low", "timestamp": first["timestamp"], "candleKey": first["timestamp"], "barIndex": 0, "price": first["low"], "kind": "L", "grade": "structural"},
+            {"id": "1D:pivot:high", "timestamp": last["timestamp"], "candleKey": last["timestamp"], "barIndex": len(rows) - 1, "price": last["high"], "kind": "H", "grade": "structural"},
+        ],
+        "levels": [], "trends": [], "patterns": [], "events": [],
+        "fibCandidates": [{
+            "fromPivotId": "1D:pivot:low", "toPivotId": "1D:pivot:high",
+            "quality": .9, "hardPass": True, "impulseAtr": 10,
+            "reactionAt": last["timestamp"], "currentDistanceAtr": .5,
+        }],
+        "vp": {},
+        "regime": {"trend": "up", "atr14": 4, "atrPercentile": .5},
+        "qualityFlags": [],
+    }
 
 
 def candles():
