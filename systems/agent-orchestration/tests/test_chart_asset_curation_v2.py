@@ -206,7 +206,7 @@ def valid_output(bundle):
 
 
 def features():
-    return {"regime":{"trend":"up","atr14":4,"atrPercentile":.5},"pivots":[],"levels":[],"fibCandidates":[],"events":[{"id":"1D:event:e1","timestamp":"2026-07-10T04:00:00.000Z","candleKey":"2026-07-10","price":160,"kind":"gap","refIds":[],"detail":{"state":"unfilled"},"hardPass":True,"currentImpact":"high"}]}
+    return {"regime":{"trend":"up","atr14":4,"atrPercentile":.5},"pivots":[],"levels":[],"fibCandidates":[],"events":[{"id":"1D:event:e1","timestamp":"2026-07-10T04:00:00.000Z","candleKey":"2026-07-10","price":160,"kind":"breakout","refIds":[],"detail":{"direction":"up","state":"hold_confirmed"},"hardPass":True,"currentImpact":"high"}]}
 
 
 def candles():

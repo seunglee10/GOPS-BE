@@ -17,7 +17,6 @@ def compute_events(candles, levels, *, atr, display_from, interval):
     eligible_levels = [item for item in levels if item.get("evidencePass", item.get("hardPass"))]
     events = []
     active_breaks = {}
-    gaps = []
     extreme_episodes = {"52wHigh": None, "52wLow": None}
     for index in range(max(1, display_start), len(candles)):
         row, previous = candles[index], candles[index - 1]
@@ -65,16 +64,6 @@ def compute_events(candles, levels, *, atr, display_from, interval):
                     "confirmationPass": volume_confirmed,
                 }, interval)
                 events.append(event); active_breaks[level["id"]] = (index, direction, event)
-        gap_distance = abs(float(row["open"]) - previous_close)
-        if gap_distance >= local_atr:
-            direction = "up" if float(row["open"]) > previous_close else "down"
-            event = _event(row, "gap", float(row["open"]), [], {"direction": direction, "state": "unfilled", "gapFrom": previous_close, "gapTo": float(row["open"])}, interval)
-            gaps.append(event); events.append(event)
-        for gap in gaps:
-            if gap["detail"]["state"] != "unfilled" or gap["timestamp"] == row["timestamp"]: continue
-            lower, upper = sorted((gap["detail"]["gapFrom"], gap["detail"]["gapTo"]))
-            if float(row["low"]) <= lower and float(row["high"]) >= upper:
-                gap["detail"]["state"] = "filled"; gap["detail"]["filledAt"] = row["timestamp"]
         lookback = candles[max(0,index-min(252,index)):index]
         for kind, value, is_extreme in (("52wHigh",float(row["high"]),lookback and float(row["high"])>max(float(item["high"]) for item in lookback)),("52wLow",float(row["low"]),lookback and float(row["low"])<min(float(item["low"]) for item in lookback))):
             if not is_extreme: continue

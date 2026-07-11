@@ -49,7 +49,9 @@ def compile_rule_layers(
     candle_times = {item["timestamp"] for item in candles}
     current = float(candles[-1]["close"])
     all_levels = list(features.get("levels", []))
-    all_events = list(features.get("events", []))
+    # Gap-up/down markers were retired in kernel-v6. Keep the compiler guard so
+    # legacy feature payloads cannot reintroduce them as rule drawings.
+    all_events = [item for item in features.get("events", []) if item.get("kind") != "gap"]
     levels = [
         item for item in all_levels
         if item.get("hardPass") and item.get("role") in {"support", "resistance"}
@@ -448,8 +450,6 @@ def _event_label(event: dict[str, Any]) -> str:
         return "52주 신고가"
     if kind == "52wLow":
         return "52주 신저가"
-    if kind == "gap":
-        return f"갭 {'상승' if detail.get('direction') == 'up' else '하락'}{'(미채움)' if detail.get('unfilled') else ''}"
     if kind == "volumeSpike":
         return "거래량 급증"
     return str(kind or "이벤트")

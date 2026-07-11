@@ -108,7 +108,7 @@ flowchart TD
 | `analytics/pivots.py` | tactical/structural pivot과 prominence |
 | `analytics/levels.py` | bounded cluster, touch episode, reaction, role state, level gate |
 | `analytics/trends.py` | structural anchor 가설, raw high/low 접점·반응, active invalidation, channel, range, regime |
-| `analytics/events.py` | breakout/retest/gap/volume/extreme episode와 current impact |
+| `analytics/events.py` | breakout/retest/volume/extreme episode와 current impact; gap marker는 생성하지 않음 |
 | `analytics/schema.py` | feature pack 조립 및 품질 flag |
 
 ### Agent orchestration system의 독립 build subsystem
@@ -195,8 +195,8 @@ directional efficiency rejection enabled
 ### Triangle / Flag
 
 ```text
-triangle: upper/lower contacts >= 2, total >= 5, residual <= 0.35 ATR
-triangle: containment >= 0.85, current/start width ratio 0.20..0.80
+triangle: upper/lower contacts >= 2, total >= 5, residual <= 0.40 ATR
+triangle: containment >= 0.82, current/start width ratio 0.15..0.85
 triangle search: current-relative 20/40/60/90/120-bar spans
 triangle subsets: per-side latest 6 pivots, full contiguous sequence plus at most newest pivot omitted
 flag pole: 3..20 bars, move >= 4 ATR, efficiency >= 0.70
@@ -271,8 +271,8 @@ intervalSelections[]
 
 ```text
 assetVersion            v2
-kernelVersion           kernel-v5
-qualityPolicyVersion    chart-quality-v4
+kernelVersion           kernel-v6
+qualityPolicyVersion    chart-quality-v5
 promptVersion           prompt-v2
 modelPolicyVersion      chart-asset-model-v1
 assemblerVersion        chart-asset-assembler-v4

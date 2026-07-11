@@ -56,6 +56,7 @@ def build_interval_palette(
         }, generated_at)
         if candidate["redundancyKey"] not in selected_rule_ids: candidates.append(candidate)
     for event in features.get("events", []):
+        if event.get("kind") == "gap": continue
         if not event.get("hardPass") or event.get("currentImpact") not in {"high", "medium"}: continue
         if event["id"] in selected_rule_ids: continue
         candidate = _candidate(symbol, interval, input_digest, "single_event", [event["id"]], event["id"], .7 if event["currentImpact"] == "high" else .65, 0, {
@@ -248,4 +249,4 @@ def _candidate_fact(candidate): return {"price_zone":"폭과 매물대 근거가
 def _fact_code(semantic): return {"price_zone":"ACTIVE_ZONE_NEAR","retracement":"VALID_RETRACEMENT_NEAR","single_event":"CURRENT_EVENT_IMPACT"}.get(semantic,"ADDITIONAL_STRUCTURE")
 def _event_label(event):
     if event.get("kind")=="breakout" and (event.get("detail") or {}).get("state")=="failed":return "구조 이탈 실패"
-    return {"breakout":"구조 이탈","retest":"리테스트 확인","gap":"갭","52wHigh":"52주 신고가","52wLow":"52주 신저가"}.get(event.get("kind"),"주요 이벤트")
+    return {"breakout":"구조 이탈","retest":"리테스트 확인","52wHigh":"52주 신고가","52wLow":"52주 신저가"}.get(event.get("kind"),"주요 이벤트")

@@ -13,6 +13,10 @@ FLAG_KINDS = {"bullish_flag", "bearish_flag"}
 TRIANGLE_SEARCH_SPANS = (20, 40, 60, 90, 120)
 TRIANGLE_MAX_PIVOTS_PER_SIDE = 6
 TRIANGLE_RETAINED_PER_STATE = 8
+TRIANGLE_MIN_CONVERGENCE = 0.15
+TRIANGLE_MAX_CONVERGENCE = 0.85
+TRIANGLE_MAX_RESIDUAL_ATR = 0.40
+TRIANGLE_MIN_CONTAINMENT = 0.82
 
 
 def compute_patterns(
@@ -164,17 +168,17 @@ def _triangle_candidate(candles, highs, lows, *, atr, interval, search_span):
         len(highs) >= 2
         and len(lows) >= 2
         and len(highs) + len(lows) >= 5
-        and max(contact_residuals, default=99.0) <= 0.35
+        and max(contact_residuals, default=99.0) <= TRIANGLE_MAX_RESIDUAL_ATR
         and starting_width >= 2 * atr
-        and 0.20 <= convergence <= 0.80
-        and containment >= 0.85
+        and TRIANGLE_MIN_CONVERGENCE <= convergence <= TRIANGLE_MAX_CONVERGENCE
+        and containment >= TRIANGLE_MIN_CONTAINMENT
     )
     active_pass = state in {"forming", "confirmed"}
     hard_pass = evidence_pass and active_pass
     score = (
         0.25 * min(1.0, (len(highs) + len(lows)) / 6)
         + 0.25 * containment
-        + 0.20 * (1 - min(1.0, max(contact_residuals, default=1.0) / 0.35))
+        + 0.20 * (1 - min(1.0, max(contact_residuals, default=1.0) / TRIANGLE_MAX_RESIDUAL_ATR))
         + 0.15 * (1 - abs(convergence - 0.45) / 0.45)
         + 0.15 * (1 if state == "confirmed" else 0.8)
     )
