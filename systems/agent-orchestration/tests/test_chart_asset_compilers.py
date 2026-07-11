@@ -51,6 +51,83 @@ def candles() -> list[dict]:
 
 
 class ChartAssetCompilerTest(unittest.TestCase):
+    def test_triangle_compiles_as_grouped_lines_alongside_existing_trend_with_global_budget(self):
+        features = feature_pack()
+        features["patterns"] = [{
+            "id": "1D:pattern:ascending",
+            "kind": "ascending_triangle",
+            "state": "forming",
+            "breakoutDirection": None,
+            "hardPass": True,
+            "score": .94,
+            "touches": 6,
+            "containment": .92,
+            "evidenceRefs": ["p1", "p2"],
+            "geometry": {
+                "upper": {
+                    "start": {"timestamp": candles()[0]["timestamp"], "price": 122},
+                    "end": {"timestamp": candles()[1]["timestamp"], "price": 122},
+                },
+                "lower": {
+                    "start": {"timestamp": candles()[0]["timestamp"], "price": 96},
+                    "end": {"timestamp": candles()[1]["timestamp"], "price": 116},
+                },
+            },
+        }]
+
+        layers = compile_rule_layers(
+            symbol="NVDA", interval="1D", features=features,
+            candles=candles(), generated_at=GENERATED_AT,
+        )
+
+        pattern = next(item for item in layers["trend"]["selected"] if item["candidateId"] == "1D:pattern:ascending")
+        pattern_drawings = [item for item in layers["trend"]["drawings"] if item["id"] in pattern["drawingIds"]]
+        self.assertEqual([item["type"] for item in pattern_drawings], ["trendLine", "trendLine"])
+        self.assertTrue(all(item["style"]["lineDash"] == [6, 4] for item in pattern_drawings))
+        self.assertIn("형성 중", pattern_drawings[0]["label"])
+        self.assertEqual(len(layers["trend"]["drawings"]), 3)
+        self.assertLessEqual(len(layers["structure"]["drawings"]) + len(layers["trend"]["drawings"]), 5)
+
+    def test_confirmed_flag_compiles_to_pole_and_parallel_channel(self):
+        features = feature_pack()
+        features["patterns"] = [{
+            "id": "1D:pattern:bear-flag",
+            "kind": "bearish_flag",
+            "state": "confirmed",
+            "breakoutDirection": "down",
+            "hardPass": True,
+            "score": .91,
+            "touches": 5,
+            "containment": .88,
+            "evidenceRefs": ["p1", "p2"],
+            "geometry": {
+                "pole": {
+                    "start": {"timestamp": candles()[0]["timestamp"], "price": 122},
+                    "end": {"timestamp": candles()[1]["timestamp"], "price": 116},
+                },
+                "upper": {
+                    "start": {"timestamp": candles()[0]["timestamp"], "price": 116},
+                    "end": {"timestamp": candles()[1]["timestamp"], "price": 120},
+                },
+                "lower": {
+                    "start": {"timestamp": candles()[0]["timestamp"], "price": 112},
+                    "end": {"timestamp": candles()[1]["timestamp"], "price": 116},
+                },
+            },
+        }]
+
+        trend = compile_rule_layers(
+            symbol="NVDA", interval="1D", features=features,
+            candles=candles(), generated_at=GENERATED_AT,
+        )["trend"]
+
+        selected = next(item for item in trend["selected"] if item["candidateId"] == "1D:pattern:bear-flag")
+        drawings = [item for item in trend["drawings"] if item["id"] in selected["drawingIds"]]
+        self.assertEqual([item["type"] for item in drawings], ["trendLine", "trendParallelLines"])
+        self.assertNotIn("lineDash", drawings[0]["style"])
+        self.assertEqual(drawings[1]["parallelLineCount"], 2)
+        self.assertIn("확인", drawings[0]["label"])
+
     def test_only_hard_pass_candidates_compile_with_exact_anchors(self):
         layers = compile_rule_layers(
             symbol="NVDA", interval="1D", features=feature_pack(),
