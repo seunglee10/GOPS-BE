@@ -16,7 +16,7 @@ for path in (ROOT / "systems" / "agent-orchestration" / "shared", ROOT / "system
 
 from gops_agents.chart_assets.builder import ChartAssetBuilder  # noqa: E402
 from gops_agents.chart_assets.envelope import ChartAssetBuildEnvelope  # noqa: E402
-from gops_agents.chart_assets.progress import InMemoryChartAssetProgressStore  # noqa: E402
+from gops_agents.chart_assets.progress import InMemoryChartAssetProgressStore, RedisChartAssetProgressStore  # noqa: E402
 from gops_agents.chart_assets.curation import deterministic_curation  # noqa: E402
 from alfaka.analytics.analysis_candles import analysis_input_digest  # noqa: E402
 
@@ -70,13 +70,39 @@ class FakeCurator:
         return {"output": deterministic_curation(bundle), "degraded": False, "reason": None, "model": self.model, "usage": {}}
 
 
+class RecordingProgressStore(InMemoryChartAssetProgressStore):
+    def __init__(self):
+        super().__init__()
+        self.emitted_logs = []
+
+    def add_log(self, _job_id, message):
+        self.emitted_logs.append(str(message))
+
+
+class PublishOnlyRedis:
+    def __init__(self):
+        self.published = []
+
+    def publish(self, channel, payload):
+        self.published.append((channel, payload))
+
+
 def envelope(symbols=("NVDA", "AAPL"), intervals=("1D", "1W", "1M"), job_id="cab-12345678-test", llm_enabled=False, force=False):
     return ChartAssetBuildEnvelope.create(requested_by="test", symbols=symbols, intervals=intervals, llm_enabled=llm_enabled, force=force, job_id=job_id, submitted_at="2026-07-11T00:00:00.000Z")
 
 
 class ChartAssetBuilderTest(unittest.TestCase):
+    def test_redis_logs_are_pubsub_only_and_not_job_state(self):
+        redis = PublishOnlyRedis()
+        store = RedisChartAssetProgressStore(redis_client=redis)
+        store.add_log("cab-12345678-log", "NVDA:1D saved; entities=2")
+        self.assertEqual(redis.published[0][0], "chart-assets.build:cab-12345678-log")
+        self.assertEqual(json.loads(redis.published[0][1]), {
+            "type": "log", "jobId": "cab-12345678-log", "message": "NVDA:1D saved; entities=2",
+        })
+
     def test_rule_only_job_builds_six_assets_and_completes(self):
-        progress = InMemoryChartAssetProgressStore(); request = envelope(); progress.initialize(request)
+        progress = RecordingProgressStore(); request = envelope(); progress.initialize(request)
         loader = FakeCandleLoader(); storage = FakeStorage()
         state = ChartAssetBuilder(candle_loader=loader, storage=storage, progress=progress, concurrency=2).run(request)
         self.assertEqual(state["status"], "completed")
@@ -89,9 +115,11 @@ class ChartAssetBuilderTest(unittest.TestCase):
             for asset in storage.saved
             for layer in asset["layers"].values()
         )
-        self.assertTrue(any("entities=" in line and "(S=" in line for line in state["logs"]))
-        self.assertIn(f"created_entities={created_entities}", state["logs"][-1])
-        self.assertIn("done=6/6", state["logs"][-1])
+        self.assertTrue(any("entities=" in line and "(S=" in line for line in progress.emitted_logs))
+        self.assertIn(f"created_entities={created_entities}", progress.emitted_logs[-1])
+        self.assertIn("done=6/6", progress.emitted_logs[-1])
+        self.assertNotIn("logs", state)
+        self.assertEqual(state["createdEntities"], created_entities)
         for symbol in request.symbols:
             self.assertEqual([interval for current_symbol, interval in loader.calls if current_symbol == symbol], ["1M", "1W", "1D"])
         one_day = storage.assets[("NVDA", "1D")]
@@ -158,7 +186,7 @@ class ChartAssetBuilderTest(unittest.TestCase):
         ChartAssetBuilder(candle_loader=loader, storage=storage, progress=first_progress, llm_service=service, concurrency=1).run(first)
         saved_count = len(storage.saved)
         second = envelope(symbols=("NVDA",), job_id="cab-12345678-noop-b", llm_enabled=True)
-        second_progress = InMemoryChartAssetProgressStore(); second_progress.initialize(second)
+        second_progress = RecordingProgressStore(); second_progress.initialize(second)
         state = ChartAssetBuilder(candle_loader=loader, storage=storage, progress=second_progress, llm_service=service, concurrency=1).run(second)
         self.assertEqual(service.calls, 1)
         self.assertEqual(len(storage.saved), saved_count)
@@ -181,14 +209,14 @@ class ChartAssetBuilderTest(unittest.TestCase):
             asset["build"]["preKernelDigest"] = "sha256:" + "f" * 64
 
         second = envelope(symbols=("NVDA",), job_id="cab-12345678-late-b", llm_enabled=True)
-        second_progress = InMemoryChartAssetProgressStore(); second_progress.initialize(second)
+        second_progress = RecordingProgressStore(); second_progress.initialize(second)
         state = ChartAssetBuilder(candle_loader=loader, storage=storage, progress=second_progress, llm_service=service, concurrency=1).run(second)
 
         self.assertEqual(loader.bundle_calls, 2)
         self.assertEqual(service.calls, 1, "late intent no-op skips the second curator call")
         self.assertEqual(len(storage.saved), saved_count)
         self.assertEqual({item.get("reason") for item in state["recentItems"]}, {"late_intent_unchanged"})
-        self.assertTrue(any("unchanged after kernel" in line and "entities=" in line for line in state["logs"]))
+        self.assertTrue(any("unchanged after kernel" in line and "entities=" in line for line in second_progress.emitted_logs))
 
 
 if __name__ == "__main__": unittest.main()

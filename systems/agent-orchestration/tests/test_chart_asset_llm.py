@@ -79,6 +79,15 @@ class RaisingLLMService:
         raise RuntimeError("injected failure")
 
 
+class RecordingProgressStore(InMemoryChartAssetProgressStore):
+    def __init__(self):
+        super().__init__()
+        self.emitted_logs = []
+
+    def add_log(self, _job_id, message):
+        self.emitted_logs.append(str(message))
+
+
 class ChartAssetLLMTest(unittest.TestCase):
     def test_rate_limit_retries_once_after_backoff(self):
         bundle = {"symbol": "NVDA", "intervals": [], "crossTimeframe": {"relationIds": [], "evidenceRefs": []}}
@@ -97,7 +106,7 @@ class ChartAssetLLMTest(unittest.TestCase):
         opener = Mock(side_effect=TimeoutError("timeout"))
         service = ChartAssetLLMService(api_key="test", opener=opener)
         request = build_envelope("cab-12345678-llm-timeout", intervals=("1D",))
-        progress = InMemoryChartAssetProgressStore(); progress.initialize(request)
+        progress = RecordingProgressStore(); progress.initialize(request)
         storage = FakeStorage()
         state = ChartAssetBuilder(
             candle_loader=FakeCandleLoader(), storage=storage, progress=progress,
@@ -111,7 +120,7 @@ class ChartAssetLLMTest(unittest.TestCase):
         self.assertIn("주요 관찰", storage.saved[0]["commentary"]["text"])
         self.assertIsNone(storage.saved[0]["commentary"]["enrichment"])
         self.assertEqual(storage.saved[0]["build"]["agentOutcome"], "degraded")
-        self.assertTrue(any("warning=openai_TimeoutError" in line and "entities=" in line for line in state["logs"]))
+        self.assertTrue(any("warning=openai_TimeoutError" in line and "entities=" in line for line in progress.emitted_logs))
 
     def test_builder_catches_llm_exception_and_saves_degraded_asset(self):
         request = build_envelope("cab-12345678-llm-exception", intervals=("1D",))

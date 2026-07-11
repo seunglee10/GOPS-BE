@@ -314,6 +314,9 @@ drawing을 강조한다. v1은 기존 렌더를 유지하며 v2의 정상 빈 la
 열려 있는 chart/commentary panel은 같은 symbol을 즉시 다시 조회한다. 운영 현황은
 최종 drawing 수를 표시해 `ready`이지만 정상 무작도인 asset을 구분한다. 행별 `삭제`
 버튼은 확인 후 해당 symbol/interval의 ClickHouse 저장 이력을 실제로 제거한다.
+개발 패널의 build log는 SSE `log` 이벤트를 수신하는 동안 브라우저 메모리에만 최대
+200줄 유지한다. polling/status 응답에 로그 이력을 기대하지 않으며, 연결 전·후 유실은
+허용한다. 최종 생성량은 `createdEntities`로 별도 표시한다.
 
 지원하지 않는 경우 정책:
 

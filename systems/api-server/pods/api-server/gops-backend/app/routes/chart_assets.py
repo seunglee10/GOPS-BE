@@ -152,7 +152,8 @@ async def _stream_build_updates(job_id: str):
                 message = await asyncio.to_thread(pubsub.get_message, timeout=0.25)
                 if message and message.get("type") == "message":
                     event = _json_object(message.get("data"))
-                    yield _sse("update", event)
+                    event_type = "log" if event.get("type") == "log" else "update"
+                    yield _sse(event_type, event)
             state = store.get(job_id)
             if state is None:
                 yield _sse("error", {"jobId": job_id, "detail": "job state expired"})

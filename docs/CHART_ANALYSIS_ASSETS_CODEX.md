@@ -281,11 +281,12 @@ chart-assets.build:{jobId}       # ephemeral pub/sub
 
 그 밖의 chart asset key를 만들지 않는다.
 
-job log는 동일 status document의 `logs` 최근 200줄에만 존재하고 TTL 24시간 뒤 함께
-사라진다. ClickHouse asset에는 기록하지 않는다. 각 interval 결과 로그는
-`entities=<total> (S=<n>,T=<n>,I=<n>)`을 포함하고, 0개면 상위 reject reason을,
-warning/failure면 실제 reason과 coverage flag를 포함한다. 마지막 로그는
-`created_entities`, done/total, warnings, failed, skipped를 요약한다.
+job log는 `chart-assets.build:{jobId}` pub/sub으로만 송출한다. status document,
+Redis List/Stream, ClickHouse에는 기록하지 않는다. 구독 전에 발생했거나 연결이 끊긴
+로그는 의도적으로 유실된다. 열린 브라우저만 최근 200줄을 메모리에 보관한다. 각
+interval 로그는 `entities=<total> (S=<n>,T=<n>,I=<n>)`을 포함하고, 0개면 상위 reject
+reason을, warning/failure면 실제 reason과 coverage flag를 포함한다. 최종
+`createdEntities` 정수는 status에 남겨 로그 유실 시에도 전체 생성량은 확인할 수 있다.
 
 DELETE는 인증된 개발 도구이며 최대 100개 symbol과 허용 interval만 받는다. 선택
 pair의 모든 historical row를 `ALTER TABLE ... DELETE ... SETTINGS mutations_sync=1`로
