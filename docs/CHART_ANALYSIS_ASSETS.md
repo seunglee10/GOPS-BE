@@ -41,7 +41,7 @@ sequenceDiagram
 
   Operator->>API: symbol/interval/LLM 옵션으로 수동 빌드
   API->>Kafka: symbol 중심 job 발행
-  Worker->>Store: 기존 1D/1W/1M asset snapshot 1회 조회
+  Worker->>Store: 기존 8개 interval asset snapshot 1회 조회
   Worker->>Worker: freshness/input/version digest 검사
   Worker->>CH: 요청 interval의 정확한 canonical 1D 범위 감사
   opt 결측 구간 존재
@@ -55,7 +55,7 @@ sequenceDiagram
   alt 동일한 빌드 의도
     Worker-->>API: unchanged
   else 계산 필요
-    Worker->>Kernel: 1M → 1W → 1D feature와 S/T 후보 계산
+    Worker->>Kernel: 1M → 1W → 1D → 4h → 1h → 10m → 5m → 1m feature와 S/T 후보 계산
     opt LLM 활성화
       Worker->>LLM: 좌표 없는 compact 후보 ID bundle 1회
       LLM-->>Worker: 선택 ID와 서술 참조 ID만 반환
@@ -77,9 +77,10 @@ sequenceDiagram
 
 ### 1. 실제 봉을 하나의 시간 격자로 만든다
 
-분석은 ClickHouse의 실제 시장 데이터만 사용한다. 1D를 기준으로 1W와 1M을
-결정론적으로 집계하며, NYSE의 마지막 실제 세션 종료 전인 주·월 봉은 제외한다.
-Identity는 `candleKey`이고, 1D 좌표는 뉴욕 자정, 1W·1M 좌표는 UTC bucket start다.
+분석은 ClickHouse의 실제 시장 데이터만 사용한다. 인트라데이는 저장된 해당 interval을
+직접 읽고, 1D를 기준으로 1W와 1M을 결정론적으로 집계한다. NYSE의 마지막 실제 세션
+종료 전인 봉은 제외한다. Identity는 `candleKey`이고, 인트라데이는 정확한 UTC bucket
+timestamp, 1D는 뉴욕 자정, 1W·1M은 UTC bucket start다.
 
 빌드 전 감사 범위는 요청 interval의 lookback에서 정확히 계산한다. 1D는 완료 거래일
 500개, 1W는 완료 312주, 1M은 완료 72개월을 구성하는 일봉이다. 휴장일과 특별
@@ -112,6 +113,8 @@ flowchart TD
 | 채널 | confirmed 기준선 + 반대 경계 접점 2회, 평행 오차 20% 이하, containment 80% | 기반 추세의 현재 관련성 통과 | 추세 예산과 공유 |
 | 박스권 | 상·하단 각 2회, 합산 5회, 최근 양 경계와 교대 반응, containment 85% | 현재가가 박스에서 0.75 ATR 이내 | 추세 예산과 공유 |
 | 이벤트 | breakout/retest/gap/52주 extreme 등의 상태와 impact 검증 | interval별 age와 current impact 통과 | Flag 최대 1개 |
+| 삼각형 | 상·하단 각 2회, 합산 5회, 수렴·containment·ATR residual 검증 | 형성 중 또는 예상 방향 돌파 확인 | 경계선 2개 |
+| 깃발 | 4 ATR 이상 깃대, 평행 채널 각 2회, 10~50% 되돌림 | 형성 중 또는 깃대 방향 돌파 확인 | 깃대 + 채널 |
 
 ATR은 종목 가격대와 변동성 차이를 정규화한다. 단순히 오래된 두 점을 연결하거나
 화면 안에 있다는 이유만으로 선을 통과시키지 않는다.
@@ -227,7 +230,7 @@ flowchart TD
   ContentDigest -- "아니오" --> Save["active latest-asset store write"]
 ```
 
-- 기존 asset은 심볼당 1회 snapshot query로 1D/1W/1M을 함께 읽는다.
+- 기존 asset은 심볼당 1회 snapshot query로 8개 interval을 함께 읽는다.
 - raw candle과 전체 후보는 저장하지 않고, 선택된 evidence와 regime만 compact하게
   투영한다.
 - Canonical candle과 repair materialization은 ClickHouse에 남는다. 최신 asset JSON은

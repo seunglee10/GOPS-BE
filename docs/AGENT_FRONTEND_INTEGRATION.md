@@ -309,6 +309,9 @@ chart analysis asset 운영 패널은 `kind="chartAssetOps"`, 화면 표시는
 Asset v2도 기존 GET/build/poll/SSE route를 사용한다. timed anchor는 interval
 `candleKey`로 현재 chart candle을 찾은 뒤 그 봉의 실제 timestamp로 snap한다. 가격이나
 임의 시간 좌표를 보간하지 않으며, 대응 bucket이 없으면 작도를 제외한다.
+인트라데이 `candleKey`는 정확한 UTC timestamp이며 패널은 8개 interval을 모두 수동
+빌드할 수 있다. 삼각형·깃발이 선택되면 이름, `forming|confirmed`, 점수, 선 수를 표시하고
+빌드 완료 cache invalidation 뒤 현재 chart에 자동 적용한다.
 `commentary.focusItems[].drawingIds`는 실제 적용 drawing을 가리키고 선택 시 해당
 drawing을 강조한다. v1은 기존 렌더를 유지하며 v2의 정상 빈 layer는 오류가 아니다.
 빌드 완료와 개발 패널 삭제는 analysis asset cache invalidation event를 발생시키며,

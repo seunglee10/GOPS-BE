@@ -192,6 +192,24 @@ current distance <= 0.75 ATR
 directional efficiency rejection enabled
 ```
 
+### Triangle / Flag
+
+```text
+triangle: upper/lower contacts >= 2, total >= 5, residual <= 0.35 ATR
+triangle: containment >= 0.85, current/start width ratio 0.20..0.80
+flag pole: 3..20 bars, move >= 4 ATR, efficiency >= 0.70
+flag channel: 5..30 bars, boundary contacts >= 2, containment >= 0.80
+flag retracement: 0.10..0.50 of pole, parallel slope error <= 0.05 ATR/bar
+forming: price remains inside boundary
+confirmed: 0.25 ATR breakout + next-bar hold or 1.5x 20-bar median volume
+ascending/descending triangle and flags reject opposite-direction breakout
+```
+
+삼각형은 `trendLine` 2개, 깃발은 pole `trendLine`과 channel
+`trendParallelLines`로 materialize한다. 하나의 selected pattern이 두 drawing ID를
+소유한다. `forming`은 점선, `confirmed`는 실선이며 모든 anchor는 실제 candleKey에
+정확히 존재해야 한다.
+
 모든 구조는 하나의 `hardPass`/confirmed 자격만 가진다. 보조 tier, 두 점 fallback,
 최소 수량 채우기는 없다. 후보가 없으면 `no_structural_evidence`,
 `not_currently_actionable`, `active_invalidation`, `data_quality_blocked` 중 하나로
@@ -202,9 +220,10 @@ reason count만 투영한다.
 
 ```text
 S: nearest hardPass support 1 + resistance 1 + event flag 1
-T: highest-ranked trend/channel/range 1
+T: highest-ranked trend/channel/range 1 + highest-ranked pattern drawing group 1
 I: at most 2 candidates per interval, at most 6 per symbol
 I available slots: max(0, 5 - ruleDrawingCount)
+global drawing entities: max 5; pattern이 있으면 낮은 우선순위 S/I가 양보
 ```
 
 ## 7. LLM trust boundary
@@ -250,12 +269,12 @@ intervalSelections[]
 
 ```text
 assetVersion            v2
-kernelVersion           kernel-v3
-qualityPolicyVersion    chart-quality-v2
+kernelVersion           kernel-v4
+qualityPolicyVersion    chart-quality-v4
 promptVersion           prompt-v2
 modelPolicyVersion      chart-asset-model-v1
-assemblerVersion        chart-asset-assembler-v3
-candleContractVersion   v2
+assemblerVersion        chart-asset-assembler-v4
+candleContractVersion   v3
 ```
 
 - `input.digest`: canonical candle input
@@ -271,10 +290,10 @@ kernel, quality, prompt, model policy, assembler 중 의미가 바뀌면 해당 
 
 ## 9. MTF와 snapshot query 규칙
 
-빌더는 `ChartAssetStorage.get_symbol_assets(symbol)`로 기존 1D/1W/1M을 한 번에 읽는다.
+빌더는 `ChartAssetStorage.get_symbol_assets(symbol)`로 기존 8개 interval을 한 번에 읽는다.
 freshness와 stored higher context를 위해 interval별 `get()`을 반복하지 않는다.
 
-요청 interval은 항상 `1M → 1W → 1D` 순서로 materialize한다. 같은 build에 상위
+요청 interval은 항상 `1M → 1W → 1D → 4h → 1h → 10m → 5m → 1m` 순서로 materialize한다. 같은 build에 상위
 interval이 포함되면 방금 조립한 asset을 하위 interval의 `buildContext.higherTf`에
 사용한다. 일부 interval만 빌드하면 snapshot의 eligible v2 상위 asset만 사용하며,
 없으면 `no_higher_tf_context`를 기록한다.
@@ -282,14 +301,15 @@ interval이 포함되면 방금 조립한 asset을 하위 interval의 `buildCont
 LLM bundle은 모든 eligible interval을 한 번에 보내므로 symbol당 curator 호출은 최대
 1회다.
 
-freshness skip을 통과한 symbol만 요청 수명 내 repair를 수행한다. 요청 interval의
-lookback을 구성하는 정확한 1D 거래일을 한 번 감사하고, 결측이 없으면 S3/Alpaca를
-호출하지 않는다. 모든 결측 range는 symbol inventory LIST 한 번과 관련 object manifest
+freshness skip을 통과한 symbol만 요청 수명 내 repair를 수행한다. 1D/1W/1M은 lookback을
+구성하는 정확한 1D 거래일을 한 번 감사하고, 결측이 없으면 S3/Alpaca를 호출하지 않는다.
+장기봉의 모든 결측 range는 symbol inventory LIST 한 번과 관련 object manifest
 조회로 찾고 inventory miss일 때만 legacy symbol-root를 한 번 조회한다. 이 경로는 시간별 `final-v2`를 scan하지
 않으며 S3 기본 deadline은 45초다. S3 list/get/normalize는 durable write가 없는
 prepare 단계이며 deadline 안에 성공한 결과만 요청 thread가 ClickHouse에 commit한다.
 timeout을 반환한 background prepare는 candle/audit table을 쓸 수 없다. 1W/1M은 별도 저장 데이터를 repair하지 않고
-canonical 1D에서만 파생한다. S3와 Alpaca 결과는 기존 materializer를 거쳐 ClickHouse에
+canonical 1D에서만 파생한다. 인트라데이는 interval별 정확한 UTC bucket 500개를 감사하고
+S3 조회 없이 누락 범위만 Alpaca에 요청한다. 결과는 기존 materializer를 거쳐 ClickHouse에
 들어간 뒤 다시 조회되며, Redis candle을 builder 입력에 직접 합치지 않는다.
 
 ## 10. 저장·서빙 계약
