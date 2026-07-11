@@ -16,7 +16,7 @@ for path in (ROOT / "systems" / "agent-orchestration" / "shared", ROOT / "system
     if str(path) not in sys.path: sys.path.insert(0, str(path))
 
 from gops_agents.chart_assets.builder import ChartAssetBuilder, _asset_content_digest  # noqa: E402
-from gops_agents.chart_assets.envelope import ChartAssetBuildEnvelope  # noqa: E402
+from gops_agents.chart_assets.envelope import ALLOWED_INTERVALS, ChartAssetBuildEnvelope  # noqa: E402
 from gops_agents.chart_assets.progress import InMemoryChartAssetProgressStore, RedisChartAssetProgressStore  # noqa: E402
 from gops_agents.chart_assets.curation import deterministic_curation  # noqa: E402
 from alfaka.analytics.analysis_candles import CANDLE_CONTRACT_VERSION, analysis_input_digest  # noqa: E402
@@ -73,7 +73,7 @@ class FakeStorage:
     def get(self, symbol, interval): return copy.deepcopy(self.assets.get((symbol, interval)))
     def get_symbol_assets(self, symbol):
         self.snapshot_calls.append(symbol)
-        return {interval: copy.deepcopy(self.assets.get((symbol, interval))) for interval in ("1D", "1W", "1M")}
+        return {interval: copy.deepcopy(self.assets.get((symbol, interval))) for interval in ALLOWED_INTERVALS}
     def save(self, asset):
         self.assets[(asset["symbol"], asset["interval"])] = copy.deepcopy(asset)
         self.saved.append(copy.deepcopy(asset))
@@ -178,6 +178,21 @@ def envelope(symbols=("NVDA", "AAPL"), intervals=("1D", "1W", "1M"), job_id="cab
 
 
 class ChartAssetBuilderTest(unittest.TestCase):
+    def test_builds_all_eight_intervals_in_higher_to_lower_order(self):
+        request = envelope(symbols=("NVDA",), intervals=ALLOWED_INTERVALS, job_id="cab-12345678-all")
+        progress = RecordingProgressStore(); progress.initialize(request)
+        storage = FakeStorage()
+
+        state = ChartAssetBuilder(
+            candle_loader=FakeCandleLoader(), storage=storage, progress=progress,
+            repair_service=FakeRepairService(), concurrency=1,
+        ).run(request)
+
+        self.assertEqual(state["status"], "completed")
+        self.assertEqual(
+            [item["interval"] for item in storage.saved],
+            ["1M", "1W", "1D", "4h", "1h", "10m", "5m", "1m"],
+        )
     def test_content_digest_tracks_presentation_freshness_but_not_audit_time(self):
         base = {
             "asOf": "2026-07-09T04:00:00.000Z",

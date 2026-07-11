@@ -14,7 +14,7 @@ for path in (ROOT / "systems/agent-orchestration/shared", ROOT / "systems/market
 
 from gops_agents.chart_assets.commentary_v2 import assemble_commentary_v2  # noqa: E402
 from gops_agents.chart_assets.curation import (  # noqa: E402
-    build_interval_palette, build_symbol_bundle, materialize_curation,
+    build_interval_palette, build_symbol_bundle, curation_output_schema, materialize_curation,
     validate_curation_output,
 )
 from gops_agents.chart_assets.llm import ChartAssetLLMService  # noqa: E402
@@ -31,6 +31,15 @@ class Response:
 
 
 class ChartAssetCurationV2Test(unittest.TestCase):
+    def test_curation_schema_accepts_all_eight_intervals(self):
+        schema = curation_output_schema()
+        selection = schema["properties"]["intervalSelections"]
+
+        self.assertEqual(selection["maxItems"], 8)
+        self.assertEqual(
+            selection["items"]["properties"]["interval"]["enum"],
+            ["1m", "5m", "10m", "1h", "4h", "1D", "1W", "1M"],
+        )
     def setUp(self):
         self.palette = build_interval_palette(
             symbol="NVDA", interval="1D", input_digest="sha256:" + "a"*64,
