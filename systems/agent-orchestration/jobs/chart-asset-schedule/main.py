@@ -11,10 +11,10 @@ from gops_agents.query_understanding.supported_companies import load_market_regi
 
 
 def main() -> int:
-    symbols = _csv(os.getenv("CHART_ASSET_SYMBOLS"))
+    symbols = _parse_symbols(os.getenv("CHART_ASSET_SYMBOLS"))
     if not symbols:
         symbols, _source, _version = load_market_registry_symbols()
-    intervals = tuple(_csv(os.getenv("CHART_ASSET_INTERVALS"))) or ALLOWED_INTERVALS
+    intervals = tuple(_parse_intervals(os.getenv("CHART_ASSET_INTERVALS"))) or ALLOWED_INTERVALS
     invalid = set(intervals).difference(ALLOWED_INTERVALS)
     if not symbols:
         raise RuntimeError("S&P 500 symbol registry is empty")
@@ -33,8 +33,16 @@ def main() -> int:
     return 0
 
 
-def _csv(value: str | None) -> list[str]:
-    return list(dict.fromkeys(item.strip().upper() for item in (value or "").split(",") if item.strip()))
+def _parse_symbols(value: str | None) -> list[str]:
+    return list(dict.fromkeys(item.upper() for item in _split_csv(value)))
+
+
+def _parse_intervals(value: str | None) -> list[str]:
+    return _split_csv(value)
+
+
+def _split_csv(value: str | None) -> list[str]:
+    return list(dict.fromkeys(item.strip() for item in (value or "").split(",") if item.strip()))
 
 
 def _bool(name: str) -> bool:
