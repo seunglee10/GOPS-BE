@@ -7,9 +7,18 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Callable, Iterable
 from zoneinfo import ZoneInfo
 
-from alfaka.backfill.runner import BackfillRunner, BackfillUnavailable
+from alfaka.backfill.runner import (
+    BackfillUnavailable,
+    fetch_alpaca_bars,
+    historical_feed_for_symbol,
+    raw_bars_to_processed_candles,
+    repair_daily_bar_outliers,
+)
 from alfaka.backfill.gapfill import TradingCalendar
+from alfaka.common.canonical import historical_adjustment_from_env
 from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
+from alfaka.serving.intervals import alpaca_timeframe_for_interval
+from alfaka.storage.clickhouse_loader import ClickHouseHttpClient, candle_to_clickhouse_row
 from alfaka.storage.candle_validation import invalid_candle_numeric_reason
 
 from .analysis_candles import (
@@ -81,6 +90,67 @@ class AnalysisRepairResult:
         return asdict(self)
 
 
+class AlpacaClickHouseRepairRunner:
+    """Fetch only the requested Alpaca range and insert canonical candles directly into ClickHouse."""
+
+    def __init__(self, *, clickhouse_client: Any | None = None, fetcher: Callable[..., list[dict[str, Any]]] | None = None):
+        self.clickhouse_client = clickhouse_client or ClickHouseHttpClient(
+            url=os.getenv("CLICKHOUSE_HTTP_URL", "http://localhost:8123"),
+            database=os.getenv("CLICKHOUSE_DATABASE", "market_data"),
+            user=os.getenv("CLICKHOUSE_USER", "alfaka"),
+            password=os.getenv("CLICKHOUSE_PASSWORD", "alfaka"),
+        )
+        self.fetcher = fetcher or fetch_alpaca_bars
+
+    def run(self, record: dict[str, Any]) -> dict[str, Any]:
+        symbol = str(record["symbol"]).upper()
+        interval = str(record["interval"])
+        requested_range = record["range"]
+        feed = historical_feed_for_symbol(
+            symbol,
+            os.getenv("HISTORICAL_FEED", os.getenv("ALPACA_FEED", "sip")),
+        )
+        raw_bars = self.fetcher(
+            symbol,
+            requested_range["start"],
+            requested_range["end"],
+            feed,
+            alpaca_timeframe_for_interval(interval),
+        )
+        if not raw_bars:
+            raise BackfillUnavailable("Historical provider returned no bars.")
+        source_bars = repair_daily_bar_outliers(symbol, raw_bars, feed) if interval == "1D" else raw_bars
+        candles = raw_bars_to_processed_candles(
+            symbol,
+            source_bars,
+            feed=feed,
+            interval=interval,
+            price_adjustment=historical_adjustment_from_env(os.environ),
+        )
+        missing_keys = {str(item) for item in record.get("analysisMissingCandleKeys") or [] if item}
+        selected = []
+        for candle in candles:
+            identity = canonicalize_candle_identity(candle, interval)
+            if identity is None or (missing_keys and identity["candleKey"] not in missing_keys):
+                continue
+            if candle.get("marketSession") not in {None, "", "regular"}:
+                continue
+            selected.append(candle_to_clickhouse_row(candle))
+        if not selected:
+            raise BackfillUnavailable("Alpaca returned no matching regular-session candles.")
+        self.clickhouse_client.insert_json_each_row("chart_candles", selected)
+        return {
+            **record,
+            "status": "succeeded",
+            "result": {
+                "source": "alpaca-clickhouse-direct",
+                "rawRowCount": len(raw_bars),
+                "processedRowCount": len(candles),
+                "materializedRowCount": len(selected),
+            },
+        }
+
+
 class AnalysisCandleRepairService:
     def __init__(
         self,
@@ -98,7 +168,7 @@ class AnalysisCandleRepairService:
         self.enabled = _env_bool("CHART_ASSET_REPAIR_ENABLED", True) if enabled is None else bool(enabled)
         self.alpaca_enabled = _env_bool("CHART_ASSET_REPAIR_ALPACA_ENABLED", True) if alpaca_enabled is None else bool(alpaca_enabled)
         self.max_ranges = max(1, int(max_ranges or os.getenv("CHART_ASSET_REPAIR_MAX_RANGES", "8")))
-        self.runner_factory = runner_factory or (lambda: BackfillRunner(store=None))
+        self.runner_factory = runner_factory or AlpacaClickHouseRepairRunner
         self._semaphore = threading.BoundedSemaphore(max(1, int(concurrency or os.getenv("CHART_ASSET_REPAIR_CONCURRENCY", "2"))))
 
     def ensure_ready(
