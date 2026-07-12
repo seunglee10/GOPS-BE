@@ -226,8 +226,9 @@ deterministic kernel이 빌드 입력 종가에서 계산한다. 교차 판정�
 
 삼각형은 `trendLine` 2개, 깃발은 pole `trendLine`과 channel
 `trendParallelLines`로 materialize한다. 하나의 selected pattern이 두 drawing ID를
-소유한다. `forming`은 점선, `confirmed`는 실선이며 모든 anchor는 실제 candleKey에
-정확히 존재해야 한다.
+소유한다. 삼각형 경계는 `forming|confirmed` 모두 실선이며 `forming`만 낮은
+불투명도로 상태를 구분한다. 깃발은 `forming` 점선, `confirmed` 실선이다. 모든
+anchor는 실제 candleKey에 정확히 존재해야 한다.
 
 모든 구조는 하나의 `hardPass`/confirmed 자격만 가진다. 보조 tier, 두 점 fallback,
 최소 수량 채우기는 없다. 후보가 없으면 `no_structural_evidence`,
@@ -292,7 +293,7 @@ kernelVersion           kernel-v7
 qualityPolicyVersion    chart-quality-v5
 promptVersion           prompt-v2
 modelPolicyVersion      chart-asset-model-v1
-assemblerVersion        chart-asset-assembler-v4
+assemblerVersion        chart-asset-assembler-v5
 candleContractVersion   v3
 ```
 

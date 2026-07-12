@@ -298,7 +298,7 @@ def _compile_pattern_drawings(*, symbol, interval, pattern, candle_times, genera
                 label=label if boundary_name == "upper" else "패턴 하단 경계",
                 generated_at=generated_at, created_by="system",
             )
-            _apply_pattern_state_style(drawing, state)
+            _apply_pattern_state_style(drawing, state, dashed_when_forming=False)
             drawings.append(drawing)
         return drawings
     if kind not in {"bullish_flag", "bearish_flag"}:
@@ -338,9 +338,10 @@ def _valid_pattern_anchors(anchors, candle_times):
     )
 
 
-def _apply_pattern_state_style(drawing, state):
+def _apply_pattern_state_style(drawing, state, *, dashed_when_forming=True):
     if state == "forming":
-        drawing["style"]["lineDash"] = [6, 4]
+        if dashed_when_forming:
+            drawing["style"]["lineDash"] = [6, 4]
         drawing["style"]["opacity"] = 0.78
 
 

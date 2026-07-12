@@ -30,7 +30,7 @@ from .storage import build_chart_asset_storage_from_env
 
 
 ASSET_VERSION = "v2"
-ASSEMBLER_VERSION = "chart-asset-assembler-v4"
+ASSEMBLER_VERSION = "chart-asset-assembler-v5"
 AGENT_PRESERVATION_POLICY = "preserve_valid_same_input"
 MAX_ASSET_BYTES = 20 * 1024
 

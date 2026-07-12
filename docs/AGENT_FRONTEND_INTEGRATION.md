@@ -311,7 +311,8 @@ Asset v2도 기존 GET/build/poll/SSE route를 사용한다. timed anchor는 int
 임의 시간 좌표를 보간하지 않으며, 대응 bucket이 없으면 작도를 제외한다.
 인트라데이 `candleKey`는 정확한 UTC timestamp이며 패널은 8개 interval을 모두 수동
 빌드할 수 있다. 삼각형·깃발이 선택되면 이름, `forming|confirmed`, 점수, 선 수를 표시하고
-빌드 완료 cache invalidation 뒤 현재 chart에 자동 적용한다.
+빌드 완료 cache invalidation 뒤 현재 chart에 자동 적용한다. 삼각형 경계는 상태와
+무관하게 실선으로 렌더링하고 `forming`은 낮은 불투명도로 구분한다.
 일봉 asset은 MA60/120 골든크로스·데드크로스가 현재 관련성 범위 안에 있으면 교차
 봉의 canonical candleKey에 각각 녹색·붉은색 `flagMarker`를 적용한다. 이 이벤트가
 선택되면 서버 계산형 `sma:120` 가격 오버레이도 자동 활성화해 기본 활성 상태인
