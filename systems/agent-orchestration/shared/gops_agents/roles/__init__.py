@@ -2713,7 +2713,6 @@ DEFAULT_PANEL_SPECS: dict[str, dict[str, Any]] = {
     "ontologyGraph": {"title": "온톨로지", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 2, "rowSpan": 2}, "layoutWeight": 50},
     "portfolioDashboard": {"title": "포트폴리오", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 2, "rowSpan": 2}, "layoutWeight": 35},
     "portfolioHoldings": {"title": "내 투자", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 5, "rowSpan": 3}, "layoutWeight": 40},
-    "portfolioHoldingsCards": {"title": "보유종목 카드", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 4, "rowSpan": 2}, "layoutWeight": 39},
     "portfolioMulti": {"title": "듀얼 포트폴리오", "minSpan": {"colSpan": 2, "rowSpan": 3}, "defaultSpan": {"colSpan": 2, "rowSpan": 3}, "maxSpan": {"colSpan": 2, "rowSpan": 3}, "layoutWeight": 90},
     "portfolioInvestment": {"title": "US 포트폴리오", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 2, "rowSpan": 2}, "layoutWeight": 38},
     "portfolioPerformance": {"title": "수익률", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 3, "rowSpan": 2}, "layoutWeight": 42},
