@@ -22,6 +22,15 @@ STYLE_TOKENS: dict[str, dict[str, Any]] = {
 def recommended_indicators(features: dict[str, Any]) -> list[dict[str, str]]:
     regime = features.get("regime") or {}
     candidates: list[dict[str, str]] = []
+    has_ma_cross = any(
+        event.get("kind") == "movingAverageCross"
+        and event.get("hardPass")
+        and (event.get("detail") or {}).get("shortPeriod") == 60
+        and (event.get("detail") or {}).get("longPeriod") == 120
+        for event in features.get("events") or []
+    )
+    if has_ma_cross:
+        candidates.append({"layer": "sma:120", "reason": "MA60/120 교차 확인", "source": "rule"})
     if regime.get("bbSqueeze") or float(regime.get("bbBandwidthPercentile") or 1) < 0.2:
         candidates.append({"layer": "bollinger:20:2", "reason": "변동성 수축 — 확장 임박 관찰", "source": "rule"})
     macd_state = str(regime.get("macdState") or "neutral")

@@ -313,8 +313,10 @@ Asset v2도 기존 GET/build/poll/SSE route를 사용한다. timed anchor는 int
 빌드할 수 있다. 삼각형·깃발이 선택되면 이름, `forming|confirmed`, 점수, 선 수를 표시하고
 빌드 완료 cache invalidation 뒤 현재 chart에 자동 적용한다.
 일봉 asset은 MA60/120 골든크로스·데드크로스가 현재 관련성 범위 안에 있으면 교차
-봉의 canonical candleKey에 각각 녹색·붉은색 `flagMarker`를 적용한다. MA120 선을
-별도 chart layer로 추가하거나 ClickHouse indicator artifact로 저장하지 않는다.
+봉의 canonical candleKey에 각각 녹색·붉은색 `flagMarker`를 적용한다. 이 이벤트가
+선택되면 서버 계산형 `sma:120` 가격 오버레이도 자동 활성화해 기본 활성 상태인
+SMA60과의 교차를 차트에서 확인할 수 있다. SMA120은 ClickHouse indicator artifact로
+저장하지 않고 `/api/charts/indicators`의 요청 범위에서 계산한다.
 `commentary.focusItems[].drawingIds`는 실제 적용 drawing을 가리키고 선택 시 해당
 drawing을 강조한다. v1은 기존 렌더를 유지하며 v2의 정상 빈 layer는 오류가 아니다.
 빌드 완료와 개발 패널 삭제는 analysis asset cache invalidation event를 발생시키며,
