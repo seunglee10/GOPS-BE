@@ -10,7 +10,7 @@ from typing import Any
 from ..contracts import IntentRoute
 
 
-ROLE_ORDER = ["chart", "news", "macro", "ontology", "financial"]
+ROLE_ORDER = ["chart", "news", "macro", "ontology", "financial", "risk"]
 FALLBACK_ROLE_ORDER = ["chart", "news", "macro", "ontology"]
 BOUNDARY_KEYWORDS = {"eps", "roe", "fcf"}
 FINANCIAL_COMPARISON_KEYWORDS = ("compare", "comparison", "peer", "vs", "versus", "경쟁사", "비교", "대비", "동종")
@@ -21,6 +21,11 @@ KEYWORD_ROUTES = [
     (("차트", "캔들", "가격", "추세", "chart", "candle", "price", "trend"), ["chart"], "chart"),
     (("거시", "금리", "cpi", "fomc", "macro", "rate", "inflation"), ["macro"], "macro"),
     (("관계", "온톨로지", "공급망", "경쟁사", "섹터", "ontology", "relationship", "supply"), ["ontology"], "ontology"),
+    (
+        ("리스크", "위험해", "위험한", "물타기", "몰빵", "쏠림", "한도", "얼마나 사", "왜 막", "리스크 점검", "risk"),
+        ["risk"],
+        "risk-check",
+    ),
     (
         (
             "재무",
@@ -132,7 +137,7 @@ def route_with_openai(intent: str, runtime_context: Any | None = None) -> Intent
             "input": [
                 {
                     "role": "system",
-                    "content": "Route a stock analysis request to chart, news, macro, ontology, financial roles. Return strict JSON only.",
+                    "content": "Route a stock analysis request to chart, news, macro, ontology, financial, risk roles. The risk role handles defensive questions (position limits, portfolio risk, why an order was blocked). Return strict JSON only.",
                 },
                 {"role": "user", "content": intent},
             ],

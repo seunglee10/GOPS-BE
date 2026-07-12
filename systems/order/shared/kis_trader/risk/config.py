@@ -16,9 +16,6 @@ from typing import Any, Mapping
 
 @dataclass(frozen=True)
 class RiskConfig:
-    # position_sizing_2pct_atr
-    risk_per_trade: Decimal = Decimal("0.02")
-    atr_stop_multiple: Decimal = Decimal("2.0")
     # single_name_limit
     single_name_max_weight: Decimal = Decimal("0.20")
     # sector_limit
@@ -34,8 +31,6 @@ class RiskConfig:
 
 
 _DECIMAL_FIELDS = {
-    "risk_per_trade",
-    "atr_stop_multiple",
     "single_name_max_weight",
     "sector_max_weight",
     "max_order_notional",

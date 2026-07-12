@@ -16,6 +16,7 @@ resources:
   - deployment-agent-delivery-gateway.yaml
   - deployment-agent-event-detector.yaml
   - deployment-agent-notification-publisher.yaml
+  - deployment-risk-monitor.yaml
   - deployment-alpaca-ingestor.yaml
   - deployment-feed-session-controller.yaml
   - deployment-subscription-controller.yaml

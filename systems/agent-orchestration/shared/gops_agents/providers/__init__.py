@@ -46,6 +46,97 @@ class FinancialProvider:
         raise NotImplementedError
 
 
+class RiskProvider:
+    def fetch(self, request: ProviderRequest) -> list[EvidenceItem]:
+        raise NotImplementedError
+
+
+class RedisRiskEventsProvider(RiskProvider):
+    """Reads the latest risk-monitor events cached by the notification publisher.
+
+    Keys: agent.alerts:latest:<SYMBOL> plus the account-wide PORTFOLIO key.
+    Read-only by design — the risk agent narrates engine/monitor output and can
+    never produce or override verdicts.
+    """
+
+    PORTFOLIO_KEY = "PORTFOLIO"
+
+    def __init__(self, redis_client: Any = None, *, channel_prefix: str = "agent.alerts:latest") -> None:
+        self._client = redis_client
+        self.channel_prefix = channel_prefix
+
+    def fetch(self, request: ProviderRequest) -> list[EvidenceItem]:
+        evidence: list[EvidenceItem] = []
+        symbols = [request.symbol.upper()] if request.symbol else []
+        symbols.extend(symbol.upper() for symbol in request.symbols if symbol.upper() not in symbols)
+        if self.PORTFOLIO_KEY not in symbols:
+            symbols.append(self.PORTFOLIO_KEY)
+        for symbol in symbols:
+            decision = self._latest_decision(symbol)
+            if decision is None:
+                continue
+            event_type = str(decision.get("eventType") or "")
+            if not event_type.startswith("risk_"):
+                continue
+            evidence.append(
+                EvidenceItem(
+                    provider="risk",
+                    status="available",
+                    title=event_type,
+                    summary=str(decision.get("summary") or f"{symbol} 리스크 이벤트"),
+                    observedAt=str(decision.get("observedAt") or utc_now_iso()),
+                    raw={
+                        "symbol": symbol,
+                        "severity": decision.get("severity"),
+                        "metrics": decision.get("metrics") or {},
+                        "source_type": "risk_monitor_event",
+                    },
+                )
+            )
+        if not evidence:
+            evidence.append(
+                EvidenceItem.no_data(
+                    "risk",
+                    "No recent risk events",
+                    f"{request.symbol or 'portfolio'} 관련 최근 리스크 이벤트가 없습니다. 현재 방어 룰에 걸린 항목이 없다는 뜻입니다.",
+                )
+            )
+        return evidence
+
+    def _latest_decision(self, symbol: str) -> dict[str, Any] | None:
+        client = self._client
+        if client is None:
+            client = self._client = _default_risk_redis_client()
+        if client is None:
+            return None
+        try:
+            value = client.get(f"{self.channel_prefix}:{symbol}")
+        except Exception:
+            return None
+        if not value:
+            return None
+        if isinstance(value, bytes):
+            value = value.decode("utf-8")
+        try:
+            payload = json.loads(value)
+        except (ValueError, TypeError):
+            return None
+        decision = payload.get("decision") if isinstance(payload, dict) else None
+        return decision if isinstance(decision, dict) else None
+
+
+def _default_risk_redis_client():
+    try:
+        import redis
+
+        url = os.getenv("REDIS_URL")
+        if not url:
+            return None
+        return redis.from_url(url, decode_responses=True)
+    except Exception:
+        return None
+
+
 class EmptyNewsProvider(NewsProvider):
     def fetch(self, request: ProviderRequest) -> list[EvidenceItem]:
         return [

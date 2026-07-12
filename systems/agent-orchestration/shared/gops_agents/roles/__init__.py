@@ -12,7 +12,14 @@ from ..contracts import AgentFinding, EvidenceItem, LayoutProposal, MarketEvent,
 from ..intent_understanding.schema import UI_PANEL_TYPES, UiTask
 from ..orchestration.routing import parse_openai_text_json
 from ..orchestration.ui_intent import UIIntent
-from ..providers import ClickHouseFinancialProvider, ClickHouseNewsProvider, EmptyMacroProvider, GraphDBOntologyProvider, ProviderRequest
+from ..providers import (
+    ClickHouseFinancialProvider,
+    ClickHouseNewsProvider,
+    EmptyMacroProvider,
+    GraphDBOntologyProvider,
+    ProviderRequest,
+    RedisRiskEventsProvider,
+)
 from ..providers.news_localization import NewsLocalizationService
 
 
@@ -252,6 +259,57 @@ class MacroAgent(ProviderBackedAgent):
 
     def __init__(self, provider=None):
         super().__init__(provider or EmptyMacroProvider())
+
+
+SEVERITY_LABELS_KO = {"critical": "긴급", "alert": "경고", "watch": "주의", "info": "참고"}
+
+
+class RiskAgent(ProviderBackedAgent):
+    """리스크 매니저의 대화 창구 — 조회 전용 서술자.
+
+    Engine/Monitor가 만든 판정·이벤트를 사용자 눈높이로 설명한다.
+    계산이나 판정을 하지 않으며, block 판정을 뒤집거나 한도를 바꿀 수 없다.
+    (한도 변경은 설정에서, 매수 타이밍 조언은 시그널 에이전트 소관.)
+    """
+
+    agent_id = "risk-agent"
+    role = "risk-analysis"
+    provider_name = "risk"
+
+    def __init__(self, provider=None):
+        super().__init__(provider or RedisRiskEventsProvider())
+
+    def analyze(self, context: AgentContext) -> AgentFinding:
+        evidence = self.provider.fetch(
+            ProviderRequest(context.symbol, context.intent, symbols=tuple(context.newsSymbols or []))
+        )
+        available = [item for item in evidence if item.status == "available"]
+        if available:
+            lead = available[0]
+            severity = str((lead.raw or {}).get("severity") or "info")
+            label = SEVERITY_LABELS_KO.get(severity, severity)
+            extra = f" 외 {len(available) - 1}건" if len(available) > 1 else ""
+            summary = f"[{label}] {lead.summary}{extra}"
+            confidence = 0.7
+        else:
+            summary = (
+                f"{context.symbol} 관련 최근 리스크 이벤트가 없습니다. "
+                "비중·손실 한도 모두 방어 룰에 걸린 항목이 없어요."
+            )
+            confidence = 0.5
+        return AgentFinding(
+            agentId=self.agent_id,
+            role=self.role,
+            summary=summary,
+            rationale=(
+                "리스크 에이전트는 룰 엔진과 모니터의 판정을 조회해 설명만 합니다. "
+                "판정을 바꾸거나 우회할 수 없고, 한도 변경은 설정에서만 가능합니다. "
+                "매수/매도 타이밍 판단은 제공하지 않습니다."
+            ),
+            confidence=confidence,
+            evidence=evidence,
+            tags=["risk", "defensive", "read-only"],
+        )
 
 
 class FinancialAgent(ProviderBackedAgent):

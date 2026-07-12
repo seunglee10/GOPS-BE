@@ -91,10 +91,8 @@ def evaluate_pretrade(
     checks = (
         _check_fat_finger,
         _check_daily_loss_cooldown,
-        _check_position_sizing,
         _check_single_name_limit,
         _check_sector_limit,
-        _check_stop_loss_required,
     )
     for check in checks:
         outcome = check(normalized_side, normalized_symbol, qty, price, context, config)
@@ -219,45 +217,6 @@ def _check_daily_loss_cooldown(
     return None
 
 
-def _check_position_sizing(
-    side: str,
-    symbol: str,
-    qty: Decimal,
-    price: Decimal,
-    context: RiskContext,
-    config: RiskConfig,
-) -> RuleResult | SkippedRule | None:
-    if side != "buy":
-        return None
-    atr = context.metrics.atr
-    equity = context.account_equity
-    if equity is None or equity <= 0:
-        return SkippedRule("position_sizing_2pct_atr", "account equity unavailable")
-    if atr is None or atr <= 0:
-        return SkippedRule("position_sizing_2pct_atr", "ATR unavailable for symbol")
-    max_loss = equity * config.risk_per_trade
-    stop_distance = atr * config.atr_stop_multiple
-    allowed_qty = (max_loss / stop_distance).to_integral_value(rounding=ROUND_FLOOR)
-    if qty > allowed_qty:
-        return RuleResult(
-            rule_id="position_sizing_2pct_atr",
-            action=ACTION_RESIZE,
-            explanation=(
-                f"1회 허용 손실 {max_loss}(계좌의 {_pct(config.risk_per_trade)}) ÷ "
-                f"손절 거리 {stop_distance}(ATR×{config.atr_stop_multiple}) = {allowed_qty}주까지 권장합니다."
-            ),
-            numbers={
-                "accountEquity": str(equity),
-                "maxLoss": str(max_loss),
-                "atr": str(atr),
-                "stopDistance": str(stop_distance),
-                "allowedQty": str(allowed_qty),
-            },
-            suggested_qty=allowed_qty,
-        )
-    return None
-
-
 def _check_single_name_limit(
     side: str,
     symbol: str,
@@ -327,38 +286,6 @@ def _check_sector_limit(
             "postTradeExposure": str(post_trade_exposure),
             "sectorMaxWeight": str(config.sector_max_weight),
         },
-    )
-
-
-def _check_stop_loss_required(
-    side: str,
-    symbol: str,
-    qty: Decimal,
-    price: Decimal,
-    context: RiskContext,
-    config: RiskConfig,
-) -> RuleResult | SkippedRule | None:
-    if side != "buy":
-        return None
-    if context.stop_price is not None:
-        return None
-    atr = context.metrics.atr
-    if atr is not None and atr > 0:
-        suggested_stop = price - atr * config.atr_stop_multiple
-        return RuleResult(
-            rule_id="stop_loss_required",
-            action=ACTION_WARN,
-            explanation=(
-                f"손절가 없이 매수하려고 합니다. ATR 기준 손절가 {suggested_stop}"
-                f"(진입가 - ATR×{config.atr_stop_multiple})을 권장합니다."
-            ),
-            numbers={"suggestedStop": str(suggested_stop), "atr": str(atr)},
-        )
-    return RuleResult(
-        rule_id="stop_loss_required",
-        action=ACTION_WARN,
-        explanation="손절가 없이 매수하려고 합니다. 진입 전에 탈출 가격을 정해두세요.",
-        numbers={},
     )
 
 

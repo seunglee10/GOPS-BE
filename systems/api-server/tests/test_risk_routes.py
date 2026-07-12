@@ -73,7 +73,7 @@ class RiskRoutesTest(unittest.TestCase):
         risk = response.json()["risk"]
         self.assertEqual(risk["verdict"], "allow")
         skipped = {item["ruleId"] for item in risk["skippedRules"]}
-        self.assertIn("position_sizing_2pct_atr", skipped)
+        self.assertIn("single_name_limit", skipped)
 
     def test_pretrade_preview_resizes_from_holdings_snapshot(self):
         self.set_snapshot(healthy_holdings_snapshot())
@@ -108,6 +108,56 @@ class RiskRoutesTest(unittest.TestCase):
         risk = response.json().get("risk")
         self.assertIsNotNone(risk)
         self.assertEqual(risk["verdict"], "allow")
+
+    def test_risk_conditions_endpoint_removed(self):
+        # 사용자 방어 조건 알림 제거 (risk-stoploss-removal-plan.md 2차)
+        response = self.client.post(
+            "/api/risk/conditions",
+            json={"symbol": "NVDA", "kind": "price_below", "threshold": 95},
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_risk_report_aggregates_daily_log(self):
+        import json as json_module
+
+        events = [
+            {"eventId": "e1", "symbol": "PORTFOLIO", "eventType": "risk_daily_loss_limit", "severity": "critical", "summary": "일일 손실 한도"},
+            {"eventId": "e2", "symbol": "MU", "eventType": "risk_concentration_drift", "severity": "alert", "summary": "쏠림"},
+            {"eventId": "e3", "symbol": "PORTFOLIO", "eventType": "risk_daily_loss_limit", "severity": "critical", "summary": "일일 손실 한도2"},
+        ]
+        rows = [json_module.dumps(event) for event in events]
+        self.app.state.risk_report_redis = SimpleNamespace(lrange=lambda key, start, end: rows)
+
+        response = self.client.get("/api/risk/report?date=2026-07-12")
+
+        self.assertEqual(response.status_code, 200)
+        report = response.json()
+        self.assertEqual(report["date"], "2026-07-12")
+        self.assertEqual(report["totalEvents"], 3)
+        self.assertEqual(report["byType"]["risk_daily_loss_limit"], 2)
+        self.assertEqual(report["bySeverity"]["critical"], 2)
+        self.assertEqual(len(report["events"]), 3)
+
+    def test_risk_report_returns_zeros_for_empty_day(self):
+        self.app.state.risk_report_redis = SimpleNamespace(lrange=lambda key, start, end: [])
+
+        response = self.client.get("/api/risk/report?date=2026-07-12")
+
+        self.assertEqual(response.status_code, 200)
+        report = response.json()
+        self.assertEqual(report["totalEvents"], 0)
+        self.assertEqual(report["byType"], {})
+        self.assertEqual(report["events"], [])
+
+    def test_risk_report_unavailable_without_storage(self):
+        saved = os.environ.pop("REDIS_URL", None)
+        try:
+            response = self.client.get("/api/risk/report")
+            self.assertEqual(response.status_code, 503)
+        finally:
+            if saved is not None:
+                os.environ["REDIS_URL"] = saved
 
     def test_kill_switch_disables_risk_checks_on_orders(self):
         os.environ["RISK_PRETRADE_ENABLED"] = "false"

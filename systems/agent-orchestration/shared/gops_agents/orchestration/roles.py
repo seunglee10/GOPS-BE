@@ -9,6 +9,7 @@ def role_agent_error_finding(role: str, symbol: str, exc: Exception):
         "macro": "macro",
         "ontology": "ontology",
         "chart": "chart",
+        "risk": "risk",
     }
     provider = role_to_provider.get(role, role)
     return AgentFinding(
@@ -18,6 +19,7 @@ def role_agent_error_finding(role: str, symbol: str, exc: Exception):
             "news": "news-analysis",
             "macro": "macro-analysis",
             "ontology": "company-relationship-analysis",
+            "risk": "risk-analysis",
         }.get(role, role),
         summary=f"{symbol} {role} 분석 중 오류가 발생했습니다.",
         rationale=f"{exc.__class__.__name__}: role agent execution failed.",

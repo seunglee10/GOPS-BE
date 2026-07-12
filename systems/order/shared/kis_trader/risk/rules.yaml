@@ -2,11 +2,6 @@
 # Loaded via RISK_RULES_PATH (see kis_trader.risk.config). Values here mirror
 # the code defaults; edit and point RISK_RULES_PATH at this file to tune.
 
-# 한 번의 매수에서 손절가까지 밀렸을 때 잃어도 되는 계좌 비율 (2% 룰)
-risk_per_trade: 0.02
-# 손절 거리 = ATR x 이 배수
-atr_stop_multiple: 2.0
-
 # 종목당 최대 비중
 single_name_max_weight: 0.20
 # 섹터당 최대 비중 (경고)

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 import os
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -19,7 +18,7 @@ from kis_trader.persistence.memory import InMemoryOrderRepository
 from kis_trader.persistence.postgres import PostgresOrderRepository
 from kis_trader.persistence.repository import IdempotencyConflictError, OrderRepository
 from kis_trader.risk import PretradeVerdict, RiskContext, evaluate_pretrade, load_risk_config
-from kis_trader.risk.context import decimal_or_none, risk_context_from_dict
+from kis_trader.risk.context import risk_context_from_dict
 from kis_trader.security.idempotency import hash_idempotency_key, stable_body_hash
 from kis_trader.security.validation import assert_no_forbidden_fields
 
@@ -94,7 +93,7 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         verdict = _pretrade_verdict(app, request, payload, allow_inline_context=True)
         if verdict is None:
-            verdict = _evaluate(app, request, RiskContext(), payload)
+            verdict = _evaluate(app, request, RiskContext())
         return {"symbol": request.symbol, "side": request.side, "risk": verdict.to_dict()}
 
     @app.get("/orders/{order_id}")
@@ -152,18 +151,14 @@ def _pretrade_verdict(
         context = risk_context_from_dict(payload["risk_context"])
     if context is None:
         return None
-    return _evaluate(app, request, context, payload)
+    return _evaluate(app, request, context)
 
 
 def _evaluate(
     app: FastAPI,
     request: OrderRequest,
     context: RiskContext,
-    payload: dict[str, Any],
 ) -> PretradeVerdict:
-    stop_price = decimal_or_none(payload.get("stop_price"))
-    if stop_price is not None and context.stop_price is None:
-        context = dataclasses.replace(context, stop_price=stop_price)
     return evaluate_pretrade(
         side=request.side,
         symbol=request.symbol,

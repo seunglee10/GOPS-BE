@@ -21,11 +21,9 @@ def build_context(**overrides):
         positions=(),
         metrics=SymbolMetrics(
             last_price=Decimal("100"),
-            atr=Decimal("2"),
             average_daily_volume=Decimal("1000000"),
         ),
         daily_pnl=Decimal("0"),
-        stop_price=Decimal("96"),
     )
     defaults.update(overrides)
     return RiskContext(**defaults)
@@ -48,43 +46,6 @@ def triggered(verdict, rule_id):
 
 def skipped_ids(verdict):
     return {item.rule_id for item in verdict.skipped}
-
-
-# --- position_sizing_2pct_atr ------------------------------------------------
-
-
-WIDE_NAME_CAP = {"single_name_max_weight": "1.0"}  # isolate position sizing from the 20% cap
-
-
-def test_position_sizing_allows_qty_at_exact_limit():
-    # equity 10000 * 2% = 200 max loss; stop distance = ATR 2 * 2 = 4 -> 50 shares
-    verdict = evaluate(qty="50", config=load_risk_config(overrides=WIDE_NAME_CAP))
-
-    assert verdict.verdict == "allow"
-    assert not triggered(verdict, "position_sizing_2pct_atr")
-
-
-def test_position_sizing_resizes_one_share_over_limit():
-    verdict = evaluate(qty="51", config=load_risk_config(overrides=WIDE_NAME_CAP))
-
-    assert verdict.verdict == "resize"
-    assert verdict.adjusted_qty == Decimal("50")
-    result = triggered(verdict, "position_sizing_2pct_atr")[0]
-    assert result.suggested_qty == Decimal("50")
-    assert result.numbers["allowedQty"] == "50"
-
-
-def test_position_sizing_skipped_without_atr():
-    context = build_context(metrics=SymbolMetrics(last_price=Decimal("100")))
-    verdict = evaluate(context=context)
-
-    assert "position_sizing_2pct_atr" in skipped_ids(verdict)
-
-
-def test_position_sizing_not_applied_to_sells():
-    verdict = evaluate(qty="500", side="sell")
-
-    assert not triggered(verdict, "position_sizing_2pct_atr")
 
 
 # --- single_name_limit -------------------------------------------------------
@@ -115,6 +76,16 @@ def test_single_name_limit_blocks_when_already_at_cap():
 
 def test_single_name_limit_allows_exact_cap():
     verdict = evaluate(qty="20", price="100")  # 2000 == 20% of 10000
+
+    assert verdict.verdict == "allow"
+    assert not triggered(verdict, "single_name_limit")
+
+
+def test_single_name_limit_not_applied_to_sells():
+    context = build_context(
+        positions=(PositionSnapshot("NVDA", Decimal("30"), Decimal("3000")),),
+    )
+    verdict = evaluate(qty="30", side="sell", context=context)
 
     assert not triggered(verdict, "single_name_limit")
 
@@ -161,7 +132,6 @@ def test_fat_finger_blocks_excessive_adv_participation():
     context = build_context(
         metrics=SymbolMetrics(
             last_price=Decimal("100"),
-            atr=Decimal("2"),
             average_daily_volume=Decimal("100"),
         ),
     )
@@ -210,51 +180,31 @@ def test_daily_loss_cooldown_does_not_block_sells():
     assert not triggered(verdict, "daily_loss_cooldown")
 
 
-# --- stop_loss_required ----------------------------------------------------------
-
-
-def test_stop_loss_warning_suggests_atr_stop():
-    context = build_context(stop_price=None)
-    verdict = evaluate(qty="10", price="100", context=context)
-
-    result = triggered(verdict, "stop_loss_required")[0]
-    assert result.action == "warn"
-    assert Decimal(result.numbers["suggestedStop"]) == Decimal("96")  # 100 - 2*2
-    assert verdict.verdict == "allow"
-
-
-def test_no_stop_loss_warning_when_stop_attached():
-    verdict = evaluate()
-
-    assert not triggered(verdict, "stop_loss_required")
-
-
 # --- aggregation ------------------------------------------------------------------
 
 
 def test_block_wins_over_resize():
-    context = build_context(daily_pnl=Decimal("-300"))
-    verdict = evaluate(qty="51", context=context)
+    # daily loss block + single-name resize on the same order -> block
+    context = build_context(
+        daily_pnl=Decimal("-300"),
+        positions=(PositionSnapshot("NVDA", Decimal("15"), Decimal("1500")),),
+    )
+    verdict = evaluate(qty="10", context=context)
 
     assert verdict.verdict == "block"
     assert verdict.adjusted_qty is None
 
 
-def test_smallest_resize_suggestion_wins():
-    # position sizing allows 50; single name cap allows 20 -> adjusted 20
-    verdict = evaluate(qty="60")
-
-    assert verdict.verdict == "resize"
-    assert verdict.adjusted_qty == Decimal("20")
-
-
 def test_verdict_serializes_for_api_and_agent():
-    verdict = evaluate(qty="51", config=load_risk_config(overrides=WIDE_NAME_CAP))
+    context = build_context(
+        positions=(PositionSnapshot("NVDA", Decimal("15"), Decimal("1500")),),
+    )
+    verdict = evaluate(qty="10", context=context)
     payload = verdict.to_dict()
 
     assert payload["verdict"] == "resize"
-    assert payload["adjustedQty"] == "50"
-    assert payload["triggeredRules"][0]["ruleId"] == "position_sizing_2pct_atr"
+    assert payload["adjustedQty"] == "5"
+    assert payload["triggeredRules"][0]["ruleId"] == "single_name_limit"
     assert isinstance(payload["skippedRules"], list)
 
 
@@ -262,9 +212,8 @@ def test_empty_context_only_runs_data_free_rules():
     verdict = evaluate(context=RiskContext())
 
     assert verdict.verdict == "allow"
-    assert {"position_sizing_2pct_atr", "single_name_limit", "sector_limit", "daily_loss_cooldown"} <= skipped_ids(verdict)
-    # stop-loss warning still fires without any market data
-    assert triggered(verdict, "stop_loss_required")
+    assert verdict.results == ()
+    assert {"single_name_limit", "sector_limit", "daily_loss_cooldown"} <= skipped_ids(verdict)
 
 
 # --- portfolio helpers --------------------------------------------------------------
@@ -291,16 +240,102 @@ def test_risk_context_from_dict_parses_json_payload():
                 {"symbol": "nvda", "quantity": "10", "marketValue": "2000", "sector": "semiconductor"},
                 {"symbol": "", "quantity": "1", "marketValue": "1"},
             ],
-            "metrics": {"lastPrice": "100", "atr": "2", "averageDailyVolume": "5000"},
+            "metrics": {"lastPrice": "100", "averageDailyVolume": "5000"},
         }
     )
 
     assert context.account_equity == Decimal("10000")
     assert len(context.positions) == 1
     assert context.positions[0].symbol == "NVDA"
-    assert context.metrics.atr == Decimal("2")
+    assert context.metrics.average_daily_volume == Decimal("5000")
+
+
+# --- edge cases ---------------------------------------------------------------
+
+
+def test_boundary_values_pass_at_exact_limits():
+    """팻핑거 3종은 전부 초과(>)일 때만 발동 — 정확히 한도값이면 통과."""
+    config = load_risk_config(overrides={"max_order_notional": "1000"})
+    at_notional_cap = evaluate(qty="10", price="100", config=config)  # 1000 == cap
+    assert not triggered(at_notional_cap, "fat_finger")
+
+    thin_adv = build_context(metrics=SymbolMetrics(last_price=Decimal("100"), average_daily_volume=Decimal("100")))
+    at_adv_cap = evaluate(qty="5", context=thin_adv)  # 5% == cap
+    assert not triggered(at_adv_cap, "fat_finger")
+
+    at_band_cap = evaluate(qty="1", price="105")  # 5% == price band
+    assert not triggered(at_band_cap, "fat_finger")
+
+
+def test_side_and_symbol_are_normalized():
+    context = build_context(
+        positions=(PositionSnapshot("NVDA", Decimal("15"), Decimal("1500")),),
+    )
+    verdict = evaluate_pretrade(
+        side="  BUY ",
+        symbol="nvda",
+        qty=Decimal("10"),
+        price=Decimal("100"),
+        context=context,
+        config=RiskConfig(),
+    )
+
+    # 소문자 심볼도 기존 NVDA 포지션과 합산되어 비중 한도에 걸린다
+    assert verdict.verdict == "resize"
+    assert verdict.adjusted_qty == Decimal("5")
+
+
+def test_duplicate_position_rows_are_aggregated():
+    context = build_context(
+        positions=(
+            PositionSnapshot("NVDA", Decimal("10"), Decimal("1000")),
+            PositionSnapshot("NVDA", Decimal("10"), Decimal("1000")),
+        ),
+    )
+    verdict = evaluate(qty="1", context=context)  # 이미 2000 == 20% cap
+
+    assert verdict.verdict == "block"
+
+
+def test_sector_from_metrics_overrides_config_map():
+    context = build_context(
+        positions=(PositionSnapshot("XOM", Decimal("38"), Decimal("3800"), sector="energy"),),
+        metrics=SymbolMetrics(last_price=Decimal("100"), average_daily_volume=Decimal("1000000"), sector="energy"),
+    )
+    config = load_risk_config(overrides={"sector_map": {"NVDA": "semiconductor"}})
+    verdict = evaluate(qty="7", context=context, config=config)  # energy 45% > 40%
+
+    result = triggered(verdict, "sector_limit")[0]
+    assert result.numbers["sector"] == "energy"
+
+
+def test_zero_equity_skips_equity_rules_but_fat_finger_still_blocks():
+    context = build_context(account_equity=Decimal("0"))
+    verdict = evaluate(qty="1", price="200", context=context)  # 직전가 100 대비 +100%
+
+    assert verdict.verdict == "block"
+    assert triggered(verdict, "fat_finger")
+    assert {"single_name_limit", "sector_limit", "daily_loss_cooldown"} <= skipped_ids(verdict)
+
+
+def test_yaml_file_overrides_thresholds(tmp_path):
+    rules = tmp_path / "rules.yaml"
+    rules.write_text("single_name_max_weight: 0.5\n", encoding="utf-8")
+    config = load_risk_config(path=rules)
+
+    verdict = evaluate(qty="30", price="100", config=config)  # 30% < 50% cap
+
+    assert verdict.verdict == "allow"
+    assert not triggered(verdict, "single_name_limit")
 
 
 def test_load_risk_config_rejects_unknown_keys():
     with pytest.raises(ValueError):
         load_risk_config(overrides={"nope": 1})
+
+
+def test_removed_rule_keys_are_rejected_by_config():
+    # 손절·사이징 제거 후 이 키들은 더 이상 유효하지 않다 (risk-stoploss-removal-plan.md)
+    for key in ("risk_per_trade", "atr_stop_multiple"):
+        with pytest.raises(ValueError):
+            load_risk_config(overrides={key: "0.02"})

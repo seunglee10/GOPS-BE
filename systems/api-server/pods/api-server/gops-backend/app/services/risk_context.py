@@ -4,9 +4,8 @@ Data sources, in order of preference:
 - portfolio: simulator account (simulation mode) or the latest holdings
   snapshot remembered by GET /api/account/holdings, falling back to a direct
   KIS demo fetch.
-- symbol metrics: daily candles from the market-data query service; ATR-14 is
-  computed with the same alfaka implementation the chart uses, ADV over the
-  last 20 sessions.
+- symbol metrics: daily candles from the market-data query service; last price
+  and ADV over the last 20 sessions (fat-finger checks).
 
 Everything degrades gracefully: any missing piece leaves the matching
 RiskContext field as None so the risk engine skips (and reports) the rules
@@ -22,7 +21,6 @@ from typing import Any
 from kis_trader.risk import PositionSnapshot, RiskContext, SymbolMetrics
 from kis_trader.risk.context import decimal_or_none
 
-ATR_PERIOD = 14
 ADV_SESSIONS = 20
 
 
@@ -30,7 +28,7 @@ def risk_pretrade_enabled() -> bool:
     return os.getenv("RISK_PRETRADE_ENABLED", "true").strip().lower() not in {"0", "false", "off"}
 
 
-def build_risk_context(app: Any, user_sub: str, symbol: str, stop_price: Any = None) -> RiskContext:
+def build_risk_context(app: Any, user_sub: str, symbol: str) -> RiskContext:
     equity, positions, daily_pnl = _portfolio_snapshot(app, user_sub)
     metrics = _symbol_metrics(symbol)
     return RiskContext(
@@ -38,9 +36,7 @@ def build_risk_context(app: Any, user_sub: str, symbol: str, stop_price: Any = N
         positions=tuple(positions),
         metrics=metrics,
         daily_pnl=daily_pnl,
-        stop_price=decimal_or_none(stop_price),
     )
-
 
 # --- portfolio --------------------------------------------------------------
 
@@ -132,16 +128,12 @@ def _symbol_metrics(symbol: str) -> SymbolMetrics:
     if not candles:
         return SymbolMetrics(sector=_sector_for_symbol(symbol))
     closes = [_as_float(candle.get("close")) for candle in candles]
-    highs = [_as_float(candle.get("high")) for candle in candles]
-    lows = [_as_float(candle.get("low")) for candle in candles]
     volumes = [_as_float(candle.get("volume")) for candle in candles]
 
     last_price = next((value for value in reversed(closes) if value is not None), None)
-    atr_value = _latest_atr(highs, lows, closes)
     adv_value = _average_volume(volumes)
     return SymbolMetrics(
         last_price=decimal_or_none(last_price),
-        atr=decimal_or_none(atr_value),
         average_daily_volume=decimal_or_none(adv_value),
         sector=_sector_for_symbol(symbol),
     )
@@ -151,25 +143,11 @@ def _daily_candles(symbol: str) -> list[dict[str, Any]]:
     try:
         from app.market_data.query.service import get_query_service
 
-        payload = get_query_service().candle_snapshot(symbol, "1d", "", ATR_PERIOD * 2 + 2)
+        payload = get_query_service().candle_snapshot(symbol, "1d", "", ADV_SESSIONS + 2)
     except Exception:
         return []
     candles = payload.get("candles") if isinstance(payload, dict) else None
     return [candle for candle in candles if isinstance(candle, dict)] if isinstance(candles, list) else []
-
-
-def _latest_atr(
-    highs: list[float | None],
-    lows: list[float | None],
-    closes: list[float | None],
-) -> float | None:
-    try:
-        from alfaka.serving.indicators import atr
-
-        series = atr(highs, lows, closes, ATR_PERIOD)
-    except Exception:
-        return None
-    return next((value for value in reversed(series) if value is not None), None)
 
 
 def _average_volume(volumes: list[float | None]) -> float | None:

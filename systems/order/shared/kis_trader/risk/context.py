@@ -29,7 +29,6 @@ class SymbolMetrics:
     """
 
     last_price: Decimal | None = None
-    atr: Decimal | None = None
     average_daily_volume: Decimal | None = None
     sector: str | None = None
 
@@ -40,7 +39,6 @@ class RiskContext:
     positions: tuple[PositionSnapshot, ...] = ()
     metrics: SymbolMetrics = field(default_factory=SymbolMetrics)
     daily_pnl: Decimal | None = None
-    stop_price: Decimal | None = None
 
 
 def decimal_or_none(value: Any) -> Decimal | None:
@@ -74,7 +72,6 @@ def risk_context_from_dict(payload: dict[str, Any]) -> RiskContext:
     metrics_payload = payload.get("metrics") or {}
     metrics = SymbolMetrics(
         last_price=decimal_or_none(metrics_payload.get("lastPrice")),
-        atr=decimal_or_none(metrics_payload.get("atr")),
         average_daily_volume=decimal_or_none(metrics_payload.get("averageDailyVolume")),
         sector=(str(metrics_payload["sector"]) if metrics_payload.get("sector") else None),
     )
@@ -83,5 +80,4 @@ def risk_context_from_dict(payload: dict[str, Any]) -> RiskContext:
         positions=tuple(positions),
         metrics=metrics,
         daily_pnl=decimal_or_none(payload.get("dailyPnl")),
-        stop_price=decimal_or_none(payload.get("stopPrice")),
     )

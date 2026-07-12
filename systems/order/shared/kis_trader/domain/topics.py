@@ -7,12 +7,14 @@ from .status import OrderContractError
 ORDERS_COMMANDS_TOPIC = "orders.commands.v1"
 SUBMIT_RESULTS_TOPIC = "broker.submit-results.v1"
 ORDER_EVENTS_TOPIC = "broker.order-events.v1"
+ORDERS_FILLS_TOPIC = "orders.fills.v1"
 ORDERS_DLQ_TOPIC = "orders.dlq.v1"
 
 CANONICAL_ORDER_TOPICS: tuple[str, ...] = (
     ORDERS_COMMANDS_TOPIC,
     SUBMIT_RESULTS_TOPIC,
     ORDER_EVENTS_TOPIC,
+    ORDERS_FILLS_TOPIC,
     ORDERS_DLQ_TOPIC,
 )
 

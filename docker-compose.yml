@@ -1424,10 +1424,31 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
       REDIS_URL: "redis://redis:6379/0"
       AGENT_NOTIFICATION_DECISIONS_TOPIC: "agents.notification-decisions.v1"
+      RISK_EVENTS_TOPIC: "risk.events.v1"
     command: ["python", "-u", "/app/systems/agent-orchestration/pods/notification-publisher/main.py"]
     restart: unless-stopped
     networks:
       - data_net
+      - streaming_net
+
+  risk-monitor:
+    image: gops-agent-orchestrator
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
+    container_name: alfaka-risk-monitor
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      RISK_MONITOR_INPUT_TOPICS: "market.layer.candles.1m.closed.v1,market.layer.candles.5m.closed.v1,market.layer.candles.1d.closed.v1,orders.fills.v1"
+      RISK_EVENTS_TOPIC: "risk.events.v1"
+      # 실제 계좌 자산 기준값. 비어 있으면 equity 의존 룰은 안전하게 건너뜁니다.
+      RISK_MONITOR_EQUITY: "${RISK_MONITOR_EQUITY:-}"
+    command: ["python", "-u", "/app/systems/agent-orchestration/pods/risk-monitor/main.py"]
+    restart: unless-stopped
+    networks:
       - streaming_net
 
   gops-backend:

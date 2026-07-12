@@ -1,0 +1,30 @@
+# Consumes candles + order fills + user conditions, publishes risk.events.v1.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: risk-monitor
+  namespace: alfaka-market-data
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: risk-monitor
+  template:
+    metadata:
+      labels:
+        app: risk-monitor
+    spec:
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: risk-monitor
+          image: YOUR_ECR_REPOSITORY/gops-agent-orchestrator:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "/app/systems/agent-orchestration/pods/risk-monitor/main.py"]
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+          env:
+            - name: RISK_MONITOR_INPUT_TOPICS
+              value: "market.layer.candles.1m.closed.v1,market.layer.candles.5m.closed.v1,market.layer.candles.1d.closed.v1,orders.fills.v1"
+            - name: RISK_EVENTS_TOPIC
+              value: "risk.events.v1"

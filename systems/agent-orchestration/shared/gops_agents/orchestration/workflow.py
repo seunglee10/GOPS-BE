@@ -28,6 +28,7 @@ from ..roles import (
     MarketSummaryAgent,
     NewsAgent,
     OntologyAgent,
+    RiskAgent,
     UIAgent,
     UnusualEventExplainerAgent,
     VerificationGuardrailAgent,
@@ -78,6 +79,7 @@ class AgentOrchestrator:
         self.macro_agent = MacroAgent()
         self.financial_agent = FinancialAgent()
         self.ontology_agent = OntologyAgent()
+        self.risk_agent = RiskAgent()
         self.event_explainer = UnusualEventExplainerAgent()
         self.market_summary = MarketSummaryAgent()
         self.verifier = VerificationGuardrailAgent()
@@ -310,7 +312,7 @@ class AgentOrchestrator:
                 "analysis_cache_hit": False,
             }
 
-        selected_roles = [role for role in understanding.get("selectedRoles", []) if role in {"chart", "news", "macro", "ontology", "financial"}]
+        selected_roles = [role for role in understanding.get("selectedRoles", []) if role in {"chart", "news", "macro", "ontology", "financial", "risk"}]
         if selected_roles:
             route = IntentRoute(
                 source=str(understanding.get("source") or "query-understanding"),
@@ -482,7 +484,7 @@ class AgentOrchestrator:
 
         selected_roles = [
             role
-            for role in ["chart", "news", "macro", "ontology", "financial"]
+            for role in ["chart", "news", "macro", "ontology", "financial", "risk"]
             if role in state.get("selected_roles", [])
         ]
         agents = {
@@ -491,6 +493,7 @@ class AgentOrchestrator:
             "macro": self.macro_agent,
             "ontology": self.ontology_agent,
             "financial": self.financial_agent,
+            "risk": self.risk_agent,
         }
         if not selected_roles:
             return {**state, "role_findings": []}
@@ -1147,6 +1150,7 @@ def role_finding_name(role: str) -> str:
         "macro": "macro-analysis",
         "ontology": "company-relationship-analysis",
         "financial": "financial-analysis",
+        "risk": "risk-analysis",
     }.get(str(role), str(role))
 
 

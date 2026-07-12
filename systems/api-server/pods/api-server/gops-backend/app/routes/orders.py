@@ -89,7 +89,7 @@ async def create_order(
             "role": payload.get("role") or "trader",
         }
     order_request = _validate_order_request(payload)
-    verdict = _risk_verdict(request.app, current_user.sub, order_request, payload)
+    verdict = _risk_verdict(request.app, current_user.sub, order_request)
     if verdict is not None and verdict.verdict != "allow":
         # Block outright, or ask the user to confirm the suggested qty by
         # resubmitting. The risk engine never silently changes an order.
@@ -133,6 +133,57 @@ async def create_order(
     return jsonable_encoder(_with_risk(dict(result.response), verdict))
 
 
+@router.get("/api/risk/report")
+def risk_daily_report(
+    request: Request,
+    date: str | None = None,
+    _user: AuthenticatedUser = Depends(require_current_user),
+) -> dict[str, Any]:
+    """오늘(또는 지정일) 발동한 리스크 룰 이력 요약 — 장마감 리포트 리스크 섹션."""
+    day = (date or datetime.now(timezone.utc).strftime("%Y-%m-%d"))[:10]
+    client = _risk_report_redis(request.app)
+    if client is None:
+        raise HTTPException(status_code=503, detail="risk report storage unavailable (REDIS_URL)")
+    try:
+        rows = client.lrange(f"agent.alerts:log:{day}", 0, 499)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"risk report read failed: {exc}") from exc
+    events = []
+    for row in rows or []:
+        if isinstance(row, bytes):
+            row = row.decode("utf-8")
+        try:
+            decoded = json.loads(row)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(decoded, dict):
+            events.append(decoded)
+    by_type: dict[str, int] = {}
+    by_severity: dict[str, int] = {}
+    for event in events:
+        event_type = str(event.get("eventType") or "unknown")
+        severity = str(event.get("severity") or "info")
+        by_type[event_type] = by_type.get(event_type, 0) + 1
+        by_severity[severity] = by_severity.get(severity, 0) + 1
+    return {
+        "date": day,
+        "totalEvents": len(events),
+        "byType": by_type,
+        "bySeverity": by_severity,
+        "events": [
+            {
+                "eventId": event.get("eventId"),
+                "symbol": event.get("symbol"),
+                "eventType": event.get("eventType"),
+                "severity": event.get("severity"),
+                "observedAt": event.get("observedAt"),
+                "summary": event.get("summary"),
+            }
+            for event in events[:50]
+        ],
+    }
+
+
 @router.post("/api/risk/pretrade")
 async def risk_pretrade_preview(
     request: Request,
@@ -142,7 +193,7 @@ async def risk_pretrade_preview(
     payload = await _json_body(request)
     _validate_no_forbidden_fields(payload)
     order_request = _validate_order_request(payload)
-    verdict = _risk_verdict(request.app, current_user.sub, order_request, payload, force=True)
+    verdict = _risk_verdict(request.app, current_user.sub, order_request, force=True)
     if verdict is None:
         raise HTTPException(status_code=503, detail="risk pretrade preview is disabled")
     return {
@@ -265,14 +316,13 @@ def _risk_verdict(
     app: Any,
     user_sub: str,
     order_request: Any,
-    payload: dict[str, Any],
     *,
     force: bool = False,
 ) -> PretradeVerdict | None:
     if not force and not risk_pretrade_enabled():
         return None
     try:
-        context = build_risk_context(app, user_sub, order_request.symbol, stop_price=payload.get("stop_price"))
+        context = build_risk_context(app, user_sub, order_request.symbol)
         return evaluate_pretrade(
             side=order_request.side,
             symbol=order_request.symbol,
@@ -284,6 +334,23 @@ def _risk_verdict(
     except Exception:
         # Risk evaluation must never break order submission.
         return None
+
+
+def _risk_report_redis(app: Any):
+    existing = getattr(app.state, "risk_report_redis", None)
+    if existing is not None:
+        return existing
+    url = os.getenv("REDIS_URL")
+    if not url:
+        return None
+    try:
+        import redis
+
+        client = redis.from_url(url, decode_responses=True)
+    except Exception:
+        return None
+    app.state.risk_report_redis = client
+    return client
 
 
 def _risk_config_from_app(app: Any):
