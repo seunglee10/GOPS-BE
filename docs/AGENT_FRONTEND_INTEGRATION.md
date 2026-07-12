@@ -145,8 +145,10 @@ drawing command로 저장하고, 해당 봉은 canvas에서 만료 시간이 있
 잠깐 표시한다.
 
 Drawing anchor는 pixel이 아니라 canonical `timestamp`/`price`를 사용하고
-`logicalIndex`는 현재 candle 배열에서 계산 가능한 보조 cache로만 취급한다. 지원하는
-평행선 계약은 2-anchor `horizontalParallelLines`/`verticalParallelLines`, 3-anchor
+`logicalIndex`는 현재 candle 배열에서 계산 가능한 보조 cache로만 취급한다.
+`horizontalLine`은 수동 작도의 단일 anchor와 Geometry 자산의 동일 가격 2-anchor
+접촉 구간을 모두 허용한다. 2-anchor 형식의 각 timestamp도 실제 candle key여야 한다.
+지원하는 평행선 계약은 2-anchor `horizontalParallelLines`/`verticalParallelLines`, 3-anchor
 `trendParallelLines`이며 추세 평행선의 `parallelLineCount`는 2..10이다. 이벤트 설명은
 `flagMarker`의 editable label을 사용한다. `rangeBox`와 평행선 band fill은 candle/지표
 아래에서, outline·label·selection handle은 chart layer 위에서 렌더링해야 한다.

@@ -6,6 +6,8 @@
 - 분석 입력은 정규장·분할조정·완료된 canonical candle뿐이다.
 - `1W`는 canonical `1D`에서 기존 주봉 방식으로 생성한다.
 - 모든 timed anchor는 현재 asset interval의 실제 candle timestamp에 속한다.
+- 지지·저항 `horizontalLine`은 첫·마지막 접촉의 동일 가격 2-anchor를 저장하며,
+  차트 엔진은 수동 작도의 기존 단일 anchor와 이 형식을 모두 허용한다.
 - 작도는 지지·저항 최대 4개와 상승·하락·대칭 삼각형 선 2개뿐이다.
 - geometry 계산에는 LLM을 사용하지 않는다.
 - chart asset payload/job은 PostgreSQL, candle은 ClickHouse에 저장한다.
