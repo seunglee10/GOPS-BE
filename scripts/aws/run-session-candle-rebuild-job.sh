@@ -23,7 +23,7 @@ if [[ "${APPLY}" == "true" ]]; then
     clickhouse-client \
       --user "$CLICKHOUSE_USER" \
       --password "$CLICKHOUSE_PASSWORD" \
-      --query "ALTER TABLE market_data.chart_candles MODIFY ORDER BY (symbol, interval, event_time, feed_profile, market_session, bucket_policy)"
+      --query "ALTER TABLE market_data.chart_candles ADD COLUMN IF NOT EXISTS bucket_policy_key LowCardinality(String) AFTER bucket_policy, MODIFY ORDER BY (symbol, interval, event_time, feed_profile, market_session, bucket_policy_key)"
   '
 fi
 

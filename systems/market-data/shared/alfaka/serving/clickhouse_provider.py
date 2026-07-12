@@ -971,8 +971,9 @@ class ClickHouseMarketDataProvider:
             "ADD COLUMN IF NOT EXISTS bucket_policy LowCardinality(String) DEFAULT 'clock_aligned' AFTER canonical_version"
         )
         self.execute(
-            f"ALTER TABLE {self.table('chart_candles')} MODIFY ORDER BY "
-            "(symbol, interval, event_time, feed_profile, market_session, bucket_policy)"
+            f"ALTER TABLE {self.table('chart_candles')} "
+            "ADD COLUMN IF NOT EXISTS bucket_policy_key LowCardinality(String) AFTER bucket_policy, "
+            "MODIFY ORDER BY (symbol, interval, event_time, feed_profile, market_session, bucket_policy_key)"
         )
         # Crypto 체결/거래량은 소수 단위가 자연스럽기 때문에 조회 스키마도 Float64로 맞춥니다.
         for table, column, column_type in (

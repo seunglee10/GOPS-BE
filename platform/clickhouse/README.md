@@ -44,6 +44,11 @@ Legacy/native clock rows use `clock_aligned`; new US-equity derived rows use
 `us_equity_regular_session`. Readers select only the latter for
 `5m/10m/1h/4h`. The source `1m` and session-derived rows are both persisted, so
 chart serving, Geometry, and SMA share the same OHLCV facts.
+`bucket_policy_key` mirrors that value only for the ReplacingMergeTree sorting
+key. Writers set both fields explicitly; the key intentionally has no default
+expression because ClickHouse forbids adding such a column to an existing sorting
+key. Adding it in the same migration statement as the sorting-key change lets an
+existing table adopt the new identity without deleting legacy rows.
 
 The operator migration and one-year rebuild entrypoint is:
 

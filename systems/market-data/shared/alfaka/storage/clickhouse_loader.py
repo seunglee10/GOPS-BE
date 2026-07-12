@@ -442,6 +442,7 @@ def candle_to_clickhouse_row(payload):
     """processed candle payload를 chart_candles 테이블 row로 변환합니다."""
     ma = payload.get("ma") or {}
     metadata = candle_metadata(payload.get("priceAdjustment") or payload.get("price_adjustment"), payload.get("canonicalVersion") or payload.get("canonical_version"))
+    bucket_policy = bucket_policy_for_candle(payload)
     return {
         "event_time": clickhouse_time(payload.get("timestamp")),
         "symbol": payload.get("symbol", "UNKNOWN"),
@@ -464,7 +465,8 @@ def candle_to_clickhouse_row(payload):
         "market_session": candle_market_session_for_storage(payload),
         "price_adjustment": metadata["priceAdjustment"],
         "canonical_version": metadata["canonicalVersion"],
-        "bucket_policy": bucket_policy_for_candle(payload),
+        "bucket_policy": bucket_policy,
+        "bucket_policy_key": bucket_policy,
         "source_event_id": payload.get("sourceEventId"),
         "created_at": clickhouse_time_or_none(payload.get("createdAt") or payload.get("updatedAt")),
     }
@@ -906,8 +908,9 @@ class ClickHouseHttpClient:
             "ADD COLUMN IF NOT EXISTS bucket_policy LowCardinality(String) DEFAULT 'clock_aligned' AFTER canonical_version"
         )
         self.execute(
-            f"ALTER TABLE {chart_candles} MODIFY ORDER BY "
-            "(symbol, interval, event_time, feed_profile, market_session, bucket_policy)"
+            f"ALTER TABLE {chart_candles} "
+            "ADD COLUMN IF NOT EXISTS bucket_policy_key LowCardinality(String) AFTER bucket_policy, "
+            "MODIFY ORDER BY (symbol, interval, event_time, feed_profile, market_session, bucket_policy_key)"
         )
         # Crypto 체결 수량과 거래량은 0.013 BTC처럼 소수일 수 있어서 Float64로 보정합니다.
         for table, column, column_type in (

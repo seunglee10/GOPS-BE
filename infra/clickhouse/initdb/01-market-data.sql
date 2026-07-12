@@ -77,13 +77,14 @@ CREATE TABLE IF NOT EXISTS market_data.chart_candles
     price_adjustment LowCardinality(String) DEFAULT 'unknown',
     canonical_version LowCardinality(String) DEFAULT 'legacy',
     bucket_policy LowCardinality(String) DEFAULT 'clock_aligned',
+    bucket_policy_key LowCardinality(String),
     source_event_id Nullable(String),
     created_at Nullable(DateTime64(3, 'UTC')),
     inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
 )
 ENGINE = ReplacingMergeTree(inserted_at)
 PARTITION BY toYYYYMM(event_time)
-ORDER BY (symbol, interval, event_time, feed_profile, market_session, bucket_policy);
+ORDER BY (symbol, interval, event_time, feed_profile, market_session, bucket_policy_key);
 
 CREATE TABLE IF NOT EXISTS market_data.market_status_events
 (
@@ -344,7 +345,8 @@ ALTER TABLE market_data.chart_candles
     ADD COLUMN IF NOT EXISTS bucket_policy LowCardinality(String) DEFAULT 'clock_aligned' AFTER canonical_version;
 
 ALTER TABLE market_data.chart_candles
-    MODIFY ORDER BY (symbol, interval, event_time, feed_profile, market_session, bucket_policy);
+    ADD COLUMN IF NOT EXISTS bucket_policy_key LowCardinality(String) AFTER bucket_policy,
+    MODIFY ORDER BY (symbol, interval, event_time, feed_profile, market_session, bucket_policy_key);
 
 ALTER TABLE market_data.trade_ticks
     ADD COLUMN IF NOT EXISTS feed_profile LowCardinality(String) DEFAULT feed AFTER feed,

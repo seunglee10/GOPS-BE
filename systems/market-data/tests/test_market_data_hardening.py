@@ -1397,6 +1397,23 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertFalse(should_ensure_schema_on_start({"CLICKHOUSE_ENSURE_SCHEMA_ON_START": "false"}))
         self.assertTrue(should_ensure_schema_on_start({"CLICKHOUSE_ENSURE_SCHEMA_ON_START": "true"}))
 
+    def test_clickhouse_bucket_policy_sort_key_uses_new_migration_column(self):
+        client = object.__new__(ClickHouseHttpClient)
+        client.database = "market_data"
+        statements = []
+        client.execute = lambda query, parameters=None: statements.append(" ".join(str(query).split()))
+
+        client.ensure_market_data_schema()
+
+        migration = next(statement for statement in statements if "bucket_policy_key" in statement)
+        self.assertIn("ADD COLUMN IF NOT EXISTS bucket_policy_key LowCardinality(String) AFTER bucket_policy", migration)
+        self.assertNotIn("bucket_policy_key LowCardinality(String) DEFAULT", migration)
+        self.assertIn("MODIFY ORDER BY (symbol, interval, event_time, feed_profile, market_session, bucket_policy_key)", migration)
+        self.assertFalse(any(
+            "MODIFY ORDER BY (symbol, interval, event_time, feed_profile, market_session, bucket_policy)" in statement
+            for statement in statements
+        ))
+
     def test_processor_runtime_config_rejects_placeholders(self):
         with self.assertRaisesRegex(RuntimeError, "placeholder"):
             processor_runtime_config({
