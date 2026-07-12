@@ -12,7 +12,10 @@ SHARED = ROOT / "systems" / "market-data" / "shared"
 if str(SHARED) not in sys.path: sys.path.insert(0, str(SHARED))
 
 from alfaka.analytics.analysis_candles import _expected_intraday_keys, analysis_daily_window  # noqa: E402
-from alfaka.analytics.analysis_repair import AnalysisCandleRepairService  # noqa: E402
+from alfaka.analytics.analysis_repair import (  # noqa: E402
+    AlpacaClickHouseRepairRunner,
+    AnalysisCandleRepairService,
+)
 from alfaka.backfill.gapfill import TradingCalendar  # noqa: E402
 from alfaka.backfill.runner import BackfillUnavailable  # noqa: E402
 
@@ -99,6 +102,41 @@ def test_interior_gap_remaining_after_alpaca_failure_is_unavailable():
 
     assert result.unavailable
     assert result.reason == "alpaca_unavailable"
+
+
+def test_default_repair_runner_writes_alpaca_candles_directly_to_clickhouse():
+    client = ClickHouseClient()
+    runner = AlpacaClickHouseRepairRunner(
+        clickhouse_client=client,
+        fetcher=lambda *_args, **_kwargs: [{
+            "t": "2026-07-10T13:35:00.000Z",
+            "o": 100,
+            "h": 102,
+            "l": 99,
+            "c": 101,
+            "v": 1000,
+            "n": 25,
+            "vw": 100.5,
+        }],
+    )
+
+    outcome = runner.run({
+        "requestId": "cab-direct",
+        "symbol": "NVDA",
+        "interval": "5m",
+        "range": {"start": "2026-07-10T13:35:00.000Z", "end": "2026-07-10T13:40:00.000Z"},
+        "analysisMissingCandleKeys": ["2026-07-10T13:35:00.000Z"],
+    })
+
+    assert outcome["result"]["materializedRowCount"] == 1
+    assert "processedObjects" not in outcome["result"]
+    assert client.inserts[0][0] == "chart_candles"
+    assert client.inserts[0][1][0]["interval"] == "5m"
+
+
+class ClickHouseClient:
+    def __init__(self): self.inserts = []
+    def insert_json_each_row(self, table, rows): self.inserts.append((table, rows))
 
 
 class Provider:
