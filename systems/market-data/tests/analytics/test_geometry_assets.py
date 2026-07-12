@@ -25,7 +25,7 @@ from alfaka.analytics.geometry import (  # noqa: E402
 class GeometryAssetKernelTest(unittest.TestCase):
     def test_interval_contract_and_coverage_windows_are_exact(self):
         self.assertEqual(SUPPORTED_INTERVALS, ("1m", "5m", "10m", "1h", "4h", "1D", "1W"))
-        self.assertEqual(ALGORITHM_VERSION, "ohlcv-consensus-1")
+        self.assertEqual(ALGORITHM_VERSION, "ohlcv-consensus-regression-triangles")
         self.assertEqual(MINIMUM_BARS, 120)
         for interval in SUPPORTED_INTERVALS[:-1]:
             self.assertEqual(TARGET_BARS[interval], 380)
@@ -73,6 +73,17 @@ class GeometryAssetKernelTest(unittest.TestCase):
                 {"ascending_triangle", "descending_triangle", "symmetrical_triangle"},
             )
             self.assertTrue(all(item["style"]["lineStyle"] == "solid" for item in result["drawings"][-2:]))
+
+    def test_geometry_uses_previous_regression_triangle_detector(self):
+        rows = _triangle_rows(180, interval="10m")
+
+        result = analyze_geometry("NVDA", "10m", rows)
+
+        self.assertIsNotNone(result["primaryTriangle"])
+        self.assertEqual(result["primaryTriangle"]["kind"], "ascending_triangle")
+        triangle_drawings = [drawing for drawing in result["drawings"] if drawing["type"] == "trendLine"]
+        self.assertEqual(len(triangle_drawings), 2)
+        self.assertTrue(all("상승 삼각형" in drawing["label"] for drawing in triangle_drawings))
 
     def test_rejects_less_than_120_completed_bars(self):
         with self.assertRaisesRegex(ValueError, "120 completed candles"):
