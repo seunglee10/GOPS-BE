@@ -470,7 +470,9 @@ def _asset_projection(asset: dict[str, Any], payload: str | None = None) -> dict
 
 
 def _assets_by_interval(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any] | None]:
-    assets: dict[str, dict[str, Any] | None] = {"1D": None, "1W": None, "1M": None}
+    assets: dict[str, dict[str, Any] | None] = {
+        interval: None for interval in ("1m", "5m", "10m", "1h", "4h", "1D", "1W", "1M")
+    }
     for row in rows:
         interval = str(row.get("interval") or "")
         if interval in assets:

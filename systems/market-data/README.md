@@ -207,6 +207,12 @@ the unavailable moving average remains null rather than being fabricated. Use
 continue to come from the existing environment/Secrets Manager contract; never
 put credentials in command arguments.
 
+Equity `1D`, `1W`, and `1M` rows always use `market_session=regular` as part of
+their ClickHouse storage identity. Provider timestamps for weekly and monthly
+bars can fall in the overnight clock window, but that clock classification must
+not create a second logical copy of the same long-term candle. Crypto candles
+continue to use `market_session=crypto`.
+
 ## On-Demand Historical Fill
 
 Normal chart expansion is:

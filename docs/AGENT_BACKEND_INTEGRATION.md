@@ -386,7 +386,8 @@ GET    /api/charts/analysis-assets/build/{job_id}/stream
 POST   /api/charts/analysis-assets/build/{job_id}/cancel
 ```
 
-DELETE는 개발 패널의 명시적 정리 기능이다. 최대 100개 symbol과 1D/1W/1M만 받고,
+DELETE는 개발 패널의 명시적 정리 기능이다. 최대 100개 symbol과
+`1m/5m/10m/1h/4h/1D/1W/1M`만 받고,
 선택된 pair를 active asset store에서 삭제한다. ClickHouse 기본 모드는 전체 history를
 `mutations_sync=1`로 지우고, dual mode는 양쪽 저장소가 모두 성공해야 한다. 자동 보존 정책,
 TTL 또는 broad cleanup으로 재사용하지 않는다. build 완료·삭제 후 프런트는 cache를

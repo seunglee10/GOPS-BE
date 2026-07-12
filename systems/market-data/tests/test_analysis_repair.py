@@ -13,8 +13,9 @@ SHARED = ROOT / "systems" / "market-data" / "shared"
 if str(SHARED) not in sys.path:
     sys.path.insert(0, str(SHARED))
 
-from alfaka.analytics.analysis_candles import analysis_daily_window  # noqa: E402
+from alfaka.analytics.analysis_candles import _expected_intraday_keys, analysis_daily_window  # noqa: E402
 from alfaka.analytics.analysis_repair import AnalysisCandleRepairService  # noqa: E402
+from alfaka.backfill.gapfill import TradingCalendar  # noqa: E402
 from alfaka.backfill.runner import BackfillDeadlineExceeded, BackfillUnavailable  # noqa: E402
 from alfaka.common import s3_client as s3_client_module  # noqa: E402
 from alfaka.common.trading_calendar import configured_closed_dates, is_us_equity_session_date  # noqa: E402
@@ -285,6 +286,31 @@ def test_cancel_after_audit_does_not_construct_runner():
     assert not result.attempted
 
 
+def test_intraday_gap_uses_direct_alpaca_repair_without_s3_lookup():
+    expected = _expected_intraday_keys(NOW, 500, "5m", TradingCalendar.from_environment())
+    rows = [intraday_row(timestamp, "5m") for timestamp in expected]
+    missing = rows.pop(-2)
+    provider = MixedIntervalProvider({"5m": rows})
+    runner = IntradayMutatingRunner(provider, missing)
+    service = AnalysisCandleRepairService(
+        provider=provider,
+        runner_factory=lambda: runner,
+        now_provider=lambda: NOW,
+        enabled=True,
+        alpaca_enabled=True,
+        max_ranges=8,
+        concurrency=1,
+    )
+
+    result = service.ensure_ready("AAPL", ("5m",), request_id="cab-intraday")
+
+    assert result.reason == "repaired"
+    assert result.materialized_rows == 1
+    assert [item["sourcePreference"] for item in runner.calls] == ["alpaca-only"]
+    assert runner.calls[0]["interval"] == "5m"
+    assert runner.calls[0]["range"]["start"] == missing["timestamp"]
+
+
 class MutableProvider:
     def __init__(self, rows):
         self.rows = list(rows)
@@ -293,6 +319,27 @@ class MutableProvider:
     def daily_candles(self, _symbol, **kwargs):
         self.calls.append(kwargs)
         return list(self.rows)
+
+
+class MixedIntervalProvider:
+    def __init__(self, rows):
+        self.rows = {key: list(value) for key, value in rows.items()}
+
+    def stored_interval_candles(self, _symbol, interval, **_kwargs):
+        return list(self.rows.get(interval, []))
+
+
+class IntradayMutatingRunner:
+    def __init__(self, provider, missing):
+        self.provider = provider
+        self.missing = missing
+        self.calls = []
+
+    def run(self, record):
+        self.calls.append(record)
+        assert record["sourcePreference"] == "alpaca-only"
+        self.provider.rows[record["interval"]].append(self.missing)
+        return {"status": "succeeded", "result": {"materializedRowCount": 1}}
 
 
 class MutatingRunner:
@@ -358,6 +405,23 @@ class SlowCancelableRunner:
     def commit_analysis_s3_repair(self, outcome):
         self.commit_seen.set()
         return outcome
+
+
+def intraday_row(timestamp, interval):
+    return {
+        "timestamp": timestamp,
+        "open": 100,
+        "high": 102,
+        "low": 99,
+        "close": 101,
+        "volume": 1_000,
+        "isClosed": True,
+        "canonicalVersion": "v2",
+        "priceAdjustment": "split",
+        "marketSession": "regular",
+        "sourceClass": "clickhouse_direct",
+        "interval": interval,
+    }
 
 
 def repair_service(provider, runner, *, alpaca_enabled):

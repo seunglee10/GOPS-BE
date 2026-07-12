@@ -157,6 +157,11 @@ class PanelSpecResolutionTest(unittest.TestCase):
         self.assertEqual(spec["defaultSpan"], {"colSpan": 3, "rowSpan": 2})
         self.assertEqual(spec["title"], "분야추천")
 
+    def test_popular_stocks_defaults_to_one_column(self):
+        spec = panel_spec_for("popularStocks", None)
+        self.assertEqual(spec["minSpan"], {"colSpan": 1, "rowSpan": 2})
+        self.assertEqual(spec["defaultSpan"], {"colSpan": 1, "rowSpan": 2})
+
     def test_unknown_type_uses_generic_fallback(self):
         spec = panel_spec_for("someFuturePanel", None)
         self.assertEqual(spec["minSpan"], {"colSpan": 1, "rowSpan": 1})

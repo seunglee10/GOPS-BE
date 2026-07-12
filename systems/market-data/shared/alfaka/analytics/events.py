@@ -15,9 +15,12 @@ def compute_events(candles, levels, *, atr, display_from, interval):
     # A well-evidenced level remains useful for detecting its own break even when
     # it is no longer eligible to be drawn as an active H-Line.
     eligible_levels = [item for item in levels if item.get("evidencePass", item.get("hardPass"))]
-    events = []
+    events = _moving_average_cross_events(
+        candles,
+        interval=interval,
+        display_start=display_start,
+    )
     active_breaks = {}
-    gaps = []
     extreme_episodes = {"52wHigh": None, "52wLow": None}
     for index in range(max(1, display_start), len(candles)):
         row, previous = candles[index], candles[index - 1]
@@ -65,16 +68,6 @@ def compute_events(candles, levels, *, atr, display_from, interval):
                     "confirmationPass": volume_confirmed,
                 }, interval)
                 events.append(event); active_breaks[level["id"]] = (index, direction, event)
-        gap_distance = abs(float(row["open"]) - previous_close)
-        if gap_distance >= local_atr:
-            direction = "up" if float(row["open"]) > previous_close else "down"
-            event = _event(row, "gap", float(row["open"]), [], {"direction": direction, "state": "unfilled", "gapFrom": previous_close, "gapTo": float(row["open"])}, interval)
-            gaps.append(event); events.append(event)
-        for gap in gaps:
-            if gap["detail"]["state"] != "unfilled" or gap["timestamp"] == row["timestamp"]: continue
-            lower, upper = sorted((gap["detail"]["gapFrom"], gap["detail"]["gapTo"]))
-            if float(row["low"]) <= lower and float(row["high"]) >= upper:
-                gap["detail"]["state"] = "filled"; gap["detail"]["filledAt"] = row["timestamp"]
         lookback = candles[max(0,index-min(252,index)):index]
         for kind, value, is_extreme in (("52wHigh",float(row["high"]),lookback and float(row["high"])>max(float(item["high"]) for item in lookback)),("52wLow",float(row["low"]),lookback and float(row["low"])<min(float(item["low"]) for item in lookback))):
             if not is_extreme: continue
@@ -89,7 +82,10 @@ def compute_events(candles, levels, *, atr, display_from, interval):
         age = len(candles)-1-next((i for i,row in enumerate(candles) if row["timestamp"]==event["timestamp"]),0)
         distance = abs(float(candles[-1]["close"])-float(event["price"]))/max(atr_values[-1],1e-12)
         state = event["detail"].get("state", "unresolved")
-        event.setdefault("currentImpact", _impact(len(candles)-1-age,len(candles),float(candles[-1]["close"]),float(event["price"]),max(atr_values[-1],1e-12),config,state))
+        if event["kind"] == "movingAverageCross":
+            event.setdefault("currentImpact", _moving_average_cross_impact(age, config))
+        else:
+            event.setdefault("currentImpact", _impact(len(candles)-1-age,len(candles),float(candles[-1]["close"]),float(event["price"]),max(atr_values[-1],1e-12),config,state))
         event["ageBars"] = age
         impact_pass = event["currentImpact"] in {"high", "medium"}
         current_distance = abs(float(candles[-1]["close"])-float(event["price"]))/max(atr_values[-1],1e-12)
@@ -108,6 +104,9 @@ def compute_events(candles, levels, *, atr, display_from, interval):
         elif event["kind"] in {"52wHigh", "52wLow"}:
             evidence_pass = True
             active_pass = event["currentImpact"] == "high"
+        elif event["kind"] == "movingAverageCross":
+            evidence_pass = True
+            active_pass = age <= config.event_relevance_bars
         else:
             evidence_pass = True
             active_pass = impact_pass
@@ -124,6 +123,57 @@ def compute_events(candles, levels, *, atr, display_from, interval):
             key=lambda item: (int(item.get("ageBars") or 0), item["id"]),
         )[:8])
     return sorted([*passed, *rejected], key=lambda item:(item["timestamp"],item["kind"],item["id"]))
+
+
+def _moving_average_cross_events(candles, *, interval, display_start):
+    if interval != "1D" or len(candles) < 121:
+        return []
+    closes = [float(row["close"]) for row in candles]
+    prefix = [0.0]
+    for close in closes:
+        prefix.append(prefix[-1] + close)
+
+    def average(end_index, period):
+        return (prefix[end_index + 1] - prefix[end_index + 1 - period]) / period
+
+    events = []
+    for index in range(max(120, display_start), len(candles)):
+        previous_short = average(index - 1, 60)
+        current_short = average(index, 60)
+        previous_long = average(index - 1, 120)
+        current_long = average(index, 120)
+        previous_difference = previous_short - previous_long
+        current_difference = current_short - current_long
+        if previous_difference <= 0 < current_difference:
+            direction = "golden"
+        elif previous_difference >= 0 > current_difference:
+            direction = "dead"
+        else:
+            continue
+        difference_change = current_difference - previous_difference
+        fraction = max(0.0, min(1.0, -previous_difference / difference_change))
+        short_cross = previous_short + fraction * (current_short - previous_short)
+        long_cross = previous_long + fraction * (current_long - previous_long)
+        row = candles[index]
+        events.append(_event(row, "movingAverageCross", (short_cross + long_cross) / 2, [], {
+            "direction": direction,
+            "state": "crossed",
+            "shortPeriod": 60,
+            "longPeriod": 120,
+            "previousShort": round(previous_short, 6),
+            "previousLong": round(previous_long, 6),
+            "currentShort": round(current_short, 6),
+            "currentLong": round(current_long, 6),
+        }, interval))
+    return events
+
+
+def _moving_average_cross_impact(age, config):
+    if age <= max(1, int(.05 * config.display_bars)):
+        return "high"
+    if age <= config.event_relevance_bars:
+        return "medium"
+    return "low"
 
 
 def _event(row, kind, price, refs, detail, interval):

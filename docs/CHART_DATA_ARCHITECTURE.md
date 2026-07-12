@@ -173,6 +173,13 @@ subscription. Redis is limited to the existing job status key and pub/sub
 channel. The development delete route removes explicit pairs from every active
 asset store; it is not retention or automatic cleanup.
 
+The chart-analysis kernel may derive a daily MA60/MA120 crossing event from 121
+canonical completed closes. This is an asset-build feature, not a persisted
+candle indicator: it does not add an `ma120` ClickHouse column, Redis key, or
+public candle response field. The chart can request the `sma:120` overlay from
+the generic derived-indicator endpoint, which computes it from the canonical
+close series and keeps only the existing bounded derived cache.
+
 ## Retained Compatibility
 
 The generic closed-candle topic, tick-fanout topics, and raw manifest lookup

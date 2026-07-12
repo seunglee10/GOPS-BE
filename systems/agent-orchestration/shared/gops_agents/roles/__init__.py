@@ -2702,7 +2702,7 @@ DEFAULT_PANEL_SPECS: dict[str, dict[str, Any]] = {
     "compareChart": {"title": "비교 차트", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 4, "rowSpan": 2}, "layoutWeight": 80},
     "newsFeed": {"title": "시장 뉴스", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 2, "rowSpan": 2}, "layoutWeight": 50},
     "marketIndices": {"title": "지수", "minSpan": {"colSpan": 1, "rowSpan": 1}, "defaultSpan": {"colSpan": 2, "rowSpan": 2}, "layoutWeight": 50},
-    "popularStocks": {"title": "인기종목", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 2, "rowSpan": 2}, "layoutWeight": 50},
+    "popularStocks": {"title": "인기종목", "minSpan": {"colSpan": 1, "rowSpan": 2}, "defaultSpan": {"colSpan": 1, "rowSpan": 2}, "layoutWeight": 50},
     "stockRecommendations": {"title": "추천", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 2, "rowSpan": 2}, "layoutWeight": 45},
     "themeRadar": {"title": "분야추천", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 3, "rowSpan": 2}, "layoutWeight": 58},
     "companyProfile": {"title": "기업정보", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 2, "rowSpan": 2}, "layoutWeight": 50},

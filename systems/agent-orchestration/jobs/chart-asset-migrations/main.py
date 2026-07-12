@@ -18,12 +18,13 @@ from gops_agents.chart_assets.storage import (
 )
 
 
-SQL_PATH = Path(__file__).with_name("001_create_chart_assets.sql")
+SQL_PATHS = tuple(sorted(Path(__file__).parent.glob("[0-9][0-9][0-9]_*.sql")))
 
 
 def apply_schema(conninfo: str | None = None) -> None:
     with psycopg.connect(conninfo or _database_conninfo()) as conn:
-        conn.execute(SQL_PATH.read_text(encoding="utf-8"))
+        for path in SQL_PATHS:
+            conn.execute(path.read_text(encoding="utf-8"))
         conn.commit()
 
 

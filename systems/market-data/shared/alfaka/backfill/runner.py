@@ -799,7 +799,7 @@ def raw_bar_to_processed_candle(symbol, raw_bar, feed="sip", received_at=None, i
         "feedProfile": feed,
         "marketSession": (
             "crypto" if is_crypto_symbol(symbol)
-            else "regular" if interval == "1D"
+            else "regular" if interval in {"1D", "1W", "1M"}
             else market_session_for_timestamp(raw_bar.get("t"))
         ),
         "channel": channel,

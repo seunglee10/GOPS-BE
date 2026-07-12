@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 from alfaka.backfill.gapfill import TradingCalendar
 from alfaka.serving.time_utils import canonical_utc_timestamp, parse_utc_time
+from alfaka.serving.intervals import INTRADAY_INTERVAL_MINUTES
 from alfaka.storage.candle_validation import invalid_candle_numeric_reason
 
 
@@ -17,7 +18,10 @@ MARKET_TIMEZONE = ZoneInfo("America/New_York")
 CANONICAL_DATA_VERSION = "v2"
 SESSION_POLICY = "us-equity-regular"
 ADJUSTMENT_POLICY = "split"
-CANDLE_CONTRACT_VERSION = "v2"
+CANDLE_CONTRACT_VERSION = "v3"
+INTRADAY_ANALYSIS_INTERVALS = tuple(INTRADAY_INTERVAL_MINUTES)
+LONG_ANALYSIS_INTERVALS = ("1D", "1W", "1M")
+ANALYSIS_INTERVALS = (*INTRADAY_ANALYSIS_INTERVALS, *LONG_ANALYSIS_INTERVALS)
 SOURCE_RANK_ANALYSIS = {"derived_aggregate": 1, "clickhouse_direct": 2}
 SOURCE_RANK_CURRENT = {
     "derived_aggregate": 1,
@@ -44,11 +48,16 @@ class AnalysisDailyWindow:
 def canonicalize_candle_identity(
     row: dict[str, Any], interval: str, session_policy: str = SESSION_POLICY
 ) -> dict[str, Any] | None:
-    if session_policy != SESSION_POLICY or interval not in {"1D", "1W", "1M"}:
+    if session_policy != SESSION_POLICY or interval not in ANALYSIS_INTERVALS:
         raise ValueError("Unsupported analysis candle identity policy")
     parsed = parse_utc_time(row.get("timestamp") or row.get("event_time"))
     if parsed is None:
         return None
+    if interval in INTRADAY_ANALYSIS_INTERVALS:
+        timestamp = _iso_utc_milliseconds(parsed)
+        normalized = dict(row)
+        normalized.update({"interval": interval, "candleKey": timestamp, "timestamp": timestamp})
+        return normalized
     market_day = parsed.astimezone(MARKET_TIMEZONE).date()
     if parsed.hour == 0 and parsed.minute == 0 and parsed.second == 0:
         market_day = parsed.date()
@@ -143,13 +152,16 @@ def is_analysis_candle_bucket_complete(
     identity = canonicalize_candle_identity({"timestamp": timestamp}, interval)
     if identity is None:
         return False
+    reference = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    if interval in INTRADAY_ANALYSIS_INTERVALS:
+        bucket = parse_utc_time(identity["timestamp"])
+        return bucket is not None and bucket + timedelta(minutes=INTRADAY_INTERVAL_MINUTES[interval]) <= reference
     trading_calendar = calendar or TradingCalendar.from_environment()
     completed_at = _bucket_completed_at(
         _bucket_date(identity["candleKey"], interval),
         interval,
         trading_calendar,
     )
-    reference = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     return completed_at is not None and completed_at <= reference
 
 
@@ -258,9 +270,12 @@ def compute_analysis_coverage(
 ) -> dict[str, Any]:
     reference = now or datetime.now(timezone.utc)
     actual = {str(row.get("candleKey")) for row in rows if row.get("candleKey")}
+    trading_calendar = calendar or TradingCalendar.from_environment()
+    if interval in INTRADAY_ANALYSIS_INTERVALS:
+        expected = _expected_intraday_keys(reference, display_bars, interval, trading_calendar)
+        return _coverage_result(expected, actual, interval, reference)
     if not rows:
         return _coverage_result([], actual, interval, reference)
-    trading_calendar = calendar or TradingCalendar.from_environment()
     last_key = _last_expected_key(interval, reference, calendar=trading_calendar)
     if last_key is None:
         expected: list[str] = []
@@ -276,20 +291,37 @@ class AnalysisCandleSource:
 
     def load_symbol(self, symbol: str, requested_intervals: Iterable[str]) -> AnalysisCandleBundle:
         intervals = tuple(dict.fromkeys(requested_intervals))
-        if not intervals or set(intervals).difference({"1D", "1W", "1M"}):
+        if not intervals or set(intervals).difference(ANALYSIS_INTERVALS):
             raise ValueError("Unsupported analysis intervals")
         from .schema import DISPLAY_BARS, LOOKBACK_BARS
         now = self.now_provider()
-        window = analysis_daily_window(intervals, now=now)
-        raw = self.provider.daily_candles(
-            symbol,
-            interval="1D",
-            limit=max(1, len(window.expected_keys) + 16),
-            from_time=window.start,
-            before=window.end,
-        )
-        aggregated = aggregate_analysis_candle_bundle(raw, intervals, now=now)
-        rows = {item: aggregated[item][-LOOKBACK_BARS[item]:] for item in intervals}
+        rows: dict[str, list[dict[str, Any]]] = {}
+        long_intervals = tuple(item for item in intervals if item in LONG_ANALYSIS_INTERVALS)
+        if long_intervals:
+            window = analysis_daily_window(long_intervals, now=now)
+            raw = self.provider.daily_candles(
+                symbol,
+                interval="1D",
+                limit=max(1, len(window.expected_keys) + 16),
+                from_time=window.start,
+                before=window.end,
+            )
+            aggregated = aggregate_analysis_candle_bundle(raw, long_intervals, now=now)
+            rows.update({item: aggregated[item][-LOOKBACK_BARS[item]:] for item in long_intervals})
+        for interval in intervals:
+            if interval not in INTRADAY_ANALYSIS_INTERVALS:
+                continue
+            raw = self.provider.stored_interval_candles(
+                symbol,
+                interval,
+                limit=LOOKBACK_BARS[interval] + 16,
+            )
+            canonical = merge_canonical_candles(raw, interval=interval, view="analysis_closed")
+            rows[interval] = [
+                _analysis_row(row, interval, index)
+                for index, row in enumerate(canonical[-LOOKBACK_BARS[interval]:])
+            ]
+        rows = {item: rows[item] for item in intervals}
         coverage = {item: compute_analysis_coverage(rows[item], item, display_bars=DISPLAY_BARS[item], now=now) for item in intervals}
         digests = {item: analysis_input_digest(symbol, item, rows[item]) for item in intervals}
         return AnalysisCandleBundle(rows=rows, coverage=coverage, digests=digests)
@@ -374,7 +406,11 @@ def _coverage_result(expected: list[str], actual: set[str], interval: str, refer
     actual_expected = [key for key in expected if key in actual]
     last_actual = _key_timestamp(actual_expected[-1], interval) if actual_expected else None
     ratio = sum(hits) / len(hits) if hits else 0.0
-    thresholds = {"1D": (0.95, 60, 2), "1W": (0.92, 26, 1), "1M": (0.90, 18, 1)}[interval]
+    thresholds = {
+        "1m": (0.95, 60, 2), "5m": (0.95, 60, 2), "10m": (0.95, 60, 2),
+        "1h": (0.95, 60, 2), "4h": (0.95, 60, 2),
+        "1D": (0.95, 60, 2), "1W": (0.92, 26, 1), "1M": (0.90, 18, 1),
+    }[interval]
     flags = []
     if ratio < thresholds[0]: flags.append("display_coverage_below_threshold")
     if contiguous < thresholds[1]: flags.append("recent_contiguous_below_threshold")
@@ -497,10 +533,39 @@ def _bucket_completed_at(
 
 
 def _key_timestamp(key: str, interval: str) -> str:
+    if interval in INTRADAY_ANALYSIS_INTERVALS:
+        parsed = parse_utc_time(key)
+        return _iso_utc_milliseconds(parsed) if parsed else key
     bucket_date = _bucket_date(key, interval)
     if interval == "1D":
         return _market_midnight_utc(bucket_date)
     return _utc_midnight(bucket_date)
+
+
+def _expected_intraday_keys(
+    reference: datetime,
+    count: int,
+    interval: str,
+    calendar: TradingCalendar,
+) -> list[str]:
+    step = timedelta(minutes=INTRADAY_INTERVAL_MINUTES[interval])
+    local_reference = reference.astimezone(calendar.timezone)
+    session_day = local_reference.date()
+    values: list[datetime] = []
+    while len(values) < count:
+        if calendar.is_session_date(session_day):
+            opened = datetime.combine(session_day, calendar.open_time, calendar.timezone)
+            closed = datetime.combine(session_day, calendar.session_close_for(session_day), calendar.timezone)
+            cursor = opened
+            day_values: list[datetime] = []
+            while cursor < closed:
+                completed_at = min(cursor + step, closed)
+                if completed_at <= local_reference:
+                    day_values.append(cursor.astimezone(timezone.utc))
+                cursor += step
+            values = [*day_values, *values]
+        session_day -= timedelta(days=1)
+    return [_iso_utc_milliseconds(item) for item in values[-count:]]
 
 
 def _days_in_month(day: date) -> int:

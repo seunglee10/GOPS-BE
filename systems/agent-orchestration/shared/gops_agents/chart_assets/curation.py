@@ -18,6 +18,9 @@ SEMANTIC_TO_TOOL = {
     "historical_structure": "trendLine",
 }
 EMPHASIS_CODES = {"STRUCTURE_FIRST", "EVENT_FIRST", "CONFLICT_FIRST", "BALANCED"}
+INTERVAL_ORDER = ("1M", "1W", "1D", "4h", "1h", "10m", "5m", "1m")
+INTERVAL_RANK = {interval: index for index, interval in enumerate(INTERVAL_ORDER)}
+SCHEMA_INTERVALS = ["1m", "5m", "10m", "1h", "4h", "1D", "1W", "1M"]
 
 
 def build_interval_palette(
@@ -53,6 +56,7 @@ def build_interval_palette(
         }, generated_at)
         if candidate["redundancyKey"] not in selected_rule_ids: candidates.append(candidate)
     for event in features.get("events", []):
+        if event.get("kind") == "gap": continue
         if not event.get("hardPass") or event.get("currentImpact") not in {"high", "medium"}: continue
         if event["id"] in selected_rule_ids: continue
         candidate = _candidate(symbol, interval, input_digest, "single_event", [event["id"]], event["id"], .7 if event["currentImpact"] == "high" else .65, 0, {
@@ -97,7 +101,7 @@ def build_interval_palette(
 
 
 def build_symbol_bundle(symbol: str, interval_palettes: list[dict[str, Any]], cross_timeframe: dict[str, Any] | None = None) -> dict[str, Any]:
-    palettes = sorted(interval_palettes, key=lambda item: {"1M": 0, "1W": 1, "1D": 2}[item["interval"]])
+    palettes = sorted(interval_palettes, key=lambda item: INTERVAL_RANK[item["interval"]])
     digest = "sha256:" + hashlib.sha256(_stable_json({"symbol": symbol, "intervals": palettes, "cross": cross_timeframe or {}}).encode()).hexdigest()
     compact = [_compact_palette(item) for item in palettes]
     allowed: set[str] = set()
@@ -166,7 +170,7 @@ def materialize_curation(*, symbol: str, palettes: dict[str, dict[str, Any]], ou
     results = {}
     selections = {item["interval"]: item for item in output["intervalSelections"]}
     accepted_candidates: list[dict[str, Any]] = []
-    for interval in sorted(palettes, key=lambda item: {"1M": 0, "1W": 1, "1D": 2}[item]):
+    for interval in sorted(palettes, key=lambda item: INTERVAL_RANK[item]):
         palette = palettes[interval]
         selection = selections.get(interval) or {"selectedCandidateIds": [], "focusNarratives": []}
         candidates = {item["candidateId"]: item for item in palette["visualCandidates"]}
@@ -194,8 +198,8 @@ def deterministic_curation(bundle: dict[str, Any]) -> dict[str, Any]:
 
 def curation_output_schema() -> dict[str, Any]:
     focus = {"type":"object","additionalProperties":False,"properties":{"refType":{"enum":["visualCandidate","ruleFinding"]},"refId":{"type":"string"},"factIds":{"type":"array","items":{"type":"string"},"maxItems":3},"watchConditionRef":{"type":"string"},"priority":{"type":"integer","minimum":1,"maximum":9}},"required":["refType","refId","factIds","watchConditionRef","priority"]}
-    selection = {"type":"object","additionalProperties":False,"properties":{"interval":{"enum":["1D","1W","1M"]},"selectedCandidateIds":{"type":"array","items":{"type":"string"},"maxItems":2},"headlineFactIds":{"type":"array","items":{"type":"string"},"maxItems":3},"focusNarratives":{"type":"array","items":focus,"maxItems":5},"counterEvidenceRefs":{"type":"array","items":{"type":"string"},"maxItems":3},"higherTimeframeRelationIds":{"type":"array","items":{"type":"string"},"maxItems":3},"emphasisCode":{"enum":sorted(EMPHASIS_CODES)}},"required":["interval","selectedCandidateIds","headlineFactIds","focusNarratives","counterEvidenceRefs","higherTimeframeRelationIds","emphasisCode"]}
-    return {"type":"object","additionalProperties":False,"properties":{"intervalSelections":{"type":"array","items":selection,"maxItems":3}},"required":["intervalSelections"]}
+    selection = {"type":"object","additionalProperties":False,"properties":{"interval":{"enum":SCHEMA_INTERVALS},"selectedCandidateIds":{"type":"array","items":{"type":"string"},"maxItems":2},"headlineFactIds":{"type":"array","items":{"type":"string"},"maxItems":3},"focusNarratives":{"type":"array","items":focus,"maxItems":5},"counterEvidenceRefs":{"type":"array","items":{"type":"string"},"maxItems":3},"higherTimeframeRelationIds":{"type":"array","items":{"type":"string"},"maxItems":3},"emphasisCode":{"enum":sorted(EMPHASIS_CODES)}},"required":["interval","selectedCandidateIds","headlineFactIds","focusNarratives","counterEvidenceRefs","higherTimeframeRelationIds","emphasisCode"]}
+    return {"type":"object","additionalProperties":False,"properties":{"intervalSelections":{"type":"array","items":selection,"maxItems":len(SCHEMA_INTERVALS)}},"required":["intervalSelections"]}
 
 
 def _candidate(symbol, interval, digest, semantic, evidence, redundancy, score, distance, template, generated_at):
@@ -245,4 +249,4 @@ def _candidate_fact(candidate): return {"price_zone":"폭과 매물대 근거가
 def _fact_code(semantic): return {"price_zone":"ACTIVE_ZONE_NEAR","retracement":"VALID_RETRACEMENT_NEAR","single_event":"CURRENT_EVENT_IMPACT"}.get(semantic,"ADDITIONAL_STRUCTURE")
 def _event_label(event):
     if event.get("kind")=="breakout" and (event.get("detail") or {}).get("state")=="failed":return "구조 이탈 실패"
-    return {"breakout":"구조 이탈","retest":"리테스트 확인","gap":"갭","52wHigh":"52주 신고가","52wLow":"52주 신저가"}.get(event.get("kind"),"주요 이벤트")
+    return {"breakout":"구조 이탈","retest":"리테스트 확인","52wHigh":"52주 신고가","52wLow":"52주 신저가"}.get(event.get("kind"),"주요 이벤트")

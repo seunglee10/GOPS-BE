@@ -10,10 +10,18 @@ from typing import Any, Callable, Iterable
 from zoneinfo import ZoneInfo
 
 from alfaka.backfill.runner import BackfillDeadlineExceeded, BackfillRunner, BackfillUnavailable
+from alfaka.backfill.gapfill import TradingCalendar
 from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
 from alfaka.storage.candle_validation import invalid_candle_numeric_reason
 
-from .analysis_candles import analysis_daily_window, canonicalize_candle_identity
+from .analysis_candles import (
+    ANALYSIS_INTERVALS,
+    INTRADAY_ANALYSIS_INTERVALS,
+    _expected_intraday_keys,
+    analysis_daily_window,
+    canonicalize_candle_identity,
+)
+from .schema import LOOKBACK_BARS
 
 
 MARKET_TIMEZONE = ZoneInfo("America/New_York")
@@ -28,6 +36,7 @@ class AnalysisRepairRange:
     end: str
     missing_count: int
     missing_keys: tuple[str, ...] = ()
+    interval: str = "1D"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -35,6 +44,7 @@ class AnalysisRepairRange:
             "start": self.start,
             "end": self.end,
             "missingCount": self.missing_count,
+            "interval": self.interval,
         }
 
 
@@ -128,10 +138,11 @@ class AnalysisCandleRepairService:
         s3_timed_out = False
         with self._semaphore:
             runner = self.runner_factory()
+            daily_ranges = tuple(item for item in before.ranges if item.interval == "1D")
             _s3_materialized, _s3_unavailable, s3_timed_out = self._repair_s3_batch(
                 runner,
                 symbol,
-                before.ranges,
+                daily_ranges,
                 request_id=request_id,
                 emit=emit,
                 cancel=cancel,
@@ -294,24 +305,53 @@ class AnalysisCandleRepairService:
             executor.shutdown(wait=False, cancel_futures=True)
 
     def audit(self, symbol: str, intervals: Iterable[str]) -> AnalysisReadinessAudit:
-        window = analysis_daily_window(intervals, now=self.now_provider())
-        rows = self.provider.daily_candles(
-            symbol,
-            interval="1D",
-            limit=max(1, len(window.expected_keys) + 16),
-            from_time=window.start,
-            before=window.end,
-        )
-        actual = _valid_daily_keys(rows)
-        expected = list(window.expected_keys)
-        present = [key for key in expected if key in actual]
-        ranges = _bounded_missing_ranges(expected, actual, self.max_ranges)
+        requested = tuple(dict.fromkeys(intervals))
+        if not requested or set(requested).difference(ANALYSIS_INTERVALS):
+            raise ValueError("Unsupported analysis intervals")
+        now = self.now_provider()
+        expected_count = actual_count = missing_count = 0
+        present_keys: list[str] = []
+        ranges: list[AnalysisRepairRange] = []
+        daily_intervals = tuple(item for item in requested if item not in INTRADAY_ANALYSIS_INTERVALS)
+        if daily_intervals:
+            window = analysis_daily_window(daily_intervals, now=now)
+            rows = self.provider.daily_candles(
+                symbol,
+                interval="1D",
+                limit=max(1, len(window.expected_keys) + 16),
+                from_time=window.start,
+                before=window.end,
+            )
+            actual = _valid_daily_keys(rows)
+            expected = list(window.expected_keys)
+            present = [key for key in expected if key in actual]
+            expected_count += len(expected)
+            actual_count += len(present)
+            missing_count += len(expected) - len(present)
+            present_keys.extend(present)
+            ranges.extend(_bounded_missing_ranges(expected, actual, self.max_ranges))
+        trading_calendar = TradingCalendar.from_environment()
+        for interval in requested:
+            if interval not in INTRADAY_ANALYSIS_INTERVALS:
+                continue
+            expected = _expected_intraday_keys(now, LOOKBACK_BARS[interval], interval, trading_calendar)
+            rows = self.provider.stored_interval_candles(
+                symbol, interval, limit=LOOKBACK_BARS[interval] + 16,
+            )
+            actual = _valid_interval_keys(rows, interval)
+            present = [key for key in expected if key in actual]
+            expected_count += len(expected)
+            actual_count += len(present)
+            missing_count += len(expected) - len(present)
+            present_keys.extend(present)
+            ranges.extend(_bounded_intraday_ranges(expected, actual, interval, self.max_ranges))
+        present_keys.sort()
         return AnalysisReadinessAudit(
-            expected_bars=len(expected),
-            actual_bars=len(present),
-            missing_bars=len(expected) - len(present),
-            available_from=present[0] if present else None,
-            available_to=present[-1] if present else None,
+            expected_bars=expected_count,
+            actual_bars=actual_count,
+            missing_bars=missing_count,
+            available_from=present_keys[0] if present_keys else None,
+            available_to=present_keys[-1] if present_keys else None,
             ranges=tuple(ranges),
         )
 
@@ -339,7 +379,7 @@ class AnalysisCandleRepairService:
                     "schemaVersion": 1,
                     "requestId": f"{request_id}-{stage}-{index}",
                     "symbol": symbol,
-                    "interval": "1D",
+                    "interval": repair_range.interval,
                     "range": {"start": repair_range.start, "end": repair_range.end},
                     "jobType": "gapfill",
                     "sourcePreference": source_preference,
@@ -377,6 +417,18 @@ def _valid_daily_keys(rows: Iterable[dict[str, Any]]) -> set[str]:
     return result
 
 
+def _valid_interval_keys(rows: Iterable[dict[str, Any]], interval: str) -> set[str]:
+    result: set[str] = set()
+    for row in rows:
+        if row.get("isClosed", row.get("is_closed", True)) is False:
+            continue
+        normalized = canonicalize_candle_identity(row, interval)
+        if normalized is None or invalid_candle_numeric_reason(normalized, require=True):
+            continue
+        result.add(str(normalized["candleKey"]))
+    return result
+
+
 def _bounded_missing_ranges(expected: list[str], actual: set[str], max_ranges: int) -> list[AnalysisRepairRange]:
     groups: list[list[int]] = []
     for index, key in enumerate(expected):
@@ -398,6 +450,39 @@ def _bounded_missing_ranges(expected: list[str], actual: set[str], max_ranges: i
             end=_market_midnight((date.fromisoformat(expected[end_index]) + timedelta(days=1)).isoformat()),
             missing_count=sum(1 for key in expected[start_index:end_index + 1] if key not in actual),
             missing_keys=tuple(key for key in expected[start_index:end_index + 1] if key not in actual),
+            interval="1D",
+        ))
+    return result
+
+
+def _bounded_intraday_ranges(
+    expected: list[str], actual: set[str], interval: str, max_ranges: int,
+) -> list[AnalysisRepairRange]:
+    groups: list[list[int]] = []
+    for index, key in enumerate(expected):
+        if key in actual:
+            continue
+        if groups and groups[-1][1] == index - 1:
+            groups[-1][1] = index
+        else:
+            groups.append([index, index])
+    while len(groups) > max_ranges:
+        merge_at = min(range(len(groups) - 1), key=lambda index: groups[index + 1][0] - groups[index][1])
+        groups[merge_at:merge_at + 2] = [[groups[merge_at][0], groups[merge_at + 1][1]]]
+    step_minutes = {"1m": 1, "5m": 5, "10m": 10, "1h": 60, "4h": 240}[interval]
+    result = []
+    for start_index, end_index in groups:
+        missing_keys = tuple(key for key in expected[start_index:end_index + 1] if key not in actual)
+        start = datetime.fromisoformat(expected[start_index].replace("Z", "+00:00"))
+        end = datetime.fromisoformat(expected[end_index].replace("Z", "+00:00")) + timedelta(minutes=step_minutes)
+        kind = "missing_head" if start_index == 0 else "stale_tail" if end_index == len(expected) - 1 else "interior_gap"
+        result.append(AnalysisRepairRange(
+            kind=kind,
+            start=start.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+            end=end.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+            missing_count=len(missing_keys),
+            missing_keys=missing_keys,
+            interval=interval,
         ))
     return result
 

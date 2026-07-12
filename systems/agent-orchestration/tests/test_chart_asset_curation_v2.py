@@ -14,7 +14,7 @@ for path in (ROOT / "systems/agent-orchestration/shared", ROOT / "systems/market
 
 from gops_agents.chart_assets.commentary_v2 import assemble_commentary_v2  # noqa: E402
 from gops_agents.chart_assets.curation import (  # noqa: E402
-    build_interval_palette, build_symbol_bundle, materialize_curation,
+    build_interval_palette, build_symbol_bundle, curation_output_schema, materialize_curation,
     validate_curation_output,
 )
 from gops_agents.chart_assets.llm import ChartAssetLLMService  # noqa: E402
@@ -31,6 +31,15 @@ class Response:
 
 
 class ChartAssetCurationV2Test(unittest.TestCase):
+    def test_curation_schema_accepts_all_eight_intervals(self):
+        schema = curation_output_schema()
+        selection = schema["properties"]["intervalSelections"]
+
+        self.assertEqual(selection["maxItems"], 8)
+        self.assertEqual(
+            selection["items"]["properties"]["interval"]["enum"],
+            ["1m", "5m", "10m", "1h", "4h", "1D", "1W", "1M"],
+        )
     def setUp(self):
         self.palette = build_interval_palette(
             symbol="NVDA", interval="1D", input_digest="sha256:" + "a"*64,
@@ -168,6 +177,22 @@ class ChartAssetCurationV2Test(unittest.TestCase):
         )
         self.assertIn("retracement", {item["semanticType"] for item in strong["visualCandidates"]})
 
+    def test_legacy_gap_event_is_not_exposed_to_curation(self):
+        current = features()
+        current["events"] = [{
+            "id": "1D:event:legacy-gap", "timestamp": candles()[-1]["timestamp"],
+            "candleKey": "2026-07-10", "price": 160, "kind": "gap", "refIds": [],
+            "detail": {"direction": "up", "state": "unfilled"},
+            "hardPass": True, "currentImpact": "high",
+        }]
+
+        palette = build_interval_palette(
+            symbol="NVDA", interval="1D", input_digest="sha256:" + "c"*64,
+            features=current, rule_layers=rule_layers(), candles=candles(), generated_at=NOW,
+        )
+
+        self.assertEqual(palette["visualCandidates"], [])
+
 
 def valid_output(bundle):
     palette = bundle["intervals"][0]
@@ -181,7 +206,7 @@ def valid_output(bundle):
 
 
 def features():
-    return {"regime":{"trend":"up","atr14":4,"atrPercentile":.5},"pivots":[],"levels":[],"fibCandidates":[],"events":[{"id":"1D:event:e1","timestamp":"2026-07-10T04:00:00.000Z","candleKey":"2026-07-10","price":160,"kind":"gap","refIds":[],"detail":{"state":"unfilled"},"hardPass":True,"currentImpact":"high"}]}
+    return {"regime":{"trend":"up","atr14":4,"atrPercentile":.5},"pivots":[],"levels":[],"fibCandidates":[],"events":[{"id":"1D:event:e1","timestamp":"2026-07-10T04:00:00.000Z","candleKey":"2026-07-10","price":160,"kind":"breakout","refIds":[],"detail":{"direction":"up","state":"hold_confirmed"},"hardPass":True,"currentImpact":"high"}]}
 
 
 def candles():

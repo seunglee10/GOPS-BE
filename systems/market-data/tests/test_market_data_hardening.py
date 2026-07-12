@@ -6909,6 +6909,32 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(row["interval"], "1D")
         self.assertEqual(row["price_adjustment"], "split")
 
+    def test_clickhouse_long_term_equity_candles_use_one_regular_session_identity(self):
+        for interval, timestamp in (
+            ("1W", "2026-07-06T04:00:00.000Z"),
+            ("1M", "2026-07-01T04:00:00.000Z"),
+        ):
+            with self.subTest(interval=interval):
+                candle = raw_bar_to_processed_candle(
+                    "NVDA",
+                    alpaca_raw_bar(timestamp),
+                    feed="sip",
+                    interval=interval,
+                )
+
+                self.assertEqual(candle["marketSession"], "regular")
+                legacy_session_candle = {**candle, "marketSession": "overnight"}
+                self.assertEqual(candle_to_clickhouse_row(legacy_session_candle)["market_session"], "regular")
+
+        crypto_candle = raw_bar_to_processed_candle(
+            "BTCUSD",
+            alpaca_raw_bar("2026-07-06T00:00:00.000Z"),
+            feed="us",
+            interval="1W",
+        )
+        self.assertEqual(crypto_candle["marketSession"], "crypto")
+        self.assertEqual(candle_to_clickhouse_row(crypto_candle)["market_session"], "crypto")
+
     def test_backfill_processed_candles_include_moving_averages(self):
         raw_bars = [
             alpaca_raw_bar(f"2026-06-25T13:3{index}:00.000Z", open_price=10 + index, index=index)

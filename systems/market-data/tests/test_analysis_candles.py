@@ -20,6 +20,7 @@ from alfaka.analytics.analysis_candles import (  # noqa: E402
     canonicalize_candle_identity,
     choose_canonical_winner,
     compute_analysis_coverage,
+    is_analysis_candle_bucket_complete,
     merge_canonical_candles,
 )
 from alfaka.backfill.gapfill import TradingCalendar  # noqa: E402
@@ -32,7 +33,24 @@ class AnalysisCandleContractTest(unittest.TestCase):
         self.assertEqual(winter["timestamp"], "2026-01-05T05:00:00.000Z")
         self.assertEqual(summer["timestamp"], "2026-07-06T04:00:00.000Z")
         self.assertEqual((winter["candleKey"], summer["candleKey"]), ("2026-01-05", "2026-07-06"))
-        self.assertEqual(CANDLE_CONTRACT_VERSION, "v2")
+        self.assertEqual(CANDLE_CONTRACT_VERSION, "v3")
+
+    def test_intraday_identity_preserves_exact_utc_bucket_timestamp(self):
+        identity = canonicalize_candle_identity(candle("2026-07-10T13:35:00.000Z"), "5m")
+
+        self.assertEqual(identity["candleKey"], "2026-07-10T13:35:00.000Z")
+        self.assertEqual(identity["timestamp"], "2026-07-10T13:35:00.000Z")
+        self.assertEqual(identity["interval"], "5m")
+
+    def test_intraday_bucket_is_complete_only_after_its_interval_end(self):
+        self.assertFalse(is_analysis_candle_bucket_complete(
+            "2026-07-10T13:35:00.000Z", "5m",
+            now=datetime(2026, 7, 10, 13, 39, 59, tzinfo=timezone.utc),
+        ))
+        self.assertTrue(is_analysis_candle_bucket_complete(
+            "2026-07-10T13:35:00.000Z", "5m",
+            now=datetime(2026, 7, 10, 13, 40, 0, tzinfo=timezone.utc),
+        ))
 
     def test_weekly_and_monthly_identity_use_utc_bucket_midnight(self):
         weekly_utc = canonicalize_candle_identity(candle("2026-07-06T00:00:00.000Z"), "1W")
@@ -171,6 +189,23 @@ class AnalysisCandleContractTest(unittest.TestCase):
         self.assertEqual(set(bundle.rows), {"1M", "1W", "1D"})
         self.assertTrue(all(value.startswith("sha256:") for value in bundle.digests.values()))
 
+    def test_symbol_source_reads_intraday_directly_and_long_intervals_from_one_daily_query(self):
+        provider = MixedProvider(
+            daily=[candle("2026-06-29T00:00:00.000Z"), candle("2026-06-30T00:00:00.000Z")],
+            intraday={
+                interval: [candle("2026-07-10T13:30:00.000Z", interval=interval)]
+                for interval in ("1m", "5m", "10m", "1h", "4h")
+            },
+        )
+        source = AnalysisCandleSource(provider, now_provider=lambda: datetime(2026, 7, 11, tzinfo=timezone.utc))
+
+        bundle = source.load_symbol("NVDA", ("1M", "1W", "1D", "4h", "1h", "10m", "5m", "1m"))
+
+        self.assertEqual(provider.daily_calls, 1)
+        self.assertEqual(provider.direct_calls, ["4h", "1h", "10m", "5m", "1m"])
+        self.assertEqual(set(bundle.rows), {"1m", "5m", "10m", "1h", "4h", "1D", "1W", "1M"})
+        self.assertEqual(bundle.rows["5m"][0]["candleKey"], "2026-07-10T13:30:00.000Z")
+
 
 class FakeProvider:
     def __init__(self, rows):
@@ -180,6 +215,22 @@ class FakeProvider:
     def daily_candles(self, *_args, **_kwargs):
         self.calls += 1
         return list(self.rows)
+
+
+class MixedProvider:
+    def __init__(self, *, daily, intraday):
+        self.daily = daily
+        self.intraday = intraday
+        self.daily_calls = 0
+        self.direct_calls = []
+
+    def daily_candles(self, *_args, **_kwargs):
+        self.daily_calls += 1
+        return list(self.daily)
+
+    def stored_interval_candles(self, _symbol, interval, **_kwargs):
+        self.direct_calls.append(interval)
+        return list(self.intraday[interval])
 
 
 def candle(timestamp: str, **values) -> dict:

@@ -9,14 +9,28 @@ STYLE_TOKENS: dict[str, dict[str, Any]] = {
     "asset-sr-medium": {"color": "#ffffff", "colorToken": "asset-sr-medium", "lineWidth": 1.5, "opacity": 0.75},
     "asset-sr-weak": {"color": "#ffffff", "colorToken": "asset-sr-weak", "lineWidth": 1, "opacity": 0.55},
     "asset-flag": {"color": "#ff7a3d", "colorToken": "asset-flag", "lineWidth": 1, "opacity": 0.95},
+    "asset-cross-golden": {"color": "#22c55e", "colorToken": "asset-cross-golden", "lineWidth": 1, "opacity": 0.95},
+    "asset-cross-dead": {"color": "#ef4444", "colorToken": "asset-cross-dead", "lineWidth": 1, "opacity": 0.95},
     "asset-trend": {"color": "#0099ff", "colorToken": "asset-trend", "lineWidth": 1.5, "opacity": 0.9, "extension": "ray"},
     "asset-range": {"color": "#999999", "colorToken": "asset-range", "lineWidth": 1, "fillColor": "#999999", "fillToken": "asset-range", "fillOpacity": 0.06, "opacity": 0.8},
+    "asset-pattern-bull": {"color": "#22c55e", "colorToken": "asset-pattern-bull", "lineWidth": 2, "opacity": 0.95, "extension": "ray"},
+    "asset-pattern-bear": {"color": "#ef4444", "colorToken": "asset-pattern-bear", "lineWidth": 2, "opacity": 0.95, "extension": "ray"},
+    "asset-pattern-neutral": {"color": "#f59e0b", "colorToken": "asset-pattern-neutral", "lineWidth": 2, "opacity": 0.95, "extension": "ray"},
 }
 
 
 def recommended_indicators(features: dict[str, Any]) -> list[dict[str, str]]:
     regime = features.get("regime") or {}
     candidates: list[dict[str, str]] = []
+    has_ma_cross = any(
+        event.get("kind") == "movingAverageCross"
+        and event.get("hardPass")
+        and (event.get("detail") or {}).get("shortPeriod") == 60
+        and (event.get("detail") or {}).get("longPeriod") == 120
+        for event in features.get("events") or []
+    )
+    if has_ma_cross:
+        candidates.append({"layer": "sma:120", "reason": "MA60/120 교차 확인", "source": "rule"})
     if regime.get("bbSqueeze") or float(regime.get("bbBandwidthPercentile") or 1) < 0.2:
         candidates.append({"layer": "bollinger:20:2", "reason": "변동성 수축 — 확장 임박 관찰", "source": "rule"})
     macd_state = str(regime.get("macdState") or "neutral")
@@ -46,7 +60,9 @@ def compile_rule_layers(
     candle_times = {item["timestamp"] for item in candles}
     current = float(candles[-1]["close"])
     all_levels = list(features.get("levels", []))
-    all_events = list(features.get("events", []))
+    # Gap-up/down markers were retired in kernel-v6. Keep the compiler guard so
+    # legacy feature payloads cannot reintroduce them as rule drawings.
+    all_events = [item for item in features.get("events", []) if item.get("kind") != "gap"]
     levels = [
         item for item in all_levels
         if item.get("hardPass") and item.get("role") in {"support", "resistance"}
@@ -106,7 +122,7 @@ def compile_rule_layers(
             suffix=_stable_suffix(candidate_id),
             drawing_type="flagMarker",
             anchors=[{"timestamp": event["timestamp"], "price": round(float(event["price"]), 2)}],
-            style_token="asset-flag",
+            style_token=_event_style(event),
             label=_event_label(event),
             generated_at=generated_at,
             created_by="system",
@@ -202,18 +218,151 @@ def compile_rule_layers(
                 },
             }]
 
+    all_patterns = list(features.get("patterns", []))
+    patterns = [item for item in all_patterns if item.get("hardPass")]
+    if patterns:
+        pattern = sorted(patterns, key=lambda item: (-float(item.get("score") or 0), item["id"]))[0]
+        pattern_drawings = _compile_pattern_drawings(
+            symbol=symbol,
+            interval=interval,
+            pattern=pattern,
+            candle_times=candle_times,
+            generated_at=generated_at,
+        )
+        if len(pattern_drawings) == 2:
+            trend_drawings.extend(pattern_drawings)
+            trend_selected.append({
+                "candidateId": pattern["id"],
+                "drawingIds": [item["id"] for item in pattern_drawings],
+                "evidenceRefs": pattern.get("evidenceRefs") or [],
+                "quality": {
+                    key: pattern.get(key)
+                    for key in (
+                        "score", "state", "breakoutDirection", "touches", "containment",
+                        "convergenceRatio", "poleAtr", "retracementRatio", "spanBars",
+                    )
+                    if pattern.get(key) is not None
+                },
+                "patternKind": pattern.get("kind"),
+                "patternState": pattern.get("state"),
+            })
+
+    # A pattern is one semantic structure but needs two engine drawings. Keep
+    # the existing five-entity foreground contract by yielding lower-priority
+    # S-layer drawings when the T layer grows.
+    available_structure = max(0, 5 - len(trend_drawings))
+    if len(structure_drawings) > available_structure:
+        kept_ids = {item["id"] for item in structure_drawings[:available_structure]}
+        structure_drawings = structure_drawings[:available_structure]
+        structure_selected = [
+            item for item in structure_selected
+            if any(drawing_id in kept_ids for drawing_id in item.get("drawingIds", []))
+        ]
+        structure["drawings"] = structure_drawings
+        structure["selected"] = structure_selected
+
+    trend_candidates = [*all_trends, *all_patterns]
     trend_layer = {
         "drawings": trend_drawings,
         "selected": trend_selected,
-        "emptyReason": _empty_reason(all_trends, features.get("qualityFlags") or [], trend_drawings),
+        "emptyReason": _empty_reason(trend_candidates, features.get("qualityFlags") or [], trend_drawings),
         "meta": {
-            "candidateCount": len(all_trends),
-            "passedCount": len(trends),
-            "rejectedByReason": _reason_counts([item for item in all_trends if not item.get("hardPass")]),
+            "candidateCount": len(trend_candidates),
+            "passedCount": len(trends) + len(patterns),
+            "rejectedByReason": _reason_counts([item for item in trend_candidates if not item.get("hardPass")]),
             "qualityState": "ready" if trend_drawings else "quality_empty",
         },
     }
     return {"structure": structure, "trend": trend_layer}
+
+
+def _compile_pattern_drawings(*, symbol, interval, pattern, candle_times, generated_at):
+    geometry = pattern.get("geometry") or {}
+    kind = str(pattern.get("kind") or "")
+    state = str(pattern.get("state") or "forming")
+    style_token = _pattern_style(kind)
+    label = _pattern_label(kind, state)
+    candidate_id = str(pattern["id"])
+    drawings = []
+    if kind.endswith("_triangle"):
+        for boundary_name in ("upper", "lower"):
+            boundary = geometry.get(boundary_name) or {}
+            anchors = [boundary.get("start"), boundary.get("end")]
+            if not _valid_pattern_anchors(anchors, candle_times):
+                return []
+            drawing = _drawing(
+                symbol=symbol, interval=interval, layer="trend",
+                suffix=_stable_suffix(f"{candidate_id}:{boundary_name}"),
+                drawing_type="trendLine", anchors=anchors,
+                style_token=style_token,
+                label=label if boundary_name == "upper" else "패턴 하단 경계",
+                generated_at=generated_at, created_by="system",
+            )
+            _apply_pattern_state_style(drawing, state, dashed_when_forming=False)
+            drawings.append(drawing)
+        return drawings
+    if kind not in {"bullish_flag", "bearish_flag"}:
+        return []
+    pole = geometry.get("pole") or {}
+    pole_anchors = [pole.get("start"), pole.get("end")]
+    upper = geometry.get("upper") or {}
+    lower = geometry.get("lower") or {}
+    channel_anchors = [upper.get("start"), upper.get("end"), lower.get("start")]
+    if not _valid_pattern_anchors(pole_anchors, candle_times) or not _valid_pattern_anchors(channel_anchors, candle_times):
+        return []
+    pole_drawing = _drawing(
+        symbol=symbol, interval=interval, layer="trend",
+        suffix=_stable_suffix(f"{candidate_id}:pole"),
+        drawing_type="trendLine", anchors=pole_anchors,
+        style_token=style_token, label=label,
+        generated_at=generated_at, created_by="system",
+    )
+    channel_drawing = _drawing(
+        symbol=symbol, interval=interval, layer="trend",
+        suffix=_stable_suffix(f"{candidate_id}:channel"),
+        drawing_type="trendParallelLines", anchors=channel_anchors,
+        style_token=style_token, label="깃발 채널",
+        generated_at=generated_at, created_by="system", parallel_line_count=2,
+    )
+    _apply_pattern_state_style(pole_drawing, state)
+    _apply_pattern_state_style(channel_drawing, state)
+    return [pole_drawing, channel_drawing]
+
+
+def _valid_pattern_anchors(anchors, candle_times):
+    return all(
+        isinstance(anchor, dict)
+        and anchor.get("timestamp") in candle_times
+        and isinstance(anchor.get("price"), (int, float))
+        for anchor in anchors
+    )
+
+
+def _apply_pattern_state_style(drawing, state, *, dashed_when_forming=True):
+    if state == "forming":
+        if dashed_when_forming:
+            drawing["style"]["lineDash"] = [6, 4]
+        drawing["style"]["opacity"] = 0.78
+
+
+def _pattern_style(kind):
+    if kind in {"ascending_triangle", "bullish_flag"}:
+        return "asset-pattern-bull"
+    if kind in {"descending_triangle", "bearish_flag"}:
+        return "asset-pattern-bear"
+    return "asset-pattern-neutral"
+
+
+def _pattern_label(kind, state):
+    names = {
+        "ascending_triangle": "상승 삼각형",
+        "descending_triangle": "하락 삼각형",
+        "symmetrical_triangle": "대칭 삼각형",
+        "bullish_flag": "상승 깃발",
+        "bearish_flag": "하락 깃발",
+    }
+    state_label = "돌파 확인" if state == "confirmed" else "형성 중"
+    return f"{names.get(kind, '차트 패턴')} · {state_label}"
 
 
 def _drawing(
@@ -313,8 +462,17 @@ def _event_label(event: dict[str, Any]) -> str:
         return "52주 신고가"
     if kind == "52wLow":
         return "52주 신저가"
-    if kind == "gap":
-        return f"갭 {'상승' if detail.get('direction') == 'up' else '하락'}{'(미채움)' if detail.get('unfilled') else ''}"
     if kind == "volumeSpike":
         return "거래량 급증"
+    if kind == "movingAverageCross":
+        short = int(detail.get("shortPeriod") or 60)
+        long = int(detail.get("longPeriod") or 120)
+        name = "골든크로스" if detail.get("direction") == "golden" else "데드크로스"
+        return f"MA{short}/{long} {name}"
     return str(kind or "이벤트")
+
+
+def _event_style(event: dict[str, Any]) -> str:
+    if event.get("kind") != "movingAverageCross":
+        return "asset-flag"
+    return "asset-cross-golden" if (event.get("detail") or {}).get("direction") == "golden" else "asset-cross-dead"

@@ -21,10 +21,15 @@ class IntervalQualityConfig:
 
 
 QUALITY_CONFIG = {
+    "1m": IntervalQualityConfig(120, 60, 3, 5, 5, 10, 24, 42, 30, 10, 20, 3, 12),
+    "5m": IntervalQualityConfig(120, 60, 3, 5, 5, 10, 24, 42, 30, 10, 20, 3, 12),
+    "10m": IntervalQualityConfig(120, 60, 3, 5, 5, 10, 24, 42, 30, 10, 20, 3, 12),
+    "1h": IntervalQualityConfig(120, 60, 3, 5, 5, 10, 24, 42, 30, 10, 20, 3, 12),
+    "4h": IntervalQualityConfig(120, 60, 2, 4, 4, 8, 20, 40, 24, 8, 20, 2, 10),
     "1D": IntervalQualityConfig(120, 60, 3, 5, 5, 10, 24, 42, 30, 10, 20, 3, 12),
     "1W": IntervalQualityConfig(104, 52, 2, 3, 3, 6, 16, 36, 16, 4, 13, 2, 8),
     "1M": IntervalQualityConfig(36, 18, 1, 2, 2, 3, 8, 14, 12, 2, 12, 1, 4),
 }
 
-KERNEL_VERSION = "kernel-v3"
-QUALITY_POLICY_VERSION = "chart-quality-v2"
+KERNEL_VERSION = "kernel-v7"
+QUALITY_POLICY_VERSION = "chart-quality-v5"

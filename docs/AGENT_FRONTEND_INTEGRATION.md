@@ -284,6 +284,7 @@ panel의 symbol/interval/coverage 상태와 연결하지 않는다. 응답의 `r
 변동률을 렌더링한다.
 
 popular stocks panel은 `panelType="popularStocks"`/`kind="popular"`로 표현한다.
+기본 배치와 읽기 가능한 최소 너비는 1 column이며 기본 높이는 2 rows다.
 현재 `gops-frontend`는 App이 이미 폴링 중인 `GET /api/market/heatmap?universe=sp500`
 items를 패널로 전달해 S&P500 거래대금순 Top10을 렌더링한다. 별도 heatmap 요청은
 추가하지 않고, 금액 표시는 `GET /api/market/indices`의 `KRW=X` 환율을 사용해
@@ -309,6 +310,15 @@ chart analysis asset 운영 패널은 `kind="chartAssetOps"`, 화면 표시는
 Asset v2도 기존 GET/build/poll/SSE route를 사용한다. timed anchor는 interval
 `candleKey`로 현재 chart candle을 찾은 뒤 그 봉의 실제 timestamp로 snap한다. 가격이나
 임의 시간 좌표를 보간하지 않으며, 대응 bucket이 없으면 작도를 제외한다.
+인트라데이 `candleKey`는 정확한 UTC timestamp이며 패널은 8개 interval을 모두 수동
+빌드할 수 있다. 삼각형·깃발이 선택되면 이름, `forming|confirmed`, 점수, 선 수를 표시하고
+빌드 완료 cache invalidation 뒤 현재 chart에 자동 적용한다. 삼각형 경계는 상태와
+무관하게 실선으로 렌더링하고 `forming`은 낮은 불투명도로 구분한다.
+일봉 asset은 MA60/120 골든크로스·데드크로스가 현재 관련성 범위 안에 있으면 교차
+봉의 canonical candleKey에 각각 녹색·붉은색 `flagMarker`를 적용한다. 이 이벤트가
+선택되면 서버 계산형 `sma:120` 가격 오버레이도 자동 활성화해 기본 활성 상태인
+SMA60과의 교차를 차트에서 확인할 수 있다. SMA120은 ClickHouse indicator artifact로
+저장하지 않고 `/api/charts/indicators`의 요청 범위에서 계산한다.
 `commentary.focusItems[].drawingIds`는 실제 적용 drawing을 가리키고 선택 시 해당
 drawing을 강조한다. v1은 기존 렌더를 유지하며 v2의 정상 빈 layer는 오류가 아니다.
 빌드 완료와 개발 패널 삭제는 analysis asset cache invalidation event를 발생시키며,
