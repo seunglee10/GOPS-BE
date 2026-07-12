@@ -75,15 +75,17 @@ class GeometryAssetKernelTest(unittest.TestCase):
             self.assertTrue(all(item["style"]["lineStyle"] == "solid" for item in result["drawings"][-2:]))
 
     def test_geometry_uses_previous_regression_triangle_detector(self):
-        rows = _triangle_rows(180, interval="10m")
+        for interval in SUPPORTED_INTERVALS:
+            with self.subTest(interval=interval):
+                rows = _triangle_rows(180, interval=interval)
 
-        result = analyze_geometry("NVDA", "10m", rows)
+                result = analyze_geometry("NVDA", interval, rows)
 
-        self.assertIsNotNone(result["primaryTriangle"])
-        self.assertEqual(result["primaryTriangle"]["kind"], "ascending_triangle")
-        triangle_drawings = [drawing for drawing in result["drawings"] if drawing["type"] == "trendLine"]
-        self.assertEqual(len(triangle_drawings), 2)
-        self.assertTrue(all("상승 삼각형" in drawing["label"] for drawing in triangle_drawings))
+                self.assertIsNotNone(result["primaryTriangle"])
+                self.assertEqual(result["primaryTriangle"]["kind"], "ascending_triangle")
+                triangle_drawings = [drawing for drawing in result["drawings"] if drawing["type"] == "trendLine"]
+                self.assertEqual(len(triangle_drawings), 2)
+                self.assertTrue(all("상승 삼각형" in drawing["label"] for drawing in triangle_drawings))
 
     def test_rejects_less_than_120_completed_bars(self):
         with self.assertRaisesRegex(ValueError, "120 completed candles"):
@@ -91,7 +93,12 @@ class GeometryAssetKernelTest(unittest.TestCase):
 
 
 def _rows(count: int, *, interval: str, closes: list[float] | None = None) -> list[dict]:
-    step = timedelta(days=1) if interval == "1D" else timedelta(minutes={"1m": 1, "5m": 5, "10m": 10, "1h": 60, "4h": 240}.get(interval, 60))
+    steps = {
+        "1m": timedelta(minutes=1), "5m": timedelta(minutes=5), "10m": timedelta(minutes=10),
+        "1h": timedelta(hours=1), "4h": timedelta(hours=4), "1D": timedelta(days=1),
+        "1W": timedelta(weeks=1),
+    }
+    step = steps[interval]
     started = datetime(2025, 1, 2, 14, 30, tzinfo=timezone.utc)
     values = closes or [100.0 + index * 0.05 for index in range(count)]
     return [

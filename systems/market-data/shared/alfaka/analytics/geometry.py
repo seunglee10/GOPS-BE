@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import hashlib
-import itertools
 import statistics
 from typing import Any, Iterable
 
-from .atr import latest_atr
+from .atr import latest_atr as regression_atr
 from .patterns import compute_triangles
 from .pivots import compute_pivots
 
@@ -21,8 +20,6 @@ _ATR_PERIOD = 14
 _VOLUME_BASELINE = 20
 _TOUCH_TOLERANCE_ATR = 0.35
 _MIN_TOUCH_GAP = 5
-_TRIANGLE_SPANS = (20, 40, 60, 90, 120)
-_TRIANGLE_KINDS = ("ascending_triangle", "descending_triangle", "symmetrical_triangle")
 
 
 def analyze_geometry(symbol: str, interval: str, candles: list[dict[str, Any]]) -> dict[str, Any]:
@@ -199,10 +196,12 @@ def _horizontal_levels(symbol, interval, rows, candidates, *, role, current, atr
     return sorted(levels, key=lambda item: (-item["score"], item["currentDistanceAtr"], item["id"]))[:2]
 
 
-def _regression_triangle_candidates(rows, *, interval):
+def _regression_triangle_candidates(
+    rows: list[dict[str, Any]], *, interval: str,
+) -> list[dict[str, Any]]:
     display_from = rows[max(0, len(rows) - EVALUATION_BARS[interval])]["timestamp"]
     pivots = compute_pivots(rows, display_from=display_from, interval=interval)
-    candidates = compute_triangles(rows, pivots, atr=latest_atr(rows), interval=interval)
+    candidates = compute_triangles(rows, pivots, atr=regression_atr(rows), interval=interval)
     evidence_by_id = {str(item["id"]): item for item in pivots}
     end = len(rows) - 1
     results = []
@@ -225,105 +224,6 @@ def _regression_triangle_candidates(rows, *, interval):
             "evidence": [evidence_by_id[ref] for ref in candidate.get("evidenceRefs", []) if ref in evidence_by_id],
         })
     return results
-
-
-def _triangle_candidates(rows, evidence, *, atr, interval):
-    results: dict[str, dict[str, Any]] = {}
-    end = len(rows) - 1
-    for span in _TRIANGLE_SPANS:
-        start_limit = max(0, end - span + 1)
-        highs = _bounded_side([item for item in evidence if item["kind"] == "H" and item["barIndex"] >= start_limit])
-        lows = _bounded_side([item for item in evidence if item["kind"] == "L" and item["barIndex"] >= start_limit])
-        if len(highs) < 2 or len(lows) < 2:
-            continue
-        for high_pair, low_pair in itertools.product(itertools.combinations(highs, 2), itertools.combinations(lows, 2)):
-            candidate = _triangle_candidate(rows, highs, lows, high_pair, low_pair, atr=atr, interval=interval, span=span)
-            if candidate is not None:
-                current = results.get(candidate["geometryHash"])
-                if current is None or candidate["score"] > current["score"]:
-                    results[candidate["geometryHash"]] = candidate
-    return list(results.values())
-
-
-def _triangle_candidate(rows, highs, lows, high_pair, low_pair, *, atr, interval, span):
-    upper_slope, upper_intercept = _line_from_pair(high_pair)
-    lower_slope, lower_intercept = _line_from_pair(low_pair)
-    kind = _triangle_kind(upper_slope / atr, lower_slope / atr)
-    if not kind:
-        return None
-    upper = _independent_contacts([item for item in highs if abs(item["price"] - _line(upper_slope, upper_intercept, item["barIndex"])) <= _TOUCH_TOLERANCE_ATR * atr])
-    lower = _independent_contacts([item for item in lows if abs(item["price"] - _line(lower_slope, lower_intercept, item["barIndex"])) <= _TOUCH_TOLERANCE_ATR * atr])
-    if len(upper) < 2 or len(lower) < 2 or len(upper) + len(lower) < 5:
-        return None
-    start = min(item["barIndex"] for item in (*upper, *lower))
-    end = len(rows) - 1
-    upper_start, lower_start = _line(upper_slope, upper_intercept, start), _line(lower_slope, lower_intercept, start)
-    upper_end, lower_end = _line(upper_slope, upper_intercept, end), _line(lower_slope, lower_intercept, end)
-    starting_width = upper_start - lower_start
-    current_width = upper_end - lower_end
-    if starting_width < 2 * atr or current_width <= 0:
-        return None
-    convergence = current_width / starting_width
-    if not 0.15 <= convergence <= 0.85:
-        return None
-    residuals = [abs(item["price"] - _line(upper_slope, upper_intercept, item["barIndex"])) / atr for item in upper]
-    residuals += [abs(item["price"] - _line(lower_slope, lower_intercept, item["barIndex"])) / atr for item in lower]
-    max_residual = max(residuals)
-    if max_residual > _TOUCH_TOLERANCE_ATR:
-        return None
-    contained = sum(
-        _line(lower_slope, lower_intercept, index) - _TOUCH_TOLERANCE_ATR * atr <= float(rows[index]["close"]) <= _line(upper_slope, upper_intercept, index) + _TOUCH_TOLERANCE_ATR * atr
-        for index in range(start, end + 1)
-    )
-    containment = contained / max(1, end - start + 1)
-    if containment < 0.82:
-        return None
-    state, breakout_direction = _triangle_state(rows, kind, upper_slope, upper_intercept, lower_slope, lower_intercept, atr)
-    touch_quality = statistics.mean(item["score"] for item in (*upper, *lower))
-    residual_quality = 1 - min(1.0, max_residual / _TOUCH_TOLERANCE_ATR)
-    convergence_quality = 1 - min(1.0, abs(convergence - 0.45) / 0.45)
-    recency = 1 - min(1.0, (end - max(item["barIndex"] for item in (*upper, *lower))) / max(1, span))
-    score = 0.30 * touch_quality + 0.25 * containment + 0.20 * residual_quality + 0.15 * convergence_quality + 0.10 * recency
-    geometry_hash = hashlib.sha256(
-        f"{interval}|{kind}|{start}|{end}|{upper_slope:.10f}|{lower_slope:.10f}|{'|'.join(item['id'] for item in (*upper, *lower))}".encode()
-    ).hexdigest()[:16]
-    return {
-        "kind": kind, "state": state, "breakoutDirection": breakout_direction,
-        "score": round(score, 4), "touches": len(upper) + len(lower),
-        "upperTouches": len(upper), "lowerTouches": len(lower), "containment": round(containment, 4),
-        "convergenceRatio": round(convergence, 4), "maxResidualAtr": round(max_residual, 4),
-        "startIndex": start, "endIndex": end, "geometryHash": geometry_hash,
-        "upper": _boundary(rows, start, end, upper_slope, upper_intercept),
-        "lower": _boundary(rows, start, end, lower_slope, lower_intercept),
-        "apexBarsFromAsOf": _apex_bars(end, upper_slope, upper_intercept, lower_slope, lower_intercept),
-        "evidence": [*upper, *lower],
-    }
-
-
-def _triangle_state(rows, kind, upper_slope, upper_intercept, lower_slope, lower_intercept, atr):
-    expected = "up" if kind == "ascending_triangle" else "down" if kind == "descending_triangle" else "either"
-    detected = None
-    for index in range(max(0, len(rows) - 5), len(rows)):
-        close = float(rows[index]["close"])
-        direction = "up" if close > _line(upper_slope, upper_intercept, index) + 0.25 * atr else "down" if close < _line(lower_slope, lower_intercept, index) - 0.25 * atr else None
-        if direction:
-            detected = (index, direction)
-            break
-    if detected:
-        index, direction = detected
-        if expected not in {"either", direction}:
-            return "invalidated", direction
-        held = index + 1 < len(rows) and (
-            float(rows[index + 1]["close"]) > _line(upper_slope, upper_intercept, index + 1) + 0.25 * atr if direction == "up"
-            else float(rows[index + 1]["close"]) < _line(lower_slope, lower_intercept, index + 1) - 0.25 * atr
-        )
-        baseline = [float(item.get("volume") or 0) for item in rows[max(0, index - 20):index]]
-        volume_confirmed = bool(baseline) and float(rows[index].get("volume") or 0) >= 1.5 * statistics.median(baseline)
-        return ("confirmed", direction) if held or volume_confirmed else ("inactive", direction)
-    latest = len(rows) - 1
-    close = float(rows[-1]["close"])
-    inside = _line(lower_slope, lower_intercept, latest) <= close <= _line(upper_slope, upper_intercept, latest)
-    return ("forming", None) if inside else ("inactive", None)
 
 
 def _level_drawing(symbol, interval, level, generated_at):
@@ -391,37 +291,6 @@ def _independent_contacts(values):
     return result
 
 
-def _bounded_side(values):
-    recent = sorted(values, key=lambda item: (item["barIndex"], item["id"]))[-10:]
-    return sorted(recent, key=lambda item: (item["barIndex"], item["id"]))
-
-
-def _line_from_pair(pair):
-    first, second = pair
-    distance = second["barIndex"] - first["barIndex"]
-    if not distance:
-        return 0.0, float(first["price"])
-    slope = (float(second["price"]) - float(first["price"])) / distance
-    return slope, float(first["price"]) - slope * first["barIndex"]
-
-
-def _triangle_kind(upper_slope_atr, lower_slope_atr):
-    if upper_slope_atr <= -0.01 and lower_slope_atr >= 0.01:
-        return "symmetrical_triangle"
-    if abs(upper_slope_atr) <= 0.03 and lower_slope_atr >= 0.01:
-        return "ascending_triangle"
-    if abs(lower_slope_atr) <= 0.03 and upper_slope_atr <= -0.01:
-        return "descending_triangle"
-    return None
-
-
-def _boundary(rows, start, end, slope, intercept):
-    return {
-        "start": {"timestamp": rows[start]["timestamp"], "price": round(_line(slope, intercept, start), 6)},
-        "end": {"timestamp": rows[end]["timestamp"], "price": round(_line(slope, intercept, end), 6)},
-    }
-
-
 def _apex_bars(end, upper_slope, upper_intercept, lower_slope, lower_intercept):
     difference = upper_slope - lower_slope
     if abs(difference) < 1e-12:
@@ -439,10 +308,6 @@ def _weighted_median(values: Iterable[tuple[float, float]]) -> float:
         if cursor >= total / 2:
             return float(value)
     return float(ordered[-1][0])
-
-
-def _line(slope, intercept, index):
-    return intercept + slope * index
 
 
 def _cap(value):

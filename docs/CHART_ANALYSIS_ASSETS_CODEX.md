@@ -28,7 +28,8 @@
 
 ## 주요 코드 경계
 
-- `alfaka.analytics.geometry`: OHLCV evidence, 수평선, 삼각형, SMA/교차
+- `alfaka.analytics.geometry`: OHLCV evidence, 수평선, SMA/교차와 Geometry 자산 조립
+- `alfaka.analytics.pivots` + `alfaka.analytics.patterns`: 방향전환 피벗과 회귀형 삼각형 탐지
 - `alfaka.analytics.analysis_candles`: 완료 봉과 canonical identity, 기존 주봉 집계
 - `alfaka.analytics.analysis_repair`: ClickHouse audit와 Alpaca-only repair
 - `gops_agents.chart_assets.builder`: symbol/interval 단위 조립과 digest no-op
@@ -37,7 +38,7 @@
 
 새 payload의 `assetVersion`은 숫자 개발 단계가 아니라 기존 응답 union을 구분하는
 semantic discriminator인 `geometry`다. `algorithmVersion`은 현재
-`ohlcv-consensus-1`이며 분석 의미가 바뀔 때만 변경한다. 기존 숫자형 자산 row는 읽기
+`ohlcv-consensus-regression-triangles`이며 분석 의미가 바뀔 때만 변경한다. 기존 숫자형 자산 row는 읽기
 fallback이나 자동 변환에 사용하지 않는다.
 
 PostgreSQL 테이블은 `geometry_assets`, `geometry_build_jobs`,
