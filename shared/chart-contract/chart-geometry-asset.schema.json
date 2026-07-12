@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gops.local/contracts/chart-geometry-asset.schema.json",
+  "title": "GOPS Chart Geometry Asset",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["assetVersion", "algorithmVersion", "symbol", "interval", "sourceInterval", "asOf", "generatedAt", "status", "inputDigest", "coverage", "geometry", "indicators"],
+  "properties": {
+    "assetVersion": {"const": "geometry"},
+    "algorithmVersion": {"type": "string", "minLength": 1},
+    "symbol": {"type": "string", "minLength": 1},
+    "interval": {"$ref": "#/$defs/interval"},
+    "sourceInterval": {"$ref": "#/$defs/interval"},
+    "asOf": {"type": "string", "format": "date-time"},
+    "generatedAt": {"type": "string", "format": "date-time"},
+    "status": {"const": "ready"},
+    "inputDigest": {"type": "string", "pattern": "^sha256:"},
+    "coverage": {
+      "type": "object",
+      "required": ["state", "targetBars", "actualBars", "contiguousBars", "missingBars"],
+      "properties": {
+        "state": {"enum": ["full", "partial"]},
+        "targetBars": {"type": "integer", "minimum": 120},
+        "actualBars": {"type": "integer", "minimum": 120},
+        "contiguousBars": {"type": "integer", "minimum": 120},
+        "missingBars": {"type": "integer", "minimum": 0}
+      }
+    },
+    "geometry": {
+      "type": "object",
+      "required": ["drawings", "supports", "resistances", "primaryTriangle", "historicalTriangle"],
+      "properties": {
+        "drawings": {"type": "array", "maxItems": 6, "items": {"$ref": "#/$defs/drawing"}},
+        "supports": {"type": "array", "maxItems": 2},
+        "resistances": {"type": "array", "maxItems": 2},
+        "primaryTriangle": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/triangle"}]},
+        "historicalTriangle": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/triangle"}]},
+        "evidence": {"type": "array"}
+      }
+    },
+    "indicators": {"type": "object"}
+  },
+  "$defs": {
+    "interval": {"enum": ["1m", "5m", "10m", "1h", "4h", "1D", "1W"]},
+    "anchor": {
+      "type": "object",
+      "required": ["timestamp", "price"],
+      "properties": {"timestamp": {"type": "string", "format": "date-time"}, "price": {"type": "number", "exclusiveMinimum": 0}}
+    },
+    "drawing": {
+      "type": "object",
+      "required": ["id", "type", "symbol", "interval", "anchors", "sourceInterval", "style", "visible", "createdBy", "sourceProposalId", "createdAt", "updatedAt"],
+      "properties": {
+        "id": {"type": "string"},
+        "type": {"enum": ["horizontalLine", "trendLine"]},
+        "symbol": {"type": "string", "minLength": 1},
+        "interval": {"$ref": "#/$defs/interval"},
+        "anchors": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"$ref": "#/$defs/anchor"}},
+        "sourceInterval": {"$ref": "#/$defs/interval"},
+        "style": {"type": "object"},
+        "visible": {"type": "boolean"},
+        "createdBy": {"const": "system"},
+        "sourceProposalId": {"type": "string"},
+        "createdAt": {"type": "string", "format": "date-time"},
+        "updatedAt": {"type": "string", "format": "date-time"}
+      }
+    },
+    "triangle": {
+      "type": "object",
+      "required": ["kind", "state", "score", "geometryHash"],
+      "properties": {
+        "kind": {"enum": ["ascending_triangle", "descending_triangle", "symmetrical_triangle"]},
+        "state": {"enum": ["forming", "confirmed", "inactive", "invalidated"]},
+        "score": {"type": "number", "minimum": 0, "maximum": 1},
+        "geometryHash": {"type": "string"}
+      }
+    }
+  }
+}

@@ -2,43 +2,43 @@ from __future__ import annotations
 
 import logging
 import os
+import socket
+import time
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
-from alfaka.common.kafka_io import create_json_consumer
 from gops_agents.chart_assets.builder import ChartAssetBuilder
-from gops_agents.chart_assets.envelope import envelope_from_dict
-from gops_agents.chart_assets.queue import DEFAULT_TOPIC
+from gops_agents.chart_assets.queue import build_chart_asset_queue_from_env
 
 
 LOGGER = logging.getLogger(__name__)
 
 
 def run() -> None:
-    consumer = create_json_consumer(
-        [os.getenv("CHART_ASSET_BUILD_REQUESTS_TOPIC", DEFAULT_TOPIC)],
-        os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"),
-        "gops-chart-asset-builder",
-        "gops-chart-asset-builder",
-        enable_auto_commit=False,
-        max_poll_records=1,
-        max_poll_interval_ms=os.getenv("CHART_ASSET_BUILD_MAX_POLL_INTERVAL_MS", "7200000"),
-    )
-    builder = ChartAssetBuilder()
-    try:
-        consume_messages(consumer, builder)
-    finally:
-        consumer.close()
+    concurrency = max(1, int(os.getenv("CHART_ASSET_BUILD_CONCURRENCY", "4")))
+    worker_id = f"{socket.gethostname()}-{os.getpid()}"
+    queue = build_chart_asset_queue_from_env()
+    builder = ChartAssetBuilder(concurrency=concurrency)
+    futures = set()
+    with ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="chart-geometry") as executor:
+        while True:
+            while len(futures) < concurrency:
+                claim = queue.claim_next(worker_id, lease_seconds=900)
+                if claim is None:
+                    break
+                futures.add(executor.submit(process_claim, builder, claim))
+            if not futures:
+                time.sleep(1.0)
+                continue
+            completed, futures = wait(futures, timeout=1.0, return_when=FIRST_COMPLETED)
+            for future in completed:
+                try:
+                    future.result()
+                except Exception:
+                    LOGGER.exception("chart geometry build item failed outside the item boundary")
 
 
-def consume_messages(consumer, builder) -> None:
-    for message in consumer:
-        try:
-            envelope = envelope_from_dict(message.value)
-        except (TypeError, ValueError) as exc:
-            LOGGER.error("discarding invalid chart asset build envelope: %s", exc)
-            consumer.commit()
-            continue
-        builder.run(envelope)
-        consumer.commit()
+def process_claim(builder: ChartAssetBuilder, claim: dict) -> dict:
+    return builder.run_item(claim["envelope"], claim["symbol"], claim["interval"])
 
 
 if __name__ == "__main__":

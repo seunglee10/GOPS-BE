@@ -63,6 +63,7 @@ class GeometryAssetKernelTest(unittest.TestCase):
         for drawing in result["drawings"]:
             self.assertIn(drawing["type"], {"horizontalLine", "trendLine"})
             self.assertTrue(drawing["id"].startswith("chart-asset:NVDA:10m:"))
+            self.assertEqual((drawing["symbol"], drawing["interval"], drawing["sourceInterval"]), ("NVDA", "10m", "10m"))
             for anchor in drawing["anchors"]:
                 self.assertIn(anchor["timestamp"], timestamps)
                 self.assertGreater(anchor["price"], 0)

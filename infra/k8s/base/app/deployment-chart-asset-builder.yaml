@@ -1,4 +1,4 @@
-# 역할: 수동 Chart Analysis Asset 빌드 요청을 독립적으로 처리합니다.
+# 역할: PostgreSQL 작업 큐에서 결정론적 Geometry Asset 빌드 항목을 처리합니다.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -30,8 +30,5 @@ spec:
                 name: alfaka-clickhouse-secret
                 optional: true
             - secretRef:
-                name: alfaka-openai-secret
-                optional: true
-            - secretRef:
                 name: alfaka-order-db-secret
-                optional: true
+                optional: false

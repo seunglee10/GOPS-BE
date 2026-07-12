@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
 
-ALLOWED_INTERVALS = ("1m", "5m", "10m", "1h", "4h", "1D", "1W", "1M")
-BUILD_INTERVAL_ORDER = ("1M", "1W", "1D", "4h", "1h", "10m", "5m", "1m")
+ALLOWED_INTERVALS = ("1m", "5m", "10m", "1h", "4h", "1D", "1W")
+BUILD_INTERVAL_ORDER = ("1W", "1D", "4h", "1h", "10m", "5m", "1m")
 
 
 @dataclass(frozen=True)
@@ -17,8 +17,6 @@ class ChartAssetBuildEnvelope:
     submitted_at: str
     symbols: tuple[str, ...]
     intervals: tuple[str, ...] = ALLOWED_INTERVALS
-    llm_enabled: bool = True
-    skip_fresh_hours: int = 0
     force: bool = False
 
     def to_dict(self) -> dict[str, Any]:
@@ -28,8 +26,6 @@ class ChartAssetBuildEnvelope:
             "submittedAt": self.submitted_at,
             "symbols": list(self.symbols),
             "intervals": list(self.intervals),
-            "llmEnabled": self.llm_enabled,
-            "skipFreshHours": self.skip_fresh_hours,
             "force": self.force,
         }
 
@@ -40,8 +36,6 @@ class ChartAssetBuildEnvelope:
         requested_by: str,
         symbols: list[str] | tuple[str, ...],
         intervals: list[str] | tuple[str, ...] = ALLOWED_INTERVALS,
-        llm_enabled: bool = True,
-        skip_fresh_hours: int = 0,
         job_id: str | None = None,
         submitted_at: str | None = None,
         force: bool = False,
@@ -59,8 +53,6 @@ class ChartAssetBuildEnvelope:
             submitted_at=submitted_at or utc_now_iso(),
             symbols=normalized_symbols,
             intervals=normalized_intervals,
-            llm_enabled=bool(llm_enabled),
-            skip_fresh_hours=max(0, int(skip_fresh_hours or 0)),
             force=bool(force),
         )
 
@@ -74,8 +66,6 @@ def envelope_from_dict(value: Any) -> ChartAssetBuildEnvelope:
         submitted_at=str(value.get("submittedAt") or "").strip() or None,
         symbols=value.get("symbols") or [],
         intervals=value.get("intervals") or ALLOWED_INTERVALS,
-        llm_enabled=value.get("llmEnabled", True),
-        skip_fresh_hours=value.get("skipFreshHours", 0),
         force=value.get("force", False),
     )
 

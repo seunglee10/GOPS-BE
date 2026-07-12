@@ -39,7 +39,7 @@ class GeometryAssetContractTest(unittest.TestCase):
         store.claim_next("worker-1", lease_seconds=900)
 
         query = connection.executions[0][0]
-        self.assertIn("FOR UPDATE SKIP LOCKED", query)
+        self.assertIn("FOR UPDATE OF item SKIP LOCKED", query)
         self.assertIn("lease_expires_at", query)
 
     def test_migration_defines_geometry_asset_and_job_tables(self):

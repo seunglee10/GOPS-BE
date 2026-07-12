@@ -1,23 +1,19 @@
 from __future__ import annotations
 
-import asyncio
 import hashlib
-import json
 import os
 import re
-import time
 from functools import lru_cache
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from app.auth.dependencies import require_current_user
 from app.auth.models import AuthenticatedUser
 from app.services.alfaka_market_data import configured_universe_symbols, normalize_market_symbol, sp500_universe_symbols
 from gops_agents.chart_assets.envelope import ALLOWED_INTERVALS, ChartAssetBuildEnvelope, utc_now_iso
-from gops_agents.chart_assets.progress import TERMINAL_STATUSES, build_progress_store_from_env
+from gops_agents.chart_assets.progress import build_progress_store_from_env
 from gops_agents.chart_assets.queue import build_chart_asset_queue_from_env
 from gops_agents.chart_assets.storage import build_chart_asset_storage_from_env
 
@@ -29,8 +25,6 @@ JOB_ID_PATTERN = r"^cab-[A-Za-z0-9-]{8,64}$"
 class ChartAssetBuildRequest(BaseModel):
     symbols: list[str] | Literal["sp500"]
     intervals: list[str] = Field(default_factory=lambda: list(ALLOWED_INTERVALS))
-    llmEnabled: bool = True
-    skipFreshHours: int = Field(default=0, ge=0, le=24 * 365)
     force: bool = False
 
     @field_validator("intervals")
@@ -94,8 +88,6 @@ def build_chart_analysis_assets(
         requested_by=hashlib.sha256(user.sub.encode("utf-8")).hexdigest()[:24],
         symbols=symbols,
         intervals=request.intervals,
-        llm_enabled=request.llmEnabled,
-        skip_fresh_hours=request.skipFreshHours,
         force=request.force,
     )
     progress = chart_asset_progress_store()
@@ -110,7 +102,6 @@ def build_chart_analysis_assets(
         "jobId": envelope.job_id,
         "status": "queued",
         "status_url": f"/api/charts/analysis-assets/build/{envelope.job_id}",
-        "stream_url": f"/api/charts/analysis-assets/build/{envelope.job_id}/stream",
     }
 
 
@@ -125,16 +116,6 @@ def chart_analysis_asset_build_status(
     return state
 
 
-@router.get("/api/charts/analysis-assets/build/{job_id}/stream")
-def chart_analysis_asset_build_stream(
-    job_id: str = Path(min_length=12, max_length=80, pattern=JOB_ID_PATTERN),
-    _user: AuthenticatedUser = Depends(require_current_user),
-) -> StreamingResponse:
-    if chart_asset_progress_store().get(job_id) is None:
-        raise HTTPException(status_code=404, detail="Chart analysis asset build job not found.")
-    return StreamingResponse(_stream_build_updates(job_id), media_type="text/event-stream")
-
-
 @router.post("/api/charts/analysis-assets/build/{job_id}/cancel")
 def cancel_chart_analysis_asset_build(
     job_id: str = Path(min_length=12, max_length=80, pattern=JOB_ID_PATTERN),
@@ -144,36 +125,6 @@ def cancel_chart_analysis_asset_build(
     if state is None:
         raise HTTPException(status_code=404, detail="Chart analysis asset build job not found.")
     return state
-
-
-async def _stream_build_updates(job_id: str):
-    store = chart_asset_progress_store()
-    pubsub = store.pubsub(job_id)
-    deadline = time.monotonic() + 3600
-    last_snapshot = None
-    try:
-        while time.monotonic() < deadline:
-            if pubsub is not None:
-                message = await asyncio.to_thread(pubsub.get_message, timeout=0.25)
-                if message and message.get("type") == "message":
-                    event = _json_object(message.get("data"))
-                    event_type = "log" if event.get("type") == "log" else "update"
-                    yield _sse(event_type, event)
-            state = store.get(job_id)
-            if state is None:
-                yield _sse("error", {"jobId": job_id, "detail": "job state expired"})
-                return
-            fingerprint = json.dumps(state, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-            if fingerprint != last_snapshot:
-                last_snapshot = fingerprint
-                yield _sse("status", state)
-            if state.get("status") in TERMINAL_STATUSES:
-                return
-            await asyncio.sleep(0.5)
-        yield _sse("timeout", {"jobId": job_id})
-    finally:
-        if pubsub is not None:
-            pubsub.close()
 
 
 def _requested_symbols(value: list[str] | str) -> list[str]:
@@ -202,18 +153,6 @@ def _parse_intervals_csv(value: str) -> list[str]:
     if not intervals or set(intervals).difference(ALLOWED_INTERVALS):
         raise HTTPException(status_code=400, detail="intervals must contain only supported chart intervals")
     return intervals
-
-
-def _json_object(value: Any) -> dict[str, Any]:
-    if isinstance(value, dict): return value
-    if isinstance(value, bytes): value = value.decode("utf-8")
-    try: parsed = json.loads(str(value))
-    except ValueError: return {}
-    return parsed if isinstance(parsed, dict) else {}
-
-
-def _sse(event: str, payload: dict[str, Any]) -> str:
-    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}\n\n"
 
 
 @lru_cache(maxsize=1)

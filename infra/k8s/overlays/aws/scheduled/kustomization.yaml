@@ -4,4 +4,5 @@ kind: Kustomization
 resources:
   - externalsecret-sec-fundamentals.yaml
   - cronjob-order-flow-daily-rollup.yaml
+  - cronjob-chart-geometry-build.yaml
   - cronjob-sec-fundamentals-sync.yaml

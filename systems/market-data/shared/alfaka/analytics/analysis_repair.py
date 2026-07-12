@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import os
 import threading
-import time as monotonic_time
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Callable, Iterable
 from zoneinfo import ZoneInfo
 
-from alfaka.backfill.runner import BackfillDeadlineExceeded, BackfillRunner, BackfillUnavailable
+from alfaka.backfill.runner import BackfillRunner, BackfillUnavailable
 from alfaka.backfill.gapfill import TradingCalendar
 from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
 from alfaka.storage.candle_validation import invalid_candle_numeric_reason
@@ -94,23 +92,13 @@ class AnalysisCandleRepairService:
         alpaca_enabled: bool | None = None,
         max_ranges: int | None = None,
         concurrency: int | None = None,
-        s3_timeout_seconds: float | None = None,
     ):
         self.provider = provider or ClickHouseMarketDataProvider()
         self.now_provider = now_provider or (lambda: datetime.now(timezone.utc))
         self.enabled = _env_bool("CHART_ASSET_REPAIR_ENABLED", True) if enabled is None else bool(enabled)
-        self.alpaca_enabled = _env_bool("CHART_ASSET_REPAIR_ALPACA_ENABLED", False) if alpaca_enabled is None else bool(alpaca_enabled)
+        self.alpaca_enabled = _env_bool("CHART_ASSET_REPAIR_ALPACA_ENABLED", True) if alpaca_enabled is None else bool(alpaca_enabled)
         self.max_ranges = max(1, int(max_ranges or os.getenv("CHART_ASSET_REPAIR_MAX_RANGES", "8")))
-        self.s3_timeout_seconds = max(
-            0.001,
-            float(s3_timeout_seconds or os.getenv("CHART_ASSET_REPAIR_S3_TIMEOUT_SECONDS", "45")),
-        )
-        self.runner_factory = runner_factory or (
-            lambda: BackfillRunner(
-                store=None,
-                s3_operation_timeout_seconds=self.s3_timeout_seconds,
-            )
-        )
+        self.runner_factory = runner_factory or (lambda: BackfillRunner(store=None))
         self._semaphore = threading.BoundedSemaphore(max(1, int(concurrency or os.getenv("CHART_ASSET_REPAIR_CONCURRENCY", "2"))))
 
     def ensure_ready(
@@ -134,27 +122,12 @@ class AnalysisCandleRepairService:
             return AnalysisRepairResult(True, False, False, True, before.missing_bars, before.missing_bars, 0, "canceled")
 
         alpaca_error = False
-        alpaca_empty_head = False
-        s3_timed_out = False
         with self._semaphore:
             runner = self.runner_factory()
-            daily_ranges = tuple(item for item in before.ranges if item.interval == "1D")
-            _s3_materialized, _s3_unavailable, s3_timed_out = self._repair_s3_batch(
-                runner,
-                symbol,
-                daily_ranges,
-                request_id=request_id,
-                emit=emit,
-                cancel=cancel,
-                timeout_seconds=self.s3_timeout_seconds,
-            )
-            after_s3 = self.audit(symbol, intervals)
-            emit("recheck", {"source": "s3", **after_s3.to_dict()})
-            if after_s3.missing_bars and self.alpaca_enabled and not cancel():
-                _alpaca_materialized, alpaca_error, alpaca_empty_head = self._repair_ranges(
+            if self.alpaca_enabled and not cancel():
+                _alpaca_materialized, alpaca_error, _alpaca_empty_head = self._repair_ranges(
                     runner,
-                    symbol,
-                    after_s3.ranges,
+                    symbol, before.ranges,
                     source_preference="alpaca-only",
                     request_id=request_id,
                     stage="alpaca",
@@ -168,12 +141,10 @@ class AnalysisCandleRepairService:
             reason = "canceled"
         elif after.missing_bars == 0:
             reason = "repaired"
-        elif s3_timed_out and not self.alpaca_enabled:
-            reason = "s3_timeout"
         elif not self.alpaca_enabled:
             reason = "alpaca_disabled"
-        elif alpaca_empty_head and all(item.kind == "missing_head" for item in after.ranges):
-            reason = "insufficient_listing_history"
+        elif _partial_history_is_usable(after):
+            reason = "partial_listing_history"
         elif alpaca_error:
             reason = "alpaca_unavailable"
         else:
@@ -182,7 +153,7 @@ class AnalysisCandleRepairService:
             checked=True,
             attempted=True,
             repaired=after.missing_bars == 0,
-            unavailable=after.missing_bars > 0,
+            unavailable=after.missing_bars > 0 and not _partial_history_is_usable(after),
             missing_before=before.missing_bars,
             missing_after=after.missing_bars,
             # Stage runners may read shared objects or merged request ranges.
@@ -191,118 +162,6 @@ class AnalysisCandleRepairService:
             materialized_rows=max(0, before.missing_bars - after.missing_bars),
             reason=reason,
         )
-
-    @staticmethod
-    def _repair_s3_batch(
-        runner: Any,
-        symbol: str,
-        ranges: Iterable[AnalysisRepairRange],
-        *,
-        request_id: str,
-        emit: RepairEventHandler,
-        cancel: CancelCheck,
-        timeout_seconds: float,
-    ) -> tuple[int, bool, bool]:
-        repair_ranges = tuple(ranges)
-        if not repair_ranges or cancel():
-            return 0, False, False
-        range_payload = [item.to_dict() for item in repair_ranges]
-        emit("s3", {
-            "status": "started",
-            "rangeCount": len(repair_ranges),
-            "missingBars": sum(item.missing_count for item in repair_ranges),
-            "ranges": range_payload,
-        })
-        abort = threading.Event()
-        lookup_metrics: dict[str, Any] = {}
-        record = {
-                "schemaVersion": 1,
-                "requestId": f"{request_id}-s3",
-                "symbol": symbol,
-                "interval": "1D",
-                "range": {
-                    "start": repair_ranges[0].start,
-                    "end": repair_ranges[-1].end,
-                },
-                "analysisRepairRanges": [
-                    {"start": item.start, "end": item.end, "missingCount": item.missing_count, "candleKeys": list(item.missing_keys)}
-                    for item in repair_ranges
-                ],
-                "jobType": "gapfill",
-                "sourcePreference": "s3-only",
-                "mode": "inline",
-                "force": False,
-                "_deadlineMonotonic": monotonic_time.monotonic() + timeout_seconds,
-                "_cancelCheck": lambda: cancel() or abort.is_set(),
-                "_lookupMetrics": lookup_metrics,
-            }
-        executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="chart-asset-s3-repair")
-        prepare = getattr(runner, "prepare_analysis_s3_repair", None)
-        task = prepare if callable(prepare) else runner.run
-        future = executor.submit(task, record)
-        try:
-            outcome = future.result(timeout=timeout_seconds)
-            if cancel():
-                abort.set()
-                raise BackfillUnavailable("Analysis repair was canceled.")
-            if callable(prepare):
-                commit = getattr(runner, "commit_analysis_s3_repair", None)
-                if not callable(commit):
-                    raise BackfillUnavailable("Analysis repair commit boundary is unavailable.")
-                outcome = commit(outcome)
-            result = outcome.get("result") if isinstance(outcome, dict) and isinstance(outcome.get("result"), dict) else outcome
-            result = result or {}
-            rows = int(result.get("materializedRowCount") or 0)
-            metrics = dict(result.get("lookupMetrics") or {})
-            emit("s3", {
-                "status": "completed",
-                "rangeCount": len(repair_ranges),
-                "materializedRows": rows,
-                "metrics": metrics,
-            })
-            return rows, False, False
-        except FutureTimeoutError:
-            abort.set()
-            metrics = dict(lookup_metrics)
-            metrics["elapsedMs"] = max(
-                int(metrics.get("elapsedMs") or 0),
-                int(round(timeout_seconds * 1000)),
-            )
-            emit("s3", {
-                "status": "unavailable",
-                "reason": "BackfillDeadlineExceeded: S3 analysis repair exceeded its stage deadline.",
-                "reasonCode": "s3_timeout",
-                "rangeCount": len(repair_ranges),
-                "metrics": metrics,
-            })
-            return 0, True, True
-        except BackfillDeadlineExceeded as exc:
-            emit("s3", {
-                "status": "unavailable",
-                "reason": _compact_reason(exc),
-                "reasonCode": "s3_timeout",
-                "rangeCount": len(repair_ranges),
-                "metrics": dict(exc.metrics or {}),
-            })
-            return 0, True, True
-        except BackfillUnavailable as exc:
-            emit("s3", {
-                "status": "unavailable",
-                "reason": _compact_reason(exc),
-                "rangeCount": len(repair_ranges),
-                "metrics": dict(getattr(exc, "metrics", {}) or {}),
-            })
-            return 0, True, False
-        except Exception as exc:
-            emit("s3", {
-                "status": "failed",
-                "reason": _compact_reason(exc),
-                "rangeCount": len(repair_ranges),
-                "metrics": dict(getattr(exc, "metrics", {}) or {}),
-            })
-            return 0, True, False
-        finally:
-            executor.shutdown(wait=False, cancel_futures=True)
 
     def audit(self, symbol: str, intervals: Iterable[str]) -> AnalysisReadinessAudit:
         requested = tuple(dict.fromkeys(intervals))
@@ -502,3 +361,7 @@ def _env_bool(name: str, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _partial_history_is_usable(audit: AnalysisReadinessAudit) -> bool:
+    return audit.actual_bars >= 120 and bool(audit.ranges) and all(item.kind == "missing_head" for item in audit.ranges)

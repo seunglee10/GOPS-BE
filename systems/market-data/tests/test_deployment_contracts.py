@@ -17,20 +17,19 @@ def load_yaml(relative_path: str):
 
 
 class DeploymentContractsTest(unittest.TestCase):
-    def test_chart_asset_repair_aws_overlay_enables_bounded_alpaca_fallback(self):
+    def test_chart_asset_runtime_is_postgres_alpaca_only(self):
         base = load_yaml("infra/k8s/base/app/configmap.yaml")["data"]
-        self.assertEqual(base["CHART_ASSET_REPAIR_ALPACA_ENABLED"], "false")
-        self.assertEqual(base["CHART_ASSET_REPAIR_S3_TIMEOUT_SECONDS"], "45")
-        self.assertEqual(base["CHART_ASSET_STORAGE_MODE"], "clickhouse")
+        self.assertEqual(base["CHART_ASSET_REPAIR_ALPACA_ENABLED"], "true")
+        self.assertNotIn("CHART_ASSET_REPAIR_S3_TIMEOUT_SECONDS", base)
+        self.assertNotIn("CHART_ASSET_STORAGE_MODE", base)
+        self.assertNotIn("CHART_ASSET_BUILD_REQUESTS_TOPIC", base)
         self.assertEqual(base["CHART_ASSET_STORAGE_MAINTENANCE"], "false")
 
         compose_builder = load_yaml("docker-compose.yml")["services"]["chart-asset-builder"]
         compose_env = compose_builder["environment"]
-        self.assertEqual(compose_env["CHART_ASSET_REPAIR_ALPACA_ENABLED"], "${CHART_ASSET_REPAIR_ALPACA_ENABLED:-false}")
-        self.assertEqual(compose_env["CHART_ASSET_REPAIR_S3_TIMEOUT_SECONDS"], "${CHART_ASSET_REPAIR_S3_TIMEOUT_SECONDS:-45}")
-        self.assertEqual(compose_env["S3_HISTORICAL_PROCESSED_MANIFEST_LAYOUT"], "${S3_HISTORICAL_PROCESSED_MANIFEST_LAYOUT:-compact}")
-        for name in ("S3_BUCKET", "S3_ENDPOINT_URL", "S3_FINAL_PREFIX", "S3_MANIFEST_PREFIX"):
-            self.assertIn(name, compose_env)
+        self.assertEqual(compose_env["CHART_ASSET_REPAIR_ALPACA_ENABLED"], "${CHART_ASSET_REPAIR_ALPACA_ENABLED:-true}")
+        for name in ("REDIS_URL", "KAFKA_BOOTSTRAP_SERVERS", "S3_BUCKET", "OPENAI_API_KEY"):
+            self.assertNotIn(name, compose_env)
 
         completed = subprocess.run(
             ["kubectl", "kustomize", "infra/k8s/overlays/aws-incluster-app-ci"],
@@ -52,7 +51,7 @@ class DeploymentContractsTest(unittest.TestCase):
         self.assertEqual(data["CHART_ASSET_REPAIR_ALPACA_ENABLED"], "true")
         self.assertEqual(data["CHART_ASSET_REPAIR_CONCURRENCY"], "2")
         self.assertEqual(data["CHART_ASSET_REPAIR_MAX_RANGES"], "8")
-        self.assertEqual(data["CHART_ASSET_REPAIR_S3_TIMEOUT_SECONDS"], "45")
+        self.assertNotIn("CHART_ASSET_REPAIR_S3_TIMEOUT_SECONDS", data)
 
     def test_chart_asset_postgres_migration_is_explicit_and_builder_has_db_secret(self):
         base_resources = load_yaml("infra/k8s/base/kustomization.yaml")["resources"]
@@ -70,26 +69,18 @@ class DeploymentContractsTest(unittest.TestCase):
         migration = load_yaml("infra/k8s/base/job-chart-asset-migrations.yaml")
         container = migration["spec"]["template"]["spec"]["containers"][0]
         self.assertIn("chart-asset-migrations/main.py", " ".join(container["command"]))
-        action = next(item for item in container["env"] if item["name"] == "CHART_ASSET_MIGRATION_ACTION")
-        self.assertEqual(action["value"], "migrate")
         required_secrets = {
             item["secretRef"]["name"]
             for item in container["envFrom"]
             if "secretRef" in item and item["secretRef"].get("optional") is False
         }
-        self.assertEqual(required_secrets, {"alfaka-clickhouse-secret", "alfaka-order-db-secret"})
+        self.assertEqual(required_secrets, {"alfaka-order-db-secret"})
 
         runner = (REPO_ROOT / "scripts/aws/run-chart-asset-migrations-job.sh").read_text(encoding="utf-8")
-        self.assertIn("CHART_ASSET_MIGRATIONS_JOB_NAME must be a Kubernetes DNS label", runner)
-        self.assertIn("K8S_NAMESPACE must be a Kubernetes DNS label", runner)
         self.assertIn("name: ${JOB_NAME}", runner)
         self.assertIn("namespace: ${K8S_NAMESPACE}", runner)
-        self.assertIn('deployment/${BUILDER_DEPLOYMENT}', runner)
-        self.assertIn("jsonpath='{.spec.replicas}'", runner)
-        self.assertIn("-l app=chart-asset-builder -o name", runner)
-        self.assertIn('-l "${BACKEND_LABEL}" -o name', runner)
-        self.assertIn("printenv CHART_ASSET_STORAGE_MAINTENANCE", runner)
-        self.assertIn('"${ACTION}" == "sync" || "${ACTION}" == "verify"', runner)
+        self.assertNotIn("sync", runner)
+        self.assertNotIn("verify", runner)
 
         compose = load_yaml("docker-compose.yml")
         compose_migration = compose["services"]["chart-asset-migrations"]
@@ -98,6 +89,17 @@ class DeploymentContractsTest(unittest.TestCase):
             compose_migration["environment"]["CHART_ASSET_STORAGE_MAINTENANCE"],
             "${CHART_ASSET_STORAGE_MAINTENANCE:-false}",
         )
+
+    def test_chart_geometry_schedule_and_manual_job_cover_all_seven_intervals(self):
+        cron = load_yaml("infra/k8s/overlays/aws/scheduled/cronjob-chart-geometry-build.yaml")
+        self.assertEqual(cron["spec"]["schedule"], "40 8 * * 1-5")
+        self.assertEqual(cron["spec"]["timeZone"], "Asia/Seoul")
+        self.assertEqual(cron["spec"]["concurrencyPolicy"], "Forbid")
+        container = cron["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]
+        intervals = next(item["value"] for item in container["env"] if item["name"] == "CHART_ASSET_INTERVALS")
+        self.assertEqual(intervals, "1m,5m,10m,1h,4h,1D,1W")
+        manual = (REPO_ROOT / "scripts/aws/run-chart-geometry-build-job.sh").read_text(encoding="utf-8")
+        self.assertIn('INTERVALS="${INTERVALS:-1m,5m,10m,1h,4h,1D,1W}"', manual)
 
     def test_agent_shared_changes_rebuild_agent_and_backend_images(self):
         detector = (REPO_ROOT / "scripts/aws/detect-changed-services.sh").read_text(encoding="utf-8")
@@ -116,7 +118,7 @@ class DeploymentContractsTest(unittest.TestCase):
         agent_case = agent_case[:agent_case.index(";;")]
         self.assertIn("chart-asset-builder", agent_case)
 
-    def test_chart_asset_migration_runner_requires_stopped_builder_and_renders_custom_name(self):
+    def test_chart_asset_migration_runner_renders_custom_name(self):
         runner = REPO_ROOT / "scripts/aws/run-chart-asset-migrations-job.sh"
         with tempfile.TemporaryDirectory() as temp_dir:
             temp = Path(temp_dir)
@@ -124,22 +126,6 @@ class DeploymentContractsTest(unittest.TestCase):
             fake_kubectl.write_text(
                 """#!/usr/bin/env bash
 set -euo pipefail
-if [[ "$1" == "get" && "$2" == "deployment/chart-asset-builder" ]]; then
-  printf '%s' "${FAKE_REPLICAS:-0}"
-  exit 0
-fi
-if [[ "$1" == "get" && "$2" == "pods" && "$6" == "app=gops-backend" ]]; then
-  printf '%s' "${FAKE_BACKEND_PODS:-pod/gops-backend-test}"
-  exit 0
-fi
-if [[ "$1" == "get" && "$2" == "pods" ]]; then
-  printf '%s' "${FAKE_PODS:-}"
-  exit 0
-fi
-if [[ "$1" == "exec" ]]; then
-  printf '%s' "${FAKE_BACKEND_MAINTENANCE:-true}"
-  exit 0
-fi
 if [[ "$1" == "apply" ]]; then
   cp "$3" "${APPLIED_MANIFEST}"
 fi
@@ -155,40 +141,13 @@ fi
                 "APPLIED_MANIFEST": str(temp / "applied.yaml"),
             }
 
-            blocked = subprocess.run(
-                [str(runner)],
-                cwd=REPO_ROOT,
-                env={**base_env, "CHART_ASSET_MIGRATION_ACTION": "sync", "FAKE_REPLICAS": "1"},
-                capture_output=True,
-                text=True,
-            )
-            self.assertEqual(blocked.returncode, 2)
-            self.assertIn("Scale deployment/chart-asset-builder to 0", blocked.stderr)
-
-            backend_not_restarted = subprocess.run(
-                [str(runner)],
-                cwd=REPO_ROOT,
-                env={
-                    **base_env,
-                    "CHART_ASSET_MIGRATION_ACTION": "sync",
-                    "FAKE_REPLICAS": "0",
-                    "FAKE_BACKEND_MAINTENANCE": "false",
-                },
-                capture_output=True,
-                text=True,
-            )
-            self.assertEqual(backend_not_restarted.returncode, 2)
-            self.assertIn("Restart every gops-backend pod", backend_not_restarted.stderr)
-
             completed = subprocess.run(
                 [str(runner)],
                 cwd=REPO_ROOT,
                 env={
                     **base_env,
-                    "CHART_ASSET_MIGRATION_ACTION": "verify",
                     "CHART_ASSET_MIGRATIONS_JOB_NAME": "chart-assets-verify",
                     "K8S_NAMESPACE": "chart-assets-test",
-                    "FAKE_REPLICAS": "0",
                 },
                 check=True,
                 capture_output=True,
@@ -197,10 +156,7 @@ fi
             applied = yaml.safe_load((temp / "applied.yaml").read_text(encoding="utf-8"))
             self.assertEqual(applied["metadata"]["name"], "chart-assets-verify")
             self.assertEqual(applied["metadata"]["namespace"], "chart-assets-test")
-            container = applied["spec"]["template"]["spec"]["containers"][0]
-            action = next(item for item in container["env"] if item["name"] == "CHART_ASSET_MIGRATION_ACTION")
-            self.assertEqual(action["value"], "verify")
-            self.assertIn("action=verify", completed.stdout)
+            self.assertNotIn("CHART_ASSET_MIGRATION_ACTION", str(applied))
 
     def test_kafka_uses_persistent_child_log_directory(self):
         kafka = load_yaml("infra/k8s/base/platform/kafka-statefulset.yaml")
