@@ -161,34 +161,18 @@ For an externally managed bucket, its owner must add both raw-prefix expiry
 rules. Never enable this module merely to append rules; the AWS lifecycle API
 treats the configuration as one bucket-wide document.
 
-## Chart Asset PostgreSQL Cutover
+## Chart Geometry PostgreSQL Schema
 
-Keep `CHART_ASSET_STORAGE_MODE=clickhouse` until the chart-owned migration job
-has created `chart_assets.analysis_assets`. Move to `dual_clickhouse_read` and
-drain the builder queue. Then set `CHART_ASSET_STORAGE_MAINTENANCE=true`, restart
-and verify `gops-backend` so build/delete return 503, restart the builder into its
-read-only maintenance guard, and scale `deployment/chart-asset-builder` to zero.
-Wait until no builder pod remains before running:
+Geometry asset payload와 build queue는 PostgreSQL만 사용한다. 배포 전 builder를
+중단하고 다음 schema migration을 실행한다.
 
 ```bash
-CHART_ASSET_MIGRATION_ACTION=sync CHART_ASSET_MIGRATION_PRUNE=true \
-  scripts/aws/run-chart-asset-migrations-job.sh
-CHART_ASSET_MIGRATION_ACTION=verify \
-  scripts/aws/run-chart-asset-migrations-job.sh
+scripts/aws/run-chart-asset-migrations-job.sh
 ```
 
-`run-chart-asset-migrations-job.sh`는 sync/verify 전에 실행 중인 모든
-`gops-backend` pod의 `CHART_ASSET_STORAGE_MAINTENANCE=true`를 직접 확인하고,
-builder replica 0과 남은 pod 0을 확인한다. ConfigMap만 바꾸고 backend rollout을
-생략한 상태에서는 fail closed로 실행하지 않는다.
-
-Unset maintenance only after pair and canonical payload digest parity is 100%.
-Then use `dual_postgres_read` for at least seven days/one release. Any missing,
-extra, mismatched, shadow-write, 5xx, or latency regression returns the read
-primary to ClickHouse. Switch to `postgres` only after the observation gate;
-do not drop the ClickHouse compatibility table in the same rollout. Restore the
-builder replica and restart both backend and builder only after the selected
-storage mode and maintenance=false have been deployed.
+새 migration은 `geometry_assets`, `geometry_build_jobs`, `geometry_build_items`만 만든다.
+기존 숫자형 자산을 복사하거나 parity fallback으로 사용하지 않는다. Runtime은 schema를
+자동 생성하지 않는다. migration 성공 후 backend와 builder를 재시작한다.
 
 ## Rollback
 

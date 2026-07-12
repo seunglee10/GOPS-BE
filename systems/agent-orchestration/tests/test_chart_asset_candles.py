@@ -26,7 +26,7 @@ class FakeProvider:
 
 
 class ChartAssetCandleLoaderTest(unittest.TestCase):
-    def test_weekly_loader_drops_current_incomplete_bucket(self):
+    def test_weekly_loader_keeps_bucket_after_its_last_market_session_closes(self):
         loader = ChartAssetCandleLoader(
             FakeProvider([candle("2026-06-29T00:00:00.000Z"), candle("2026-07-06T00:00:00.000Z")]),
             now_provider=lambda: datetime(2026, 7, 11, tzinfo=timezone.utc),
@@ -34,17 +34,19 @@ class ChartAssetCandleLoaderTest(unittest.TestCase):
 
         rows = loader.load("NVDA", "1W")
 
-        self.assertEqual([row["timestamp"] for row in rows], ["2026-06-29T00:00:00.000Z"])
+        self.assertEqual(
+            [row["timestamp"] for row in rows],
+            ["2026-06-29T00:00:00.000Z", "2026-07-06T00:00:00.000Z"],
+        )
 
-    def test_monthly_loader_drops_current_incomplete_bucket(self):
+    def test_monthly_loader_is_not_a_geometry_asset_interval(self):
         loader = ChartAssetCandleLoader(
             FakeProvider([candle("2026-06-01T00:00:00.000Z"), candle("2026-07-01T00:00:00.000Z")]),
             now_provider=lambda: datetime(2026, 7, 11, tzinfo=timezone.utc),
         )
 
-        rows = loader.load("NVDA", "1M")
-
-        self.assertEqual([row["timestamp"] for row in rows], ["2026-06-01T00:00:00.000Z"])
+        with self.assertRaisesRegex(ValueError, "Unsupported geometry interval"):
+            loader.load("NVDA", "1M")
 
     def test_completed_weekly_bucket_is_retained_at_next_boundary(self):
         loader = ChartAssetCandleLoader(

@@ -40,6 +40,7 @@ SNAPSHOT_BUNDLE_BY_INTENT = {
     "financial_analysis": ["financial_snapshot", "risk_policy_snapshot"],
     "financial_comparison": ["financial_snapshot", "financial_peer_snapshot", "risk_policy_snapshot"],
     "financial_news_analysis": ["financial_snapshot", "news_snapshot", "risk_policy_snapshot"],
+    "risk_check": ["risk_events_snapshot", "market_snapshot", "risk_policy_snapshot"],
     "general_question": ["risk_policy_snapshot"],
 }
 
@@ -311,6 +312,8 @@ def route_plan_intent(route: IntentRoute) -> str:
     intent_type = str(route.intentType or "").strip().lower()
     intent_types = {part.strip() for part in intent_type.split("+") if part.strip()}
     roles = list(route.selectedRoles or [])
+    if "risk" in roles or "risk-check" in intent_types:
+        return "risk_check"
     if "financial" in roles or any("financial" in item for item in intent_types):
         if "news" in roles or "news" in intent_types:
             return "financial_news_analysis"
@@ -382,6 +385,7 @@ class SnapshotExecutor:
         self.financial = FinancialSnapshotProvider()
         self.financial_peer = FinancialPeerSnapshotProvider(self.financial.provider)
         self.risk = RiskPolicySnapshotProvider()
+        self.risk_events = RiskEventsSnapshotProvider()
 
     def fetch(self, *, context: Any, run_id: str, route_plan: RoutePlan, policy: RuntimePolicy) -> list[DataSnapshot]:
         providers = {
@@ -390,6 +394,7 @@ class SnapshotExecutor:
             "relationship_snapshot": self.relationship,
             "financial_snapshot": self.financial,
             "financial_peer_snapshot": self.financial_peer,
+            "risk_events_snapshot": self.risk_events,
         }
         bundle = [item for item in route_plan.snapshot_bundle if item in providers]
         snapshots_by_type: dict[str, DataSnapshot] = {}
@@ -707,6 +712,47 @@ class RiskPolicySnapshotProvider:
         )
 
 
+class RiskEventsSnapshotProvider:
+    """리스크 모니터가 발행한 최근 이벤트를 스냅숏으로 노출 (조회 전용)."""
+
+    def __init__(self, provider: Any = None):
+        if provider is None:
+            from ..providers import RedisRiskEventsProvider
+
+            provider = RedisRiskEventsProvider()
+        self.provider = provider
+
+    def fetch(self, context: Any, run_id: str, max_items: int) -> DataSnapshot:
+        started_at = time.perf_counter()
+        request = ProviderRequest(
+            str(getattr(context, "symbol", "") or ""),
+            str(getattr(context, "intent", "") or ""),
+            symbols=tuple(str(item) for item in getattr(context, "newsSymbols", []) or []),
+        )
+        evidence = list(self.provider.fetch(request))[:max_items]
+        available = [item for item in evidence if item.status == "available"]
+        if available:
+            summary = f"{request.symbol or '포트폴리오'} 관련 리스크 이벤트 {len(available)}건: {available[0].summary}"
+        else:
+            summary = f"{request.symbol or '포트폴리오'} 관련 최근 리스크 이벤트가 없습니다. 방어 룰에 걸린 항목이 없습니다."
+        return sanitize_snapshot(DataSnapshot(
+            snapshot_id=stable_id("snapshot", {"runId": run_id, "type": "risk_events_snapshot", "symbol": request.symbol}),
+            run_id=run_id,
+            snapshot_type="risk_events_snapshot",
+            status="success" if available else "partial",
+            source="computed",
+            cache_hit=False,
+            freshness={"generated_at": utc_now_iso(), "stale": False},
+            summary=summary,
+            signals=[],
+            evidence=evidence,
+            data_quality="medium" if available else "low",
+            confidence=0.7 if available else 0.4,
+            latency_ms=elapsed_ms(started_at),
+            warnings=[] if available else ["no_recent_risk_events"],
+        ))
+
+
 def sanitize_snapshot(snapshot: DataSnapshot) -> DataSnapshot:
     summary_result = sanitize_text(snapshot.summary)
     freshness_result = sanitize_value(dict(snapshot.freshness))
@@ -1006,6 +1052,8 @@ def snapshot_for_role(role: str, by_type: dict[str, DataSnapshot]) -> DataSnapsh
         return by_type.get("relationship_snapshot")
     if role == "financial":
         return merge_financial_snapshots(by_type)
+    if role == "risk":
+        return by_type.get("risk_events_snapshot")
     return None
 
 
@@ -1044,6 +1092,7 @@ def role_name(role: str) -> str:
         "macro": "macro-analysis",
         "ontology": "company-relationship-analysis",
         "financial": "financial-analysis",
+        "risk": "risk-analysis",
     }.get(role, role)
 
 

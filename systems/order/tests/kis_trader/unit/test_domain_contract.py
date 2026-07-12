@@ -6,6 +6,7 @@ from kis_trader.domain import (
     ORDER_EVENTS_TOPIC,
     ORDERS_COMMANDS_TOPIC,
     ORDERS_DLQ_TOPIC,
+    ORDERS_FILLS_TOPIC,
     SUBMIT_RESULTS_TOPIC,
     OrderStatus,
     assert_transition_allowed,
@@ -41,6 +42,7 @@ def test_topics_are_exactly_the_doc_canonical_set():
         ORDERS_COMMANDS_TOPIC,
         SUBMIT_RESULTS_TOPIC,
         ORDER_EVENTS_TOPIC,
+        ORDERS_FILLS_TOPIC,
         ORDERS_DLQ_TOPIC,
     )
 

@@ -15,8 +15,8 @@ from .pivots import compute_pivots
 from .trends import compute_regime, compute_trends
 
 
-DISPLAY_BARS = {"1m": 120, "5m": 120, "10m": 120, "1h": 120, "4h": 120, "1D": 120, "1W": 104, "1M": 36}
-LOOKBACK_BARS = {"1m": 500, "5m": 500, "10m": 500, "1h": 500, "4h": 500, "1D": 500, "1W": 312, "1M": 72}
+DISPLAY_BARS = {"1m": 260, "5m": 260, "10m": 260, "1h": 260, "4h": 260, "1D": 260, "1W": 192, "1M": 36}
+LOOKBACK_BARS = {"1m": 380, "5m": 380, "10m": 380, "1h": 380, "4h": 380, "1D": 380, "1W": 312, "1M": 72}
 
 
 def normalize_candles(candles: list[dict[str, Any]], interval: str) -> list[dict[str, Any]]:

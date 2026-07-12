@@ -35,7 +35,7 @@ def compute_patterns(
     if len(candles) < 20 or atr <= 0 or interval not in QUALITY_CONFIG:
         return []
     candidates = [
-        *_triangle_candidates(candles, pivots, atr=atr, interval=interval),
+        *compute_triangles(candles, pivots, atr=atr, interval=interval),
         *_flag_candidates(candles, pivots, atr=atr, interval=interval),
     ]
     passed = sorted(
@@ -47,6 +47,19 @@ def compute_patterns(
         key=lambda item: (-float(item["score"]), item["id"]),
     )
     return [*passed[:1], *rejected[:3]]
+
+
+def compute_triangles(
+    candles: list[dict[str, Any]],
+    pivots: list[dict[str, Any]],
+    *,
+    atr: float,
+    interval: str,
+) -> list[dict[str, Any]]:
+    """Return the previous regression-fitted triangle candidates only."""
+    if len(candles) < 20 or atr <= 0 or interval not in QUALITY_CONFIG:
+        return []
+    return _triangle_candidates(candles, pivots, atr=atr, interval=interval)
 
 
 def _triangle_candidates(candles, pivots, *, atr, interval):

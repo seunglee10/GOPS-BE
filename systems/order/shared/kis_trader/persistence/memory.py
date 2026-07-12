@@ -9,9 +9,18 @@ from typing import Any
 from uuid import uuid4
 
 from kis_trader.domain.commands import OrderCommand
-from kis_trader.domain.envelope import build_order_status_envelope
+from kis_trader.domain.envelope import build_order_fill_envelope, build_order_status_envelope
 from kis_trader.domain.status import OrderStatus, assert_transition_allowed, is_terminal_status
-from kis_trader.domain.topics import ORDER_EVENTS_TOPIC, ORDERS_COMMANDS_TOPIC, ORDERS_DLQ_TOPIC, SUBMIT_RESULTS_TOPIC, build_order_message_key
+from kis_trader.domain.topics import (
+    ORDER_EVENTS_TOPIC,
+    ORDERS_COMMANDS_TOPIC,
+    ORDERS_DLQ_TOPIC,
+    ORDERS_FILLS_TOPIC,
+    SUBMIT_RESULTS_TOPIC,
+    build_order_message_key,
+)
+
+FILL_STATUSES = {OrderStatus.FILLED, OrderStatus.PARTIALLY_FILLED}
 from kis_trader.security.redaction import redact_sensitive
 
 from .repository import IdempotencyConflictError, OrderCreationResult, OrderNotFoundError, SubmissionIntent, utc_now_iso
@@ -135,7 +144,17 @@ class InMemoryOrderRepository:
             self.orders[order_id]["status"] = status.value
             self.orders[order_id]["reason"] = reason
             self.orders[order_id]["updated_at"] = utc_now_iso()
-            return self._append_order_event(order_id, status, reason)
+            event_id = self._append_order_event(order_id, status, reason)
+            if status in FILL_STATUSES:
+                order = self.orders[order_id]
+                self._insert_outbox_event(
+                    ORDERS_FILLS_TOPIC,
+                    order_id,
+                    status,
+                    build_order_fill_envelope(order, reason=reason),
+                    message_key=build_order_message_key(order["account_alias"], order["symbol"]),
+                )
+            return event_id
 
     def fetch_pending_outbox(self, limit: int | None = None, topic: str | None = None) -> list[dict[str, Any]]:
         with self._lock:

@@ -17,7 +17,9 @@ from app.auth.dependencies import (
 )
 from app.auth.models import AuthenticatedUser
 from app.routes.simulator import simulator_gateway_from_app, simulator_mode_active
+from app.services.risk_context import build_risk_context, risk_pretrade_enabled
 from kis_trader.domain.commands import validate_order_request_payload
+from kis_trader.risk import PretradeVerdict, evaluate_pretrade, load_risk_config
 from kis_trader.domain.envelope import build_order_command_envelope, validate_order_envelope
 from kis_trader.domain.status import CANONICAL_STATUSES, OrderContractError
 from kis_trader.domain.topics import CANONICAL_ORDER_TOPICS
@@ -87,6 +89,14 @@ async def create_order(
             "role": payload.get("role") or "trader",
         }
     order_request = _validate_order_request(payload)
+    verdict = _risk_verdict(request.app, current_user.sub, order_request)
+    if verdict is not None and verdict.verdict != "allow":
+        # Block outright, or ask the user to confirm the suggested qty by
+        # resubmitting. The risk engine never silently changes an order.
+        raise HTTPException(
+            status_code=422,
+            detail={"reason": "risk rejected", "risk": verdict.to_dict()},
+        )
     if simulator_mode_active(request.app):
         try:
             result = simulator_gateway_from_app(request.app).individual_order(
@@ -100,7 +110,7 @@ async def create_order(
         order = result.get("order") if isinstance(result, dict) else None
         if not isinstance(order, dict):
             raise HTTPException(status_code=502, detail="simulator returned an invalid order")
-        return jsonable_encoder(order)
+        return jsonable_encoder(_with_risk(order, verdict))
     envelope = build_order_command_envelope(
         order_request,
         occurred_at=datetime.now(timezone.utc).isoformat(),
@@ -120,7 +130,77 @@ async def create_order(
 
     if result.idempotent_replay:
         response.headers["X-Idempotent-Replay"] = "true"
-    return jsonable_encoder(result.response)
+    return jsonable_encoder(_with_risk(dict(result.response), verdict))
+
+
+@router.get("/api/risk/report")
+def risk_daily_report(
+    request: Request,
+    date: str | None = None,
+    _user: AuthenticatedUser = Depends(require_current_user),
+) -> dict[str, Any]:
+    """오늘(또는 지정일) 발동한 리스크 룰 이력 요약 — 장마감 리포트 리스크 섹션."""
+    day = (date or datetime.now(timezone.utc).strftime("%Y-%m-%d"))[:10]
+    client = _risk_report_redis(request.app)
+    if client is None:
+        raise HTTPException(status_code=503, detail="risk report storage unavailable (REDIS_URL)")
+    try:
+        rows = client.lrange(f"agent.alerts:log:{day}", 0, 499)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"risk report read failed: {exc}") from exc
+    events = []
+    for row in rows or []:
+        if isinstance(row, bytes):
+            row = row.decode("utf-8")
+        try:
+            decoded = json.loads(row)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(decoded, dict):
+            events.append(decoded)
+    by_type: dict[str, int] = {}
+    by_severity: dict[str, int] = {}
+    for event in events:
+        event_type = str(event.get("eventType") or "unknown")
+        severity = str(event.get("severity") or "info")
+        by_type[event_type] = by_type.get(event_type, 0) + 1
+        by_severity[severity] = by_severity.get(severity, 0) + 1
+    return {
+        "date": day,
+        "totalEvents": len(events),
+        "byType": by_type,
+        "bySeverity": by_severity,
+        "events": [
+            {
+                "eventId": event.get("eventId"),
+                "symbol": event.get("symbol"),
+                "eventType": event.get("eventType"),
+                "severity": event.get("severity"),
+                "observedAt": event.get("observedAt"),
+                "summary": event.get("summary"),
+            }
+            for event in events[:50]
+        ],
+    }
+
+
+@router.post("/api/risk/pretrade")
+async def risk_pretrade_preview(
+    request: Request,
+    current_user: AuthenticatedUser = Depends(require_current_user),
+) -> dict[str, Any]:
+    """Advisory pre-trade risk verdict for the order ticket (no order created)."""
+    payload = await _json_body(request)
+    _validate_no_forbidden_fields(payload)
+    order_request = _validate_order_request(payload)
+    verdict = _risk_verdict(request.app, current_user.sub, order_request, force=True)
+    if verdict is None:
+        raise HTTPException(status_code=503, detail="risk pretrade preview is disabled")
+    return {
+        "symbol": order_request.symbol,
+        "side": order_request.side,
+        "risk": verdict.to_dict(),
+    }
 
 
 @router.get("/api/orders/balance")
@@ -230,6 +310,62 @@ async def order_events_socket(websocket: WebSocket, order_id: str) -> None:
                 await websocket.close(code=1011)
         except Exception:
             return
+
+
+def _risk_verdict(
+    app: Any,
+    user_sub: str,
+    order_request: Any,
+    *,
+    force: bool = False,
+) -> PretradeVerdict | None:
+    if not force and not risk_pretrade_enabled():
+        return None
+    try:
+        context = build_risk_context(app, user_sub, order_request.symbol)
+        return evaluate_pretrade(
+            side=order_request.side,
+            symbol=order_request.symbol,
+            qty=order_request.qty,
+            price=order_request.price,
+            context=context,
+            config=_risk_config_from_app(app),
+        )
+    except Exception:
+        # Risk evaluation must never break order submission.
+        return None
+
+
+def _risk_report_redis(app: Any):
+    existing = getattr(app.state, "risk_report_redis", None)
+    if existing is not None:
+        return existing
+    url = os.getenv("REDIS_URL")
+    if not url:
+        return None
+    try:
+        import redis
+
+        client = redis.from_url(url, decode_responses=True)
+    except Exception:
+        return None
+    app.state.risk_report_redis = client
+    return client
+
+
+def _risk_config_from_app(app: Any):
+    existing = getattr(app.state, "risk_config", None)
+    if existing is not None:
+        return existing
+    config = load_risk_config()
+    app.state.risk_config = config
+    return config
+
+
+def _with_risk(order: dict[str, Any], verdict: PretradeVerdict | None) -> dict[str, Any]:
+    if verdict is None:
+        return order
+    return {**order, "risk": verdict.to_dict()}
 
 
 async def _json_body(request: Request) -> dict[str, Any]:

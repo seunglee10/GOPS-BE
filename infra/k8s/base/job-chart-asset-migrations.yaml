@@ -1,5 +1,4 @@
-# 역할: Chart Analysis Asset 최신 JSON 저장소의 PostgreSQL schema/sync/parity 작업을 1회 실행합니다.
-# 기본 action은 schema migrate이며 sync/verify는 운영자가 명시적으로 선택합니다.
+# 역할: Chart Geometry Asset과 PostgreSQL 작업 큐 schema를 1회 적용합니다.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -15,7 +14,7 @@ spec:
     spec:
       restartPolicy: Never
       nodeSelector:
-        karpenter.sh/nodepool: batch
+        karpenter.sh/nodepool: batch-warm
       tolerations:
         - key: gops.io/dedicated
           operator: Equal
@@ -27,17 +26,9 @@ spec:
           image: YOUR_ECR_REPOSITORY/gops-agent-orchestrator:latest
           imagePullPolicy: IfNotPresent
           command: ["python", "-u", "/app/systems/agent-orchestration/jobs/chart-asset-migrations/main.py"]
-          env:
-            - name: CHART_ASSET_MIGRATION_ACTION
-              value: migrate
-            - name: CHART_ASSET_MIGRATION_PRUNE
-              value: "false"
           envFrom:
             - configMapRef:
                 name: alfaka-market-data-config
-            - secretRef:
-                name: alfaka-clickhouse-secret
-                optional: false
             - secretRef:
                 name: alfaka-order-db-secret
                 optional: false

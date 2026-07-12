@@ -55,6 +55,30 @@ class IndicatorCalculationTest(unittest.TestCase):
         self.assertGreater(payload["series"]["stochastic:14:3:3"][-1]["k"], 0)
         self.assertIsNotNone(payload["series"]["macd:12:26:9"][-1]["histogram"])
 
+    def test_parses_atr_spec_with_shorthand_and_default_period(self):
+        specs = indicator_specs_from_csv("atr,atr:5,atr20")
+
+        self.assertEqual([spec.id for spec in specs], ["atr:14", "atr:5", "atr:20"])
+        self.assertEqual(specs[0].placement, "below")
+        self.assertEqual(specs[1].parameters, {"period": 5})
+
+    def test_computes_atr_with_wilder_smoothing_and_warmup_gap(self):
+        # candles(): high - low == 2 and |high - prev_close| == 2 every bar,
+        # so the true range is a constant 2 and ATR must converge to 2 exactly.
+        specs = indicator_specs_from_csv("atr:5")
+        payload = compute_indicator_payload(candles(20), specs)
+        points = payload["series"]["atr:5"]
+
+        self.assertTrue(all(point["value"] is None for point in points[:5]))
+        self.assertEqual(points[5]["value"], 2.0)
+        self.assertEqual(points[-1]["value"], 2.0)
+
+    def test_atr_requires_period_plus_one_bars(self):
+        specs = indicator_specs_from_csv("atr:5")
+        payload = compute_indicator_payload(candles(5), specs)
+
+        self.assertTrue(all(point["value"] is None for point in payload["series"]["atr:5"]))
+
     def test_filters_computed_points_to_requested_visible_range(self):
         specs = indicator_specs_from_csv("sma:3")
         payload = compute_indicator_payload(

@@ -14,9 +14,18 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from kis_trader.domain.commands import OrderCommand
-from kis_trader.domain.envelope import build_order_status_envelope
+from kis_trader.domain.envelope import build_order_fill_envelope, build_order_status_envelope
 from kis_trader.domain.status import OrderStatus, assert_transition_allowed
-from kis_trader.domain.topics import ORDER_EVENTS_TOPIC, ORDERS_COMMANDS_TOPIC, ORDERS_DLQ_TOPIC, SUBMIT_RESULTS_TOPIC, build_order_message_key
+from kis_trader.domain.topics import (
+    ORDER_EVENTS_TOPIC,
+    ORDERS_COMMANDS_TOPIC,
+    ORDERS_DLQ_TOPIC,
+    ORDERS_FILLS_TOPIC,
+    SUBMIT_RESULTS_TOPIC,
+    build_order_message_key,
+)
+
+FILL_STATUSES = {OrderStatus.FILLED, OrderStatus.PARTIALLY_FILLED}
 from kis_trader.security.redaction import redact_sensitive
 
 from .repository import IdempotencyConflictError, OrderCreationResult, OrderNotFoundError, SubmissionIntent, utc_now_iso
@@ -380,7 +389,18 @@ class PostgresOrderRepository:
             "UPDATE orders SET status = %s, reason = %s, updated_at = now() WHERE order_id = %s",
             (status.value, reason, order_id),
         )
-        return self._append_order_event(conn, order_id, status, reason)
+        event_id = self._append_order_event(conn, order_id, status, reason)
+        if status in FILL_STATUSES:
+            order = {**row, "status": status.value}
+            self._insert_outbox_event(
+                conn,
+                ORDERS_FILLS_TOPIC,
+                order_id,
+                status,
+                build_order_fill_envelope(order, reason=reason),
+                build_order_message_key(order["account_alias"], order["symbol"]),
+            )
+        return event_id
 
     def _append_order_event(
         self,

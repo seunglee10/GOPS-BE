@@ -57,7 +57,6 @@ class AnalysisCandleContractTest(unittest.TestCase):
         weekly_market = canonicalize_candle_identity(candle("2026-07-06T04:00:00.000Z"), "1W")
         monthly_utc = canonicalize_candle_identity(candle("2026-07-01T00:00:00.000Z"), "1M")
         monthly_market = canonicalize_candle_identity(candle("2026-07-01T04:00:00.000Z"), "1M")
-
         self.assertEqual((weekly_utc["candleKey"], weekly_market["candleKey"]), ("2026-07-06", "2026-07-06"))
         self.assertEqual((weekly_utc["timestamp"], weekly_market["timestamp"]), ("2026-07-06T00:00:00.000Z",) * 2)
         self.assertEqual((monthly_utc["candleKey"], monthly_market["candleKey"]), ("2026-07", "2026-07"))
@@ -78,7 +77,7 @@ class AnalysisCandleContractTest(unittest.TestCase):
         merged = merge_canonical_candles([direct], [redis], interval="1D", view="chart_current")
         self.assertEqual(merged[0]["close"], 101)
 
-    def test_weekly_and_monthly_use_same_daily_source_and_drop_open_bucket(self):
+    def test_weekly_uses_daily_source_and_drops_open_bucket(self):
         rows = [
             candle("2026-06-29T00:00:00.000Z", open=100, high=105, low=99, close=104, volume=10),
             candle("2026-06-30T00:00:00.000Z", open=104, high=108, low=103, close=107, volume=20),
@@ -86,12 +85,9 @@ class AnalysisCandleContractTest(unittest.TestCase):
         ]
         now = datetime(2026, 7, 8, tzinfo=timezone.utc)
         weekly = aggregate_analysis_candles(rows, "1W", now=now)
-        monthly = aggregate_analysis_candles(rows, "1M", now=now)
         self.assertEqual(len(weekly), 1)
         self.assertEqual(weekly[0]["candleKey"], "2026-06-29")
         self.assertEqual((weekly[0]["open"], weekly[0]["close"], weekly[0]["volume"]), (100, 107, 30))
-        self.assertEqual(len(monthly), 1)
-        self.assertEqual(monthly[0]["candleKey"], "2026-06")
 
     def test_bundle_matches_individual_interval_derivation(self):
         rows = [
@@ -100,8 +96,8 @@ class AnalysisCandleContractTest(unittest.TestCase):
             candle("2026-07-01T00:00:00.000Z", close=102),
         ]
         now = datetime(2026, 7, 11, tzinfo=timezone.utc)
-        bundle = aggregate_analysis_candle_bundle(rows, ("1M", "1W", "1D"), now=now)
-        for interval in ("1M", "1W", "1D"):
+        bundle = aggregate_analysis_candle_bundle(rows, ("1W", "1D"), now=now)
+        for interval in ("1W", "1D"):
             self.assertEqual(
                 bundle[interval],
                 aggregate_analysis_candles(rows, interval, now=now),
@@ -138,23 +134,6 @@ class AnalysisCandleContractTest(unittest.TestCase):
         self.assertEqual(calendar.session_close_for(datetime(2026, 12, 24).date()), time(13, 0))
         self.assertEqual(calendar.session_close_for(datetime(2026, 12, 23).date()), time(16, 0))
 
-    def test_monthly_bucket_completes_after_last_session_close(self):
-        rows = [candle("2026-06-01T00:00:00.000Z")]
-        before_close = aggregate_analysis_candles(
-            rows,
-            "1M",
-            now=datetime(2026, 6, 30, 19, 59, tzinfo=timezone.utc),
-        )
-        after_close = aggregate_analysis_candles(
-            rows,
-            "1M",
-            now=datetime(2026, 6, 30, 20, 1, tzinfo=timezone.utc),
-        )
-
-        self.assertEqual(before_close, [])
-        self.assertEqual(after_close[0]["candleKey"], "2026-06")
-        self.assertEqual(after_close[0]["timestamp"], "2026-06-01T00:00:00.000Z")
-
     def test_digest_changes_for_ohlcv_correction_and_is_stable(self):
         rows = aggregate_analysis_candles([candle("2026-07-06T00:00:00.000Z")], "1D")
         before = analysis_input_digest("NVDA", "1D", rows)
@@ -184,9 +163,9 @@ class AnalysisCandleContractTest(unittest.TestCase):
     def test_symbol_source_queries_daily_once_for_all_intervals(self):
         provider = FakeProvider([candle("2026-06-29T00:00:00.000Z"), candle("2026-06-30T00:00:00.000Z")])
         source = AnalysisCandleSource(provider, now_provider=lambda: datetime(2026, 7, 11, tzinfo=timezone.utc))
-        bundle = source.load_symbol("NVDA", ("1M", "1W", "1D"))
+        bundle = source.load_symbol("NVDA", ("1W", "1D"))
         self.assertEqual(provider.calls, 1)
-        self.assertEqual(set(bundle.rows), {"1M", "1W", "1D"})
+        self.assertEqual(set(bundle.rows), {"1W", "1D"})
         self.assertTrue(all(value.startswith("sha256:") for value in bundle.digests.values()))
 
     def test_symbol_source_reads_intraday_directly_and_long_intervals_from_one_daily_query(self):
@@ -199,11 +178,11 @@ class AnalysisCandleContractTest(unittest.TestCase):
         )
         source = AnalysisCandleSource(provider, now_provider=lambda: datetime(2026, 7, 11, tzinfo=timezone.utc))
 
-        bundle = source.load_symbol("NVDA", ("1M", "1W", "1D", "4h", "1h", "10m", "5m", "1m"))
+        bundle = source.load_symbol("NVDA", ("1W", "1D", "4h", "1h", "10m", "5m", "1m"))
 
         self.assertEqual(provider.daily_calls, 1)
         self.assertEqual(provider.direct_calls, ["4h", "1h", "10m", "5m", "1m"])
-        self.assertEqual(set(bundle.rows), {"1m", "5m", "10m", "1h", "4h", "1D", "1W", "1M"})
+        self.assertEqual(set(bundle.rows), {"1m", "5m", "10m", "1h", "4h", "1D", "1W"})
         self.assertEqual(bundle.rows["5m"][0]["candleKey"], "2026-07-10T13:30:00.000Z")
 
 

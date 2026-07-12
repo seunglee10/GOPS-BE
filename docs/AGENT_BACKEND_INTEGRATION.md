@@ -382,30 +382,26 @@ DELETE /api/charts/analysis-assets?symbols=NVDA&intervals=1D
 GET    /api/charts/analysis-assets/coverage
 POST   /api/charts/analysis-assets/build
 GET    /api/charts/analysis-assets/build/{job_id}
-GET    /api/charts/analysis-assets/build/{job_id}/stream
 POST   /api/charts/analysis-assets/build/{job_id}/cancel
 ```
 
 DELETE는 개발 패널의 명시적 정리 기능이다. 최대 100개 symbol과
-`1m/5m/10m/1h/4h/1D/1W/1M`만 받고,
-선택된 pair를 active asset store에서 삭제한다. ClickHouse 기본 모드는 전체 history를
-`mutations_sync=1`로 지우고, dual mode는 양쪽 저장소가 모두 성공해야 한다. 자동 보존 정책,
-TTL 또는 broad cleanup으로 재사용하지 않는다. build 완료·삭제 후 프런트는 cache를
-무효화하고 열린 chart/commentary panel을 재조회한다.
-Build 상세 로그는 status JSON에 넣지 않고 기존 Redis pub/sub을 SSE `event: log`로
-그대로 전달한다. 별도 key/List/Stream을 만들지 않으며 구독하지 않은 로그는 유실된다.
+`1m/5m/10m/1h/4h/1D/1W`만 받고 선택된 pair를 PostgreSQL
+`chart_assets.geometry_assets`에서 삭제한다. 자동 TTL이나 broad cleanup은 사용하지
+않는다. build 완료·삭제 후 프런트는 cache를 무효화하고 열린 chart를 재조회한다.
+Build 상태와 bounded log는 PostgreSQL polling 응답으로 제공한다. Redis pub/sub과
+SSE route는 사용하지 않는다.
 최종 생성량은 status의 작은 `createdEntities` 정수만 사용한다. Coverage의
 `drawingCount`는 저장된 엔티티 수이며 호환 alias `storedDrawingCount`와 같다. 실제
 차트 적용 수와 anchor/stale 제외 수는 현재 candle과 active chart document의 실제
 drawing ID를 아는 프런트가 계산한다.
 
 `CHART_ASSET_STORAGE_MAINTENANCE=true` 동안 GET은 계속 열어 두고 build와 DELETE만
-503으로 막는다. 이 짧은 drain window에서 ClickHouse 최신 행을 PostgreSQL로
-동기화·prune하고 canonical payload digest parity가 100%일 때만 read primary를 바꾼다.
+503으로 막는다. 기존 숫자형 자산은 변환하거나 fallback으로 읽지 않는다.
 
 ## Failure Policy
 
-- Kafka enqueue 실패는 `202 queued`로 가장하면 안 된다.
+- PostgreSQL enqueue 실패는 `202 queued`로 가장하면 안 된다.
 - Redis report store가 없으면 polling/SSE는 degrade를 명시해야 한다.
 - Provider no-data는 backend error가 아니다.
 - `agent-analysis-worker` failure는 DLQ 또는 report status로 드러나야 한다.

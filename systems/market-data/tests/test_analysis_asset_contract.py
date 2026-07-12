@@ -9,23 +9,14 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 class ChartAnalysisAssetContractTest(unittest.TestCase):
-    def test_canonical_schema_discriminates_preserved_v1_and_v2(self):
+    def test_canonical_schema_points_only_to_geometry_contract(self):
         canonical = json.loads((ROOT / "shared/chart-contract/chart-analysis-asset.schema.json").read_text())
-        self.assertEqual(canonical["oneOf"], [
-            {"$ref": "chart-analysis-asset-v1.schema.json"},
-            {"$ref": "chart-analysis-asset-v2.schema.json"},
-        ])
-        v1 = json.loads((ROOT / "shared/chart-contract/chart-analysis-asset-v1.schema.json").read_text())
-        v2 = json.loads((ROOT / "shared/chart-contract/chart-analysis-asset-v2.schema.json").read_text())
-        self.assertEqual(v1["properties"]["assetVersion"]["const"], "v1")
-        self.assertEqual(v2["properties"]["assetVersion"]["const"], "v2")
-        self.assertEqual(
-            v2["properties"]["kernelVersion"]["enum"],
-            ["kernel-v2", "kernel-v3", "kernel-v4", "kernel-v5", "kernel-v6", "kernel-v7"],
-        )
-        self.assertEqual(v2["properties"]["qualityPolicyVersion"]["enum"], ["chart-quality-v1", "chart-quality-v2", "chart-quality-v4", "chart-quality-v5"])
-        self.assertEqual(v2["properties"]["interval"]["enum"], ["1m", "5m", "10m", "1h", "4h", "1D", "1W", "1M"])
-        self.assertEqual(v2["$defs"]["input"]["properties"]["candleContractVersion"]["enum"], ["analysis-candles-v1", "v2", "v3"])
+        self.assertEqual(canonical["$ref"], "chart-geometry-asset.schema.json")
+        geometry = json.loads((ROOT / "shared/chart-contract/chart-geometry-asset.schema.json").read_text())
+        self.assertEqual(geometry["properties"]["assetVersion"]["const"], "geometry")
+        self.assertEqual(geometry["$defs"]["interval"]["enum"], ["1m", "5m", "10m", "1h", "4h", "1D", "1W"])
+        self.assertEqual(geometry["properties"]["geometry"]["properties"]["drawings"]["maxItems"], 6)
+        self.assertTrue({"symbol", "interval", "sourceInterval"}.issubset(geometry["$defs"]["drawing"]["required"]))
 
 
 if __name__ == "__main__":

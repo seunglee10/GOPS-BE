@@ -2,8 +2,5 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://gops.local/contracts/chart-analysis-asset.schema.json",
   "title": "GOPS Chart Analysis Asset",
-  "oneOf": [
-    {"$ref": "chart-analysis-asset-v1.schema.json"},
-    {"$ref": "chart-analysis-asset-v2.schema.json"}
-  ]
+  "$ref": "chart-geometry-asset.schema.json"
 }

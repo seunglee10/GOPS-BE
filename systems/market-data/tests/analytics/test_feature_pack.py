@@ -137,8 +137,8 @@ class FeaturePackGoldenTest(unittest.TestCase):
     def test_full_lookback_is_bounded_and_range_uses_display_tail(self):
         spec = {**FIXTURES["range"], "count": 540}
         rows = normalize_candles(scenario_candles(spec), "1D")
-        self.assertEqual(len(rows), 500)
-        display = rows[-120:]
+        self.assertEqual(len(rows), 380)
+        display = rows[-260:]
 
         trends = compute_trends(rows, [], display_from=display[0]["timestamp"], atr=2.0)
 

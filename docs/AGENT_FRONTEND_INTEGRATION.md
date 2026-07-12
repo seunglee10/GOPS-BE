@@ -145,8 +145,10 @@ drawing command로 저장하고, 해당 봉은 canvas에서 만료 시간이 있
 잠깐 표시한다.
 
 Drawing anchor는 pixel이 아니라 canonical `timestamp`/`price`를 사용하고
-`logicalIndex`는 현재 candle 배열에서 계산 가능한 보조 cache로만 취급한다. 지원하는
-평행선 계약은 2-anchor `horizontalParallelLines`/`verticalParallelLines`, 3-anchor
+`logicalIndex`는 현재 candle 배열에서 계산 가능한 보조 cache로만 취급한다.
+`horizontalLine`은 수동 작도의 단일 anchor와 Geometry 자산의 동일 가격 2-anchor
+접촉 구간을 모두 허용한다. 2-anchor 형식의 각 timestamp도 실제 candle key여야 한다.
+지원하는 평행선 계약은 2-anchor `horizontalParallelLines`/`verticalParallelLines`, 3-anchor
 `trendParallelLines`이며 추세 평행선의 `parallelLineCount`는 2..10이다. 이벤트 설명은
 `flagMarker`의 editable label을 사용한다. `rangeBox`와 평행선 band fill은 candle/지표
 아래에서, outline·label·selection handle은 chart layer 위에서 렌더링해야 한다.
@@ -307,35 +309,20 @@ chart analysis asset 운영 패널은 `kind="chartAssetOps"`, 화면 표시는
 레이아웃 수정 모드의 패널 추가 팔레트에 항상 노출하며 URL query나 localStorage로
 숨기지 않는다.
 
-Asset v2도 기존 GET/build/poll/SSE route를 사용한다. timed anchor는 interval
-`candleKey`로 현재 chart candle을 찾은 뒤 그 봉의 실제 timestamp로 snap한다. 가격이나
-임의 시간 좌표를 보간하지 않으며, 대응 bucket이 없으면 작도를 제외한다.
-인트라데이 `candleKey`는 정확한 UTC timestamp이며 패널은 8개 interval을 모두 수동
-빌드할 수 있다. 삼각형·깃발이 선택되면 이름, `forming|confirmed`, 점수, 선 수를 표시하고
-빌드 완료 cache invalidation 뒤 현재 chart에 자동 적용한다. 삼각형 경계는 상태와
-무관하게 실선으로 렌더링하고 `forming`은 낮은 불투명도로 구분한다.
-일봉 asset은 MA60/120 골든크로스·데드크로스가 현재 관련성 범위 안에 있으면 교차
-봉의 canonical candleKey에 각각 녹색·붉은색 `flagMarker`를 적용한다. 이 이벤트가
-선택되면 서버 계산형 `sma:120` 가격 오버레이도 자동 활성화해 기본 활성 상태인
-SMA60과의 교차를 차트에서 확인할 수 있다. SMA120은 ClickHouse indicator artifact로
-저장하지 않고 `/api/charts/indicators`의 요청 범위에서 계산한다.
-`commentary.focusItems[].drawingIds`는 실제 적용 drawing을 가리키고 선택 시 해당
-drawing을 강조한다. v1은 기존 렌더를 유지하며 v2의 정상 빈 layer는 오류가 아니다.
-빌드 완료와 개발 패널 삭제는 analysis asset cache invalidation event를 발생시키며,
-열려 있는 chart/commentary panel은 같은 symbol을 즉시 다시 조회한다. 운영 현황은
-저장 수와 현재 차트 적용 수, 제외 수·사유를 구분해 `quality_empty`,
-`data_degraded`, `presentation_rejected`, `stale_asset`을 숨김 없이 표시한다. 행별 `삭제`
-버튼은 확인 후 해당 symbol/interval을 active asset store에서 실제로 제거한다.
-`현재 차트 적용`은 snap 가능한 payload 수가 아니라 active chart document에 실제로
-존재하는 drawing ID 교집합이다. stale/rejected 상태에서는 asset-derived 해설을 숨기고,
-focus item은 연결 ID가 모두 적용된 경우에만 렌더링한다.
-개발 패널의 build log는 SSE `log` 이벤트를 수신하는 동안 브라우저 메모리에만 최대
-200줄 유지한다. polling/status 응답에 로그 이력을 기대하지 않으며, 연결 전·후 유실은
-허용한다. 최종 생성량은 `createdEntities`로 별도 표시한다.
-요청 symbol의 candle readiness/repair는 같은 build job 안에서만 실행된다. 패널은
-SSE log로 audit/S3/Alpaca/recheck 단계를 표시하고, status의 작은 `repair` 집계와
-compact `reasonCodes`로 점검 symbol 수, 전후 결측 수, materialized row 수를 표시한다. 별도 자동 갱신 UI나
-주기 실행 상태는 만들지 않는다.
+Geometry asset은 GET/build/poll route를 사용한다. timed anchor는 현재 interval의
+canonical candle timestamp로만 snap하며 대응 봉이 없으면 해당 drawing을 제외한다.
+패널은 `1m/5m/10m/1h/4h/1D/1W`를 지원하고 지지·저항, 세 삼각형, coverage,
+SMA60·SMA120과 최근 교차 상태를 표시한다. Geometry 토글 하나가 모든 자동 작도를
+제어하며 삼각형은 실선, forming은 낮은 불투명도로 표현한다.
+
+SMA 기간은 일수가 아니라 현재 interval의 완료 봉 개수다. SMA60과 SMA120 overlay는
+Geometry 자산 적용 시 함께 활성화하고 골든·데드크로스는 별도 marker가 아닌 metadata로
+표시한다. 빌드 완료와 삭제는 cache invalidation event를 발생시켜 같은 symbol의 열린
+chart/panel을 즉시 재조회한다. 다른 interval의 자산은 적용하지 않는다.
+
+stale 자산은 차트에서 제거하지 않고 낮은 불투명도와 stale badge로 표시한다. 빌드
+상태, log, repair 집계는 PostgreSQL polling 응답을 사용하며 SSE와 Redis pub/sub은
+사용하지 않는다.
 
 지원하지 않는 경우 정책:
 

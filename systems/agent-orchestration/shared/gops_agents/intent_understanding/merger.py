@@ -71,7 +71,7 @@ def merge_content_tasks(tasks: list[ContentTask]) -> list[ContentTask]:
         current = best.get(task.taskType)
         if current is None or task.confidence > current.confidence:
             best[task.taskType] = task
-    order = ["market_move", "news", "chart", "macro", "ontology", "financial_comparison", "financial", "general"]
+    order = ["market_move", "news", "chart", "macro", "ontology", "financial_comparison", "financial", "risk", "general"]
     return [best[item] for item in order if item in best]
 
 
