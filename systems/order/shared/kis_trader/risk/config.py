@@ -26,6 +26,8 @@ class RiskConfig:
     price_band_pct: Decimal = Decimal("0.05")
     # daily_loss_cooldown
     daily_loss_limit_pct: Decimal = Decimal("0.03")
+    # daily_buy_budget — 사용자 옵트인 자기구속 장치. None = 꺼짐(룰 침묵)
+    daily_buy_budget: Decimal | None = None
     # symbol -> sector fallback map (metrics/position sector wins)
     sector_map: dict[str, str] = field(default_factory=dict)
 
@@ -37,6 +39,10 @@ _DECIMAL_FIELDS = {
     "max_adv_participation",
     "price_band_pct",
     "daily_loss_limit_pct",
+}
+
+_OPTIONAL_DECIMAL_FIELDS = {
+    "daily_buy_budget",
 }
 
 
@@ -74,6 +80,8 @@ def _config_from_values(values: Mapping[str, Any]) -> RiskConfig:
             raise ValueError(f"unknown risk config key: {key}")
         if key in _DECIMAL_FIELDS:
             parsed[key] = Decimal(str(value))
+        elif key in _OPTIONAL_DECIMAL_FIELDS:
+            parsed[key] = None if value is None else Decimal(str(value))
         elif key == "sector_map":
             if not isinstance(value, Mapping):
                 raise ValueError("sector_map must be a mapping of symbol to sector")

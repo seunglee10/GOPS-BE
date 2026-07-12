@@ -121,6 +121,16 @@ class PostgresOrderRepository:
                 order = conn.execute("SELECT * FROM orders WHERE order_id = %s", (command.order_id,)).fetchone()
                 return OrderCreationResult(True, False, dict(order), response, outbox_event_id)
 
+    def find_idempotent_response(self, idempotency_key_hash: str, body_hash: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT body_hash, response FROM idempotency_requests WHERE key_hash = %s",
+                (idempotency_key_hash,),
+            ).fetchone()
+            if row is None or row["body_hash"] != body_hash:
+                return None
+            return dict(row["response"] or {})
+
     def get_order(self, order_id: str) -> dict[str, Any] | None:
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM orders WHERE order_id = %s", (order_id,)).fetchone()

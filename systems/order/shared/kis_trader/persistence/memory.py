@@ -125,6 +125,13 @@ class InMemoryOrderRepository:
             }
             self._append_order_event(command.order_id, OrderStatus.PUBLISHED, "reconstructed from command", command)
 
+    def find_idempotent_response(self, idempotency_key_hash: str, body_hash: str) -> dict[str, Any] | None:
+        with self._lock:
+            existing = self.idempotency_requests.get(idempotency_key_hash)
+            if existing is None or existing["body_hash"] != body_hash:
+                return None
+            return dict(existing["response"])
+
     def get_order(self, order_id: str) -> dict[str, Any] | None:
         with self._lock:
             row = self.orders.get(order_id)
