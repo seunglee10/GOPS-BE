@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
+ALL_INTERVALS = ["1m", "5m", "10m", "1h", "4h", "1D", "1W", "1M"]
 for path in (
     ROOT / "systems" / "market-data" / "shared",
     ROOT / "systems" / "order" / "shared",
@@ -25,8 +26,8 @@ from gops_agents.chart_assets.queue import InMemoryChartAssetBuildQueue  # noqa:
 
 class FakeStorage:
     def __init__(self):
-        self.assets = {"NVDA": {"1D": {"symbol": "NVDA", "interval": "1D"}, "1W": None, "1M": None}}
-    def get_symbol_assets(self, symbol): return self.assets.get(symbol, {"1D": None, "1W": None, "1M": None})
+        self.assets = {"NVDA": {interval: {"symbol": "NVDA", "interval": interval} if interval == "1D" else None for interval in ALL_INTERVALS}}
+    def get_symbol_assets(self, symbol): return self.assets.get(symbol, {interval: None for interval in ALL_INTERVALS})
     def coverage(self, symbols=None):
         items = [{"symbol": "NVDA", "interval": "1D", "generatedAt": "2026-07-11T00:00:00.000Z", "status": "ready"}]
         return [item for item in items if not symbols or item["symbol"] in symbols]
@@ -73,7 +74,7 @@ class ChartAssetsRoutesTest(unittest.TestCase):
         self.assertEqual(ready.json()["assets"]["1D"]["interval"], "1D")
         missing = self.client.get("/api/charts/analysis-assets", params={"symbol": "AAPL"})
         self.assertEqual(missing.status_code, 200)
-        self.assertEqual(missing.json()["assets"], {"1D": None, "1W": None, "1M": None})
+        self.assertEqual(missing.json()["assets"], {interval: None for interval in ALL_INTERVALS})
 
     def test_coverage_filters_symbols(self):
         response = self.client.get("/api/charts/analysis-assets/coverage", params={"symbols": "NVDA,AAPL"})
@@ -124,9 +125,16 @@ class ChartAssetsRoutesTest(unittest.TestCase):
             })
         self.assertEqual(response.status_code, 503)
 
+    def test_build_accepts_all_chart_intervals(self):
+        response = self.client.post("/api/charts/analysis-assets/build", json={
+            "symbols": ["NVDA"], "intervals": ALL_INTERVALS, "llmEnabled": False,
+        })
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(self.queue.items[-1]["intervals"], ALL_INTERVALS)
+
     def test_rejects_invalid_intervals(self):
         response = self.client.post("/api/charts/analysis-assets/build", json={
-            "symbols": ["NVDA"], "intervals": ["1h"], "llmEnabled": False,
+            "symbols": ["NVDA"], "intervals": ["15m"], "llmEnabled": False,
         })
         self.assertEqual(response.status_code, 422)
 

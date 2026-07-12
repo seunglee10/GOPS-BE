@@ -83,7 +83,7 @@ def _rule_conditions(drawing):
     if kind == "flagMarker":
         return ("사건 이후 확정봉이 발생 방향의 구조를 유지하는지 확인하세요.", "확정 종가가 사건 발생 이전 구조로 되돌아가면 무효입니다.")
     return ("다음 확정봉의 구조 반응이 이어지는지 확인하세요.", "확정 종가가 표시 구조의 반대편에서 유지되면 무효입니다.")
-def _horizon(interval): return {"1D":"weeks","1W":"months","1M":"years"}[interval]
+def _horizon(interval): return {"1m":"minutes","5m":"hours","10m":"hours","1h":"days","4h":"days","1D":"weeks","1W":"months","1M":"years"}[interval]
 def _key_levels(rule_layers):
     result=[]
     for drawing in (rule_layers.get("structure") or {}).get("drawings",[]):

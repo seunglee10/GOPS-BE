@@ -38,7 +38,7 @@ class ChartAssetBuildRequest(BaseModel):
     def validate_intervals(cls, value: list[str]) -> list[str]:
         normalized = list(dict.fromkeys(str(item).strip() for item in value))
         if not normalized or set(normalized).difference(ALLOWED_INTERVALS):
-            raise ValueError("intervals must contain only 1D, 1W, and 1M")
+            raise ValueError("intervals must contain only supported chart intervals")
         return normalized
 
 
@@ -65,7 +65,7 @@ def chart_analysis_asset_coverage(symbols: str | None = Query(default=None, max_
 @router.delete("/api/charts/analysis-assets")
 def delete_chart_analysis_assets(
     symbols: str = Query(min_length=1, max_length=4096),
-    intervals: str = Query(default="1D,1W,1M", min_length=2, max_length=32),
+    intervals: str = Query(default=",".join(ALLOWED_INTERVALS), min_length=2, max_length=64),
     _user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
     if _storage_maintenance_enabled():
@@ -200,7 +200,7 @@ def _parse_symbol_csv(value: str) -> list[str]:
 def _parse_intervals_csv(value: str) -> list[str]:
     intervals = list(dict.fromkeys(item for item in re.split(r"[\s,]+", value) if item))
     if not intervals or set(intervals).difference(ALLOWED_INTERVALS):
-        raise HTTPException(status_code=400, detail="intervals must contain only 1D, 1W, and 1M")
+        raise HTTPException(status_code=400, detail="intervals must contain only supported chart intervals")
     return intervals
 
 

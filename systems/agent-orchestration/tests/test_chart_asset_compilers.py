@@ -51,6 +51,121 @@ def candles() -> list[dict]:
 
 
 class ChartAssetCompilerTest(unittest.TestCase):
+    def test_triangle_compiles_as_grouped_lines_alongside_existing_trend_with_global_budget(self):
+        features = feature_pack()
+        features["patterns"] = [{
+            "id": "1D:pattern:ascending",
+            "kind": "ascending_triangle",
+            "state": "forming",
+            "breakoutDirection": None,
+            "hardPass": True,
+            "score": .94,
+            "touches": 6,
+            "containment": .92,
+            "evidenceRefs": ["p1", "p2"],
+            "geometry": {
+                "upper": {
+                    "start": {"timestamp": candles()[0]["timestamp"], "price": 122},
+                    "end": {"timestamp": candles()[1]["timestamp"], "price": 122},
+                },
+                "lower": {
+                    "start": {"timestamp": candles()[0]["timestamp"], "price": 96},
+                    "end": {"timestamp": candles()[1]["timestamp"], "price": 116},
+                },
+            },
+        }]
+
+        layers = compile_rule_layers(
+            symbol="NVDA", interval="1D", features=features,
+            candles=candles(), generated_at=GENERATED_AT,
+        )
+
+        pattern = next(item for item in layers["trend"]["selected"] if item["candidateId"] == "1D:pattern:ascending")
+        pattern_drawings = [item for item in layers["trend"]["drawings"] if item["id"] in pattern["drawingIds"]]
+        self.assertEqual([item["type"] for item in pattern_drawings], ["trendLine", "trendLine"])
+        self.assertTrue(all("lineDash" not in item["style"] for item in pattern_drawings))
+        self.assertTrue(all(item["style"]["opacity"] == .78 for item in pattern_drawings))
+        self.assertIn("형성 중", pattern_drawings[0]["label"])
+        self.assertEqual(len(layers["trend"]["drawings"]), 3)
+        self.assertLessEqual(len(layers["structure"]["drawings"]) + len(layers["trend"]["drawings"]), 5)
+
+    def test_confirmed_flag_compiles_to_pole_and_parallel_channel(self):
+        features = feature_pack()
+        features["patterns"] = [{
+            "id": "1D:pattern:bear-flag",
+            "kind": "bearish_flag",
+            "state": "confirmed",
+            "breakoutDirection": "down",
+            "hardPass": True,
+            "score": .91,
+            "touches": 5,
+            "containment": .88,
+            "evidenceRefs": ["p1", "p2"],
+            "geometry": {
+                "pole": {
+                    "start": {"timestamp": candles()[0]["timestamp"], "price": 122},
+                    "end": {"timestamp": candles()[1]["timestamp"], "price": 116},
+                },
+                "upper": {
+                    "start": {"timestamp": candles()[0]["timestamp"], "price": 116},
+                    "end": {"timestamp": candles()[1]["timestamp"], "price": 120},
+                },
+                "lower": {
+                    "start": {"timestamp": candles()[0]["timestamp"], "price": 112},
+                    "end": {"timestamp": candles()[1]["timestamp"], "price": 116},
+                },
+            },
+        }]
+
+        trend = compile_rule_layers(
+            symbol="NVDA", interval="1D", features=features,
+            candles=candles(), generated_at=GENERATED_AT,
+        )["trend"]
+
+        selected = next(item for item in trend["selected"] if item["candidateId"] == "1D:pattern:bear-flag")
+        drawings = [item for item in trend["drawings"] if item["id"] in selected["drawingIds"]]
+        self.assertEqual([item["type"] for item in drawings], ["trendLine", "trendParallelLines"])
+        self.assertNotIn("lineDash", drawings[0]["style"])
+        self.assertEqual(drawings[1]["parallelLineCount"], 2)
+        self.assertIn("확인", drawings[0]["label"])
+
+    def test_forming_flag_keeps_dashed_state_style(self):
+        features = feature_pack()
+        features["patterns"] = [{
+            "id": "1D:pattern:forming-flag",
+            "kind": "bullish_flag",
+            "state": "forming",
+            "breakoutDirection": None,
+            "hardPass": True,
+            "score": .9,
+            "touches": 5,
+            "containment": .86,
+            "evidenceRefs": ["p1", "p2"],
+            "geometry": {
+                "pole": {
+                    "start": {"timestamp": candles()[0]["timestamp"], "price": 100},
+                    "end": {"timestamp": candles()[1]["timestamp"], "price": 120},
+                },
+                "upper": {
+                    "start": {"timestamp": candles()[0]["timestamp"], "price": 120},
+                    "end": {"timestamp": candles()[1]["timestamp"], "price": 116},
+                },
+                "lower": {
+                    "start": {"timestamp": candles()[0]["timestamp"], "price": 116},
+                    "end": {"timestamp": candles()[1]["timestamp"], "price": 112},
+                },
+            },
+        }]
+
+        trend = compile_rule_layers(
+            symbol="NVDA", interval="1D", features=features,
+            candles=candles(), generated_at=GENERATED_AT,
+        )["trend"]
+
+        selected = next(item for item in trend["selected"] if item["candidateId"] == "1D:pattern:forming-flag")
+        drawings = [item for item in trend["drawings"] if item["id"] in selected["drawingIds"]]
+        self.assertTrue(all(item["style"]["lineDash"] == [6, 4] for item in drawings))
+
     def test_only_hard_pass_candidates_compile_with_exact_anchors(self):
         layers = compile_rule_layers(
             symbol="NVDA", interval="1D", features=feature_pack(),
@@ -77,9 +192,92 @@ class ChartAssetCompilerTest(unittest.TestCase):
         flag = next(item for item in structure["drawings"] if item["type"] == "flagMarker")
         self.assertEqual(flag["label"], "지지 이탈")
 
+    def test_ma60_ma120_cross_compiles_as_colored_event_marker(self):
+        for direction, label, color in (
+            ("golden", "MA60/120 골든크로스", "#22c55e"),
+            ("dead", "MA60/120 데드크로스", "#ef4444"),
+        ):
+            with self.subTest(direction=direction):
+                features = feature_pack()
+                features.update({
+                    "levels": [],
+                    "trends": [],
+                    "events": [{
+                        "id": f"1D:event:{direction}",
+                        "timestamp": candles()[-1]["timestamp"],
+                        "candleKey": "2026-03-10",
+                        "kind": "movingAverageCross",
+                        "price": 119.25,
+                        "refIds": [],
+                        "detail": {
+                            "direction": direction,
+                            "shortPeriod": 60,
+                            "longPeriod": 120,
+                            "state": "crossed",
+                        },
+                        "hardPass": True,
+                        "evidencePass": True,
+                        "activePass": True,
+                        "currentImpact": "high",
+                        "ageBars": 0,
+                    }],
+                })
+
+                structure = compile_rule_layers(
+                    symbol="NVDA", interval="1D", features=features,
+                    candles=candles(), generated_at=GENERATED_AT,
+                )["structure"]
+
+                marker = structure["drawings"][0]
+                self.assertEqual(marker["type"], "flagMarker")
+                self.assertEqual(marker["label"], label)
+                self.assertEqual(marker["style"]["color"], color)
+                self.assertEqual(marker["anchors"], [{
+                    "timestamp": candles()[-1]["timestamp"],
+                    "price": 119.25,
+                }])
+
+    def test_legacy_gap_event_is_not_compiled(self):
+        features = feature_pack()
+        features.update({
+            "levels": [],
+            "trends": [],
+            "events": [{
+                "id": "legacy-gap", "timestamp": candles()[-1]["timestamp"], "kind": "gap",
+                "price": 120, "refIds": [], "detail": {"direction": "up", "state": "unfilled"},
+                "hardPass": True, "currentImpact": "high", "ageBars": 0,
+            }],
+        })
+
+        structure = compile_rule_layers(
+            symbol="NVDA", interval="1D", features=features,
+            candles=candles(), generated_at=GENERATED_AT,
+        )["structure"]
+
+        self.assertEqual(structure["drawings"], [])
+        self.assertEqual(structure["meta"]["passedCount"], 0)
+
     def test_indicator_rules_are_bounded(self):
         recommendations = recommended_indicators(feature_pack())
         self.assertEqual([item["layer"] for item in recommendations], ["bollinger:20:2", "macd:12:26:9"])
+        self.assertLessEqual(len(recommendations), 2)
+
+    def test_ma_cross_recommends_sma120_first_for_visual_confirmation(self):
+        features = feature_pack()
+        features["events"] = [{
+            "id": "1D:event:golden",
+            "kind": "movingAverageCross",
+            "hardPass": True,
+            "detail": {"direction": "golden", "shortPeriod": 60, "longPeriod": 120},
+        }]
+
+        recommendations = recommended_indicators(features)
+
+        self.assertEqual(recommendations[0], {
+            "layer": "sma:120",
+            "reason": "MA60/120 교차 확인",
+            "source": "rule",
+        })
         self.assertLessEqual(len(recommendations), 2)
 
     def test_exactly_current_level_is_not_ranked_as_missing_distance(self):

@@ -777,14 +777,15 @@ CHART_ASSET_LLM_TIMEOUT_SECONDS
 
 `chart-asset-builder`는 `gops-agent-orchestrator` image를 공유하지만 interactive
 AgentOrchestrator workflow에 참여하지 않는다. Kafka job 하나를 symbol 중심으로
-처리한다. freshness skip이 아니면 요청 symbol의 canonical 1D를 감사하고 모든 결측
+처리한다. freshness skip이 아니면 요청 symbol의 canonical 1D와 요청 인트라데이 interval을 감사하고 모든 결측
 range를 compact S3 manifest inventory LIST 한 번으로 찾아 복원한 뒤 남은 범위만 Alpaca split
 historical data로 채운다. 기존 inventory의 object별 manifest GET은 45초 deadline으로
 제한하며 aggregate symbol index 전환은 rollout 전 성능 gate다. 시간별 `final-v2` scan은 하지 않고 S3 단계는 기본 45초다. 복구된 행은 기존
 materializer의 no-write prepare가 deadline 안에 완료된 경우에만 caller thread가
 ClickHouse에 commit하고 재조회한다. timeout을 반환한 background read는 candle/audit을
 뒤늦게 쓸 수 없다. 별도 CronJob/topic/Redis candle 입력은
-없다. AWS overlay는 `CHART_ASSET_REPAIR_ALPACA_ENABLED=true`, 동시성 2, 최대 repair
+없다. 인트라데이 결측은 S3 lookup 없이 interval별 Alpaca 요청으로 ClickHouse에 보강한다.
+AWS overlay는 `CHART_ASSET_REPAIR_ALPACA_ENABLED=true`, 동시성 2, 최대 repair
 range 8을 사용한다. 실제 local deploy/CI 경로인 `aws-incluster-app`도 같은 값을
 명시한다. ClickHouse asset table은 기본/rollback store이고 PostgreSQL 전환은
 `job-chart-asset-migrations.yaml`과 `run-chart-asset-migrations-job.sh`로 schema,

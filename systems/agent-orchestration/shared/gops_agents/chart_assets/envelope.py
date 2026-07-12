@@ -6,8 +6,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 
-ALLOWED_INTERVALS = ("1D", "1W", "1M")
-BUILD_INTERVAL_ORDER = ("1M", "1W", "1D")
+ALLOWED_INTERVALS = ("1m", "5m", "10m", "1h", "4h", "1D", "1W", "1M")
+BUILD_INTERVAL_ORDER = ("1M", "1W", "1D", "4h", "1h", "10m", "5m", "1m")
 
 
 @dataclass(frozen=True)

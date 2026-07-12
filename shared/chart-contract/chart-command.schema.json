@@ -61,7 +61,7 @@
         "timeframe": { "type": "string", "enum": ["1m", "5m", "10m", "1h", "4h", "1D", "1W", "1M"] },
         "visibleCount": { "type": "number", "minimum": 12, "maximum": 180 },
         "rightOffset": { "type": "number", "minimum": 0 },
-        "layer": { "type": "string", "enum": ["candles", "volume", "ma5", "ma20", "ma60"] },
+        "layer": { "type": "string", "enum": ["candles", "volume", "ma5", "ma20", "ma60", "sma:5", "sma:20", "sma:60", "sma:120", "ema:20", "wma:20", "bollinger:20:2", "rsi:14", "stochastic:14:3:3", "macd:12:26:9", "volume-profile"] },
         "visible": { "type": "boolean" },
         "drawingId": { "type": "string" },
         "drawing": { "$ref": "#/$defs/drawingEntity" },

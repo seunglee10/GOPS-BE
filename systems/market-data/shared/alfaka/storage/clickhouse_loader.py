@@ -460,7 +460,7 @@ def candle_to_clickhouse_row(payload):
         "source": payload.get("source", "stream-processor"),
         "feed": payload.get("feed") or "unknown",
         "feed_profile": payload.get("feedProfile") or payload.get("feed") or "unknown",
-        "market_session": payload.get("marketSession") or market_session_for_symbol(payload.get("symbol"), payload.get("timestamp")),
+        "market_session": candle_market_session_for_storage(payload),
         "price_adjustment": metadata["priceAdjustment"],
         "canonical_version": metadata["canonicalVersion"],
         "source_event_id": payload.get("sourceEventId"),
@@ -589,6 +589,16 @@ def float_or_none(value):
 def market_session_for_symbol(symbol, timestamp):
     """crypto는 항상 crypto 세션으로, 주식은 timestamp 기반 장 세션으로 분류합니다."""
     return "crypto" if is_crypto_symbol(symbol) else market_session_for_timestamp(timestamp)
+
+
+def candle_market_session_for_storage(payload):
+    """장기 주식 봉은 봉 시각과 무관하게 하나의 regular 저장 identity를 사용합니다."""
+    symbol = payload.get("symbol")
+    if is_crypto_symbol(symbol):
+        return "crypto"
+    if payload.get("interval") in {"1D", "1d", "1W", "1w", "1M", "1mo"}:
+        return "regular"
+    return payload.get("marketSession") or market_session_for_symbol(symbol, payload.get("timestamp"))
 
 
 class ClickHouseHttpClient:

@@ -73,6 +73,24 @@ class IndicatorCalculationTest(unittest.TestCase):
             ],
         )
 
+    def test_computes_sma120_without_a_persisted_candle_column(self):
+        source = [
+            {
+                "timestamp": f"2026-{1 + index // 28:02d}-{1 + index % 28:02d}T00:00:00.000Z",
+                "open": index + 1,
+                "high": index + 2,
+                "low": index,
+                "close": index + 1,
+                "volume": 100 + index,
+            }
+            for index in range(121)
+        ]
+        payload = compute_indicator_payload(source, indicator_specs_from_csv("sma:120"))
+
+        self.assertIsNone(payload["series"]["sma:120"][118]["value"])
+        self.assertEqual(payload["series"]["sma:120"][119]["value"], 60.5)
+        self.assertEqual(payload["series"]["sma:120"][120]["value"], 61.5)
+
 
 if __name__ == "__main__":
     unittest.main()
