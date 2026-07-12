@@ -14,11 +14,11 @@ spec:
     spec:
       restartPolicy: Never
       nodeSelector:
-        karpenter.sh/nodepool: batch
+        karpenter.sh/nodepool: batch-warm
       tolerations:
         - key: gops.io/dedicated
           operator: Equal
-          value: batch
+          value: batch-warm
           effect: NoSchedule
       serviceAccountName: alfaka-market-data-sa
       containers:

@@ -69,6 +69,10 @@ class DeploymentContractsTest(unittest.TestCase):
         migration = load_yaml("infra/k8s/base/job-chart-asset-migrations.yaml")
         container = migration["spec"]["template"]["spec"]["containers"][0]
         self.assertIn("chart-asset-migrations/main.py", " ".join(container["command"]))
+        self.assertEqual(
+            migration["spec"]["template"]["spec"]["nodeSelector"]["karpenter.sh/nodepool"],
+            "batch-warm",
+        )
         required_secrets = {
             item["secretRef"]["name"]
             for item in container["envFrom"]
