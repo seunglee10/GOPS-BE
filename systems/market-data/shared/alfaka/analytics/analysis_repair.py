@@ -18,6 +18,8 @@ from alfaka.backfill.gapfill import TradingCalendar
 from alfaka.common.canonical import historical_adjustment_from_env
 from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
 from alfaka.serving.intervals import alpaca_timeframe_for_interval
+from alfaka.serving.intervals import historical_source_interval_for
+from alfaka.serving.session_buckets import aggregate_regular_session_candles
 from alfaka.storage.clickhouse_loader import ClickHouseHttpClient, candle_to_clickhouse_row
 from alfaka.storage.candle_validation import invalid_candle_numeric_reason
 
@@ -85,6 +87,7 @@ class AnalysisRepairResult:
     missing_after: int
     materialized_rows: int
     reason: str
+    confirmed_empty_bars: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -105,6 +108,7 @@ class AlpacaClickHouseRepairRunner:
     def run(self, record: dict[str, Any]) -> dict[str, Any]:
         symbol = str(record["symbol"]).upper()
         interval = str(record["interval"])
+        source_interval = historical_source_interval_for(interval)
         requested_range = record["range"]
         feed = historical_feed_for_symbol(
             symbol,
@@ -115,18 +119,28 @@ class AlpacaClickHouseRepairRunner:
             requested_range["start"],
             requested_range["end"],
             feed,
-            alpaca_timeframe_for_interval(interval),
+            alpaca_timeframe_for_interval(source_interval),
         )
         if not raw_bars:
-            raise BackfillUnavailable("Historical provider returned no bars.")
-        source_bars = repair_daily_bar_outliers(symbol, raw_bars, feed) if interval == "1D" else raw_bars
-        candles = raw_bars_to_processed_candles(
+            raise ProviderConfirmedEmpty("Historical provider returned no bars for the requested range.")
+        source_bars = repair_daily_bar_outliers(symbol, raw_bars, feed) if source_interval == "1D" else raw_bars
+        source_candles = raw_bars_to_processed_candles(
             symbol,
             source_bars,
             feed=feed,
-            interval=interval,
+            interval=source_interval,
             price_adjustment=historical_adjustment_from_env(os.environ),
         )
+        regular_source = [
+            candle for candle in source_candles
+            if source_interval not in INTRADAY_ANALYSIS_INTERVALS
+            or candle.get("marketSession") in {None, "", "regular"}
+        ]
+        if interval in INTRADAY_ANALYSIS_INTERVALS and source_interval == "1m" and interval != "1m":
+            range_end = datetime.fromisoformat(str(requested_range["end"]).replace("Z", "+00:00"))
+            candles = aggregate_regular_session_candles(regular_source, interval, now=range_end)
+        else:
+            candles = regular_source
         missing_keys = {str(item) for item in record.get("analysisMissingCandleKeys") or [] if item}
         selected = []
         for candle in candles:
@@ -137,7 +151,10 @@ class AlpacaClickHouseRepairRunner:
                 continue
             selected.append(candle_to_clickhouse_row(candle))
         if not selected:
-            raise BackfillUnavailable("Alpaca returned no matching regular-session candles.")
+            raise ProviderConfirmedEmpty("Alpaca returned no matching regular-session candles.")
+        source_rows = [candle_to_clickhouse_row(candle) for candle in regular_source]
+        if source_interval != interval and source_rows:
+            self.clickhouse_client.insert_json_each_row("chart_candles", source_rows)
         self.clickhouse_client.insert_json_each_row("chart_candles", selected)
         return {
             **record,
@@ -147,8 +164,14 @@ class AlpacaClickHouseRepairRunner:
                 "rawRowCount": len(raw_bars),
                 "processedRowCount": len(candles),
                 "materializedRowCount": len(selected),
+                "sourceInterval": source_interval,
+                "sourceMaterializedRowCount": len(source_rows) if source_interval != interval else 0,
             },
         }
+
+
+class ProviderConfirmedEmpty(BackfillUnavailable):
+    """The provider request succeeded but no real candle exists for the expected slot."""
 
 
 class AnalysisCandleRepairService:
@@ -192,10 +215,11 @@ class AnalysisCandleRepairService:
             return AnalysisRepairResult(True, False, False, True, before.missing_bars, before.missing_bars, 0, "canceled")
 
         alpaca_error = False
+        confirmed_empty = 0
         with self._semaphore:
             runner = self.runner_factory()
             if self.alpaca_enabled and not cancel():
-                _alpaca_materialized, alpaca_error, _alpaca_empty_head = self._repair_ranges(
+                _alpaca_materialized, alpaca_error, _alpaca_empty_head, confirmed_empty = self._repair_ranges(
                     runner,
                     symbol, before.ranges,
                     source_preference="alpaca-only",
@@ -215,15 +239,21 @@ class AnalysisCandleRepairService:
             reason = "alpaca_disabled"
         elif _partial_history_is_usable(after):
             reason = "partial_listing_history"
+        elif confirmed_empty >= after.missing_bars and not alpaca_error:
+            reason = "provider_confirmed_empty"
         elif alpaca_error:
-            reason = "alpaca_unavailable"
+            reason = "alpaca_request_failed"
         else:
             reason = "candle_repair_incomplete"
         return AnalysisRepairResult(
             checked=True,
             attempted=True,
             repaired=after.missing_bars == 0,
-            unavailable=after.missing_bars > 0 and not _partial_history_is_usable(after),
+            unavailable=(
+                after.missing_bars > 0
+                and not _partial_history_is_usable(after)
+                and reason != "provider_confirmed_empty"
+            ),
             missing_before=before.missing_bars,
             missing_after=after.missing_bars,
             # Stage runners may read shared objects or merged request ranges.
@@ -231,6 +261,7 @@ class AnalysisCandleRepairService:
             # became available for this symbol during this request.
             materialized_rows=max(0, before.missing_bars - after.missing_bars),
             reason=reason,
+            confirmed_empty_bars=min(after.missing_bars, confirmed_empty),
         )
 
     def audit(self, symbol: str, intervals: Iterable[str]) -> AnalysisReadinessAudit:
@@ -295,10 +326,11 @@ class AnalysisCandleRepairService:
         stage: str,
         emit: RepairEventHandler,
         cancel: CancelCheck,
-    ) -> tuple[int, bool, bool]:
+    ) -> tuple[int, bool, bool, int]:
         materialized = 0
         unavailable = False
         empty_head = False
+        confirmed_empty = 0
         for index, repair_range in enumerate(ranges):
             if cancel():
                 break
@@ -320,6 +352,9 @@ class AnalysisCandleRepairService:
                 rows = int((result or {}).get("materializedRowCount") or 0)
                 materialized += rows
                 emit(stage, {"status": "completed", "materializedRows": rows, "range": repair_range.to_dict()})
+            except ProviderConfirmedEmpty as exc:
+                confirmed_empty += repair_range.missing_count
+                emit(stage, {"status": "confirmed_empty", "reason": _compact_reason(exc), "range": repair_range.to_dict()})
             except BackfillUnavailable as exc:
                 unavailable = True
                 message = str(exc)
@@ -329,7 +364,7 @@ class AnalysisCandleRepairService:
             except Exception as exc:
                 unavailable = True
                 emit(stage, {"status": "failed", "reason": _compact_reason(exc), "range": repair_range.to_dict()})
-        return materialized, unavailable, empty_head
+        return materialized, unavailable, empty_head, confirmed_empty
 
 
 def _valid_daily_keys(rows: Iterable[dict[str, Any]]) -> set[str]:

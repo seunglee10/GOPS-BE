@@ -53,6 +53,7 @@ from alfaka.serving.closed_watermark import (
     watermark_after,
 )
 from alfaka.serving.intervals import redis_closed_candle_cap
+from alfaka.serving.session_buckets import BUCKET_POLICY_REGULAR_SESSION
 from alfaka.streaming.transforms import (
     CalendarCandleAggregator,
     CandleAggregator,
@@ -246,7 +247,7 @@ class ProcessorState:
         self.live_builder = LiveCandleBuilder()
         self.window_builder = TickWindowCandleBuilder(grace_seconds=watermark_grace_seconds)
         self.provisional_state = ProvisionalCandleState()
-        self.aggregator = CandleAggregator()
+        self.aggregator = CandleAggregator(bucket_policy=BUCKET_POLICY_REGULAR_SESSION)
         self.daily_aggregator = CalendarCandleAggregator("1m", "1D")
         self.weekly_aggregator = CalendarCandleAggregator("1D", "1W")
         self.monthly_aggregator = CalendarCandleAggregator("1D", "1M")

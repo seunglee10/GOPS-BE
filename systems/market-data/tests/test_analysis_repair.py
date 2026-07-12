@@ -149,7 +149,20 @@ def test_interior_gap_remaining_after_alpaca_failure_is_unavailable():
     result = service.ensure_ready("NVDA", ("1D",), request_id="cab-test")
 
     assert result.unavailable
-    assert result.reason == "alpaca_unavailable"
+    assert result.reason == "alpaca_request_failed"
+
+
+def test_provider_confirmed_empty_is_not_a_coverage_failure():
+    expected = _expected_intraday_keys(NOW, 380, "1m", TradingCalendar.from_environment())
+    missing = expected[-10]
+    provider = Provider(intraday={"1m": [_intraday(key, "1m") for key in expected if key != missing]})
+    service = _service(provider, ConfirmedEmptyRunner())
+
+    result = service.ensure_ready("A", ("1m",), request_id="cab-confirmed-empty")
+
+    assert result.reason == "provider_confirmed_empty"
+    assert not result.unavailable
+    assert result.confirmed_empty_bars == 1
 
 
 def test_default_repair_runner_writes_alpaca_candles_directly_to_clickhouse():
@@ -179,7 +192,8 @@ def test_default_repair_runner_writes_alpaca_candles_directly_to_clickhouse():
     assert outcome["result"]["materializedRowCount"] == 1
     assert "processedObjects" not in outcome["result"]
     assert client.inserts[0][0] == "chart_candles"
-    assert client.inserts[0][1][0]["interval"] == "5m"
+    assert client.inserts[0][1][0]["interval"] == "1m"
+    assert client.inserts[1][1][0]["interval"] == "5m"
 
 
 class ClickHouseClient:
@@ -212,6 +226,13 @@ class EmptyRunner:
     def run(self, record):
         self.calls.append(record)
         raise BackfillUnavailable("Alpaca returned no bars")
+
+
+class ConfirmedEmptyRunner:
+    def __init__(self): self.calls = []
+    def run(self, record):
+        self.calls.append(record)
+        raise ProviderConfirmedEmpty("Provider has no real bar for the requested slot")
 
 
 def _service(provider, runner):

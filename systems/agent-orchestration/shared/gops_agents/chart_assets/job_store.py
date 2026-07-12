@@ -210,7 +210,7 @@ class PostgresChartAssetJobStore:
         with self._connect() as conn:
             row = conn.execute(f"SELECT repair FROM {JOBS_TABLE} WHERE job_id = %s FOR UPDATE", (job_id,)).fetchone()
             repair = dict((row or {}).get("repair") or {})
-            for key in ("checkedSymbols", "attemptedSymbols", "repairedSymbols", "unavailableSymbols", "missingBarsBefore", "missingBarsAfter", "materializedRows"):
+            for key in ("checkedSymbols", "attemptedSymbols", "repairedSymbols", "unavailableSymbols", "missingBarsBefore", "missingBarsAfter", "materializedRows", "confirmedEmptyBars"):
                 repair.setdefault(key, 0)
             repair.setdefault("reasonCodes", {})
             repair["checkedSymbols"] += int(bool(result.get("checked")))
@@ -220,6 +220,7 @@ class PostgresChartAssetJobStore:
             repair["missingBarsBefore"] += int(result.get("missing_before") or 0)
             repair["missingBarsAfter"] += int(result.get("missing_after") or 0)
             repair["materializedRows"] += int(result.get("materialized_rows") or 0)
+            repair["confirmedEmptyBars"] += int(result.get("confirmed_empty_bars") or 0)
             reason = str(result.get("reason") or "")
             if reason and reason not in {"coverage_complete", "repaired"}:
                 repair["reasonCodes"][reason] = int(repair["reasonCodes"].get(reason) or 0) + 1

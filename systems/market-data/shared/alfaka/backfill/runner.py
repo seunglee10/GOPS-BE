@@ -10,10 +10,20 @@ from alfaka.common.env import load_dotenv, utc_now_iso
 from alfaka.common.market_messages import source_event_id
 from alfaka.common.symbols import alpaca_provider_symbol, is_crypto_symbol
 from alfaka.alpaca.feed_profiles import market_session_for_timestamp
-from alfaka.serving.intervals import alpaca_timeframe_for_interval, normalize_chart_interval
+from alfaka.serving.intervals import (
+    INTRADAY_DERIVED_INTERVALS,
+    alpaca_timeframe_for_interval,
+    historical_source_interval_for,
+    normalize_chart_interval,
+)
 from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
 from alfaka.serving.moving_average import attach_moving_averages
-from alfaka.storage.clickhouse_loader import ClickHouseHttpClient, should_ensure_schema_on_start
+from alfaka.serving.session_buckets import aggregate_regular_session_candles
+from alfaka.storage.clickhouse_loader import (
+    ClickHouseHttpClient,
+    candle_to_clickhouse_row,
+    should_ensure_schema_on_start,
+)
 from alfaka.storage.processed_s3_sink import flush_buffer
 from alfaka.storage.s3_manifest import (
     DEFAULT_MANIFEST_PREFIX,
@@ -218,7 +228,10 @@ class BackfillRunner:
             if source_preference == "s3-only":
                 raise BackfillUnavailable("No S3 final candle objects with matching rows are available for the requested symbol, interval, and range.")
 
-        timeframe = alpaca_timeframe_for_interval(interval)
+        source_interval = historical_source_interval_for(interval)
+        if is_crypto_symbol(symbol):
+            source_interval = interval
+        timeframe = alpaca_timeframe_for_interval(source_interval)
         adjustment = historical_adjustment_from_env(os.environ)
         raw_bars = []
         for repair_range in repair_ranges:
@@ -291,7 +304,23 @@ class BackfillRunner:
             price_adjustment=adjustment,
             canonical_version=CANONICAL_VERSION,
         )
-        processed = raw_bars_to_processed_candles(symbol, processed_source_bars, feed=feed, interval=interval, price_adjustment=adjustment)
+        source_candles, processed = canonical_historical_candles(
+            symbol,
+            processed_source_bars,
+            feed=feed,
+            interval=interval,
+            source_interval=source_interval,
+            price_adjustment=adjustment,
+            completed_through=parse_time(end),
+        )
+        if not processed:
+            raise BackfillUnavailable("Historical provider returned no completed regular-session candles.")
+        source_stored_rows = persist_historical_source_candles(
+            self.clickhouse_client,
+            source_candles,
+            source_interval=source_interval,
+            interval=interval,
+        )
         first_event_time = parse_time(processed[0]["timestamp"])
         request_id = record["requestId"].replace(":", "_")
         partition_key = (
@@ -322,6 +351,7 @@ class BackfillRunner:
             "gapRanges": repair_ranges,
             "processedObjects": [f"s3://{bucket}/{processed_key}"],
             "dailyBarRepairCount": repair_count,
+            "sourceStoredRowCount": source_stored_rows,
         }
 
     def _run_analysis_s3_repair(
@@ -825,6 +855,53 @@ def raw_bars_to_processed_candles(symbol, raw_bars, feed="sip", interval="1m", p
         raw_bar_to_processed_candle(symbol, row, feed=feed, interval=interval, price_adjustment=price_adjustment)
         for row in raw_bars
     ])
+
+
+def canonical_historical_candles(
+    symbol,
+    raw_bars,
+    *,
+    feed="sip",
+    interval="1m",
+    source_interval=None,
+    price_adjustment=None,
+    completed_through=None,
+):
+    """정규장 1분봉과 요청 interval의 canonical 봉을 함께 만든다."""
+    target_interval = normalize_chart_interval(interval)
+    resolved_source = normalize_chart_interval(
+        source_interval
+        or (target_interval if is_crypto_symbol(symbol) else historical_source_interval_for(target_interval))
+    )
+    source_candles = raw_bars_to_processed_candles(
+        symbol,
+        raw_bars,
+        feed=feed,
+        interval=resolved_source,
+        price_adjustment=price_adjustment,
+    )
+    if target_interval not in INTRADAY_DERIVED_INTERVALS or resolved_source != "1m" or is_crypto_symbol(symbol):
+        return source_candles, source_candles
+    regular_source = [
+        candle for candle in source_candles
+        if candle.get("marketSession") in {None, "", "regular"}
+    ]
+    derived = aggregate_regular_session_candles(
+        regular_source,
+        target_interval,
+        now=completed_through,
+    )
+    return regular_source, attach_moving_averages(derived)
+
+
+def persist_historical_source_candles(client, source_candles, *, source_interval, interval):
+    """파생 봉의 근거가 된 실제 1분봉을 ClickHouse에 직접 보존한다."""
+    if source_interval == interval or source_interval != "1m" or interval not in INTRADAY_DERIVED_INTERVALS:
+        return 0
+    rows = [candle_to_clickhouse_row(candle) for candle in source_candles]
+    if rows:
+        client.insert_json_each_row("chart_candles", rows)
+    return len(rows)
 
 
 def main():

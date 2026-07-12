@@ -33,7 +33,7 @@ class AnalysisCandleContractTest(unittest.TestCase):
         self.assertEqual(winter["timestamp"], "2026-01-05T05:00:00.000Z")
         self.assertEqual(summer["timestamp"], "2026-07-06T04:00:00.000Z")
         self.assertEqual((winter["candleKey"], summer["candleKey"]), ("2026-01-05", "2026-07-06"))
-        self.assertEqual(CANDLE_CONTRACT_VERSION, "v3")
+        self.assertEqual(CANDLE_CONTRACT_VERSION, "regular-session-derived")
 
     def test_intraday_identity_preserves_exact_utc_bucket_timestamp(self):
         identity = canonicalize_candle_identity(candle("2026-07-10T13:35:00.000Z"), "5m")

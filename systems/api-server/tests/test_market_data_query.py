@@ -1983,7 +1983,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(result["fill"]["status"], "empty")
         self.assertEqual(len(service.queued), 1)
 
-    def test_on_demand_fill_uses_foreground_alpaca_direct_interval_for_missing_history(self):
+    def test_on_demand_fill_derives_foreground_hourly_candles_from_minutes(self):
         payload = {
             "symbol": "BAC",
             "interval": "1h",
@@ -1998,7 +1998,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         }
         raw_rows = [
             {
-                "t": f"2026-06-25T{hour:02d}:00:00Z",
+                "t": f"2026-06-25T{hour:02d}:30:00Z",
                 "o": 100 + index,
                 "h": 101 + index,
                 "l": 99 + index,
@@ -2007,7 +2007,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
                 "n": 10 + index,
                 "vw": 100.25 + index,
             }
-            for index, hour in enumerate(range(13, 21))
+            for index, hour in enumerate(range(13, 20))
         ]
         with mock.patch.dict(os.environ, {"ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED": "true"}):
             service = OnDemandFillService(timeout_seconds=8, background_enabled=False)
@@ -2016,23 +2016,23 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             result = service.fill_if_needed(
                 symbol="BAC",
                 interval="1h",
-                limit=8,
+                limit=7,
                 before=None,
-                from_time="2026-06-25T13:00:00.000Z",
+                from_time="2026-06-25T13:30:00.000Z",
                 to_time="2026-06-25T20:00:00.000Z",
                 payload=payload,
             )
 
-        self.assertEqual(fetch.call_args.args[4], "1Hour")
+        self.assertEqual(fetch.call_args.args[4], "1Min")
         self.assertEqual(result["sourceInterval"], "1h")
         self.assertEqual(result["fill"]["sourceInterval"], "1h")
-        self.assertEqual(result["fill"]["status"], "filled")
+        self.assertEqual(result["fill"]["status"], "partial")
         self.assertEqual(result["fill"]["foregroundFill"]["state"], "filled")
         self.assertTrue(result["fill"]["sources"]["alpaca"]["hit"])
-        self.assertEqual(len(result["candles"]), 8)
-        self.assertEqual(result["candles"][0]["timestamp"], "2026-06-25T13:00:00.000Z")
-        self.assertIn(":1h:2026-06-25T20:00:00.000Z:", result["snapshotCursor"])
-        self.assertTrue(result["fill"]["renderable"])
+        self.assertEqual(len(result["candles"]), 7)
+        self.assertEqual(result["candles"][0]["timestamp"], "2026-06-25T13:30:00.000Z")
+        self.assertIn(":1h:2026-06-25T19:30:00.000Z:", result["snapshotCursor"])
+        self.assertFalse(result["fill"]["renderable"])
 
     def test_on_demand_fill_routes_intraday_historical_fetch_by_market_session(self):
         payload = {
@@ -2213,7 +2213,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             "storedCandleCount": 0,
             "sourceInterval": "1h",
             "missingRanges": [
-                {"start": "2026-07-02T13:00:00.000Z", "end": "2026-07-02T20:00:00.000Z"}
+                {"start": "2026-07-02T13:30:00.000Z", "end": "2026-07-02T20:00:00.000Z"}
             ],
             "_sourceTrace": {
                 "redis": {"checked": True, "hit": False, "rowCount": 0},
@@ -2222,7 +2222,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         }
         raw_rows = [
             {
-                "t": f"2026-07-02T{hour:02d}:00:00Z",
+                "t": f"2026-07-02T{hour:02d}:30:00Z",
                 "o": 100 + index,
                 "h": 101 + index,
                 "l": 99 + index,
@@ -2231,7 +2231,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
                 "n": 10 + index,
                 "vw": 100.25 + index,
             }
-            for index, hour in enumerate(range(13, 21))
+            for index, hour in enumerate(range(13, 20))
         ]
         with mock.patch.dict(os.environ, {
             "ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED": "",
@@ -2246,26 +2246,25 @@ class MarketDataQueryServiceTest(unittest.TestCase):
                 interval="1h",
                 limit=8,
                 before=None,
-                from_time="2026-07-02T13:00:00.000Z",
+                from_time="2026-07-02T13:30:00.000Z",
                 to_time="2026-07-02T20:00:00.000Z",
                 payload=payload,
             )
 
-        self.assertEqual(fetch.call_count, 2)
-        self.assertEqual(fetch.call_args_list[0].args[1], "2026-07-02T13:00:00.000Z")
-        self.assertEqual(fetch.call_args_list[0].args[2], "2026-07-02T13:30:00.000Z")
-        self.assertEqual(fetch.call_args_list[1].args[1], "2026-07-02T13:30:00.000Z")
-        self.assertEqual(fetch.call_args_list[1].args[2], "2026-07-02T20:00:00.000Z")
-        self.assertEqual({call.args[4] for call in fetch.call_args_list}, {"1Hour"})
+        self.assertEqual(fetch.call_count, 1)
+        self.assertEqual(fetch.call_args.args[1], "2026-07-02T13:30:00.000Z")
+        self.assertEqual(fetch.call_args.args[2], "2026-07-02T20:00:00.000Z")
+        self.assertEqual({call.args[4] for call in fetch.call_args_list}, {"1Min"})
         self.assertEqual(result["fill"]["foregroundFill"]["state"], "filled")
-        self.assertEqual(result["fill"]["status"], "filled")
+        self.assertEqual(result["fill"]["status"], "partial")
         self.assertEqual(result["sourceInterval"], "1h")
-        self.assertEqual(len(result["candles"]), 8)
+        # 2026-07-02 is the observed Independence Day early-close session.
+        self.assertEqual(len(result["candles"]), 4)
 
     def test_on_demand_fill_repairs_intraday_sparse_gap_range(self):
         existing = [
             {
-                "timestamp": f"2026-07-06T{hour:02d}:00:00.000Z",
+                "timestamp": f"2026-07-06T{hour:02d}:30:00.000Z",
                 "open": 100 + index,
                 "high": 101 + index,
                 "low": 99 + index,
@@ -2274,7 +2273,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
                 "isClosed": True,
                 "marketSession": "regular",
             }
-            for index, hour in enumerate([13, 14, 18, 19, 20])
+            for index, hour in enumerate([13, 14, 18, 19])
         ]
         payload = {
             "symbol": "MSFT",
@@ -2291,7 +2290,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         }
         raw_rows = [
             {
-                "t": f"2026-07-06T{hour:02d}:00:00Z",
+                "t": f"2026-07-06T{hour:02d}:30:00Z",
                 "o": 100 + index,
                 "h": 101 + index,
                 "l": 99 + index,
@@ -2315,19 +2314,19 @@ class MarketDataQueryServiceTest(unittest.TestCase):
                 interval="1h",
                 limit=8,
                 before=None,
-                from_time="2026-07-06T13:00:00.000Z",
-                to_time="2026-07-06T21:00:00.000Z",
+                from_time="2026-07-06T13:30:00.000Z",
+                to_time="2026-07-06T20:00:00.000Z",
                 payload=payload,
             )
 
         fetch.assert_called_once()
-        self.assertEqual(fetch.call_args.args[1], "2026-07-06T15:00:00.000Z")
-        self.assertEqual(fetch.call_args.args[2], "2026-07-06T18:00:00.000Z")
-        self.assertEqual(fetch.call_args.args[4], "1Hour")
+        self.assertEqual(fetch.call_args.args[1], "2026-07-06T15:30:00.000Z")
+        self.assertEqual(fetch.call_args.args[2], "2026-07-06T18:30:00.000Z")
+        self.assertEqual(fetch.call_args.args[4], "1Min")
         self.assertEqual(result["fill"]["foregroundFill"]["state"], "filled")
-        self.assertEqual(result["fill"]["status"], "filled")
-        self.assertEqual(len(result["candles"]), 8)
-        self.assertEqual(result["candles"][2]["timestamp"], "2026-07-06T15:00:00.000Z")
+        self.assertEqual(result["fill"]["status"], "partial")
+        self.assertEqual(len(result["candles"]), 7)
+        self.assertEqual(result["candles"][2]["timestamp"], "2026-07-06T15:30:00.000Z")
 
     def test_on_demand_fill_repairs_overnight_sparse_gap_from_boats(self):
         existing_times = [
@@ -2460,7 +2459,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         live = {
             "symbol": "BAC",
             "timeframe": "1h",
-            "timestamp": "2026-06-25T20:00:00.000Z",
+            "timestamp": "2026-06-25T19:30:00.000Z",
             "open": 200,
             "high": 201,
             "low": 199,
@@ -2478,7 +2477,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         }
         raw_rows = [
             {
-                "t": f"2026-06-25T{hour:02d}:00:00Z",
+                "t": f"2026-06-25T{hour:02d}:30:00Z",
                 "o": 100 + index,
                 "h": 101 + index,
                 "l": 99 + index,
@@ -2487,7 +2486,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
                 "n": 10 + index,
                 "vw": 100.25 + index,
             }
-            for index, hour in enumerate(range(13, 21))
+            for index, hour in enumerate(range(13, 20))
         ]
         with mock.patch.dict(os.environ, {"ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED": "true"}):
             service = OnDemandFillService(timeout_seconds=8, background_enabled=False)
@@ -2503,8 +2502,8 @@ class MarketDataQueryServiceTest(unittest.TestCase):
                 payload=payload,
             )
 
-        self.assertEqual(len(result["candles"]), 8)
-        self.assertEqual(result["candles"][-1]["timestamp"], "2026-06-25T20:00:00.000Z")
+        self.assertEqual(len(result["candles"]), 7)
+        self.assertEqual(result["candles"][-1]["timestamp"], "2026-06-25T19:30:00.000Z")
         self.assertEqual(result["candles"][-1]["close"], 200.75)
         self.assertFalse(result["candles"][-1]["isClosed"])
 

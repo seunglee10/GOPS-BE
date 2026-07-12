@@ -201,7 +201,7 @@ def alpaca_timeframe_for_interval(interval):
 
 
 def historical_source_interval_for(interval):
-    return normalize_chart_interval(interval)
+    return source_interval_for(interval)
 
 
 def is_derived_interval(interval):

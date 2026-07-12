@@ -6,8 +6,9 @@ in `platform/{kafka,redis,clickhouse,s3}/README.md`.
 
 ## Invariants
 
-- The visible candle, line, OHLC, Bid/Ask, indicator, compare, and volume-profile
-  geometry must remain unchanged when data internals are refactored.
+- A data-internal refactor must preserve visible geometry unless the task explicitly
+  changes the canonical candle contract. The regular-session intraday migration is
+  such an explicit change: derived US-equity candles are anchored at 09:30 ET.
 - Frontend code reads REST/WebSocket contracts only. It never reads Redis,
   ClickHouse, or S3 directly.
 - Historical candles are canonical only when `priceAdjustment=split` and
@@ -16,6 +17,10 @@ in `platform/{kafka,redis,clickhouse,s3}/README.md`.
   are excluded and raw S3 is never chart serving or ClickHouse materialization input.
 - Local runtime never injects fake market candles. `?orderFlowDemo=1` is a
   browser fixture path only.
+- US-equity `1m` is the real provider source. `5m/10m/1h/4h` are materialized
+  from regular-session `1m` with `bucket_policy=us_equity_regular_session`.
+  Bucket timestamps are stored in UTC, while session open/close and early-close
+  decisions use the NYSE calendar in `America/New_York`.
 - Orders, KIS, and agent APIs are outside this data-plane contract.
 
 ## Runtime Flow
@@ -73,7 +78,7 @@ The single candle read boundary is `CanonicalCandleQuery`:
 
 ```text
 Redis recent/live projection
-  -> ClickHouse direct interval rows or bounded source aggregation
+  -> ClickHouse matching bucket-policy rows or bounded canonical 1m aggregation
   -> optional bounded foreground Alpaca fill for the requested window
   -> background processed S3 final/final-v2 materialization
   -> background Alpaca historical fill
@@ -146,18 +151,18 @@ layout migration. See `platform/s3/README.md` for exact prefixes.
 - Processor maps, frontend inactive candle caches, and order-flow bucket caches
   have tested upper bounds.
 
-Persisted chart-analysis assets are an offline manual-build projection, not an
-API request-derived cache. The independent builder reads canonical ClickHouse
-daily candles once per requested symbol. Before the read, a request-scoped
-readiness step audits the exact 1D lookback, lists the compact S3 manifest once
-for every missing range, and fills only remaining ranges from Alpaca when the
-deployment enables that source. This analysis path never scans hourly
-`final-v2`; its S3 stage is deadline-bounded. All repaired rows pass through the
-existing materializer's no-write prepare phase; only a preparation accepted
-before the deadline is committed by the request thread and re-read from
-ClickHouse. A timed-out background read cannot later write candle/audit rows.
-Redis candles are never
-mixed into analysis input.
+Persisted chart-analysis assets are an offline build projection, not an API
+request-derived cache. The independent builder reads canonical ClickHouse candles
+for the requested interval. Missing derived intraday ranges fetch Alpaca `1Min`,
+write real regular-session `1m`, materialize the requested session-aligned
+`5m/10m/1h/4h`, and re-read ClickHouse. `1W` continues to derive from canonical
+`1D`. This analysis repair path does not use S3, Redis, or Kafka.
+
+Alpaca may legitimately omit an intraday slot with no bar. A successful provider
+request with no matching real candle is `provider_confirmed_empty`, not an OHLCV
+row and not a coverage failure. Authentication, network, rate-limit, and server
+failures remain `alpaca_request_failed`/unavailable. No zero-volume or carry-forward
+candle is manufactured.
 
 Completed 1D/1W/1M candles use a shared `candleKey`. Daily chart coordinates use
 New York market midnight; weekly/monthly coordinates use their UTC bucket start.

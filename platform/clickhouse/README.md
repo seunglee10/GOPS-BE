@@ -39,6 +39,22 @@ window through the operator-reviewed, idempotent migration:
 scripts/local/migrate-chart-tick-retention.sql
 ```
 
+`chart_candles.bucket_policy` separates incompatible intraday bucket identities.
+Legacy/native clock rows use `clock_aligned`; new US-equity derived rows use
+`us_equity_regular_session`. Readers select only the latter for
+`5m/10m/1h/4h`. The source `1m` and session-derived rows are both persisted, so
+chart serving, Geometry, and SMA share the same OHLCV facts.
+
+The operator migration and one-year rebuild entrypoint is:
+
+```bash
+APPLY=true WAIT_FOR_JOB=false scripts/aws/run-session-candle-rebuild-job.sh
+```
+
+The script adds the column idempotently before starting the rebuild Job. It never
+deletes legacy rows; readers exclude them by policy and an operator may clean them
+only after validation and the rollback window.
+
 Optional indicators and candle volume profile are calculated by the API and
 cached in Redis; ClickHouse does not store request-hash artifacts. The retired
 tick-volume-profile and derived-artifact tables are not created in fresh

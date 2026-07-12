@@ -243,7 +243,7 @@ class FakeClickHouseRecoveryProvider:
             return []
         if interval == "1m":
             return [{
-                "timestamp": "2026-06-25T10:15:00.000Z",
+                "timestamp": "2026-06-25T13:35:00.000Z",
                 "open": 190,
                 "high": 191,
                 "low": 189,
@@ -1881,7 +1881,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "eventType": "CANDLE",
             "symbol": "AAPL",
             "interval": "1m",
-            "timestamp": "2026-06-25T10:15:00.000Z",
+            "timestamp": "2026-06-25T13:35:00.000Z",
             "open": 190,
             "high": 191,
             "low": 189,
@@ -1895,7 +1895,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         state.provisional_state.record_closed(closed_1d)
         state.provisional_state.record_closed(closed_1m)
         process_raw_envelope(
-            build_raw_envelope({"T": "t", "S": "AAPL", "i": 124, "p": 195.2, "s": 10, "t": "2026-06-25T10:17:20.100Z"}, "sip"),
+            build_raw_envelope({"T": "t", "S": "AAPL", "i": 124, "p": 195.2, "s": 10, "t": "2026-06-25T13:37:20.100Z"}, "sip"),
             producer,
             redis,
             keys,
@@ -1911,7 +1911,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         live_1w = json.loads(redis.values[keys.live_candle("AAPL", "1W")])
         live_1month = json.loads(redis.values[keys.live_candle("AAPL", "1M")])
 
-        self.assertEqual(live_5m["timestamp"], "2026-06-25T10:15:00.000Z")
+        self.assertEqual(live_5m["timestamp"], "2026-06-25T13:35:00.000Z")
         self.assertEqual(live_5m["open"], 190)
         self.assertEqual(live_5m["high"], 195.2)
         self.assertEqual(live_5m["low"], 189)
@@ -1919,10 +1919,10 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(live_5m["volume"], 110)
         self.assertEqual(live_5m["sourceInterval"], "1m")
         self.assertFalse(live_5m["isClosed"])
-        self.assertEqual(live_10m["timestamp"], "2026-06-25T10:10:00.000Z")
-        self.assertEqual(live_1h["timestamp"], "2026-06-25T10:00:00.000Z")
+        self.assertEqual(live_10m["timestamp"], "2026-06-25T13:30:00.000Z")
+        self.assertEqual(live_1h["timestamp"], "2026-06-25T13:30:00.000Z")
         self.assertEqual(live_1h["sourceInterval"], "1m")
-        self.assertEqual(live_4h["timestamp"], "2026-06-25T08:00:00.000Z")
+        self.assertEqual(live_4h["timestamp"], "2026-06-25T13:30:00.000Z")
         self.assertEqual(live_4h["sourceInterval"], "1m")
         self.assertEqual(live_1d["timestamp"], "2026-06-25T04:00:00.000Z")
         self.assertEqual(live_1d["sourceInterval"], "1m")
@@ -1953,7 +1953,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "eventType": "CANDLE",
             "symbol": "AAPL",
             "interval": "1m",
-            "timestamp": "2026-06-25T10:15:00.000Z",
+            "timestamp": "2026-06-25T13:35:00.000Z",
             "open": 190,
             "high": 191,
             "low": 189,
@@ -1963,7 +1963,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "source": "alpaca.bars",
             "feed": "sip",
             "sourceEventId": "closed-1m",
-            "createdAt": "2026-06-25T10:16:00.000Z",
+            "createdAt": "2026-06-25T13:36:00.000Z",
         })
         write_closed_candle_to_redis(redis, keys, {
             "eventType": "CANDLE",
@@ -1985,7 +1985,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
 
         recovered = recover_processor_state_from_redis(redis, keys, state, ["AAPL"])
         process_raw_envelope(
-            build_raw_envelope({"T": "t", "S": "AAPL", "i": 125, "p": 195.2, "s": 10, "t": "2026-06-25T10:17:20.100Z"}, "sip"),
+            build_raw_envelope({"T": "t", "S": "AAPL", "i": 125, "p": 195.2, "s": 10, "t": "2026-06-25T13:37:20.100Z"}, "sip"),
             producer,
             redis,
             keys,
@@ -2013,7 +2013,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
 
         recovered = recover_processor_state_from_clickhouse(state, ["AAPL"], provider=provider)
         process_raw_envelope(
-            build_raw_envelope({"T": "t", "S": "AAPL", "i": 126, "p": 195.2, "s": 10, "t": "2026-06-25T10:17:20.100Z"}, "sip"),
+            build_raw_envelope({"T": "t", "S": "AAPL", "i": 126, "p": 195.2, "s": 10, "t": "2026-06-25T13:37:20.100Z"}, "sip"),
             producer,
             redis,
             keys,
@@ -3034,6 +3034,28 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(aggregated["open"], 100)
         self.assertEqual(aggregated["close"], 159.5)
         self.assertEqual(aggregated["volume"], 6000)
+
+    def test_regular_session_aggregator_closes_hour_by_time_with_missing_minutes(self):
+        aggregator = CandleAggregator(bucket_policy="us_equity_regular_session")
+        first = {
+            "eventType": "CANDLE", "symbol": "AAPL", "interval": "1m",
+            "timestamp": "2026-07-10T13:30:00.000Z", "open": 100, "high": 101,
+            "low": 99, "close": 100.5, "volume": 10, "tradeCount": 1,
+            "marketSession": "regular", "feed": "sip",
+        }
+        last = {
+            **first,
+            "timestamp": "2026-07-10T14:29:00.000Z", "open": 101,
+            "high": 103, "low": 100, "close": 102, "volume": 20,
+        }
+
+        self.assertIsNone(aggregator.update(first, 60))
+        aggregated = aggregator.update(last, 60)
+
+        self.assertIsNotNone(aggregated)
+        self.assertEqual(aggregated["timestamp"], "2026-07-10T13:30:00.000Z")
+        self.assertEqual(aggregated["volume"], 30)
+        self.assertEqual(aggregated["bucketPolicy"], "us_equity_regular_session")
 
     def test_redis_key_prefix_keeps_contract_namespaced(self):
         keys = RedisKeyBuilder("gops-prod")
@@ -4772,12 +4794,12 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(result["source"], "alpaca")
         self.assertEqual(result["gapRanges"], [{"start": "2026-06-25T13:31:00.000Z", "end": "2026-06-25T13:33:00.000Z", "missingCount": 2}])
 
-    def test_backfill_runner_fetches_direct_hourly_bars_for_hourly_interval(self):
+    def test_backfill_runner_derives_hourly_bars_from_regular_session_minutes(self):
         record = {
             "requestId": "backfill:AAPL:1h:test",
             "symbol": "AAPL",
             "interval": "1h",
-            "range": {"start": "2026-06-25T13:00:00.000Z", "end": "2026-06-25T16:00:00.000Z"},
+            "range": {"start": "2026-06-25T13:30:00.000Z", "end": "2026-06-25T14:30:00.000Z"},
             "jobType": "gapfill",
             "sourcePreference": "coverage-first",
         }
@@ -4786,8 +4808,8 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         def fake_fetch(symbol, start, end, feed, timeframe):
             calls.append({"symbol": symbol, "start": start, "end": end, "timeframe": timeframe})
             return [
-                alpaca_raw_bar("2026-06-25T13:00:00.000Z", open_price=10, index=1),
-                alpaca_raw_bar("2026-06-25T14:00:00.000Z", open_price=11, index=2),
+                alpaca_raw_bar("2026-06-25T13:30:00.000Z", open_price=10, index=1),
+                alpaca_raw_bar("2026-06-25T14:29:00.000Z", open_price=11, index=2),
             ]
 
         runner = BackfillRunner(
@@ -4800,9 +4822,14 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             with mock.patch("alfaka.backfill.runner.fetch_alpaca_bars", side_effect=fake_fetch):
                 result = runner._run(record)
 
-        self.assertEqual(calls[0]["timeframe"], "1Hour")
+        self.assertEqual(calls[0]["timeframe"], "1Min")
         self.assertEqual(result["source"], "alpaca")
         self.assertIn("/interval=1h/", result["processedObjects"][0])
+        self.assertEqual(result["processedRowCount"], 1)
+        self.assertEqual(result["sourceStoredRowCount"], 2)
+        source_rows = runner.clickhouse_client.inserts[0][1]
+        self.assertEqual({row["interval"] for row in source_rows}, {"1m"})
+        self.assertEqual({row["bucket_policy"] for row in source_rows}, {"source_native"})
 
     def test_fetch_alpaca_bars_forces_split_adjustment_and_retries_rate_limits(self):
         responses = [
@@ -5382,9 +5409,10 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(candle_row["market_session"], "crypto")
 
     def test_clickhouse_query_time_minute_aggregation_uses_1m_source_and_attaches_ma(self):
+        start = datetime(2026, 6, 25, 13, 30, tzinfo=timezone.utc)
         rows = [
             {
-                "timestamp": f"2026-06-25T13:3{index}:00.000Z",
+                "timestamp": (start + timedelta(minutes=index)).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
                 "open": index + 1,
                 "high": index + 1,
                 "low": index + 1,
@@ -5394,7 +5422,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
                 "source": "alpaca.bars",
                 "feed": "sip",
             }
-            for index in range(5)
+            for index in range(25)
         ]
         provider = RecordingClickHouseProviderForAggregation(rows)
 
@@ -5403,10 +5431,11 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn("AND interval = '1m'", provider.queries[0][0])
         self.assertIn("row_number() OVER", provider.queries[0][0])
         self.assertEqual(candles[-1]["interval"], "5m")
-        self.assertEqual(candles[-1]["ma5"], 3.0)
+        self.assertEqual(candles[-1]["ma5"], 15.0)
 
-        provider.aggregated_minute_candles("AAPL", "1h", 5)
-        self.assertIn("INTERVAL 60 minute", provider.queries[-1][0])
+        hourly = provider.aggregated_minute_candles("AAPL", "1h", 5)
+        self.assertNotIn("toStartOfInterval", provider.queries[-1][0])
+        self.assertEqual(hourly[-1]["timestamp"], "2026-06-25T13:30:00.000Z")
 
     def test_clickhouse_query_time_weekly_monthly_aggregation_uses_daily_source(self):
         rows = [

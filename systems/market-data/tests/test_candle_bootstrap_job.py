@@ -126,7 +126,7 @@ class CandleBootstrapJobTest(unittest.TestCase):
             "event_time", "symbol", "interval", "open", "high", "low", "close", "volume",
             "trade_count", "vwap", "ma5", "ma20", "ma60", "is_closed", "correction_type",
             "source", "feed", "feed_profile", "market_session", "price_adjustment",
-            "canonical_version", "source_event_id", "created_at",
+            "canonical_version", "bucket_policy", "source_event_id", "created_at",
         }
 
         rows = MODULE.prepare_clickhouse_rows(
@@ -149,6 +149,7 @@ class CandleBootstrapJobTest(unittest.TestCase):
         self.assertEqual(row["market_session"], "regular")
         self.assertEqual(row["price_adjustment"], "split")
         self.assertEqual(row["canonical_version"], "v2")
+        self.assertEqual(row["bucket_policy"], "source_native")
         self.assertNotIn("simulation_run_id", row)
 
     def test_insert_rows_filters_existing_timestamps_and_uses_deduplication_token(self):
@@ -252,7 +253,7 @@ class CandleBootstrapJobTest(unittest.TestCase):
             "event_time", "symbol", "interval", "open", "high", "low", "close", "volume",
             "trade_count", "vwap", "ma5", "ma20", "ma60", "is_closed", "correction_type",
             "source", "feed", "feed_profile", "market_session", "price_adjustment",
-            "canonical_version", "source_event_id", "created_at",
+            "canonical_version", "bucket_policy", "source_event_id", "created_at",
         }
         client = BootstrapClickHouseClient(
             table_columns,
@@ -314,8 +315,9 @@ class CandleBootstrapJobTest(unittest.TestCase):
         )
 
         assert calls[0][-1] == "1Min"
-        assert summary["insertedRows"] == 1
-        inserted = client.inserts[0][1][0]
+        assert summary["insertedRows"] == 3
+        assert summary["insertedSourceRows"] == 2
+        inserted = client.inserts[-1][1][0]
         assert inserted["interval"] == "1h"
         assert inserted["event_time"] == "2026-07-10 13:30:00.000"
         assert inserted["bucket_policy"] == "us_equity_regular_session"
@@ -325,7 +327,7 @@ class CandleBootstrapJobTest(unittest.TestCase):
             "event_time", "symbol", "interval", "open", "high", "low", "close", "volume",
             "trade_count", "vwap", "ma5", "ma20", "ma60", "is_closed", "correction_type",
             "source", "feed", "feed_profile", "market_session", "price_adjustment",
-            "canonical_version", "source_event_id", "created_at",
+            "canonical_version", "bucket_policy", "source_event_id", "created_at",
         }
         client = BootstrapClickHouseClient(table_columns)
         first_bar_time = datetime(2026, 7, 10, 13, 30, tzinfo=timezone.utc)

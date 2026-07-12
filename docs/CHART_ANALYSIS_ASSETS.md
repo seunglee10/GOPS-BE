@@ -10,6 +10,7 @@ Chart Geometry Asset은 완료된 실제 OHLCV 봉에서 현재 지지·저항�
 - 삼각형: 상승, 하락, 대칭
 - 보조지표: 선택 interval의 완료 봉 개수 기준 SMA60·SMA120과 최근 교차
 - 좌표: 해당 interval에 실제로 존재하는 canonical candle timestamp와 가격
+- intraday: `1m` 실제 정규장 봉, `5m/10m/1h/4h`는 09:30 ET 기준 파생 봉
 
 삼각형은 방향전환 피벗의 최근 연속 묶음을 회귀선으로 적합한 뒤 상승·하락·대칭
 형태를 판정한다. 경계마다 최소 2회, 전체 최소 5회 접촉과 수렴·내부 포함 조건을
@@ -31,13 +32,17 @@ flowchart LR
   API --> UI["Geometry layer + SMA60/120"]
 ```
 
-차트 자산 하위 시스템은 S3, Redis, Kafka, LLM을 사용하지 않는다. 다른 GOPS 하위
+차트 자산 하위 시스템은 S3, Redis, Kafka, LLM을 사용하지 않는다. 파생 intraday가
+부족하면 Alpaca `1Min` 원본을 ClickHouse에 보충하고 같은 공통 집계기로 상위 봉을
+저장한 뒤 재조회한다. 다른 GOPS 하위
 시스템의 해당 인프라 사용에는 영향을 주지 않는다. `1W`는 기존처럼 ClickHouse의
 canonical `1D`를 집계하며 Alpaca native 주봉을 저장하지 않는다.
 
 목표 완료 봉은 인트라데이와 `1D`가 380개, `1W`가 312개다. 최신까지 연속된 완료
 봉이 120개 이상이고 과거 head만 부족하면 partial 자산을 허용한다. 중간이나 최신
-결측은 보충 후에도 남으면 실패하며 기존 성공 자산을 교체하지 않는다.
+결측은 보충 후에도 남으면 실패하며 기존 성공 자산을 교체하지 않는다. 단, 성공한
+Alpaca 요청에도 실재 봉이 없는 무거래 slot은 `provider_confirmed_empty`로 인정하며
+가짜 봉을 만들지 않는다.
 
 ## 실행
 

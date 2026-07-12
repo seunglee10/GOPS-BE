@@ -100,7 +100,7 @@ class ProcessorStateBoundsTest(unittest.TestCase):
 
     def test_correction_adapter_reads_canonical_window_once(self):
         state = ProcessorState()
-        start = datetime(2026, 7, 9, 8, 0, tzinfo=timezone.utc)
+        start = datetime(2026, 7, 9, 13, 30, tzinfo=timezone.utc)
         rows = [_candle(timestamp=to_iso(start + timedelta(minutes=index))) for index in range(240)]
         corrected = {**rows[121], "close": 777.0, "correctionType": "UPDATED"}
         calls = []

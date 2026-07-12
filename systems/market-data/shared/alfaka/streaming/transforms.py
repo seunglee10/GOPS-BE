@@ -6,7 +6,13 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from alfaka.common.canonical import candle_metadata
+from alfaka.common.symbols import is_crypto_symbol
 from alfaka.serving.intervals import INTRADAY_DERIVED_INTERVALS, INTRADAY_INTERVAL_MINUTES
+from alfaka.serving.session_buckets import (
+    BUCKET_POLICY_CLOCK_ALIGNED,
+    BUCKET_POLICY_REGULAR_SESSION,
+    regular_session_bucket,
+)
 
 MARKET_TIMEZONE = ZoneInfo("America/New_York")
 DEFAULT_CLOSED_KEY_CAP = 2048
@@ -271,11 +277,20 @@ class ProvisionalCandleState:
             return None
         if target_interval in INTRADAY_DERIVED_INTERVALS:
             minutes = INTRADAY_INTERVAL_MINUTES[target_interval]
-            bucket = floor_interval(anchor, minutes)
-            end = bucket + timedelta(minutes=minutes)
+            if is_crypto_symbol(symbol):
+                bucket = floor_interval(anchor, minutes)
+                end = bucket + timedelta(minutes=minutes)
+                bucket_policy = BUCKET_POLICY_CLOCK_ALIGNED
+            else:
+                session_bucket = regular_session_bucket(anchor, target_interval)
+                if session_bucket is None:
+                    return None
+                bucket, end = session_bucket.start, session_bucket.end
+                bucket_policy = BUCKET_POLICY_REGULAR_SESSION
         elif target_interval == "1D":
             bucket = floor_market_day(anchor)
             end = bucket + timedelta(days=1)
+            bucket_policy = BUCKET_POLICY_REGULAR_SESSION
         else:
             raise ValueError(f"Unsupported 1m provisional target: {target_interval}")
 
@@ -291,6 +306,7 @@ class ProvisionalCandleState:
             bucket=bucket,
             rows=rows,
             source_interval="1m",
+            bucket_policy=bucket_policy,
         )
 
     def build_from_1d(self, symbol, target_interval, anchor_timestamp=None, provisional_1d=None):
@@ -346,7 +362,7 @@ class ProvisionalCandleState:
             rows.pop(timestamp, None)
 
 
-def build_provisional_candle(symbol, interval, bucket, rows, source_interval):
+def build_provisional_candle(symbol, interval, bucket, rows, source_interval, bucket_policy=BUCKET_POLICY_CLOCK_ALIGNED):
     candles = sorted(rows, key=lambda candle: parse_time(candle["timestamp"]))
     latest = candles[-1]
     return {
@@ -365,6 +381,7 @@ def build_provisional_candle(symbol, interval, bucket, rows, source_interval):
         "isClosed": False,
         "source": "derived.live",
         "sourceInterval": source_interval,
+        "bucketPolicy": bucket_policy,
         "feed": latest.get("feed"),
         "feedProfile": latest.get("feedProfile"),
         "marketSession": latest.get("marketSession"),
@@ -398,33 +415,60 @@ class MovingAverageState:
 
 
 class CandleAggregator:
-    def __init__(self, max_closed_keys=DEFAULT_CLOSED_KEY_CAP):
+    def __init__(self, max_closed_keys=DEFAULT_CLOSED_KEY_CAP, bucket_policy=BUCKET_POLICY_CLOCK_ALIGNED):
         self.windows = defaultdict(dict)
+        self.window_ends = {}
         self.closed_keys = BoundedKeySet(max_closed_keys)
         self.recomputes = 0
+        self.bucket_policy = bucket_policy
 
     def update(self, candle_1m, interval_minutes):
-        interval = intraday_interval_for_minutes(interval_minutes)
-        bucket = floor_interval(candle_1m["timestamp"], interval_minutes)
+        resolved = self._bucket_window(candle_1m, interval_minutes)
+        if resolved is None:
+            return None
+        interval, bucket, end = resolved
         key = (candle_1m["symbol"], interval, to_iso(bucket))
         if key in self.closed_keys:
             return None
+        previous = None
+        if self.bucket_policy == BUCKET_POLICY_REGULAR_SESSION:
+            stale_keys = sorted(
+                (
+                    candidate for candidate in self.windows
+                    if candidate[0] == key[0] and candidate[1] == key[1] and candidate != key
+                ),
+                key=lambda candidate: parse_time(candidate[2]),
+            )
+            for stale_key in stale_keys:
+                stale_window = self.windows.pop(stale_key, {})
+                self.window_ends.pop(stale_key, None)
+                if stale_window:
+                    previous = self._aggregate(stale_key, stale_window.values())
+                    self.closed_keys.add(stale_key)
         window = self.windows[key]
         window[candle_1m["timestamp"]] = candle_1m
+        self.window_ends[key] = end
 
-        if len(window) < interval_minutes:
-            return None
+        if self.bucket_policy == BUCKET_POLICY_REGULAR_SESSION:
+            candle_end = parse_time(candle_1m["timestamp"]) + timedelta(minutes=1)
+            ready = candle_end >= end
+        else:
+            ready = len(window) >= interval_minutes
+        if not ready:
+            return previous
 
         result = self._aggregate(key, window.values())
         self.windows.pop(key, None)
+        self.window_ends.pop(key, None)
         self.closed_keys.add(key)
         return result
 
     def recompute(self, corrected_candle, interval_minutes, source_candles):
-        interval = intraday_interval_for_minutes(interval_minutes)
-        bucket = floor_interval(corrected_candle["timestamp"], interval_minutes)
+        resolved = self._bucket_window(corrected_candle, interval_minutes)
+        if resolved is None:
+            return None
+        interval, bucket, end = resolved
         key = (corrected_candle["symbol"], interval, to_iso(bucket))
-        end = bucket + timedelta(minutes=interval_minutes)
         rows = {
             candle["timestamp"]: dict(candle)
             for candle in source_candles
@@ -433,7 +477,7 @@ class CandleAggregator:
             and bucket <= parse_time(candle["timestamp"]) < end
         }
         rows[corrected_candle["timestamp"]] = dict(corrected_candle)
-        if len(rows) < interval_minutes:
+        if self.bucket_policy != BUCKET_POLICY_REGULAR_SESSION and len(rows) < interval_minutes:
             return None
         result = self._aggregate(key, rows.values())
         result["correctionType"] = "UPDATED"
@@ -449,14 +493,24 @@ class CandleAggregator:
     def is_closed_window(self, candle_1m, interval_minutes):
         return self._key(candle_1m, interval_minutes) in self.closed_keys
 
-    @staticmethod
-    def _key(candle_1m, interval_minutes):
-        interval = intraday_interval_for_minutes(interval_minutes)
-        bucket = floor_interval(candle_1m["timestamp"], interval_minutes)
+    def _key(self, candle_1m, interval_minutes):
+        resolved = self._bucket_window(candle_1m, interval_minutes)
+        if resolved is None:
+            return (candle_1m["symbol"], intraday_interval_for_minutes(interval_minutes), "outside-session")
+        interval, bucket, _end = resolved
         return (candle_1m["symbol"], interval, to_iso(bucket))
 
-    @staticmethod
-    def _aggregate(key, source_candles):
+    def _bucket_window(self, candle_1m, interval_minutes):
+        interval = intraday_interval_for_minutes(interval_minutes)
+        if self.bucket_policy == BUCKET_POLICY_REGULAR_SESSION and not is_crypto_symbol(candle_1m.get("symbol")):
+            session_bucket = regular_session_bucket(candle_1m.get("timestamp"), interval)
+            if session_bucket is None:
+                return None
+            return interval, session_bucket.start, session_bucket.end
+        bucket = floor_interval(candle_1m["timestamp"], interval_minutes)
+        return interval, bucket, bucket + timedelta(minutes=interval_minutes)
+
+    def _aggregate(self, key, source_candles):
         candles = sorted(source_candles, key=lambda candle: parse_time(candle["timestamp"]))
         latest = candles[-1]
         return {
@@ -475,6 +529,8 @@ class CandleAggregator:
             "isClosed": True,
             "correctionType": latest.get("correctionType", "NONE"),
             "source": "stream-processor",
+            "sourceInterval": "1m",
+            "bucketPolicy": self.bucket_policy,
             "feed": latest.get("feed"),
             "feedProfile": latest.get("feedProfile"),
             "marketSession": latest.get("marketSession"),

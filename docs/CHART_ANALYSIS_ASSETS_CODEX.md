@@ -13,7 +13,9 @@
 - chart asset payload/job은 PostgreSQL, candle은 ClickHouse에 저장한다.
 - 결측 보충은 Alpaca의 정확한 누락 range만 사용하며 S3·Redis·Kafka를 거치지 않는다.
 - 동일 `(symbol, interval, inputDigest, algorithmVersion)`은 no-op이다.
-- 120개 미만 또는 interior/tail gap이면 기존 성공 자산을 덮어쓰지 않는다.
+- 실제 완료 봉 120개 미만 또는 provider가 확인하지 못한 interior/tail gap이면 기존
+  성공 자산을 덮어쓰지 않는다. 성공한 Alpaca 조회에도 실재 봉이 없는 slot은
+  `provider_confirmed_empty`로 기록하고 가짜 봉 없이 분석을 계속한다.
 
 ## Coverage 계약
 
@@ -31,6 +33,7 @@
 - `alfaka.analytics.geometry`: OHLCV evidence, 수평선, SMA/교차와 Geometry 자산 조립
 - `alfaka.analytics.pivots` + `alfaka.analytics.patterns`: 방향전환 피벗과 회귀형 삼각형 탐지
 - `alfaka.analytics.analysis_candles`: 완료 봉과 canonical identity, 기존 주봉 집계
+- `alfaka.serving.session_buckets`: 09:30 ET 기준 intraday 버킷과 공통 OHLCV 집계
 - `alfaka.analytics.analysis_repair`: ClickHouse audit와 Alpaca-only repair
 - `gops_agents.chart_assets.builder`: symbol/interval 단위 조립과 digest no-op
 - `gops_agents.chart_assets.storage`: PostgreSQL 최신 geometry 자산
@@ -40,6 +43,10 @@
 semantic discriminator인 `geometry`다. `algorithmVersion`은 현재
 `ohlcv-consensus-regression-triangles`이며 분석 의미가 바뀔 때만 변경한다. 기존 숫자형 자산 row는 읽기
 fallback이나 자동 변환에 사용하지 않는다.
+
+Intraday candle input contract는 `regular-session-derived`이며 asset digest에 포함된다.
+미국 주식 `5m/10m/1h/4h`는 `bucket_policy=us_equity_regular_session`인 ClickHouse
+행만 사용한다. 과거 `clock_aligned` 행과 섞지 않는다.
 
 PostgreSQL 테이블은 `geometry_assets`, `geometry_build_jobs`,
 `geometry_build_items`다. 자산 기본 키는 `(symbol, interval)`이고 item claim은

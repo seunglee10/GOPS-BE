@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 from alfaka.backfill.gapfill import TradingCalendar
 from alfaka.serving.time_utils import canonical_utc_timestamp, parse_utc_time
 from alfaka.serving.intervals import INTRADAY_INTERVAL_MINUTES
+from alfaka.serving.session_buckets import regular_session_bucket
 from alfaka.storage.candle_validation import invalid_candle_numeric_reason
 
 
@@ -18,7 +19,7 @@ MARKET_TIMEZONE = ZoneInfo("America/New_York")
 CANONICAL_DATA_VERSION = "v2"
 SESSION_POLICY = "us-equity-regular"
 ADJUSTMENT_POLICY = "split"
-CANDLE_CONTRACT_VERSION = "v3"
+CANDLE_CONTRACT_VERSION = "regular-session-derived"
 INTRADAY_ANALYSIS_INTERVALS = tuple(INTRADAY_INTERVAL_MINUTES)
 LONG_ANALYSIS_INTERVALS = ("1D", "1W", "1M")
 ANALYSIS_INTERVALS = (*INTRADAY_ANALYSIS_INTERVALS, *LONG_ANALYSIS_INTERVALS)
@@ -155,7 +156,12 @@ def is_analysis_candle_bucket_complete(
     reference = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     if interval in INTRADAY_ANALYSIS_INTERVALS:
         bucket = parse_utc_time(identity["timestamp"])
-        return bucket is not None and bucket + timedelta(minutes=INTRADAY_INTERVAL_MINUTES[interval]) <= reference
+        if bucket is None:
+            return False
+        if interval == "1m":
+            return bucket + timedelta(minutes=1) <= reference
+        session_bucket = regular_session_bucket(bucket, interval, calendar=calendar)
+        return session_bucket is not None and session_bucket.end <= reference
     trading_calendar = calendar or TradingCalendar.from_environment()
     completed_at = _bucket_completed_at(
         _bucket_date(identity["candleKey"], interval),

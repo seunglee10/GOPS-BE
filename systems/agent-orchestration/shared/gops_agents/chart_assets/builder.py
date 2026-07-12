@@ -58,6 +58,19 @@ class ChartAssetBuilder:
             bundle = self.candle_loader.load_symbol(symbol, [interval])
             rows = list(bundle.rows[interval])
             coverage = dict(bundle.coverage[interval])
+            confirmed_empty = int(repair.get("confirmed_empty_bars") or 0)
+            if confirmed_empty:
+                unresolved = max(0, int(coverage.get("missingBars") or 0) - confirmed_empty)
+                coverage["confirmedEmptyBars"] = confirmed_empty
+                coverage["missingBars"] = unresolved
+                quality_flags = [
+                    flag for flag in list(coverage.get("qualityFlags") or [])
+                    if flag not in {"interior_gap", "stale_input", "recent_contiguous_below_minimum"}
+                ]
+                quality_flags.append("provider_confirmed_empty")
+                coverage["qualityFlags"] = quality_flags
+                if unresolved == 0 and len(rows) >= MINIMUM_BARS:
+                    coverage["coverageState"] = "full" if len(rows) >= TARGET_BARS[interval] else "partial"
             if len(rows) < MINIMUM_BARS or coverage.get("coverageState") == "data_insufficient":
                 reason = repair.get("reason") or "data_insufficient"
                 item = _item(symbol, interval, "failed", "coverage", started, reason=reason, error=f"{len(rows)} completed candles available")
@@ -93,6 +106,7 @@ class ChartAssetBuilder:
                     "actualBars": len(rows),
                     "contiguousBars": int(coverage.get("recentContiguousBars") or len(rows)),
                     "missingBars": int(coverage.get("missingBars") or 0),
+                    "confirmedEmptyBars": int(coverage.get("confirmedEmptyBars") or 0),
                     "lastExpectedClosedAt": coverage.get("lastExpectedClosedAt"),
                     "lastActualClosedAt": coverage.get("lastActualClosedAt") or rows[-1]["timestamp"],
                     "qualityFlags": list(coverage.get("qualityFlags") or []),

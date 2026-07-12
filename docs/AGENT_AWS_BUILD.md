@@ -771,6 +771,9 @@ CHART_ASSET_REPAIR_MAX_RANGES
 `chart-asset-builder`는 `gops-agent-orchestrator` image를 공유하지만 interactive
 AgentOrchestrator workflow에 참여하지 않는다. PostgreSQL queue item을 symbol/interval
 단위로 처리하고 ClickHouse 완료 봉을 감사하며 누락 range만 Alpaca로 보충한다.
+미국 주식 `5m/10m/1h/4h` 보충은 native timeframe이 아니라 Alpaca `1Min`을 사용해
+실제 정규장 `1m`과 `bucket_policy=us_equity_regular_session` 파생 봉을 함께
+ClickHouse에 저장한다.
 `1W`는 underlying `1D` 결측만 보충한 뒤 기존 주봉 집계를 사용한다. 이 하위 시스템은
 S3, Redis, Kafka, OpenAI를 사용하지 않는다.
 

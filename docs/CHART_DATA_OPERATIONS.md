@@ -121,6 +121,27 @@ quotes, and 1 hour for `agents.market-events.v1`, with bounded segment sizes.
 
 ## S3 And ClickHouse Recovery
 
+### Regular-session intraday migration
+
+Build and deploy the new market-processor/storage/backend images, then migrate
+the ClickHouse column and create the one-year rebuild Job. Dry-run is the default:
+
+```bash
+scripts/aws/run-session-candle-rebuild-job.sh
+```
+
+After reviewing the selected image, S&P 500 universe, intervals, and one-year
+range, persist real `1m` plus session-aligned derived candles:
+
+```bash
+APPLY=true WAIT_FOR_JOB=false scripts/aws/run-session-candle-rebuild-job.sh
+```
+
+Use `SYMBOLS=AAPL,NVDA` and `MAX_SYMBOLS=2` for a smoke run. The job is idempotent
+by `(symbol, interval, event_time, bucket_policy)` selection and does not delete
+`clock_aligned` rollback rows. After it completes, force a Geometry build so the
+new candle digest replaces PostgreSQL assets.
+
 Dry-run ClickHouse-to-S3 regeneration first:
 
 ```bash
@@ -181,6 +202,8 @@ scripts/aws/run-chart-asset-migrations-job.sh
 - S3 v2 rollback: switch writers to `dual`, verify v1 manifests, then switch
   readers. Do not delete v2 evidence during rollback.
 - Derived rollback: disable the new API image; cached results expire naturally.
+- Session-candle rollback: restore the prior readers, which can still see retained
+  `clock_aligned` rows. Do not delete either policy during the rollback window.
 - Redis throttling rollback: restore prior interval env values, not old key
   families or per-message writes.
 - Terraform rollback: set lifecycle management false before apply. Coordinate
