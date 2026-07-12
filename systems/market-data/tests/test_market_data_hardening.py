@@ -6922,8 +6922,18 @@ class MarketDataHardeningContractTest(unittest.TestCase):
                     interval=interval,
                 )
 
-                self.assertEqual(candle["marketSession"], "overnight")
-                self.assertEqual(candle_to_clickhouse_row(candle)["market_session"], "regular")
+                self.assertEqual(candle["marketSession"], "regular")
+                legacy_session_candle = {**candle, "marketSession": "overnight"}
+                self.assertEqual(candle_to_clickhouse_row(legacy_session_candle)["market_session"], "regular")
+
+        crypto_candle = raw_bar_to_processed_candle(
+            "BTCUSD",
+            alpaca_raw_bar("2026-07-06T00:00:00.000Z"),
+            feed="us",
+            interval="1W",
+        )
+        self.assertEqual(crypto_candle["marketSession"], "crypto")
+        self.assertEqual(candle_to_clickhouse_row(crypto_candle)["market_session"], "crypto")
 
     def test_backfill_processed_candles_include_moving_averages(self):
         raw_bars = [
