@@ -73,6 +73,10 @@ class DeploymentContractsTest(unittest.TestCase):
             migration["spec"]["template"]["spec"]["nodeSelector"]["karpenter.sh/nodepool"],
             "batch-warm",
         )
+        self.assertEqual(
+            migration["spec"]["template"]["spec"]["tolerations"][0]["value"],
+            "batch",
+        )
         required_secrets = {
             item["secretRef"]["name"]
             for item in container["envFrom"]
@@ -192,6 +196,10 @@ fi
             topic_init["spec"]["template"]["spec"]["nodeSelector"]["karpenter.sh/nodepool"],
             "batch-warm",
         )
+        geometry_cron = load_yaml("infra/k8s/overlays/aws/scheduled/cronjob-chart-geometry-build.yaml")
+        geometry_pod = geometry_cron["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+        self.assertEqual(geometry_pod["nodeSelector"]["karpenter.sh/nodepool"], "batch-warm")
+        self.assertEqual(geometry_pod["tolerations"][0]["value"], "batch")
 
     def test_scheduled_jobs_have_resources_and_retain_failure_evidence(self):
         for path in (

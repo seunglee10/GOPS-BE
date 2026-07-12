@@ -24,7 +24,7 @@ spec:
           tolerations:
             - key: gops.io/dedicated
               operator: Equal
-              value: batch-warm
+              value: batch
               effect: NoSchedule
           serviceAccountName: alfaka-market-data-sa
           containers:
