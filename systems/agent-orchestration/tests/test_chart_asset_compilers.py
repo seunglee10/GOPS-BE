@@ -154,6 +154,51 @@ class ChartAssetCompilerTest(unittest.TestCase):
         flag = next(item for item in structure["drawings"] if item["type"] == "flagMarker")
         self.assertEqual(flag["label"], "지지 이탈")
 
+    def test_ma60_ma120_cross_compiles_as_colored_event_marker(self):
+        for direction, label, color in (
+            ("golden", "MA60/120 골든크로스", "#22c55e"),
+            ("dead", "MA60/120 데드크로스", "#ef4444"),
+        ):
+            with self.subTest(direction=direction):
+                features = feature_pack()
+                features.update({
+                    "levels": [],
+                    "trends": [],
+                    "events": [{
+                        "id": f"1D:event:{direction}",
+                        "timestamp": candles()[-1]["timestamp"],
+                        "candleKey": "2026-03-10",
+                        "kind": "movingAverageCross",
+                        "price": 119.25,
+                        "refIds": [],
+                        "detail": {
+                            "direction": direction,
+                            "shortPeriod": 60,
+                            "longPeriod": 120,
+                            "state": "crossed",
+                        },
+                        "hardPass": True,
+                        "evidencePass": True,
+                        "activePass": True,
+                        "currentImpact": "high",
+                        "ageBars": 0,
+                    }],
+                })
+
+                structure = compile_rule_layers(
+                    symbol="NVDA", interval="1D", features=features,
+                    candles=candles(), generated_at=GENERATED_AT,
+                )["structure"]
+
+                marker = structure["drawings"][0]
+                self.assertEqual(marker["type"], "flagMarker")
+                self.assertEqual(marker["label"], label)
+                self.assertEqual(marker["style"]["color"], color)
+                self.assertEqual(marker["anchors"], [{
+                    "timestamp": candles()[-1]["timestamp"],
+                    "price": 119.25,
+                }])
+
     def test_legacy_gap_event_is_not_compiled(self):
         features = feature_pack()
         features.update({

@@ -78,6 +78,41 @@ class FeaturePackGoldenTest(unittest.TestCase):
         features = compute_feature_pack(scenario_candles(spec), "1D")
         self.assertNotIn("gap", {event["kind"] for event in features["events"]})
 
+    def test_daily_ma60_ma120_crosses_are_emitted_at_the_cross_candle(self):
+        for direction in ("golden", "dead"):
+            with self.subTest(direction=direction):
+                rows = _ma_cross_rows(direction)
+
+                events = compute_events(
+                    rows,
+                    [],
+                    atr=1,
+                    display_from=rows[-120]["timestamp"],
+                    interval="1D",
+                )
+
+                cross = next(item for item in events if item["kind"] == "movingAverageCross")
+                self.assertEqual(cross["timestamp"], rows[157]["timestamp"])
+                self.assertEqual(cross["candleKey"], rows[157]["candleKey"])
+                self.assertEqual(cross["detail"]["direction"], direction)
+                self.assertEqual(cross["detail"]["shortPeriod"], 60)
+                self.assertEqual(cross["detail"]["longPeriod"], 120)
+                self.assertTrue(cross["hardPass"])
+                self.assertEqual(cross["ageBars"], 0)
+
+    def test_ma60_ma120_crosses_require_121_daily_candles(self):
+        rows = _ma_cross_rows("golden")
+
+        insufficient = compute_events(
+            rows[:120], [], atr=1, display_from=rows[0]["timestamp"], interval="1D",
+        )
+        weekly = compute_events(
+            rows, [], atr=1, display_from=rows[-120]["timestamp"], interval="1W",
+        )
+
+        self.assertFalse(any(item["kind"] == "movingAverageCross" for item in insufficient))
+        self.assertFalse(any(item["kind"] == "movingAverageCross" for item in weekly))
+
     def test_short_and_missing_history_are_deterministic(self):
         for name in ("short_history", "missing_bars"):
             with self.subTest(name=name):
@@ -277,6 +312,27 @@ def _line_rows(*, touches, breach=None):
             "candleKey": (start + timedelta(days=index)).date().isoformat(),
             "barIndex": index, "open": close, "high": high, "low": low,
             "close": close, "volume": 1000, "isClosed": True,
+        })
+    return rows
+
+
+def _ma_cross_rows(direction: str) -> list[dict]:
+    start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    rows = []
+    for index in range(158):
+        base = 120 - .4 * index if index < 100 else 80 + .5 * (index - 100)
+        close = base if direction == "golden" else 200 - base
+        timestamp = (start + timedelta(days=index)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        rows.append({
+            "timestamp": timestamp,
+            "candleKey": timestamp[:10],
+            "barIndex": index,
+            "open": close,
+            "high": close + 1,
+            "low": close - 1,
+            "close": close,
+            "volume": 1000,
+            "isClosed": True,
         })
     return rows
 
