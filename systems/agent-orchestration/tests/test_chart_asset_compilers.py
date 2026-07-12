@@ -224,6 +224,24 @@ class ChartAssetCompilerTest(unittest.TestCase):
         self.assertEqual([item["layer"] for item in recommendations], ["bollinger:20:2", "macd:12:26:9"])
         self.assertLessEqual(len(recommendations), 2)
 
+    def test_ma_cross_recommends_sma120_first_for_visual_confirmation(self):
+        features = feature_pack()
+        features["events"] = [{
+            "id": "1D:event:golden",
+            "kind": "movingAverageCross",
+            "hardPass": True,
+            "detail": {"direction": "golden", "shortPeriod": 60, "longPeriod": 120},
+        }]
+
+        recommendations = recommended_indicators(features)
+
+        self.assertEqual(recommendations[0], {
+            "layer": "sma:120",
+            "reason": "MA60/120 교차 확인",
+            "source": "rule",
+        })
+        self.assertLessEqual(len(recommendations), 2)
+
     def test_exactly_current_level_is_not_ranked_as_missing_distance(self):
         features = feature_pack()
         features["levels"] = [
