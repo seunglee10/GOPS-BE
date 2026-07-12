@@ -5,13 +5,17 @@ import itertools
 import statistics
 from typing import Any, Iterable
 
+from .atr import latest_atr
+from .patterns import compute_triangles
+from .pivots import compute_pivots
+
 
 SUPPORTED_INTERVALS = ("1m", "5m", "10m", "1h", "4h", "1D", "1W")
 TARGET_BARS = {**{interval: 380 for interval in SUPPORTED_INTERVALS[:-1]}, "1W": 312}
 WARMUP_BARS = {interval: 120 for interval in SUPPORTED_INTERVALS}
 EVALUATION_BARS = {**{interval: 260 for interval in SUPPORTED_INTERVALS[:-1]}, "1W": 192}
 MINIMUM_BARS = 120
-ALGORITHM_VERSION = "ohlcv-consensus-1"
+ALGORITHM_VERSION = "ohlcv-consensus-regression-triangles"
 
 _ATR_PERIOD = 14
 _VOLUME_BASELINE = 20
@@ -43,9 +47,9 @@ def analyze_geometry(symbol: str, interval: str, candles: list[dict[str, Any]]) 
         symbol, interval, rows, [item for item in evidence if item["kind"] == "H"],
         role="resistance", current=current, atr=latest_atr,
     )
-    triangle_candidates = _triangle_candidates(rows, evidence, atr=latest_atr, interval=interval)
+    triangle_candidates = _regression_triangle_candidates(rows, interval=interval)
     active = sorted(
-        (item for item in triangle_candidates if item["state"] in {"forming", "confirmed"}),
+        (item for item in triangle_candidates if item["hardPass"] and item["state"] in {"forming", "confirmed"}),
         key=lambda item: (-item["score"], -item["endIndex"], item["geometryHash"]),
     )
     primary = active[0] if active else None
@@ -193,6 +197,34 @@ def _horizontal_levels(symbol, interval, rows, candidates, *, role, current, atr
             "evidence": contacts[:8],
         })
     return sorted(levels, key=lambda item: (-item["score"], item["currentDistanceAtr"], item["id"]))[:2]
+
+
+def _regression_triangle_candidates(rows, *, interval):
+    display_from = rows[max(0, len(rows) - EVALUATION_BARS[interval])]["timestamp"]
+    pivots = compute_pivots(rows, display_from=display_from, interval=interval)
+    candidates = compute_triangles(rows, pivots, atr=latest_atr(rows), interval=interval)
+    evidence_by_id = {str(item["id"]): item for item in pivots}
+    end = len(rows) - 1
+    results = []
+    for candidate in candidates:
+        geometry = candidate["geometry"]
+        start = max(0, end - int(candidate["spanBars"]))
+        span = max(1, end - start)
+        upper_slope = (float(geometry["upper"]["end"]["price"]) - float(geometry["upper"]["start"]["price"])) / span
+        lower_slope = (float(geometry["lower"]["end"]["price"]) - float(geometry["lower"]["start"]["price"])) / span
+        upper_intercept = float(geometry["upper"]["start"]["price"]) - upper_slope * start
+        lower_intercept = float(geometry["lower"]["start"]["price"]) - lower_slope * start
+        results.append({
+            **candidate,
+            "startIndex": start,
+            "endIndex": end,
+            "geometryHash": hashlib.sha256(str(candidate["id"]).encode()).hexdigest()[:16],
+            "upper": geometry["upper"],
+            "lower": geometry["lower"],
+            "apexBarsFromAsOf": _apex_bars(end, upper_slope, upper_intercept, lower_slope, lower_intercept),
+            "evidence": [evidence_by_id[ref] for ref in candidate.get("evidenceRefs", []) if ref in evidence_by_id],
+        })
+    return results
 
 
 def _triangle_candidates(rows, evidence, *, atr, interval):
