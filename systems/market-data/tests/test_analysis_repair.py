@@ -15,6 +15,7 @@ from alfaka.analytics.analysis_candles import _expected_intraday_keys, analysis_
 from alfaka.analytics.analysis_repair import (  # noqa: E402
     AlpacaClickHouseRepairRunner,
     AnalysisCandleRepairService,
+    ProviderConfirmedEmpty,
 )
 from alfaka.backfill.gapfill import TradingCalendar  # noqa: E402
 from alfaka.backfill.runner import BackfillUnavailable  # noqa: E402
@@ -62,6 +63,53 @@ def test_intraday_repair_uses_selected_interval_and_exact_canonical_keys():
     assert result.reason == "repaired"
     assert runner.calls[0]["interval"] == "5m"
     assert runner.calls[0]["analysisMissingCandleKeys"] == [missing]
+
+
+def test_default_repair_runner_fetches_one_minute_source_and_materializes_session_hour():
+    client = ClickHouseClient()
+    calls = []
+
+    def fetcher(symbol, start, end, feed, timeframe):
+        calls.append((symbol, start, end, feed, timeframe))
+        return [
+            {"t": "2026-07-10T13:30:00.000Z", "o": 100, "h": 102, "l": 99, "c": 101, "v": 10},
+            {"t": "2026-07-10T14:29:00.000Z", "o": 101, "h": 104, "l": 100, "c": 103, "v": 20},
+        ]
+
+    runner = AlpacaClickHouseRepairRunner(clickhouse_client=client, fetcher=fetcher)
+    outcome = runner.run({
+        "requestId": "cab-session-hour",
+        "symbol": "AAPL",
+        "interval": "1h",
+        "range": {"start": "2026-07-10T13:30:00.000Z", "end": "2026-07-10T14:30:00.000Z"},
+        "analysisMissingCandleKeys": ["2026-07-10T13:30:00.000Z"],
+    })
+
+    assert calls[0][-1] == "1Min"
+    assert [table for table, _rows in client.inserts] == ["chart_candles", "chart_candles"]
+    source_rows = client.inserts[0][1]
+    derived_rows = client.inserts[1][1]
+    assert {row["interval"] for row in source_rows} == {"1m"}
+    assert derived_rows[0]["interval"] == "1h"
+    assert derived_rows[0]["event_time"] == "2026-07-10 13:30:00.000"
+    assert derived_rows[0]["bucket_policy"] == "us_equity_regular_session"
+    assert outcome["result"]["materializedRowCount"] == 1
+
+
+def test_default_repair_runner_distinguishes_provider_confirmed_empty():
+    runner = AlpacaClickHouseRepairRunner(
+        clickhouse_client=ClickHouseClient(),
+        fetcher=lambda *_args, **_kwargs: [],
+    )
+
+    with pytest.raises(ProviderConfirmedEmpty):
+        runner.run({
+            "requestId": "cab-empty-minute",
+            "symbol": "A",
+            "interval": "1m",
+            "range": {"start": "2026-07-10T13:57:00.000Z", "end": "2026-07-10T13:58:00.000Z"},
+            "analysisMissingCandleKeys": ["2026-07-10T13:57:00.000Z"],
+        })
 
 
 def test_weekly_repair_audits_and_materializes_underlying_daily_candles():
