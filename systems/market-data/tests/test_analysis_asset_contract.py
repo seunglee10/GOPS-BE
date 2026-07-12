@@ -21,7 +21,7 @@ class ChartAnalysisAssetContractTest(unittest.TestCase):
         self.assertEqual(v2["properties"]["assetVersion"]["const"], "v2")
         self.assertEqual(
             v2["properties"]["kernelVersion"]["enum"],
-            ["kernel-v2", "kernel-v3", "kernel-v4", "kernel-v5", "kernel-v6"],
+            ["kernel-v2", "kernel-v3", "kernel-v4", "kernel-v5", "kernel-v6", "kernel-v7"],
         )
         self.assertEqual(v2["properties"]["qualityPolicyVersion"]["enum"], ["chart-quality-v1", "chart-quality-v2", "chart-quality-v4", "chart-quality-v5"])
         self.assertEqual(v2["properties"]["interval"]["enum"], ["1m", "5m", "10m", "1h", "4h", "1D", "1W", "1M"])

@@ -108,7 +108,7 @@ flowchart TD
 | `analytics/pivots.py` | tactical/structural pivot과 prominence |
 | `analytics/levels.py` | bounded cluster, touch episode, reaction, role state, level gate |
 | `analytics/trends.py` | structural anchor 가설, raw high/low 접점·반응, active invalidation, channel, range, regime |
-| `analytics/events.py` | breakout/retest/volume/extreme episode와 current impact; gap marker는 생성하지 않음 |
+| `analytics/events.py` | breakout/retest/volume/extreme episode와 일봉 MA60/120 교차; gap marker는 생성하지 않음 |
 | `analytics/schema.py` | feature pack 조립 및 품질 flag |
 
 ### Agent orchestration system의 독립 build subsystem
@@ -207,6 +207,23 @@ confirmed: 0.25 ATR breakout + next-bar hold or 1.5x 20-bar median volume
 ascending/descending triangle and flags reject opposite-direction breakout
 ```
 
+### Daily MA60 / MA120 cross
+
+```text
+interval: 1D only
+input: canonical completed close, minimum 121 candles
+golden: previous MA60 <= MA120 and current MA60 > MA120
+dead: previous MA60 >= MA120 and current MA60 < MA120
+confirmation/volume filter: none
+anchor: crossing candle canonical timestamp, linearly interpolated crossing price
+active window: 1D event_relevance_bars
+rendering: golden green Flag, dead red Flag
+```
+
+MA120은 ClickHouse candle column이나 별도 indicator artifact로 저장하지 않고
+deterministic kernel이 빌드 입력 종가에서 계산한다. 교차 판정은 최근 두 MA 값만
+비교하지만 그 값을 만들기 위한 warm-up 121개 일봉은 필요하다.
+
 삼각형은 `trendLine` 2개, 깃발은 pole `trendLine`과 channel
 `trendParallelLines`로 materialize한다. 하나의 selected pattern이 두 drawing ID를
 소유한다. `forming`은 점선, `confirmed`는 실선이며 모든 anchor는 실제 candleKey에
@@ -221,7 +238,7 @@ reason count만 투영한다.
 ### Compiler budget
 
 ```text
-S: nearest hardPass support 1 + resistance 1 + event flag 1
+S: nearest hardPass support 1 + resistance 1 + event flag 1 (MA cross 포함)
 T: highest-ranked trend/channel/range 1 + highest-ranked pattern drawing group 1
 I: at most 2 candidates per interval, at most 6 per symbol
 I available slots: max(0, 5 - ruleDrawingCount)
@@ -271,7 +288,7 @@ intervalSelections[]
 
 ```text
 assetVersion            v2
-kernelVersion           kernel-v6
+kernelVersion           kernel-v7
 qualityPolicyVersion    chart-quality-v5
 promptVersion           prompt-v2
 modelPolicyVersion      chart-asset-model-v1

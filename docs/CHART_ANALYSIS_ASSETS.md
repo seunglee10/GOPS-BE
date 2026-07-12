@@ -112,7 +112,7 @@ flowchart TD
 | 추세선 | structural anchor 2개, raw 고·저가 독립 접점 3회, 0.75 ATR 반응 2회 | 2.25 ATR 이내, 최근 접점 20% 이내, active invalidation 없음 | 1개 |
 | 채널 | confirmed 기준선 + 반대 경계 접점 2회, 평행 오차 20% 이하, containment 80% | 기반 추세의 현재 관련성 통과 | 추세 예산과 공유 |
 | 박스권 | 상·하단 각 2회, 합산 5회, 최근 양 경계와 교대 반응, containment 85% | 현재가가 박스에서 0.75 ATR 이내 | 추세 예산과 공유 |
-| 이벤트 | breakout/retest/52주 extreme 등의 상태와 impact 검증; 갭 상승·하락은 제외 | interval별 age와 current impact 통과 | Flag 최대 1개 |
+| 이벤트 | breakout/retest/52주 extreme과 일봉 MA60/120 교차; 갭 상승·하락은 제외 | interval별 age와 current impact 통과 | Flag 최대 1개 |
 | 삼각형 | 최근 20·40·60·90·120봉의 연속 피벗 부분집합에서 상·하단 각 2회, 합산 5회, 수렴·containment·ATR residual 검증 | 형성 중 또는 예상 방향 돌파 확인 | 경계선 2개 |
 | 깃발 | 4 ATR 이상 깃대, 평행 채널 각 2회, 10~50% 되돌림 | 형성 중 또는 깃대 방향 돌파 확인 | 깃대 + 채널 |
 
@@ -163,6 +163,12 @@ flowchart LR
 전체 rule 작도는 interval당 최대 4개 수준이며, I 레이어까지 합쳐도 전경 예산을
 넘지 않는다. H-Line 라벨에는 가격을 반복하지 않는다. 가격은 차트 가격축에서
 표시된다.
+
+일봉 MA60/120 교차는 canonical 종가 121개로 두 SMA를 계산하고, 이전 봉과 현재
+봉 사이의 대소 관계가 바뀐 경우에만 이벤트로 만든다. MA60이 MA120 위로 바뀌면
+골든크로스, 아래로 바뀌면 데드크로스다. 유지 봉·거래량 같은 추가 확인은 요구하지
+않으며 교차가 확인된 실제 일봉 timestamp에 녹색 또는 붉은색 Flag를 표시한다.
+MA120 자체는 candle이나 별도 지표 artifact로 저장하지 않는다.
 
 ## LLM이 할 수 있는 일과 할 수 없는 일
 

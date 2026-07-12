@@ -9,6 +9,8 @@ STYLE_TOKENS: dict[str, dict[str, Any]] = {
     "asset-sr-medium": {"color": "#f5f5f5", "colorToken": "asset-sr-medium", "lineWidth": 1.5, "opacity": 0.75},
     "asset-sr-weak": {"color": "#f5f5f5", "colorToken": "asset-sr-weak", "lineWidth": 1, "opacity": 0.55},
     "asset-flag": {"color": "#ff7a3d", "colorToken": "asset-flag", "lineWidth": 1, "opacity": 0.95},
+    "asset-cross-golden": {"color": "#22c55e", "colorToken": "asset-cross-golden", "lineWidth": 1, "opacity": 0.95},
+    "asset-cross-dead": {"color": "#ef4444", "colorToken": "asset-cross-dead", "lineWidth": 1, "opacity": 0.95},
     "asset-trend": {"color": "#0099ff", "colorToken": "asset-trend", "lineWidth": 1.5, "opacity": 0.9, "extension": "ray"},
     "asset-range": {"color": "#999999", "colorToken": "asset-range", "lineWidth": 1, "fillColor": "#999999", "fillToken": "asset-range", "fillOpacity": 0.06, "opacity": 0.8},
     "asset-pattern-bull": {"color": "#22c55e", "colorToken": "asset-pattern-bull", "lineWidth": 2, "opacity": 0.95, "extension": "ray"},
@@ -111,7 +113,7 @@ def compile_rule_layers(
             suffix=_stable_suffix(candidate_id),
             drawing_type="flagMarker",
             anchors=[{"timestamp": event["timestamp"], "price": round(float(event["price"]), 2)}],
-            style_token="asset-flag",
+            style_token=_event_style(event),
             label=_event_label(event),
             generated_at=generated_at,
             created_by="system",
@@ -452,4 +454,15 @@ def _event_label(event: dict[str, Any]) -> str:
         return "52주 신저가"
     if kind == "volumeSpike":
         return "거래량 급증"
+    if kind == "movingAverageCross":
+        short = int(detail.get("shortPeriod") or 60)
+        long = int(detail.get("longPeriod") or 120)
+        name = "골든크로스" if detail.get("direction") == "golden" else "데드크로스"
+        return f"MA{short}/{long} {name}"
     return str(kind or "이벤트")
+
+
+def _event_style(event: dict[str, Any]) -> str:
+    if event.get("kind") != "movingAverageCross":
+        return "asset-flag"
+    return "asset-cross-golden" if (event.get("detail") or {}).get("direction") == "golden" else "asset-cross-dead"
