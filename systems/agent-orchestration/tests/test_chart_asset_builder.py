@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[3]
 for path in (ROOT / "systems" / "agent-orchestration" / "shared", ROOT / "systems" / "market-data" / "shared"):
     if str(path) not in sys.path: sys.path.insert(0, str(path))
 
-from gops_agents.chart_assets.builder import ChartAssetBuilder, _asset_content_digest  # noqa: E402
+from gops_agents.chart_assets.builder import ASSEMBLER_VERSION, ChartAssetBuilder, _asset_content_digest  # noqa: E402
 from gops_agents.chart_assets.envelope import ALLOWED_INTERVALS, ChartAssetBuildEnvelope  # noqa: E402
 from gops_agents.chart_assets.progress import InMemoryChartAssetProgressStore, RedisChartAssetProgressStore  # noqa: E402
 from gops_agents.chart_assets.curation import deterministic_curation  # noqa: E402
@@ -178,6 +178,9 @@ def envelope(symbols=("NVDA", "AAPL"), intervals=("1D", "1W", "1M"), job_id="cab
 
 
 class ChartAssetBuilderTest(unittest.TestCase):
+    def test_drawing_style_contract_uses_new_assembler_version(self):
+        self.assertEqual(ASSEMBLER_VERSION, "chart-asset-assembler-v5")
+
     def test_builds_all_eight_intervals_in_higher_to_lower_order(self):
         request = envelope(symbols=("NVDA",), intervals=ALLOWED_INTERVALS, job_id="cab-12345678-all")
         progress = RecordingProgressStore(); progress.initialize(request)
