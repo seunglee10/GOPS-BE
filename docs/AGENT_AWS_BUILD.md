@@ -287,9 +287,10 @@ scripts/aws/restore-graphdb-pvc.sh
 The dev deploy workflow does not run cache rebuilds or SQL migrations
 automatically. For one-off maintenance during a manual build, set
 `run_order_migrations=true` with `order-worker` in `services`, or
+`run_chart_asset_migrations=true` with `agent-orchestrator` in `services`, or
 `rebuild_news_cache=true` with `market-storage` in `services`. Run
-`scripts/aws/run-order-migrations-job.sh` directly only when SQL migrations must
-be applied outside the deploy workflow.
+the corresponding migration script directly only when SQL migrations must be
+applied outside the deploy workflow.
 
 Market processor deploys as two runtime units from the same
 `gops-market-processor` image. `alfaka-market-processor` handles trades, bars,

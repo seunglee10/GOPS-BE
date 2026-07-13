@@ -337,6 +337,20 @@ fi
         self.assertEqual(workflow["jobs"]["deploy"]["needs"], "quality")
         self.assertIn("kubectl kustomize infra/k8s/base/platform", workflow_text)
 
+    def test_dev_deploy_can_migrate_chart_assets_before_app_rollout(self):
+        workflow = (REPO_ROOT / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8")
+
+        self.assertIn("run_chart_asset_migrations:", workflow)
+        self.assertIn("run-chart-asset-migrations-job.sh", workflow)
+        self.assertIn(
+            "run_chart_asset_migrations=true requires services to include agent-orchestrator.",
+            workflow,
+        )
+        self.assertLess(
+            workflow.index("run-chart-asset-migrations-job.sh"),
+            workflow.index("name: Deploy app workloads"),
+        )
+
     def test_terraform_covers_all_current_images_with_immutable_tags(self):
         terraform = (REPO_ROOT / "infra/aws/terraform/main.tf").read_text(encoding="utf-8")
 
