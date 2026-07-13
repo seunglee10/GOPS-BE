@@ -17,8 +17,13 @@ in `platform/{kafka,redis,clickhouse,s3}/README.md`.
   are excluded and raw S3 is never chart serving or ClickHouse materialization input.
 - Local runtime never injects fake market candles. `?orderFlowDemo=1` is a
   browser fixture path only.
-- US-equity `1m` is the real provider source. `5m/10m/1h/4h` are materialized
-  from regular-session `1m` with `bucket_policy=us_equity_regular_session`.
+- US-equity realtime `1m` is the live provider source. Live `5m/10m/1h/4h`
+  candles are materialized from regular-session `1m` with
+  `bucket_policy=us_equity_regular_session`. Bounded historical repair keeps
+  `1m` as the source for `5m/10m`, but fetches and stores Alpaca `10Min` as a
+  `source_native` recovery source for `1h/4h`; the resulting target candles use
+  the same regular-session bucket policy. Readers prefer stored target rows,
+  then `10m`, then legacy `1m` aggregation for hourly intervals.
   Bucket timestamps are stored in UTC, while session open/close and early-close
   decisions use the NYSE calendar in `America/New_York`.
 - Candle runtime boundaries normalize OHLCV to numeric values and `tradeCount`
@@ -82,7 +87,7 @@ The single candle read boundary is `CanonicalCandleQuery`:
 
 ```text
 Redis recent/live projection
-  -> ClickHouse matching bucket-policy rows or bounded canonical 1m aggregation
+  -> ClickHouse matching bucket-policy rows or bounded canonical 10m/1m aggregation
   -> optional bounded foreground Alpaca fill for the requested window
   -> background processed S3 final/final-v2 materialization
   -> background Alpaca historical fill
@@ -165,10 +170,11 @@ layout migration. See `platform/s3/README.md` for exact prefixes.
 
 Persisted chart-analysis assets are an offline build projection, not an API
 request-derived cache. The independent builder reads canonical ClickHouse candles
-for the requested interval. Missing derived intraday ranges fetch Alpaca `1Min`,
-write real regular-session `1m`, materialize the requested session-aligned
-`5m/10m/1h/4h`, and re-read ClickHouse. `1W` continues to derive from canonical
-`1D`. This analysis repair path does not use S3, Redis, or Kafka.
+for the requested interval. Missing `5m/10m` ranges fetch Alpaca `1Min`; missing
+`1h/4h` ranges fetch Alpaca `10Min`. The real regular-session source rows are
+stored before the requested session-aligned target is materialized and re-read
+from ClickHouse. `1W` continues to derive from canonical `1D`. This analysis
+repair path does not use S3, Redis, or Kafka.
 
 Alpaca may legitimately omit an intraday slot with no bar. A successful provider
 request with no matching real candle is `provider_confirmed_empty`, not an OHLCV

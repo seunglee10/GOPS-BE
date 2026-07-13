@@ -12,13 +12,14 @@ from alfaka.common.symbols import alpaca_provider_symbol, is_crypto_symbol
 from alfaka.alpaca.feed_profiles import market_session_for_timestamp
 from alfaka.serving.intervals import (
     INTRADAY_DERIVED_INTERVALS,
+    INTRADAY_INTERVAL_MINUTES,
     alpaca_timeframe_for_interval,
     historical_source_interval_for,
     normalize_chart_interval,
 )
 from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
 from alfaka.serving.moving_average import attach_moving_averages
-from alfaka.serving.session_buckets import aggregate_regular_session_candles
+from alfaka.serving.session_buckets import BUCKET_POLICY_SOURCE_NATIVE, aggregate_regular_session_candles
 from alfaka.storage.clickhouse_loader import (
     ClickHouseHttpClient,
     candle_to_clickhouse_row,
@@ -880,7 +881,13 @@ def canonical_historical_candles(
         interval=resolved_source,
         price_adjustment=price_adjustment,
     )
-    if target_interval not in INTRADAY_DERIVED_INTERVALS or resolved_source != "1m" or is_crypto_symbol(symbol):
+    can_aggregate_intraday = (
+        target_interval in INTRADAY_DERIVED_INTERVALS
+        and resolved_source in INTRADAY_INTERVAL_MINUTES
+        and INTRADAY_INTERVAL_MINUTES[resolved_source] < INTRADAY_INTERVAL_MINUTES[target_interval]
+        and not is_crypto_symbol(symbol)
+    )
+    if not can_aggregate_intraday:
         return source_candles, source_candles
     regular_source = [
         candle for candle in source_candles
@@ -890,15 +897,26 @@ def canonical_historical_candles(
         regular_source,
         target_interval,
         now=completed_through,
+        source_interval=resolved_source,
     )
     return regular_source, attach_moving_averages(derived)
 
 
 def persist_historical_source_candles(client, source_candles, *, source_interval, interval):
-    """파생 봉의 근거가 된 실제 1분봉을 ClickHouse에 직접 보존한다."""
-    if source_interval == interval or source_interval != "1m" or interval not in INTRADAY_DERIVED_INTERVALS:
+    """파생 봉의 근거가 된 실제 intraday 원본 봉을 ClickHouse에 직접 보존한다."""
+    source_interval = normalize_chart_interval(source_interval)
+    interval = normalize_chart_interval(interval)
+    if (
+        source_interval == interval
+        or source_interval not in INTRADAY_INTERVAL_MINUTES
+        or interval not in INTRADAY_DERIVED_INTERVALS
+        or INTRADAY_INTERVAL_MINUTES[source_interval] >= INTRADAY_INTERVAL_MINUTES[interval]
+    ):
         return 0
-    rows = [candle_to_clickhouse_row(candle) for candle in source_candles]
+    rows = [
+        candle_to_clickhouse_row({**candle, "bucketPolicy": BUCKET_POLICY_SOURCE_NATIVE})
+        for candle in source_candles
+    ]
     if rows:
         client.insert_json_each_row("chart_candles", rows)
     return len(rows)

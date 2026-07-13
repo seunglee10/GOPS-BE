@@ -777,9 +777,9 @@ CHART_ASSET_REPAIR_MAX_RANGES
 `chart-asset-builder`는 `gops-agent-orchestrator` image를 공유하지만 interactive
 AgentOrchestrator workflow에 참여하지 않는다. PostgreSQL queue item을 symbol/interval
 단위로 처리하고 ClickHouse 완료 봉을 감사하며 누락 range만 Alpaca로 보충한다.
-미국 주식 `5m/10m/1h/4h` 보충은 native timeframe이 아니라 Alpaca `1Min`을 사용해
-실제 정규장 `1m`과 `bucket_policy=us_equity_regular_session` 파생 봉을 함께
-ClickHouse에 저장한다.
+미국 주식 `5m/10m` 보충은 Alpaca `1Min`, `1h/4h` 보충은 Alpaca `10Min`을
+사용한다. 실제 정규장 원본과 `bucket_policy=us_equity_regular_session` 파생 봉을
+함께 ClickHouse에 저장하며, 실시간 파생 봉은 계속 `1m`을 원본으로 사용한다.
 stream processor가 Redis/ClickHouse에서 캔들을 복구할 때는 legacy JSON의 문자열
 `tradeCount`를 정수로 정규화한 뒤 provisional state에 넣는다. 이 경계가 깨지면
 1m→상위 interval 합산에서 processor 전체가 재시작할 수 있으므로 복구·집계·Redis

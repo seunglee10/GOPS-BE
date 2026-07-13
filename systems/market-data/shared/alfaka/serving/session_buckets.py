@@ -64,12 +64,14 @@ def aggregate_regular_session_candles(
     *,
     now: datetime | None = None,
     calendar: TradingCalendar | None = None,
+    source_interval: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Aggregate real regular-session 1m rows without manufacturing empty bars."""
+    """Aggregate real regular-session source rows without manufacturing empty bars."""
     if interval not in INTRADAY_DERIVED_INTERVALS:
         raise ValueError(f"Regular-session aggregation does not support {interval}")
     reference = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     trading_calendar = calendar or TradingCalendar.from_environment()
+    resolved_source_interval = source_interval
     grouped: dict[str, tuple[SessionBucket, list[dict[str, Any]]]] = {}
     for source in rows:
         if source.get("isClosed", source.get("is_closed", True)) is False:
@@ -77,6 +79,7 @@ def aggregate_regular_session_candles(
         if source.get("marketSession", source.get("market_session", "regular")) not in {None, "", "regular"}:
             continue
         timestamp = source.get("timestamp") or source.get("event_time")
+        resolved_source_interval = resolved_source_interval or source.get("interval") or source.get("sourceInterval")
         bucket = regular_session_bucket(timestamp, interval, calendar=trading_calendar)
         if bucket is None:
             continue
@@ -119,7 +122,7 @@ def aggregate_regular_session_candles(
             "correctionType": latest.get("correctionType", latest.get("correction_type", "NONE")),
             "source": "derived.regular-session",
             "sourceClass": "derived_aggregate",
-            "sourceInterval": "1m",
+            "sourceInterval": resolved_source_interval or "1m",
             "feed": latest.get("feed") or "unknown",
             "feedProfile": latest.get("feedProfile", latest.get("feed_profile")) or latest.get("feed") or "unknown",
             "marketSession": "regular",

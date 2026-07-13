@@ -23,6 +23,7 @@ from alfaka.backfill.runner import (
 )
 from alfaka.serving.dto import candle_to_gops, cursor_for
 from alfaka.serving.intervals import (
+    INTRADAY_DERIVED_INTERVALS,
     alpaca_timeframe_for_interval,
     historical_source_interval_for,
     interval_seconds,
@@ -316,7 +317,8 @@ class OnDemandFillService:
         )
         trace["feedRoutes"] = routes
         fetch_routes = [route for route in routes if route.get("state") == "fetchable"]
-        estimated_bars = estimated_bar_count(interval, fetch_ranges_from_routes(fetch_routes))
+        provider_interval = interval if is_crypto_symbol(symbol) else historical_source_interval_for(interval)
+        estimated_bars = estimated_bar_count(provider_interval, fetch_ranges_from_routes(fetch_routes))
         foreground_auto_enabled = interval in self.foreground_auto_intervals and estimated_bars <= self.foreground_auto_max_bars
         if not fetch_routes:
             trace["foregroundFill"].update({
@@ -343,7 +345,6 @@ class OnDemandFillService:
         source["checked"] = True
         trace["foregroundFill"]["attempted"] = True
         try:
-            provider_interval = interval if is_crypto_symbol(symbol) else historical_source_interval_for(interval)
             timeframe = alpaca_timeframe_for_interval(provider_interval)
             raw_by_feed: list[tuple[str, list[dict[str, Any]]]] = []
             for route in fetch_routes:
@@ -922,7 +923,15 @@ def historical_fill_routes(symbol: str, interval: str, ranges: list[dict[str, An
             if segment_end <= cursor:
                 break
             session = market_session_for_datetime(cursor)
-            if session in {"pre", "regular", "after"}:
+            if session == "regular":
+                route_feed = feed
+                state = "fetchable"
+                reason = None
+            elif interval in INTRADAY_DERIVED_INTERVALS:
+                route_feed = None
+                state = "skipped"
+                reason = "derived equity candles use regular-session source bars only"
+            elif session in {"pre", "after"}:
                 route_feed = feed
                 state = "fetchable"
                 reason = None
@@ -968,6 +977,8 @@ def opportunistic_intraday_gap_ranges(interval: str, candles: list[dict[str, Any
         current_session = market_session_for_datetime(current)
         if previous_session != current_session or previous_session not in {"pre", "regular", "after", "overnight"}:
             continue
+        if market_session_identity(previous, previous_session) != market_session_identity(current, current_session):
+            continue
         missing_count = max(1, int(gap_seconds // interval_seconds(interval)) - 1)
         ranges.append({
             "start": iso_utc(previous + bucket_delta),
@@ -975,6 +986,14 @@ def opportunistic_intraday_gap_ranges(interval: str, candles: list[dict[str, Any
             "missingCount": missing_count,
         })
     return ranges
+
+
+def market_session_identity(value: datetime, session: str) -> tuple[str, str]:
+    local = value.astimezone(MARKET_TIMEZONE)
+    trading_date = local.date()
+    if session == "overnight" and local.time() >= datetime_time(20, 0):
+        trading_date += timedelta(days=1)
+    return session, trading_date.isoformat()
 
 
 def requested_window_shortfall_ranges(

@@ -9,9 +9,10 @@ from zoneinfo import ZoneInfo
 
 from alfaka.backfill.runner import (
     BackfillUnavailable,
+    canonical_historical_candles,
     fetch_alpaca_bars,
     historical_feed_for_symbol,
-    raw_bars_to_processed_candles,
+    persist_historical_source_candles,
     repair_daily_bar_outliers,
 )
 from alfaka.backfill.gapfill import TradingCalendar
@@ -19,7 +20,6 @@ from alfaka.common.canonical import historical_adjustment_from_env
 from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
 from alfaka.serving.intervals import alpaca_timeframe_for_interval
 from alfaka.serving.intervals import historical_source_interval_for
-from alfaka.serving.session_buckets import aggregate_regular_session_candles
 from alfaka.storage.clickhouse_loader import ClickHouseHttpClient, candle_to_clickhouse_row
 from alfaka.storage.candle_validation import invalid_candle_numeric_reason
 
@@ -124,23 +124,21 @@ class AlpacaClickHouseRepairRunner:
         if not raw_bars:
             raise ProviderConfirmedEmpty("Historical provider returned no bars for the requested range.")
         source_bars = repair_daily_bar_outliers(symbol, raw_bars, feed) if source_interval == "1D" else raw_bars
-        source_candles = raw_bars_to_processed_candles(
+        range_end = datetime.fromisoformat(str(requested_range["end"]).replace("Z", "+00:00"))
+        source_candles, candles = canonical_historical_candles(
             symbol,
             source_bars,
             feed=feed,
-            interval=source_interval,
+            interval=interval,
+            source_interval=source_interval,
             price_adjustment=historical_adjustment_from_env(os.environ),
+            completed_through=range_end,
         )
         regular_source = [
             candle for candle in source_candles
             if source_interval not in INTRADAY_ANALYSIS_INTERVALS
             or candle.get("marketSession") in {None, "", "regular"}
         ]
-        if interval in INTRADAY_ANALYSIS_INTERVALS and source_interval == "1m" and interval != "1m":
-            range_end = datetime.fromisoformat(str(requested_range["end"]).replace("Z", "+00:00"))
-            candles = aggregate_regular_session_candles(regular_source, interval, now=range_end)
-        else:
-            candles = regular_source
         missing_keys = {str(item) for item in record.get("analysisMissingCandleKeys") or [] if item}
         selected = []
         for candle in candles:
@@ -152,9 +150,12 @@ class AlpacaClickHouseRepairRunner:
             selected.append(candle_to_clickhouse_row(candle))
         if not selected:
             raise ProviderConfirmedEmpty("Alpaca returned no matching regular-session candles.")
-        source_rows = [candle_to_clickhouse_row(candle) for candle in regular_source]
-        if source_interval != interval and source_rows:
-            self.clickhouse_client.insert_json_each_row("chart_candles", source_rows)
+        source_materialized_rows = persist_historical_source_candles(
+            self.clickhouse_client,
+            regular_source,
+            source_interval=source_interval,
+            interval=interval,
+        )
         self.clickhouse_client.insert_json_each_row("chart_candles", selected)
         return {
             **record,
@@ -165,7 +166,7 @@ class AlpacaClickHouseRepairRunner:
                 "processedRowCount": len(candles),
                 "materializedRowCount": len(selected),
                 "sourceInterval": source_interval,
-                "sourceMaterializedRowCount": len(source_rows) if source_interval != interval else 0,
+                "sourceMaterializedRowCount": source_materialized_rows,
             },
         }
 

@@ -96,7 +96,8 @@ Runtime policy:
 - realtime trades/quotes only for explicit active subscriptions on the same SIP WebSocket
 - Redis keeps only the frontend-requested recent chart window per `symbol + timeframe`
 - older confirmed candles come from ClickHouse direct interval rows when present
-- ClickHouse direct misses can fall back to query-time aggregation from `1m` or `1D`
+- ClickHouse direct hourly misses aggregate `10m` first and legacy `1m` second;
+  other derived intervals use their documented `1m` or `1D` source
 - small incomplete foreground chart windows may use Alpaca REST direct bars for the requested interval, including intraday intervals enabled by `ON_DEMAND_FILL_FOREGROUND_AUTO_INTERVALS`
 - background misses check S3 final/manifest before Alpaca historical direct fill
 - raw S3 archives keep only low-volume event/bar backup data, exclude realtime
@@ -162,8 +163,8 @@ COVERAGE_REPAIR_DRY_RUN=false docker compose --profile repair run --rm coverage-
 
 The job talks to the API server rather than Redis or ClickHouse directly, so it
 uses the same serving rules as the frontend: realtime derived candles still use
-local `1m`/`1D` aggregation, while historical repair uses Alpaca direct bars for
-the requested interval.
+local `1m`/`1D` aggregation, while historical repair uses the canonical Alpaca
+source interval (`1Min` for `1m/5m/10m`, `10Min` for `1h/4h`).
 
 ## One-Year Candle Bootstrap
 
@@ -228,9 +229,12 @@ legacy/raw/unknown rows.
 Stored `1m` serving also accepts `priceAdjustment=live` closed realtime Alpaca
 bars so current-session baseline rows are not hidden from the chart API. Daily
 and historical canonical materialization remain `split` only.
-Historical direct fill maps canonical intervals to Alpaca REST timeframes:
-`1m=1Min`, `5m=5Min`, `10m=10Min`, `1h=1Hour`, `4h=4Hour`, `1D=1Day`,
-`1W=1Week`, and `1M=1Month`.
+Historical equity repair maps target intervals to canonical REST sources:
+`1m=1Min`, `5m/10m=1Min`, `1h/4h=10Min`, and `1D=1Day`. Hourly repair stores
+the real `10m` source before producing the 09:30 ET-aligned target candle;
+ClickHouse query-time aggregation falls back to existing `1m` history when a
+range predates the `10m` source rollout. Weekly/monthly serving continues to
+derive from canonical daily rows.
 For intraday equities, direct fill is split by market session before any Alpaca
 REST call. `pre`, `regular`, and `after` slices use the configured historical
 feed; `overnight` slices are BOATS live/on-demand only and appear as skipped

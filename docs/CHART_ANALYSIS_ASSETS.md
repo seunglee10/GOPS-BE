@@ -51,8 +51,9 @@ flowchart LR
 ```
 
 차트 자산 하위 시스템은 S3, Redis, Kafka, LLM을 사용하지 않는다. 파생 intraday가
-부족하면 Alpaca `1Min` 원본을 ClickHouse에 보충하고 같은 공통 집계기로 상위 봉을
-저장한 뒤 재조회한다. 다른 GOPS 하위
+부족하면 `5m/10m`은 Alpaca `1Min`, `1h/4h`는 Alpaca `10Min` 원본을
+ClickHouse에 보충하고 같은 공통 정규장 집계기로 상위 봉을 저장한 뒤 재조회한다.
+다른 GOPS 하위
 시스템의 해당 인프라 사용에는 영향을 주지 않는다. `1W`는 기존처럼 ClickHouse의
 canonical `1D`를 집계하며 Alpaca native 주봉을 저장하지 않는다.
 

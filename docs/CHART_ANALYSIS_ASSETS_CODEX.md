@@ -22,6 +22,8 @@
   손익비는 `2.0`, 기본 포지션 정책은 long-only다.
 - chart asset payload/job은 PostgreSQL, candle은 ClickHouse에 저장한다.
 - 결측 보충은 Alpaca의 정확한 누락 range만 사용하며 S3·Redis·Kafka를 거치지 않는다.
+- 결측 source는 `5m/10m` target에 `1Min`, `1h/4h` target에 `10Min`을 사용하며,
+  실시간 `1m` 기반 파생 계약은 바꾸지 않는다.
 - 동일 `(symbol, interval, inputDigest, algorithmVersion)`은 no-op이다.
 - 수동 request source/priority는 `manual/100`, 정기 request는 `scheduled/10`이며
   priority는 서버가 소유한다. 동일 활성 요청은 `request_fingerprint`로 합친다.

@@ -53,6 +53,9 @@ class MarketDataProvider:
             clickhouse_from_time = target_floor_from_time(interval, from_time, limit)
             if from_time and not before:
                 clickhouse_from_time = moving_average_query_from_time(interval, clickhouse_from_time, ma_windows)
+        redis_freshness_from_time = clickhouse_from_time
+        if not before and not from_time and not to_time and interval in {"1h", "4h"}:
+            clickhouse_from_time = None
         filter_from_time = from_time or implicit_from_time
         range_query = bool(before or from_time or to_time)
         redis_candles = filter_stock_chart_candles(self.redis_provider.recent_candles(symbol, interval, query_limit))
@@ -72,7 +75,7 @@ class MarketDataProvider:
                 to_time=to_time,
             ) else None
         coverage = None
-        if len(redis_candles) >= query_limit and redis_recent_window_is_current(redis_candles, clickhouse_from_time, range_query):
+        if len(redis_candles) >= query_limit and redis_recent_window_is_current(redis_candles, redis_freshness_from_time, range_query):
             live_candle = live_candle_after_latest_closed(live_candle, redis_candles, watermark=closed_watermark)
             merged_redis = merge_candles(redis_candles, [live_candle] if live_candle else [])
             payload = snapshot(symbol=symbol, interval=interval, candles=attach_moving_averages(merged_redis, windows=ma_windows, overwrite=True)[-limit:])
@@ -319,7 +322,7 @@ def candle_in_requested_window(candle, before=None, from_time=None, to_time=None
 
 def with_coverage_metadata(payload, coverage, requested_limit, before=None, from_time=None, to_time=None):
     interval = normalize_chart_interval(payload.get("interval"))
-    source_interval = normalize_chart_interval((coverage or {}).get("sourceInterval") or source_interval_for(interval))
+    source_interval = normalize_chart_interval((coverage or {}).get("sourceInterval") or interval)
     candles = payload.get("candles") or []
     oldest = candles[0].get("timestamp") if candles else None
     newest = candles[-1].get("timestamp") if candles else None
@@ -475,6 +478,9 @@ def requested_source_bar_target(interval, requested_limit, source_interval=None)
     if source_interval == interval:
         return limit
     if interval in INTRADAY_DERIVED_INTERVALS:
+        source_minutes = INTRADAY_INTERVAL_MINUTES.get(source_interval)
+        if source_minutes:
+            return limit * max(1, (INTRADAY_INTERVAL_MINUTES[interval] + source_minutes - 1) // source_minutes)
         return limit * INTRADAY_INTERVAL_MINUTES[interval]
     if interval == "1W":
         return limit * 5

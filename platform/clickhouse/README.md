@@ -42,8 +42,11 @@ scripts/local/migrate-chart-tick-retention.sql
 `chart_candles.bucket_policy` separates incompatible intraday bucket identities.
 Legacy/native clock rows use `clock_aligned`; new US-equity derived rows use
 `us_equity_regular_session`. Readers select only the latter for
-`5m/10m/1h/4h`. The source `1m` and session-derived rows are both persisted, so
-chart serving, Geometry, and SMA share the same OHLCV facts.
+`5m/10m/1h/4h`. Realtime source `1m`, historical hourly-repair source `10m`,
+and session-derived rows are persisted. The `10m` recovery rows use
+`source_native`; target `1h/4h` rows use `us_equity_regular_session`. Hourly
+read fallback is stored target, then `10m` aggregation, then legacy `1m`
+aggregation, so chart serving, Geometry, and SMA share the same OHLCV facts.
 `bucket_policy_key` mirrors that value only for the ReplacingMergeTree sorting
 key. Writers set both fields explicitly; the key intentionally has no default
 expression because ClickHouse forbids adding such a column to an existing sorting
