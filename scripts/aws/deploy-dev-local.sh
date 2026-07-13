@@ -14,6 +14,7 @@ REMOTE_NAME="${REMOTE_NAME:-origin}"
 REMOTE_BRANCH="${REMOTE_BRANCH:-dev}"
 FORCE_SERVICES="${FORCE_SERVICES:-}"
 RUN_ORDER_MIGRATIONS="${RUN_ORDER_MIGRATIONS:-false}"
+RUN_CHART_ASSET_MIGRATIONS="${RUN_CHART_ASSET_MIGRATIONS:-false}"
 REBUILD_NEWS_CACHE="${REBUILD_NEWS_CACHE:-false}"
 APPLY_PLATFORM_MANIFESTS="${APPLY_PLATFORM_MANIFESTS:-false}"
 DRY_RUN="${DRY_RUN:-false}"
@@ -35,14 +36,16 @@ Usage:
   AWS_PROFILE=gops-dev ./scripts/aws/deploy-dev-local.sh
 
 Optional environment variables:
+  REMOTE_BRANCH=branch-name              Deploy latest origin/<branch>; defaults to dev.
   FORCE_SERVICES=all|frontend,backend   Override automatic diff detection.
   DRY_RUN=true                          Resolve target/diff and server-side dry-run only.
   RUN_ORDER_MIGRATIONS=true             Run order migrations; requires order-worker selected.
+  RUN_CHART_ASSET_MIGRATIONS=true       Run chart asset migrations; requires agent-orchestrator selected.
   REBUILD_NEWS_CACHE=true               Rebuild news Redis cache; requires market-storage selected.
   APPLY_PLATFORM_MANIFESTS=true         Apply dedicated platform manifests before app workloads.
 
-The deploy target is always the latest origin/dev commit. Local uncommitted
-changes and the current checkout branch are not included in the build.
+The deploy target is the latest origin/<REMOTE_BRANCH> commit. REMOTE_BRANCH
+defaults to dev. Local uncommitted changes are not included in the build.
 USAGE
 }
 
@@ -457,6 +460,10 @@ validate_optional_tasks() {
     printf 'RUN_ORDER_MIGRATIONS=true requires order-worker to be selected.\n' >&2
     exit 1
   fi
+  if is_true "${RUN_CHART_ASSET_MIGRATIONS}" && ! service_selected "agent-orchestrator"; then
+    printf 'RUN_CHART_ASSET_MIGRATIONS=true requires agent-orchestrator to be selected.\n' >&2
+    exit 1
+  fi
   if is_true "${REBUILD_NEWS_CACHE}" && ! service_selected "market-storage"; then
     printf 'REBUILD_NEWS_CACHE=true requires market-storage to be selected.\n' >&2
     exit 1
@@ -562,23 +569,37 @@ build_and_push_images() {
 }
 
 run_migrations_if_requested() {
-  if ! is_true "${RUN_ORDER_MIGRATIONS}"; then
-    return 0
-  fi
-  if is_true "${DRY_RUN}"; then
-    printf 'DRY_RUN=true: skipping order migrations job.\n'
-    return 0
+  if is_true "${RUN_ORDER_MIGRATIONS}"; then
+    if is_true "${DRY_RUN}"; then
+      printf 'DRY_RUN=true: skipping order migrations job.\n'
+    else
+      (
+        cd "${WORKTREE_DIR}"
+        # shellcheck source=scripts/aws/lib-gops-images.sh
+        source scripts/aws/lib-gops-images.sh
+        ECR_ORDER_WORKER_REPO="${ECR_ORDER_WORKER_REPO:-$(gops_image_url_for_key order-worker)}" \
+          IMAGE_TAG="${IMAGE_TAG}" \
+          K8S_NAMESPACE="${K8S_NAMESPACE}" \
+          scripts/aws/run-order-migrations-job.sh
+      )
+    fi
   fi
 
-  (
-    cd "${WORKTREE_DIR}"
-    # shellcheck source=scripts/aws/lib-gops-images.sh
-    source scripts/aws/lib-gops-images.sh
-    ECR_ORDER_WORKER_REPO="${ECR_ORDER_WORKER_REPO:-$(gops_image_url_for_key order-worker)}" \
-      IMAGE_TAG="${IMAGE_TAG}" \
-      K8S_NAMESPACE="${K8S_NAMESPACE}" \
-      scripts/aws/run-order-migrations-job.sh
-  )
+  if is_true "${RUN_CHART_ASSET_MIGRATIONS}"; then
+    if is_true "${DRY_RUN}"; then
+      printf 'DRY_RUN=true: skipping chart asset migrations job.\n'
+    else
+      (
+        cd "${WORKTREE_DIR}"
+        # shellcheck source=scripts/aws/lib-gops-images.sh
+        source scripts/aws/lib-gops-images.sh
+        ECR_AGENT_ORCHESTRATOR_REPO="${ECR_AGENT_ORCHESTRATOR_REPO:-$(gops_image_url_for_key agent-orchestrator)}" \
+          IMAGE_TAG="${IMAGE_TAG}" \
+          K8S_NAMESPACE="${K8S_NAMESPACE}" \
+          scripts/aws/run-chart-asset-migrations-job.sh
+      )
+    fi
+  fi
 }
 
 deploy_app_workloads() {

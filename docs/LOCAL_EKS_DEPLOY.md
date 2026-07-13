@@ -7,9 +7,10 @@
 AWS_PROFILE=gops-dev ./scripts/aws/deploy-dev-local.sh
 ```
 
-이 스크립트는 현재 로컬 브랜치나 미커밋 변경을 배포하지 않는다. 항상
+이 스크립트는 현재 로컬 브랜치나 미커밋 변경을 배포하지 않는다. 기본값은
 `git fetch origin dev`로 원격 `origin/dev` 최신 commit을 가져오고, 임시
-`git worktree`에서 그 commit만 checkout해서 빌드한다.
+`git worktree`에서 그 commit만 checkout해서 빌드한다. 검증용 원격 브랜치를
+명시할 때만 `REMOTE_BRANCH`를 사용한다.
 
 ## Required Local Tools
 
@@ -74,6 +75,18 @@ baseline으로 사용한다. 이 fallback도 실패하면 해당 서비스는 �
 DRY_RUN=true AWS_PROFILE=gops-dev ./scripts/aws/deploy-dev-local.sh
 ```
 
+원격 feature branch를 검증 배포할 때도 먼저 dry-run한다. 로컬 checkout이나
+미커밋 파일이 아니라 지정한 `origin/<branch>` commit이 대상이다.
+
+```bash
+REMOTE_BRANCH=codex/expand-chart-patterns \
+FORCE_SERVICES=frontend,agent-orchestrator \
+RUN_CHART_ASSET_MIGRATIONS=true \
+DRY_RUN=true \
+AWS_PROFILE=gops-dev \
+./scripts/aws/deploy-dev-local.sh
+```
+
 ## Emergency Overrides
 
 전체 app image를 강제로 다시 빌드/배포한다.
@@ -101,16 +114,18 @@ AWS_PROFILE=gops-dev ./scripts/aws/start-dev-simulator.sh
 AWS_PROFILE=gops-dev ./scripts/aws/stop-dev-simulator.sh
 ```
 
-Order migration이나 news cache rebuild는 관련 image가 선택될 때만 허용된다.
+Order/chart migration이나 news cache rebuild는 관련 image가 선택될 때만 허용된다.
 
 ```bash
 RUN_ORDER_MIGRATIONS=true FORCE_SERVICES=order-worker AWS_PROFILE=gops-dev ./scripts/aws/deploy-dev-local.sh
+RUN_CHART_ASSET_MIGRATIONS=true FORCE_SERVICES=agent-orchestrator AWS_PROFILE=gops-dev ./scripts/aws/deploy-dev-local.sh
 REBUILD_NEWS_CACHE=true FORCE_SERVICES=market-storage AWS_PROFILE=gops-dev ./scripts/aws/deploy-dev-local.sh
 ```
 
 ## Failure Behavior
 
 - Docker build나 ECR push가 실패하면 EKS apply 전이므로 클러스터 상태는 바뀌지 않는다.
+- order/chart migration이 실패하면 app workload apply 전에 중단한다.
 - EKS apply 이후 rollout, smoke, rebuild 단계가 실패하면 선택된 Deployment에
   `kubectl rollout undo`를 시도한다.
 - 실패한 실행은 `gops-dev-deploy-state`를 갱신하지 않는다.

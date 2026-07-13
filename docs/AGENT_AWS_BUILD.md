@@ -27,11 +27,12 @@ flowchart LR
 ```
 
 The default dev deploy entrypoint is `scripts/aws/deploy-dev-local.sh`. It runs
-from an operator's local machine but always deploys the latest remote
-`origin/dev` commit, not local uncommitted changes. It records successful
+from an operator's local machine and deploys the latest remote `origin/dev`
+commit by default, not local uncommitted changes. An explicit `REMOTE_BRANCH`
+may select another remote branch for a validation deploy. It records successful
 deploy state per app image in EKS `ConfigMap/gops-dev-deploy-state` using
 `service.<name>.lastSuccessfulSha`, then compares each service's own deployed
-baseline with `origin/dev`. This prevents a backend-only deploy from hiding an
+baseline with the selected remote target. This prevents a backend-only deploy from hiding an
 older undeployed frontend change. For legacy state migration, the script falls
 back to the old global `lastSuccessfulSha` only when `lastSuccessfulServices`
 included that service, and otherwise reads the live primary Deployment image
@@ -291,6 +292,10 @@ automatically. For one-off maintenance during a manual build, set
 `rebuild_news_cache=true` with `market-storage` in `services`. Run
 the corresponding migration script directly only when SQL migrations must be
 applied outside the deploy workflow.
+The local equivalents are `RUN_ORDER_MIGRATIONS=true`,
+`RUN_CHART_ASSET_MIGRATIONS=true`, and `REBUILD_NEWS_CACHE=true`; each requires
+its owning service to be selected. Migration Jobs run after image push but before
+the app workload apply.
 
 Market processor deploys as two runtime units from the same
 `gops-market-processor` image. `alfaka-market-processor` handles trades, bars,
