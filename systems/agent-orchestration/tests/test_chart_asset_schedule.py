@@ -45,6 +45,23 @@ class ChartAssetScheduleParsingTest(unittest.TestCase):
         self.assertEqual(store.envelope.source, "scheduled")
         self.assertEqual(store.envelope.priority, 10)
 
+    def test_scheduled_build_defaults_to_one_minute_and_one_day(self):
+        store = _Store()
+        with (
+            patch.object(schedule, "PostgresChartAssetJobStore", return_value=store),
+            patch.dict(
+                os.environ,
+                {
+                    "CHART_ASSET_SYMBOLS": "nvda",
+                    "CHART_ASSET_SCHEDULED": "true",
+                },
+                clear=True,
+            ),
+        ):
+            self.assertEqual(schedule.main(), 0)
+
+        self.assertEqual(store.envelope.intervals, ("1m", "1D"))
+
 
 class _Store:
     def __init__(self):

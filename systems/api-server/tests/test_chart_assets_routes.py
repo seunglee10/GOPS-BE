@@ -140,12 +140,25 @@ class ChartAssetsRoutesTest(unittest.TestCase):
             })
         self.assertEqual(response.status_code, 503)
 
-    def test_build_accepts_all_chart_intervals(self):
+    def test_build_accepts_only_operational_chart_intervals(self):
         response = self.client.post("/api/charts/analysis-assets/build", json={
-            "symbols": ["NVDA"], "intervals": ALL_INTERVALS,
+            "symbols": ["NVDA"], "intervals": ["1m", "1D"],
         })
         self.assertEqual(response.status_code, 202)
-        self.assertEqual(self.queue.items[-1]["intervals"], ALL_INTERVALS)
+        self.assertEqual(self.queue.items[-1]["intervals"], ["1m", "1D"])
+
+    def test_build_defaults_to_one_minute_and_one_day(self):
+        response = self.client.post("/api/charts/analysis-assets/build", json={"symbols": ["NVDA"]})
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(self.queue.items[-1]["intervals"], ["1m", "1D"])
+
+    def test_build_rejects_supported_but_disabled_interval(self):
+        response = self.client.post("/api/charts/analysis-assets/build", json={
+            "symbols": ["NVDA"], "intervals": ["5m"],
+        })
+
+        self.assertEqual(response.status_code, 422)
 
     def test_rejects_invalid_intervals(self):
         response = self.client.post("/api/charts/analysis-assets/build", json={

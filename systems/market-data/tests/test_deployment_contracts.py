@@ -106,16 +106,16 @@ class DeploymentContractsTest(unittest.TestCase):
             "${CHART_ASSET_STORAGE_MAINTENANCE:-false}",
         )
 
-    def test_chart_geometry_schedule_is_bounded_and_manual_job_covers_all_seven_intervals(self):
+    def test_chart_geometry_schedule_and_manual_job_use_operational_intervals(self):
         cron = load_yaml("infra/k8s/overlays/aws/scheduled/cronjob-chart-geometry-build.yaml")
         self.assertEqual(cron["spec"]["schedule"], "40 8 * * 1-5")
         self.assertEqual(cron["spec"]["timeZone"], "Asia/Seoul")
         self.assertEqual(cron["spec"]["concurrencyPolicy"], "Forbid")
         container = cron["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]
         intervals = next(item["value"] for item in container["env"] if item["name"] == "CHART_ASSET_INTERVALS")
-        self.assertEqual(intervals, "1D,1W")
+        self.assertEqual(intervals, "1m,1D")
         manual = (REPO_ROOT / "scripts/aws/run-chart-geometry-build-job.sh").read_text(encoding="utf-8")
-        self.assertIn('INTERVALS="${INTERVALS:-1m,5m,10m,1h,4h,1D,1W}"', manual)
+        self.assertIn('INTERVALS="${INTERVALS:-1m,1D}"', manual)
 
     def test_agent_shared_changes_rebuild_agent_and_backend_images(self):
         detector = (REPO_ROOT / "scripts/aws/detect-changed-services.sh").read_text(encoding="utf-8")

@@ -14,6 +14,7 @@ for path in (
         sys.path.insert(0, str(path))
 
 from gops_agents.chart_assets.envelope import ALLOWED_INTERVALS, ChartAssetBuildEnvelope  # noqa: E402
+from gops_agents.chart_assets import envelope as envelope_contract  # noqa: E402
 from gops_agents.chart_assets.job_store import PostgresChartAssetJobStore  # noqa: E402
 from gops_agents.chart_assets.storage import POSTGRES_TABLE, build_chart_asset_storage_from_env  # noqa: E402
 
@@ -21,9 +22,10 @@ from gops_agents.chart_assets.storage import POSTGRES_TABLE, build_chart_asset_s
 class GeometryAssetContractTest(unittest.TestCase):
     def test_build_contract_supports_exactly_seven_intervals_without_llm_fields(self):
         self.assertEqual(ALLOWED_INTERVALS, ("1m", "5m", "10m", "1h", "4h", "1D", "1W"))
+        self.assertEqual(envelope_contract.BUILD_INTERVALS, ("1m", "1D"))
         envelope = ChartAssetBuildEnvelope.create(requested_by="test", symbols=["nvda"])
         payload = envelope.to_dict()
-        self.assertEqual(payload["intervals"], list(ALLOWED_INTERVALS))
+        self.assertEqual(payload["intervals"], list(envelope_contract.BUILD_INTERVALS))
         self.assertNotIn("llmEnabled", payload)
         self.assertNotIn("skipFreshHours", payload)
 
