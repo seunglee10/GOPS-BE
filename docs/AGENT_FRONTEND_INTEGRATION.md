@@ -311,6 +311,10 @@ chart analysis asset 운영 패널은 `kind="chartAssetOps"`, 화면 표시는
 
 Geometry asset은 GET/build/poll route를 사용한다. timed anchor는 현재 interval의
 canonical candle timestamp로만 snap하며 대응 봉이 없으면 해당 drawing을 제외한다.
+단, Geometry 지지·저항 `horizontalLine`은 가격 자체가 핵심인 무한 수평선이므로
+저장된 과거 접촉 봉이 아직 차트에 로드되지 않았으면 현재 로드된 첫·마지막 canonical
+candle timestamp에 presentation anchor를 투영해 즉시 표시한다. PostgreSQL 원본
+접촉 timestamp는 변경하지 않으며 삼각형의 timed anchor에는 이 예외를 적용하지 않는다.
 패널은 `1m/5m/10m/1h/4h/1D/1W`를 지원하고 지지·저항, 세 삼각형, coverage,
 SMA60·SMA120과 최근 교차 상태를 표시한다. Geometry 토글 하나가 모든 자동 작도를
 제어하며 삼각형은 실선, forming은 낮은 불투명도로 표현한다.
