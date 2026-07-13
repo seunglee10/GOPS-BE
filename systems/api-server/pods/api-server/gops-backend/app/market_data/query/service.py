@@ -248,6 +248,7 @@ class MarketDataQueryService:
                 target_bins=int(params.get("targetBins") or resolved_target_bins),
                 price_min=params.get("priceMin"),
                 price_max=params.get("priceMax"),
+                binning_mode="exact",
             )
 
         return self.derived_service.resolve(request, calculate)

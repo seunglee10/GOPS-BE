@@ -1074,13 +1074,32 @@ class MarketDataQueryServiceTest(unittest.TestCase):
                 price_min=100,
                 price_max=102,
             )
+            warm = service.volume_profile_bins(
+                "aapl",
+                "2026-06-25T13:30:00.000Z",
+                "2026-06-25T14:00:00.000Z",
+                "auto",
+                target_bins=4,
+                price_min=100,
+                price_max=102,
+            )
 
         self.assertEqual(payload["symbol"], "AAPL")
-        self.assertEqual(payload["calculationVersion"], "volume-profile-v1")
+        self.assertEqual(payload["calculationVersion"], "volume-profile-exact-v2")
         self.assertEqual(payload["targetBins"], 4)
+        self.assertEqual(payload["bucketCount"], 4)
+        self.assertEqual(len(payload["bins"]), 4)
+        self.assertEqual(payload["priceBinSize"], 0.5)
+        self.assertEqual(payload["bins"][0]["priceMin"], 100.0)
+        self.assertEqual(payload["bins"][-1]["priceMax"], 102.0)
         self.assertEqual(payload["derived"]["state"], "ready")
         self.assertEqual(payload["derived"]["source"], "api-compute")
         self.assertEqual(set(payload["derived"]), {"state", "source", "requestHash", "generatedAt"})
+        self.assertEqual(payload["cache"]["keyVersion"], "volume-profile-exact-v2")
+        self.assertFalse(payload["cache"]["hit"])
+        self.assertEqual(warm["derived"]["source"], "redis")
+        self.assertEqual(warm["cache"]["keyVersion"], "volume-profile-exact-v2")
+        self.assertTrue(warm["cache"]["hit"])
         self.assertEqual(provider.calls, [])
         payload_5m = service.volume_profile_bins(
             "aapl",
