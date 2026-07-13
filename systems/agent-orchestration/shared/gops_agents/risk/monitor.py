@@ -196,8 +196,8 @@ class RiskMonitor:
             severity="alert",
             source_topic=topic,
             summary=(
-                f"{symbol} 가격이 오르면서 비중이 {weight * 100:.1f}%가 됐어요 (한도 {limit * 100:.0f}%). "
-                "직접 산 게 아니어도 쏠림은 쏠림이에요. 일부 정리로 비중을 낮추는 걸 검토하세요."
+                f"{symbol}이 계좌에서 차지하는 비율이 {weight * 100:.1f}%로, 설정한 한도 {limit * 100:.0f}%를 초과했습니다. "
+                "한 종목의 가격이 크게 움직이면 계좌 전체 손익에 미치는 영향도 커질 수 있습니다. 보유 비중 확인이 필요합니다."
             ),
             metrics={"account": account, "weight": round(weight, 4), "limit": limit, "price": close, "qty": position.qty},
             ui_proposals=[{"panelType": "portfolioDiversification", "action": "open"}],
@@ -220,8 +220,8 @@ class RiskMonitor:
             severity="critical",
             source_topic=topic,
             summary=(
-                f"오늘 손익이 {pnl:,.0f}로 일일 한도 {limit:,.0f}에 닿았어요. "
-                "잃은 직후의 매매는 판단이 흐려지기 쉬워요. 오늘 신규 매수는 쉬어가는 걸 권해요."
+                f"오늘 손실이 {abs(pnl):,.0f}로, 설정한 일일 손실 보호 한도 {abs(limit):,.0f}에 도달했습니다. "
+                "오늘은 추가 매수만 제한되며 보유 종목 매도는 가능합니다."
             ),
             metrics={"account": account, "dailyPnl": round(pnl, 2), "dailyLossLimit": round(limit, 2)},
             ui_proposals=[{"panelType": "portfolioPerformance", "action": "open"}],
@@ -253,9 +253,9 @@ class RiskMonitor:
             severity="watch",
             source_topic=topic,
             summary=(
-                f"{symbol}이(가) 오늘 {change * 100:.1f}% 급등 중이고 거래량은 평소의 {volume_multiple:.1f}배예요. "
-                "이유를 확인하기 전에는 추격 매수를 조심하세요 — 이런 자리는 뒤늦게 따라 들어간 사람이 "
-                "고점을 떠안는 경우가 많아요."
+                f"{symbol}이(가) 오늘 {change * 100:.1f}% 급등 중이며 거래량은 평소의 {volume_multiple:.1f}배입니다. "
+                "평소와 다른 움직임이므로 관련 뉴스와 공시를 확인하기 전에는 가격 변동 위험에 주의해야 합니다. "
+                "이 알림만으로 시세조종이나 향후 주가 방향을 판단할 수는 없습니다."
             ),
             metrics={
                 "changeFromAnchor": round(change, 4),
@@ -314,9 +314,9 @@ class RiskMonitor:
             severity="alert",
             source_topic=topic,
             summary=(
-                f"{names}이(가) 거의 같이 움직이고 있어요 (상관 {self.thresholds.correlation_threshold:.1f}+). "
-                f"묶어서 보면 계좌의 {weight * 100:.1f}%로, 사실상 한 종목에 몰빵한 것과 같아요 "
-                f"(한도 {limit * 100:.0f}%)."
+                f"{names}이(가) 최근 비슷하게 움직이고 있습니다 (상관계수 {self.thresholds.correlation_threshold:.1f} 이상). "
+                f"이 종목들을 합치면 계좌의 {weight * 100:.1f}%로, 설정한 묶음 한도 {limit * 100:.0f}%를 넘습니다. "
+                "여러 종목을 보유해도 함께 움직이면 분산 효과가 줄어들 수 있습니다."
             ),
             metrics={
                 "account": account,

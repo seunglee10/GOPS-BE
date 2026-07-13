@@ -24,6 +24,22 @@
 반도체 매도/에너지 매수 바스켓은 사용자가 해당 버튼을 직접 누를 때만 전송하고,
 SIM 표시가 있는 주문은 실제 브로커 WebSocket에 연결하지 않는다.
 
+`빠른 주문` 패널도 자동 주문 경로가 아니다. 최우선 매수·매도호가, 1틱 오프셋,
+estimated order-flow imbalance는 `side + price` 주문 의도를 선택하는 입력이며,
+사용자가 패널 하단의 주문 전송 버튼을 눌러야만 기존 `POST /api/orders`를 호출한다.
+`202` 응답은 접수로 표시하고 체결은 `/ws/orders/{order_id}`의 terminal event로
+확인한다. 빠른 주문은 호가 이벤트 시각을 연결 상태 판단 기준으로 사용하지 않는다.
+Bid/Ask 구조가 유효하지 않거나 chart WebSocket이 연결 오류 상태이거나 order-flow
+미지원 종목일 때만 전송을 비활성화한다. 로컬 SIM의 지정가 체결가는 replay engine 기준이며 실제 지정가
+matching을 의미하지 않는다.
+
+Agent 인증 진입은 상단 global navigation의 `Login` 버튼을 사용한다. 별도 `Agents`
+버튼은 표시하지 않으며, 인증 후 하단 Agent 입력을 직접 사용한다. 로컬 Vite DEV에서는
+Agent debug가 기본으로 켜지고 분석 prompt를 보내면 request snapshot을 browser
+console과 `window.__GOPS_AGENT_LAST_REQUEST__`에 기록한다. `?agentDebug=0`은 해당
+브라우저의 localStorage에 opt-out을 저장하고, `?agentDebug=1`은 다시 켠다.
+production build에는 debug snapshot을 노출하지 않는다.
+
 프런트가 담당하지 않는 것:
 
 - provider 직접 호출
@@ -35,12 +51,12 @@ SIM 표시가 있는 주문은 실제 브로커 WebSocket에 연결하지 않는
 
 ```mermaid
 flowchart TD
-  User["User question"] --> FE["Frontend chat"]
+  User["User question"] --> FE["Frontend Agent input"]
   FE --> Submit["POST /api/agents/analyze"]
   Submit --> Queued["202 queued + analysisId"]
   Queued --> Wait["SSE stream or polling"]
   Wait --> Report["AnalysisReport"]
-  Report --> Answer["final answer"]
+  Report --> Answer["Wild panel final answer"]
   Report --> Evidence["evidence and role findings"]
   Report --> OptionalUI["optional layout/chart proposal"]
 ```
@@ -59,14 +75,14 @@ panel proposal을 적용한다. `엔비디아 뉴스`,
 `엔비디아 분석해줘`, `엔비디아 차트 분석해줘`, 관계 질문, chart registry 미지원
 symbol은 기존 분석 흐름을 유지한다.
 
-티커 shortcut이 아니면 프런트는 분석 pending 메시지를 띄우기 전에
+티커 shortcut이 아니면 프런트는 분석 API를 호출하기 전에
 `POST /api/agents/layout/resolve`로 UI-only layout command인지 확인한다.
 응답이 `status="ui_layout"`이고 `layoutProposal`이 있으면 즉시 적용하고
 사용자에게 `summary`만 표시한다. `status="not_ui"`이거나 route가 실패하면
 기존 `/api/agents/analyze` 흐름으로 fallback한다.
 `status="ui_clarify"`이면 패널/레이아웃 관련 표현은 맞지만 대상이나 동작이
-불명확한 것이므로 `/api/agents/analyze`로 fallback하지 않고 `summary`를 채팅에
-표시한다.
+불명확한 것이므로 `/api/agents/analyze`로 fallback하지 않고 `summary`를 상단
+Agent 결과 알림으로 표시한다.
 
 ## Submit Request
 
@@ -210,7 +226,7 @@ Async response:
 넣어야 한다. 사용자가 중단하면 현재 fetch/SSE/polling을 `AbortController`로
 닫고 `POST /api/agents/reports/{analysis_id}/cancel`을 호출한다.
 
-Cancel 후에는 pending 메시지를 중단됨으로 바꾸고 입력을 다시 연다. 서버가
+Cancel 후에는 상단 Agent 결과 알림에 중단됨을 표시하고 입력을 다시 연다. 서버가
 `canceled` report를 반환하거나 polling/SSE에서 같은 status를 받으면 terminal로
 처리한다. 이미 completed/deep_completed/failed가 도착한 뒤의 cancel 응답은 기존
 terminal report를 유지할 수 있다.
@@ -237,6 +253,37 @@ Provider가 `status="no-data"` evidence를 반환하는 것은 정상적인 part
 role 답변이 함께 온 경우에도 사용자 화면의 첫 문장은 `finalAnswer.summary`의 종합
 판단이어야 하며, role별 답변은 세부 근거로 뒤에 붙인다.
 
+### Wild Panel Answer Pages
+
+현재 `gops-frontend`에서는 workspace 전체에서 한 panel만 Wild가 될 수 있다. Wild
+아이콘은 layout edit mode에서만 panel header에 표시한다. 사용자가 다른 panel의 Wild
+아이콘을 누르면 기존 Wild panel은 저장된 answer page를 모두 지우고 fixed panel로
+돌아가며 새 panel이 Wild destination이 된다. edit mode를 나가면 아이콘만 숨고 Wild
+page와 navigation은 유지된다. Wild panel은 원래 content를 base page로 유지한다.
+Wild panel이 있는 동안 완료된 Agent report는 해당 panel의 다음 page로 자동 추가한다.
+`AGENT LOG` button과 drawer는 표시하지 않는다. report 완료 시 Wild panel이 없으면
+상단의 3초 결과 알림만 표시하고 상세 report를 나중에 연결하기 위해 보관하지 않는다.
+자동 panel 생성이나 placement picker는 사용하지 않는다.
+
+저장 순서는 base content, `finalAnswer` 기반 `차트 해설`, role별 `에이전트 답변`이다.
+다만 새 report를 추가한 직후에는 사용자가 요청한 Wild UX 예외로 첫 role 답변을
+활성화하고, role 답변이 없을 때만 `차트 해설`을 활성화한다. 같은 `analysisId`를
+같은 panel에 다시 추가하지 않으며 이미 저장된 첫 role page로 이동한다.
+
+Agent 동작이 끝나면 top navigation의 center preset dock을 한 줄 결과 알림으로
+flip한다. 진행 중 메시지는 표시하지 않고 완료·취소·clarification·실패 결과만
+표시한다. 분석 결과는 `MSFT 뉴스를 가져왔습니다.`, `MSFT 차트 분석을 완료했습니다.`
+처럼 symbol과 action을 사용한 deterministic 문구이며 3초 뒤 preset dock으로 돌아간다.
+알림은 display-only `role="status"`이고 새 결과가 오면 기존 알림을 즉시 교체한다.
+
+Wild state와 answer snapshot은 layout localStorage에 저장하고 panel당 최신 report
+10개만 유지한다. fixed state로 되돌리면 별도 확인이나 개별 page 삭제 없이 저장된
+Wild page를 모두 제거한다. workspace에 Wild panel이 하나뿐이므로 reload 후에도 해당
+panel을 report destination으로 자동 복원한다.
+Wild answer payload는 backend `layoutContext`에 넣지 않으며 API/report 계약을 바꾸지
+않는다. 기존 `chartCommentary` Geometry panel은 base content로서 동작을 그대로
+유지하고 Wild 전환만으로 다른 Geometry page를 자동 추가하지 않는다.
+
 ## Layout And Chart Proposals
 
 에이전트가 `layoutProposal` 또는 `chartProposal`을 반환할 수 있다. 프런트가
@@ -257,14 +304,13 @@ save, panel group open을 `layoutProposal.commands`로 반환한다. 프런트�
 `layout.undo`용 최근 agent layout 이력을 유지하고, `layout.panel.pin/unpin`을
 slot의 `layoutPinned`에 보존하며, `layout.save`는 현재 layout을 custom preset으로
 저장한다. `layout.panels.arrange`가 충돌 때문에 일부 생략되거나 readable span으로
-정규화되면 적용 결과의 `appliedWithChanges/reason`을 채팅에 표시해야 하며 backend
+정규화되면 적용 결과의 `appliedWithChanges/reason`을 상단 결과 알림에 표시해야 하며 backend
 rationale만으로 성공을 단정하면 안 된다.
 
-UI-only layout 명령이 프런트에 정상 적용되면 assistant 성공 메시지는 채팅에
-추가하지 않는다. 사용자 명령만 기록하고, `ui_clarify`, `autoApply=false`, undo
-이력 없음, placement 선택 필요, 충돌·부분 적용처럼 사용자의 확인이나 조치가
-필요한 경우에만 assistant 메시지를 표시한다. Placement picker에서 후보 적용이
-성공한 뒤에도 별도의 "적용했습니다" 메시지를 만들지 않는다.
+UI-only layout 명령이 프런트에 정상 적용되면 symbol-aware 완료 문구를 상단 결과
+알림으로 표시한다. `ui_clarify`, `autoApply=false`, undo 이력 없음, placement 선택
+필요, 충돌·부분 적용처럼 사용자의 확인이나 조치가 필요한 경우도 같은 알림 영역을
+사용하며 placement 후보 적용이 끝나면 완료 문구를 표시한다.
 
 `layoutContext.selectedPanelId`는 "이거", "이 패널", "여기" 같은 지시어의 대상이다.
 선택된 패널이 없으면 backend는 임의 패널을 고르지 않고 clarification을 반환한다.

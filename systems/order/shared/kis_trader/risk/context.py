@@ -31,6 +31,8 @@ class SymbolMetrics:
     last_price: Decimal | None = None
     average_daily_volume: Decimal | None = None
     sector: str | None = None
+    price_source: str | None = None
+    price_observed_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -76,6 +78,8 @@ def risk_context_from_dict(payload: dict[str, Any]) -> RiskContext:
         last_price=decimal_or_none(metrics_payload.get("lastPrice")),
         average_daily_volume=decimal_or_none(metrics_payload.get("averageDailyVolume")),
         sector=(str(metrics_payload["sector"]) if metrics_payload.get("sector") else None),
+        price_source=(str(metrics_payload["priceSource"]) if metrics_payload.get("priceSource") else None),
+        price_observed_at=(str(metrics_payload["priceObservedAt"]) if metrics_payload.get("priceObservedAt") else None),
     )
     return RiskContext(
         account_equity=decimal_or_none(payload.get("accountEquity")),

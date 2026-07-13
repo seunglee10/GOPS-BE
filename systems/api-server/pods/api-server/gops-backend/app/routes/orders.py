@@ -56,6 +56,7 @@ ORDER_CONTRACT = {
             "order_division",
             "actor_id",
             "role",
+            "risk_acknowledged",
         ],
         "accepted_values": {
             "market": ["overseas"],
@@ -97,6 +98,7 @@ async def create_order(
             "actor_id": current_user.email,
             "role": payload.get("role") or "trader",
         }
+    risk_acknowledged = payload.get("risk_acknowledged") is True
     order_request = _validate_order_request(payload)
     simulator_mode = simulator_mode_active(request.app)
     repository = None
@@ -113,9 +115,10 @@ async def create_order(
             return jsonable_encoder({**replay, "idempotent_replay": True})
 
     verdict = _risk_verdict(request.app, current_user.sub, order_request)
-    if verdict is not None and verdict.verdict != "allow":
-        # Block outright, or ask the user to confirm the suggested qty by
-        # resubmitting. The risk engine never silently changes an order.
+    if verdict is not None and verdict.verdict != "allow" and not risk_acknowledged:
+        # API clients must explicitly acknowledge a non-allow verdict. The UI
+        # keeps the original quantity and sends this acknowledgement only when
+        # the user chooses to continue after seeing the risk explanation.
         raise HTTPException(
             status_code=422,
             detail={"reason": "risk rejected", "risk": verdict.to_dict()},
