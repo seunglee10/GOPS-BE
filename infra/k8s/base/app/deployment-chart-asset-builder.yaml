@@ -23,6 +23,13 @@ spec:
             - python
             - -u
             - /app/systems/agent-orchestration/pods/chart-asset-builder/main.py
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
           envFrom:
             - configMapRef:
                 name: alfaka-market-data-config

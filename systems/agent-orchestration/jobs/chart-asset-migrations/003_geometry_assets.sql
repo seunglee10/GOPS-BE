@@ -24,6 +24,9 @@ CREATE TABLE IF NOT EXISTS chart_assets.geometry_build_jobs (
     submitted_at TIMESTAMPTZ NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'completed', 'completed_with_warnings', 'completed_with_errors', 'failed', 'canceled')),
     force_build BOOLEAN NOT NULL DEFAULT false,
+    source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'scheduled')),
+    priority SMALLINT NOT NULL DEFAULT 100 CHECK (priority BETWEEN 0 AND 100),
+    request_fingerprint TEXT NOT NULL,
     requested_intervals JSONB NOT NULL,
     symbol_count INTEGER NOT NULL CHECK (symbol_count > 0),
     total_items INTEGER NOT NULL CHECK (total_items > 0),
@@ -59,6 +62,14 @@ CREATE TABLE IF NOT EXISTS chart_assets.geometry_build_items (
 CREATE INDEX IF NOT EXISTS geometry_build_items_claim_idx
     ON chart_assets.geometry_build_items (status, lease_expires_at, job_id)
     WHERE status IN ('pending', 'running');
+
+CREATE UNIQUE INDEX IF NOT EXISTS geometry_build_jobs_active_request_idx
+    ON chart_assets.geometry_build_jobs (request_fingerprint)
+    WHERE status IN ('queued', 'running');
+
+CREATE INDEX IF NOT EXISTS geometry_build_jobs_priority_idx
+    ON chart_assets.geometry_build_jobs (priority DESC, submitted_at, job_id)
+    WHERE status IN ('queued', 'running');
 
 ALTER TABLE chart_assets.geometry_assets
     DROP CONSTRAINT IF EXISTS geometry_assets_drawing_count_check;

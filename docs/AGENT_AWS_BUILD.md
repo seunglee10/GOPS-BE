@@ -788,11 +788,15 @@ stream processor가 Redis/ClickHouse에서 캔들을 복구할 때는 legacy JSO
 S3, Redis, Kafka, OpenAI를 사용하지 않는다.
 
 AWS overlay는 Alpaca repair 동시성 2와 최대 range 8을 사용한다. 평일 KST 08:40
-CronJob은 S&P500 전체 7개 interval을 등록한다. PostgreSQL schema는
+CronJob은 S&P500 전체의 `1D/1W`만 등록해 일일 작업량을 제한한다. 전체 7개 interval은
+수동 실행에서 계속 선택할 수 있다. `chart-asset-builder`는 concurrency 2,
+memory request `512Mi`, limit `1Gi`로 실행한다. 수동 build priority 100이 정기 build
+priority 10보다 먼저 claim된다. PostgreSQL schema는
 `job-chart-asset-migrations.yaml`과 `run-chart-asset-migrations-job.sh`로 명시 적용하며
 runtime은 자동 생성하지 않는다. one-shot migration Job은 PostgreSQL Secret이 없으면
 시작하지 않는다. 범용 패턴 자산 배포 전에는 migration Job을 다시 실행해
-`geometry_assets.drawing_count` check constraint를 0..8로 갱신한다.
+`geometry_assets.drawing_count` check constraint와 queue priority/fingerprint index를
+갱신한다.
 
 Financial final-answer synthesis is enabled with
 `AGENT_FINANCIAL_FINAL_ANSWER_PROVIDER=openai`. The orchestrator still reads SEC

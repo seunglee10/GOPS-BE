@@ -59,11 +59,14 @@ Alpaca 요청에도 실재 봉이 없는 무거래 slot은 `provider_confirmed_e
 
 ## 실행
 
-- API 패널에서 symbol/interval을 선택해 PostgreSQL 작업을 등록한다.
-- 평일 KST 08:40 CronJob이 S&P500 전체 7개 interval 작업을 멱등 등록한다.
+- API 패널은 현재 차트 interval 하나를 기본 선택해 PostgreSQL 작업을 등록한다.
+- 수동 작업은 priority 100, 정기 작업은 priority 10이며 worker는 높은 값부터 처리한다.
+- 동일 source/force/symbol/interval의 실행 중 요청은 하나의 job으로 합친다.
+- 평일 KST 08:40 CronJob은 S&P500 전체 `1D/1W` 작업만 멱등 등록한다.
 - 수동 실행은 `scripts/aws/run-chart-geometry-build-job.sh`를 사용한다.
 - 빌드 상태는 PostgreSQL polling으로 확인한다.
-- 기존 PostgreSQL 설치는 migration Job을 다시 실행해 `drawing_count` 상한 8 제약을 적용한다.
+- 최대 2회 처리 뒤 lease가 만료된 item은 실패로 종결해 영구 대기를 막는다.
+- 기존 PostgreSQL 설치는 migration Job을 다시 실행해 작도 상한과 queue index를 적용한다.
 
 새 완료 봉 때문에 stale이 된 자산은 차트에서 제거하지 않고 낮은 불투명도로 표시한다.
 현재 symbol과 interval이 모두 일치하는 자산만 적용한다.

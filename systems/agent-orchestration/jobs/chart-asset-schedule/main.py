@@ -27,6 +27,7 @@ def main() -> int:
     envelope = ChartAssetBuildEnvelope.create(
         requested_by=os.getenv("CHART_ASSET_REQUESTED_BY", "kubernetes-job"),
         symbols=symbols, intervals=intervals, force=_bool("CHART_ASSET_FORCE"), job_id=job_id,
+        source="scheduled",
     )
     PostgresChartAssetJobStore().enqueue(envelope)
     print(json.dumps({"jobId": envelope.job_id, "symbols": len(symbols), "intervals": list(intervals)}, sort_keys=True))

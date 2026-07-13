@@ -89,19 +89,26 @@ def build_chart_analysis_assets(
         symbols=symbols,
         intervals=request.intervals,
         force=request.force,
+        source="manual",
     )
     progress = chart_asset_progress_store()
-    progress.initialize(envelope)
+    state = progress.initialize(envelope)
+    actual_job_id = str(state.get("jobId") or envelope.job_id)
+    coalesced = actual_job_id != envelope.job_id
     try:
-        chart_asset_build_queue().submit(envelope)
+        if not coalesced:
+            submission = chart_asset_build_queue().submit(envelope)
+            actual_job_id = str((submission or {}).get("jobId") or envelope.job_id)
+            coalesced = actual_job_id != envelope.job_id
     except Exception as exc:
         progress.set_status(envelope.job_id, "failed", finishedAt=utc_now_iso())
         raise HTTPException(status_code=503, detail="Chart analysis asset build queue is unavailable.") from exc
     response.status_code = 202
     return {
-        "jobId": envelope.job_id,
+        "jobId": actual_job_id,
         "status": "queued",
-        "status_url": f"/api/charts/analysis-assets/build/{envelope.job_id}",
+        "status_url": f"/api/charts/analysis-assets/build/{actual_job_id}",
+        "coalesced": coalesced,
     }
 
 

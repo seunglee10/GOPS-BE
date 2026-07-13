@@ -21,6 +21,9 @@
 - chart asset payload/job은 PostgreSQL, candle은 ClickHouse에 저장한다.
 - 결측 보충은 Alpaca의 정확한 누락 range만 사용하며 S3·Redis·Kafka를 거치지 않는다.
 - 동일 `(symbol, interval, inputDigest, algorithmVersion)`은 no-op이다.
+- 수동 request source/priority는 `manual/100`, 정기 request는 `scheduled/10`이며
+  priority는 서버가 소유한다. 동일 활성 요청은 `request_fingerprint`로 합친다.
+- item claim은 priority 내림차순이며 2회 시도 후 만료된 lease는 실패로 종결한다.
 - 실제 완료 봉 120개 미만 또는 provider가 확인하지 못한 interior/tail gap이면 기존
   성공 자산을 덮어쓰지 않는다. 성공한 Alpaca 조회에도 실재 봉이 없는 slot은
   `provider_confirmed_empty`로 기록하고 가짜 봉 없이 분석을 계속한다.
@@ -61,8 +64,9 @@ Intraday candle input contract는 `regular-session-derived`이며 asset digest�
 
 PostgreSQL 테이블은 `geometry_assets`, `geometry_build_jobs`,
 `geometry_build_items`다. 자산 기본 키는 `(symbol, interval)`이고 item claim은
-`FOR UPDATE SKIP LOCKED`를 사용한다. 기존 설치는 명시적 migration Job을 재실행해
-`geometry_assets_drawing_count_check`를 0..8로 갱신해야 한다.
+`FOR UPDATE SKIP LOCKED`를 사용한다. 활성 request fingerprint에는 partial unique
+index를 사용한다. 기존 설치는 명시적 migration Job을 재실행해
+`geometry_assets_drawing_count_check`와 queue index를 갱신해야 한다.
 
 ## 검증
 
@@ -75,4 +79,5 @@ PostgreSQL 테이블은 `geometry_assets`, `geometry_build_jobs`,
 ```
 
 프론트는 `Geometry` 토글 하나만 제공하고, 현재 interval의 자산만 적용하며,
-SMA60·SMA120 overlay를 함께 활성화한다.
+SMA60·SMA120 overlay를 함께 활성화한다. 빌드 패널도 현재 interval 하나를 기본
+선택하고 `1M`에서는 `1D`를 사용한다.
