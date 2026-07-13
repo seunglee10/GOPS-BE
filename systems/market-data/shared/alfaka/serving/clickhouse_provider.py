@@ -14,6 +14,7 @@ from alfaka.common.symbols import is_crypto_symbol
 from alfaka.serving.dto import snapshot
 from alfaka.serving.intervals import INTRADAY_DERIVED_INTERVALS, INTRADAY_INTERVAL_MINUTES, max_request_bars, normalize_chart_interval, resolve_candle_limit
 from alfaka.serving.moving_average import attach_moving_averages
+from alfaka.serving.session_buckets import BUCKET_POLICY_REGULAR_SESSION, aggregate_regular_session_candles
 
 
 class ClickHouseMarketDataProvider:
@@ -85,6 +86,10 @@ class ClickHouseMarketDataProvider:
         interval_filter = "interval IN ('1D', '1d')" if interval == "1D" else "interval = {interval:String}"
         if interval != "1D":
             params["interval"] = interval
+        bucket_policy_filter = ""
+        if interval in INTRADAY_DERIVED_INTERVALS and not is_crypto_symbol(symbol):
+            bucket_policy_filter = "\n          AND bucket_policy = {bucketPolicy:String}"
+            params["bucketPolicy"] = BUCKET_POLICY_REGULAR_SESSION
         if from_time:
             time_filter += "\n          AND event_time >= parseDateTime64BestEffort({fromTime:String})"
             params["fromTime"] = from_time
@@ -100,6 +105,7 @@ class ClickHouseMarketDataProvider:
             symbol = {{symbol:String}}
             AND {interval_filter}
             AND {session_filter}
+            {bucket_policy_filter}
             {time_filter}
         """, include_live=include_live)
         query = f"""
@@ -184,9 +190,14 @@ class ClickHouseMarketDataProvider:
         """1분봉을 intraday 파생 주기로 묶어 차트용 캔들을 만듭니다."""
         interval = normalize_chart_interval(interval)
         limit = resolve_candle_limit(interval, limit)
+        if is_crypto_symbol(symbol):
+            return self._clock_aligned_minute_candles(
+                symbol, interval, limit, before=before, from_time=from_time, to_time=to_time,
+            )
         bucket_minutes = INTRADAY_INTERVAL_MINUTES[interval]
         time_filter = ""
-        params = {"symbol": symbol, "limit": int(limit)}
+        source_limit = min(max_request_bars("1m"), max(int(limit) * bucket_minutes + 390, int(limit)))
+        params = {"symbol": symbol, "limit": int(source_limit)}
         if from_time:
             time_filter += "\n          AND event_time >= parseDateTime64BestEffort({fromTime:String})"
             params["fromTime"] = from_time
@@ -206,6 +217,55 @@ class ClickHouseMarketDataProvider:
         """, include_live=include_live_stored_candles("1m"))
         query = f"""
         SELECT
+          formatDateTime(event_time, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS timestamp,
+          symbol,
+          open,
+          high,
+          low,
+          close,
+          volume,
+          is_closed AS isClosed,
+          correction_type AS correctionType,
+          source,
+          feed,
+          feed_profile AS feedProfile,
+          market_session AS marketSession,
+          price_adjustment AS priceAdjustment,
+          canonical_version AS canonicalVersion,
+          source_event_id AS sourceEventId
+        FROM (
+          {source_query}
+        )
+        ORDER BY event_time DESC
+        LIMIT {{limit:UInt32}}
+        FORMAT JSONEachRow
+        """
+        rows = list(reversed(self.query_json_each_row(query, params)))
+        for row in rows:
+            row["interval"] = "1m"
+        aggregated = aggregate_regular_session_candles(rows, interval, now=self.now_provider())
+        return attach_moving_averages(aggregated[-limit:], overwrite=True)
+
+    def _clock_aligned_minute_candles(self, symbol, interval, limit, *, before=None, from_time=None, to_time=None):
+        bucket_minutes = INTRADAY_INTERVAL_MINUTES[interval]
+        time_filter = ""
+        params = {"symbol": symbol, "limit": int(limit)}
+        if from_time:
+            time_filter += "\n          AND event_time >= parseDateTime64BestEffort({fromTime:String})"
+            params["fromTime"] = from_time
+        if to_time:
+            time_filter += "\n          AND event_time <= parseDateTime64BestEffort({toTime:String})"
+            params["toTime"] = to_time
+        if before:
+            time_filter += "\n          AND event_time < parseDateTime64BestEffort({before:String})"
+            params["before"] = before
+        source_query = self.latest_chart_candles_source(f"""
+            symbol = {{symbol:String}}
+            AND interval = '1m'
+            {time_filter}
+        """, include_live=include_live_stored_candles("1m"))
+        query = f"""
+        SELECT
           formatDateTime(bucket, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS timestamp,
           argMin(open, event_time) AS open,
           max(high) AS high,
@@ -217,25 +277,12 @@ class ClickHouseMarketDataProvider:
           anyLast(source) AS source,
           anyLast(feed) AS feed,
           anyLast(feed_profile) AS feedProfile,
-          anyLast(market_session) AS marketSession,
-          concat('agg/{interval}/', symbol, '/', formatDateTime(bucket, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC')) AS sourceEventId
+          anyLast(market_session) AS marketSession
         FROM (
           SELECT
             toStartOfInterval(event_time, INTERVAL {bucket_minutes} minute) AS bucket,
-            event_time,
-            symbol,
-            open,
-            high,
-            low,
-            close,
-            volume,
-            source,
-            feed,
-            feed_profile,
-            market_session
-          FROM (
-            {source_query}
-          )
+            event_time, symbol, open, high, low, close, volume, source, feed, feed_profile, market_session
+          FROM ({source_query})
         )
         GROUP BY symbol, bucket
         ORDER BY bucket DESC
@@ -725,6 +772,7 @@ class ClickHouseMarketDataProvider:
           market_session,
           price_adjustment,
           canonical_version,
+          bucket_policy,
           source_event_id,
           inserted_at
         FROM (
@@ -748,6 +796,7 @@ class ClickHouseMarketDataProvider:
             market_session,
             price_adjustment,
             canonical_version,
+            bucket_policy,
             source_event_id,
             inserted_at,
             row_number() OVER (
@@ -918,7 +967,13 @@ class ClickHouseMarketDataProvider:
         self.execute(
             f"ALTER TABLE {self.table('chart_candles')} "
             "ADD COLUMN IF NOT EXISTS price_adjustment LowCardinality(String) DEFAULT 'unknown' AFTER market_session, "
-            "ADD COLUMN IF NOT EXISTS canonical_version LowCardinality(String) DEFAULT 'legacy' AFTER price_adjustment"
+            "ADD COLUMN IF NOT EXISTS canonical_version LowCardinality(String) DEFAULT 'legacy' AFTER price_adjustment, "
+            "ADD COLUMN IF NOT EXISTS bucket_policy LowCardinality(String) DEFAULT 'clock_aligned' AFTER canonical_version"
+        )
+        self.execute(
+            f"ALTER TABLE {self.table('chart_candles')} "
+            "ADD COLUMN IF NOT EXISTS bucket_policy_key LowCardinality(String) AFTER bucket_policy, "
+            "MODIFY ORDER BY (symbol, interval, event_time, feed_profile, market_session, bucket_policy_key)"
         )
         # Crypto 체결/거래량은 소수 단위가 자연스럽기 때문에 조회 스키마도 Float64로 맞춥니다.
         for table, column, column_type in (

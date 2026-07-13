@@ -26,11 +26,13 @@ from alfaka.backfill.runner import (
 )
 from alfaka.common.env import load_dotenv, utc_now_iso
 from alfaka.serving.intervals import (
+    INTRADAY_DERIVED_INTERVALS,
     INTRADAY_INTERVAL_MINUTES,
     alpaca_timeframe_for_interval,
     normalize_chart_interval,
 )
 from alfaka.serving.moving_average import MA_WINDOWS, attach_moving_averages
+from alfaka.serving.session_buckets import aggregate_regular_session_candles
 from alfaka.storage.candle_validation import invalid_candle_reason
 from alfaka.storage.clickhouse_loader import (
     ClickHouseHttpClient,
@@ -61,6 +63,7 @@ CORE_CLICKHOUSE_COLUMNS = frozenset({
     "market_session",
     "price_adjustment",
     "canonical_version",
+    "bucket_policy",
 })
 MARKET_TIMEZONE = ZoneInfo("America/New_York")
 EXTENDED_SESSION_CLOSE = time(20, 0)
@@ -167,25 +170,31 @@ def prepare_clickhouse_rows(
 ) -> list[dict[str, Any]]:
     """Convert Alpaca bars through the existing canonical ClickHouse contract."""
     interval = normalize_chart_interval(interval)
+    source_interval = "1m" if interval in INTRADAY_DERIVED_INTERVALS else interval
     received_at = received_at or utc_now_iso()
-    candles = []
+    source_candles = []
     for raw_bar in raw_bars:
         candle = raw_bar_to_processed_candle(
             symbol,
             raw_bar,
             feed=feed,
             received_at=received_at,
-            interval=interval,
+            interval=source_interval,
             price_adjustment="split",
         )
-        if interval not in INTRADAY_INTERVALS:
+        if source_interval not in INTRADAY_INTERVALS:
             candle["marketSession"] = "regular"
         elif candle.get("marketSession") not in allowed_sessions:
             continue
         if invalid_candle_reason(candle):
             continue
-        candles.append(candle)
-    candles.sort(key=lambda candle: parse_time(candle["timestamp"]))
+        source_candles.append(candle)
+    source_candles.sort(key=lambda candle: parse_time(candle["timestamp"]))
+    if interval in INTRADAY_DERIVED_INTERVALS:
+        aggregation_now = parse_time(store_end) if store_end else datetime.now(timezone.utc)
+        candles = aggregate_regular_session_candles(source_candles, interval, now=aggregation_now)
+    else:
+        candles = source_candles
     store_start_time = parse_time(store_start) if store_start else None
     store_end_time = parse_time(store_end) if store_end else None
     rows = []
@@ -221,8 +230,11 @@ def load_existing_timestamps(
     interval = normalize_chart_interval(interval)
     interval_filter = "interval IN ('1D', '1d')" if interval == "1D" else "interval = {interval:String}"
     parameters: dict[str, Any] = {"symbol": symbol, "start": start, "end": end, "limit": int(limit)}
+    bucket_policy_filter = ""
     if interval != "1D":
         parameters["interval"] = interval
+    if interval in INTRADAY_DERIVED_INTERVALS:
+        bucket_policy_filter = "AND bucket_policy = 'us_equity_regular_session'"
     query = f"""
     SELECT formatDateTime(event_time, '%Y-%m-%d %H:%i:%S.000', 'UTC') AS eventTime
     FROM (
@@ -242,6 +254,7 @@ def load_existing_timestamps(
         AND event_time < parseDateTime64BestEffort({{end:String}})
         AND canonical_version = 'v2'
         AND price_adjustment = 'split'
+        {bucket_policy_filter}
     )
     WHERE rn = 1
       AND ma5 IS NOT NULL
@@ -332,33 +345,71 @@ def bootstrap(
         "intervals": list(intervals),
         "fetchedRows": 0,
         "insertedRows": 0,
+        "insertedSourceRows": 0,
         "skippedExistingRows": 0,
         "failures": [],
     }
     for symbol in symbols:
+        symbol_feed = historical_feed_for_symbol(symbol, feed)
+        source_requirements: dict[str, str] = {}
+        for interval in intervals:
+            source_interval = "1m" if interval in INTRADAY_DERIVED_INTERVALS else interval
+            fetch_start = moving_average_warmup_start(interval, start)
+            current = source_requirements.get(source_interval)
+            if current is None or parse_time(fetch_start) < parse_time(current):
+                source_requirements[source_interval] = fetch_start
+        raw_by_source: dict[str, list[dict[str, Any]]] = {}
+        existing_cache: dict[str, set[str]] = {}
+        stored_sources: set[str] = set()
+
+        def existing_for(target_interval: str) -> set[str]:
+            if target_interval not in existing_cache:
+                existing_cache[target_interval] = load_existing_timestamps(
+                    client,
+                    symbol=symbol,
+                    interval=target_interval,
+                    start=start,
+                    end=end,
+                    limit=timestamp_limit,
+                )
+            return existing_cache[target_interval]
+
         for interval in intervals:
             item = {"symbol": symbol, "interval": interval, "status": "planned"}
             if not apply:
                 print(json.dumps(item, ensure_ascii=False), flush=True)
                 continue
             try:
-                existing = load_existing_timestamps(
-                    client,
-                    symbol=symbol,
-                    interval=interval,
-                    start=start,
-                    end=end,
-                    limit=timestamp_limit,
-                )
-                symbol_feed = historical_feed_for_symbol(symbol, feed)
-                fetch_start = moving_average_warmup_start(interval, start)
-                raw_bars = fetcher(
-                    symbol,
-                    fetch_start,
-                    end,
-                    symbol_feed,
-                    alpaca_timeframe_for_interval(interval),
-                )
+                source_interval = "1m" if interval in INTRADAY_DERIVED_INTERVALS else interval
+                if source_interval not in raw_by_source:
+                    raw_by_source[source_interval] = fetcher(
+                        symbol,
+                        source_requirements[source_interval],
+                        end,
+                        symbol_feed,
+                        alpaca_timeframe_for_interval(source_interval),
+                    )
+                raw_bars = raw_by_source[source_interval]
+                source_inserted = 0
+                if source_interval != interval and source_interval not in stored_sources:
+                    source_rows = prepare_clickhouse_rows(
+                        symbol,
+                        source_interval,
+                        raw_bars,
+                        feed=symbol_feed,
+                        table_columns=table_columns,
+                        allowed_sessions=frozenset({"regular"}),
+                        store_start=start,
+                        store_end=end,
+                    )
+                    source_inserted = insert_missing_rows(
+                        client,
+                        source_rows,
+                        existing_timestamps=existing_for(source_interval),
+                        batch_size=insert_batch_size,
+                        token_prefix=f"candle-bootstrap:{symbol}:{source_interval}:{start}:{end}",
+                    )
+                    stored_sources.add(source_interval)
                 rows = prepare_clickhouse_rows(
                     symbol,
                     interval,
@@ -371,17 +422,19 @@ def bootstrap(
                 inserted = insert_missing_rows(
                     client,
                     rows,
-                    existing_timestamps=existing,
+                    existing_timestamps=existing_for(interval),
                     batch_size=insert_batch_size,
                     token_prefix=f"candle-bootstrap:{symbol}:{interval}:{start}:{end}",
                 )
                 summary["fetchedRows"] += len(rows)
-                summary["insertedRows"] += inserted
+                summary["insertedRows"] += inserted + source_inserted
+                summary["insertedSourceRows"] += source_inserted
                 summary["skippedExistingRows"] += len(rows) - inserted
                 item.update({
                     "status": "completed",
                     "fetchedRows": len(rows),
                     "insertedRows": inserted,
+                    "insertedSourceRows": source_inserted,
                     "skippedExistingRows": len(rows) - inserted,
                 })
                 print(json.dumps(item, ensure_ascii=False), flush=True)

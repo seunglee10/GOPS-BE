@@ -1077,35 +1077,22 @@ services:
       dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
     container_name: alfaka-chart-asset-builder
     depends_on:
-      kafka-init:
-        condition: service_completed_successfully
-      redis:
-        condition: service_healthy
       clickhouse:
         condition: service_healthy
       postgres:
         condition: service_healthy
     environment:
-      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
-      REDIS_URL: "redis://redis:6379/0"
       CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
       CLICKHOUSE_DATABASE: "market_data"
       CLICKHOUSE_USER: "alfaka"
       CLICKHOUSE_PASSWORD: "alfaka"
       DATABASE_URL: "postgresql://gops:${POSTGRES_PASSWORD:-gops_dev_password}@postgres:5432/gops"
-      CHART_ASSET_STORAGE_MODE: "${CHART_ASSET_STORAGE_MODE:-clickhouse}"
       CHART_ASSET_STORAGE_MAINTENANCE: "${CHART_ASSET_STORAGE_MAINTENANCE:-false}"
-      CHART_ASSET_BUILD_REQUESTS_TOPIC: "agents.chart-asset-build-requests.v1"
       CHART_ASSET_BUILD_CONCURRENCY: "${CHART_ASSET_BUILD_CONCURRENCY:-4}"
-      CHART_ASSET_BUILD_MAX_POLL_INTERVAL_MS: "${CHART_ASSET_BUILD_MAX_POLL_INTERVAL_MS:-7200000}"
-      CHART_ASSET_LLM_ENABLED: "${CHART_ASSET_LLM_ENABLED:-true}"
-      CHART_ASSET_LLM_MODEL: "${CHART_ASSET_LLM_MODEL:-}"
-      CHART_ASSET_LLM_TIMEOUT_SECONDS: "${CHART_ASSET_LLM_TIMEOUT_SECONDS:-25}"
       CHART_ASSET_REPAIR_ENABLED: "${CHART_ASSET_REPAIR_ENABLED:-true}"
-      CHART_ASSET_REPAIR_ALPACA_ENABLED: "${CHART_ASSET_REPAIR_ALPACA_ENABLED:-false}"
+      CHART_ASSET_REPAIR_ALPACA_ENABLED: "${CHART_ASSET_REPAIR_ALPACA_ENABLED:-true}"
       CHART_ASSET_REPAIR_CONCURRENCY: "${CHART_ASSET_REPAIR_CONCURRENCY:-2}"
       CHART_ASSET_REPAIR_MAX_RANGES: "${CHART_ASSET_REPAIR_MAX_RANGES:-8}"
-      CHART_ASSET_REPAIR_S3_TIMEOUT_SECONDS: "${CHART_ASSET_REPAIR_S3_TIMEOUT_SECONDS:-45}"
       MARKET_CALENDAR_PROVIDER: "configured-nyse"
       MARKET_TIMEZONE: "America/New_York"
       MARKET_OPEN_TIME: "09:30"
@@ -1113,36 +1100,13 @@ services:
       MARKET_CLOSED_DATES: "${MARKET_CLOSED_DATES:-}"
       MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS: "${MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS:-true}"
       MARKET_EARLY_CLOSES: "${MARKET_EARLY_CLOSES:-}"
-      AWS_REGION: "${AWS_REGION:-ap-northeast-2}"
-      AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-ap-northeast-2}"
-      AWS_EC2_METADATA_DISABLED: "${AWS_EC2_METADATA_DISABLED:-true}"
-      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
-      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
-      AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
-      AWS_PROFILE: "${AWS_PROFILE:-default}"
-      AWS_SDK_LOAD_CONFIG: "${AWS_SDK_LOAD_CONFIG:-1}"
-      S3_ENDPOINT_URL: "${DOCKER_S3_ENDPOINT_URL:-}"
-      S3_ACCESS_KEY_ID: "${S3_ACCESS_KEY_ID:-}"
-      S3_SECRET_ACCESS_KEY: "${S3_SECRET_ACCESS_KEY:-}"
-      S3_SESSION_TOKEN: "${S3_SESSION_TOKEN:-}"
-      S3_BUCKET: "${S3_BUCKET:-gops-market-data-<aws-account-id>-ap-northeast-2-an}"
-      S3_FINAL_PREFIX: "${S3_FINAL_PREFIX:-market-data/rebuild-20260702-lazy-v1/final}"
-      S3_MANIFEST_PREFIX: "${S3_MANIFEST_PREFIX:-market-data/rebuild-20260702-lazy-v1/manifest}"
-      S3_PROCESSED_FORMAT: "${S3_PROCESSED_FORMAT:-parquet}"
-      S3_HISTORICAL_PROCESSED_MANIFEST_LAYOUT: "${S3_HISTORICAL_PROCESSED_MANIFEST_LAYOUT:-compact}"
       HISTORICAL_ADJUSTMENT: "split"
       ALLOW_NON_CANONICAL_HISTORICAL_ADJUSTMENT: "false"
       CLICKHOUSE_REQUIRE_CANONICAL_CANDLES: "true"
-      S3_REQUIRE_CANONICAL_PROCESSED_CANDLES: "true"
-      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
-      OPENAI_MODEL: "${OPENAI_MODEL:-gpt-5.2}"
     command: ["python", "-u", "/app/systems/agent-orchestration/pods/chart-asset-builder/main.py"]
-    volumes:
-      - ${HOME}/.aws:/root/.aws:ro
     restart: unless-stopped
     networks:
       - data_net
-      - streaming_net
 
   chart-asset-migrations:
     profiles: ["chart-assets-pg"]
@@ -1154,16 +1118,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      clickhouse:
-        condition: service_healthy
     environment:
       DATABASE_URL: "postgresql://gops:${POSTGRES_PASSWORD:-gops_dev_password}@postgres:5432/gops"
-      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
-      CLICKHOUSE_DATABASE: "market_data"
-      CLICKHOUSE_USER: "alfaka"
-      CLICKHOUSE_PASSWORD: "alfaka"
-      CHART_ASSET_MIGRATION_ACTION: "${CHART_ASSET_MIGRATION_ACTION:-migrate}"
-      CHART_ASSET_MIGRATION_PRUNE: "${CHART_ASSET_MIGRATION_PRUNE:-false}"
       CHART_ASSET_STORAGE_MAINTENANCE: "${CHART_ASSET_STORAGE_MAINTENANCE:-false}"
     command: ["python", "-u", "/app/systems/agent-orchestration/jobs/chart-asset-migrations/main.py"]
     restart: "no"
@@ -1468,10 +1424,31 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
       REDIS_URL: "redis://redis:6379/0"
       AGENT_NOTIFICATION_DECISIONS_TOPIC: "agents.notification-decisions.v1"
+      RISK_EVENTS_TOPIC: "risk.events.v1"
     command: ["python", "-u", "/app/systems/agent-orchestration/pods/notification-publisher/main.py"]
     restart: unless-stopped
     networks:
       - data_net
+      - streaming_net
+
+  risk-monitor:
+    image: gops-agent-orchestrator
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
+    container_name: alfaka-risk-monitor
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      RISK_MONITOR_INPUT_TOPICS: "market.layer.candles.1m.closed.v1,market.layer.candles.5m.closed.v1,market.layer.candles.1d.closed.v1,orders.fills.v1"
+      RISK_EVENTS_TOPIC: "risk.events.v1"
+      # 실제 계좌 자산 기준값. 비어 있으면 equity 의존 룰은 안전하게 건너뜁니다.
+      RISK_MONITOR_EQUITY: "${RISK_MONITOR_EQUITY:-}"
+    command: ["python", "-u", "/app/systems/agent-orchestration/pods/risk-monitor/main.py"]
+    restart: unless-stopped
+    networks:
       - streaming_net
 
   gops-backend:
@@ -1512,7 +1489,6 @@ services:
       GOOGLE_OAUTH_CLIENT_SECRET: "${GOOGLE_OAUTH_CLIENT_SECRET:-}"
       GOOGLE_OAUTH_SECRET_NAME: "${GOOGLE_OAUTH_SECRET_NAME:-}"
       DATABASE_URL: "postgresql://gops:${POSTGRES_PASSWORD:-gops_dev_password}@postgres:5432/gops"
-      CHART_ASSET_STORAGE_MODE: "${CHART_ASSET_STORAGE_MODE:-clickhouse}"
       CHART_ASSET_STORAGE_MAINTENANCE: "${CHART_ASSET_STORAGE_MAINTENANCE:-false}"
       AGENT_ORCHESTRATOR_URL: "http://agent-orchestrator:8100"
       AGENT_ASYNC_ANALYSIS_ENABLED: "${AGENT_ASYNC_ANALYSIS_ENABLED:-true}"
@@ -1529,7 +1505,6 @@ services:
       AGENT_REPORT_STREAM_REDIS_ENABLED: "${AGENT_REPORT_STREAM_REDIS_ENABLED:-true}"
       AGENT_REPORT_UPDATES_CHANNEL: "agent.reports"
       AGENT_ANALYSIS_REQUESTS_TOPIC: "agents.analysis-requests.v1"
-      CHART_ASSET_BUILD_REQUESTS_TOPIC: "agents.chart-asset-build-requests.v1"
       AGENT_ANALYSIS_RESULTS_TOPIC: "agents.analysis-results.v1"
       AGENT_NOTIFICATION_DECISIONS_TOPIC: "agents.notification-decisions.v1"
       AGENT_DLQ_TOPIC: "agents.dlq.v1"

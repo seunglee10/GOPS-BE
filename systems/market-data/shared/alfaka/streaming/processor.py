@@ -53,6 +53,7 @@ from alfaka.serving.closed_watermark import (
     watermark_after,
 )
 from alfaka.serving.intervals import redis_closed_candle_cap
+from alfaka.serving.session_buckets import BUCKET_POLICY_REGULAR_SESSION
 from alfaka.streaming.transforms import (
     CalendarCandleAggregator,
     CandleAggregator,
@@ -62,6 +63,7 @@ from alfaka.streaming.transforms import (
     SourceEventDeduper,
     TickWindowCandleBuilder,
     normalize_bar,
+    normalize_candle_numeric_fields,
     normalize_quote,
     normalize_status,
     normalize_trade,
@@ -246,7 +248,7 @@ class ProcessorState:
         self.live_builder = LiveCandleBuilder()
         self.window_builder = TickWindowCandleBuilder(grace_seconds=watermark_grace_seconds)
         self.provisional_state = ProvisionalCandleState()
-        self.aggregator = CandleAggregator()
+        self.aggregator = CandleAggregator(bucket_policy=BUCKET_POLICY_REGULAR_SESSION)
         self.daily_aggregator = CalendarCandleAggregator("1m", "1D")
         self.weekly_aggregator = CalendarCandleAggregator("1D", "1W")
         self.monthly_aggregator = CalendarCandleAggregator("1D", "1M")
@@ -848,6 +850,7 @@ def normalize_processor_topics(topics):
 
 def publish_closed_candle(producer, redis_client, redis_keys, state, topics, candle, log_every_n=500):
     topics = normalize_processor_topics(topics)
+    candle = normalize_candle_numeric_fields(candle)
     candle = state.ma_state.attach_ma(candle)
     publish_processed(producer, candle_topic(topics["closed_candles"], candle["interval"]), {**candle, "layer": "candles", "state": "closed"}, log_every_n)
     write_closed_candle_to_redis(redis_client, redis_keys, candle)
@@ -1085,6 +1088,7 @@ def publish_daily_derived_live_candles(producer, redis_client, redis_keys, state
 
 
 def write_closed_candle_to_redis(redis_client, redis_keys, candle):
+    candle = normalize_candle_numeric_fields(candle)
     latest_key = redis_keys.latest_closed_candle(candle["symbol"], candle["interval"])
     series_key = redis_keys.recent_candles(candle["symbol"], candle["interval"])
     candle_json = json.dumps(candle, ensure_ascii=False, separators=(",", ":"))

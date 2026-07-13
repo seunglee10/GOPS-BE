@@ -65,6 +65,8 @@ def parse_indicator_spec(token: str) -> IndicatorSpec:
         normalized = f"ema:{normalized[3:]}"
     if normalized.startswith("wma") and ":" not in normalized and normalized[3:].isdigit():
         normalized = f"wma:{normalized[3:]}"
+    if normalized.startswith("atr") and ":" not in normalized and normalized[3:].isdigit():
+        normalized = f"atr:{normalized[3:]}"
     parts = normalized.split(":")
     kind = parts[0]
 
@@ -84,6 +86,9 @@ def parse_indicator_spec(token: str) -> IndicatorSpec:
     if kind == "rsi":
         period = read_int(parts, 1, default=14, minimum=1, maximum=500)
         return IndicatorSpec(id=f"rsi:{period}", kind="rsi", placement="below", parameters={"period": period})
+    if kind == "atr":
+        period = read_int(parts, 1, default=14, minimum=1, maximum=500)
+        return IndicatorSpec(id=f"atr:{period}", kind="atr", placement="below", parameters={"period": period})
     if kind in {"stochastic", "stoch"}:
         k_period = read_int(parts, 1, default=14, minimum=1, maximum=500)
         smooth_k = read_int(parts, 2, default=3, minimum=1, maximum=100)
@@ -118,6 +123,8 @@ def indicator_required_lookback_bars(specs: Iterable[IndicatorSpec]) -> int:
         elif spec.kind == "bollinger":
             required = max(required, int(params["period"]))
         elif spec.kind == "rsi":
+            required = max(required, int(params["period"]) + 1)
+        elif spec.kind == "atr":
             required = max(required, int(params["period"]) + 1)
         elif spec.kind == "stochastic":
             required = max(required, int(params["kPeriod"]) + int(params["smoothK"]) + int(params["dPeriod"]))
@@ -199,6 +206,9 @@ def indicator_points(
         ]
     if spec.kind == "rsi":
         values = rsi(closes, int(spec.parameters["period"]))
+        return value_points(timestamps, values)
+    if spec.kind == "atr":
+        values = atr(highs, lows, closes, int(spec.parameters["period"]))
         return value_points(timestamps, values)
     if spec.kind == "stochastic":
         values = stochastic(
@@ -322,6 +332,47 @@ def rsi(values: list[float | None], period: int) -> list[float | None]:
         average_gain = (average_gain * (period - 1) + gain) / period
         average_loss = (average_loss * (period - 1) + loss) / period
         result[index] = rsi_value(average_gain, average_loss)
+    return result
+
+
+def atr(
+    highs: list[float | None],
+    lows: list[float | None],
+    closes: list[float | None],
+    period: int,
+) -> list[float | None]:
+    """Average True Range with Wilder smoothing.
+
+    True range needs the previous close, so the first ATR value appears at
+    index `period` (period + 1 bars of lookback).
+    """
+    result: list[float | None] = [None] * len(closes)
+    if len(closes) <= period:
+        return result
+    true_ranges: list[float | None] = [None] * len(closes)
+    for index in range(1, len(closes)):
+        high = highs[index]
+        low = lows[index]
+        previous_close = closes[index - 1]
+        if high is None or low is None or previous_close is None:
+            continue
+        true_ranges[index] = max(
+            high - low,
+            abs(high - previous_close),
+            abs(low - previous_close),
+        )
+    initial_window = true_ranges[1:period + 1]
+    if any(value is None for value in initial_window):
+        return result
+    previous_atr = sum(value for value in initial_window if value is not None) / period
+    result[period] = previous_atr
+    for index in range(period + 1, len(closes)):
+        true_range = true_ranges[index]
+        if true_range is None:
+            result[index] = previous_atr
+            continue
+        previous_atr = (previous_atr * (period - 1) + true_range) / period
+        result[index] = previous_atr
     return result
 
 

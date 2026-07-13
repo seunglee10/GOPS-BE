@@ -1,0 +1,45 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: chart-geometry-build
+  namespace: alfaka-market-data
+spec:
+  schedule: "40 8 * * 1-5"
+  timeZone: Asia/Seoul
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            app: chart-geometry-build
+        spec:
+          restartPolicy: Never
+          nodeSelector:
+            karpenter.sh/nodepool: batch-warm
+          tolerations:
+            - key: gops.io/dedicated
+              operator: Equal
+              value: batch
+              effect: NoSchedule
+          serviceAccountName: alfaka-market-data-sa
+          containers:
+            - name: enqueue
+              image: YOUR_ECR_REPOSITORY/gops-agent-orchestrator:latest
+              imagePullPolicy: IfNotPresent
+              command: ["python", "-u", "/app/systems/agent-orchestration/jobs/chart-asset-schedule/main.py"]
+              env:
+                - name: CHART_ASSET_SCHEDULED
+                  value: "true"
+                - name: CHART_ASSET_INTERVALS
+                  value: "1m,5m,10m,1h,4h,1D,1W"
+              envFrom:
+                - configMapRef:
+                    name: alfaka-market-data-config
+                - secretRef:
+                    name: alfaka-order-db-secret
+                    optional: false

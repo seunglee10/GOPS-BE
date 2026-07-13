@@ -73,10 +73,6 @@
       "title": "오더플로우",
       "aliases": ["오더플로우", "오더 플로우", "볼륨 프로파일", "체결 분석", "order flow", "orderflow", "volume profile"]
     },
-    "portfolioHoldingsCards": {
-      "title": "보유종목 카드",
-      "aliases": ["보유종목 카드", "홀딩스 카드", "holdings 카드", "holdings cards"]
-    },
     "portfolioMulti": {
       "title": "듀얼 포트폴리오",
       "aliases": ["듀얼 포트폴리오", "포트폴리오 멀티", "dual portfolio", "portfolio multi"]

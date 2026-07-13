@@ -2,9 +2,11 @@
 
 Shared chart-command and chart-analysis-asset contracts for frontend runtime and backend/agent code.
 
-`chart-analysis-asset.schema.json` defines the prebuilt v1 asset stored per
-`(symbol, interval)`. Builders persist complete `DrawingEntity` objects and the
-frontend applies them without a second compiler.
+`chart-analysis-asset.schema.json` points to the semantic `geometry` asset stored
+per `(symbol, interval)`. Builders persist complete `DrawingEntity` objects and
+the frontend applies them without a second compiler. Geometry assets support
+`1m`, `5m`, `10m`, `1h`, `4h`, `1D`, `1W`; the general chart can still expose
+other intervals independently.
 
 Chart data storage and transport semantics are defined by
 `docs/CHART_DATA_ARCHITECTURE.md`. This contract covers UI/chart command shape;

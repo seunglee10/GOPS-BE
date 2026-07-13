@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
-ALL_INTERVALS = ["1m", "5m", "10m", "1h", "4h", "1D", "1W", "1M"]
+ALL_INTERVALS = ["1m", "5m", "10m", "1h", "4h", "1D", "1W"]
 for path in (
     ROOT / "systems" / "market-data" / "shared",
     ROOT / "systems" / "order" / "shared",
@@ -91,8 +91,8 @@ class ChartAssetsRoutesTest(unittest.TestCase):
         response = self.client.delete("/api/charts/analysis-assets", params={"symbols": "NVDA", "intervals": "4H"})
         self.assertEqual(response.status_code, 400)
 
-    def test_build_returns_202_and_poll_cancel_stream_work(self):
-        submitted = self.client.post("/api/charts/analysis-assets/build", json={"symbols": ["NVDA"], "intervals": ["1D", "1W", "1M"], "llmEnabled": False, "skipFreshHours": 0})
+    def test_build_returns_202_and_poll_cancel_work(self):
+        submitted = self.client.post("/api/charts/analysis-assets/build", json={"symbols": ["NVDA"], "intervals": ["1D", "1W"]})
         self.assertEqual(submitted.status_code, 202)
         job_id = submitted.json()["jobId"]
         self.assertEqual(len(self.queue.items), 1)
@@ -101,40 +101,37 @@ class ChartAssetsRoutesTest(unittest.TestCase):
         canceled = self.client.post(f"/api/charts/analysis-assets/build/{job_id}/cancel")
         self.assertTrue(canceled.json()["cancelRequested"])
         self.progress.set_status(job_id, "canceled", finishedAt="2026-07-11T00:00:00.000Z")
-        stream = self.client.get(f"/api/charts/analysis-assets/build/{job_id}/stream")
-        self.assertEqual(stream.status_code, 200)
-        self.assertIn("event: status", stream.text)
 
     def test_sp500_build_expands_registry_and_preserves_envelope_options(self):
         response = self.client.post("/api/charts/analysis-assets/build", json={
-            "symbols": "sp500", "intervals": ["1W", "1D"], "llmEnabled": True, "skipFreshHours": 12, "force": True,
+            "symbols": "sp500", "intervals": ["1W", "1D"], "force": True,
         })
 
         self.assertEqual(response.status_code, 202)
         envelope = self.queue.items[-1]
         self.assertEqual(envelope["symbols"], ["NVDA", "AAPL"])
         self.assertEqual(envelope["intervals"], ["1W", "1D"])
-        self.assertTrue(envelope["llmEnabled"])
-        self.assertEqual(envelope["skipFreshHours"], 12)
+        self.assertNotIn("llmEnabled", envelope)
+        self.assertNotIn("skipFreshHours", envelope)
         self.assertTrue(envelope["force"])
 
     def test_sp500_build_rejects_missing_registry_instead_of_using_fallback(self):
         with patch("app.routes.chart_assets.sp500_universe_symbols", return_value=[]):
             response = self.client.post("/api/charts/analysis-assets/build", json={
-                "symbols": "sp500", "llmEnabled": False,
+                "symbols": "sp500",
             })
         self.assertEqual(response.status_code, 503)
 
     def test_build_accepts_all_chart_intervals(self):
         response = self.client.post("/api/charts/analysis-assets/build", json={
-            "symbols": ["NVDA"], "intervals": ALL_INTERVALS, "llmEnabled": False,
+            "symbols": ["NVDA"], "intervals": ALL_INTERVALS,
         })
         self.assertEqual(response.status_code, 202)
         self.assertEqual(self.queue.items[-1]["intervals"], ALL_INTERVALS)
 
     def test_rejects_invalid_intervals(self):
         response = self.client.post("/api/charts/analysis-assets/build", json={
-            "symbols": ["NVDA"], "intervals": ["15m"], "llmEnabled": False,
+            "symbols": ["NVDA"], "intervals": ["15m"],
         })
         self.assertEqual(response.status_code, 422)
 
@@ -145,7 +142,7 @@ class ChartAssetsRoutesTest(unittest.TestCase):
         with patch.dict(os.environ, {"AUTH_ENABLED": "true", "AUTH_SESSION_SECRET": "test-session-secret"}, clear=False):
             self.client.app.state.auth_session_store = MemorySessionStore(AuthConfig.from_env())
             response = self.client.post("/api/charts/analysis-assets/build", json={
-                "symbols": ["NVDA"], "llmEnabled": False,
+                "symbols": ["NVDA"],
             })
 
         self.assertEqual(response.status_code, 401)
@@ -171,13 +168,13 @@ class ChartAssetsRoutesTest(unittest.TestCase):
     def test_enqueue_failure_is_not_reported_as_queued(self):
         queue = FailingQueue()
         with patch("app.routes.chart_assets.chart_asset_build_queue", return_value=queue):
-            response = self.client.post("/api/charts/analysis-assets/build", json={"symbols": ["NVDA"], "llmEnabled": False})
+            response = self.client.post("/api/charts/analysis-assets/build", json={"symbols": ["NVDA"]})
         self.assertEqual(response.status_code, 503)
         state = self.progress.get(queue.envelope.job_id)
         self.assertEqual(state["status"], "failed")
 
     def test_rejects_unregistered_symbol(self):
-        response = self.client.post("/api/charts/analysis-assets/build", json={"symbols": ["ZZZZ"], "llmEnabled": False})
+        response = self.client.post("/api/charts/analysis-assets/build", json={"symbols": ["ZZZZ"]})
         self.assertEqual(response.status_code, 400)
 
 

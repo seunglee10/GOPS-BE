@@ -4,9 +4,9 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
-CONTENT_TASK_TYPES = ("news", "chart", "macro", "ontology", "financial", "financial_comparison", "market_move", "general")
+CONTENT_TASK_TYPES = ("news", "chart", "macro", "ontology", "financial", "financial_comparison", "risk", "market_move", "general")
 ROUTE_MODES = ("analysis", "ui_layout", "hybrid", "clarify")
-ROLE_ORDER = ("chart", "news", "macro", "ontology", "financial")
+ROLE_ORDER = ("chart", "news", "macro", "ontology", "financial", "risk")
 DEFAULT_ANALYSIS_ROLES = ("chart", "news", "macro", "ontology")
 UI_ACTIONS = (
     "focus",
@@ -44,7 +44,6 @@ UI_PANEL_TYPES = (
     "orderFlowProfile",
     "portfolioDashboard",
     "portfolioHoldings",
-    "portfolioHoldingsCards",
     "portfolioMulti",
     "portfolioInvestment",
     "portfolioPerformance",
@@ -68,6 +67,7 @@ ROLES_BY_CONTENT_TASK = {
     "ontology": ("ontology",),
     "financial": ("financial",),
     "financial_comparison": ("financial",),
+    "risk": ("risk",),
     "market_move": DEFAULT_ANALYSIS_ROLES,
     "general": DEFAULT_ANALYSIS_ROLES,
 }
@@ -79,6 +79,7 @@ INTENT_TYPE_BY_CONTENT_TASK = {
     "ontology": "ontology",
     "financial": "financial-analysis",
     "financial_comparison": "financial-comparison",
+    "risk": "risk-check",
     "market_move": "market-move",
     "general": "general-analysis",
 }

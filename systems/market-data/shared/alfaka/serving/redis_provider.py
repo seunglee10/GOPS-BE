@@ -25,6 +25,7 @@ from alfaka.serving.news_hot_cache import (
     write_localized_news_to_redis,
 )
 from alfaka.serving.time_utils import parse_utc_time
+from alfaka.streaming.transforms import normalize_candle_numeric_fields
 
 
 class RedisMarketDataProvider:
@@ -47,7 +48,7 @@ class RedisMarketDataProvider:
         value = self.redis.get(self.keys.live_candle(symbol, interval))
         if not value:
             return None
-        candle = json.loads(value)
+        candle = normalize_candle_numeric_fields(json.loads(value))
         if not live_candle_is_fresh(candle):
             return None
         latest_closed = self.latest_closed_candle(symbol, interval)
@@ -58,7 +59,7 @@ class RedisMarketDataProvider:
         value = self.redis.get(self.keys.latest_closed_candle(symbol, interval))
         if not value:
             return None
-        return json.loads(value)
+        return normalize_candle_numeric_fields(json.loads(value))
 
     def closed_candle_watermark(self, symbol, interval):
         interval = normalize_chart_interval(interval)
@@ -71,7 +72,7 @@ class RedisMarketDataProvider:
         interval = normalize_chart_interval(interval)
         limit = resolve_candle_limit(interval, limit)
         rows = self.redis.zrevrange(self.keys.recent_candles(symbol, interval), 0, max(0, limit - 1))
-        candles = [json.loads(row) for row in reversed(rows)]
+        candles = [normalize_candle_numeric_fields(json.loads(row)) for row in reversed(rows)]
         return candles
 
     def candle_snapshot(self, symbol, interval, limit=None):
@@ -91,7 +92,7 @@ class RedisMarketDataProvider:
         value = self.redis.get(self.keys.latest_closed_candle(symbol, interval))
         if not value:
             return None
-        candle = json.loads(value)
+        candle = normalize_candle_numeric_fields(json.loads(value))
         event_type = "CANDLE_CORRECTED" if candle.get("correctionType") == "UPDATED" else "CANDLE_CLOSED"
         return websocket_event(event_type, symbol, interval, candle)
 

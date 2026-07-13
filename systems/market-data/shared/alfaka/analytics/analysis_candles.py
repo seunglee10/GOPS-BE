@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 from alfaka.backfill.gapfill import TradingCalendar
 from alfaka.serving.time_utils import canonical_utc_timestamp, parse_utc_time
 from alfaka.serving.intervals import INTRADAY_INTERVAL_MINUTES
+from alfaka.serving.session_buckets import regular_session_bucket
 from alfaka.storage.candle_validation import invalid_candle_numeric_reason
 
 
@@ -18,7 +19,7 @@ MARKET_TIMEZONE = ZoneInfo("America/New_York")
 CANONICAL_DATA_VERSION = "v2"
 SESSION_POLICY = "us-equity-regular"
 ADJUSTMENT_POLICY = "split"
-CANDLE_CONTRACT_VERSION = "v3"
+CANDLE_CONTRACT_VERSION = "regular-session-derived"
 INTRADAY_ANALYSIS_INTERVALS = tuple(INTRADAY_INTERVAL_MINUTES)
 LONG_ANALYSIS_INTERVALS = ("1D", "1W", "1M")
 ANALYSIS_INTERVALS = (*INTRADAY_ANALYSIS_INTERVALS, *LONG_ANALYSIS_INTERVALS)
@@ -155,7 +156,12 @@ def is_analysis_candle_bucket_complete(
     reference = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     if interval in INTRADAY_ANALYSIS_INTERVALS:
         bucket = parse_utc_time(identity["timestamp"])
-        return bucket is not None and bucket + timedelta(minutes=INTRADAY_INTERVAL_MINUTES[interval]) <= reference
+        if bucket is None:
+            return False
+        if interval == "1m":
+            return bucket + timedelta(minutes=1) <= reference
+        session_bucket = regular_session_bucket(bucket, interval, calendar=calendar)
+        return session_bucket is not None and session_bucket.end <= reference
     trading_calendar = calendar or TradingCalendar.from_environment()
     completed_at = _bucket_completed_at(
         _bucket_date(identity["candleKey"], interval),
@@ -322,7 +328,7 @@ class AnalysisCandleSource:
                 for index, row in enumerate(canonical[-LOOKBACK_BARS[interval]:])
             ]
         rows = {item: rows[item] for item in intervals}
-        coverage = {item: compute_analysis_coverage(rows[item], item, display_bars=DISPLAY_BARS[item], now=now) for item in intervals}
+        coverage = {item: compute_analysis_coverage(rows[item], item, display_bars=LOOKBACK_BARS[item], now=now) for item in intervals}
         digests = {item: analysis_input_digest(symbol, item, rows[item]) for item in intervals}
         return AnalysisCandleBundle(rows=rows, coverage=coverage, digests=digests)
 
@@ -406,21 +412,25 @@ def _coverage_result(expected: list[str], actual: set[str], interval: str, refer
     actual_expected = [key for key in expected if key in actual]
     last_actual = _key_timestamp(actual_expected[-1], interval) if actual_expected else None
     ratio = sum(hits) / len(hits) if hits else 0.0
-    thresholds = {
-        "1m": (0.95, 60, 2), "5m": (0.95, 60, 2), "10m": (0.95, 60, 2),
-        "1h": (0.95, 60, 2), "4h": (0.95, 60, 2),
-        "1D": (0.95, 60, 2), "1W": (0.92, 26, 1), "1M": (0.90, 18, 1),
-    }[interval]
+    missing_indexes = [index for index, hit in enumerate(hits) if not hit]
+    first_present = next((index for index, hit in enumerate(hits) if hit), len(hits))
+    missing_head_only = all(index < first_present for index in missing_indexes)
+    if not missing_indexes and expected:
+        state = "full"
+    elif contiguous >= 120 and missing_head_only and last_actual == last_expected:
+        state = "partial"
+    else:
+        state = "data_insufficient"
     flags = []
-    if ratio < thresholds[0]: flags.append("display_coverage_below_threshold")
-    if contiguous < thresholds[1]: flags.append("recent_contiguous_below_threshold")
-    if largest > thresholds[2]: flags.append("largest_gap_above_threshold")
+    if contiguous < 120: flags.append("recent_contiguous_below_minimum")
+    if missing_indexes and not missing_head_only: flags.append("interior_gap")
     if last_expected and last_actual != last_expected: flags.append("stale_input")
     return {
         "expectedBars": len(expected), "actualBars": sum(hits), "missingBars": missing,
         "coverageRatio": round(ratio, 4), "recentContiguousBars": contiguous,
         "largestGapBars": largest, "lastExpectedClosedAt": last_expected,
-        "lastActualClosedAt": last_actual, "renderable": not flags,
+        "lastActualClosedAt": last_actual, "renderable": state in {"full", "partial"},
+        "coverageState": state, "state": state,
         "qualityFlags": flags,
     }
 

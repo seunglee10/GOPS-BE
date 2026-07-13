@@ -760,40 +760,32 @@ SEC_USER_AGENT
 Chart-analysis asset builder (independent optional runtime):
 
 ```text
-CHART_ASSET_BUILD_REQUESTS_TOPIC
 CHART_ASSET_BUILD_CONCURRENCY
-CHART_ASSET_BUILD_MAX_POLL_INTERVAL_MS
-CHART_ASSET_STORAGE_MODE
 CHART_ASSET_STORAGE_MAINTENANCE
 CHART_ASSET_REPAIR_ENABLED
 CHART_ASSET_REPAIR_ALPACA_ENABLED
 CHART_ASSET_REPAIR_CONCURRENCY
 CHART_ASSET_REPAIR_MAX_RANGES
-CHART_ASSET_REPAIR_S3_TIMEOUT_SECONDS
-CHART_ASSET_LLM_ENABLED
-CHART_ASSET_LLM_MODEL
-CHART_ASSET_LLM_TIMEOUT_SECONDS
 ```
 
 `chart-asset-builder`는 `gops-agent-orchestrator` image를 공유하지만 interactive
-AgentOrchestrator workflow에 참여하지 않는다. Kafka job 하나를 symbol 중심으로
-처리한다. freshness skip이 아니면 요청 symbol의 canonical 1D와 요청 인트라데이 interval을 감사하고 모든 결측
-range를 compact S3 manifest inventory LIST 한 번으로 찾아 복원한 뒤 남은 범위만 Alpaca split
-historical data로 채운다. 기존 inventory의 object별 manifest GET은 45초 deadline으로
-제한하며 aggregate symbol index 전환은 rollout 전 성능 gate다. 시간별 `final-v2` scan은 하지 않고 S3 단계는 기본 45초다. 복구된 행은 기존
-materializer의 no-write prepare가 deadline 안에 완료된 경우에만 caller thread가
-ClickHouse에 commit하고 재조회한다. timeout을 반환한 background read는 candle/audit을
-뒤늦게 쓸 수 없다. 별도 CronJob/topic/Redis candle 입력은
-없다. 인트라데이 결측은 S3 lookup 없이 interval별 Alpaca 요청으로 ClickHouse에 보강한다.
-AWS overlay는 `CHART_ASSET_REPAIR_ALPACA_ENABLED=true`, 동시성 2, 최대 repair
-range 8을 사용한다. 실제 local deploy/CI 경로인 `aws-incluster-app`도 같은 값을
-명시한다. ClickHouse asset table은 기본/rollback store이고 PostgreSQL 전환은
-`job-chart-asset-migrations.yaml`과 `run-chart-asset-migrations-job.sh`로 schema,
-sync, verify를 명시 실행한다. Runtime은 어떤 DB schema도 자동 생성하지 않는다.
-이 one-shot Job은 base/app 또는 AWS app overlay에 포함하지 않고 운영자가 standalone
-manifest로만 실행하며 ClickHouse/PostgreSQL Secret이 모두 없으면 시작하지 않는다.
-`alfaka-openai-secret`은 curator를 켤 때만
-필요하며, 키 부재·LLM 장애는 eligible S/T를 `saved_with_warning`으로 저장한다.
+AgentOrchestrator workflow에 참여하지 않는다. PostgreSQL queue item을 symbol/interval
+단위로 처리하고 ClickHouse 완료 봉을 감사하며 누락 range만 Alpaca로 보충한다.
+미국 주식 `5m/10m/1h/4h` 보충은 native timeframe이 아니라 Alpaca `1Min`을 사용해
+실제 정규장 `1m`과 `bucket_policy=us_equity_regular_session` 파생 봉을 함께
+ClickHouse에 저장한다.
+stream processor가 Redis/ClickHouse에서 캔들을 복구할 때는 legacy JSON의 문자열
+`tradeCount`를 정수로 정규화한 뒤 provisional state에 넣는다. 이 경계가 깨지면
+1m→상위 interval 합산에서 processor 전체가 재시작할 수 있으므로 복구·집계·Redis
+쓰기와 조회가 같은 숫자 계약을 사용해야 한다.
+`1W`는 underlying `1D` 결측만 보충한 뒤 기존 주봉 집계를 사용한다. 이 하위 시스템은
+S3, Redis, Kafka, OpenAI를 사용하지 않는다.
+
+AWS overlay는 Alpaca repair 동시성 2와 최대 range 8을 사용한다. 평일 KST 08:40
+CronJob은 S&P500 전체 7개 interval을 등록한다. PostgreSQL schema는
+`job-chart-asset-migrations.yaml`과 `run-chart-asset-migrations-job.sh`로 명시 적용하며
+runtime은 자동 생성하지 않는다. one-shot migration Job은 PostgreSQL Secret이 없으면
+시작하지 않는다.
 
 Financial final-answer synthesis is enabled with
 `AGENT_FINANCIAL_FINAL_ANSWER_PROVIDER=openai`. The orchestrator still reads SEC

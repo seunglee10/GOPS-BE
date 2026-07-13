@@ -14,15 +14,17 @@ from typing import Any
 from alfaka.alpaca.feed_profiles import MARKET_TIMEZONE, market_session_for_datetime
 from alfaka.backfill.runner import (
     BackfillUnavailable,
+    canonical_historical_candles,
     fetch_alpaca_bars,
     find_processed_candle_objects,
     historical_feed_for_symbol,
-    raw_bars_to_processed_candles,
+    persist_historical_source_candles,
     repair_daily_bar_outliers,
 )
 from alfaka.serving.dto import candle_to_gops, cursor_for
 from alfaka.serving.intervals import (
     alpaca_timeframe_for_interval,
+    historical_source_interval_for,
     interval_seconds,
     minimum_renderable_returned_bars,
     minimum_renderable_source_bars,
@@ -341,7 +343,8 @@ class OnDemandFillService:
         source["checked"] = True
         trace["foregroundFill"]["attempted"] = True
         try:
-            timeframe = alpaca_timeframe_for_interval(interval)
+            provider_interval = interval if is_crypto_symbol(symbol) else historical_source_interval_for(interval)
+            timeframe = alpaca_timeframe_for_interval(provider_interval)
             raw_by_feed: list[tuple[str, list[dict[str, Any]]]] = []
             for route in fetch_routes:
                 if self._deadline_exceeded(started):
@@ -361,7 +364,15 @@ class OnDemandFillService:
                 if not raw_rows:
                     continue
                 processed_source = repair_daily_bar_outliers(symbol, raw_rows, feed) if interval == "1D" else raw_rows
-                processed.extend(raw_bars_to_processed_candles(symbol, processed_source, feed=feed, interval=interval))
+                _, target_candles = canonical_historical_candles(
+                    symbol,
+                    processed_source,
+                    feed=feed,
+                    interval=interval,
+                    source_interval=provider_interval,
+                    completed_through=parse_time(requested_end),
+                )
+                processed.extend(target_candles)
             direct_candles = [
                 {
                     **candle_to_gops(candle),
@@ -673,7 +684,8 @@ class OnDemandFillService:
             source["error"] = "S3_BUCKET is required before Alpaca historical rows can be canonicalized."
             source["durationMs"] = elapsed_ms(source_started)
             return False
-        timeframe = alpaca_timeframe_for_interval(interval)
+        provider_interval = interval if is_crypto_symbol(symbol) else historical_source_interval_for(interval)
+        timeframe = alpaca_timeframe_for_interval(provider_interval)
         routes = historical_fill_routes(symbol, interval, ranges, os.getenv("HISTORICAL_FEED", os.getenv("ALPACA_FEED", "sip")))
         trace["feedRoutes"] = routes
         fetch_routes = [route for route in routes if route.get("state") == "fetchable"]
@@ -697,14 +709,30 @@ class OnDemandFillService:
             manifest_prefix = os.getenv("S3_MANIFEST_PREFIX", DEFAULT_MANIFEST_PREFIX)
             output_format = os.getenv("S3_PROCESSED_FORMAT", "parquet").lower()
             processed = []
+            source_candles = []
             first_feed = fetch_routes[0]["feed"]
             for feed, raw_rows in raw_by_feed:
                 if not raw_rows:
                     continue
                 processed_source = repair_daily_bar_outliers(symbol, raw_rows, feed) if interval == "1D" else raw_rows
-                processed.extend(raw_bars_to_processed_candles(symbol, processed_source, feed=feed, interval=interval))
+                canonical_source, target_candles = canonical_historical_candles(
+                    symbol,
+                    processed_source,
+                    feed=feed,
+                    interval=interval,
+                    source_interval=provider_interval,
+                    completed_through=max(parse_time(route["end"]) for route in fetch_routes),
+                )
+                source_candles.extend(canonical_source)
+                processed.extend(target_candles)
             if not processed:
                 return False
+            persist_historical_source_candles(
+                self._clickhouse_client(),
+                source_candles,
+                source_interval=provider_interval,
+                interval=interval,
+            )
             first_event_time = parse_time(processed[0]["timestamp"])
             partition_key = (
                 f"{final_prefix}/candles/feed={first_feed or 'unknown'}/interval={interval}/symbol={symbol}"

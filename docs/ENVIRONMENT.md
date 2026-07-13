@@ -786,26 +786,19 @@ server refresh only asks Yahoo whether newer data is available.
 
 GapFill and chart-analysis readiness share one year-aware US equity calendar to avoid false gaps on weekends, regular holidays, exceptional full-day closures, and early closes. `MARKET_CLOSED_DATES` remains an additive emergency override. Set `MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS=false` only for a test that intentionally disables built-in rules. The v1 provider is `configured-nyse`; it is an adapter boundary that can later be replaced by a managed exchange-calendar provider. Sunday `20:00 ET` through Friday `20:00 ET` is treated as the 24/5 equity window, with BOATS active only for the `overnight` slices. Intraday chart serving keeps historical views regular-session-only and allows the currently active `pre`, `after`, or `overnight` session to appear while it is live. Intraday chart renderability treats sparse gaps as blocking only when both candles are inside the regular session; sparse extended-hours 1m bars can still render because Alpaca may only emit bars for minutes with activity.
 
-Chart Asset build repair is trigger-only. Base/local config audits ClickHouse and S3 but keeps Alpaca disabled; the AWS overlay enables Alpaca historical repair. It creates no extra Redis key or durable log.
+Chart Geometry repair는 trigger-only다. ClickHouse를 감사하고 Alpaca historical
+API로 정확한 누락 range만 보충한다. S3, Redis, Kafka를 사용하지 않는다.
 
 ```text
 CHART_ASSET_REPAIR_ENABLED
 CHART_ASSET_REPAIR_ALPACA_ENABLED
 CHART_ASSET_REPAIR_CONCURRENCY
 CHART_ASSET_REPAIR_MAX_RANGES
-CHART_ASSET_REPAIR_S3_TIMEOUT_SECONDS
-CHART_ASSET_STORAGE_MODE
 CHART_ASSET_STORAGE_MAINTENANCE
 ```
 
-`CHART_ASSET_REPAIR_S3_TIMEOUT_SECONDS` defaults to `45`. Storage mode defaults
-to `clickhouse`; `dual_clickhouse_read`, `dual_postgres_read`, and `postgres`
-require the chart-owned PostgreSQL migration and exact parity verification.
-Maintenance mode leaves asset GET live while temporarily rejecting build/delete.
-The S3 timeout covers the no-write list/get/normalize preparation. Only a
-preparation accepted before the deadline is committed to ClickHouse; one S3
-socket read is additionally bounded to ten seconds so expired workers release
-promptly.
+Asset payload와 build queue는 PostgreSQL만 사용한다. Maintenance mode는 asset GET을
+유지하면서 build/delete를 일시 거부한다.
 
 ```text
 MARKET_CALENDAR_PROVIDER

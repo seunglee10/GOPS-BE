@@ -126,7 +126,7 @@ class CandleBootstrapJobTest(unittest.TestCase):
             "event_time", "symbol", "interval", "open", "high", "low", "close", "volume",
             "trade_count", "vwap", "ma5", "ma20", "ma60", "is_closed", "correction_type",
             "source", "feed", "feed_profile", "market_session", "price_adjustment",
-            "canonical_version", "source_event_id", "created_at",
+            "canonical_version", "bucket_policy", "source_event_id", "created_at",
         }
 
         rows = MODULE.prepare_clickhouse_rows(
@@ -149,6 +149,7 @@ class CandleBootstrapJobTest(unittest.TestCase):
         self.assertEqual(row["market_session"], "regular")
         self.assertEqual(row["price_adjustment"], "split")
         self.assertEqual(row["canonical_version"], "v2")
+        self.assertEqual(row["bucket_policy"], "source_native")
         self.assertNotIn("simulation_run_id", row)
 
     def test_insert_rows_filters_existing_timestamps_and_uses_deduplication_token(self):
@@ -252,7 +253,7 @@ class CandleBootstrapJobTest(unittest.TestCase):
             "event_time", "symbol", "interval", "open", "high", "low", "close", "volume",
             "trade_count", "vwap", "ma5", "ma20", "ma60", "is_closed", "correction_type",
             "source", "feed", "feed_profile", "market_session", "price_adjustment",
-            "canonical_version", "source_event_id", "created_at",
+            "canonical_version", "bucket_policy", "source_event_id", "created_at",
         }
         client = BootstrapClickHouseClient(
             table_columns,
@@ -285,12 +286,48 @@ class CandleBootstrapJobTest(unittest.TestCase):
         self.assertEqual(summary["skippedExistingRows"], 1)
         self.assertEqual(client.inserts[0][1][0]["event_time"], "2026-07-10 13:31:00.000")
 
+    def test_bootstrap_hour_fetches_one_minute_and_stores_session_aligned_row(self):
+        table_columns = set(MODULE.CORE_CLICKHOUSE_COLUMNS) | {
+            "trade_count", "vwap", "correction_type", "source_event_id", "created_at", "bucket_policy",
+        }
+        client = BootstrapClickHouseClient(table_columns)
+        calls = []
+
+        def fetch(symbol, start, end, feed, timeframe):
+            calls.append((symbol, start, end, feed, timeframe))
+            return [
+                {"t": "2026-07-10T13:30:00Z", "o": 100, "h": 102, "l": 99, "c": 101, "v": 10},
+                {"t": "2026-07-10T14:29:00Z", "o": 101, "h": 104, "l": 100, "c": 103, "v": 20},
+            ]
+
+        summary = MODULE.bootstrap(
+            symbols=("AAPL",),
+            intervals=("1h",),
+            start="2026-07-10T13:30:00.000Z",
+            end="2026-07-10T14:30:00.000Z",
+            feed="sip",
+            apply=True,
+            insert_batch_size=100,
+            timestamp_limit=500_000,
+            continue_on_error=False,
+            client=client,
+            fetcher=fetch,
+        )
+
+        assert calls[0][-1] == "1Min"
+        assert summary["insertedRows"] == 3
+        assert summary["insertedSourceRows"] == 2
+        inserted = client.inserts[-1][1][0]
+        assert inserted["interval"] == "1h"
+        assert inserted["event_time"] == "2026-07-10 13:30:00.000"
+        assert inserted["bucket_policy"] == "us_equity_regular_session"
+
     def test_bootstrap_uses_warmup_bars_but_stores_only_target_range(self):
         table_columns = {
             "event_time", "symbol", "interval", "open", "high", "low", "close", "volume",
             "trade_count", "vwap", "ma5", "ma20", "ma60", "is_closed", "correction_type",
             "source", "feed", "feed_profile", "market_session", "price_adjustment",
-            "canonical_version", "source_event_id", "created_at",
+            "canonical_version", "bucket_policy", "source_event_id", "created_at",
         }
         client = BootstrapClickHouseClient(table_columns)
         first_bar_time = datetime(2026, 7, 10, 13, 30, tzinfo=timezone.utc)

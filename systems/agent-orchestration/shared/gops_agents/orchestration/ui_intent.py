@@ -26,7 +26,6 @@ PANEL_TYPES = (
     "orderFlowProfile",
     "portfolioDashboard",
     "portfolioHoldings",
-    "portfolioHoldingsCards",
     "portfolioMulti",
     "portfolioInvestment",
     "portfolioPerformance",

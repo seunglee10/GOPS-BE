@@ -302,14 +302,14 @@ def apply_operation_ir_to_query_understanding(
     roles = [
         role
         for role in operation_ir.get("suggestedRoles", [])
-        if role in {"chart", "news", "macro", "ontology", "financial"}
+        if role in {"chart", "news", "macro", "ontology", "financial", "risk"}
     ]
     if not roles:
         return next_payload
     existing_roles = [
         role
         for role in next_payload.get("selectedRoles", [])
-        if role in {"chart", "news", "macro", "ontology", "financial"}
+        if role in {"chart", "news", "macro", "ontology", "financial", "risk"}
     ]
     merged_roles = list(existing_roles)
     for role in roles:
