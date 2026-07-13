@@ -67,6 +67,8 @@ class GeometryAssetContractTest(unittest.TestCase):
         self.assertIn("PRIMARY KEY (symbol, \"interval\")", sql)
         self.assertIn("drawing_count BETWEEN 0 AND 8", sql)
         self.assertNotIn("1M", sql)
+        self.assertNotIn("geometry_build_jobs_active_request_idx", sql)
+        self.assertNotIn("geometry_build_jobs_priority_idx", sql)
 
         queue_sql = (
             ROOT
@@ -79,6 +81,8 @@ class GeometryAssetContractTest(unittest.TestCase):
         self.assertIn("source", queue_sql)
         self.assertIn("priority", queue_sql)
         self.assertIn("request_fingerprint", queue_sql)
+        self.assertIn("geometry_build_jobs_active_request_idx", queue_sql)
+        self.assertIn("geometry_build_jobs_priority_idx", queue_sql)
         self.assertIn("WHERE status IN ('queued', 'running')", queue_sql)
 
 
