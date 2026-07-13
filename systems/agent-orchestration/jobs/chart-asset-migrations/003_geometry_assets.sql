@@ -63,14 +63,6 @@ CREATE INDEX IF NOT EXISTS geometry_build_items_claim_idx
     ON chart_assets.geometry_build_items (status, lease_expires_at, job_id)
     WHERE status IN ('pending', 'running');
 
-CREATE UNIQUE INDEX IF NOT EXISTS geometry_build_jobs_active_request_idx
-    ON chart_assets.geometry_build_jobs (request_fingerprint)
-    WHERE status IN ('queued', 'running');
-
-CREATE INDEX IF NOT EXISTS geometry_build_jobs_priority_idx
-    ON chart_assets.geometry_build_jobs (priority DESC, submitted_at, job_id)
-    WHERE status IN ('queued', 'running');
-
 ALTER TABLE chart_assets.geometry_assets
     DROP CONSTRAINT IF EXISTS geometry_assets_drawing_count_check;
 ALTER TABLE chart_assets.geometry_assets
