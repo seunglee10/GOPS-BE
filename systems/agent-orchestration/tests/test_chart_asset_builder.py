@@ -32,6 +32,8 @@ class ChartAssetBuilderTest(unittest.TestCase):
         self.assertEqual(asset["assetVersion"], ASSET_VERSION)
         self.assertEqual(asset["coverage"]["state"], "partial")
         self.assertIn("geometry", asset)
+        self.assertIn("patterns", asset["geometry"])
+        self.assertIn("primaryPattern", asset["geometry"])
         self.assertIn("indicators", asset)
         self.assertNotIn("layers", asset)
         self.assertNotIn("commentary", asset)

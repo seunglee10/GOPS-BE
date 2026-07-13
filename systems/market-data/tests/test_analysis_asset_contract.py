@@ -15,7 +15,18 @@ class ChartAnalysisAssetContractTest(unittest.TestCase):
         geometry = json.loads((ROOT / "shared/chart-contract/chart-geometry-asset.schema.json").read_text())
         self.assertEqual(geometry["properties"]["assetVersion"]["const"], "geometry")
         self.assertEqual(geometry["$defs"]["interval"]["enum"], ["1m", "5m", "10m", "1h", "4h", "1D", "1W"])
-        self.assertEqual(geometry["properties"]["geometry"]["properties"]["drawings"]["maxItems"], 6)
+        geometry_contract = geometry["properties"]["geometry"]
+        self.assertEqual(geometry_contract["properties"]["drawings"]["maxItems"], 8)
+        self.assertTrue({"patterns", "primaryPattern"}.issubset(geometry_contract["required"]))
+        self.assertEqual(
+            set(geometry["$defs"]["pattern"]["properties"]["kind"]["enum"]),
+            {
+                "ascending_triangle", "descending_triangle", "symmetrical_triangle",
+                "bullish_flag", "bearish_flag", "bullish_pennant", "bearish_pennant",
+                "bullish_rectangle", "bearish_rectangle", "rising_wedge", "falling_wedge",
+                "descending_channel_breakout", "ascending_channel_breakdown",
+            },
+        )
         self.assertTrue({"symbol", "interval", "sourceInterval"}.issubset(geometry["$defs"]["drawing"]["required"]))
 
 

@@ -48,6 +48,7 @@ class GeometryAssetContractTest(unittest.TestCase):
         self.assertIn("chart_assets.geometry_build_jobs", sql)
         self.assertIn("chart_assets.geometry_build_items", sql)
         self.assertIn("PRIMARY KEY (symbol, \"interval\")", sql)
+        self.assertIn("drawing_count BETWEEN 0 AND 8", sql)
         self.assertNotIn("1M", sql)
 
 
