@@ -21,6 +21,10 @@ in `platform/{kafka,redis,clickhouse,s3}/README.md`.
   from regular-session `1m` with `bucket_policy=us_equity_regular_session`.
   Bucket timestamps are stored in UTC, while session open/close and early-close
   decisions use the NYSE calendar in `America/New_York`.
+- Candle runtime boundaries normalize OHLCV to numeric values and `tradeCount`
+  to a non-negative integer. Redis/ClickHouse recovery must normalize legacy
+  JSON strings before placing candles in live aggregation state, and writers
+  must not persist new string-valued numeric fields.
 - Orders, KIS, and agent APIs are outside this data-plane contract.
 
 ## Runtime Flow

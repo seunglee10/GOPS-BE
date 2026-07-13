@@ -54,6 +54,32 @@ def float_or_zero(value):
         return 0.0
 
 
+def int_or_zero(value):
+    """ClickHouse UInt64 JSON 문자열을 포함한 정수형 값을 안전하게 정규화합니다."""
+    try:
+        parsed = int(value or 0)
+    except (TypeError, ValueError):
+        try:
+            parsed = int(float(value or 0))
+        except (TypeError, ValueError, OverflowError):
+            return 0
+    return max(0, parsed)
+
+
+def normalize_candle_numeric_fields(candle):
+    """캔들 경계에서 OHLCV와 거래 수의 런타임 타입을 하나로 통일합니다."""
+    normalized = dict(candle)
+    for field in ("open", "high", "low", "close", "volume"):
+        if field in normalized:
+            normalized[field] = float_or_zero(normalized.get(field))
+    if normalized.get("vwap") is not None:
+        normalized["vwap"] = float_or_zero(normalized.get("vwap"))
+    normalized["tradeCount"] = int_or_zero(
+        normalized.get("tradeCount", normalized.get("trade_count"))
+    )
+    return normalized
+
+
 def floor_minute(value):
     dt = parse_time(value) if isinstance(value, str) else value
     return dt.replace(second=0, microsecond=0)
@@ -99,7 +125,7 @@ def normalize_bar(envelope, correction_type="NONE"):
         "dailyBars": "alpaca.dailyBars",
     }.get(envelope["channel"], "alpaca.bars")
     metadata = candle_metadata(envelope.get("priceAdjustment") or envelope.get("price_adjustment"), envelope.get("canonicalVersion") or envelope.get("canonical_version"))
-    return {
+    return normalize_candle_numeric_fields({
         "eventType": "CANDLE",
         "symbol": envelope["symbol"],
         "interval": interval,
@@ -121,7 +147,7 @@ def normalize_bar(envelope, correction_type="NONE"):
         "sourceEventId": envelope.get("sourceEventId"),
         "createdAt": envelope.get("receivedAt"),
         **metadata,
-    }
+    })
 
 
 def normalize_trade(envelope):
@@ -195,6 +221,7 @@ class LiveCandleBuilder:
         self.evictions = 0
 
     def seed(self, candle):
+        candle = normalize_candle_numeric_fields(candle)
         if candle.get("interval") != "1m" or candle.get("isClosed"):
             return False
         timestamp = candle.get("timestamp")
@@ -208,7 +235,7 @@ class LiveCandleBuilder:
     def update(self, trade):
         bucket = floor_minute(trade["timestamp"])
         key = (trade["symbol"], to_iso(bucket))
-        price = trade["price"]
+        price = float_or_zero(trade["price"])
         size = float_or_zero(trade.get("size"))
         candle = self.candles.get(key)
 
@@ -223,6 +250,7 @@ class LiveCandleBuilder:
                 "low": price,
                 "close": price,
                 "volume": size,
+                "tradeCount": 1,
                 "isClosed": False,
                 "source": "alpaca.trades",
                 "sourceInterval": "trades",
@@ -238,6 +266,7 @@ class LiveCandleBuilder:
             candle["low"] = min(candle["low"], price)
             candle["close"] = price
             candle["volume"] += size
+            candle["tradeCount"] = int_or_zero(candle.get("tradeCount")) + 1
             candle["feed"] = trade.get("feed") or candle.get("feed")
             candle["feedProfile"] = trade.get("feedProfile") or candle.get("feedProfile")
             candle["marketSession"] = trade.get("marketSession") or candle.get("marketSession")
@@ -264,6 +293,7 @@ class ProvisionalCandleState:
         self.max_closed = {"1m": max_closed_1m, "1D": max_closed_1d}
 
     def record_closed(self, candle):
+        candle = normalize_candle_numeric_fields(candle)
         interval = candle.get("interval")
         if interval not in self.max_closed:
             return
@@ -363,7 +393,10 @@ class ProvisionalCandleState:
 
 
 def build_provisional_candle(symbol, interval, bucket, rows, source_interval, bucket_policy=BUCKET_POLICY_CLOCK_ALIGNED):
-    candles = sorted(rows, key=lambda candle: parse_time(candle["timestamp"]))
+    candles = sorted(
+        (normalize_candle_numeric_fields(candle) for candle in rows),
+        key=lambda candle: parse_time(candle["timestamp"]),
+    )
     latest = candles[-1]
     return {
         "eventType": "LIVE_CANDLE",
@@ -423,6 +456,7 @@ class CandleAggregator:
         self.bucket_policy = bucket_policy
 
     def update(self, candle_1m, interval_minutes):
+        candle_1m = normalize_candle_numeric_fields(candle_1m)
         resolved = self._bucket_window(candle_1m, interval_minutes)
         if resolved is None:
             return None
@@ -464,13 +498,14 @@ class CandleAggregator:
         return result
 
     def recompute(self, corrected_candle, interval_minutes, source_candles):
+        corrected_candle = normalize_candle_numeric_fields(corrected_candle)
         resolved = self._bucket_window(corrected_candle, interval_minutes)
         if resolved is None:
             return None
         interval, bucket, end = resolved
         key = (corrected_candle["symbol"], interval, to_iso(bucket))
         rows = {
-            candle["timestamp"]: dict(candle)
+            candle["timestamp"]: normalize_candle_numeric_fields(candle)
             for candle in source_candles
             if candle.get("symbol", corrected_candle["symbol"]) == corrected_candle["symbol"]
             and candle.get("timestamp")
@@ -656,6 +691,7 @@ class CalendarCandleAggregator:
         self.closed_keys = BoundedKeySet(max_closed_keys)
 
     def update(self, candle):
+        candle = normalize_candle_numeric_fields(candle)
         bucket, end = self._bucket(candle["timestamp"])
         key = (candle["symbol"], self.target_interval, to_iso(bucket), candle.get("feedProfile") or candle.get("feed") or "unknown")
         if key in self.closed_keys:

@@ -1904,7 +1904,6 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "low": 189,
             "close": 190.5,
             "volume": 100,
-            "tradeCount": "10",
             "tradeCount": 1,
             "isClosed": True,
             "source": "test",
@@ -2855,6 +2854,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "low": 189,
             "close": 194,
             "volume": 110,
+            "tradeCount": "12",
             "isClosed": False,
             "source": "derived.live",
             "sourceInterval": "1m",
@@ -2865,11 +2865,13 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         provider.keys = keys
 
         with mock.patch.dict(os.environ, {"LIVE_CANDLE_STALE_SECONDS": "0"}):
+            candle = provider.live_candle("AAPL", "5m")
             event = provider.live_event("AAPL", "5m")
 
         self.assertEqual(event["interval"], "5m")
         self.assertEqual(event["source"], "derived.live")
         self.assertEqual(event["sourceInterval"], "1m")
+        self.assertEqual(candle["tradeCount"], 12)
         self.assertEqual(event["data"]["updatedAt"], "2026-06-25T10:17:20.250Z")
 
     def test_redis_provider_allows_newer_daily_live_candle_for_same_closed_bucket(self):

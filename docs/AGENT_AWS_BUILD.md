@@ -774,6 +774,10 @@ AgentOrchestrator workflow에 참여하지 않는다. PostgreSQL queue item을 s
 미국 주식 `5m/10m/1h/4h` 보충은 native timeframe이 아니라 Alpaca `1Min`을 사용해
 실제 정규장 `1m`과 `bucket_policy=us_equity_regular_session` 파생 봉을 함께
 ClickHouse에 저장한다.
+stream processor가 Redis/ClickHouse에서 캔들을 복구할 때는 legacy JSON의 문자열
+`tradeCount`를 정수로 정규화한 뒤 provisional state에 넣는다. 이 경계가 깨지면
+1m→상위 interval 합산에서 processor 전체가 재시작할 수 있으므로 복구·집계·Redis
+쓰기와 조회가 같은 숫자 계약을 사용해야 한다.
 `1W`는 underlying `1D` 결측만 보충한 뒤 기존 주봉 집계를 사용한다. 이 하위 시스템은
 S3, Redis, Kafka, OpenAI를 사용하지 않는다.
 
