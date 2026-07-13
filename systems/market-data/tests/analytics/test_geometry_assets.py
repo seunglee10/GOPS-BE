@@ -27,7 +27,7 @@ from alfaka.analytics.atr import latest_atr  # noqa: E402
 class GeometryAssetKernelTest(unittest.TestCase):
     def test_interval_contract_and_coverage_windows_are_exact(self):
         self.assertEqual(SUPPORTED_INTERVALS, ("1m", "5m", "10m", "1h", "4h", "1D", "1W"))
-        self.assertEqual(ALGORITHM_VERSION, "ohlcv-consensus-pattern-families-v2")
+        self.assertEqual(ALGORITHM_VERSION, "ohlcv-consensus-pattern-families-v3")
         self.assertEqual(MINIMUM_BARS, 120)
         for interval in SUPPORTED_INTERVALS[:-1]:
             self.assertEqual(TARGET_BARS[interval], 380)

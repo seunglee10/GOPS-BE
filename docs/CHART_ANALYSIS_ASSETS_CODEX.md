@@ -55,7 +55,7 @@
 
 새 payload의 `assetVersion`은 숫자 개발 단계가 아니라 기존 응답 union을 구분하는
 semantic discriminator인 `geometry`다. `algorithmVersion`은 현재
-`ohlcv-consensus-pattern-families-v2`이며 분석 의미가 바뀔 때만 변경한다. 범용
+`ohlcv-consensus-pattern-families-v3`이며 분석 의미가 바뀔 때만 변경한다. 범용
 `patterns[]`/`primaryPattern`이 없는 기존 geometry row는 프런트가 `primaryTriangle`로
 표시 호환하고, 다음 빌드에서 새 계약으로 교체한다. 기존 숫자형 자산 row는 읽기
 fallback이나 자동 변환에 사용하지 않는다.

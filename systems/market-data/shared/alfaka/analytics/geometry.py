@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import statistics
-from typing import Any, Iterable
+from typing import Any
+
+from alfaka.serving.volume_profile import compute_volume_profile_payload
 
 from .atr import latest_atr as regression_atr
+from .levels import compute_levels
 from .patterns import TRIANGLE_KINDS, compute_patterns, compute_triangles
 from .pivots import compute_pivots
 from .trade_timing import evaluate_pattern_trade_timing
@@ -15,12 +18,10 @@ TARGET_BARS = {**{interval: 380 for interval in SUPPORTED_INTERVALS[:-1]}, "1W":
 WARMUP_BARS = {interval: 120 for interval in SUPPORTED_INTERVALS}
 EVALUATION_BARS = {**{interval: 260 for interval in SUPPORTED_INTERVALS[:-1]}, "1W": 192}
 MINIMUM_BARS = 120
-ALGORITHM_VERSION = "ohlcv-consensus-pattern-families-v2"
+ALGORITHM_VERSION = "ohlcv-consensus-pattern-families-v3"
 
 _ATR_PERIOD = 14
 _VOLUME_BASELINE = 20
-_TOUCH_TOLERANCE_ATR = 0.35
-_MIN_TOUCH_GAP = 5
 
 
 def analyze_geometry(symbol: str, interval: str, candles: list[dict[str, Any]]) -> dict[str, Any]:
@@ -37,13 +38,8 @@ def analyze_geometry(symbol: str, interval: str, candles: list[dict[str, Any]]) 
     evidence = _pivot_evidence(rows, atr_values, evaluation_from=evaluation_from)
     latest_atr = max(atr_values[-1], 1e-12)
     current = float(rows[-1]["close"])
-    supports = _horizontal_levels(
-        symbol, interval, rows, [item for item in evidence if item["kind"] == "L"],
-        role="support", current=current, atr=latest_atr,
-    )
-    resistances = _horizontal_levels(
-        symbol, interval, rows, [item for item in evidence if item["kind"] == "H"],
-        role="resistance", current=current, atr=latest_atr,
+    supports, resistances = _confirmed_horizontal_levels(
+        symbol, interval, rows, current=current, atr=latest_atr,
     )
     pattern_candidates = _regression_pattern_candidates(rows, interval=interval)
     active_patterns = sorted(
@@ -178,40 +174,77 @@ def _pivot_evidence(rows: list[dict[str, Any]], atr_values: list[float], *, eval
     return evidence
 
 
-def _horizontal_levels(symbol, interval, rows, candidates, *, role, current, atr):
-    groups: list[list[dict[str, Any]]] = []
-    for candidate in sorted(candidates, key=lambda item: (item["price"], item["barIndex"], item["id"])):
-        matching = next((group for group in groups if abs(candidate["price"] - statistics.median(item["price"] for item in group)) <= _TOUCH_TOLERANCE_ATR * atr), None)
-        if matching is None:
-            groups.append([candidate])
-        else:
-            matching.append(candidate)
+def _confirmed_horizontal_levels(symbol, interval, rows, *, current, atr):
+    """Return only evidence-confirmed levels that are still relevant now."""
+    display_from = rows[max(0, len(rows) - EVALUATION_BARS[interval])]["timestamp"]
+    pivots = compute_pivots(rows, display_from=display_from, interval=interval)
+    profile_rows = rows[-WARMUP_BARS[interval]:]
+    volume_profile = compute_volume_profile_payload(
+        profile_rows,
+        symbol=symbol,
+        interval=interval,
+        from_time=str(profile_rows[0]["timestamp"]),
+        to_time=str(profile_rows[-1]["timestamp"]),
+        target_bins=24,
+    )
+    candidates = compute_levels(
+        rows,
+        pivots,
+        atr=atr,
+        volume_profile=volume_profile,
+        expected_bars=TARGET_BARS[interval],
+        interval=interval,
+    )
+    evidence_by_id = {str(item["id"]): item for item in pivots}
     levels = []
-    for group in groups:
-        contacts = _independent_contacts(group)
-        if len(contacts) < 2:
+    for candidate in candidates:
+        if not candidate["hardPass"]:
             continue
-        price = _weighted_median([(item["price"], item["score"]) for item in contacts])
-        age = len(rows) - 1 - contacts[-1]["barIndex"]
-        distance = abs(current - price) / atr
-        score = (
-            0.45 * statistics.mean(item["score"] for item in contacts)
-            + 0.20 * min(1.0, len(contacts) / 4)
-            + 0.20 * (1 - min(1.0, age / max(1, EVALUATION_BARS[interval])))
-            + 0.15 * (1 - min(1.0, distance / 4))
+        role = candidate["role"]
+        role_side_pass = (
+            role == "support" and current >= float(candidate["zoneLow"]) - 0.25 * atr
+        ) or (
+            role == "resistance" and current <= float(candidate["zoneHigh"]) + 0.25 * atr
         )
-        identity = f"{symbol}|{interval}|{role}|{price:.8f}|{'|'.join(item['id'] for item in contacts)}"
+        if not role_side_pass:
+            continue
+        price = float(candidate["price"])
         levels.append({
-            "id": f"{role}-{hashlib.sha256(identity.encode()).hexdigest()[:12]}", "role": role,
-            "price": round(price, 6), "score": round(score, 4), "touches": len(contacts),
-            "lastTouchAgeBars": age, "currentDistanceAtr": round(distance, 4),
+            "id": candidate["id"],
+            "role": role,
+            "price": price,
+            "zoneLow": candidate["zoneLow"],
+            "zoneHigh": candidate["zoneHigh"],
+            "halfWidthAtr": candidate["halfWidthAtr"],
+            "score": candidate["score"],
+            "touches": candidate["touches"],
+            "reactionCount": candidate["reactionCount"],
+            "lastTouchAgeBars": candidate["lastTouchAgeBars"],
+            "currentDistanceAtr": candidate["currentDistanceAtr"],
+            "state": candidate["state"],
+            "evidencePass": candidate["evidencePass"],
+            "activePass": candidate["activePass"],
+            "hardPass": candidate["hardPass"],
+            "roleFlips": candidate["roleFlips"],
+            "vpConfluence": candidate["vpConfluence"],
+            "roundNumber": candidate["roundNumber"],
             "anchors": [
-                {"timestamp": contacts[0]["timestamp"], "price": round(price, 6)},
-                {"timestamp": contacts[-1]["timestamp"], "price": round(price, 6)},
+                {"timestamp": candidate["firstTestAt"], "price": price},
+                {"timestamp": candidate["lastTestAt"], "price": price},
             ],
-            "evidence": contacts[:8],
+            "evidence": [
+                evidence_by_id[pivot_id]
+                for pivot_id in candidate["memberPivotIds"]
+                if pivot_id in evidence_by_id
+            ][:8],
         })
-    return sorted(levels, key=lambda item: (-item["score"], item["currentDistanceAtr"], item["id"]))[:2]
+    ordered = sorted(
+        levels,
+        key=lambda item: (-item["score"], item["currentDistanceAtr"], item["id"]),
+    )
+    supports = [item for item in ordered if item["role"] == "support"][:2]
+    resistances = [item for item in ordered if item["role"] == "resistance"][:2]
+    return supports, resistances
 
 
 def _regression_triangle_candidates(
@@ -363,16 +396,6 @@ def _wilder_atr(rows):
     return values
 
 
-def _independent_contacts(values):
-    result = []
-    for item in sorted(values, key=lambda value: (value["barIndex"], -value["score"], value["id"])):
-        if not result or item["barIndex"] - result[-1]["barIndex"] >= _MIN_TOUCH_GAP:
-            result.append(item)
-        elif item["score"] > result[-1]["score"]:
-            result[-1] = item
-    return result
-
-
 def _apex_bars(end, upper_slope, upper_intercept, lower_slope, lower_intercept):
     difference = upper_slope - lower_slope
     if abs(difference) < 1e-12:
@@ -426,17 +449,6 @@ def _pattern_bias(kind):
 def _pattern_color(kind):
     bias = _pattern_bias(kind)
     return "#22c55e" if bias == "bullish" else "#ef4444" if bias == "bearish" else "#f59e0b"
-
-
-def _weighted_median(values: Iterable[tuple[float, float]]) -> float:
-    ordered = sorted(values)
-    total = sum(weight for _value, weight in ordered)
-    cursor = 0.0
-    for value, weight in ordered:
-        cursor += weight
-        if cursor >= total / 2:
-            return float(value)
-    return float(ordered[-1][0])
 
 
 def _cap(value):

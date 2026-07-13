@@ -35,9 +35,12 @@ def compute_levels(
         valid = [item for item in episodes if item["outcome"] == "reaction"]
         if not episodes:
             continue
+        first_touch = episodes[0]["startIndex"]
         last_touch = episodes[-1]["startIndex"]
         age = len(candles) - 1 - last_touch
-        distance_atr = _zone_distance(float(candles[-1]["close"]), low, high) / max(float(atr_values[-1]), 1e-12)
+        latest_close = float(candles[-1]["close"])
+        latest_atr = max(float(atr_values[-1]), 1e-12)
+        distance_atr = _zone_distance(latest_close, low, high) / latest_atr
         reaction_values = [max(0.0, min(1.0, (item["mfeAtr"] - item["maeAtr"]) / 2)) for item in valid]
         touch_quality = 0.5 * min(1.0, max(0.0, (len(episodes) - 1) / 3)) + 0.5 * (statistics.median([min(1.0, item["mfeAtr"] / 2) for item in valid]) if valid else 0)
         recency = math.exp(-math.log(2) * age / config.level_half_life)
@@ -46,22 +49,33 @@ def compute_levels(
         score = 0.30 * touch_quality + 0.20 * recency + 0.15 * (statistics.median(reaction_values) if reaction_values else 0) + 0.15 * relevance + 0.15 * float(vp) + 0.05 * float(state.startswith("role_flip"))
         evidence_pass = len(episodes) >= 3 and len(valid) >= 2
         evidence_confirmed_index = _evidence_confirmed_index(episodes)
+        public_role = _public_role(state)
+        role_side_pass = (
+            public_role == "support" and latest_close >= low - 0.25 * latest_atr
+        ) or (
+            public_role == "resistance" and latest_close <= high + 0.25 * latest_atr
+        )
         active_pass = (
             state not in {"unresolved", "invalidated", "break_up_pending", "break_down_pending"}
             and age <= config.level_last_touch_max_age
             and distance_atr <= 2
+            and role_side_pass
         )
         hard_pass = evidence_pass and active_pass
+        reject_reasons = _reject_reasons(state, len(episodes), len(valid), age, distance_atr, config)
+        if not role_side_pass:
+            reject_reasons.append("role_conflict")
         local_id = hashlib.sha256(f"{interval}|{','.join(sorted(item['id'] for item in cluster))}".encode()).hexdigest()[:10]
         levels.append({
             "id": f"{interval}:level:{local_id}", "price": round(center, 2),
             "zoneLow": round(low, 4), "zoneHigh": round(high, 4), "halfWidthAtr": round(half_width_atr, 4),
             "score": round(max(0.0, min(1.0, score)), 4), "touches": len(episodes),
-            "touchEpisodes": episodes[-6:], "lastTestAt": candles[last_touch]["timestamp"],
+            "reactionCount": len(valid), "touchEpisodes": episodes[-6:],
+            "firstTestAt": candles[first_touch]["timestamp"], "lastTestAt": candles[last_touch]["timestamp"],
             "lastTouchAgeBars": age, "currentDistanceAtr": round(distance_atr, 4),
-            "role": _public_role(state), "state": state,
+            "role": public_role, "state": state,
             "evidencePass": evidence_pass, "activePass": active_pass, "hardPass": hard_pass,
-            "rejectReasons": [] if hard_pass else _reject_reasons(state, len(episodes), len(valid), age, distance_atr, config),
+            "rejectReasons": [] if hard_pass else reject_reasons,
             "roleFlips": int(state.startswith("role_flip")), "vpConfluence": vp,
             "roundNumber": _is_round_number(center), "memberPivotIds": [item["id"] for item in cluster],
             "evidenceConfirmedIndex": evidence_confirmed_index,
@@ -134,11 +148,23 @@ def _role_state(candles, low, high, atr_values, episodes, config):
     state = "support_active" if reactions[-1]["approach"] == "above" else "resistance_active"
     start = reactions[-1]["endIndex"] + 1
     for index in range(start, len(candles)):
-        close, local_atr = float(candles[index]["close"]), max(atr_values[index], 1e-12)
-        if state in {"support_active", "role_flip_support"} and close < low - 0.25 * local_atr: state = "break_down_pending"
-        elif state in {"resistance_active", "role_flip_resistance"} and close > high + 0.25 * local_atr: state = "break_up_pending"
-        elif state == "break_up_pending" and low <= float(candles[index]["low"]) <= high and close > high: state = "role_flip_support"
-        elif state == "break_down_pending" and low <= float(candles[index]["high"]) <= high and close < low: state = "role_flip_resistance"
+        row = candles[index]
+        close, local_atr = float(row["close"]), max(atr_values[index], 1e-12)
+        overlaps = float(row["low"]) <= high and float(row["high"]) >= low
+        if state in {"support_active", "role_flip_support"} and close < low - 0.25 * local_atr:
+            state = "break_down_pending"
+        elif state in {"resistance_active", "role_flip_resistance"} and close > high + 0.25 * local_atr:
+            state = "break_up_pending"
+        elif state == "break_up_pending":
+            if overlaps and close > high:
+                state = "role_flip_support"
+            elif close <= high:
+                state = "resistance_active"
+        elif state == "break_down_pending":
+            if overlaps and close < low:
+                state = "role_flip_resistance"
+            elif close >= low:
+                state = "support_active"
     return state
 
 
