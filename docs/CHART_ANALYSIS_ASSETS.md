@@ -9,6 +9,7 @@ Chart Geometry Asset은 완료된 실제 OHLCV 봉에서 현재 지지·저항�
 - geometry: 지지선 최대 2개, 저항선 최대 2개, 최고 점수 패턴 1개를 최대 8개 drawing으로 표현
 - 패턴: 상승·하락·대칭 삼각형, 상승·하락 깃발형/페넌트/직사각형, 상승·하락 쐐기,
   하락 채널 상단 돌파, 상승 채널 하단 이탈
+- 매매 시나리오: 확인된 최고 점수 패턴의 진입 후보·손절·목표·손익비를 `tradePlan`으로 제공
 - 보조지표: 선택 interval의 완료 봉 개수 기준 SMA60·SMA120과 최근 교차
 - 좌표: 해당 interval에 실제로 존재하는 canonical candle timestamp와 가격
 - intraday: `1m` 실제 정규장 봉, `5m/10m/1h/4h`는 09:30 ET 기준 파생 봉
@@ -20,6 +21,14 @@ Chart Geometry Asset은 완료된 실제 OHLCV 봉에서 현재 지지·저항�
 호환 필드인 `primaryTriangle`/`historicalTriangle`도 유지한다. 지지·저항은 별도의
 OHLCV 접촉 증거 계산을 계속 사용한다.
 
+`tradePlan`은 주문이 아니라 차트 표시용 시나리오다. `forming`은 관찰만 하고
+`confirmed`에서만 신호를 낸다. 돌파 기준은 패턴 경계에서 `0.25 ATR` 바깥의 완료 봉
+종가이며, 신규 진입 손절은 반대 경계와 돌파선에서 `1 ATR` 떨어진 가격 중 더 가까운
+유효 무효화 가격을 사용한다. 목표가는 깃발형·페넌트는 깃대 길이, 나머지는 패턴의
+최대 높이를 돌파선에 투영한다. 신규 매수·공매도 시나리오는 손익비 `2.0` 이상만
+후보로 표시한다. 기본 운영 모드는 long-only라 하락 확인은 공매도 진입이 아니라
+`매도·청산 후보`다.
+
 ## 데이터와 저장 흐름
 
 ```mermaid
@@ -30,7 +39,8 @@ flowchart LR
   Gap -- "아니오" --> Alpaca["누락 range만 Alpaca"]
   Alpaca --> CH
   Gap -- "예" --> Kernel["OHLCV consensus kernel"]
-  Kernel --> PG["PostgreSQL geometry_assets"]
+  Kernel --> Plan["Pattern tradePlan"]
+  Plan --> PG["PostgreSQL geometry_assets"]
   PG --> API["Chart asset API"]
   API --> UI["Geometry layer + SMA60/120"]
 ```
@@ -57,3 +67,7 @@ Alpaca 요청에도 실재 봉이 없는 무거래 slot은 `provider_confirmed_e
 
 새 완료 봉 때문에 stale이 된 자산은 차트에서 제거하지 않고 낮은 불투명도로 표시한다.
 현재 symbol과 interval이 모두 일치하는 자산만 적용한다.
+확인 신호는 실제 완료 봉에 `flagMarker`로 표시한다. 신규 포지션 후보의 진입·손절·목표는
+프런트가 `riskRewardBox`로 만들며, 미래 봉 timestamp를 만들지 않고 화면에서만 미래
+logical index로 투영한다. 이 동적 도형은 PostgreSQL geometry drawing 예산 8개에 포함하지
+않으며 주문 API를 호출하지 않는다.

@@ -28,13 +28,14 @@
     },
     "geometry": {
       "type": "object",
-      "required": ["drawings", "supports", "resistances", "patterns", "primaryPattern", "primaryTriangle", "historicalTriangle"],
+      "required": ["drawings", "supports", "resistances", "patterns", "primaryPattern", "tradePlan", "primaryTriangle", "historicalTriangle"],
       "properties": {
         "drawings": {"type": "array", "maxItems": 8, "items": {"$ref": "#/$defs/drawing"}},
         "supports": {"type": "array", "maxItems": 2},
         "resistances": {"type": "array", "maxItems": 2},
         "patterns": {"type": "array", "maxItems": 8, "items": {"$ref": "#/$defs/pattern"}},
         "primaryPattern": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/pattern"}]},
+        "tradePlan": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/tradePlan"}]},
         "primaryTriangle": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/triangle"}]},
         "historicalTriangle": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/triangle"}]},
         "evidence": {"type": "array"}
@@ -77,6 +78,32 @@
         "breakoutDirection": {"enum": ["up", "down", null]},
         "score": {"type": "number", "minimum": 0, "maximum": 1},
         "geometryHash": {"type": "string"}
+      }
+    },
+    "tradePlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "symbol", "interval", "patternId", "patternKind", "patternState", "action", "direction", "signalAt", "entryTrigger", "entryPrice", "stopPrice", "targetPrice", "riskPerShare", "rewardPerShare", "rewardRiskRatio", "minimumRewardRisk", "projectionBars", "reasons"],
+      "properties": {
+        "version": {"const": "pattern-trade-timing-v1"},
+        "symbol": {"type": ["string", "null"]},
+        "interval": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/interval"}]},
+        "patternId": {"type": "string", "minLength": 1},
+        "patternKind": {"type": "string", "minLength": 1},
+        "patternState": {"type": "string", "minLength": 1},
+        "action": {"enum": ["watch", "buy_candidate", "sell_candidate", "short_candidate", "no_trade"]},
+        "direction": {"enum": ["long", "exit_long", "short", null]},
+        "signalAt": {"type": ["string", "null"], "format": "date-time"},
+        "entryTrigger": {"type": ["number", "null"]},
+        "entryPrice": {"type": ["number", "null"]},
+        "stopPrice": {"type": ["number", "null"]},
+        "targetPrice": {"type": ["number", "null"]},
+        "riskPerShare": {"type": ["number", "null"]},
+        "rewardPerShare": {"type": ["number", "null"]},
+        "rewardRiskRatio": {"type": ["number", "null"]},
+        "minimumRewardRisk": {"type": "number", "minimum": 0},
+        "projectionBars": {"type": "integer", "minimum": 1},
+        "reasons": {"type": "array", "items": {"type": "string"}}
       }
     },
     "triangle": {

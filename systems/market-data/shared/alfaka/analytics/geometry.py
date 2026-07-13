@@ -7,6 +7,7 @@ from typing import Any, Iterable
 from .atr import latest_atr as regression_atr
 from .patterns import TRIANGLE_KINDS, compute_patterns, compute_triangles
 from .pivots import compute_pivots
+from .trade_timing import evaluate_pattern_trade_timing
 
 
 SUPPORTED_INTERVALS = ("1m", "5m", "10m", "1h", "4h", "1D", "1W")
@@ -14,7 +15,7 @@ TARGET_BARS = {**{interval: 380 for interval in SUPPORTED_INTERVALS[:-1]}, "1W":
 WARMUP_BARS = {interval: 120 for interval in SUPPORTED_INTERVALS}
 EVALUATION_BARS = {**{interval: 260 for interval in SUPPORTED_INTERVALS[:-1]}, "1W": 192}
 MINIMUM_BARS = 120
-ALGORITHM_VERSION = "ohlcv-consensus-pattern-families-v1"
+ALGORITHM_VERSION = "ohlcv-consensus-pattern-families-v2"
 
 _ATR_PERIOD = 14
 _VOLUME_BASELINE = 20
@@ -50,6 +51,14 @@ def analyze_geometry(symbol: str, interval: str, candles: list[dict[str, Any]]) 
         key=lambda item: (-item["score"], -item["endIndex"], item["geometryHash"]),
     )
     primary_pattern = active_patterns[0] if active_patterns else None
+    public_primary_pattern = _public_pattern(primary_pattern)
+    trade_plan = evaluate_pattern_trade_timing(
+        rows,
+        public_primary_pattern,
+        atr=latest_atr,
+        symbol=symbol,
+        interval=interval,
+    )
     triangle_candidates = _regression_triangle_candidates(rows, interval=interval)
     active = sorted(
         (item for item in triangle_candidates if item["hardPass"] and item["state"] in {"forming", "confirmed"}),
@@ -70,7 +79,8 @@ def analyze_geometry(symbol: str, interval: str, candles: list[dict[str, Any]]) 
         "supports": supports,
         "resistances": resistances,
         "patterns": [_public_pattern(item) for item in active_patterns[:8]],
-        "primaryPattern": _public_pattern(primary_pattern),
+        "primaryPattern": public_primary_pattern,
+        "tradePlan": trade_plan,
         "primaryTriangle": _public_triangle(primary),
         "historicalTriangle": _public_triangle(historical),
         "indicators": compute_sma_snapshot(rows),

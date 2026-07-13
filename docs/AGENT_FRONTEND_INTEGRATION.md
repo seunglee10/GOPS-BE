@@ -320,6 +320,13 @@ candle timestamp에 presentation anchor를 투영해 즉시 표시한다. Postgr
 SMA60·SMA120과 최근 교차 상태를 표시한다. Geometry 토글 하나가 모든 자동 작도를
 제어하며 패턴 선은 실선, forming은 낮은 불투명도로 표현한다. 새 자산은
 `primaryPattern`을 우선 표시하고 기존 geometry 자산은 `primaryTriangle`로 호환한다.
+`tradePlan.action`이 `buy_candidate`이면 확인 봉의 `flagMarker`와
+`[entry, stop, target]` 순서의 `riskRewardBox`를 함께 적용한다. long-only 기본값의
+`sell_candidate`는 청산 의미의 `flagMarker`만 적용하며 공매도 박스를 만들지 않는다.
+손익비가 기준 미만인 `no_trade`와 미확정 `watch`는 매매 도형을 만들지 않는다.
+박스의 Entry는 실제 확인 봉 timestamp를 사용하고 Stop/Target의 미래 끝점은 자산에
+저장하지 않는 logical index 투영만 사용해 가짜 candle timestamp를 만들지 않는다.
+이 표시는 교육용 시나리오이며 주문 route를 호출하지 않는다.
 
 SMA 기간은 일수가 아니라 현재 interval의 완료 봉 개수다. SMA60과 SMA120 overlay는
 Geometry 자산 적용 시 함께 활성화하고 골든·데드크로스는 별도 marker가 아닌 metadata로

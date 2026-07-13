@@ -133,6 +133,50 @@ def test_unclosed_candle_is_never_used_as_signal_time_or_entry_price():
     assert plan["entryPrice"] == 98.5
 
 
+def test_every_supported_directional_pattern_maps_to_the_expected_entry_side():
+    bullish_kinds = (
+        "ascending_triangle",
+        "bullish_flag",
+        "bullish_pennant",
+        "bullish_rectangle",
+        "falling_wedge",
+        "descending_channel_breakout",
+    )
+    bearish_kinds = (
+        "descending_triangle",
+        "bearish_flag",
+        "bearish_pennant",
+        "bearish_rectangle",
+        "rising_wedge",
+        "ascending_channel_breakdown",
+    )
+    bullish_rows = _rows([96.0, 96.5, 97.0, 97.5, 98.5])
+    bearish_rows = _rows([104.0, 103.5, 103.0, 102.5, 101.5])
+
+    for kind in bullish_kinds:
+        pole = (88.0, 98.0) if kind in {"bullish_flag", "bullish_pennant"} else None
+        plan = evaluate_pattern_trade_timing(
+            bullish_rows,
+            _pattern(kind, bullish_rows, breakout_direction="up", upper=(98.0, 98.0), lower=(94.0, 96.0), pole=pole),
+            atr=1.0,
+            symbol="AAPL",
+            interval="5m",
+        )
+        assert plan is not None and plan["action"] == "buy_candidate", kind
+
+    for kind in bearish_kinds:
+        pole = (112.0, 102.0) if kind in {"bearish_flag", "bearish_pennant"} else None
+        plan = evaluate_pattern_trade_timing(
+            bearish_rows,
+            _pattern(kind, bearish_rows, breakout_direction="down", upper=(106.0, 104.0), lower=(102.0, 102.0), pole=pole),
+            atr=1.0,
+            symbol="AAPL",
+            interval="5m",
+            long_only=False,
+        )
+        assert plan is not None and plan["action"] == "short_candidate", kind
+
+
 def _pattern(
     kind: str,
     rows: list[dict],

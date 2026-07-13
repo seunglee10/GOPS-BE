@@ -6,6 +6,8 @@
 - 분석 입력은 정규장·분할조정·완료된 canonical candle뿐이다.
 - `1W`는 canonical `1D`에서 기존 주봉 방식으로 생성한다.
 - 모든 timed anchor는 현재 asset interval의 실제 candle timestamp에 속한다.
+- `tradePlan`의 신호 anchor도 실제 완료 봉 timestamp여야 한다. 프런트가 만드는 임시
+  `riskRewardBox`의 미래 끝점은 저장하지 않으며 timestamp 없이 logical index로만 투영한다.
 - 지지·저항 `horizontalLine`은 첫·마지막 접촉의 동일 가격 2-anchor를 저장하며,
   차트 엔진은 수동 작도의 기존 단일 anchor와 이 형식을 모두 허용한다.
 - 작도 계약은 최대 8개다. 지지·저항은 최대 4개이며 최고 점수 패턴 하나는 경계선
@@ -13,6 +15,9 @@
 - 패턴 종류는 세 삼각형, 상승·하락 깃발형/페넌트/직사각형, 상승·하락 쐐기,
   하락 채널 상단 돌파, 상승 채널 하단 이탈이다. 채널 이탈은 `confirmed`만 hard-pass다.
 - geometry 계산에는 LLM을 사용하지 않는다.
+- `forming`은 `watch`, `confirmed`만 매매 후보이며 자동 주문으로 연결하지 않는다.
+- 돌파 buffer는 `0.25 ATR`, 전술 stop은 돌파 경계에서 `1 ATR`, 최소 신규 진입
+  손익비는 `2.0`, 기본 포지션 정책은 long-only다.
 - chart asset payload/job은 PostgreSQL, candle은 ClickHouse에 저장한다.
 - 결측 보충은 Alpaca의 정확한 누락 range만 사용하며 S3·Redis·Kafka를 거치지 않는다.
 - 동일 `(symbol, interval, inputDigest, algorithmVersion)`은 no-op이다.
@@ -35,6 +40,7 @@
 
 - `alfaka.analytics.geometry`: OHLCV evidence, 수평선, SMA/교차와 Geometry 자산 조립
 - `alfaka.analytics.pivots` + `alfaka.analytics.patterns`: 방향전환 피벗과 회귀형 패턴 탐지
+- `alfaka.analytics.trade_timing`: 확인 상태를 진입·손절·목표·손익비 시나리오로 변환
 - `alfaka.analytics.analysis_candles`: 완료 봉과 canonical identity, 기존 주봉 집계
 - `alfaka.serving.session_buckets`: 09:30 ET 기준 intraday 버킷과 공통 OHLCV 집계
 - `alfaka.analytics.analysis_repair`: ClickHouse audit와 Alpaca-only repair
@@ -44,7 +50,7 @@
 
 새 payload의 `assetVersion`은 숫자 개발 단계가 아니라 기존 응답 union을 구분하는
 semantic discriminator인 `geometry`다. `algorithmVersion`은 현재
-`ohlcv-consensus-pattern-families-v1`이며 분석 의미가 바뀔 때만 변경한다. 범용
+`ohlcv-consensus-pattern-families-v2`이며 분석 의미가 바뀔 때만 변경한다. 범용
 `patterns[]`/`primaryPattern`이 없는 기존 geometry row는 프런트가 `primaryTriangle`로
 표시 호환하고, 다음 빌드에서 새 계약으로 교체한다. 기존 숫자형 자산 row는 읽기
 fallback이나 자동 변환에 사용하지 않는다.
@@ -63,6 +69,7 @@ PostgreSQL 테이블은 `geometry_assets`, `geometry_build_jobs`,
 ```sh
 .venv/bin/python -m pytest systems/market-data/tests/analytics/test_geometry_assets.py
 .venv/bin/python -m pytest systems/market-data/tests/analytics/test_patterns.py
+.venv/bin/python -m pytest systems/market-data/tests/analytics/test_trade_timing.py
 .venv/bin/python -m pytest systems/agent-orchestration/tests/test_geometry_asset_contract.py
 .venv/bin/python -m pytest systems/api-server/tests/test_chart_assets_routes.py
 ```
