@@ -9,6 +9,7 @@ from typing import Any
 
 
 ALLOWED_INTERVALS = ("1m", "5m", "10m", "1h", "4h", "1D", "1W")
+BUILD_INTERVALS = ("1m", "1D")
 BUILD_INTERVAL_ORDER = ("1W", "1D", "4h", "1h", "10m", "5m", "1m")
 BUILD_SOURCES = ("manual", "scheduled")
 BUILD_PRIORITY_BY_SOURCE = {"manual": 100, "scheduled": 10}
@@ -20,7 +21,7 @@ class ChartAssetBuildEnvelope:
     requested_by: str
     submitted_at: str
     symbols: tuple[str, ...]
-    intervals: tuple[str, ...] = ALLOWED_INTERVALS
+    intervals: tuple[str, ...] = BUILD_INTERVALS
     force: bool = False
     source: str = "manual"
 
@@ -46,7 +47,7 @@ class ChartAssetBuildEnvelope:
         *,
         requested_by: str,
         symbols: list[str] | tuple[str, ...],
-        intervals: list[str] | tuple[str, ...] = ALLOWED_INTERVALS,
+        intervals: list[str] | tuple[str, ...] = BUILD_INTERVALS,
         job_id: str | None = None,
         submitted_at: str | None = None,
         force: bool = False,
@@ -81,7 +82,7 @@ def envelope_from_dict(value: Any) -> ChartAssetBuildEnvelope:
         requested_by=str(value.get("requestedBy") or "unknown"),
         submitted_at=str(value.get("submittedAt") or "").strip() or None,
         symbols=value.get("symbols") or [],
-        intervals=value.get("intervals") or ALLOWED_INTERVALS,
+        intervals=value.get("intervals") or BUILD_INTERVALS,
         force=value.get("force", False),
         source=str(value.get("source") or "manual"),
     )

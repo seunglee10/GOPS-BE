@@ -320,9 +320,8 @@ candle timestamp에 presentation anchor를 투영해 즉시 표시한다. Postgr
 SMA60·SMA120과 최근 교차 상태를 표시한다. Geometry 토글 하나가 모든 자동 작도를
 제어하며 패턴 선은 실선, forming은 낮은 불투명도로 표현한다. 새 자산은
 `primaryPattern`을 우선 표시하고 기존 geometry 자산은 `primaryTriangle`로 호환한다.
-빌드 interval의 초기 선택은 전체 7개가 아니라 현재 차트 interval 하나다. 지원하지
-않는 `1M` 차트에서는 `1D`를 기본으로 사용하며, 사용자가 `현재 주기만`/`전체 주기`로
-명시 변경할 수 있다. 동일 실행 중 요청에 합쳐진 경우 이를 안내하고 polling은 기존
+기존 7개 interval 자산은 계속 표시할 수 있지만 새 빌드 선택지는 `1m/1D` 두 개뿐이며
+둘 다 기본 선택한다. 동일 실행 중 요청에 합쳐진 경우 이를 안내하고 polling은 기존
 job URL을 사용한다. 상태 화면은 수동 우선 작업과 정기 작업을 구분해 표시한다.
 `tradePlan.action`이 `buy_candidate`이면 확인 봉의 `flagMarker`와
 `[entry, stop, target]` 순서의 `riskRewardBox`를 함께 적용한다. long-only 기본값의

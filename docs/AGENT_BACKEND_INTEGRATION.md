@@ -388,7 +388,9 @@ POST   /api/charts/analysis-assets/build/{job_id}/cancel
 DELETE는 개발 패널의 명시적 정리 기능이다. 최대 100개 symbol과
 `1m/5m/10m/1h/4h/1D/1W`만 받고 선택된 pair를 PostgreSQL
 `chart_assets.geometry_assets`에서 삭제한다. 자동 TTL이나 broad cleanup은 사용하지
-않는다. build 완료·삭제 후 프런트는 cache를 무효화하고 열린 chart를 재조회한다.
+않는다. 새 build 요청은 운영 interval `1m/1D`만 허용한다. 다른 지원 interval의 기존
+자산은 GET/DELETE와 표시 호환을 위해 유지한다. build 완료·삭제 후 프런트는 cache를
+무효화하고 열린 chart를 재조회한다.
 Build 상태와 bounded log는 PostgreSQL polling 응답으로 제공한다. Redis pub/sub과
 SSE route는 사용하지 않는다.
 API에서 만든 수동 build는 서버가 `source=manual`, `priority=100`으로 지정하고 정기

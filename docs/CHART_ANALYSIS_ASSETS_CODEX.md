@@ -3,6 +3,8 @@
 ## 불변 조건
 
 - 지원 interval은 `1m/5m/10m/1h/4h/1D/1W`뿐이다.
+- 새 build 등록은 `1m/1D`만 허용한다. 기존 다른 interval 자산의 저장·조회·표시
+  호환은 유지한다.
 - 분석 입력은 정규장·분할조정·완료된 canonical candle뿐이다.
 - `1W`는 canonical `1D`에서 기존 주봉 방식으로 생성한다.
 - 모든 timed anchor는 현재 asset interval의 실제 candle timestamp에 속한다.
@@ -79,5 +81,5 @@ index를 사용한다. 기존 설치는 명시적 migration Job을 재실행해
 ```
 
 프론트는 `Geometry` 토글 하나만 제공하고, 현재 interval의 자산만 적용하며,
-SMA60·SMA120 overlay를 함께 활성화한다. 빌드 패널도 현재 interval 하나를 기본
-선택하고 `1M`에서는 `1D`를 사용한다.
+SMA60·SMA120 overlay를 함께 활성화한다. 빌드 패널은 `1m/1D`만 제공하고 둘 다
+기본 선택한다.

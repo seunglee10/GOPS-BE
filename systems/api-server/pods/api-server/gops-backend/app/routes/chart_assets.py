@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field, field_validator
 from app.auth.dependencies import require_current_user
 from app.auth.models import AuthenticatedUser
 from app.services.alfaka_market_data import configured_universe_symbols, normalize_market_symbol, sp500_universe_symbols
-from gops_agents.chart_assets.envelope import ALLOWED_INTERVALS, ChartAssetBuildEnvelope, utc_now_iso
+from gops_agents.chart_assets.envelope import ALLOWED_INTERVALS, BUILD_INTERVALS, ChartAssetBuildEnvelope, utc_now_iso
 from gops_agents.chart_assets.progress import build_progress_store_from_env
 from gops_agents.chart_assets.queue import build_chart_asset_queue_from_env
 from gops_agents.chart_assets.storage import build_chart_asset_storage_from_env
@@ -24,15 +24,15 @@ JOB_ID_PATTERN = r"^cab-[A-Za-z0-9-]{8,64}$"
 
 class ChartAssetBuildRequest(BaseModel):
     symbols: list[str] | Literal["sp500"]
-    intervals: list[str] = Field(default_factory=lambda: list(ALLOWED_INTERVALS))
+    intervals: list[str] = Field(default_factory=lambda: list(BUILD_INTERVALS))
     force: bool = False
 
     @field_validator("intervals")
     @classmethod
     def validate_intervals(cls, value: list[str]) -> list[str]:
         normalized = list(dict.fromkeys(str(item).strip() for item in value))
-        if not normalized or set(normalized).difference(ALLOWED_INTERVALS):
-            raise ValueError("intervals must contain only supported chart intervals")
+        if not normalized or set(normalized).difference(BUILD_INTERVALS):
+            raise ValueError("chart asset builds support only 1m and 1D intervals")
         return normalized
 
 

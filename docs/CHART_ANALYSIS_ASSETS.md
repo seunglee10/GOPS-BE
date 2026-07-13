@@ -59,11 +59,11 @@ Alpaca 요청에도 실재 봉이 없는 무거래 slot은 `provider_confirmed_e
 
 ## 실행
 
-- API 패널은 현재 차트 interval 하나를 기본 선택해 PostgreSQL 작업을 등록한다.
+- API 패널은 새 빌드를 `1m/1D`로 제한하고 두 interval을 기본 선택한다.
 - 수동 작업은 priority 100, 정기 작업은 priority 10이며 worker는 높은 값부터 처리한다.
 - 동일 source/force/symbol/interval의 실행 중 요청은 하나의 job으로 합친다.
-- 평일 KST 08:40 CronJob은 S&P500 전체 `1D/1W` 작업만 멱등 등록한다.
-- 수동 실행은 `scripts/aws/run-chart-geometry-build-job.sh`를 사용한다.
+- 평일 KST 08:40 CronJob은 S&P500 전체 `1m/1D` 작업만 멱등 등록한다.
+- 수동 실행 스크립트도 기본적으로 `1m/1D`만 등록한다.
 - 빌드 상태는 PostgreSQL polling으로 확인한다.
 - 최대 2회 처리 뒤 lease가 만료된 item은 실패로 종결해 영구 대기를 막는다.
 - 기존 PostgreSQL 설치는 migration Job을 다시 실행해 작도 상한과 queue index를 적용한다.

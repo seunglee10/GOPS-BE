@@ -36,7 +36,7 @@ spec:
                 - name: CHART_ASSET_SCHEDULED
                   value: "true"
                 - name: CHART_ASSET_INTERVALS
-                  value: "1D,1W"
+                  value: "1m,1D"
               envFrom:
                 - configMapRef:
                     name: alfaka-market-data-config

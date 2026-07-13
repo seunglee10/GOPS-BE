@@ -788,8 +788,9 @@ stream processor가 Redis/ClickHouse에서 캔들을 복구할 때는 legacy JSO
 S3, Redis, Kafka, OpenAI를 사용하지 않는다.
 
 AWS overlay는 Alpaca repair 동시성 2와 최대 range 8을 사용한다. 평일 KST 08:40
-CronJob은 S&P500 전체의 `1D/1W`만 등록해 일일 작업량을 제한한다. 전체 7개 interval은
-수동 실행에서 계속 선택할 수 있다. `chart-asset-builder`는 concurrency 2,
+CronJob은 S&P500 전체의 `1m/1D`만 등록한다. API 패널과 수동 실행 스크립트도 새
+빌드를 이 두 interval로 제한한다. 기존 다른 interval 자산의 조회·표시는 유지한다.
+`chart-asset-builder`는 concurrency 2,
 memory request `512Mi`, limit `1Gi`로 실행한다. 수동 build priority 100이 정기 build
 priority 10보다 먼저 claim된다. PostgreSQL schema는
 `job-chart-asset-migrations.yaml`과 `run-chart-asset-migrations-job.sh`로 명시 적용하며
