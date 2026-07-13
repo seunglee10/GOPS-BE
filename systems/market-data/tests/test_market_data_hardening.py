@@ -5530,8 +5530,56 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn("AND interval = {sourceInterval:String}", hourly_provider.queries[0][0])
         self.assertEqual(hourly_provider.queries[0][1]["sourceInterval"], "10m")
         self.assertNotIn("toStartOfInterval", hourly_provider.queries[0][0])
-        self.assertEqual(hourly[-1]["timestamp"], "2026-06-25T13:30:00.000Z")
+        self.assertEqual(hourly[-1]["timestamp"], "2026-06-25T17:30:00.000Z")
         self.assertEqual(hourly[-1]["sourceInterval"], "10m")
+
+    def test_clickhouse_hourly_aggregation_falls_back_to_existing_one_minute_history(self):
+        start = datetime(2026, 6, 25, 13, 30, tzinfo=timezone.utc)
+        minute_rows = [
+            {
+                "timestamp": (start + timedelta(minutes=index)).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+                "open": index + 1,
+                "high": index + 1,
+                "low": index + 1,
+                "close": index + 1,
+                "volume": 100 + index,
+                "isClosed": 1,
+                "source": "alpaca.bars",
+                "feed": "sip",
+            }
+            for index in range(60)
+        ]
+
+        class SourceAwareProvider(RecordingClickHouseProviderForAggregation):
+            def query_json_each_row(self, query, params=None):
+                self.queries.append((query, params or {}))
+                return [] if (params or {}).get("sourceInterval") == "10m" else list(self.rows)
+
+        provider = SourceAwareProvider(minute_rows)
+
+        candles = provider.aggregated_minute_candles("AAPL", "1h", 1)
+
+        self.assertEqual(len(provider.queries), 2)
+        self.assertEqual(provider.queries[0][1]["sourceInterval"], "10m")
+        self.assertIn("AND interval = '1m'", provider.queries[1][0])
+        self.assertEqual(candles[0]["sourceInterval"], "1m")
+
+    def test_clickhouse_crypto_hourly_coverage_keeps_one_minute_source(self):
+        provider = ClickHouseMarketDataProvider(
+            url="http://clickhouse.local:8123",
+            database="market_data",
+            user="u",
+            password="p",
+        )
+        with mock.patch.object(provider, "stored_interval_coverage", side_effect=[
+            {"rowCount": 0, "availableFrom": None, "availableTo": None},
+            {"rowCount": 60, "availableFrom": "2026-07-10T13:30:00.000Z", "availableTo": "2026-07-10T14:29:00.000Z"},
+        ]) as coverage:
+            result = provider.candle_coverage("BTCUSD", "1h")
+
+        self.assertEqual(result["sourceInterval"], "1m")
+        self.assertEqual(coverage.call_args_list[1].args[1], "1m")
+        self.assertEqual(coverage.call_count, 2)
 
     def test_clickhouse_query_time_weekly_monthly_aggregation_uses_daily_source(self):
         rows = [
