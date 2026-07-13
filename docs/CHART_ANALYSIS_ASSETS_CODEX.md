@@ -60,6 +60,10 @@ semantic discriminator인 `geometry`다. `algorithmVersion`은 현재
 표시 호환하고, 다음 빌드에서 새 계약으로 교체한다. 기존 숫자형 자산 row는 읽기
 fallback이나 자동 변환에 사용하지 않는다.
 
+`GET /api/charts/analysis-assets/coverage`의 각 `symbol + interval` 항목은 대표 패턴의
+`kind/state/score`만 담은 `primaryPattern` 요약을 포함한다. 저장 payload에 범용
+`primaryPattern`이 없으면 `primaryTriangle`을 사용하고, 둘 다 없으면 `null`이다.
+
 Intraday candle input contract는 `regular-session-derived`이며 asset digest에 포함된다.
 미국 주식 `5m/10m/1h/4h`는 `bucket_policy=us_equity_regular_session`인 ClickHouse
 행만 사용한다. 과거 `clock_aligned` 행과 섞지 않는다.

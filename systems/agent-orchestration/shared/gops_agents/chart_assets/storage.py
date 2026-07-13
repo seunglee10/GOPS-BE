@@ -103,7 +103,11 @@ class PostgresChartAssetStorage:
             rows = conn.execute(
                 f"""
                 SELECT symbol, "interval", generated_at, status, asset_version,
-                       coverage_state, payload_bytes, drawing_count
+                       coverage_state, payload_bytes, drawing_count,
+                       COALESCE(
+                           NULLIF(payload #> '{{geometry,primaryPattern}}', 'null'::jsonb),
+                           NULLIF(payload #> '{{geometry,primaryTriangle}}', 'null'::jsonb)
+                       ) AS primary_pattern
                 FROM {POSTGRES_TABLE} {where}
                 ORDER BY symbol, "interval"
                 """, parameters,
@@ -113,6 +117,7 @@ class PostgresChartAssetStorage:
             "status": row["status"], "assetVersion": row["asset_version"], "coverageState": row["coverage_state"],
             "payloadBytes": int(row["payload_bytes"]), "drawingCount": int(row["drawing_count"]),
             "storedDrawingCount": int(row["drawing_count"]), "freshness": "unknown", "staleByBars": None,
+            "primaryPattern": _pattern_summary(row.get("primary_pattern")),
         } for row in rows]
 
     def delete(self, symbols: list[str], intervals: list[str]) -> int:
@@ -208,6 +213,21 @@ def _decode_asset(value: Any) -> dict[str, Any] | None:
     try: decoded = json.loads(str(value))
     except (TypeError, ValueError): return None
     return decoded if isinstance(decoded, dict) else None
+
+
+def _pattern_summary(value: Any) -> dict[str, Any] | None:
+    source = _decode_asset(value)
+    if source is None:
+        return None
+    kind = str(source.get("kind") or "").strip()
+    state = str(source.get("state") or "").strip()
+    try:
+        score = float(source.get("score"))
+    except (TypeError, ValueError):
+        return None
+    if not kind or state not in {"forming", "confirmed", "inactive", "invalidated"}:
+        return None
+    return {"kind": kind, "state": state, "score": score}
 
 
 def _timestamp(value: Any) -> Any:

@@ -65,6 +65,8 @@ Alpaca 요청에도 실재 봉이 없는 무거래 slot은 `provider_confirmed_e
 - 평일 KST 08:40 CronJob은 S&P500 전체 `1m/1D` 작업만 멱등 등록한다.
 - 수동 실행 스크립트도 기본적으로 `1m/1D`만 등록한다.
 - 빌드 상태는 PostgreSQL polling으로 확인한다.
+- 자산 현황 목록은 `symbol + interval`별 대표 패턴의 한국어 이름, 상태, 점수를 표시한다.
+  새 자산은 `primaryPattern`, 기존 삼각형 자산은 `primaryTriangle`을 사용한다.
 - 최대 2회 처리 뒤 lease가 만료된 item은 실패로 종결해 영구 대기를 막는다.
 - 기존 PostgreSQL 설치는 migration Job을 다시 실행해 작도 상한과 queue index를 적용한다.
 
