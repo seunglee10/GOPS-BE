@@ -18,6 +18,15 @@ from app.auth.dependencies import (
 from app.auth.models import AuthenticatedUser
 from app.routes.simulator import simulator_gateway_from_app, simulator_mode_active
 from app.services.risk_context import build_risk_context, risk_pretrade_enabled
+from app.services.risk_settings import (
+    ADJUSTABLE_FIELDS,
+    GUARDRAILS,
+    PRESETS,
+    RiskSettingsError,
+    budget_tracker_from_app,
+    serialize_values,
+    settings_store_from_app,
+)
 from kis_trader.domain.commands import validate_order_request_payload
 from kis_trader.risk import PretradeVerdict, evaluate_pretrade, load_risk_config
 from kis_trader.domain.envelope import build_order_command_envelope, validate_order_envelope
@@ -89,6 +98,20 @@ async def create_order(
             "role": payload.get("role") or "trader",
         }
     order_request = _validate_order_request(payload)
+    simulator_mode = simulator_mode_active(request.app)
+    repository = None
+    idempotency_key_hash = None
+    body_hash = None
+    if not simulator_mode:
+        repository = _repository_from_app(request.app)
+        idempotency_key_hash = hash_idempotency_key(_scoped_idempotency_key(idempotency_key.strip(), current_user))
+        body_hash = stable_body_hash(payload)
+        # 멱등 재시도는 이미 접수된 주문의 결과 재조회 — 리스크 판정을 다시 태우지 않는다.
+        replay = _find_idempotent_response(repository, idempotency_key_hash, body_hash)
+        if replay is not None:
+            response.headers["X-Idempotent-Replay"] = "true"
+            return jsonable_encoder({**replay, "idempotent_replay": True})
+
     verdict = _risk_verdict(request.app, current_user.sub, order_request)
     if verdict is not None and verdict.verdict != "allow":
         # Block outright, or ask the user to confirm the suggested qty by
@@ -97,7 +120,7 @@ async def create_order(
             status_code=422,
             detail={"reason": "risk rejected", "risk": verdict.to_dict()},
         )
-    if simulator_mode_active(request.app):
+    if simulator_mode:
         try:
             result = simulator_gateway_from_app(request.app).individual_order(
                 user_id=current_user.sub,
@@ -110,6 +133,7 @@ async def create_order(
         order = result.get("order") if isinstance(result, dict) else None
         if not isinstance(order, dict):
             raise HTTPException(status_code=502, detail="simulator returned an invalid order")
+        _record_buy_spend(request.app, current_user.sub, order_request)
         return jsonable_encoder(_with_risk(order, verdict))
     envelope = build_order_command_envelope(
         order_request,
@@ -118,11 +142,10 @@ async def create_order(
     _validate_no_forbidden_fields(envelope)
     command = _validate_order_envelope(envelope)
 
-    repository = _repository_from_app(request.app)
     try:
         result = repository.create_received_order(
-            idempotency_key_hash=hash_idempotency_key(_scoped_idempotency_key(idempotency_key.strip(), current_user)),
-            body_hash=stable_body_hash(payload),
+            idempotency_key_hash=idempotency_key_hash,
+            body_hash=body_hash,
             command=command,
         )
     except IdempotencyConflictError as exc:
@@ -130,7 +153,61 @@ async def create_order(
 
     if result.idempotent_replay:
         response.headers["X-Idempotent-Replay"] = "true"
+    else:
+        _record_buy_spend(request.app, current_user.sub, order_request)
     return jsonable_encoder(_with_risk(dict(result.response), verdict))
+
+
+@router.get("/api/risk/settings")
+def get_risk_settings(
+    request: Request,
+    current_user: AuthenticatedUser = Depends(require_current_user),
+) -> dict[str, Any]:
+    """사용자 리스크 설정 조회 — active(디폴트 병합)·pending·메타."""
+    store = settings_store_from_app(request.app)
+    state = store.resolve(current_user.sub)
+    return {
+        "active": serialize_values(store.active_values(current_user.sub)),
+        "pending": state.get("pending"),
+        "history": (state.get("history") or [])[:10],
+        "meta": {
+            "adjustable": sorted(ADJUSTABLE_FIELDS),
+            "guardrails": {
+                key: {"min": str(minimum), "max": (str(maximum) if maximum is not None else None)}
+                for key, (minimum, maximum) in GUARDRAILS.items()
+            },
+            "presets": {name: serialize_values(dict(values)) for name, values in PRESETS.items()},
+            "policy": "조이는 변경은 즉시, 푸는 변경은 다음 날부터 적용됩니다.",
+        },
+    }
+
+
+@router.patch("/api/risk/settings")
+async def patch_risk_settings(
+    request: Request,
+    current_user: AuthenticatedUser = Depends(require_current_user),
+) -> dict[str, Any]:
+    """사용자 리스크 설정 변경 — {preset} 또는 {values:{...}}. 비대칭 적용."""
+    payload = await _json_body(request)
+    preset = payload.get("preset")
+    values = payload.get("values")
+    if values is not None and not isinstance(values, dict):
+        raise HTTPException(status_code=422, detail="values must be an object")
+    store = settings_store_from_app(request.app)
+    try:
+        result = store.apply_change(
+            current_user.sub,
+            values=values,
+            preset=(str(preset) if preset is not None else None),
+        )
+    except RiskSettingsError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "appliedNow": serialize_values(result.applied_now),
+        "scheduled": serialize_values(result.scheduled),
+        "effectiveDate": result.effective_date,
+        "active": serialize_values(store.active_values(current_user.sub)),
+    }
 
 
 @router.get("/api/risk/report")
@@ -323,17 +400,52 @@ def _risk_verdict(
         return None
     try:
         context = build_risk_context(app, user_sub, order_request.symbol)
+        config = _user_risk_config(app, user_sub)
+        if config.daily_buy_budget is not None:
+            import dataclasses
+
+            spent = budget_tracker_from_app(app).used_today(user_sub)
+            context = dataclasses.replace(context, daily_buy_notional=spent)
         return evaluate_pretrade(
             side=order_request.side,
             symbol=order_request.symbol,
             qty=order_request.qty,
             price=order_request.price,
             context=context,
-            config=_risk_config_from_app(app),
+            config=config,
         )
     except Exception:
         # Risk evaluation must never break order submission.
         return None
+
+
+def _user_risk_config(app: Any, user_sub: str):
+    """글로벌 디폴트 위에 사용자 성향 설정을 병합한 RiskConfig."""
+    overrides = settings_store_from_app(app).engine_overrides(user_sub)
+    if not overrides:
+        return _risk_config_from_app(app)
+    return load_risk_config(overrides=overrides)
+
+
+def _find_idempotent_response(repository: Any, idempotency_key_hash: str, body_hash: str) -> dict[str, Any] | None:
+    finder = getattr(repository, "find_idempotent_response", None)
+    if not callable(finder):
+        return None
+    try:
+        return finder(idempotency_key_hash, body_hash)
+    except Exception:
+        return None
+
+
+def _record_buy_spend(app: Any, user_sub: str, order_request: Any) -> None:
+    """주문 접수 성공 시 매수 금액 누적 (예산 룰 입력, 접수 기준 보수적 근사)."""
+    try:
+        if str(order_request.side).lower() != "buy":
+            return
+        budget_tracker_from_app(app).record_buy(user_sub, order_request.qty * order_request.price)
+    except Exception:
+        # 집계 실패가 주문 응답을 깨면 안 됨
+        return
 
 
 def _risk_report_redis(app: Any):

@@ -91,6 +91,7 @@ def evaluate_pretrade(
     checks = (
         _check_fat_finger,
         _check_daily_loss_cooldown,
+        _check_daily_buy_budget,
         _check_single_name_limit,
         _check_sector_limit,
     )
@@ -127,6 +128,64 @@ def _aggregate(
 
 
 # --- individual rules -------------------------------------------------------
+
+
+BUDGET_WARN_RATIO = Decimal("0.8")
+
+
+def _check_daily_buy_budget(
+    side: str,
+    symbol: str,
+    qty: Decimal,
+    price: Decimal,
+    context: RiskContext,
+    config: RiskConfig,
+) -> RuleResult | SkippedRule | None:
+    """사용자 옵트인 자기구속 장치 — 오늘 매수 누적액이 예산을 넘지 않게.
+
+    예산 미설정(None)이면 침묵. 손실 여부와 무관하게 '쓰기로 한 만큼만'을
+    지켜주는 의도 기반 차단이라 daily_loss_cooldown(결과 기반)과 보완 관계.
+    """
+    if side != "buy":
+        return None
+    budget = config.daily_buy_budget
+    if budget is None:
+        return None
+    spent = context.daily_buy_notional
+    if spent is None:
+        return SkippedRule("daily_buy_budget", "today's accumulated buy amount unavailable")
+    post_trade = spent + qty * price
+    if post_trade > budget:
+        remaining = budget - spent
+        return RuleResult(
+            rule_id="daily_buy_budget",
+            action=ACTION_BLOCK,
+            explanation=(
+                f"오늘 정한 매수 예산 {budget}을 넘어요 (이미 {spent} 사용, 이 주문 {qty * price}). "
+                f"남은 예산은 {remaining if remaining > 0 else 0}입니다. 내일 다시 보는 걸 권해요."
+            ),
+            numbers={
+                "dailyBuyBudget": str(budget),
+                "spentToday": str(spent),
+                "orderNotional": str(qty * price),
+                "remaining": str(remaining if remaining > 0 else Decimal("0")),
+            },
+        )
+    if post_trade >= budget * BUDGET_WARN_RATIO:
+        return RuleResult(
+            rule_id="daily_buy_budget",
+            action=ACTION_WARN,
+            explanation=(
+                f"이 주문까지 하면 오늘 예산 {budget}의 {_pct(post_trade / budget)}를 쓰게 돼요 "
+                f"(누적 {post_trade}). 남은 예산을 확인하세요."
+            ),
+            numbers={
+                "dailyBuyBudget": str(budget),
+                "spentAfterOrder": str(post_trade),
+                "usageRatio": str(post_trade / budget),
+            },
+        )
+    return None
 
 
 def _check_fat_finger(

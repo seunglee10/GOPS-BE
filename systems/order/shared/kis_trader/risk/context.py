@@ -39,6 +39,8 @@ class RiskContext:
     positions: tuple[PositionSnapshot, ...] = ()
     metrics: SymbolMetrics = field(default_factory=SymbolMetrics)
     daily_pnl: Decimal | None = None
+    # 오늘 매수 누적 금액 (daily_buy_budget 룰 입력, 접수 기준 근사)
+    daily_buy_notional: Decimal | None = None
 
 
 def decimal_or_none(value: Any) -> Decimal | None:
@@ -80,4 +82,5 @@ def risk_context_from_dict(payload: dict[str, Any]) -> RiskContext:
         positions=tuple(positions),
         metrics=metrics,
         daily_pnl=decimal_or_none(payload.get("dailyPnl")),
+        daily_buy_notional=decimal_or_none(payload.get("dailyBuyNotional")),
     )

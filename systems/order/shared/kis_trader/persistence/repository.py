@@ -51,6 +51,14 @@ class OrderRepository(Protocol):
     ) -> OrderCreationResult:
         ...
 
+    def find_idempotent_response(self, idempotency_key_hash: str, body_hash: str) -> dict[str, Any] | None:
+        """이미 같은 키+본문으로 접수된 요청의 저장된 응답 (replay 프로브).
+
+        리스크 체크보다 먼저 호출해, 멱등 재시도가 리스크 판정에 다시 걸리지
+        않게 한다. 키는 같은데 본문이 다르면 None (충돌은 create에서 409).
+        """
+        ...
+
     def get_order(self, order_id: str) -> dict[str, Any] | None:
         ...
 
