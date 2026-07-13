@@ -28,11 +28,13 @@
     },
     "geometry": {
       "type": "object",
-      "required": ["drawings", "supports", "resistances", "primaryTriangle", "historicalTriangle"],
+      "required": ["drawings", "supports", "resistances", "patterns", "primaryPattern", "primaryTriangle", "historicalTriangle"],
       "properties": {
-        "drawings": {"type": "array", "maxItems": 6, "items": {"$ref": "#/$defs/drawing"}},
+        "drawings": {"type": "array", "maxItems": 8, "items": {"$ref": "#/$defs/drawing"}},
         "supports": {"type": "array", "maxItems": 2},
         "resistances": {"type": "array", "maxItems": 2},
+        "patterns": {"type": "array", "maxItems": 8, "items": {"$ref": "#/$defs/pattern"}},
+        "primaryPattern": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/pattern"}]},
         "primaryTriangle": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/triangle"}]},
         "historicalTriangle": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/triangle"}]},
         "evidence": {"type": "array"}
@@ -63,6 +65,18 @@
         "sourceProposalId": {"type": "string"},
         "createdAt": {"type": "string", "format": "date-time"},
         "updatedAt": {"type": "string", "format": "date-time"}
+      }
+    },
+    "pattern": {
+      "type": "object",
+      "required": ["kind", "state", "score", "geometryHash"],
+      "properties": {
+        "kind": {"enum": ["ascending_triangle", "descending_triangle", "symmetrical_triangle", "bullish_flag", "bearish_flag", "bullish_pennant", "bearish_pennant", "bullish_rectangle", "bearish_rectangle", "rising_wedge", "falling_wedge", "descending_channel_breakout", "ascending_channel_breakdown"]},
+        "state": {"enum": ["forming", "confirmed", "inactive", "invalidated"]},
+        "bias": {"enum": ["bullish", "bearish", "neutral"]},
+        "breakoutDirection": {"enum": ["up", "down", null]},
+        "score": {"type": "number", "minimum": 0, "maximum": 1},
+        "geometryHash": {"type": "string"}
       }
     },
     "triangle": {

@@ -188,7 +188,7 @@ def _validate_asset_identity(asset: dict[str, Any]) -> None:
     if not symbol or interval not in ASSET_INTERVALS or asset.get("sourceInterval") != interval:
         raise ValueError("Geometry asset symbol and interval identity is invalid")
     drawings = (asset.get("geometry") or {}).get("drawings") or []
-    if len(drawings) > 6:
+    if len(drawings) > 8:
         raise ValueError("Geometry asset drawing limit exceeded")
     if any(
         str(drawing.get("symbol") or "").strip().upper() != symbol

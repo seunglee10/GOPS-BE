@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS chart_assets.geometry_assets (
     algorithm_version TEXT NOT NULL,
     status TEXT NOT NULL,
     coverage_state TEXT NOT NULL CHECK (coverage_state IN ('full', 'partial')),
-    drawing_count SMALLINT NOT NULL CHECK (drawing_count BETWEEN 0 AND 6),
+    drawing_count SMALLINT NOT NULL CHECK (drawing_count BETWEEN 0 AND 8),
     payload_bytes INTEGER NOT NULL CHECK (payload_bytes >= 0),
     input_digest TEXT NOT NULL,
     payload_digest TEXT NOT NULL,
@@ -59,3 +59,9 @@ CREATE TABLE IF NOT EXISTS chart_assets.geometry_build_items (
 CREATE INDEX IF NOT EXISTS geometry_build_items_claim_idx
     ON chart_assets.geometry_build_items (status, lease_expires_at, job_id)
     WHERE status IN ('pending', 'running');
+
+ALTER TABLE chart_assets.geometry_assets
+    DROP CONSTRAINT IF EXISTS geometry_assets_drawing_count_check;
+ALTER TABLE chart_assets.geometry_assets
+    ADD CONSTRAINT geometry_assets_drawing_count_check
+    CHECK (drawing_count BETWEEN 0 AND 8);

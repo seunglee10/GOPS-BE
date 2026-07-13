@@ -115,6 +115,8 @@ class ChartAssetBuilder:
                     "drawings": result["drawings"],
                     "supports": result["supports"],
                     "resistances": result["resistances"],
+                    "patterns": result["patterns"],
+                    "primaryPattern": result["primaryPattern"],
                     "primaryTriangle": result["primaryTriangle"],
                     "historicalTriangle": result["historicalTriangle"],
                     "evidence": result["evidence"],

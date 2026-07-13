@@ -5,7 +5,7 @@ import statistics
 from typing import Any, Iterable
 
 from .atr import latest_atr as regression_atr
-from .patterns import compute_triangles
+from .patterns import TRIANGLE_KINDS, compute_patterns, compute_triangles
 from .pivots import compute_pivots
 
 
@@ -14,7 +14,7 @@ TARGET_BARS = {**{interval: 380 for interval in SUPPORTED_INTERVALS[:-1]}, "1W":
 WARMUP_BARS = {interval: 120 for interval in SUPPORTED_INTERVALS}
 EVALUATION_BARS = {**{interval: 260 for interval in SUPPORTED_INTERVALS[:-1]}, "1W": 192}
 MINIMUM_BARS = 120
-ALGORITHM_VERSION = "ohlcv-consensus-regression-triangles"
+ALGORITHM_VERSION = "ohlcv-consensus-pattern-families-v1"
 
 _ATR_PERIOD = 14
 _VOLUME_BASELINE = 20
@@ -44,6 +44,12 @@ def analyze_geometry(symbol: str, interval: str, candles: list[dict[str, Any]]) 
         symbol, interval, rows, [item for item in evidence if item["kind"] == "H"],
         role="resistance", current=current, atr=latest_atr,
     )
+    pattern_candidates = _regression_pattern_candidates(rows, interval=interval)
+    active_patterns = sorted(
+        (item for item in pattern_candidates if item["hardPass"] and item["state"] in {"forming", "confirmed"}),
+        key=lambda item: (-item["score"], -item["endIndex"], item["geometryHash"]),
+    )
+    primary_pattern = active_patterns[0] if active_patterns else None
     triangle_candidates = _regression_triangle_candidates(rows, interval=interval)
     active = sorted(
         (item for item in triangle_candidates if item["hardPass"] and item["state"] in {"forming", "confirmed"}),
@@ -57,12 +63,14 @@ def analyze_geometry(symbol: str, interval: str, candles: list[dict[str, Any]]) 
     generated_at = str(rows[-1]["timestamp"])
     drawings = [
         *[_level_drawing(symbol, interval, item, generated_at) for item in (*supports, *resistances)],
-        *(_triangle_drawings(symbol, interval, primary, generated_at) if primary else []),
-    ][:6]
+        *(_pattern_drawings(symbol, interval, primary_pattern, generated_at) if primary_pattern else []),
+    ][:8]
     return {
         "algorithmVersion": ALGORITHM_VERSION,
         "supports": supports,
         "resistances": resistances,
+        "patterns": [_public_pattern(item) for item in active_patterns[:8]],
+        "primaryPattern": _public_pattern(primary_pattern),
         "primaryTriangle": _public_triangle(primary),
         "historicalTriangle": _public_triangle(historical),
         "indicators": compute_sma_snapshot(rows),
@@ -226,20 +234,69 @@ def _regression_triangle_candidates(
     return results
 
 
+def _regression_pattern_candidates(
+    rows: list[dict[str, Any]], *, interval: str,
+) -> list[dict[str, Any]]:
+    display_from = rows[max(0, len(rows) - EVALUATION_BARS[interval])]["timestamp"]
+    pivots = compute_pivots(rows, display_from=display_from, interval=interval)
+    candidates = compute_patterns(rows, pivots, atr=regression_atr(rows), interval=interval)
+    evidence_by_id = {str(item["id"]): item for item in pivots}
+    index_by_timestamp = {str(row["timestamp"]): index for index, row in enumerate(rows)}
+    results = []
+    for candidate in candidates:
+        geometry = candidate["geometry"]
+        geometry_hash = hashlib.sha256(str(candidate["id"]).encode()).hexdigest()[:16]
+        end_index = max(
+            (
+                index_by_timestamp.get(str(point.get("timestamp")), len(rows) - 1)
+                for boundary in geometry.values()
+                if isinstance(boundary, dict)
+                for point in boundary.values()
+                if isinstance(point, dict)
+            ),
+            default=len(rows) - 1,
+        )
+        projected = {
+            **candidate,
+            "endIndex": end_index,
+            "geometryHash": geometry_hash,
+            "evidence": [evidence_by_id[ref] for ref in candidate.get("evidenceRefs", []) if ref in evidence_by_id],
+        }
+        for name in ("pole", "upper", "lower"):
+            if name in geometry:
+                projected[name] = geometry[name]
+        if candidate["kind"] in TRIANGLE_KINDS:
+            projected["apexBarsFromAsOf"] = _pattern_apex_bars(geometry, index_by_timestamp, end_index)
+        results.append(projected)
+    return results
+
+
 def _level_drawing(symbol, interval, level, generated_at):
     color = "#22c55e" if level["role"] == "support" else "#ef4444"
     return _drawing(symbol, interval, level["id"], "horizontalLine", level["anchors"], color, "지지" if level["role"] == "support" else "저항", generated_at, opacity=0.86)
 
 
-def _triangle_drawings(symbol, interval, triangle, generated_at):
-    color = "#22c55e" if triangle["kind"] == "ascending_triangle" else "#ef4444" if triangle["kind"] == "descending_triangle" else "#f59e0b"
-    name = {"ascending_triangle": "상승 삼각형", "descending_triangle": "하락 삼각형", "symmetrical_triangle": "대칭 삼각형"}[triangle["kind"]]
-    state = "돌파 확인" if triangle["state"] == "confirmed" else "형성 중"
-    opacity = 0.95 if triangle["state"] == "confirmed" else 0.58
-    return [
-        _drawing(symbol, interval, f"{triangle['geometryHash']}-upper", "trendLine", [triangle["upper"]["start"], triangle["upper"]["end"]], color, f"{name} · {state}", generated_at, opacity=opacity),
-        _drawing(symbol, interval, f"{triangle['geometryHash']}-lower", "trendLine", [triangle["lower"]["start"], triangle["lower"]["end"]], color, f"{name} · {state}", generated_at, opacity=opacity),
-    ]
+def _pattern_drawings(symbol, interval, pattern, generated_at):
+    color = _pattern_color(pattern["kind"])
+    name = _pattern_name(pattern["kind"])
+    state = "돌파 확인" if pattern["state"] == "confirmed" else "형성 중"
+    opacity = 0.95 if pattern["state"] == "confirmed" else 0.58
+    drawings = []
+    if pattern.get("pole"):
+        drawings.append(_drawing(
+            symbol, interval, f"{pattern['geometryHash']}-pole", "trendLine",
+            [pattern["pole"]["start"], pattern["pole"]["end"]], color,
+            f"{name} · 깃대", generated_at, opacity=opacity,
+        ))
+    for boundary in ("upper", "lower"):
+        if not pattern.get(boundary):
+            continue
+        drawings.append(_drawing(
+            symbol, interval, f"{pattern['geometryHash']}-{boundary}", "trendLine",
+            [pattern[boundary]["start"], pattern[boundary]["end"]], color,
+            f"{name} · {state}", generated_at, opacity=opacity,
+        ))
+    return drawings
 
 
 def _drawing(symbol, interval, suffix, drawing_type, anchors, color, label, generated_at, *, opacity):
@@ -262,6 +319,21 @@ def _public_triangle(value):
         "containment", "convergenceRatio", "maxResidualAtr", "geometryHash", "upper", "lower",
         "apexBarsFromAsOf", "evidence",
     )}
+
+
+def _public_pattern(value):
+    if value is None:
+        return None
+    keys = (
+        "id", "kind", "state", "breakoutDirection", "score", "touches", "upperTouches", "lowerTouches",
+        "containment", "convergenceRatio", "parallelSlopeErrorAtr", "maxResidualAtr", "poleAtr",
+        "poleEfficiency", "retracementRatio", "channelWidthAtr", "geometryHash", "pole", "upper", "lower",
+        "apexBarsFromAsOf", "evidence",
+    )
+    return {
+        **{key: value[key] for key in keys if key in value},
+        "bias": _pattern_bias(value["kind"]),
+    }
 
 
 def _wilder_atr(rows):
@@ -297,6 +369,53 @@ def _apex_bars(end, upper_slope, upper_intercept, lower_slope, lower_intercept):
         return None
     apex = (lower_intercept - upper_intercept) / difference
     return round(apex - end, 4)
+
+
+def _pattern_apex_bars(geometry, index_by_timestamp, end_index):
+    upper, lower = geometry.get("upper"), geometry.get("lower")
+    if not upper or not lower:
+        return None
+    start_index = index_by_timestamp.get(str(upper["start"]["timestamp"]))
+    boundary_end = index_by_timestamp.get(str(upper["end"]["timestamp"]))
+    if start_index is None or boundary_end is None or boundary_end <= start_index:
+        return None
+    span = boundary_end - start_index
+    upper_slope = (float(upper["end"]["price"]) - float(upper["start"]["price"])) / span
+    lower_slope = (float(lower["end"]["price"]) - float(lower["start"]["price"])) / span
+    upper_intercept = float(upper["start"]["price"]) - upper_slope * start_index
+    lower_intercept = float(lower["start"]["price"]) - lower_slope * start_index
+    return _apex_bars(end_index, upper_slope, upper_intercept, lower_slope, lower_intercept)
+
+
+def _pattern_name(kind):
+    return {
+        "ascending_triangle": "상승 삼각형",
+        "descending_triangle": "하락 삼각형",
+        "symmetrical_triangle": "대칭 삼각형",
+        "bullish_flag": "상승 깃발형",
+        "bearish_flag": "하락 깃발형",
+        "bullish_pennant": "상승 페넌트",
+        "bearish_pennant": "하락 페넌트",
+        "bullish_rectangle": "상승 직사각형",
+        "bearish_rectangle": "하락 직사각형",
+        "rising_wedge": "상승 쐐기",
+        "falling_wedge": "하락 쐐기",
+        "descending_channel_breakout": "하락 채널 상단 돌파",
+        "ascending_channel_breakdown": "상승 채널 하단 이탈",
+    }[kind]
+
+
+def _pattern_bias(kind):
+    if kind in {"descending_triangle", "bearish_flag", "bearish_pennant", "bearish_rectangle", "rising_wedge", "ascending_channel_breakdown"}:
+        return "bearish"
+    if kind == "symmetrical_triangle":
+        return "neutral"
+    return "bullish"
+
+
+def _pattern_color(kind):
+    bias = _pattern_bias(kind)
+    return "#22c55e" if bias == "bullish" else "#ef4444" if bias == "bearish" else "#f59e0b"
 
 
 def _weighted_median(values: Iterable[tuple[float, float]]) -> float:
