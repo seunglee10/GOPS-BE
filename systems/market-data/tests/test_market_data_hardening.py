@@ -1904,6 +1904,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "low": 189,
             "close": 190.5,
             "volume": 100,
+            "tradeCount": "10",
             "tradeCount": 1,
             "isClosed": True,
             "source": "test",
@@ -1976,6 +1977,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "low": 189,
             "close": 190.5,
             "volume": 100,
+            "tradeCount": "10",
             "isClosed": True,
             "source": "alpaca.bars",
             "feed": "sip",
@@ -1992,6 +1994,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "low": 179,
             "close": 185,
             "volume": 1000,
+            "tradeCount": "20",
             "isClosed": True,
             "source": "alpaca.dailyBars",
             "feed": "sip",
@@ -2017,8 +2020,10 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(recovered["closed"]["1D"], 1)
         self.assertEqual(live_5m["open"], 190)
         self.assertEqual(live_5m["volume"], 110)
+        self.assertEqual(live_5m["tradeCount"], 11)
         self.assertEqual(live_1w["open"], 180)
         self.assertEqual(live_1w["close"], 195.2)
+        self.assertEqual(live_1w["tradeCount"], 31)
 
     def test_processor_recovers_provisional_state_from_clickhouse_when_enabled(self):
         producer = RecordingProducer()
