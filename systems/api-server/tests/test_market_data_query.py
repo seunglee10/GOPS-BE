@@ -84,7 +84,7 @@ from app.market_data.query.service import MarketDataQueryService  # noqa: E402
 from app.market_data.calendar.service import next_market_open_payload, us_equity_holidays  # noqa: E402
 from app.market_data.backfill.service import BackfillService  # noqa: E402
 from app.market_data.compare.service import ChartCompareService  # noqa: E402
-from app.market_data.fill.service import OnDemandFillService  # noqa: E402
+from app.market_data.fill.service import OnDemandFillService, opportunistic_intraday_gap_ranges  # noqa: E402
 from app.market_data.fundamentals.service import FundamentalsAdapter, FundamentalsRecord, StoreFundamentalsAdapter, records_from_payload  # noqa: E402
 from app.market_data.heatmap import service as heatmap_service  # noqa: E402
 from app.market_data.indices import service as indices_service  # noqa: E402
@@ -2273,7 +2273,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(fetch.call_count, 1)
         self.assertEqual(fetch.call_args.args[1], "2026-07-02T13:30:00.000Z")
         self.assertEqual(fetch.call_args.args[2], "2026-07-02T20:00:00.000Z")
-        self.assertEqual({call.args[4] for call in fetch.call_args_list}, {"1Min"})
+        self.assertEqual({call.args[4] for call in fetch.call_args_list}, {"10Min"})
         self.assertEqual(result["fill"]["foregroundFill"]["state"], "filled")
         self.assertEqual(result["fill"]["status"], "partial")
         self.assertEqual(result["sourceInterval"], "1h")
@@ -2341,11 +2341,56 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         fetch.assert_called_once()
         self.assertEqual(fetch.call_args.args[1], "2026-07-06T15:30:00.000Z")
         self.assertEqual(fetch.call_args.args[2], "2026-07-06T18:30:00.000Z")
-        self.assertEqual(fetch.call_args.args[4], "1Min")
+        self.assertEqual(fetch.call_args.args[4], "10Min")
         self.assertEqual(result["fill"]["foregroundFill"]["state"], "filled")
         self.assertEqual(result["fill"]["status"], "partial")
         self.assertEqual(len(result["candles"]), 7)
         self.assertEqual(result["candles"][2]["timestamp"], "2026-07-06T15:30:00.000Z")
+
+    def test_on_demand_fill_does_not_treat_weekend_between_regular_sessions_as_gap(self):
+        candles = [
+            {"timestamp": "2026-07-10T17:30:00.000Z", "marketSession": "regular"},
+            {"timestamp": "2026-07-13T13:30:00.000Z", "marketSession": "regular"},
+        ]
+
+        self.assertEqual(opportunistic_intraday_gap_ranges("4h", candles), [])
+
+    def test_on_demand_fill_auto_cap_counts_ten_minute_provider_bars_for_hourly_repair(self):
+        payload = {
+            "symbol": "MSFT",
+            "interval": "1h",
+            "candles": [],
+            "returnedCount": 0,
+            "storedCandleCount": 0,
+            "sourceInterval": "1h",
+            "missingRanges": [
+                {"start": "2026-07-06T13:30:00.000Z", "end": "2026-07-06T20:00:00.000Z"}
+            ],
+            "_sourceTrace": {
+                "redis": {"checked": True, "hit": False, "rowCount": 0},
+                "clickhouse": {"checked": True, "hit": False, "rowCount": 0},
+            },
+        }
+        with mock.patch.dict(os.environ, {
+            "ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED": "",
+            "ON_DEMAND_FILL_FOREGROUND_AUTO_INTERVALS": "1h",
+            "ON_DEMAND_FILL_FOREGROUND_AUTO_MAX_BARS": "10",
+        }, clear=False):
+            service = OnDemandFillService(timeout_seconds=8, background_enabled=False)
+
+        with mock.patch("app.market_data.fill.service.fetch_alpaca_bars") as fetch:
+            result = service.fill_if_needed(
+                symbol="MSFT",
+                interval="1h",
+                limit=8,
+                before=None,
+                from_time="2026-07-06T13:30:00.000Z",
+                to_time="2026-07-06T20:00:00.000Z",
+                payload=payload,
+            )
+
+        fetch.assert_not_called()
+        self.assertEqual(result["fill"]["foregroundFill"]["state"], "disabled")
 
     def test_on_demand_fill_repairs_overnight_sparse_gap_from_boats(self):
         existing_times = [
