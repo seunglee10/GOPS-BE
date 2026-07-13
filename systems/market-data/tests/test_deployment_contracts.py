@@ -351,6 +351,22 @@ fi
             workflow.index("name: Deploy app workloads"),
         )
 
+    def test_local_dev_deploy_can_migrate_chart_assets_before_app_rollout(self):
+        script = (REPO_ROOT / "scripts/aws/deploy-dev-local.sh").read_text(encoding="utf-8")
+
+        self.assertIn('RUN_CHART_ASSET_MIGRATIONS="${RUN_CHART_ASSET_MIGRATIONS:-false}"', script)
+        self.assertIn("REMOTE_BRANCH=branch-name", script)
+        self.assertIn(
+            "RUN_CHART_ASSET_MIGRATIONS=true requires agent-orchestrator to be selected.",
+            script,
+        )
+        self.assertIn("run-chart-asset-migrations-job.sh", script)
+        main = script[script.index("main()") :]
+        self.assertLess(
+            main.index("run_migrations_if_requested"),
+            main.index("deploy_app_workloads"),
+        )
+
     def test_terraform_covers_all_current_images_with_immutable_tags(self):
         terraform = (REPO_ROOT / "infra/aws/terraform/main.tf").read_text(encoding="utf-8")
 
