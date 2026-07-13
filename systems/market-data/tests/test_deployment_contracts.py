@@ -58,13 +58,21 @@ class DeploymentContractsTest(unittest.TestCase):
         self.assertNotIn("job-chart-asset-migrations.yaml", base_resources)
 
         deployment = load_yaml("infra/k8s/base/app/deployment-chart-asset-builder.yaml")
-        env_from = deployment["spec"]["template"]["spec"]["containers"][0]["envFrom"]
+        builder = deployment["spec"]["template"]["spec"]["containers"][0]
+        env_from = builder["envFrom"]
         secret_names = {
             item["secretRef"]["name"]
             for item in env_from
             if "secretRef" in item
         }
         self.assertIn("alfaka-order-db-secret", secret_names)
+        self.assertEqual(builder["resources"]["requests"]["memory"], "512Mi")
+        self.assertEqual(builder["resources"]["limits"]["memory"], "1Gi")
+
+        base_config = load_yaml("infra/k8s/base/app/configmap.yaml")["data"]
+        aws_config = load_yaml("infra/k8s/overlays/aws/configmap-aws-patch.yaml")["data"]
+        self.assertEqual(base_config["CHART_ASSET_BUILD_CONCURRENCY"], "2")
+        self.assertEqual(aws_config["CHART_ASSET_BUILD_CONCURRENCY"], "2")
 
         migration = load_yaml("infra/k8s/base/job-chart-asset-migrations.yaml")
         container = migration["spec"]["template"]["spec"]["containers"][0]
@@ -98,14 +106,14 @@ class DeploymentContractsTest(unittest.TestCase):
             "${CHART_ASSET_STORAGE_MAINTENANCE:-false}",
         )
 
-    def test_chart_geometry_schedule_and_manual_job_cover_all_seven_intervals(self):
+    def test_chart_geometry_schedule_is_bounded_and_manual_job_covers_all_seven_intervals(self):
         cron = load_yaml("infra/k8s/overlays/aws/scheduled/cronjob-chart-geometry-build.yaml")
         self.assertEqual(cron["spec"]["schedule"], "40 8 * * 1-5")
         self.assertEqual(cron["spec"]["timeZone"], "Asia/Seoul")
         self.assertEqual(cron["spec"]["concurrencyPolicy"], "Forbid")
         container = cron["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]
         intervals = next(item["value"] for item in container["env"] if item["name"] == "CHART_ASSET_INTERVALS")
-        self.assertEqual(intervals, "1m,5m,10m,1h,4h,1D,1W")
+        self.assertEqual(intervals, "1D,1W")
         manual = (REPO_ROOT / "scripts/aws/run-chart-geometry-build-job.sh").read_text(encoding="utf-8")
         self.assertIn('INTERVALS="${INTERVALS:-1m,5m,10m,1h,4h,1D,1W}"', manual)
 

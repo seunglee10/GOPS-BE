@@ -96,11 +96,29 @@ class ChartAssetsRoutesTest(unittest.TestCase):
         self.assertEqual(submitted.status_code, 202)
         job_id = submitted.json()["jobId"]
         self.assertEqual(len(self.queue.items), 1)
+        self.assertEqual(self.queue.items[0]["source"], "manual")
+        self.assertEqual(self.queue.items[0]["priority"], 100)
         status = self.client.get(f"/api/charts/analysis-assets/build/{job_id}")
         self.assertEqual(status.json()["status"], "queued")
         canceled = self.client.post(f"/api/charts/analysis-assets/build/{job_id}/cancel")
         self.assertTrue(canceled.json()["cancelRequested"])
         self.progress.set_status(job_id, "canceled", finishedAt="2026-07-11T00:00:00.000Z")
+
+    def test_identical_active_manual_builds_are_coalesced(self):
+        first = self.client.post(
+            "/api/charts/analysis-assets/build",
+            json={"symbols": ["NVDA"], "intervals": ["1D"]},
+        )
+        second = self.client.post(
+            "/api/charts/analysis-assets/build",
+            json={"symbols": ["NVDA"], "intervals": ["1D"]},
+        )
+
+        self.assertEqual(first.status_code, 202)
+        self.assertEqual(second.status_code, 202)
+        self.assertEqual(second.json()["jobId"], first.json()["jobId"])
+        self.assertTrue(second.json()["coalesced"])
+        self.assertEqual(len(self.queue.items), 1)
 
     def test_sp500_build_expands_registry_and_preserves_envelope_options(self):
         response = self.client.post("/api/charts/analysis-assets/build", json={
