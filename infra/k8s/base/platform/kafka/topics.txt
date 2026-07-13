@@ -29,6 +29,7 @@ market.news.daily-summary-dirty.v1
 orders.commands.v1
 broker.submit-results.v1
 broker.order-events.v1
+orders.fills.v1
 orders.dlq.v1
 alerts.triggered.v1
 alerts.dlq.v1
@@ -40,3 +41,4 @@ agents.analysis-results.v1
 agents.query-understanding-events.v1
 agents.notification-decisions.v1
 agents.dlq.v1
+risk.events.v1
