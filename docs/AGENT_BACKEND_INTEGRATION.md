@@ -396,6 +396,11 @@ SSE route는 사용하지 않는다.
 차트 적용 수와 anchor/stale 제외 수는 현재 candle과 active chart document의 실제
 drawing ID를 아는 프런트가 계산한다.
 
+Geometry payload는 활성 후보 `patterns[]`, 최고 점수 `primaryPattern`, 삼각형 호환
+필드 `primaryTriangle`/`historicalTriangle`을 함께 가진다. 저장 drawing은 최대 8개다.
+기존 PostgreSQL 설치는 build 배포 전에 명시적 chart-asset migration Job을 다시 실행해
+`drawing_count` check constraint를 0..8로 갱신한다.
+
 `CHART_ASSET_STORAGE_MAINTENANCE=true` 동안 GET은 계속 열어 두고 build와 DELETE만
 503으로 막는다. 기존 숫자형 자산은 변환하거나 fallback으로 읽지 않는다.
 

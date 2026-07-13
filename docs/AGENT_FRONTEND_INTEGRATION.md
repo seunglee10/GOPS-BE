@@ -314,10 +314,12 @@ canonical candle timestamp로만 snap하며 대응 봉이 없으면 해당 drawi
 단, Geometry 지지·저항 `horizontalLine`은 가격 자체가 핵심인 무한 수평선이므로
 저장된 과거 접촉 봉이 아직 차트에 로드되지 않았으면 현재 로드된 첫·마지막 canonical
 candle timestamp에 presentation anchor를 투영해 즉시 표시한다. PostgreSQL 원본
-접촉 timestamp는 변경하지 않으며 삼각형의 timed anchor에는 이 예외를 적용하지 않는다.
-패널은 `1m/5m/10m/1h/4h/1D/1W`를 지원하고 지지·저항, 세 삼각형, coverage,
+접촉 timestamp는 변경하지 않으며 패턴 경계의 timed anchor에는 이 예외를 적용하지 않는다.
+패널은 `1m/5m/10m/1h/4h/1D/1W`를 지원하고 지지·저항, 삼각형·깃발형·페넌트·
+직사각형·쐐기·채널 이탈 패턴, coverage,
 SMA60·SMA120과 최근 교차 상태를 표시한다. Geometry 토글 하나가 모든 자동 작도를
-제어하며 삼각형은 실선, forming은 낮은 불투명도로 표현한다.
+제어하며 패턴 선은 실선, forming은 낮은 불투명도로 표현한다. 새 자산은
+`primaryPattern`을 우선 표시하고 기존 geometry 자산은 `primaryTriangle`로 호환한다.
 
 SMA 기간은 일수가 아니라 현재 interval의 완료 봉 개수다. SMA60과 SMA120 overlay는
 Geometry 자산 적용 시 함께 활성화하고 골든·데드크로스는 별도 marker가 아닌 metadata로

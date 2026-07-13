@@ -785,7 +785,8 @@ AWS overlay는 Alpaca repair 동시성 2와 최대 range 8을 사용한다. 평�
 CronJob은 S&P500 전체 7개 interval을 등록한다. PostgreSQL schema는
 `job-chart-asset-migrations.yaml`과 `run-chart-asset-migrations-job.sh`로 명시 적용하며
 runtime은 자동 생성하지 않는다. one-shot migration Job은 PostgreSQL Secret이 없으면
-시작하지 않는다.
+시작하지 않는다. 범용 패턴 자산 배포 전에는 migration Job을 다시 실행해
+`geometry_assets.drawing_count` check constraint를 0..8로 갱신한다.
 
 Financial final-answer synthesis is enabled with
 `AGENT_FINANCIAL_FINAL_ANSWER_PROVIDER=openai`. The orchestrator still reads SEC

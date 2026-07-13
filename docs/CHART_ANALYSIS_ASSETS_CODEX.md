@@ -8,7 +8,10 @@
 - 모든 timed anchor는 현재 asset interval의 실제 candle timestamp에 속한다.
 - 지지·저항 `horizontalLine`은 첫·마지막 접촉의 동일 가격 2-anchor를 저장하며,
   차트 엔진은 수동 작도의 기존 단일 anchor와 이 형식을 모두 허용한다.
-- 작도는 지지·저항 최대 4개와 상승·하락·대칭 삼각형 선 2개뿐이다.
+- 작도 계약은 최대 8개다. 지지·저항은 최대 4개이며 최고 점수 패턴 하나는 경계선
+  2개와 선택적 깃대 1개를 사용한다.
+- 패턴 종류는 세 삼각형, 상승·하락 깃발형/페넌트/직사각형, 상승·하락 쐐기,
+  하락 채널 상단 돌파, 상승 채널 하단 이탈이다. 채널 이탈은 `confirmed`만 hard-pass다.
 - geometry 계산에는 LLM을 사용하지 않는다.
 - chart asset payload/job은 PostgreSQL, candle은 ClickHouse에 저장한다.
 - 결측 보충은 Alpaca의 정확한 누락 range만 사용하며 S3·Redis·Kafka를 거치지 않는다.
@@ -31,7 +34,7 @@
 ## 주요 코드 경계
 
 - `alfaka.analytics.geometry`: OHLCV evidence, 수평선, SMA/교차와 Geometry 자산 조립
-- `alfaka.analytics.pivots` + `alfaka.analytics.patterns`: 방향전환 피벗과 회귀형 삼각형 탐지
+- `alfaka.analytics.pivots` + `alfaka.analytics.patterns`: 방향전환 피벗과 회귀형 패턴 탐지
 - `alfaka.analytics.analysis_candles`: 완료 봉과 canonical identity, 기존 주봉 집계
 - `alfaka.serving.session_buckets`: 09:30 ET 기준 intraday 버킷과 공통 OHLCV 집계
 - `alfaka.analytics.analysis_repair`: ClickHouse audit와 Alpaca-only repair
@@ -41,7 +44,9 @@
 
 새 payload의 `assetVersion`은 숫자 개발 단계가 아니라 기존 응답 union을 구분하는
 semantic discriminator인 `geometry`다. `algorithmVersion`은 현재
-`ohlcv-consensus-regression-triangles`이며 분석 의미가 바뀔 때만 변경한다. 기존 숫자형 자산 row는 읽기
+`ohlcv-consensus-pattern-families-v1`이며 분석 의미가 바뀔 때만 변경한다. 범용
+`patterns[]`/`primaryPattern`이 없는 기존 geometry row는 프런트가 `primaryTriangle`로
+표시 호환하고, 다음 빌드에서 새 계약으로 교체한다. 기존 숫자형 자산 row는 읽기
 fallback이나 자동 변환에 사용하지 않는다.
 
 Intraday candle input contract는 `regular-session-derived`이며 asset digest에 포함된다.
@@ -50,12 +55,14 @@ Intraday candle input contract는 `regular-session-derived`이며 asset digest�
 
 PostgreSQL 테이블은 `geometry_assets`, `geometry_build_jobs`,
 `geometry_build_items`다. 자산 기본 키는 `(symbol, interval)`이고 item claim은
-`FOR UPDATE SKIP LOCKED`를 사용한다.
+`FOR UPDATE SKIP LOCKED`를 사용한다. 기존 설치는 명시적 migration Job을 재실행해
+`geometry_assets_drawing_count_check`를 0..8로 갱신해야 한다.
 
 ## 검증
 
 ```sh
 .venv/bin/python -m pytest systems/market-data/tests/analytics/test_geometry_assets.py
+.venv/bin/python -m pytest systems/market-data/tests/analytics/test_patterns.py
 .venv/bin/python -m pytest systems/agent-orchestration/tests/test_geometry_asset_contract.py
 .venv/bin/python -m pytest systems/api-server/tests/test_chart_assets_routes.py
 ```
