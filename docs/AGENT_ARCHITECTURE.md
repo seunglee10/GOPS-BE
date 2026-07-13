@@ -266,6 +266,12 @@ Agent runtime은 `gops-agent-orchestrator` image를 공유한다. SEC
 companyfacts backfill은 S3/ClickHouse helpers를 재사용하기 위해
 `gops-market-storage` image에서 실행된다.
 
+`event-detector`의 가격 급변 판정은 trade 가격을 계속 사용하지만, 거래량
+급증 판정은 `market.layer.candles.<interval>.closed.v1`의 완료 캔들만
+사용한다. 같은 symbol과 interval의 이전 완료 캔들 20개 rolling 평균을
+기준으로 하며, 최소 5개가 쌓이기 전에는 판정하지 않는다. 같은
+symbol/interval의 `volume_spike`는 기본 30분 cooldown을 적용한다.
+
 ## Package Layout
 
 ```text

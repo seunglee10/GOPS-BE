@@ -2392,15 +2392,116 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(report.finalAnswer.title, "기업 인식 실패")
         self.assertIn("지원 기업으로 인식하지 못했습니다", report.finalAnswer.summary)
 
-    def test_event_detector_detects_price_surge_and_volume_spike(self):
+    def test_event_detector_keeps_trade_price_signal_but_ignores_trade_size_for_volume(self):
         detector = MarketEventDetector(MarketEventThresholds(price_change_percent=3.0, volume_spike_multiplier=2.0))
-        self.assertEqual(detector.detect({"symbol": "NVDA", "price": 100, "volume": 100}, "market.layer.trades.v1"), [])
+        self.assertEqual(detector.detect({"symbol": "NVDA", "price": 100, "size": 100}, "market.layer.trades.v1"), [])
 
-        events = detector.detect({"symbol": "NVDA", "price": 105, "volume": 250}, "market.layer.trades.v1")
+        events = detector.detect({"symbol": "NVDA", "price": 105, "size": 250}, "market.layer.trades.v1")
 
         event_types = {event.eventType for event in events}
         self.assertIn("price_surge", event_types)
-        self.assertIn("volume_spike", event_types)
+        self.assertNotIn("volume_spike", event_types)
+
+    def test_event_detector_uses_completed_candle_rolling_volume_baseline(self):
+        detector = MarketEventDetector(MarketEventThresholds(
+            volume_spike_multiplier=2.0,
+            volume_baseline_window=3,
+            volume_min_samples=3,
+            volume_event_cooldown_seconds=0,
+        ))
+        topic = "market.layer.candles.1m.closed.v1"
+
+        for timestamp, volume in (
+            ("2026-07-14T00:00:00Z", 100),
+            ("2026-07-14T00:01:00Z", 120),
+            ("2026-07-14T00:02:00Z", 80),
+        ):
+            events = detector.detect({
+                "symbol": "NVDA",
+                "interval": "1m",
+                "timestamp": timestamp,
+                "volume": volume,
+            }, topic)
+            self.assertNotIn("volume_spike", {event.eventType for event in events})
+
+        events = detector.detect({
+            "symbol": "NVDA",
+            "interval": "1m",
+            "timestamp": "2026-07-14T00:03:00Z",
+            "volume": 240,
+        }, topic)
+
+        volume_event = next(event for event in events if event.eventType == "volume_spike")
+        self.assertEqual(volume_event.metrics["previousVolume"], 100.0)
+        self.assertEqual(volume_event.metrics["baselineVolume"], 100.0)
+        self.assertEqual(volume_event.metrics["baselineSamples"], 3)
+        self.assertEqual(volume_event.metrics["interval"], "1m")
+        self.assertEqual(volume_event.metrics["multiplier"], 2.4)
+
+    def test_event_detector_keeps_volume_baselines_separate_by_interval(self):
+        detector = MarketEventDetector(MarketEventThresholds(
+            volume_spike_multiplier=2.0,
+            volume_baseline_window=2,
+            volume_min_samples=2,
+            volume_event_cooldown_seconds=0,
+        ))
+
+        for interval, volumes in (("1m", (100, 100)), ("5m", (1000, 1000))):
+            topic = f"market.layer.candles.{interval}.closed.v1"
+            for index, volume in enumerate(volumes):
+                events = detector.detect({
+                    "symbol": "NVDA",
+                    "interval": interval,
+                    "timestamp": f"2026-07-14T00:0{index}:00Z",
+                    "volume": volume,
+                }, topic)
+                self.assertNotIn("volume_spike", {event.eventType for event in events})
+
+        events = detector.detect({
+            "symbol": "NVDA",
+            "interval": "1m",
+            "timestamp": "2026-07-14T00:02:00Z",
+            "volume": 250,
+        }, "market.layer.candles.1m.closed.v1")
+
+        volume_event = next(event for event in events if event.eventType == "volume_spike")
+        self.assertEqual(volume_event.metrics["baselineVolume"], 100.0)
+        self.assertEqual(volume_event.metrics["interval"], "1m")
+
+    def test_event_detector_applies_volume_spike_cooldown_per_symbol_interval(self):
+        detector = MarketEventDetector(MarketEventThresholds(
+            volume_spike_multiplier=2.0,
+            volume_baseline_window=2,
+            volume_min_samples=2,
+            volume_event_cooldown_seconds=1800,
+        ))
+        topic = "market.layer.candles.1m.closed.v1"
+
+        for timestamp, volume in (
+            ("2026-07-14T00:00:00Z", 100),
+            ("2026-07-14T00:01:00Z", 100),
+        ):
+            detector.detect({"symbol": "NVDA", "interval": "1m", "timestamp": timestamp, "volume": volume}, topic)
+
+        first = detector.detect({
+            "symbol": "NVDA", "interval": "1m", "timestamp": "2026-07-14T00:02:00Z", "volume": 300,
+        }, topic)
+        suppressed = detector.detect({
+            "symbol": "NVDA", "interval": "1m", "timestamp": "2026-07-14T00:03:00Z", "volume": 500,
+        }, topic)
+        detector.detect({
+            "symbol": "NVDA", "interval": "1m", "timestamp": "2026-07-14T00:31:00Z", "volume": 100,
+        }, topic)
+        detector.detect({
+            "symbol": "NVDA", "interval": "1m", "timestamp": "2026-07-14T00:32:00Z", "volume": 100,
+        }, topic)
+        after_cooldown = detector.detect({
+            "symbol": "NVDA", "interval": "1m", "timestamp": "2026-07-14T00:33:00Z", "volume": 300,
+        }, topic)
+
+        self.assertIn("volume_spike", {event.eventType for event in first})
+        self.assertNotIn("volume_spike", {event.eventType for event in suppressed})
+        self.assertIn("volume_spike", {event.eventType for event in after_cooldown})
 
     def test_notification_payload_preserves_decision(self):
         payload = notification_payload({"symbol": "NVDA", "level": "alert", "showToast": True})

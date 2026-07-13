@@ -199,8 +199,12 @@ sequenceDiagram
 | --- | --- |
 | `price_surge` | 직전 관측 가격 대비 상승률이 threshold 이상 |
 | `price_drop` | 직전 관측 가격 대비 하락률이 threshold 이상 |
-| `volume_spike` | 직전 관측 거래량 대비 배수가 threshold 이상 |
+| `volume_spike` | 같은 symbol/interval의 이전 완료 캔들 rolling 거래량 평균 대비 배수가 threshold 이상이며 cooldown이 지난 경우 |
 | `volatility_expansion` | 캔들 고가-저가 범위가 open 대비 threshold 이상 |
+
+`volume_spike`는 trade payload의 개별 체결량 `size`를 사용하지 않는다.
+기본값은 이전 완료 캔들 20개, 최소 표본 5개, 같은 symbol/interval별
+30분 cooldown이다. 출력 `MarketEvent` 스키마와 event type 이름은 유지한다.
 
 ## 7. Docker와 Kubernetes 반영
 
