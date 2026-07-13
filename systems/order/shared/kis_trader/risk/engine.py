@@ -9,7 +9,7 @@ Risk Agent only narrates these results — it can never change them.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from decimal import ROUND_FLOOR, Decimal
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from typing import Any
 
 from .config import RiskConfig
@@ -31,8 +31,12 @@ class RuleResult:
     rule_id: str
     action: str
     explanation: str
+    title: str | None = None
+    guidance: str | None = None
     numbers: dict[str, str] = field(default_factory=dict)
     suggested_qty: Decimal | None = None
+    suggested_price: Decimal | None = None
+    suggested_action_label: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -41,8 +45,16 @@ class RuleResult:
             "explanation": self.explanation,
             "numbers": dict(self.numbers),
         }
+        if self.title:
+            payload["title"] = self.title
+        if self.guidance:
+            payload["guidance"] = self.guidance
         if self.suggested_qty is not None:
             payload["suggestedQty"] = str(self.suggested_qty)
+        if self.suggested_price is not None:
+            payload["suggestedPrice"] = str(self.suggested_price)
+        if self.suggested_action_label:
+            payload["suggestedActionLabel"] = self.suggested_action_label
         return payload
 
 
@@ -157,12 +169,22 @@ def _check_daily_buy_budget(
     post_trade = spent + qty * price
     if post_trade > budget:
         remaining = budget - spent
+        allowed_qty = (
+            (remaining / price).to_integral_value(rounding=ROUND_FLOOR)
+            if remaining > 0 and price > 0
+            else Decimal("0")
+        )
         return RuleResult(
             rule_id="daily_buy_budget",
             action=ACTION_BLOCK,
+            title="오늘 설정한 매수 예산을 초과합니다",
             explanation=(
-                f"오늘 정한 매수 예산 {budget}을 넘어요 (이미 {spent} 사용, 이 주문 {qty * price}). "
-                f"남은 예산은 {remaining if remaining > 0 else 0}입니다. 내일 다시 보는 걸 권해요."
+                f"오늘 매수 예산은 {_money(budget)}이며, 이미 {_money(spent)}을 사용했습니다. "
+                f"이번 주문 {_money(qty * price)}을 더하면 예산을 초과합니다."
+            ),
+            guidance=(
+                f"남은 예산 {_money(remaining if remaining > 0 else Decimal('0'))} 안에서 수량을 줄이거나 "
+                "다음 거래일에 다시 주문할 수 있습니다."
             ),
             numbers={
                 "dailyBuyBudget": str(budget),
@@ -170,15 +192,18 @@ def _check_daily_buy_budget(
                 "orderNotional": str(qty * price),
                 "remaining": str(remaining if remaining > 0 else Decimal("0")),
             },
+            suggested_qty=allowed_qty if allowed_qty > 0 else None,
+            suggested_action_label=(f"{allowed_qty}주로 줄이기" if allowed_qty > 0 else None),
         )
     if post_trade >= budget * BUDGET_WARN_RATIO:
         return RuleResult(
             rule_id="daily_buy_budget",
             action=ACTION_WARN,
+            title="오늘 매수 예산의 대부분을 사용합니다",
             explanation=(
-                f"이 주문까지 하면 오늘 예산 {budget}의 {_pct(post_trade / budget)}를 쓰게 돼요 "
-                f"(누적 {post_trade}). 남은 예산을 확인하세요."
+                f"이 주문까지 포함하면 오늘 예산 {_money(budget)}의 {_pct(post_trade / budget)}를 사용하게 됩니다."
             ),
+            guidance=f"주문 후 남는 매수 예산은 {_money(budget - post_trade)}입니다. 주문은 그대로 진행할 수 있습니다.",
             numbers={
                 "dailyBuyBudget": str(budget),
                 "spentAfterOrder": str(post_trade),
@@ -198,25 +223,36 @@ def _check_fat_finger(
 ) -> RuleResult | SkippedRule | None:
     notional = qty * price
     if notional > config.max_order_notional:
+        allowed_qty = (config.max_order_notional / price).to_integral_value(rounding=ROUND_FLOOR)
         return RuleResult(
             rule_id="fat_finger",
             action=ACTION_BLOCK,
+            title="1회 주문 금액 한도를 초과합니다",
             explanation=(
-                f"주문 금액 {notional}이 1회 상한 {config.max_order_notional}을 초과합니다. "
-                "수량이나 가격 입력 실수가 아닌지 확인하세요."
+                f"이번 주문 금액은 {_money(notional)}으로, 입력 실수 방지를 위한 1회 주문 한도 "
+                f"{_money(config.max_order_notional)}을 넘습니다."
             ),
+            guidance=f"가격을 유지하려면 {allowed_qty}주 이하로 수량을 조정해야 합니다.",
             numbers={"notional": str(notional), "maxOrderNotional": str(config.max_order_notional)},
+            suggested_qty=allowed_qty if allowed_qty > 0 else None,
+            suggested_action_label=(f"{allowed_qty}주로 줄이기" if allowed_qty > 0 else None),
         )
     adv = context.metrics.average_daily_volume
     if adv is not None and adv > 0:
         participation = qty / adv
         if participation > config.max_adv_participation:
+            allowed_qty = (adv * config.max_adv_participation).to_integral_value(rounding=ROUND_FLOOR)
             return RuleResult(
                 rule_id="fat_finger",
                 action=ACTION_BLOCK,
+                title="평소 거래량에 비해 주문 수량이 많습니다",
                 explanation=(
-                    f"주문 수량이 일평균거래량의 {_pct(participation)}로 상한 "
-                    f"{_pct(config.max_adv_participation)}을 초과합니다."
+                    f"이번 주문 {qty}주는 최근 20거래일 하루 평균 거래량 {adv}주의 "
+                    f"{_pct(participation)}에 해당합니다."
+                ),
+                guidance=(
+                    "거래가 적은 종목에 큰 주문을 내면 가격이 크게 움직이거나 일부만 체결될 수 있습니다. "
+                    f"{allowed_qty}주 이하로 줄이면 입력 실수 방지 기준 {_pct(config.max_adv_participation)} 안에 들어옵니다."
                 ),
                 numbers={
                     "qty": str(qty),
@@ -224,23 +260,82 @@ def _check_fat_finger(
                     "participation": str(participation),
                     "maxAdvParticipation": str(config.max_adv_participation),
                 },
+                suggested_qty=allowed_qty if allowed_qty > 0 else None,
+                suggested_action_label=(f"{allowed_qty}주로 줄이기" if allowed_qty > 0 else None),
             )
     last_price = context.metrics.last_price
     if last_price is not None and last_price > 0:
-        deviation = abs(price - last_price) / last_price
-        if deviation > config.price_band_pct:
+        signed_deviation = (price - last_price) / last_price
+        deviation = abs(signed_deviation)
+        is_aggressive = (
+            (side == "buy" and signed_deviation > config.price_band_pct)
+            or (side == "sell" and signed_deviation < -config.price_band_pct)
+        )
+        is_passive = (
+            (side == "buy" and signed_deviation < -config.price_band_pct)
+            or (side == "sell" and signed_deviation > config.price_band_pct)
+        )
+        reference_label = _reference_price_label(context)
+        if is_aggressive:
+            if side == "buy":
+                safe_price = (last_price * (Decimal("1") + config.price_band_pct)).quantize(
+                    Decimal("0.01"), rounding=ROUND_FLOOR
+                )
+                title = "매수 가격 확인이 필요합니다"
+                risk_text = "가격 입력 오류가 있으면 예상보다 비싸게 매수될 수 있습니다."
+            else:
+                safe_price = (last_price * (Decimal("1") - config.price_band_pct)).quantize(
+                    Decimal("0.01"), rounding=ROUND_CEILING
+                )
+                title = "매도 가격 확인이 필요합니다"
+                risk_text = "가격 입력 오류가 있으면 예상보다 낮은 가격에 매도될 수 있습니다."
             return RuleResult(
                 rule_id="fat_finger",
-                action=ACTION_BLOCK,
+                action=ACTION_WARN,
+                title=title,
                 explanation=(
-                    f"지정가 {price}가 직전가 {last_price} 대비 {_pct(deviation)} 벗어났습니다 "
-                    f"(허용 {_pct(config.price_band_pct)})."
+                    f"입력한 {'매수' if side == 'buy' else '매도'} 가격 {_money(price)}은 "
+                    f"{reference_label} {_money(last_price)}보다 {_pct(deviation)} "
+                    f"{'높습니다' if side == 'buy' else '낮습니다'}."
+                ),
+                guidance=(
+                    f"{risk_text} {_money(safe_price)} "
+                    f"{'이하' if side == 'buy' else '이상'}로 수정하면 가격 보호 기준 {_pct(config.price_band_pct)} 이내가 됩니다. "
+                    "경고를 확인한 후 현재 입력한 가격으로 주문을 계속할 수도 있습니다."
                 ),
                 numbers={
                     "price": str(price),
                     "lastPrice": str(last_price),
                     "deviation": str(deviation),
+                    "signedDeviation": str(signed_deviation),
                     "priceBandPct": str(config.price_band_pct),
+                    "priceSource": str(context.metrics.price_source or ""),
+                    "priceObservedAt": str(context.metrics.price_observed_at or ""),
+                    "safePrice": str(safe_price),
+                },
+            )
+        if is_passive:
+            return RuleResult(
+                rule_id="fat_finger",
+                action=ACTION_WARN,
+                title=f"{reference_label}보다 {'낮은 매수 가격입니다' if side == 'buy' else '높은 매도 가격입니다'}",
+                explanation=(
+                    f"입력한 {'매수' if side == 'buy' else '매도'} 가격 {_money(price)}은 "
+                    f"{reference_label} {_money(last_price)}보다 {_pct(deviation)} "
+                    f"{'낮습니다' if side == 'buy' else '높습니다'}."
+                ),
+                guidance=(
+                    "원하는 가격이 될 때까지 기다리는 주문이라면 그대로 진행할 수 있습니다. "
+                    "다만 시장가격이 이 가격에 도달하지 않으면 주문이 체결되지 않을 수 있습니다."
+                ),
+                numbers={
+                    "price": str(price),
+                    "lastPrice": str(last_price),
+                    "deviation": str(deviation),
+                    "signedDeviation": str(signed_deviation),
+                    "priceBandPct": str(config.price_band_pct),
+                    "priceSource": str(context.metrics.price_source or ""),
+                    "priceObservedAt": str(context.metrics.price_observed_at or ""),
                 },
             )
     return None
@@ -263,10 +358,12 @@ def _check_daily_loss_cooldown(
         return RuleResult(
             rule_id="daily_loss_cooldown",
             action=ACTION_BLOCK,
+            title="오늘 신규 매수가 제한됩니다",
             explanation=(
-                f"오늘 손실 {context.daily_pnl}이 일일 한도 {limit}에 도달했습니다. "
-                "손실 직후의 추가 매수는 판단이 흐려지기 쉬워 오늘은 신규 매수를 차단합니다."
+                f"오늘 손실은 {_money(abs(context.daily_pnl))}으로, 설정한 일일 손실 보호 한도 "
+                f"{_money(abs(limit))}에 도달했습니다."
             ),
+            guidance="추가 매수만 오늘까지 제한됩니다. 보유 종목 매도는 가능하며, 제한은 다음 거래일에 다시 계산됩니다.",
             numbers={
                 "dailyPnl": str(context.daily_pnl),
                 "dailyLossLimit": str(limit),
@@ -299,9 +396,14 @@ def _check_single_name_limit(
     return RuleResult(
         rule_id="single_name_limit",
         action=ACTION_RESIZE,
+        title=f"{symbol} 한 종목의 투자 비중이 높습니다",
         explanation=(
-            f"이 주문 후 {symbol} 비중이 {_pct(post_trade_weight)}로 한도 "
-            f"{_pct(config.single_name_max_weight)}을 초과합니다. {allowed_qty}주까지 권장합니다."
+            f"이 주문 후 {symbol}이 계좌에서 차지하는 비율은 {_pct(post_trade_weight)}가 되어, "
+            f"설정한 한도 {_pct(config.single_name_max_weight)}을 넘습니다."
+        ),
+        guidance=(
+            f"한 종목의 가격이 크게 움직이면 계좌 전체 손익에 미치는 영향도 커질 수 있습니다. "
+            f"{allowed_qty}주까지 줄이면 설정한 한도 안에 들어옵니다."
         ),
         numbers={
             "currentValue": str(current_value),
@@ -310,6 +412,7 @@ def _check_single_name_limit(
             "allowedQty": str(allowed_qty),
         },
         suggested_qty=allowed_qty,
+        suggested_action_label=(f"{allowed_qty}주로 줄이기" if allowed_qty > 0 else None),
     )
 
 
@@ -336,10 +439,12 @@ def _check_sector_limit(
     return RuleResult(
         rule_id="sector_limit",
         action=ACTION_WARN,
+        title=f"{sector} 업종의 투자 비중이 높습니다",
         explanation=(
-            f"이 주문 후 {sector} 섹터 비중이 {_pct(post_trade_exposure)}로 한도 "
-            f"{_pct(config.sector_max_weight)}을 초과합니다. 같은 섹터 종목은 함께 떨어지는 경향이 있습니다."
+            f"이 주문 후 {sector} 업종이 계좌에서 차지하는 비율은 {_pct(post_trade_exposure)}가 되어, "
+            f"설정한 한도 {_pct(config.sector_max_weight)}을 넘습니다."
         ),
+        guidance="같은 업종의 종목은 비슷한 원인으로 함께 움직일 수 있어 분산 효과가 줄어들 수 있습니다. 주문은 그대로 진행할 수 있습니다.",
         numbers={
             "sector": sector,
             "postTradeExposure": str(post_trade_exposure),
@@ -350,3 +455,16 @@ def _check_sector_limit(
 
 def _pct(value: Decimal) -> str:
     return f"{(value * 100).quantize(Decimal('0.1'))}%"
+
+
+def _money(value: Decimal) -> str:
+    return f"${value.quantize(Decimal('0.01')):,.2f}"
+
+
+def _reference_price_label(context: RiskContext) -> str:
+    source = str(context.metrics.price_source or "").lower()
+    if source in {"redis_live", "live", "redis", "live_quote"}:
+        return "실시간 시장가격"
+    if source == "daily_close":
+        return "최근 종가"
+    return "최근 기준가격"

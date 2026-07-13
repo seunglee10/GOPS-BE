@@ -11,7 +11,7 @@ sector_max_weight: 0.40
 max_order_notional: 50000
 # 팻핑거: 일평균거래량 대비 주문 수량 상한 비율
 max_adv_participation: 0.05
-# 팻핑거: 직전가 대비 지정가 허용 괴리
+# 가격 입력 확인 경고: 기준가격 대비 지정가 괴리
 price_band_pct: 0.05
 
 # 일일 손실이 계좌의 이 비율에 도달하면 당일 신규 매수 차단 (쿨다운)
