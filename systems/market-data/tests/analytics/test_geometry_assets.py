@@ -21,6 +21,7 @@ from alfaka.analytics.geometry import (  # noqa: E402
     analyze_geometry,
     compute_sma_snapshot,
 )
+from alfaka.analytics.atr import latest_atr  # noqa: E402
 
 
 class GeometryAssetKernelTest(unittest.TestCase):
@@ -74,6 +75,54 @@ class GeometryAssetKernelTest(unittest.TestCase):
                 {"ascending_triangle", "descending_triangle", "symmetrical_triangle"},
             )
             self.assertTrue(all(item["style"]["lineStyle"] == "solid" for item in result["drawings"][-2:]))
+
+    def test_recorded_market_levels_are_active_relevant_and_role_consistent(self):
+        fixture_root = ROOT / "systems" / "market-data" / "tests" / "fixtures" / "chart_assets_v2"
+        manifest = json.loads((fixture_root / "manifest.json").read_text(encoding="utf-8"))
+        emitted = 0
+
+        for series in manifest["series"]:
+            with self.subTest(symbol=series["symbol"]):
+                rows = json.loads((fixture_root / series["file"]).read_text(encoding="utf-8"))[-TARGET_BARS["1D"]:]
+                result = analyze_geometry(series["symbol"], "1D", rows)
+                current = float(rows[-1]["close"])
+                atr = latest_atr(rows)
+                levels = [*result["supports"], *result["resistances"]]
+                emitted += len(levels)
+
+                for level in levels:
+                    self.assertLessEqual(level["currentDistanceAtr"], 2.0)
+                    self.assertGreaterEqual(level["touches"], 3)
+                    self.assertGreaterEqual(level["reactionCount"], 2)
+                    self.assertTrue(level["activePass"])
+                    self.assertTrue(level["hardPass"])
+                    self.assertIn(level["state"], {
+                        "support_active", "resistance_active",
+                        "role_flip_support", "role_flip_resistance",
+                    })
+                    if level["role"] == "support":
+                        self.assertGreaterEqual(current, float(level["zoneLow"]) - 0.25 * atr)
+                    else:
+                        self.assertLessEqual(current, float(level["zoneHigh"]) + 0.25 * atr)
+
+        self.assertGreater(emitted, 0)
+
+    def test_known_aapl_noise_window_does_not_emit_horizontal_levels(self):
+        fixture_root = ROOT / "systems" / "market-data" / "tests" / "fixtures" / "chart_assets_v2"
+        manifest = json.loads((fixture_root / "manifest.json").read_text(encoding="utf-8"))
+        episode = next(
+            item for item in manifest["episodes"]
+            if item["episodeId"] == "aapl-2026-07-09-known_regression"
+        )
+        rows = [
+            row for row in json.loads((fixture_root / episode["series"]).read_text(encoding="utf-8"))
+            if row["timestamp"] <= episode["asOf"]
+        ]
+
+        result = analyze_geometry(episode["symbol"], "1D", rows)
+
+        self.assertEqual(result["supports"], [])
+        self.assertEqual(result["resistances"], [])
 
     def test_geometry_promotes_recorded_flag_to_primary_pattern_and_drawings(self):
         fixture = ROOT / "systems" / "market-data" / "tests" / "fixtures" / "chart_assets_v2" / "nvda-1d.json"

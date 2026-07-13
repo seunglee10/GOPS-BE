@@ -279,6 +279,41 @@ class FeaturePackGoldenTest(unittest.TestCase):
 
         self.assertEqual(state, "support_active")
 
+    def test_level_role_recovers_after_false_break_closes_back_inside(self):
+        resistance_rows = [
+            {"close": 99.0, "low": 98.8, "high": 100.2},
+            {"close": 101.0, "low": 100.4, "high": 101.2},
+            {"close": 100.1, "low": 99.9, "high": 100.5},
+        ]
+        resistance_episode = [{
+            "startIndex": 0, "endIndex": 0, "approach": "below",
+            "outcome": "reaction", "mfeAtr": 0.8,
+        }]
+        support_rows = [
+            {"close": 101.0, "low": 99.8, "high": 101.2},
+            {"close": 99.0, "low": 98.8, "high": 99.6},
+            {"close": 99.9, "low": 99.5, "high": 100.1},
+        ]
+        support_episode = [{
+            "startIndex": 0, "endIndex": 0, "approach": "above",
+            "outcome": "reaction", "mfeAtr": 0.8,
+        }]
+
+        self.assertEqual(
+            _role_state(
+                resistance_rows, 99.8, 100.2, [1.0] * 3,
+                resistance_episode, QUALITY_CONFIG["1D"],
+            ),
+            "resistance_active",
+        )
+        self.assertEqual(
+            _role_state(
+                support_rows, 99.8, 100.2, [1.0] * 3,
+                support_episode, QUALITY_CONFIG["1D"],
+            ),
+            "support_active",
+        )
+
     def test_stale_medium_52_week_extreme_is_not_hard_passed(self):
         path = ROOT / "systems/market-data/tests/fixtures/chart_assets_v2/meta-1d.json"
         rows = [row for row in json.loads(path.read_text(encoding="utf-8")) if row["timestamp"] <= "2025-05-28T00:00:00.000Z"]
