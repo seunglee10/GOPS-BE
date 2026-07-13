@@ -92,7 +92,7 @@ class ChartAssetsRoutesTest(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
 
     def test_build_returns_202_and_poll_cancel_work(self):
-        submitted = self.client.post("/api/charts/analysis-assets/build", json={"symbols": ["NVDA"], "intervals": ["1D", "1W"]})
+        submitted = self.client.post("/api/charts/analysis-assets/build", json={"symbols": ["NVDA"], "intervals": ["1m", "1D"]})
         self.assertEqual(submitted.status_code, 202)
         job_id = submitted.json()["jobId"]
         self.assertEqual(len(self.queue.items), 1)
@@ -122,13 +122,13 @@ class ChartAssetsRoutesTest(unittest.TestCase):
 
     def test_sp500_build_expands_registry_and_preserves_envelope_options(self):
         response = self.client.post("/api/charts/analysis-assets/build", json={
-            "symbols": "sp500", "intervals": ["1W", "1D"], "force": True,
+            "symbols": "sp500", "intervals": ["1m", "1D"], "force": True,
         })
 
         self.assertEqual(response.status_code, 202)
         envelope = self.queue.items[-1]
         self.assertEqual(envelope["symbols"], ["NVDA", "AAPL"])
-        self.assertEqual(envelope["intervals"], ["1W", "1D"])
+        self.assertEqual(envelope["intervals"], ["1m", "1D"])
         self.assertNotIn("llmEnabled", envelope)
         self.assertNotIn("skipFreshHours", envelope)
         self.assertTrue(envelope["force"])
