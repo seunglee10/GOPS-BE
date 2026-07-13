@@ -111,11 +111,32 @@ class DeploymentContractsTest(unittest.TestCase):
         self.assertEqual(cron["spec"]["schedule"], "40 8 * * 1-5")
         self.assertEqual(cron["spec"]["timeZone"], "Asia/Seoul")
         self.assertEqual(cron["spec"]["concurrencyPolicy"], "Forbid")
+        self.assertFalse(cron["spec"]["suspend"])
         container = cron["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]
         intervals = next(item["value"] for item in container["env"] if item["name"] == "CHART_ASSET_INTERVALS")
         self.assertEqual(intervals, "1m,1D")
         manual = (REPO_ROOT / "scripts/aws/run-chart-geometry-build-job.sh").read_text(encoding="utf-8")
         self.assertIn('INTERVALS="${INTERVALS:-1m,1D}"', manual)
+
+    def test_aws_overlay_preserves_chart_builder_memory_contract(self):
+        completed = subprocess.run(
+            ["kubectl", "kustomize", "infra/k8s/overlays/aws-incluster-app-ci"],
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        resources = [item for item in yaml.safe_load_all(completed.stdout) if item]
+        deployment = next(
+            item
+            for item in resources
+            if item.get("kind") == "Deployment"
+            and item.get("metadata", {}).get("name") == "chart-asset-builder"
+        )
+        builder_resources = deployment["spec"]["template"]["spec"]["containers"][0]["resources"]
+
+        self.assertEqual(builder_resources["requests"]["memory"], "512Mi")
+        self.assertEqual(builder_resources["limits"]["memory"], "1Gi")
 
     def test_agent_shared_changes_rebuild_agent_and_backend_images(self):
         detector = (REPO_ROOT / "scripts/aws/detect-changed-services.sh").read_text(encoding="utf-8")

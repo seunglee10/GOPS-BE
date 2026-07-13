@@ -6,6 +6,7 @@ metadata:
 spec:
   schedule: "40 8 * * 1-5"
   timeZone: Asia/Seoul
+  suspend: false
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 2
   failedJobsHistoryLimit: 3
