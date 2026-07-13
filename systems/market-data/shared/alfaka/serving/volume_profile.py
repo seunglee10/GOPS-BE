@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, Literal
 
 
 VOLUME_PROFILE_CALCULATION_VERSION = "volume-profile-v1"
+VOLUME_PROFILE_EXACT_CALCULATION_VERSION = "volume-profile-exact-v2"
 DEFAULT_VOLUME_PROFILE_TARGET_BINS = 10
 DEFAULT_VALUE_AREA_PERCENT = 0.7
+VolumeProfileBinningMode = Literal["adaptive", "exact"]
 
 
 def compute_volume_profile_payload(
@@ -19,10 +21,12 @@ def compute_volume_profile_payload(
     target_bins: int = DEFAULT_VOLUME_PROFILE_TARGET_BINS,
     price_min: float | None = None,
     price_max: float | None = None,
+    binning_mode: VolumeProfileBinningMode = "adaptive",
 ) -> dict[str, Any]:
     source_rows = raw_payload.get("candles") if isinstance(raw_payload, dict) else raw_payload
     candles = normalize_source_candles(source_rows if isinstance(source_rows, list) else [])
     requested_target = normalize_target_bins(target_bins)
+    calculation_version = calculation_version_for_binning_mode(binning_mode)
     source = first_string(raw_payload, candles, "source") or "candles"
     feed = first_string(raw_payload, candles, "feed") or "unknown"
     feed_profile = first_string(raw_payload, candles, "feedProfile")
@@ -45,8 +49,8 @@ def compute_volume_profile_payload(
             "source": source,
             "feed": feed,
             "feedProfile": feed_profile,
-            "calculationVersion": VOLUME_PROFILE_CALCULATION_VERSION,
-            "classificationVersion": VOLUME_PROFILE_CALCULATION_VERSION,
+            "calculationVersion": calculation_version,
+            "classificationVersion": calculation_version,
             "sideClassification": "estimated",
             "estimationMethod": "candle-range-volume-overlap",
             "dataStatus": "empty",
@@ -63,8 +67,19 @@ def compute_volume_profile_payload(
             "valueArea": None,
         }
 
-    domain_min, domain_max, step = nice_display_domain(bucket_range[0], bucket_range[1], requested_target)
-    buckets = build_display_buckets(domain_min, domain_max, step, candles)
+    if binning_mode == "exact":
+        domain_min, domain_max = bucket_range
+        step = (domain_max - domain_min) / requested_target
+        buckets = build_display_buckets(
+            domain_min,
+            domain_max,
+            step,
+            candles,
+            exact_bucket_count=requested_target,
+        )
+    else:
+        domain_min, domain_max, step = nice_display_domain(bucket_range[0], bucket_range[1], requested_target)
+        buckets = build_display_buckets(domain_min, domain_max, step, candles)
     total_volume = sum(bucket["volume"] for bucket in buckets)
     total_trade_count = sum(bucket["tradeCount"] for bucket in buckets)
     poc = poc_payload(buckets)
@@ -92,8 +107,8 @@ def compute_volume_profile_payload(
         "source": source,
         "feed": feed,
         "feedProfile": feed_profile,
-        "calculationVersion": VOLUME_PROFILE_CALCULATION_VERSION,
-        "classificationVersion": VOLUME_PROFILE_CALCULATION_VERSION,
+        "calculationVersion": calculation_version,
+        "classificationVersion": calculation_version,
         "sideClassification": "estimated",
         "estimationMethod": "candle-range-volume-overlap",
         "dataStatus": "ready" if total_volume > 0 else "empty",
@@ -152,6 +167,14 @@ def normalize_target_bins(value: int | float | str | None) -> int:
     return max(4, min(parsed, 48))
 
 
+def calculation_version_for_binning_mode(binning_mode: VolumeProfileBinningMode) -> str:
+    if binning_mode == "adaptive":
+        return VOLUME_PROFILE_CALCULATION_VERSION
+    if binning_mode == "exact":
+        return VOLUME_PROFILE_EXACT_CALCULATION_VERSION
+    raise ValueError(f"Unsupported volume profile binning mode: {binning_mode}")
+
+
 def resolve_bucket_range(rows: list[dict[str, Any]], price_min: float | None, price_max: float | None) -> tuple[float, float] | None:
     if not rows:
         return None
@@ -190,19 +213,32 @@ def nice_display_domain(price_min: float, price_max: float, target_bins: int) ->
     return domain_min, domain_max, step
 
 
-def build_display_buckets(domain_min: float, domain_max: float, step: float, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    count = bucket_count_for_domain(domain_min, domain_max, step)
+def build_display_buckets(
+    domain_min: float,
+    domain_max: float,
+    step: float,
+    rows: list[dict[str, Any]],
+    *,
+    exact_bucket_count: int | None = None,
+) -> list[dict[str, Any]]:
+    count = exact_bucket_count if exact_bucket_count is not None else bucket_count_for_domain(domain_min, domain_max, step)
     buckets = []
+    allocation_bounds: list[tuple[float, float]] = []
     weighted_vwap = [0.0 for _ in range(count)]
     for index in range(count):
         lower = domain_min + index * step
-        upper = lower + step
+        upper = domain_max if exact_bucket_count is not None and index == count - 1 else lower + step
+        display_lower = rounded(lower)
+        display_upper = rounded(upper)
+        allocation_bounds.append(
+            (lower, upper) if exact_bucket_count is not None else (display_lower, display_upper)
+        )
         buckets.append({
             "index": index,
-            "priceBin": rounded(lower),
+            "priceBin": display_lower,
             "priceBinSize": rounded(step),
-            "priceMin": rounded(lower),
-            "priceMax": rounded(upper),
+            "priceMin": display_lower,
+            "priceMax": display_upper,
             "priceMid": rounded((lower + upper) / 2),
             "volume": 0.0,
             "tradeCount": 0,
@@ -216,7 +252,14 @@ def build_display_buckets(domain_min: float, domain_max: float, step: float, row
         volume = candle["volume"]
         if volume <= 0:
             continue
-        allocations = candle_bucket_allocations(candle, buckets, domain_min, domain_max, step)
+        allocations = candle_bucket_allocations(
+            candle,
+            buckets,
+            domain_min,
+            domain_max,
+            step,
+            allocation_bounds=allocation_bounds,
+        )
         for index, allocated_volume in allocations:
             if allocated_volume <= 0:
                 continue
@@ -238,6 +281,8 @@ def candle_bucket_allocations(
     domain_min: float,
     domain_max: float,
     step: float,
+    *,
+    allocation_bounds: list[tuple[float, float]] | None = None,
 ) -> list[tuple[int, float]]:
     low = candle["priceLow"]
     high = candle["priceHigh"]
@@ -246,7 +291,12 @@ def candle_bucket_allocations(
         overlaps: list[tuple[int, float]] = []
         total_overlap = 0.0
         for index, bucket in enumerate(buckets):
-            overlap = max(0.0, min(high, bucket["priceMax"]) - max(low, bucket["priceMin"]))
+            bucket_min, bucket_max = (
+                allocation_bounds[index]
+                if allocation_bounds is not None
+                else (bucket["priceMin"], bucket["priceMax"])
+            )
+            overlap = max(0.0, min(high, bucket_max) - max(low, bucket_min))
             if overlap > 0:
                 overlaps.append((index, overlap))
                 total_overlap += overlap

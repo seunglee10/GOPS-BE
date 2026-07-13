@@ -117,6 +117,14 @@ finish with `derived.state=ready|failed` and
 `derived.source=api-compute|redis`; there is no derived queue, worker, or
 ClickHouse artifact contract.
 
+`GET /api/charts/volume-profile-bins` treats `targetBins` as an exact display
+bucket count from 4 through 48. The active chart requests 10 equal-width buckets
+across the visible closed-candle low/high range. Zero-volume buckets remain in
+the response so their price-space gaps are preserved, while a request with no
+source candles remains empty. The response `priceBinSize` is the resolved price
+range divided by `targetBins`; `priceBinSize=auto` remains the compatible request
+mode. This chart calculation uses `volume-profile-exact-v2` cache keys.
+
 ## Order Flow Consumers
 
 - The `bidask` chart type reads intraday minute rows and supports `1m`, `10m`,

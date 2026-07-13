@@ -39,6 +39,7 @@ class DerivedCalculationServiceTest(unittest.TestCase):
                 from_time=request["from"],
                 to_time=request["to"],
                 target_bins=10,
+                binning_mode="exact",
             )
 
         with ThreadPoolExecutor(max_workers=10) as executor:
@@ -104,6 +105,10 @@ class DerivedCalculationServiceTest(unittest.TestCase):
             "price_max": 103.0,
         }
         volume = compute_volume_profile_payload({"candles": candles, "source": "fixture", "feed": "sip"}, **kwargs)
+        self.assertEqual(volume_request["calculationVersion"], "volume-profile-exact-v2")
+        self.assertIn("volume-profile-exact-v2", volume_request["cacheKey"])
+        self.assertEqual(volume["calculationVersion"], "volume-profile-v1")
+        self.assertEqual(volume["bucketCount"], 7)
         self.assertEqual(volume["totalVolume"], 2190.0)
         self.assertEqual(volume["poc"], {
             "index": 3,
