@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -25,7 +26,7 @@ from alfaka.analytics.geometry import (  # noqa: E402
 class GeometryAssetKernelTest(unittest.TestCase):
     def test_interval_contract_and_coverage_windows_are_exact(self):
         self.assertEqual(SUPPORTED_INTERVALS, ("1m", "5m", "10m", "1h", "4h", "1D", "1W"))
-        self.assertEqual(ALGORITHM_VERSION, "ohlcv-consensus-regression-triangles")
+        self.assertEqual(ALGORITHM_VERSION, "ohlcv-consensus-pattern-families-v2")
         self.assertEqual(MINIMUM_BARS, 120)
         for interval in SUPPORTED_INTERVALS[:-1]:
             self.assertEqual(TARGET_BARS[interval], 380)
@@ -55,7 +56,7 @@ class GeometryAssetKernelTest(unittest.TestCase):
         result = analyze_geometry("NVDA", "10m", rows)
 
         timestamps = {row["timestamp"] for row in rows}
-        self.assertLessEqual(len(result["drawings"]), 6)
+        self.assertLessEqual(len(result["drawings"]), 8)
         self.assertLessEqual(len(result["supports"]), 2)
         self.assertLessEqual(len(result["resistances"]), 2)
         self.assertNotIn("bullish_flag", str(result))
@@ -73,6 +74,25 @@ class GeometryAssetKernelTest(unittest.TestCase):
                 {"ascending_triangle", "descending_triangle", "symmetrical_triangle"},
             )
             self.assertTrue(all(item["style"]["lineStyle"] == "solid" for item in result["drawings"][-2:]))
+
+    def test_geometry_promotes_recorded_flag_to_primary_pattern_and_drawings(self):
+        fixture = ROOT / "systems" / "market-data" / "tests" / "fixtures" / "chart_assets_v2" / "nvda-1d.json"
+        rows = json.loads(fixture.read_text(encoding="utf-8"))[:950]
+
+        result = analyze_geometry("NVDA", "1D", rows)
+
+        self.assertEqual(result["primaryPattern"]["kind"], "bullish_flag")
+        self.assertEqual(result["primaryPattern"]["state"], "confirmed")
+        self.assertEqual(result["tradePlan"]["action"], "buy_candidate")
+        self.assertEqual(result["tradePlan"]["direction"], "long")
+        self.assertIn(result["tradePlan"]["signalAt"], {row["timestamp"] for row in rows})
+        self.assertEqual(result["patterns"][0]["geometryHash"], result["primaryPattern"]["geometryHash"])
+        pattern_drawings = [
+            drawing for drawing in result["drawings"]
+            if result["primaryPattern"]["geometryHash"] in drawing["id"]
+        ]
+        self.assertEqual(len(pattern_drawings), 3)
+        self.assertTrue(any("상승 깃발형" in drawing["label"] for drawing in pattern_drawings))
 
     def test_geometry_uses_previous_regression_triangle_detector(self):
         for interval in SUPPORTED_INTERVALS:

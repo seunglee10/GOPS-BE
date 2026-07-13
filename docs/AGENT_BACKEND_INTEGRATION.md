@@ -388,13 +388,26 @@ POST   /api/charts/analysis-assets/build/{job_id}/cancel
 DELETE는 개발 패널의 명시적 정리 기능이다. 최대 100개 symbol과
 `1m/5m/10m/1h/4h/1D/1W`만 받고 선택된 pair를 PostgreSQL
 `chart_assets.geometry_assets`에서 삭제한다. 자동 TTL이나 broad cleanup은 사용하지
-않는다. build 완료·삭제 후 프런트는 cache를 무효화하고 열린 chart를 재조회한다.
+않는다. 새 build 요청은 운영 interval `1m/1D`만 허용한다. 다른 지원 interval의 기존
+자산은 GET/DELETE와 표시 호환을 위해 유지한다. build 완료·삭제 후 프런트는 cache를
+무효화하고 열린 chart를 재조회한다.
 Build 상태와 bounded log는 PostgreSQL polling 응답으로 제공한다. Redis pub/sub과
 SSE route는 사용하지 않는다.
+API에서 만든 수동 build는 서버가 `source=manual`, `priority=100`으로 지정하고 정기
+build는 `source=scheduled`, `priority=10`으로 지정한다. 클라이언트는 priority를
+보내지 않는다. 실행 중인 동일 source/force/symbol/interval 요청은
+`request_fingerprint`로 기존 job에 합치며 응답의 `coalesced=true`로 알린다.
+Worker는 높은 priority부터 claim하고, 최대 2회 처리 뒤 lease가 만료된 item은
+`lease_expired_after_max_attempts` 실패로 종결해 job이 영구 대기하지 않게 한다.
 최종 생성량은 status의 작은 `createdEntities` 정수만 사용한다. Coverage의
 `drawingCount`는 저장된 엔티티 수이며 호환 alias `storedDrawingCount`와 같다. 실제
 차트 적용 수와 anchor/stale 제외 수는 현재 candle과 active chart document의 실제
 drawing ID를 아는 프런트가 계산한다.
+
+Geometry payload는 활성 후보 `patterns[]`, 최고 점수 `primaryPattern`, 삼각형 호환
+필드 `primaryTriangle`/`historicalTriangle`을 함께 가진다. 저장 drawing은 최대 8개다.
+기존 PostgreSQL 설치는 build 배포 전에 명시적 chart-asset migration Job을 다시 실행해
+`drawing_count` check constraint와 queue priority/fingerprint 컬럼·index를 갱신한다.
 
 `CHART_ASSET_STORAGE_MAINTENANCE=true` 동안 GET은 계속 열어 두고 build와 DELETE만
 503으로 막는다. 기존 숫자형 자산은 변환하거나 fallback으로 읽지 않는다.

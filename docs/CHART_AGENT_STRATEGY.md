@@ -1,6 +1,6 @@
 # Chart Intelligence / Agent Strategy
 
-Status: design baseline, implementation not started
+Status: design baseline; deterministic Geometry asset subset implemented
 
 Owners: agent-orchestration, market-data, chart-engine, frontend
 

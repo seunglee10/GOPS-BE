@@ -251,7 +251,7 @@ catalog를 image/runtime filesystem에 포함해야 한다.
 | --- | --- | --- |
 | `agent-orchestrator` | yes | HTTP compatibility endpoint and direct report lookup. |
 | `agent-analysis-worker` | yes | hot analysis request를 소비하고 report를 저장한다. |
-| `chart-asset-builder` | no | PostgreSQL queue의 symbol/interval item을 처리한다. ClickHouse 완료 봉을 우선 읽고 누락 range만 Alpaca로 보충한 뒤 지지·저항과 세 삼각형을 결정론적으로 계산해 PostgreSQL에 저장한다. S3, Redis, Kafka, LLM을 사용하지 않으며 interactive orchestrator와 독립이다. |
+| `chart-asset-builder` | no | PostgreSQL queue의 symbol/interval item을 처리한다. ClickHouse 완료 봉을 우선 읽고 누락 range만 Alpaca로 보충한 뒤 지지·저항과 삼각형·깃발형·페넌트·직사각형·쐐기·채널 이탈을 결정론적으로 계산해 PostgreSQL에 저장한다. S3, Redis, Kafka, LLM을 사용하지 않으며 interactive orchestrator와 독립이다. |
 | `agent-delivery-gateway` | yes for async/SSE | result event를 Redis report update로 mirror한다. |
 | `agent-intent-classifier` | no | ambiguous query를 위한 optional cheap classifier. |
 | `deep-analysis-worker` | no | opt-in deep analysis request를 처리한다. |

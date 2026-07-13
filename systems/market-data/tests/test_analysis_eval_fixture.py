@@ -41,7 +41,7 @@ class AnalysisEvalFixtureTest(unittest.TestCase):
         second = analyze_geometry("NVDA", "1D", rows)
 
         self.assertEqual(first, second)
-        self.assertLessEqual(len(first["drawings"]), 6)
+        self.assertLessEqual(len(first["drawings"]), 8)
         self.assertLessEqual(len(first["supports"]), 2)
         self.assertLessEqual(len(first["resistances"]), 2)
         timestamps = {row["timestamp"] for row in rows}

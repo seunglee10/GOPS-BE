@@ -14,7 +14,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 def run() -> None:
-    concurrency = max(1, int(os.getenv("CHART_ASSET_BUILD_CONCURRENCY", "4")))
+    concurrency = max(1, int(os.getenv("CHART_ASSET_BUILD_CONCURRENCY", "2")))
     worker_id = f"{socket.gethostname()}-{os.getpid()}"
     queue = build_chart_asset_queue_from_env()
     builder = ChartAssetBuilder(concurrency=concurrency)

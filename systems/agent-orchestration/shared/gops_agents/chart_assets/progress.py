@@ -4,7 +4,7 @@ import copy
 import threading
 from typing import Any
 
-from .envelope import ChartAssetBuildEnvelope, utc_now_iso
+from .envelope import ChartAssetBuildEnvelope, request_fingerprint, utc_now_iso
 from .job_store import PostgresChartAssetJobStore, TERMINAL_JOB_STATUSES
 
 
@@ -14,11 +14,21 @@ TERMINAL_STATUSES = TERMINAL_JOB_STATUSES
 class InMemoryChartAssetProgressStore:
     def __init__(self):
         self._states: dict[str, dict[str, Any]] = {}
+        self._active_fingerprints: dict[str, str] = {}
+        self._job_fingerprints: dict[str, str] = {}
         self._lock = threading.RLock()
 
     def initialize(self, envelope: ChartAssetBuildEnvelope) -> dict[str, Any]:
-        state = initial_state(envelope)
-        return self.save(state, event={"type": "status", "status": "queued"})
+        fingerprint = request_fingerprint(envelope)
+        with self._lock:
+            existing_job_id = self._active_fingerprints.get(fingerprint)
+            existing = self._states.get(existing_job_id or "")
+            if existing and existing.get("status") not in TERMINAL_STATUSES:
+                return copy.deepcopy(existing)
+            state = initial_state(envelope)
+            self._active_fingerprints[fingerprint] = envelope.job_id
+            self._job_fingerprints[envelope.job_id] = fingerprint
+            return self.save(state, event={"type": "status", "status": "queued"})
 
     def get(self, job_id: str) -> dict[str, Any] | None:
         with self._lock:
@@ -49,7 +59,13 @@ class InMemoryChartAssetProgressStore:
         def mutate(state: dict[str, Any]) -> None:
             state["status"] = status
             state.update(values)
-        return self.mutate(job_id, mutate, event={"type": "status", "status": status})
+        state = self.mutate(job_id, mutate, event={"type": "status", "status": status})
+        if state and status in TERMINAL_STATUSES:
+            with self._lock:
+                fingerprint = self._job_fingerprints.pop(job_id, None)
+                if fingerprint and self._active_fingerprints.get(fingerprint) == job_id:
+                    self._active_fingerprints.pop(fingerprint, None)
+        return state
 
     def add_log(self, job_id: str, message: str) -> None:
         # The in-memory fallback has no streaming transport. Do not retain logs in
@@ -149,6 +165,8 @@ def initial_state(envelope: ChartAssetBuildEnvelope) -> dict[str, Any]:
     return {
         "jobId": envelope.job_id,
         "status": "queued",
+        "source": envelope.source,
+        "priority": envelope.priority,
         "requested": {"symbolCount": len(envelope.symbols), "intervals": list(envelope.intervals), "force": envelope.force},
         "progress": {"total": total, "done": 0, "failed": 0, "skipped": 0, "warnings": 0, "current": None},
         "repair": initial_repair_state(),

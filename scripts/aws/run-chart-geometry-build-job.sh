@@ -3,7 +3,7 @@ set -euo pipefail
 
 NAMESPACE="${K8S_NAMESPACE:-alfaka-market-data}"
 SYMBOLS="${SYMBOLS:-}"
-INTERVALS="${INTERVALS:-1m,5m,10m,1h,4h,1D,1W}"
+INTERVALS="${INTERVALS:-1m,1D}"
 FORCE="${FORCE:-false}"
 JOB_NAME="${JOB_NAME:-chart-geometry-build-$(date +%Y%m%d%H%M%S)}"
 IMAGE="$(kubectl -n "$NAMESPACE" get deployment/chart-asset-builder -o jsonpath='{.spec.template.spec.containers[0].image}')"

@@ -261,7 +261,7 @@ data:
   AGENT_EVENT_INPUT_TOPICS: market.layer.trades.v1,market.layer.candles.1m.closed.v1,market.layer.candles.5m.closed.v1,market.layer.candles.10m.closed.v1,market.layer.candles.1h.closed.v1,market.layer.candles.4h.closed.v1,market.layer.candles.1d.closed.v1,market.layer.candles.1w.closed.v1,market.layer.candles.1mo.closed.v1,market.layer.events.v1
   AGENT_MARKET_EVENTS_TOPIC: agents.market-events.v1
   AGENT_ANALYSIS_REQUESTS_TOPIC: agents.analysis-requests.v1
-  CHART_ASSET_BUILD_CONCURRENCY: "4"
+  CHART_ASSET_BUILD_CONCURRENCY: "2"
   CHART_ASSET_REPAIR_ENABLED: "true"
   CHART_ASSET_REPAIR_ALPACA_ENABLED: "true"
   CHART_ASSET_REPAIR_CONCURRENCY: "2"

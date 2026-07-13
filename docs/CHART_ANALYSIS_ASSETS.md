@@ -1,21 +1,33 @@
 # Chart Geometry Assets
 
-Chart Geometry Asset은 완료된 실제 OHLCV 봉에서 현재 지지·저항과 삼각형만 계산해
-차트에 적용하는 결정론적 자산이다. LLM 해설이나 다른 패턴을 생성하지 않는다.
+Chart Geometry Asset은 완료된 실제 OHLCV 봉에서 현재 지지·저항과 가격 패턴을
+계산해 차트에 적용하는 결정론적 자산이다. 패턴 좌표나 판정에 LLM을 사용하지 않는다.
 
 ## 지원 범위
 
 - interval: `1m`, `5m`, `10m`, `1h`, `4h`, `1D`, `1W`
-- geometry: 지지선 최대 2개, 저항선 최대 2개, 최고 삼각형 1개(선 2개)
-- 삼각형: 상승, 하락, 대칭
+- geometry: 지지선 최대 2개, 저항선 최대 2개, 최고 점수 패턴 1개를 최대 8개 drawing으로 표현
+- 패턴: 상승·하락·대칭 삼각형, 상승·하락 깃발형/페넌트/직사각형, 상승·하락 쐐기,
+  하락 채널 상단 돌파, 상승 채널 하단 이탈
+- 매매 시나리오: 확인된 최고 점수 패턴의 진입 후보·손절·목표·손익비를 `tradePlan`으로 제공
 - 보조지표: 선택 interval의 완료 봉 개수 기준 SMA60·SMA120과 최근 교차
 - 좌표: 해당 interval에 실제로 존재하는 canonical candle timestamp와 가격
 - intraday: `1m` 실제 정규장 봉, `5m/10m/1h/4h`는 09:30 ET 기준 파생 봉
 
-삼각형은 방향전환 피벗의 최근 연속 묶음을 회귀선으로 적합한 뒤 상승·하락·대칭
-형태를 판정한다. 경계마다 최소 2회, 전체 최소 5회 접촉과 수렴·내부 포함 조건을
-통과한 형성 중 또는 돌파 확인 후보 중 최고 점수 1개만 표시한다. 지지·저항은 별도의
+패턴은 방향전환 피벗과 회귀 경계선에서 깃대 유무, 두 경계의 기울기·평행성·수렴률,
+내부 포함률, 종가 돌파 방향을 판정한다. 깃발형·페넌트·직사각형은 선행 impulse를
+요구하고, 채널 이탈은 종가 돌파가 거래량 또는 다음 봉 유지로 확인된 경우만 표시한다.
+`patterns[]`에는 활성 hard-pass 후보를 저장하고 `primaryPattern`만 작도한다. 삼각형
+호환 필드인 `primaryTriangle`/`historicalTriangle`도 유지한다. 지지·저항은 별도의
 OHLCV 접촉 증거 계산을 계속 사용한다.
+
+`tradePlan`은 주문이 아니라 차트 표시용 시나리오다. `forming`은 관찰만 하고
+`confirmed`에서만 신호를 낸다. 돌파 기준은 패턴 경계에서 `0.25 ATR` 바깥의 완료 봉
+종가이며, 신규 진입 손절은 반대 경계와 돌파선에서 `1 ATR` 떨어진 가격 중 더 가까운
+유효 무효화 가격을 사용한다. 목표가는 깃발형·페넌트는 깃대 길이, 나머지는 패턴의
+최대 높이를 돌파선에 투영한다. 신규 매수·공매도 시나리오는 손익비 `2.0` 이상만
+후보로 표시한다. 기본 운영 모드는 long-only라 하락 확인은 공매도 진입이 아니라
+`매도·청산 후보`다.
 
 ## 데이터와 저장 흐름
 
@@ -27,7 +39,8 @@ flowchart LR
   Gap -- "아니오" --> Alpaca["누락 range만 Alpaca"]
   Alpaca --> CH
   Gap -- "예" --> Kernel["OHLCV consensus kernel"]
-  Kernel --> PG["PostgreSQL geometry_assets"]
+  Kernel --> Plan["Pattern tradePlan"]
+  Plan --> PG["PostgreSQL geometry_assets"]
   PG --> API["Chart asset API"]
   API --> UI["Geometry layer + SMA60/120"]
 ```
@@ -46,10 +59,18 @@ Alpaca 요청에도 실재 봉이 없는 무거래 slot은 `provider_confirmed_e
 
 ## 실행
 
-- API 패널에서 symbol/interval을 선택해 PostgreSQL 작업을 등록한다.
-- 평일 KST 08:40 CronJob이 S&P500 전체 7개 interval 작업을 멱등 등록한다.
-- 수동 실행은 `scripts/aws/run-chart-geometry-build-job.sh`를 사용한다.
+- API 패널은 새 빌드를 `1m/1D`로 제한하고 두 interval을 기본 선택한다.
+- 수동 작업은 priority 100, 정기 작업은 priority 10이며 worker는 높은 값부터 처리한다.
+- 동일 source/force/symbol/interval의 실행 중 요청은 하나의 job으로 합친다.
+- 평일 KST 08:40 CronJob은 S&P500 전체 `1m/1D` 작업만 멱등 등록한다.
+- 수동 실행 스크립트도 기본적으로 `1m/1D`만 등록한다.
 - 빌드 상태는 PostgreSQL polling으로 확인한다.
+- 최대 2회 처리 뒤 lease가 만료된 item은 실패로 종결해 영구 대기를 막는다.
+- 기존 PostgreSQL 설치는 migration Job을 다시 실행해 작도 상한과 queue index를 적용한다.
 
 새 완료 봉 때문에 stale이 된 자산은 차트에서 제거하지 않고 낮은 불투명도로 표시한다.
 현재 symbol과 interval이 모두 일치하는 자산만 적용한다.
+확인 신호는 실제 완료 봉에 `flagMarker`로 표시한다. 신규 포지션 후보의 진입·손절·목표는
+프런트가 `riskRewardBox`로 만들며, 미래 봉 timestamp를 만들지 않고 화면에서만 미래
+logical index로 투영한다. 이 동적 도형은 PostgreSQL geometry drawing 예산 8개에 포함하지
+않으며 주문 API를 호출하지 않는다.

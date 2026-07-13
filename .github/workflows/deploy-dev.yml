@@ -12,6 +12,11 @@ on:
         required: false
         default: false
         type: boolean
+      run_chart_asset_migrations:
+        description: "Run chart Geometry SQL migrations using the built agent-orchestrator image"
+        required: false
+        default: false
+        type: boolean
       rebuild_news_cache:
         description: "Rebuild news Redis cache using the built market-storage image"
         required: false
@@ -161,10 +166,15 @@ jobs:
         env:
           SERVICES: ${{ steps.changes.outputs.services }}
           RUN_ORDER_MIGRATIONS: ${{ github.event.inputs.run_order_migrations || 'false' }}
+          RUN_CHART_ASSET_MIGRATIONS: ${{ github.event.inputs.run_chart_asset_migrations || 'false' }}
           REBUILD_NEWS_CACHE: ${{ github.event.inputs.rebuild_news_cache || 'false' }}
         run: |
           if [[ "$RUN_ORDER_MIGRATIONS" == "true" && " ${SERVICES} " != *" order-worker "* ]]; then
             echo "run_order_migrations=true requires services to include order-worker." >&2
+            exit 1
+          fi
+          if [[ "$RUN_CHART_ASSET_MIGRATIONS" == "true" && " ${SERVICES} " != *" agent-orchestrator "* ]]; then
+            echo "run_chart_asset_migrations=true requires services to include agent-orchestrator." >&2
             exit 1
           fi
           if [[ "$REBUILD_NEWS_CACHE" == "true" && " ${SERVICES} " != *" market-storage "* ]]; then
@@ -226,6 +236,12 @@ jobs:
       - name: Run order database migrations
         if: steps.changes.outputs.has_services == 'true' && github.event.inputs.run_order_migrations == 'true'
         run: ./scripts/aws/run-order-migrations-job.sh
+
+      - name: Run chart asset database migrations
+        if: steps.changes.outputs.has_services == 'true' && github.event.inputs.run_chart_asset_migrations == 'true'
+        env:
+          ECR_AGENT_ORCHESTRATOR_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-agent-orchestrator
+        run: ./scripts/aws/run-chart-asset-migrations-job.sh
 
       - name: Server-side dry run
         if: steps.changes.outputs.has_services == 'true'

@@ -141,11 +141,13 @@ def test_fat_finger_blocks_excessive_adv_participation():
     assert triggered(verdict, "fat_finger")[0].numbers["participation"] == "0.06"
 
 
-def test_fat_finger_blocks_price_far_from_last_price():
+def test_fat_finger_warns_price_far_from_last_price():
     verdict = evaluate(qty="1", price="106")  # 6% above last price 100
 
-    assert verdict.verdict == "block"
-    assert "lastPrice" in triggered(verdict, "fat_finger")[0].numbers
+    result = triggered(verdict, "fat_finger")[0]
+    assert verdict.verdict == "allow"
+    assert result.action == "warn"
+    assert "lastPrice" in result.numbers
 
 
 def test_fat_finger_applies_to_sells_too():
@@ -309,12 +311,12 @@ def test_sector_from_metrics_overrides_config_map():
     assert result.numbers["sector"] == "energy"
 
 
-def test_zero_equity_skips_equity_rules_but_fat_finger_still_blocks():
+def test_zero_equity_skips_equity_rules_but_price_warning_still_runs():
     context = build_context(account_equity=Decimal("0"))
     verdict = evaluate(qty="1", price="200", context=context)  # 직전가 100 대비 +100%
 
-    assert verdict.verdict == "block"
-    assert triggered(verdict, "fat_finger")
+    assert verdict.verdict == "allow"
+    assert triggered(verdict, "fat_finger")[0].action == "warn"
     assert {"single_name_limit", "sector_limit", "daily_loss_cooldown"} <= skipped_ids(verdict)
 
 

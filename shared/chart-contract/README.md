@@ -6,7 +6,14 @@ Shared chart-command and chart-analysis-asset contracts for frontend runtime and
 per `(symbol, interval)`. Builders persist complete `DrawingEntity` objects and
 the frontend applies them without a second compiler. Geometry assets support
 `1m`, `5m`, `10m`, `1h`, `4h`, `1D`, `1W`; the general chart can still expose
-other intervals independently.
+other intervals independently. The geometry payload stores active `patterns[]`,
+one `primaryPattern`, and compatibility `primaryTriangle` fields. It permits at
+most eight drawings so a pole plus two boundaries can coexist with level lines.
+The optional-compatible `tradePlan` field stores a deterministic, non-executable
+pattern scenario. New builders always emit it; older rows may omit it until rebuilt.
+The frontend derives an ephemeral `flagMarker` and, for new-position candidates,
+an ephemeral `riskRewardBox` from that plan without consuming the eight persisted
+geometry drawing slots.
 
 Chart data storage and transport semantics are defined by
 `docs/CHART_DATA_ARCHITECTURE.md`. This contract covers UI/chart command shape;
@@ -44,6 +51,9 @@ Rules:
 - `riskRewardBox` uses exactly three canonical anchors in `[entry, stop, target]`
   order. Target time is normalized to Stop time; Stop and Target must remain on
   opposite sides of Entry.
+- A trade-plan overlay anchors Entry to the confirmed completed candle. Its
+  non-persisted future Stop/Target edge may use logical index only; it must not
+  invent or persist a candle timestamp.
 - `fibonacciRetracement` uses exactly two canonical swing anchors and fixed v1
   levels `0, 0.236, 0.382, 0.5, 0.618, 0.786, 1`.
 

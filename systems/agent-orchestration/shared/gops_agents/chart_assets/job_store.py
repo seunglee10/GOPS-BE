@@ -8,7 +8,7 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from .envelope import ChartAssetBuildEnvelope
+from .envelope import ChartAssetBuildEnvelope, request_fingerprint
 from .storage import _database_conninfo
 
 
@@ -25,35 +25,72 @@ class PostgresChartAssetJobStore:
 
     def enqueue(self, envelope: ChartAssetBuildEnvelope) -> dict[str, Any]:
         total = len(envelope.symbols) * len(envelope.intervals)
+        fingerprint = request_fingerprint(envelope)
+        actual_job_id = envelope.job_id
         with self._connect() as conn:
-            conn.execute(
+            inserted = conn.execute(
                 f"""
                 INSERT INTO {JOBS_TABLE} (
-                    job_id, requested_by, submitted_at, status, force_build,
+                    job_id, requested_by, submitted_at, status, force_build, source, priority, request_fingerprint,
                     requested_intervals, symbol_count, total_items, repair, logs
-                ) VALUES (%s, %s, %s, 'queued', %s, %s, %s, %s, '{{}}'::jsonb, '[]'::jsonb)
-                ON CONFLICT (job_id) DO NOTHING
+                ) VALUES (%s, %s, %s, 'queued', %s, %s, %s, %s, %s, %s, %s, '{{}}'::jsonb, '[]'::jsonb)
+                ON CONFLICT DO NOTHING
+                RETURNING job_id
                 """,
                 (
                     envelope.job_id, envelope.requested_by, _timestamp(envelope.submitted_at), envelope.force,
-                    Jsonb(list(envelope.intervals)), len(envelope.symbols), total,
+                    envelope.source, envelope.priority, fingerprint, Jsonb(list(envelope.intervals)),
+                    len(envelope.symbols), total,
                 ),
-            )
-            for symbol in envelope.symbols:
-                for interval in envelope.intervals:
-                    conn.execute(
-                        f"""
-                        INSERT INTO {ITEMS_TABLE} (job_id, symbol, "interval", status)
-                        VALUES (%s, %s, %s, 'pending')
-                        ON CONFLICT (job_id, symbol, "interval") DO NOTHING
-                        """,
-                        (envelope.job_id, symbol, interval),
-                    )
+            ).fetchone()
+            if inserted is None:
+                existing = conn.execute(
+                    f"""
+                    SELECT job_id
+                    FROM {JOBS_TABLE}
+                    WHERE request_fingerprint = %s
+                      AND status IN ('queued', 'running')
+                    ORDER BY priority DESC, submitted_at, job_id
+                    LIMIT 1
+                    """,
+                    (fingerprint,),
+                ).fetchone()
+                if existing is not None:
+                    actual_job_id = existing["job_id"]
+            else:
+                for symbol in envelope.symbols:
+                    for interval in envelope.intervals:
+                        conn.execute(
+                            f"""
+                            INSERT INTO {ITEMS_TABLE} (job_id, symbol, "interval", status)
+                            VALUES (%s, %s, %s, 'pending')
+                            ON CONFLICT (job_id, symbol, "interval") DO NOTHING
+                            """,
+                            (envelope.job_id, symbol, interval),
+                        )
             conn.commit()
-        return self.get(envelope.job_id) or {}
+        return self.get(actual_job_id) or {}
 
     def claim_next(self, worker_id: str, *, lease_seconds: int = 900) -> dict[str, Any] | None:
         with self._connect() as conn:
+            expired = conn.execute(
+                f"""
+                WITH expired AS (
+                    UPDATE {ITEMS_TABLE}
+                    SET status = 'failed', stage = 'lease',
+                        error = 'Worker lease expired after the maximum number of attempts.',
+                        reason = 'lease_expired_after_max_attempts', lease_expires_at = NULL,
+                        finished_at = now(), updated_at = now()
+                    WHERE status = 'running'
+                      AND attempts >= 2
+                      AND lease_expires_at < now()
+                    RETURNING job_id
+                )
+                SELECT array_agg(DISTINCT job_id) AS job_ids FROM expired
+                """
+            ).fetchone()
+            for expired_job_id in (expired or {}).get("job_ids") or []:
+                self._finish_job_if_terminal(conn, expired_job_id)
             row = conn.execute(
                 f"""
                 WITH candidate AS (
@@ -67,7 +104,7 @@ class PostgresChartAssetJobStore:
                           item.status = 'pending'
                           OR (item.status = 'running' AND item.lease_expires_at < now())
                       )
-                    ORDER BY job.submitted_at, item.job_id, item.symbol, item."interval"
+                    ORDER BY job.priority DESC, job.submitted_at, item.job_id, item.symbol, item."interval"
                     FOR UPDATE OF item SKIP LOCKED
                     LIMIT 1
                 )
@@ -91,7 +128,7 @@ class PostgresChartAssetJobStore:
                 UPDATE {JOBS_TABLE}
                 SET status = 'running', started_at = COALESCE(started_at, now()), updated_at = now()
                 WHERE job_id = %s
-                RETURNING requested_by, submitted_at, force_build, requested_intervals
+                RETURNING requested_by, submitted_at, force_build, requested_intervals, source
                 """,
                 (row["job_id"],),
             ).fetchone()
@@ -100,7 +137,7 @@ class PostgresChartAssetJobStore:
         envelope = ChartAssetBuildEnvelope.create(
             job_id=row["job_id"], requested_by=job["requested_by"],
             submitted_at=_iso(job["submitted_at"]), symbols=[row["symbol"]],
-            intervals=intervals, force=job["force_build"],
+            intervals=intervals, force=job["force_build"], source=job["source"],
         )
         return {"envelope": envelope, "symbol": row["symbol"], "interval": row["interval"], "attempts": row["attempts"]}
 
@@ -121,6 +158,7 @@ class PostgresChartAssetJobStore:
         requested_intervals = job["requested_intervals"] if isinstance(job["requested_intervals"], list) else json.loads(job["requested_intervals"])
         return {
             "jobId": job_id, "status": job["status"],
+            "source": job["source"], "priority": int(job["priority"]),
             "requested": {"symbolCount": job["symbol_count"], "intervals": requested_intervals, "force": job["force_build"]},
             "progress": {
                 "total": job["total_items"], "done": len(done), "failed": len(failed),

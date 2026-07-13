@@ -92,25 +92,43 @@ class ChartAssetsRoutesTest(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
 
     def test_build_returns_202_and_poll_cancel_work(self):
-        submitted = self.client.post("/api/charts/analysis-assets/build", json={"symbols": ["NVDA"], "intervals": ["1D", "1W"]})
+        submitted = self.client.post("/api/charts/analysis-assets/build", json={"symbols": ["NVDA"], "intervals": ["1m", "1D"]})
         self.assertEqual(submitted.status_code, 202)
         job_id = submitted.json()["jobId"]
         self.assertEqual(len(self.queue.items), 1)
+        self.assertEqual(self.queue.items[0]["source"], "manual")
+        self.assertEqual(self.queue.items[0]["priority"], 100)
         status = self.client.get(f"/api/charts/analysis-assets/build/{job_id}")
         self.assertEqual(status.json()["status"], "queued")
         canceled = self.client.post(f"/api/charts/analysis-assets/build/{job_id}/cancel")
         self.assertTrue(canceled.json()["cancelRequested"])
         self.progress.set_status(job_id, "canceled", finishedAt="2026-07-11T00:00:00.000Z")
 
+    def test_identical_active_manual_builds_are_coalesced(self):
+        first = self.client.post(
+            "/api/charts/analysis-assets/build",
+            json={"symbols": ["NVDA"], "intervals": ["1D"]},
+        )
+        second = self.client.post(
+            "/api/charts/analysis-assets/build",
+            json={"symbols": ["NVDA"], "intervals": ["1D"]},
+        )
+
+        self.assertEqual(first.status_code, 202)
+        self.assertEqual(second.status_code, 202)
+        self.assertEqual(second.json()["jobId"], first.json()["jobId"])
+        self.assertTrue(second.json()["coalesced"])
+        self.assertEqual(len(self.queue.items), 1)
+
     def test_sp500_build_expands_registry_and_preserves_envelope_options(self):
         response = self.client.post("/api/charts/analysis-assets/build", json={
-            "symbols": "sp500", "intervals": ["1W", "1D"], "force": True,
+            "symbols": "sp500", "intervals": ["1m", "1D"], "force": True,
         })
 
         self.assertEqual(response.status_code, 202)
         envelope = self.queue.items[-1]
         self.assertEqual(envelope["symbols"], ["NVDA", "AAPL"])
-        self.assertEqual(envelope["intervals"], ["1W", "1D"])
+        self.assertEqual(envelope["intervals"], ["1m", "1D"])
         self.assertNotIn("llmEnabled", envelope)
         self.assertNotIn("skipFreshHours", envelope)
         self.assertTrue(envelope["force"])
@@ -122,12 +140,25 @@ class ChartAssetsRoutesTest(unittest.TestCase):
             })
         self.assertEqual(response.status_code, 503)
 
-    def test_build_accepts_all_chart_intervals(self):
+    def test_build_accepts_only_operational_chart_intervals(self):
         response = self.client.post("/api/charts/analysis-assets/build", json={
-            "symbols": ["NVDA"], "intervals": ALL_INTERVALS,
+            "symbols": ["NVDA"], "intervals": ["1m", "1D"],
         })
         self.assertEqual(response.status_code, 202)
-        self.assertEqual(self.queue.items[-1]["intervals"], ALL_INTERVALS)
+        self.assertEqual(self.queue.items[-1]["intervals"], ["1m", "1D"])
+
+    def test_build_defaults_to_one_minute_and_one_day(self):
+        response = self.client.post("/api/charts/analysis-assets/build", json={"symbols": ["NVDA"]})
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(self.queue.items[-1]["intervals"], ["1m", "1D"])
+
+    def test_build_rejects_supported_but_disabled_interval(self):
+        response = self.client.post("/api/charts/analysis-assets/build", json={
+            "symbols": ["NVDA"], "intervals": ["5m"],
+        })
+
+        self.assertEqual(response.status_code, 422)
 
     def test_rejects_invalid_intervals(self):
         response = self.client.post("/api/charts/analysis-assets/build", json={

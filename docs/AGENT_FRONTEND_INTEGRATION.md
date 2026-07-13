@@ -360,10 +360,22 @@ canonical candle timestamp로만 snap하며 대응 봉이 없으면 해당 drawi
 단, Geometry 지지·저항 `horizontalLine`은 가격 자체가 핵심인 무한 수평선이므로
 저장된 과거 접촉 봉이 아직 차트에 로드되지 않았으면 현재 로드된 첫·마지막 canonical
 candle timestamp에 presentation anchor를 투영해 즉시 표시한다. PostgreSQL 원본
-접촉 timestamp는 변경하지 않으며 삼각형의 timed anchor에는 이 예외를 적용하지 않는다.
-패널은 `1m/5m/10m/1h/4h/1D/1W`를 지원하고 지지·저항, 세 삼각형, coverage,
+접촉 timestamp는 변경하지 않으며 패턴 경계의 timed anchor에는 이 예외를 적용하지 않는다.
+패널은 `1m/5m/10m/1h/4h/1D/1W`를 지원하고 지지·저항, 삼각형·깃발형·페넌트·
+직사각형·쐐기·채널 이탈 패턴, coverage,
 SMA60·SMA120과 최근 교차 상태를 표시한다. Geometry 토글 하나가 모든 자동 작도를
-제어하며 삼각형은 실선, forming은 낮은 불투명도로 표현한다.
+제어하며 패턴 선은 실선, forming은 낮은 불투명도로 표현한다. 새 자산은
+`primaryPattern`을 우선 표시하고 기존 geometry 자산은 `primaryTriangle`로 호환한다.
+기존 7개 interval 자산은 계속 표시할 수 있지만 새 빌드 선택지는 `1m/1D` 두 개뿐이며
+둘 다 기본 선택한다. 동일 실행 중 요청에 합쳐진 경우 이를 안내하고 polling은 기존
+job URL을 사용한다. 상태 화면은 수동 우선 작업과 정기 작업을 구분해 표시한다.
+`tradePlan.action`이 `buy_candidate`이면 확인 봉의 `flagMarker`와
+`[entry, stop, target]` 순서의 `riskRewardBox`를 함께 적용한다. long-only 기본값의
+`sell_candidate`는 청산 의미의 `flagMarker`만 적용하며 공매도 박스를 만들지 않는다.
+손익비가 기준 미만인 `no_trade`와 미확정 `watch`는 매매 도형을 만들지 않는다.
+박스의 Entry는 실제 확인 봉 timestamp를 사용하고 Stop/Target의 미래 끝점은 자산에
+저장하지 않는 logical index 투영만 사용해 가짜 candle timestamp를 만들지 않는다.
+이 표시는 교육용 시나리오이며 주문 route를 호출하지 않는다.
 
 SMA 기간은 일수가 아니라 현재 interval의 완료 봉 개수다. SMA60과 SMA120 overlay는
 Geometry 자산 적용 시 함께 활성화하고 골든·데드크로스는 별도 marker가 아닌 metadata로

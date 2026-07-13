@@ -58,13 +58,21 @@ class DeploymentContractsTest(unittest.TestCase):
         self.assertNotIn("job-chart-asset-migrations.yaml", base_resources)
 
         deployment = load_yaml("infra/k8s/base/app/deployment-chart-asset-builder.yaml")
-        env_from = deployment["spec"]["template"]["spec"]["containers"][0]["envFrom"]
+        builder = deployment["spec"]["template"]["spec"]["containers"][0]
+        env_from = builder["envFrom"]
         secret_names = {
             item["secretRef"]["name"]
             for item in env_from
             if "secretRef" in item
         }
         self.assertIn("alfaka-order-db-secret", secret_names)
+        self.assertEqual(builder["resources"]["requests"]["memory"], "512Mi")
+        self.assertEqual(builder["resources"]["limits"]["memory"], "1Gi")
+
+        base_config = load_yaml("infra/k8s/base/app/configmap.yaml")["data"]
+        aws_config = load_yaml("infra/k8s/overlays/aws/configmap-aws-patch.yaml")["data"]
+        self.assertEqual(base_config["CHART_ASSET_BUILD_CONCURRENCY"], "2")
+        self.assertEqual(aws_config["CHART_ASSET_BUILD_CONCURRENCY"], "2")
 
         migration = load_yaml("infra/k8s/base/job-chart-asset-migrations.yaml")
         container = migration["spec"]["template"]["spec"]["containers"][0]
@@ -98,16 +106,37 @@ class DeploymentContractsTest(unittest.TestCase):
             "${CHART_ASSET_STORAGE_MAINTENANCE:-false}",
         )
 
-    def test_chart_geometry_schedule_and_manual_job_cover_all_seven_intervals(self):
+    def test_chart_geometry_schedule_and_manual_job_use_operational_intervals(self):
         cron = load_yaml("infra/k8s/overlays/aws/scheduled/cronjob-chart-geometry-build.yaml")
         self.assertEqual(cron["spec"]["schedule"], "40 8 * * 1-5")
         self.assertEqual(cron["spec"]["timeZone"], "Asia/Seoul")
         self.assertEqual(cron["spec"]["concurrencyPolicy"], "Forbid")
+        self.assertFalse(cron["spec"]["suspend"])
         container = cron["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]
         intervals = next(item["value"] for item in container["env"] if item["name"] == "CHART_ASSET_INTERVALS")
-        self.assertEqual(intervals, "1m,5m,10m,1h,4h,1D,1W")
+        self.assertEqual(intervals, "1m,1D")
         manual = (REPO_ROOT / "scripts/aws/run-chart-geometry-build-job.sh").read_text(encoding="utf-8")
-        self.assertIn('INTERVALS="${INTERVALS:-1m,5m,10m,1h,4h,1D,1W}"', manual)
+        self.assertIn('INTERVALS="${INTERVALS:-1m,1D}"', manual)
+
+    def test_aws_overlay_preserves_chart_builder_memory_contract(self):
+        completed = subprocess.run(
+            ["kubectl", "kustomize", "infra/k8s/overlays/aws-incluster-app-ci"],
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        resources = [item for item in yaml.safe_load_all(completed.stdout) if item]
+        deployment = next(
+            item
+            for item in resources
+            if item.get("kind") == "Deployment"
+            and item.get("metadata", {}).get("name") == "chart-asset-builder"
+        )
+        builder_resources = deployment["spec"]["template"]["spec"]["containers"][0]["resources"]
+
+        self.assertEqual(builder_resources["requests"]["memory"], "512Mi")
+        self.assertEqual(builder_resources["limits"]["memory"], "1Gi")
 
     def test_agent_shared_changes_rebuild_agent_and_backend_images(self):
         detector = (REPO_ROOT / "scripts/aws/detect-changed-services.sh").read_text(encoding="utf-8")
@@ -336,6 +365,36 @@ fi
         self.assertIn("quality", workflow["jobs"])
         self.assertEqual(workflow["jobs"]["deploy"]["needs"], "quality")
         self.assertIn("kubectl kustomize infra/k8s/base/platform", workflow_text)
+
+    def test_dev_deploy_can_migrate_chart_assets_before_app_rollout(self):
+        workflow = (REPO_ROOT / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8")
+
+        self.assertIn("run_chart_asset_migrations:", workflow)
+        self.assertIn("run-chart-asset-migrations-job.sh", workflow)
+        self.assertIn(
+            "run_chart_asset_migrations=true requires services to include agent-orchestrator.",
+            workflow,
+        )
+        self.assertLess(
+            workflow.index("run-chart-asset-migrations-job.sh"),
+            workflow.index("name: Deploy app workloads"),
+        )
+
+    def test_local_dev_deploy_can_migrate_chart_assets_before_app_rollout(self):
+        script = (REPO_ROOT / "scripts/aws/deploy-dev-local.sh").read_text(encoding="utf-8")
+
+        self.assertIn('RUN_CHART_ASSET_MIGRATIONS="${RUN_CHART_ASSET_MIGRATIONS:-false}"', script)
+        self.assertIn("REMOTE_BRANCH=branch-name", script)
+        self.assertIn(
+            "RUN_CHART_ASSET_MIGRATIONS=true requires agent-orchestrator to be selected.",
+            script,
+        )
+        self.assertIn("run-chart-asset-migrations-job.sh", script)
+        main = script[script.index("main()") :]
+        self.assertLess(
+            main.index("run_migrations_if_requested"),
+            main.index("deploy_app_workloads"),
+        )
 
     def test_terraform_covers_all_current_images_with_immutable_tags(self):
         terraform = (REPO_ROOT / "infra/aws/terraform/main.tf").read_text(encoding="utf-8")

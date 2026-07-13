@@ -46,10 +46,23 @@ class ChartAssetStorageTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "does not match"):
             storage.save(asset)
 
-    def test_schema_has_seven_interval_primary_key_and_six_drawing_limit(self):
+    def test_storage_accepts_eight_drawings_and_rejects_nine(self):
+        storage = PostgresChartAssetStorage("postgresql://test", connect=lambda *_args, **_kwargs: Connection())
+        asset = _asset()
+        template = asset["geometry"]["drawings"][0]
+        asset["geometry"]["drawings"] = [{**template, "id": f"drawing-{index}"} for index in range(8)]
+
+        self.assertTrue(storage.save(asset))
+
+        asset["geometry"]["drawings"].append({**template, "id": "drawing-8"})
+        with self.assertRaisesRegex(ValueError, "drawing limit"):
+            storage.save(asset)
+
+    def test_schema_has_seven_interval_primary_key_and_eight_drawing_limit(self):
         sql = (ROOT / "systems" / "agent-orchestration" / "jobs" / "chart-asset-migrations" / "003_geometry_assets.sql").read_text(encoding="utf-8")
         self.assertIn('PRIMARY KEY (symbol, "interval")', sql)
-        self.assertIn("drawing_count BETWEEN 0 AND 6", sql)
+        self.assertIn("drawing_count BETWEEN 0 AND 8", sql)
+        self.assertIn("DROP CONSTRAINT IF EXISTS geometry_assets_drawing_count_check", sql)
         self.assertNotIn("'1M'", sql)
 
 

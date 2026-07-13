@@ -27,11 +27,12 @@ flowchart LR
 ```
 
 The default dev deploy entrypoint is `scripts/aws/deploy-dev-local.sh`. It runs
-from an operator's local machine but always deploys the latest remote
-`origin/dev` commit, not local uncommitted changes. It records successful
+from an operator's local machine and deploys the latest remote `origin/dev`
+commit by default, not local uncommitted changes. An explicit `REMOTE_BRANCH`
+may select another remote branch for a validation deploy. It records successful
 deploy state per app image in EKS `ConfigMap/gops-dev-deploy-state` using
 `service.<name>.lastSuccessfulSha`, then compares each service's own deployed
-baseline with `origin/dev`. This prevents a backend-only deploy from hiding an
+baseline with the selected remote target. This prevents a backend-only deploy from hiding an
 older undeployed frontend change. For legacy state migration, the script falls
 back to the old global `lastSuccessfulSha` only when `lastSuccessfulServices`
 included that service, and otherwise reads the live primary Deployment image
@@ -287,9 +288,14 @@ scripts/aws/restore-graphdb-pvc.sh
 The dev deploy workflow does not run cache rebuilds or SQL migrations
 automatically. For one-off maintenance during a manual build, set
 `run_order_migrations=true` with `order-worker` in `services`, or
+`run_chart_asset_migrations=true` with `agent-orchestrator` in `services`, or
 `rebuild_news_cache=true` with `market-storage` in `services`. Run
-`scripts/aws/run-order-migrations-job.sh` directly only when SQL migrations must
-be applied outside the deploy workflow.
+the corresponding migration script directly only when SQL migrations must be
+applied outside the deploy workflow.
+The local equivalents are `RUN_ORDER_MIGRATIONS=true`,
+`RUN_CHART_ASSET_MIGRATIONS=true`, and `REBUILD_NEWS_CACHE=true`; each requires
+its owning service to be selected. Migration Jobs run after image push but before
+the app workload apply.
 
 Market processor deploys as two runtime units from the same
 `gops-market-processor` image. `alfaka-market-processor` handles trades, bars,
@@ -782,10 +788,16 @@ stream processor가 Redis/ClickHouse에서 캔들을 복구할 때는 legacy JSO
 S3, Redis, Kafka, OpenAI를 사용하지 않는다.
 
 AWS overlay는 Alpaca repair 동시성 2와 최대 range 8을 사용한다. 평일 KST 08:40
-CronJob은 S&P500 전체 7개 interval을 등록한다. PostgreSQL schema는
+CronJob은 S&P500 전체의 `1m/1D`만 등록한다. API 패널과 수동 실행 스크립트도 새
+빌드를 이 두 interval로 제한한다. 기존 다른 interval 자산의 조회·표시는 유지한다.
+`chart-asset-builder`는 concurrency 2,
+memory request `512Mi`, limit `1Gi`로 실행한다. 수동 build priority 100이 정기 build
+priority 10보다 먼저 claim된다. PostgreSQL schema는
 `job-chart-asset-migrations.yaml`과 `run-chart-asset-migrations-job.sh`로 명시 적용하며
 runtime은 자동 생성하지 않는다. one-shot migration Job은 PostgreSQL Secret이 없으면
-시작하지 않는다.
+시작하지 않는다. 범용 패턴 자산 배포 전에는 migration Job을 다시 실행해
+`geometry_assets.drawing_count` check constraint와 queue priority/fingerprint index를
+갱신한다.
 
 Financial final-answer synthesis is enabled with
 `AGENT_FINANCIAL_FINAL_ANSWER_PROVIDER=openai`. The orchestrator still reads SEC
