@@ -15,16 +15,14 @@ from gops_simul.config import PROJECT_ROOT
 
 DEFAULT_SCENARIO_ID = "saturday-demo-amd-iff-oke"
 SEMICONDUCTOR_SYMBOLS = ("AMD",)
-MATERIALS_SYMBOLS = ("IFF",)
 ENERGY_SYMBOLS = ("OKE",)
-ALL_DEMO_SYMBOLS = (*SEMICONDUCTOR_SYMBOLS, *MATERIALS_SYMBOLS, *ENERGY_SYMBOLS)
+ALL_DEMO_SYMBOLS = (*SEMICONDUCTOR_SYMBOLS, *ENERGY_SYMBOLS)
 SEMICONDUCTOR_WEIGHTS = {
     "AMD": 0.70,
 }
 ENERGY_WEIGHTS = {"OKE": 0.80}
 DEFAULT_SEED_PRICES = {
     "AMD": 565.0,
-    "IFF": 82.0,
     "OKE": 90.0,
 }
 
@@ -570,15 +568,10 @@ def load_demo_scenario(root: Path | None = None) -> DemoScenario:
 def default_demo_scenario() -> DemoScenario:
     return DemoScenario(
         scenario_id=DEFAULT_SCENARIO_ID,
-        title="Saturday operator demo · AMD, IFF, OKE",
+        title="Saturday operator demo · AMD, OKE",
         seed_prices=dict(DEFAULT_SEED_PRICES),
         phases=[
             DemoScenarioPhase("market-overview", "시장 조망", 0),
-            DemoScenarioPhase("recommendation", "추천 종목", 30),
-            DemoScenarioPhase("company-research", "기업 분석", 60),
-            DemoScenarioPhase("chart-analysis", "차트 분석", 90),
-            DemoScenarioPhase("order-ready", "예약매매 설정", 130),
-            DemoScenarioPhase("market-open", "본장 시작", 170),
             DemoScenarioPhase("breaking-event", "지정학 이벤트", 210),
             DemoScenarioPhase("market-close", "장 마감·복기", 285),
         ],

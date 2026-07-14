@@ -114,7 +114,7 @@ class SimulatorEksDeploymentContractTests(unittest.TestCase):
         self.assertIn("ALPACA_STREAM_BASE_URL=ws://gops-simulator:8765", start_script)
         self.assertIn("/api/control/mode", start_script)
         self.assertIn('{"mode":"live"}', start_script)
-        self.assertIn("ALPACA_SYMBOLS=AMD,OKE", start_script)
+        self.assertIn("ALPACA_COLLECTION_SYMBOLS=AMD,OKE", start_script)
         self.assertIn("ALPACA_CHANNELS=trades,quotes", start_script)
         self.assertIn("ORDER_FLOW_PINNED_SYMBOLS=AMD,OKE", start_script)
         self.assertIn("TRADE_CONDITION_EXECUTION_MODE=paper", start_script)
