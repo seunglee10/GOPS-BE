@@ -8,7 +8,7 @@ on:
         required: false
         type: string
       run_order_migrations:
-        description: "Run SQL migrations using the built order-worker image"
+        description: "Legacy force switch. Order migrations run automatically whenever order-worker or agent-orchestrator is selected."
         required: false
         default: false
         type: boolean
@@ -166,11 +166,16 @@ jobs:
         env:
           SERVICES: ${{ steps.changes.outputs.services }}
           RUN_ORDER_MIGRATIONS: ${{ github.event.inputs.run_order_migrations || 'false' }}
+          ORDER_MIGRATIONS_REQUIRED: ${{ steps.changes.outputs.order_migrations_required }}
           RUN_CHART_ASSET_MIGRATIONS: ${{ github.event.inputs.run_chart_asset_migrations || 'false' }}
           REBUILD_NEWS_CACHE: ${{ github.event.inputs.rebuild_news_cache || 'false' }}
         run: |
           if [[ "$RUN_ORDER_MIGRATIONS" == "true" && " ${SERVICES} " != *" order-worker "* ]]; then
             echo "run_order_migrations=true requires services to include order-worker." >&2
+            exit 1
+          fi
+          if [[ "$ORDER_MIGRATIONS_REQUIRED" == "true" && " ${SERVICES} " != *" order-worker "* ]]; then
+            echo "Automatic order migration gate requires the order-worker migration image." >&2
             exit 1
           fi
           if [[ "$RUN_CHART_ASSET_MIGRATIONS" == "true" && " ${SERVICES} " != *" agent-orchestrator "* ]]; then
@@ -234,7 +239,7 @@ jobs:
         run: ./scripts/aws/update-ci-image-tags.sh
 
       - name: Run order database migrations
-        if: steps.changes.outputs.has_services == 'true' && github.event.inputs.run_order_migrations == 'true'
+        if: steps.changes.outputs.has_services == 'true' && (steps.changes.outputs.order_migrations_required == 'true' || github.event.inputs.run_order_migrations == 'true')
         run: ./scripts/aws/run-order-migrations-job.sh
 
       - name: Run chart asset database migrations
@@ -272,6 +277,10 @@ jobs:
               exit 1
             fi
           done
+
+      - name: Verify AI coach snapshot archive through worker IRSA
+        if: steps.changes.outputs.has_services == 'true' && contains(steps.changes.outputs.services, 'agent-orchestrator')
+        run: ./scripts/aws/verify-ai-coach-snapshot-s3.sh
 
       - name: Smoke test public endpoints
         if: steps.changes.outputs.has_services == 'true'

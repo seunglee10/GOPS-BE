@@ -6,6 +6,7 @@ import time
 from typing import Any
 
 from ..contracts import AnalysisReport, FinalAnswer, IntentRoute, stable_id, utc_now_iso
+from .coach_analytics import build_coach_report
 from ..intent_understanding.ui_parser import has_analysis_intent_signal, has_explicit_ui_surface_signal, parse_ui_query
 from ..retrieval.context import build_primary_retrieval_context
 from ..retrieval.cross_signal import CrossSignal, build_cross_signals
@@ -813,6 +814,7 @@ class AgentOrchestrator:
             latencyTrace=latency_trace,
             agentAnswers=list(state.get("agent_answers", [])),
             agentTrace=agent_trace,
+            coachReport=build_coach_report(request.get("coachInputSnapshot"), state["analysis_id"]),
         )
         return {**state, "report": report}
 

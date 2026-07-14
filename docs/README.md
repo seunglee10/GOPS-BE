@@ -51,6 +51,8 @@ flowchart TD
 | `AGENT_BACKEND_INTEGRATION.md` | Backend API, idempotency, Kafka async path, Redis report store, polling/SSE/WebSocket 계약. |
 | `AGENT_FRONTEND_INTEGRATION.md` | 프런트 request shape, `analysisId`, polling/SSE, report rendering, layout/chart proposal 처리. |
 | `AGENT_AWS_BUILD.md` | `gops-agent-orchestrator` image, ECR/EKS, Kafka, Redis/Valkey, ClickHouse, GraphDB, S3, secrets, smoke checks. |
+| `ai-coach/CODEX_TASK_PROMPT.md` | 이 작업에 사용한 AI 투자 코치 1페이지 구현·검증 원문 프롬프트. |
+| `ai-coach/HANDOFF.md` | AI 투자 코치 4페이지 계약, 결정론적 계산, snapshot, AWS 흐름 및 외부 데이터 의존성. |
 | `../AGENTS.md` | Codex/contributor rules for this repo. |
 
 Supplementary current documents include `ALERT_SYSTEM_DESIGN.md`, `ODC.md`,

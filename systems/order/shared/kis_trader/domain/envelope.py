@@ -74,7 +74,7 @@ def build_order_status_envelope(
     event_id: str | None = None,
     occurred_at: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    envelope = {
         "schema_version": 1,
         "event_type": event_type,
         "event_id": event_id or f"evt_{uuid4().hex}",
@@ -88,6 +88,9 @@ def build_order_status_envelope(
         "source": source,
         "payload": payload,
     }
+    if order.get("user_sub"):
+        envelope["user_sub"] = str(order["user_sub"])
+    return envelope
 
 
 def build_order_fill_envelope(order: dict[str, Any], *, reason: str | None = None) -> dict[str, Any]:

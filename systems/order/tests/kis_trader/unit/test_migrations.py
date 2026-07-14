@@ -25,6 +25,25 @@ def test_repository_does_not_auto_create_schema():
     assert not hasattr(PostgresOrderRepository, "init_schema")
 
 
+def test_ai_coach_migration_declares_owned_orders_and_point_in_time_sources():
+    [migration] = [path for path in migration_files() if path.name == "0006_ai_coach.sql"]
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "ADD COLUMN IF NOT EXISTS user_sub" in sql
+    assert "CREATE TABLE IF NOT EXISTS user_portfolio_snapshot_history" in sql
+    assert "CREATE TABLE IF NOT EXISTS trade_decision_check_events" in sql
+
+
+def test_ai_coach_execution_lookup_has_join_and_time_index():
+    [migration] = [
+        path for path in migration_files() if path.name == "0007_ai_coach_execution_index.sql"
+    ]
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "CREATE INDEX IF NOT EXISTS idx_executions_order_id_created_at" in sql
+    assert "ON executions (order_id, created_at)" in sql
+
+
 def test_alert_migration_declares_alert_and_notification_tables():
     [migration] = [path for path in migration_files() if path.name == "0002_alerts.sql"]
     sql = migration.read_text(encoding="utf-8")

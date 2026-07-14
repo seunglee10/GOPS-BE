@@ -114,10 +114,12 @@ AWS_PROFILE=gops-dev ./scripts/aws/start-dev-simulator.sh
 AWS_PROFILE=gops-dev ./scripts/aws/stop-dev-simulator.sh
 ```
 
-Order/chart migration이나 news cache rebuild는 관련 image가 선택될 때만 허용된다.
+Order migration은 `order-worker` 선택 시 app rollout 전에 자동 실행된다.
+`agent-orchestrator`를 선택하면 migration image인 `order-worker`도 함께 선택된다.
+Chart migration과 news cache rebuild만 명시적 switch가 필요하다.
 
 ```bash
-RUN_ORDER_MIGRATIONS=true FORCE_SERVICES=order-worker AWS_PROFILE=gops-dev ./scripts/aws/deploy-dev-local.sh
+FORCE_SERVICES=order-worker AWS_PROFILE=gops-dev ./scripts/aws/deploy-dev-local.sh
 RUN_CHART_ASSET_MIGRATIONS=true FORCE_SERVICES=agent-orchestrator AWS_PROFILE=gops-dev ./scripts/aws/deploy-dev-local.sh
 REBUILD_NEWS_CACHE=true FORCE_SERVICES=market-storage AWS_PROFILE=gops-dev ./scripts/aws/deploy-dev-local.sh
 ```
@@ -125,7 +127,8 @@ REBUILD_NEWS_CACHE=true FORCE_SERVICES=market-storage AWS_PROFILE=gops-dev ./scr
 ## Failure Behavior
 
 - Docker build나 ECR push가 실패하면 EKS apply 전이므로 클러스터 상태는 바뀌지 않는다.
-- order/chart migration이 실패하면 app workload apply 전에 중단한다.
+- 자동 order migration 또는 명시적 chart migration이 실패하면 app workload apply 전에 중단한다.
+- agent rollout 뒤 IRSA snapshot canary write가 실패하면 배포를 실패 처리하고 rollback을 시도한다.
 - EKS apply 이후 rollout, smoke, rebuild 단계가 실패하면 선택된 Deployment에
   `kubectl rollout undo`를 시도한다.
 - 실패한 실행은 `gops-dev-deploy-state`를 갱신하지 않는다.

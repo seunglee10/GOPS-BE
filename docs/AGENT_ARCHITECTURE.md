@@ -44,6 +44,18 @@ GOPS 에이전트는 사용자 질의를 받아 시장 데이터, 뉴스, 온톨
 
 ## Runtime Flow
 
+`AnalysisReport` may include a versioned `coachReport`. The public request contains only
+the lightweight `coachRequest`; the authenticated analysis worker, not the client, builds
+one immutable `CoachInputSnapshot` from user-owned PostgreSQL rows and point-in-time
+ClickHouse candles. Deterministic coach analytics owns similarity, MFE/MAE/return,
+portfolio impact, habit aggregation, improvement priority, and condition evaluation.
+Narrative synthesis may explain these values but may not recompute them. Missing sources
+remain explicit and do not trigger role-specific refetches.
+
+`coach-report.v2` exposes four UI pages. Page 2 computes `entry`, `exit`, and
+`portfolio` reports independently for `30d`, `90d`, and `1y`; page 4 is the single
+action center that combines the former execution, guardrail, and alert-management pages.
+
 ```mermaid
 flowchart LR
   Client["Frontend or API client"] --> Backend["Backend API"]

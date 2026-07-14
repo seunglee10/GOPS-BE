@@ -1691,6 +1691,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         }])
         orchestrator = AgentOrchestrator()
         orchestrator.news_agent = NewsAgent(ClickHouseNewsProvider(clickhouse_provider=provider, cache=MemoryNewsEvidenceCache()), localizer=NewsLocalizationService())
+        orchestrator.ontology_agent = OntologyAgent(FakeOntologyProvider([]))
 
         with patch.dict(os.environ, {"AGENT_CROSS_SIGNAL_ENABLED": "true"}):
             report = orchestrator.analyze({"symbol": "NVDA", "intent": "뉴스 보여줘", "agentIds": ["agent-02"]})
@@ -3180,6 +3181,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         )
         orchestrator = AgentOrchestrator()
         orchestrator.news_agent = NewsAgent(provider)
+        orchestrator.ontology_agent = OntologyAgent(FakeOntologyProvider([]))
 
         report = orchestrator.analyze({
             "symbol": "NVDA",

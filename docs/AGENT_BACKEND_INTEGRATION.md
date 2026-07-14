@@ -5,6 +5,13 @@
 
 ## Backend Role
 
+AI coach remains on the existing analyze/report contract. `POST /api/agents/analyze`
+accepts only a bounded `coachRequest` (`enabled`, optional `selectedFillId`, optional
+`tradingDate`). A client-supplied `coachInputSnapshot` is stripped. The authenticated
+`agent-analysis-worker` builds one trusted snapshot after consuming the Kafka envelope,
+and completed polling/SSE reports may contain optional `coachReport`. The backend does
+not create per-page jobs or call `AgentOrchestrator.analyze()` in the request handler.
+
 백엔드는 에이전트 요청의 ingress와 report delivery를 담당한다.
 
 - HTTP request validation
@@ -160,6 +167,22 @@ body 초과는 JSON 파싱 전에 `413`을 반환한다. `messages`는 최대 50
 }
 ```
 
+To request the coach report, the frontend adds:
+
+```json
+{
+  "coachRequest": {
+    "enabled": true,
+    "selectedFillId": null,
+    "tradingDate": "2026-07-14"
+  }
+}
+```
+
+The request body never carries fills, positions, portfolio snapshots, indicators, or
+historical cases. These are server-owned inputs and are too large and too sensitive for
+the public 64 KiB request contract.
+
 백엔드는 모르는 agent context field를 worker envelope로 전달하되 `userId`,
 `idempotencyKey`, `submittedAt`, `maxLlmCalls`, `maxInputTokens`,
 `maxOutputTokens`, `llmBudgetOwner` 같은 서버 소유 필드는 제거한다.
@@ -288,6 +311,10 @@ agent.reports:{analysisId}
 Report persistence failure는 가능하면 analysis generation을 막지 않도록 fail
 open한다. 단, polling/SSE 품질은 Redis store 상태에 의존한다.
 
+AWS overlays explicitly set `AGENT_ANALYSIS_QUEUE_BACKEND=kafka` and
+`AGENT_REPORT_STORE_BACKEND=redis`. Explicit backends fail closed during initialization;
+process-local queue/report fallback is reserved for local `auto` configuration.
+
 ## Compatibility Mode
 
 `AGENT_ASYNC_ANALYSIS_ENABLED=false`이면 백엔드는 Kafka enqueue 대신
@@ -328,6 +355,7 @@ KAFKA_BOOTSTRAP_SERVERS
 AGENT_ANALYSIS_REQUESTS_TOPIC
 AGENT_ANALYSIS_RESULTS_TOPIC
 AGENT_DLQ_TOPIC
+AGENT_OUTPUT_KAFKA_REQUIRED
 REDIS_URL
 ```
 
@@ -350,6 +378,15 @@ OPENAI_API_KEY
 AGENT_OPERATION_PLANNER_PROVIDER
 AGENT_OPERATION_PLANNER_MODEL
 AGENT_OPERATION_PLANNER_TIMEOUT_SECONDS
+DATABASE_HOST
+DATABASE_PORT
+DATABASE_NAME
+DATABASE_USER
+DATABASE_PASSWORD
+AI_COACH_SNAPSHOT_ARCHIVE_ENABLED
+AI_COACH_SNAPSHOT_ARCHIVE_REQUIRED
+AI_COACH_SNAPSHOT_S3_BUCKET
+AI_COACH_SNAPSHOT_S3_PREFIX
 ```
 
 `AGENT_OPERATION_PLANNER_PROVIDER=openai` enables the slow-path structured
@@ -418,6 +455,9 @@ Geometry payload는 활성 후보 `patterns[]`, 최고 점수 `primaryPattern`, 
 - Redis report store가 없으면 polling/SSE는 degrade를 명시해야 한다.
 - Provider no-data는 backend error가 아니다.
 - `agent-analysis-worker` failure는 DLQ 또는 report status로 드러나야 한다.
+- AWS에서 `AGENT_OUTPUT_KAFKA_REQUIRED=true`이면 completed result publish/flush
+  실패를 성공 처리하거나 request offset을 commit하지 않는다. 로컬 기본값만
+  `false`로 유지한다.
 - API는 order/account/broker flow를 agent report 생성과 섞지 않는다.
 
 ## Validation

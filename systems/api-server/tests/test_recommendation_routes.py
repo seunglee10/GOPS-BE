@@ -96,6 +96,37 @@ def test_recommendations_require_profile(recommendation_app) -> None:
     assert response.json() == {"status": "profile_required", "items": []}
 
 
+def test_portfolio_snapshot_history_keeps_changes_and_ignores_poll_observation_timestamps() -> None:
+    repository = InMemoryRecommendationRepository()
+    first_payload = {
+        "asOf": "2026-07-14T01:00:00Z",
+        "positions": [{"symbol": "NVDA", "quantity": "10"}],
+        "cash": "1000",
+    }
+
+    first = repository.upsert_portfolio_snapshot("user-1", first_payload)
+    replay_payload = {**first_payload, "asOf": "2026-07-14T01:01:00Z"}
+    replay = repository.upsert_portfolio_snapshot("user-1", replay_payload)
+
+    assert replay["payload"] == replay_payload
+    assert replay["updated_at"] >= first["updated_at"]
+    assert len(repository.portfolio_snapshot_history) == 1
+
+    changed_payload = {
+        **first_payload,
+        "positions": [{"symbol": "NVDA", "quantity": "12"}],
+        "cash": "600",
+    }
+    changed = repository.upsert_portfolio_snapshot("user-1", changed_payload)
+
+    assert changed["payload"] == changed_payload
+    assert len(repository.portfolio_snapshot_history) == 2
+    assert [row["payload"] for row in repository.portfolio_snapshot_history] == [
+        first_payload,
+        changed_payload,
+    ]
+
+
 def test_profile_crud_and_intraday_refresh_returns_new_buy_recommendation(recommendation_app) -> None:
     client = TestClient(recommendation_app)
     profile = client.put(

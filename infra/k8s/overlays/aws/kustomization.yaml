@@ -32,6 +32,9 @@ patches:
       - op: replace
         path: /spec/template/spec/containers/0/envFrom/2/secretRef/optional
         value: false
+      - op: replace
+        path: /spec/template/spec/containers/0/envFrom/3/secretRef/optional
+        value: false
   - target:
       group: apps
       version: v1
@@ -49,6 +52,9 @@ patches:
     patch: |-
       - op: replace
         path: /spec/template/spec/containers/0/envFrom/2/secretRef/optional
+        value: false
+      - op: replace
+        path: /spec/template/spec/containers/0/envFrom/3/secretRef/optional
         value: false
 
 images:

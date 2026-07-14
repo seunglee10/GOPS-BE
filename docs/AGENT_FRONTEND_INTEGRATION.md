@@ -237,6 +237,19 @@ terminal report를 유지할 수 있다.
 
 ## Report Rendering
 
+When present, one `coach-report.v2` is passed from the workspace container into the AI
+coach panel. The panel has four pages: (1) today's trade review, (2) habit review with
+independent `entry`/`exit`/`portfolio` tabs and `30d`/`90d`/`1y` periods, (3) improvement
+priorities, and (4) one action center combining execution experiments, guardrails, and
+alert management. Page sections receive props only and never call the analysis API.
+
+On page 1, the selected fill and similar-case index are local UI state. A fill switch
+selects one `reviewsByFillId` object so chart, missed checks, outcome, portfolio impact,
+and conditions change atomically. Price, volume, RSI, and MACD share the `T-60..T+20`
+relative axis, and today's path ends at its latest observation without a forecast.
+The dev fixture is loaded only by a DEV-only dynamic import when
+`VITE_AI_COACH_DEV_FIXTURE=true`; production has no fixture fallback.
+
 Report에서 우선 렌더링할 영역:
 
 - final answer
