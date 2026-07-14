@@ -19,6 +19,7 @@ from gops_agents.orchestrator import AgentOrchestrator  # noqa: E402
 from gops_agents.orchestration.coach_snapshot_builder import (  # noqa: E402
     ClickHouseCoachMarketProvider,
     CoachInputSnapshotBuilder,
+    _ALERTS_SQL,
     _market_day_bounds,
 )
 from gops_agents.runtime.coach_snapshot_archive import (  # noqa: E402
@@ -111,7 +112,7 @@ class FakeSnapshotDataProvider:
                 },
             ],
             "alerts": [
-                {"id": "alert-1", "symbol": "NVDA", "type": "price_cross", "status": "active", "created_at": "2026-07-10T13:00:00Z"},
+                {"id": "alert-1", "symbol": "NVDA", "type": "price_cross", "status": "active", "proposal_source": "daily_trade", "created_at": "2026-07-10T13:00:00Z"},
                 {"id": "alert-future", "symbol": "NVDA", "type": "price_cross", "status": "active", "created_at": "2026-07-10T16:00:00Z"},
             ],
         }
@@ -224,6 +225,8 @@ class CoachSnapshotPipelineTests(unittest.TestCase):
         self.assertEqual([point["relativeDay"] for point in snapshot["chartContext"]["currentCase"]["series"]], [-1, 0])
         self.assertEqual(len(snapshot["request"]["decisionChecksByFillId"]["fill-today"]), 1)
         self.assertEqual([item["id"] for item in snapshot["request"]["alerts"]], ["alert-1"])
+        self.assertEqual(snapshot["request"]["alerts"][0]["proposal_source"], "daily_trade")
+        self.assertIn("proposal_source", _ALERTS_SQL)
         self.assertEqual(len(snapshot["portfolioBefore"]["history"]), 2)
         self.assertEqual(snapshot["user"]["subjectHash"], hashlib.sha256(b"trusted-user").hexdigest()[:24])
         self.assertNotIn("trusted-user", json.dumps(snapshot, ensure_ascii=False))

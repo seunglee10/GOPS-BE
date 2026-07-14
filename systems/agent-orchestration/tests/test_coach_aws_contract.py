@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -129,6 +130,19 @@ class CoachAwsContractTests(unittest.TestCase):
         self.assertEqual(secret_refs["alfaka-order-db-secret"], False)
         self.assertEqual(secret_refs["alfaka-openai-secret"], False)
 
+    def test_default_app_overlay_keeps_earnings_estimates_collector(self):
+        resources = render("infra/k8s/overlays/aws-incluster-app-ci")
+        cronjob = next(
+            item
+            for item in resources
+            if item.get("kind") == "CronJob"
+            and item.get("metadata", {}).get("name") == "alfaka-yahoo-estimates-sync"
+        )
+        container = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]
+        env = {item["name"]: item.get("value") for item in container.get("env", [])}
+        self.assertEqual(env["YAHOO_ESTIMATES_DRY_RUN"], "false")
+        self.assertIn("systems/fundamentals/jobs/yahoo-estimates-sync/main.py", container["command"])
+
     def test_image_and_terraform_contain_snapshot_runtime(self):
         dockerfile = (REPO_ROOT / "infra/docker/Dockerfile.gops-agent-orchestrator").read_text(
             encoding="utf-8"
@@ -199,31 +213,64 @@ class CoachAwsContractTests(unittest.TestCase):
             local_main.index("deploy_app_workloads"),
         )
 
-        bash_major = int(
-            subprocess.run(
-                ["bash", "-c", 'printf "%s" "${BASH_VERSINFO[0]}"'],
-                check=True,
-                capture_output=True,
-                text=True,
-            ).stdout
+        self.assertNotIn("declare -A", detector)
+        completed = subprocess.run(
+            ["bash", "scripts/aws/detect-changed-services.sh"],
+            cwd=REPO_ROOT,
+            env={**os.environ, "REQUESTED_SERVICES": "agent-orchestrator"},
+            check=True,
+            capture_output=True,
+            text=True,
         )
-        if bash_major >= 4:
+        outputs = dict(
+            line.split("=", 1)
+            for line in completed.stdout.splitlines()
+            if "=" in line
+        )
+        self.assertIn("agent-orchestrator", outputs["services"].split())
+        self.assertIn("order-worker", outputs["services"].split())
+        self.assertEqual(outputs["order_migrations_required"], "true")
+
+    def test_image_tag_updater_runs_on_system_bash_without_associative_arrays(self):
+        updater = (REPO_ROOT / "scripts/aws/update-ci-image-tags.sh").read_text(encoding="utf-8")
+        self.assertNotIn("declare -A", updater)
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            overlay = Path(temporary_dir) / "overlay"
+            shutil.copytree(REPO_ROOT / "infra/k8s/overlays/aws-incluster-app-ci", overlay)
             completed = subprocess.run(
-                ["bash", "scripts/aws/detect-changed-services.sh"],
+                ["bash", "scripts/aws/update-ci-image-tags.sh"],
                 cwd=REPO_ROOT,
-                env={**os.environ, "REQUESTED_SERVICES": "agent-orchestrator"},
+                env={
+                    **os.environ,
+                    "AWS_ACCOUNT_ID": "<aws-account-id>",
+                    "IMAGE_TAG": "bash3-contract",
+                    "KUSTOMIZE_OVERLAY": str(overlay),
+                    "SERVICES": (
+                        "frontend backend market-ingestor market-processor market-storage "
+                        "order-worker kis-adapter agent-orchestrator simulator"
+                    ),
+                },
                 check=True,
                 capture_output=True,
                 text=True,
             )
-            outputs = dict(
-                line.split("=", 1)
-                for line in completed.stdout.splitlines()
-                if "=" in line
-            )
-            self.assertIn("agent-orchestrator", outputs["services"].split())
-            self.assertIn("order-worker", outputs["services"].split())
-            self.assertEqual(outputs["order_migrations_required"], "true")
+            self.assertIn("agent-orchestrator", completed.stdout)
+            rendered = load_yaml(str(overlay / "kustomization.yaml"))
+            self.assertTrue(rendered["images"])
+            self.assertTrue(all(item["newTag"] == "bash3-contract" for item in rendered["images"]))
+
+    def test_scheduled_aws_resources_trigger_their_runtime_service(self):
+        detector = (REPO_ROOT / "scripts/aws/detect-changed-services.sh").read_text(encoding="utf-8")
+        expected = {
+            "cronjob-chart-geometry-build.yaml": "add_service agent-orchestrator",
+            "cronjob-order-flow-daily-rollup.yaml": "add_service market-processor",
+            "cronjob-sec-fundamentals-sync.yaml": "add_service market-storage",
+            "cronjob-yahoo-estimates-sync.yaml": "add_service market-storage",
+        }
+        for filename, service_call in expected.items():
+            branch = detector[detector.index(f"infra/k8s/overlays/aws/scheduled/{filename}") :]
+            branch = branch[: branch.index(";;")]
+            self.assertIn(service_call, branch)
 
     def test_deploy_has_fail_closed_worker_irsa_snapshot_gate(self):
         workflow = (REPO_ROOT / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8")

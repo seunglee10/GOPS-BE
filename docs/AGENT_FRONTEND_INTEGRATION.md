@@ -68,6 +68,42 @@ production build에는 debug snapshot을 노출하지 않는다.
 필드를 받고, `created`일 때만 독립 가격 조건 패널을 invalidate/refetch한다. 관련
 없는 새 분석이 완료되면 이전 proposal context를 폐기한다.
 
+## Chart Derived Profile
+
+차트의 candle Volume Profile은 Agent feature pack과 별도 계약이다. `ChartCanvas`가
+현재 viewport로 만든 scene과 visible closed-candle 범위가 일치한 뒤에만 프런트가
+`targetBins=10`, `scene.scales.minPrice/maxPrice`, `candleCount`를 요청한다. 따라서
+활성 MA·Bollinger와 축 padding을 포함한 main price pane 전체가 같은 화면 높이의
+10개 슬롯이 된다. pane 높이만 바뀌면 기존 가격 bucket을 다시 투영하고 재조회하지
+않는다.
+
+응답은 10개 bucket, 요청 가격 경계, 요청/source candle count가 모두 일치할 때만
+표시한다. `dataStatus=partial`은 클라이언트 derived cache에 넣지 않고 숨긴 상태로
+500ms와 1500ms 뒤 두 번 재시도한다. 계속 partial이면 다음 scene, range, candle
+변경까지 숨긴다. 0-volume bucket은 응답에 유지하지만 Canvas는 막대를 그리지 않아
+그 가격 슬롯의 빈 공간을 보존한다.
+## AI 투자 코치
+
+AI 투자 코치의 알람 생성 UI는 4페이지 `실행·알람 관리`에만 둔다. 1페이지의
+매도·관찰 조건은 조건명과 현재값·기준값만 보이는 단일 미리보기로 표시한다.
+좌우 화살표로 한 조건씩 전환하고 첫·마지막 항목에서는 해당 화살표를 비활성화한다.
+활성 항목을 누르면 API를 호출하지 않은 채 4페이지의 같은 후보로 이동해
+focus/highlight한다. 유사 사례의 `그때의 실수`, `오늘과 같은 점`, `오늘과 다른 점`도
+한 항목씩 같은 방식으로 전환한다. 현재값, 임계값, 연산자, 판단 사유, 추천 행동 같은 상세는
+4페이지에서 표시한다. 추천 후보는 `당일 거래에서 제안`, `진입 습관에서 제안`,
+`청산 습관에서 제안`, `포트폴리오 위험에서 제안` 네 출처 그룹을 고정 순서로
+표시한다. 사용자가 지원되는 후보의 `알람 추가`를 눌렀을 때만 `POST /api/alerts`를
+호출하며 RSI·거래량·집중도처럼 현재 alert API가 지원하지 않는 후보는 `미지원`으로
+남긴다. 저장된 알람의 출처가 null이면 `출처 기록 없음`으로 표시한다.
+
+1페이지의 여러 당일 체결은 종목명 tab row를 만들지 않고 활성 기업 정보 양옆의
+화살표로 전환한다. 현재 거래와 유사 사례도 차트 양옆 화살표로 전환하며 화면에는
+carousel 위치 숫자를 반복 표시하지 않는다. 화살표는 별도 좌우 column을 점유하지
+않고 콘텐츠 가장자리에 작은 overlay control로 표시하며 비활성 끝점은 숨긴다. 판단
+요약은 등급 제목이나 상태색 없이 한 문장으로 크게 표시한다. 확인 항목은 `차트`,
+`뉴스`, `재무`, `시장` 순서의 2열 overview로 렌더링하고, 기본 화면에는 분류명, 상태,
+최대 두 개 핵심 항목명만 크게 표시한다. 세부 수치·출처·기준시각은 tooltip에 둔다.
+
 ## User Flow
 
 ```mermaid

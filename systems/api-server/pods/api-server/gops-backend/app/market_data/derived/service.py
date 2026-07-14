@@ -108,13 +108,15 @@ class DerivedCalculationService:
             "ttlSeconds": redis_ttl_seconds(request["kind"]),
             "keyVersion": request["calculationVersion"],
         }
-        if write_cache:
+        if write_cache and payload.get("dataStatus") != "partial":
             write_json_cache(self.redis, request["cacheKey"], payload, redis_ttl_seconds(request["kind"]))
         return payload
 
     def _cached(self, request: dict[str, Any]) -> dict[str, Any] | None:
         payload = read_json_cache(self.redis, request["cacheKey"])
         if not payload:
+            return None
+        if payload.get("dataStatus") == "partial":
             return None
         cached_metadata = payload.get("derived") if isinstance(payload.get("derived"), dict) else {}
         if cached_metadata.get("state") not in {None, "ready"}:

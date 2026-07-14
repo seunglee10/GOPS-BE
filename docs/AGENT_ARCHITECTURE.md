@@ -62,6 +62,9 @@ remain explicit and do not trigger role-specific refetches.
 `coach-report.v2` exposes four UI pages. Page 2 computes `entry`, `exit`, and
 `portfolio` reports independently for `30d`, `90d`, and `1y`; page 4 is the single
 action center that combines the former execution, guardrail, and alert-management pages.
+Daily-trade alert candidates preserve their deterministic condition value, threshold,
+operator, reason, recommended action, and support flag so page 4 can render the full
+condition without recomputing it in the browser. Page 1 renders only a compact preview.
 
 ```mermaid
 flowchart LR

@@ -16,6 +16,7 @@ SIMILARITY_WEIGHTS = {
     "portfolioStateScore": 0.10,
     "indicatorScore": 0.12,
 }
+ALERT_PROPOSAL_SOURCES = {"daily_trade", "entry_habit", "exit_habit", "portfolio_risk"}
 
 
 @dataclass(frozen=True)
@@ -396,15 +397,73 @@ def _build_improvement_page(page2: dict[str, Any] | None) -> dict[str, Any] | No
 
 
 def _build_action_center(snapshot: CoachInputSnapshot, page1: dict[str, Any] | None, page3: dict[str, Any] | None) -> dict[str, Any]:
-    recommended = []
+    recommended: list[dict[str, Any]] = []
+    seen_recommendations: set[str] = set()
+
+    def add_recommendation(candidate: dict[str, Any]) -> None:
+        candidate_id = str(candidate.get("id") or "")
+        if not candidate_id or not candidate.get("title") or candidate_id in seen_recommendations:
+            return
+        seen_recommendations.add(candidate_id)
+        recommended.append(candidate)
+
     if page1:
-        for condition in page1.get("watchConditions", []):
-            if condition.get("alertSupported") and isinstance(condition.get("alertRequest"), dict):
-                recommended.append({"id": condition.get("id"), "title": condition.get("label"), "detail": condition.get("reason"), "enabled": False, "alertRequest": condition.get("alertRequest")})
-    watching = []
+        reviews_by_fill = page1.get("reviewsByFillId")
+        if isinstance(reviews_by_fill, dict):
+            reviews = [reviews_by_fill[key] for key in sorted(reviews_by_fill) if isinstance(reviews_by_fill[key], dict)]
+        else:
+            reviews = [page1]
+        if not reviews:
+            reviews = [page1]
+        for review in reviews:
+            current_case = review.get("currentCase")
+            review_symbol = current_case.get("symbol") if isinstance(current_case, dict) else None
+            for condition in review.get("watchConditions", []):
+                if not isinstance(condition, dict):
+                    continue
+                alert_request = condition.get("alertRequest")
+                condition_symbol = alert_request.get("symbol") if isinstance(alert_request, dict) else None
+                candidate = {
+                    "id": condition.get("id"),
+                    "symbol": review_symbol or condition_symbol,
+                    "title": condition.get("label"),
+                    "detail": condition.get("reason"),
+                    "currentValue": condition.get("currentValue"),
+                    "threshold": condition.get("threshold"),
+                    "operator": condition.get("operator"),
+                    "recommendedAction": condition.get("recommendedAction"),
+                    "alertSupported": bool(condition.get("alertSupported")),
+                    "enabled": False,
+                    "proposalSource": "daily_trade",
+                }
+                if condition.get("alertSupported") and isinstance(alert_request, dict):
+                    candidate["alertRequest"] = alert_request
+                add_recommendation(candidate)
+
+    source_by_stage = {"entry": "entry_habit", "exit": "exit_habit", "portfolio": "portfolio_risk"}
+    for priority in (page3 or {}).get("priorities", []):
+        if not isinstance(priority, dict):
+            continue
+        source = source_by_stage.get(str(priority.get("stage") or ""))
+        if source is None:
+            continue
+        detail_parts = [priority.get("condition"), priority.get("observedBehavior"), priority.get("nextAction")]
+        add_recommendation({
+            "id": f"{source}-{priority.get('id') or 'unknown'}",
+            "title": priority.get("title") or priority.get("nextAction"),
+            "detail": " · ".join(str(item) for item in detail_parts if item),
+            "enabled": False,
+            "proposalSource": source,
+        })
+
+    watching: list[dict[str, Any]] = []
     for row in snapshot.request.get("alerts", []):
         if isinstance(row, dict):
-            watching.append({"id": str(row.get("id")), "title": f"{row.get('symbol')} {row.get('type')}", "detail": str(row.get("target_price") or row.get("change_pct") or ""), "enabled": row.get("status") == "active", "serverAlertId": row.get("id")})
+            candidate = {"id": str(row.get("id")), "title": f"{row.get('symbol')} {row.get('type')}", "detail": str(row.get("target_price") or row.get("change_pct") or ""), "enabled": row.get("status") == "active", "serverAlertId": row.get("id")}
+            proposal_source = row.get("proposal_source") or row.get("proposalSource")
+            if proposal_source in ALERT_PROPOSAL_SOURCES:
+                candidate["proposalSource"] = proposal_source
+            watching.append(candidate)
     return {"availability": "ready" if recommended or watching or (page3 and page3.get("experiments")) else "observing", "activeExperiments": [item for item in (page3 or {}).get("experiments", []) if item.get("status") == "active"], "enabledGuardrails": [item for item in (page3 or {}).get("guardrails", []) if item.get("enabled")], "recommendedAlerts": recommended, "watchingAlerts": watching}
 
 

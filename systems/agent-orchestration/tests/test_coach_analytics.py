@@ -9,7 +9,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "systems" / "agent-orchestration" / "shared"))
 
-from gops_agents.orchestration.coach_analytics import build_coach_report, calculate_outcomes, select_similar_cases  # noqa: E402
+from gops_agents.orchestration.coach_analytics import (  # noqa: E402
+    CoachInputSnapshot,
+    _build_action_center,
+    build_coach_report,
+    calculate_outcomes,
+    select_similar_cases,
+)
 from gops_agents.contracts import AnalysisReport  # noqa: E402
 from gops_agents.runtime.report_store import deserialize_report, serialize_report  # noqa: E402
 
@@ -191,6 +197,41 @@ class CoachAnalyticsTests(unittest.TestCase):
         self.assertIsNotNone(restored)
         self.assertEqual(restored.coachReport, coach)
         self.assertEqual(json.loads(serialize_report(restored))["coachReport"]["contractVersion"], "coach-report.v2")
+
+    def test_action_center_groups_deterministic_proposals_without_inventing_alert_requests(self) -> None:
+        snapshot = CoachInputSnapshot.from_dict({"request": {"alerts": [
+            {"id": 10, "symbol": "NVDA", "type": "price_cross", "status": "active", "proposal_source": "daily_trade", "target_price": 110},
+            {"id": 11, "symbol": "AAPL", "type": "price_cross", "status": "disabled", "target_price": 90},
+        ]}})
+        page1 = {"reviewsByFillId": {"fill-1": {"watchConditions": [
+            {"id": "price-stop", "label": "가격 기준", "reason": "검증 가격", "currentValue": 100, "threshold": 95, "operator": "<", "recommendedAction": "보유 근거 재검토", "alertSupported": True, "alertRequest": {"symbol": "NVDA", "type": "price_cross", "targetPrice": "95", "repeatLimit": 1}},
+            {"id": "rsi-check", "label": "RSI 확인", "reason": "과열 완화", "alertSupported": False},
+        ]}}}
+        page3 = {"priorities": [
+            {"id": "entry-1", "stage": "entry", "title": "진입 거래량 확인", "condition": "상대 거래량 1.2 미만", "nextAction": "다음 진입 전 확인"},
+            {"id": "exit-1", "stage": "exit", "title": "분할 청산 재현", "condition": "목표가 도달", "nextAction": "청산 비율 기록"},
+            {"id": "portfolio-1", "stage": "portfolio", "title": "집중도 상한 확인", "condition": "상위 종목 60% 이상", "nextAction": "비중 계획 확인"},
+        ]}
+
+        first = _build_action_center(snapshot, page1, page3)
+        second = _build_action_center(snapshot, page1, page3)
+
+        self.assertEqual(first, second)
+        self.assertEqual(
+            [item["proposalSource"] for item in first["recommendedAlerts"]],
+            ["daily_trade", "daily_trade", "entry_habit", "exit_habit", "portfolio_risk"],
+        )
+        self.assertIn("alertRequest", first["recommendedAlerts"][0])
+        self.assertEqual(first["recommendedAlerts"][0]["symbol"], "NVDA")
+        self.assertEqual(first["recommendedAlerts"][0]["currentValue"], 100)
+        self.assertEqual(first["recommendedAlerts"][0]["threshold"], 95)
+        self.assertEqual(first["recommendedAlerts"][0]["operator"], "<")
+        self.assertEqual(first["recommendedAlerts"][0]["recommendedAction"], "보유 근거 재검토")
+        self.assertTrue(first["recommendedAlerts"][0]["alertSupported"])
+        self.assertNotIn("alertRequest", first["recommendedAlerts"][1])
+        self.assertTrue(all("alertRequest" not in item for item in first["recommendedAlerts"][2:]))
+        self.assertEqual(first["watchingAlerts"][0]["proposalSource"], "daily_trade")
+        self.assertNotIn("proposalSource", first["watchingAlerts"][1])
 
     @staticmethod
     def _portfolio_snapshot(as_of: str, concentration: float) -> dict:

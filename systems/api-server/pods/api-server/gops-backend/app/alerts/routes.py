@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.encoders import jsonable_encoder
@@ -42,6 +42,7 @@ class AlertCreateBody(BaseModel):
     repeat: bool | None = None
     repeatLimit: int | None = None
     expiresAt: datetime | None = None
+    proposalSource: Literal["daily_trade", "entry_habit", "exit_habit", "portfolio_risk"] | None = None
 
 
 class AlertStatusBody(BaseModel):
@@ -97,6 +98,7 @@ def create_alert(
             window_min=window_min,
             repeat=repeat_limit is None or repeat_limit > 1,
             repeat_limit=repeat_limit,
+            proposal_source=body.proposalSource,
             expires_at=expires_at,
         )
     )

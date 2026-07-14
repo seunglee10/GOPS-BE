@@ -84,8 +84,24 @@ def chart_volume_profile_bins(
     target_bins: int = Query(default=10, ge=4, le=48, alias="targetBins"),
     price_min: float | None = Query(default=None, alias="priceMin"),
     price_max: float | None = Query(default=None, alias="priceMax"),
+    candle_count: int | None = Query(
+        default=None,
+        ge=1,
+        le=MAX_CHART_CANDLE_LIMIT,
+        alias="candleCount",
+    ),
 ) -> dict[str, Any]:
-    return get_query_service().volume_profile_bins(symbol, from_time, to_time, price_bin_size, target_bins, price_min, price_max, interval=interval)
+    return get_query_service().volume_profile_bins(
+        symbol,
+        from_time,
+        to_time,
+        price_bin_size,
+        target_bins,
+        price_min,
+        price_max,
+        interval=interval,
+        candle_count=candle_count,
+    )
 
 
 @router.get("/api/charts/indicators")

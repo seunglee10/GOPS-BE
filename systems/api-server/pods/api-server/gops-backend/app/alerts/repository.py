@@ -29,6 +29,7 @@ class AlertCreate:
     repeat_limit: int | None = 1
     status: str = "active"
     notifications_enabled: bool = True
+    proposal_source: str | None = None
     expires_at: datetime | None = None
 
 
@@ -121,9 +122,10 @@ class PostgresAlertRepository(AlertRepository):
                 """
                 INSERT INTO alerts (
                     user_sub, symbol, type, direction, target_price, change_pct,
-                    window_min, repeat, repeat_limit, status, notifications_enabled, expires_at
+                    window_min, repeat, repeat_limit, status, notifications_enabled,
+                    proposal_source, expires_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING *
                 """,
                 (
@@ -138,6 +140,7 @@ class PostgresAlertRepository(AlertRepository):
                     alert.repeat_limit,
                     alert.status,
                     alert.notifications_enabled,
+                    alert.proposal_source,
                     alert.expires_at,
                 ),
             ).fetchone()
@@ -362,6 +365,7 @@ class InMemoryAlertRepository(AlertRepository):
             "triggered_count": 0,
             "status": alert.status,
             "notifications_enabled": alert.notifications_enabled,
+            "proposal_source": alert.proposal_source,
             "created_at": datetime.now(timezone.utc),
             "expires_at": alert.expires_at,
         }

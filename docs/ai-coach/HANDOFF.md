@@ -12,8 +12,8 @@ bad-process grade.
 
 The existing workspace hosts one `AI 투자 코치` panel with four internal pages.
 
-1. `당일 거래 회고`: fill switching, process/outcome split, current and up to six
-   similar cases, missed-check markers, portfolio impact, and position conditions.
+1. `당일 거래 회고`: fill switching, a concise decision sentence, current and up to six
+   similar cases, missed-check markers, portfolio impact, and a compact condition preview.
 2. `판단 습관과 다음 원칙`: independent `진입`, `청산`, and `포트폴리오` tabs for
    `30d`, `90d`, and `1y`. Each tab uses its own sample, metrics, confidence, and
    missing-data state.
@@ -21,8 +21,33 @@ The existing workspace hosts one `AI 투자 코치` panel with four internal pag
 4. `실행·알람 관리`: one action center combining the former pages 4, 5, and 6:
    experiments, guardrails, recommended alerts, and already watched alerts.
 
-The page-1 chart uses a shared daily `T-60..T+20` axis. It renders normalized OHLC plus
-volume, RSI, and MACD. Entry and missed price/volume/RSI/MACD observations are anchored
+All coach alert creation and full sell/watch condition detail are centralized on page 4.
+Page 1 renders exactly one sell/watch condition at a time, with the condition label and
+current-to-threshold summary. Side arrows move between conditions and stop at the first and
+last item. Selecting the active preview only moves to page 4 and focuses the matching
+candidate, and never calls `POST /api/alerts`. A selected similar case likewise renders one
+of `그때의 실수`, `오늘과 같은 점`, or `오늘과 다른 점` at a time with clamped side-arrow
+navigation. Daily-trade page-4 candidates preserve `currentValue`,
+`threshold`, `operator`, `detail`, `recommendedAction`, and `alertSupported` from the
+deterministic condition. Recommended candidates are grouped by the
+deterministic source `daily_trade`, `entry_habit`, `exit_habit`, or `portfolio_risk`,
+rendered respectively as `당일 거래에서 제안`, `진입 습관에서 제안`,
+`청산 습관에서 제안`, and `포트폴리오 위험에서 제안`. An empty source group stays
+empty instead of receiving a fabricated candidate. RSI, relative-volume, and portfolio
+conditions remain visible but do not receive a fake price-alert request.
+
+Page 1 has no visible trade-symbol tab row or carousel counters. Today's fills switch with
+arrows around the active company summary, and current/similar cases switch with arrows beside
+the chart. These controls float over the content edge instead of reserving side columns, and
+disabled end controls are hidden. The decision summary is a single prominent neutral sentence
+without a repeated grade heading. `차트`, `뉴스`, `재무`, and `시장` render as a readable
+two-by-two overview with category headings, text status badges, and up to two prioritized item
+labels. Small evidence values are omitted from the default view; full evidence, source, and
+as-of values remain available on hover or keyboard focus.
+
+The page-1 chart uses a compact 360-pixel plotting viewport on a shared daily `T-60..T+20`
+axis. It renders normalized OHLC plus volume, RSI, and MACD. Entry and missed
+price/volume/RSI/MACD observations are anchored
 at their relative day with a marker and dashed guide. Today's path stops at the latest
 available observation; no future candle or forecast is drawn. The supplied prototype is
 preserved under `reference/` and is never imported by production code.
@@ -120,7 +145,11 @@ Before AWS rollout, the deploy entrypoints automatically apply pending order mig
 whenever `order-worker` or `agent-orchestrator` is selected. `0006_ai_coach.sql` adds
 `orders.user_sub`, `user_portfolio_snapshot_history`, and
 `trade_decision_check_events`; `0007_ai_coach_execution_index.sql` adds the execution
-join/time index used by point-in-time history. Roll out backend/order writers that
+join/time index used by point-in-time history. `0008_alert_proposal_source.sql` adds the
+nullable, constrained `alerts.proposal_source` used to preserve coach proposal origin
+through create/list, the next trusted snapshot, and page-4 watched-alert rendering. The
+migration must complete before the updated API and analysis worker roll out. Existing and
+manually created alerts remain null and render as `출처 기록 없음`. Roll out backend/order writers that
 populate ownership and history before expecting historical coach data. Existing rows
 without a reliable owner are intentionally not backfilled by inference.
 
@@ -175,17 +204,33 @@ that preserves the original object, and a cross-user isolation check.
 ### Live AWS read-only audit (2026-07-14)
 
 No deploy, push, or AWS mutation was performed during this task. A read-only check of the
-configured dev account found the EKS cluster `gops-eks-cluster` `ACTIVE`, but the currently
-deployed `agent-analysis-worker` still uses the previous `alfaka-market-data-sa` service
-account and an earlier image. Its live ConfigMap still reports queue/report backends as
-`auto`, has no coach archive flags, and the planned dedicated snapshot bucket returns
-`HeadBucket 404`. Therefore the source and images are deployment-ready, but the new
-snapshot path is not currently active in dev. Terraform apply, image push, migration,
-rollout, the new IRSA canary, and the authenticated staging acceptance sequence above are
-still required before claiming live snapshot persistence.
+configured dev account found `gops-eks-cluster` active and `agent-analysis-worker` healthy
+with zero restarts. The worker uses `ai-coach-worker-sa`; its IRSA role, required archive
+flags, bucket, and prefix match the Terraform contract. The snapshot bucket has versioning
+and AES256 encryption enabled. Four small deploy-smoke objects prove worker-IRSA PUT access,
+but no authenticated analysis snapshot has yet been observed. The deployed cluster also
+lacks `alfaka-yahoo-estimates-sync`, and the order database has migrations only through
+`0007`: `alerts.proposal_source` and `0008_alert_proposal_source.sql` are not deployed.
+The live order database has filled paper orders but no execution rows; the current trusted
+snapshot provider reads `orders` joined to `executions`, not `paper_orders`, so those paper
+fills cannot yet populate the coach report. The decision-check table also has no live rows.
+Therefore the archive infrastructure is active, but this worktree's report/UI/migration and
+collector changes are not live. Commit/push, migration, image rollout, and the authenticated
+staging acceptance sequence above are still required before claiming end-to-end coach data.
 
 ## Conflicts and remaining dependencies
 
+- The worktree was rebased without local commits onto `origin/dev`
+  `8e2bfc8e2b519a979ceb19c827364252b1d5c6e3`. The only textual conflict was in
+  `AGENT_FRONTEND_INTEGRATION.md`; both the latest chart-derived profile contract
+  and the AI coach contract were preserved. The original repository worktree was
+  not modified.
+- Latest dev's local AWS deploy path exposed a macOS Bash 3.2 failure in the
+  service detector. The detector now uses ordered scalar lists instead of Bash
+  4 associative arrays, and its agent selection still adds `order-worker` so all
+  migrations precede the analysis-worker rollout. The default in-cluster app
+  overlay also includes the Yahoo estimates CronJob that the legacy AWS overlay
+  already carried.
 - Latest `origin/dev` did not contain the original worktree's uncommitted AI coach UI.
   Compatible page concepts were selectively ported; unrelated original changes were not
   reset, restored, or copied.
@@ -193,9 +238,26 @@ still required before claiming live snapshot persistence.
   later instruction supersedes this with four pages, merging former pages 4/5/6, and a
   daily `T-60..T+20` chart.
 - Actual news evidence, earnings calendar, fundamentals, ontology, and decision-check
-  capture producers remain external dependencies. Their absence is explicit no-data.
+  capture producers remain external dependencies. The current snapshot builder deliberately
+  reports those providers as not connected rather than reading populated stores without a
+  point-in-time contract. Their absence is explicit no-data.
+- Paper-trading fills are stored separately from `orders`/`executions` and are not currently
+  selected by the trusted snapshot provider. Supporting them requires an explicit execution-mode
+  contract plus matching paper-position history; silently mixing paper and live fills would make
+  portfolio-before/after and similarity results unreliable.
+- The production repository has no writer for `trade_decision_check_events`. Until a trusted
+  capture path writes those events, process review and missed-check markers correctly remain
+  `확인 기록 없음` for real analyses. Current quote, company, and sector enrichment also needs
+  a point-in-time Redis/symbol-registry provider before current return and sector impact can be
+  complete.
+- The deterministic source mapping supports an `exit_habit` proposal, but the current raw habit
+  engine does not yet derive an exit insight from trade history. Fixture and injected-contract
+  tests can render the group; production data will leave it empty until that rule is implemented.
 - Page-3 experiment/guardrail persistence needs an owning write API before toggles can be
   treated as durable across sessions. Alerts are created only after an explicit user
   action; no automatic order, liquidation, or alert activation exists.
+- `proposal_source` is display metadata supplied with an explicit page-4 create request;
+  it is not a cryptographically trusted audit assertion. Trusted provenance would need a
+  server-owned proposal identifier and is outside this contract.
 - Live AWS E2E was not established by source inspection. It must not be claimed until the
   staging acceptance evidence above is collected.

@@ -39,6 +39,13 @@ included that service, and otherwise reads the live primary Deployment image
 tag as the baseline. Use `FORCE_SERVICES=frontend,backend` to override
 detection, or `FORCE_SERVICES=all` to force every app image to rebuild. See
 `docs/LOCAL_EKS_DEPLOY.md` for the team runbook.
+The change detector and CI-overlay image-tag updater intentionally support the
+macOS system Bash 3.2 as well as the newer Bash used by GitHub Actions; do not
+reintroduce associative arrays in `scripts/aws/detect-changed-services.sh` or
+`scripts/aws/update-ci-image-tags.sh`.
+Changes under `infra/k8s/overlays/aws/scheduled/` must select the owning runtime
+service so the deployment workflow applies the updated CronJob instead of
+returning `has_services=false`.
 
 GitHub Actions dev/test deploy entrypoint `.github/workflows/deploy-dev.yml`
 remains a backup path. It deploys to the shared dev EKS environment only when an
@@ -321,6 +328,12 @@ it must never query another user's rows. The local order migration gate is autom
 news rebuilds remain explicitly controlled by `RUN_CHART_ASSET_MIGRATIONS=true` and
 `REBUILD_NEWS_CACHE=true`. Migration Jobs run after image push but before app apply.
 
+AI 코치 알람 출처를 저장하는 배포는 `0008_alert_proposal_source.sql`도 선행해야
+한다. 이 migration은 nullable `alerts.proposal_source`와 네 허용값 CHECK를 추가한다.
+updated API의 INSERT와 `agent-analysis-worker`의 snapshot SELECT가 모두 이 컬럼을
+사용하므로 migration Job 성공 전에 두 workload를 rollout하면 안 된다. 기존 알람은
+null로 호환되며 Redis projection, Kafka topic, evaluator schema 변경은 필요하지 않다.
+
 The holdings endpoint may be polled every minute. PostgreSQL always refreshes the latest
 observation, but appends portfolio history only when payload content differs after
 top-level `asOf`/`sourceAsOf` timestamps are removed. A per-user advisory transaction
@@ -589,7 +602,9 @@ Create the schema from `infra/clickhouse/initdb/01-market-data.sql` and
 `infra/clickhouse/initdb/02-sec-fundamentals.sql`, then rebuild projections from
 the official sources: S3 final/manifest for chart history, SEC companyfacts for
 actual fundamentals, and the separate Yahoo estimates collector for consensus
-data. Redis reset must be targeted to fundamentals summary/peer keys and chart
+data. The normal `aws-incluster-app-ci` deploy overlay includes
+`alfaka-yahoo-estimates-sync` with live writes enabled so that this collector is
+not omitted from the shared dev EKS rollout. Redis reset must be targeted to fundamentals summary/peer keys and chart
 live/latest/coverage keys; do not flush agent reports, sessions, or unrelated
 caches.
 
