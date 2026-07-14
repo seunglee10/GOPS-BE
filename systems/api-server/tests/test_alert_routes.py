@@ -365,7 +365,7 @@ def test_alert_and_notification_reads_are_scoped_by_user(monkeypatch: pytest.Mon
     client.cookies.set(config.session_cookie_name, store.create_session(AuthenticatedUser("user-1", "one@test.local", True)))
     created = client.post("/api/alerts", json={"symbol": "AAPL", "type": "price_cross", "targetPrice": "101"})
     assert created.status_code == 201
-    repo.create_notification(
+    user_one_notification = repo.create_notification(
         user_sub="user-1",
         alert_id=created.json()["alert"]["id"],
         event_id="event-1",
@@ -376,6 +376,8 @@ def test_alert_and_notification_reads_are_scoped_by_user(monkeypatch: pytest.Mon
     client.cookies.set(config.session_cookie_name, store.create_session(AuthenticatedUser("user-2", "two@test.local", True)))
     assert client.get("/api/alerts").json()["alerts"] == []
     assert client.get("/api/notifications").json()["notifications"] == []
+    assert client.patch("/api/notifications/read-all").json() == {"updated": 0}
+    assert repo.notifications[user_one_notification["id"]]["read_at"] is None
 
 
 def test_read_notification_can_be_deleted(alert_app) -> None:
@@ -399,6 +401,45 @@ def test_read_notification_can_be_deleted(alert_app) -> None:
     assert deleted.status_code == 200
     assert deleted.json()["deleted"] is True
     assert client.get("/api/notifications").json()["notifications"] == []
+
+
+def test_mark_all_notifications_read_updates_only_unread_rows(alert_app) -> None:
+    repo = alert_app.state.alert_repository
+    client = TestClient(alert_app)
+    first = repo.create_notification(
+        user_sub="dev-auth-disabled",
+        alert_id=None,
+        event_id="event-read-all-1",
+        notification_type="alert.price_cross",
+        payload={"symbol": "NVDA"},
+    )
+    second = repo.create_notification(
+        user_sub="dev-auth-disabled",
+        alert_id=None,
+        event_id="event-read-all-2",
+        notification_type="alert.price_cross",
+        payload={"symbol": "AAPL"},
+    )
+    already_read = repo.create_notification(
+        user_sub="dev-auth-disabled",
+        alert_id=None,
+        event_id="event-read-all-3",
+        notification_type="alert.price_cross",
+        payload={"symbol": "MSFT"},
+    )
+    repo.mark_notification_read("dev-auth-disabled", already_read["id"])
+
+    response = client.patch("/api/notifications/read-all")
+
+    assert response.status_code == 200
+    assert response.json() == {"updated": 2}
+    payload = client.get("/api/notifications").json()
+    assert payload["unreadCount"] == 0
+    rows = {item["id"]: item for item in payload["notifications"]}
+    assert rows[first["id"]]["read_at"] is not None
+    assert rows[second["id"]]["read_at"] is not None
+    assert rows[already_read["id"]]["read_at"] is not None
+    assert client.patch("/api/notifications/read-all").json() == {"updated": 0}
 
 
 def test_notification_preferences_return_defaults_and_patch_individual_fields(alert_app) -> None:

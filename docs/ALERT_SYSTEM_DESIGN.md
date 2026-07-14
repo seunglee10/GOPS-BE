@@ -30,7 +30,7 @@ market.layer.trades.v1 + closed candle topics ──> [alert-evaluator pod]
                                         └─ alerts.triggered.v1 발행 (감사 로그·리플레이용)
                                               │
                                   [api-server] WS /ws/notifications
-                                        └─ 프론트: 토스트 + 안읽음 뱃지 + 알림함
+                                        └─ 프론트: 기존 우하단 토스트 + 헤더 종 뱃지/알림함
 ```
 
 ### Mermaid
@@ -178,8 +178,8 @@ PATCH  /api/alerts/{id}                활성/비활성 토글
 
 GET    /api/notifications              알림함 (커서 페이지네이션, ?after= 지원)
 GET    /api/notifications/unread-count 안읽음 수
-POST   /api/notifications/{id}/read    읽음 처리
-POST   /api/notifications/read-all     전체 읽음
+PATCH  /api/notifications/{id}/read    읽음 처리
+PATCH  /api/notifications/read-all     전체 읽음
 
 WS     /ws/notifications               실시간 push (기존 세션 쿠키 인증)
 ```
@@ -373,7 +373,7 @@ tradeId가 없는 틱은 `{symbol}:{tickTimestamp}`로 대체 (Alpaca 틱 타임
 3. **alert-evaluator pod** — price_cross 감지(프리필터 포함) + outbox(XADD) +
    sender 코루틴(notifications INSERT, pub/sub, `alerts.triggered.v1` 발행) + 멱등성
 4. **api-server WS `/ws/notifications` + 알림함 REST**
-5. **프론트: 등록 모달 + 토스트/뱃지/알림함**
+5. **프론트: 등록 모달 + 기존 우하단 토스트 + 헤더 종 뱃지/연결형 알림함**
 6. **급등락(spike) 조건** — 윈도우 상태 추가
 7. 운영: reconcile 잡, DLQ, lag 모니터링, 리플레이 테스트
 8. (선택) 발화 이벤트를 `agents.market-events.v1`로 흘려 뉴스 연관 enrichment

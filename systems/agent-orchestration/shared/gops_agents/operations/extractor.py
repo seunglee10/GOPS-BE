@@ -6,6 +6,7 @@ from typing import Any
 
 CHART_REFERENCE_TYPES = {"chart.candle", "chart.range"}
 NEWS_REFERENCE_TYPES = {"news.article", "news.dailySummary"}
+RECOMMENDATION_REFERENCE_TYPES = {"recommendation.stock"}
 ONTOLOGY_REFERENCE_TYPES = {"ontology.entity"}
 FINANCIAL_REFERENCE_TYPES = {"financial.metric"}
 
@@ -66,6 +67,14 @@ def build_agent_operation_ir(
             ambiguities.append(ambiguity("newsAnchor", "연결할 뉴스 기사나 날짜가 필요합니다."))
         if not has_chart_ref(ref_types) and not has_move_terms(text):
             ambiguities.append(ambiguity("priceMoveAnchor", "연결할 차트 봉이나 가격 움직임이 필요합니다."))
+    elif has_recommendation_ref(ref_types) and (has_explain_terms(text) or has_recommendation_terms(text)):
+        operations.append(analysis_operation(
+            "explain_recommendation",
+            symbol=symbol,
+            references=refs,
+            required_sources=["market", "news", "financial"],
+            confidence=0.88,
+        ))
     elif has_chart_ref(ref_types) and has_explain_terms(text):
         operations.append(analysis_operation(
             "explain_price_move",
@@ -294,6 +303,10 @@ def has_chart_ref(ref_types: set[str]) -> bool:
     return bool(ref_types & CHART_REFERENCE_TYPES)
 
 
+def has_recommendation_ref(ref_types: set[str]) -> bool:
+    return bool(ref_types & RECOMMENDATION_REFERENCE_TYPES)
+
+
 def has_chart_reference(references: list[dict[str, Any]]) -> bool:
     return any(str(item.get("type") or "") in CHART_REFERENCE_TYPES for item in references)
 
@@ -304,6 +317,10 @@ def has_explain_terms(text: str) -> bool:
 
 def has_news_terms(text: str) -> bool:
     return has_any(text, ("뉴스", "기사", "헤드라인", "news", "headline"))
+
+
+def has_recommendation_terms(text: str) -> bool:
+    return has_any(text, ("추천", "추천 종목", "추천주", "recommendation", "recommended"))
 
 
 def has_move_terms(text: str) -> bool:

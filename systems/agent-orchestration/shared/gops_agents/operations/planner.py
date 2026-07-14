@@ -13,6 +13,7 @@ OPERATION_TYPES = [
     "link_news_to_price_move",
     "explain_price_move",
     "explain_news",
+    "explain_recommendation",
     "summarize_news",
     "explain_relationship",
     "add_horizontal_line",
@@ -323,6 +324,7 @@ def normalize_required_sources(value: Any, op_type: str) -> list[str]:
         "link_news_to_price_move": ["market", "news", "ontology"],
         "explain_price_move": ["market", "news", "macro"],
         "explain_news": ["news", "market", "ontology"],
+        "explain_recommendation": ["market", "news", "financial"],
         "summarize_news": ["news"],
         "explain_relationship": ["ontology"],
     }
