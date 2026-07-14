@@ -17,6 +17,7 @@ try:
     from fastapi.testclient import TestClient
 
     import app.routes.paper_trading as paper_routes
+    from alfaka.serving.symbol_registry import SymbolRegistry
     from app.auth.models import AuthenticatedUser
     from app.main import create_app
     from kis_trader.paper.memory import InMemoryPaperTradingRepository
@@ -99,6 +100,14 @@ class PaperTradingRoutesTest(unittest.TestCase):
         self.assertEqual(self.repository.account_snapshot("dev-auth-disabled")["account"]["reserved_cash"], Decimal("1000"))
         self.assertEqual(self.subscription_syncs[-1][0], ["AAPL"])
         self.assertFalse(hasattr(self.repository, "outbox_events"))
+
+    def test_submit_accepts_lowercase_configured_universe_symbol(self):
+        self.app.state.paper_symbol_validator = SymbolRegistry().detail
+
+        response = self.submit(payload(symbol="aapl"))
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["symbol"], "AAPL")
 
     def test_submit_requires_idempotency_and_replays_same_order(self):
         missing = self.client.post("/api/paper/orders", json=payload())

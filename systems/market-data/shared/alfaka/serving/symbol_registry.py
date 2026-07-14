@@ -119,7 +119,7 @@ class SymbolRegistry:
             "market": market,
             "assetClass": configured_metadata.get("assetClass") or "us_equity",
             "tradable": configured_metadata.get("tradable", True),
-            "status": configured_metadata.get("status") or "unknown",
+            "status": configured_metadata.get("status") or "active",
             "source": configured_metadata.get("source") or "alpaca",
             "updatedAt": datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
         }
