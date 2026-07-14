@@ -144,7 +144,7 @@ python -u systems/fundamentals/jobs/yahoo-estimates-sync/main.py
 It runs in the `gops-market-storage` image and writes only
 `market_data.yahoo_earnings_estimates`. It does not write SEC actual tables or
 Redis fundamentals summaries. In AWS/EKS the scheduled collector is
-`infra/k8s/overlays/aws/cronjob-yahoo-estimates-sync.yaml`.
+`infra/k8s/overlays/aws/scheduled/cronjob-yahoo-estimates-sync.yaml`.
 
 Default execution is a dry-run:
 

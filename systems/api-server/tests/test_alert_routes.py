@@ -29,7 +29,7 @@ try:
     from fastapi.testclient import TestClient
 
     from app.alerts.notifications import InMemoryNotificationBroker
-    from app.alerts.repository import AlertCreate, InMemoryAlertRepository
+    from app.alerts.repository import AlertCreate, InMemoryAlertRepository, PostgresAlertRepository
     from app.auth.config import AuthConfig
     from app.auth.models import AuthenticatedUser
     from app.auth.session_store import MemorySessionStore
@@ -95,6 +95,73 @@ def test_create_alert_accepts_repeat_limit_options(alert_app) -> None:
     assert unlimited.status_code == 201
     assert unlimited.json()["alert"]["repeat"] is True
     assert unlimited.json()["alert"]["repeat_limit"] is None
+
+
+def test_create_alert_preserves_ai_coach_proposal_source(alert_app) -> None:
+    client = TestClient(alert_app)
+    created = client.post(
+        "/api/alerts",
+        json={"symbol": "nvda", "type": "price_cross", "targetPrice": "110", "proposalSource": "daily_trade"},
+    )
+
+    assert created.status_code == 201
+    assert created.json()["alert"]["proposal_source"] == "daily_trade"
+    assert alert_app.state.alert_projection.upserted[0]["proposal_source"] == "daily_trade"
+    assert client.get("/api/alerts").json()["alerts"][0]["proposal_source"] == "daily_trade"
+
+    legacy = client.post(
+        "/api/alerts",
+        json={"symbol": "aapl", "type": "price_cross", "targetPrice": "90"},
+    )
+    assert legacy.status_code == 201
+    assert legacy.json()["alert"]["proposal_source"] is None
+
+    invalid = client.post(
+        "/api/alerts",
+        json={"symbol": "msft", "type": "price_cross", "targetPrice": "120", "proposalSource": "made_up"},
+    )
+    assert invalid.status_code == 422
+
+
+def test_postgres_alert_insert_includes_proposal_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeConnection:
+        def __init__(self) -> None:
+            self.query = ""
+            self.params = ()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, query, params):
+            self.query = query
+            self.params = tuple(params)
+            return self
+
+        def fetchone(self):
+            return {"id": 1, "proposal_source": "entry_habit"}
+
+        def commit(self):
+            return None
+
+    connection = FakeConnection()
+    repository = PostgresAlertRepository("postgresql://unused")
+    monkeypatch.setattr(repository, "_connect", lambda: connection)
+
+    created = repository.create_alert(AlertCreate(
+        user_sub="user-1",
+        symbol="NVDA",
+        type="price_cross",
+        direction="above",
+        target_price=Decimal("110"),
+        proposal_source="entry_habit",
+    ))
+
+    assert "proposal_source" in connection.query
+    assert connection.params[-2] == "entry_habit"
+    assert created["proposal_source"] == "entry_habit"
 
 
 def test_create_alert_rejects_unknown_repeat_limit(alert_app) -> None:

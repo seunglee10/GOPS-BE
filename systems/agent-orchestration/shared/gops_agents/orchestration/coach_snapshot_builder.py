@@ -345,7 +345,7 @@ ORDER BY created_at DESC LIMIT %s
 """
 
 _ALERTS_SQL = """
-SELECT id, symbol, type, direction, target_price, change_pct, window_min, status, created_at
+SELECT id, symbol, type, direction, target_price, change_pct, window_min, status, proposal_source, created_at
 FROM alerts WHERE user_sub = %s AND status IN ('active', 'disabled')
 ORDER BY created_at DESC LIMIT 100
 """

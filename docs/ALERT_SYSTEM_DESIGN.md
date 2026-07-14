@@ -65,6 +65,12 @@ flowchart TB
 역할 분담: Kafka = 틱 전달 + 발화 감사 로그, Redis = 조건 저장/직전가/윈도우 상태,
 evaluator = 비교 연산 + 발송, api-server = CRUD + WebSocket 서빙.
 
+AI 투자 코치 4페이지에서 사용자가 명시적으로 추가한 알람은 optional
+`proposal_source`(`daily_trade`, `entry_habit`, `exit_habit`, `portfolio_risk`)를
+PostgreSQL에 함께 저장한다. 이는 화면에서 제안 출처를 보존하기 위한 메타데이터이며
+evaluator의 조건 판정, repeat/status, Redis ZSET, 알림 발송 계약을 바꾸지 않는다.
+기존·직접 생성 알람은 null이다.
+
 **v1 토폴로지 결정 — 단일 pod.** 별도 dispatcher pod 없이 evaluator가 감지와 발송을
 모두 담당한다. 발화는 하루 수백 건 수준이라 발송 부하가 감지를 밀어낼 규모가 아니고,
 Kafka 홉이 하나 빠져 발화→알림함 저장이 10~20ms 빨라진다. 단:

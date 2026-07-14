@@ -9,7 +9,6 @@ resources:
   - secretstore-aws-secrets-manager.yaml
   - externalsecret-openai.yaml
   - scheduled
-  - cronjob-yahoo-estimates-sync.yaml
 
 patches:
   - path: configmap-aws-patch.yaml

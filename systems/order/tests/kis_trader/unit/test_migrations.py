@@ -65,6 +65,16 @@ def test_alert_repeat_limit_migration_tracks_trigger_counts():
     assert "CONSTRAINT alerts_triggered_count_check" in sql
 
 
+def test_alert_proposal_source_migration_preserves_ai_coach_origin():
+    [migration] = [path for path in migration_files() if path.name == "0008_alert_proposal_source.sql"]
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "ADD COLUMN IF NOT EXISTS proposal_source TEXT" in sql
+    assert "CONSTRAINT alerts_proposal_source_check" in sql
+    for source in ("daily_trade", "entry_habit", "exit_habit", "portfolio_risk"):
+        assert source in sql
+
+
 def test_recommendation_migration_declares_profile_runs_and_items():
     [migration] = [path for path in migration_files() if path.name == "0004_recommendations.sql"]
     sql = migration.read_text(encoding="utf-8")

@@ -26,6 +26,18 @@ not create per-page jobs or call `AgentOrchestrator.analyze()` in the request ha
 않는다. sync compatibility가 필요하면 `agent-orchestrator` HTTP endpoint를
 호출한다.
 
+AI 코치 알람 제안은 기존 `POST /api/alerts`를 재사용한다. 사용자가 4페이지에서
+명시적으로 생성할 때만 optional `proposalSource`를 보낼 수 있으며 허용값은
+`daily_trade`, `entry_habit`, `exit_habit`, `portfolio_risk`다. API는 이를 PostgreSQL
+`alerts.proposal_source`에 저장하고 create/list 응답에서 `proposal_source`로 보존한다.
+기존·수동 알람은 null이며 임의 출처를 추정하지 않는다. 이 메타데이터는 알람의
+평가·주문 동작을 바꾸지 않는다.
+
+`coach-report.v2.page4.recommendedAlerts`의 당일 거래 후보는 page 1의 결정론적
+조건에서 `currentValue`, `threshold`, `operator`, `detail`, `recommendedAction`,
+`alertSupported`를 그대로 복사한다. 프런트가 임계값을 다시 계산하거나 원천 데이터를
+재조회하지 않으며, 미지원 조건에는 `alertRequest`를 만들지 않는다.
+
 ## Local Demo Simulator Boundary
 
 토요일 시연에서는 `GOPS_SIMULATOR_URL`이 가리키는 로컬 시뮬레이터를
