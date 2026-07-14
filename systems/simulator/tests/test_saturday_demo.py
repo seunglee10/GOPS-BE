@@ -92,6 +92,20 @@ class SaturdayDemoScenarioTests(unittest.TestCase):
         self.assertEqual(status["nextPhase"], "market-close")
         self.assertEqual(len(status["phases"]), 8)
 
+    def test_timeline_waits_at_each_boundary_until_the_operator_advances(self):
+        clock = ManualClock()
+        controller = DemoScenarioController(load_demo_scenario(SCENARIO_ROOT), clock=clock)
+        controller.set_mode("simulation")
+
+        clock.value += 999
+        waiting = controller.status()
+
+        self.assertEqual(waiting["phase"], "market-overview")
+        self.assertLess(waiting["elapsedSeconds"], 30)
+        self.assertFalse(waiting["breakingNewsReleased"])
+        advanced = controller.set_phase("recommendation")
+        self.assertEqual(advanced["phase"], "recommendation")
+
     def test_replayed_messages_are_tagged_as_regular_session_simulation_data(self):
         rendered = demo_stream_payload(
             {"T": "q", "S": "AMD", "bp": 99.9, "ap": 100.1, "t": "2026-07-10T19:30:00Z"},
@@ -107,6 +121,18 @@ class SaturdayDemoScenarioTests(unittest.TestCase):
         self.assertEqual(rendered["simulator"]["marketSession"], "regular")
         self.assertEqual(rendered["simulator"]["source"], "gops-simulator")
         self.assertEqual(rendered["simulator"]["runId"], "sim-test")
+
+    def test_jumping_back_starts_a_fresh_run_so_stream_clients_can_replay_again(self):
+        clock = ManualClock()
+        controller = DemoScenarioController(load_demo_scenario(SCENARIO_ROOT), clock=clock)
+        first = controller.set_mode("simulation")
+        controller.set_phase("breaking-event")
+
+        rewound = controller.set_phase("chart-analysis")
+
+        self.assertNotEqual(rewound["runId"], first["runId"])
+        self.assertEqual(rewound["phase"], "chart-analysis")
+        self.assertEqual(rewound["elapsedSeconds"], 90)
 
 
 if __name__ == "__main__":

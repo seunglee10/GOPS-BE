@@ -26,6 +26,9 @@ class SimulatorGateway:
     def action(self, action: str) -> dict[str, Any]:
         return self._request("POST", "/api/control/action", {"action": action})
 
+    def set_phase(self, phase: str) -> dict[str, Any]:
+        return self._request("PUT", "/api/control/phase", {"phase": phase})
+
     def account(self, user_id: str) -> dict[str, Any]:
         return self._request("GET", f"/api/control/account?userId={urllib.parse.quote(user_id)}")
 

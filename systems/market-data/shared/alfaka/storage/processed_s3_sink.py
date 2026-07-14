@@ -129,6 +129,10 @@ def run_processed_s3_sink(
             for records in batches.values():
                 for record in records:
                     payload = record.value
+                    simulation = payload.get("simulation") if isinstance(payload, dict) else None
+                    if isinstance(simulation, dict) and simulation.get("source") == "gops-simulator":
+                        increment_metric(metrics, "simulationRowsSkipped", 1)
+                        continue
                     for partition_key in processed_realtime_partition_keys(final_prefix, payload, realtime_layout_mode):
                         buffer_key = realtime_buffer_identity(partition_key, payload)
                         buffers[buffer_key].append(payload)

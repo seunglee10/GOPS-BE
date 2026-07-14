@@ -1,0 +1,146 @@
+{
+  "scenarioId": "saturday-demo-amd-iff-oke",
+  "title": "Saturday operator demo · AMD, IFF, OKE",
+  "durationSeconds": 300,
+  "breakingNewsAtSeconds": 210,
+  "seedPrices": {
+    "AMD": 200.0,
+    "IFF": 75.0,
+    "OKE": 82.0
+  },
+  "symbols": [
+    "AMD",
+    "IFF",
+    "OKE"
+  ],
+  "phases": [
+    {
+      "id": "market-overview",
+      "label": "시장 조망",
+      "atSeconds": 0,
+      "summary": "시장 트리맵과 오늘의 흐름을 확인합니다."
+    },
+    {
+      "id": "recommendation",
+      "label": "추천 종목",
+      "atSeconds": 30,
+      "summary": "투자 성향과 포트폴리오를 반영한 추천 종목을 확인합니다."
+    },
+    {
+      "id": "company-research",
+      "label": "기업 분석",
+      "atSeconds": 60,
+      "summary": "기업 정보·뉴스·온톨로지 관계를 확인합니다."
+    },
+    {
+      "id": "chart-analysis",
+      "label": "차트 분석",
+      "atSeconds": 90,
+      "summary": "지지선·저항선과 삼각 수렴 패턴을 확인합니다."
+    },
+    {
+      "id": "order-ready",
+      "label": "예약매매 설정",
+      "atSeconds": 130,
+      "summary": "추천 타점에 예약매매와 알림을 설정합니다."
+    },
+    {
+      "id": "market-open",
+      "label": "본장 시작",
+      "atSeconds": 170,
+      "summary": "관심종목의 체결·호가·풋프린트를 동시에 관찰합니다."
+    },
+    {
+      "id": "breaking-event",
+      "label": "지정학 이벤트",
+      "atSeconds": 210,
+      "summary": "반도체 약세와 에너지 강세에 대응합니다."
+    },
+    {
+      "id": "market-close",
+      "label": "장 마감·복기",
+      "atSeconds": 285,
+      "summary": "주문·알림 상태와 오늘의 판단을 리포트로 복기합니다."
+    }
+  ],
+  "source": {
+    "provider": "GOPS deterministic scenario generator",
+    "feed": "simulation",
+    "marketSession": "regular",
+    "synthetic": true,
+    "generatedEventCount": 1800,
+    "notice": "시연 전용 합성 체결·호가이며 실제 시장 데이터가 아닙니다."
+  },
+  "recommendations": [
+    {
+      "symbol": "IFF",
+      "rank": 1,
+      "score": 92,
+      "confidence": 0.86,
+      "sector": "Materials",
+      "changePercent": 1.4,
+      "reasons": [
+        "삼각 수렴 상단 접근",
+        "포트폴리오 업종 분산"
+      ],
+      "riskWarnings": [
+        "이벤트 발생 시 변동성 확대 가능"
+      ]
+    },
+    {
+      "symbol": "AMD",
+      "rank": 2,
+      "score": 84,
+      "confidence": 0.79,
+      "sector": "Information Technology",
+      "changePercent": 0.6,
+      "reasons": [
+        "거래량 회복",
+        "지지 구간 재확인"
+      ],
+      "riskWarnings": [
+        "반도체 집중 위험"
+      ]
+    },
+    {
+      "symbol": "OKE",
+      "rank": 3,
+      "score": 78,
+      "confidence": 0.74,
+      "sector": "Energy",
+      "changePercent": 0.2,
+      "reasons": [
+        "에너지 업종 분산",
+        "이벤트 헤지 후보"
+      ],
+      "riskWarnings": [
+        "뉴스 민감도 높음"
+      ]
+    }
+  ],
+  "chartAnalysis": {
+    "symbol": "IFF",
+    "pattern": "삼각 수렴 패턴",
+    "support": 74.8,
+    "resistance": 76.2,
+    "entry": 76.3,
+    "stop": 74.6,
+    "summary": "고점과 저점 간격이 좁아진 뒤 76.20 저항 돌파를 확인하는 시나리오입니다."
+  },
+  "eventResponse": {
+    "riskSymbol": "AMD",
+    "beneficiarySymbol": "OKE",
+    "summary": "AMD 손절 기준과 알림을 관리하고 OKE 매수 타점을 제안합니다."
+  },
+  "breakingNews": {
+    "id": "simulated-geopolitical-risk",
+    "headline": "[시뮬레이션 속보] 지정학적 긴장 고조…반도체 약세·에너지 강세",
+    "summary": "시연 시나리오가 지정학 이벤트를 발생시켰습니다. 실제 뉴스가 아니며 AMD 하락·OKE 상승 체결과 호가가 이어집니다.",
+    "source": "GOPS 시뮬레이터",
+    "symbols": [
+      "AMD",
+      "IFF",
+      "OKE"
+    ]
+  }
+}

@@ -148,6 +148,7 @@ def normalize_bar(envelope, correction_type="NONE"):
         "marketSession": envelope.get("marketSession"),
         "sourceEventId": envelope.get("sourceEventId"),
         "createdAt": envelope.get("receivedAt"),
+        **({"simulation": envelope["simulation"]} if envelope.get("simulation") else {}),
         **metadata,
     })
 
@@ -170,6 +171,7 @@ def normalize_trade(envelope):
         "marketSession": envelope.get("marketSession"),
         "sourceEventId": envelope.get("sourceEventId"),
         "receivedAt": envelope.get("receivedAt"),
+        **({"simulation": envelope["simulation"]} if envelope.get("simulation") else {}),
     }
 
 
@@ -193,6 +195,7 @@ def normalize_quote(envelope):
         "marketSession": envelope.get("marketSession"),
         "sourceEventId": envelope.get("sourceEventId"),
         "receivedAt": envelope.get("receivedAt"),
+        **({"simulation": envelope["simulation"]} if envelope.get("simulation") else {}),
     }
 
 
@@ -213,6 +216,7 @@ def normalize_status(envelope):
         "marketSession": envelope.get("marketSession"),
         "sourceEventId": envelope.get("sourceEventId"),
         "raw": raw,
+        **({"simulation": envelope["simulation"]} if envelope.get("simulation") else {}),
     }
 
 
@@ -261,6 +265,7 @@ class LiveCandleBuilder:
                 "marketSession": trade.get("marketSession"),
                 "sourceEventId": trade.get("sourceEventId"),
                 "updatedAt": trade.get("receivedAt"),
+                **({"simulation": trade["simulation"]} if trade.get("simulation") else {}),
                 **candle_metadata("live"),
             }
         else:
@@ -274,6 +279,8 @@ class LiveCandleBuilder:
             candle["marketSession"] = trade.get("marketSession") or candle.get("marketSession")
             candle["sourceEventId"] = trade.get("sourceEventId")
             candle["updatedAt"] = trade.get("receivedAt")
+            if trade.get("simulation"):
+                candle["simulation"] = trade["simulation"]
 
         self.candles[key] = candle
         self._prune_symbol(trade["symbol"])
@@ -427,6 +434,7 @@ def build_provisional_candle(symbol, interval, bucket, rows, source_interval, bu
         "marketSession": latest.get("marketSession"),
         "sourceEventId": latest.get("sourceEventId"),
         "updatedAt": latest.get("updatedAt") or latest.get("createdAt"),
+        **({"simulation": latest["simulation"]} if latest.get("simulation") else {}),
         **candle_metadata(latest.get("priceAdjustment"), latest.get("canonicalVersion")),
     }
 
@@ -578,6 +586,7 @@ class CandleAggregator:
             "marketSession": latest.get("marketSession"),
             "sourceEventId": latest.get("sourceEventId"),
             "createdAt": latest.get("createdAt"),
+            **({"simulation": latest["simulation"]} if latest.get("simulation") else {}),
             **candle_metadata(latest.get("priceAdjustment"), latest.get("canonicalVersion")),
         }
 
@@ -627,6 +636,7 @@ class TickWindowCandleBuilder:
                 "marketSession": trade.get("marketSession"),
                 "sourceEventId": trade.get("sourceEventId"),
                 "createdAt": trade.get("receivedAt"),
+                **({"simulation": trade["simulation"]} if trade.get("simulation") else {}),
             }
         if event_time < current["openTime"]:
             current["open"] = price
@@ -644,6 +654,8 @@ class TickWindowCandleBuilder:
         current["marketSession"] = trade.get("marketSession") or current.get("marketSession")
         current["sourceEventId"] = trade.get("sourceEventId")
         current["createdAt"] = trade.get("receivedAt") or current.get("createdAt")
+        if trade.get("simulation"):
+            current["simulation"] = trade["simulation"]
         self.windows[key] = current
         return True
 
@@ -686,6 +698,7 @@ class TickWindowCandleBuilder:
             "marketSession": window.get("marketSession"),
             "sourceEventId": window.get("sourceEventId"),
             "createdAt": window.get("createdAt"),
+            **({"simulation": window["simulation"]} if window.get("simulation") else {}),
             **candle_metadata("split"),
         }
 
@@ -760,6 +773,7 @@ class CalendarCandleAggregator:
             "marketSession": latest.get("marketSession"),
             "sourceEventId": latest.get("sourceEventId"),
             "createdAt": latest.get("createdAt"),
+            **({"simulation": latest["simulation"]} if latest.get("simulation") else {}),
             **candle_metadata(latest.get("priceAdjustment"), latest.get("canonicalVersion")),
         }
 

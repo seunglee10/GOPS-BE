@@ -40,8 +40,16 @@ kubectl set env deployment/alfaka-alpaca-ingestor-sip -n "${K8S_NAMESPACE}" \
 
 kubectl set env deployment/gops-backend -n "${K8S_NAMESPACE}" GOPS_SIMULATOR_URL-
 
+kubectl set env deployment/alfaka-market-processor deployment/gops-backend -n "${K8S_NAMESPACE}" \
+  ORDER_FLOW_PINNED_SYMBOLS=NVDA,AMZN,MU,AAPL,GOOGL
+
+kubectl set env deployment/trade-condition-executor -n "${K8S_NAMESPACE}" \
+  TRADE_CONDITION_EXECUTION_MODE=demo
+
 kubectl rollout status deployment/alfaka-alpaca-ingestor-sip -n "${K8S_NAMESPACE}" --timeout=300s
 kubectl rollout status deployment/gops-backend -n "${K8S_NAMESPACE}" --timeout=300s
+kubectl rollout status deployment/alfaka-market-processor -n "${K8S_NAMESPACE}" --timeout=300s
+kubectl rollout status deployment/trade-condition-executor -n "${K8S_NAMESPACE}" --timeout=300s
 kubectl scale deployment/gops-simulator --replicas=0 -n "${K8S_NAMESPACE}"
 
 printf 'Live Alpaca SIP path restored; EKS simulator replicas are now 0.\n'

@@ -10,6 +10,7 @@ if str(SHARED) not in sys.path:
     sys.path.insert(0, str(SHARED))
 
 from alfaka.common.market_messages import build_raw_envelope
+from alfaka.storage.clickhouse_loader import clickhouse_actions_for_payload
 from alfaka.streaming.transforms import normalize_quote, normalize_trade
 
 
@@ -50,3 +51,22 @@ def test_simulation_metadata_survives_quote_normalization_for_paper_matching():
     assert quote["bidPrice"] == 199.99
     assert quote["askPrice"] == 200.01
     assert quote["simulation"]["source"] == "gops-simulator"
+
+
+def test_simulation_ticks_are_not_written_to_durable_clickhouse_tables():
+    envelope = build_raw_envelope(simulator_payload("t"), "sip", feed_profile="sip")
+    trade = normalize_trade(envelope)
+
+    assert clickhouse_actions_for_payload(trade, load_trades=True) == []
+
+
+def test_untrusted_payload_cannot_override_the_market_session():
+    payload = simulator_payload("t")
+    payload["simulator"] = {"source": "unknown-client", "marketSession": "regular"}
+
+    envelope = build_raw_envelope(payload, "sip", feed_profile="sip")
+    trade = normalize_trade(envelope)
+
+    assert envelope["marketSession"] == "closed"
+    assert "simulation" not in envelope
+    assert "simulation" not in trade

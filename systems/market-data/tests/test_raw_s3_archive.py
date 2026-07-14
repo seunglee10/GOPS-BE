@@ -138,6 +138,27 @@ class RawS3ArchiveV2Test(unittest.TestCase):
 
         self.assertEqual(consumer.commits, 0)
 
+    def test_simulation_rows_are_not_written_to_durable_raw_storage(self):
+        row = _envelope("AMD", "sim-a", minute=30)
+        row["simulation"] = {"source": "gops-simulator", "runId": "sim-test"}
+        consumer = _BatchThenInterruptConsumer([row])
+        s3 = _S3()
+        metrics = {}
+
+        run_raw_s3_archive_sink(
+            consumer,
+            s3,
+            s3_bucket="bucket",
+            raw_prefix=_raw_prefix(),
+            flush_count=1,
+            realtime_layout_mode="v2",
+            metrics=metrics,
+        )
+
+        self.assertEqual(s3.objects, {})
+        self.assertEqual(metrics["simulationRowsSkipped"], 1)
+        self.assertGreaterEqual(consumer.commits, 1)
+
 
 class _S3:
     def __init__(self):

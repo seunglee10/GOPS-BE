@@ -193,9 +193,11 @@ def demo_stream_payload(
         # 정수 ID를 발급해 재생 이벤트끼리 충돌하지 않게 한다.
         rendered["i"] = 1_000_000_000_000_000 + sequence
     rendered["simulator"] = {
+        "source": "gops-simulator",
         "scenarioId": status["scenarioId"],
         "runId": status["runId"],
         "phase": status["phase"],
+        "marketSession": "regular",
         "elapsedSeconds": status["elapsedSeconds"],
         "sourceTimestamp": source_timestamp,
     }

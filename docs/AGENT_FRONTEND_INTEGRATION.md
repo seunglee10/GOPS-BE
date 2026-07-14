@@ -19,9 +19,22 @@
 - final answer, evidence, role findings rendering
 - optional chart/layout proposal preview and apply flow
 
-로컬 시연에서는 상단 LIVE/SIM 토글이 `/api/simulator/*`를 사용한다. SIM 전환 후
-5초 속보는 기사 링크만 열 수 있으며 차트를 자동 배치하지 않는다. 주문 패널의
-반도체 매도/에너지 매수 바스켓은 사용자가 해당 버튼을 직접 누를 때만 전송하고,
+토요일 시연에서는 상단 LIVE/SIM 토글과 `다음 시연 단계` 제어가
+`/api/simulator/*`를 사용한다. 상태 응답의 `phases`, `phaseIndex`, `nextPhase`를
+기준으로 8단계를 이동하며, 임의의 클라이언트 타이머로 단계를 추정하지 않는다.
+본장 시작은 파란 시계, 지정학 이벤트는 빨간 경고, 장 마감은 보라색 달 아이콘으로
+구분한다.
+
+SIM 상태에서는 추천 패널에 명시적인 시뮬레이션 AMD/IFF/OKE 추천을 표시하고,
+트리맵은 status의 가격·등락률을 1초 단위로 반영한다. 뉴스 패널은 이벤트 전
+시뮬레이션 빈 결과를 사용하고 이벤트 뒤 `/api/simulator/news`의 가짜 속보를
+정상 뉴스 카드로 표시한다. IFF 차트 해설은 `GlossaryText`를 통해 삼각 수렴·지지선·
+저항선 용어 hover 설명을 제공한다. 장 마감 단계의 AI 코치 fixture도
+`saturday-demo-close-report`로 표시해 실제 저장 report와 혼동하지 않는다.
+
+이벤트 속보의 `대응 레이아웃 적용`은 보유종목, AMD 차트, 가상계좌, 알림 설정,
+OKE 오더플로우 패널을 여는 layout proposal이다. 사용자가 버튼을 눌러야 적용하며
+주문은 실행하지 않는다. 주문 패널의 바스켓도 사용자가 직접 눌러야 전송하고,
 SIM 표시가 있는 주문은 실제 브로커 WebSocket에 연결하지 않는다.
 시뮬레이터 상태는 실행 중에만 1초 간격으로 확인하고 LIVE, 일시정지, 완료,
 연결 불가 상태에서는 30초 간격으로 낮춘다. 이전 요청이 끝난 뒤 다음 요청을

@@ -21,6 +21,10 @@ class SimulatorActionRequest(BaseModel):
     action: Literal["pause", "resume", "restart"]
 
 
+class SimulatorPhaseRequest(BaseModel):
+    phase: str
+
+
 class SimulatorBasketOrderRequest(BaseModel):
     basket: Literal["semiconductor", "energy"]
     side: Literal["buy", "sell"]
@@ -38,8 +42,12 @@ def simulator_status(request: Request) -> dict[str, Any]:
             "detail": str(exc),
             "elapsedSeconds": 0,
             "durationSeconds": 300,
-            "breakingNewsAtSeconds": 5,
+            "breakingNewsAtSeconds": 210,
             "breakingNewsReleased": False,
+            "phase": "live",
+            "phaseIndex": -1,
+            "nextPhase": None,
+            "phases": [],
             "symbols": [],
         }
 
@@ -52,6 +60,11 @@ def simulator_mode(payload: SimulatorModeRequest, request: Request) -> dict[str,
 @router.post("/action")
 def simulator_action(payload: SimulatorActionRequest, request: Request) -> dict[str, Any]:
     return _call_simulator(lambda gateway: gateway.action(payload.action), request)
+
+
+@router.put("/phase")
+def simulator_phase(payload: SimulatorPhaseRequest, request: Request) -> dict[str, Any]:
+    return _call_simulator(lambda gateway: gateway.set_phase(payload.phase), request)
 
 
 @router.get("/news")
