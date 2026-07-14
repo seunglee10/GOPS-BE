@@ -26,9 +26,30 @@ configure_cluster() {
   kubectl get namespace "${K8S_NAMESPACE}" >/dev/null
 }
 
+stop_simulator_replay() {
+  local live_payload='{"mode":"live"}'
+
+  kubectl exec deployment/gops-simulator -n "${K8S_NAMESPACE}" -- \
+    python -c 'import sys, urllib.request
+request = urllib.request.Request(
+    "http://127.0.0.1:8765/api/control/mode",
+    data=sys.argv[1].encode("utf-8"),
+    headers={"Content-Type": "application/json"},
+    method="PUT",
+)
+urllib.request.urlopen(request, timeout=2).read()' "${live_payload}" \
+    || printf 'Simulator mode reset skipped; continuing live path restoration.\n' >&2
+}
+
+cleanup_simulator_state() {
+  kubectl exec deployment/alfaka-market-processor -n "${K8S_NAMESPACE}" -- \
+    python -m alfaka.tools.cleanup_simulator_state --symbols AMD,IFF,OKE
+}
+
 require_command aws
 require_command kubectl
 configure_cluster
+stop_simulator_replay
 
 kubectl set env deployment/alfaka-alpaca-ingestor-sip -n "${K8S_NAMESPACE}" \
   ALPACA_STREAM_BASE_URL- \
@@ -50,6 +71,7 @@ kubectl rollout status deployment/alfaka-alpaca-ingestor-sip -n "${K8S_NAMESPACE
 kubectl rollout status deployment/gops-backend -n "${K8S_NAMESPACE}" --timeout=300s
 kubectl rollout status deployment/alfaka-market-processor -n "${K8S_NAMESPACE}" --timeout=300s
 kubectl rollout status deployment/trade-condition-executor -n "${K8S_NAMESPACE}" --timeout=300s
+cleanup_simulator_state
 kubectl scale deployment/gops-simulator --replicas=0 -n "${K8S_NAMESPACE}"
 
 printf 'Live Alpaca SIP path restored; EKS simulator replicas are now 0.\n'

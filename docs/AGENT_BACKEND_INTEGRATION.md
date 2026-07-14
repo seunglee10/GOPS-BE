@@ -91,7 +91,8 @@ manifest에 정의된 단계 ID만 받아, 운영자가 시장 조망·추천·�
 `gops-simulator`일 때 market envelope는 선언된 `marketSession=regular`를 유지하고
 normalized trade/quote/candle에 simulation metadata를 전파한다. ClickHouse loader와
 raw/processed S3 sink는 이 표식이 있는 행을 영구 적재하지 않는다. Redis 실시간 상태는
-시연 동안만 사용하며 live 경로 복구 뒤 실제 시세가 다시 덮어쓴다.
+시연 동안만 사용한다. 종료 스크립트는 AMD/IFF/OKE의 합성 캔들·체결·호가·
+오더플로우 Redis 키를 제거한 뒤 live 경로의 실제 시세가 다시 채우도록 한다.
 
 SIM 모드일 때 일반 `/api/orders`는 시뮬레이터 메모리 원장을 사용하고 KIS order
 outbox를 만들지 않는다. 영구 예약매매는 별도 paper 경계를 사용한다. EKS 시연
