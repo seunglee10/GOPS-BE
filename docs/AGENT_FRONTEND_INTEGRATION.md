@@ -38,13 +38,27 @@ Bid/Ask 구조가 유효하지 않거나 chart WebSocket이 연결 오류 상태
 미지원 종목일 때만 전송을 비활성화한다. 로컬 SIM의 지정가 체결가는 replay engine 기준이며 실제 지정가
 matching을 의미하지 않는다.
 
+일반 주문 ticket과 빠른 주문은 전송 전에 compact `AI 코치 판단 기록` picker를
+표시한다. 사용자가 실제로 확인한 항목만 선택하며, UI의 여섯 key는 `RSI`
+(`chart.rsi`), `MACD` (`chart.macd`), `거래량` (`chart.volume`), `기업 뉴스`
+(`news.company`), `실적·재무` (`fundamentals.earnings`), `시장·섹터`
+(`market.context`)다. Submit payload는 여섯 항목 모두를 `checked` 또는
+`unchecked`로 명시하는 `decision-checks.v1`을 포함한다. Picker는 주문 성공 뒤에만
+초기화하며 실패한 요청에서 사용자의 선택을 잃지 않는다. 프런트는 label, evidence,
+source, capture timestamp를 보내지 않으며 서버가 검증·보강한 fill event만 AI 코치
+판단 근거로 사용한다.
+
 패널 팔레트의 `가상 빠른 주문`, `가상 주문`, `가상계좌`는 기존 레이아웃에 자동
 추가하지 않는다. 두 가상 주문 패널은 KIS 주문 컴포넌트의 형태를 재사용하지만
 `/api/paper/*`와 `/ws/paper/*`만 호출하며 LIVE/SIM 토글의 영향을 받지 않는다.
 가상 빠른 주문은 `/api/paper/symbols/search`의 전체 활성 미국 주식/ETF를 선택할 수 있고 유효한 bid/ask가
 없으면 전송을 비활성화한다. 일반 가상 주문은 호가가 없어도 지정가를 대기 주문으로
-접수한다. `가상계좌`는 현금, 평가손익, 보유종목, 미체결 취소, 거래내역, 새 시작금을
-받는 명시적 계좌 초기화를 제공한다.
+접수한다. `가상계좌`는 현금, 평가손익, 보유종목, 미체결 취소, 거래내역을 제공한다.
+첫 번째 `예약 매매` 탭은 기존 `/api/trade-conditions` 목록·등록·일시정지·알림·삭제
+기능을 가상계좌 표 스타일 안에서 제공하며, 조건 충족 주문은 기존 영구 가상계좌
+실행 경로를 그대로 사용한다. 가격 조건 화면은 별도 패널에 중복 표시하지 않는다.
+기존 `priceCondition` panel type은 저장된 레이아웃 호환을 위해 유지하되 팔레트 제목은
+`알림 설정`이고 알림·관심 기업 설정만 표시한다.
 
 Agent 인증 진입은 상단 global navigation의 `Login` 버튼을 사용한다. 별도 `Agents`
 버튼은 표시하지 않으며, 인증 후 하단 Agent 입력을 직접 사용한다. 로컬 Vite DEV에서는
@@ -65,7 +79,7 @@ production build에는 debug snapshot을 노출하지 않는다.
 걸어줘`처럼 명시적으로 요청한 경우에만 프런트는 가격을 재구성하지 않고
 `analysisId`, `proposalId`, 원문 후속 문장을 `POST /api/trade-conditions/commands`로
 보낸다. API가 `clarify`를 반환하면 같은 proposal context를 유지해 수량 같은 누락
-필드를 받고, `created`일 때만 독립 가격 조건 패널을 invalidate/refetch한다. 관련
+필드를 받고, `created`일 때만 가상계좌의 예약 매매 탭을 invalidate/refetch한다. 관련
 없는 새 분석이 완료되면 이전 proposal context를 폐기한다.
 
 ## Chart Derived Profile
@@ -90,11 +104,16 @@ AI 투자 코치의 알람 생성 UI는 4페이지 `실행·알람 관리`에만
 활성 항목을 누르면 API를 호출하지 않은 채 4페이지의 같은 후보로 이동해
 focus/highlight한다. 유사 사례의 `그때의 실수`, `오늘과 같은 점`, `오늘과 다른 점`도
 한 항목씩 같은 방식으로 전환한다. 현재값, 임계값, 연산자, 판단 사유, 추천 행동 같은 상세는
-4페이지에서 표시한다. 추천 후보는 `당일 거래에서 제안`, `진입 습관에서 제안`,
-`청산 습관에서 제안`, `포트폴리오 위험에서 제안` 네 출처 그룹을 고정 순서로
-표시한다. 사용자가 지원되는 후보의 `알람 추가`를 눌렀을 때만 `POST /api/alerts`를
+4페이지에서 표시한다. 추천 후보는 `당일 거래에서 제안` 출처만 표시하고, 출처명은
+신호색 왼쪽 rail과 표에 붙은 section band로 행 목록과 한 그룹임을 나타낸다.
+가상계좌의 예약 매매 목록과 같은 표에서 첫 줄을 종목·항목·현재값·기호 조건·관리 열로 나눈다.
+판단 근거와 추천 행동은 사용자가 행을 선택했을 때만 둘째 줄에 표시한다. 이 줄은
+티커 아래에는 작은 빈 여백만 유지하고, 나머지 영역을 `판단 근거 | 근거 내용 |
+추천 행동 | 행동 내용` 4열로 나눈다.
+여러 행을 동시에 펼칠 수 있고 각 행은 독립적으로 닫는다. 사용자가 지원되는 후보의
+`알람 추가`를 눌렀을 때만 `POST /api/alerts`를
 호출하며 RSI·거래량·집중도처럼 현재 alert API가 지원하지 않는 후보는 `미지원`으로
-남긴다. 저장된 알람의 출처가 null이면 `출처 기록 없음`으로 표시한다.
+남긴다. 저장된 주시 알람은 4페이지에 표시하지 않는다.
 
 1페이지의 여러 당일 체결은 종목명 tab row를 만들지 않고 활성 기업 정보 양옆의
 화살표로 전환한다. 현재 거래와 유사 사례도 차트 양옆 화살표로 전환하며 화면에는
@@ -103,6 +122,12 @@ carousel 위치 숫자를 반복 표시하지 않는다. 화살표는 별도 좌
 요약은 등급 제목이나 상태색 없이 한 문장으로 크게 표시한다. 확인 항목은 `차트`,
 `뉴스`, `재무`, `시장` 순서의 2열 overview로 렌더링하고, 기본 화면에는 분류명, 상태,
 최대 두 개 핵심 항목명만 크게 표시한다. 세부 수치·출처·기준시각은 tooltip에 둔다.
+
+2페이지 포트폴리오 탭은 별도 API를 호출하지 않고 받은 report의
+`marketDiversification`만 렌더링한다. 현재 섹터 비중과 보유 종목의 시장 연동성은
+큰 행으로, 최대 3개의 분산 후보 시장은 가로 rail로 표시한다. 후보는 자동 매수
+추천이 아니라 검토 비중 범위이며, 상관 데이터가 없으면 숫자나 일반론적 섹터를
+채우지 않고 `시장·섹터 상관 데이터 연결 대기`를 표시한다.
 
 ## User Flow
 
@@ -295,9 +320,15 @@ terminal report를 유지할 수 있다.
 
 When present, one `coach-report.v2` is passed from the workspace container into the AI
 coach panel. The panel has four pages: (1) today's trade review, (2) habit review with
-independent `entry`/`exit`/`portfolio` tabs and `30d`/`90d`/`1y` periods, (3) improvement
-priorities, and (4) one action center combining execution experiments, guardrails, and
-alert management. Page sections receive props only and never call the analysis API.
+independent `entry`/`exit`/`portfolio` tabs and a six-month point-in-time profile, (3) improvement
+priorities, and (4) an alert center for daily-trade recommendations. Page 4 does not
+repeat the page header, summary counts, active experiments, enabled guardrails, watched
+alerts, or the safety footer. Page sections receive props only and never call the
+analysis API.
+Page 2 is a long-term investor-profile view, not an alert surface: it renders the supplied
+process/outcome cohorts, repeated patterns, and representative trades without a chart or
+per-section fetch. If the report has no decision record, it must show the supplied missing
+state rather than infer a personality or plan from realized profit and loss.
 
 On page 1, the selected fill and similar-case index are local UI state. A fill switch
 selects one `reviewsByFillId` object so chart, missed checks, outcome, portfolio impact,
@@ -305,6 +336,26 @@ and conditions change atomically. Price, volume, RSI, and MACD share the `T-60..
 relative axis, and today's path ends at its latest observation without a forecast.
 The dev fixture is loaded only by a DEV-only dynamic import when
 `VITE_AI_COACH_DEV_FIXTURE=true`; production has no fixture fallback.
+
+When the workspace does not already supply a `coachReport`, the panel makes one top-level
+authenticated request to `GET /api/ai-coach/reports/latest`. Child pages never fetch their
+own data. A stored report renders immediately; no stored report renders a clear waiting
+state. This keeps the post-market coach independent of Redis report delivery while
+preserving the existing polling/SSE contract for interactive agent analysis.
+
+Production report의 decision checklist는 post-market input archive에 실제로 있던
+기록만 사용한다. Snapshot Builder가 cutoff-safe chart/news/fundamentals/market
+evidence를 tooltip과 chart marker에 보강할 수 있지만 그 evidence가
+`checked`/`unchecked`를 바꾸지는 않는다. 기록이 없는 체결은 UI가 임의로
+`미확인`으로 채우지 않고 `확인 기록 없음`을 표시한다. Historical cases keep their
+own decision-check records; a case switch must not reuse the selected current fill's checks.
+Decision evidence is bounded by `decisionAt`, while chart outcomes are anchored at
+`filledAt` and stop at the report request cutoff.
+
+Portfolio impact renders only an exact fill-scoped `before`/`after` pair. This applies to
+both KIS and paper fills; an adjacent account snapshot is not substituted and the UI shows
+`계산되지 않음`. Paper cost-basis pairs remain labeled as acquisition-cost data rather
+than current market valuation.
 
 Report에서 우선 렌더링할 영역:
 

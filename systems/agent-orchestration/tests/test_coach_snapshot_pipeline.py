@@ -19,10 +19,15 @@ from gops_agents.orchestrator import AgentOrchestrator  # noqa: E402
 from gops_agents.orchestration.coach_snapshot_builder import (  # noqa: E402
     ClickHouseCoachMarketProvider,
     CoachInputSnapshotBuilder,
-    _ALERTS_SQL,
+    S3CoachSnapshotDataProvider,
     _market_day_bounds,
+    _enrich_decision_checks,
+    _normalize_fill,
+    _portfolio_pair,
+    _sanitize_trade_case,
 )
 from gops_agents.runtime.coach_snapshot_archive import (  # noqa: E402
+    CoachReportArchive,
     CoachSnapshotArchive,
     CoachSnapshotArchiveError,
     canonical_snapshot_bytes,
@@ -94,6 +99,7 @@ class FakeSnapshotDataProvider:
             "decisionChecks": [
                 {
                     "fill_id": "fill-today",
+                    "check_key": "chart.rsi",
                     "category": "chart",
                     "label": "RSI",
                     "status": "unchecked",
@@ -101,6 +107,15 @@ class FakeSnapshotDataProvider:
                     "source_as_of": "2026-07-09T20:00:00Z",
                     "source": "clickhouse",
                     "evidence": {"summary": "RSI 72", "marker": {"type": "rsi", "value": 72}},
+                },
+                {
+                    "fill_id": "fill-history",
+                    "check_key": "news.company",
+                    "category": "news",
+                    "label": "기업 뉴스",
+                    "status": "checked",
+                    "checked_at": "2026-06-01T13:58:00Z",
+                    "evidence": {},
                 },
                 {
                     "fill_id": "fill-today",
@@ -125,29 +140,91 @@ class FakeMarketProvider:
     def trade_case(self, fill: dict, *, requested_at: datetime) -> dict:
         self.calls.append((str(fill["fillId"]), requested_at))
         entry = datetime.fromisoformat(str(fill["filledAt"]).replace("Z", "+00:00"))
+        decision_point = _point(entry - timedelta(days=1), -1, 99, rsi=65)
         return {
             "caseId": "provider-controlled-id",
-            "featureAsOf": entry.isoformat(),
-            "rsiBand": "overbought",
+            "featureAsOf": (entry - timedelta(days=1)).isoformat(),
+            "featureVintageAsOf": (entry - timedelta(minutes=1)).isoformat(),
+            "rsiBand": "neutral",
+            "decisionPoint": decision_point,
             "series": [
-                _point(entry - timedelta(days=1), -1, 99, rsi=65),
+                decision_point,
                 _point(entry, 0, 101, rsi=99),
                 _point(entry + timedelta(days=1), 1, 102, rsi=100),
             ],
         }
 
 
+class FakeContextProvider:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def load(self, **kwargs) -> dict:
+        self.calls.append(kwargs)
+        fills = kwargs["fills"]
+        enrichment = {
+            str(fill["fillId"]): {
+                "companyName": "NVIDIA" if fill["symbol"] == "NVDA" else fill["symbol"],
+                "sector": "Technology",
+                "currentPrice": 105 if str(fill["fillId"]) == "fill-today" else None,
+            }
+            for fill in fills
+        }
+        return {
+            "fillEnrichmentById": enrichment,
+            "marketContext": {"metadataBySymbol": {"NVDA": {"sector": "Technology", "source": "test", "sourceAsOf": "2026-07-01T00:00:00Z"}}},
+            "newsContext": {"byFillId": {}},
+            "fundamentalsContext": {"byFillId": {}},
+            "earningsContext": {},
+            "ontologyContext": {"temporalScope": "current-only", "historicalSimilarityEligible": False},
+            "sourceAsOf": {"market": "2026-07-10T14:59:00Z", "news": None, "fundamentals": None, "earnings": None, "ontology": None},
+            "missingData": [],
+        }
+
+
 class FakeCandleProvider:
     def __init__(self, rows: list[dict]) -> None:
         self.rows = rows
+        self.calls: list[dict] = []
 
     def candles(self, symbol, interval, limit, *, from_time=None, to_time=None):
         return list(self.rows)
+
+    def latest_canonical_daily_source(self, where_sql):
+        return f"SELECT * FROM fake_canonical_daily WHERE {where_sql}"
+
+    def query_json_each_row(self, query, params):
+        self.calls.append(dict(params))
+        available_at = datetime.fromisoformat(str(params["availableAt"]).replace("Z", "+00:00"))
+        from_time = datetime.fromisoformat(str(params["fromTime"]).replace("Z", "+00:00"))
+        to_time = datetime.fromisoformat(str(params["toTime"]).replace("Z", "+00:00"))
+        by_time: dict[str, dict] = {}
+        for raw in self.rows:
+            row = dict(raw)
+            timestamp = datetime.fromisoformat(str(row["timestamp"]).replace("Z", "+00:00"))
+            inserted_at = datetime.fromisoformat(
+                str(row.get("insertedAt") or "1970-01-01T00:00:00Z").replace("Z", "+00:00")
+            )
+            if timestamp < from_time or timestamp > to_time or inserted_at > available_at:
+                continue
+            key = timestamp.isoformat()
+            previous = by_time.get(key)
+            previous_inserted = datetime.fromisoformat(
+                str((previous or {}).get("insertedAt") or "1970-01-01T00:00:00Z").replace("Z", "+00:00")
+            )
+            if previous is None or inserted_at >= previous_inserted:
+                by_time[key] = row
+        return [by_time[key] for key in sorted(by_time)]
 
 
 class PreconditionFailed(Exception):
     def __init__(self) -> None:
         self.response = {"Error": {"Code": "PreconditionFailed"}}
+
+
+class NoSuchKey(Exception):
+    def __init__(self) -> None:
+        self.response = {"Error": {"Code": "NoSuchKey"}}
 
 
 class MemoryS3Client:
@@ -158,9 +235,15 @@ class MemoryS3Client:
     def put_object(self, **kwargs):
         self.put_calls.append(kwargs)
         key = (kwargs["Bucket"], kwargs["Key"])
-        if key in self.objects:
+        if key in self.objects and kwargs.get("IfNoneMatch") == "*":
             raise PreconditionFailed()
         self.objects[key] = {"Body": kwargs["Body"], "Metadata": dict(kwargs.get("Metadata") or {})}
+
+    def get_object(self, **kwargs):
+        key = (kwargs["Bucket"], kwargs["Key"])
+        if key not in self.objects:
+            raise NoSuchKey()
+        return dict(self.objects[key])
 
 class RecordingBuilder:
     def __init__(self) -> None:
@@ -181,6 +264,9 @@ class RecordingArchive:
         self.calls.append((snapshot, analysis_id))
         if self.error:
             raise CoachSnapshotArchiveError("archive unavailable")
+        return None
+
+    def get_existing(self, analysis_id: str, requested_at):
         return None
 
 
@@ -204,7 +290,8 @@ class CoachSnapshotPipelineTests(unittest.TestCase):
     def test_builder_uses_trusted_user_and_caps_every_source_at_request_time(self) -> None:
         data = FakeSnapshotDataProvider()
         market = FakeMarketProvider()
-        builder = CoachInputSnapshotBuilder(data_provider=data, market_provider=market, now_provider=lambda: FIXED_NOW)
+        context = FakeContextProvider()
+        builder = CoachInputSnapshotBuilder(data_provider=data, market_provider=market, context_provider=context, now_provider=lambda: FIXED_NOW)
 
         snapshot = builder.build(
             user_id="trusted-user",
@@ -214,22 +301,102 @@ class CoachSnapshotPipelineTests(unittest.TestCase):
         )
 
         self.assertEqual(len(data.calls), 1)
+        self.assertEqual(len(context.calls), 1)
+        self.assertEqual(context.calls[0]["current_fill_ids"], {"fill-today"})
         self.assertEqual(data.calls[0], {"user_id": "trusted-user", "requested_at": FIXED_NOW, "trading_date": FIXED_NOW.date()})
         self.assertEqual([item[0] for item in market.calls], ["fill-today", "fill-history"])
         self.assertEqual(snapshot["request"]["selectedFillId"], "fill-today")
         self.assertEqual([item["fillId"] for item in snapshot["fills"]], ["fill-today"])
+        self.assertEqual(snapshot["fills"][0]["companyName"], "NVIDIA")
+        self.assertEqual(snapshot["fills"][0]["currentPrice"], 105)
         self.assertEqual([item["caseId"] for item in snapshot["chartContext"]["historicalCases"]], ["fill-history"])
+        self.assertEqual(snapshot["chartContext"]["historicalCases"][0]["decisionChecks"][0]["checkKey"], "news.company")
         self.assertEqual(snapshot["chartContext"]["currentCase"]["caseId"], "fill-today")
         self.assertEqual(snapshot["chartContext"]["currentCase"]["featureAsOf"], "2026-07-09T14:00:00Z")
         self.assertEqual(snapshot["chartContext"]["currentCase"]["rsiBand"], "neutral")
         self.assertEqual([point["relativeDay"] for point in snapshot["chartContext"]["currentCase"]["series"]], [-1, 0])
         self.assertEqual(len(snapshot["request"]["decisionChecksByFillId"]["fill-today"]), 1)
+        decision_check = snapshot["request"]["decisionChecksByFillId"]["fill-today"][0]
+        self.assertEqual(decision_check["checkKey"], "chart.rsi")
+        self.assertEqual(decision_check["marker"]["relativeDay"], -1)
+        self.assertEqual(decision_check["marker"]["value"], 65.0)
         self.assertEqual([item["id"] for item in snapshot["request"]["alerts"]], ["alert-1"])
         self.assertEqual(snapshot["request"]["alerts"][0]["proposal_source"], "daily_trade")
-        self.assertIn("proposal_source", _ALERTS_SQL)
         self.assertEqual(len(snapshot["portfolioBefore"]["history"]), 2)
         self.assertEqual(snapshot["user"]["subjectHash"], hashlib.sha256(b"trusted-user").hexdigest()[:24])
         self.assertNotIn("trusted-user", json.dumps(snapshot, ensure_ascii=False))
+
+    def test_paper_fill_normalization_and_fill_scoped_cost_basis_portfolio_pair(self) -> None:
+        fill = _normalize_fill({
+            "fill_id": "paper:order-1",
+            "order_id": "order-1",
+            "symbol": "nvda",
+            "side": "buy",
+            "filled_at": "2026-07-10T14:00:00Z",
+            "fill_price": "190.80",
+            "filled_qty": "12",
+            "execution_mode": "paper",
+            "generation": 3,
+        })
+        self.assertEqual(fill["fillId"], "paper:order-1")
+        self.assertEqual(fill["averageFillPrice"], 190.8)
+        self.assertEqual(fill["quantity"], 12.0)
+        self.assertEqual(fill["executionMode"], "paper")
+        self.assertEqual(fill["generation"], 3)
+        kis_fill = _normalize_fill({
+            "fill_id": "kis:order-1",
+            "symbol": "NVDA",
+            "filled_at": "2026-07-10T14:00:00Z",
+            "execution_payload": {
+                "price": "200.00",
+                "px": "198.00",
+                "average_fill_price": "190.80",
+                "filled_qty": "12",
+            },
+        })
+        self.assertEqual(kis_fill["averageFillPrice"], 190.8)
+        fill_at = datetime(2026, 7, 10, 14, tzinfo=timezone.utc)
+        rows = [
+            {"sourceAsOf": "2026-07-10T13:59:00Z", "positions": [{"symbol": "KIS"}]},
+            {"fillId": "paper:order-1", "phase": "before", "sourceAsOf": "2026-07-10T14:00:00Z", "valuationBasis": "cost_basis", "positions": []},
+            {"fillId": "paper:order-1", "phase": "after", "sourceAsOf": "2026-07-10T14:00:00Z", "valuationBasis": "cost_basis", "positions": [{"symbol": "NVDA", "costBasisValue": "2289.60"}]},
+        ]
+        before, after = _portfolio_pair(rows, fill_at, fill_id="paper:order-1", execution_mode="paper")
+        self.assertEqual(before["phase"], "before")
+        self.assertEqual(after["phase"], "after")
+        self.assertEqual(after["valuationBasis"], "cost_basis")
+        self.assertEqual(_portfolio_pair(rows[:1], fill_at, fill_id="paper:missing", execution_mode="paper"), ({}, {}))
+        self.assertEqual(_portfolio_pair(rows[:1], fill_at, fill_id="kis:missing", execution_mode="kis"), ({}, {}))
+
+    def test_s3_input_archive_is_user_scoped_and_missing_without_a_generated_file(self) -> None:
+        client = MemoryS3Client()
+        provider = S3CoachSnapshotDataProvider(client=client, bucket="coach-bucket", prefix="coach/input")
+        trading_date = datetime(2026, 7, 10, tzinfo=timezone.utc).date()
+        requested_at = datetime(2026, 7, 10, 15, tzinfo=timezone.utc)
+        key = provider._key("trusted-user", trading_date)
+        client.objects[("coach-bucket", key)] = {
+            "Body": json.dumps({"sourceAsOf": "2026-07-10T14:59:00Z", "fills": [{"fillId": "fill-1"}]}).encode("utf-8"),
+            "Metadata": {},
+        }
+        loaded = provider.load("trusted-user", requested_at=requested_at, trading_date=trading_date)
+        self.assertEqual(loaded["fills"][0]["fillId"], "fill-1")
+        self.assertNotIn("missingData", loaded)
+        missing = provider.load("other-user", requested_at=requested_at, trading_date=trading_date)
+        self.assertEqual(missing["missingData"][0]["code"], "input_archive_missing")
+
+    def test_s3_report_archive_returns_only_the_authenticated_users_latest_report(self) -> None:
+        client = MemoryS3Client()
+        archive = CoachReportArchive(client=client, bucket="coach-bucket", prefix="coach/reports")
+        report = {"contractVersion": "coach-report.v1", "analysisId": "analysis-1", "page1": None}
+        with patch.dict(os.environ, {"AI_COACH_SNAPSHOT_ARCHIVE_ENABLED": "true"}, clear=False):
+            stored = archive.put_daily(report, user_id="trusted-user", trading_date="2026-07-10")
+            self.assertIsNotNone(stored)
+            self.assertEqual(archive.get_latest(user_id="trusted-user"), report)
+            self.assertIsNone(archive.get_latest(user_id="other-user"))
+
+            # A retried analysis cannot replace the immutable daily report.
+            archive.put_daily({**report, "analysisId": "retry"}, user_id="trusted-user", trading_date="2026-07-10")
+            self.assertEqual(archive.get_latest(user_id="trusted-user"), report)
 
     def test_default_trading_date_uses_new_york_day_across_utc_midnight(self) -> None:
         boundary_now = datetime(2026, 7, 11, 2, 0, tzinfo=timezone.utc)
@@ -258,6 +425,7 @@ class CoachSnapshotPipelineTests(unittest.TestCase):
         snapshot = CoachInputSnapshotBuilder(
             data_provider=data,
             market_provider=FakeMarketProvider(),
+            context_provider=FakeContextProvider(),
             now_provider=lambda: boundary_now,
         ).build(user_id="trusted-user", analysis_id="analysis-boundary", coach_request={"enabled": True})
 
@@ -295,14 +463,108 @@ class CoachSnapshotPipelineTests(unittest.TestCase):
         day_zero = next(item for item in result["series"] if item["relativeDay"] == 0)
         self.assertLess(day_zero["rsi"], 70)
 
-    def test_archive_is_canonical_encrypted_immutable_and_write_only(self) -> None:
+    def test_clickhouse_similarity_features_use_entry_vintage_not_later_correction(self) -> None:
+        start = datetime(2026, 5, 25, tzinfo=timezone.utc)
+        entry_at = datetime(2026, 7, 10, 14, tzinfo=timezone.utc)
+        rows = []
+        for index in range(46):
+            timestamp = start + timedelta(days=index)
+            rows.append({
+                "timestamp": timestamp.isoformat(),
+                "open": 100 + index,
+                "high": 102 + index,
+                "low": 99 + index,
+                "close": 101 + index,
+                "volume": 1000 + index,
+                "insertedAt": (timestamp + timedelta(hours=23)).isoformat(),
+            })
+        prior_day = entry_at.replace(hour=0) - timedelta(days=1)
+        rows.append({
+            "timestamp": prior_day.isoformat(),
+            "open": 20,
+            "high": 21,
+            "low": 19,
+            "close": 20,
+            "volume": 1,
+            "insertedAt": (entry_at + timedelta(days=1)).isoformat(),
+            "sourceEventId": "late-correction",
+        })
+        provider = FakeCandleProvider(rows)
+
+        result = ClickHouseCoachMarketProvider(provider).trade_case(
+            {
+                "fillId": "kis:order-1",
+                "symbol": "NVDA",
+                "side": "buy",
+                "decisionAt": (entry_at - timedelta(minutes=2)).isoformat(),
+                "filledAt": entry_at.isoformat(),
+                "averageFillPrice": 146,
+            },
+            requested_at=entry_at + timedelta(days=3),
+        )
+
+        self.assertEqual(len(provider.calls), 2)
+        self.assertEqual(provider.calls[0]["availableAt"], (entry_at + timedelta(days=3)).isoformat().replace("+00:00", "Z"))
+        self.assertEqual(provider.calls[1]["availableAt"], (entry_at - timedelta(minutes=2)).isoformat().replace("+00:00", "Z"))
+        self.assertEqual(result["featureVintageAsOf"], "2026-07-10T13:58:00Z")
+        corrected = next(point for point in result["series"] if point["time"].startswith("2026-07-09"))
+        self.assertEqual(corrected["close"], 20.0)
+
+    def test_delayed_fill_marker_uses_order_time_vintage_not_pre_fill_display_bar(self) -> None:
+        fill = {
+            "fillId": "kis:limit-order",
+            "symbol": "NVDA",
+            "decisionAt": "2026-07-05T14:00:00Z",
+            "filledAt": "2026-07-10T14:00:00Z",
+        }
+        case = _sanitize_trade_case({
+            "featureVintageAsOf": "2026-07-05T14:00:00Z",
+            "featureAsOf": "2026-07-04T00:00:00Z",
+            "rsiBand": "neutral",
+            "decisionPoint": {
+                "relativeDay": -6,
+                "time": "2026-07-04T00:00:00Z",
+                "close": 100,
+                "rsi": 45,
+            },
+            "series": [
+                {"relativeDay": -1, "time": "2026-07-09T00:00:00Z", "close": 110, "rsi": 75},
+                {"relativeDay": 0, "time": "2026-07-10T00:00:00Z", "close": 111, "rsi": 78},
+            ],
+        }, fill, requested_at=datetime(2026, 7, 11, tzinfo=timezone.utc))
+        checks = _enrich_decision_checks(
+            {"kis:limit-order": [{
+                "checkKey": "chart.rsi",
+                "category": "chart",
+                "label": "RSI",
+                "status": "unchecked",
+            }]},
+            fills=[fill],
+            cases_by_fill={"kis:limit-order": case},
+            news_context={},
+            fundamentals_context={},
+            earnings_context={},
+            market_context={},
+        )
+
+        marker = checks["kis:limit-order"][0]["marker"]
+        self.assertEqual(marker["value"], 45.0)
+        self.assertEqual(marker["label"], "RSI 확인 누락")
+        self.assertEqual(marker["sourceAsOf"], "2026-07-04T00:00:00Z")
+
+    def test_archive_is_canonical_encrypted_and_immutable(self) -> None:
         client = MemoryS3Client()
         archive = CoachSnapshotArchive(client=client, bucket="coach-bucket", prefix="coach")
-        snapshot = {"request": {"requestedAt": "2026-07-10T15:00:00Z"}, "fills": [{"symbol": "NVDA"}]}
+        snapshot = {
+            "schemaVersion": "coach-input.v1",
+            "request": {"analysisId": "analysis-1", "requestedAt": "2026-07-10T15:00:00Z"},
+            "fills": [{"symbol": "NVDA"}],
+        }
         with patch.dict(os.environ, {"AI_COACH_SNAPSHOT_ARCHIVE_ENABLED": "true", "AI_COACH_SNAPSHOT_ARCHIVE_REQUIRED": "false"}, clear=False):
             first = archive.put_once(snapshot, "analysis-1")
             second = archive.put_once({"fills": [{"symbol": "NVDA"}], "request": {"requestedAt": "2026-07-10T15:00:00Z"}}, "analysis-1")
             different_retry = archive.put_once({**snapshot, "fills": [{"symbol": "AMD"}]}, "analysis-1")
+            reused = archive.get_existing("analysis-1", "2026-07-10T15:00:00Z")
 
         assert first is not None and second is not None and different_retry is not None
         self.assertEqual(first["status"], "stored")
@@ -314,6 +576,10 @@ class CoachSnapshotPipelineTests(unittest.TestCase):
         self.assertEqual(client.put_calls[0]["Body"], canonical_snapshot_bytes(snapshot))
         stored = next(iter(client.objects.values()))
         self.assertEqual(stored["Body"], canonical_snapshot_bytes(snapshot))
+        assert reused is not None
+        self.assertEqual(reused[0], snapshot)
+        self.assertEqual(reused[1]["status"], "already_exists_reused")
+        self.assertEqual(reused[1]["sha256"], first["sha256"])
 
     def test_required_archive_cannot_be_disabled_and_ids_do_not_sanitize_to_collisions(self) -> None:
         archive = CoachSnapshotArchive(client=MemoryS3Client(), bucket="coach-bucket")
@@ -405,7 +671,7 @@ class CoachSnapshotPipelineTests(unittest.TestCase):
         with self.assertRaises(CoachSnapshotArchiveError):
             required_worker._prepare_coach_snapshot(envelope, analysis_payload_for_envelope(envelope))
 
-    def test_worker_marks_write_only_retry_digest_as_unverified(self) -> None:
+    def test_worker_reuses_existing_immutable_snapshot_after_conditional_put_conflict(self) -> None:
         class ExistingArchive(RecordingArchive):
             def put_once(self, snapshot: dict, analysis_id: str):
                 self.calls.append((snapshot, analysis_id))
@@ -414,6 +680,18 @@ class CoachSnapshotPipelineTests(unittest.TestCase):
                     "key": "coach/v1/date=2026-07-10/analysis-retry.json",
                     "sha256": None,
                 }
+
+            def get_existing(self, analysis_id: str, requested_at):
+                return ({
+                    "schemaVersion": "coach-input.v1",
+                    "request": {"analysisId": analysis_id, "requestedAt": requested_at},
+                    "fills": [{"fillId": "first-immutable-fill"}],
+                    "missingData": [],
+                }, {
+                    "status": "already_exists_reused",
+                    "key": "coach/v1/date=2026-07-10/analysis-retry.json",
+                    "sha256": "b" * 64,
+                })
 
         envelope = build_request_envelope(
             {"symbol": "NVDA", "coachRequest": {"enabled": True}},
@@ -430,12 +708,11 @@ class CoachSnapshotPipelineTests(unittest.TestCase):
 
         trace = worker._prepare_coach_snapshot(envelope, payload)
 
-        self.assertEqual(trace["archiveStatus"], "already_exists_unverified")
-        self.assertIsNone(trace["sha256"])
-        self.assertEqual(
-            payload["coachInputSnapshot"]["missingData"][-1]["code"],
-            "existing_object_digest_unverified",
-        )
+        self.assertEqual(trace["archiveStatus"], "already_exists_reused")
+        self.assertTrue(trace["built"])
+        self.assertEqual(trace["sha256"], "b" * 64)
+        self.assertEqual(payload["coachInputSnapshot"]["fills"][0]["fillId"], "first-immutable-fill")
+        self.assertEqual(len(worker.coach_snapshot_builder.calls), 1)
 
     def test_coach_request_never_rebuilds_snapshot_in_deep_worker(self) -> None:
         envelope = build_request_envelope(

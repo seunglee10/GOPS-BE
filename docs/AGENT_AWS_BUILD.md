@@ -86,9 +86,11 @@ The existing `gops-agent-orchestrator` image also contains the trusted coach sna
 builder, deterministic coach analytics, and the S3 snapshot archive adapter. Coach
 analysis uses the existing request topic, `agent-analysis-worker`, Redis report store,
 polling, and SSE delivery; it adds no Kafka topic or deployment. The worker builds one
-snapshot from authenticated PostgreSQL rows and ClickHouse candles. When archive is
-enabled it writes that snapshot once, with a canonical SHA-256 digest and
-`If-None-Match: *`, before orchestration.
+snapshot from authenticated PostgreSQL rows plus cutoff-safe Redis/ClickHouse/GraphDB
+serving data. The context provider does not call SEC, Yahoo, or Alpaca external APIs on
+the request path. PostgreSQL source rows are read in one read-only repeatable-read
+transaction. When archive is enabled it writes that snapshot once, with a canonical
+SHA-256 digest and `If-None-Match: *`, before orchestration.
 
 Agent runtime image:
 
@@ -119,7 +121,13 @@ Image에는 다음 source가 들어가야 한다.
 systems/agent-orchestration
 systems/market-data/shared
 systems/market-data/config/sp500-universe.json
+systems/market-data/config/sp500-heatmap-seed.json
 ```
+
+The coach point-in-time context provider uses `sp500-heatmap-seed.json` only as
+timestamped company/sector metadata fallback. The image must preserve the seed's
+`sourceRetrievedAt`; rows newer than a trade cutoff remain ineligible instead of
+being treated as historical fact.
 
 현재 agent provider가 `alfaka.*` helper를 import하므로
 `systems/market-data/shared`를 image에서 빼면 안 된다. 이 dependency를 제거하려면
@@ -334,6 +342,26 @@ updated API의 INSERT와 `agent-analysis-worker`의 snapshot SELECT가 모두 �
 사용하므로 migration Job 성공 전에 두 workload를 rollout하면 안 된다. 기존 알람은
 null로 호환되며 Redis projection, Kafka topic, evaluator schema 변경은 필요하지 않다.
 
+Order-time checklist capture requires `0009_trade_decision_capture.sql`. It adds nullable
+normalized `decision_checks` JSONB to KIS and paper order rows, adds canonical KIS
+`orders.coach_filled_at`/`orders.coach_fill_payload`, adds `check_key` to
+`trade_decision_check_events`, and creates the replay-safe `(user_sub, fill_id, check_key)`
+unique index plus the user/fill-time lookup index. It also creates append-only
+`order_coach_fill_history` with `user_sub`, `order_id`, stable `fill_id`,
+`first_filled_at`, positive `cumulative_filled_qty`, `payload`, and `observed_at`.
+KIS reconciliation keeps audit rows in `executions`; equal/lower cumulative replay does
+not append history, while each strictly advancing positive quantity is stored in the same
+transaction as canonical order state. The coach builder selects the latest history row
+observed by the immutable request cutoff. The updated backend/order writers and paper matcher must not roll
+out before this migration. The same automatic order-migration gate applies every pending
+migration, including `0009`, before app apply when `order-worker` or `agent-orchestrator`
+is selected; it is not a manual PostgreSQL step.
+
+On an actual paper fill the matcher also writes one `paper:{order_id}`-scoped before/after
+pair to `user_portfolio_snapshot_history` in its fill transaction. Those snapshots carry
+`valuationBasis="cost_basis"`; they intentionally do not claim current market valuation.
+Existing paper fills are not retroactively assigned a guessed portfolio pair.
+
 The holdings endpoint may be polled every minute. PostgreSQL always refreshes the latest
 observation, but appends portfolio history only when payload content differs after
 top-level `asOf`/`sourceAsOf` timestamps are removed. A per-user advisory transaction
@@ -393,6 +421,11 @@ overlay deliberately deletes the GraphDB StatefulSet from the rendered app
 bundle so immutable PVC template changes cannot break ordinary app deploys.
 It still includes scheduled app-runtime CronJobs such as the order-flow daily
 rollup; one-shot Jobs remain outside the automatic apply path.
+Both `aws` and `aws-incluster-app` reference the same scheduled bundle, which includes
+`order-reconciler`. That CronJob runs the `gops-order-worker` image every five minutes with
+`concurrencyPolicy: Forbid`, `KIS_ENV=demo`, bounded date/page/row limits, required
+`alfaka-order-db-secret`, the existing Secrets Manager IRSA service account, and an
+ephemeral `/kis-cache` token volume. `KIS_ENV=real` remains rejected in code.
 By default it does not apply platform NodePools or perform the clean rebuild.
 Set the workflow input `apply_platform_manifests=true` only after the
 data-preserving rebuild has been approved or completed; that path applies the
@@ -419,7 +452,7 @@ temporary API-to-Redis synchronization failure heals without a new order.
 
 Scheduled batch Jobs declare resource requests/limits. Failed Job and Pod
 evidence is retained for seven days. The `batch-warm` NodePool is static with
-one node, and both the SEC fundamentals and order-flow CronJobs select it so
+one node, and the SEC fundamentals, order-flow, and order-reconciler CronJobs select it so
 they can start without depending on a scale-from-zero event.
 
 ## Kafka
@@ -602,6 +635,29 @@ market_data.sec_collection_runs
 market_data.yahoo_earnings_estimates
 ```
 
+The coach context provider runs once per immutable snapshot. It accepts Redis live-trade
+prices only when separate received/inserted time proves availability by the request cutoff,
+the quote is not earlier than the fill, and it is within the configured freshness window
+(96 hours by default). The current event-time-only Redis row therefore falls back to
+deterministic, cutoff-bounded ClickHouse `trade_ticks` and closed `chart_candles` rows. Daily similarity
+features select a canonical candle revision with `inserted_at <= decisionAt`; display and
+outcome rows may use only revisions inserted by the immutable request cutoff. News requires
+published/received/inserted availability before each fill. SEC facts use stored filing,
+revision, computation, and insertion dates; because the current schema has filing-date
+precision, same-trading-day filings are excluded from historical entry evidence. Yahoo
+earnings rows are useful only when collected and inserted before the request cutoff and
+are marked `historicalRevisionAvailable=false`; the current ReplacingMergeTree cannot
+prove a prior consensus revision. GraphDB evidence is current-only and is excluded from
+historical similarity. Missing or ineligible rows produce `missingData`, not a current-data
+substitution.
+
+Portfolio market-diversification context follows the same rule. The worker may use only
+stored, cutoff-bounded daily series for held symbols, sector/market benchmarks, and the
+recorded portfolio valuation snapshot to calculate correlation and relative strength.
+When the required series or sector mapping is absent, the report omits candidate markets
+and exposes a data-connection state; no OpenAI response or generic allocation fills that
+gap.
+
 News provider는 Redis 30일 article/daily hot cache를 우선 사용하고, daily coverage
 metadata가 최근 30일 요청을 보장하지 못할 때 ClickHouse serving rows로 보강해
 Redis를 다시 warm-up한다.
@@ -742,30 +798,41 @@ after `ai_coach_snapshot_noncurrent_retention_days` (1 day by default, constrain
 1-7 days). Default snapshot bytes are therefore eligible for deletion at about day 91,
 not day 180. S3 lifecycle processing is asynchronous and is not an exact deletion-time
 SLA. A dedicated IRSA role grants `ai-coach-worker-sa` access only to
-`s3:PutObject` under that prefix; it has no bucket-list or object-read permission. The
+`s3:PutObject` and `s3:GetObject` under that prefix; it has no bucket-list or delete
+permission. The
 application object key is:
 
 ```text
 ai-coach/snapshots/v1/date=YYYY-MM-DD/{analysisId}.json
 ```
 
+The same private bucket also keeps post-market coach input and the panel's durable daily
+report. The analysis worker reads `ai-coach/input/v1/user={subjectHash}/date=YYYY-MM-DD.json`,
+writes `ai-coach/reports/v1/user={subjectHash}/date=YYYY-MM-DD/report.json`, and updates that
+user's `latest.json` pointer. It has no list/delete permission. The authenticated
+`gops-backend` reads only the report prefix through its existing IRSA policy so
+`GET /api/ai-coach/reports/latest` can render the panel without Redis. Terraform must grant
+the worker input `GetObject`, snapshot/report `PutObject`, report `GetObject` for retry
+verification, and report `GetObject` to the backend role before application rollout.
+
 Writes use `If-None-Match: *`, so a Kafka retry cannot replace an existing immutable
-snapshot. On a 412 response the write-only worker reports
-`already_exists_unverified`, keeps the existing object authoritative, and leaves the
-digest unset rather than claiming it verified data it cannot read.
+snapshot. Only after a 412 proves that the object exists does the worker read it,
+verify its digest and contract, and analyze that first input with status
+`already_exists_reused`. It never analyzes the conflicting rebuilt candidate.
 
 `AI_COACH_SNAPSHOT_KMS_KEY_ID` is optional in code but is not configured by the current
 Terraform module. If KMS encryption is enabled later, add the matching KMS key policy and
-`kms:Encrypt` permission before setting the env value.
+`kms:Encrypt`/`kms:Decrypt` permissions before setting the env value.
 
 AWS overlays set archive `ENABLED=true` and `REQUIRED=true`: audit retention is
 fail-closed, so an S3 failure fails the coach analysis instead of producing an
 unarchived report. After an agent rollout,
-`scripts/aws/verify-ai-coach-snapshot-s3.sh` executes inside the deployed analysis worker
-and writes one non-sensitive immutable canary through the same IRSA identity. The deploy
-fails if the service account, required-mode environment, bucket, or `PutObject` path is
-invalid. The put-only role still cannot list, read, verify, or delete account snapshots;
-the canary is removed by the same lifecycle policy.
+Terraform must apply the `GetObject` policy before the worker image rollout.
+`scripts/aws/verify-ai-coach-snapshot-s3.sh` then executes inside the deployed analysis
+worker and writes and digest-verifies one non-sensitive immutable canary through the same
+IRSA identity. The deploy fails if the service account, required-mode environment,
+bucket, `PutObject`, or `GetObject` path is invalid. The role still cannot list or delete
+account snapshots; the canary is removed by the same lifecycle policy.
 
 현재 AWS bucket:
 
@@ -897,7 +964,22 @@ CLICKHOUSE_PASSWORD
 GRAPHDB_SPARQL_URL
 GRAPHDB_REPOSITORY
 SEC_USER_AGENT
+HEATMAP_UNIVERSE_REGISTRY_PATH
+COACH_CURRENT_QUOTE_MAX_AGE_MINUTES
+COACH_NEWS_LOOKBACK_DAYS
+COACH_NEWS_ITEMS_PER_FILL
+COACH_FUNDAMENTAL_METRICS_PER_FILL
 ```
+
+`HEATMAP_UNIVERSE_REGISTRY_PATH` points at the timestamped seed copied into the agent
+image. `COACH_CURRENT_QUOTE_MAX_AGE_MINUTES` defaults to `5760` (96 hours); older values
+remain missing rather than being labeled current. The other three `COACH_*` values are
+optional bounded-query limits with code defaults; none are credentials. AWS overlays make
+both `alfaka-clickhouse-secret` and
+`alfaka-openai-secret` mandatory for orchestrator/analysis-worker, and also keep
+`alfaka-order-db-secret` mandatory for the analysis worker. A missing required serving or
+order database Secret must prevent startup instead of silently selecting process-local or
+fixture data.
 
 Chart-analysis asset builder (independent optional runtime):
 
@@ -1030,6 +1112,7 @@ agent-delivery-gateway publishes Redis update
 GET /api/agents/reports/{analysis_id} returns completed report
 SSE stream emits updates or frontend polling works
 coach request report contains coach-report.v2 pages 1..4
+page2 long-term profile cohorts and representative trades are present only when the worker snapshot has eligible historical fills and decision-check evidence
 agent-analysis-worker trace reports coachSnapshot.archiveStatus=stored
 the S3 object SHA-256 metadata matches coachReport.snapshotDigest
 another authenticated user cannot read the report or contribute account rows

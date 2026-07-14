@@ -70,6 +70,15 @@ AI 코치 알람 제안은 기존 `POST /api/alerts`를 재사용한다. 사용�
 `alertSupported`를 그대로 복사한다. 프런트가 임계값을 다시 계산하거나 원천 데이터를
 재조회하지 않으며, 미지원 조건에는 `alertRequest`를 만들지 않는다.
 
+`coach-report.v2.page2`의 장기 투자 성향 분석은 같은 immutable snapshot의 체결·결과·
+decision-check event만 사용한다. `confirmed`는 여섯 필수 확인 key가 모두 기록되고
+checked인 거래만 의미하며, 나머지는 `unconfirmed`로 남긴다. 과정·결과 cohort, 반복
+누락 패턴, 대표 거래는 worker가 결정론적으로 계산하고 프런트는 재계산하지 않는다.
+포트폴리오 탭의 시장·섹터 분산 후보도 worker가 snapshot의 현재 보유 평가액과 저장된
+market correlation/relative-strength context로만 계산한다. context가 없으면 후보·비중
+범위를 반환하지 않으며, API나 LLM이 일반 섹터 추천을 대신 만들지 않는다. 후보는
+검토용이며 자동 알람·주문·리밸런싱을 생성하지 않는다.
+
 ## Local Demo Simulator Boundary
 
 토요일 시연에서는 `GOPS_SIMULATOR_URL`이 가리키는 로컬 시뮬레이터를
@@ -104,6 +113,57 @@ WS   /ws/paper/account
 공매도는 지원하지 않는다. 모든 HTTP와 WebSocket 조회는 주문 소유자를 검사한다.
 가상투자 심볼 검색은 ClickHouse의 전체 symbol registry를 직접 조회하며
 `active`, `tradable`인 미국 주식/ETF만 노출한다.
+
+AI 코치는 KIS append-only `order_coach_fill_history`에서 분석 요청시각까지 관찰된
+최신 canonical cumulative fill state와 filled `paper_orders`를 같은 사용자 범위에서 읽되 namespace를 섞지
+않는다. KIS fill ID는 reconciliation replay와 partial/final update에 걸쳐 안정적인
+`kis:{order_id}`다. `executions`는 broker reconciliation audit log이며 개별 AI 코치
+fill ledger가 아니다. `orders.coach_filled_at`/`coach_fill_payload`는 최신 상태 호환
+projection이며, 지연 분석의 point-in-time 입력에는 history를 사용한다. 동일하거나
+낮은 누적 수량 replay는 history를 추가하지 않고, 부분 체결 후 잔량 취소된 row의
+양수 누적 체결은 canceled 최종 상태와 별개로 보존한다. Paper matcher는 체결 트랜잭션 안에서 `paper:{order_id}`에
+묶인 before/after portfolio rows를 `user_portfolio_snapshot_history`에 기록한다. 이
+row의 `valuationBasis="cost_basis"`는 가상 현금과 취득원가 비교용이며 현재가 평가액으로
+표시하거나 해석하지 않는다. KIS와 paper 모두 정확한 `fillId` + `phase` pair가 없으면
+포트폴리오 영향은 `계산되지 않음`으로 남긴다.
+
+Snapshot Builder reads PostgreSQL fills, portfolio rows, decision events, and alerts in one
+read-only repeatable-read transaction. `decisionAt` is the earliest server-owned order/check
+time and bounds decision evidence; `filledAt` anchors the executed entry and subsequent
+performance window. Historical decision-check rows remain attached to their matching cases.
+
+## Order-time decision checks
+
+`POST /api/orders`와 `POST /api/paper/orders`는 optional `decision_checks`를 받을 수
+있다. 현재 order ticket과 quick-order UI가 보내는 bounded contract는 다음과 같다.
+
+```json
+{
+  "version": "decision-checks.v1",
+  "surface": "order-ticket",
+  "items": [
+    {"key": "chart.rsi", "status": "checked"},
+    {"key": "chart.macd", "status": "unchecked"},
+    {"key": "chart.volume", "status": "checked"},
+    {"key": "news.company", "status": "unchecked"},
+    {"key": "fundamentals.earnings", "status": "checked"},
+    {"key": "market.context", "status": "checked"}
+  ]
+}
+```
+
+`surface`는 `order-ticket` 또는 `quick-order`이고 item status는 `checked` 또는
+`unchecked`다. 서버는 unknown/duplicate key와 client-supplied label, category,
+evidence, timestamp field를 거절하고, allowlist의 label/category와 server capture
+time을 붙인 normalized JSON을 주문 row에 저장한다. 이 JSON은 broker outbox payload로
+전파하지 않는다.
+
+체결이 확정될 때만 normalized items를 `trade_decision_check_events`로 materialize한다.
+KIS는 `kis:{order_id}`, paper는 `paper:{order_id}`를 fill ID로 사용하며
+`(user_sub, fill_id, check_key)` unique index와 conflict-safe insert로 reconciliation
+retry를 멱등 처리한다. canceled/rejected order에는 fill-scoped event가 생기지 않는다.
+체크를 보내지 않은 기존 order는 추정 backfill하지 않고 AI 코치에서
+`확인 기록 없음`으로 남긴다. 이 기능은 새 route나 Kafka topic을 만들지 않는다.
 
 ## Runtime Flow
 
@@ -482,6 +542,19 @@ AI_COACH_SNAPSHOT_S3_BUCKET
 AI_COACH_SNAPSHOT_S3_PREFIX
 ```
 
+### Post-market AI coach report read
+
+`GET /api/ai-coach/reports/latest` is an authenticated read-only endpoint for the coach
+panel. It does not invoke `AgentOrchestrator`, Kafka, Redis, or a provider. The endpoint
+derives the user prefix from the authenticated subject and reads only that user's S3
+`latest.json` pointer and immutable daily `coach-report.v2`. It returns `{status:"ready",
+report}` or `{status:"pending", report:null}`; S3 access failure is `503`.
+
+The analysis worker reads the separate post-market input archive from
+`ai-coach/input/v1/user={subjectHash}/date=YYYY-MM-DD.json`. The archive's required
+`sourceAsOf`/`generatedAt` must not be later than the requested cutoff. No order route,
+broker route, Redis cache, or client supplied snapshot is used to fill a missing archive.
+
 `AGENT_OPERATION_PLANNER_PROVIDER=openai` enables the slow-path structured
 OperationIR planner for low-confidence or ambiguous interactive requests. Keep it
 unset to run only deterministic extraction.
@@ -562,6 +635,9 @@ git diff --check
 .venv/bin/python -m unittest discover -s systems/api-server/tests -p 'test_agent_routes.py'
 .venv/bin/python -m unittest discover -s systems/agent-orchestration/tests -p 'test_*.py'
 .venv/bin/python -m unittest discover -s systems/fundamentals/tests -p 'test_*.py'
+.venv/bin/python -m pytest systems/api-server/tests/test_order_routes.py \
+  systems/api-server/tests/test_paper_trading_routes.py
+.venv/bin/python -m pytest systems/order/tests/kis_trader/unit
 ```
 
 Runtime acceptance:

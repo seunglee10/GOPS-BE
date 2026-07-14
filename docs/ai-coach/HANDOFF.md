@@ -58,19 +58,73 @@ The browser submits only a small `coachRequest`. The API strips any client-suppl
 `coachInputSnapshot`. After Kafka consumption, `agent-analysis-worker` identifies the
 session owner from the signed envelope and builds exactly one `coach-input.v1` from:
 
-- PostgreSQL: user-owned fills/orders, change-only append portfolio history,
-  decision-check events, and existing alerts;
-- ClickHouse: verified daily candles through the request time;
+- PostgreSQL: user-owned canonical KIS order fill state, filled paper orders, fill-scoped
+  portfolio before/after history, decision-check events, and existing alerts;
+- Redis/ClickHouse: cutoff-safe current quote, verified daily candles, company metadata,
+  point-in-time news, SEC facts/derived metrics, and stored Yahoo earnings dates;
+- GraphDB: current ontology evidence, explicitly marked current-only and ineligible for
+  historical similarity;
 - existing request metadata and per-source `sourceAsOf` values.
 
 The snapshot has request/user, fills, positions and portfolio before/after,
 market/chart/indicator/news/fundamentals/earnings/ontology sections, `sourceAsOf`, and
 `missingData`. Role code receives this single object and does not independently refetch
-coach inputs. The user subject is stored as a hash, not as the raw session identifier.
+coach inputs. The PostgreSQL reads run in one read-only repeatable-read transaction, and
+the user subject is stored as a hash rather than the raw session identifier.
 
-News, fundamentals, earnings, and ontology sections currently remain explicit no-data
-unless an upstream producer adds their point-in-time values to the builder. They must not
-be inferred from current or post-entry information.
+`StoreCoachPointInTimeContextProvider` is called once by Snapshot Builder for the current
+and historical fill set. It never calls SEC, Yahoo, or Alpaca external APIs on the request
+path. Redis current trade is accepted only when separate received/inserted time proves
+availability by the request cutoff, it is at or after the fill, and it is within the
+freshness window; the default maximum age is 5,760 minutes (96 hours). The current
+event-time-only Redis row therefore falls through to deterministically ordered ClickHouse
+trade ticks and closed 1-minute candles as bounded
+fallbacks. Older values remain `missingData` rather than being labeled current. News
+uses published/received/inserted availability, and SEC rows use filing/revision/computation/
+insertion bounds. Because current SEC serving rows preserve filing date rather than exact
+acceptance time, a same-trading-day filing is excluded from an intraday entry snapshot.
+
+Decision and performance time are separate. `decisionAt` is derived from the server-owned
+order/check time and bounds evidence and similarity features. `filledAt` anchors the executed
+entry and outcome window. Daily similarity features select the canonical ClickHouse candle
+revision with `inserted_at <= decisionAt`; display and outcome series may use revisions only
+up to the immutable request cutoff. Providers without revision-aware primitives cannot
+supply similarity features.
+
+Yahoo earnings rows are accepted only when collected and inserted by the request cutoff,
+but the current `ReplacingMergeTree` does not preserve a provable historical consensus
+revision. Reports therefore set `historicalRevisionAvailable=false` and do not feed those
+rows into historical similarity. GraphDB has no historical graph contract, so ontology is
+`temporalScope="current-only"`, `historicalSimilarityEligible=false`, and has no invented
+`sourceAsOf`. Any unavailable or ineligible source remains in `missingData` instead of
+being replaced with a current value.
+
+Both KIS and paper fills are normalized into the same snapshot without sharing identities.
+KIS reconciliation stores point-in-time canonical cumulative state in append-only
+`order_coach_fill_history`, with stable `kis:{orderId}` identity across partial/final replay.
+Each strictly increasing positive cumulative quantity records `user_sub`, `order_id`,
+`fill_id`, `first_filled_at`, `cumulative_filled_qty`, payload, and repository `observed_at`
+transactionally. Equal/lower replay does not append, and delayed analysis selects only a
+row observed by its request cutoff. `orders.coach_filled_at`/`coach_fill_payload` remain the
+latest-state compatibility projection. A positive cumulative quantity on a canceled final
+row is still an actual partial fill and remains in history.
+The `executions` table remains an audit log and is not read as a coach fill ledger. Paper IDs
+are `paper:{orderId}`. At actual paper fill, the matcher records the exact
+before/after pair in the fill transaction with `valuationBasis="cost_basis"`, cash balance,
+quantity, average price, and `costBasisValue`. These figures compare paper acquisition cost
+and cash only; the UI labels them as such and never presents them as market valuation.
+Portfolio impact for either mode requires an exact `fillId` + `phase=before|after` pair;
+otherwise it remains `계산되지 않음` and never borrows an adjacent account snapshot.
+
+Order ticket and quick-order requests may carry `decision-checks.v1`. The current client
+always sends the six visible keys (`chart.rsi`, `chart.macd`, `chart.volume`,
+`news.company`, `fundamentals.earnings`, `market.context`) as `checked` or `unchecked`.
+The server rejects unknown/duplicate fields and client evidence/timestamps, assigns the
+allowlisted label/category and capture time, and stores the normalized JSON on the order.
+Only an actual KIS or paper fill materializes one event per key; the unique
+`(user_sub, fill_id, check_key)` boundary makes retry idempotent. Canceled/rejected and
+legacy orders without this input do not acquire inferred confirmation history. Events for
+historical fills stay attached to those historical cases for case-specific process review.
 
 Holdings polling always updates the latest portfolio observation, but appends history
 only when the incoming JSONB payload differs after top-level `asOf`/`sourceAsOf`
@@ -90,6 +144,13 @@ transaction state is retained as a new point-in-time row.
 - portfolio before/after weights and concentration flags;
 - page-2 period/stage aggregation, page-3 priority, and page-4 alert candidates;
 - support/resistance, relative-volume, and RSI observation conditions.
+
+Exit-habit generation uses real sell cases only. A pre-sale giveback observation uses
+completed `T-60..T-1` highs and requires the configured minimum sample/recurrence threshold.
+A post-sale observation requires the full `T+1..T+20` high path as of the immutable request
+cutoff and is labeled hindsight MFE. It is a split-exit comparison candidate, not proof that
+the original exit was a mistake. Without an explicit plan-confirmation record the report
+continues to say plan consistency is unavailable.
 
 The LLM may rewrite already computed findings into clear prose. It must not calculate or
 replace scores, returns, thresholds, weights, sample size, confidence, or priority.
@@ -125,14 +186,14 @@ AWS overlays explicitly use Kafka and Redis backends; they do not allow `auto` m
 fallback. `AGENT_OUTPUT_KAFKA_REQUIRED=true` makes result-publish failure visible instead
 of treating delivery as complete. The worker writes an enabled archive to the dedicated
 private, versioned, encrypted bucket with `If-None-Match: *`; the report exposes only the
-object key and, after a successful first write, its SHA-256 digest. Its IRSA is put-only
-for the coach prefix. A 412 retry cannot overwrite the object and is reported as
-`already_exists_unverified` with a null digest; this avoids granting snapshot read access
-or falsely asserting unverified metadata. AWS overlays set archive `REQUIRED=true`, so an
+object key and its verified SHA-256 digest. Its IRSA can put and get objects only under
+the coach prefix, without list or delete. A 412 retry cannot overwrite the object: the
+worker reads, verifies, and reuses the first immutable input as
+`already_exists_reused`. AWS overlays set archive `REQUIRED=true`, so an
 archive failure fails the coach request rather than producing an unaudited report. Every
 agent rollout runs `scripts/aws/verify-ai-coach-snapshot-s3.sh` inside the deployed worker;
-its non-sensitive conditional-put canary verifies the real IRSA/bucket write path without
-granting object read or delete access.
+its non-sensitive conditional-put and digest-read canary verifies both live IRSA paths.
+Apply the Terraform `GetObject` policy before rolling out this worker image.
 
 The versioned bucket does not retain a second 90-day copy. Current snapshots expire
 after `ai_coach_snapshot_retention_days` (default 90), and the resulting noncurrent
@@ -148,10 +209,20 @@ whenever `order-worker` or `agent-orchestrator` is selected. `0006_ai_coach.sql`
 join/time index used by point-in-time history. `0008_alert_proposal_source.sql` adds the
 nullable, constrained `alerts.proposal_source` used to preserve coach proposal origin
 through create/list, the next trusted snapshot, and page-4 watched-alert rendering. The
-migration must complete before the updated API and analysis worker roll out. Existing and
-manually created alerts remain null and render as `출처 기록 없음`. Roll out backend/order writers that
-populate ownership and history before expecting historical coach data. Existing rows
-without a reliable owner are intentionally not backfilled by inference.
+`0009_trade_decision_capture.sql` migration adds nullable normalized checklists to KIS and
+paper order rows, canonical KIS `coach_filled_at`/`coach_fill_payload`, a stable `check_key`,
+and fill/key plus user/fill-time indexes. All four migrations must complete before the
+updated API, order writers, paper matcher, and analysis worker roll out. Selecting
+`order-worker` or `agent-orchestrator` runs all pending order migrations through the existing
+automatic pre-rollout Job. Existing and manually created alerts remain null and render as
+`출처 기록 없음`. Existing fills without reliable ownership, decision input, canonical KIS
+fill state, or an exact fill-scoped portfolio pair are intentionally not backfilled by
+inference.
+
+The agent image includes `sp500-heatmap-seed.json`; it is only a timestamped metadata
+fallback and its `sourceRetrievedAt` must pass each fill cutoff. AWS overlays make
+ClickHouse/OpenAI Secrets mandatory for the agent runtimes and the order database Secret
+mandatory for the analysis worker. Fixture data is not an AWS fallback.
 
 ## Missing data and development fixture
 
@@ -182,6 +253,9 @@ npm run build --prefix apps/gops-frontend
 npm run test:bundle-size --prefix apps/gops-frontend
 PYTHONPATH=systems/agent-orchestration/shared:systems/market-data/shared \
   .venv/bin/python -m pytest systems/agent-orchestration/tests
+.venv/bin/python -m pytest systems/api-server/tests/test_order_routes.py \
+  systems/api-server/tests/test_paper_trading_routes.py
+.venv/bin/python -m pytest systems/order/tests/kis_trader/unit
 kubectl kustomize infra/k8s/overlays/aws
 kubectl kustomize infra/k8s/overlays/aws-incluster-app-ci
 terraform -chdir=infra/aws/terraform fmt -check
@@ -212,13 +286,42 @@ but no authenticated analysis snapshot has yet been observed. The deployed clust
 lacks `alfaka-yahoo-estimates-sync`, and the order database has migrations only through
 `0007`: `alerts.proposal_source` and `0008_alert_proposal_source.sql` are not deployed.
 The live order database has filled paper orders but no execution rows; the current trusted
-snapshot provider reads `orders` joined to `executions`, not `paper_orders`, so those paper
-fills cannot yet populate the coach report. The decision-check table also has no live rows.
+snapshot provider in the deployed, older image reads `orders` joined to `executions`, not
+`paper_orders`, so those paper fills cannot yet populate the coach report. The
+decision-check table also has no live rows.
 Therefore the archive infrastructure is active, but this worktree's report/UI/migration and
 collector changes are not live. Commit/push, migration, image rollout, and the authenticated
 staging acceptance sequence above are still required before claiming end-to-end coach data.
 
 ## Conflicts and remaining dependencies
+
+### Maintenance direction (2026-07-14)
+
+The coach is maintained as a post-market reader, not an order-screen feature.  The
+current implementation does not add purchase-time checkboxes, KIS reconciliation, paper
+order persistence, or a decision-event writer.  Its server-owned input is one completed
+S3 object per authenticated user and New York trading date:
+
+```text
+ai-coach/input/v1/user={sha256(userId)[:24]}/date=YYYY-MM-DD.json
+```
+
+That object must carry `sourceAsOf` (or `generatedAt`) plus any fills, historical fills,
+portfolio pairs, optional recorded decision evidence, and prior alerts available to the
+post-market job. Missing sections remain missing; absent decision evidence is rendered as
+`확인 기록 없음`, not inferred as a user action. The worker reads this archive once,
+uses ClickHouse only for cutoff-safe market/chart context, stores its immutable audit
+snapshot, and writes the first daily `coach-report.v2` to
+`ai-coach/reports/v1/user={hash}/date=YYYY-MM-DD/report.json`. A small `latest.json`
+pointer lets the authenticated backend serve `GET /api/ai-coach/reports/latest` without
+Redis, polling, or a new analysis request when the panel opens.
+
+This is deliberately not a scheduler or user-data exporter. An upstream post-market
+exporter must produce the input object before a report can exist. Until it does, the
+production panel shows a clear waiting state rather than fixture data or invented values.
+The deployed API service account needs `s3:GetObject` only for the report prefix; the
+analysis-worker role needs input reads and snapshot/report writes. Apply the Terraform
+policy change before rolling out the images.
 
 - The worktree was rebased without local commits onto `origin/dev`
   `8e2bfc8e2b519a979ceb19c827364252b1d5c6e3`. The only textual conflict was in
@@ -237,22 +340,21 @@ staging acceptance sequence above are still required before claiming end-to-end 
 - The older docs and prototype described six pages and a short intraday line. The user's
   later instruction supersedes this with four pages, merging former pages 4/5/6, and a
   daily `T-60..T+20` chart.
-- Actual news evidence, earnings calendar, fundamentals, ontology, and decision-check
-  capture producers remain external dependencies. The current snapshot builder deliberately
-  reports those providers as not connected rather than reading populated stores without a
-  point-in-time contract. Their absence is explicit no-data.
-- Paper-trading fills are stored separately from `orders`/`executions` and are not currently
-  selected by the trusted snapshot provider. Supporting them requires an explicit execution-mode
-  contract plus matching paper-position history; silently mixing paper and live fills would make
-  portfolio-before/after and similarity results unreliable.
-- The production repository has no writer for `trade_decision_check_events`. Until a trusted
-  capture path writes those events, process review and missed-check markers correctly remain
-  `확인 기록 없음` for real analyses. Current quote, company, and sector enrichment also needs
-  a point-in-time Redis/symbol-registry provider before current return and sector impact can be
-  complete.
-- The deterministic source mapping supports an `exit_habit` proposal, but the current raw habit
-  engine does not yet derive an exit insight from trade history. Fixture and injected-contract
-  tests can render the group; production data will leave it empty until that rule is implemented.
+- The snapshot provider now reads stored market, news, SEC, Yahoo, metadata, and GraphDB
+  sources under explicit cutoff rules. A working code path does not guarantee that AWS serving
+  tables contain rows for every symbol/time; gaps correctly remain `missingData` and must be
+  verified with an authenticated staging analysis after rollout.
+- GraphDB still has no historical ontology contract, and Yahoo's current estimates table does
+  not preserve provable historical revisions. These dimensions remain excluded from historical
+  similarity instead of being reconstructed from current data.
+- Only orders created with `decision-checks.v1` can produce trusted decision events, and only
+  fills processed by writers that record an exact `fillId`/phase pair can produce portfolio
+  impact. The updated paper matcher records a cost-basis pair; no KIS pair is inferred from
+  adjacent account observations. Existing history remains partial, and no migration invents
+  what the user checked or what an old account looked like before a fill.
+- Deterministic exit-habit rules now exist, but they require enough real sell samples and, for
+  post-sale MFE, a complete `T+20` outcome window. An empty `exit_habit` group is therefore a
+  valid insufficient-sample result, not a fixture fallback.
 - Page-3 experiment/guardrail persistence needs an owning write API before toggles can be
   treated as durable across sessions. Alerts are created only after an explicit user
   action; no automatic order, liquidation, or alert activation exists.

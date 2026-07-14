@@ -53,18 +53,40 @@ GOPS 에이전트는 사용자 질의를 받아 시장 데이터, 뉴스, 온톨
 
 `AnalysisReport` may include a versioned `coachReport`. The public request contains only
 the lightweight `coachRequest`; the authenticated analysis worker, not the client, builds
-one immutable `CoachInputSnapshot` from user-owned PostgreSQL rows and point-in-time
-ClickHouse candles. Deterministic coach analytics owns similarity, MFE/MAE/return,
-portfolio impact, habit aggregation, improvement priority, and condition evaluation.
-Narrative synthesis may explain these values but may not recompute them. Missing sources
-remain explicit and do not trigger role-specific refetches.
+one immutable `CoachInputSnapshot` from a completed user/date-scoped post-market S3 input
+archive plus cutoff-safe ClickHouse context. It does not query orders, KIS, paper trading,
+or Redis at panel-open time. The archive must provide its own `sourceAsOf`/`generatedAt`;
+missing fills, portfolio pairs, and decision evidence remain explicit rather than being
+invented. Deterministic coach analytics owns similarity, MFE/MAE/return, portfolio impact,
+habit aggregation, improvement priority, and condition evaluation. Narrative synthesis may
+explain these values but may not recompute them.
+
+Each fill keeps `decisionAt` separate from `filledAt`. Decision evidence and similarity
+inputs use `decisionAt`; entry anchoring and outcome performance use `filledAt`. A missing
+decision record means `확인 기록 없음`; the coach does not add purchase-time confirmation UI
+or infer a user action from chart evidence.
 
 `coach-report.v2` exposes four UI pages. Page 2 computes `entry`, `exit`, and
 `portfolio` reports independently for `30d`, `90d`, and `1y`; page 4 is the single
 action center that combines the former execution, guardrail, and alert-management pages.
+For entry and exit, page 2 also carries a deterministic long-term profile: confirmed versus
+unconfirmed process/outcome cohorts, repeated missed-check or concentration patterns, and
+representative historical trades. Profit never upgrades an unconfirmed process. Missing
+decision records remain explicit rather than becoming an inferred investor trait.
+The page-2 portfolio profile also exposes snapshot-bound sector exposure, holding market/
+sector sensitivity, and at most three market-diversification candidates. Candidate market
+facts (correlation and relative strength) must be supplied by stored point-in-time market
+evidence; without them the report shows a data-connection state rather than a generic
+allocation or an LLM-generated recommendation. Suggested ranges are review ranges only and
+never create orders or rebalance the account.
 Daily-trade alert candidates preserve their deterministic condition value, threshold,
 operator, reason, recommended action, and support flag so page 4 can render the full
 condition without recomputing it in the browser. Page 1 renders only a compact preview.
+Exit-habit findings are likewise deterministic and conservative: pre-sale giveback uses
+only completed `T-60..T-1` daily highs, while a post-sale MFE observation is eligible only
+after the complete `T+1..T+20` window exists. Post-sale data is labeled hindsight outcome
+evaluation and never proves that the original exit decision was wrong or that a plan was
+followed when no plan-confirmation record exists.
 
 ```mermaid
 flowchart LR
@@ -178,6 +200,27 @@ class EvidenceItem:
 
 Provider 실패나 빈 결과는 예외로 전체 분석을 멈추지 않는다. 반드시
 `status="no-data"` evidence로 degrade한다.
+
+AI 코치의 `StoreCoachPointInTimeContextProvider`는 일반 role provider fan-out과
+별도로 Snapshot Builder가 요청당 한 번만 호출한다. 외부 SEC/Yahoo/Alpaca API를
+hot path에서 호출하지 않고 Redis/ClickHouse에 저장된 quote, company metadata,
+news, SEC fundamentals, Yahoo earnings rows와 현재 GraphDB evidence를 하나의 cutoff
+계약으로 정규화한다. Quote는 event/insert 순서를 함께 사용해 결정론적으로 고르고,
+체결 이후·cutoff 이하이면서 기본 96시간 freshness 안에 있을 때만 쓴다. Redis row는
+별도 received/inserted 시각을 증명할 때만 적격이다. 현재 writer처럼 event time만
+보존하면 ClickHouse trade tick과 완료 1분봉 순서로 degrade한다. SEC schema가 filing 시각이
+아닌 날짜만 보존하므로 진입 당일 filing은 역사적 판단 근거에서 제외한다.
+
+Daily candle similarity features are revision-aware: the selected canonical candle revision
+must have `inserted_at <= decisionAt`. Display/outcome candles may use revisions available by
+the immutable request cutoff, never later revisions. A provider without this vintage contract
+may supply display rows but is ineligible to supply similarity features.
+
+GraphDB는 현재 graph만 제공하므로 `temporalScope="current-only"`와
+`historicalSimilarityEligible=false`로 기록하고 역사 유사도 입력에 넣지 않는다.
+Yahoo `ReplacingMergeTree` row도 과거 revision 재현을 보장하지 않으므로
+`historicalRevisionAvailable=false`로 표시한다. cutoff에 맞는 저장 row가 없으면
+현재 값을 과거 사실로 대체하지 않고 snapshot `missingData`를 남긴다.
 
 ## Provider Types
 

@@ -134,11 +134,13 @@ ai_coach_worker_irsa_role_arn
 ```
 
 Set the first output as `AI_COACH_SNAPSHOT_S3_BUCKET` and annotate
-`ai-coach-worker-sa` with the second output. The role can only call `s3:PutObject`
-under `ai-coach/snapshots/`; it cannot list or read archived account snapshots.
-Conditional writes prevent retry overwrite; a 412 is surfaced as
-`already_exists_unverified` with no asserted digest because the least-privilege role
-cannot read snapshot metadata.
+`ai-coach-worker-sa` with the second output. The role can read the user/date-scoped
+`ai-coach/input/` archive and read/write only `ai-coach/snapshots/` and
+`ai-coach/reports/`; it cannot list the bucket or delete objects. The existing
+market-data service role receives read-only access to `ai-coach/reports/` so the
+authenticated backend can serve the latest coach report. Conditional writes prevent retry
+overwrite. Only after a 412 proves that the immutable object already exists does the worker
+read, verify, and reuse that first snapshot instead of analyzing a newly rebuilt input.
 Current versions expire after `ai_coach_snapshot_retention_days` (default 90). Because
 the bucket is versioned, that expiration makes the object noncurrent; Terraform then
 makes the noncurrent version eligible for permanent deletion after
@@ -149,5 +151,5 @@ than an exact wall-clock deletion SLA. Run `terraform plan` before the applicati
 rollout and confirm that the generated bucket and role names match the Kubernetes
 overlay values. AWS app overlays run coach archiving in required mode. After the
 analysis-worker rollout, `scripts/aws/verify-ai-coach-snapshot-s3.sh` performs one
-non-sensitive conditional put from that worker to prove the live IRSA/bucket path; it
-does not add list, read, or delete permission.
+non-sensitive conditional put and digest-verified read from that worker to prove the
+live IRSA/bucket path; it does not add list or delete permission.

@@ -25,7 +25,7 @@ from .envelope import (
     status_report_for_envelope,
 )
 from .context import AgentAnalysisCanceled
-from .coach_snapshot_archive import CoachSnapshotArchive, CoachSnapshotArchiveError
+from .coach_snapshot_archive import CoachReportArchive, CoachSnapshotArchive, CoachSnapshotArchiveError, CoachSnapshotReuseError
 
 
 class AgentAnalysisWorker:
@@ -37,12 +37,14 @@ class AgentAnalysisWorker:
         deep_queue: AnalysisRequestQueue | None = None,
         coach_snapshot_builder: CoachInputSnapshotBuilder | None = None,
         coach_snapshot_archive: CoachSnapshotArchive | None = None,
+        coach_report_archive: CoachReportArchive | None = None,
     ):
         self.store = store or build_report_store_from_env()
         self.orchestrator = orchestrator or AgentOrchestrator(store=self.store)
         self.deep_queue = deep_queue
         self.coach_snapshot_builder = coach_snapshot_builder or CoachInputSnapshotBuilder()
         self.coach_snapshot_archive = coach_snapshot_archive or CoachSnapshotArchive()
+        self.coach_report_archive = coach_report_archive or CoachReportArchive()
 
     def process_message(self, message: dict[str, Any]) -> dict[str, Any]:
         envelope = request_envelope_from_dict(message)
@@ -73,6 +75,7 @@ class AgentAnalysisWorker:
             apply_worker_diagnostics(report, envelope)
             if snapshot_trace:
                 report.agentTrace["coachSnapshot"] = snapshot_trace
+            self._archive_coach_report(report, envelope, payload)
             report = self._apply_deep_analysis_policy(envelope, report)
             publish_agent_outputs(report.to_dict())
             return report
@@ -116,6 +119,8 @@ class AgentAnalysisWorker:
         trace: dict[str, Any] = {"schemaVersion": snapshot.get("schemaVersion"), "built": True}
         try:
             archive = self.coach_snapshot_archive.put_once(snapshot, envelope.request_id)
+        except CoachSnapshotReuseError:
+            raise
         except CoachSnapshotArchiveError as exc:
             if self.coach_snapshot_archive.required:
                 raise
@@ -127,18 +132,32 @@ class AgentAnalysisWorker:
             })
             trace["archiveStatus"] = "failed_optional"
         if archive:
+            if archive["status"] == "already_exists_unverified":
+                reused = self.coach_snapshot_archive.get_existing(envelope.request_id, snapshot.get("request", {}).get("requestedAt"))
+                if reused is None:
+                    raise CoachSnapshotReuseError("immutable coach snapshot exists but could not be reused")
+                snapshot, archive = reused
             snapshot["_archive"] = archive
             trace.update({"archiveStatus": archive["status"], "key": archive["key"], "sha256": archive.get("sha256")})
-            if archive["status"] == "already_exists_unverified":
-                snapshot.setdefault("missingData", []).append({
-                    "source": "snapshotArchive",
-                    "code": "existing_object_digest_unverified",
-                    "message": "immutable snapshot already exists; write-only IRSA cannot verify its digest",
-                })
         else:
             trace.setdefault("archiveStatus", "disabled")
         payload["coachInputSnapshot"] = snapshot
         return trace
+
+    def _archive_coach_report(self, report: AnalysisReport, envelope: AgentAnalysisRequestEnvelope, payload: dict[str, Any]) -> None:
+        coach_report = report.coachReport
+        snapshot = payload.get("coachInputSnapshot")
+        request = snapshot.get("request") if isinstance(snapshot, dict) and isinstance(snapshot.get("request"), dict) else {}
+        trading_date = str(request.get("tradingDate") or "")
+        if not isinstance(coach_report, dict) or not trading_date:
+            return
+        archived = self.coach_report_archive.put_daily(
+            coach_report,
+            user_id=envelope.user_id,
+            trading_date=trading_date,
+        )
+        if archived:
+            report.agentTrace["coachReportArchive"] = archived
 
     def _mark_started(self, envelope: AgentAnalysisRequestEnvelope) -> None:
         if self.store.is_canceled(envelope.request_id):

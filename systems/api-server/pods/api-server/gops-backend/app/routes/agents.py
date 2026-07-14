@@ -26,6 +26,7 @@ from app.services.agent_gateway import cancel_agent_analysis, get_agent_report, 
 from app.services.agent_rate_limit import enforce_agent_rate_limit
 from gops_agents.query_understanding import EntityResolution, KoreanEntityResolver, extract_relationship_symbols_from_intent
 from gops_agents.query_understanding.korean_text import compact_text
+from gops_agents.runtime.coach_snapshot_archive import CoachReportArchive, CoachSnapshotArchiveError
 
 router = APIRouter()
 AGENT_ALERTS_CHANNEL = "agent.alerts"
@@ -226,6 +227,21 @@ def resolve_agent_entity(
     _user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
     return resolve_agent_entity_for_chart_shortcut(q, mode=mode)
+
+
+@router.get("/api/ai-coach/reports/latest")
+def latest_ai_coach_report(
+    user: AuthenticatedUser = Depends(require_current_user),
+) -> dict[str, Any]:
+    """Return the post-market S3 report without starting an analysis job."""
+
+    try:
+        report = CoachReportArchive().get_latest(user_id=user.sub)
+    except CoachSnapshotArchiveError as exc:
+        raise HTTPException(status_code=503, detail="AI coach report archive is unavailable") from exc
+    if report is None:
+        return {"status": "pending", "report": None}
+    return {"status": "ready", "report": report}
 
 
 @router.get("/api/agents/reports/{analysis_id}")
