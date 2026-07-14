@@ -43,8 +43,12 @@ matching을 의미하지 않는다.
 `/api/paper/*`와 `/ws/paper/*`만 호출하며 LIVE/SIM 토글의 영향을 받지 않는다.
 가상 빠른 주문은 `/api/paper/symbols/search`의 전체 활성 미국 주식/ETF를 선택할 수 있고 유효한 bid/ask가
 없으면 전송을 비활성화한다. 일반 가상 주문은 호가가 없어도 지정가를 대기 주문으로
-접수한다. `가상계좌`는 현금, 평가손익, 보유종목, 미체결 취소, 거래내역, 새 시작금을
-받는 명시적 계좌 초기화를 제공한다.
+접수한다. `가상계좌`는 현금, 평가손익, 보유종목, 미체결 취소, 거래내역을 제공한다.
+첫 번째 `예약 매매` 탭은 기존 `/api/trade-conditions` 목록·등록·일시정지·알림·삭제
+기능을 가상계좌 표 스타일 안에서 제공하며, 조건 충족 주문은 기존 영구 가상계좌
+실행 경로를 그대로 사용한다. 가격 조건 화면은 별도 패널에 중복 표시하지 않는다.
+기존 `priceCondition` panel type은 저장된 레이아웃 호환을 위해 유지하되 팔레트 제목은
+`알림 설정`이고 알림·관심 기업 설정만 표시한다.
 
 Agent 인증 진입은 상단 global navigation의 `Login` 버튼을 사용한다. 별도 `Agents`
 버튼은 표시하지 않으며, 인증 후 하단 Agent 입력을 직접 사용한다. 로컬 Vite DEV에서는
@@ -65,7 +69,7 @@ production build에는 debug snapshot을 노출하지 않는다.
 걸어줘`처럼 명시적으로 요청한 경우에만 프런트는 가격을 재구성하지 않고
 `analysisId`, `proposalId`, 원문 후속 문장을 `POST /api/trade-conditions/commands`로
 보낸다. API가 `clarify`를 반환하면 같은 proposal context를 유지해 수량 같은 누락
-필드를 받고, `created`일 때만 독립 가격 조건 패널을 invalidate/refetch한다. 관련
+필드를 받고, `created`일 때만 가상계좌의 예약 매매 탭을 invalidate/refetch한다. 관련
 없는 새 분석이 완료되면 이전 proposal context를 폐기한다.
 
 ## Chart Derived Profile
@@ -521,7 +525,7 @@ broadcast agent alert용 `WS /ws/agent-alerts`를 함께 구독하고 하나의 
 - 주문 실행으로 자동 연결하지 않는다.
 - 사용자가 보고 확인할 수 있는 UI action으로만 이어간다.
 
-가격조건 패널의 `알림` 탭은 사용자 알림 바 설정을 저장한다. 현재 지원되는
+`알림 설정` 패널의 `알림` 탭은 사용자 알림 바 설정을 저장한다. 현재 지원되는
 본장 시작, 목표가 도달, 급등락, 거래량 급증 및 관심기업별 gate만 조작할 수 있고,
 생성 producer가 아직 없는 항목은 `준비 중`으로 비활성화한다. 가격 조건 행의
 개별 알림 토글은 별도의 condition delivery 상태이며 서버 감시와 예약 주문 실행
