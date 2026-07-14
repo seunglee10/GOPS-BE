@@ -1,4 +1,4 @@
-# Publishes agents.notification-decisions.v1 as Redis/WebSocket alert events.
+# Publishes notification decisions, market events, and risk events as Redis/WebSocket alerts.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

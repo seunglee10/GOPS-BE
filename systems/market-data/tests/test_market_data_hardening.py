@@ -1421,14 +1421,31 @@ class MarketDataHardeningContractTest(unittest.TestCase):
 
         client.ensure_market_data_schema()
 
-        migration = next(statement for statement in statements if "bucket_policy_key" in statement)
-        self.assertIn("ADD COLUMN IF NOT EXISTS bucket_policy_key LowCardinality(String) AFTER bucket_policy", migration)
-        self.assertNotIn("bucket_policy_key LowCardinality(String) DEFAULT", migration)
-        self.assertIn("MODIFY ORDER BY (symbol, interval, event_time, feed_profile, market_session, bucket_policy_key)", migration)
+        add_column = next(statement for statement in statements if "ADD COLUMN IF NOT EXISTS bucket_policy_key" in statement)
+        modify_order = next(statement for statement in statements if "MODIFY ORDER BY" in statement and "bucket_policy_key" in statement)
+        self.assertIn("ADD COLUMN IF NOT EXISTS bucket_policy_key LowCardinality(String) AFTER bucket_policy", add_column)
+        self.assertNotIn("bucket_policy_key LowCardinality(String) DEFAULT", add_column)
+        self.assertIn("MODIFY ORDER BY (symbol, interval, event_time, feed_profile, market_session, bucket_policy_key)", modify_order)
         self.assertFalse(any(
             "MODIFY ORDER BY (symbol, interval, event_time, feed_profile, market_session, bucket_policy)" in statement
             for statement in statements
         ))
+
+    def test_schema_ensure_tolerates_legacy_sort_key_extension_rejection(self):
+        provider = object.__new__(ClickHouseMarketDataProvider)
+        provider.database = "market_data"
+        statements = []
+
+        def execute(query, parameters=None):
+            statement = " ".join(str(query).split())
+            statements.append(statement)
+            if "MODIFY ORDER BY" in statement and "bucket_policy_key" in statement:
+                raise RuntimeError("Existing column feed_profile is used in the expression that was added to the sorting key")
+
+        provider.execute = execute
+        provider.ensure_market_data_schema()
+
+        self.assertTrue(any("ADD COLUMN IF NOT EXISTS bucket_policy_key" in statement for statement in statements))
 
     def test_processor_runtime_config_rejects_placeholders(self):
         with self.assertRaisesRegex(RuntimeError, "placeholder"):

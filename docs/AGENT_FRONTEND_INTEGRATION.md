@@ -509,8 +509,11 @@ workspace 좌표를 변환한다.
 `WS /ws/agent-alerts`는 notification publisher가 Redis에 publish한 alert를
 프런트에 전달하는 bridge다.
 
-현재 active App에는 alert WebSocket consumer가 붙어 있지 않다. 알림 UI를 붙일 때
-이 route를 사용하고, 그 전까지 agent 분석/레이아웃 흐름과 섞지 않는다.
+active App의 `BottomCommandBar`는 persisted notification용 `WS /ws/notifications`와
+broadcast agent alert용 `WS /ws/agent-alerts`를 함께 구독하고 하나의 toast queue로
+정규화한다. `NotificationPreferencesProvider`가 `/api/notification-preferences`에서
+읽은 전체/유형별/기업별 설정을 새 toast와 이미 대기 중인 toast에 모두 적용한다.
+설정을 꺼도 알림 이력과 unread count는 그대로 유지된다.
 
 프런트는 alert를 다음처럼 취급한다.
 
@@ -518,10 +521,12 @@ workspace 좌표를 변환한다.
 - 주문 실행으로 자동 연결하지 않는다.
 - 사용자가 보고 확인할 수 있는 UI action으로만 이어간다.
 
-독립 가격 조건 패널의 알림 토글은 `WS /ws/agent-alerts` 설정이 아니다. 연결된
-price-cross alert의 notification delivery만 켜고 끄며, 서버 감시와 예약 주문
-실행 여부는 별도 상태로 유지한다. 패널 목록은 `/api/trade-conditions`가 source of
-truth이고 브라우저 event는 refetch invalidation 용도로만 쓴다.
+가격조건 패널의 `알림` 탭은 사용자 알림 바 설정을 저장한다. 현재 지원되는
+본장 시작, 목표가 도달, 급등락, 거래량 급증 및 관심기업별 gate만 조작할 수 있고,
+생성 producer가 아직 없는 항목은 `준비 중`으로 비활성화한다. 가격 조건 행의
+개별 알림 토글은 별도의 condition delivery 상태이며 서버 감시와 예약 주문 실행
+여부도 분리한다. 패널 목록은 `/api/trade-conditions`가 source of truth이고 브라우저
+event는 refetch invalidation 용도로만 쓴다.
 
 ## Frontend Reference Files
 

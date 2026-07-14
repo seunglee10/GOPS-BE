@@ -142,6 +142,17 @@ GET  /api/agents/reports/{analysis_id}/stream
 WS   /ws/agent-alerts
 ```
 
+사용자 알림 표시 설정은 다음 session-auth route를 사용한다.
+
+```text
+GET   /api/notification-preferences
+PATCH /api/notification-preferences
+```
+
+설정과 기업별 override는 `user_notification_preferences`에 사용자별로 저장된다.
+이 설정은 프런트 알림 바/toast 노출만 제어하며 notifications 이력, unread count,
+가격 조건 평가, 주문 실행은 삭제하거나 중지하지 않는다.
+
 news 패널과 news agent가 일자별 요약을 렌더링할 때 market-data query route
 `GET /api/market/news/daily?symbol={SYMBOL}&limit=30&locale=ko-KR`를 사용할 수
 있다. 응답은 `displayMode="dailySummary"`와 `dailySummaries[]`를 포함하며,

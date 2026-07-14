@@ -351,6 +351,10 @@ order migration gate로 먼저 실행해야 한다. base ConfigMap은 실행 모
 두고, 로컬 compose는 `sim`, AWS dev overlay는 KIS v1 제한에 맞춰 `demo`를 사용한다.
 `demo`도 사전 리스크 검사와 기존 orders/outbox/KIS demo adapter를 우회하지 않는다.
 
+사용자 알림 표시 설정은 order migration `0009_notification_preferences.sql`이
+필요하다. `user_notification_preferences`에 설정과 기업별 override를 저장하므로
+backend 적용 전에 같은 자동 order migration gate로 실행한다.
+
 Market processor deploys as two runtime units from the same
 `gops-market-processor` image. `alfaka-market-processor` handles trades, bars,
 updated bars, daily bars, and events. `alfaka-market-quote-processor` handles
@@ -425,6 +429,10 @@ agents.query-understanding-events.v1
 agents.notification-decisions.v1
 agents.dlq.v1
 ```
+
+`agent-notification-publisher`는 notification decision topic뿐 아니라
+`agents.market-events.v1`과 risk event topic도 소비한다. 따라서 deployment의
+`AGENT_MARKET_EVENTS_TOPIC`을 event detector와 같은 topic으로 유지해야 한다.
 
 Chart derived env:
 

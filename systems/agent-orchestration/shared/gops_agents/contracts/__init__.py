@@ -378,6 +378,7 @@ class NotificationDecision:
     message: str
     reason: str
     eventId: str | None = None
+    eventType: str | None = None
     createdAt: str = field(default_factory=utc_now_iso)
     expiresAt: str | None = None
     channels: list[str] = field(default_factory=lambda: ["websocket", "redis"])

@@ -279,7 +279,7 @@ catalog를 image/runtime filesystem에 포함해야 한다.
 | `agent-intent-classifier` | no | ambiguous query를 위한 optional cheap classifier. |
 | `deep-analysis-worker` | no | opt-in deep analysis request를 처리한다. |
 | `event-detector` | no | market Kafka topics를 agent market events로 바꾼다. |
-| `notification-publisher` | no | notification decision을 Redis/WebSocket consumer에 fanout한다. |
+| `notification-publisher` | no | notification decision, market event, risk event를 Redis/WebSocket consumer에 fanout한다. market event는 `level`/`severity`가 watch 이상일 때 기본 toast 대상으로 승격된다. |
 | `graph-expansion-refresh` | no | GraphDB hint를 Redis/ClickHouse cache로 materialize한다. |
 | `sec-companyfacts-backfill` | no | SEC companyfacts bulk ZIP을 S3에 저장하고 ClickHouse/Redis fundamentals projection을 만든다. |
 | `sec-fundamentals-reconcile` | future | ClickHouse 최신 revision과 Redis cache를 비교해 stale cache를 재작성한다. Hot path stale check를 하지 않는다. |
@@ -352,6 +352,10 @@ agents.query-understanding-events.v1
 agents.notification-decisions.v1
 agents.dlq.v1
 ```
+
+`NotificationDecision`은 선택적 `eventType`을 포함한다. 프런트는 이 값을
+가격 급등락, 거래량 급증 같은 사용자 알림 설정에 매핑하며, 알 수 없는 값은
+전체 알림과 기업별 알림 gate만 적용한다.
 
 Redis report keys and channels:
 

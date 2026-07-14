@@ -1424,6 +1424,7 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
       REDIS_URL: "redis://redis:6379/0"
       AGENT_NOTIFICATION_DECISIONS_TOPIC: "agents.notification-decisions.v1"
+      AGENT_MARKET_EVENTS_TOPIC: "agents.market-events.v1"
       RISK_EVENTS_TOPIC: "risk.events.v1"
     command: ["python", "-u", "/app/systems/agent-orchestration/pods/notification-publisher/main.py"]
     restart: unless-stopped

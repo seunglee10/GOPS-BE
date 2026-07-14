@@ -10,6 +10,13 @@ from pydantic import BaseModel, Field
 from starlette.websockets import WebSocketState
 
 from app.alerts.notifications import RedisNotificationBroker
+from app.alerts.preferences import (
+    MAX_COMPANY_OVERRIDES,
+    NOTIFICATION_SETTING_KEYS,
+    InMemoryNotificationPreferenceRepository,
+    PostgresNotificationPreferenceRepository,
+    preference_response,
+)
 from app.alerts.projection import AlertProjectionError, RedisAlertProjection
 from app.alerts.repository import ACTIVE_ALERT_LIMIT, AlertCreate, InMemoryAlertRepository, PostgresAlertRepository
 from app.auth.dependencies import (
@@ -47,6 +54,11 @@ class AlertCreateBody(BaseModel):
 
 class AlertStatusBody(BaseModel):
     status: str
+
+
+class NotificationPreferencesPatchBody(BaseModel):
+    settings: dict[str, bool] | None = None
+    companyOverrides: dict[str, bool] | None = None
 
 
 @router.post("/api/alerts", status_code=status.HTTP_201_CREATED)
@@ -220,6 +232,45 @@ def delete_notification(
     }
 
 
+@router.get("/api/notification-preferences")
+def get_notification_preferences(
+    request: Request,
+    user: AuthenticatedUser = Depends(require_current_user),
+) -> dict[str, Any]:
+    repository = _notification_preferences_repository_from_app(request.app)
+    return preference_response(repository.get(user.sub))
+
+
+@router.patch("/api/notification-preferences")
+def patch_notification_preferences(
+    body: NotificationPreferencesPatchBody,
+    request: Request,
+    user: AuthenticatedUser = Depends(require_current_user),
+) -> dict[str, Any]:
+    settings = body.settings or {}
+    unknown_keys = sorted(set(settings) - NOTIFICATION_SETTING_KEYS)
+    if unknown_keys:
+        raise HTTPException(status_code=422, detail=f"Unknown notification settings: {', '.join(unknown_keys)}")
+
+    raw_company_overrides = body.companyOverrides or {}
+    if len(raw_company_overrides) > MAX_COMPANY_OVERRIDES:
+        raise HTTPException(status_code=422, detail=f"Company notification settings support up to {MAX_COMPANY_OVERRIDES} symbols.")
+    company_overrides: dict[str, bool] = {}
+    for symbol, enabled in raw_company_overrides.items():
+        company_overrides[normalize_market_symbol(symbol)] = enabled
+
+    if not settings and not company_overrides:
+        raise HTTPException(status_code=422, detail="At least one notification preference is required.")
+
+    repository = _notification_preferences_repository_from_app(request.app)
+    row = repository.patch(
+        user.sub,
+        settings=settings,
+        company_overrides=company_overrides,
+    )
+    return preference_response(row)
+
+
 @router.websocket("/ws/notifications")
 async def notification_socket(websocket: WebSocket) -> None:
     try:
@@ -292,6 +343,23 @@ def _notification_broker_from_app(app: Any):
     broker = RedisNotificationBroker.from_env()
     app.state.alert_notification_broker = broker
     return broker
+
+
+def _notification_preferences_repository_from_app(app: Any):
+    existing = getattr(app.state, "notification_preferences_repository", None)
+    if existing is not None:
+        return existing
+    repository_mode = "memory" if not auth_is_enabled() and not _database_configured() else "postgres"
+    if os_mode := getattr(app.state, "alert_repository_mode", None):
+        repository_mode = str(os_mode)
+    if repository_mode == "memory":
+        repository = InMemoryNotificationPreferenceRepository()
+    else:
+        if not _database_configured():
+            raise HTTPException(status_code=503, detail="DATABASE_URL or DATABASE_* settings are required for notification preferences")
+        repository = PostgresNotificationPreferenceRepository.from_env()
+    app.state.notification_preferences_repository = repository
+    return repository
 
 
 def _sync_projection(app: Any, action: str, alert: dict[str, Any]) -> str:

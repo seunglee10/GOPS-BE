@@ -464,17 +464,20 @@ class NotificationDecisionAgent:
             message = "No unusual market alert was detected."
             reason = "No event detector signal was attached to this analysis."
             event_id = None
+            event_type = None
         else:
             level = event.severity if event.severity in {"info", "watch", "alert", "critical"} else "watch"
             title = f"{event.symbol} {event.eventType.replace('_', ' ')}"
             message = event.summary
             reason = "Notification level follows the strongest attached market event severity."
             event_id = event.eventId
+            event_type = event.eventType
 
         return NotificationDecision(
             decisionId=stable_id("notification", {"analysisId": analysis_id, "eventId": event_id, "level": level}),
             analysisId=analysis_id,
             eventId=event_id,
+            eventType=event_type,
             symbol=context.symbol,
             level=level,
             showToast=level in {"watch", "alert", "critical"},

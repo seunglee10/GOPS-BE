@@ -2510,6 +2510,26 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(payload["type"], "AGENT_ALERT")
         self.assertTrue(payload["showToast"])
 
+    def test_notification_payload_promotes_watch_market_event_to_toast(self):
+        payload = notification_payload({
+            "symbol": "NVDA",
+            "eventType": "volume_spike",
+            "severity": "watch",
+        })
+
+        self.assertEqual(payload["level"], "watch")
+        self.assertTrue(payload["showToast"])
+        self.assertEqual(payload["decision"]["eventType"], "volume_spike")
+
+    def test_notification_payload_preserves_explicit_toast_suppression(self):
+        payload = notification_payload({
+            "symbol": "NVDA",
+            "severity": "critical",
+            "showToast": False,
+        })
+
+        self.assertFalse(payload["showToast"])
+
     def test_news_provider_normalizes_dedupes_and_scores_articles(self):
         rows = [
             {

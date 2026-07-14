@@ -21,6 +21,11 @@ from alfaka.serving.session_buckets import (
 )
 
 
+def _legacy_sort_key_extension_error(exc):
+    message = str(exc)
+    return "Existing column" in message and "sorting key" in message
+
+
 class ClickHouseMarketDataProvider:
     def __init__(self, url=None, database=None, user=None, password=None, now_provider=None):
         """ClickHouse HTTP API 접속 정보를 환경변수 또는 인자로 초기화합니다."""
@@ -1140,9 +1145,16 @@ class ClickHouseMarketDataProvider:
         )
         self.execute(
             f"ALTER TABLE {self.table('chart_candles')} "
-            "ADD COLUMN IF NOT EXISTS bucket_policy_key LowCardinality(String) AFTER bucket_policy, "
-            "MODIFY ORDER BY (symbol, interval, event_time, feed_profile, market_session, bucket_policy_key)"
+            "ADD COLUMN IF NOT EXISTS bucket_policy_key LowCardinality(String) AFTER bucket_policy"
         )
+        try:
+            self.execute(
+                f"ALTER TABLE {self.table('chart_candles')} "
+                "MODIFY ORDER BY (symbol, interval, event_time, feed_profile, market_session, bucket_policy_key)"
+            )
+        except RuntimeError as exc:
+            if not _legacy_sort_key_extension_error(exc):
+                raise
         # Crypto 체결/거래량은 소수 단위가 자연스럽기 때문에 조회 스키마도 Float64로 맞춥니다.
         for table, column, column_type in (
             ("trade_ticks", "size", "Nullable(Float64)"),

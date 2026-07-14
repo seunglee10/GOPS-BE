@@ -464,6 +464,7 @@ def notification_decision_from_dict(value: Any) -> NotificationDecision | None:
             message=str(value.get("message") or ""),
             reason=str(value.get("reason") or ""),
             eventId=value.get("eventId") if isinstance(value.get("eventId"), str) else None,
+            eventType=value.get("eventType") if isinstance(value.get("eventType"), str) else None,
             createdAt=str(value.get("createdAt") or ""),
             expiresAt=value.get("expiresAt") if isinstance(value.get("expiresAt"), str) else None,
             channels=[str(item) for item in value.get("channels", []) if isinstance(item, (str, int, float))],

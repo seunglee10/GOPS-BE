@@ -111,3 +111,13 @@ def test_trade_condition_migration_declares_durable_conditions_and_alert_deliver
     assert "CREATE TABLE IF NOT EXISTS trade_conditions" in sql
     assert "trade_conditions_user_proposal_unique" in sql
     assert "trade_conditions_trigger_event_unique" in sql
+
+
+def test_notification_preferences_migration_declares_user_scoped_json_settings():
+    [migration] = [path for path in migration_files() if path.name == "0009_notification_preferences.sql"]
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "CREATE TABLE IF NOT EXISTS user_notification_preferences" in sql
+    assert "user_sub TEXT PRIMARY KEY" in sql
+    assert "settings JSONB NOT NULL" in sql
+    assert "company_overrides JSONB NOT NULL" in sql
