@@ -255,6 +255,35 @@ class FakeVolumeProfileProvider(FakeProvider):
         }
 
 
+class ManyCandleVolumeProfileProvider(FakeProvider):
+    def __init__(self, candle_count=220):
+        super().__init__()
+        self.redis_provider = FakeIndicatorRedisProvider()
+        self.candles = [
+            {
+                "timestamp": f"2026-06-25T{13 + index // 60:02d}:{index % 60:02d}:00.000Z",
+                "open": 109.5 if index < 100 else 100.5,
+                "high": 110.0 if index < 100 else 101.0,
+                "low": 109.0 if index < 100 else 100.0,
+                "close": 109.5 if index < 100 else 100.5,
+                "volume": 100,
+            }
+            for index in range(candle_count)
+        ]
+
+    def candle_snapshot(self, symbol, interval, limit, before=None, from_time=None, to_time=None, ma_windows=None):
+        del before, from_time, to_time, ma_windows
+        self.last_limit = limit
+        return {
+            "symbol": symbol,
+            "interval": interval,
+            "source": "unit",
+            "feed": "sip",
+            "dataStatus": "ready",
+            "candles": self.candles[-limit:],
+        }
+
+
 class FakeNewsRedisProvider:
     def __init__(self, rows=None, daily_rows=None, daily_coverage=None):
         self.rows = rows or []
@@ -1133,6 +1162,31 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             service.volume_profile_bins("aapl", "from", "to", "auto", target_bins=10, price_min=102, price_max=100)
 
         self.assertEqual(raised.exception.status_code, 400)
+
+    def test_volume_profile_uses_full_requested_visible_candle_count(self):
+        provider = ManyCandleVolumeProfileProvider()
+        service = MarketDataQueryService(
+            provider,
+            backfill_service=FakeBackfillService(),
+            fill_service=FakeFillService(),
+        )
+
+        payload = service.volume_profile_bins(
+            "aapl",
+            provider.candles[0]["timestamp"],
+            provider.candles[-1]["timestamp"],
+            "auto",
+            target_bins=10,
+            price_min=100,
+            price_max=110,
+            candle_count=len(provider.candles),
+        )
+
+        self.assertEqual(provider.last_limit, 220)
+        self.assertEqual(payload["requestedCandleCount"], 220)
+        self.assertEqual(payload["sourceCandleCount"], 220)
+        self.assertEqual(payload["dataStatus"], "ready")
+        self.assertGreater(payload["bins"][-1]["volume"], 0)
 
     def test_indicator_series_uses_filled_candle_snapshot_lookback_inline(self):
         provider = FakeIndicatorProvider()

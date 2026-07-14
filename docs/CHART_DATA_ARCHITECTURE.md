@@ -130,11 +130,19 @@ ClickHouse artifact contract.
 
 `GET /api/charts/volume-profile-bins` treats `targetBins` as an exact display
 bucket count from 4 through 48. The active chart requests 10 equal-width buckets
-across the visible closed-candle low/high range. Zero-volume buckets remain in
-the response so their price-space gaps are preserved, while a request with no
-source candles remains empty. The response `priceBinSize` is the resolved price
-range divided by `targetBins`; `priceBinSize=auto` remains the compatible request
-mode. This chart calculation uses `volume-profile-exact-v2` cache keys.
+across the main price pane's actual `scene.scales.minPrice/maxPrice` domain. That
+domain includes active overlay indicators and axis padding. The request also sends
+the visible closed-candle `candleCount`; the API uses it as the canonical query
+limit and includes it in request/cache identity. Zero-volume buckets remain in the
+response so their price-space gaps are preserved, while a request with no source
+candles remains empty. The response `priceBinSize` is the resolved price range
+divided by `targetBins`; `priceBinSize=auto` remains the compatible request mode.
+This chart calculation uses `volume-profile-exact-v2` cache keys.
+
+When `candleCount` is present and `sourceCandleCount` differs, the response is
+`dataStatus=partial` and includes `requestedCandleCount`. Partial profiles are not
+written to the derived Redis cache. Calls that omit `candleCount` retain the
+legacy default visible-bar query limit.
 
 ## Order Flow Consumers
 
