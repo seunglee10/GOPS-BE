@@ -41,12 +41,13 @@ class MarketEventDetector:
                 if abs(change_percent) >= self.thresholds.price_change_percent:
                     event_type = "price_surge" if change_percent > 0 else "price_drop"
                     severity = severity_for_change(abs(change_percent))
+                    direction = "상승" if change_percent > 0 else "하락"
                     events.append(MarketEvent.from_payload(
                         symbol=symbol,
                         event_type=event_type,
                         severity=severity,
                         source_topic=source_topic,
-                        summary=f"{symbol} moved {change_percent:.2f}% from the previous observed price.",
+                        summary=f"{symbol} 가격이 직전 관측값 대비 {abs(change_percent):.2f}% {direction}했습니다.",
                         observed_at=str(timestamp) if timestamp else None,
                         metrics={"price": price, "previousPrice": previous, "changePercent": round(change_percent, 4)},
                     ))
@@ -63,7 +64,7 @@ class MarketEventDetector:
                     event_type="volatility_expansion",
                     severity=severity_for_change(range_percent),
                     source_topic=source_topic,
-                    summary=f"{symbol} candle range expanded to {range_percent:.2f}% of open.",
+                    summary=f"{symbol} 캔들의 고가·저가 범위가 시가 대비 {range_percent:.2f}%로 확대되었습니다.",
                     observed_at=str(timestamp) if timestamp else None,
                     metrics={"open": open_price, "high": high, "low": low, "rangePercent": round(range_percent, 4)},
                 ))
@@ -99,8 +100,8 @@ class MarketEventDetector:
                             severity="alert" if multiplier >= 5 else "watch",
                             source_topic=source_topic,
                             summary=(
-                                f"{symbol} {interval} candle volume rose {multiplier:.2f}x "
-                                "above its rolling baseline."
+                                f"{symbol} {interval_label_ko(interval)} 거래량이 "
+                                f"최근 평균의 {multiplier:.2f}배까지 증가했습니다."
                             ),
                             observed_at=str(timestamp) if timestamp else None,
                             metrics={
@@ -159,6 +160,20 @@ def normalize_interval(value: Any) -> str:
         "1mo": "1M",
         "1month": "1M",
     }.get(normalized, normalized)
+
+
+def interval_label_ko(interval: str) -> str:
+    if interval == "1D":
+        return "일봉"
+    if interval == "1W":
+        return "주봉"
+    if interval == "1M":
+        return "월봉"
+    match = re.fullmatch(r"(\d+)(m|h)", interval, re.IGNORECASE)
+    if match is not None:
+        value, unit = match.groups()
+        return f"{value}{'분봉' if unit.lower() == 'm' else '시간봉'}"
+    return f"{interval} 봉"
 
 
 def timestamp_seconds(value: Any) -> float | None:

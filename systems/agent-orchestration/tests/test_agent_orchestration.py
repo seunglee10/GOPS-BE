@@ -2572,6 +2572,28 @@ class AgentOrchestrationTests(unittest.TestCase):
         event_types = {event.eventType for event in events}
         self.assertIn("price_surge", event_types)
         self.assertNotIn("volume_spike", event_types)
+        price_event = next(event for event in events if event.eventType == "price_surge")
+        self.assertEqual(price_event.summary, "NVDA 가격이 직전 관측값 대비 5.00% 상승했습니다.")
+
+        drop_events = detector.detect({"symbol": "NVDA", "price": 100}, "market.layer.trades.v1")
+        price_drop = next(event for event in drop_events if event.eventType == "price_drop")
+        self.assertEqual(price_drop.summary, "NVDA 가격이 직전 관측값 대비 4.76% 하락했습니다.")
+
+    def test_event_detector_localizes_volatility_summary(self):
+        detector = MarketEventDetector(MarketEventThresholds(volatility_percent=4.0))
+
+        events = detector.detect({
+            "symbol": "NVDA",
+            "open": 100,
+            "high": 104,
+            "low": 99,
+        }, "market.layer.candles.1m.closed.v1")
+
+        volatility_event = next(event for event in events if event.eventType == "volatility_expansion")
+        self.assertEqual(
+            volatility_event.summary,
+            "NVDA 캔들의 고가·저가 범위가 시가 대비 5.00%로 확대되었습니다.",
+        )
 
     def test_event_detector_uses_completed_candle_rolling_volume_baseline(self):
         detector = MarketEventDetector(MarketEventThresholds(
@@ -2608,6 +2630,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(volume_event.metrics["baselineSamples"], 3)
         self.assertEqual(volume_event.metrics["interval"], "1m")
         self.assertEqual(volume_event.metrics["multiplier"], 2.4)
+        self.assertEqual(volume_event.summary, "NVDA 1분봉 거래량이 최근 평균의 2.40배까지 증가했습니다.")
 
     def test_event_detector_keeps_volume_baselines_separate_by_interval(self):
         detector = MarketEventDetector(MarketEventThresholds(
