@@ -639,6 +639,9 @@ API에서 만든 수동 build는 서버가 `source=manual`, `priority=100`으로
 build는 `source=scheduled`, `priority=10`으로 지정한다. 클라이언트는 priority를
 보내지 않는다. 실행 중인 동일 source/force/symbol/interval 요청은
 `request_fingerprint`로 기존 job에 합치며 응답의 `coalesced=true`로 알린다.
+Worker는 `scheduled` item을 candle 조회·복구·분석·저장 전에 `manual_refresh_only`로
+종료한다. 기존 자산은 선택된 pair의 `manual + force` 요청에서만 교체하며 일반 manual
+요청은 없는 자산만 만들 수 있다. 전체 universe force 갱신은 제공하지 않는다.
 Worker는 높은 priority부터 claim하고, 최대 2회 처리 뒤 lease가 만료된 item은
 `lease_expired_after_max_attempts` 실패로 종결해 job이 영구 대기하지 않게 한다.
 최종 생성량은 status의 작은 `createdEntities` 정수만 사용한다. Coverage의

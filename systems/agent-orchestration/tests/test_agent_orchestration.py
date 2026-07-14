@@ -1290,7 +1290,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(explanation["facts"]["pattern"]["stateLabel"], "돌파 확인")
         self.assertEqual(explanation["facts"]["tradeScenario"]["positionMeaning"], "기존 long 포지션의 매도·청산 검토 시나리오")
         rendered = " ".join([answer.summary, *(bullet for section in answer.sections for bullet in section.bullets)])
-        self.assertIn("매도·청산 후보", rendered)
+        self.assertIn("매도 후보", rendered)
         self.assertIn("기존 long 포지션", rendered)
         self.assertNotIn("공매도 검토 후보", rendered)
 

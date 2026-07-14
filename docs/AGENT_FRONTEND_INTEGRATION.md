@@ -474,10 +474,15 @@ Wild answer payload는 backend `layoutContext`에 넣지 않으며 API/report �
 명시적인 차트 질문인 `차트 분석해줘`와 chart/candle reference가 있는 질문은 Wild 대신
 요청을 시작한 `chartDocumentId`의 `chartCommentary` panel로 보낸다. panel이 없으면
 넓은 화면에서는 원본 차트 오른쪽, 좁은 화면에서는 아래의 빈 grid에 자동 생성하고 기존
-Wild panel은 이동·대체하지 않는다. 패널은 현재 Geometry와 로컬 `ActiveTradePlan`에서
+Wild panel은 이동·대체하지 않는다. 패널은 현재 Geometry와 로컬 `ChartTradeSetup`에서
 즉시 만드는 `현재 해설`, 서버의 요청 시점 snapshot인 `질문 답변`을 분리한다. 요청 중에도
 현재 해설을 유지하고 진행 상태만 표시하며, 완료 답변은 문서별 최신 10개를 workspace
 layout props에 저장한다.
+
+패널 상단은 연결된 `종목 · 주기`를 표시하고 `차트 선택` 모드에서 대상 차트 외곽선을
+강조한다. 다른 차트를 클릭하거나 목록에서 선택하면 `chartDocumentId`를 바꾸며, 각 문서의
+답변 기록은 별도로 보존·복원한다. 해설 카드 hover/focus는 transient spotlight, click은
+고정 spotlight이며 대상 선은 signal 색상과 증가한 두께로 표시한다.
 
 요청에는 `chartDocumentId`, `sourcePanelId`, 당시 asset identity를 넣는다. 서버 응답의
 source document와 현재 문서가 같고 `symbol/interval/assetVersion/algorithmVersion/
@@ -576,18 +581,19 @@ candle timestamp에 presentation anchor를 투영해 즉시 표시한다. Postgr
 패널은 `1m/5m/10m/1h/4h/1D/1W`를 지원하고 지지·저항, 삼각형·깃발형·페넌트·
 직사각형·쐐기·채널 이탈 패턴, coverage,
 SMA60·SMA120과 최근 교차 상태를 표시한다. `chart-asset:` 근거와 `chart-plan:` 제안은
-차트별 `작도`, `제안` 토글로 독립 제어하며 사용자 수동 drawing은 보존한다. 지지·저항의
-기존 `zoneLow/zoneHigh/halfWidthAtr` metadata가 유효하면 프런트 presentation에서 동일
-ID의 밴드로 표시하되 ATR을 다시 계산하거나 레벨을 재병합하지 않는다. metadata가 부족한
-구자산은 원본 선을 유지한다. 패턴 선은 실선, forming은 낮은 불투명도로 표현한다. 새 자산은
+차트별 `작도`, `제안` 토글로 독립 제어하며 사용자 수동 drawing은 보존한다. 지지·저항은
+기존 zone metadata를 다시 계산하지 않고 2.5px 단일 H-Line으로 표시한다. 패턴 경계는
+3.5px 실선이며 대표 경계에 이름·상태를 표시하고 forming은 낮은 불투명도로 표현한다. 새 자산은
 `primaryPattern`을 우선 표시하고 기존 geometry 자산은 `primaryTriangle`로 호환한다.
 기존 7개 interval 자산은 계속 표시할 수 있지만 새 빌드 선택지는 `1m/1D` 두 개뿐이며
 둘 다 기본 선택한다. 동일 실행 중 요청에 합쳐진 경우 이를 안내하고 polling은 기존
 job URL을 사용한다. 상태 화면은 수동 우선 작업과 정기 작업을 구분해 표시한다.
-`tradePlan.action`이 `buy_candidate`이면 확인 봉의 `flagMarker`와
-`[entry, stop, target]` 순서의 `riskRewardBox`를 함께 적용한다. long-only 기본값의
-`sell_candidate`는 청산 의미의 `flagMarker`만 적용하며 공매도 박스를 만들지 않는다.
-손익비가 기준 미만인 `no_trade`와 미확정 `watch`는 매매 도형을 만들지 않는다.
+완전한 서버 `tradePlan`이 있으면 우선해 `buy_candidate`를 `매수 후보`, `sell_candidate`를
+`매도 후보`로 표시하고 `[entry, stop, target]` 순서의 `riskRewardBox`와 세 가격 pill을
+함께 적용한다. 서버 플랜이 없으면 현재 또는 가까운 저장 주기의 패턴·지지·저항만으로
+조건부 매수/매도 setup을 만든다. 종목별 분기, ATR 재계산, 레벨 재병합, 가짜 candle은
+허용하지 않는다. 손익비가 기준 미만인 `no_trade`와 미확정 `watch`는 서버 확정 플랜을
+만들지 않는다.
 박스의 Entry는 실제 확인 봉 timestamp를 사용하고 Stop/Target의 미래 끝점은 자산에
 저장하지 않는 logical index 투영만 사용해 가짜 candle timestamp를 만들지 않는다.
 진입 점선은 확인 봉부터, fill과 목표·손절 경계는 마지막 완료 봉 다음 슬롯부터 시작한다.
@@ -595,12 +601,15 @@ job URL을 사용한다. 상태 화면은 수동 우선 작업과 정기 작업�
 `zoneSplit`은 command add/update/undo/redo에서 보존하며 값이 없으면 기존 수동 drawing의
 inline·axis label과 risk/reward geometry를 유지한다.
 
-완전한 신규 long/short 후보는 `chartDocumentId`별 비영속 `ActiveTradePlan`으로 projection한다.
+완전한 신규 매수 후보만 `chartDocumentId`별 비영속 `ActiveTradePlan`으로 projection한다.
+매도 후보와 조건부 setup은 주문 원본으로 오해되지 않도록 `ChartTradeSetup`에만 둔다.
 registry는 해당 문서의 심볼·주기 변경, 자산 제거, unmount에서만 clear하고 제안 레이어
 숨김에는 유지한다. `gops:trade-plan-updated` detail은 `{ chartDocumentId, plan }`이며
 clear에는 `plan:null`을 사용한다. primary chart 해설은 같은 document ID의 projection으로
-근거→진입→목표→손절→action·손익비 단계를 만들고 카드 hover/focus 동안 해당 문서만
-transient spotlight한다. 이 표시는 교육용 UI이며 주문·알림 route를 호출하거나 신뢰
+근거→매수/매도 기준→목표→손절/무효화→action·손익비 단계를 만들고 카드 hover/focus와
+click spotlight 동안 해당 문서만 강조한다. 수동 drawing 선 두께는 1~5 범위에서 0.5
+간격 slider로 편집하며 command normalizer와 undo/redo도 같은 범위를 사용한다. 이 표시는
+교육용 UI이며 주문·알림 route를 호출하거나 신뢰
 원본으로 사용하지 않는다.
 
 이 해설·질문 통합은 저장된 Geometry asset의 consumer 변경이다. 배포 시 기존

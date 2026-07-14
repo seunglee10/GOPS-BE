@@ -5,6 +5,7 @@ import sys
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -28,7 +29,7 @@ from alfaka.analytics.atr import latest_atr  # noqa: E402
 class GeometryAssetKernelTest(unittest.TestCase):
     def test_interval_contract_and_coverage_windows_are_exact(self):
         self.assertEqual(SUPPORTED_INTERVALS, ("1m", "5m", "10m", "1h", "4h", "1D", "1W"))
-        self.assertEqual(ALGORITHM_VERSION, "ohlcv-consensus-pattern-families-v4")
+        self.assertEqual(ALGORITHM_VERSION, "ohlcv-consensus-pattern-families-v5")
         self.assertEqual(MINIMUM_BARS, 120)
         for interval in SUPPORTED_INTERVALS[:-1]:
             self.assertEqual(TARGET_BARS[interval], 380)
@@ -126,11 +127,17 @@ class GeometryAssetKernelTest(unittest.TestCase):
                 emitted += len(levels)
 
                 for level in levels:
-                    self.assertLessEqual(level["currentDistanceAtr"], 2.0)
                     self.assertGreaterEqual(level["touches"], 3)
-                    self.assertGreaterEqual(level["reactionCount"], 2)
-                    self.assertTrue(level["activePass"])
-                    self.assertTrue(level["hardPass"])
+                    if level["selectionTier"] == "confirmed":
+                        self.assertLessEqual(level["currentDistanceAtr"], 2.0)
+                        self.assertGreaterEqual(level["reactionCount"], 2)
+                        self.assertTrue(level["activePass"])
+                        self.assertTrue(level["hardPass"])
+                    else:
+                        self.assertEqual(level["selectionTier"], "contextual")
+                        self.assertLessEqual(level["currentDistanceAtr"], 3.0)
+                        self.assertGreaterEqual(level["reactionCount"], 1)
+                        self.assertFalse(level["hardPass"])
                     self.assertIn(level["state"], {
                         "support_active", "resistance_active",
                         "role_flip_support", "role_flip_resistance",
@@ -141,6 +148,32 @@ class GeometryAssetKernelTest(unittest.TestCase):
                         self.assertLessEqual(current, float(level["zoneHigh"]) + 0.25 * atr)
 
         self.assertGreater(emitted, 0)
+
+    def test_amd_adds_only_the_nearest_contextual_support_without_replacing_confirmed_resistance(self):
+        fixture = ROOT / "systems" / "market-data" / "tests" / "fixtures" / "chart_assets_v2" / "amd-1d.json"
+        rows = json.loads(fixture.read_text(encoding="utf-8"))[-TARGET_BARS["1D"]:]
+
+        result = analyze_geometry("AMD", "1D", rows)
+
+        self.assertEqual([(item["price"], item["selectionTier"]) for item in result["supports"]], [(469.21, "contextual")])
+        self.assertEqual([(item["price"], item["selectionTier"]) for item in result["resistances"]], [(546.44, "confirmed")])
+        self.assertEqual(len(result["supports"]), 1)
+
+    def test_contextual_level_publication_does_not_change_pattern_or_trade_plan(self):
+        fixture = ROOT / "systems" / "market-data" / "tests" / "fixtures" / "chart_assets_v2" / "amd-1d.json"
+        rows = json.loads(fixture.read_text(encoding="utf-8"))[-TARGET_BARS["1D"]:]
+
+        with patch("alfaka.analytics.geometry._contextual_level_pass", return_value=False):
+            strict_only = analyze_geometry("AMD", "1D", rows)
+        contextual = analyze_geometry("AMD", "1D", rows)
+
+        self.assertEqual(strict_only["primaryPattern"], contextual["primaryPattern"])
+        self.assertEqual(strict_only["patterns"], contextual["patterns"])
+        self.assertEqual(strict_only["tradePlan"], contextual["tradePlan"])
+        self.assertEqual(
+            strict_only["primaryPattern"]["geometryHash"] if strict_only["primaryPattern"] else None,
+            contextual["primaryPattern"]["geometryHash"] if contextual["primaryPattern"] else None,
+        )
 
     def test_known_aapl_noise_window_does_not_emit_horizontal_levels(self):
         fixture_root = ROOT / "systems" / "market-data" / "tests" / "fixtures" / "chart_assets_v2"

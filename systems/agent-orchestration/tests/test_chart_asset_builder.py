@@ -63,8 +63,42 @@ class ChartAssetBuilderTest(unittest.TestCase):
 
         state = builder.run(envelope)
 
-        self.assertEqual(state["status"], "completed_with_errors")
+        self.assertEqual(state["status"], "completed")
+        self.assertEqual(state["recentItems"][-1]["reason"], "existing_asset_preserved")
         self.assertEqual(storage.save_count, 0)
+
+    def test_scheduled_build_skips_before_loading_or_repairing(self):
+        storage = MemoryStorage()
+        progress = InMemoryChartAssetProgressStore()
+        builder = ChartAssetBuilder(
+            candle_loader=RaisingLoader(), storage=storage, progress=progress,
+            repair_service=RaisingRepair(), concurrency=1,
+        )
+        envelope = ChartAssetBuildEnvelope.create(
+            requested_by="test", symbols=["AMD"], intervals=["1D"], source="scheduled",
+        )
+
+        state = builder.run(envelope)
+
+        self.assertEqual(state["status"], "completed")
+        self.assertEqual(state["recentItems"][-1]["status"], "skipped")
+        self.assertEqual(state["recentItems"][-1]["reason"], "manual_refresh_only")
+        self.assertEqual(storage.save_count, 0)
+
+    def test_manual_force_is_the_only_path_that_replaces_existing_asset(self):
+        rows = _rows(120, "1D")
+        storage = MemoryStorage()
+        storage.assets[("AMD", "1D")] = {"assetVersion": "geometry", "symbol": "AMD", "interval": "1D"}
+        progress = InMemoryChartAssetProgressStore()
+        builder = ChartAssetBuilder(candle_loader=Loader(rows), storage=storage, progress=progress, concurrency=1)
+        envelope = ChartAssetBuildEnvelope.create(
+            requested_by="test", symbols=["AMD"], intervals=["1D"], source="manual", force=True,
+        )
+
+        state = builder.run(envelope)
+
+        self.assertEqual(state["recentItems"][-1]["status"], "saved")
+        self.assertEqual(storage.save_count, 1)
 
     def test_provider_confirmed_empty_gaps_do_not_block_asset_save(self):
         rows = _rows(380, "1m")
@@ -107,6 +141,16 @@ class Loader:
             }},
             digests={interval: f"sha256:{interval}:{actual}"},
         )
+
+
+class RaisingLoader:
+    def load_symbol(self, *_args, **_kwargs):
+        raise AssertionError("scheduled manual-only policy must skip before candle loading")
+
+
+class RaisingRepair:
+    def ensure_ready(self, *_args, **_kwargs):
+        raise AssertionError("scheduled manual-only policy must skip before candle repair")
 
 
 class ConfirmedEmptyRepair:
