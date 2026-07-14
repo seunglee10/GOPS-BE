@@ -64,6 +64,13 @@ add_service() {
   while IFS= read -r deployment; do
     add_deployment "${deployment}"
   done < <(gops_deployments_for_service "${key}")
+
+  # The trusted AI coach worker reads the order-owned schema. Always build the
+  # migration image together with agent analytics so schema migrations can run
+  # before the new worker is rolled out, including manual service selection.
+  if [[ "${key}" == "agent-orchestrator" ]]; then
+    add_service order-worker
+  fi
 }
 
 add_all_services() {
@@ -264,6 +271,7 @@ deployments="$(join_by_space "${SELECTED_DEPLOYMENTS[@]}")"
 has_services="false"
 smoke_frontend="false"
 smoke_backend="false"
+order_migrations_required="false"
 if [[ "${#SELECTED_KEYS[@]}" -gt 0 ]]; then
   has_services="true"
 fi
@@ -273,8 +281,12 @@ fi
 if [[ -n "${SELECTED[backend]:-}" ]]; then
   smoke_backend="true"
 fi
+if [[ -n "${SELECTED[order-worker]:-}" ]]; then
+  order_migrations_required="true"
+fi
 write_output "has_services" "${has_services}"
 write_output "services" "${services}"
 write_output "deployments" "${deployments}"
 write_output "smoke_frontend" "${smoke_frontend}"
 write_output "smoke_backend" "${smoke_backend}"
+write_output "order_migrations_required" "${order_migrations_required}"

@@ -33,8 +33,20 @@ output "kis_adapter_ecr_repository_url" {
   value = aws_ecr_repository.custom_images["kis_adapter"].repository_url
 }
 
+output "agent_orchestrator_ecr_repository_url" {
+  value = aws_ecr_repository.custom_images["agent_orchestrator"].repository_url
+}
+
 output "s3_bucket_name" {
   value = local.market_data_bucket_name
+}
+
+output "ai_coach_snapshot_s3_bucket" {
+  value = aws_s3_bucket.ai_coach_snapshots.bucket
+}
+
+output "ai_coach_worker_irsa_role_arn" {
+  value = aws_iam_role.ai_coach_worker_irsa.arn
 }
 
 output "alpaca_secret_name" {

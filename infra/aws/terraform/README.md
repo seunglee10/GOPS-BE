@@ -7,8 +7,9 @@
 ```text
 ECR repositories for GOPS custom images
 S3 market data bucket reference
+private/versioned AI coach snapshot S3 bucket
 Secrets Manager Alpaca secret reference
-IRSA IAM role/policy
+market-data and put-only AI coach worker IRSA roles/policies
 ```
 
 ## 만들지 않는 것
@@ -44,6 +45,7 @@ gops-market-processor
 gops-market-storage
 gops-order-worker
 gops-kis-adapter
+gops-agent-orchestrator
 ```
 
 Build script variable mapping:
@@ -57,6 +59,7 @@ Build script variable mapping:
 | `market_storage_ecr_repository_url` | `ECR_MARKET_STORAGE_REPO` |
 | `order_worker_ecr_repository_url` | `ECR_ORDER_WORKER_REPO` |
 | `kis_adapter_ecr_repository_url` | `ECR_KIS_ADAPTER_REPO` |
+| `agent_orchestrator_ecr_repository_url` | `ECR_AGENT_ORCHESTRATOR_REPO` |
 
 이미지를 전부 다시 빌드하지 않고 변경된 서비스만 빌드/푸시할 수 있습니다.
 
@@ -122,3 +125,29 @@ create_s3_bucket = false
 ```
 
 bucket을 Terraform으로 새로 만들 때만 `create_s3_bucket = true`로 바꿉니다.
+
+AI coach snapshot bucket is always created by this module and has separate outputs:
+
+```text
+ai_coach_snapshot_s3_bucket
+ai_coach_worker_irsa_role_arn
+```
+
+Set the first output as `AI_COACH_SNAPSHOT_S3_BUCKET` and annotate
+`ai-coach-worker-sa` with the second output. The role can only call `s3:PutObject`
+under `ai-coach/snapshots/`; it cannot list or read archived account snapshots.
+Conditional writes prevent retry overwrite; a 412 is surfaced as
+`already_exists_unverified` with no asserted digest because the least-privilege role
+cannot read snapshot metadata.
+Current versions expire after `ai_coach_snapshot_retention_days` (default 90). Because
+the bucket is versioned, that expiration makes the object noncurrent; Terraform then
+makes the noncurrent version eligible for permanent deletion after
+`ai_coach_snapshot_noncurrent_retention_days` (default 1, constrained to 1-7). With the
+defaults, snapshot bytes are therefore eligible for deletion at about day 91, not day
+180. S3 lifecycle actions are asynchronous, so this is an eligibility window rather
+than an exact wall-clock deletion SLA. Run `terraform plan` before the application
+rollout and confirm that the generated bucket and role names match the Kubernetes
+overlay values. AWS app overlays run coach archiving in required mode. After the
+analysis-worker rollout, `scripts/aws/verify-ai-coach-snapshot-s3.sh` performs one
+non-sensitive conditional put from that worker to prove the live IRSA/bucket path; it
+does not add list, read, or delete permission.

@@ -15,6 +15,16 @@ class AgentChatMessage(BaseModel):
     content: str = Field(min_length=1, max_length=4000)
 
 
+class CoachAnalysisRequest(BaseModel):
+    """Public, lightweight request for a server-owned coach snapshot."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    selectedFillId: str | None = Field(default=None, min_length=1, max_length=128)
+    tradingDate: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
 class AgentAnalysisRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -29,6 +39,7 @@ class AgentAnalysisRequest(BaseModel):
     uiContext: dict[str, Any] = Field(default_factory=dict)
     marketEvents: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
     chartProposal: dict[str, Any] | None = None
+    coachRequest: CoachAnalysisRequest | None = None
     chartAction: str | None = Field(default=None, max_length=32)
     chartTargetSymbol: str | None = Field(default=None, max_length=32)
     chartPlacementIntent: str | None = Field(default=None, max_length=32)

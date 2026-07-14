@@ -56,6 +56,26 @@ variable "s3_raw_retention_days" {
   }
 }
 
+variable "ai_coach_snapshot_retention_days" {
+  type        = number
+  default     = 90
+  description = "Days before the current encrypted immutable AI coach input snapshot version expires."
+  validation {
+    condition     = var.ai_coach_snapshot_retention_days >= 30
+    error_message = "ai_coach_snapshot_retention_days must be at least 30."
+  }
+}
+
+variable "ai_coach_snapshot_noncurrent_retention_days" {
+  type        = number
+  default     = 1
+  description = "Days a superseded AI coach snapshot version remains eligible for storage before permanent lifecycle deletion. Keep this short so versioning does not double the financial-data retention window."
+  validation {
+    condition     = var.ai_coach_snapshot_noncurrent_retention_days >= 1 && var.ai_coach_snapshot_noncurrent_retention_days <= 7
+    error_message = "ai_coach_snapshot_noncurrent_retention_days must be between 1 and 7."
+  }
+}
+
 variable "alpaca_secret_name" {
   type    = string
   default = "dev/alpaca"

@@ -130,6 +130,8 @@ class RedisReportStore(ReportStore):
         redis_url: str | None = None,
         ttl_seconds: int | None = None,
         key_prefix: str | None = None,
+        strict: bool = False,
+        verify_connection: bool = False,
     ):
         if redis_client is not None:
             self.redis = redis_client
@@ -142,6 +144,11 @@ class RedisReportStore(ReportStore):
         self.idempotency_key_prefix = os.getenv("AGENT_IDEMPOTENCY_KEY_PREFIX", DEFAULT_IDEMPOTENCY_KEY_PREFIX)
         self.cancel_key_prefix = os.getenv("AGENT_REPORT_CANCEL_KEY_PREFIX", DEFAULT_CANCEL_KEY_PREFIX)
         self.owner_key_prefix = os.getenv("AGENT_REPORT_OWNER_KEY_PREFIX", DEFAULT_OWNER_KEY_PREFIX)
+        self.strict = bool(strict)
+        if self.strict and self.ttl_seconds <= 0:
+            raise ValueError("AGENT_REPORT_TTL_SECONDS must be positive for strict Redis report storage")
+        if verify_connection:
+            self.redis.ping()
 
     def save(self, report: AnalysisReport) -> AnalysisReport:
         if self.ttl_seconds <= 0:
@@ -156,6 +163,8 @@ class RedisReportStore(ReportStore):
             self.redis.setex(self._latest_key(), self.ttl_seconds, encoded)
             self.redis.setex(self._latest_key(report.symbol), self.ttl_seconds, encoded)
         except Exception as exc:
+            if self.strict:
+                raise
             report.agentTrace["reportStoreWriteFailed"] = f"{exc.__class__.__name__}: {exc}"
             return report
         return report
@@ -164,6 +173,8 @@ class RedisReportStore(ReportStore):
         try:
             payload = self.redis.get(self._report_key(analysis_id))
         except Exception:
+            if self.strict:
+                raise
             return None
         if isinstance(payload, bytes):
             payload = payload.decode("utf-8")
@@ -178,7 +189,8 @@ class RedisReportStore(ReportStore):
         try:
             self.redis.setex(self._cancel_key(str(analysis_id)), self.ttl_seconds, json.dumps(marker, ensure_ascii=False, separators=(",", ":")))
         except Exception:
-            pass
+            if self.strict:
+                raise
         report = canceled_report_for_existing(
             str(analysis_id),
             existing,
@@ -193,7 +205,8 @@ class RedisReportStore(ReportStore):
             if self.redis.get(self._cancel_key(str(analysis_id))):
                 return True
         except Exception:
-            pass
+            if self.strict:
+                raise
         report = self.get(str(analysis_id))
         return bool(report and report.status == CANCELED_REPORT_STATUS)
 
@@ -204,6 +217,8 @@ class RedisReportStore(ReportStore):
         try:
             self.redis.setex(self._idempotency_key(user_id, idempotency_key), ttl, request_id)
         except Exception:
+            if self.strict:
+                raise
             return None
 
     def get_idempotency_request_id(self, user_id: str, idempotency_key: str) -> str | None:
@@ -212,6 +227,8 @@ class RedisReportStore(ReportStore):
         try:
             payload = self.redis.get(self._idempotency_key(user_id, idempotency_key))
         except Exception:
+            if self.strict:
+                raise
             return None
         if isinstance(payload, bytes):
             payload = payload.decode("utf-8")
@@ -237,6 +254,8 @@ class RedisReportStore(ReportStore):
                 existing = existing.decode("utf-8")
             return bool(existing and secrets.compare_digest(str(existing), owner_hash))
         except Exception:
+            if self.strict:
+                raise
             return False
 
     def is_owner(self, analysis_id: str, user_id: str) -> bool:
@@ -245,6 +264,8 @@ class RedisReportStore(ReportStore):
         try:
             existing = self.redis.get(self._owner_key(analysis_id))
         except Exception:
+            if self.strict:
+                raise
             return False
         if isinstance(existing, bytes):
             existing = existing.decode("utf-8")
@@ -321,8 +342,10 @@ def build_report_store_from_env() -> ReportStore:
         return InMemoryReportStore()
     if backend == "redis" or (backend == "auto" and os.getenv("REDIS_URL")):
         try:
-            return RedisReportStore()
+            return RedisReportStore(strict=backend == "redis", verify_connection=backend == "redis")
         except Exception:
+            if backend == "redis":
+                raise
             return InMemoryReportStore()
     return InMemoryReportStore()
 
@@ -375,6 +398,7 @@ def analysis_report_from_dict(value: Any) -> AnalysisReport | None:
         latencyTrace=latency_trace_from_dict(value.get("latencyTrace")),
         agentAnswers=[item for item in (agent_answer_from_dict(item) for item in value.get("agentAnswers", [])) if item],
         agentTrace=dict(value.get("agentTrace") or {}),
+        coachReport=dict(value.get("coachReport")) if isinstance(value.get("coachReport"), dict) else None,
     )
 
 

@@ -8,6 +8,7 @@ from typing import Any
 
 from ..contracts import AnalysisReport, utc_now_iso
 from ..orchestrator import AgentOrchestrator
+from ..orchestration.coach_snapshot_builder import CoachInputSnapshotBuilder
 from ..query_understanding import warm_entity_catalog_cache
 from ..synthesis import log_synthesis_runtime_diagnostics
 from .queues import AnalysisRequestQueue, build_deep_analysis_request_queue_from_env
@@ -24,6 +25,7 @@ from .envelope import (
     status_report_for_envelope,
 )
 from .context import AgentAnalysisCanceled
+from .coach_snapshot_archive import CoachSnapshotArchive, CoachSnapshotArchiveError
 
 
 class AgentAnalysisWorker:
@@ -33,10 +35,14 @@ class AgentAnalysisWorker:
         store: ReportStore | None = None,
         orchestrator: AgentOrchestrator | None = None,
         deep_queue: AnalysisRequestQueue | None = None,
+        coach_snapshot_builder: CoachInputSnapshotBuilder | None = None,
+        coach_snapshot_archive: CoachSnapshotArchive | None = None,
     ):
         self.store = store or build_report_store_from_env()
         self.orchestrator = orchestrator or AgentOrchestrator(store=self.store)
         self.deep_queue = deep_queue
+        self.coach_snapshot_builder = coach_snapshot_builder or CoachInputSnapshotBuilder()
+        self.coach_snapshot_archive = coach_snapshot_archive or CoachSnapshotArchive()
 
     def process_message(self, message: dict[str, Any]) -> dict[str, Any]:
         envelope = request_envelope_from_dict(message)
@@ -58,15 +64,23 @@ class AgentAnalysisWorker:
             return canceled
         try:
             payload = analysis_payload_for_envelope(envelope)
+            snapshot_trace = self._prepare_coach_snapshot(envelope, payload)
             report = self.orchestrator.analyze(payload)
             if self.store.is_canceled(envelope.request_id) or report.status == REQUEST_STATUS_CANCELED:
                 canceled = self.store.mark_canceled(envelope.request_id, reason="canceled during analysis", user_id=envelope.user_id)
                 publish_agent_outputs(canceled.to_dict())
                 return canceled
             apply_worker_diagnostics(report, envelope)
+            if snapshot_trace:
+                report.agentTrace["coachSnapshot"] = snapshot_trace
             report = self._apply_deep_analysis_policy(envelope, report)
             publish_agent_outputs(report.to_dict())
             return report
+        except AgentOutputPublishError:
+            # The completed report is already durable in Redis.  Let the Kafka
+            # consumer retry instead of committing an offset that SSE delivery
+            # never observed.
+            raise
         except AgentAnalysisCanceled as exc:
             canceled = self.store.mark_canceled(
                 envelope.request_id,
@@ -87,6 +101,44 @@ class AgentAnalysisWorker:
             self.store.save(failed)
             publish_agent_outputs(failed.to_dict())
             return failed
+
+    def _prepare_coach_snapshot(self, envelope: AgentAnalysisRequestEnvelope, payload: dict[str, Any]) -> dict[str, Any] | None:
+        payload.pop("coachInputSnapshot", None)
+        coach_request = payload.get("coachRequest")
+        if not isinstance(coach_request, dict) or coach_request.get("enabled") is not True:
+            return None
+        snapshot = self.coach_snapshot_builder.build(
+            user_id=envelope.user_id,
+            analysis_id=envelope.request_id,
+            coach_request=coach_request,
+            submitted_at=envelope.submitted_at,
+        )
+        trace: dict[str, Any] = {"schemaVersion": snapshot.get("schemaVersion"), "built": True}
+        try:
+            archive = self.coach_snapshot_archive.put_once(snapshot, envelope.request_id)
+        except CoachSnapshotArchiveError as exc:
+            if self.coach_snapshot_archive.required:
+                raise
+            archive = None
+            snapshot.setdefault("missingData", []).append({
+                "source": "snapshotArchive",
+                "code": "archive_failed",
+                "message": str(exc),
+            })
+            trace["archiveStatus"] = "failed_optional"
+        if archive:
+            snapshot["_archive"] = archive
+            trace.update({"archiveStatus": archive["status"], "key": archive["key"], "sha256": archive.get("sha256")})
+            if archive["status"] == "already_exists_unverified":
+                snapshot.setdefault("missingData", []).append({
+                    "source": "snapshotArchive",
+                    "code": "existing_object_digest_unverified",
+                    "message": "immutable snapshot already exists; write-only IRSA cannot verify its digest",
+                })
+        else:
+            trace.setdefault("archiveStatus", "disabled")
+        payload["coachInputSnapshot"] = snapshot
+        return trace
 
     def _mark_started(self, envelope: AgentAnalysisRequestEnvelope) -> None:
         if self.store.is_canceled(envelope.request_id):
@@ -121,7 +173,10 @@ class AgentAnalysisWorker:
             return self.store.save(report)
 
         if not should_queue_deep_analysis(envelope, report):
-            return report
+            # Worker diagnostics and the trusted snapshot archive trace are
+            # added after orchestrator synthesis, so persist the enriched
+            # report before publishing it to polling/SSE consumers.
+            return self.store.save(report)
 
         deep_envelope = deep_envelope_for_hot_report(envelope)
         try:
@@ -149,6 +204,7 @@ class AgentAnalysisWorker:
 
 def analysis_payload_for_envelope(envelope: AgentAnalysisRequestEnvelope) -> dict[str, Any]:
     payload = dict(envelope.payload)
+    payload.pop("coachInputSnapshot", None)
     payload["requestId"] = envelope.request_id
     payload["analysisId"] = envelope.request_id
     payload.setdefault("createdAt", envelope.submitted_at)
@@ -177,6 +233,12 @@ def queue_wait_ms(submitted_at: str) -> float:
 def should_queue_deep_analysis(envelope: AgentAnalysisRequestEnvelope, report: AnalysisReport) -> bool:
     if envelope.mode != "hot" or report.status != REQUEST_STATUS_COMPLETED:
         return False
+    coach_request = envelope.payload.get("coachRequest") if isinstance(envelope.payload, dict) else None
+    if isinstance(coach_request, dict) and coach_request.get("enabled") is True:
+        # A coach analysis owns one immutable snapshot. Sending the same logical
+        # request through the deep worker would rebuild it at a later point in
+        # time and violate the audit/replay contract.
+        return False
     if os.getenv("AGENT_DEEP_ANALYSIS_ENABLED", "false").strip().lower() not in {"1", "true", "yes", "on"}:
         return False
     payload = envelope.payload if isinstance(envelope.payload, dict) else {}
@@ -199,6 +261,10 @@ def deep_envelope_for_hot_report(envelope: AgentAnalysisRequestEnvelope) -> Agen
 
 
 _producer = None
+
+
+class AgentOutputPublishError(RuntimeError):
+    pass
 
 
 def publish_agent_outputs(report: dict[str, Any]) -> None:
@@ -229,6 +295,8 @@ def publish_agent_outputs(report: dict[str, Any]) -> None:
             producer.send(notification_topic, key=str(symbol), value=decision)
         producer.flush(timeout=float(os.getenv("AGENT_OUTPUT_KAFKA_FLUSH_SECONDS", "5")))
     except Exception as exc:
+        if os.getenv("AGENT_OUTPUT_KAFKA_REQUIRED", "false").lower() in {"1", "true", "yes", "on"}:
+            raise AgentOutputPublishError(f"agent output Kafka publish failed: {exc.__class__.__name__}") from exc
         print(f"Agent output publish skipped: {exc}", flush=True)
 
 

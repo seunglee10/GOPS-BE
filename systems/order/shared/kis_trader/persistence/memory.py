@@ -45,6 +45,7 @@ class InMemoryOrderRepository:
         idempotency_key_hash: str,
         body_hash: str,
         command: OrderCommand,
+        user_sub: str | None = None,
     ) -> OrderCreationResult:
         with self._lock:
             existing = self.idempotency_requests.get(idempotency_key_hash)
@@ -73,6 +74,7 @@ class InMemoryOrderRepository:
                 "reason": None,
                 "occurred_at": command.occurred_at,
                 "updated_at": utc_now_iso(),
+                "user_sub": user_sub,
             }
             self.orders[command.order_id] = order
             self._append_order_event(command.order_id, OrderStatus.RECEIVED, None, command)

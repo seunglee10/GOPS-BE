@@ -116,6 +116,61 @@ resource "aws_s3_bucket_lifecycle_configuration" "market_data" {
   depends_on = [aws_s3_bucket_versioning.market_data]
 }
 
+resource "aws_s3_bucket" "ai_coach_snapshots" {
+  bucket = "${local.name_prefix}-ai-coach-snapshots-${data.aws_caller_identity.current.account_id}-${var.aws_region}"
+  tags = merge(local.common_tags, {
+    DataClass = "user-financial-snapshot"
+  })
+}
+
+resource "aws_s3_bucket_public_access_block" "ai_coach_snapshots" {
+  bucket                  = aws_s3_bucket.ai_coach_snapshots.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_versioning" "ai_coach_snapshots" {
+  bucket = aws_s3_bucket.ai_coach_snapshots.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "ai_coach_snapshots" {
+  bucket = aws_s3_bucket.ai_coach_snapshots.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "ai_coach_snapshots" {
+  bucket = aws_s3_bucket.ai_coach_snapshots.id
+  rule {
+    id     = "expire-ai-coach-snapshots"
+    status = "Enabled"
+
+    filter {
+      prefix = "ai-coach/snapshots/"
+    }
+
+    expiration {
+      days = var.ai_coach_snapshot_retention_days
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = var.ai_coach_snapshot_noncurrent_retention_days
+    }
+  }
+
+  depends_on = [aws_s3_bucket_versioning.ai_coach_snapshots]
+}
+
 data "aws_secretsmanager_secret" "alpaca_api" {
   count = var.create_alpaca_secret ? 0 : 1
   name  = var.alpaca_secret_name
@@ -232,4 +287,47 @@ resource "aws_iam_role" "market_data_irsa" {
 resource "aws_iam_role_policy_attachment" "market_data_irsa" {
   role       = aws_iam_role.market_data_irsa.name
   policy_arn = aws_iam_policy.market_data_pod_policy.arn
+}
+
+resource "aws_iam_policy" "ai_coach_worker" {
+  name        = "${local.name_prefix}-ai-coach-worker-policy"
+  description = "Write immutable AI coach input snapshots to the dedicated bucket"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["s3:PutObject"]
+        Resource = ["${aws_s3_bucket.ai_coach_snapshots.arn}/ai-coach/snapshots/*"]
+      }
+    ]
+  })
+  tags = local.common_tags
+}
+
+resource "aws_iam_role" "ai_coach_worker_irsa" {
+  name = "${local.name_prefix}-ai-coach-worker-irsa"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Federated = var.eks_oidc_provider_arn
+      }
+      Action = "sts:AssumeRoleWithWebIdentity"
+      Condition = {
+        StringEquals = {
+          "${var.eks_oidc_provider_url}:sub" = "system:serviceaccount:${var.kubernetes_namespace}:ai-coach-worker-sa"
+          "${var.eks_oidc_provider_url}:aud" = "sts.amazonaws.com"
+        }
+      }
+    }]
+  })
+  tags = local.common_tags
+}
+
+resource "aws_iam_role_policy_attachment" "ai_coach_worker" {
+  role       = aws_iam_role.ai_coach_worker_irsa.name
+  policy_arn = aws_iam_policy.ai_coach_worker.arn
 }

@@ -31,6 +31,7 @@ AGENT_REPORTS_CHANNEL = "agent.reports"
 CHART_SHORTCUT_MODE = "chartShortcut"
 AGENT_ANALYSIS_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:-]*$"
 CLIENT_CONTROLLED_AGENT_FIELDS = {
+    "coachInputSnapshot",
     "idempotencyKey",
     "llmBudgetOwner",
     "maxInputTokens",

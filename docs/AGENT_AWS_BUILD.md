@@ -75,6 +75,14 @@ the visible attribution.
 
 ## Image
 
+The existing `gops-agent-orchestrator` image also contains the trusted coach snapshot
+builder, deterministic coach analytics, and the S3 snapshot archive adapter. Coach
+analysis uses the existing request topic, `agent-analysis-worker`, Redis report store,
+polling, and SSE delivery; it adds no Kafka topic or deployment. The worker builds one
+snapshot from authenticated PostgreSQL rows and ClickHouse candles. When archive is
+enabled it writes that snapshot once, with a canonical SHA-256 digest and
+`If-None-Match: *`, before orchestration.
+
 Agent runtime image:
 
 ```text
@@ -285,21 +293,37 @@ scripts/aws/create-pvc-ebs-snapshots.sh
 scripts/aws/restore-graphdb-pvc.sh
 ```
 
-The dev deploy workflow does not run cache rebuilds or SQL migrations
-automatically. For one-off maintenance during a manual build, set
-`run_order_migrations=true` with `order-worker` in `services`, or
-`run_chart_asset_migrations=true` with `agent-orchestrator` in `services`, or
-`rebuild_news_cache=true` with `market-storage` in `services`. Run
-the corresponding migration script directly only when SQL migrations must be
-applied outside the deploy workflow.
-The local equivalents are `RUN_ORDER_MIGRATIONS=true`,
-`RUN_CHART_ASSET_MIGRATIONS=true`, and `REBUILD_NEWS_CACHE=true`; each requires
-its owning service to be selected. Migration Jobs run after image push but before
-the app workload apply.
-Persistent paper trading first requires `0006_paper_trading.sql`; therefore a
-deploy that introduces or changes `paper-order-matcher` must select
-`order-worker` and enable `run_order_migrations=true` (local:
-`RUN_ORDER_MIGRATIONS=true`) before applying app workloads.
+The dev deploy workflow automatically runs the idempotent order migration Job before
+app apply whenever `order-worker` is selected. Selecting `agent-orchestrator` also
+selects `order-worker`, so a new coach worker cannot roll out ahead of its order-owned
+schema. The legacy `run_order_migrations=true` input remains only as an explicit force
+switch and cannot run without the migration image. Other one-off maintenance remains
+explicit: set `run_chart_asset_migrations=true` with `agent-orchestrator`, or
+`rebuild_news_cache=true` with `market-storage`.
+
+AI coach requires order migration `0006_ai_coach.sql` before the new worker is rolled
+out. It adds order ownership, change-only append portfolio snapshot history, and decision-check
+events; `0007_ai_coach_execution_index.sql` adds the `(order_id, created_at)` execution
+lookup index used by the point-in-time fill joins. GitHub Actions and the local deploy
+entrypoint apply all pending order migrations automatically before app rollout when the
+order or coach analytics image set is selected. Deploy the backend/order writers that
+populate `orders.user_sub` before relying on user-scoped coach history. Existing rows
+without ownership remain unavailable rather than being guessed or assigned. The snapshot
+builder intentionally returns missing-data states when historical rows do not yet exist;
+it must never query another user's rows. The local order migration gate is automatic;
+`RUN_ORDER_MIGRATIONS=true` is retained only for compatibility. Chart migrations and
+news rebuilds remain explicitly controlled by `RUN_CHART_ASSET_MIGRATIONS=true` and
+`REBUILD_NEWS_CACHE=true`. Migration Jobs run after image push but before app apply.
+
+The holdings endpoint may be polled every minute. PostgreSQL always refreshes the latest
+observation, but appends portfolio history only when payload content differs after
+top-level `asOf`/`sourceAsOf` timestamps are removed. A per-user advisory transaction
+lock serializes the compare/upsert operation: poll-only timestamp changes do not grow RDS
+history, while changed positions, cash, valuations, or transaction states remain durable.
+
+Persistent paper trading requires `0006_paper_trading.sql`. Changes to
+`paper-order-matcher` select `order-worker`, so the same automatic migration gate
+applies the paper account schema before the matcher and backend workloads roll out.
 
 Market processor deploys as two runtime units from the same
 `gops-market-processor` image. `alfaka-market-processor` handles trades, bars,
@@ -657,6 +681,40 @@ scripts/aws/restore-graphdb-pvc.sh --replace-pending-pvc
 S3는 agent가 직접 final report serving을 하는 저장소가 아니라 market/news
 source data와 replay evidence를 보관하는 durable storage다.
 
+AI coach audit snapshots are the exception to the market-data bucket rule: Terraform
+creates a dedicated private, versioned, AES-256 encrypted bucket named
+`alfaka-dev-ai-coach-snapshots-{account}-{region}`. The lifecycle expires current
+versions under `ai-coach/snapshots/` after `ai_coach_snapshot_retention_days` (90 days
+by default), then makes the resulting noncurrent version eligible for permanent deletion
+after `ai_coach_snapshot_noncurrent_retention_days` (1 day by default, constrained to
+1-7 days). Default snapshot bytes are therefore eligible for deletion at about day 91,
+not day 180. S3 lifecycle processing is asynchronous and is not an exact deletion-time
+SLA. A dedicated IRSA role grants `ai-coach-worker-sa` access only to
+`s3:PutObject` under that prefix; it has no bucket-list or object-read permission. The
+application object key is:
+
+```text
+ai-coach/snapshots/v1/date=YYYY-MM-DD/{analysisId}.json
+```
+
+Writes use `If-None-Match: *`, so a Kafka retry cannot replace an existing immutable
+snapshot. On a 412 response the write-only worker reports
+`already_exists_unverified`, keeps the existing object authoritative, and leaves the
+digest unset rather than claiming it verified data it cannot read.
+
+`AI_COACH_SNAPSHOT_KMS_KEY_ID` is optional in code but is not configured by the current
+Terraform module. If KMS encryption is enabled later, add the matching KMS key policy and
+`kms:Encrypt` permission before setting the env value.
+
+AWS overlays set archive `ENABLED=true` and `REQUIRED=true`: audit retention is
+fail-closed, so an S3 failure fails the coach analysis instead of producing an
+unarchived report. After an agent rollout,
+`scripts/aws/verify-ai-coach-snapshot-s3.sh` executes inside the deployed analysis worker
+and writes one non-sensitive immutable canary through the same IRSA identity. The deploy
+fails if the service account, required-mode environment, bucket, or `PutObject` path is
+invalid. The put-only role still cannot list, read, verify, or delete account snapshots;
+the canary is removed by the same lifecycle policy.
+
 현재 AWS bucket:
 
 ```text
@@ -743,11 +801,25 @@ AGENT_SHARED_REPORT_STORE_ENABLED
 AGENT_ANALYSIS_QUEUE_BACKEND
 AGENT_REPORT_STORE_BACKEND
 AGENT_REPORT_STREAM_REDIS_ENABLED
+AGENT_OUTPUT_KAFKA_REQUIRED
 AGENT_REPORT_OWNER_KEY_PREFIX
 AGENT_RATE_LIMIT_ENABLED
 AGENT_RATE_LIMIT_REQUESTS
 AGENT_RATE_LIMIT_WINDOW_SECONDS
+AI_COACH_SNAPSHOT_ARCHIVE_ENABLED
+AI_COACH_SNAPSHOT_ARCHIVE_REQUIRED
+AI_COACH_SNAPSHOT_S3_BUCKET
+AI_COACH_SNAPSHOT_S3_PREFIX
 ```
+
+AWS overlays set queue/report backends explicitly to `kafka` and `redis`; they must not
+use `auto`, because `auto` may fall back to process-local memory and break polling across
+pods. They also set `AGENT_OUTPUT_KAFKA_REQUIRED=true`, so a result publish/flush failure
+prevents the consumed analysis request from being acknowledged as successfully delivered.
+The analysis worker also needs the ClickHouse, OpenAI, and order database Secrets.
+`ai-coach-worker-sa` must carry the Terraform output
+`ai_coach_worker_irsa_role_arn`, and the ConfigMap bucket must equal Terraform output
+`ai_coach_snapshot_s3_bucket`.
 
 Provider and LLM:
 
@@ -883,6 +955,16 @@ Kubernetes manifests:
 ```sh
 kubectl kustomize infra/k8s/base >/tmp/gops-k8s-base.yaml
 kubectl kustomize infra/k8s/overlays/aws >/tmp/gops-k8s-aws.yaml
+kubectl kustomize infra/k8s/overlays/aws-incluster-app >/tmp/gops-k8s-incluster.yaml
+kubectl kustomize infra/k8s/overlays/aws-incluster-app-ci >/tmp/gops-k8s-ci.yaml
+```
+
+Terraform source validation (requires Terraform 1.6+):
+
+```sh
+terraform -chdir=infra/aws/terraform fmt -check
+terraform -chdir=infra/aws/terraform init -backend=false
+terraform -chdir=infra/aws/terraform validate
 ```
 
 Runtime acceptance:
@@ -895,4 +977,16 @@ Kafka agents.analysis-results.v1 receives the result
 agent-delivery-gateway publishes Redis update
 GET /api/agents/reports/{analysis_id} returns completed report
 SSE stream emits updates or frontend polling works
+coach request report contains coach-report.v2 pages 1..4
+agent-analysis-worker trace reports coachSnapshot.archiveStatus=stored
+the S3 object SHA-256 metadata matches coachReport.snapshotDigest
+another authenticated user cannot read the report or contribute account rows
+the post-rollout IRSA canary gate reports archiveStatus=stored
 ```
+
+Static render/build success proves source and image compatibility only. The automatic
+post-rollout canary proves that the deployed worker can assume IRSA and perform an
+encrypted conditional S3 write, but it does not prove an authenticated API request,
+RDS/ClickHouse reachability, Kafka topic health, Redis persistence, or report delivery.
+Those still require a staging EKS request plus report, worker log, Redis, and S3 evidence
+after Terraform apply and migration execution.
