@@ -97,9 +97,17 @@ class SaturdayDemoScenarioTests(unittest.TestCase):
         self.assertLessEqual(final_prices["IFF"], 85.0)
         self.assertGreaterEqual(final_prices["OKE"], 95.0)
         self.assertLessEqual(final_prices["OKE"], 96.0)
+        amd_prices = post_event_prices["AMD"]
+        early_decline = amd_prices[0] - amd_prices[25]
+        middle_decline = amd_prices[25] - amd_prices[65]
+        late_decline = amd_prices[65] - amd_prices[-1]
+        self.assertLessEqual(early_decline, 3.0)
+        self.assertGreaterEqual(middle_decline, 25.0)
+        self.assertLessEqual(late_decline, 6.0)
+        self.assertGreater(middle_decline, early_decline * 8)
         for symbol, prices in post_event_prices.items():
             largest_tick_jump = max(abs(current - previous) for previous, current in zip(prices, prices[1:]))
-            max_allowed_jump = 0.85 if symbol == "AMD" else 0.5
+            max_allowed_jump = 1.4 if symbol == "AMD" else 0.5
             self.assertLessEqual(largest_tick_jump, max_allowed_jump, symbol)
 
     def test_operator_can_jump_to_each_phase_without_waiting_for_wall_clock(self):
