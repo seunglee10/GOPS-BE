@@ -1,12 +1,12 @@
-# 역할: 미국 정규장 마감 뒤 KST 06:10에 사용자별 관심기업 요약 알림을 1건 발송합니다.
+# 역할: 미국 정규장 개장·마감 10분 전에 사용자별 리마인더를 발송합니다.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: gops-market-close-notifications
+  name: gops-market-reminder-notifications
   namespace: alfaka-market-data
 spec:
-  schedule: "10 6 * * 2-6"
-  timeZone: Asia/Seoul
+  schedule: "*/5 * * * 1-5"
+  timeZone: America/New_York
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 3600
   successfulJobsHistoryLimit: 3
@@ -19,7 +19,7 @@ spec:
       template:
         metadata:
           labels:
-            app: gops-market-close-notifications
+            app: gops-market-reminder-notifications
         spec:
           restartPolicy: Never
           nodeSelector:
@@ -34,67 +34,13 @@ spec:
             - name: send-notifications
               image: YOUR_ECR_REPOSITORY/gops-api-server:latest
               imagePullPolicy: IfNotPresent
-              command: ["python", "-u", "-m", "app.alerts.scheduled", "market-close"]
+              command: ["python", "-u", "-m", "app.alerts.scheduled", "market-reminders"]
               envFrom:
                 - configMapRef:
                     name: alfaka-market-data-config
                 - secretRef:
                     name: alfaka-clickhouse-secret
                     optional: true
-                - secretRef:
-                    name: alfaka-order-db-secret
-                    optional: false
-              resources:
-                requests:
-                  cpu: 100m
-                  memory: 192Mi
-                limits:
-                  cpu: 500m
-                  memory: 512Mi
----
-# 역할: KST 20:00에 Yahoo 실적 캘린더를 조회해 관심기업의 실적 발표 D-1 알림을 발송합니다.
-apiVersion: batch/v1
-kind: CronJob
-metadata:
-  name: gops-earnings-d1-notifications
-  namespace: alfaka-market-data
-spec:
-  schedule: "0 20 * * *"
-  timeZone: Asia/Seoul
-  concurrencyPolicy: Forbid
-  startingDeadlineSeconds: 3600
-  successfulJobsHistoryLimit: 3
-  failedJobsHistoryLimit: 3
-  jobTemplate:
-    spec:
-      ttlSecondsAfterFinished: 86400
-      backoffLimit: 2
-      activeDeadlineSeconds: 1800
-      template:
-        metadata:
-          labels:
-            app: gops-earnings-d1-notifications
-        spec:
-          restartPolicy: Never
-          nodeSelector:
-            karpenter.sh/nodepool: batch-warm
-          tolerations:
-            - key: gops.io/dedicated
-              operator: Equal
-              value: batch
-              effect: NoSchedule
-          serviceAccountName: alfaka-market-data-sa
-          containers:
-            - name: send-notifications
-              image: YOUR_ECR_REPOSITORY/gops-api-server:latest
-              imagePullPolicy: IfNotPresent
-              command: ["python", "-u", "-m", "app.alerts.scheduled", "earnings-d1"]
-              envFrom:
-                - configMapRef:
-                    name: alfaka-market-data-config
-                - secretRef:
-                    name: alfaka-clickhouse-secret
-                    optional: false
                 - secretRef:
                     name: alfaka-order-db-secret
                     optional: false

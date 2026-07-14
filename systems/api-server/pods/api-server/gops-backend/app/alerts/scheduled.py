@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Callable, Iterable
 from zoneinfo import ZoneInfo
 
@@ -16,7 +16,6 @@ from app.market_data.calendar.service import configured_closed_dates, is_session
 from app.services.alfaka_market_data import get_market_data_provider, read_watchlist_symbols, symbol_summaries_for
 
 
-SEOUL = ZoneInfo("Asia/Seoul")
 NEW_YORK = ZoneInfo("America/New_York")
 WATCHLIST_SOURCE = "watchlist"
 
@@ -28,7 +27,58 @@ class ScheduledNotificationService:
     broker: Any
     user_provider: Callable[[], Iterable[str]]
     watchlist_provider: Callable[[str], list[dict[str, Any]]]
-    earnings_provider: Callable[[date], list[dict[str, Any]]]
+
+    def send_market_reminders(self, now: datetime | None = None) -> dict[str, Any]:
+        current = _aware(now)
+        market_now = current.astimezone(NEW_YORK)
+        market_date = market_now.date()
+        if not is_session_date(market_date, configured_closed_dates(market_date.year, market_date.year)):
+            return {"job": "market-reminders", "marketDate": market_date.isoformat(), "sent": 0, "skipped": "market_closed"}
+
+        minute_of_day = market_now.hour * 60 + market_now.minute
+        reminder = (
+            ("market_open", "system.market_open", "미국장 개장 10분 전", "미국 정규장이 10분 뒤 개장합니다.")
+            if minute_of_day == 9 * 60 + 20
+            else ("market_close", "system.market_close", "미국장 마감 10분 전", "미국 정규장이 10분 뒤 마감합니다.")
+            if minute_of_day == 15 * 60 + 50
+            else None
+        )
+        if reminder is None:
+            return {"job": "market-reminders", "marketDate": market_date.isoformat(), "sent": 0, "skipped": "outside_window"}
+
+        kind, notification_type, title, summary = reminder
+        sent = 0
+        duplicate = 0
+        for user_sub in _normalized_users(self.user_provider()):
+            preferences = preference_response(self.preference_repository.get(user_sub))
+            payload = {
+                "kind": kind,
+                "marketDate": market_date.isoformat(),
+                "title": title,
+                "summary": summary,
+            }
+            allowed, _reason = notification_delivery_decision(notification_type, payload, preferences)
+            if not allowed:
+                continue
+            notification = self.notification_repository.create_notification_once(
+                user_sub=user_sub,
+                alert_id=None,
+                event_id=f"{kind}:{market_date.isoformat()}:{user_sub}",
+                notification_type=notification_type,
+                payload=payload,
+            )
+            if notification is None:
+                duplicate += 1
+                continue
+            self._publish(user_sub, notification, payload)
+            sent += 1
+        return {
+            "job": "market-reminders",
+            "kind": kind,
+            "marketDate": market_date.isoformat(),
+            "sent": sent,
+            "duplicates": duplicate,
+        }
 
     def send_market_close_summaries(self, now: datetime | None = None) -> dict[str, Any]:
         current = _aware(now)
@@ -84,90 +134,12 @@ class ScheduledNotificationService:
             "duplicates": duplicate,
         }
 
-    def send_earnings_d1(self, now: datetime | None = None) -> dict[str, Any]:
-        current = _aware(now)
-        earnings_date = current.astimezone(SEOUL).date() + timedelta(days=1)
-        events = {
-            str(item.get("symbol") or "").strip().upper(): item
-            for item in self.earnings_provider(earnings_date)
-            if str(item.get("symbol") or "").strip()
-        }
-        if not events:
-            return {"job": "earnings-d1", "earningsDate": earnings_date.isoformat(), "sent": 0, "events": 0}
-
-        sent = 0
-        duplicate = 0
-        for user_sub in _normalized_users(self.user_provider()):
-            preferences = preference_response(self.preference_repository.get(user_sub))
-            watchlist = self.watchlist_provider(user_sub)
-            for company in watchlist:
-                symbol = str(company.get("symbol") or "").strip().upper()
-                if symbol not in events:
-                    continue
-                payload = {
-                    "kind": "earnings_d1",
-                    "symbol": symbol,
-                    "companyName": company.get("name") or symbol,
-                    "earningsDate": earnings_date.isoformat(),
-                    "title": f"{company.get('name') or symbol} 실적 발표 D-1",
-                    "summary": f"{symbol}의 실적 발표가 내일 예정되어 있습니다.",
-                    "source": events[symbol].get("source") or "yahoo-earnings-dates",
-                }
-                allowed, _reason = notification_delivery_decision(
-                    "system.earnings_d1",
-                    payload,
-                    preferences,
-                )
-                if not allowed:
-                    continue
-                notification = self.notification_repository.create_notification_once(
-                    user_sub=user_sub,
-                    alert_id=None,
-                    event_id=f"earnings-d1:{earnings_date.isoformat()}:{user_sub}:{symbol}",
-                    notification_type="system.earnings_d1",
-                    payload=payload,
-                )
-                if notification is None:
-                    duplicate += 1
-                    continue
-                self._publish(user_sub, notification, payload)
-                sent += 1
-        return {
-            "job": "earnings-d1",
-            "earningsDate": earnings_date.isoformat(),
-            "events": len(events),
-            "sent": sent,
-            "duplicates": duplicate,
-        }
-
     def _publish(self, user_sub: str, notification: dict[str, Any], payload: dict[str, Any]) -> None:
         self.broker.publish_user(user_sub, {
             "type": "notification",
             "notification": notification,
             "event": payload,
         })
-
-
-class ClickHouseEarningsCalendar:
-    def __init__(self, clickhouse_provider: Any) -> None:
-        self.provider = clickhouse_provider
-
-    def events_on(self, target_date: date) -> list[dict[str, Any]]:
-        table = self.provider.table("yahoo_earnings_estimates")
-        query = f"""
-        SELECT
-          symbol,
-          toString(period_end) AS earningsDate,
-          'yahoo-earnings-dates' AS source
-        FROM {table}
-        WHERE metric = 'eps'
-          AND period_end = {{targetDate:Date}}
-          AND JSONExtractString(raw, 'sourceFrame') = 'earnings_dates'
-        GROUP BY symbol, period_end
-        ORDER BY symbol
-        FORMAT JSONEachRow
-        """
-        return self.provider.query_json_each_row(query, {"targetDate": target_date.isoformat()})
 
 
 def build_scheduled_notification_service() -> ScheduledNotificationService:
@@ -182,14 +154,12 @@ def build_scheduled_notification_service() -> ScheduledNotificationService:
         symbols = read_watchlist_symbols(user_sub)
         return symbol_summaries_for(symbols) if symbols else []
 
-    earnings_calendar = ClickHouseEarningsCalendar(market_provider.clickhouse_provider)
     return ScheduledNotificationService(
         preference_repository=PostgresNotificationPreferenceRepository.from_env(),
         notification_repository=PostgresAlertRepository.from_env(),
         broker=RedisNotificationBroker(redis_client),
         user_provider=users,
         watchlist_provider=watchlist,
-        earnings_provider=earnings_calendar.events_on,
     )
 
 
@@ -243,13 +213,13 @@ def _aware(value: datetime | None) -> datetime:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Send scheduled GOPS notifications.")
-    parser.add_argument("job", choices=("market-close", "earnings-d1"))
+    parser.add_argument("job", choices=("market-reminders", "market-close"))
     args = parser.parse_args()
     service = build_scheduled_notification_service()
     result = (
-        service.send_market_close_summaries()
-        if args.job == "market-close"
-        else service.send_earnings_d1()
+        service.send_market_reminders()
+        if args.job == "market-reminders"
+        else service.send_market_close_summaries()
     )
     print(json.dumps(result, ensure_ascii=False, sort_keys=True), flush=True)
 

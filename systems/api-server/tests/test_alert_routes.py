@@ -29,6 +29,7 @@ try:
     from fastapi.testclient import TestClient
 
     from app.alerts.notifications import InMemoryNotificationBroker
+    from app.alerts import routes as alert_routes
     from app.alerts.preferences import InMemoryNotificationPreferenceRepository
     from app.alerts.repository import AlertCreate, InMemoryAlertRepository, PostgresAlertRepository
     from app.auth.config import AuthConfig
@@ -79,6 +80,26 @@ def test_create_price_cross_alert_derives_direction_and_syncs_projection(alert_a
     assert payload["alert"]["repeat_limit"] == 1
     assert payload["alert"]["triggered_count"] == 0
     assert alert_app.state.alert_projection.upserted[0]["target_price"] == 110.0
+
+
+def test_one_shot_alert_leaves_active_list_after_notification_is_persisted(alert_app) -> None:
+    client = TestClient(alert_app)
+    created = client.post(
+        "/api/alerts",
+        json={"symbol": "NVDA", "type": "price_cross", "targetPrice": "110"},
+    ).json()["alert"]
+
+    notification, updated = alert_app.state.alert_repository.persist_triggered_notification(
+        user_sub="dev-auth-disabled",
+        alert_id=created["id"],
+        event_id="one-shot-event",
+        notification_type="alert.price_cross",
+        payload={"alertId": created["id"], "symbol": "NVDA"},
+    )
+
+    assert notification is not None
+    assert updated["status"] == "fired"
+    assert client.get("/api/alerts?includeTerminal=false").json()["alerts"] == []
 
 
 def test_create_alert_accepts_repeat_limit_options(alert_app) -> None:
@@ -162,7 +183,7 @@ def test_postgres_alert_insert_includes_proposal_source(monkeypatch: pytest.Monk
     ))
 
     assert "proposal_source" in connection.query
-    assert connection.params[-2] == "entry_habit"
+    assert connection.params[11] == "entry_habit"
     assert created["proposal_source"] == "entry_habit"
 
 
@@ -173,6 +194,110 @@ def test_create_alert_rejects_unknown_repeat_limit(alert_app) -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_create_rsi_condition_and_agent_command_are_persisted_with_source(alert_app) -> None:
+    client = TestClient(alert_app)
+    manual = client.post(
+        "/api/alerts",
+        headers={"Idempotency-Key": "manual-rsi-1"},
+        json={
+            "symbol": "NVDA",
+            "condition": {
+                "kind": "rsi_threshold",
+                "operator": "above",
+                "threshold": 70,
+                "interval": "1D",
+                "period": 14,
+            },
+            "repeatLimit": None,
+        },
+    )
+    command = client.post(
+        "/api/alerts/commands",
+        headers={"Idempotency-Key": "agent-rsi-1"},
+        json={"text": "NVDA RSI 70 이상이면 알림 설정해줘"},
+    )
+    replay = client.post(
+        "/api/alerts/commands",
+        headers={"Idempotency-Key": "agent-rsi-1"},
+        json={"text": "다른 요청"},
+    )
+
+    assert manual.status_code == 201
+    assert manual.json()["alert"]["condition"] == {
+        "kind": "rsi_threshold",
+        "operator": "above",
+        "threshold": 70.0,
+        "interval": "1D",
+        "period": 14,
+    }
+    assert command.status_code == 200
+    assert command.json()["status"] == "created"
+    assert command.json()["alert"]["created_via"] == "agent_chat"
+    assert command.json()["alert"]["repeat_limit"] == 1
+    assert replay.json()["idempotentReplay"] is True
+    assert replay.json()["alert"]["id"] == command.json()["alert"]["id"]
+
+
+def test_agent_command_clarifies_missing_volume_interval_then_creates(alert_app) -> None:
+    client = TestClient(alert_app)
+    first = client.post(
+        "/api/alerts/commands",
+        headers={"Idempotency-Key": "agent-volume-1"},
+        json={"text": "NVDA 거래량 1000000 이상이면 알림 설정해줘"},
+    )
+
+    assert first.status_code == 200
+    assert first.json()["status"] == "clarify"
+    assert first.json()["clarificationId"]
+
+    second = client.post(
+        "/api/alerts/commands",
+        headers={"Idempotency-Key": "agent-volume-1"},
+        json={"text": "5분봉", "clarificationId": first.json()["clarificationId"]},
+    )
+
+    assert second.status_code == 200
+    assert second.json()["status"] == "created"
+    assert second.json()["alert"]["condition"]["kind"] == "volume_absolute"
+    assert second.json()["alert"]["condition"]["interval"] == "5m"
+
+
+def test_agent_command_requires_idempotency_key(alert_app) -> None:
+    response = TestClient(alert_app).post(
+        "/api/alerts/commands",
+        json={"text": "NVDA RSI 70 이상이면 알림 설정해줘"},
+    )
+
+    assert response.status_code == 400
+
+
+def test_agent_command_uses_strict_fallback_for_unfamiliar_expression(alert_app, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+    monkeypatch.setattr(alert_routes, "request_agent_alert_resolution", lambda payload: calls.append(payload) or {
+        "status": "ready",
+        "symbol": "NVDA",
+        "condition": {
+            "kind": "volume_relative",
+            "operator": "above",
+            "threshold": 2,
+            "interval": "5m",
+            "lookback": 20,
+        },
+        "repeatLimit": 1,
+    })
+
+    response = TestClient(alert_app).post(
+        "/api/alerts/commands",
+        headers={"Idempotency-Key": "agent-fallback-1"},
+        json={"text": "NVDA 거래량이 평소보다 크게 튀면 5분봉 알림 설정해줘"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "created"
+    assert response.json()["alert"]["condition"]["kind"] == "volume_relative"
+    assert calls and calls[0]["contextSymbol"] == "NVDA"
 
 
 def test_create_price_cross_rejects_equal_current_price(alert_app) -> None:
@@ -284,7 +409,6 @@ def test_notification_preferences_return_defaults_and_patch_individual_fields(al
     assert initial.json()["persisted"] is False
     assert initial.json()["settings"]["master"] is True
     assert initial.json()["settings"]["marketOpen"] is True
-    assert initial.json()["settings"]["earningsD1"] is True
     assert initial.json()["settings"]["aiAnomaly"] is True
     assert initial.json()["settings"]["volumeSpike"] is False
     assert initial.json()["thresholds"] == {"rapidMovePct": 5, "volumeSpikeMultiple": 3}
@@ -356,14 +480,17 @@ def test_notification_preferences_normalize_legacy_json(alert_app) -> None:
         "volumeSpike",
         "marketOpen",
         "marketClose",
+        "rsiBand",
+        "economicCalendar",
+        "earnings",
+        "tradingHalt",
+        "marketVolatility",
         "extendedHoursMove",
-        "earningsD1",
         "socialIssue",
         "aiAnomaly",
     }
     assert payload["settings"]["master"] is False
     assert payload["settings"]["rapidMove"] is False
-    assert payload["settings"]["earningsD1"] is True
     assert payload["thresholds"] == {"rapidMovePct": 5, "volumeSpikeMultiple": 3}
     assert payload["companyOverrides"] == {"AAPL": False}
 

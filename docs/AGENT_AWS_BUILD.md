@@ -355,6 +355,12 @@ order migration gate로 먼저 실행해야 한다. base ConfigMap은 실행 모
 필요하다. `user_notification_preferences`에 설정과 기업별 override를 저장하므로
 backend 적용 전에 같은 자동 order migration gate로 실행한다.
 
+다중 조건과 Agent 알림 생성은 `0010_alert_condition_rules.sql`이 필요하다. 이
+migration을 backend와 alert-evaluator보다 먼저 적용한다. alert-evaluator는 trades와
+1m/5m/10m/1h/4h/1D closed candle topic을 모두 받도록
+`ALERT_EVALUATOR_INPUT_TOPICS`를 설정하고, 시작 이력 warm-up을 위해 ClickHouse
+secret도 주입한다. 개장·마감 10분 전 알림 CronJob은 5분 간격 ET 스케줄로 실행된다.
+
 Market processor deploys as two runtime units from the same
 `gops-market-processor` image. `alfaka-market-processor` handles trades, bars,
 updated bars, daily bars, and events. `alfaka-market-quote-processor` handles

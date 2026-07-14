@@ -30,6 +30,10 @@ class AlertCreate:
     status: str = "active"
     notifications_enabled: bool = True
     proposal_source: str | None = None
+    condition: dict[str, Any] | None = None
+    condition_version: int = 1
+    created_via: str = "manual"
+    request_id: str | None = None
     expires_at: datetime | None = None
 
 
@@ -44,6 +48,9 @@ class AlertRepository:
         raise NotImplementedError
 
     def get_alert(self, user_sub: str, alert_id: int) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    def get_alert_by_request_id(self, user_sub: str, request_id: str) -> dict[str, Any] | None:
         raise NotImplementedError
 
     def update_alert_status(self, user_sub: str, alert_id: int, status: str) -> dict[str, Any] | None:
@@ -84,6 +91,18 @@ class AlertRepository:
         notification_type: str,
         payload: dict[str, Any],
     ) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    def persist_triggered_notification(
+        self,
+        *,
+        user_sub: str,
+        alert_id: int | None,
+        event_id: str,
+        notification_type: str,
+        payload: dict[str, Any],
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        """Persist the notification and advance its alert in one transaction."""
         raise NotImplementedError
 
     def list_notifications(self, user_sub: str, *, after: int | None = None, limit: int = 50) -> list[dict[str, Any]]:
@@ -134,9 +153,12 @@ class PostgresAlertRepository(AlertRepository):
                 INSERT INTO alerts (
                     user_sub, symbol, type, direction, target_price, change_pct,
                     window_min, repeat, repeat_limit, status, notifications_enabled,
-                    proposal_source, expires_at
+                    proposal_source, condition, condition_version, created_via,
+                    request_id, expires_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (user_sub, request_id) WHERE request_id IS NOT NULL
+                DO UPDATE SET request_id = EXCLUDED.request_id
                 RETURNING *
                 """,
                 (
@@ -152,6 +174,10 @@ class PostgresAlertRepository(AlertRepository):
                     alert.status,
                     alert.notifications_enabled,
                     alert.proposal_source,
+                    Jsonb(_json_ready(alert.condition or {})),
+                    alert.condition_version,
+                    alert.created_via,
+                    alert.request_id,
                     alert.expires_at,
                 ),
             ).fetchone()
@@ -171,6 +197,14 @@ class PostgresAlertRepository(AlertRepository):
             row = conn.execute(
                 "SELECT * FROM alerts WHERE user_sub = %s AND id = %s",
                 (user_sub, alert_id),
+            ).fetchone()
+            return _json_ready(dict(row)) if row else None
+
+    def get_alert_by_request_id(self, user_sub: str, request_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM alerts WHERE user_sub = %s AND request_id = %s",
+                (user_sub, request_id),
             ).fetchone()
             return _json_ready(dict(row)) if row else None
 
@@ -203,6 +237,7 @@ class PostgresAlertRepository(AlertRepository):
                 """
                 UPDATE alerts
                 SET triggered_count = triggered_count + 1,
+                    last_triggered_at = now(),
                     status = CASE
                         WHEN repeat_limit IS NOT NULL AND triggered_count + 1 >= repeat_limit THEN 'fired'
                         ELSE status
@@ -291,6 +326,51 @@ class PostgresAlertRepository(AlertRepository):
             ).fetchone()
             conn.commit()
             return _json_ready(dict(row)) if row else None
+
+    def persist_triggered_notification(
+        self,
+        *,
+        user_sub: str,
+        alert_id: int | None,
+        event_id: str,
+        notification_type: str,
+        payload: dict[str, Any],
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        with self._connect() as conn:
+            notification_row = conn.execute(
+                """
+                INSERT INTO notifications (user_sub, alert_id, event_id, type, payload)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (event_id) DO NOTHING
+                RETURNING *
+                """,
+                (user_sub, alert_id, event_id, notification_type, Jsonb(_json_ready(payload))),
+            ).fetchone()
+            alert_row = None
+            if notification_row is not None and alert_id is not None:
+                alert_row = conn.execute(
+                    """
+                    UPDATE alerts
+                    SET triggered_count = triggered_count + 1,
+                        last_triggered_at = now(),
+                        status = CASE
+                            WHEN repeat_limit IS NOT NULL AND triggered_count + 1 >= repeat_limit THEN 'fired'
+                            ELSE status
+                        END
+                    WHERE user_sub = %s
+                      AND id = %s
+                      AND status = 'active'
+                    RETURNING *
+                    """,
+                    (user_sub, alert_id),
+                ).fetchone()
+                if alert_row is None:
+                    conn.rollback()
+                    return None, None
+            conn.commit()
+            notification = _json_ready(dict(notification_row)) if notification_row else None
+            updated_alert = _json_ready(dict(alert_row)) if alert_row else None
+            return notification, updated_alert
 
     def list_notifications(self, user_sub: str, *, after: int | None = None, limit: int = 50) -> list[dict[str, Any]]:
         params: list[Any] = [user_sub]
@@ -399,8 +479,13 @@ class InMemoryAlertRepository(AlertRepository):
             "status": alert.status,
             "notifications_enabled": alert.notifications_enabled,
             "proposal_source": alert.proposal_source,
+            "condition": deepcopy(alert.condition or {}),
+            "condition_version": alert.condition_version,
+            "created_via": alert.created_via,
+            "request_id": alert.request_id,
             "created_at": datetime.now(timezone.utc),
             "expires_at": alert.expires_at,
+            "last_triggered_at": None,
         }
         self.alerts[self._alert_id] = deepcopy(row)
         return _json_ready(row)
@@ -413,6 +498,13 @@ class InMemoryAlertRepository(AlertRepository):
     def get_alert(self, user_sub: str, alert_id: int) -> dict[str, Any] | None:
         row = self.alerts.get(alert_id)
         return _json_ready(row) if row and row["user_sub"] == user_sub else None
+
+    def get_alert_by_request_id(self, user_sub: str, request_id: str) -> dict[str, Any] | None:
+        row = next((
+            item for item in self.alerts.values()
+            if item["user_sub"] == user_sub and item.get("request_id") == request_id
+        ), None)
+        return _json_ready(row) if row else None
 
     def update_alert_status(self, user_sub: str, alert_id: int, status: str) -> dict[str, Any] | None:
         row = self.alerts.get(alert_id)
@@ -433,6 +525,7 @@ class InMemoryAlertRepository(AlertRepository):
         if not row or row["user_sub"] != user_sub or row["status"] != "active":
             return None
         row["triggered_count"] = int(row.get("triggered_count") or 0) + 1
+        row["last_triggered_at"] = datetime.now(timezone.utc)
         repeat_limit = row.get("repeat_limit")
         if repeat_limit is not None and row["triggered_count"] >= int(repeat_limit):
             row["status"] = "fired"
@@ -502,6 +595,30 @@ class InMemoryAlertRepository(AlertRepository):
             notification_type=notification_type,
             payload=payload,
         )
+
+    def persist_triggered_notification(
+        self,
+        *,
+        user_sub: str,
+        alert_id: int | None,
+        event_id: str,
+        notification_type: str,
+        payload: dict[str, Any],
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        notification = self.create_notification_once(
+            user_sub=user_sub,
+            alert_id=alert_id,
+            event_id=event_id,
+            notification_type=notification_type,
+            payload=payload,
+        )
+        if notification is None:
+            return None, None
+        updated_alert = self.record_alert_trigger(user_sub, alert_id) if alert_id is not None else None
+        if alert_id is not None and updated_alert is None:
+            self.notifications.pop(int(notification["id"]), None)
+            return None, None
+        return notification, updated_alert
 
     def list_notifications(self, user_sub: str, *, after: int | None = None, limit: int = 50) -> list[dict[str, Any]]:
         rows = [row for row in self.notifications.values() if row["user_sub"] == user_sub]

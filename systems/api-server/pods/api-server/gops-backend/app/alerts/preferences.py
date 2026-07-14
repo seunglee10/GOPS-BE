@@ -14,28 +14,38 @@ from psycopg.types.json import Jsonb
 NOTIFICATION_SETTING_KEYS = frozenset(
     {
         "master",
-        "targetPrice",
-        "rapidMove",
-        "volumeSpike",
         "marketOpen",
         "marketClose",
-        "extendedHoursMove",
-        "earningsD1",
         "socialIssue",
+        "rsiBand",
+        "economicCalendar",
+        "earnings",
+        "volumeSpike",
+        "tradingHalt",
+        "marketVolatility",
+        # One-release compatibility for the previous settings response.
+        "targetPrice",
+        "rapidMove",
+        "extendedHoursMove",
         "aiAnomaly",
     }
 )
 
 DEFAULT_NOTIFICATION_SETTINGS: dict[str, bool] = {
     "master": True,
+    "marketOpen": True,
+    "marketClose": True,
+    "socialIssue": False,
+    "rsiBand": True,
+    "economicCalendar": True,
+    "earnings": True,
+    "volumeSpike": False,
+    "tradingHalt": True,
+    "marketVolatility": True,
+    # Legacy keys remain readable until every client has moved to the reminder rows.
     "targetPrice": True,
     "rapidMove": True,
-    "volumeSpike": False,
-    "marketOpen": True,
-    "marketClose": False,
     "extendedHoursMove": False,
-    "earningsD1": True,
-    "socialIssue": True,
     "aiAnomaly": True,
 }
 

@@ -154,6 +154,7 @@ data:
   KAFKA_NEWS_TOPIC: market.news.alpaca.v1
   KAFKA_NEWS_DAILY_SUMMARY_DIRTY_TOPIC: market.news.daily-summary-dirty.v1
   ALERT_EVALUATOR_INPUT_TOPIC: market.layer.trades.v1
+  ALERT_EVALUATOR_INPUT_TOPICS: market.layer.trades.v1,market.layer.candles.1m.closed.v1,market.layer.candles.5m.closed.v1,market.layer.candles.10m.closed.v1,market.layer.candles.1h.closed.v1,market.layer.candles.4h.closed.v1,market.layer.candles.1d.closed.v1
   ALERT_TRIGGERED_TOPIC: alerts.triggered.v1
   ALERT_DLQ_TOPIC: alerts.dlq.v1
   ALERT_EVALUATOR_GROUP_ID: gops-alert-evaluator

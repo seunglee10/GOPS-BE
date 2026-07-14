@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sys
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -17,7 +17,7 @@ for path in (str(MARKET_SHARED), str(ORDER_SHARED), str(BACKEND), str(ROOT)):
 try:
     from app.alerts.preferences import InMemoryNotificationPreferenceRepository
     from app.alerts.repository import InMemoryAlertRepository
-    from app.alerts.scheduled import ClickHouseEarningsCalendar, ScheduledNotificationService
+    from app.alerts.scheduled import ScheduledNotificationService
 except Exception as exc:  # pragma: no cover - dependency guard for lean envs
     pytest.skip(f"scheduled notification tests are unavailable: {exc}", allow_module_level=True)
 
@@ -38,6 +38,12 @@ def test_market_close_sends_one_filtered_watchlist_summary_and_dedupes() -> None
         thresholds={},
         company_overrides={"AAPL": False},
     )
+    preferences.patch(
+        "user-b",
+        settings={"marketClose": False},
+        thresholds={},
+        company_overrides={},
+    )
     notifications = InMemoryAlertRepository()
     broker = Broker()
     watchlists = {
@@ -53,7 +59,6 @@ def test_market_close_sends_one_filtered_watchlist_summary_and_dedupes() -> None
         broker=broker,
         user_provider=lambda: ["user-a", "user-b"],
         watchlist_provider=lambda user_sub: watchlists[user_sub],
-        earnings_provider=lambda target: [],
     )
     now = datetime(2026, 7, 14, 21, 10, tzinfo=timezone.utc)
 
@@ -81,7 +86,6 @@ def test_market_close_skips_non_session_date() -> None:
         broker=Broker(),
         user_provider=lambda: ["user-a"],
         watchlist_provider=lambda user_sub: [{"symbol": "AAPL", "changePercent": 1}],
-        earnings_provider=lambda target: [],
     )
 
     result = service.send_market_close_summaries(datetime(2026, 7, 4, 21, 10, tzinfo=timezone.utc))
@@ -90,14 +94,8 @@ def test_market_close_skips_non_session_date() -> None:
     assert result["skipped"] == "market_closed"
 
 
-def test_earnings_d1_uses_calendar_and_company_mute() -> None:
+def test_market_open_reminder_sends_at_0920_new_york_and_dedupes() -> None:
     preferences = InMemoryNotificationPreferenceRepository()
-    preferences.patch(
-        "user-a",
-        settings={},
-        thresholds={},
-        company_overrides={"MSFT": False},
-    )
     notifications = InMemoryAlertRepository()
     broker = Broker()
     service = ScheduledNotificationService(
@@ -105,49 +103,15 @@ def test_earnings_d1_uses_calendar_and_company_mute() -> None:
         notification_repository=notifications,
         broker=broker,
         user_provider=lambda: ["user-a"],
-        watchlist_provider=lambda user_sub: [
-            {"symbol": "AAPL", "name": "Apple"},
-            {"symbol": "MSFT", "name": "Microsoft"},
-        ],
-        earnings_provider=lambda target: [
-            {"symbol": "AAPL", "source": "yahoo-earnings-dates"},
-            {"symbol": "MSFT", "source": "yahoo-earnings-dates"},
-        ] if target == date(2026, 7, 15) else [],
+        watchlist_provider=lambda _user_sub: [],
     )
+    now = datetime(2026, 7, 14, 13, 20, tzinfo=timezone.utc)
 
-    result = service.send_earnings_d1(datetime(2026, 7, 14, 11, 0, tzinfo=timezone.utc))
+    first = service.send_market_reminders(now)
+    second = service.send_market_reminders(now)
 
-    assert result == {
-        "job": "earnings-d1",
-        "earningsDate": "2026-07-15",
-        "events": 2,
-        "sent": 1,
-        "duplicates": 0,
-    }
-    notification = next(iter(notifications.notifications.values()))
-    assert notification["type"] == "system.earnings_d1"
-    assert notification["payload"]["symbol"] == "AAPL"
-    assert broker.published[0][0] == "user-a"
-
-
-def test_clickhouse_earnings_calendar_queries_only_calendar_rows() -> None:
-    class Provider:
-        def __init__(self):
-            self.query = ""
-            self.parameters = {}
-
-        def table(self, name):
-            return f"market_data.{name}"
-
-        def query_json_each_row(self, query, parameters):
-            self.query = query
-            self.parameters = parameters
-            return [{"symbol": "AAPL", "earningsDate": "2026-07-15"}]
-
-    provider = Provider()
-    rows = ClickHouseEarningsCalendar(provider).events_on(date(2026, 7, 15))
-
-    assert rows[0]["symbol"] == "AAPL"
-    assert "yahoo_earnings_estimates" in provider.query
-    assert "sourceFrame" in provider.query
-    assert provider.parameters == {"targetDate": "2026-07-15"}
+    assert first["kind"] == "market_open"
+    assert first["sent"] == 1
+    assert second["sent"] == 0
+    assert second["duplicates"] == 1
+    assert broker.published[0][1]["notification"]["type"] == "system.market_open"

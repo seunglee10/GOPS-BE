@@ -521,12 +521,15 @@ broadcast agent alert용 `WS /ws/agent-alerts`를 함께 구독하고 하나의 
 - 주문 실행으로 자동 연결하지 않는다.
 - 사용자가 보고 확인할 수 있는 UI action으로만 이어간다.
 
-가격조건 패널의 `알림` 탭은 사용자 알림 바 설정을 저장한다. 현재 지원되는
-본장 시작, 목표가 도달, 급등락, 거래량 급증 및 관심기업별 gate만 조작할 수 있고,
-생성 producer가 아직 없는 항목은 `준비 중`으로 비활성화한다. 가격 조건 행의
-개별 알림 토글은 별도의 condition delivery 상태이며 서버 감시와 예약 주문 실행
-여부도 분리한다. 패널 목록은 `/api/trade-conditions`가 source of truth이고 브라우저
-event는 refetch invalidation 용도로만 쓴다.
+가격조건 패널의 `알림` 탭은 리마인더 설정과 `/api/alerts` 기업 조건을 함께 표시한다.
+기업 조건 행은 `/api/alerts?includeTerminal=false`가 source of truth이고 기업명을
+누르면 조건과 생성 위치를 펼친다. 종은 active/disabled, 휴지통은 삭제를 조작한다.
+1회 조건은 발화 후 목록에서 사라진다. 브라우저 event는 refetch invalidation에만 쓴다.
+
+Agent 입력은 일반 분석 전에 `/api/alerts/commands` fast path를 호출한다. `created`는
+알림 목록을 갱신하고, `clarify`는 다음 입력에 clarification id를 재사용하며,
+`not_matched`만 기존 차트·분석 흐름으로 넘긴다. 조건을 만든 시점에는 toast를 띄우지
+않고 `/ws/notifications`의 실제 발화와 재접속 snapshot만 toast queue에 넣는다.
 
 ## Frontend Reference Files
 

@@ -21,10 +21,12 @@ def notification_setting_for_item(notification_type: str, payload: dict[str, Any
     normalized_type = str(notification_type or "").strip()
     if normalized_type == "system.market_open" or kind == "market_open":
         return "marketOpen"
-    if normalized_type == "system.market_close_summary" or kind == "market_close_summary":
+    if normalized_type in {"system.market_close", "system.market_close_summary"} or kind in {"market_close", "market_close_summary"}:
         return "marketClose"
-    if normalized_type == "system.earnings_d1" or kind == "earnings_d1":
-        return "earningsD1"
+    if normalized_type == "system.volume_spike" or kind == "volume_spike":
+        return "volumeSpike"
+    if normalized_type == "system.rsi_band" or kind == "rsi_band":
+        return "rsiBand"
     if normalized_type == "alert.price_cross":
         return "targetPrice"
     if normalized_type == "alert.spike":
@@ -52,8 +54,16 @@ def notification_delivery_decision(
 ) -> tuple[bool, str]:
     settings = _record(preferences.get("settings"))
     thresholds = _record(preferences.get("thresholds"))
+    kind = str(payload.get("kind") or "").strip().lower()
+    if notification_type == "system.earnings_d1" or kind == "earnings_d1":
+        return False, "event_excluded"
     if settings.get("master") is not True:
         return False, "master_disabled"
+
+    # A user-created company rule is controlled by the global master and its own
+    # bell/status. Reminder category switches must not silently disable it.
+    if str(notification_type or "").startswith("alert.") and payload.get("alertId") is not None:
+        return True, "allowed"
 
     setting = notification_setting_for_item(notification_type, payload)
     if setting is None and notification_type == "AGENT_ALERT":
