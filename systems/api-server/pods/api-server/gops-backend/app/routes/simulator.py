@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from app.auth.dependencies import require_current_user
 from app.auth.models import AuthenticatedUser
 from app.services.simulator_gateway import SimulatorGateway, SimulatorUnavailable
+from app.services.simulator_market_state import simulator_market_state_manager_from_app
 
 
 router = APIRouter(prefix="/api/simulator", tags=["simulator"])
@@ -54,7 +55,16 @@ def simulator_status(request: Request) -> dict[str, Any]:
 
 @router.put("/mode")
 def simulator_mode(payload: SimulatorModeRequest, request: Request) -> dict[str, Any]:
-    return _call_simulator(lambda gateway: gateway.set_mode(payload.mode), request)
+    market_state = simulator_market_state_manager_from_app(request.app)
+    try:
+        if payload.mode == "simulation":
+            market_state.capture()
+            return _call_simulator(lambda gateway: gateway.set_mode(payload.mode), request)
+        result = _call_simulator(lambda gateway: gateway.set_mode(payload.mode), request)
+        market_state.restore()
+        return result
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
 
 @router.post("/action")

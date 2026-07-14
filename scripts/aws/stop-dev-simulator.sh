@@ -41,9 +41,9 @@ urllib.request.urlopen(request, timeout=2).read()' "${live_payload}" \
     || printf 'Simulator mode reset skipped; continuing live path restoration.\n' >&2
 }
 
-cleanup_simulator_state() {
+restore_simulator_state() {
   kubectl exec deployment/alfaka-market-processor -n "${K8S_NAMESPACE}" -- \
-    python -m alfaka.tools.cleanup_simulator_state --symbols AMD,IFF,OKE
+    python -m alfaka.tools.simulator_state_snapshot restore --symbols AMD,IFF,OKE
 }
 
 require_command aws
@@ -71,7 +71,7 @@ kubectl rollout status deployment/alfaka-alpaca-ingestor-sip -n "${K8S_NAMESPACE
 kubectl rollout status deployment/gops-backend -n "${K8S_NAMESPACE}" --timeout=300s
 kubectl rollout status deployment/alfaka-market-processor -n "${K8S_NAMESPACE}" --timeout=300s
 kubectl rollout status deployment/trade-condition-executor -n "${K8S_NAMESPACE}" --timeout=300s
-cleanup_simulator_state
+restore_simulator_state
 kubectl scale deployment/gops-simulator --replicas=0 -n "${K8S_NAMESPACE}"
 
 printf 'Live Alpaca SIP path restored; EKS simulator replicas are now 0.\n'

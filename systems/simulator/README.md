@@ -20,9 +20,10 @@
 5. 속보의 `대응 레이아웃 적용`을 눌러 포트폴리오 대응 패널을 연다.
 6. 종료 뒤 `scripts/aws/stop-dev-simulator.sh`를 실행한다.
 
-종료 스크립트는 시뮬레이터를 LIVE 모드로 되돌린 뒤 AMD/IFF/OKE의 Redis 임시
-캔들·체결·호가·오더플로우를 제거한다. 프런트는 SIM→LIVE 전환을 감지하면 브라우저
-차트 런타임을 비우고 실시간 스냅샷과 WebSocket을 다시 연결한다.
+시뮬레이터 시작 전에는 AMD/IFF/OKE의 Redis 캔들·체결·호가·오더플로우를
+원본 스냅샷으로 보관한다. 상단 토글이나 종료 스크립트가 LIVE 모드로 되돌아가면
+시뮬레이션 임시 상태를 제거한 뒤 이 스냅샷을 복원한다. 프런트는 SIM→LIVE 전환을
+감지하면 브라우저 차트 런타임을 비우고 복원된 스냅샷과 WebSocket을 다시 연결한다.
 
 제어 API는 `PUT /api/control/phase`에 `{"phase":"breaking-event"}` 형식으로
 단계 ID를 받는다. 프런트 백엔드 프록시는 `PUT /api/simulator/phase`다.

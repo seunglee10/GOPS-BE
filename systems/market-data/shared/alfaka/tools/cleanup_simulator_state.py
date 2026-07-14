@@ -18,6 +18,22 @@ def cleanup_simulator_market_state(
     intervals: Iterable[str] = DEFAULT_CANDLE_INTERVALS,
     prefix: str | None = None,
 ) -> int:
+    stale_keys = simulator_market_state_keys(
+        redis_client,
+        symbols=symbols,
+        intervals=intervals,
+        prefix=prefix,
+    )
+    return int(redis_client.delete(*sorted(stale_keys))) if stale_keys else 0
+
+
+def simulator_market_state_keys(
+    redis_client,
+    *,
+    symbols: Iterable[str] = DEFAULT_SIMULATOR_SYMBOLS,
+    intervals: Iterable[str] = DEFAULT_CANDLE_INTERVALS,
+    prefix: str | None = None,
+) -> set[str]:
     keys = RedisKeyBuilder(prefix)
     stale_keys: set[str] = set()
 
@@ -50,7 +66,7 @@ def cleanup_simulator_market_state(
             stale_keys.update(redis_client.scan_iter(match=keys.key(f"state:candle-window:{symbol}:{interval}:*")))
             stale_keys.update(redis_client.scan_iter(match=keys.key(f"pending:replace:{symbol}:{interval}:*")))
 
-    return int(redis_client.delete(*sorted(stale_keys))) if stale_keys else 0
+    return stale_keys
 
 
 def main() -> None:

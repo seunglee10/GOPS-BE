@@ -42,6 +42,8 @@ SIM 표시가 있는 주문은 실제 브로커 WebSocket에 연결하지 않는
 한 번 갱신한다.
 SIM에서 LIVE로 돌아갈 때 프런트는 합성 캔들·체결·호가가 남은 차트 런타임을
 초기화하고 차트 컴포넌트를 다시 연결해 실제 시장 스냅샷과 WebSocket을 새로 받는다.
+`PUT /api/simulator/mode`의 LIVE 응답은 서버가 SIM 시작 직전 보관한 AMD/IFF/OKE
+Redis 시장 상태를 복원한 뒤 반환하므로, 프런트 재연결이 합성 봉을 다시 읽지 않는다.
 
 `빠른 주문` 패널도 자동 주문 경로가 아니다. 최우선 매수·매도호가, 1틱 오프셋,
 estimated order-flow imbalance는 `side + price` 주문 의도를 선택해 편집 가능한 가격 입력란을

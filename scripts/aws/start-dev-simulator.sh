@@ -40,6 +40,11 @@ request = urllib.request.Request(
 urllib.request.urlopen(request, timeout=2).read()' "${live_payload}"
 }
 
+capture_simulator_state() {
+  kubectl exec deployment/alfaka-market-processor -n "${K8S_NAMESPACE}" -- \
+    python -m alfaka.tools.simulator_state_snapshot capture --symbols AMD,IFF,OKE
+}
+
 restore_live_path() {
   local exit_code="$1"
   trap - ERR
@@ -66,6 +71,7 @@ require_command aws
 require_command kubectl
 configure_cluster
 trap 'restore_live_path $?' ERR
+capture_simulator_state
 
 kubectl scale deployment/gops-simulator --replicas=1 -n "${K8S_NAMESPACE}"
 kubectl rollout status deployment/gops-simulator -n "${K8S_NAMESPACE}" --timeout=180s
