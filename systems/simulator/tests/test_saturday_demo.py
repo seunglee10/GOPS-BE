@@ -84,16 +84,18 @@ class SaturdayDemoScenarioTests(unittest.TestCase):
         self.assertGreaterEqual(final_prices["OKE"], 95.0)
         self.assertLessEqual(final_prices["OKE"], 96.0)
         amd_prices = post_event_prices["AMD"]
-        early_decline = amd_prices[0] - amd_prices[25]
-        middle_decline = amd_prices[25] - amd_prices[65]
-        late_decline = amd_prices[65] - amd_prices[-1]
+        self.assertEqual(amd_prices[:5], [amd_prices[0]] * 5)
+        self.assertLess(amd_prices[5], amd_prices[4])
+        early_decline = amd_prices[4] - amd_prices[30]
+        middle_decline = amd_prices[30] - amd_prices[75]
+        late_decline = amd_prices[75] - amd_prices[-1]
         self.assertLessEqual(early_decline, 3.0)
-        self.assertGreaterEqual(middle_decline, 25.0)
-        self.assertLessEqual(late_decline, 6.0)
-        self.assertGreater(middle_decline, early_decline * 8)
+        self.assertGreaterEqual(middle_decline, 28.0)
+        self.assertLessEqual(late_decline, 8.0)
+        self.assertGreater(middle_decline, early_decline * 10)
         for symbol, prices in post_event_prices.items():
             largest_tick_jump = max(abs(current - previous) for previous, current in zip(prices, prices[1:]))
-            max_allowed_jump = 1.4 if symbol == "AMD" else 0.5
+            max_allowed_jump = 1.1 if symbol == "AMD" else 0.5
             self.assertLessEqual(largest_tick_jump, max_allowed_jump, symbol)
 
     def test_first_next_action_starts_the_breaking_event_immediately(self):
