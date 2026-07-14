@@ -94,7 +94,8 @@ manifest에 정의된 단계 ID만 받는다. 운영자는 시장 조망·추천
 normalized trade/quote/candle에 simulation metadata를 전파한다. ClickHouse loader와
 raw/processed S3 sink는 이 표식이 있는 행을 영구 적재하지 않는다. Redis 실시간 상태는
 시연 동안만 사용한다. 지정학 이벤트는 즉시 공개하지만 AMD 하락은 5초 뒤 시작하며,
-단일 틱 급락 없이 중간 구간에서 낙폭을 확대한다. `PUT /api/simulator/mode`가 SIM으로 전환되기 직전에
+약 1분 동안 초반에는 완만하게, 이후에는 점진적으로 낙폭을 만든다. OKE 상승도 같은 지연 뒤
+더 긴 구간에 걸쳐 천천히 진행한다. `PUT /api/simulator/mode`가 SIM으로 전환되기 직전에
 AMD/OKE의 캔들·체결·호가·오더플로우 Redis 상태를 보관하고, LIVE 전환은
 재생을 멈춘 뒤 합성 상태를 제거하고 보관본을 복원한 다음 응답한다. EKS 종료
 스크립트도 같은 복원 명령을 사용하므로 토글과 전체 인프라 종료가 같은 차트 복구
