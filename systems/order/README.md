@@ -70,3 +70,9 @@ highest-priority Alpaca realtime subscription cohort; the configured default is
 at most 100 distinct pending symbols.
 
 The frontend-facing account holdings view uses `GET /api/account/holdings`, which calls KIS demo balance APIs through `kis_trader.kis.client.DemoKisHttpClient` and reuses the existing `dev/kis` Secrets Manager contract.
+
+The overseas holdings balance response does not treat `frcr_buy_amt_smtl1`
+(foreign-currency buy amount sum) as cash. When KIS does not provide a genuine
+foreign-currency cash field, `account.cashForeign` remains `null`; stock and
+total foreign values are derived from the position valuation sum instead of
+fabricating a cash allocation.
