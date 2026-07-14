@@ -67,6 +67,12 @@ console과 `window.__GOPS_AGENT_LAST_REQUEST__`에 기록한다. `?agentDebug=0`
 브라우저의 localStorage에 opt-out을 저장하고, `?agentDebug=1`은 다시 켠다.
 production build에는 debug snapshot을 노출하지 않는다.
 
+상단 global navigation은 `SimulatorControl`과 `Login` 사이에 알림 종을 둔다. 종의
+뱃지는 `/api/notifications` 및 `/ws/notifications`의 사용자별 안읽음 수를 표시하고,
+종 아래에 연결된 알림함에서 개별 `PATCH /api/notifications/{id}/read`와 전체
+`PATCH /api/notifications/read-all`을 호출한다. 알림 토스트는 기존 화면 우하단
+위치를 유지하며, 헤더에서 읽은 영속 알림은 현재 토스트 대기열에서도 제거한다.
+
 프런트가 담당하지 않는 것:
 
 - provider 직접 호출
