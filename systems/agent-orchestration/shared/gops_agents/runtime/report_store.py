@@ -404,6 +404,7 @@ def analysis_report_from_dict(value: Any) -> AnalysisReport | None:
         latencyTrace=latency_trace_from_dict(value.get("latencyTrace")),
         agentAnswers=[item for item in (agent_answer_from_dict(item) for item in value.get("agentAnswers", [])) if item],
         agentTrace=dict(value.get("agentTrace") or {}),
+        chartExplanation=dict(value.get("chartExplanation")) if isinstance(value.get("chartExplanation"), dict) else None,
         coachReport=dict(value.get("coachReport")) if isinstance(value.get("coachReport"), dict) else None,
     )
 

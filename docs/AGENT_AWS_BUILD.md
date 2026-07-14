@@ -46,6 +46,22 @@ reintroduce associative arrays in `scripts/aws/detect-changed-services.sh` or
 Changes under `infra/k8s/overlays/aws/scheduled/` must select the owning runtime
 service so the deployment workflow applies the updated CronJob instead of
 returning `has_services=false`.
+Changes under `shared/chart-contract/` select both `frontend` and
+`agent-orchestrator`, because the typed chart explanation contract is consumed on
+both sides.
+
+The chart commentary integration deploy is a read-only consumer rollout. Use
+`CHART_INTERPRETATION_ONLY=true` together with
+`FORCE_SERVICES=frontend,agent-orchestrator`. This path updates only
+`gops-frontend`, `agent-analysis-worker`, and the compatibility
+`agent-orchestrator`; it does not apply the full Kustomize overlay even though the
+agent image is shared. It therefore leaves `chart-asset-builder`, the Geometry
+CronJob, migration/maintenance Jobs, and unrelated agent workloads on their
+existing specs and image tags. The profile fails closed when migration, cache
+rebuild, or platform-apply options are enabled. Do not enqueue chart build FORCE
+jobs or universe regeneration. Validate against the existing `geometry_assets`
+rows through the API and browser; this rollout does not require Alpaca credentials
+or a chart-asset builder run.
 
 GitHub Actions dev/test deploy entrypoint `.github/workflows/deploy-dev.yml`
 remains a backup path. It deploys to the shared dev EKS environment only when an
@@ -1004,6 +1020,13 @@ stream processor가 Redis/ClickHouse에서 캔들을 복구할 때는 legacy JSO
 쓰기와 조회가 같은 숫자 계약을 사용해야 한다.
 `1W`는 underlying `1D` 결측만 보충한 뒤 기존 주봉 집계를 사용한다. 이 하위 시스템은
 S3, Redis, Kafka, OpenAI를 사용하지 않는다.
+
+interactive `agent-orchestrator`와 `agent-analysis-worker`도 chart 질문에서 동일한
+PostgreSQL Geometry asset을 읽으므로 `DATABASE_URL`/`alfaka-order-db-secret`을 필수로
+주입한다. 새 table, topic, 별도 chart analysis worker는 만들지 않는다. 호환 reader와
+optional `chartExplanation` 계약을 먼저 배포한 뒤 Geometry algorithm v4 writer,
+asset rebuild, backend chart snapshot, frontend 순으로 rollout한다. 뉴스나 optional
+LLM enrichment 장애는 deterministic chart answer를 막지 않아야 한다.
 
 AWS overlay는 Alpaca repair 동시성 2와 최대 range 8을 사용한다. 평일 KST 08:40
 CronJob은 S&P500 전체의 `1m/1D`만 등록한다. API 패널과 수동 실행 스크립트도 새

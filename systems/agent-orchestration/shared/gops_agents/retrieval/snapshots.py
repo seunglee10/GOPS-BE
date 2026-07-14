@@ -5,7 +5,7 @@ import re
 import time
 import json
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError, as_completed
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .bulkhead import ProviderBulkheadRejected, provider_bulkhead
@@ -67,7 +67,13 @@ ANALYSIS_QUERY_POLICY_BY_TYPE = {
         "priority": "P2",
         "anchor_mode": "selected_reference",
         "composition_strategy": "reference_first_context_join",
-        "snapshot_bundle": ["market_snapshot", "news_snapshot", "relationship_snapshot", "risk_policy_snapshot"],
+        "snapshot_bundle": ["chart_analysis_snapshot", "news_snapshot", "risk_policy_snapshot"],
+    },
+    "chart_overview": {
+        "priority": "P0",
+        "anchor_mode": "active_chart",
+        "composition_strategy": "deterministic_chart_explanation",
+        "snapshot_bundle": ["chart_analysis_snapshot", "risk_policy_snapshot"],
     },
     "impact_mapping": {
         "priority": "P2",
@@ -176,9 +182,22 @@ def classify_analysis_query_type(route: IntentRoute, context: Any, route_plan_in
         return "earnings_reaction"
     if is_reference_anchor_query(text, compacted, ref_types, operation_types):
         return "reference_anchor_analysis"
+    if is_chart_overview_query(context, compacted, intent_type):
+        return "chart_overview"
     if is_price_move_cause_query(text, compacted, operation_types, intent_type, route_plan_intent_value):
         return "price_move_cause"
     return "general"
+
+
+def is_chart_overview_query(context: Any, compacted: str, intent_type: str) -> bool:
+    chart_context = getattr(context, "chartContext", {})
+    chart_document = chart_context.get("chartDocument") if isinstance(chart_context, dict) else None
+    if not isinstance(chart_document, dict) or not chart_document.get("symbol"):
+        return False
+    return (
+        "chart" in intent_type
+        or compacted in {"차트분석해줘", "분석해줘", "봐줘", "차트봐줘", "차트설명해줘", "analysis", "analyze"}
+    )
 
 
 def operation_types_for_context(context: Any) -> set[str]:
@@ -253,7 +272,11 @@ def snapshot_bundle_for_analysis_policy(intent: str, context: Any, analysis_poli
             bundle = required
         else:
             bundle = unique_strings([*bundle, *required])
-    return normalize_snapshot_bundle(bundle)
+    bundle = normalize_snapshot_bundle(bundle)
+    if query_type in {"chart_overview", "reference_anchor_analysis"}:
+        bundle = ["chart_analysis_snapshot" if item == "market_snapshot" else item for item in bundle]
+        bundle = unique_strings(bundle)
+    return bundle
 
 
 def operation_required_snapshots(context: Any) -> list[str]:
@@ -280,7 +303,7 @@ def operation_required_snapshots(context: Any) -> list[str]:
 def snapshot_type_for_required_source(source: str) -> str | None:
     return {
         "market": "market_snapshot",
-        "chart": "market_snapshot",
+        "chart": "chart_analysis_snapshot",
         "macro": "market_snapshot",
         "news": "news_snapshot",
         "ontology": "relationship_snapshot",
@@ -381,6 +404,7 @@ class SnapshotExecutor:
     def __init__(self, *, news_agent: Any, ontology_agent: Any):
         self.news = NewsSnapshotProvider(news_agent)
         self.market = MarketSnapshotProvider()
+        self.chart = ChartAnalysisSnapshotProvider()
         self.relationship = RelationshipSnapshotProvider(ontology_agent)
         self.financial = FinancialSnapshotProvider()
         self.financial_peer = FinancialPeerSnapshotProvider(self.financial.provider)
@@ -390,6 +414,7 @@ class SnapshotExecutor:
     def fetch(self, *, context: Any, run_id: str, route_plan: RoutePlan, policy: RuntimePolicy) -> list[DataSnapshot]:
         providers = {
             "market_snapshot": self.market,
+            "chart_analysis_snapshot": self.chart,
             "news_snapshot": self.news,
             "relationship_snapshot": self.relationship,
             "financial_snapshot": self.financial,
@@ -497,7 +522,7 @@ class NewsSnapshotProvider:
 
     def fetch(self, context: Any, run_id: str, max_items: int) -> DataSnapshot:
         started_at = time.perf_counter()
-        request = ProviderRequest(str(context.symbol), str(context.intent), symbols=tuple(news_symbols_for_context(context)))
+        request = news_provider_request(context)
         provider = self.news_agent.provider
         localizer = self.news_agent.localizer
         daily_summaries = []
@@ -511,6 +536,7 @@ class NewsSnapshotProvider:
                 evidence=evidence,
                 allow_runtime_openai=bool_env("AGENT_ALLOW_RUNTIME_NEWS_OPENAI", False),
             )
+            evidence = align_news_evidence(evidence, context)
         except Exception as exc:
             evidence = [EvidenceItem.no_data("news", "News snapshot unavailable", f"뉴스 snapshot 조회에 실패했습니다: {exc.__class__.__name__}")]
         reference_evidence = news_reference_evidence(context)
@@ -549,6 +575,88 @@ class NewsSnapshotProvider:
         if daily_result.warnings:
             sanitized.warnings = merge_safety_warnings([*sanitized.warnings, *daily_result.warnings])
         return sanitized
+
+
+def news_provider_request(context: Any) -> ProviderRequest:
+    base = ProviderRequest(str(context.symbol), str(context.intent), symbols=tuple(news_symbols_for_context(context)))
+    reference = next((
+        item for item in context_references(context)
+        if str(item.get("type") or "") in {"chart.candle", "chart.range", "chart.orderFlow"}
+    ), None)
+    if not isinstance(reference, dict):
+        return base
+    data = reference.get("data") if isinstance(reference.get("data"), dict) else {}
+    anchor_text = str(data.get("timestamp") or data.get("from") or "")
+    try:
+        anchor = datetime.fromisoformat(anchor_text.replace("Z", "+00:00"))
+    except ValueError:
+        return base
+    interval = str(data.get("interval") or data.get("timeframe") or "1D")
+    before, after = {
+        "1m": (timedelta(minutes=60), timedelta(minutes=30)),
+        "5m": (timedelta(minutes=60), timedelta(minutes=30)),
+        "10m": (timedelta(minutes=60), timedelta(minutes=30)),
+        "1h": (timedelta(hours=4), timedelta(hours=2)),
+        "4h": (timedelta(days=1), timedelta(days=1)),
+        "1D": (timedelta(days=1), timedelta(days=1)),
+        "1W": (timedelta(days=7), timedelta(days=7)),
+    }.get(interval, (timedelta(days=1), timedelta(days=1)))
+    return ProviderRequest(
+        base.symbol,
+        base.intent,
+        symbols=base.symbols,
+        fromAt=(anchor - before).astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+        toAt=(anchor + after).astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+        availableAsOf=utc_now_iso(),
+    )
+
+
+def align_news_evidence(evidence: list[EvidenceItem], context: Any) -> list[EvidenceItem]:
+    reference = next((item for item in context_references(context) if str(item.get("type") or "").startswith("chart.")), None)
+    if not isinstance(reference, dict):
+        return evidence
+    data = reference.get("data") if isinstance(reference.get("data"), dict) else {}
+    anchor_text = str(data.get("timestamp") or data.get("from") or "")
+    try:
+        anchor = datetime.fromisoformat(anchor_text.replace("Z", "+00:00"))
+    except ValueError:
+        return evidence
+    interval = str(data.get("interval") or data.get("timeframe") or "1D")
+    anchor_end = anchor + {
+        "1m": timedelta(minutes=1), "5m": timedelta(minutes=5), "10m": timedelta(minutes=10),
+        "1h": timedelta(hours=1), "4h": timedelta(hours=4), "1D": timedelta(days=1), "1W": timedelta(days=7),
+    }.get(interval, timedelta(days=1))
+    aligned = []
+    for item in evidence:
+        raw = dict(item.raw) if isinstance(item.raw, dict) else {}
+        published_text = str(raw.get("publishedAt") or item.observedAt or "")
+        try:
+            published = datetime.fromisoformat(published_text.replace("Z", "+00:00"))
+        except ValueError:
+            aligned.append(item)
+            continue
+        lag = (published - anchor).total_seconds()
+        available_text = str(raw.get("availableAt") or published_text)
+        try:
+            available = datetime.fromisoformat(available_text.replace("Z", "+00:00"))
+        except ValueError:
+            available = published
+        available_after_anchor = available > anchor_end
+        raw.update({
+            "temporalRelation": "after" if available_after_anchor else "before" if published < anchor else "during" if published <= anchor_end else "after",
+            "lagSeconds": round(lag),
+            "availabilityLagSeconds": round((available - anchor_end).total_seconds()),
+            "causality": "temporal_association_only",
+        })
+        aligned.append(EvidenceItem(
+            provider=item.provider, status=item.status, title=item.title, summary=item.summary,
+            observedAt=item.observedAt, url=item.url, raw=raw,
+        ))
+    return sorted(aligned, key=lambda item: (
+        0 if str((item.raw or {}).get("subjectRelevance") or "") in {"primary", "secondary"} else 1,
+        abs(float((item.raw or {}).get("lagSeconds") or 0)),
+        -float((item.raw or {}).get("importanceScore") or 0),
+    ))
 
 
 class MarketSnapshotProvider:
@@ -591,6 +699,114 @@ class MarketSnapshotProvider:
             latency_ms=elapsed_ms(started_at),
             warnings=warnings,
         ))
+
+
+class ChartAnalysisSnapshotProvider:
+    def __init__(self, storage: Any | None = None):
+        self.storage = storage
+
+    def fetch(self, context: Any, run_id: str, max_items: int) -> DataSnapshot:
+        started_at = time.perf_counter()
+        chart_context = getattr(context, "chartContext", {}) if isinstance(getattr(context, "chartContext", {}), dict) else {}
+        document = chart_context.get("chartDocument") if isinstance(chart_context.get("chartDocument"), dict) else {}
+        symbol = str(document.get("symbol") or getattr(context, "symbol", "UNKNOWN")).upper()
+        interval = str(document.get("timeframe") or chart_context.get("interval") or "1D")
+        asset = None
+        storage_error = None
+        canonical_error = None
+        asset_excluded_as_future = False
+        try:
+            storage = self.storage
+            if storage is None:
+                from ..chart_assets.storage import build_chart_asset_storage_from_env
+
+                storage = build_chart_asset_storage_from_env()
+            asset = storage.get(symbol, interval)
+            if isinstance(asset, dict) and chart_asset_is_after_analysis_anchor(asset, chart_context, context):
+                asset = None
+                asset_excluded_as_future = True
+        except Exception as exc:
+            storage_error = exc.__class__.__name__
+        if asset is None and (os.getenv("CLICKHOUSE_HTTP_URL") or os.getenv("CLICKHOUSE_HOST")):
+            try:
+                asset = canonical_chart_asset_for_context(symbol, interval, chart_context, context)
+            except Exception as exc:
+                canonical_error = exc.__class__.__name__
+        from ..chart_intelligence import build_chart_explanation, chart_explanation_evidence
+
+        explanation = build_chart_explanation(context, asset)
+        evidence = [chart_explanation_evidence(explanation), *chart_reference_evidence(context)]
+        quality = explanation.get("quality") if isinstance(explanation.get("quality"), dict) else {}
+        state = str(quality.get("state") or "unavailable")
+        has_screen_candles = bool(chart_context.get("candles"))
+        available = asset is not None or has_screen_candles
+        warnings = []
+        if asset is None:
+            warnings.append("chart_asset_unavailable")
+        if state in {"partial", "screen_only"}:
+            warnings.append("partial_chart_data")
+        if quality.get("stale"):
+            warnings.append("stale_chart_asset")
+        if storage_error:
+            warnings.append("chart_asset_storage_unavailable")
+        if asset_excluded_as_future:
+            warnings.append("future_chart_asset_excluded")
+        if canonical_error:
+            warnings.append("canonical_chart_recompute_unavailable")
+        return sanitize_snapshot(DataSnapshot(
+            snapshot_id=stable_id("snapshot", {"runId": run_id, "type": "chart_analysis_snapshot", "symbol": symbol, "interval": interval}),
+            run_id=run_id,
+            snapshot_type="chart_analysis_snapshot",
+            status="success" if asset is not None else ("partial" if available else "failed"),
+            source="database" if asset is not None else "screen",
+            cache_hit=False,
+            freshness={"generated_at": explanation.get("asOf"), "stale": bool(quality.get("stale"))},
+            summary=evidence[0].summary,
+            signals=[],
+            evidence=evidence[:max_items],
+            data_quality="high" if state == "full" else ("medium" if available else "low"),
+            confidence=0.86 if state == "full" else (0.68 if available else 0.25),
+            latency_ms=elapsed_ms(started_at),
+            warnings=unique_strings(warnings),
+        ))
+
+
+def chart_asset_is_after_analysis_anchor(asset: dict[str, Any], chart_context: dict[str, Any], context: Any) -> bool:
+    analysis_window = chart_context.get("analysisWindow") if isinstance(chart_context.get("analysisWindow"), dict) else {}
+    anchor_text = str(analysis_window.get("viewportTo") or "")
+    reference = next((item for item in context_references(context) if str(item.get("type") or "").startswith("chart.")), None)
+    if isinstance(reference, dict):
+        data = reference.get("data") if isinstance(reference.get("data"), dict) else {}
+        anchor_text = str(data.get("timestamp") or data.get("to") or data.get("from") or anchor_text)
+    as_of_text = str(asset.get("asOf") or "")
+    try:
+        return datetime.fromisoformat(as_of_text.replace("Z", "+00:00")) > datetime.fromisoformat(anchor_text.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+
+
+def canonical_chart_asset_for_context(symbol: str, interval: str, chart_context: dict[str, Any], context: Any) -> dict[str, Any] | None:
+    from alfaka.analytics.geometry import analyze_geometry
+    from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
+
+    analysis_window = chart_context.get("analysisWindow") if isinstance(chart_context.get("analysisWindow"), dict) else {}
+    anchor = str(analysis_window.get("viewportTo") or "") or None
+    reference = next((item for item in context_references(context) if str(item.get("type") or "").startswith("chart.")), None)
+    if isinstance(reference, dict):
+        data = reference.get("data") if isinstance(reference.get("data"), dict) else {}
+        anchor = str(data.get("timestamp") or data.get("to") or data.get("from") or anchor or "") or None
+    rows = ClickHouseMarketDataProvider().candles(symbol, interval, limit=380, to_time=anchor)
+    if len(rows) < 120:
+        return None
+    analysis = analyze_geometry(symbol, interval, rows)
+    indicators = analysis.pop("indicators", {})
+    algorithm_version = analysis.pop("algorithmVersion", None)
+    return {
+        "assetVersion": "geometry", "algorithmVersion": algorithm_version,
+        "symbol": symbol, "interval": interval, "asOf": rows[-1].get("timestamp"),
+        "coverage": {"state": "full" if len(rows) >= 380 else "partial", "qualityFlags": ["point_in_time_recomputed"]},
+        "geometry": analysis, "indicators": indicators,
+    }
 
 
 class RelationshipSnapshotProvider:
@@ -1043,7 +1259,7 @@ def role_findings_from_snapshots(selected_roles: list[str], snapshots: list[Data
 
 def snapshot_for_role(role: str, by_type: dict[str, DataSnapshot]) -> DataSnapshot | None:
     if role == "chart":
-        return by_type.get("market_snapshot")
+        return by_type.get("chart_analysis_snapshot") or by_type.get("market_snapshot")
     if role == "news":
         return by_type.get("news_snapshot")
     if role == "macro":
@@ -1130,6 +1346,7 @@ def snapshots_from_cached_evidence(run_id: str, context: Any, route_plan: RouteP
         "news_snapshot": [item for item in evidence if item.provider == "news"],
         "relationship_snapshot": [item for item in evidence if item.provider == "ontology"],
         "market_snapshot": [item for item in evidence if item.provider in {"macro", "market-data"}],
+        "chart_analysis_snapshot": [item for item in evidence if item.provider == "chart-analysis"],
         "financial_snapshot": [item for item in evidence if item.provider == "financial" and "peer" not in str(item.title).lower()],
         "financial_peer_snapshot": [item for item in evidence if item.provider == "financial" and "peer" in str(item.title).lower()],
     }
@@ -1138,7 +1355,10 @@ def snapshots_from_cached_evidence(run_id: str, context: Any, route_plan: RouteP
             continue
         items = grouped.get(snapshot_type, [])
         available = [item for item in items if item.status == "available"]
-        if snapshot_type == "news_snapshot":
+        if snapshot_type == "chart_analysis_snapshot":
+            summary = available[0].summary if available else f"{context.symbol} cached 차트 해설 근거가 없습니다."
+            warnings = [] if available else ["chart_asset_unavailable"]
+        elif snapshot_type == "news_snapshot":
             summary = news_snapshot_summary(context, available, getattr(context, "newsDailySummaries", []))
             warnings = [] if available else ["no_relevant_news_found"]
         elif snapshot_type == "relationship_snapshot":
@@ -1205,7 +1425,7 @@ def chart_reference_evidence(context: Any) -> list[EvidenceItem]:
     evidence = []
     for index, reference in enumerate(context_references(context)):
         ref_type = str(reference.get("type") or "")
-        if ref_type not in {"chart.candle", "chart.range"}:
+        if ref_type not in {"chart.candle", "chart.range", "chart.orderFlow", "chart.pattern", "chart.drawing"}:
             continue
         data = reference.get("data") if isinstance(reference.get("data"), dict) else {}
         symbol = str(data.get("symbol") or context.symbol)
@@ -1217,9 +1437,13 @@ def chart_reference_evidence(context: Any) -> list[EvidenceItem]:
             if isinstance(close, (int, float)):
                 summary = f"사용자가 {symbol} {interval} {timestamp} 봉을 선택했고 종가는 {close}입니다."
             title = "Selected chart candle"
-        else:
+        elif ref_type == "chart.range":
             summary = f"사용자가 {symbol} {interval} {data.get('from', 'unknown')}~{data.get('to', 'unknown')} 구간을 분석 기준으로 선택했습니다."
             title = "Selected chart range"
+        else:
+            anchor_id = data.get("id") or data.get("patternId") or data.get("drawingId") or data.get("timestamp") or "unknown"
+            summary = f"사용자가 {symbol} {interval} {ref_type} {anchor_id}을(를) 분석 기준으로 선택했습니다."
+            title = f"Selected {ref_type}"
         evidence.append(EvidenceItem(
             provider="market-data",
             status="available",

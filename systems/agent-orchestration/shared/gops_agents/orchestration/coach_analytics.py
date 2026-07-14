@@ -399,7 +399,11 @@ def _build_habit_page(snapshot: CoachInputSnapshot) -> dict[str, Any] | None:
     requested_at = datetime.fromtimestamp(_timestamp(snapshot.request.get("requestedAt")) or datetime.now(timezone.utc).timestamp(), tz=timezone.utc)
     requested_timestamp = requested_at.timestamp()
     reports_by_period: dict[str, Any] = {}
-    for key, days, label in (("6m", 183, "최근 6개월"),):
+    for key, days, label in (
+        ("30d", 30, "최근 30일"),
+        ("90d", 90, "최근 90일"),
+        ("1y", 365, "최근 1년"),
+    ):
         cutoff = requested_at.timestamp() - days * 86400
         period_cases = [
             item
@@ -413,7 +417,7 @@ def _build_habit_page(snapshot: CoachInputSnapshot) -> dict[str, Any] | None:
             "portfolio": _portfolio_habit_report(snapshot, period_cases, label, cutoff, requested_timestamp),
         }
     has_samples = any(report.get("sampleSize", 0) for reports in reports_by_period.values() for report in reports.values())
-    return {"availability": "ready" if has_samples else "insufficient_sample", "defaultPeriod": "6m", "reportsByPeriod": reports_by_period}
+    return {"availability": "ready" if has_samples else "insufficient_sample", "defaultPeriod": "90d", "reportsByPeriod": reports_by_period}
 
 
 def _habit_report(stage: str, cases: list[dict[str, Any]], period_label: str, requested_timestamp: float) -> dict[str, Any]:
@@ -703,7 +707,7 @@ def _exit_habit_insights(cases: list[dict[str, Any]], requested_timestamp: float
             "kind": "observation",
             "title": "청산 전 목표가·수익반납 확인",
             "condition": f"매도 후 T+1..T+{EXIT_POST_SALE_HORIZON} 완료 일봉의 MFE가 체결가 대비 {EXIT_POST_SALE_MFE_THRESHOLD_PERCENT:g}% 이상",
-            "observedBehavior": f"사후 {EXIT_POST_SALE_HORIZON}개 일봉이 모두 확정된 {len(post_sale_mfes)}건에서 청산 후 추가 상승 여지가 확인됐습니다. 청산 전에는 목표가, 손절 기준, MFE 반납, 거래량 약화, MACD 전환을 함께 봐야 합니다.",
+            "observedBehavior": f"사후 {EXIT_POST_SALE_HORIZON}개 일봉이 모두 확정된 {len(post_sale_mfes)}건에서 청산 후 추가 상승 여지가 확인됐습니다. 이는 다음 계획의 분할 청산 비교 후보일 뿐이며, 청산 전에는 목표가, 손절 기준, MFE 반납, 거래량 약화, MACD 전환을 함께 봐야 합니다.",
             "sampleSize": len(post_sale_mfes),
             "confidence": "high" if len(post_sale_mfes) >= 15 else "low",
             "metrics": {"avgMfe": average_post_mfe},

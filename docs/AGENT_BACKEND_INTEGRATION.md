@@ -325,7 +325,11 @@ body 초과는 JSON 파싱 전에 `413`을 반환한다. `messages`는 최대 50
   "intent": "analysis",
   "routerMode": "hybrid",
   "messages": [{"role": "user", "content": "NVDA 분석해줘"}],
-  "chartContext": {},
+  "chartContext": {
+    "chartDocument": {"symbol": "NVDA", "timeframe": "1D", "sourcePanelId": "chart-1"},
+    "analysisWindow": {"viewportStart": "...", "viewportEnd": "...", "preRollCandles": 120},
+    "assetIdentity": {"algorithmVersion": "...", "inputDigest": "...", "asOf": "..."}
+  },
   "layoutContext": {},
   "references": [],
   "uiContext": {},
@@ -360,14 +364,30 @@ the public 64 KiB request contract.
 `idempotencyKey`, `submittedAt`, `maxLlmCalls`, `maxInputTokens`,
 `maxOutputTokens`, `llmBudgetOwner` 같은 서버 소유 필드는 제거한다.
 
+`intent="analysis"` 또는 `intent="analyze"`는 placeholder다. runtime은 `prompt`,
+그 다음 최신 user message를 실제 intent로 사용한다. 종목은 명시적 ticker/정확한 회사명,
+chart reference, 활성 chart document, request symbol, 제한된 fuzzy 순으로 결정하며
+유효한 chart context를 fuzzy 후보가 덮어쓸 수 없다.
+
 `references`, `uiContext`, `chartContext`의 선택/hover reference는 worker payload에
 보존되어 agent runtime의 `OperationIR` extractor로 전달된다. runtime은 같은
 reference가 여러 필드에 중복 포함돼도 fingerprint로 dedupe한다. reference가 포함된
 분석 요청은 선택한 뉴스, 차트 봉, 차트 구간이 cache key에 반영되어야 하며, 같은
 자연어 질문이라도 anchor가 다르면 cached analysis를 재사용하지 않는다.
-`chart.orderFlow` references are valid chart references and must be preserved
-the same way as `chart.candle`; their bid/ask side classification is estimated,
+`chart.orderFlow`, `chart.pattern`, `chart.drawing` references are valid chart references
+and must be preserved the same way as `chart.candle`; their bid/ask side classification is estimated,
 not provider-confirmed.
+
+완료 report는 additive `chartExplanation`을 포함할 수 있다. `version`은
+`chart-explanation.v1`이며 `quality`, `facts`, `usedIndicators`, `focusIds`, `anchor`,
+`news`를 담는다. optional `source`는 요청의 `chartDocumentId/sourcePanelId`를 echo하고,
+optional `focusGroups`는 기존 `focusIds` 합집합을 evidence/pattern/support/resistance로
+분류한다. 두 필드가 없는 기존 v1 응답도 유효하다. `finalAnswer`가 사용자 문장 계약이고
+`chartExplanation`은 UI의 구조화 렌더링 및 요청 시점 drawing focus snapshot 계약이다.
+현재 자산과 `symbol/interval/assetVersion/algorithmVersion/inputDigest/asOf`가 정확히
+일치하지 않으면 프런트는 서버 수치만 표시하고 현재 작도를 focus하지 않는다.
+provider/snapshot/LLM fallback과
+`investment_advice_limited` 같은 내부 정책 코드는 trace에만 둔다.
 
 완료 report의 `timing`은 synthesis 진단을 포함할 수 있다.
 `llmCallLabels`에 `synthesis` 또는 `financial-synthesis`가 있으면 최종 종합 답변용

@@ -438,6 +438,7 @@ class AnalysisReport:
     latencyTrace: LatencyTrace | None = None
     agentAnswers: list[AgentAnswer] = field(default_factory=list)
     agentTrace: dict[str, Any] = field(default_factory=dict)
+    chartExplanation: dict[str, Any] | None = None
     coachReport: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:

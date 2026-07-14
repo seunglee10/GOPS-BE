@@ -9,7 +9,7 @@ from ..query_understanding import EntityResolution, extract_news_topic_from_inte
 from .classifier import ClassifierResult, build_intent_classifier_from_env
 from .merger import merge_understanding
 from .rules import content_tasks_are_only_panel_references, deterministic_content_tasks, deterministic_ui_tasks
-from .schema import QueryUnderstanding
+from .schema import ContentTask, QueryUnderstanding
 
 UI_ONLY_EARLY_RETURN_CONFIDENCE = 0.9
 ANALYSIS_INTENT_TERMS = (
@@ -60,6 +60,7 @@ def build_query_understanding(
     runtime_context: Any | None = None,
     layout_command_preflight: bool = False,
     timing: dict[str, Any] | None = None,
+    contextual_chart_request: bool = False,
 ) -> tuple[QueryUnderstanding, Any]:
     started_at = time.perf_counter()
     layout = layout_context if isinstance(layout_context, dict) else {}
@@ -116,7 +117,20 @@ def build_query_understanding(
                 else "entity resolver unavailable in parallel query understanding"
             ),
         )
+    if contextual_chart_request:
+        entity_resolution = EntityResolution(
+            status="not_found",
+            needs_clarification=False,
+            reason="active chart reference owns this contextual request",
+        )
     rule_content_tasks = list(results.get("content_rules") or [])
+    if contextual_chart_request:
+        rule_content_tasks = [ContentTask(
+            taskType="chart",
+            confidence=0.96,
+            source="contextual-chart-rule",
+            reason="active chart or chart reference supplies the analysis target",
+        )]
     raw_ui_tasks = results.get("ui_rules")
     if raw_ui_tasks is None:
         raw_ui_tasks = []
@@ -127,7 +141,7 @@ def build_query_understanding(
             warnings.append(str(warning))
     classifier_result = None
     classifier_required = False
-    if early_return_reason is None:
+    if early_return_reason is None and not contextual_chart_request:
         classifier_required = should_call_classifier_fallback(
             query=query,
             entity_resolution=entity_resolution,

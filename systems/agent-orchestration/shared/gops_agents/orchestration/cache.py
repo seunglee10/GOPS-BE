@@ -28,6 +28,7 @@ def analysis_cache_key_for_state(state: dict[str, Any]) -> str | None:
         "references": references_cache_payload(getattr(state["context"], "references", [])),
         "operationIR": operation_ir_cache_payload(getattr(state["context"], "operationIR", {})),
         "newsSymbols": list(state.get("news_symbols", [])),
+        "narratorVersion": "chart-explanation.v1",
     }
     return analysis_cache_key(symbol=state["symbol"], payload=payload)
 
@@ -109,6 +110,11 @@ def references_cache_payload(references: Any) -> list[dict[str, Any]]:
             "title": data.get("title"),
             "summary": data.get("summary"),
             "close": data.get("close"),
+            "open": data.get("open"),
+            "high": data.get("high"),
+            "low": data.get("low"),
+            "volume": data.get("volume"),
+            "id": data.get("id") or data.get("patternId") or data.get("drawingId"),
         })
     return json.loads(json.dumps(compact, sort_keys=True, ensure_ascii=True, default=str))
 

@@ -31,6 +31,9 @@ spec:
             - secretRef:
                 name: alfaka-openai-secret
                 optional: true
+            - secretRef:
+                name: alfaka-order-db-secret
+                optional: false
           readinessProbe:
             httpGet:
               path: /health

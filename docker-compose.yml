@@ -937,6 +937,7 @@ services:
     environment:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
       REDIS_URL: "redis://redis:6379/0"
+      DATABASE_URL: "postgresql://gops:${POSTGRES_PASSWORD:-gops_dev_password}@postgres:5432/gops"
       AGENT_MARKET_EVENTS_TOPIC: "agents.market-events.v1"
       AGENT_ANALYSIS_REQUESTS_TOPIC: "agents.analysis-requests.v1"
       AGENT_DEEP_ANALYSIS_REQUESTS_TOPIC: "agents.deep-analysis-requests.v1"
@@ -1014,6 +1015,7 @@ services:
     environment:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
       REDIS_URL: "redis://redis:6379/0"
+      DATABASE_URL: "postgresql://gops:${POSTGRES_PASSWORD:-gops_dev_password}@postgres:5432/gops"
       AGENT_ANALYSIS_REQUESTS_TOPIC: "agents.analysis-requests.v1"
       AGENT_DEEP_ANALYSIS_REQUESTS_TOPIC: "agents.deep-analysis-requests.v1"
       AGENT_ANALYSIS_RESULTS_TOPIC: "agents.analysis-results.v1"

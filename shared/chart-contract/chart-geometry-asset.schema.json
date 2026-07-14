@@ -31,8 +31,8 @@
       "required": ["drawings", "supports", "resistances", "patterns", "primaryPattern", "tradePlan", "primaryTriangle", "historicalTriangle"],
       "properties": {
         "drawings": {"type": "array", "maxItems": 8, "items": {"$ref": "#/$defs/drawing"}},
-        "supports": {"type": "array", "maxItems": 2},
-        "resistances": {"type": "array", "maxItems": 2},
+        "supports": {"type": "array", "maxItems": 2, "items": {"$ref": "#/$defs/level"}},
+        "resistances": {"type": "array", "maxItems": 2, "items": {"$ref": "#/$defs/level"}},
         "patterns": {"type": "array", "maxItems": 8, "items": {"$ref": "#/$defs/pattern"}},
         "primaryPattern": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/pattern"}]},
         "tradePlan": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/tradePlan"}]},
@@ -49,6 +49,21 @@
       "type": "object",
       "required": ["timestamp", "price"],
       "properties": {"timestamp": {"type": "string", "format": "date-time"}, "price": {"type": "number", "exclusiveMinimum": 0}}
+    },
+    "level": {
+      "type": "object",
+      "required": ["id", "role", "price", "score", "touches", "anchors"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "role": {"enum": ["support", "resistance"]},
+        "price": {"type": "number", "exclusiveMinimum": 0},
+        "zoneLow": {"type": "number", "exclusiveMinimum": 0},
+        "zoneHigh": {"type": "number", "exclusiveMinimum": 0},
+        "halfWidthAtr": {"type": "number", "minimum": 0},
+        "score": {"type": "number", "minimum": 0},
+        "touches": {"type": "integer", "minimum": 0},
+        "anchors": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/anchor"}}
+      }
     },
     "drawing": {
       "type": "object",
@@ -76,8 +91,22 @@
         "state": {"enum": ["forming", "confirmed", "inactive", "invalidated"]},
         "bias": {"enum": ["bullish", "bearish", "neutral"]},
         "breakoutDirection": {"enum": ["up", "down", null]},
+        "confirmation": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/confirmation"}]},
         "score": {"type": "number", "minimum": 0, "maximum": 1},
         "geometryHash": {"type": "string"}
+      }
+    },
+    "confirmation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["breakoutAt", "confirmedAt", "mode", "boundaryPrice", "penetrationAtr", "relativeVolume"],
+      "properties": {
+        "breakoutAt": {"type": "string", "format": "date-time"},
+        "confirmedAt": {"type": "string", "format": "date-time"},
+        "mode": {"enum": ["both", "next_close_hold", "relative_volume"]},
+        "boundaryPrice": {"type": "number"},
+        "penetrationAtr": {"type": "number", "minimum": 0},
+        "relativeVolume": {"type": ["number", "null"], "minimum": 0}
       }
     },
     "tradePlan": {
@@ -112,6 +141,7 @@
       "properties": {
         "kind": {"enum": ["ascending_triangle", "descending_triangle", "symmetrical_triangle"]},
         "state": {"enum": ["forming", "confirmed", "inactive", "invalidated"]},
+        "confirmation": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/confirmation"}]},
         "score": {"type": "number", "minimum": 0, "maximum": 1},
         "geometryHash": {"type": "string"}
       }

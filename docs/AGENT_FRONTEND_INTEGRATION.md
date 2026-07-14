@@ -283,6 +283,16 @@ reference로 보낸다. 사용자가 별도 reference를 선택하지 않아도
 `uiContext.selectedReference`/`hoverReference`를 보낼 수 있지만, 명시 선택 chip이나
 row selection이 있으면 그것을 우선한다.
 
+Agent submit 시 symbol, interval, `sourcePanelId`, 선택 reference는 하나의 chart panel을
+가리켜야 한다. 프런트는 선택 reference를 소유한 panel을 우선하고 해당 handle의
+viewport 종료 index까지만 candle을 보낸다. payload에는 viewport 이전 최대 120봉만
+pre-roll로 포함하며 viewport 뒤의 candle은 포함하지 않는다. `analysisWindow`와
+`assetIdentity`는 서버 재검증을 위한 hint이고 계산 원본을 대체하지 않는다.
+
+캔들·뉴스 선택 overlay의 `ContextualAgentAskButton`은 reference와 각각 기본 문장
+`이 봉 분석해줘`, `이 뉴스 설명해줘`를 질문창에 함께 넣는다. 기본 차트분석 layout은 상단 chart `8x4`,
+하단 chart commentary `4x2`, news `4x2`이며 저장된 custom layout은 덮어쓰지 않는다.
+
 Bid/Ask chart type or the 오더플로우 panel can send `chart.orderFlow`
 references. The reference data should include the selected symbol/session date,
 daily or intraday bid/ask totals when available, and
@@ -434,15 +444,17 @@ role 답변이 함께 온 경우에도 사용자 화면의 첫 문장은 `finalA
 아이콘을 누르면 기존 Wild panel은 저장된 answer page를 모두 지우고 fixed panel로
 돌아가며 새 panel이 Wild destination이 된다. edit mode를 나가면 아이콘만 숨고 Wild
 page와 navigation은 유지된다. Wild panel은 원래 content를 base page로 유지한다.
-Wild panel이 있는 동안 완료된 Agent report는 해당 panel의 다음 page로 자동 추가한다.
+일반 질문의 완료 report는 Wild panel의 다음 page로 자동 추가한다.
 `AGENT LOG` button과 drawer는 표시하지 않는다. report 완료 시 Wild panel이 없으면
 상단의 3초 결과 알림만 표시하고 상세 report를 나중에 연결하기 위해 보관하지 않는다.
-자동 panel 생성이나 placement picker는 사용하지 않는다.
+일반 질문을 위해 자동 panel 생성이나 placement picker는 사용하지 않는다.
 
-저장 순서는 base content, `finalAnswer` 기반 `차트 해설`, role별 `에이전트 답변`이다.
-다만 새 report를 추가한 직후에는 사용자가 요청한 Wild UX 예외로 첫 role 답변을
-활성화하고, role 답변이 없을 때만 `차트 해설`을 활성화한다. 같은 `analysisId`를
-같은 panel에 다시 추가하지 않으며 이미 저장된 첫 role page로 이동한다.
+저장 순서는 base content, `finalAnswer` 기반 최종 답변, role별 상세 답변이다. 새 일반
+report는 항상 최종 답변 page를 먼저 연다. chart route에는 범용 snapshot confidence를
+정확도처럼 표시하지 않고 quality·패턴 점수·확인 근거를 분리한다.
+`investment_advice_limited`, provider/storage 이름, snapshot/LLM fallback 코드는 DOM에
+노출하지 않는다. `finalAnswer`가 없으면 일반 summary를 차트 해설로 바꾸지 않고
+분석 미완료 상태를 표시한다. 같은 `analysisId`를 같은 panel에 다시 추가하지 않는다.
 
 Agent 동작이 끝나면 top navigation의 center preset dock을 한 줄 결과 알림으로
 flip한다. 진행 중 메시지는 표시하지 않고 완료·취소·clarification·실패 결과만
@@ -455,8 +467,25 @@ Wild state와 answer snapshot은 layout localStorage에 저장하고 panel당 �
 Wild page를 모두 제거한다. workspace에 Wild panel이 하나뿐이므로 reload 후에도 해당
 panel을 report destination으로 자동 복원한다.
 Wild answer payload는 backend `layoutContext`에 넣지 않으며 API/report 계약을 바꾸지
-않는다. 기존 `chartCommentary` Geometry panel은 base content로서 동작을 그대로
-유지하고 Wild 전환만으로 다른 Geometry page를 자동 추가하지 않는다.
+않는다. Wild와 차트 해설은 `finalAnswer`·용어 주석 renderer를 공유한다.
+
+### Chart Commentary Questions
+
+명시적인 차트 질문인 `차트 분석해줘`와 chart/candle reference가 있는 질문은 Wild 대신
+요청을 시작한 `chartDocumentId`의 `chartCommentary` panel로 보낸다. panel이 없으면
+넓은 화면에서는 원본 차트 오른쪽, 좁은 화면에서는 아래의 빈 grid에 자동 생성하고 기존
+Wild panel은 이동·대체하지 않는다. 패널은 현재 Geometry와 로컬 `ActiveTradePlan`에서
+즉시 만드는 `현재 해설`, 서버의 요청 시점 snapshot인 `질문 답변`을 분리한다. 요청 중에도
+현재 해설을 유지하고 진행 상태만 표시하며, 완료 답변은 문서별 최신 10개를 workspace
+layout props에 저장한다.
+
+요청에는 `chartDocumentId`, `sourcePanelId`, 당시 asset identity를 넣는다. 서버 응답의
+source document와 현재 문서가 같고 `symbol/interval/assetVersion/algorithmVersion/
+inputDigest/asOf`가 모두 일치할 때만 `focusGroups`의 기존 drawing과 로컬 proposal을
+transient spotlight한다. 불일치는 `분석 기준 변경됨`, 삭제된 문서는 `원본 차트 없음`으로
+표시하고 snapshot 수치는 유지하되 focus하지 않는다. 선택 봉 anchor도 같은 symbol/interval의
+canonical timestamp가 현재 candle에 있을 때만 focus한다. 이 상태는 chart history에
+저장하지 않는다. 일반 질문은 기존 Wild 흐름을 유지한다.
 
 ## Layout And Chart Proposals
 
@@ -546,8 +575,11 @@ candle timestamp에 presentation anchor를 투영해 즉시 표시한다. Postgr
 접촉 timestamp는 변경하지 않으며 패턴 경계의 timed anchor에는 이 예외를 적용하지 않는다.
 패널은 `1m/5m/10m/1h/4h/1D/1W`를 지원하고 지지·저항, 삼각형·깃발형·페넌트·
 직사각형·쐐기·채널 이탈 패턴, coverage,
-SMA60·SMA120과 최근 교차 상태를 표시한다. Geometry 토글 하나가 모든 자동 작도를
-제어하며 패턴 선은 실선, forming은 낮은 불투명도로 표현한다. 새 자산은
+SMA60·SMA120과 최근 교차 상태를 표시한다. `chart-asset:` 근거와 `chart-plan:` 제안은
+차트별 `작도`, `제안` 토글로 독립 제어하며 사용자 수동 drawing은 보존한다. 지지·저항의
+기존 `zoneLow/zoneHigh/halfWidthAtr` metadata가 유효하면 프런트 presentation에서 동일
+ID의 밴드로 표시하되 ATR을 다시 계산하거나 레벨을 재병합하지 않는다. metadata가 부족한
+구자산은 원본 선을 유지한다. 패턴 선은 실선, forming은 낮은 불투명도로 표현한다. 새 자산은
 `primaryPattern`을 우선 표시하고 기존 geometry 자산은 `primaryTriangle`로 호환한다.
 기존 7개 interval 자산은 계속 표시할 수 있지만 새 빌드 선택지는 `1m/1D` 두 개뿐이며
 둘 다 기본 선택한다. 동일 실행 중 요청에 합쳐진 경우 이를 안내하고 polling은 기존
@@ -558,11 +590,32 @@ job URL을 사용한다. 상태 화면은 수동 우선 작업과 정기 작업�
 손익비가 기준 미만인 `no_trade`와 미확정 `watch`는 매매 도형을 만들지 않는다.
 박스의 Entry는 실제 확인 봉 timestamp를 사용하고 Stop/Target의 미래 끝점은 자산에
 저장하지 않는 logical index 투영만 사용해 가짜 candle timestamp를 만들지 않는다.
-이 표시는 교육용 시나리오이며 주문 route를 호출하지 않는다.
+진입 점선은 확인 봉부터, fill과 목표·손절 경계는 마지막 완료 봉 다음 슬롯부터 시작한다.
+제안이 보이는 동안 세 가격을 Y축 자동 범위에 포함한다. `DrawingStyle.labelPlacement`와
+`zoneSplit`은 command add/update/undo/redo에서 보존하며 값이 없으면 기존 수동 drawing의
+inline·axis label과 risk/reward geometry를 유지한다.
+
+완전한 신규 long/short 후보는 `chartDocumentId`별 비영속 `ActiveTradePlan`으로 projection한다.
+registry는 해당 문서의 심볼·주기 변경, 자산 제거, unmount에서만 clear하고 제안 레이어
+숨김에는 유지한다. `gops:trade-plan-updated` detail은 `{ chartDocumentId, plan }`이며
+clear에는 `plan:null`을 사용한다. primary chart 해설은 같은 document ID의 projection으로
+근거→진입→목표→손절→action·손익비 단계를 만들고 카드 hover/focus 동안 해당 문서만
+transient spotlight한다. 이 표시는 교육용 UI이며 주문·알림 route를 호출하거나 신뢰
+원본으로 사용하지 않는다.
+
+이 해설·질문 통합은 저장된 Geometry asset의 consumer 변경이다. 배포 시 기존
+`geometry_assets`를 그대로 읽으며 chart asset build/FORCE 재생성/migration Job을 실행하거나
+Geometry CronJob을 중지하지 않는다. AWS 개발 환경에는
+`CHART_INTERPRETATION_ONLY=true FORCE_SERVICES=frontend,agent-orchestrator` 경로로
+배포해 frontend, analysis worker, compatibility orchestrator만 교체한다. 공유 agent
+image를 사용하는 builder·CronJob·다른 agent workload에는 새 태그를 적용하지 않는다.
 
 SMA 기간은 일수가 아니라 현재 interval의 완료 봉 개수다. SMA60과 SMA120 overlay는
-Geometry 자산 적용 시 함께 활성화하고 골든·데드크로스는 별도 marker가 아닌 metadata로
-표시한다. 빌드 완료와 삭제는 cache invalidation event를 발생시켜 같은 symbol의 열린
+Geometry 자산 적용 시 함께 활성화한다. 골든·데드크로스 metadata의
+`cross.timestamp`는 교차 확인 봉, `previousTimestamp`와 `fraction`은 실제 보간 x 좌표,
+`cross.price`는 두 이동평균선의 보간 y 좌표이며 프런트가 종가나 현재 viewport 데이터로
+대체하지 않는다. 빌드 완료와 삭제는
+cache invalidation event를 발생시켜 같은 symbol의 열린
 chart/panel을 즉시 재조회한다. 다른 interval의 자산은 적용하지 않는다.
 
 stale 자산은 차트에서 제거하지 않고 낮은 불투명도와 stale badge로 표시한다. 빌드

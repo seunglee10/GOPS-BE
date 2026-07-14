@@ -35,4 +35,4 @@ spec:
                 optional: true
             - secretRef:
                 name: alfaka-order-db-secret
-                optional: true
+                optional: false

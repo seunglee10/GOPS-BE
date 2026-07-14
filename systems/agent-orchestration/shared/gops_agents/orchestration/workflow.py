@@ -636,6 +636,14 @@ class AgentOrchestrator:
         else:
             started_at = time.perf_counter()
             try:
+                runtime_context = state.get("runtime_context")
+                if state.get("analysis_mode") == "deep" and runtime_context is not None:
+                    evidence_domains = {
+                        "chart" if item.provider in {"chart-analysis", "market-data"} else item.provider
+                        for item in provider_evidence
+                        if item.status == "available" and item.provider in {"chart-analysis", "market-data", "news", "financial", "ontology", "macro"}
+                    }
+                    runtime_context.llm_budget.max_calls = 1 if len(evidence_domains) >= 2 else 0
                 final_answer = self.synthesizer.synthesize(
                     symbol=symbol,
                     intent=intent,
@@ -645,7 +653,7 @@ class AgentOrchestrator:
                     timing=state.get("timing"),
                     daily_summaries=list(state["context"].newsDailySummaries),
                     synthesis_input=synthesis_input,
-                    runtime_context=state.get("runtime_context"),
+                    runtime_context=runtime_context,
                 )
             finally:
                 add_timing_ms(state, "finalAnswerMs", (time.perf_counter() - started_at) * 1000)
@@ -821,6 +829,7 @@ class AgentOrchestrator:
             latencyTrace=latency_trace,
             agentAnswers=list(state.get("agent_answers", [])),
             agentTrace=agent_trace,
+            chartExplanation=chart_explanation_from_snapshots(snapshots),
             coachReport=build_coach_report(request.get("coachInputSnapshot"), state["analysis_id"]),
         )
         return {**state, "report": report}
@@ -1161,6 +1170,18 @@ def role_finding_name(role: str) -> str:
         "financial": "financial-analysis",
         "risk": "risk-analysis",
     }.get(str(role), str(role))
+
+
+def chart_explanation_from_snapshots(snapshots: list[Any]) -> dict[str, Any] | None:
+    for snapshot in snapshots:
+        if getattr(snapshot, "snapshot_type", "") != "chart_analysis_snapshot":
+            continue
+        for evidence in getattr(snapshot, "evidence", []) or []:
+            raw = getattr(evidence, "raw", {})
+            explanation = raw.get("chartExplanation") if isinstance(raw, dict) else None
+            if isinstance(explanation, dict):
+                return dict(explanation)
+    return None
 
 
 def unsupported_subject_final_answer(symbol: str, validation: Any) -> FinalAnswer:

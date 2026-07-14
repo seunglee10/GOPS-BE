@@ -18,7 +18,7 @@ TARGET_BARS = {**{interval: 380 for interval in SUPPORTED_INTERVALS[:-1]}, "1W":
 WARMUP_BARS = {interval: 120 for interval in SUPPORTED_INTERVALS}
 EVALUATION_BARS = {**{interval: 260 for interval in SUPPORTED_INTERVALS[:-1]}, "1W": 192}
 MINIMUM_BARS = 120
-ALGORITHM_VERSION = "ohlcv-consensus-pattern-families-v3"
+ALGORITHM_VERSION = "ohlcv-consensus-pattern-families-v4"
 
 _ATR_PERIOD = 14
 _VOLUME_BASELINE = 20
@@ -112,9 +112,18 @@ def compute_sma_snapshot(candles: list[dict[str, Any]]) -> dict[str, Any]:
                 else None
             )
             if direction:
+                previous_difference = previous_short - previous_long
+                current_difference = current_short - current_long
+                difference_change = current_difference - previous_difference
+                fraction = max(0.0, min(1.0, -previous_difference / difference_change))
+                short_cross = previous_short + fraction * (current_short - previous_short)
+                long_cross = previous_long + fraction * (current_long - previous_long)
                 events.append({
                     "status": "crossed", "direction": direction,
                     "timestamp": candles[index]["timestamp"], "barsAgo": len(closes) - 1 - index,
+                    "previousTimestamp": candles[index - 1]["timestamp"],
+                    "fraction": round(fraction, 9),
+                    "price": round((short_cross + long_cross) / 2, 6),
                     "shortPeriod": 60, "longPeriod": 120,
                 })
         cross = events[-1] if events else {"status": "none", "direction": None, "timestamp": None, "barsAgo": None}
@@ -362,7 +371,7 @@ def _public_triangle(value):
     return {key: value[key] for key in (
         "kind", "state", "breakoutDirection", "score", "touches", "upperTouches", "lowerTouches",
         "containment", "convergenceRatio", "maxResidualAtr", "geometryHash", "upper", "lower",
-        "apexBarsFromAsOf", "evidence",
+        "apexBarsFromAsOf", "evidence", "confirmation",
     )}
 
 
@@ -373,7 +382,7 @@ def _public_pattern(value):
         "id", "kind", "state", "breakoutDirection", "score", "touches", "upperTouches", "lowerTouches",
         "containment", "convergenceRatio", "parallelSlopeErrorAtr", "maxResidualAtr", "poleAtr",
         "poleEfficiency", "retracementRatio", "channelWidthAtr", "geometryHash", "pole", "upper", "lower",
-        "apexBarsFromAsOf", "evidence",
+        "apexBarsFromAsOf", "evidence", "confirmation",
     )
     return {
         **{key: value[key] for key in keys if key in value},

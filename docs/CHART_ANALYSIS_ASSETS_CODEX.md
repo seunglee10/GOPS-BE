@@ -2,6 +2,8 @@
 
 ## 불변 조건
 
+- 해설·질문 UI 통합 작업은 기존 `geometry_assets`의 read-only consumer다. 자산 build,
+  FORCE 재생성, migration Job, 전체 universe 등록, Geometry CronJob 조작을 실행하지 않는다.
 - 지원 interval은 `1m/5m/10m/1h/4h/1D/1W`뿐이다.
 - 새 build 등록은 `1m/1D`만 허용한다. 기존 다른 interval 자산의 저장·조회·표시
   호환은 유지한다.
@@ -10,11 +12,14 @@
 - 모든 timed anchor는 현재 asset interval의 실제 candle timestamp에 속한다.
 - `tradePlan`의 신호 anchor도 실제 완료 봉 timestamp여야 한다. 프런트가 만드는 임시
   `riskRewardBox`의 미래 끝점은 저장하지 않으며 timestamp 없이 logical index로만 투영한다.
-- `indicators.cross.status=crossed`이면 프런트는 실제 교차 완료 봉에 SMA60/120
-  `flagMarker`를 만들고 Geometry 표시 상태를 따른다. 현재 candle 범위 밖이면 만들지 않는다.
-- 지지·저항 `horizontalLine`은 첫·마지막 접촉의 동일 가격 2-anchor를 저장하며,
-  `[6, 4]` 점선으로 표시한다. 차트 엔진은 수동 작도의 기존 단일 anchor와 이 형식을
-  모두 허용하며, 기존 저장 자산도 프런트 presentation 단계에서 점선으로 보정한다.
+- `indicators.cross.status=crossed`이면 프런트는 `previousIndex + fraction`의 실제
+  SMA60/120 보간 교차점에 `flagMarker`를 만들고 Geometry 표시 상태를 따른다.
+  `timestamp`는 확인 봉으로 보존하고 마커 가격은 asset의 `price`를 사용하며, 교차
+  구간이 현재 candle 범위 밖이면 만들지 않는다.
+- 지지·저항 `horizontalLine`은 첫·마지막 접촉의 동일 가격 2-anchor와 선택적
+  `role/zoneLow/zoneHigh/halfWidthAtr`를 저장한다. 프런트 presentation은 유효한 zone만
+  동일 ID의 `horizontalParallelLines` 밴드로 바꾸며 ATR 재계산·레벨 재병합을 하지 않는다.
+  metadata가 부족한 기존 자산과 수동 단일-anchor 선은 원래 geometry를 유지한다.
 - 작도 계약은 최대 8개다. 지지·저항은 최대 4개이며 최고 점수 패턴 하나는 경계선
   2개와 선택적 깃대 1개를 사용한다.
 - 패턴 종류는 세 삼각형, 상승·하락 깃발형/페넌트/직사각형, 상승·하락 쐐기,
@@ -60,7 +65,7 @@
 
 새 payload의 `assetVersion`은 숫자 개발 단계가 아니라 기존 응답 union을 구분하는
 semantic discriminator인 `geometry`다. `algorithmVersion`은 현재
-`ohlcv-consensus-pattern-families-v3`이며 분석 의미가 바뀔 때만 변경한다. 범용
+`ohlcv-consensus-pattern-families-v4`이며 분석 의미가 바뀔 때만 변경한다. 범용
 `patterns[]`/`primaryPattern`이 없는 기존 geometry row는 프런트가 `primaryTriangle`로
 표시 호환하고, 다음 빌드에서 새 계약으로 교체한다. 기존 숫자형 자산 row는 읽기
 fallback이나 자동 변환에 사용하지 않는다.
@@ -89,6 +94,19 @@ index를 사용한다. 기존 설치는 명시적 migration Job을 재실행해
 .venv/bin/python -m pytest systems/api-server/tests/test_chart_assets_routes.py
 ```
 
-프론트는 `Geometry` 토글 하나만 제공하고, 현재 interval의 자산만 적용하며,
-SMA60·SMA120 overlay를 함께 활성화한다. 빌드 패널은 `1m/1D`만 제공하고 둘 다
-기본 선택한다.
+프론트는 `chart-asset:` 근거와 `chart-plan:` 제안을 차트별 `작도`, `제안` 토글로
+독립 제어하고, 현재 interval의 자산만 적용하며 SMA60·SMA120 overlay를 함께
+활성화한다. 레이어가 없을 때만 해당 토글을 비활성화하고 수동 drawing은 보존한다.
+빌드 패널은 `1m/1D`만 제공하고 둘 다 기본 선택한다.
+
+`DrawingStyle.labelPlacement`는 `inline | axis | none`, `zoneSplit`은 boolean이다.
+두 값이 없으면 기존 수동 작도의 label/geometry를 보존한다. 시스템 밴드는 중앙 가격
+pill 하나, 패턴은 마지막 anchor 가격 pill을 사용한다. `zoneSplit:true` trade plan은
+확인 봉부터 진입 점선을 그리고 마지막 완료 봉 다음 슬롯부터 위험·보상 fill과
+목표·손절선을 그린다. 미래 끝점은 `last candle index + projectionBars`의 logical index이며
+timestamp를 만들지 않는다.
+
+완전한 신규 long/short 후보만 차트 문서별 비영속 `ActiveTradePlan` registry에 저장한다.
+`sell_candidate`, `watch`, `no_trade`는 active plan을 만들지 않는다. registry event는
+`gops:trade-plan-updated`와 `{ chartDocumentId, plan }` detail을 사용하고 clear는
+`plan:null`이다. 이 projection은 해설·spotlight용이며 주문·알림 계약으로 사용하지 않는다.

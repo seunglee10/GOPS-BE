@@ -265,8 +265,23 @@ LLM은 confidence가 낮거나 required slot이 비어 있는 복합 요청의 s
 fallback으로만 사용한다. 이 fallback은 `AGENT_OPERATION_PLANNER_PROVIDER=openai`일
 때만 Responses API JSON schema로 호출하고, 실패하거나 예산을 얻지 못하면
 deterministic `OperationIR`을 그대로 쓴다. 차트 변경은 영구 `ChartCommand[]`와
-임시 visual overlay를 분리하고, 분석 질문은 resolved anchor를 기준으로
-market/news/ontology/financial snapshot을 수집한다.
+임시 visual overlay를 분리한다. 활성 차트가 있는 `차트 분석해줘`와 chart reference가
+있는 `이 봉 분석해줘`는 classifier/planner를 건너뛰고 각각 `chart_overview`,
+`reference_anchor_analysis`로 라우팅한다. 이때 chart role은 범용
+`market_snapshot`이 아니라 PostgreSQL Geometry 자산과 canonical candle을 조합한
+`chart_analysis_snapshot`을 사용한다. Geometry를 읽지 못하면 request의 bounded
+화면 candle로 degrade하며, chart 설명 자체에는 LLM을 사용하지 않는다.
+
+`chart_analysis_snapshot`의 `chartExplanation v1`은 패턴·확인 상태, 지지·저항,
+trade scenario와 무효화 조건, SMA60/120 교차, 선택 봉 feature, focus drawing ID,
+coverage를 typed fact로 보존한다. 요청의 `chartDocumentId/sourcePanelId`는 optional
+`source`로 echo하고, 저장 자산의 drawing ID만 `focusGroups`의 evidence/pattern/support/
+resistance로 분류한다. `focusIds`는 호환용 합집합으로 유지한다. 이 응답은 요청 시점의
+불변 snapshot이며 현재 Geometry asset과 identity가 정확히 일치할 때만 프런트가 focus한다.
+최종 문장과 숫자는 deterministic Korean narrator가 렌더링한다. 뉴스는 anchor window에서 `availableAt` cutoff를 통과한 항목만 원인 후보로
+정렬하고 이후 항목은 후속 뉴스로 분리하며, 인과가 아니라 시간상 연관으로 표현한다.
+`analysisMode=deep`도 실제 available evidence domain이 둘 이상일 때만 LLM budget 1회를
+열며, 그보다 적으면 deterministic synthesis를 사용한다.
 
 일반 분석의 최종 사용자 답변은 `final answer synthesis`를 우선한다.
 `AGENT_MAX_REALTIME_LLM_CALLS`의 운영 기본값은 2이며, runtime은

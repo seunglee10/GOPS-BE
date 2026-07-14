@@ -10,10 +10,28 @@ other intervals independently. The geometry payload stores active `patterns[]`,
 one `primaryPattern`, and compatibility `primaryTriangle` fields. It permits at
 most eight drawings so a pole plus two boundaries can coexist with level lines.
 The optional-compatible `tradePlan` field stores a deterministic, non-executable
-pattern scenario. New builders always emit it; older rows may omit it until rebuilt.
+pattern scenario. Older persisted rows may omit it and remain valid read inputs.
+Confirmed patterns may include additive `confirmation` timing, boundary, ATR
+penetration, and relative-volume evidence. `chart-semantics.ko.json` is the canonical
+Korean label catalog for pattern states, actions, and reason codes.
 The frontend derives an ephemeral `flagMarker` and, for new-position candidates,
 an ephemeral `riskRewardBox` from that plan without consuming the eight persisted
-geometry drawing slots.
+geometry drawing slots. Existing `zoneLow`, `zoneHigh`, and `halfWidthAtr` level
+fields are optional presentation metadata; the frontend does not recompute ATR or
+merge levels. System analysis drawings use `chart-asset:` evidence and `chart-plan:`
+proposal identities.
+
+`chart-explanation.schema.json` defines the immutable chart-question response
+snapshot. Optional `source` identifies the originating chart document/panel and
+optional `focusGroups` partitions the backwards-compatible `focusIds` union into
+evidence, pattern, support, and resistance IDs. Consumers must require an exact
+asset identity match before focusing a current drawing.
+
+The commentary integration is read-only with respect to persisted Geometry assets.
+Deploying it must not enqueue builds, run chart-asset migrations, suspend the
+Geometry CronJob, or regenerate existing universe assets. The AWS rollout uses
+the `CHART_INTERPRETATION_ONLY` profile so the shared agent image is applied only
+to the analysis consumers, never to the asset builder or scheduler.
 
 Chart data storage and transport semantics are defined by
 `docs/CHART_DATA_ARCHITECTURE.md`. This contract covers UI/chart command shape;
@@ -48,12 +66,22 @@ Rules:
 - Drawing `anchor.interval` and `sourceInterval` use canonical chart intervals.
 - `parallelLineCount` is an integer from 2 through 10, and drawing `fillOpacity`
   is a number from 0 through 1.
+- `DrawingStyle.labelPlacement` is optional `inline | axis | none`, and
+  `DrawingStyle.zoneSplit` is an optional boolean. Missing values preserve legacy
+  manual drawing labels and risk/reward geometry.
 - `riskRewardBox` uses exactly three canonical anchors in `[entry, stop, target]`
   order. Target time is normalized to Stop time; Stop and Target must remain on
   opposite sides of Entry.
 - A trade-plan overlay anchors Entry to the confirmed completed candle. Its
   non-persisted future Stop/Target edge may use logical index only; it must not
   invent or persist a candle timestamp.
+- A complete new-position candidate may be projected into the frontend-only,
+  chart-document-scoped `ActiveTradePlan` registry. Its update event detail is
+  `{ chartDocumentId, plan }`; this projection is not an order or alert source of truth.
+- An SMA cross keeps `timestamp` as the confirmation candle and stores
+  `previousTimestamp`, `fraction`, and `price` for the actual interpolated
+  SMA60/SMA120 intersection. The marker uses fractional logical index rather
+  than the confirmation candle center.
 - `fibonacciRetracement` uses exactly two canonical swing anchors and fixed v1
   levels `0, 0.236, 0.382, 0.5, 0.618, 0.786, 1`.
 
