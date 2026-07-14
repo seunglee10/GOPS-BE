@@ -27,9 +27,12 @@ class SimulatorEksDeploymentContractTests(unittest.TestCase):
             if line
         }
 
-        self.assertEqual(scenario["symbols"], ["AMD", "IFF", "OKE"])
+        self.assertEqual(scenario["symbols"], ["AMD", "OKE"])
         self.assertEqual(event_types, {"t", "q"})
-        self.assertEqual(len(scenario["phases"]), 8)
+        self.assertEqual(
+            [phase["id"] for phase in scenario["phases"]],
+            ["market-overview", "breaking-event", "market-close"],
+        )
 
     def test_simulator_image_contains_the_five_minute_demo_scenario(self):
         scenario_path = (
@@ -111,9 +114,9 @@ class SimulatorEksDeploymentContractTests(unittest.TestCase):
         self.assertIn("ALPACA_STREAM_BASE_URL=ws://gops-simulator:8765", start_script)
         self.assertIn("/api/control/mode", start_script)
         self.assertIn('{"mode":"live"}', start_script)
-        self.assertIn("AMD,IFF,OKE", start_script)
+        self.assertIn("ALPACA_SYMBOLS=AMD,OKE", start_script)
         self.assertIn("ALPACA_CHANNELS=trades,quotes", start_script)
-        self.assertIn("ORDER_FLOW_PINNED_SYMBOLS=AMD,IFF,OKE", start_script)
+        self.assertIn("ORDER_FLOW_PINNED_SYMBOLS=AMD,OKE", start_script)
         self.assertIn("TRADE_CONDITION_EXECUTION_MODE=paper", start_script)
         self.assertIn("simulator_state_snapshot capture", start_script)
         self.assertIn("alfaka-alpaca-ingestor-sip", start_script)

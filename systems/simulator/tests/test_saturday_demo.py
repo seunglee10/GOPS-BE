@@ -27,20 +27,15 @@ class ManualClock:
 
 
 class SaturdayDemoScenarioTests(unittest.TestCase):
-    def test_manifest_contains_the_full_operator_runbook(self):
+    def test_manifest_contains_the_streamlined_operator_runbook(self):
         manifest = json.loads((SCENARIO_ROOT / "scenario.json").read_text(encoding="utf-8"))
 
         self.assertEqual(manifest["scenarioId"], "saturday-demo-amd-iff-oke")
-        self.assertEqual(manifest["symbols"], ["AMD", "IFF", "OKE"])
+        self.assertEqual(manifest["symbols"], ["AMD", "OKE"])
         self.assertEqual(
             [phase["id"] for phase in manifest["phases"]],
             [
                 "market-overview",
-                "recommendation",
-                "company-research",
-                "chart-analysis",
-                "order-ready",
-                "market-open",
                 "breaking-event",
                 "market-close",
             ],
@@ -48,14 +43,7 @@ class SaturdayDemoScenarioTests(unittest.TestCase):
         self.assertEqual(manifest["breakingNewsAtSeconds"], 210)
         self.assertEqual(
             manifest["seedPrices"],
-            {"AMD": 565.0, "IFF": 82.0, "OKE": 90.0},
-        )
-        self.assertEqual(
-            {
-                key: manifest["chartAnalysis"][key]
-                for key in ("support", "resistance", "entry", "stop")
-            },
-            {"support": 81.4, "resistance": 82.6, "entry": 82.7, "stop": 81.1},
+            {"AMD": 565.0, "OKE": 90.0},
         )
 
     def test_scenario_streams_matching_trades_and_quotes_with_the_expected_rotation(self):
@@ -93,8 +81,6 @@ class SaturdayDemoScenarioTests(unittest.TestCase):
         self.assertGreater(final_prices["OKE"], first_prices["OKE"] * 1.05)
         self.assertGreaterEqual(final_prices["AMD"], 524.0)
         self.assertLessEqual(final_prices["AMD"], 527.0)
-        self.assertGreaterEqual(final_prices["IFF"], 84.0)
-        self.assertLessEqual(final_prices["IFF"], 85.0)
         self.assertGreaterEqual(final_prices["OKE"], 95.0)
         self.assertLessEqual(final_prices["OKE"], 96.0)
         amd_prices = post_event_prices["AMD"]
@@ -110,33 +96,44 @@ class SaturdayDemoScenarioTests(unittest.TestCase):
             max_allowed_jump = 1.4 if symbol == "AMD" else 0.5
             self.assertLessEqual(largest_tick_jump, max_allowed_jump, symbol)
 
-    def test_operator_can_jump_to_each_phase_without_waiting_for_wall_clock(self):
+    def test_first_next_action_starts_the_breaking_event_immediately(self):
         clock = ManualClock()
         controller = DemoScenarioController(load_demo_scenario(SCENARIO_ROOT), clock=clock)
-        controller.set_mode("simulation")
+        started = controller.set_mode("simulation")
 
-        status = controller.set_phase("breaking-event")
+        self.assertEqual(started["phase"], "market-overview")
+        self.assertEqual(started["nextPhase"], "breaking-event")
+        status = controller.set_phase(str(started["nextPhase"]))
 
         self.assertEqual(status["phase"], "breaking-event")
-        self.assertEqual(status["phaseIndex"], 6)
+        self.assertEqual(status["phaseIndex"], 1)
         self.assertEqual(status["elapsedSeconds"], 210)
         self.assertTrue(status["breakingNewsReleased"])
         self.assertEqual(status["nextPhase"], "market-close")
-        self.assertEqual(len(status["phases"]), 8)
+        self.assertEqual(len(status["phases"]), 3)
 
-    def test_timeline_waits_at_each_boundary_until_the_operator_advances(self):
+    def test_simulation_starts_natural_amd_and_oke_data_before_the_event(self):
         clock = ManualClock()
         controller = DemoScenarioController(load_demo_scenario(SCENARIO_ROOT), clock=clock)
         controller.set_mode("simulation")
 
+        clock.value += 12
+        running = controller.status()
+
+        self.assertEqual(running["phase"], "market-overview")
+        self.assertEqual(running["nextPhase"], "breaking-event")
+        self.assertGreater(running["eventCount"], 0)
+        self.assertFalse(running["breakingNewsReleased"])
+        symbols = {item["symbol"]: item for item in running["symbols"]}
+        self.assertEqual(set(symbols), {"AMD", "OKE"})
+        self.assertNotEqual(symbols["AMD"]["price"], symbols["AMD"]["seedPrice"])
+        self.assertNotEqual(symbols["OKE"]["price"], symbols["OKE"]["seedPrice"])
+
         clock.value += 999
         waiting = controller.status()
-
         self.assertEqual(waiting["phase"], "market-overview")
-        self.assertLess(waiting["elapsedSeconds"], 30)
+        self.assertLess(waiting["elapsedSeconds"], 210)
         self.assertFalse(waiting["breakingNewsReleased"])
-        advanced = controller.set_phase("recommendation")
-        self.assertEqual(advanced["phase"], "recommendation")
 
     def test_replayed_messages_are_tagged_as_regular_session_simulation_data(self):
         rendered = demo_stream_payload(
@@ -144,7 +141,7 @@ class SaturdayDemoScenarioTests(unittest.TestCase):
             status={
                 "scenarioId": "saturday-demo-amd-iff-oke",
                 "runId": "sim-test",
-                "phase": "market-open",
+                "phase": "market-overview",
                 "elapsedSeconds": 180,
             },
             sequence=12,
@@ -160,11 +157,11 @@ class SaturdayDemoScenarioTests(unittest.TestCase):
         first = controller.set_mode("simulation")
         controller.set_phase("breaking-event")
 
-        rewound = controller.set_phase("chart-analysis")
+        rewound = controller.set_phase("market-overview")
 
         self.assertNotEqual(rewound["runId"], first["runId"])
-        self.assertEqual(rewound["phase"], "chart-analysis")
-        self.assertEqual(rewound["elapsedSeconds"], 90)
+        self.assertEqual(rewound["phase"], "market-overview")
+        self.assertEqual(rewound["elapsedSeconds"], 0)
 
 
 if __name__ == "__main__":
