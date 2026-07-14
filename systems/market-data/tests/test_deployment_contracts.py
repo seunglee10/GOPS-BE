@@ -231,6 +231,11 @@ fi
             topic_init["spec"]["template"]["spec"]["nodeSelector"]["karpenter.sh/nodepool"],
             "batch-warm",
         )
+        order_migrations = load_yaml("infra/k8s/base/job-order-migrations.yaml")
+        self.assertEqual(
+            order_migrations["spec"]["template"]["spec"]["nodeSelector"]["karpenter.sh/nodepool"],
+            "batch-warm",
+        )
         geometry_cron = load_yaml("infra/k8s/overlays/aws/scheduled/cronjob-chart-geometry-build.yaml")
         geometry_pod = geometry_cron["spec"]["jobTemplate"]["spec"]["template"]["spec"]
         self.assertEqual(geometry_pod["nodeSelector"]["karpenter.sh/nodepool"], "batch-warm")
