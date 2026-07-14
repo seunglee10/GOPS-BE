@@ -78,7 +78,9 @@ Alpaca 요청에도 실재 봉이 없는 무거래 slot은 `provider_confirmed_e
 
 새 완료 봉 때문에 stale이 된 자산은 차트에서 제거하지 않고 낮은 불투명도로 표시한다.
 현재 symbol과 interval이 모두 일치하는 자산만 적용한다.
+최근 SMA60/120 교차가 있으면 실제 교차 완료 봉에 `flagMarker`를 표시한다. 골든크로스는
+초록색, 데드크로스는 빨간색이며 현재 차트 데이터에 교차 봉이 없으면 표시하지 않는다.
 확인 신호는 실제 완료 봉에 `flagMarker`로 표시한다. 신규 포지션 후보의 진입·손절·목표는
 프런트가 `riskRewardBox`로 만들며, 미래 봉 timestamp를 만들지 않고 화면에서만 미래
-logical index로 투영한다. 이 동적 도형은 PostgreSQL geometry drawing 예산 8개에 포함하지
-않으며 주문 API를 호출하지 않는다.
+logical index로 투영한다. 교차 마커와 이 동적 도형은 PostgreSQL geometry drawing 예산
+8개에 포함하지 않으며 주문 API를 호출하지 않는다.

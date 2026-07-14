@@ -10,6 +10,8 @@
 - 모든 timed anchor는 현재 asset interval의 실제 candle timestamp에 속한다.
 - `tradePlan`의 신호 anchor도 실제 완료 봉 timestamp여야 한다. 프런트가 만드는 임시
   `riskRewardBox`의 미래 끝점은 저장하지 않으며 timestamp 없이 logical index로만 투영한다.
+- `indicators.cross.status=crossed`이면 프런트는 실제 교차 완료 봉에 SMA60/120
+  `flagMarker`를 만들고 Geometry 표시 상태를 따른다. 현재 candle 범위 밖이면 만들지 않는다.
 - 지지·저항 `horizontalLine`은 첫·마지막 접촉의 동일 가격 2-anchor를 저장하며,
   차트 엔진은 수동 작도의 기존 단일 anchor와 이 형식을 모두 허용한다.
 - 작도 계약은 최대 8개다. 지지·저항은 최대 4개이며 최고 점수 패턴 하나는 경계선
