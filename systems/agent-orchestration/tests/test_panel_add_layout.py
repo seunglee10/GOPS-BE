@@ -162,6 +162,12 @@ class PanelSpecResolutionTest(unittest.TestCase):
         self.assertEqual(spec["minSpan"], {"colSpan": 1, "rowSpan": 2})
         self.assertEqual(spec["defaultSpan"], {"colSpan": 1, "rowSpan": 2})
 
+    def test_pattern_list_falls_back_to_frontend_mirror(self):
+        spec = panel_spec_for("chartPatternList", None)
+        self.assertEqual(spec["title"], "패턴 종목")
+        self.assertEqual(spec["minSpan"], {"colSpan": 2, "rowSpan": 2})
+        self.assertEqual(spec["defaultSpan"], {"colSpan": 2, "rowSpan": 2})
+
     def test_unknown_type_uses_generic_fallback(self):
         spec = panel_spec_for("someFuturePanel", None)
         self.assertEqual(spec["minSpan"], {"colSpan": 1, "rowSpan": 1})
@@ -180,6 +186,7 @@ class PanelOpenParsingTest(unittest.TestCase):
             "인기종목 패널 보여줘": "popularStocks",
             "기업정보 패널 열어줘": "companyProfile",
             "수익률 패널 띄워줘": "portfolioPerformance",
+            "패턴 종목 패널 열어줘": "chartPatternList",
         }
         for query, expected_type in cases.items():
             with self.subTest(query=query):
