@@ -252,6 +252,13 @@ resource "aws_iam_policy" "market_data_pod_policy" {
           local.market_data_bucket_arn,
           "${local.market_data_bucket_arn}/*"
         ]
+      },
+      {
+        # The authenticated API reads a report only after it derives the
+        # caller's hashed prefix.  It never lists this user-data bucket.
+        Effect   = "Allow"
+        Action   = ["s3:GetObject"]
+        Resource = ["${aws_s3_bucket.ai_coach_snapshots.arn}/ai-coach/reports/*"]
       }
     ]
   })
@@ -291,14 +298,26 @@ resource "aws_iam_role_policy_attachment" "market_data_irsa" {
 
 resource "aws_iam_policy" "ai_coach_worker" {
   name        = "${local.name_prefix}-ai-coach-worker-policy"
-  description = "Write immutable AI coach input snapshots to the dedicated bucket"
+  description = "Read post-market coach input and write immutable coach analysis artifacts"
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
-        Effect   = "Allow"
-        Action   = ["s3:PutObject"]
-        Resource = ["${aws_s3_bucket.ai_coach_snapshots.arn}/ai-coach/snapshots/*"]
+        Effect = "Allow"
+        Action = ["s3:GetObject"]
+        Resource = [
+          "${aws_s3_bucket.ai_coach_snapshots.arn}/ai-coach/input/*",
+          "${aws_s3_bucket.ai_coach_snapshots.arn}/ai-coach/snapshots/*",
+          "${aws_s3_bucket.ai_coach_snapshots.arn}/ai-coach/reports/*",
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = ["s3:PutObject"]
+        Resource = [
+          "${aws_s3_bucket.ai_coach_snapshots.arn}/ai-coach/snapshots/*",
+          "${aws_s3_bucket.ai_coach_snapshots.arn}/ai-coach/reports/*",
+        ]
       }
     ]
   })

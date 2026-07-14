@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Verify the deployed analysis worker can write an immutable, non-sensitive S3
-# canary through the same IRSA identity and environment as coach snapshots.
+# Verify the deployed analysis worker can write and read an immutable,
+# non-sensitive S3 canary through the coach snapshot IRSA identity.
 set -euo pipefail
 
 K8S_NAMESPACE="${K8S_NAMESPACE:-alfaka-market-data}"
@@ -61,7 +61,8 @@ body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=
 digest = hashlib.sha256(body).hexdigest()
 key = f"{prefix}/v1/date={now.date().isoformat()}/{canary_id}.json"
 
-response = boto3.client("s3").put_object(
+s3 = boto3.client("s3")
+response = s3.put_object(
     Bucket=bucket,
     Key=key,
     Body=body,
@@ -74,8 +75,15 @@ status = int(response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0))
 if status != 200:
     raise RuntimeError(f"AI coach snapshot gate failed: S3 PutObject returned HTTP {status}")
 
+stored = s3.get_object(Bucket=bucket, Key=key)
+stored_body = stored["Body"].read()
+stored_digest = hashlib.sha256(stored_body).hexdigest()
+stored_metadata = stored.get("Metadata") or {}
+if stored_body != body or stored_digest != digest or stored_metadata.get("sha256") != digest:
+    raise RuntimeError("AI coach snapshot gate failed: S3 GetObject digest verification failed")
+
 json.dump(
-    {"archiveStatus": "stored", "bucket": bucket, "key": key, "sha256": digest},
+    {"archiveStatus": "stored-and-verified", "bucket": bucket, "key": key, "sha256": digest},
     sys.stdout,
     ensure_ascii=False,
     sort_keys=True,

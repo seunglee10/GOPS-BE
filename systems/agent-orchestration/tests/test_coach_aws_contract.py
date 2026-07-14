@@ -127,8 +127,20 @@ class CoachAwsContractTests(unittest.TestCase):
             for item in pod["containers"][0]["envFrom"]
             if "secretRef" in item
         }
+        self.assertEqual(secret_refs["alfaka-clickhouse-secret"], False)
         self.assertEqual(secret_refs["alfaka-order-db-secret"], False)
         self.assertEqual(secret_refs["alfaka-openai-secret"], False)
+
+        config = next(
+            item
+            for item in resources
+            if item.get("kind") == "ConfigMap"
+            and item.get("metadata", {}).get("name") == "alfaka-market-data-config"
+        )["data"]
+        self.assertTrue(config["REDIS_URL"])
+        self.assertTrue(config["CLICKHOUSE_HTTP_URL"])
+        self.assertTrue(config["GRAPHDB_SPARQL_URL"])
+        self.assertTrue(config["AI_COACH_SNAPSHOT_S3_BUCKET"])
 
     def test_default_app_overlay_keeps_earnings_estimates_collector(self):
         resources = render("infra/k8s/overlays/aws-incluster-app-ci")
@@ -153,6 +165,10 @@ class CoachAwsContractTests(unittest.TestCase):
         outputs = (REPO_ROOT / "infra/aws/terraform/outputs.tf").read_text(encoding="utf-8")
 
         self.assertIn("COPY systems/agent-orchestration", dockerfile)
+        self.assertIn(
+            "COPY systems/market-data/config/sp500-heatmap-seed.json",
+            dockerfile,
+        )
         self.assertIn("boto3", requirements)
         self.assertIn("psycopg", requirements)
         self.assertIn('resource "aws_s3_bucket" "ai_coach_snapshots"', terraform)
@@ -160,8 +176,11 @@ class CoachAwsContractTests(unittest.TestCase):
         self.assertIn('"${aws_s3_bucket.ai_coach_snapshots.arn}/ai-coach/snapshots/*"', terraform)
         coach_policy = terraform[terraform.index('resource "aws_iam_policy" "ai_coach_worker"') :]
         coach_policy = coach_policy[: coach_policy.index('resource "aws_iam_role" "ai_coach_worker_irsa"')]
-        self.assertIn('Action   = ["s3:PutObject"]', coach_policy)
-        self.assertNotIn("s3:GetObject", coach_policy)
+        self.assertIn('Action = ["s3:GetObject"]', coach_policy)
+        self.assertIn('Action = ["s3:PutObject"]', coach_policy)
+        self.assertIn("s3:GetObject", coach_policy)
+        self.assertIn('"${aws_s3_bucket.ai_coach_snapshots.arn}/ai-coach/input/*"', coach_policy)
+        self.assertIn('"${aws_s3_bucket.ai_coach_snapshots.arn}/ai-coach/reports/*"', coach_policy)
         self.assertNotIn("s3:ListBucket", coach_policy)
         self.assertIn(
             "noncurrent_days = var.ai_coach_snapshot_noncurrent_retention_days",
@@ -272,6 +291,12 @@ class CoachAwsContractTests(unittest.TestCase):
             branch = branch[: branch.index(";;")]
             self.assertIn(service_call, branch)
 
+    def test_market_config_changes_rebuild_agent_image_with_metadata_seed(self):
+        detector = (REPO_ROOT / "scripts/aws/detect-changed-services.sh").read_text(encoding="utf-8")
+        branch = detector[detector.index("systems/market-data/config/*)") :]
+        branch = branch[: branch.index(";;")]
+        self.assertIn("add_service agent-orchestrator", branch)
+
     def test_deploy_has_fail_closed_worker_irsa_snapshot_gate(self):
         workflow = (REPO_ROOT / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8")
         verifier = (REPO_ROOT / "scripts/aws/verify-ai-coach-snapshot-s3.sh").read_text(
@@ -286,8 +311,9 @@ class CoachAwsContractTests(unittest.TestCase):
         )
         self.assertIn('IfNoneMatch="*"', verifier)
         self.assertIn('ServerSideEncryption="AES256"', verifier)
+        self.assertIn("get_object", verifier)
+        self.assertIn("S3 GetObject digest verification failed", verifier)
         self.assertNotIn("delete_object", verifier)
-        self.assertNotIn("get_object", verifier)
         local_deploy = (REPO_ROOT / "scripts/aws/deploy-dev-local.sh").read_text(
             encoding="utf-8"
         )

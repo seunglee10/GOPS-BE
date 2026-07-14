@@ -38,6 +38,16 @@ Bid/Ask 구조가 유효하지 않거나 chart WebSocket이 연결 오류 상태
 미지원 종목일 때만 전송을 비활성화한다. 로컬 SIM의 지정가 체결가는 replay engine 기준이며 실제 지정가
 matching을 의미하지 않는다.
 
+일반 주문 ticket과 빠른 주문은 전송 전에 compact `AI 코치 판단 기록` picker를
+표시한다. 사용자가 실제로 확인한 항목만 선택하며, UI의 여섯 key는 `RSI`
+(`chart.rsi`), `MACD` (`chart.macd`), `거래량` (`chart.volume`), `기업 뉴스`
+(`news.company`), `실적·재무` (`fundamentals.earnings`), `시장·섹터`
+(`market.context`)다. Submit payload는 여섯 항목 모두를 `checked` 또는
+`unchecked`로 명시하는 `decision-checks.v1`을 포함한다. Picker는 주문 성공 뒤에만
+초기화하며 실패한 요청에서 사용자의 선택을 잃지 않는다. 프런트는 label, evidence,
+source, capture timestamp를 보내지 않으며 서버가 검증·보강한 fill event만 AI 코치
+판단 근거로 사용한다.
+
 패널 팔레트의 `가상 빠른 주문`, `가상 주문`, `가상계좌`는 기존 레이아웃에 자동
 추가하지 않는다. 두 가상 주문 패널은 KIS 주문 컴포넌트의 형태를 재사용하지만
 `/api/paper/*`와 `/ws/paper/*`만 호출하며 LIVE/SIM 토글의 영향을 받지 않는다.
@@ -107,6 +117,12 @@ carousel 위치 숫자를 반복 표시하지 않는다. 화살표는 별도 좌
 요약은 등급 제목이나 상태색 없이 한 문장으로 크게 표시한다. 확인 항목은 `차트`,
 `뉴스`, `재무`, `시장` 순서의 2열 overview로 렌더링하고, 기본 화면에는 분류명, 상태,
 최대 두 개 핵심 항목명만 크게 표시한다. 세부 수치·출처·기준시각은 tooltip에 둔다.
+
+2페이지 포트폴리오 탭은 별도 API를 호출하지 않고 받은 report의
+`marketDiversification`만 렌더링한다. 현재 섹터 비중과 보유 종목의 시장 연동성은
+큰 행으로, 최대 3개의 분산 후보 시장은 가로 rail로 표시한다. 후보는 자동 매수
+추천이 아니라 검토 비중 범위이며, 상관 데이터가 없으면 숫자나 일반론적 섹터를
+채우지 않고 `시장·섹터 상관 데이터 연결 대기`를 표시한다.
 
 ## User Flow
 
@@ -302,6 +318,10 @@ coach panel. The panel has four pages: (1) today's trade review, (2) habit revie
 independent `entry`/`exit`/`portfolio` tabs and `30d`/`90d`/`1y` periods, (3) improvement
 priorities, and (4) one action center combining execution experiments, guardrails, and
 alert management. Page sections receive props only and never call the analysis API.
+Page 2 is a long-term investor-profile view, not an alert surface: it renders the supplied
+process/outcome cohorts, repeated patterns, and representative trades without a chart or
+per-section fetch. If the report has no decision record, it must show the supplied missing
+state rather than infer a personality or plan from realized profit and loss.
 
 On page 1, the selected fill and similar-case index are local UI state. A fill switch
 selects one `reviewsByFillId` object so chart, missed checks, outcome, portfolio impact,
@@ -309,6 +329,26 @@ and conditions change atomically. Price, volume, RSI, and MACD share the `T-60..
 relative axis, and today's path ends at its latest observation without a forecast.
 The dev fixture is loaded only by a DEV-only dynamic import when
 `VITE_AI_COACH_DEV_FIXTURE=true`; production has no fixture fallback.
+
+When the workspace does not already supply a `coachReport`, the panel makes one top-level
+authenticated request to `GET /api/ai-coach/reports/latest`. Child pages never fetch their
+own data. A stored report renders immediately; no stored report renders a clear waiting
+state. This keeps the post-market coach independent of Redis report delivery while
+preserving the existing polling/SSE contract for interactive agent analysis.
+
+Production report의 decision checklist는 post-market input archive에 실제로 있던
+기록만 사용한다. Snapshot Builder가 cutoff-safe chart/news/fundamentals/market
+evidence를 tooltip과 chart marker에 보강할 수 있지만 그 evidence가
+`checked`/`unchecked`를 바꾸지는 않는다. 기록이 없는 체결은 UI가 임의로
+`미확인`으로 채우지 않고 `확인 기록 없음`을 표시한다. Historical cases keep their
+own decision-check records; a case switch must not reuse the selected current fill's checks.
+Decision evidence is bounded by `decisionAt`, while chart outcomes are anchored at
+`filledAt` and stop at the report request cutoff.
+
+Portfolio impact renders only an exact fill-scoped `before`/`after` pair. This applies to
+both KIS and paper fills; an adjacent account snapshot is not substituted and the UI shows
+`계산되지 않음`. Paper cost-basis pairs remain labeled as acquisition-cost data rather
+than current market valuation.
 
 Report에서 우선 렌더링할 영역:
 

@@ -190,6 +190,7 @@ select_services_for_path() {
       ;;
     systems/market-data/config/*)
       add_service backend
+      add_service agent-orchestrator
       add_service market-ingestor
       add_service market-processor
       add_service market-storage
