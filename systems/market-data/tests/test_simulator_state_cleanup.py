@@ -16,8 +16,10 @@ from alfaka.tools.cleanup_simulator_state import cleanup_simulator_market_state
 class FakeRedis:
     def __init__(self, keys: set[str]) -> None:
         self.keys = set(keys)
+        self.scan_patterns: list[str] = []
 
     def scan_iter(self, match: str):
+        self.scan_patterns.append(match)
         return iter(sorted(key for key in self.keys if fnmatch.fnmatch(key, match)))
 
     def delete(self, *keys: str) -> int:
@@ -54,3 +56,4 @@ def test_cleanup_removes_demo_symbol_market_state_without_touching_other_symbols
 
     assert deleted == 10
     assert redis.keys == {f"{prefix}:live:trade:NVDA"}
+    assert redis.scan_patterns == [f"{prefix}:*"]
