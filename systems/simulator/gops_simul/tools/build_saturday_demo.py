@@ -57,7 +57,7 @@ def main() -> None:
         "chartAnalysis": {
             "symbol": "AMD", "pattern": "이벤트 대응 패턴", "support": 525.50,
             "resistance": 566.20, "entry": 530.50, "stop": 524.00,
-            "summary": "초기 완만한 하락 뒤 중간 구간에서 낙폭이 확대되는 대응 시나리오입니다.",
+            "summary": "알림 후 5초간 가격을 유지하고 완만히 하락한 뒤 중간 구간에서 낙폭이 확대되는 대응 시나리오입니다.",
         },
         "eventResponse": {
             "riskSymbol": "AMD", "beneficiarySymbol": "OKE",
@@ -114,21 +114,26 @@ def scenario_price(symbol: str, second: int) -> float:
             value = 566.4 + 0.45 * math.sin(second / 5)
         else:
             elapsed = second - 210
-            if elapsed <= 25:
-                progress = elapsed / 25
+            if elapsed < 5:
+                value = 566.2
+            elif elapsed < 30:
+                movement = elapsed - 4
+                progress = movement / 25
                 eased = progress * progress * (3 - 2 * progress)
-                noise = 0.08 * math.sin(second / 3) * math.sin(math.pi * progress)
-                value = 566.2 + (563.8 - 566.2) * eased + noise
-            elif elapsed <= 65:
-                progress = (elapsed - 25) / 40
+                noise = 0.02 * math.sin(second / 3) * math.sin(math.pi * progress)
+                value = 566.2 + (564.2 - 566.2) * eased + noise
+            elif elapsed < 75:
+                movement = elapsed - 4
+                progress = (movement - 25) / 45
                 eased = progress * progress * (3 - 2 * progress)
-                noise = 0.15 * math.sin(second / 3) * math.sin(math.pi * progress)
-                value = 563.8 + (530.5 - 563.8) * eased + noise
+                noise = 0.03 * math.sin(second / 3) * math.sin(math.pi * progress)
+                value = 564.2 + (532.0 - 564.2) * eased + noise
             else:
-                progress = (elapsed - 65) / 24
+                movement = elapsed - 4
+                progress = (movement - 70) / 15
                 eased = progress * progress * (3 - 2 * progress)
-                noise = 0.08 * math.sin(second / 3) * math.sin(math.pi * progress)
-                value = 530.5 + (525.5 - 530.5) * eased + noise
+                noise = 0.02 * math.sin(second / 3) * math.sin(math.pi * progress)
+                value = 532.0 + (525.5 - 532.0) * eased + noise
     else:
         if second < 210:
             value = 90 + 0.28 * math.sin(second / 9) + second * 0.001
