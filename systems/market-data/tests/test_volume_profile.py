@@ -150,6 +150,23 @@ class VolumeProfileCalculationTest(unittest.TestCase):
         self.assertEqual(exact_payload["bucketCount"], 0)
         self.assertEqual(exact_payload["bins"], [])
 
+    def test_requested_candle_count_marks_incomplete_source_partial(self):
+        payload = compute_volume_profile_payload(
+            {"candles": [{"low": 100, "high": 101, "close": 100.5, "volume": 10}]},
+            symbol="AAPL",
+            from_time="from",
+            to_time="to",
+            target_bins=10,
+            price_min=99,
+            price_max=102,
+            binning_mode="exact",
+            requested_candle_count=2,
+        )
+
+        self.assertEqual(payload["dataStatus"], "partial")
+        self.assertEqual(payload["requestedCandleCount"], 2)
+        self.assertEqual(payload["sourceCandleCount"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

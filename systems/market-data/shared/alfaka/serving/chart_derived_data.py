@@ -58,6 +58,7 @@ def build_volume_profile_request(
     target_bins: int,
     price_min: float | None,
     price_max: float | None,
+    candle_count: int | None = None,
 ) -> dict[str, Any]:
     interval = normalize_chart_interval(interval)
     identity = {
@@ -70,6 +71,7 @@ def build_volume_profile_request(
         "targetBins": int(target_bins),
         "priceMin": price_min,
         "priceMax": price_max,
+        "candleCount": int(candle_count) if candle_count is not None else None,
     }
     return build_request(
         DERIVED_KIND_VOLUME_PROFILE,
@@ -77,12 +79,13 @@ def build_volume_profile_request(
         interval=interval,
         from_time=from_time,
         to_time=to_time,
-        limit=None,
+        limit=int(candle_count) if candle_count is not None else None,
         parameters={
             "priceBinSize": price_bin_size,
             "targetBins": int(target_bins),
             "priceMin": price_min,
             "priceMax": price_max,
+            "candleCount": int(candle_count) if candle_count is not None else None,
         },
         calculation_version=VOLUME_PROFILE_EXACT_CALCULATION_VERSION,
         identity=identity,

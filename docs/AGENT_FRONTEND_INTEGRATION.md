@@ -60,6 +60,21 @@ production build에는 debug snapshot을 노출하지 않는다.
 - ClickHouse/GraphDB 직접 query
 - 주문 실행 자동화
 
+## Chart Derived Profile
+
+차트의 candle Volume Profile은 Agent feature pack과 별도 계약이다. `ChartCanvas`가
+현재 viewport로 만든 scene과 visible closed-candle 범위가 일치한 뒤에만 프런트가
+`targetBins=10`, `scene.scales.minPrice/maxPrice`, `candleCount`를 요청한다. 따라서
+활성 MA·Bollinger와 축 padding을 포함한 main price pane 전체가 같은 화면 높이의
+10개 슬롯이 된다. pane 높이만 바뀌면 기존 가격 bucket을 다시 투영하고 재조회하지
+않는다.
+
+응답은 10개 bucket, 요청 가격 경계, 요청/source candle count가 모두 일치할 때만
+표시한다. `dataStatus=partial`은 클라이언트 derived cache에 넣지 않고 숨긴 상태로
+500ms와 1500ms 뒤 두 번 재시도한다. 계속 partial이면 다음 scene, range, candle
+변경까지 숨긴다. 0-volume bucket은 응답에 유지하지만 Canvas는 막대를 그리지 않아
+그 가격 슬롯의 빈 공간을 보존한다.
+
 ## User Flow
 
 ```mermaid

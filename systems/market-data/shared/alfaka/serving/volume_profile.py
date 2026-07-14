@@ -22,6 +22,7 @@ def compute_volume_profile_payload(
     price_min: float | None = None,
     price_max: float | None = None,
     binning_mode: VolumeProfileBinningMode = "adaptive",
+    requested_candle_count: int | None = None,
 ) -> dict[str, Any]:
     source_rows = raw_payload.get("candles") if isinstance(raw_payload, dict) else raw_payload
     candles = normalize_source_candles(source_rows if isinstance(source_rows, list) else [])
@@ -30,6 +31,8 @@ def compute_volume_profile_payload(
     source = first_string(raw_payload, candles, "source") or "candles"
     feed = first_string(raw_payload, candles, "feed") or "unknown"
     feed_profile = first_string(raw_payload, candles, "feedProfile")
+    resolved_requested_candle_count = int(requested_candle_count) if requested_candle_count is not None else None
+    data_is_partial = resolved_requested_candle_count is not None and len(candles) != resolved_requested_candle_count
 
     bucket_range = resolve_bucket_range(candles, price_min, price_max)
     if bucket_range is None:
@@ -46,6 +49,7 @@ def compute_volume_profile_payload(
             "sourcePriceBinSize": None,
             "sourceBinCount": len(candles),
             "sourceCandleCount": len(candles),
+            "requestedCandleCount": resolved_requested_candle_count,
             "source": source,
             "feed": feed,
             "feedProfile": feed_profile,
@@ -53,7 +57,7 @@ def compute_volume_profile_payload(
             "classificationVersion": calculation_version,
             "sideClassification": "estimated",
             "estimationMethod": "candle-range-volume-overlap",
-            "dataStatus": "empty",
+            "dataStatus": "partial" if data_is_partial else "empty",
             "priceRange": {
                 "min": price_min,
                 "max": price_max,
@@ -104,6 +108,7 @@ def compute_volume_profile_payload(
         "sourcePriceBinSize": None,
         "sourceBinCount": len(candles),
         "sourceCandleCount": len(candles),
+        "requestedCandleCount": resolved_requested_candle_count,
         "source": source,
         "feed": feed,
         "feedProfile": feed_profile,
@@ -111,7 +116,7 @@ def compute_volume_profile_payload(
         "classificationVersion": calculation_version,
         "sideClassification": "estimated",
         "estimationMethod": "candle-range-volume-overlap",
-        "dataStatus": "ready" if total_volume > 0 else "empty",
+        "dataStatus": "partial" if data_is_partial else ("ready" if total_volume > 0 else "empty"),
         "priceRange": {
             "min": rounded(domain_min),
             "max": rounded(domain_max),
