@@ -1005,6 +1005,13 @@ stream processor가 Redis/ClickHouse에서 캔들을 복구할 때는 legacy JSO
 `1W`는 underlying `1D` 결측만 보충한 뒤 기존 주봉 집계를 사용한다. 이 하위 시스템은
 S3, Redis, Kafka, OpenAI를 사용하지 않는다.
 
+interactive `agent-orchestrator`와 `agent-analysis-worker`도 chart 질문에서 동일한
+PostgreSQL Geometry asset을 읽으므로 `DATABASE_URL`/`alfaka-order-db-secret`을 필수로
+주입한다. 새 table, topic, 별도 chart analysis worker는 만들지 않는다. 호환 reader와
+optional `chartExplanation` 계약을 먼저 배포한 뒤 Geometry algorithm v4 writer,
+asset rebuild, backend chart snapshot, frontend 순으로 rollout한다. 뉴스나 optional
+LLM enrichment 장애는 deterministic chart answer를 막지 않아야 한다.
+
 AWS overlay는 Alpaca repair 동시성 2와 최대 range 8을 사용한다. 평일 KST 08:40
 CronJob은 S&P500 전체의 `1m/1D`만 등록한다. API 패널과 수동 실행 스크립트도 새
 빌드를 이 두 interval로 제한한다. 기존 다른 interval 자산의 조회·표시는 유지한다.

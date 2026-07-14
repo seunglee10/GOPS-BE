@@ -17,6 +17,9 @@ Chart Geometry Asset은 완료된 실제 OHLCV 봉에서 현재 지지·저항�
 패턴은 방향전환 피벗과 회귀 경계선에서 깃대 유무, 두 경계의 기울기·평행성·수렴률,
 내부 포함률, 종가 돌파 방향을 판정한다. 깃발형·페넌트·직사각형은 선행 impulse를
 요구하고, 채널 이탈은 종가 돌파가 거래량 또는 다음 봉 유지로 확인된 경우만 표시한다.
+신규 자산은 `confirmation`에 `breakoutAt`, `confirmedAt`, `mode`, `boundaryPrice`,
+`penetrationAtr`, `relativeVolume`을 저장한다. 이 값은 해설의 확인 근거이며 기존 자산은
+필드가 없어도 읽을 수 있다.
 `patterns[]`에는 활성 hard-pass 후보를 저장하고 `primaryPattern`만 작도한다. 삼각형
 호환 필드인 `primaryTriangle`/`historicalTriangle`도 유지한다. 지지·저항은 별도의
 OHLCV 접촉 증거 계산을 계속 사용한다.
@@ -79,8 +82,11 @@ Alpaca 요청에도 실재 봉이 없는 무거래 slot은 `provider_confirmed_e
 
 새 완료 봉 때문에 stale이 된 자산은 차트에서 제거하지 않고 낮은 불투명도로 표시한다.
 현재 symbol과 interval이 모두 일치하는 자산만 적용한다.
-최근 SMA60/120 교차가 있으면 실제 교차 완료 봉에 `flagMarker`를 표시한다. 골든크로스는
-초록색, 데드크로스는 빨간색이며 현재 차트 데이터에 교차 봉이 없으면 표시하지 않는다.
+최근 SMA60/120 교차가 있으면 두 선분의 실제 보간 교차점에 `flagMarker`를 표시한다.
+`timestamp`는 교차 확인 봉, `previousTimestamp`는 직전 봉, `fraction`은 그 사이의
+교차 비율이며 화면 x 좌표는 `previousIndex + fraction`이다. 골든크로스는 초록색,
+데드크로스는 빨간색이다. y 좌표는 자산의 `price`를 사용하며 교차 구간이 현재 차트에
+없으면 표시하지 않는다.
 확인 신호는 실제 완료 봉에 `flagMarker`로 표시한다. 신규 포지션 후보의 진입·손절·목표는
 프런트가 `riskRewardBox`로 만들며, 미래 봉 timestamp를 만들지 않고 화면에서만 미래
 logical index로 투영한다. 교차 마커와 이 동적 도형은 PostgreSQL geometry drawing 예산

@@ -14,6 +14,7 @@ RUN pip install --no-cache-dir -r /tmp/alfaka-requirements.txt -r /tmp/gops-back
 
 COPY systems/agent-orchestration ./systems/agent-orchestration
 COPY systems/market-data/shared ./systems/market-data/shared
+COPY shared/chart-contract ./shared/chart-contract
 COPY systems/market-data/config/sp500-universe.json ./systems/market-data/config/sp500-universe.json
 COPY systems/market-data/config/sp500-heatmap-seed.json ./systems/market-data/config/sp500-heatmap-seed.json
 COPY systems/api-server/pods/api-server/gops-backend/app/contracts ./systems/api-server/pods/api-server/gops-backend/app/contracts

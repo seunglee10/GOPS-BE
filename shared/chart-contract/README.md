@@ -11,6 +11,9 @@ one `primaryPattern`, and compatibility `primaryTriangle` fields. It permits at
 most eight drawings so a pole plus two boundaries can coexist with level lines.
 The optional-compatible `tradePlan` field stores a deterministic, non-executable
 pattern scenario. New builders always emit it; older rows may omit it until rebuilt.
+Confirmed patterns may include additive `confirmation` timing, boundary, ATR
+penetration, and relative-volume evidence. `chart-semantics.ko.json` is the canonical
+Korean label catalog for pattern states, actions, and reason codes.
 The frontend derives an ephemeral `flagMarker` and, for new-position candidates,
 an ephemeral `riskRewardBox` from that plan without consuming the eight persisted
 geometry drawing slots.
@@ -54,6 +57,10 @@ Rules:
 - A trade-plan overlay anchors Entry to the confirmed completed candle. Its
   non-persisted future Stop/Target edge may use logical index only; it must not
   invent or persist a candle timestamp.
+- An SMA cross keeps `timestamp` as the confirmation candle and stores
+  `previousTimestamp`, `fraction`, and `price` for the actual interpolated
+  SMA60/SMA120 intersection. The marker uses fractional logical index rather
+  than the confirmation candle center.
 - `fibonacciRetracement` uses exactly two canonical swing anchors and fixed v1
   levels `0, 0.236, 0.382, 0.5, 0.618, 0.786, 1`.
 

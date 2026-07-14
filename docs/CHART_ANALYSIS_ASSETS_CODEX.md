@@ -10,8 +10,10 @@
 - 모든 timed anchor는 현재 asset interval의 실제 candle timestamp에 속한다.
 - `tradePlan`의 신호 anchor도 실제 완료 봉 timestamp여야 한다. 프런트가 만드는 임시
   `riskRewardBox`의 미래 끝점은 저장하지 않으며 timestamp 없이 logical index로만 투영한다.
-- `indicators.cross.status=crossed`이면 프런트는 실제 교차 완료 봉에 SMA60/120
-  `flagMarker`를 만들고 Geometry 표시 상태를 따른다. 현재 candle 범위 밖이면 만들지 않는다.
+- `indicators.cross.status=crossed`이면 프런트는 `previousIndex + fraction`의 실제
+  SMA60/120 보간 교차점에 `flagMarker`를 만들고 Geometry 표시 상태를 따른다.
+  `timestamp`는 확인 봉으로 보존하고 마커 가격은 asset의 `price`를 사용하며, 교차
+  구간이 현재 candle 범위 밖이면 만들지 않는다.
 - 지지·저항 `horizontalLine`은 첫·마지막 접촉의 동일 가격 2-anchor를 저장하며,
   `[6, 4]` 점선으로 표시한다. 차트 엔진은 수동 작도의 기존 단일 anchor와 이 형식을
   모두 허용하며, 기존 저장 자산도 프런트 presentation 단계에서 점선으로 보정한다.
@@ -60,7 +62,7 @@
 
 새 payload의 `assetVersion`은 숫자 개발 단계가 아니라 기존 응답 union을 구분하는
 semantic discriminator인 `geometry`다. `algorithmVersion`은 현재
-`ohlcv-consensus-pattern-families-v3`이며 분석 의미가 바뀔 때만 변경한다. 범용
+`ohlcv-consensus-pattern-families-v4`이며 분석 의미가 바뀔 때만 변경한다. 범용
 `patterns[]`/`primaryPattern`이 없는 기존 geometry row는 프런트가 `primaryTriangle`로
 표시 호환하고, 다음 빌드에서 새 계약으로 교체한다. 기존 숫자형 자산 row는 읽기
 fallback이나 자동 변환에 사용하지 않는다.

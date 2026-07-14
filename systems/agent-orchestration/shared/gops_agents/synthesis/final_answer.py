@@ -126,6 +126,19 @@ class FinalAnswerSynthesizer:
             timing.pop("synthesisSkippedReason", None)
             timing.pop("synthesisFallbackReason", None)
             record_synthesis_runtime_diagnostics(timing, runtime_context=runtime_context)
+        analysis_query_type = analysis_query_type_from_synthesis_input(synthesis_input)
+        if analysis_query_type in {"chart_overview", "reference_anchor_analysis"} and chart_explanation_for_answer(
+            findings, provider_evidence, synthesis_input
+        ):
+            mark_synthesis_fallback(timing, "deterministic_chart_route", skipped=True)
+            return self._synthesize_deterministic(
+                symbol=symbol,
+                intent=intent,
+                route=route,
+                findings=findings,
+                provider_evidence=provider_evidence,
+                synthesis_input=synthesis_input,
+            )
         if is_news_route(route):
             return self._synthesize_deterministic(
                 symbol=symbol,
@@ -210,6 +223,7 @@ class FinalAnswerSynthesizer:
             "news_price_mismatch",
             "factor_decomposition",
             "reference_anchor_analysis",
+            "chart_overview",
             "impact_mapping",
             "earnings_reaction",
         }:
@@ -1592,6 +1606,12 @@ def build_policy_final_answer(
     intent: str = "",
     synthesis_input: SynthesisInput | None = None,
 ) -> FinalAnswer:
+    if analysis_query_type == "chart_overview":
+        explanation = chart_explanation_for_answer(findings, provider_evidence, synthesis_input)
+        if explanation:
+            from ..chart_intelligence import build_chart_final_answer
+
+            return build_chart_final_answer(symbol, explanation)
     if analysis_query_type == "news_price_mismatch":
         return build_news_price_mismatch_final_answer(symbol, findings, provider_evidence, intent=intent, synthesis_input=synthesis_input)
     if analysis_query_type == "factor_decomposition":
@@ -1713,6 +1733,23 @@ def build_reference_anchor_final_answer(
     intent: str = "",
     synthesis_input: SynthesisInput | None = None,
 ) -> FinalAnswer:
+    explanation = chart_explanation_for_answer(findings, provider_evidence, synthesis_input)
+    if explanation:
+        from ..chart_intelligence import build_chart_final_answer
+
+        answer = build_chart_final_answer(symbol, explanation, reference_mode=True)
+        aligned_news = [
+            item for item in deterministic_evidence_items(findings, provider_evidence, synthesis_input)
+            if item.provider == "news" and item.status == "available" and isinstance(item.raw, dict)
+        ][:3]
+        if aligned_news:
+            bullets = []
+            for item in aligned_news:
+                relation = str(item.raw.get("temporalRelation") or "before")
+                label = {"before": "선택 시점 이전", "during": "선택 시점", "after": "후속 뉴스"}.get(relation, "시점 주변")
+                bullets.append(f"{label}: {display_title(item)} — 시간상 근접한 정황이며 원인으로 단정하지 않습니다.")
+            answer.sections.insert(min(2, len(answer.sections)), FinalAnswerSection(title="시간상 가까운 뉴스", bullets=bullets))
+        return answer
     context = deterministic_policy_context(symbol, intent, findings, provider_evidence, synthesis_input)
     available = list(context["available"])
     anchor = selected_reference_label(provider_evidence)
@@ -1733,6 +1770,16 @@ def build_reference_anchor_final_answer(
         citations=citations_from_evidence(available),
         limitations=[],
     )
+
+
+def chart_explanation_for_answer(
+    findings: list[AgentFinding],
+    provider_evidence: list[EvidenceItem],
+    synthesis_input: SynthesisInput | None,
+) -> dict[str, Any] | None:
+    from ..chart_intelligence import chart_explanation_from_evidence
+
+    return chart_explanation_from_evidence(deterministic_evidence_items(findings, provider_evidence, synthesis_input))
 
 
 def build_impact_mapping_final_answer(symbol: str, findings: list[AgentFinding], provider_evidence: list[EvidenceItem]) -> FinalAnswer:

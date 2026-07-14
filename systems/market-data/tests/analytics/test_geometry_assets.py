@@ -28,7 +28,7 @@ from alfaka.analytics.atr import latest_atr  # noqa: E402
 class GeometryAssetKernelTest(unittest.TestCase):
     def test_interval_contract_and_coverage_windows_are_exact(self):
         self.assertEqual(SUPPORTED_INTERVALS, ("1m", "5m", "10m", "1h", "4h", "1D", "1W"))
-        self.assertEqual(ALGORITHM_VERSION, "ohlcv-consensus-pattern-families-v3")
+        self.assertEqual(ALGORITHM_VERSION, "ohlcv-consensus-pattern-families-v4")
         self.assertEqual(MINIMUM_BARS, 120)
         for interval in SUPPORTED_INTERVALS[:-1]:
             self.assertEqual(TARGET_BARS[interval], 380)
@@ -51,6 +51,26 @@ class GeometryAssetKernelTest(unittest.TestCase):
         self.assertIsNotNone(snapshot["sma60"])
         self.assertIsNotNone(snapshot["sma120"])
         self.assertEqual(snapshot["cross"]["status"], "insufficient_previous_bar")
+
+    def test_sma_cross_snapshot_preserves_the_interpolated_cross_price(self):
+        scenarios = {
+            "golden": ([101.0] * 60 + [100.0] * 60 + [171.0], 100.986111),
+            "dead": ([100.0] * 60 + [101.0] * 60 + [30.0], 100.013889),
+        }
+        for direction, (closes, expected_price) in scenarios.items():
+            with self.subTest(direction=direction):
+                rows = _rows(121, interval="1D", closes=closes)
+
+                cross = compute_sma_snapshot(rows)["cross"]
+
+                self.assertEqual(cross["status"], "crossed")
+                self.assertEqual(cross["direction"], direction)
+                self.assertEqual(cross["timestamp"], rows[-1]["timestamp"])
+                self.assertEqual(cross["previousTimestamp"], rows[-2]["timestamp"])
+                self.assertGreaterEqual(cross["fraction"], 0)
+                self.assertLessEqual(cross["fraction"], 1)
+                self.assertEqual(cross["price"], expected_price)
+                self.assertNotEqual(cross["price"], rows[-1]["close"])
 
     def test_support_and_resistance_drawings_use_dashed_lines(self):
         anchors = [

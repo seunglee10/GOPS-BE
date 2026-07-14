@@ -4,7 +4,7 @@ import re
 from typing import Any
 
 
-CHART_REFERENCE_TYPES = {"chart.candle", "chart.range"}
+CHART_REFERENCE_TYPES = {"chart.candle", "chart.range", "chart.orderFlow", "chart.pattern", "chart.drawing"}
 NEWS_REFERENCE_TYPES = {"news.article", "news.dailySummary"}
 ONTOLOGY_REFERENCE_TYPES = {"ontology.entity"}
 FINANCIAL_REFERENCE_TYPES = {"financial.metric"}
@@ -66,13 +66,21 @@ def build_agent_operation_ir(
             ambiguities.append(ambiguity("newsAnchor", "연결할 뉴스 기사나 날짜가 필요합니다."))
         if not has_chart_ref(ref_types) and not has_move_terms(text):
             ambiguities.append(ambiguity("priceMoveAnchor", "연결할 차트 봉이나 가격 움직임이 필요합니다."))
+    elif has_chart_ref(ref_types) and is_contextual_chart_request(text):
+        operations.append(analysis_operation(
+            "explain_price_move",
+            symbol=symbol,
+            references=refs,
+            required_sources=["market", "news"],
+            confidence=0.9,
+        ))
     elif has_chart_ref(ref_types) and has_explain_terms(text):
         operations.append(analysis_operation(
             "explain_price_move",
             symbol=symbol,
             references=refs,
             required_sources=["market", "news", "macro"],
-            confidence=0.86,
+            confidence=0.9,
         ))
     elif has_news_ref(ref_types) and has_explain_terms(text):
         operations.append(analysis_operation(
@@ -223,7 +231,7 @@ def roles_for_operations(operations: list[dict[str, Any]]) -> list[str]:
 
 def roles_to_snapshots(roles: list[str]) -> list[str]:
     mapping = {
-        "chart": "market_snapshot",
+        "chart": "chart_analysis_snapshot",
         "news": "news_snapshot",
         "ontology": "relationship_snapshot",
         "financial": "financial_snapshot",
@@ -308,6 +316,11 @@ def has_news_terms(text: str) -> bool:
 
 def has_move_terms(text: str) -> bool:
     return has_any(text, ("하락", "내려", "빠졌", "상승", "올랐", "급등", "급락", "차트", "봉", "move", "down", "up"))
+
+
+def is_contextual_chart_request(text: str) -> bool:
+    compacted = re.sub(r"\s+", "", text)
+    return compacted in {"분석해줘", "봐줘", "설명해줘", "이봉분석해줘", "이봉설명해줘", "이거봐줘"}
 
 
 def has_relation_terms(text: str) -> bool:

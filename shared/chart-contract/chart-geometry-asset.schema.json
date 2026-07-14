@@ -76,8 +76,22 @@
         "state": {"enum": ["forming", "confirmed", "inactive", "invalidated"]},
         "bias": {"enum": ["bullish", "bearish", "neutral"]},
         "breakoutDirection": {"enum": ["up", "down", null]},
+        "confirmation": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/confirmation"}]},
         "score": {"type": "number", "minimum": 0, "maximum": 1},
         "geometryHash": {"type": "string"}
+      }
+    },
+    "confirmation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["breakoutAt", "confirmedAt", "mode", "boundaryPrice", "penetrationAtr", "relativeVolume"],
+      "properties": {
+        "breakoutAt": {"type": "string", "format": "date-time"},
+        "confirmedAt": {"type": "string", "format": "date-time"},
+        "mode": {"enum": ["both", "next_close_hold", "relative_volume"]},
+        "boundaryPrice": {"type": "number"},
+        "penetrationAtr": {"type": "number", "minimum": 0},
+        "relativeVolume": {"type": ["number", "null"], "minimum": 0}
       }
     },
     "tradePlan": {
@@ -112,6 +126,7 @@
       "properties": {
         "kind": {"enum": ["ascending_triangle", "descending_triangle", "symmetrical_triangle"]},
         "state": {"enum": ["forming", "confirmed", "inactive", "invalidated"]},
+        "confirmation": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/confirmation"}]},
         "score": {"type": "number", "minimum": 0, "maximum": 1},
         "geometryHash": {"type": "string"}
       }

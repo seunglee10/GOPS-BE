@@ -1259,6 +1259,39 @@ class ClickHouseMarketDataProvider:
         """
         return self.query_json_each_row(query, {"symbol": symbol, "limit": int(limit), "days": int(days)})
 
+    def news_articles_window(self, symbol, *, from_at, to_at, available_as_of, limit=12):
+        query = f"""
+        WITH greatest(published_at, coalesce(received_at, published_at), inserted_at) AS available_at
+        SELECT
+          formatDateTime(published_at, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS publishedAt,
+          formatDateTime(available_at, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS availableAt,
+          symbol,
+          article_id AS articleId,
+          headline,
+          summary,
+          content,
+          url,
+          source,
+          author,
+          formatDateTime(updated_at, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS updatedAt,
+          formatDateTime(received_at, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS receivedAt
+        FROM {self.table('news_articles')}
+        WHERE symbol = {{symbol:String}}
+          AND published_at >= parseDateTime64BestEffort({{fromAt:String}})
+          AND published_at <= parseDateTime64BestEffort({{toAt:String}})
+          AND available_at <= parseDateTime64BestEffort({{availableAsOf:String}})
+        ORDER BY published_at DESC, inserted_at DESC
+        LIMIT {{limit:UInt32}}
+        FORMAT JSONEachRow
+        """
+        return self.query_json_each_row(query, {
+            "symbol": symbol,
+            "fromAt": str(from_at),
+            "toAt": str(to_at),
+            "availableAsOf": str(available_as_of),
+            "limit": int(limit),
+        })
+
     def localized_news_articles(self, symbol, limit=10, days=7, locale="ko-KR"):
         return self.localized_news_articles_for_symbols([symbol], limit=limit, days=days, locale=locale)
 

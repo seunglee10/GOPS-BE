@@ -100,6 +100,8 @@ class KoreanEntityResolver:
         if choseong_candidates:
             return self._select(choseong_candidates, reason="matched unique initial-consonant alias")
 
+        if is_deictic_chart_query(text):
+            return EntityResolution(status="not_found", needs_clarification=False, reason="deictic chart request is not a company name")
         fuzzy_candidates = self._fuzzy_candidates(text)
         if fuzzy_candidates:
             return self._select(fuzzy_candidates, reason="matched fuzzy catalog alias")
@@ -150,7 +152,7 @@ class KoreanEntityResolver:
 
     def _fuzzy_candidates(self, text: str) -> list[EntityCandidate]:
         best: dict[tuple[str, str, str], EntityCandidate] = {}
-        fragments = query_fragments(text, min_length=2, max_length=12)
+        fragments = query_fragments(text, min_length=3, max_length=12)
         for fragment in fragments:
             fragment_compact = compact_text(fragment)
             fragment_jamo = jamo_key(fragment)
@@ -167,7 +169,7 @@ class KoreanEntityResolver:
                     fuzzy_ratio(fragment_jamo, alias.jamo),
                     similarity(fragment_choseong, alias.choseong) if len(fragment_choseong) >= 3 and len(alias.choseong) >= 3 else 0.0,
                 )
-                if score < 0.78:
+                if score < 0.90:
                     continue
                 candidate = candidate_from_alias(alias, matched_text=fragment, match_type="alias_fuzzy", score=score, confidence=min(0.9, score))
                 key = (alias.entity_id, alias.symbol, alias.alias)
@@ -210,7 +212,8 @@ class KoreanEntityResolver:
                 needs_clarification=True,
                 reason="multiple entity candidates are too close",
             )
-        if best.confidence < 0.78:
+        minimum_confidence = 0.90 if best.match_type == "alias_fuzzy" else 0.78
+        if best.confidence < minimum_confidence:
             return EntityResolution(
                 status="ambiguous",
                 candidates=ordered[:5],
@@ -218,6 +221,11 @@ class KoreanEntityResolver:
                 reason="best entity candidate confidence is too low",
             )
         return self._confirmed(best, reason=reason)
+
+
+def is_deictic_chart_query(text: str) -> bool:
+    compacted = re.sub(r"\s+", "", str(text or "").lower())
+    return any(token in compacted for token in ("이봉", "저봉", "선택한봉", "이캔들", "선택한캔들"))
 
 
 def candidate_from_alias(alias: EntityAlias, *, matched_text: str, match_type: str, score: float, confidence: float) -> EntityCandidate:

@@ -628,7 +628,7 @@ class AgentOrchestrationTests(unittest.TestCase):
 
         self.assertEqual(operation_ir["operations"][0]["type"], "link_news_to_price_move")
         self.assertEqual(operation_ir["suggestedRoles"], ["chart", "news", "ontology"])
-        self.assertEqual(operation_ir["contextWindow"]["requiredSnapshots"], ["market_snapshot", "news_snapshot", "relationship_snapshot"])
+        self.assertEqual(operation_ir["contextWindow"]["requiredSnapshots"], ["chart_analysis_snapshot", "news_snapshot", "relationship_snapshot"])
         self.assertGreaterEqual(operation_ir["confidence"], 0.9)
 
     def test_operation_reference_normalization_dedupes_chart_context_reference(self):
@@ -701,7 +701,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(planned["source"], "operation-planner-openai")
         self.assertEqual(planned["operations"][0]["type"], "explain_price_move")
         self.assertEqual(planned["suggestedRoles"], ["chart", "news", "macro"])
-        self.assertEqual(planned["contextWindow"]["requiredSnapshots"], ["market_snapshot", "news_snapshot", "macro_snapshot"])
+        self.assertEqual(planned["contextWindow"]["requiredSnapshots"], ["chart_analysis_snapshot", "news_snapshot", "macro_snapshot"])
 
     def test_normalize_request_operation_ir_prevents_reference_query_clarify(self):
         state = normalize_request_state({
@@ -1156,7 +1156,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(understanding.source, "test-llm")
 
     def test_gops_agents_top_level_keeps_only_package_boundaries(self):
-        allowed = {"__init__.py", "orchestrator.py"}
+        allowed = {"__init__.py", "orchestrator.py", "alert_commands.py"}
         top_level_files = {
             path.name
             for path in (ROOT / "shared" / "gops_agents").iterdir()
@@ -1164,7 +1164,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         }
         self.assertEqual(top_level_files, allowed)
 
-    def test_orchestrator_clarifies_generic_analyze_when_llm_unavailable(self):
+    def test_orchestrator_uses_active_chart_for_generic_analyze_without_llm(self):
         report = AgentOrchestrator().analyze({
             "symbol": "NVDA",
             "intent": "analyze",
@@ -1177,12 +1177,101 @@ class AgentOrchestrationTests(unittest.TestCase):
 
         self.assertEqual(report.symbol, "NVDA")
         self.assertEqual(report.status, "completed")
-        self.assertEqual(report.route.intentType, "clarify")
-        self.assertEqual(report.route.selectedRoles, [])
+        self.assertEqual(report.route.intentType, "chart")
+        self.assertEqual(report.route.selectedRoles, ["chart"])
         self.assertIsNotNone(report.finalAnswer)
-        self.assertEqual(report.finalAnswer.title, "추가 확인 필요")
-        self.assertEqual(report.providerEvidence, [])
+        self.assertEqual(report.finalAnswer.title, "NVDA 차트 해설")
+        self.assertEqual(report.routePlan.analysisQueryType, "chart_overview")
+        self.assertEqual(report.timing["llmCalls"], 0)
+        self.assertTrue(any(item.provider == "chart-analysis" for item in report.providerEvidence))
+        self.assertIsNotNone(report.chartExplanation)
         self.assertIsNone(report.notificationDecision)
+
+    def test_orchestrator_analyzes_selected_mu_candle_without_entity_fallback_or_llm(self):
+        candles = [
+            {"timestamp": "2026-07-13T00:00:00Z", "open": 120, "high": 124, "low": 119, "close": 123, "volume": 1_000},
+            {"timestamp": "2026-07-14T00:00:00Z", "open": 124, "high": 126, "low": 116, "close": 118, "volume": 2_200},
+        ]
+        reference = {
+            "type": "chart.candle",
+            "sourcePanelId": "mu-chart",
+            "data": {"symbol": "MU", "interval": "1D", **candles[-1]},
+        }
+        report = AgentOrchestrator().analyze({
+            "symbol": "MU",
+            "intent": "analysis",
+            "messages": [{"role": "user", "content": "이 봉 분석해줘"}],
+            "references": [reference],
+            "chartContext": {
+                "chartDocument": {"symbol": "MU", "timeframe": "1D", "sourcePanelId": "mu-chart"},
+                "candles": candles,
+                "selectedReference": reference,
+            },
+        })
+
+        self.assertEqual(report.symbol, "MU")
+        self.assertEqual(report.route.intentType, "chart")
+        self.assertEqual(report.routePlan.analysisQueryType, "reference_anchor_analysis")
+        self.assertEqual(report.timing["llmCalls"], 0)
+        self.assertEqual(report.chartExplanation["facts"]["selectedCandle"]["timestamp"], "2026-07-14T00:00:00Z")
+        self.assertEqual(report.chartExplanation["facts"]["selectedCandle"]["close"], 118.0)
+        self.assertEqual(report.finalAnswer.title, "MU 선택 봉 분석")
+        self.assertNotIn("ABBV", report.finalAnswer.summary)
+
+    def test_chart_narrator_describes_confirmed_channel_exit_as_long_exit_scenario(self):
+        from gops_agents.chart_intelligence import build_chart_explanation, build_chart_final_answer
+
+        asset = {
+            "symbol": "MU", "interval": "1D", "asOf": "2026-07-14T00:00:00Z",
+            "algorithmVersion": "ohlcv-consensus-pattern-families-v4", "inputDigest": "mu-fixture",
+            "coverage": {"state": "full", "qualityFlags": []},
+            "geometry": {
+                "primaryPattern": {
+                    "id": "mu-channel", "kind": "ascending_channel_breakdown", "state": "confirmed",
+                    "breakoutDirection": "down", "score": 0.91, "touches": 5,
+                    "confirmation": {"breakoutAt": "2026-07-13T00:00:00Z", "confirmedAt": "2026-07-14T00:00:00Z", "mode": "next_close_hold"},
+                },
+                "supports": [{"id": "support-1", "price": 116.0}],
+                "resistances": [{"id": "resistance-1", "price": 126.0}],
+                "drawings": [{"id": "drawing-mu-channel"}],
+                "tradePlan": {
+                    "action": "sell_candidate", "direction": "exit_long", "signalAt": "2026-07-14T00:00:00Z",
+                    "entryPrice": 118.0, "stopPrice": 122.0, "targetPrice": 110.0, "rewardRiskRatio": 2.0,
+                    "reasons": ["confirmed_downward_breakout", "long_position_exit_only"],
+                },
+            },
+            "indicators": {"sma60": 121.0, "sma120": 119.0, "cross": {"status": "none"}},
+        }
+        context = types.SimpleNamespace(symbol="MU", chartContext={"chartDocument": {"symbol": "MU", "timeframe": "1D"}}, references=[])
+        explanation = build_chart_explanation(context, asset)
+        answer = build_chart_final_answer("MU", explanation)
+
+        self.assertEqual(explanation["facts"]["pattern"]["label"], "상승 채널 하단 이탈")
+        self.assertEqual(explanation["facts"]["pattern"]["stateLabel"], "돌파 확인")
+        self.assertEqual(explanation["facts"]["tradeScenario"]["positionMeaning"], "기존 long 포지션의 매도·청산 검토 시나리오")
+        rendered = " ".join([answer.summary, *(bullet for section in answer.sections for bullet in section.bullets)])
+        self.assertIn("매도·청산 후보", rendered)
+        self.assertIn("기존 long 포지션", rendered)
+        self.assertNotIn("공매도 검토 후보", rendered)
+
+    def test_time_aligned_news_received_after_anchor_is_followup_not_cause_candidate(self):
+        from gops_agents.retrieval.snapshots import align_news_evidence
+
+        context = types.SimpleNamespace(references=[{
+            "type": "chart.candle",
+            "data": {"symbol": "MU", "interval": "1h", "timestamp": "2026-07-14T13:00:00Z"},
+        }])
+        evidence = [EvidenceItem(
+            provider="news", status="available", title="Delayed article", summary="stored after candle close",
+            observedAt="2026-07-14T12:30:00Z",
+            raw={"publishedAt": "2026-07-14T12:30:00Z", "availableAt": "2026-07-14T14:10:00Z"},
+        )]
+
+        aligned = align_news_evidence(evidence, context)
+
+        self.assertEqual(aligned[0].raw["temporalRelation"], "after")
+        self.assertGreater(aligned[0].raw["availabilityLagSeconds"], 0)
+        self.assertEqual(aligned[0].raw["causality"], "temporal_association_only")
 
     def test_memory_report_store_round_trip(self):
         store = InMemoryReportStore()
@@ -1763,7 +1852,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertIn("verification-guardrail", roles)
         self.assertNotIn("macro-analysis", roles)
         self.assertNotIn("company-relationship-analysis", roles)
-        self.assertEqual(providers, {"news"})
+        self.assertEqual(providers, {"news", "chart-analysis"})
         self.assertEqual(report.route.selectedRoles, ["chart", "news"])
         self.assertTrue(report.finalAnswer.summary)
 
@@ -2197,7 +2286,7 @@ class AgentOrchestrationTests(unittest.TestCase):
                 "선택한 봉 왜 저렇게 움직였어?",
                 [{"type": "chart.candle", "data": {"symbol": "NVDA", "interval": "1D", "timestamp": "2026-07-04T00:00:00Z", "close": 145.5}}],
                 "reference_anchor_analysis",
-                {"market_snapshot", "news_snapshot", "risk_policy_snapshot"},
+                {"chart_analysis_snapshot", "news_snapshot", "risk_policy_snapshot"},
             ),
         ]
 
@@ -3871,7 +3960,6 @@ class AgentOrchestrationTests(unittest.TestCase):
         cases = {
             "애플뉴스알려줘": "AAPL",
             "apple뉴스알려줘": "AAPL",
-            "얘플 뉴스": "AAPL",
             "애플ㄹ 뉴스": "AAPL",
             "엔비댜 왜 오름": "NVDA",
             "테슬랴 급등 이유": "TSLA",
@@ -3888,6 +3976,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertIsNone(extract_symbol_from_intent("사과 뉴스"))
         self.assertIsNone(extract_symbol_from_intent("차트랑 뉴스 나란히 보여줘"))
         self.assertIsNone(extract_symbol_from_intent("차트를 아래로 옮겨줘"))
+        self.assertIsNone(extract_symbol_from_intent("이 봉 분석해줘"))
         self.assertIsNone(extract_symbol_from_intent("UI 바꿔줘 온톨로지 기반으로"))
 
     def test_dynamic_entity_index_resolves_non_seed_company_alias(self):
@@ -4133,11 +4222,9 @@ class AgentOrchestrationTests(unittest.TestCase):
             },
         })
 
-        self.assertEqual(report.symbol, "AAPL")
-        self.assertEqual(clickhouse.requested_symbols, ["AAPL"])
-        self.assertEqual(report.agentTrace["entityResolution"]["status"], "confirmed")
-        self.assertEqual(report.agentTrace["entityResolution"]["symbol"], "AAPL")
-        self.assertEqual(report.resolvedEntities[0].aliases, ["애플"])
+        self.assertEqual(report.symbol, "NVDA")
+        self.assertEqual(clickhouse.requested_symbols, ["NVDA"])
+        self.assertNotEqual(report.agentTrace["entityResolution"]["matchType"], "alias_fuzzy")
 
     def test_news_only_request_skips_runtime_openai_and_uses_fast_deterministic_answer(self):
         clickhouse = FakeClickHouseProvider([

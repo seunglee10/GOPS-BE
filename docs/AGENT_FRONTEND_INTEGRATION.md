@@ -240,6 +240,16 @@ selection 같은 화면 상태 hint만 담고, provider 조회나 최종 판단�
 `uiContext.selectedReference`/`hoverReference`를 보낼 수 있지만, 명시 선택 chip이나
 row selection이 있으면 그것을 우선한다.
 
+Agent submit 시 symbol, interval, `sourcePanelId`, 선택 reference는 하나의 chart panel을
+가리켜야 한다. 프런트는 선택 reference를 소유한 panel을 우선하고 해당 handle의
+viewport 종료 index까지만 candle을 보낸다. payload에는 viewport 이전 최대 120봉만
+pre-roll로 포함하며 viewport 뒤의 candle은 포함하지 않는다. `analysisWindow`와
+`assetIdentity`는 서버 재검증을 위한 hint이고 계산 원본을 대체하지 않는다.
+
+캔들·뉴스 선택 overlay의 `ContextualAgentAskButton`은 reference와 각각 기본 문장
+`이 봉 분석해줘`, `이 뉴스 설명해줘`를 질문창에 함께 넣는다. 기본 차트분석 layout은 상단 chart `8x4`,
+하단 chart commentary `4x2`, news `4x2`이며 저장된 custom layout은 덮어쓰지 않는다.
+
 Bid/Ask chart type or the 오더플로우 panel can send `chart.orderFlow`
 references. The reference data should include the selected symbol/session date,
 daily or intraday bid/ask totals when available, and
@@ -396,10 +406,13 @@ Wild panel이 있는 동안 완료된 Agent report는 해당 panel의 다음 pag
 상단의 3초 결과 알림만 표시하고 상세 report를 나중에 연결하기 위해 보관하지 않는다.
 자동 panel 생성이나 placement picker는 사용하지 않는다.
 
-저장 순서는 base content, `finalAnswer` 기반 `차트 해설`, role별 `에이전트 답변`이다.
-다만 새 report를 추가한 직후에는 사용자가 요청한 Wild UX 예외로 첫 role 답변을
-활성화하고, role 답변이 없을 때만 `차트 해설`을 활성화한다. 같은 `analysisId`를
-같은 panel에 다시 추가하지 않으며 이미 저장된 첫 role page로 이동한다.
+저장 순서는 base content, `finalAnswer` 기반 최종 답변, role별 상세 답변이다. 새 report는
+항상 최종 답변 page를 먼저 연다. `chartExplanation`이 있는 chart route만 `차트 해설`,
+그 외에는 `분석 답변`으로 표기한다. chart route에는 범용 snapshot confidence를
+정확도처럼 표시하지 않고 quality·패턴 점수·확인 근거를 분리한다.
+`investment_advice_limited`, provider/storage 이름, snapshot/LLM fallback 코드는 DOM에
+노출하지 않는다. `finalAnswer`가 없으면 일반 summary를 차트 해설로 바꾸지 않고
+분석 미완료 상태를 표시한다. 같은 `analysisId`를 같은 panel에 다시 추가하지 않는다.
 
 Agent 동작이 끝나면 top navigation의 center preset dock을 한 줄 결과 알림으로
 flip한다. 진행 중 메시지는 표시하지 않고 완료·취소·clarification·실패 결과만
@@ -517,8 +530,11 @@ job URL을 사용한다. 상태 화면은 수동 우선 작업과 정기 작업�
 이 표시는 교육용 시나리오이며 주문 route를 호출하지 않는다.
 
 SMA 기간은 일수가 아니라 현재 interval의 완료 봉 개수다. SMA60과 SMA120 overlay는
-Geometry 자산 적용 시 함께 활성화하고 골든·데드크로스는 별도 marker가 아닌 metadata로
-표시한다. 빌드 완료와 삭제는 cache invalidation event를 발생시켜 같은 symbol의 열린
+Geometry 자산 적용 시 함께 활성화한다. 골든·데드크로스 metadata의
+`cross.timestamp`는 교차 확인 봉, `previousTimestamp`와 `fraction`은 실제 보간 x 좌표,
+`cross.price`는 두 이동평균선의 보간 y 좌표이며 프런트가 종가나 현재 viewport 데이터로
+대체하지 않는다. 빌드 완료와 삭제는
+cache invalidation event를 발생시켜 같은 symbol의 열린
 chart/panel을 즉시 재조회한다. 다른 interval의 자산은 적용하지 않는다.
 
 stale 자산은 차트에서 제거하지 않고 낮은 불투명도와 stale badge로 표시한다. 빌드
