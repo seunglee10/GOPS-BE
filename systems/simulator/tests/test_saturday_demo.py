@@ -87,17 +87,20 @@ class SaturdayDemoScenarioTests(unittest.TestCase):
             for symbol in manifest["symbols"]
         }
         final_prices = {symbol: prices[-1] for symbol, prices in post_event_prices.items()}
-        self.assertLess(final_prices["AMD"], first_prices["AMD"] * 0.98)
-        self.assertGreater(final_prices["OKE"], first_prices["OKE"] * 1.02)
-        self.assertGreaterEqual(final_prices["AMD"], 551.0)
-        self.assertLessEqual(final_prices["AMD"], 553.0)
+        amd_decline_percent = (first_prices["AMD"] - final_prices["AMD"]) / first_prices["AMD"] * 100
+        self.assertGreaterEqual(amd_decline_percent, 6.5)
+        self.assertLessEqual(amd_decline_percent, 7.5)
+        self.assertGreater(final_prices["OKE"], first_prices["OKE"] * 1.05)
+        self.assertGreaterEqual(final_prices["AMD"], 524.0)
+        self.assertLessEqual(final_prices["AMD"], 527.0)
         self.assertGreaterEqual(final_prices["IFF"], 84.0)
         self.assertLessEqual(final_prices["IFF"], 85.0)
-        self.assertGreaterEqual(final_prices["OKE"], 92.0)
-        self.assertLessEqual(final_prices["OKE"], 93.5)
+        self.assertGreaterEqual(final_prices["OKE"], 95.0)
+        self.assertLessEqual(final_prices["OKE"], 96.0)
         for symbol, prices in post_event_prices.items():
             largest_tick_jump = max(abs(current - previous) for previous, current in zip(prices, prices[1:]))
-            self.assertLessEqual(largest_tick_jump, 0.5, symbol)
+            max_allowed_jump = 0.85 if symbol == "AMD" else 0.5
+            self.assertLessEqual(largest_tick_jump, max_allowed_jump, symbol)
 
     def test_operator_can_jump_to_each_phase_without_waiting_for_wall_clock(self):
         clock = ManualClock()
