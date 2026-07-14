@@ -18,6 +18,7 @@ from alfaka.analytics.geometry import (  # noqa: E402
     MINIMUM_BARS,
     SUPPORTED_INTERVALS,
     TARGET_BARS,
+    _level_drawing,
     analyze_geometry,
     compute_sma_snapshot,
 )
@@ -50,6 +51,20 @@ class GeometryAssetKernelTest(unittest.TestCase):
         self.assertIsNotNone(snapshot["sma60"])
         self.assertIsNotNone(snapshot["sma120"])
         self.assertEqual(snapshot["cross"]["status"], "insufficient_previous_bar")
+
+    def test_support_and_resistance_drawings_use_dashed_lines(self):
+        anchors = [
+            {"timestamp": "2026-07-10T00:00:00.000Z", "price": 100.0},
+            {"timestamp": "2026-07-11T00:00:00.000Z", "price": 100.0},
+        ]
+
+        support = _level_drawing("NVDA", "1D", {"id": "support", "role": "support", "anchors": anchors}, anchors[-1]["timestamp"])
+        resistance = _level_drawing("NVDA", "1D", {"id": "resistance", "role": "resistance", "anchors": anchors}, anchors[-1]["timestamp"])
+
+        self.assertEqual(support["style"]["lineDash"], [6, 4])
+        self.assertEqual(resistance["style"]["lineDash"], [6, 4])
+        self.assertEqual(support["style"]["lineStyle"], "dashed")
+        self.assertEqual(resistance["style"]["lineStyle"], "dashed")
 
     def test_geometry_anchors_are_real_canonical_timestamps_and_budget_is_six(self):
         rows = _triangle_rows(180, interval="10m")
