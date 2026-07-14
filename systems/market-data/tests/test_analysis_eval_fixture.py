@@ -49,7 +49,8 @@ class AnalysisEvalFixtureTest(unittest.TestCase):
             self.assertIn(drawing["type"], {"horizontalLine", "trendLine"})
             self.assertEqual((drawing["symbol"], drawing["interval"]), ("NVDA", "1D"))
             self.assertEqual(drawing["sourceInterval"], "1D")
-            self.assertEqual(drawing["style"]["lineStyle"], "solid")
+            expected_line_style = "dashed" if ":level:" in drawing["id"] else "solid"
+            self.assertEqual(drawing["style"]["lineStyle"], expected_line_style)
             for anchor in drawing["anchors"]:
                 self.assertIn(anchor["timestamp"], timestamps)
 

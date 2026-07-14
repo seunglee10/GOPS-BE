@@ -1095,6 +1095,20 @@ AGENT_EXPANDED_RETRIEVAL_DEADLINE_MS
 AGENT_SNAPSHOT_TOTAL_DEADLINE_MS
 ```
 
+## On-demand Saturday Simulator
+
+`gops-simulator`는 평소 `replicas: 0`이다. 시연 시작 스크립트는 이 deployment를
+1개로 올린 뒤 SIP ingestor의 symbols를 `AMD,IFF,OKE`, channels를 `trades,quotes`로
+바꾼다. 같은 실행에서 `alfaka-market-processor`와 `gops-backend`의
+`ORDER_FLOW_PINNED_SYMBOLS`를 세 종목으로 바꾸고
+`trade-condition-executor`의 `TRADE_CONDITION_EXECUTION_MODE`를 `paper`로 바꾼다.
+따라서 footprint/order-flow와 영구 가상 예약매매가 같은 합성 호가를 사용한다.
+
+`scripts/aws/stop-dev-simulator.sh`는 SIP URL·symbols·channels를 live 기본값으로,
+order-flow pins를 `NVDA,AMZN,MU,AAPL,GOOGL`로, trade-condition mode를 `demo`로
+복구하고 simulator를 다시 0개로 내린다. start 중간 실패도 같은 복구를 실행한다.
+시연 종료 뒤 stop 스크립트 실행은 선택 사항이 아니다.
+
 ## Smoke Checks
 
 Local static checks:

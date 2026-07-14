@@ -352,6 +352,13 @@ def processed_record_offsets(records):
 
 
 def clickhouse_actions_for_payload(payload, load_trades=False, load_quotes=True):
+    if is_simulation_payload(payload):
+        print(
+            f"ClickHouse 시뮬레이션 적재 제외: symbol={payload.get('symbol', 'UNKNOWN')} "
+            f"eventType={payload.get('eventType', 'UNKNOWN')}",
+            flush=True,
+        )
+        return []
     event_type = payload.get("eventType")
     if event_type == "QUOTE" or payload.get("layer") == "quotes":
         if not load_quotes:
@@ -400,6 +407,11 @@ def clickhouse_actions_for_payload(payload, load_trades=False, load_quotes=True)
 
     print(f"ClickHouse 적재 제외 eventType={event_type}", flush=True)
     return []
+
+
+def is_simulation_payload(payload):
+    simulation = payload.get("simulation")
+    return isinstance(simulation, dict) and simulation.get("source") == "gops-simulator"
 
 
 def trade_to_clickhouse_row(payload):

@@ -241,9 +241,9 @@ def is_earnings_reaction_query(text: str, compacted: str) -> bool:
 def is_reference_anchor_query(text: str, compacted: str, ref_types: set[str], operation_types: set[str]) -> bool:
     if not ref_types:
         return False
-    if operation_types & {"explain_news", "explain_price_move", "link_news_to_price_move"}:
+    if operation_types & {"explain_news", "explain_price_move", "link_news_to_price_move", "explain_recommendation"}:
         return True
-    return has_any_text(compacted, ("이뉴스", "이기사", "이봉", "선택한", "여기", "이거", "저거"))
+    return has_any_text(compacted, ("이뉴스", "이기사", "이봉", "이종목", "이추천", "추천이유", "선택한", "여기", "이거", "저거"))
 
 
 def is_price_move_cause_query(
@@ -669,7 +669,7 @@ class MarketSnapshotProvider:
         chart_evidence = chart_context_evidence(context, chart_context)
         if chart_evidence:
             evidence.insert(0, chart_evidence)
-        reference_evidence = chart_reference_evidence(context)
+        reference_evidence = [*chart_reference_evidence(context), *recommendation_reference_evidence(context)]
         if reference_evidence:
             evidence = [*reference_evidence, *evidence]
         peer_symbols = market_peer_symbols_for_context(context)
@@ -1472,6 +1472,41 @@ def news_reference_evidence(context: Any) -> list[EvidenceItem]:
             summary=summary,
             observedAt=observed_at,
             url=url,
+            raw={"referenceIndex": index, "reference": reference},
+        ))
+    return evidence
+
+
+def recommendation_reference_evidence(context: Any) -> list[EvidenceItem]:
+    evidence = []
+    for index, reference in enumerate(context_references(context)):
+        if str(reference.get("type") or "") != "recommendation.stock":
+            continue
+        data = reference.get("data") if isinstance(reference.get("data"), dict) else {}
+        symbol = str(data.get("symbol") or context.symbol).strip().upper()
+        rank = data.get("rank")
+        score = data.get("score")
+        confidence = data.get("confidence")
+        reasons = data.get("reasons") if isinstance(data.get("reasons"), list) else []
+        reason_texts = [
+            str(item.get("text") or "").strip()
+            for item in reasons
+            if isinstance(item, dict) and str(item.get("text") or "").strip()
+        ]
+        summary_parts = [f"사용자가 {symbol} 추천 종목을 분석 기준으로 선택했습니다."]
+        if isinstance(rank, (int, float)):
+            summary_parts.append(f"추천 순위는 {int(rank)}위입니다.")
+        if isinstance(score, (int, float)):
+            summary_parts.append(f"추천 점수는 {float(score):g}입니다.")
+        if isinstance(confidence, (int, float)):
+            summary_parts.append(f"데이터 신뢰도는 {float(confidence):.0%}입니다.")
+        if reason_texts:
+            summary_parts.append(f"추천 근거: {' / '.join(reason_texts[:3])}")
+        evidence.append(EvidenceItem(
+            provider="market-data",
+            status="available",
+            title=f"Selected stock recommendation: {symbol}",
+            summary=" ".join(summary_parts),
             raw={"referenceIndex": index, "reference": reference},
         ))
     return evidence

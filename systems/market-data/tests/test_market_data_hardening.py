@@ -6732,6 +6732,57 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(len(payload["candles"]), 5)
         self.assertEqual(payload["candles"][-1]["ma60"], 35.5)
 
+    def test_provider_aggregates_active_extended_intervals_from_redis_1m_when_clickhouse_lags(self):
+        class IntervalRedisProvider(FakeRedisProvider):
+            def __init__(self, candles_by_interval):
+                super().__init__()
+                self._candles_by_interval = candles_by_interval
+
+            def recent_candles(self, symbol, interval, limit):
+                return list(self._candles_by_interval.get(interval, []))[-limit:]
+
+        start = datetime(2026, 7, 8, 20, 0, tzinfo=timezone.utc)
+        extended_minutes = [
+            {
+                "symbol": "AAPL",
+                "interval": "1m",
+                "timestamp": (start + timedelta(minutes=minute)).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                "open": 100 + minute,
+                "high": 101 + minute,
+                "low": 99 + minute,
+                "close": 100.5 + minute,
+                "volume": 10,
+                "tradeCount": 1,
+                "isClosed": True,
+                "marketSession": "after",
+                "priceAdjustment": "live",
+                "canonicalVersion": "v2",
+            }
+            for minute in range(10)
+        ]
+        provider = MarketDataProvider(
+            redis_provider=IntervalRedisProvider({"1m": extended_minutes}),
+            clickhouse_provider=FakeClickHouseProvider(),
+        )
+
+        with mock.patch("alfaka.serving.provider.datetime") as fake_datetime:
+            fake_datetime.now.return_value = datetime(2026, 7, 8, 20, 10, tzinfo=timezone.utc)
+            fake_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+            payload_5m = provider.candle_snapshot("AAPL", "5m", 5, ma_windows=())
+            payload_10m = provider.candle_snapshot("AAPL", "10m", 5, ma_windows=())
+
+        self.assertEqual(
+            [candle["timestamp"] for candle in payload_5m["candles"]],
+            ["2026-07-08T20:00:00.000Z", "2026-07-08T20:05:00.000Z"],
+        )
+        self.assertEqual([candle["marketSession"] for candle in payload_5m["candles"]], ["after", "after"])
+        self.assertEqual(payload_5m["candles"][0]["volume"], 50)
+        self.assertEqual(payload_5m["candles"][1]["close"], 109.5)
+        self.assertEqual([candle["timestamp"] for candle in payload_10m["candles"]], ["2026-07-08T20:00:00.000Z"])
+        self.assertEqual(payload_10m["candles"][0]["marketSession"], "after")
+        self.assertEqual(payload_10m["candles"][0]["volume"], 100)
+        self.assertEqual(payload_10m["candles"][0]["close"], 109.5)
+
     def test_provider_uses_lookback_rows_for_explicit_range_moving_averages(self):
         start = datetime(2026, 6, 25, 10, 0, tzinfo=timezone.utc)
         candles = [

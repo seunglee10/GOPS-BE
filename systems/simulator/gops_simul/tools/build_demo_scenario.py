@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Iterable
 
 from gops_simul.config import PROJECT_ROOT
-from gops_simul.demo import ALL_DEMO_SYMBOLS, DEFAULT_SCENARIO_ID
 from gops_simul.env import load_env_file
 from gops_simul.time_utils import parse_record_time, parse_time
 from gops_simul.tools.import_alpaca import DATA_BASE_URL, alpaca_headers, fetch_kind
@@ -17,6 +16,8 @@ PRE_SOURCE_START = "2026-07-07T19:58:00Z"
 PRE_SOURCE_END = "2026-07-07T20:00:00Z"
 POST_SOURCE_START = "2026-07-08T13:18:00Z"
 POST_SOURCE_END = "2026-07-08T13:30:00Z"
+LEGACY_SCENARIO_ID = "iran-ceasefire-collapse-2026-07-08"
+LEGACY_DEMO_SYMBOLS = ("NVDA", "AMD", "AVGO", "MU", "TSM", "XOM", "CVX", "COP")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -30,7 +31,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--max-pages", type=int, default=30)
     parser.add_argument(
         "--output",
-        default=str(PROJECT_ROOT / "data" / "scenarios" / DEFAULT_SCENARIO_ID),
+        default=str(PROJECT_ROOT / "data" / "scenarios" / LEGACY_SCENARIO_ID),
     )
     args = parser.parse_args(argv)
     load_env_file(args.env_file, override=True)
@@ -38,7 +39,7 @@ def main(argv: list[str] | None = None) -> None:
 
     pre_rows: list[dict[str, object]] = []
     post_rows: list[dict[str, object]] = []
-    for symbol in ALL_DEMO_SYMBOLS:
+    for symbol in LEGACY_DEMO_SYMBOLS:
         pre_rows.extend(fetch_kind(
             kind="trades",
             base_url=args.base_url,
@@ -64,7 +65,7 @@ def main(argv: list[str] | None = None) -> None:
         print(f"[FETCH] {symbol}: pre={count_symbol(pre_rows, symbol)} post={count_symbol(post_rows, symbol)}")
 
     seed_prices = last_prices(pre_rows)
-    missing = [symbol for symbol in ALL_DEMO_SYMBOLS if symbol not in seed_prices]
+    missing = [symbol for symbol in LEGACY_DEMO_SYMBOLS if symbol not in seed_prices]
     if missing:
         raise SystemExit(f"No pre-event trades returned for: {', '.join(missing)}")
 
@@ -91,12 +92,12 @@ def main(argv: list[str] | None = None) -> None:
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
     manifest = {
-        "scenarioId": DEFAULT_SCENARIO_ID,
+        "scenarioId": LEGACY_SCENARIO_ID,
         "title": "Iran ceasefire collapse · semiconductor to energy rotation",
         "durationSeconds": 300,
         "breakingNewsAtSeconds": 5,
         "seedPrices": seed_prices,
-        "symbols": list(ALL_DEMO_SYMBOLS),
+        "symbols": list(LEGACY_DEMO_SYMBOLS),
         "source": {
             "provider": "Alpaca Market Data API",
             "feed": args.feed,
@@ -111,7 +112,7 @@ def main(argv: list[str] | None = None) -> None:
             "summary": "미국 대통령이 이란과의 휴전이 끝났다고 언급하면서 유가가 뛰고 위험자산 변동성이 확대됐습니다.",
             "source": "AP",
             "url": "https://apnews.com/article/671d9c94b302f7db533f46baa18387d3",
-            "symbols": list(ALL_DEMO_SYMBOLS),
+            "symbols": list(LEGACY_DEMO_SYMBOLS),
         },
     }
     (output / "scenario.json").write_text(

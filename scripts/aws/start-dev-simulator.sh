@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 역할: dev EKS에서 시뮬레이터를 켜고 backend와 SIP 수집기만 시연 경로로 전환합니다.
+# 역할: dev EKS에서 토요일 시연 시나리오와 가상 체결 경로를 함께 켭니다.
 set -Eeuo pipefail
 
 AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-<aws-account-id>}"
@@ -40,6 +40,11 @@ request = urllib.request.Request(
 urllib.request.urlopen(request, timeout=2).read()' "${live_payload}"
 }
 
+capture_simulator_state() {
+  kubectl exec deployment/alfaka-market-processor -n "${K8S_NAMESPACE}" -- \
+    python -m alfaka.tools.simulator_state_snapshot capture --symbols AMD,OKE
+}
+
 restore_live_path() {
   local exit_code="$1"
   trap - ERR
@@ -54,6 +59,10 @@ restore_live_path() {
     ALPACA_MAX_TRADE_SYMBOLS- \
     ALPACA_ENFORCE_FEED_SESSION_WINDOW-
   kubectl set env deployment/gops-backend -n "${K8S_NAMESPACE}" GOPS_SIMULATOR_URL-
+  kubectl set env deployment/alfaka-market-processor deployment/gops-backend -n "${K8S_NAMESPACE}" \
+    ORDER_FLOW_PINNED_SYMBOLS=NVDA,AMZN,MU,AAPL,GOOGL
+  kubectl set env deployment/trade-condition-executor -n "${K8S_NAMESPACE}" \
+    TRADE_CONDITION_EXECUTION_MODE=demo
   kubectl scale deployment/gops-simulator --replicas=0 -n "${K8S_NAMESPACE}"
   exit "${exit_code}"
 }
@@ -62,25 +71,35 @@ require_command aws
 require_command kubectl
 configure_cluster
 trap 'restore_live_path $?' ERR
+capture_simulator_state
 
 kubectl scale deployment/gops-simulator --replicas=1 -n "${K8S_NAMESPACE}"
 kubectl rollout status deployment/gops-simulator -n "${K8S_NAMESPACE}" --timeout=180s
 reset_simulator_to_live
 
 kubectl set env deployment/gops-backend -n "${K8S_NAMESPACE}" \
-  GOPS_SIMULATOR_URL=http://gops-simulator:8765
+  GOPS_SIMULATOR_URL=http://gops-simulator:8765 \
+  ORDER_FLOW_PINNED_SYMBOLS=AMD,OKE
+
+kubectl set env deployment/alfaka-market-processor -n "${K8S_NAMESPACE}" \
+  ORDER_FLOW_PINNED_SYMBOLS=AMD,OKE
+
+kubectl set env deployment/trade-condition-executor -n "${K8S_NAMESPACE}" \
+  TRADE_CONDITION_EXECUTION_MODE=paper
 
 kubectl set env deployment/alfaka-alpaca-ingestor-sip -n "${K8S_NAMESPACE}" \
   ALPACA_STREAM_BASE_URL=ws://gops-simulator:8765 \
-  ALPACA_COLLECTION_SYMBOLS=NVDA,AMD,AVGO,MU,TSM,XOM,CVX,COP \
-  ALPACA_CHANNELS=trades \
+  ALPACA_COLLECTION_SYMBOLS=AMD,OKE \
+  ALPACA_CHANNELS=trades,quotes \
   ALPACA_ACTIVE_CHANNELS= \
-  ALPACA_MAX_TRADE_SYMBOLS=8 \
+  ALPACA_MAX_TRADE_SYMBOLS=2 \
   ALPACA_ENFORCE_FEED_SESSION_WINDOW=false
 
 kubectl rollout status deployment/gops-backend -n "${K8S_NAMESPACE}" --timeout=300s
+kubectl rollout status deployment/alfaka-market-processor -n "${K8S_NAMESPACE}" --timeout=300s
+kubectl rollout status deployment/trade-condition-executor -n "${K8S_NAMESPACE}" --timeout=300s
 kubectl rollout status deployment/alfaka-alpaca-ingestor-sip -n "${K8S_NAMESPACE}" --timeout=300s
 
 trap - ERR
-printf 'EKS simulator is ready. LIVE→SIM 토글을 누르면 5초 뒤 속보가 공개됩니다.\n'
+printf 'EKS simulator is ready. LIVE→SIM 전환 후 첫 다음 버튼으로 지정학 이벤트를 시작하세요.\n'
 printf '종료 후 반드시 AWS_PROFILE=%s scripts/aws/stop-dev-simulator.sh 를 실행하세요.\n' "${AWS_PROFILE:-gops-dev}"

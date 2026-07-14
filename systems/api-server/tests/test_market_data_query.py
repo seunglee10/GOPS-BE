@@ -3049,6 +3049,22 @@ class MarketDataQueryServiceTest(unittest.TestCase):
 
         self.assertEqual([item["symbol"] for item in payload["symbols"]], ["NVDA", "AAPL", "MSFT"])
 
+    def test_watchlist_read_uses_default_symbols_when_user_store_is_unavailable(self):
+        provider = FakeWatchlistProvider()
+        provider.redis_provider.redis.lrange = mock.Mock(side_effect=RuntimeError("redis unavailable"))
+        previous_provider = market_data_service.get_market_data_provider
+        previous_defaults = market_data_service.default_watchlist_symbols
+        market_data_service.get_market_data_provider = lambda: provider
+        market_data_service.default_watchlist_symbols = lambda: ["AAPL"]
+        try:
+            payload = market_data_service.watchlist_summaries(user_id="user-a")
+        finally:
+            market_data_service.get_market_data_provider = previous_provider
+            market_data_service.default_watchlist_symbols = previous_defaults
+
+        self.assertFalse(payload["persisted"])
+        self.assertEqual([item["symbol"] for item in payload["symbols"]], ["AAPL"])
+
     def test_watchlist_remove_preserves_active_chart_subscription_source(self):
         provider = FakeWatchlistProvider()
         redis_state = provider.redis_provider.redis

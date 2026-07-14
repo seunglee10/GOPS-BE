@@ -21,9 +21,10 @@ from systems.order.tests.kis_trader.fixtures.orders import sample_order_request
 
 
 class FakeSimulatorGateway:
-    def __init__(self):
+    def __init__(self, trace=None):
         self.mode = "live"
         self.calls = []
+        self.trace = trace
 
     def status(self):
         return {
@@ -40,11 +41,17 @@ class FakeSimulatorGateway:
     def set_mode(self, mode):
         self.mode = mode
         self.calls.append(("mode", mode))
+        if self.trace is not None:
+            self.trace.append(("gateway", mode))
         return self.status()
 
     def action(self, action):
         self.calls.append(("action", action))
         return self.status()
+
+    def set_phase(self, phase):
+        self.calls.append(("phase", phase))
+        return {**self.status(), "phase": phase, "phaseIndex": 6}
 
     def account(self, user_id):
         self.calls.append(("account", user_id))
@@ -72,27 +79,64 @@ class FakeSimulatorGateway:
         return {"news": [], "next_page_token": None}
 
 
+class FakeSimulatorMarketStateManager:
+    def __init__(self, trace):
+        self.trace = trace
+
+    def capture(self):
+        self.trace.append(("market-state", "capture"))
+
+    def restore(self):
+        self.trace.append(("market-state", "restore"))
+
+
 class SimulatorRoutesTest(unittest.TestCase):
     def setUp(self):
         os.environ["AUTH_ENABLED"] = "false"
         os.environ["KIS_ENV"] = "demo"
         os.environ["IDEMPOTENCY_HASH_SECRET"] = "test-secret"
-        self.gateway = FakeSimulatorGateway()
+        self.trace = []
+        self.gateway = FakeSimulatorGateway(self.trace)
         self.repository = InMemoryOrderRepository()
         self.app = create_app()
         self.app.state.simulator_gateway = self.gateway
+        self.app.state.simulator_market_state_manager = FakeSimulatorMarketStateManager(self.trace)
         self.app.state.order_repository = self.repository
         self.client = TestClient(self.app)
 
     def test_mode_control_is_exposed_to_the_frontend(self):
         initial = self.client.get("/api/simulator/status")
         started = self.client.put("/api/simulator/mode", json={"mode": "simulation"})
+        stopped = self.client.put("/api/simulator/mode", json={"mode": "live"})
 
         self.assertEqual(initial.status_code, 200)
         self.assertEqual(initial.json()["mode"], "live")
         self.assertEqual(started.status_code, 200)
         self.assertEqual(started.json()["mode"], "simulation")
-        self.assertEqual(self.gateway.calls, [("mode", "simulation")])
+        self.assertEqual(stopped.status_code, 200)
+        self.assertEqual(stopped.json()["mode"], "live")
+        self.assertEqual(self.gateway.calls, [("mode", "simulation"), ("mode", "live")])
+        self.assertEqual(
+            self.trace,
+            [
+                ("market-state", "capture"),
+                ("gateway", "simulation"),
+                ("gateway", "live"),
+                ("market-state", "restore"),
+            ],
+        )
+
+    def test_operator_can_jump_to_a_demo_phase_from_the_frontend(self):
+        self.gateway.mode = "simulation"
+
+        response = self.client.put(
+            "/api/simulator/phase",
+            json={"phase": "breaking-event"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["phase"], "breaking-event")
+        self.assertIn(("phase", "breaking-event"), self.gateway.calls)
 
     def test_simulation_holdings_replace_kis_with_semiconductor_dummy_account(self):
         self.gateway.mode = "simulation"

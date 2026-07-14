@@ -31,7 +31,7 @@ def render_control_dashboard() -> str:
     .clock span { color:var(--muted); }
     .track { position:relative; height:14px; margin:24px 0 12px; border-radius:99px; background:#25302c; overflow:hidden; }
     .progress { width:0; height:100%; background:linear-gradient(90deg,var(--mint),var(--amber)); transition:width .2s linear; }
-    .news-mark { position:absolute; top:0; bottom:0; left:1.666%; width:3px; background:var(--red); box-shadow:0 0 12px var(--red); }
+    .news-mark { position:absolute; top:0; bottom:0; left:70%; width:3px; background:var(--red); box-shadow:0 0 12px var(--red); }
     .track-labels { display:flex; justify-content:space-between; color:var(--muted); font-size:11px; }
     .phase { display:inline-flex; align-items:center; gap:7px; margin-top:16px; padding:6px 10px; border-radius:7px; color:var(--mint); background:#77f2b116; }
     .phase::before { content:""; width:7px; height:7px; border-radius:50%; background:currentColor; box-shadow:0 0 10px currentColor; }
@@ -44,6 +44,9 @@ def render_control_dashboard() -> str:
     .actions { display:grid; gap:8px; }
     .actions button { width:100%; border:1px solid var(--line); color:var(--ink); padding:11px; border-radius:10px; background:#18211e; cursor:pointer; font:inherit; }
     .actions button:hover { border-color:var(--mint); }
+    .phase-buttons { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; margin-top:10px; }
+    .phase-buttons button { padding:8px; font-size:11px; }
+    .phase-buttons button.active { border-color:var(--amber); color:var(--amber); }
     .actions .danger { color:#ffd6d3; border-color:#663532; }
     .account { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:14px; }
     .metric { padding:10px; border-left:2px solid var(--mint); background:#0b110f; }
@@ -66,17 +69,18 @@ def render_control_dashboard() -> str:
   </header>
   <section class="grid">
     <article class="panel hero">
-      <div class="clock"><div><div class="eyebrow">Scenario clock</div><strong id="clock">00:00.0</strong></div><span>총 05:00 · 속보 T+00:05</span></div>
+      <div class="clock"><div><div class="eyebrow">Scenario clock</div><strong id="clock">00:00.0</strong></div><span>총 05:00 · 이벤트 T+03:30</span></div>
       <div class="track"><div id="progress" class="progress"></div><i class="news-mark"></i></div>
-      <div class="track-labels"><span>시뮬레이션 시작</span><span>이란 속보</span><span>시장 영향 구간</span><span>종료</span></div>
+      <div class="track-labels"><span>시장 조망</span><span>차트·예약매매</span><span>지정학 이벤트</span><span>복기</span></div>
       <div id="phase" class="phase">LIVE 대기</div>
     </article>
     <article class="panel">
-      <h2>8종목 틱 상태</h2><div id="symbols" class="symbols"></div>
+      <h2>AMD · IFF · OKE 체결 상태</h2><div id="symbols" class="symbols"></div>
     </article>
     <aside class="panel">
       <h2>운영 제어</h2>
-      <div class="actions"><button id="pause">일시정지</button><button id="restart" class="danger">처음부터 다시 시작</button></div>
+      <div class="actions"><button id="pause">일시정지</button><button id="next">다음 시연 단계</button><button id="restart" class="danger">처음부터 다시 시작</button></div>
+      <div id="phaseButtons" class="phase-buttons"></div>
     </aside>
     <article class="panel">
       <h2>더미 계좌 · demo-user</h2><div id="account" class="empty">SIM 전환 시 반도체 포트폴리오를 준비합니다.</div>
@@ -97,16 +101,20 @@ async function refresh(){
     const s=await json('/api/control/status'); const sim=s.mode==='simulation';
     $('toggle').classList.toggle('on',sim); $('modeText').textContent=sim?'SIMULATION':'LIVE';
     $('clock').textContent=stamp(s.elapsedSeconds); $('progress').style.width=`${(s.elapsedSeconds/s.durationSeconds)*100}%`;
-    $('phase').textContent=sim?(s.phase==='pre-war'?'속보 전 · 기준 틱 송신':s.phase==='complete'?'시나리오 종료':'속보 후 · 충격 틱 송신'):'LIVE 대기';
+    $('phase').textContent=sim?`${s.phaseIndex+1}/${s.phases.length} · ${s.phaseLabel}`:'LIVE 대기';
     $('pause').textContent=s.state==='paused'?'계속 재생':'일시정지';
     $('symbols').innerHTML=s.symbols.map(q=>`<div class="quote"><div><b>${q.symbol}</b><small>${q.price?.toFixed(2)??'—'}</small></div><small class="${q.changePercent>=0?'up':'down'}">${q.changePercent==null?'—':(q.changePercent>=0?'+':'')+q.changePercent.toFixed(2)+'%'}</small></div>`).join('');
+    $('phaseButtons').innerHTML=s.phases.map(p=>`<button data-phase="${p.id}" class="${p.id===s.phase?'active':''}" ${sim?'':'disabled'}>${p.label}</button>`).join('');
+    $('phaseButtons').querySelectorAll('button').forEach(button=>button.onclick=async()=>{ await json('/api/control/phase',{method:'PUT',body:JSON.stringify({phase:button.dataset.phase})}); refresh(); });
+    $('next').disabled=!sim||!s.nextPhase; $('next').dataset.phase=s.nextPhase||'';
     if(s.runId!==lastRun){ if(lastRun!==null) log('새 시나리오 실행이 시작되었습니다.'); lastRun=s.runId; newsLogged=false; }
-    if(s.breakingNewsReleased&&!newsLogged){ log('[속보] 이란 휴전 붕괴 — 시장 충격 구간 진입',true); newsLogged=true; }
+    if(s.breakingNewsReleased&&!newsLogged){ log('[시뮬레이션 속보] 지정학 이벤트 — AMD 약세·OKE 강세 구간 진입',true); newsLogged=true; }
     if(sim){ const a=await json('/api/control/account?userId=demo-user'); const p=a.account; $('account').innerHTML=`<div class="account"><div class="metric"><small>총 평가</small><b>${money(p.totalValueForeign)}</b></div><div class="metric"><small>현금</small><b>${money(p.cashForeign)}</b></div><div class="metric"><small>미실현</small><b>${money(p.unrealizedPnlForeign)}</b></div></div><div class="positions">${Object.values(a.positions).map(v=>`<span>${v.symbol} ${v.quantity}주</span>`).join('')||'<span>보유 종목 없음</span>'}</div>`; }
   } catch(e){ console.error(e); }
 }
-$('toggle').onclick=async()=>{ const next=$('toggle').classList.contains('on')?'live':'simulation'; await json('/api/control/mode',{method:'PUT',body:JSON.stringify({mode:next})}); log(next==='simulation'?'SIMULATION 시작 — 5초 카운트다운':'LIVE 모드로 복귀'); refresh(); };
+$('toggle').onclick=async()=>{ const next=$('toggle').classList.contains('on')?'live':'simulation'; await json('/api/control/mode',{method:'PUT',body:JSON.stringify({mode:next})}); log(next==='simulation'?'SIMULATION 시작 — 시장 조망 단계':'LIVE 모드로 복귀'); refresh(); };
 $('pause').onclick=async()=>{ const action=$('pause').textContent.includes('계속')?'resume':'pause'; await json('/api/control/action',{method:'POST',body:JSON.stringify({action})}); refresh(); };
+$('next').onclick=async()=>{ const phase=$('next').dataset.phase; if(!phase)return; await json('/api/control/phase',{method:'PUT',body:JSON.stringify({phase})}); refresh(); };
 $('restart').onclick=async()=>{ await json('/api/control/action',{method:'POST',body:JSON.stringify({action:'restart'})}); log('계좌와 시나리오를 초기화했습니다.'); refresh(); };
 refresh(); setInterval(refresh,250);
 </script>

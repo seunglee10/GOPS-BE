@@ -81,11 +81,29 @@ market correlation/relative-strength context로만 계산한다. context가 없�
 
 ## Local Demo Simulator Boundary
 
-토요일 시연에서는 `GOPS_SIMULATOR_URL`이 가리키는 로컬 시뮬레이터를
-`/api/simulator/*` route로 프록시한다. SIM 모드일 때만 계좌 조회와 주문을
-시뮬레이터의 메모리 원장으로 보내며, 이 경로에서는 KIS 주문 outbox를 만들지 않는다.
-바스켓 주문도 사용자의 명시적인 버튼 입력과 `Idempotency-Key`가 있어야 실행한다.
-속보 수신은 주문이나 차트 레이아웃 변경을 자동으로 실행하지 않는다.
+토요일 시연에서는 `GOPS_SIMULATOR_URL`이 가리키는 시뮬레이터를
+`/api/simulator/*` route로 프록시한다. `PUT /api/simulator/phase`는 시나리오
+manifest에 정의된 단계 ID만 받는다. 운영자는 시장 조망·추천·기업 분석·차트 분석·
+예약매매·본장 화면을 자유롭게 설명한 뒤, 첫 입력으로 지정학 이벤트에, 다음 입력으로
+장 마감·복기 시점에 대기 없이 이동할 수 있다.
+
+기본 `saturday-demo-amd-iff-oke` 시나리오는 호환성을 위해 기존 ID를 유지하지만,
+실시간 재생 종목은 AMD/OKE다. 두 종목의 합성 trade와 quote를
+같은 시각·가격 범위로 함께 보낸다. 재생 payload의 `simulator.source`가
+`gops-simulator`일 때 market envelope는 선언된 `marketSession=regular`를 유지하고
+normalized trade/quote/candle에 simulation metadata를 전파한다. ClickHouse loader와
+raw/processed S3 sink는 이 표식이 있는 행을 영구 적재하지 않는다. Redis 실시간 상태는
+시연 동안만 사용한다. `PUT /api/simulator/mode`가 SIM으로 전환되기 직전에
+AMD/OKE의 캔들·체결·호가·오더플로우 Redis 상태를 보관하고, LIVE 전환은
+재생을 멈춘 뒤 합성 상태를 제거하고 보관본을 복원한 다음 응답한다. EKS 종료
+스크립트도 같은 복원 명령을 사용하므로 토글과 전체 인프라 종료가 같은 차트 복구
+계약을 따른다. 보관본이 없으면 합성 키 제거만 수행한다.
+
+SIM 모드일 때 일반 `/api/orders`는 시뮬레이터 메모리 원장을 사용하고 KIS order
+outbox를 만들지 않는다. 영구 예약매매는 별도 paper 경계를 사용한다. EKS 시연
+스크립트는 `trade-condition-executor`를 `paper`로 전환하고 quote를
+`paper-order-matcher`에 공급한다. 바스켓·일반·예약 주문은 모두 사용자의 명시적인
+입력과 기존 멱등성/사전 리스크 검사를 요구한다. 속보 수신만으로 주문을 실행하지 않는다.
 
 ## Persistent Paper Trading Boundary
 

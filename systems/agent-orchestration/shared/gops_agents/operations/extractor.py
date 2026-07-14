@@ -6,6 +6,7 @@ from typing import Any
 
 CHART_REFERENCE_TYPES = {"chart.candle", "chart.range", "chart.orderFlow", "chart.pattern", "chart.drawing"}
 NEWS_REFERENCE_TYPES = {"news.article", "news.dailySummary"}
+RECOMMENDATION_REFERENCE_TYPES = {"recommendation.stock"}
 ONTOLOGY_REFERENCE_TYPES = {"ontology.entity"}
 FINANCIAL_REFERENCE_TYPES = {"financial.metric"}
 
@@ -66,6 +67,14 @@ def build_agent_operation_ir(
             ambiguities.append(ambiguity("newsAnchor", "연결할 뉴스 기사나 날짜가 필요합니다."))
         if not has_chart_ref(ref_types) and not has_move_terms(text):
             ambiguities.append(ambiguity("priceMoveAnchor", "연결할 차트 봉이나 가격 움직임이 필요합니다."))
+    elif has_recommendation_ref(ref_types) and (has_explain_terms(text) or has_recommendation_terms(text)):
+        operations.append(analysis_operation(
+            "explain_recommendation",
+            symbol=symbol,
+            references=refs,
+            required_sources=["market", "news", "financial"],
+            confidence=0.88,
+        ))
     elif has_chart_ref(ref_types) and is_contextual_chart_request(text):
         operations.append(analysis_operation(
             "explain_price_move",
@@ -194,10 +203,17 @@ def build_context_window_spec(
 ) -> dict[str, Any]:
     anchors = [reference_summary(item) for item in references]
     chart_document = chart_context.get("chartDocument") if isinstance(chart_context.get("chartDocument"), dict) else {}
+    required_snapshots = roles_to_snapshots(roles)
+    reference_types = {str(item.get("type") or "") for item in references}
+    if reference_types & RECOMMENDATION_REFERENCE_TYPES and not reference_types & CHART_REFERENCE_TYPES:
+        required_snapshots = [
+            "market_snapshot" if item == "chart_analysis_snapshot" else item
+            for item in required_snapshots
+        ]
     return {
         "anchors": anchors,
         "dateHints": dates,
-        "requiredSnapshots": roles_to_snapshots(roles),
+        "requiredSnapshots": required_snapshots,
         "chart": {
             "symbol": chart_document.get("symbol"),
             "timeframe": chart_document.get("timeframe"),
@@ -302,6 +318,10 @@ def has_chart_ref(ref_types: set[str]) -> bool:
     return bool(ref_types & CHART_REFERENCE_TYPES)
 
 
+def has_recommendation_ref(ref_types: set[str]) -> bool:
+    return bool(ref_types & RECOMMENDATION_REFERENCE_TYPES)
+
+
 def has_chart_reference(references: list[dict[str, Any]]) -> bool:
     return any(str(item.get("type") or "") in CHART_REFERENCE_TYPES for item in references)
 
@@ -312,6 +332,10 @@ def has_explain_terms(text: str) -> bool:
 
 def has_news_terms(text: str) -> bool:
     return has_any(text, ("뉴스", "기사", "헤드라인", "news", "headline"))
+
+
+def has_recommendation_terms(text: str) -> bool:
+    return has_any(text, ("추천", "추천 종목", "추천주", "recommendation", "recommended"))
 
 
 def has_move_terms(text: str) -> bool:

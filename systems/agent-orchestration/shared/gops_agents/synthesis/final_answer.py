@@ -1939,6 +1939,8 @@ def selected_reference_label(provider_evidence: list[EvidenceItem]) -> str:
             return "선택한 뉴스"
         if ref_type == "news.dailySummary":
             return "선택한 일일 뉴스 요약"
+        if ref_type == "recommendation.stock":
+            return "선택한 추천 종목"
     return "선택한 reference"
 
 

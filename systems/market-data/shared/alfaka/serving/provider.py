@@ -5,6 +5,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from alfaka.alpaca.feed_profiles import market_session_for_timestamp, visible_extended_session_windows
+from alfaka.common.symbols import is_crypto_symbol
 from alfaka.serving.closed_watermark import live_candle_after_latest_closed
 from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider, with_higher_timeframe_closed_state
 from alfaka.serving.cursors import timestamp_from_cursor
@@ -20,6 +21,7 @@ from alfaka.serving.intervals import (
 )
 from alfaka.serving.moving_average import MA_WINDOWS, attach_moving_averages
 from alfaka.serving.redis_provider import RedisMarketDataProvider
+from alfaka.serving.session_buckets import aggregate_visible_extended_session_candles
 from alfaka.serving.symbol_registry import SymbolRegistry
 from alfaka.serving.time_utils import canonical_utc_timestamp, parse_utc_time
 from alfaka.serving.volume_profile import compute_volume_profile_payload
@@ -27,6 +29,7 @@ from alfaka.serving.volume_profile import compute_volume_profile_payload
 
 logger = logging.getLogger(__name__)
 TARGET_FLOOR_TOLERANCE = timedelta(days=3)
+REDIS_RECENT_CANDLE_HARD_CAP = 120
 
 
 class MarketDataProvider:
@@ -39,6 +42,7 @@ class MarketDataProvider:
         interval = normalize_chart_interval(interval)
         limit = resolve_candle_limit(interval, limit)
         query_limit = moving_average_query_limit(interval, limit, ma_windows)
+        reference = datetime.now(timezone.utc)
         implicit_from_time = None
         if from_time and to_time:
             clickhouse_from_time = moving_average_query_from_time(interval, from_time, ma_windows)
@@ -58,9 +62,21 @@ class MarketDataProvider:
             clickhouse_from_time = None
         filter_from_time = from_time or implicit_from_time
         range_query = bool(before or from_time or to_time)
-        redis_candles = filter_stock_chart_candles(self.redis_provider.recent_candles(symbol, interval, query_limit))
+        redis_candles = filter_stock_chart_candles(
+            self.redis_provider.recent_candles(symbol, interval, query_limit),
+            now=reference,
+        )
         live_candle = self._live_candle(symbol, interval)
         closed_watermark = self._closed_watermark(symbol, interval)
+        redis_extended_candles = self._active_extended_candles_from_redis(
+            symbol,
+            interval,
+            query_limit,
+            now=reference,
+            before=before,
+            from_time=clickhouse_from_time,
+            to_time=to_time,
+        )
         if range_query:
             redis_candles = filter_candles_for_requested_window(
                 redis_candles,
@@ -74,10 +90,11 @@ class MarketDataProvider:
                 from_time=filter_from_time,
                 to_time=to_time,
             ) else None
+        redis_snapshot_candles = merge_candles(redis_candles, redis_extended_candles)
         coverage = None
-        if len(redis_candles) >= query_limit and redis_recent_window_is_current(redis_candles, redis_freshness_from_time, range_query):
-            live_candle = live_candle_after_latest_closed(live_candle, redis_candles, watermark=closed_watermark)
-            merged_redis = merge_candles(redis_candles, [live_candle] if live_candle else [])
+        if len(redis_snapshot_candles) >= query_limit and redis_recent_window_is_current(redis_snapshot_candles, redis_freshness_from_time, range_query):
+            live_candle = live_candle_after_latest_closed(live_candle, redis_snapshot_candles, watermark=closed_watermark)
+            merged_redis = merge_candles(redis_snapshot_candles, [live_candle] if live_candle else [])
             payload = snapshot(symbol=symbol, interval=interval, candles=attach_moving_averages(merged_redis, windows=ma_windows, overwrite=True)[-limit:])
             payload["_sourceTrace"] = {
                 "redis": {"checked": True, "hit": len(merged_redis) > 0, "rowCount": len(merged_redis)},
@@ -99,18 +116,23 @@ class MarketDataProvider:
             before=before,
             from_time=clickhouse_from_time,
             to_time=to_time,
-        ))
+        ), now=reference)
         if interval in {"1m", *INTRADAY_DERIVED_INTERVALS} and not range_query and len(clickhouse_candles) < query_limit and clickhouse_from_time and not clickhouse_candles:
             latest_candles = filter_stock_chart_candles(self.clickhouse_provider.candles(
                 symbol,
                 interval,
                 query_limit,
-            ))
+            ), now=reference)
             if len(latest_candles) > len(clickhouse_candles):
                 clickhouse_candles = latest_candles
-        live_candle = live_candle_after_latest_closed(live_candle, clickhouse_candles, redis_candles, watermark=closed_watermark)
+        live_candle = live_candle_after_latest_closed(
+            live_candle,
+            clickhouse_candles,
+            redis_snapshot_candles,
+            watermark=closed_watermark,
+        )
         live_group = [live_candle] if live_candle else []
-        merged = merge_candles(clickhouse_candles, redis_candles, live_group)
+        merged = merge_candles(clickhouse_candles, redis_snapshot_candles, live_group)
         computed = attach_moving_averages(merged, windows=ma_windows, overwrite=True)
         if range_query:
             computed = filter_candles_for_requested_window(
@@ -124,7 +146,7 @@ class MarketDataProvider:
         source = first_value(candles, "source", "alpaca")
         payload = snapshot(symbol=symbol, interval=interval, candles=candles, source=source, feed=feed)
         payload["_sourceTrace"] = {
-            "redis": {"checked": True, "hit": len(redis_candles) > 0 or live_candle is not None, "rowCount": len(redis_candles) + len(live_group)},
+            "redis": {"checked": True, "hit": len(redis_snapshot_candles) > 0 or live_candle is not None, "rowCount": len(merge_candles(redis_snapshot_candles, live_group))},
             "clickhouse": {"checked": True, "hit": len(clickhouse_candles) > 0, "rowCount": len(clickhouse_candles)},
         }
         return with_coverage_metadata(
@@ -135,6 +157,44 @@ class MarketDataProvider:
             from_time=filter_from_time,
             to_time=to_time,
         )
+
+    def _active_extended_candles_from_redis(
+        self,
+        symbol,
+        interval,
+        limit,
+        *,
+        now,
+        before=None,
+        from_time=None,
+        to_time=None,
+    ):
+        if interval not in INTRADAY_DERIVED_INTERVALS or is_crypto_symbol(symbol):
+            return []
+        windows = visible_extended_session_windows(now)
+        if not windows:
+            return []
+
+        window_minutes = sum(max(1, int((end - start).total_seconds() // 60)) for _session, start, end in windows)
+        source_limit = min(REDIS_RECENT_CANDLE_HARD_CAP, window_minutes)
+        source_candles = self.redis_provider.recent_candles(symbol, "1m", source_limit)
+        live_source = self._live_candle(symbol, "1m")
+        source_candles = filter_stock_chart_candles(
+            merge_candles(source_candles, [live_source] if live_source else []),
+            now=now,
+        )
+        source_candles = filter_candles_for_requested_window(
+            source_candles,
+            before=before,
+            from_time=from_time,
+            to_time=to_time,
+        )
+        return aggregate_visible_extended_session_candles(
+            source_candles,
+            interval,
+            now=now,
+            source_interval="1m",
+        )[-limit:]
 
     def candles_since_cursor(self, symbol, interval, cursor, limit=500):
         interval = normalize_chart_interval(interval)
