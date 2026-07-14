@@ -46,6 +46,10 @@ class FakeSimulatorGateway:
         self.calls.append(("action", action))
         return self.status()
 
+    def set_phase(self, phase):
+        self.calls.append(("phase", phase))
+        return {**self.status(), "phase": phase, "phaseIndex": 6}
+
     def account(self, user_id):
         self.calls.append(("account", user_id))
         return {
@@ -93,6 +97,18 @@ class SimulatorRoutesTest(unittest.TestCase):
         self.assertEqual(started.status_code, 200)
         self.assertEqual(started.json()["mode"], "simulation")
         self.assertEqual(self.gateway.calls, [("mode", "simulation")])
+
+    def test_operator_can_jump_to_a_demo_phase_from_the_frontend(self):
+        self.gateway.mode = "simulation"
+
+        response = self.client.put(
+            "/api/simulator/phase",
+            json={"phase": "breaking-event"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["phase"], "breaking-event")
+        self.assertIn(("phase", "breaking-event"), self.gateway.calls)
 
     def test_simulation_holdings_replace_kis_with_semiconductor_dummy_account(self):
         self.gateway.mode = "simulation"

@@ -10,6 +10,27 @@ SIMULATOR_ROOT = REPO_ROOT / "systems" / "simulator"
 
 
 class SimulatorEksDeploymentContractTests(unittest.TestCase):
+    def test_simulator_image_contains_the_operator_controlled_saturday_scenario(self):
+        scenario_path = (
+            SIMULATOR_ROOT
+            / "data"
+            / "scenarios"
+            / "saturday-demo-amd-iff-oke"
+            / "scenario.json"
+        )
+        events_path = scenario_path.with_name("events.jsonl")
+
+        scenario = json.loads(scenario_path.read_text(encoding="utf-8"))
+        event_types = {
+            json.loads(line)["payload"]["T"]
+            for line in events_path.read_text(encoding="utf-8").splitlines()
+            if line
+        }
+
+        self.assertEqual(scenario["symbols"], ["AMD", "IFF", "OKE"])
+        self.assertEqual(event_types, {"t", "q"})
+        self.assertEqual(len(scenario["phases"]), 8)
+
     def test_simulator_image_contains_the_five_minute_demo_scenario(self):
         scenario_path = (
             SIMULATOR_ROOT
@@ -90,7 +111,10 @@ class SimulatorEksDeploymentContractTests(unittest.TestCase):
         self.assertIn("ALPACA_STREAM_BASE_URL=ws://gops-simulator:8765", start_script)
         self.assertIn("/api/control/mode", start_script)
         self.assertIn('{"mode":"live"}', start_script)
-        self.assertIn("NVDA,AMD,AVGO,MU,TSM,XOM,CVX,COP", start_script)
+        self.assertIn("AMD,IFF,OKE", start_script)
+        self.assertIn("ALPACA_CHANNELS=trades,quotes", start_script)
+        self.assertIn("ORDER_FLOW_PINNED_SYMBOLS=AMD,IFF,OKE", start_script)
+        self.assertIn("TRADE_CONDITION_EXECUTION_MODE=paper", start_script)
         self.assertIn("alfaka-alpaca-ingestor-sip", start_script)
         self.assertNotIn("alfaka-alpaca-ingestor-boats", start_script)
         self.assertNotIn("alfaka-alpaca-ingestor-crypto", start_script)
@@ -103,6 +127,7 @@ class SimulatorEksDeploymentContractTests(unittest.TestCase):
         )
         self.assertNotIn("ALPACA_ACTIVE_CHANNELS-", stop_script)
         self.assertIn("gops-simulator --replicas=0", stop_script)
+        self.assertIn("TRADE_CONDITION_EXECUTION_MODE=demo", stop_script)
 
         for script in ("start-dev-simulator.sh", "stop-dev-simulator.sh"):
             subprocess.run(
