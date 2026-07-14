@@ -91,3 +91,13 @@ def test_paper_trading_migration_declares_isolated_account_and_order_tables():
         assert f"CREATE TABLE IF NOT EXISTS {table_name}" in sql
     assert "UNIQUE (user_id, idempotency_key_hash)" in sql
     assert "WHERE status = 'pending'" in sql
+
+
+def test_trade_condition_migration_declares_durable_conditions_and_alert_delivery_flag():
+    [migration] = [path for path in migration_files() if path.name == "0008_trade_conditions.sql"]
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "ADD COLUMN IF NOT EXISTS notifications_enabled" in sql
+    assert "CREATE TABLE IF NOT EXISTS trade_conditions" in sql
+    assert "trade_conditions_user_proposal_unique" in sql
+    assert "trade_conditions_trigger_event_unique" in sql

@@ -428,6 +428,13 @@ patches:
       - op: replace
         path: /spec/replicas
         value: 1
+  - target:
+      kind: Deployment
+      name: trade-condition-executor
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/envFrom/1/secretRef/optional
+        value: false
 images:
   - name: YOUR_ECR_REPOSITORY/gops-market-ingestor
     newName: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-ingestor

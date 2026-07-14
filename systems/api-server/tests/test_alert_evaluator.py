@@ -63,8 +63,9 @@ class FakeProjection:
 
 
 class FakeRepository:
-    def __init__(self, trigger_result=None):
+    def __init__(self, trigger_result=None, alert=None):
         self.trigger_result = trigger_result
+        self.alert = alert
         self.trigger_records = []
         self.notifications = []
 
@@ -80,6 +81,9 @@ class FakeRepository:
     def create_notification(self, **kwargs):
         self.notifications.append(kwargs)
         return {"id": 1, **kwargs}
+
+    def get_alert(self, user_sub, alert_id):
+        return self.alert
 
 
 class FakeOutbox:
@@ -233,6 +237,51 @@ def test_outbox_sender_publishes_even_when_notification_event_is_duplicate() -> 
     assert len(repo.notifications) == 2
     assert len(broker.published) == 2
     assert len(producer.sent) == 2
+
+
+def test_outbox_sender_skips_user_notification_but_keeps_execution_event_when_disabled() -> None:
+    class Broker:
+        def __init__(self):
+            self.published = []
+
+        def publish_user(self, user_sub, payload):
+            self.published.append((user_sub, payload))
+
+    class Producer:
+        def __init__(self):
+            self.sent = []
+
+        def send(self, topic, key, value):
+            self.sent.append((topic, key, value))
+            return None
+
+    repo = FakeRepository(alert={"id": 1, "notifications_enabled": False})
+    broker = Broker()
+    producer = Producer()
+    sender = AlertOutboxSender(
+        redis_client=None,
+        repository=repo,
+        broker=broker,
+        producer=producer,
+        triggered_topic="alerts.triggered.v1",
+        stream="alerts:outbox",
+        group="group",
+        consumer_name="consumer",
+    )
+    payload = {
+        "eventId": "event-no-notification",
+        "type": "alert.price_cross",
+        "alertId": 1,
+        "userSub": "user-1",
+        "symbol": "NVDA",
+    }
+
+    result = sender.deliver(payload)
+
+    assert result["reason"] == "notifications_disabled"
+    assert repo.notifications == []
+    assert broker.published == []
+    assert len(producer.sent) == 1
 
 
 def test_outbox_sender_ensures_group_once_after_busygroup() -> None:

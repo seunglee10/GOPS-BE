@@ -26,6 +26,36 @@ not create per-page jobs or call `AgentOrchestrator.analyze()` in the request ha
 않는다. sync compatibility가 필요하면 `agent-orchestrator` HTTP endpoint를
 호출한다.
 
+## Price Condition Command Boundary
+
+가격 조건과 예약 주문은 agent 분석 생성과 분리된 backend/order 기능이다.
+
+```text
+GET    /api/trade-conditions
+POST   /api/trade-conditions
+PATCH  /api/trade-conditions/{condition_id}
+DELETE /api/trade-conditions/{condition_id}
+POST   /api/trade-conditions/commands
+```
+
+수동 등록은 현재 서버 가격과 발동 방향, 양수 지정가, 정수 수량을 검증한다.
+Agent 후속 명령은 클라이언트가 보낸 가격을 신뢰하지 않고 `analysisId`와
+`proposalId`만 받아 사용자 소유 report의 `tradeConditionProposals[]`를 다시
+조회한다. `걸어줘`, `등록해줘`, `예약해줘` 같은 명시적 등록 표현과 선택적 수량을
+규칙으로 해석하며, 모호하거나 수량이 없거나 30분이 지난 제안은 저장하지 않는다.
+같은 사용자와 proposal ID 조합은 멱등이다.
+
+각 조건은 one-shot `alerts.price_cross` 행과 PostgreSQL transaction으로 함께
+저장된다. 알림 끄기는 WebSocket/notification 생성만 생략하며 가격 평가와 예약
+주문 이벤트는 유지한다. 일시정지는 alert 평가도 중단한다. 트리거된 조건은 다시
+감시 상태로 되돌릴 수 없다.
+
+`trade-condition-executor`는 `alerts.triggered.v1`을 별도 consumer group으로
+읽고 조건을 한 번 점유한다. `sim`/`paper`는 영구 가상계좌에, `demo`는 기존
+orders/outbox 계약에 같은 결정적 멱등키로 제출한다. 두 경로 모두 기존 사전 리스크
+검사를 통과해야 하며, KIS 실계좌 모드는 사용하지 않는다. 같은 Kafka 이벤트가
+재전달되거나 주문 접수 뒤 상태 저장이 실패해도 같은 멱등키로 복구한다.
+
 ## Local Demo Simulator Boundary
 
 토요일 시연에서는 `GOPS_SIMULATOR_URL`이 가리키는 로컬 시뮬레이터를
@@ -491,6 +521,8 @@ Geometry payload는 활성 후보 `patterns[]`, 최고 점수 `primaryPattern`, 
   실패를 성공 처리하거나 request offset을 commit하지 않는다. 로컬 기본값만
   `false`로 유지한다.
 - API는 order/account/broker flow를 agent report 생성과 섞지 않는다.
+- 가격 조건 command route는 완료 report를 읽기 전용 제안 원본으로만 사용하며,
+  report 생성 route나 agent worker에서 주문을 제출하지 않는다.
 
 ## Validation
 

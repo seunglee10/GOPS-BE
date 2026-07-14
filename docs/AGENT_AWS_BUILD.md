@@ -148,6 +148,11 @@ systems/api-server/pods/api-server/gops-backend
 프로필이 저장된 사용자에 대해 정규장 09:45/12:45/15:45 ET 추천 슬롯을 멱등
 생성하고, 기존 notifications Redis/WebSocket 경로로 추천 변경 알림을 발행한다.
 
+같은 image는 `app.trade_conditions.executor`도 실행한다. 이 consumer는
+`alerts.triggered.v1`의 price-cross 이벤트를 `gops-trade-condition-executor-v1`
+group으로 읽고 PostgreSQL 조건을 점유한 뒤 기존 paper 또는 orders/outbox 계약으로
+한 번만 주문을 제출한다. Agent image나 LLM process에서는 실행하지 않는다.
+
 SEC companyfacts backfill은 `gops-agent-orchestrator`가 아니라
 `gops-market-storage` image에서 실행한다. 해당 image에는
 `systems/fundamentals`와 `systems/market-data/shared`가 포함되어야 한다.
@@ -212,6 +217,7 @@ infra/k8s/base/app/deployment-deep-analysis-worker.yaml
 infra/k8s/base/app/deployment-agent-event-detector.yaml
 infra/k8s/base/app/deployment-agent-notification-publisher.yaml
 infra/k8s/base/app/deployment-recommendation-worker.yaml
+infra/k8s/base/app/deployment-trade-condition-executor.yaml
 ```
 
 The AWS in-cluster overlay keeps `recommendation-worker` and
@@ -324,6 +330,13 @@ history, while changed positions, cash, valuations, or transaction states remain
 Persistent paper trading requires `0006_paper_trading.sql`. Changes to
 `paper-order-matcher` select `order-worker`, so the same automatic migration gate
 applies the paper account schema before the matcher and backend workloads roll out.
+
+가격 조건 기능은 order migration `0008_trade_conditions.sql`이 필요하다. 이
+migration은 alert notification delivery flag와 사용자 소유 조건·proposal·trigger
+멱등 상태를 추가한다. backend/agent/order-worker image를 적용하기 전에 기존 자동
+order migration gate로 먼저 실행해야 한다. base ConfigMap은 실행 모드를 `off`로
+두고, 로컬 compose는 `sim`, AWS dev overlay는 KIS v1 제한에 맞춰 `demo`를 사용한다.
+`demo`도 사전 리스크 검사와 기존 orders/outbox/KIS demo adapter를 우회하지 않는다.
 
 Market processor deploys as two runtime units from the same
 `gops-market-processor` image. `alfaka-market-processor` handles trades, bars,
@@ -439,6 +452,16 @@ AGENT_NOTIFICATION_DECISIONS_TOPIC
 AGENT_MARKET_EVENTS_TOPIC
 AGENT_DLQ_TOPIC
 AGENT_PUBLISH_TO_KAFKA
+TRADE_CONDITION_TRIGGER_TOPIC
+TRADE_CONDITION_EXECUTOR_GROUP_ID
+```
+
+Price-condition execution env:
+
+```text
+TRADE_CONDITION_COMMANDS_ENABLED
+TRADE_CONDITION_EXECUTION_MODE   # off | sim | paper | demo
+TRADE_CONDITION_RISK_REQUIRED
 ```
 
 AWS stage는 MSK를 강제하지 않는다. 현 구조는 다음 staged path를 허용한다.

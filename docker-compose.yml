@@ -1520,6 +1520,7 @@ services:
       ALERT_OUTBOX_STREAM: "alerts:outbox"
       ALERT_OUTBOX_GROUP: "gops-alert-outbox-senders"
       ALERT_RECONCILE_INTERVAL_SECONDS: "${ALERT_RECONCILE_INTERVAL_SECONDS:-60}"
+      TRADE_CONDITION_COMMANDS_ENABLED: "${TRADE_CONDITION_COMMANDS_ENABLED:-true}"
       ORDER_REPOSITORY: "postgres"
       KIS_ENV: "${KIS_ENV:-demo}"
       KIS_SECRET_NAME: "${KIS_SECRET_NAME:-dev/kis}"
@@ -1647,6 +1648,41 @@ services:
       ALERT_OUTBOX_GROUP: "gops-alert-outbox-senders"
       ALERT_RECONCILE_INTERVAL_SECONDS: "${ALERT_RECONCILE_INTERVAL_SECONDS:-60}"
     command: ["python", "-u", "-m", "app.alerts.evaluator"]
+    restart: unless-stopped
+    networks:
+      - data_net
+      - streaming_net
+
+  trade-condition-executor:
+    image: gops-api-server
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-backend
+    container_name: alfaka-trade-condition-executor
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      order-migrations:
+        condition: service_completed_successfully
+    environment:
+      REDIS_URL: "redis://redis:6379/0"
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      DATABASE_URL: "postgresql://gops:${POSTGRES_PASSWORD:-gops_dev_password}@postgres:5432/gops"
+      TRADE_CONDITION_TRIGGER_TOPIC: "alerts.triggered.v1"
+      TRADE_CONDITION_EXECUTOR_GROUP_ID: "gops-trade-condition-executor-v1"
+      TRADE_CONDITION_EXECUTION_MODE: "${TRADE_CONDITION_EXECUTION_MODE:-sim}"
+      TRADE_CONDITION_RISK_REQUIRED: "${TRADE_CONDITION_RISK_REQUIRED:-true}"
+      PAPER_REPOSITORY: "postgres"
+      PAPER_STARTING_CASH: "${PAPER_STARTING_CASH:-100000.00}"
+      ORDER_REPOSITORY: "postgres"
+      KAFKA_ACCOUNT_ALIAS: "${KAFKA_ACCOUNT_ALIAS:-demo-account}"
+      IDEMPOTENCY_HASH_SECRET: "${IDEMPOTENCY_HASH_SECRET:-local-dev-idempotency-secret}"
+      KIS_ENV: "${KIS_ENV:-demo}"
+    command: ["python", "-u", "-m", "app.trade_conditions.executor"]
     restart: unless-stopped
     networks:
       - data_net

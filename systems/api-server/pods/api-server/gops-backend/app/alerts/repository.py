@@ -28,6 +28,7 @@ class AlertCreate:
     repeat: bool = False
     repeat_limit: int | None = 1
     status: str = "active"
+    notifications_enabled: bool = True
     expires_at: datetime | None = None
 
 
@@ -45,6 +46,9 @@ class AlertRepository:
         raise NotImplementedError
 
     def update_alert_status(self, user_sub: str, alert_id: int, status: str) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    def update_notifications_enabled(self, user_sub: str, alert_id: int, enabled: bool) -> dict[str, Any] | None:
         raise NotImplementedError
 
     def record_alert_trigger(self, user_sub: str, alert_id: int) -> dict[str, Any] | None:
@@ -117,9 +121,9 @@ class PostgresAlertRepository(AlertRepository):
                 """
                 INSERT INTO alerts (
                     user_sub, symbol, type, direction, target_price, change_pct,
-                    window_min, repeat, repeat_limit, status, expires_at
+                    window_min, repeat, repeat_limit, status, notifications_enabled, expires_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING *
                 """,
                 (
@@ -133,6 +137,7 @@ class PostgresAlertRepository(AlertRepository):
                     alert.repeat,
                     alert.repeat_limit,
                     alert.status,
+                    alert.notifications_enabled,
                     alert.expires_at,
                 ),
             ).fetchone()
@@ -165,6 +170,15 @@ class PostgresAlertRepository(AlertRepository):
                 RETURNING *
                 """,
                 (status, user_sub, alert_id),
+            ).fetchone()
+            conn.commit()
+            return _json_ready(dict(row)) if row else None
+
+    def update_notifications_enabled(self, user_sub: str, alert_id: int, enabled: bool) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "UPDATE alerts SET notifications_enabled = %s WHERE user_sub = %s AND id = %s RETURNING *",
+                (enabled, user_sub, alert_id),
             ).fetchone()
             conn.commit()
             return _json_ready(dict(row)) if row else None
@@ -347,6 +361,7 @@ class InMemoryAlertRepository(AlertRepository):
             "repeat_limit": alert.repeat_limit,
             "triggered_count": 0,
             "status": alert.status,
+            "notifications_enabled": alert.notifications_enabled,
             "created_at": datetime.now(timezone.utc),
             "expires_at": alert.expires_at,
         }
@@ -367,6 +382,13 @@ class InMemoryAlertRepository(AlertRepository):
         if not row or row["user_sub"] != user_sub:
             return None
         row["status"] = status
+        return _json_ready(row)
+
+    def update_notifications_enabled(self, user_sub: str, alert_id: int, enabled: bool) -> dict[str, Any] | None:
+        row = self.alerts.get(alert_id)
+        if not row or row["user_sub"] != user_sub:
+            return None
+        row["notifications_enabled"] = bool(enabled)
         return _json_ready(row)
 
     def record_alert_trigger(self, user_sub: str, alert_id: int) -> dict[str, Any] | None:

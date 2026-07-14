@@ -256,23 +256,31 @@ class AlertOutboxSender:
         return delivered
 
     def deliver(self, payload: dict[str, Any]) -> dict[str, Any]:
-        notification = self.repository.create_notification(
-            user_sub=str(payload["userSub"]),
-            alert_id=int(payload["alertId"]) if payload.get("alertId") is not None else None,
-            event_id=str(payload["eventId"]),
-            notification_type=str(payload["type"]),
-            payload=payload,
-        )
-        websocket_payload = {
-            "type": "notification",
-            "notification": notification,
-            "event": payload,
-        }
-        self.broker.publish_user(str(payload["userSub"]), websocket_payload)
+        alert = payload.get("alert") if isinstance(payload.get("alert"), dict) else {}
+        get_alert = getattr(self.repository, "get_alert", None)
+        if callable(get_alert) and payload.get("alertId") is not None:
+            current_alert = get_alert(str(payload["userSub"]), int(payload["alertId"]))
+            if isinstance(current_alert, dict):
+                alert = current_alert
+        notification = None
+        if alert.get("notifications_enabled", True) is not False:
+            notification = self.repository.create_notification(
+                user_sub=str(payload["userSub"]),
+                alert_id=int(payload["alertId"]) if payload.get("alertId") is not None else None,
+                event_id=str(payload["eventId"]),
+                notification_type=str(payload["type"]),
+                payload=payload,
+            )
+            websocket_payload = {
+                "type": "notification",
+                "notification": notification,
+                "event": payload,
+            }
+            self.broker.publish_user(str(payload["userSub"]), websocket_payload)
         future = self.producer.send(self.triggered_topic, key=str(payload.get("symbol") or payload["alertId"]), value=payload)
         if hasattr(future, "get"):
             future.get(timeout=float(os.getenv("ALERT_KAFKA_SEND_TIMEOUT_SECONDS", "10")))
-        return notification
+        return notification or {"skipped": True, "reason": "notifications_disabled", "eventId": payload.get("eventId")}
 
 
 def run() -> None:

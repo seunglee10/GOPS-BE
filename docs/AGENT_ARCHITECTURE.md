@@ -42,6 +42,13 @@ GOPS 에이전트는 사용자 질의를 받아 시장 데이터, 뉴스, 온톨
 에이전트는 절대 실주문을 실행하지 않는다. 주문 관련 의사결정이 필요하면
 분석 근거와 사용자 확인을 위한 UI 제안까지만 만든다.
 
+가격 예약 주문도 이 경계를 유지한다. 에이전트는 원문 답변에서 가격을 다시
+추출하지 않고, 인증된 분석 요청의 구조화된 차트 봉으로
+`tradeConditionProposals[]`를 결정론적으로 만든다. 이 제안에는 안정적인
+`proposalId`, 종목, 매수/매도, 발동 방향·가격, 지정가, 수량 누락 여부와 30분
+만료 시각만 담긴다. 후속 사용자 문장을 해석하고 조건을 저장하거나 주문을
+실행하는 책임은 API/order runtime에 있으며 AgentOrchestrator에는 없다.
+
 ## Runtime Flow
 
 `AnalysisReport` may include a versioned `coachReport`. The public request contains only
@@ -89,6 +96,7 @@ Kafka queue, worker, Redis report store를 쓰는 async path다.
 | synthesis | evidence와 role finding을 기반으로 최종 답변과 리포트를 만든다. |
 | report store | `analysisId`별 리포트, latest report, idempotency mapping, cancel marker를 저장한다. |
 | delivery gateway | result topic을 Redis update channel로 fanout한다. |
+| trade condition proposal builder | 구조화된 최근 차트 봉에서 만료되는 매수·매도 가격 제안을 만든다. 주문은 실행하지 않는다. |
 
 UI-only layout 명령은 LLM 없이 `intent_understanding/ui_parser.py`의 lexicon/rule
 경로에서 먼저 판정한다. 새 action은 `intent_understanding/schema.py`와
@@ -316,6 +324,19 @@ providers, news relevance, Alpaca news fallback, and ClickHouse writes. If this
 dependency is removed later, create agent-owned provider interfaces first.
 
 ## Important Contracts
+
+완료 `AnalysisReport`는 선택적으로 다음 필드를 포함한다.
+
+```text
+tradeConditionProposals[]
+  proposalId, analysisId, symbol, exchange
+  side, direction, triggerPrice, limitPrice, quantity
+  executionEnabled, alertsEnabled, validity
+  missingFields, rationale, createdAt, expiresAt
+```
+
+프런트는 이 값을 가격 조건으로 직접 저장하지 않는다. 사용자의 명시적인 후속
+요청이 있을 때 API가 report owner와 proposal ID를 다시 검증해야 한다.
 
 Kafka topics:
 

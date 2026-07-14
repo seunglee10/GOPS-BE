@@ -11,6 +11,7 @@ from app.market_data.indices.service import start_market_indices_warmer
 from app.market_data.monitor.routes import router as market_monitor_router
 from app.market_data.query.routes import router as market_query_router
 from app.recommendations.routes import router as recommendations_router
+from app.trade_conditions.routes import router as trade_conditions_router
 from app.routes.account import account_holdings, router as account_router
 from app.routes.auth import router as auth_router
 from app.routes.agents import agent_alerts, agent_report, agent_report_stream, analyze_agents, router as agents_router
@@ -66,6 +67,7 @@ def create_app() -> FastAPI:
     app.include_router(paper_trading_router)
     app.include_router(simulator_router)
     app.include_router(alerts_router)
+    app.include_router(trade_conditions_router)
     app.include_router(recommendations_router)
     app.include_router(streams_router)
 

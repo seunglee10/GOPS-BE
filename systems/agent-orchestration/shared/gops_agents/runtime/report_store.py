@@ -21,6 +21,7 @@ from ..contracts import (
     ResolvedEntity,
     RoutePlan,
     SynthesisInput,
+    TradeConditionProposal,
     utc_now_iso,
 )
 
@@ -388,6 +389,11 @@ def analysis_report_from_dict(value: Any) -> AnalysisReport | None:
         notificationDecision=notification_decision_from_dict(value.get("notificationDecision")),
         layoutProposal=layout_proposal_from_dict(value.get("layoutProposal")),
         chartProposal=value.get("chartProposal") if isinstance(value.get("chartProposal"), dict) else None,
+        tradeConditionProposals=[
+            item
+            for item in (trade_condition_proposal_from_dict(item) for item in value.get("tradeConditionProposals", []))
+            if item is not None
+        ],
         dailySummaries=[item for item in value.get("dailySummaries", []) if isinstance(item, dict)],
         timing=dict(value.get("timing") or {}),
         routePlan=route_plan_from_dict(value.get("routePlan")),
@@ -404,6 +410,44 @@ def analysis_report_from_dict(value: Any) -> AnalysisReport | None:
 
 def market_event_from_dict(value: dict[str, Any]) -> MarketEvent:
     return MarketEvent.from_dict(value)
+
+
+def trade_condition_proposal_from_dict(value: Any) -> TradeConditionProposal | None:
+    if not isinstance(value, dict):
+        return None
+    proposal_id = str(value.get("proposalId") or "").strip()
+    analysis_id = str(value.get("analysisId") or "").strip()
+    symbol = str(value.get("symbol") or "").strip().upper()
+    side = str(value.get("side") or "").strip()
+    direction = str(value.get("direction") or "").strip()
+    try:
+        trigger_price = float(value.get("triggerPrice"))
+        limit_price = float(value["limitPrice"]) if value.get("limitPrice") is not None else None
+        quantity = int(value["quantity"]) if value.get("quantity") is not None else None
+    except (TypeError, ValueError):
+        return None
+    if not proposal_id or not analysis_id or not symbol or side not in {"buy", "sell"}:
+        return None
+    if direction not in {"atOrBelow", "atOrAbove"} or trigger_price <= 0:
+        return None
+    return TradeConditionProposal(
+        proposalId=proposal_id,
+        analysisId=analysis_id,
+        symbol=symbol,
+        exchange=str(value.get("exchange") or "NASD").upper(),
+        side=side,
+        direction=direction,
+        triggerPrice=trigger_price,
+        limitPrice=limit_price,
+        quantity=quantity,
+        executionEnabled=value.get("executionEnabled") is not False,
+        alertsEnabled=value.get("alertsEnabled") is not False,
+        validity=str(value.get("validity") or "DAY"),
+        missingFields=[str(item) for item in value.get("missingFields", []) if isinstance(item, str)],
+        rationale=str(value.get("rationale") or ""),
+        createdAt=str(value.get("createdAt") or ""),
+        expiresAt=str(value.get("expiresAt")) if value.get("expiresAt") else None,
+    )
 
 
 def notification_decision_from_dict(value: Any) -> NotificationDecision | None:

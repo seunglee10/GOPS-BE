@@ -1,0 +1,51 @@
+# 역할: 가격 조건 알림 이벤트를 사용자별로 한 번만 점유해 예약 주문을 실행합니다.
+# 안전 기본값: TRADE_CONDITION_EXECUTION_MODE=off. 환경별 승인 후 sim 또는 demo로 전환합니다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trade-condition-executor
+  namespace: alfaka-market-data
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: trade-condition-executor
+  template:
+    metadata:
+      labels:
+        app: trade-condition-executor
+    spec:
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: trade-condition-executor
+          image: YOUR_ECR_REPOSITORY/gops-api-server:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "-m", "app.trade_conditions.executor"]
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-order-db-secret
+                optional: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          startupProbe:
+            exec:
+              command: ["python", "-m", "kis_trader.runtime_heartbeat", "--max-age-seconds", "120"]
+            periodSeconds: 5
+            failureThreshold: 24
+          readinessProbe:
+            exec:
+              command: ["python", "-m", "kis_trader.runtime_heartbeat", "--max-age-seconds", "30"]
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            exec:
+              command: ["python", "-m", "kis_trader.runtime_heartbeat", "--max-age-seconds", "60"]
+            periodSeconds: 20
+            failureThreshold: 3

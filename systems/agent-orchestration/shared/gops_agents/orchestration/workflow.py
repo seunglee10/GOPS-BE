@@ -56,6 +56,7 @@ from .reporting import (
 from .routing import route_intent
 from .roles import role_agent_error_finding
 from .timing import add_timing_ms, finalize_timing
+from .trade_condition_proposals import build_trade_condition_proposals
 from .ui_intent import UIIntent
 
 try:
@@ -804,6 +805,12 @@ class AgentOrchestrator:
             notificationDecision=state.get("notification"),
             layoutProposal=state.get("layout"),
             chartProposal=request.get("chartProposal") if isinstance(request.get("chartProposal"), dict) else None,
+            tradeConditionProposals=build_trade_condition_proposals(
+                analysis_id=state["analysis_id"],
+                symbol=state["symbol"],
+                intent=state["intent"],
+                chart_context=context.chartContext,
+            ),
             dailySummaries=list(context.newsDailySummaries),
             timing=timing,
             routePlan=route_plan,

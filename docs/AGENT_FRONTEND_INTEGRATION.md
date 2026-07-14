@@ -58,7 +58,15 @@ production build에는 debug snapshot을 노출하지 않는다.
 - provider 직접 호출
 - Kafka 직접 produce/consume
 - ClickHouse/GraphDB 직접 query
-- 주문 실행 자동화
+- 사용자 확인 없이 분석 결과만으로 주문을 실행하는 자동화
+
+완료 report에 `tradeConditionProposals[]`가 있으면 답변 하단에 가격·방향·지정가·
+수량 누락 여부를 표시할 수 있다. 사용자가 이어서 `이 가격에 예약매매랑 알림
+걸어줘`처럼 명시적으로 요청한 경우에만 프런트는 가격을 재구성하지 않고
+`analysisId`, `proposalId`, 원문 후속 문장을 `POST /api/trade-conditions/commands`로
+보낸다. API가 `clarify`를 반환하면 같은 proposal context를 유지해 수량 같은 누락
+필드를 받고, `created`일 때만 독립 가격 조건 패널을 invalidate/refetch한다. 관련
+없는 새 분석이 완료되면 이전 proposal context를 폐기한다.
 
 ## User Flow
 
@@ -72,6 +80,9 @@ flowchart TD
   Report --> Answer["Wild panel final answer"]
   Report --> Evidence["evidence and role findings"]
   Report --> OptionalUI["optional layout/chart proposal"]
+  Report --> PriceProposal["optional price-condition proposal"]
+  PriceProposal --> Confirm["explicit user follow-up"]
+  Confirm --> ConditionAPI["trade-condition command API"]
 ```
 
 사용자 입력이 회사명/티커 단독이거나 `애플차트 보여줘`, `AAPL chart` 같은
@@ -270,6 +281,7 @@ Report에서 우선 렌더링할 영역:
 - warnings or no-data provider messages
 - optional `layoutProposal`
 - optional `chartProposal`
+- optional `tradeConditionProposals`
 
 Provider가 `status="no-data"` evidence를 반환하는 것은 정상적인 partial analysis다.
 예를 들어 GraphDB가 없으면 ontology evidence만 no-data가 되고 market/news 기반
@@ -469,6 +481,11 @@ workspace 좌표를 변환한다.
 - market-event explanation 또는 notification decision으로 표시한다.
 - 주문 실행으로 자동 연결하지 않는다.
 - 사용자가 보고 확인할 수 있는 UI action으로만 이어간다.
+
+독립 가격 조건 패널의 알림 토글은 `WS /ws/agent-alerts` 설정이 아니다. 연결된
+price-cross alert의 notification delivery만 켜고 끄며, 서버 감시와 예약 주문
+실행 여부는 별도 상태로 유지한다. 패널 목록은 `/api/trade-conditions`가 source of
+truth이고 브라우저 event는 refetch invalidation 용도로만 쓴다.
 
 ## Frontend Reference Files
 
