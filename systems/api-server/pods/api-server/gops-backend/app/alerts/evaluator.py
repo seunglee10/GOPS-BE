@@ -14,7 +14,8 @@ try:
 except Exception:  # pragma: no cover - dependency guard for lean test envs
     redis = None  # type: ignore[assignment]
 
-from app.alerts.notifications import RedisNotificationBroker
+from app.alerts.notifications import RedisNotificationBroker, notification_delivery_decision
+from app.alerts.preferences import PostgresNotificationPreferenceRepository, preference_response
 from app.alerts.projection import RedisAlertProjection
 from app.alerts.repository import PostgresAlertRepository
 
@@ -55,12 +56,14 @@ class AlertEvaluator:
         repository: Any,
         projection: RedisAlertProjection,
         outbox: "AlertRedisOutbox",
+        preference_repository: Any | None = None,
         dedupe_ttl_seconds: int = DEFAULT_DEDUPE_TTL_SECONDS,
         spike_retention_minutes: int = DEFAULT_SPIKE_RETENTION_MINUTES,
     ) -> None:
         self.repository = repository
         self.projection = projection
         self.outbox = outbox
+        self.preference_repository = preference_repository
         self.dedupe_ttl_seconds = dedupe_ttl_seconds
         self.spike_retention_ms = spike_retention_minutes * 60 * 1000
 
@@ -146,12 +149,14 @@ class AlertEvaluator:
         if baseline_price is None or baseline_price <= 0:
             return None
         actual_change_pct = ((trade["price"] - baseline_price) / baseline_price) * 100
+        preference_threshold = self._rapid_move_threshold(alert)
+        effective_change_pct = max(change_pct, preference_threshold) if preference_threshold is not None else change_pct
         direction = alert.get("direction")
-        if direction == "above" and actual_change_pct < change_pct:
+        if direction == "above" and actual_change_pct < effective_change_pct:
             return None
-        if direction == "below" and actual_change_pct > -change_pct:
+        if direction == "below" and actual_change_pct > -effective_change_pct:
             return None
-        if direction is None and abs(actual_change_pct) < change_pct:
+        if direction is None and abs(actual_change_pct) < effective_change_pct:
             return None
         resolved_direction = direction or ("above" if actual_change_pct >= 0 else "below")
         base_event_id = trade.get("sourceEventId") or trade.get("tradeId") or f"{trade['symbol']}:{trade['timestamp']}"
@@ -165,13 +170,24 @@ class AlertEvaluator:
             "price": trade["price"],
             "baselinePrice": baseline_price,
             "changePct": actual_change_pct,
-            "thresholdPct": change_pct,
+            "thresholdPct": effective_change_pct,
+            "alertThresholdPct": change_pct,
+            "preferenceThresholdPct": preference_threshold,
             "windowMin": window_min,
             "triggeredAt": datetime.now(timezone.utc).isoformat(),
             "sourceEventId": trade.get("sourceEventId"),
             "tradeId": trade.get("tradeId"),
             "alert": alert,
         }
+
+    def _rapid_move_threshold(self, alert: dict[str, Any]) -> float | None:
+        if self.preference_repository is None:
+            return None
+        user_sub = str(alert.get("user_sub") or "").strip()
+        if not user_sub:
+            return None
+        preferences = preference_response(self.preference_repository.get(user_sub))
+        return _float_or_none(preferences["thresholds"].get("rapidMovePct"))
 
 
 class AlertRedisOutbox:
@@ -201,6 +217,7 @@ class AlertOutboxSender:
         stream: str,
         group: str,
         consumer_name: str,
+        preference_repository: Any | None = None,
     ) -> None:
         self.redis = redis_client
         self.repository = repository
@@ -210,6 +227,7 @@ class AlertOutboxSender:
         self.stream = stream
         self.group = group
         self.consumer_name = consumer_name
+        self.preference_repository = preference_repository
         self._group_ready = False
 
     def ensure_group(self) -> None:
@@ -263,7 +281,16 @@ class AlertOutboxSender:
             if isinstance(current_alert, dict):
                 alert = current_alert
         notification = None
-        if alert.get("notifications_enabled", True) is not False:
+        notification_allowed = alert.get("notifications_enabled", True) is not False
+        skip_reason = "notifications_disabled"
+        if notification_allowed and self.preference_repository is not None:
+            preferences = preference_response(self.preference_repository.get(str(payload["userSub"])))
+            notification_allowed, skip_reason = notification_delivery_decision(
+                str(payload["type"]),
+                payload,
+                preferences,
+            )
+        if notification_allowed:
             notification = self.repository.create_notification(
                 user_sub=str(payload["userSub"]),
                 alert_id=int(payload["alertId"]) if payload.get("alertId") is not None else None,
@@ -280,7 +307,7 @@ class AlertOutboxSender:
         future = self.producer.send(self.triggered_topic, key=str(payload.get("symbol") or payload["alertId"]), value=payload)
         if hasattr(future, "get"):
             future.get(timeout=float(os.getenv("ALERT_KAFKA_SEND_TIMEOUT_SECONDS", "10")))
-        return notification or {"skipped": True, "reason": "notifications_disabled", "eventId": payload.get("eventId")}
+        return notification or {"skipped": True, "reason": skip_reason, "eventId": payload.get("eventId")}
 
 
 def run() -> None:
@@ -299,6 +326,7 @@ def run() -> None:
 
     redis_client = redis.from_url(redis_url, decode_responses=True)
     repository = PostgresAlertRepository.from_env()
+    preference_repository = PostgresNotificationPreferenceRepository.from_env()
     projection = RedisAlertProjection(redis_client)
     producer = create_json_producer(kafka_servers, "gops-alert-evaluator")
     consumer = create_json_consumer(
@@ -309,7 +337,12 @@ def run() -> None:
         enable_auto_commit=False,
     )
     outbox = AlertRedisOutbox(redis_client, stream=outbox_stream)
-    evaluator = AlertEvaluator(repository=repository, projection=projection, outbox=outbox)
+    evaluator = AlertEvaluator(
+        repository=repository,
+        projection=projection,
+        outbox=outbox,
+        preference_repository=preference_repository,
+    )
     sender = AlertOutboxSender(
         redis_client=redis_client,
         repository=repository,
@@ -319,6 +352,7 @@ def run() -> None:
         stream=outbox_stream,
         group=outbox_group,
         consumer_name=consumer_name,
+        preference_repository=preference_repository,
     )
 
     evaluator.reconcile_active_alerts()

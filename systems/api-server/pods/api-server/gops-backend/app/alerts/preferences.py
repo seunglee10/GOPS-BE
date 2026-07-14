@@ -14,35 +14,39 @@ from psycopg.types.json import Jsonb
 NOTIFICATION_SETTING_KEYS = frozenset(
     {
         "master",
-        "marketOpen",
-        "marketClose",
-        "extendedHoursMove",
         "targetPrice",
         "rapidMove",
         "volumeSpike",
-        "watchlistNews",
-        "earningsFiling",
-        "executiveChange",
+        "marketOpen",
+        "marketClose",
+        "extendedHoursMove",
+        "earningsD1",
         "socialIssue",
-        "regulationLegal",
-        "supplyChainMacro",
+        "aiAnomaly",
     }
 )
 
 DEFAULT_NOTIFICATION_SETTINGS: dict[str, bool] = {
     "master": True,
-    "marketOpen": True,
-    "marketClose": False,
-    "extendedHoursMove": False,
     "targetPrice": True,
     "rapidMove": True,
     "volumeSpike": False,
-    "watchlistNews": True,
-    "earningsFiling": True,
-    "executiveChange": False,
+    "marketOpen": True,
+    "marketClose": False,
+    "extendedHoursMove": False,
+    "earningsD1": True,
     "socialIssue": True,
-    "regulationLegal": True,
-    "supplyChainMacro": False,
+    "aiAnomaly": True,
+}
+
+NOTIFICATION_THRESHOLD_ALLOWED_VALUES: dict[str, frozenset[int]] = {
+    "rapidMovePct": frozenset({3, 5, 10}),
+    "volumeSpikeMultiple": frozenset({2, 3, 5}),
+}
+
+DEFAULT_NOTIFICATION_THRESHOLDS: dict[str, int] = {
+    "rapidMovePct": 5,
+    "volumeSpikeMultiple": 3,
 }
 
 MAX_COMPANY_OVERRIDES = 50
@@ -57,6 +61,7 @@ class NotificationPreferenceRepository:
         user_sub: str,
         *,
         settings: dict[str, bool],
+        thresholds: dict[str, int],
         company_overrides: dict[str, bool],
     ) -> dict[str, Any]:
         raise NotImplementedError
@@ -92,20 +97,31 @@ class PostgresNotificationPreferenceRepository(NotificationPreferenceRepository)
         user_sub: str,
         *,
         settings: dict[str, bool],
+        thresholds: dict[str, int],
         company_overrides: dict[str, bool],
     ) -> dict[str, Any]:
         with self._connect() as conn:
+            existing = conn.execute(
+                "SELECT * FROM user_notification_preferences WHERE user_sub = %s FOR UPDATE",
+                (user_sub,),
+            ).fetchone()
+            current = preference_response(_json_ready(dict(existing)) if existing else None)
+            stored_settings = {
+                "settings": {**current["settings"], **settings},
+                "thresholds": {**current["thresholds"], **thresholds},
+            }
+            stored_overrides = {**current["companyOverrides"], **company_overrides}
             row = conn.execute(
                 """
                 INSERT INTO user_notification_preferences (user_sub, settings, company_overrides)
                 VALUES (%s, %s, %s)
                 ON CONFLICT (user_sub) DO UPDATE
-                SET settings = user_notification_preferences.settings || EXCLUDED.settings,
-                    company_overrides = user_notification_preferences.company_overrides || EXCLUDED.company_overrides,
+                SET settings = EXCLUDED.settings,
+                    company_overrides = EXCLUDED.company_overrides,
                     updated_at = now()
                 RETURNING *
                 """,
-                (user_sub, Jsonb(settings), Jsonb(company_overrides)),
+                (user_sub, Jsonb(stored_settings), Jsonb(stored_overrides)),
             ).fetchone()
             conn.commit()
             return _json_ready(dict(row))
@@ -127,6 +143,7 @@ class InMemoryNotificationPreferenceRepository(NotificationPreferenceRepository)
         user_sub: str,
         *,
         settings: dict[str, bool],
+        thresholds: dict[str, int],
         company_overrides: dict[str, bool],
     ) -> dict[str, Any]:
         now = datetime.now(timezone.utc).isoformat()
@@ -136,10 +153,14 @@ class InMemoryNotificationPreferenceRepository(NotificationPreferenceRepository)
             "company_overrides": {},
             "updated_at": now,
         })
+        normalized = preference_response(current if user_sub in self.rows else None)
         row = {
             **current,
-            "settings": {**current["settings"], **settings},
-            "company_overrides": {**current["company_overrides"], **company_overrides},
+            "settings": {
+                "settings": {**normalized["settings"], **settings},
+                "thresholds": {**normalized["thresholds"], **thresholds},
+            },
+            "company_overrides": {**normalized["companyOverrides"], **company_overrides},
             "updated_at": now,
         }
         self.rows[user_sub] = deepcopy(row)
@@ -147,7 +168,17 @@ class InMemoryNotificationPreferenceRepository(NotificationPreferenceRepository)
 
 
 def preference_response(row: dict[str, Any] | None) -> dict[str, Any]:
-    stored_settings = row.get("settings") if isinstance(row, dict) and isinstance(row.get("settings"), dict) else {}
+    stored_container = row.get("settings") if isinstance(row, dict) and isinstance(row.get("settings"), dict) else {}
+    stored_settings = (
+        stored_container.get("settings")
+        if isinstance(stored_container.get("settings"), dict)
+        else stored_container
+    )
+    stored_thresholds = (
+        stored_container.get("thresholds")
+        if isinstance(stored_container.get("thresholds"), dict)
+        else {}
+    )
     stored_overrides = (
         row.get("company_overrides")
         if isinstance(row, dict) and isinstance(row.get("company_overrides"), dict)
@@ -160,6 +191,20 @@ def preference_response(row: dict[str, Any] | None) -> dict[str, Any]:
                 key: bool(value)
                 for key, value in stored_settings.items()
                 if key in NOTIFICATION_SETTING_KEYS and isinstance(value, bool)
+            },
+        },
+        "thresholds": {
+            **DEFAULT_NOTIFICATION_THRESHOLDS,
+            **{
+                key: int(value)
+                for key, value in stored_thresholds.items()
+                if (
+                    key in NOTIFICATION_THRESHOLD_ALLOWED_VALUES
+                    and not isinstance(value, bool)
+                    and isinstance(value, (int, float))
+                    and int(value) == value
+                    and int(value) in NOTIFICATION_THRESHOLD_ALLOWED_VALUES[key]
+                )
             },
         },
         "companyOverrides": {

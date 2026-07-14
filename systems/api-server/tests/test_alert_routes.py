@@ -284,11 +284,16 @@ def test_notification_preferences_return_defaults_and_patch_individual_fields(al
     assert initial.json()["persisted"] is False
     assert initial.json()["settings"]["master"] is True
     assert initial.json()["settings"]["marketOpen"] is True
+    assert initial.json()["settings"]["earningsD1"] is True
+    assert initial.json()["settings"]["aiAnomaly"] is True
+    assert initial.json()["settings"]["volumeSpike"] is False
+    assert initial.json()["thresholds"] == {"rapidMovePct": 5, "volumeSpikeMultiple": 3}
 
     updated = client.patch(
         "/api/notification-preferences",
         json={
             "settings": {"marketOpen": False, "targetPrice": False},
+            "thresholds": {"rapidMovePct": 10, "volumeSpikeMultiple": 2},
             "companyOverrides": {"aapl": False},
         },
     )
@@ -298,6 +303,7 @@ def test_notification_preferences_return_defaults_and_patch_individual_fields(al
     assert updated.json()["settings"]["marketOpen"] is False
     assert updated.json()["settings"]["targetPrice"] is False
     assert updated.json()["settings"]["rapidMove"] is True
+    assert updated.json()["thresholds"] == {"rapidMovePct": 10, "volumeSpikeMultiple": 2}
     assert updated.json()["companyOverrides"] == {"AAPL": False}
     assert client.get("/api/notification-preferences").json() == updated.json()
 
@@ -310,10 +316,75 @@ def test_notification_preferences_reject_unknown_keys_and_empty_patches(alert_ap
         json={"settings": {"unknownSetting": True}},
     )
     empty = client.patch("/api/notification-preferences", json={})
+    invalid_threshold = client.patch(
+        "/api/notification-preferences",
+        json={"thresholds": {"rapidMovePct": 7}},
+    )
+    unknown_threshold = client.patch(
+        "/api/notification-preferences",
+        json={"thresholds": {"mysteryThreshold": 3}},
+    )
 
     assert unknown.status_code == 422
     assert "unknownSetting" in unknown.json()["detail"]
     assert empty.status_code == 422
+    assert invalid_threshold.status_code == 400
+    assert unknown_threshold.status_code == 400
+
+
+def test_notification_preferences_normalize_legacy_json(alert_app) -> None:
+    repository = alert_app.state.notification_preferences_repository
+    repository.rows["dev-auth-disabled"] = {
+        "user_sub": "dev-auth-disabled",
+        "settings": {
+            "master": False,
+            "rapidMove": False,
+            "watchlistNews": False,
+            "earningsFiling": False,
+            "unknownLegacyKey": True,
+        },
+        "company_overrides": {"aapl": False},
+        "updated_at": "2026-07-14T00:00:00+00:00",
+    }
+
+    payload = TestClient(alert_app).get("/api/notification-preferences").json()
+
+    assert set(payload["settings"]) == {
+        "master",
+        "targetPrice",
+        "rapidMove",
+        "volumeSpike",
+        "marketOpen",
+        "marketClose",
+        "extendedHoursMove",
+        "earningsD1",
+        "socialIssue",
+        "aiAnomaly",
+    }
+    assert payload["settings"]["master"] is False
+    assert payload["settings"]["rapidMove"] is False
+    assert payload["settings"]["earningsD1"] is True
+    assert payload["thresholds"] == {"rapidMovePct": 5, "volumeSpikeMultiple": 3}
+    assert payload["companyOverrides"] == {"AAPL": False}
+
+
+def test_notification_preferences_enforce_total_company_override_limit(alert_app) -> None:
+    client = TestClient(alert_app)
+    repository = alert_app.state.notification_preferences_repository
+    repository.rows["dev-auth-disabled"] = {
+        "user_sub": "dev-auth-disabled",
+        "settings": {},
+        "company_overrides": {f"S{index}": False for index in range(50)},
+        "updated_at": "2026-07-14T00:00:00+00:00",
+    }
+
+    response = client.patch(
+        "/api/notification-preferences",
+        json={"companyOverrides": {"AAPL": False}},
+    )
+
+    assert response.status_code == 422
+    assert "up to 50" in response.json()["detail"]
 
 
 def test_notification_preferences_are_scoped_by_session_user(monkeypatch: pytest.MonkeyPatch) -> None:

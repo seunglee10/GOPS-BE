@@ -75,6 +75,17 @@ class AlertRepository:
     ) -> dict[str, Any]:
         raise NotImplementedError
 
+    def create_notification_once(
+        self,
+        *,
+        user_sub: str,
+        alert_id: int | None,
+        event_id: str,
+        notification_type: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        raise NotImplementedError
+
     def list_notifications(self, user_sub: str, *, after: int | None = None, limit: int = 50) -> list[dict[str, Any]]:
         raise NotImplementedError
 
@@ -258,6 +269,28 @@ class PostgresAlertRepository(AlertRepository):
             ).fetchone()
             conn.commit()
             return _json_ready(dict(row))
+
+    def create_notification_once(
+        self,
+        *,
+        user_sub: str,
+        alert_id: int | None,
+        event_id: str,
+        notification_type: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                INSERT INTO notifications (user_sub, alert_id, event_id, type, payload)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (event_id) DO NOTHING
+                RETURNING *
+                """,
+                (user_sub, alert_id, event_id, notification_type, Jsonb(_json_ready(payload))),
+            ).fetchone()
+            conn.commit()
+            return _json_ready(dict(row)) if row else None
 
     def list_notifications(self, user_sub: str, *, after: int | None = None, limit: int = 50) -> list[dict[str, Any]]:
         params: list[Any] = [user_sub]
@@ -450,6 +483,25 @@ class InMemoryAlertRepository(AlertRepository):
         }
         self.notifications[self._notification_id] = row
         return _json_ready(row)
+
+    def create_notification_once(
+        self,
+        *,
+        user_sub: str,
+        alert_id: int | None,
+        event_id: str,
+        notification_type: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if any(row["event_id"] == event_id for row in self.notifications.values()):
+            return None
+        return self.create_notification(
+            user_sub=user_sub,
+            alert_id=alert_id,
+            event_id=event_id,
+            notification_type=notification_type,
+            payload=payload,
+        )
 
     def list_notifications(self, user_sub: str, *, after: int | None = None, limit: int = 50) -> list[dict[str, Any]]:
         rows = [row for row in self.notifications.values() if row["user_sub"] == user_sub]

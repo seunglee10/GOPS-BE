@@ -264,6 +264,7 @@ class CoachAwsContractTests(unittest.TestCase):
         expected = {
             "cronjob-chart-geometry-build.yaml": "add_service agent-orchestrator",
             "cronjob-order-flow-daily-rollup.yaml": "add_service market-processor",
+            "cronjob-notification-schedules.yaml": "add_service backend",
             "cronjob-sec-fundamentals-sync.yaml": "add_service market-storage",
             "cronjob-yahoo-estimates-sync.yaml": "add_service market-storage",
         }

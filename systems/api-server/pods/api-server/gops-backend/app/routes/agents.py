@@ -17,6 +17,8 @@ from app.auth.dependencies import (
     require_websocket_user,
 )
 from app.auth.models import AuthenticatedUser
+from app.alerts.notifications import notification_delivery_decision
+from app.alerts.preferences import PostgresNotificationPreferenceRepository, preference_response
 from app.core.config import read_dotenv_value
 from app.services.agent_alert_payloads import parse_pubsub_payload
 from app.services.alfaka_market_data import get_market_data_provider, normalize_market_symbol, sp500_universe_symbols
@@ -257,7 +259,7 @@ async def agent_alerts(
     symbol: str | None = Query(default=None, min_length=1, max_length=12),
 ) -> None:
     try:
-        require_websocket_user(websocket)
+        user = require_websocket_user(websocket)
     except WebSocketAuthRequired as exc:
         await websocket.accept()
         await websocket.send_json({"type": "error", "detail": str(exc)})
@@ -271,17 +273,24 @@ async def agent_alerts(
     await websocket.accept()
     try:
         await websocket.send_json({"type": "AGENT_ALERTS_READY", "symbol": symbol})
-        await stream_agent_alerts(websocket, symbol.upper() if symbol else None)
+        await stream_agent_alerts(websocket, symbol.upper() if symbol else None, user_sub=user.sub)
     except WebSocketDisconnect:
         return
 
 
-async def stream_agent_alerts(websocket: WebSocket, symbol: str | None) -> None:
+async def stream_agent_alerts(websocket: WebSocket, symbol: str | None, *, user_sub: str | None = None) -> None:
     import redis
 
     redis_url = read_dotenv_value("REDIS_URL") or "redis://localhost:6379/0"
     client = redis.from_url(redis_url, decode_responses=True)
     pubsub = client.pubsub(ignore_subscribe_messages=True)
+    preference_repository = getattr(websocket.app.state, "notification_preferences_repository", None)
+    if user_sub and preference_repository is None:
+        try:
+            preference_repository = PostgresNotificationPreferenceRepository.from_env()
+            websocket.app.state.notification_preferences_repository = preference_repository
+        except (KeyError, ValueError):
+            preference_repository = None
     channels = [AGENT_ALERTS_CHANNEL]
     if symbol:
         channels.append(f"{AGENT_ALERTS_CHANNEL}:{symbol}")
@@ -291,7 +300,21 @@ async def stream_agent_alerts(websocket: WebSocket, symbol: str | None) -> None:
         while True:
             message = await asyncio.to_thread(pubsub.get_message, timeout=1.0)
             if message and message.get("type") == "message":
-                await websocket.send_json(parse_pubsub_payload(message.get("data")))
+                payload = parse_pubsub_payload(message.get("data"))
+                if user_sub:
+                    row = (
+                        await asyncio.to_thread(preference_repository.get, user_sub)
+                        if preference_repository is not None
+                        else None
+                    )
+                    allowed, _reason = notification_delivery_decision(
+                        str(payload.get("type") or "AGENT_ALERT"),
+                        payload,
+                        preference_response(row),
+                    )
+                    if not allowed:
+                        continue
+                await websocket.send_json(payload)
                 continue
             now = time.monotonic()
             if now - last_heartbeat >= 25:

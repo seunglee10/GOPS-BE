@@ -255,6 +255,9 @@ select_services_for_path() {
     infra/k8s/overlays/aws/scheduled/cronjob-order-flow-daily-rollup.yaml)
       add_service market-processor
       ;;
+    infra/k8s/overlays/aws/scheduled/cronjob-notification-schedules.yaml)
+      add_service backend
+      ;;
     infra/k8s/overlays/aws/scheduled/cronjob-sec-fundamentals-sync.yaml | infra/k8s/overlays/aws/scheduled/cronjob-yahoo-estimates-sync.yaml | infra/k8s/overlays/aws/scheduled/externalsecret-sec-fundamentals.yaml)
       add_service market-storage
       ;;

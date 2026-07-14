@@ -13,6 +13,7 @@ from app.alerts.notifications import RedisNotificationBroker
 from app.alerts.preferences import (
     MAX_COMPANY_OVERRIDES,
     NOTIFICATION_SETTING_KEYS,
+    NOTIFICATION_THRESHOLD_ALLOWED_VALUES,
     InMemoryNotificationPreferenceRepository,
     PostgresNotificationPreferenceRepository,
     preference_response,
@@ -58,6 +59,7 @@ class AlertStatusBody(BaseModel):
 
 class NotificationPreferencesPatchBody(BaseModel):
     settings: dict[str, bool] | None = None
+    thresholds: dict[str, Any] | None = None
     companyOverrides: dict[str, bool] | None = None
 
 
@@ -252,6 +254,18 @@ def patch_notification_preferences(
     if unknown_keys:
         raise HTTPException(status_code=422, detail=f"Unknown notification settings: {', '.join(unknown_keys)}")
 
+    raw_thresholds = body.thresholds or {}
+    unknown_thresholds = sorted(set(raw_thresholds) - NOTIFICATION_THRESHOLD_ALLOWED_VALUES.keys())
+    if unknown_thresholds:
+        raise HTTPException(status_code=400, detail=f"Unknown notification thresholds: {', '.join(unknown_thresholds)}")
+    thresholds: dict[str, int] = {}
+    for key, value in raw_thresholds.items():
+        allowed_values = NOTIFICATION_THRESHOLD_ALLOWED_VALUES[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or int(value) != value or int(value) not in allowed_values:
+            allowed_label = ", ".join(str(item) for item in sorted(allowed_values))
+            raise HTTPException(status_code=400, detail=f"{key} must be one of: {allowed_label}")
+        thresholds[key] = int(value)
+
     raw_company_overrides = body.companyOverrides or {}
     if len(raw_company_overrides) > MAX_COMPANY_OVERRIDES:
         raise HTTPException(status_code=422, detail=f"Company notification settings support up to {MAX_COMPANY_OVERRIDES} symbols.")
@@ -259,13 +273,17 @@ def patch_notification_preferences(
     for symbol, enabled in raw_company_overrides.items():
         company_overrides[normalize_market_symbol(symbol)] = enabled
 
-    if not settings and not company_overrides:
+    if not settings and not thresholds and not company_overrides:
         raise HTTPException(status_code=422, detail="At least one notification preference is required.")
 
     repository = _notification_preferences_repository_from_app(request.app)
+    existing = preference_response(repository.get(user.sub))
+    if len({**existing["companyOverrides"], **company_overrides}) > MAX_COMPANY_OVERRIDES:
+        raise HTTPException(status_code=422, detail=f"Company notification settings support up to {MAX_COMPANY_OVERRIDES} symbols.")
     row = repository.patch(
         user.sub,
         settings=settings,
+        thresholds=thresholds,
         company_overrides=company_overrides,
     )
     return preference_response(row)

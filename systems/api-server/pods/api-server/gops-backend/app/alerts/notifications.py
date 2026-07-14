@@ -16,6 +16,117 @@ class NotificationBrokerError(RuntimeError):
     """Raised when the notification broker cannot be used."""
 
 
+def notification_setting_for_item(notification_type: str, payload: dict[str, Any]) -> str | None:
+    kind = str(payload.get("kind") or "").strip().lower()
+    normalized_type = str(notification_type or "").strip()
+    if normalized_type == "system.market_open" or kind == "market_open":
+        return "marketOpen"
+    if normalized_type == "system.market_close_summary" or kind == "market_close_summary":
+        return "marketClose"
+    if normalized_type == "system.earnings_d1" or kind == "earnings_d1":
+        return "earningsD1"
+    if normalized_type == "alert.price_cross":
+        return "targetPrice"
+    if normalized_type == "alert.spike":
+        return "rapidMove"
+
+    decision = _record(payload.get("decision"))
+    event_type = str(decision.get("eventType") or payload.get("eventType") or "").strip().lower()
+    if event_type == "volume_spike":
+        return "volumeSpike"
+    if event_type in {"price_surge", "price_drop"}:
+        return "rapidMove"
+    if event_type in {"extended_hours_move", "premarket_move", "after_hours_move"}:
+        return "extendedHoursMove"
+    if event_type in {"risk_anomaly_surge", "volatility_expansion"}:
+        return "aiAnomaly"
+    if event_type in {"social_issue", "controversy", "sentiment_crisis"}:
+        return "socialIssue"
+    return None
+
+
+def notification_delivery_decision(
+    notification_type: str,
+    payload: dict[str, Any],
+    preferences: dict[str, Any],
+) -> tuple[bool, str]:
+    settings = _record(preferences.get("settings"))
+    thresholds = _record(preferences.get("thresholds"))
+    if settings.get("master") is not True:
+        return False, "master_disabled"
+
+    setting = notification_setting_for_item(notification_type, payload)
+    if setting is None and notification_type == "AGENT_ALERT":
+        return False, "event_excluded"
+    if setting is not None and settings.get(setting) is not True:
+        return False, f"{setting}_disabled"
+
+    symbol = notification_symbol(payload)
+    company_overrides = _record(preferences.get("companyOverrides"))
+    if symbol and company_overrides.get(symbol) is False:
+        return False, "company_muted"
+
+    if setting == "rapidMove":
+        actual_change = _notification_metric(payload, "changePct", "changePercent", "percentChange")
+        threshold = _number_or_none(thresholds.get("rapidMovePct"))
+        if actual_change is None:
+            return False, "rapid_move_metric_missing"
+        if threshold is not None and abs(actual_change) < threshold:
+            return False, "rapid_move_below_threshold"
+    elif setting == "volumeSpike":
+        actual_multiple = _notification_metric(payload, "multiplier", "volumeMultiple", "volumeRatio")
+        threshold = _number_or_none(thresholds.get("volumeSpikeMultiple"))
+        if actual_multiple is None:
+            return False, "volume_spike_metric_missing"
+        if threshold is not None and actual_multiple < threshold:
+            return False, "volume_spike_below_threshold"
+    elif setting == "extendedHoursMove":
+        actual_change = _notification_metric(payload, "changePct", "changePercent", "percentChange")
+        if actual_change is None:
+            return False, "extended_hours_metric_missing"
+        if abs(actual_change) < 5:
+            return False, "extended_hours_below_threshold"
+
+    return True, "allowed"
+
+
+def notification_symbol(payload: dict[str, Any]) -> str:
+    decision = _record(payload.get("decision"))
+    value = str(payload.get("symbol") or decision.get("symbol") or "").strip().upper()
+    if value in {"", "MARKET", "PORTFOLIO", "UNKNOWN", "ALERT"}:
+        return ""
+    return value
+
+
+def _notification_metric(payload: dict[str, Any], *keys: str) -> float | None:
+    decision = _record(payload.get("decision"))
+    metric_sources = (
+        payload,
+        _record(payload.get("metrics")),
+        decision,
+        _record(decision.get("metrics")),
+    )
+    for source in metric_sources:
+        for key in keys:
+            value = _number_or_none(source.get(key))
+            if value is not None:
+                return value
+    return None
+
+
+def _record(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _number_or_none(value: Any) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 class RedisNotificationBroker:
     def __init__(self, redis_client: Any, channel_prefix: str | None = None) -> None:
         self.redis = redis_client
