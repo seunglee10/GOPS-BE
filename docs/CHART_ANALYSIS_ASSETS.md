@@ -120,3 +120,9 @@ fill과 목표·손절 경계는 마지막 완료 봉 다음 슬롯부터 시작
 `{ chartDocumentId, plan }`이다. 심볼·주기 변경, 자산 제거, 문서 unmount에는 해당
 문서 항목만 지우고 레이어 숨김은 지우지 않는다. 해설과 spotlight는 같은 projection의
 가격과 drawing ID를 사용하며 주문·알림의 신뢰 원본이 아니다.
+
+차트 오른쪽 가격축에서 고른 가격은 `ChartPriceSelection.v1`으로 해당 차트 문서와 패널에
+묶이며 주문 패널의 종목·지정가 입력을 준비하는 UI snapshot으로만 사용한다. 질문창의
+예약매매·알림 표현도 현재 `ChartTradeSetup`의 세 가격을 그대로 확인 dialog에 투영할 뿐,
+Geometry 자산이나 `ActiveTradePlan`을 주문 신뢰 원본으로 승격하거나 실행 API를 호출하지
+않는다.

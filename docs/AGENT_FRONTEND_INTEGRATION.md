@@ -101,6 +101,22 @@ production build에는 debug snapshot을 노출하지 않는다.
 - ClickHouse/GraphDB 직접 query
 - 사용자 확인 없이 분석 결과만으로 주문을 실행하는 자동화
 
+## 차트 가격 선택과 매매 요청 미리보기
+
+오른쪽 가격축의 가격 pane을 pointer로 선택하면 프런트는
+`ChartPriceSelection.v1` 불변 snapshot을 만든다. `PanelWorkspace`는 마지막으로
+focus/pointer 선택한 `OrderTicket`·`QuickOrderPanel`(paper 변형 포함), 또는 화면
+순서상 첫 주문 패널 하나에만 이를 typed prop으로 전달한다. 주문 패널은 종목과
+지정가만 바꾸고 수량·매수/매도 방향을 보존하며 자동 제출하지 않는다.
+
+`이 가격에 예약하자`, `이 때 사자` 같은 차트 맥락 문장은 Agent/주문/알림 API보다
+먼저 로컬 확인 intent로 분기한다. 현재 `ChartTradeSetup`의 진입·목표·손절과 asset
+identity가 완전하고 대상 `chartDocumentId`가 하나로 정해진 경우에만
+`TradeAutomationConfirmationDraft.v1` dialog를 연다. 확인 결과는 메모리와 기존 toast에
+`frontend_preview_only`로만 남고 서버·DB·localStorage에 저장하지 않는다. 실제 주문,
+예약매매, bracket/OCO, 알림 생성은 이 경로에서 항상 0회다. setup·symbol·interval·asset
+identity 변경 또는 원본 차트 삭제 시 열린 draft는 `stale`로 바뀌어 확인할 수 없다.
+
 완료 report에 `tradeConditionProposals[]`가 있으면 답변 하단에 가격·방향·지정가·
 수량 누락 여부를 표시할 수 있다. 사용자가 이어서 `이 가격에 예약매매랑 알림
 걸어줘`처럼 명시적으로 요청한 경우에만 프런트는 가격을 재구성하지 않고
