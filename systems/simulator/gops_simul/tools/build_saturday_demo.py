@@ -9,7 +9,7 @@ from gops_simul.config import PROJECT_ROOT
 
 SCENARIO_ID = "saturday-demo-amd-iff-oke"
 SYMBOLS = ("AMD", "IFF", "OKE")
-SEED_PRICES = {"AMD": 200.0, "IFF": 75.0, "OKE": 82.0}
+SEED_PRICES = {"AMD": 565.0, "IFF": 82.0, "OKE": 90.0}
 PHASES = (
     ("market-overview", "시장 조망", 0, "시장 트리맵과 오늘의 흐름을 확인합니다."),
     ("recommendation", "추천 종목", 30, "투자 성향과 포트폴리오를 반영한 추천 종목을 확인합니다."),
@@ -66,9 +66,9 @@ def main() -> None:
             },
         ],
         "chartAnalysis": {
-            "symbol": "IFF", "pattern": "삼각 수렴 패턴", "support": 74.80,
-            "resistance": 76.20, "entry": 76.30, "stop": 74.60,
-            "summary": "고점과 저점 간격이 좁아진 뒤 76.20 저항 돌파를 확인하는 시나리오입니다.",
+            "symbol": "IFF", "pattern": "삼각 수렴 패턴", "support": 81.40,
+            "resistance": 82.60, "entry": 82.70, "stop": 81.10,
+            "summary": "고점과 저점 간격이 좁아진 뒤 82.60 저항 돌파를 확인하는 시나리오입니다.",
         },
         "eventResponse": {
             "riskSymbol": "AMD", "beneficiarySymbol": "OKE",
@@ -100,7 +100,7 @@ def build_rows() -> list[dict[str, object]]:
         timestamp = (started_at + timedelta(seconds=second)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
         for symbol in SYMBOLS:
             price = scenario_price(symbol, second)
-            spread = 0.04 if symbol == "AMD" else 0.02
+            spread = {"AMD": 0.10, "IFF": 0.04, "OKE": 0.06}[symbol]
             bid = round(price - spread / 2, 4)
             ask = round(price + spread / 2, 4)
             size = 20 + ((second * 7 + len(symbol) * 11) % 180)
@@ -120,30 +120,48 @@ def build_rows() -> list[dict[str, object]]:
 def scenario_price(symbol: str, second: int) -> float:
     if symbol == "AMD":
         if second < 170:
-            value = 200 + 0.55 * math.sin(second / 10) + second * 0.003
+            value = 565 + 1.2 * math.sin(second / 10) + second * 0.006
         elif second < 210:
-            value = 200.65 + 0.22 * math.sin(second / 5)
+            value = 566.4 + 0.45 * math.sin(second / 5)
         else:
-            progress = (second - 210) / 89
-            value = 200.5 + (185.0 - 200.5) * progress + 0.16 * math.sin(second / 3)
+            elapsed = second - 210
+            if elapsed <= 25:
+                progress = elapsed / 25
+                eased = progress * progress * (3 - 2 * progress)
+                noise = 0.08 * math.sin(second / 3) * math.sin(math.pi * progress)
+                value = 566.2 + (563.8 - 566.2) * eased + noise
+            elif elapsed <= 65:
+                progress = (elapsed - 25) / 40
+                eased = progress * progress * (3 - 2 * progress)
+                noise = 0.15 * math.sin(second / 3) * math.sin(math.pi * progress)
+                value = 563.8 + (530.5 - 563.8) * eased + noise
+            else:
+                progress = (elapsed - 65) / 24
+                eased = progress * progress * (3 - 2 * progress)
+                noise = 0.08 * math.sin(second / 3) * math.sin(math.pi * progress)
+                value = 530.5 + (525.5 - 530.5) * eased + noise
     elif symbol == "IFF":
         if second < 90:
-            amplitude = max(0.12, 1.45 * (1 - second / 100))
-            value = 75 + amplitude * math.sin(second / 4.5)
+            amplitude = max(0.12, 1.1 * (1 - second / 100))
+            value = 82 + amplitude * math.sin(second / 4.5)
         elif second < 130:
             progress = (second - 90) / 40
-            value = 75.2 + 3.1 * progress + 0.12 * math.sin(second / 3)
+            value = 82.2 + 3.1 * progress + 0.12 * math.sin(second / 3)
         elif second < 210:
-            value = 78.25 + 0.18 * math.sin(second / 7)
+            value = 85.25 + 0.18 * math.sin(second / 7)
         else:
             progress = (second - 210) / 89
-            value = 78.2 + (76.5 - 78.2) * progress + 0.08 * math.sin(second / 4)
+            eased = progress * progress * (3 - 2 * progress)
+            noise = 0.06 * math.sin(second / 4) * math.sin(math.pi * progress)
+            value = 85.2 + (84.4 - 85.2) * eased + noise
     else:
         if second < 210:
-            value = 82 + 0.24 * math.sin(second / 9) + second * 0.001
+            value = 90 + 0.28 * math.sin(second / 9) + second * 0.001
         else:
             progress = (second - 210) / 89
-            value = 82.15 + (87.2 - 82.15) * progress + 0.09 * math.sin(second / 3.5)
+            eased = progress * progress * (3 - 2 * progress)
+            noise = 0.06 * math.sin(second / 3.5) * math.sin(math.pi * progress)
+            value = 90.2 + (95.5 - 90.2) * eased + noise
     return round(value, 4)
 
 

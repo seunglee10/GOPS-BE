@@ -23,9 +23,9 @@ SEMICONDUCTOR_WEIGHTS = {
 }
 ENERGY_WEIGHTS = {"OKE": 0.80}
 DEFAULT_SEED_PRICES = {
-    "AMD": 200.0,
-    "IFF": 75.0,
-    "OKE": 82.0,
+    "AMD": 565.0,
+    "IFF": 82.0,
+    "OKE": 90.0,
 }
 
 
