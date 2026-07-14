@@ -115,6 +115,7 @@ class SimulatorEksDeploymentContractTests(unittest.TestCase):
         self.assertIn("ALPACA_CHANNELS=trades,quotes", start_script)
         self.assertIn("ORDER_FLOW_PINNED_SYMBOLS=AMD,IFF,OKE", start_script)
         self.assertIn("TRADE_CONDITION_EXECUTION_MODE=paper", start_script)
+        self.assertIn("simulator_state_snapshot capture", start_script)
         self.assertIn("alfaka-alpaca-ingestor-sip", start_script)
         self.assertNotIn("alfaka-alpaca-ingestor-boats", start_script)
         self.assertNotIn("alfaka-alpaca-ingestor-crypto", start_script)
@@ -128,7 +129,7 @@ class SimulatorEksDeploymentContractTests(unittest.TestCase):
         self.assertNotIn("ALPACA_ACTIVE_CHANNELS-", stop_script)
         self.assertIn("gops-simulator --replicas=0", stop_script)
         self.assertIn("TRADE_CONDITION_EXECUTION_MODE=demo", stop_script)
-        self.assertIn("cleanup_simulator_state", stop_script)
+        self.assertIn("simulator_state_snapshot restore", stop_script)
 
         for script in ("start-dev-simulator.sh", "stop-dev-simulator.sh"):
             subprocess.run(
