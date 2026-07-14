@@ -36,6 +36,7 @@ def simulator_market_state_keys(
 ) -> set[str]:
     keys = RedisKeyBuilder(prefix)
     stale_keys: set[str] = set()
+    dynamic_key_prefixes: list[str] = []
 
     for raw_symbol in symbols:
         symbol = str(raw_symbol).strip().upper()
@@ -63,8 +64,17 @@ def simulator_market_state_keys(
                     keys.closed_candle_watermark(symbol, interval),
                 }
             )
-            stale_keys.update(redis_client.scan_iter(match=keys.key(f"state:candle-window:{symbol}:{interval}:*")))
-            stale_keys.update(redis_client.scan_iter(match=keys.key(f"pending:replace:{symbol}:{interval}:*")))
+            dynamic_key_prefixes.extend(
+                (
+                    keys.key(f"state:candle-window:{symbol}:{interval}:"),
+                    keys.key(f"pending:replace:{symbol}:{interval}:"),
+                )
+            )
+
+    if dynamic_key_prefixes:
+        for candidate in redis_client.scan_iter(match=keys.key("*")):
+            if any(candidate.startswith(dynamic_prefix) for dynamic_prefix in dynamic_key_prefixes):
+                stale_keys.add(candidate)
 
     return stale_keys
 
