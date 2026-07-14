@@ -10,7 +10,9 @@ from alfaka.common.symbols import is_crypto_symbol
 from alfaka.serving.intervals import INTRADAY_DERIVED_INTERVALS, INTRADAY_INTERVAL_MINUTES
 from alfaka.serving.session_buckets import (
     BUCKET_POLICY_CLOCK_ALIGNED,
+    BUCKET_POLICY_EXTENDED_SESSION,
     BUCKET_POLICY_REGULAR_SESSION,
+    extended_session_bucket,
     regular_session_bucket,
 )
 
@@ -314,9 +316,14 @@ class ProvisionalCandleState:
             else:
                 session_bucket = regular_session_bucket(anchor, target_interval)
                 if session_bucket is None:
-                    return None
-                bucket, end = session_bucket.start, session_bucket.end
-                bucket_policy = BUCKET_POLICY_REGULAR_SESSION
+                    extended_bucket = extended_session_bucket(anchor, target_interval)
+                    if extended_bucket is None:
+                        return None
+                    bucket, end = extended_bucket.start, extended_bucket.end
+                    bucket_policy = BUCKET_POLICY_EXTENDED_SESSION
+                else:
+                    bucket, end = session_bucket.start, session_bucket.end
+                    bucket_policy = BUCKET_POLICY_REGULAR_SESSION
         elif target_interval == "1D":
             bucket = floor_market_day(anchor)
             end = bucket + timedelta(days=1)

@@ -232,8 +232,15 @@ class FailingClickHouseProvider(FakeClickHouseProvider):
 
 
 class RecordingClickHouseProviderForAggregation(ClickHouseMarketDataProvider):
-    def __init__(self, rows):
-        super().__init__(url="http://clickhouse.local:8123", database="market_data", user="u", password="p")
+    def __init__(self, rows, now=None):
+        reference = now or datetime(2026, 7, 10, 15, 0, tzinfo=timezone.utc)
+        super().__init__(
+            url="http://clickhouse.local:8123",
+            database="market_data",
+            user="u",
+            password="p",
+            now_provider=lambda: reference,
+        )
         self.rows = rows
         self.queries = []
 
@@ -5677,6 +5684,78 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(provider.queries[0][1]["interval"], "1h")
         self.assertEqual(len(provider.queries), 1)
         self.assertEqual(candles[-1]["interval"], "1h")
+
+    def test_clickhouse_adds_current_extended_candle_when_direct_history_is_full(self):
+        direct_rows = [
+            {
+                "timestamp": f"2026-07-08T{13 + index:02d}:00:00.000Z",
+                "open": index + 1,
+                "high": index + 2,
+                "low": index,
+                "close": index + 1.5,
+                "volume": 100 + index,
+                "isClosed": 1,
+                "source": "derived.regular-session",
+                "feed": "sip",
+                "marketSession": "regular",
+            }
+            for index in range(5)
+        ]
+        extended_rows = [
+            {
+                "timestamp": "2026-07-09T04:01:00.000Z",
+                "symbol": "AAPL",
+                "open": 100,
+                "high": 102,
+                "low": 99,
+                "close": 101,
+                "volume": 10,
+                "isClosed": 1,
+                "source": "alpaca.bars",
+                "feed": "boats",
+                "marketSession": "overnight",
+                "priceAdjustment": "split",
+                "canonicalVersion": "v2",
+            },
+            {
+                "timestamp": "2026-07-09T05:15:00.000Z",
+                "symbol": "AAPL",
+                "open": 101,
+                "high": 106,
+                "low": 100,
+                "close": 105,
+                "volume": 20,
+                "isClosed": 1,
+                "source": "alpaca.bars",
+                "feed": "boats",
+                "marketSession": "overnight",
+                "priceAdjustment": "split",
+                "canonicalVersion": "v2",
+            },
+        ]
+
+        class ExtendedAwareProvider(RecordingClickHouseProviderForAggregation):
+            def query_json_each_row(self, query, params=None):
+                self.queries.append((query, params or {}))
+                if "AND interval = '1m'" in query and "market_session = 'overnight'" in query:
+                    return list(extended_rows)
+                return list(self.rows)
+
+        provider = ExtendedAwareProvider(
+            direct_rows,
+            now=datetime(2026, 7, 9, 5, 30, tzinfo=timezone.utc),
+        )
+
+        candles = provider.candles("AAPL", "4h", 5)
+
+        self.assertEqual(len(provider.queries), 2)
+        self.assertIn("market_session = 'overnight'", provider.queries[1][0])
+        self.assertIn("price_adjustment IN ('split', 'live')", provider.queries[1][0])
+        self.assertEqual(candles[-1]["timestamp"], "2026-07-09T04:00:00.000Z")
+        self.assertEqual(candles[-1]["close"], 105)
+        self.assertEqual(candles[-1]["marketSession"], "overnight")
+        self.assertEqual(candles[-1]["bucketPolicy"], "us_equity_extended_session")
+        self.assertFalse(candles[-1]["isClosed"])
 
     def test_clickhouse_recomputes_stored_direct_interval_moving_averages(self):
         rows = [

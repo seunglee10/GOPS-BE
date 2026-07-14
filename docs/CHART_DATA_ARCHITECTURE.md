@@ -17,13 +17,19 @@ in `platform/{kafka,redis,clickhouse,s3}/README.md`.
   are excluded and raw S3 is never chart serving or ClickHouse materialization input.
 - Local runtime never injects fake market candles. `?orderFlowDemo=1` is a
   browser fixture path only.
-- US-equity realtime `1m` is the live provider source. Live `5m/10m/1h/4h`
-  candles are materialized from regular-session `1m` with
-  `bucket_policy=us_equity_regular_session`. Bounded historical repair keeps
-  `1m` as the source for `5m/10m`, but fetches and stores Alpaca `10Min` as a
-  `source_native` recovery source for `1h/4h`; the resulting target candles use
-  the same regular-session bucket policy. Readers prefer stored target rows,
-  then `10m`, then legacy `1m` aggregation for hourly intervals.
+- US-equity realtime `1m` is the live provider source. Historical and persisted
+  `5m/10m/1h/4h` candles are materialized from regular-session data with
+  `bucket_policy=us_equity_regular_session`. During an active pre, after, or
+  overnight session, the API and live processor additionally aggregate retained
+  `1m` rows for the current extended session and its contiguous predecessor with
+  `bucket_policy=us_equity_extended_session`. Those read-time/live rows are
+  anchored to each extended-session open, never cross a session boundary, and do
+  not make old extended sessions part of historical chart serving. Bounded
+  historical repair keeps `1m` as the source for `5m/10m`, but fetches and stores
+  Alpaca `10Min` as a `source_native` recovery source for `1h/4h`; the resulting
+  historical target candles use the regular-session bucket policy. Readers prefer
+  stored target rows, then `10m`, then legacy `1m` aggregation for hourly history,
+  and merge the bounded current extended-session aggregate when applicable.
   Bucket timestamps are stored in UTC, while session open/close and early-close
   decisions use the NYSE calendar in `America/New_York`.
 - Candle runtime boundaries normalize OHLCV to numeric values and `tradeCount`

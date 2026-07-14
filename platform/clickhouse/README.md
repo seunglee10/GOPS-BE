@@ -47,6 +47,11 @@ and session-derived rows are persisted. The `10m` recovery rows use
 `source_native`; target `1h/4h` rows use `us_equity_regular_session`. Hourly
 read fallback is stored target, then `10m` aggregation, then legacy `1m`
 aggregation, so chart serving, Geometry, and SMA share the same OHLCV facts.
+While a pre, after, or overnight session is active, readers also query only the
+bounded current and contiguous prior session's `1m` rows and expose a
+session-anchored `us_equity_extended_session` aggregate. This aggregate is a
+serving result, not an additional historical `chart_candles` persistence path;
+old extended sessions remain excluded.
 `bucket_policy_key` mirrors that value only for the ReplacingMergeTree sorting
 key. Writers set both fields explicitly; the key intentionally has no default
 expression because ClickHouse forbids adding such a column to an existing sorting
