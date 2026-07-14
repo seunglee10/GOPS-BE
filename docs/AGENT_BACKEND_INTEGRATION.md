@@ -131,6 +131,11 @@ compat endpoint를 동기로 호출한다. 응답은 다음 shape를 유지한�
 확정되지 않은 상태다. 프런트는 분석 fallback을 하지 않고 `summary`를 사용자에게
 표시한다.
 
+UI layout parser는 `패턴 종목`, `패턴 종목 목록`, `패턴 리스트`,
+`패턴 보유 종목`을 `panelType="chartPatternList"`로 해석한다. 프런트가
+`layoutContext.panelCatalog`를 보내지 못한 경우에도 기본 크기는 `2x2`, 제목은
+`패턴 종목`으로 해석해 `layout.panel.add` proposal을 만들 수 있어야 한다.
+
 ## Request Shape
 
 요청 body는 프런트와 차트 엔진이 context를 추가할 수 있도록 확장 필드를

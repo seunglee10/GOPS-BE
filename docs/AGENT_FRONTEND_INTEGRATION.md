@@ -359,6 +359,14 @@ chart analysis asset 운영 패널은 `kind="chartAssetOps"`, 화면 표시는
 레이아웃 수정 모드의 패널 추가 팔레트에 항상 노출하며 URL query나 localStorage로
 숨기지 않는다.
 
+패턴 보유 종목 조회 패널은 `kind="chartPatternList"`, 화면 표시는 `패턴 종목`으로
+표현한다. 이 패널은 운영 패널과 분리하며 기존
+`GET /api/charts/analysis-assets/coverage` 응답의 `primaryPattern`만 사용한다.
+`forming`/`confirmed` 대표 패턴만 종목별로 묶고, 검색과 interval·상태·패턴 종류
+필터를 클라이언트에서 적용한다. 빌드 완료·삭제 invalidation event에는 목록을 다시
+조회하지만 별도 polling은 하지 않는다. 패턴 항목을 누르면 첫 번째 chart panel의
+symbol과 timeframe을 해당 자산 값으로 함께 바꾸며 주문 route는 호출하지 않는다.
+
 Geometry asset은 GET/build/poll route를 사용한다. timed anchor는 현재 interval의
 canonical candle timestamp로만 snap하며 대응 봉이 없으면 해당 drawing을 제외한다.
 단, Geometry 지지·저항 `horizontalLine`은 가격 자체가 핵심인 무한 수평선이므로

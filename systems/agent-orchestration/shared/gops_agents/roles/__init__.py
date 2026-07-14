@@ -2757,6 +2757,7 @@ def default_panel_title(panel_type: str) -> str:
 # The frontend can override these at request time via layoutContext.panelCatalog.
 DEFAULT_PANEL_SPECS: dict[str, dict[str, Any]] = {
     "chart": {"title": "차트", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 2, "rowSpan": 2}, "layoutWeight": 100},
+    "chartPatternList": {"title": "패턴 종목", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 2, "rowSpan": 2}, "layoutWeight": 44},
     "compareChart": {"title": "비교 차트", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 4, "rowSpan": 2}, "layoutWeight": 80},
     "newsFeed": {"title": "시장 뉴스", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 2, "rowSpan": 2}, "layoutWeight": 50},
     "marketIndices": {"title": "지수", "minSpan": {"colSpan": 1, "rowSpan": 1}, "defaultSpan": {"colSpan": 2, "rowSpan": 2}, "layoutWeight": 50},

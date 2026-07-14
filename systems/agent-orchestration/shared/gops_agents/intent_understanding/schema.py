@@ -30,6 +30,7 @@ UI_ACTIONS = (
 # and PANEL_TYPES in orchestration/ui_intent.py.
 UI_PANEL_TYPES = (
     "chart",
+    "chartPatternList",
     "compareChart",
     "marketIndices",
     "companyProfile",
