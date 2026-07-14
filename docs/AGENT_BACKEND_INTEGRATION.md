@@ -27,6 +27,33 @@
 바스켓 주문도 사용자의 명시적인 버튼 입력과 `Idempotency-Key`가 있어야 실행한다.
 속보 수신은 주문이나 차트 레이아웃 변경을 자동으로 실행하지 않는다.
 
+## Persistent Paper Trading Boundary
+
+영구 가상투자는 전역 LIVE/SIM 상태와 무관하며 사용자 `sub`로 격리한다.
+`POST /api/paper/orders`는 `Idempotency-Key`를 필수로 받고 Postgres의 가상 현금과
+보유수량만 예약한다. KIS 주문 테이블, Outbox, broker adapter는 호출하지 않는다.
+
+```text
+GET  /api/paper/symbols/search
+GET  /api/paper/account
+POST /api/paper/account/reset
+GET  /api/paper/account/balance
+POST /api/paper/risk/pretrade
+GET  /api/paper/orders
+POST /api/paper/orders
+GET  /api/paper/orders/{order_id}
+GET  /api/paper/orders/{order_id}/events
+POST /api/paper/orders/{order_id}/cancel
+WS   /ws/paper/orders/{order_id}
+WS   /ws/paper/account
+```
+
+`paper-order-matcher`는 `market.layer.quotes.v1`의 모든 market session quote를
+사용한다. 매수는 ask, 매도는 bid 최우선호가로 전량 체결하며 부분체결, 수수료,
+공매도는 지원하지 않는다. 모든 HTTP와 WebSocket 조회는 주문 소유자를 검사한다.
+가상투자 심볼 검색은 ClickHouse의 전체 symbol registry를 직접 조회하며
+`active`, `tradable`인 미국 주식/ETF만 노출한다.
+
 ## Runtime Flow
 
 ```mermaid

@@ -178,6 +178,7 @@ select_services_for_path() {
       add_service market-processor
       add_service market-storage
       add_service agent-orchestrator
+      add_service order-worker
       ;;
     systems/market-data/pods/market-ingestor/* | systems/market-data/pods/news-ingestor/*)
       add_service market-ingestor
@@ -193,7 +194,7 @@ select_services_for_path() {
       add_service order-worker
       add_service kis-adapter
       ;;
-    systems/order/pods/order-outbox/* | systems/order/jobs/*)
+    systems/order/pods/order-outbox/* | systems/order/pods/paper-order-matcher/* | systems/order/jobs/*)
       add_service order-worker
       ;;
     systems/order/pods/kis-adapter/*)

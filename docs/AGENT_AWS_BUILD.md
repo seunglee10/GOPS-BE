@@ -296,6 +296,10 @@ The local equivalents are `RUN_ORDER_MIGRATIONS=true`,
 `RUN_CHART_ASSET_MIGRATIONS=true`, and `REBUILD_NEWS_CACHE=true`; each requires
 its owning service to be selected. Migration Jobs run after image push but before
 the app workload apply.
+Persistent paper trading first requires `0006_paper_trading.sql`; therefore a
+deploy that introduces or changes `paper-order-matcher` must select
+`order-worker` and enable `run_order_migrations=true` (local:
+`RUN_ORDER_MIGRATIONS=true`) before applying app workloads.
 
 Market processor deploys as two runtime units from the same
 `gops-market-processor` image. `alfaka-market-processor` handles trades, bars,
@@ -343,7 +347,15 @@ The market and quote processors use per-workload `DoNotSchedule` topology spread
 constraints with `minDomains=3`, so their three replicas cannot collapse onto
 one node. Their
 readiness/liveness probes check a local heartbeat updated after every bounded
-Kafka poll. The order outbox and KIS adapter use the same loop-heartbeat pattern.
+Kafka poll. The order outbox, paper-order matcher, and KIS adapter use the same
+loop-heartbeat pattern. `paper-order-matcher` is a single-replica consumer of
+`market.layer.quotes.v1` in group `gops-paper-order-matcher-v1`; it uses the
+existing `gops-order-worker` image and creates no additional Kafka topic.
+Because that image now includes `systems/market-data/shared` for Kafka and
+subscription contracts, market-data shared changes also rebuild `order-worker`.
+The matcher reconciles pending-order and current-position subscription cohorts
+from Postgres every `PAPER_SUBSCRIPTION_SYNC_SECONDS` (default 5 seconds), so a
+temporary API-to-Redis synchronization failure heals without a new order.
 
 Scheduled batch Jobs declare resource requests/limits. Failed Job and Pod
 evidence is retained for seven days. The `batch-warm` NodePool is static with

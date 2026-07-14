@@ -8,7 +8,12 @@ sys.modules.setdefault("redis", types.SimpleNamespace(from_url=lambda *args, **k
 
 from alfaka.alpaca.websocket_collector import read_realtime_subscription_symbols_by_channel
 from alfaka.common.redis_keys import RedisKeyBuilder
-from alfaka.realtime.subscription_cohorts import ORDER_FLOW_SOURCE, RealtimeSubscriptionCohortService
+from alfaka.realtime.subscription_cohorts import (
+    ORDER_FLOW_SOURCE,
+    PAPER_ORDER_SOURCE,
+    PAPER_PORTFOLIO_SOURCE,
+    RealtimeSubscriptionCohortService,
+)
 
 
 class OrderFlowSubscriptionTest(unittest.TestCase):
@@ -39,6 +44,23 @@ class OrderFlowSubscriptionTest(unittest.TestCase):
 
         self.assertEqual(desired["trades"], {"AAPL", "NVDA"})
         self.assertEqual(desired["quotes"], {"AAPL", "NVDA"})
+
+    def test_paper_orders_outrank_orderflow_and_paper_positions(self):
+        redis = _MemoryRedis()
+        keys = RedisKeyBuilder()
+        controller = RealtimeSubscriptionCohortService(redis, keys)
+
+        controller.replace_order_flow_source(["NVDA"])
+        controller.replace_paper_portfolio_source(["MSFT"])
+        controller.replace_paper_order_source(["AAPL"])
+
+        self.assertEqual(redis.smembers(keys.subscription_source_symbols(PAPER_ORDER_SOURCE)), {"AAPL"})
+        self.assertEqual(redis.smembers(keys.subscription_source_symbols(PAPER_PORTFOLIO_SOURCE)), {"MSFT"})
+        with mock.patch.dict(os.environ, {"ALPACA_MAX_TRADE_SYMBOLS": "1"}, clear=False):
+            desired = read_realtime_subscription_symbols_by_channel(redis, ["trades", "quotes"])
+
+        self.assertEqual(desired["trades"], {"AAPL"})
+        self.assertEqual(desired["quotes"], {"AAPL"})
 
 
 class _MemoryRedis:

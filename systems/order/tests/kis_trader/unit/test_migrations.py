@@ -55,3 +55,20 @@ def test_recommendation_migration_declares_profile_runs_and_items():
     assert "CREATE TABLE IF NOT EXISTS stock_recommendation_items" in sql
     assert "CREATE TABLE IF NOT EXISTS user_portfolio_snapshots" in sql
     assert "stock_recommendation_runs_user_key_unique" in sql
+
+
+def test_paper_trading_migration_declares_isolated_account_and_order_tables():
+    [migration] = [path for path in migration_files() if path.name == "0006_paper_trading.sql"]
+    sql = migration.read_text(encoding="utf-8")
+
+    for table_name in [
+        "paper_accounts",
+        "paper_account_runs",
+        "paper_positions",
+        "paper_orders",
+        "paper_order_events",
+        "paper_cash_ledger",
+    ]:
+        assert f"CREATE TABLE IF NOT EXISTS {table_name}" in sql
+    assert "UNIQUE (user_id, idempotency_key_hash)" in sql
+    assert "WHERE status = 'pending'" in sql

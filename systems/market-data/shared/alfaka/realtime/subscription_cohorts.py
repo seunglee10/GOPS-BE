@@ -18,6 +18,8 @@ ACTIVE_CHART_SOURCE = "active-chart"
 RANK_SOURCE_PREFIX = "rank:"
 MANUAL_SOURCE = "manual"
 ORDER_FLOW_SOURCE = "orderflow"
+PAPER_ORDER_SOURCE = "paper-order"
+PAPER_PORTFOLIO_SOURCE = "paper-portfolio"
 ACTIVE_CHART_REASON = "active-chart-session"
 RANKING_KINDS = ("dollar-volume", "volume", "gainers", "losers")
 DEFAULT_SUBSCRIPTION_EVENTS_MAXLEN = 10000
@@ -89,6 +91,18 @@ class RealtimeSubscriptionCohortService:
         self._after_source_state_changed()
         return next_symbols
 
+    def replace_paper_order_source(self, symbols: Iterable[str]) -> list[str]:
+        next_symbols = normalize_symbol_list(symbols)
+        self._replace_set(self.keys.subscription_source_symbols(PAPER_ORDER_SOURCE), next_symbols)
+        self._after_source_state_changed()
+        return next_symbols
+
+    def replace_paper_portfolio_source(self, symbols: Iterable[str]) -> list[str]:
+        next_symbols = normalize_symbol_list(symbols)
+        self._replace_set(self.keys.subscription_source_symbols(PAPER_PORTFOLIO_SOURCE), next_symbols)
+        self._after_source_state_changed()
+        return next_symbols
+
     def add_manual_source(self, symbol: str, layers: Iterable[str] | None = None) -> dict[str, str]:
         symbol = normalize_market_symbol(symbol)
         self._sadd(self.keys.subscription_source_symbols(MANUAL_SOURCE), symbol)
@@ -152,6 +166,8 @@ class RealtimeSubscriptionCohortService:
             ACTIVE_CHART_SOURCE: defaultdict(set),
             MANUAL_SOURCE: defaultdict(set),
             ORDER_FLOW_SOURCE: defaultdict(set),
+            PAPER_ORDER_SOURCE: defaultdict(set),
+            PAPER_PORTFOLIO_SOURCE: defaultdict(set),
         }
         for kind in RANKING_KINDS:
             by_source[f"{RANK_SOURCE_PREFIX}{kind}"] = defaultdict(set)
@@ -164,6 +180,8 @@ class RealtimeSubscriptionCohortService:
         self._collect_ranking_sources(by_source)
         self._collect_manual_sources(by_source[MANUAL_SOURCE])
         self._collect_order_flow_sources(by_source[ORDER_FLOW_SOURCE])
+        self._collect_static_symbol_source(PAPER_ORDER_SOURCE, by_source[PAPER_ORDER_SOURCE])
+        self._collect_static_symbol_source(PAPER_PORTFOLIO_SOURCE, by_source[PAPER_PORTFOLIO_SOURCE])
         return {source: dict(symbols) for source, symbols in by_source.items()}
 
     def _collect_user_symbol_source(self, source: str, key_fn, target: dict[str, set[str]]) -> None:
@@ -232,6 +250,13 @@ class RealtimeSubscriptionCohortService:
             except ValueError:
                 continue
 
+    def _collect_static_symbol_source(self, source: str, target: dict[str, set[str]]) -> None:
+        for symbol in self._smembers(self.keys.subscription_source_symbols(source)):
+            try:
+                target[normalize_market_symbol(symbol)].add(source)
+            except ValueError:
+                continue
+
     def _write_aggregate_source_keys(self, source_members: dict[str, dict[str, set[str]]]) -> None:
         source_key_fns = {
             WATCHLIST_SOURCE: self.keys.subscription_source_watchlist,
@@ -244,6 +269,8 @@ class RealtimeSubscriptionCohortService:
             source = f"{RANK_SOURCE_PREFIX}{kind}"
             self._replace_aggregate_source(source, lambda symbol, kind=kind: self.keys.subscription_source_ranking(kind, symbol), source_members.get(source, {}))
         self._replace_set(self.keys.subscription_source_symbols(ORDER_FLOW_SOURCE), sorted(source_members.get(ORDER_FLOW_SOURCE, {})))
+        self._replace_set(self.keys.subscription_source_symbols(PAPER_ORDER_SOURCE), sorted(source_members.get(PAPER_ORDER_SOURCE, {})))
+        self._replace_set(self.keys.subscription_source_symbols(PAPER_PORTFOLIO_SOURCE), sorted(source_members.get(PAPER_PORTFOLIO_SOURCE, {})))
 
     def _replace_aggregate_source(self, source: str, key_fn, members_by_symbol: dict[str, set[str]]) -> None:
         index_key = self.keys.subscription_source_symbols(source)
@@ -402,6 +429,10 @@ def reason_for_sources(sources: set[str]) -> str:
         return "manual-monitor"
     if source == ORDER_FLOW_SOURCE:
         return "orderflow"
+    if source == PAPER_ORDER_SOURCE:
+        return "paper-order"
+    if source == PAPER_PORTFOLIO_SOURCE:
+        return "paper-portfolio"
     return source or "unknown"
 
 

@@ -155,6 +155,12 @@ class DeploymentContractsTest(unittest.TestCase):
         agent_case = agent_case[:agent_case.index(";;")]
         self.assertIn("chart-asset-builder", agent_case)
 
+    def test_market_shared_changes_rebuild_paper_order_matcher_image(self):
+        detector = (REPO_ROOT / "scripts/aws/detect-changed-services.sh").read_text(encoding="utf-8")
+        start = detector.index("systems/market-data/shared/*)")
+        branch = detector[start:detector.index(";;", start)]
+        self.assertIn("add_service order-worker", branch)
+
     def test_chart_asset_migration_runner_renders_custom_name(self):
         runner = REPO_ROOT / "scripts/aws/run-chart-asset-migrations-job.sh"
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -334,6 +340,7 @@ fi
     def test_order_workers_have_loop_heartbeat_probes(self):
         for path in (
             "infra/k8s/base/app/deployment-order-outbox-publisher.yaml",
+            "infra/k8s/base/app/deployment-paper-order-matcher.yaml",
             "infra/k8s/base/app/deployment-kis-broker-adapter.yaml",
         ):
             with self.subTest(path=path):

@@ -4,7 +4,7 @@ FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONPATH=/app/systems/order/shared
+    PYTHONPATH=/app/systems/order/shared:/app/systems/market-data/shared
 
 WORKDIR /app
 
@@ -13,7 +13,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY systems/order/shared ./systems/order/shared
 COPY systems/order/pods/order-outbox ./systems/order/pods/order-outbox
+COPY systems/order/pods/paper-order-matcher ./systems/order/pods/paper-order-matcher
 COPY systems/order/jobs/migrations ./systems/order/jobs/migrations
 COPY systems/order/jobs/reconciler ./systems/order/jobs/reconciler
+COPY systems/market-data/shared ./systems/market-data/shared
 
 CMD ["python", "-u", "systems/order/pods/order-outbox/main.py"]

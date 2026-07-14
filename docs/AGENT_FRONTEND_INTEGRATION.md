@@ -37,6 +37,14 @@ Bid/Ask 구조가 유효하지 않거나 chart WebSocket이 연결 오류 상태
 미지원 종목일 때만 전송을 비활성화한다. 로컬 SIM의 지정가 체결가는 replay engine 기준이며 실제 지정가
 matching을 의미하지 않는다.
 
+패널 팔레트의 `가상 빠른 주문`, `가상 주문`, `가상계좌`는 기존 레이아웃에 자동
+추가하지 않는다. 두 가상 주문 패널은 KIS 주문 컴포넌트의 형태를 재사용하지만
+`/api/paper/*`와 `/ws/paper/*`만 호출하며 LIVE/SIM 토글의 영향을 받지 않는다.
+가상 빠른 주문은 `/api/paper/symbols/search`의 전체 활성 미국 주식/ETF를 선택할 수 있고 유효한 bid/ask가
+없으면 전송을 비활성화한다. 일반 가상 주문은 호가가 없어도 지정가를 대기 주문으로
+접수한다. `가상계좌`는 현금, 평가손익, 보유종목, 미체결 취소, 거래내역, 새 시작금을
+받는 명시적 계좌 초기화를 제공한다.
+
 Agent 인증 진입은 상단 global navigation의 `Login` 버튼을 사용한다. 별도 `Agents`
 버튼은 표시하지 않으며, 인증 후 하단 Agent 입력을 직접 사용한다. 로컬 Vite DEV에서는
 Agent debug가 기본으로 켜지고 분석 prompt를 보내면 request snapshot을 browser
