@@ -316,7 +316,9 @@ def _regression_pattern_candidates(
 
 def _level_drawing(symbol, interval, level, generated_at):
     color = "#22c55e" if level["role"] == "support" else "#ef4444"
-    return _drawing(symbol, interval, level["id"], "horizontalLine", level["anchors"], color, "지지" if level["role"] == "support" else "저항", generated_at, opacity=0.86)
+    drawing = _drawing(symbol, interval, level["id"], "horizontalLine", level["anchors"], color, "지지" if level["role"] == "support" else "저항", generated_at, opacity=0.86)
+    drawing["style"] = {**drawing["style"], "lineDash": [6, 4], "lineStyle": "dashed"}
+    return drawing
 
 
 def _pattern_drawings(symbol, interval, pattern, generated_at):
