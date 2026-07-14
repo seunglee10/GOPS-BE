@@ -84,18 +84,26 @@ class SaturdayDemoScenarioTests(unittest.TestCase):
         self.assertGreaterEqual(final_prices["OKE"], 95.0)
         self.assertLessEqual(final_prices["OKE"], 96.0)
         amd_prices = post_event_prices["AMD"]
+        oke_prices = post_event_prices["OKE"]
         self.assertEqual(amd_prices[:5], [amd_prices[0]] * 5)
+        self.assertEqual(oke_prices[:5], [oke_prices[0]] * 5)
         self.assertLess(amd_prices[5], amd_prices[4])
-        early_decline = amd_prices[4] - amd_prices[30]
-        middle_decline = amd_prices[30] - amd_prices[75]
-        late_decline = amd_prices[75] - amd_prices[-1]
-        self.assertLessEqual(early_decline, 3.0)
-        self.assertGreaterEqual(middle_decline, 28.0)
-        self.assertLessEqual(late_decline, 8.0)
-        self.assertGreater(middle_decline, early_decline * 10)
+        self.assertGreater(oke_prices[5], oke_prices[4])
+        self.assertLessEqual(amd_prices[4] - amd_prices[14], 2.6)
+        self.assertLessEqual(amd_prices[4] - amd_prices[34], 13.0)
+        self.assertGreater(amd_prices[64], amd_prices[-1])
+        self.assertEqual(amd_prices[69:], [amd_prices[-1]] * len(amd_prices[69:]))
+        self.assertTrue(
+            all(current <= previous for previous, current in zip(amd_prices[4:69], amd_prices[5:70])),
+            "AMD should decline gradually for about one minute",
+        )
+        self.assertTrue(
+            all(current >= previous for previous, current in zip(oke_prices[4:], oke_prices[5:])),
+            "OKE should rise gradually through the response window",
+        )
         for symbol, prices in post_event_prices.items():
             largest_tick_jump = max(abs(current - previous) for previous, current in zip(prices, prices[1:]))
-            max_allowed_jump = 1.1 if symbol == "AMD" else 0.5
+            max_allowed_jump = 0.95 if symbol == "AMD" else 0.08
             self.assertLessEqual(largest_tick_jump, max_allowed_jump, symbol)
 
     def test_first_next_action_starts_the_breaking_event_immediately(self):
