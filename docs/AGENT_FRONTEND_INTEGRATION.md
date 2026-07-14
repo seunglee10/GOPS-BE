@@ -29,7 +29,8 @@ SIM 표시가 있는 주문은 실제 브로커 WebSocket에 연결하지 않는
 한 번 갱신한다.
 
 `빠른 주문` 패널도 자동 주문 경로가 아니다. 최우선 매수·매도호가, 1틱 오프셋,
-estimated order-flow imbalance는 `side + price` 주문 의도를 선택하는 입력이며,
+estimated order-flow imbalance는 `side + price` 주문 의도를 선택해 편집 가능한 가격 입력란을
+채우는 프리셋이다. 사용자는 선택한 가격을 전송 전에 직접 수정할 수 있으며,
 사용자가 패널 하단의 주문 전송 버튼을 눌러야만 기존 `POST /api/orders`를 호출한다.
 `202` 응답은 접수로 표시하고 체결은 `/ws/orders/{order_id}`의 terminal event로
 확인한다. 빠른 주문은 호가 이벤트 시각을 연결 상태 판단 기준으로 사용하지 않는다.
