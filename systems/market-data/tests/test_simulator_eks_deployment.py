@@ -128,6 +128,7 @@ class SimulatorEksDeploymentContractTests(unittest.TestCase):
         self.assertNotIn("ALPACA_ACTIVE_CHANNELS-", stop_script)
         self.assertIn("gops-simulator --replicas=0", stop_script)
         self.assertIn("TRADE_CONDITION_EXECUTION_MODE=demo", stop_script)
+        self.assertIn("cleanup_simulator_state", stop_script)
 
         for script in ("start-dev-simulator.sh", "stop-dev-simulator.sh"):
             subprocess.run(
