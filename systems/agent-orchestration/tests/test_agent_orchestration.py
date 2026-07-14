@@ -49,6 +49,7 @@ from gops_agents.retrieval.snapshots import (
     build_synthesis_input,
     chart_reference_evidence,
     news_reference_evidence,
+    recommendation_reference_evidence,
     trim_cross_signals,
 )
 from gops_agents.roles import AgentContext, NewsAgent, OntologyAgent, VerificationGuardrailAgent
@@ -419,8 +420,8 @@ def layout_context(*, pinned_news=False):
 def preset_layout_context():
     context = layout_context()
     context["presets"] = [
-        {"id": "market", "kind": "default", "name": "시장분석", "aliases": ["시장분석", "시장분석 프리셋"]},
-        {"id": "stock", "kind": "default", "name": "종목분석", "aliases": ["종목분석"]},
+        {"id": "market", "kind": "default", "name": "추천종목", "aliases": ["추천종목", "오늘의 추천 종목", "시장분석", "시장분석 프리셋"]},
+        {"id": "stock", "kind": "default", "name": "기업분석", "aliases": ["기업분석", "종목분석"]},
         {"id": "custom-taste", "kind": "custom", "name": "내 입맛", "aliases": ["내입맛", "내 입맛 프리셋"]},
     ]
     return context
@@ -630,6 +631,45 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(operation_ir["suggestedRoles"], ["chart", "news", "ontology"])
         self.assertEqual(operation_ir["contextWindow"]["requiredSnapshots"], ["market_snapshot", "news_snapshot", "relationship_snapshot"])
         self.assertGreaterEqual(operation_ir["confidence"], 0.9)
+
+    def test_recommendation_reference_becomes_market_evidence_and_operation_anchor(self):
+        reference = {
+            "type": "recommendation.stock",
+            "sourcePanelId": "content-recommendations-list",
+            "displayLabel": "MSFT 추천 1위",
+            "data": {
+                "symbol": "MSFT",
+                "rank": 1,
+                "score": 55.8,
+                "confidence": 0.75,
+                "reasons": [
+                    {"type": "market_momentum", "text": "상승 모멘텀이 확인됐습니다.", "weight": 23.8},
+                    {"type": "liquidity", "text": "거래대금이 충분합니다.", "weight": 16.0},
+                ],
+                "riskWarnings": [],
+            },
+        }
+        context = AgentContext(symbol="MSFT", intent="이 추천 종목은 왜 추천됐어?", references=[reference])
+
+        evidence = recommendation_reference_evidence(context)
+        operation_ir = build_agent_operation_ir(
+            intent=context.intent,
+            symbol=context.symbol,
+            references=[reference],
+            ui_context={"selectedReference": reference},
+            chart_context={},
+        )
+
+        self.assertEqual(len(evidence), 1)
+        self.assertEqual(evidence[0].provider, "market-data")
+        self.assertIn("MSFT", evidence[0].summary)
+        self.assertIn("55.8", evidence[0].summary)
+        self.assertEqual(operation_ir["operations"][0]["type"], "explain_recommendation")
+        self.assertEqual(operation_ir["suggestedRoles"], ["chart", "news", "financial"])
+        self.assertEqual(
+            operation_ir["contextWindow"]["requiredSnapshots"],
+            ["market_snapshot", "news_snapshot", "financial_snapshot"],
+        )
 
     def test_operation_reference_normalization_dedupes_chart_context_reference(self):
         reference = {
@@ -926,17 +966,17 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(len(parsed.tasks), 1)
         self.assertEqual(parsed.tasks[0].action, "load")
         self.assertEqual(parsed.tasks[0].presetId, "market")
-        self.assertEqual(parsed.tasks[0].presetName, "시장분석")
+        self.assertEqual(parsed.tasks[0].presetName, "추천종목")
 
     def test_ui_parser_loads_default_layout_preset_without_preset_word(self):
-        for query in ("시장분석 보여줘", "시장분석창 보여줘", "시장분석 대시보드 열어줘"):
+        for query in ("시장분석 보여줘", "시장분석창 보여줘", "시장분석 대시보드 열어줘", "오늘의 추천 종목 보여줘"):
             with self.subTest(query=query):
                 parsed = parse_ui_query(query, preset_layout_context())
 
                 self.assertEqual(len(parsed.tasks), 1)
                 self.assertEqual(parsed.tasks[0].action, "load")
                 self.assertEqual(parsed.tasks[0].presetId, "market")
-                self.assertEqual(parsed.tasks[0].presetName, "시장분석")
+                self.assertEqual(parsed.tasks[0].presetName, "추천종목")
 
     def test_ui_parser_loads_custom_layout_preset_without_llm(self):
         with patch("gops_agents.intent_understanding.fanout.classify_with_provider", side_effect=AssertionError("preset load should not call classifier")):
@@ -1943,7 +1983,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         proposal = response["layoutProposal"]
         self.assertEqual(proposal["commands"][0]["type"], "layout.load")
         self.assertEqual(proposal["commands"][0]["payload"]["presetId"], "market")
-        self.assertEqual(proposal["commands"][0]["payload"]["presetName"], "시장분석")
+        self.assertEqual(proposal["commands"][0]["payload"]["presetName"], "추천종목")
 
     def test_layout_resolve_loads_named_preset_without_preset_word(self):
         response = AgentOrchestrator().resolve_layout({

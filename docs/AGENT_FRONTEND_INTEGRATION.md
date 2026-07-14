@@ -175,6 +175,21 @@ symbol은 기존 분석 흐름을 유지한다.
 불명확한 것이므로 `/api/agents/analyze`로 fallback하지 않고 `summary`를 상단
 Agent 결과 알림으로 표시한다.
 
+기본 화면 프리셋은 `추천종목`, `기업분석`, `차트분석`, `포트폴리오` 네 개다.
+`오늘의 추천 종목 보여줘`처럼 프리셋 이름과 화면 전환 표현이 함께 있는 요청은
+기존 `layout.load` fast path로 `추천종목`을 연다. 이전 명칭인 `시장분석`,
+`종목분석`, `비교분석`, `자산현황`은 기존 채팅 명령 호환을 위한 alias로만 남긴다.
+
+추천 목록의 종목 클릭은 차트 이동이 아니라 현재 추천 종목 선택이다. 선택값은
+`recommendation.stock` reference로 만들어 하단 Agent 입력의 `추천` chip에 표시하고,
+추천 당시 순위·점수·신뢰도·근거·위험 경고를 분석 요청의 `references`에 보낸다.
+한 번에 하나의 추천 종목 reference만 유지하고 뉴스·차트 reference와는 함께 사용할
+수 있다. 선택 행은 뉴스 reference와 같은 주황색으로 강조한다. `이 종목의 기업에 대해 자세히
+알려줘`처럼 선택 종목을 가리키는 기업 상세 요청은 분석 API를 호출하지 않는
+UI-only fast path다. 선택 종목으로 `기업분석` 프리셋과 회사 패널 symbol을 함께
+갱신하고, 성공 시 채팅 답변을 만들지 않는다. 선택값이 없으면 현재 URL의 다른
+symbol을 추측해서 쓰지 않고 추천 종목을 먼저 선택하라고 안내한다.
+
 ## Submit Request
 
 프런트는 최소한 `symbol`, `intent`, `messages`를 보낸다. 가능한 경우 현재 차트와
@@ -228,7 +243,7 @@ Agent 결과 알림으로 표시한다.
 ```
 
 `references`는 사용자가 명시적으로 선택한 화면 객체를 구조화해 보내는 필드다.
-차트 봉, 차트 구간, 뉴스 기사, 일자별 뉴스 요약, 온톨로지 노드처럼 사용자가
+차트 봉, 차트 구간, 뉴스 기사, 일자별 뉴스 요약, 추천 종목, 온톨로지 노드처럼 사용자가
 "이거", "여기", "이 뉴스"라고 가리킬 수 있는 객체를 prompt 문자열로 긁어 넣지
 말고 별도 reference로 보낸다. `uiContext`는 현재 active panel, visible range,
 selection 같은 화면 상태 hint만 담고, provider 조회나 최종 판단은 백엔드/agent가
@@ -236,7 +251,8 @@ selection 같은 화면 상태 hint만 담고, provider 조회나 최종 판단�
 
 현재 `gops-frontend`는 canvas chart의 `SemanticSelectionSnapshot`을
 `chart.candle` reference로 보내고, news row 선택을 `news.article` 또는
-`news.dailySummary` reference로 보낸다. 사용자가 별도 reference를 선택하지 않아도
+`news.dailySummary` reference로 보내며, 추천 행 선택은 `recommendation.stock`
+reference로 보낸다. 사용자가 별도 reference를 선택하지 않아도
 `uiContext.selectedReference`/`hoverReference`를 보낼 수 있지만, 명시 선택 chip이나
 row selection이 있으면 그것을 우선한다.
 
@@ -476,8 +492,9 @@ stock recommendations panel은 `panelType="stockRecommendations"`/`kind="recomme
 표현한다. 패널은 `GET /api/recommendations/stocks/latest`로 마지막 장중 추천을
 읽고, 새로고침 버튼은 `POST /api/recommendations/stocks/refresh`에 현재 active
 symbol을 보낸다. 필수 투자 설정은 하단 `VI: 설정`의 `추천 설정` 탭에 있는
-`PUT /api/recommendations/profile` 폼에서만 받는다. 추천 행 클릭은 차트 symbol
-전환까지만 수행하고 주문 실행으로 연결하지 않는다. 추천 행의 섹터도
+`PUT /api/recommendations/profile` 폼에서만 받는다. 추천 행 클릭은 차트 symbol을
+바꾸지 않고 `recommendation.stock` Agent reference를 선택하며 주문 실행으로
+연결하지 않는다. 추천 행의 섹터도
 `sectorLabelKo` 한글 라벨을 사용한다.
 
 chart analysis asset 운영 패널은 `kind="chartAssetOps"`, 화면 표시는
