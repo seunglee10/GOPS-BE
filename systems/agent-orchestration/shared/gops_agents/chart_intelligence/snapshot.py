@@ -73,7 +73,11 @@ def build_chart_explanation(context: Any, asset: dict[str, Any] | None) -> dict[
     coverage = (asset or {}).get("coverage") if isinstance((asset or {}).get("coverage"), dict) else {}
     quality_state = str(coverage.get("state") or ("screen_only" if candles else "unavailable"))
     quality_flags = [str(item) for item in coverage.get("qualityFlags", []) if str(item)]
-    drawing_ids = [str(item.get("id")) for item in geometry.get("drawings", []) if isinstance(item, dict) and item.get("id")]
+    drawing_ids = list(dict.fromkeys(
+        str(item.get("id"))
+        for item in geometry.get("drawings", [])
+        if isinstance(item, dict) and item.get("id")
+    ))
     pattern_fact = None
     if pattern:
         pattern_fact = {
@@ -105,7 +109,12 @@ def build_chart_explanation(context: Any, asset: dict[str, Any] | None) -> dict[
         used_indicators.append("ATR(14)")
     if selected and selected.get("relativeVolume") is not None:
         used_indicators.append("20봉 상대 거래량")
-    return {
+    source = {
+        key: str(chart_document[key])
+        for key in ("chartDocumentId", "sourcePanelId")
+        if chart_document.get(key)
+    }
+    explanation = {
         "version": "chart-explanation.v1",
         "symbol": symbol,
         "interval": interval,
@@ -118,9 +127,51 @@ def build_chart_explanation(context: Any, asset: dict[str, Any] | None) -> dict[
         "facts": facts,
         "usedIndicators": used_indicators,
         "focusIds": drawing_ids,
+        "focusGroups": _focus_groups(geometry, drawing_ids, pattern),
         "anchor": _reference_anchor(reference),
         "news": [],
     }
+    if source:
+        explanation["source"] = source
+    return validate_chart_explanation_contract(explanation)
+
+
+def validate_chart_explanation_contract(value: dict[str, Any]) -> dict[str, Any]:
+    """Validate the Python producer boundary without adding a runtime schema package."""
+    required = {
+        "version", "symbol", "interval", "asOf", "quality", "assetIdentity",
+        "facts", "usedIndicators", "focusIds", "anchor", "news",
+    }
+    missing = sorted(required.difference(value))
+    if missing:
+        raise ValueError(f"chart explanation is missing required fields: {', '.join(missing)}")
+    if value.get("version") != "chart-explanation.v1":
+        raise ValueError("unsupported chart explanation version")
+    if not all(isinstance(value.get(key), str) and str(value[key]).strip() for key in ("symbol", "interval", "asOf")):
+        raise ValueError("chart explanation identity is invalid")
+    if not isinstance(value.get("quality"), dict) or not isinstance(value.get("assetIdentity"), dict) or not isinstance(value.get("facts"), dict):
+        raise ValueError("chart explanation object fields are invalid")
+    focus_ids = value.get("focusIds")
+    if not isinstance(focus_ids, list) or not all(isinstance(item, str) and item for item in focus_ids):
+        raise ValueError("chart explanation focusIds are invalid")
+    focus_groups = value.get("focusGroups")
+    if focus_groups is not None:
+        if not isinstance(focus_groups, dict):
+            raise ValueError("chart explanation focusGroups are invalid")
+        allowed_ids = set(focus_ids)
+        for key in ("evidence", "pattern", "support", "resistance"):
+            ids = focus_groups.get(key)
+            if not isinstance(ids, list) or not all(isinstance(item, str) and item in allowed_ids for item in ids):
+                raise ValueError(f"chart explanation focusGroups.{key} is invalid")
+    source = value.get("source")
+    if source is not None and (
+        not isinstance(source, dict)
+        or not source
+        or any(key not in {"chartDocumentId", "sourcePanelId"} for key in source)
+        or not all(isinstance(item, str) and item for item in source.values())
+    ):
+        raise ValueError("chart explanation source is invalid")
+    return value
 
 
 def chart_explanation_evidence(explanation: dict[str, Any]) -> EvidenceItem:
@@ -320,6 +371,31 @@ def _nearest_levels(values: Any, current_price: float | None) -> list[dict[str, 
     if current_price is None:
         return levels[:2]
     return sorted(levels, key=lambda item: abs(float(item["price"]) - current_price))[:2]
+
+
+def _focus_groups(
+    geometry: dict[str, Any],
+    drawing_ids: list[str],
+    primary_pattern: dict[str, Any] | None,
+) -> dict[str, list[str]]:
+    def level_ids(values: Any) -> list[str]:
+        raw_ids = {
+            str(item.get("id"))
+            for item in values or []
+            if isinstance(item, dict) and item.get("id")
+        }
+        return [
+            drawing_id for drawing_id in drawing_ids
+            if any(drawing_id == level_id or drawing_id.endswith(f":{level_id}") for level_id in raw_ids)
+        ]
+
+    geometry_hash = str((primary_pattern or {}).get("geometryHash") or "")
+    return {
+        "evidence": list(drawing_ids),
+        "pattern": [drawing_id for drawing_id in drawing_ids if geometry_hash and geometry_hash in drawing_id],
+        "support": level_ids(geometry.get("supports")),
+        "resistance": level_ids(geometry.get("resistances")),
+    }
 
 
 def _candles(chart_context: dict[str, Any]) -> list[dict[str, Any]]:

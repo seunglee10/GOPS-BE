@@ -360,8 +360,13 @@ not provider-confirmed.
 
 완료 report는 additive `chartExplanation`을 포함할 수 있다. `version`은
 `chart-explanation.v1`이며 `quality`, `facts`, `usedIndicators`, `focusIds`, `anchor`,
-`news`를 담는다. `finalAnswer`가 사용자 문장 계약이고 `chartExplanation`은 UI의
-구조화 렌더링 및 drawing focus 계약이다. provider/snapshot/LLM fallback과
+`news`를 담는다. optional `source`는 요청의 `chartDocumentId/sourcePanelId`를 echo하고,
+optional `focusGroups`는 기존 `focusIds` 합집합을 evidence/pattern/support/resistance로
+분류한다. 두 필드가 없는 기존 v1 응답도 유효하다. `finalAnswer`가 사용자 문장 계약이고
+`chartExplanation`은 UI의 구조화 렌더링 및 요청 시점 drawing focus snapshot 계약이다.
+현재 자산과 `symbol/interval/assetVersion/algorithmVersion/inputDigest/asOf`가 정확히
+일치하지 않으면 프런트는 서버 수치만 표시하고 현재 작도를 focus하지 않는다.
+provider/snapshot/LLM fallback과
 `investment_advice_limited` 같은 내부 정책 코드는 trace에만 둔다.
 
 완료 report의 `timing`은 synthesis 진단을 포함할 수 있다.

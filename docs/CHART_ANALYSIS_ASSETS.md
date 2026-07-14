@@ -28,7 +28,10 @@ OHLCV 접촉 증거 계산을 계속 사용한다.
 확인하고, 마지막 접촉이 interval별 유효 기간 안에 있으며 현재가가 2 ATR 이내인
 후보만 사용한다. 완료 봉 종가 돌파는 즉시 기존 역할을 중단하며, 거짓 돌파 복귀
 또는 구간 재테스트가 확인된 경우에만 역할을 복구·전환한다.
-지지선과 저항선은 `[6, 4]` 간격의 점선으로 표시하고, 가격 패턴 경계선은 실선을 유지한다.
+저장 자산의 지지·저항에는 중심 가격과 함께 `role`, `zoneLow`, `zoneHigh`,
+`halfWidthAtr`가 포함될 수 있다. 프런트는 이 값을 다시 계산하거나 병합하지 않고,
+유효한 zone이 있는 선만 동일 ID의 가격 밴드로 표현한다. metadata가 없는 구자산은
+원래 선·색·라벨을 유지한다. 가격 패턴 경계선은 얇은 실선 근거로 표시한다.
 
 `tradePlan`은 주문이 아니라 차트 표시용 시나리오다. `forming`은 관찰만 하고
 `confirmed`에서만 신호를 낸다. 돌파 기준은 패턴 경계에서 `0.25 ATR` 바깥의 완료 봉
@@ -69,6 +72,10 @@ Alpaca 요청에도 실재 봉이 없는 무거래 slot은 `provider_confirmed_e
 
 ## 실행
 
+> 해설·질문 UI 통합 배포에서는 아래 builder 운영 절차를 실행하지 않는다. 이미 저장된
+> `geometry_assets`를 읽기 전용으로 사용하며 FORCE 재생성, 전체 종목 재등록, chart asset
+> migration Job, Geometry CronJob 중지·변경을 하지 않는다.
+
 - API 패널은 새 빌드를 `1m/1D`로 제한하고 두 interval을 기본 선택한다.
 - 수동 작업은 priority 100, 정기 작업은 priority 10이며 worker는 높은 값부터 처리한다.
 - 동일 source/force/symbol/interval의 실행 중 요청은 하나의 job으로 합친다.
@@ -81,7 +88,9 @@ Alpaca 요청에도 실재 봉이 없는 무거래 slot은 `provider_confirmed_e
 - 기존 PostgreSQL 설치는 migration Job을 다시 실행해 작도 상한과 queue index를 적용한다.
 
 새 완료 봉 때문에 stale이 된 자산은 차트에서 제거하지 않고 낮은 불투명도로 표시한다.
-현재 symbol과 interval이 모두 일치하는 자산만 적용한다.
+현재 symbol과 interval이 모두 일치하는 자산만 적용한다. 자동 분석 drawing은
+`chart-asset:` 근거 레이어와 `chart-plan:` 제안 레이어로 나누며 차트의 `작도`, `제안`
+토글로 각각 표시한다. 토글은 사용자 수동 작도를 변경하지 않는다.
 최근 SMA60/120 교차가 있으면 두 선분의 실제 보간 교차점에 `flagMarker`를 표시한다.
 `timestamp`는 교차 확인 봉, `previousTimestamp`는 직전 봉, `fraction`은 그 사이의
 교차 비율이며 화면 x 좌표는 `previousIndex + fraction`이다. 골든크로스는 초록색,
@@ -90,4 +99,12 @@ Alpaca 요청에도 실재 봉이 없는 무거래 slot은 `provider_confirmed_e
 확인 신호는 실제 완료 봉에 `flagMarker`로 표시한다. 신규 포지션 후보의 진입·손절·목표는
 프런트가 `riskRewardBox`로 만들며, 미래 봉 timestamp를 만들지 않고 화면에서만 미래
 logical index로 투영한다. 교차 마커와 이 동적 도형은 PostgreSQL geometry drawing 예산
-8개에 포함하지 않으며 주문 API를 호출하지 않는다.
+8개에 포함하지 않으며 주문 API를 호출하지 않는다. 진입선은 확인 봉부터, 위험·보상
+fill과 목표·손절 경계는 마지막 완료 봉 다음 슬롯부터 시작한다. 제안 레이어가 보일 때만
+세 가격을 자동 Y축 범위에 포함한다.
+
+완전한 long/short 신규 포지션 후보는 차트 문서별 메모리 `ActiveTradePlan`으로도
+projection된다. 이 값은 비영속 UI 계약이며 `gops:trade-plan-updated` 이벤트 detail은
+`{ chartDocumentId, plan }`이다. 심볼·주기 변경, 자산 제거, 문서 unmount에는 해당
+문서 항목만 지우고 레이어 숨김은 지우지 않는다. 해설과 spotlight는 같은 projection의
+가격과 drawing ID를 사용하며 주문·알림의 신뢰 원본이 아니다.

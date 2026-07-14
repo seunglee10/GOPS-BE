@@ -81,11 +81,27 @@ DRY_RUN=true AWS_PROFILE=gops-dev ./scripts/aws/deploy-dev-local.sh
 ```bash
 REMOTE_BRANCH=codex/expand-chart-patterns \
 FORCE_SERVICES=frontend,agent-orchestrator \
-RUN_CHART_ASSET_MIGRATIONS=true \
+CHART_INTERPRETATION_ONLY=true \
 DRY_RUN=true \
 AWS_PROFILE=gops-dev \
 ./scripts/aws/deploy-dev-local.sh
 ```
+
+`CHART_INTERPRETATION_ONLY=true`는 기존 Geometry 자산을 읽는 통합 해설 전용
+배포 경계다. 전체 Kustomize overlay를 apply하지 않고 다음 Deployment의 image만
+교체한다.
+
+```text
+gops-frontend
+agent-analysis-worker
+agent-orchestrator
+```
+
+따라서 같은 agent image를 공유하는 `chart-asset-builder`, `chart-geometry-build`
+CronJob, migration/maintenance Job과 다른 agent workload는 변경하지 않는다. 이 모드는
+`FORCE_SERVICES=frontend,agent-orchestrator`를 반드시 함께 사용하며 migration, cache
+rebuild, platform apply option이 하나라도 켜져 있으면 시작 전에 실패한다. 실제 배포도
+위 명령에서 `DRY_RUN=true`만 제거해 같은 경계를 유지한다.
 
 ## Emergency Overrides
 
@@ -117,6 +133,7 @@ AWS_PROFILE=gops-dev ./scripts/aws/stop-dev-simulator.sh
 Order migration은 `order-worker` 선택 시 app rollout 전에 자동 실행된다.
 `agent-orchestrator`를 선택하면 migration image인 `order-worker`도 함께 선택된다.
 Chart migration과 news cache rebuild만 명시적 switch가 필요하다.
+단, 위 `CHART_INTERPRETATION_ONLY` 경로는 이 일반 결합을 적용하지 않는다.
 
 ```bash
 FORCE_SERVICES=order-worker AWS_PROFILE=gops-dev ./scripts/aws/deploy-dev-local.sh

@@ -18,6 +18,7 @@ RUN_CHART_ASSET_MIGRATIONS="${RUN_CHART_ASSET_MIGRATIONS:-false}"
 REBUILD_NEWS_CACHE="${REBUILD_NEWS_CACHE:-false}"
 APPLY_PLATFORM_MANIFESTS="${APPLY_PLATFORM_MANIFESTS:-false}"
 DRY_RUN="${DRY_RUN:-false}"
+CHART_INTERPRETATION_ONLY="${CHART_INTERPRETATION_ONLY:-false}"
 VITE_LOGO_DEV_ATTRIBUTION="${VITE_LOGO_DEV_ATTRIBUTION:-${LOGO_DEV_ATTRIBUTION:-true}}"
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
@@ -43,11 +44,14 @@ Optional environment variables:
   RUN_CHART_ASSET_MIGRATIONS=true       Run chart asset migrations; requires agent-orchestrator selected.
   REBUILD_NEWS_CACHE=true               Rebuild news Redis cache; requires market-storage selected.
   APPLY_PLATFORM_MANIFESTS=true         Apply dedicated platform manifests before app workloads.
+  CHART_INTERPRETATION_ONLY=true        Roll out only frontend and chart-analysis consumers.
 
 The deploy target is the latest origin/<REMOTE_BRANCH> commit. REMOTE_BRANCH
 defaults to dev. Local uncommitted changes are not included in the build.
 Order migrations run automatically before rollout whenever order-worker is
 selected. Selecting agent-orchestrator also selects the migration image.
+CHART_INTERPRETATION_ONLY requires FORCE_SERVICES=frontend,agent-orchestrator.
+It never applies Kustomize, migrations, the chart asset builder, or Geometry CronJobs.
 USAGE
 }
 
@@ -457,6 +461,30 @@ detect_services() {
   resolve_selected_services "${requested_services}"
 }
 
+apply_chart_interpretation_scope() {
+  if ! is_true "${CHART_INTERPRETATION_ONLY}"; then
+    return 0
+  fi
+
+  if [[ "${FORCE_SERVICES// /}" != "frontend,agent-orchestrator" && "${FORCE_SERVICES// /}" != "agent-orchestrator,frontend" ]]; then
+    printf 'CHART_INTERPRETATION_ONLY=true requires FORCE_SERVICES=frontend,agent-orchestrator.\n' >&2
+    exit 1
+  fi
+  if is_true "${RUN_ORDER_MIGRATIONS}" \
+    || is_true "${RUN_CHART_ASSET_MIGRATIONS}" \
+    || is_true "${REBUILD_NEWS_CACHE}" \
+    || is_true "${APPLY_PLATFORM_MANIFESTS}"; then
+    printf 'CHART_INTERPRETATION_ONLY=true cannot run migrations, rebuilds, or platform apply.\n' >&2
+    exit 1
+  fi
+
+  # 일반 agent service의 order migration 및 공유-image workload 결합을 제거한다.
+  SELECTED_SERVICES="frontend agent-orchestrator"
+  SELECTED_DEPLOYMENTS="gops-frontend agent-analysis-worker agent-orchestrator"
+  export LOCAL_DEPLOY_SMOKE_FRONTEND="true"
+  export LOCAL_DEPLOY_SMOKE_BACKEND="false"
+}
+
 validate_optional_tasks() {
   if is_true "${RUN_ORDER_MIGRATIONS}" && ! service_selected "order-worker"; then
     printf 'RUN_ORDER_MIGRATIONS=true requires order-worker to be selected.\n' >&2
@@ -620,6 +648,32 @@ verify_ai_coach_snapshot_archive() {
 }
 
 deploy_app_workloads() {
+  if is_true "${CHART_INTERPRETATION_ONLY}"; then
+    (
+      cd "${WORKTREE_DIR}"
+      AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}" \
+        AWS_REGION="${AWS_REGION}" \
+        IMAGE_TAG="${IMAGE_TAG}" \
+        K8S_NAMESPACE="${K8S_NAMESPACE}" \
+        DRY_RUN="${DRY_RUN}" \
+        scripts/aws/deploy-chart-interpretation-images.sh
+    )
+
+    if is_true "${DRY_RUN}"; then
+      printf 'DRY_RUN=true: skipping chart interpretation rollout status.\n'
+      return 0
+    fi
+
+    APP_APPLIED="true"
+    for deployment in ${SELECTED_DEPLOYMENTS}; do
+      if ! kubectl rollout status "deployment/${deployment}" -n "${K8S_NAMESPACE}" --timeout=600s; then
+        "${WORKTREE_DIR}/scripts/aws/print-rollout-diagnostics.sh" "${deployment}"
+        exit 1
+      fi
+    done
+    return 0
+  fi
+
   (
     cd "${WORKTREE_DIR}"
     kubectl apply -k "${KUSTOMIZE_OVERLAY}" --dry-run=server
@@ -706,6 +760,7 @@ main() {
   fi
 
   detect_services
+  apply_chart_interpretation_scope
   apply_platform_if_requested
 
   if [[ -z "${SELECTED_SERVICES}" ]]; then
@@ -736,7 +791,9 @@ main() {
   fi
 
   build_and_push_images
-  prepare_kustomize_overlay
+  if ! is_true "${CHART_INTERPRETATION_ONLY}"; then
+    prepare_kustomize_overlay
+  fi
 
   (
     cd "${WORKTREE_DIR}"
@@ -745,7 +802,9 @@ main() {
 
   run_migrations_if_requested
   deploy_app_workloads
-  verify_ai_coach_snapshot_archive
+  if ! is_true "${CHART_INTERPRETATION_ONLY}"; then
+    verify_ai_coach_snapshot_archive
+  fi
   run_smoke_tests
   run_news_cache_rebuild_if_requested
 

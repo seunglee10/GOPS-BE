@@ -164,8 +164,12 @@ select_services_for_path() {
     requirements.txt | .dockerignore)
       add_all_services
       ;;
-    apps/gops-frontend/* | apps/chart-engine/* | shared/chart-contract/* | infra/docker/nginx/*)
+    apps/gops-frontend/* | apps/chart-engine/* | infra/docker/nginx/*)
       add_service frontend
+      ;;
+    shared/chart-contract/*)
+      add_service frontend
+      add_service agent-orchestrator
       ;;
     systems/api-server/pods/api-server/gops-backend/app/contracts/*)
       add_service backend

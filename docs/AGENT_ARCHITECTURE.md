@@ -272,8 +272,11 @@ deterministic `OperationIR`을 그대로 쓴다. 차트 변경은 영구 `ChartC
 
 `chart_analysis_snapshot`의 `chartExplanation v1`은 패턴·확인 상태, 지지·저항,
 trade scenario와 무효화 조건, SMA60/120 교차, 선택 봉 feature, focus drawing ID,
-coverage를 typed fact로 보존한다. 최종 문장과 숫자는 deterministic Korean narrator가
-렌더링한다. 뉴스는 anchor window에서 `availableAt` cutoff를 통과한 항목만 원인 후보로
+coverage를 typed fact로 보존한다. 요청의 `chartDocumentId/sourcePanelId`는 optional
+`source`로 echo하고, 저장 자산의 drawing ID만 `focusGroups`의 evidence/pattern/support/
+resistance로 분류한다. `focusIds`는 호환용 합집합으로 유지한다. 이 응답은 요청 시점의
+불변 snapshot이며 현재 Geometry asset과 identity가 정확히 일치할 때만 프런트가 focus한다.
+최종 문장과 숫자는 deterministic Korean narrator가 렌더링한다. 뉴스는 anchor window에서 `availableAt` cutoff를 통과한 항목만 원인 후보로
 정렬하고 이후 항목은 후속 뉴스로 분리하며, 인과가 아니라 시간상 연관으로 표현한다.
 `analysisMode=deep`도 실제 available evidence domain이 둘 이상일 때만 LLM budget 1회를
 열며, 그보다 적으면 deterministic synthesis를 사용한다.

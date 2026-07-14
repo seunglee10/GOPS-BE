@@ -46,6 +46,22 @@ reintroduce associative arrays in `scripts/aws/detect-changed-services.sh` or
 Changes under `infra/k8s/overlays/aws/scheduled/` must select the owning runtime
 service so the deployment workflow applies the updated CronJob instead of
 returning `has_services=false`.
+Changes under `shared/chart-contract/` select both `frontend` and
+`agent-orchestrator`, because the typed chart explanation contract is consumed on
+both sides.
+
+The chart commentary integration deploy is a read-only consumer rollout. Use
+`CHART_INTERPRETATION_ONLY=true` together with
+`FORCE_SERVICES=frontend,agent-orchestrator`. This path updates only
+`gops-frontend`, `agent-analysis-worker`, and the compatibility
+`agent-orchestrator`; it does not apply the full Kustomize overlay even though the
+agent image is shared. It therefore leaves `chart-asset-builder`, the Geometry
+CronJob, migration/maintenance Jobs, and unrelated agent workloads on their
+existing specs and image tags. The profile fails closed when migration, cache
+rebuild, or platform-apply options are enabled. Do not enqueue chart build FORCE
+jobs or universe regeneration. Validate against the existing `geometry_assets`
+rows through the API and browser; this rollout does not require Alpaca credentials
+or a chart-asset builder run.
 
 GitHub Actions dev/test deploy entrypoint `.github/workflows/deploy-dev.yml`
 remains a backup path. It deploys to the shared dev EKS environment only when an

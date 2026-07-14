@@ -1254,6 +1254,47 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertIn("기존 long 포지션", rendered)
         self.assertNotIn("공매도 검토 후보", rendered)
 
+    def test_chart_explanation_echoes_document_source_and_groups_existing_asset_drawings(self):
+        from gops_agents.chart_intelligence import build_chart_explanation, validate_chart_explanation_contract
+
+        asset = {
+            "assetVersion": "geometry", "symbol": "NVDA", "interval": "1D",
+            "asOf": "2026-07-14T00:00:00Z", "algorithmVersion": "ohlcv-consensus-pattern-families-v4",
+            "inputDigest": "sha256:nvda-existing", "coverage": {"state": "full", "qualityFlags": []},
+            "geometry": {
+                "primaryPattern": {"kind": "bullish_flag", "state": "confirmed", "score": 0.9, "touches": 4, "geometryHash": "flag-hash"},
+                "supports": [{"id": "support-1", "price": 118.0}],
+                "resistances": [{"id": "resistance-1", "price": 126.0}],
+                "drawings": [
+                    {"id": "chart-asset:NVDA:1D:support-1"},
+                    {"id": "chart-asset:NVDA:1D:resistance-1"},
+                    {"id": "chart-asset:NVDA:1D:flag-hash-upper"},
+                ],
+                "tradePlan": None,
+            },
+            "indicators": {},
+        }
+        context = types.SimpleNamespace(
+            symbol="NVDA",
+            chartContext={"chartDocument": {
+                "symbol": "NVDA", "timeframe": "1D",
+                "chartDocumentId": "doc-nvda", "sourcePanelId": "content-chart-nvda",
+            }},
+            references=[],
+        )
+
+        explanation = build_chart_explanation(context, asset)
+
+        self.assertEqual(explanation["source"], {"chartDocumentId": "doc-nvda", "sourcePanelId": "content-chart-nvda"})
+        self.assertEqual(explanation["focusGroups"]["support"], ["chart-asset:NVDA:1D:support-1"])
+        self.assertEqual(explanation["focusGroups"]["resistance"], ["chart-asset:NVDA:1D:resistance-1"])
+        self.assertEqual(explanation["focusGroups"]["pattern"], ["chart-asset:NVDA:1D:flag-hash-upper"])
+        self.assertIs(validate_chart_explanation_contract(explanation), explanation)
+        schema = json.loads((REPO_ROOT / "shared/chart-contract/chart-explanation.schema.json").read_text())
+        self.assertEqual(schema["properties"]["version"]["const"], "chart-explanation.v1")
+        self.assertNotIn("source", schema["required"], "source remains additive for old report readers")
+        self.assertNotIn("focusGroups", schema["required"], "focusGroups remains additive for old report readers")
+
     def test_time_aligned_news_received_after_anchor_is_followup_not_cause_candidate(self):
         from gops_agents.retrieval.snapshots import align_news_evidence
 
