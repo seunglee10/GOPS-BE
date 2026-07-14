@@ -46,6 +46,17 @@ class SaturdayDemoScenarioTests(unittest.TestCase):
             ],
         )
         self.assertEqual(manifest["breakingNewsAtSeconds"], 210)
+        self.assertEqual(
+            manifest["seedPrices"],
+            {"AMD": 565.0, "IFF": 82.0, "OKE": 90.0},
+        )
+        self.assertEqual(
+            {
+                key: manifest["chartAnalysis"][key]
+                for key in ("support", "resistance", "entry", "stop")
+            },
+            {"support": 81.4, "resistance": 82.6, "entry": 82.7, "stop": 81.1},
+        )
 
     def test_scenario_streams_matching_trades_and_quotes_with_the_expected_rotation(self):
         manifest = json.loads((SCENARIO_ROOT / "scenario.json").read_text(encoding="utf-8"))
@@ -77,6 +88,12 @@ class SaturdayDemoScenarioTests(unittest.TestCase):
         }
         self.assertLess(final_prices["AMD"], first_prices["AMD"] * 0.94)
         self.assertGreater(final_prices["OKE"], first_prices["OKE"] * 1.05)
+        self.assertGreaterEqual(final_prices["AMD"], 520.0)
+        self.assertLessEqual(final_prices["AMD"], 525.0)
+        self.assertGreaterEqual(final_prices["IFF"], 83.0)
+        self.assertLessEqual(final_prices["IFF"], 85.0)
+        self.assertGreaterEqual(final_prices["OKE"], 95.0)
+        self.assertLessEqual(final_prices["OKE"], 97.0)
 
     def test_operator_can_jump_to_each_phase_without_waiting_for_wall_clock(self):
         clock = ManualClock()
