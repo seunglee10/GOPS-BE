@@ -104,11 +104,16 @@ AI 투자 코치의 알람 생성 UI는 4페이지 `실행·알람 관리`에만
 활성 항목을 누르면 API를 호출하지 않은 채 4페이지의 같은 후보로 이동해
 focus/highlight한다. 유사 사례의 `그때의 실수`, `오늘과 같은 점`, `오늘과 다른 점`도
 한 항목씩 같은 방식으로 전환한다. 현재값, 임계값, 연산자, 판단 사유, 추천 행동 같은 상세는
-4페이지에서 표시한다. 추천 후보는 `당일 거래에서 제안`, `진입 습관에서 제안`,
-`청산 습관에서 제안`, `포트폴리오 위험에서 제안` 네 출처 그룹을 고정 순서로
-표시한다. 사용자가 지원되는 후보의 `알람 추가`를 눌렀을 때만 `POST /api/alerts`를
+4페이지에서 표시한다. 추천 후보는 `당일 거래에서 제안` 출처만 표시하고, 출처명은
+신호색 왼쪽 rail과 표에 붙은 section band로 행 목록과 한 그룹임을 나타낸다.
+가상계좌의 예약 매매 목록과 같은 표에서 첫 줄을 종목·항목·현재값·기호 조건·관리 열로 나눈다.
+판단 근거와 추천 행동은 사용자가 행을 선택했을 때만 둘째 줄에 표시한다. 이 줄은
+티커 아래에는 작은 빈 여백만 유지하고, 나머지 영역을 `판단 근거 | 근거 내용 |
+추천 행동 | 행동 내용` 4열로 나눈다.
+여러 행을 동시에 펼칠 수 있고 각 행은 독립적으로 닫는다. 사용자가 지원되는 후보의
+`알람 추가`를 눌렀을 때만 `POST /api/alerts`를
 호출하며 RSI·거래량·집중도처럼 현재 alert API가 지원하지 않는 후보는 `미지원`으로
-남긴다. 저장된 알람의 출처가 null이면 `출처 기록 없음`으로 표시한다.
+남긴다. 저장된 주시 알람은 4페이지에 표시하지 않는다.
 
 1페이지의 여러 당일 체결은 종목명 tab row를 만들지 않고 활성 기업 정보 양옆의
 화살표로 전환한다. 현재 거래와 유사 사례도 차트 양옆 화살표로 전환하며 화면에는
@@ -315,9 +320,11 @@ terminal report를 유지할 수 있다.
 
 When present, one `coach-report.v2` is passed from the workspace container into the AI
 coach panel. The panel has four pages: (1) today's trade review, (2) habit review with
-independent `entry`/`exit`/`portfolio` tabs and `30d`/`90d`/`1y` periods, (3) improvement
-priorities, and (4) one action center combining execution experiments, guardrails, and
-alert management. Page sections receive props only and never call the analysis API.
+independent `entry`/`exit`/`portfolio` tabs and a six-month point-in-time profile, (3) improvement
+priorities, and (4) an alert center for daily-trade recommendations. Page 4 does not
+repeat the page header, summary counts, active experiments, enabled guardrails, watched
+alerts, or the safety footer. Page sections receive props only and never call the
+analysis API.
 Page 2 is a long-term investor-profile view, not an alert surface: it renders the supplied
 process/outcome cohorts, repeated patterns, and representative trades without a chart or
 per-section fetch. If the report has no decision record, it must show the supplied missing
