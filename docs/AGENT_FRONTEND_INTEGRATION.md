@@ -103,7 +103,7 @@ production build에는 debug snapshot을 노출하지 않는다.
 - ClickHouse/GraphDB 직접 query
 - 사용자 확인 없이 분석 결과만으로 주문을 실행하는 자동화
 
-## 차트 가격 선택과 매매 요청 미리보기
+## 차트 가격 선택과 paper 예약매매 확인
 
 오른쪽 가격축의 가격 pane을 pointer로 선택하면 프런트는
 `ChartPriceSelection.v1` 불변 snapshot을 만든다. `PanelWorkspace`는 마지막으로
@@ -114,10 +114,15 @@ focus/pointer 선택한 `OrderTicket`·`QuickOrderPanel`(paper 변형 포함), �
 `이 가격에 예약하자`, `이 때 사자` 같은 차트 맥락 문장은 Agent/주문/알림 API보다
 먼저 로컬 확인 intent로 분기한다. 현재 `ChartTradeSetup`의 진입·목표·손절과 asset
 identity가 완전하고 대상 `chartDocumentId`가 하나로 정해진 경우에만
-`TradeAutomationConfirmationDraft.v1` dialog를 연다. 확인 결과는 메모리와 기존 toast에
-`frontend_preview_only`로만 남고 서버·DB·localStorage에 저장하지 않는다. 실제 주문,
-예약매매, bracket/OCO, 알림 생성은 이 경로에서 항상 0회다. setup·symbol·interval·asset
-identity 변경 또는 원본 차트 삭제 시 열린 draft는 `stale`로 바뀌어 확인할 수 없다.
+`TradeAutomationConfirmationDraft.v1` dialog를 연다. 수량 기본값은 시연용 20주이며
+사용자가 확인 전에 양의 정수로 바꿀 수 있다. 확인하면 현재 선택 가격을 발동가와
+지정가로 사용하고 `executionEnabled=true`, `alertsEnabled=true`, `validity=GTC`인
+조건 하나를 `POST /api/trade-conditions`로 등록한다. 이 경로는 영구 가상계좌의
+paper 실행만 사용하며 실계좌 주문을 만들지 않는다. 화면에 함께 보이는 목표가·손절가는
+분석 참고값이고 bracket/OCO 또는 별도 목표·손절 알림으로 등록하지 않는다.
+setup·symbol·interval·asset identity 변경 또는 원본 차트 삭제 시 열린 draft는
+`stale`로 바뀌어 확인할 수 없다. API 실패 시 dialog를 유지해 사용자가 수량을 잃지
+않고 재시도할 수 있다.
 
 완료 report에 `tradeConditionProposals[]`가 있으면 답변 하단에 가격·방향·지정가·
 수량 누락 여부를 표시할 수 있다. 사용자가 이어서 `이 가격에 예약매매랑 알림
@@ -126,6 +131,12 @@ identity 변경 또는 원본 차트 삭제 시 열린 draft는 `stale`로 바�
 보낸다. API가 `clarify`를 반환하면 같은 proposal context를 유지해 수량 같은 누락
 필드를 받고, `created`일 때만 가상계좌의 예약 매매 탭을 invalidate/refetch한다. 관련
 없는 새 분석이 완료되면 이전 proposal context를 폐기한다.
+
+`이 종목을 관심종목에 추가해줘` 같은 문장은 현재 선택된 추천 종목 또는 차트 종목이
+있을 때 결정론적 UI 명령으로 처리한다. 프런트는 `GET /api/charts/watchlist`로 현재
+목록을 읽고 종목이 없을 때만 `PUT /api/charts/watchlist`로 전체 목록을 교체한다.
+이미 등록된 종목에는 쓰기 요청을 반복하지 않는다. 현재 종목을 정할 수 없으면 임의로
+티커를 추론하지 않고 먼저 종목 선택을 요청한다.
 
 ## Chart Derived Profile
 

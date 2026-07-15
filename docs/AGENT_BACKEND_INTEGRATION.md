@@ -46,9 +46,13 @@ Agent 후속 명령은 클라이언트가 보낸 가격을 신뢰하지 않고 `
 같은 사용자와 proposal ID 조합은 멱등이다.
 
 각 조건은 one-shot `alerts.price_cross` 행과 PostgreSQL transaction으로 함께
-저장된다. 알림 끄기는 WebSocket/notification 생성만 생략하며 가격 평가와 예약
-주문 이벤트는 유지한다. 일시정지는 alert 평가도 중단한다. 트리거된 조건은 다시
-감시 상태로 되돌릴 수 없다.
+저장된다. alert 행의 `condition`에는 `{kind: price_cross, operator: above|below,
+threshold}`를 저장하고 `condition_version=1`, `created_via=trade_condition`으로
+출처를 명시한다. 이 필드는 alert evaluator가 같은 PostgreSQL 행을 즉시 읽을 수
+있게 하며, 필수 `condition` 제약이 있는 운영 schema에서도 수동 조건 등록이
+실패하지 않게 한다. 알림 끄기는 WebSocket/notification 생성만 생략하며 가격 평가와
+예약 주문 이벤트는 유지한다. 일시정지는 alert 평가도 중단한다. 트리거된 조건은
+다시 감시 상태로 되돌릴 수 없다.
 
 `trade-condition-executor`는 `alerts.triggered.v1`을 별도 consumer group으로
 읽고 조건을 한 번 점유한다. `sim`/`paper`는 영구 가상계좌에, `demo`는 기존

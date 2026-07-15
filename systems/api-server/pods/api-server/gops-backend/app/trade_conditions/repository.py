@@ -10,6 +10,7 @@ from typing import Any
 import psycopg
 from psycopg.conninfo import make_conninfo
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 
 from app.alerts.repository import AlertCreate, AlertRepository
 
@@ -218,8 +219,12 @@ class PostgresTradeConditionRepository(TradeConditionRepository):
                     """
                     INSERT INTO alerts (
                         user_sub, symbol, type, direction, target_price, repeat,
-                        repeat_limit, status, notifications_enabled, expires_at
-                    ) VALUES (%s, %s, 'price_cross', %s, %s, false, 1, 'active', %s, %s)
+                        repeat_limit, status, notifications_enabled, condition,
+                        condition_version, created_via, expires_at
+                    ) VALUES (
+                        %s, %s, 'price_cross', %s, %s, false, 1, 'active', %s,
+                        %s, %s, %s, %s
+                    )
                     RETURNING *
                     """,
                     (
@@ -228,6 +233,9 @@ class PostgresTradeConditionRepository(TradeConditionRepository):
                         _alert_direction(condition.direction),
                         condition.trigger_price,
                         condition.alerts_enabled,
+                        Jsonb(_alert_condition(condition)),
+                        1,
+                        "trade_condition",
                         condition.expires_at,
                     ),
                 ).fetchone()
@@ -399,8 +407,18 @@ def _alert_create(condition: TradeConditionCreate) -> AlertCreate:
         repeat_limit=1,
         status="active",
         notifications_enabled=condition.alerts_enabled,
+        condition=_alert_condition(condition),
+        created_via="trade_condition",
         expires_at=condition.expires_at,
     )
+
+
+def _alert_condition(condition: TradeConditionCreate) -> dict[str, Any]:
+    return {
+        "kind": "price_cross",
+        "operator": _alert_direction(condition.direction),
+        "threshold": float(condition.trigger_price),
+    }
 
 
 def _alert_direction(direction: str) -> str:
