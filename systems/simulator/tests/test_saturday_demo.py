@@ -45,6 +45,13 @@ class SaturdayDemoScenarioTests(unittest.TestCase):
             manifest["seedPrices"],
             {"AMD": 565.0, "OKE": 90.0},
         )
+        breaking_news = manifest["breakingNews"]
+        self.assertEqual(breaking_news["source"], "GOPS Market Wire")
+        visible_news_copy = " ".join(
+            str(breaking_news.get(field) or "")
+            for field in ("headline", "summary", "source")
+        )
+        self.assertNotRegex(visible_news_copy, r"시뮬레이션|시연|실제 뉴스|simulator")
 
     def test_scenario_streams_matching_trades_and_quotes_with_the_expected_rotation(self):
         manifest = json.loads((SCENARIO_ROOT / "scenario.json").read_text(encoding="utf-8"))
@@ -89,12 +96,16 @@ class SaturdayDemoScenarioTests(unittest.TestCase):
         self.assertEqual(oke_prices[:5], [oke_prices[0]] * 5)
         self.assertLess(amd_prices[5], amd_prices[4])
         self.assertGreater(oke_prices[5], oke_prices[4])
-        self.assertLessEqual(amd_prices[4] - amd_prices[14], 2.6)
-        self.assertLessEqual(amd_prices[4] - amd_prices[34], 13.0)
-        self.assertGreater(amd_prices[64], amd_prices[-1])
-        self.assertEqual(amd_prices[69:], [amd_prices[-1]] * len(amd_prices[69:]))
+        first_ten_second_decline = amd_prices[4] - amd_prices[14]
+        first_thirty_second_decline = amd_prices[4] - amd_prices[34]
+        self.assertGreaterEqual(first_ten_second_decline, 3.0)
+        self.assertLessEqual(first_ten_second_decline, 3.5)
+        self.assertGreaterEqual(first_thirty_second_decline, 15.0)
+        self.assertLessEqual(first_thirty_second_decline, 16.0)
+        self.assertGreater(amd_prices[59], amd_prices[-1])
+        self.assertEqual(amd_prices[64:], [amd_prices[-1]] * len(amd_prices[64:]))
         self.assertTrue(
-            all(current <= previous for previous, current in zip(amd_prices[4:69], amd_prices[5:70])),
+            all(current <= previous for previous, current in zip(amd_prices[4:64], amd_prices[5:65])),
             "AMD should decline gradually for about one minute",
         )
         self.assertTrue(
@@ -103,7 +114,7 @@ class SaturdayDemoScenarioTests(unittest.TestCase):
         )
         for symbol, prices in post_event_prices.items():
             largest_tick_jump = max(abs(current - previous) for previous, current in zip(prices, prices[1:]))
-            max_allowed_jump = 0.95 if symbol == "AMD" else 0.08
+            max_allowed_jump = 0.98 if symbol == "AMD" else 0.08
             self.assertLessEqual(largest_tick_jump, max_allowed_jump, symbol)
 
     def test_first_next_action_starts_the_breaking_event_immediately(self):
