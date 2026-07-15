@@ -533,6 +533,9 @@ slot의 `layoutPinned`에 보존하며, `layout.save`는 현재 layout을 custom
 정규화되면 적용 결과의 `appliedWithChanges/reason`을 상단 결과 알림에 표시해야 하며 backend
 rationale만으로 성공을 단정하면 안 된다.
 
+상단 패널 편집 버튼은 레이아웃 수정모드 토글이다. 비편집 상태에서는 수정모드에
+진입하고, 수정 중 다시 누르면 팔레트의 `완료` 버튼과 같은 종료·저장 경로를 사용한다.
+
 UI-only layout 명령이 프런트에 정상 적용되면 symbol-aware 완료 문구를 상단 결과
 알림으로 표시한다. `ui_clarify`, `autoApply=false`, undo 이력 없음, placement 선택
 필요, 충돌·부분 적용처럼 사용자의 확인이나 조치가 필요한 경우도 같은 알림 영역을
