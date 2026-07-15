@@ -7,6 +7,7 @@ from typing import Any
 from alfaka.serving.volume_profile import compute_volume_profile_payload
 
 from .atr import latest_atr as regression_atr
+from .config import QUALITY_CONFIG
 from .levels import compute_levels
 from .patterns import TRIANGLE_KINDS, compute_patterns, compute_triangles
 from .pivots import compute_pivots
@@ -18,7 +19,7 @@ TARGET_BARS = {**{interval: 380 for interval in SUPPORTED_INTERVALS[:-1]}, "1W":
 WARMUP_BARS = {interval: 120 for interval in SUPPORTED_INTERVALS}
 EVALUATION_BARS = {**{interval: 260 for interval in SUPPORTED_INTERVALS[:-1]}, "1W": 192}
 MINIMUM_BARS = 120
-ALGORITHM_VERSION = "ohlcv-consensus-pattern-families-v4"
+ALGORITHM_VERSION = "ohlcv-consensus-pattern-families-v5"
 
 _ATR_PERIOD = 14
 _VOLUME_BASELINE = 20
@@ -205,10 +206,9 @@ def _confirmed_horizontal_levels(symbol, interval, rows, *, current, atr):
         interval=interval,
     )
     evidence_by_id = {str(item["id"]): item for item in pivots}
-    levels = []
+    confirmed = []
+    contextual = []
     for candidate in candidates:
-        if not candidate["hardPass"]:
-            continue
         role = candidate["role"]
         role_side_pass = (
             role == "support" and current >= float(candidate["zoneLow"]) - 0.25 * atr
@@ -218,9 +218,13 @@ def _confirmed_horizontal_levels(symbol, interval, rows, *, current, atr):
         if not role_side_pass:
             continue
         price = float(candidate["price"])
-        levels.append({
+        selection_tier = "confirmed" if candidate["hardPass"] else "contextual"
+        if selection_tier == "contextual" and not _contextual_level_pass(candidate, interval):
+            continue
+        projected = {
             "id": candidate["id"],
             "role": role,
+            "selectionTier": selection_tier,
             "price": price,
             "zoneLow": candidate["zoneLow"],
             "zoneHigh": candidate["zoneHigh"],
@@ -246,14 +250,36 @@ def _confirmed_horizontal_levels(symbol, interval, rows, *, current, atr):
                 for pivot_id in candidate["memberPivotIds"]
                 if pivot_id in evidence_by_id
             ][:8],
-        })
+        }
+        (confirmed if selection_tier == "confirmed" else contextual).append(projected)
     ordered = sorted(
-        levels,
+        confirmed,
         key=lambda item: (-item["score"], item["currentDistanceAtr"], item["id"]),
     )
     supports = [item for item in ordered if item["role"] == "support"][:2]
     resistances = [item for item in ordered if item["role"] == "resistance"][:2]
+    contextual_ordered = sorted(
+        contextual,
+        key=lambda item: (item["currentDistanceAtr"], -item["score"], item["lastTouchAgeBars"], item["id"]),
+    )
+    if not supports:
+        supports = [item for item in contextual_ordered if item["role"] == "support"][:1]
+    if not resistances:
+        resistances = [item for item in contextual_ordered if item["role"] == "resistance"][:1]
     return supports, resistances
+
+
+def _contextual_level_pass(candidate, interval):
+    config = QUALITY_CONFIG[interval]
+    role = candidate.get("role")
+    return (
+        role in {"support", "resistance"}
+        and candidate.get("state") in {f"{role}_active", f"role_flip_{role}"}
+        and int(candidate.get("touches") or 0) >= 3
+        and int(candidate.get("reactionCount") or 0) >= 1
+        and int(candidate.get("lastTouchAgeBars", 10**9)) <= config.level_last_touch_max_age
+        and float(candidate.get("currentDistanceAtr", 10**9)) <= 3
+    )
 
 
 def _regression_triangle_candidates(
@@ -325,7 +351,9 @@ def _regression_pattern_candidates(
 
 def _level_drawing(symbol, interval, level, generated_at):
     color = "#22c55e" if level["role"] == "support" else "#ef4444"
-    drawing = _drawing(symbol, interval, level["id"], "horizontalLine", level["anchors"], color, "지지" if level["role"] == "support" else "저항", generated_at, opacity=0.86)
+    contextual = level.get("selectionTier") == "contextual"
+    label = ("보조 지지" if level["role"] == "support" else "보조 저항") if contextual else ("지지" if level["role"] == "support" else "저항")
+    drawing = _drawing(symbol, interval, level["id"], "horizontalLine", level["anchors"], color, label, generated_at, opacity=0.72 if contextual else 0.86)
     drawing["style"] = {**drawing["style"], "lineDash": [6, 4], "lineStyle": "dashed"}
     return drawing
 

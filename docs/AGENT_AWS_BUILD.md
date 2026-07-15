@@ -1010,7 +1010,9 @@ CHART_ASSET_REPAIR_MAX_RANGES
 
 `chart-asset-builder`는 `gops-agent-orchestrator` image를 공유하지만 interactive
 AgentOrchestrator workflow에 참여하지 않는다. PostgreSQL queue item을 symbol/interval
-단위로 처리하고 ClickHouse 완료 봉을 감사하며 누락 range만 Alpaca로 보충한다.
+단위로 처리한다. 현재 보존 정책에서는 `scheduled` item을 candle 조회 전에
+`manual_refresh_only`로 종료하고, 기존 자산은 선택한 symbol/interval의 `manual + force`에서만
+ClickHouse 감사·Alpaca 보충·분석·저장을 수행한다. 일반 manual 요청은 없는 자산만 만든다.
 미국 주식 `5m/10m` 보충은 Alpaca `1Min`, `1h/4h` 보충은 Alpaca `10Min`을
 사용한다. 실제 정규장 원본과 `bucket_policy=us_equity_regular_session` 파생 봉을
 함께 ClickHouse에 저장하며, 실시간 파생 봉은 계속 `1m`을 원본으로 사용한다.
@@ -1024,16 +1026,19 @@ S3, Redis, Kafka, OpenAI를 사용하지 않는다.
 interactive `agent-orchestrator`와 `agent-analysis-worker`도 chart 질문에서 동일한
 PostgreSQL Geometry asset을 읽으므로 `DATABASE_URL`/`alfaka-order-db-secret`을 필수로
 주입한다. 새 table, topic, 별도 chart analysis worker는 만들지 않는다. 호환 reader와
-optional `chartExplanation` 계약을 먼저 배포한 뒤 Geometry algorithm v4 writer,
-asset rebuild, backend chart snapshot, frontend 순으로 rollout한다. 뉴스나 optional
+optional `chartExplanation` 계약과 기존 v3/v4 reader 호환을 먼저 배포한다. 신규 v5
+writer는 개발 패널에서 확인한 단일 자산의 명시적 수동 갱신에만 사용하며 asset rebuild를
+rollout 절차에 넣지 않는다. backend chart snapshot과 frontend consumer는 저장 자산을
+그대로 읽는다. 뉴스나 optional
 LLM enrichment 장애는 deterministic chart answer를 막지 않아야 한다.
 
-AWS overlay는 Alpaca repair 동시성 2와 최대 range 8을 사용한다. 평일 KST 08:40
-CronJob은 S&P500 전체의 `1m/1D`만 등록한다. API 패널과 수동 실행 스크립트도 새
-빌드를 이 두 interval로 제한한다. 기존 다른 interval 자산의 조회·표시는 유지한다.
+AWS overlay는 Alpaca repair 동시성 2와 최대 range 8을 사용한다. 기존 평일 CronJob이
+queue item을 등록해도 builder는 scheduled item을 분석·복구·저장하지 않는다. API 패널과
+수동 실행 스크립트의 새 빌드는 `1m/1D`로 제한하며 기존 다른 interval 자산의 조회·표시는
+유지한다. 전체 S&P500 force 갱신 경로는 제공하지 않는다.
 `chart-asset-builder`는 concurrency 2,
-memory request `512Mi`, limit `1Gi`로 실행한다. 수동 build priority 100이 정기 build
-priority 10보다 먼저 claim된다. PostgreSQL schema는
+memory request `512Mi`, limit `1Gi`로 실행한다. 수동 build priority 100 계약은 유지한다.
+PostgreSQL schema는
 `job-chart-asset-migrations.yaml`과 `run-chart-asset-migrations-job.sh`로 명시 적용하며
 runtime은 자동 생성하지 않는다. one-shot migration Job은 PostgreSQL Secret이 없으면
 시작하지 않는다. 범용 패턴 자산 배포 전에는 migration Job을 다시 실행해

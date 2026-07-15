@@ -23,8 +23,8 @@
   },
   "actions": {
     "watch": "관찰 후보",
-    "buy_candidate": "매수 검토 후보",
-    "sell_candidate": "매도·청산 후보",
+    "buy_candidate": "매수 후보",
+    "sell_candidate": "매도 후보",
     "short_candidate": "공매도 검토 후보",
     "no_trade": "진입 보류"
   },

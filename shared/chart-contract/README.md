@@ -14,12 +14,14 @@ pattern scenario. Older persisted rows may omit it and remain valid read inputs.
 Confirmed patterns may include additive `confirmation` timing, boundary, ATR
 penetration, and relative-volume evidence. `chart-semantics.ko.json` is the canonical
 Korean label catalog for pattern states, actions, and reason codes.
-The frontend derives an ephemeral `flagMarker` and, for new-position candidates,
-an ephemeral `riskRewardBox` from that plan without consuming the eight persisted
-geometry drawing slots. Existing `zoneLow`, `zoneHigh`, and `halfWidthAtr` level
+The frontend derives an ephemeral `ChartTradeSetup` and `riskRewardBox` for complete
+buy/sell plans. When a server plan is absent it may project a conditional setup from
+stored pattern/level evidence only, without ATR recomputation, level merging, fake
+candles, or symbol-specific branches. Existing `zoneLow`, `zoneHigh`, `halfWidthAtr`,
+and `selectionTier` level
 fields are optional presentation metadata; the frontend does not recompute ATR or
-merge levels. System analysis drawings use `chart-asset:` evidence and `chart-plan:`
-proposal identities.
+merge levels. Automated levels remain single H-Lines. System analysis drawings use
+`chart-asset:` evidence and `chart-plan:` proposal identities.
 
 `chart-explanation.schema.json` defines the immutable chart-question response
 snapshot. Optional `source` identifies the originating chart document/panel and
@@ -66,6 +68,8 @@ Rules:
 - Drawing `anchor.interval` and `sourceInterval` use canonical chart intervals.
 - `parallelLineCount` is an integer from 2 through 10, and drawing `fillOpacity`
   is a number from 0 through 1.
+- Drawing `lineWidth` is normalized to the `1..5` range. The manual drawing UI uses
+  `0.5` steps.
 - `DrawingStyle.labelPlacement` is optional `inline | axis | none`, and
   `DrawingStyle.zoneSplit` is an optional boolean. Missing values preserve legacy
   manual drawing labels and risk/reward geometry.
@@ -75,9 +79,11 @@ Rules:
 - A trade-plan overlay anchors Entry to the confirmed completed candle. Its
   non-persisted future Stop/Target edge may use logical index only; it must not
   invent or persist a candle timestamp.
-- A complete new-position candidate may be projected into the frontend-only,
+- Only a complete confirmed buy candidate may be projected into the frontend-only,
   chart-document-scoped `ActiveTradePlan` registry. Its update event detail is
   `{ chartDocumentId, plan }`; this projection is not an order or alert source of truth.
+- Sell and conditional scenarios remain frontend-only `ChartTradeSetup` projections
+  and are not registered as active trade plans.
 - An SMA cross keeps `timestamp` as the confirmation candle and stores
   `previousTimestamp`, `fraction`, and `price` for the actual interpolated
   SMA60/SMA120 intersection. The marker uses fractional logical index rather

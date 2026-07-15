@@ -17,9 +17,9 @@
   `timestamp`는 확인 봉으로 보존하고 마커 가격은 asset의 `price`를 사용하며, 교차
   구간이 현재 candle 범위 밖이면 만들지 않는다.
 - 지지·저항 `horizontalLine`은 첫·마지막 접촉의 동일 가격 2-anchor와 선택적
-  `role/zoneLow/zoneHigh/halfWidthAtr`를 저장한다. 프런트 presentation은 유효한 zone만
-  동일 ID의 `horizontalParallelLines` 밴드로 바꾸며 ATR 재계산·레벨 재병합을 하지 않는다.
-  metadata가 부족한 기존 자산과 수동 단일-anchor 선은 원래 geometry를 유지한다.
+  `role/zoneLow/zoneHigh/halfWidthAtr/selectionTier`를 저장한다. 프런트 presentation은
+  zone metadata를 재계산하지 않고 2.5px 단일 H-Line으로 표시한다. 패턴 경계는 3.5px와
+  패턴 이름·상태를 사용하며 metadata가 부족한 기존 자산도 읽기 호환한다.
 - 작도 계약은 최대 8개다. 지지·저항은 최대 4개이며 최고 점수 패턴 하나는 경계선
   2개와 선택적 깃대 1개를 사용한다.
 - 패턴 종류는 세 삼각형, 상승·하락 깃발형/페넌트/직사각형, 상승·하락 쐐기,
@@ -33,8 +33,12 @@
 - 결측 source는 `5m/10m` target에 `1Min`, `1h/4h` target에 `10Min`을 사용하며,
   실시간 `1m` 기반 파생 계약은 바꾸지 않는다.
 - 동일 `(symbol, interval, inputDigest, algorithmVersion)`은 no-op이다.
-- 수동 request source/priority는 `manual/100`, 정기 request는 `scheduled/10`이며
-  priority는 서버가 소유한다. 동일 활성 요청은 `request_fingerprint`로 합친다.
+- 신규 수동 자산의 `algorithmVersion`은 `ohlcv-consensus-pattern-families-v5`다. strict
+  역할이 비었을 때만 공개 레벨에 `contextual` 한 개를 보완하며 pattern/tradePlan에는
+  영향을 주지 않는다. 기존 v3/v4 row는 그대로 읽는다.
+- 수동 request source/priority는 `manual/100`이다. `scheduled` item은 candle 조회·복구·
+  분석·저장 전에 `manual_refresh_only`로 종료하며 기존 자산은 `manual + force`에서만
+  교체한다. 동일 활성 요청은 `request_fingerprint`로 합친다.
 - item claim은 priority 내림차순이며 2회 시도 후 만료된 lease는 실패로 종결한다.
 - 실제 완료 봉 120개 미만 또는 provider가 확인하지 못한 interior/tail gap이면 기존
   성공 자산을 덮어쓰지 않는다. 성공한 Alpaca 조회에도 실재 봉이 없는 slot은
@@ -65,7 +69,7 @@
 
 새 payload의 `assetVersion`은 숫자 개발 단계가 아니라 기존 응답 union을 구분하는
 semantic discriminator인 `geometry`다. `algorithmVersion`은 현재
-`ohlcv-consensus-pattern-families-v4`이며 분석 의미가 바뀔 때만 변경한다. 범용
+`ohlcv-consensus-pattern-families-v5`이며 분석 의미가 바뀔 때만 변경한다. 범용
 `patterns[]`/`primaryPattern`이 없는 기존 geometry row는 프런트가 `primaryTriangle`로
 표시 호환하고, 다음 빌드에서 새 계약으로 교체한다. 기존 숫자형 자산 row는 읽기
 fallback이나 자동 변환에 사용하지 않는다.
@@ -100,13 +104,15 @@ index를 사용한다. 기존 설치는 명시적 migration Job을 재실행해
 빌드 패널은 `1m/1D`만 제공하고 둘 다 기본 선택한다.
 
 `DrawingStyle.labelPlacement`는 `inline | axis | none`, `zoneSplit`은 boolean이다.
-두 값이 없으면 기존 수동 작도의 label/geometry를 보존한다. 시스템 밴드는 중앙 가격
-pill 하나, 패턴은 마지막 anchor 가격 pill을 사용한다. `zoneSplit:true` trade plan은
+두 값이 없으면 기존 수동 작도의 label/geometry를 보존한다. 자동 H-Line은 가격 pill,
+패턴은 대표 경계의 이름·상태와 마지막 anchor 가격 pill을 사용한다. `zoneSplit:true`
+trade setup은
 확인 봉부터 진입 점선을 그리고 마지막 완료 봉 다음 슬롯부터 위험·보상 fill과
 목표·손절선을 그린다. 미래 끝점은 `last candle index + projectionBars`의 logical index이며
 timestamp를 만들지 않는다.
 
-완전한 신규 long/short 후보만 차트 문서별 비영속 `ActiveTradePlan` registry에 저장한다.
-`sell_candidate`, `watch`, `no_trade`는 active plan을 만들지 않는다. registry event는
+완전한 신규 `buy_candidate`만 차트 문서별 비영속 `ActiveTradePlan` registry에 저장한다.
+`sell_candidate`와 조건부 플랜은 `ChartTradeSetup`으로 표시하되 active plan을 만들지
+않는다. `watch`, `no_trade`도 active plan을 만들지 않는다. registry event는
 `gops:trade-plan-updated`와 `{ chartDocumentId, plan }` detail을 사용하고 clear는
 `plan:null`이다. 이 projection은 해설·spotlight용이며 주문·알림 계약으로 사용하지 않는다.

@@ -24,22 +24,26 @@ Chart Geometry Asset은 완료된 실제 OHLCV 봉에서 현재 지지·저항�
 호환 필드인 `primaryTriangle`/`historicalTriangle`도 유지한다. 지지·저항은 별도의
 OHLCV 접촉 증거 계산을 계속 사용한다.
 
-표시하는 지지·저항은 ATR 기반 가격 구간에서 최소 3회 독립 접촉과 2회 반응을
+표시하는 확정 지지·저항은 ATR 기반 가격 구간에서 최소 3회 독립 접촉과 2회 반응을
 확인하고, 마지막 접촉이 interval별 유효 기간 안에 있으며 현재가가 2 ATR 이내인
 후보만 사용한다. 완료 봉 종가 돌파는 즉시 기존 역할을 중단하며, 거짓 돌파 복귀
 또는 구간 재테스트가 확인된 경우에만 역할을 복구·전환한다.
+Geometry v5는 확정 레벨 중 한 역할이 비어 있을 때에만 활성 상태, 3회 접촉, 1회 반응,
+주기별 최근성, 현재가 3 ATR 이내를 만족한 가장 가까운 레벨을 `contextual`로 최대 1개
+보완한다. 이 공개 단계 선택은 피벗·패턴·점수·`geometryHash`·`tradePlan`에 입력되지 않는다.
 저장 자산의 지지·저항에는 중심 가격과 함께 `role`, `zoneLow`, `zoneHigh`,
-`halfWidthAtr`가 포함될 수 있다. 프런트는 이 값을 다시 계산하거나 병합하지 않고,
-유효한 zone이 있는 선만 동일 ID의 가격 밴드로 표현한다. metadata가 없는 구자산은
-원래 선·색·라벨을 유지한다. 가격 패턴 경계선은 얇은 실선 근거로 표시한다.
+`halfWidthAtr`, `selectionTier`가 포함될 수 있다. 프런트는 이 값을 다시 계산하거나
+병합하지 않으며 자동 지지·저항은 2.5px 단일 H-Line으로 표시한다. 가격 패턴 경계는
+3.5px 실선과 패턴 이름·상태로 표시한다. 기존 v3/v4 자산과 metadata가 없는 자산도
+읽기 호환한다.
 
 `tradePlan`은 주문이 아니라 차트 표시용 시나리오다. `forming`은 관찰만 하고
 `confirmed`에서만 신호를 낸다. 돌파 기준은 패턴 경계에서 `0.25 ATR` 바깥의 완료 봉
 종가이며, 신규 진입 손절은 반대 경계와 돌파선에서 `1 ATR` 떨어진 가격 중 더 가까운
 유효 무효화 가격을 사용한다. 목표가는 깃발형·페넌트는 깃대 길이, 나머지는 패턴의
 최대 높이를 돌파선에 투영한다. 신규 매수·공매도 시나리오는 손익비 `2.0` 이상만
-후보로 표시한다. 기본 운영 모드는 long-only라 하락 확인은 공매도 진입이 아니라
-`매도·청산 후보`다.
+후보로 표시한다. 기본 운영 모드는 long-only라 하락 확인은 메인 UI에서 `매도 후보`로
+표시한다.
 
 ## 데이터와 저장 흐름
 
@@ -77,9 +81,13 @@ Alpaca 요청에도 실재 봉이 없는 무거래 slot은 `provider_confirmed_e
 > migration Job, Geometry CronJob 중지·변경을 하지 않는다.
 
 - API 패널은 새 빌드를 `1m/1D`로 제한하고 두 interval을 기본 선택한다.
-- 수동 작업은 priority 100, 정기 작업은 priority 10이며 worker는 높은 값부터 처리한다.
+- worker는 `scheduled` 요청을 candle 조회·복구·분석·저장 전에 `manual_refresh_only`로
+  종료한다. 기존 자산 교체는 선택한 symbol/interval의 `manual + force` 요청만 허용한다.
+- 개발 패널의 일반 수동 빌드는 없는 자산만 만들고, 기존 자산 갱신은 별도 확인을 거친
+  `선택 자산 수동 갱신`으로만 실행한다. S&P500 전체 강제 갱신 동작은 제공하지 않는다.
+- 수동 작업 priority 100 계약은 유지한다.
 - 동일 source/force/symbol/interval의 실행 중 요청은 하나의 job으로 합친다.
-- 평일 KST 08:40 CronJob은 S&P500 전체 `1m/1D` 작업만 멱등 등록한다.
+- 기존 scheduler가 요청을 등록해도 builder의 read-only 경계에서 처리하지 않는다.
 - 수동 실행 스크립트도 기본적으로 `1m/1D`만 등록한다.
 - 빌드 상태는 PostgreSQL polling으로 확인한다.
 - 자산 현황 목록은 `symbol + interval`별 대표 패턴의 한국어 이름, 상태, 점수를 표시한다.
@@ -96,15 +104,25 @@ Alpaca 요청에도 실재 봉이 없는 무거래 slot은 `provider_confirmed_e
 교차 비율이며 화면 x 좌표는 `previousIndex + fraction`이다. 골든크로스는 초록색,
 데드크로스는 빨간색이다. y 좌표는 자산의 `price`를 사용하며 교차 구간이 현재 차트에
 없으면 표시하지 않는다.
-확인 신호는 실제 완료 봉에 `flagMarker`로 표시한다. 신규 포지션 후보의 진입·손절·목표는
-프런트가 `riskRewardBox`로 만들며, 미래 봉 timestamp를 만들지 않고 화면에서만 미래
-logical index로 투영한다. 교차 마커와 이 동적 도형은 PostgreSQL geometry drawing 예산
+완전한 서버 `tradePlan`은 우선 사용한다. `buy_candidate`와 세 가격이 유효한
+`sell_candidate`는 각각 `매수 후보`, `매도 후보`의 기준·목표·손절/무효화 가격을
+프런트 `ChartTradeSetup`으로 만들고 `riskRewardBox`로 표시한다. 서버 플랜이 없으면
+현재 및 가까운 저장 주기의 패턴·지지·저항만으로 조건부 setup을 결정론적으로 투영한다.
+ATR 재계산, 레벨 재병합, 종목별 분기, 가짜 봉 생성은 하지 않는다. 미래 봉 timestamp는
+만들지 않고 화면에서만 미래 logical index로 투영한다. 교차 마커와 이 동적 도형은 PostgreSQL geometry drawing 예산
 8개에 포함하지 않으며 주문 API를 호출하지 않는다. 진입선은 확인 봉부터, 위험·보상
 fill과 목표·손절 경계는 마지막 완료 봉 다음 슬롯부터 시작한다. 제안 레이어가 보일 때만
 세 가격을 자동 Y축 범위에 포함한다.
 
-완전한 long/short 신규 포지션 후보는 차트 문서별 메모리 `ActiveTradePlan`으로도
-projection된다. 이 값은 비영속 UI 계약이며 `gops:trade-plan-updated` 이벤트 detail은
+완전한 신규 매수 플랜만 차트 문서별 메모리 `ActiveTradePlan`으로도 projection된다.
+매도 및 조건부 setup은 `ChartTradeSetup` UI projection으로만 존재한다. 이 값들은
+비영속 UI 계약이며 `gops:trade-plan-updated` 이벤트 detail은
 `{ chartDocumentId, plan }`이다. 심볼·주기 변경, 자산 제거, 문서 unmount에는 해당
 문서 항목만 지우고 레이어 숨김은 지우지 않는다. 해설과 spotlight는 같은 projection의
 가격과 drawing ID를 사용하며 주문·알림의 신뢰 원본이 아니다.
+
+차트 오른쪽 가격축에서 고른 가격은 `ChartPriceSelection.v1`으로 해당 차트 문서와 패널에
+묶이며 주문 패널의 종목·지정가 입력을 준비하는 UI snapshot으로만 사용한다. 질문창의
+예약매매·알림 표현도 현재 `ChartTradeSetup`의 세 가격을 그대로 확인 dialog에 투영할 뿐,
+Geometry 자산이나 `ActiveTradePlan`을 주문 신뢰 원본으로 승격하거나 실행 API를 호출하지
+않는다.

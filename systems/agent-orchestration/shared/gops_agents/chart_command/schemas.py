@@ -9,7 +9,7 @@ def chart_command_payload_schema(supported_symbols: list[str]) -> dict[str, Any]
         "properties": {
             "color": {"type": ["string", "null"]},
             "fillColor": {"type": ["string", "null"]},
-            "lineWidth": {"type": ["number", "null"]},
+            "lineWidth": {"type": ["number", "null"], "minimum": 1, "maximum": 5},
             "textColor": {"type": ["string", "null"]},
             "lineDash": {"type": ["array", "null"], "items": {"type": "number"}},
         },
