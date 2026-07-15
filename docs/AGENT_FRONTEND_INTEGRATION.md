@@ -137,6 +137,9 @@ setup·symbol·interval·asset identity 변경 또는 원본 차트 삭제 시 �
 `가격 545로 예약 매수해줘`처럼 프롬프트가 양의 가격을 명시하면 가격축 선택 없이
 그 값을 발동가와 지정가로 사용해 확인 dialog를 연다. 프롬프트 가격은 남아 있는
 차트 가격 선택보다 우선하며, `20주` 같은 수량 숫자는 가격으로 해석하지 않는다.
+`예약 매수`와 `예약 매도`의 방향도 프롬프트를 우선한다. 현재 차트 플랜이 반대
+방향이어도 paper 조건은 사용자가 말한 `buy` 또는 `sell`로 만들며, dialog의 참고
+목표가와 무효화가는 선택한 방향에 맞게 기존 차트 레벨의 역할을 바꿔 표시한다.
 
 차트별 `ChartTradeSetupSnapshot`은 App React state로 올리지 않고 `chartDocumentId`별
 메모리 store에 보관한다. store는 가격·drawing ID·asset identity 등을 값으로 비교해
