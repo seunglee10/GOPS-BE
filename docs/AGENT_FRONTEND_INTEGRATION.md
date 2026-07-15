@@ -30,8 +30,9 @@ SIM 상태에서 트리맵은 status의 AMD/OKE 가격·등락률을 1초 단위
 뉴스 패널은 이벤트 전 빈 결과를 사용하고 이벤트 뒤 `/api/simulator/news`의 속보를
 정상 뉴스 카드로 표시한다. 화면에 보이는 제목·요약·출처에는 시뮬레이션 표기를 넣지
 않지만, API의 내부 합성 데이터 식별 정보는 유지한다. IFF 차트 해설은
-`GlossaryText`를 통해 삼각 수렴·지지선·
-저항선 용어 hover 설명을 제공한다. 장 마감 단계의 AI 코치 fixture도
+`GlossaryText`를 통해 차트 해설과 Wild 답변에 같은 투자 용어 설명을 제공한다.
+공용 사전은 일반 단어를 주석하지 않고, 처음 보는 투자자에게 필요한 전문용어만
+한 문장으로 설명한다. 장 마감 단계의 AI 코치 fixture도
 `saturday-demo-close-report`로 표시해 실제 저장 report와 혼동하지 않는다.
 
 지정학 이벤트와 장 마감 알림은 시뮬레이터 전용 toast를 만들지 않고 기존
@@ -123,6 +124,12 @@ paper 실행만 사용하며 실계좌 주문을 만들지 않는다. 화면에 
 setup·symbol·interval·asset identity 변경 또는 원본 차트 삭제 시 열린 draft는
 `stale`로 바뀌어 확인할 수 없다. API 실패 시 dialog를 유지해 사용자가 수량을 잃지
 않고 재시도할 수 있다.
+
+차트별 `ChartTradeSetupSnapshot`은 App React state로 올리지 않고 `chartDocumentId`별
+메모리 store에 보관한다. store는 가격·drawing ID·asset identity 등을 값으로 비교해
+동일 snapshot의 저장과 알림을 생략하며, 확인 dialog가 열린 문서만 변경을 구독한다.
+차트 crosshair는 정적 캔들·지표·작도 base canvas와 분리된 overlay canvas에서 rAF로
+그려 pointer 이동이 workspace 전체 또는 정적 차트 레이어를 다시 렌더하지 않게 한다.
 
 완료 report에 `tradeConditionProposals[]`가 있으면 답변 하단에 가격·방향·지정가·
 수량 누락 여부를 표시할 수 있다. 사용자가 이어서 `이 가격에 예약매매랑 알림
@@ -584,10 +591,12 @@ items를 패널로 전달해 S&P500 거래대금순 Top10을 렌더링한다. �
 stock recommendations panel은 `panelType="stockRecommendations"`/`kind="recommendations"`로
 표현한다. 패널은 `GET /api/recommendations/stocks/latest`로 마지막 장중 추천을
 읽고, 새로고침 버튼은 `POST /api/recommendations/stocks/refresh`에 현재 active
-symbol을 보낸다. 필수 투자 설정은 하단 `VI: 설정`의 `추천 설정` 탭에 있는
-`PUT /api/recommendations/profile` 폼에서만 받는다. 추천 행 클릭은 차트 symbol을
-바꾸지 않고 `recommendation.stock` Agent reference를 선택하며 주문 실행으로
-연결하지 않는다. 추천 행의 섹터도
+symbol을 보낸다. 패널 상단 왼쪽의 `추천 설정` 버튼은 hover/focus 때 표시되고 중앙
+dialog에서 `GET /api/recommendations/profile`로 현재 값을 읽어
+`PUT /api/recommendations/profile`로 저장한다. 저장 성공 시 dialog를 닫고 현재
+장전/본장 모드의 추천을 다시 조회한다. 추천 행 클릭은 차트 symbol을 바꾸지 않고
+`recommendation.stock` Agent reference를 선택하며 주문 실행으로 연결하지 않는다.
+추천 행의 섹터도
 `sectorLabelKo` 한글 라벨을 사용한다.
 
 chart analysis asset 운영 패널은 `kind="chartAssetOps"`, 화면 표시는
