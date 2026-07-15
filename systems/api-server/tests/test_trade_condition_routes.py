@@ -30,7 +30,12 @@ try:
 
     from app.alerts.repository import InMemoryAlertRepository
     from app.main import create_app
-    from app.trade_conditions.repository import InMemoryTradeConditionRepository
+    from app.trade_conditions.repository import (
+        InMemoryTradeConditionRepository,
+        PostgresTradeConditionRepository,
+        TradeConditionCreate,
+        _alert_create,
+    )
 except Exception as exc:  # pragma: no cover
     pytest.skip(f"trade condition route tests unavailable: {exc}", allow_module_level=True)
 
@@ -45,6 +50,51 @@ class FakeProjection:
 
     def delete_alert(self, alert_id, *, symbol=None):
         self.deleted.append((alert_id, symbol))
+
+
+class FakeResult:
+    def __init__(self, row):
+        self.row = row
+
+    def fetchone(self):
+        return self.row
+
+
+class FakePostgresConnection:
+    def __init__(self):
+        self.executed = []
+        self.committed = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def execute(self, query, params):
+        self.executed.append((query, params))
+        if "INSERT INTO alerts" in query:
+            return FakeResult({
+                "id": 41,
+                "symbol": "AMD",
+                "direction": "below",
+                "target_price": Decimal("531"),
+                "notifications_enabled": True,
+                "triggered_count": 0,
+                "status": "active",
+            })
+        return FakeResult({
+            "id": 9,
+            "user_sub": "user-1",
+            "alert_id": 41,
+            "side": "buy",
+            "limit_price": Decimal("530.5"),
+            "quantity": Decimal("20"),
+            "status": "watching",
+        })
+
+    def commit(self):
+        self.committed = True
 
 
 @pytest.fixture
@@ -80,6 +130,34 @@ def trade_condition_app(monkeypatch: pytest.MonkeyPatch):
         }],
     }
     return app
+
+
+def test_trade_condition_alert_shape_matches_current_alert_schema(monkeypatch: pytest.MonkeyPatch) -> None:
+    condition = TradeConditionCreate(
+        user_sub="user-1",
+        source="manual",
+        symbol="AMD",
+        side="buy",
+        direction="atOrBelow",
+        trigger_price=Decimal("531"),
+        limit_price=Decimal("530.5"),
+        quantity=20,
+    )
+
+    alert = _alert_create(condition)
+    assert alert.condition == {"kind": "price_cross", "operator": "below", "threshold": 531.0}
+    assert alert.created_via == "trade_condition"
+
+    connection = FakePostgresConnection()
+    repository = PostgresTradeConditionRepository("postgresql://unused")
+    monkeypatch.setattr(repository, "_connect", lambda: connection)
+    repository.create_condition(condition)
+
+    alert_query, alert_params = connection.executed[0]
+    assert "condition, condition_version, created_via" in " ".join(alert_query.split())
+    assert getattr(alert_params[5], "obj", None) == alert.condition
+    assert alert_params[6:8] == (1, "trade_condition")
+    assert connection.committed is True
 
 
 def test_manual_trade_condition_crud_updates_the_linked_alert(trade_condition_app) -> None:
