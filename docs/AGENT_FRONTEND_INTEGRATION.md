@@ -125,6 +125,13 @@ setup·symbol·interval·asset identity 변경 또는 원본 차트 삭제 시 �
 `stale`로 바뀌어 확인할 수 없다. API 실패 시 dialog를 유지해 사용자가 수량을 잃지
 않고 재시도할 수 있다.
 
+`예약 매수 해줘`, `예약매수 해달라`, `예약 주문해줘`처럼 실행 의사가 분명하지만
+가격 지시어가 없는 문장도 일반 분석으로 보내지 않는 거래 명령이다. 현재 차트에서
+사용자가 가격축을 선택한 상태면 그 선택 가격으로 같은 확인 dialog를 열고, 선택
+가격이 없거나 다른 차트의 선택이면 `어느 가격에 예약할까요?`라고 안내하며
+`POST /api/agents/analyze`를 호출하지 않는다. `예약매매가 뭐야?` 같은 설명 질문과
+가격 없는 일반 `매수해줘`는 이 로컬 paper 예약 명령으로 추정하지 않는다.
+
 차트별 `ChartTradeSetupSnapshot`은 App React state로 올리지 않고 `chartDocumentId`별
 메모리 store에 보관한다. store는 가격·drawing ID·asset identity 등을 값으로 비교해
 동일 snapshot의 저장과 알림을 생략하며, 확인 dialog가 열린 문서만 변경을 구독한다.
