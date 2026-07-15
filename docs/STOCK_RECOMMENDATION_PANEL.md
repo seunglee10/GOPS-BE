@@ -21,7 +21,8 @@ v1은 미국 주식의 장전/데이장 추천과 본장 추천만 다룬다.
 
 ## 사용자 설정
 
-사용자는 하단 메뉴 `VI: 설정`의 `추천 설정` 탭에서 장중 추천 설정을 저장해야 한다.
+사용자는 추천목록 패널에 hover하거나 키보드 focus했을 때 상단 왼쪽에 나타나는
+`추천 설정` 버튼을 눌러 중앙 dialog에서 장중 추천 설정을 저장한다.
 
 저장되는 필드는 다음과 같다.
 
@@ -37,13 +38,15 @@ v1은 미국 주식의 장전/데이장 추천과 본장 추천만 다룬다.
 
 프론트 설정 UI는 canonical GICS 섹터 목록만 선택하게 한다. `preferredSectors`와 `excludedSectors`는 검색창 focus 이후 섹터 목록을 띄워 추가하고, 같은 섹터가 선호/제외에 동시에 들어가지 않도록 한쪽을 선택하면 반대쪽에서 제거한다. `excludedSymbols`도 검색창 focus 이후 등록 종목 목록을 필터링한 뒤 선택하며, 임의 섹터명이나 티커 문자열은 저장하지 않는다. 기존 API/DB 호환을 위해 `maxDrawdownPct`는 내부 기본값 `6`으로 저장하지만 사용자 입력으로 받지 않는다.
 
-프로필이 없으면 추천 API는 `profile_required`를 반환하고, 프론트 패널은 설정의 추천 설정 탭에서 설정을 저장하라는 상태를 보여준다.
+프로필이 없으면 추천 API는 `profile_required`를 반환하고, 프론트 패널은 장중 추천
+설정을 저장하라는 상태를 보여준다. `추천 설정` 버튼은 프로필 유무와 관계없이 항상
+렌더링되며 저장 성공 뒤 현재 추천 모드를 자동 재조회한다.
 
 ## 전체 구조
 
 ```mermaid
 flowchart TD
-  Profile["설정 > 추천 설정<br/>투자 설정 저장"] --> ProfileAPI["PUT /api/recommendations/profile"]
+  Profile["추천목록 패널 > 추천 설정 dialog<br/>투자 설정 저장"] --> ProfileAPI["PUT /api/recommendations/profile"]
   Holdings["내 투자 패널<br/>/api/account/holdings"] --> Snapshot["user_portfolio_snapshots"]
   Worker["recommendation-worker<br/>30분 polling"] --> Service["RecommendationService.refresh"]
   Panel["추천 패널<br/>latest/refresh"] --> Service
@@ -78,9 +81,9 @@ flowchart TD
 | 파일 | 역할 |
 | --- | --- |
 | `apps/gops-frontend/src/recommendations/recommendationApi.ts` | 추천 API client와 응답 정규화 |
-| `apps/gops-frontend/src/recommendations/InvestmentProfileForm.tsx` | 설정 > 추천 설정 탭의 필수 설정 폼 |
+| `apps/gops-frontend/src/recommendations/InvestmentProfileForm.tsx` | 추천 설정 dialog의 필수 설정 폼 |
+| `apps/gops-frontend/src/recommendations/RecommendationSettingsDialog.tsx` | 추천 설정 dialog와 focus/Escape/닫기 동작 |
 | `apps/gops-frontend/src/recommendations/StockRecommendationsPanel.tsx` | 장전/본장 토글이 포함된 추천 패널 |
-| `apps/gops-frontend/src/components/BottomCommandBar.tsx` | 설정 탭에 계정/추천 설정 연결 |
 | `apps/gops-frontend/src/components/PanelContentRenderer.tsx` | `kind="recommendations"` 렌더링 |
 | `apps/gops-frontend/src/layout/*` | 추천 패널 insert/layout kind 등록 |
 
