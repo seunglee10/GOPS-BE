@@ -131,6 +131,8 @@ setup·symbol·interval·asset identity 변경 또는 원본 차트 삭제 시 �
 가격이 없거나 다른 차트의 선택이면 `어느 가격에 예약할까요?`라고 안내하며
 `POST /api/agents/analyze`를 호출하지 않는다. `예약매매가 뭐야?` 같은 설명 질문과
 가격 없는 일반 `매수해줘`는 이 로컬 paper 예약 명령으로 추정하지 않는다.
+수량이 명령 중간에 들어가거나 `걸어줘`, `넣어줘`, `설정해줘` 같은 실행 동사를
+사용한 예약매수·예약매도 표현도 같은 로컬 확인 경로로 처리한다.
 
 차트별 `ChartTradeSetupSnapshot`은 App React state로 올리지 않고 `chartDocumentId`별
 메모리 store에 보관한다. store는 가격·drawing ID·asset identity 등을 값으로 비교해
