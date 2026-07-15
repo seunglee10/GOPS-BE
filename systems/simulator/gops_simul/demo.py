@@ -203,7 +203,7 @@ class DemoScenarioController:
             if requested and not requested.intersection(article_symbols):
                 return {"news": [], "next_page_token": None}
             article["id"] = f"{self.run_id}:{article.get('id') or 'breaking-news'}"
-            article.setdefault("source", "GOPS Simulator")
+            article.setdefault("source", "GOPS Market Wire")
             article.setdefault("created_at", "2026-07-08T13:20:00Z")
             article.setdefault("updated_at", article["created_at"])
             article["symbols"] = article_symbols
@@ -577,9 +577,9 @@ def default_demo_scenario() -> DemoScenario:
         ],
         breaking_news={
             "id": "simulated-geopolitical-risk",
-            "headline": "[시뮬레이션 속보] 지정학적 긴장 고조",
-            "summary": "실제 뉴스가 아닌 시연 이벤트입니다. AMD 약세와 OKE 강세 시세가 이어집니다.",
-            "source": "GOPS 시뮬레이터",
+            "headline": "중동 지정학적 긴장 고조…반도체 약세·에너지 강세",
+            "summary": "중동 지역의 지정학적 긴장이 고조되면서 반도체 업종에 매도 압력이 확대되고 에너지 관련주는 강세를 보이고 있습니다.",
+            "source": "GOPS Market Wire",
             "symbols": list(ALL_DEMO_SYMBOLS),
         },
     )

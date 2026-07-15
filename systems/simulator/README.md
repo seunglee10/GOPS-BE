@@ -5,11 +5,12 @@
 - 기본 시나리오: `saturday-demo-amd-iff-oke`
 - AMD와 OKE를 종목별 300 체결 + 300 호가로 재생
 - `시장 조망 → 지정학 이벤트 → 장 마감·복기` 3단계 수동 이동
-- T+03:30 지정학 이벤트 알림 뒤 5초 후 AMD는 약 1분간 완만한 약세, OKE는 더 느린 점진 강세로 전환
+- T+03:30 지정학 이벤트 알림 뒤 5초 후 AMD는 약 60초간 점진적 약세, OKE는 더 느린 점진 강세로 전환
 - SIM 전환 직후에는 자연스러운 가격 흐름, 첫 다음 버튼부터 이벤트 대응 시나리오
 - 시뮬레이터 메모리 원장과 영구 가상계좌(paper) 모두 실제 KIS와 분리
 - 모든 합성 이벤트에 `simulator.source=gops-simulator`와
   `marketSession=regular`를 붙이고 ClickHouse·raw/processed S3 영구 적재에서는 제외
+- 뉴스 카드와 알림 문구는 일반 시장 뉴스 형식을 사용하되 내부 합성 데이터 표식은 유지
 
 ## Operator Flow
 
