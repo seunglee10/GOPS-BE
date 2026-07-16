@@ -32,7 +32,6 @@ def account_holdings(
             payload = _normalize_simulator_holdings(simulator_gateway_from_app(request.app).account(user.sub))
         except Exception as exc:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
-        payload = _enrich_portfolio_holdings_sectors(request.app, payload)
         _remember_portfolio_holdings_snapshot(request.app, user.sub, payload)
         return jsonable_encoder(payload)
     try:
@@ -67,7 +66,7 @@ def _normalize_simulator_holdings(payload: dict[str, Any]) -> dict[str, Any]:
         rendered_positions = []
     return {
         **payload,
-        "asOf": datetime.now(timezone.utc).isoformat(),
+        "asOf": payload.get("virtualTime") or datetime.now(timezone.utc).isoformat(),
         "positions": rendered_positions,
     }
 

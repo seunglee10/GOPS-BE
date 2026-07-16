@@ -8,7 +8,6 @@ from pydantic import BaseModel
 from app.auth.dependencies import require_current_user
 from app.auth.models import AuthenticatedUser
 from app.services.simulator_gateway import SimulatorGateway, SimulatorUnavailable
-from app.services.simulator_market_state import simulator_market_state_manager_from_app
 
 
 router = APIRouter(prefix="/api/simulator", tags=["simulator"])
@@ -22,13 +21,8 @@ class SimulatorActionRequest(BaseModel):
     action: Literal["pause", "resume", "restart"]
 
 
-class SimulatorPhaseRequest(BaseModel):
-    phase: str
-
-
-class SimulatorBasketOrderRequest(BaseModel):
-    basket: Literal["semiconductor", "energy"]
-    side: Literal["buy", "sell"]
+class SimulatorSpeedRequest(BaseModel):
+    speed: Literal[1, 5, 20, 60, 300]
 
 
 @router.get("/status")
@@ -41,30 +35,24 @@ def simulator_status(request: Request) -> dict[str, Any]:
             "mode": "live",
             "state": "idle",
             "detail": str(exc),
-            "elapsedSeconds": 0,
-            "durationSeconds": 300,
-            "breakingNewsAtSeconds": 210,
-            "breakingNewsReleased": False,
-            "phase": "live",
-            "phaseIndex": -1,
-            "nextPhase": None,
-            "phases": [],
+            "datasetId": "sp500-top20-20260715-kst-v1",
+            "runId": None,
+            "virtualTime": "2026-07-15T00:00:00+09:00",
+            "startTime": "2026-07-15T00:00:00+09:00",
+            "endTime": "2026-07-16T00:00:00+09:00",
+            "requestedSpeed": 1,
+            "effectiveSpeed": 0,
+            "processedEventCount": 0,
+            "totalEventCount": 0,
+            "progress": 0,
+            "lagMs": 0,
             "symbols": [],
         }
 
 
 @router.put("/mode")
 def simulator_mode(payload: SimulatorModeRequest, request: Request) -> dict[str, Any]:
-    market_state = simulator_market_state_manager_from_app(request.app)
-    try:
-        if payload.mode == "simulation":
-            market_state.capture()
-            return _call_simulator(lambda gateway: gateway.set_mode(payload.mode), request)
-        result = _call_simulator(lambda gateway: gateway.set_mode(payload.mode), request)
-        market_state.restore()
-        return result
-    except RuntimeError as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    return _call_simulator(lambda gateway: gateway.set_mode(payload.mode), request)
 
 
 @router.post("/action")
@@ -72,41 +60,9 @@ def simulator_action(payload: SimulatorActionRequest, request: Request) -> dict[
     return _call_simulator(lambda gateway: gateway.action(payload.action), request)
 
 
-@router.put("/phase")
-def simulator_phase(payload: SimulatorPhaseRequest, request: Request) -> dict[str, Any]:
-    return _call_simulator(lambda gateway: gateway.set_phase(payload.phase), request)
-
-
-@router.get("/news")
-def simulator_news(request: Request) -> dict[str, Any]:
-    return _call_simulator(lambda gateway: gateway.news(), request)
-
-
-@router.post("/orders/basket")
-def simulator_basket_order(
-    payload: SimulatorBasketOrderRequest,
-    request: Request,
-    current_user: AuthenticatedUser = Depends(require_current_user),
-) -> dict[str, Any]:
-    idempotency_key = request.headers.get("Idempotency-Key", "").strip()
-    if not idempotency_key:
-        raise HTTPException(status_code=400, detail="Idempotency-Key header is required")
-    if not simulator_mode_active(request.app):
-        raise HTTPException(status_code=409, detail="simulation mode is not active")
-    key = (current_user.sub, idempotency_key)
-    cache = _simulation_idempotency_cache(request.app)
-    if key in cache:
-        return cache[key]
-    result = _call_simulator(
-        lambda gateway: gateway.basket_order(
-            user_id=current_user.sub,
-            basket=payload.basket,
-            side=payload.side,
-        ),
-        request,
-    )
-    cache[key] = result
-    return result
+@router.put("/speed")
+def simulator_speed(payload: SimulatorSpeedRequest, request: Request) -> dict[str, Any]:
+    return _call_simulator(lambda gateway: gateway.set_speed(payload.speed), request)
 
 
 def simulator_gateway_from_app(app: Any) -> SimulatorGateway:
@@ -123,14 +79,6 @@ def simulator_mode_active(app: Any) -> bool:
         return simulator_gateway_from_app(app).status().get("mode") == "simulation"
     except SimulatorUnavailable:
         return False
-
-
-def _simulation_idempotency_cache(app: Any) -> dict[tuple[str, str], dict[str, Any]]:
-    cache = getattr(app.state, "simulation_idempotency_cache", None)
-    if not isinstance(cache, dict):
-        cache = {}
-        app.state.simulation_idempotency_cache = cache
-    return cache
 
 
 def _call_simulator(callback, request: Request) -> dict[str, Any]:

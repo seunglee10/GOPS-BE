@@ -1,4 +1,3 @@
-import json
 import os
 import subprocess
 import unittest
@@ -10,52 +9,15 @@ SIMULATOR_ROOT = REPO_ROOT / "systems" / "simulator"
 
 
 class SimulatorEksDeploymentContractTests(unittest.TestCase):
-    def test_simulator_image_contains_the_operator_controlled_saturday_scenario(self):
-        scenario_path = (
-            SIMULATOR_ROOT
-            / "data"
-            / "scenarios"
-            / "saturday-demo-amd-iff-oke"
-            / "scenario.json"
-        )
-        events_path = scenario_path.with_name("events.jsonl")
+    def test_simulator_uses_fixed_replay_dataset_and_no_ttl_tables(self):
+        dataset_source = (SIMULATOR_ROOT / "gops_simul" / "dataset.py").read_text(encoding="utf-8")
+        schema = (REPO_ROOT / "infra" / "clickhouse" / "initdb" / "01-market-data.sql").read_text(encoding="utf-8")
 
-        scenario = json.loads(scenario_path.read_text(encoding="utf-8"))
-        event_types = {
-            json.loads(line)["payload"]["T"]
-            for line in events_path.read_text(encoding="utf-8").splitlines()
-            if line
-        }
-
-        self.assertEqual(scenario["symbols"], ["AMD", "OKE"])
-        self.assertEqual(event_types, {"t", "q"})
-        self.assertEqual(
-            [phase["id"] for phase in scenario["phases"]],
-            ["market-overview", "breaking-event", "market-close"],
-        )
-
-    def test_simulator_image_contains_the_five_minute_demo_scenario(self):
-        scenario_path = (
-            SIMULATOR_ROOT
-            / "data"
-            / "scenarios"
-            / "iran-ceasefire-collapse-2026-07-08"
-            / "scenario.json"
-        )
-        events_path = scenario_path.with_name("events.jsonl")
-
-        scenario = json.loads(scenario_path.read_text(encoding="utf-8"))
-
-        self.assertEqual(scenario["durationSeconds"], 300)
-        self.assertEqual(scenario["breakingNewsAtSeconds"], 5)
-        self.assertEqual(
-            scenario["symbols"],
-            ["NVDA", "AMD", "AVGO", "MU", "TSM", "XOM", "CVX", "COP"],
-        )
-        self.assertEqual(
-            sum(1 for line in events_path.read_text(encoding="utf-8").splitlines() if line),
-            4_076,
-        )
+        self.assertIn('DATASET_ID: Final = "sp500-top20-20260715-kst-v1"', dataset_source)
+        self.assertIn("simulation_replay_events", schema)
+        self.assertIn("simulation_replay_candles_1m", schema)
+        replay_schema = schema.split("CREATE TABLE IF NOT EXISTS market_data.trade_ticks", 1)[0]
+        self.assertNotIn("TTL", replay_schema)
 
     def test_kustomize_renders_an_internal_scale_to_zero_simulator(self):
         completed = subprocess.run(
@@ -69,9 +31,12 @@ class SimulatorEksDeploymentContractTests(unittest.TestCase):
 
         self.assertIn("name: gops-simulator", rendered)
         self.assertIn("replicas: 0", rendered)
-        self.assertIn("cpu: 50m", rendered)
-        self.assertIn("memory: 64Mi", rendered)
-        self.assertIn("memory: 128Mi", rendered)
+        self.assertIn("cpu: 250m", rendered)
+        self.assertIn("memory: 256Mi", rendered)
+        self.assertIn("memory: 512Mi", rendered)
+        self.assertIn("SIM_REPLAY_DATASET_ID", rendered)
+        self.assertIn("CLICKHOUSE_URL", rendered)
+        self.assertIn("REDIS_URL", rendered)
         self.assertIn("type: ClusterIP", rendered)
         self.assertNotIn("host: simulator.", rendered)
 
@@ -101,7 +66,7 @@ class SimulatorEksDeploymentContractTests(unittest.TestCase):
         self.assertIn("systems/simulator/*", detector)
         self.assertIn("Dockerfile.gops-simulator", detector)
 
-    def test_on_demand_scripts_switch_only_the_sip_feed_and_restore_it(self):
+    def test_on_demand_scripts_only_switch_global_mode_and_preserve_live_pipeline(self):
         start_script = (REPO_ROOT / "scripts" / "aws" / "start-dev-simulator.sh").read_text(
             encoding="utf-8"
         )
@@ -111,36 +76,53 @@ class SimulatorEksDeploymentContractTests(unittest.TestCase):
 
         self.assertIn("gops-simulator --replicas=1", start_script)
         self.assertIn("GOPS_SIMULATOR_URL=http://gops-simulator:8765", start_script)
-        self.assertIn("ALPACA_STREAM_BASE_URL=ws://gops-simulator:8765", start_script)
+        self.assertIn("simulation_replay_datasets", start_script)
+        self.assertIn('"READY"', start_script)
         self.assertIn("/api/control/mode", start_script)
-        self.assertIn('{"mode":"live"}', start_script)
-        self.assertIn("ALPACA_COLLECTION_SYMBOLS=AMD,OKE", start_script)
-        self.assertIn("ALPACA_CHANNELS=trades,quotes", start_script)
-        self.assertIn("ORDER_FLOW_PINNED_SYMBOLS=AMD,OKE", start_script)
-        self.assertIn("TRADE_CONDITION_EXECUTION_MODE=paper", start_script)
-        self.assertIn("simulator_state_snapshot capture", start_script)
-        self.assertIn("alfaka-alpaca-ingestor-sip", start_script)
-        self.assertNotIn("alfaka-alpaca-ingestor-boats", start_script)
-        self.assertNotIn("alfaka-alpaca-ingestor-crypto", start_script)
+        self.assertIn("set_simulator_mode simulation", start_script)
+        self.assertNotIn("alfaka-alpaca-ingestor", start_script)
+        self.assertNotIn("alfaka-market-processor", start_script)
+        self.assertNotIn("trade-condition-executor", start_script)
 
         self.assertIn("GOPS_SIMULATOR_URL-", stop_script)
-        self.assertIn("ALPACA_STREAM_BASE_URL-", stop_script)
-        self.assertIn(
-            "ALPACA_ACTIVE_CHANNELS=bars,updatedBars,dailyBars,trades,quotes",
-            stop_script,
-        )
-        self.assertNotIn("ALPACA_ACTIVE_CHANNELS-", stop_script)
         self.assertIn("gops-simulator --replicas=0", stop_script)
-        self.assertIn("TRADE_CONDITION_EXECUTION_MODE=demo", stop_script)
-        self.assertIn("simulator_state_snapshot restore", stop_script)
+        self.assertIn("simulator:replay:active-run", stop_script)
+        self.assertNotIn("alfaka-alpaca-ingestor", stop_script)
+        self.assertNotIn("alfaka-market-processor", stop_script)
+        self.assertNotIn("trade-condition-executor", stop_script)
 
-        for script in ("start-dev-simulator.sh", "stop-dev-simulator.sh"):
+        for script in ("start-dev-simulator.sh", "stop-dev-simulator.sh", "run-simulator-replay-import.sh"):
             subprocess.run(
                 ["bash", "-n", f"scripts/aws/{script}"],
                 cwd=REPO_ROOT,
                 check=True,
                 env=os.environ.copy(),
             )
+
+    def test_replay_import_job_is_suspended_and_uses_existing_secrets(self):
+        manifest = (REPO_ROOT / "infra" / "k8s" / "base" / "job-simulator-replay-import.yaml").read_text(
+            encoding="utf-8"
+        )
+        runner = (REPO_ROOT / "scripts" / "aws" / "run-simulator-replay-import.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("suspend: true", manifest)
+        self.assertIn("serviceAccountName: alfaka-market-data-sa", manifest)
+        self.assertIn("name: alfaka-alpaca-secret", manifest)
+        self.assertIn("name: alfaka-clickhouse-secret", manifest)
+        self.assertIn("--fixed-dataset", manifest)
+        self.assertIn("suspend\":false", runner)
+        self.assertIn("condition=complete", runner)
+        self.assertIn("simulation_replay_datasets", runner)
+
+    def test_local_deploy_can_target_a_committed_local_ref(self):
+        deploy_script = (REPO_ROOT / "scripts" / "aws" / "deploy-dev-local.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('LOCAL_REF="${LOCAL_REF:-}"', deploy_script)
+        self.assertIn('DEPLOY_TARGET_REF="local:${LOCAL_REF}"', deploy_script)
+        self.assertIn('git rev-parse --verify "${LOCAL_REF}^{commit}"', deploy_script)
 
 
 if __name__ == "__main__":

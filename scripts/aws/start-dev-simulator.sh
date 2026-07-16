@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# 역할: dev EKS에서 토요일 시연 시나리오와 가상 체결 경로를 함께 켭니다.
+# 역할: dev EKS에서 READY 실제 틱 데이터셋을 확인한 뒤 전역 SIM 모드만 켭니다.
 set -Eeuo pipefail
 
 AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-<aws-account-id>}"
 AWS_REGION="${AWS_REGION:-ap-northeast-2}"
 EKS_CLUSTER_NAME="${EKS_CLUSTER_NAME:-gops-eks-cluster}"
 K8S_NAMESPACE="${K8S_NAMESPACE:-alfaka-market-data}"
+DATASET_ID="${SIM_REPLAY_DATASET_ID:-sp500-top20-20260715-kst-v1}"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+CLICKHOUSE_SCHEMA="${REPO_ROOT}/infra/k8s/base/platform/clickhouse-initdb/01-market-data.sql"
 
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -16,7 +19,6 @@ require_command() {
 
 configure_cluster() {
   local actual_account
-
   actual_account="$(aws sts get-caller-identity --query Account --output text)"
   if [[ "${actual_account}" != "${AWS_ACCOUNT_ID}" ]]; then
     printf 'AWS account mismatch: expected %s, got %s\n' "${AWS_ACCOUNT_ID}" "${actual_account}" >&2
@@ -26,80 +28,76 @@ configure_cluster() {
   kubectl get namespace "${K8S_NAMESPACE}" >/dev/null
 }
 
-reset_simulator_to_live() {
-  local live_payload='{"mode":"live"}'
+apply_replay_schema() {
+  kubectl exec -i statefulset/clickhouse -n "${K8S_NAMESPACE}" -- \
+    sh -c 'clickhouse-client --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --multiquery' \
+    < "${CLICKHOUSE_SCHEMA}"
+}
 
+require_ready_dataset() {
+  local result status total_events
+  result="$(kubectl exec statefulset/clickhouse -n "${K8S_NAMESPACE}" -- \
+    sh -c 'clickhouse-client --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --query "$1"' -- \
+    "SELECT concat(status, ':', toString(total_events)) FROM market_data.simulation_replay_datasets FINAL WHERE dataset_id = '${DATASET_ID}' LIMIT 1 FORMAT TSVRaw")"
+  status="${result%%:*}"
+  total_events="${result##*:}"
+  if [[ "${status}" != "READY" || ! "${total_events}" =~ ^[1-9][0-9]*$ ]]; then
+    printf 'Replay dataset is not READY: dataset=%s status=%s events=%s\n' \
+      "${DATASET_ID}" "${status:-missing}" "${total_events:-0}" >&2
+    exit 1
+  fi
+  printf 'READY dataset verified: %s (%s events)\n' "${DATASET_ID}" "${total_events}"
+}
+
+set_simulator_mode() {
+  local mode="$1"
   kubectl exec deployment/gops-simulator -n "${K8S_NAMESPACE}" -- \
-    python -c 'import sys, urllib.request
+    python -c 'import json, sys, urllib.request
 request = urllib.request.Request(
     "http://127.0.0.1:8765/api/control/mode",
-    data=sys.argv[1].encode("utf-8"),
+    data=json.dumps({"mode": sys.argv[1]}).encode("utf-8"),
     headers={"Content-Type": "application/json"},
     method="PUT",
 )
-urllib.request.urlopen(request, timeout=2).read()' "${live_payload}"
+payload = json.loads(urllib.request.urlopen(request, timeout=5).read())
+if payload.get("mode") != sys.argv[1]:
+    raise SystemExit(f"mode switch failed: {payload}")' "${mode}"
 }
 
-capture_simulator_state() {
-  kubectl exec deployment/alfaka-market-processor -n "${K8S_NAMESPACE}" -- \
-    python -m alfaka.tools.simulator_state_snapshot capture --symbols AMD,OKE
+verify_simulator_health() {
+  kubectl exec deployment/gops-simulator -n "${K8S_NAMESPACE}" -- \
+    python -c 'import json, urllib.request
+payload = json.loads(urllib.request.urlopen("http://127.0.0.1:8765/health", timeout=5).read())
+if not payload.get("datasetReady"):
+    raise SystemExit(f"dataset is not ready: {payload}")
+print(f"simulator health ok: {payload.get('"'"'datasetId'"'"')} events={payload.get('"'"'totalEventCount'"'"')}")'
 }
 
-restore_live_path() {
+cleanup_failed_start() {
   local exit_code="$1"
   trap - ERR
   set +e
-
-  printf 'Simulator start failed; restoring the live SIP path.\n' >&2
-  kubectl set env deployment/alfaka-alpaca-ingestor-sip -n "${K8S_NAMESPACE}" \
-    ALPACA_STREAM_BASE_URL- \
-    ALPACA_COLLECTION_SYMBOLS- \
-    ALPACA_CHANNELS- \
-    ALPACA_ACTIVE_CHANNELS=bars,updatedBars,dailyBars,trades,quotes \
-    ALPACA_MAX_TRADE_SYMBOLS- \
-    ALPACA_ENFORCE_FEED_SESSION_WINDOW-
-  kubectl set env deployment/gops-backend -n "${K8S_NAMESPACE}" GOPS_SIMULATOR_URL-
-  kubectl set env deployment/alfaka-market-processor deployment/gops-backend -n "${K8S_NAMESPACE}" \
-    ORDER_FLOW_PINNED_SYMBOLS=NVDA,AMZN,MU,AAPL,GOOGL
-  kubectl set env deployment/trade-condition-executor -n "${K8S_NAMESPACE}" \
-    TRADE_CONDITION_EXECUTION_MODE=demo
-  kubectl scale deployment/gops-simulator --replicas=0 -n "${K8S_NAMESPACE}"
+  set_simulator_mode live >/dev/null 2>&1
+  kubectl set env deployment/gops-backend -n "${K8S_NAMESPACE}" GOPS_SIMULATOR_URL- >/dev/null 2>&1
+  kubectl scale deployment/gops-simulator --replicas=0 -n "${K8S_NAMESPACE}" >/dev/null 2>&1
   exit "${exit_code}"
 }
 
 require_command aws
 require_command kubectl
 configure_cluster
-trap 'restore_live_path $?' ERR
-capture_simulator_state
+trap 'cleanup_failed_start $?' ERR
+apply_replay_schema
+require_ready_dataset
 
 kubectl scale deployment/gops-simulator --replicas=1 -n "${K8S_NAMESPACE}"
-kubectl rollout status deployment/gops-simulator -n "${K8S_NAMESPACE}" --timeout=180s
-reset_simulator_to_live
-
+kubectl rollout status deployment/gops-simulator -n "${K8S_NAMESPACE}" --timeout=300s
+verify_simulator_health
 kubectl set env deployment/gops-backend -n "${K8S_NAMESPACE}" \
-  GOPS_SIMULATOR_URL=http://gops-simulator:8765 \
-  ORDER_FLOW_PINNED_SYMBOLS=AMD,OKE
-
-kubectl set env deployment/alfaka-market-processor -n "${K8S_NAMESPACE}" \
-  ORDER_FLOW_PINNED_SYMBOLS=AMD,OKE
-
-kubectl set env deployment/trade-condition-executor -n "${K8S_NAMESPACE}" \
-  TRADE_CONDITION_EXECUTION_MODE=paper
-
-kubectl set env deployment/alfaka-alpaca-ingestor-sip -n "${K8S_NAMESPACE}" \
-  ALPACA_STREAM_BASE_URL=ws://gops-simulator:8765 \
-  ALPACA_COLLECTION_SYMBOLS=AMD,OKE \
-  ALPACA_CHANNELS=trades,quotes \
-  ALPACA_ACTIVE_CHANNELS= \
-  ALPACA_MAX_TRADE_SYMBOLS=2 \
-  ALPACA_ENFORCE_FEED_SESSION_WINDOW=false
-
+  GOPS_SIMULATOR_URL=http://gops-simulator:8765
 kubectl rollout status deployment/gops-backend -n "${K8S_NAMESPACE}" --timeout=300s
-kubectl rollout status deployment/alfaka-market-processor -n "${K8S_NAMESPACE}" --timeout=300s
-kubectl rollout status deployment/trade-condition-executor -n "${K8S_NAMESPACE}" --timeout=300s
-kubectl rollout status deployment/alfaka-alpaca-ingestor-sip -n "${K8S_NAMESPACE}" --timeout=300s
+set_simulator_mode simulation
 
 trap - ERR
-printf 'EKS simulator is ready. LIVE→SIM 전환 후 첫 다음 버튼으로 지정학 이벤트를 시작하세요.\n'
-printf '종료 후 반드시 AWS_PROFILE=%s scripts/aws/stop-dev-simulator.sh 를 실행하세요.\n' "${AWS_PROFILE:-gops-dev}"
+printf 'dev EKS tick replay is READY in SIM mode: %s\n' "${DATASET_ID}"
+printf 'LIVE 복귀: AWS_PROFILE=%s scripts/aws/stop-dev-simulator.sh\n' "${AWS_PROFILE:-gops-dev}"

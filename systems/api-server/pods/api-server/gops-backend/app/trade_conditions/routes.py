@@ -15,6 +15,7 @@ from app.alerts.repository import ACTIVE_ALERT_LIMIT
 from app.auth.dependencies import auth_is_enabled, require_current_user
 from app.auth.models import AuthenticatedUser
 from app.services.agent_gateway import get_agent_report
+from app.routes.simulator import simulator_gateway_from_app, simulator_mode_active
 from .command_parser import resolve_trade_condition_command
 from .repository import (
     DuplicateProposalError,
@@ -57,6 +58,11 @@ def list_trade_conditions(
     request: Request,
     user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
+    if simulator_mode_active(request.app):
+        try:
+            return simulator_gateway_from_app(request.app).conditions(user.sub)
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
     repository = _repository_from_app(request.app)
     return {"conditions": jsonable_encoder(repository.list_conditions(user.sub))}
 
@@ -67,6 +73,24 @@ def create_trade_condition(
     request: Request,
     user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
+    if simulator_mode_active(request.app):
+        try:
+            return simulator_gateway_from_app(request.app).create_condition(
+                user.sub,
+                {
+                    "symbol": body.symbol,
+                    "side": body.side,
+                    "direction": body.direction,
+                    "triggerPrice": str(body.triggerPrice),
+                    "limitPrice": str(body.limitPrice),
+                    "quantity": body.quantity,
+                    "executionEnabled": body.executionEnabled,
+                    "alertsEnabled": body.alertsEnabled,
+                    "validity": body.validity,
+                },
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
     created = _create_from_values(
         request,
         user_sub=user.sub,
@@ -96,6 +120,15 @@ def update_trade_condition(
         raise HTTPException(status_code=422, detail="status or alertsEnabled is required")
     if body.status is not None and body.status not in USER_MUTABLE_STATUSES:
         raise HTTPException(status_code=422, detail="status must be watching or paused")
+    if simulator_mode_active(request.app):
+        try:
+            return simulator_gateway_from_app(request.app).update_condition(
+                user.sub,
+                condition_id,
+                {"status": body.status, "alertsEnabled": body.alertsEnabled},
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
     repository = _repository_from_app(request.app)
     existing = repository.get_condition(user.sub, condition_id)
     if existing is None:
@@ -121,6 +154,11 @@ def delete_trade_condition(
     request: Request,
     user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
+    if simulator_mode_active(request.app):
+        try:
+            return simulator_gateway_from_app(request.app).delete_condition(user.sub, condition_id)
+        except Exception as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
     repository = _repository_from_app(request.app)
     condition = repository.get_condition(user.sub, condition_id)
     if condition is None:
@@ -138,6 +176,8 @@ def resolve_trade_condition_chat_command(
     request: Request,
     user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
+    if simulator_mode_active(request.app):
+        raise HTTPException(status_code=409, detail="simulation_data_unavailable")
     if not _commands_enabled():
         return {"status": "not_matched", "reason": "trade_condition_commands_disabled"}
     if not body.analysisId:

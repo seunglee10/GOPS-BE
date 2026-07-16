@@ -8,7 +8,13 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def load_env_file(path: str | Path | None = None, *, override: bool = False) -> Path | None:
-    env_path = Path(path or os.getenv("SIM_ENV_FILE") or PROJECT_ROOT / ".env")
+    configured = path or os.getenv("SIM_ENV_FILE")
+    if configured:
+        env_path = Path(configured)
+    else:
+        local_env = PROJECT_ROOT / ".env"
+        repository_env = Path(__file__).resolve().parents[3] / ".env"
+        env_path = local_env if local_env.exists() else repository_env
     if not env_path.exists():
         return None
 

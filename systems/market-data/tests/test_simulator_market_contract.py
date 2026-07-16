@@ -17,13 +17,12 @@ from alfaka.streaming.transforms import normalize_quote, normalize_trade
 def simulator_payload(message_type: str) -> dict[str, object]:
     payload: dict[str, object] = {
         "T": message_type,
-        "S": "AMD",
-        "t": "2026-07-18T03:00:00Z",
+        "S": "NVDA",
+        "t": "2026-07-14T15:00:01Z",
         "simulator": {
             "source": "gops-simulator",
-            "scenarioId": "saturday-demo-amd-iff-oke",
+            "datasetId": "sp500-top20-20260715-kst-v1",
             "runId": "sim-test",
-            "phase": "market-open",
             "marketSession": "regular",
         },
     }
@@ -34,14 +33,14 @@ def simulator_payload(message_type: str) -> dict[str, object]:
     return payload
 
 
-def test_simulation_metadata_overrides_the_weekend_session_and_survives_trade_normalization():
+def test_simulation_metadata_survives_trade_normalization():
     envelope = build_raw_envelope(simulator_payload("t"), "sip", feed_profile="sip")
     trade = normalize_trade(envelope)
 
     assert envelope["marketSession"] == "regular"
     assert envelope["simulation"]["runId"] == "sim-test"
     assert trade["marketSession"] == "regular"
-    assert trade["simulation"]["scenarioId"] == "saturday-demo-amd-iff-oke"
+    assert trade["simulation"]["datasetId"] == "sp500-top20-20260715-kst-v1"
 
 
 def test_simulation_metadata_survives_quote_normalization_for_paper_matching():
@@ -62,6 +61,7 @@ def test_simulation_ticks_are_not_written_to_durable_clickhouse_tables():
 
 def test_untrusted_payload_cannot_override_the_market_session():
     payload = simulator_payload("t")
+    payload["t"] = "2026-07-18T03:00:00Z"
     payload["simulator"] = {"source": "unknown-client", "marketSession": "regular"}
 
     envelope = build_raw_envelope(payload, "sip", feed_profile="sip")

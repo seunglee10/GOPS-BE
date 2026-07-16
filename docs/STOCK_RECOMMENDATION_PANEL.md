@@ -158,9 +158,8 @@ flowchart TD
 | `apps/gops-frontend/src/recommendations/recommendationApi.ts` | API 호출과 응답 정규화 |
 | `apps/gops-frontend/src/recommendations/InvestmentProfileForm.tsx` | 추천 설정 입력 폼 |
 | `apps/gops-frontend/src/recommendations/RecommendationSettingsDialog.tsx` | dialog focus, Escape, 닫기 동작 |
-| `apps/gops-frontend/src/recommendations/StockRecommendationsPanel.tsx` | 추천 카드·목록, 세션 toggle, LIVE API 결과와 simulator fallback 분리 |
+| `apps/gops-frontend/src/recommendations/StockRecommendationsPanel.tsx` | 추천 카드·목록, 세션 toggle, LIVE API 결과와 SIM unavailable 상태 분리 |
 | `apps/gops-frontend/src/recommendations/StockRecommendationExplainPanel.tsx` | 선택 추천의 핵심 지표, 근거, 위험, 개인화 provenance |
-| `apps/gops-frontend/src/recommendations/recommendationSimulationFallback.ts` | 고정 시뮬레이션 추천 10개 |
 | `apps/gops-frontend/src/recommendations/recommendationNavigation.ts` | 선택 추천을 기업 화면 이동 의도로 해석 |
 | `apps/gops-frontend/src/components/PanelContentRenderer.tsx` | `recommendations`, `recommendationsList`, `recommendationExplain` 렌더링 |
 | `apps/gops-frontend/src/layout/panelRegistry.ts` | 추천 패널 kind와 기본 크기 등록 |
@@ -446,33 +445,16 @@ snapshot 보강 점수는 다음으로 구성된다.
 
 이 결과는 1차 추천과 같은 `completed` run에 저장되고 알림 평가에도 들어간다. 그래서 현재 문서에서는 “hard filter를 통과한 후보만 저장한다”거나 “데이터 부족이면 항상 retryable empty로 남는다”고 설명하면 안 된다.
 
-## 프런트 simulator fallback
+## 프런트 추천 표시
 
 LIVE mode에서는 `pre`와 `regular` 각각의 API 결과만 표시한다. 선택한 세션의 item이
 비어 있으면 빈 상태를 표시하며, 다른 세션 결과나 고정 종목으로 대체하지 않는다.
 
-명시적인 simulator mode에서 API가 `empty`, `ready`, `stale` 상태와 빈 item을
-반환할 때만 프런트는 다음 고정 종목 10개를 표시한다.
+### SIM 모드
 
-```text
-NVDA, AMD, MSFT, AAPL, AMZN, GOOGL, META, AVGO, TSLA, JPM
-```
-
-점수는 90부터 54까지, 신뢰도는 0.84부터 0.57까지 코드에 고정되어 있다. 각 item에는 다음 marker가 들어간다.
-
-```json
-{
-  "source": "frontend-recommendation-fallback",
-  "synthetic": true,
-  "simulation": true
-}
-```
-
-이 데이터는 DB에 저장되거나 backend 알림을 만들지 않는다. 실제 추천과 같은 행
-renderer를 사용하지만 LIVE mode에는 들어오지 않는다. 패널에는 작은 `simulation`
-배지가 표시된다.
-
-`profile_required`, `market_closed`, API 오류에서는 고정 시뮬레이션을 사용하지 않는다.
+틱 replay SIM에서는 point-in-time 추천을 보장할 수 없으므로 backend가
+`simulation_data_unavailable`을 반환한다. 프런트는 최신 추천이나 고정 synthetic item을
+대신 표시하지 않고 unavailable 상태를 보여 준다.
 
 ## 추천 item과 화면 표시
 
@@ -524,7 +506,7 @@ Agent UI panel type은 `stockRecommendations`다. 프런트 layout kind `recomme
 - reasons, riskWarnings
 - metricsSnapshot
 
-synthetic marker가 있는 프런트 시뮬레이션 item은 simulator mode 안에서만 같은 참조 계약을 사용한다.
+틱 replay SIM에서는 추천 item을 만들지 않으므로 이 참조 계약도 생성하지 않는다.
 
 ## 전문 개인화
 
@@ -626,12 +608,12 @@ volumeRatio = recent / previous
 - 과거 `regular` 결과를 보여줄 필요가 있으면 사용자가 선택할 수 있는 별도 “이전 본장 결과” 상태로 노출한다.
 - 세션 fallback을 유지한다면 세션 label과 생성 시각을 행 위에 명확히 표시한다.
 
-### 7. synthetic 데이터는 simulator에서만 사용한다
+### 7. simulator에서도 synthetic 추천을 만들지 않는다
 
-- `recommendationSimulationFallbackItems`는 simulator mode 또는 명시적 demo flag에서만 활성화한다.
 - live mode의 빈 응답은 빈 상태로 표시한다.
-- synthetic item은 운영 Agent 분석 참조와 알림으로 전달하지 않는다.
-- demo 데이터는 “실제 매수 추천 아님”을 행 단위에서도 확인할 수 있어야 한다.
+- tick replay SIM은 `simulation_data_unavailable`을 표시한다.
+- 최신 추천이나 고정 fixture를 가상시각의 추천처럼 대신 표시하지 않는다.
+- 추천이 필요하면 cutoff-safe point-in-time 데이터셋을 별도로 준비한 뒤 연결한다.
 
 ### 8. 알림에는 공통 품질 하한을 둔다
 
