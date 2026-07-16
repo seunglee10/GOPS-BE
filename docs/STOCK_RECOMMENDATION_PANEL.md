@@ -550,11 +550,14 @@ fill에서 장기·세션 선호를 연속적으로 학습하고, 계좌 위험�
 | `RECOMMENDATION_WORKER_POLL_SECONDS` | `1800` | worker polling 주기, 최소 10초 |
 | `RECOMMENDATION_ALPACA_NEWS_FALLBACK_LIMIT` | batch 기준 최대 `50` | Alpaca fallback article 수 |
 | `RECOMMENDATION_ALPACA_NEWS_INCLUDE_CONTENT` | `false` | Alpaca 원문 content 포함 여부 |
+| `RECOMMENDATION_ALGORITHM_VERSION` | 없음 | `legacy`, `professional-v1`, `continuous-v2` 명시 선택. 지정하면 아래 기존 flag보다 우선하며 V2는 shadow를 무시 |
 | `RECOMMENDATION_PERSONALIZATION_ENABLED` | `false` | professional personalization 계산 활성화 |
 | `RECOMMENDATION_PERSONALIZATION_SHADOW` | `true` | 기존 순서를 유지하고 개인화 점수만 저장 |
 | `RECOMMENDATION_PROFESSIONAL_WEIGHTS_JSON` | 없음 | 승인된 스타일 가중치와 검증 metadata |
 
 worker는 API 서버와 같은 추천 service와 repository를 사용하기 위해 `gops-api-server` image를 사용한다.
+AWS 활성화 전 image, migration, SPY/직전 세션 candle, 포트폴리오/fill 데이터 준비 상태는
+`AWS_RECOMMENDATION_DATA_PREPARATION.md`의 최신 실측 절을 확인한다.
 
 ## 확인된 위험
 
