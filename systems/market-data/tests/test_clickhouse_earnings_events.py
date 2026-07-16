@@ -56,6 +56,9 @@ def test_chart_news_events_limit_snapshots_to_the_replay_cursor() -> None:
     ) == []
 
     assert "generated_at <= parseDateTime64BestEffort({asOf:String})" in provider.query
+    assert "FROM market_data.news_company_daily_summaries AS summaries" in provider.query
+    assert "AND summaries.date >= toDate({fromDate:String})" in provider.query
+    assert "GROUP BY summaries.date, summaries.symbol, summaries.locale" in provider.query
     assert provider.parameters["asOf"] == "2026-07-14T15:00:00.000Z"
 
 
