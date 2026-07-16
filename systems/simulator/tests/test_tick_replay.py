@@ -23,7 +23,7 @@ from gops_simul.dataset import (
 )
 from gops_simul import env as simulator_env
 from gops_simul.tick_replay import InMemoryReplayEventSource, ReplayController, ReplayEvent
-from gops_simul.clickhouse import ClickHouseHttpClient
+from gops_simul.clickhouse import ClickHouseHttpClient, ClickHouseReplayEventSource
 from gops_simul.tools import import_alpaca
 from gops_simul.tools.import_alpaca import fetch_kind
 
@@ -92,6 +92,39 @@ class DatasetContractTests(unittest.TestCase):
         request = ClickHouseHttpClient("http://clickhouse:8123")._request(b"SELECT now64()")
         query = urllib.parse.parse_qs(urllib.parse.urlparse(request.full_url).query)
         self.assertEqual(query["date_time_output_format"], ["iso"])
+
+    def test_daily_replay_candles_use_new_york_market_midnight_and_stay_live(self):
+        class FakeClickHouseClient:
+            def __init__(self):
+                self.queries = []
+
+            def query_rows(self, sql):
+                self.queries.append(sql)
+                if "simulation_replay_datasets" in sql:
+                    return [{"status": "READY", "total_events": 2}]
+                return [{
+                    "market_date": "2026-07-14",
+                    "open": 170.0,
+                    "high": 171.0,
+                    "low": 169.5,
+                    "close": 170.5,
+                    "volume": 1000,
+                    "trade_count": 2,
+                }]
+
+        client = FakeClickHouseClient()
+        source = ClickHouseReplayEventSource(client)
+
+        payload = source.candle_snapshot(
+            "NVDA",
+            "1D",
+            datetime(2026, 7, 14, 15, 1, tzinfo=UTC),
+            20,
+        )
+
+        self.assertIn("America/New_York", client.queries[-1])
+        self.assertEqual(payload["candles"][0]["timestamp"], "2026-07-14T04:00:00.000Z")
+        self.assertFalse(payload["candles"][0]["isClosed"])
 
     def test_installed_layout_uses_the_application_root_env_candidate(self):
         self.assertEqual(
