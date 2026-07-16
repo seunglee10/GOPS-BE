@@ -106,6 +106,32 @@ class ChartAssetBuilderTest(unittest.TestCase):
 
         self.assertEqual(state["recentItems"][-1]["status"], "saved")
         self.assertEqual(storage.save_count, 1)
+        saved_log = json.loads(state["logs"][-1])
+        self.assertEqual(saved_log["traceMode"], "geometry-analysis-trace-v2")
+        self.assertTrue(saved_log["writeVerified"])
+        self.assertEqual(saved_log["asOf"], storage.assets[("AMD", "1D")]["asOf"])
+
+    def test_force_build_preserves_a_newer_as_of_asset(self):
+        rows = _rows(120, "1D")
+        existing = {
+            "assetVersion": "geometry", "symbol": "AMD", "interval": "1D",
+            "asOf": "2026-12-31T00:00:00.000Z", "marker": "newer",
+        }
+        storage = MemoryStorage()
+        storage.assets[("AMD", "1D")] = existing
+        builder = ChartAssetBuilder(
+            candle_loader=Loader(rows), storage=storage,
+            progress=InMemoryChartAssetProgressStore(), concurrency=1,
+        )
+
+        state = builder.run(ChartAssetBuildEnvelope.create(
+            requested_by="test", symbols=["AMD"], intervals=["1D"], force=True,
+        ))
+
+        self.assertEqual(state["status"], "completed_with_errors")
+        self.assertIn("older than the stored asset", state["recentItems"][-1]["error"])
+        self.assertIs(storage.assets[("AMD", "1D")], existing)
+        self.assertEqual(storage.save_count, 0)
 
     def test_provider_confirmed_empty_gaps_do_not_block_asset_save(self):
         rows = _rows(380, "1m")
@@ -147,7 +173,7 @@ class ChartAssetBuilderTest(unittest.TestCase):
             "primaryTrend": {"id": "trend-1", "kind": "uptrend"},
             "drawingGroups": {"levels": [], "trend": ["chart-asset:trend-1"], "pattern": []},
             "analysisTrace": {
-                "version": "geometry-analysis-trace-v1",
+                "version": "geometry-analysis-trace-v2",
                 "pivots": [],
                 "levelCandidates": [],
                 "trendCandidates": [{"id": "trend-1"}],
@@ -158,6 +184,11 @@ class ChartAssetBuilderTest(unittest.TestCase):
                     "patternCandidateIds": [],
                 },
                 "omittedCounts": {"trendCandidates": 2},
+                "completeness": {
+                    "complete": True,
+                    "detected": {"levels": 0, "trends": 1, "patterns": 0},
+                    "stored": {"levels": 0, "trends": 1, "patterns": 0},
+                },
             },
         })
 
@@ -227,7 +258,7 @@ class ChartAssetBuilderTest(unittest.TestCase):
         builder = ChartAssetBuilder(candle_loader=Loader(rows), storage=storage, progress=progress, concurrency=1)
         result = _analysis_result()
         result["analysisTrace"] = {
-            "version": "geometry-analysis-trace-v1",
+            "version": "geometry-analysis-trace-v2",
             "pivots": [],
             "levelCandidates": [{
                 "id": "oversized", "selected": True, "score": 1.0,
@@ -239,6 +270,11 @@ class ChartAssetBuilderTest(unittest.TestCase):
                 "levelCandidateIds": ["oversized"], "trendCandidateIds": [], "patternCandidateIds": [],
             },
             "omittedCounts": {},
+            "completeness": {
+                "complete": True,
+                "detected": {"levels": 1, "trends": 0, "patterns": 0},
+                "stored": {"levels": 1, "trends": 0, "patterns": 0},
+            },
         }
 
         with patch("gops_agents.chart_assets.builder.analyze_geometry", return_value=result):
@@ -260,7 +296,7 @@ class ChartAssetBuilderTest(unittest.TestCase):
         builder = ChartAssetBuilder(candle_loader=Loader(rows), storage=storage, progress=progress, concurrency=1)
         result = _analysis_result()
         result["analysisTrace"] = {
-            "version": "geometry-analysis-trace-v1",
+            "version": "geometry-analysis-trace-v2",
             "pivots": [
                 {"id": "pivot-selected", "timestamp": rows[-3]["timestamp"], "confirmedAt": rows[-2]["timestamp"], "price": 100, "kind": "L"},
                 {"id": "pivot-rejected", "timestamp": rows[-5]["timestamp"], "confirmedAt": rows[-4]["timestamp"], "price": 105, "kind": "H"},
@@ -284,6 +320,11 @@ class ChartAssetBuilderTest(unittest.TestCase):
             },
             "omittedCounts": {
                 "levelCandidates": 0, "trendCandidates": 0, "patternCandidates": 0, "touchEpisodes": 0,
+            },
+            "completeness": {
+                "complete": True,
+                "detected": {"levels": 2, "trends": 0, "patterns": 0},
+                "stored": {"levels": 2, "trends": 0, "patterns": 0},
             },
         }
 

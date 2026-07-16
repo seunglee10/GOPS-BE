@@ -164,7 +164,11 @@ range without requiring a separate horizontal pan to the left edge.
 `GET /api/charts/volume-profile-bins` treats `targetBins` as an exact display
 bucket count from 4 through 48. The active chart requests 10 equal-width buckets
 across the main price pane's actual `scene.scales.minPrice/maxPrice` domain. That
-domain includes active overlay indicators and axis padding. The request also sends
+domain includes active overlay indicators, a visible chart-plan proposal, live
+price, and pixel headroom, but excludes ordinary drawings. Nice axis ticks do not
+redefine or expand the display domain; their exact count is derived only from
+price-pane height. Bid/Ask keeps its discrete order-flow rows while using the same
+independent axis-tick density contract. The request also sends
 the visible closed-candle `candleCount`; the API uses it as the canonical query
 limit and includes it in request/cache identity. Zero-volume buckets remain in the
 response so their price-space gaps are preserved, while a request with no source
@@ -217,12 +221,15 @@ layout migration. See `platform/s3/README.md` for exact prefixes.
 
 Persisted chart-analysis assets are an offline build projection, not an API
 request-derived cache. New build and refresh envelopes accept only `1m` and `1D`;
-the independent builder reads their canonical completed candles from ClickHouse.
+the independent builder reads the same canonical completed-candle boundary as the
+chart: Redis supplies the newest closed tail and ClickHouse supplies durable history.
+Live candles are excluded before the analysis merge.
 Existing `5m/10m/1h/4h/1W` asset rows remain readable and explicitly deletable,
 but are not regenerated. When repair is enabled, only a requested missing range
 is fetched from Alpaca and its real canonical source rows are stored before the
-builder re-reads ClickHouse. This analysis repair path does not use S3, Redis, or
-Kafka. Local fixture tests inject a candle loader and disable repair, so they do
+builder re-reads the combined closed-candle view. Repair materialization itself does
+not use S3 or Kafka and still writes only real rows to ClickHouse. Local fixture tests
+inject a candle loader and disable repair, so they do
 not require Alpaca credentials or make provider calls.
 
 Alpaca may legitimately omit an intraday slot with no bar. A successful provider

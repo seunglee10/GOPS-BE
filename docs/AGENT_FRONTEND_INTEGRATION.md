@@ -177,9 +177,18 @@ pre/regular/after/overnight 봉을 임의로 다시 숨기지 않는다.
 차트의 candle Volume Profile은 Agent feature pack과 별도 계약이다. `ChartCanvas`가
 현재 viewport로 만든 scene과 visible closed-candle 범위가 일치한 뒤에만 프런트가
 `targetBins=10`, `scene.scales.minPrice/maxPrice`, `candleCount`를 요청한다. 따라서
-활성 MA·Bollinger와 축 padding을 포함한 main price pane 전체가 같은 화면 높이의
-10개 슬롯이 된다. pane 높이만 바뀌면 기존 가격 bucket을 다시 투영하고 재조회하지
-않는다.
+활성 SMA·EMA·WMA·Bollinger와 축 padding을 포함한 main price pane 전체가 같은 화면 높이의
+10개 슬롯이 된다. pane 높이 변경으로 pixel headroom과 실제 domain이 달라지면 연속
+resize가 끝난 뒤 120ms debounce를 거쳐 새 범위를 한 번 조회하고, domain이 같으면 기존
+가격 bucket만 다시 투영한다.
+
+main price pane의 display domain과 가격 tick 격자는 별도 계약이다. display domain은
+visible candle, time-gap carry price, live trade, 활성 SMA·EMA·WMA·Bollinger, 보이는 chart-plan
+proposal의 유효한 양수 가격과 pixel headroom으로 계산하며 일반 drawing은 포함하지
+않는다. tick 개수는 price pane 높이만 사용해 4~10개로 결정하고, nice tick의 첫 값과
+마지막 값으로 display domain을 다시 확장하지 않는다. pan/zoom과 layer 변경은 새 범위를
+즉시 적용하며 animation, 이전 scale hysteresis, 조작 종료 후 지연 적용은 사용하지 않는다.
+Bid/Ask도 order-flow row 가격과 axis tick을 분리해 같은 높이 기반 tick 개수 계약을 따른다.
 
 응답은 10개 bucket, 요청 가격 경계, 요청/source candle count가 모두 일치할 때만
 표시한다. `dataStatus=partial`은 클라이언트 derived cache에 넣지 않고 숨긴 상태로
@@ -538,25 +547,42 @@ Wild answer payload는 backend `layoutContext`에 넣지 않으며 API/report �
 요청을 시작한 `chartDocumentId`의 `chartCommentary` panel로 보낸다. panel이 없으면
 넓은 화면에서는 원본 차트 오른쪽, 좁은 화면에서는 아래의 빈 grid에 자동 생성하고 기존
 Wild panel은 이동·대체하지 않는다. 패널은 현재 Geometry와 로컬 `ChartTradeSetup`에서
-즉시 만드는 `현재 해설`, 서버의 요청 시점 snapshot인 `질문 답변`을 분리한다. 요청 중에도
-현재 해설을 유지하고 진행 상태만 표시하며, 완료 답변은 문서별 최신 10개를 workspace
-layout props에 저장한다.
+즉시 만드는 `commentary` 모드와 서버의 요청 시점 snapshot 답변을 쌓는 `conversation`
+모드를 분리한다. 요청 중에는 해설을 유지하면서 pending과 `대화` 토글을 노출한다. 사용자가
+pending 중 대화를 열면 질문과 분석 중 상태를 볼 수 있고, 정상 완료 시 대화 모드로 자동
+전환한다. 실패·취소 pending은 제거한다. 성공 답변은 문서별 최신 질문·답변 5개만 workspace
+layout props/localStorage에 저장하며 같은 `analysisId`는 중복 저장하지 않는다. 서버 대화
+API, DB, thread ID를 만들지 않고 과거 답변을 다음 Agent 요청 `messages`에 넣지 않는다.
+`chart-commentary-history.v1`은 현재 해설을 `commentary`, 과거 답변 선택을 `conversation`으로
+변환하고 기존 최대 10개 답변을 최신 5개로 절단한다.
 
-패널 상단은 연결된 `종목 · 주기`를 표시하고 `차트 선택` 모드에서 대상 차트 외곽선을
-강조한다. 다른 차트를 클릭하거나 목록에서 선택하면 `chartDocumentId`를 바꾸며, 각 문서의
-답변 기록은 별도로 보존·복원한다. 현재 해설은 지지·저항, 추세, 패턴 세 섹션을 항상
-유지하고 적격 결과가 없으면 그 상태를 명시한다. 섹션 hover/focus는 해당 drawing만
-강조하고 같은 `analysisTrace`의 근거 pivot, touch, reaction marker를 비영속 overlay로
-표시한다. click은 한 섹션만 확장·고정하며 다른 섹션을 hover한 뒤 leave하면 고정 섹션으로
-복귀한다. 수치 카드는 자산에 저장된 metrics만 사용하고 브라우저에서 점수나 ATR 값을
-다시 계산하지 않는다.
+패널 상단은 `종목 · 주기 / 최신 상태 · 분석일` 한 줄을 사용한다. 차트가 둘 이상일 때만
+`연결`을 표시하고 선택 모드에서 대상 차트 외곽선을 강조한다. 다른 차트를 클릭하거나
+목록에서 선택하면 `chartDocumentId`를 바꾸며 각 문서의 기록은 별도로 보존·복원한다.
+기록이나 pending이 있을 때만 `대화`를 표시하며 대화 모드에서는 같은 위치의 `해설`로
+복귀한다. 패널 안에는 별도 입력창을 두지 않는다.
+
+해설 본문은 `실계좌 보유 현황`, 규칙 기반 `종합 해설`, `주요 가격`, 조건부 `시나리오`,
+`판단 근거`, 접힌 `수치 근거 자세히` 순서다. 보유 현황은 `/api/account/holdings?source=kis`
+결과만 사용하므로 SIM 보유분과 섞지 않으며, active/kis 응답은 요청 key별 프런트 저장소에
+분리한다. 표는 보유 상태·평균 매입가·수량만 표시하고 미보유, 계좌 미연결, 확인 불가를
+추정 없이 구분한다. 종합 해설은 LLM이 아니라 분석 자산, 현재가, 패턴·추세, 가까운
+지지·저항, 로컬 setup, 선택 종목 보유정보로 2~4문장을 결정론적으로 만든다. 값이 없으면
+문장을 만들지 않는다.
+
+판단 근거의 지지·저항, 추세, 패턴은 적격 결과가 없으면 그 상태를 명시한다. 섹션
+hover/focus는 해당 drawing만 강조하고 같은 `analysisTrace`의 근거 pivot, touch, reaction
+marker를 비영속 overlay로 표시한다. click은 한 섹션만 고정하며 다른 섹션을 hover한 뒤
+leave하면 고정 섹션으로 복귀한다. ATR·점수·접촉 수 수치 카드는 자산에 저장된 metrics만
+사용하고 브라우저에서 다시 계산하지 않는다.
 
 요청에는 `chartDocumentId`, `sourcePanelId`, 당시 asset identity를 넣는다. 서버 응답의
 source document와 현재 문서가 같고 `symbol/interval/assetVersion/algorithmVersion/
 inputDigest/asOf`가 모두 일치할 때만 `focusGroups`의 기존 drawing과 로컬 proposal을
 transient spotlight한다. v1의 기존 evidence/pattern/support/resistance와 optional
 levels/trend group을 모두 지원한다. 불일치는 `분석 기준 변경됨`, 삭제된 문서는 `원본 차트 없음`으로
-표시하고 snapshot 수치는 유지하되 focus하지 않는다. 선택 봉 anchor도 같은 symbol/interval의
+표시하고 snapshot 수치는 유지하되 focus하지 않는다. 대화 답변의 제목·요약·섹션·주의사항과
+기존 지지·저항·패턴·선택 봉 focus를 읽기 전용 채팅 목록에서 유지한다. 선택 봉 anchor도 같은 symbol/interval의
 canonical timestamp가 현재 candle에 있을 때만 focus한다. 이 상태는 chart history에
 저장하지 않는다. 일반 질문은 기존 Wild 흐름을 유지한다.
 ## Public Company Journal
@@ -712,7 +738,7 @@ standard 2.25px dashed, minor 1.5px dotted H-Line으로 표시한다. importance
 해석 ON은 retained 선택·탈락 후보를 모두 Canvas overlay로 표시한다. OFF에서도 해설
 hover 중에는 관련 trace subset만 임시 표시한다. overlay는 chart document, undo/history,
 export, PostgreSQL drawing 예산에 넣지 않는다. 데스크톱에서는 첫 줄에 다섯 토글,
-둘째 줄에 as-of를 배치한다. 이번 변경에는 mobile-specific 축약 메뉴, touch gesture,
+둘째 줄에 as-of와 현재 viewport 후보 수/전체 후보 수를 배치한다. 이번 변경에는 mobile-specific 축약 메뉴, touch gesture,
 mobile visual regression을 추가하지 않는다.
 기존 7개 interval 자산은 계속 표시할 수 있지만 새 빌드 선택지는 `1m/1D` 두 개뿐이며
 둘 다 기본 선택한다. 동일 실행 중 요청에 합쳐진 경우 이를 안내하고 polling은 기존
@@ -755,7 +781,9 @@ Geometry 자산 적용 시 함께 활성화한다. 골든·데드크로스 metad
 cache invalidation event를 발생시켜 같은 symbol의 열린
 chart/panel을 즉시 재조회한다. 다른 interval의 자산은 적용하지 않는다.
 
-stale 자산은 차트에서 제거하지 않고 낮은 불투명도와 stale badge로 표시한다. 빌드
+새 완료 봉이 생긴 정상 자산은 `outdated_snapshot`으로 표시하되 당시 작도 opacity를
+유지하고 `N봉 전`을 안내한다. proposal만 stale로 제한한다. as-of/coverage watermark가
+모순된 `source_invalid` 자산에만 낮은 불투명도와 데이터 불일치 badge를 적용한다. 빌드
 상태, log, repair 집계는 PostgreSQL polling 응답을 사용하며 SSE와 Redis pub/sub은
 사용하지 않는다.
 

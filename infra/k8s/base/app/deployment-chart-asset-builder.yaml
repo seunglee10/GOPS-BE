@@ -17,6 +17,8 @@ spec:
       serviceAccountName: alfaka-market-data-sa
       containers:
         - name: chart-asset-builder
+          # Base placeholder only. AWS/CI overlays replace this with one immutable
+          # Git-SHA tag shared by every gops-agent-orchestrator workload.
           image: YOUR_ECR_REPOSITORY/gops-agent-orchestrator:latest
           imagePullPolicy: IfNotPresent
           command:

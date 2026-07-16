@@ -149,6 +149,27 @@ class SimulatorRoutesTest(unittest.TestCase):
         self.assertEqual({item["symbol"] for item in payload["positions"]}, {"NVDA", "AMD"})
         self.assertIn("SIMULATED", payload["account"]["alias"])
 
+    def test_kis_holdings_source_bypasses_simulation_account(self):
+        class FakeKisClient:
+            def fetch_holdings(self, *, market, currency, exchange):
+                return {
+                    "status": "ok",
+                    "source": "kis-demo",
+                    "account": {"alias": "KIS", "market": market, "currency": currency},
+                    "positions": [{"symbol": "AAPL", "quantity": 3, "averagePrice": 180}],
+                    "limitations": [],
+                }
+
+        self.gateway.mode = "simulation"
+        self.app.state.kis_client = FakeKisClient()
+
+        response = self.client.get("/api/account/holdings?market=overseas&currency=USD&source=kis")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["source"], "kis-demo")
+        self.assertEqual(response.json()["positions"][0]["symbol"], "AAPL")
+        self.assertNotIn(("account", "dev-auth-disabled"), self.gateway.calls)
+
     def test_manual_basket_order_is_filled_only_after_the_user_request(self):
         self.gateway.mode = "simulation"
 

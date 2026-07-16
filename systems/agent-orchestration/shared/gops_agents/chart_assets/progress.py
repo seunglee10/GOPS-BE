@@ -68,9 +68,11 @@ class InMemoryChartAssetProgressStore:
         return state
 
     def add_log(self, job_id: str, message: str) -> None:
-        # The in-memory fallback has no streaming transport. Do not retain logs in
-        # job state; operational details are intentionally ephemeral.
-        return None
+        self.mutate(
+            job_id,
+            lambda state: state.update(logs=[*state.get("logs", []), str(message)[:500]][-200:]),
+            event={"type": "log"},
+        )
 
     def record_item(self, job_id: str, item: dict[str, Any]) -> None:
         def mutate(state: dict[str, Any]) -> None:
@@ -170,7 +172,7 @@ def initial_state(envelope: ChartAssetBuildEnvelope) -> dict[str, Any]:
         "requested": {"symbolCount": len(envelope.symbols), "intervals": list(envelope.intervals), "force": envelope.force},
         "progress": {"total": total, "done": 0, "failed": 0, "skipped": 0, "warnings": 0, "current": None},
         "repair": initial_repair_state(),
-        "recentItems": [], "failedItems": [], "startedAt": None, "finishedAt": None, "cancelRequested": False,
+        "recentItems": [], "failedItems": [], "logs": [], "startedAt": None, "finishedAt": None, "cancelRequested": False,
     }
 
 

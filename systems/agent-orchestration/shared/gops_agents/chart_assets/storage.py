@@ -71,9 +71,13 @@ class PostgresChartAssetStorage:
                     payload_digest = EXCLUDED.payload_digest,
                     payload = EXCLUDED.payload,
                     updated_at = now()
-                WHERE EXCLUDED.generated_at > {POSTGRES_TABLE}.generated_at
+                WHERE (
+                       EXCLUDED.generated_at > {POSTGRES_TABLE}.generated_at
+                       AND EXCLUDED.as_of >= {POSTGRES_TABLE}.as_of
+                   )
                    OR (
                        EXCLUDED.generated_at = {POSTGRES_TABLE}.generated_at
+                       AND EXCLUDED.as_of >= {POSTGRES_TABLE}.as_of
                        AND EXCLUDED.payload_digest IS DISTINCT FROM {POSTGRES_TABLE}.payload_digest
                    )
                 """,
@@ -117,8 +121,12 @@ class PostgresChartAssetStorage:
         with self._connect() as conn:
             rows = conn.execute(
                 f"""
-                SELECT symbol, "interval", generated_at, status, asset_version,
+                SELECT symbol, "interval", as_of, generated_at, status, asset_version, algorithm_version,
                        coverage_state, payload_bytes, drawing_count,
+                       payload #>> '{{geometry,analysisTrace,version}}' AS trace_mode,
+                       jsonb_array_length(COALESCE(payload #> '{{geometry,analysisTrace,levelCandidates}}', '[]'::jsonb)) AS level_candidates,
+                       jsonb_array_length(COALESCE(payload #> '{{geometry,analysisTrace,trendCandidates}}', '[]'::jsonb)) AS trend_candidates,
+                       jsonb_array_length(COALESCE(payload #> '{{geometry,analysisTrace,patternCandidates}}', '[]'::jsonb)) AS pattern_candidates,
                        COALESCE(
                            NULLIF(payload #> '{{geometry,primaryPattern}}', 'null'::jsonb),
                            NULLIF(payload #> '{{geometry,primaryTriangle}}', 'null'::jsonb)
@@ -129,9 +137,16 @@ class PostgresChartAssetStorage:
             ).fetchall()
         return [{
             "symbol": row["symbol"], "interval": row["interval"], "generatedAt": _iso(row["generated_at"]),
-            "status": row["status"], "assetVersion": row["asset_version"], "coverageState": row["coverage_state"],
+            "asOf": _iso(row.get("as_of")), "status": row["status"], "assetVersion": row["asset_version"],
+            "algorithmVersion": str(row.get("algorithm_version") or ""), "coverageState": row["coverage_state"],
             "payloadBytes": int(row["payload_bytes"]), "drawingCount": int(row["drawing_count"]),
             "storedDrawingCount": int(row["drawing_count"]), "freshness": "unknown", "staleByBars": None,
+            "traceMode": str(row.get("trace_mode") or "none"),
+            "traceCandidateCounts": {
+                "levels": int(row.get("level_candidates") or 0),
+                "trends": int(row.get("trend_candidates") or 0),
+                "patterns": int(row.get("pattern_candidates") or 0),
+            },
             "primaryPattern": _pattern_summary(row.get("primary_pattern")),
         } for row in rows]
 

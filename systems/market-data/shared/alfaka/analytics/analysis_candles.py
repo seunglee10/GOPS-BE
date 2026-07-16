@@ -24,6 +24,11 @@ INTRADAY_ANALYSIS_INTERVALS = tuple(INTRADAY_INTERVAL_MINUTES)
 LONG_ANALYSIS_INTERVALS = ("1D", "1W", "1M")
 ANALYSIS_INTERVALS = (*INTRADAY_ANALYSIS_INTERVALS, *LONG_ANALYSIS_INTERVALS)
 SOURCE_RANK_ANALYSIS = {"derived_aggregate": 1, "clickhouse_direct": 2}
+SOURCE_RANK_CHART_COMPLETED = {
+    "derived_aggregate": 1,
+    "clickhouse_direct": 2,
+    "redis_closed": 3,
+}
 SOURCE_RANK_CURRENT = {
     "derived_aggregate": 1,
     "clickhouse_direct": 2,
@@ -80,7 +85,11 @@ def canonicalize_candle_identity(
 def choose_canonical_winner(
     rows: Iterable[dict[str, Any]], *, view: str = "analysis_closed"
 ) -> dict[str, Any] | None:
-    ranks = SOURCE_RANK_ANALYSIS if view == "analysis_closed" else SOURCE_RANK_CURRENT
+    ranks = (
+        SOURCE_RANK_ANALYSIS if view == "analysis_closed"
+        else SOURCE_RANK_CHART_COMPLETED if view == "chart_completed"
+        else SOURCE_RANK_CURRENT
+    )
     winner: dict[str, Any] | None = None
     winner_rank: tuple[int, float, str] | None = None
     winner_hash: str | None = None
@@ -92,8 +101,9 @@ def choose_canonical_winner(
         session = row.get("marketSession", row.get("market_session", "regular"))
         if session not in {None, "", "regular"}:
             continue
-        is_closed = row.get("isClosed", row.get("is_closed", True)) is not False
-        if view == "analysis_closed" and not is_closed:
+        closed_value = row.get("isClosed", row.get("is_closed"))
+        is_closed = closed_value is not False if closed_value is not None else view != "chart_completed"
+        if view in {"analysis_closed", "chart_completed"} and not is_closed:
             continue
         source = _source_class(row, is_closed)
         if source not in ranks:
@@ -177,8 +187,9 @@ def aggregate_analysis_candles(
     *,
     now: datetime | None = None,
     calendar: TradingCalendar | None = None,
+    view: str = "analysis_closed",
 ) -> list[dict[str, Any]]:
-    canonical = merge_canonical_candles(daily_rows, interval="1D", view="analysis_closed")
+    canonical = merge_canonical_candles(daily_rows, interval="1D", view=view)
     return _aggregate_canonical_daily(canonical, interval, now=now, calendar=calendar)
 
 
@@ -188,12 +199,13 @@ def aggregate_analysis_candle_bundle(
     *,
     now: datetime | None = None,
     calendar: TradingCalendar | None = None,
+    view: str = "analysis_closed",
 ) -> dict[str, list[dict[str, Any]]]:
     """Derive requested analysis intervals after one canonical 1D merge."""
     requested = tuple(dict.fromkeys(intervals))
     if not requested or set(requested).difference({"1D", "1W", "1M"}):
         raise ValueError("Unsupported analysis intervals")
-    canonical = merge_canonical_candles(daily_rows, interval="1D", view="analysis_closed")
+    canonical = merge_canonical_candles(daily_rows, interval="1D", view=view)
     return {
         interval: _aggregate_canonical_daily(canonical, interval, now=now, calendar=calendar)
         for interval in requested
@@ -291,9 +303,12 @@ def compute_analysis_coverage(
 
 
 class AnalysisCandleSource:
-    def __init__(self, provider: Any, *, now_provider=None):
+    def __init__(self, provider: Any, *, now_provider=None, view: str = "analysis_closed"):
+        if view not in {"analysis_closed", "chart_completed"}:
+            raise ValueError("Unsupported analysis candle source view")
         self.provider = provider
         self.now_provider = now_provider or (lambda: datetime.now(timezone.utc))
+        self.view = view
 
     def load_symbol(self, symbol: str, requested_intervals: Iterable[str]) -> AnalysisCandleBundle:
         intervals = tuple(dict.fromkeys(requested_intervals))
@@ -312,7 +327,7 @@ class AnalysisCandleSource:
                 from_time=window.start,
                 before=window.end,
             )
-            aggregated = aggregate_analysis_candle_bundle(raw, long_intervals, now=now)
+            aggregated = aggregate_analysis_candle_bundle(raw, long_intervals, now=now, view=self.view)
             rows.update({item: aggregated[item][-LOOKBACK_BARS[item]:] for item in long_intervals})
         for interval in intervals:
             if interval not in INTRADAY_ANALYSIS_INTERVALS:
@@ -322,7 +337,7 @@ class AnalysisCandleSource:
                 interval,
                 limit=LOOKBACK_BARS[interval] + 16,
             )
-            canonical = merge_canonical_candles(raw, interval=interval, view="analysis_closed")
+            canonical = merge_canonical_candles(raw, interval=interval, view=self.view)
             rows[interval] = [
                 _analysis_row(row, interval, index)
                 for index, row in enumerate(canonical[-LOOKBACK_BARS[interval]:])

@@ -12,6 +12,8 @@
   canonical candle과 선택적 repair materialization만 소유하며 asset dual-write는 없다.
 - `(symbol, interval)` 조건부 UPSERT와 `assetVersion="geometry"`를 유지한다.
   현재 `algorithmVersion`은 `ohlcv-consensus-pattern-families-v6`이다.
+- 기존 row보다 과거 canonical `asOf`를 새 generatedAt만으로 덮어쓰지 않는다. 같은
+  as-of의 v6 교체는 허용한다.
 - 기존 패턴 detector, ranking, hardPass, confirmation, trade timing, primary 선택,
   drawing ID/anchor/label/style은 v5 golden과 같아야 한다.
 - `drawings[]` 예산은 levels 4 + pattern 3 + trend/channel 1 = 최대 8이다. 그룹을
@@ -81,6 +83,9 @@ detected/stored가 일치해야 한다. v2 성공 payload의 candidate omitted c
 교체한다. `scheduled` item은 candle 조회 전 `manual_refresh_only`로 종료한다.
 `symbols="sp500" + force=true`는 API 400이다. 로컬 검증은 injected candle loader와
 repair-disabled fixture만 사용하며 Alpaca credential이나 provider call이 필요하지 않다.
+운영 builder 입력은 차트와 같은 Redis recent-closed + ClickHouse history canonical view다.
+live candle은 제외하고 Alpaca repair는 ClickHouse에 실제 row를 materialize한 뒤 이 view를
+다시 읽는다.
 
 ## 프런트 계약
 
@@ -100,8 +105,14 @@ fallback 분류한다. SMA60/120과 cross는 trend가 소유한다. proposal hid
 overlay이며 history/undo/export/8-drawing 예산에 들어가지 않는다. 글로벌 해석은
 전체 v2 후보선을 표시하고 해설 hover는 selections에 속한 후보의 marker만 표시한다.
 구자산은 후보를 합성하지 않고 v1은 일부 후보, legacy evidence는 근거만으로 명시한다.
+토글의 진단 문구는 complete trace에서 현재 viewport 후보 수/전체 후보 수를 함께 표시한다.
 
-해설은 지지·저항, 추세, 패턴 세 섹션이다. hover/focus는 해당 drawing만 강조하고 trace
+자산 최신성은 `current|outdated_snapshot|source_invalid`다. outdated snapshot은 작도를
+흐리게 하지 않고 N봉 전임을 표시하되 proposal을 stale로 둔다. canonical watermark
+불일치나 stale input만 source-invalid로 dim한다.
+
+해설은 규칙 기반 종합 해설, 주요 가격, 시나리오 뒤에 지지·저항, 추세, 패턴 판단 근거를
+배치한다. metric은 접힌 상세 영역에 둔다. hover/focus는 해당 drawing만 강조하고 trace
 subset의 pivot/touch/reaction marker를 표시한다. click은 한 섹션만 고정하고 다른 섹션
 hover가 끝나면 고정 섹션으로 복귀한다. 대상 stroke/label은 opacity 1, 비대상 analysis
 drawing은 0.45배, base chart는 0.60배다. fill opacity는 유지한다. 서버 metrics를
