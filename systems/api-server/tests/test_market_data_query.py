@@ -959,8 +959,8 @@ class FakeQueryService:
     def agent_chart_context(self, symbol, interval, from_time, to_time, include):
         return self.service.agent_chart_context(symbol, interval, from_time, to_time, include)
 
-    def latest_news(self, symbol, limit=10, locale="ko-KR"):
-        return self.service.latest_news(symbol, limit=limit, locale=locale)
+    def latest_news(self, symbol, limit=10, locale="ko-KR", now=None):
+        return self.service.latest_news(symbol, limit=limit, locale=locale, now=now)
 
     def watchlist_news(self, user_sub, limit=30, locale="ko-KR", mode="watchlist", recommendation_repository=None):
         return self.service.watchlist_news(
@@ -1506,8 +1506,11 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             "headline": "NVIDIA",
             "summary": "News summary",
         }]))
+        request = types.SimpleNamespace(app=types.SimpleNamespace(state=types.SimpleNamespace(
+            simulator_gateway=types.SimpleNamespace(status=lambda: {"mode": "live"}),
+        )))
         try:
-            payload = query_routes.market_latest_news("nvda", limit=3)
+            payload = query_routes.market_latest_news(request, "nvda", limit=3)
         finally:
             query_routes.get_query_service = previous
 

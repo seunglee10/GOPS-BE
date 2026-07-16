@@ -57,11 +57,15 @@ from `yahoo_earnings_estimates`, and news comes from
 earnings state instead of an error. Yahoo and Alpaca are never called by this
 request.
 
-During tick replay the handler receives the simulator `virtualTime` and limits
-daily-news snapshots to `generated_at <= virtualTime` before ClickHouse chooses
-the latest row for each date. Earnings collected after the replay cursor are
-also excluded. This route is therefore available in SIM while other latest-only
-news routes continue to return `simulation_data_unavailable`.
+During tick replay the handlers receive the simulator `virtualTime`. Chart-event
+and daily-news snapshots are limited to `generated_at <= virtualTime` before
+ClickHouse chooses the latest row for each date. `GET /api/market/news/latest`
+uses only ClickHouse localized articles with both `published_at` and
+`localized_at` at or before the cursor; it never reads or warms the live Redis
+cache in SIM. `GET /api/market/news/daily` is also ClickHouse-only in SIM and
+does not attach a latest daily price change. Earnings collected after the replay
+cursor are excluded. Other latest-only market and news-watchlist routes continue
+to return `simulation_data_unavailable`.
 
 ## Market Heatmap
 

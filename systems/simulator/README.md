@@ -66,7 +66,10 @@ SIM 차트는 재생 시작 전 정상 과거 캔들과 현재 가상시각까�
 뒤에만 이전 일봉을 완료 상태로 바꾼다. 진행 일봉 OHLCV는 replay controller가 처리한
 모든 trade에서 실행별로 누적·복원하며, 화면 갱신마다 ClickHouse 원본 틱을 다시 집계하지
 않는다. `ready` 상태에서는 replay 시작 시각과 겹치는 과거 완성 일봉도 노출하지 않는다.
-point-in-time 조회를 보장하지 못하는 뉴스·추천·기업정보·AI 분석은
+SIM 뉴스 패널은 live Redis 캐시 대신 ClickHouse만 읽는다. 최신 기사 경로는
+`published_at`과 `localized_at`이 모두 현재 가상시각 이하인 저장 기사만 반환하고,
+일별 요약 경로는 `generated_at <= virtualTime`인 스냅샷만 반환한다. 그 밖에
+point-in-time 조회를 보장하지 못하는 뉴스 watchlist·추천·기업정보·AI 분석은
 `simulation_data_unavailable`을 반환한다.
 
 ## 오프라인 V3 추천 fixture

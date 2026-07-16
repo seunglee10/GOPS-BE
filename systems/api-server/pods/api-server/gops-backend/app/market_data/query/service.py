@@ -589,27 +589,54 @@ class MarketDataQueryService:
             "feed": "unknown",
         }
 
-    def latest_news(self, symbol: str, limit: int = 10, locale: str = "ko-KR") -> dict[str, Any]:
+    def latest_news(
+        self,
+        symbol: str,
+        limit: int = 10,
+        locale: str = "ko-KR",
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
         symbol = normalize_market_symbol(symbol)
         limit = max(1, min(int(limit), 30))
-        rows, source = self._latest_news_rows(symbol, limit, locale)
-        return {
+        rows, source = (
+            self._latest_news_rows_as_of(symbol, limit, locale, now)
+            if now is not None
+            else self._latest_news_rows(symbol, limit, locale)
+        )
+        payload = {
             "symbol": symbol,
             "source": source,
             "items": [normalize_news_item(row, symbol) for row in rows],
         }
+        if now is not None:
+            payload["asOf"] = chart_event_iso(now)
+        return payload
 
-    def daily_news(self, symbol: str, limit: int = 5, locale: str = "ko-KR") -> dict[str, Any]:
+    def daily_news(
+        self,
+        symbol: str,
+        limit: int = 5,
+        locale: str = "ko-KR",
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
         symbol = normalize_market_symbol(symbol)
         limit = max(1, min(int(limit), 30))
-        rows = self._daily_news_rows(symbol, limit, locale)
+        rows = (
+            self._daily_news_rows_as_of(symbol, limit, locale, now)
+            if now is not None
+            else self._daily_news_rows(symbol, limit, locale)
+        )
         summaries = [clickhouse_row_to_daily_summary(row) for row in rows]
-        summaries = attach_price_changes_to_daily_summaries(summaries, self._daily_news_price_candles(symbol, limit))
-        return {
+        if now is None:
+            summaries = attach_price_changes_to_daily_summaries(summaries, self._daily_news_price_candles(symbol, limit))
+        payload = {
             "symbol": symbol,
             "displayMode": "dailySummary",
             "dailySummaries": summaries,
         }
+        if now is not None:
+            payload["asOf"] = chart_event_iso(now)
+        return payload
 
     def watchlist_news(
         self,
@@ -771,6 +798,30 @@ class MarketDataQueryService:
             return redis_rows[:limit], "redis"
         return [], "no-data"
 
+    def _latest_news_rows_as_of(
+        self,
+        symbol: str,
+        limit: int,
+        locale: str,
+        as_of: datetime,
+    ) -> tuple[list[dict[str, Any]], str]:
+        clickhouse_provider = getattr(self.provider, "clickhouse_provider", None)
+        method = getattr(clickhouse_provider, "localized_news_articles_for_symbols_as_of", None)
+        if not callable(method):
+            return [], "no-data"
+        try:
+            rows = method(
+                [symbol],
+                as_of=chart_event_iso(as_of),
+                limit=limit,
+                days=30,
+                locale=locale,
+            )
+        except Exception:
+            rows = []
+        normalized = [row for row in rows or [] if isinstance(row, dict)]
+        return normalized[:limit], "clickhouse-simulation" if normalized else "no-data"
+
     def _localized_news_rows_from_provider(self, provider, symbol: str, limit: int, locale: str, *, use_days: bool) -> list[dict[str, Any]]:
         if provider is None:
             return []
@@ -895,6 +946,35 @@ class MarketDataQueryService:
         if redis_rows:
             return redis_rows[:limit]
         return []
+
+    def _daily_news_rows_as_of(
+        self,
+        symbol: str,
+        limit: int,
+        locale: str,
+        as_of: datetime,
+    ) -> list[dict[str, Any]]:
+        clickhouse_provider = getattr(self.provider, "clickhouse_provider", None)
+        method = getattr(clickhouse_provider, "company_daily_news_summaries_between", None)
+        if not callable(method):
+            return []
+        reference = as_of.astimezone(timezone.utc)
+        to_date = reference.date()
+        from_date = to_date - timedelta(days=30)
+        try:
+            rows = method(
+                symbol,
+                from_date.isoformat(),
+                to_date.isoformat(),
+                limit=max(30, limit),
+                locale=locale,
+                as_of=chart_event_iso(reference),
+            )
+        except Exception:
+            rows = []
+        normalized = [row for row in rows or [] if isinstance(row, dict)]
+        normalized.sort(key=lambda row: str(row.get("date") or ""), reverse=True)
+        return normalized[:limit]
 
     def _daily_news_rows_from_provider(self, provider, symbol: str, limit: int, locale: str, *, use_days: bool) -> list[dict[str, Any]]:
         if provider is None:

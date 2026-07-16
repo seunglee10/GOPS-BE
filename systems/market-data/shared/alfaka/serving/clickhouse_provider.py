@@ -1367,7 +1367,42 @@ class ClickHouseMarketDataProvider:
             relevance_levels=["mention"],
         )
 
-    def localized_news_articles_for_symbols_by_relevance(self, symbols, limit=10, days=7, locale="ko-KR", relevance_levels=None):
+    def localized_news_articles_for_symbols_as_of(self, symbols, as_of, limit=10, days=7, locale="ko-KR"):
+        normalized_symbols = []
+        for value in symbols or []:
+            symbol = str(value or "").strip().upper()
+            if symbol and symbol not in normalized_symbols:
+                normalized_symbols.append(symbol)
+        if not normalized_symbols:
+            return []
+        direct_rows = self.localized_news_articles_for_symbols_by_relevance(
+            normalized_symbols,
+            limit=limit,
+            days=days,
+            locale=locale,
+            relevance_levels=["primary", "secondary"],
+            as_of=as_of,
+        )
+        if direct_rows:
+            return direct_rows
+        return self.localized_news_articles_for_symbols_by_relevance(
+            normalized_symbols,
+            limit=min(int(limit), 3),
+            days=days,
+            locale=locale,
+            relevance_levels=["mention"],
+            as_of=as_of,
+        )
+
+    def localized_news_articles_for_symbols_by_relevance(
+        self,
+        symbols,
+        limit=10,
+        days=7,
+        locale="ko-KR",
+        relevance_levels=None,
+        as_of=None,
+    ):
         normalized_symbols = []
         for value in symbols or []:
             symbol = str(value or "").strip().upper()
@@ -1376,6 +1411,22 @@ class ClickHouseMarketDataProvider:
         if not normalized_symbols:
             return []
         levels = [str(level or "").strip().lower() for level in (relevance_levels or ["primary", "secondary"]) if str(level or "").strip()]
+        parameters = {
+            "symbols": normalized_symbols,
+            "relevanceLevels": levels,
+            "locale": locale,
+            "limit": int(limit),
+            "days": int(days),
+        }
+        if as_of:
+            time_filter = """
+          AND published_at >= parseDateTime64BestEffort({asOf:String}) - INTERVAL {days:UInt32} DAY
+          AND published_at <= parseDateTime64BestEffort({asOf:String})
+          AND localized_at <= parseDateTime64BestEffort({asOf:String})
+            """
+            parameters["asOf"] = str(as_of)
+        else:
+            time_filter = "\n          AND published_at >= now64(3) - INTERVAL {days:UInt32} DAY"
         query = f"""
         SELECT
           formatDateTime(published_at, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS publishedAt,
@@ -1407,21 +1458,12 @@ class ClickHouseMarketDataProvider:
         WHERE target_symbol IN {{symbols:Array(String)}}
           AND locale = {{locale:String}}
           AND subject_relevance IN {{relevanceLevels:Array(String)}}
-          AND published_at >= now64(3) - INTERVAL {{days:UInt32}} DAY
+          {time_filter}
         ORDER BY relevance_score_v2 DESC, published_at DESC, localized_at DESC
         LIMIT {{limit:UInt32}}
         FORMAT JSONEachRow
         """
-        return self.query_json_each_row(
-            query,
-            {
-                "symbols": normalized_symbols,
-                "relevanceLevels": levels,
-                "locale": locale,
-                "limit": int(limit),
-                "days": int(days),
-            },
-        )
+        return self.query_json_each_row(query, parameters)
 
     def company_daily_news_summaries(self, symbol, limit=5, days=30, locale="ko-KR"):
         query = f"""
