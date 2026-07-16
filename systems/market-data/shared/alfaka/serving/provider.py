@@ -2,7 +2,7 @@
 # 사용: 먼저 Redis 최근 캔들을 보고, 부족하면 ClickHouse 과거 캔들을 조회합니다.
 # 결과: GOPS CandleSnapshot 형식으로 반환합니다.
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time as datetime_time, timedelta, timezone
 
 from alfaka.alpaca.feed_profiles import market_session_for_timestamp, visible_extended_session_windows
 from alfaka.backfill.gapfill import TradingCalendar
@@ -399,6 +399,7 @@ def with_coverage_metadata(
     newest = candles[-1].get("timestamp") if candles else None
     available_from = coverage.get("availableFrom") if coverage else None
     available_to = coverage.get("availableTo") if coverage else None
+    regular_available_to = coverage.get("regularAvailableTo") if coverage else None
     row_count = coverage.get("rowCount") if coverage else None
     invalid_row_count = coverage.get("invalidRowCount") if coverage else None
     stored_count = int(row_count) if row_count is not None else len(candles)
@@ -415,6 +416,7 @@ def with_coverage_metadata(
         target_range_to=target_range_to,
         available_from=available_from,
         available_to=available_to,
+        regular_available_to=regular_available_to,
         interval=source_interval,
         calendar=(
             TradingCalendar.crypto_24x7()
@@ -431,6 +433,7 @@ def with_coverage_metadata(
         "sourceInterval": source_interval,
         "availableFrom": available_from,
         "availableTo": available_to,
+        "regularAvailableTo": regular_available_to,
         "oldestTimestamp": oldest,
         "newestTimestamp": newest,
         "hasMoreBefore": has_more_before_target(oldest, available_from, target_range_from, interval=interval),
@@ -572,6 +575,7 @@ def missing_ranges_for_requested_window(
     target_range_to,
     available_from,
     available_to,
+    regular_available_to=None,
     interval=None,
     calendar=None,
 ):
@@ -590,16 +594,28 @@ def missing_ranges_for_requested_window(
             "start": target_start.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
             "end": min(available_start, target_end).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
         })
+    tail_start = available_end
     tail_is_missing = target_end - available_end > TARGET_FLOOR_TOLERANCE
-    if interval and normalize_chart_interval(interval) == "1D":
+    normalized_interval = normalize_chart_interval(interval) if interval else None
+    if normalized_interval == "1D":
         tail_is_missing = daily_tail_is_missing(
             available_end,
             target_end,
             calendar=calendar,
         )
+    elif normalized_interval in INTRADAY_INTERVAL_MINUTES and calendar and not calendar.is_24x7:
+        detected_tail_start = intraday_tail_missing_start(
+            available_end,
+            target_end,
+            interval=normalized_interval,
+            calendar=calendar,
+            regular_available_end=parse_iso_time(regular_available_to),
+        )
+        tail_is_missing = detected_tail_start is not None
+        tail_start = detected_tail_start or available_end
     if tail_is_missing:
         ranges.append({
-            "start": max(available_end, target_start).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+            "start": max(tail_start, target_start).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
             "end": target_end.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
         })
     return [item for item in ranges if item["start"] < item["end"]]
@@ -610,6 +626,68 @@ def daily_tail_is_missing(available_end, target_end, *, calendar=None):
     latest_completed = trading_calendar.latest_completed_session_date(target_end)
     available_session = daily_candle_session_date(available_end, trading_calendar)
     return available_session < latest_completed
+
+
+def intraday_tail_missing_start(
+    available_end,
+    target_end,
+    *,
+    interval,
+    calendar,
+    regular_available_end=None,
+):
+    """Return the earliest stale stock-session cursor that needs a bounded REST repair."""
+    bucket_minutes = INTRADAY_INTERVAL_MINUTES[normalize_chart_interval(interval)]
+    completed_session = calendar.latest_completed_session_date(target_end)
+    datetime_type = type(target_end)
+    session_open = datetime_type.combine(completed_session, calendar.open_time, calendar.timezone)
+    session_close = datetime_type.combine(
+        completed_session,
+        calendar.session_close_for(completed_session),
+        calendar.timezone,
+    )
+    session_minutes = max(1, int((session_close - session_open).total_seconds() // 60))
+    expected_regular = session_open + timedelta(
+        minutes=((session_minutes - 1) // bucket_minutes) * bucket_minutes,
+    )
+    expected_regular = expected_regular.astimezone(timezone.utc)
+    latest_regular = regular_available_end or available_end
+    stale_starts = [latest_regular] if latest_regular < expected_regular else []
+
+    expected_active = active_intraday_bucket_start(target_end, bucket_minutes, calendar)
+    if expected_active is not None and available_end < expected_active:
+        stale_starts.append(available_end)
+    return min(stale_starts) if stale_starts else None
+
+
+def active_intraday_bucket_start(reference, bucket_minutes, calendar):
+    """Return the live session bucket expected at ``reference`` without inventing closed-market bars."""
+    session = market_session_for_timestamp(reference)
+    if session not in {"pre", "regular", "after", "overnight"}:
+        return None
+    local = reference.astimezone(calendar.timezone)
+    if session == "overnight" and local.time() < datetime_time(4, 0):
+        start_day = local.date() - timedelta(days=1)
+    else:
+        start_day = local.date()
+    if session == "pre":
+        opened = type(reference).combine(start_day, datetime_time(4, 0), calendar.timezone)
+    elif session == "regular":
+        opened = type(reference).combine(start_day, calendar.open_time, calendar.timezone)
+        closed = type(reference).combine(start_day, calendar.session_close_for(start_day), calendar.timezone)
+        if local >= closed:
+            return None
+    elif session == "after":
+        opened = type(reference).combine(start_day, calendar.session_close_for(start_day), calendar.timezone)
+    else:
+        opened = type(reference).combine(start_day, datetime_time(20, 0), calendar.timezone)
+    if reference <= opened.astimezone(timezone.utc):
+        return None
+    probe = reference - timedelta(microseconds=1)
+    elapsed_minutes = max(0, int((probe - opened.astimezone(timezone.utc)).total_seconds() // 60))
+    return opened.astimezone(timezone.utc) + timedelta(
+        minutes=(elapsed_minutes // bucket_minutes) * bucket_minutes,
+    )
 
 
 def daily_candle_session_date(value, calendar):
@@ -682,12 +760,7 @@ def is_stock_chart_visible_candle(candle, now=None):
         return market_session_for_timestamp(timestamp) != "closed"
     if session == "closed":
         return False
-    if session == "regular":
-        return True
-    for active_session, start, end in visible_extended_session_windows(now):
-        if session == active_session and start <= parsed < end:
-            return True
-    return False
+    return session in {"pre", "regular", "after", "overnight"}
 
 
 def normalized_market_session(value):

@@ -2181,7 +2181,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             "storedCandleCount": 0,
             "sourceInterval": "1h",
             "missingRanges": [
-                {"start": "2026-07-08T20:30:00.000Z", "end": "2026-07-09T04:30:00.000Z"}
+                {"start": "2026-07-08T20:00:00.000Z", "end": "2026-07-09T04:30:00.000Z"}
             ],
             "_sourceTrace": {
                 "redis": {"checked": True, "hit": False, "rowCount": 0},
@@ -2213,7 +2213,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
                 interval="1h",
                 limit=20,
                 before=None,
-                from_time="2026-07-08T20:30:00.000Z",
+                from_time="2026-07-08T20:00:00.000Z",
                 to_time="2026-07-09T04:30:00.000Z",
                 payload=payload,
             )

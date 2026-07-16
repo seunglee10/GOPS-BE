@@ -35,6 +35,7 @@ ALPACA_UNIVERSE_REGISTRY_PATH=systems/market-data/config/sp500-universe.json
 ALPACA_COLLECTION_SYMBOL_SOURCE=universe
 ALPACA_CHANNELS=bars,updatedBars,dailyBars,statuses
 ALPACA_ACTIVE_CHANNELS=trades,quotes
+ALPACA_BOATS_ACTIVE_CHANNELS=bars,updatedBars,trades,quotes
 ALPACA_MAX_TRADE_SYMBOLS=100
 ALPACA_KAFKA_PUBLISH_WORKERS=4
 ALPACA_KAFKA_PUBLISH_QUEUE_MAXSIZE=20000
@@ -79,6 +80,9 @@ producer batching is tuned with `KAFKA_PRODUCER_LINGER_MS`,
 BOATS/overnight keeps `ALPACA_COLLECTION_SYMBOL_SOURCE=on-demand` at the
 deployment level. Overnight liquidity is sparse and the BOATS stream should not
 fan out a 500-symbol baseline until feed support and traffic are measured.
+`ALPACA_BOATS_ACTIVE_CHANNELS` dynamically adds `bars`, `updatedBars`, `trades`,
+and `quotes` only for the bounded realtime cohorts. An empty static BOATS symbol
+list therefore does not suppress active candle subscriptions.
 
 `ALPACA_FEED_PROFILE` selects one active ingestor runtime feed (`sip` or
 `boats`). The live contract is session-routed: SIP is primary for `04:00-20:00
@@ -316,8 +320,10 @@ classification role still depends on Redis quote fallback.
 
 `ACTIVE_CHART_TTL_SECONDS` keeps the symbol currently open in the chart inside
 the explicit realtime cohort even when the visible chart interval is 1h, 4h,
-1D, 1W, or 1M. WebSocket delivery can still be interval-specific, but trades/quotes
-subscription state must not depend on whether an intraday socket is open.
+1D, 1W, or 1M. The active-symbol heartbeat declares
+`candles,trades,quotes`; WebSocket delivery can still be interval-specific, but
+the candle/trade/quote subscription state must not depend on whether an
+intraday socket is open.
 `REALTIME_REDIS_POLL_SECONDS` controls the API WebSocket hub's missed-event
 recovery period and defaults to five seconds. A subscription receives one Redis
 snapshot, then the hub uses `market.events` pub/sub as its steady-state path and
@@ -660,15 +666,16 @@ being global `.env` knobs.
 
 Canonical Alpaca historical fill uses `adjustment=split` and writes
 `priceAdjustment=split`, `canonicalVersion=v2`. US-equity repair uses `1Min`
-for target `1m/5m/10m`, `10Min` for target `1h/4h`, and `1Day` for `1D`.
+for target `1m/5m/10m`, normally uses `10Min` for regular-only target `1h/4h`,
+and uses `1Day` for `1D`. A derived intraday repair that crosses pre, after, or
+overnight switches to `1Min` so those source rows can be retained and aggregated.
 Realtime live/provisional candles are still locally aggregated from live `1m`
 source bars where needed.
 Intraday equity historical fill is session-routed before calling Alpaca REST:
 `pre`, `regular`, and `after` ranges are fetched from the configured historical
-feed, while `overnight` ranges are marked as BOATS-only and are not fetched
-through the SIP historical path. The per-request `fill.feedRoutes` trace shows
-which sub-ranges were `fetchable` and which were skipped because they require
-the live/on-demand BOATS subscription path.
+feed, while `overnight` ranges are fetched through the BOATS historical path.
+The per-request `fill.feedRoutes` trace shows each session, selected feed, and
+whether a closed-market sub-range was skipped.
 ClickHouse serving prefers stored direct interval rows. Hourly intervals fall
 back to query-time `10m` aggregation and then legacy `1m`; other intraday
 derived intervals fall back to `1m`, while weekly/monthly use `1D`.
@@ -785,7 +792,7 @@ server refresh only asks Yahoo whether newer data is available.
 
 ## Market Calendar
 
-GapFill and chart-analysis readiness share one year-aware US equity calendar to avoid false gaps on weekends, regular holidays, exceptional full-day closures, and early closes. `MARKET_CLOSED_DATES` remains an additive emergency override. Set `MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS=false` only for a test that intentionally disables built-in rules. The v1 provider is `configured-nyse`; it is an adapter boundary that can later be replaced by a managed exchange-calendar provider. Sunday `20:00 ET` through Friday `20:00 ET` is treated as the 24/5 equity window, with BOATS active only for the `overnight` slices. Intraday chart serving keeps historical views regular-session-only and allows the currently active `pre`, `after`, or `overnight` session to appear while it is live. Intraday chart renderability treats sparse gaps as blocking only when both candles are inside the regular session; sparse extended-hours 1m bars can still render because Alpaca may only emit bars for minutes with activity.
+GapFill and chart-analysis readiness share one year-aware US equity calendar to avoid false gaps on weekends, regular holidays, exceptional full-day closures, and early closes. `MARKET_CLOSED_DATES` remains an additive emergency override. Set `MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS=false` only for a test that intentionally disables built-in rules. The v1 provider is `configured-nyse`; it is an adapter boundary that can later be replaced by a managed exchange-calendar provider. Sunday `20:00 ET` through Friday `20:00 ET` is treated as the 24/5 equity window, with BOATS active only for the `overnight` slices. Intraday chart serving preserves historical `pre`, `regular`, `after`, and `overnight` candles. Coverage compares the latest completed NYSE regular-session bucket separately from the newest all-session bucket, so a newer extended row cannot hide a missing regular session. Intraday chart renderability treats sparse gaps as blocking only when both candles are inside the regular session; sparse extended-hours 1m bars can still render because Alpaca may only emit bars for minutes with activity.
 
 Chart Geometry repair는 trigger-only다. ClickHouse를 감사하고 Alpaca historical
 API로 정확한 누락 range만 보충한다. S3, Redis, Kafka를 사용하지 않는다.

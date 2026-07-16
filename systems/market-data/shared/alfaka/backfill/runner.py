@@ -19,7 +19,11 @@ from alfaka.serving.intervals import (
 )
 from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
 from alfaka.serving.moving_average import attach_moving_averages
-from alfaka.serving.session_buckets import BUCKET_POLICY_SOURCE_NATIVE, aggregate_regular_session_candles
+from alfaka.serving.session_buckets import (
+    BUCKET_POLICY_SOURCE_NATIVE,
+    aggregate_extended_session_candles,
+    aggregate_regular_session_candles,
+)
 from alfaka.storage.clickhouse_loader import (
     ClickHouseHttpClient,
     candle_to_clickhouse_row,
@@ -868,7 +872,7 @@ def canonical_historical_candles(
     price_adjustment=None,
     completed_through=None,
 ):
-    """정규장 1분봉과 요청 interval의 canonical 봉을 함께 만든다."""
+    """실제 세션 원본 봉과 요청 interval의 canonical 봉을 함께 만든다."""
     target_interval = normalize_chart_interval(interval)
     resolved_source = normalize_chart_interval(
         source_interval
@@ -893,13 +897,23 @@ def canonical_historical_candles(
         candle for candle in source_candles
         if candle.get("marketSession") in {None, "", "regular"}
     ]
-    derived = aggregate_regular_session_candles(
+    regular_derived = aggregate_regular_session_candles(
         regular_source,
         target_interval,
         now=completed_through,
         source_interval=resolved_source,
     )
-    return regular_source, attach_moving_averages(derived)
+    extended_derived = aggregate_extended_session_candles(
+        source_candles,
+        target_interval,
+        now=completed_through,
+        source_interval=resolved_source,
+    )
+    derived = sorted(
+        [*regular_derived, *extended_derived],
+        key=lambda candle: candle.get("timestamp") or "",
+    )
+    return source_candles, attach_moving_averages(derived)
 
 
 def persist_historical_source_candles(client, source_candles, *, source_interval, interval):

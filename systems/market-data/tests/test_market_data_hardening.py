@@ -5618,9 +5618,10 @@ class MarketDataHardeningContractTest(unittest.TestCase):
 
         candles = provider.aggregated_minute_candles("AAPL", "1h", 1)
 
-        self.assertEqual(len(provider.queries), 2)
+        self.assertEqual(len(provider.queries), 3)
         self.assertEqual(provider.queries[0][1]["sourceInterval"], "10m")
         self.assertIn("AND interval = '1m'", provider.queries[1][0])
+        self.assertIn("market_session IN ('pre', 'after', 'overnight')", provider.queries[2][0])
         self.assertEqual(candles[0]["sourceInterval"], "1m")
 
     def test_clickhouse_intraday_coverage_reports_latest_regular_candle_separately(self):
@@ -5748,7 +5749,8 @@ class MarketDataHardeningContractTest(unittest.TestCase):
 
         self.assertIn("interval = {interval:String}", provider.queries[0][0])
         self.assertEqual(provider.queries[0][1]["interval"], "1h")
-        self.assertEqual(len(provider.queries), 1)
+        self.assertEqual(len(provider.queries), 2)
+        self.assertIn("market_session IN ('pre', 'after', 'overnight')", provider.queries[1][0])
         self.assertEqual(candles[-1]["interval"], "1h")
 
     def test_clickhouse_adds_current_extended_candle_when_direct_history_is_full(self):
@@ -6329,6 +6331,51 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             120,
             from_time="2026-07-17T13:30:00.000Z",
             to_time="2026-07-20T08:00:00.000Z",
+            symbol="MPC",
+        )
+
+        self.assertEqual(payload["missingRanges"], [])
+
+    def test_intraday_coverage_repairs_active_premarket_tail(self):
+        payload = with_coverage_metadata(
+            {
+                "interval": "1m",
+                "candles": [{"timestamp": "2026-07-15T23:00:00.000Z"}],
+            },
+            {
+                "sourceInterval": "1m",
+                "rowCount": 500,
+                "availableFrom": "2026-07-15T13:30:00.000Z",
+                "availableTo": "2026-07-15T23:00:00.000Z",
+                "regularAvailableTo": "2026-07-15T19:59:00.000Z",
+            },
+            120,
+            from_time="2026-07-15T13:30:00.000Z",
+            to_time="2026-07-16T08:16:00.000Z",
+            symbol="MPC",
+        )
+
+        self.assertEqual(payload["missingRanges"], [{
+            "start": "2026-07-15T23:00:00.000Z",
+            "end": "2026-07-16T08:16:00.000Z",
+        }])
+
+    def test_intraday_coverage_honors_standard_early_close(self):
+        payload = with_coverage_metadata(
+            {
+                "interval": "1m",
+                "candles": [{"timestamp": "2026-07-02T16:59:00.000Z"}],
+            },
+            {
+                "sourceInterval": "1m",
+                "rowCount": 210,
+                "availableFrom": "2026-07-02T13:30:00.000Z",
+                "availableTo": "2026-07-02T16:59:00.000Z",
+                "regularAvailableTo": "2026-07-02T16:59:00.000Z",
+            },
+            120,
+            from_time="2026-07-02T13:30:00.000Z",
+            to_time="2026-07-02T18:01:00.000Z",
             symbol="MPC",
         )
 
