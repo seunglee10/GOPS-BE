@@ -59,6 +59,7 @@ kubectl set image "job/${JOB_NAME}" -n "${K8S_NAMESPACE}" replay-import="${simul
 kubectl patch job "${JOB_NAME}" -n "${K8S_NAMESPACE}" --type merge -p '{"spec":{"suspend":false}}'
 
 printf 'Replay import started with image %s\n' "${simulator_image}"
+kubectl wait --for=condition=Ready pod -l "job-name=${JOB_NAME}" -n "${K8S_NAMESPACE}" --timeout=300s
 kubectl logs -f "job/${JOB_NAME}" -n "${K8S_NAMESPACE}"
 kubectl wait --for=condition=complete "job/${JOB_NAME}" -n "${K8S_NAMESPACE}" --timeout=24h
 
