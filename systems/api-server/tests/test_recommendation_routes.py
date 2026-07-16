@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import types
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -144,6 +144,7 @@ def test_profile_crud_and_intraday_refresh_returns_new_buy_recommendation(recomm
 
     assert profile.status_code == 200
     assert profile.json()["profile"]["riskLevel"] == "balanced"
+    assert profile.json()["profile"]["recommendationStyle"] == "balanced"
     assert profile.json()["profile"]["preferredSectors"] == ["Information Technology"]
     assert refresh.status_code == 200
     payload = refresh.json()
@@ -170,6 +171,106 @@ def test_refresh_is_idempotent_within_same_market_slot(recommendation_app) -> No
 
     assert first["runKey"] == second["runKey"]
     assert second["idempotentReplay"] is True
+
+
+def test_professional_refresh_persists_versioned_scores_and_recomputes_when_style_changes(
+    recommendation_app, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("RECOMMENDATION_PERSONALIZATION_ENABLED", "true")
+    monkeypatch.setenv("RECOMMENDATION_PERSONALIZATION_SHADOW", "false")
+    recommendation_app.state.recommendation_daily_candles_provider = professional_daily_candles
+    recommendation_app.state.recommendation_previous_session_candles_provider = fake_candles
+    client = TestClient(recommendation_app)
+    client.put(
+        "/api/recommendations/profile",
+        json={
+            "riskLevel": "balanced",
+            "recommendationStyle": "momentum",
+            "horizon": "intraday",
+            "maxDrawdownPct": 6,
+        },
+    )
+
+    first = client.post("/api/recommendations/stocks/refresh", json={}).json()
+    client.put(
+        "/api/recommendations/profile",
+        json={
+            "riskLevel": "balanced",
+            "recommendationStyle": "stable",
+            "horizon": "intraday",
+            "maxDrawdownPct": 6,
+        },
+    )
+    second = client.post("/api/recommendations/stocks/refresh", json={}).json()
+
+    assert first["status"] == "completed"
+    assert first["items"][0]["metricsSnapshot"]["personalization"]["weightsVersion"] == "professional-personalization-v1"
+    assert first["items"][0]["metricsSnapshot"]["personalScore"] == first["items"][0]["score"]
+    assert first["runKey"] == second["runKey"]
+    assert second["idempotentReplay"] is False
+    assert second["summary"]["personalization"]["recommendationStyle"] == "stable"
+    stored = recommendation_app.state.recommendation_repository.latest_run("dev-auth-disabled")
+    assert stored["weights_version"] == "professional-personalization-v1"
+    assert stored["personalization_input_digest"]
+
+
+def test_continuous_v2_ranks_with_final_score_and_persists_all_candidate_features(
+    recommendation_app, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("RECOMMENDATION_ALGORITHM_VERSION", "continuous-v2")
+    monkeypatch.setenv("RECOMMENDATION_PERSONALIZATION_SHADOW", "true")
+    recommendation_app.state.recommendation_daily_candles_provider = professional_daily_candles
+    recommendation_app.state.recommendation_previous_session_candles_provider = fake_candles
+
+    class FundamentalProvider:
+        def snapshots_as_of(self, symbols, cutoff):
+            return {
+                "snapshotId": "fundamental-1",
+                "schemaVersion": "fundamentals.v1",
+                "featureVersion": "features.v1",
+                "digest": "fixture-digest",
+                "sourceAsOf": (cutoff - timedelta(minutes=1)).isoformat(),
+                "snapshots": {
+                    symbol: {
+                        "value": 70,
+                        "quality": 80,
+                        "growth": 60,
+                        "earningsRevision": 50,
+                        "coverage": 1,
+                        "freshness": 1,
+                        "sourceQuality": 1,
+                    }
+                    for symbol in symbols
+                },
+            }
+
+    recommendation_app.state.recommendation_fundamental_provider = FundamentalProvider()
+    client = TestClient(recommendation_app)
+    client.put(
+        "/api/recommendations/profile",
+        json={
+            "riskLevel": "balanced",
+            "recommendationStyle": "balanced",
+            "horizon": "intraday",
+            "maxDrawdownPct": 6,
+        },
+    )
+
+    first = client.post("/api/recommendations/stocks/refresh", json={}).json()
+    second = client.post("/api/recommendations/stocks/refresh", json={}).json()
+
+    assert first["status"] == "completed"
+    assert first["summary"]["personalization"]["shadow"] is False
+    assert first["items"][0]["algorithmVersion"] == "continuous-personalization-v2"
+    assert first["items"][0]["score"] == pytest.approx(first["items"][0]["personalScore"], abs=0.01)
+    assert first["items"][0]["fundamentalStatus"] == "ready"
+    assert second["idempotentReplay"] is True
+    repository = recommendation_app.state.recommendation_repository
+    assert len(repository.candidate_features) >= len(first["items"])
+    assert repository.preference_states[0]["payload"]["preferenceConfidence"] == pytest.approx(0.2)
+    stored = repository.latest_run("dev-auth-disabled")
+    assert stored["algorithm_version"] == "continuous-personalization-v2"
+    assert stored["v2_input_digest"]
 
 
 def test_pre_and_regular_recommendations_use_separate_run_keys(recommendation_app) -> None:
@@ -556,3 +657,23 @@ def flat_candles(symbol: str, _now: datetime) -> list[dict]:
             }
         )
     return candles
+
+
+def professional_daily_candles(symbol: str, _now: datetime) -> list[dict]:
+    rows = []
+    count = 260
+    start = datetime(2026, 7, 6, tzinfo=timezone.utc) - timedelta(days=count - 1)
+    for index in range(count):
+        timestamp = start + timedelta(days=index)
+        move = 0.1 if symbol == "SPY" else 1.0 if symbol == "MSFT" else 0.7
+        close = 100 * (1 + move / 100)
+        rows.append({
+            "timestamp": timestamp.isoformat(),
+            "open": 100,
+            "high": close + 0.2,
+            "low": 99.8,
+            "close": close,
+            "volume": 5_000_000 + index * 10_000,
+            "is_closed": True,
+        })
+    return rows

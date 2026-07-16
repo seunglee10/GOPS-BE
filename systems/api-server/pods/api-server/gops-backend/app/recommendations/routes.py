@@ -15,6 +15,7 @@ from app.core.sectors import normalize_sector_list
 
 from .repository import (
     HORIZONS,
+    RECOMMENDATION_STYLES,
     RISK_LEVELS,
     InMemoryRecommendationRepository,
     InvestmentProfileUpsert,
@@ -29,6 +30,7 @@ router = APIRouter(tags=["recommendations"])
 
 class InvestmentProfileBody(BaseModel):
     riskLevel: str = Field(min_length=1, max_length=24)
+    recommendationStyle: str = Field(default="balanced", min_length=1, max_length=24)
     horizon: str = "intraday"
     maxDrawdownPct: float = Field(default=6, gt=0, le=50)
     preferredSectors: list[str] = Field(default_factory=list)
@@ -54,9 +56,12 @@ def upsert_recommendation_profile(
     user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
     risk_level = body.riskLevel.strip().lower()
+    recommendation_style = body.recommendationStyle.strip().lower()
     horizon = body.horizon.strip().lower()
     if risk_level not in RISK_LEVELS:
         raise HTTPException(status_code=422, detail="riskLevel must be conservative, balanced, or aggressive")
+    if recommendation_style not in RECOMMENDATION_STYLES:
+        raise HTTPException(status_code=422, detail="recommendationStyle must be momentum, balanced, or stable")
     if horizon not in HORIZONS:
         raise HTTPException(status_code=422, detail="v1 recommendations only support intraday horizon")
     profile = _call_recommendation_storage(
@@ -64,6 +69,7 @@ def upsert_recommendation_profile(
             InvestmentProfileUpsert(
                 user_sub=user.sub,
                 risk_level=risk_level,
+                recommendation_style=recommendation_style,
                 horizon=horizon,
                 max_drawdown_pct=float(body.maxDrawdownPct),
                 preferred_sectors=clean_sector_list(body.preferredSectors, max_items=12),
@@ -192,6 +198,7 @@ def _public_profile(profile: dict[str, Any] | None) -> dict[str, Any] | None:
         return None
     return {
         "riskLevel": profile.get("risk_level"),
+        "recommendationStyle": profile.get("recommendation_style") or "balanced",
         "horizon": profile.get("horizon"),
         "maxDrawdownPct": profile.get("max_drawdown_pct"),
         "preferredSectors": normalize_sector_list(profile.get("preferred_sectors") or []),

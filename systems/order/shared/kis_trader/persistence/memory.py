@@ -23,6 +23,7 @@ from kis_trader.domain.topics import (
 FILL_STATUSES = {OrderStatus.FILLED, OrderStatus.PARTIALLY_FILLED}
 from kis_trader.security.redaction import redact_sensitive
 
+from .fills import canonical_fill_observation
 from .repository import IdempotencyConflictError, OrderCreationResult, OrderNotFoundError, SubmissionIntent, utc_now_iso
 
 
@@ -36,6 +37,7 @@ class InMemoryOrderRepository:
         self.broker_submissions_by_request: dict[str, dict[str, Any]] = {}
         self.broker_submissions_by_client: dict[str, dict[str, Any]] = {}
         self.executions: dict[str, dict[str, Any]] = {}
+        self.order_coach_fill_history: list[dict[str, Any]] = []
         self.dlq_events: list[dict[str, Any]] = []
         self.audit_logs: list[dict[str, Any]] = []
 
@@ -304,6 +306,21 @@ class InMemoryOrderRepository:
                 self.executions[execution_id] = redact_sensitive(payload or {})
             self.update_order_status(order_id, status, reason)
             order = self.orders[order_id]
+            observation = canonical_fill_observation(
+                order, payload, execution_id=execution_id
+            )
+            if observation is not None:
+                previous = [
+                    row for row in self.order_coach_fill_history
+                    if row["fill_id"] == observation["fill_id"]
+                ]
+                latest = previous[-1] if previous else None
+                if latest is None or latest["cumulative_filled_qty"] < observation["cumulative_filled_qty"]:
+                    self.order_coach_fill_history.append({
+                        **observation,
+                        "id": len(self.order_coach_fill_history) + 1,
+                        "observation_version": int(latest["observation_version"]) + 1 if latest else 1,
+                    })
             envelope = build_order_status_envelope(
                 order,
                 event_type="order.broker.event.reconciled",

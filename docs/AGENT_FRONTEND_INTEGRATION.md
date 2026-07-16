@@ -19,6 +19,11 @@
 - final answer, evidence, role findings rendering
 - optional chart/layout proposal preview and apply flow
 
+`stockRecommendationExplain` 레이아웃 패널은 프런트 전용 추천 해설 surface다.
+`recommendationExplain` kind로 5×4 기본 span을 사용하고 기존 추천 latest 응답의
+점수, 신뢰도, 지표 스냅샷, 근거, 위험만 읽는다. 새 report/API 계약을 만들거나
+주문을 실행하지 않는다.
+
 토요일 시연에서는 상단 LIVE/SIM 토글과 `다음 시연 단계` 제어가
 `/api/simulator/*`를 사용한다. 상태 응답의 `phases`, `phaseIndex`, `nextPhase`를
 기준으로 `시장 조망 → 지정학 이벤트 → 장 마감·복기`를 이동하며, 임의의 클라이언트
@@ -657,6 +662,12 @@ public company journal panel은 `panelType="companyJournal"`/`kind="companyJourn
 업종별 관점을 사용하며, 확인되지 않은 뉴스 원인을 생성하지 않는다. 이후 RAG
 보고서를 연결할 때에도 차트별 provider를 다시 호출하지 말고 같은 기준시각의
 기업 evidence snapshot을 상위 컨테이너에서 전달한다.
+
+`recommendationExplain`은 legacy/V1 응답의 기존 표시를 유지하고, V2 optional 필드가
+있으면 `algorithmVersion`, 유효 가중치, 선호 신뢰도, 펀더멘털 상태·provenance/fallback,
+위험예산과 관측 위험, 경고를 읽기 전용으로 추가 표시한다. 일부 또는 모든 V2 필드가
+없어도 패널은 기존 응답으로 렌더링해야 한다. 이 패널에는 slider, 피드백 제어,
+tracking API, 자동 주문 동작을 추가하지 않는다.
 
 chart analysis asset 운영 패널은 `kind="chartAssetOps"`, 화면 표시는
 `작도 자산(개발)`로 표현한다. 이름의 `(개발)`은 수동 운영 도구임을 나타내는 라벨일

@@ -281,6 +281,33 @@ Finance snapshot을 Redis에 fresh/stale 캐시한다. 백엔드는 fresh 캐시
 snapshot의 `sector`는 GraphDB `gops:sector` canonical 값을 사용하고, 화면 표시용
 한글 라벨은 `sectorLabelKo`로 함께 내려준다.
 
+추천 profile의 `recommendationStyle`은 `momentum`, `balanced`, `stable` 중 하나이며
+`riskLevel`과 독립적이다. personalization 활성화 시 backend는 완료 1D history,
+직전 정규장 1분봉, SPY, cutoff-safe 뉴스와 추천 시점 이전
+`user_portfolio_snapshot_history`를 결합한다. run에는 snapshot history ID,
+`weights_version`, `personalization_input_digest`, bounded personalization metadata만
+저장하고 전체 계좌 payload를 복제하지 않는다. 같은 slot의 기존 run은 digest까지
+같을 때만 replay한다. item별 전문 점수와 팩터 기여도는 기존
+`metrics_snapshot` JSONB에 저장해 API shape를 확장하되 기존 필드를 제거하지 않는다.
+자동 주문과 시뮬레이터 경로는 이 계산에 연결하지 않는다.
+
+명시적 `RECOMMENDATION_ALGORITHM_VERSION=legacy|professional-v1|continuous-v2`가 있으면
+기존 flag보다 우선한다. `continuous-v2`는 shadow 여부와 무관하게 실제 최종 점수로
+정렬하고 공개 `algorithmVersion`은 `continuous-personalization-v2`다. 추천 cutoff까지의
+canonical real fill만 시간순으로 처리하며, `order_coach_fill_history`의 매수 체결을
+24시간 이내 동일 종목 candidate feature와 연결한다. 매도와 match 실패도 skip reason이
+있는 event로 남지만 선호 state를 바꾸지 않는다. paper/simulator activity는 포함하지
+않는다.
+
+V2 commit은 사용자 advisory lock 아래에서 slot idempotency와 예상 preference state를
+재확인하고, processed/skipped events, immutable preference/risk states, 모든 적격 후보의
+feature evidence, Top 15 item, run provenance와 digest를 한 transaction에 저장한다. 완료된
+slot은 이후 체결로 덮어쓰지 않으며 state 충돌은 최신 context로 한 번만 재계산한다.
+응답은 기존 필드를 유지하면서 `algorithmVersion`, `extendedBaseAlphaScore`, fundamental,
+preference, `effectiveWeights`, `personalizationDelta`, `riskBudget`, `observedRisk`를 optional로
+추가한다. 펀더멘털 provider가 없거나 validation에 실패한 종목은 제외하지 않고 9팩터로
+재정규화한다.
+
 `POST /api/agents/analyze`는 로그인 session cookie로 사용자를 확인하고 다음 header만
 클라이언트 입력으로 읽는다.
 
