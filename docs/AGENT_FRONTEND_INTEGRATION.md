@@ -77,6 +77,13 @@ source, capture timestamp를 보내지 않으며 서버가 검증·보강한 fil
 기존 `priceCondition` panel type은 저장된 레이아웃 호환을 위해 유지하되 팔레트 제목은
 `알림 설정`이고 알림·관심 기업 설정만 표시한다.
 
+가상계좌 스냅샷과 `/ws/paper/account` 연결은 앱 최상위 `PaperAccountProvider`가 한 번만
+소유한다. 차트와 가상계좌 패널은 이 동일한 스냅샷을 읽으며, 현재 차트 종목의 양수
+보유수량과 평균 매입가가 존재하면 가격 pane에 금색 점선과 `평균 매입가 · 가격 · 수량`
+라벨을 표시한다. 평균 매입가는 캔들 범위와 합리적으로 가까울 때 가격축 자동 범위에도
+포함한다. 종목 변경, 전량 매도, 계정 변경 또는 WebSocket 갱신은 별도 새 연결 없이
+표시를 즉시 교체하거나 제거하며, 다른 사용자 계정의 이전 스냅샷을 재사용하지 않는다.
+
 Agent 인증 진입은 상단 global navigation의 `Login` 버튼을 사용한다. 별도 `Agents`
 버튼은 표시하지 않으며, 인증 후 하단 Agent 입력을 직접 사용한다. 로컬 Vite DEV에서는
 Agent debug가 기본으로 켜지고 분석 prompt를 보내면 request snapshot을 browser
