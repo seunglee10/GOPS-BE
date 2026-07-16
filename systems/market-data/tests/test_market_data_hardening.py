@@ -63,7 +63,15 @@ from alfaka.serving.cursors import timestamp_from_cursor
 from alfaka.serving.dto import cursor_for, market_status_event, snapshot, websocket_event
 from alfaka.serving.hot_symbols import build_hot_symbols_payload, dollar_volume_from_candle
 from alfaka.serving.intervals import candle_count_for_1y, candle_count_for_24h, historical_source_interval_for, historical_target_bars, redis_closed_candle_cap, resolve_candle_limit
-from alfaka.serving.provider import MarketDataProvider, filter_stock_chart_candles, has_more_before_target, merge_candles, requested_source_bar_target, target_range_from_for_interval
+from alfaka.serving.provider import (
+    MarketDataProvider,
+    filter_stock_chart_candles,
+    has_more_before_target,
+    merge_candles,
+    requested_source_bar_target,
+    target_range_from_for_interval,
+    with_coverage_metadata,
+)
 from alfaka.serving.redis_provider import RedisMarketDataProvider
 from alfaka.serving.news_hot_cache import (
     company_daily_summary_coverage_valid,
@@ -6146,6 +6154,88 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "2020-07-01T00:00:00.000Z",
             interval="1m",
         ))
+
+    def test_daily_coverage_reports_latest_completed_session_as_missing(self):
+        payload = with_coverage_metadata(
+            {
+                "interval": "1D",
+                "candles": [{"timestamp": "2026-07-14T04:00:00.000Z"}],
+            },
+            {
+                "sourceInterval": "1D",
+                "rowCount": 20,
+                "availableFrom": "2026-06-16T04:00:00.000Z",
+                "availableTo": "2026-07-14T04:00:00.000Z",
+            },
+            20,
+            from_time="2026-06-16T04:00:00.000Z",
+            to_time="2026-07-16T05:00:00.000Z",
+        )
+
+        self.assertEqual(payload["missingRanges"], [{
+            "start": "2026-07-14T04:00:00.000Z",
+            "end": "2026-07-16T05:00:00.000Z",
+        }])
+
+    def test_daily_coverage_does_not_require_current_session_before_close(self):
+        payload = with_coverage_metadata(
+            {
+                "interval": "1D",
+                "candles": [{"timestamp": "2026-07-14T04:00:00.000Z"}],
+            },
+            {
+                "sourceInterval": "1D",
+                "rowCount": 20,
+                "availableFrom": "2026-06-16T04:00:00.000Z",
+                "availableTo": "2026-07-14T04:00:00.000Z",
+            },
+            20,
+            from_time="2026-06-16T04:00:00.000Z",
+            to_time="2026-07-15T19:59:00.000Z",
+        )
+
+        self.assertEqual(payload["missingRanges"], [])
+
+    def test_daily_coverage_keeps_friday_current_through_monday_premarket(self):
+        payload = with_coverage_metadata(
+            {
+                "interval": "1D",
+                "candles": [{"timestamp": "2026-07-17T04:00:00.000Z"}],
+            },
+            {
+                "sourceInterval": "1D",
+                "rowCount": 20,
+                "availableFrom": "2026-06-22T04:00:00.000Z",
+                "availableTo": "2026-07-17T04:00:00.000Z",
+            },
+            20,
+            from_time="2026-06-22T04:00:00.000Z",
+            to_time="2026-07-20T12:00:00.000Z",
+        )
+
+        self.assertEqual(payload["missingRanges"], [])
+
+    def test_daily_coverage_honors_standard_early_close(self):
+        payload = with_coverage_metadata(
+            {
+                "interval": "1D",
+                "candles": [{"timestamp": "2026-11-25T05:00:00.000Z"}],
+            },
+            {
+                "sourceInterval": "1D",
+                "rowCount": 20,
+                "availableFrom": "2026-10-30T04:00:00.000Z",
+                "availableTo": "2026-11-25T05:00:00.000Z",
+            },
+            20,
+            from_time="2026-10-30T04:00:00.000Z",
+            to_time="2026-11-27T18:01:00.000Z",
+        )
+
+        self.assertEqual(payload["missingRanges"], [{
+            "start": "2026-11-25T05:00:00.000Z",
+            "end": "2026-11-27T18:01:00.000Z",
+        }])
 
     def test_intraday_target_floor_uses_requested_visible_window(self):
         self.assertEqual(
