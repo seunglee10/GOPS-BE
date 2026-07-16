@@ -88,6 +88,11 @@ class DatasetContractTests(unittest.TestCase):
         query = urllib.parse.parse_qs(urllib.parse.urlparse(request.full_url).query)
         self.assertEqual(query["date_time_input_format"], ["best_effort"])
 
+    def test_clickhouse_http_client_returns_timezone_aware_iso_timestamps(self):
+        request = ClickHouseHttpClient("http://clickhouse:8123")._request(b"SELECT now64()")
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(request.full_url).query)
+        self.assertEqual(query["date_time_output_format"], ["iso"])
+
     def test_installed_layout_uses_the_application_root_env_candidate(self):
         self.assertEqual(
             simulator_env.repository_env_path(Path("/app/gops_simul/env.py")),
@@ -205,6 +210,37 @@ class ReplayControllerTests(unittest.TestCase):
         self.assertEqual([event.sequence for event in self.controller.emitted_events()], [1, 2, 3, 4])
         with self.assertRaises(ValueError):
             self.controller.set_speed(2)
+
+    def test_raw_crossed_quote_is_replayed_without_modification(self):
+        controller = ReplayController(
+            InMemoryReplayEventSource([quote(1, 1, "NVDA", 101.0, 100.0)]),
+            clock=self.clock,
+        )
+        controller.set_mode("simulation")
+        controller.resume()
+        self.clock.value += 2
+
+        status = controller.status()
+
+        self.assertEqual(status["processedEventCount"], 1)
+        self.assertEqual(controller.latest_quote("NVDA"), {"bid": 101.0, "ask": 100.0})
+
+    def test_zero_sided_quote_is_processed_and_invalidates_the_executable_quote(self):
+        controller = ReplayController(
+            InMemoryReplayEventSource([
+                quote(1, 1, "NVDA", 99.0, 100.0),
+                quote(2, 2, "NVDA", 99.0, 0.0),
+            ]),
+            clock=self.clock,
+        )
+        controller.set_mode("simulation")
+        controller.resume()
+        self.clock.value += 3
+
+        status = controller.status()
+
+        self.assertEqual(status["processedEventCount"], 2)
+        self.assertIsNone(controller.latest_quote("NVDA"))
 
     def test_market_and_limit_orders_fill_at_the_replayed_quote(self):
         self.controller.set_mode("simulation")

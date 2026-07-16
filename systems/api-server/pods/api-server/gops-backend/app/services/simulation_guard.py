@@ -10,7 +10,6 @@ UNSAFE_SIMULATION_PREFIXES = (
     "/api/charts/analysis-assets",
     "/api/charts/backfill",
     "/api/charts/compare",
-    "/api/charts/events",
     "/api/charts/hot-symbols",
     "/api/charts/indicators",
     "/api/charts/order-flow",

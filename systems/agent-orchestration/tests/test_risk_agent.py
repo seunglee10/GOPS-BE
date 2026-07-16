@@ -182,6 +182,24 @@ class RiskLogTest(unittest.TestCase):
 
         self.assertEqual(redis.lists, {})
 
+    def test_market_events_are_internal_only_and_duplicate_ids_publish_once(self):
+        redis = FakeRedis()
+        publisher = RedisNotificationPublisher(redis)
+        decision = {
+            "eventId": "market-event-1",
+            "symbol": "NVDA",
+            "eventType": "volatility_expansion",
+            "severity": "critical",
+            "showToast": True,
+        }
+
+        first = publisher.publish(decision, source_topic="agents.market-events.v1")
+        duplicate = publisher.publish(decision, source_topic="agents.market-events.v1")
+
+        self.assertFalse(first["showToast"])
+        self.assertTrue(duplicate["duplicate"])
+        self.assertEqual(len(redis.published), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

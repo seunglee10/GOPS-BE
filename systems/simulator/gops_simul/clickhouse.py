@@ -42,6 +42,7 @@ class ClickHouseHttpClient:
         query = urllib.parse.urlencode({
             "database": self.database,
             "date_time_input_format": "best_effort",
+            "date_time_output_format": "iso",
         })
         return urllib.request.Request(
             f"{self.base_url}/?{query}",

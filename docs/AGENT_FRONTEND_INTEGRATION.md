@@ -27,7 +27,9 @@
 상단 LIVE/SIM 컨트롤은 `2026-07-15 KST` 실제 틱 replay를 제어한다. SIM 진입 직후
 `ready` 상태의 재생 버튼은 활성화되어야 하며, KST 가상시각·진행률·요청 배속·실효
 배속과 `재생/일시정지/재시작`을 표시한다. 배속은 `1·5·20·60·300×`이고 서버 status를
-진실의 원천으로 사용한다. phase, 합성 news, basket UI는 없다.
+진실의 원천으로 사용한다. 진행 중인 차트 봉의 남은 시간도 LIVE에서는 실제 시각,
+SIM에서는 status의 `virtualTime`과 `effectiveSpeed`를 사용하며 일시정지 중에는 함께
+멈춘다. phase, 합성 news, basket UI는 없다.
 
 상태는 실행 중 1초, LIVE·ready·paused·completed·연결 불가에서는 30초 간격으로
 확인한다. 이전 요청이 끝난 뒤 다음 요청을 예약하고 숨겨진 브라우저 탭에서는 polling을
@@ -42,8 +44,9 @@ limit-only 계약을 유지한다. 주문 상태는 `/ws/orders/{order_id}`의 S
 
 뉴스·추천·기업정보·AI 코치는 point-in-time 데이터가 없을 때 기존 최신값이나 fixture를
 남기지 않고 `simulation_data_unavailable` 상태를 표시한다. 프런트는 합성 추천·뉴스·
-AI 보고서를 만들지 않는다. 차트는 서버가 반환한 과거+replay candle과 replay
-WebSocket만 사용한다.
+AI 보고서를 만들지 않는다. 단, 차트의 `GET /api/charts/events`는 저장된 ClickHouse
+일별 뉴스 중 `generated_at <= virtualTime`인 스냅샷만 반환하므로 SIM에서도 `N` 마커를
+표시할 수 있다. 차트는 서버가 반환한 과거+replay candle과 replay WebSocket만 사용한다.
 
 `빠른 주문` 패널도 자동 주문 경로가 아니다. 최우선 매수·매도호가, 1틱 오프셋,
 estimated order-flow imbalance는 `side + price` 주문 의도를 선택해 편집 가능한 가격 입력란을
@@ -76,6 +79,13 @@ source, capture timestamp를 보내지 않으며 서버가 검증·보강한 fil
 실행 경로를 그대로 사용한다. 가격 조건 화면은 별도 패널에 중복 표시하지 않는다.
 기존 `priceCondition` panel type은 저장된 레이아웃 호환을 위해 유지하되 팔레트 제목은
 `알림 설정`이고 알림·관심 기업 설정만 표시한다.
+
+가상계좌 스냅샷과 `/ws/paper/account` 연결은 앱 최상위 `PaperAccountProvider`가 한 번만
+소유한다. 차트와 가상계좌 패널은 이 동일한 스냅샷을 읽으며, 현재 차트 종목의 양수
+보유수량과 평균 매입가가 존재하면 가격 pane에 금색 점선을 그리고 오른쪽 가격축의
+동일한 y 좌표에 `평균 매입가 · 가격 · 수량` 라벨을 표시한다. 평균 매입가는 캔들 범위와 합리적으로 가까울 때 가격축 자동 범위에도
+포함한다. 종목 변경, 전량 매도, 계정 변경 또는 WebSocket 갱신은 별도 새 연결 없이
+표시를 즉시 교체하거나 제거하며, 다른 사용자 계정의 이전 스냅샷을 재사용하지 않는다.
 
 Agent 인증 진입은 상단 global navigation의 `Login` 버튼을 사용한다. 별도 `Agents`
 버튼은 표시하지 않으며, 인증 후 하단 Agent 입력을 직접 사용한다. 로컬 Vite DEV에서는

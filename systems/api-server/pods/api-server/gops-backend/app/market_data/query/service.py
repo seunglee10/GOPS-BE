@@ -210,6 +210,7 @@ class MarketDataQueryService:
             raise HTTPException(status_code=400, detail=f"Invalid locale: {locale}")
         upcoming_days = max(1, min(int(upcoming_days), 365))
         reference = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        as_of = reference if now is not None else None
         clickhouse_provider = getattr(self.provider, "clickhouse_provider", None)
 
         news_rows = self._chart_news_rows(
@@ -218,6 +219,7 @@ class MarketDataQueryService:
             range_from.astimezone(MARKET_TIMEZONE).date().isoformat(),
             range_to.astimezone(MARKET_TIMEZONE).date().isoformat(),
             locale,
+            as_of,
         )
         news_days = chart_news_days_from_rows(symbol, news_rows)
 
@@ -239,6 +241,11 @@ class MarketDataQueryService:
                 earnings_query_failed = True
 
         normalized_earnings = chart_earnings_from_rows(symbol, earnings_rows)
+        if as_of is not None:
+            normalized_earnings = [
+                item for item in normalized_earnings
+                if parse_chart_event_datetime(item["sourceAsOf"], "sourceAsOf") <= as_of
+            ]
         visible_earnings = [
             item for item in normalized_earnings
             if range_from <= parse_chart_event_datetime(item["eventAt"], "eventAt") <= range_to
@@ -280,15 +287,37 @@ class MarketDataQueryService:
         from_date: str,
         to_date: str,
         locale: str,
+        as_of: datetime | None = None,
     ) -> list[dict[str, Any]]:
         method = getattr(clickhouse_provider, "company_daily_news_summaries_between", None)
         if not callable(method):
             return []
         try:
-            rows = method(symbol, from_date, to_date, limit=370, locale=locale)
+            query_options: dict[str, Any] = {"limit": 370, "locale": locale}
+            if as_of is not None:
+                query_options["as_of"] = chart_event_iso(as_of)
+            rows = method(
+                symbol,
+                from_date,
+                to_date,
+                **query_options,
+            )
         except Exception:
             return []
-        return [row for row in rows or [] if isinstance(row, dict)]
+        normalized_rows = [row for row in rows or [] if isinstance(row, dict)]
+        if as_of is None:
+            return normalized_rows
+        available_rows: list[dict[str, Any]] = []
+        for row in normalized_rows:
+            generated_at = read_string(row.get("generatedAt") or row.get("generated_at"))
+            if not generated_at:
+                continue
+            try:
+                if parse_chart_event_datetime(generated_at, "generatedAt") <= as_of:
+                    available_rows.append(row)
+            except HTTPException:
+                continue
+        return available_rows
 
     def indices(self, background_tasks=None) -> dict[str, Any]:
         try:

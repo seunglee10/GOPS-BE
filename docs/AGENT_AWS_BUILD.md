@@ -397,7 +397,10 @@ backend 적용 전에 같은 자동 order migration gate로 실행한다.
 migration을 backend와 alert-evaluator보다 먼저 적용한다. alert-evaluator는 trades와
 1m/5m/10m/1h/4h/1D closed candle topic을 모두 받도록
 `ALERT_EVALUATOR_INPUT_TOPICS`를 설정하고, 시작 이력 warm-up을 위해 ClickHouse
-secret도 주입한다. 개장·마감 10분 전 알림 CronJob은 5분 간격 ET 스케줄로 실행된다.
+secret도 주입한다. 개장·마감 알림 CronJob은 5분 간격 ET 스케줄을 유지하지만,
+실제 NYSE 개장 또는 마감 이후 2분 안에서만 `system.market_opened` 또는
+`system.market_closed`를 발송한다. 휴장일, DST, 기본·환경설정 조기 폐장은 공통
+시장 캘린더가 계산하며 사전 알림과 늦게 실행된 작업은 발송하지 않는다.
 
 Market processor deploys as two runtime units from the same
 `gops-market-processor` image. `alfaka-market-processor` handles trades, bars,

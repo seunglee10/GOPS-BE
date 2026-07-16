@@ -96,7 +96,7 @@ def create_app(
 
     async def pump_replay() -> None:
         while True:
-            controller.status()
+            await asyncio.to_thread(controller.status)
             await asyncio.sleep(0.01 if controller.state == "running" else 0.25)
 
     @app.on_event("startup")
@@ -123,7 +123,7 @@ def create_app(
 
     @app.get("/api/control/status")
     def replay_status() -> dict[str, object]:
-        return {"available": controller.source.total_events > 0, **controller.status()}
+        return {"available": controller.source.total_events > 0, **controller.status_snapshot()}
 
     @app.put("/api/control/mode")
     def set_mode(payload: ModeRequest) -> dict[str, object]:

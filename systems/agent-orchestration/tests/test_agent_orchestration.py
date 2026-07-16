@@ -2596,6 +2596,59 @@ class AgentOrchestrationTests(unittest.TestCase):
         price_drop = next(event for event in drop_events if event.eventType == "price_drop")
         self.assertEqual(price_drop.summary, "NVDA 가격이 직전 관측값 대비 4.76% 하락했습니다.")
 
+    def test_event_detector_never_mixes_candle_price_into_trade_baseline(self):
+        now = 1_800_000_000.0
+        detector = MarketEventDetector(
+            MarketEventThresholds(price_change_percent=3.0),
+            now_seconds=lambda: now,
+        )
+        detector.detect({"symbol": "NVDA", "price": 100, "timestamp": now - 2}, "market.layer.trades.v1")
+
+        candle_events = detector.detect({
+            "symbol": "NVDA",
+            "close": 300,
+            "open": 300,
+            "high": 301,
+            "low": 299,
+            "timestamp": now - 1,
+        }, "market.layer.candles.1d.closed.v1")
+        trade_events = detector.detect(
+            {"symbol": "NVDA", "price": 101, "timestamp": now},
+            "market.layer.trades.v1",
+        )
+
+        self.assertNotIn("price_surge", {event.eventType for event in candle_events})
+        self.assertNotIn("price_drop", {event.eventType for event in candle_events})
+        self.assertEqual(trade_events, [])
+        self.assertEqual(detector.previous_price_by_symbol["NVDA"], 101)
+
+    def test_event_detector_rejects_simulated_historical_and_reverse_trades(self):
+        now = 1_800_000_000.0
+        detector = MarketEventDetector(
+            MarketEventThresholds(price_change_percent=3.0, price_event_max_age_seconds=90),
+            now_seconds=lambda: now,
+        )
+        detector.detect({"symbol": "NVDA", "price": 100, "timestamp": now - 2}, "market.layer.trades.v1")
+
+        self.assertEqual(detector.detect(
+            {"symbol": "NVDA", "price": 200, "timestamp": now - 1, "simulated": True},
+            "market.layer.trades.v1",
+        ), [])
+        self.assertEqual(detector.detect(
+            {"symbol": "NVDA", "price": 200, "timestamp": now - 1000},
+            "market.layer.trades.v1",
+        ), [])
+        detector.detect({"symbol": "NVDA", "price": 101, "timestamp": now - 1}, "market.layer.trades.v1")
+        self.assertEqual(detector.detect(
+            {"symbol": "NVDA", "price": 200, "timestamp": now - 2},
+            "market.layer.trades.v1",
+        ), [])
+
+        events = detector.detect({"symbol": "NVDA", "price": 105, "timestamp": now}, "market.layer.trades.v1")
+
+        self.assertEqual([event.eventType for event in events], ["price_surge"])
+        self.assertEqual(detector.previous_price_by_symbol["NVDA"], 105)
+
     def test_event_detector_localizes_volatility_summary(self):
         detector = MarketEventDetector(MarketEventThresholds(volatility_percent=4.0))
 

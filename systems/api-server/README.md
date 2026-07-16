@@ -57,6 +57,12 @@ from `yahoo_earnings_estimates`, and news comes from
 earnings state instead of an error. Yahoo and Alpaca are never called by this
 request.
 
+During tick replay the handler receives the simulator `virtualTime` and limits
+daily-news snapshots to `generated_at <= virtualTime` before ClickHouse chooses
+the latest row for each date. Earnings collected after the replay cursor are
+also excluded. This route is therefore available in SIM while other latest-only
+news routes continue to return `simulation_data_unavailable`.
+
 ## Market Heatmap
 
 `GET /api/market/heatmap?universe=sp500` is the API-owned serving projection for

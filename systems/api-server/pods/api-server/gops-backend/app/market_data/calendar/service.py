@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 from alfaka.common.secrets import load_alpaca_credentials
 from alfaka.common.trading_calendar import (
     configured_closed_dates as shared_configured_closed_dates,
+    is_us_equity_early_close_date,
     us_equity_holidays as shared_us_equity_holidays,
 )
 
@@ -33,6 +34,35 @@ def next_market_open_payload(now: datetime | None = None, clock_provider: ClockP
             return resolved
 
     return _payload_from_configured_calendar(current)
+
+
+def market_session_bounds(session_date: date) -> dict[str, Any] | None:
+    """Return the configured US regular-session bounds for one market date.
+
+    The datetimes are timezone-aware so DST is applied by ``zoneinfo``.  A
+    closed date returns ``None`` and configured early closes override the
+    regular close time.
+    """
+    closed_dates = configured_closed_dates(session_date.year, session_date.year)
+    if not is_session_date(session_date, closed_dates):
+        return None
+    market_zone = ZoneInfo(os.getenv("MARKET_TIMEZONE") or DEFAULT_MARKET_TIMEZONE)
+    open_time = parse_market_time(os.getenv("MARKET_OPEN_TIME"), time(9, 30))
+    close_time = parse_market_time(os.getenv("MARKET_CLOSE_TIME"), time(16, 0))
+    early_closes = parse_early_closes(os.getenv("MARKET_EARLY_CLOSES"))
+    local_open = datetime.combine(session_date, open_time, market_zone)
+    default_close = time(13, 0) if is_us_equity_early_close_date(session_date) else close_time
+    local_close = datetime.combine(
+        session_date,
+        early_closes.get(session_date.isoformat(), default_close),
+        market_zone,
+    )
+    return {
+        "marketDate": session_date.isoformat(),
+        "marketTimezone": market_zone.key,
+        "openAt": local_open.astimezone(timezone.utc),
+        "closeAt": local_close.astimezone(timezone.utc),
+    }
 
 
 def normalize_datetime(value: datetime | None) -> datetime:
@@ -96,7 +126,8 @@ def _payload_from_configured_calendar(now: datetime) -> dict[str, Any]:
         if is_session_date(candidate, closed_dates):
             local_open = datetime.combine(candidate, open_time, market_zone)
             if local_open.astimezone(timezone.utc) > now:
-                local_close = datetime.combine(candidate, early_closes.get(candidate.isoformat(), close_time), market_zone)
+                default_close = time(13, 0) if is_us_equity_early_close_date(candidate) else close_time
+                local_close = datetime.combine(candidate, early_closes.get(candidate.isoformat(), default_close), market_zone)
                 payload = _render_next_open(local_open.astimezone(timezone.utc), source="configured-nyse", is_open=False)
                 payload["nextCloseAt"] = local_close.astimezone(timezone.utc).isoformat()
                 payload["marketTimezone"] = market_zone.key

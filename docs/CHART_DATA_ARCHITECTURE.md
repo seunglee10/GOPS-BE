@@ -155,6 +155,21 @@ explicitly disabled them. Loading older candles requests only the newly exposed
 event range, and the latest loaded news date refreshes every 60 seconds while the
 news layer is visible.
 
+In SIM mode the route uses the replay `virtualTime` as an as-of cutoff instead
+of returning `simulation_data_unavailable`. The ClickHouse daily-news query
+applies `generated_at <= virtualTime` before `argMax`, so it selects the latest
+snapshot that existed at the replay cursor and never falls forward to today's
+latest row. Earnings rows whose `sourceAsOf` is after that cursor are excluded.
+The accessible DOM marker layer is positioned synchronously from each canvas
+scene before React reconciliation, keeping `E`/`N` buttons aligned while the
+viewport pans or zooms.
+
+The paper holding average-price guide is a transient frontend overlay, not candle
+data or a persisted chart drawing. The authenticated paper-account snapshot supplies
+the current symbol's positive quantity and average price through one shared account
+WebSocket. A nearby average price may participate in the visible price domain, while
+the overlay never changes candle facts, chart documents, or market-data APIs.
+
 `POST /api/charts/active-symbol` refreshes a bounded cohort with the declared
 `candles,trades,quotes` layers before the frontend requests the candle snapshot.
 This ordering lets a newly opened symbol start BOATS/SIP candle collection while

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,7 @@ for path in (str(MARKET_SHARED), str(ORDER_SHARED), str(BACKEND), str(ROOT)):
         sys.path.insert(0, path)
 
 try:
-    from app.alerts.evaluator import AlertEvaluator, AlertOutboxSender, _entries_from_xautoclaim
+    from app.alerts.evaluator import AlertEvaluator, AlertOutboxSender, ReminderDispatcher, _entries_from_xautoclaim
     from app.alerts.notifications import notification_delivery_decision, notification_setting_for_item
     from app.alerts.preferences import preference_response
 except Exception as exc:  # pragma: no cover - dependency guard for lean envs
@@ -124,6 +125,174 @@ class FakePreferenceRepository:
 
     def get(self, user_sub):
         return self.row
+
+
+class FakeReminderRedis:
+    def __init__(self, sets=None):
+        self.sets = dict(sets or {})
+        self.values = {}
+
+    def smembers(self, key):
+        return self.sets.get(key, set())
+
+    def get(self, key):
+        return self.values.get(key)
+
+    def set(self, key, value, **kwargs):
+        if kwargs.get("nx") and key in self.values:
+            return False
+        self.values[key] = value
+        return True
+
+
+def test_market_move_uses_heatmap_values_and_watchlist_portfolio_union_once() -> None:
+    redis_client = FakeReminderRedis()
+    dispatcher = ReminderDispatcher(
+        redis_client=redis_client,
+        preference_repository=FakePreferenceRepository({
+            "settings": {
+                "settings": {"master": True, "rapidMove": True},
+                "thresholds": {"rapidMovePct": 5},
+            },
+            "company_overrides": {},
+        }),
+        market_snapshot_provider=lambda symbol: {
+            "symbol": symbol,
+            "lastPrice": 94.25,
+            "previousClose": 100.0,
+            "changePercent": -5.75,
+            "quoteAsOf": "2026-07-14T14:00:00Z",
+            "priceUpdatedAt": "2026-07-14T14:00:00Z",
+        },
+        market_move_mode="live",
+        now_provider=lambda: datetime(2026, 7, 14, 14, 0, 30, tzinfo=timezone.utc),
+    )
+    redis_client.sets[dispatcher.keys.subscription_source_watchlist("NVDA")] = {"watch-user"}
+    redis_client.sets[dispatcher.keys.subscription_source_portfolio("NVDA")] = {"portfolio-user"}
+
+    class CandleProjection(FakeProjection):
+        def __init__(self):
+            super().__init__([])
+
+        def remember_candle(self, candle):
+            return [candle]
+
+        def metric_alerts(self, symbol, interval):
+            return []
+
+    projection = CandleProjection()
+    outbox = FakeOutbox()
+    evaluator = AlertEvaluator(
+        repository=FakeRepository(),
+        projection=projection,
+        outbox=outbox,
+        reminder_dispatcher=dispatcher,
+    )
+    candle = {
+        "symbol": "NVDA",
+        "interval": "1m",
+        "timestamp": "2026-07-14T14:00:00Z",
+        "close": 999,
+        "volume": 100,
+    }
+
+    first = evaluator.process_candle(candle, "market.layer.candles.1m.closed.v1")
+    second = evaluator.process_candle({**candle, "timestamp": "2026-07-14T14:01:00Z"}, "market.layer.candles.1m.closed.v1")
+
+    assert {event["userSub"] for event in first} == {"watch-user", "portfolio-user"}
+    assert all(event["type"] == "system.market_move" for event in first)
+    assert all(event["direction"] == "down" for event in first)
+    assert all(event["lastPrice"] == 94.25 for event in first)
+    assert all(event["previousClose"] == 100 for event in first)
+    assert all(event["changePercent"] == -5.75 for event in first)
+    assert second == first
+    assert len(outbox.events) == 2
+
+
+def test_market_move_shadow_records_candidate_without_user_notification() -> None:
+    redis_client = FakeReminderRedis()
+    dispatcher = ReminderDispatcher(
+        redis_client=redis_client,
+        preference_repository=FakePreferenceRepository({
+            "settings": {
+                "settings": {"master": True, "rapidMove": True},
+                "thresholds": {"rapidMovePct": 5},
+            },
+            "company_overrides": {},
+        }),
+        market_snapshot_provider=lambda _symbol: {
+            "lastPrice": 106,
+            "previousClose": 100,
+            "changePercent": 6,
+            "quoteAsOf": "2026-07-14T14:00:00Z",
+            "priceUpdatedAt": "2026-07-14T14:00:00Z",
+        },
+        market_move_mode="shadow",
+        now_provider=lambda: datetime(2026, 7, 14, 14, 0, 30, tzinfo=timezone.utc),
+    )
+    redis_client.sets[dispatcher.keys.subscription_source_watchlist("NVDA")] = {"user-a"}
+
+    events = dispatcher.events_for_candle({"symbol": "NVDA", "interval": "1m"}, [])
+
+    assert events == []
+    assert any("market-move-shadow" in key for key in redis_client.values)
+
+
+def test_market_move_live_allowlist_limits_canary_delivery() -> None:
+    redis_client = FakeReminderRedis()
+    preferences = FakePreferenceRepository({
+        "settings": {
+            "settings": {"master": True, "rapidMove": True},
+            "thresholds": {"rapidMovePct": 5},
+        },
+        "company_overrides": {},
+    })
+    dispatcher = ReminderDispatcher(
+        redis_client=redis_client,
+        preference_repository=preferences,
+        market_snapshot_provider=lambda _symbol: {
+            "lastPrice": 106,
+            "previousClose": 100,
+            "changePercent": 6,
+            "quoteAsOf": "2026-07-14T14:00:00Z",
+            "priceUpdatedAt": "2026-07-14T14:00:00Z",
+        },
+        market_move_mode="live",
+        market_move_allowlist={"canary-user"},
+        now_provider=lambda: datetime(2026, 7, 14, 14, 0, 30, tzinfo=timezone.utc),
+    )
+    redis_client.sets[dispatcher.keys.subscription_source_watchlist("NVDA")] = {"canary-user", "regular-user"}
+
+    events = dispatcher.events_for_candle({"symbol": "NVDA", "interval": "1m"}, [])
+
+    assert [event["userSub"] for event in events] == ["canary-user"]
+
+
+def test_market_move_rejects_stale_quote_and_non_subscriber() -> None:
+    redis_client = FakeReminderRedis()
+    dispatcher = ReminderDispatcher(
+        redis_client=redis_client,
+        preference_repository=FakePreferenceRepository({
+            "settings": {
+                "settings": {"master": True, "rapidMove": True},
+                "thresholds": {"rapidMovePct": 5},
+            },
+            "company_overrides": {},
+        }),
+        market_snapshot_provider=lambda _symbol: {
+            "lastPrice": 106,
+            "previousClose": 100,
+            "changePercent": 6,
+            "quoteAsOf": "2026-07-14T13:58:00Z",
+            "priceUpdatedAt": "2026-07-14T13:58:00Z",
+        },
+        market_move_mode="live",
+        now_provider=lambda: datetime(2026, 7, 14, 14, 0, tzinfo=timezone.utc),
+    )
+    redis_client.sets[dispatcher.keys.subscription_source_watchlist("NVDA")] = {"user-a"}
+
+    assert dispatcher.events_for_candle({"symbol": "NVDA", "interval": "1m"}, []) == []
+    assert dispatcher.events_for_candle({"symbol": "MSFT", "interval": "1m"}, []) == []
 
 
 def test_price_cross_event_prefers_source_event_id_and_fires_once() -> None:

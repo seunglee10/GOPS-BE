@@ -108,6 +108,7 @@ class ReplayController:
         self._latest_trades: dict[str, float] = {}
         self._accounts: dict[str, dict[str, object]] = {}
         self._restore_state()
+        self._status_snapshot = self._status()
 
     def set_mode(self, mode: str) -> dict[str, object]:
         normalized = str(mode).strip().lower()
@@ -122,7 +123,7 @@ class ReplayController:
                 self._accounts.clear()
                 if old_run and self.state_store:
                     self.state_store.delete(old_run)
-            return self._status()
+            return self._capture_status()
 
     def resume(self) -> dict[str, object]:
         with self._lock:
@@ -134,7 +135,7 @@ class ReplayController:
                     self._run_started_wall = self.clock()
                 self._match_all_orders()
                 self._persist()
-            return self._status()
+            return self._capture_status()
 
     def pause(self) -> dict[str, object]:
         with self._lock:
@@ -144,13 +145,13 @@ class ReplayController:
                 self.state = "paused"
             self._reset_anchor()
             self._persist()
-            return self._status()
+            return self._capture_status()
 
     def restart(self) -> dict[str, object]:
         with self._lock:
             self._require_simulation()
             self._new_run()
-            return self._status()
+            return self._capture_status()
 
     def set_speed(self, speed: int) -> dict[str, object]:
         if speed not in ALLOWED_SPEEDS:
@@ -160,12 +161,19 @@ class ReplayController:
             self.requested_speed = speed
             self._reset_anchor()
             self._persist()
-            return self._status()
+            return self._capture_status()
 
     def status(self) -> dict[str, object]:
         with self._lock:
             self._pump()
-            return self._status()
+            return self._capture_status()
+
+    def status_snapshot(self) -> dict[str, object]:
+        snapshot = self._status_snapshot
+        return {
+            **snapshot,
+            "symbols": [dict(item) for item in snapshot.get("symbols", [])],
+        }
 
     def latest_quote(self, symbol: str) -> dict[str, float] | None:
         with self._lock:
@@ -179,6 +187,7 @@ class ReplayController:
     def candle_snapshot(self, symbol: str, interval: str, limit: int = 2000) -> dict[str, object]:
         with self._lock:
             self._pump()
+            self._capture_status()
             return self.source.candle_snapshot(symbol, interval, self.cursor, limit)
 
     def account(self, user_id: str) -> dict[str, object]:
@@ -314,9 +323,10 @@ class ReplayController:
         self._emitted.append(event)
         payload, symbol = event.payload, str(event.payload.get("S") or "").upper()
         if payload.get("T") == "q":
-            bid, ask = _positive_float(payload.get("bp"), "bid"), _positive_float(payload.get("ap"), "ask")
-            if bid > ask:
-                raise ValueError("replay quote bid must not exceed ask")
+            bid, ask = _nonnegative_float(payload.get("bp"), "bid"), _nonnegative_float(payload.get("ap"), "ask")
+            if bid == 0 or ask == 0:
+                self._latest_quotes.pop(symbol, None)
+                return
             self._latest_quotes[symbol] = {"bid": bid, "ask": ask}
             self._match_orders(symbol)
         elif payload.get("T") == "t":
@@ -515,6 +525,10 @@ class ReplayController:
             "progress": round(min(1.0, elapsed / duration), 8), "lagMs": round(max(0.0, (target - self.cursor).total_seconds()) * 1000),
             "symbols": [{"symbol": symbol, "price": self._latest_trades.get(symbol)} for symbol in REPLAY_SYMBOLS]}
 
+    def _capture_status(self) -> dict[str, object]:
+        self._status_snapshot = self._status()
+        return self.status_snapshot()
+
     @staticmethod
     def _format(value: datetime) -> str:
         return value.astimezone(KST).isoformat(timespec="seconds")
@@ -524,6 +538,13 @@ def _positive_float(value: object, field: str) -> float:
     try: parsed = float(value)
     except (TypeError, ValueError) as exc: raise ValueError(f"{field} must be a positive number") from exc
     if parsed <= 0: raise ValueError(f"{field} must be a positive number")
+    return parsed
+
+
+def _nonnegative_float(value: object, field: str) -> float:
+    try: parsed = float(value)
+    except (TypeError, ValueError) as exc: raise ValueError(f"{field} must be a non-negative number") from exc
+    if parsed < 0: raise ValueError(f"{field} must be a non-negative number")
     return parsed
 
 
