@@ -653,12 +653,12 @@ dialog에서 `GET /api/recommendations/profile`로 현재 값을 읽어
 `recommendation.stock` Agent reference를 선택하며 주문 실행으로 연결하지 않는다.
 추천 행의 섹터도
 `sectorLabelKo` 한글 라벨을 사용한다.
-API가 `empty`, `ready`, `stale` 상태로 정상 응답했지만 `items=[]`이면 프런트는
-S&P 500 seed 기반의 고정 시뮬레이션 추천 10개를 기존 목록/카드 renderer에 전달한다.
-이때 툴바에 작은 `simulation` 배지를 표시하고 각 item의 `metricsSnapshot`에
-`source="frontend-recommendation-fallback"`, `synthetic=true`, `simulation=true`를
-남긴다. 실제 추천 item이 하나라도 있거나 `profile_required`, `market_closed`, API 오류
-상태이면 시뮬레이션 추천을 사용하지 않는다. 시뮬레이션 item 클릭도 기존과 동일하게
+LIVE mode에서는 선택한 `pre` 또는 `regular`의 API item만 표시한다. `items=[]`이면
+빈 상태를 유지하고 다른 세션이나 S&P 500 seed 기반 고정 종목으로 대체하지 않는다.
+명시적인 simulator mode에서만 `empty`, `ready`, `stale` 빈 응답을 고정 시뮬레이션
+추천 10개로 대체할 수 있다. 이때 툴바에 `simulation` 배지를 표시하고 각 item의
+`metricsSnapshot`에 `source="frontend-recommendation-fallback"`, `synthetic=true`,
+`simulation=true`를 남긴다. 시뮬레이션 item 클릭도 기존과 동일하게
 `recommendation.stock` reference만 선택하며 차트나 레이아웃을 자동 변경하지 않는다.
 
 public company journal panel은 `panelType="companyJournal"`/`kind="companyJournal"`로

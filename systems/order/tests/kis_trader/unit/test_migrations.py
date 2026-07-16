@@ -119,6 +119,22 @@ def test_continuous_recommendation_v2_migration_declares_state_and_candidate_fea
     assert "fundamental_weight >= 0 AND fundamental_weight <= 0.15" in sql
 
 
+def test_deterministic_evidence_v3_migration_declares_immutable_evidence_storage():
+    [migration] = [
+        path for path in migration_files() if path.name == "0013_deterministic_evidence_v3.sql"
+    ]
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "CREATE TABLE IF NOT EXISTS stock_recommendation_evidence_snapshots" in sql
+    assert "snapshot_key TEXT NOT NULL UNIQUE" in sql
+    assert "CREATE TABLE IF NOT EXISTS stock_recommendation_evidence_candidates" in sql
+    assert "raw_factors JSONB NOT NULL" in sql
+    assert "normalized_factors JSONB NOT NULL" in sql
+    assert "block_scores JSONB NOT NULL" in sql
+    assert "evidence_snapshot_id" in sql
+    assert "evidence_candidate_id" in sql
+
+
 def test_paper_trading_migration_declares_isolated_account_and_order_tables():
     [migration] = [path for path in migration_files() if path.name == "0006_paper_trading.sql"]
     sql = migration.read_text(encoding="utf-8")

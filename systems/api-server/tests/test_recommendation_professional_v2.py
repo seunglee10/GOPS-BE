@@ -176,6 +176,7 @@ def test_bounded_risk_penalty_and_algorithm_selection() -> None:
 
     assert penalty == 30
     assert resolve_algorithm_version("continuous-v2", enabled=False, shadow=True) == ("continuous-v2", False)
+    assert resolve_algorithm_version("deterministic-evidence-v3", enabled=False, shadow=True) == ("deterministic-evidence-v3", False)
     assert resolve_algorithm_version(None, enabled=True, shadow=True) == ("professional-v1", True)
 
 

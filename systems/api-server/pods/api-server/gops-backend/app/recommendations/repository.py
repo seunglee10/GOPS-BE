@@ -74,6 +74,7 @@ class RecommendationRunCreate:
     risk_state_id: int | None = None
     fundamental_snapshot_provenance: dict[str, Any] | None = None
     v2_input_digest: str | None = None
+    evidence_snapshot_id: int | None = None
 
 
 class RecommendationRepository:
@@ -111,6 +112,14 @@ class RecommendationRepository:
         raise NotImplementedError
 
     def get_v2_context(self, user_sub: str, cutoff: datetime) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def get_evidence_snapshot(self, snapshot_key: str) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    def create_evidence_snapshot(
+        self, snapshot: dict[str, Any], candidates: list[dict[str, Any]]
+    ) -> dict[str, Any]:
         raise NotImplementedError
 
     def commit_v2_run(
@@ -350,13 +359,81 @@ class PostgresRecommendationRepository(RecommendationRepository):
         except UndefinedTable as exc:
             raise RecommendationSchemaUnavailable("recommendation database migration required") from exc
 
+    def get_evidence_snapshot(self, snapshot_key: str) -> dict[str, Any] | None:
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT * FROM stock_recommendation_evidence_snapshots WHERE snapshot_key = %s",
+                    (snapshot_key,),
+                ).fetchone()
+                return self._evidence_snapshot_with_candidates(conn, dict(row)) if row else None
+        except UndefinedTable as exc:
+            raise RecommendationSchemaUnavailable("recommendation database migration required") from exc
+
+    def create_evidence_snapshot(
+        self, snapshot: dict[str, Any], candidates: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        try:
+            with self._connect() as conn:
+                with conn.transaction():
+                    row = conn.execute(
+                        """
+                        INSERT INTO stock_recommendation_evidence_snapshots (
+                            snapshot_key, slot_start, market_date, session_mode, cutoff, universe,
+                            rule_set_version, source_digests, source_status, status, input_digest
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (snapshot_key) DO NOTHING
+                        RETURNING *
+                        """,
+                        (
+                            snapshot["snapshotKey"], snapshot["slotStart"], snapshot["marketDate"],
+                            snapshot["sessionMode"], snapshot["cutoff"], Jsonb(snapshot["universe"]),
+                            snapshot["ruleSetVersion"], Jsonb(snapshot["sourceDigests"]),
+                            Jsonb(snapshot.get("sourceStatus") or {}), snapshot["status"], snapshot["inputDigest"],
+                        ),
+                    ).fetchone()
+                    if row is None:
+                        row = conn.execute(
+                            "SELECT * FROM stock_recommendation_evidence_snapshots WHERE snapshot_key = %s",
+                            (snapshot["snapshotKey"],),
+                        ).fetchone()
+                        return self._evidence_snapshot_with_candidates(conn, dict(row))
+                    snapshot_id = int(row["id"])
+                    for candidate in candidates:
+                        conn.execute(
+                            """
+                            INSERT INTO stock_recommendation_evidence_candidates (
+                                snapshot_id, symbol, sector, industry, change_percent, raw_factors,
+                                normalized_factors, block_scores, base_setup_score, evidence_reliability,
+                                reliability_components, rejection_reasons, daily_returns_60, market_item, input_digest
+                            )
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            """,
+                            (
+                                snapshot_id, candidate["symbol"], candidate["sector"], candidate["industry"],
+                                candidate.get("changePercent"), Jsonb(candidate.get("rawFactors") or {}),
+                                Jsonb(candidate.get("normalizedFactors") or {}), Jsonb(candidate.get("blockScores") or {}),
+                                candidate["baseSetupScore"], candidate["evidenceReliability"],
+                                Jsonb(candidate.get("reliabilityComponents") or {}),
+                                Jsonb(candidate.get("rejectionReasons") or []), Jsonb(candidate.get("dailyReturns60") or []),
+                                Jsonb(candidate.get("marketItem") or {}), candidate["inputDigest"],
+                            ),
+                        )
+                    return self._evidence_snapshot_with_candidates(conn, dict(row))
+        except UndefinedTable as exc:
+            raise RecommendationSchemaUnavailable("recommendation database migration required") from exc
+
     def _enrich_fill_for_preference(self, conn: psycopg.Connection, fill: dict[str, Any]) -> dict[str, Any]:
         feature = conn.execute(
             """
             SELECT f.id AS candidate_feature_id, f.run_id AS candidate_run_id,
-                   f.available_factor_scores, f.candidate_mean_scores
+                   f.available_factor_scores, f.candidate_mean_scores,
+                   ec.id AS evidence_candidate_id
             FROM stock_recommendation_candidate_features f
             JOIN stock_recommendation_runs r ON r.id = f.run_id
+            LEFT JOIN stock_recommendation_evidence_candidates ec
+              ON ec.snapshot_id = r.evidence_snapshot_id AND ec.symbol = f.symbol
             WHERE f.symbol = %s
               AND r.user_sub = %s
               AND f.evaluated_at <= %s
@@ -370,6 +447,7 @@ class PostgresRecommendationRepository(RecommendationRepository):
             fill.update(
                 candidate_feature_id=feature["candidate_feature_id"],
                 candidate_run_id=feature["candidate_run_id"],
+                evidence_candidate_id=feature["evidence_candidate_id"],
                 feature_scores=feature["available_factor_scores"],
                 candidate_mean_scores=feature["candidate_mean_scores"],
             )
@@ -521,9 +599,9 @@ class PostgresRecommendationRepository(RecommendationRepository):
                         portfolio_snapshot_history_id, weights_version,
                         personalization_input_digest, personalization_snapshot,
                         algorithm_version, preference_state_id, risk_state_id,
-                        fundamental_snapshot_provenance, v2_input_digest, generated_at
+                        fundamental_snapshot_provenance, v2_input_digest, evidence_snapshot_id, generated_at
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
                     ON CONFLICT (user_sub, run_key) DO UPDATE
                     SET status = EXCLUDED.status,
                         profile_snapshot = EXCLUDED.profile_snapshot,
@@ -538,6 +616,7 @@ class PostgresRecommendationRepository(RecommendationRepository):
                         risk_state_id = EXCLUDED.risk_state_id,
                         fundamental_snapshot_provenance = EXCLUDED.fundamental_snapshot_provenance,
                         v2_input_digest = EXCLUDED.v2_input_digest,
+                        evidence_snapshot_id = EXCLUDED.evidence_snapshot_id,
                         generated_at = now()
                     RETURNING *
                     """,
@@ -559,6 +638,7 @@ class PostgresRecommendationRepository(RecommendationRepository):
                         run.risk_state_id,
                         Jsonb(run.fundamental_snapshot_provenance or {}),
                         run.v2_input_digest,
+                        run.evidence_snapshot_id,
                     ),
                 ).fetchone()
                 run_id = int(row["id"])
@@ -671,9 +751,9 @@ class PostgresRecommendationRepository(RecommendationRepository):
                             market_snapshot_time, summary, portfolio_snapshot_history_id, weights_version,
                             personalization_input_digest, personalization_snapshot, algorithm_version,
                             preference_state_id, risk_state_id, fundamental_snapshot_provenance,
-                            v2_input_digest, generated_at
+                            v2_input_digest, evidence_snapshot_id, generated_at
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
                         RETURNING *
                         """,
                         (
@@ -683,6 +763,7 @@ class PostgresRecommendationRepository(RecommendationRepository):
                             run.personalization_input_digest, Jsonb(run.personalization_snapshot or {}),
                             run.algorithm_version, preference_row["id"], risk_row["id"],
                             Jsonb(run.fundamental_snapshot_provenance or {}), run.v2_input_digest,
+                            run.evidence_snapshot_id,
                         ),
                     ).fetchone()
                     run_id = int(row["id"])
@@ -712,17 +793,18 @@ class PostgresRecommendationRepository(RecommendationRepository):
                             """
                             INSERT INTO user_recommendation_preference_events (
                                 fill_history_id, user_sub, order_id, symbol, side, decision_at,
-                                candidate_run_id, candidate_feature_id, event_status, skip_reason,
+                                candidate_run_id, candidate_feature_id, evidence_candidate_id, event_status, skip_reason,
                                 relative_exposure, event_strength, incremental_notional, portfolio_equity,
                                 order_cumulative_strength, provenance, event_schema_version, processing_version, input_digest
                             )
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             ON CONFLICT (fill_history_id) DO NOTHING
                             """,
                             (
                                 event["fill_history_id"], run.user_sub, event["order_id"], event["symbol"], event["side"],
                                 event["decision_at"], event.get("candidate_run_id"), event.get("candidate_feature_id"),
-                                event["event_status"], event.get("skip_reason"), Jsonb(event.get("relative_exposure") or {}),
+                                event.get("evidence_candidate_id"), event["event_status"], event.get("skip_reason"),
+                                Jsonb(event.get("relative_exposure") or {}),
                                 event.get("event_strength", 0), event.get("incremental_notional"), event.get("portfolio_equity"),
                                 event.get("order_cumulative_strength", 0), Jsonb(event.get("provenance") or {}), event["event_schema_version"],
                                 event["processing_version"], _digest(event),
@@ -758,6 +840,50 @@ class PostgresRecommendationRepository(RecommendationRepository):
         payload["items"] = [_json_ready(dict(row)) for row in rows]
         return payload
 
+    def _evidence_snapshot_with_candidates(
+        self, conn: psycopg.Connection, snapshot: dict[str, Any]
+    ) -> dict[str, Any]:
+        rows = conn.execute(
+            "SELECT * FROM stock_recommendation_evidence_candidates WHERE snapshot_id = %s ORDER BY symbol",
+            (snapshot["id"],),
+        ).fetchall()
+        payload = {
+            "id": int(snapshot["id"]),
+            "snapshotKey": snapshot["snapshot_key"],
+            "slotStart": _json_ready(snapshot["slot_start"]),
+            "marketDate": _json_ready(snapshot["market_date"]),
+            "sessionMode": snapshot["session_mode"],
+            "cutoff": _json_ready(snapshot["cutoff"]),
+            "universe": _json_ready(snapshot["universe"]),
+            "ruleSetVersion": snapshot["rule_set_version"],
+            "sourceDigests": _json_ready(snapshot["source_digests"]),
+            "sourceStatus": _json_ready(snapshot["source_status"]),
+            "status": snapshot["status"],
+            "inputDigest": snapshot["input_digest"],
+            "candidates": [],
+        }
+        for row in rows:
+            candidate = dict(row)
+            payload["candidates"].append({
+                "id": int(candidate["id"]),
+                "symbol": candidate["symbol"],
+                "sector": candidate["sector"],
+                "industry": candidate["industry"],
+                "changePercent": _json_ready(candidate["change_percent"]),
+                "rawFactors": _json_ready(candidate["raw_factors"]),
+                "normalizedFactors": _json_ready(candidate["normalized_factors"]),
+                "blockScores": _json_ready(candidate["block_scores"]),
+                "baseSetupScore": _json_ready(candidate["base_setup_score"]),
+                "evidenceReliability": _json_ready(candidate["evidence_reliability"]),
+                "reliabilityComponents": _json_ready(candidate["reliability_components"]),
+                "rejectionReasons": _json_ready(candidate["rejection_reasons"]),
+                "dailyReturns60": _json_ready(candidate["daily_returns_60"]),
+                "marketItem": _json_ready(candidate["market_item"]),
+                "inputDigest": candidate["input_digest"],
+                "evaluatedAt": payload["cutoff"],
+            })
+        return payload
+
     def _connect(self) -> psycopg.Connection:
         return psycopg.connect(self.conninfo, row_factory=dict_row)
 
@@ -774,6 +900,9 @@ class InMemoryRecommendationRepository(RecommendationRepository):
         self.preference_events: list[dict[str, Any]] = []
         self.risk_states: list[dict[str, Any]] = []
         self.candidate_features: list[dict[str, Any]] = []
+        self.evidence_snapshots: dict[str, dict[str, Any]] = {}
+        self._evidence_snapshot_id = 0
+        self._evidence_candidate_id = 0
 
     def get_profile(self, user_sub: str) -> dict[str, Any] | None:
         row = self.profiles.get(user_sub)
@@ -875,6 +1004,34 @@ class InMemoryRecommendationRepository(RecommendationRepository):
             "orderStrengths": strengths,
         }
 
+    def get_evidence_snapshot(self, snapshot_key: str) -> dict[str, Any] | None:
+        row = self.evidence_snapshots.get(snapshot_key)
+        return _json_ready(deepcopy(row)) if row else None
+
+    def create_evidence_snapshot(
+        self, snapshot: dict[str, Any], candidates: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        existing = self.evidence_snapshots.get(snapshot["snapshotKey"])
+        if existing:
+            return _json_ready(deepcopy(existing))
+        self._evidence_snapshot_id += 1
+        prepared = []
+        for candidate in sorted(candidates, key=lambda row: str(row["symbol"])):
+            self._evidence_candidate_id += 1
+            prepared.append({
+                **deepcopy(candidate),
+                "id": self._evidence_candidate_id,
+                "evaluatedAt": snapshot["cutoff"],
+            })
+        row = {
+            **deepcopy(snapshot),
+            "id": self._evidence_snapshot_id,
+            "candidates": prepared,
+            "createdAt": datetime.now(timezone.utc),
+        }
+        self.evidence_snapshots[snapshot["snapshotKey"]] = row
+        return _json_ready(deepcopy(row))
+
     def _enrich_memory_fill(self, fill: dict[str, Any]) -> dict[str, Any]:
         decision = _coerce_datetime(fill.get("decision_at"))
         matches = []
@@ -892,6 +1049,18 @@ class InMemoryRecommendationRepository(RecommendationRepository):
                 feature_scores=match.get("available_factor_scores"),
                 candidate_mean_scores=match.get("candidate_mean_scores"),
             )
+            run = self.runs.get(int(match.get("run_id") or 0)) or {}
+            evidence_snapshot_id = run.get("evidence_snapshot_id")
+            if evidence_snapshot_id is not None:
+                evidence = next((
+                    candidate
+                    for snapshot in self.evidence_snapshots.values()
+                    if snapshot.get("id") == evidence_snapshot_id
+                    for candidate in snapshot.get("candidates", [])
+                    if candidate.get("symbol") == fill.get("symbol")
+                ), None)
+                if evidence:
+                    fill["evidence_candidate_id"] = evidence.get("id")
         else:
             historical_runs = [
                 row for row in self.runs.values()
@@ -997,6 +1166,7 @@ class InMemoryRecommendationRepository(RecommendationRepository):
             "risk_state_id": run.risk_state_id,
             "fundamental_snapshot_provenance": deepcopy(run.fundamental_snapshot_provenance or {}),
             "v2_input_digest": run.v2_input_digest,
+            "evidence_snapshot_id": run.evidence_snapshot_id,
             "generated_at": datetime.now(timezone.utc),
         }
         self.runs[run_id] = row
