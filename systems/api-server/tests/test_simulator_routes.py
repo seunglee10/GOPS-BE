@@ -375,10 +375,59 @@ class SimulatorRoutesTest(unittest.TestCase):
         self.assertEqual(updated.json()["condition"]["status"], "paused")
         self.assertTrue(deleted.json()["deleted"])
 
-    def test_point_in_time_unsafe_latest_data_is_blocked(self):
+    def test_simulation_latest_news_uses_the_replay_cursor(self):
+        self.gateway.mode = "simulation"
+        service = SimpleNamespace(latest_news=unittest.mock.Mock(return_value={
+            "symbol": "NVDA",
+            "source": "clickhouse-simulation",
+            "items": [{
+                "symbol": "NVDA",
+                "title": "가상시각 이전 뉴스",
+                "summary": "미래 뉴스는 포함하지 않습니다.",
+                "publishedAt": "2026-07-14T14:32:44.000Z",
+            }],
+        }))
+
+        with patch("app.market_data.query.routes.get_query_service", return_value=service):
+            response = self.client.get("/api/market/news/latest?symbol=NVDA")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["items"][0]["title"], "가상시각 이전 뉴스")
+        service.latest_news.assert_called_once_with(
+            "NVDA",
+            limit=10,
+            locale="ko-KR",
+            now=datetime(2026, 7, 14, 15, 0, tzinfo=timezone.utc),
+        )
+
+    def test_simulation_daily_news_uses_the_replay_cursor(self):
+        self.gateway.mode = "simulation"
+        service = SimpleNamespace(daily_news=unittest.mock.Mock(return_value={
+            "symbol": "NVDA",
+            "displayMode": "dailySummary",
+            "dailySummaries": [{
+                "date": "2026-07-13",
+                "symbol": "NVDA",
+                "summary": "가상시각 이전 일별 뉴스",
+            }],
+        }))
+
+        with patch("app.market_data.query.routes.get_query_service", return_value=service):
+            response = self.client.get("/api/market/news/daily?symbol=NVDA")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["dailySummaries"][0]["date"], "2026-07-13")
+        service.daily_news.assert_called_once_with(
+            "NVDA",
+            limit=5,
+            locale="ko-KR",
+            now=datetime(2026, 7, 14, 15, 0, tzinfo=timezone.utc),
+        )
+
+    def test_other_point_in_time_unsafe_market_data_stays_blocked(self):
         self.gateway.mode = "simulation"
 
-        response = self.client.get("/api/market/news/latest?symbol=NVDA")
+        response = self.client.get("/api/market/fundamentals/NVDA/series")
 
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["detail"], "simulation_data_unavailable")

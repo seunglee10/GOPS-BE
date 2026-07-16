@@ -57,3 +57,22 @@ def test_chart_news_events_limit_snapshots_to_the_replay_cursor() -> None:
 
     assert "generated_at <= parseDateTime64BestEffort({asOf:String})" in provider.query
     assert provider.parameters["asOf"] == "2026-07-14T15:00:00.000Z"
+
+
+def test_localized_news_as_of_excludes_articles_after_the_replay_cursor() -> None:
+    provider = RecordingClickHouseProvider()
+
+    assert provider.localized_news_articles_for_symbols_as_of(
+        ["NVDA"],
+        "2026-07-14T15:00:00.000Z",
+        limit=30,
+        days=30,
+        locale="ko-KR",
+    ) == []
+
+    assert "published_at <= parseDateTime64BestEffort({asOf:String})" in provider.query
+    assert "localized_at <= parseDateTime64BestEffort({asOf:String})" in provider.query
+    assert "now64(3)" not in provider.query
+    assert provider.parameters["symbols"] == ["NVDA"]
+    assert provider.parameters["asOf"] == "2026-07-14T15:00:00.000Z"
+    assert provider.parameters["days"] == 30
