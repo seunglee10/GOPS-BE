@@ -19,9 +19,9 @@ class NotificationBrokerError(RuntimeError):
 def notification_setting_for_item(notification_type: str, payload: dict[str, Any]) -> str | None:
     kind = str(payload.get("kind") or "").strip().lower()
     normalized_type = str(notification_type or "").strip()
-    if normalized_type == "system.market_open" or kind == "market_open":
+    if normalized_type in {"system.market_open", "system.market_opened"} or kind in {"market_open", "market_opened"}:
         return "marketOpen"
-    if normalized_type in {"system.market_close", "system.market_close_summary"} or kind in {"market_close", "market_close_summary"}:
+    if normalized_type in {"system.market_close", "system.market_closed", "system.market_close_summary"} or kind in {"market_close", "market_closed", "market_close_summary"}:
         return "marketClose"
     if normalized_type == "system.volume_spike" or kind == "volume_spike":
         return "volumeSpike"
@@ -29,7 +29,7 @@ def notification_setting_for_item(notification_type: str, payload: dict[str, Any
         return "rsiBand"
     if normalized_type == "alert.price_cross":
         return "targetPrice"
-    if normalized_type == "alert.spike":
+    if normalized_type in {"alert.spike", "system.market_move"} or kind == "market_move":
         return "rapidMove"
 
     decision = _record(payload.get("decision"))

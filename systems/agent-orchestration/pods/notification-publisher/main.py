@@ -21,8 +21,12 @@ def main() -> None:
     publisher = RedisNotificationPublisher(redis.from_url(redis_url, decode_responses=True))
     print(f"Agent notification publisher started: topics={topics} redis={redis_url}", flush=True)
     for record in consumer:
-        payload = publisher.publish(record.value)
-        print(f"Agent alert published: symbol={payload.get('symbol')} level={payload.get('level')}", flush=True)
+        payload = publisher.publish(record.value, source_topic=record.topic)
+        print(
+            f"Agent alert processed: symbol={payload.get('symbol')} level={payload.get('level')} "
+            f"toast={payload.get('showToast')} duplicate={payload.get('duplicate', False)}",
+            flush=True,
+        )
 
 
 if __name__ == "__main__":

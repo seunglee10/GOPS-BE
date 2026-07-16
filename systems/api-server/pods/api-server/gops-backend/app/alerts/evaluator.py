@@ -6,9 +6,10 @@ import sys
 import time
 import traceback
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 try:
     import redis
@@ -19,6 +20,8 @@ from app.alerts.notifications import RedisNotificationBroker, notification_deliv
 from app.alerts.preferences import PostgresNotificationPreferenceRepository, preference_response
 from app.alerts.projection import RedisAlertProjection
 from app.alerts.repository import PostgresAlertRepository
+from app.market_data.calendar.service import market_session_bounds, parse_datetime
+from app.market_data.heatmap.service import get_heatmap_service
 
 
 DEFAULT_INPUT_TOPIC = "market.layer.trades.v1"
@@ -29,6 +32,7 @@ DEFAULT_OUTBOX_STREAM = "alerts:outbox"
 DEFAULT_OUTBOX_GROUP = "gops-alert-outbox-senders"
 DEFAULT_SPIKE_RETENTION_MINUTES = 240
 DEFAULT_DEDUPE_TTL_SECONDS = 7 * 24 * 60 * 60
+DEFAULT_MARKET_MOVE_FRESHNESS_SECONDS = 90
 
 
 def _add_alfaka_package_path() -> None:
@@ -312,25 +316,147 @@ class AlertEvaluator:
         }
 
 
+class HeatmapMarketSnapshotLookup:
+    """Look up a symbol from the exact cached snapshot used by the heatmap."""
+
+    def __init__(self, heatmap_service: Any, cache_seconds: float = 1.0) -> None:
+        self.heatmap_service = heatmap_service
+        self.cache_seconds = cache_seconds
+        self._loaded_at = 0.0
+        self._items: dict[str, dict[str, Any]] = {}
+
+    def __call__(self, symbol: str) -> dict[str, Any] | None:
+        now = time.monotonic()
+        if not self._items or now - self._loaded_at >= self.cache_seconds:
+            snapshot = self.heatmap_service.snapshot("sp500")
+            quote_as_of = snapshot.get("quoteAsOf")
+            self._items = {
+                str(item.get("symbol") or "").upper(): {**item, "quoteAsOf": quote_as_of}
+                for item in snapshot.get("items") or []
+                if isinstance(item, dict) and item.get("symbol")
+            }
+            self._loaded_at = now
+        return self._items.get(symbol.upper())
+
+
 class ReminderDispatcher:
-    def __init__(self, *, redis_client: Any, preference_repository: Any) -> None:
+    def __init__(
+        self,
+        *,
+        redis_client: Any,
+        preference_repository: Any,
+        market_snapshot_provider: Any | None = None,
+        market_move_mode: str | None = None,
+        market_move_allowlist: set[str] | None = None,
+        now_provider: Any | None = None,
+    ) -> None:
         self.redis = redis_client
         self.preference_repository = preference_repository
         self.keys = RedisKeyBuilder()
+        self.market_snapshot_provider = market_snapshot_provider
+        configured_mode = market_move_mode or os.getenv("MARKET_MOVE_NOTIFICATION_MODE", "off")
+        self.market_move_mode = configured_mode.strip().lower() if configured_mode.strip().lower() in {"off", "shadow", "live"} else "off"
+        configured_allowlist = market_move_allowlist
+        if configured_allowlist is None:
+            configured_allowlist = set(_csv_values(os.getenv("MARKET_MOVE_NOTIFICATION_USER_ALLOWLIST")))
+        self.market_move_allowlist = {str(value).strip() for value in configured_allowlist if str(value).strip()}
+        self.now_provider = now_provider or (lambda: datetime.now(timezone.utc))
 
     def events_for_candle(
         self,
         candle: dict[str, Any],
         candles: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
+        if candle["interval"] == "1m":
+            return self._market_move_events(candle["symbol"], self._subscribed_users(candle["symbol"]))
         users = self._watchlist_users(candle["symbol"])
-        if not users:
-            return []
         if candle["interval"] == "5m":
             return self._volume_events(candle, candles, users)
         if candle["interval"] == "1D":
             return self._rsi_events(candle, candles, users)
         return []
+
+    def _market_move_events(self, symbol: str, users: list[str]) -> list[dict[str, Any]]:
+        if self.market_move_mode == "off" or self.market_snapshot_provider is None or not users:
+            return []
+        current = self.now_provider()
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=timezone.utc)
+        else:
+            current = current.astimezone(timezone.utc)
+        market_zone = ZoneInfo(os.getenv("MARKET_TIMEZONE") or "America/New_York")
+        session = market_session_bounds(current.astimezone(market_zone).date())
+        if session is None or not (session["openAt"] <= current <= session["closeAt"]):
+            return []
+
+        snapshot = self.market_snapshot_provider(symbol)
+        if not isinstance(snapshot, dict):
+            return []
+        last_price = _float_or_none(snapshot.get("lastPrice"))
+        previous_close = _float_or_none(snapshot.get("previousClose"))
+        change_percent = _float_or_none(snapshot.get("changePercent"))
+        quote_as_of_text = str(snapshot.get("quoteAsOf") or "")
+        snapshot_quote_as_of = parse_datetime(quote_as_of_text)
+        price_as_of = parse_datetime(snapshot.get("priceUpdatedAt") or quote_as_of_text)
+        if (
+            last_price is None
+            or previous_close is None
+            or previous_close <= 0
+            or change_percent is None
+            or snapshot_quote_as_of is None
+            or price_as_of is None
+        ):
+            return []
+        age = current - price_as_of
+        freshness_seconds = max(1, int(os.getenv("MARKET_MOVE_QUOTE_FRESHNESS_SECONDS", str(DEFAULT_MARKET_MOVE_FRESHNESS_SECONDS))))
+        if age < timedelta(seconds=-5) or age > timedelta(seconds=freshness_seconds):
+            return []
+
+        market_date = str(session["marketDate"])
+        direction = "up" if change_percent >= 0 else "down"
+        events: list[dict[str, Any]] = []
+        for user_sub in users:
+            preferences = preference_response(self.preference_repository.get(user_sub))
+            threshold = _float_or_none(preferences["thresholds"].get("rapidMovePct")) or 5.0
+            if abs(change_percent) < threshold or not self._allowed(preferences, "rapidMove", symbol):
+                continue
+            threshold_key = format(threshold, "g")
+            payload = {
+                "eventId": f"market-move:{market_date}:{user_sub}:{symbol}:{direction}:{threshold_key}",
+                "type": "system.market_move",
+                "userSub": user_sub,
+                "kind": "market_move",
+                "symbol": symbol,
+                "direction": direction,
+                "thresholdPct": threshold,
+                "referenceType": "previous_regular_close",
+                "previousClose": previous_close,
+                "lastPrice": last_price,
+                "changePercent": change_percent,
+                "marketDate": market_date,
+                "quoteAsOf": quote_as_of_text,
+                "effectiveAt": quote_as_of_text,
+                "expiresAt": (price_as_of + timedelta(seconds=freshness_seconds)).isoformat(),
+                "title": f"{symbol} 정규장 급{'등' if direction == 'up' else '락'}",
+                "summary": f"전일 정규장 종가 대비 {change_percent:+.2f}% {'상승' if direction == 'up' else '하락'}했습니다.",
+                "triggeredAt": current.isoformat(),
+            }
+            if self.market_move_mode == "shadow":
+                self._remember_shadow(payload)
+                continue
+            if self.market_move_allowlist and user_sub not in self.market_move_allowlist:
+                continue
+            events.append(payload)
+        return events
+
+    def _remember_shadow(self, payload: dict[str, Any]) -> None:
+        key = f"alerts:v1:market-move-shadow:{payload['eventId']}"
+        encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        try:
+            self.redis.set(key, encoded, nx=True, ex=24 * 60 * 60)
+        except TypeError:
+            if self.redis.setnx(key, encoded):
+                self.redis.expire(key, 24 * 60 * 60)
 
     def _volume_events(
         self,
@@ -419,6 +545,18 @@ class ReminderDispatcher:
 
     def _watchlist_users(self, symbol: str) -> list[str]:
         values = self.redis.smembers(self.keys.subscription_source_watchlist(symbol))
+        users = set()
+        for value in values:
+            if isinstance(value, bytes):
+                value = value.decode("utf-8")
+            normalized = str(value or "").strip()
+            if normalized and normalized != "__legacy__":
+                users.add(normalized)
+        return sorted(users)
+
+    def _subscribed_users(self, symbol: str) -> list[str]:
+        values = set(self.redis.smembers(self.keys.subscription_source_watchlist(symbol)))
+        values.update(self.redis.smembers(self.keys.subscription_source_portfolio(symbol)))
         users = set()
         for value in values:
             if isinstance(value, bytes):
@@ -631,6 +769,7 @@ def run() -> None:
         reminder_dispatcher=ReminderDispatcher(
             redis_client=redis_client,
             preference_repository=preference_repository,
+            market_snapshot_provider=HeatmapMarketSnapshotLookup(get_heatmap_service()),
         ),
         history_loader=ClickHouseMarketDataProvider().candles,
     )

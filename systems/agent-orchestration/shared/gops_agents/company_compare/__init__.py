@@ -23,6 +23,7 @@ from .synthesizer import (
     CompanyCompareNarrativeError,
     CompanyCompareNarrativeSynthesizer,
     find_unsupported_numbers,
+    find_vague_insights,
     find_vague_sentences,
     validate_narrative,
 )
@@ -49,6 +50,7 @@ __all__ = [
     "company_compare_cache_key",
     "compare_section_schema",
     "find_unsupported_numbers",
+    "find_vague_insights",
     "find_vague_sentences",
     "normalize_symbol",
     "suggest_peers",

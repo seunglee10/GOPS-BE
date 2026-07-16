@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import re
 import time
-from typing import Any
+from typing import Any, Callable
 
 from ..contracts import MarketEvent
 
@@ -18,6 +18,7 @@ class MarketEventThresholds:
     volume_baseline_window: int = 20
     volume_min_samples: int = 5
     volume_event_cooldown_seconds: int = 1800
+    price_event_max_age_seconds: int = 90
 
 
 @dataclass
@@ -27,14 +28,16 @@ class MarketEventDetector:
     previous_volume_by_symbol: dict[str, float] = field(default_factory=dict)
     volume_history_by_stream: dict[tuple[str, str], deque[float]] = field(default_factory=dict)
     last_volume_event_at_by_stream: dict[tuple[str, str], float] = field(default_factory=dict)
+    last_trade_timestamp_by_symbol: dict[str, float] = field(default_factory=dict)
+    now_seconds: Callable[[], float] = time.time
 
     def detect(self, payload: dict[str, Any], source_topic: str) -> list[MarketEvent]:
         symbol = str(payload.get("symbol") or "UNKNOWN").upper()
         events: list[MarketEvent] = []
-        price = first_float(payload, "price", "close", "lastPrice")
+        price = first_float(payload, "price") if is_trade_topic(source_topic) else None
         timestamp = payload.get("timestamp") or payload.get("eventTime") or payload.get("updatedAt")
 
-        if price is not None:
+        if price is not None and self._accept_trade_price(symbol, payload, timestamp):
             previous = self.previous_price_by_symbol.get(symbol)
             if previous and previous > 0:
                 change_percent = ((price - previous) / previous) * 100
@@ -120,6 +123,22 @@ class MarketEventDetector:
 
         return events
 
+    def _accept_trade_price(self, symbol: str, payload: dict[str, Any], timestamp: Any) -> bool:
+        if is_replay_or_simulation(payload):
+            return False
+        observed_seconds = timestamp_seconds(timestamp)
+        if observed_seconds is None:
+            observed_seconds = self.now_seconds()
+        else:
+            age_seconds = self.now_seconds() - observed_seconds
+            if age_seconds < -5 or age_seconds > max(1, self.thresholds.price_event_max_age_seconds):
+                return False
+        previous_timestamp = self.last_trade_timestamp_by_symbol.get(symbol)
+        if previous_timestamp is not None and observed_seconds <= previous_timestamp:
+            return False
+        self.last_trade_timestamp_by_symbol[symbol] = observed_seconds
+        return True
+
 
 def first_float(payload: dict[str, Any], *keys: str) -> float | None:
     for key in keys:
@@ -133,6 +152,17 @@ def first_float(payload: dict[str, Any], *keys: str) -> float | None:
 
 
 _CLOSED_CANDLE_TOPIC = re.compile(r"(?:^|\.)candles\.([^.]+)\.closed(?:\.|$)", re.IGNORECASE)
+
+
+def is_trade_topic(source_topic: str) -> bool:
+    return str(source_topic or "").strip().lower() == "market.layer.trades.v1"
+
+
+def is_replay_or_simulation(payload: dict[str, Any]) -> bool:
+    if any(payload.get(key) is True for key in ("historical", "isHistorical", "simulated", "isSimulated", "replay", "isReplay")):
+        return True
+    source = str(payload.get("source") or payload.get("dataSource") or "").strip().lower()
+    return source in {"historical", "backfill", "replay", "simulation", "simulated"}
 
 
 def closed_candle_interval(payload: dict[str, Any], source_topic: str) -> str | None:

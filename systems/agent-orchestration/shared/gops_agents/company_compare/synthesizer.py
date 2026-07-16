@@ -26,6 +26,11 @@ BANNED_LANGUAGE = (
     "투자해야",
     "원어치",
     "남는 장사",
+    "포지션",
+    "비중 확대",
+    "비중 축소",
+    "손절",
+    "익절",
 )
 NUMBER_PATTERN = re.compile(r"(?<![A-Za-z0-9])[-+]?\d[\d,]*(?:\.\d+)?%?")
 VAGUE_CLAIM_TERMS = (
@@ -41,6 +46,7 @@ VAGUE_CLAIM_TERMS = (
     "긍정적인",
 )
 SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[.!?])\s+")
+CONCRETE_INSIGHT_TERMS = ("실적", "분기", "발표", "공시", "10-K", "컨센서스")
 
 
 class CompanyCompareNarrativeError(RuntimeError):
@@ -173,12 +179,20 @@ class CompanyCompareNarrativeSynthesizer:
                 warningType="vague_sentences",
                 warningCount=len(vague_sentences),
             )
+        vague_insights = find_vague_insights(validated)
+        if vague_insights:
+            log_company_compare_event(
+                "validation_warning",
+                cacheToken=cache_token,
+                warningType="vague_insights",
+                warningCount=len(vague_insights),
+            )
         self.cache.set(cache_key, validated, cache_ttl_seconds)
         log_company_compare_event(
             "validation_accepted",
             cacheToken=cache_token,
             sectionCount=len(validated["sections"]),
-            warningCount=len(unsupported_numbers) + len(vague_sentences),
+            warningCount=len(unsupported_numbers) + len(vague_sentences) + len(vague_insights),
         )
         return {
             "status": "ready",
@@ -254,7 +268,20 @@ def system_prompt() -> str:
         "흔적으로, 마진보다 물량 성장이 실적을 이끌고 있습니다.'\n"
         "나쁜 예(반복): 'NVDA의 영업이익률은 61%이고 AMD는 20%입니다.'\n"
         "나쁜 예(뜬구름): 'NVDA는 높은 수익성을 바탕으로 시장에서 유리한 위치를 확보하고 있습니다.'\n"
-        "나쁜 예(환산): '100원어치를 팔면 61원이 남는 구조입니다.'"
+        "나쁜 예(환산): '100원어치를 팔면 61원이 남는 구조입니다.'\n"
+        "\n"
+        "[판단 지원 — 확인 포인트]\n"
+        "설명에서 멈추지 말고, 사용자가 다음에 무엇을 확인해야 하는지까지 안내하세요. 단, 행동 지시가 아니라 "
+        "관찰 지점을 제시하는 것입니다.\n"
+        "- summary는 이 비교가 어떤 선택지 사이의 문제인지 트레이드오프 구도로 정리하며 시작하세요. "
+        "(예: '이 비교는 집중이 만드는 이익률과 분산이 주는 실적 안정성 사이의 구도입니다.')\n"
+        "- 조건부 안내는 허용됩니다: '~를 중시한다면 ~지표가 핵심 변수입니다'처럼 사용자의 기준에 지표를 "
+        "연결하는 문장은 판정이 아닙니다.\n"
+        "- insights에는 종합 확인 포인트를 2~3개 작성하세요. 각 항목은 관찰 가능한 지표나 이벤트를 지목하고, "
+        "가능하면 제공된 데이터 기준의 기준값과 시점을 포함하세요. "
+        "(예: '다음 분기 실적 발표에서 데이터센터 매출 성장률이 55% 아래로 내려오는지가 첫 확인 지점입니다.')\n"
+        "- 지표를 보라는 안내는 되지만 행동을 하라는 지시는 금지입니다. 진입, 청산, 비중, 타이밍 등 "
+        "매매 행동을 암시하는 표현을 쓰지 마세요."
     )
 
 
@@ -369,6 +396,22 @@ def find_vague_sentences(narrative: dict[str, Any]) -> list[str]:
                 continue
             if any(term in stripped for term in VAGUE_CLAIM_TERMS) and stripped not in found:
                 found.append(stripped)
+    return found
+
+
+def find_vague_insights(narrative: dict[str, Any]) -> list[str]:
+    """수치도 구체적 이벤트도 없는 관전 포인트를 찾는다. 확인 포인트 규칙 위반 감시용."""
+    found: list[str] = []
+    for value in narrative.get("insights") or []:
+        text = str(value).strip()
+        if not text:
+            continue
+        if NUMBER_PATTERN.search(text):
+            continue
+        if any(term in text for term in CONCRETE_INSIGHT_TERMS):
+            continue
+        if text not in found:
+            found.append(text)
     return found
 
 
