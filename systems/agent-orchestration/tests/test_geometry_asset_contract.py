@@ -56,6 +56,9 @@ class GeometryAssetContractTest(unittest.TestCase):
         )
         self.assertIn("disposition", schema["$defs"]["traceCandidate"]["properties"])
         self.assertIn("render", schema["$defs"]["traceCandidate"]["properties"])
+        trade_plan = schema["$defs"]["tradePlan"]["properties"]
+        self.assertEqual(trade_plan["action"]["enum"], ["watch", "buy_candidate", "sell_candidate", "no_trade"])
+        self.assertEqual(trade_plan["direction"]["enum"], ["long", "exit_long", None])
 
     def test_manual_and_scheduled_requests_have_server_owned_priorities(self):
         manual = ChartAssetBuildEnvelope.create(requested_by="user", symbols=["NVDA"])

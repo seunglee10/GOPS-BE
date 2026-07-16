@@ -20,6 +20,9 @@ class ChartAnalysisAssetContractTest(unittest.TestCase):
         self.assertTrue({"patterns", "primaryPattern"}.issubset(geometry_contract["required"]))
         self.assertIn("tradePlan", geometry_contract["properties"])
         self.assertIn("tradePlan", geometry_contract["required"])
+        trade_plan = geometry["$defs"]["tradePlan"]["properties"]
+        self.assertEqual(trade_plan["action"]["enum"], ["watch", "buy_candidate", "sell_candidate", "no_trade"])
+        self.assertEqual(trade_plan["direction"]["enum"], ["long", "exit_long", None])
         self.assertEqual(
             set(geometry["$defs"]["pattern"]["properties"]["kind"]["enum"]),
             {

@@ -41,6 +41,17 @@ class ChartAssetStorageTest(unittest.TestCase):
         _validate_asset_schema(_channel_asset())
         _validate_asset_schema(_trace_asset_v2())
 
+    def test_trade_plan_schema_accepts_buy_and_exit_long_but_rejects_short(self):
+        for action, direction in (("buy_candidate", "long"), ("sell_candidate", "exit_long")):
+            asset = _asset()
+            asset["geometry"]["tradePlan"] = _trade_plan(action, direction)
+            _validate_asset_schema(asset)
+
+        short_asset = _asset()
+        short_asset["geometry"]["tradePlan"] = _trade_plan("short_candidate", "short")
+        with self.assertRaisesRegex(ValueError, "schema validation failed"):
+            _validate_asset_schema(short_asset)
+
     def test_schema_failure_preserves_existing_row_before_postgres_write(self):
         connection = Connection()
         storage = PostgresChartAssetStorage("postgresql://test", connect=lambda *_args, **_kwargs: connection)
@@ -352,6 +363,30 @@ def _trace_asset_v2():
         "stored": {"levels": 1, "trends": 0, "patterns": 0},
     }
     return asset
+
+
+def _trade_plan(action: str, direction: str):
+    return {
+        "version": "pattern-trade-timing-v1",
+        "symbol": "NVDA",
+        "interval": "1D",
+        "patternId": "pattern-1",
+        "patternKind": "bullish_flag",
+        "patternState": "confirmed",
+        "action": action,
+        "direction": direction,
+        "signalAt": "2026-07-10T04:00:00.000Z",
+        "entryTrigger": 100.0,
+        "entryPrice": 101.0,
+        "stopPrice": 99.0,
+        "targetPrice": 105.0,
+        "riskPerShare": 2.0,
+        "rewardPerShare": 4.0,
+        "rewardRiskRatio": 2.0,
+        "minimumRewardRisk": 2.0,
+        "projectionBars": 10,
+        "reasons": ["reward_risk_passed"],
+    }
 
 
 def _channel_asset():

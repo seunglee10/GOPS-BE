@@ -15,7 +15,9 @@ Confirmed patterns may include additive `confirmation` timing, boundary, ATR
 penetration, and relative-volume evidence. `chart-semantics.ko.json` is the canonical
 Korean label catalog for pattern states, actions, and reason codes.
 The frontend derives an ephemeral `ChartTradeSetup` and `riskRewardBox` for complete
-buy/sell plans. When a server plan is absent it may project a conditional setup from
+`buy_candidate/long` and `sell_candidate/exit_long` plans. The latter describes
+selling an existing holding; the geometry contract does not define a short-position
+entry. When a server plan is absent it may project a conditional setup from
 stored pattern/level evidence only, without ATR recomputation, level merging, fake
 candles, or symbol-specific branches. Existing `zoneLow`, `zoneHigh`, `halfWidthAtr`,
 and `selectionTier` level

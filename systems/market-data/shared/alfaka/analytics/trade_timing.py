@@ -36,7 +36,6 @@ def evaluate_pattern_trade_timing(
     symbol: str,
     interval: str,
     minimum_reward_risk: float = DEFAULT_MINIMUM_REWARD_RISK,
-    long_only: bool = True,
     projection_bars: int = DEFAULT_PROJECTION_BARS,
 ) -> dict[str, Any] | None:
     """Convert one detected chart pattern into a non-executable trade scenario.
@@ -96,8 +95,8 @@ def evaluate_pattern_trade_timing(
         tactical_stop = breakout_level + DEFAULT_STOP_DISTANCE_ATR * atr_value
         stop_price = min(structural_stop, tactical_stop)
         target_price = breakout_level - measured_move
-        direction = "exit_long" if long_only else "short"
-        action = "sell_candidate" if long_only else "short_candidate"
+        direction = "exit_long"
+        action = "sell_candidate"
         reasons = ["confirmed_downward_breakout"]
 
     risk = abs(entry_price - stop_price)
@@ -111,7 +110,7 @@ def evaluate_pattern_trade_timing(
         return _empty_plan(pattern, minimum_reward_risk, projection_bars, "invalid_risk_geometry")
 
     reward_risk = reward / risk
-    if action in {"buy_candidate", "short_candidate"}:
+    if action == "buy_candidate":
         if reward_risk < minimum_reward_risk:
             action = "no_trade"
             direction = None
