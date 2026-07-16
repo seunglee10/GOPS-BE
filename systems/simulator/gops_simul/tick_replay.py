@@ -315,8 +315,6 @@ class ReplayController:
         payload, symbol = event.payload, str(event.payload.get("S") or "").upper()
         if payload.get("T") == "q":
             bid, ask = _positive_float(payload.get("bp"), "bid"), _positive_float(payload.get("ap"), "ask")
-            if bid > ask:
-                raise ValueError("replay quote bid must not exceed ask")
             self._latest_quotes[symbol] = {"bid": bid, "ask": ask}
             self._match_orders(symbol)
         elif payload.get("T") == "t":
