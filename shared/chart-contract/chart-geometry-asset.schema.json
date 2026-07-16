@@ -194,11 +194,16 @@
         "selectionTier": {"enum": ["confirmed", "contextual", "reference", null]},
         "importanceTier": {"enum": ["major", "standard", "minor", null]},
         "importanceRank": {"type": ["integer", "null"], "minimum": 1},
+        "categoryRank": {"type": "integer", "minimum": 1},
+        "disposition": {"enum": ["selected", "qualified_not_selected", "rejected"]},
+        "selectionReasons": {"type": "array", "items": {"type": "string"}},
+        "direction": {"enum": ["up", "down"]},
+        "render": {"$ref": "#/$defs/traceRender"},
         "anchors": {"type": "array", "items": {"$ref": "#/$defs/anchor"}},
         "evidenceRefs": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
         "touchRefs": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
         "reactionRefs": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
-        "touches": {"type": "array", "maxItems": 8, "items": {"$ref": "#/$defs/traceTouch"}},
+        "touches": {"type": "array", "items": {"$ref": "#/$defs/traceTouch"}},
         "pivotIds": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
         "anchorPivotIds": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
         "touchPivotIds": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
@@ -215,10 +220,31 @@
         "timestamp": {"type": "string", "format": "date-time"},
         "price": {"type": "number", "exclusiveMinimum": 0},
         "barIndex": {"type": "integer", "minimum": 0},
+        "boundary": {"type": "string"},
         "outcome": {"type": ["string", "null"]},
         "mfeAtr": {"type": ["number", "null"]},
         "maeAtr": {"type": ["number", "null"]},
         "residualAtr": {"type": ["number", "null"], "minimum": 0}
+      }
+    },
+    "traceRender": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["drawingType", "extension"],
+      "properties": {
+        "drawingType": {"enum": ["horizontalLine", "trendLine", "trendParallelLines", "segments"]},
+        "extension": {"enum": ["plot", "ray", "segment"]},
+        "direction": {"enum": ["up", "down"]},
+        "parallelLineCount": {"const": 2},
+        "segments": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "prefixItems": [{"type": "integer", "minimum": 0}, {"type": "integer", "minimum": 0}],
+            "minItems": 2,
+            "maxItems": 2
+          }
+        }
       }
     },
     "analysisTrace": {
@@ -229,11 +255,11 @@
         "patternCandidates", "selections", "omittedCounts"
       ],
       "properties": {
-        "version": {"const": "geometry-analysis-trace-v1"},
+        "version": {"enum": ["geometry-analysis-trace-v1", "geometry-analysis-trace-v2"]},
         "pivots": {"type": "array", "items": {"$ref": "#/$defs/tracePivot"}},
-        "levelCandidates": {"type": "array", "maxItems": 8, "items": {"$ref": "#/$defs/traceCandidate"}},
-        "trendCandidates": {"type": "array", "maxItems": 7, "items": {"$ref": "#/$defs/traceCandidate"}},
-        "patternCandidates": {"type": "array", "maxItems": 4, "items": {"$ref": "#/$defs/traceCandidate"}},
+        "levelCandidates": {"type": "array", "items": {"$ref": "#/$defs/traceCandidate"}},
+        "trendCandidates": {"type": "array", "items": {"$ref": "#/$defs/traceCandidate"}},
+        "patternCandidates": {"type": "array", "items": {"$ref": "#/$defs/traceCandidate"}},
         "selections": {
           "type": "object",
           "additionalProperties": false,
@@ -247,7 +273,27 @@
         "omittedCounts": {
           "type": "object",
           "additionalProperties": {"type": "integer", "minimum": 0}
+        },
+        "completeness": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["complete", "detected", "stored"],
+          "properties": {
+            "complete": {"const": true},
+            "detected": {"$ref": "#/$defs/traceCounts"},
+            "stored": {"$ref": "#/$defs/traceCounts"}
+          }
         }
+      }
+    },
+    "traceCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["levels", "trends", "patterns"],
+      "properties": {
+        "levels": {"type": "integer", "minimum": 0},
+        "trends": {"type": "integer", "minimum": 0},
+        "patterns": {"type": "integer", "minimum": 0}
       }
     },
     "pattern": {

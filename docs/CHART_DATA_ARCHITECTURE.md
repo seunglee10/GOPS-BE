@@ -246,7 +246,7 @@ to own canonical candles and optional repair materialization. Build jobs, items,
 bounded logs, status polling, and explicit pair deletion are also PostgreSQL
 contracts. Repair has no CronJob or candle-closed subscription. The development
 delete route is not retention or automatic cleanup. Geometry v6 stays within the
-existing eight-drawing and 64 KiB payload bounds, so it requires no table or data
+existing eight-drawing and 256 KiB payload bounds, so it requires no table or data
 migration.
 
 The chart-analysis kernel may derive a daily MA60/MA120 crossing event from 121

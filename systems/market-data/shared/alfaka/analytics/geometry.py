@@ -24,10 +24,6 @@ ALGORITHM_VERSION = "ohlcv-consensus-pattern-families-v6"
 
 _ATR_PERIOD = 14
 _VOLUME_BASELINE = 20
-_LEVEL_TRACE_LIMIT = 8
-_TREND_TRACE_LIMIT = 7
-_PATTERN_TRACE_LIMIT = 4
-_TOUCH_TRACE_LIMIT = 8
 _TRACE_PIVOT_REFERENCE_FIELDS = (
     "evidenceRefs", "anchorPivotIds", "touchPivotIds", "reactionPivotIds",
 )
@@ -710,38 +706,35 @@ def _analysis_trace(
     diagonal_trends = [
         item for item in trend_candidates if item.get("kind") in {"up", "down", "channel"}
     ]
-    kept_levels = _retain_trace_candidates(
-        level_candidates, selected_level_ids, _LEVEL_TRACE_LIMIT,
-    )
-    kept_trends = _retain_trace_candidates(
-        diagonal_trends, selected_trend_ids, _TREND_TRACE_LIMIT,
-    )
-    kept_patterns = _retain_trace_candidates(
-        pattern_candidates, selected_pattern_ids, _PATTERN_TRACE_LIMIT,
-    )
+    kept_levels = _retain_trace_candidates(level_candidates, selected_level_ids)
+    kept_trends = _retain_trace_candidates(diagonal_trends, selected_trend_ids)
+    kept_patterns = _retain_trace_candidates(pattern_candidates, selected_pattern_ids)
     pivot_by_id = {str(item["id"]): item for item in pivots}
     level_trace, level_touch_omitted = _project_trace_group(
         kept_levels,
-        lambda item: _trace_level_candidate(
+        lambda item, rank: _trace_level_candidate(
             rows, pivots, item, selected=str(item["id"]) in selected_level_ids,
+            category_rank=rank,
         ),
     )
     trend_trace, trend_touch_omitted = _project_trace_group(
         kept_trends,
-        lambda item: _trace_trend_candidate(
+        lambda item, rank: _trace_trend_candidate(
             rows,
             pivots,
             item,
             selected=str(item["id"]) in selected_trend_ids,
             atr=atr,
+            category_rank=rank,
         ),
     )
     pattern_trace, pattern_touch_omitted = _project_trace_group(
         kept_patterns,
-        lambda item: _trace_pattern_candidate(
+        lambda item, rank: _trace_pattern_candidate(
             item,
             pivot_by_id,
             selected=str(item["id"]) in selected_pattern_ids,
+            category_rank=rank,
         ),
     )
     referenced = {
@@ -756,7 +749,7 @@ def _analysis_trace(
         if str(item["id"]) in referenced
     ]
     trace = {
-        "version": "geometry-analysis-trace-v1",
+        "version": "geometry-analysis-trace-v2",
         "pivots": trace_pivots,
         "levelCandidates": level_trace,
         "trendCandidates": trend_trace,
@@ -767,49 +760,67 @@ def _analysis_trace(
             "patternCandidateIds": sorted(selected_pattern_ids),
         },
         "omittedCounts": {
-            "levelCandidates": max(0, len(level_candidates) - len(kept_levels)),
-            "trendCandidates": max(0, len(diagonal_trends) - len(kept_trends)),
-            "patternCandidates": max(0, len(pattern_candidates) - len(kept_patterns)),
+            "levelCandidates": 0,
+            "trendCandidates": 0,
+            "patternCandidates": 0,
             "touchEpisodes": level_touch_omitted + trend_touch_omitted + pattern_touch_omitted,
+        },
+        "completeness": {
+            "complete": True,
+            "detected": {
+                "levels": len(level_candidates),
+                "trends": len(diagonal_trends),
+                "patterns": len(pattern_candidates),
+            },
+            "stored": {
+                "levels": len(level_trace),
+                "trends": len(trend_trace),
+                "patterns": len(pattern_trace),
+            },
         },
     }
     return trace
 
 
-def _retain_trace_candidates(candidates, selected_ids, limit):
+def _retain_trace_candidates(candidates, selected_ids):
     # Detectors already provide their deterministic ranking (including pattern
     # family priority and channel-first trend competition). Move selected
     # candidates to the front without disturbing either partition's order.
     selected = [item for item in candidates if str(item.get("id")) in selected_ids]
     unselected = [item for item in candidates if str(item.get("id")) not in selected_ids]
     ordered = [*selected, *unselected]
-    return ordered[:limit]
+    return ordered
 
 
 def _project_trace_group(candidates, projector):
     projected = []
     omitted = 0
-    for candidate in candidates:
-        item, item_omitted = projector(candidate)
+    for rank, candidate in enumerate(candidates, start=1):
+        item, item_omitted = projector(candidate, rank)
         projected.append(item)
         omitted += item_omitted
     return projected, omitted
 
 
-def _trace_level_candidate(rows, pivots, candidate, *, selected):
+def _trace_level_candidate(rows, pivots, candidate, *, selected, category_rank):
     touch_records = []
-    episodes = list(candidate.get("touchEpisodes", []))[-_TOUCH_TRACE_LIMIT:]
+    episodes = list(candidate.get("touchEpisodes", []))
     for episode in episodes:
         index = int(episode.get("startIndex", -1))
         if not 0 <= index < len(rows):
             continue
         timestamp = str(rows[index]["timestamp"])
+        approach = str(episode.get("approach") or "inside")
+        price_key = "low" if approach == "above" else "high" if approach == "below" else "close"
         touch_records.append(_trace_touch(
             candidate["id"],
             timestamp=timestamp,
             bar_index=index,
-            price=float(candidate["price"]),
+            price=float(rows[index][price_key]),
             outcome=episode.get("outcome"),
+            boundary=candidate.get("role") or approach,
+            mfe_atr=episode.get("mfeAtr"),
+            mae_atr=episode.get("maeAtr"),
         ))
     touch_refs = [item["id"] for item in touch_records]
     reaction_refs = [
@@ -817,7 +828,7 @@ def _trace_level_candidate(rows, pivots, candidate, *, selected):
     ]
     pivot_by_id = {str(item["id"]): item for item in pivots}
     evidence_refs = [
-        reference for reference in _unique_strings(candidate.get("memberPivotIds", []))[:8]
+        reference for reference in _unique_strings(candidate.get("memberPivotIds", []))
         if reference in pivot_by_id
     ]
     ordered_evidence = sorted(
@@ -853,6 +864,13 @@ def _trace_level_candidate(rows, pivots, candidate, *, selected):
         "selectionTier": candidate.get("selectionTier"),
         "importanceTier": candidate.get("importanceTier"),
         "importanceRank": candidate.get("importanceRank"),
+        "categoryRank": category_rank,
+        "disposition": _trace_disposition(candidate, selected=selected),
+        "selectionReasons": _trace_selection_reasons(candidate, selected=selected),
+        "render": {
+            "drawingType": "horizontalLine",
+            "extension": "plot",
+        },
         "anchors": [
             {"role": "start", "timestamp": candidate["firstTestAt"], "price": candidate["price"]},
             {"role": "end", "timestamp": candidate["lastTestAt"], "price": candidate["price"]},
@@ -887,7 +905,7 @@ def _trace_level_candidate(rows, pivots, candidate, *, selected):
     return result, max(0, int(candidate.get("touches") or 0) - len(touch_records))
 
 
-def _trace_trend_candidate(rows, pivots, candidate, *, selected, atr):
+def _trace_trend_candidate(rows, pivots, candidate, *, selected, atr, category_rank):
     pivot_by_id = {str(item["id"]): item for item in pivots}
     required = 3 if candidate["kind"] == "channel" else 2
     anchor_ids = [
@@ -904,9 +922,16 @@ def _trace_trend_candidate(rows, pivots, candidate, *, selected, atr):
         for index, pivot_id in enumerate(anchor_ids)
     ]
     direction = str(candidate.get("direction") or candidate["kind"])
-    touch_pivot_ids = _unique_strings(candidate.get("touchPivotIds", []))[-_TOUCH_TRACE_LIMIT:]
+    if candidate["kind"] == "channel" and len(anchors) == 2:
+        offset_sign = 1 if direction == "up" else -1
+        anchors.append({
+            "role": "channelOffset",
+            "timestamp": anchors[0]["timestamp"],
+            "price": round(float(anchors[0]["price"]) + offset_sign * float(candidate.get("channelWidth") or 0), 6),
+        })
+    touch_pivot_ids = _unique_strings(candidate.get("touchPivotIds", []))
     touch_records = []
-    episodes = list(candidate.get("touchEpisodes", []))[-_TOUCH_TRACE_LIMIT:]
+    episodes = list(candidate.get("touchEpisodes", []))
     for episode in episodes:
         index = int(episode.get("barIndex", -1))
         if not 0 <= index < len(rows):
@@ -918,7 +943,24 @@ def _trace_trend_candidate(rows, pivots, candidate, *, selected, atr):
             bar_index=index,
             price=float(rows[index][price_key]),
             outcome="reaction" if episode.get("reactionPass") else "touch",
+            boundary="lower" if direction == "up" else "upper",
+            mfe_atr=episode.get("mfeAtr"),
+            residual_atr=episode.get("residualAtr"),
         ))
+    episode_bars = {int(item.get("barIndex", -1)) for item in episodes}
+    for pivot_id in touch_pivot_ids:
+        pivot = pivot_by_id.get(pivot_id)
+        if pivot is None or int(pivot.get("barIndex", -1)) in episode_bars:
+            continue
+        touch_records.append(_trace_touch(
+            candidate["id"],
+            timestamp=str(pivot["timestamp"]),
+            bar_index=int(pivot["barIndex"]),
+            price=float(pivot["price"]),
+            outcome="touch",
+            boundary="upper" if direction == "up" else "lower",
+        ))
+    touch_records.sort(key=lambda item: (int(item.get("barIndex") or 0), item["id"]))
     touch_refs = [item["id"] for item in touch_records]
     reaction_refs = [
         item["id"] for item in touch_records if item.get("outcome") == "reaction"
@@ -965,6 +1007,16 @@ def _trace_trend_candidate(rows, pivots, candidate, *, selected, atr):
         "selectionTier": "confirmed" if selected else None,
         "importanceTier": None,
         "importanceRank": None,
+        "categoryRank": category_rank,
+        "disposition": _trace_disposition(candidate, selected=selected),
+        "selectionReasons": _trace_selection_reasons(candidate, selected=selected),
+        "direction": direction,
+        "render": {
+            "drawingType": "trendParallelLines" if candidate["kind"] == "channel" else "trendLine",
+            "extension": "ray",
+            "direction": direction,
+            **({"parallelLineCount": 2} if candidate["kind"] == "channel" else {}),
+        },
         "anchors": anchors,
         "evidenceRefs": evidence_refs,
         "anchorPivotIds": anchor_ids,
@@ -978,7 +1030,7 @@ def _trace_trend_candidate(rows, pivots, candidate, *, selected, atr):
     return result, max(0, int(candidate.get("touches") or 0) - len(touch_records))
 
 
-def _trace_pattern_candidate(candidate, pivot_by_id, *, selected):
+def _trace_pattern_candidate(candidate, pivot_by_id, *, selected, category_rank):
     anchors = []
     geometry = candidate.get("geometry") or {}
     for boundary in ("pole", "upper", "lower"):
@@ -996,8 +1048,20 @@ def _trace_pattern_candidate(candidate, pivot_by_id, *, selected):
             })
     evidence_refs = _unique_strings(candidate.get("evidenceRefs", []))
     evidence_pivots = [pivot_by_id[reference] for reference in evidence_refs if reference in pivot_by_id]
-    touch_pivots = evidence_pivots[-_TOUCH_TRACE_LIMIT:]
+    touch_pivots = evidence_pivots
     touch_pivot_ids = [str(pivot["id"]) for pivot in touch_pivots]
+    touch_records = [
+        _trace_touch(
+            candidate["id"],
+            timestamp=str(pivot["timestamp"]),
+            bar_index=int(pivot["barIndex"]),
+            price=float(pivot["price"]),
+            outcome="touch",
+            boundary="upper" if pivot.get("kind") == "H" else "lower",
+        )
+        for pivot in touch_pivots
+    ]
+    segment_indexes = [[index, index + 1] for index in range(0, len(anchors) - 1, 2)]
     confirmation = candidate.get("confirmation") or {}
     metrics = {
         "state": candidate.get("state"),
@@ -1025,17 +1089,25 @@ def _trace_pattern_candidate(candidate, pivot_by_id, *, selected):
         "selectionTier": "confirmed" if selected else None,
         "importanceTier": None,
         "importanceRank": None,
+        "categoryRank": category_rank,
+        "disposition": _trace_disposition(candidate, selected=selected),
+        "selectionReasons": _trace_selection_reasons(candidate, selected=selected),
+        "render": {
+            "drawingType": "segments",
+            "extension": "segment",
+            "segments": segment_indexes,
+        },
         "anchors": anchors,
         "evidenceRefs": evidence_refs,
         "anchorPivotIds": [],
         "touchPivotIds": touch_pivot_ids,
         "reactionPivotIds": [],
-        "touchRefs": [],
+        "touchRefs": [item["id"] for item in touch_records],
         "reactionRefs": [],
-        "touches": [],
+        "touches": touch_records,
         "metrics": metrics,
     }
-    return result, max(0, len(evidence_pivots) - len(touch_pivots))
+    return result, 0
 
 
 def _trace_touch(
@@ -1045,35 +1117,66 @@ def _trace_touch(
     bar_index,
     price,
     outcome=None,
+    boundary=None,
+    mfe_atr=None,
+    mae_atr=None,
+    residual_atr=None,
 ):
     identity = f"{candidate_id}|{timestamp}|{bar_index}|{outcome or 'touch'}"
     result = {
         "id": f"touch-{hashlib.sha256(identity.encode()).hexdigest()[:12]}",
         "timestamp": timestamp,
         "price": round(float(price), 6),
+        "barIndex": int(bar_index),
     }
     if outcome is not None:
         result["outcome"] = outcome
+    if boundary is not None:
+        result["boundary"] = str(boundary)
+    for key, value in (("mfeAtr", mfe_atr), ("maeAtr", mae_atr), ("residualAtr", residual_atr)):
+        if value is not None:
+            result[key] = round(float(value), 6)
     return result
 
 
 def _trace_reject_reasons(candidate, *, selected):
     reasons = _unique_strings(candidate.get("rejectReasons", []))
-    if selected:
-        return reasons
-    if not reasons and (candidate.get("hardPass") or candidate.get("selectionTier") is not None):
-        reasons.append("not_selected")
     return reasons
 
 
+def _trace_disposition(candidate, *, selected):
+    if selected:
+        return "selected"
+    if candidate.get("hardPass") or candidate.get("selectionTier") is not None:
+        return "qualified_not_selected"
+    return "rejected"
+
+
+def _trace_selection_reasons(candidate, *, selected):
+    if selected:
+        tier = candidate.get("selectionTier")
+        return [str(tier)] if tier else ["ranked_primary"]
+    if candidate.get("hardPass") or candidate.get("selectionTier") is not None:
+        return ["ranked_below_selection"]
+    return []
+
+
 def _trace_pivot(pivot):
-    return {
+    result = {
         "id": pivot["id"],
         "kind": pivot["kind"],
         "timestamp": pivot["timestamp"],
         "confirmedAt": pivot["confirmedAt"],
         "price": round(float(pivot["price"]), 6),
+        "barIndex": int(pivot["barIndex"]),
     }
+    for key in ("grade", "candleKey"):
+        if pivot.get(key) is not None:
+            result[key] = pivot[key]
+    for key in ("strength", "reversalAtr", "prominenceAtr"):
+        if pivot.get(key) is not None:
+            result[key] = round(float(pivot[key]), 6)
+    return result
 
 
 def _unique_strings(values):

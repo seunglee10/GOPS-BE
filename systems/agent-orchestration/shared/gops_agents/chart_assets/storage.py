@@ -18,7 +18,7 @@ from psycopg.types.json import Jsonb
 
 POSTGRES_TABLE = "chart_assets.geometry_assets"
 ASSET_INTERVALS = ("1m", "5m", "10m", "1h", "4h", "1D", "1W")
-MAX_ASSET_BYTES = 64 * 1024
+MAX_ASSET_BYTES = 256 * 1024
 GEOMETRY_ASSET_SCHEMA_PATH = (
     Path(__file__).resolve().parents[5]
     / "shared"
@@ -372,7 +372,7 @@ def _validate_v6_trend(trend: dict[str, Any], drawings: list[Any]) -> None:
         raise ValueError("Geometry v6 channel metrics are invalid")
 
 
-def _valid_trace_candidate(candidate: dict[str, Any], expected_category: str) -> bool:
+def _valid_trace_candidate(candidate: dict[str, Any], expected_category: str, *, version: str) -> bool:
     required = {
         "id", "category", "score", "selected", "hardPass", "evidencePass",
         "activePass", "rejectReasons", "selectionTier", "importanceTier",
@@ -389,7 +389,7 @@ def _valid_trace_candidate(candidate: dict[str, Any], expected_category: str) ->
         candidate.get("role") in {"support", "resistance"}
         or bool(str(candidate.get("kind") or ""))
     )
-    return (
+    base_valid = (
         required.issubset(candidate)
         and candidate.get("category") == expected_category
         and has_role_or_kind
@@ -409,6 +409,20 @@ def _valid_trace_candidate(candidate: dict[str, Any], expected_category: str) ->
         and all(_valid_trace_touch(touch) for touch in touches)
         and isinstance(candidate.get("metrics"), dict)
     )
+    if not base_valid or version == "geometry-analysis-trace-v1":
+        return base_valid
+    render = candidate.get("render")
+    return (
+        candidate.get("disposition") in {"selected", "qualified_not_selected", "rejected"}
+        and isinstance(candidate.get("categoryRank"), int)
+        and not isinstance(candidate.get("categoryRank"), bool)
+        and candidate["categoryRank"] >= 1
+        and isinstance(candidate.get("selectionReasons"), list)
+        and all(isinstance(value, str) and value for value in candidate["selectionReasons"])
+        and isinstance(render, dict)
+        and render.get("drawingType") in {"horizontalLine", "trendLine", "trendParallelLines", "segments"}
+        and render.get("extension") in {"plot", "ray", "segment"}
+    )
 
 
 def _valid_trace_touch(value: Any) -> bool:
@@ -417,12 +431,17 @@ def _valid_trace_touch(value: Any) -> bool:
         and bool(str(value.get("id") or ""))
         and _valid_anchor(value)
         and (value.get("outcome") is None or isinstance(value.get("outcome"), str))
+        and (value.get("barIndex") is None or (isinstance(value.get("barIndex"), int) and not isinstance(value.get("barIndex"), bool) and value["barIndex"] >= 0))
+        and (value.get("boundary") is None or isinstance(value.get("boundary"), str))
     )
 
 
 def _validate_analysis_trace(trace: Any, as_of: Any) -> None:
-    if not isinstance(trace, dict) or trace.get("version") != "geometry-analysis-trace-v1":
+    if not isinstance(trace, dict) or trace.get("version") not in {
+        "geometry-analysis-trace-v1", "geometry-analysis-trace-v2",
+    }:
         raise ValueError("Geometry v6 analysisTrace contract is invalid")
+    version = str(trace["version"])
     pivots = trace.get("pivots")
     selections = trace.get("selections")
     omitted = trace.get("omittedCounts")
@@ -441,6 +460,22 @@ def _validate_analysis_trace(trace: Any, as_of: Any) -> None:
     if len(pivot_ids) != len(set(pivot_ids)):
         raise ValueError("Geometry v6 trace pivot IDs are not unique")
 
+    if version == "geometry-analysis-trace-v2":
+        completeness = trace.get("completeness")
+        if not isinstance(completeness, dict) or completeness.get("complete") is not True:
+            raise ValueError("Geometry v6 analysisTrace completeness is invalid")
+        for key in ("detected", "stored"):
+            counts = completeness.get(key)
+            if not isinstance(counts, dict) or any(
+                not isinstance(counts.get(category), int)
+                or isinstance(counts.get(category), bool)
+                or counts[category] < 0
+                for category in ("levels", "trends", "patterns")
+            ):
+                raise ValueError("Geometry v6 analysisTrace completeness counts are invalid")
+        if completeness["detected"] != completeness["stored"]:
+            raise ValueError("Geometry v6 analysisTrace is incomplete")
+
     group_contracts = (
         ("levelCandidates", "levelCandidateIds", "level", 8, 4),
         ("trendCandidates", "trendCandidateIds", "trend", 7, 1),
@@ -452,7 +487,7 @@ def _validate_analysis_trace(trace: Any, as_of: Any) -> None:
         selected_ids = selections.get(selection_key)
         if (
             not isinstance(candidates, list)
-            or len(candidates) > limit
+            or (version == "geometry-analysis-trace-v1" and len(candidates) > limit)
             or not isinstance(selected_ids, list)
             or len(selected_ids) > selection_limit
             or any(not isinstance(value, str) or not value for value in selected_ids)
@@ -466,7 +501,7 @@ def _validate_analysis_trace(trace: Any, as_of: Any) -> None:
                 raise ValueError(f"Geometry v6 analysisTrace {candidate_key} candidate is invalid")
             candidate_id = str(candidate["id"])
             candidate_ids.append(candidate_id)
-            if not _valid_trace_candidate(candidate, expected_category):
+            if not _valid_trace_candidate(candidate, expected_category, version=version):
                 raise ValueError(f"Geometry v6 analysisTrace {candidate_key} candidate is invalid")
             if candidate["selected"]:
                 projected_selected.add(candidate_id)
@@ -492,7 +527,7 @@ def _validate_analysis_trace(trace: Any, as_of: Any) -> None:
                 or len(reaction_pivot_ids) != len(set(reaction_pivot_ids))
                 or not set(reaction_pivot_ids).issubset(touch_pivot_ids)
                 or not isinstance(touches, list)
-                or len(touches) > 8
+                or (version == "geometry-analysis-trace-v1" and len(touches) > 8)
                 or not isinstance(touch_refs, list)
                 or any(not isinstance(value, str) or not value for value in touch_refs)
                 or len(touch_refs) != len(set(touch_refs))

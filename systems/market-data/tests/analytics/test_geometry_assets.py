@@ -22,6 +22,7 @@ from alfaka.analytics.geometry import (  # noqa: E402
     _confirmed_horizontal_levels,
     _level_drawing,
     _public_trend,
+    _trace_trend_candidate,
     _trend_drawing,
     analyze_geometry,
     compute_sma_snapshot,
@@ -377,25 +378,58 @@ class GeometryAssetKernelTest(unittest.TestCase):
         self.assertEqual(drawing["parallelLineCount"], 2)
         self.assertEqual(drawing["style"]["extension"], "ray")
 
-    def test_trace_is_bounded_referentially_complete_and_drawing_groups_are_atomic(self):
+    def test_rejected_channel_trace_synthesizes_renderable_offset_anchor(self):
+        rows = _rows(120, interval="1D")
+        pivots = [
+            {"id": "1D:pivot:a", "timestamp": rows[10]["timestamp"], "confirmedAt": rows[11]["timestamp"], "barIndex": 10, "price": 100, "kind": "L"},
+            {"id": "1D:pivot:b", "timestamp": rows[50]["timestamp"], "confirmedAt": rows[51]["timestamp"], "barIndex": 50, "price": 110, "kind": "L"},
+        ]
+        candidate = {
+            "id": "1D:channel:rejected", "kind": "channel", "direction": "up", "score": .4,
+            "anchorPivotIds": [item["id"] for item in pivots], "touchPivotIds": [item["id"] for item in pivots],
+            "touchEpisodes": [], "touches": 2, "reactionCount": 0, "slopeAtrPerBar": .05,
+            "medianResidualAtr": .2, "currentDistanceAtr": 3, "lastTouchAgeBars": 30,
+            "channelWidth": 8, "parallelSlopeError": .4, "containment": .6,
+            "evidencePass": False, "activePass": False, "hardPass": False,
+            "rejectReasons": ["insufficient_opposite_touches"],
+        }
+
+        trace, omitted = _trace_trend_candidate(
+            rows, pivots, candidate, selected=False, atr=2, category_rank=1,
+        )
+
+        self.assertEqual(len(trace["anchors"]), 3)
+        self.assertEqual(trace["render"], {
+            "drawingType": "trendParallelLines", "extension": "ray",
+            "direction": "up", "parallelLineCount": 2,
+        })
+        self.assertEqual(trace["disposition"], "rejected")
+        self.assertEqual(omitted, 0)
+
+    def test_trace_is_complete_referentially_sound_and_drawing_groups_are_atomic(self):
         fixture = ROOT / "systems" / "market-data" / "tests" / "fixtures" / "chart_assets_v2" / "tsla-1d.json"
         rows = json.loads(fixture.read_text(encoding="utf-8"))[-TARGET_BARS["1D"]:]
 
         result = analyze_geometry("TSLA", "1D", rows)
         trace = result["analysisTrace"]
 
-        self.assertEqual(trace["version"], "geometry-analysis-trace-v1")
-        self.assertLessEqual(len(trace["levelCandidates"]), 8)
-        self.assertLessEqual(len(trace["trendCandidates"]), 7)
-        self.assertLessEqual(len(trace["patternCandidates"]), 4)
-        self.assertLessEqual(len(json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")), 64 * 1024)
+        self.assertEqual(trace["version"], "geometry-analysis-trace-v2")
+        self.assertTrue(trace["completeness"]["complete"])
+        self.assertEqual(trace["completeness"]["detected"], trace["completeness"]["stored"])
+        self.assertEqual(trace["omittedCounts"], {
+            "levelCandidates": 0, "trendCandidates": 0,
+            "patternCandidates": 0, "touchEpisodes": 0,
+        })
+        self.assertLessEqual(len(json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")), 256 * 1024)
         pivot_ids = {item["id"] for item in trace["pivots"]}
         self.assertTrue(all(item["confirmedAt"] <= rows[-1]["timestamp"] for item in trace["pivots"]))
         for candidate in [*trace["levelCandidates"], *trace["trendCandidates"], *trace["patternCandidates"]]:
             for field in ("evidenceRefs", "anchorPivotIds", "touchPivotIds", "reactionPivotIds"):
                 self.assertTrue(set(candidate[field]).issubset(pivot_ids), (candidate["id"], field))
             self.assertTrue(set(candidate["reactionPivotIds"]).issubset(candidate["touchPivotIds"]))
-            self.assertLessEqual(len(candidate["touches"]), 8)
+            self.assertIn(candidate["disposition"], {"selected", "qualified_not_selected", "rejected"})
+            self.assertGreaterEqual(candidate["categoryRank"], 1)
+            self.assertIn(candidate["render"]["extension"], {"plot", "ray", "segment"})
         selected_ids = {
             item["id"]
             for item in [*trace["levelCandidates"], *trace["trendCandidates"], *trace["patternCandidates"]]

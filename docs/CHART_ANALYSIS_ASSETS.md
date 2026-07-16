@@ -15,7 +15,7 @@ Chart Geometry Asset은 완료된 실제 OHLCV 봉에서 현재 지지·저항, 
 - 좌표는 해당 interval의 canonical completed candle timestamp와 가격만 사용한다.
 - 자산 하나는 지지·저항 최대 4개, 최고 추세/채널 최대 1개, 최고 패턴 최대 3개로
   `drawings[]` 8개를 넘지 않는다.
-- payload는 canonical UTF-8 JSON 기준 64 KiB 이하이며 초과한 결과는 저장하지 않는다.
+- payload는 canonical UTF-8 JSON 기준 256 KiB 이하이며 초과한 결과는 저장하지 않는다.
 - v6 필드는 모두 `geometry` 아래 optional이다. 구자산과 v6 자산을 같은 API가 읽는다.
 
 ## 지지·저항
@@ -35,8 +35,8 @@ role 충돌, break-pending 후보는 reference가 될 수 없다. role별 최대
 | importance | 대상 | 선 표현 | 라벨 |
 | --- | --- | --- | --- |
 | `major` | role별 첫 confirmed | 3px, 0.95, solid | 지지/저항 |
-| `standard` | 두 번째 confirmed 또는 contextual | 2.25px, 0.72, `[6,4]` | 보조 지지/저항 |
-| `minor` | reference | 1.5px, 0.45, `[2,4]` | 참고 지지/저항 |
+| `standard` | 두 번째 confirmed 또는 contextual | 2.25px, 0.82, `[6,4]` | 보조 지지/저항 |
+| `minor` | reference | 1.5px, 0.62, `[2,4]` | 참고 지지/저항 |
 
 구자산처럼 importance metadata가 없으면 기존 2.5px 표현을 사용한다. 프런트는 레벨을
 재계산하거나 재병합하지 않는다.
@@ -67,17 +67,18 @@ v6는 기존 패턴 detector, ranking, hardPass, confirmation, `tradePlan`, prim
 
 ## 해석 trace
 
-`analysisTrace.version`은 `geometry-analysis-trace-v1`이다. levels, trends, patterns가
+신규 writer의 `analysisTrace.version`은 `geometry-analysis-trace-v2`이며 reader는 기존
+v1도 계속 받는다. levels, trends, patterns가
 같은 `compute_pivots()` 결과를 공유하며 trace에는 선택 후보와 탈락 후보, 근거 피벗,
 접촉·반응 episode, reject reason과 표시용 metrics를 담는다. 기존 `_pivot_evidence()`
 payload는 구자산 호환 필드일 뿐 신규 trace의 원천이 아니다.
 
-trace 상한은 level 후보 8개, trend 후보 7개, pattern 후보 4개, 후보별 touch/reaction
-episode 8개다. 남은 후보가 참조하는 pivot만 보존하고 dangling reference를 허용하지
-않는다. 초과 시 미선택·낮은 순위부터 결정론적으로 생략하며 `omittedCounts`를 남긴다.
-선택 후보와 그 근거는 생략하지 않는다. 이 고정 상한을 적용한 전체 payload가 64 KiB를
-넘으면 후보를 더 지우지 않고 저장을 실패시킨다. trace는 persistent drawing으로
-변환하지 않고 프런트의 비영속 Canvas overlay가 소비한다.
+v2는 detector가 중복 제거와 후보 구성을 마친 뒤 ranking에 전달한 후보와 접촉 episode를
+생략하지 않는다. `disposition`, category rank, selection/reject reason, drawing type,
+extension, channel/segment 정보를 저장하며 `completeness`의 detected/stored 수가 같아야
+한다. 참조된 pivot만 registry에 남기고 dangling reference를 허용하지 않는다. 전체
+payload가 256 KiB를 넘으면 후보를 자르지 않고 저장을 실패시킨다. trace는 persistent
+drawing으로 변환하지 않고 프런트의 비영속 Canvas overlay가 소비한다.
 
 ## 데이터와 PostgreSQL 저장 흐름
 
@@ -89,7 +90,7 @@ flowchart LR
   Gap -- "아니오, repair 허용" --> Alpaca["누락 range만 Alpaca"]
   Alpaca --> CH
   Gap -- "예" --> Kernel["deterministic geometry v6"]
-  Kernel --> Guard["schema / 8 drawings / 64 KiB"]
+  Kernel --> Guard["schema / 8 drawings / 256 KiB"]
   Guard --> PG["PostgreSQL geometry_assets JSONB UPSERT"]
   PG --> API["Chart asset API"]
   API --> UI["5 layers + commentary"]
@@ -127,7 +128,9 @@ SMA60/120과 최근 교차는 추세 레이어가 소유한다. 제안 OFF는 �
 삭제하지 않고 표시와 제안 가격의 Y축 반영만 중단한다.
 
 해설은 지지·저항, 추세, 패턴 세 항목으로 분리한다. hover는 해당 작도만 강조하고 같은
-trace의 피벗·접촉·반응을 임시 overlay로 표시한다. 클릭은 한 항목의 서버 metrics 카드를
+trace에서 최종 선택된 후보의 피벗·접촉·반응만 임시 overlay로 표시한다. 글로벌 해석은
+v2 전체 후보를 H-line, ray, 채널, 패턴 segment로 표시하고 v1/legacy는 일부 후보 또는
+근거만 제공한다. 클릭은 한 항목의 서버 metrics 카드를
 확장·고정하며 다른 항목 hover가 끝나면 고정 항목으로 복귀한다. 해석 글로벌 토글이
 꺼져 있어도 해설 hover의 관련 subset은 표시할 수 있다. 이 overlay와 제안 projection은
 PostgreSQL drawing 8개, undo/history/export에 포함되지 않으며 주문 API를 호출하지 않는다.

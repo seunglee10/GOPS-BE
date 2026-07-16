@@ -16,8 +16,8 @@
   drawing ID/anchor/label/style은 v5 golden과 같아야 한다.
 - `drawings[]` 예산은 levels 4 + pattern 3 + trend/channel 1 = 최대 8이다. 그룹을
   부분 slice하지 않는다. 채널은 3-anchor `trendParallelLines` 하나다.
-- canonical UTF-8 payload는 64 KiB 이하다. trace의 고정 후보·touch 상한을 적용한 뒤에도
-  초과하면 후보를 더 제거하지 않고 저장을 실패시켜 기존 row를 유지한다.
+- canonical UTF-8 payload는 256 KiB 이하다. v2 complete trace가 초과하면 후보를
+  제거하지 않고 저장을 실패시켜 기존 row를 유지한다.
 - 신규 v6 필드는 `geometry` 아래 optional이다. DB table/column 삭제, payload 변환,
   일괄 backfill, Geometry v6용 migration Job은 실행하지 않는다.
 - `tradePlan`, 해설, spotlight, trace overlay는 주문·알림 신뢰 원본이 아니다.
@@ -38,8 +38,8 @@
 - role별 최대 2개이고 겹치는 zone은 tier, score, reaction, touch, recency, price, ID
   순으로 억제한다.
 - importance는 첫 confirmed `major`, 두 번째 confirmed/contextual `standard`, reference
-  `minor`다. 스타일은 각각 `3/0.95/solid`, `2.25/0.72/[6,4]`,
-  `1.5/0.45/[2,4]`다. importance가 없는 구자산은 기존 2.5px 표현이다.
+  `minor`다. 프런트 표시 스타일은 각각 `3/0.95/solid`, `2.25/0.82/[6,4]`,
+  `1.5/0.62/[2,4]`다. importance가 없는 구자산은 기존 2.5px 표현이다.
 
 ### 추세
 
@@ -49,26 +49,28 @@
 - `GeometryTrend`는 ID/kind/direction/score/drawingId/anchors, pivot refs, touch/reaction,
   ATR/bar slope, residual, distance, recency와 채널 metrics를 저장한다.
 - 일반선은 2-anchor `trendLine`, 채널은 3-anchor `trendParallelLines`와
-  `parallelLineCount=2`다. 선 표현은 2.75px, opacity 0.86, solid, ray다.
+  `parallelLineCount=2`다. 저장 표현은 2.75px, opacity 0.86, solid, ray이며 프런트
+  presentation은 opacity 0.90을 적용한다.
 
 ### Trace
 
-`analysisTrace.version`은 `geometry-analysis-trace-v1`이다. 고정 상한은 level 8,
-trend 7, pattern 4, 후보별 touch episode 8이다. root `pivots[]`는 retained candidate의
+신규 writer의 `analysisTrace.version`은 `geometry-analysis-trace-v2`이고 v1은 읽기
+호환이다. v2는 detector가 ranking에 전달한 후보와 touch episode 전체를 저장한다.
+root `pivots[]`는 candidate의
 `evidenceRefs/anchorPivotIds/touchPivotIds/reactionPivotIds` 합집합만 포함한다.
 `touchRefs/reactionRefs`는 같은 candidate의 embedded `touches[].id`를 가리킨다.
 패턴 접촉은 이미 같은 pivot registry에 있으므로 `touchPivotIds`로만 표현한다.
 
-Retained 정렬은 selected를 먼저 두되 각 detector의 원래 deterministic ranking을 보존한다.
-상한을 넘는 꼬리 후보와 8개를 넘는 touch만 제거하며 `omittedCounts`에 기록한다.
-selected 후보와 그 근거는 제거하지 않는다.
+정렬은 selected를 먼저 두되 각 detector의 원래 deterministic ranking을 보존한다.
+`disposition`, rank, selection/reject reasons와 render 계약을 저장하고 `completeness`의
+detected/stored가 일치해야 한다. v2 성공 payload의 candidate omitted count는 0이다.
 
 ## 저장·빌드 경계
 
 - `gops_agents.chart_assets.envelope`: build interval `1m/1D`, manual/scheduled source,
   server-owned priority와 request fingerprint
 - `gops_agents.chart_assets.builder`: candle load/repair, kernel 조립, optional v6 passthrough,
-  64 KiB fail-closed guard, bounded storage log
+  256 KiB fail-closed guard, bounded storage log
 - `gops_agents.chart_assets.storage`: PostgreSQL-only conditional UPSERT, identity/v6 refs/
   drawing budget/payload size validation
 - `gops_agents.chart_assets.job_store`: PostgreSQL queue, `FOR UPDATE SKIP LOCKED`, lease 2회
@@ -95,12 +97,15 @@ proposal=false        제안
 `drawingGroups`가 levels/trend/pattern 분류 원본이다. 구자산은 ID와 geometry metadata로
 fallback 분류한다. SMA60/120과 cross는 trend가 소유한다. proposal hide는
 `ActiveTradePlan`을 clear하지 않는다. interpretation은 persistent drawing이 아닌 Canvas
-overlay이며 history/undo/export/8-drawing 예산에 들어가지 않는다.
+overlay이며 history/undo/export/8-drawing 예산에 들어가지 않는다. 글로벌 해석은
+전체 v2 후보선을 표시하고 해설 hover는 selections에 속한 후보의 marker만 표시한다.
+구자산은 후보를 합성하지 않고 v1은 일부 후보, legacy evidence는 근거만으로 명시한다.
 
 해설은 지지·저항, 추세, 패턴 세 섹션이다. hover/focus는 해당 drawing만 강조하고 trace
 subset의 pivot/touch/reaction marker를 표시한다. click은 한 섹션만 고정하고 다른 섹션
-hover가 끝나면 고정 섹션으로 복귀한다. 서버 metrics를 표시하며 프런트가 ATR/score를
-재계산하지 않는다. 이번 구현은 desktop/tiled desktop만 대상으로 하고 mobile-specific
+hover가 끝나면 고정 섹션으로 복귀한다. 대상 stroke/label은 opacity 1, 비대상 analysis
+drawing은 0.45배, base chart는 0.60배다. fill opacity는 유지한다. 서버 metrics를
+표시하며 프런트가 ATR/score를 재계산하지 않는다. 이번 구현은 desktop/tiled desktop만 대상으로 하고 mobile-specific
 control, touch gesture, visual regression은 추가하지 않는다.
 
 `chart-explanation.v1`은 기존 required fields를 유지하고 optional `facts.trend`,

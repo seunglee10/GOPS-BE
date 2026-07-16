@@ -43,8 +43,8 @@ def compute_patterns(
     Coordinates are always projected onto timestamps that already exist in the
     canonical candle input. By default the function emits at most one
     hard-pass pattern; ``retain_competitors`` exposes the full ranked
-    diagnostic pool so the geometry trace compiler alone owns its candidate
-    cap and omitted-count accounting.
+    diagnostic pool so the geometry trace compiler can persist a complete
+    decision record without changing the public pattern projection.
     """
     if len(candles) < 20 or atr <= 0 or interval not in QUALITY_CONFIG:
         return []

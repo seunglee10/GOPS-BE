@@ -141,7 +141,7 @@ def _materialize_line(candles, first, second, slope, touches, atr_values, config
     return {
         "id": f"{interval}:trend:{hashlib.sha256(raw.encode()).hexdigest()[:10]}", "kind": trend_kind,
         "anchorPivotIds": [first["id"], second["id"]], "touchPivotIds": touch_pivots,
-        "touchCandleKeys": [item["candleKey"] for item in touches], "touchEpisodes": touches[-8:],
+        "touchCandleKeys": [item["candleKey"] for item in touches], "touchEpisodes": touches,
         "touches": len(touches), "slopePerBar": slope, "slopeAtrPerBar": slope_atr,
         "reactionCount": len(reactions), "channelWidth": None, "medianResidualAtr": median_residual,
         "violationCount": len(active_invalidations), "invalidationEpisodes": invalidations[-8:],

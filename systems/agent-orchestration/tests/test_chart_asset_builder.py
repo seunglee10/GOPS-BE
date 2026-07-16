@@ -171,7 +171,7 @@ class ChartAssetBuilderTest(unittest.TestCase):
         self.assertEqual(geometry["drawingGroups"]["trend"], ["chart-asset:trend-1"])
         self.assertEqual(geometry["analysisTrace"]["omittedCounts"], {"trendCandidates": 2})
 
-    def test_bounded_recorded_trace_fits_the_complete_asset_without_extra_candidate_pruning(self):
+    def test_complete_recorded_trace_fits_the_asset_without_candidate_pruning(self):
         fixture = ROOT / "systems" / "market-data" / "tests" / "fixtures" / "chart_assets_v2" / "tsla-1d.json"
         rows = json.loads(fixture.read_text(encoding="utf-8"))[-380:]
         storage = MemoryStorage()
@@ -187,9 +187,11 @@ class ChartAssetBuilderTest(unittest.TestCase):
         self.assertEqual(state["status"], "completed")
         asset = storage.assets[("TSLA", "1D")]
         trace = asset["geometry"]["analysisTrace"]
+        self.assertEqual(trace["version"], "geometry-analysis-trace-v2")
+        self.assertEqual(trace["completeness"]["detected"], trace["completeness"]["stored"])
         self.assertEqual(
             [len(trace[field]) for field in ("levelCandidates", "trendCandidates", "patternCandidates")],
-            [8, 7, 4],
+            [15, 50, 16],
         )
         payload_bytes = len(json.dumps(
             asset, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str,
@@ -229,7 +231,7 @@ class ChartAssetBuilderTest(unittest.TestCase):
             "pivots": [],
             "levelCandidates": [{
                 "id": "oversized", "selected": True, "score": 1.0,
-                "metrics": {"note": "x" * (64 * 1024)},
+                "metrics": {"note": "x" * (256 * 1024)},
             }],
             "trendCandidates": [],
             "patternCandidates": [],
@@ -271,7 +273,7 @@ class ChartAssetBuilderTest(unittest.TestCase):
                 {
                     "id": "rejected", "score": .1, "selected": False,
                     "evidenceRefs": ["pivot-rejected"],
-                    "touches": [{"id": "touch-rejected", "note": "x" * (64 * 1024)}],
+                    "touches": [{"id": "touch-rejected", "note": "x" * (256 * 1024)}],
                     "metrics": {},
                 },
             ],

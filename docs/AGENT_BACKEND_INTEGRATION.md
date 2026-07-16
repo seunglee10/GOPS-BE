@@ -703,9 +703,9 @@ drawing ID를 아는 프런트가 계산한다.
 
 Geometry v6 payload는 기존 패턴 필드와 함께 optional `trends`, `primaryTrend`,
 `drawingGroups`, `analysisTrace`를 `geometry` 아래에 가진다. 저장 drawing은 levels 4,
-pattern 3, trend/channel 1의 합계 최대 8개이고 canonical UTF-8 JSON은 64 KiB 이하다.
-trace는 level 8, trend 7, pattern 4와 후보별 touch 8의 고정 상한에서만 결정론적으로
-잘린다. 이 상한을 적용한 전체 payload가 초과하면 후보를 더 제거하지 않고 저장을
+pattern 3, trend/channel 1의 합계 최대 8개이고 canonical UTF-8 JSON은 256 KiB 이하다.
+trace v2는 detector의 ranked 후보와 접촉 episode를 생략하지 않고 detected/stored
+completeness를 검증한다. 전체 payload가 초과하면 후보를 제거하지 않고 저장을
 실패시켜 이전 row를 유지한다. v6는 기존 JSONB와 drawing-count check 안에서 동작하므로
 chart-asset table/data migration을 다시 실행하지 않는다.
 

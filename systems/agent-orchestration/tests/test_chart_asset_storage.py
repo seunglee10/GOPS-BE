@@ -38,6 +38,7 @@ class ChartAssetStorageTest(unittest.TestCase):
     def test_json_schema_accepts_legacy_and_v6_payload_fixtures(self):
         _validate_asset_schema(_asset())
         _validate_asset_schema(_channel_asset())
+        _validate_asset_schema(_trace_asset_v2())
 
     def test_schema_failure_preserves_existing_row_before_postgres_write(self):
         connection = Connection()
@@ -212,6 +213,14 @@ class ChartAssetStorageTest(unittest.TestCase):
         self.assertEqual(loaded, asset)
         self.assertEqual(connection.executions[0][1], ("NVDA", "1D"))
 
+    def test_postgres_save_accepts_complete_v2_trace_without_schema_migration(self):
+        connection = Connection()
+        storage = PostgresChartAssetStorage("postgresql://test", connect=lambda *_args, **_kwargs: connection)
+
+        self.assertTrue(storage.save(_trace_asset_v2()))
+
+        self.assertIn(f"INSERT INTO {POSTGRES_TABLE}", connection.executions[0][0])
+
     def test_schema_has_seven_interval_primary_key_and_eight_drawing_limit(self):
         sql = (ROOT / "systems" / "agent-orchestration" / "jobs" / "chart-asset-migrations" / "003_geometry_assets.sql").read_text(encoding="utf-8")
         self.assertIn('PRIMARY KEY (symbol, "interval")', sql)
@@ -313,6 +322,25 @@ def _trace_asset():
             "patternCandidateIds": [],
         },
         "omittedCounts": {},
+    }
+    return asset
+
+
+def _trace_asset_v2():
+    asset = _trace_asset()
+    trace = asset["geometry"]["analysisTrace"]
+    trace["version"] = "geometry-analysis-trace-v2"
+    candidate = trace["levelCandidates"][0]
+    candidate.update({
+        "categoryRank": 1,
+        "disposition": "selected",
+        "selectionReasons": ["confirmed"],
+        "render": {"drawingType": "horizontalLine", "extension": "plot"},
+    })
+    trace["completeness"] = {
+        "complete": True,
+        "detected": {"levels": 1, "trends": 0, "patterns": 0},
+        "stored": {"levels": 1, "trends": 0, "patterns": 0},
     }
     return asset
 

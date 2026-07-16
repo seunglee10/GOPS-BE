@@ -79,7 +79,7 @@ def compute_levels(
             "id": f"{interval}:level:{local_id}", "price": round(center, 2),
             "zoneLow": round(low, 4), "zoneHigh": round(high, 4), "halfWidthAtr": round(half_width_atr, 4),
             "score": round(max(0.0, min(1.0, score)), 4), "touches": len(episodes),
-            "reactionCount": len(valid), "touchEpisodes": episodes[-8:],
+            "reactionCount": len(valid), "touchEpisodes": episodes,
             "firstTestAt": candles[first_touch]["timestamp"], "lastTestAt": candles[last_touch]["timestamp"],
             "lastTouchAgeBars": age, "currentDistanceAtr": round(distance_atr, 4),
             "role": public_role, "state": state,

@@ -50,6 +50,12 @@ class GeometryAssetContractTest(unittest.TestCase):
         self.assertTrue({"trends", "primaryTrend", "drawingGroups", "analysisTrace"}.issubset(geometry["properties"]))
         self.assertIn("reference", schema["$defs"]["level"]["properties"]["selectionTier"]["enum"])
         self.assertIn("trendParallelLines", schema["$defs"]["drawing"]["properties"]["type"]["enum"])
+        self.assertEqual(
+            schema["$defs"]["analysisTrace"]["properties"]["version"]["enum"],
+            ["geometry-analysis-trace-v1", "geometry-analysis-trace-v2"],
+        )
+        self.assertIn("disposition", schema["$defs"]["traceCandidate"]["properties"])
+        self.assertIn("render", schema["$defs"]["traceCandidate"]["properties"])
 
     def test_manual_and_scheduled_requests_have_server_owned_priorities(self):
         manual = ChartAssetBuildEnvelope.create(requested_by="user", symbols=["NVDA"])
