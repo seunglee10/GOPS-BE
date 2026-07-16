@@ -225,6 +225,23 @@ class ReplayControllerTests(unittest.TestCase):
         self.assertEqual(status["processedEventCount"], 1)
         self.assertEqual(controller.latest_quote("NVDA"), {"bid": 101.0, "ask": 100.0})
 
+    def test_zero_sided_quote_is_processed_and_invalidates_the_executable_quote(self):
+        controller = ReplayController(
+            InMemoryReplayEventSource([
+                quote(1, 1, "NVDA", 99.0, 100.0),
+                quote(2, 2, "NVDA", 99.0, 0.0),
+            ]),
+            clock=self.clock,
+        )
+        controller.set_mode("simulation")
+        controller.resume()
+        self.clock.value += 3
+
+        status = controller.status()
+
+        self.assertEqual(status["processedEventCount"], 2)
+        self.assertIsNone(controller.latest_quote("NVDA"))
+
     def test_market_and_limit_orders_fill_at_the_replayed_quote(self):
         self.controller.set_mode("simulation")
         self.controller.resume()
