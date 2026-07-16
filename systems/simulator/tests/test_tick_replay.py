@@ -20,6 +20,7 @@ from gops_simul.dataset import (
     REPLAY_SYMBOLS,
     in_half_open_window,
 )
+from gops_simul import env as simulator_env
 from gops_simul.tick_replay import InMemoryReplayEventSource, ReplayController, ReplayEvent
 from gops_simul.tools.import_alpaca import fetch_kind
 
@@ -68,6 +69,12 @@ def trade(sequence: int, seconds: float, symbol: str, price: float) -> ReplayEve
 
 
 class DatasetContractTests(unittest.TestCase):
+    def test_installed_layout_uses_the_application_root_env_candidate(self):
+        self.assertEqual(
+            simulator_env.repository_env_path(Path("/app/gops_simul/env.py")),
+            Path("/app/.env"),
+        )
+
     def test_dataset_is_the_fixed_kst_day_and_twenty_companies(self):
         self.assertEqual(DATASET_ID, "sp500-top20-20260715-kst-v1")
         self.assertEqual(DATASET_START, datetime(2026, 7, 14, 15, 0, tzinfo=UTC))
