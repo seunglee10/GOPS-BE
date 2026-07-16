@@ -5,14 +5,16 @@ from __future__ import annotations
 import json
 import urllib.parse
 import urllib.request
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Iterable
+from zoneinfo import ZoneInfo
 
 from gops_simul.dataset import DATASET_ID, REPLAY_SYMBOLS, isoformat_z, parse_timestamp
 from gops_simul.tick_replay import ReplayEvent
 
 
 INTERVAL_SECONDS = {"1m": 60, "5m": 300, "10m": 600, "1h": 3600, "4h": 14_400, "1D": 86_400, "1d": 86_400}
+MARKET_TIMEZONE = ZoneInfo("America/New_York")
 
 
 class ClickHouseHttpClient:
@@ -72,7 +74,29 @@ class ClickHouseReplayEventSource:
         symbol = symbol.strip().upper(); seconds = INTERVAL_SECONDS.get(interval)
         if symbol not in REPLAY_SYMBOLS: raise ValueError(f"symbol is not available in {self.dataset_id}")
         if seconds is None: raise ValueError(f"unsupported replay candle interval: {interval}")
-        rows = self.client.query_rows("WITH " + str(seconds) + " AS bucket_seconds, "
+        daily = interval in {"1D", "1d"}
+        rows = self.client.query_rows(
+            self._daily_candle_query(symbol, through, limit)
+            if daily
+            else self._intraday_candle_query(symbol, through, limit, seconds)
+        )
+        candles = []
+        for row in reversed(rows):
+            if daily:
+                timestamp = market_midnight_utc(str(row["market_date"]))
+                bucket_end = market_midnight_utc((timestamp.astimezone(MARKET_TIMEZONE).date() + timedelta(days=1)).isoformat())
+            else:
+                timestamp = parse_timestamp(row["timestamp"])
+                bucket_end = timestamp + timedelta(seconds=seconds)
+            candle_timestamp = isoformat_milliseconds_z(timestamp) if daily else isoformat_z(timestamp)
+            candles.append({"symbol": symbol, "interval": interval, "timestamp": candle_timestamp,
+                "open": float(row["open"]), "high": float(row["high"]), "low": float(row["low"]), "close": float(row["close"]),
+                "volume": float(row.get("volume") or 0), "tradeCount": int(row.get("trade_count") or 0),
+                "isClosed": bucket_end <= through, "source": "simulation_replay", "feed": "mixed", "sourceInterval": "trades"})
+        return replay_candle_payload(symbol, interval, candles, through)
+
+    def _intraday_candle_query(self, symbol: str, through: datetime, limit: int, seconds: int) -> str:
+        return ("WITH " + str(seconds) + " AS bucket_seconds, "
             "toDateTime64(intDiv(toUnixTimestamp64Milli(event_time), bucket_seconds * 1000) * bucket_seconds, 3, 'UTC') AS bucket "
             "SELECT bucket AS timestamp, argMin(JSONExtractFloat(payload, 'p'), tuple(event_time, sequence)) AS open, "
             "max(JSONExtractFloat(payload, 'p')) AS high, min(JSONExtractFloat(payload, 'p')) AS low, "
@@ -81,20 +105,32 @@ class ClickHouseReplayEventSource:
             f"WHERE dataset_id = {sql_string(self.dataset_id)} AND symbol = {sql_string(symbol)} AND event_type = 'trade' "
             f"AND event_time <= parseDateTime64BestEffort({sql_string(isoformat_z(through))}, 9) "
             f"GROUP BY bucket ORDER BY bucket DESC LIMIT {max(1, int(limit))}")
-        candles = []
-        for row in reversed(rows):
-            timestamp = parse_timestamp(row["timestamp"])
-            candles.append({"symbol": symbol, "interval": interval, "timestamp": isoformat_z(timestamp),
-                "open": float(row["open"]), "high": float(row["high"]), "low": float(row["low"]), "close": float(row["close"]),
-                "volume": float(row.get("volume") or 0), "tradeCount": int(row.get("trade_count") or 0),
-                "isClosed": timestamp + timedelta(seconds=seconds) <= through, "source": "simulation_replay", "feed": "mixed", "sourceInterval": "trades"})
-        return replay_candle_payload(symbol, interval, candles, through)
+
+    def _daily_candle_query(self, symbol: str, through: datetime, limit: int) -> str:
+        return ("SELECT toString(toDate(event_time, 'America/New_York')) AS market_date, "
+            "argMin(JSONExtractFloat(payload, 'p'), tuple(event_time, sequence)) AS open, "
+            "max(JSONExtractFloat(payload, 'p')) AS high, min(JSONExtractFloat(payload, 'p')) AS low, "
+            "argMax(JSONExtractFloat(payload, 'p'), tuple(event_time, sequence)) AS close, sum(JSONExtractFloat(payload, 's')) AS volume, count() AS trade_count "
+            "FROM market_data.simulation_replay_events "
+            f"WHERE dataset_id = {sql_string(self.dataset_id)} AND symbol = {sql_string(symbol)} AND event_type = 'trade' "
+            f"AND event_time <= parseDateTime64BestEffort({sql_string(isoformat_z(through))}, 9) "
+            "GROUP BY toDate(event_time, 'America/New_York') "
+            f"ORDER BY toDate(event_time, 'America/New_York') DESC LIMIT {max(1, int(limit))}")
 
 
 def replay_candle_payload(symbol: str, interval: str, candles: list[dict[str, object]], through: datetime) -> dict[str, object]:
     return {"symbol": symbol, "interval": interval, "source": "simulation_replay", "feed": "sip+boats", "simulation": True,
         "asOf": isoformat_z(through), "dataStatus": "ready" if candles else "empty", "backfillStatus": "not_available",
         "canBackfill": False, "indicators": {"ma": [], "volume": True}, "candles": candles}
+
+
+def market_midnight_utc(market_date: str) -> datetime:
+    parsed = date.fromisoformat(market_date)
+    return datetime.combine(parsed, time.min, tzinfo=MARKET_TIMEZONE).astimezone(timezone.utc)
+
+
+def isoformat_milliseconds_z(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def sql_string(value: object) -> str:

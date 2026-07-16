@@ -1,6 +1,7 @@
 import os
 from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 try:
@@ -33,11 +34,14 @@ from app.services.alfaka_market_data import (
     symbol_summaries,
     watchlist_summaries,
 )
+from alfaka.analytics.analysis_candles import canonicalize_candle_identity
 from alfaka.serving.intervals import MAX_CHART_CANDLE_LIMIT
+from alfaka.serving.intervals import normalize_chart_interval
 
 CHART_INTERVAL_PATTERN = "^(1m|5m|10m|1h|4h|1D|1W|1M|1d|1w|1mo|1MO|1month)$"
 CHART_COMPARE_RANGE_PATTERN = "^(1D|1M|6M|1Y|5Y|1d|1m|6m|1y|5y)$"
 SIMULATION_REPLAY_START = datetime(2026, 7, 14, 15, 0, tzinfo=UTC)
+SIMULATION_REPLAY_MARKET_DATE = SIMULATION_REPLAY_START.astimezone(ZoneInfo("America/New_York")).date().isoformat()
 
 
 def positive_int_env(name: str, default: int) -> int:
@@ -276,16 +280,21 @@ def _merge_simulation_candles(
     replay: dict[str, Any],
     limit: int,
 ) -> dict[str, Any]:
+    interval = normalize_chart_interval(replay.get("interval") or historical.get("interval") or "1m")
     merged: dict[str, dict[str, Any]] = {}
     for candle in historical.get("candles") or []:
         if not isinstance(candle, dict):
             continue
         timestamp = _candle_timestamp(candle)
-        if timestamp is not None and timestamp < SIMULATION_REPLAY_START:
-            merged[str(candle.get("timestamp"))] = candle
+        if timestamp is not None and _historical_candle_ends_before_replay(candle, interval, timestamp):
+            key, normalized = _simulation_candle_identity(candle, interval)
+            if key is not None:
+                merged[key] = normalized
     for candle in replay.get("candles") or []:
         if isinstance(candle, dict) and candle.get("timestamp"):
-            merged[str(candle["timestamp"])] = candle
+            key, normalized = _simulation_candle_identity(candle, interval)
+            if key is not None:
+                merged[key] = normalized
     candles = sorted(merged.values(), key=lambda item: _candle_timestamp(item) or datetime.min.replace(tzinfo=UTC))[-limit:]
     return {
         **historical,
@@ -294,6 +303,27 @@ def _merge_simulation_candles(
         "candles": candles,
         "futureDataCutoff": replay.get("asOf"),
     }
+
+
+def _simulation_candle_identity(candle: dict[str, Any], interval: str) -> tuple[str | None, dict[str, Any]]:
+    if interval != "1D":
+        timestamp = str(candle.get("timestamp") or "").strip()
+        return (timestamp or None), candle
+    normalized = canonicalize_candle_identity(candle, interval)
+    if normalized is None:
+        return None, candle
+    return str(normalized["candleKey"]), normalized
+
+
+def _historical_candle_ends_before_replay(
+    candle: dict[str, Any],
+    interval: str,
+    timestamp: datetime,
+) -> bool:
+    if interval != "1D":
+        return timestamp < SIMULATION_REPLAY_START
+    normalized = canonicalize_candle_identity(candle, interval)
+    return bool(normalized and str(normalized["candleKey"]) < SIMULATION_REPLAY_MARKET_DATE)
 
 
 def _candle_timestamp(candle: dict[str, Any]) -> datetime | None:

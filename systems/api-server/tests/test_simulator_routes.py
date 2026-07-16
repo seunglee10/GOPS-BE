@@ -313,11 +313,40 @@ class SimulatorRoutesTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         candles = response.json()["candles"]
         self.assertEqual([item["timestamp"] for item in candles], [
-            "2026-07-13T04:00:00Z",
+            "2026-07-13T04:00:00.000Z",
             "2026-07-14T04:00:00.000Z",
         ])
         self.assertEqual(candles[-1]["close"], 170.5)
         self.assertFalse(candles[-1]["isClosed"])
+
+    def test_simulation_ready_daily_chart_hides_the_overlapping_completed_market_day(self):
+        self.gateway.mode = "simulation"
+        self.gateway.candles = lambda symbol, interval, limit: {
+            "symbol": symbol,
+            "interval": interval,
+            "simulation": True,
+            "asOf": "2026-07-14T15:00:00Z",
+            "candles": [],
+        }
+        historical = {
+            "symbol": "NVDA",
+            "interval": "1D",
+            "candles": [
+                {"timestamp": "2026-07-13T04:00:00Z", "close": 168.0, "isClosed": True},
+                {"timestamp": "2026-07-14T04:00:00Z", "close": 169.0, "isClosed": True},
+            ],
+        }
+
+        with patch(
+            "app.routes.charts.get_query_service",
+            return_value=SimpleNamespace(candle_snapshot=lambda *_args, **_kwargs: historical),
+        ):
+            response = self.client.get("/api/charts/candles?symbol=NVDA&interval=1D&limit=20")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([item["timestamp"] for item in response.json()["candles"]], [
+            "2026-07-13T04:00:00.000Z",
+        ])
 
     def test_simulation_order_history_and_trade_conditions_stay_in_run_ledger(self):
         self.gateway.mode = "simulation"

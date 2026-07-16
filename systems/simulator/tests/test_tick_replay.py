@@ -281,6 +281,26 @@ class ReplayControllerTests(unittest.TestCase):
         self.assertEqual(payload["candles"][0]["close"], 101.5)
         self.assertFalse(payload["candles"][0]["isClosed"])
 
+    def test_daily_snapshot_survives_controller_restore(self):
+        store = MemoryStateStore()
+        source = InMemoryReplayEventSource([
+            trade(1, 1, "NVDA", 99.5),
+            trade(2, 3, "NVDA", 101.5),
+        ])
+        controller = ReplayController(source, clock=self.clock, state_store=store)
+        controller.set_mode("simulation")
+        controller.resume()
+        self.clock.value += 4
+        controller.status()
+
+        restored = ReplayController(source, clock=self.clock, state_store=store)
+        payload = restored.candle_snapshot("NVDA", "1D", 20)
+
+        self.assertEqual(restored.state, "paused")
+        self.assertEqual(payload["candles"][0]["open"], 99.5)
+        self.assertEqual(payload["candles"][0]["close"], 101.5)
+        self.assertFalse(payload["candles"][0]["isClosed"])
+
     def test_speed_can_change_mid_run_without_dropping_events(self):
         self.controller.set_mode("simulation")
         self.controller.resume()
