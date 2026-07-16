@@ -17,6 +17,8 @@ from app.auth.dependencies import (
     require_websocket_user,
 )
 from app.auth.models import AuthenticatedUser
+from app.alerts.notifications import notification_delivery_decision
+from app.alerts.preferences import PostgresNotificationPreferenceRepository, preference_response
 from app.core.config import read_dotenv_value
 from app.services.agent_alert_payloads import parse_pubsub_payload
 from app.services.alfaka_market_data import get_market_data_provider, normalize_market_symbol, sp500_universe_symbols
@@ -24,6 +26,7 @@ from app.services.agent_gateway import cancel_agent_analysis, get_agent_report, 
 from app.services.agent_rate_limit import enforce_agent_rate_limit
 from gops_agents.query_understanding import EntityResolution, KoreanEntityResolver, extract_relationship_symbols_from_intent
 from gops_agents.query_understanding.korean_text import compact_text
+from gops_agents.runtime.coach_snapshot_archive import CoachReportArchive, CoachSnapshotArchiveError
 
 router = APIRouter()
 AGENT_ALERTS_CHANNEL = "agent.alerts"
@@ -31,6 +34,7 @@ AGENT_REPORTS_CHANNEL = "agent.reports"
 CHART_SHORTCUT_MODE = "chartShortcut"
 AGENT_ANALYSIS_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:-]*$"
 CLIENT_CONTROLLED_AGENT_FIELDS = {
+    "coachInputSnapshot",
     "idempotencyKey",
     "llmBudgetOwner",
     "maxInputTokens",
@@ -225,6 +229,21 @@ def resolve_agent_entity(
     return resolve_agent_entity_for_chart_shortcut(q, mode=mode)
 
 
+@router.get("/api/ai-coach/reports/latest")
+def latest_ai_coach_report(
+    user: AuthenticatedUser = Depends(require_current_user),
+) -> dict[str, Any]:
+    """Return the post-market S3 report without starting an analysis job."""
+
+    try:
+        report = CoachReportArchive().get_latest(user_id=user.sub)
+    except CoachSnapshotArchiveError as exc:
+        raise HTTPException(status_code=503, detail="AI coach report archive is unavailable") from exc
+    if report is None:
+        return {"status": "pending", "report": None}
+    return {"status": "ready", "report": report}
+
+
 @router.get("/api/agents/reports/{analysis_id}")
 def agent_report(
     analysis_id: str = Path(min_length=1, max_length=128, pattern=AGENT_ANALYSIS_ID_PATTERN),
@@ -256,7 +275,7 @@ async def agent_alerts(
     symbol: str | None = Query(default=None, min_length=1, max_length=12),
 ) -> None:
     try:
-        require_websocket_user(websocket)
+        user = require_websocket_user(websocket)
     except WebSocketAuthRequired as exc:
         await websocket.accept()
         await websocket.send_json({"type": "error", "detail": str(exc)})
@@ -270,17 +289,24 @@ async def agent_alerts(
     await websocket.accept()
     try:
         await websocket.send_json({"type": "AGENT_ALERTS_READY", "symbol": symbol})
-        await stream_agent_alerts(websocket, symbol.upper() if symbol else None)
+        await stream_agent_alerts(websocket, symbol.upper() if symbol else None, user_sub=user.sub)
     except WebSocketDisconnect:
         return
 
 
-async def stream_agent_alerts(websocket: WebSocket, symbol: str | None) -> None:
+async def stream_agent_alerts(websocket: WebSocket, symbol: str | None, *, user_sub: str | None = None) -> None:
     import redis
 
     redis_url = read_dotenv_value("REDIS_URL") or "redis://localhost:6379/0"
     client = redis.from_url(redis_url, decode_responses=True)
     pubsub = client.pubsub(ignore_subscribe_messages=True)
+    preference_repository = getattr(websocket.app.state, "notification_preferences_repository", None)
+    if user_sub and preference_repository is None:
+        try:
+            preference_repository = PostgresNotificationPreferenceRepository.from_env()
+            websocket.app.state.notification_preferences_repository = preference_repository
+        except (KeyError, ValueError):
+            preference_repository = None
     channels = [AGENT_ALERTS_CHANNEL]
     if symbol:
         channels.append(f"{AGENT_ALERTS_CHANNEL}:{symbol}")
@@ -290,7 +316,21 @@ async def stream_agent_alerts(websocket: WebSocket, symbol: str | None) -> None:
         while True:
             message = await asyncio.to_thread(pubsub.get_message, timeout=1.0)
             if message and message.get("type") == "message":
-                await websocket.send_json(parse_pubsub_payload(message.get("data")))
+                payload = parse_pubsub_payload(message.get("data"))
+                if user_sub:
+                    row = (
+                        await asyncio.to_thread(preference_repository.get, user_sub)
+                        if preference_repository is not None
+                        else None
+                    )
+                    allowed, _reason = notification_delivery_decision(
+                        str(payload.get("type") or "AGENT_ALERT"),
+                        payload,
+                        preference_response(row),
+                    )
+                    if not allowed:
+                        continue
+                await websocket.send_json(payload)
                 continue
             now = time.monotonic()
             if now - last_heartbeat >= 25:

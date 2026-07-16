@@ -56,6 +56,7 @@ ORDER_CONTRACT = {
             "order_division",
             "actor_id",
             "role",
+            "risk_acknowledged",
         ],
         "accepted_values": {
             "market": ["overseas"],
@@ -97,6 +98,7 @@ async def create_order(
             "actor_id": current_user.email,
             "role": payload.get("role") or "trader",
         }
+    risk_acknowledged = payload.get("risk_acknowledged") is True
     order_request = _validate_order_request(payload)
     simulator_mode = simulator_mode_active(request.app)
     repository = None
@@ -113,9 +115,10 @@ async def create_order(
             return jsonable_encoder({**replay, "idempotent_replay": True})
 
     verdict = _risk_verdict(request.app, current_user.sub, order_request)
-    if verdict is not None and verdict.verdict != "allow":
-        # Block outright, or ask the user to confirm the suggested qty by
-        # resubmitting. The risk engine never silently changes an order.
+    if verdict is not None and verdict.verdict != "allow" and not risk_acknowledged:
+        # API clients must explicitly acknowledge a non-allow verdict. The UI
+        # keeps the original quantity and sends this acknowledgement only when
+        # the user chooses to continue after seeing the risk explanation.
         raise HTTPException(
             status_code=422,
             detail={"reason": "risk rejected", "risk": verdict.to_dict()},
@@ -147,6 +150,7 @@ async def create_order(
             idempotency_key_hash=idempotency_key_hash,
             body_hash=body_hash,
             command=command,
+            user_sub=current_user.sub,
         )
     except IdempotencyConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -322,10 +326,10 @@ def get_order_balance(
 def get_order(
     order_id: str,
     request: Request,
-    _user: AuthenticatedUser = Depends(require_current_user),
+    current_user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
     repository = _repository_from_app(request.app)
-    order = repository.get_order(order_id)
+    order = _get_owned_order(repository, order_id, current_user.sub)
     if order is None:
         raise HTTPException(status_code=404, detail="order not found")
     return jsonable_encoder(order)
@@ -335,10 +339,10 @@ def get_order(
 def get_order_events(
     order_id: str,
     request: Request,
-    _user: AuthenticatedUser = Depends(require_current_user),
+    current_user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
     repository = _repository_from_app(request.app)
-    if repository.get_order(order_id) is None:
+    if _get_owned_order(repository, order_id, current_user.sub) is None:
         raise HTTPException(status_code=404, detail="order not found")
     return {"order_id": order_id, "events": jsonable_encoder(repository.list_order_events(order_id))}
 
@@ -346,7 +350,7 @@ def get_order_events(
 @router.websocket("/ws/orders/{order_id}")
 async def order_events_socket(websocket: WebSocket, order_id: str) -> None:
     try:
-        require_websocket_user(websocket)
+        current_user = require_websocket_user(websocket)
     except WebSocketAuthRequired as exc:
         await websocket.accept()
         await websocket.send_json({"type": "error", "detail": str(exc)})
@@ -363,7 +367,7 @@ async def order_events_socket(websocket: WebSocket, order_id: str) -> None:
         repository = _repository_from_app(websocket.app)
         last_fingerprint: str | None = None
         while True:
-            order = repository.get_order(order_id)
+            order = _get_owned_order(repository, order_id, current_user.sub)
             if order is None:
                 await websocket.send_json({"type": "error", "detail": "order not found"})
                 await websocket.close(code=1008)
@@ -537,6 +541,20 @@ def _repository_from_app(app: Any) -> OrderRepository:
         repository = PostgresOrderRepository.from_env()
     app.state.order_repository = repository
     return repository
+
+
+def _get_owned_order(repository: OrderRepository, order_id: str, user_sub: str) -> dict[str, Any] | None:
+    """Return an order only when it belongs to the authenticated principal.
+
+    Missing, legacy-unowned, and foreign-user orders intentionally collapse to
+    the same result so callers cannot use order or event routes as an existence
+    oracle. Order ownership is immutable after creation, so a successful check
+    also safely gates the following event-history read.
+    """
+    order = repository.get_order(order_id)
+    if order is None or order.get("user_sub") != user_sub:
+        return None
+    return order
 
 
 def _scoped_idempotency_key(idempotency_key: str, user: AuthenticatedUser) -> str:

@@ -9,7 +9,7 @@ from typing import Any
 from alfaka.serving.indicators import INDICATOR_CALCULATION_VERSION, IndicatorSpec
 from alfaka.serving.intervals import normalize_chart_interval
 from alfaka.serving.time_utils import parse_utc_time
-from alfaka.serving.volume_profile import VOLUME_PROFILE_CALCULATION_VERSION
+from alfaka.serving.volume_profile import VOLUME_PROFILE_EXACT_CALCULATION_VERSION
 
 
 DERIVED_KIND_INDICATORS = "indicators"
@@ -58,10 +58,11 @@ def build_volume_profile_request(
     target_bins: int,
     price_min: float | None,
     price_max: float | None,
+    candle_count: int | None = None,
 ) -> dict[str, Any]:
     interval = normalize_chart_interval(interval)
     identity = {
-        "version": VOLUME_PROFILE_CALCULATION_VERSION,
+        "version": VOLUME_PROFILE_EXACT_CALCULATION_VERSION,
         "symbol": symbol,
         "interval": interval,
         "from": from_time,
@@ -70,6 +71,7 @@ def build_volume_profile_request(
         "targetBins": int(target_bins),
         "priceMin": price_min,
         "priceMax": price_max,
+        "candleCount": int(candle_count) if candle_count is not None else None,
     }
     return build_request(
         DERIVED_KIND_VOLUME_PROFILE,
@@ -77,14 +79,15 @@ def build_volume_profile_request(
         interval=interval,
         from_time=from_time,
         to_time=to_time,
-        limit=None,
+        limit=int(candle_count) if candle_count is not None else None,
         parameters={
             "priceBinSize": price_bin_size,
             "targetBins": int(target_bins),
             "priceMin": price_min,
             "priceMax": price_max,
+            "candleCount": int(candle_count) if candle_count is not None else None,
         },
-        calculation_version=VOLUME_PROFILE_CALCULATION_VERSION,
+        calculation_version=VOLUME_PROFILE_EXACT_CALCULATION_VERSION,
         identity=identity,
         cache_key=volume_profile_cache_key_from_identity(symbol, identity),
     )
@@ -131,7 +134,7 @@ def indicator_cache_key_from_identity(symbol: str, interval: str, identity: dict
 
 
 def volume_profile_cache_key_from_identity(symbol: str, identity: dict[str, Any]) -> str:
-    return f"chart:volume-profile:{VOLUME_PROFILE_CALCULATION_VERSION}:{symbol}:{digest_json(identity)}"
+    return f"chart:volume-profile:{VOLUME_PROFILE_EXACT_CALCULATION_VERSION}:{symbol}:{digest_json(identity)}"
 
 
 def digest_json(value: dict[str, Any]) -> str:

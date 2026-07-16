@@ -203,6 +203,8 @@ def test_demo_overseas_holdings_uses_balance_endpoint_and_normalizes_positions(m
     assert payload["status"] == "ok"
     assert payload["source"] == "kis-demo"
     assert payload["account"]["cashForeign"] == 1199.0
+    assert payload["account"]["stockValueForeign"] == 1853.0
+    assert payload["account"]["totalValueForeign"] == 3052.0
     assert payload["account"]["unrealizedPnlRate"] == 104.6
     assert payload["positions"][0]["symbol"] == "MU"
     assert payload["positions"][0]["quantity"] == 10.0
@@ -211,6 +213,50 @@ def test_demo_overseas_holdings_uses_balance_endpoint_and_normalizes_positions(m
     assert get_calls[0]["headers"]["tr_id"] == "VTTS3012R"
     assert get_calls[0]["params"]["CANO"] == "12345678"
     assert get_calls[0]["params"]["TR_CRCY_CD"] == "USD"
+
+
+def test_demo_overseas_holdings_does_not_treat_buy_amount_sum_as_cash(monkeypatch, tmp_path):
+    set_demo_env(monkeypatch, tmp_path)
+
+    def fake_post(url: str, **_kwargs: Any) -> FakeResponse:
+        return FakeResponse(200, valid_token_payload())
+
+    def fake_get(url: str, **_kwargs: Any) -> FakeResponse:
+        return FakeResponse(
+            200,
+            {
+                "rt_cd": "0",
+                "output1": [
+                    {
+                        "ovrs_pdno": "MU",
+                        "ovrs_cblc_qty": "20",
+                        "frcr_evlu_amt2": "19586.00",
+                        "tr_crcy_cd": "USD",
+                    },
+                    {
+                        "ovrs_pdno": "AAPL",
+                        "ovrs_cblc_qty": "50",
+                        "frcr_evlu_amt2": "15766.00",
+                        "tr_crcy_cd": "USD",
+                    },
+                ],
+                "output2": {
+                    "frcr_buy_amt_smtl1": "105510401.1332",
+                    "ovrs_tot_pfls": "2492695.1728",
+                    "tot_pftrt": "2.36251132",
+                },
+            },
+        )
+
+    monkeypatch.setattr("requests.post", fake_post)
+    monkeypatch.setattr("requests.get", fake_get)
+
+    payload = DemoKisHttpClient.from_env().fetch_holdings(market="overseas", currency="USD")
+
+    assert payload["account"]["cashForeign"] is None
+    assert payload["account"]["stockValueForeign"] == 35352.0
+    assert payload["account"]["totalValueForeign"] == 35352.0
+    assert "KIS overseas balance response did not include foreign-currency cash." in payload["limitations"]
 
 
 def test_real_env_is_rejected_at_config_load(monkeypatch, tmp_path):

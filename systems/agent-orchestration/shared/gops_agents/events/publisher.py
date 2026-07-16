@@ -10,12 +10,19 @@ RISK_LOG_TTL_SECONDS = 7 * 24 * 3600
 
 
 def notification_payload(decision: dict[str, Any]) -> dict[str, Any]:
+    level = decision.get("level") or decision.get("severity")
+    explicit_show_toast = decision.get("showToast")
+    show_toast = (
+        bool(explicit_show_toast)
+        if "showToast" in decision
+        else str(level or "").lower() in {"watch", "alert", "critical"}
+    )
     return {
         "type": "AGENT_ALERT",
         "decision": decision,
         "symbol": decision.get("symbol"),
-        "level": decision.get("level"),
-        "showToast": decision.get("showToast", False),
+        "level": level,
+        "showToast": show_toast,
     }
 
 

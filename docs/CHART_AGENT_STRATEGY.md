@@ -1,6 +1,6 @@
 # Chart Intelligence / Agent Strategy
 
-Status: design baseline, implementation not started
+Status: design baseline; deterministic Geometry asset subset implemented
 
 Owners: agent-orchestration, market-data, chart-engine, frontend
 
@@ -112,6 +112,12 @@ compiler의 출력 계약으로 승격한다.
   point-in-time feature snapshot 계약은 아직 없다.
 - volume profile은 OHLCV candle에서 추정한 값이므로 체결 기반 profile과 같은
   confidence로 사용하면 안 된다.
+- 화면용 candle volume profile은 활성 overlay와 padding을 포함한 실제 main price
+  pane의 scene 가격축 전체를 정확히 10개로 나누는 `volume-profile-exact-v2`를
+  사용한다. visible closed-candle 수를 요청에 포함하며 source 수가 부족한 partial
+  결과는 캐시하거나 표시하지 않는다. 0-volume bucket은 candle range overlap 추정상
+  배분량이 0이라는 뜻이며 실제 무체결을 보장하지 않는다. Agent feature pack은 분석
+  신호 호환성을 위해 기존 `volume-profile-v1` adaptive 24-bin을 유지한다.
 - order-flow는 장중 Redis와 daily ClickHouse 자산이 있지만 종목/기간 coverage와
   side 추정 품질이 제한된다. raw trade/quote retention 범위 밖의 분석은 daily
   aggregate 수준으로 degrade해야 한다.

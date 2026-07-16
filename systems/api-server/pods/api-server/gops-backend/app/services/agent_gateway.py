@@ -61,6 +61,10 @@ def request_agent_layout_resolution(payload: dict[str, Any]) -> dict[str, Any]:
     return request_orchestrator_json("POST", "/layout/resolve", payload)
 
 
+def request_agent_alert_resolution(payload: dict[str, Any]) -> dict[str, Any]:
+    return request_orchestrator_json("POST", "/alerts/resolve", payload)
+
+
 def get_agent_report(analysis_id: str, *, user_id: str | None = None) -> dict[str, Any]:
     store = build_report_store_from_env()
     require_report_owner(store, analysis_id, user_id)

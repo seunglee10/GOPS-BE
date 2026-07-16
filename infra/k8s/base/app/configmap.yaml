@@ -125,6 +125,13 @@ data:
   KAFKA_INPUT_DAILY_BARS_TOPIC: market.input.realtime.daily-bars.v1
   KAFKA_TRADES_LAYER_TOPIC: market.layer.trades.v1
   KAFKA_QUOTES_LAYER_TOPIC: market.layer.quotes.v1
+  PAPER_ORDER_QUOTES_TOPIC: market.layer.quotes.v1
+  PAPER_ORDER_MATCHER_GROUP_ID: gops-paper-order-matcher-v1
+  PAPER_ORDER_MATCHER_CLIENT_ID: gops-paper-order-matcher
+  PAPER_ORDER_MATCHER_MAX_POLL_RECORDS: "100"
+  PAPER_SUBSCRIPTION_SYNC_SECONDS: "5"
+  PAPER_MAX_ACTIVE_ORDER_SYMBOLS: "100"
+  PAPER_STARTING_CASH: "100000.00"
   KAFKA_EVENTS_LAYER_TOPIC: market.layer.events.v1
   KAFKA_REALTIME_TICKS_TO_1M_TOPIC: market.realtime.ticks.to.1m.v1
   KAFKA_REALTIME_TICKS_TO_5M_TOPIC: market.realtime.ticks.to.5m.v1
@@ -147,6 +154,7 @@ data:
   KAFKA_NEWS_TOPIC: market.news.alpaca.v1
   KAFKA_NEWS_DAILY_SUMMARY_DIRTY_TOPIC: market.news.daily-summary-dirty.v1
   ALERT_EVALUATOR_INPUT_TOPIC: market.layer.trades.v1
+  ALERT_EVALUATOR_INPUT_TOPICS: market.layer.trades.v1,market.layer.candles.1m.closed.v1,market.layer.candles.5m.closed.v1,market.layer.candles.10m.closed.v1,market.layer.candles.1h.closed.v1,market.layer.candles.4h.closed.v1,market.layer.candles.1d.closed.v1
   ALERT_TRIGGERED_TOPIC: alerts.triggered.v1
   ALERT_DLQ_TOPIC: alerts.dlq.v1
   ALERT_EVALUATOR_GROUP_ID: gops-alert-evaluator
@@ -154,6 +162,11 @@ data:
   ALERT_OUTBOX_STREAM: alerts:outbox
   ALERT_OUTBOX_GROUP: gops-alert-outbox-senders
   ALERT_RECONCILE_INTERVAL_SECONDS: "60"
+  TRADE_CONDITION_COMMANDS_ENABLED: "true"
+  TRADE_CONDITION_TRIGGER_TOPIC: alerts.triggered.v1
+  TRADE_CONDITION_EXECUTOR_GROUP_ID: gops-trade-condition-executor-v1
+  TRADE_CONDITION_EXECUTION_MODE: "off"
+  TRADE_CONDITION_RISK_REQUIRED: "true"
   CHART_INDICATOR_CACHE_TTL_SECONDS: "300"
   CHART_VOLUME_PROFILE_CACHE_TTL_SECONDS: "30"
   CHART_DERIVED_INLINE_LOCK_TTL_SECONDS: "30"
@@ -296,7 +309,7 @@ data:
   AGENT_EVENT_INPUT_TOPICS: market.layer.trades.v1,market.layer.candles.1m.closed.v1,market.layer.candles.5m.closed.v1,market.layer.candles.10m.closed.v1,market.layer.candles.1h.closed.v1,market.layer.candles.4h.closed.v1,market.layer.candles.1d.closed.v1,market.layer.candles.1w.closed.v1,market.layer.candles.1mo.closed.v1,market.layer.events.v1
   AGENT_MARKET_EVENTS_TOPIC: agents.market-events.v1
   AGENT_ANALYSIS_REQUESTS_TOPIC: agents.analysis-requests.v1
-  CHART_ASSET_BUILD_CONCURRENCY: "4"
+  CHART_ASSET_BUILD_CONCURRENCY: "2"
   CHART_ASSET_STORAGE_MAINTENANCE: "false"
   CHART_ASSET_REPAIR_ENABLED: "true"
   CHART_ASSET_REPAIR_ALPACA_ENABLED: "true"
@@ -308,6 +321,7 @@ data:
   AGENT_NOTIFICATION_DECISIONS_TOPIC: agents.notification-decisions.v1
   AGENT_DLQ_TOPIC: agents.dlq.v1
   AGENT_PUBLISH_TO_KAFKA: "true"
+  AGENT_OUTPUT_KAFKA_REQUIRED: "false"
   AGENT_REPORT_STORE_BACKEND: auto
   AGENT_REPORT_TTL_SECONDS: "43200"
   AGENT_REPORT_OWNER_KEY_PREFIX: agent:report:owner
@@ -316,6 +330,10 @@ data:
   AGENT_IDEMPOTENCY_TTL_SECONDS: "43200"
   AGENT_IDEMPOTENCY_KEY_PREFIX: agent:request:idempotency
   AGENT_ANALYSIS_QUEUE_BACKEND: auto
+  AI_COACH_SNAPSHOT_ARCHIVE_ENABLED: "false"
+  AI_COACH_SNAPSHOT_ARCHIVE_REQUIRED: "false"
+  AI_COACH_SNAPSHOT_S3_BUCKET: ""
+  AI_COACH_SNAPSHOT_S3_PREFIX: ai-coach/snapshots
   AGENT_INTENT_CLASSIFIER_PROVIDER: deterministic
   AGENT_INTENT_CLASSIFIER_URL: http://agent-intent-classifier:8120/classify
   AGENT_INTENT_CLASSIFIER_TIMEOUT_SECONDS: "2.5"

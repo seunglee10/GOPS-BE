@@ -9,7 +9,6 @@ resources:
   - secretstore-aws-secrets-manager.yaml
   - externalsecret-openai.yaml
   - scheduled
-  - cronjob-yahoo-estimates-sync.yaml
 
 patches:
   - path: configmap-aws-patch.yaml
@@ -32,6 +31,9 @@ patches:
       - op: replace
         path: /spec/template/spec/containers/0/envFrom/2/secretRef/optional
         value: false
+      - op: replace
+        path: /spec/template/spec/containers/0/envFrom/3/secretRef/optional
+        value: false
   - target:
       group: apps
       version: v1
@@ -49,6 +51,18 @@ patches:
     patch: |-
       - op: replace
         path: /spec/template/spec/containers/0/envFrom/2/secretRef/optional
+        value: false
+      - op: replace
+        path: /spec/template/spec/containers/0/envFrom/3/secretRef/optional
+        value: false
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: trade-condition-executor
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/envFrom/1/secretRef/optional
         value: false
 
 images:

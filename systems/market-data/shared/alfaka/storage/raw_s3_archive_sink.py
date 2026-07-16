@@ -121,6 +121,10 @@ def run_raw_s3_archive_sink(
             batches = consumer.poll(timeout_ms=poll_timeout_ms)
             for records in batches.values():
                 for record in records:
+                    simulation = record.value.get("simulation") if isinstance(record.value, dict) else None
+                    if isinstance(simulation, dict) and simulation.get("source") == "gops-simulator":
+                        increment_metric(metrics, "simulationRowsSkipped", 1)
+                        continue
                     archive_row = raw_archive_row(record.value, now_fn=now_fn)
                     for partition_key in raw_realtime_partition_keys(raw_prefix, archive_row, realtime_layout_mode):
                         buffer_key = realtime_buffer_identity(partition_key, archive_row)

@@ -5,6 +5,7 @@ import os
 import sys
 import time
 import traceback
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -14,7 +15,8 @@ try:
 except Exception:  # pragma: no cover - dependency guard for lean test envs
     redis = None  # type: ignore[assignment]
 
-from app.alerts.notifications import RedisNotificationBroker
+from app.alerts.notifications import RedisNotificationBroker, notification_delivery_decision
+from app.alerts.preferences import PostgresNotificationPreferenceRepository, preference_response
 from app.alerts.projection import RedisAlertProjection
 from app.alerts.repository import PostgresAlertRepository
 
@@ -45,7 +47,21 @@ def _add_alfaka_package_path() -> None:
 _add_alfaka_package_path()
 
 from alfaka.common.kafka_io import create_json_consumer, create_json_producer  # noqa: E402
+from alfaka.common.redis_keys import RedisKeyBuilder  # noqa: E402
 from alfaka.common.symbols import normalize_market_symbol  # noqa: E402
+from alfaka.serving.indicators import rsi  # noqa: E402
+from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider  # noqa: E402
+
+
+DEFAULT_INPUT_TOPICS = (
+    "market.layer.trades.v1",
+    "market.layer.candles.1m.closed.v1",
+    "market.layer.candles.5m.closed.v1",
+    "market.layer.candles.10m.closed.v1",
+    "market.layer.candles.1h.closed.v1",
+    "market.layer.candles.4h.closed.v1",
+    "market.layer.candles.1d.closed.v1",
+)
 
 
 class AlertEvaluator:
@@ -55,17 +71,51 @@ class AlertEvaluator:
         repository: Any,
         projection: RedisAlertProjection,
         outbox: "AlertRedisOutbox",
+        preference_repository: Any | None = None,
         dedupe_ttl_seconds: int = DEFAULT_DEDUPE_TTL_SECONDS,
         spike_retention_minutes: int = DEFAULT_SPIKE_RETENTION_MINUTES,
+        reminder_dispatcher: "ReminderDispatcher | None" = None,
+        history_loader: Any | None = None,
     ) -> None:
         self.repository = repository
         self.projection = projection
         self.outbox = outbox
+        self.preference_repository = preference_repository
         self.dedupe_ttl_seconds = dedupe_ttl_seconds
         self.spike_retention_ms = spike_retention_minutes * 60 * 1000
+        self.reminder_dispatcher = reminder_dispatcher
+        self.history_loader = history_loader
+        self._warmed_pairs: set[tuple[str, str]] = set()
 
     def reconcile_active_alerts(self) -> None:
-        self.projection.replace_all(self.repository.active_alerts())
+        active_alerts = self.repository.active_alerts()
+        self.projection.replace_all(active_alerts)
+        if self.history_loader is None:
+            return
+        pairs = {
+            (str(alert["symbol"]), str((alert.get("condition") or {}).get("interval") or "1D"))
+            for alert in active_alerts
+            if alert.get("type") in {"volume_absolute", "volume_relative", "rsi_threshold"}
+        }
+        if self.reminder_dispatcher is not None:
+            for symbol in self.reminder_dispatcher.watchlist_symbols():
+                pairs.update({(symbol, "5m"), (symbol, "1D")})
+        for symbol, interval in sorted(pairs - self._warmed_pairs):
+            try:
+                rows = self.history_loader(symbol, interval, 240)
+                for row in rows or []:
+                    candle = parse_candle({**row, "symbol": row.get("symbol") or symbol, "interval": interval})
+                    if candle is not None:
+                        self.projection.remember_candle(candle)
+                if rows:
+                    self._warmed_pairs.add((symbol, interval))
+            except Exception:
+                traceback.print_exc()
+
+    def process_message(self, payload: dict[str, Any], topic: str) -> list[dict[str, Any]]:
+        if ".candles." in topic and ".closed." in topic:
+            return self.process_candle(payload, topic)
+        return self.process_trade(payload)
 
     def process_trade(self, trade: dict[str, Any]) -> list[dict[str, Any]]:
         parsed = parse_trade(trade)
@@ -92,16 +142,28 @@ class AlertEvaluator:
                 events.append(event)
 
         self.projection.set_last_price(symbol, price)
+        self._enqueue_events(events)
+        return events
+
+    def process_candle(self, payload: dict[str, Any], topic: str) -> list[dict[str, Any]]:
+        candle = parse_candle(payload, topic)
+        if candle is None:
+            return []
+        candles = self.projection.remember_candle(candle)
+        events: list[dict[str, Any]] = []
+        for alert in self.projection.metric_alerts(candle["symbol"], candle["interval"]):
+            event = self._metric_event(alert, candle, candles)
+            if event is not None:
+                events.append(event)
+        if self.reminder_dispatcher is not None:
+            events.extend(self.reminder_dispatcher.events_for_candle(candle, candles))
+        self._enqueue_events(events)
+        return events
+
+    def _enqueue_events(self, events: list[dict[str, Any]]) -> None:
         for event in events:
             if self.projection.mark_event_seen(event["eventId"], self.dedupe_ttl_seconds):
                 self.outbox.enqueue(event)
-                alert = event.get("alert") or {}
-                updated_alert = self.repository.record_alert_trigger(str(alert["user_sub"]), int(alert["id"]))
-                if not updated_alert or updated_alert.get("status") != "active":
-                    self.projection.delete_alert(alert["id"], symbol=alert.get("symbol"))
-                else:
-                    self.projection.upsert_alert(updated_alert)
-        return events
 
     def _price_cross_event(
         self,
@@ -136,6 +198,7 @@ class AlertEvaluator:
             "alert": alert,
         }
 
+
     def _spike_event(self, alert: dict[str, Any], trade: dict[str, Any]) -> dict[str, Any] | None:
         change_pct = _float_or_none(alert.get("change_pct"))
         window_min = _int_or_none(alert.get("window_min"))
@@ -146,12 +209,18 @@ class AlertEvaluator:
         if baseline_price is None or baseline_price <= 0:
             return None
         actual_change_pct = ((trade["price"] - baseline_price) / baseline_price) * 100
+        effective_change_pct = change_pct
         direction = alert.get("direction")
-        if direction == "above" and actual_change_pct < change_pct:
-            return None
-        if direction == "below" and actual_change_pct > -change_pct:
-            return None
-        if direction is None and abs(actual_change_pct) < change_pct:
+        satisfied = (
+            actual_change_pct >= effective_change_pct
+            if direction == "above"
+            else actual_change_pct <= -effective_change_pct
+            if direction == "below"
+            else abs(actual_change_pct) >= effective_change_pct
+        )
+        previous_state = self.projection.condition_state(alert["id"])
+        self.projection.set_condition_state(alert["id"], satisfied)
+        if previous_state is None or previous_state is True or not satisfied:
             return None
         resolved_direction = direction or ("above" if actual_change_pct >= 0 else "below")
         base_event_id = trade.get("sourceEventId") or trade.get("tradeId") or f"{trade['symbol']}:{trade['timestamp']}"
@@ -165,7 +234,8 @@ class AlertEvaluator:
             "price": trade["price"],
             "baselinePrice": baseline_price,
             "changePct": actual_change_pct,
-            "thresholdPct": change_pct,
+            "thresholdPct": effective_change_pct,
+            "alertThresholdPct": change_pct,
             "windowMin": window_min,
             "triggeredAt": datetime.now(timezone.utc).isoformat(),
             "sourceEventId": trade.get("sourceEventId"),
@@ -173,6 +243,208 @@ class AlertEvaluator:
             "alert": alert,
         }
 
+    def _metric_event(
+        self,
+        alert: dict[str, Any],
+        candle: dict[str, Any],
+        candles: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        condition = alert.get("condition") if isinstance(alert.get("condition"), dict) else {}
+        kind = str(condition.get("kind") or alert.get("type") or "")
+        operator = str(condition.get("operator") or alert.get("direction") or "")
+        threshold = _float_or_none(condition.get("threshold"))
+        if threshold is None:
+            return None
+
+        value: float | None = None
+        metrics: dict[str, Any] = {"interval": candle["interval"]}
+        if kind == "volume_absolute":
+            value = _float_or_none(candle.get("volume"))
+            metrics["volume"] = value
+        elif kind == "volume_relative":
+            lookback = max(5, min(_int_or_none(condition.get("lookback")) or 20, 200))
+            history = [
+                item for item in candles[:-1]
+                if _float_or_none(item.get("volume")) is not None
+            ][-lookback:]
+            if len(history) < lookback:
+                return None
+            baseline = sum(float(item["volume"]) for item in history) / len(history)
+            if baseline <= 0:
+                return None
+            value = float(candle["volume"]) / baseline
+            metrics.update({"volume": candle["volume"], "baselineVolume": baseline, "volumeMultiple": value, "lookback": lookback})
+        elif kind == "rsi_threshold":
+            period = max(2, min(_int_or_none(condition.get("period")) or 14, 100))
+            values = rsi([_float_or_none(item.get("close")) for item in candles], period)
+            value = values[-1] if values else None
+            metrics.update({"rsi": value, "period": period})
+        else:
+            return None
+        if value is None:
+            return None
+
+        satisfied = value >= threshold if operator == "above" else value <= threshold
+        previous_state = self.projection.condition_state(alert["id"])
+        self.projection.set_condition_state(alert["id"], satisfied)
+        if previous_state is None or previous_state is True or not satisfied:
+            return None
+
+        event_type = {
+            "volume_absolute": "alert.volume_absolute",
+            "volume_relative": "alert.volume_relative",
+            "rsi_threshold": "alert.rsi_threshold",
+        }[kind]
+        return {
+            "eventId": f"{alert['id']}:candle:{candle['timestamp']}:{kind}:{operator}",
+            "type": event_type,
+            "alertId": alert["id"],
+            "userSub": alert["user_sub"],
+            "symbol": candle["symbol"],
+            "direction": operator,
+            "value": value,
+            "threshold": threshold,
+            "interval": candle["interval"],
+            "metrics": metrics,
+            "triggeredAt": datetime.now(timezone.utc).isoformat(),
+            "sourceEventId": candle.get("sourceEventId"),
+            "alert": alert,
+        }
+
+
+class ReminderDispatcher:
+    def __init__(self, *, redis_client: Any, preference_repository: Any) -> None:
+        self.redis = redis_client
+        self.preference_repository = preference_repository
+        self.keys = RedisKeyBuilder()
+
+    def events_for_candle(
+        self,
+        candle: dict[str, Any],
+        candles: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        users = self._watchlist_users(candle["symbol"])
+        if not users:
+            return []
+        if candle["interval"] == "5m":
+            return self._volume_events(candle, candles, users)
+        if candle["interval"] == "1D":
+            return self._rsi_events(candle, candles, users)
+        return []
+
+    def _volume_events(
+        self,
+        candle: dict[str, Any],
+        candles: list[dict[str, Any]],
+        users: list[str],
+    ) -> list[dict[str, Any]]:
+        history = [
+            float(item["volume"])
+            for item in candles[:-1]
+            if _float_or_none(item.get("volume")) is not None
+        ][-20:]
+        if len(history) < 20:
+            return []
+        baseline = sum(history) / len(history)
+        if baseline <= 0:
+            return []
+        multiple = float(candle["volume"]) / baseline
+        events = []
+        for user_sub in users:
+            preferences = preference_response(self.preference_repository.get(user_sub))
+            threshold = _float_or_none(preferences["thresholds"].get("volumeSpikeMultiple")) or 3.0
+            satisfied = multiple >= threshold
+            if not self._condition_entry(user_sub, "volumeSpike", candle["symbol"], satisfied):
+                continue
+            if not self._allowed(preferences, "volumeSpike", candle["symbol"]):
+                continue
+            events.append({
+                "eventId": f"reminder:volume:{user_sub}:{candle['symbol']}:{candle['timestamp']}",
+                "type": "system.volume_spike",
+                "userSub": user_sub,
+                "symbol": candle["symbol"],
+                "kind": "volume_spike",
+                "interval": "5m",
+                "metrics": {
+                    "volume": candle["volume"],
+                    "baselineVolume": baseline,
+                    "volumeMultiple": multiple,
+                    "lookback": 20,
+                },
+                "title": f"{candle['symbol']} 거래량 이상 급증",
+                "summary": f"5분 거래량이 최근 평균의 {multiple:.1f}배입니다.",
+                "triggeredAt": datetime.now(timezone.utc).isoformat(),
+            })
+        return events
+
+    def _condition_entry(self, user_sub: str, setting: str, symbol: str, satisfied: bool) -> bool:
+        key = f"alerts:v1:reminder-state:{setting}:{user_sub}:{symbol}"
+        previous = self.redis.get(key)
+        self.redis.set(key, "1" if satisfied else "0")
+        return previous is not None and str(previous) == "0" and satisfied
+
+    def _rsi_events(
+        self,
+        candle: dict[str, Any],
+        candles: list[dict[str, Any]],
+        users: list[str],
+    ) -> list[dict[str, Any]]:
+        values = rsi([_float_or_none(item.get("close")) for item in candles], 14)
+        if len(values) < 2 or values[-1] is None or values[-2] is None:
+            return []
+        current = float(values[-1])
+        previous = float(values[-2])
+        band = "overbought" if current >= 70 and previous < 70 else "oversold" if current <= 30 and previous > 30 else None
+        if band is None:
+            return []
+        label = "과매수" if band == "overbought" else "과매도"
+        events = []
+        for user_sub in users:
+            preferences = preference_response(self.preference_repository.get(user_sub))
+            if not self._allowed(preferences, "rsiBand", candle["symbol"]):
+                continue
+            events.append({
+                "eventId": f"reminder:rsi:{user_sub}:{candle['symbol']}:{candle['timestamp']}:{band}",
+                "type": "system.rsi_band",
+                "userSub": user_sub,
+                "symbol": candle["symbol"],
+                "kind": "rsi_band",
+                "interval": "1D",
+                "metrics": {"rsi": current, "previousRsi": previous, "period": 14, "band": band},
+                "title": f"{candle['symbol']} RSI {label} 진입",
+                "summary": f"일봉 RSI(14)가 {current:.1f}로 {label} 구간에 진입했습니다.",
+                "triggeredAt": datetime.now(timezone.utc).isoformat(),
+            })
+        return events
+
+    def _watchlist_users(self, symbol: str) -> list[str]:
+        values = self.redis.smembers(self.keys.subscription_source_watchlist(symbol))
+        users = set()
+        for value in values:
+            if isinstance(value, bytes):
+                value = value.decode("utf-8")
+            normalized = str(value or "").strip()
+            if normalized and normalized != "__legacy__":
+                users.add(normalized)
+        return sorted(users)
+
+    def watchlist_symbols(self) -> list[str]:
+        values = self.redis.smembers(self.keys.subscription_source_symbols("watchlist"))
+        symbols = set()
+        for value in values:
+            normalized = value.decode("utf-8") if isinstance(value, bytes) else str(value or "")
+            normalized = normalized.strip().upper()
+            if normalized:
+                symbols.add(normalized)
+        return sorted(symbols)
+
+    @staticmethod
+    def _allowed(preferences: dict[str, Any], setting: str, symbol: str) -> bool:
+        return (
+            preferences["settings"].get("master") is True
+            and preferences["settings"].get(setting) is True
+            and preferences["companyOverrides"].get(symbol) is not False
+        )
 
 class AlertRedisOutbox:
     def __init__(self, redis_client: Any, stream: str = DEFAULT_OUTBOX_STREAM, maxlen: int = 100_000) -> None:
@@ -201,6 +473,8 @@ class AlertOutboxSender:
         stream: str,
         group: str,
         consumer_name: str,
+        preference_repository: Any | None = None,
+        projection: RedisAlertProjection | None = None,
     ) -> None:
         self.redis = redis_client
         self.repository = repository
@@ -210,6 +484,8 @@ class AlertOutboxSender:
         self.stream = stream
         self.group = group
         self.consumer_name = consumer_name
+        self.preference_repository = preference_repository
+        self.projection = projection
         self._group_ready = False
 
     def ensure_group(self) -> None:
@@ -256,23 +532,65 @@ class AlertOutboxSender:
         return delivered
 
     def deliver(self, payload: dict[str, Any]) -> dict[str, Any]:
-        notification = self.repository.create_notification(
-            user_sub=str(payload["userSub"]),
-            alert_id=int(payload["alertId"]) if payload.get("alertId") is not None else None,
-            event_id=str(payload["eventId"]),
-            notification_type=str(payload["type"]),
-            payload=payload,
-        )
-        websocket_payload = {
-            "type": "notification",
-            "notification": notification,
-            "event": payload,
-        }
-        self.broker.publish_user(str(payload["userSub"]), websocket_payload)
+        alert = payload.get("alert") if isinstance(payload.get("alert"), dict) else {}
+        get_alert = getattr(self.repository, "get_alert", None)
+        if callable(get_alert) and payload.get("alertId") is not None:
+            current_alert = get_alert(str(payload["userSub"]), int(payload["alertId"]))
+            if isinstance(current_alert, dict):
+                alert = current_alert
+        notification = None
+        notification_allowed = alert.get("notifications_enabled", True) is not False
+        skip_reason = "notifications_disabled"
+        if notification_allowed and self.preference_repository is not None:
+            preferences = preference_response(self.preference_repository.get(str(payload["userSub"])))
+            notification_allowed, skip_reason = notification_delivery_decision(
+                str(payload["type"]),
+                payload,
+                preferences,
+            )
+        if notification_allowed:
+            persist = getattr(self.repository, "persist_triggered_notification", None)
+            if callable(persist):
+                notification, updated_alert = persist(
+                    user_sub=str(payload["userSub"]),
+                    alert_id=int(payload["alertId"]) if payload.get("alertId") is not None else None,
+                    event_id=str(payload["eventId"]),
+                    notification_type=str(payload["type"]),
+                    payload=payload,
+                )
+            else:
+                notification = self.repository.create_notification_once(
+                    user_sub=str(payload["userSub"]),
+                    alert_id=int(payload["alertId"]) if payload.get("alertId") is not None else None,
+                    event_id=str(payload["eventId"]),
+                    notification_type=str(payload["type"]),
+                    payload=payload,
+                )
+                updated_alert = (
+                    self.repository.record_alert_trigger(str(payload["userSub"]), int(payload["alertId"]))
+                    if notification is not None and payload.get("alertId") is not None
+                    else None
+                )
+            if notification is not None:
+                if payload.get("alertId") is not None:
+                    if self.projection is not None:
+                        if not updated_alert or updated_alert.get("status") != "active":
+                            self.projection.delete_alert(payload["alertId"], symbol=payload.get("symbol"))
+                        else:
+                            self.projection.upsert_alert(updated_alert)
+                websocket_payload = {
+                    "type": "notification",
+                    "notification": notification,
+                    "event": payload,
+                    "updatedAlert": updated_alert,
+                }
+                self.broker.publish_user(str(payload["userSub"]), websocket_payload)
+            else:
+                skip_reason = "duplicate_event"
         future = self.producer.send(self.triggered_topic, key=str(payload.get("symbol") or payload["alertId"]), value=payload)
         if hasattr(future, "get"):
             future.get(timeout=float(os.getenv("ALERT_KAFKA_SEND_TIMEOUT_SECONDS", "10")))
-        return notification
+        return notification or {"skipped": True, "reason": skip_reason, "eventId": payload.get("eventId")}
 
 
 def run() -> None:
@@ -280,7 +598,10 @@ def run() -> None:
         raise RuntimeError("redis package is not installed")
     kafka_servers = _required_env("KAFKA_BOOTSTRAP_SERVERS")
     redis_url = _required_env("REDIS_URL")
-    input_topic = os.getenv("ALERT_EVALUATOR_INPUT_TOPIC", os.getenv("KAFKA_TRADES_LAYER_TOPIC", DEFAULT_INPUT_TOPIC))
+    input_topics = _csv_values(os.getenv("ALERT_EVALUATOR_INPUT_TOPICS"))
+    if not input_topics:
+        legacy_input = os.getenv("ALERT_EVALUATOR_INPUT_TOPIC")
+        input_topics = [legacy_input] if legacy_input else list(DEFAULT_INPUT_TOPICS)
     triggered_topic = os.getenv("ALERT_TRIGGERED_TOPIC", DEFAULT_TRIGGERED_TOPIC)
     group_id = os.getenv("ALERT_EVALUATOR_GROUP_ID", DEFAULT_GROUP_ID)
     dlq_topic = os.getenv("ALERT_DLQ_TOPIC", DEFAULT_DLQ_TOPIC)
@@ -291,17 +612,28 @@ def run() -> None:
 
     redis_client = redis.from_url(redis_url, decode_responses=True)
     repository = PostgresAlertRepository.from_env()
+    preference_repository = PostgresNotificationPreferenceRepository.from_env()
     projection = RedisAlertProjection(redis_client)
     producer = create_json_producer(kafka_servers, "gops-alert-evaluator")
     consumer = create_json_consumer(
-        [input_topic],
+        input_topics,
         kafka_servers,
         group_id,
         "gops-alert-evaluator",
         enable_auto_commit=False,
     )
     outbox = AlertRedisOutbox(redis_client, stream=outbox_stream)
-    evaluator = AlertEvaluator(repository=repository, projection=projection, outbox=outbox)
+    evaluator = AlertEvaluator(
+        repository=repository,
+        projection=projection,
+        outbox=outbox,
+        preference_repository=preference_repository,
+        reminder_dispatcher=ReminderDispatcher(
+            redis_client=redis_client,
+            preference_repository=preference_repository,
+        ),
+        history_loader=ClickHouseMarketDataProvider().candles,
+    )
     sender = AlertOutboxSender(
         redis_client=redis_client,
         repository=repository,
@@ -311,13 +643,15 @@ def run() -> None:
         stream=outbox_stream,
         group=outbox_group,
         consumer_name=consumer_name,
+        preference_repository=preference_repository,
+        projection=projection,
     )
 
     evaluator.reconcile_active_alerts()
     next_reconcile_at = time.monotonic() + reconcile_seconds
     print(
         "Alert evaluator started: "
-        f"kafka={kafka_servers} input={input_topic} triggered={triggered_topic} redis={redis_url}",
+        f"kafka={kafka_servers} inputs={input_topics} triggered={triggered_topic} redis={redis_url}",
         flush=True,
     )
     while True:
@@ -326,7 +660,7 @@ def run() -> None:
             processed = False
             for _partition, partition_records in records.items():
                 for record in partition_records:
-                    evaluator.process_trade(record.value)
+                    evaluator.process_message(record.value, record.topic)
                     processed = True
             if processed:
                 consumer.commit()
@@ -367,6 +701,45 @@ def parse_trade(payload: dict[str, Any]) -> dict[str, Any] | None:
         "sourceEventId": payload.get("sourceEventId"),
         "tradeId": payload.get("tradeId") or payload.get("i"),
     }
+
+
+def parse_candle(payload: dict[str, Any], topic: str = "") -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    symbol_value = payload.get("symbol")
+    close = _float_or_none(payload.get("close") or payload.get("c"))
+    volume = _float_or_none(payload.get("volume") if payload.get("volume") is not None else payload.get("v"))
+    if not isinstance(symbol_value, str) or close is None or volume is None or volume < 0:
+        return None
+    try:
+        symbol = normalize_market_symbol(symbol_value)
+    except Exception:
+        return None
+    interval = _normalize_candle_interval(payload.get("interval"), topic)
+    if interval is None:
+        return None
+    timestamp = str(payload.get("timestamp") or payload.get("t") or datetime.now(timezone.utc).isoformat())
+    return {
+        "symbol": symbol,
+        "interval": interval,
+        "timestamp": timestamp,
+        "timestampMs": _timestamp_ms(timestamp),
+        "open": _float_or_none(payload.get("open") or payload.get("o")),
+        "high": _float_or_none(payload.get("high") or payload.get("h")),
+        "low": _float_or_none(payload.get("low") or payload.get("l")),
+        "close": close,
+        "volume": volume,
+        "sourceEventId": payload.get("sourceEventId"),
+    }
+
+
+def _normalize_candle_interval(value: Any, topic: str) -> str | None:
+    raw = str(value or "").strip()
+    if not raw:
+        match = re.search(r"\.candles\.([^.]+)\.closed\.", topic)
+        raw = match.group(1) if match else ""
+    normalized = "1D" if raw.lower() == "1d" else raw.lower()
+    return normalized if normalized in {"1m", "5m", "10m", "1h", "4h", "1D"} else None
 
 
 def _payload_from_stream_fields(fields: dict[str, Any]) -> dict[str, Any]:
@@ -423,6 +796,10 @@ def _required_env(name: str) -> str:
     if not value:
         raise RuntimeError(f"{name} is required")
     return value
+
+
+def _csv_values(value: str | None) -> list[str]:
+    return [item.strip() for item in str(value or "").split(",") if item.strip()]
 
 
 if __name__ == "__main__":

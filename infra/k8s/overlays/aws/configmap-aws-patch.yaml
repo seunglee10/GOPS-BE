@@ -154,6 +154,7 @@ data:
   KAFKA_NEWS_TOPIC: market.news.alpaca.v1
   KAFKA_NEWS_DAILY_SUMMARY_DIRTY_TOPIC: market.news.daily-summary-dirty.v1
   ALERT_EVALUATOR_INPUT_TOPIC: market.layer.trades.v1
+  ALERT_EVALUATOR_INPUT_TOPICS: market.layer.trades.v1,market.layer.candles.1m.closed.v1,market.layer.candles.5m.closed.v1,market.layer.candles.10m.closed.v1,market.layer.candles.1h.closed.v1,market.layer.candles.4h.closed.v1,market.layer.candles.1d.closed.v1
   ALERT_TRIGGERED_TOPIC: alerts.triggered.v1
   ALERT_DLQ_TOPIC: alerts.dlq.v1
   ALERT_EVALUATOR_GROUP_ID: gops-alert-evaluator
@@ -161,6 +162,11 @@ data:
   ALERT_OUTBOX_STREAM: alerts:outbox
   ALERT_OUTBOX_GROUP: gops-alert-outbox-senders
   ALERT_RECONCILE_INTERVAL_SECONDS: "60"
+  TRADE_CONDITION_COMMANDS_ENABLED: "true"
+  TRADE_CONDITION_TRIGGER_TOPIC: alerts.triggered.v1
+  TRADE_CONDITION_EXECUTOR_GROUP_ID: gops-trade-condition-executor-v1
+  TRADE_CONDITION_EXECUTION_MODE: demo
+  TRADE_CONDITION_RISK_REQUIRED: "true"
   RECOMMENDATION_WORKER_POLL_SECONDS: "1800"
   CHART_INDICATOR_CACHE_TTL_SECONDS: "300"
   CHART_VOLUME_PROFILE_CACHE_TTL_SECONDS: "30"
@@ -261,7 +267,7 @@ data:
   AGENT_EVENT_INPUT_TOPICS: market.layer.trades.v1,market.layer.candles.1m.closed.v1,market.layer.candles.5m.closed.v1,market.layer.candles.10m.closed.v1,market.layer.candles.1h.closed.v1,market.layer.candles.4h.closed.v1,market.layer.candles.1d.closed.v1,market.layer.candles.1w.closed.v1,market.layer.candles.1mo.closed.v1,market.layer.events.v1
   AGENT_MARKET_EVENTS_TOPIC: agents.market-events.v1
   AGENT_ANALYSIS_REQUESTS_TOPIC: agents.analysis-requests.v1
-  CHART_ASSET_BUILD_CONCURRENCY: "4"
+  CHART_ASSET_BUILD_CONCURRENCY: "2"
   CHART_ASSET_REPAIR_ENABLED: "true"
   CHART_ASSET_REPAIR_ALPACA_ENABLED: "true"
   CHART_ASSET_REPAIR_CONCURRENCY: "2"
@@ -272,13 +278,18 @@ data:
   AGENT_NOTIFICATION_DECISIONS_TOPIC: agents.notification-decisions.v1
   AGENT_DLQ_TOPIC: agents.dlq.v1
   AGENT_PUBLISH_TO_KAFKA: "true"
-  AGENT_REPORT_STORE_BACKEND: auto
+  AGENT_OUTPUT_KAFKA_REQUIRED: "true"
+  AGENT_REPORT_STORE_BACKEND: redis
   AGENT_REPORT_TTL_SECONDS: "43200"
   AGENT_REPORT_STREAM_REDIS_ENABLED: "true"
   AGENT_REPORT_UPDATES_CHANNEL: agent.reports
   AGENT_IDEMPOTENCY_TTL_SECONDS: "43200"
   AGENT_IDEMPOTENCY_KEY_PREFIX: agent:request:idempotency
-  AGENT_ANALYSIS_QUEUE_BACKEND: auto
+  AGENT_ANALYSIS_QUEUE_BACKEND: kafka
+  AI_COACH_SNAPSHOT_ARCHIVE_ENABLED: "true"
+  AI_COACH_SNAPSHOT_ARCHIVE_REQUIRED: "true"
+  AI_COACH_SNAPSHOT_S3_BUCKET: alfaka-dev-ai-coach-snapshots-<aws-account-id>-ap-northeast-2
+  AI_COACH_SNAPSHOT_S3_PREFIX: ai-coach/snapshots
   AGENT_INTENT_CLASSIFIER_PROVIDER: deterministic
   AGENT_INTENT_CLASSIFIER_URL: http://agent-intent-classifier:8120/classify
   AGENT_INTENT_CLASSIFIER_TIMEOUT_SECONDS: "2.5"

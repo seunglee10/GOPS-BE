@@ -48,6 +48,7 @@ class OrderRepository(Protocol):
         idempotency_key_hash: str,
         body_hash: str,
         command: OrderCommand,
+        user_sub: str | None = None,
     ) -> OrderCreationResult:
         ...
 

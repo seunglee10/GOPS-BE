@@ -7,6 +7,7 @@ resources:
   - namespace.yaml
   - configmap.yaml
   - serviceaccount-irsa.example.yaml
+  - serviceaccount-ai-coach-worker.yaml
   - statefulset-graphdb.yaml
   - deployment-agent-orchestrator.yaml
   - deployment-agent-intent-classifier.yaml
@@ -29,8 +30,10 @@ resources:
   - deployment-news-intelligence-worker.yaml
   - deployment-news-daily-summary-worker.yaml
   - deployment-alert-evaluator.yaml
+  - deployment-trade-condition-executor.yaml
   - deployment-recommendation-worker.yaml
   - deployment-order-outbox-publisher.yaml
+  - deployment-paper-order-matcher.yaml
   - deployment-kis-broker-adapter.yaml
   - deployment-gops-backend.yaml
   - deployment-gops-frontend.yaml

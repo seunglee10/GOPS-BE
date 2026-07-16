@@ -659,18 +659,19 @@ all supported overrides. Role safety settings such as Kafka auto-commit and
 being global `.env` knobs.
 
 Canonical Alpaca historical fill uses `adjustment=split` and writes
-`priceAdjustment=split`, `canonicalVersion=v2`. Historical fill now uses direct
-Alpaca REST timeframes for every canonical interval: `1Min`, `5Min`, `10Min`,
-`1Hour`, `4Hour`, `1Day`, `1Week`, and `1Month`. Realtime live/provisional
-candles are still locally aggregated from live source bars where needed.
+`priceAdjustment=split`, `canonicalVersion=v2`. US-equity repair uses `1Min`
+for target `1m/5m/10m`, `10Min` for target `1h/4h`, and `1Day` for `1D`.
+Realtime live/provisional candles are still locally aggregated from live `1m`
+source bars where needed.
 Intraday equity historical fill is session-routed before calling Alpaca REST:
 `pre`, `regular`, and `after` ranges are fetched from the configured historical
 feed, while `overnight` ranges are marked as BOATS-only and are not fetched
 through the SIP historical path. The per-request `fill.feedRoutes` trace shows
 which sub-ranges were `fetchable` and which were skipped because they require
 the live/on-demand BOATS subscription path.
-ClickHouse serving prefers stored direct interval rows and falls back to
-query-time aggregation from `1m` or `1D` only when direct rows are missing.
+ClickHouse serving prefers stored direct interval rows. Hourly intervals fall
+back to query-time `10m` aggregation and then legacy `1m`; other intraday
+derived intervals fall back to `1m`, while weekly/monthly use `1D`.
 Stored `1m` serving includes `priceAdjustment=live` closed realtime bars in
 addition to `split`; `1D` and historical canonical materialization remain
 `split` only. Raw S3 backup objects are not a fill source. Retry settings are

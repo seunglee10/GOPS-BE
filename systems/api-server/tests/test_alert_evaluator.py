@@ -15,6 +15,8 @@ for path in (str(MARKET_SHARED), str(ORDER_SHARED), str(BACKEND), str(ROOT)):
 
 try:
     from app.alerts.evaluator import AlertEvaluator, AlertOutboxSender, _entries_from_xautoclaim
+    from app.alerts.notifications import notification_delivery_decision, notification_setting_for_item
+    from app.alerts.preferences import preference_response
 except Exception as exc:  # pragma: no cover - dependency guard for lean envs
     pytest.skip(f"alert evaluator tests are unavailable: {exc}", allow_module_level=True)
 
@@ -26,6 +28,7 @@ class FakeProjection:
         self.seen = set()
         self.deleted = []
         self.upserted = []
+        self.condition_states = {}
 
     def replace_all(self, active_alerts):
         self.alerts = active_alerts
@@ -61,12 +64,20 @@ class FakeProjection:
     def upsert_alert(self, alert):
         self.upserted.append(alert)
 
+    def condition_state(self, alert_id):
+        return self.condition_states.get(alert_id)
+
+    def set_condition_state(self, alert_id, satisfied):
+        self.condition_states[alert_id] = bool(satisfied)
+
 
 class FakeRepository:
-    def __init__(self, trigger_result=None):
+    def __init__(self, trigger_result=None, alert=None):
         self.trigger_result = trigger_result
+        self.alert = alert
         self.trigger_records = []
         self.notifications = []
+        self.notification_event_ids = set()
 
     def active_alerts(self):
         return []
@@ -81,6 +92,22 @@ class FakeRepository:
         self.notifications.append(kwargs)
         return {"id": 1, **kwargs}
 
+    def create_notification_once(self, **kwargs):
+        if kwargs["event_id"] in self.notification_event_ids:
+            return None
+        self.notification_event_ids.add(kwargs["event_id"])
+        return self.create_notification(**kwargs)
+
+    def persist_triggered_notification(self, **kwargs):
+        notification = self.create_notification_once(**kwargs)
+        if notification is None:
+            return None, None
+        updated = self.record_alert_trigger(kwargs["user_sub"], kwargs["alert_id"]) if kwargs["alert_id"] is not None else None
+        return notification, updated
+
+    def get_alert(self, user_sub, alert_id):
+        return self.alert
+
 
 class FakeOutbox:
     def __init__(self):
@@ -89,6 +116,14 @@ class FakeOutbox:
     def enqueue(self, payload):
         self.events.append(payload)
         return "1-0"
+
+
+class FakePreferenceRepository:
+    def __init__(self, row):
+        self.row = row
+
+    def get(self, user_sub):
+        return self.row
 
 
 def test_price_cross_event_prefers_source_event_id_and_fires_once() -> None:
@@ -130,8 +165,8 @@ def test_price_cross_event_prefers_source_event_id_and_fires_once() -> None:
 
     assert events[0]["eventId"] == "7:source-1:above"
     assert outbox.events[0]["eventId"] == "7:source-1:above"
-    assert repo.trigger_records == [("user-1", 7)]
-    assert projection.deleted == [(7, "NVDA")]
+    assert repo.trigger_records == []
+    assert projection.deleted == []
     assert duplicate == []
 
 
@@ -163,8 +198,8 @@ def test_repeat_limited_alert_stays_active_until_limit_is_reached() -> None:
     )
 
     assert events[0]["eventId"] == "9:source-2:above"
-    assert repo.trigger_records == [("user-1", 9)]
-    assert projection.upserted == [updated_alert]
+    assert repo.trigger_records == []
+    assert projection.upserted == []
     assert projection.deleted == []
 
 
@@ -188,6 +223,136 @@ def test_first_trade_seeds_last_price_without_triggering() -> None:
 
     assert events == []
     assert projection.last["AAPL"] == 106
+
+
+def test_volume_relative_rule_fires_only_when_it_reenters_true() -> None:
+    alert = {
+        "id": 20,
+        "user_sub": "user-1",
+        "symbol": "NVDA",
+        "type": "volume_relative",
+        "direction": "above",
+        "condition": {
+            "kind": "volume_relative",
+            "operator": "above",
+            "threshold": 2,
+            "interval": "5m",
+            "lookback": 20,
+        },
+    }
+
+    class CandleProjection(FakeProjection):
+        def __init__(self):
+            super().__init__([alert])
+            self.candles = []
+
+        def remember_candle(self, candle):
+            self.candles.append(candle)
+            return list(self.candles)
+
+        def metric_alerts(self, symbol, interval):
+            return [alert] if symbol == "NVDA" and interval == "5m" else []
+
+    projection = CandleProjection()
+    outbox = FakeOutbox()
+    evaluator = AlertEvaluator(repository=FakeRepository(), projection=projection, outbox=outbox)
+    for index in range(21):
+        evaluator.process_candle({
+            "symbol": "NVDA",
+            "interval": "5m",
+            "timestamp": f"2026-07-06T01:{index:02d}:00Z",
+            "close": 100,
+            "volume": 100,
+        }, "market.layer.candles.5m.closed.v1")
+    events = evaluator.process_candle({
+        "symbol": "NVDA",
+        "interval": "5m",
+        "timestamp": "2026-07-06T01:21:00Z",
+        "close": 100,
+        "volume": 300,
+    }, "market.layer.candles.5m.closed.v1")
+    still_true = evaluator.process_candle({
+        "symbol": "NVDA",
+        "interval": "5m",
+        "timestamp": "2026-07-06T01:22:00Z",
+        "close": 100,
+        "volume": 300,
+    }, "market.layer.candles.5m.closed.v1")
+
+    assert len(events) == 1
+    assert events[0]["type"] == "alert.volume_relative"
+    assert events[0]["metrics"]["volumeMultiple"] == pytest.approx(3)
+    assert still_true == []
+    assert len(outbox.events) == 1
+
+
+def test_spike_evaluator_uses_rule_threshold_and_only_fires_on_false_to_true_edge() -> None:
+    alert = {
+        "id": 12,
+        "user_sub": "user-1",
+        "symbol": "NVDA",
+        "type": "spike",
+        "direction": None,
+        "change_pct": 5,
+        "window_min": 10,
+        "repeat": False,
+        "repeat_limit": 1,
+        "triggered_count": 0,
+    }
+
+    class SpikeProjection(FakeProjection):
+        def price_cross_candidates(self, symbol, low, high):
+            return []
+
+        def spike_alerts(self, symbol):
+            return [alert]
+
+        def baseline_price(self, symbol, timestamp_ms):
+            return {"price": 100}
+
+    preferences = FakePreferenceRepository({
+        "settings": {
+            "settings": {"master": True, "rapidMove": True},
+            "thresholds": {"rapidMovePct": 10},
+        },
+        "company_overrides": {},
+    })
+    projection = SpikeProjection([alert])
+    repo = FakeRepository()
+    outbox = FakeOutbox()
+    evaluator = AlertEvaluator(
+        repository=repo,
+        projection=projection,
+        outbox=outbox,
+        preference_repository=preferences,
+    )
+
+    initially_true = evaluator.process_trade({
+        "symbol": "NVDA",
+        "price": 105,
+        "timestamp": "2026-07-06T01:00:00Z",
+        "sourceEventId": "below-preference",
+    })
+    reset = evaluator.process_trade({
+        "symbol": "NVDA",
+        "price": 100,
+        "timestamp": "2026-07-06T01:00:30Z",
+        "sourceEventId": "reset-condition",
+    })
+    reached = evaluator.process_trade({
+        "symbol": "NVDA",
+        "price": 106,
+        "timestamp": "2026-07-06T01:01:00Z",
+        "sourceEventId": "at-preference",
+    })
+
+    assert initially_true == []
+    assert reset == []
+    assert reached[0]["changePct"] == pytest.approx(6)
+    assert reached[0]["thresholdPct"] == 5
+    assert reached[0]["alertThresholdPct"] == 5
+    assert "preferenceThresholdPct" not in reached[0]
+    assert repo.trigger_records == []
 
 
 def test_outbox_sender_publishes_even_when_notification_event_is_duplicate() -> None:
@@ -230,9 +395,161 @@ def test_outbox_sender_publishes_even_when_notification_event_is_duplicate() -> 
     sender.deliver(payload)
     sender.deliver(payload)
 
-    assert len(repo.notifications) == 2
-    assert len(broker.published) == 2
+    assert len(repo.notifications) == 1
+    assert len(broker.published) == 1
     assert len(producer.sent) == 2
+
+
+def test_outbox_sender_skips_user_notification_but_keeps_execution_event_when_disabled() -> None:
+    class Broker:
+        def __init__(self):
+            self.published = []
+
+        def publish_user(self, user_sub, payload):
+            self.published.append((user_sub, payload))
+
+    class Producer:
+        def __init__(self):
+            self.sent = []
+
+        def send(self, topic, key, value):
+            self.sent.append((topic, key, value))
+            return None
+
+    repo = FakeRepository(alert={"id": 1, "notifications_enabled": False})
+    broker = Broker()
+    producer = Producer()
+    sender = AlertOutboxSender(
+        redis_client=None,
+        repository=repo,
+        broker=broker,
+        producer=producer,
+        triggered_topic="alerts.triggered.v1",
+        stream="alerts:outbox",
+        group="group",
+        consumer_name="consumer",
+    )
+    payload = {
+        "eventId": "event-no-notification",
+        "type": "alert.price_cross",
+        "alertId": 1,
+        "userSub": "user-1",
+        "symbol": "NVDA",
+    }
+
+    result = sender.deliver(payload)
+
+    assert result["reason"] == "notifications_disabled"
+    assert repo.notifications == []
+    assert broker.published == []
+    assert len(producer.sent) == 1
+
+
+def test_outbox_sender_keeps_custom_rule_independent_from_generic_threshold() -> None:
+    class Broker:
+        def __init__(self):
+            self.published = []
+
+        def publish_user(self, user_sub, payload):
+            self.published.append((user_sub, payload))
+
+    class Producer:
+        def __init__(self):
+            self.sent = []
+
+        def send(self, topic, key, value):
+            self.sent.append((topic, key, value))
+            return None
+
+    preferences = FakePreferenceRepository({
+        "settings": {
+            "settings": {"master": True, "rapidMove": True},
+            "thresholds": {"rapidMovePct": 10},
+        },
+        "company_overrides": {},
+    })
+    repo = FakeRepository()
+    broker = Broker()
+    producer = Producer()
+    sender = AlertOutboxSender(
+        redis_client=None,
+        repository=repo,
+        broker=broker,
+        producer=producer,
+        triggered_topic="alerts.triggered.v1",
+        stream="alerts:outbox",
+        group="group",
+        consumer_name="consumer",
+        preference_repository=preferences,
+    )
+
+    result = sender.deliver({
+        "eventId": "event-below-user-threshold",
+        "type": "alert.spike",
+        "alertId": 1,
+        "userSub": "user-1",
+        "symbol": "NVDA",
+        "changePct": 5,
+    })
+
+    assert result["event_id"] == "event-below-user-threshold"
+    assert len(repo.notifications) == 1
+    assert len(broker.published) == 1
+    assert len(producer.sent) == 1
+
+
+@pytest.mark.parametrize(
+    ("settings", "company_overrides", "expected_reason"),
+    [
+        ({"master": False, "targetPrice": True}, {}, "master_disabled"),
+        ({"master": True, "targetPrice": True}, {"NVDA": False}, "company_muted"),
+    ],
+)
+def test_notification_preferences_block_target_price_delivery(settings, company_overrides, expected_reason) -> None:
+    preferences = preference_response({
+        "settings": {"settings": settings, "thresholds": {}},
+        "company_overrides": company_overrides,
+    })
+
+    allowed, reason = notification_delivery_decision(
+        "alert.price_cross",
+        {"symbol": "NVDA"},
+        preferences,
+    )
+
+    assert allowed is False
+    assert reason == expected_reason
+
+
+def test_agent_event_routing_and_volume_thresholds_follow_new_contract() -> None:
+    preferences = preference_response({
+        "settings": {
+            "settings": {"master": True, "volumeSpike": True, "aiAnomaly": True},
+            "thresholds": {"volumeSpikeMultiple": 5},
+        },
+        "company_overrides": {},
+    })
+    volume_payload = {
+        "decision": {"symbol": "NVDA", "eventType": "volume_spike", "metrics": {"multiplier": 3}},
+    }
+
+    assert notification_setting_for_item("AGENT_ALERT", {
+        "decision": {"eventType": "risk_anomaly_surge"},
+    }) == "aiAnomaly"
+    assert notification_setting_for_item("AGENT_ALERT", {
+        "decision": {"eventType": "earnings"},
+    }) is None
+    assert notification_delivery_decision("system.earnings_d1", {
+        "kind": "earnings_d1",
+        "symbol": "NVDA",
+    }, preferences) == (False, "event_excluded")
+    assert notification_delivery_decision("AGENT_ALERT", volume_payload, preferences) == (
+        False,
+        "volume_spike_below_threshold",
+    )
+    assert notification_delivery_decision("AGENT_ALERT", {
+        "decision": {"symbol": "NVDA", "eventType": "company_news"},
+    }, preferences) == (False, "event_excluded")
 
 
 def test_outbox_sender_ensures_group_once_after_busygroup() -> None:

@@ -41,7 +41,7 @@ class AnalysisEvalFixtureTest(unittest.TestCase):
         second = analyze_geometry("NVDA", "1D", rows)
 
         self.assertEqual(first, second)
-        self.assertLessEqual(len(first["drawings"]), 6)
+        self.assertLessEqual(len(first["drawings"]), 8)
         self.assertLessEqual(len(first["supports"]), 2)
         self.assertLessEqual(len(first["resistances"]), 2)
         timestamps = {row["timestamp"] for row in rows}
@@ -49,7 +49,8 @@ class AnalysisEvalFixtureTest(unittest.TestCase):
             self.assertIn(drawing["type"], {"horizontalLine", "trendLine"})
             self.assertEqual((drawing["symbol"], drawing["interval"]), ("NVDA", "1D"))
             self.assertEqual(drawing["sourceInterval"], "1D")
-            self.assertEqual(drawing["style"]["lineStyle"], "solid")
+            expected_line_style = "dashed" if ":level:" in drawing["id"] else "solid"
+            self.assertEqual(drawing["style"]["lineStyle"], expected_line_style)
             for anchor in drawing["anchors"]:
                 self.assertIn(anchor["timestamp"], timestamps)
 

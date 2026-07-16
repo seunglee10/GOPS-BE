@@ -22,10 +22,12 @@ def normalize_account_holdings(
     positions.sort(key=lambda position: position.get("marketValueKrw") or position.get("marketValueForeign") or 0, reverse=True)
 
     account = _normalize_account(summary, market=normalized_market, account_alias=account_alias, currency=currency)
+    if account["stockValueForeign"] is None:
+        account["stockValueForeign"] = _sum_present(position.get("marketValueForeign") for position in positions)
     if account["totalValueKrw"] is None:
         account["totalValueKrw"] = _sum_present(position.get("marketValueKrw") for position in positions)
     if account["totalValueForeign"] is None:
-        account["totalValueForeign"] = _sum_present(position.get("marketValueForeign") for position in positions)
+        account["totalValueForeign"] = _sum_present((account["stockValueForeign"], account["cashForeign"]))
     if account["unrealizedPnlKrw"] is None:
         account["unrealizedPnlKrw"] = _sum_present(position.get("unrealizedPnlKrw") for position in positions)
     if account["unrealizedPnlForeign"] is None:
@@ -65,11 +67,11 @@ def _normalize_account(summary: dict[str, Any], *, market: str, account_alias: s
         "market": market,
         "currency": "KRW" if market == "domestic" else currency.upper(),
         "cashKrw": _number(_first(summary, ("dnca_tot_amt", "cash_krw", "tot_ccld_amt"))),
-        "cashForeign": _number(_first(summary, ("frcr_use_psbl_amt", "ord_psbl_cash", "cash_foreign", "frcr_buy_amt_smtl1"))),
+        "cashForeign": _number(_first(summary, ("frcr_use_psbl_amt", "ord_psbl_cash", "cash_foreign"))),
         "stockValueKrw": _number(_first(summary, ("scts_evlu_amt", "ovrs_stck_evlu_amt", "stock_value_krw"))),
-        "stockValueForeign": _number(_first(summary, ("frcr_evlu_tota", "ovrs_stck_evlu_amt", "stock_value_foreign"))),
+        "stockValueForeign": _number(_first(summary, ("ovrs_stck_evlu_amt", "stock_value_foreign"))),
         "totalValueKrw": _number(_first(summary, ("tot_evlu_amt", "tot_asst_amt", "total_value_krw"))),
-        "totalValueForeign": _number(_first(summary, ("frcr_evlu_tota", "tot_evlu_amt", "total_value_foreign"))),
+        "totalValueForeign": _number(_first(summary, ("total_value_foreign",))),
         "unrealizedPnlKrw": _number(_first(summary, ("evlu_pfls_smtl_amt", "tot_evlu_pfls_amt", "unrealized_pnl_krw"))),
         "unrealizedPnlForeign": _number(_first(summary, ("ovrs_tot_pfls", "tot_evlu_pfls_amt", "unrealized_pnl_foreign"))),
         "unrealizedPnlRate": _number(_first(summary, ("asst_icdc_erng_rt", "tot_pftrt", "rlzt_erng_rt", "unrealized_pnl_rate"))),
@@ -143,6 +145,8 @@ def _limitations(account: dict[str, Any], positions: list[dict[str, Any]], marke
     limitations = []
     if market == "overseas" and account["cashKrw"] is None:
         limitations.append("KIS overseas balance response may not include KRW cash fields.")
+    if market == "overseas" and account["cashForeign"] is None:
+        limitations.append("KIS overseas balance response did not include foreign-currency cash.")
     if positions and all(position.get("marketValueKrw") is None for position in positions):
         limitations.append("KIS response did not include KRW valuation for positions.")
     return limitations

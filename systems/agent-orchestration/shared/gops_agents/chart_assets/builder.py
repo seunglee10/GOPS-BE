@@ -54,6 +54,15 @@ class ChartAssetBuilder:
             self.progress.record_item(envelope.job_id, item)
             return item
         try:
+            if envelope.source == "scheduled":
+                item = _item(symbol, interval, "skipped", "policy", started, reason="manual_refresh_only")
+                self.progress.record_item(envelope.job_id, item)
+                return item
+            existing = self.storage.get(symbol, interval)
+            if existing and not envelope.force:
+                item = _item(symbol, interval, "unchanged", "policy", started, reason="existing_asset_preserved")
+                self.progress.record_item(envelope.job_id, item)
+                return item
             repair = self._repair(envelope, symbol, interval)
             bundle = self.candle_loader.load_symbol(symbol, [interval])
             rows = list(bundle.rows[interval])
@@ -78,7 +87,6 @@ class ChartAssetBuilder:
                 return item
             coverage_state = "full" if len(rows) >= TARGET_BARS[interval] and coverage.get("missingBars", 0) == 0 else "partial"
             input_digest = bundle.digests[interval]
-            existing = self.storage.get(symbol, interval)
             if (
                 not envelope.force and existing
                 and existing.get("assetVersion") == ASSET_VERSION
@@ -115,6 +123,9 @@ class ChartAssetBuilder:
                     "drawings": result["drawings"],
                     "supports": result["supports"],
                     "resistances": result["resistances"],
+                    "patterns": result["patterns"],
+                    "primaryPattern": result["primaryPattern"],
+                    "tradePlan": result["tradePlan"],
                     "primaryTriangle": result["primaryTriangle"],
                     "historicalTriangle": result["historicalTriangle"],
                     "evidence": result["evidence"],

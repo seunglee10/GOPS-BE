@@ -1,0 +1,98 @@
+{
+  "scenarioId": "saturday-demo-amd-iff-oke",
+  "title": "Saturday operator demo · AMD, OKE",
+  "durationSeconds": 300,
+  "breakingNewsAtSeconds": 210,
+  "seedPrices": {
+    "AMD": 565.0,
+    "OKE": 90.0
+  },
+  "symbols": [
+    "AMD",
+    "OKE"
+  ],
+  "phases": [
+    {
+      "id": "market-overview",
+      "label": "시장 조망",
+      "atSeconds": 0,
+      "summary": "AMD와 OKE의 자연스러운 체결·호가 흐름을 관찰합니다."
+    },
+    {
+      "id": "breaking-event",
+      "label": "지정학 이벤트",
+      "atSeconds": 210,
+      "summary": "반도체 약세와 에너지 강세에 대응합니다."
+    },
+    {
+      "id": "market-close",
+      "label": "장 마감·복기",
+      "atSeconds": 285,
+      "summary": "주문·알림 상태와 오늘의 판단을 리포트로 복기합니다."
+    }
+  ],
+  "source": {
+    "provider": "GOPS deterministic scenario generator",
+    "feed": "simulation",
+    "marketSession": "regular",
+    "synthetic": true,
+    "generatedEventCount": 1200,
+    "notice": "시연 전용 합성 체결·호가이며 실제 시장 데이터가 아닙니다."
+  },
+  "recommendations": [
+    {
+      "symbol": "AMD",
+      "rank": 1,
+      "score": 84,
+      "confidence": 0.79,
+      "sector": "Information Technology",
+      "changePercent": 0.6,
+      "reasons": [
+        "거래량 회복",
+        "지지 구간 재확인"
+      ],
+      "riskWarnings": [
+        "반도체 집중 위험"
+      ]
+    },
+    {
+      "symbol": "OKE",
+      "rank": 2,
+      "score": 78,
+      "confidence": 0.74,
+      "sector": "Energy",
+      "changePercent": 0.2,
+      "reasons": [
+        "에너지 업종 분산",
+        "이벤트 헤지 후보"
+      ],
+      "riskWarnings": [
+        "뉴스 민감도 높음"
+      ]
+    }
+  ],
+  "chartAnalysis": {
+    "symbol": "AMD",
+    "pattern": "이벤트 대응 패턴",
+    "support": 525.5,
+    "resistance": 566.2,
+    "entry": 530.5,
+    "stop": 524.0,
+    "summary": "알림 후 5초간 가격을 유지하고 약 60초 동안 점진적으로 하락하는 대응 시나리오입니다."
+  },
+  "eventResponse": {
+    "riskSymbol": "AMD",
+    "beneficiarySymbol": "OKE",
+    "summary": "AMD 손절 기준과 알림을 관리하고 OKE 매수 타점을 제안합니다."
+  },
+  "breakingNews": {
+    "id": "simulated-geopolitical-risk",
+    "headline": "중동 지정학적 긴장 고조…반도체 약세·에너지 강세",
+    "summary": "중동 지역의 지정학적 긴장이 고조되면서 반도체 업종에 매도 압력이 확대되고 에너지 관련주는 강세를 보이고 있습니다.",
+    "source": "GOPS Market Wire",
+    "symbols": [
+      "AMD",
+      "OKE"
+    ]
+  }
+}

@@ -88,6 +88,10 @@ derived-result Redis state.
 Legacy keys such as `price:*`, `candle:*`, and `candles:*` are reset targets
 only; do not add new chart state that depends on them. `market.events*` remains
 the existing pub/sub fanout path for live updates, not durable Redis state.
+US-equity live `5m/10m/1h/4h` values may use
+`bucketPolicy=us_equity_extended_session` while pre, after, or overnight trading
+is active. They are rebuilt from bounded `1m` state and expire as live state;
+Redis does not retain historical extended-session aggregates.
 
 Chart asset v2 adds `completed_with_warnings`, `saved_with_warning`, and
 `unchanged` to the existing job/item status vocabulary. Digests, candidate

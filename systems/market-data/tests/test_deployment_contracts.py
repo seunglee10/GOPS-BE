@@ -58,20 +58,28 @@ class DeploymentContractsTest(unittest.TestCase):
         self.assertNotIn("job-chart-asset-migrations.yaml", base_resources)
 
         deployment = load_yaml("infra/k8s/base/app/deployment-chart-asset-builder.yaml")
-        env_from = deployment["spec"]["template"]["spec"]["containers"][0]["envFrom"]
+        builder = deployment["spec"]["template"]["spec"]["containers"][0]
+        env_from = builder["envFrom"]
         secret_names = {
             item["secretRef"]["name"]
             for item in env_from
             if "secretRef" in item
         }
         self.assertIn("alfaka-order-db-secret", secret_names)
+        self.assertEqual(builder["resources"]["requests"]["memory"], "512Mi")
+        self.assertEqual(builder["resources"]["limits"]["memory"], "1Gi")
+
+        base_config = load_yaml("infra/k8s/base/app/configmap.yaml")["data"]
+        aws_config = load_yaml("infra/k8s/overlays/aws/configmap-aws-patch.yaml")["data"]
+        self.assertEqual(base_config["CHART_ASSET_BUILD_CONCURRENCY"], "2")
+        self.assertEqual(aws_config["CHART_ASSET_BUILD_CONCURRENCY"], "2")
 
         migration = load_yaml("infra/k8s/base/job-chart-asset-migrations.yaml")
         container = migration["spec"]["template"]["spec"]["containers"][0]
         self.assertIn("chart-asset-migrations/main.py", " ".join(container["command"]))
         self.assertEqual(
             migration["spec"]["template"]["spec"]["nodeSelector"]["karpenter.sh/nodepool"],
-            "batch-warm",
+            "batch",
         )
         self.assertEqual(
             migration["spec"]["template"]["spec"]["tolerations"][0]["value"],
@@ -98,16 +106,37 @@ class DeploymentContractsTest(unittest.TestCase):
             "${CHART_ASSET_STORAGE_MAINTENANCE:-false}",
         )
 
-    def test_chart_geometry_schedule_and_manual_job_cover_all_seven_intervals(self):
+    def test_chart_geometry_schedule_and_manual_job_use_operational_intervals(self):
         cron = load_yaml("infra/k8s/overlays/aws/scheduled/cronjob-chart-geometry-build.yaml")
         self.assertEqual(cron["spec"]["schedule"], "40 8 * * 1-5")
         self.assertEqual(cron["spec"]["timeZone"], "Asia/Seoul")
         self.assertEqual(cron["spec"]["concurrencyPolicy"], "Forbid")
+        self.assertFalse(cron["spec"]["suspend"])
         container = cron["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]
         intervals = next(item["value"] for item in container["env"] if item["name"] == "CHART_ASSET_INTERVALS")
-        self.assertEqual(intervals, "1m,5m,10m,1h,4h,1D,1W")
+        self.assertEqual(intervals, "1m,1D")
         manual = (REPO_ROOT / "scripts/aws/run-chart-geometry-build-job.sh").read_text(encoding="utf-8")
-        self.assertIn('INTERVALS="${INTERVALS:-1m,5m,10m,1h,4h,1D,1W}"', manual)
+        self.assertIn('INTERVALS="${INTERVALS:-1m,1D}"', manual)
+
+    def test_aws_overlay_preserves_chart_builder_memory_contract(self):
+        completed = subprocess.run(
+            ["kubectl", "kustomize", "infra/k8s/overlays/aws-incluster-app-ci"],
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        resources = [item for item in yaml.safe_load_all(completed.stdout) if item]
+        deployment = next(
+            item
+            for item in resources
+            if item.get("kind") == "Deployment"
+            and item.get("metadata", {}).get("name") == "chart-asset-builder"
+        )
+        builder_resources = deployment["spec"]["template"]["spec"]["containers"][0]["resources"]
+
+        self.assertEqual(builder_resources["requests"]["memory"], "512Mi")
+        self.assertEqual(builder_resources["limits"]["memory"], "1Gi")
 
     def test_agent_shared_changes_rebuild_agent_and_backend_images(self):
         detector = (REPO_ROOT / "scripts/aws/detect-changed-services.sh").read_text(encoding="utf-8")
@@ -125,6 +154,12 @@ class DeploymentContractsTest(unittest.TestCase):
         agent_case = deployments[deployments.index("agent-orchestrator)"):]
         agent_case = agent_case[:agent_case.index(";;")]
         self.assertIn("chart-asset-builder", agent_case)
+
+    def test_market_shared_changes_rebuild_paper_order_matcher_image(self):
+        detector = (REPO_ROOT / "scripts/aws/detect-changed-services.sh").read_text(encoding="utf-8")
+        start = detector.index("systems/market-data/shared/*)")
+        branch = detector[start:detector.index(";;", start)]
+        self.assertIn("add_service order-worker", branch)
 
     def test_chart_asset_migration_runner_renders_custom_name(self):
         runner = REPO_ROOT / "scripts/aws/run-chart-asset-migrations-job.sh"
@@ -177,29 +212,59 @@ fi
         self.assertIn("log.dirs=/var/lib/kafka/data/data", command)
         self.assertNotIn("rm -rf", command)
 
-    def test_batch_nodepool_stays_warm_for_scheduled_jobs(self):
+    def test_batch_nodepool_scales_from_zero_for_scheduled_jobs(self):
         dynamic_nodepool = load_yaml("infra/k8s/base/platform/nodepool-batch.yaml")
-        warm_nodepool = load_yaml("infra/k8s/base/platform/nodepool-batch-warm.yaml")
+        platform_resources = load_yaml("infra/k8s/base/platform/kustomization.yaml")["resources"]
 
         self.assertNotIn("replicas", dynamic_nodepool["spec"])
-        self.assertEqual(warm_nodepool["metadata"]["name"], "batch-warm")
-        self.assertEqual(warm_nodepool["spec"]["replicas"], 1)
-        requirements = {
-            item["key"]: item["values"]
-            for item in warm_nodepool["spec"]["template"]["spec"]["requirements"]
-        }
-        self.assertEqual(requirements["eks.amazonaws.com/instance-cpu"], ["2"])
-        self.assertEqual(requirements["eks.amazonaws.com/instance-memory"], ["8192"])
+        self.assertNotIn("nodepool-batch-warm.yaml", platform_resources)
 
         topic_init = load_yaml("infra/k8s/base/platform/kafka-topic-init-job.yaml")
         self.assertEqual(
             topic_init["spec"]["template"]["spec"]["nodeSelector"]["karpenter.sh/nodepool"],
-            "batch-warm",
+            "batch",
+        )
+        order_migrations = load_yaml("infra/k8s/base/job-order-migrations.yaml")
+        self.assertEqual(
+            order_migrations["spec"]["template"]["spec"]["nodeSelector"]["karpenter.sh/nodepool"],
+            "batch",
         )
         geometry_cron = load_yaml("infra/k8s/overlays/aws/scheduled/cronjob-chart-geometry-build.yaml")
         geometry_pod = geometry_cron["spec"]["jobTemplate"]["spec"]["template"]["spec"]
-        self.assertEqual(geometry_pod["nodeSelector"]["karpenter.sh/nodepool"], "batch-warm")
+        self.assertEqual(geometry_pod["nodeSelector"]["karpenter.sh/nodepool"], "batch")
         self.assertEqual(geometry_pod["tolerations"][0]["value"], "batch")
+
+        reminder = load_yaml("infra/k8s/overlays/aws/scheduled/cronjob-notification-schedules.yaml")
+        reminder_pod = reminder["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+        self.assertEqual(reminder_pod["nodeSelector"]["karpenter.sh/nodepool"], "app-agent")
+        self.assertEqual(reminder_pod["tolerations"][0]["value"], "app-agent")
+
+    def test_right_sized_nodeclasses_and_stateful_pools(self):
+        app_nodeclass = load_yaml("infra/k8s/base/platform/nodeclass-app-agent.yaml")
+        state_nodeclass = load_yaml("infra/k8s/base/platform/nodeclass-stateful.yaml")
+        self.assertEqual(app_nodeclass["spec"]["ephemeralStorage"]["size"], "50Gi")
+        self.assertEqual(state_nodeclass["spec"]["ephemeralStorage"]["size"], "20Gi")
+
+        expected = {
+            "cache-db": (["r5a"], ["2"], ["16384"]),
+            "graphdb": (["r5a"], ["2"], ["16384"]),
+            "streaming": (["m5a", "m6a"], ["2"], ["8192"]),
+            "clickhouse": (["m5a", "m6a"], ["4"], ["16384"]),
+        }
+        for pool, (families, cpu, memory) in expected.items():
+            with self.subTest(pool=pool):
+                nodepool = load_yaml(f"infra/k8s/base/platform/nodepool-{pool}.yaml")
+                template = nodepool["spec"]["template"]["spec"]
+                self.assertEqual(template["nodeClassRef"]["name"], "gops-stateful-20")
+                requirements = {item["key"]: item["values"] for item in template["requirements"]}
+                self.assertEqual(requirements["eks.amazonaws.com/instance-family"], families)
+                self.assertEqual(requirements["eks.amazonaws.com/instance-cpu"], cpu)
+                self.assertEqual(requirements["eks.amazonaws.com/instance-memory"], memory)
+
+        clickhouse = load_yaml("infra/k8s/base/platform/clickhouse-statefulset.yaml")
+        resources = clickhouse["spec"]["template"]["spec"]["containers"][0]["resources"]
+        self.assertEqual(resources["requests"]["cpu"], "3500m")
+        self.assertEqual(resources["limits"]["cpu"], "4")
 
     def test_scheduled_jobs_have_resources_and_retain_failure_evidence(self):
         for path in (
@@ -217,8 +282,10 @@ fi
                 self.assertTrue(container["resources"]["limits"]["memory"])
                 self.assertEqual(
                     job_spec["template"]["spec"]["nodeSelector"]["karpenter.sh/nodepool"],
-                    "batch-warm",
+                    "batch",
                 )
+                if cronjob["metadata"]["name"] == "alfaka-order-flow-daily-rollup":
+                    self.assertTrue(cronjob["spec"]["suspend"])
                 if cronjob["metadata"]["name"] == "alfaka-sec-fundamentals-sync":
                     self.assertEqual(container["resources"]["limits"], {"cpu": "2", "memory": "6Gi"})
 
@@ -305,6 +372,7 @@ fi
     def test_order_workers_have_loop_heartbeat_probes(self):
         for path in (
             "infra/k8s/base/app/deployment-order-outbox-publisher.yaml",
+            "infra/k8s/base/app/deployment-paper-order-matcher.yaml",
             "infra/k8s/base/app/deployment-kis-broker-adapter.yaml",
         ):
             with self.subTest(path=path):
@@ -336,6 +404,36 @@ fi
         self.assertIn("quality", workflow["jobs"])
         self.assertEqual(workflow["jobs"]["deploy"]["needs"], "quality")
         self.assertIn("kubectl kustomize infra/k8s/base/platform", workflow_text)
+
+    def test_dev_deploy_can_migrate_chart_assets_before_app_rollout(self):
+        workflow = (REPO_ROOT / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8")
+
+        self.assertIn("run_chart_asset_migrations:", workflow)
+        self.assertIn("run-chart-asset-migrations-job.sh", workflow)
+        self.assertIn(
+            "run_chart_asset_migrations=true requires services to include agent-orchestrator.",
+            workflow,
+        )
+        self.assertLess(
+            workflow.index("run-chart-asset-migrations-job.sh"),
+            workflow.index("name: Deploy app workloads"),
+        )
+
+    def test_local_dev_deploy_can_migrate_chart_assets_before_app_rollout(self):
+        script = (REPO_ROOT / "scripts/aws/deploy-dev-local.sh").read_text(encoding="utf-8")
+
+        self.assertIn('RUN_CHART_ASSET_MIGRATIONS="${RUN_CHART_ASSET_MIGRATIONS:-false}"', script)
+        self.assertIn("REMOTE_BRANCH=branch-name", script)
+        self.assertIn(
+            "RUN_CHART_ASSET_MIGRATIONS=true requires agent-orchestrator to be selected.",
+            script,
+        )
+        self.assertIn("run-chart-asset-migrations-job.sh", script)
+        main = script[script.index("main()") :]
+        self.assertLess(
+            main.index("run_migrations_if_requested"),
+            main.index("deploy_app_workloads"),
+        )
 
     def test_terraform_covers_all_current_images_with_immutable_tags(self):
         terraform = (REPO_ROOT / "infra/aws/terraform/main.tf").read_text(encoding="utf-8")

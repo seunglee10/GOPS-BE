@@ -137,6 +137,28 @@ class ProcessedS3SinkV2Test(unittest.TestCase):
 
         self.assertEqual(consumer.commits, 0)
 
+    def test_simulation_rows_are_not_written_to_durable_processed_storage(self):
+        row = _candle("AMD")
+        row["simulation"] = {"source": "gops-simulator", "runId": "sim-test"}
+        consumer = _BatchThenInterruptConsumer([row])
+        s3 = _S3()
+        metrics = {}
+
+        run_processed_s3_sink(
+            consumer,
+            s3,
+            "bucket",
+            _final_prefix(),
+            "jsonl",
+            flush_count=1,
+            realtime_layout_mode="v2",
+            metrics=metrics,
+        )
+
+        self.assertEqual(s3.objects, {})
+        self.assertEqual(metrics["simulationRowsSkipped"], 1)
+        self.assertGreaterEqual(consumer.commits, 1)
+
     def test_v1_v2_and_mixed_rows_reconstruct_identically(self):
         rows = [_candle("AAPL", minute=30, source_event_id="one"), _candle("AAPL", minute=31, source_event_id="two")]
         v1, _ = canonical_rows_with_duplicate_count(rows)

@@ -13,27 +13,17 @@ from typing import Callable, Iterable
 from gops_simul.config import PROJECT_ROOT
 
 
-DEFAULT_SCENARIO_ID = "iran-ceasefire-collapse-2026-07-08"
-SEMICONDUCTOR_SYMBOLS = ("NVDA", "AMD", "AVGO", "MU", "TSM")
-ENERGY_SYMBOLS = ("XOM", "CVX", "COP")
+DEFAULT_SCENARIO_ID = "saturday-demo-amd-iff-oke"
+SEMICONDUCTOR_SYMBOLS = ("AMD",)
+ENERGY_SYMBOLS = ("OKE",)
 ALL_DEMO_SYMBOLS = (*SEMICONDUCTOR_SYMBOLS, *ENERGY_SYMBOLS)
 SEMICONDUCTOR_WEIGHTS = {
-    "NVDA": 0.30,
-    "AMD": 0.20,
-    "AVGO": 0.20,
-    "MU": 0.15,
-    "TSM": 0.15,
+    "AMD": 0.70,
 }
-ENERGY_WEIGHTS = {"XOM": 0.45, "CVX": 0.35, "COP": 0.20}
+ENERGY_WEIGHTS = {"OKE": 0.80}
 DEFAULT_SEED_PRICES = {
-    "NVDA": 195.55,
-    "AMD": 141.90,
-    "AVGO": 340.00,
-    "MU": 132.60,
-    "TSM": 245.00,
-    "XOM": 113.22,
-    "CVX": 154.80,
-    "COP": 94.20,
+    "AMD": 565.0,
+    "OKE": 90.0,
 }
 
 
@@ -45,13 +35,22 @@ class DemoScenarioEvent:
 
 
 @dataclass(frozen=True)
+class DemoScenarioPhase:
+    phase_id: str
+    label: str
+    at_seconds: float
+    summary: str = ""
+
+
+@dataclass(frozen=True)
 class DemoScenario:
     scenario_id: str
     title: str
     duration_seconds: float = 300.0
-    breaking_news_at_seconds: float = 5.0
+    breaking_news_at_seconds: float = 210.0
     seed_prices: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_SEED_PRICES))
     events: list[DemoScenarioEvent] = field(default_factory=list)
+    phases: list[DemoScenarioPhase] = field(default_factory=list)
     breaking_news: dict[str, object] = field(default_factory=dict)
 
 
@@ -71,6 +70,8 @@ class DemoScenarioController:
         self.started_at: float | None = None
         self.paused_at: float | None = None
         self.paused_duration = 0.0
+        self.elapsed_offset = 0.0
+        self.operator_phase_index = 0
         self.latest_prices = dict(scenario.seed_prices)
         self._applied_event_index = 0
         self._accounts: dict[str, dict[str, object]] = {}
@@ -90,6 +91,8 @@ class DemoScenarioController:
                 self.mode = normalized
                 self.started_at = None
                 self.paused_at = None
+                self.elapsed_offset = 0.0
+                self.operator_phase_index = 0
                 self.run_id = None
                 self._accounts.clear()
             return self.status()
@@ -114,11 +117,39 @@ class DemoScenarioController:
                 self.paused_at = None
             return self.status()
 
+    def set_phase(self, phase_id: str) -> dict[str, object]:
+        normalized = str(phase_id or "").strip().lower()
+        with self._lock:
+            if self.mode != "simulation":
+                raise ValueError("simulation mode is not active")
+            phases = self._phases()
+            phase_index = next((index for index, item in enumerate(phases) if item.phase_id == normalized), None)
+            if phase_index is None:
+                raise ValueError("unknown simulation phase")
+            phase = phases[phase_index]
+            previous_elapsed = self._elapsed_seconds()
+            now = self.clock()
+            was_paused = self.paused_at is not None
+            self.started_at = now
+            self.paused_at = now if was_paused else None
+            self.paused_duration = 0.0
+            self.elapsed_offset = phase.at_seconds
+            self.operator_phase_index = phase_index
+            if phase.at_seconds < previous_elapsed:
+                self.run_id = f"sim-{uuid.uuid4().hex[:12]}"
+                self.latest_prices = dict(self.scenario.seed_prices)
+                self._applied_event_index = 0
+                self._accounts.clear()
+            self._apply_events_until(phase.at_seconds)
+            return self.status()
+
     def status(self) -> dict[str, object]:
         with self._lock:
             elapsed = self._elapsed_seconds()
             self._apply_events_until(elapsed)
             state = self._state(elapsed)
+            phases = self._phases()
+            phase_index = self._phase_index(elapsed)
             return {
                 "mode": self.mode,
                 "state": state,
@@ -128,7 +159,23 @@ class DemoScenarioController:
                 "elapsedSeconds": round(elapsed, 3),
                 "durationSeconds": self.scenario.duration_seconds,
                 "breakingNewsAtSeconds": self.scenario.breaking_news_at_seconds,
-                "phase": self._phase(elapsed),
+                "phase": phases[phase_index].phase_id if self.mode == "simulation" else "live",
+                "phaseLabel": phases[phase_index].label if self.mode == "simulation" else "LIVE",
+                "phaseIndex": phase_index if self.mode == "simulation" else -1,
+                "nextPhase": (
+                    phases[phase_index + 1].phase_id
+                    if self.mode == "simulation" and phase_index + 1 < len(phases)
+                    else None
+                ),
+                "phases": [
+                    {
+                        "id": phase.phase_id,
+                        "label": phase.label,
+                        "atSeconds": phase.at_seconds,
+                        "summary": phase.summary,
+                    }
+                    for phase in phases
+                ],
                 "breakingNewsReleased": self._news_released(elapsed),
                 "eventCount": self._applied_event_index,
                 "symbols": [
@@ -141,7 +188,7 @@ class DemoScenarioController:
                             self.scenario.seed_prices.get(symbol),
                         ),
                     }
-                    for symbol in ALL_DEMO_SYMBOLS
+                    for symbol in self.scenario.seed_prices
                 ],
             }
 
@@ -152,11 +199,11 @@ class DemoScenarioController:
                 return {"news": [], "next_page_token": None}
             requested = {str(symbol).strip().upper() for symbol in symbols or [] if str(symbol).strip()}
             article = deepcopy(self.scenario.breaking_news)
-            article_symbols = [str(value).upper() for value in article.get("symbols", ALL_DEMO_SYMBOLS)]
+            article_symbols = [str(value).upper() for value in article.get("symbols", self.scenario.seed_prices)]
             if requested and not requested.intersection(article_symbols):
                 return {"news": [], "next_page_token": None}
             article["id"] = f"{self.run_id}:{article.get('id') or 'breaking-news'}"
-            article.setdefault("source", "GOPS Simulator")
+            article.setdefault("source", "GOPS Market Wire")
             article.setdefault("created_at", "2026-07-08T13:20:00Z")
             article.setdefault("updated_at", article["created_at"])
             article["symbols"] = article_symbols
@@ -214,7 +261,7 @@ class DemoScenarioController:
                 raise ValueError("simulation mode is not active")
             normalized_symbol = str(symbol or "").strip().upper()
             normalized_side = str(side or "").strip().lower()
-            if normalized_symbol not in ALL_DEMO_SYMBOLS:
+            if normalized_symbol not in self.scenario.seed_prices:
                 raise ValueError("symbol is not part of the demo universe")
             if normalized_side not in {"buy", "sell"}:
                 raise ValueError("side must be buy or sell")
@@ -250,8 +297,8 @@ class DemoScenarioController:
                     positions[normalized_symbol] = {
                         "symbol": normalized_symbol,
                         "name": normalized_symbol,
-                        "sector": "Energy" if normalized_symbol in ENERGY_SYMBOLS else "Information Technology",
-                        "industry": "Integrated Energy" if normalized_symbol in ENERGY_SYMBOLS else "Semiconductors",
+                        "sector": demo_sector(normalized_symbol),
+                        "industry": demo_industry(normalized_symbol),
                         "quantity": quantity,
                         "averagePrice": round(price, 4),
                     }
@@ -269,6 +316,8 @@ class DemoScenarioController:
         self.started_at = self.clock()
         self.paused_at = None
         self.paused_duration = 0.0
+        self.elapsed_offset = 0.0
+        self.operator_phase_index = 0
         self.latest_prices = dict(self.scenario.seed_prices)
         self._applied_event_index = 0
         self._accounts.clear()
@@ -277,10 +326,11 @@ class DemoScenarioController:
         if self.mode != "simulation" or self.started_at is None:
             return 0.0
         current = self.paused_at if self.paused_at is not None else self.clock()
-        return min(
-            self.scenario.duration_seconds,
-            max(0.0, current - self.started_at - self.paused_duration),
-        )
+        elapsed = max(0.0, self.elapsed_offset + current - self.started_at - self.paused_duration)
+        phases = self._phases()
+        if self.operator_phase_index + 1 < len(phases):
+            elapsed = min(elapsed, max(0.0, phases[self.operator_phase_index + 1].at_seconds - 0.001))
+        return min(self.scenario.duration_seconds, elapsed)
 
     def _state(self, elapsed: float | None = None) -> str:
         if self.mode != "simulation":
@@ -291,14 +341,26 @@ class DemoScenarioController:
             return "completed"
         return "running"
 
-    def _phase(self, elapsed: float) -> str:
-        if self.mode != "simulation":
-            return "live"
-        if elapsed >= self.scenario.duration_seconds:
-            return "complete"
-        if elapsed < self.scenario.breaking_news_at_seconds:
-            return "pre-war"
-        return "market-impact"
+    def _phases(self) -> list[DemoScenarioPhase]:
+        if self.scenario.phases:
+            return self.scenario.phases
+        return [
+            DemoScenarioPhase("market-overview", "시장 조망", 0.0),
+            DemoScenarioPhase("breaking-event", "이벤트 대응", self.scenario.breaking_news_at_seconds),
+            DemoScenarioPhase(
+                "market-close",
+                "장 마감·복기",
+                max(0.0, self.scenario.duration_seconds - 15.0),
+            ),
+        ]
+
+    def _phase_index(self, elapsed: float) -> int:
+        selected = 0
+        for index, phase in enumerate(self._phases()):
+            if phase.at_seconds > elapsed:
+                break
+            selected = index
+        return selected
 
     def _news_released(self, elapsed: float) -> bool:
         return self.mode == "simulation" and elapsed >= self.scenario.breaking_news_at_seconds
@@ -336,8 +398,8 @@ class DemoScenarioController:
             positions[symbol] = {
                 "symbol": symbol,
                 "name": symbol,
-                "sector": "Information Technology",
-                "industry": "Semiconductors",
+                "sector": demo_sector(symbol),
+                "industry": demo_industry(symbol),
                 "quantity": quantity,
                 "averagePrice": round(price, 4),
             }
@@ -382,8 +444,8 @@ class DemoScenarioController:
             positions[symbol] = {
                 "symbol": symbol,
                 "name": symbol,
-                "sector": "Energy",
-                "industry": "Integrated Energy",
+                "sector": demo_sector(symbol),
+                "industry": demo_industry(symbol),
                 "quantity": quantity,
                 "averagePrice": round(price, 4),
             }
@@ -480,13 +542,25 @@ def load_demo_scenario(root: Path | None = None) -> DemoScenario:
                 source_timestamp=row.get("sourceTimestamp"),
             ))
     events.sort(key=lambda item: item.at_seconds)
+    phases = [
+        DemoScenarioPhase(
+            phase_id=str(item.get("id") or "").strip(),
+            label=str(item.get("label") or item.get("id") or "시연 단계"),
+            at_seconds=float(item.get("atSeconds") or 0.0),
+            summary=str(item.get("summary") or ""),
+        )
+        for item in manifest.get("phases", [])
+        if isinstance(item, dict) and str(item.get("id") or "").strip()
+    ]
+    phases.sort(key=lambda item: item.at_seconds)
     return DemoScenario(
         scenario_id=str(manifest.get("scenarioId") or DEFAULT_SCENARIO_ID),
-        title=str(manifest.get("title") or "Iran ceasefire collapse demo"),
+        title=str(manifest.get("title") or "Saturday operator demo"),
         duration_seconds=float(manifest.get("durationSeconds") or 300.0),
-        breaking_news_at_seconds=float(manifest.get("breakingNewsAtSeconds") or 5.0),
+        breaking_news_at_seconds=float(manifest.get("breakingNewsAtSeconds") or 210.0),
         seed_prices={key.upper(): float(value) for key, value in (manifest.get("seedPrices") or DEFAULT_SEED_PRICES).items()},
         events=events,
+        phases=phases,
         breaking_news=dict(manifest.get("breakingNews") or {}),
     )
 
@@ -494,17 +568,37 @@ def load_demo_scenario(root: Path | None = None) -> DemoScenario:
 def default_demo_scenario() -> DemoScenario:
     return DemoScenario(
         scenario_id=DEFAULT_SCENARIO_ID,
-        title="Iran ceasefire collapse semiconductor-to-energy rotation",
+        title="Saturday operator demo · AMD, OKE",
         seed_prices=dict(DEFAULT_SEED_PRICES),
+        phases=[
+            DemoScenarioPhase("market-overview", "시장 조망", 0),
+            DemoScenarioPhase("breaking-event", "지정학 이벤트", 210),
+            DemoScenarioPhase("market-close", "장 마감·복기", 285),
+        ],
         breaking_news={
-            "id": "iran-ceasefire-collapse",
-            "headline": "[속보] 이란 휴전 붕괴, 추가 공습 가능성",
-            "summary": "호르무즈 해협을 둘러싼 군사 긴장이 다시 고조되며 에너지 가격과 위험자산 변동성이 확대됐습니다.",
-            "source": "GOPS Simulator",
-            "url": "https://www.investing.com/news/commodities-news/trump-on-iran-us-will-probably-hit-them-again-wednesday-night-4781812",
+            "id": "simulated-geopolitical-risk",
+            "headline": "중동 지정학적 긴장 고조…반도체 약세·에너지 강세",
+            "summary": "중동 지역의 지정학적 긴장이 고조되면서 반도체 업종에 매도 압력이 확대되고 에너지 관련주는 강세를 보이고 있습니다.",
+            "source": "GOPS Market Wire",
             "symbols": list(ALL_DEMO_SYMBOLS),
         },
     )
+
+
+def demo_sector(symbol: str) -> str:
+    return {
+        "AMD": "Information Technology",
+        "IFF": "Materials",
+        "OKE": "Energy",
+    }.get(symbol, "Unclassified")
+
+
+def demo_industry(symbol: str) -> str:
+    return {
+        "AMD": "Semiconductors",
+        "IFF": "Specialty Chemicals",
+        "OKE": "Oil & Gas Midstream",
+    }.get(symbol, "Unclassified")
 
 
 def number_or_none(value: object) -> float | None:

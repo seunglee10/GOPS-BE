@@ -39,6 +39,7 @@ class DerivedCalculationServiceTest(unittest.TestCase):
                 from_time=request["from"],
                 to_time=request["to"],
                 target_bins=10,
+                binning_mode="exact",
             )
 
         with ThreadPoolExecutor(max_workers=10) as executor:
@@ -104,6 +105,10 @@ class DerivedCalculationServiceTest(unittest.TestCase):
             "price_max": 103.0,
         }
         volume = compute_volume_profile_payload({"candles": candles, "source": "fixture", "feed": "sip"}, **kwargs)
+        self.assertEqual(volume_request["calculationVersion"], "volume-profile-exact-v2")
+        self.assertIn("volume-profile-exact-v2", volume_request["cacheKey"])
+        self.assertEqual(volume["calculationVersion"], "volume-profile-v1")
+        self.assertEqual(volume["bucketCount"], 7)
         self.assertEqual(volume["totalVolume"], 2190.0)
         self.assertEqual(volume["poc"], {
             "index": 3,
@@ -138,6 +143,28 @@ class DerivedCalculationServiceTest(unittest.TestCase):
         self.assertEqual(result["derived"]["source"], "api-compute")
         self.assertEqual(set(result["derived"]), {"state", "source", "requestHash", "generatedAt"})
         self.assertFalse(hasattr(service, "worker_client"))
+
+    def test_partial_volume_profile_is_not_cached(self):
+        redis = _Redis()
+        service = DerivedCalculationService(canonical_query=_CanonicalQuery(_candles()), redis_client=redis)
+        request = _volume_request(candle_count=21)
+
+        first = service.resolve(request, lambda: {"dataStatus": "partial", "bins": []})
+        second = service.resolve(request, lambda: {"dataStatus": "partial", "bins": [{"index": 1}]})
+
+        self.assertEqual(first["dataStatus"], "partial")
+        self.assertEqual(second["bins"], [{"index": 1}])
+        self.assertNotIn(request["cacheKey"], redis.values)
+        self.assertEqual(service.metrics()["calculate"], 2)
+
+    def test_volume_profile_candle_count_changes_request_and_cache_identity(self):
+        request_120 = _volume_request(candle_count=120)
+        request_200 = _volume_request(candle_count=200)
+
+        self.assertNotEqual(request_120["requestHash"], request_200["requestHash"])
+        self.assertNotEqual(request_120["cacheKey"], request_200["cacheKey"])
+        self.assertEqual(request_200["limit"], 200)
+        self.assertEqual(request_200["parameters"]["candleCount"], 200)
 
 
 class _Redis:
@@ -209,7 +236,7 @@ def _indicator_request():
     )
 
 
-def _volume_request():
+def _volume_request(candle_count=None):
     return build_volume_profile_request(
         symbol="AAPL",
         interval="1m",
@@ -219,6 +246,7 @@ def _volume_request():
         target_bins=10,
         price_min=None,
         price_max=None,
+        candle_count=candle_count,
     )
 
 

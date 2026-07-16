@@ -65,7 +65,7 @@ def test_intraday_repair_uses_selected_interval_and_exact_canonical_keys():
     assert runner.calls[0]["analysisMissingCandleKeys"] == [missing]
 
 
-def test_default_repair_runner_fetches_one_minute_source_and_materializes_session_hour():
+def test_default_repair_runner_fetches_ten_minute_source_and_materializes_session_hour():
     client = ClickHouseClient()
     calls = []
 
@@ -85,11 +85,11 @@ def test_default_repair_runner_fetches_one_minute_source_and_materializes_sessio
         "analysisMissingCandleKeys": ["2026-07-10T13:30:00.000Z"],
     })
 
-    assert calls[0][-1] == "1Min"
+    assert calls[0][-1] == "10Min"
     assert [table for table, _rows in client.inserts] == ["chart_candles", "chart_candles"]
     source_rows = client.inserts[0][1]
     derived_rows = client.inserts[1][1]
-    assert {row["interval"] for row in source_rows} == {"1m"}
+    assert {row["interval"] for row in source_rows} == {"10m"}
     assert derived_rows[0]["interval"] == "1h"
     assert derived_rows[0]["event_time"] == "2026-07-10 13:30:00.000"
     assert derived_rows[0]["bucket_policy"] == "us_equity_regular_session"

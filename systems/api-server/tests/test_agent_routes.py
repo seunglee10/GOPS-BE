@@ -184,6 +184,7 @@ class AgentAuthenticatedRoutesTest(unittest.TestCase):
                 self.client.post("/api/agents/analyze", json={"symbol": "NVDA", "intent": "analysis"}),
                 self.client.post("/api/agents/layout/resolve", json={"symbol": "NVDA", "intent": "패널 추가"}),
                 self.client.get("/api/agents/entities/resolve", params={"q": "NVDA"}),
+                self.client.get("/api/ai-coach/reports/latest"),
                 self.client.get("/api/agents/reports/analysis-1"),
                 self.client.post("/api/agents/reports/analysis-1/cancel"),
                 self.client.get("/api/agents/reports/analysis-1/stream"),
@@ -228,6 +229,17 @@ class AgentAuthenticatedRoutesTest(unittest.TestCase):
         self.assertEqual(cancel_response.status_code, 200)
         self.assertEqual(get_report.call_args.kwargs["user_id"], "trusted-user")
         self.assertEqual(cancel.call_args.kwargs["user_id"], "trusted-user")
+
+    def test_latest_coach_report_reads_the_authenticated_users_s3_report(self):
+        self.authenticate("trusted-user")
+        expected = {"contractVersion": "coach-report.v2", "analysisId": "analysis-1", "page1": None}
+        with patch("app.routes.agents.CoachReportArchive") as archive_type:
+            archive_type.return_value.get_latest.return_value = expected
+            response = self.client.get("/api/ai-coach/reports/latest")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ready", "report": expected})
+        archive_type.return_value.get_latest.assert_called_once_with(user_id="trusted-user")
 
     def test_agent_request_rejects_oversized_extensible_context(self):
         self.authenticate()

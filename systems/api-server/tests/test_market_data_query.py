@@ -84,7 +84,7 @@ from app.market_data.query.service import MarketDataQueryService  # noqa: E402
 from app.market_data.calendar.service import next_market_open_payload, us_equity_holidays  # noqa: E402
 from app.market_data.backfill.service import BackfillService  # noqa: E402
 from app.market_data.compare.service import ChartCompareService  # noqa: E402
-from app.market_data.fill.service import OnDemandFillService  # noqa: E402
+from app.market_data.fill.service import OnDemandFillService, opportunistic_intraday_gap_ranges  # noqa: E402
 from app.market_data.fundamentals.service import FundamentalsAdapter, FundamentalsRecord, StoreFundamentalsAdapter, records_from_payload  # noqa: E402
 from app.market_data.heatmap import service as heatmap_service  # noqa: E402
 from app.market_data.indices import service as indices_service  # noqa: E402
@@ -252,6 +252,35 @@ class FakeVolumeProfileProvider(FakeProvider):
                 {"priceBin": 100.5, "priceBinSize": 0.25, "volume": 45, "tradeCount": 4, "vwap": 100.6},
                 {"priceBin": 101.0, "priceBinSize": 0.25, "volume": 25, "tradeCount": 3, "vwap": 101.1},
             ],
+        }
+
+
+class ManyCandleVolumeProfileProvider(FakeProvider):
+    def __init__(self, candle_count=220):
+        super().__init__()
+        self.redis_provider = FakeIndicatorRedisProvider()
+        self.candles = [
+            {
+                "timestamp": f"2026-06-25T{13 + index // 60:02d}:{index % 60:02d}:00.000Z",
+                "open": 109.5 if index < 100 else 100.5,
+                "high": 110.0 if index < 100 else 101.0,
+                "low": 109.0 if index < 100 else 100.0,
+                "close": 109.5 if index < 100 else 100.5,
+                "volume": 100,
+            }
+            for index in range(candle_count)
+        ]
+
+    def candle_snapshot(self, symbol, interval, limit, before=None, from_time=None, to_time=None, ma_windows=None):
+        del before, from_time, to_time, ma_windows
+        self.last_limit = limit
+        return {
+            "symbol": symbol,
+            "interval": interval,
+            "source": "unit",
+            "feed": "sip",
+            "dataStatus": "ready",
+            "candles": self.candles[-limit:],
         }
 
 
@@ -590,6 +619,7 @@ class FakeHeatmapClickHouseProvider:
             {
                 "symbol": "AAPL",
                 "lastPrice": 200,
+                "previousClose": 197.5308641975,
                 "changePercent": 1.25,
                 "volume": 1000,
                 "sessionDollarVolume": 200000,
@@ -1074,13 +1104,32 @@ class MarketDataQueryServiceTest(unittest.TestCase):
                 price_min=100,
                 price_max=102,
             )
+            warm = service.volume_profile_bins(
+                "aapl",
+                "2026-06-25T13:30:00.000Z",
+                "2026-06-25T14:00:00.000Z",
+                "auto",
+                target_bins=4,
+                price_min=100,
+                price_max=102,
+            )
 
         self.assertEqual(payload["symbol"], "AAPL")
-        self.assertEqual(payload["calculationVersion"], "volume-profile-v1")
+        self.assertEqual(payload["calculationVersion"], "volume-profile-exact-v2")
         self.assertEqual(payload["targetBins"], 4)
+        self.assertEqual(payload["bucketCount"], 4)
+        self.assertEqual(len(payload["bins"]), 4)
+        self.assertEqual(payload["priceBinSize"], 0.5)
+        self.assertEqual(payload["bins"][0]["priceMin"], 100.0)
+        self.assertEqual(payload["bins"][-1]["priceMax"], 102.0)
         self.assertEqual(payload["derived"]["state"], "ready")
         self.assertEqual(payload["derived"]["source"], "api-compute")
         self.assertEqual(set(payload["derived"]), {"state", "source", "requestHash", "generatedAt"})
+        self.assertEqual(payload["cache"]["keyVersion"], "volume-profile-exact-v2")
+        self.assertFalse(payload["cache"]["hit"])
+        self.assertEqual(warm["derived"]["source"], "redis")
+        self.assertEqual(warm["cache"]["keyVersion"], "volume-profile-exact-v2")
+        self.assertTrue(warm["cache"]["hit"])
         self.assertEqual(provider.calls, [])
         payload_5m = service.volume_profile_bins(
             "aapl",
@@ -1114,6 +1163,31 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             service.volume_profile_bins("aapl", "from", "to", "auto", target_bins=10, price_min=102, price_max=100)
 
         self.assertEqual(raised.exception.status_code, 400)
+
+    def test_volume_profile_uses_full_requested_visible_candle_count(self):
+        provider = ManyCandleVolumeProfileProvider()
+        service = MarketDataQueryService(
+            provider,
+            backfill_service=FakeBackfillService(),
+            fill_service=FakeFillService(),
+        )
+
+        payload = service.volume_profile_bins(
+            "aapl",
+            provider.candles[0]["timestamp"],
+            provider.candles[-1]["timestamp"],
+            "auto",
+            target_bins=10,
+            price_min=100,
+            price_max=110,
+            candle_count=len(provider.candles),
+        )
+
+        self.assertEqual(provider.last_limit, 220)
+        self.assertEqual(payload["requestedCandleCount"], 220)
+        self.assertEqual(payload["sourceCandleCount"], 220)
+        self.assertEqual(payload["dataStatus"], "ready")
+        self.assertGreater(payload["bins"][-1]["volume"], 0)
 
     def test_indicator_series_uses_filled_candle_snapshot_lookback_inline(self):
         provider = FakeIndicatorProvider()
@@ -1983,7 +2057,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(result["fill"]["status"], "empty")
         self.assertEqual(len(service.queued), 1)
 
-    def test_on_demand_fill_derives_foreground_hourly_candles_from_minutes(self):
+    def test_on_demand_fill_derives_foreground_hourly_candles_from_ten_minute_bars(self):
         payload = {
             "symbol": "BAC",
             "interval": "1h",
@@ -2023,7 +2097,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
                 payload=payload,
             )
 
-        self.assertEqual(fetch.call_args.args[4], "1Min")
+        self.assertEqual(fetch.call_args.args[4], "10Min")
         self.assertEqual(result["sourceInterval"], "1h")
         self.assertEqual(result["fill"]["sourceInterval"], "1h")
         self.assertEqual(result["fill"]["status"], "partial")
@@ -2097,6 +2171,44 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(result["fill"]["feedRoutes"][1]["session"], "overnight")
         self.assertEqual(result["fill"]["feedRoutes"][1]["state"], "fetchable")
         self.assertEqual(result["fill"]["feedRoutes"][1]["feed"], "boats")
+
+    def test_on_demand_fill_hourly_repair_skips_extended_sessions(self):
+        payload = {
+            "symbol": "BAC",
+            "interval": "1h",
+            "candles": [],
+            "returnedCount": 0,
+            "storedCandleCount": 0,
+            "sourceInterval": "1h",
+            "missingRanges": [
+                {"start": "2026-07-08T20:30:00.000Z", "end": "2026-07-09T04:30:00.000Z"}
+            ],
+            "_sourceTrace": {
+                "redis": {"checked": True, "hit": False, "rowCount": 0},
+                "clickhouse": {"checked": True, "hit": False, "rowCount": 0},
+            },
+        }
+        with mock.patch.dict(os.environ, {
+            "HISTORICAL_FEED": "sip",
+            "ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED": "true",
+        }, clear=False):
+            service = OnDemandFillService(timeout_seconds=8, background_enabled=False)
+
+        with mock.patch("app.market_data.fill.service.fetch_alpaca_bars", return_value=[]) as fetch:
+            result = service.fill_if_needed(
+                symbol="BAC",
+                interval="1h",
+                limit=20,
+                before=None,
+                from_time="2026-07-08T20:30:00.000Z",
+                to_time="2026-07-09T04:30:00.000Z",
+                payload=payload,
+            )
+
+        fetch.assert_not_called()
+        self.assertEqual(result["fill"]["foregroundFill"]["state"], "skipped")
+        self.assertTrue(result["fill"]["feedRoutes"])
+        self.assertEqual({route["state"] for route in result["fill"]["feedRoutes"]}, {"skipped"})
 
     def test_on_demand_fill_uses_boats_for_overnight_historical_route(self):
         payload = {
@@ -2254,7 +2366,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(fetch.call_count, 1)
         self.assertEqual(fetch.call_args.args[1], "2026-07-02T13:30:00.000Z")
         self.assertEqual(fetch.call_args.args[2], "2026-07-02T20:00:00.000Z")
-        self.assertEqual({call.args[4] for call in fetch.call_args_list}, {"1Min"})
+        self.assertEqual({call.args[4] for call in fetch.call_args_list}, {"10Min"})
         self.assertEqual(result["fill"]["foregroundFill"]["state"], "filled")
         self.assertEqual(result["fill"]["status"], "partial")
         self.assertEqual(result["sourceInterval"], "1h")
@@ -2322,11 +2434,56 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         fetch.assert_called_once()
         self.assertEqual(fetch.call_args.args[1], "2026-07-06T15:30:00.000Z")
         self.assertEqual(fetch.call_args.args[2], "2026-07-06T18:30:00.000Z")
-        self.assertEqual(fetch.call_args.args[4], "1Min")
+        self.assertEqual(fetch.call_args.args[4], "10Min")
         self.assertEqual(result["fill"]["foregroundFill"]["state"], "filled")
         self.assertEqual(result["fill"]["status"], "partial")
         self.assertEqual(len(result["candles"]), 7)
         self.assertEqual(result["candles"][2]["timestamp"], "2026-07-06T15:30:00.000Z")
+
+    def test_on_demand_fill_does_not_treat_weekend_between_regular_sessions_as_gap(self):
+        candles = [
+            {"timestamp": "2026-07-10T17:30:00.000Z", "marketSession": "regular"},
+            {"timestamp": "2026-07-13T13:30:00.000Z", "marketSession": "regular"},
+        ]
+
+        self.assertEqual(opportunistic_intraday_gap_ranges("4h", candles), [])
+
+    def test_on_demand_fill_auto_cap_counts_ten_minute_provider_bars_for_hourly_repair(self):
+        payload = {
+            "symbol": "MSFT",
+            "interval": "1h",
+            "candles": [],
+            "returnedCount": 0,
+            "storedCandleCount": 0,
+            "sourceInterval": "1h",
+            "missingRanges": [
+                {"start": "2026-07-06T13:30:00.000Z", "end": "2026-07-06T20:00:00.000Z"}
+            ],
+            "_sourceTrace": {
+                "redis": {"checked": True, "hit": False, "rowCount": 0},
+                "clickhouse": {"checked": True, "hit": False, "rowCount": 0},
+            },
+        }
+        with mock.patch.dict(os.environ, {
+            "ON_DEMAND_FILL_FOREGROUND_ALPACA_ENABLED": "",
+            "ON_DEMAND_FILL_FOREGROUND_AUTO_INTERVALS": "1h",
+            "ON_DEMAND_FILL_FOREGROUND_AUTO_MAX_BARS": "10",
+        }, clear=False):
+            service = OnDemandFillService(timeout_seconds=8, background_enabled=False)
+
+        with mock.patch("app.market_data.fill.service.fetch_alpaca_bars") as fetch:
+            result = service.fill_if_needed(
+                symbol="MSFT",
+                interval="1h",
+                limit=8,
+                before=None,
+                from_time="2026-07-06T13:30:00.000Z",
+                to_time="2026-07-06T20:00:00.000Z",
+                payload=payload,
+            )
+
+        fetch.assert_not_called()
+        self.assertEqual(result["fill"]["foregroundFill"]["state"], "disabled")
 
     def test_on_demand_fill_repairs_overnight_sparse_gap_from_boats(self):
         existing_times = [
@@ -2893,6 +3050,22 @@ class MarketDataQueryServiceTest(unittest.TestCase):
 
         self.assertEqual([item["symbol"] for item in payload["symbols"]], ["NVDA", "AAPL", "MSFT"])
 
+    def test_watchlist_read_uses_default_symbols_when_user_store_is_unavailable(self):
+        provider = FakeWatchlistProvider()
+        provider.redis_provider.redis.lrange = mock.Mock(side_effect=RuntimeError("redis unavailable"))
+        previous_provider = market_data_service.get_market_data_provider
+        previous_defaults = market_data_service.default_watchlist_symbols
+        market_data_service.get_market_data_provider = lambda: provider
+        market_data_service.default_watchlist_symbols = lambda: ["AAPL"]
+        try:
+            payload = market_data_service.watchlist_summaries(user_id="user-a")
+        finally:
+            market_data_service.get_market_data_provider = previous_provider
+            market_data_service.default_watchlist_symbols = previous_defaults
+
+        self.assertFalse(payload["persisted"])
+        self.assertEqual([item["symbol"] for item in payload["symbols"]], ["AAPL"])
+
     def test_watchlist_remove_preserves_active_chart_subscription_source(self):
         provider = FakeWatchlistProvider()
         redis_state = provider.redis_provider.redis
@@ -3297,8 +3470,15 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             "marketCap": 100000,
             "changePercent": 0.1,
         }]
-        provider = FakeHeatmapProvider(redis_prices={
-            "AAPL": {"price": "201.5", "timestamp": "2026-06-25T15:32:00.000Z"}
+        provider = FakeHeatmapProvider(rows=[{
+            "symbol": "AAPL",
+            "lastPrice": 110,
+            "previousClose": 100,
+            "changePercent": 37.5,
+            "sourceUpdatedAt": "2026-06-25T15:31:00.000Z",
+            "rankReason": "clickhouse_1m_latest_quote",
+        }], redis_prices={
+            "AAPL": {"price": "120", "timestamp": "2026-06-25T15:32:00.000Z"}
         })
         adapter = FakeFundamentalsAdapter({
             "AAPL": FundamentalsRecord(symbol="AAPL", sharesOutstanding=1000, source="sec", asOf="2026-07-05")
@@ -3306,11 +3486,37 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         with mock.patch.object(heatmap_service, "load_heatmap_seed_items", return_value=seed_items):
             payload = heatmap_service.MarketHeatmapService(provider=provider, fundamentals_adapter=adapter).snapshot("sp500")
 
-        self.assertEqual(payload["items"][0]["lastPrice"], 201.5)
-        self.assertEqual(payload["items"][0]["marketCap"], 201500)
-        self.assertEqual(payload["items"][0]["layoutPrice"], 201.5)
-        self.assertEqual(payload["items"][0]["layoutMarketCap"], 201500)
+        self.assertEqual(payload["items"][0]["lastPrice"], 120)
+        self.assertEqual(payload["items"][0]["previousClose"], 100)
+        self.assertEqual(payload["items"][0]["changePercent"], 20)
+        self.assertEqual(payload["items"][0]["marketCap"], 120000)
+        self.assertEqual(payload["items"][0]["layoutPrice"], 120)
+        self.assertEqual(payload["items"][0]["layoutMarketCap"], 120000)
         self.assertEqual(payload["items"][0]["priceSource"], "redis_live")
+
+    def test_market_heatmap_does_not_use_session_open_or_seed_change_without_previous_close(self):
+        seed_items = [{
+            "symbol": "AAPL",
+            "companyName": "Apple Inc.",
+            "sector": "Technology",
+            "industry": "Technology Hardware",
+            "marketCap": 100000,
+            "changePercent": 4.2,
+        }]
+        provider = FakeHeatmapProvider(rows=[{
+            "symbol": "AAPL",
+            "lastPrice": 120,
+            "changePercent": 9.09,
+            "sourceUpdatedAt": "2026-06-25T15:31:00.000Z",
+            "rankReason": "clickhouse_1m_latest_quote",
+        }])
+        adapter = FakeFundamentalsAdapter({})
+
+        with mock.patch.object(heatmap_service, "load_heatmap_seed_items", return_value=seed_items):
+            payload = heatmap_service.MarketHeatmapService(provider=provider, fundamentals_adapter=adapter).snapshot("sp500")
+
+        self.assertIsNone(payload["items"][0]["previousClose"])
+        self.assertIsNone(payload["items"][0]["changePercent"])
 
     def test_store_fundamentals_adapter_reads_redis_summary_before_clickhouse(self):
         provider = FakeHeatmapProvider()

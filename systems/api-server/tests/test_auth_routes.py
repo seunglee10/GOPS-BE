@@ -31,6 +31,7 @@ from app.auth.session_store import MemorySessionStore
 
 try:
     from fastapi.testclient import TestClient
+    from starlette.websockets import WebSocketDisconnect
 
     from app.main import create_app
     from kis_trader.persistence.memory import InMemoryOrderRepository
@@ -181,6 +182,55 @@ class AuthRoutesTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 202)
         self.assertEqual(response.json()["status"], "RECEIVED")
+
+    def test_order_and_event_reads_hide_foreign_order_existence(self):
+        owner_cookie = self.store.create_session(AuthenticatedUser("owner-sub", "owner@example.com", True))
+        self.client.cookies.set(self.config.session_cookie_name, owner_cookie)
+        created = self.client.post(
+            "/api/orders",
+            json=sample_order_request(),
+            headers={"Idempotency-Key": "owner-order"},
+        )
+        self.assertEqual(created.status_code, 202)
+        order_id = created.json()["order_id"]
+
+        attacker_cookie = self.store.create_session(AuthenticatedUser("attacker-sub", "attacker@example.com", True))
+        self.client.cookies.set(self.config.session_cookie_name, attacker_cookie)
+
+        foreign_order = self.client.get(f"/api/orders/{order_id}")
+        missing_order = self.client.get("/api/orders/ord_missing")
+        self.assertEqual(foreign_order.status_code, 404)
+        self.assertEqual(foreign_order.json(), missing_order.json())
+
+        foreign_events = self.client.get(f"/api/orders/{order_id}/events")
+        missing_events = self.client.get("/api/orders/ord_missing/events")
+        self.assertEqual(foreign_events.status_code, 404)
+        self.assertEqual(foreign_events.json(), missing_events.json())
+
+    def test_order_websocket_hides_foreign_order_existence(self):
+        owner_cookie = self.store.create_session(AuthenticatedUser("owner-sub", "owner@example.com", True))
+        self.client.cookies.set(self.config.session_cookie_name, owner_cookie)
+        created = self.client.post(
+            "/api/orders",
+            json=sample_order_request(),
+            headers={"Idempotency-Key": "owner-websocket-order"},
+        )
+        self.assertEqual(created.status_code, 202)
+        order_id = created.json()["order_id"]
+
+        attacker_cookie = self.store.create_session(AuthenticatedUser("attacker-sub", "attacker@example.com", True))
+        self.client.cookies.set(self.config.session_cookie_name, attacker_cookie)
+
+        observations = []
+        for target in (order_id, "ord_missing"):
+            with self.client.websocket_connect(f"/ws/orders/{target}") as websocket:
+                message = websocket.receive_json()
+                with self.assertRaises(WebSocketDisconnect) as closed:
+                    websocket.receive_json()
+            observations.append((message, closed.exception.code))
+
+        self.assertEqual(observations[0], observations[1])
+        self.assertEqual(observations[0], ({"type": "error", "detail": "order not found"}, 1008))
 
     def test_protected_order_websocket_requires_session(self):
         with self.client.websocket_connect("/ws/orders/ord_missing") as websocket:

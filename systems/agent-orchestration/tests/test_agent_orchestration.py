@@ -49,6 +49,7 @@ from gops_agents.retrieval.snapshots import (
     build_synthesis_input,
     chart_reference_evidence,
     news_reference_evidence,
+    recommendation_reference_evidence,
     trim_cross_signals,
 )
 from gops_agents.roles import AgentContext, NewsAgent, OntologyAgent, VerificationGuardrailAgent
@@ -419,8 +420,8 @@ def layout_context(*, pinned_news=False):
 def preset_layout_context():
     context = layout_context()
     context["presets"] = [
-        {"id": "market", "kind": "default", "name": "시장분석", "aliases": ["시장분석", "시장분석 프리셋"]},
-        {"id": "stock", "kind": "default", "name": "종목분석", "aliases": ["종목분석"]},
+        {"id": "market", "kind": "default", "name": "추천종목", "aliases": ["추천종목", "오늘의 추천 종목", "시장분석", "시장분석 프리셋"]},
+        {"id": "stock", "kind": "default", "name": "기업분석", "aliases": ["기업분석", "종목분석"]},
         {"id": "custom-taste", "kind": "custom", "name": "내 입맛", "aliases": ["내입맛", "내 입맛 프리셋"]},
     ]
     return context
@@ -628,8 +629,47 @@ class AgentOrchestrationTests(unittest.TestCase):
 
         self.assertEqual(operation_ir["operations"][0]["type"], "link_news_to_price_move")
         self.assertEqual(operation_ir["suggestedRoles"], ["chart", "news", "ontology"])
-        self.assertEqual(operation_ir["contextWindow"]["requiredSnapshots"], ["market_snapshot", "news_snapshot", "relationship_snapshot"])
+        self.assertEqual(operation_ir["contextWindow"]["requiredSnapshots"], ["chart_analysis_snapshot", "news_snapshot", "relationship_snapshot"])
         self.assertGreaterEqual(operation_ir["confidence"], 0.9)
+
+    def test_recommendation_reference_becomes_market_evidence_and_operation_anchor(self):
+        reference = {
+            "type": "recommendation.stock",
+            "sourcePanelId": "content-recommendations-list",
+            "displayLabel": "MSFT 추천 1위",
+            "data": {
+                "symbol": "MSFT",
+                "rank": 1,
+                "score": 55.8,
+                "confidence": 0.75,
+                "reasons": [
+                    {"type": "market_momentum", "text": "상승 모멘텀이 확인됐습니다.", "weight": 23.8},
+                    {"type": "liquidity", "text": "거래대금이 충분합니다.", "weight": 16.0},
+                ],
+                "riskWarnings": [],
+            },
+        }
+        context = AgentContext(symbol="MSFT", intent="이 추천 종목은 왜 추천됐어?", references=[reference])
+
+        evidence = recommendation_reference_evidence(context)
+        operation_ir = build_agent_operation_ir(
+            intent=context.intent,
+            symbol=context.symbol,
+            references=[reference],
+            ui_context={"selectedReference": reference},
+            chart_context={},
+        )
+
+        self.assertEqual(len(evidence), 1)
+        self.assertEqual(evidence[0].provider, "market-data")
+        self.assertIn("MSFT", evidence[0].summary)
+        self.assertIn("55.8", evidence[0].summary)
+        self.assertEqual(operation_ir["operations"][0]["type"], "explain_recommendation")
+        self.assertEqual(operation_ir["suggestedRoles"], ["chart", "news", "financial"])
+        self.assertEqual(
+            operation_ir["contextWindow"]["requiredSnapshots"],
+            ["market_snapshot", "news_snapshot", "financial_snapshot"],
+        )
 
     def test_operation_reference_normalization_dedupes_chart_context_reference(self):
         reference = {
@@ -701,7 +741,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(planned["source"], "operation-planner-openai")
         self.assertEqual(planned["operations"][0]["type"], "explain_price_move")
         self.assertEqual(planned["suggestedRoles"], ["chart", "news", "macro"])
-        self.assertEqual(planned["contextWindow"]["requiredSnapshots"], ["market_snapshot", "news_snapshot", "macro_snapshot"])
+        self.assertEqual(planned["contextWindow"]["requiredSnapshots"], ["chart_analysis_snapshot", "news_snapshot", "macro_snapshot"])
 
     def test_normalize_request_operation_ir_prevents_reference_query_clarify(self):
         state = normalize_request_state({
@@ -926,17 +966,17 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(len(parsed.tasks), 1)
         self.assertEqual(parsed.tasks[0].action, "load")
         self.assertEqual(parsed.tasks[0].presetId, "market")
-        self.assertEqual(parsed.tasks[0].presetName, "시장분석")
+        self.assertEqual(parsed.tasks[0].presetName, "추천종목")
 
     def test_ui_parser_loads_default_layout_preset_without_preset_word(self):
-        for query in ("시장분석 보여줘", "시장분석창 보여줘", "시장분석 대시보드 열어줘"):
+        for query in ("시장분석 보여줘", "시장분석창 보여줘", "시장분석 대시보드 열어줘", "오늘의 추천 종목 보여줘"):
             with self.subTest(query=query):
                 parsed = parse_ui_query(query, preset_layout_context())
 
                 self.assertEqual(len(parsed.tasks), 1)
                 self.assertEqual(parsed.tasks[0].action, "load")
                 self.assertEqual(parsed.tasks[0].presetId, "market")
-                self.assertEqual(parsed.tasks[0].presetName, "시장분석")
+                self.assertEqual(parsed.tasks[0].presetName, "추천종목")
 
     def test_ui_parser_loads_custom_layout_preset_without_llm(self):
         with patch("gops_agents.intent_understanding.fanout.classify_with_provider", side_effect=AssertionError("preset load should not call classifier")):
@@ -1156,7 +1196,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(understanding.source, "test-llm")
 
     def test_gops_agents_top_level_keeps_only_package_boundaries(self):
-        allowed = {"__init__.py", "orchestrator.py"}
+        allowed = {"__init__.py", "orchestrator.py", "alert_commands.py"}
         top_level_files = {
             path.name
             for path in (ROOT / "shared" / "gops_agents").iterdir()
@@ -1164,7 +1204,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         }
         self.assertEqual(top_level_files, allowed)
 
-    def test_orchestrator_clarifies_generic_analyze_when_llm_unavailable(self):
+    def test_orchestrator_uses_active_chart_for_generic_analyze_without_llm(self):
         report = AgentOrchestrator().analyze({
             "symbol": "NVDA",
             "intent": "analyze",
@@ -1177,12 +1217,142 @@ class AgentOrchestrationTests(unittest.TestCase):
 
         self.assertEqual(report.symbol, "NVDA")
         self.assertEqual(report.status, "completed")
-        self.assertEqual(report.route.intentType, "clarify")
-        self.assertEqual(report.route.selectedRoles, [])
+        self.assertEqual(report.route.intentType, "chart")
+        self.assertEqual(report.route.selectedRoles, ["chart"])
         self.assertIsNotNone(report.finalAnswer)
-        self.assertEqual(report.finalAnswer.title, "추가 확인 필요")
-        self.assertEqual(report.providerEvidence, [])
+        self.assertEqual(report.finalAnswer.title, "NVDA 차트 해설")
+        self.assertEqual(report.routePlan.analysisQueryType, "chart_overview")
+        self.assertEqual(report.timing["llmCalls"], 0)
+        self.assertTrue(any(item.provider == "chart-analysis" for item in report.providerEvidence))
+        self.assertIsNotNone(report.chartExplanation)
         self.assertIsNone(report.notificationDecision)
+
+    def test_orchestrator_analyzes_selected_mu_candle_without_entity_fallback_or_llm(self):
+        candles = [
+            {"timestamp": "2026-07-13T00:00:00Z", "open": 120, "high": 124, "low": 119, "close": 123, "volume": 1_000},
+            {"timestamp": "2026-07-14T00:00:00Z", "open": 124, "high": 126, "low": 116, "close": 118, "volume": 2_200},
+        ]
+        reference = {
+            "type": "chart.candle",
+            "sourcePanelId": "mu-chart",
+            "data": {"symbol": "MU", "interval": "1D", **candles[-1]},
+        }
+        report = AgentOrchestrator().analyze({
+            "symbol": "MU",
+            "intent": "analysis",
+            "messages": [{"role": "user", "content": "이 봉 분석해줘"}],
+            "references": [reference],
+            "chartContext": {
+                "chartDocument": {"symbol": "MU", "timeframe": "1D", "sourcePanelId": "mu-chart"},
+                "candles": candles,
+                "selectedReference": reference,
+            },
+        })
+
+        self.assertEqual(report.symbol, "MU")
+        self.assertEqual(report.route.intentType, "chart")
+        self.assertEqual(report.routePlan.analysisQueryType, "reference_anchor_analysis")
+        self.assertEqual(report.timing["llmCalls"], 0)
+        self.assertEqual(report.chartExplanation["facts"]["selectedCandle"]["timestamp"], "2026-07-14T00:00:00Z")
+        self.assertEqual(report.chartExplanation["facts"]["selectedCandle"]["close"], 118.0)
+        self.assertEqual(report.finalAnswer.title, "MU 선택 봉 분석")
+        self.assertNotIn("ABBV", report.finalAnswer.summary)
+
+    def test_chart_narrator_describes_confirmed_channel_exit_as_long_exit_scenario(self):
+        from gops_agents.chart_intelligence import build_chart_explanation, build_chart_final_answer
+
+        asset = {
+            "symbol": "MU", "interval": "1D", "asOf": "2026-07-14T00:00:00Z",
+            "algorithmVersion": "ohlcv-consensus-pattern-families-v4", "inputDigest": "mu-fixture",
+            "coverage": {"state": "full", "qualityFlags": []},
+            "geometry": {
+                "primaryPattern": {
+                    "id": "mu-channel", "kind": "ascending_channel_breakdown", "state": "confirmed",
+                    "breakoutDirection": "down", "score": 0.91, "touches": 5,
+                    "confirmation": {"breakoutAt": "2026-07-13T00:00:00Z", "confirmedAt": "2026-07-14T00:00:00Z", "mode": "next_close_hold"},
+                },
+                "supports": [{"id": "support-1", "price": 116.0}],
+                "resistances": [{"id": "resistance-1", "price": 126.0}],
+                "drawings": [{"id": "drawing-mu-channel"}],
+                "tradePlan": {
+                    "action": "sell_candidate", "direction": "exit_long", "signalAt": "2026-07-14T00:00:00Z",
+                    "entryPrice": 118.0, "stopPrice": 122.0, "targetPrice": 110.0, "rewardRiskRatio": 2.0,
+                    "reasons": ["confirmed_downward_breakout", "long_position_exit_only"],
+                },
+            },
+            "indicators": {"sma60": 121.0, "sma120": 119.0, "cross": {"status": "none"}},
+        }
+        context = types.SimpleNamespace(symbol="MU", chartContext={"chartDocument": {"symbol": "MU", "timeframe": "1D"}}, references=[])
+        explanation = build_chart_explanation(context, asset)
+        answer = build_chart_final_answer("MU", explanation)
+
+        self.assertEqual(explanation["facts"]["pattern"]["label"], "상승 채널 하단 이탈")
+        self.assertEqual(explanation["facts"]["pattern"]["stateLabel"], "돌파 확인")
+        self.assertEqual(explanation["facts"]["tradeScenario"]["positionMeaning"], "기존 long 포지션의 매도·청산 검토 시나리오")
+        rendered = " ".join([answer.summary, *(bullet for section in answer.sections for bullet in section.bullets)])
+        self.assertIn("매도 후보", rendered)
+        self.assertIn("기존 long 포지션", rendered)
+        self.assertNotIn("공매도 검토 후보", rendered)
+
+    def test_chart_explanation_echoes_document_source_and_groups_existing_asset_drawings(self):
+        from gops_agents.chart_intelligence import build_chart_explanation, validate_chart_explanation_contract
+
+        asset = {
+            "assetVersion": "geometry", "symbol": "NVDA", "interval": "1D",
+            "asOf": "2026-07-14T00:00:00Z", "algorithmVersion": "ohlcv-consensus-pattern-families-v4",
+            "inputDigest": "sha256:nvda-existing", "coverage": {"state": "full", "qualityFlags": []},
+            "geometry": {
+                "primaryPattern": {"kind": "bullish_flag", "state": "confirmed", "score": 0.9, "touches": 4, "geometryHash": "flag-hash"},
+                "supports": [{"id": "support-1", "price": 118.0}],
+                "resistances": [{"id": "resistance-1", "price": 126.0}],
+                "drawings": [
+                    {"id": "chart-asset:NVDA:1D:support-1"},
+                    {"id": "chart-asset:NVDA:1D:resistance-1"},
+                    {"id": "chart-asset:NVDA:1D:flag-hash-upper"},
+                ],
+                "tradePlan": None,
+            },
+            "indicators": {},
+        }
+        context = types.SimpleNamespace(
+            symbol="NVDA",
+            chartContext={"chartDocument": {
+                "symbol": "NVDA", "timeframe": "1D",
+                "chartDocumentId": "doc-nvda", "sourcePanelId": "content-chart-nvda",
+            }},
+            references=[],
+        )
+
+        explanation = build_chart_explanation(context, asset)
+
+        self.assertEqual(explanation["source"], {"chartDocumentId": "doc-nvda", "sourcePanelId": "content-chart-nvda"})
+        self.assertEqual(explanation["focusGroups"]["support"], ["chart-asset:NVDA:1D:support-1"])
+        self.assertEqual(explanation["focusGroups"]["resistance"], ["chart-asset:NVDA:1D:resistance-1"])
+        self.assertEqual(explanation["focusGroups"]["pattern"], ["chart-asset:NVDA:1D:flag-hash-upper"])
+        self.assertIs(validate_chart_explanation_contract(explanation), explanation)
+        schema = json.loads((REPO_ROOT / "shared/chart-contract/chart-explanation.schema.json").read_text())
+        self.assertEqual(schema["properties"]["version"]["const"], "chart-explanation.v1")
+        self.assertNotIn("source", schema["required"], "source remains additive for old report readers")
+        self.assertNotIn("focusGroups", schema["required"], "focusGroups remains additive for old report readers")
+
+    def test_time_aligned_news_received_after_anchor_is_followup_not_cause_candidate(self):
+        from gops_agents.retrieval.snapshots import align_news_evidence
+
+        context = types.SimpleNamespace(references=[{
+            "type": "chart.candle",
+            "data": {"symbol": "MU", "interval": "1h", "timestamp": "2026-07-14T13:00:00Z"},
+        }])
+        evidence = [EvidenceItem(
+            provider="news", status="available", title="Delayed article", summary="stored after candle close",
+            observedAt="2026-07-14T12:30:00Z",
+            raw={"publishedAt": "2026-07-14T12:30:00Z", "availableAt": "2026-07-14T14:10:00Z"},
+        )]
+
+        aligned = align_news_evidence(evidence, context)
+
+        self.assertEqual(aligned[0].raw["temporalRelation"], "after")
+        self.assertGreater(aligned[0].raw["availabilityLagSeconds"], 0)
+        self.assertEqual(aligned[0].raw["causality"], "temporal_association_only")
 
     def test_memory_report_store_round_trip(self):
         store = InMemoryReportStore()
@@ -1691,6 +1861,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         }])
         orchestrator = AgentOrchestrator()
         orchestrator.news_agent = NewsAgent(ClickHouseNewsProvider(clickhouse_provider=provider, cache=MemoryNewsEvidenceCache()), localizer=NewsLocalizationService())
+        orchestrator.ontology_agent = OntologyAgent(FakeOntologyProvider([]))
 
         with patch.dict(os.environ, {"AGENT_CROSS_SIGNAL_ENABLED": "true"}):
             report = orchestrator.analyze({"symbol": "NVDA", "intent": "뉴스 보여줘", "agentIds": ["agent-02"]})
@@ -1762,7 +1933,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertIn("verification-guardrail", roles)
         self.assertNotIn("macro-analysis", roles)
         self.assertNotIn("company-relationship-analysis", roles)
-        self.assertEqual(providers, {"news"})
+        self.assertEqual(providers, {"news", "chart-analysis"})
         self.assertEqual(report.route.selectedRoles, ["chart", "news"])
         self.assertTrue(report.finalAnswer.summary)
 
@@ -1942,7 +2113,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         proposal = response["layoutProposal"]
         self.assertEqual(proposal["commands"][0]["type"], "layout.load")
         self.assertEqual(proposal["commands"][0]["payload"]["presetId"], "market")
-        self.assertEqual(proposal["commands"][0]["payload"]["presetName"], "시장분석")
+        self.assertEqual(proposal["commands"][0]["payload"]["presetName"], "추천종목")
 
     def test_layout_resolve_loads_named_preset_without_preset_word(self):
         response = AgentOrchestrator().resolve_layout({
@@ -2196,7 +2367,7 @@ class AgentOrchestrationTests(unittest.TestCase):
                 "선택한 봉 왜 저렇게 움직였어?",
                 [{"type": "chart.candle", "data": {"symbol": "NVDA", "interval": "1D", "timestamp": "2026-07-04T00:00:00Z", "close": 145.5}}],
                 "reference_anchor_analysis",
-                {"market_snapshot", "news_snapshot", "risk_policy_snapshot"},
+                {"chart_analysis_snapshot", "news_snapshot", "risk_policy_snapshot"},
             ),
         ]
 
@@ -2392,21 +2563,165 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(report.finalAnswer.title, "기업 인식 실패")
         self.assertIn("지원 기업으로 인식하지 못했습니다", report.finalAnswer.summary)
 
-    def test_event_detector_detects_price_surge_and_volume_spike(self):
+    def test_event_detector_keeps_trade_price_signal_but_ignores_trade_size_for_volume(self):
         detector = MarketEventDetector(MarketEventThresholds(price_change_percent=3.0, volume_spike_multiplier=2.0))
-        self.assertEqual(detector.detect({"symbol": "NVDA", "price": 100, "volume": 100}, "market.layer.trades.v1"), [])
+        self.assertEqual(detector.detect({"symbol": "NVDA", "price": 100, "size": 100}, "market.layer.trades.v1"), [])
 
-        events = detector.detect({"symbol": "NVDA", "price": 105, "volume": 250}, "market.layer.trades.v1")
+        events = detector.detect({"symbol": "NVDA", "price": 105, "size": 250}, "market.layer.trades.v1")
 
         event_types = {event.eventType for event in events}
         self.assertIn("price_surge", event_types)
-        self.assertIn("volume_spike", event_types)
+        self.assertNotIn("volume_spike", event_types)
+        price_event = next(event for event in events if event.eventType == "price_surge")
+        self.assertEqual(price_event.summary, "NVDA 가격이 직전 관측값 대비 5.00% 상승했습니다.")
+
+        drop_events = detector.detect({"symbol": "NVDA", "price": 100}, "market.layer.trades.v1")
+        price_drop = next(event for event in drop_events if event.eventType == "price_drop")
+        self.assertEqual(price_drop.summary, "NVDA 가격이 직전 관측값 대비 4.76% 하락했습니다.")
+
+    def test_event_detector_localizes_volatility_summary(self):
+        detector = MarketEventDetector(MarketEventThresholds(volatility_percent=4.0))
+
+        events = detector.detect({
+            "symbol": "NVDA",
+            "open": 100,
+            "high": 104,
+            "low": 99,
+        }, "market.layer.candles.1m.closed.v1")
+
+        volatility_event = next(event for event in events if event.eventType == "volatility_expansion")
+        self.assertEqual(
+            volatility_event.summary,
+            "NVDA 캔들의 고가·저가 범위가 시가 대비 5.00%로 확대되었습니다.",
+        )
+
+    def test_event_detector_uses_completed_candle_rolling_volume_baseline(self):
+        detector = MarketEventDetector(MarketEventThresholds(
+            volume_spike_multiplier=2.0,
+            volume_baseline_window=3,
+            volume_min_samples=3,
+            volume_event_cooldown_seconds=0,
+        ))
+        topic = "market.layer.candles.1m.closed.v1"
+
+        for timestamp, volume in (
+            ("2026-07-14T00:00:00Z", 100),
+            ("2026-07-14T00:01:00Z", 120),
+            ("2026-07-14T00:02:00Z", 80),
+        ):
+            events = detector.detect({
+                "symbol": "NVDA",
+                "interval": "1m",
+                "timestamp": timestamp,
+                "volume": volume,
+            }, topic)
+            self.assertNotIn("volume_spike", {event.eventType for event in events})
+
+        events = detector.detect({
+            "symbol": "NVDA",
+            "interval": "1m",
+            "timestamp": "2026-07-14T00:03:00Z",
+            "volume": 240,
+        }, topic)
+
+        volume_event = next(event for event in events if event.eventType == "volume_spike")
+        self.assertEqual(volume_event.metrics["previousVolume"], 100.0)
+        self.assertEqual(volume_event.metrics["baselineVolume"], 100.0)
+        self.assertEqual(volume_event.metrics["baselineSamples"], 3)
+        self.assertEqual(volume_event.metrics["interval"], "1m")
+        self.assertEqual(volume_event.metrics["multiplier"], 2.4)
+        self.assertEqual(volume_event.summary, "NVDA 1분봉 거래량이 최근 평균의 2.40배까지 증가했습니다.")
+
+    def test_event_detector_keeps_volume_baselines_separate_by_interval(self):
+        detector = MarketEventDetector(MarketEventThresholds(
+            volume_spike_multiplier=2.0,
+            volume_baseline_window=2,
+            volume_min_samples=2,
+            volume_event_cooldown_seconds=0,
+        ))
+
+        for interval, volumes in (("1m", (100, 100)), ("5m", (1000, 1000))):
+            topic = f"market.layer.candles.{interval}.closed.v1"
+            for index, volume in enumerate(volumes):
+                events = detector.detect({
+                    "symbol": "NVDA",
+                    "interval": interval,
+                    "timestamp": f"2026-07-14T00:0{index}:00Z",
+                    "volume": volume,
+                }, topic)
+                self.assertNotIn("volume_spike", {event.eventType for event in events})
+
+        events = detector.detect({
+            "symbol": "NVDA",
+            "interval": "1m",
+            "timestamp": "2026-07-14T00:02:00Z",
+            "volume": 250,
+        }, "market.layer.candles.1m.closed.v1")
+
+        volume_event = next(event for event in events if event.eventType == "volume_spike")
+        self.assertEqual(volume_event.metrics["baselineVolume"], 100.0)
+        self.assertEqual(volume_event.metrics["interval"], "1m")
+
+    def test_event_detector_applies_volume_spike_cooldown_per_symbol_interval(self):
+        detector = MarketEventDetector(MarketEventThresholds(
+            volume_spike_multiplier=2.0,
+            volume_baseline_window=2,
+            volume_min_samples=2,
+            volume_event_cooldown_seconds=1800,
+        ))
+        topic = "market.layer.candles.1m.closed.v1"
+
+        for timestamp, volume in (
+            ("2026-07-14T00:00:00Z", 100),
+            ("2026-07-14T00:01:00Z", 100),
+        ):
+            detector.detect({"symbol": "NVDA", "interval": "1m", "timestamp": timestamp, "volume": volume}, topic)
+
+        first = detector.detect({
+            "symbol": "NVDA", "interval": "1m", "timestamp": "2026-07-14T00:02:00Z", "volume": 300,
+        }, topic)
+        suppressed = detector.detect({
+            "symbol": "NVDA", "interval": "1m", "timestamp": "2026-07-14T00:03:00Z", "volume": 500,
+        }, topic)
+        detector.detect({
+            "symbol": "NVDA", "interval": "1m", "timestamp": "2026-07-14T00:31:00Z", "volume": 100,
+        }, topic)
+        detector.detect({
+            "symbol": "NVDA", "interval": "1m", "timestamp": "2026-07-14T00:32:00Z", "volume": 100,
+        }, topic)
+        after_cooldown = detector.detect({
+            "symbol": "NVDA", "interval": "1m", "timestamp": "2026-07-14T00:33:00Z", "volume": 300,
+        }, topic)
+
+        self.assertIn("volume_spike", {event.eventType for event in first})
+        self.assertNotIn("volume_spike", {event.eventType for event in suppressed})
+        self.assertIn("volume_spike", {event.eventType for event in after_cooldown})
 
     def test_notification_payload_preserves_decision(self):
         payload = notification_payload({"symbol": "NVDA", "level": "alert", "showToast": True})
 
         self.assertEqual(payload["type"], "AGENT_ALERT")
         self.assertTrue(payload["showToast"])
+
+    def test_notification_payload_promotes_watch_market_event_to_toast(self):
+        payload = notification_payload({
+            "symbol": "NVDA",
+            "eventType": "volume_spike",
+            "severity": "watch",
+        })
+
+        self.assertEqual(payload["level"], "watch")
+        self.assertTrue(payload["showToast"])
+        self.assertEqual(payload["decision"]["eventType"], "volume_spike")
+
+    def test_notification_payload_preserves_explicit_toast_suppression(self):
+        payload = notification_payload({
+            "symbol": "NVDA",
+            "severity": "critical",
+            "showToast": False,
+        })
+
+        self.assertFalse(payload["showToast"])
 
     def test_news_provider_normalizes_dedupes_and_scores_articles(self):
         rows = [
@@ -3079,6 +3394,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         )
         orchestrator = AgentOrchestrator()
         orchestrator.news_agent = NewsAgent(provider)
+        orchestrator.ontology_agent = OntologyAgent(FakeOntologyProvider([]))
 
         report = orchestrator.analyze({
             "symbol": "NVDA",
@@ -3748,7 +4064,6 @@ class AgentOrchestrationTests(unittest.TestCase):
         cases = {
             "애플뉴스알려줘": "AAPL",
             "apple뉴스알려줘": "AAPL",
-            "얘플 뉴스": "AAPL",
             "애플ㄹ 뉴스": "AAPL",
             "엔비댜 왜 오름": "NVDA",
             "테슬랴 급등 이유": "TSLA",
@@ -3765,6 +4080,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertIsNone(extract_symbol_from_intent("사과 뉴스"))
         self.assertIsNone(extract_symbol_from_intent("차트랑 뉴스 나란히 보여줘"))
         self.assertIsNone(extract_symbol_from_intent("차트를 아래로 옮겨줘"))
+        self.assertIsNone(extract_symbol_from_intent("이 봉 분석해줘"))
         self.assertIsNone(extract_symbol_from_intent("UI 바꿔줘 온톨로지 기반으로"))
 
     def test_dynamic_entity_index_resolves_non_seed_company_alias(self):
@@ -4010,11 +4326,9 @@ class AgentOrchestrationTests(unittest.TestCase):
             },
         })
 
-        self.assertEqual(report.symbol, "AAPL")
-        self.assertEqual(clickhouse.requested_symbols, ["AAPL"])
-        self.assertEqual(report.agentTrace["entityResolution"]["status"], "confirmed")
-        self.assertEqual(report.agentTrace["entityResolution"]["symbol"], "AAPL")
-        self.assertEqual(report.resolvedEntities[0].aliases, ["애플"])
+        self.assertEqual(report.symbol, "NVDA")
+        self.assertEqual(clickhouse.requested_symbols, ["NVDA"])
+        self.assertNotEqual(report.agentTrace["entityResolution"]["matchType"], "alias_fuzzy")
 
     def test_news_only_request_skips_runtime_openai_and_uses_fast_deterministic_answer(self):
         clickhouse = FakeClickHouseProvider([

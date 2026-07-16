@@ -11,6 +11,7 @@ from app.market_data.indices.service import start_market_indices_warmer
 from app.market_data.monitor.routes import router as market_monitor_router
 from app.market_data.query.routes import router as market_query_router
 from app.recommendations.routes import router as recommendations_router
+from app.trade_conditions.routes import router as trade_conditions_router
 from app.routes.account import account_holdings, router as account_router
 from app.routes.auth import router as auth_router
 from app.routes.agents import agent_alerts, agent_report, agent_report_stream, analyze_agents, router as agents_router
@@ -20,6 +21,7 @@ from app.routes.chart_assets import router as chart_assets_router
 from app.routes.health import health, log_runtime_config, router as health_router
 from app.routes.llm import agent_chat, chart_proposal, router as llm_router
 from app.routes.orders import order_contract, router as orders_router
+from app.routes.paper_trading import router as paper_trading_router
 from app.routes.simulator import router as simulator_router
 from app.routes.streams import chart_stream, router as streams_router
 from app.services.ai_agents import openai_agent_chat, openai_chart_proposal
@@ -62,8 +64,10 @@ def create_app() -> FastAPI:
     app.include_router(agents_router)
     app.include_router(llm_router)
     app.include_router(orders_router)
+    app.include_router(paper_trading_router)
     app.include_router(simulator_router)
     app.include_router(alerts_router)
+    app.include_router(trade_conditions_router)
     app.include_router(recommendations_router)
     app.include_router(streams_router)
 

@@ -21,6 +21,11 @@ from alfaka.serving.session_buckets import bucket_policy_for_candle
 from alfaka.storage.candle_validation import invalid_candle_reason
 
 
+def _legacy_sort_key_extension_error(exc):
+    message = str(exc)
+    return "Existing column" in message and "sorting key" in message
+
+
 def main():
     load_dotenv()
 
@@ -347,6 +352,13 @@ def processed_record_offsets(records):
 
 
 def clickhouse_actions_for_payload(payload, load_trades=False, load_quotes=True):
+    if is_simulation_payload(payload):
+        print(
+            f"ClickHouse 시뮬레이션 적재 제외: symbol={payload.get('symbol', 'UNKNOWN')} "
+            f"eventType={payload.get('eventType', 'UNKNOWN')}",
+            flush=True,
+        )
+        return []
     event_type = payload.get("eventType")
     if event_type == "QUOTE" or payload.get("layer") == "quotes":
         if not load_quotes:
@@ -395,6 +407,11 @@ def clickhouse_actions_for_payload(payload, load_trades=False, load_quotes=True)
 
     print(f"ClickHouse 적재 제외 eventType={event_type}", flush=True)
     return []
+
+
+def is_simulation_payload(payload):
+    simulation = payload.get("simulation")
+    return isinstance(simulation, dict) and simulation.get("source") == "gops-simulator"
 
 
 def trade_to_clickhouse_row(payload):
@@ -909,9 +926,16 @@ class ClickHouseHttpClient:
         )
         self.execute(
             f"ALTER TABLE {chart_candles} "
-            "ADD COLUMN IF NOT EXISTS bucket_policy_key LowCardinality(String) AFTER bucket_policy, "
-            "MODIFY ORDER BY (symbol, interval, event_time, feed_profile, market_session, bucket_policy_key)"
+            "ADD COLUMN IF NOT EXISTS bucket_policy_key LowCardinality(String) AFTER bucket_policy"
         )
+        try:
+            self.execute(
+                f"ALTER TABLE {chart_candles} "
+                "MODIFY ORDER BY (symbol, interval, event_time, feed_profile, market_session, bucket_policy_key)"
+            )
+        except RuntimeError as exc:
+            if not _legacy_sort_key_extension_error(exc):
+                raise
         # Crypto 체결 수량과 거래량은 0.013 BTC처럼 소수일 수 있어서 Float64로 보정합니다.
         for table, column, column_type in (
             ("trade_ticks", "size", "Nullable(Float64)"),

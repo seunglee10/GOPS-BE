@@ -12,6 +12,7 @@ from .routing import parse_openai_text_json
 # Keep in sync with UI_PANEL_TYPES in intent_understanding/schema.py.
 PANEL_TYPES = (
     "chart",
+    "chartPatternList",
     "compareChart",
     "marketIndices",
     "companyProfile",

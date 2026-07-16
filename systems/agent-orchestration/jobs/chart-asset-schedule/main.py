@@ -5,7 +5,7 @@ import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from gops_agents.chart_assets.envelope import ALLOWED_INTERVALS, ChartAssetBuildEnvelope
+from gops_agents.chart_assets.envelope import BUILD_INTERVALS, ChartAssetBuildEnvelope
 from gops_agents.chart_assets.job_store import PostgresChartAssetJobStore
 from gops_agents.query_understanding.supported_companies import load_market_registry_symbols
 
@@ -14,8 +14,8 @@ def main() -> int:
     symbols = _parse_symbols(os.getenv("CHART_ASSET_SYMBOLS"))
     if not symbols:
         symbols, _source, _version = load_market_registry_symbols()
-    intervals = tuple(_parse_intervals(os.getenv("CHART_ASSET_INTERVALS"))) or ALLOWED_INTERVALS
-    invalid = set(intervals).difference(ALLOWED_INTERVALS)
+    intervals = tuple(_parse_intervals(os.getenv("CHART_ASSET_INTERVALS"))) or BUILD_INTERVALS
+    invalid = set(intervals).difference(BUILD_INTERVALS)
     if not symbols:
         raise RuntimeError("S&P 500 symbol registry is empty")
     if invalid:
@@ -27,6 +27,7 @@ def main() -> int:
     envelope = ChartAssetBuildEnvelope.create(
         requested_by=os.getenv("CHART_ASSET_REQUESTED_BY", "kubernetes-job"),
         symbols=symbols, intervals=intervals, force=_bool("CHART_ASSET_FORCE"), job_id=job_id,
+        source="scheduled",
     )
     PostgresChartAssetJobStore().enqueue(envelope)
     print(json.dumps({"jobId": envelope.job_id, "symbols": len(symbols), "intervals": list(intervals)}, sort_keys=True))

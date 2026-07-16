@@ -937,6 +937,7 @@ services:
     environment:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
       REDIS_URL: "redis://redis:6379/0"
+      DATABASE_URL: "postgresql://gops:${POSTGRES_PASSWORD:-gops_dev_password}@postgres:5432/gops"
       AGENT_MARKET_EVENTS_TOPIC: "agents.market-events.v1"
       AGENT_ANALYSIS_REQUESTS_TOPIC: "agents.analysis-requests.v1"
       AGENT_DEEP_ANALYSIS_REQUESTS_TOPIC: "agents.deep-analysis-requests.v1"
@@ -1014,6 +1015,7 @@ services:
     environment:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
       REDIS_URL: "redis://redis:6379/0"
+      DATABASE_URL: "postgresql://gops:${POSTGRES_PASSWORD:-gops_dev_password}@postgres:5432/gops"
       AGENT_ANALYSIS_REQUESTS_TOPIC: "agents.analysis-requests.v1"
       AGENT_DEEP_ANALYSIS_REQUESTS_TOPIC: "agents.deep-analysis-requests.v1"
       AGENT_ANALYSIS_RESULTS_TOPIC: "agents.analysis-results.v1"
@@ -1088,7 +1090,7 @@ services:
       CLICKHOUSE_PASSWORD: "alfaka"
       DATABASE_URL: "postgresql://gops:${POSTGRES_PASSWORD:-gops_dev_password}@postgres:5432/gops"
       CHART_ASSET_STORAGE_MAINTENANCE: "${CHART_ASSET_STORAGE_MAINTENANCE:-false}"
-      CHART_ASSET_BUILD_CONCURRENCY: "${CHART_ASSET_BUILD_CONCURRENCY:-4}"
+      CHART_ASSET_BUILD_CONCURRENCY: "${CHART_ASSET_BUILD_CONCURRENCY:-2}"
       CHART_ASSET_REPAIR_ENABLED: "${CHART_ASSET_REPAIR_ENABLED:-true}"
       CHART_ASSET_REPAIR_ALPACA_ENABLED: "${CHART_ASSET_REPAIR_ALPACA_ENABLED:-true}"
       CHART_ASSET_REPAIR_CONCURRENCY: "${CHART_ASSET_REPAIR_CONCURRENCY:-2}"
@@ -1424,6 +1426,7 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
       REDIS_URL: "redis://redis:6379/0"
       AGENT_NOTIFICATION_DECISIONS_TOPIC: "agents.notification-decisions.v1"
+      AGENT_MARKET_EVENTS_TOPIC: "agents.market-events.v1"
       RISK_EVENTS_TOPIC: "risk.events.v1"
     command: ["python", "-u", "/app/systems/agent-orchestration/pods/notification-publisher/main.py"]
     restart: unless-stopped
@@ -1513,6 +1516,7 @@ services:
       CHART_DERIVED_INLINE_LOCK_TTL_SECONDS: "${CHART_DERIVED_INLINE_LOCK_TTL_SECONDS:-30}"
       CHART_DERIVED_INLINE_WAIT_MS: "${CHART_DERIVED_INLINE_WAIT_MS:-500}"
       ALERT_EVALUATOR_INPUT_TOPIC: "market.layer.trades.v1"
+      ALERT_EVALUATOR_INPUT_TOPICS: "market.layer.trades.v1,market.layer.candles.1m.closed.v1,market.layer.candles.5m.closed.v1,market.layer.candles.10m.closed.v1,market.layer.candles.1h.closed.v1,market.layer.candles.4h.closed.v1,market.layer.candles.1d.closed.v1"
       ALERT_TRIGGERED_TOPIC: "alerts.triggered.v1"
       ALERT_DLQ_TOPIC: "alerts.dlq.v1"
       ALERT_EVALUATOR_GROUP_ID: "gops-alert-evaluator"
@@ -1520,6 +1524,7 @@ services:
       ALERT_OUTBOX_STREAM: "alerts:outbox"
       ALERT_OUTBOX_GROUP: "gops-alert-outbox-senders"
       ALERT_RECONCILE_INTERVAL_SECONDS: "${ALERT_RECONCILE_INTERVAL_SECONDS:-60}"
+      TRADE_CONDITION_COMMANDS_ENABLED: "${TRADE_CONDITION_COMMANDS_ENABLED:-true}"
       ORDER_REPOSITORY: "postgres"
       KIS_ENV: "${KIS_ENV:-demo}"
       KIS_SECRET_NAME: "${KIS_SECRET_NAME:-dev/kis}"
@@ -1639,6 +1644,7 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
       DATABASE_URL: "postgresql://gops:${POSTGRES_PASSWORD:-gops_dev_password}@postgres:5432/gops"
       ALERT_EVALUATOR_INPUT_TOPIC: "market.layer.trades.v1"
+      ALERT_EVALUATOR_INPUT_TOPICS: "market.layer.trades.v1,market.layer.candles.1m.closed.v1,market.layer.candles.5m.closed.v1,market.layer.candles.10m.closed.v1,market.layer.candles.1h.closed.v1,market.layer.candles.4h.closed.v1,market.layer.candles.1d.closed.v1"
       ALERT_TRIGGERED_TOPIC: "alerts.triggered.v1"
       ALERT_DLQ_TOPIC: "alerts.dlq.v1"
       ALERT_EVALUATOR_GROUP_ID: "gops-alert-evaluator"
@@ -1646,7 +1652,46 @@ services:
       ALERT_OUTBOX_STREAM: "alerts:outbox"
       ALERT_OUTBOX_GROUP: "gops-alert-outbox-senders"
       ALERT_RECONCILE_INTERVAL_SECONDS: "${ALERT_RECONCILE_INTERVAL_SECONDS:-60}"
+      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
+      CLICKHOUSE_DATABASE: "market_data"
+      CLICKHOUSE_USER: "alfaka"
+      CLICKHOUSE_PASSWORD: "alfaka"
     command: ["python", "-u", "-m", "app.alerts.evaluator"]
+    restart: unless-stopped
+    networks:
+      - data_net
+      - streaming_net
+
+  trade-condition-executor:
+    image: gops-api-server
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-backend
+    container_name: alfaka-trade-condition-executor
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      order-migrations:
+        condition: service_completed_successfully
+    environment:
+      REDIS_URL: "redis://redis:6379/0"
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      DATABASE_URL: "postgresql://gops:${POSTGRES_PASSWORD:-gops_dev_password}@postgres:5432/gops"
+      TRADE_CONDITION_TRIGGER_TOPIC: "alerts.triggered.v1"
+      TRADE_CONDITION_EXECUTOR_GROUP_ID: "gops-trade-condition-executor-v1"
+      TRADE_CONDITION_EXECUTION_MODE: "${TRADE_CONDITION_EXECUTION_MODE:-sim}"
+      TRADE_CONDITION_RISK_REQUIRED: "${TRADE_CONDITION_RISK_REQUIRED:-true}"
+      PAPER_REPOSITORY: "postgres"
+      PAPER_STARTING_CASH: "${PAPER_STARTING_CASH:-100000.00}"
+      ORDER_REPOSITORY: "postgres"
+      KAFKA_ACCOUNT_ALIAS: "${KAFKA_ACCOUNT_ALIAS:-demo-account}"
+      IDEMPOTENCY_HASH_SECRET: "${IDEMPOTENCY_HASH_SECRET:-local-dev-idempotency-secret}"
+      KIS_ENV: "${KIS_ENV:-demo}"
+    command: ["python", "-u", "-m", "app.trade_conditions.executor"]
     restart: unless-stopped
     networks:
       - data_net

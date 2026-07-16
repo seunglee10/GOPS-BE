@@ -1,7 +1,8 @@
 # 실시간 가격 알림 시스템 설계
 
-사용자가 종목별로 조건(목표가 도달 / 급등·급락)을 등록하면, 실시간 가격 스트림에서
-조건 충족을 감지해 사이트 내 알림(뱃지/토스트/알림함)으로 전달하는 시스템.
+사용자가 종목별로 목표가, 가격 변동률, 거래량, RSI 단일 조건을 등록하면 실시간
+체결 또는 closed candle 스트림에서 조건 충족을 감지해 사이트 내 토스트와 알림함으로
+전달하는 시스템.
 
 LLM 에이전트는 감지·발송 핫패스에 사용하지 않는다. 감지는 결정적 규칙 평가(ms 단위),
 에이전트는 발화 후 비동기 enrichment(뉴스 연관 분석 등)에만 선택적으로 사용한다.
@@ -15,7 +16,7 @@ LLM 에이전트는 감지·발송 핫패스에 사용하지 않는다. 감지�
                                         ├─ Postgres alerts (source of truth)
                                         └─ Redis ZSET 동기화 (evaluator 조회용)
 
-market.layer.trades.v1 (실시간 틱) ──> [alert-evaluator pod]  ← 신규 (단일 pod, 감지+발송)
+market.layer.trades.v1 + closed candle topics ──> [alert-evaluator pod]
                                         ├─ 인메모리 프리필터 (알림 없는 심볼 즉시 drop)
                                         ├─ 가격 조건: 직전가 대비 크로싱 감지 (Redis ZSET)
                                         ├─ 급등락: 심볼별 롤링 윈도우 상태
@@ -29,7 +30,7 @@ market.layer.trades.v1 (실시간 틱) ──> [alert-evaluator pod]  ← 신규
                                         └─ alerts.triggered.v1 발행 (감사 로그·리플레이용)
                                               │
                                   [api-server] WS /ws/notifications
-                                        └─ 프론트: 토스트 + 안읽음 뱃지 + 알림함
+                                        └─ 프론트: 기존 우하단 토스트 + 헤더 종 뱃지/알림함
 ```
 
 ### Mermaid
@@ -64,6 +65,12 @@ flowchart TB
 
 역할 분담: Kafka = 틱 전달 + 발화 감사 로그, Redis = 조건 저장/직전가/윈도우 상태,
 evaluator = 비교 연산 + 발송, api-server = CRUD + WebSocket 서빙.
+
+AI 투자 코치 4페이지에서 사용자가 명시적으로 추가한 알람은 optional
+`proposal_source`(`daily_trade`, `entry_habit`, `exit_habit`, `portfolio_risk`)를
+PostgreSQL에 함께 저장한다. 이는 화면에서 제안 출처를 보존하기 위한 메타데이터이며
+evaluator의 조건 판정, repeat/status, Redis ZSET, 알림 발송 계약을 바꾸지 않는다.
+기존·직접 생성 알람은 null이다.
 
 **v1 토폴로지 결정 — 단일 pod.** 별도 dispatcher pod 없이 evaluator가 감지와 발송을
 모두 담당한다. 발화는 하루 수백 건 수준이라 발송 부하가 감지를 밀어낼 규모가 아니고,
@@ -106,16 +113,18 @@ evaluator가 죽어도 차트는 정상 동작하고, 그 반대도 같다.
   Redis pub/sub으로 evaluator 인메모리 캐시를 갱신.
 - 스케일아웃 필요 시 토픽이 이미 key=symbol이므로 파티션 기준 수평 확장.
 
-### 2.2 조건 등록 UI — 모달
+### 2.2 조건 등록 UI와 Agent
 
-자연어 입력 없음. 버튼 → 모달 → 구조화된 폼.
+구조화된 패널은 `POST /api/alerts`, Agent 입력은 `POST /api/alerts/commands`를
+사용한다. 명확한 자연어 조건은 즉시 생성하고 필수값이 빠지면 한 가지 후속 질문을
+한다. 한 알림에 AND/OR 복합 조건은 지원하지 않는다.
 
 | 필드 | 내용 |
 |---|---|
 | 종목 | 자동완성 검색 (symbol-registry 조회). 차트 화면에서 진입 시 현재 종목 프리필 |
-| 조건 유형 | 탭 2개: `목표가 도달` / `급등·급락` |
-| 값 | 목표가 입력 or 등락률 프리셋 |
-| 알림 빈도 | `한 번만`(기본) / `계속 받기` 토글 |
+| 조건 유형 | 목표가 / 변동률 / 거래량 절대값 / 평균 거래량 배수 / RSI |
+| 값 | 임계값, 방향, 필요한 경우 봉 간격·윈도우 |
+| 알림 빈도 | 1회(기본) / 3·5·10회 / 계속 받기 |
 
 **방향(이상/이하)은 묻지 않는다.** 모달에 현재가를 표시하고 자동 추론:
 목표가 < 현재가 → below(하락 도달), 목표가 > 현재가 → above(상승 도달).
@@ -131,15 +140,14 @@ evaluator가 죽어도 차트는 정상 동작하고, 그 반대도 같다.
 - v1은 고정 % 프리셋. 소형주 노이즈 문제(저유동성 종목은 3%가 일상)가 확인되면
   종목 변동성 대비 동적 임계값(예: 최근 20일 표준편차 배수)으로 고도화 여지를 남김.
 
-### 2.4 재발화 정책 (서버 정책 — 유저에게 쿨다운 값을 묻지 않음)
+### 2.4 재발화 정책
 
 | 조건 유형 | 한 번만 | 계속 받기 |
 |---|---|---|
-| 목표가 도달 | 발화 후 ZSET 제거, 알림 비활성화 | **재크로싱(히스테리시스)**: 발화 후 목표가에서 0.5% 이상 반대 방향으로 벗어나면 re-arm(ZSET 재삽입), 다시 크로스 시 재발화. 하루 최대 N회 상한 |
-| 급등·급락 | 발화 후 비활성화 | **시간 쿨다운**: 같은 알림 30분 1회 (`SETNX alert:fired:{alertId} EX 1800`) |
+| 목표가 도달 | 발화 후 비활성화 | 가격이 반대편으로 이동한 뒤 다시 크로스할 때 발화 |
+| 변동률·거래량·RSI | 발화 후 비활성화 | 조건이 false가 된 뒤 true로 재진입할 때 발화 |
 
-히스테리시스를 쓰는 이유: 목표가 근처에서 가격이 진동할 때 시간 쿨다운만으로는
-주기적 스팸 알림이 되기 때문.
+시간 쿨다운은 사용하지 않는다. 조건이 계속 true인 동안 같은 알림을 반복하지 않는다.
 
 ### 2.5 크로싱 감지 (tolerance 밴드 사용 금지)
 
@@ -162,6 +170,7 @@ evaluator가 죽어도 차트는 정상 동작하고, 그 반대도 같다.
 
 ```text
 POST   /api/alerts                     조건 등록 (Postgres + Redis ZSET)
+POST   /api/alerts/commands            자연어 조건 등록 (Idempotency-Key 필수)
 GET    /api/alerts                     내 조건 목록
 DELETE /api/alerts                     내 조건 전체 삭제 (양쪽 제거)
 DELETE /api/alerts/{id}                조건 삭제 (양쪽 제거)
@@ -169,8 +178,8 @@ PATCH  /api/alerts/{id}                활성/비활성 토글
 
 GET    /api/notifications              알림함 (커서 페이지네이션, ?after= 지원)
 GET    /api/notifications/unread-count 안읽음 수
-POST   /api/notifications/{id}/read    읽음 처리
-POST   /api/notifications/read-all     전체 읽음
+PATCH  /api/notifications/{id}/read    읽음 처리
+PATCH  /api/notifications/read-all     전체 읽음
 
 WS     /ws/notifications               실시간 push (기존 세션 쿠키 인증)
 ```
@@ -180,15 +189,18 @@ WS     /ws/notifications               실시간 push (기존 세션 쿠키 인�
 ```json
 {
   "symbol": "NVDA",
-  "type": "price_cross",
-  "targetPrice": 150.00,
-  "repeat": false
+  "condition": {
+    "kind": "volume_relative",
+    "operator": "above",
+    "threshold": 3,
+    "interval": "5m",
+    "lookback": 20
+  },
+  "repeatLimit": 1
 }
 ```
 
-급등락: `{"symbol": "NVDA", "type": "spike", "changePct": -5.0, "windowMinutes": 5, "repeat": true}`
-
-`direction`은 서버가 등록 시점 현재가로 계산해 저장 (요청에 받지 않음).
+기존 `type=price_cross|spike` 페이로드는 한 릴리스 호환 경로로 유지한다.
 
 ---
 
@@ -204,7 +216,7 @@ CREATE TABLE alerts (
   id            BIGSERIAL PRIMARY KEY,
   user_sub      TEXT NOT NULL,             -- AuthenticatedUser.sub
   symbol        TEXT NOT NULL,
-  type          TEXT NOT NULL,            -- price_cross | spike
+  type          TEXT NOT NULL,            -- price_cross | spike | volume_* | rsi_threshold
   direction     TEXT,                     -- above | below (price_cross만)
   target_price  NUMERIC(18,4),
   change_pct    NUMERIC(6,2),
@@ -212,7 +224,12 @@ CREATE TABLE alerts (
   repeat        BOOLEAN NOT NULL DEFAULT false,
   status        TEXT NOT NULL DEFAULT 'active',  -- active | fired | disabled | expired
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  expires_at    TIMESTAMPTZ
+  expires_at    TIMESTAMPTZ,
+  condition     JSONB NOT NULL,
+  condition_version SMALLINT NOT NULL DEFAULT 1,
+  created_via   TEXT NOT NULL DEFAULT 'manual',
+  request_id    TEXT,
+  last_triggered_at TIMESTAMPTZ
 );
 
 CREATE INDEX ON alerts (user_sub) WHERE status = 'active';
@@ -236,11 +253,13 @@ payload에 `symbol`, `triggeredPrice`, `targetPrice`를 구조화해 넣어
 ### Redis (evaluator 조회용 — 유실 시 Postgres에서 재구축)
 
 ```text
-alerts:below:{symbol}   ZSET, score=target_price, member=alertId+meta JSON
-alerts:above:{symbol}   ZSET
-last:{symbol}           직전가 (크로싱 판정용)
-win:{symbol}            급등락 롤링 윈도우 (최근 5분 가격)
-alert:fired:{alertId}   쿨다운 키 (TTL)
+alerts:v1:price:{symbol}  목표가 ZSET
+alerts:v1:spike:{symbol}  변동률 조건 ZSET
+alerts:v1:metric:{symbol}:{interval} 거래량·RSI 조건 SET
+alerts:v1:prices:{symbol} 변동률 롤링 가격
+alerts:v1:last:{symbol}   직전가 (크로싱 판정용)
+alerts:v1:state:{alertId} false→true 재진입 상태
+alerts:v1:candles:{symbol}:{interval} 최근 최대 240봉
 alerts:outbox           Stream, 발화 outbox (sender 코루틴이 소비, §1)
 notify:{userSub}        pub/sub 채널
 ```
@@ -258,7 +277,7 @@ Redis flush/장애 대비 warmup 스크립트: Postgres `alerts WHERE status='ac
 |---|---|---|---|
 | 1 | 유저당 알림 조건 수 | **50개** | 남용 방지 + evaluator 캐시 크기 예측 가능 |
 | 2 | 트리거 대상 세션 | **정규장만** | 확장시간은 유동성 낮아 노이즈 체결로 오발화 위험. 옵트인 토글은 v2 |
-| 3 | 알림 조건 만료 | **90일 자동 만료** (`expires_at`) | 잊힌 조건이 몇 달 뒤 발화하는 경험 방지. 만료 전 안내 알림 |
+| 3 | 알림 조건 만료 | **유한 횟수 기본 90일**, 무제한은 직접 삭제까지 | 유한 조건의 방치 방지와 장기 감시 요구를 함께 지원 |
 | 4 | 기준가 필터 | **비정상 체결 제외** | odd lot, 장외(dark pool) 프린트가 시장가와 동떨어진 값으로 오발화 가능. Alpaca trade condition 코드로 필터 |
 | 5 | 알림 보존 기간 | **90일 후 삭제 배치** | 테이블 무한 성장 방지 |
 | 6 | 실시간 push 방식 | **WS** | 기존 `/ws/orders` 인프라 재사용. SSE도 충분하나 통일이 이득 |
@@ -354,7 +373,7 @@ tradeId가 없는 틱은 `{symbol}:{tickTimestamp}`로 대체 (Alpaca 틱 타임
 3. **alert-evaluator pod** — price_cross 감지(프리필터 포함) + outbox(XADD) +
    sender 코루틴(notifications INSERT, pub/sub, `alerts.triggered.v1` 발행) + 멱등성
 4. **api-server WS `/ws/notifications` + 알림함 REST**
-5. **프론트: 등록 모달 + 토스트/뱃지/알림함**
+5. **프론트: 등록 모달 + 기존 우하단 토스트 + 헤더 종 뱃지/연결형 알림함**
 6. **급등락(spike) 조건** — 윈도우 상태 추가
 7. 운영: reconcile 잡, DLQ, lag 모니터링, 리플레이 테스트
 8. (선택) 발화 이벤트를 `agents.market-events.v1`로 흘려 뉴스 연관 enrichment

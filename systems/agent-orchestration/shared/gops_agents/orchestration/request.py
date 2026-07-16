@@ -23,12 +23,15 @@ def normalize_request_state(state: dict[str, Any]) -> dict[str, Any]:
     timing = empty_timing()
     runtime_policy = runtime_policy_from_env()
     runtime_context = RuntimeRunContext(policy=runtime_policy, timing=timing)
-    intent = str(request.get("intent") or request.get("prompt") or latest_message(request.get("messages")) or "analysis")
+    intent = effective_request_intent(request)
     analysis_mode = resolve_analysis_mode(request, intent)
+    if analysis_mode == "deep":
+        runtime_context.llm_budget.max_calls = 1
     layout_context = request.get("layoutContext") if isinstance(request.get("layoutContext"), dict) else {}
     ui_context = request.get("uiContext") if isinstance(request.get("uiContext"), dict) else {}
     chart_context_raw = request.get("chartContext") if isinstance(request.get("chartContext"), dict) else {}
     references = normalize_operation_references(request.get("references", []), ui_context, chart_context_raw)
+    contextual_chart_request = is_contextual_chart_request(intent, chart_context_raw, references)
     query_understanding, entity_resolution = build_query_understanding(
         intent,
         agent_ids=request.get("agentIds"),
@@ -38,16 +41,28 @@ def normalize_request_state(state: dict[str, Any]) -> dict[str, Any]:
         runtime_context=runtime_context,
         layout_command_preflight=bool(request.get("_layoutResolveOnly")),
         timing=timing,
+        contextual_chart_request=contextual_chart_request,
     )
-    explicit_symbol = (
+    exact_symbol = (
         entity_resolution.symbol
-        if entity_resolution.status == "confirmed" and entity_resolution.entity_type == "company"
+        if entity_resolution.status == "confirmed"
+        and entity_resolution.entity_type == "company"
+        and entity_resolution.match_type in {"ticker_exact", "alias_exact", "choseong_exact"}
         else None
     )
-    news_topic = fallback_news_topic(intent, explicit_symbol, entity_resolution)
+    fuzzy_symbol = (
+        entity_resolution.symbol
+        if entity_resolution.status == "confirmed"
+        and entity_resolution.entity_type == "company"
+        and entity_resolution.match_type == "alias_fuzzy"
+        else None
+    )
+    news_topic = fallback_news_topic(intent, exact_symbol, entity_resolution)
     symbol, symbol_source, symbol_from_query = resolve_subject_symbol(
         request=request,
-        explicit_symbol=explicit_symbol,
+        exact_symbol=exact_symbol,
+        fuzzy_symbol=fuzzy_symbol,
+        references=references,
         news_topic=news_topic,
     )
     subject_validation = validate_subject_symbol(
@@ -330,11 +345,21 @@ def apply_operation_ir_to_query_understanding(
     return next_payload
 
 
-def resolve_subject_symbol(*, request: dict[str, Any], explicit_symbol: str | None, news_topic: dict[str, Any] | None) -> tuple[str, str, bool]:
-    if explicit_symbol:
-        return normalize_symbol(explicit_symbol), "query_company", True
+def resolve_subject_symbol(
+    *,
+    request: dict[str, Any],
+    exact_symbol: str | None,
+    fuzzy_symbol: str | None,
+    references: list[dict[str, Any]],
+    news_topic: dict[str, Any] | None,
+) -> tuple[str, str, bool]:
+    if exact_symbol:
+        return normalize_symbol(exact_symbol), "query_company", True
     if news_topic:
         return normalize_symbol(news_topic["label"]), "query_theme", True
+    reference_symbol = read_symbol_from_references(references)
+    if reference_symbol:
+        return normalize_symbol(reference_symbol), "selected_reference", False
     chart_context = request.get("chartContext")
     entity_fallback_symbol = read_entity_fallback_symbol_from_chart_context(chart_context)
     if entity_fallback_symbol:
@@ -345,7 +370,20 @@ def resolve_subject_symbol(*, request: dict[str, Any], explicit_symbol: str | No
     request_symbol = request.get("symbol")
     if request_symbol:
         return normalize_symbol(request_symbol), "request_symbol", False
+    if fuzzy_symbol:
+        return normalize_symbol(fuzzy_symbol), "query_company_fuzzy", True
     return "UNKNOWN", "unresolved", False
+
+
+def read_symbol_from_references(references: list[dict[str, Any]]) -> str | None:
+    for reference in references:
+        if not str(reference.get("type") or "").startswith("chart."):
+            continue
+        data = reference.get("data") if isinstance(reference.get("data"), dict) else {}
+        symbol = data.get("symbol")
+        if isinstance(symbol, str) and symbol.strip():
+            return symbol
+    return None
 
 
 def read_entity_fallback_symbol_from_chart_context(context: Any) -> str | None:
@@ -384,10 +422,38 @@ def sanitize_chart_context_for_symbol(context: Any, symbol: str, symbol_from_int
 def latest_message(messages: Any) -> str | None:
     if not isinstance(messages, list) or not messages:
         return None
-    latest = messages[-1]
-    if isinstance(latest, dict) and isinstance(latest.get("content"), str):
-        return latest["content"]
+    for latest in reversed(messages):
+        if not isinstance(latest, dict) or not isinstance(latest.get("content"), str):
+            continue
+        if str(latest.get("role") or "user").lower() == "user":
+            return latest["content"]
     return None
+
+
+def effective_request_intent(request: dict[str, Any]) -> str:
+    raw = str(request.get("intent") or "").strip()
+    prompt = str(request.get("prompt") or "").strip()
+    message = str(latest_message(request.get("messages")) or "").strip()
+    placeholders = {"", "analysis", "analyze"}
+    if raw.lower() in placeholders:
+        if prompt and prompt.lower() not in placeholders:
+            return prompt
+        if message:
+            return message
+    return raw or prompt or message or "analysis"
+
+
+def is_contextual_chart_request(intent: str, chart_context: dict[str, Any], references: list[dict[str, Any]]) -> bool:
+    has_chart = bool(read_chart_document_symbol_from_chart_context(chart_context)) or any(
+        str(item.get("type") or "").startswith("chart.") for item in references
+    )
+    if not has_chart:
+        return False
+    compacted = re.sub(r"\s+", "", str(intent or "").lower())
+    return compacted in {
+        "analysis", "analyze", "분석해줘", "봐줘", "설명해줘", "차트분석해줘", "차트봐줘",
+        "이봉분석해줘", "이봉설명해줘", "이거봐줘",
+    }
 
 
 def normalize_symbol(value: Any) -> str:
@@ -399,6 +465,8 @@ def resolve_analysis_mode(request: dict[str, Any], intent: str) -> str:
     raw_mode = str(request.get("analysisMode") or request.get("analysis_mode") or "").strip().lower()
     if raw_mode in {"multi_agent", "multi-agent", "multiagent"}:
         return "multi_agent"
+    if raw_mode == "deep":
+        return "deep"
     if raw_mode in {"auto", "single", "snapshot"}:
         return "auto"
     return "auto"

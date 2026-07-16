@@ -201,6 +201,9 @@ def alpaca_timeframe_for_interval(interval):
 
 
 def historical_source_interval_for(interval):
+    interval = normalize_chart_interval(interval)
+    if interval in {"1h", "4h"}:
+        return "10m"
     return source_interval_for(interval)
 
 

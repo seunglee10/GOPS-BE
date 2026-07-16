@@ -21,6 +21,9 @@ class ProviderRequest:
     symbol: str
     intent: str
     symbols: tuple[str, ...] = field(default_factory=tuple)
+    fromAt: str | None = None
+    toAt: str | None = None
+    availableAsOf: str | None = None
 
 
 class NewsProvider:
@@ -176,6 +179,24 @@ class ClickHouseNewsProvider(NewsProvider):
         self.daily_summary_limit = int(os.getenv("AGENT_NEWS_DAILY_SUMMARY_LIMIT", "5"))
 
     def fetch(self, request: ProviderRequest) -> list[EvidenceItem]:
+        if request.fromAt and request.toAt:
+            rows = []
+            try:
+                provider = self.clickhouse_provider or self._default_provider()
+                for symbol in self._request_symbols(request):
+                    rows.extend(provider.news_articles_window(
+                        symbol,
+                        from_at=request.fromAt,
+                        to_at=request.toAt,
+                        available_as_of=request.availableAsOf or utc_now_iso(),
+                        limit=self.limit,
+                    ))
+            except Exception as exc:
+                return [EvidenceItem.no_data("news", "News provider not available", f"선택 시점 뉴스 조회에 실패했습니다: {exc.__class__.__name__}")]
+            evidence = normalize_news_evidence([self._row_to_evidence(row, request, source="clickhouse-point-in-time") for row in rows])
+            return filter_subject_relevance(evidence, limit=self.limit) or [
+                EvidenceItem.no_data("news", "No time-aligned news", f"{request.symbol} 선택 시점 주변의 저장 뉴스가 없습니다.")
+            ]
         cached = self._cache_get(request)
         if cached is not None:
             return cached
@@ -396,6 +417,7 @@ class ClickHouseNewsProvider(NewsProvider):
             "topic": request.symbol if request.symbol != symbol else None,
             "publishedAt": published_at,
             "receivedAt": received_at,
+            "availableAt": row.get("availableAt") or row.get("available_at") or received_at or published_at,
             "impactDirection": impact_direction,
             "eventType": event_type,
             "sentiment": row.get("sentiment"),

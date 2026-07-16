@@ -464,17 +464,20 @@ class NotificationDecisionAgent:
             message = "No unusual market alert was detected."
             reason = "No event detector signal was attached to this analysis."
             event_id = None
+            event_type = None
         else:
             level = event.severity if event.severity in {"info", "watch", "alert", "critical"} else "watch"
             title = f"{event.symbol} {event.eventType.replace('_', ' ')}"
             message = event.summary
             reason = "Notification level follows the strongest attached market event severity."
             event_id = event.eventId
+            event_type = event.eventType
 
         return NotificationDecision(
             decisionId=stable_id("notification", {"analysisId": analysis_id, "eventId": event_id, "level": level}),
             analysisId=analysis_id,
             eventId=event_id,
+            eventType=event_type,
             symbol=context.symbol,
             level=level,
             showToast=level in {"watch", "alert", "critical"},
@@ -2757,6 +2760,7 @@ def default_panel_title(panel_type: str) -> str:
 # The frontend can override these at request time via layoutContext.panelCatalog.
 DEFAULT_PANEL_SPECS: dict[str, dict[str, Any]] = {
     "chart": {"title": "차트", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 2, "rowSpan": 2}, "layoutWeight": 100},
+    "chartPatternList": {"title": "패턴 종목", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 2, "rowSpan": 2}, "layoutWeight": 44},
     "compareChart": {"title": "비교 차트", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 4, "rowSpan": 2}, "layoutWeight": 80},
     "newsFeed": {"title": "시장 뉴스", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 2, "rowSpan": 2}, "layoutWeight": 50},
     "marketIndices": {"title": "지수", "minSpan": {"colSpan": 1, "rowSpan": 1}, "defaultSpan": {"colSpan": 2, "rowSpan": 2}, "layoutWeight": 50},

@@ -34,6 +34,31 @@ class ChartAssetStorageTest(unittest.TestCase):
         self.assertIn("EXCLUDED.payload_digest IS DISTINCT FROM", query)
         self.assertEqual(parameters[:2], ("NVDA", "1D"))
 
+    def test_coverage_projects_primary_pattern_for_each_symbol_interval(self):
+        primary_pattern = {
+            "kind": "bullish_flag",
+            "state": "confirmed",
+            "score": 0.88,
+        }
+        connection = Connection(rows=[{
+            "symbol": "NVDA",
+            "interval": "1D",
+            "generated_at": "2026-07-11T00:00:00.000Z",
+            "status": "ready",
+            "asset_version": "geometry",
+            "coverage_state": "full",
+            "payload_bytes": 512,
+            "drawing_count": 3,
+            "primary_pattern": primary_pattern,
+        }])
+        storage = PostgresChartAssetStorage("postgresql://test", connect=lambda *_args, **_kwargs: connection)
+
+        item = storage.coverage()[0]
+
+        self.assertEqual(item["primaryPattern"], primary_pattern)
+        self.assertIn("primaryPattern", connection.executions[0][0])
+        self.assertIn("primaryTriangle", connection.executions[0][0])
+
     def test_factory_is_postgres_only(self):
         with self.assertRaises(RuntimeError):
             build_chart_asset_storage_from_env()
@@ -46,19 +71,33 @@ class ChartAssetStorageTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "does not match"):
             storage.save(asset)
 
-    def test_schema_has_seven_interval_primary_key_and_six_drawing_limit(self):
+    def test_storage_accepts_eight_drawings_and_rejects_nine(self):
+        storage = PostgresChartAssetStorage("postgresql://test", connect=lambda *_args, **_kwargs: Connection())
+        asset = _asset()
+        template = asset["geometry"]["drawings"][0]
+        asset["geometry"]["drawings"] = [{**template, "id": f"drawing-{index}"} for index in range(8)]
+
+        self.assertTrue(storage.save(asset))
+
+        asset["geometry"]["drawings"].append({**template, "id": "drawing-8"})
+        with self.assertRaisesRegex(ValueError, "drawing limit"):
+            storage.save(asset)
+
+    def test_schema_has_seven_interval_primary_key_and_eight_drawing_limit(self):
         sql = (ROOT / "systems" / "agent-orchestration" / "jobs" / "chart-asset-migrations" / "003_geometry_assets.sql").read_text(encoding="utf-8")
         self.assertIn('PRIMARY KEY (symbol, "interval")', sql)
-        self.assertIn("drawing_count BETWEEN 0 AND 6", sql)
+        self.assertIn("drawing_count BETWEEN 0 AND 8", sql)
+        self.assertIn("DROP CONSTRAINT IF EXISTS geometry_assets_drawing_count_check", sql)
         self.assertNotIn("'1M'", sql)
 
 
 class Connection:
-    def __init__(self): self.executions = []; self.rowcount = 1
+    def __init__(self, rows=None): self.executions = []; self.rowcount = 1; self.rows = rows or []
     def __enter__(self): return self
     def __exit__(self, *_args): return False
     def execute(self, query, parameters=()): self.executions.append((query, parameters)); return self
     def commit(self): return None
+    def fetchall(self): return self.rows
 
 
 def _asset():

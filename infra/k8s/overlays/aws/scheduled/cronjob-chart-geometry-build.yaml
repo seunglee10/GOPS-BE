@@ -6,12 +6,14 @@ metadata:
 spec:
   schedule: "40 8 * * 1-5"
   timeZone: Asia/Seoul
+  suspend: false
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 2
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
       backoffLimit: 2
+      activeDeadlineSeconds: 3600
       ttlSecondsAfterFinished: 86400
       template:
         metadata:
@@ -20,7 +22,7 @@ spec:
         spec:
           restartPolicy: Never
           nodeSelector:
-            karpenter.sh/nodepool: batch-warm
+            karpenter.sh/nodepool: batch
           tolerations:
             - key: gops.io/dedicated
               operator: Equal
@@ -36,10 +38,17 @@ spec:
                 - name: CHART_ASSET_SCHEDULED
                   value: "true"
                 - name: CHART_ASSET_INTERVALS
-                  value: "1m,5m,10m,1h,4h,1D,1W"
+                  value: "1m,1D"
               envFrom:
                 - configMapRef:
                     name: alfaka-market-data-config
                 - secretRef:
                     name: alfaka-order-db-secret
                     optional: false
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: "1"
+                  memory: 1Gi

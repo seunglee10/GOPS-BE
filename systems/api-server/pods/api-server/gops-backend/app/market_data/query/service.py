@@ -212,6 +212,7 @@ class MarketDataQueryService:
         price_min: float | None = None,
         price_max: float | None = None,
         interval: str = "1m",
+        candle_count: int | None = None,
     ) -> dict[str, Any]:
         symbol = normalize_market_symbol(symbol)
         interval = normalize_chart_interval(interval)
@@ -227,6 +228,7 @@ class MarketDataQueryService:
             target_bins=resolved_target_bins,
             price_min=price_min,
             price_max=price_max,
+            candle_count=candle_count,
         )
         params = request.get("parameters") or {}
 
@@ -234,7 +236,7 @@ class MarketDataQueryService:
             candle_payload = self.derived_service.query_candles(
                 symbol,
                 interval,
-                resolve_candle_limit(interval),
+                resolve_candle_limit(interval, candle_count),
                 from_time=from_time,
                 to_time=to_time,
                 ma_windows=(),
@@ -248,6 +250,8 @@ class MarketDataQueryService:
                 target_bins=int(params.get("targetBins") or resolved_target_bins),
                 price_min=params.get("priceMin"),
                 price_max=params.get("priceMax"),
+                binning_mode="exact",
+                requested_candle_count=params.get("candleCount"),
             )
 
         return self.derived_service.resolve(request, calculate)

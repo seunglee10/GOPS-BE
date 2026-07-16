@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from app.auth.dependencies import require_current_user
 from app.auth.models import AuthenticatedUser
 from app.services.simulator_gateway import SimulatorGateway, SimulatorUnavailable
+from app.services.simulator_market_state import simulator_market_state_manager_from_app
 
 
 router = APIRouter(prefix="/api/simulator", tags=["simulator"])
@@ -19,6 +20,10 @@ class SimulatorModeRequest(BaseModel):
 
 class SimulatorActionRequest(BaseModel):
     action: Literal["pause", "resume", "restart"]
+
+
+class SimulatorPhaseRequest(BaseModel):
+    phase: str
 
 
 class SimulatorBasketOrderRequest(BaseModel):
@@ -38,20 +43,38 @@ def simulator_status(request: Request) -> dict[str, Any]:
             "detail": str(exc),
             "elapsedSeconds": 0,
             "durationSeconds": 300,
-            "breakingNewsAtSeconds": 5,
+            "breakingNewsAtSeconds": 210,
             "breakingNewsReleased": False,
+            "phase": "live",
+            "phaseIndex": -1,
+            "nextPhase": None,
+            "phases": [],
             "symbols": [],
         }
 
 
 @router.put("/mode")
 def simulator_mode(payload: SimulatorModeRequest, request: Request) -> dict[str, Any]:
-    return _call_simulator(lambda gateway: gateway.set_mode(payload.mode), request)
+    market_state = simulator_market_state_manager_from_app(request.app)
+    try:
+        if payload.mode == "simulation":
+            market_state.capture()
+            return _call_simulator(lambda gateway: gateway.set_mode(payload.mode), request)
+        result = _call_simulator(lambda gateway: gateway.set_mode(payload.mode), request)
+        market_state.restore()
+        return result
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
 
 @router.post("/action")
 def simulator_action(payload: SimulatorActionRequest, request: Request) -> dict[str, Any]:
     return _call_simulator(lambda gateway: gateway.action(payload.action), request)
+
+
+@router.put("/phase")
+def simulator_phase(payload: SimulatorPhaseRequest, request: Request) -> dict[str, Any]:
+    return _call_simulator(lambda gateway: gateway.set_phase(payload.phase), request)
 
 
 @router.get("/news")

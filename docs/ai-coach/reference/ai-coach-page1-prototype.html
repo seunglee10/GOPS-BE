@@ -1,0 +1,1009 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GOPS AI 투자 코치 · 당일 거래 회고</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #111315;
+      --panel: #171a1d;
+      --surface: #1d2023;
+      --surface-2: #22262a;
+      --line: #34393e;
+      --line-soft: #292e32;
+      --text: #f2f4f5;
+      --muted: #979da3;
+      --blue: #62aef7;
+      --blue-dim: #23486b;
+      --green: #63d58a;
+      --red: #ef7979;
+      --amber: #e3b552;
+      --violet: #ad8de8;
+      --cyan: #62cad4;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0;
+    }
+
+    body { padding: 20px; }
+
+    button { font: inherit; }
+
+    .coach {
+      width: min(980px, 100%);
+      margin: 0 auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      overflow: hidden;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 22px 26px 20px;
+      border-bottom: 1px solid var(--line);
+      background: #15181a;
+    }
+
+    .eyebrow {
+      margin: 0 0 4px;
+      color: var(--blue);
+      font-size: 13px;
+      font-weight: 750;
+    }
+
+    h1, h2, h3, p { margin: 0; }
+
+    h1 { font-size: 28px; line-height: 1.15; }
+
+    .page-count {
+      min-width: 62px;
+      padding: 8px 12px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      text-align: center;
+      font-weight: 750;
+      color: #dce1e4;
+    }
+
+    .content { padding: 0 22px 22px; }
+
+    .section-head {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 22px 0 14px;
+    }
+
+    .section-index {
+      color: var(--blue);
+      font-size: 13px;
+      font-weight: 800;
+      margin-bottom: 5px;
+    }
+
+    .section-head h2 { font-size: 23px; }
+    .section-copy { margin-top: 5px; color: var(--muted); font-size: 14px; }
+
+    .demo-label {
+      color: #7e858b;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .trade-strip {
+      display: grid;
+      grid-template-columns: minmax(220px, 1.35fr) repeat(3, minmax(120px, .7fr));
+      border: 1px solid var(--line);
+      background: var(--surface);
+    }
+
+    .trade-main, .trade-stat {
+      min-width: 0;
+      padding: 16px 18px;
+    }
+
+    .trade-stat { border-left: 1px solid var(--line); }
+
+    .trade-main {
+      display: flex;
+      align-items: center;
+      gap: 13px;
+    }
+
+    .symbol-mark {
+      display: grid;
+      place-items: center;
+      width: 44px;
+      height: 44px;
+      flex: 0 0 44px;
+      border: 1px solid #56616a;
+      border-radius: 50%;
+      color: #dce3e8;
+      font-size: 13px;
+      font-weight: 850;
+    }
+
+    .trade-name {
+      overflow: hidden;
+      font-size: 18px;
+      font-weight: 800;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .trade-time, .stat-label {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .stat-value {
+      margin-top: 6px;
+      font-size: 19px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .positive { color: var(--green); }
+    .negative { color: var(--red); }
+
+    .tag-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      padding: 11px 14px;
+      border: 1px solid var(--line);
+      border-top: 0;
+    }
+
+    .tag {
+      padding: 5px 9px;
+      border: 1px solid #41474c;
+      border-radius: 999px;
+      color: #c8cdd1;
+      background: #24282b;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .verdict {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 16px;
+      align-items: center;
+      margin-top: 12px;
+      padding: 15px 16px;
+      border-left: 3px solid var(--red);
+      background: #202326;
+    }
+
+    .verdict-kicker {
+      color: var(--blue);
+      font-size: 12px;
+      font-weight: 800;
+      margin-bottom: 5px;
+    }
+
+    .verdict-main { font-size: 17px; font-weight: 760; line-height: 1.45; }
+    .verdict-sub { margin-top: 4px; color: var(--muted); font-size: 13px; }
+
+    .status {
+      padding: 6px 10px;
+      border: 1px solid #8c4747;
+      color: #f09a9a;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .chart-shell {
+      margin-top: 14px;
+      border: 1px solid var(--line);
+      background: #141719;
+    }
+
+    .chart-toolbar {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 12px;
+      padding: 13px 15px;
+      border-bottom: 1px solid var(--line-soft);
+    }
+
+    .case-nav {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .icon-button {
+      display: grid;
+      place-items: center;
+      width: 32px;
+      height: 32px;
+      border: 1px solid #3c4247;
+      border-radius: 50%;
+      background: #202428;
+      color: #e7ebed;
+      cursor: pointer;
+      transition: background .16s ease, border-color .16s ease;
+    }
+
+    .icon-button:hover, .icon-button:focus-visible {
+      background: #2a3035;
+      border-color: var(--blue);
+      outline: none;
+    }
+
+    .case-position {
+      color: #d8dcdf;
+      font-size: 13px;
+      font-weight: 750;
+      white-space: nowrap;
+    }
+
+    .case-title {
+      min-width: 0;
+      text-align: center;
+    }
+
+    .case-title strong {
+      display: block;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      font-size: 14px;
+    }
+
+    .case-title span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .case-result {
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .case-result strong { display: block; font-size: 15px; }
+    .case-result span { color: var(--muted); font-size: 11px; }
+
+    .chart-wrap {
+      position: relative;
+      min-height: 390px;
+      padding: 4px 10px 0;
+      overflow: hidden;
+    }
+
+    #reviewChart {
+      display: block;
+      width: 100%;
+      height: 390px;
+      touch-action: pan-y;
+    }
+
+    .grid-line { stroke: #2d3236; stroke-width: 1; }
+    .axis-label { fill: #7f878d; font-size: 11px; }
+    .zero-line { stroke: #71787e; stroke-width: 1; stroke-dasharray: 5 6; }
+    .entry-line { stroke: #9ea5aa; stroke-width: 1.5; stroke-dasharray: 6 6; }
+    .today-line { fill: none; stroke: var(--blue); stroke-width: 3.2; }
+    .history-line { fill: none; stroke: var(--green); stroke-width: 3; opacity: .88; }
+    .crosshair { stroke: #aab0b4; stroke-width: 1; stroke-dasharray: 3 5; opacity: 0; }
+    .focus-dot { opacity: 0; stroke: #141719; stroke-width: 3; }
+
+    .missed-marker { cursor: help; }
+    .missed-marker circle { stroke: #15181a; stroke-width: 3; }
+    .missed-marker text { fill: #111315; font-size: 10px; font-weight: 900; pointer-events: none; }
+
+    .chart-legend {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+      padding: 9px 15px 12px;
+      color: #b7bdc1;
+      font-size: 12px;
+    }
+
+    .legend-key {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .legend-line {
+      width: 22px;
+      height: 3px;
+      background: var(--blue);
+    }
+
+    .legend-line.history { background: var(--green); }
+
+    .chart-tooltip {
+      position: absolute;
+      z-index: 5;
+      width: min(330px, calc(100% - 24px));
+      padding: 12px 13px;
+      border: 1px solid #4a5157;
+      background: rgba(20, 23, 25, .97);
+      box-shadow: 0 12px 30px rgba(0, 0, 0, .28);
+      pointer-events: none;
+      opacity: 0;
+      transform: translateY(5px);
+      transition: opacity .12s ease, transform .12s ease;
+    }
+
+    .chart-tooltip.visible { opacity: 1; transform: translateY(0); }
+
+    .tooltip-time { color: var(--blue); font-size: 11px; font-weight: 800; }
+    .tooltip-row { margin-top: 7px; font-size: 12px; line-height: 1.45; }
+    .tooltip-row b { color: #fff; }
+    .tooltip-missed { color: #f0b5b5; }
+
+    .missed-strip {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      border-top: 1px solid var(--line);
+    }
+
+    .missed-item {
+      min-width: 0;
+      padding: 12px 13px;
+      border-right: 1px solid var(--line-soft);
+      background: #1c1f22;
+    }
+
+    .missed-item:last-child { border-right: 0; }
+
+    .missed-item .name {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      color: #d8dde0;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      flex: 0 0 8px;
+      border-radius: 50%;
+    }
+
+    .missed-item .detail {
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.4;
+    }
+
+    .missed-item.active {
+      background: #262124;
+      box-shadow: inset 0 -2px 0 var(--red);
+    }
+
+    .judgment-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      border: 1px solid var(--line);
+      border-top: 0;
+    }
+
+    .judgment {
+      min-width: 0;
+      padding: 15px 16px;
+    }
+
+    .judgment + .judgment { border-left: 1px solid var(--line); }
+
+    .judgment-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 7px;
+      font-size: 12px;
+      font-weight: 850;
+    }
+
+    .judgment-label.mistake { color: var(--red); }
+    .judgment-label.today { color: var(--green); }
+
+    .judgment-text {
+      color: #d7dbde;
+      font-size: 14px;
+      line-height: 1.55;
+    }
+
+    .case-dots {
+      display: flex;
+      justify-content: center;
+      gap: 7px;
+      padding: 12px 0 2px;
+    }
+
+    .case-dot {
+      width: 7px;
+      height: 7px;
+      padding: 0;
+      border: 0;
+      border-radius: 50%;
+      background: #51575c;
+      cursor: pointer;
+    }
+
+    .case-dot.active { width: 24px; border-radius: 999px; background: var(--blue); }
+
+    .impact {
+      margin-top: 17px;
+      border-top: 1px solid var(--line);
+    }
+
+    .block-title {
+      padding: 16px 0 10px;
+      font-size: 17px;
+    }
+
+    .impact-table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+      font-size: 13px;
+    }
+
+    .impact-table th, .impact-table td {
+      padding: 10px 9px;
+      border-top: 1px solid var(--line-soft);
+      text-align: left;
+      overflow-wrap: anywhere;
+    }
+
+    .impact-table th { color: var(--muted); font-size: 11px; }
+    .impact-risk { color: #e4a3a3; }
+
+    .criteria {
+      margin-top: 17px;
+      border-top: 1px solid var(--line);
+    }
+
+    .criterion {
+      display: grid;
+      grid-template-columns: 34px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 4px;
+      border-top: 1px solid var(--line-soft);
+    }
+
+    .criterion-icon {
+      display: grid;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      border: 1px solid currentColor;
+      border-radius: 50%;
+      font-size: 14px;
+    }
+
+    .criterion strong { display: block; font-size: 13px; }
+    .criterion span { color: var(--muted); font-size: 12px; }
+
+    .alert-btn {
+      padding: 7px 10px;
+      border: 1px solid #454c51;
+      background: #202428;
+      color: #e9edef;
+      cursor: pointer;
+    }
+
+    .alert-btn:hover { border-color: var(--blue); }
+
+    @media (max-width: 760px) {
+      body { padding: 0; }
+      .coach { border-left: 0; border-right: 0; border-radius: 0; }
+      .content { padding: 0 14px 18px; }
+      .topbar { padding: 18px 16px; }
+      h1 { font-size: 23px; }
+      .trade-strip { grid-template-columns: 1fr 1fr; }
+      .trade-main { grid-column: 1 / -1; }
+      .trade-stat { border-top: 1px solid var(--line); }
+      .trade-stat:nth-of-type(2) { border-left: 0; }
+      .trade-stat:last-child { grid-column: 1 / -1; border-left: 0; }
+      .chart-toolbar { grid-template-columns: auto 1fr; }
+      .case-result { grid-column: 1 / -1; display: flex; justify-content: space-between; text-align: left; }
+      .chart-wrap { min-height: 330px; padding-inline: 0; }
+      #reviewChart { height: 330px; }
+      .missed-strip { grid-template-columns: 1fr 1fr; }
+      .missed-item:nth-child(2) { border-right: 0; }
+      .missed-item:nth-child(n + 3) { border-top: 1px solid var(--line-soft); }
+      .judgment-grid { grid-template-columns: 1fr; }
+      .judgment + .judgment { border-left: 0; border-top: 1px solid var(--line); }
+      .impact-table { min-width: 620px; }
+      .table-scroll { overflow-x: auto; }
+      .criterion { grid-template-columns: 30px minmax(0, 1fr); }
+      .alert-btn { grid-column: 2; justify-self: start; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        scroll-behavior: auto !important;
+        animation-duration: .01ms !important;
+        transition-duration: .01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="coach">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">POST MARKET</p>
+        <h1>AI 투자 코치</h1>
+      </div>
+      <div class="page-count">1 / 6</div>
+    </header>
+
+    <div class="content">
+      <section>
+        <div class="section-head">
+          <div>
+            <div class="section-index">01 / 06</div>
+            <h2>당일 거래 회고</h2>
+            <p class="section-copy">오늘 거래를 과거의 비슷한 판단과 비교해, 놓친 정보와 다음 행동 기준을 확인합니다.</p>
+          </div>
+          <span class="demo-label">프로토타입 더미 데이터</span>
+        </div>
+
+        <div class="trade-strip">
+          <div class="trade-main">
+            <div class="symbol-mark">NVDA</div>
+            <div>
+              <div class="trade-name">NVDA 추가 매수</div>
+              <div class="trade-time">오늘 10:42 체결</div>
+            </div>
+          </div>
+          <div class="trade-stat">
+            <div class="stat-label">체결가</div>
+            <div class="stat-value">$196.80</div>
+          </div>
+          <div class="trade-stat">
+            <div class="stat-label">수량</div>
+            <div class="stat-value">12주</div>
+          </div>
+          <div class="trade-stat">
+            <div class="stat-label">현재 수익률</div>
+            <div class="stat-value positive">+1.20%</div>
+          </div>
+        </div>
+        <div class="tag-row">
+          <span class="tag">상승 추세 후반</span>
+          <span class="tag">RSI 72</span>
+          <span class="tag">실적 D-3</span>
+          <span class="tag">비중 12% → 18%</span>
+        </div>
+
+        <div class="verdict">
+          <div>
+            <div class="verdict-kicker">오늘 판단</div>
+            <div class="verdict-main">수익 여부와 별개로, 확인 절차가 빠진 추격 매수였습니다.</div>
+            <div class="verdict-sub">차트 위 표식과 유사 사례를 넘겨 보며 어떤 정보를 놓쳤는지 확인하세요.</div>
+          </div>
+          <span class="status">주의</span>
+        </div>
+      </section>
+
+      <section class="chart-shell" aria-labelledby="similarTitle">
+        <div class="chart-toolbar">
+          <div class="case-nav">
+            <button class="icon-button" id="prevCase" aria-label="이전 유사 사례">‹</button>
+            <span class="case-position" id="casePosition">유사 사례 1 / 6</span>
+            <button class="icon-button" id="nextCase" aria-label="다음 유사 사례">›</button>
+          </div>
+          <div class="case-title">
+            <strong id="similarTitle">2026.05.14 · 상승 추세 후반 진입</strong>
+            <span id="caseSimilarity">오늘 판단과 88% 유사</span>
+          </div>
+          <div class="case-result">
+            <strong id="caseReturn" class="negative">진입 후 2일 -3.10%</strong>
+            <span>MFE / MAE 기준</span>
+          </div>
+        </div>
+
+        <div class="chart-wrap" id="chartWrap">
+          <svg id="reviewChart" viewBox="0 0 900 390" role="img" aria-label="오늘 거래와 유사 과거 거래의 진입 후 경로 비교 차트">
+            <g id="grid"></g>
+            <line id="zeroLine" class="zero-line"></line>
+            <line id="entryLine" class="entry-line"></line>
+            <text id="entryLabel" class="axis-label">진입</text>
+            <path id="todayPath" class="today-line"></path>
+            <path id="historyPath" class="history-line"></path>
+            <g id="markers"></g>
+            <line id="crosshair" class="crosshair"></line>
+            <circle id="todayFocus" class="focus-dot" r="5" fill="#62aef7"></circle>
+            <circle id="historyFocus" class="focus-dot" r="5" fill="#63d58a"></circle>
+            <rect id="hitArea" x="44" y="24" width="824" height="310" fill="transparent"></rect>
+          </svg>
+          <div class="chart-tooltip" id="chartTooltip" role="status">
+            <div class="tooltip-time" id="tooltipTime"></div>
+            <div class="tooltip-row"><b>오늘 판단</b> <span id="tooltipToday"></span></div>
+            <div class="tooltip-row tooltip-missed"><b>그때의 실수</b> <span id="tooltipMistake"></span></div>
+          </div>
+        </div>
+
+        <div class="chart-legend">
+          <span class="legend-key"><i class="legend-line"></i>오늘 NVDA</span>
+          <span class="legend-key"><i class="legend-line history"></i><span id="historyLegend">2026.05.14 유사 거래</span></span>
+          <span>표식에 마우스를 올리면 놓친 내용을 확인할 수 있습니다.</span>
+        </div>
+
+        <div class="missed-strip" id="missedStrip"></div>
+
+        <div class="judgment-grid">
+          <div class="judgment">
+            <div class="judgment-label mistake">그때의 실수</div>
+            <p class="judgment-text" id="mistakeText"></p>
+          </div>
+          <div class="judgment">
+            <div class="judgment-label today">오늘의 판단</div>
+            <p class="judgment-text" id="todayText"></p>
+          </div>
+        </div>
+
+        <div class="case-dots" id="caseDots" aria-label="유사 사례 선택"></div>
+      </section>
+
+      <section class="impact">
+        <h3 class="block-title">이번 거래의 포트폴리오 영향</h3>
+        <div class="table-scroll">
+          <table class="impact-table">
+            <thead>
+              <tr><th>항목</th><th>변경 전</th><th>변경 후</th><th>변화</th><th>영향 및 리스크</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>NVDA 비중</td><td>12%</td><td>18%</td><td class="negative">+6%p</td><td class="impact-risk">단일 종목 변동성 증가</td></tr>
+              <tr><td>반도체 비중</td><td>54%</td><td>61%</td><td class="negative">+7%p</td><td class="impact-risk">동일 시장 충격 집중</td></tr>
+              <tr><td>현금 비중</td><td>14%</td><td>9%</td><td class="positive">-5%p</td><td>추가 대응 여력 감소</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="criteria">
+        <h3 class="block-title">매도 및 관찰 기준</h3>
+        <div class="criterion">
+          <div class="criterion-icon negative">↓</div>
+          <div><strong>추세 훼손</strong><span>$190.80 아래 일봉 마감</span></div>
+          <button class="alert-btn">알람 추가</button>
+        </div>
+        <div class="criterion">
+          <div class="criterion-icon positive">◎</div>
+          <div><strong>목표 구간</strong><span>다음 저항 $203–206 접근</span></div>
+          <button class="alert-btn">알람 추가</button>
+        </div>
+        <div class="criterion">
+          <div class="criterion-icon" style="color:var(--blue)">▥</div>
+          <div><strong>상대 거래량</strong><span>1.2배 이상 회복 여부</span></div>
+          <button class="alert-btn">알람 추가</button>
+        </div>
+        <div class="criterion">
+          <div class="criterion-icon" style="color:var(--amber)">□</div>
+          <div><strong>실적 전 재검토</strong><span>D-1에 비중과 현금 완충력 확인</span></div>
+          <button class="alert-btn">알람 추가</button>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    const checkCatalog = {
+      chart: { label: "차트", short: "C", color: "#62aef7", detail: "RSI·저항·거래량 구조" },
+      news: { label: "뉴스", short: "N", color: "#63d58a", detail: "실적 일정과 최근 핵심 기사" },
+      finance: { label: "재무", short: "F", color: "#e3b552", detail: "마진 둔화와 가이던스 변화" },
+      market: { label: "시장", short: "M", color: "#ad8de8", detail: "반도체 상대 거래량과 시장 국면" }
+    };
+
+    const todaySeries = [0, .2, .45, .8, 1.05, 1.38, 1.13, 1.56, 1.42, 1.78, 1.64, 1.94, 1.81, 2.08, 1.96, 2.25];
+
+    const cases = [
+      {
+        date: "2026.05.14",
+        title: "상승 추세 후반 진입",
+        similarity: 88,
+        result: -3.10,
+        path: [0, .16, .38, .72, .96, .61, .20, -.18, -.55, -.92, -1.35, -1.72, -2.12, -2.58, -2.84, -3.10],
+        missed: ["chart", "news", "market"],
+        markerIndexes: { chart: 4, news: 7, market: 10 },
+        mistake: "RSI 70 이상과 실적 D-4를 따로 확인했지만, 상대 거래량 둔화까지 한 세트로 보지 않아 고점 추격을 허용했습니다.",
+        today: "오늘도 같은 조합이므로 추가 매수보다 실적 전 비중 18%의 위험을 먼저 줄이고, 상대 거래량 회복을 확인해야 합니다."
+      },
+      {
+        date: "2026.03.03",
+        title: "실적 직전 비중 확대",
+        similarity: 84,
+        result: -5.40,
+        path: [0, .28, .62, .94, 1.18, .88, .41, -.35, -1.12, -1.88, -2.44, -3.15, -3.82, -4.26, -4.91, -5.40],
+        missed: ["news", "finance"],
+        markerIndexes: { news: 5, finance: 8 },
+        mistake: "실적 발표일은 알았지만 컨센서스 상향이 멈춘 사실과 마진 가이던스 둔화를 확인하지 않았습니다.",
+        today: "실적 D-3인 오늘은 방향 예측보다 예상치 변화와 가이던스 민감도를 확인한 뒤 비중을 결정하는 편이 낫습니다."
+      },
+      {
+        date: "2025.11.21",
+        title: "섹터 과열 중 추가 매수",
+        similarity: 81,
+        result: 2.30,
+        path: [0, .14, .34, .58, .83, 1.05, 1.31, 1.09, 1.42, 1.67, 1.52, 1.88, 2.01, 2.16, 2.05, 2.30],
+        missed: ["market"],
+        markerIndexes: { market: 6 },
+        mistake: "수익은 났지만 반도체 비중이 60%를 넘는 상태에서 섹터 상관 위험을 무시했습니다. 결과가 절차의 정당성을 증명하지는 않습니다.",
+        today: "이번 매수로 반도체 비중이 다시 61%가 됐습니다. 종목 전망과 별도로 시장군 집중 한도를 판단해야 합니다."
+      },
+      {
+        date: "2025.09.08",
+        title: "저항 돌파 확인 전 진입",
+        similarity: 79,
+        result: -1.80,
+        path: [0, .08, .31, .57, .74, .69, .43, .12, -.24, -.52, -.37, -.68, -.91, -1.18, -1.46, -1.80],
+        missed: ["chart"],
+        markerIndexes: { chart: 5 },
+        mistake: "장중 돌파만 보고 종가 안착과 거래량 확인 없이 진입해 다음 날 되돌림을 그대로 맞았습니다.",
+        today: "현재 저항 $203–206을 장중 가격이 아니라 종가와 상대 거래량으로 확인한 뒤 추가 행동을 결정해야 합니다."
+      },
+      {
+        date: "2025.06.18",
+        title: "호재 기사 직후 추격",
+        similarity: 76,
+        result: -2.20,
+        path: [0, .26, .72, 1.14, 1.43, 1.12, .68, .22, -.15, -.41, -.73, -1.05, -1.31, -1.54, -1.93, -2.20],
+        missed: ["news", "chart"],
+        markerIndexes: { news: 4, chart: 7 },
+        mistake: "기사 제목만 보고 이미 가격에 반영된 정도와 저항 위치를 확인하지 않아 뉴스 직후 변동성에 진입했습니다.",
+        today: "뉴스의 방향보다 발표 시각 이후 가격 반응과 거래량 지속 여부를 함께 확인해야 같은 실수를 피할 수 있습니다."
+      },
+      {
+        date: "2025.02.12",
+        title: "현금 완충력 없이 비중 확대",
+        similarity: 72,
+        result: .90,
+        path: [0, .11, .26, .44, .61, .55, .72, .84, .76, .93, .88, 1.04, .98, 1.10, .94, .90],
+        missed: ["finance", "market"],
+        markerIndexes: { finance: 6, market: 11 },
+        mistake: "종목 분석은 맞았지만 현금 비중과 섹터 집중도를 보지 않아 이후 더 좋은 진입 기회를 활용하지 못했습니다.",
+        today: "현재 현금 비중 9%는 방향이 맞더라도 대응력을 제한합니다. 추가 매수보다 보유 판단과 현금 완충력을 함께 관리해야 합니다."
+      }
+    ];
+
+    const dims = { left: 44, right: 868, top: 24, bottom: 334 };
+    let activeCase = 0;
+    let pointsToday = [];
+    let pointsHistory = [];
+
+    const svg = document.getElementById("reviewChart");
+    const grid = document.getElementById("grid");
+    const todayPath = document.getElementById("todayPath");
+    const historyPath = document.getElementById("historyPath");
+    const markers = document.getElementById("markers");
+    const crosshair = document.getElementById("crosshair");
+    const todayFocus = document.getElementById("todayFocus");
+    const historyFocus = document.getElementById("historyFocus");
+    const hitArea = document.getElementById("hitArea");
+    const tooltip = document.getElementById("chartTooltip");
+
+    function el(name, attrs = {}) {
+      const node = document.createElementNS("http://www.w3.org/2000/svg", name);
+      Object.entries(attrs).forEach(([key, value]) => node.setAttribute(key, value));
+      return node;
+    }
+
+    function setupGrid() {
+      grid.replaceChildren();
+      for (let i = 0; i < 5; i++) {
+        const y = dims.top + ((dims.bottom - dims.top) / 4) * i;
+        grid.appendChild(el("line", { x1: dims.left, y1: y, x2: dims.right, y2: y, class: "grid-line" }));
+        const label = el("text", { x: 7, y: y + 4, class: "axis-label" });
+        label.textContent = ["+3%", "+1.5%", "0%", "-1.5%", "-3%"][i];
+        grid.appendChild(label);
+      }
+      ["10:30", "10:46", "11:02", "11:18", "11:34", "11:50"].forEach((time, i, arr) => {
+        const x = dims.left + ((dims.right - dims.left) / (arr.length - 1)) * i;
+        const label = el("text", { x, y: 358, class: "axis-label", "text-anchor": i === 0 ? "start" : i === arr.length - 1 ? "end" : "middle" });
+        label.textContent = time;
+        grid.appendChild(label);
+      });
+    }
+
+    function scaleSeries(today, history) {
+      const all = [...today, ...history];
+      const min = Math.min(-3.3, ...all) - .25;
+      const max = Math.max(2.5, ...all) + .25;
+      const xStep = (dims.right - dims.left) / (today.length - 1);
+      const map = series => series.map((value, index) => ({
+        x: dims.left + xStep * index,
+        y: dims.bottom - ((value - min) / (max - min)) * (dims.bottom - dims.top),
+        value
+      }));
+      return { today: map(today), history: map(history), min, max };
+    }
+
+    function pathData(points) {
+      return points.map((p, i) => `${i ? "L" : "M"} ${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(" ");
+    }
+
+    function animatePath(path) {
+      const length = path.getTotalLength();
+      path.style.transition = "none";
+      path.style.strokeDasharray = String(length);
+      path.style.strokeDashoffset = String(length);
+      requestAnimationFrame(() => {
+        path.style.transition = "stroke-dashoffset .55s ease";
+        path.style.strokeDashoffset = "0";
+      });
+    }
+
+    function renderMarkers(data) {
+      markers.replaceChildren();
+      data.missed.forEach(key => {
+        const catalog = checkCatalog[key];
+        const index = data.markerIndexes[key];
+        const point = pointsToday[index];
+        const group = el("g", { class: "missed-marker", tabindex: "0", "data-key": key, "aria-label": `${catalog.label}: ${catalog.detail}` });
+        group.appendChild(el("circle", { cx: point.x, cy: point.y - 18, r: 13, fill: catalog.color }));
+        const text = el("text", { x: point.x, y: point.y - 14.5, "text-anchor": "middle" });
+        text.textContent = catalog.short;
+        group.appendChild(text);
+        group.addEventListener("mouseenter", event => showMarkerTooltip(event, key, point));
+        group.addEventListener("focus", event => showMarkerTooltip(event, key, point));
+        group.addEventListener("mouseleave", hideTooltip);
+        group.addEventListener("blur", hideTooltip);
+        markers.appendChild(group);
+      });
+    }
+
+    function showMarkerTooltip(event, key, point) {
+      const item = checkCatalog[key];
+      document.getElementById("tooltipTime").textContent = `놓친 확인 항목 · ${item.label}`;
+      document.getElementById("tooltipToday").textContent = `${item.detail}를 오늘 진입 전에 다시 확인해야 합니다.`;
+      document.getElementById("tooltipMistake").textContent = cases[activeCase].mistake;
+      placeTooltip(point.x, point.y - 42);
+    }
+
+    function placeTooltip(svgX, svgY) {
+      const wrap = document.getElementById("chartWrap");
+      const rect = svg.getBoundingClientRect();
+      const wrapRect = wrap.getBoundingClientRect();
+      const scaleX = rect.width / 900;
+      const scaleY = rect.height / 390;
+      let left = (rect.left - wrapRect.left) + svgX * scaleX + 12;
+      let top = (rect.top - wrapRect.top) + svgY * scaleY - 20;
+      const maxLeft = wrap.clientWidth - Math.min(330, wrap.clientWidth - 24) - 12;
+      left = Math.max(12, Math.min(left, maxLeft));
+      top = Math.max(10, Math.min(top, wrap.clientHeight - 145));
+      tooltip.style.left = `${left}px`;
+      tooltip.style.top = `${top}px`;
+      tooltip.classList.add("visible");
+    }
+
+    function hideTooltip() {
+      tooltip.classList.remove("visible");
+      crosshair.style.opacity = "0";
+      todayFocus.style.opacity = "0";
+      historyFocus.style.opacity = "0";
+    }
+
+    function renderMissedStrip(data) {
+      const strip = document.getElementById("missedStrip");
+      strip.replaceChildren();
+      Object.entries(checkCatalog).forEach(([key, item]) => {
+        const active = data.missed.includes(key);
+        const div = document.createElement("div");
+        div.className = `missed-item${active ? " active" : ""}`;
+        div.innerHTML = `
+          <div class="name"><i class="dot" style="background:${item.color}"></i>${item.label} ${active ? "미확인" : "확인"}</div>
+          <div class="detail">${active ? item.detail : "판단 전에 확인 기록 있음"}</div>
+        `;
+        strip.appendChild(div);
+      });
+    }
+
+    function renderCase(index) {
+      activeCase = (index + cases.length) % cases.length;
+      const data = cases[activeCase];
+      const scaled = scaleSeries(todaySeries, data.path);
+      pointsToday = scaled.today;
+      pointsHistory = scaled.history;
+
+      todayPath.setAttribute("d", pathData(pointsToday));
+      historyPath.setAttribute("d", pathData(pointsHistory));
+      animatePath(historyPath);
+
+      const zeroY = dims.bottom - ((0 - scaled.min) / (scaled.max - scaled.min)) * (dims.bottom - dims.top);
+      const entryX = pointsToday[4].x;
+      Object.assign(document.getElementById("zeroLine"), { x1: dims.left, x2: dims.right, y1: zeroY, y2: zeroY });
+      Object.assign(document.getElementById("entryLine"), { x1: entryX, x2: entryX, y1: dims.top, y2: dims.bottom });
+      document.getElementById("entryLabel").setAttribute("x", entryX + 8);
+      document.getElementById("entryLabel").setAttribute("y", dims.top + 14);
+
+      document.getElementById("casePosition").textContent = `유사 사례 ${activeCase + 1} / ${cases.length}`;
+      document.getElementById("similarTitle").textContent = `${data.date} · ${data.title}`;
+      document.getElementById("caseSimilarity").textContent = `오늘 판단과 ${data.similarity}% 유사`;
+      const returnNode = document.getElementById("caseReturn");
+      returnNode.textContent = `진입 후 2일 ${data.result >= 0 ? "+" : ""}${data.result.toFixed(2)}%`;
+      returnNode.className = data.result >= 0 ? "positive" : "negative";
+      document.getElementById("historyLegend").textContent = `${data.date} 유사 거래`;
+      document.getElementById("mistakeText").textContent = data.mistake;
+      document.getElementById("todayText").textContent = data.today;
+
+      renderMarkers(data);
+      renderMissedStrip(data);
+      [...document.querySelectorAll(".case-dot")].forEach((dot, dotIndex) => dot.classList.toggle("active", dotIndex === activeCase));
+      hideTooltip();
+    }
+
+    function setupDots() {
+      const root = document.getElementById("caseDots");
+      cases.forEach((_, index) => {
+        const button = document.createElement("button");
+        button.className = "case-dot";
+        button.setAttribute("aria-label", `유사 사례 ${index + 1}`);
+        button.addEventListener("click", () => renderCase(index));
+        root.appendChild(button);
+      });
+    }
+
+    function handleChartMove(event) {
+      const rect = svg.getBoundingClientRect();
+      const svgX = ((event.clientX - rect.left) / rect.width) * 900;
+      const index = Math.max(0, Math.min(pointsToday.length - 1, Math.round((svgX - dims.left) / ((dims.right - dims.left) / (pointsToday.length - 1)))));
+      const today = pointsToday[index];
+      const history = pointsHistory[index];
+      crosshair.setAttribute("x1", today.x);
+      crosshair.setAttribute("x2", today.x);
+      crosshair.setAttribute("y1", dims.top);
+      crosshair.setAttribute("y2", dims.bottom);
+      crosshair.style.opacity = "1";
+      todayFocus.setAttribute("cx", today.x);
+      todayFocus.setAttribute("cy", today.y);
+      historyFocus.setAttribute("cx", history.x);
+      historyFocus.setAttribute("cy", history.y);
+      todayFocus.style.opacity = "1";
+      historyFocus.style.opacity = "1";
+
+      const minutes = 30 + index * 5;
+      const hour = 10 + Math.floor(minutes / 60);
+      const minute = minutes % 60;
+      document.getElementById("tooltipTime").textContent = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")} · 오늘 ${today.value >= 0 ? "+" : ""}${today.value.toFixed(2)}% / 과거 ${history.value >= 0 ? "+" : ""}${history.value.toFixed(2)}%`;
+      document.getElementById("tooltipToday").textContent = cases[activeCase].today;
+      document.getElementById("tooltipMistake").textContent = cases[activeCase].mistake;
+      placeTooltip(today.x, Math.min(today.y, history.y));
+    }
+
+    setupGrid();
+    setupDots();
+    renderCase(0);
+
+    document.getElementById("prevCase").addEventListener("click", () => renderCase(activeCase - 1));
+    document.getElementById("nextCase").addEventListener("click", () => renderCase(activeCase + 1));
+    hitArea.addEventListener("pointermove", handleChartMove);
+    hitArea.addEventListener("pointerleave", hideTooltip);
+    document.addEventListener("keydown", event => {
+      if (event.key === "ArrowLeft") renderCase(activeCase - 1);
+      if (event.key === "ArrowRight") renderCase(activeCase + 1);
+    });
+  </script>
+</body>
+</html>

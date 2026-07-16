@@ -1,0 +1,43 @@
+{
+  "version": "chart-semantics-ko-v1",
+  "patterns": {
+    "ascending_triangle": "상승 삼각형",
+    "descending_triangle": "하락 삼각형",
+    "symmetrical_triangle": "대칭 삼각형",
+    "bullish_flag": "상승 깃발형",
+    "bearish_flag": "하락 깃발형",
+    "bullish_pennant": "상승 페넌트",
+    "bearish_pennant": "하락 페넌트",
+    "bullish_rectangle": "상승 직사각형",
+    "bearish_rectangle": "하락 직사각형",
+    "rising_wedge": "상승 쐐기",
+    "falling_wedge": "하락 쐐기",
+    "descending_channel_breakout": "하락 채널 상단 돌파",
+    "ascending_channel_breakdown": "상승 채널 하단 이탈"
+  },
+  "states": {
+    "forming": "형성 중",
+    "confirmed": "돌파 확인",
+    "inactive": "비활성",
+    "invalidated": "무효화"
+  },
+  "actions": {
+    "watch": "관찰 후보",
+    "buy_candidate": "매수 후보",
+    "sell_candidate": "매도 후보",
+    "short_candidate": "공매도 검토 후보",
+    "no_trade": "진입 보류"
+  },
+  "reasons": {
+    "confirmed_upward_breakout": "상단 돌파가 확인됨",
+    "confirmed_downward_breakout": "하단 이탈이 확인됨",
+    "long_position_exit_only": "기존 long 포지션의 매도·청산 검토 시나리오",
+    "pattern_not_confirmed": "패턴 확인 전",
+    "pattern_not_active": "패턴이 활성 상태가 아님",
+    "reward_risk_passed": "최소 손익비 기준 충족",
+    "reward_risk_below_minimum": "최소 손익비 기준 미달",
+    "breakout_direction_mismatch": "예상 방향과 실제 돌파 방향이 다름",
+    "confirmed_state_without_current_breakout": "현재 구간에서 돌파 봉을 재확인하지 못함",
+    "missing_pattern_boundaries": "패턴 경계선이 부족함"
+  }
+}

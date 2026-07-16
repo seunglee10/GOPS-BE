@@ -17,8 +17,19 @@ in `platform/{kafka,redis,clickhouse,s3}/README.md`.
   are excluded and raw S3 is never chart serving or ClickHouse materialization input.
 - Local runtime never injects fake market candles. `?orderFlowDemo=1` is a
   browser fixture path only.
-- US-equity `1m` is the real provider source. `5m/10m/1h/4h` are materialized
-  from regular-session `1m` with `bucket_policy=us_equity_regular_session`.
+- US-equity realtime `1m` is the live provider source. Historical and persisted
+  `5m/10m/1h/4h` candles are materialized from regular-session data with
+  `bucket_policy=us_equity_regular_session`. During an active pre, after, or
+  overnight session, the API and live processor additionally aggregate retained
+  `1m` rows for the current extended session and its contiguous predecessor with
+  `bucket_policy=us_equity_extended_session`. Those read-time/live rows are
+  anchored to each extended-session open, never cross a session boundary, and do
+  not make old extended sessions part of historical chart serving. Bounded
+  historical repair keeps `1m` as the source for `5m/10m`, but fetches and stores
+  Alpaca `10Min` as a `source_native` recovery source for `1h/4h`; the resulting
+  historical target candles use the regular-session bucket policy. Readers prefer
+  stored target rows, then `10m`, then legacy `1m` aggregation for hourly history,
+  and merge the bounded current extended-session aggregate when applicable.
   Bucket timestamps are stored in UTC, while session open/close and early-close
   decisions use the NYSE calendar in `America/New_York`.
 - Candle runtime boundaries normalize OHLCV to numeric values and `tradeCount`
@@ -76,13 +87,26 @@ Persist a derived value only when a named reader needs reuse, recovery, or
 audit. Display-only regrouping, such as 1m order-flow minutes into 10m/1h
 columns, stays in the frontend bucket cache and does not create a new fact.
 
+## Heatmap Change Contract
+
+LIVE heatmap `changePercent` is the latest available price compared with the
+previous completed regular-session close. ClickHouse returns that baseline as
+`previousClose`; when Redis supplies a newer live price, the API recomputes the
+percentage from the same baseline. The session open and static universe seed
+must never be used as substitutes.
+
+When no previous regular-session close is available, both `previousClose` and
+`changePercent` are null. The frontend renders an em dash, excludes that item
+from sector and industry percentage averages, and keeps its tile visually
+neutral. SIM mode keeps its separate scenario-seed percentage contract.
+
 ## Query Contract
 
 The single candle read boundary is `CanonicalCandleQuery`:
 
 ```text
 Redis recent/live projection
-  -> ClickHouse matching bucket-policy rows or bounded canonical 1m aggregation
+  -> ClickHouse matching bucket-policy rows or bounded canonical 10m/1m aggregation
   -> optional bounded foreground Alpaca fill for the requested window
   -> background processed S3 final/final-v2 materialization
   -> background Alpaca historical fill
@@ -116,6 +140,22 @@ WebSocket candle events remain `LIVE_CANDLE_UPDATE`, `CANDLE_CLOSED`, and
 finish with `derived.state=ready|failed` and
 `derived.source=api-compute|redis`; there is no derived queue, worker, or
 ClickHouse artifact contract.
+
+`GET /api/charts/volume-profile-bins` treats `targetBins` as an exact display
+bucket count from 4 through 48. The active chart requests 10 equal-width buckets
+across the main price pane's actual `scene.scales.minPrice/maxPrice` domain. That
+domain includes active overlay indicators and axis padding. The request also sends
+the visible closed-candle `candleCount`; the API uses it as the canonical query
+limit and includes it in request/cache identity. Zero-volume buckets remain in the
+response so their price-space gaps are preserved, while a request with no source
+candles remains empty. The response `priceBinSize` is the resolved price range
+divided by `targetBins`; `priceBinSize=auto` remains the compatible request mode.
+This chart calculation uses `volume-profile-exact-v2` cache keys.
+
+When `candleCount` is present and `sourceCandleCount` differs, the response is
+`dataStatus=partial` and includes `requestedCandleCount`. Partial profiles are not
+written to the derived Redis cache. Calls that omit `candleCount` retain the
+legacy default visible-bar query limit.
 
 ## Order Flow Consumers
 
@@ -157,10 +197,11 @@ layout migration. See `platform/s3/README.md` for exact prefixes.
 
 Persisted chart-analysis assets are an offline build projection, not an API
 request-derived cache. The independent builder reads canonical ClickHouse candles
-for the requested interval. Missing derived intraday ranges fetch Alpaca `1Min`,
-write real regular-session `1m`, materialize the requested session-aligned
-`5m/10m/1h/4h`, and re-read ClickHouse. `1W` continues to derive from canonical
-`1D`. This analysis repair path does not use S3, Redis, or Kafka.
+for the requested interval. Missing `5m/10m` ranges fetch Alpaca `1Min`; missing
+`1h/4h` ranges fetch Alpaca `10Min`. The real regular-session source rows are
+stored before the requested session-aligned target is materialized and re-read
+from ClickHouse. `1W` continues to derive from canonical `1D`. This analysis
+repair path does not use S3, Redis, or Kafka.
 
 Alpaca may legitimately omit an intraday slot with no bar. A successful provider
 request with no matching real candle is `provider_confirmed_empty`, not an OHLCV
@@ -173,6 +214,10 @@ New York market midnight; weekly/monthly coordinates use their UTC bucket start.
 The last real NYSE session close, including early close, determines whether a
 higher-timeframe bucket is complete. Serving, analysis, stale checks, and drawing
 anchor snapping share this identity rather than comparing raw timestamps.
+Daily serving coverage therefore reports a tail gap as soon as the latest NYSE
+session has completed and its `1D` candle is absent. It does not wait for the
+generic three-calendar-day tolerance, and weekends, holidays, pre-close sessions,
+and standard or configured early closes do not create false tail gaps.
 
 Only compact final v2 assets are written. Default deployments still use the
 ClickHouse compatibility table; guarded dual-write modes can move the single

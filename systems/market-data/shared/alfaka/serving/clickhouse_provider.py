@@ -12,9 +12,18 @@ from alfaka.common.env import load_dotenv
 from alfaka.common.canonical import CANONICAL_VERSION, HISTORICAL_SERVING_PRICE_ADJUSTMENTS, SERVING_PRICE_ADJUSTMENTS
 from alfaka.common.symbols import is_crypto_symbol
 from alfaka.serving.dto import snapshot
-from alfaka.serving.intervals import INTRADAY_DERIVED_INTERVALS, INTRADAY_INTERVAL_MINUTES, max_request_bars, normalize_chart_interval, resolve_candle_limit
+from alfaka.serving.intervals import INTRADAY_DERIVED_INTERVALS, INTRADAY_INTERVAL_MINUTES, historical_source_interval_for, max_request_bars, normalize_chart_interval, resolve_candle_limit
 from alfaka.serving.moving_average import attach_moving_averages
-from alfaka.serving.session_buckets import BUCKET_POLICY_REGULAR_SESSION, aggregate_regular_session_candles
+from alfaka.serving.session_buckets import (
+    BUCKET_POLICY_REGULAR_SESSION,
+    aggregate_regular_session_candles,
+    aggregate_visible_extended_session_candles,
+)
+
+
+def _legacy_sort_key_extension_error(exc):
+    message = str(exc)
+    return "Existing column" in message and "sorting key" in message
 
 
 class ClickHouseMarketDataProvider:
@@ -68,7 +77,20 @@ class ClickHouseMarketDataProvider:
         )
         direct_rows = with_higher_timeframe_closed_state(direct_rows, interval, now=reference)
         if len(direct_rows) >= limit:
-            return attach_moving_averages(direct_rows[-limit:], overwrite=True)
+            if interval not in INTRADAY_DERIVED_INTERVALS or is_crypto_symbol(symbol) or not visible_extended_session_windows(reference):
+                return attach_moving_averages(direct_rows[-limit:], overwrite=True)
+            extended_rows = self._aggregated_visible_extended_session_candles(
+                symbol,
+                interval,
+                limit,
+                before=before,
+                from_time=from_time,
+                to_time=to_time,
+            )
+            return attach_moving_averages(
+                merge_candle_rows(direct_rows, extended_rows, interval=interval)[-limit:],
+                overwrite=True,
+            )
         aggregate_rows = aggregate(symbol, interval, limit, before=before, from_time=from_time, to_time=to_time) if aggregate else []
         aggregate_rows = with_higher_timeframe_closed_state(aggregate_rows, interval, now=reference)
         return attach_moving_averages(
@@ -187,17 +209,72 @@ class ClickHouseMarketDataProvider:
         return attach_moving_averages(list(reversed(rows)), overwrite=True)
 
     def aggregated_minute_candles(self, symbol, interval, limit=None, before=None, from_time=None, to_time=None):
-        """1분봉을 intraday 파생 주기로 묶어 차트용 캔들을 만듭니다."""
+        """선호 intraday 원본 봉을 파생 주기로 묶고, 기존 1분봉을 fallback으로 사용합니다."""
         interval = normalize_chart_interval(interval)
         limit = resolve_candle_limit(interval, limit)
         if is_crypto_symbol(symbol):
             return self._clock_aligned_minute_candles(
                 symbol, interval, limit, before=before, from_time=from_time, to_time=to_time,
             )
+        source_interval = historical_source_interval_for(interval)
+        preferred = self._aggregated_regular_session_candles_from_source(
+            symbol,
+            interval,
+            source_interval,
+            limit,
+            before=before,
+            from_time=from_time,
+            to_time=to_time,
+        )
+        if source_interval == "1m" or len(preferred) >= limit:
+            regular_rows = preferred
+        else:
+            fallback = self._aggregated_regular_session_candles_from_source(
+                symbol,
+                interval,
+                "1m",
+                limit,
+                before=before,
+                from_time=from_time,
+                to_time=to_time,
+            )
+            regular_rows = merge_candle_rows(fallback, preferred, interval=interval)
+        extended_rows = self._aggregated_visible_extended_session_candles(
+            symbol,
+            interval,
+            limit,
+            before=before,
+            from_time=from_time,
+            to_time=to_time,
+        )
+        return attach_moving_averages(
+            merge_candle_rows(regular_rows, extended_rows, interval=interval)[-limit:],
+            overwrite=True,
+        )
+
+    def _aggregated_regular_session_candles_from_source(
+        self,
+        symbol,
+        interval,
+        source_interval,
+        limit,
+        *,
+        before=None,
+        from_time=None,
+        to_time=None,
+    ):
         bucket_minutes = INTRADAY_INTERVAL_MINUTES[interval]
+        source_minutes = INTRADAY_INTERVAL_MINUTES[source_interval]
         time_filter = ""
-        source_limit = min(max_request_bars("1m"), max(int(limit) * bucket_minutes + 390, int(limit)))
+        source_bars_per_target = max(1, (bucket_minutes + source_minutes - 1) // source_minutes)
+        session_padding = (390 + source_minutes - 1) // source_minutes
+        source_limit = min(
+            max_request_bars(source_interval),
+            max(int(limit) * source_bars_per_target + session_padding, int(limit)),
+        )
         params = {"symbol": symbol, "limit": int(source_limit)}
+        if source_interval != "1m":
+            params["sourceInterval"] = source_interval
         if from_time:
             time_filter += "\n          AND event_time >= parseDateTime64BestEffort({fromTime:String})"
             params["fromTime"] = from_time
@@ -208,10 +285,11 @@ class ClickHouseMarketDataProvider:
             time_filter += "\n          AND event_time < parseDateTime64BestEffort({before:String})"
             params["before"] = before
 
-        session_filter = self.market_session_filter_sql(symbol)
+        session_filter = "market_session = 'regular'"
+        interval_filter = "interval = '1m'" if source_interval == "1m" else "interval = {sourceInterval:String}"
         source_query = self.latest_chart_candles_source(f"""
             symbol = {{symbol:String}}
-            AND interval = '1m'
+            AND {interval_filter}
             AND {session_filter}
             {time_filter}
         """, include_live=include_live_stored_candles("1m"))
@@ -242,9 +320,86 @@ class ClickHouseMarketDataProvider:
         """
         rows = list(reversed(self.query_json_each_row(query, params)))
         for row in rows:
+            row["interval"] = source_interval
+        return aggregate_regular_session_candles(
+            rows,
+            interval,
+            now=self.now_provider(),
+            source_interval=source_interval,
+        )[-limit:]
+
+    def _aggregated_visible_extended_session_candles(
+        self,
+        symbol,
+        interval,
+        limit,
+        *,
+        before=None,
+        from_time=None,
+        to_time=None,
+    ):
+        reference = self.now_provider()
+        windows = visible_extended_session_windows(reference)
+        if not windows:
+            return []
+
+        time_filter = ""
+        source_limit = min(
+            max_request_bars("1m"),
+            max(1, sum(int((end - start).total_seconds() // 60) for _session, start, end in windows)),
+        )
+        params = {"symbol": symbol, "limit": int(source_limit)}
+        if from_time:
+            time_filter += "\n          AND event_time >= parseDateTime64BestEffort({fromTime:String})"
+            params["fromTime"] = from_time
+        if to_time:
+            time_filter += "\n          AND event_time <= parseDateTime64BestEffort({toTime:String})"
+            params["toTime"] = to_time
+        if before:
+            time_filter += "\n          AND event_time < parseDateTime64BestEffort({before:String})"
+            params["before"] = before
+
+        session_filter = self.extended_market_session_filter_sql(windows)
+        source_query = self.latest_chart_candles_source(f"""
+            symbol = {{symbol:String}}
+            AND interval = '1m'
+            AND {session_filter}
+            {time_filter}
+        """, include_live=True)
+        query = f"""
+        SELECT
+          formatDateTime(event_time, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS timestamp,
+          symbol,
+          open,
+          high,
+          low,
+          close,
+          volume,
+          is_closed AS isClosed,
+          correction_type AS correctionType,
+          source,
+          feed,
+          feed_profile AS feedProfile,
+          market_session AS marketSession,
+          price_adjustment AS priceAdjustment,
+          canonical_version AS canonicalVersion,
+          source_event_id AS sourceEventId
+        FROM (
+          {source_query}
+        )
+        ORDER BY event_time DESC
+        LIMIT {{limit:UInt32}}
+        FORMAT JSONEachRow
+        """
+        rows = list(reversed(self.query_json_each_row(query, params)))
+        for row in rows:
             row["interval"] = "1m"
-        aggregated = aggregate_regular_session_candles(rows, interval, now=self.now_provider())
-        return attach_moving_averages(aggregated[-limit:], overwrite=True)
+        return aggregate_visible_extended_session_candles(
+            rows,
+            interval,
+            now=reference,
+            source_interval="1m",
+        )[-limit:]
 
     def _clock_aligned_minute_candles(self, symbol, interval, limit, *, before=None, from_time=None, to_time=None):
         bucket_minutes = INTRADAY_INTERVAL_MINUTES[interval]
@@ -419,18 +574,35 @@ class ClickHouseMarketDataProvider:
         """backfill 판단에 필요한 저장 캔들 개수와 가용 기간을 계산합니다."""
         interval = normalize_chart_interval(interval)
         if interval in {*INTRADAY_DERIVED_INTERVALS, "1W", "1M"}:
-            direct = self.stored_interval_coverage(symbol, interval)
+            direct_bucket_policy = (
+                BUCKET_POLICY_REGULAR_SESSION
+                if interval in INTRADAY_DERIVED_INTERVALS and not is_crypto_symbol(symbol)
+                else None
+            )
+            direct = self.stored_interval_coverage(symbol, interval, bucket_policy=direct_bucket_policy)
             if int(direct.get("rowCount") or 0) > 0:
                 return {**direct, "sourceInterval": interval}
-        stored_interval = "1m" if interval in INTRADAY_DERIVED_INTERVALS else "1D" if interval in {"1W", "1M"} else interval
-        return {**self.stored_interval_coverage(symbol, stored_interval), "sourceInterval": stored_interval}
+        stored_interval = (
+            "1m"
+            if is_crypto_symbol(symbol) and interval in INTRADAY_DERIVED_INTERVALS
+            else historical_source_interval_for(interval)
+        )
+        source_coverage = self.stored_interval_coverage(symbol, stored_interval)
+        if int(source_coverage.get("rowCount") or 0) > 0 or stored_interval == "1m":
+            return {**source_coverage, "sourceInterval": stored_interval}
+        fallback = self.stored_interval_coverage(symbol, "1m")
+        return {**fallback, "sourceInterval": "1m"}
 
-    def stored_interval_coverage(self, symbol, stored_interval):
+    def stored_interval_coverage(self, symbol, stored_interval, bucket_policy=None):
         stored_interval = normalize_chart_interval(stored_interval)
         interval_filter = "interval IN ('1D', '1d')" if stored_interval == "1D" else "interval = {interval:String}"
         params = {"symbol": symbol}
         if stored_interval != "1D":
             params["interval"] = stored_interval
+        bucket_policy_filter = ""
+        if bucket_policy:
+            params["bucketPolicy"] = bucket_policy
+            bucket_policy_filter = "\n            AND bucket_policy = {bucketPolicy:String}"
         if is_crypto_symbol(symbol):
             if stored_interval == "1D":
                 row_count_expr = "uniqExact(toDate(event_time))"
@@ -453,6 +625,7 @@ class ClickHouseMarketDataProvider:
         source_query = self.latest_chart_candles_source(f"""
             symbol = {{symbol:String}}
             AND {interval_filter}
+            {bucket_policy_filter}
         """, include_live=include_live_stored_candles(stored_interval))
         query = f"""
         SELECT
@@ -722,6 +895,14 @@ class ClickHouseMarketDataProvider:
             AND event_time >= subtractDays(now(), {{lookbackDays:UInt32}})
             AND toDayOfWeek(event_time) BETWEEN 1 AND 5
         """, include_live=normalized_interval == "1m")
+        previous_close_session_filter = "AND market_session = 'regular'" if normalized_interval == "1m" else ""
+        previous_close_source_query = self.latest_chart_candles_source(f"""
+            symbol IN {{symbols:Array(String)}}
+            AND {interval_filter}
+            AND event_time >= subtractDays(now(), {{lookbackDays:UInt32}})
+            AND toDayOfWeek(event_time) BETWEEN 1 AND 5
+            {previous_close_session_filter}
+        """, include_live=normalized_interval == "1m")
         query = f"""
         WITH latest_sessions AS (
           SELECT
@@ -729,22 +910,58 @@ class ClickHouseMarketDataProvider:
             max(toDate(event_time)) AS latest_session_date
           FROM ({latest_source_query})
           GROUP BY symbol
+        ), current_quotes AS (
+          SELECT
+            c.symbol AS symbol,
+            argMax(c.close, c.event_time) AS sessionClose,
+            sum(toFloat64(c.volume) * c.close) AS sessionDollarVolume,
+            sum(c.volume) AS volume,
+            max(c.event_time) AS sourceUpdatedAt
+          FROM ({session_source_query}) AS c
+          INNER JOIN latest_sessions AS latest
+            ON c.symbol = latest.symbol
+           AND toDate(c.event_time) = latest.latest_session_date
+          GROUP BY c.symbol
+        ), regular_session_closes AS (
+          SELECT
+            symbol,
+            toDate(event_time) AS sessionDate,
+            argMax(close, event_time) AS sessionClose
+          FROM ({previous_close_source_query})
+          GROUP BY symbol, sessionDate
+        ), previous_closes AS (
+          SELECT
+            regular.symbol AS symbol,
+            argMax(regular.sessionClose, regular.sessionDate) AS previousClose
+          FROM regular_session_closes AS regular
+          INNER JOIN latest_sessions AS latest
+            ON regular.symbol = latest.symbol
+           AND regular.sessionDate < latest.latest_session_date
+          GROUP BY regular.symbol
         )
         SELECT
-          c.symbol AS symbol,
-          argMax(c.close, c.event_time) AS lastPrice,
-          if(argMin(c.open, c.event_time) = 0, NULL, round(((argMax(c.close, c.event_time) - argMin(c.open, c.event_time)) / argMin(c.open, c.event_time)) * 100, 2)) AS changePercent,
-          sum(toFloat64(c.volume) * c.close) AS sessionDollarVolume,
-          sum(c.volume) AS volume,
-          formatDateTime(max(c.event_time), '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS sourceUpdatedAt,
+          symbol,
+          sessionClose AS lastPrice,
+          previousClose AS previousClose,
+          if(isNull(previousClose) OR previousClose = 0, NULL, round(((sessionClose - previousClose) / previousClose) * 100, 2)) AS changePercent,
+          sessionDollarVolume,
+          volume,
+          formatDateTime(sourceUpdatedAt, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS sourceUpdatedAt,
           {clickhouse_string_literal('latest_available_session')} AS rankingWindow,
           {clickhouse_string_literal(f'clickhouse_{normalized_interval}_latest_quote')} AS rankReason
-        FROM ({session_source_query}) AS c
-        INNER JOIN latest_sessions AS latest
-          ON c.symbol = latest.symbol
-         AND toDate(c.event_time) = latest.latest_session_date
-        GROUP BY c.symbol
-        ORDER BY c.symbol ASC
+        FROM (
+          SELECT
+            quote.symbol AS symbol,
+            quote.sessionClose AS sessionClose,
+            nullIf(baseline.previousClose, 0) AS previousClose,
+            quote.sessionDollarVolume AS sessionDollarVolume,
+            quote.volume AS volume,
+            quote.sourceUpdatedAt AS sourceUpdatedAt
+          FROM current_quotes AS quote
+          LEFT JOIN previous_closes AS baseline
+            ON quote.symbol = baseline.symbol
+        )
+        ORDER BY symbol ASC
         LIMIT {{limit:UInt32}}
         FORMAT JSONEachRow
         """
@@ -972,9 +1189,16 @@ class ClickHouseMarketDataProvider:
         )
         self.execute(
             f"ALTER TABLE {self.table('chart_candles')} "
-            "ADD COLUMN IF NOT EXISTS bucket_policy_key LowCardinality(String) AFTER bucket_policy, "
-            "MODIFY ORDER BY (symbol, interval, event_time, feed_profile, market_session, bucket_policy_key)"
+            "ADD COLUMN IF NOT EXISTS bucket_policy_key LowCardinality(String) AFTER bucket_policy"
         )
+        try:
+            self.execute(
+                f"ALTER TABLE {self.table('chart_candles')} "
+                "MODIFY ORDER BY (symbol, interval, event_time, feed_profile, market_session, bucket_policy_key)"
+            )
+        except RuntimeError as exc:
+            if not _legacy_sort_key_extension_error(exc):
+                raise
         # Crypto 체결/거래량은 소수 단위가 자연스럽기 때문에 조회 스키마도 Float64로 맞춥니다.
         for table, column, column_type in (
             ("trade_ticks", "size", "Nullable(Float64)"),
@@ -991,7 +1215,11 @@ class ClickHouseMarketDataProvider:
         windows = visible_extended_session_windows(now)
         if not windows:
             return "market_session = 'regular'"
-        clauses = ["market_session = 'regular'"]
+        return f"(market_session = 'regular' OR {self.extended_market_session_filter_sql(windows, column=column)})"
+
+    def extended_market_session_filter_sql(self, windows, column="event_time"):
+        """지정된 extended session window만 통과시키는 ClickHouse 조건을 만듭니다."""
+        clauses = []
         for session, start, end in windows:
             start_literal = clickhouse_string_literal(start.strftime("%Y-%m-%dT%H:%M:%S.000Z"))
             end_literal = clickhouse_string_literal(end.strftime("%Y-%m-%dT%H:%M:%S.000Z"))
@@ -1001,7 +1229,7 @@ class ClickHouseMarketDataProvider:
                 f"AND {column} >= parseDateTime64BestEffort({start_literal}) "
                 f"AND {column} < parseDateTime64BestEffort({end_literal}))"
             )
-        return f"({' OR '.join(clauses)})"
+        return f"({' OR '.join(clauses)})" if clauses else "0 = 1"
 
     def canonical_candle_filter_sql(self, *, include_live=False):
         if os.getenv("CLICKHOUSE_REQUIRE_CANONICAL_CANDLES", "true").lower() not in {"1", "true", "yes"}:
@@ -1074,6 +1302,39 @@ class ClickHouseMarketDataProvider:
         FORMAT JSONEachRow
         """
         return self.query_json_each_row(query, {"symbol": symbol, "limit": int(limit), "days": int(days)})
+
+    def news_articles_window(self, symbol, *, from_at, to_at, available_as_of, limit=12):
+        query = f"""
+        WITH greatest(published_at, coalesce(received_at, published_at), inserted_at) AS available_at
+        SELECT
+          formatDateTime(published_at, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS publishedAt,
+          formatDateTime(available_at, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS availableAt,
+          symbol,
+          article_id AS articleId,
+          headline,
+          summary,
+          content,
+          url,
+          source,
+          author,
+          formatDateTime(updated_at, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS updatedAt,
+          formatDateTime(received_at, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS receivedAt
+        FROM {self.table('news_articles')}
+        WHERE symbol = {{symbol:String}}
+          AND published_at >= parseDateTime64BestEffort({{fromAt:String}})
+          AND published_at <= parseDateTime64BestEffort({{toAt:String}})
+          AND available_at <= parseDateTime64BestEffort({{availableAsOf:String}})
+        ORDER BY published_at DESC, inserted_at DESC
+        LIMIT {{limit:UInt32}}
+        FORMAT JSONEachRow
+        """
+        return self.query_json_each_row(query, {
+            "symbol": symbol,
+            "fromAt": str(from_at),
+            "toAt": str(to_at),
+            "availableAsOf": str(available_as_of),
+            "limit": int(limit),
+        })
 
     def localized_news_articles(self, symbol, limit=10, days=7, locale="ko-KR"):
         return self.localized_news_articles_for_symbols([symbol], limit=limit, days=days, locale=locale)

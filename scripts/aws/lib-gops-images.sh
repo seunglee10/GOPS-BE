@@ -147,7 +147,7 @@ gops_deployments_for_service() {
         alfaka-s3-sink
       ;;
     order-worker)
-      printf '%s\n' order-outbox-publisher
+      printf '%s\n' order-outbox-publisher paper-order-matcher
       ;;
     simulator)
       printf '%s\n' gops-simulator

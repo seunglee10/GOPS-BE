@@ -10,12 +10,16 @@ import psycopg
 from gops_agents.chart_assets.storage import _database_conninfo
 
 
-SQL_PATH = Path(__file__).parent / "003_geometry_assets.sql"
+SQL_PATHS = (
+    Path(__file__).parent / "003_geometry_assets.sql",
+    Path(__file__).parent / "004_chart_asset_queue_priority.sql",
+)
 
 
 def apply_schema(conninfo: str | None = None) -> None:
     with psycopg.connect(conninfo or _database_conninfo()) as conn:
-        conn.execute(SQL_PATH.read_text(encoding="utf-8"))
+        for sql_path in SQL_PATHS:
+            conn.execute(sql_path.read_text(encoding="utf-8"))
         conn.commit()
 
 

@@ -104,7 +104,7 @@ CI/CD는 Continuous Integration/Continuous Delivery의 줄임말이다. 코드�
     StatefulSet을 server-side dry-run 후 apply하고, StatefulSet rollout을
     기다린다.
 13. `scripts/aws/validate-dedicated-platform.sh`가 `app-agent`, `cache-db`,
-    `streaming`, `graphdb`, `clickhouse`, `batch-warm`, 동적 `batch` NodePool과 Stateful pod
+    `streaming`, `graphdb`, `clickhouse`, 동적 `batch` NodePool과 Stateful pod
     배치를 확인한다.
 14. 임시 worktree 안에서 `scripts/aws/update-ci-image-tags.sh`가 CI overlay image tag를 갱신한다. 원래 작업 폴더의 tracked manifest는 수정하지 않는다.
 15. Git에 선언된 `alert-evaluator`와 `recommendation-worker` replica를 그대로

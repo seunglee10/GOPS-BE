@@ -42,7 +42,51 @@ GOPS 에이전트는 사용자 질의를 받아 시장 데이터, 뉴스, 온톨
 에이전트는 절대 실주문을 실행하지 않는다. 주문 관련 의사결정이 필요하면
 분석 근거와 사용자 확인을 위한 UI 제안까지만 만든다.
 
+가격 예약 주문도 이 경계를 유지한다. 에이전트는 원문 답변에서 가격을 다시
+추출하지 않고, 인증된 분석 요청의 구조화된 차트 봉으로
+`tradeConditionProposals[]`를 결정론적으로 만든다. 이 제안에는 안정적인
+`proposalId`, 종목, 매수/매도, 발동 방향·가격, 지정가, 수량 누락 여부와 30분
+만료 시각만 담긴다. 후속 사용자 문장을 해석하고 조건을 저장하거나 주문을
+실행하는 책임은 API/order runtime에 있으며 AgentOrchestrator에는 없다.
+
 ## Runtime Flow
+
+`AnalysisReport` may include a versioned `coachReport`. The public request contains only
+the lightweight `coachRequest`; the authenticated analysis worker, not the client, builds
+one immutable `CoachInputSnapshot` from a completed user/date-scoped post-market S3 input
+archive plus cutoff-safe ClickHouse context. It does not query orders, KIS, paper trading,
+or Redis at panel-open time. The archive must provide its own `sourceAsOf`/`generatedAt`;
+missing fills, portfolio pairs, and decision evidence remain explicit rather than being
+invented. Deterministic coach analytics owns similarity, MFE/MAE/return, portfolio impact,
+habit aggregation, improvement priority, and condition evaluation. Narrative synthesis may
+explain these values but may not recompute them.
+
+Each fill keeps `decisionAt` separate from `filledAt`. Decision evidence and similarity
+inputs use `decisionAt`; entry anchoring and outcome performance use `filledAt`. A missing
+decision record means `확인 기록 없음`; the coach does not add purchase-time confirmation UI
+or infer a user action from chart evidence.
+
+`coach-report.v2` exposes four UI pages. Page 2 computes `entry`, `exit`, and
+`portfolio` reports independently for `30d`, `90d`, and `1y`; page 4 is the single
+action center that combines the former execution, guardrail, and alert-management pages.
+For entry and exit, page 2 also carries a deterministic long-term profile: confirmed versus
+unconfirmed process/outcome cohorts, repeated missed-check or concentration patterns, and
+representative historical trades. Profit never upgrades an unconfirmed process. Missing
+decision records remain explicit rather than becoming an inferred investor trait.
+The page-2 portfolio profile also exposes snapshot-bound sector exposure, holding market/
+sector sensitivity, and at most three market-diversification candidates. Candidate market
+facts (correlation and relative strength) must be supplied by stored point-in-time market
+evidence; without them the report shows a data-connection state rather than a generic
+allocation or an LLM-generated recommendation. Suggested ranges are review ranges only and
+never create orders or rebalance the account.
+Daily-trade alert candidates preserve their deterministic condition value, threshold,
+operator, reason, recommended action, and support flag so page 4 can render the full
+condition without recomputing it in the browser. Page 1 renders only a compact preview.
+Exit-habit findings are likewise deterministic and conservative: pre-sale giveback uses
+only completed `T-60..T-1` daily highs, while a post-sale MFE observation is eligible only
+after the complete `T+1..T+20` window exists. Post-sale data is labeled hindsight outcome
+evaluation and never proves that the original exit decision was wrong or that a plan was
+followed when no plan-confirmation record exists.
 
 ```mermaid
 flowchart LR
@@ -77,6 +121,7 @@ Kafka queue, worker, Redis report store를 쓰는 async path다.
 | synthesis | evidence와 role finding을 기반으로 최종 답변과 리포트를 만든다. |
 | report store | `analysisId`별 리포트, latest report, idempotency mapping, cancel marker를 저장한다. |
 | delivery gateway | result topic을 Redis update channel로 fanout한다. |
+| trade condition proposal builder | 구조화된 최근 차트 봉에서 만료되는 매수·매도 가격 제안을 만든다. 주문은 실행하지 않는다. |
 
 UI-only layout 명령은 LLM 없이 `intent_understanding/ui_parser.py`의 lexicon/rule
 경로에서 먼저 판정한다. 새 action은 `intent_understanding/schema.py`와
@@ -156,6 +201,27 @@ class EvidenceItem:
 Provider 실패나 빈 결과는 예외로 전체 분석을 멈추지 않는다. 반드시
 `status="no-data"` evidence로 degrade한다.
 
+AI 코치의 `StoreCoachPointInTimeContextProvider`는 일반 role provider fan-out과
+별도로 Snapshot Builder가 요청당 한 번만 호출한다. 외부 SEC/Yahoo/Alpaca API를
+hot path에서 호출하지 않고 Redis/ClickHouse에 저장된 quote, company metadata,
+news, SEC fundamentals, Yahoo earnings rows와 현재 GraphDB evidence를 하나의 cutoff
+계약으로 정규화한다. Quote는 event/insert 순서를 함께 사용해 결정론적으로 고르고,
+체결 이후·cutoff 이하이면서 기본 96시간 freshness 안에 있을 때만 쓴다. Redis row는
+별도 received/inserted 시각을 증명할 때만 적격이다. 현재 writer처럼 event time만
+보존하면 ClickHouse trade tick과 완료 1분봉 순서로 degrade한다. SEC schema가 filing 시각이
+아닌 날짜만 보존하므로 진입 당일 filing은 역사적 판단 근거에서 제외한다.
+
+Daily candle similarity features are revision-aware: the selected canonical candle revision
+must have `inserted_at <= decisionAt`. Display/outcome candles may use revisions available by
+the immutable request cutoff, never later revisions. A provider without this vintage contract
+may supply display rows but is ineligible to supply similarity features.
+
+GraphDB는 현재 graph만 제공하므로 `temporalScope="current-only"`와
+`historicalSimilarityEligible=false`로 기록하고 역사 유사도 입력에 넣지 않는다.
+Yahoo `ReplacingMergeTree` row도 과거 revision 재현을 보장하지 않으므로
+`historicalRevisionAvailable=false`로 표시한다. cutoff에 맞는 저장 row가 없으면
+현재 값을 과거 사실로 대체하지 않고 snapshot `missingData`를 남긴다.
+
 ## Provider Types
 
 | Provider | Runtime dependency | Behavior |
@@ -188,17 +254,34 @@ Hot path query understanding은 bounded fan-out으로 실행된다.
 - deterministic UI-task rules
 - optional classifier pod or OpenAI classifier
 
-Interactive chart/news 질문은 shortcut router가 최종 판단하지 않는다. 프런트가
+Interactive chart/news/recommendation 질문은 shortcut router가 최종 판단하지 않는다. 프런트가
 보낸 `references`와 `uiContext`를 먼저 `OperationIR` 후보로 모으고, 날짜·캔들·가격·
-레이어·뉴스 anchor 계산은 deterministic resolver가 처리한다. 현재 v1은
+레이어·뉴스·선택 추천 종목 anchor 계산은 deterministic resolver가 처리한다. 추천 행은
+`recommendation.stock` reference로 전달되며 추천 당시 순위·점수·신뢰도·근거를
+market snapshot evidence에 포함한다. 현재 v1은
 `systems/agent-orchestration/shared/gops_agents/operations`에서 analysis/chart
 operation 후보와 `contextWindow` spec을 만들고, `agentTrace.operationIR`에 남긴다.
 LLM은 confidence가 낮거나 required slot이 비어 있는 복합 요청의 structured planner
 fallback으로만 사용한다. 이 fallback은 `AGENT_OPERATION_PLANNER_PROVIDER=openai`일
 때만 Responses API JSON schema로 호출하고, 실패하거나 예산을 얻지 못하면
 deterministic `OperationIR`을 그대로 쓴다. 차트 변경은 영구 `ChartCommand[]`와
-임시 visual overlay를 분리하고, 분석 질문은 resolved anchor를 기준으로
-market/news/ontology/financial snapshot을 수집한다.
+임시 visual overlay를 분리한다. 활성 차트가 있는 `차트 분석해줘`와 chart reference가
+있는 `이 봉 분석해줘`는 classifier/planner를 건너뛰고 각각 `chart_overview`,
+`reference_anchor_analysis`로 라우팅한다. 이때 chart role은 범용
+`market_snapshot`이 아니라 PostgreSQL Geometry 자산과 canonical candle을 조합한
+`chart_analysis_snapshot`을 사용한다. Geometry를 읽지 못하면 request의 bounded
+화면 candle로 degrade하며, chart 설명 자체에는 LLM을 사용하지 않는다.
+
+`chart_analysis_snapshot`의 `chartExplanation v1`은 패턴·확인 상태, 지지·저항,
+trade scenario와 무효화 조건, SMA60/120 교차, 선택 봉 feature, focus drawing ID,
+coverage를 typed fact로 보존한다. 요청의 `chartDocumentId/sourcePanelId`는 optional
+`source`로 echo하고, 저장 자산의 drawing ID만 `focusGroups`의 evidence/pattern/support/
+resistance로 분류한다. `focusIds`는 호환용 합집합으로 유지한다. 이 응답은 요청 시점의
+불변 snapshot이며 현재 Geometry asset과 identity가 정확히 일치할 때만 프런트가 focus한다.
+최종 문장과 숫자는 deterministic Korean narrator가 렌더링한다. 뉴스는 anchor window에서 `availableAt` cutoff를 통과한 항목만 원인 후보로
+정렬하고 이후 항목은 후속 뉴스로 분리하며, 인과가 아니라 시간상 연관으로 표현한다.
+`analysisMode=deep`도 실제 available evidence domain이 둘 이상일 때만 LLM budget 1회를
+열며, 그보다 적으면 deterministic synthesis를 사용한다.
 
 일반 분석의 최종 사용자 답변은 `final answer synthesis`를 우선한다.
 `AGENT_MAX_REALTIME_LLM_CALLS`의 운영 기본값은 2이며, runtime은
@@ -251,12 +334,12 @@ catalog를 image/runtime filesystem에 포함해야 한다.
 | --- | --- | --- |
 | `agent-orchestrator` | yes | HTTP compatibility endpoint and direct report lookup. |
 | `agent-analysis-worker` | yes | hot analysis request를 소비하고 report를 저장한다. |
-| `chart-asset-builder` | no | PostgreSQL queue의 symbol/interval item을 처리한다. ClickHouse 완료 봉을 우선 읽고 누락 range만 Alpaca로 보충한 뒤 지지·저항과 세 삼각형을 결정론적으로 계산해 PostgreSQL에 저장한다. S3, Redis, Kafka, LLM을 사용하지 않으며 interactive orchestrator와 독립이다. |
+| `chart-asset-builder` | no | PostgreSQL queue의 symbol/interval item을 처리한다. 보존 정책상 scheduled item은 분석 전에 종료하고, 기존 자산은 선택 pair의 `manual + force`에서만 ClickHouse 완료 봉 감사·누락 range Alpaca 보충·Geometry v5 저장을 수행한다. 기존 v3/v4 자산은 reader가 그대로 사용한다. S3, Redis, Kafka, LLM을 사용하지 않으며 interactive orchestrator와 독립이다. |
 | `agent-delivery-gateway` | yes for async/SSE | result event를 Redis report update로 mirror한다. |
 | `agent-intent-classifier` | no | ambiguous query를 위한 optional cheap classifier. |
 | `deep-analysis-worker` | no | opt-in deep analysis request를 처리한다. |
 | `event-detector` | no | market Kafka topics를 agent market events로 바꾼다. |
-| `notification-publisher` | no | notification decision을 Redis/WebSocket consumer에 fanout한다. |
+| `notification-publisher` | no | notification decision, market event, risk event를 Redis/WebSocket consumer에 fanout한다. market event는 `level`/`severity`가 watch 이상일 때 기본 toast 대상으로 승격된다. |
 | `graph-expansion-refresh` | no | GraphDB hint를 Redis/ClickHouse cache로 materialize한다. |
 | `sec-companyfacts-backfill` | no | SEC companyfacts bulk ZIP을 S3에 저장하고 ClickHouse/Redis fundamentals projection을 만든다. |
 | `sec-fundamentals-reconcile` | future | ClickHouse 최신 revision과 Redis cache를 비교해 stale cache를 재작성한다. Hot path stale check를 하지 않는다. |
@@ -265,6 +348,12 @@ catalog를 image/runtime filesystem에 포함해야 한다.
 Agent runtime은 `gops-agent-orchestrator` image를 공유한다. SEC
 companyfacts backfill은 S3/ClickHouse helpers를 재사용하기 위해
 `gops-market-storage` image에서 실행된다.
+
+`event-detector`의 가격 급변 판정은 trade 가격을 계속 사용하지만, 거래량
+급증 판정은 `market.layer.candles.<interval>.closed.v1`의 완료 캔들만
+사용한다. 같은 symbol과 interval의 이전 완료 캔들 20개 rolling 평균을
+기준으로 하며, 최소 5개가 쌓이기 전에는 판정하지 않는다. 같은
+symbol/interval의 `volume_spike`는 기본 30분 cooldown을 적용한다.
 
 ## Package Layout
 
@@ -299,6 +388,19 @@ dependency is removed later, create agent-owned provider interfaces first.
 
 ## Important Contracts
 
+완료 `AnalysisReport`는 선택적으로 다음 필드를 포함한다.
+
+```text
+tradeConditionProposals[]
+  proposalId, analysisId, symbol, exchange
+  side, direction, triggerPrice, limitPrice, quantity
+  executionEnabled, alertsEnabled, validity
+  missingFields, rationale, createdAt, expiresAt
+```
+
+프런트는 이 값을 가격 조건으로 직접 저장하지 않는다. 사용자의 명시적인 후속
+요청이 있을 때 API가 report owner와 proposal ID를 다시 검증해야 한다.
+
 Kafka topics:
 
 ```text
@@ -310,6 +412,10 @@ agents.query-understanding-events.v1
 agents.notification-decisions.v1
 agents.dlq.v1
 ```
+
+`NotificationDecision`은 선택적 `eventType`을 포함한다. 프런트는 이 값을
+가격 급등락, 거래량 급증 같은 사용자 알림 설정에 매핑하며, 알 수 없는 값은
+전체 알림과 기업별 알림 gate만 적용한다.
 
 Redis report keys and channels:
 

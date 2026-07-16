@@ -4,8 +4,8 @@ Data sources, in order of preference:
 - portfolio: simulator account (simulation mode) or the latest holdings
   snapshot remembered by GET /api/account/holdings, falling back to a direct
   KIS demo fetch.
-- symbol metrics: daily candles from the market-data query service; last price
-  and ADV over the last 20 sessions (fat-finger checks).
+- symbol metrics: the live heatmap quote when available, then the latest daily
+  candle close; ADV comes from the last 20 daily sessions (fat-finger checks).
 
 Everything degrades gracefully: any missing piece leaves the matching
 RiskContext field as None so the risk engine skips (and reports) the rules
@@ -124,18 +124,25 @@ def _parse_positions(rows: Any) -> tuple[list[PositionSnapshot], bool]:
 
 
 def _symbol_metrics(symbol: str) -> SymbolMetrics:
+    market_item = _market_item_for_symbol(symbol)
     candles = _daily_candles(symbol)
-    if not candles:
-        return SymbolMetrics(sector=_sector_for_symbol(symbol))
     closes = [_as_float(candle.get("close")) for candle in candles]
     volumes = [_as_float(candle.get("volume")) for candle in candles]
 
-    last_price = next((value for value in reversed(closes) if value is not None), None)
+    live_price = _as_float(market_item.get("lastPrice"))
+    last_price = live_price if live_price is not None else next((value for value in reversed(closes) if value is not None), None)
+    price_source = (
+        (str(market_item.get("priceSource") or "").strip() or "live_quote")
+        if live_price is not None
+        else ("daily_close" if last_price is not None else None)
+    )
     adv_value = _average_volume(volumes)
     return SymbolMetrics(
         last_price=decimal_or_none(last_price),
         average_daily_volume=decimal_or_none(adv_value),
-        sector=_sector_for_symbol(symbol),
+        sector=(str(market_item.get("sector") or "").strip() or None),
+        price_source=price_source,
+        price_observed_at=((str(market_item.get("priceUpdatedAt") or "").strip() or None) if live_price is not None else None),
     )
 
 
@@ -157,7 +164,7 @@ def _average_volume(volumes: list[float | None]) -> float | None:
     return sum(recent) / len(recent)
 
 
-def _sector_for_symbol(symbol: str) -> str | None:
+def _market_item_for_symbol(symbol: str) -> dict[str, Any]:
     try:
         from app.market_data.heatmap.service import get_heatmap_service
 
@@ -165,11 +172,10 @@ def _sector_for_symbol(symbol: str) -> str | None:
         items = payload.get("items") if isinstance(payload, dict) else []
         for item in items or []:
             if isinstance(item, dict) and str(item.get("symbol") or "").upper() == symbol.upper():
-                sector = str(item.get("sector") or "").strip()
-                return sector or None
+                return item
     except Exception:
-        return None
-    return None
+        return {}
+    return {}
 
 
 # --- helpers -----------------------------------------------------------------

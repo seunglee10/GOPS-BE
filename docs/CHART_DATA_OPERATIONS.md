@@ -141,8 +141,8 @@ Use `SYMBOLS=AAPL,NVDA` and `MAX_SYMBOLS=2` for a smoke run. The job is idempote
 by `(symbol, interval, event_time, bucket_policy)` selection and does not delete
 `clock_aligned` rollback rows. After it completes, force a Geometry build so the
 new candle digest replaces PostgreSQL assets.
-The default scheduler target is the always-on `batch-warm` node pool; override it
-with `BATCH_NODEPOOL=batch` only when the elastic batch pool is provisioning normally.
+The default scheduler target is the elastic `batch` node pool. It scales from zero,
+so allow for node provisioning time when setting Job deadlines.
 
 Dry-run ClickHouse-to-S3 regeneration first:
 

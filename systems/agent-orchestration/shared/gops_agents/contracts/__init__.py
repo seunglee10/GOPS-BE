@@ -378,9 +378,33 @@ class NotificationDecision:
     message: str
     reason: str
     eventId: str | None = None
+    eventType: str | None = None
     createdAt: str = field(default_factory=utc_now_iso)
     expiresAt: str | None = None
     channels: list[str] = field(default_factory=lambda: ["websocket", "redis"])
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class TradeConditionProposal:
+    proposalId: str
+    analysisId: str
+    symbol: str
+    exchange: str
+    side: str
+    direction: str
+    triggerPrice: float
+    limitPrice: float | None = None
+    quantity: int | None = None
+    executionEnabled: bool = True
+    alertsEnabled: bool = True
+    validity: str = "DAY"
+    missingFields: list[str] = field(default_factory=list)
+    rationale: str = ""
+    createdAt: str = field(default_factory=utc_now_iso)
+    expiresAt: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -403,6 +427,7 @@ class AnalysisReport:
     notificationDecision: NotificationDecision | None = None
     layoutProposal: LayoutProposal | None = None
     chartProposal: dict[str, Any] | None = None
+    tradeConditionProposals: list[TradeConditionProposal] = field(default_factory=list)
     dailySummaries: list[dict[str, Any]] = field(default_factory=list)
     timing: dict[str, Any] = field(default_factory=dict)
     routePlan: RoutePlan | None = None
@@ -413,6 +438,8 @@ class AnalysisReport:
     latencyTrace: LatencyTrace | None = None
     agentAnswers: list[AgentAnswer] = field(default_factory=list)
     agentTrace: dict[str, Any] = field(default_factory=dict)
+    chartExplanation: dict[str, Any] | None = None
+    coachReport: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -423,6 +450,7 @@ class AnalysisReport:
         data["finalAnswer"] = self.finalAnswer.to_dict() if self.finalAnswer else None
         data["notificationDecision"] = self.notificationDecision.to_dict() if self.notificationDecision else None
         data["layoutProposal"] = self.layoutProposal.to_dict() if self.layoutProposal else None
+        data["tradeConditionProposals"] = [item.to_dict() for item in self.tradeConditionProposals]
         data["routePlan"] = self.routePlan.to_dict() if self.routePlan else None
         data["resolvedEntities"] = [item.to_dict() for item in self.resolvedEntities]
         data["snapshots"] = [item.to_dict() for item in self.snapshots]

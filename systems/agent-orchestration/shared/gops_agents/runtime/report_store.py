@@ -21,6 +21,7 @@ from ..contracts import (
     ResolvedEntity,
     RoutePlan,
     SynthesisInput,
+    TradeConditionProposal,
     utc_now_iso,
 )
 
@@ -130,6 +131,8 @@ class RedisReportStore(ReportStore):
         redis_url: str | None = None,
         ttl_seconds: int | None = None,
         key_prefix: str | None = None,
+        strict: bool = False,
+        verify_connection: bool = False,
     ):
         if redis_client is not None:
             self.redis = redis_client
@@ -142,6 +145,11 @@ class RedisReportStore(ReportStore):
         self.idempotency_key_prefix = os.getenv("AGENT_IDEMPOTENCY_KEY_PREFIX", DEFAULT_IDEMPOTENCY_KEY_PREFIX)
         self.cancel_key_prefix = os.getenv("AGENT_REPORT_CANCEL_KEY_PREFIX", DEFAULT_CANCEL_KEY_PREFIX)
         self.owner_key_prefix = os.getenv("AGENT_REPORT_OWNER_KEY_PREFIX", DEFAULT_OWNER_KEY_PREFIX)
+        self.strict = bool(strict)
+        if self.strict and self.ttl_seconds <= 0:
+            raise ValueError("AGENT_REPORT_TTL_SECONDS must be positive for strict Redis report storage")
+        if verify_connection:
+            self.redis.ping()
 
     def save(self, report: AnalysisReport) -> AnalysisReport:
         if self.ttl_seconds <= 0:
@@ -156,6 +164,8 @@ class RedisReportStore(ReportStore):
             self.redis.setex(self._latest_key(), self.ttl_seconds, encoded)
             self.redis.setex(self._latest_key(report.symbol), self.ttl_seconds, encoded)
         except Exception as exc:
+            if self.strict:
+                raise
             report.agentTrace["reportStoreWriteFailed"] = f"{exc.__class__.__name__}: {exc}"
             return report
         return report
@@ -164,6 +174,8 @@ class RedisReportStore(ReportStore):
         try:
             payload = self.redis.get(self._report_key(analysis_id))
         except Exception:
+            if self.strict:
+                raise
             return None
         if isinstance(payload, bytes):
             payload = payload.decode("utf-8")
@@ -178,7 +190,8 @@ class RedisReportStore(ReportStore):
         try:
             self.redis.setex(self._cancel_key(str(analysis_id)), self.ttl_seconds, json.dumps(marker, ensure_ascii=False, separators=(",", ":")))
         except Exception:
-            pass
+            if self.strict:
+                raise
         report = canceled_report_for_existing(
             str(analysis_id),
             existing,
@@ -193,7 +206,8 @@ class RedisReportStore(ReportStore):
             if self.redis.get(self._cancel_key(str(analysis_id))):
                 return True
         except Exception:
-            pass
+            if self.strict:
+                raise
         report = self.get(str(analysis_id))
         return bool(report and report.status == CANCELED_REPORT_STATUS)
 
@@ -204,6 +218,8 @@ class RedisReportStore(ReportStore):
         try:
             self.redis.setex(self._idempotency_key(user_id, idempotency_key), ttl, request_id)
         except Exception:
+            if self.strict:
+                raise
             return None
 
     def get_idempotency_request_id(self, user_id: str, idempotency_key: str) -> str | None:
@@ -212,6 +228,8 @@ class RedisReportStore(ReportStore):
         try:
             payload = self.redis.get(self._idempotency_key(user_id, idempotency_key))
         except Exception:
+            if self.strict:
+                raise
             return None
         if isinstance(payload, bytes):
             payload = payload.decode("utf-8")
@@ -237,6 +255,8 @@ class RedisReportStore(ReportStore):
                 existing = existing.decode("utf-8")
             return bool(existing and secrets.compare_digest(str(existing), owner_hash))
         except Exception:
+            if self.strict:
+                raise
             return False
 
     def is_owner(self, analysis_id: str, user_id: str) -> bool:
@@ -245,6 +265,8 @@ class RedisReportStore(ReportStore):
         try:
             existing = self.redis.get(self._owner_key(analysis_id))
         except Exception:
+            if self.strict:
+                raise
             return False
         if isinstance(existing, bytes):
             existing = existing.decode("utf-8")
@@ -321,8 +343,10 @@ def build_report_store_from_env() -> ReportStore:
         return InMemoryReportStore()
     if backend == "redis" or (backend == "auto" and os.getenv("REDIS_URL")):
         try:
-            return RedisReportStore()
+            return RedisReportStore(strict=backend == "redis", verify_connection=backend == "redis")
         except Exception:
+            if backend == "redis":
+                raise
             return InMemoryReportStore()
     return InMemoryReportStore()
 
@@ -365,6 +389,11 @@ def analysis_report_from_dict(value: Any) -> AnalysisReport | None:
         notificationDecision=notification_decision_from_dict(value.get("notificationDecision")),
         layoutProposal=layout_proposal_from_dict(value.get("layoutProposal")),
         chartProposal=value.get("chartProposal") if isinstance(value.get("chartProposal"), dict) else None,
+        tradeConditionProposals=[
+            item
+            for item in (trade_condition_proposal_from_dict(item) for item in value.get("tradeConditionProposals", []))
+            if item is not None
+        ],
         dailySummaries=[item for item in value.get("dailySummaries", []) if isinstance(item, dict)],
         timing=dict(value.get("timing") or {}),
         routePlan=route_plan_from_dict(value.get("routePlan")),
@@ -375,11 +404,51 @@ def analysis_report_from_dict(value: Any) -> AnalysisReport | None:
         latencyTrace=latency_trace_from_dict(value.get("latencyTrace")),
         agentAnswers=[item for item in (agent_answer_from_dict(item) for item in value.get("agentAnswers", [])) if item],
         agentTrace=dict(value.get("agentTrace") or {}),
+        chartExplanation=dict(value.get("chartExplanation")) if isinstance(value.get("chartExplanation"), dict) else None,
+        coachReport=dict(value.get("coachReport")) if isinstance(value.get("coachReport"), dict) else None,
     )
 
 
 def market_event_from_dict(value: dict[str, Any]) -> MarketEvent:
     return MarketEvent.from_dict(value)
+
+
+def trade_condition_proposal_from_dict(value: Any) -> TradeConditionProposal | None:
+    if not isinstance(value, dict):
+        return None
+    proposal_id = str(value.get("proposalId") or "").strip()
+    analysis_id = str(value.get("analysisId") or "").strip()
+    symbol = str(value.get("symbol") or "").strip().upper()
+    side = str(value.get("side") or "").strip()
+    direction = str(value.get("direction") or "").strip()
+    try:
+        trigger_price = float(value.get("triggerPrice"))
+        limit_price = float(value["limitPrice"]) if value.get("limitPrice") is not None else None
+        quantity = int(value["quantity"]) if value.get("quantity") is not None else None
+    except (TypeError, ValueError):
+        return None
+    if not proposal_id or not analysis_id or not symbol or side not in {"buy", "sell"}:
+        return None
+    if direction not in {"atOrBelow", "atOrAbove"} or trigger_price <= 0:
+        return None
+    return TradeConditionProposal(
+        proposalId=proposal_id,
+        analysisId=analysis_id,
+        symbol=symbol,
+        exchange=str(value.get("exchange") or "NASD").upper(),
+        side=side,
+        direction=direction,
+        triggerPrice=trigger_price,
+        limitPrice=limit_price,
+        quantity=quantity,
+        executionEnabled=value.get("executionEnabled") is not False,
+        alertsEnabled=value.get("alertsEnabled") is not False,
+        validity=str(value.get("validity") or "DAY"),
+        missingFields=[str(item) for item in value.get("missingFields", []) if isinstance(item, str)],
+        rationale=str(value.get("rationale") or ""),
+        createdAt=str(value.get("createdAt") or ""),
+        expiresAt=str(value.get("expiresAt")) if value.get("expiresAt") else None,
+    )
 
 
 def notification_decision_from_dict(value: Any) -> NotificationDecision | None:
@@ -396,6 +465,7 @@ def notification_decision_from_dict(value: Any) -> NotificationDecision | None:
             message=str(value.get("message") or ""),
             reason=str(value.get("reason") or ""),
             eventId=value.get("eventId") if isinstance(value.get("eventId"), str) else None,
+            eventType=value.get("eventType") if isinstance(value.get("eventType"), str) else None,
             createdAt=str(value.get("createdAt") or ""),
             expiresAt=value.get("expiresAt") if isinstance(value.get("expiresAt"), str) else None,
             channels=[str(item) for item in value.get("channels", []) if isinstance(item, (str, int, float))],

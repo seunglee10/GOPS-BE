@@ -31,6 +31,10 @@ class ActionRequest(BaseModel):
     action: str
 
 
+class PhaseRequest(BaseModel):
+    phase: str
+
+
 class BasketOrderRequest(BaseModel):
     userId: str = "demo-user"
     basket: str
@@ -105,6 +109,13 @@ def create_app(
             if payload.action == "restart":
                 return controller.restart()
             raise ValueError("action must be pause, resume, or restart")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.put("/api/control/phase")
+    def set_demo_phase(payload: PhaseRequest) -> dict[str, object]:
+        try:
+            return require_demo_controller().set_phase(payload.phase)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

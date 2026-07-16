@@ -5,6 +5,10 @@
       "title": "차트",
       "aliases": ["차트", "캔들", "가격 그래프", "그래프", "chart", "candle", "price chart", "graph"]
     },
+    "chartPatternList": {
+      "title": "패턴 종목",
+      "aliases": ["패턴 종목", "패턴 종목 목록", "패턴 리스트", "패턴 보유 종목", "pattern stocks", "pattern list", "chart pattern list"]
+    },
     "newsFeed": {
       "title": "시장 뉴스",
       "aliases": ["뉴스", "시장 뉴스", "기사", "헤드라인", "뉴스 피드", "news", "headline", "article", "news feed"]

@@ -121,7 +121,7 @@ def analysis_cache_key(*, symbol: str, payload: dict[str, Any], prefix: str | No
     normalized_symbol = str(symbol or "UNKNOWN").strip().upper() or "UNKNOWN"
     encoded = json.dumps(payload, sort_keys=True, ensure_ascii=True, default=str, separators=(",", ":"))
     digest = hashlib.sha1(encoded.encode("utf-8")).hexdigest()[:24]
-    return f"{prefix or os.getenv('AGENT_ANALYSIS_CACHE_KEY_PREFIX', DEFAULT_ANALYSIS_CACHE_PREFIX)}:result:v1:{normalized_symbol}:{digest}"
+    return f"{prefix or os.getenv('AGENT_ANALYSIS_CACHE_KEY_PREFIX', DEFAULT_ANALYSIS_CACHE_PREFIX)}:result:v2:{normalized_symbol}:{digest}"
 
 
 def serialize_cached_analysis(payload: CachedAgentAnalysis) -> str:

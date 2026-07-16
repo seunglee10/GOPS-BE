@@ -96,6 +96,85 @@ def _flag(direction: str, *, confirmed: bool = False) -> tuple[list[dict], list[
     return rows, pivots
 
 
+def _continuation(kind: str, *, confirmed: bool = False) -> tuple[list[dict], list[dict]]:
+    rows = [_row(index, high=101, low=99, close=100) for index in range(50)]
+    bullish = kind.startswith("bullish_")
+    sign = 1 if bullish else -1
+    for step in range(10):
+        close = 100 + sign * (step + 1)
+        rows.append(_row(len(rows), high=close + 0.4, low=close - 0.4, close=close))
+    pole_end = len(rows) - 1
+    for step in range(20):
+        if kind.endswith("pennant"):
+            upper = 109.6 - 0.07 * step if bullish else 94.2 - 0.07 * step
+            lower = 105.8 + 0.07 * step if bullish else 90.4 + 0.07 * step
+        else:
+            upper = 109.6 if bullish else 94.0
+            lower = 106.0 if bullish else 90.4
+        rows.append(_row(len(rows), high=upper, low=lower, close=(upper + lower) / 2))
+    if confirmed:
+        boundary = rows[-2]["high" if bullish else "low"]
+        close = boundary + 0.6 if bullish else boundary - 0.6
+        rows[-1].update({
+            "open": close,
+            "high": max(float(rows[-1]["high"]), close),
+            "low": min(float(rows[-1]["low"]), close),
+            "close": close,
+            "volume": 2_000,
+        })
+    pivots = [
+        _pivot(rows, 49, "L" if bullish else "H", rows[49]["low" if bullish else "high"]),
+        _pivot(rows, pole_end, "H" if bullish else "L", rows[pole_end]["high" if bullish else "low"]),
+    ]
+    return rows, pivots
+
+
+def _wedge(kind: str) -> tuple[list[dict], list[dict]]:
+    rows = []
+    for index in range(120):
+        distance = index - 20
+        if kind == "rising_wedge":
+            upper, lower = 110.0 + 0.10 * distance, 100.0 + 0.14 * distance
+        else:
+            upper, lower = 110.0 - 0.14 * distance, 100.0 - 0.10 * distance
+        rows.append(_row(index, high=upper, low=lower, close=(upper + lower) / 2))
+    high_indexes = (20, 50, 80)
+    low_indexes = (30, 60, 90)
+    return rows, [
+        *[_pivot(rows, index, "H", rows[index]["high"]) for index in high_indexes],
+        *[_pivot(rows, index, "L", rows[index]["low"]) for index in low_indexes],
+    ]
+
+
+def _channel_break(kind: str) -> tuple[list[dict], list[dict]]:
+    rows = []
+    descending = kind == "descending_channel_breakout"
+    slope = -0.08 if descending else 0.08
+    for index in range(120):
+        distance = index - 20
+        upper = 110.0 + slope * distance
+        lower = 104.0 + slope * distance
+        rows.append(_row(index, high=upper, low=lower, close=(upper + lower) / 2))
+    for index in (118, 119):
+        distance = index - 20
+        upper = 110.0 + slope * distance
+        lower = 104.0 + slope * distance
+        close = upper + 0.6 if descending else lower - 0.6
+        rows[index].update({
+            "open": close,
+            "high": max(upper, close + 0.2),
+            "low": min(lower, close - 0.2),
+            "close": close,
+            "volume": 2_000,
+        })
+    high_indexes = (20, 50, 80)
+    low_indexes = (30, 60, 90)
+    return rows, [
+        *[_pivot(rows, index, "H", rows[index]["high"]) for index in high_indexes],
+        *[_pivot(rows, index, "L", rows[index]["low"]) for index in low_indexes],
+    ]
+
+
 def _best(rows: list[dict], pivots: list[dict]) -> dict:
     patterns = compute_patterns(rows, pivots, atr=1.0, interval="5m")
     return next(item for item in patterns if item["hardPass"])
@@ -188,6 +267,60 @@ def test_detects_bullish_and_bearish_flags_in_both_states() -> None:
         confirmed = _best(confirmed_rows, confirmed_pivots)
         assert confirmed["kind"] == expected
         assert confirmed["state"] == "confirmed"
+
+
+def test_detects_bullish_and_bearish_pennants_in_both_states() -> None:
+    for expected in ("bullish_pennant", "bearish_pennant"):
+        forming_rows, forming_pivots = _continuation(expected)
+        forming = _best(forming_rows, forming_pivots)
+        assert forming["kind"] == expected
+        assert forming["state"] == "forming"
+        assert 0.15 <= forming["convergenceRatio"] <= 0.85
+
+        confirmed_rows, confirmed_pivots = _continuation(expected, confirmed=True)
+        confirmed = _best(confirmed_rows, confirmed_pivots)
+        assert confirmed["kind"] == expected
+        assert confirmed["state"] == "confirmed"
+
+
+def test_detects_bullish_and_bearish_rectangles_in_both_states() -> None:
+    for expected in ("bullish_rectangle", "bearish_rectangle"):
+        forming_rows, forming_pivots = _continuation(expected)
+        forming = _best(forming_rows, forming_pivots)
+        assert forming["kind"] == expected
+        assert forming["state"] == "forming"
+        assert forming["upperTouches"] >= 2
+        assert forming["lowerTouches"] >= 2
+
+        confirmed_rows, confirmed_pivots = _continuation(expected, confirmed=True)
+        confirmed = _best(confirmed_rows, confirmed_pivots)
+        assert confirmed["kind"] == expected
+        assert confirmed["state"] == "confirmed"
+
+
+def test_detects_rising_and_falling_wedges_without_relabeling_them_as_triangles() -> None:
+    for expected in ("rising_wedge", "falling_wedge"):
+        rows, pivots = _wedge(expected)
+
+        pattern = _best(rows, pivots)
+
+        assert pattern["kind"] == expected
+        assert pattern["state"] == "forming"
+        assert pattern["convergenceRatio"] < 0.85
+
+
+def test_detects_only_confirmed_directional_channel_breakouts() -> None:
+    for expected, direction in (
+        ("descending_channel_breakout", "up"),
+        ("ascending_channel_breakdown", "down"),
+    ):
+        rows, pivots = _channel_break(expected)
+
+        pattern = _best(rows, pivots)
+
+        assert pattern["kind"] == expected
+        assert pattern["state"] == "confirmed"
+        assert pattern["breakoutDirection"] == direction
 
 
 def test_non_converging_triangle_is_not_emitted() -> None:

@@ -37,7 +37,7 @@ class RedisAlertProjection:
 
     def upsert_alert(self, alert: dict[str, Any]) -> None:
         alert_id = str(alert["id"])
-        self.delete_alert(alert_id, symbol=alert.get("symbol"), publish=False)
+        self.delete_alert(alert_id, symbol=alert.get("symbol"), publish=False, preserve_state=True)
         if alert.get("status") != "active":
             self._publish({"type": "delete", "alertId": alert_id, "symbol": alert.get("symbol")})
             return
@@ -48,9 +48,20 @@ class RedisAlertProjection:
             self.redis.zadd(self._price_key(str(alert["symbol"])), {alert_id: float(alert["target_price"])})
         elif alert_type == "spike":
             self.redis.zadd(self._spike_key(str(alert["symbol"])), {alert_id: float(alert["change_pct"])})
+        elif alert_type in {"volume_absolute", "volume_relative", "rsi_threshold"}:
+            condition = alert.get("condition") if isinstance(alert.get("condition"), dict) else {}
+            interval = str(condition.get("interval") or "1D")
+            self.redis.sadd(self._metric_key(str(alert["symbol"]), interval), alert_id)
         self._publish({"type": "upsert", "alertId": alert_id, "symbol": alert.get("symbol"), "alertType": alert_type})
 
-    def delete_alert(self, alert_id: int | str, *, symbol: str | None = None, publish: bool = True) -> None:
+    def delete_alert(
+        self,
+        alert_id: int | str,
+        *,
+        symbol: str | None = None,
+        publish: bool = True,
+        preserve_state: bool = False,
+    ) -> None:
         alert_id_text = str(alert_id)
         existing = self.redis.hget(self._alerts_key(), alert_id_text)
         existing_alert = _loads(existing)
@@ -58,7 +69,12 @@ class RedisAlertProjection:
         if resolved_symbol:
             self.redis.zrem(self._price_key(str(resolved_symbol)), alert_id_text)
             self.redis.zrem(self._spike_key(str(resolved_symbol)), alert_id_text)
+            condition = existing_alert.get("condition") if isinstance(existing_alert.get("condition"), dict) else {}
+            interval = str(condition.get("interval") or "1D")
+            self.redis.srem(self._metric_key(str(resolved_symbol), interval), alert_id_text)
         self.redis.hdel(self._alerts_key(), alert_id_text)
+        if not preserve_state:
+            self.redis.delete(self._condition_state_key(alert_id_text))
         if publish:
             self._publish({"type": "delete", "alertId": alert_id_text, "symbol": resolved_symbol})
 
@@ -66,6 +82,8 @@ class RedisAlertProjection:
         for key in self.redis.scan_iter(f"{self.prefix}:price:*"):
             self.redis.delete(key)
         for key in self.redis.scan_iter(f"{self.prefix}:spike:*"):
+            self.redis.delete(key)
+        for key in self.redis.scan_iter(f"{self.prefix}:metric:*"):
             self.redis.delete(key)
         self.redis.delete(self._alerts_key())
         for alert in active_alerts:
@@ -79,6 +97,32 @@ class RedisAlertProjection:
     def spike_alerts(self, symbol: str) -> list[dict[str, Any]]:
         members = self.redis.zrange(self._spike_key(symbol), 0, -1)
         return self._load_alerts(members)
+
+    def metric_alerts(self, symbol: str, interval: str) -> list[dict[str, Any]]:
+        members = sorted(self.redis.smembers(self._metric_key(symbol, interval)))
+        return self._load_alerts(members)
+
+    def remember_candle(self, candle: dict[str, Any], *, retention_bars: int = 240) -> list[dict[str, Any]]:
+        symbol = str(candle["symbol"])
+        interval = str(candle["interval"])
+        timestamp_ms = int(candle["timestampMs"])
+        key = self._candles_key(symbol, interval)
+        self.redis.zremrangebyscore(key, timestamp_ms, timestamp_ms)
+        self.redis.zadd(key, {_dumps(candle): timestamp_ms})
+        count = int(self.redis.zcard(key))
+        if count > retention_bars:
+            self.redis.zremrangebyrank(key, 0, count - retention_bars - 1)
+        rows = self.redis.zrange(key, 0, -1)
+        return [item for row in rows if (item := _loads(row))]
+
+    def condition_state(self, alert_id: int | str) -> bool | None:
+        value = self.redis.get(self._condition_state_key(alert_id))
+        if value is None:
+            return None
+        return str(value) == "1"
+
+    def set_condition_state(self, alert_id: int | str, satisfied: bool) -> None:
+        self.redis.set(self._condition_state_key(alert_id), "1" if satisfied else "0")
 
     def remember_price(self, symbol: str, price: float, timestamp_ms: int | None = None, *, retention_ms: int) -> None:
         timestamp_ms = timestamp_ms or int(time.time() * 1000)
@@ -120,6 +164,15 @@ class RedisAlertProjection:
 
     def _spike_key(self, symbol: str) -> str:
         return f"{self.prefix}:spike:{symbol}"
+
+    def _metric_key(self, symbol: str, interval: str) -> str:
+        return f"{self.prefix}:metric:{symbol}:{interval}"
+
+    def _candles_key(self, symbol: str, interval: str) -> str:
+        return f"{self.prefix}:candles:{symbol}:{interval}"
+
+    def _condition_state_key(self, alert_id: int | str) -> str:
+        return f"{self.prefix}:state:{alert_id}"
 
     def _prices_key(self, symbol: str) -> str:
         return f"{self.prefix}:prices:{symbol}"

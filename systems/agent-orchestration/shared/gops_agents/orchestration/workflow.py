@@ -6,6 +6,7 @@ import time
 from typing import Any
 
 from ..contracts import AnalysisReport, FinalAnswer, IntentRoute, stable_id, utc_now_iso
+from .coach_analytics import build_coach_report
 from ..intent_understanding.ui_parser import has_analysis_intent_signal, has_explicit_ui_surface_signal, parse_ui_query
 from ..retrieval.context import build_primary_retrieval_context
 from ..retrieval.cross_signal import CrossSignal, build_cross_signals
@@ -55,6 +56,7 @@ from .reporting import (
 from .routing import route_intent
 from .roles import role_agent_error_finding
 from .timing import add_timing_ms, finalize_timing
+from .trade_condition_proposals import build_trade_condition_proposals
 from .ui_intent import UIIntent
 
 try:
@@ -634,6 +636,14 @@ class AgentOrchestrator:
         else:
             started_at = time.perf_counter()
             try:
+                runtime_context = state.get("runtime_context")
+                if state.get("analysis_mode") == "deep" and runtime_context is not None:
+                    evidence_domains = {
+                        "chart" if item.provider in {"chart-analysis", "market-data"} else item.provider
+                        for item in provider_evidence
+                        if item.status == "available" and item.provider in {"chart-analysis", "market-data", "news", "financial", "ontology", "macro"}
+                    }
+                    runtime_context.llm_budget.max_calls = 1 if len(evidence_domains) >= 2 else 0
                 final_answer = self.synthesizer.synthesize(
                     symbol=symbol,
                     intent=intent,
@@ -643,7 +653,7 @@ class AgentOrchestrator:
                     timing=state.get("timing"),
                     daily_summaries=list(state["context"].newsDailySummaries),
                     synthesis_input=synthesis_input,
-                    runtime_context=state.get("runtime_context"),
+                    runtime_context=runtime_context,
                 )
             finally:
                 add_timing_ms(state, "finalAnswerMs", (time.perf_counter() - started_at) * 1000)
@@ -803,6 +813,12 @@ class AgentOrchestrator:
             notificationDecision=state.get("notification"),
             layoutProposal=state.get("layout"),
             chartProposal=request.get("chartProposal") if isinstance(request.get("chartProposal"), dict) else None,
+            tradeConditionProposals=build_trade_condition_proposals(
+                analysis_id=state["analysis_id"],
+                symbol=state["symbol"],
+                intent=state["intent"],
+                chart_context=context.chartContext,
+            ),
             dailySummaries=list(context.newsDailySummaries),
             timing=timing,
             routePlan=route_plan,
@@ -813,6 +829,8 @@ class AgentOrchestrator:
             latencyTrace=latency_trace,
             agentAnswers=list(state.get("agent_answers", [])),
             agentTrace=agent_trace,
+            chartExplanation=chart_explanation_from_snapshots(snapshots),
+            coachReport=build_coach_report(request.get("coachInputSnapshot"), state["analysis_id"]),
         )
         return {**state, "report": report}
 
@@ -1152,6 +1170,18 @@ def role_finding_name(role: str) -> str:
         "financial": "financial-analysis",
         "risk": "risk-analysis",
     }.get(str(role), str(role))
+
+
+def chart_explanation_from_snapshots(snapshots: list[Any]) -> dict[str, Any] | None:
+    for snapshot in snapshots:
+        if getattr(snapshot, "snapshot_type", "") != "chart_analysis_snapshot":
+            continue
+        for evidence in getattr(snapshot, "evidence", []) or []:
+            raw = getattr(evidence, "raw", {})
+            explanation = raw.get("chartExplanation") if isinstance(raw, dict) else None
+            if isinstance(explanation, dict):
+                return dict(explanation)
+    return None
 
 
 def unsupported_subject_final_answer(symbol: str, validation: Any) -> FinalAnswer:

@@ -141,7 +141,7 @@
       "properties": {
         "color": { "type": "string" },
         "colorToken": { "type": "string" },
-        "lineWidth": { "type": "number", "minimum": 1 },
+        "lineWidth": { "type": "number", "minimum": 1, "maximum": 5 },
         "lineDash": {
           "type": "array",
           "items": { "type": "number", "minimum": 0 }
@@ -153,7 +153,11 @@
         "textToken": { "type": "string" },
         "fontSize": { "type": "number", "minimum": 8 },
         "opacity": { "type": "number", "minimum": 0, "maximum": 1 },
-        "extension": { "type": "string", "enum": ["segment", "ray", "line"] }
+        "extension": { "type": "string", "enum": ["segment", "ray", "line"] },
+        "labelPlacement": { "type": "string", "enum": ["inline", "axis", "none"] },
+        "zoneSplit": { "type": "boolean" },
+        "proposalAction": { "type": "string", "enum": ["buy_candidate", "sell_candidate"] },
+        "proposalKind": { "type": "string", "enum": ["confirmed", "conditional"] }
       }
     },
     "drawingEntity": {

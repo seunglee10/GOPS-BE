@@ -46,7 +46,14 @@ def build_raw_envelope(message, feed, feed_profile=None, market_session=None):
     symbol = normalize_provider_symbol(provider_symbol)
     event_time = message.get("t")
     asset_class = "crypto" if is_crypto_symbol(symbol) else "us_equity"
-    resolved_session = market_session or ("crypto" if asset_class == "crypto" else "regular" if channel == "dailyBars" else market_session_for_timestamp(event_time or received_at))
+    raw_simulation = message.get("simulator")
+    simulation = (
+        dict(raw_simulation)
+        if isinstance(raw_simulation, dict) and raw_simulation.get("source") == "gops-simulator"
+        else None
+    )
+    simulation_session = simulation.get("marketSession") if simulation else None
+    resolved_session = market_session or simulation_session or ("crypto" if asset_class == "crypto" else "regular" if channel == "dailyBars" else market_session_for_timestamp(event_time or received_at))
 
     envelope = {
         "source": "alpaca",
@@ -63,6 +70,8 @@ def build_raw_envelope(message, feed, feed_profile=None, market_session=None):
     }
     if provider_symbol != symbol:
         envelope["providerSymbol"] = provider_symbol
+    if simulation:
+        envelope["simulation"] = simulation
     if channel in {"bars", "updatedBars", "dailyBars"}:
         envelope.update(candle_metadata(LIVE_PRICE_ADJUSTMENT))
     return envelope

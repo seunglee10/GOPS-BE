@@ -25,6 +25,25 @@ def test_repository_does_not_auto_create_schema():
     assert not hasattr(PostgresOrderRepository, "init_schema")
 
 
+def test_ai_coach_migration_declares_owned_orders_and_point_in_time_sources():
+    [migration] = [path for path in migration_files() if path.name == "0006_ai_coach.sql"]
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "ADD COLUMN IF NOT EXISTS user_sub" in sql
+    assert "CREATE TABLE IF NOT EXISTS user_portfolio_snapshot_history" in sql
+    assert "CREATE TABLE IF NOT EXISTS trade_decision_check_events" in sql
+
+
+def test_ai_coach_execution_lookup_has_join_and_time_index():
+    [migration] = [
+        path for path in migration_files() if path.name == "0007_ai_coach_execution_index.sql"
+    ]
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "CREATE INDEX IF NOT EXISTS idx_executions_order_id_created_at" in sql
+    assert "ON executions (order_id, created_at)" in sql
+
+
 def test_alert_migration_declares_alert_and_notification_tables():
     [migration] = [path for path in migration_files() if path.name == "0002_alerts.sql"]
     sql = migration.read_text(encoding="utf-8")
@@ -46,6 +65,16 @@ def test_alert_repeat_limit_migration_tracks_trigger_counts():
     assert "CONSTRAINT alerts_triggered_count_check" in sql
 
 
+def test_alert_proposal_source_migration_preserves_ai_coach_origin():
+    [migration] = [path for path in migration_files() if path.name == "0008_alert_proposal_source.sql"]
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "ADD COLUMN IF NOT EXISTS proposal_source TEXT" in sql
+    assert "CONSTRAINT alerts_proposal_source_check" in sql
+    for source in ("daily_trade", "entry_habit", "exit_habit", "portfolio_risk"):
+        assert source in sql
+
+
 def test_recommendation_migration_declares_profile_runs_and_items():
     [migration] = [path for path in migration_files() if path.name == "0004_recommendations.sql"]
     sql = migration.read_text(encoding="utf-8")
@@ -55,3 +84,40 @@ def test_recommendation_migration_declares_profile_runs_and_items():
     assert "CREATE TABLE IF NOT EXISTS stock_recommendation_items" in sql
     assert "CREATE TABLE IF NOT EXISTS user_portfolio_snapshots" in sql
     assert "stock_recommendation_runs_user_key_unique" in sql
+
+
+def test_paper_trading_migration_declares_isolated_account_and_order_tables():
+    [migration] = [path for path in migration_files() if path.name == "0006_paper_trading.sql"]
+    sql = migration.read_text(encoding="utf-8")
+
+    for table_name in [
+        "paper_accounts",
+        "paper_account_runs",
+        "paper_positions",
+        "paper_orders",
+        "paper_order_events",
+        "paper_cash_ledger",
+    ]:
+        assert f"CREATE TABLE IF NOT EXISTS {table_name}" in sql
+    assert "UNIQUE (user_id, idempotency_key_hash)" in sql
+    assert "WHERE status = 'pending'" in sql
+
+
+def test_trade_condition_migration_declares_durable_conditions_and_alert_delivery_flag():
+    [migration] = [path for path in migration_files() if path.name == "0008_trade_conditions.sql"]
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "ADD COLUMN IF NOT EXISTS notifications_enabled" in sql
+    assert "CREATE TABLE IF NOT EXISTS trade_conditions" in sql
+    assert "trade_conditions_user_proposal_unique" in sql
+    assert "trade_conditions_trigger_event_unique" in sql
+
+
+def test_notification_preferences_migration_declares_user_scoped_json_settings():
+    [migration] = [path for path in migration_files() if path.name == "0009_notification_preferences.sql"]
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "CREATE TABLE IF NOT EXISTS user_notification_preferences" in sql
+    assert "user_sub TEXT PRIMARY KEY" in sql
+    assert "settings JSONB NOT NULL" in sql
+    assert "company_overrides JSONB NOT NULL" in sql

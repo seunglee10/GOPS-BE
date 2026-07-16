@@ -12,10 +12,32 @@ EVENT_NAME="${EVENT_NAME:-${GITHUB_EVENT_NAME:-}}"
 REQUESTED_SERVICES="${REQUESTED_SERVICES:-${SERVICES:-}}"
 WORKFLOW_FILE="${WORKFLOW_FILE:-deploy-dev.yml}"
 
-declare -A SELECTED=()
-declare -A DEPLOYMENT_SELECTED=()
-declare -a SELECTED_KEYS=()
-declare -a SELECTED_DEPLOYMENTS=()
+SELECTED_KEYS=""
+SELECTED_DEPLOYMENTS=""
+
+service_already_selected() {
+  local expected="$1"
+  local selected
+
+  for selected in ${SELECTED_KEYS}; do
+    if [[ "${selected}" == "${expected}" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+deployment_already_selected() {
+  local expected="$1"
+  local selected
+
+  for selected in ${SELECTED_DEPLOYMENTS}; do
+    if [[ "${selected}" == "${expected}" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
 
 write_output() {
   local name="$1"
@@ -27,20 +49,14 @@ write_output() {
   printf '%s=%s\n' "${name}" "${value}"
 }
 
-join_by_space() {
-  local IFS=" "
-  echo "$*"
-}
-
 add_deployment() {
   local deployment="$1"
 
-  if [[ -n "${DEPLOYMENT_SELECTED[${deployment}]:-}" ]]; then
+  if deployment_already_selected "${deployment}"; then
     return
   fi
 
-  DEPLOYMENT_SELECTED["${deployment}"]=1
-  SELECTED_DEPLOYMENTS+=("${deployment}")
+  SELECTED_DEPLOYMENTS="${SELECTED_DEPLOYMENTS}${SELECTED_DEPLOYMENTS:+ }${deployment}"
 }
 
 add_service() {
@@ -54,16 +70,22 @@ add_service() {
     exit 1
   fi
 
-  if [[ -n "${SELECTED[${key}]:-}" ]]; then
+  if service_already_selected "${key}"; then
     return
   fi
 
-  SELECTED["${key}"]=1
-  SELECTED_KEYS+=("${key}")
+  SELECTED_KEYS="${SELECTED_KEYS}${SELECTED_KEYS:+ }${key}"
 
   while IFS= read -r deployment; do
     add_deployment "${deployment}"
   done < <(gops_deployments_for_service "${key}")
+
+  # The trusted AI coach worker reads the order-owned schema. Always build the
+  # migration image together with agent analytics so schema migrations can run
+  # before the new worker is rolled out, including manual service selection.
+  if [[ "${key}" == "agent-orchestrator" ]]; then
+    add_service order-worker
+  fi
 }
 
 add_all_services() {
@@ -142,8 +164,12 @@ select_services_for_path() {
     requirements.txt | .dockerignore)
       add_all_services
       ;;
-    apps/gops-frontend/* | apps/chart-engine/* | shared/chart-contract/* | infra/docker/nginx/*)
+    apps/gops-frontend/* | apps/chart-engine/* | infra/docker/nginx/*)
       add_service frontend
+      ;;
+    shared/chart-contract/*)
+      add_service frontend
+      add_service agent-orchestrator
       ;;
     systems/api-server/pods/api-server/gops-backend/app/contracts/*)
       add_service backend
@@ -168,6 +194,7 @@ select_services_for_path() {
       ;;
     systems/market-data/config/*)
       add_service backend
+      add_service agent-orchestrator
       add_service market-ingestor
       add_service market-processor
       add_service market-storage
@@ -178,6 +205,7 @@ select_services_for_path() {
       add_service market-processor
       add_service market-storage
       add_service agent-orchestrator
+      add_service order-worker
       ;;
     systems/market-data/pods/market-ingestor/* | systems/market-data/pods/news-ingestor/*)
       add_service market-ingestor
@@ -193,7 +221,7 @@ select_services_for_path() {
       add_service order-worker
       add_service kis-adapter
       ;;
-    systems/order/pods/order-outbox/* | systems/order/jobs/*)
+    systems/order/pods/order-outbox/* | systems/order/pods/paper-order-matcher/* | systems/order/jobs/*)
       add_service order-worker
       ;;
     systems/order/pods/kis-adapter/*)
@@ -225,6 +253,23 @@ select_services_for_path() {
       ;;
     infra/docker/Dockerfile.gops-simulator)
       add_service simulator
+      ;;
+    infra/k8s/overlays/aws/scheduled/cronjob-chart-geometry-build.yaml)
+      add_service agent-orchestrator
+      ;;
+    infra/k8s/overlays/aws/scheduled/cronjob-order-flow-daily-rollup.yaml)
+      add_service market-processor
+      ;;
+    infra/k8s/overlays/aws/scheduled/cronjob-notification-schedules.yaml)
+      add_service backend
+      ;;
+    infra/k8s/overlays/aws/scheduled/cronjob-sec-fundamentals-sync.yaml | infra/k8s/overlays/aws/scheduled/cronjob-yahoo-estimates-sync.yaml | infra/k8s/overlays/aws/scheduled/externalsecret-sec-fundamentals.yaml)
+      add_service market-storage
+      ;;
+    infra/k8s/overlays/aws/scheduled/*)
+      add_service agent-orchestrator
+      add_service market-processor
+      add_service market-storage
       ;;
     infra/k8s/base/platform/* | infra/k8s/overlays/aws-incluster-platform/* | infra/k8s/overlays/aws-incluster-app-rebuild/*)
       ;;
@@ -258,22 +303,27 @@ else
   done < <(git diff --name-only "${BASE_SHA}" "${HEAD_SHA}")
 fi
 
-services="$(join_by_space "${SELECTED_KEYS[@]}")"
-deployments="$(join_by_space "${SELECTED_DEPLOYMENTS[@]}")"
+services="${SELECTED_KEYS}"
+deployments="${SELECTED_DEPLOYMENTS}"
 has_services="false"
 smoke_frontend="false"
 smoke_backend="false"
-if [[ "${#SELECTED_KEYS[@]}" -gt 0 ]]; then
+order_migrations_required="false"
+if [[ -n "${SELECTED_KEYS}" ]]; then
   has_services="true"
 fi
-if [[ -n "${SELECTED[frontend]:-}" ]]; then
+if service_already_selected frontend; then
   smoke_frontend="true"
 fi
-if [[ -n "${SELECTED[backend]:-}" ]]; then
+if service_already_selected backend; then
   smoke_backend="true"
+fi
+if service_already_selected order-worker; then
+  order_migrations_required="true"
 fi
 write_output "has_services" "${has_services}"
 write_output "services" "${services}"
 write_output "deployments" "${deployments}"
 write_output "smoke_frontend" "${smoke_frontend}"
 write_output "smoke_backend" "${smoke_backend}"
+write_output "order_migrations_required" "${order_migrations_required}"

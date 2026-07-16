@@ -166,16 +166,42 @@ class PostgresRecommendationRepository(RecommendationRepository):
     def upsert_portfolio_snapshot(self, user_sub: str, payload: dict[str, Any]) -> dict[str, Any]:
         try:
             with self._connect() as conn:
+                source_as_of = payload.get("asOf") or payload.get("sourceAsOf")
+                # The normalizer emits a fresh asOf on every poll. Serialize writers per
+                # account so observation timestamps can update the latest row without
+                # creating duplicate point-in-time history for the same portfolio state.
+                conn.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                    (user_sub,),
+                )
                 row = conn.execute(
                     """
-                    INSERT INTO user_portfolio_snapshots (user_sub, payload, updated_at)
-                    VALUES (%s, %s, now())
-                    ON CONFLICT (user_sub) DO UPDATE
-                    SET payload = EXCLUDED.payload,
-                        updated_at = now()
-                    RETURNING *
+                    WITH previous AS (
+                        SELECT payload
+                        FROM user_portfolio_snapshots
+                        WHERE user_sub = %s
+                    ), upserted AS (
+                        INSERT INTO user_portfolio_snapshots (user_sub, payload, updated_at)
+                        VALUES (%s, %s, now())
+                        ON CONFLICT (user_sub) DO UPDATE
+                        SET payload = EXCLUDED.payload,
+                            updated_at = now()
+                        RETURNING user_sub, payload, updated_at
+                    ), history AS (
+                        INSERT INTO user_portfolio_snapshot_history (user_sub, payload, source_as_of)
+                        SELECT upserted.user_sub, upserted.payload, COALESCE(%s::timestamptz, now())
+                        FROM upserted
+                        WHERE NOT EXISTS (
+                            SELECT 1
+                            FROM previous
+                            WHERE (previous.payload - 'asOf' - 'sourceAsOf')
+                                IS NOT DISTINCT FROM (upserted.payload - 'asOf' - 'sourceAsOf')
+                        )
+                    )
+                    SELECT user_sub, payload, updated_at
+                    FROM upserted
                     """,
-                    (user_sub, Jsonb(payload)),
+                    (user_sub, user_sub, Jsonb(payload), source_as_of),
                 ).fetchone()
                 conn.commit()
                 return _json_ready(dict(row))
@@ -303,6 +329,7 @@ class InMemoryRecommendationRepository(RecommendationRepository):
         self.runs: dict[int, dict[str, Any]] = {}
         self.items: dict[int, list[dict[str, Any]]] = {}
         self._run_id = 0
+        self.portfolio_snapshot_history: list[dict[str, Any]] = []
 
     def get_profile(self, user_sub: str) -> dict[str, Any] | None:
         row = self.profiles.get(user_sub)
@@ -333,8 +360,19 @@ class InMemoryRecommendationRepository(RecommendationRepository):
     def upsert_portfolio_snapshot(self, user_sub: str, payload: dict[str, Any]) -> dict[str, Any]:
         if not hasattr(self, "portfolio_snapshots"):
             self.portfolio_snapshots: dict[str, dict[str, Any]] = {}
+        existing = self.portfolio_snapshots.get(user_sub)
+        append_history = (
+            existing is None
+            or _portfolio_history_payload(existing.get("payload"))
+            != _portfolio_history_payload(payload)
+        )
         row = {"user_sub": user_sub, "payload": deepcopy(payload), "updated_at": datetime.now(timezone.utc)}
         self.portfolio_snapshots[user_sub] = deepcopy(row)
+        if append_history:
+            self.portfolio_snapshot_history.append({
+                **deepcopy(row),
+                "source_as_of": payload.get("asOf") or payload.get("sourceAsOf") or row["updated_at"],
+            })
         return _json_ready(row)
 
     def latest_run(self, user_sub: str) -> dict[str, Any] | None:
@@ -398,3 +436,12 @@ def _json_ready(value: Any) -> Any:
     if isinstance(value, list):
         return [_json_ready(item) for item in value]
     return value
+
+
+def _portfolio_history_payload(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+    normalized = deepcopy(value)
+    normalized.pop("asOf", None)
+    normalized.pop("sourceAsOf", None)
+    return normalized

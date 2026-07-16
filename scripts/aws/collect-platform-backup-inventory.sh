@@ -110,8 +110,10 @@ main() {
   capture namespace.txt kubectl get namespace "${NAMESPACE}" -o wide
   capture statefulsets-wide.txt kubectl get statefulset -n "${NAMESPACE}" -o wide
   capture deployments-wide.txt kubectl get deployment -n "${NAMESPACE}" -o wide
+  capture deployments.yaml kubectl get deployment -n "${NAMESPACE}" -o yaml
   capture jobs-wide.txt kubectl get job -n "${NAMESPACE}" -o wide
   capture cronjobs-wide.txt kubectl get cronjob -n "${NAMESPACE}" -o wide
+  capture cronjobs.yaml kubectl get cronjob -n "${NAMESPACE}" -o yaml
   capture pods-wide.txt kubectl get pod -n "${NAMESPACE}" -o wide
   capture pvc-wide.txt kubectl get pvc -n "${NAMESPACE}" -o wide
   capture pvc.yaml kubectl get pvc -n "${NAMESPACE}" -o yaml

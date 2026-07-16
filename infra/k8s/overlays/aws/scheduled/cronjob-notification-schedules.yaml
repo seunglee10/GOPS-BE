@@ -1,0 +1,53 @@
+# 역할: 미국 정규장 개장·마감 10분 전에 사용자별 리마인더를 발송합니다.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: gops-market-reminder-notifications
+  namespace: alfaka-market-data
+spec:
+  schedule: "*/5 * * * 1-5"
+  timeZone: America/New_York
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 86400
+      backoffLimit: 2
+      activeDeadlineSeconds: 1800
+      template:
+        metadata:
+          labels:
+            app: gops-market-reminder-notifications
+        spec:
+          restartPolicy: Never
+          nodeSelector:
+            karpenter.sh/nodepool: app-agent
+          tolerations:
+            - key: gops.io/dedicated
+              operator: Equal
+              value: app-agent
+              effect: NoSchedule
+          serviceAccountName: alfaka-market-data-sa
+          containers:
+            - name: send-notifications
+              image: YOUR_ECR_REPOSITORY/gops-api-server:latest
+              imagePullPolicy: IfNotPresent
+              command: ["python", "-u", "-m", "app.alerts.scheduled", "market-reminders"]
+              envFrom:
+                - configMapRef:
+                    name: alfaka-market-data-config
+                - secretRef:
+                    name: alfaka-clickhouse-secret
+                    optional: true
+                - secretRef:
+                    name: alfaka-order-db-secret
+                    optional: false
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 192Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi

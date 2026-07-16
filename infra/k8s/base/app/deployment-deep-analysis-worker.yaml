@@ -15,7 +15,7 @@ spec:
       labels:
         app: deep-analysis-worker
     spec:
-      serviceAccountName: alfaka-market-data-sa
+      serviceAccountName: ai-coach-worker-sa
       containers:
         - name: deep-analysis-worker
           image: YOUR_ECR_REPOSITORY/gops-agent-orchestrator:latest
@@ -32,4 +32,7 @@ spec:
                 optional: true
             - secretRef:
                 name: alfaka-openai-secret
+                optional: true
+            - secretRef:
+                name: alfaka-order-db-secret
                 optional: true
