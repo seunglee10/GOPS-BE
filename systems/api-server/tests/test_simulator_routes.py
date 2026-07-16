@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -303,6 +304,38 @@ class SimulatorRoutesTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["detail"], "simulation_data_unavailable")
+
+    def test_chart_events_use_the_replay_cursor_in_simulation_mode(self):
+        self.gateway.mode = "simulation"
+        service = SimpleNamespace(chart_events=unittest.mock.Mock(return_value={
+            "symbol": "NVDA",
+            "from": "2026-07-01T00:00:00.000Z",
+            "to": "2026-07-31T23:59:59.000Z",
+            "status": {"earnings": "empty", "news": "ready"},
+            "earnings": [],
+            "newsDays": [{"id": "news:NVDA:2026-07-14", "type": "news", "date": "2026-07-14"}],
+            "upcomingEarnings": None,
+        }))
+
+        with patch("app.market_data.query.routes.get_query_service", return_value=service):
+            response = self.client.get(
+                "/api/charts/events",
+                params={
+                    "symbol": "NVDA",
+                    "from": "2026-07-01T00:00:00Z",
+                    "to": "2026-07-31T23:59:59Z",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        service.chart_events.assert_called_once_with(
+            "NVDA",
+            "2026-07-01T00:00:00Z",
+            "2026-07-31T23:59:59Z",
+            locale="ko-KR",
+            upcoming_days=90,
+            now=datetime(2026, 7, 14, 15, 0, tzinfo=timezone.utc),
+        )
 
 
 if __name__ == "__main__":

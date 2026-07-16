@@ -18,8 +18,16 @@ class FakeClickHouseEventsProvider:
         self.earnings_calls.append((symbol, from_time, to_time))
         return self.earnings
 
-    def company_daily_news_summaries_between(self, symbol, from_date, to_date, limit=370, locale="ko-KR"):
-        self.news_calls.append((symbol, from_date, to_date, limit, locale))
+    def company_daily_news_summaries_between(
+        self,
+        symbol,
+        from_date,
+        to_date,
+        limit=370,
+        locale="ko-KR",
+        as_of=None,
+    ):
+        self.news_calls.append((symbol, from_date, to_date, limit, locale, as_of))
         return self.news
 
 
@@ -116,7 +124,14 @@ def test_chart_events_return_db_news_and_eps_events_without_external_calls():
     assert payload["upcomingEarnings"]["eventAt"] == "2026-08-01T12:00:00.000Z"
     assert payload["upcomingEarnings"]["daysRemaining"] == 16
     assert len(clickhouse.earnings_calls) == 1
-    assert clickhouse.news_calls == [("AMD", "2026-06-30", "2026-07-31", 370, "ko-KR")]
+    assert clickhouse.news_calls == [(
+        "AMD",
+        "2026-06-30",
+        "2026-07-31",
+        370,
+        "ko-KR",
+        "2026-07-16T12:00:00.000Z",
+    )]
 
 
 def test_chart_events_non_sp500_symbol_skips_earnings_but_keeps_news():
@@ -149,7 +164,67 @@ def test_chart_events_news_range_uses_new_york_market_dates():
             "2026-07-16T02:30:00Z",
         )
 
-    assert clickhouse.news_calls == [("AMD", "2026-07-15", "2026-07-15", 370, "ko-KR")]
+    assert clickhouse.news_calls == [("AMD", "2026-07-15", "2026-07-15", 370, "ko-KR", None)]
+
+
+def test_chart_events_as_of_cursor_hides_future_news_and_earnings_snapshots():
+    clickhouse = FakeClickHouseEventsProvider(
+        earnings=[
+            {
+                "eventAt": "2026-07-14T13:00:00.000Z",
+                "actualValue": 1.4,
+                "estimate": 1.2,
+                "eventStatus": "reported",
+                "sourceAsOf": "2026-07-14T14:00:00.000Z",
+            },
+            {
+                "eventAt": "2026-08-01T12:00:00.000Z",
+                "estimate": 1.5,
+                "eventStatus": "scheduled",
+                "sourceAsOf": "2026-07-14T16:00:00.000Z",
+            },
+        ],
+        news=[
+            {
+                "date": "2026-07-14",
+                "summary": "재생 커서 전에 생성된 뉴스",
+                "articleIds": ["past"],
+                "articleCount": 1,
+                "generatedAt": "2026-07-14T14:00:00.000Z",
+                "sources": [{"articleId": "past", "title": "Past", "url": "https://example.com/past"}],
+            },
+            {
+                "date": "2026-07-14",
+                "summary": "재생 커서 뒤에 생성된 뉴스",
+                "articleIds": ["future"],
+                "articleCount": 1,
+                "generatedAt": "2026-07-14T16:00:00.000Z",
+                "sources": [{"articleId": "future", "title": "Future", "url": "https://example.com/future"}],
+            },
+        ],
+    )
+    service = make_service(clickhouse)
+    cursor = datetime(2026, 7, 14, 15, tzinfo=timezone.utc)
+
+    with mock.patch("app.market_data.query.service.sp500_universe_symbols", return_value=["AMD"]):
+        payload = service.chart_events(
+            "AMD",
+            "2026-07-01T00:00:00Z",
+            "2026-07-31T23:59:59Z",
+            now=cursor,
+        )
+
+    assert [item["summary"] for item in payload["newsDays"]] == ["재생 커서 전에 생성된 뉴스"]
+    assert [item["eventAt"] for item in payload["earnings"]] == ["2026-07-14T13:00:00.000Z"]
+    assert payload["upcomingEarnings"] is None
+    assert clickhouse.news_calls == [(
+        "AMD",
+        "2026-06-30",
+        "2026-07-31",
+        370,
+        "ko-KR",
+        "2026-07-14T15:00:00.000Z",
+    )]
 
 
 @pytest.mark.parametrize(
