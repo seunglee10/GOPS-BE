@@ -54,8 +54,8 @@ if [[ -z "${simulator_image}" ]]; then
 fi
 
 kubectl delete job "${JOB_NAME}" -n "${K8S_NAMESPACE}" --ignore-not-found --wait=true
-kubectl apply -f "${JOB_MANIFEST}"
-kubectl set image "job/${JOB_NAME}" -n "${K8S_NAMESPACE}" replay-import="${simulator_image}"
+kubectl set image -f "${JOB_MANIFEST}" replay-import="${simulator_image}" --local -o yaml \
+  | kubectl apply -f -
 kubectl patch job "${JOB_NAME}" -n "${K8S_NAMESPACE}" --type merge -p '{"spec":{"suspend":false}}'
 
 printf 'Replay import started with image %s\n' "${simulator_image}"
