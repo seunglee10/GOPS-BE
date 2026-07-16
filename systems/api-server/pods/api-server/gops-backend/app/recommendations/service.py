@@ -12,9 +12,11 @@ from app.market_data.heatmap.service import get_heatmap_service
 from app.services.alfaka_market_data import get_market_data_provider, read_watchlist_symbols
 
 from .repository import RecommendationRunCreate, RecommendationRepository, RecommendationStateConflict
+from .explanations import compose_explanations
 from .professional import (
     ProfessionalContext,
     apply_professional_personalization,
+    completed_daily,
     personalization_digest,
     raw_factors,
     resolve_weight_set,
@@ -99,7 +101,7 @@ class RecommendationDataSource:
             return list(provider(symbol, now))
         try:
             market_provider = get_market_data_provider()
-            redis_candles = market_provider.redis_provider.recent_candles(symbol, "1m", 240)
+            redis_candles = market_provider.redis_provider.recent_candles(symbol, "1m", 420)
             clickhouse_candles: list[dict[str, Any]] = []
             session_mode = market_session(now)
             if session_mode in {"pre", "regular"}:
@@ -113,7 +115,7 @@ class RecommendationDataSource:
                     )
             elif len(redis_candles or []) < 120:
                 clickhouse_candles = market_provider.clickhouse_provider.candles(symbol, "1m", 240)
-            return candles_not_after(merge_candles([*(clickhouse_candles or []), *(redis_candles or [])]), now)[-240:]
+            return candles_not_after(merge_candles([*(clickhouse_candles or []), *(redis_candles or [])]), now)[-420:]
         except Exception:
             return []
 
@@ -144,6 +146,62 @@ class RecommendationDataSource:
             ) or [])
         except Exception:
             return []
+
+    def benchmark_health(
+        self,
+        *,
+        now: datetime,
+        session_mode: str,
+        merged_candles: list[dict[str, Any]],
+        daily_candles: list[dict[str, Any]],
+        previous_session_candles: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        provider = getattr(self.app.state, "recommendation_benchmark_health_provider", None)
+        if callable(provider):
+            return dict(provider(now, session_mode))
+        reasons: list[str] = []
+        redis_rows: list[dict[str, Any]] = []
+        clickhouse_rows: list[dict[str, Any]] = []
+        try:
+            market_provider = get_market_data_provider()
+            redis_rows = list(market_provider.redis_provider.recent_candles("SPY", "1m", 420) or [])
+            clickhouse_rows = list(market_provider.clickhouse_provider.candles(
+                "SPY", "1m", 420, **session_candle_window(now, session_mode)
+            ) or [])
+        except Exception:
+            reasons.append("benchmark_storage_check_unavailable")
+        current = filter_candles_for_session(merged_candles, session_mode, now)
+        redis_current = filter_candles_for_session(redis_rows, session_mode, now)
+        clickhouse_current = filter_candles_for_session(clickhouse_rows, session_mode, now)
+        minimum = min_candle_count(session_mode, now)
+        completed_dailies = completed_daily(daily_candles, now)
+        if len(completed_dailies) < 252:
+            reasons.append("insufficient_spy_daily_history")
+        if len(previous_session_candles) < 380:
+            reasons.append("insufficient_spy_previous_session_candles")
+        if len(current) < minimum:
+            reasons.append("insufficient_spy_session_candles")
+        latest = _latest_candle_time(current)
+        freshness = 120 if session_mode == "regular" else 300
+        if latest is None or latest > now or (now - latest).total_seconds() > freshness:
+            reasons.append("stale_spy_data")
+        redis_latest = _latest_candle(redis_current)
+        clickhouse_latest = _latest_candle(clickhouse_current)
+        if redis_latest is None or clickhouse_latest is None:
+            reasons.append("spy_storage_copy_missing")
+        elif not _matching_candle(redis_latest, clickhouse_latest):
+            reasons.append("spy_storage_copy_mismatch")
+        return {
+            "symbol": "SPY",
+            "ready": not reasons,
+            "reasons": sorted(set(reasons)),
+            "dailyCandleCount": len(completed_dailies),
+            "previousSessionCandleCount": len(previous_session_candles),
+            "currentSessionCandleCount": len(current),
+            "latestAt": latest.isoformat() if latest else None,
+            "redisLatestAt": _candle_time_text(redis_latest),
+            "clickHouseLatestAt": _candle_time_text(clickhouse_latest),
+        }
 
     def news(self, symbol: str, now: datetime) -> list[dict[str, Any]]:
         normalized_symbol = str(symbol or "").strip().upper()
@@ -585,6 +643,33 @@ class RecommendationService:
                 symbol: self.data_source.previous_session_candles(symbol, now)
                 for symbol in source_symbols
             }
+            benchmark_health_method = getattr(self.data_source, "benchmark_health", None)
+            benchmark_health = (
+                benchmark_health_method(
+                    now=now,
+                    session_mode=session_mode,
+                    merged_candles=candles_by_symbol.get("SPY") or [],
+                    daily_candles=daily_by_symbol.get("SPY") or [],
+                    previous_session_candles=previous_by_symbol.get("SPY") or [],
+                )
+                if callable(benchmark_health_method)
+                else injected_benchmark_health(
+                    now=now,
+                    session_mode=session_mode,
+                    merged_candles=candles_by_symbol.get("SPY") or [],
+                    daily_candles=daily_by_symbol.get("SPY") or [],
+                    previous_session_candles=previous_by_symbol.get("SPY") or [],
+                )
+            )
+            if not benchmark_health.get("ready"):
+                return data_not_ready_response(
+                    profile=profile_row,
+                    session_mode=session_mode,
+                    actual_session=actual_session,
+                    reason="benchmark_data_not_ready",
+                    benchmark_health=benchmark_health,
+                    qualified_count=0,
+                )
             news_by_symbol = self.data_source.news_for_symbols(symbols, now)
             provider = getattr(self.app.state, "recommendation_fundamental_provider", None) if self.app else None
             if provider is None:
@@ -613,6 +698,21 @@ class RecommendationService:
                 fundamentals_by_symbol=fundamentals,
                 fundamental_provenance=fundamental_provenance,
             ))
+            reliability_qualified = sum(
+                float(row.get("evidenceReliability") or 0) >= 70
+                and (row.get("rawFactors") or {}).get("quotedSpreadBps") is not None
+                for row in built.candidates
+            )
+            if reliability_qualified < 15:
+                return data_not_ready_response(
+                    profile=profile_row,
+                    session_mode=session_mode,
+                    actual_session=actual_session,
+                    reason="candidate_data_not_ready",
+                    benchmark_health=benchmark_health,
+                    qualified_count=reliability_qualified,
+                    rejected_by_reason=_count_snapshot_rejections(built.rejected),
+                )
             source_status = {
                 "market": "ready" if market_items else "unavailable",
                 "candles": "ready" if candles_by_symbol else "unavailable",
@@ -620,6 +720,7 @@ class RecommendationService:
                 "previousSession": "ready" if previous_by_symbol else "unavailable",
                 "news": "ready" if any(news_by_symbol.values()) else "neutral_no_news",
                 "fundamentals": fundamental_provenance.get("status", "unavailable"),
+                "benchmark": benchmark_health,
             }
             snapshot = self.repository.create_evidence_snapshot({
                 "snapshotKey": snapshot_key,
@@ -685,6 +786,25 @@ class RecommendationService:
             snapshot_id=int(snapshot["id"]) if snapshot.get("id") is not None else None,
         )
         items = ranking.items
+        benchmark_health = (snapshot.get("sourceStatus") or {}).get("benchmark") or {
+            "symbol": "SPY",
+            "ready": True,
+        }
+        if ranking.qualified_count < 15 or len(items) < 15:
+            return data_not_ready_response(
+                profile=profile_row,
+                session_mode=session_mode,
+                actual_session=actual_session,
+                reason="candidate_data_not_ready",
+                benchmark_health=benchmark_health,
+                qualified_count=ranking.qualified_count,
+                rejected_by_reason=ranking.rejected_by_reason,
+            )
+        narrative_provider = (
+            getattr(self.app.state, "recommendation_narrative_provider", None)
+            if self.app else None
+        )
+        items = compose_explanations(items, provider=narrative_provider)
         previous_run = self.repository.latest_run_for_session(user_sub, session_mode)
         summary = {
             **base_summary(session_mode=session_mode, actual_session=actual_session),
@@ -701,6 +821,7 @@ class RecommendationService:
             "evidenceSnapshotId": snapshot.get("id"),
             "evidenceSnapshotKey": snapshot_key,
             "evidenceCutoff": snapshot.get("cutoff"),
+            "benchmarkHealth": benchmark_health,
             "ruleSetVersion": EVIDENCE_RULE_SET_VERSION,
             "personalization": {
                 "enabled": True,
@@ -999,6 +1120,43 @@ def iso_z(value: datetime) -> str:
     return normalized.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+def _latest_candle(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    dated = [(observed, row) for row in rows if (observed := _candle_time(row)) is not None]
+    return max(dated, key=lambda pair: pair[0])[1] if dated else None
+
+
+def _latest_candle_time(rows: list[dict[str, Any]]) -> datetime | None:
+    latest = _latest_candle(rows)
+    return _candle_time(latest) if latest else None
+
+
+def _candle_time(row: dict[str, Any] | None) -> datetime | None:
+    if not row:
+        return None
+    return parse_datetime(row.get("timestamp") or row.get("eventTime") or row.get("updatedAt"))
+
+
+def _candle_time_text(row: dict[str, Any] | None) -> str | None:
+    observed = _candle_time(row)
+    return observed.isoformat() if observed else None
+
+
+def _matching_candle(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    if _candle_time(left) != _candle_time(right):
+        return False
+    for key in ("open", "high", "low", "close", "volume"):
+        left_value = left.get(key)
+        right_value = right.get(key)
+        if left_value is not None and right_value is not None:
+            try:
+                if abs(float(left_value) - float(right_value)) > 1e-8:
+                    return False
+            except (TypeError, ValueError):
+                if str(left_value) != str(right_value):
+                    return False
+    return True
+
+
 def base_summary(*, session_mode: str, actual_session: str | None = None) -> dict[str, Any]:
     return {
         "sessionMode": normalize_session_mode(session_mode),
@@ -1007,6 +1165,77 @@ def base_summary(*, session_mode: str, actual_session: str | None = None) -> dic
         "newsLookbackDays": NEWS_LOOKBACK_DAYS,
         "regularMarketOnly": False,
     }
+
+
+def data_not_ready_response(
+    *,
+    profile: dict[str, Any],
+    session_mode: str,
+    actual_session: str,
+    reason: str,
+    benchmark_health: dict[str, Any],
+    qualified_count: int,
+    rejected_by_reason: dict[str, int] | None = None,
+) -> dict[str, Any]:
+    return {
+        "status": "data_not_ready",
+        "items": [],
+        "profile": normalize_profile_sector_fields(profile),
+        "stale": False,
+        "idempotentReplay": False,
+        "summary": {
+            **base_summary(session_mode=session_mode, actual_session=actual_session),
+            "emptyReason": reason,
+            "retryable": True,
+            "algorithmVersion": EVIDENCE_ALGORITHM_VERSION,
+            "ruleSetVersion": EVIDENCE_RULE_SET_VERSION,
+            "benchmarkHealth": benchmark_health,
+            "qualifiedCount": qualified_count,
+            "minimumQualifiedCount": 15,
+            "rejectedByReason": rejected_by_reason or {},
+        },
+    }
+
+
+def injected_benchmark_health(
+    *,
+    now: datetime,
+    session_mode: str,
+    merged_candles: list[dict[str, Any]],
+    daily_candles: list[dict[str, Any]],
+    previous_session_candles: list[dict[str, Any]],
+) -> dict[str, Any]:
+    current = filter_candles_for_session(merged_candles, session_mode, now)
+    latest = _latest_candle_time(current)
+    reasons = []
+    completed_dailies = completed_daily(daily_candles, now)
+    if len(completed_dailies) < 252:
+        reasons.append("insufficient_spy_daily_history")
+    if len(previous_session_candles) < 380:
+        reasons.append("insufficient_spy_previous_session_candles")
+    if len(current) < min_candle_count(session_mode, now):
+        reasons.append("insufficient_spy_session_candles")
+    freshness = 120 if session_mode == "regular" else 300
+    if latest is None or latest > now or (now - latest).total_seconds() > freshness:
+        reasons.append("stale_spy_data")
+    return {
+        "symbol": "SPY",
+        "ready": not reasons,
+        "reasons": reasons,
+        "dailyCandleCount": len(completed_dailies),
+        "previousSessionCandleCount": len(previous_session_candles),
+        "currentSessionCandleCount": len(current),
+        "latestAt": latest.isoformat() if latest else None,
+        "storageMatch": "injected_provider",
+    }
+
+
+def _count_snapshot_rejections(rows: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        for reason in row.get("rejectionReasons") or []:
+            counts[str(reason)] = counts.get(str(reason), 0) + 1
+    return counts
 
 
 def rejection_summary(candidates: list[Any], candles_by_symbol: dict[str, list[dict[str, Any]]], *, session_mode: str, now: datetime) -> dict[str, int]:
@@ -1077,6 +1306,7 @@ def normalize_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             **sector_payload_fields(item.get("sector")),
             "reasons": item.get("reasons") or [],
             "riskWarnings": item.get("riskWarnings") or item.get("risk_warnings") or [],
+            "explanation": item.get("explanation") or item.get("explanation_json"),
             "metricsSnapshot": metrics_snapshot,
         })
     return normalized

@@ -645,6 +645,9 @@ LIVE mode에서는 선택한 `pre` 또는 `regular`의 API item만 표시한다.
 빈 상태를 유지하고 다른 세션이나 S&P 500 seed 기반 고정 종목으로 대체하지 않는다.
 API가 비어 있거나 point-in-time 조회를 보장하지 못하면 고정 추천 fixture로 채우지 않고
 빈 상태 또는 `simulation_data_unavailable`을 표시한다.
+SIM mode도 frontend fixture를 import하거나 scenario ID를 special-case하지 않는다.
+시뮬레이션 item 클릭 역시 `recommendation.stock` reference만 선택하며 차트나 레이아웃을
+자동 변경하지 않는다.
 
 public company journal panel은 `panelType="companyJournal"`/`kind="companyJournal"`로
 표현한다. 이 패널은 기존 기업 수익성·안정성·가치평가 차트와 뉴스 목록을
@@ -658,6 +661,11 @@ public company journal panel은 `panelType="companyJournal"`/`kind="companyJourn
 위험예산과 관측 위험, 경고를 읽기 전용으로 추가 표시한다. 일부 또는 모든 V2 필드가
 없어도 패널은 기존 응답으로 렌더링해야 한다. 이 패널에는 slider, 피드백 제어,
 tracking API, 자동 주문 동작을 추가하지 않는다.
+
+V3 item은 LLM headline/body를 먼저 표시하되 그 아래 결정론적 6개 evidence block을 항상
+표시한다. UI label은 `V3 종합 점수`, `근거 신뢰도`이며 신뢰도가 성공확률이 아님을 적는다.
+기여도 부호, penalty, 누락 factor, stale 여부, cutoff, algorithm/rule-set/snapshot/digest를
+그대로 보여 주고 누락 metric을 `0`으로 만들지 않는다. legacy `reasons`는 비-V3에만 쓴다.
 
 chart analysis asset 운영 패널은 `kind="chartAssetOps"`, 화면 표시는
 `작도 자산(개발)`로 표현한다. 이름의 `(개발)`은 수동 운영 도구임을 나타내는 라벨일

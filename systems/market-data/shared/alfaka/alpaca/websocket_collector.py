@@ -12,7 +12,7 @@ import redis
 import websockets
 
 from alfaka.alpaca.feed_profiles import feed_profile_active_for_session, market_session_for_now, resolve_feed_profile
-from alfaka.alpaca.subscription import alpaca_subscription_symbols, build_subscription_request, load_request_config, load_symbols_and_channels, validate_channels
+from alfaka.alpaca.subscription import alpaca_subscription_symbols, build_subscription_request, configured_benchmark_symbols, load_request_config, load_symbols_and_channels, validate_channels
 from alfaka.common.env import load_dotenv, parse_csv
 from alfaka.common.kafka_io import create_json_producer
 from alfaka.common.market_messages import CONTROL_MESSAGE_TYPES, build_raw_envelope, raw_topic_name
@@ -40,6 +40,7 @@ async def main():
     alpaca_feed = feed_profile.feed
     symbols, channels = load_symbols_and_channels()
     request_config = load_request_config()
+    benchmark_symbols = configured_benchmark_symbols(request_config)
     active_channels = parse_csv(os.getenv("ALPACA_ACTIVE_CHANNELS", ",".join(request_config.get("activeChartChannels", ["trades"]))))
     validate_channels(active_channels, request_config)
     active_channels = resolve_active_channels(symbols, channels, active_channels)
@@ -73,6 +74,9 @@ async def main():
         websocketUrl=alpaca_url,
         channels=channels,
         symbolCount=len(symbols),
+        benchmarkSymbols=benchmark_symbols,
+        benchmarkSymbolCount=len(benchmark_symbols),
+        benchmarkSubscriptionReady=False,
     )
 
     print(f"Alpaca profile: {feed_profile.profile_id} feed={alpaca_feed} sessions={','.join(feed_profile.sessions)}", flush=True)
@@ -149,6 +153,8 @@ async def main():
                 active_poll_seconds=active_poll_seconds,
                 raw_topic_prefix=raw_topic_prefix,
                 enforce_session_window=enforce_session_window,
+                benchmark_symbols=benchmark_symbols,
+                collection_channels=channels,
                 raw_log_every_n=raw_log_every_n,
                 ws_ping_interval=ws_ping_interval,
                 ws_ping_timeout=ws_ping_timeout,
@@ -185,12 +191,18 @@ async def run_stream_session(
     active_poll_seconds,
     raw_topic_prefix,
     enforce_session_window,
+    benchmark_symbols=None,
+    collection_channels=None,
     raw_log_every_n=0,
     ws_ping_interval=30.0,
     ws_ping_timeout=60.0,
     on_session_healthy=None,
 ):
     """Alpaca WebSocket 세션 하나를 열고 인증, 구독, raw Kafka 발행을 처리합니다."""
+    benchmark_symbols = list(benchmark_symbols or [])
+    collection_channels = list(collection_channels or [
+        key for key in subscribe_request if key != "action"
+    ])
     active_subscribed_symbols = {channel: set() for channel in active_channels}
     last_active_sync = 0.0
     authenticated = False
@@ -280,12 +292,16 @@ async def run_stream_session(
 
                     if message_type == "subscription":
                         notify_session_healthy(on_session_healthy, "subscribed")
+                        benchmark_health = benchmark_subscription_health(
+                            message, benchmark_symbols, collection_channels
+                        )
                         write_ingestor_health(
                             redis_client,
                             feed_profile,
                             status="subscribed",
                             alpacaFeed=alpaca_feed,
                             subscription=message,
+                            **benchmark_health,
                         )
                         print("현재 구독:", summarize_subscription_request(message), flush=True)
                         continue
@@ -713,6 +729,21 @@ def summarize_subscription_request(request):
         else:
             summary[channel] = values
     return summary
+
+
+def benchmark_subscription_health(subscription, benchmark_symbols, required_channels):
+    provider_symbols = set(alpaca_subscription_symbols(benchmark_symbols))
+    missing = []
+    for channel in required_channels:
+        subscribed = set(subscription.get(channel) or [])
+        for symbol in sorted(provider_symbols - subscribed):
+            missing.append(f"{channel}:{symbol}")
+    return {
+        "benchmarkSymbols": list(benchmark_symbols),
+        "benchmarkSymbolCount": len(benchmark_symbols),
+        "benchmarkSubscriptionReady": bool(benchmark_symbols) and not missing,
+        "benchmarkMissingSubscriptions": missing,
+    }
 
 
 def write_ingestor_health(redis_client, feed_profile, **fields):

@@ -150,6 +150,8 @@ flowchart TD
 | `systems/order/shared/kis_trader/migrations/0004_recommendations.sql` | 추천 프로필·run·item·portfolio snapshot 테이블 |
 | `systems/order/shared/kis_trader/migrations/0011_personalized_recommendations.sql` | 스타일, 모델 registry, outcome, 개인화 provenance |
 | `systems/order/shared/kis_trader/migrations/0012_continuous_recommendation_v2.sql` | continuous V2 선호·위험·펀더멘털 상태 |
+| `systems/order/shared/kis_trader/migrations/0013_deterministic_evidence_v3.sql` | V3 evidence snapshot·candidate |
+| `systems/order/shared/kis_trader/migrations/0014_recommendation_explanations.sql` | versioned explanation JSONB |
 
 ### 프런트
 
@@ -159,7 +161,7 @@ flowchart TD
 | `apps/gops-frontend/src/recommendations/InvestmentProfileForm.tsx` | 추천 설정 입력 폼 |
 | `apps/gops-frontend/src/recommendations/RecommendationSettingsDialog.tsx` | dialog focus, Escape, 닫기 동작 |
 | `apps/gops-frontend/src/recommendations/StockRecommendationsPanel.tsx` | 추천 카드·목록, 세션 toggle, LIVE API 결과와 SIM unavailable 상태 분리 |
-| `apps/gops-frontend/src/recommendations/StockRecommendationExplainPanel.tsx` | 선택 추천의 핵심 지표, 근거, 위험, 개인화 provenance |
+| `apps/gops-frontend/src/recommendations/StockRecommendationExplainPanel.tsx` | V3 한국어 narrative, 결정론적 근거, 위험, data quality·provenance |
 | `apps/gops-frontend/src/recommendations/recommendationNavigation.ts` | 선택 추천을 기업 화면 이동 의도로 해석 |
 | `apps/gops-frontend/src/components/PanelContentRenderer.tsx` | `recommendations`, `recommendationsList`, `recommendationExplain` 렌더링 |
 | `apps/gops-frontend/src/layout/panelRegistry.ts` | 추천 패널 kind와 기본 크기 등록 |

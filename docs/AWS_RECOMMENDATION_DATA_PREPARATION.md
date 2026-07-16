@@ -7,6 +7,20 @@
 
 ## 0. 현재 AWS 실측 결과와 결론
 
+2026년 7월 16일 재점검에서 SPY는 총 252개 1D candle을 보유했지만 7월 14일 replay
+cutoff(7월 13일까지)에는 251개뿐이었다. 7월 13일 직전 정규장 SPY는 389개로
+"약 390개" 하한 380을 충족하고, 7월 14일 SPY 정규장은 390개다. 따라서
+`recommendation_v3_fixture.py extract`는 현재 의도대로 fixture 생성을 거절한다.
+최소 한 개의 더 오래된 실제 SPY 완료 일봉을 복구한 뒤 extractor를 다시 실행해야 하며,
+이 결과를 legacy/V3 성공 증거로 해석하면 안 된다.
+
+복구 wrapper는 기본 dry-run이다. 검토 후에만 `APPLY=true`로 실행한다.
+
+```bash
+./scripts/aws/restore-spy-recommendation-data.sh
+APPLY=true ./scripts/aws/restore-spy-recommendation-data.sh
+```
+
 이 절은 2026년 7월 16일 18:51 KST에 `gops-eks-cluster`의
 `alfaka-market-data` namespace를 읽기 전용으로 점검한 결과다. 개인별 row나 Secret
 값은 조회하지 않고 deployment image, ConfigMap key 존재 여부, migration 이름과 aggregate

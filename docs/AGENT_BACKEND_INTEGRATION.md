@@ -299,6 +299,14 @@ canonical real fill만 시간순으로 처리하며, `order_coach_fill_history`�
 70 미만과 hard gate 실패 종목은 개인화로 복구할 수 없다. run은 evidence snapshot ID와
 `deterministic-evidence-v3.1`의 전체 규칙 snapshot을 저장한다.
 
+V3는 SPY 완료 일봉 252개, 직전 정규장 1분봉 380개 이상(약 390개), 세션 신선도,
+Redis/ClickHouse 최신 candle 일치, 신뢰도 70 이상 후보 15개를 activation gate로 사용한다.
+하나라도 실패하면 run/item을 만들거나 legacy로 fallback하지 않고
+`status="data_not_ready"`, `summary.retryable=true`를 반환한다. 새 V3 item은 migration
+`0014_recommendation_explanations.sql`의 `explanation_json`에
+`recommendation-explanation.v1`을 저장한다. 결정론적 한국어 설명이 권위 있는 근거이고,
+선택적 OpenAI Responses batched narrative는 문장만 다듬으며 실패 즉시 결정론적 문장을 쓴다.
+
 V2 commit은 사용자 advisory lock 아래에서 slot idempotency와 예상 preference state를
 재확인하고, processed/skipped events, immutable preference/risk states, 모든 적격 후보의
 feature evidence, Top 15 item, run provenance와 digest를 한 transaction에 저장한다. 완료된

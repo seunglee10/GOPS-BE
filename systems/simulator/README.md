@@ -60,6 +60,13 @@ SIM 차트는 재생 시작 전 정상 과거 캔들과 현재 가상시각까�
 point-in-time 조회를 보장하지 못하는 뉴스·추천·기업정보·AI 분석은
 `simulation_data_unavailable`을 반환한다.
 
+## 오프라인 V3 추천 fixture
+
+`tools/recommendation_v3_fixture.py`는 AWS ClickHouse의 2026-07-14 실제 데이터를
+read-only로 추출하고 cutoff-safe 추천 결과를 검증하는 별도 오프라인 도구다.
+생성 파일은 저장소에 자동 포함되지 않으며 현재 tick replay runtime API에는 연결되지
+않는다. fixture가 없을 때 synthetic 추천으로 대체하지 않는다.
+
 ## dev EKS
 
 `Deployment/gops-simulator`는 평소 `replicas: 0`이다. 시작 스크립트는 ClickHouse

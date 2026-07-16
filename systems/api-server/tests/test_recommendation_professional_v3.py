@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -22,6 +23,7 @@ from app.recommendations.professional_v3 import (  # noqa: E402
     process_evidence_preference_events,
     rank_evidence_candidates,
 )
+from app.recommendations.explanations import compose_explanations, deterministic_explanation  # noqa: E402
 from app.recommendations.repository import (  # noqa: E402
     InMemoryRecommendationRepository,
     InvestmentProfileUpsert,
@@ -124,6 +126,8 @@ def test_missing_critical_market_evidence_rejects_before_scoring() -> None:
 
     assert "insufficient_session_candles" in reasons
     assert "insufficient_spy_session_candles" in reasons
+    assert "insufficient_previous_session_candles" in reasons
+    assert "insufficient_spy_previous_session_candles" in reasons
     assert "insufficient_daily_history" in reasons
     assert "insufficient_spy_daily_history" in reasons
 
@@ -251,13 +255,17 @@ def test_service_builds_one_shared_full_universe_snapshot(monkeypatch) -> None:
                     "tradable": True,
                     "priceSource": "canonical",
                 }
-                for symbol, change in (("AAA", 3), ("BBB", 2), ("CCC", 1))
+                for change, symbol in enumerate(
+                    ("AAA", "BBB", "CCC", "DDD", "EEE", "FFF", "GGG", "HHH",
+                     "III", "JJJ", "KKK", "LLL", "MMM", "NNN", "OOO", "PPP"),
+                    start=1,
+                )
             ]
 
         def candles(self, symbol, now):
             start = now - timedelta(minutes=179)
             base = 500 if symbol == "SPY" else 100
-            strength = 0.2 if symbol == "AAA" else 0.15 if symbol == "BBB" else 0.1
+            strength = 0.08 + (sum(ord(value) for value in symbol) % 10) / 100
             return [
                 {
                     "timestamp": (start + timedelta(minutes=index)).isoformat(),
@@ -290,7 +298,18 @@ def test_service_builds_one_shared_full_universe_snapshot(monkeypatch) -> None:
             return rows
 
         def previous_session_candles(self, symbol, now):
-            return self.candles(symbol, now - timedelta(days=1))
+            rows = self.candles(symbol, now - timedelta(days=1))
+            first = rows[0]
+            start = datetime.fromisoformat(first["timestamp"]) - timedelta(minutes=210)
+            return [
+                {
+                    **first,
+                    "timestamp": (start + timedelta(minutes=index)).isoformat(),
+                    "close": float(first["close"]) + index * 0.01,
+                    "volume": 10_000 + index * 100,
+                }
+                for index in range(390)
+            ]
 
         def news_for_symbols(self, symbols, _now):
             return {symbol: [] for symbol in symbols}
@@ -325,9 +344,54 @@ def test_service_builds_one_shared_full_universe_snapshot(monkeypatch) -> None:
     first = service.refresh("user-1", now=NOW)
     replay = service.refresh("user-1", now=NOW)
 
-    assert first["summary"]["universeCount"] == 3
-    assert first["summary"]["candidateCount"] == 3
+    assert first["summary"]["universeCount"] == 16
+    assert first["summary"]["candidateCount"] == 16
     assert len(repository.evidence_snapshots) == 1
     assert all(item["symbol"] != "AAA" for item in first["items"])
     assert all(item["confidence"] >= 0.70 for item in first["items"])
+    assert len(first["items"]) == 15
+    assert all(item["explanation"]["version"] == "recommendation-explanation.v1" for item in first["items"])
     assert replay["idempotentReplay"] is True
+
+
+def test_deterministic_explanation_describes_support_limit_and_data_quality() -> None:
+    item = {
+        "symbol": "AAA", "rank": 1, "score": 71, "confidence": 0.82,
+        "metricsSnapshot": {
+            "algorithmVersion": "deterministic-evidence-v3",
+            "ruleSetVersion": "deterministic-evidence-v3.1",
+            "blockScores": {key: score for key, score in zip(BLOCK_KEYS, (82, 74, 66, 50, 38, 61), strict=True)},
+            "blockContributions": {key: value for key, value in zip(BLOCK_KEYS, (20.5, 14.8, 9.9, 5, 5.7, 9.15), strict=True)},
+            "softPenalties": {"weakConfirmation": 6},
+            "missingOptionalFactors": ["growthQuality"],
+            "evidenceReliability": 82,
+            "cutoff": NOW.isoformat(), "evidenceSnapshotId": 7, "inputDigest": "abc",
+        },
+    }
+    explanation = deterministic_explanation(item)
+    assert "뒷받침" in explanation["deterministic"]["summary"]
+    assert "제한" in explanation["deterministic"]["summary"]
+    assert "수익 성공 확률이 아니라" in explanation["deterministic"]["dataQuality"]["sentence"]
+    assert explanation["deterministic"]["dataQuality"]["missingFactors"] == ["growthQuality"]
+
+
+def test_invalid_llm_narrative_falls_back_without_changing_rank(monkeypatch) -> None:
+    monkeypatch.setenv("RECOMMENDATION_NARRATIVE_PROVIDER", "openai")
+    monkeypatch.setenv("RECOMMENDATION_NARRATIVE_MODEL", "test-model")
+    item = {
+        "symbol": "AAA", "rank": 3, "score": 71, "confidence": 0.82,
+        "metricsSnapshot": {
+            "algorithmVersion": "deterministic-evidence-v3", "ruleSetVersion": "deterministic-evidence-v3.1",
+            "blockScores": {key: 65 for key in BLOCK_KEYS},
+            "blockContributions": {key: 10 for key in BLOCK_KEYS},
+            "softPenalties": {}, "missingOptionalFactors": [], "evidenceReliability": 82,
+            "cutoff": NOW.isoformat(), "evidenceSnapshotId": 7, "inputDigest": "abc",
+        },
+    }
+    provider = lambda _request: {"output_text": json.dumps({"narratives": [{
+        "symbol": "AAA", "headline": "새로운 전망", "body": "성공 확률은 99%입니다. 지금 매수하세요."
+    }]}, ensure_ascii=False)}
+    result = compose_explanations([item], provider=provider)
+    assert result[0]["rank"] == 3
+    assert result[0]["score"] == 71
+    assert result[0]["explanation"]["primary"]["source"] == "deterministic"

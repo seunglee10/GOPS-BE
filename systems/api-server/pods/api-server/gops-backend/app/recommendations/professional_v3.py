@@ -36,6 +36,9 @@ SPREAD_CAPS_BPS = {"conservative": 25.0, "balanced": 40.0, "aggressive": 75.0}
 RELIABILITY_MINIMUM = 70.0
 MAX_SOFT_PENALTY = 30.0
 FRESHNESS_SECONDS = {"regular": 120.0, "pre": 300.0}
+# Real feeds may omit a small number of corrected/empty one-minute buckets. 380
+# is the explicit lower bound for the documented "approximately 390" gate.
+MIN_PREVIOUS_SESSION_CANDLES = 380
 
 CONTINUOUS_FACTORS = (
     "currentSessionRelativeStrength",
@@ -100,6 +103,7 @@ def rules_snapshot() -> dict[str, Any]:
         "riskWeights": RISK_WEIGHTS,
         "spreadCapsBps": SPREAD_CAPS_BPS,
         "freshnessSeconds": FRESHNESS_SECONDS,
+        "minimumPreviousSessionCandles": MIN_PREVIOUS_SESSION_CANDLES,
         "reliabilityMinimum": RELIABILITY_MINIMUM,
         "maxSoftPenalty": MAX_SOFT_PENALTY,
         "winsorization": [0.01, 0.99],
@@ -310,6 +314,10 @@ def base_rejection_reasons(
         reasons.append("insufficient_session_candles")
     if len(spy_session) < minimum:
         reasons.append("insufficient_spy_session_candles")
+    if len(previous_session) < MIN_PREVIOUS_SESSION_CANDLES:
+        reasons.append("insufficient_previous_session_candles")
+    if len(spy_previous_session) < MIN_PREVIOUS_SESSION_CANDLES:
+        reasons.append("insufficient_spy_previous_session_candles")
     if len(daily) < 252:
         reasons.append("insufficient_daily_history")
     if len(spy_daily) < 252:
@@ -685,6 +693,8 @@ def rank_evidence_candidates(
             "softPenalties": penalties,
             "adjustedSetupScore": round(adjusted, 4),
             "evidenceReliability": round(float(row.get("evidenceReliability") or 0.0), 4),
+            "missingOptionalFactors": missing_optional,
+            "stale": False,
             "reliabilityComponents": row.get("reliabilityComponents") or {},
             "preferenceFitScore": round(preference_fit, 4),
             "preferenceConfidence": round(preference_confidence, 8),
@@ -695,7 +705,7 @@ def rank_evidence_candidates(
             "portfolioWeight": round(risk_weight, 8),
             "portfolioContribution": portfolio_contribution,
             "personalScore": final,
-            "confidenceMeaning": "evidence_reliability",
+            "confidenceMeaning": "evidence_reliability_not_success_probability",
             "changePercent": row.get("changePercent"),
         }
         output.append({
