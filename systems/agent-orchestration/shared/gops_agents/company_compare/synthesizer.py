@@ -24,8 +24,23 @@ BANNED_LANGUAGE = (
     "승자",
     "매력도",
     "투자해야",
+    "원어치",
+    "남는 장사",
 )
 NUMBER_PATTERN = re.compile(r"(?<![A-Za-z0-9])[-+]?\d[\d,]*(?:\.\d+)?%?")
+VAGUE_CLAIM_TERMS = (
+    "높은 수익성",
+    "높은 성장",
+    "강력한",
+    "뛰어난",
+    "우수한",
+    "탄탄한",
+    "견고한",
+    "상당한",
+    "안정적인 모습",
+    "긍정적인",
+)
+SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[.!?])\s+")
 
 
 class CompanyCompareNarrativeError(RuntimeError):
@@ -150,12 +165,20 @@ class CompanyCompareNarrativeSynthesizer:
                 warningType="unsupported_numbers",
                 warningCount=len(unsupported_numbers),
             )
+        vague_sentences = find_vague_sentences(validated)
+        if vague_sentences:
+            log_company_compare_event(
+                "validation_warning",
+                cacheToken=cache_token,
+                warningType="vague_sentences",
+                warningCount=len(vague_sentences),
+            )
         self.cache.set(cache_key, validated, cache_ttl_seconds)
         log_company_compare_event(
             "validation_accepted",
             cacheToken=cache_token,
             sectionCount=len(validated["sections"]),
-            warningCount=len(unsupported_numbers),
+            warningCount=len(unsupported_numbers) + len(vague_sentences),
         )
         return {
             "status": "ready",
@@ -212,7 +235,26 @@ def system_prompt() -> str:
         "데이터가 부족한 내용은 dataGaps에 짧게 적으세요. 10-K의 severityHint는 회사 간 우열 점수가 아니라 문서 강조도 보조값입니다. "
         "summary와 analysis는 사용자의 언어로 작성하되 질문 언어가 불명확하면 한국어를 사용하세요. "
         "summary에는 이 결과가 정보성 분석이며 투자 판단을 대신하지 않는다는 점을 자연스럽게 명시하세요. "
-        "고정된 정량 사실을 다시 계산하지 말고, 차이가 드러나는 방식과 각 회사의 성향만 중립적으로 설명하세요."
+        "고정된 정량 사실을 다시 계산하지 말고, 차이가 드러나는 방식과 각 회사의 성향만 중립적으로 설명하세요.\n"
+        "\n"
+        "[작성 규칙 — 해설 레지스터]\n"
+        "독자는 패널의 표와 수치를 이미 보고 있습니다. 수치를 문장으로 반복하는 것은 설명이 아닙니다. "
+        "각 analysis 문장은 표에 없는 정보를 반드시 추가해야 합니다.\n"
+        "- 기준점: 이 수치가 어느 위치인지 잡아주세요. 단, 컨텍스트에 제공된 기준(자사 과거 추이, 컨센서스 대비 이력, "
+        "peer 비교값, 섹터 백분위)만 사용하고 제공되지 않은 업계 평균이나 순위를 지어내지 마세요.\n"
+        "- 원인: 그 수치가 나온 사업적 이유를 제공된 10-K 프로파일과 관계 근거에서 연결하세요.\n"
+        "문체 규칙:\n"
+        "- 형용사 단독 주장 금지. '높은 수익성' 대신 근거 수치와 기준점을 함께 쓰세요.\n"
+        "- 비유, 의인화, 화폐 환산(예: '100원어치를 팔면 61원이 남는다')을 금지합니다.\n"
+        "- 전문 용어는 풀어 쓰지 말고 정확한 용어를 그대로 사용하세요. 용어 설명은 UI가 담당합니다.\n"
+        "- 증권사 리포트의 코멘트 톤으로, 섹션당 1~2문장의 담백한 평서문을 쓰세요.\n"
+        "\n"
+        "좋은 예: '영업이익률 61%는 최근 3년 추이에서도 가장 높은 수준으로, 데이터센터 GPU를 사실상 독점 공급하는 "
+        "위치가 가격 결정력으로 이어진 결과입니다. AMD의 20%는 서버 CPU 점유율 확대 국면에서 가격 경쟁을 병행한 "
+        "흔적으로, 마진보다 물량 성장이 실적을 이끌고 있습니다.'\n"
+        "나쁜 예(반복): 'NVDA의 영업이익률은 61%이고 AMD는 20%입니다.'\n"
+        "나쁜 예(뜬구름): 'NVDA는 높은 수익성을 바탕으로 시장에서 유리한 위치를 확보하고 있습니다.'\n"
+        "나쁜 예(환산): '100원어치를 팔면 61원이 남는 구조입니다.'"
     )
 
 
@@ -315,6 +357,19 @@ def validate_narrative(
         "insights": [str(value).strip() for value in payload.get("insights") or [] if str(value).strip()],
         "dataGaps": [str(value).strip() for value in payload.get("dataGaps") or [] if str(value).strip()],
     }
+
+
+def find_vague_sentences(narrative: dict[str, Any]) -> list[str]:
+    """수치 근거 없이 형용사 주장만 있는 문장을 찾는다. 해설 레지스터 위반 감시용."""
+    found: list[str] = []
+    for text in iter_narrative_text(narrative):
+        for sentence in SENTENCE_SPLIT_PATTERN.split(text):
+            stripped = sentence.strip()
+            if not stripped or NUMBER_PATTERN.search(stripped):
+                continue
+            if any(term in stripped for term in VAGUE_CLAIM_TERMS) and stripped not in found:
+                found.append(stripped)
+    return found
 
 
 def find_unsupported_numbers(narrative: dict[str, Any], quantitative: dict[str, Any]) -> list[str]:

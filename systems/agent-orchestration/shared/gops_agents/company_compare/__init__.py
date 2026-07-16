@@ -19,9 +19,11 @@ from .cache import (
 from .schemas import SECTION_IDS, company_compare_schema, compare_section_schema
 from .synthesizer import (
     BANNED_LANGUAGE,
+    VAGUE_CLAIM_TERMS,
     CompanyCompareNarrativeError,
     CompanyCompareNarrativeSynthesizer,
     find_unsupported_numbers,
+    find_vague_sentences,
     validate_narrative,
 )
 
@@ -33,6 +35,7 @@ __all__ = [
     "CompanyCompareAgent",
     "CompanyCompareError",
     "BANNED_LANGUAGE",
+    "VAGUE_CLAIM_TERMS",
     "CompanyCompareNarrativeError",
     "CompanyCompareNarrativeCache",
     "CompanyCompareNarrativeSynthesizer",
@@ -46,6 +49,7 @@ __all__ = [
     "company_compare_cache_key",
     "compare_section_schema",
     "find_unsupported_numbers",
+    "find_vague_sentences",
     "normalize_symbol",
     "suggest_peers",
     "validate_symbols",

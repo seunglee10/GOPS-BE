@@ -19,7 +19,7 @@ class MetricSpec:
 QUANTITATIVE_SECTIONS: tuple[tuple[str, str, tuple[MetricSpec, ...]], ...] = (
     (
         "growth_style",
-        "성장 스타일",
+        "성장성",
         (
             MetricSpec("revenue_growth_yoy", "매출 성장률", "percent", signed=True),
             MetricSpec("operating_income_growth_yoy", "영업이익 성장률", "percent", signed=True),
@@ -28,7 +28,7 @@ QUANTITATIVE_SECTIONS: tuple[tuple[str, str, tuple[MetricSpec, ...]], ...] = (
     ),
     (
         "profit_structure",
-        "수익 구조",
+        "수익성",
         (
             MetricSpec("net_margin", "순이익률", "percent"),
             MetricSpec("operating_margin", "영업이익률", "percent"),
@@ -37,7 +37,7 @@ QUANTITATIVE_SECTIONS: tuple[tuple[str, str, tuple[MetricSpec, ...]], ...] = (
     ),
     (
         "financial_health",
-        "재무 체질",
+        "재무 안정성",
         (
             MetricSpec("total_debt_to_assets", "총부채/자산", "percent"),
             MetricSpec("total_debt_to_equity", "총부채/자본", "percent"),
@@ -73,10 +73,10 @@ FRAME_FACTS: dict[str, tuple[str, str, int]] = {
 }
 
 QUALITATIVE_SECTION_HEADINGS = {
-    "business_model": "돈 버는 방식",
-    "risk_profile": "리스크 체질",
-    "relationship": "관계 맥락",
-    "recent_flow": "최근 흐름",
+    "business_model": "주요 사업",
+    "risk_profile": "위험 요인",
+    "relationship": "연관성",
+    "recent_flow": "최근 이슈",
 }
 RISK_NEWS_EVENT_TYPES = {"regulation", "legal", "macro"}
 
@@ -183,7 +183,7 @@ def build_qualitative_context(
     for symbol in symbols:
         profile = profiles_by_symbol.get(symbol)
         if profile is None:
-            data_gaps.append(f"{symbol}: 돈 버는 방식·리스크 체질용 10-K 프로파일 없음")
+            data_gaps.append(f"{symbol}: 주요 사업·위험 요인용 10-K 프로파일 없음")
             continue
         raw = profile.raw
         source_ref = f"tenk:{symbol}"
@@ -321,13 +321,13 @@ def build_qualitative_context(
                 risk_items.append(item)
 
     if not business_items:
-        data_gaps.append("돈 버는 방식 섹션 근거 없음")
+        data_gaps.append("주요 사업 섹션 근거 없음")
     if not risk_items:
-        data_gaps.append("리스크 체질 섹션 근거 없음")
+        data_gaps.append("위험 요인 섹션 근거 없음")
     if not relationship_items:
         data_gaps.append("비교 기업 간 공통 테마·지배관계 근거 없음")
     if not recent_items:
-        data_gaps.append("최근 흐름 섹션 뉴스 근거 없음")
+        data_gaps.append("최근 이슈 섹션 뉴스 근거 없음")
 
     material_by_id = {
         "business_model": business_items,
