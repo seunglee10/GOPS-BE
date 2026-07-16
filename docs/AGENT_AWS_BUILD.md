@@ -326,12 +326,12 @@ scripts/aws/restore-graphdb-pvc.sh
 ```
 
 The dev deploy workflow automatically runs the idempotent order migration Job before
-app apply whenever `order-worker` is selected. Selecting `agent-orchestrator` also
-selects `order-worker`, so a new coach worker cannot roll out ahead of its order-owned
-schema. The legacy `run_order_migrations=true` input remains only as an explicit force
-switch and cannot run without the migration image. Other one-off maintenance remains
-explicit: set `run_chart_asset_migrations=true` with `agent-orchestrator`, or
-`rebuild_news_cache=true` with `market-storage`.
+app apply whenever `order-worker` is selected and the chart asset migration Job whenever
+`agent-orchestrator` is selected. Selecting `agent-orchestrator` also selects
+`order-worker`, so neither schema consumer can roll out ahead of its PostgreSQL schema.
+The legacy `run_order_migrations=true` and `run_chart_asset_migrations=true` inputs remain
+only as compatibility force switches. News cache rebuild remains explicit with
+`rebuild_news_cache=true` and `market-storage`.
 
 AI coach requires order migration `0006_ai_coach.sql` before the new worker is rolled
 out. It adds order ownership, change-only append portfolio snapshot history, and decision-check
@@ -342,9 +342,9 @@ order or coach analytics image set is selected. Deploy the backend/order writers
 populate `orders.user_sub` before relying on user-scoped coach history. Existing rows
 without ownership remain unavailable rather than being guessed or assigned. The snapshot
 builder intentionally returns missing-data states when historical rows do not yet exist;
-it must never query another user's rows. The local order migration gate is automatic;
-`RUN_ORDER_MIGRATIONS=true` is retained only for compatibility. Chart migrations and
-news rebuilds remain explicitly controlled by `RUN_CHART_ASSET_MIGRATIONS=true` and
+it must never query another user's rows. The local order and chart migration gates are
+automatic; `RUN_ORDER_MIGRATIONS=true` and `RUN_CHART_ASSET_MIGRATIONS=true` are retained
+only for compatibility. News rebuilds remain explicitly controlled by
 `REBUILD_NEWS_CACHE=true`. Migration Jobs run after image push but before app apply.
 
 AI 코치 알람 출처를 저장하는 배포는 `0008_alert_proposal_source.sql`도 선행해야
@@ -1145,9 +1145,10 @@ queue item을 등록해도 builder는 scheduled item을 분석·복구·저장�
 `chart-asset-builder`는 concurrency 2,
 memory request `512Mi`, limit `1Gi`로 실행한다. 수동 build priority 100 계약은 유지한다.
 PostgreSQL schema는
-`job-chart-asset-migrations.yaml`과 `run-chart-asset-migrations-job.sh`로 명시 적용하며
-runtime은 자동 생성하지 않는다. one-shot migration Job은 PostgreSQL Secret이 없으면
-시작하지 않는다. 범용 패턴 자산 배포 전에는 migration Job을 다시 실행해
+`job-chart-asset-migrations.yaml`과 `run-chart-asset-migrations-job.sh`의 one-shot Job이
+`agent-orchestrator` 일반 배포의 자동 선행 gate로 적용하며 runtime은 자동 생성하지 않는다.
+PostgreSQL Secret이 없거나 Job이 실패하면 app rollout을 시작하지 않는다.
+범용 패턴 자산 배포 전에는 이 gate가
 `geometry_assets.drawing_count` check constraint와 queue priority/fingerprint index를
 갱신한다.
 

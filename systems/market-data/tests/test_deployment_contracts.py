@@ -53,7 +53,7 @@ class DeploymentContractsTest(unittest.TestCase):
         self.assertEqual(data["CHART_ASSET_REPAIR_MAX_RANGES"], "8")
         self.assertNotIn("CHART_ASSET_REPAIR_S3_TIMEOUT_SECONDS", data)
 
-    def test_chart_asset_postgres_migration_is_explicit_and_builder_has_db_secret(self):
+    def test_chart_asset_postgres_migration_is_one_shot_and_builder_waits_for_it(self):
         base_resources = load_yaml("infra/k8s/base/kustomization.yaml")["resources"]
         self.assertNotIn("job-chart-asset-migrations.yaml", base_resources)
 
@@ -100,10 +100,15 @@ class DeploymentContractsTest(unittest.TestCase):
 
         compose = load_yaml("docker-compose.yml")
         compose_migration = compose["services"]["chart-asset-migrations"]
-        self.assertEqual(compose_migration["profiles"], ["chart-assets-pg"])
+        self.assertNotIn("profiles", compose_migration)
         self.assertEqual(
             compose_migration["environment"]["CHART_ASSET_STORAGE_MAINTENANCE"],
             "${CHART_ASSET_STORAGE_MAINTENANCE:-false}",
+        )
+        self.assertEqual(compose_migration["restart"], "no")
+        self.assertEqual(
+            compose["services"]["chart-asset-builder"]["depends_on"]["chart-asset-migrations"]["condition"],
+            "service_completed_successfully",
         )
 
     def test_chart_geometry_schedule_and_manual_job_use_operational_intervals(self):
@@ -405,11 +410,15 @@ fi
         self.assertEqual(workflow["jobs"]["deploy"]["needs"], "quality")
         self.assertIn("kubectl kustomize infra/k8s/base/platform", workflow_text)
 
-    def test_dev_deploy_can_migrate_chart_assets_before_app_rollout(self):
+    def test_dev_deploy_automatically_migrates_chart_assets_before_app_rollout(self):
         workflow = (REPO_ROOT / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8")
 
         self.assertIn("run_chart_asset_migrations:", workflow)
         self.assertIn("run-chart-asset-migrations-job.sh", workflow)
+        self.assertIn(
+            "contains(steps.changes.outputs.services, 'agent-orchestrator')",
+            workflow,
+        )
         self.assertIn(
             "run_chart_asset_migrations=true requires services to include agent-orchestrator.",
             workflow,
@@ -419,13 +428,17 @@ fi
             workflow.index("name: Deploy app workloads"),
         )
 
-    def test_local_dev_deploy_can_migrate_chart_assets_before_app_rollout(self):
+    def test_local_dev_deploy_automatically_migrates_chart_assets_before_app_rollout(self):
         script = (REPO_ROOT / "scripts/aws/deploy-dev-local.sh").read_text(encoding="utf-8")
 
         self.assertIn('RUN_CHART_ASSET_MIGRATIONS="${RUN_CHART_ASSET_MIGRATIONS:-false}"', script)
         self.assertIn("REMOTE_BRANCH=branch-name", script)
         self.assertIn(
             "RUN_CHART_ASSET_MIGRATIONS=true requires agent-orchestrator to be selected.",
+            script,
+        )
+        self.assertIn(
+            'service_selected "agent-orchestrator" && ! is_true "${CHART_INTERPRETATION_ONLY}"',
             script,
         )
         self.assertIn("run-chart-asset-migrations-job.sh", script)
