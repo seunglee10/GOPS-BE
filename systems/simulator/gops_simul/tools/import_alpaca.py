@@ -7,12 +7,14 @@ import json
 import os
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
+from threading import Event
 from typing import Any, Iterator
 
 from gops_simul.config import PROJECT_ROOT
-from gops_simul.dataset import DATASET_ID, FEED_SEGMENTS, REPLAY_SYMBOLS, dataset_manifest_template, isoformat_z
+from gops_simul.dataset import DATASET_ID, FEED_SEGMENTS, REPLAY_SYMBOLS, FeedSegment, dataset_manifest_template, isoformat_z
 from gops_simul.env import load_env_file
 from gops_simul.errors import BadRequest
 from gops_simul.storage import normalize_symbols
@@ -21,6 +23,8 @@ from gops_simul.storage import normalize_symbols
 DATA_BASE_URL = "https://data.alpaca.markets"
 DEFAULT_IMPORT_DAYS = 7
 CLICKHOUSE_INSERT_BATCH_SIZE = 50_000
+DEFAULT_IMPORT_WORKERS = 4
+SOURCE_SEQUENCE_STRIDE = 1_000_000_000
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -113,40 +117,43 @@ def build_fixed_dataset(*, output_root: Path, base_url: str, headers: dict[str, 
         clickhouse = ClickHouseHttpClient(clickhouse_url, database=clickhouse_database, user=clickhouse_user,
             password=clickhouse_password, timeout_seconds=120)
         _clear_clickhouse_build(clickhouse)
+    worker_count = max(1, min(16, int(os.getenv("SIM_IMPORT_WORKERS", str(DEFAULT_IMPORT_WORKERS)))))
     manifest = dataset_manifest_template(); manifest["createdAt"] = datetime.now(UTC).isoformat()
-    manifest["source"] = {"provider": "alpaca", "baseUrl": base_url, "adjustment": "raw", "limit": limit}
-    counts = manifest["counts"]; collection_sequence = 0
+    manifest["source"] = {"provider": "alpaca", "baseUrl": base_url, "adjustment": "raw", "limit": limit,
+        "importWorkers": worker_count}
+    counts = manifest["counts"]
     try:
+        tasks: list[tuple[int, int, FeedSegment, str, str]] = []
         for segment_index, segment in enumerate(FEED_SEGMENTS, 1):
             for symbol in REPLAY_SYMBOLS:
-                symbol_counts = counts["bySymbol"].setdefault(symbol, {"trades": 0, "quotes": 0})
                 for kind in ("trades", "quotes"):
-                    relative = Path(f"feed={segment.feed}/segment={segment_index:02d}/symbol={symbol}/{kind}.jsonl.gz")
-                    path = root / relative; path.parent.mkdir(parents=True, exist_ok=True)
-                    row_count = 0; batch: list[dict[str, object]] = []
-                    with gzip.open(path, "wt", encoding="utf-8", newline="\n") as handle:
-                        for row_count, row in enumerate(iter_kind_rows(kind=kind, base_url=base_url, symbol=symbol,
-                            feed=segment.feed, start=isoformat_z(segment.start), end=isoformat_z(segment.end),
-                            limit=limit, max_pages=max_pages, headers=headers), 1):
-                            collection_sequence += 1
-                            encoded = json.dumps(row, sort_keys=True, separators=(",", ":")); handle.write(encoded + "\n")
-                            if clickhouse:
-                                batch.append({"dataset_id": DATASET_ID, "event_time": row["t"], "source_file": str(relative),
-                                    "source_sequence": collection_sequence, "symbol": symbol,
-                                    "event_type": "trade" if kind == "trades" else "quote", "feed": segment.feed, "payload": encoded})
-                                if len(batch) >= CLICKHOUSE_INSERT_BATCH_SIZE:
-                                    clickhouse.insert_json_each_row("market_data.simulation_replay_staging", batch); batch.clear()
-                    if clickhouse and batch: clickhouse.insert_json_each_row("market_data.simulation_replay_staging", batch)
-                    digest = sha256_file(path)
-                    entry = {"path": str(relative), "feed": segment.feed, "segment": segment_index, "symbol": symbol,
-                        "kind": kind, "rowCount": row_count, "compressedBytes": path.stat().st_size, "sha256": digest,
-                        "apiParameters": {"symbols": symbol, "start": isoformat_z(segment.start), "end": isoformat_z(segment.end),
-                            "feed": segment.feed, "sort": "asc", "limit": limit, "adjustment": "raw"}}
-                    manifest["files"].append(entry); counts[kind] += row_count; counts["events"] += row_count; symbol_counts[kind] += row_count
-                    if s3_prefix:
-                        _upload_s3(path, f"{s3_prefix}/{relative.as_posix()}", sha256=digest, row_count=row_count)
-                        if not local_only:
-                            path.unlink()
+                    tasks.append((len(tasks), segment_index, segment, symbol, kind))
+        stop_event = Event()
+        executor = ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="replay-import")
+        futures = {
+            executor.submit(_collect_fixed_file, root=root, file_ordinal=file_ordinal,
+                segment_index=segment_index, segment=segment, symbol=symbol, kind=kind,
+                base_url=base_url, headers=headers, limit=limit, max_pages=max_pages,
+                s3_prefix=s3_prefix, clickhouse=clickhouse, local_only=local_only,
+                stop_event=stop_event): file_ordinal
+            for file_ordinal, segment_index, segment, symbol, kind in tasks
+        }
+        results: dict[int, tuple[dict[str, object], int]] = {}
+        try:
+            for future in as_completed(futures):
+                results[futures[future]] = future.result()
+        except Exception:
+            stop_event.set()
+            for future in futures:
+                future.cancel()
+            raise
+        finally:
+            executor.shutdown(wait=True, cancel_futures=True)
+        for file_ordinal, _segment_index, _segment, _symbol, _kind in tasks:
+            entry, row_count = results[file_ordinal]
+            symbol = str(entry["symbol"]); kind = str(entry["kind"])
+            symbol_counts = counts["bySymbol"].setdefault(symbol, {"trades": 0, "quotes": 0})
+            manifest["files"].append(entry); counts[kind] += row_count; counts["events"] += row_count; symbol_counts[kind] += row_count
         if int(counts["events"]) <= 0: raise RuntimeError("Alpaca returned no replay events")
         if clickhouse:
             _materialize_clickhouse(clickhouse)
@@ -169,6 +176,50 @@ def build_fixed_dataset(*, output_root: Path, base_url: str, headers: dict[str, 
         raise
     finally:
         if clickhouse: clickhouse.execute(f"ALTER TABLE market_data.simulation_replay_staging DELETE WHERE dataset_id='{DATASET_ID}' SETTINGS mutations_sync=1")
+
+
+def deterministic_source_sequence(file_ordinal: int, row_number: int) -> int:
+    if file_ordinal < 0:
+        raise ValueError("file_ordinal must not be negative")
+    if row_number < 1 or row_number >= SOURCE_SEQUENCE_STRIDE:
+        raise ValueError(f"row_number must be between 1 and {SOURCE_SEQUENCE_STRIDE - 1}")
+    return file_ordinal * SOURCE_SEQUENCE_STRIDE + row_number
+
+
+def _collect_fixed_file(*, root: Path, file_ordinal: int, segment_index: int, segment: FeedSegment,
+                        symbol: str, kind: str, base_url: str, headers: dict[str, str], limit: int,
+                        max_pages: int | None, s3_prefix: str, clickhouse, local_only: bool,
+                        stop_event: Event) -> tuple[dict[str, object], int]:
+    relative = Path(f"feed={segment.feed}/segment={segment_index:02d}/symbol={symbol}/{kind}.jsonl.gz")
+    path = root / relative; path.parent.mkdir(parents=True, exist_ok=True)
+    row_count = 0; batch: list[dict[str, object]] = []
+    with gzip.open(path, "wt", encoding="utf-8", newline="\n") as handle:
+        for row_count, row in enumerate(iter_kind_rows(kind=kind, base_url=base_url, symbol=symbol,
+            feed=segment.feed, start=isoformat_z(segment.start), end=isoformat_z(segment.end),
+            limit=limit, max_pages=max_pages, headers=headers), 1):
+            if stop_event.is_set():
+                raise RuntimeError("replay import cancelled after another file failed")
+            encoded = json.dumps(row, sort_keys=True, separators=(",", ":")); handle.write(encoded + "\n")
+            if clickhouse:
+                batch.append({"dataset_id": DATASET_ID, "event_time": row["t"], "source_file": str(relative),
+                    "source_sequence": deterministic_source_sequence(file_ordinal, row_count), "symbol": symbol,
+                    "event_type": "trade" if kind == "trades" else "quote", "feed": segment.feed, "payload": encoded})
+                if len(batch) >= CLICKHOUSE_INSERT_BATCH_SIZE:
+                    clickhouse.insert_json_each_row("market_data.simulation_replay_staging", batch); batch.clear()
+            if row_count % 500_000 == 0:
+                print(f"[{segment_index:02d}/{segment.feed}] {symbol} {kind}: {row_count:,} rows", flush=True)
+    if clickhouse and batch: clickhouse.insert_json_each_row("market_data.simulation_replay_staging", batch)
+    digest = sha256_file(path)
+    entry = {"path": str(relative), "feed": segment.feed, "segment": segment_index, "symbol": symbol,
+        "kind": kind, "rowCount": row_count, "compressedBytes": path.stat().st_size, "sha256": digest,
+        "apiParameters": {"symbols": symbol, "start": isoformat_z(segment.start), "end": isoformat_z(segment.end),
+            "feed": segment.feed, "sort": "asc", "limit": limit, "adjustment": "raw"}}
+    if s3_prefix:
+        _upload_s3(path, f"{s3_prefix}/{relative.as_posix()}", sha256=digest, row_count=row_count)
+        if not local_only:
+            path.unlink()
+    print(f"[{segment_index:02d}/{segment.feed}] {symbol} {kind}: completed {row_count:,} rows", flush=True)
+    return entry, row_count
 
 
 def _clear_clickhouse_build(client) -> None:
