@@ -6,8 +6,12 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from .backfill import build_clickhouse_client, clickhouse_datetime, ensure_sec_clickhouse_schema, insert_batches, load_universe_symbols, parse_csv, unique_symbols
+
+
+MARKET_TIMEZONE = ZoneInfo("America/New_York")
 
 
 @dataclass
@@ -45,6 +49,7 @@ class YahooEstimatesStats:
             "dryRun": self.dry_run,
             "symbolsRequested": self.symbols_requested,
             "symbolsLoaded": self.symbols_loaded,
+            "symbolsSucceeded": self.symbols_loaded,
             "rows": self.rows,
             "errors": self.errors,
         }
@@ -58,6 +63,9 @@ def run_yahoo_estimates_sync(config: YahooEstimatesConfig | None = None, *, clic
     if config.max_companies > 0:
         symbols = symbols[: config.max_companies]
     stats.symbols_requested = len(symbols)
+    if not symbols:
+        print(json.dumps({"status": "failed", "reason": "empty-universe", **stats.to_dict()}, ensure_ascii=False), flush=True)
+        raise RuntimeError("Yahoo estimates universe is empty")
     if config.dry_run:
         print(json.dumps({"status": "dry-run", **stats.to_dict(), "symbols": symbols[:10]}, ensure_ascii=False), flush=True)
         return stats
@@ -70,7 +78,8 @@ def run_yahoo_estimates_sync(config: YahooEstimatesConfig | None = None, *, clic
         try:
             rows = fetcher(symbol, collected_at=started_at)
         except Exception as exc:
-            stats.errors[symbol] = exc.__class__.__name__
+            message = str(exc).strip()
+            stats.errors[symbol] = f"{exc.__class__.__name__}: {message}"[:240] if message else exc.__class__.__name__
             continue
         if not rows:
             continue
@@ -82,6 +91,9 @@ def run_yahoo_estimates_sync(config: YahooEstimatesConfig | None = None, *, clic
             batch = []
     if batch:
         insert_batches(clickhouse_client, "yahoo_earnings_estimates", batch, config.batch_size)
+    if stats.rows == 0:
+        print(json.dumps({"status": "failed", "reason": "zero-rows", **stats.to_dict()}, ensure_ascii=False, default=str), flush=True)
+        raise RuntimeError("Yahoo estimates sync produced zero rows")
     print(json.dumps({"status": "success", **stats.to_dict()}, ensure_ascii=False, default=str), flush=True)
     return stats
 
@@ -139,19 +151,35 @@ def rows_from_earnings_dates(symbol: str, frame: Any, *, collected_at: datetime)
     rows = []
     for index, row in frame.iterrows():
         estimate = first_number(row, "EPS Estimate", "epsEstimate", "eps_estimate")
-        if estimate is None:
+        actual = first_number(row, "Reported EPS", "reportedEPS", "reported_eps")
+        surprise_percent = first_number(row, "Surprise(%)", "Surprise (%)", "surprisePercent", "surprise_percent")
+        if estimate is None and actual is None:
             continue
-        period_end = date_from_any(index) or collected_at.date()
+        event_at, event_session = earnings_event_datetime(index)
+        period_end = event_at.astimezone(MARKET_TIMEZONE).date() if event_at else date_from_any(index) or collected_at.date()
+        if surprise_percent is None and estimate not in {None, 0} and actual is not None:
+            surprise_percent = ((actual - estimate) / abs(estimate)) * 100
         rows.append(estimate_row(
             symbol=symbol,
             metric="eps",
-            period=period_from_date(period_end),
+            period=(period_end.year, "EVENT", period_end),
             average=estimate,
             low=None,
             high=None,
             analyst_count=None,
             collected_at=collected_at,
-            raw={"date": str(index), "sourceFrame": "earnings_dates"},
+            event_at=event_at,
+            actual_value=actual,
+            surprise_percent=surprise_percent,
+            event_session=event_session,
+            event_status="reported" if actual is not None else "scheduled",
+            raw={
+                "date": str(index),
+                "sourceFrame": "earnings_dates",
+                "epsEstimate": estimate,
+                "reportedEps": actual,
+                "surprisePercent": surprise_percent,
+            },
         ))
     return rows
 
@@ -161,12 +189,17 @@ def estimate_row(
     symbol: str,
     metric: str,
     period: tuple[int, str, date],
-    average: float,
+    average: float | None,
     low: float | None,
     high: float | None,
     analyst_count: int | None,
     collected_at: datetime,
     raw: dict[str, Any],
+    event_at: datetime | None = None,
+    actual_value: float | None = None,
+    surprise_percent: float | None = None,
+    event_session: str = "unknown",
+    event_status: str = "scheduled",
 ) -> dict[str, Any]:
     fiscal_year, fiscal_period, period_end = period
     return {
@@ -179,6 +212,11 @@ def estimate_row(
         "low": low,
         "high": high,
         "analyst_count": analyst_count,
+        "event_at": clickhouse_datetime(event_at) if event_at else None,
+        "actual_value": actual_value,
+        "surprise_percent": surprise_percent,
+        "event_session": event_session,
+        "event_status": event_status,
         "source": "yahoo-finance",
         "collected_at": clickhouse_datetime(collected_at),
         "raw": json.dumps(raw, ensure_ascii=False, separators=(",", ":"), default=str),
@@ -253,6 +291,50 @@ def date_from_any(value: Any) -> date | None:
         return datetime.fromisoformat(text[:10]).date()
     except ValueError:
         return None
+
+
+def earnings_event_datetime(value: Any) -> tuple[datetime | None, str]:
+    raw_value = value
+    to_python = getattr(value, "to_pydatetime", None)
+    if callable(to_python):
+        try:
+            raw_value = to_python()
+        except Exception:
+            raw_value = value
+
+    precise_time = isinstance(raw_value, datetime)
+    parsed: datetime | None
+    if isinstance(raw_value, datetime):
+        parsed = raw_value
+    elif isinstance(raw_value, date):
+        parsed = datetime(raw_value.year, raw_value.month, raw_value.day)
+    else:
+        text = str(raw_value or "").strip()
+        if not text:
+            return None, "unknown"
+        precise_time = len(text) > 10
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            parsed_date = date_from_any(text)
+            parsed = datetime(parsed_date.year, parsed_date.month, parsed_date.day) if parsed_date else None
+            precise_time = False
+    if parsed is None:
+        return None, "unknown"
+    localized = parsed.replace(tzinfo=MARKET_TIMEZONE) if parsed.tzinfo is None else parsed.astimezone(MARKET_TIMEZONE)
+    session = earnings_event_session(localized) if precise_time else "unknown"
+    return localized.astimezone(timezone.utc), session
+
+
+def earnings_event_session(localized: datetime) -> str:
+    minutes = localized.hour * 60 + localized.minute
+    if minutes == 0:
+        return "unknown"
+    if minutes < 9 * 60 + 30:
+        return "pre"
+    if minutes >= 16 * 60:
+        return "after"
+    return "regular"
 
 
 def dedupe_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

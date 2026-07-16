@@ -758,9 +758,14 @@ by a separate scheduled collector into `market_data.yahoo_earnings_estimates`.
 The AWS collector is `alfaka-yahoo-estimates-sync` and runs the
 `systems/fundamentals/jobs/yahoo-estimates-sync/main.py` entrypoint in the
 `gops-market-storage` image. It writes only Yahoo consensus rows and keeps them
-separate from SEC actuals. Daily refreshes use the ClickHouse key
+separate from SEC actuals. It runs on weekdays at `22:30 UTC`; an empty S&P 500
+universe or a run that produces zero rows fails the Job and emits structured
+requested/succeeded/row/error counts. Refreshes use the ClickHouse key
 `symbol + metric + fiscal_year + fiscal_period + period_end`, so current
 consensus values are replaced rather than duplicated indefinitely.
+Earnings-date rows additionally preserve `event_at`, reported EPS,
+`surprise_percent`, market session, and scheduled/reported status for chart
+event markers.
 The API only reads ClickHouse/Redis snapshots on screen requests. It must not
 call SEC or Yahoo directly from the frontend hot path.
 

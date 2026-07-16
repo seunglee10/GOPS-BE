@@ -1,12 +1,12 @@
 # 역할: AWS/EKS에서 Yahoo Finance EPS/매출 컨센서스를 주기적으로 수집해 ClickHouse에 적재합니다.
-# schedule은 Kubernetes controller 기준 UTC입니다. 21:15 UTC는 한국 시간 06:15입니다.
+# schedule은 Kubernetes controller 기준 UTC입니다. 미국 장후 발표를 반영해 평일 22:30 UTC에 실행합니다.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: alfaka-yahoo-estimates-sync
   namespace: alfaka-market-data
 spec:
-  schedule: "15 21 * * *"
+  schedule: "30 22 * * 1-5"
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 3600
   successfulJobsHistoryLimit: 3

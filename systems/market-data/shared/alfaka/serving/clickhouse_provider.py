@@ -1462,6 +1462,95 @@ class ClickHouseMarketDataProvider:
             },
         )
 
+    def company_daily_news_summaries_between(self, symbol, from_date, to_date, limit=370, locale="ko-KR"):
+        """차트 이벤트가 요청한 정확한 날짜 구간의 저장된 일별 뉴스만 읽습니다."""
+        query = f"""
+        SELECT
+          toString(date) AS date,
+          symbol,
+          locale,
+          argMax(summary, generated_at) AS summary,
+          argMax(key_points, generated_at) AS keyPoints,
+          argMax(positive_points, generated_at) AS positivePoints,
+          argMax(concerns, generated_at) AS concerns,
+          argMax(impact_direction, generated_at) AS impactDirection,
+          argMax(sentiment, generated_at) AS sentiment,
+          argMax(article_ids, generated_at) AS articleIds,
+          argMax(article_ids_hash, generated_at) AS articleIdsHash,
+          argMax(article_count, generated_at) AS articleCount,
+          argMax(mention_count, generated_at) AS mentionCount,
+          argMax(status, generated_at) AS status,
+          argMax(model, generated_at) AS model,
+          formatDateTime(max(generated_at), '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS generatedAt,
+          argMax(version, generated_at) AS version,
+          argMax(raw, generated_at) AS raw
+        FROM {self.table('news_company_daily_summaries')}
+        WHERE symbol = {{symbol:String}}
+          AND locale = {{locale:String}}
+          AND date >= toDate({{fromDate:String}})
+          AND date <= toDate({{toDate:String}})
+        GROUP BY date, symbol, locale
+        ORDER BY date ASC
+        LIMIT {{limit:UInt32}}
+        FORMAT JSONEachRow
+        """
+        return self.query_json_each_row(
+            query,
+            {
+                "symbol": str(symbol or "").strip().upper(),
+                "locale": locale,
+                "fromDate": str(from_date)[:10],
+                "toDate": str(to_date)[:10],
+                "limit": int(limit),
+            },
+        )
+
+    def earnings_events(self, symbol, from_time, to_time):
+        """수집 시각이 가장 최신인 Yahoo 실적 이벤트 행만 반환합니다."""
+        query = f"""
+        SELECT
+          symbol,
+          formatDateTime(eventAt, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS eventAt,
+          actualValue,
+          estimate,
+          surprisePercent,
+          eventSession,
+          eventStatus,
+          source,
+          formatDateTime(sourceAsOf, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS sourceAsOf
+        FROM
+        (
+          SELECT
+            symbol,
+            argMax(event_at, tuple(collected_at, inserted_at)) AS eventAt,
+            argMax(actual_value, tuple(collected_at, inserted_at)) AS actualValue,
+            argMax(average, tuple(collected_at, inserted_at)) AS estimate,
+            argMax(surprise_percent, tuple(collected_at, inserted_at)) AS surprisePercent,
+            argMax(event_session, tuple(collected_at, inserted_at)) AS eventSession,
+            argMax(event_status, tuple(collected_at, inserted_at)) AS eventStatus,
+            argMax(source, tuple(collected_at, inserted_at)) AS source,
+            max(collected_at) AS sourceAsOf
+          FROM {self.table('yahoo_earnings_estimates')}
+          WHERE symbol = {{symbol:String}}
+            AND metric = 'eps'
+            AND event_at IS NOT NULL
+          GROUP BY symbol, fiscal_year, fiscal_period, period_end
+          HAVING eventAt IS NOT NULL
+        )
+        WHERE eventAt >= parseDateTime64BestEffort({{fromTime:String}})
+          AND eventAt <= parseDateTime64BestEffort({{toTime:String}})
+        ORDER BY eventAt ASC
+        FORMAT JSONEachRow
+        """
+        return self.query_json_each_row(
+            query,
+            {
+                "symbol": str(symbol or "").strip().upper(),
+                "fromTime": str(from_time),
+                "toTime": str(to_time),
+            },
+        )
+
     def table(self, name):
         return f"{clickhouse_identifier(self.database)}.{clickhouse_identifier(name)}"
 

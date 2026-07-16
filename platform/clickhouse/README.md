@@ -121,12 +121,26 @@ market_data.sec_financial_facts
 market_data.sec_derived_metrics
 market_data.sec_frames
 market_data.sec_collection_runs
+market_data.yahoo_earnings_estimates
 ```
 
 `market_data.sec_company_tickers` stores ticker/CIK mapping and
 `is_active_universe_member`. S&P 500 membership comes from
 `systems/market-data/config/sp500-universe.json`; when a company leaves the
 universe, existing facts and metrics remain and only membership is updated.
+
+`market_data.yahoo_earnings_estimates` also stores chart-event fields
+`event_at`, `actual_value`, `surprise_percent`, `event_session`, and
+`event_status`. Existing volumes apply these additions through the idempotent
+operator script below; both local and EKS DDL copies include the same columns.
+
+```text
+scripts/local/migrate-yahoo-earnings-events.sql
+```
+
+The chart events reader selects the latest `collected_at` revision for each
+stored event. It reads `news_company_daily_summaries.raw.sources` for at most
+three article links and does not call an external provider on the request path.
 
 `market_data.sec_financial_facts` stores normalized source facts.
 `market_data.sec_derived_metrics` stores deterministic metrics such as margins,
