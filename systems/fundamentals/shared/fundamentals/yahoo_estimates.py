@@ -119,7 +119,12 @@ def safe_call(obj: Any, method_name: str, **kwargs: Any) -> Any:
     try:
         return method(**kwargs)
     except TypeError:
-        return method()
+        try:
+            return method()
+        except Exception:
+            return None
+    except Exception:
+        return None
 
 
 def rows_from_estimate_frame(symbol: str, metric: str, frame: Any, *, collected_at: datetime) -> list[dict[str, Any]]:

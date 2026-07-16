@@ -8,6 +8,7 @@ from fastapi import FastAPI, HTTPException
 
 from gops_agents.orchestrator import AgentOrchestrator
 from gops_agents.alert_commands import resolve_alert_expression
+from gops_agents.company_compare import CompanyCompareNarrativeError, CompanyCompareNarrativeSynthesizer
 from gops_agents.query_understanding import warm_entity_catalog_cache
 from gops_agents.runtime.report_store import build_report_store_from_env
 from gops_agents.synthesis import log_synthesis_runtime_diagnostics
@@ -45,6 +46,15 @@ def resolve_layout(request: dict[str, Any]) -> dict[str, Any]:
 @app.post("/alerts/resolve")
 def resolve_alert(request: dict[str, Any]) -> dict[str, Any]:
     return resolve_alert_expression(request)
+
+
+@app.post("/company-compare/narrative")
+def company_compare_narrative(request: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return CompanyCompareNarrativeSynthesizer().synthesize(request)
+    except CompanyCompareNarrativeError as exc:
+        print(f"company compare narrative failed: {exc.detail}", flush=True)
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
 @app.get("/reports/{analysis_id}")

@@ -12,6 +12,7 @@ from typing import Any
 
 SEC_DATA_BASE_URL = "https://data.sec.gov"
 SEC_ARCHIVE_BASE_URL = "https://www.sec.gov/Archives/edgar/daily-index"
+SEC_FILINGS_BASE_URL = "https://www.sec.gov/Archives/edgar/data"
 
 
 @dataclass
@@ -54,13 +55,33 @@ class SecClient:
     def company_tickers_exchange(self) -> dict[str, Any]:
         return self.get_json("https://www.sec.gov/files/company_tickers_exchange.json")
 
+    def filing_document_url(self, cik: str, accession: str, primary_document: str) -> str:
+        cik_digits = str(int(normalize_cik(cik)))
+        accession_digits = "".join(ch for ch in str(accession or "") if ch.isdigit())
+        document = str(primary_document or "").strip().lstrip("/")
+        if not accession_digits or not document:
+            raise ValueError("SEC filing accession and primary document are required.")
+        return f"{SEC_FILINGS_BASE_URL}/{cik_digits}/{accession_digits}/{document}"
+
+    def filing_document(self, cik: str, accession: str, primary_document: str) -> str:
+        return self.get_text(self.filing_document_url(cik, accession, primary_document))
+
     def get_json(self, url: str) -> dict[str, Any]:
+        raw = self.get_bytes(url, accept="application/json")
+        return json.loads(raw.decode("utf-8"))
+
+    def get_text(self, url: str) -> str:
+        raw = self.get_bytes(url, accept="text/html,application/xhtml+xml,text/plain")
+        return raw.decode("utf-8", errors="replace")
+
+    def get_bytes(self, url: str, *, accept: str = "*/*") -> bytes:
         self.rate_limiter.wait()
         request = urllib.request.Request(
             url,
             headers={
                 "User-Agent": self.user_agent,
                 "Accept-Encoding": "gzip, deflate",
+                "Accept": accept,
             },
         )
         with urllib.request.urlopen(request, timeout=float(os.getenv("SEC_HTTP_TIMEOUT_SECONDS", "20"))) as response:
@@ -68,7 +89,7 @@ class SecClient:
             encoding = str(response.headers.get("Content-Encoding") or "").lower()
         if encoding == "gzip" or raw[:2] == b"\x1f\x8b":
             raw = gzip.decompress(raw)
-        return json.loads(raw.decode("utf-8"))
+        return raw
 
 
 def normalize_cik(cik: str) -> str:

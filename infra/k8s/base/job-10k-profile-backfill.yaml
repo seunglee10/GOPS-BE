@@ -1,0 +1,56 @@
+# 역할: 최신 10-K Item 1/1A를 S3에 보관하고 구조화 프로파일 카드만 Redis에 씁니다.
+# 기본은 dry-run이며 실제 실행은 SEC/OpenAI Secret과 TEN_K_PROFILE_DRY_RUN=false가 필요합니다.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: alfaka-ten-k-profile-backfill
+  namespace: alfaka-market-data
+spec:
+  ttlSecondsAfterFinished: 86400
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app: alfaka-ten-k-profile-backfill
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        karpenter.sh/nodepool: batch
+      tolerations:
+        - key: gops.io/dedicated
+          operator: Equal
+          value: batch
+          effect: NoSchedule
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: ten-k-profile-backfill
+          image: YOUR_ECR_REPOSITORY/gops-market-storage:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "systems/fundamentals/jobs/10k-profile-backfill/main.py"]
+          env:
+            - name: TEN_K_PROFILE_DRY_RUN
+              value: "true"
+            - name: TEN_K_PROFILE_DOWNLOAD_IN_DRY_RUN
+              value: "false"
+            - name: TEN_K_PROFILE_FORCE
+              value: "false"
+            - name: TEN_K_PROFILE_SYMBOLS
+              value: ""
+            - name: TEN_K_PROFILE_MAX_COMPANIES
+              value: "0"
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-sec-fundamentals-secret
+                optional: true
+            - secretRef:
+                name: alfaka-openai-secret
+                optional: true
+          resources:
+            requests:
+              cpu: "1"
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 3Gi

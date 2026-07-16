@@ -2762,6 +2762,7 @@ DEFAULT_PANEL_SPECS: dict[str, dict[str, Any]] = {
     "chart": {"title": "차트", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 2, "rowSpan": 2}, "layoutWeight": 100},
     "chartPatternList": {"title": "패턴 종목", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 2, "rowSpan": 2}, "layoutWeight": 44},
     "compareChart": {"title": "비교 차트", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 4, "rowSpan": 2}, "layoutWeight": 80},
+    "companyCompare": {"title": "기업 성향 비교", "minSpan": {"colSpan": 4, "rowSpan": 3}, "defaultSpan": {"colSpan": 6, "rowSpan": 4}, "layoutWeight": 76},
     "newsFeed": {"title": "시장 뉴스", "minSpan": {"colSpan": 2, "rowSpan": 2}, "defaultSpan": {"colSpan": 2, "rowSpan": 2}, "layoutWeight": 50},
     "marketIndices": {"title": "지수", "minSpan": {"colSpan": 1, "rowSpan": 1}, "defaultSpan": {"colSpan": 2, "rowSpan": 2}, "layoutWeight": 50},
     "popularStocks": {"title": "인기종목", "minSpan": {"colSpan": 1, "rowSpan": 2}, "defaultSpan": {"colSpan": 1, "rowSpan": 2}, "layoutWeight": 50},

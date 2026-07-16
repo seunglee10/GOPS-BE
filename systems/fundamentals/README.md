@@ -170,3 +170,41 @@ Earnings-date rows use `fiscal_period=EVENT` and preserve announcement time,
 market session, actual EPS, estimate, surprise percentage, and
 scheduled/reported status. An empty universe or a zero-row live run exits with
 failure and prints structured requested/succeeded/row/error counts.
+
+## 10-K Profile Backfill
+
+The company-compare qualitative layer is generated outside the agent hot path:
+
+```sh
+python -u systems/fundamentals/jobs/10k-profile-backfill/main.py
+```
+
+For each requested symbol the job resolves the latest exact `10-K` from EDGAR
+submissions, downloads the filing document, extracts Item 1 and Item 1A, and asks
+OpenAI for a strict Korean profile card. The output keeps business model, revenue
+drivers, competitive position, and the fixed risk categories
+`공급망/고객집중/경쟁/기술변화/규제·법률/지정학/거시경제`. The prompt forbids facts not
+present in the filing and removes promotional phrasing.
+
+Storage is deliberately split:
+
+```text
+S3   fundamentals/sec/10k-profiles/{SYMBOL}/{ACCESSION_DIGITS}/sections.json
+Redis profile:10k:{SYMBOL}
+```
+
+S3 retains the extracted source sections for regeneration and audit. Redis contains only
+the compact 5–10KB card used by `TenKProfileProvider`; the writer rejects cards above
+12KB. An unchanged accession is skipped unless `TEN_K_PROFILE_FORCE=true`.
+
+Local targeted execution:
+
+```sh
+TEN_K_PROFILE_DRY_RUN=false \
+TEN_K_PROFILE_SYMBOLS=NVDA,AMD \
+python -u systems/fundamentals/jobs/10k-profile-backfill/main.py
+```
+
+AWS uses the weekly `alfaka-10k-profile-sync` CronJob and the same
+`alfaka-openai-secret.OPENAI_API_KEY` as agent-orchestrator. The secret is synchronized
+from `/gops/prod/agent-orchestrator/openai/api-key`; no key value is stored in this repo.

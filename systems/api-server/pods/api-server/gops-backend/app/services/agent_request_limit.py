@@ -8,7 +8,13 @@ from fastapi.responses import JSONResponse
 from app.contracts.agents import MAX_AGENT_REQUEST_BYTES
 
 
-AGENT_BODY_PATHS = frozenset({"/api/agents/analyze", "/api/agents/layout/resolve", "/api/alerts/commands"})
+AGENT_BODY_PATHS = frozenset({
+    "/api/agents/analyze",
+    "/api/agents/layout/resolve",
+    "/api/alerts/commands",
+    "/api/llm/company-compare",
+    "/api/llm/company-compare/quantitative",
+})
 
 
 class AgentRequestTooLarge(RuntimeError):
