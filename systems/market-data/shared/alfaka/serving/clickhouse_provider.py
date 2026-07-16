@@ -1510,36 +1510,36 @@ class ClickHouseMarketDataProvider:
         query = f"""
         SELECT
           symbol,
-          formatDateTime(eventAt, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS eventAt,
+          formatDateTime(event_at_value, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS eventAt,
           actualValue,
           estimate,
           surprisePercent,
           eventSession,
           eventStatus,
           source,
-          formatDateTime(sourceAsOf, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS sourceAsOf
+          formatDateTime(source_as_of_value, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS sourceAsOf
         FROM
         (
           SELECT
             symbol,
-            argMax(event_at, tuple(collected_at, inserted_at)) AS eventAt,
+            argMax(event_at, tuple(collected_at, inserted_at)) AS event_at_value,
             argMax(actual_value, tuple(collected_at, inserted_at)) AS actualValue,
             argMax(average, tuple(collected_at, inserted_at)) AS estimate,
             argMax(surprise_percent, tuple(collected_at, inserted_at)) AS surprisePercent,
             argMax(event_session, tuple(collected_at, inserted_at)) AS eventSession,
             argMax(event_status, tuple(collected_at, inserted_at)) AS eventStatus,
             argMax(source, tuple(collected_at, inserted_at)) AS source,
-            max(collected_at) AS sourceAsOf
+            max(collected_at) AS source_as_of_value
           FROM {self.table('yahoo_earnings_estimates')}
           WHERE symbol = {{symbol:String}}
             AND metric = 'eps'
             AND event_at IS NOT NULL
           GROUP BY symbol, fiscal_year, fiscal_period, period_end
-          HAVING eventAt IS NOT NULL
+          HAVING event_at_value IS NOT NULL
         )
-        WHERE eventAt >= parseDateTime64BestEffort({{fromTime:String}})
-          AND eventAt <= parseDateTime64BestEffort({{toTime:String}})
-        ORDER BY eventAt ASC
+        WHERE event_at_value >= parseDateTime64BestEffort({{fromTime:String}})
+          AND event_at_value <= parseDateTime64BestEffort({{toTime:String}})
+        ORDER BY event_at_value ASC
         FORMAT JSONEachRow
         """
         return self.query_json_each_row(
