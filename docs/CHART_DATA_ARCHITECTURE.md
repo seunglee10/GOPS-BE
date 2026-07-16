@@ -141,6 +141,11 @@ finish with `derived.state=ready|failed` and
 `derived.source=api-compute|redis`; there is no derived queue, worker, or
 ClickHouse artifact contract.
 
+Frontend viewport scale is independent of candle availability. The user may
+zoom out into unloaded slots even when historical fill is pending, failed, or
+unavailable; pagination and background fill only populate those slots and must
+not clamp the viewport back to the returned candle count.
+
 `GET /api/charts/volume-profile-bins` treats `targetBins` as an exact display
 bucket count from 4 through 48. The active chart requests 10 equal-width buckets
 across the main price pane's actual `scene.scales.minPrice/maxPrice` domain. That
