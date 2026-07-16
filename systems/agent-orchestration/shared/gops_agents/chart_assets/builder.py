@@ -6,6 +6,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
+from alfaka.analytics.analysis_candles import canonicalize_candle_identity
 from alfaka.analytics.analysis_repair import AnalysisCandleRepairService
 from alfaka.analytics.geometry import ALGORITHM_VERSION, MINIMUM_BARS, TARGET_BARS, analyze_geometry
 
@@ -25,7 +26,9 @@ class ChartAssetBuilder:
         self.storage = storage or build_chart_asset_storage_from_env()
         self.progress = progress or build_progress_store_from_env()
         self.repair_service = repair_service if repair_service is not None else (
-            None if supplied_loader else AnalysisCandleRepairService(provider=self.candle_loader.provider)
+            None if supplied_loader else AnalysisCandleRepairService(
+                provider=getattr(self.candle_loader, "repair_provider", self.candle_loader.provider),
+            )
         )
         self.concurrency = max(1, int(concurrency or os.getenv("CHART_ASSET_BUILD_CONCURRENCY", "4")))
 
@@ -135,10 +138,15 @@ class ChartAssetBuilder:
                 "geometry": geometry,
                 "indicators": result["indicators"],
             }
+            _validate_writer_asset(asset, existing=existing)
             asset, encoded = _fit_asset_payload(asset)
             geometry = asset["geometry"]
             payload_bytes = len(encoded.encode("utf-8"))
             saved = self.storage.save(asset)
+            persisted = self.storage.get(symbol, interval)
+            write_verified = bool(saved is not False and _saved_asset_matches(asset, persisted))
+            if saved is not False and not write_verified:
+                raise RuntimeError("chart asset write verification failed")
             self._record_asset_log(
                 envelope.job_id,
                 symbol=symbol,
@@ -147,6 +155,9 @@ class ChartAssetBuilder:
                 payload_bytes=payload_bytes,
                 trace=geometry.get("analysisTrace"),
                 saved=saved is not False,
+                as_of=str(asset["asOf"]),
+                generated_at=str(asset["generatedAt"]),
+                write_verified=write_verified,
             )
             status = "saved" if saved is not False else "unchanged"
             item = _item(
@@ -170,6 +181,9 @@ class ChartAssetBuilder:
         payload_bytes: int,
         trace: Any,
         saved: bool,
+        as_of: str,
+        generated_at: str,
+        write_verified: bool,
     ) -> None:
         trace_payload = trace if isinstance(trace, dict) else {}
         omitted = trace_payload.get("omittedCounts")
@@ -179,7 +193,11 @@ class ChartAssetBuilder:
             "symbol": symbol,
             "interval": interval,
             "algorithmVersion": algorithm_version,
+            "asOf": as_of,
+            "generatedAt": generated_at,
             "payloadBytes": payload_bytes,
+            "traceMode": str(trace_payload.get("version") or "none"),
+            "writeVerified": write_verified,
             "traceCandidates": {
                 name: len(trace_payload.get(name) or [])
                 for name in ("levelCandidates", "trendCandidates", "patternCandidates")
@@ -220,6 +238,39 @@ def _fit_asset_payload(asset: dict[str, Any]) -> tuple[dict[str, Any], str]:
     if len(encoded.encode("utf-8")) > MAX_ASSET_BYTES:
         raise ValueError(f"geometry asset payload exceeds {MAX_ASSET_BYTES} bytes")
     return asset, encoded
+
+
+def _validate_writer_asset(asset: dict[str, Any], *, existing: dict[str, Any] | None) -> None:
+    if asset.get("algorithmVersion") != ALGORITHM_VERSION:
+        raise ValueError("geometry writer algorithm version mismatch")
+    geometry = asset.get("geometry") if isinstance(asset.get("geometry"), dict) else {}
+    trace = geometry.get("analysisTrace") if isinstance(geometry.get("analysisTrace"), dict) else {}
+    completeness = trace.get("completeness") if isinstance(trace.get("completeness"), dict) else {}
+    if trace.get("version") != "geometry-analysis-trace-v2" or completeness.get("complete") is not True:
+        raise ValueError("geometry writer requires a complete analysisTrace v2")
+    if completeness.get("detected") != completeness.get("stored"):
+        raise ValueError("geometry writer analysisTrace is incomplete")
+
+    interval = str(asset.get("interval") or "")
+    as_of_identity = canonicalize_candle_identity({"timestamp": asset.get("asOf")}, interval)
+    coverage = asset.get("coverage") if isinstance(asset.get("coverage"), dict) else {}
+    last_actual = coverage.get("lastActualClosedAt")
+    last_actual_identity = canonicalize_candle_identity({"timestamp": last_actual}, interval) if last_actual else as_of_identity
+    if not as_of_identity or not last_actual_identity or as_of_identity["candleKey"] != last_actual_identity["candleKey"]:
+        raise ValueError("geometry asset asOf does not match the canonical completed-candle watermark")
+
+    if existing:
+        existing_identity = canonicalize_candle_identity({"timestamp": existing.get("asOf")}, interval)
+        if existing_identity and as_of_identity["candleKey"] < existing_identity["candleKey"]:
+            raise ValueError("geometry asset asOf is older than the stored asset")
+
+
+def _saved_asset_matches(expected: dict[str, Any], actual: dict[str, Any] | None) -> bool:
+    if not isinstance(actual, dict):
+        return False
+    return all(actual.get(key) == expected.get(key) for key in (
+        "algorithmVersion", "symbol", "interval", "asOf", "generatedAt", "inputDigest",
+    )) and actual.get("geometry", {}).get("analysisTrace", {}).get("version") == "geometry-analysis-trace-v2"
 
 
 def _canonical_asset_payload(asset: dict[str, Any]) -> str:

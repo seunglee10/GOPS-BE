@@ -32,6 +32,7 @@ class ChartAssetStorageTest(unittest.TestCase):
         query, parameters = connection.executions[0]
         self.assertIn(f"INSERT INTO {POSTGRES_TABLE}", query)
         self.assertIn('ON CONFLICT (symbol, "interval")', query)
+        self.assertIn("EXCLUDED.as_of >=", query)
         self.assertIn("EXCLUDED.payload_digest IS DISTINCT FROM", query)
         self.assertEqual(parameters[:2], ("NVDA", "1D"))
 
@@ -60,19 +61,27 @@ class ChartAssetStorageTest(unittest.TestCase):
         connection = Connection(rows=[{
             "symbol": "NVDA",
             "interval": "1D",
+            "as_of": "2026-07-10T00:00:00.000Z",
             "generated_at": "2026-07-11T00:00:00.000Z",
             "status": "ready",
             "asset_version": "geometry",
+            "algorithm_version": "ohlcv-consensus-pattern-families-v6",
             "coverage_state": "full",
             "payload_bytes": 512,
             "drawing_count": 3,
             "primary_pattern": primary_pattern,
+            "trace_mode": "geometry-analysis-trace-v2",
+            "level_candidates": 15,
+            "trend_candidates": 50,
+            "pattern_candidates": 16,
         }])
         storage = PostgresChartAssetStorage("postgresql://test", connect=lambda *_args, **_kwargs: connection)
 
         item = storage.coverage()[0]
 
         self.assertEqual(item["primaryPattern"], primary_pattern)
+        self.assertEqual(item["traceCandidateCounts"], {"levels": 15, "trends": 50, "patterns": 16})
+        self.assertEqual(item["algorithmVersion"], "ohlcv-consensus-pattern-families-v6")
         self.assertIn("primaryPattern", connection.executions[0][0])
         self.assertIn("primaryTriangle", connection.executions[0][0])
 

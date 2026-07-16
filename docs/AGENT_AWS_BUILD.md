@@ -1113,7 +1113,8 @@ CHART_ASSET_REPAIR_MAX_RANGES
 AgentOrchestrator workflow에 참여하지 않는다. PostgreSQL queue item을 symbol/interval
 단위로 처리한다. 현재 보존 정책에서는 `scheduled` item을 candle 조회 전에
 `manual_refresh_only`로 종료하고, 기존 자산은 선택한 symbol/interval의 `manual + force`에서만
-ClickHouse 감사·Alpaca 보충·분석·저장을 수행한다. 일반 manual 요청은 없는 자산만 만든다.
+Redis recent-closed와 ClickHouse history를 합친 canonical 완료 봉 감사·Alpaca 보충·분석·저장을
+수행한다. live candle은 제외하며 일반 manual 요청은 없는 자산만 만든다.
 미국 주식 `5m/10m` 보충은 Alpaca `1Min`, `1h/4h` 보충은 Alpaca `10Min`을
 사용한다. 실제 정규장 원본과 `bucket_policy=us_equity_regular_session` 파생 봉을
 함께 ClickHouse에 저장하며, 실시간 파생 봉은 계속 `1m`을 원본으로 사용한다.
@@ -1122,16 +1123,20 @@ stream processor가 Redis/ClickHouse에서 캔들을 복구할 때는 legacy JSO
 1m→상위 interval 합산에서 processor 전체가 재시작할 수 있으므로 복구·집계·Redis
 쓰기와 조회가 같은 숫자 계약을 사용해야 한다.
 `1W`는 underlying `1D` 결측만 보충한 뒤 기존 주봉 집계를 사용한다. 이 하위 시스템은
-S3, Redis, Kafka, OpenAI를 사용하지 않는다.
+최근 완료 봉을 위해 Redis를 읽지만 S3, Kafka, OpenAI를 사용하지 않는다.
 
 interactive `agent-orchestrator`와 `agent-analysis-worker`도 chart 질문에서 동일한
 PostgreSQL Geometry asset을 읽으므로 `DATABASE_URL`/`alfaka-order-db-secret`을 필수로
 주입한다. 새 table, topic, 별도 chart analysis worker는 만들지 않는다. 호환 reader와
-optional `chartExplanation` 계약과 기존 v3/v4 reader 호환을 먼저 배포한다. 신규 v5
+optional `chartExplanation` 계약과 기존 reader 호환을 먼저 배포한다. 신규 v6
 writer는 개발 패널에서 확인한 단일 자산의 명시적 수동 갱신에만 사용하며 asset rebuild를
 rollout 절차에 넣지 않는다. backend chart snapshot과 frontend consumer는 저장 자산을
 그대로 읽는다. 뉴스나 optional
 LLM enrichment 장애는 deterministic chart answer를 막지 않아야 한다.
+
+Geometry writer 변경은 `CHART_INTERPRETATION_ONLY=true` reader-only 프로필로 배포하지
+않는다. 일반 dev 배포에서 frontend, backend, agent-orchestrator를 함께 선택해 동일한
+immutable Git-SHA image tag의 `chart-asset-builder`까지 rollout한 뒤 force 재생성을 수행한다.
 
 AWS overlay는 Alpaca repair 동시성 2와 최대 range 8을 사용한다. 기존 평일 CronJob이
 queue item을 등록해도 builder는 scheduled item을 분석·복구·저장하지 않는다. API 패널과

@@ -85,10 +85,11 @@ drawing으로 변환하지 않고 프런트의 비영속 Canvas overlay가 소�
 ```mermaid
 flowchart LR
   PGQ["PostgreSQL build items"] --> Worker["Geometry worker"]
-  Worker --> CH["ClickHouse canonical completed candles"]
-  CH --> Gap{"coverage 충분?"}
+  Worker --> Closed["Redis recent closed + ClickHouse history"]
+  Closed --> Gap{"coverage 충분?"}
   Gap -- "아니오, repair 허용" --> Alpaca["누락 range만 Alpaca"]
-  Alpaca --> CH
+  Alpaca --> CH["ClickHouse repair materialization"]
+  CH --> Closed
   Gap -- "예" --> Kernel["deterministic geometry v6"]
   Kernel --> Guard["schema / 8 drawings / 256 KiB"]
   Guard --> PG["PostgreSQL geometry_assets JSONB UPSERT"]
@@ -97,8 +98,9 @@ flowchart LR
 ```
 
 저장 원본은 `chart_assets.geometry_assets`이며 `(symbol, interval)`당 최신 JSONB row
-하나다. 더 최신 `generatedAt`, 또는 같은 시각의 다른 canonical payload digest만
-조건부 UPSERT한다. 빌드·검증·저장 중 실패하면 기존 성공 row를 보존한다. 캔들 원본과
+하나다. 기존 row보다 과거 `asOf`는 저장하지 않으며, 같은 `asOf`에서는 더 최신
+`generatedAt` 또는 같은 시각의 다른 canonical payload digest만 조건부 UPSERT한다.
+빌드·검증·저장 중 실패하면 기존 성공 row를 보존한다. 캔들 원본과
 repair materialization은 계속 ClickHouse에 있고 Geometry asset을 ClickHouse에
 저장하거나 dual-write하지 않는다. S3, Redis, Kafka, LLM도 자산 저장 경로에 없다.
 
@@ -114,6 +116,9 @@ Alpaca가 성공했지만 실제 봉이 없는 slot은 `provider_confirmed_empty
 - worker는 `scheduled` item을 candle 조회 전에 `manual_refresh_only`로 종료한다.
 - 일반 manual build는 없는 자산만 만든다. 기존 row 교체는 선택한 symbol/interval의
   `manual + force`에서만 가능하다.
+- 개발 패널은 이를 `없는 자산 생성`과 `기존 자산 강제 재생성`으로 구분한다. 완료
+  결과에는 algorithm version, 저장 as-of, trace mode, category별 후보 수와 write 검증을
+  표시하며 실패·unchanged는 이전 row가 유지됐음을 명시한다.
 - `symbols="sp500"`과 `force=true` 조합은 API에서 400으로 거절한다.
 - 같은 source/force/symbol/interval의 active 요청은 하나의 PostgreSQL job으로 합친다.
 - 수동 priority는 100이고 최대 2회 처리 뒤 만료된 lease는 실패로 종결한다.
@@ -127,10 +132,17 @@ drawing ID의 원본이며 구자산은 stable ID와 geometry metadata로 호환
 SMA60/120과 최근 교차는 추세 레이어가 소유한다. 제안 OFF는 메모리 trade plan을
 삭제하지 않고 표시와 제안 가격의 Y축 반영만 중단한다.
 
-해설은 지지·저항, 추세, 패턴 세 항목으로 분리한다. hover는 해당 작도만 강조하고 같은
+해설은 규칙 기반 종합 해설과 주요 가격·시나리오를 먼저 보여주고, 판단 근거를 지지·저항,
+추세, 패턴 세 항목으로 분리한다. 원시 metric은 `수치 근거 자세히`에 접어 둔다. hover는 해당 작도만 강조하고 같은
 trace에서 최종 선택된 후보의 피벗·접촉·반응만 임시 overlay로 표시한다. 글로벌 해석은
 v2 전체 후보를 H-line, ray, 채널, 패턴 segment로 표시하고 v1/legacy는 일부 후보 또는
 근거만 제공한다. 클릭은 한 항목의 서버 metrics 카드를
 확장·고정하며 다른 항목 hover가 끝나면 고정 항목으로 복귀한다. 해석 글로벌 토글이
 꺼져 있어도 해설 hover의 관련 subset은 표시할 수 있다. 이 overlay와 제안 projection은
 PostgreSQL drawing 8개, undo/history/export에 포함되지 않으며 주문 API를 호출하지 않는다.
+
+최신성은 `current`, `outdated_snapshot`, `source_invalid`로 구분한다. 새 완료 봉이 생긴
+정상 자산은 당시 분석 스냅샷이므로 원래 opacity를 유지하고 `N봉 전`을 표시한다.
+proposal/trade plan만 stale로 제한한다. asset as-of와 coverage watermark가 다르거나
+`stale_input`인 실제 계약 오류에만 낮은 opacity를 적용한다. 완료 봉 비교는 명시적으로
+`isClosed=true`인 interval canonical key만 사용한다.

@@ -25,6 +25,17 @@ class FakeProvider:
         return list(self.rows)
 
 
+class FakeCanonicalProvider:
+    def __init__(self, rows):
+        self.rows = rows
+        self.calls = []
+        self.clickhouse_provider = object()
+
+    def candle_snapshot(self, symbol, interval, limit, **kwargs):
+        self.calls.append((symbol, interval, limit, kwargs))
+        return {"candles": list(self.rows)}
+
+
 class ChartAssetCandleLoaderTest(unittest.TestCase):
     def test_weekly_loader_keeps_bucket_after_its_last_market_session_closes(self):
         loader = ChartAssetCandleLoader(
@@ -63,6 +74,25 @@ class ChartAssetCandleLoaderTest(unittest.TestCase):
         )
 
         self.assertEqual(len(loader.load("NVDA", "1D")), 1)
+
+    def test_canonical_snapshot_loader_keeps_redis_completed_tail_and_excludes_live_bar(self):
+        provider = FakeCanonicalProvider([
+            candle("2026-07-10T13:30:00.000Z"),
+            {**candle("2026-07-10T13:31:00.000Z"), "sourceClass": "redis_closed"},
+            {**candle("2026-07-10T13:32:00.000Z"), "isClosed": False, "sourceClass": "active_live"},
+        ])
+        loader = ChartAssetCandleLoader(
+            provider,
+            now_provider=lambda: datetime(2026, 7, 10, 13, 33, tzinfo=timezone.utc),
+        )
+
+        rows = loader.load("NVDA", "1m")
+
+        self.assertEqual([row["timestamp"] for row in rows], [
+            "2026-07-10T13:30:00.000Z", "2026-07-10T13:31:00.000Z",
+        ])
+        self.assertIs(loader.repair_provider, provider.clickhouse_provider)
+        self.assertEqual(provider.calls[0][3]["ma_windows"], ())
 
 
 def candle(timestamp: str) -> dict:

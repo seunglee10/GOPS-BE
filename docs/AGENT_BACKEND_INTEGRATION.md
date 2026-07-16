@@ -26,6 +26,18 @@ not create per-page jobs or call `AgentOrchestrator.analyze()` in the request ha
 않는다. sync compatibility가 필요하면 `agent-orchestrator` HTTP endpoint를
 호출한다.
 
+## Account Holdings Source Boundary
+
+`GET /api/account/holdings`는 선택적 `source=active|kis`를 받으며 기본값은 `active`다.
+`active`는 기존 동작을 보존해 SIM 모드에서는 시뮬레이터 원장을, 그 외에는 연결된 KIS
+보유정보를 반환한다. `source=kis`는 SIM 모드와 무관하게 KIS 보유정보 경로를 사용하며
+차트 해설의 실계좌 보유 표가 이 값을 읽는다. 응답 형식은 기존 account/positions 계약을
+그대로 사용한다.
+
+이 query는 조회 source만 고르며 주문 환경이나 broker 권한을 바꾸지 않는다.
+`KIS_ENV=real` 비활성 정책, 주문 멱등성, 주문/outbox 경계는 그대로 유지한다. 차트 대화
+기록은 서버에 저장하지 않고 API request/report 계약에도 추가하지 않는다.
+
 ## Price Condition Command Boundary
 
 가격 조건과 예약 주문은 agent 분석 생성과 분리된 backend/order 기능이다.

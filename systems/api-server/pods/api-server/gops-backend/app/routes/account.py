@@ -25,9 +25,10 @@ def account_holdings(
     market: str = Query(default="overseas", pattern="^(overseas|domestic)$"),
     currency: str = Query(default="USD", min_length=3, max_length=3),
     exchange: str = Query(default="", max_length=8),
+    source: str = Query(default="active", pattern="^(active|kis)$"),
     user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
-    if simulator_mode_active(request.app):
+    if source == "active" and simulator_mode_active(request.app):
         try:
             payload = _normalize_simulator_holdings(simulator_gateway_from_app(request.app).account(user.sub))
         except Exception as exc:
