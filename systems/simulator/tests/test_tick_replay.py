@@ -211,6 +211,20 @@ class ReplayControllerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.controller.set_speed(2)
 
+    def test_raw_crossed_quote_is_replayed_without_modification(self):
+        controller = ReplayController(
+            InMemoryReplayEventSource([quote(1, 1, "NVDA", 101.0, 100.0)]),
+            clock=self.clock,
+        )
+        controller.set_mode("simulation")
+        controller.resume()
+        self.clock.value += 2
+
+        status = controller.status()
+
+        self.assertEqual(status["processedEventCount"], 1)
+        self.assertEqual(controller.latest_quote("NVDA"), {"bid": 101.0, "ask": 100.0})
+
     def test_market_and_limit_orders_fill_at_the_replayed_quote(self):
         self.controller.set_mode("simulation")
         self.controller.resume()
