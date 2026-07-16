@@ -88,6 +88,11 @@ class DatasetContractTests(unittest.TestCase):
         query = urllib.parse.parse_qs(urllib.parse.urlparse(request.full_url).query)
         self.assertEqual(query["date_time_input_format"], ["best_effort"])
 
+    def test_clickhouse_http_client_returns_timezone_aware_iso_timestamps(self):
+        request = ClickHouseHttpClient("http://clickhouse:8123")._request(b"SELECT now64()")
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(request.full_url).query)
+        self.assertEqual(query["date_time_output_format"], ["iso"])
+
     def test_installed_layout_uses_the_application_root_env_candidate(self):
         self.assertEqual(
             simulator_env.repository_env_path(Path("/app/gops_simul/env.py")),
