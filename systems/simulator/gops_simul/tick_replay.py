@@ -314,7 +314,10 @@ class ReplayController:
         self._emitted.append(event)
         payload, symbol = event.payload, str(event.payload.get("S") or "").upper()
         if payload.get("T") == "q":
-            bid, ask = _positive_float(payload.get("bp"), "bid"), _positive_float(payload.get("ap"), "ask")
+            bid, ask = _nonnegative_float(payload.get("bp"), "bid"), _nonnegative_float(payload.get("ap"), "ask")
+            if bid == 0 or ask == 0:
+                self._latest_quotes.pop(symbol, None)
+                return
             self._latest_quotes[symbol] = {"bid": bid, "ask": ask}
             self._match_orders(symbol)
         elif payload.get("T") == "t":
@@ -522,6 +525,13 @@ def _positive_float(value: object, field: str) -> float:
     try: parsed = float(value)
     except (TypeError, ValueError) as exc: raise ValueError(f"{field} must be a positive number") from exc
     if parsed <= 0: raise ValueError(f"{field} must be a positive number")
+    return parsed
+
+
+def _nonnegative_float(value: object, field: str) -> float:
+    try: parsed = float(value)
+    except (TypeError, ValueError) as exc: raise ValueError(f"{field} must be a non-negative number") from exc
+    if parsed < 0: raise ValueError(f"{field} must be a non-negative number")
     return parsed
 
 
