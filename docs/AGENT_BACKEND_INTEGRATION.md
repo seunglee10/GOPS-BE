@@ -291,13 +291,20 @@ snapshot의 `sector`는 GraphDB `gops:sector` canonical 값을 사용하고, 화
 `metrics_snapshot` JSONB에 저장해 API shape를 확장하되 기존 필드를 제거하지 않는다.
 자동 주문과 시뮬레이터 경로는 이 계산에 연결하지 않는다.
 
-명시적 `RECOMMENDATION_ALGORITHM_VERSION=legacy|professional-v1|continuous-v2`가 있으면
+명시적 `RECOMMENDATION_ALGORITHM_VERSION=legacy|professional-v1|continuous-v2|deterministic-evidence-v3`가 있으면
 기존 flag보다 우선한다. `continuous-v2`는 shadow 여부와 무관하게 실제 최종 점수로
 정렬하고 공개 `algorithmVersion`은 `continuous-personalization-v2`다. 추천 cutoff까지의
 canonical real fill만 시간순으로 처리하며, `order_coach_fill_history`의 매수 체결을
 24시간 이내 동일 종목 candidate feature와 연결한다. 매도와 match 실패도 skip reason이
 있는 event로 남지만 선호 state를 바꾸지 않는다. paper/simulator activity는 포함하지
 않는다.
+
+`deterministic-evidence-v3`는 가격·수익률·성공확률을 예측하지 않는다. 같은 세션 슬롯의
+전체 준비 유니버스에서 immutable evidence snapshot을 한 번 만들고, 사용자별 제외·스타일,
+실제 매수 체결 기반 선호, 최신 포트폴리오 적합성만 후처리한다. 공개 `score`는
+`FinalRankScore`, `confidence`는 성공확률이 아닌 `EvidenceReliability / 100`이다. 신뢰도
+70 미만과 hard gate 실패 종목은 개인화로 복구할 수 없다. run은 evidence snapshot ID와
+`deterministic-evidence-v3.1`의 전체 규칙 snapshot을 저장한다.
 
 V2 commit은 사용자 advisory lock 아래에서 slot idempotency와 예상 preference state를
 재확인하고, processed/skipped events, immutable preference/risk states, 모든 적격 후보의

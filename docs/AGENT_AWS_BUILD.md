@@ -446,11 +446,19 @@ The app overlay declaratively keeps `alert-evaluator` and
 rewrite desired replicas; Git is the source of truth for both workers.
 
 Recommendation rollout accepts the explicit selector
-`RECOMMENDATION_ALGORITHM_VERSION=legacy|professional-v1|continuous-v2`. When it is absent,
+`RECOMMENDATION_ALGORITHM_VERSION=legacy|professional-v1|continuous-v2|deterministic-evidence-v3`.
+When it is absent,
 the existing `RECOMMENDATION_PERSONALIZATION_ENABLED` and
 `RECOMMENDATION_PERSONALIZATION_SHADOW` behavior remains unchanged. `continuous-v2`
 ignores the shadow flag and publishes `algorithmVersion="continuous-personalization-v2"`.
 API and recommendation-worker must receive the same selector.
+
+`deterministic-evidence-v3` is non-predictive and ignores the shadow flag. Before activating
+it, apply migration `0013` after `0012`; verify canonical cutoff-safe candles, quotes/spreads,
+tradability, news metadata, fundamentals, benchmark data, universe membership, and exchange
+calendar inputs for the complete prepared S&P 500 universe. The API and worker must be able to
+read and write the shared evidence snapshot tables. Rollback only changes the selector; the
+additive evidence rows remain immutable.
 
 A Git merge or push does not deploy this selector, application image, or database migration.
 Use the manual dev/test deploy workflow and treat the following as hard activation gates:

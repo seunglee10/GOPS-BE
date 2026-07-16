@@ -103,9 +103,12 @@ class ContinuousRecommendationResult:
 def resolve_algorithm_version(env_value: str | None, *, enabled: bool, shadow: bool) -> tuple[str, bool]:
     explicit = str(env_value or "").strip().lower()
     if explicit:
-        if explicit not in {"legacy", "professional-v1", "continuous-v2"}:
-            raise ValueError("RECOMMENDATION_ALGORITHM_VERSION must be legacy, professional-v1, or continuous-v2")
-        return explicit, False if explicit == "continuous-v2" else shadow
+        if explicit not in {"legacy", "professional-v1", "continuous-v2", "deterministic-evidence-v3"}:
+            raise ValueError(
+                "RECOMMENDATION_ALGORITHM_VERSION must be legacy, professional-v1, "
+                "continuous-v2, or deterministic-evidence-v3"
+            )
+        return explicit, False if explicit in {"continuous-v2", "deterministic-evidence-v3"} else shadow
     return ("professional-v1" if enabled else "legacy"), shadow
 
 
