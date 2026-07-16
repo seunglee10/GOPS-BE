@@ -667,6 +667,14 @@ class FakeHeatmapClickHouseProvider:
                     "periodEndDate": "2026-03-31",
                     "filedAt": "2026-04-25",
                 },
+                {"symbol": "MSFT", "metric": "liabilities_to_equity", "value": 0.8, "fiscalYear": 2026, "fiscalPeriod": "Q1", "periodEndDate": "2026-03-31", "filedAt": "2026-04-25"},
+                {"symbol": "MSFT", "metric": "current_liabilities_to_equity", "value": 0.3, "fiscalYear": 2026, "fiscalPeriod": "Q1", "periodEndDate": "2026-03-31", "filedAt": "2026-04-25"},
+                {"symbol": "MSFT", "metric": "noncurrent_liabilities_to_equity", "value": 0.5, "fiscalYear": 2026, "fiscalPeriod": "Q1", "periodEndDate": "2026-03-31", "filedAt": "2026-04-25"},
+                {"symbol": "MSFT", "metric": "current_ratio", "value": 1.5, "fiscalYear": 2026, "fiscalPeriod": "Q1", "periodEndDate": "2026-03-31", "filedAt": "2026-04-25"},
+                {"symbol": "MSFT", "metric": "total_debt", "value": 30000, "fiscalYear": 2026, "fiscalPeriod": "Q1", "periodEndDate": "2026-03-31", "filedAt": "2026-04-25"},
+                {"symbol": "MSFT", "metric": "interest_coverage", "value": 12.5, "fiscalYear": 2026, "fiscalPeriod": "Q1", "periodEndDate": "2026-03-31", "filedAt": "2026-04-25"},
+                {"symbol": "MSFT", "metric": "financial_cost_burden_ratio", "value": 0.02, "fiscalYear": 2026, "fiscalPeriod": "Q1", "periodEndDate": "2026-03-31", "filedAt": "2026-04-25"},
+                {"symbol": "MSFT", "metric": "net_debt", "value": 10000, "fiscalYear": 2026, "fiscalPeriod": "Q1", "periodEndDate": "2026-03-31", "filedAt": "2026-04-25"},
             ]
         if "yahoo_earnings_estimates" in query:
             return [
@@ -731,6 +739,10 @@ class FakeHeatmapClickHouseProvider:
                     "periodEndDate": "2026-03-31",
                     "filedAt": "2026-04-25",
                 },
+                {"symbol": "MSFT", "cik": "0000789019", "metric": "current_assets", "value": 45000, "fiscalYear": 2026, "fiscalPeriod": "Q1", "periodEndDate": "2026-03-31", "filedAt": "2026-04-25"},
+                {"symbol": "MSFT", "cik": "0000789019", "metric": "current_liabilities", "value": 30000, "fiscalYear": 2026, "fiscalPeriod": "Q1", "periodEndDate": "2026-03-31", "filedAt": "2026-04-25"},
+                {"symbol": "MSFT", "cik": "0000789019", "metric": "cash_and_cash_equivalents", "value": 20000, "fiscalYear": 2026, "fiscalPeriod": "Q1", "periodEndDate": "2026-03-31", "filedAt": "2026-04-25"},
+                {"symbol": "MSFT", "cik": "0000789019", "metric": "interest_expense", "value": -2000, "fiscalYear": 2026, "fiscalPeriod": "Q1", "periodEndDate": "2026-03-31", "filedAt": "2026-04-25"},
             ]
         return []
 
@@ -3616,6 +3628,12 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(series[0].eps, 4)
         self.assertEqual(series[0].totalEquity, 50000)
         self.assertEqual(series[0].freeCashFlow, 25000)
+        self.assertEqual(series[0].currentAssets, 45000)
+        self.assertEqual(series[0].currentLiabilities, 30000)
+        self.assertEqual(series[0].debtRatio, 0.8)
+        self.assertEqual(series[0].currentRatio, 1.5)
+        self.assertEqual(series[0].interestCoverage, 12.5)
+        self.assertEqual(series[0].netDebt, 10000)
         self.assertEqual(series[0].source, "sec")
 
     def test_store_fundamentals_adapter_returns_earnings_series_with_yahoo_estimates(self):
@@ -3637,6 +3655,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(payload["items"][0]["period"], "2026Q1")
         self.assertEqual(payload["items"][0]["revenue"], 100000)
         self.assertEqual(payload["items"][0]["freeCashFlow"], 25000)
+        self.assertEqual(payload["items"][0]["financialCostBurdenRatio"], 0.02)
 
     def test_query_service_returns_earnings_series_payload(self):
         payload = MarketDataQueryService(provider=FakeHeatmapProvider()).earnings_series("MSFT", years=3)

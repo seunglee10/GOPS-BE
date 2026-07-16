@@ -156,7 +156,8 @@ class FundamentalsBackfillTests(unittest.TestCase):
                     "LiabilitiesCurrent": concept({"USD": [sec_fact(30)]}),
                     "NetCashProvidedByUsedInOperatingActivities": concept({"USD": [sec_fact(30)]}),
                     "PaymentsToAcquirePropertyPlantAndEquipment": concept({"USD": [sec_fact(5)]}),
-                    "InterestExpense": concept({"USD": [sec_fact(4)]}),
+                    "InterestExpense": concept({"USD": [sec_fact(-4)]}),
+                    "CashAndCashEquivalentsAtCarryingValue": concept({"USD": [sec_fact(8)]}),
                     "EarningsPerShareDiluted": concept({"USD/shares": [sec_fact(2)]}),
                     "DebtCurrent": concept({"USD": [sec_fact(10, accn="debt-current")]}),
                     "ShortTermBorrowings": concept({"USD": [sec_fact(999, accn="component-ignored")]}),
@@ -190,7 +191,11 @@ class FundamentalsBackfillTests(unittest.TestCase):
         self.assertEqual(fy_metrics["current_ratio"]["value"], 2.0)
         self.assertEqual(fy_metrics["free_cash_flow"]["value"], 25.0)
         self.assertEqual(fy_metrics["interest_coverage"]["value"], 5.0)
+        self.assertEqual(fy_metrics["current_liabilities_to_equity"]["value"], 0.6)
+        self.assertEqual(fy_metrics["noncurrent_liabilities_to_equity"]["value"], 1.4)
+        self.assertEqual(fy_metrics["financial_cost_burden_ratio"]["value"], 0.04)
         self.assertEqual(fy_metrics["total_debt"]["value"], 30.0)
+        self.assertEqual(fy_metrics["net_debt"]["value"], 22.0)
         self.assertEqual(json.loads(fy_metrics["total_debt"]["raw"])["debt_composition"]["current_sources"], ["DebtCurrent"])
 
         summary = build_summary_payload("AAPL", fact_rows, derived_rows)

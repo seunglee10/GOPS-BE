@@ -112,6 +112,11 @@ class FakeFinancialProvider:
                         {"metric": "current_ratio", "value": 0.8932929222186667, "quality": "available", "fiscalYear": 2026, "fiscalPeriod": "Q2"},
                         {"metric": "liabilities_to_assets", "value": 0.7947455900083788, "quality": "available", "fiscalYear": 2026, "fiscalPeriod": "Q2"},
                         {"metric": "liabilities_to_equity", "value": 3.872187487285205, "quality": "available", "fiscalYear": 2026, "fiscalPeriod": "Q2"},
+                        {"metric": "current_liabilities_to_equity", "value": 1.2, "quality": "available", "fiscalYear": 2026, "fiscalPeriod": "Q2"},
+                        {"metric": "noncurrent_liabilities_to_equity", "value": 2.672187487285205, "quality": "available", "fiscalYear": 2026, "fiscalPeriod": "Q2"},
+                        {"metric": "interest_coverage", "value": 8.4, "quality": "available", "fiscalYear": 2026, "fiscalPeriod": "Q2"},
+                        {"metric": "financial_cost_burden_ratio", "value": 0.018, "quality": "available", "fiscalYear": 2026, "fiscalPeriod": "Q2"},
+                        {"metric": "net_debt", "value": -12_000_000_000, "quality": "available", "fiscalYear": 2026, "fiscalPeriod": "Q2"},
                         {"metric": "total_debt_to_assets", "value": 0.2524155093655791, "quality": "available", "fiscalYear": 2026, "fiscalPeriod": "Q2"},
                         {"metric": "long_term_debt_current", "value": 12_350_000_000, "quality": "available", "fiscalYear": 2026, "fiscalPeriod": "Q2"},
                         {"metric": "free_cash_flow", "value": None, "quality": "missing_source", "fiscalYear": 2026, "fiscalPeriod": "Q2"},
@@ -367,6 +372,11 @@ class FinancialAgentIntegrationTests(unittest.TestCase):
         self.assertIn("79.5%", rendered)
         self.assertIn("이자성 부채/총자산", rendered)
         self.assertIn("25.2%", rendered)
+        self.assertIn("유동부채/자기자본", rendered)
+        self.assertIn("비유동부채/자기자본", rendered)
+        self.assertIn("이자보상배율", rendered)
+        self.assertIn("금융비용부담률", rendered)
+        self.assertIn("순부채", rendered)
         self.assertIn("영업이익", rendered)
         self.assertIn("총자산", rendered)
         self.assertNotIn("Assets:", rendered)

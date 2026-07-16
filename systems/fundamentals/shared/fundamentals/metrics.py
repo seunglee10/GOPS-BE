@@ -39,6 +39,8 @@ def select_latest_fact(
             }
             if metric == "equity" and concept == "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest":
                 raw["quality"] = "equity_includes_nci"
+            elif metric == "cash_and_cash_equivalents" and concept == "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents":
+                raw["quality"] = "cash_includes_restricted"
             return {
                 "metric": metric,
                 "value": numeric(selected.get("val")),
@@ -61,9 +63,12 @@ def calculate_derived_metrics(facts: dict[str, dict[str, Any] | None], prior_fac
     add_ratio(derived, "roe", facts.get("net_income"), facts.get("equity"), extra_quality=quality_for_equity(facts.get("equity")))
     add_ratio(derived, "liabilities_to_assets", facts.get("liabilities"), facts.get("assets"))
     add_ratio(derived, "liabilities_to_equity", facts.get("liabilities"), facts.get("equity"), extra_quality=quality_for_equity(facts.get("equity")))
+    add_ratio(derived, "current_liabilities_to_equity", facts.get("current_liabilities"), facts.get("equity"), extra_quality=quality_for_equity(facts.get("equity")))
+    add_noncurrent_liabilities_ratio(derived, facts)
     add_ratio(derived, "current_ratio", facts.get("current_assets"), facts.get("current_liabilities"))
     add_difference(derived, "free_cash_flow", facts.get("operating_cash_flow"), facts.get("capex"))
-    add_ratio(derived, "interest_coverage", facts.get("operating_income"), facts.get("interest_expense"))
+    add_ratio(derived, "interest_coverage", facts.get("operating_income"), facts.get("interest_expense"), absolute_denominator=True)
+    add_ratio(derived, "financial_cost_burden_ratio", facts.get("interest_expense"), facts.get("revenue"), absolute_numerator=True)
     add_growth(derived, "revenue_growth_yoy", facts.get("revenue"), prior_facts.get("revenue"))
     add_growth(derived, "net_income_growth_yoy", facts.get("net_income"), prior_facts.get("net_income"))
     add_growth(derived, "operating_income_growth_yoy", facts.get("operating_income"), prior_facts.get("operating_income"))
@@ -73,7 +78,50 @@ def calculate_derived_metrics(facts: dict[str, dict[str, Any] | None], prior_fac
         derived["total_debt"] = debt
         add_ratio(derived, "total_debt_to_assets", debt, facts.get("assets"))
         add_ratio(derived, "total_debt_to_equity", debt, facts.get("equity"), extra_quality=quality_for_equity(facts.get("equity")))
+    add_net_debt(derived, debt, facts.get("cash_and_cash_equivalents"))
     return derived
+
+
+def add_noncurrent_liabilities_ratio(target: dict[str, dict[str, Any]], facts: dict[str, dict[str, Any] | None]) -> None:
+    liabilities = facts.get("liabilities")
+    current_liabilities = facts.get("current_liabilities")
+    equity = facts.get("equity")
+    metric = "noncurrent_liabilities_to_equity"
+    if liabilities is None or current_liabilities is None or equity is None or fact_value(equity) == 0:
+        target[metric] = missing_metric(metric, liabilities, current_liabilities, equity)
+        return
+    noncurrent_value = fact_value(liabilities) - fact_value(current_liabilities)
+    if noncurrent_value < 0:
+        target[metric] = {
+            "metric": metric,
+            "value": None,
+            "raw": {"quality": "invalid_source_relationship", "reason": "current_liabilities_exceed_total_liabilities"},
+        }
+        return
+    target[metric] = {
+        "metric": metric,
+        "value": noncurrent_value / fact_value(equity),
+        "raw": {"quality": quality_for_equity(equity) or "available"},
+    }
+
+
+def add_net_debt(target: dict[str, dict[str, Any]], debt: dict[str, Any] | None, cash: dict[str, Any] | None) -> None:
+    metric = "net_debt"
+    if debt is None or cash is None:
+        target[metric] = missing_metric(metric, debt, cash)
+        return
+    debt_quality = str((debt.get("raw") or {}).get("quality") or "available")
+    cash_quality = str((cash.get("raw") or {}).get("quality") or "available")
+    quality = debt_quality if debt_quality != "available" else cash_quality
+    target[metric] = {
+        "metric": metric,
+        "value": fact_value(debt) - fact_value(cash),
+        "raw": {
+            "quality": quality,
+            "cash_concept": selected_concept(cash),
+            "debt_composition": (debt.get("raw") or {}).get("debt_composition"),
+        },
+    }
 
 
 def calculate_total_debt(facts: dict[str, dict[str, Any] | None]) -> dict[str, Any] | None:
@@ -158,12 +206,33 @@ def q4_synthetic_fact(fy_fact: dict[str, Any], q1_fact: dict[str, Any], q2_fact:
     }
 
 
-def add_ratio(target: dict[str, dict[str, Any]], metric: str, numerator: dict[str, Any] | None, denominator: dict[str, Any] | None, *, extra_quality: str | None = None) -> None:
-    if numerator is None or denominator is None or fact_value(denominator) == 0:
+def add_ratio(
+    target: dict[str, dict[str, Any]],
+    metric: str,
+    numerator: dict[str, Any] | None,
+    denominator: dict[str, Any] | None,
+    *,
+    extra_quality: str | None = None,
+    absolute_numerator: bool = False,
+    absolute_denominator: bool = False,
+) -> None:
+    if numerator is None or denominator is None:
         target[metric] = missing_metric(metric, numerator, denominator)
         return
+    numerator_value = fact_value(numerator)
+    denominator_value = fact_value(denominator)
+    if absolute_numerator:
+        numerator_value = abs(numerator_value)
+    if absolute_denominator:
+        denominator_value = abs(denominator_value)
+    if denominator_value == 0:
+        target[metric] = missing_metric(metric, numerator, denominator)
+        target[metric]["raw"]["quality"] = "zero_denominator"
+        return
     raw = {"quality": extra_quality or "available"}
-    target[metric] = {"metric": metric, "value": fact_value(numerator) / fact_value(denominator), "raw": raw}
+    if absolute_numerator or absolute_denominator:
+        raw["sign_policy"] = "absolute_expense"
+    target[metric] = {"metric": metric, "value": numerator_value / denominator_value, "raw": raw}
 
 
 def add_difference(target: dict[str, dict[str, Any]], metric: str, minuend: dict[str, Any] | None, subtrahend: dict[str, Any] | None) -> None:

@@ -144,6 +144,42 @@ class FundamentalsMetricTests(unittest.TestCase):
         self.assertEqual(derived["free_cash_flow"]["raw"]["quality"], "missing_source")
         self.assertEqual(derived["interest_coverage"]["raw"]["quality"], "missing_source")
 
+    def test_stability_metrics_use_canonical_sec_inputs_and_expense_sign_policy(self):
+        facts = {
+            "revenue": fact("revenue", 200),
+            "operating_income": fact("operating_income", 80),
+            "liabilities": fact("liabilities", 100),
+            "equity": fact("equity", 250),
+            "current_assets": fact("current_assets", 60),
+            "current_liabilities": fact("current_liabilities", 30),
+            "interest_expense": fact("interest_expense", -4),
+            "cash_and_cash_equivalents": fact("cash_and_cash_equivalents", 20, concept="CashAndCashEquivalentsAtCarryingValue"),
+            "debt_current_aggregate": fact("debt_current_aggregate", 30, concept="DebtCurrent"),
+            "long_term_debt_noncurrent": fact("long_term_debt_noncurrent", 70, concept="LongTermDebtNoncurrent"),
+        }
+
+        derived = calculate_derived_metrics(facts)
+
+        self.assertEqual(derived["liabilities_to_equity"]["value"], Decimal("0.4"))
+        self.assertEqual(derived["current_liabilities_to_equity"]["value"], Decimal("0.12"))
+        self.assertEqual(derived["noncurrent_liabilities_to_equity"]["value"], Decimal("0.28"))
+        self.assertEqual(derived["current_ratio"]["value"], Decimal("2"))
+        self.assertEqual(derived["total_debt"]["value"], Decimal("100"))
+        self.assertEqual(derived["interest_coverage"]["value"], Decimal("20"))
+        self.assertEqual(derived["financial_cost_burden_ratio"]["value"], Decimal("0.02"))
+        self.assertEqual(derived["net_debt"]["value"], Decimal("80"))
+        self.assertEqual(derived["interest_coverage"]["raw"]["sign_policy"], "absolute_expense")
+
+    def test_noncurrent_liability_ratio_rejects_inconsistent_source_relationship(self):
+        derived = calculate_derived_metrics({
+            "liabilities": fact("liabilities", 20),
+            "current_liabilities": fact("current_liabilities", 30),
+            "equity": fact("equity", 10),
+        })
+
+        self.assertIsNone(derived["noncurrent_liabilities_to_equity"]["value"])
+        self.assertEqual(derived["noncurrent_liabilities_to_equity"]["raw"]["quality"], "invalid_source_relationship")
+
     def test_q4_synthetic_fact_has_stable_accession_hash_and_version(self):
         fy = fact("revenue", 100, accession="fy", filed_at="2026-02-15")
         q1 = fact("revenue", 10, accession="q1", filed_at="2025-05-01")

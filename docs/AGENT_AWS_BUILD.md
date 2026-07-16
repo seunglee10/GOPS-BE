@@ -701,6 +701,12 @@ re-fetch `companyfacts` only for companies with new `10-K`, `10-Q`, `10-K/A`, or
 `10-Q/A`. `8-K` is stored as an event and does not trigger metric recomputation
 by default.
 
+안정성 지표 확장은 새 테이블 migration을 요구하지 않는다. SEC 원천 계정은 기존
+`sec_financial_facts`, 파생값은 기존 `sec_derived_metrics` metric rows에 적재한다.
+배포 후 기존 종목에 현금성자산, 유동부채, 이자비용과 8개 안정성 지표를 채우려면
+`sec-companyfacts-backfill`을 다시 실행해 ClickHouse와 fundamentals Redis summary를
+함께 갱신한다. 기존 테이블 또는 다른 Redis key를 삭제하거나 flush하지 않는다.
+
 Required env:
 
 ```text

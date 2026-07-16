@@ -256,6 +256,14 @@ news 패널과 news agent가 일자별 요약을 렌더링할 때 market-data qu
 metadata가 최근 30일 요청을 보장하지 못할 때만 ClickHouse에서 보강한 뒤 Redis를
 다시 warm-up한다.
 
+기업저널 재무 시계열은
+`GET /api/market/fundamentals/{symbol}/series?period=quarterly|annual`을 사용한다.
+기존 손익·자산 필드와 함께 `currentAssets`, `currentLiabilities`,
+`cashAndCashEquivalents`, `interestExpense`, `debtRatio`,
+`currentLiabilityRatio`, `noncurrentLiabilityRatio`, `currentRatio`, `totalDebt`,
+`interestCoverage`, `financialCostBurdenRatio`, `netDebt`를 반환한다. 파생 필드는
+ClickHouse `sec_derived_metrics` 값을 전달하며 API 요청 시 재계산하지 않는다.
+
 지수 패널은 market-data query route `GET /api/market/indices`를 사용한다. 이
 route는 차트 candle coverage/backfill/read-through 경로를 타지 않고 Yahoo
 Finance snapshot을 Redis에 fresh/stale 캐시한다. 백엔드는 fresh 캐시가 있으면

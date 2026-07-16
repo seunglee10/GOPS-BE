@@ -543,6 +543,26 @@ transient spotlight한다. 불일치는 `분석 기준 변경됨`, 삭제된 문
 표시하고 snapshot 수치는 유지하되 focus하지 않는다. 선택 봉 anchor도 같은 symbol/interval의
 canonical timestamp가 현재 candle에 있을 때만 focus한다. 이 상태는 chart history에
 저장하지 않는다. 일반 질문은 기존 Wild 흐름을 유지한다.
+## Public Company Journal
+
+`companyJournal` 패널은 기존 기업 재무·실적·뉴스 화면을 근거 표면으로 재사용한다.
+수익성 화면은 `/api/market/fundamentals/{symbol}/series`의 연간 5년 또는 최근
+12개 분기를 사용해 매출액, 영업·순이익률, ROE, ROA, FCF Margin과 YoY를
+결정론적으로 계산한다. 사용자가 기간을 선택하면 차트, 표 강조와 기업저널 해석이
+같은 기간으로 함께 바뀌어야 한다.
+
+기업저널은 `매출·수익`, `안정성`, `가치`, `뉴스` 탭을 사용한다.
+`안정성` 탭은 자본·부채 구조 차트와 부채비율·유동부채비율·비유동부채비율 차트를
+1:1로 표시한다. 하단 표는 유동비율, 이자성 부채, 이자보상배율, 금융비용부담률,
+순부채를 같은 기간 시계열로 제공하며 실적 예상치 차트를 섞지 않는다. 가치 탭은 EPS/BPS/SPS/CPS 시계열·YoY와 현재 가격 기준 가치지표를
+표시하며, 실적 화면과 가치 화면을 다시 한 탭 안의 숨겨진 페이지로 합치지 않는다.
+
+EPS/BPS/SPS/CPS와 최신 PER/PBR/PSR/FCF Yield를 표시한다. 과거 PER/PBR/PSR은
+`/api/charts/candles`의 일봉에서 각 재무 결산일 이전 가장 가까운 거래일 종가를
+선택해 당시 EPS/BPS/SPS와 결합한다. 결산일 가격이 없으면 해당 점을 생략하며 현재가를
+과거 구간에 재사용하지 않는다. 투자자본 계약이 없는 ROIC는 추정하지 않는다.
+로컬 고정 자료는 `import.meta.env.DEV`와
+`companyJournalPreview=1`을 모두 만족할 때만 사용하며 `DEV PREVIEW`를 표시한다.
 
 ## Layout And Chart Proposals
 
@@ -624,6 +644,13 @@ S&P 500 seed 기반의 고정 시뮬레이션 추천 10개를 기존 목록/카�
 남긴다. 실제 추천 item이 하나라도 있거나 `profile_required`, `market_closed`, API 오류
 상태이면 시뮬레이션 추천을 사용하지 않는다. 시뮬레이션 item 클릭도 기존과 동일하게
 `recommendation.stock` reference만 선택하며 차트나 레이아웃을 자동 변경하지 않는다.
+
+public company journal panel은 `panelType="companyJournal"`/`kind="companyJournal"`로
+표현한다. 이 패널은 기존 기업 수익성·안정성·가치평가 차트와 뉴스 목록을
+근거 화면으로 재사용한다. 프런트 초안의 설명은 동일 시계열에서 계산한 변화율과
+업종별 관점을 사용하며, 확인되지 않은 뉴스 원인을 생성하지 않는다. 이후 RAG
+보고서를 연결할 때에도 차트별 provider를 다시 호출하지 말고 같은 기준시각의
+기업 evidence snapshot을 상위 컨테이너에서 전달한다.
 
 chart analysis asset 운영 패널은 `kind="chartAssetOps"`, 화면 표시는
 `작도 자산(개발)`로 표현한다. 이름의 `(개발)`은 수동 운영 도구임을 나타내는 라벨일
