@@ -396,7 +396,9 @@ fi
             if name not in {"alert-evaluator", "recommendation-worker"}:
                 continue
             operations = yaml.safe_load(patch["patch"])
-            replicas[name] = next(item["value"] for item in operations if item["path"] == "/spec/replicas")
+            for operation in operations:
+                if operation["path"] == "/spec/replicas":
+                    replicas[name] = operation["value"]
 
         self.assertEqual(replicas, {"alert-evaluator": 1, "recommendation-worker": 1})
         workflow = (REPO_ROOT / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8")
