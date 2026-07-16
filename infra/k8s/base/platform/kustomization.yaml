@@ -12,9 +12,10 @@ resources:
   - redis-statefulset.yaml
   - postgres-service.yaml
   - postgres-statefulset.yaml
+  - nodeclass-app-agent.yaml
+  - nodeclass-stateful.yaml
   - nodepool-app-agent.yaml
   - nodepool-batch.yaml
-  - nodepool-batch-warm.yaml
   - nodepool-cache-db.yaml
   - nodepool-streaming.yaml
   - nodepool-graphdb.yaml

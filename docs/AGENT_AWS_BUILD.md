@@ -273,30 +273,24 @@ In-cluster dedicated rebuild sizing:
 
 ```text
 app-agent:  4 x m5a/m6a large class, 2 vCPU / 8 GiB, app + agent + workers
-cache-db:   1 x m5a/m6a xlarge class, 4 vCPU / 16 GiB, Redis + Postgres
-streaming:  1 x m5a/m6a xlarge class, 4 vCPU / 16 GiB, Kafka
-graphdb:    1 x m5a/m6a xlarge class, 4 vCPU / 16 GiB, GraphDB
-clickhouse: 1 x m5a/m6a 2xlarge class, 8 vCPU / 32 GiB, ClickHouse
-batch-warm: 1 x m5a/m6a large class, 2 vCPU / 8 GiB, scheduled Jobs
+cache-db:   1 x r5a large class, 2 vCPU / 16 GiB, Redis + Postgres
+streaming:  1 x m5a/m6a large class, 2 vCPU / 8 GiB, Kafka
+graphdb:    1 x r5a large class, 2 vCPU / 16 GiB, GraphDB
+clickhouse: 1 x m5a/m6a xlarge class, 4 vCPU / 16 GiB, ClickHouse
 batch:      0 steady nodes, dynamic capacity for ad hoc Jobs
 ```
 
-This profile uses 30 vCPU in steady state, excluding cluster add-ons. The live
-cluster keeps one 2 vCPU
-`general-purpose` node for CoreDNS, AWS Load Balancer Controller, EBS CSI,
-metrics-server, and external-secrets, bringing the current total to the 32 vCPU
-on-demand quota. Drain old workload nodes or legacy `platform-core` nodes after
-the dedicated NodePools are ready and stateful pods have been restored and
-validated.
+This profile uses 18 vCPU in steady state, excluding cluster add-ons. The live
+cluster keeps one 2 vCPU `general-purpose` node for CoreDNS, AWS Load Balancer
+Controller, metrics-server, and external-secrets, bringing the normal total to
+20 vCPU. A dynamic batch node temporarily brings it to 24 vCPU.
 
-`app-agent`, `cache-db`, `streaming`, `graphdb`, `clickhouse`, and `batch-warm`
-use static `spec.replicas` to hold the intended node count. The existing
-dynamic `batch` pool remains available for ad hoc Jobs because Karpenter does
-not allow an existing NodePool to transition between dynamic and static modes.
-Scheduled Jobs select `batch-warm`, which stays at one node so they do not
-consume their entire active deadline waiting for scale-from-zero. If the old
-`platform-core` NodePool was applied during the 16 vCPU attempt, delete it only
-after all pods are drained from that node.
+`app-agent`, `cache-db`, `streaming`, `graphdb`, and `clickhouse` use static
+`spec.replicas` to hold the intended node count. Scheduled and ad hoc Jobs use
+the dynamic `batch` pool, so their active deadlines must include scale-from-zero
+provisioning time. The five stateful and app pools use custom NodeClasses with
+20 GiB and 50 GiB node-local ephemeral storage respectively; application PVC
+sizes are unchanged.
 
 The app overlay uses `maxUnavailable=1` and `maxSurge=0` for Deployment rolling
 updates. That intentionally allows one old pod to stop before a replacement pod
@@ -467,9 +461,10 @@ from Postgres every `PAPER_SUBSCRIPTION_SYNC_SECONDS` (default 5 seconds), so a
 temporary API-to-Redis synchronization failure heals without a new order.
 
 Scheduled batch Jobs declare resource requests/limits. Failed Job and Pod
-evidence is retained for seven days. The `batch-warm` NodePool is static with
-one node, and the SEC fundamentals, order-flow, and order-reconciler CronJobs select it so
-they can start without depending on a scale-from-zero event.
+evidence is retained for seven days. Heavy scheduled Jobs use the dynamic
+`batch` NodePool; the lightweight five-minute market reminder runs on the
+always-on `app-agent` pool. The order-flow rollup remains suspended until its
+deployed image contains the configured script path.
 
 ## Kafka
 

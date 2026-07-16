@@ -15,7 +15,7 @@ spec:
       nodeClassRef:
         group: eks.amazonaws.com
         kind: NodeClass
-        name: default
+        name: gops-app-agent-50
       requirements:
         - key: karpenter.sh/capacity-type
           operator: In

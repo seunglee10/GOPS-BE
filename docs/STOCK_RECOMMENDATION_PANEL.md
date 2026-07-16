@@ -14,7 +14,7 @@ v1은 미국 주식의 장전/데이장 추천과 본장 추천만 다룬다.
 - 추천 종류: `buy` only
 - 추천 수: 최대 15개
 - 섹터 분산: 현재 임시로 적용하지 않는다. hard filter를 통과한 후보를 점수순으로 상위 15개 저장한다.
-- 자동 주문: 없음. 추천 행 클릭은 차트 종목 전환만 수행한다.
+- 자동 주문: 없음. 추천 행 클릭은 `recommendation.stock` Agent 참조만 선택한다.
 - 장 외 추천: 보류. 선택한 모드의 시간이 아니면 새 추천을 만들지 않고 `market_closed`를 반환한다.
 
 추천은 LLM이 고르는 방식이 아니다. 현재 구현은 결정론적 점수화 로직으로 후보를 만들고, 필터를 통과한 종목만 점수와 근거를 붙여 저장한다. 관심종목, 보유종목, 현재 보고 있는 종목은 새 추천 대상이 아니라 사용자 맥락과 제외 조건으로만 쓴다.
@@ -84,6 +84,7 @@ flowchart TD
 | `apps/gops-frontend/src/recommendations/InvestmentProfileForm.tsx` | 추천 설정 dialog의 필수 설정 폼 |
 | `apps/gops-frontend/src/recommendations/RecommendationSettingsDialog.tsx` | 추천 설정 dialog와 focus/Escape/닫기 동작 |
 | `apps/gops-frontend/src/recommendations/StockRecommendationsPanel.tsx` | 장전/본장 토글이 포함된 추천 패널 |
+| `apps/gops-frontend/src/recommendations/recommendationSimulationFallback.ts` | 빈 정상 응답에 표시할 프런트 전용 시뮬레이션 추천 10개 |
 | `apps/gops-frontend/src/components/PanelContentRenderer.tsx` | `kind="recommendations"` 렌더링 |
 | `apps/gops-frontend/src/layout/*` | 추천 패널 insert/layout kind 등록 |
 
@@ -348,6 +349,18 @@ score =
 | `metricsSnapshot` | 추천 시점 지표, 섹터 비중, `excludedReason`, 점수 breakdown |
 
 프론트는 중복 리스크 문구를 제외한 근거와 첫 번째 리스크 경고를 추천 행에 표시한다. 리스크 경고는 별도 색상을 유지한다. 섹터는 종목 아래가 아니라 추천 행 가장 오른쪽 컬럼에 `sectorLabelKo` 한글 라벨로 표시한다. 사용자에게 점수 숫자와 신뢰도 색상 점을 상시 노출하지 않고, 종목 심볼 옆에는 `changePercent` 기준 오늘의 등락률을 표시한다.
+
+### 빈 정상 응답의 시뮬레이션 표시
+
+추천 API가 `empty`, `ready`, `stale` 상태와 빈 `items`를 정상 반환하면 프런트는 화면
+공백 대신 `NVDA, AMD, MSFT, AAPL, AMZN, GOOGL, META, AVGO, TSLA, JPM` 순서의
+고정 시뮬레이션 추천을 표시한다. 회사명, 섹터, 등락률은 S&P 500 seed를 사용하며
+툴바의 작은 `simulation` 배지와 `metricsSnapshot`의
+`source="frontend-recommendation-fallback"`, `synthetic=true`, `simulation=true`로
+실제 추천과 구분한다. 실제 item이 하나라도 있으면 시뮬레이션 item을 섞지 않는다.
+`profile_required`, `market_closed`, API 오류에서는 기존 안내를 유지한다. 클릭, 카드
+8초 순환, 선택 일시정지, Agent 추천 chip 생성은 실제 추천과 같은 기존 renderer와
+참조 계약을 그대로 사용한다.
 
 ## 알림 로직
 

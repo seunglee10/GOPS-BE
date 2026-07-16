@@ -13,6 +13,7 @@ spec:
   jobTemplate:
     spec:
       backoffLimit: 2
+      activeDeadlineSeconds: 3600
       ttlSecondsAfterFinished: 86400
       template:
         metadata:
@@ -21,7 +22,7 @@ spec:
         spec:
           restartPolicy: Never
           nodeSelector:
-            karpenter.sh/nodepool: batch-warm
+            karpenter.sh/nodepool: batch
           tolerations:
             - key: gops.io/dedicated
               operator: Equal
@@ -44,3 +45,10 @@ spec:
                 - secretRef:
                     name: alfaka-order-db-secret
                     optional: false
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: "1"
+                  memory: 1Gi

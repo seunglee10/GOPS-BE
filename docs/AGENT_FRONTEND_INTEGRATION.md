@@ -614,6 +614,13 @@ dialog에서 `GET /api/recommendations/profile`로 현재 값을 읽어
 `recommendation.stock` Agent reference를 선택하며 주문 실행으로 연결하지 않는다.
 추천 행의 섹터도
 `sectorLabelKo` 한글 라벨을 사용한다.
+API가 `empty`, `ready`, `stale` 상태로 정상 응답했지만 `items=[]`이면 프런트는
+S&P 500 seed 기반의 고정 시뮬레이션 추천 10개를 기존 목록/카드 renderer에 전달한다.
+이때 툴바에 작은 `simulation` 배지를 표시하고 각 item의 `metricsSnapshot`에
+`source="frontend-recommendation-fallback"`, `synthetic=true`, `simulation=true`를
+남긴다. 실제 추천 item이 하나라도 있거나 `profile_required`, `market_closed`, API 오류
+상태이면 시뮬레이션 추천을 사용하지 않는다. 시뮬레이션 item 클릭도 기존과 동일하게
+`recommendation.stock` reference만 선택하며 차트나 레이아웃을 자동 변경하지 않는다.
 
 chart analysis asset 운영 패널은 `kind="chartAssetOps"`, 화면 표시는
 `작도 자산(개발)`로 표현한다. 이름의 `(개발)`은 수동 운영 도구임을 나타내는 라벨일
