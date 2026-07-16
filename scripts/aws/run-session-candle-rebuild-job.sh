@@ -12,7 +12,7 @@ MAX_SYMBOLS="${MAX_SYMBOLS:-0}"
 APPLY="${APPLY:-false}"
 WAIT_FOR_JOB="${WAIT_FOR_JOB:-false}"
 JOB_TIMEOUT_SECONDS="${JOB_TIMEOUT_SECONDS:-21600}"
-BATCH_NODEPOOL="${BATCH_NODEPOOL:-batch-warm}"
+BATCH_NODEPOOL="${BATCH_NODEPOOL:-batch}"
 IMAGE="${IMAGE:-$(kubectl -n "${NAMESPACE}" get deployment/alfaka-market-processor -o jsonpath='{.spec.template.spec.containers[0].image}')}"
 
 if [[ "${APPLY}" == "true" ]]; then

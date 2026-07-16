@@ -23,11 +23,11 @@ spec:
         spec:
           restartPolicy: Never
           nodeSelector:
-            karpenter.sh/nodepool: batch-warm
+            karpenter.sh/nodepool: app-agent
           tolerations:
             - key: gops.io/dedicated
               operator: Equal
-              value: batch
+              value: app-agent
               effect: NoSchedule
           serviceAccountName: alfaka-market-data-sa
           containers:

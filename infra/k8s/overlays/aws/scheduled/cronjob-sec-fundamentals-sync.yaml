@@ -24,7 +24,7 @@ spec:
         spec:
           restartPolicy: Never
           nodeSelector:
-            karpenter.sh/nodepool: batch-warm
+            karpenter.sh/nodepool: batch
           tolerations:
             - key: gops.io/dedicated
               operator: Equal
