@@ -1131,6 +1131,8 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      chart-asset-migrations:
+        condition: service_completed_successfully
     environment:
       CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
       CLICKHOUSE_DATABASE: "market_data"
@@ -1159,7 +1161,6 @@ services:
       - data_net
 
   chart-asset-migrations:
-    profiles: ["chart-assets-pg"]
     image: gops-agent-orchestrator
     build:
       context: .

@@ -62,8 +62,9 @@ v6는 기존 패턴 detector, ranking, hardPass, confirmation, `tradePlan`, prim
 `primaryTriangle`/`historicalTriangle`은 구독자 호환 필드다.
 
 `tradePlan`은 주문이 아니라 차트 표시용 시나리오다. `forming`은 관찰만 하고
-`confirmed`만 신호를 낸다. 돌파, 무효화, 목표, 손익비는 서버가 ATR 정규화 값으로
-계산하며 프런트가 다시 계산하지 않는다.
+`confirmed`만 신호를 낸다. 상승은 `buy_candidate/long`, 하락은 보유분 매도 검토인
+`sell_candidate/exit_long`만 생성하며 공매도 진입 시나리오는 없다. 진입·매도,
+손절·재검토, 목표·예상 하단과 손익비는 서버가 ATR 정규화 값으로 계산한다.
 
 ## 해석 trace
 
@@ -140,6 +141,13 @@ v2 전체 후보를 H-line, ray, 채널, 패턴 segment로 표시하고 v1/legac
 확장·고정하며 다른 항목 hover가 끝나면 고정 항목으로 복귀한다. 해석 글로벌 토글이
 꺼져 있어도 해설 hover의 관련 subset은 표시할 수 있다. 이 overlay와 제안 projection은
 PostgreSQL drawing 8개, undo/history/export에 포함되지 않으며 주문 API를 호출하지 않는다.
+
+패턴 작도는 상단 선의 inline 패턴명만 표시하고 우측 가격축 라벨은 만들지 않는다.
+제안 `riskRewardBox`도 가격축 pill이나 내부 설명 chip을 만들지 않으며, 오른쪽의
+클릭 가능한 DOM 라벨로 진입/목표/손절 또는 매도/예상 하단/재검토 가격을 표시한다.
+시나리오 hover/focus는 제안이 꺼져 있어도 이를 임시 표시하고, 시나리오 클릭은 연결된
+`chartDocumentId`의 제안 레이어만 토글한다. 최초 표시에는 projection 폭과 176px 라벨
+공간을 포함한 외부 auto-frame을 한 번 적용한다.
 
 최신성은 `current`, `outdated_snapshot`, `source_invalid`로 구분한다. 새 완료 봉이 생긴
 정상 자산은 당시 분석 스냅샷이므로 원래 opacity를 유지하고 `N봉 전`을 표시한다.

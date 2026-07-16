@@ -57,7 +57,7 @@ def test_forming_pattern_is_watch_only_and_never_marks_an_entry():
     assert plan["reasons"] == ["pattern_not_confirmed"]
 
 
-def test_bearish_pattern_defaults_to_long_position_exit_instead_of_short_entry():
+def test_bearish_pattern_is_always_a_long_position_exit():
     rows = _rows([104.0, 103.5, 103.0, 102.5, 101.5])
     pattern = _pattern(
         "bearish_flag",
@@ -69,22 +69,11 @@ def test_bearish_pattern_defaults_to_long_position_exit_instead_of_short_entry()
     )
 
     plan = evaluate_pattern_trade_timing(rows, pattern, atr=1.0, symbol="AAPL", interval="5m")
-    short_plan = evaluate_pattern_trade_timing(
-        rows,
-        pattern,
-        atr=1.0,
-        symbol="AAPL",
-        interval="5m",
-        long_only=False,
-    )
-
-    assert plan is not None and short_plan is not None
+    assert plan is not None
     assert plan["action"] == "sell_candidate"
     assert plan["direction"] == "exit_long"
-    assert short_plan["action"] == "short_candidate"
-    assert short_plan["direction"] == "short"
-    assert short_plan["stopPrice"] == 103.0
-    assert short_plan["targetPrice"] == 92.0
+    assert plan["stopPrice"] == 103.0
+    assert plan["targetPrice"] == 92.0
 
 
 def test_low_reward_risk_rejects_new_long_entry():
@@ -172,9 +161,9 @@ def test_every_supported_directional_pattern_maps_to_the_expected_entry_side():
             atr=1.0,
             symbol="AAPL",
             interval="5m",
-            long_only=False,
         )
-        assert plan is not None and plan["action"] == "short_candidate", kind
+        assert plan is not None and plan["action"] == "sell_candidate", kind
+        assert plan["direction"] == "exit_long", kind
 
 
 def _pattern(

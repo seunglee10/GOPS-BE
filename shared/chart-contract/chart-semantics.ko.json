@@ -23,15 +23,14 @@
   },
   "actions": {
     "watch": "관찰 후보",
-    "buy_candidate": "매수 후보",
-    "sell_candidate": "매도 후보",
-    "short_candidate": "공매도 검토 후보",
+    "buy_candidate": "조건부 매수 검토",
+    "sell_candidate": "조건부 매도 검토",
     "no_trade": "진입 보류"
   },
   "reasons": {
     "confirmed_upward_breakout": "상단 돌파가 확인됨",
     "confirmed_downward_breakout": "하단 이탈이 확인됨",
-    "long_position_exit_only": "기존 long 포지션의 매도·청산 검토 시나리오",
+    "long_position_exit_only": "기존 보유분 매도 검토 시나리오",
     "pattern_not_confirmed": "패턴 확인 전",
     "pattern_not_active": "패턴이 활성 상태가 아님",
     "reward_risk_passed": "최소 손익비 기준 충족",

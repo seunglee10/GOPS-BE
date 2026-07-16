@@ -771,15 +771,16 @@ mobile visual regression을 추가하지 않는다.
 기존 7개 interval 자산은 계속 표시할 수 있지만 새 빌드 선택지는 `1m/1D` 두 개뿐이며
 둘 다 기본 선택한다. 동일 실행 중 요청에 합쳐진 경우 이를 안내하고 polling은 기존
 job URL을 사용한다. 상태 화면은 수동 우선 작업과 정기 작업을 구분해 표시한다.
-완전한 서버 `tradePlan`이 있으면 우선해 `buy_candidate`를 `매수 후보`, `sell_candidate`를
-`매도 후보`로 표시하고 `[entry, stop, target]` 순서의 `riskRewardBox`와 세 가격 pill을
-함께 적용한다. 서버 플랜이 없으면 현재 또는 가까운 저장 주기의 패턴·지지·저항만으로
+완전한 서버 `tradePlan`이 있으면 우선해 `buy_candidate/long`은 조건부 매수 검토,
+`sell_candidate/exit_long`은 보유분의 조건부 매도 검토로 표시한다. 숏 신규 포지션
+계약은 없다. `[entry, stop, target]` 순서의 `riskRewardBox`는 가격축 pill과 내부 설명
+chip 없이 렌더링하고 세 가격은 오른쪽 DOM 버튼으로 표시한다. 서버 플랜이 없으면 현재 또는 가까운 저장 주기의 패턴·지지·저항만으로
 조건부 매수/매도 setup을 만든다. 종목별 분기, ATR 재계산, 레벨 재병합, 가짜 candle은
 허용하지 않는다. 손익비가 기준 미만인 `no_trade`와 미확정 `watch`는 서버 확정 플랜을
 만들지 않는다.
 박스의 Entry는 실제 확인 봉 timestamp를 사용하고 Stop/Target의 미래 끝점은 자산에
 저장하지 않는 logical index 투영만 사용해 가짜 candle timestamp를 만들지 않는다.
-진입 점선은 확인 봉부터, fill과 목표·손절 경계는 마지막 완료 봉 다음 슬롯부터 시작한다.
+진입 점선은 확인 봉부터, fill과 목표·손절 또는 예상 하단·재검토 경계는 마지막 완료 봉 다음 슬롯부터 시작한다.
 제안이 보이는 동안 세 가격을 Y축 자동 범위에 포함한다. `DrawingStyle.labelPlacement`와
 `zoneSplit`은 command add/update/undo/redo에서 보존하며 값이 없으면 기존 수동 drawing의
 inline·axis label과 risk/reward geometry를 유지한다.
@@ -789,8 +790,10 @@ inline·axis label과 risk/reward geometry를 유지한다.
 registry는 해당 문서의 심볼·주기 변경, 자산 제거, unmount에서만 clear하고 제안 레이어
 숨김에는 유지한다. `gops:trade-plan-updated` detail은 `{ chartDocumentId, plan }`이며
 clear에는 `plan:null`을 사용한다. primary chart 해설은 같은 document ID의 projection으로
-근거→매수/매도 기준→목표→손절/무효화→action·손익비 단계를 만들고 카드 hover/focus와
-click spotlight 동안 해당 문서만 강조한다. 수동 drawing 선 두께는 1~5 범위에서 0.5
+근거→진입/매도→목표/예상 하단→손절/재검토→action·손익비 단계를 만들고 카드 hover/focus와
+click spotlight 동안 해당 문서만 강조한다. 시나리오 자체는 keyboard button이며 hover/focus는
+비영속 spotlight, click은 해당 문서의 proposal 레이어 external toggle로 처리한다. 가격
+DOM 버튼과 가격축 click은 같은 `ChartPriceSelection.v1` 생성 경로를 사용한다. 수동 drawing 선 두께는 1~5 범위에서 0.5
 간격 slider로 편집하며 command normalizer와 undo/redo도 같은 범위를 사용한다. 이 표시는
 교육용 UI이며 주문·알림 route를 호출하거나 신뢰
 원본으로 사용하지 않는다.

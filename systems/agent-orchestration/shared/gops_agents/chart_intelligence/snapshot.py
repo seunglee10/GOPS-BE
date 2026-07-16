@@ -18,12 +18,12 @@ PATTERN_LABELS = {
 }
 STATE_LABELS = {"forming": "형성 중", "confirmed": "돌파 확인", "inactive": "비활성", "invalidated": "무효화"}
 ACTION_LABELS = {
-    "watch": "관찰 후보", "buy_candidate": "매수 검토 후보", "sell_candidate": "매도·청산 후보",
-    "short_candidate": "공매도 검토 후보", "no_trade": "진입 보류",
+    "watch": "관찰 후보", "buy_candidate": "조건부 매수 검토", "sell_candidate": "조건부 매도 검토",
+    "no_trade": "진입 보류",
 }
 REASON_LABELS = {
     "confirmed_upward_breakout": "상단 돌파가 확인됨", "confirmed_downward_breakout": "하단 이탈이 확인됨",
-    "long_position_exit_only": "기존 long 포지션의 매도·청산 검토 시나리오", "pattern_not_confirmed": "패턴 확인 전",
+    "long_position_exit_only": "기존 보유분 매도 검토 시나리오", "pattern_not_confirmed": "패턴 확인 전",
     "pattern_not_active": "패턴이 활성 상태가 아님", "reward_risk_passed": "최소 손익비 기준 충족",
     "reward_risk_below_minimum": "최소 손익비 기준 미달", "breakout_direction_mismatch": "예상 방향과 실제 돌파 방향이 다름",
     "confirmed_state_without_current_breakout": "현재 구간에서 돌파 봉을 재확인하지 못함",
@@ -226,7 +226,7 @@ def build_chart_final_answer(symbol: str, explanation: dict[str, Any], *, refere
     sections = [FinalAnswerSection(title="주요 관찰", bullets=observations or ["현재 화면 구간의 가격 구조를 기준으로 분석했습니다."])]
     scenario_bullets = _scenario_bullets(scenario)
     if scenario_bullets:
-        sections.append(FinalAnswerSection(title="확인·무효화 조건", bullets=scenario_bullets))
+        sections.append(FinalAnswerSection(title="확인·재검토 조건", bullets=scenario_bullets))
     indicators = [str(item) for item in explanation.get("usedIndicators", []) if str(item)]
     if indicators:
         sections.append(FinalAnswerSection(title="분석한 지표", bullets=[", ".join(indicators)]))
@@ -287,7 +287,12 @@ def _scenario_bullets(scenario: dict[str, Any] | None) -> list[str]:
     if scenario.get("signalAt"):
         bullets.append(f"신호 확인 시점은 {scenario['signalAt']}입니다.")
     prices = []
-    for label, key in (("기준", "entryPrice"), ("무효화", "stopPrice"), ("목표", "targetPrice")):
+    sell = scenario.get("action") == "sell_candidate"
+    price_fields = (
+        (("매도", "entryPrice"), ("재검토", "stopPrice"), ("예상 하단", "targetPrice"))
+        if sell else (("진입", "entryPrice"), ("손절", "stopPrice"), ("목표", "targetPrice"))
+    )
+    for label, key in price_fields:
         if scenario.get(key) is not None:
             prices.append(f"{label} {_price(scenario[key])}")
     if prices:
@@ -305,7 +310,7 @@ def _trade_scenario(plan: dict[str, Any] | None) -> dict[str, Any] | None:
         **{key: plan.get(key) for key in ("action", "direction", "signalAt", "entryTrigger", "entryPrice", "stopPrice", "targetPrice", "rewardRiskRatio")},
         "actionLabel": ACTION_LABELS.get(action, action),
         "reasonLabels": [REASON_LABELS.get(item, item.replace("_", " ")) for item in reasons],
-        "positionMeaning": "기존 long 포지션의 매도·청산 검토 시나리오" if action == "sell_candidate" and plan.get("direction") == "exit_long" else None,
+        "positionMeaning": "기존 보유분 매도 검토 시나리오" if action == "sell_candidate" and plan.get("direction") == "exit_long" else None,
     }
 
 

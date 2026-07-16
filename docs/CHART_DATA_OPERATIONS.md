@@ -186,8 +186,8 @@ treats the configuration as one bucket-wide document.
 
 ## Chart Geometry PostgreSQL Schema
 
-Geometry asset payload와 build queue는 PostgreSQL만 사용한다. 배포 전 builder를
-중단하고 다음 schema migration을 실행한다.
+Geometry asset payload와 build queue는 PostgreSQL만 사용한다. 일반 dev 배포는
+`agent-orchestrator`가 선택되면 app rollout 전에 다음 schema migration Job을 자동 실행한다.
 
 ```bash
 scripts/aws/run-chart-asset-migrations-job.sh
@@ -195,7 +195,8 @@ scripts/aws/run-chart-asset-migrations-job.sh
 
 새 migration은 `geometry_assets`, `geometry_build_jobs`, `geometry_build_items`만 만든다.
 기존 숫자형 자산을 복사하거나 parity fallback으로 사용하지 않는다. Runtime은 schema를
-자동 생성하지 않는다. migration 성공 후 backend와 builder를 재시작한다.
+자동 생성하지 않으며 migration 실패 시 backend와 builder rollout을 시작하지 않는다.
+로컬 Compose도 같은 one-shot migration이 성공한 뒤 chart asset builder를 시작한다.
 
 ## Rollback
 

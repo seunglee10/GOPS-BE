@@ -13,7 +13,7 @@ on:
         default: false
         type: boolean
       run_chart_asset_migrations:
-        description: "Run chart Geometry SQL migrations using the built agent-orchestrator image"
+        description: "Legacy force switch. Chart Geometry migrations run automatically whenever agent-orchestrator is selected."
         required: false
         default: false
         type: boolean
@@ -243,7 +243,7 @@ jobs:
         run: ./scripts/aws/run-order-migrations-job.sh
 
       - name: Run chart asset database migrations
-        if: steps.changes.outputs.has_services == 'true' && github.event.inputs.run_chart_asset_migrations == 'true'
+        if: steps.changes.outputs.has_services == 'true' && contains(steps.changes.outputs.services, 'agent-orchestrator')
         env:
           ECR_AGENT_ORCHESTRATOR_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-agent-orchestrator
         run: ./scripts/aws/run-chart-asset-migrations-job.sh

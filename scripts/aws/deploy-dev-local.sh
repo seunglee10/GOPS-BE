@@ -44,7 +44,7 @@ Optional environment variables:
   FORCE_SERVICES=all|frontend,backend   Override automatic diff detection.
   DRY_RUN=true                          Resolve target/diff and server-side dry-run only.
   RUN_ORDER_MIGRATIONS=true             Legacy force switch; requires order-worker selected.
-  RUN_CHART_ASSET_MIGRATIONS=true       Run chart asset migrations; requires agent-orchestrator selected.
+  RUN_CHART_ASSET_MIGRATIONS=true       Legacy force switch; chart migrations run automatically with agent-orchestrator.
   REBUILD_NEWS_CACHE=true               Rebuild news Redis cache; requires market-storage selected.
   APPLY_PLATFORM_MANIFESTS=true         Apply dedicated platform manifests before app workloads.
   CHART_INTERPRETATION_ONLY=true        Roll out only frontend and chart-analysis consumers.
@@ -52,7 +52,8 @@ Optional environment variables:
 The deploy target is the latest origin/<REMOTE_BRANCH> commit unless LOCAL_REF
 is set. Local uncommitted changes are never included in the build.
 Order migrations run automatically before rollout whenever order-worker is
-selected. Selecting agent-orchestrator also selects the migration image.
+selected. Chart migrations run automatically whenever agent-orchestrator is
+selected. Selecting agent-orchestrator also selects both migration images.
 CHART_INTERPRETATION_ONLY requires FORCE_SERVICES=frontend,agent-orchestrator.
 It never applies Kustomize, migrations, the chart asset builder, or Geometry CronJobs.
 USAGE
@@ -625,9 +626,9 @@ run_migrations_if_requested() {
     fi
   fi
 
-  if is_true "${RUN_CHART_ASSET_MIGRATIONS}"; then
+  if service_selected "agent-orchestrator" && ! is_true "${CHART_INTERPRETATION_ONLY}"; then
     if is_true "${DRY_RUN}"; then
-      printf 'DRY_RUN=true: skipping chart asset migrations job.\n'
+      printf 'DRY_RUN=true: automatic chart asset migration gate selected; skipping live Job.\n'
     else
       (
         cd "${WORKTREE_DIR}"

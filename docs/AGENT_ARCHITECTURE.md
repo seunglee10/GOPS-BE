@@ -279,7 +279,7 @@ deterministic `OperationIR`을 그대로 쓴다. 차트 변경은 영구 `ChartC
 화면 candle로 degrade하며, chart 설명 자체에는 LLM을 사용하지 않는다.
 
 `chart_analysis_snapshot`의 `chartExplanation v1`은 패턴·확인 상태, 지지·저항,
-trade scenario와 무효화 조건, SMA60/120 교차, 선택 봉 feature, focus drawing ID,
+trade scenario와 손절·재검토 조건, SMA60/120 교차, 선택 봉 feature, focus drawing ID,
 coverage를 typed fact로 보존한다. Geometry v6이면 optional trend fact도 저장한다.
 요청의 `chartDocumentId/sourcePanelId`는 optional `source`로 echo하고, 저장 자산의
 drawing ID만 `focusGroups`의 evidence/pattern/support/resistance와 optional levels/trend로
