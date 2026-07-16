@@ -113,6 +113,8 @@ class SimulatorEksDeploymentContractTests(unittest.TestCase):
         self.assertIn("name: alfaka-clickhouse-secret", manifest)
         self.assertIn("--fixed-dataset", manifest)
         self.assertIn("suspend\":false", runner)
+        self.assertIn("condition=Ready", runner)
+        self.assertLess(runner.index("condition=Ready"), runner.index("kubectl logs -f"))
         self.assertIn("condition=complete", runner)
         self.assertIn("simulation_replay_datasets", runner)
 
