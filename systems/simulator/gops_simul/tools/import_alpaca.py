@@ -20,6 +20,7 @@ from gops_simul.storage import normalize_symbols
 
 DATA_BASE_URL = "https://data.alpaca.markets"
 DEFAULT_IMPORT_DAYS = 7
+CLICKHOUSE_INSERT_BATCH_SIZE = 50_000
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -133,7 +134,7 @@ def build_fixed_dataset(*, output_root: Path, base_url: str, headers: dict[str, 
                                 batch.append({"dataset_id": DATASET_ID, "event_time": row["t"], "source_file": str(relative),
                                     "source_sequence": collection_sequence, "symbol": symbol,
                                     "event_type": "trade" if kind == "trades" else "quote", "feed": segment.feed, "payload": encoded})
-                                if len(batch) >= 5_000:
+                                if len(batch) >= CLICKHOUSE_INSERT_BATCH_SIZE:
                                     clickhouse.insert_json_each_row("market_data.simulation_replay_staging", batch); batch.clear()
                     if clickhouse and batch: clickhouse.insert_json_each_row("market_data.simulation_replay_staging", batch)
                     digest = sha256_file(path)
