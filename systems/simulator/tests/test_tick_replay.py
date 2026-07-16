@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import unittest
+import urllib.parse
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
@@ -22,6 +23,7 @@ from gops_simul.dataset import (
 )
 from gops_simul import env as simulator_env
 from gops_simul.tick_replay import InMemoryReplayEventSource, ReplayController, ReplayEvent
+from gops_simul.clickhouse import ClickHouseHttpClient
 from gops_simul.tools.import_alpaca import fetch_kind
 
 
@@ -69,6 +71,11 @@ def trade(sequence: int, seconds: float, symbol: str, price: float) -> ReplayEve
 
 
 class DatasetContractTests(unittest.TestCase):
+    def test_clickhouse_http_client_accepts_iso8601_event_timestamps(self):
+        request = ClickHouseHttpClient("http://clickhouse:8123")._request(b"SELECT 1")
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(request.full_url).query)
+        self.assertEqual(query["date_time_input_format"], ["best_effort"])
+
     def test_installed_layout_uses_the_application_root_env_candidate(self):
         self.assertEqual(
             simulator_env.repository_env_path(Path("/app/gops_simul/env.py")),
