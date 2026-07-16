@@ -121,6 +121,31 @@ def test_extended_aggregation_keeps_only_visible_sessions_and_marks_live_bucket(
     assert result[-1]["bucketPolicy"] == BUCKET_POLICY_EXTENDED_SESSION
 
 
+def test_extended_aggregation_keeps_historical_sessions() -> None:
+    from alfaka.serving import session_buckets
+
+    rows = [
+        candle("2026-07-07T21:00:00.000Z", marketSession="after", close=90),
+        candle("2026-07-08T21:00:00.000Z", marketSession="after", open=100, close=101),
+        candle("2026-07-09T00:01:00.000Z", marketSession="overnight", open=101, close=102),
+        candle("2026-07-09T05:15:00.000Z", marketSession="overnight", open=102, close=103),
+    ]
+
+    result = session_buckets.aggregate_extended_session_candles(
+        rows,
+        "4h",
+        now=datetime(2026, 7, 9, 5, 30, tzinfo=timezone.utc),
+    )
+
+    assert [item["timestamp"] for item in result] == [
+        "2026-07-07T20:00:00.000Z",
+        "2026-07-08T20:00:00.000Z",
+        "2026-07-09T00:00:00.000Z",
+        "2026-07-09T04:00:00.000Z",
+    ]
+    assert [item["isClosed"] for item in result] == [True, True, True, False]
+
+
 def test_provisional_candle_uses_extended_session_bucket() -> None:
     state = ProvisionalCandleState()
     state.record_closed(candle("2026-07-09T04:01:00.000Z", marketSession="overnight", open=100, close=101))

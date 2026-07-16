@@ -628,6 +628,14 @@ systems/api-server/tests/test_agent_routes.py
 새 백엔드는 구현을 바꿔도 되지만 route name, idempotency, async status,
 polling/SSE semantics는 보존해야 한다.
 
+## Chart Candle Runtime Contract
+
+`POST /api/charts/active-symbol`은 `candles,trades,quotes` 레이어를 가진 제한된
+realtime cohort를 먼저 갱신한다. 이어지는 `GET /api/charts/candles`는 Redis와
+ClickHouse를 읽고, 최신 완료 NYSE 세션이나 현재 pre/after/overnight tail이
+누락됐으면 동일 요청 범위만 Alpaca REST로 복구한다. Overnight 구간은 BOATS로
+라우팅하며 과거 장외 봉도 응답에서 숨기지 않는다.
+
 ## Chart Analysis Asset Routes
 
 Chart analysis asset은 interactive agent report와 별도인 수동 build projection이다.

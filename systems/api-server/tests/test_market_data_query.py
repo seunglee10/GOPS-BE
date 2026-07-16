@@ -2184,7 +2184,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(result["fill"]["feedRoutes"][1]["state"], "fetchable")
         self.assertEqual(result["fill"]["feedRoutes"][1]["feed"], "boats")
 
-    def test_on_demand_fill_hourly_repair_skips_extended_sessions(self):
+    def test_on_demand_fill_hourly_repair_fetches_and_aggregates_extended_sessions(self):
         payload = {
             "symbol": "BAC",
             "interval": "1h",
@@ -2193,7 +2193,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             "storedCandleCount": 0,
             "sourceInterval": "1h",
             "missingRanges": [
-                {"start": "2026-07-08T20:30:00.000Z", "end": "2026-07-09T04:30:00.000Z"}
+                {"start": "2026-07-08T20:00:00.000Z", "end": "2026-07-09T04:30:00.000Z"}
             ],
             "_sourceTrace": {
                 "redis": {"checked": True, "hit": False, "rowCount": 0},
@@ -2206,21 +2206,38 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         }, clear=False):
             service = OnDemandFillService(timeout_seconds=8, background_enabled=False)
 
-        with mock.patch("app.market_data.fill.service.fetch_alpaca_bars", return_value=[]) as fetch:
+        def fetch_rows(_symbol, _start, _end, feed, _timeframe):
+            timestamp = "2026-07-08T20:30:00Z" if feed == "sip" else "2026-07-09T00:30:00Z"
+            return [{
+                "t": timestamp,
+                "o": 100,
+                "h": 102,
+                "l": 99,
+                "c": 101,
+                "v": 1000,
+                "n": 10,
+                "vw": 100.5,
+            }]
+
+        with mock.patch("app.market_data.fill.service.fetch_alpaca_bars", side_effect=fetch_rows) as fetch:
             result = service.fill_if_needed(
                 symbol="BAC",
                 interval="1h",
                 limit=20,
                 before=None,
-                from_time="2026-07-08T20:30:00.000Z",
+                from_time="2026-07-08T20:00:00.000Z",
                 to_time="2026-07-09T04:30:00.000Z",
                 payload=payload,
             )
 
-        fetch.assert_not_called()
-        self.assertEqual(result["fill"]["foregroundFill"]["state"], "skipped")
-        self.assertTrue(result["fill"]["feedRoutes"])
-        self.assertEqual({route["state"] for route in result["fill"]["feedRoutes"]}, {"skipped"})
+        self.assertEqual(fetch.call_count, 2)
+        self.assertEqual([call.args[3] for call in fetch.call_args_list], ["sip", "boats"])
+        self.assertEqual({call.args[4] for call in fetch.call_args_list}, {"1Min"})
+        self.assertEqual(result["fill"]["foregroundFill"]["state"], "filled")
+        self.assertEqual(
+            [candle["timestamp"] for candle in result["candles"]],
+            ["2026-07-08T20:00:00.000Z", "2026-07-09T00:00:00.000Z"],
+        )
 
     def test_on_demand_fill_uses_boats_for_overnight_historical_route(self):
         payload = {
@@ -2822,6 +2839,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
 
         self.assertEqual(payload["symbol"], "MLM")
         self.assertTrue(payload["pendingReconcile"])
+        self.assertEqual(payload["layers"], ["candles", "trades", "quotes"])
         self.assertIn("anonymous", fake_redis.sets["gops:market:on-demand:v1:subscription:users:active-chart"])
         self.assertEqual(
             fake_redis.hashes["gops:market:on-demand:v1:user:anonymous:active-chart:panel-1"]["symbol"],

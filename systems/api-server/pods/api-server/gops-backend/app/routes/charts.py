@@ -119,7 +119,7 @@ def chart_active_symbol_heartbeat(
         "symbol": symbol,
         "sessionId": session_id,
         "ttlSeconds": manager.ttl_seconds,
-        "layers": ["trades", "quotes"],
+        "layers": ["candles", "trades", "quotes"],
         "pendingReconcile": True,
     }
 

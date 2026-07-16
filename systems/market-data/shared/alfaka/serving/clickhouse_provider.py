@@ -7,7 +7,6 @@ import re
 import time
 from datetime import datetime, timezone
 
-from alfaka.alpaca.feed_profiles import visible_extended_session_windows
 from alfaka.common.env import load_dotenv
 from alfaka.common.canonical import CANONICAL_VERSION, HISTORICAL_SERVING_PRICE_ADJUSTMENTS, SERVING_PRICE_ADJUSTMENTS
 from alfaka.common.symbols import is_crypto_symbol
@@ -16,8 +15,8 @@ from alfaka.serving.intervals import INTRADAY_DERIVED_INTERVALS, INTRADAY_INTERV
 from alfaka.serving.moving_average import attach_moving_averages
 from alfaka.serving.session_buckets import (
     BUCKET_POLICY_REGULAR_SESSION,
+    aggregate_extended_session_candles,
     aggregate_regular_session_candles,
-    aggregate_visible_extended_session_candles,
 )
 
 
@@ -77,9 +76,9 @@ class ClickHouseMarketDataProvider:
         )
         direct_rows = with_higher_timeframe_closed_state(direct_rows, interval, now=reference)
         if len(direct_rows) >= limit:
-            if interval not in INTRADAY_DERIVED_INTERVALS or is_crypto_symbol(symbol) or not visible_extended_session_windows(reference):
+            if interval not in INTRADAY_DERIVED_INTERVALS or is_crypto_symbol(symbol):
                 return attach_moving_averages(direct_rows[-limit:], overwrite=True)
-            extended_rows = self._aggregated_visible_extended_session_candles(
+            extended_rows = self._aggregated_extended_session_candles(
                 symbol,
                 interval,
                 limit,
@@ -239,7 +238,7 @@ class ClickHouseMarketDataProvider:
                 to_time=to_time,
             )
             regular_rows = merge_candle_rows(fallback, preferred, interval=interval)
-        extended_rows = self._aggregated_visible_extended_session_candles(
+        extended_rows = self._aggregated_extended_session_candles(
             symbol,
             interval,
             limit,
@@ -328,7 +327,7 @@ class ClickHouseMarketDataProvider:
             source_interval=source_interval,
         )[-limit:]
 
-    def _aggregated_visible_extended_session_candles(
+    def _aggregated_extended_session_candles(
         self,
         symbol,
         interval,
@@ -339,14 +338,11 @@ class ClickHouseMarketDataProvider:
         to_time=None,
     ):
         reference = self.now_provider()
-        windows = visible_extended_session_windows(reference)
-        if not windows:
-            return []
-
         time_filter = ""
+        bucket_minutes = INTRADAY_INTERVAL_MINUTES[interval]
         source_limit = min(
             max_request_bars("1m"),
-            max(1, sum(int((end - start).total_seconds() // 60) for _session, start, end in windows)),
+            max(int(limit) * bucket_minutes + 960, int(limit)),
         )
         params = {"symbol": symbol, "limit": int(source_limit)}
         if from_time:
@@ -359,7 +355,7 @@ class ClickHouseMarketDataProvider:
             time_filter += "\n          AND event_time < parseDateTime64BestEffort({before:String})"
             params["before"] = before
 
-        session_filter = self.extended_market_session_filter_sql(windows)
+        session_filter = "market_session IN ('pre', 'after', 'overnight')"
         source_query = self.latest_chart_candles_source(f"""
             symbol = {{symbol:String}}
             AND interval = '1m'
@@ -394,7 +390,7 @@ class ClickHouseMarketDataProvider:
         rows = list(reversed(self.query_json_each_row(query, params)))
         for row in rows:
             row["interval"] = "1m"
-        return aggregate_visible_extended_session_candles(
+        return aggregate_extended_session_candles(
             rows,
             interval,
             now=reference,
@@ -600,6 +596,7 @@ class ClickHouseMarketDataProvider:
         if stored_interval != "1D":
             params["interval"] = stored_interval
         bucket_policy_filter = ""
+        regular_available_to_select = ""
         if bucket_policy:
             params["bucketPolicy"] = bucket_policy
             bucket_policy_filter = "\n            AND bucket_policy = {bucketPolicy:String}"
@@ -621,6 +618,11 @@ class ClickHouseMarketDataProvider:
             invalid_row_count_expr = "countIf(toDayOfWeek(event_time) NOT BETWEEN 1 AND 5)"
             available_from_expr = "minIf(event_time, toDayOfWeek(event_time) BETWEEN 1 AND 5)"
             available_to_expr = "maxIf(event_time, toDayOfWeek(event_time) BETWEEN 1 AND 5)"
+            regular_available_to_select = (
+                ",\n          formatDateTime(nullIf(maxIf(event_time, market_session = 'regular'), "
+                "toDateTime64(0, 3, 'UTC')), "
+                "'%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS regularAvailableTo"
+            )
 
         source_query = self.latest_chart_candles_source(f"""
             symbol = {{symbol:String}}
@@ -633,6 +635,7 @@ class ClickHouseMarketDataProvider:
           {invalid_row_count_expr} AS invalidRowCount,
           formatDateTime({available_from_expr}, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS availableFrom,
           formatDateTime({available_to_expr}, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS availableTo
+          {regular_available_to_select}
         FROM (
           {source_query}
         )
@@ -643,12 +646,15 @@ class ClickHouseMarketDataProvider:
         count = int(row.get("rowCount") or 0)
         if count <= 0:
             return {"rowCount": 0, "invalidRowCount": int(row.get("invalidRowCount") or 0), "availableFrom": None, "availableTo": None}
-        return {
+        result = {
             "rowCount": count,
             "invalidRowCount": int(row.get("invalidRowCount") or 0),
             "availableFrom": row.get("availableFrom"),
             "availableTo": row.get("availableTo"),
         }
+        if row.get("regularAvailableTo"):
+            result["regularAvailableTo"] = row.get("regularAvailableTo")
+        return result
 
     def candle_timestamps(self, symbol, interval, from_time, to_time, limit=200000):
         """gapfill 비교에 사용할 저장 candle timestamp 목록을 조회합니다."""
@@ -1209,13 +1215,10 @@ class ClickHouseMarketDataProvider:
             self.execute(f"ALTER TABLE {self.table(table)} MODIFY COLUMN IF EXISTS {column} {column_type}")
 
     def market_session_filter_sql(self, symbol, column="event_time", now=None):
-        """주식은 정규장과 현재 live extended window만, crypto는 24/7 캔들을 통과시킵니다."""
+        """주식은 실제 거래 세션 전체를, crypto는 24/7 캔들을 통과시킵니다."""
         if is_crypto_symbol(symbol):
             return "1 = 1"
-        windows = visible_extended_session_windows(now)
-        if not windows:
-            return "market_session = 'regular'"
-        return f"(market_session = 'regular' OR {self.extended_market_session_filter_sql(windows, column=column)})"
+        return "market_session IN ('pre', 'regular', 'after', 'overnight')"
 
     def extended_market_session_filter_sql(self, windows, column="event_time"):
         """지정된 extended session window만 통과시키는 ClickHouse 조건을 만듭니다."""

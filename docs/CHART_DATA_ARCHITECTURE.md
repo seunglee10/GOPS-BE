@@ -19,19 +19,27 @@ in `platform/{kafka,redis,clickhouse,s3}/README.md`.
   browser fixture path only.
 - US-equity realtime `1m` is the live provider source. Historical and persisted
   `5m/10m/1h/4h` candles are materialized from regular-session data with
-  `bucket_policy=us_equity_regular_session`. During an active pre, after, or
-  overnight session, the API and live processor additionally aggregate retained
-  `1m` rows for the current extended session and its contiguous predecessor with
-  `bucket_policy=us_equity_extended_session`. Those read-time/live rows are
-  anchored to each extended-session open, never cross a session boundary, and do
-  not make old extended sessions part of historical chart serving. Bounded
-  historical repair keeps `1m` as the source for `5m/10m`, but fetches and stores
-  Alpaca `10Min` as a `source_native` recovery source for `1h/4h`; the resulting
-  historical target candles use the regular-session bucket policy. Readers prefer
-  stored target rows, then `10m`, then legacy `1m` aggregation for hourly history,
-  and merge the bounded current extended-session aggregate when applicable.
+  `bucket_policy=us_equity_regular_session`. The API and live processor also
+  aggregate retained `1m` pre, after, and overnight rows with
+  `bucket_policy=us_equity_extended_session`. Extended buckets are anchored to
+  each session open, never cross a session boundary, and remain visible for both
+  live and historical chart windows. Bounded historical repair keeps `1m` as the
+  source for `5m/10m`, and normally uses Alpaca `10Min` as a `source_native`
+  recovery source for regular-session `1h/4h`. When a derived repair crosses an
+  extended session, it switches to `1Min`, routes overnight ranges to BOATS, and
+  aggregates both regular and extended target candles. Readers prefer stored
+  target rows, then `10m`, then legacy `1m` aggregation for hourly regular-session
+  history, and merge bounded historical/live extended-session aggregates.
   Bucket timestamps are stored in UTC, while session open/close and early-close
   decisions use the NYSE calendar in `America/New_York`.
+- BOATS remains bounded to explicit realtime cohorts. Active chart, watchlist,
+  portfolio, ranking, and manual symbols dynamically subscribe to
+  `bars/updatedBars/trades/quotes`; the change does not create an all-universe
+  overnight tick or candle fanout.
+- Intraday coverage records both the latest candle and the latest regular-session
+  candle. A chart request repairs a stale latest completed NYSE session even when
+  a newer extended-hours row exists, and can repair the currently active
+  pre/after/overnight tail without treating weekends or holidays as gaps.
 - Candle runtime boundaries normalize OHLCV to numeric values and `tradeCount`
   to a non-negative integer. Redis/ClickHouse recovery must normalize legacy
   JSON strings before placing candles in live aggregation state, and writers
@@ -134,6 +142,11 @@ GET  /api/charts/order-flow/intraday
 POST /api/charts/active-symbol
 WS   /ws/charts
 ```
+
+`POST /api/charts/active-symbol` refreshes a bounded cohort with the declared
+`candles,trades,quotes` layers before the frontend requests the candle snapshot.
+This ordering lets a newly opened symbol start BOATS/SIP candle collection while
+the same request performs any bounded REST repair.
 
 WebSocket candle events remain `LIVE_CANDLE_UPDATE`, `CANDLE_CLOSED`, and
 `CANDLE_CORRECTED`. Order flow adds `ORDER_FLOW_BINS_UPDATE`. Derived responses

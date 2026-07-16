@@ -163,6 +163,12 @@ setup·symbol·interval·asset identity 변경 또는 원본 차트 삭제 시 �
 
 ## Chart Derived Profile
 
+`ChartPanel`은 종목 진입 시 `POST /api/charts/active-symbol` 응답을 기다린 뒤
+`GET /api/charts/candles`를 호출한다. 이 순서로 SIP/BOATS의
+`candles,trades,quotes` cohort를 먼저 활성화하고, API가 같은 진입 요청에서 필요한
+bounded REST repair를 수행할 수 있게 한다. 차트는 API가 반환한 과거
+pre/regular/after/overnight 봉을 임의로 다시 숨기지 않는다.
+
 차트의 candle Volume Profile은 Agent feature pack과 별도 계약이다. `ChartCanvas`가
 현재 viewport로 만든 scene과 visible closed-candle 범위가 일치한 뒤에만 프런트가
 `targetBins=10`, `scene.scales.minPrice/maxPrice`, `candleCount`를 요청한다. 따라서
