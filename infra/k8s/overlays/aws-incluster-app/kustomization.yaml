@@ -17,6 +17,15 @@ patches:
       group: apps
       version: v1
       kind: Deployment
+      name: recommendation-worker
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/envFrom/3/secretRef/optional
+        value: false
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
       name: agent-orchestrator
     patch: |-
       - op: replace

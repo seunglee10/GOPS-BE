@@ -46,8 +46,8 @@ flowchart TD
 | `EKS_DATA_PRESERVING_REBUILD_PLAN.md` | Data-preserving EKS clean rebuild runbook for dedicated NodePools and restored PVCs. |
 | `AGENT_ORCHESTRATION_IMPLEMENTATION.md` | Summary of the role-based multi-agent implementation and Docker validation. |
 | `STOCK_RECOMMENDATION_PANEL.md` | 장중 매수 추천 패널의 현재 구현, 확인된 품질 위험, API/DB/worker/프런트 계약, 개선 목표. |
-| `PROFESSIONAL_PERSONALIZED_RECOMMENDATION_LOGIC.md` | 현재 v1의 9개 시장 팩터와 구현된 continuous V2의 canonical fill 학습·연속 선호·위험예산·cutoff-safe 펀더멘털 overlay를 구분한 한국어 상세 문서. |
-| `AWS_RECOMMENDATION_DATA_PREPARATION.md` | timestamped live AWS 준비 상태, V2 활성화 차단 요소와 작업 순서, 추천용 캔들·fill·포트폴리오·펀더멘털 handoff/검증 책임을 정리한 한국어 runbook. |
+| `PROFESSIONAL_PERSONALIZED_RECOMMENDATION_LOGIC.md` | v1/V2와 결정론적 evidence V3, 한국어 설명·신뢰도 계약을 구분한 상세 문서. |
+| `AWS_RECOMMENDATION_DATA_PREPARATION.md` | timestamped AWS 상태, SPY/V3 activation gate, 추천 데이터 복구·검증 순서를 정리한 runbook. |
 | `AGENT_ARCHITECTURE.md` | `AgentOrchestrator`, role agents, snapshots, synthesis, provider boundary, `EvidenceItem` 계약. |
 | `AGENT_ANALYSIS_QUERY_POLICY.md` | 우선 처리할 분석 쿼리 종류, 결론 중심 답변 형식, 신뢰도 표시, 내부 GraphDB 사용 정책. |
 | `AGENT_BACKEND_INTEGRATION.md` | Backend API, idempotency, Kafka async path, Redis report store, polling/SSE/WebSocket 계약. |

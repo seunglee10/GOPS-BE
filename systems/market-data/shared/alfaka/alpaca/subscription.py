@@ -196,6 +196,13 @@ def configured_seed_symbols(config=None):
     return _validated_symbol_list(values, config, "ALPACA_SYMBOLS")
 
 
+def configured_benchmark_symbols(config=None):
+    """추천 기준지수로 영구 수집하되 일반 universe에는 섞지 않을 심볼입니다."""
+    config = config or load_request_config()
+    values = parse_csv(os.getenv("ALPACA_BENCHMARK_SYMBOLS", ""))
+    return _validated_symbol_list(values, config, "ALPACA_BENCHMARK_SYMBOLS") if values else []
+
+
 def _validated_symbol_list(values, config, source_name):
     """여러 출처에서 온 심볼 목록을 중복 제거하고 내부 표기로 정규화합니다."""
     symbols = []
@@ -227,7 +234,10 @@ def load_symbols_and_channels(company_or_symbol=None):
     if requested_symbol:
         symbols = [requested_symbol]
     else:
-        symbols = configured_collection_symbols(config)
+        symbols = list(dict.fromkeys([
+            *configured_collection_symbols(config),
+            *configured_benchmark_symbols(config),
+        ]))
 
     channels = parse_csv(os.getenv("ALPACA_CHANNELS", ",".join(config["defaultChannels"])))
     validate_channels(channels, config)

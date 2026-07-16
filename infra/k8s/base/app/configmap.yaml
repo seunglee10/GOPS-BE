@@ -14,6 +14,7 @@ data:
   ALPACA_UNIVERSE: sp500
   ALPACA_UNIVERSE_REGISTRY_PATH: systems/market-data/config/sp500-universe.json
   ALPACA_COLLECTION_SYMBOL_SOURCE: universe
+  ALPACA_BENCHMARK_SYMBOLS: SPY
   ALPACA_CHANNELS: bars,updatedBars,dailyBars,statuses
   ALPACA_ACTIVE_CHANNELS: trades,quotes
   ALPACA_ACTIVE_TICK_SUBSCRIPTION: "true"

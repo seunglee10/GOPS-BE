@@ -648,9 +648,9 @@ class PostgresRecommendationRepository(RecommendationRepository):
                         """
                         INSERT INTO stock_recommendation_items (
                             run_id, symbol, action, rank, score, confidence, sector,
-                            reasons, risk_warnings, metrics_snapshot
+                            reasons, risk_warnings, metrics_snapshot, explanation_json
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         """,
                         (
                             run_id,
@@ -663,6 +663,7 @@ class PostgresRecommendationRepository(RecommendationRepository):
                             Jsonb(item.get("reasons") or []),
                             Jsonb(item.get("riskWarnings") or item.get("risk_warnings") or []),
                             Jsonb(item.get("metricsSnapshot") or item.get("metrics_snapshot") or {}),
+                            Jsonb(item.get("explanation")) if isinstance(item.get("explanation"), dict) else None,
                         ),
                     )
                 conn.commit()
@@ -820,14 +821,15 @@ class PostgresRecommendationRepository(RecommendationRepository):
                 """
                 INSERT INTO stock_recommendation_items (
                     run_id, symbol, action, rank, score, confidence, sector,
-                    reasons, risk_warnings, metrics_snapshot
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    reasons, risk_warnings, metrics_snapshot, explanation_json
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     run_id, item["symbol"], item.get("action", "buy"), item["rank"], item["score"],
                     item["confidence"], item.get("sector"), Jsonb(item.get("reasons") or []),
                     Jsonb(item.get("riskWarnings") or item.get("risk_warnings") or []),
                     Jsonb(item.get("metricsSnapshot") or item.get("metrics_snapshot") or {}),
+                    Jsonb(item.get("explanation")) if isinstance(item.get("explanation"), dict) else None,
                 ),
             )
 

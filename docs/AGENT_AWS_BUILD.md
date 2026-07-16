@@ -455,15 +455,29 @@ ignores the shadow flag and publishes `algorithmVersion="continuous-personalizat
 API and recommendation-worker must receive the same selector.
 
 `deterministic-evidence-v3` is non-predictive and ignores the shadow flag. Before activating
-it, apply migration `0013` after `0012`; verify canonical cutoff-safe candles, quotes/spreads,
+it, apply migrations `0013` and `0014` after `0012`; verify canonical cutoff-safe candles, quotes/spreads,
 tradability, news metadata, fundamentals, benchmark data, universe membership, and exchange
 calendar inputs for the complete prepared S&P 500 universe. The API and worker must be able to
 read and write the shared evidence snapshot tables. Rollback only changes the selector; the
 additive evidence rows remain immutable.
 
+Both AWS app overlays declare `ALPACA_BENCHMARK_SYMBOLS=SPY`, subscribe it to bars,
+updated bars, daily bars, and statuses, and inject `alfaka-openai-secret` into the
+recommendation worker. The benchmark remains outside the heatmap/candidate universe. V3
+activation requires 252 SPY completed dailies through the prior day, at least 380 prior-session
+minutes, fresh current data matching in Redis and ClickHouse, and 15 reliability-qualified
+candidates. Failure is `data_not_ready`, never a legacy recommendation. Narrative rollout uses
+`RECOMMENDATION_NARRATIVE_PROVIDER=openai` and optional
+`RECOMMENDATION_NARRATIVE_MODEL`; it falls back to deterministic Korean text without changing rank.
+
+For the staged deploy, keep an explicit container env override at `legacy` while applying the
+image and migrations, replace it with `deterministic-evidence-v3` only after the gates and offline
+replay pass, and validate a newly created 30-minute slot. Rollback sets the same explicit override
+back to `legacy`; migrations `0013`/`0014` and evidence rows remain intact.
+
 A Git merge or push does not deploy this selector, application image, or database migration.
 Use the manual dev/test deploy workflow and treat the following as hard activation gates:
-the backend and recommendation-worker run the merged image, migrations `0011` and `0012`
+the backend and recommendation-worker run the merged image, migrations `0011` through `0014`
 are present, and SPY plus the candidate universe have the required completed daily and prior
 regular-session minute candles. The timestamped live AWS audit, measured gaps, backfill
 commands, portfolio/fill requirements, and verification order are maintained in
