@@ -7,7 +7,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "shared"))
 
-from fundamentals.yahoo_estimates import YahooEstimatesConfig, dedupe_rows, earnings_event_datetime, estimate_row, period_from_yahoo_label, rows_from_earnings_dates, run_yahoo_estimates_sync
+from fundamentals.yahoo_estimates import (
+    YahooEstimatesConfig,
+    dedupe_rows,
+    earnings_event_datetime,
+    estimate_row,
+    period_from_yahoo_label,
+    rows_from_earnings_dates,
+    run_yahoo_estimates_sync,
+    safe_call,
+)
 
 
 class FakeClickHouseClient:
@@ -31,6 +40,22 @@ class FakeFrame:
 
 
 class YahooEstimatesTests(unittest.TestCase):
+    def test_safe_call_isolates_optional_yahoo_endpoint_failure(self):
+        class PartialTicker:
+            def get_earnings_dates(self, **_kwargs):
+                raise ImportError("optional parser is unavailable")
+
+        self.assertIsNone(safe_call(PartialTicker(), "get_earnings_dates", limit=16))
+
+    def test_safe_call_retries_without_kwargs_for_legacy_method(self):
+        class LegacyTicker:
+            def get_earnings_dates(self, *args, **kwargs):
+                if kwargs:
+                    raise TypeError("kwargs are unsupported")
+                return "legacy-result"
+
+        self.assertEqual(safe_call(LegacyTicker(), "get_earnings_dates", limit=16), "legacy-result")
+
     def test_period_from_yahoo_label_uses_stable_quarter_keys(self):
         fiscal_year, fiscal_period, period_end = period_from_yahoo_label("+1q", datetime(2026, 7, 6, tzinfo=timezone.utc).date())
 

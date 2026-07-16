@@ -667,6 +667,27 @@ V3 item은 LLM headline/body를 먼저 표시하되 그 아래 결정론적 6개
 기여도 부호, penalty, 누락 factor, stale 여부, cutoff, algorithm/rule-set/snapshot/digest를
 그대로 보여 주고 누락 metric을 `0`으로 만들지 않는다. legacy `reasons`는 비-V3에만 쓴다.
 
+company compare panel은 `panelType="companyCompare"`/`kind="companyCompare"`로
+표현하고 패널 추가 팔레트에 노출한다. 비교 대상이 없으면 GraphDB same-theme 후보 칩과
+직접 선택 경로를 표시한다. 비교 기업이 하나 이상 확정되는 순간 별도 실행 버튼 없이
+400ms debounce 후 `POST /api/llm/company-compare/quantitative`와
+`POST /api/llm/company-compare`를 함께 호출하며, 대상 변경 시 이전 요청은
+`AbortController`로 취소한다. 전자는 LLM을 기다리지 않고 정량 표·성장 차트·SEC frames와
+10-K 사업/리스크, GraphDB 관계, 최근 뉴스를 먼저 채우고, 후자는 준비된 전체 응답으로
+서술 영역만 후속 갱신한다. 패널은 즉시 레이어와 서술 레이어를 분리한다. 서술 레이어는
+자리를 유지하며 저장 근거 응답 실패가 아닌 한 전체 패널을 막지 않는다. 응답의 수치와
+표시 문자열은 서버가 계산한 값을 그대로 사용하고 브라우저가 margin, growth, EPS
+surprise를 재계산하지 않는다.
+
+기본 `기업분석` 프리셋은 `companyCompare`를 8×4 중심 영역에 두고 차트·기업정보·관심
+뉴스를 하단 보조 영역에 둔다. 저장된 구버전 기본 프리셋에 비교 패널이 없을 때만 새
+구성으로 이행하며 사용자 custom preset은 유지한다. 패널은 상단에서 비교 기업과
+8개 분석축 상태를 보여주고, `01—04` 정량 카드, `05—08` 10-K·관계·뉴스 카드,
+AI 근거 해석 순으로 렌더링한다. 긴 위험 목록은 처음 세 항목 뒤에 접고, 해석 카드도
+제목 전체를 노출한 채 필요한 항목만 펼친다. 모든 정량 카드에는 실제 source와 기준일을
+표시하고 전체 출처·데이터 공백은 별도 details로 제공한다. narrative cache hit는
+`검증된 캐시 응답`으로 표시한다.
+
 chart analysis asset 운영 패널은 `kind="chartAssetOps"`, 화면 표시는
 `작도 자산(개발)`로 표현한다. 이름의 `(개발)`은 수동 운영 도구임을 나타내는 라벨일
 뿐 표시 게이트가 아니다. 로컬 Vite, Docker production build, 실제 배포 환경 모두
@@ -814,6 +835,17 @@ Agent 입력은 일반 분석 전에 `/api/alerts/commands` fast path를 호출�
 알림 목록을 갱신하고, `clarify`는 다음 입력에 clarification id를 재사용하며,
 `not_matched`만 기존 차트·분석 흐름으로 넘긴다. 조건을 만든 시점에는 toast를 띄우지
 않고 `/ws/notifications`의 실제 발화와 재접속 snapshot만 toast queue에 넣는다.
+
+## Company Compare panel
+
+`companyCompare` 패널은 대상 확정 후 400ms debounce와 AbortController를 적용해
+정량 전용 요청과 전체 서술 요청을 병렬로 시작한다. `quantitative`와 `narrative`를 별도
+영역으로 렌더링하며 서술이 실패하거나 아직 생성 중이어도 먼저 받은 표와 성장 차트는
+유지한다. M3 즉시 레이어는 돈 버는 방식·성장 스타일·수익 구조·재무 체질·실적 안정성·
+리스크 체질·관계 맥락·최근 흐름의 8개 섹션을 서버 응답 순서와 근거 그대로 표시한다.
+ready 서술은 섹션별
+`evidenceRefs`를 응답의 source label로 바꾸어 표시하고 정보성 분석 고지를 함께 노출한다.
+패널은 버튼 없이 기업 선택 즉시 실행되며 1~3개 비교 기업을 허용한다.
 
 ## Frontend Reference Files
 

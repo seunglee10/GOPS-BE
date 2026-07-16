@@ -472,6 +472,41 @@ finding role = financial-analysis
 evidence provider = financial
 ```
 
+Company Compare Agent는 `systems/agent-orchestration/shared/gops_agents/company_compare`
+경계에서 동작한다. M1의 `company-compare.v1` 정량 빌더는 OpenAI를 호출하지 않고 저장된
+`ClickHouseFinancialProvider` summary/SEC frames와 Yahoo earnings series를 조립해
+`quantitative`를 만든다. `quantitative`와 `narrative`는 별도 필드이며, 정량 행에는
+`better`, 점수, 추천, verdict가 없다. SEC/Yahoo/GraphDB 조회 실패는 전체 응답 실패가
+아니라 `dataGaps`와 `status="partial"`로 degrade한다. 비교 후보는 하드코딩하지 않고
+GraphDB의 same-theme member evidence에서 만든다.
+
+M2는 정량 payload를 만든 뒤 backend가 agent-orchestrator의 내부
+`POST /company-compare/narrative` route로 서술 합성을 위임한다. orchestrator는
+`summary/sections/insights/dataGaps` strict schema만 허용하고, 활성 정량 섹션 id와
+실제 source ref를 동적 enum으로 제한한다. 금지된 우열·권유 표현이나 알 수 없는
+evidence ref는 응답으로 채택하지 않는다. OpenAI 장애 시에도 `quantitative`는 그대로
+반환되고 `narrative.status=failed`만 표시된다.
+
+M3는 같은 hot path에 저장 전용 정성 레이어를 추가한다. `TenKProfileProvider`는 Redis
+`profile:10k:<SYMBOL>`의 5~10KB 프로파일 카드를 읽고, 원본 Item 1/1A 텍스트는 S3
+`fundamentals/sec/10k-profiles/` 아래에만 둔다. `GraphDBOntologyProvider`는 비교 심볼
+전체의 테마·지배관계를 조회해 cross-symbol 관계 근거를 만들며,
+`ClickHouseNewsProvider`는 관련도·중요도 상위 저장 뉴스만 반환한다. 이 세 provider와
+정량 레이어가 합쳐져 8개 활성 섹션을 만들고 strict schema도 그 8개 id를 정확히 한
+번씩 요구한다. SEC·GraphDB·뉴스·OpenAI 외부 호출을 agent 요청 중 새로 수집하는 경로는
+없다.
+
+M4 narrative cache는 `company_compare/cache.py` 경계에만 있다. 정량·정성 provider 조회는
+항상 현재 저장 근거로 다시 조립하고, 서술 합성 전에 재무/실적 as-of, 10-K accession,
+뉴스 id와 기준시각, 안정된 관계 근거를 digest한 versioned key를 조회한다. hit payload도
+현재 활성 8개 섹션과 evidence enum으로 재검증한다. miss에서만 OpenAI를 호출하고 성공
+검증 뒤 TTL을 붙여 기록한다. 공유 Redis가 session/report/alert도 보유하므로 비교 cache
+때문에 전역 `allkeys-lru`로 변경하지 않는다.
+
+M5는 agent 경계를 바꾸지 않는다. 프런트가 저장 근거를 `01—08` 분석축으로 구조화하고
+AI 서술을 별도 하단 레이어로 렌더링하며, 골든셋은 서로 다른 산업의 세 비교쌍에 대해
+섹션 완전성, 근거 참조, 빈 텍스트, 금칙어를 결정론적으로 검증한다.
+
 Snapshot bundle additions:
 
 ```text

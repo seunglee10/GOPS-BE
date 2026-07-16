@@ -6,5 +6,6 @@ resources:
   - cronjob-order-flow-daily-rollup.yaml
   - cronjob-chart-geometry-build.yaml
   - cronjob-sec-fundamentals-sync.yaml
+  - cronjob-10k-profile-sync.yaml
   - cronjob-yahoo-estimates-sync.yaml
   - cronjob-notification-schedules.yaml
