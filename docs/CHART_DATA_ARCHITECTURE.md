@@ -214,6 +214,10 @@ New York market midnight; weekly/monthly coordinates use their UTC bucket start.
 The last real NYSE session close, including early close, determines whether a
 higher-timeframe bucket is complete. Serving, analysis, stale checks, and drawing
 anchor snapping share this identity rather than comparing raw timestamps.
+Daily serving coverage therefore reports a tail gap as soon as the latest NYSE
+session has completed and its `1D` candle is absent. It does not wait for the
+generic three-calendar-day tolerance, and weekends, holidays, pre-close sessions,
+and standard or configured early closes do not create false tail gaps.
 
 Only compact final v2 assets are written. Default deployments still use the
 ClickHouse compatibility table; guarded dual-write modes can move the single

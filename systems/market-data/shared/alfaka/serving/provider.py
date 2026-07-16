@@ -5,6 +5,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from alfaka.alpaca.feed_profiles import market_session_for_timestamp, visible_extended_session_windows
+from alfaka.backfill.gapfill import TradingCalendar
 from alfaka.common.symbols import is_crypto_symbol
 from alfaka.serving.closed_watermark import live_candle_after_latest_closed
 from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider, with_higher_timeframe_closed_state
@@ -107,6 +108,7 @@ class MarketDataProvider:
                 before=before,
                 from_time=from_time,
                 to_time=to_time,
+                symbol=symbol,
             )
 
         clickhouse_candles = filter_stock_chart_candles(self.clickhouse_provider.candles(
@@ -156,6 +158,7 @@ class MarketDataProvider:
             before=before,
             from_time=filter_from_time,
             to_time=to_time,
+            symbol=symbol,
         )
 
     def _active_extended_candles_from_redis(
@@ -380,7 +383,15 @@ def candle_in_requested_window(candle, before=None, from_time=None, to_time=None
     return True
 
 
-def with_coverage_metadata(payload, coverage, requested_limit, before=None, from_time=None, to_time=None):
+def with_coverage_metadata(
+    payload,
+    coverage,
+    requested_limit,
+    before=None,
+    from_time=None,
+    to_time=None,
+    symbol=None,
+):
     interval = normalize_chart_interval(payload.get("interval"))
     source_interval = normalize_chart_interval((coverage or {}).get("sourceInterval") or interval)
     candles = payload.get("candles") or []
@@ -404,6 +415,12 @@ def with_coverage_metadata(payload, coverage, requested_limit, before=None, from
         target_range_to=target_range_to,
         available_from=available_from,
         available_to=available_to,
+        interval=source_interval,
+        calendar=(
+            TradingCalendar.crypto_24x7()
+            if symbol and is_crypto_symbol(symbol)
+            else TradingCalendar.from_environment()
+        ),
     )
     payload.update({
         "requestedLimit": requested_limit,
@@ -549,7 +566,15 @@ def requested_source_bar_target(interval, requested_limit, source_interval=None)
     return limit
 
 
-def missing_ranges_for_requested_window(*, target_range_from, target_range_to, available_from, available_to):
+def missing_ranges_for_requested_window(
+    *,
+    target_range_from,
+    target_range_to,
+    available_from,
+    available_to,
+    interval=None,
+    calendar=None,
+):
     target_start = parse_iso_time(target_range_from)
     target_end = parse_iso_time(target_range_to)
     if not target_start or not target_end:
@@ -565,12 +590,40 @@ def missing_ranges_for_requested_window(*, target_range_from, target_range_to, a
             "start": target_start.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
             "end": min(available_start, target_end).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
         })
-    if target_end - available_end > TARGET_FLOOR_TOLERANCE:
+    tail_is_missing = target_end - available_end > TARGET_FLOOR_TOLERANCE
+    if interval and normalize_chart_interval(interval) == "1D":
+        tail_is_missing = daily_tail_is_missing(
+            available_end,
+            target_end,
+            calendar=calendar,
+        )
+    if tail_is_missing:
         ranges.append({
             "start": max(available_end, target_start).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
             "end": target_end.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
         })
     return [item for item in ranges if item["start"] < item["end"]]
+
+
+def daily_tail_is_missing(available_end, target_end, *, calendar=None):
+    trading_calendar = calendar or TradingCalendar.from_environment()
+    latest_completed = trading_calendar.latest_completed_session_date(target_end)
+    available_session = daily_candle_session_date(available_end, trading_calendar)
+    return available_session < latest_completed
+
+
+def daily_candle_session_date(value, calendar):
+    parsed = value.astimezone(timezone.utc)
+    if calendar.is_24x7:
+        return parsed.date()
+    if (
+        parsed.hour == 0
+        and parsed.minute == 0
+        and parsed.second == 0
+        and parsed.microsecond == 0
+    ):
+        return parsed.date()
+    return parsed.astimezone(calendar.timezone).date()
 
 
 def parse_iso_time(value):

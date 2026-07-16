@@ -75,6 +75,24 @@ class TradingCalendar:
             include_default_holidays=self.include_default_holidays,
         )
 
+    def latest_completed_session_date(self, reference: datetime) -> date:
+        """기준 시각까지 실제로 마감된 가장 최근 거래일을 반환합니다."""
+        if reference.tzinfo is None:
+            reference = reference.replace(tzinfo=timezone.utc)
+        local = reference.astimezone(self.timezone)
+        if self.is_24x7:
+            return local.date() - timedelta(days=1)
+
+        session_date = local.date()
+        if (
+            not self.is_session_date(session_date)
+            or local.time() < self.session_close_for(session_date)
+        ):
+            session_date -= timedelta(days=1)
+        while not self.is_session_date(session_date):
+            session_date -= timedelta(days=1)
+        return session_date
+
 
 @dataclass(frozen=True)
 class GapFillRange:
