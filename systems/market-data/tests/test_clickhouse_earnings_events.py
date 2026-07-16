@@ -43,3 +43,17 @@ def test_earnings_events_filters_on_datetime_before_formatting() -> None:
         "fromTime": "2025-07-01T00:00:00.000Z",
         "toTime": "2026-10-14T00:00:00.000Z",
     }
+
+
+def test_chart_news_events_limit_snapshots_to_the_replay_cursor() -> None:
+    provider = RecordingClickHouseProvider()
+
+    assert provider.company_daily_news_summaries_between(
+        "AMD",
+        "2026-07-01",
+        "2026-07-31",
+        as_of="2026-07-14T15:00:00.000Z",
+    ) == []
+
+    assert "generated_at <= parseDateTime64BestEffort({asOf:String})" in provider.query
+    assert provider.parameters["asOf"] == "2026-07-14T15:00:00.000Z"

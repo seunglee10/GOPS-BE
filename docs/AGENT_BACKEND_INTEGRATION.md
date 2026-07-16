@@ -108,6 +108,9 @@ market correlation/relative-strength context로만 계산한다. context가 없�
 WebSocket 경로를 사용하지 않는다. SIM 심볼 검색은 manifest의 21개 티커로 제한한다.
 뉴스·추천·기업정보·chart derived asset·agent snapshot처럼 신뢰할 수 있는
 point-in-time 조회가 없는 경로는 `409 simulation_data_unavailable`을 반환한다.
+`GET /api/charts/events`는 예외로, SIM `virtualTime`을 cutoff로 전달해
+`news_company_daily_summaries.generated_at`이 cutoff 이하인 저장 스냅샷만 읽는다.
+따라서 외부 뉴스 호출 없이 과거 `N` 마커를 안전하게 제공한다.
 
 SIM의 `POST /api/orders`는 기존 `Idempotency-Key`와 리스크 검사를 유지한다.
 `order_type=market`은 price를 생략할 수 있고 현재 ask/bid로 즉시 전량 체결한다.

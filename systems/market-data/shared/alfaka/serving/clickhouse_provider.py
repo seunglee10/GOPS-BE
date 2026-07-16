@@ -1462,8 +1462,27 @@ class ClickHouseMarketDataProvider:
             },
         )
 
-    def company_daily_news_summaries_between(self, symbol, from_date, to_date, limit=370, locale="ko-KR"):
+    def company_daily_news_summaries_between(
+        self,
+        symbol,
+        from_date,
+        to_date,
+        limit=370,
+        locale="ko-KR",
+        as_of=None,
+    ):
         """차트 이벤트가 요청한 정확한 날짜 구간의 저장된 일별 뉴스만 읽습니다."""
+        as_of_filter = ""
+        parameters = {
+            "symbol": str(symbol or "").strip().upper(),
+            "locale": locale,
+            "fromDate": str(from_date)[:10],
+            "toDate": str(to_date)[:10],
+            "limit": int(limit),
+        }
+        if as_of:
+            as_of_filter = "\n          AND generated_at <= parseDateTime64BestEffort({asOf:String})"
+            parameters["asOf"] = str(as_of)
         query = f"""
         SELECT
           toString(date) AS date,
@@ -1489,6 +1508,7 @@ class ClickHouseMarketDataProvider:
           AND locale = {{locale:String}}
           AND date >= toDate({{fromDate:String}})
           AND date <= toDate({{toDate:String}})
+          {as_of_filter}
         GROUP BY date, symbol, locale
         ORDER BY date ASC
         LIMIT {{limit:UInt32}}
@@ -1496,13 +1516,7 @@ class ClickHouseMarketDataProvider:
         """
         return self.query_json_each_row(
             query,
-            {
-                "symbol": str(symbol or "").strip().upper(),
-                "locale": locale,
-                "fromDate": str(from_date)[:10],
-                "toDate": str(to_date)[:10],
-                "limit": int(limit),
-            },
+            parameters,
         )
 
     def earnings_events(self, symbol, from_time, to_time):

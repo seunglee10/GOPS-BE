@@ -57,7 +57,7 @@ def test_chart_events_return_db_news_and_eps_events_without_external_calls():
                 "eventSession": "after",
                 "eventStatus": "reported",
                 "source": "yahoo-finance",
-                "sourceAsOf": "2026-07-16T22:30:00.000Z",
+                "sourceAsOf": "2026-07-16T11:00:00.000Z",
             },
             {
                 "eventAt": "2026-08-01T12:00:00.000Z",
@@ -67,7 +67,7 @@ def test_chart_events_return_db_news_and_eps_events_without_external_calls():
                 "eventSession": "pre",
                 "eventStatus": "scheduled",
                 "source": "yahoo-finance",
-                "sourceAsOf": "2026-07-16T22:30:00.000Z",
+                "sourceAsOf": "2026-07-16T11:00:00.000Z",
             },
         ],
         news=[

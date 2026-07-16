@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
@@ -6,6 +7,8 @@ from app.auth.dependencies import require_current_user
 from app.auth.models import AuthenticatedUser
 from app.market_data.calendar.service import next_market_open_payload
 from app.market_data.query.service import get_query_service
+from app.routes.simulator import simulator_gateway_from_app
+from app.services.simulator_gateway import SimulatorUnavailable
 from alfaka.serving.intervals import MAX_CHART_CANDLE_LIMIT, resolve_candle_limit
 
 router = APIRouter()
@@ -125,6 +128,7 @@ def chart_indicators(
 
 @router.get("/api/charts/events")
 def chart_events(
+    request: Request,
     symbol: str = Query(min_length=1, max_length=12),
     from_time: str = Query(alias="from"),
     to_time: str = Query(alias="to"),
@@ -137,7 +141,25 @@ def chart_events(
         to_time,
         locale=locale,
         upcoming_days=upcoming_days,
+        now=chart_event_reference_time(request),
     )
+
+
+def chart_event_reference_time(request: Request) -> datetime | None:
+    try:
+        status_payload = simulator_gateway_from_app(request.app).status()
+    except SimulatorUnavailable:
+        return None
+    if status_payload.get("mode") != "simulation":
+        return None
+    virtual_time = str(status_payload.get("virtualTime") or "").strip()
+    try:
+        parsed = datetime.fromisoformat(virtual_time.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail="simulation_virtual_time_unavailable") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 @router.get("/api/charts/order-flow/symbols")

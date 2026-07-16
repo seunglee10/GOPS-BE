@@ -44,8 +44,9 @@ limit-only 계약을 유지한다. 주문 상태는 `/ws/orders/{order_id}`의 S
 
 뉴스·추천·기업정보·AI 코치는 point-in-time 데이터가 없을 때 기존 최신값이나 fixture를
 남기지 않고 `simulation_data_unavailable` 상태를 표시한다. 프런트는 합성 추천·뉴스·
-AI 보고서를 만들지 않는다. 차트는 서버가 반환한 과거+replay candle과 replay
-WebSocket만 사용한다.
+AI 보고서를 만들지 않는다. 단, 차트의 `GET /api/charts/events`는 저장된 ClickHouse
+일별 뉴스 중 `generated_at <= virtualTime`인 스냅샷만 반환하므로 SIM에서도 `N` 마커를
+표시할 수 있다. 차트는 서버가 반환한 과거+replay candle과 replay WebSocket만 사용한다.
 
 `빠른 주문` 패널도 자동 주문 경로가 아니다. 최우선 매수·매도호가, 1틱 오프셋,
 estimated order-flow imbalance는 `side + price` 주문 의도를 선택해 편집 가능한 가격 입력란을
