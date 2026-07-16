@@ -102,6 +102,9 @@ def build_chart_explanation(context: Any, asset: dict[str, Any] | None) -> dict[
         "movingAverageCross": cross,
         "selectedCandle": selected,
     }
+    if "primaryTrend" in geometry:
+        primary_trend = geometry.get("primaryTrend")
+        facts["trend"] = dict(primary_trend) if isinstance(primary_trend, dict) else None
     used_indicators = ["가격 구조", "지지·저항"]
     if indicators.get("sma60") is not None or indicators.get("sma120") is not None:
         used_indicators.append("SMA60/120")
@@ -159,9 +162,19 @@ def validate_chart_explanation_contract(value: dict[str, Any]) -> dict[str, Any]
         if not isinstance(focus_groups, dict):
             raise ValueError("chart explanation focusGroups are invalid")
         allowed_ids = set(focus_ids)
+        allowed_group_keys = {"evidence", "levels", "trend", "pattern", "support", "resistance"}
+        if any(key not in allowed_group_keys for key in focus_groups):
+            raise ValueError("chart explanation focusGroups contain unsupported groups")
         for key in ("evidence", "pattern", "support", "resistance"):
             ids = focus_groups.get(key)
             if not isinstance(ids, list) or not all(isinstance(item, str) and item in allowed_ids for item in ids):
+                raise ValueError(f"chart explanation focusGroups.{key} is invalid")
+        for key in ("levels", "trend"):
+            ids = focus_groups.get(key)
+            if ids is not None and (
+                not isinstance(ids, list)
+                or not all(isinstance(item, str) and item in allowed_ids for item in ids)
+            ):
                 raise ValueError(f"chart explanation focusGroups.{key} is invalid")
     source = value.get("source")
     if source is not None and (
@@ -390,12 +403,26 @@ def _focus_groups(
         ]
 
     geometry_hash = str((primary_pattern or {}).get("geometryHash") or "")
-    return {
+    result = {
         "evidence": list(drawing_ids),
         "pattern": [drawing_id for drawing_id in drawing_ids if geometry_hash and geometry_hash in drawing_id],
         "support": level_ids(geometry.get("supports")),
         "resistance": level_ids(geometry.get("resistances")),
     }
+    drawing_groups = geometry.get("drawingGroups")
+    if isinstance(drawing_groups, dict):
+        def stored_group(name: str) -> list[str]:
+            requested = {
+                str(item)
+                for item in drawing_groups.get(name) or []
+                if isinstance(item, str) and item
+            }
+            return [drawing_id for drawing_id in drawing_ids if drawing_id in requested]
+
+        result["levels"] = stored_group("levels")
+        result["trend"] = stored_group("trend")
+        result["pattern"] = stored_group("pattern")
+    return result
 
 
 def _candles(chart_context: dict[str, Any]) -> list[dict[str, Any]]:

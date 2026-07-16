@@ -39,20 +39,43 @@ class AnalysisEvalFixtureTest(unittest.TestCase):
 
         first = analyze_geometry("NVDA", "1D", rows)
         second = analyze_geometry("NVDA", "1D", rows)
+        canonical_first = json.dumps(first, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        canonical_second = json.dumps(second, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
         self.assertEqual(first, second)
+        self.assertEqual(canonical_first, canonical_second)
         self.assertLessEqual(len(first["drawings"]), 8)
         self.assertLessEqual(len(first["supports"]), 2)
         self.assertLessEqual(len(first["resistances"]), 2)
         timestamps = {row["timestamp"] for row in rows}
         for drawing in first["drawings"]:
-            self.assertIn(drawing["type"], {"horizontalLine", "trendLine"})
+            self.assertIn(drawing["type"], {"horizontalLine", "trendLine", "trendParallelLines"})
             self.assertEqual((drawing["symbol"], drawing["interval"]), ("NVDA", "1D"))
             self.assertEqual(drawing["sourceInterval"], "1D")
-            expected_line_style = "dashed" if ":level:" in drawing["id"] else "solid"
-            self.assertEqual(drawing["style"]["lineStyle"], expected_line_style)
+            if drawing["id"] in first["drawingGroups"]["levels"]:
+                self.assertIn(drawing["style"]["lineStyle"], {"solid", "dashed"})
+            else:
+                self.assertEqual(drawing["style"]["lineStyle"], "solid")
             for anchor in drawing["anchors"]:
                 self.assertIn(anchor["timestamp"], timestamps)
+
+    def test_geometry_ignores_unclosed_future_candle_after_as_of(self):
+        rows = json.loads((FIXTURES / "nvda-1d.json").read_text(encoding="utf-8"))[-380:]
+        future = {
+            **rows[-1],
+            "candleKey": "2099-01-01T00:00:00.000Z",
+            "timestamp": "2099-01-01T00:00:00.000Z",
+            "open": 1_000_000.0,
+            "high": 1_000_100.0,
+            "low": 999_900.0,
+            "close": 1_000_050.0,
+            "isClosed": False,
+        }
+
+        at_as_of = analyze_geometry("NVDA", "1D", rows)
+        with_future = analyze_geometry("NVDA", "1D", [*rows, future])
+
+        self.assertEqual(at_as_of, with_future)
 
     def test_recorded_regression_window_does_not_create_two_point_only_asset(self):
         manifest = json.loads((FIXTURES / "manifest.json").read_text(encoding="utf-8"))

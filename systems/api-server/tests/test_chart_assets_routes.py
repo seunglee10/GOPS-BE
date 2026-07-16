@@ -44,9 +44,9 @@ class FailingQueue:
 
 
 class FailingStorage:
-    def get_symbol_assets(self, _symbol): raise RuntimeError("clickhouse unavailable")
-    def coverage(self, _symbols=None): raise RuntimeError("clickhouse unavailable")
-    def delete(self, _symbols, _intervals): raise RuntimeError("clickhouse unavailable")
+    def get_symbol_assets(self, _symbol): raise RuntimeError("postgres unavailable")
+    def coverage(self, _symbols=None): raise RuntimeError("postgres unavailable")
+    def delete(self, _symbols, _intervals): raise RuntimeError("postgres unavailable")
 
 
 class ChartAssetsRoutesTest(unittest.TestCase):
@@ -120,9 +120,9 @@ class ChartAssetsRoutesTest(unittest.TestCase):
         self.assertTrue(second.json()["coalesced"])
         self.assertEqual(len(self.queue.items), 1)
 
-    def test_sp500_build_expands_registry_and_preserves_envelope_options(self):
+    def test_sp500_non_force_build_expands_registry_and_preserves_envelope_options(self):
         response = self.client.post("/api/charts/analysis-assets/build", json={
-            "symbols": "sp500", "intervals": ["1m", "1D"], "force": True,
+            "symbols": "sp500", "intervals": ["1m", "1D"], "force": False,
         })
 
         self.assertEqual(response.status_code, 202)
@@ -131,7 +131,16 @@ class ChartAssetsRoutesTest(unittest.TestCase):
         self.assertEqual(envelope["intervals"], ["1m", "1D"])
         self.assertNotIn("llmEnabled", envelope)
         self.assertNotIn("skipFreshHours", envelope)
-        self.assertTrue(envelope["force"])
+        self.assertFalse(envelope["force"])
+
+    def test_sp500_force_build_is_rejected_before_queueing(self):
+        response = self.client.post("/api/charts/analysis-assets/build", json={
+            "symbols": "sp500", "intervals": ["1m", "1D"], "force": True,
+        })
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("force refresh", response.json()["detail"])
+        self.assertEqual(len(self.queue.items), 0)
 
     def test_sp500_build_rejects_missing_registry_instead_of_using_fallback(self):
         with patch("app.routes.chart_assets.sp500_universe_symbols", return_value=[]):

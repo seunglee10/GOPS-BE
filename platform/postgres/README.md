@@ -9,41 +9,36 @@ systems/order/jobs/migrations
 systems/agent-orchestration/jobs/chart-asset-migrations
 ```
 
-## Chart Analysis Assets
+## Chart Geometry Assets
 
-`chart_assets.analysis_assets` stores exactly one latest JSONB row per
-`(symbol, interval)`. It stores no candle, rejected-candidate ledger, prompt,
-response, or build log. The chart asset public routes keep the same shape while
-`CHART_ASSET_STORAGE_MODE` controls a guarded migration:
+`chart_assets.geometry_assets` stores exactly one latest Geometry JSONB payload
+per `(symbol, interval)`. Runtime storage is PostgreSQL-only; there is no
+ClickHouse asset table, guarded dual-write mode, or `CHART_ASSET_STORAGE_MODE`.
+Canonical candles and optional repair materialization continue to live in
+ClickHouse and are not copied into the asset payload.
 
-```text
-clickhouse
-dual_clickhouse_read
-dual_postgres_read
-postgres
-```
+The row keeps query/audit projections (`as_of`, `generated_at`, versions,
+coverage state, drawing count, payload bytes, input/payload digests) beside the
+JSONB payload. UPSERT replaces the complete payload only when `generated_at` is
+newer, or when the timestamp is equal and the canonical payload digest differs.
+A delayed older build is a no-op.
 
-Dual modes write both stores and read only the named primary. A primary write
-failure is fatal; a shadow failure is a visible warning and blocks cutover.
-Both stores arbitrate by `generated_at` and canonical payload digest. A
-conditional no-op that leaves primary/shadow payloads different is also a
-visible shadow warning; a delayed older build is never silently treated as a
-successful parity write.
-Delete must complete in both stores. Before changing the read primary, run the
-one-shot schema/sync job with build/delete maintenance enabled and require exact
-`symbol + interval + canonical payload digest` parity. Keep ClickHouse shadow
-writes for one observation release before `postgres`; table removal is a later
-operator migration. The sync/verify runner fails closed unless the builder
-Deployment is scaled to zero and all builder Pods have terminated.
+Geometry v6 keeps `assetVersion="geometry"` and adds optional fields under
+`geometry`. It uses the existing JSONB column and the existing 0..8 drawing
+constraint, so deployment does not delete rows, alter the table, or run a data
+backfill. Canonical UTF-8 payloads over 64 KiB are rejected before SQL execution;
+a failed build never replaces the previous successful row.
 
-Local Compose exposes the migration job through the `chart-assets-pg` profile.
-For local sync/verify, first stop `chart-asset-builder`, set
-`CHART_ASSET_STORAGE_MAINTENANCE=true`, and pass the selected
-`CHART_ASSET_MIGRATION_ACTION` to the one-shot Compose service.
-EKS uses `infra/k8s/base/job-chart-asset-migrations.yaml` and
-`scripts/aws/run-chart-asset-migrations-job.sh`; runtime never creates the schema.
-The one-shot `verify` action idempotently reapplies `CREATE ... IF NOT EXISTS`
-before its read-only parity comparison; `upsertedRows` reports actual conditional
-writes and `attemptedRows` reports the source rows examined by sync.
+New build and refresh jobs accept only `1m` and `1D`. Existing rows for
+`5m/10m/1h/4h/1W` remain readable and can be removed by explicit selected-pair
+DELETE. `chart_assets.geometry_build_jobs` and `geometry_build_items` own queue,
+priority, lease, bounded log, coalescing, cancel, and polling state. S&P500-wide
+force refresh is not supported.
+
+The migration jobs remain the bootstrap path for a fresh PostgreSQL database;
+they are not a Geometry v6 rollout step. `CHART_ASSET_STORAGE_MAINTENANCE=true`
+keeps GET available while blocking build and DELETE during an operator-owned
+schema maintenance window.
+
 AWS/EKS can point `DATABASE_*` or `DATABASE_URL` at the in-cluster database or
 RDS. Never commit real passwords or connection strings.

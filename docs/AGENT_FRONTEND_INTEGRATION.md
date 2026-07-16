@@ -533,13 +533,18 @@ layout props에 저장한다.
 
 패널 상단은 연결된 `종목 · 주기`를 표시하고 `차트 선택` 모드에서 대상 차트 외곽선을
 강조한다. 다른 차트를 클릭하거나 목록에서 선택하면 `chartDocumentId`를 바꾸며, 각 문서의
-답변 기록은 별도로 보존·복원한다. 해설 카드 hover/focus는 transient spotlight, click은
-고정 spotlight이며 대상 선은 signal 색상과 증가한 두께로 표시한다.
+답변 기록은 별도로 보존·복원한다. 현재 해설은 지지·저항, 추세, 패턴 세 섹션을 항상
+유지하고 적격 결과가 없으면 그 상태를 명시한다. 섹션 hover/focus는 해당 drawing만
+강조하고 같은 `analysisTrace`의 근거 pivot, touch, reaction marker를 비영속 overlay로
+표시한다. click은 한 섹션만 확장·고정하며 다른 섹션을 hover한 뒤 leave하면 고정 섹션으로
+복귀한다. 수치 카드는 자산에 저장된 metrics만 사용하고 브라우저에서 점수나 ATR 값을
+다시 계산하지 않는다.
 
 요청에는 `chartDocumentId`, `sourcePanelId`, 당시 asset identity를 넣는다. 서버 응답의
 source document와 현재 문서가 같고 `symbol/interval/assetVersion/algorithmVersion/
 inputDigest/asOf`가 모두 일치할 때만 `focusGroups`의 기존 drawing과 로컬 proposal을
-transient spotlight한다. 불일치는 `분석 기준 변경됨`, 삭제된 문서는 `원본 차트 없음`으로
+transient spotlight한다. v1의 기존 evidence/pattern/support/resistance와 optional
+levels/trend group을 모두 지원한다. 불일치는 `분석 기준 변경됨`, 삭제된 문서는 `원본 차트 없음`으로
 표시하고 snapshot 수치는 유지하되 focus하지 않는다. 선택 봉 anchor도 같은 symbol/interval의
 canonical timestamp가 현재 candle에 있을 때만 focus한다. 이 상태는 chart history에
 저장하지 않는다. 일반 질문은 기존 Wild 흐름을 유지한다.
@@ -645,13 +650,26 @@ canonical candle timestamp로만 snap하며 대응 봉이 없으면 해당 drawi
 저장된 과거 접촉 봉이 아직 차트에 로드되지 않았으면 현재 로드된 첫·마지막 canonical
 candle timestamp에 presentation anchor를 투영해 즉시 표시한다. PostgreSQL 원본
 접촉 timestamp는 변경하지 않으며 패턴 경계의 timed anchor에는 이 예외를 적용하지 않는다.
-패널은 `1m/5m/10m/1h/4h/1D/1W`를 지원하고 지지·저항, 삼각형·깃발형·페넌트·
-직사각형·쐐기·채널 이탈 패턴, coverage,
-SMA60·SMA120과 최근 교차 상태를 표시한다. `chart-asset:` 근거와 `chart-plan:` 제안은
-차트별 `작도`, `제안` 토글로 독립 제어하며 사용자 수동 drawing은 보존한다. 지지·저항은
-기존 zone metadata를 다시 계산하지 않고 2.5px 단일 H-Line으로 표시한다. 패턴 경계는
-3.5px 실선이며 대표 경계에 이름·상태를 표시하고 forming은 낮은 불투명도로 표현한다. 새 자산은
-`primaryPattern`을 우선 표시하고 기존 geometry 자산은 `primaryTriangle`로 호환한다.
+패널은 기존 자산 표시용으로 `1m/5m/10m/1h/4h/1D/1W`를 지원하고 지지·저항, 대각
+추세선·평행 채널, 삼각형·깃발형·페넌트·직사각형·쐐기·채널 이탈 패턴, coverage,
+SMA60·SMA120과 최근 교차 상태를 표시한다. 신규 build/refresh는 `1m/1D`뿐이다.
+자동 분석은 `해석`, `저항(지지·저항)`, `추세`, `패턴`, `제안` 다섯 토글로 나눈다.
+초기값은 저항·추세·패턴 ON, 해석·제안 OFF이며 사용자 수동 drawing은 어느 토글도
+변경하지 않는다. `drawingGroups`가 levels/trend/pattern 분류 원본이고 구자산은 ID와
+geometry metadata로 fallback 분류한다. SMA60/120과 cross는 추세가 소유한다.
+
+지지·저항은 저장된 zone을 재계산하지 않고 importance에 따라 major 3px solid,
+standard 2.25px dashed, minor 1.5px dotted H-Line으로 표시한다. importance가 없는
+구자산은 기존 2.5px 표현을 사용한다. 일반 추세는 `trendLine`, 채널은 3-anchor
+`trendParallelLines` 하나로 렌더링한다. 패턴 경계는 기존 3.5px 표현과 golden을
+유지한다. 새 자산은 `primaryPattern`을 우선 표시하고 기존 geometry 자산은
+`primaryTriangle`로 호환한다.
+
+해석 ON은 retained 선택·탈락 후보를 모두 Canvas overlay로 표시한다. OFF에서도 해설
+hover 중에는 관련 trace subset만 임시 표시한다. overlay는 chart document, undo/history,
+export, PostgreSQL drawing 예산에 넣지 않는다. 데스크톱에서는 첫 줄에 다섯 토글,
+둘째 줄에 as-of를 배치한다. 이번 변경에는 mobile-specific 축약 메뉴, touch gesture,
+mobile visual regression을 추가하지 않는다.
 기존 7개 interval 자산은 계속 표시할 수 있지만 새 빌드 선택지는 `1m/1D` 두 개뿐이며
 둘 다 기본 선택한다. 동일 실행 중 요청에 합쳐진 경우 이를 안내하고 polling은 기존
 job URL을 사용한다. 상태 화면은 수동 우선 작업과 정기 작업을 구분해 표시한다.
@@ -679,12 +697,11 @@ click spotlight 동안 해당 문서만 강조한다. 수동 drawing 선 두께�
 교육용 UI이며 주문·알림 route를 호출하거나 신뢰
 원본으로 사용하지 않는다.
 
-이 해설·질문 통합은 저장된 Geometry asset의 consumer 변경이다. 배포 시 기존
-`geometry_assets`를 그대로 읽으며 chart asset build/FORCE 재생성/migration Job을 실행하거나
-Geometry CronJob을 중지하지 않는다. AWS 개발 환경에는
-`CHART_INTERPRETATION_ONLY=true FORCE_SERVICES=frontend,agent-orchestrator` 경로로
-배포해 frontend, analysis worker, compatibility orchestrator만 교체한다. 공유 agent
-image를 사용하는 builder·CronJob·다른 agent workload에는 새 태그를 적용하지 않는다.
+Geometry v6 배포는 기존 `geometry_assets`를 삭제하거나 일괄 재생성하지 않는다.
+reader가 optional v6 필드와 구자산 fallback을 처리하는 상태로 먼저 배포하고, 이후
+개발 패널에서 선택한 symbol의 `1m` 또는 `1D`만 명시적인 manual force로 덮어쓴다.
+JSONB와 기존 8-drawing check 안에서 동작하므로 v6용 migration Job이나 Geometry
+CronJob 조작은 하지 않는다.
 
 SMA 기간은 일수가 아니라 현재 interval의 완료 봉 개수다. SMA60과 SMA120 overlay는
 Geometry 자산 적용 시 함께 활성화한다. 골든·데드크로스 metadata의

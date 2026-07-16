@@ -196,12 +196,14 @@ layout migration. See `platform/s3/README.md` for exact prefixes.
   have tested upper bounds.
 
 Persisted chart-analysis assets are an offline build projection, not an API
-request-derived cache. The independent builder reads canonical ClickHouse candles
-for the requested interval. Missing `5m/10m` ranges fetch Alpaca `1Min`; missing
-`1h/4h` ranges fetch Alpaca `10Min`. The real regular-session source rows are
-stored before the requested session-aligned target is materialized and re-read
-from ClickHouse. `1W` continues to derive from canonical `1D`. This analysis
-repair path does not use S3, Redis, or Kafka.
+request-derived cache. New build and refresh envelopes accept only `1m` and `1D`;
+the independent builder reads their canonical completed candles from ClickHouse.
+Existing `5m/10m/1h/4h/1W` asset rows remain readable and explicitly deletable,
+but are not regenerated. When repair is enabled, only a requested missing range
+is fetched from Alpaca and its real canonical source rows are stored before the
+builder re-reads ClickHouse. This analysis repair path does not use S3, Redis, or
+Kafka. Local fixture tests inject a candle loader and disable repair, so they do
+not require Alpaca credentials or make provider calls.
 
 Alpaca may legitimately omit an intraday slot with no bar. A successful provider
 request with no matching real candle is `provider_confirmed_empty`, not an OHLCV
@@ -219,13 +221,15 @@ session has completed and its `1D` candle is absent. It does not wait for the
 generic three-calendar-day tolerance, and weekends, holidays, pre-close sessions,
 and standard or configured early closes do not create false tail gaps.
 
-Only compact final v2 assets are written. Default deployments still use the
-ClickHouse compatibility table; guarded dual-write modes can move the single
-latest `(symbol, interval)` JSON projection to PostgreSQL. Canonical candles and
-repair materialization never move. Repair has no CronJob or candle-closed
-subscription. Redis is limited to the existing job status key and pub/sub
-channel. The development delete route removes explicit pairs from every active
-asset store; it is not retention or automatic cleanup.
+Only compact Geometry assets are written to PostgreSQL
+`chart_assets.geometry_assets`, one latest JSONB row per `(symbol, interval)`.
+There is no ClickHouse asset projection or dual-write mode; ClickHouse continues
+to own canonical candles and optional repair materialization. Build jobs, items,
+bounded logs, status polling, and explicit pair deletion are also PostgreSQL
+contracts. Repair has no CronJob or candle-closed subscription. The development
+delete route is not retention or automatic cleanup. Geometry v6 stays within the
+existing eight-drawing and 64 KiB payload bounds, so it requires no table or data
+migration.
 
 The chart-analysis kernel may derive a daily MA60/MA120 crossing event from 121
 canonical completed closes. This is an asset-build feature, not a persisted

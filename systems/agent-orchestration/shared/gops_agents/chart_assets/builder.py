@@ -12,11 +12,10 @@ from alfaka.analytics.geometry import ALGORITHM_VERSION, MINIMUM_BARS, TARGET_BA
 from .candles import ChartAssetCandleLoader
 from .envelope import ChartAssetBuildEnvelope, utc_now_iso
 from .progress import build_progress_store_from_env
-from .storage import build_chart_asset_storage_from_env
+from .storage import MAX_ASSET_BYTES, build_chart_asset_storage_from_env
 
 
 ASSET_VERSION = "geometry"
-MAX_ASSET_BYTES = 64 * 1024
 
 
 class ChartAssetBuilder:
@@ -98,6 +97,20 @@ class ChartAssetBuilder:
                 return item
             result = analyze_geometry(symbol, interval, rows)
             generated_at = utc_now_iso()
+            geometry = {
+                "drawings": result["drawings"],
+                "supports": result["supports"],
+                "resistances": result["resistances"],
+                "patterns": result["patterns"],
+                "primaryPattern": result["primaryPattern"],
+                "tradePlan": result["tradePlan"],
+                "primaryTriangle": result["primaryTriangle"],
+                "historicalTriangle": result["historicalTriangle"],
+                "evidence": result["evidence"],
+            }
+            for optional_field in ("trends", "primaryTrend", "drawingGroups", "analysisTrace"):
+                if optional_field in result:
+                    geometry[optional_field] = result[optional_field]
             asset = {
                 "assetVersion": ASSET_VERSION,
                 "algorithmVersion": ALGORITHM_VERSION,
@@ -119,23 +132,22 @@ class ChartAssetBuilder:
                     "lastActualClosedAt": coverage.get("lastActualClosedAt") or rows[-1]["timestamp"],
                     "qualityFlags": list(coverage.get("qualityFlags") or []),
                 },
-                "geometry": {
-                    "drawings": result["drawings"],
-                    "supports": result["supports"],
-                    "resistances": result["resistances"],
-                    "patterns": result["patterns"],
-                    "primaryPattern": result["primaryPattern"],
-                    "tradePlan": result["tradePlan"],
-                    "primaryTriangle": result["primaryTriangle"],
-                    "historicalTriangle": result["historicalTriangle"],
-                    "evidence": result["evidence"],
-                },
+                "geometry": geometry,
                 "indicators": result["indicators"],
             }
-            encoded = json.dumps(asset, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
-            if len(encoded.encode("utf-8")) > MAX_ASSET_BYTES:
-                raise ValueError(f"geometry asset payload exceeds {MAX_ASSET_BYTES} bytes")
+            asset, encoded = _fit_asset_payload(asset)
+            geometry = asset["geometry"]
+            payload_bytes = len(encoded.encode("utf-8"))
             saved = self.storage.save(asset)
+            self._record_asset_log(
+                envelope.job_id,
+                symbol=symbol,
+                interval=interval,
+                algorithm_version=str(asset["algorithmVersion"]),
+                payload_bytes=payload_bytes,
+                trace=geometry.get("analysisTrace"),
+                saved=saved is not False,
+            )
             status = "saved" if saved is not False else "unchanged"
             item = _item(
                 symbol, interval, status, "storage", started,
@@ -147,6 +159,45 @@ class ChartAssetBuilder:
             item = _item(symbol, interval, "failed", "build", started, error=f"{exc.__class__.__name__}: {exc}")
         self.progress.record_item(envelope.job_id, item)
         return item
+
+    def _record_asset_log(
+        self,
+        job_id: str,
+        *,
+        symbol: str,
+        interval: str,
+        algorithm_version: str,
+        payload_bytes: int,
+        trace: Any,
+        saved: bool,
+    ) -> None:
+        trace_payload = trace if isinstance(trace, dict) else {}
+        omitted = trace_payload.get("omittedCounts")
+        omitted_payload = omitted if isinstance(omitted, dict) else {}
+        log = {
+            "event": "chart_asset_saved" if saved else "chart_asset_unchanged",
+            "symbol": symbol,
+            "interval": interval,
+            "algorithmVersion": algorithm_version,
+            "payloadBytes": payload_bytes,
+            "traceCandidates": {
+                name: len(trace_payload.get(name) or [])
+                for name in ("levelCandidates", "trendCandidates", "patternCandidates")
+            },
+            "traceOmitted": {
+                str(name): int(count or 0)
+                for name, count in sorted(omitted_payload.items(), key=lambda item: str(item[0]))
+            },
+        }
+        try:
+            self.progress.add_log(
+                job_id,
+                json.dumps(log, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+            )
+        except Exception:
+            # Asset persistence is authoritative. A bounded operational log must
+            # never turn a successful conditional UPSERT into a failed build.
+            return None
 
     def _repair(self, envelope: ChartAssetBuildEnvelope, symbol: str, interval: str) -> dict[str, Any]:
         if self.repair_service is None:
@@ -162,6 +213,17 @@ class ChartAssetBuilder:
                 break
         self.progress.record_repair(envelope.job_id, {"symbol": symbol, "interval": interval, **latest})
         return latest
+
+
+def _fit_asset_payload(asset: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    encoded = _canonical_asset_payload(asset)
+    if len(encoded.encode("utf-8")) > MAX_ASSET_BYTES:
+        raise ValueError(f"geometry asset payload exceeds {MAX_ASSET_BYTES} bytes")
+    return asset, encoded
+
+
+def _canonical_asset_payload(asset: dict[str, Any]) -> str:
+    return json.dumps(asset, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
 
 
 def _item(

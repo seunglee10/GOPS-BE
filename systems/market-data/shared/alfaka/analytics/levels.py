@@ -7,17 +7,26 @@ from typing import Any
 
 from .atr import atr_series
 from .config import QUALITY_CONFIG
+from .pivots import compute_pivots
 
 
 def compute_levels(
-    candles: list[dict[str, Any]], pivots: list[dict[str, Any]], *, atr: float,
+    candles: list[dict[str, Any]], pivots: list[dict[str, Any]] | None = None, *, atr: float,
     volume_profile: dict[str, Any], expected_bars: int, interval: str = "1D",
+    rejected_limit: int | None = 8,
 ) -> list[dict[str, Any]]:
+    config = QUALITY_CONFIG[interval]
+    if pivots is None:
+        display_index = max(0, len(candles) - config.display_bars)
+        pivots = compute_pivots(
+            candles,
+            display_from=str(candles[display_index]["timestamp"]),
+            interval=interval,
+        )
     structural = [item for item in pivots if item.get("grade") == "structural"]
     if not structural:
         return []
     atr_values = [float(value or 0) for value in atr_series(candles)]
-    config = QUALITY_CONFIG[interval]
     clusters = _bounded_clusters(structural, atr_values)
     vp_prices = _volume_profile_prices(volume_profile)
     levels = []
@@ -70,7 +79,7 @@ def compute_levels(
             "id": f"{interval}:level:{local_id}", "price": round(center, 2),
             "zoneLow": round(low, 4), "zoneHigh": round(high, 4), "halfWidthAtr": round(half_width_atr, 4),
             "score": round(max(0.0, min(1.0, score)), 4), "touches": len(episodes),
-            "reactionCount": len(valid), "touchEpisodes": episodes[-6:],
+            "reactionCount": len(valid), "touchEpisodes": episodes[-8:],
             "firstTestAt": candles[first_touch]["timestamp"], "lastTestAt": candles[last_touch]["timestamp"],
             "lastTouchAgeBars": age, "currentDistanceAtr": round(distance_atr, 4),
             "role": public_role, "state": state,
@@ -82,7 +91,9 @@ def compute_levels(
         })
     ordered = sorted(levels, key=lambda item: (-int(item["hardPass"]), -item["score"], item["currentDistanceAtr"], item["id"]))
     passed = [item for item in ordered if item["hardPass"]]
-    rejected = [item for item in ordered if not item["hardPass"]][:8]
+    rejected = [item for item in ordered if not item["hardPass"]]
+    if rejected_limit is not None:
+        rejected = rejected[:max(0, rejected_limit)]
     return passed + rejected
 
 

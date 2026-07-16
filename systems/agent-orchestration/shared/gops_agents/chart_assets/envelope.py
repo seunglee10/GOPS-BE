@@ -57,9 +57,11 @@ class ChartAssetBuildEnvelope:
         normalized_intervals = tuple(dict.fromkeys(str(interval).strip() for interval in intervals))
         if not normalized_symbols:
             raise ValueError("At least one chart asset symbol is required.")
-        invalid = sorted(set(normalized_intervals).difference(ALLOWED_INTERVALS))
+        invalid = sorted(set(normalized_intervals).difference(BUILD_INTERVALS))
         if invalid or not normalized_intervals:
-            raise ValueError(f"Unsupported chart asset intervals: {invalid or normalized_intervals}")
+            raise ValueError(
+                f"Chart asset builds support only 1m and 1D intervals: {invalid or normalized_intervals}"
+            )
         normalized_source = str(source or "").strip().lower()
         if normalized_source not in BUILD_SOURCES:
             raise ValueError(f"Unsupported chart asset build source: {normalized_source}")

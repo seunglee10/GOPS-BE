@@ -1299,17 +1299,27 @@ class AgentOrchestrationTests(unittest.TestCase):
 
         asset = {
             "assetVersion": "geometry", "symbol": "NVDA", "interval": "1D",
-            "asOf": "2026-07-14T00:00:00Z", "algorithmVersion": "ohlcv-consensus-pattern-families-v4",
+            "asOf": "2026-07-14T00:00:00Z", "algorithmVersion": "ohlcv-consensus-pattern-families-v6",
             "inputDigest": "sha256:nvda-existing", "coverage": {"state": "full", "qualityFlags": []},
             "geometry": {
                 "primaryPattern": {"kind": "bullish_flag", "state": "confirmed", "score": 0.9, "touches": 4, "geometryHash": "flag-hash"},
                 "supports": [{"id": "support-1", "price": 118.0}],
                 "resistances": [{"id": "resistance-1", "price": 126.0}],
+                "primaryTrend": {
+                    "id": "trend-1", "kind": "uptrend", "direction": "up", "score": 0.86,
+                    "drawingId": "chart-asset:NVDA:1D:trend-1",
+                },
                 "drawings": [
                     {"id": "chart-asset:NVDA:1D:support-1"},
                     {"id": "chart-asset:NVDA:1D:resistance-1"},
                     {"id": "chart-asset:NVDA:1D:flag-hash-upper"},
+                    {"id": "chart-asset:NVDA:1D:trend-1"},
                 ],
+                "drawingGroups": {
+                    "levels": ["chart-asset:NVDA:1D:support-1", "chart-asset:NVDA:1D:resistance-1"],
+                    "trend": ["chart-asset:NVDA:1D:trend-1"],
+                    "pattern": ["chart-asset:NVDA:1D:flag-hash-upper"],
+                },
                 "tradePlan": None,
             },
             "indicators": {},
@@ -1329,11 +1339,19 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(explanation["focusGroups"]["support"], ["chart-asset:NVDA:1D:support-1"])
         self.assertEqual(explanation["focusGroups"]["resistance"], ["chart-asset:NVDA:1D:resistance-1"])
         self.assertEqual(explanation["focusGroups"]["pattern"], ["chart-asset:NVDA:1D:flag-hash-upper"])
+        self.assertEqual(explanation["focusGroups"]["levels"], [
+            "chart-asset:NVDA:1D:support-1", "chart-asset:NVDA:1D:resistance-1",
+        ])
+        self.assertEqual(explanation["focusGroups"]["trend"], ["chart-asset:NVDA:1D:trend-1"])
+        self.assertEqual(explanation["facts"]["trend"]["id"], "trend-1")
         self.assertIs(validate_chart_explanation_contract(explanation), explanation)
         schema = json.loads((REPO_ROOT / "shared/chart-contract/chart-explanation.schema.json").read_text())
         self.assertEqual(schema["properties"]["version"]["const"], "chart-explanation.v1")
         self.assertNotIn("source", schema["required"], "source remains additive for old report readers")
         self.assertNotIn("focusGroups", schema["required"], "focusGroups remains additive for old report readers")
+        self.assertNotIn("trend", schema["properties"]["facts"]["required"])
+        self.assertNotIn("levels", schema["properties"]["focusGroups"]["required"])
+        self.assertNotIn("trend", schema["properties"]["focusGroups"]["required"])
 
     def test_time_aligned_news_received_after_anchor_is_followup_not_cause_candidate(self):
         from gops_agents.retrieval.snapshots import align_news_evidence

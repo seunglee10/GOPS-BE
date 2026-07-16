@@ -274,9 +274,10 @@ deterministic `OperationIR`을 그대로 쓴다. 차트 변경은 영구 `ChartC
 
 `chart_analysis_snapshot`의 `chartExplanation v1`은 패턴·확인 상태, 지지·저항,
 trade scenario와 무효화 조건, SMA60/120 교차, 선택 봉 feature, focus drawing ID,
-coverage를 typed fact로 보존한다. 요청의 `chartDocumentId/sourcePanelId`는 optional
-`source`로 echo하고, 저장 자산의 drawing ID만 `focusGroups`의 evidence/pattern/support/
-resistance로 분류한다. `focusIds`는 호환용 합집합으로 유지한다. 이 응답은 요청 시점의
+coverage를 typed fact로 보존한다. Geometry v6이면 optional trend fact도 저장한다.
+요청의 `chartDocumentId/sourcePanelId`는 optional `source`로 echo하고, 저장 자산의
+drawing ID만 `focusGroups`의 evidence/pattern/support/resistance와 optional levels/trend로
+분류한다. `focusIds`는 호환용 합집합으로 유지한다. 이 응답은 요청 시점의
 불변 snapshot이며 현재 Geometry asset과 identity가 정확히 일치할 때만 프런트가 focus한다.
 최종 문장과 숫자는 deterministic Korean narrator가 렌더링한다. 뉴스는 anchor window에서 `availableAt` cutoff를 통과한 항목만 원인 후보로
 정렬하고 이후 항목은 후속 뉴스로 분리하며, 인과가 아니라 시간상 연관으로 표현한다.
@@ -334,7 +335,7 @@ catalog를 image/runtime filesystem에 포함해야 한다.
 | --- | --- | --- |
 | `agent-orchestrator` | yes | HTTP compatibility endpoint and direct report lookup. |
 | `agent-analysis-worker` | yes | hot analysis request를 소비하고 report를 저장한다. |
-| `chart-asset-builder` | no | PostgreSQL queue의 symbol/interval item을 처리한다. 보존 정책상 scheduled item은 분석 전에 종료하고, 기존 자산은 선택 pair의 `manual + force`에서만 ClickHouse 완료 봉 감사·누락 range Alpaca 보충·Geometry v5 저장을 수행한다. 기존 v3/v4 자산은 reader가 그대로 사용한다. S3, Redis, Kafka, LLM을 사용하지 않으며 interactive orchestrator와 독립이다. |
+| `chart-asset-builder` | no | PostgreSQL queue의 `1m/1D` symbol/interval item을 처리한다. 보존 정책상 scheduled item은 분석 전에 종료하고, 기존 자산은 선택 pair의 `manual + force`에서만 ClickHouse 완료 봉 감사·선택적 누락 range Alpaca 보충·Geometry v6 PostgreSQL JSONB 저장을 수행한다. 다른 interval의 기존 자산은 reader가 그대로 사용한다. S3, Redis, Kafka, LLM을 사용하지 않으며 interactive orchestrator와 독립이다. |
 | `agent-delivery-gateway` | yes for async/SSE | result event를 Redis report update로 mirror한다. |
 | `agent-intent-classifier` | no | ambiguous query를 위한 optional cheap classifier. |
 | `deep-analysis-worker` | no | opt-in deep analysis request를 처리한다. |
@@ -454,7 +455,6 @@ market_data.sec_financial_facts
 market_data.sec_derived_metrics
 market_data.sec_frames
 market_data.sec_collection_runs
-market_data.chart_analysis_assets  # PostgreSQL cutover 전 compatibility/rollback projection
 ```
 
 Financial role contract:
