@@ -263,7 +263,7 @@ select_services_for_path() {
     infra/k8s/overlays/aws/scheduled/cronjob-notification-schedules.yaml)
       add_service backend
       ;;
-    infra/k8s/overlays/aws/scheduled/cronjob-sec-fundamentals-sync.yaml | infra/k8s/overlays/aws/scheduled/cronjob-yahoo-estimates-sync.yaml | infra/k8s/overlays/aws/scheduled/externalsecret-sec-fundamentals.yaml)
+    infra/k8s/overlays/aws/scheduled/cronjob-sec-fundamentals-sync.yaml | infra/k8s/overlays/aws/scheduled/cronjob-10k-profile-sync.yaml | infra/k8s/overlays/aws/scheduled/cronjob-yahoo-estimates-sync.yaml | infra/k8s/overlays/aws/scheduled/externalsecret-sec-fundamentals.yaml)
       add_service market-storage
       ;;
     infra/k8s/overlays/aws/scheduled/*)

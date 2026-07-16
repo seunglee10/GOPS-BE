@@ -39,7 +39,16 @@ class ClickHouseHttpClient:
     def _request(self, body: bytes) -> urllib.request.Request:
         headers = {"Content-Type": "text/plain; charset=utf-8", "X-ClickHouse-User": self.user}
         if self.password: headers["X-ClickHouse-Key"] = self.password
-        return urllib.request.Request(f"{self.base_url}/?{urllib.parse.urlencode({'database': self.database})}", data=body, headers=headers, method="POST")
+        query = urllib.parse.urlencode({
+            "database": self.database,
+            "date_time_input_format": "best_effort",
+        })
+        return urllib.request.Request(
+            f"{self.base_url}/?{query}",
+            data=body,
+            headers=headers,
+            method="POST",
+        )
 
 
 class ClickHouseReplayEventSource:

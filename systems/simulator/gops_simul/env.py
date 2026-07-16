@@ -13,7 +13,7 @@ def load_env_file(path: str | Path | None = None, *, override: bool = False) -> 
         env_path = Path(configured)
     else:
         local_env = PROJECT_ROOT / ".env"
-        repository_env = Path(__file__).resolve().parents[3] / ".env"
+        repository_env = repository_env_path(__file__)
         env_path = local_env if local_env.exists() else repository_env
     if not env_path.exists():
         return None
@@ -26,6 +26,14 @@ def load_env_file(path: str | Path | None = None, *, override: bool = False) -> 
         if override or key not in os.environ:
             os.environ[key] = value
     return env_path
+
+
+def repository_env_path(module_file: str | Path) -> Path:
+    resolved = Path(module_file).resolve()
+    application_env = resolved.parent.parent / ".env"
+    if len(resolved.parents) <= 3:
+        return application_env
+    return resolved.parents[3] / ".env"
 
 
 def parse_env_line(line: str) -> tuple[str, str] | None:

@@ -1,0 +1,68 @@
+# 역할: 주 1회 최신 SEC submissions를 확인하고 새 10-K가 있는 기업만 프로파일을 재생성합니다.
+# 일요일 21:30 UTC는 월요일 06:30 KST입니다.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: alfaka-ten-k-profile-sync
+  namespace: alfaka-market-data
+spec:
+  schedule: "30 21 * * 0"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 7200
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 7
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 604800
+      backoffLimit: 2
+      activeDeadlineSeconds: 14400
+      template:
+        metadata:
+          labels:
+            app: alfaka-ten-k-profile-sync
+        spec:
+          restartPolicy: Never
+          nodeSelector:
+            karpenter.sh/nodepool: batch
+          tolerations:
+            - key: gops.io/dedicated
+              operator: Equal
+              value: batch
+              effect: NoSchedule
+          serviceAccountName: alfaka-market-data-sa
+          containers:
+            - name: ten-k-profile-sync
+              image: YOUR_ECR_REPOSITORY/gops-market-storage:latest
+              imagePullPolicy: IfNotPresent
+              command: ["python", "-u", "systems/fundamentals/jobs/10k-profile-backfill/main.py"]
+              env:
+                - name: TEN_K_PROFILE_DRY_RUN
+                  value: "false"
+                - name: TEN_K_PROFILE_DOWNLOAD_IN_DRY_RUN
+                  value: "false"
+                - name: TEN_K_PROFILE_FORCE
+                  value: "false"
+                - name: TEN_K_PROFILE_SYMBOLS
+                  value: ""
+                - name: TEN_K_PROFILE_MAX_COMPANIES
+                  value: "0"
+                - name: SEC_USER_AGENT
+                  valueFrom:
+                    secretKeyRef:
+                      name: alfaka-sec-fundamentals-secret
+                      key: SEC_USER_AGENT
+                - name: OPENAI_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: alfaka-openai-secret
+                      key: OPENAI_API_KEY
+              envFrom:
+                - configMapRef:
+                    name: alfaka-market-data-config
+              resources:
+                requests:
+                  cpu: "1"
+                  memory: 1Gi
+                limits:
+                  cpu: "2"
+                  memory: 3Gi

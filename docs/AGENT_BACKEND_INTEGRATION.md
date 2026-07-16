@@ -232,6 +232,33 @@ GET  /api/agents/reports/{analysis_id}/stream
 WS   /ws/agent-alerts
 ```
 
+기업 비교 패널은 별도 read path를 사용한다.
+
+```text
+POST /api/llm/company-compare
+POST /api/llm/company-compare/quantitative
+GET  /api/llm/company-compare/candidates?symbol=NVDA
+```
+
+POST body는 `{baseSymbol, compareSymbols[], question?}`이며 비교 종목은 1~3개다.
+`company-compare.v1` 응답은 즉시 렌더링하는 `quantitative`와 `qualitative`, 후속 서술용
+`narrative`, `sources`, `dataGaps`를 분리한다. `/quantitative` 경로는 이름과 달리 두 저장
+근거 레이어를 모두 반환하되 LLM gateway는 호출하지 않으므로 표·차트·10-K·관계·뉴스가
+서술 생성 시간을 기다리지 않는다. `narrative.status`는 `not-requested`이고 OpenAI key가
+없어도 저장 근거 응답이 동작한다. 조회는 Redis/ClickHouse SEC projection, Yahoo
+estimates, Redis 10-K 카드, GraphDB, ClickHouse/Redis news만 사용하며 요청 중 SEC/Yahoo
+외부 API나 10-K 프로파일 생성은 실행하지 않는다. candidates route는 GraphDB
+same-theme evidence를 사용한다.
+
+두 POST route의 body는 `baseSymbol` 10자, 비교 심볼 1~3개, 선택 질문 1000자로 제한한다.
+인증이 활성화되면 기존 사용자별 agent rate limit을 공유하고 초과 응답은 `429`와
+`Retry-After`를 반환한다. 전체 서술 route는 데이터 revision 기반 Redis lazy cache를
+사용한다. cache key에는 정렬된 심볼, 질문, 재무·실적 기준일, 10-K accession, 뉴스
+revision, 안정된 GraphDB 관계가 들어가므로 어느 근거라도 바뀌면 새 서술을 만든다.
+기본 TTL은 86400초다. hit 응답도 strict schema와 evidence ref를 다시 검증하며
+`narrative.cache.status="hit"`을 반환한다. 같은 payload의 두 번째 요청은 OpenAI를
+호출하지 않는다.
+
 사용자 알림 표시 설정은 다음 session-auth route를 사용한다.
 
 ```text
@@ -660,6 +687,20 @@ broker route, Redis cache, or client supplied snapshot is used to fill a missing
 `AGENT_OPERATION_PLANNER_PROVIDER=openai` enables the slow-path structured
 OperationIR planner for low-confidence or ambiguous interactive requests. Keep it
 unset to run only deterministic extraction.
+
+## Company Compare M2/M3 bridge
+
+Public backend는 `POST /api/llm/company-compare`에서 저장된 SEC/Yahoo 정량 자료와
+10-K/GraphDB/news 정성 자료를 먼저 완성한 뒤
+`AGENT_ORCHESTRATOR_URL/company-compare/narrative`에 그 payload만 전달한다.
+agent-orchestrator가 OpenAI Responses API strict structured output을 실행하므로 LLM은
+데이터 조회나 수치 계산을 하지 않는다. 8개 데이터 섹션이 활성화되면 schema도 동일한
+8개 id를 빠짐없이 한 번씩 요구한다.
+
+AWS에서는 ExternalSecret `/gops/prod/agent-orchestrator/openai/api-key`가
+`alfaka-openai-secret.OPENAI_API_KEY`로 동기화되고 agent-orchestrator에 `envFrom`으로
+주입된다. 값은 manifest나 repo에 기록하지 않는다. 키 누락, timeout, schema 위반은
+public route 전체 실패가 아니라 `narrative.status=failed`와 정량-only 폴백으로 처리한다.
 
 ## Backend Reference Files
 

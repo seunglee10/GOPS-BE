@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import unittest
+import urllib.parse
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
@@ -20,7 +21,10 @@ from gops_simul.dataset import (
     REPLAY_SYMBOLS,
     in_half_open_window,
 )
+from gops_simul import env as simulator_env
 from gops_simul.tick_replay import InMemoryReplayEventSource, ReplayController, ReplayEvent
+from gops_simul.clickhouse import ClickHouseHttpClient
+from gops_simul.tools import import_alpaca
 from gops_simul.tools.import_alpaca import fetch_kind
 
 
@@ -68,6 +72,28 @@ def trade(sequence: int, seconds: float, symbol: str, price: float) -> ReplayEve
 
 
 class DatasetContractTests(unittest.TestCase):
+    def test_clickhouse_import_batches_are_large_enough_for_full_tick_volume(self):
+        self.assertGreaterEqual(import_alpaca.CLICKHOUSE_INSERT_BATCH_SIZE, 50_000)
+
+    def test_parallel_import_uses_deterministic_file_and_row_sequence(self):
+        self.assertGreaterEqual(import_alpaca.DEFAULT_IMPORT_WORKERS, 4)
+        self.assertEqual(import_alpaca.deterministic_source_sequence(0, 1), 1)
+        self.assertGreater(
+            import_alpaca.deterministic_source_sequence(1, 1),
+            import_alpaca.deterministic_source_sequence(0, 999_999_999),
+        )
+
+    def test_clickhouse_http_client_accepts_iso8601_event_timestamps(self):
+        request = ClickHouseHttpClient("http://clickhouse:8123")._request(b"SELECT 1")
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(request.full_url).query)
+        self.assertEqual(query["date_time_input_format"], ["best_effort"])
+
+    def test_installed_layout_uses_the_application_root_env_candidate(self):
+        self.assertEqual(
+            simulator_env.repository_env_path(Path("/app/gops_simul/env.py")),
+            Path("/app/.env"),
+        )
+
     def test_dataset_is_the_fixed_kst_day_and_twenty_companies(self):
         self.assertEqual(DATASET_ID, "sp500-top20-20260715-kst-v1")
         self.assertEqual(DATASET_START, datetime(2026, 7, 14, 15, 0, tzinfo=UTC))

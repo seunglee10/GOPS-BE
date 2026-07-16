@@ -832,6 +832,46 @@ SEC_FUNDAMENTALS_SYMBOLS=AAPL,NVDA \
 ./scripts/aws/run-sec-fundamentals-backfill-job.sh
 ```
 
+## 10-K Company Profiles
+
+Company Compare의 10-K 프로파일은 agent image가 아니라 `gops-market-storage` image의
+`systems/fundamentals/jobs/10k-profile-backfill/main.py`에서 생성한다. EDGAR Item 1/1A
+원문은 S3 `fundamentals/sec/10k-profiles/{SYMBOL}/{ACCESSION}/sections.json`에 보관하고,
+agent hot path에는 Redis `profile:10k:{SYMBOL}`의 5–10KB 카드만 제공한다. 같은 accession은
+기본적으로 다시 생성하지 않는다.
+
+Required env:
+
+```text
+SEC_USER_AGENT
+OPENAI_API_KEY
+TEN_K_PROFILE_DRY_RUN
+TEN_K_PROFILE_SYMBOLS
+TEN_K_PROFILE_MAX_COMPANIES
+TEN_K_PROFILE_S3_PREFIX
+TEN_K_PROFILE_REDIS_TTL_SECONDS
+TEN_K_PROFILE_MODEL
+S3_BUCKET
+REDIS_URL
+```
+
+AWS scheduled sync is `infra/k8s/overlays/aws/scheduled/cronjob-10k-profile-sync.yaml`.
+It runs weekly at `30 21 * * 0` UTC (Monday 06:30 KST) and reads both required secrets:
+
+```text
+alfaka-sec-fundamentals-secret.SEC_USER_AGENT
+alfaka-openai-secret.OPENAI_API_KEY
+```
+
+`alfaka-openai-secret` is the ExternalSecret synchronized from
+`/gops/prod/agent-orchestrator/openai/api-key`; the CronJob and manual wrapper never
+embed or print the plaintext value. A targeted manual EKS run uses:
+
+```sh
+TEN_K_PROFILE_SYMBOLS=NVDA,AMD \
+./scripts/aws/run-10k-profile-backfill-job.sh
+```
+
 ## GraphDB
 
 Ontology provider는 GraphDB SPARQL endpoint가 있을 때 relationship snapshot을

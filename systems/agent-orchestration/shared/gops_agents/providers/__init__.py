@@ -561,6 +561,119 @@ class EmptyMacroProvider(MacroProvider):
         ]
 
 
+class TenKProfileProvider:
+    """Reads batch-generated 10-K profile cards from Redis only.
+
+    The provider deliberately has no SEC or OpenAI fallback. Interactive compare
+    requests must degrade to no-data instead of turning the hot path into a filing
+    download or profile-generation job.
+    """
+
+    def __init__(self, redis_client=None):
+        self.redis_client = redis_client
+
+    def fetch(self, request: ProviderRequest) -> list[EvidenceItem]:
+        symbols = provider_request_symbols(request)
+        evidence: list[EvidenceItem] = []
+        for symbol in symbols:
+            payload = self.profile(symbol)
+            if not payload:
+                evidence.append(
+                    EvidenceItem.no_data(
+                        "ten-k-profile",
+                        f"{symbol} 10-K profile not available",
+                        f"{symbol}의 배치 생성 10-K 프로파일 카드가 Redis에 없습니다.",
+                    )
+                )
+                evidence[-1].raw = {"symbol": symbol, "redisKey": ten_k_profile_key(symbol)}
+                continue
+            evidence.append(ten_k_profile_to_evidence(payload, symbol))
+        return evidence
+
+    def profile(self, symbol: str) -> dict[str, Any] | None:
+        client = self.redis_client
+        if client is None and os.getenv("REDIS_URL"):
+            client = self._default_redis_client()
+        if client is None:
+            return None
+        try:
+            value = client.get(ten_k_profile_key(symbol))
+        except Exception:
+            return None
+        if not value:
+            return None
+        if isinstance(value, bytes):
+            value = value.decode("utf-8")
+        try:
+            payload = json.loads(value)
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        payload_symbol = str(payload.get("symbol") or "").strip().upper()
+        if payload_symbol and payload_symbol != normalize_financial_symbol(symbol):
+            return None
+        return payload
+
+    def _default_redis_client(self):
+        import redis
+
+        self.redis_client = redis.from_url(
+            os.getenv("REDIS_URL", "redis://localhost:6379/0"),
+            decode_responses=True,
+            socket_connect_timeout=float(os.getenv("REDIS_CONNECT_TIMEOUT_SECONDS", "0.2")),
+            socket_timeout=float(os.getenv("REDIS_SOCKET_TIMEOUT_SECONDS", "0.2")),
+        )
+        return self.redis_client
+
+
+def ten_k_profile_key(symbol: str) -> str:
+    return f"profile:10k:{normalize_financial_symbol(symbol)}"
+
+
+def provider_request_symbols(request: ProviderRequest) -> list[str]:
+    symbols: list[str] = []
+    for value in (request.symbol, *request.symbols):
+        symbol = str(value or "").strip().upper()
+        if re.fullmatch(r"[A-Z0-9][A-Z0-9.\-]{0,15}", symbol) and symbol not in symbols:
+            symbols.append(symbol)
+    return symbols
+
+
+def ten_k_profile_to_evidence(payload: dict[str, Any], symbol: str) -> EvidenceItem:
+    business_model = str(payload.get("businessModel") or "").strip()
+    risk_factors = [item for item in payload.get("riskFactors") or [] if isinstance(item, dict)]
+    if not business_model and not risk_factors:
+        return EvidenceItem.no_data(
+            "ten-k-profile",
+            f"{symbol} 10-K profile is empty",
+            f"{symbol}의 10-K 프로파일 카드에 사업 또는 리스크 요약이 없습니다.",
+        )
+    summary = business_model or f"{symbol} 10-K 리스크 요약 {len(risk_factors)}건"
+    return EvidenceItem(
+        provider="ten-k-profile",
+        status="available",
+        title=str(payload.get("sourceFiling") or f"{symbol} latest 10-K profile"),
+        summary=summary,
+        observedAt=str(payload.get("generatedAt") or payload.get("filingDate") or utc_now_iso()),
+        url=payload.get("sourceUrl"),
+        raw={
+            "symbol": symbol,
+            "companyName": payload.get("companyName"),
+            "sourceFiling": payload.get("sourceFiling"),
+            "sourceAccession": payload.get("sourceAccession"),
+            "filingDate": payload.get("filingDate"),
+            "reportDate": payload.get("reportDate"),
+            "generatedAt": payload.get("generatedAt"),
+            "businessModel": business_model,
+            "revenueDrivers": [str(item) for item in payload.get("revenueDrivers") or [] if str(item).strip()],
+            "competitivePosition": str(payload.get("competitivePosition") or "").strip(),
+            "riskFactors": risk_factors,
+            "rawSectionsS3Key": payload.get("rawSectionsS3Key"),
+        },
+    )
+
+
 class ClickHouseFinancialProvider(FinancialProvider):
     def __init__(self, clickhouse_provider=None, redis_client=None, limit: int | None = None):
         self.clickhouse_provider = clickhouse_provider
@@ -1153,8 +1266,14 @@ class GraphDBOntologyProvider(OntologyProvider):
             ]
 
         primary_rows = [
-            *per_symbol_rows[primary_symbol]["theme"],
-            *per_symbol_rows[primary_symbol]["control"],
+            *(
+                row
+                for symbol in requested
+                for row in (
+                    *per_symbol_rows[symbol]["theme"],
+                    *per_symbol_rows[symbol]["control"],
+                )
+            ),
             *theme_matched_rows,
         ]
         evidence = dedupe_evidence([row_to_ontology_evidence(row) for row in primary_rows])

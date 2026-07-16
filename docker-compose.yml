@@ -449,6 +449,50 @@ services:
       - app_net
       - data_net
 
+  ten-k-profile-backfill:
+    profiles: ["jobs"]
+    image: gops-market-storage
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-market-storage
+    container_name: alfaka-ten-k-profile-backfill
+    env_file: .env
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_URL: "redis://redis:6379/0"
+      AWS_REGION: "${AWS_REGION:-ap-northeast-2}"
+      AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-ap-northeast-2}"
+      AWS_EC2_METADATA_DISABLED: "${AWS_EC2_METADATA_DISABLED:-true}"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
+      AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
+      AWS_PROFILE: "${AWS_PROFILE:-default}"
+      AWS_SDK_LOAD_CONFIG: "${AWS_SDK_LOAD_CONFIG:-1}"
+      S3_ENDPOINT_URL: "${DOCKER_S3_ENDPOINT_URL:-}"
+      S3_ACCESS_KEY_ID: "${S3_ACCESS_KEY_ID:-}"
+      S3_SECRET_ACCESS_KEY: "${S3_SECRET_ACCESS_KEY:-}"
+      S3_SESSION_TOKEN: "${S3_SESSION_TOKEN:-}"
+      S3_BUCKET: "${S3_BUCKET:-gops-market-data-<aws-account-id>-ap-northeast-2-an}"
+      TEN_K_PROFILE_DRY_RUN: "${TEN_K_PROFILE_DRY_RUN:-true}"
+      TEN_K_PROFILE_DOWNLOAD_IN_DRY_RUN: "${TEN_K_PROFILE_DOWNLOAD_IN_DRY_RUN:-false}"
+      TEN_K_PROFILE_FORCE: "${TEN_K_PROFILE_FORCE:-false}"
+      TEN_K_PROFILE_SYMBOLS: "${TEN_K_PROFILE_SYMBOLS:-}"
+      TEN_K_PROFILE_MAX_COMPANIES: "${TEN_K_PROFILE_MAX_COMPANIES:-0}"
+      TEN_K_PROFILE_S3_PREFIX: "${TEN_K_PROFILE_S3_PREFIX:-fundamentals/sec/10k-profiles}"
+      TEN_K_PROFILE_REDIS_TTL_SECONDS: "${TEN_K_PROFILE_REDIS_TTL_SECONDS:-0}"
+      TEN_K_PROFILE_MODEL: "${TEN_K_PROFILE_MODEL:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      SEC_USER_AGENT: "${SEC_USER_AGENT:-}"
+    command: ["python", "-u", "systems/fundamentals/jobs/10k-profile-backfill/main.py"]
+    restart: "no"
+    volumes:
+      - ${HOME}/.aws:/root/.aws:ro
+    networks:
+      - app_net
+      - data_net
+
   local-stream-processor:
     image: gops-market-processor
     build:
@@ -971,6 +1015,10 @@ services:
       CLICKHOUSE_PASSWORD: "alfaka"
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       OPENAI_MODEL: "${OPENAI_MODEL:-gpt-5.2}"
+      AGENT_COMPANY_COMPARE_TIMEOUT_SECONDS: "${AGENT_COMPANY_COMPARE_TIMEOUT_SECONDS:-60}"
+      AGENT_COMPANY_COMPARE_CACHE_BACKEND: "${AGENT_COMPANY_COMPARE_CACHE_BACKEND:-auto}"
+      AGENT_COMPANY_COMPARE_CACHE_TTL_SECONDS: "${AGENT_COMPANY_COMPARE_CACHE_TTL_SECONDS:-86400}"
+      AGENT_COMPANY_COMPARE_CACHE_KEY_PREFIX: "${AGENT_COMPANY_COMPARE_CACHE_KEY_PREFIX:-gops:agent:company-compare:v1}"
       AGENT_FINAL_ANSWER_PROVIDER: "${AGENT_FINAL_ANSWER_PROVIDER:-openai}"
       AGENT_MAX_REALTIME_LLM_CALLS: "${AGENT_MAX_REALTIME_LLM_CALLS:-2}"
       AGENT_SYNTHESIZER_TIMEOUT_SECONDS: "${AGENT_SYNTHESIZER_TIMEOUT_SECONDS:-5}"
@@ -1537,6 +1585,12 @@ services:
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       OPENAI_MODEL: "${OPENAI_MODEL:-gpt-5.2}"
       OPENAI_TIMEOUT_SECONDS: "${OPENAI_TIMEOUT_SECONDS:-20}"
+      GRAPHDB_SPARQL_URL: "${GRAPHDB_SPARQL_URL:-http://graphdb:7200/repositories/nasdaq-fibo}"
+      GRAPHDB_REPOSITORY: "${GRAPHDB_REPOSITORY:-nasdaq-fibo}"
+      AGENT_GRAPHDB_TIMEOUT_MS: "${AGENT_GRAPHDB_TIMEOUT_MS:-2000}"
+      AGENT_GRAPH_PATH_CACHE_BACKEND: "${AGENT_GRAPH_PATH_CACHE_BACKEND:-auto}"
+      AGENT_GRAPH_PATH_CACHE_TTL_SECONDS: "${AGENT_GRAPH_PATH_CACHE_TTL_SECONDS:-900}"
+      AGENT_GRAPH_PATH_CACHE_NO_DATA_TTL_SECONDS: "${AGENT_GRAPH_PATH_CACHE_NO_DATA_TTL_SECONDS:-120}"
       KAFKA_ACCOUNT_ALIAS: "${KAFKA_ACCOUNT_ALIAS:-demo-account}"
       IDEMPOTENCY_HASH_SECRET: "${IDEMPOTENCY_HASH_SECRET:-local-dev-idempotency-secret}"
       CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"

@@ -32,6 +32,7 @@ UI_PANEL_TYPES = (
     "chart",
     "chartPatternList",
     "compareChart",
+    "companyCompare",
     "marketIndices",
     "companyProfile",
     "companyMulti",
