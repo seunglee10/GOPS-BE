@@ -24,6 +24,7 @@ from gops_simul.dataset import (
 from gops_simul import env as simulator_env
 from gops_simul.tick_replay import InMemoryReplayEventSource, ReplayController, ReplayEvent
 from gops_simul.clickhouse import ClickHouseHttpClient
+from gops_simul.tools import import_alpaca
 from gops_simul.tools.import_alpaca import fetch_kind
 
 
@@ -71,6 +72,9 @@ def trade(sequence: int, seconds: float, symbol: str, price: float) -> ReplayEve
 
 
 class DatasetContractTests(unittest.TestCase):
+    def test_clickhouse_import_batches_are_large_enough_for_full_tick_volume(self):
+        self.assertGreaterEqual(import_alpaca.CLICKHOUSE_INSERT_BATCH_SIZE, 50_000)
+
     def test_clickhouse_http_client_accepts_iso8601_event_timestamps(self):
         request = ClickHouseHttpClient("http://clickhouse:8123")._request(b"SELECT 1")
         query = urllib.parse.parse_qs(urllib.parse.urlparse(request.full_url).query)
