@@ -6,6 +6,7 @@ import statistics
 from typing import Any, Iterable
 
 from .config import QUALITY_CONFIG
+from .pivots import compute_pivots
 
 
 TRIANGLE_KINDS = {"ascending_triangle", "descending_triangle", "symmetrical_triangle"}
@@ -31,19 +32,24 @@ _PATTERN_PRIORITY = {
 
 def compute_patterns(
     candles: list[dict[str, Any]],
-    pivots: list[dict[str, Any]],
+    pivots: list[dict[str, Any]] | None = None,
     *,
     atr: float,
     interval: str,
+    retain_competitors: bool = False,
 ) -> list[dict[str, Any]]:
     """Return deterministic, geometry-complete chart-pattern candidates.
 
     Coordinates are always projected onto timestamps that already exist in the
-    canonical candle input. The function emits at most one hard-pass pattern;
-    rejected candidates are kept only when they explain an invalid breakout.
+    canonical candle input. By default the function emits at most one
+    hard-pass pattern; ``retain_competitors`` exposes the full ranked
+    diagnostic pool so the geometry trace compiler alone owns its candidate
+    cap and omitted-count accounting.
     """
     if len(candles) < 20 or atr <= 0 or interval not in QUALITY_CONFIG:
         return []
+    if pivots is None:
+        pivots = compute_pivots(candles, display_from=str(candles[0]["timestamp"]), interval=interval)
     candidates = [
         *compute_triangles(candles, pivots, atr=atr, interval=interval),
         *_flag_candidates(candles, pivots, atr=atr, interval=interval),
@@ -58,12 +64,18 @@ def compute_patterns(
         (item for item in candidates if not item["hardPass"]),
         key=lambda item: (-float(item["score"]), item["id"]),
     )
+    # The default remains the public feature-pack contract: one winning
+    # hard-pass candidate and up to three diagnostic rejects. Geometry trace
+    # generation can opt into the full ranked pool without changing that
+    # public projection or its ordering.
+    if retain_competitors:
+        return [*passed, *rejected]
     return [*passed[:1], *rejected[:3]]
 
 
 def compute_triangles(
     candles: list[dict[str, Any]],
-    pivots: list[dict[str, Any]],
+    pivots: list[dict[str, Any]] | None = None,
     *,
     atr: float,
     interval: str,
@@ -71,6 +83,8 @@ def compute_triangles(
     """Return the previous regression-fitted triangle candidates only."""
     if len(candles) < 20 or atr <= 0 or interval not in QUALITY_CONFIG:
         return []
+    if pivots is None:
+        pivots = compute_pivots(candles, display_from=str(candles[0]["timestamp"]), interval=interval)
     return _triangle_candidates(candles, pivots, atr=atr, interval=interval)
 
 

@@ -352,20 +352,19 @@ updated API의 INSERT와 `agent-analysis-worker`의 snapshot SELECT가 모두 �
 사용하므로 migration Job 성공 전에 두 workload를 rollout하면 안 된다. 기존 알람은
 null로 호환되며 Redis projection, Kafka topic, evaluator schema 변경은 필요하지 않다.
 
-Order-time checklist capture requires `0009_trade_decision_capture.sql`. It adds nullable
-normalized `decision_checks` JSONB to KIS and paper order rows, adds canonical KIS
-`orders.coach_filled_at`/`orders.coach_fill_payload`, adds `check_key` to
-`trade_decision_check_events`, and creates the replay-safe `(user_sub, fill_id, check_key)`
-unique index plus the user/fill-time lookup index. It also creates append-only
-`order_coach_fill_history` with `user_sub`, `order_id`, stable `fill_id`,
-`first_filled_at`, positive `cumulative_filled_qty`, `payload`, and `observed_at`.
-KIS reconciliation keeps audit rows in `executions`; equal/lower cumulative replay does
-not append history, while each strictly advancing positive quantity is stored in the same
-transaction as canonical order state. The coach builder selects the latest history row
-observed by the immutable request cutoff. The updated backend/order writers and paper matcher must not roll
-out before this migration. The same automatic order-migration gate applies every pending
-migration, including `0009`, before app apply when `order-worker` or `agent-orchestrator`
-is selected; it is not a manual PostgreSQL step.
+Continuous recommendation V2 requires `0012_continuous_recommendation_v2.sql`. It creates
+the append-only canonical KIS ledger `order_coach_fill_history`, immutable preference and
+risk state/event tables, and full-candidate feature evidence. It also adds run provenance
+columns for algorithm/state/model/fundamental versions and the reproducible input digest.
+The ledger uses stable `fill_id="kis:{order_id}"` plus an observation version and stores
+normalized cumulative quantity, fill price, decision/fill timestamps, source execution,
+and payload digest. KIS reconciliation keeps audit rows in `executions`; equal or lower
+cumulative replay does not append history, while every strictly advancing positive real
+fill is stored in the same transaction as canonical order state. Paper and simulator
+orders never enter this ledger. Historical real executions are backfilled only when user,
+quantity, price, and timestamps can be normalized safely. API, recommendation-worker, and
+order-reconciler images must not roll out before this migration. The normal automatic
+order-migration gate applies before app rollout; this is not a manual PostgreSQL step.
 
 On an actual paper fill the matcher also writes one `paper:{order_id}`-scoped before/after
 pair to `user_portfolio_snapshot_history` in its fill transaction. Those snapshots carry
@@ -445,6 +444,35 @@ without deleting PVCs, then validates stateful pod placement before app rollout.
 The app overlay declaratively keeps `alert-evaluator` and
 `recommendation-worker` at one replica. CI does not read live replica counts or
 rewrite desired replicas; Git is the source of truth for both workers.
+
+Recommendation rollout accepts the explicit selector
+`RECOMMENDATION_ALGORITHM_VERSION=legacy|professional-v1|continuous-v2`. When it is absent,
+the existing `RECOMMENDATION_PERSONALIZATION_ENABLED` and
+`RECOMMENDATION_PERSONALIZATION_SHADOW` behavior remains unchanged. `continuous-v2`
+ignores the shadow flag and publishes `algorithmVersion="continuous-personalization-v2"`.
+API and recommendation-worker must receive the same selector.
+
+Before activating `continuous-v2`, apply migration `0012`, verify that canonical real-fill
+rows advance only on increasing cumulative quantity, and validate that the injected
+fundamental batch has complete schema/version/digest provenance with `sourceAsOf` no later
+than the recommendation cutoff. Missing or rejected fundamentals are a supported
+nine-factor fallback and should be visible in metrics rather than blocking the run.
+Monitor skipped preference-event reasons, candidate feature row counts, state versions,
+input digests, portfolio valuation basis, and the risk sample gates. Roll back by setting
+the selector to `professional-v1` or `legacy`; the additive V2 schema remains in place and
+completed V2 slot evidence stays immutable. No Terraform, Kubernetes, compose, or AWS
+manifest change is required for this algorithm rollback.
+
+For the older flag-controlled professional rollout,
+`RECOMMENDATION_PERSONALIZATION_ENABLED=false` keeps the legacy scorer. Set it to `true`
+with `RECOMMENDATION_PERSONALIZATION_SHADOW=true` first to persist versioned professional
+scores without changing visible ranking. After out-of-sample and data-quality review, set
+shadow to `false` to rank by `personalScore`.
+An approved learned set may be supplied through
+`RECOMMENDATION_PROFESSIONAL_WEIGHTS_JSON`; keep the JSON in a versioned ConfigMap
+or equivalent registry projection. The backend rejects missing factor keys,
+negative weights, sums other than 100, drift beyond ±10 percentage points, and
+sets without explicit approval plus out-of-sample improvement.
 
 The market and quote processors use per-workload `DoNotSchedule` topology spread
 constraints with `minDomains=3`, so their three replicas cannot collapse onto

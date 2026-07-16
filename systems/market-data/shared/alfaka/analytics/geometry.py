@@ -12,6 +12,7 @@ from .levels import compute_levels
 from .patterns import TRIANGLE_KINDS, compute_patterns, compute_triangles
 from .pivots import compute_pivots
 from .trade_timing import evaluate_pattern_trade_timing
+from .trends import compute_trends
 
 
 SUPPORTED_INTERVALS = ("1m", "5m", "10m", "1h", "4h", "1D", "1W")
@@ -19,10 +20,17 @@ TARGET_BARS = {**{interval: 380 for interval in SUPPORTED_INTERVALS[:-1]}, "1W":
 WARMUP_BARS = {interval: 120 for interval in SUPPORTED_INTERVALS}
 EVALUATION_BARS = {**{interval: 260 for interval in SUPPORTED_INTERVALS[:-1]}, "1W": 192}
 MINIMUM_BARS = 120
-ALGORITHM_VERSION = "ohlcv-consensus-pattern-families-v5"
+ALGORITHM_VERSION = "ohlcv-consensus-pattern-families-v6"
 
 _ATR_PERIOD = 14
 _VOLUME_BASELINE = 20
+_LEVEL_TRACE_LIMIT = 8
+_TREND_TRACE_LIMIT = 7
+_PATTERN_TRACE_LIMIT = 4
+_TOUCH_TRACE_LIMIT = 8
+_TRACE_PIVOT_REFERENCE_FIELDS = (
+    "evidenceRefs", "anchorPivotIds", "touchPivotIds", "reactionPivotIds",
+)
 
 
 def analyze_geometry(symbol: str, interval: str, candles: list[dict[str, Any]]) -> dict[str, Any]:
@@ -37,12 +45,20 @@ def analyze_geometry(symbol: str, interval: str, candles: list[dict[str, Any]]) 
     atr_values = _wilder_atr(rows)
     evaluation_from = max(0, len(rows) - EVALUATION_BARS[interval])
     evidence = _pivot_evidence(rows, atr_values, evaluation_from=evaluation_from)
+    display_from = str(rows[evaluation_from]["timestamp"])
+    pivots = compute_pivots(rows, display_from=display_from, interval=interval)
     latest_atr = max(atr_values[-1], 1e-12)
     current = float(rows[-1]["close"])
-    supports, resistances = _confirmed_horizontal_levels(
-        symbol, interval, rows, current=current, atr=latest_atr,
+    supports, resistances, level_candidates = _confirmed_horizontal_levels(
+        symbol, interval, rows, current=current, atr=latest_atr, pivots=pivots,
     )
-    pattern_candidates = _regression_pattern_candidates(rows, interval=interval)
+    trace_pattern_candidates = _regression_pattern_candidates(
+        rows,
+        interval=interval,
+        pivots=pivots,
+        retain_competitors=True,
+    )
+    pattern_candidates = _public_pattern_candidate_slice(trace_pattern_candidates)
     active_patterns = sorted(
         (item for item in pattern_candidates if item["hardPass"] and item["state"] in {"forming", "confirmed"}),
         key=lambda item: (-item["score"], -item["endIndex"], item["geometryHash"]),
@@ -56,7 +72,7 @@ def analyze_geometry(symbol: str, interval: str, candles: list[dict[str, Any]]) 
         symbol=symbol,
         interval=interval,
     )
-    triangle_candidates = _regression_triangle_candidates(rows, interval=interval)
+    triangle_candidates = _regression_triangle_candidates(rows, interval=interval, pivots=pivots)
     active = sorted(
         (item for item in triangle_candidates if item["hardPass"] and item["state"] in {"forming", "confirmed"}),
         key=lambda item: (-item["score"], -item["endIndex"], item["geometryHash"]),
@@ -66,11 +82,61 @@ def analyze_geometry(symbol: str, interval: str, candles: list[dict[str, Any]]) 
         (item for item in sorted(triangle_candidates, key=lambda item: (-item["score"], -item["endIndex"], item["geometryHash"])) if not primary or item["geometryHash"] != primary["geometryHash"]),
         None,
     )
+    trend_candidates = compute_trends(
+        rows,
+        pivots,
+        display_from=display_from,
+        atr=latest_atr,
+        interval=interval,
+        retain_competitors=True,
+    )
+    primary_trend_candidate = next(
+        (
+            item
+            for item in trend_candidates
+            if item.get("hardPass") and item.get("kind") in {"up", "down", "channel"}
+        ),
+        None,
+    )
     generated_at = str(rows[-1]["timestamp"])
-    drawings = [
-        *[_level_drawing(symbol, interval, item, generated_at) for item in (*supports, *resistances)],
-        *(_pattern_drawings(symbol, interval, primary_pattern, generated_at) if primary_pattern else []),
-    ][:8]
+    level_drawings = [
+        _level_drawing(symbol, interval, item, generated_at)
+        for item in (*supports, *resistances)
+    ]
+    pattern_drawings = _pattern_drawings(
+        symbol, interval, primary_pattern, generated_at,
+    ) if primary_pattern else []
+    public_primary_trend = _public_trend(
+        symbol,
+        interval,
+        primary_trend_candidate,
+        pivots=pivots,
+        atr=latest_atr,
+    )
+    trend_drawings = [
+        _trend_drawing(symbol, interval, public_primary_trend, generated_at)
+    ] if public_primary_trend else []
+    if len(level_drawings) > 4 or len(pattern_drawings) > 3 or len(trend_drawings) > 1:
+        raise ValueError("Geometry drawing group exceeds its atomic budget")
+    drawings = [*level_drawings, *pattern_drawings, *trend_drawings]
+    if len(drawings) > 8:
+        raise ValueError("Geometry drawing budget exceeded")
+    drawing_groups = {
+        "levels": [item["id"] for item in level_drawings],
+        "trend": [item["id"] for item in trend_drawings],
+        "pattern": [item["id"] for item in pattern_drawings],
+    }
+    analysis_trace = _analysis_trace(
+        rows,
+        pivots=pivots,
+        level_candidates=level_candidates,
+        selected_levels=[*supports, *resistances],
+        trend_candidates=trend_candidates,
+        primary_trend=public_primary_trend,
+        pattern_candidates=trace_pattern_candidates,
+        primary_pattern=primary_pattern,
+        atr=latest_atr,
+    )
     return {
         "algorithmVersion": ALGORITHM_VERSION,
         "supports": supports,
@@ -80,8 +146,12 @@ def analyze_geometry(symbol: str, interval: str, candles: list[dict[str, Any]]) 
         "tradePlan": trade_plan,
         "primaryTriangle": _public_triangle(primary),
         "historicalTriangle": _public_triangle(historical),
+        "trends": [public_primary_trend] if public_primary_trend else [],
+        "primaryTrend": public_primary_trend,
         "indicators": compute_sma_snapshot(rows),
         "drawings": drawings,
+        "drawingGroups": drawing_groups,
+        "analysisTrace": analysis_trace,
         "evidence": [dict(item) for item in sorted(evidence, key=lambda value: (-value["score"], -value["barIndex"]))[:24]],
     }
 
@@ -184,10 +254,11 @@ def _pivot_evidence(rows: list[dict[str, Any]], atr_values: list[float], *, eval
     return evidence
 
 
-def _confirmed_horizontal_levels(symbol, interval, rows, *, current, atr):
-    """Return only evidence-confirmed levels that are still relevant now."""
-    display_from = rows[max(0, len(rows) - EVALUATION_BARS[interval])]["timestamp"]
-    pivots = compute_pivots(rows, display_from=display_from, interval=interval)
+def _confirmed_horizontal_levels(symbol, interval, rows, *, current, atr, pivots=None):
+    """Select role-local levels while retaining every considered candidate."""
+    if pivots is None:
+        display_from = rows[max(0, len(rows) - EVALUATION_BARS[interval])]["timestamp"]
+        pivots = compute_pivots(rows, display_from=display_from, interval=interval)
     profile_rows = rows[-WARMUP_BARS[interval]:]
     volume_profile = compute_volume_profile_payload(
         profile_rows,
@@ -204,10 +275,10 @@ def _confirmed_horizontal_levels(symbol, interval, rows, *, current, atr):
         volume_profile=volume_profile,
         expected_bars=TARGET_BARS[interval],
         interval=interval,
+        rejected_limit=None,
     )
     evidence_by_id = {str(item["id"]): item for item in pivots}
-    confirmed = []
-    contextual = []
+    annotated = []
     for candidate in candidates:
         role = candidate["role"]
         role_side_pass = (
@@ -215,16 +286,56 @@ def _confirmed_horizontal_levels(symbol, interval, rows, *, current, atr):
         ) or (
             role == "resistance" and current <= float(candidate["zoneHigh"]) + 0.25 * atr
         )
-        if not role_side_pass:
-            continue
+        selection_tier = (
+            "confirmed" if candidate["hardPass"]
+            else "contextual" if role_side_pass and _contextual_level_pass(candidate, interval)
+            else "reference" if role_side_pass and _reference_level_pass(candidate, interval)
+            else None
+        )
+        annotated.append({
+            **candidate,
+            "selectionTier": selection_tier,
+            "roleSidePass": role_side_pass,
+            "selected": False,
+            "importanceTier": None,
+            "importanceRank": None,
+        })
+
+    selected = []
+    for role in ("support", "resistance"):
+        role_candidates = [
+            item for item in annotated
+            if item["role"] == role and item["roleSidePass"] and item["selectionTier"] is not None
+        ]
+        confirmed = [item for item in role_candidates if item["selectionTier"] == "confirmed"]
+        contextual = [item for item in role_candidates if item["selectionTier"] == "contextual"]
+        reference = [item for item in role_candidates if item["selectionTier"] == "reference"]
+        if confirmed:
+            role_selected = _non_overlapping_levels(confirmed, limit=2)
+        elif contextual:
+            role_selected = _non_overlapping_levels(contextual, limit=2)
+        else:
+            role_selected = _non_overlapping_levels(reference, limit=2)
+        for rank, candidate in enumerate(role_selected, start=1):
+            candidate["selected"] = True
+            candidate["importanceRank"] = rank
+            candidate["importanceTier"] = (
+                "major" if candidate["selectionTier"] == "confirmed" and rank == 1
+                else "standard" if candidate["selectionTier"] in {"confirmed", "contextual"}
+                else "minor"
+            )
+        selected.extend(role_selected)
+
+    public_levels = []
+    for candidate in selected:
+        role = candidate["role"]
         price = float(candidate["price"])
-        selection_tier = "confirmed" if candidate["hardPass"] else "contextual"
-        if selection_tier == "contextual" and not _contextual_level_pass(candidate, interval):
-            continue
         projected = {
             "id": candidate["id"],
             "role": role,
-            "selectionTier": selection_tier,
+            "selectionTier": candidate["selectionTier"],
+            "importanceTier": candidate["importanceTier"],
+            "importanceRank": candidate["importanceRank"],
             "price": price,
             "zoneLow": candidate["zoneLow"],
             "zoneHigh": candidate["zoneHigh"],
@@ -251,22 +362,10 @@ def _confirmed_horizontal_levels(symbol, interval, rows, *, current, atr):
                 if pivot_id in evidence_by_id
             ][:8],
         }
-        (confirmed if selection_tier == "confirmed" else contextual).append(projected)
-    ordered = sorted(
-        confirmed,
-        key=lambda item: (-item["score"], item["currentDistanceAtr"], item["id"]),
-    )
-    supports = [item for item in ordered if item["role"] == "support"][:2]
-    resistances = [item for item in ordered if item["role"] == "resistance"][:2]
-    contextual_ordered = sorted(
-        contextual,
-        key=lambda item: (item["currentDistanceAtr"], -item["score"], item["lastTouchAgeBars"], item["id"]),
-    )
-    if not supports:
-        supports = [item for item in contextual_ordered if item["role"] == "support"][:1]
-    if not resistances:
-        resistances = [item for item in contextual_ordered if item["role"] == "resistance"][:1]
-    return supports, resistances
+        public_levels.append(projected)
+    supports = [item for item in public_levels if item["role"] == "support"]
+    resistances = [item for item in public_levels if item["role"] == "resistance"]
+    return supports, resistances, annotated
 
 
 def _contextual_level_pass(candidate, interval):
@@ -282,11 +381,57 @@ def _contextual_level_pass(candidate, interval):
     )
 
 
+def _reference_level_pass(candidate, interval):
+    config = QUALITY_CONFIG[interval]
+    role = candidate.get("role")
+    return (
+        role in {"support", "resistance"}
+        and candidate.get("state") in {f"{role}_active", f"role_flip_{role}"}
+        and len(_unique_strings(candidate.get("memberPivotIds", []))) >= 2
+        and int(candidate.get("touches") or 0) >= 2
+        and int(candidate.get("reactionCount") or 0) >= 1
+        and int(candidate.get("lastTouchAgeBars", 10**9)) <= config.level_last_touch_max_age
+        and float(candidate.get("currentDistanceAtr", 10**9)) <= 4
+        and "role_conflict" not in candidate.get("rejectReasons", [])
+        and "break_pending" not in candidate.get("rejectReasons", [])
+    )
+
+
+def _level_selection_key(candidate):
+    tier_rank = {"confirmed": 0, "contextual": 1, "reference": 2}
+    return (
+        tier_rank.get(candidate.get("selectionTier"), 99),
+        -float(candidate.get("score") or 0),
+        -int(candidate.get("reactionCount") or 0),
+        -int(candidate.get("touches") or 0),
+        int(candidate.get("lastTouchAgeBars", 10**9)),
+        float(candidate.get("price") or 0),
+        str(candidate.get("id") or ""),
+    )
+
+
+def _non_overlapping_levels(candidates, *, limit, sort_key=_level_selection_key):
+    selected = []
+    for candidate in sorted(candidates, key=sort_key):
+        overlaps = any(
+            max(float(candidate["zoneLow"]), float(existing["zoneLow"]))
+            <= min(float(candidate["zoneHigh"]), float(existing["zoneHigh"]))
+            for existing in selected
+        )
+        if overlaps:
+            continue
+        selected.append(candidate)
+        if len(selected) == limit:
+            break
+    return selected
+
+
 def _regression_triangle_candidates(
-    rows: list[dict[str, Any]], *, interval: str,
+    rows: list[dict[str, Any]], *, interval: str, pivots=None,
 ) -> list[dict[str, Any]]:
-    display_from = rows[max(0, len(rows) - EVALUATION_BARS[interval])]["timestamp"]
-    pivots = compute_pivots(rows, display_from=display_from, interval=interval)
+    if pivots is None:
+        display_from = rows[max(0, len(rows) - EVALUATION_BARS[interval])]["timestamp"]
+        pivots = compute_pivots(rows, display_from=display_from, interval=interval)
     candidates = compute_triangles(rows, pivots, atr=regression_atr(rows), interval=interval)
     evidence_by_id = {str(item["id"]): item for item in pivots}
     end = len(rows) - 1
@@ -313,11 +458,19 @@ def _regression_triangle_candidates(
 
 
 def _regression_pattern_candidates(
-    rows: list[dict[str, Any]], *, interval: str,
+    rows: list[dict[str, Any]], *, interval: str, pivots=None,
+    retain_competitors: bool = False,
 ) -> list[dict[str, Any]]:
-    display_from = rows[max(0, len(rows) - EVALUATION_BARS[interval])]["timestamp"]
-    pivots = compute_pivots(rows, display_from=display_from, interval=interval)
-    candidates = compute_patterns(rows, pivots, atr=regression_atr(rows), interval=interval)
+    if pivots is None:
+        display_from = rows[max(0, len(rows) - EVALUATION_BARS[interval])]["timestamp"]
+        pivots = compute_pivots(rows, display_from=display_from, interval=interval)
+    candidates = compute_patterns(
+        rows,
+        pivots,
+        atr=regression_atr(rows),
+        interval=interval,
+        retain_competitors=retain_competitors,
+    )
     evidence_by_id = {str(item["id"]): item for item in pivots}
     index_by_timestamp = {str(row["timestamp"]): index for index, row in enumerate(rows)}
     results = []
@@ -349,12 +502,133 @@ def _regression_pattern_candidates(
     return results
 
 
+def _public_pattern_candidate_slice(candidates):
+    """Recreate compute_patterns' stable public projection from diagnostics."""
+    passed = [item for item in candidates if item.get("hardPass")]
+    rejected = [item for item in candidates if not item.get("hardPass")]
+    return [*passed[:1], *rejected[:3]]
+
+
 def _level_drawing(symbol, interval, level, generated_at):
     color = "#22c55e" if level["role"] == "support" else "#ef4444"
+    importance = level.get("importanceTier")
     contextual = level.get("selectionTier") == "contextual"
-    label = ("보조 지지" if level["role"] == "support" else "보조 저항") if contextual else ("지지" if level["role"] == "support" else "저항")
-    drawing = _drawing(symbol, interval, level["id"], "horizontalLine", level["anchors"], color, label, generated_at, opacity=0.72 if contextual else 0.86)
-    drawing["style"] = {**drawing["style"], "lineDash": [6, 4], "lineStyle": "dashed"}
+    base_label = "지지" if level["role"] == "support" else "저항"
+    if importance == "major":
+        label, width, opacity, dash, line_style = base_label, 3.0, 0.95, [], "solid"
+    elif importance == "standard":
+        label, width, opacity, dash, line_style = f"보조 {base_label}", 2.25, 0.72, [6, 4], "dashed"
+    elif importance == "minor":
+        label, width, opacity, dash, line_style = f"참고 {base_label}", 1.5, 0.45, [2, 4], "dashed"
+    else:
+        # Old assets did not carry an importance tier. Preserve their raw
+        # geometry style so the reader can apply the legacy 2.5px treatment.
+        label = f"보조 {base_label}" if contextual else base_label
+        width, opacity, dash, line_style = 2, 0.72 if contextual else 0.86, [6, 4], "dashed"
+    drawing = _drawing(
+        symbol, interval, level["id"], "horizontalLine", level["anchors"], color,
+        label, generated_at, opacity=opacity,
+    )
+    drawing["style"] = {
+        **drawing["style"],
+        "lineWidth": width,
+        "lineDash": dash,
+        "lineStyle": line_style,
+    }
+    return drawing
+
+
+def _public_trend(symbol, interval, candidate, *, pivots, atr):
+    if candidate is None or candidate.get("kind") not in {"up", "down", "channel"}:
+        return None
+    pivot_by_id = {str(item["id"]): item for item in pivots}
+    required = 3 if candidate["kind"] == "channel" else 2
+    anchor_ids = [
+        str(value) for value in candidate.get("anchorPivotIds", [])
+        if str(value) in pivot_by_id
+    ][:required]
+    if len(anchor_ids) != required:
+        return None
+    anchors = [
+        {
+            "timestamp": pivot_by_id[pivot_id]["timestamp"],
+            "price": round(float(pivot_by_id[pivot_id]["price"]), 6),
+        }
+        for pivot_id in anchor_ids
+    ]
+    direction = str(candidate.get("direction") or candidate["kind"])
+    public_kind = "channel" if candidate["kind"] == "channel" else f"{candidate['kind']}trend"
+    reaction_bars = {
+        int(item["barIndex"])
+        for item in candidate.get("touchEpisodes", [])
+        if item.get("reactionPass")
+    }
+    touch_pivot_ids = _unique_strings(candidate.get("touchPivotIds", []))
+    reaction_pivot_ids = [
+        str(item["id"]) for item in pivots
+        if int(item["barIndex"]) in reaction_bars and str(item["id"]) in touch_pivot_ids
+    ]
+    drawing_id = f"chart-asset:{symbol.upper()}:{interval}:{candidate['id']}"
+    result = {
+        "id": candidate["id"],
+        "kind": public_kind,
+        "direction": direction,
+        "score": candidate["score"],
+        "drawingId": drawing_id,
+        "anchors": anchors,
+        "anchorPivotIds": anchor_ids,
+        "touchPivotIds": touch_pivot_ids,
+        "reactionPivotIds": _unique_strings(reaction_pivot_ids),
+        "touchCount": int(candidate.get("touches") or 0),
+        "reactionCount": int(candidate.get("reactionCount") or 0),
+        "slopeAtrPerBar": round(float(candidate.get("slopeAtrPerBar") or 0), 6),
+        "medianResidualAtr": round(float(candidate.get("medianResidualAtr") or 0), 6),
+        "currentDistanceAtr": round(float(candidate.get("currentDistanceAtr") or 0), 6),
+        "lastTouchAgeBars": int(candidate.get("lastTouchAgeBars") or 0),
+        "activeInvalidation": bool(candidate.get("activeInvalidation")),
+        "violationCount": int(candidate.get("violationCount") or 0),
+        "invalidation": (
+            "active" if candidate.get("activeInvalidation")
+            else "historical_revalidated" if int(candidate.get("violationCount") or 0) > 0
+            else None
+        ),
+    }
+    if candidate["kind"] == "channel":
+        result.update({
+            "channelWidthAtr": round(float(candidate.get("channelWidth") or 0) / max(atr, 1e-12), 6),
+            "parallelSlopeError": round(float(candidate.get("parallelSlopeError") or 0), 6),
+            "containment": round(float(candidate.get("containment") or 0), 6),
+        })
+    return result
+
+
+def _trend_drawing(symbol, interval, trend, generated_at):
+    color = "#22c55e" if trend["direction"] == "up" else "#ef4444"
+    name = (
+        f"{'상승' if trend['direction'] == 'up' else '하락'} 평행 채널"
+        if trend["kind"] == "channel"
+        else f"{'상승' if trend['direction'] == 'up' else '하락'} 추세선"
+    )
+    drawing = _drawing(
+        symbol,
+        interval,
+        trend["id"],
+        "trendParallelLines" if trend["kind"] == "channel" else "trendLine",
+        trend["anchors"],
+        color,
+        name,
+        generated_at,
+        opacity=0.86,
+    )
+    drawing["style"] = {
+        **drawing["style"],
+        "lineWidth": 2.75,
+        "lineDash": [],
+        "lineStyle": "solid",
+        "extension": "ray",
+    }
+    if trend["kind"] == "channel":
+        drawing["parallelLineCount"] = 2
     return drawing
 
 
@@ -416,6 +690,402 @@ def _public_pattern(value):
         **{key: value[key] for key in keys if key in value},
         "bias": _pattern_bias(value["kind"]),
     }
+
+
+def _analysis_trace(
+    rows,
+    *,
+    pivots,
+    level_candidates,
+    selected_levels,
+    trend_candidates,
+    primary_trend,
+    pattern_candidates,
+    primary_pattern,
+    atr,
+):
+    selected_level_ids = {str(item["id"]) for item in selected_levels}
+    selected_trend_ids = {str(primary_trend["id"])} if primary_trend else set()
+    selected_pattern_ids = {str(primary_pattern["id"])} if primary_pattern else set()
+    diagonal_trends = [
+        item for item in trend_candidates if item.get("kind") in {"up", "down", "channel"}
+    ]
+    kept_levels = _retain_trace_candidates(
+        level_candidates, selected_level_ids, _LEVEL_TRACE_LIMIT,
+    )
+    kept_trends = _retain_trace_candidates(
+        diagonal_trends, selected_trend_ids, _TREND_TRACE_LIMIT,
+    )
+    kept_patterns = _retain_trace_candidates(
+        pattern_candidates, selected_pattern_ids, _PATTERN_TRACE_LIMIT,
+    )
+    pivot_by_id = {str(item["id"]): item for item in pivots}
+    level_trace, level_touch_omitted = _project_trace_group(
+        kept_levels,
+        lambda item: _trace_level_candidate(
+            rows, pivots, item, selected=str(item["id"]) in selected_level_ids,
+        ),
+    )
+    trend_trace, trend_touch_omitted = _project_trace_group(
+        kept_trends,
+        lambda item: _trace_trend_candidate(
+            rows,
+            pivots,
+            item,
+            selected=str(item["id"]) in selected_trend_ids,
+            atr=atr,
+        ),
+    )
+    pattern_trace, pattern_touch_omitted = _project_trace_group(
+        kept_patterns,
+        lambda item: _trace_pattern_candidate(
+            item,
+            pivot_by_id,
+            selected=str(item["id"]) in selected_pattern_ids,
+        ),
+    )
+    referenced = {
+        str(reference)
+        for candidate in (*level_trace, *trend_trace, *pattern_trace)
+        for reference_field in _TRACE_PIVOT_REFERENCE_FIELDS
+        for reference in candidate[reference_field]
+    }
+    trace_pivots = [
+        _trace_pivot(item)
+        for item in pivots
+        if str(item["id"]) in referenced
+    ]
+    trace = {
+        "version": "geometry-analysis-trace-v1",
+        "pivots": trace_pivots,
+        "levelCandidates": level_trace,
+        "trendCandidates": trend_trace,
+        "patternCandidates": pattern_trace,
+        "selections": {
+            "levelCandidateIds": sorted(selected_level_ids),
+            "trendCandidateIds": sorted(selected_trend_ids),
+            "patternCandidateIds": sorted(selected_pattern_ids),
+        },
+        "omittedCounts": {
+            "levelCandidates": max(0, len(level_candidates) - len(kept_levels)),
+            "trendCandidates": max(0, len(diagonal_trends) - len(kept_trends)),
+            "patternCandidates": max(0, len(pattern_candidates) - len(kept_patterns)),
+            "touchEpisodes": level_touch_omitted + trend_touch_omitted + pattern_touch_omitted,
+        },
+    }
+    return trace
+
+
+def _retain_trace_candidates(candidates, selected_ids, limit):
+    # Detectors already provide their deterministic ranking (including pattern
+    # family priority and channel-first trend competition). Move selected
+    # candidates to the front without disturbing either partition's order.
+    selected = [item for item in candidates if str(item.get("id")) in selected_ids]
+    unselected = [item for item in candidates if str(item.get("id")) not in selected_ids]
+    ordered = [*selected, *unselected]
+    return ordered[:limit]
+
+
+def _project_trace_group(candidates, projector):
+    projected = []
+    omitted = 0
+    for candidate in candidates:
+        item, item_omitted = projector(candidate)
+        projected.append(item)
+        omitted += item_omitted
+    return projected, omitted
+
+
+def _trace_level_candidate(rows, pivots, candidate, *, selected):
+    touch_records = []
+    episodes = list(candidate.get("touchEpisodes", []))[-_TOUCH_TRACE_LIMIT:]
+    for episode in episodes:
+        index = int(episode.get("startIndex", -1))
+        if not 0 <= index < len(rows):
+            continue
+        timestamp = str(rows[index]["timestamp"])
+        touch_records.append(_trace_touch(
+            candidate["id"],
+            timestamp=timestamp,
+            bar_index=index,
+            price=float(candidate["price"]),
+            outcome=episode.get("outcome"),
+        ))
+    touch_refs = [item["id"] for item in touch_records]
+    reaction_refs = [
+        item["id"] for item in touch_records if item.get("outcome") == "reaction"
+    ]
+    pivot_by_id = {str(item["id"]): item for item in pivots}
+    evidence_refs = [
+        reference for reference in _unique_strings(candidate.get("memberPivotIds", []))[:8]
+        if reference in pivot_by_id
+    ]
+    ordered_evidence = sorted(
+        evidence_refs,
+        key=lambda reference: (int(pivot_by_id[reference]["barIndex"]), reference),
+    )
+    reaction_bars = {
+        int(episode.get("startIndex", -1))
+        for episode in episodes
+        if episode.get("outcome") == "reaction"
+    }
+    reaction_pivot_ids = [
+        reference for reference in ordered_evidence
+        if int(pivot_by_id[reference]["barIndex"]) in reaction_bars
+    ]
+    raw_reasons = _trace_reject_reasons(candidate, selected=selected)
+    if (
+        not candidate.get("hardPass")
+        and candidate.get("selectionTier") is None
+        and len(_unique_strings(candidate.get("memberPivotIds", []))) < 2
+        and "single_swing" not in raw_reasons
+    ):
+        raw_reasons.append("single_swing")
+    result = {
+        "id": candidate["id"],
+        "category": "level",
+        "score": candidate.get("score", 0),
+        "selected": selected,
+        "hardPass": bool(candidate.get("hardPass")),
+        "evidencePass": bool(candidate.get("evidencePass")),
+        "activePass": bool(candidate.get("activePass")),
+        "rejectReasons": raw_reasons,
+        "selectionTier": candidate.get("selectionTier"),
+        "importanceTier": candidate.get("importanceTier"),
+        "importanceRank": candidate.get("importanceRank"),
+        "anchors": [
+            {"role": "start", "timestamp": candidate["firstTestAt"], "price": candidate["price"]},
+            {"role": "end", "timestamp": candidate["lastTestAt"], "price": candidate["price"]},
+        ],
+        "evidenceRefs": evidence_refs,
+        "anchorPivotIds": (
+            _unique_strings([ordered_evidence[0], ordered_evidence[-1]])
+            if ordered_evidence else []
+        ),
+        "touchPivotIds": ordered_evidence,
+        "reactionPivotIds": reaction_pivot_ids,
+        "touchRefs": touch_refs,
+        "reactionRefs": reaction_refs,
+        "touches": touch_records,
+        "metrics": {
+            "price": candidate["price"],
+            "zoneLow": candidate["zoneLow"],
+            "zoneHigh": candidate["zoneHigh"],
+            "touchCount": int(candidate.get("touches") or 0),
+            "reactionCount": int(candidate.get("reactionCount") or 0),
+            "lastTouchAgeBars": int(candidate.get("lastTouchAgeBars") or 0),
+            "currentDistanceAtr": candidate.get("currentDistanceAtr", 0),
+            "state": candidate.get("state"),
+            "roleFlips": int(candidate.get("roleFlips") or 0),
+            "vpConfluence": bool(candidate.get("vpConfluence")),
+        },
+    }
+    if candidate.get("role") in {"support", "resistance"}:
+        result["role"] = candidate["role"]
+    else:
+        result["kind"] = "unresolved_level"
+    return result, max(0, int(candidate.get("touches") or 0) - len(touch_records))
+
+
+def _trace_trend_candidate(rows, pivots, candidate, *, selected, atr):
+    pivot_by_id = {str(item["id"]): item for item in pivots}
+    required = 3 if candidate["kind"] == "channel" else 2
+    anchor_ids = [
+        str(value) for value in candidate.get("anchorPivotIds", [])
+        if str(value) in pivot_by_id
+    ][:required]
+    anchor_roles = ["baseStart", "baseEnd", "channelOffset"]
+    anchors = [
+        {
+            "role": anchor_roles[index],
+            "timestamp": pivot_by_id[pivot_id]["timestamp"],
+            "price": round(float(pivot_by_id[pivot_id]["price"]), 6),
+        }
+        for index, pivot_id in enumerate(anchor_ids)
+    ]
+    direction = str(candidate.get("direction") or candidate["kind"])
+    touch_pivot_ids = _unique_strings(candidate.get("touchPivotIds", []))[-_TOUCH_TRACE_LIMIT:]
+    touch_records = []
+    episodes = list(candidate.get("touchEpisodes", []))[-_TOUCH_TRACE_LIMIT:]
+    for episode in episodes:
+        index = int(episode.get("barIndex", -1))
+        if not 0 <= index < len(rows):
+            continue
+        price_key = "low" if direction == "up" else "high"
+        touch_records.append(_trace_touch(
+            candidate["id"],
+            timestamp=str(rows[index]["timestamp"]),
+            bar_index=index,
+            price=float(rows[index][price_key]),
+            outcome="reaction" if episode.get("reactionPass") else "touch",
+        ))
+    touch_refs = [item["id"] for item in touch_records]
+    reaction_refs = [
+        item["id"] for item in touch_records if item.get("outcome") == "reaction"
+    ]
+    evidence_refs = _unique_strings([
+        *anchor_ids,
+        *touch_pivot_ids,
+    ])
+    reaction_bars = {
+        int(item["barIndex"])
+        for item in candidate.get("touchEpisodes", [])
+        if item.get("reactionPass")
+    }
+    reaction_pivot_ids = [
+        str(item["id"]) for item in pivots
+        if int(item["barIndex"]) in reaction_bars and str(item["id"]) in touch_pivot_ids
+    ]
+    metrics = {
+        "touchCount": int(candidate.get("touches") or 0),
+        "reactionCount": int(candidate.get("reactionCount") or 0),
+        "slopeAtrPerBar": round(float(candidate.get("slopeAtrPerBar") or 0), 6),
+        "medianResidualAtr": round(float(candidate.get("medianResidualAtr") or 0), 6),
+        "currentDistanceAtr": round(float(candidate.get("currentDistanceAtr") or 0), 6),
+        "lastTouchAgeBars": int(candidate.get("lastTouchAgeBars") or 0),
+        "activeInvalidation": bool(candidate.get("activeInvalidation")),
+        "violationCount": int(candidate.get("violationCount") or 0),
+    }
+    if candidate["kind"] == "channel":
+        metrics.update({
+            "channelWidthAtr": round(float(candidate.get("channelWidth") or 0) / max(atr, 1e-12), 6),
+            "parallelSlopeError": round(float(candidate.get("parallelSlopeError") or 0), 6),
+            "containment": round(float(candidate.get("containment") or 0), 6),
+        })
+    result = {
+        "id": candidate["id"],
+        "category": "trend",
+        "kind": "channel" if candidate["kind"] == "channel" else f"{candidate['kind']}trend",
+        "score": candidate.get("score", 0),
+        "selected": selected,
+        "hardPass": bool(candidate.get("hardPass")),
+        "evidencePass": bool(candidate.get("evidencePass")),
+        "activePass": bool(candidate.get("activePass")),
+        "rejectReasons": _trace_reject_reasons(candidate, selected=selected),
+        "selectionTier": "confirmed" if selected else None,
+        "importanceTier": None,
+        "importanceRank": None,
+        "anchors": anchors,
+        "evidenceRefs": evidence_refs,
+        "anchorPivotIds": anchor_ids,
+        "touchPivotIds": touch_pivot_ids,
+        "reactionPivotIds": reaction_pivot_ids,
+        "touchRefs": touch_refs,
+        "reactionRefs": reaction_refs,
+        "touches": touch_records,
+        "metrics": metrics,
+    }
+    return result, max(0, int(candidate.get("touches") or 0) - len(touch_records))
+
+
+def _trace_pattern_candidate(candidate, pivot_by_id, *, selected):
+    anchors = []
+    geometry = candidate.get("geometry") or {}
+    for boundary in ("pole", "upper", "lower"):
+        segment = geometry.get(boundary)
+        if not isinstance(segment, dict):
+            continue
+        for endpoint in ("start", "end"):
+            point = segment.get(endpoint)
+            if not isinstance(point, dict):
+                continue
+            anchors.append({
+                "role": f"{boundary}{endpoint.title()}",
+                "timestamp": point["timestamp"],
+                "price": point["price"],
+            })
+    evidence_refs = _unique_strings(candidate.get("evidenceRefs", []))
+    evidence_pivots = [pivot_by_id[reference] for reference in evidence_refs if reference in pivot_by_id]
+    touch_pivots = evidence_pivots[-_TOUCH_TRACE_LIMIT:]
+    touch_pivot_ids = [str(pivot["id"]) for pivot in touch_pivots]
+    confirmation = candidate.get("confirmation") or {}
+    metrics = {
+        "state": candidate.get("state"),
+        "touchCount": int(candidate.get("touches") or 0),
+        "upperTouches": int(candidate.get("upperTouches") or 0),
+        "lowerTouches": int(candidate.get("lowerTouches") or 0),
+        "containment": candidate.get("containment"),
+        "maxResidualAtr": candidate.get("maxResidualAtr"),
+        "convergenceRatio": candidate.get("convergenceRatio"),
+        "parallelSlopeErrorAtr": candidate.get("parallelSlopeErrorAtr"),
+        "confirmationMode": confirmation.get("mode"),
+        "penetrationAtr": confirmation.get("penetrationAtr"),
+        "relativeVolume": confirmation.get("relativeVolume"),
+    }
+    result = {
+        "id": candidate["id"],
+        "category": "pattern",
+        "kind": candidate.get("kind"),
+        "score": candidate.get("score", 0),
+        "selected": selected,
+        "hardPass": bool(candidate.get("hardPass")),
+        "evidencePass": bool(candidate.get("evidencePass", candidate.get("hardPass"))),
+        "activePass": bool(candidate.get("activePass", candidate.get("hardPass"))),
+        "rejectReasons": _trace_reject_reasons(candidate, selected=selected),
+        "selectionTier": "confirmed" if selected else None,
+        "importanceTier": None,
+        "importanceRank": None,
+        "anchors": anchors,
+        "evidenceRefs": evidence_refs,
+        "anchorPivotIds": [],
+        "touchPivotIds": touch_pivot_ids,
+        "reactionPivotIds": [],
+        "touchRefs": [],
+        "reactionRefs": [],
+        "touches": [],
+        "metrics": metrics,
+    }
+    return result, max(0, len(evidence_pivots) - len(touch_pivots))
+
+
+def _trace_touch(
+    candidate_id,
+    *,
+    timestamp,
+    bar_index,
+    price,
+    outcome=None,
+):
+    identity = f"{candidate_id}|{timestamp}|{bar_index}|{outcome or 'touch'}"
+    result = {
+        "id": f"touch-{hashlib.sha256(identity.encode()).hexdigest()[:12]}",
+        "timestamp": timestamp,
+        "price": round(float(price), 6),
+    }
+    if outcome is not None:
+        result["outcome"] = outcome
+    return result
+
+
+def _trace_reject_reasons(candidate, *, selected):
+    reasons = _unique_strings(candidate.get("rejectReasons", []))
+    if selected:
+        return reasons
+    if not reasons and (candidate.get("hardPass") or candidate.get("selectionTier") is not None):
+        reasons.append("not_selected")
+    return reasons
+
+
+def _trace_pivot(pivot):
+    return {
+        "id": pivot["id"],
+        "kind": pivot["kind"],
+        "timestamp": pivot["timestamp"],
+        "confirmedAt": pivot["confirmedAt"],
+        "price": round(float(pivot["price"]), 6),
+    }
+
+
+def _unique_strings(values):
+    result = []
+    seen = set()
+    for value in values:
+        normalized = str(value)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+    return result
 
 
 def _wilder_atr(rows):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -28,6 +29,27 @@ class GeometryAssetContractTest(unittest.TestCase):
         self.assertEqual(payload["intervals"], list(envelope_contract.BUILD_INTERVALS))
         self.assertNotIn("llmEnabled", payload)
         self.assertNotIn("skipFreshHours", payload)
+
+    def test_build_envelope_rejects_read_compatible_non_build_interval(self):
+        with self.assertRaisesRegex(ValueError, "only 1m and 1D"):
+            ChartAssetBuildEnvelope.create(
+                requested_by="test",
+                symbols=["NVDA"],
+                intervals=["5m"],
+            )
+
+    def test_v6_schema_keeps_legacy_fields_and_adds_optional_geometry_contract(self):
+        path = ROOT / "shared" / "chart-contract" / "chart-geometry-asset.schema.json"
+        schema = json.loads(path.read_text(encoding="utf-8"))
+        geometry = schema["properties"]["geometry"]
+
+        self.assertTrue({
+            "drawings", "supports", "resistances", "patterns", "primaryPattern",
+            "tradePlan", "primaryTriangle", "historicalTriangle",
+        }.issubset(geometry["required"]))
+        self.assertTrue({"trends", "primaryTrend", "drawingGroups", "analysisTrace"}.issubset(geometry["properties"]))
+        self.assertIn("reference", schema["$defs"]["level"]["properties"]["selectionTier"]["enum"])
+        self.assertIn("trendParallelLines", schema["$defs"]["drawing"]["properties"]["type"]["enum"])
 
     def test_manual_and_scheduled_requests_have_server_owned_priorities(self):
         manual = ChartAssetBuildEnvelope.create(requested_by="user", symbols=["NVDA"])

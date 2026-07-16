@@ -30,6 +30,88 @@ def test_submit_failed_unknown_can_reconcile_to_filled():
     assert event["payload"]["payload"]["filled_qty"] == "1"
 
 
+def test_reconciliation_projects_increasing_real_fill_observations_once():
+    repo = make_unknown_repo()
+    repo.orders["ord-1"]["user_sub"] = "user-1"
+
+    reconcile_orders(repo, [{
+        "client_order_id": "coid-1",
+        "status": "partially_filled",
+        "filled_qty": "0.5",
+        "fill_price": "144.50",
+        "execution_id": "exec-partial",
+    }])
+    reconcile_orders(repo, [{
+        "client_order_id": "coid-1",
+        "status": "filled",
+        "filled_qty": "1",
+        "fill_price": "145.00",
+        "execution_id": "exec-final",
+    }])
+    reconcile_orders(repo, [{
+        "client_order_id": "coid-1",
+        "status": "filled",
+        "filled_qty": "1",
+        "fill_price": "145.00",
+        "execution_id": "exec-final",
+    }])
+
+    assert [row["observation_version"] for row in repo.order_coach_fill_history] == [1, 2]
+    assert [str(row["cumulative_filled_qty"]) for row in repo.order_coach_fill_history] == ["0.5", "1"]
+    assert {row["fill_id"] for row in repo.order_coach_fill_history} == {"kis:ord-1"}
+
+
+def test_reconciliation_skips_fill_projection_without_owned_user_or_positive_quantity():
+    repo = make_unknown_repo()
+
+    reconcile_orders(repo, [{
+        "client_order_id": "coid-1",
+        "status": "submitted",
+        "filled_qty": "0",
+        "execution_id": "exec-zero",
+    }])
+
+    assert repo.order_coach_fill_history == []
+
+
+def test_reconciliation_does_not_substitute_order_limit_for_missing_fill_price():
+    repo = make_unknown_repo()
+    repo.orders["ord-1"]["user_sub"] = "user-1"
+
+    reconcile_orders(repo, [{
+        "client_order_id": "coid-1",
+        "status": "filled",
+        "filled_qty": "1",
+        "execution_id": "exec-missing-price",
+    }])
+
+    assert repo.order_coach_fill_history == []
+
+
+def test_partial_fill_is_preserved_when_the_remainder_is_canceled():
+    repo = make_unknown_repo()
+    repo.orders["ord-1"]["user_sub"] = "user-1"
+
+    reconcile_orders(repo, [{
+        "client_order_id": "coid-1",
+        "status": "partially_filled",
+        "filled_qty": "0.5",
+        "fill_price": "144.50",
+        "execution_id": "exec-partial",
+    }])
+    reconcile_orders(repo, [{
+        "client_order_id": "coid-1",
+        "status": "canceled",
+        "filled_qty": "0.5",
+        "fill_price": "144.50",
+        "execution_id": "exec-cancel",
+    }])
+
+    assert repo.get_order("ord-1")["status"] == OrderStatus.CANCELED.value
+    assert len(repo.order_coach_fill_history) == 1
+    assert str(repo.order_coach_fill_history[0]["cumulative_filled_qty"]) == "0.5"
+
+
 def test_submit_failed_unknown_cancel_requires_manual_reconciliation():
     repo = make_unknown_repo()
     rows = [{"client_order_id": "coid-1", "status": "canceled", "filled_qty": "0", "execution_id": "cancel-1"}]

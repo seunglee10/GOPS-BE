@@ -68,10 +68,14 @@
 3. 중앙 dialog에서 위험성향, 선호 섹터, 제외 섹터, 제외 종목을 저장한다.
 4. 패널이 현재 세션의 최근 추천을 다시 조회한다.
 5. 사용자가 추천 행을 선택하면 해당 종목이 Agent의 `recommendation.stock` 참조로 추가된다.
+6. 선택한 추천은 `recommendationExplain` 패널의 점수·근거·위험·개인화 provenance와 동기화된다.
 
 추천 행 선택만으로 차트 종목이 즉시 바뀌지는 않는다. 선택한 추천을 바탕으로 기업 상세 화면을 열어 달라는 Agent 명령이 들어오면 별도의 navigation 로직이 종목 화면 이동을 결정한다.
 
-현재 별도의 `StockRecommendationExplainPanel`이나 `recommendationExplain` layout kind는 없다. 추천 카드와 추천 목록은 같은 `StockRecommendationsPanel`을 서로 다른 variant로 사용한다.
+추천 카드와 추천 목록은 같은 `StockRecommendationsPanel`을 서로 다른 variant로 사용한다.
+별도 `StockRecommendationExplainPanel`은 선택 또는 상위 추천을 5×4 기본 크기의
+`recommendationExplain` layout kind로 설명한다. latest 응답만 사용하며 별도 API,
+feedback control, tracking, 자동 주문 경로를 만들지 않는다.
 
 ## 사용자 설정
 
@@ -80,6 +84,7 @@
 | 필드 | 설명 |
 | --- | --- |
 | `riskLevel` | `conservative`, `balanced`, `aggressive` |
+| `recommendationStyle` | `momentum`, `balanced`, `stable`. 전문 팩터 가중치 선택 |
 | `horizon` | v1에서는 `intraday`만 허용 |
 | `maxDrawdownPct` | 내부 호환 필드. UI 입력 없이 기본값 `6` 사용 |
 | `preferredSectors` | 후보 유니버스의 섹터 anchor |
@@ -137,10 +142,14 @@ flowchart TD
 | `systems/api-server/pods/api-server/gops-backend/app/recommendations/routes.py` | 프로필·latest·refresh API |
 | `systems/api-server/pods/api-server/gops-backend/app/recommendations/service.py` | 데이터 수집, 슬롯 멱등성, 저장, 알림 |
 | `systems/api-server/pods/api-server/gops-backend/app/recommendations/scoring.py` | 후보 생성, 1차 점수화, backend fallback |
+| `systems/api-server/pods/api-server/gops-backend/app/recommendations/professional.py` | 전문 9팩터와 스타일 prior |
+| `systems/api-server/pods/api-server/gops-backend/app/recommendations/professional_v2.py` | canonical fill 학습, 연속 선호, 위험예산, cutoff-safe 펀더멘털 overlay |
 | `systems/api-server/pods/api-server/gops-backend/app/recommendations/repository.py` | PostgreSQL·메모리 저장소 |
 | `systems/api-server/pods/api-server/gops-backend/app/recommendations/worker.py` | 프로필 사용자별 주기 실행 |
 | `systems/api-server/pods/api-server/gops-backend/app/routes/account.py` | 보유종목 sector 보강과 snapshot 저장 |
 | `systems/order/shared/kis_trader/migrations/0004_recommendations.sql` | 추천 프로필·run·item·portfolio snapshot 테이블 |
+| `systems/order/shared/kis_trader/migrations/0011_personalized_recommendations.sql` | 스타일, 모델 registry, outcome, 개인화 provenance |
+| `systems/order/shared/kis_trader/migrations/0012_continuous_recommendation_v2.sql` | continuous V2 선호·위험·펀더멘털 상태 |
 
 ### 프런트
 
@@ -150,9 +159,10 @@ flowchart TD
 | `apps/gops-frontend/src/recommendations/InvestmentProfileForm.tsx` | 추천 설정 입력 폼 |
 | `apps/gops-frontend/src/recommendations/RecommendationSettingsDialog.tsx` | dialog focus, Escape, 닫기 동작 |
 | `apps/gops-frontend/src/recommendations/StockRecommendationsPanel.tsx` | 추천 카드·목록, 세션 toggle, fallback 조합 |
+| `apps/gops-frontend/src/recommendations/StockRecommendationExplainPanel.tsx` | 선택 추천의 핵심 지표, 근거, 위험, 개인화 provenance |
 | `apps/gops-frontend/src/recommendations/recommendationSimulationFallback.ts` | 고정 시뮬레이션 추천 10개 |
 | `apps/gops-frontend/src/recommendations/recommendationNavigation.ts` | 선택 추천을 기업 화면 이동 의도로 해석 |
-| `apps/gops-frontend/src/components/PanelContentRenderer.tsx` | `recommendations`, `recommendationsList` 렌더링 |
+| `apps/gops-frontend/src/components/PanelContentRenderer.tsx` | `recommendations`, `recommendationsList`, `recommendationExplain` 렌더링 |
 | `apps/gops-frontend/src/layout/panelRegistry.ts` | 추천 패널 kind와 기본 크기 등록 |
 
 ## API 계약
@@ -166,6 +176,7 @@ flowchart TD
   "status": "ready",
   "profile": {
     "riskLevel": "balanced",
+    "recommendationStyle": "balanced",
     "horizon": "intraday",
     "maxDrawdownPct": 6,
     "preferredSectors": ["Information Technology"],
@@ -183,6 +194,7 @@ flowchart TD
 추천 설정을 생성하거나 갱신한다.
 
 - `riskLevel`은 세 값만 허용한다.
+- `recommendationStyle`은 `momentum`, `balanced`, `stable`만 허용하며 `riskLevel`과 독립적이다.
 - `horizon`은 `intraday`만 허용한다.
 - `maxDrawdownPct`를 생략하면 `6`을 사용한다.
 - 섹터 배열은 최대 12개, 제외 종목은 최대 50개로 정리한다.
@@ -236,6 +248,8 @@ DB migration이 없거나 DB 설정이 없으면 추천 API는 HTTP 503을 반�
 | `user_portfolio_snapshots` | 마지막 계좌 보유종목 응답 |
 | `stock_recommendation_runs` | 사용자·세션·슬롯별 실행 결과 |
 | `stock_recommendation_items` | run에 포함된 추천 종목과 근거 |
+| `stock_recommendation_model_registry` | 학습 cutoff, 팩터 가중치, OOS 승인 metadata |
+| `stock_recommendation_outcomes` | 다음 세션 SPY 초과수익 label |
 
 `stock_recommendation_runs`에는 `(user_sub, run_key)` unique 제약이 있다. run에는 당시 프로필을 `profile_snapshot`으로 저장하지만, API 응답의 `profile` 필드는 현재 프로필을 사용한다. 같은 슬롯에서 프로필이 바뀌면 과거 설정으로 계산한 item과 새 프로필이 한 응답에 함께 보일 수 있다.
 
@@ -483,6 +497,11 @@ NVDA, AMD, MSFT, AAPL, AMZN, GOOGL, META, AVGO, TSLA, JPM
 | `reasons` | 점수 근거 |
 | `riskWarnings` | 위험 문구 |
 | `metricsSnapshot` | 계산 지표, 점수 breakdown, fallback marker |
+| `algorithmVersion` | optional 알고리즘 identity. continuous V2는 `continuous-personalization-v2` |
+| `effectiveWeights` | optional 사용자별 유효 가중치 |
+| `preferenceConfidence` | optional 실제 매수 기반 선호 신뢰도 |
+| `fundamentalStatus` / `fundamentalProvenance` | optional 펀더멘털 적용 또는 fallback 근거 |
+| `riskBudget` / `observedRisk` | optional 위험예산과 관측 위험 비교 |
 
 화면은 점수와 신뢰도를 상시 표시하지 않는다. 추천 행에는 심볼, 당일 등락률, 근거, 첫 번째 위험 경고, 한글 섹터를 표시한다. 선택한 추천은 흰색 계열 선택 상태로 표시되고 Agent 참조 chip과 연결된다.
 
@@ -515,6 +534,15 @@ Agent UI panel type은 `stockRecommendations`다. 프런트 layout kind `recomme
 
 synthetic marker가 있는 프런트 시뮬레이션 item도 현재 같은 참조 계약을 사용한다.
 
+## 전문 개인화
+
+`professional-personalization-v1`은 momentum, balanced, stable이 같은 9개 시장 팩터를
+사용하고 스타일별 prior 가중치만 바꾼다. `continuous-personalization-v2`는 canonical
+fill에서 장기·세션 선호를 연속적으로 학습하고, 계좌 위험예산과 cutoff-safe
+펀더멘털 overlay를 적용한다. 데이터가 부족하면 명시적인 9팩터 fallback과 provenance를
+남긴다. 상세 수식, 제한, 검증 계약은
+`PROFESSIONAL_PERSONALIZED_RECOMMENDATION_LOGIC.md`를 따른다.
+
 ## 운영 설정
 
 | 환경 변수 | 기본값 | 설명 |
@@ -522,6 +550,9 @@ synthetic marker가 있는 프런트 시뮬레이션 item도 현재 같은 참�
 | `RECOMMENDATION_WORKER_POLL_SECONDS` | `1800` | worker polling 주기, 최소 10초 |
 | `RECOMMENDATION_ALPACA_NEWS_FALLBACK_LIMIT` | batch 기준 최대 `50` | Alpaca fallback article 수 |
 | `RECOMMENDATION_ALPACA_NEWS_INCLUDE_CONTENT` | `false` | Alpaca 원문 content 포함 여부 |
+| `RECOMMENDATION_PERSONALIZATION_ENABLED` | `false` | professional personalization 계산 활성화 |
+| `RECOMMENDATION_PERSONALIZATION_SHADOW` | `true` | 기존 순서를 유지하고 개인화 점수만 저장 |
+| `RECOMMENDATION_PROFESSIONAL_WEIGHTS_JSON` | 없음 | 승인된 스타일 가중치와 검증 metadata |
 
 worker는 API 서버와 같은 추천 service와 repository를 사용하기 위해 `gops-api-server` image를 사용한다.
 

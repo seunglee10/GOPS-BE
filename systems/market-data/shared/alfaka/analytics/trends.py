@@ -9,10 +9,21 @@ from alfaka.serving.indicators import bollinger_bands, ema, macd, rsi
 
 from .atr import atr_series, latest_atr, percentile_rank
 from .config import QUALITY_CONFIG
+from .pivots import compute_pivots
 
 
-def compute_trends(candles, pivots, *, display_from, atr, interval="1D"):
+def compute_trends(
+    candles,
+    pivots=None,
+    *,
+    display_from,
+    atr,
+    interval="1D",
+    retain_competitors=False,
+):
     config = QUALITY_CONFIG[interval]
+    if pivots is None:
+        pivots = compute_pivots(candles, display_from=display_from, interval=interval)
     atr_values = [float(value or 0) for value in atr_series(candles)]
     structural = [item for item in pivots if item.get("grade") == "structural" and item["barIndex"] >= len(candles) - config.display_bars - config.extra_anchor_bars]
     hypotheses = []
@@ -70,8 +81,25 @@ def compute_trends(candles, pivots, *, display_from, atr, interval="1D"):
         item for item in (*hypotheses, *channels, *range_candidates)
         if not item["hardPass"] and item["id"] not in selected_ids
     ]
-    rejected = sorted(rejected, key=lambda item: (-item["score"], item.get("currentDistanceAtr", 99), item["id"]))[:8]
-    return [*selected, *rejected]
+    rejected = sorted(
+        rejected,
+        key=lambda item: (-item["score"], item.get("currentDistanceAtr", 99), item["id"]),
+    )
+    if not retain_competitors:
+        return [*selected, *rejected[:8]]
+    competitors = sorted(
+        (
+            item for item in (*hypotheses, *channels, *range_candidates)
+            if item["hardPass"] and item["id"] not in selected_ids
+        ),
+        key=lambda item: (
+            0 if item["kind"] == "channel" else 1 if item["kind"] in {"up", "down"} else 2,
+            -float(item.get("score") or 0),
+            float(item["currentDistanceAtr"]) if item.get("currentDistanceAtr") is not None else 99.0,
+            str(item["id"]),
+        ),
+    )
+    return [*selected, *competitors, *rejected]
 
 
 def _materialize_line(candles, first, second, slope, touches, atr_values, config, interval, trend_kind, same):

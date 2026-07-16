@@ -58,6 +58,7 @@
       "required": ["pattern", "support", "resistance", "tradeScenario", "movingAverageCross", "selectedCandle"],
       "properties": {
         "pattern": {"type": ["object", "null"]},
+        "trend": {"type": ["object", "null"]},
         "support": {"type": ["object", "null"]},
         "resistance": {"type": ["object", "null"]},
         "tradeScenario": {"type": ["object", "null"]},
@@ -73,6 +74,8 @@
       "required": ["evidence", "pattern", "support", "resistance"],
       "properties": {
         "evidence": {"$ref": "#/$defs/focusIdList"},
+        "levels": {"$ref": "#/$defs/focusIdList"},
+        "trend": {"$ref": "#/$defs/focusIdList"},
         "pattern": {"$ref": "#/$defs/focusIdList"},
         "support": {"$ref": "#/$defs/focusIdList"},
         "resistance": {"$ref": "#/$defs/focusIdList"}

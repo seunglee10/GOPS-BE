@@ -288,6 +288,13 @@ Applies to:
 - symbol search menu,
 - bottom chat panel.
 
+Recommendation selection has one narrow product-directed exception: a selected
+row in `recommendationsList` uses a white paper surface with black ink. The
+`recommendationExplain` report and surrounding panel chrome remain in the
+locked dark hierarchy. This exception does not authorize white cards or
+alternate structural surfaces in other panels; blue remains the focus/action
+color and market status keeps its semantic green, red, and caution colors.
+
 ### Panel Chrome
 
 Panel chrome is intentionally hidden by default:

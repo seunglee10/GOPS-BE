@@ -83,6 +83,8 @@ def build_chart_analysis_assets(
 ) -> dict[str, Any]:
     if _storage_maintenance_enabled():
         raise HTTPException(status_code=503, detail="Chart analysis asset storage migration is in progress.")
+    if request.symbols == "sp500" and request.force:
+        raise HTTPException(status_code=400, detail="S&P 500 force refresh is not supported.")
     symbols = _requested_symbols(request.symbols)
     envelope = ChartAssetBuildEnvelope.create(
         requested_by=hashlib.sha256(user.sub.encode("utf-8")).hexdigest()[:24],

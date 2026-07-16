@@ -1,128 +1,133 @@
 # Chart Geometry Assets
 
-Chart Geometry Asset은 완료된 실제 OHLCV 봉에서 현재 지지·저항과 가격 패턴을
-계산해 차트에 적용하는 결정론적 자산이다. 패턴 좌표나 판정에 LLM을 사용하지 않는다.
+Chart Geometry Asset은 완료된 실제 OHLCV 봉에서 현재 지지·저항, 대각 추세와 가격
+패턴을 계산해 차트에 적용하는 결정론적 자산이다. 계산과 hard-pass 판정은 해석,
+선택된 geometry의 `drawings[]` 생성은 작도, `tradePlan`의 화면 투영은 제안 단계다.
+어느 단계도 패턴 좌표나 수치를 LLM으로 계산하지 않는다.
 
-## 지원 범위
+## 지원 범위와 호환성
 
-- interval: `1m`, `5m`, `10m`, `1h`, `4h`, `1D`, `1W`
-- geometry: 지지선 최대 2개, 저항선 최대 2개, 최고 점수 패턴 1개를 최대 8개 drawing으로 표현
-- 패턴: 상승·하락·대칭 삼각형, 상승·하락 깃발형/페넌트/직사각형, 상승·하락 쐐기,
-  하락 채널 상단 돌파, 상승 채널 하단 이탈
-- 매매 시나리오: 확인된 최고 점수 패턴의 진입 후보·손절·목표·손익비를 `tradePlan`으로 제공
-- 보조지표: 선택 interval의 완료 봉 개수 기준 SMA60·SMA120과 최근 교차
-- 좌표: 해당 interval에 실제로 존재하는 canonical candle timestamp와 가격
-- intraday: `1m` 실제 정규장 봉, `5m/10m/1h/4h`는 09:30 ET 기준 파생 봉
+- 새 생성·재생성 interval은 `1m`, `1D`뿐이다.
+- `5m`, `10m`, `1h`, `4h`, `1W`의 기존 PostgreSQL row는 GET, 표시, 선택 DELETE
+  호환을 유지하지만 새 build envelope에는 넣을 수 없다.
+- `assetVersion="geometry"`는 유지하고 현재 알고리즘은
+  `ohlcv-consensus-pattern-families-v6`이다.
+- 좌표는 해당 interval의 canonical completed candle timestamp와 가격만 사용한다.
+- 자산 하나는 지지·저항 최대 4개, 최고 추세/채널 최대 1개, 최고 패턴 최대 3개로
+  `drawings[]` 8개를 넘지 않는다.
+- payload는 canonical UTF-8 JSON 기준 64 KiB 이하이며 초과한 결과는 저장하지 않는다.
+- v6 필드는 모두 `geometry` 아래 optional이다. 구자산과 v6 자산을 같은 API가 읽는다.
 
-패턴은 방향전환 피벗과 회귀 경계선에서 깃대 유무, 두 경계의 기울기·평행성·수렴률,
-내부 포함률, 종가 돌파 방향을 판정한다. 깃발형·페넌트·직사각형은 선행 impulse를
-요구하고, 채널 이탈은 종가 돌파가 거래량 또는 다음 봉 유지로 확인된 경우만 표시한다.
-신규 자산은 `confirmation`에 `breakoutAt`, `confirmedAt`, `mode`, `boundaryPrice`,
-`penetrationAtr`, `relativeVolume`을 저장한다. 이 값은 해설의 확인 근거이며 기존 자산은
-필드가 없어도 읽을 수 있다.
-`patterns[]`에는 활성 hard-pass 후보를 저장하고 `primaryPattern`만 작도한다. 삼각형
-호환 필드인 `primaryTriangle`/`historicalTriangle`도 유지한다. 지지·저항은 별도의
-OHLCV 접촉 증거 계산을 계속 사용한다.
+## 지지·저항
 
-표시하는 확정 지지·저항은 ATR 기반 가격 구간에서 최소 3회 독립 접촉과 2회 반응을
-확인하고, 마지막 접촉이 interval별 유효 기간 안에 있으며 현재가가 2 ATR 이내인
-후보만 사용한다. 완료 봉 종가 돌파는 즉시 기존 역할을 중단하며, 거짓 돌파 복귀
-또는 구간 재테스트가 확인된 경우에만 역할을 복구·전환한다.
-Geometry v5는 확정 레벨 중 한 역할이 비어 있을 때에만 활성 상태, 3회 접촉, 1회 반응,
-주기별 최근성, 현재가 3 ATR 이내를 만족한 가장 가까운 레벨을 `contextual`로 최대 1개
-보완한다. 이 공개 단계 선택은 피벗·패턴·점수·`geometryHash`·`tradePlan`에 입력되지 않는다.
-저장 자산의 지지·저항에는 중심 가격과 함께 `role`, `zoneLow`, `zoneHigh`,
-`halfWidthAtr`, `selectionTier`가 포함될 수 있다. 프런트는 이 값을 다시 계산하거나
-병합하지 않으며 자동 지지·저항은 2.5px 단일 H-Line으로 표시한다. 가격 패턴 경계는
-3.5px 실선과 패턴 이름·상태로 표시한다. 기존 v3/v4 자산과 metadata가 없는 자산도
-읽기 호환한다.
+확정 레벨은 ATR 가격 구간의 최소 3회 독립 접촉, 2회 반응, interval별 최근성,
+현재 관련성을 통과해야 한다. 완료 봉 종가 돌파는 역할을 중단하며 거짓 돌파 복귀나
+구간 재테스트를 확인한 뒤에만 역할을 복구하거나 전환한다.
+
+한 role에 확정 레벨이 없을 때만 기존 `contextual` 후보를 허용한다. contextual도
+없을 때만 활성 또는 유효한 role-flip, 접촉 2회, 반응 1회, role 방향, 최근성,
+현재가 4 ATR 이내를 모두 통과한 후보를 `reference`로 허용한다. single swing,
+role 충돌, break-pending 후보는 reference가 될 수 없다. role별 최대 2개를 저장하고
+겹치는 zone은 tier, 점수, 반응, 접촉, 최근성, 가격, stable ID 순으로 억제한다.
+
+표시 위계는 다음과 같다.
+
+| importance | 대상 | 선 표현 | 라벨 |
+| --- | --- | --- | --- |
+| `major` | role별 첫 confirmed | 3px, 0.95, solid | 지지/저항 |
+| `standard` | 두 번째 confirmed 또는 contextual | 2.25px, 0.72, `[6,4]` | 보조 지지/저항 |
+| `minor` | reference | 1.5px, 0.45, `[2,4]` | 참고 지지/저항 |
+
+구자산처럼 importance metadata가 없으면 기존 2.5px 표현을 사용한다. 프런트는 레벨을
+재계산하거나 재병합하지 않는다.
+
+## 추세선과 채널
+
+대각 추세는 공통 구조 피벗에서 계산한다. 최소 3회 접촉과 2회 반응, span, 중앙
+residual, 현재 거리, 마지막 접촉 최근성, invalidation, adverse close 게이트를 모두
+통과한 최고 점수 후보 하나만 `primaryTrend`로 저장한다. 적격 후보가 없으면
+`trends=[]`, `primaryTrend=null`이 정상 결과다.
+
+일반 상승·하락선은 두 anchor의 `trendLine`이다. 평행 채널은 기준선 anchor 두 개와
+offset anchor 하나, `parallelLineCount=2`를 가진 단일 `trendParallelLines` drawing이다.
+따라서 채널도 drawing budget 하나만 사용한다. 저장 trend에는 피벗 참조, 접촉·반응 수,
+ATR/bar 기울기, residual, 현재 거리, 최근성 및 채널 폭·평행 오차·containment를 포함한다.
+
+## 패턴과 매매 시나리오
+
+v6는 기존 패턴 detector, ranking, hardPass, confirmation, `tradePlan`, primary 선택과
+패턴 drawing을 그대로 유지한다. 지원 패턴은 상승·하락·대칭 삼각형, 상승·하락
+깃발형/페넌트/직사각형, 상승·하락 쐐기, 하락 채널 상단 돌파, 상승 채널 하단 이탈이다.
+`patterns[]`에는 활성 hard-pass 후보를 저장하고 `primaryPattern`만 작도한다.
+`primaryTriangle`/`historicalTriangle`은 구독자 호환 필드다.
 
 `tradePlan`은 주문이 아니라 차트 표시용 시나리오다. `forming`은 관찰만 하고
-`confirmed`에서만 신호를 낸다. 돌파 기준은 패턴 경계에서 `0.25 ATR` 바깥의 완료 봉
-종가이며, 신규 진입 손절은 반대 경계와 돌파선에서 `1 ATR` 떨어진 가격 중 더 가까운
-유효 무효화 가격을 사용한다. 목표가는 깃발형·페넌트는 깃대 길이, 나머지는 패턴의
-최대 높이를 돌파선에 투영한다. 신규 매수·공매도 시나리오는 손익비 `2.0` 이상만
-후보로 표시한다. 기본 운영 모드는 long-only라 하락 확인은 메인 UI에서 `매도 후보`로
-표시한다.
+`confirmed`만 신호를 낸다. 돌파, 무효화, 목표, 손익비는 서버가 ATR 정규화 값으로
+계산하며 프런트가 다시 계산하지 않는다.
 
-## 데이터와 저장 흐름
+## 해석 trace
+
+`analysisTrace.version`은 `geometry-analysis-trace-v1`이다. levels, trends, patterns가
+같은 `compute_pivots()` 결과를 공유하며 trace에는 선택 후보와 탈락 후보, 근거 피벗,
+접촉·반응 episode, reject reason과 표시용 metrics를 담는다. 기존 `_pivot_evidence()`
+payload는 구자산 호환 필드일 뿐 신규 trace의 원천이 아니다.
+
+trace 상한은 level 후보 8개, trend 후보 7개, pattern 후보 4개, 후보별 touch/reaction
+episode 8개다. 남은 후보가 참조하는 pivot만 보존하고 dangling reference를 허용하지
+않는다. 초과 시 미선택·낮은 순위부터 결정론적으로 생략하며 `omittedCounts`를 남긴다.
+선택 후보와 그 근거는 생략하지 않는다. 이 고정 상한을 적용한 전체 payload가 64 KiB를
+넘으면 후보를 더 지우지 않고 저장을 실패시킨다. trace는 persistent drawing으로
+변환하지 않고 프런트의 비영속 Canvas overlay가 소비한다.
+
+## 데이터와 PostgreSQL 저장 흐름
 
 ```mermaid
 flowchart LR
   PGQ["PostgreSQL build items"] --> Worker["Geometry worker"]
-  Worker --> CH["ClickHouse completed candles"]
+  Worker --> CH["ClickHouse canonical completed candles"]
   CH --> Gap{"coverage 충분?"}
-  Gap -- "아니오" --> Alpaca["누락 range만 Alpaca"]
+  Gap -- "아니오, repair 허용" --> Alpaca["누락 range만 Alpaca"]
   Alpaca --> CH
-  Gap -- "예" --> Kernel["OHLCV consensus kernel"]
-  Kernel --> Plan["Pattern tradePlan"]
-  Plan --> PG["PostgreSQL geometry_assets"]
+  Gap -- "예" --> Kernel["deterministic geometry v6"]
+  Kernel --> Guard["schema / 8 drawings / 64 KiB"]
+  Guard --> PG["PostgreSQL geometry_assets JSONB UPSERT"]
   PG --> API["Chart asset API"]
-  API --> UI["Geometry layer + SMA60/120"]
+  API --> UI["5 layers + commentary"]
 ```
 
-차트 자산 하위 시스템은 S3, Redis, Kafka, LLM을 사용하지 않는다. 파생 intraday가
-부족하면 `5m/10m`은 Alpaca `1Min`, `1h/4h`는 Alpaca `10Min` 원본을
-ClickHouse에 보충하고 같은 공통 정규장 집계기로 상위 봉을 저장한 뒤 재조회한다.
-다른 GOPS 하위
-시스템의 해당 인프라 사용에는 영향을 주지 않는다. `1W`는 기존처럼 ClickHouse의
-canonical `1D`를 집계하며 Alpaca native 주봉을 저장하지 않는다.
+저장 원본은 `chart_assets.geometry_assets`이며 `(symbol, interval)`당 최신 JSONB row
+하나다. 더 최신 `generatedAt`, 또는 같은 시각의 다른 canonical payload digest만
+조건부 UPSERT한다. 빌드·검증·저장 중 실패하면 기존 성공 row를 보존한다. 캔들 원본과
+repair materialization은 계속 ClickHouse에 있고 Geometry asset을 ClickHouse에
+저장하거나 dual-write하지 않는다. S3, Redis, Kafka, LLM도 자산 저장 경로에 없다.
 
-목표 완료 봉은 인트라데이와 `1D`가 380개, `1W`가 312개다. 최신까지 연속된 완료
-봉이 120개 이상이고 과거 head만 부족하면 partial 자산을 허용한다. 중간이나 최신
-결측은 보충 후에도 남으면 실패하며 기존 성공 자산을 교체하지 않는다. 단, 성공한
-Alpaca 요청에도 실재 봉이 없는 무거래 slot은 `provider_confirmed_empty`로 인정하며
-가짜 봉을 만들지 않는다.
+운영에서 repair가 활성화되고 Alpaca credential이 있을 때만 실제 누락 range를 보충한다.
+Alpaca가 성공했지만 실제 봉이 없는 slot은 `provider_confirmed_empty`로 기록하며 가짜
+봉을 만들지 않는다. 이 경우에도 `coverage.contiguousBars`는 보정값이 아니라 실제 관측
+연속 봉 수를 유지한다. 로컬 테스트와 acceptance는 저장 fixture 및 주입식 candle loader를
+사용하고 repair를 끄므로 Alpaca API key나 외부 호출이 필요하지 않다.
 
-## 실행
+## 빌드 정책
 
-> 해설·질문 UI 통합 배포에서는 아래 builder 운영 절차를 실행하지 않는다. 이미 저장된
-> `geometry_assets`를 읽기 전용으로 사용하며 FORCE 재생성, 전체 종목 재등록, chart asset
-> migration Job, Geometry CronJob 중지·변경을 하지 않는다.
+- API와 내부 build envelope 모두 `1m/1D`만 받으며 기본값도 두 interval이다.
+- worker는 `scheduled` item을 candle 조회 전에 `manual_refresh_only`로 종료한다.
+- 일반 manual build는 없는 자산만 만든다. 기존 row 교체는 선택한 symbol/interval의
+  `manual + force`에서만 가능하다.
+- `symbols="sp500"`과 `force=true` 조합은 API에서 400으로 거절한다.
+- 같은 source/force/symbol/interval의 active 요청은 하나의 PostgreSQL job으로 합친다.
+- 수동 priority는 100이고 최대 2회 처리 뒤 만료된 lease는 실패로 종결한다.
+- 배포 시 기존 row를 일괄 재생성하거나 DB schema/data migration을 실행하지 않는다.
 
-- API 패널은 새 빌드를 `1m/1D`로 제한하고 두 interval을 기본 선택한다.
-- worker는 `scheduled` 요청을 candle 조회·복구·분석·저장 전에 `manual_refresh_only`로
-  종료한다. 기존 자산 교체는 선택한 symbol/interval의 `manual + force` 요청만 허용한다.
-- 개발 패널의 일반 수동 빌드는 없는 자산만 만들고, 기존 자산 갱신은 별도 확인을 거친
-  `선택 자산 수동 갱신`으로만 실행한다. S&P500 전체 강제 갱신 동작은 제공하지 않는다.
-- 수동 작업 priority 100 계약은 유지한다.
-- 동일 source/force/symbol/interval의 실행 중 요청은 하나의 job으로 합친다.
-- 기존 scheduler가 요청을 등록해도 builder의 read-only 경계에서 처리하지 않는다.
-- 수동 실행 스크립트도 기본적으로 `1m/1D`만 등록한다.
-- 빌드 상태는 PostgreSQL polling으로 확인한다.
-- 자산 현황 목록은 `symbol + interval`별 대표 패턴의 한국어 이름, 상태, 점수를 표시한다.
-  새 자산은 `primaryPattern`, 기존 삼각형 자산은 `primaryTriangle`을 사용한다.
-- 최대 2회 처리 뒤 lease가 만료된 item은 실패로 종결해 영구 대기를 막는다.
-- 기존 PostgreSQL 설치는 migration Job을 다시 실행해 작도 상한과 queue index를 적용한다.
+## 화면 레이어와 해설
 
-새 완료 봉 때문에 stale이 된 자산은 차트에서 제거하지 않고 낮은 불투명도로 표시한다.
-현재 symbol과 interval이 모두 일치하는 자산만 적용한다. 자동 분석 drawing은
-`chart-asset:` 근거 레이어와 `chart-plan:` 제안 레이어로 나누며 차트의 `작도`, `제안`
-토글로 각각 표시한다. 토글은 사용자 수동 작도를 변경하지 않는다.
-최근 SMA60/120 교차가 있으면 두 선분의 실제 보간 교차점에 `flagMarker`를 표시한다.
-`timestamp`는 교차 확인 봉, `previousTimestamp`는 직전 봉, `fraction`은 그 사이의
-교차 비율이며 화면 x 좌표는 `previousIndex + fraction`이다. 골든크로스는 초록색,
-데드크로스는 빨간색이다. y 좌표는 자산의 `price`를 사용하며 교차 구간이 현재 차트에
-없으면 표시하지 않는다.
-완전한 서버 `tradePlan`은 우선 사용한다. `buy_candidate`와 세 가격이 유효한
-`sell_candidate`는 각각 `매수 후보`, `매도 후보`의 기준·목표·손절/무효화 가격을
-프런트 `ChartTradeSetup`으로 만들고 `riskRewardBox`로 표시한다. 서버 플랜이 없으면
-현재 및 가까운 저장 주기의 패턴·지지·저항만으로 조건부 setup을 결정론적으로 투영한다.
-ATR 재계산, 레벨 재병합, 종목별 분기, 가짜 봉 생성은 하지 않는다. 미래 봉 timestamp는
-만들지 않고 화면에서만 미래 logical index로 투영한다. 교차 마커와 이 동적 도형은 PostgreSQL geometry drawing 예산
-8개에 포함하지 않으며 주문 API를 호출하지 않는다. 진입선은 확인 봉부터, 위험·보상
-fill과 목표·손절 경계는 마지막 완료 봉 다음 슬롯부터 시작한다. 제안 레이어가 보일 때만
-세 가격을 자동 Y축 범위에 포함한다.
+자동 분석은 `해석`, `저항(지지·저항)`, `추세`, `패턴`, `제안`의 다섯 레이어로
+나뉜다. 초기값은 해석·제안 OFF, 나머지 ON이다. `drawingGroups`가 levels/trend/pattern
+drawing ID의 원본이며 구자산은 stable ID와 geometry metadata로 호환 분류한다.
+SMA60/120과 최근 교차는 추세 레이어가 소유한다. 제안 OFF는 메모리 trade plan을
+삭제하지 않고 표시와 제안 가격의 Y축 반영만 중단한다.
 
-완전한 신규 매수 플랜만 차트 문서별 메모리 `ActiveTradePlan`으로도 projection된다.
-매도 및 조건부 setup은 `ChartTradeSetup` UI projection으로만 존재한다. 이 값들은
-비영속 UI 계약이며 `gops:trade-plan-updated` 이벤트 detail은
-`{ chartDocumentId, plan }`이다. 심볼·주기 변경, 자산 제거, 문서 unmount에는 해당
-문서 항목만 지우고 레이어 숨김은 지우지 않는다. 해설과 spotlight는 같은 projection의
-가격과 drawing ID를 사용하며 주문·알림의 신뢰 원본이 아니다.
-
-차트 오른쪽 가격축에서 고른 가격은 `ChartPriceSelection.v1`으로 해당 차트 문서와 패널에
-묶이며 주문 패널의 종목·지정가 입력을 준비하는 UI snapshot으로만 사용한다. 질문창의
-예약매매·알림 표현도 현재 `ChartTradeSetup`의 세 가격을 그대로 확인 dialog에 투영할 뿐,
-Geometry 자산이나 `ActiveTradePlan`을 주문 신뢰 원본으로 승격하거나 실행 API를 호출하지
-않는다.
+해설은 지지·저항, 추세, 패턴 세 항목으로 분리한다. hover는 해당 작도만 강조하고 같은
+trace의 피벗·접촉·반응을 임시 overlay로 표시한다. 클릭은 한 항목의 서버 metrics 카드를
+확장·고정하며 다른 항목 hover가 끝나면 고정 항목으로 복귀한다. 해석 글로벌 토글이
+꺼져 있어도 해설 hover의 관련 subset은 표시할 수 있다. 이 overlay와 제안 projection은
+PostgreSQL drawing 8개, undo/history/export에 포함되지 않으며 주문 API를 호출하지 않는다.

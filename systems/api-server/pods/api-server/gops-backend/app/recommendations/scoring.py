@@ -21,6 +21,7 @@ SESSION_MODES = {"pre", "regular"}
 @dataclass(frozen=True)
 class RecommendationProfile:
     risk_level: str
+    recommendation_style: str
     horizon: str
     max_drawdown_pct: float
     preferred_sectors: tuple[str, ...] = ()
@@ -90,7 +91,7 @@ def recommendation_slot(now: datetime, session_mode: str = "regular") -> dict[st
     }
 
 
-def score_recommendations(payload: RecommendationInput) -> list[dict[str, Any]]:
+def score_recommendations(payload: RecommendationInput, *, limit: int = 15, allow_fallback: bool = True) -> list[dict[str, Any]]:
     session_mode = normalize_session_mode(payload.session_mode)
     candidates = build_candidates(
         watchlist_symbols=payload.watchlist_symbols,
@@ -108,7 +109,7 @@ def score_recommendations(payload: RecommendationInput) -> list[dict[str, Any]]:
         if item is not None:
             scored.append(item)
             scored_symbols.add(candidate.symbol)
-    if len(scored) < 15:
+    if allow_fallback and len(scored) < limit:
         for candidate in candidates:
             if candidate.symbol in scored_symbols:
                 continue
@@ -117,7 +118,7 @@ def score_recommendations(payload: RecommendationInput) -> list[dict[str, Any]]:
                 scored.append(item)
                 scored_symbols.add(candidate.symbol)
     scored.sort(key=lambda item: (item["score"], item["confidence"]), reverse=True)
-    selected = scored[:15]
+    selected = scored[:limit]
     for index, item in enumerate(selected, start=1):
         item["rank"] = index
     return selected
@@ -808,6 +809,7 @@ def reason(reason_type: str, text: str, weight: float) -> dict[str, Any]:
 def normalize_profile(row: dict[str, Any]) -> RecommendationProfile:
     return RecommendationProfile(
         risk_level=str(row.get("risk_level") or row.get("riskLevel") or "balanced"),
+        recommendation_style=str(row.get("recommendation_style") or row.get("recommendationStyle") or "balanced"),
         horizon=str(row.get("horizon") or "intraday"),
         max_drawdown_pct=float(row.get("max_drawdown_pct") or row.get("maxDrawdownPct") or 5),
         preferred_sectors=tuple(normalize_sector_list(row.get("preferred_sectors") or row.get("preferredSectors") or [])),

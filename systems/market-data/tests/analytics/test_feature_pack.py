@@ -176,6 +176,24 @@ class FeaturePackGoldenTest(unittest.TestCase):
         self.assertIn(rows[110]["candleKey"], confirmed["touchCandleKeys"])
         self.assertLessEqual(confirmed["medianResidualAtr"], .35)
 
+    def test_parallel_opposite_pivots_promote_a_confirmed_channel(self):
+        rows = _line_rows(touches=(20, 60, 110))
+        pivots = [
+            _structural_pivot(rows, 20, "L"),
+            _structural_pivot(rows, 60, "L"),
+            *[_structural_pivot(rows, index, "H") for index in (30, 70, 100)],
+        ]
+
+        trends = compute_trends(
+            rows, pivots, display_from=rows[0]["timestamp"], atr=1.2,
+        )
+
+        channel = next(item for item in trends if item["kind"] == "channel" and item["hardPass"])
+        self.assertEqual(channel["direction"], "up")
+        self.assertEqual(len(channel["anchorPivotIds"]), 3)
+        self.assertLessEqual(channel["parallelSlopeError"], .20)
+        self.assertGreaterEqual(channel["containment"], .80)
+
     def test_historical_breach_revalidates_but_latest_breach_blocks(self):
         rows = _line_rows(touches=(20, 60, 110), breach=80)
         pivots = [_structural_pivot(rows, 20, "L"), _structural_pivot(rows, 60, "L")]

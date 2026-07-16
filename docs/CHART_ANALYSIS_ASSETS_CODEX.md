@@ -2,117 +2,122 @@
 
 ## 불변 조건
 
-- 해설·질문 UI 통합 작업은 기존 `geometry_assets`의 read-only consumer다. 자산 build,
-  FORCE 재생성, migration Job, 전체 universe 등록, Geometry CronJob 조작을 실행하지 않는다.
-- 지원 interval은 `1m/5m/10m/1h/4h/1D/1W`뿐이다.
-- 새 build 등록은 `1m/1D`만 허용한다. 기존 다른 interval 자산의 저장·조회·표시
-  호환은 유지한다.
-- 분석 입력은 정규장·분할조정·완료된 canonical candle뿐이다.
-- `1W`는 canonical `1D`에서 기존 주봉 방식으로 생성한다.
-- 모든 timed anchor는 현재 asset interval의 실제 candle timestamp에 속한다.
-- `tradePlan`의 신호 anchor도 실제 완료 봉 timestamp여야 한다. 프런트가 만드는 임시
-  `riskRewardBox`의 미래 끝점은 저장하지 않으며 timestamp 없이 logical index로만 투영한다.
-- `indicators.cross.status=crossed`이면 프런트는 `previousIndex + fraction`의 실제
-  SMA60/120 보간 교차점에 `flagMarker`를 만들고 Geometry 표시 상태를 따른다.
-  `timestamp`는 확인 봉으로 보존하고 마커 가격은 asset의 `price`를 사용하며, 교차
-  구간이 현재 candle 범위 밖이면 만들지 않는다.
-- 지지·저항 `horizontalLine`은 첫·마지막 접촉의 동일 가격 2-anchor와 선택적
-  `role/zoneLow/zoneHigh/halfWidthAtr/selectionTier`를 저장한다. 프런트 presentation은
-  zone metadata를 재계산하지 않고 2.5px 단일 H-Line으로 표시한다. 패턴 경계는 3.5px와
-  패턴 이름·상태를 사용하며 metadata가 부족한 기존 자산도 읽기 호환한다.
-- 작도 계약은 최대 8개다. 지지·저항은 최대 4개이며 최고 점수 패턴 하나는 경계선
-  2개와 선택적 깃대 1개를 사용한다.
-- 패턴 종류는 세 삼각형, 상승·하락 깃발형/페넌트/직사각형, 상승·하락 쐐기,
-  하락 채널 상단 돌파, 상승 채널 하단 이탈이다. 채널 이탈은 `confirmed`만 hard-pass다.
-- geometry 계산에는 LLM을 사용하지 않는다.
-- `forming`은 `watch`, `confirmed`만 매매 후보이며 자동 주문으로 연결하지 않는다.
-- 돌파 buffer는 `0.25 ATR`, 전술 stop은 돌파 경계에서 `1 ATR`, 최소 신규 진입
-  손익비는 `2.0`, 기본 포지션 정책은 long-only다.
-- chart asset payload/job은 PostgreSQL, candle은 ClickHouse에 저장한다.
-- 결측 보충은 Alpaca의 정확한 누락 range만 사용하며 S3·Redis·Kafka를 거치지 않는다.
-- 결측 source는 `5m/10m` target에 `1Min`, `1h/4h` target에 `10Min`을 사용하며,
-  실시간 `1m` 기반 파생 계약은 바꾸지 않는다.
-- 동일 `(symbol, interval, inputDigest, algorithmVersion)`은 no-op이다.
-- 신규 수동 자산의 `algorithmVersion`은 `ohlcv-consensus-pattern-families-v5`다. strict
-  역할이 비었을 때만 공개 레벨에 `contextual` 한 개를 보완하며 pattern/tradePlan에는
-  영향을 주지 않는다. 기존 v3/v4 row는 그대로 읽는다.
-- 수동 request source/priority는 `manual/100`이다. `scheduled` item은 candle 조회·복구·
-  분석·저장 전에 `manual_refresh_only`로 종료하며 기존 자산은 `manual + force`에서만
-  교체한다. 동일 활성 요청은 `request_fingerprint`로 합친다.
-- item claim은 priority 내림차순이며 2회 시도 후 만료된 lease는 실패로 종결한다.
-- 실제 완료 봉 120개 미만 또는 provider가 확인하지 못한 interior/tail gap이면 기존
-  성공 자산을 덮어쓰지 않는다. 성공한 Alpaca 조회에도 실재 봉이 없는 slot은
-  `provider_confirmed_empty`로 기록하고 가짜 봉 없이 분석을 계속한다.
+- 계산은 결정론적이고 point-in-time이며 ATR 정규화다. LLM, 난수, 미래 봉, 가짜 봉을
+  사용하지 않는다.
+- 입력은 정규장·분할조정·완료된 canonical candle이다. 모든 persisted timed anchor와
+  confirmation은 asset `asOf` 이하의 실제 interval candle에 속해야 한다.
+- 신규 생성·재생성 envelope는 `1m/1D`만 허용한다. 기존
+  `5m/10m/1h/4h/1W` PostgreSQL row는 GET, 표시, 선택 DELETE 호환만 유지한다.
+- 자산 저장은 PostgreSQL `chart_assets.geometry_assets` JSONB뿐이다. ClickHouse는
+  canonical candle과 선택적 repair materialization만 소유하며 asset dual-write는 없다.
+- `(symbol, interval)` 조건부 UPSERT와 `assetVersion="geometry"`를 유지한다.
+  현재 `algorithmVersion`은 `ohlcv-consensus-pattern-families-v6`이다.
+- 기존 패턴 detector, ranking, hardPass, confirmation, trade timing, primary 선택,
+  drawing ID/anchor/label/style은 v5 golden과 같아야 한다.
+- `drawings[]` 예산은 levels 4 + pattern 3 + trend/channel 1 = 최대 8이다. 그룹을
+  부분 slice하지 않는다. 채널은 3-anchor `trendParallelLines` 하나다.
+- canonical UTF-8 payload는 64 KiB 이하다. trace의 고정 후보·touch 상한을 적용한 뒤에도
+  초과하면 후보를 더 제거하지 않고 저장을 실패시켜 기존 row를 유지한다.
+- 신규 v6 필드는 `geometry` 아래 optional이다. DB table/column 삭제, payload 변환,
+  일괄 backfill, Geometry v6용 migration Job은 실행하지 않는다.
+- `tradePlan`, 해설, spotlight, trace overlay는 주문·알림 신뢰 원본이 아니다.
 
-## Coverage 계약
+## 계산과 자산 계약
 
-| Interval | Target | Warm-up | Evaluation | Minimum | Cross |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| `1m`~`1D` | 380 | 120 | 260 | 120 | 121 |
-| `1W` | 312 | 120 | 192 | 120 | 121 |
+`analyze_geometry()`는 `compute_pivots()`를 한 번 실행해 levels, trends, patterns에
+같은 피벗 집합을 전달한다. `_pivot_evidence()`는 legacy evidence 호환용이며 v6 trace
+원천이 아니다.
 
-120봉은 SMA60/120 값을 계산할 수 있지만 직전 봉 비교가 없으므로 교차 상태는
-`insufficient_previous_bar`다. SMA 기간은 달력 일수가 아니라 선택 interval의 완료
-봉 개수다.
+### 지지·저항
 
-## 주요 코드 경계
+- confirmed: 기존 3 touch, 2 reaction, 최근성, 현재 관련성 게이트를 유지한다.
+- contextual: 해당 role에 confirmed가 없을 때만 기존 3 touch, 1 reaction 보완을 허용한다.
+- reference: confirmed/contextual이 모두 없을 때만 2 touch, 1 reaction, active/role-flip,
+  role 방향, 최근성, 4 ATR 이내를 모두 요구한다.
+- single swing, role conflict, break-pending 후보는 reference가 될 수 없다.
+- role별 최대 2개이고 겹치는 zone은 tier, score, reaction, touch, recency, price, ID
+  순으로 억제한다.
+- importance는 첫 confirmed `major`, 두 번째 confirmed/contextual `standard`, reference
+  `minor`다. 스타일은 각각 `3/0.95/solid`, `2.25/0.72/[6,4]`,
+  `1.5/0.45/[2,4]`다. importance가 없는 구자산은 기존 2.5px 표현이다.
 
-- `alfaka.analytics.geometry`: OHLCV evidence, 수평선, SMA/교차와 Geometry 자산 조립
-- `alfaka.analytics.pivots` + `alfaka.analytics.patterns`: 방향전환 피벗과 회귀형 패턴 탐지
-- `alfaka.analytics.trade_timing`: 확인 상태를 진입·손절·목표·손익비 시나리오로 변환
-- `alfaka.analytics.analysis_candles`: 완료 봉과 canonical identity, 기존 주봉 집계
-- `alfaka.serving.session_buckets`: 09:30 ET 기준 intraday 버킷과 공통 OHLCV 집계
-- `alfaka.analytics.analysis_repair`: ClickHouse audit와 Alpaca-only repair
-- `gops_agents.chart_assets.builder`: symbol/interval 단위 조립과 digest no-op
-- `gops_agents.chart_assets.storage`: PostgreSQL 최신 geometry 자산
-- `gops_agents.chart_assets.job_store`: PostgreSQL queue, 15분 lease, 최대 2회 시도
+### 추세
 
-새 payload의 `assetVersion`은 숫자 개발 단계가 아니라 기존 응답 union을 구분하는
-semantic discriminator인 `geometry`다. `algorithmVersion`은 현재
-`ohlcv-consensus-pattern-families-v5`이며 분석 의미가 바뀔 때만 변경한다. 범용
-`patterns[]`/`primaryPattern`이 없는 기존 geometry row는 프런트가 `primaryTriangle`로
-표시 호환하고, 다음 빌드에서 새 계약으로 교체한다. 기존 숫자형 자산 row는 읽기
-fallback이나 자동 변환에 사용하지 않는다.
+- `compute_trends()`의 structural pivot, 3 touch, 2 reaction, residual/span/relevance,
+  invalidation, adverse-close 게이트를 유지한다.
+- 최고 hard-pass 대각 후보 하나만 public trend로 선택한다. 없음은 정상 결과다.
+- `GeometryTrend`는 ID/kind/direction/score/drawingId/anchors, pivot refs, touch/reaction,
+  ATR/bar slope, residual, distance, recency와 채널 metrics를 저장한다.
+- 일반선은 2-anchor `trendLine`, 채널은 3-anchor `trendParallelLines`와
+  `parallelLineCount=2`다. 선 표현은 2.75px, opacity 0.86, solid, ray다.
 
-`GET /api/charts/analysis-assets/coverage`의 각 `symbol + interval` 항목은 대표 패턴의
-`kind/state/score`만 담은 `primaryPattern` 요약을 포함한다. 저장 payload에 범용
-`primaryPattern`이 없으면 `primaryTriangle`을 사용하고, 둘 다 없으면 `null`이다.
+### Trace
 
-Intraday candle input contract는 `regular-session-derived`이며 asset digest에 포함된다.
-미국 주식 `5m/10m/1h/4h`는 `bucket_policy=us_equity_regular_session`인 ClickHouse
-행만 사용한다. 과거 `clock_aligned` 행과 섞지 않는다.
+`analysisTrace.version`은 `geometry-analysis-trace-v1`이다. 고정 상한은 level 8,
+trend 7, pattern 4, 후보별 touch episode 8이다. root `pivots[]`는 retained candidate의
+`evidenceRefs/anchorPivotIds/touchPivotIds/reactionPivotIds` 합집합만 포함한다.
+`touchRefs/reactionRefs`는 같은 candidate의 embedded `touches[].id`를 가리킨다.
+패턴 접촉은 이미 같은 pivot registry에 있으므로 `touchPivotIds`로만 표현한다.
 
-PostgreSQL 테이블은 `geometry_assets`, `geometry_build_jobs`,
-`geometry_build_items`다. 자산 기본 키는 `(symbol, interval)`이고 item claim은
-`FOR UPDATE SKIP LOCKED`를 사용한다. 활성 request fingerprint에는 partial unique
-index를 사용한다. 기존 설치는 명시적 migration Job을 재실행해
-`geometry_assets_drawing_count_check`와 queue index를 갱신해야 한다.
+Retained 정렬은 selected를 먼저 두되 각 detector의 원래 deterministic ranking을 보존한다.
+상한을 넘는 꼬리 후보와 8개를 넘는 touch만 제거하며 `omittedCounts`에 기록한다.
+selected 후보와 그 근거는 제거하지 않는다.
+
+## 저장·빌드 경계
+
+- `gops_agents.chart_assets.envelope`: build interval `1m/1D`, manual/scheduled source,
+  server-owned priority와 request fingerprint
+- `gops_agents.chart_assets.builder`: candle load/repair, kernel 조립, optional v6 passthrough,
+  64 KiB fail-closed guard, bounded storage log
+- `gops_agents.chart_assets.storage`: PostgreSQL-only conditional UPSERT, identity/v6 refs/
+  drawing budget/payload size validation
+- `gops_agents.chart_assets.job_store`: PostgreSQL queue, `FOR UPDATE SKIP LOCKED`, lease 2회
+- `alfaka.analytics.geometry`: public asset와 atomic drawing groups
+- `alfaka.analytics.levels|trends|patterns`: 후보 계산과 hard gates
+
+일반 manual build는 없는 자산만 만들고 기존 row는 선택 pair의 `manual + force`만
+교체한다. `scheduled` item은 candle 조회 전 `manual_refresh_only`로 종료한다.
+`symbols="sp500" + force=true`는 API 400이다. 로컬 검증은 injected candle loader와
+repair-disabled fixture만 사용하며 Alpaca credential이나 provider call이 필요하지 않다.
+
+## 프런트 계약
+
+레이어 키와 초기값은 다음과 같다.
+
+```text
+interpretation=false  해석
+levels=true           저항 (aria/tooltip: 지지·저항)
+trend=true            추세
+pattern=true          패턴
+proposal=false        제안
+```
+
+`drawingGroups`가 levels/trend/pattern 분류 원본이다. 구자산은 ID와 geometry metadata로
+fallback 분류한다. SMA60/120과 cross는 trend가 소유한다. proposal hide는
+`ActiveTradePlan`을 clear하지 않는다. interpretation은 persistent drawing이 아닌 Canvas
+overlay이며 history/undo/export/8-drawing 예산에 들어가지 않는다.
+
+해설은 지지·저항, 추세, 패턴 세 섹션이다. hover/focus는 해당 drawing만 강조하고 trace
+subset의 pivot/touch/reaction marker를 표시한다. click은 한 섹션만 고정하고 다른 섹션
+hover가 끝나면 고정 섹션으로 복귀한다. 서버 metrics를 표시하며 프런트가 ATR/score를
+재계산하지 않는다. 이번 구현은 desktop/tiled desktop만 대상으로 하고 mobile-specific
+control, touch gesture, visual regression은 추가하지 않는다.
+
+`chart-explanation.v1`은 기존 required fields를 유지하고 optional `facts.trend`,
+`focusGroups.levels`, `focusGroups.trend`를 추가한다. `focusIds`와 기존
+evidence/pattern/support/resistance group은 계속 호환된다.
 
 ## 검증
 
 ```sh
 .venv/bin/python -m pytest systems/market-data/tests/analytics/test_geometry_assets.py
 .venv/bin/python -m pytest systems/market-data/tests/analytics/test_patterns.py
-.venv/bin/python -m pytest systems/market-data/tests/analytics/test_trade_timing.py
-.venv/bin/python -m pytest systems/agent-orchestration/tests/test_geometry_asset_contract.py
-.venv/bin/python -m pytest systems/api-server/tests/test_chart_assets_routes.py
+.venv/bin/python -m pytest systems/market-data/tests/analytics/test_feature_pack.py
+.venv/bin/python -m unittest systems.agent-orchestration.tests.test_chart_asset_builder
+.venv/bin/python -m unittest systems.agent-orchestration.tests.test_chart_asset_storage
+.venv/bin/python -m unittest systems.agent-orchestration.tests.test_geometry_asset_contract
+.venv/bin/python -m unittest systems.api-server.tests.test_chart_assets_routes
 ```
 
-프론트는 `chart-asset:` 근거와 `chart-plan:` 제안을 차트별 `작도`, `제안` 토글로
-독립 제어하고, 현재 interval의 자산만 적용하며 SMA60·SMA120 overlay를 함께
-활성화한다. 레이어가 없을 때만 해당 토글을 비활성화하고 수동 drawing은 보존한다.
-빌드 패널은 `1m/1D`만 제공하고 둘 다 기본 선택한다.
-
-`DrawingStyle.labelPlacement`는 `inline | axis | none`, `zoneSplit`은 boolean이다.
-두 값이 없으면 기존 수동 작도의 label/geometry를 보존한다. 자동 H-Line은 가격 pill,
-패턴은 대표 경계의 이름·상태와 마지막 anchor 가격 pill을 사용한다. `zoneSplit:true`
-trade setup은
-확인 봉부터 진입 점선을 그리고 마지막 완료 봉 다음 슬롯부터 위험·보상 fill과
-목표·손절선을 그린다. 미래 끝점은 `last candle index + projectionBars`의 logical index이며
-timestamp를 만들지 않는다.
-
-완전한 신규 `buy_candidate`만 차트 문서별 비영속 `ActiveTradePlan` registry에 저장한다.
-`sell_candidate`와 조건부 플랜은 `ChartTradeSetup`으로 표시하되 active plan을 만들지
-않는다. `watch`, `no_trade`도 active plan을 만들지 않는다. registry event는
-`gops:trade-plan-updated`와 `{ chartDocumentId, plan }` detail을 사용하고 clear는
-`plan:null`이다. 이 projection은 해설·spotlight용이며 주문·알림 계약으로 사용하지 않는다.
+프런트는 `apps/gops-frontend`에서 `npm run test:chart`, `npm run build`, desktop visual
+spec을 실행한다. 모바일 viewport는 이번 acceptance 범위가 아니다.

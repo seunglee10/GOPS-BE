@@ -281,6 +281,33 @@ Finance snapshot을 Redis에 fresh/stale 캐시한다. 백엔드는 fresh 캐시
 snapshot의 `sector`는 GraphDB `gops:sector` canonical 값을 사용하고, 화면 표시용
 한글 라벨은 `sectorLabelKo`로 함께 내려준다.
 
+추천 profile의 `recommendationStyle`은 `momentum`, `balanced`, `stable` 중 하나이며
+`riskLevel`과 독립적이다. personalization 활성화 시 backend는 완료 1D history,
+직전 정규장 1분봉, SPY, cutoff-safe 뉴스와 추천 시점 이전
+`user_portfolio_snapshot_history`를 결합한다. run에는 snapshot history ID,
+`weights_version`, `personalization_input_digest`, bounded personalization metadata만
+저장하고 전체 계좌 payload를 복제하지 않는다. 같은 slot의 기존 run은 digest까지
+같을 때만 replay한다. item별 전문 점수와 팩터 기여도는 기존
+`metrics_snapshot` JSONB에 저장해 API shape를 확장하되 기존 필드를 제거하지 않는다.
+자동 주문과 시뮬레이터 경로는 이 계산에 연결하지 않는다.
+
+명시적 `RECOMMENDATION_ALGORITHM_VERSION=legacy|professional-v1|continuous-v2`가 있으면
+기존 flag보다 우선한다. `continuous-v2`는 shadow 여부와 무관하게 실제 최종 점수로
+정렬하고 공개 `algorithmVersion`은 `continuous-personalization-v2`다. 추천 cutoff까지의
+canonical real fill만 시간순으로 처리하며, `order_coach_fill_history`의 매수 체결을
+24시간 이내 동일 종목 candidate feature와 연결한다. 매도와 match 실패도 skip reason이
+있는 event로 남지만 선호 state를 바꾸지 않는다. paper/simulator activity는 포함하지
+않는다.
+
+V2 commit은 사용자 advisory lock 아래에서 slot idempotency와 예상 preference state를
+재확인하고, processed/skipped events, immutable preference/risk states, 모든 적격 후보의
+feature evidence, Top 15 item, run provenance와 digest를 한 transaction에 저장한다. 완료된
+slot은 이후 체결로 덮어쓰지 않으며 state 충돌은 최신 context로 한 번만 재계산한다.
+응답은 기존 필드를 유지하면서 `algorithmVersion`, `extendedBaseAlphaScore`, fundamental,
+preference, `effectiveWeights`, `personalizationDelta`, `riskBudget`, `observedRisk`를 optional로
+추가한다. 펀더멘털 provider가 없거나 validation에 실패한 종목은 제외하지 않고 9팩터로
+재정규화한다.
+
 `POST /api/agents/analyze`는 로그인 session cookie로 사용자를 확인하고 다음 header만
 클라이언트 입력으로 읽는다.
 
@@ -395,7 +422,9 @@ not provider-confirmed.
 `chart-explanation.v1`이며 `quality`, `facts`, `usedIndicators`, `focusIds`, `anchor`,
 `news`를 담는다. optional `source`는 요청의 `chartDocumentId/sourcePanelId`를 echo하고,
 optional `focusGroups`는 기존 `focusIds` 합집합을 evidence/pattern/support/resistance로
-분류한다. 두 필드가 없는 기존 v1 응답도 유효하다. `finalAnswer`가 사용자 문장 계약이고
+분류하며 Geometry v6이면 optional levels/trend 그룹과 trend fact를 함께 보존할 수 있다.
+기존 required facts/groups는 변하지 않으며 이 optional 필드가 없는 기존 v1 응답도
+유효하다. `finalAnswer`가 사용자 문장 계약이고
 `chartExplanation`은 UI의 구조화 렌더링 및 요청 시점 drawing focus snapshot 계약이다.
 현재 자산과 `symbol/interval/assetVersion/algorithmVersion/inputDigest/asOf`가 정확히
 일치하지 않으면 프런트는 서버 수치만 표시하고 현재 작도를 focus하지 않는다.
@@ -663,7 +692,8 @@ build는 `source=scheduled`, `priority=10`으로 지정한다. 클라이언트�
 `request_fingerprint`로 기존 job에 합치며 응답의 `coalesced=true`로 알린다.
 Worker는 `scheduled` item을 candle 조회·복구·분석·저장 전에 `manual_refresh_only`로
 종료한다. 기존 자산은 선택된 pair의 `manual + force` 요청에서만 교체하며 일반 manual
-요청은 없는 자산만 만들 수 있다. 전체 universe force 갱신은 제공하지 않는다.
+요청은 없는 자산만 만들 수 있다. `symbols="sp500"`와 `force=true` 조합은 API가
+400으로 거절하며 전체 universe force 갱신은 제공하지 않는다.
 Worker는 높은 priority부터 claim하고, 최대 2회 처리 뒤 lease가 만료된 item은
 `lease_expired_after_max_attempts` 실패로 종결해 job이 영구 대기하지 않게 한다.
 최종 생성량은 status의 작은 `createdEntities` 정수만 사용한다. Coverage의
@@ -671,10 +701,13 @@ Worker는 높은 priority부터 claim하고, 최대 2회 처리 뒤 lease가 만
 차트 적용 수와 anchor/stale 제외 수는 현재 candle과 active chart document의 실제
 drawing ID를 아는 프런트가 계산한다.
 
-Geometry payload는 활성 후보 `patterns[]`, 최고 점수 `primaryPattern`, 삼각형 호환
-필드 `primaryTriangle`/`historicalTriangle`을 함께 가진다. 저장 drawing은 최대 8개다.
-기존 PostgreSQL 설치는 build 배포 전에 명시적 chart-asset migration Job을 다시 실행해
-`drawing_count` check constraint와 queue priority/fingerprint 컬럼·index를 갱신한다.
+Geometry v6 payload는 기존 패턴 필드와 함께 optional `trends`, `primaryTrend`,
+`drawingGroups`, `analysisTrace`를 `geometry` 아래에 가진다. 저장 drawing은 levels 4,
+pattern 3, trend/channel 1의 합계 최대 8개이고 canonical UTF-8 JSON은 64 KiB 이하다.
+trace는 level 8, trend 7, pattern 4와 후보별 touch 8의 고정 상한에서만 결정론적으로
+잘린다. 이 상한을 적용한 전체 payload가 초과하면 후보를 더 제거하지 않고 저장을
+실패시켜 이전 row를 유지한다. v6는 기존 JSONB와 drawing-count check 안에서 동작하므로
+chart-asset table/data migration을 다시 실행하지 않는다.
 
 `CHART_ASSET_STORAGE_MAINTENANCE=true` 동안 GET은 계속 열어 두고 build와 DELETE만
 503으로 막는다. 기존 숫자형 자산은 변환하거나 fallback으로 읽지 않는다.
