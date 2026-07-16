@@ -619,6 +619,7 @@ class FakeHeatmapClickHouseProvider:
             {
                 "symbol": "AAPL",
                 "lastPrice": 200,
+                "previousClose": 197.5308641975,
                 "changePercent": 1.25,
                 "volume": 1000,
                 "sessionDollarVolume": 200000,

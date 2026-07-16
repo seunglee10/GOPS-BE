@@ -173,11 +173,12 @@ def build_heatmap_item(
             previous_source_key="layoutMarketCapSource",
         )
 
-    change_percent = read_float(quote_row.get("changePercent"))
-    if change_percent is None:
+    if price_from_previous:
+        previous_close = read_previous_close(previous_item.get("previousClose"))
         change_percent = read_float(previous_item.get("changePercent"))
-    if change_percent is None:
-        change_percent = read_float(seed_item.get("changePercent"))
+    else:
+        previous_close = read_previous_close(quote_row.get("previousClose"))
+        change_percent = previous_close_change_percent(last_price, previous_close)
 
     public_fundamentals = fundamentals.to_public_dict() if fundamentals else {}
     sector_fields = sector_payload_fields(public_fundamentals.get("sector") or seed_item.get("sector") or "Unclassified")
@@ -188,6 +189,7 @@ def build_heatmap_item(
         "industry": public_fundamentals.get("industry") or seed_item.get("industry") or "Unclassified",
         "cik": public_fundamentals.get("cik"),
         "lastPrice": last_price,
+        "previousClose": previous_close,
         "changePercent": change_percent,
         "sharesOutstanding": shares_outstanding,
         "marketCap": market_cap,
@@ -456,3 +458,14 @@ def read_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def previous_close_change_percent(last_price: float | None, previous_close: float | None) -> float | None:
+    if last_price is None or previous_close is None or previous_close == 0:
+        return None
+    return round(((last_price - previous_close) / previous_close) * 100, 2)
+
+
+def read_previous_close(value: Any) -> float | None:
+    previous_close = read_float(value)
+    return previous_close if previous_close is not None and previous_close > 0 else None

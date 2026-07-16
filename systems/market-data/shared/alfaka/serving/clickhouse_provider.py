@@ -895,6 +895,14 @@ class ClickHouseMarketDataProvider:
             AND event_time >= subtractDays(now(), {{lookbackDays:UInt32}})
             AND toDayOfWeek(event_time) BETWEEN 1 AND 5
         """, include_live=normalized_interval == "1m")
+        previous_close_session_filter = "AND market_session = 'regular'" if normalized_interval == "1m" else ""
+        previous_close_source_query = self.latest_chart_candles_source(f"""
+            symbol IN {{symbols:Array(String)}}
+            AND {interval_filter}
+            AND event_time >= subtractDays(now(), {{lookbackDays:UInt32}})
+            AND toDayOfWeek(event_time) BETWEEN 1 AND 5
+            {previous_close_session_filter}
+        """, include_live=normalized_interval == "1m")
         query = f"""
         WITH latest_sessions AS (
           SELECT
@@ -902,22 +910,58 @@ class ClickHouseMarketDataProvider:
             max(toDate(event_time)) AS latest_session_date
           FROM ({latest_source_query})
           GROUP BY symbol
+        ), current_quotes AS (
+          SELECT
+            c.symbol AS symbol,
+            argMax(c.close, c.event_time) AS sessionClose,
+            sum(toFloat64(c.volume) * c.close) AS sessionDollarVolume,
+            sum(c.volume) AS volume,
+            max(c.event_time) AS sourceUpdatedAt
+          FROM ({session_source_query}) AS c
+          INNER JOIN latest_sessions AS latest
+            ON c.symbol = latest.symbol
+           AND toDate(c.event_time) = latest.latest_session_date
+          GROUP BY c.symbol
+        ), regular_session_closes AS (
+          SELECT
+            symbol,
+            toDate(event_time) AS sessionDate,
+            argMax(close, event_time) AS sessionClose
+          FROM ({previous_close_source_query})
+          GROUP BY symbol, sessionDate
+        ), previous_closes AS (
+          SELECT
+            regular.symbol AS symbol,
+            argMax(regular.sessionClose, regular.sessionDate) AS previousClose
+          FROM regular_session_closes AS regular
+          INNER JOIN latest_sessions AS latest
+            ON regular.symbol = latest.symbol
+           AND regular.sessionDate < latest.latest_session_date
+          GROUP BY regular.symbol
         )
         SELECT
-          c.symbol AS symbol,
-          argMax(c.close, c.event_time) AS lastPrice,
-          if(argMin(c.open, c.event_time) = 0, NULL, round(((argMax(c.close, c.event_time) - argMin(c.open, c.event_time)) / argMin(c.open, c.event_time)) * 100, 2)) AS changePercent,
-          sum(toFloat64(c.volume) * c.close) AS sessionDollarVolume,
-          sum(c.volume) AS volume,
-          formatDateTime(max(c.event_time), '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS sourceUpdatedAt,
+          symbol,
+          sessionClose AS lastPrice,
+          previousClose AS previousClose,
+          if(isNull(previousClose) OR previousClose = 0, NULL, round(((sessionClose - previousClose) / previousClose) * 100, 2)) AS changePercent,
+          sessionDollarVolume,
+          volume,
+          formatDateTime(sourceUpdatedAt, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS sourceUpdatedAt,
           {clickhouse_string_literal('latest_available_session')} AS rankingWindow,
           {clickhouse_string_literal(f'clickhouse_{normalized_interval}_latest_quote')} AS rankReason
-        FROM ({session_source_query}) AS c
-        INNER JOIN latest_sessions AS latest
-          ON c.symbol = latest.symbol
-         AND toDate(c.event_time) = latest.latest_session_date
-        GROUP BY c.symbol
-        ORDER BY c.symbol ASC
+        FROM (
+          SELECT
+            quote.symbol AS symbol,
+            quote.sessionClose AS sessionClose,
+            nullIf(baseline.previousClose, 0) AS previousClose,
+            quote.sessionDollarVolume AS sessionDollarVolume,
+            quote.volume AS volume,
+            quote.sourceUpdatedAt AS sourceUpdatedAt
+          FROM current_quotes AS quote
+          LEFT JOIN previous_closes AS baseline
+            ON quote.symbol = baseline.symbol
+        )
+        ORDER BY symbol ASC
         LIMIT {{limit:UInt32}}
         FORMAT JSONEachRow
         """

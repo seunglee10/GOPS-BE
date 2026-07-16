@@ -602,7 +602,10 @@ items를 패널로 전달해 S&P500 거래대금순 Top10을 렌더링한다. �
 조원/억원 단위로 환산한다. Top10의 섹터 컬럼은 GraphDB `gops:sector` canonical
 값의 `sectorLabelKo` 한글 라벨을 표시하며, 산업명과 섞어 표시하지 않는다.
 히트맵/트리맵도 grouping key는 canonical `sector`를 유지하고, 섹터 타일과 hover
-표시는 같은 `sectorLabelKo` 한글 라벨을 사용한다.
+표시는 같은 `sectorLabelKo` 한글 라벨을 사용한다. LIVE 등락률은 API가 제공하는
+`previousClose`(전일 정규장 종가)를 기준으로 계산된 값만 사용한다. 기준 종가가
+없으면 seed 값이나 `0%`로 대체하지 않고 `—`로 표시하며, 섹터·산업 평균에서도
+제외한다. SIM 모드의 시나리오 시작가 기준 등락률은 이 LIVE 계약과 분리한다.
 
 stock recommendations panel은 `panelType="stockRecommendations"`/`kind="recommendations"`로
 표현한다. 패널은 `GET /api/recommendations/stocks/latest`로 마지막 장중 추천을

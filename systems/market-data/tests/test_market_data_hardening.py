@@ -5403,6 +5403,8 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         query = provider.queries[-1][0]
         self.assertIn("AS previousClose", query)
         self.assertIn("sessionClose - previousClose", query)
+        self.assertIn("nullIf(baseline.previousClose, 0) AS previousClose", query)
+        self.assertIn("market_session = 'regular'", query)
         self.assertNotIn("argMin(c.open, c.event_time)", query)
         self.assertEqual(rows[0]["previousClose"], 100)
 

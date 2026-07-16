@@ -87,6 +87,19 @@ Persist a derived value only when a named reader needs reuse, recovery, or
 audit. Display-only regrouping, such as 1m order-flow minutes into 10m/1h
 columns, stays in the frontend bucket cache and does not create a new fact.
 
+## Heatmap Change Contract
+
+LIVE heatmap `changePercent` is the latest available price compared with the
+previous completed regular-session close. ClickHouse returns that baseline as
+`previousClose`; when Redis supplies a newer live price, the API recomputes the
+percentage from the same baseline. The session open and static universe seed
+must never be used as substitutes.
+
+When no previous regular-session close is available, both `previousClose` and
+`changePercent` are null. The frontend renders an em dash, excludes that item
+from sector and industry percentage averages, and keeps its tile visually
+neutral. SIM mode keeps its separate scenario-seed percentage contract.
+
 ## Query Contract
 
 The single candle read boundary is `CanonicalCandleQuery`:
