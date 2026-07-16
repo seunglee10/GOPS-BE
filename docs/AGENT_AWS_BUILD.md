@@ -452,6 +452,15 @@ the existing `RECOMMENDATION_PERSONALIZATION_ENABLED` and
 ignores the shadow flag and publishes `algorithmVersion="continuous-personalization-v2"`.
 API and recommendation-worker must receive the same selector.
 
+A Git merge or push does not deploy this selector, application image, or database migration.
+Use the manual dev/test deploy workflow and treat the following as hard activation gates:
+the backend and recommendation-worker run the merged image, migrations `0011` and `0012`
+are present, and SPY plus the candidate universe have the required completed daily and prior
+regular-session minute candles. The timestamped live AWS audit, measured gaps, backfill
+commands, portfolio/fill requirements, and verification order are maintained in
+`AWS_RECOMMENDATION_DATA_PREPARATION.md`. Fundamental provider availability is not a hard
+V2 gate because the validated nine-factor fallback is supported.
+
 Before activating `continuous-v2`, apply migration `0012`, verify that canonical real-fill
 rows advance only on increasing cumulative quantity, and validate that the injected
 fundamental batch has complete schema/version/digest provenance with `sourceAsOf` no later

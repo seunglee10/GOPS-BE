@@ -1,9 +1,243 @@
 # AWS 추천 알고리즘 데이터 준비 체크리스트
 
-이 문서는 2026년 7월 14일 정규장 마감 시점까지 이용 가능한 데이터로
-7월 15일 정규장 추천을 생성하기 위한 데이터 준비·검증 책임을 정의한다.
-추천 알고리즘 데이터만 다루며 시뮬레이터, 주문 생성, 주문 실행은 범위에 포함하지
-않는다.
+이 문서는 추천 알고리즘 데이터 준비·검증 책임을 정의한다. 1절 이후의 2026년 7월
+14일 cutoff 시나리오는 재현 가능한 품질 검증 기준으로 유지하고, 실제 AWS의 현재
+준비 상태와 지금 해야 할 작업은 0절을 우선한다. 추천 알고리즘 데이터만 다루며
+시뮬레이터, 주문 생성, 주문 실행은 범위에 포함하지 않는다.
+
+## 0. 현재 AWS 실측 결과와 결론
+
+이 절은 2026년 7월 16일 18:51 KST에 `gops-eks-cluster`의
+`alfaka-market-data` namespace를 읽기 전용으로 점검한 결과다. 개인별 row나 Secret
+값은 조회하지 않고 deployment image, ConfigMap key 존재 여부, migration 이름과 aggregate
+count만 확인했다. 이후 배포나 적재가 있었다면 아래 검증 명령으로 다시 측정해야 한다.
+
+### 0.1 지금 바로 내릴 수 있는 결론
+
+- 머지와 push만 완료되었고 현재 EKS에는 아직 V2 image가 배포되지 않았다.
+  - 확인 당시 repository HEAD: `f75f247`
+  - live backend/recommendation-worker image: `edc1744-20260716090042`
+- live ConfigMap에는 `RECOMMENDATION_ALGORITHM_VERSION`,
+  `RECOMMENDATION_PERSONALIZATION_ENABLED`, `RECOMMENDATION_PERSONALIZATION_SHADOW`가 없다.
+  현재 코드 기본값으로는 legacy scorer가 실행된다.
+- PostgreSQL에는 `0004_recommendations.sql`, `0006_ai_coach.sql`만 확인되었고
+  `0011_personalized_recommendations.sql`, `0012_continuous_recommendation_v2.sql`은 없다.
+- SPY의 완료 1D와 직전 정규장 1m가 모두 0건이므로 professional-v1과 continuous-v2의
+  전문 팩터 계산은 현재 모든 후보에서 차단된다.
+- 후보군 일봉은 대체로 준비되어 있지만 직전 정규장 1m coverage는 부족하다.
+- 포트폴리오 history는 존재하지만 30일 범위를 충족하지 않고 모든 row에
+  `valuationBasis`가 빠져 있다. 현재 상태로는 V2 strict risk inference의 승인 근거가
+  아니다.
+- 소유자가 있는 KIS order는 있으나 execution이 0건이다. 현재 개인화는 실제 fill로
+  학습할 수 없고 cold-start prior만 사용할 수 있다.
+- SEC actual/derived 데이터는 준비되어 있지만 Yahoo estimate history는 0건이고,
+  추천용 `FundamentalSnapshotProvider` production adapter/wiring이 없다. 따라서 지금은
+  9팩터 fallback만 활성화할 수 있다.
+
+### 0.2 실측 요약
+
+| 영역 | 2026-07-16 실측 | V2 영향 | 판정 |
+| --- | ---: | --- | --- |
+| EKS recommendation-worker | 1/1 Ready, image `edc1744-20260716090042` | 머지된 V2 코드가 아직 없음 | 차단 |
+| V2 selector key | live ConfigMap에 없음 | default legacy | 차단 |
+| `0011` / `0012` | `schema_migrations`에 없음 | V2 state/ledger/table 사용 불가 | 차단 |
+| 투자 프로필 | 6 rows | `0011` 적용 후 기존 row는 balanced style 기본값 사용 가능 | 부분 준비 |
+| 포트폴리오 history | 825 rows, 7 users | 표본 수는 있으나 최대 span 1일 | 차단 |
+| `valuationBasis` | missing 825 rows | 시장가치 여부를 증명하지 못함 | 차단 |
+| owned KIS orders | 3 rows | 사용자 scope는 일부 존재 | 부분 준비 |
+| executions | 0 rows | canonical fill/history seed 없음 | 개인화 학습 차단 |
+| 1D candles | 504 symbols, 500 symbols가 252일 이상 | 후보 일봉은 대부분 준비 | 준비 |
+| SPY 1D | 0 rows | 9팩터 계산 전체 차단 | 차단 |
+| 직전 정규장 1m | 3 symbols, 390개 충족 1 symbol | 대부분 후보 계산 차단 | 차단 |
+| SPY 직전 정규장 1m | 0 rows | 상대강도 계산 전체 차단 | 차단 |
+| 최근 7일 뉴스 | 7,723 rows, 2,555 symbols, `received_at` 누락 0 | news factor 입력 가능 | 준비 |
+| SEC facts | 1,730,992 rows, 502 symbols, 19 metrics | provider 원천으로 사용 가능 | 부분 준비 |
+| SEC derived | 4,888,902 rows, 502 symbols, 14 metrics | provider 원천으로 사용 가능 | 부분 준비 |
+| Yahoo estimates | 0 rows | earnings revision 생성 불가 | 차단 |
+| production fundamental provider | 코드에 adapter/wiring 없음 | `fundamentalWeight=0` fallback | 선택 기능 차단 |
+
+### 0.3 우선순위별 필요한 추가 작업
+
+#### P0: V2 코드와 schema 배포
+
+dev/test 배포 workflow는 push만으로 자동 실행되지 않는다. GitHub Actions의
+`Deploy dev/test to EKS`를 수동 실행하거나 다음과 같이 실행한다.
+
+```bash
+gh workflow run deploy-dev.yml \
+  --ref dev \
+  -f services=backend,order-worker
+```
+
+`backend`는 `gops-backend`, `recommendation-worker`, `alert-evaluator`를 같은 API image로
+배포한다. `order-worker` 선택은 order migration Job을 선행시켜 `0011`과 `0012`를 app
+rollout 전에 적용한다. 배포 후 다음을 확인한다.
+
+```bash
+kubectl -n alfaka-market-data get deployment recommendation-worker gops-backend -o wide
+
+kubectl -n alfaka-market-data exec postgres-0 -- \
+  psql -U gops -d gops -Atc \
+  "select filename from schema_migrations
+   where filename in (
+     '0011_personalized_recommendations.sql',
+     '0012_continuous_recommendation_v2.sql'
+   ) order by filename;"
+```
+
+두 migration 이름이 모두 출력되기 전에는 V2 selector를 켜지 않는다.
+
+#### P0: SPY와 직전 정규장 1m 복구
+
+continuous-v2는 후보와 SPY 모두에 대해 완료 일봉과 직전 정규장 1분봉이 필요하다.
+먼저 기존 operator Job을 dry-run한다.
+
+```bash
+SYMBOLS=SPY \
+INTERVALS=1m,1D \
+LOOKBACK_DAYS=400 \
+WAIT_FOR_JOB=true \
+./scripts/aws/run-session-candle-rebuild-job.sh
+
+INTERVALS=1m \
+LOOKBACK_DAYS=7 \
+MAX_SYMBOLS=0 \
+WAIT_FOR_JOB=true \
+./scripts/aws/run-session-candle-rebuild-job.sh
+```
+
+Job image, 요청 범위, Alpaca rate limit과 예상 insert를 검토한 후 같은 명령에
+`APPLY=true`를 추가한다. 첫 명령은 SPY 1D/1m를, 두 번째 명령은 전체 S&P 500 최근
+정규장 1m를 보강한다. 누락된 1D 후보가 계속 있으면 `INTERVALS=1D`,
+`LOOKBACK_DAYS=400`으로 별도 실행한다.
+
+현재 `ALPACA_UNIVERSE=sp500` registry에는 SPY가 포함되지 않는다. 일회성 backfill만 하면
+다음 세션에 다시 SPY가 비게 되므로 다음 중 하나를 durable contract로 추가해야 한다.
+
+1. 권장: 시장 수집기에 UI 종목 universe와 분리된 benchmark symbol 설정을 추가하고
+   `SPY`를 bars/updatedBars/dailyBars에 항상 구독한다.
+2. 임시: 장 마감 후 SPY `1m,1D`를 보강하는 bounded CronJob을 운영한다.
+
+SPY를 S&P 500 UI universe 파일에 임의로 넣어 heatmap 구성종목처럼 취급하지 않는다.
+
+#### P0: 9팩터 V2 활성화
+
+배포와 candle 검증이 끝난 뒤 수동 workflow가 실제로 렌더링하는
+`infra/k8s/overlays/aws-incluster-app/configmap-incluster-patch.yaml`에 다음 값을 추가한다.
+별도 `aws` overlay도 계속 운영한다면
+`infra/k8s/overlays/aws/configmap-aws-patch.yaml`에도 같은 값을 유지한다.
+
+```yaml
+RECOMMENDATION_ALGORITHM_VERSION: "continuous-v2"
+```
+
+API와 recommendation-worker가 같은 ConfigMap을 사용해야 한다. `continuous-v2`는 shadow를
+무시하고 실제 `score`와 순서를 바꾼다. 펀더멘털 provider가 없어도 9팩터 fallback으로
+실행되므로 fundamental 작업 완료를 기다릴 필요는 없다.
+
+#### P1: 시장가치 포트폴리오 history 축적
+
+현재 history row는 모두 `valuationBasis`가 없고 시간 span도 최대 1일이다. producer가
+다음 최소 payload를 명시적으로 저장하도록 보완한다.
+
+```json
+{
+  "valuationBasis": "market_value",
+  "sourceAsOf": "2026-07-16T09:00:00Z",
+  "account": {
+    "totalValueForeign": 100000,
+    "cashForeign": 20000
+  },
+  "positions": [
+    {
+      "symbol": "AAPL",
+      "marketValueForeign": 10000,
+      "sector": "Information Technology"
+    }
+  ]
+}
+```
+
+현재 저장은 authenticated `GET /api/account/holdings` 호출 시
+`upsert_portfolio_snapshot()`으로 이루어진다. 사용자가 화면을 열었을 때만 수집하는
+방식으로는 30일 coverage를 보장하지 못하므로, 사용자별 KIS holdings를 최소 일 1회
+수집하는 scheduler를 추가하는 것이 권장된다. 변동성·drawdown·turnover V2 추론에는
+90일 window 안에서 30일 이상에 걸친 신뢰 가능한 시장가치 관측 20개가 필요하다.
+
+기존 `valuationBasis` 누락 row를 일괄 `market_value`로 덮어쓰지 않는다. 원본 KIS 응답과
+가격 기준시각으로 시장가치였음을 증명할 수 있는 row만 별도 backfill한다. 준비 전에는
+V2가 기존 V1 portfolio-fit/risk blend fallback을 사용한다.
+
+#### P1: 실제 KIS fill 학습 데이터 축적
+
+`0012` 적용 후 KIS reconciliation이 양의 누적 체결량과 실제 체결가를 확인하면
+`order_coach_fill_history`에 자동으로 append한다. 필요한 전제는 다음과 같다.
+
+- authenticated order의 `orders.user_sub`가 null이 아닐 것
+- payload에 양의 cumulative filled quantity와 실제 average/fill price가 있을 것
+- `order-reconciler`가 실행될 것
+- paper/simulator order가 아닐 것
+
+현재 execution이 0건이므로 historical seed는 없다. V2 첫 run이 candidate feature를
+저장한 뒤 발생한 KIS buy fill부터 preference가 갱신된다. 테스트용 가짜 fill을 AWS DB에
+직접 insert하지 않는다. KIS demo 주문도 paper/simulator table이 아닌 기존 KIS order와
+reconciliation 경로를 통과하면 canonical ledger 검증에 사용할 수 있다.
+
+#### P2: 펀더멘털 overlay 연결
+
+현재 SEC facts/derived는 충분한 원천 coverage가 있지만 다음 두 항목은 없다.
+
+1. `yahoo_earnings_estimates` append-only history와 30일 earnings revision
+2. API와 recommendation-worker에 설치되는 production
+   `FundamentalSnapshotProvider` adapter
+
+provider는 원시 SEC row를 추천 서비스 안에서 다시 계산하지 않고, 외부 producer가 만든
+4개 0–100 합성점수를 한 번의 cutoff-safe batch로 반환해야 한다.
+
+```json
+{
+  "snapshotId": "fundamental-20260716T090000Z",
+  "schemaVersion": "fundamentals.v1",
+  "featureVersion": "fundamental-factors.v1",
+  "digest": "sha256:...",
+  "sourceAsOf": "2026-07-16T09:00:00Z",
+  "snapshots": {
+    "AAPL": {
+      "value": 72.1,
+      "quality": 83.4,
+      "growth": 61.0,
+      "earningsRevision": 55.2,
+      "coverage": 0.95,
+      "freshness": 0.90,
+      "sourceQuality": 1.0,
+      "sourceAsOf": "2026-07-16T09:00:00Z"
+    }
+  }
+}
+```
+
+현재 SEC schema의 `filed_at`은 날짜 정밀도이므로 같은 날 장중/장후 cutoff를 증명하지
+못한다. `accepted_at` 또는 검증된 `available_at`이 추가되기 전에는 cutoff 당일 공시를
+보수적으로 제외한다. provider adapter가 준비되기 전에도 V2는 정상 동작하지만
+`fundamentalStatus`가 fallback이고 `fundamentalWeight=0`이다.
+
+### 0.4 재점검 순서
+
+배포 또는 데이터 보강 뒤에는 다음 순서로 승인한다. 사용자별 raw row나 Secret 값을
+운영 증빙에 남기지 않고 aggregate count와 version/digest만 기록한다.
+
+1. backend와 recommendation-worker가 같은 새 image인지 확인한다.
+2. `schema_migrations`에서 `0011`, `0012` 적용을 확인한다.
+3. ClickHouse에서 SPY 1D와 직전 정규장 SPY/후보 1m coverage를 확인한다.
+4. API와 worker의 selector가 모두 `continuous-v2`인지 확인한다.
+5. 첫 run의 `algorithm_version`, 전체 후보 feature 수, Top 15, input digest를 확인한다.
+6. 이후 실제 KIS buy fill이 있을 때 canonical fill/event/state가 한 번만 증가하는지
+   확인한다.
+
+초기 활성화 승인선은 **새 image + `0011`/`0012` + SPY/후보 candle + selector + 첫 V2
+run**이다. 포트폴리오 30일 history, 실제 fill history, fundamental provider는 V2 품질을
+높이는 후속 데이터이며, 없을 때 각각 기존 risk fallback, cold-start prior, 9팩터
+fallback을 사용한다.
 
 ## 기준과 범위
 
@@ -159,10 +393,10 @@ coverage가 승인되었다는 뜻은 아니다.
 
 | 데이터/계약 | 코드 준비 | AWS 데이터 준비 | AWS 완료 증빙 |
 | --- | --- | --- | --- |
-| 사용자 `recommendationStyle` | 준비 | migration 적용 필요 | `0011_personalized_recommendations.sql` 적용 기록 |
-| 추천 시점 이전 portfolio snapshot history | 준비 | history coverage 검증 필요 | 사용자별 최신 `source_as_of`, 누락률 |
-| 후보·SPY 완료 1D 260개 | 조회 경로 준비 | 미검증 | 종목별 22/252 거래일 coverage |
-| 직전 정규장 1분봉 | 조회 경로 준비 | 7월 13·14일 검증 필요 | 종목별 390개 및 SPY coverage |
+| 사용자 `recommendationStyle` | 준비 | live `0011` 미적용; profile 6 rows | `0011_personalized_recommendations.sql` 적용 기록 |
+| 추천 시점 이전 portfolio snapshot history | 준비 | 825 rows지만 `valuationBasis` 전부 누락, 최대 span 1일 | 사용자별 90일 표본 수·span·시장가치 basis |
+| 후보·SPY 완료 1D 260개 | 조회 경로 준비 | 후보 500/504는 252일 이상, SPY 0 rows | 후보별 252일과 SPY coverage |
+| 직전 정규장 1분봉 | 조회 경로 준비 | 3 symbols만 존재, 390개 충족 1 symbol, SPY 0 rows | 종목별 390개 및 SPY coverage |
 | 20일 거래대금·변동성 | 계산 준비 | 원천 coverage 미검증 | feature null/제외 보고서 |
 | 52주 고가 | 계산 준비 | 252일 일봉 coverage 미검증 | 종목별 high52 산출 결과 |
 | cutoff-safe 뉴스 | 시간 필터·중복 제거 준비 | `published_at/received_at` 정확성 미검증 | cutoff 위반 0건, 중복률 |
@@ -171,10 +405,10 @@ coverage가 승인되었다는 뜻은 아니다.
 | 현금·총자산 | freshness별 사용 준비 | 계좌 필드 단위/통화 검증 필요 | 필드 mapping과 표본 reconciliation |
 | 가중치/model version | v1 prior·registry schema 준비 | registry 승인 운영 절차 미준비 | 승인자, cutoff, OOS 보고서 |
 | 추천 outcome/label | outcome schema 준비 | label 산출 job 미준비 | next-session excess label job 실행 기록 |
-| 실제 order execution | V2 조회·멱등 처리 준비 | `orders.user_sub`·`executions.payload` coverage 검증 필요 | filled/partial fill 표본과 qty·price mapping |
-| V2 후보 feature snapshot | 저장·24시간 매칭 준비 | `0012` migration 적용 필요 | run별 후보 수와 feature digest |
-| 연속 preference state | buy-only decay·softmax 준비 | `0012` migration 적용 필요 | 사용자별 state version·event 처리 결과 |
-| 연속 risk state | snapshot·buy/sell 추론 준비 | 시장가치 snapshot coverage 검증 필요 | cost-basis 제외 및 preset cap 검증 |
+| canonical KIS fill | `order_coach_fill_history` projection·멱등 처리 준비 | live `0012` 미적용, executions 0 rows | partial/final fill의 증가 qty·price·시각과 replay 결과 |
+| V2 후보 feature snapshot | 저장·24시간 매칭 준비 | live `0012` 미적용 | run별 전체 후보 수와 feature digest |
+| 연속 preference state | buy-only decay·softmax 준비 | live `0012` 미적용, 학습할 fill 없음 | 사용자별 state version·event 처리 결과 |
+| 연속 risk state | snapshot·buy/sell 추론 준비 | 시장가치 30일 coverage 없음 | cost-basis 제외 및 preset cap 검증 |
 
 AWS 담당자는 15분 이내 스냅샷은 전체 포트폴리오 적합도에, 15분 초과 24시간 이내
 스냅샷은 보유·상관·집중도에만 사용할 수 있음을 검증한다. 24시간 초과는
@@ -191,13 +425,13 @@ AWS 담당자는 15분 이내 스냅샷은 전체 포트폴리오 적합도에, 
 
 | 데이터/계약 | 현재 상태 | 판정 | 필요한 작업 |
 | --- | --- | --- | --- |
-| SEC Companyfacts 원천 | ClickHouse `sec_financial_facts` 적재 경로 존재 | 부분 준비 | AWS 실제 symbol·period coverage 검증 |
+| SEC Companyfacts 원천 | ClickHouse 1,730,992 rows, 502 symbols, 19 metrics | 부분 준비 | cutoff별 symbol·period coverage 검증 |
 | EPS, 매출, 순이익, 자본, 자산, 부채, 현금흐름 | canonical fact mapping 존재 | 부분 준비 | cutoff snapshot과 단위·통화 검증 |
-| ROE, margin, growth, FCF, 부채·유동성 비율 | `sec_derived_metrics` 계산 경로 존재 | 부분 준비 | TTM·period version 고정 및 coverage 검증 |
-| Yahoo EPS·매출 consensus | 별도 latest collector/table 존재 | 부분 준비 | 수집 cutoff 검증 |
+| ROE, margin, growth, FCF, 부채·유동성 비율 | ClickHouse 4,888,902 rows, 502 symbols, 14 metrics | 부분 준비 | TTM·period version 고정 및 coverage 검증 |
+| Yahoo EPS·매출 consensus | table/collector 경로는 있으나 live 0 rows | 미준비 | append-only 수집과 cutoff 검증 |
 | BPS | 명시적 추천 derived metric 없음 | 미준비 | common equity/기간말 보통주 수 계산 |
 | TTM EPS·순이익·FCF | 추천용 immutable TTM snapshot 없음 | 미준비 | quarterly/FY 중복 없는 TTM builder |
-| `fundamentals_as_of(symbols, cutoff)` | batch 계약 없음 | 미준비 | 추천 전용 batch reader/projection |
+| `snapshots_as_of(symbols, cutoff)` | 검증 interface와 fallback 구현됨 | 부분 준비 | production adapter를 API·worker에 동일하게 wiring |
 | 당일 공시 시각 | 주요 fact의 `filed_at`이 날짜 정밀도 | 미준비 | `accepted_at` 또는 증명 가능한 `available_at` 보존 |
 | 과거 consensus revision | latest replacement 구조 | 미준비 | append-only consensus snapshot |
 | sector-neutral fundamental feature | 추천 dataset 없음 | 미준비 | Value·Quality·Growth·Revision feature 생성 |
@@ -317,13 +551,14 @@ Provider가 없으면 V2는 `fundamentalWeight=0`으로 9개 시장 팩터 순�
 
 | 완료 여부 | 담당자 | 입력물 | 작업 내용 | 완료 증빙 |
 | --- | --- | --- | --- | --- |
-| 미착수 | AWS 담당자 | `0012_continuous_recommendation_v2.sql` | order DB migration job으로 적용한다. | `schema_migrations` 적용 행 |
-| 미착수 | AWS 담당자 | orders/executions | 실제 filled/partial fill의 user, symbol, side, qty, price, 시각을 검증한다. | 익명화 표본과 누락률 |
-| 미착수 | AWS 담당자 | portfolio history | 최근 90일 시장가치 snapshot과 `valuationBasis`를 검증한다. | 사용자별 reliable snapshot 수 |
-| 미착수 | AWS 담당자 | company provider | `snapshots_as_of(symbols, cutoff)`와 snapshot/version/digest를 검증한다. | cutoff 위반 0건·coverage 보고서 |
-| 미착수 | AWS 담당자 | API·worker runtime | 두 workload에 동일한 `RECOMMENDATION_ALGORITHM_VERSION=continuous-v2`를 적용한다. | 배포 revision과 env 확인 |
-| 미착수 | AWS 담당자 | 첫 V2 run | actual rank, preference/risk digest, 후보 feature 저장을 확인한다. | run ID와 SQL 검증 결과 |
-| 미착수 | AWS 담당자 | 실제 매수 체결 | 다음 refresh에서 event 1회 처리와 state version 증가를 확인한다. | execution/event/state 연결 결과 |
+| 차단 | AWS 담당자 | merged API/order image와 `0011`/`0012` | 수동 deploy workflow로 image를 배포하고 migration job을 완료한다. | image tag와 두 `schema_migrations` 행 |
+| 차단 | AWS 담당자 | SPY·후보 candle | SPY 1D와 직전 정규장 1m를 backfill하고 다음 세션 수집을 보장한다. | SPY/후보별 daily·390분 coverage |
+| 차단 | AWS 담당자 | canonical KIS fill | `order_coach_fill_history`에서 실제 partial/final fill과 replay 멱등성을 검증한다. 현재 source execution은 0 rows다. | 익명화 aggregate와 qty·price mapping |
+| 차단 | AWS 담당자 | portfolio history | 최소 일 1회 시장가치 snapshot을 30일 이상 축적하고 `valuationBasis`를 검증한다. | 사용자별 reliable snapshot 수·span |
+| 미착수 | AWS 담당자·회사정보 담당자 | company provider | consensus history와 `snapshots_as_of(symbols, cutoff)` adapter/version/digest를 준비한다. | cutoff 위반 0건·coverage 보고서 |
+| 차단 | AWS 담당자 | API·worker runtime | 두 workload에 동일한 `RECOMMENDATION_ALGORITHM_VERSION=continuous-v2`를 적용한다. | 배포 revision과 ConfigMap key 확인 |
+| 차단 | AWS 담당자 | 첫 V2 run | actual rank, preference/risk digest, 전체 후보 feature 저장을 확인한다. | run ID와 SQL 검증 결과 |
+| 미착수 | AWS 담당자 | 실제 KIS 매수 체결 | 다음 refresh에서 event 1회 처리와 state version 증가를 확인한다. | fill/event/state 연결 결과 |
 | 미착수 | AWS 담당자 | rollback 절차 | 값을 `professional-v1` 또는 `legacy`로 되돌리는 절차를 검증한다. | rollback 실행 기록 |
 
 API와 recommendation worker의 알고리즘 버전이 다르면 같은 slot의 digest와 추천 순위가
@@ -354,6 +589,10 @@ API와 recommendation worker의 알고리즘 버전이 다르면 같은 slot의 
 
 다음 조건을 모두 만족해야 AWS 추천 데이터 준비가 완료된 것으로 판단한다.
 
+- [ ] live backend와 recommendation-worker가 merged V2 image를 사용한다.
+- [ ] `0011_personalized_recommendations.sql`과 `0012_continuous_recommendation_v2.sql`이 적용되었다.
+- [ ] API와 recommendation-worker의 selector가 모두 `continuous-v2`다.
+- [ ] 첫 V2 run이 전체 후보 feature, Top 15, algorithm/model version과 input digest를 원자적으로 저장한다.
 - [ ] 7월 13일과 14일 모두 추천 대상 종목의 95% 이상이 완전한 정규장 데이터를 보유한다.
 - [ ] SPY 정규장 데이터가 100% 존재한다.
 - [ ] 중복 canonical candle이 없다.
@@ -364,7 +603,7 @@ API와 recommendation worker의 알고리즘 버전이 다르면 같은 slot의 
 - [ ] 7월 14일 16:00 ET 이후 이용 가능해진 공시·정정·컨센서스가 제외되었다.
 - [ ] TTM, BPS, earnings/book/FCF yield 계산식과 split·negative-value 정책이 versioned되어 있다.
 - [ ] 펀더멘털 snapshot ID, feature version과 input digest가 재현 가능하다.
-- [ ] production 반영 전 shadow/OOS 승인 보고서가 존재한다.
+- [ ] 펀더멘털 provider를 production에 연결하기 전 overlay shadow/OOS 승인 보고서가 존재한다.
 - [ ] 적재·변환·검증 결과가 재현 가능한 보고서로 남아 있다.
 - [ ] 7월 15일 데이터가 추천 입력에 포함되지 않았음이 확인되었다.
 - [ ] 데이터 품질 보고서가 `준비 완료`, `부분 준비`, `미준비`를 구분한다.
