@@ -30,11 +30,18 @@ class FakeSimulatorGateway:
         return {
             "available": True,
             "mode": self.mode,
-            "state": "running" if self.mode == "simulation" else "idle",
-            "elapsedSeconds": 0,
-            "durationSeconds": 300,
-            "breakingNewsAtSeconds": 5,
-            "breakingNewsReleased": False,
+            "state": "ready" if self.mode == "simulation" else "idle",
+            "datasetId": "sp500-top20-20260715-kst-v1",
+            "runId": "run-1" if self.mode == "simulation" else None,
+            "virtualTime": "2026-07-15T00:00:00+09:00",
+            "startTime": "2026-07-15T00:00:00+09:00",
+            "endTime": "2026-07-16T00:00:00+09:00",
+            "requestedSpeed": 1,
+            "effectiveSpeed": 0,
+            "processedEventCount": 0,
+            "totalEventCount": 10,
+            "progress": 0,
+            "lagMs": 0,
             "symbols": [],
         }
 
@@ -49,9 +56,9 @@ class FakeSimulatorGateway:
         self.calls.append(("action", action))
         return self.status()
 
-    def set_phase(self, phase):
-        self.calls.append(("phase", phase))
-        return {**self.status(), "phase": phase, "phaseIndex": 6}
+    def set_speed(self, speed):
+        self.calls.append(("speed", speed))
+        return {**self.status(), "requestedSpeed": speed}
 
     def account(self, user_id):
         self.calls.append(("account", user_id))
@@ -67,16 +74,9 @@ class FakeSimulatorGateway:
             "limitations": ["simulation only"],
         }
 
-    def basket_order(self, *, user_id, basket, side):
-        self.calls.append(("basket", user_id, basket, side))
-        return {"orders": [{"order_id": "sim-basket", "status": "filled", "simulation": True}], "account": self.account(user_id)}
-
-    def individual_order(self, *, user_id, symbol, side, quantity):
-        self.calls.append(("individual", user_id, symbol, side, quantity))
-        return {"order": {"order_id": "sim-one", "status": "filled", "symbol": symbol, "side": side, "qty": str(quantity), "simulation": True}}
-
-    def news(self):
-        return {"news": [], "next_page_token": None}
+    def individual_order(self, *, user_id, symbol, side, quantity, order_type, limit_price, idempotency_key):
+        self.calls.append(("individual", user_id, symbol, side, quantity, order_type, limit_price, idempotency_key))
+        return {"order": {"order_id": "sim-one", "status": "filled", "symbol": symbol, "side": side, "qty": str(quantity), "order_type": order_type, "simulation": True}}
 
 
 class FakeSimulatorMarketStateManager:
@@ -100,7 +100,6 @@ class SimulatorRoutesTest(unittest.TestCase):
         self.repository = InMemoryOrderRepository()
         self.app = create_app()
         self.app.state.simulator_gateway = self.gateway
-        self.app.state.simulator_market_state_manager = FakeSimulatorMarketStateManager(self.trace)
         self.app.state.order_repository = self.repository
         self.client = TestClient(self.app)
 
@@ -116,27 +115,22 @@ class SimulatorRoutesTest(unittest.TestCase):
         self.assertEqual(stopped.status_code, 200)
         self.assertEqual(stopped.json()["mode"], "live")
         self.assertEqual(self.gateway.calls, [("mode", "simulation"), ("mode", "live")])
-        self.assertEqual(
-            self.trace,
-            [
-                ("market-state", "capture"),
-                ("gateway", "simulation"),
-                ("gateway", "live"),
-                ("market-state", "restore"),
-            ],
-        )
+        self.assertEqual(self.trace, [("gateway", "simulation"), ("gateway", "live")])
 
-    def test_operator_can_jump_to_a_demo_phase_from_the_frontend(self):
+    def test_operator_can_change_replay_speed(self):
         self.gateway.mode = "simulation"
 
         response = self.client.put(
-            "/api/simulator/phase",
-            json={"phase": "breaking-event"},
+            "/api/simulator/speed",
+            json={"speed": 300},
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["phase"], "breaking-event")
-        self.assertIn(("phase", "breaking-event"), self.gateway.calls)
+        self.assertEqual(response.json()["requestedSpeed"], 300)
+        self.assertIn(("speed", 300), self.gateway.calls)
+
+        invalid = self.client.put("/api/simulator/speed", json={"speed": 2})
+        self.assertEqual(invalid.status_code, 422)
 
     def test_simulation_holdings_replace_kis_with_semiconductor_dummy_account(self):
         self.gateway.mode = "simulation"
@@ -149,20 +143,7 @@ class SimulatorRoutesTest(unittest.TestCase):
         self.assertEqual({item["symbol"] for item in payload["positions"]}, {"NVDA", "AMD"})
         self.assertIn("SIMULATED", payload["account"]["alias"])
 
-    def test_manual_basket_order_is_filled_only_after_the_user_request(self):
-        self.gateway.mode = "simulation"
-
-        response = self.client.post(
-            "/api/simulator/orders/basket",
-            headers={"Idempotency-Key": "manual-sell"},
-            json={"basket": "semiconductor", "side": "sell"},
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertTrue(response.json()["orders"][0]["simulation"])
-        self.assertIn(("basket", "dev-auth-disabled", "semiconductor", "sell"), self.gateway.calls)
-
-    def test_standard_order_route_uses_dummy_ledger_in_simulation_mode(self):
+    def test_standard_order_route_forwards_limit_order_to_replay_ledger(self):
         self.gateway.mode = "simulation"
 
         response = self.client.post(
@@ -175,7 +156,27 @@ class SimulatorRoutesTest(unittest.TestCase):
         self.assertEqual(response.json()["status"], "filled")
         self.assertTrue(response.json()["simulation"])
         self.assertEqual(self.repository.orders, {})
-        self.assertIn(("individual", "dev-auth-disabled", "XOM", "buy", 3), self.gateway.calls)
+        self.assertIn(("individual", "dev-auth-disabled", "XOM", "buy", 3, "limit", 140.0, "manual-one"), self.gateway.calls)
+
+    def test_market_order_does_not_require_a_price_in_simulation_mode(self):
+        self.gateway.mode = "simulation"
+
+        response = self.client.post(
+            "/api/orders",
+            headers={"Idempotency-Key": "market-one"},
+            json={
+                "market": "overseas",
+                "symbol": "NVDA",
+                "side": "buy",
+                "qty": "2",
+                "exchange": "NASD",
+                "order_type": "market",
+            },
+        )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["order_type"], "market")
+        self.assertIn(("individual", "dev-auth-disabled", "NVDA", "buy", 2, "market", None, "market-one"), self.gateway.calls)
 
 
 if __name__ == "__main__":
