@@ -1,0 +1,19 @@
+apiVersion: eks.amazonaws.com/v1
+kind: NodeClass
+metadata:
+  name: gops-stateful-20
+spec:
+  role: AmazonEKSAutoNodeRole
+  subnetSelectorTerms:
+    - tags:
+        name: gops-vpc
+  securityGroupSelectorTerms:
+    - tags:
+        aws:eks:cluster-name: gops-eks-cluster
+  ephemeralStorage:
+    size: 20Gi
+    iops: 3000
+    throughput: 125
+  networkPolicy: DefaultAllow
+  networkPolicyEventLogs: Disabled
+  snatPolicy: Random

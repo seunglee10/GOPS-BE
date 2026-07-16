@@ -15,7 +15,7 @@ spec:
       nodeClassRef:
         group: eks.amazonaws.com
         kind: NodeClass
-        name: default
+        name: gops-stateful-20
       requirements:
         - key: karpenter.sh/capacity-type
           operator: In
@@ -29,11 +29,11 @@ spec:
         - key: eks.amazonaws.com/instance-cpu
           operator: In
           values:
-            - "4"
+            - "2"
         - key: eks.amazonaws.com/instance-memory
           operator: In
           values:
-            - "16384"
+            - "8192"
         - key: kubernetes.io/arch
           operator: In
           values:

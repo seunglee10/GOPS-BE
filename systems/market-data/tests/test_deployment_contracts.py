@@ -79,7 +79,7 @@ class DeploymentContractsTest(unittest.TestCase):
         self.assertIn("chart-asset-migrations/main.py", " ".join(container["command"]))
         self.assertEqual(
             migration["spec"]["template"]["spec"]["nodeSelector"]["karpenter.sh/nodepool"],
-            "batch-warm",
+            "batch",
         )
         self.assertEqual(
             migration["spec"]["template"]["spec"]["tolerations"][0]["value"],
@@ -212,34 +212,59 @@ fi
         self.assertIn("log.dirs=/var/lib/kafka/data/data", command)
         self.assertNotIn("rm -rf", command)
 
-    def test_batch_nodepool_stays_warm_for_scheduled_jobs(self):
+    def test_batch_nodepool_scales_from_zero_for_scheduled_jobs(self):
         dynamic_nodepool = load_yaml("infra/k8s/base/platform/nodepool-batch.yaml")
-        warm_nodepool = load_yaml("infra/k8s/base/platform/nodepool-batch-warm.yaml")
+        platform_resources = load_yaml("infra/k8s/base/platform/kustomization.yaml")["resources"]
 
         self.assertNotIn("replicas", dynamic_nodepool["spec"])
-        self.assertEqual(warm_nodepool["metadata"]["name"], "batch-warm")
-        self.assertEqual(warm_nodepool["spec"]["replicas"], 1)
-        requirements = {
-            item["key"]: item["values"]
-            for item in warm_nodepool["spec"]["template"]["spec"]["requirements"]
-        }
-        self.assertEqual(requirements["eks.amazonaws.com/instance-cpu"], ["2"])
-        self.assertEqual(requirements["eks.amazonaws.com/instance-memory"], ["8192"])
+        self.assertNotIn("nodepool-batch-warm.yaml", platform_resources)
 
         topic_init = load_yaml("infra/k8s/base/platform/kafka-topic-init-job.yaml")
         self.assertEqual(
             topic_init["spec"]["template"]["spec"]["nodeSelector"]["karpenter.sh/nodepool"],
-            "batch-warm",
+            "batch",
         )
         order_migrations = load_yaml("infra/k8s/base/job-order-migrations.yaml")
         self.assertEqual(
             order_migrations["spec"]["template"]["spec"]["nodeSelector"]["karpenter.sh/nodepool"],
-            "batch-warm",
+            "batch",
         )
         geometry_cron = load_yaml("infra/k8s/overlays/aws/scheduled/cronjob-chart-geometry-build.yaml")
         geometry_pod = geometry_cron["spec"]["jobTemplate"]["spec"]["template"]["spec"]
-        self.assertEqual(geometry_pod["nodeSelector"]["karpenter.sh/nodepool"], "batch-warm")
+        self.assertEqual(geometry_pod["nodeSelector"]["karpenter.sh/nodepool"], "batch")
         self.assertEqual(geometry_pod["tolerations"][0]["value"], "batch")
+
+        reminder = load_yaml("infra/k8s/overlays/aws/scheduled/cronjob-notification-schedules.yaml")
+        reminder_pod = reminder["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+        self.assertEqual(reminder_pod["nodeSelector"]["karpenter.sh/nodepool"], "app-agent")
+        self.assertEqual(reminder_pod["tolerations"][0]["value"], "app-agent")
+
+    def test_right_sized_nodeclasses_and_stateful_pools(self):
+        app_nodeclass = load_yaml("infra/k8s/base/platform/nodeclass-app-agent.yaml")
+        state_nodeclass = load_yaml("infra/k8s/base/platform/nodeclass-stateful.yaml")
+        self.assertEqual(app_nodeclass["spec"]["ephemeralStorage"]["size"], "50Gi")
+        self.assertEqual(state_nodeclass["spec"]["ephemeralStorage"]["size"], "20Gi")
+
+        expected = {
+            "cache-db": (["r5a"], ["2"], ["16384"]),
+            "graphdb": (["r5a"], ["2"], ["16384"]),
+            "streaming": (["m5a", "m6a"], ["2"], ["8192"]),
+            "clickhouse": (["m5a", "m6a"], ["4"], ["16384"]),
+        }
+        for pool, (families, cpu, memory) in expected.items():
+            with self.subTest(pool=pool):
+                nodepool = load_yaml(f"infra/k8s/base/platform/nodepool-{pool}.yaml")
+                template = nodepool["spec"]["template"]["spec"]
+                self.assertEqual(template["nodeClassRef"]["name"], "gops-stateful-20")
+                requirements = {item["key"]: item["values"] for item in template["requirements"]}
+                self.assertEqual(requirements["eks.amazonaws.com/instance-family"], families)
+                self.assertEqual(requirements["eks.amazonaws.com/instance-cpu"], cpu)
+                self.assertEqual(requirements["eks.amazonaws.com/instance-memory"], memory)
+
+        clickhouse = load_yaml("infra/k8s/base/platform/clickhouse-statefulset.yaml")
+        resources = clickhouse["spec"]["template"]["spec"]["containers"][0]["resources"]
+        self.assertEqual(resources["requests"]["cpu"], "3500m")
+        self.assertEqual(resources["limits"]["cpu"], "4")
 
     def test_scheduled_jobs_have_resources_and_retain_failure_evidence(self):
         for path in (
@@ -257,8 +282,10 @@ fi
                 self.assertTrue(container["resources"]["limits"]["memory"])
                 self.assertEqual(
                     job_spec["template"]["spec"]["nodeSelector"]["karpenter.sh/nodepool"],
-                    "batch-warm",
+                    "batch",
                 )
+                if cronjob["metadata"]["name"] == "alfaka-order-flow-daily-rollup":
+                    self.assertTrue(cronjob["spec"]["suspend"])
                 if cronjob["metadata"]["name"] == "alfaka-sec-fundamentals-sync":
                     self.assertEqual(container["resources"]["limits"], {"cpu": "2", "memory": "6Gi"})
 

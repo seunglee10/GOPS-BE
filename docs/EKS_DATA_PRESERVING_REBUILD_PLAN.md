@@ -49,26 +49,31 @@ Default-preserve 대상:
 
 | NodePool | EC2 class | Workload |
 | --- | --- | --- |
-| `app-agent` | 3 x `m5a.large` or `m6a.large`, 2 vCPU / 8 GiB | backend, frontend, AI agent, market/news workers |
-| `cache-db` | 1 x `m5a.xlarge` or `m6a.xlarge`, 4 vCPU / 16 GiB | Redis, Postgres |
-| `streaming` | 1 x `m5a.xlarge` or `m6a.xlarge`, 4 vCPU / 16 GiB | Kafka only |
-| `graphdb` | 1 x `m5a.xlarge` or `m6a.xlarge`, 4 vCPU / 16 GiB | GraphDB only |
-| `clickhouse` | 1 x `m5a.2xlarge` or `m6a.2xlarge`, 8 vCPU / 32 GiB | ClickHouse only |
+| `app-agent` | 4 x `m5a.large` or `m6a.large`, 2 vCPU / 8 GiB | backend, frontend, AI agent, market/news workers |
+| `cache-db` | 1 x `r5a.large`, 2 vCPU / 16 GiB | Redis, Postgres |
+| `streaming` | 1 x `m5a.large` or `m6a.large`, 2 vCPU / 8 GiB | Kafka only |
+| `graphdb` | 1 x `r5a.large`, 2 vCPU / 16 GiB | GraphDB only |
+| `clickhouse` | 1 x `m5a.xlarge` or `m6a.xlarge`, 4 vCPU / 16 GiB | ClickHouse only |
 | `batch` | 0->1 x `m5a.xlarge` or `m6a.xlarge`, 4 vCPU / 16 GiB | backfill, eval, smoke, rebuild Jobs |
 
 Expected vCPU:
 
 ```text
-steady state: 26 vCPU
-with batch:   30 vCPU
+steady state excluding add-ons: 18 vCPU
+steady state with 2-vCPU general-purpose add-on node: 20 vCPU
+with batch: 24 vCPU
 ```
 
 The live cluster may also keep one small `general-purpose` node for EKS add-ons
-such as CoreDNS, the AWS Load Balancer Controller, EBS CSI, metrics-server, and
-external-secrets. Count that add-on capacity separately unless those controllers
+such as CoreDNS, the AWS Load Balancer Controller, metrics-server, and
+external-secrets. The standard `aws-ebs-csi-driver` add-on is not installed because
+all platform PVs use the EKS Auto Mode `ebs.csi.eks.amazonaws.com` driver. Count the
+remaining add-on capacity separately unless those controllers
 are explicitly moved to a dedicated system NodePool.
 
-All new nodes are on-demand.
+All new nodes are on-demand. `app-agent` uses 50 GiB and stateful pools use
+20 GiB of node-local ephemeral storage. These values do not shrink application
+PVCs; the existing EBS-backed PVC capacities remain unchanged.
 
 ## Manifest Preparation
 
