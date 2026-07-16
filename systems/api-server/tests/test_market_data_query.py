@@ -3469,8 +3469,15 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             "marketCap": 100000,
             "changePercent": 0.1,
         }]
-        provider = FakeHeatmapProvider(redis_prices={
-            "AAPL": {"price": "201.5", "timestamp": "2026-06-25T15:32:00.000Z"}
+        provider = FakeHeatmapProvider(rows=[{
+            "symbol": "AAPL",
+            "lastPrice": 110,
+            "previousClose": 100,
+            "changePercent": 37.5,
+            "sourceUpdatedAt": "2026-06-25T15:31:00.000Z",
+            "rankReason": "clickhouse_1m_latest_quote",
+        }], redis_prices={
+            "AAPL": {"price": "120", "timestamp": "2026-06-25T15:32:00.000Z"}
         })
         adapter = FakeFundamentalsAdapter({
             "AAPL": FundamentalsRecord(symbol="AAPL", sharesOutstanding=1000, source="sec", asOf="2026-07-05")
@@ -3478,11 +3485,37 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         with mock.patch.object(heatmap_service, "load_heatmap_seed_items", return_value=seed_items):
             payload = heatmap_service.MarketHeatmapService(provider=provider, fundamentals_adapter=adapter).snapshot("sp500")
 
-        self.assertEqual(payload["items"][0]["lastPrice"], 201.5)
-        self.assertEqual(payload["items"][0]["marketCap"], 201500)
-        self.assertEqual(payload["items"][0]["layoutPrice"], 201.5)
-        self.assertEqual(payload["items"][0]["layoutMarketCap"], 201500)
+        self.assertEqual(payload["items"][0]["lastPrice"], 120)
+        self.assertEqual(payload["items"][0]["previousClose"], 100)
+        self.assertEqual(payload["items"][0]["changePercent"], 20)
+        self.assertEqual(payload["items"][0]["marketCap"], 120000)
+        self.assertEqual(payload["items"][0]["layoutPrice"], 120)
+        self.assertEqual(payload["items"][0]["layoutMarketCap"], 120000)
         self.assertEqual(payload["items"][0]["priceSource"], "redis_live")
+
+    def test_market_heatmap_does_not_use_session_open_or_seed_change_without_previous_close(self):
+        seed_items = [{
+            "symbol": "AAPL",
+            "companyName": "Apple Inc.",
+            "sector": "Technology",
+            "industry": "Technology Hardware",
+            "marketCap": 100000,
+            "changePercent": 4.2,
+        }]
+        provider = FakeHeatmapProvider(rows=[{
+            "symbol": "AAPL",
+            "lastPrice": 120,
+            "changePercent": 9.09,
+            "sourceUpdatedAt": "2026-06-25T15:31:00.000Z",
+            "rankReason": "clickhouse_1m_latest_quote",
+        }])
+        adapter = FakeFundamentalsAdapter({})
+
+        with mock.patch.object(heatmap_service, "load_heatmap_seed_items", return_value=seed_items):
+            payload = heatmap_service.MarketHeatmapService(provider=provider, fundamentals_adapter=adapter).snapshot("sp500")
+
+        self.assertIsNone(payload["items"][0]["previousClose"])
+        self.assertIsNone(payload["items"][0]["changePercent"])
 
     def test_store_fundamentals_adapter_reads_redis_summary_before_clickhouse(self):
         provider = FakeHeatmapProvider()

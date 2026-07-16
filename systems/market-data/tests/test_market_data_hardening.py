@@ -5390,6 +5390,22 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn("price_adjustment IN ('split')", query)
         self.assertNotIn("'live'", query)
 
+    def test_latest_quotes_calculate_change_from_previous_session_close(self):
+        provider = RecordingClickHouseProviderForAggregation([{
+            "symbol": "AAPL",
+            "lastPrice": 110,
+            "previousClose": 100,
+            "changePercent": 10,
+        }])
+
+        rows = provider.latest_quotes(["AAPL"])
+
+        query = provider.queries[-1][0]
+        self.assertIn("AS previousClose", query)
+        self.assertIn("sessionClose - previousClose", query)
+        self.assertNotIn("argMin(c.open, c.event_time)", query)
+        self.assertEqual(rows[0]["previousClose"], 100)
+
     def test_clickhouse_intraday_aggregation_includes_live_minute_source(self):
         provider = RecordingClickHouseProviderForAggregation([])
 
