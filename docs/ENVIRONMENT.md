@@ -823,6 +823,19 @@ MARKET_INCLUDE_DEFAULT_US_EQUITY_HOLIDAYS
 MARKET_EARLY_CLOSES
 ```
 
+사용자용 정규장 급등락 알림은 히트맵과 같은 snapshot 수치만 사용한다.
+
+```text
+MARKET_MOVE_NOTIFICATION_MODE=off|shadow|live
+MARKET_MOVE_NOTIFICATION_USER_ALLOWLIST
+MARKET_MOVE_QUOTE_FRESHNESS_SECONDS=90
+```
+
+`shadow`는 관심·보유 종목 사용자의 후보를 Redis에 24시간 기록하지만 notification을
+저장하거나 WebSocket 토스트를 발송하지 않는다. `live`에서 allowlist가 비어 있으면
+전체 대상 사용자에게, 값이 있으면 해당 사용자에게만 발송한다. 리스크 이벤트와
+사용자가 직접 만든 가격 조건은 이 모드의 영향을 받지 않는다.
+
 ## Coverage Repair
 
 The manual repair job audits chart API coverage and the returned on-demand fill

@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterable
 from zoneinfo import ZoneInfo
 
@@ -12,7 +12,7 @@ from alfaka.common.redis_keys import RedisKeyBuilder
 from app.alerts.notifications import RedisNotificationBroker, notification_delivery_decision
 from app.alerts.preferences import PostgresNotificationPreferenceRepository, preference_response
 from app.alerts.repository import PostgresAlertRepository
-from app.market_data.calendar.service import configured_closed_dates, is_session_date
+from app.market_data.calendar.service import configured_closed_dates, is_session_date, market_session_bounds
 from app.services.alfaka_market_data import get_market_data_provider, read_watchlist_symbols, symbol_summaries_for
 
 
@@ -32,21 +32,16 @@ class ScheduledNotificationService:
         current = _aware(now)
         market_now = current.astimezone(NEW_YORK)
         market_date = market_now.date()
-        if not is_session_date(market_date, configured_closed_dates(market_date.year, market_date.year)):
+        session = market_session_bounds(market_date)
+        if session is None:
             return {"job": "market-reminders", "marketDate": market_date.isoformat(), "sent": 0, "skipped": "market_closed"}
 
-        minute_of_day = market_now.hour * 60 + market_now.minute
-        reminder = (
-            ("market_open", "system.market_open", "미국장 개장 10분 전", "미국 정규장이 10분 뒤 개장합니다.")
-            if minute_of_day == 9 * 60 + 20
-            else ("market_close", "system.market_close", "미국장 마감 10분 전", "미국 정규장이 10분 뒤 마감합니다.")
-            if minute_of_day == 15 * 60 + 50
-            else None
-        )
+        reminder = _market_session_event(current, session)
         if reminder is None:
             return {"job": "market-reminders", "marketDate": market_date.isoformat(), "sent": 0, "skipped": "outside_window"}
 
-        kind, notification_type, title, summary = reminder
+        kind, notification_type, effective_at, title, summary = reminder
+        expires_at = effective_at + timedelta(minutes=2)
         sent = 0
         duplicate = 0
         for user_sub in _normalized_users(self.user_provider()):
@@ -54,6 +49,9 @@ class ScheduledNotificationService:
             payload = {
                 "kind": kind,
                 "marketDate": market_date.isoformat(),
+                "marketTimezone": str(session["marketTimezone"]),
+                "effectiveAt": effective_at.isoformat(),
+                "expiresAt": expires_at.isoformat(),
                 "title": title,
                 "summary": summary,
             }
@@ -63,7 +61,7 @@ class ScheduledNotificationService:
             notification = self.notification_repository.create_notification_once(
                 user_sub=user_sub,
                 alert_id=None,
-                event_id=f"{kind}:{market_date.isoformat()}:{user_sub}",
+                event_id=f"{notification_type}:{market_date.isoformat()}:{user_sub}",
                 notification_type=notification_type,
                 payload=payload,
             )
@@ -181,6 +179,33 @@ def _market_close_summary_text(items: list[dict[str, Any]]) -> str:
     gainers = sum(1 for value in changes if value > 0)
     losers = sum(1 for value in changes if value < 0)
     return f"관심 기업 {len(items)}개 · 상승 {gainers} · 하락 {losers}"
+
+
+def _market_session_event(
+    current: datetime,
+    session: dict[str, Any],
+) -> tuple[str, str, datetime, str, str] | None:
+    candidates = (
+        (
+            "market_opened",
+            "system.market_opened",
+            session["openAt"],
+            "미국 정규장 개장",
+            "미국 정규장이 개장했습니다.",
+        ),
+        (
+            "market_closed",
+            "system.market_closed",
+            session["closeAt"],
+            "미국 정규장 마감",
+            "미국 정규장이 마감했습니다.",
+        ),
+    )
+    for kind, notification_type, effective_at, title, summary in candidates:
+        elapsed = current - effective_at
+        if timedelta(0) <= elapsed <= timedelta(minutes=2):
+            return kind, notification_type, effective_at, title, summary
+    return None
 
 
 def _normalized_users(values: Iterable[Any]) -> list[str]:

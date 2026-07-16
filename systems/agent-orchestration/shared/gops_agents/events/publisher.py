@@ -7,12 +7,14 @@ from typing import Any
 AGENT_ALERTS_CHANNEL = "agent.alerts"
 RISK_LOG_MAX_ENTRIES = 500
 RISK_LOG_TTL_SECONDS = 7 * 24 * 3600
+EVENT_DEDUPE_TTL_SECONDS = 24 * 3600
+MARKET_EVENTS_TOPIC = "agents.market-events.v1"
 
 
-def notification_payload(decision: dict[str, Any]) -> dict[str, Any]:
+def notification_payload(decision: dict[str, Any], *, source_topic: str | None = None) -> dict[str, Any]:
     level = decision.get("level") or decision.get("severity")
     explicit_show_toast = decision.get("showToast")
-    show_toast = (
+    show_toast = False if source_topic == MARKET_EVENTS_TOPIC else (
         bool(explicit_show_toast)
         if "showToast" in decision
         else str(level or "").lower() in {"watch", "alert", "critical"}
@@ -23,6 +25,7 @@ def notification_payload(decision: dict[str, Any]) -> dict[str, Any]:
         "symbol": decision.get("symbol"),
         "level": level,
         "showToast": show_toast,
+        "sourceTopic": source_topic,
     }
 
 
@@ -35,8 +38,11 @@ class RedisNotificationPublisher:
         self.redis = redis_client
         self.channel = channel
 
-    def publish(self, decision: dict[str, Any]) -> dict[str, Any]:
-        payload = notification_payload(decision)
+    def publish(self, decision: dict[str, Any], *, source_topic: str | None = None) -> dict[str, Any]:
+        payload = notification_payload(decision, source_topic=source_topic)
+        event_id = str(decision.get("eventId") or "").strip()
+        if event_id and not self._claim_event(event_id):
+            return {**payload, "duplicate": True}
         encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         symbol = decision.get("symbol") or "UNKNOWN"
         self.redis.publish(self.channel, encoded)
@@ -44,6 +50,28 @@ class RedisNotificationPublisher:
         self.redis.setex(f"{self.channel}:latest:{symbol}", 3600, encoded)
         self._append_risk_log(decision)
         return payload
+
+    def _claim_event(self, event_id: str) -> bool:
+        key = f"{self.channel}:dedupe:{event_id}"
+        try:
+            return bool(self.redis.set(key, "1", nx=True, ex=EVENT_DEDUPE_TTL_SECONDS))
+        except (AttributeError, TypeError):
+            try:
+                if hasattr(self.redis, "setnx"):
+                    claimed = bool(self.redis.setnx(key, "1"))
+                    if claimed:
+                        self.redis.expire(key, EVENT_DEDUPE_TTL_SECONDS)
+                    return claimed
+                if self.redis.get(key):
+                    return False
+                self.redis.setex(key, EVENT_DEDUPE_TTL_SECONDS, "1")
+                return True
+            except Exception:
+                return True
+        except Exception:
+            # Deduplication is a guardrail. Redis publish availability remains
+            # the final delivery gate if the guard cannot be written.
+            return True
 
     def _append_risk_log(self, decision: dict[str, Any]) -> None:
         """일별 리스크 이벤트 로그 — 장마감 리포트의 재료 (capped list, 7일 보존)."""
