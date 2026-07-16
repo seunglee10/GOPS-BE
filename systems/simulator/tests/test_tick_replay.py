@@ -75,6 +75,14 @@ class DatasetContractTests(unittest.TestCase):
     def test_clickhouse_import_batches_are_large_enough_for_full_tick_volume(self):
         self.assertGreaterEqual(import_alpaca.CLICKHOUSE_INSERT_BATCH_SIZE, 50_000)
 
+    def test_parallel_import_uses_deterministic_file_and_row_sequence(self):
+        self.assertGreaterEqual(import_alpaca.DEFAULT_IMPORT_WORKERS, 4)
+        self.assertEqual(import_alpaca.deterministic_source_sequence(0, 1), 1)
+        self.assertGreater(
+            import_alpaca.deterministic_source_sequence(1, 1),
+            import_alpaca.deterministic_source_sequence(0, 999_999_999),
+        )
+
     def test_clickhouse_http_client_accepts_iso8601_event_timestamps(self):
         request = ClickHouseHttpClient("http://clickhouse:8123")._request(b"SELECT 1")
         query = urllib.parse.parse_qs(urllib.parse.urlparse(request.full_url).query)
