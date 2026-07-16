@@ -126,6 +126,31 @@ class DatasetContractTests(unittest.TestCase):
         self.assertEqual(payload["candles"][0]["timestamp"], "2026-07-14T04:00:00.000Z")
         self.assertFalse(payload["candles"][0]["isClosed"])
 
+    def test_daily_replay_closes_only_the_previous_new_york_market_day(self):
+        class FakeClickHouseClient:
+            def query_rows(self, sql):
+                if "simulation_replay_datasets" in sql:
+                    return [{"status": "READY", "total_events": 4}]
+                return [
+                    {"market_date": "2026-07-15", "open": 172, "high": 173, "low": 171, "close": 172.5, "volume": 20, "trade_count": 2},
+                    {"market_date": "2026-07-14", "open": 170, "high": 172, "low": 169, "close": 171.5, "volume": 30, "trade_count": 2},
+                ]
+
+        source = ClickHouseReplayEventSource(FakeClickHouseClient())
+
+        payload = source.candle_snapshot(
+            "NVDA",
+            "1D",
+            datetime(2026, 7, 15, 14, 30, tzinfo=UTC),
+            20,
+        )
+
+        self.assertEqual([item["timestamp"] for item in payload["candles"]], [
+            "2026-07-14T04:00:00.000Z",
+            "2026-07-15T04:00:00.000Z",
+        ])
+        self.assertEqual([item["isClosed"] for item in payload["candles"]], [True, False])
+
     def test_installed_layout_uses_the_application_root_env_candidate(self):
         self.assertEqual(
             simulator_env.repository_env_path(Path("/app/gops_simul/env.py")),
@@ -229,6 +254,32 @@ class ReplayControllerTests(unittest.TestCase):
         self.assertEqual(running["processedEventCount"], 2)
         self.assertEqual(self.controller.latest_quote("NVDA"), {"bid": 99.0, "ask": 100.0})
         self.assertEqual(self.controller.emitted_events()[0].payload["t"], "2026-07-14T15:00:01+00:00")
+
+    def test_daily_snapshot_is_built_from_processed_ticks_without_a_clickhouse_rescan(self):
+        class NoDailyRescanSource(InMemoryReplayEventSource):
+            def candle_snapshot(self, symbol, interval, through, limit):
+                if interval in {"1D", "1d"}:
+                    raise AssertionError("daily replay must not rescan ClickHouse")
+                return super().candle_snapshot(symbol, interval, through, limit)
+
+        controller = ReplayController(
+            NoDailyRescanSource([
+                trade(1, 1, "NVDA", 99.5),
+                trade(2, 3, "NVDA", 101.5),
+            ]),
+            clock=self.clock,
+        )
+        controller.set_mode("simulation")
+        controller.resume()
+        self.clock.value += 4
+
+        payload = controller.candle_snapshot("NVDA", "1D", 20)
+
+        self.assertEqual(len(payload["candles"]), 1)
+        self.assertEqual(payload["candles"][0]["timestamp"], "2026-07-14T04:00:00.000Z")
+        self.assertEqual(payload["candles"][0]["open"], 99.5)
+        self.assertEqual(payload["candles"][0]["close"], 101.5)
+        self.assertFalse(payload["candles"][0]["isClosed"])
 
     def test_speed_can_change_mid_run_without_dropping_events(self):
         self.controller.set_mode("simulation")
