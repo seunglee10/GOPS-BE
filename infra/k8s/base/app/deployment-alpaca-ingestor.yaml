@@ -69,5 +69,7 @@ spec:
               value: boats
             - name: ALPACA_COLLECTION_SYMBOL_SOURCE
               value: on-demand
+            - name: ALPACA_ACTIVE_CHANNELS
+              value: bars,updatedBars,trades,quotes
             - name: KAFKA_CLIENT_ID
               value: alfaka-alpaca-ingestor-boats

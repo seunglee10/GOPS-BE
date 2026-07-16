@@ -241,6 +241,12 @@ Financial provider는 `provider="financial"` evidence만 반환한다. `missing_
 `EvidenceItem.status`가 아니라 `raw["quality"]` 또는 snapshot `warnings`에
 담는다. `EvidenceItem.status`는 `available` 또는 `no-data`만 사용한다.
 
+재무 안정성 evidence는 SEC 원천 계정에서 미리 계산한 동일한 파생지표를 사용한다.
+총부채/자기자본, 유동부채/자기자본, 비유동부채/자기자본, 유동비율, 이자성 부채,
+이자보상배율, 금융비용부담률, 순부채는 `systems/fundamentals`가 계산해
+`sec_derived_metrics`와 Redis summary에 기록한다. Agent/RAG와 프런트가 각각
+다시 계산해 서로 다른 값을 만들면 안 된다.
+
 GraphDB가 없거나 timeout이면 ontology snapshot은 no-data evidence가 되고,
 market/news 근거만으로 분석은 계속된다. Kafka나 ClickHouse가 있다는 사실만으로
 GraphDB ontology query가 성공하는 것은 아니다.

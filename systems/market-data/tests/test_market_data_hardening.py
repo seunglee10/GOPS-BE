@@ -1606,6 +1606,26 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(publish_worker_count_from_env({"ALPACA_KAFKA_PUBLISH_WORKERS": "0"}), 1)
         self.assertEqual(publish_worker_count_from_env({"ALPACA_KAFKA_PUBLISH_WORKERS": "not-a-number"}), 1)
 
+    def test_on_demand_ingestor_keeps_dynamic_candle_channels_without_static_symbols(self):
+        from alfaka.alpaca import websocket_collector
+
+        self.assertEqual(
+            websocket_collector.resolve_active_channels(
+                [],
+                ["bars", "updatedBars", "dailyBars", "statuses"],
+                ["bars", "updatedBars", "trades", "quotes"],
+            ),
+            ["bars", "updatedBars", "trades", "quotes"],
+        )
+        self.assertEqual(
+            websocket_collector.resolve_active_channels(
+                ["AAPL"],
+                ["bars", "updatedBars", "dailyBars", "statuses"],
+                ["bars", "updatedBars", "trades", "quotes"],
+            ),
+            ["trades", "quotes"],
+        )
+
     def test_alpaca_aws_secret_supports_canonical_and_legacy_field_names(self):
         class FakeSecretsManager:
             def get_secret_value(self, SecretId):
@@ -2382,6 +2402,8 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertNotIn("value: alfaka-alpaca-tick-ingestor-sip", alpaca_ingestor_deployment)
         self.assertIn("name: ALPACA_ACTIVE_CHANNELS", alpaca_ingestor_deployment)
         self.assertIn("value: bars,updatedBars,dailyBars,trades,quotes", alpaca_ingestor_deployment)
+        boats_deployment = alpaca_ingestor_deployment.split("name: alfaka-alpaca-ingestor-boats", 1)[1]
+        self.assertIn("value: bars,updatedBars,trades,quotes", boats_deployment)
         self.assertIn('ALPACA_KAFKA_PUBLISH_WORKERS: "4"', configmap)
         self.assertIn('ALPACA_KAFKA_PUBLISH_QUEUE_MAXSIZE: "20000"', configmap)
         self.assertIn('KAFKA_PRODUCER_LINGER_MS: "20"', configmap)
@@ -2464,6 +2486,11 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn("news-backfill:", compose)
         self.assertIn('NEWS_BACKFILL_UNIVERSE: "${NEWS_BACKFILL_UNIVERSE:-sp500}"', compose)
         self.assertIn("systems/market-data/jobs/news-backfill/main.py", compose)
+        boats_service = compose.split("  alpaca-ingestor-boats:", 1)[1].split("\n  alpaca-news-ingestor:", 1)[0]
+        self.assertIn(
+            'ALPACA_ACTIVE_CHANNELS: "${ALPACA_BOATS_ACTIVE_CHANNELS:-bars,updatedBars,trades,quotes}"',
+            boats_service,
+        )
 
     def test_raw_archive_batches_historical_bars_by_day(self):
         s3 = RecordingS3()
@@ -5449,33 +5476,14 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertNotIn("toDayOfWeek(event_time) BETWEEN 1 AND 5", query)
         self.assertEqual(candles[-1]["timestamp"], "2026-06-28T13:30:00.000Z")
 
-    def test_stock_clickhouse_query_filters_historical_extended_hours(self):
+    def test_stock_clickhouse_query_includes_all_trading_sessions(self):
         provider = RecordingClickHouseProviderForAggregation([])
 
-        with mock.patch(
-            "alfaka.serving.clickhouse_provider.visible_extended_session_windows",
-            return_value=[
-                (
-                    "after",
-                    datetime(2026, 7, 5, 20, 0, tzinfo=timezone.utc),
-                    datetime(2026, 7, 6, 0, 0, tzinfo=timezone.utc),
-                ),
-                (
-                    "overnight",
-                    datetime(2026, 7, 6, 0, 0, tzinfo=timezone.utc),
-                    datetime(2026, 7, 6, 8, 0, tzinfo=timezone.utc),
-                ),
-            ],
-        ):
-            provider.candles("AAPL", "1m", 5)
+        provider.candles("AAPL", "1m", 5)
 
         query = provider.queries[0][0]
-        self.assertIn("market_session = 'regular'", query)
-        self.assertIn("market_session = 'after'", query)
-        self.assertIn("market_session = 'overnight'", query)
-        self.assertIn("2026-07-05T20:00:00.000Z", query)
-        self.assertIn("2026-07-06T00:00:00.000Z", query)
-        self.assertIn("2026-07-06T08:00:00.000Z", query)
+        self.assertIn("market_session IN ('pre', 'regular', 'after', 'overnight')", query)
+        self.assertNotIn("parseDateTime64BestEffort('2026-", query)
 
     def test_stock_chart_visibility_keeps_adjacent_extended_session(self):
         candles = [
@@ -5496,6 +5504,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
                 "2026-07-08T19:30:00.000Z",
                 "2026-07-08T21:30:00.000Z",
                 "2026-07-09T02:30:00.000Z",
+                "2026-07-07T21:30:00.000Z",
             ],
         )
 
@@ -5609,10 +5618,25 @@ class MarketDataHardeningContractTest(unittest.TestCase):
 
         candles = provider.aggregated_minute_candles("AAPL", "1h", 1)
 
-        self.assertEqual(len(provider.queries), 2)
+        self.assertEqual(len(provider.queries), 3)
         self.assertEqual(provider.queries[0][1]["sourceInterval"], "10m")
         self.assertIn("AND interval = '1m'", provider.queries[1][0])
+        self.assertIn("market_session IN ('pre', 'after', 'overnight')", provider.queries[2][0])
         self.assertEqual(candles[0]["sourceInterval"], "1m")
+
+    def test_clickhouse_intraday_coverage_reports_latest_regular_candle_separately(self):
+        provider = RecordingClickHouseProviderForAggregation([{
+            "rowCount": 500,
+            "invalidRowCount": 0,
+            "availableFrom": "2026-07-14T13:30:00.000Z",
+            "availableTo": "2026-07-15T23:00:00.000Z",
+            "regularAvailableTo": "2026-07-14T19:59:00.000Z",
+        }])
+
+        coverage = provider.stored_interval_coverage("MPC", "1m")
+
+        self.assertIn("maxIf(event_time, market_session = 'regular')", provider.queries[0][0])
+        self.assertEqual(coverage["regularAvailableTo"], "2026-07-14T19:59:00.000Z")
 
     def test_clickhouse_crypto_hourly_coverage_keeps_one_minute_source(self):
         provider = ClickHouseMarketDataProvider(
@@ -5725,7 +5749,8 @@ class MarketDataHardeningContractTest(unittest.TestCase):
 
         self.assertIn("interval = {interval:String}", provider.queries[0][0])
         self.assertEqual(provider.queries[0][1]["interval"], "1h")
-        self.assertEqual(len(provider.queries), 1)
+        self.assertEqual(len(provider.queries), 2)
+        self.assertIn("market_session IN ('pre', 'after', 'overnight')", provider.queries[1][0])
         self.assertEqual(candles[-1]["interval"], "1h")
 
     def test_clickhouse_adds_current_extended_candle_when_direct_history_is_full(self):
@@ -5780,7 +5805,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         class ExtendedAwareProvider(RecordingClickHouseProviderForAggregation):
             def query_json_each_row(self, query, params=None):
                 self.queries.append((query, params or {}))
-                if "AND interval = '1m'" in query and "market_session = 'overnight'" in query:
+                if "AND interval = '1m'" in query and "market_session IN ('pre', 'after', 'overnight')" in query:
                     return list(extended_rows)
                 return list(self.rows)
 
@@ -5792,13 +5817,64 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         candles = provider.candles("AAPL", "4h", 5)
 
         self.assertEqual(len(provider.queries), 2)
-        self.assertIn("market_session = 'overnight'", provider.queries[1][0])
+        self.assertIn("market_session IN ('pre', 'after', 'overnight')", provider.queries[1][0])
         self.assertIn("price_adjustment IN ('split', 'live')", provider.queries[1][0])
         self.assertEqual(candles[-1]["timestamp"], "2026-07-09T04:00:00.000Z")
         self.assertEqual(candles[-1]["close"], 105)
         self.assertEqual(candles[-1]["marketSession"], "overnight")
         self.assertEqual(candles[-1]["bucketPolicy"], "us_equity_extended_session")
         self.assertFalse(candles[-1]["isClosed"])
+
+    def test_clickhouse_adds_historical_extended_candle_when_direct_history_is_full(self):
+        direct_rows = [
+            {
+                "timestamp": f"2026-07-07T{13 + index:02d}:00:00.000Z",
+                "open": index + 1,
+                "high": index + 2,
+                "low": index,
+                "close": index + 1.5,
+                "volume": 100 + index,
+                "isClosed": 1,
+                "source": "derived.regular-session",
+                "feed": "sip",
+                "marketSession": "regular",
+            }
+            for index in range(5)
+        ]
+        extended_rows = [{
+            "timestamp": "2026-07-07T21:15:00.000Z",
+            "symbol": "AAPL",
+            "open": 100,
+            "high": 106,
+            "low": 99,
+            "close": 105,
+            "volume": 20,
+            "isClosed": 1,
+            "source": "alpaca.bars",
+            "feed": "sip",
+            "marketSession": "after",
+            "priceAdjustment": "split",
+            "canonicalVersion": "v2",
+        }]
+
+        class HistoricalExtendedProvider(RecordingClickHouseProviderForAggregation):
+            def query_json_each_row(self, query, params=None):
+                self.queries.append((query, params or {}))
+                if "AND interval = '1m'" in query and "market_session IN ('pre', 'after', 'overnight')" in query:
+                    return list(extended_rows)
+                return list(self.rows)
+
+        provider = HistoricalExtendedProvider(
+            direct_rows,
+            now=datetime(2026, 7, 9, 15, 0, tzinfo=timezone.utc),
+        )
+
+        candles = provider.candles("AAPL", "4h", 5)
+
+        self.assertEqual(len(provider.queries), 2)
+        self.assertEqual(candles[-1]["timestamp"], "2026-07-07T20:00:00.000Z")
+        self.assertEqual(candles[-1]["marketSession"], "after")
+        self.assertTrue(candles[-1]["isClosed"])
 
     def test_clickhouse_recomputes_stored_direct_interval_moving_averages(self):
         rows = [
@@ -6211,6 +6287,96 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             20,
             from_time="2026-06-22T04:00:00.000Z",
             to_time="2026-07-20T12:00:00.000Z",
+        )
+
+        self.assertEqual(payload["missingRanges"], [])
+
+    def test_intraday_coverage_reports_missing_latest_completed_regular_session(self):
+        payload = with_coverage_metadata(
+            {
+                "interval": "1m",
+                "candles": [{"timestamp": "2026-07-15T23:00:00.000Z"}],
+            },
+            {
+                "sourceInterval": "1m",
+                "rowCount": 500,
+                "availableFrom": "2026-07-14T13:30:00.000Z",
+                "availableTo": "2026-07-15T23:00:00.000Z",
+                "regularAvailableTo": "2026-07-14T19:59:00.000Z",
+            },
+            120,
+            from_time="2026-07-14T13:30:00.000Z",
+            to_time="2026-07-16T08:16:00.000Z",
+            symbol="MPC",
+        )
+
+        self.assertEqual(payload["missingRanges"], [{
+            "start": "2026-07-14T19:59:00.000Z",
+            "end": "2026-07-16T08:16:00.000Z",
+        }])
+
+    def test_intraday_coverage_keeps_friday_current_at_monday_premarket_open(self):
+        payload = with_coverage_metadata(
+            {
+                "interval": "1m",
+                "candles": [{"timestamp": "2026-07-17T19:59:00.000Z"}],
+            },
+            {
+                "sourceInterval": "1m",
+                "rowCount": 390,
+                "availableFrom": "2026-07-17T13:30:00.000Z",
+                "availableTo": "2026-07-17T19:59:00.000Z",
+                "regularAvailableTo": "2026-07-17T19:59:00.000Z",
+            },
+            120,
+            from_time="2026-07-17T13:30:00.000Z",
+            to_time="2026-07-20T08:00:00.000Z",
+            symbol="MPC",
+        )
+
+        self.assertEqual(payload["missingRanges"], [])
+
+    def test_intraday_coverage_repairs_active_premarket_tail(self):
+        payload = with_coverage_metadata(
+            {
+                "interval": "1m",
+                "candles": [{"timestamp": "2026-07-15T23:00:00.000Z"}],
+            },
+            {
+                "sourceInterval": "1m",
+                "rowCount": 500,
+                "availableFrom": "2026-07-15T13:30:00.000Z",
+                "availableTo": "2026-07-15T23:00:00.000Z",
+                "regularAvailableTo": "2026-07-15T19:59:00.000Z",
+            },
+            120,
+            from_time="2026-07-15T13:30:00.000Z",
+            to_time="2026-07-16T08:16:00.000Z",
+            symbol="MPC",
+        )
+
+        self.assertEqual(payload["missingRanges"], [{
+            "start": "2026-07-15T23:00:00.000Z",
+            "end": "2026-07-16T08:16:00.000Z",
+        }])
+
+    def test_intraday_coverage_honors_standard_early_close(self):
+        payload = with_coverage_metadata(
+            {
+                "interval": "1m",
+                "candles": [{"timestamp": "2026-07-02T16:59:00.000Z"}],
+            },
+            {
+                "sourceInterval": "1m",
+                "rowCount": 210,
+                "availableFrom": "2026-07-02T13:30:00.000Z",
+                "availableTo": "2026-07-02T16:59:00.000Z",
+                "regularAvailableTo": "2026-07-02T16:59:00.000Z",
+            },
+            120,
+            from_time="2026-07-02T13:30:00.000Z",
+            to_time="2026-07-02T18:01:00.000Z",
+            symbol="MPC",
         )
 
         self.assertEqual(payload["missingRanges"], [])
@@ -7206,7 +7372,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
 
         self.assertEqual([candle["timestamp"] for candle in payload["candles"]], ["2026-06-29T10:00:00.000Z"])
 
-    def test_stock_chart_filter_hides_historical_extended_and_keeps_active_extended(self):
+    def test_stock_chart_filter_keeps_historical_and_active_extended_sessions(self):
         candles = [
             {
                 "timestamp": "2026-07-02T22:00:00.000Z",
@@ -7244,7 +7410,11 @@ class MarketDataHardeningContractTest(unittest.TestCase):
 
         self.assertEqual(
             [candle["timestamp"] for candle in visible],
-            ["2026-07-02T14:30:00.000Z", "2026-07-06T02:15:00.000Z"],
+            [
+                "2026-07-02T22:00:00.000Z",
+                "2026-07-02T14:30:00.000Z",
+                "2026-07-06T02:15:00.000Z",
+            ],
         )
 
     def test_daily_candles_are_visible_even_when_stored_with_non_regular_session(self):

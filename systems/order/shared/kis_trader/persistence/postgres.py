@@ -28,6 +28,7 @@ from kis_trader.domain.topics import (
 FILL_STATUSES = {OrderStatus.FILLED, OrderStatus.PARTIALLY_FILLED}
 from kis_trader.security.redaction import redact_sensitive
 
+from .fills import canonical_fill_observation
 from .repository import IdempotencyConflictError, OrderCreationResult, OrderNotFoundError, SubmissionIntent, utc_now_iso
 
 
@@ -353,6 +354,11 @@ class PostgresOrderRepository:
                     )
                 self._update_order_status(conn, order_id, status, reason)
                 order = conn.execute("SELECT * FROM orders WHERE order_id = %s", (order_id,)).fetchone()
+                observation = canonical_fill_observation(
+                    dict(order), payload, execution_id=execution_id
+                )
+                if observation is not None:
+                    self._append_coach_fill(conn, observation)
                 envelope = build_order_status_envelope(
                     dict(order),
                     event_type="order.broker.event.reconciled",
@@ -369,6 +375,47 @@ class PostgresOrderRepository:
                     build_order_message_key(order["account_alias"], order["symbol"]),
                 )
 
+    def _append_coach_fill(self, conn: psycopg.Connection, observation: dict[str, Any]) -> None:
+        latest = conn.execute(
+            """
+            SELECT observation_version, cumulative_filled_qty
+            FROM order_coach_fill_history
+            WHERE fill_id = %s
+            ORDER BY observation_version DESC
+            LIMIT 1
+            """,
+            (observation["fill_id"],),
+        ).fetchone()
+        if latest is not None and Decimal(str(latest["cumulative_filled_qty"])) >= observation["cumulative_filled_qty"]:
+            return
+        version = int(latest["observation_version"]) + 1 if latest else 1
+        conn.execute(
+            """
+            INSERT INTO order_coach_fill_history (
+                fill_id, observation_version, user_sub, order_id, source_execution_id,
+                symbol, side, cumulative_filled_qty, average_fill_price, status,
+                decision_at, filled_at, source_observed_at, source_payload_digest
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT DO NOTHING
+            """,
+            (
+                observation["fill_id"],
+                version,
+                observation["user_sub"],
+                observation["order_id"],
+                observation["source_execution_id"],
+                observation["symbol"],
+                observation["side"],
+                observation["cumulative_filled_qty"],
+                observation["average_fill_price"],
+                observation["status"],
+                observation["decision_at"],
+                observation["filled_at"],
+                observation["source_observed_at"],
+                observation["source_payload_digest"],
+            ),
+        )
     def metrics_snapshot(self) -> dict[str, Any]:
         with self._connect() as conn:
             row = conn.execute(

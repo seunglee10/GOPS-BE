@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -10,7 +11,22 @@ from app.core.sectors import normalize_sector_list, sector_payload_fields
 from app.market_data.heatmap.service import get_heatmap_service
 from app.services.alfaka_market_data import get_market_data_provider, read_watchlist_symbols
 
-from .repository import RecommendationRunCreate, RecommendationRepository
+from .repository import RecommendationRunCreate, RecommendationRepository, RecommendationStateConflict
+from .professional import (
+    ProfessionalContext,
+    apply_professional_personalization,
+    personalization_digest,
+    raw_factors,
+    resolve_weight_set,
+)
+from .professional_v2 import (
+    ALGORITHM_VERSION,
+    apply_continuous_personalization,
+    infer_risk_state,
+    process_preference_events,
+    resolve_algorithm_version,
+    stable_digest,
+)
 from .scoring import (
     MARKET_TZ,
     NEWS_LOOKBACK_DAYS,
@@ -88,6 +104,34 @@ class RecommendationDataSource:
             elif len(redis_candles or []) < 120:
                 clickhouse_candles = market_provider.clickhouse_provider.candles(symbol, "1m", 240)
             return candles_not_after(merge_candles([*(clickhouse_candles or []), *(redis_candles or [])]), now)[-240:]
+        except Exception:
+            return []
+
+    def daily_candles(self, symbol: str, now: datetime) -> list[dict[str, Any]]:
+        provider = getattr(self.app.state, "recommendation_daily_candles_provider", None)
+        if callable(provider):
+            return list(provider(symbol, now))
+        try:
+            market_provider = get_market_data_provider()
+            rows = market_provider.clickhouse_provider.candles(symbol, "1D", 260)
+            return candles_not_after(list(rows or []), now)[-260:]
+        except Exception:
+            return []
+
+    def previous_session_candles(self, symbol: str, now: datetime) -> list[dict[str, Any]]:
+        provider = getattr(self.app.state, "recommendation_previous_session_candles_provider", None)
+        if callable(provider):
+            return list(provider(symbol, now))
+        try:
+            market_provider = get_market_data_provider()
+            start, end = previous_regular_session_window(now)
+            return list(market_provider.clickhouse_provider.candles(
+                symbol,
+                "1m",
+                420,
+                from_time=iso_z(start),
+                to_time=iso_z(end),
+            ) or [])
         except Exception:
             return []
 
@@ -204,6 +248,7 @@ class RecommendationService:
         now: datetime | None = None,
         active_symbol: str | None = None,
         session_mode: str = "regular",
+        _state_retry: bool = False,
     ) -> dict[str, Any]:
         now = now or datetime.now(timezone.utc)
         session_mode = normalize_session_mode(session_mode)
@@ -213,9 +258,43 @@ class RecommendationService:
         actual_session = market_session(now)
         slot = recommendation_slot(now, session_mode=session_mode)
         run_key = f"{user_sub}:{slot['marketDate']}:{session_mode}:{slot['slotStart']}"
+        legacy_enabled = bool_env("RECOMMENDATION_PERSONALIZATION_ENABLED", default=False)
+        legacy_shadow = bool_env("RECOMMENDATION_PERSONALIZATION_SHADOW", default=True)
+        algorithm_mode, personalization_shadow = resolve_algorithm_version(
+            os.getenv("RECOMMENDATION_ALGORITHM_VERSION"),
+            enabled=legacy_enabled,
+            shadow=legacy_shadow,
+        )
+        personalization_enabled = algorithm_mode != "legacy"
+        continuous_v2 = algorithm_mode == "continuous-v2"
+        weight_payload = professional_weight_payload(self.app) if personalization_enabled else None
+        if personalization_enabled and weight_payload is None:
+            get_active_weight_set = getattr(self.repository, "get_active_weight_set", None)
+            weight_payload = get_active_weight_set() if callable(get_active_weight_set) else None
+        weight_set = resolve_weight_set(weight_payload)
+        get_snapshot_at = getattr(self.repository, "get_portfolio_snapshot_at", None)
+        portfolio_snapshot = get_snapshot_at(user_sub, now) if personalization_enabled and callable(get_snapshot_at) else None
+        if personalization_enabled and portfolio_snapshot is None:
+            portfolio_snapshot = self.repository.get_portfolio_snapshot(user_sub)
+            observed_at = snapshot_observed_at(portfolio_snapshot) if portfolio_snapshot else None
+            if observed_at and observed_at > now:
+                portfolio_snapshot = None
+        portfolio_observed_at = snapshot_observed_at(portfolio_snapshot) if portfolio_snapshot else None
+        portfolio_data_stale = bool(
+            portfolio_snapshot
+            and (portfolio_observed_at is None or now - portfolio_observed_at > timedelta(hours=24))
+        )
+        input_digest = personalization_digest(
+            profile=profile_row,
+            portfolio_snapshot=portfolio_snapshot,
+            shadow=personalization_shadow,
+            weights_version=weight_set.version,
+            style_weights=weight_set.styles,
+        ) if personalization_enabled else None
         existing = self.repository.get_run_by_key(user_sub, run_key)
         existing_summary = existing.get("summary") if isinstance(existing, dict) else {}
-        if existing and not (isinstance(existing_summary, dict) and existing_summary.get("retryable")):
+        digest_matches = not personalization_enabled or existing.get("personalization_input_digest") == input_digest if existing else False
+        if existing and (continuous_v2 or digest_matches) and not (isinstance(existing_summary, dict) and existing_summary.get("retryable")):
             return response_for_run(existing, profile=profile_row, idempotent_replay=True)
         if not is_market_session_open(now, session_mode):
             latest_for_session = getattr(self.repository, "latest_run_for_session", None)
@@ -245,20 +324,91 @@ class RecommendationService:
         news_by_symbol = self.data_source.news_for_symbols(symbols, now)
         latest_for_session = getattr(self.repository, "latest_run_for_session", None)
         previous_run = latest_for_session(user_sub, session_mode) if callable(latest_for_session) else self.repository.latest_run(user_sub)
-        items = score_recommendations(
-            RecommendationInput(
-                profile=profile,
-                watchlist_symbols=watchlist,
-                portfolio_positions=positions,
-                market_items=market_items,
-                candles_by_symbol=candles_by_symbol,
-                spy_candles=spy_candles,
-                active_symbol=active_symbol,
-                session_mode=session_mode,
-                news_by_symbol=news_by_symbol,
-                now=now,
-            )
+        scoring_input = RecommendationInput(
+            profile=profile,
+            watchlist_symbols=watchlist,
+            portfolio_positions=positions,
+            market_items=market_items,
+            candles_by_symbol=candles_by_symbol,
+            spy_candles=spy_candles,
+            active_symbol=active_symbol,
+            session_mode=session_mode,
+            news_by_symbol=news_by_symbol,
+            now=now,
         )
+        professional_eligible_count = 0
+        candidate_features: list[dict[str, Any]] = []
+        fundamental_provenance: dict[str, Any] = {}
+        preference_state: dict[str, Any] | None = None
+        preference_events: list[dict[str, Any]] = []
+        risk_state: dict[str, Any] | None = None
+        v2_context: dict[str, Any] = {}
+        if personalization_enabled:
+            professional_symbols = list(dict.fromkeys([*symbols, *[str(row.get("symbol") or "").upper() for row in positions], "SPY"]))
+            daily_candles_by_symbol = {symbol: self.data_source.daily_candles(symbol, now) for symbol in professional_symbols if symbol}
+            previous_session_candles_by_symbol = {
+                symbol: self.data_source.previous_session_candles(symbol, now)
+                for symbol in [*symbols, "SPY"]
+            }
+            candidate_items = score_recommendations(scoring_input, limit=50) if personalization_shadow and not continuous_v2 else []
+            if not candidate_items:
+                candidate_items = professional_candidate_items(candidates, profile, active_symbol=active_symbol)
+            professional_context = ProfessionalContext(
+                style=profile.recommendation_style,
+                risk_level=profile.risk_level,
+                daily_candles_by_symbol=daily_candles_by_symbol,
+                previous_session_candles_by_symbol=previous_session_candles_by_symbol,
+                news_by_symbol=news_by_symbol,
+                portfolio_snapshot=portfolio_snapshot,
+                now=now,
+                weights_version=weight_set.version,
+                style_weights=weight_set.styles,
+            )
+            professional_eligible_count = sum(
+                raw_factors(candidate.symbol, professional_context) is not None
+                for candidate in candidates
+            )
+            if continuous_v2:
+                v2_context = self.repository.get_v2_context(user_sub, now)
+                preference_state, preference_events = process_preference_events(
+                    v2_context.get("preferenceState"),
+                    v2_context.get("fills") or [],
+                    style=profile.recommendation_style,
+                    cutoff=now,
+                    existing_order_strengths=v2_context.get("orderStrengths") or {},
+                )
+                risk_state = infer_risk_state(
+                    profile_row,
+                    v2_context.get("portfolioSnapshots") or [],
+                    v2_context.get("allFills") or [],
+                    cutoff=now,
+                )
+                provider = getattr(self.app.state, "recommendation_fundamental_provider", None) if self.app else None
+                if provider is None:
+                    fundamental_payload = None
+                else:
+                    try:
+                        fundamental_payload = provider.snapshots_as_of(symbols, now)
+                    except Exception:
+                        fundamental_payload = object()
+                continuous = apply_continuous_personalization(
+                    candidate_items,
+                    context=professional_context,
+                    preference_state=preference_state,
+                    risk_state=risk_state,
+                    fundamental_payload=fundamental_payload,
+                )
+                items = continuous.items
+                candidate_features = continuous.candidate_features
+                fundamental_provenance = continuous.fundamental_provenance
+            else:
+                items = apply_professional_personalization(
+                    candidate_items,
+                    context=professional_context,
+                    shadow=personalization_shadow,
+                )
+        else:
+            items = score_recommendations(scoring_input)
         summary = {
             **base_summary(session_mode=session_mode, actual_session=actual_session),
             "candidateCount": len(candidates),
@@ -268,12 +418,29 @@ class RecommendationService:
             "excludedWatchlistCount": len({symbol.strip().upper() for symbol in watchlist if symbol.strip()}),
             "excludedActiveSymbol": bool(active_symbol),
             "emptyReason": None,
-            "rejectedByReason": rejection_summary(candidates, candles_by_symbol, session_mode=session_mode, now=now),
+            "rejectedByReason": (
+                {"missingProfessionalData": max(0, len(candidates) - professional_eligible_count)}
+                if personalization_enabled
+                else rejection_summary(candidates, candles_by_symbol, session_mode=session_mode, now=now)
+            ),
+            "personalization": {
+                "enabled": personalization_enabled,
+                "shadow": personalization_shadow if personalization_enabled else False,
+                "algorithmVersion": ALGORITHM_VERSION if continuous_v2 else weight_set.version if personalization_enabled else "legacy",
+                "recommendationStyle": profile.recommendation_style,
+                "weightsVersion": weight_set.version if personalization_enabled else "legacy",
+                "portfolioDataStale": personalization_enabled and portfolio_data_stale,
+                "preferenceConfidence": preference_state.get("preferenceConfidence") if preference_state else None,
+                "fundamentalStatus": fundamental_provenance.get("status") if continuous_v2 else None,
+            },
         }
         if not items:
-            empty_reason = empty_reason_for(candidates, candles_by_symbol, session_mode=session_mode, now=now)
+            if personalization_enabled:
+                empty_reason = "insufficient_professional_data" if professional_eligible_count == 0 else "no_positive_excess_candidates"
+            else:
+                empty_reason = empty_reason_for(candidates, candles_by_symbol, session_mode=session_mode, now=now)
             summary["emptyReason"] = empty_reason
-            summary["retryable"] = empty_reason == "insufficient_session_data"
+            summary["retryable"] = empty_reason in {"insufficient_session_data", "insufficient_professional_data"}
             if summary["retryable"]:
                 return {
                     "status": "empty",
@@ -285,19 +452,56 @@ class RecommendationService:
                     "marketDate": slot["marketDate"],
                     "retryable": True,
                 }
-        run = self.repository.create_or_replace_run(
-            RecommendationRunCreate(
-                user_sub=user_sub,
-                run_key=run_key,
-                slot_start=slot["slotStart"],
-                market_date=slot["marketDate"],
-                status="completed" if items else "empty",
-                profile_snapshot=profile_row,
-                market_snapshot_time=now.isoformat(),
-                summary=summary,
-            ),
-            items,
+        run_create = RecommendationRunCreate(
+            user_sub=user_sub,
+            run_key=run_key,
+            slot_start=slot["slotStart"],
+            market_date=slot["marketDate"],
+            status="completed" if items else "empty",
+            profile_snapshot=profile_row,
+            market_snapshot_time=now.isoformat(),
+            summary=summary,
+            portfolio_snapshot_history_id=int(portfolio_snapshot["id"]) if portfolio_snapshot and portfolio_snapshot.get("id") is not None else None,
+            weights_version=ALGORITHM_VERSION if continuous_v2 else weight_set.version if personalization_enabled else "legacy",
+            personalization_input_digest=input_digest,
+            personalization_snapshot={
+                "recommendationStyle": profile.recommendation_style,
+                "riskLevel": profile.risk_level,
+                "shadow": personalization_shadow,
+                "effectiveWeights": preference_state.get("effectiveWeights") if preference_state else None,
+            } if personalization_enabled else {},
+            algorithm_version=ALGORITHM_VERSION if continuous_v2 else weight_set.version if personalization_enabled else "legacy",
+            fundamental_snapshot_provenance=fundamental_provenance,
+            v2_input_digest=stable_digest({
+                "preference": preference_state.get("inputDigest") if preference_state else None,
+                "risk": risk_state.get("inputDigest") if risk_state else None,
+                "fundamental": fundamental_provenance,
+                "features": [row.get("input_digest") for row in candidate_features],
+            }) if continuous_v2 else None,
         )
+        if continuous_v2 and preference_state is not None and risk_state is not None:
+            try:
+                run = self.repository.commit_v2_run(
+                    run_create,
+                    items,
+                    candidate_features,
+                    preference_state,
+                    preference_events,
+                    risk_state,
+                    expected_preference_state_id=v2_context.get("preferenceStateId"),
+                )
+            except RecommendationStateConflict:
+                if _state_retry:
+                    raise
+                return self.refresh(
+                    user_sub,
+                    now=now,
+                    active_symbol=active_symbol,
+                    session_mode=session_mode,
+                    _state_retry=True,
+                )
+        else:
+            run = self.repository.create_or_replace_run(run_create, items)
         self._maybe_notify(user_sub, run, previous=previous_run)
         return response_for_run(run, profile=profile_row)
 
@@ -361,6 +565,29 @@ def candidate_symbols(watchlist: list[str], positions: list[dict[str, Any]], mar
     if "SPY" not in symbols:
         symbols.append("SPY")
     return symbols
+
+
+def professional_candidate_items(candidates: list[Any], profile: Any, *, active_symbol: str | None = None) -> list[dict[str, Any]]:
+    excluded_sectors = set(profile.excluded_sectors)
+    excluded_symbols = set(profile.excluded_symbols)
+    if active_symbol:
+        excluded_symbols.add(str(active_symbol).strip().upper())
+    return [
+        {
+            "symbol": candidate.symbol,
+            "action": "buy",
+            "rank": 0,
+            "score": 0.0,
+            "confidence": 0.7,
+            "changePercent": candidate.change_percent,
+            **sector_payload_fields(candidate.sector),
+            "reasons": [],
+            "riskWarnings": [],
+            "metricsSnapshot": {"source": candidate.source, "changePercent": candidate.change_percent},
+        }
+        for candidate in candidates
+        if candidate.symbol not in excluded_symbols and candidate.sector not in excluded_sectors
+    ]
 
 
 def merge_candles(candles: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -435,6 +662,20 @@ def bool_env(name: str, *, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def professional_weight_payload(app: Any | None) -> dict[str, Any] | None:
+    provider = getattr(app.state, "recommendation_weight_provider", None) if app else None
+    if callable(provider):
+        payload = provider()
+        return payload if isinstance(payload, dict) else None
+    raw = os.getenv("RECOMMENDATION_PROFESSIONAL_WEIGHTS_JSON", "").strip()
+    if not raw:
+        return None
+    payload = json.loads(raw)
+    if not isinstance(payload, dict):
+        raise ValueError("RECOMMENDATION_PROFESSIONAL_WEIGHTS_JSON must be a JSON object")
+    return payload
+
+
 def positive_int_env(name: str, *, default: int, maximum: int | None = None) -> int:
     try:
         value = int(os.getenv(name, str(default)))
@@ -456,6 +697,16 @@ def session_candle_window(now: datetime, session_mode: str) -> dict[str, str]:
     }
 
 
+def previous_regular_session_window(now: datetime) -> tuple[datetime, datetime]:
+    local = now.astimezone(MARKET_TZ)
+    previous = local.date() - timedelta(days=1)
+    while previous.weekday() >= 5:
+        previous -= timedelta(days=1)
+    start = datetime.combine(previous, datetime.min.time(), MARKET_TZ).replace(hour=9, minute=30)
+    end = datetime.combine(previous, datetime.min.time(), MARKET_TZ).replace(hour=16)
+    return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
+
+
 def candles_not_after(candles: list[dict[str, Any]], now: datetime) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for candle in candles:
@@ -463,6 +714,17 @@ def candles_not_after(candles: list[dict[str, Any]], now: datetime) -> list[dict
         if observed is None or observed <= now:
             rows.append(candle)
     return rows
+
+
+def snapshot_observed_at(snapshot: dict[str, Any]) -> datetime | None:
+    payload = snapshot.get("payload") if isinstance(snapshot.get("payload"), dict) else {}
+    return parse_datetime(
+        snapshot.get("source_as_of")
+        or snapshot.get("sourceAsOf")
+        or payload.get("sourceAsOf")
+        or payload.get("asOf")
+        or snapshot.get("updated_at")
+    )
 
 
 def iso_z(value: datetime) -> str:
@@ -528,6 +790,22 @@ def normalize_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "rank": item.get("rank"),
             "score": item.get("score"),
             "confidence": item.get("confidence"),
+            "baseAlphaScore": metrics_snapshot.get("baseAlphaScore"),
+            "extendedBaseAlphaScore": metrics_snapshot.get("extendedBaseAlphaScore"),
+            "styleSignalScore": metrics_snapshot.get("styleSignalScore"),
+            "preferenceFitScore": metrics_snapshot.get("preferenceFitScore"),
+            "preferenceConfidence": metrics_snapshot.get("preferenceConfidence"),
+            "personalizationDelta": metrics_snapshot.get("personalizationDelta"),
+            "portfolioFitScore": metrics_snapshot.get("portfolioFitScore"),
+            "personalScore": metrics_snapshot.get("personalScore"),
+            "fundamentalScore": metrics_snapshot.get("fundamentalScore"),
+            "fundamentalWeight": metrics_snapshot.get("fundamentalWeight"),
+            "fundamentalStatus": metrics_snapshot.get("fundamentalStatus"),
+            "fundamentalProvenance": metrics_snapshot.get("fundamentalProvenance") or {},
+            "algorithmVersion": metrics_snapshot.get("algorithmVersion"),
+            "effectiveWeights": metrics_snapshot.get("effectiveWeights") or {},
+            "riskBudget": metrics_snapshot.get("riskBudget") or {},
+            "observedRisk": metrics_snapshot.get("observedRisk") or {},
             "changePercent": change_percent if change_percent is not None else metrics_snapshot.get("changePercent"),
             **sector_payload_fields(item.get("sector")),
             "reasons": item.get("reasons") or [],

@@ -26,7 +26,7 @@ DEFAULT_COMPANYFACTS_S3_PREFIX = "fundamentals/sec/companyfacts"
 DEFAULT_COMPANYFACTS_SOURCE = "api"
 DEFAULT_UNIVERSE_PATH = "systems/market-data/config/sp500-universe.json"
 SKIP_RAW_METRIC_GROUPS = {"debt_current_components", "debt_noncurrent_components"}
-FLOW_FACT_METRICS = {"revenue", "net_income", "operating_income", "operating_cash_flow", "capex"}
+FLOW_FACT_METRICS = {"revenue", "net_income", "operating_income", "operating_cash_flow", "capex", "interest_expense"}
 PERIOD_ORDER = {"Q1": 1, "Q2": 2, "Q3": 3, "Q4": 4, "FY": 5}
 DEFAULT_FRAME_PERIOD_COUNT = 6
 FRAME_FILING_LAG_DAYS = 45
@@ -483,7 +483,12 @@ def fact_row(company: CompanyTicker, metric: str, taxonomy: str, concept: str, p
     filed_at = date_string(fact.get("filed"))
     if fiscal_year is None or not fiscal_period or not period_end or not filed_at:
         return None
-    quality = "equity_includes_nci" if metric == "equity" and concept == "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest" else "available"
+    if metric == "equity" and concept == "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest":
+        quality = "equity_includes_nci"
+    elif metric == "cash_and_cash_equivalents" and concept == "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents":
+        quality = "cash_includes_restricted"
+    else:
+        quality = "available"
     accession = str(fact.get("accn") or "")
     return {
         "symbol": company.symbol,

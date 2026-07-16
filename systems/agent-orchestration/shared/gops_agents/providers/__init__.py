@@ -565,7 +565,7 @@ class ClickHouseFinancialProvider(FinancialProvider):
     def __init__(self, clickhouse_provider=None, redis_client=None, limit: int | None = None):
         self.clickhouse_provider = clickhouse_provider
         self.redis_client = redis_client
-        self.limit = int(limit or os.getenv("AGENT_FINANCIAL_LIMIT", "24"))
+        self.limit = int(limit or os.getenv("AGENT_FINANCIAL_LIMIT", "64"))
 
     def fetch(self, request: ProviderRequest) -> list[EvidenceItem]:
         try:

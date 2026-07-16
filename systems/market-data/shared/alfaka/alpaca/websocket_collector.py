@@ -26,6 +26,12 @@ from alfaka.realtime.subscription_cohorts import ORDER_FLOW_SOURCE, PAPER_ORDER_
 _PUBLISH_STOP = object()
 
 
+def resolve_active_channels(symbols, static_channels, configured_active_channels):
+    """Keep dynamic channels unless a real static symbol subscription already owns them."""
+    statically_subscribed = set(static_channels) if symbols else set()
+    return [channel for channel in configured_active_channels if channel not in statically_subscribed]
+
+
 async def main():
     load_dotenv()
 
@@ -36,7 +42,7 @@ async def main():
     request_config = load_request_config()
     active_channels = parse_csv(os.getenv("ALPACA_ACTIVE_CHANNELS", ",".join(request_config.get("activeChartChannels", ["trades"]))))
     validate_channels(active_channels, request_config)
-    active_channels = [channel for channel in active_channels if channel not in channels]
+    active_channels = resolve_active_channels(symbols, channels, active_channels)
     active_poll_seconds = parse_positive_float(os.getenv("ALPACA_ACTIVE_POLL_SECONDS", "5"), default=5.0)
     enforce_session_window = parse_bool(os.getenv("ALPACA_ENFORCE_FEED_SESSION_WINDOW", "true"), default=True)
     session_idle_poll_seconds = parse_positive_float(os.getenv("ALPACA_SESSION_IDLE_POLL_SECONDS", "60"), default=60.0)

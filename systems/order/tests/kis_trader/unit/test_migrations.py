@@ -86,6 +86,39 @@ def test_recommendation_migration_declares_profile_runs_and_items():
     assert "stock_recommendation_runs_user_key_unique" in sql
 
 
+def test_personalized_recommendation_migration_versions_inputs_and_snapshot_reference():
+    [migration] = [path for path in migration_files() if path.name == "0011_personalized_recommendations.sql"]
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "recommendation_style" in sql
+    assert "portfolio_snapshot_history_id" in sql
+    assert "weights_version" in sql
+    assert "personalization_input_digest" in sql
+    assert "personalization_snapshot" in sql
+    assert "CREATE TABLE IF NOT EXISTS stock_recommendation_model_registry" in sql
+    assert "CREATE TABLE IF NOT EXISTS stock_recommendation_outcomes" in sql
+    assert "open_to_close_excess_return_pct" in sql
+
+
+def test_continuous_recommendation_v2_migration_declares_state_and_candidate_features():
+    [migration] = [
+        path for path in migration_files() if path.name == "0012_continuous_recommendation_v2.sql"
+    ]
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "algorithm_version" in sql
+    assert "CREATE TABLE IF NOT EXISTS user_recommendation_preference_states" in sql
+    assert "CREATE TABLE IF NOT EXISTS user_recommendation_preference_events" in sql
+    assert "CREATE TABLE IF NOT EXISTS user_recommendation_risk_states" in sql
+    assert "CREATE TABLE IF NOT EXISTS stock_recommendation_candidate_features" in sql
+    assert "CREATE TABLE IF NOT EXISTS order_coach_fill_history" in sql
+    assert "fill_history_id BIGINT NOT NULL UNIQUE REFERENCES order_coach_fill_history" in sql
+    assert "provenance JSONB NOT NULL" in sql
+    assert "INSERT INTO order_coach_fill_history" in sql
+    assert "o.user_sub IS NOT NULL" in sql
+    assert "fundamental_weight >= 0 AND fundamental_weight <= 0.15" in sql
+
+
 def test_paper_trading_migration_declares_isolated_account_and_order_tables():
     [migration] = [path for path in migration_files() if path.name == "0006_paper_trading.sql"]
     sql = migration.read_text(encoding="utf-8")

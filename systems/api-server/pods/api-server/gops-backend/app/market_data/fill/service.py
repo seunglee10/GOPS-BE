@@ -317,7 +317,7 @@ class OnDemandFillService:
         )
         trace["feedRoutes"] = routes
         fetch_routes = [route for route in routes if route.get("state") == "fetchable"]
-        provider_interval = interval if is_crypto_symbol(symbol) else historical_source_interval_for(interval)
+        provider_interval = historical_fill_source_interval(symbol, interval, fetch_routes)
         estimated_bars = estimated_bar_count(provider_interval, fetch_ranges_from_routes(fetch_routes))
         foreground_auto_enabled = interval in self.foreground_auto_intervals and estimated_bars <= self.foreground_auto_max_bars
         if not fetch_routes:
@@ -685,14 +685,14 @@ class OnDemandFillService:
             source["error"] = "S3_BUCKET is required before Alpaca historical rows can be canonicalized."
             source["durationMs"] = elapsed_ms(source_started)
             return False
-        provider_interval = interval if is_crypto_symbol(symbol) else historical_source_interval_for(interval)
-        timeframe = alpaca_timeframe_for_interval(provider_interval)
         routes = historical_fill_routes(symbol, interval, ranges, os.getenv("HISTORICAL_FEED", os.getenv("ALPACA_FEED", "sip")))
         trace["feedRoutes"] = routes
         fetch_routes = [route for route in routes if route.get("state") == "fetchable"]
         if not fetch_routes:
             source["durationMs"] = elapsed_ms(source_started)
             return False
+        provider_interval = historical_fill_source_interval(symbol, interval, fetch_routes)
+        timeframe = alpaca_timeframe_for_interval(provider_interval)
         try:
             raw_by_feed: list[tuple[str, list[dict[str, Any]]]] = []
             for route in fetch_routes:
@@ -927,10 +927,6 @@ def historical_fill_routes(symbol: str, interval: str, ranges: list[dict[str, An
                 route_feed = feed
                 state = "fetchable"
                 reason = None
-            elif interval in INTRADAY_DERIVED_INTERVALS:
-                route_feed = None
-                state = "skipped"
-                reason = "derived equity candles use regular-session source bars only"
             elif session in {"pre", "after"}:
                 route_feed = feed
                 state = "fetchable"
@@ -953,6 +949,20 @@ def historical_fill_routes(symbol: str, interval: str, ranges: list[dict[str, An
             })
             cursor = segment_end
     return merge_adjacent_routes(routes)
+
+
+def historical_fill_source_interval(symbol: str, interval: str, routes: list[dict[str, Any]]) -> str:
+    """Use 1m source bars whenever a derived stock repair crosses an extended session."""
+    interval = normalize_chart_interval(interval)
+    if is_crypto_symbol(symbol):
+        return interval
+    has_extended_session = any(
+        route.get("state") == "fetchable" and route.get("session") in {"pre", "after", "overnight"}
+        for route in routes
+    )
+    if interval in INTRADAY_DERIVED_INTERVALS and has_extended_session:
+        return "1m"
+    return historical_source_interval_for(interval)
 
 
 def opportunistic_intraday_gap_ranges(interval: str, candles: list[dict[str, Any]]) -> list[dict[str, Any]]:

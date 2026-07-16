@@ -180,6 +180,49 @@ def aggregate_visible_extended_session_candles(
     return result
 
 
+def aggregate_extended_session_candles(
+    rows: Iterable[dict[str, Any]],
+    interval: str,
+    *,
+    now: datetime | None = None,
+    source_interval: str = "1m",
+) -> list[dict[str, Any]]:
+    """Aggregate every real pre/after/overnight source row, including historical sessions."""
+    if interval not in INTRADAY_DERIVED_INTERVALS:
+        raise ValueError(f"Extended-session aggregation does not support {interval}")
+    reference = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    grouped: dict[str, tuple[ExtendedSessionBucket, list[dict[str, Any]]]] = {}
+    for source in rows:
+        parsed = _parsed_timestamp(source)
+        if parsed is None:
+            continue
+        bucket = extended_session_bucket(parsed, interval)
+        if bucket is None:
+            continue
+        declared_session = str(source.get("marketSession", source.get("market_session", "")) or "").lower()
+        if declared_session and declared_session != bucket.session:
+            continue
+        key = f"{bucket.session}|{_iso(bucket.start)}"
+        grouped.setdefault(key, (bucket, []))[1].append(dict(source))
+
+    result: list[dict[str, Any]] = []
+    for key in sorted(grouped, key=lambda value: value.split("|", 1)[1]):
+        bucket, source_rows = grouped[key]
+        candle = _build_aggregated_candle(
+            source_rows,
+            interval=interval,
+            timestamp=_iso(bucket.start),
+            market_session=bucket.session,
+            bucket_policy=BUCKET_POLICY_EXTENDED_SESSION,
+            source="derived.extended-session",
+            source_interval=source_interval,
+            is_closed=bucket.end <= reference,
+        )
+        if candle:
+            result.append(candle)
+    return result
+
+
 def bucket_policy_for_candle(payload: dict[str, Any]) -> str:
     explicit = payload.get("bucketPolicy", payload.get("bucket_policy"))
     if explicit:

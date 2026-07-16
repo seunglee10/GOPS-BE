@@ -1107,6 +1107,8 @@ FINANCIAL_METRIC_LABELS = {
     "equity": "자기자본",
     "current_assets": "유동자산",
     "current_liabilities": "유동부채",
+    "cash_and_cash_equivalents": "현금성자산",
+    "interest_expense": "이자비용",
     "operating_cash_flow": "영업활동 현금흐름",
     "free_cash_flow": "잉여현금흐름",
     "shares_outstanding": "발행주식수",
@@ -1118,10 +1120,14 @@ FINANCIAL_METRIC_LABELS = {
     "operating_income_growth": "영업이익 성장률",
     "liabilities_to_assets": "총부채/총자산",
     "liabilities_to_equity": "총부채/자기자본",
+    "current_liabilities_to_equity": "유동부채/자기자본",
+    "noncurrent_liabilities_to_equity": "비유동부채/자기자본",
     "total_debt": "이자성 부채",
     "total_debt_to_assets": "이자성 부채/총자산",
     "total_debt_to_equity": "이자성 부채/자기자본",
     "interest_coverage": "이자보상배율",
+    "financial_cost_burden_ratio": "금융비용부담률",
+    "net_debt": "순부채",
 }
 FINANCIAL_MONEY_METRICS = {
     "revenue",
@@ -1132,9 +1138,12 @@ FINANCIAL_MONEY_METRICS = {
     "equity",
     "current_assets",
     "current_liabilities",
+    "cash_and_cash_equivalents",
+    "interest_expense",
     "operating_cash_flow",
     "free_cash_flow",
     "total_debt",
+    "net_debt",
 }
 FINANCIAL_PERCENT_METRICS = {
     "current_ratio",
@@ -1145,6 +1154,9 @@ FINANCIAL_PERCENT_METRICS = {
     "operating_income_growth",
     "liabilities_to_assets",
     "liabilities_to_equity",
+    "current_liabilities_to_equity",
+    "noncurrent_liabilities_to_equity",
+    "financial_cost_burden_ratio",
     "total_debt_to_assets",
     "total_debt_to_equity",
 }
@@ -1159,17 +1171,24 @@ FINANCIAL_METRIC_ORDER = {
     "equity": 6,
     "current_assets": 7,
     "current_liabilities": 8,
-    "current_ratio": 9,
-    "operating_cash_flow": 10,
-    "free_cash_flow": 11,
-    "shares_outstanding": 12,
-    "net_margin": 13,
-    "operating_margin": 14,
-    "liabilities_to_assets": 15,
-    "liabilities_to_equity": 16,
-    "total_debt": 17,
-    "total_debt_to_assets": 18,
-    "total_debt_to_equity": 19,
+    "cash_and_cash_equivalents": 9,
+    "current_ratio": 10,
+    "operating_cash_flow": 11,
+    "free_cash_flow": 12,
+    "shares_outstanding": 13,
+    "net_margin": 14,
+    "operating_margin": 15,
+    "liabilities_to_assets": 16,
+    "liabilities_to_equity": 17,
+    "current_liabilities_to_equity": 18,
+    "noncurrent_liabilities_to_equity": 19,
+    "total_debt": 20,
+    "net_debt": 21,
+    "total_debt_to_assets": 22,
+    "total_debt_to_equity": 23,
+    "interest_expense": 24,
+    "interest_coverage": 25,
+    "financial_cost_burden_ratio": 26,
 }
 FINANCIAL_QUALITY_MESSAGES = {
     "missing_source": "일부 지표는 SEC 원천 항목이 부족해 표시하지 않았습니다.",
@@ -1177,6 +1196,10 @@ FINANCIAL_QUALITY_MESSAGES = {
     "frame_as_reported": "Peer 비교 값은 SEC frames 원 보고 기준이라 정정 공시와 차이가 날 수 있습니다.",
     "frame_coverage_gap": "일부 회사는 fiscal calendar 차이로 같은 SEC frame에 포함되지 않을 수 있습니다.",
     "stale": "캐시가 최신 공시와 다를 수 있어 재수집이 필요합니다.",
+    "cash_includes_restricted": "현금성자산에 제한성 현금이 포함될 수 있어 순부채 해석에 주의가 필요합니다.",
+    "partial_source": "이자성 부채는 확인 가능한 일부 SEC 부채 계정으로 계산했습니다.",
+    "invalid_source_relationship": "SEC 원천 계정 간 관계가 일치하지 않아 해당 비율을 표시하지 않았습니다.",
+    "zero_denominator": "분모가 0인 지표는 계산하지 않았습니다.",
 }
 
 
@@ -1975,7 +1998,7 @@ def visible_role_findings(findings: list[AgentFinding]) -> list[AgentFinding]:
 
 def financial_metric_bullets(item: EvidenceItem) -> list[str]:
     bullets = []
-    for metric in financial_display_metrics(item)[:12]:
+    for metric in financial_display_metrics(item)[:24]:
         period = f" ({metric['period']})" if metric.get("period") else ""
         bullets.append(f"{metric['label']}: {metric['displayValue']}{period}")
     return bullets
@@ -2149,6 +2172,18 @@ def financial_interpretation_signals(item: EvidenceItem) -> list[dict[str, str]]
             signals.append(financial_signal("liabilities_to_equity_high", "caution", "자기자본 대비 부채 큼", "총부채가 자기자본의 2배 이상이면 레버리지 부담을 따로 점검할 필요가 있습니다."))
         elif liabilities_to_equity >= 1.0:
             signals.append(financial_signal("liabilities_to_equity_moderate", "watch", "자기자본 대비 부채 보통 이상", "총부채가 자기자본보다 커서 안정성 판단에는 이익과 현금흐름 추세가 중요합니다."))
+    interest_coverage = metric_float(metrics, "interest_coverage")
+    if interest_coverage is not None:
+        if interest_coverage < 1.0:
+            signals.append(financial_signal("interest_coverage_below_1", "caution", "이자 지급여력 부족", "영업이익이 이자비용보다 작아 본업 이익만으로 금융비용을 감당하기 어려운 구간입니다."))
+        elif interest_coverage < 3.0:
+            signals.append(financial_signal("interest_coverage_thin", "watch", "이자 지급여력 제한", "이자보상배율이 3배 미만이면 이익 둔화 시 금융비용 부담이 빠르게 커질 수 있습니다."))
+    financial_cost_burden = metric_float(metrics, "financial_cost_burden_ratio")
+    if financial_cost_burden is not None and financial_cost_burden >= 0.05:
+        signals.append(financial_signal("financial_cost_burden_high", "watch", "매출 대비 금융비용 확인", "이자비용이 매출의 5% 이상이면 수익성 변화와 함께 금융비용 부담을 점검할 필요가 있습니다."))
+    net_debt = metric_float(metrics, "net_debt")
+    if net_debt is not None and net_debt < 0:
+        signals.append(financial_signal("net_cash_position", "positive", "순현금 구조", "현금성자산이 이자성 부채보다 많아 순부채가 마이너스인 구조입니다."))
     net_margin = metric_float(metrics, "net_margin")
     if net_margin is not None:
         if net_margin >= 0.2:

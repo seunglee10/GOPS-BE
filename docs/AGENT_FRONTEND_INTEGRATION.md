@@ -19,6 +19,11 @@
 - final answer, evidence, role findings rendering
 - optional chart/layout proposal preview and apply flow
 
+`stockRecommendationExplain` 레이아웃 패널은 프런트 전용 추천 해설 surface다.
+`recommendationExplain` kind로 5×4 기본 span을 사용하고 기존 추천 latest 응답의
+점수, 신뢰도, 지표 스냅샷, 근거, 위험만 읽는다. 새 report/API 계약을 만들거나
+주문을 실행하지 않는다.
+
 토요일 시연에서는 상단 LIVE/SIM 토글과 `다음 시연 단계` 제어가
 `/api/simulator/*`를 사용한다. 상태 응답의 `phases`, `phaseIndex`, `nextPhase`를
 기준으로 `시장 조망 → 지정학 이벤트 → 장 마감·복기`를 이동하며, 임의의 클라이언트
@@ -162,6 +167,12 @@ setup·symbol·interval·asset identity 변경 또는 원본 차트 삭제 시 �
 티커를 추론하지 않고 먼저 종목 선택을 요청한다.
 
 ## Chart Derived Profile
+
+`ChartPanel`은 종목 진입 시 `POST /api/charts/active-symbol` 응답을 기다린 뒤
+`GET /api/charts/candles`를 호출한다. 이 순서로 SIP/BOATS의
+`candles,trades,quotes` cohort를 먼저 활성화하고, API가 같은 진입 요청에서 필요한
+bounded REST repair를 수행할 수 있게 한다. 차트는 API가 반환한 과거
+pre/regular/after/overnight 봉을 임의로 다시 숨기지 않는다.
 
 차트의 candle Volume Profile은 Agent feature pack과 별도 계약이다. `ChartCanvas`가
 현재 viewport로 만든 scene과 visible closed-candle 범위가 일치한 뒤에만 프런트가
@@ -548,6 +559,26 @@ levels/trend group을 모두 지원한다. 불일치는 `분석 기준 변경됨
 표시하고 snapshot 수치는 유지하되 focus하지 않는다. 선택 봉 anchor도 같은 symbol/interval의
 canonical timestamp가 현재 candle에 있을 때만 focus한다. 이 상태는 chart history에
 저장하지 않는다. 일반 질문은 기존 Wild 흐름을 유지한다.
+## Public Company Journal
+
+`companyJournal` 패널은 기존 기업 재무·실적·뉴스 화면을 근거 표면으로 재사용한다.
+수익성 화면은 `/api/market/fundamentals/{symbol}/series`의 연간 5년 또는 최근
+12개 분기를 사용해 매출액, 영업·순이익률, ROE, ROA, FCF Margin과 YoY를
+결정론적으로 계산한다. 사용자가 기간을 선택하면 차트, 표 강조와 기업저널 해석이
+같은 기간으로 함께 바뀌어야 한다.
+
+기업저널은 `매출·수익`, `안정성`, `가치`, `뉴스` 탭을 사용한다.
+`안정성` 탭은 자본·부채 구조 차트와 부채비율·유동부채비율·비유동부채비율 차트를
+1:1로 표시한다. 하단 표는 유동비율, 이자성 부채, 이자보상배율, 금융비용부담률,
+순부채를 같은 기간 시계열로 제공하며 실적 예상치 차트를 섞지 않는다. 가치 탭은 EPS/BPS/SPS/CPS 시계열·YoY와 현재 가격 기준 가치지표를
+표시하며, 실적 화면과 가치 화면을 다시 한 탭 안의 숨겨진 페이지로 합치지 않는다.
+
+EPS/BPS/SPS/CPS와 최신 PER/PBR/PSR/FCF Yield를 표시한다. 과거 PER/PBR/PSR은
+`/api/charts/candles`의 일봉에서 각 재무 결산일 이전 가장 가까운 거래일 종가를
+선택해 당시 EPS/BPS/SPS와 결합한다. 결산일 가격이 없으면 해당 점을 생략하며 현재가를
+과거 구간에 재사용하지 않는다. 투자자본 계약이 없는 ROIC는 추정하지 않는다.
+로컬 고정 자료는 `import.meta.env.DEV`와
+`companyJournalPreview=1`을 모두 만족할 때만 사용하며 `DEV PREVIEW`를 표시한다.
 
 ## Layout And Chart Proposals
 
@@ -629,6 +660,19 @@ S&P 500 seed 기반의 고정 시뮬레이션 추천 10개를 기존 목록/카�
 남긴다. 실제 추천 item이 하나라도 있거나 `profile_required`, `market_closed`, API 오류
 상태이면 시뮬레이션 추천을 사용하지 않는다. 시뮬레이션 item 클릭도 기존과 동일하게
 `recommendation.stock` reference만 선택하며 차트나 레이아웃을 자동 변경하지 않는다.
+
+public company journal panel은 `panelType="companyJournal"`/`kind="companyJournal"`로
+표현한다. 이 패널은 기존 기업 수익성·안정성·가치평가 차트와 뉴스 목록을
+근거 화면으로 재사용한다. 프런트 초안의 설명은 동일 시계열에서 계산한 변화율과
+업종별 관점을 사용하며, 확인되지 않은 뉴스 원인을 생성하지 않는다. 이후 RAG
+보고서를 연결할 때에도 차트별 provider를 다시 호출하지 말고 같은 기준시각의
+기업 evidence snapshot을 상위 컨테이너에서 전달한다.
+
+`recommendationExplain`은 legacy/V1 응답의 기존 표시를 유지하고, V2 optional 필드가
+있으면 `algorithmVersion`, 유효 가중치, 선호 신뢰도, 펀더멘털 상태·provenance/fallback,
+위험예산과 관측 위험, 경고를 읽기 전용으로 추가 표시한다. 일부 또는 모든 V2 필드가
+없어도 패널은 기존 응답으로 렌더링해야 한다. 이 패널에는 slider, 피드백 제어,
+tracking API, 자동 주문 동작을 추가하지 않는다.
 
 chart analysis asset 운영 패널은 `kind="chartAssetOps"`, 화면 표시는
 `작도 자산(개발)`로 표현한다. 이름의 `(개발)`은 수동 운영 도구임을 나타내는 라벨일

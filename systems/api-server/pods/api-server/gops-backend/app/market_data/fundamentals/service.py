@@ -50,9 +50,21 @@ class FinancialSeriesPoint:
     totalAssets: float | None = None
     totalLiabilities: float | None = None
     totalEquity: float | None = None
+    currentAssets: float | None = None
+    currentLiabilities: float | None = None
+    cashAndCashEquivalents: float | None = None
+    interestExpense: float | None = None
     operatingCashFlow: float | None = None
     freeCashFlow: float | None = None
     sharesOutstanding: float | None = None
+    debtRatio: float | None = None
+    currentLiabilityRatio: float | None = None
+    noncurrentLiabilityRatio: float | None = None
+    currentRatio: float | None = None
+    totalDebt: float | None = None
+    interestCoverage: float | None = None
+    financialCostBurdenRatio: float | None = None
+    netDebt: float | None = None
     source: str | None = None
     filedAt: str | None = None
 
@@ -67,9 +79,21 @@ class FinancialSeriesPoint:
             "totalAssets": self.totalAssets,
             "totalLiabilities": self.totalLiabilities,
             "totalEquity": self.totalEquity,
+            "currentAssets": self.currentAssets,
+            "currentLiabilities": self.currentLiabilities,
+            "cashAndCashEquivalents": self.cashAndCashEquivalents,
+            "interestExpense": self.interestExpense,
             "operatingCashFlow": self.operatingCashFlow,
             "freeCashFlow": self.freeCashFlow,
             "sharesOutstanding": self.sharesOutstanding,
+            "debtRatio": self.debtRatio,
+            "currentLiabilityRatio": self.currentLiabilityRatio,
+            "noncurrentLiabilityRatio": self.noncurrentLiabilityRatio,
+            "currentRatio": self.currentRatio,
+            "totalDebt": self.totalDebt,
+            "interestCoverage": self.interestCoverage,
+            "financialCostBurdenRatio": self.financialCostBurdenRatio,
+            "netDebt": self.netDebt,
             "source": self.source,
             "filedAt": self.filedAt,
         }
@@ -614,11 +638,23 @@ FINANCIAL_SERIES_METRICS = (
     "assets",
     "liabilities",
     "equity",
+    "current_assets",
+    "current_liabilities",
+    "cash_and_cash_equivalents",
+    "interest_expense",
     "operating_cash_flow",
 )
 
 FINANCIAL_DERIVED_SERIES_METRICS = (
     "free_cash_flow",
+    "liabilities_to_equity",
+    "current_liabilities_to_equity",
+    "noncurrent_liabilities_to_equity",
+    "current_ratio",
+    "total_debt",
+    "interest_coverage",
+    "financial_cost_burden_ratio",
+    "net_debt",
 )
 
 METRIC_FIELD_MAP = {
@@ -630,8 +666,20 @@ METRIC_FIELD_MAP = {
     "assets": "totalAssets",
     "liabilities": "totalLiabilities",
     "equity": "totalEquity",
+    "current_assets": "currentAssets",
+    "current_liabilities": "currentLiabilities",
+    "cash_and_cash_equivalents": "cashAndCashEquivalents",
+    "interest_expense": "interestExpense",
     "operating_cash_flow": "operatingCashFlow",
     "free_cash_flow": "freeCashFlow",
+    "liabilities_to_equity": "debtRatio",
+    "current_liabilities_to_equity": "currentLiabilityRatio",
+    "noncurrent_liabilities_to_equity": "noncurrentLiabilityRatio",
+    "current_ratio": "currentRatio",
+    "total_debt": "totalDebt",
+    "interest_coverage": "interestCoverage",
+    "financial_cost_burden_ratio": "financialCostBurdenRatio",
+    "net_debt": "netDebt",
 }
 
 SUPPLEMENTAL_FUNDAMENTAL_FIELDS = (
@@ -906,9 +954,21 @@ def financial_series_point_from_row(row: dict[str, Any]) -> FinancialSeriesPoint
         totalAssets=read_float(row.get("totalAssets") or row.get("total_assets") or row.get("assets")),
         totalLiabilities=read_float(row.get("totalLiabilities") or row.get("total_liabilities") or row.get("liabilities")),
         totalEquity=read_float(row.get("totalEquity") or row.get("total_equity") or row.get("equity")),
+        currentAssets=read_float(first_present(row, "currentAssets", "current_assets")),
+        currentLiabilities=read_float(first_present(row, "currentLiabilities", "current_liabilities")),
+        cashAndCashEquivalents=read_float(first_present(row, "cashAndCashEquivalents", "cash_and_cash_equivalents")),
+        interestExpense=read_float(first_present(row, "interestExpense", "interest_expense")),
         operatingCashFlow=read_float(row.get("operatingCashFlow") or row.get("operating_cash_flow")),
         freeCashFlow=read_float(row.get("freeCashFlow") or row.get("free_cash_flow")),
         sharesOutstanding=read_float(row.get("sharesOutstanding") or row.get("shares_outstanding")),
+        debtRatio=read_float(first_present(row, "debtRatio", "liabilities_to_equity")),
+        currentLiabilityRatio=read_float(first_present(row, "currentLiabilityRatio", "current_liabilities_to_equity")),
+        noncurrentLiabilityRatio=read_float(first_present(row, "noncurrentLiabilityRatio", "noncurrent_liabilities_to_equity")),
+        currentRatio=read_float(first_present(row, "currentRatio", "current_ratio")),
+        totalDebt=read_float(first_present(row, "totalDebt", "total_debt")),
+        interestCoverage=read_float(first_present(row, "interestCoverage", "interest_coverage")),
+        financialCostBurdenRatio=read_float(first_present(row, "financialCostBurdenRatio", "financial_cost_burden_ratio")),
+        netDebt=read_float(first_present(row, "netDebt", "net_debt")),
         source=read_string(row.get("source")),
         filedAt=read_string(row.get("filedAt") or row.get("filed_at")),
     )
@@ -1015,6 +1075,13 @@ def read_float(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return parsed
+
+
+def first_present(row: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in row and row[key] is not None:
+            return row[key]
+    return None
 
 
 def read_positive_float(name: str, default: float) -> float:
