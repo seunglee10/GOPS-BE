@@ -95,34 +95,27 @@ market correlation/relative-strength context로만 계산한다. context가 없�
 범위를 반환하지 않으며, API나 LLM이 일반 섹터 추천을 대신 만들지 않는다. 후보는
 검토용이며 자동 알람·주문·리밸런싱을 생성하지 않는다.
 
-## Local Demo Simulator Boundary
+## Tick Replay Simulator Boundary
 
-토요일 시연에서는 `GOPS_SIMULATOR_URL`이 가리키는 시뮬레이터를
-`/api/simulator/*` route로 프록시한다. `PUT /api/simulator/phase`는 시나리오
-manifest에 정의된 단계 ID만 받는다. 운영자는 시장 조망·추천·기업 분석·차트 분석·
-예약매매·본장 화면을 자유롭게 설명한 뒤, 첫 입력으로 지정학 이벤트에, 다음 입력으로
-장 마감·복기 시점에 대기 없이 이동할 수 있다.
+`GOPS_SIMULATOR_URL`은 고정 데이터셋 `sp500-top20-20260715-kst-v1`을 읽는 별도
+서비스를 가리킨다. 백엔드는 `/api/simulator/status|mode|action|speed`만 공개하며
+기존 phase, 합성 news, basket 경로는 제공하지 않는다. 가상시각은 KST
+`2026-07-15 00:00`에서 시작하고 모든 사용자에게 동일하지만, 계좌·주문·가격조건은
+`userId + runId`로 격리된다.
 
-기본 `saturday-demo-amd-iff-oke` 시나리오는 호환성을 위해 기존 ID를 유지하지만,
-실시간 재생 종목은 AMD/OKE다. 두 종목의 합성 trade와 quote를
-같은 시각·가격 범위로 함께 보낸다. 재생 payload의 `simulator.source`가
-`gops-simulator`일 때 market envelope는 선언된 `marketSession=regular`를 유지하고
-normalized trade/quote/candle에 simulation metadata를 전파한다. ClickHouse loader와
-raw/processed S3 sink는 이 표식이 있는 행을 영구 적재하지 않는다. Redis 실시간 상태는
-시연 동안만 사용한다. 지정학 이벤트는 즉시 공개하지만 AMD 하락은 5초 뒤 시작하며,
-약 60초 동안 초반부터 점진적으로 낙폭을 키운다. 화면에 노출하는 뉴스 문구와 출처는 일반
-시장 뉴스 형식을 사용하지만 내부 simulation metadata는 유지한다. OKE 상승도 같은 지연 뒤
-더 긴 구간에 걸쳐 천천히 진행한다. `PUT /api/simulator/mode`가 SIM으로 전환되기 직전에
-AMD/OKE의 캔들·체결·호가·오더플로우 Redis 상태를 보관하고, LIVE 전환은
-재생을 멈춘 뒤 합성 상태를 제거하고 보관본을 복원한 다음 응답한다. EKS 종료
-스크립트도 같은 복원 명령을 사용하므로 토글과 전체 인프라 종료가 같은 차트 복구
-계약을 따른다. 보관본이 없으면 합성 키 제거만 수행한다.
+`GET /api/charts/candles`는 replay 시작 전 정상 과거 봉과 현재 가상시각까지의 replay
+봉만 합친다. `/ws/charts`도 simulator candle snapshot을 묶어서 보내며 실시간 Redis
+WebSocket 경로를 사용하지 않는다. SIM 심볼 검색은 manifest의 21개 티커로 제한한다.
+뉴스·추천·기업정보·chart derived asset·agent snapshot처럼 신뢰할 수 있는
+point-in-time 조회가 없는 경로는 `409 simulation_data_unavailable`을 반환한다.
 
-SIM 모드일 때 일반 `/api/orders`는 시뮬레이터 메모리 원장을 사용하고 KIS order
-outbox를 만들지 않는다. 영구 예약매매는 별도 paper 경계를 사용한다. EKS 시연
-스크립트는 `trade-condition-executor`를 `paper`로 전환하고 quote를
-`paper-order-matcher`에 공급한다. 바스켓·일반·예약 주문은 모두 사용자의 명시적인
-입력과 기존 멱등성/사전 리스크 검사를 요구한다. 속보 수신만으로 주문을 실행하지 않는다.
+SIM의 `POST /api/orders`는 기존 `Idempotency-Key`와 리스크 검사를 유지한다.
+`order_type=market`은 price를 생략할 수 있고 현재 ask/bid로 즉시 전량 체결한다.
+`order_type=limit`은 price가 필수이며 조건 충족 시 실제 ask/bid로 가격 개선을 적용한다.
+LIVE KIS는 기존 limit-only 계약을 유지한다. 주문 조회·event·WebSocket과
+`/api/trade-conditions`는 실행별 Redis 원장으로 라우팅되며, 기존 LIVE/paper 조건은
+숨기고 executor도 replay 활성 Redis 키가 있는 동안 평가하지 않는다. LIVE 전환은 해당
+run namespace만 제거하며 실시간 Redis/Kafka/Alpaca 상태는 변경하지 않는다.
 
 ## Persistent Paper Trading Boundary
 
@@ -303,13 +296,28 @@ snapshot의 `sector`는 GraphDB `gops:sector` canonical 값을 사용하고, 화
 `metrics_snapshot` JSONB에 저장해 API shape를 확장하되 기존 필드를 제거하지 않는다.
 자동 주문과 시뮬레이터 경로는 이 계산에 연결하지 않는다.
 
-명시적 `RECOMMENDATION_ALGORITHM_VERSION=legacy|professional-v1|continuous-v2`가 있으면
+명시적 `RECOMMENDATION_ALGORITHM_VERSION=legacy|professional-v1|continuous-v2|deterministic-evidence-v3`가 있으면
 기존 flag보다 우선한다. `continuous-v2`는 shadow 여부와 무관하게 실제 최종 점수로
 정렬하고 공개 `algorithmVersion`은 `continuous-personalization-v2`다. 추천 cutoff까지의
 canonical real fill만 시간순으로 처리하며, `order_coach_fill_history`의 매수 체결을
 24시간 이내 동일 종목 candidate feature와 연결한다. 매도와 match 실패도 skip reason이
 있는 event로 남지만 선호 state를 바꾸지 않는다. paper/simulator activity는 포함하지
 않는다.
+
+`deterministic-evidence-v3`는 가격·수익률·성공확률을 예측하지 않는다. 같은 세션 슬롯의
+전체 준비 유니버스에서 immutable evidence snapshot을 한 번 만들고, 사용자별 제외·스타일,
+실제 매수 체결 기반 선호, 최신 포트폴리오 적합성만 후처리한다. 공개 `score`는
+`FinalRankScore`, `confidence`는 성공확률이 아닌 `EvidenceReliability / 100`이다. 신뢰도
+70 미만과 hard gate 실패 종목은 개인화로 복구할 수 없다. run은 evidence snapshot ID와
+`deterministic-evidence-v3.1`의 전체 규칙 snapshot을 저장한다.
+
+V3는 SPY 완료 일봉 252개, 직전 정규장 1분봉 380개 이상(약 390개), 세션 신선도,
+Redis/ClickHouse 최신 candle 일치, 신뢰도 70 이상 후보 15개를 activation gate로 사용한다.
+하나라도 실패하면 run/item을 만들거나 legacy로 fallback하지 않고
+`status="data_not_ready"`, `summary.retryable=true`를 반환한다. 새 V3 item은 migration
+`0014_recommendation_explanations.sql`의 `explanation_json`에
+`recommendation-explanation.v1`을 저장한다. 결정론적 한국어 설명이 권위 있는 근거이고,
+선택적 OpenAI Responses batched narrative는 문장만 다듬으며 실패 즉시 결정론적 문장을 쓴다.
 
 V2 commit은 사용자 advisory lock 아래에서 slot idempotency와 예상 preference state를
 재확인하고, processed/skipped events, immutable preference/risk states, 모든 적격 후보의

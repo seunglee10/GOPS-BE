@@ -135,6 +135,11 @@ CREATE TABLE IF NOT EXISTS market_data.yahoo_earnings_estimates
     low Nullable(Float64),
     high Nullable(Float64),
     analyst_count Nullable(UInt16),
+    event_at Nullable(DateTime64(3, 'UTC')),
+    actual_value Nullable(Float64),
+    surprise_percent Nullable(Float64),
+    event_session LowCardinality(String) DEFAULT 'unknown',
+    event_status LowCardinality(String) DEFAULT 'scheduled',
     source LowCardinality(String),
     collected_at DateTime64(3, 'UTC'),
     raw String,
@@ -142,3 +147,10 @@ CREATE TABLE IF NOT EXISTS market_data.yahoo_earnings_estimates
 )
 ENGINE = ReplacingMergeTree(collected_at)
 ORDER BY (symbol, metric, fiscal_year, fiscal_period, period_end);
+
+-- Existing environments keep this file idempotent and receive the additive event fields.
+ALTER TABLE market_data.yahoo_earnings_estimates ADD COLUMN IF NOT EXISTS event_at Nullable(DateTime64(3, 'UTC')) AFTER analyst_count;
+ALTER TABLE market_data.yahoo_earnings_estimates ADD COLUMN IF NOT EXISTS actual_value Nullable(Float64) AFTER event_at;
+ALTER TABLE market_data.yahoo_earnings_estimates ADD COLUMN IF NOT EXISTS surprise_percent Nullable(Float64) AFTER actual_value;
+ALTER TABLE market_data.yahoo_earnings_estimates ADD COLUMN IF NOT EXISTS event_session LowCardinality(String) DEFAULT 'unknown' AFTER surprise_percent;
+ALTER TABLE market_data.yahoo_earnings_estimates ADD COLUMN IF NOT EXISTS event_status LowCardinality(String) DEFAULT 'scheduled' AFTER event_session;

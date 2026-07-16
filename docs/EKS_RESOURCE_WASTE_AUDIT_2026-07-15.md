@@ -46,7 +46,7 @@ service-owned node volume 표기와 사용 시간 경계 때문에 소폭 차이
 
 적용 내용:
 
-1. `alfaka-chart-derived-data-worker` 2→0, 실패 중인 order-flow CronJob suspend
+1. 폐기 예정 chart derived workload 2→0, 실패 중인 order-flow CronJob suspend
 2. reminder를 `app-agent`, 무거운 예약 작업과 one-shot migration을 동적 `batch`로 이동
 3. 정적 `batch-warm` NodePool과 8 GiB 상시 메모리 제거
 4. `cache-db`와 `graphdb`를 `r5a.large`, `streaming`을 `m5a.large`로 변경
@@ -245,7 +245,7 @@ EKS Auto Mode는 [NodeClass](https://docs.aws.amazon.com/eks/latest/userguide/cr
 
 ### 5.4 현재 `dev` 계약과 다른 실행 중 workload
 
-#### `alfaka-chart-derived-data-worker`
+#### 폐기 예정 chart derived workload
 
 - 2 replicas
 - 합계 request: 100m CPU / 256 MiB
@@ -350,7 +350,7 @@ replicas 0 Deployment와 ClusterIP Service는 EC2/ELB 비용을 만들지 않는
 
 ### 패키지 A — 가역적 정리
 
-1. `alfaka-chart-derived-data-worker`를 0으로 낮춤
+1. 폐기 예정 chart derived workload를 0으로 낮춤
 2. 24시간 동안 API 오류, Kafka lag, 관련 기능 회귀 관찰
 3. 이상 없으면 live 객체와 오래된 manifest 잔여물 삭제
 4. 실패 중인 order-flow CronJob은 image/path 수정 또는 임시 suspend
@@ -407,4 +407,4 @@ replicas 0 Deployment와 ClusterIP Service는 EC2/ELB 비용을 만들지 않는
 승인된 A~E는 적용 완료했다. 다음 운영 확인은 미국 장중 ClickHouse query/insert latency,
 Kafka lag, 노드 메모리와 eviction을 최소 24시간 관찰하는 것이다. 이상이 있으면 위 snapshot과
 Git의 기존 NodePool manifest로 서비스별 rollback한다. 24시간 이상 이상이 없을 때만
-`alfaka-chart-derived-data-worker` live 객체 삭제와 rollback snapshot 보존 기간 종료를 검토한다.
+폐기 예정 chart derived live 객체 삭제와 rollback snapshot 보존 기간 종료를 검토한다.

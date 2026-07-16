@@ -1,5 +1,5 @@
-# 역할: 토요일 시연 때만 켜는 Alpaca 호환 틱/뉴스 시뮬레이터입니다.
-# 기본 replicas=0이며 scripts/aws/start-dev-simulator.sh가 시연 직전에 1로 올립니다.
+# 역할: READY 상태의 실제 틱 데이터셋을 ClickHouse에서 순서대로 재생합니다.
+# 기본 replicas=0이며 scripts/aws/start-dev-simulator.sh가 필요할 때 1로 올립니다.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -29,10 +29,23 @@ spec:
             - name: http
               containerPort: 8765
           env:
-            - name: SIM_AUTH_MODE
-              value: dev
             - name: PYTHONDONTWRITEBYTECODE
               value: "1"
+            - name: SIM_REPLAY_DATASET_ID
+              value: sp500-top20-20260715-kst-v1
+            - name: CLICKHOUSE_URL
+              value: http://clickhouse:8123
+            - name: CLICKHOUSE_DATABASE
+              value: market_data
+            - name: CLICKHOUSE_USER
+              value: alfaka
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: alfaka-clickhouse-secret
+                  key: CLICKHOUSE_PASSWORD
+            - name: REDIS_URL
+              value: redis://redis:6379/0
           readinessProbe:
             httpGet:
               path: /health
@@ -51,11 +64,11 @@ spec:
             failureThreshold: 3
           resources:
             requests:
-              cpu: 50m
-              memory: 64Mi
-            limits:
               cpu: 250m
-              memory: 128Mi
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

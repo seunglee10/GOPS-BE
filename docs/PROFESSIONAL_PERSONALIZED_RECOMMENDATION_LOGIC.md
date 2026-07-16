@@ -118,7 +118,7 @@ flowchart TD
 버전 선택 계약은 다음과 같다.
 
 ```text
-RECOMMENDATION_ALGORITHM_VERSION=legacy|professional-v1|continuous-v2
+RECOMMENDATION_ALGORITHM_VERSION=legacy|professional-v1|continuous-v2|deterministic-evidence-v3
 RECOMMENDATION_PERSONALIZATION_ENABLED=false
 RECOMMENDATION_PERSONALIZATION_SHADOW=true
 RECOMMENDATION_PROFESSIONAL_WEIGHTS_JSON=
@@ -133,6 +133,7 @@ RECOMMENDATION_PROFESSIONAL_WEIGHTS_JSON=
 | `legacy` | 기존 `scoring.py` 점수와 순위를 그대로 사용 |
 | `professional-v1` | 기존 enable/shadow 플래그에 따라 V1을 실행 |
 | `continuous-v2` | V2 `personalScore`로 실제 추천 순위를 결정하며 shadow를 사용하지 않음 |
+| `deterministic-evidence-v3` | 예측 없이 현재 evidence block과 적합성으로 `FinalRankScore`를 계산하며 shadow를 사용하지 않음 |
 
 Shadow mode에서 기존 scorer가 후보를 만들지 못하면 전문 후보 skeleton을 사용한다.
 이 경우 기존 점수가 모두 0일 수 있으므로 shadow 결과는 전문 순위 검증용 데이터와
@@ -471,6 +472,42 @@ riskPenalty = min(30,
 6. 사용자에게 팩터 조정, 개인화 reset 및 opt-out을 제공한다.
 7. alpha outcome, 사용자 만족도, turnover, 집중도, 불만·숨김률을 공동 모니터링한다.
 
+## 5B. 현재 v3: 결정론적 evidence 추천
+
+> 상태: 구현 완료. `professional_v3.py`, `0013_deterministic_evidence_v3.sql`,
+> `0014_recommendation_explanations.sql`이 실행·저장 계약이다. V1/V2 코드는 호환 모드로 유지된다.
+
+V3는 미래 가격, 수익률, SPY 대비 초과수익, 이익 가능성을 예측하지 않으며 미래 수익률
+label, 학습 모델, 후행 성과 기반 weight 최적화를 만들지 않는다. 세션 슬롯마다 전체 준비
+S&P 500 유니버스를 평가해 하나의 immutable base evidence snapshot을 만들고 모든 사용자가
+이를 공유한다. 사용자별 처리는 hard gate 이후의 제외, 스타일 block weight, 실제 매수
+체결 기반 선호와 현재 포트폴리오 적합성으로 한정된다.
+
+여섯 block은 `TrendStrength`, `ParticipationConfirmation`, `PriceStructure`,
+`CatalystQuality`, `ExecutionQuality`, `QualityStability`이며 0–100 범위다. 연속값은 적격
+유니버스의 1/99 percentile winsorization 후 평균 rank percentile로 바꾸고 시장 60%, 섹터
+40%를 합성한다. 누락 optional 값은 50으로 중립 처리하지만 evidence coverage를 낮춘다.
+critical 입력 누락, stale 시세, 거래정지, 위험 preset의 유동성·spread 한도, 종목·섹터 hard
+cap 위반은 점수 계산 전에 탈락한다.
+
+`confidence`는 다음 `EvidenceReliability / 100`이며 이익 또는 성공 확률이 아니다.
+
+```text
+EvidenceReliability =
+    30% coverage
+  + 25% freshness
+  + 20% source quality
+  + 15% cross-source agreement
+  + 10% independent block confirmation
+```
+
+70 미만 후보는 추천하지 않는다. 선호는 이미 통과한 후보만 최대 15% 범위에서 재정렬한다.
+포트폴리오가 최신이고 증거가 있을 때만 위험성향별 15–35% weight를 적용하며, 완료된 60일
+수익률의 `0.70 × SampleCovariance + 0.30 × DiagonalCovariance`는 현재 위험 관계를 기술할
+뿐 미래 수익률을 예측하지 않는다. 모든 run에는 style weight, threshold, transform, penalty
+cap, cutoff, source digest, evidence snapshot reference와 rule set
+`deterministic-evidence-v3.1`을 저장한다.
+
 ## 6. 추천 생성 시점과 cutoff
 
 `RecommendationService.refresh()`는 요청된 `pre` 또는 `regular` 세션이 현재 활성
@@ -528,8 +565,8 @@ SPY는 후보가 아니라 benchmark로만 사용한다.
 | --- | --- |
 | 후보 일봉 | 현재 거래일 이전의 완료 일봉 252개 이상 |
 | SPY 일봉 | 현재 거래일 이전의 완료 일봉 252개 이상 |
-| 후보 직전 정규장 1분봉 | 30개 이상 |
-| SPY 직전 정규장 1분봉 | 30개 이상 |
+| 후보 직전 정규장 1분봉 | 380개 이상(정규장 약 390개) |
+| SPY 직전 정규장 1분봉 | 380개 이상(정규장 약 390개) |
 | 가격 조정 | 값이 존재하면 반드시 `split` |
 | 세션 분류 | 값이 존재하면 반드시 `regular` |
 

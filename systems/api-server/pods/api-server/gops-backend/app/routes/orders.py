@@ -50,10 +50,12 @@ ORDER_CONTRACT = {
         "method": "POST",
         "path": "/api/orders",
         "required_headers": ["Idempotency-Key"],
-        "required_fields": ["market", "symbol", "side", "qty", "price", "exchange"],
+        "required_fields": ["market", "symbol", "side", "qty", "exchange"],
         "optional_fields": [
             "account_alias",
             "order_division",
+            "order_type",
+            "price",
             "actor_id",
             "role",
             "risk_acknowledged",
@@ -62,6 +64,7 @@ ORDER_CONTRACT = {
             "market": ["overseas"],
             "side": ["buy", "sell"],
             "order_division": ["00"],
+            "order_type": ["limit", "market (SIM only)"],
         },
     },
     "statuses": list(CANONICAL_STATUSES),
@@ -98,9 +101,36 @@ async def create_order(
             "actor_id": current_user.email,
             "role": payload.get("role") or "trader",
         }
-    risk_acknowledged = payload.get("risk_acknowledged") is True
-    order_request = _validate_order_request(payload)
     simulator_mode = simulator_mode_active(request.app)
+    risk_acknowledged = payload.get("risk_acknowledged") is True
+    order_type = str(payload.get("order_type") or "limit").strip().lower()
+    limit_price: float | None = None
+    validation_payload = dict(payload)
+    if simulator_mode:
+        if order_type not in {"market", "limit"}:
+            raise HTTPException(status_code=422, detail="order_type must be market or limit in simulation mode")
+        if order_type == "market":
+            side = str(payload.get("side") or "").strip().lower()
+            if side not in {"buy", "sell"}:
+                raise HTTPException(status_code=422, detail="side must be buy or sell")
+            try:
+                quote = simulator_gateway_from_app(request.app).quote(str(payload.get("symbol") or "").upper())
+                market_price = quote.get("ask") if side == "buy" else quote.get("bid")
+                validation_payload["price"] = str(float(market_price))
+            except Exception as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+        else:
+            try:
+                limit_price = float(payload.get("price"))
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(status_code=422, detail="price must be positive for a limit order") from exc
+            if limit_price <= 0:
+                raise HTTPException(status_code=422, detail="price must be positive for a limit order")
+        validation_payload.setdefault("order_division", "00")
+    else:
+        if order_type != "limit":
+            raise HTTPException(status_code=422, detail="LIVE KIS orders support limit orders only")
+    order_request = _validate_order_request(validation_payload)
     repository = None
     idempotency_key_hash = None
     body_hash = None
@@ -130,6 +160,9 @@ async def create_order(
                 symbol=str(payload["symbol"]).upper(),
                 side=str(payload["side"]).lower(),
                 quantity=int(payload["qty"]),
+                order_type=order_type,
+                limit_price=limit_price,
+                idempotency_key=idempotency_key.strip(),
             )
         except Exception as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -328,6 +361,11 @@ def get_order(
     request: Request,
     current_user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
+    if simulator_mode_active(request.app):
+        try:
+            return jsonable_encoder(simulator_gateway_from_app(request.app).order(current_user.sub, order_id))
+        except Exception as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
     repository = _repository_from_app(request.app)
     order = _get_owned_order(repository, order_id, current_user.sub)
     if order is None:
@@ -341,6 +379,11 @@ def get_order_events(
     request: Request,
     current_user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
+    if simulator_mode_active(request.app):
+        try:
+            return jsonable_encoder(simulator_gateway_from_app(request.app).order_events(current_user.sub, order_id))
+        except Exception as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
     repository = _repository_from_app(request.app)
     if _get_owned_order(repository, order_id, current_user.sub) is None:
         raise HTTPException(status_code=404, detail="order not found")
@@ -364,6 +407,31 @@ async def order_events_socket(websocket: WebSocket, order_id: str) -> None:
 
     await websocket.accept()
     try:
+        if simulator_mode_active(websocket.app):
+            last_fingerprint: str | None = None
+            while True:
+                if not await asyncio.to_thread(simulator_mode_active, websocket.app):
+                    break
+                order = await asyncio.to_thread(
+                    simulator_gateway_from_app(websocket.app).order,
+                    current_user.sub,
+                    order_id,
+                )
+                event_payload = await asyncio.to_thread(
+                    simulator_gateway_from_app(websocket.app).order_events,
+                    current_user.sub,
+                    order_id,
+                )
+                payload = {
+                    "type": "snapshot" if last_fingerprint is None else "update",
+                    "order": order,
+                    "events": event_payload.get("events", []),
+                }
+                fingerprint = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+                if fingerprint != last_fingerprint:
+                    await websocket.send_json(payload)
+                    last_fingerprint = fingerprint
+                await asyncio.sleep(0.25)
         repository = _repository_from_app(websocket.app)
         last_fingerprint: str | None = None
         while True:

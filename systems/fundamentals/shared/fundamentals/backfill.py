@@ -17,7 +17,7 @@ from typing import Any, Iterable
 from .concepts import CONCEPT_MAP, parse_concept_ref
 from .metrics import calculate_derived_metrics, q4_synthetic_fact, usable_fact
 from .redis_keys import fundamentals_peer_latest_key, fundamentals_peer_key, fundamentals_summary_key
-from .schema import CLICKHOUSE_TABLES
+from .schema import CLICKHOUSE_COMPATIBILITY_MIGRATIONS, CLICKHOUSE_TABLES
 from .sec_client import SecClient, SecRateLimiter, normalize_cik
 
 
@@ -1006,6 +1006,8 @@ def ensure_sec_clickhouse_schema(clickhouse_client: Any) -> None:
     for ddl in CLICKHOUSE_TABLES.values():
         clickhouse_client.execute(ddl)
     clickhouse_client.execute("ALTER TABLE market_data.sec_financial_facts MODIFY COLUMN IF EXISTS accession Nullable(String)")
+    for migration in CLICKHOUSE_COMPATIBILITY_MIGRATIONS:
+        clickhouse_client.execute(migration)
 
 
 def insert_batches(clickhouse_client: Any, table: str, rows: list[dict[str, Any]], batch_size: int) -> None:

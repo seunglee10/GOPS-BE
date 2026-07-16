@@ -273,6 +273,78 @@ def test_continuous_v2_ranks_with_final_score_and_persists_all_candidate_feature
     assert stored["v2_input_digest"]
 
 
+def test_deterministic_evidence_v3_shares_full_universe_snapshot_and_returns_reliability(
+    recommendation_app, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("RECOMMENDATION_ALGORITHM_VERSION", "deterministic-evidence-v3")
+    recommendation_app.state.recommendation_daily_candles_provider = professional_daily_candles
+    recommendation_app.state.recommendation_previous_session_candles_provider = fake_candles
+    recommendation_app.state.recommendation_market_provider = lambda: [
+        {
+            "symbol": symbol,
+            "sector": "Technology",
+            "industry": "Software",
+            "sessionDollarVolume": 200_000_000,
+            "changePercent": change,
+            "lastPrice": 100 + change,
+            "quotedSpreadBps": 5,
+            "tradable": True,
+            "priceSource": "canonical",
+        }
+        for symbol, change in (("AAPL", 4.1), ("MSFT", 3.2), ("AVGO", 2.8))
+    ]
+
+    class FundamentalProvider:
+        def snapshots_as_of(self, symbols, cutoff):
+            return {
+                "snapshotId": "fundamental-v3",
+                "schemaVersion": "fundamentals.v1",
+                "featureVersion": "features.v1",
+                "digest": "fixture-v3-digest",
+                "sourceAsOf": (cutoff - timedelta(minutes=1)).isoformat(),
+                "snapshots": {
+                    symbol: {
+                        "value": 70,
+                        "quality": 80,
+                        "growth": 60,
+                        "earningsRevision": 50,
+                        "coverage": 1,
+                        "freshness": 1,
+                        "sourceQuality": 1,
+                    }
+                    for symbol in symbols
+                },
+            }
+
+    recommendation_app.state.recommendation_fundamental_provider = FundamentalProvider()
+    client = TestClient(recommendation_app)
+    client.put(
+        "/api/recommendations/profile",
+        json={
+            "riskLevel": "balanced",
+            "recommendationStyle": "balanced",
+            "horizon": "intraday",
+            "maxDrawdownPct": 6,
+        },
+    )
+
+    first = client.post("/api/recommendations/stocks/refresh", json={}).json()
+    second = client.post("/api/recommendations/stocks/refresh", json={}).json()
+
+    assert first["summary"]["personalization"]["algorithmVersion"] == "deterministic-evidence-v3"
+    assert first["summary"]["ruleSetVersion"] == "deterministic-evidence-v3.1"
+    assert first["summary"]["universeCount"] == 3
+    assert first["summary"]["candidateCount"] == 3
+    assert all(item["confidence"] >= 0.70 for item in first["items"])
+    assert all(item["metricsSnapshot"]["confidenceMeaning"] == "evidence_reliability" for item in first["items"])
+    assert second["idempotentReplay"] is True
+    repository = recommendation_app.state.recommendation_repository
+    assert len(repository.evidence_snapshots) == 1
+    stored = repository.latest_run("dev-auth-disabled")
+    assert stored["algorithm_version"] == "deterministic-evidence-v3"
+    assert stored["evidence_snapshot_id"] == first["summary"]["evidenceSnapshotId"]
+
+
 def test_pre_and_regular_recommendations_use_separate_run_keys(recommendation_app) -> None:
     client = TestClient(recommendation_app)
     client.put(

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 역할: dev EKS의 backend/SIP 수집기를 live 경로로 복구하고 시뮬레이터 Pod를 0개로 내립니다.
+# 역할: dev EKS를 LIVE로 전환하고 SIM 실행 네임스페이스만 정리합니다.
 set -euo pipefail
 
 AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-<aws-account-id>}"
@@ -16,7 +16,6 @@ require_command() {
 
 configure_cluster() {
   local actual_account
-
   actual_account="$(aws sts get-caller-identity --query Account --output text)"
   if [[ "${actual_account}" != "${AWS_ACCOUNT_ID}" ]]; then
     printf 'AWS account mismatch: expected %s, got %s\n' "${AWS_ACCOUNT_ID}" "${actual_account}" >&2
@@ -26,52 +25,35 @@ configure_cluster() {
   kubectl get namespace "${K8S_NAMESPACE}" >/dev/null
 }
 
-stop_simulator_replay() {
-  local live_payload='{"mode":"live"}'
-
+set_live_mode() {
   kubectl exec deployment/gops-simulator -n "${K8S_NAMESPACE}" -- \
-    python -c 'import sys, urllib.request
+    python -c 'import json, urllib.request
 request = urllib.request.Request(
     "http://127.0.0.1:8765/api/control/mode",
-    data=sys.argv[1].encode("utf-8"),
+    data=b"{\"mode\":\"live\"}",
     headers={"Content-Type": "application/json"},
     method="PUT",
 )
-urllib.request.urlopen(request, timeout=2).read()' "${live_payload}" \
-    || printf 'Simulator mode reset skipped; continuing live path restoration.\n' >&2
+urllib.request.urlopen(request, timeout=5).read()'
 }
 
-restore_simulator_state() {
-  kubectl exec deployment/alfaka-market-processor -n "${K8S_NAMESPACE}" -- \
-    python -m alfaka.tools.simulator_state_snapshot restore --symbols AMD,IFF,OKE
+cleanup_replay_namespace() {
+  local run_id
+  run_id="$(kubectl exec statefulset/redis -n "${K8S_NAMESPACE}" -- \
+    redis-cli --raw GET simulator:replay:active-run 2>/dev/null || true)"
+  if [[ -n "${run_id}" ]]; then
+    kubectl exec statefulset/redis -n "${K8S_NAMESPACE}" -- \
+      redis-cli DEL "simulator:replay:run:${run_id}" simulator:replay:active-run >/dev/null
+  fi
 }
 
 require_command aws
 require_command kubectl
 configure_cluster
-stop_simulator_replay
-
-kubectl set env deployment/alfaka-alpaca-ingestor-sip -n "${K8S_NAMESPACE}" \
-  ALPACA_STREAM_BASE_URL- \
-  ALPACA_COLLECTION_SYMBOLS- \
-  ALPACA_CHANNELS- \
-  ALPACA_ACTIVE_CHANNELS=bars,updatedBars,dailyBars,trades,quotes \
-  ALPACA_MAX_TRADE_SYMBOLS- \
-  ALPACA_ENFORCE_FEED_SESSION_WINDOW-
-
+set_live_mode || printf 'Simulator LIVE 전환 호출에 실패해 Redis 네임스페이스를 직접 정리합니다.\n' >&2
+cleanup_replay_namespace
 kubectl set env deployment/gops-backend -n "${K8S_NAMESPACE}" GOPS_SIMULATOR_URL-
-
-kubectl set env deployment/alfaka-market-processor deployment/gops-backend -n "${K8S_NAMESPACE}" \
-  ORDER_FLOW_PINNED_SYMBOLS=NVDA,AMZN,MU,AAPL,GOOGL
-
-kubectl set env deployment/trade-condition-executor -n "${K8S_NAMESPACE}" \
-  TRADE_CONDITION_EXECUTION_MODE=demo
-
-kubectl rollout status deployment/alfaka-alpaca-ingestor-sip -n "${K8S_NAMESPACE}" --timeout=300s
 kubectl rollout status deployment/gops-backend -n "${K8S_NAMESPACE}" --timeout=300s
-kubectl rollout status deployment/alfaka-market-processor -n "${K8S_NAMESPACE}" --timeout=300s
-kubectl rollout status deployment/trade-condition-executor -n "${K8S_NAMESPACE}" --timeout=300s
-restore_simulator_state
 kubectl scale deployment/gops-simulator --replicas=0 -n "${K8S_NAMESPACE}"
 
-printf 'Live Alpaca SIP path restored; EKS simulator replicas are now 0.\n'
+printf 'dev EKS is LIVE; realtime Redis/Kafka/Alpaca deployments were not changed.\n'

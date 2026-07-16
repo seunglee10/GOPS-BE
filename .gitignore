@@ -16,6 +16,7 @@ __pycache__/
 .idea/
 .vscode/
 node_modules/
+systems/simulator/data/sessions/
 **/node_modules/
 .pnpm-store/
 dist/

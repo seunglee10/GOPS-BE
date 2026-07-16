@@ -123,6 +123,23 @@ def chart_indicators(
     )
 
 
+@router.get("/api/charts/events")
+def chart_events(
+    symbol: str = Query(min_length=1, max_length=12),
+    from_time: str = Query(alias="from"),
+    to_time: str = Query(alias="to"),
+    locale: str = Query(default="ko-KR", min_length=2, max_length=16, pattern=r"^[a-z]{2}(?:-[A-Z]{2})?$"),
+    upcoming_days: int = Query(default=90, ge=1, le=365, alias="upcomingDays"),
+) -> dict[str, Any]:
+    return get_query_service().chart_events(
+        symbol,
+        from_time,
+        to_time,
+        locale=locale,
+        upcoming_days=upcoming_days,
+    )
+
+
 @router.get("/api/charts/order-flow/symbols")
 def chart_order_flow_symbols() -> dict[str, Any]:
     return get_query_service().order_flow_symbols()

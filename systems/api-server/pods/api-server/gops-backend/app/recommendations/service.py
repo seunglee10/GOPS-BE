@@ -12,9 +12,11 @@ from app.market_data.heatmap.service import get_heatmap_service
 from app.services.alfaka_market_data import get_market_data_provider, read_watchlist_symbols
 
 from .repository import RecommendationRunCreate, RecommendationRepository, RecommendationStateConflict
+from .explanations import compose_explanations
 from .professional import (
     ProfessionalContext,
     apply_professional_personalization,
+    completed_daily,
     personalization_digest,
     raw_factors,
     resolve_weight_set,
@@ -23,9 +25,19 @@ from .professional_v2 import (
     ALGORITHM_VERSION,
     apply_continuous_personalization,
     infer_risk_state,
+    normalize_fundamental_batch,
     process_preference_events,
     resolve_algorithm_version,
     stable_digest,
+)
+from .professional_v3 import (
+    ALGORITHM_VERSION as EVIDENCE_ALGORITHM_VERSION,
+    RULE_SET_VERSION as EVIDENCE_RULE_SET_VERSION,
+    EvidenceContext,
+    build_evidence_snapshot,
+    process_evidence_preference_events,
+    rank_evidence_candidates,
+    rules_snapshot as evidence_rules_snapshot,
 )
 from .scoring import (
     MARKET_TZ,
@@ -89,7 +101,7 @@ class RecommendationDataSource:
             return list(provider(symbol, now))
         try:
             market_provider = get_market_data_provider()
-            redis_candles = market_provider.redis_provider.recent_candles(symbol, "1m", 240)
+            redis_candles = market_provider.redis_provider.recent_candles(symbol, "1m", 420)
             clickhouse_candles: list[dict[str, Any]] = []
             session_mode = market_session(now)
             if session_mode in {"pre", "regular"}:
@@ -103,7 +115,7 @@ class RecommendationDataSource:
                     )
             elif len(redis_candles or []) < 120:
                 clickhouse_candles = market_provider.clickhouse_provider.candles(symbol, "1m", 240)
-            return candles_not_after(merge_candles([*(clickhouse_candles or []), *(redis_candles or [])]), now)[-240:]
+            return candles_not_after(merge_candles([*(clickhouse_candles or []), *(redis_candles or [])]), now)[-420:]
         except Exception:
             return []
 
@@ -134,6 +146,62 @@ class RecommendationDataSource:
             ) or [])
         except Exception:
             return []
+
+    def benchmark_health(
+        self,
+        *,
+        now: datetime,
+        session_mode: str,
+        merged_candles: list[dict[str, Any]],
+        daily_candles: list[dict[str, Any]],
+        previous_session_candles: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        provider = getattr(self.app.state, "recommendation_benchmark_health_provider", None)
+        if callable(provider):
+            return dict(provider(now, session_mode))
+        reasons: list[str] = []
+        redis_rows: list[dict[str, Any]] = []
+        clickhouse_rows: list[dict[str, Any]] = []
+        try:
+            market_provider = get_market_data_provider()
+            redis_rows = list(market_provider.redis_provider.recent_candles("SPY", "1m", 420) or [])
+            clickhouse_rows = list(market_provider.clickhouse_provider.candles(
+                "SPY", "1m", 420, **session_candle_window(now, session_mode)
+            ) or [])
+        except Exception:
+            reasons.append("benchmark_storage_check_unavailable")
+        current = filter_candles_for_session(merged_candles, session_mode, now)
+        redis_current = filter_candles_for_session(redis_rows, session_mode, now)
+        clickhouse_current = filter_candles_for_session(clickhouse_rows, session_mode, now)
+        minimum = min_candle_count(session_mode, now)
+        completed_dailies = completed_daily(daily_candles, now)
+        if len(completed_dailies) < 252:
+            reasons.append("insufficient_spy_daily_history")
+        if len(previous_session_candles) < 380:
+            reasons.append("insufficient_spy_previous_session_candles")
+        if len(current) < minimum:
+            reasons.append("insufficient_spy_session_candles")
+        latest = _latest_candle_time(current)
+        freshness = 120 if session_mode == "regular" else 300
+        if latest is None or latest > now or (now - latest).total_seconds() > freshness:
+            reasons.append("stale_spy_data")
+        redis_latest = _latest_candle(redis_current)
+        clickhouse_latest = _latest_candle(clickhouse_current)
+        if redis_latest is None or clickhouse_latest is None:
+            reasons.append("spy_storage_copy_missing")
+        elif not _matching_candle(redis_latest, clickhouse_latest):
+            reasons.append("spy_storage_copy_mismatch")
+        return {
+            "symbol": "SPY",
+            "ready": not reasons,
+            "reasons": sorted(set(reasons)),
+            "dailyCandleCount": len(completed_dailies),
+            "previousSessionCandleCount": len(previous_session_candles),
+            "currentSessionCandleCount": len(current),
+            "latestAt": latest.isoformat() if latest else None,
+            "redisLatestAt": _candle_time_text(redis_latest),
+            "clickHouseLatestAt": _candle_time_text(clickhouse_latest),
+        }
 
     def news(self, symbol: str, now: datetime) -> list[dict[str, Any]]:
         normalized_symbol = str(symbol or "").strip().upper()
@@ -267,8 +335,9 @@ class RecommendationService:
         )
         personalization_enabled = algorithm_mode != "legacy"
         continuous_v2 = algorithm_mode == "continuous-v2"
-        weight_payload = professional_weight_payload(self.app) if personalization_enabled else None
-        if personalization_enabled and weight_payload is None:
+        deterministic_v3 = algorithm_mode == EVIDENCE_ALGORITHM_VERSION
+        weight_payload = professional_weight_payload(self.app) if personalization_enabled and not deterministic_v3 else None
+        if personalization_enabled and not deterministic_v3 and weight_payload is None:
             get_active_weight_set = getattr(self.repository, "get_active_weight_set", None)
             weight_payload = get_active_weight_set() if callable(get_active_weight_set) else None
         weight_set = resolve_weight_set(weight_payload)
@@ -284,17 +353,25 @@ class RecommendationService:
             portfolio_snapshot
             and (portfolio_observed_at is None or now - portfolio_observed_at > timedelta(hours=24))
         )
-        input_digest = personalization_digest(
-            profile=profile_row,
-            portfolio_snapshot=portfolio_snapshot,
-            shadow=personalization_shadow,
-            weights_version=weight_set.version,
-            style_weights=weight_set.styles,
-        ) if personalization_enabled else None
+        if deterministic_v3:
+            input_digest = stable_digest({
+                "algorithmVersion": EVIDENCE_ALGORITHM_VERSION,
+                "rules": evidence_rules_snapshot(),
+                "profile": profile_row,
+                "portfolioSnapshot": portfolio_snapshot,
+            })
+        else:
+            input_digest = personalization_digest(
+                profile=profile_row,
+                portfolio_snapshot=portfolio_snapshot,
+                shadow=personalization_shadow,
+                weights_version=weight_set.version,
+                style_weights=weight_set.styles,
+            ) if personalization_enabled else None
         existing = self.repository.get_run_by_key(user_sub, run_key)
         existing_summary = existing.get("summary") if isinstance(existing, dict) else {}
         digest_matches = not personalization_enabled or existing.get("personalization_input_digest") == input_digest if existing else False
-        if existing and (continuous_v2 or digest_matches) and not (isinstance(existing_summary, dict) and existing_summary.get("retryable")):
+        if existing and (continuous_v2 or deterministic_v3 or digest_matches) and not (isinstance(existing_summary, dict) and existing_summary.get("retryable")):
             return response_for_run(existing, profile=profile_row, idempotent_replay=True)
         if not is_market_session_open(now, session_mode):
             latest_for_session = getattr(self.repository, "latest_run_for_session", None)
@@ -311,6 +388,25 @@ class RecommendationService:
         watchlist = self.data_source.watchlist_symbols(user_sub)
         positions = self.data_source.portfolio_positions(user_sub)
         market_items = self.data_source.market_items()
+        if deterministic_v3:
+            return self._refresh_deterministic_evidence_v3(
+                user_sub=user_sub,
+                now=now,
+                active_symbol=active_symbol,
+                session_mode=session_mode,
+                actual_session=actual_session,
+                slot=slot,
+                run_key=run_key,
+                profile_row=profile_row,
+                profile=profile,
+                portfolio_snapshot=portfolio_snapshot,
+                portfolio_data_stale=portfolio_data_stale,
+                input_digest=input_digest,
+                watchlist=watchlist,
+                positions=positions,
+                market_items=market_items,
+                state_retry=_state_retry,
+            )
         candidates = build_candidates(
             watchlist_symbols=watchlist,
             portfolio_positions=positions,
@@ -502,6 +598,298 @@ class RecommendationService:
                 )
         else:
             run = self.repository.create_or_replace_run(run_create, items)
+        self._maybe_notify(user_sub, run, previous=previous_run)
+        return response_for_run(run, profile=profile_row)
+
+    def _refresh_deterministic_evidence_v3(
+        self,
+        *,
+        user_sub: str,
+        now: datetime,
+        active_symbol: str | None,
+        session_mode: str,
+        actual_session: str,
+        slot: dict[str, str],
+        run_key: str,
+        profile_row: dict[str, Any],
+        profile: Any,
+        portfolio_snapshot: dict[str, Any] | None,
+        portfolio_data_stale: bool,
+        input_digest: str | None,
+        watchlist: list[str],
+        positions: list[dict[str, Any]],
+        market_items: list[dict[str, Any]],
+        state_retry: bool,
+    ) -> dict[str, Any]:
+        symbols = sorted({
+            str(item.get("symbol") or "").strip().upper()
+            for item in market_items
+            if str(item.get("symbol") or "").strip().upper() not in {"", "SPY"}
+        })
+        snapshot_key = (
+            f"{slot['marketDate']}:{session_mode}:{slot['slotStart']}:"
+            f"{EVIDENCE_RULE_SET_VERSION}"
+        )
+        snapshot = self.repository.get_evidence_snapshot(snapshot_key)
+        if snapshot is None:
+            source_symbols = [*symbols, "SPY"]
+            candles_by_symbol = {
+                symbol: self.data_source.candles(symbol, now) for symbol in source_symbols
+            }
+            daily_by_symbol = {
+                symbol: self.data_source.daily_candles(symbol, now) for symbol in source_symbols
+            }
+            previous_by_symbol = {
+                symbol: self.data_source.previous_session_candles(symbol, now)
+                for symbol in source_symbols
+            }
+            benchmark_health_method = getattr(self.data_source, "benchmark_health", None)
+            benchmark_health = (
+                benchmark_health_method(
+                    now=now,
+                    session_mode=session_mode,
+                    merged_candles=candles_by_symbol.get("SPY") or [],
+                    daily_candles=daily_by_symbol.get("SPY") or [],
+                    previous_session_candles=previous_by_symbol.get("SPY") or [],
+                )
+                if callable(benchmark_health_method)
+                else injected_benchmark_health(
+                    now=now,
+                    session_mode=session_mode,
+                    merged_candles=candles_by_symbol.get("SPY") or [],
+                    daily_candles=daily_by_symbol.get("SPY") or [],
+                    previous_session_candles=previous_by_symbol.get("SPY") or [],
+                )
+            )
+            if not benchmark_health.get("ready"):
+                return data_not_ready_response(
+                    profile=profile_row,
+                    session_mode=session_mode,
+                    actual_session=actual_session,
+                    reason="benchmark_data_not_ready",
+                    benchmark_health=benchmark_health,
+                    qualified_count=0,
+                )
+            news_by_symbol = self.data_source.news_for_symbols(symbols, now)
+            provider = getattr(self.app.state, "recommendation_fundamental_provider", None) if self.app else None
+            if provider is None:
+                fundamental_payload = None
+            else:
+                try:
+                    fundamental_payload = provider.snapshots_as_of(symbols, now)
+                except Exception:
+                    fundamental_payload = object()
+            normalized_fundamentals, fundamental_provenance = normalize_fundamental_batch(
+                fundamental_payload, symbols, now
+            )
+            fundamentals = {
+                symbol: dict(row.get("scores") or {})
+                for symbol, row in normalized_fundamentals.items()
+                if row.get("status") == "ready"
+            }
+            built = build_evidence_snapshot(EvidenceContext(
+                session_mode=session_mode,
+                now=now,
+                market_items=market_items,
+                candles_by_symbol=candles_by_symbol,
+                daily_candles_by_symbol=daily_by_symbol,
+                previous_session_candles_by_symbol=previous_by_symbol,
+                news_by_symbol=news_by_symbol,
+                fundamentals_by_symbol=fundamentals,
+                fundamental_provenance=fundamental_provenance,
+            ))
+            reliability_qualified = sum(
+                float(row.get("evidenceReliability") or 0) >= 70
+                and (row.get("rawFactors") or {}).get("quotedSpreadBps") is not None
+                for row in built.candidates
+            )
+            if reliability_qualified < 15:
+                return data_not_ready_response(
+                    profile=profile_row,
+                    session_mode=session_mode,
+                    actual_session=actual_session,
+                    reason="candidate_data_not_ready",
+                    benchmark_health=benchmark_health,
+                    qualified_count=reliability_qualified,
+                    rejected_by_reason=_count_snapshot_rejections(built.rejected),
+                )
+            source_status = {
+                "market": "ready" if market_items else "unavailable",
+                "candles": "ready" if candles_by_symbol else "unavailable",
+                "daily": "ready" if daily_by_symbol else "unavailable",
+                "previousSession": "ready" if previous_by_symbol else "unavailable",
+                "news": "ready" if any(news_by_symbol.values()) else "neutral_no_news",
+                "fundamentals": fundamental_provenance.get("status", "unavailable"),
+                "benchmark": benchmark_health,
+            }
+            snapshot = self.repository.create_evidence_snapshot({
+                "snapshotKey": snapshot_key,
+                "slotStart": slot["slotStart"],
+                "marketDate": slot["marketDate"],
+                "sessionMode": session_mode,
+                "cutoff": now,
+                "universe": symbols,
+                "ruleSetVersion": EVIDENCE_RULE_SET_VERSION,
+                "sourceDigests": built.source_digests,
+                "sourceStatus": source_status,
+                "status": (
+                    "completed"
+                    if any(not row.get("rejectionReasons") for row in built.candidates)
+                    else "empty"
+                ),
+                "inputDigest": built.input_digest,
+            }, built.candidates)
+        fundamental_provenance = {
+            "status": (snapshot.get("sourceStatus") or {}).get("fundamentals", "unavailable"),
+            "digest": (snapshot.get("sourceDigests") or {}).get("fundamentals"),
+            "cutoff": snapshot.get("cutoff"),
+        }
+        v2_context = self.repository.get_v2_context(user_sub, now)
+        preference_state, preference_events = process_evidence_preference_events(
+            v2_context.get("preferenceState"),
+            v2_context.get("fills") or [],
+            style=profile.recommendation_style,
+            cutoff=now,
+            existing_order_strengths=v2_context.get("orderStrengths") or {},
+        )
+        risk_state = infer_risk_state(
+            profile_row,
+            v2_context.get("portfolioSnapshots") or [],
+            v2_context.get("allFills") or [],
+            cutoff=now,
+        )
+        position_symbols = sorted({
+            str(row.get("symbol") or "").strip().upper()
+            for row in positions if str(row.get("symbol") or "").strip()
+        })
+        position_daily = {
+            symbol: self.data_source.daily_candles(symbol, now) for symbol in position_symbols
+        }
+        ranking = rank_evidence_candidates(
+            [
+                {
+                    **row,
+                    "evaluatedAt": row.get("evaluatedAt") or snapshot.get("cutoff"),
+                    "sourceDigests": snapshot.get("sourceDigests") or {},
+                }
+                for row in (snapshot.get("candidates") or [])
+            ],
+            profile=profile,
+            preference_state=preference_state,
+            risk_state=risk_state,
+            watchlist_symbols=watchlist,
+            portfolio_positions=positions,
+            portfolio_snapshot=portfolio_snapshot,
+            position_daily_candles=position_daily,
+            active_symbol=active_symbol,
+            now=now,
+            snapshot_id=int(snapshot["id"]) if snapshot.get("id") is not None else None,
+        )
+        items = ranking.items
+        benchmark_health = (snapshot.get("sourceStatus") or {}).get("benchmark") or {
+            "symbol": "SPY",
+            "ready": True,
+        }
+        if ranking.qualified_count < 15 or len(items) < 15:
+            return data_not_ready_response(
+                profile=profile_row,
+                session_mode=session_mode,
+                actual_session=actual_session,
+                reason="candidate_data_not_ready",
+                benchmark_health=benchmark_health,
+                qualified_count=ranking.qualified_count,
+                rejected_by_reason=ranking.rejected_by_reason,
+            )
+        narrative_provider = (
+            getattr(self.app.state, "recommendation_narrative_provider", None)
+            if self.app else None
+        )
+        items = compose_explanations(items, provider=narrative_provider)
+        previous_run = self.repository.latest_run_for_session(user_sub, session_mode)
+        summary = {
+            **base_summary(session_mode=session_mode, actual_session=actual_session),
+            "candidateCount": len(snapshot.get("candidates") or []),
+            "universeCount": len(snapshot.get("universe") or []),
+            "qualifiedCount": ranking.qualified_count,
+            "recommendedCount": len(items),
+            "marketItemCount": len(market_items),
+            "excludedHeldCount": len(position_symbols),
+            "excludedWatchlistCount": len({symbol.strip().upper() for symbol in watchlist if symbol.strip()}),
+            "excludedActiveSymbol": bool(active_symbol),
+            "emptyReason": None if items else "no_qualified_evidence",
+            "rejectedByReason": ranking.rejected_by_reason,
+            "evidenceSnapshotId": snapshot.get("id"),
+            "evidenceSnapshotKey": snapshot_key,
+            "evidenceCutoff": snapshot.get("cutoff"),
+            "benchmarkHealth": benchmark_health,
+            "ruleSetVersion": EVIDENCE_RULE_SET_VERSION,
+            "personalization": {
+                "enabled": True,
+                "shadow": False,
+                "algorithmVersion": EVIDENCE_ALGORITHM_VERSION,
+                "recommendationStyle": profile.recommendation_style,
+                "weightsVersion": EVIDENCE_RULE_SET_VERSION,
+                "portfolioDataStale": portfolio_data_stale,
+                "preferenceConfidence": preference_state.get("preferenceConfidence"),
+                "fundamentalStatus": fundamental_provenance.get("status"),
+                "confidenceMeaning": "evidence_reliability_not_success_probability",
+            },
+        }
+        run_create = RecommendationRunCreate(
+            user_sub=user_sub,
+            run_key=run_key,
+            slot_start=slot["slotStart"],
+            market_date=slot["marketDate"],
+            status="completed" if items else "empty",
+            profile_snapshot=profile_row,
+            market_snapshot_time=str(snapshot.get("cutoff") or now.isoformat()),
+            summary=summary,
+            portfolio_snapshot_history_id=(
+                int(portfolio_snapshot["id"])
+                if portfolio_snapshot and portfolio_snapshot.get("id") is not None else None
+            ),
+            weights_version=EVIDENCE_RULE_SET_VERSION,
+            personalization_input_digest=input_digest,
+            personalization_snapshot={
+                **evidence_rules_snapshot(),
+                "recommendationStyle": profile.recommendation_style,
+                "riskLevel": profile.risk_level,
+                "effectivePreferenceWeights": preference_state.get("effectiveWeights"),
+                "preferenceConfidence": preference_state.get("preferenceConfidence"),
+                "evidenceSnapshotInputDigest": snapshot.get("inputDigest"),
+            },
+            algorithm_version=EVIDENCE_ALGORITHM_VERSION,
+            fundamental_snapshot_provenance=fundamental_provenance,
+            v2_input_digest=stable_digest({
+                "preference": preference_state.get("inputDigest"),
+                "risk": risk_state.get("inputDigest"),
+                "evidenceSnapshot": snapshot.get("inputDigest"),
+                "features": [row.get("input_digest") for row in ranking.candidate_features],
+            }),
+            evidence_snapshot_id=(
+                int(snapshot["id"]) if snapshot.get("id") is not None else None
+            ),
+        )
+        try:
+            run = self.repository.commit_v2_run(
+                run_create,
+                items,
+                ranking.candidate_features,
+                preference_state,
+                preference_events,
+                risk_state,
+                expected_preference_state_id=v2_context.get("preferenceStateId"),
+            )
+        except RecommendationStateConflict:
+            if state_retry:
+                raise
+            return self.refresh(
+                user_sub,
+                now=now,
+                active_symbol=active_symbol,
+                session_mode=session_mode,
+                _state_retry=True,
+            )
         self._maybe_notify(user_sub, run, previous=previous_run)
         return response_for_run(run, profile=profile_row)
 
@@ -732,6 +1120,43 @@ def iso_z(value: datetime) -> str:
     return normalized.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+def _latest_candle(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    dated = [(observed, row) for row in rows if (observed := _candle_time(row)) is not None]
+    return max(dated, key=lambda pair: pair[0])[1] if dated else None
+
+
+def _latest_candle_time(rows: list[dict[str, Any]]) -> datetime | None:
+    latest = _latest_candle(rows)
+    return _candle_time(latest) if latest else None
+
+
+def _candle_time(row: dict[str, Any] | None) -> datetime | None:
+    if not row:
+        return None
+    return parse_datetime(row.get("timestamp") or row.get("eventTime") or row.get("updatedAt"))
+
+
+def _candle_time_text(row: dict[str, Any] | None) -> str | None:
+    observed = _candle_time(row)
+    return observed.isoformat() if observed else None
+
+
+def _matching_candle(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    if _candle_time(left) != _candle_time(right):
+        return False
+    for key in ("open", "high", "low", "close", "volume"):
+        left_value = left.get(key)
+        right_value = right.get(key)
+        if left_value is not None and right_value is not None:
+            try:
+                if abs(float(left_value) - float(right_value)) > 1e-8:
+                    return False
+            except (TypeError, ValueError):
+                if str(left_value) != str(right_value):
+                    return False
+    return True
+
+
 def base_summary(*, session_mode: str, actual_session: str | None = None) -> dict[str, Any]:
     return {
         "sessionMode": normalize_session_mode(session_mode),
@@ -740,6 +1165,77 @@ def base_summary(*, session_mode: str, actual_session: str | None = None) -> dic
         "newsLookbackDays": NEWS_LOOKBACK_DAYS,
         "regularMarketOnly": False,
     }
+
+
+def data_not_ready_response(
+    *,
+    profile: dict[str, Any],
+    session_mode: str,
+    actual_session: str,
+    reason: str,
+    benchmark_health: dict[str, Any],
+    qualified_count: int,
+    rejected_by_reason: dict[str, int] | None = None,
+) -> dict[str, Any]:
+    return {
+        "status": "data_not_ready",
+        "items": [],
+        "profile": normalize_profile_sector_fields(profile),
+        "stale": False,
+        "idempotentReplay": False,
+        "summary": {
+            **base_summary(session_mode=session_mode, actual_session=actual_session),
+            "emptyReason": reason,
+            "retryable": True,
+            "algorithmVersion": EVIDENCE_ALGORITHM_VERSION,
+            "ruleSetVersion": EVIDENCE_RULE_SET_VERSION,
+            "benchmarkHealth": benchmark_health,
+            "qualifiedCount": qualified_count,
+            "minimumQualifiedCount": 15,
+            "rejectedByReason": rejected_by_reason or {},
+        },
+    }
+
+
+def injected_benchmark_health(
+    *,
+    now: datetime,
+    session_mode: str,
+    merged_candles: list[dict[str, Any]],
+    daily_candles: list[dict[str, Any]],
+    previous_session_candles: list[dict[str, Any]],
+) -> dict[str, Any]:
+    current = filter_candles_for_session(merged_candles, session_mode, now)
+    latest = _latest_candle_time(current)
+    reasons = []
+    completed_dailies = completed_daily(daily_candles, now)
+    if len(completed_dailies) < 252:
+        reasons.append("insufficient_spy_daily_history")
+    if len(previous_session_candles) < 380:
+        reasons.append("insufficient_spy_previous_session_candles")
+    if len(current) < min_candle_count(session_mode, now):
+        reasons.append("insufficient_spy_session_candles")
+    freshness = 120 if session_mode == "regular" else 300
+    if latest is None or latest > now or (now - latest).total_seconds() > freshness:
+        reasons.append("stale_spy_data")
+    return {
+        "symbol": "SPY",
+        "ready": not reasons,
+        "reasons": reasons,
+        "dailyCandleCount": len(completed_dailies),
+        "previousSessionCandleCount": len(previous_session_candles),
+        "currentSessionCandleCount": len(current),
+        "latestAt": latest.isoformat() if latest else None,
+        "storageMatch": "injected_provider",
+    }
+
+
+def _count_snapshot_rejections(rows: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        for reason in row.get("rejectionReasons") or []:
+            counts[str(reason)] = counts.get(str(reason), 0) + 1
+    return counts
 
 
 def rejection_summary(candidates: list[Any], candles_by_symbol: dict[str, list[dict[str, Any]]], *, session_mode: str, now: datetime) -> dict[str, int]:
@@ -810,6 +1306,7 @@ def normalize_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             **sector_payload_fields(item.get("sector")),
             "reasons": item.get("reasons") or [],
             "riskWarnings": item.get("riskWarnings") or item.get("risk_warnings") or [],
+            "explanation": item.get("explanation") or item.get("explanation_json"),
             "metricsSnapshot": metrics_snapshot,
         })
     return normalized

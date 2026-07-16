@@ -48,6 +48,15 @@ The backend reads `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, and
 them are empty, `GOOGLE_OAUTH_SECRET_NAME` can point to an AWS Secrets Manager
 JSON secret that supplies the missing values.
 
+## Chart Events
+
+`GET /api/charts/events` returns stored earnings and daily-news markers for the
+loaded candle range. The handler reads ClickHouse only: S&P 500 earnings come
+from `yahoo_earnings_estimates`, and news comes from
+`news_company_daily_summaries`. Non-S&P 500 symbols return news with an empty
+earnings state instead of an error. Yahoo and Alpaca are never called by this
+request.
+
 ## Market Heatmap
 
 `GET /api/market/heatmap?universe=sp500` is the API-owned serving projection for

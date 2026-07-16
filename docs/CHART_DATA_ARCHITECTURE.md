@@ -134,6 +134,7 @@ Stable routes include:
 ```text
 GET  /api/charts/candles
 GET  /api/charts/compare
+GET  /api/charts/events
 GET  /api/charts/volume-profile-bins
 GET  /api/charts/indicators
 GET  /api/charts/order-flow/symbols
@@ -142,6 +143,17 @@ GET  /api/charts/order-flow/intraday
 POST /api/charts/active-symbol
 WS   /ws/charts
 ```
+
+`GET /api/charts/events` is a ClickHouse-only read path. It joins no candle
+backfill flow and never calls Yahoo, Alpaca, or an external news provider during
+the request. Stored `news_company_daily_summaries` rows produce one New York
+market-date `N` marker, while stored S&P 500 `yahoo_earnings_estimates` event rows
+produce `E` markers and the nearest scheduled event within `upcomingDays`.
+Frontend chart documents keep `events:earnings` and `events:news` as persisted
+layer flags; older documents receive both flags as enabled unless a saved value
+explicitly disabled them. Loading older candles requests only the newly exposed
+event range, and the latest loaded news date refreshes every 60 seconds while the
+news layer is visible.
 
 `POST /api/charts/active-symbol` refreshes a bounded cohort with the declared
 `candles,trades,quotes` layers before the frontend requests the candle snapshot.

@@ -25,13 +25,14 @@
 | 사용자 설정 | 추천 패널 안의 `추천 설정` 버튼과 중앙 dialog |
 | 운영상 중요 위험 | 캔들 필터 탈락 후보도 backend fallback으로 저장될 수 있음 |
 
-추천 결과가 만들어지는 경로는 하나가 아니다.
+LIVE 추천 결과가 만들어지는 경로는 백엔드가 소유한다.
 
 1. **1차 캔들 점수화**: 캔들, SPY 상대강도, 거래량, 뉴스, 포트폴리오 위험을 계산한다.
 2. **백엔드 market snapshot 보강**: 1차 결과가 15개보다 적으면 캔들 필터에서 탈락한 후보도 heatmap 값으로 다시 채운다.
-3. **프런트 시뮬레이션 표시**: API가 정상 빈 응답을 주면 고정된 가상 추천 10개를 화면에 표시한다.
 
-2번과 3번은 현재 코드에 존재하지만 운영 추천의 신뢰를 떨어뜨릴 수 있다. 아래의 `개선 후 목표 계약`에서는 두 경로를 운영 추천과 분리한다.
+2번은 현재 코드에 존재하며 운영 추천의 신뢰를 떨어뜨릴 수 있다. 프런트의 고정
+추천 10개는 LIVE 빈 응답에서 더 이상 사용하지 않고 simulator mode에서만 표시한다.
+아래의 `개선 후 목표 계약`에서는 backend 보강 경로도 운영 추천과 분리한다.
 
 ## 용어
 
@@ -129,8 +130,7 @@ flowchart TD
   Runs --> Notify["notifications + WS"]
   Runs --> Panel
 
-  Panel --> Empty{"정상 빈 응답?"}
-  Empty -->|예| FrontFallback["프런트 고정 시뮬레이션 10개"]
+  Simulator["명시적 simulator mode"] --> SimFallback["프런트 고정 시뮬레이션 10개"]
 ```
 
 ## 파일 맵
@@ -150,6 +150,8 @@ flowchart TD
 | `systems/order/shared/kis_trader/migrations/0004_recommendations.sql` | 추천 프로필·run·item·portfolio snapshot 테이블 |
 | `systems/order/shared/kis_trader/migrations/0011_personalized_recommendations.sql` | 스타일, 모델 registry, outcome, 개인화 provenance |
 | `systems/order/shared/kis_trader/migrations/0012_continuous_recommendation_v2.sql` | continuous V2 선호·위험·펀더멘털 상태 |
+| `systems/order/shared/kis_trader/migrations/0013_deterministic_evidence_v3.sql` | V3 evidence snapshot·candidate |
+| `systems/order/shared/kis_trader/migrations/0014_recommendation_explanations.sql` | versioned explanation JSONB |
 
 ### 프런트
 
@@ -158,9 +160,8 @@ flowchart TD
 | `apps/gops-frontend/src/recommendations/recommendationApi.ts` | API 호출과 응답 정규화 |
 | `apps/gops-frontend/src/recommendations/InvestmentProfileForm.tsx` | 추천 설정 입력 폼 |
 | `apps/gops-frontend/src/recommendations/RecommendationSettingsDialog.tsx` | dialog focus, Escape, 닫기 동작 |
-| `apps/gops-frontend/src/recommendations/StockRecommendationsPanel.tsx` | 추천 카드·목록, 세션 toggle, fallback 조합 |
-| `apps/gops-frontend/src/recommendations/StockRecommendationExplainPanel.tsx` | 선택 추천의 핵심 지표, 근거, 위험, 개인화 provenance |
-| `apps/gops-frontend/src/recommendations/recommendationSimulationFallback.ts` | 고정 시뮬레이션 추천 10개 |
+| `apps/gops-frontend/src/recommendations/StockRecommendationsPanel.tsx` | 추천 카드·목록, 세션 toggle, LIVE API 결과와 SIM unavailable 상태 분리 |
+| `apps/gops-frontend/src/recommendations/StockRecommendationExplainPanel.tsx` | V3 한국어 narrative, 결정론적 근거, 위험, data quality·provenance |
 | `apps/gops-frontend/src/recommendations/recommendationNavigation.ts` | 선택 추천을 기업 화면 이동 의도로 해석 |
 | `apps/gops-frontend/src/components/PanelContentRenderer.tsx` | `recommendations`, `recommendationsList`, `recommendationExplain` 렌더링 |
 | `apps/gops-frontend/src/layout/panelRegistry.ts` | 추천 패널 kind와 기본 크기 등록 |
@@ -446,41 +447,16 @@ snapshot 보강 점수는 다음으로 구성된다.
 
 이 결과는 1차 추천과 같은 `completed` run에 저장되고 알림 평가에도 들어간다. 그래서 현재 문서에서는 “hard filter를 통과한 후보만 저장한다”거나 “데이터 부족이면 항상 retryable empty로 남는다”고 설명하면 안 된다.
 
-## 프런트 fallback
+## 프런트 추천 표시
 
-### `pre`에서 `regular` 결과 대체
+LIVE mode에서는 `pre`와 `regular` 각각의 API 결과만 표시한다. 선택한 세션의 item이
+비어 있으면 빈 상태를 표시하며, 다른 세션 결과나 고정 종목으로 대체하지 않는다.
 
-사용자가 `pre`를 선택했고 응답 item이 비어 있으면, `profile_required`가 아닌 한 프런트가 `regular` latest를 한 번 더 조회한다. `regular` item이 있으면 그 payload를 화면에 사용하고 summary에 다음 값을 추가한다.
+### SIM 모드
 
-```text
-fallbackFromSessionMode=pre
-requestedSessionMode=pre
-fallbackReason=...
-```
-
-현재 UI는 이 대체를 사용자에게 명확하게 표시하지 않는다. `pre` toggle이 선택된 상태에서 `regular` 추천이 보일 수 있다.
-
-### 고정 시뮬레이션 추천
-
-API가 `empty`, `ready`, `stale` 상태와 빈 item을 반환하면 프런트는 다음 고정 종목 10개를 표시한다.
-
-```text
-NVDA, AMD, MSFT, AAPL, AMZN, GOOGL, META, AVGO, TSLA, JPM
-```
-
-점수는 90부터 54까지, 신뢰도는 0.84부터 0.57까지 코드에 고정되어 있다. 각 item에는 다음 marker가 들어간다.
-
-```json
-{
-  "source": "frontend-recommendation-fallback",
-  "synthetic": true,
-  "simulation": true
-}
-```
-
-이 데이터는 DB에 저장되거나 backend 알림을 만들지는 않는다. 그러나 실제 추천과 같은 행 renderer와 `recommendation.stock` Agent 참조를 사용한다. 패널에 작은 `simulation` 배지가 보이지만, 현재는 시뮬레이터 모드일 때만 표시하도록 제한하지 않는다.
-
-`profile_required`, `market_closed`, API 오류에서는 고정 시뮬레이션을 사용하지 않는다.
+틱 replay SIM에서는 point-in-time 추천을 보장할 수 없으므로 backend가
+`simulation_data_unavailable`을 반환한다. 프런트는 최신 추천이나 고정 synthetic item을
+대신 표시하지 않고 unavailable 상태를 보여 준다.
 
 ## 추천 item과 화면 표시
 
@@ -532,7 +508,7 @@ Agent UI panel type은 `stockRecommendations`다. 프런트 layout kind `recomme
 - reasons, riskWarnings
 - metricsSnapshot
 
-synthetic marker가 있는 프런트 시뮬레이션 item도 현재 같은 참조 계약을 사용한다.
+틱 replay SIM에서는 추천 item을 만들지 않으므로 이 참조 계약도 생성하지 않는다.
 
 ## 전문 개인화
 
@@ -566,10 +542,8 @@ AWS 활성화 전 image, migration, SPY/직전 세션 candle, 포트폴리오/fi
 | 높음 | backend snapshot 보강이 1차 hard filter를 우회 | 캔들 없는 종목도 운영 `buy`로 저장·알림 가능 |
 | 높음 | 120개 미만 캔들의 `volumeRatio` 구간 길이 불일치 | 장 초반 거래량 점수 과대평가 |
 | 높음 | 기존 run을 `activeSymbol`·새 프로필보다 먼저 재사용 | 현재 조회·새 제외 설정이 같은 슬롯에 미반영 |
-| 높음 | frontend synthetic 추천이 live mode에서도 표시 가능 | 실제 추천과 가상 추천 혼동, Agent 참조 오염 |
 | 높음 | top 변경 알림에 품질 하한 없음 | 낮은 품질 추천도 매수 알림 가능 |
 | 중간 | `dataFreshness`가 timestamp 존재 여부만 확인 | 오래된 장중 데이터에 freshness 점수 부여 |
-| 중간 | `pre` 빈 응답을 `regular`로 조용히 대체 | 세션이 다른 결과를 같은 toggle 아래 표시 |
 | 중간 | 관련 섹터 후보를 뒤에서 추가 | 선호 섹터가 후보 우선순위로 보장되지 않음 |
 | 중간 | Alpaca 원문 뉴스에 sentiment가 없어도 비부정 보너스 | 뉴스 방향을 확인하지 않은 catalyst 가점 |
 | 낮음 | 미국 공휴일·반장 미반영 | 휴장일 또는 조기 폐장 시간 오판 |
@@ -636,12 +610,12 @@ volumeRatio = recent / previous
 - 과거 `regular` 결과를 보여줄 필요가 있으면 사용자가 선택할 수 있는 별도 “이전 본장 결과” 상태로 노출한다.
 - 세션 fallback을 유지한다면 세션 label과 생성 시각을 행 위에 명확히 표시한다.
 
-### 7. synthetic 데이터는 simulator에서만 사용한다
+### 7. simulator에서도 synthetic 추천을 만들지 않는다
 
-- `recommendationSimulationFallbackItems`는 simulator mode 또는 명시적 demo flag에서만 활성화한다.
 - live mode의 빈 응답은 빈 상태로 표시한다.
-- synthetic item은 운영 Agent 분석 참조와 알림으로 전달하지 않는다.
-- demo 데이터는 “실제 매수 추천 아님”을 행 단위에서도 확인할 수 있어야 한다.
+- tick replay SIM은 `simulation_data_unavailable`을 표시한다.
+- 최신 추천이나 고정 fixture를 가상시각의 추천처럼 대신 표시하지 않는다.
+- 추천이 필요하면 cutoff-safe point-in-time 데이터셋을 별도로 준비한 뒤 연결한다.
 
 ### 8. 알림에는 공통 품질 하한을 둔다
 

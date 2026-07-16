@@ -29,7 +29,8 @@ flowchart LR
 The default dev deploy entrypoint is `scripts/aws/deploy-dev-local.sh`. It runs
 from an operator's local machine and deploys the latest remote `origin/dev`
 commit by default, not local uncommitted changes. An explicit `REMOTE_BRANCH`
-may select another remote branch for a validation deploy. It records successful
+may select another remote branch for a validation deploy. `LOCAL_REF` selects a
+committed local ref without pushing it; uncommitted files remain excluded. It records successful
 deploy state per app image in EKS `ConfigMap/gops-dev-deploy-state` using
 `service.<name>.lastSuccessfulSha`, then compares each service's own deployed
 baseline with the selected remote target. This prevents a backend-only deploy from hiding an
@@ -446,15 +447,37 @@ The app overlay declaratively keeps `alert-evaluator` and
 rewrite desired replicas; Git is the source of truth for both workers.
 
 Recommendation rollout accepts the explicit selector
-`RECOMMENDATION_ALGORITHM_VERSION=legacy|professional-v1|continuous-v2`. When it is absent,
+`RECOMMENDATION_ALGORITHM_VERSION=legacy|professional-v1|continuous-v2|deterministic-evidence-v3`.
+When it is absent,
 the existing `RECOMMENDATION_PERSONALIZATION_ENABLED` and
 `RECOMMENDATION_PERSONALIZATION_SHADOW` behavior remains unchanged. `continuous-v2`
 ignores the shadow flag and publishes `algorithmVersion="continuous-personalization-v2"`.
 API and recommendation-worker must receive the same selector.
 
+`deterministic-evidence-v3` is non-predictive and ignores the shadow flag. Before activating
+it, apply migrations `0013` and `0014` after `0012`; verify canonical cutoff-safe candles, quotes/spreads,
+tradability, news metadata, fundamentals, benchmark data, universe membership, and exchange
+calendar inputs for the complete prepared S&P 500 universe. The API and worker must be able to
+read and write the shared evidence snapshot tables. Rollback only changes the selector; the
+additive evidence rows remain immutable.
+
+Both AWS app overlays declare `ALPACA_BENCHMARK_SYMBOLS=SPY`, subscribe it to bars,
+updated bars, daily bars, and statuses, and inject `alfaka-openai-secret` into the
+recommendation worker. The benchmark remains outside the heatmap/candidate universe. V3
+activation requires 252 SPY completed dailies through the prior day, at least 380 prior-session
+minutes, fresh current data matching in Redis and ClickHouse, and 15 reliability-qualified
+candidates. Failure is `data_not_ready`, never a legacy recommendation. Narrative rollout uses
+`RECOMMENDATION_NARRATIVE_PROVIDER=openai` and optional
+`RECOMMENDATION_NARRATIVE_MODEL`; it falls back to deterministic Korean text without changing rank.
+
+For the staged deploy, keep an explicit container env override at `legacy` while applying the
+image and migrations, replace it with `deterministic-evidence-v3` only after the gates and offline
+replay pass, and validate a newly created 30-minute slot. Rollback sets the same explicit override
+back to `legacy`; migrations `0013`/`0014` and evidence rows remain intact.
+
 A Git merge or push does not deploy this selector, application image, or database migration.
 Use the manual dev/test deploy workflow and treat the following as hard activation gates:
-the backend and recommendation-worker run the merged image, migrations `0011` and `0012`
+the backend and recommendation-worker run the merged image, migrations `0011` through `0014`
 are present, and SPY plus the candidate universe have the required completed daily and prior
 regular-session minute candles. The timestamped live AWS audit, measured gaps, backfill
 commands, portfolio/fill requirements, and verification order are maintained in
@@ -1143,19 +1166,29 @@ AGENT_EXPANDED_RETRIEVAL_DEADLINE_MS
 AGENT_SNAPSHOT_TOTAL_DEADLINE_MS
 ```
 
-## On-demand Saturday Simulator
+## On-demand Tick Replay Simulator
 
-`gops-simulator`는 평소 `replicas: 0`이다. 시연 시작 스크립트는 이 deployment를
-1개로 올린 뒤 SIP ingestor의 symbols를 `AMD,IFF,OKE`, channels를 `trades,quotes`로
-바꾼다. 같은 실행에서 `alfaka-market-processor`와 `gops-backend`의
-`ORDER_FLOW_PINNED_SYMBOLS`를 세 종목으로 바꾸고
-`trade-condition-executor`의 `TRADE_CONDITION_EXECUTION_MODE`를 `paper`로 바꾼다.
-따라서 footprint/order-flow와 영구 가상 예약매매가 같은 합성 호가를 사용한다.
+`gops-simulator`는 평소 `replicas: 0`이다. 실제 원본은 S3의
+`simulator/replay/v1/dataset=sp500-top20-20260715-kst/` gzip JSONL과 ClickHouse의
+TTL 없는 `simulation_replay_events`, `simulation_replay_candles_1m`에 저장한다.
+manifest hash·크기·종목별 trade/quote 수와 ClickHouse 건수가 모두 일치한 데이터셋만
+`simulation_replay_datasets.status=READY`가 된다.
 
-`scripts/aws/stop-dev-simulator.sh`는 SIP URL·symbols·channels를 live 기본값으로,
-order-flow pins를 `NVDA,AMZN,MU,AAPL,GOOGL`로, trade-condition mode를 `demo`로
-복구하고 simulator를 다시 0개로 내린다. start 중간 실패도 같은 복구를 실행한다.
-시연 종료 뒤 stop 스크립트 실행은 선택 사항이 아니다.
+최초 적재는 `scripts/aws/run-simulator-replay-import.sh`가 suspend 상태의 전용 Job을
+생성한 뒤 실행한다. Job은 `alfaka-market-data-sa`의 S3 권한, 기존 Alpaca·ClickHouse
+Secret을 사용하며 파일별 S3 검증이 끝나면 로컬 gzip을 지워 임시 디스크 사용량을
+제한한다. `READY` 데이터셋이 이미 있으면 다시 수집하지 않는다.
+
+`scripts/aws/start-dev-simulator.sh`는 ClickHouse schema를 idempotent하게 적용하고
+고정 dataset의 `READY`와 0보다 큰 event 수를 확인한 뒤 simulator를 1개로 올린다.
+그 후 backend의 `GOPS_SIMULATOR_URL`과 simulator 전역 mode만 바꾼다. SIP/BOATS
+ingestor, market processor, order-flow pin, 실시간 Redis/Kafka, trade-condition
+deployment는 변경하지 않는다. simulator는 ClickHouse를 chunk 조회하고 실행별 계좌·
+주문·가격조건을 Redis `simulator:replay:run:{runId}`에 저장한다.
+
+`scripts/aws/stop-dev-simulator.sh`는 LIVE mode로 전환하고 해당 Redis run namespace를
+정리한 뒤 backend URL을 제거하고 simulator를 0개로 내린다. 시작 중 실패해도 같은
+범위만 복구하며 실시간 시장 상태의 backup/restore는 수행하지 않는다.
 
 ## Smoke Checks
 

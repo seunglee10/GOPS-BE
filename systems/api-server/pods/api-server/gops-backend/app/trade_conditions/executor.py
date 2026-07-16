@@ -34,6 +34,8 @@ class TradeConditionExecutionBlocked(RuntimeError):
 def process_trigger_event(app: Any, payload: dict[str, Any], *, mode: str | None = None) -> dict[str, Any]:
     if not isinstance(payload, dict) or payload.get("type") != "alert.price_cross":
         return {"status": "ignored", "reason": "unsupported_event"}
+    if _simulation_replay_active(app):
+        return {"status": "ignored", "reason": "simulation_replay_active"}
     try:
         alert_id = int(payload.get("alertId"))
     except (TypeError, ValueError):
@@ -143,6 +145,22 @@ def _order_payload(condition: dict[str, Any]) -> dict[str, Any]:
 
 def _execution_key(condition: dict[str, Any]) -> str:
     return f"trade-condition:{condition['id']}:trigger:{condition.get('version', 1)}"
+
+
+def _simulation_replay_active(app: Any) -> bool:
+    redis_url = os.getenv("REDIS_URL", "").strip()
+    if not redis_url:
+        return False
+    client = getattr(app.state, "simulation_replay_redis", None)
+    try:
+        if client is None:
+            import redis
+
+            client = redis.from_url(redis_url, decode_responses=True)
+            app.state.simulation_replay_redis = client
+        return bool(client.get("simulator:replay:active-run"))
+    except Exception:
+        return False
 
 
 def run() -> None:

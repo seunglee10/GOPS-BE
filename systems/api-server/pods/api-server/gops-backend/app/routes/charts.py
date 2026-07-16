@@ -1,7 +1,8 @@
 import os
+from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 try:
     from pydantic import BaseModel, Field
 except Exception:
@@ -20,6 +21,7 @@ from app.auth.models import AuthenticatedUser
 from app.market_data.compare.service import get_chart_compare_service
 from app.market_data.realtime.active_symbols import ActiveSymbolManager
 from app.market_data.query.service import get_query_service
+from app.routes.simulator import simulator_gateway_from_app, simulator_mode_active
 from app.services.alfaka_market_data import (
     get_market_data_provider,
     hot_symbol_summaries,
@@ -35,6 +37,7 @@ from alfaka.serving.intervals import MAX_CHART_CANDLE_LIMIT
 
 CHART_INTERVAL_PATTERN = "^(1m|5m|10m|1h|4h|1D|1W|1M|1d|1w|1mo|1MO|1month)$"
 CHART_COMPARE_RANGE_PATTERN = "^(1D|1M|6M|1Y|5Y|1d|1m|6m|1y|5y)$"
+SIMULATION_REPLAY_START = datetime(2026, 7, 14, 15, 0, tzinfo=UTC)
 
 
 def positive_int_env(name: str, default: int) -> int:
@@ -72,6 +75,7 @@ class ActiveChartHeartbeatBody(BaseModel):
 
 @router.get("/api/charts/candles")
 def chart_candles(
+    request: Request = None,
     symbol: str = Query(min_length=1, max_length=12),
     interval: str = Query(default="1m", pattern=CHART_INTERVAL_PATTERN),
     ma: str = Query(default=""),
@@ -82,6 +86,20 @@ def chart_candles(
     include_previous_close: bool = Query(default=False, alias="includePreviousClose"),
 ) -> dict[str, Any]:
     try:
+        if request is not None and simulator_mode_active(request.app):
+            replay_limit = limit or PUBLIC_CHART_CANDLE_LIMIT
+            replay = simulator_gateway_from_app(request.app).candles(symbol.upper(), interval, replay_limit)
+            historical = get_query_service().candle_snapshot(
+                symbol,
+                interval,
+                ma,
+                replay_limit,
+                before=before,
+                from_time=from_time,
+                to_time=SIMULATION_REPLAY_START.isoformat().replace("+00:00", "Z"),
+                include_previous_close=include_previous_close,
+            )
+            return _merge_simulation_candles(historical, replay, replay_limit)
         return get_query_service().candle_snapshot(
             symbol,
             interval,
@@ -101,12 +119,25 @@ def chart_candles(
 @router.post("/api/charts/active-symbol")
 def chart_active_symbol_heartbeat(
     body: ActiveChartHeartbeatBody,
+    request: Request = None,
     user: AuthenticatedUser | None = Depends(optional_current_user),
 ) -> dict[str, Any]:
     try:
         symbol = normalize_market_symbol(body.symbol)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if request is not None and simulator_mode_active(request.app):
+        available = simulator_gateway_from_app(request.app).symbols(symbol, 100).get("symbols", [])
+        if not any(str(item.get("symbol") or "").upper() == symbol for item in available if isinstance(item, dict)):
+            raise HTTPException(status_code=404, detail="symbol is not available in the active replay dataset")
+        return {
+            "symbol": symbol,
+            "sessionId": body.sessionId or "chart-simulation-http",
+            "ttlSeconds": body.ttlSeconds or 60,
+            "layers": ["candles", "trades", "quotes"],
+            "pendingReconcile": False,
+            "simulation": True,
+        }
     provider = get_market_data_provider()
     redis_client = getattr(getattr(provider, "redis_provider", None), "redis", None)
     if redis_client is None:
@@ -216,11 +247,17 @@ def chart_portfolio_subscription_cohort(body: SymbolListRequestBody, user: Authe
 
 @router.get("/api/charts/symbols")
 def chart_symbols(
+    request: Request = None,
     query: str | None = Query(default=None, max_length=120),
     limit: int = Query(default=20, ge=1, le=100),
 ) -> dict[str, Any]:
     # 프론트의 심볼 목록/요약 영역이 호출합니다.
     # 검색 후보는 현재 universe 기준이며, 최신 가격은 Redis/ClickHouse에서 보완합니다.
+    if request is not None and simulator_mode_active(request.app):
+        try:
+            return simulator_gateway_from_app(request.app).symbols(query or "", limit)
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {
         "source": "alpaca",
         "feed": "configured-market-feed",
@@ -232,3 +269,41 @@ def parse_symbol_csv(value: str | None) -> list[str]:
     if not value:
         return []
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _merge_simulation_candles(
+    historical: dict[str, Any],
+    replay: dict[str, Any],
+    limit: int,
+) -> dict[str, Any]:
+    merged: dict[str, dict[str, Any]] = {}
+    for candle in historical.get("candles") or []:
+        if not isinstance(candle, dict):
+            continue
+        timestamp = _candle_timestamp(candle)
+        if timestamp is not None and timestamp < SIMULATION_REPLAY_START:
+            merged[str(candle.get("timestamp"))] = candle
+    for candle in replay.get("candles") or []:
+        if isinstance(candle, dict) and candle.get("timestamp"):
+            merged[str(candle["timestamp"])] = candle
+    candles = sorted(merged.values(), key=lambda item: _candle_timestamp(item) or datetime.min.replace(tzinfo=UTC))[-limit:]
+    return {
+        **historical,
+        **replay,
+        "simulation": True,
+        "candles": candles,
+        "futureDataCutoff": replay.get("asOf"),
+    }
+
+
+def _candle_timestamp(candle: dict[str, Any]) -> datetime | None:
+    value = str(candle.get("timestamp") or "").strip()
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith("Z") else value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)

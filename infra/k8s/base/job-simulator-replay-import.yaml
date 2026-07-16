@@ -1,0 +1,71 @@
+# 역할: 실제 Alpaca 틱을 S3와 ClickHouse에 한 번 적재하는 수동 실행 Job 템플릿입니다.
+# 기본 suspend=true이며 scripts/aws/run-simulator-replay-import.sh만 실행을 해제합니다.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gops-simulator-replay-import
+  namespace: alfaka-market-data
+spec:
+  suspend: true
+  backoffLimit: 0
+  activeDeadlineSeconds: 86400
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels:
+        app: gops-simulator-replay-import
+    spec:
+      serviceAccountName: alfaka-market-data-sa
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: replay-import
+          image: YOUR_ECR_REPOSITORY/gops-simulator:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "-m", "gops_simul.tools.import_alpaca"]
+          args:
+            - --fixed-dataset
+            - --clickhouse-url
+            - http://clickhouse:8123
+            - --data-root
+            - /data
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-alpaca-secret
+                optional: false
+            - secretRef:
+                name: alfaka-clickhouse-secret
+                optional: false
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+              ephemeral-storage: 4Gi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+              ephemeral-storage: 20Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: replay-work
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: replay-work
+          emptyDir:
+            sizeLimit: 20Gi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

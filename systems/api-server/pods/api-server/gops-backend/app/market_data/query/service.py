@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from collections import OrderedDict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -187,6 +187,108 @@ class MarketDataQueryService:
             "years": years,
             "items": [point.to_public_dict() for point in series],
         }
+
+    def chart_events(
+        self,
+        symbol: str,
+        from_time: str,
+        to_time: str,
+        *,
+        locale: str = "ko-KR",
+        upcoming_days: int = 90,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        try:
+            symbol = normalize_market_symbol(symbol)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        range_from = parse_chart_event_datetime(from_time, "from")
+        range_to = parse_chart_event_datetime(to_time, "to")
+        if range_to <= range_from:
+            raise HTTPException(status_code=400, detail="to must be later than from")
+        if not is_supported_news_locale(locale):
+            raise HTTPException(status_code=400, detail=f"Invalid locale: {locale}")
+        upcoming_days = max(1, min(int(upcoming_days), 365))
+        reference = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        clickhouse_provider = getattr(self.provider, "clickhouse_provider", None)
+
+        news_rows = self._chart_news_rows(
+            clickhouse_provider,
+            symbol,
+            range_from.astimezone(MARKET_TIMEZONE).date().isoformat(),
+            range_to.astimezone(MARKET_TIMEZONE).date().isoformat(),
+            locale,
+        )
+        news_days = chart_news_days_from_rows(symbol, news_rows)
+
+        earnings_rows: list[dict[str, Any]] = []
+        earnings_query_failed = False
+        if symbol in set(sp500_universe_symbols(fallback_to_configured=False)):
+            query_from = min(range_from, reference)
+            query_to = max(range_to, reference + timedelta(days=upcoming_days))
+            method = getattr(clickhouse_provider, "earnings_events", None)
+            if callable(method):
+                try:
+                    earnings_rows = [
+                        row for row in method(symbol, chart_event_iso(query_from), chart_event_iso(query_to)) or []
+                        if isinstance(row, dict)
+                    ]
+                except Exception:
+                    earnings_query_failed = True
+            else:
+                earnings_query_failed = True
+
+        normalized_earnings = chart_earnings_from_rows(symbol, earnings_rows)
+        visible_earnings = [
+            item for item in normalized_earnings
+            if range_from <= parse_chart_event_datetime(item["eventAt"], "eventAt") <= range_to
+        ]
+        upcoming = next((
+            item for item in normalized_earnings
+            if item["status"] == "scheduled"
+            and reference <= parse_chart_event_datetime(item["eventAt"], "eventAt") <= reference + timedelta(days=upcoming_days)
+        ), None)
+        source_times = [
+            parse_chart_event_datetime(item["sourceAsOf"], "sourceAsOf")
+            for item in normalized_earnings
+            if item.get("sourceAsOf")
+        ]
+        earnings_status = "empty"
+        if earnings_query_failed:
+            earnings_status = "stale"
+        elif normalized_earnings:
+            latest_source = max(source_times) if source_times else None
+            earnings_status = "stale" if latest_source and reference - latest_source > timedelta(days=7) else "ready"
+
+        return {
+            "symbol": symbol,
+            "from": chart_event_iso(range_from),
+            "to": chart_event_iso(range_to),
+            "status": {
+                "earnings": earnings_status,
+                "news": "ready" if news_days else "empty",
+            },
+            "earnings": visible_earnings,
+            "newsDays": news_days,
+            "upcomingEarnings": chart_upcoming_earnings(upcoming, reference) if upcoming else None,
+        }
+
+    def _chart_news_rows(
+        self,
+        clickhouse_provider: Any,
+        symbol: str,
+        from_date: str,
+        to_date: str,
+        locale: str,
+    ) -> list[dict[str, Any]]:
+        method = getattr(clickhouse_provider, "company_daily_news_summaries_between", None)
+        if not callable(method):
+            return []
+        try:
+            rows = method(symbol, from_date, to_date, limit=370, locale=locale)
+        except Exception:
+            return []
+        return [row for row in rows or [] if isinstance(row, dict)]
 
     def indices(self, background_tasks=None) -> dict[str, Any]:
         try:
@@ -1144,3 +1246,173 @@ def read_string_list(value: Any) -> list[str]:
         if text and text.upper() not in symbols:
             symbols.append(text.upper())
     return symbols
+
+
+def parse_chart_event_datetime(value: Any, field: str) -> datetime:
+    text = read_string(value)
+    if not text:
+        raise HTTPException(status_code=400, detail=f"{field} must be an ISO-8601 timestamp")
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"{field} must be an ISO-8601 timestamp") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def chart_event_iso(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def is_supported_news_locale(locale: str) -> bool:
+    parts = str(locale or "").split("-")
+    return len(parts) in {1, 2} and len(parts[0]) == 2 and parts[0].islower() and (
+        len(parts) == 1 or (len(parts[1]) == 2 and parts[1].isupper())
+    )
+
+
+def chart_news_days_from_rows(symbol: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        summary = clickhouse_row_to_daily_summary(row)
+        day = str(summary.get("date") or "")[:10]
+        if not day:
+            continue
+        current = grouped.get(day)
+        article_ids = {
+            str(item) for item in summary.get("articleIds") or [] if str(item).strip()
+        }
+        sources = dedupe_chart_news_sources(summary.get("sources") or [])
+        item = {
+            "id": f"news:{symbol}:{day}",
+            "type": "news",
+            "date": day,
+            "articleCount": max(int(summary.get("articleCount") or 0), len(article_ids), len(sources)),
+            "summary": str(summary.get("summary") or ""),
+            "keyPoints": [str(point) for point in summary.get("keyPoints") or [] if str(point).strip()][:6],
+            "impactDirection": normalize_chart_news_direction(summary.get("impactDirection")),
+            "sentiment": str(summary.get("sentiment") or "neutral"),
+            "sources": sources,
+            "_articleIds": article_ids,
+            "_generatedAt": str(summary.get("generatedAt") or ""),
+        }
+        if current is None:
+            grouped[day] = item
+            continue
+        merged_ids = set(current.get("_articleIds") or set()) | article_ids
+        merged_sources = dedupe_chart_news_sources([*(current.get("sources") or []), *sources])
+        if item["_generatedAt"] >= current.get("_generatedAt", ""):
+            current.update({
+                "summary": item["summary"],
+                "keyPoints": item["keyPoints"],
+                "impactDirection": item["impactDirection"],
+                "sentiment": item["sentiment"],
+                "_generatedAt": item["_generatedAt"],
+            })
+        current["_articleIds"] = merged_ids
+        current["sources"] = merged_sources
+        current["articleCount"] = max(current["articleCount"], item["articleCount"], len(merged_ids), len(merged_sources))
+    return [
+        {key: value for key, value in grouped[day].items() if not key.startswith("_")}
+        for day in sorted(grouped)
+    ]
+
+
+def dedupe_chart_news_sources(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        title = read_string(source.get("title"))
+        url = read_string(source.get("url"))
+        if not title or not url:
+            continue
+        article_id = read_string(source.get("articleId")) or read_string(source.get("article_id"))
+        key = article_id or url
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append({
+            **({"articleId": article_id} if article_id else {}),
+            "title": title,
+            **({"name": name} if (name := read_string(source.get("name") or source.get("source"))) else {}),
+            "url": url,
+            **({"publishedAt": published_at} if (published_at := read_string(source.get("publishedAt") or source.get("published_at"))) else {}),
+        })
+        if len(result) >= 3:
+            break
+    return result
+
+
+def normalize_chart_news_direction(value: Any) -> str:
+    normalized = str(value or "neutral").strip().lower()
+    return normalized if normalized in {"positive", "negative", "mixed", "neutral"} else "neutral"
+
+
+def chart_earnings_from_rows(symbol: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        event_text = read_string(row.get("eventAt") or row.get("event_at"))
+        if not event_text:
+            continue
+        try:
+            event_at = chart_event_iso(parse_chart_event_datetime(event_text, "eventAt"))
+        except HTTPException:
+            continue
+        actual = chart_float(row.get("actualValue") if "actualValue" in row else row.get("actual_value"))
+        estimate = chart_float(row.get("estimate") if "estimate" in row else row.get("average"))
+        surprise = actual - estimate if actual is not None and estimate is not None else None
+        surprise_percent = chart_float(row.get("surprisePercent") if "surprisePercent" in row else row.get("surprise_percent"))
+        if surprise_percent is None and surprise is not None and estimate not in {None, 0}:
+            surprise_percent = surprise / abs(estimate) * 100
+        status = str(row.get("eventStatus") or row.get("event_status") or "").strip().lower()
+        status = "reported" if actual is not None or status == "reported" else "scheduled"
+        session = str(row.get("eventSession") or row.get("event_session") or "unknown").strip().lower()
+        if session not in {"pre", "after", "regular", "unknown"}:
+            session = "unknown"
+        source_as_of_text = read_string(row.get("sourceAsOf") or row.get("source_as_of") or row.get("collectedAt")) or event_at
+        try:
+            source_as_of = chart_event_iso(parse_chart_event_datetime(source_as_of_text, "sourceAsOf"))
+        except HTTPException:
+            source_as_of = event_at
+        item = {
+            "id": f"earnings:{symbol}:{event_at}",
+            "type": "earnings",
+            "eventAt": event_at,
+            "status": status,
+            "session": session,
+            "eps": {
+                "actual": actual,
+                "estimate": estimate,
+                "surprise": surprise,
+                "surprisePercent": surprise_percent,
+            },
+            "source": str(row.get("source") or "yahoo-finance"),
+            "sourceAsOf": source_as_of,
+        }
+        current = deduped.get(event_at)
+        if current is None or item["sourceAsOf"] >= current["sourceAsOf"]:
+            deduped[event_at] = item
+    return [deduped[key] for key in sorted(deduped)]
+
+
+def chart_upcoming_earnings(item: dict[str, Any], reference: datetime) -> dict[str, Any]:
+    event_at = parse_chart_event_datetime(item["eventAt"], "eventAt")
+    days_remaining = max(0, (event_at.astimezone(MARKET_TIMEZONE).date() - reference.astimezone(MARKET_TIMEZONE).date()).days)
+    return {
+        "eventAt": item["eventAt"],
+        "session": item["session"],
+        "estimate": item["eps"]["estimate"],
+        "daysRemaining": days_remaining,
+        "sourceAsOf": item["sourceAsOf"],
+    }
+
+
+def chart_float(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number == number and number not in {float("inf"), float("-inf")} else None

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 역할: 로컬 컴퓨터에서 origin/dev 기준으로 변경된 GOPS 서비스만 EKS dev에 배포합니다.
+# 역할: 원격 dev 또는 명시한 로컬 commit 기준으로 변경된 GOPS 서비스만 EKS dev에 배포합니다.
 set -euo pipefail
 
 AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-<aws-account-id>}"
@@ -12,6 +12,7 @@ PLATFORM_KUSTOMIZE_OVERLAY="${PLATFORM_KUSTOMIZE_OVERLAY:-infra/k8s/base/platfor
 DEPLOY_STATE_CONFIGMAP="${DEPLOY_STATE_CONFIGMAP:-gops-dev-deploy-state}"
 REMOTE_NAME="${REMOTE_NAME:-origin}"
 REMOTE_BRANCH="${REMOTE_BRANCH:-dev}"
+LOCAL_REF="${LOCAL_REF:-}"
 FORCE_SERVICES="${FORCE_SERVICES:-}"
 RUN_ORDER_MIGRATIONS="${RUN_ORDER_MIGRATIONS:-false}"
 RUN_CHART_ASSET_MIGRATIONS="${RUN_CHART_ASSET_MIGRATIONS:-false}"
@@ -26,6 +27,7 @@ WORKTREE_PARENT="${LOCAL_DEPLOY_WORKTREE_PARENT:-${TMPDIR:-/tmp}}"
 WORKTREE_DIR=""
 DEPLOY_STATE_JSON_FILE=""
 TARGET_SHA=""
+DEPLOY_TARGET_REF=""
 SELECTED_SERVICES=""
 SELECTED_DEPLOYMENTS=""
 APP_APPLIED="false"
@@ -38,6 +40,7 @@ Usage:
 
 Optional environment variables:
   REMOTE_BRANCH=branch-name              Deploy latest origin/<branch>; defaults to dev.
+  LOCAL_REF=dev                          Deploy a committed local ref without pushing it.
   FORCE_SERVICES=all|frontend,backend   Override automatic diff detection.
   DRY_RUN=true                          Resolve target/diff and server-side dry-run only.
   RUN_ORDER_MIGRATIONS=true             Legacy force switch; requires order-worker selected.
@@ -46,8 +49,8 @@ Optional environment variables:
   APPLY_PLATFORM_MANIFESTS=true         Apply dedicated platform manifests before app workloads.
   CHART_INTERPRETATION_ONLY=true        Roll out only frontend and chart-analysis consumers.
 
-The deploy target is the latest origin/<REMOTE_BRANCH> commit. REMOTE_BRANCH
-defaults to dev. Local uncommitted changes are not included in the build.
+The deploy target is the latest origin/<REMOTE_BRANCH> commit unless LOCAL_REF
+is set. Local uncommitted changes are never included in the build.
 Order migrations run automatically before rollout whenever order-worker is
 selected. Selecting agent-orchestrator also selects the migration image.
 CHART_INTERPRETATION_ONLY requires FORCE_SERVICES=frontend,agent-orchestrator.
@@ -137,7 +140,7 @@ write_state_configmap() {
   fi
 
   patch_payload="$(
-    python3 - "${TARGET_SHA}" "${IMAGE_TAG}" "${deployed_at}" "${actor}" "${SELECTED_SERVICES}" "${mode}" "${REMOTE_NAME}/${REMOTE_BRANCH}" <<'PY'
+    python3 - "${TARGET_SHA}" "${IMAGE_TAG}" "${deployed_at}" "${actor}" "${SELECTED_SERVICES}" "${mode}" "${DEPLOY_TARGET_REF}" <<'PY'
 import json
 import sys
 
@@ -199,9 +202,16 @@ preflight() {
 
 fetch_target() {
   cd "${REPO_ROOT}"
+  if [[ -n "${LOCAL_REF}" ]]; then
+    TARGET_SHA="$(git rev-parse --verify "${LOCAL_REF}^{commit}")"
+    DEPLOY_TARGET_REF="local:${LOCAL_REF}"
+    printf 'Deploy target: %s %s\n' "${DEPLOY_TARGET_REF}" "${TARGET_SHA}"
+    return 0
+  fi
   printf 'Fetching %s/%s...\n' "${REMOTE_NAME}" "${REMOTE_BRANCH}"
   git fetch "${REMOTE_NAME}" "+${REMOTE_BRANCH}:refs/remotes/${REMOTE_NAME}/${REMOTE_BRANCH}"
   TARGET_SHA="$(git rev-parse "refs/remotes/${REMOTE_NAME}/${REMOTE_BRANCH}^{commit}")"
+  DEPLOY_TARGET_REF="${REMOTE_NAME}/${REMOTE_BRANCH}"
   printf 'Deploy target: %s/%s %s\n' "${REMOTE_NAME}" "${REMOTE_BRANCH}" "${TARGET_SHA}"
 }
 
@@ -384,7 +394,7 @@ service_needs_deploy() {
     return 0
   fi
   if ! git -C "${WORKTREE_DIR}" merge-base --is-ancestor "${base_sha}" "${TARGET_SHA}"; then
-    printf 'Service %s baseline is not an ancestor of origin/dev; selecting it: %s\n' "${service}" "${base_sha}"
+    printf 'Service %s baseline is not an ancestor of the deploy target; selecting it: %s\n' "${service}" "${base_sha}"
     return 0
   fi
 
@@ -764,7 +774,7 @@ main() {
   apply_platform_if_requested
 
   if [[ -z "${SELECTED_SERVICES}" ]]; then
-    printf 'No app service changes detected for %s. Nothing to deploy.\n' "${TARGET_SHA}"
+    printf 'No app service changes detected for %s. Nothing to deploy.\n' "${DEPLOY_TARGET_REF}"
     STATE_UPDATE_MODE="skipped-no-service"
     if ! is_true "${DRY_RUN}"; then
       write_state_configmap "${STATE_UPDATE_MODE}"
@@ -813,7 +823,7 @@ main() {
     write_state_configmap "${STATE_UPDATE_MODE}"
   fi
 
-  printf 'Local dev deploy completed for %s (%s): %s\n' "${REMOTE_NAME}/${REMOTE_BRANCH}" "${TARGET_SHA}" "${SELECTED_SERVICES}"
+  printf 'Local dev deploy completed for %s (%s): %s\n' "${DEPLOY_TARGET_REF}" "${TARGET_SHA}" "${SELECTED_SERVICES}"
 }
 
 main "$@"

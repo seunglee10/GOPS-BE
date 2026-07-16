@@ -4,6 +4,68 @@
 
 CREATE DATABASE IF NOT EXISTS market_data;
 
+CREATE TABLE IF NOT EXISTS market_data.simulation_replay_datasets
+(
+    dataset_id String,
+    status LowCardinality(String),
+    start_time DateTime64(9, 'UTC'),
+    end_time DateTime64(9, 'UTC'),
+    total_events UInt64,
+    total_trades UInt64,
+    total_quotes UInt64,
+    manifest String,
+    updated_at DateTime64(3, 'UTC') DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY dataset_id;
+
+CREATE TABLE IF NOT EXISTS market_data.simulation_replay_staging
+(
+    dataset_id String,
+    event_time DateTime64(9, 'UTC'),
+    source_file String,
+    source_sequence UInt64,
+    symbol LowCardinality(String),
+    event_type LowCardinality(String),
+    feed LowCardinality(String),
+    payload String
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(event_time)
+ORDER BY (dataset_id, event_time, source_file, source_sequence);
+
+CREATE TABLE IF NOT EXISTS market_data.simulation_replay_events
+(
+    dataset_id String,
+    event_time DateTime64(9, 'UTC'),
+    sequence UInt64,
+    symbol LowCardinality(String),
+    event_type LowCardinality(String),
+    feed LowCardinality(String),
+    payload String,
+    inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(event_time)
+ORDER BY (dataset_id, sequence);
+
+CREATE TABLE IF NOT EXISTS market_data.simulation_replay_candles_1m
+(
+    dataset_id String,
+    event_time DateTime64(3, 'UTC'),
+    symbol LowCardinality(String),
+    open Float64,
+    high Float64,
+    low Float64,
+    close Float64,
+    volume Float64,
+    trade_count UInt64,
+    inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(inserted_at)
+PARTITION BY toYYYYMM(event_time)
+ORDER BY (dataset_id, symbol, event_time);
+
 CREATE TABLE IF NOT EXISTS market_data.trade_ticks
 (
     event_time DateTime64(3, 'UTC'),

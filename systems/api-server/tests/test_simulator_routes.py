@@ -2,6 +2,8 @@ import os
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -30,11 +32,18 @@ class FakeSimulatorGateway:
         return {
             "available": True,
             "mode": self.mode,
-            "state": "running" if self.mode == "simulation" else "idle",
-            "elapsedSeconds": 0,
-            "durationSeconds": 300,
-            "breakingNewsAtSeconds": 5,
-            "breakingNewsReleased": False,
+            "state": "ready" if self.mode == "simulation" else "idle",
+            "datasetId": "sp500-top20-20260715-kst-v1",
+            "runId": "run-1" if self.mode == "simulation" else None,
+            "virtualTime": "2026-07-15T00:00:00+09:00",
+            "startTime": "2026-07-15T00:00:00+09:00",
+            "endTime": "2026-07-16T00:00:00+09:00",
+            "requestedSpeed": 1,
+            "effectiveSpeed": 0,
+            "processedEventCount": 0,
+            "totalEventCount": 10,
+            "progress": 0,
+            "lagMs": 0,
             "symbols": [],
         }
 
@@ -49,15 +58,34 @@ class FakeSimulatorGateway:
         self.calls.append(("action", action))
         return self.status()
 
-    def set_phase(self, phase):
-        self.calls.append(("phase", phase))
-        return {**self.status(), "phase": phase, "phaseIndex": 6}
+    def set_speed(self, speed):
+        self.calls.append(("speed", speed))
+        return {**self.status(), "requestedSpeed": speed}
+
+    def quote(self, symbol):
+        self.calls.append(("quote", symbol))
+        return {"symbol": symbol, "bid": 99.0, "ask": 100.0, "runId": "run-1"}
+
+    def candles(self, symbol, interval, limit):
+        self.calls.append(("candles", symbol, interval, limit))
+        return {
+            "symbol": symbol,
+            "interval": interval,
+            "simulation": True,
+            "asOf": "2026-07-14T15:01:00Z",
+            "candles": [{"timestamp": "2026-07-14T15:00:00Z", "close": 100.0}],
+        }
+
+    def symbols(self, query="", limit=100):
+        self.calls.append(("symbols", query, limit))
+        return {"source": "simulation_replay", "symbols": [{"symbol": "NVDA"}]}
 
     def account(self, user_id):
         self.calls.append(("account", user_id))
         return {
             "status": "ok",
             "source": "gops-simulator",
+            "virtualTime": "2026-07-15T00:00:00+09:00",
             "account": {"alias": "반도체 집중형 · SIMULATED", "currency": "USD", "cashForeign": 100},
             "positions": {
                 "NVDA": {"symbol": "NVDA", "quantity": 100, "sector": "Information Technology"},
@@ -67,16 +95,33 @@ class FakeSimulatorGateway:
             "limitations": ["simulation only"],
         }
 
-    def basket_order(self, *, user_id, basket, side):
-        self.calls.append(("basket", user_id, basket, side))
-        return {"orders": [{"order_id": "sim-basket", "status": "filled", "simulation": True}], "account": self.account(user_id)}
+    def individual_order(self, *, user_id, symbol, side, quantity, order_type, limit_price, idempotency_key):
+        self.calls.append(("individual", user_id, symbol, side, quantity, order_type, limit_price, idempotency_key))
+        return {"order": {"order_id": "sim-one", "status": "filled", "symbol": symbol, "side": side, "qty": str(quantity), "order_type": order_type, "simulation": True}}
 
-    def individual_order(self, *, user_id, symbol, side, quantity):
-        self.calls.append(("individual", user_id, symbol, side, quantity))
-        return {"order": {"order_id": "sim-one", "status": "filled", "symbol": symbol, "side": side, "qty": str(quantity), "simulation": True}}
+    def order(self, user_id, order_id):
+        self.calls.append(("order", user_id, order_id))
+        return {"order_id": order_id, "status": "filled", "simulation": True, "runId": "run-1"}
 
-    def news(self):
-        return {"news": [], "next_page_token": None}
+    def order_events(self, user_id, order_id):
+        self.calls.append(("order-events", user_id, order_id))
+        return {"order_id": order_id, "events": [{"status": "accepted"}, {"status": "filled"}]}
+
+    def conditions(self, user_id):
+        self.calls.append(("conditions", user_id))
+        return {"conditions": [], "runId": "run-1"}
+
+    def create_condition(self, user_id, payload):
+        self.calls.append(("create-condition", user_id, payload))
+        return {"condition": {"id": 1, **payload}, "runId": "run-1"}
+
+    def update_condition(self, user_id, condition_id, payload):
+        self.calls.append(("update-condition", user_id, condition_id, payload))
+        return {"condition": {"id": condition_id, **payload}, "runId": "run-1"}
+
+    def delete_condition(self, user_id, condition_id):
+        self.calls.append(("delete-condition", user_id, condition_id))
+        return {"deleted": True, "condition": {"id": condition_id}, "runId": "run-1"}
 
 
 class FakeSimulatorMarketStateManager:
@@ -100,7 +145,6 @@ class SimulatorRoutesTest(unittest.TestCase):
         self.repository = InMemoryOrderRepository()
         self.app = create_app()
         self.app.state.simulator_gateway = self.gateway
-        self.app.state.simulator_market_state_manager = FakeSimulatorMarketStateManager(self.trace)
         self.app.state.order_repository = self.repository
         self.client = TestClient(self.app)
 
@@ -116,27 +160,22 @@ class SimulatorRoutesTest(unittest.TestCase):
         self.assertEqual(stopped.status_code, 200)
         self.assertEqual(stopped.json()["mode"], "live")
         self.assertEqual(self.gateway.calls, [("mode", "simulation"), ("mode", "live")])
-        self.assertEqual(
-            self.trace,
-            [
-                ("market-state", "capture"),
-                ("gateway", "simulation"),
-                ("gateway", "live"),
-                ("market-state", "restore"),
-            ],
-        )
+        self.assertEqual(self.trace, [("gateway", "simulation"), ("gateway", "live")])
 
-    def test_operator_can_jump_to_a_demo_phase_from_the_frontend(self):
+    def test_operator_can_change_replay_speed(self):
         self.gateway.mode = "simulation"
 
         response = self.client.put(
-            "/api/simulator/phase",
-            json={"phase": "breaking-event"},
+            "/api/simulator/speed",
+            json={"speed": 300},
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["phase"], "breaking-event")
-        self.assertIn(("phase", "breaking-event"), self.gateway.calls)
+        self.assertEqual(response.json()["requestedSpeed"], 300)
+        self.assertIn(("speed", 300), self.gateway.calls)
+
+        invalid = self.client.put("/api/simulator/speed", json={"speed": 2})
+        self.assertEqual(invalid.status_code, 422)
 
     def test_simulation_holdings_replace_kis_with_semiconductor_dummy_account(self):
         self.gateway.mode = "simulation"
@@ -148,6 +187,7 @@ class SimulatorRoutesTest(unittest.TestCase):
         self.assertEqual(payload["source"], "gops-simulator")
         self.assertEqual({item["symbol"] for item in payload["positions"]}, {"NVDA", "AMD"})
         self.assertIn("SIMULATED", payload["account"]["alias"])
+        self.assertEqual(payload["asOf"], "2026-07-15T00:00:00+09:00")
 
     def test_kis_holdings_source_bypasses_simulation_account(self):
         class FakeKisClient:
@@ -170,20 +210,7 @@ class SimulatorRoutesTest(unittest.TestCase):
         self.assertEqual(response.json()["positions"][0]["symbol"], "AAPL")
         self.assertNotIn(("account", "dev-auth-disabled"), self.gateway.calls)
 
-    def test_manual_basket_order_is_filled_only_after_the_user_request(self):
-        self.gateway.mode = "simulation"
-
-        response = self.client.post(
-            "/api/simulator/orders/basket",
-            headers={"Idempotency-Key": "manual-sell"},
-            json={"basket": "semiconductor", "side": "sell"},
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertTrue(response.json()["orders"][0]["simulation"])
-        self.assertIn(("basket", "dev-auth-disabled", "semiconductor", "sell"), self.gateway.calls)
-
-    def test_standard_order_route_uses_dummy_ledger_in_simulation_mode(self):
+    def test_standard_order_route_forwards_limit_order_to_replay_ledger(self):
         self.gateway.mode = "simulation"
 
         response = self.client.post(
@@ -196,7 +223,86 @@ class SimulatorRoutesTest(unittest.TestCase):
         self.assertEqual(response.json()["status"], "filled")
         self.assertTrue(response.json()["simulation"])
         self.assertEqual(self.repository.orders, {})
-        self.assertIn(("individual", "dev-auth-disabled", "XOM", "buy", 3), self.gateway.calls)
+        self.assertIn(("individual", "dev-auth-disabled", "XOM", "buy", 3, "limit", 140.0, "manual-one"), self.gateway.calls)
+
+    def test_market_order_does_not_require_a_price_in_simulation_mode(self):
+        self.gateway.mode = "simulation"
+
+        response = self.client.post(
+            "/api/orders",
+            headers={"Idempotency-Key": "market-one"},
+            json={
+                "market": "overseas",
+                "symbol": "NVDA",
+                "side": "buy",
+                "qty": "2",
+                "exchange": "NASD",
+                "order_type": "market",
+            },
+        )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["order_type"], "market")
+        self.assertIn(("individual", "dev-auth-disabled", "NVDA", "buy", 2, "market", None, "market-one"), self.gateway.calls)
+
+    def test_simulation_chart_and_symbol_routes_only_use_replay_gateway(self):
+        self.gateway.mode = "simulation"
+
+        historical = {
+            "candles": [
+                {"timestamp": "2026-07-14T14:59:00Z", "close": 99.0},
+                {"timestamp": "2026-07-15T15:01:00Z", "close": 999.0},
+            ]
+        }
+        with patch(
+            "app.routes.charts.get_query_service",
+            return_value=SimpleNamespace(candle_snapshot=lambda *_args, **_kwargs: historical),
+        ):
+            candles = self.client.get("/api/charts/candles?symbol=NVDA&interval=1m&limit=20")
+        symbols = self.client.get("/api/charts/symbols?query=NV&limit=20")
+
+        self.assertEqual(candles.status_code, 200)
+        self.assertTrue(candles.json()["simulation"])
+        self.assertEqual(candles.json()["candles"][-1]["timestamp"], "2026-07-14T15:00:00Z")
+        self.assertNotIn("2026-07-15T15:01:00Z", [item["timestamp"] for item in candles.json()["candles"]])
+        self.assertEqual(symbols.json()["symbols"], [{"symbol": "NVDA"}])
+        self.assertIn(("candles", "NVDA", "1m", 20), self.gateway.calls)
+        self.assertIn(("symbols", "NV", 20), self.gateway.calls)
+
+    def test_simulation_order_history_and_trade_conditions_stay_in_run_ledger(self):
+        self.gateway.mode = "simulation"
+
+        order = self.client.get("/api/orders/sim-one")
+        events = self.client.get("/api/orders/sim-one/events")
+        listed = self.client.get("/api/trade-conditions")
+        created = self.client.post(
+            "/api/trade-conditions",
+            json={
+                "symbol": "NVDA",
+                "side": "buy",
+                "direction": "atOrAbove",
+                "triggerPrice": "101",
+                "limitPrice": "101",
+                "quantity": 1,
+            },
+        )
+        updated = self.client.patch("/api/trade-conditions/1", json={"status": "paused"})
+        deleted = self.client.delete("/api/trade-conditions/1")
+
+        self.assertEqual(order.status_code, 200)
+        self.assertEqual([item["status"] for item in events.json()["events"]], ["accepted", "filled"])
+        self.assertEqual(listed.json()["runId"], "run-1")
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(updated.json()["condition"]["status"], "paused")
+        self.assertTrue(deleted.json()["deleted"])
+
+    def test_point_in_time_unsafe_latest_data_is_blocked(self):
+        self.gateway.mode = "simulation"
+
+        response = self.client.get("/api/market/news/latest?symbol=NVDA")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["detail"], "simulation_data_unavailable")
 
 
 if __name__ == "__main__":

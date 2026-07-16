@@ -17,6 +17,15 @@ patches:
       group: apps
       version: v1
       kind: Deployment
+      name: recommendation-worker
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/envFrom/3/secretRef/optional
+        value: false
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
       name: agent-orchestrator
     patch: |-
       - op: replace
@@ -210,11 +219,11 @@ patches:
         path: /spec/template/spec/containers/0/resources
         value:
           requests:
-            cpu: 50m
-            memory: 64Mi
-          limits:
             cpu: 250m
-            memory: 128Mi
+            memory: 256Mi
+          limits:
+            cpu: "1"
+            memory: 512Mi
   - target:
       kind: Deployment
       name: agent-orchestrator

@@ -24,38 +24,26 @@
 점수, 신뢰도, 지표 스냅샷, 근거, 위험만 읽는다. 새 report/API 계약을 만들거나
 주문을 실행하지 않는다.
 
-토요일 시연에서는 상단 LIVE/SIM 토글과 `다음 시연 단계` 제어가
-`/api/simulator/*`를 사용한다. 상태 응답의 `phases`, `phaseIndex`, `nextPhase`를
-기준으로 `시장 조망 → 지정학 이벤트 → 장 마감·복기`를 이동하며, 임의의 클라이언트
-타이머로 단계를 추정하지 않는다. SIM 전환 직후 AMD와 OKE의 자연스러운 trade/quote가
-흐르고 첫 `다음` 입력은 `breaking-event`로 바로 이동한다.
+상단 LIVE/SIM 컨트롤은 `2026-07-15 KST` 실제 틱 replay를 제어한다. SIM 진입 직후
+`ready` 상태의 재생 버튼은 활성화되어야 하며, KST 가상시각·진행률·요청 배속·실효
+배속과 `재생/일시정지/재시작`을 표시한다. 배속은 `1·5·20·60·300×`이고 서버 status를
+진실의 원천으로 사용한다. phase, 합성 news, basket UI는 없다.
 
-SIM 상태에서 트리맵은 status의 AMD/OKE 가격·등락률을 1초 단위로 반영한다. 기존 시연용
-추천·기업·차트 패널은 발표자가 단계 이동과 별개로 사용한다.
-뉴스 패널은 이벤트 전 빈 결과를 사용하고 이벤트 뒤 `/api/simulator/news`의 속보를
-정상 뉴스 카드로 표시한다. 화면에 보이는 제목·요약·출처에는 시뮬레이션 표기를 넣지
-않지만, API의 내부 합성 데이터 식별 정보는 유지한다. IFF 차트 해설은
-`GlossaryText`를 통해 차트 해설과 Wild 답변에 같은 투자 용어 설명을 제공한다.
-공용 사전은 일반 단어를 주석하지 않고, 처음 보는 투자자에게 필요한 전문용어만
-한 문장으로 설명한다. 장 마감 단계의 AI 코치 fixture도
-`saturday-demo-close-report`로 표시해 실제 저장 report와 혼동하지 않는다.
+상태는 실행 중 1초, LIVE·ready·paused·completed·연결 불가에서는 30초 간격으로
+확인한다. 이전 요청이 끝난 뒤 다음 요청을 예약하고 숨겨진 브라우저 탭에서는 polling을
+멈춘다. `mode` 또는 `runId`가 바뀌면 analysis/derived request cache, 차트 런타임,
+WebSocket 컴포넌트, 포트폴리오 snapshot을 초기화한다. 이 규칙은 LIVE 전환뿐 아니라
+SIM 재시작에도 적용되어 이전 실행의 미래 봉이 남지 않게 한다.
 
-지정학 이벤트와 장 마감 알림은 시뮬레이터 전용 toast를 만들지 않고 기존
-`AlertToast` 큐, 헤더 알림함, 알림 환경설정을 그대로 사용한다. 지정학 이벤트 toast와
-헤더 알림 행에는 기존 위험 색상 토큰을 옅게 섞은 붉은 강조색을 사용한다. 지정학 이벤트
-toast는 현재 toast보다 우선 노출해 뉴스 공개와 같은 상태 전환에서 즉시 확인할 수 있다. 이벤트의
-`근거 보기`는 보유종목, AMD 차트, 가상계좌, 알림 설정, OKE 오더플로우 패널을 여는
-layout proposal이다. 사용자가 버튼을 눌러야 적용하며 주문은 실행하지 않는다. 주문
-패널의 바스켓도 사용자가 직접 눌러야 전송하고, SIM 표시가 있는 주문은 실제 브로커
-WebSocket에 연결하지 않는다.
-시뮬레이터 상태는 실행 중에만 1초 간격으로 확인하고 LIVE, 일시정지, 완료,
-연결 불가 상태에서는 30초 간격으로 낮춘다. 이전 요청이 끝난 뒤 다음 요청을
-예약하며, 브라우저 탭이 백그라운드에 있으면 polling을 중단하고 다시 보일 때 즉시
-한 번 갱신한다.
-SIM에서 LIVE로 돌아갈 때 프런트는 합성 캔들·체결·호가가 남은 차트 런타임을
-초기화하고 차트 컴포넌트를 다시 연결해 실제 시장 스냅샷과 WebSocket을 새로 받는다.
-`PUT /api/simulator/mode`의 LIVE 응답은 서버가 SIM 시작 직전 보관한 AMD/OKE
-Redis 시장 상태를 복원한 뒤 반환하므로, 프런트 재연결이 합성 봉을 다시 읽지 않는다.
+SIM 검색·주문 후보는 manifest의 21개 티커만 사용한다. 주문 ticket은 SIM에서
+`market|limit`을 제공하고 market은 price를 보내지 않는다. LIVE KIS 화면은 기존
+limit-only 계약을 유지한다. 주문 상태는 `/ws/orders/{order_id}`의 SIM 원장을 읽고,
+가격조건 UI는 기존 `/api/trade-conditions`를 그대로 사용한다.
+
+뉴스·추천·기업정보·AI 코치는 point-in-time 데이터가 없을 때 기존 최신값이나 fixture를
+남기지 않고 `simulation_data_unavailable` 상태를 표시한다. 프런트는 합성 추천·뉴스·
+AI 보고서를 만들지 않는다. 차트는 서버가 반환한 과거+replay candle과 replay
+WebSocket만 사용한다.
 
 `빠른 주문` 패널도 자동 주문 경로가 아니다. 최우선 매수·매도호가, 1틱 오프셋,
 estimated order-flow imbalance는 `side + price` 주문 의도를 선택해 편집 가능한 가격 입력란을
@@ -667,7 +655,7 @@ items를 패널로 전달해 S&P500 거래대금순 Top10을 렌더링한다. �
 표시는 같은 `sectorLabelKo` 한글 라벨을 사용한다. LIVE 등락률은 API가 제공하는
 `previousClose`(전일 정규장 종가)를 기준으로 계산된 값만 사용한다. 기준 종가가
 없으면 seed 값이나 `0%`로 대체하지 않고 `—`로 표시하며, 섹터·산업 평균에서도
-제외한다. SIM 모드의 시나리오 시작가 기준 등락률은 이 LIVE 계약과 분리한다.
+제외한다. SIM 모드의 등락률은 replay 원본 trade 기준이며 이 LIVE 계약과 분리한다.
 
 stock recommendations panel은 `panelType="stockRecommendations"`/`kind="recommendations"`로
 표현한다. 패널은 `GET /api/recommendations/stocks/latest`로 마지막 장중 추천을
@@ -679,13 +667,13 @@ dialog에서 `GET /api/recommendations/profile`로 현재 값을 읽어
 `recommendation.stock` Agent reference를 선택하며 주문 실행으로 연결하지 않는다.
 추천 행의 섹터도
 `sectorLabelKo` 한글 라벨을 사용한다.
-API가 `empty`, `ready`, `stale` 상태로 정상 응답했지만 `items=[]`이면 프런트는
-S&P 500 seed 기반의 고정 시뮬레이션 추천 10개를 기존 목록/카드 renderer에 전달한다.
-이때 툴바에 작은 `simulation` 배지를 표시하고 각 item의 `metricsSnapshot`에
-`source="frontend-recommendation-fallback"`, `synthetic=true`, `simulation=true`를
-남긴다. 실제 추천 item이 하나라도 있거나 `profile_required`, `market_closed`, API 오류
-상태이면 시뮬레이션 추천을 사용하지 않는다. 시뮬레이션 item 클릭도 기존과 동일하게
-`recommendation.stock` reference만 선택하며 차트나 레이아웃을 자동 변경하지 않는다.
+LIVE mode에서는 선택한 `pre` 또는 `regular`의 API item만 표시한다. `items=[]`이면
+빈 상태를 유지하고 다른 세션이나 S&P 500 seed 기반 고정 종목으로 대체하지 않는다.
+API가 비어 있거나 point-in-time 조회를 보장하지 못하면 고정 추천 fixture로 채우지 않고
+빈 상태 또는 `simulation_data_unavailable`을 표시한다.
+SIM mode도 frontend fixture를 import하거나 scenario ID를 special-case하지 않는다.
+시뮬레이션 item 클릭 역시 `recommendation.stock` reference만 선택하며 차트나 레이아웃을
+자동 변경하지 않는다.
 
 public company journal panel은 `panelType="companyJournal"`/`kind="companyJournal"`로
 표현한다. 이 패널은 기존 기업 수익성·안정성·가치평가 차트와 뉴스 목록을
@@ -699,6 +687,11 @@ public company journal panel은 `panelType="companyJournal"`/`kind="companyJourn
 위험예산과 관측 위험, 경고를 읽기 전용으로 추가 표시한다. 일부 또는 모든 V2 필드가
 없어도 패널은 기존 응답으로 렌더링해야 한다. 이 패널에는 slider, 피드백 제어,
 tracking API, 자동 주문 동작을 추가하지 않는다.
+
+V3 item은 LLM headline/body를 먼저 표시하되 그 아래 결정론적 6개 evidence block을 항상
+표시한다. UI label은 `V3 종합 점수`, `근거 신뢰도`이며 신뢰도가 성공확률이 아님을 적는다.
+기여도 부호, penalty, 누락 factor, stale 여부, cutoff, algorithm/rule-set/snapshot/digest를
+그대로 보여 주고 누락 metric을 `0`으로 만들지 않는다. legacy `reasons`는 비-V3에만 쓴다.
 
 chart analysis asset 운영 패널은 `kind="chartAssetOps"`, 화면 표시는
 `작도 자산(개발)`로 표현한다. 이름의 `(개발)`은 수동 운영 도구임을 나타내는 라벨일

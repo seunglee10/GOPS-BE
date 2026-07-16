@@ -9,8 +9,9 @@ AWS_PROFILE=gops-dev ./scripts/aws/deploy-dev-local.sh
 
 이 스크립트는 현재 로컬 브랜치나 미커밋 변경을 배포하지 않는다. 기본값은
 `git fetch origin dev`로 원격 `origin/dev` 최신 commit을 가져오고, 임시
-`git worktree`에서 그 commit만 checkout해서 빌드한다. 검증용 원격 브랜치를
-명시할 때만 `REMOTE_BRANCH`를 사용한다.
+`git worktree`에서 그 commit만 checkout해서 빌드한다. 검증용 원격 브랜치는
+`REMOTE_BRANCH`, push하지 않은 로컬 commit은 `LOCAL_REF`로 명시한다. 어느 경우든
+미커밋 변경은 배포에 포함하지 않는다.
 
 ## Required Local Tools
 
@@ -87,6 +88,18 @@ AWS_PROFILE=gops-dev \
 ./scripts/aws/deploy-dev-local.sh
 ```
 
+push하지 않은 로컬 `dev` commit을 배포할 때도 먼저 같은 검증을 거친다.
+
+```bash
+LOCAL_REF=dev \
+FORCE_SERVICES=frontend,backend,simulator \
+DRY_RUN=true \
+AWS_PROFILE=gops-dev \
+./scripts/aws/deploy-dev-local.sh
+```
+
+실제 배포는 위 명령에서 `DRY_RUN=true`만 제거한다.
+
 `CHART_INTERPRETATION_ONLY=true`는 기존 Geometry 자산을 읽는 통합 해설 전용
 배포 경계다. 전체 Kustomize overlay를 apply하지 않고 다음 Deployment의 image만
 교체한다.
@@ -128,6 +141,13 @@ FORCE_SERVICES=simulator AWS_PROFILE=gops-dev ./scripts/aws/deploy-dev-local.sh
 ```bash
 AWS_PROFILE=gops-dev ./scripts/aws/start-dev-simulator.sh
 AWS_PROFILE=gops-dev ./scripts/aws/stop-dev-simulator.sh
+```
+
+최초 한 번은 실제 틱 데이터셋을 적재한 뒤 SIM을 시작한다.
+
+```bash
+AWS_PROFILE=gops-dev ./scripts/aws/run-simulator-replay-import.sh
+AWS_PROFILE=gops-dev ./scripts/aws/start-dev-simulator.sh
 ```
 
 Order migration은 `order-worker` 선택 시 app rollout 전에 자동 실행된다.

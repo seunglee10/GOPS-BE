@@ -1,8 +1,9 @@
 import asyncio
 from contextlib import asynccontextmanager, suppress
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.alerts.routes import router as alerts_router
 from app.contracts.chart import AgentChatMessage, AgentChatRequest, ChartProposalRequest
@@ -27,6 +28,7 @@ from app.routes.streams import chart_stream, router as streams_router
 from app.services.ai_agents import openai_agent_chat, openai_chart_proposal
 from app.services.agent_request_limit import AgentRequestBodyLimitMiddleware
 from app.services.alfaka_market_data import configured_symbols, get_market_data_provider, symbol_summaries
+from app.services.simulation_guard import requires_point_in_time_data
 from gops_agents.query_understanding import warm_entity_catalog_cache
 
 
@@ -53,6 +55,19 @@ def create_app() -> FastAPI:
         allow_credentials=True,
     )
     app.add_middleware(AgentRequestBodyLimitMiddleware)
+
+    @app.middleware("http")
+    async def reject_future_data_in_simulation(request: Request, call_next):
+        if requires_point_in_time_data(request.url.path):
+            from app.routes.simulator import simulator_mode_active
+
+            if await asyncio.to_thread(simulator_mode_active, request.app):
+                return JSONResponse(
+                    status_code=409,
+                    content={"detail": "simulation_data_unavailable"},
+                )
+        return await call_next(request)
+
     app.include_router(health_router)
     app.include_router(auth_router)
     app.include_router(account_router)
