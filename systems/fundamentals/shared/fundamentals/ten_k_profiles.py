@@ -242,13 +242,45 @@ def clean_section_text(value: str) -> str:
     return normalize_document_text(value).strip(" .:\n\t")
 
 
+def business_model_json_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["structure", "segments", "revenueModel", "platform"],
+        "properties": {
+            "structure": {"type": "string", "minLength": 1, "maxLength": 160},
+            "segments": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 6,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["name", "detail"],
+                    "properties": {
+                        "name": {"type": "string", "minLength": 1, "maxLength": 40},
+                        "detail": {"type": "string", "minLength": 1, "maxLength": 160},
+                    },
+                },
+            },
+            "revenueModel": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 4,
+                "items": {"type": "string", "minLength": 1, "maxLength": 200},
+            },
+            "platform": {"type": ["string", "null"], "maxLength": 200},
+        },
+    }
+
+
 def ten_k_profile_json_schema() -> dict[str, Any]:
     return {
         "type": "object",
         "additionalProperties": False,
         "required": ["businessModel", "revenueDrivers", "competitivePosition", "riskFactors"],
         "properties": {
-            "businessModel": {"type": "string", "minLength": 1, "maxLength": 1500},
+            "businessModel": business_model_json_schema(),
             "revenueDrivers": {
                 "type": "array",
                 "minItems": 1,
@@ -305,7 +337,11 @@ class TenKProfileSummarizer:
                         "당신은 SEC 10-K 문서 전용 구조화 요약기입니다. 제공된 Item 1과 Item 1A에 직접 적힌 내용만 사용하세요. "
                         "회사 관점의 홍보성 표현과 과장 표현을 제거하고 중립적인 한국어로 요약하세요. 문서에 없는 제품, 수치, 전망, "
                         "원인 또는 투자 판단을 만들지 마세요. riskFactors는 제공된 고정 카테고리만 사용하고 같은 카테고리는 한 번만 쓰세요. "
-                        "severityHint는 문서에서 강조된 노출 강도를 분류하는 보조값일 뿐 투자 위험 점수가 아닙니다."
+                        "severityHint는 문서에서 강조된 노출 강도를 분류하는 보조값일 뿐 투자 위험 점수가 아닙니다. "
+                        "businessModel은 완결 문장이 아니라 '항목 — 설명' 형태의 명사구로 작성하고 종결어미(합니다·입니다)를 쓰지 마세요. "
+                        "structure는 설계·생산 구조 한 줄(예: '팹리스 — 설계 전담, 생산 외주'), segments는 보고 부문별 이름과 핵심 제품, "
+                        "revenueModel은 수익 창출 방식 목록(판매 방식·라이선스·판매 채널), platform은 소프트웨어·개발 플랫폼이며 "
+                        "문서에 해당 내용이 없으면 platform은 null로 두세요."
                     ),
                 },
                 {
@@ -379,13 +415,43 @@ class TenKProfileSummarizer:
         return parse_openai_response_json(response_data)
 
 
+def validate_business_model(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict) or set(payload) != {"structure", "segments", "revenueModel", "platform"}:
+        raise ValueError("10-K business model output must match the structured contract.")
+    structure = clean_bounded_text(payload.get("structure"), 160)
+    segments: list[dict[str, str]] = []
+    seen_names: set[str] = set()
+    for raw in payload.get("segments") or []:
+        if not isinstance(raw, dict) or set(raw) != {"name", "detail"}:
+            raise ValueError("10-K business segment output is invalid.")
+        name = clean_bounded_text(raw.get("name"), 40)
+        detail = clean_bounded_text(raw.get("detail"), 160)
+        if not name or not detail:
+            raise ValueError("10-K business segment output is missing content.")
+        if name in seen_names:
+            continue
+        seen_names.add(name)
+        segments.append({"name": name, "detail": detail})
+    revenue_model = unique_text_list(payload.get("revenueModel"), limit=4, max_length=200)
+    platform_raw = payload.get("platform")
+    platform = clean_bounded_text(platform_raw, 200) if isinstance(platform_raw, str) else ""
+    if not structure or not segments or not revenue_model:
+        raise ValueError("10-K business model output is missing required content.")
+    return {
+        "structure": structure,
+        "segments": segments,
+        "revenueModel": revenue_model,
+        "platform": platform or None,
+    }
+
+
 def validate_generated_profile(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("10-K profile output must be an object.")
     required = {"businessModel", "revenueDrivers", "competitivePosition", "riskFactors"}
     if set(payload) != required:
         raise ValueError("10-K profile output fields do not match the strict contract.")
-    business_model = clean_bounded_text(payload.get("businessModel"), 1500)
+    business_model = validate_business_model(payload.get("businessModel"))
     competitive_position = clean_bounded_text(payload.get("competitivePosition"), 1200)
     revenue_drivers = unique_text_list(payload.get("revenueDrivers"), limit=6, max_length=320)
     risk_factors: list[dict[str, str]] = []

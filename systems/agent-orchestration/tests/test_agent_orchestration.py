@@ -48,6 +48,8 @@ from gops_agents.retrieval.snapshots import (
     apply_rule_guardrail,
     build_synthesis_input,
     chart_reference_evidence,
+    company_compare_reference_evidence,
+    FinancialSnapshotProvider,
     news_reference_evidence,
     recommendation_reference_evidence,
     trim_cross_signals,
@@ -670,6 +672,78 @@ class AgentOrchestrationTests(unittest.TestCase):
             operation_ir["contextWindow"]["requiredSnapshots"],
             ["market_snapshot", "news_snapshot", "financial_snapshot"],
         )
+
+    def test_company_compare_reference_routes_to_financial_without_provider_requery(self):
+        reference = {
+            "type": "financial.metric",
+            "sourcePanelId": "content-company-compare",
+            "displayLabel": "NVDA×AMD×AAPL 영업이익률",
+            "data": {
+                "symbols": ["NVDA", "AMD", "AAPL"],
+                "sectionId": "profit_structure",
+                "metric": "영업이익률",
+                "values": [
+                    {"symbol": "NVDA", "value": 0.61, "display": "61.0%"},
+                    {"symbol": "AMD", "value": 0.12, "display": "12.0%"},
+                    {"symbol": "AAPL", "value": 0.32, "display": "32.0%"},
+                ],
+                "version": "company-compare.v1",
+            },
+        }
+        context = AgentContext(symbol="NVDA", intent="이 차이가 왜 이렇게 커?", references=[reference])
+        operation_ir = build_agent_operation_ir(
+            intent=context.intent,
+            symbol=context.symbol,
+            references=[reference],
+            ui_context={"selectedReference": reference},
+            chart_context={},
+        )
+
+        class ProviderThatMustNotRun:
+            def fetch(self, _request):
+                raise AssertionError("comparison reference must not trigger a provider query")
+
+        evidence = company_compare_reference_evidence(context)
+        snapshot = FinancialSnapshotProvider(ProviderThatMustNotRun()).fetch(context, "run-compare", 5)
+
+        self.assertEqual(operation_ir["operations"][0]["type"], "explain_company_compare")
+        self.assertEqual(operation_ir["suggestedRoles"], ["financial"])
+        self.assertEqual(operation_ir["contextWindow"]["requiredSnapshots"], ["financial_snapshot"])
+        self.assertEqual(len(evidence), 1)
+        self.assertIn("NVDA 61.0%", evidence[0].summary)
+        self.assertTrue(snapshot.evidence[0].raw["referencePayloadPriority"])
+
+    def test_company_compare_reference_has_deterministic_explanation(self):
+        reference = {
+            "type": "compare.axis",
+            "data": {
+                "symbols": ["NVDA", "AMD", "AAPL"],
+                "sectionId": "profit_structure",
+                "heading": "수익성",
+                "analysis": "NVDA, AMD, AAPL의 영업이익률 차이는 각 기업의 제품 구성과 비용 구조 차이를 반영합니다.",
+                "evidenceRefs": ["financial:NVDA", "financial:AMD", "financial:AAPL"],
+                "version": "company-compare.v1",
+            },
+        }
+        context = AgentContext(symbol="NVDA", intent="이 차이를 설명해줘", references=[reference])
+        evidence = company_compare_reference_evidence(context)
+        answer = FinalAnswerSynthesizer().synthesize(
+            symbol="NVDA",
+            intent=context.intent,
+            route=IntentRoute(
+                source="operation-extractor",
+                intentType="financial-comparison",
+                selectedRoles=["financial"],
+                confidence=0.92,
+                reason="comparison reference",
+            ),
+            findings=[],
+            provider_evidence=evidence,
+        )
+
+        self.assertIn("NVDA × AMD × AAPL", answer.title)
+        self.assertIn("제품 구성과 비용 구조", answer.summary)
+        self.assertTrue(any("투자 권유" in item for item in answer.limitations))
 
     def test_operation_reference_normalization_dedupes_chart_context_reference(self):
         reference = {

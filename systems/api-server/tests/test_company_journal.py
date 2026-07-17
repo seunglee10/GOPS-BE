@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.company_journal.models import GenerationRequest, NarrativeDraft
-from app.company_journal.repository import compact_graph_expansion
+from app.company_journal.repository import CompanyJournalRepository, compact_graph_expansion
 from app.company_journal.routes import get_company_journal_service, router
 from app.company_journal.service import CompanyJournalService, calculate_server_metrics, source_receipt
 from app.services.simulation_guard import requires_point_in_time_data
@@ -102,6 +102,46 @@ def test_graph_expansion_is_bounded_before_openai_input():
     assert compact["keywords"] == ["AI"]
     assert compact["themes"][0]["name"] == "Cloud"
     assert compact["relatedSymbols"][0]["symbol"] == "MSFT"
+
+
+def test_missing_optional_graph_projection_does_not_block_source_bundle():
+    class ClickHouseClient:
+        database = "market_data"
+
+        def query_json_each_row(self, query, parameters=None):
+            if "agent_graph_expansions" in query:
+                raise RuntimeError("optional graph projection is not deployed")
+            if "chart_candles" in query:
+                return [{"date": "2026-07-15", "close": 104.2}]
+            return []
+
+    bundle = CompanyJournalRepository(client=ClickHouseClient()).load_source_bundle("NVDA")
+
+    assert bundle["symbol"] == "NVDA"
+    assert bundle["analysisAsOf"] == "2026-07-15"
+    assert bundle["graph"]["keywords"] == []
+
+
+def test_performance_series_deduplicates_candles_before_per_symbol_limit():
+    class ClickHouseClient:
+        database = "market_data"
+
+        def __init__(self):
+            self.query = ""
+
+        def query_json_each_row(self, query, parameters=None):
+            self.query = query
+            return [{
+                "symbol": "NVDA", "event_time": "2026-07-15T00:00:00Z",
+                "open": 100, "high": 105, "low": 99, "close": 104.2, "volume": 10,
+            }]
+
+    client = ClickHouseClient()
+    result = CompanyJournalRepository(client=client).load_performance_series(["NVDA"])
+
+    assert result[0]["candles"][0]["close"] == 104.2
+    assert "GROUP BY symbol, event_time" in client.query
+    assert client.query.index("GROUP BY symbol, event_time") < client.query.index("LIMIT 520 BY symbol")
 
 
 def test_worker_persists_only_a_validated_report_then_completes_request():

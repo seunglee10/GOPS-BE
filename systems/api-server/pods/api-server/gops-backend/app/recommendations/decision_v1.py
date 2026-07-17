@@ -689,6 +689,28 @@ def build_cautions(item: dict[str, Any], decision: dict[str, Any]) -> list[dict[
             "sentence": normalized,
         })
 
+    action = str(decision.get("action") or item.get("action") or "watch")
+    invalidation = _positive(decision.get("invalidationPrice"))
+    breakout = next(
+        (
+            route for route in decision.get("entryRoutes") or []
+            if isinstance(route, dict) and route.get("type") == "breakout"
+        ),
+        None,
+    )
+    if action in {"buy", "conditional_buy"} and breakout and invalidation > 0:
+        trigger = _positive(breakout.get("trigger"))
+        chase_limit = _positive(breakout.get("chaseLimit"))
+        if trigger > 0 and chase_limit >= trigger and chase_limit > invalidation:
+            risk_per_share = chase_limit - invalidation
+            add(
+                "chase_limit",
+                "추격 진입 기준",
+                "warning",
+                f"돌파 매수는 ${chase_limit:.2f}까지만 검토합니다. "
+                f"상한에서 무효화 기준 ${invalidation:.2f}까지의 하락 폭은 주당 ${risk_per_share:.2f}입니다.",
+            )
+
     for condition in decision.get("failedConditions") or []:
         code = str(condition.get("code") or "").strip()
         if code == "material_penalty" and any(
@@ -712,21 +734,6 @@ def build_cautions(item: dict[str, Any], decision: dict[str, Any]) -> list[dict[
             code, label = mapped
             add(code, label, "warning", sentence)
 
-    invalidation = decision.get("invalidationPrice")
-    if isinstance(invalidation, (int, float)) and math.isfinite(float(invalidation)):
-        scope_sentence = (
-            f"가격이 ${float(invalidation):.2f} 아래로 내려가거나 당일 15:50 ET가 지나면 "
-            "이 장중 판단은 더 이상 유효하지 않습니다."
-        )
-    else:
-        scope_sentence = "이 판단은 당일 15:50 ET까지만 유효하며 이후에는 시장 근거를 다시 확인해야 합니다."
-    add("decision_scope", "판단 유효 범위", "notice", scope_sentence)
-    add(
-        "confidence_scope",
-        "신뢰도 해석",
-        "notice",
-        "근거 신뢰도는 수익 성공확률이 아니라 사용된 데이터의 완전성과 신선도를 뜻합니다.",
-    )
     return cautions
 
 
@@ -792,7 +799,7 @@ def decision_explanation(item: dict[str, Any], *, target_session_date: str) -> d
         headline = "시장보다 강한 흐름과 활발한 거래가 이어져, 계획된\u00a0가격대에서 매수를 검토할 수 있습니다."
         body_sentences = []
     elif action == "conditional_buy":
-        headline = "시장보다 강한 흐름과 거래 참여는 확인됐지만, 지금 바로 매수하기보다 남은 조건을 확인해야 합니다."
+        headline = "시장보다 강한 흐름과 거래\u00a0참여는\u00a0확인됐지만, 남은 조건을 확인한 뒤 매수를 검토해야 합니다."
         body_sentences = [
             "가격 구조와 체결 여건은 진입 계획에 사용할 수 있지만, 유의할 점의 남은 조건이 해소되기 전에는 주문하지 않습니다."
         ]
@@ -813,7 +820,7 @@ def decision_explanation(item: dict[str, Any], *, target_session_date: str) -> d
             "headline": headline,
             "body": body,
             "model": None,
-            "promptVersion": "recommendation-decision-renderer.ko.v6",
+            "promptVersion": "recommendation-decision-renderer.ko.v7",
             "generatedAt": explanation.get("primary", {}).get("generatedAt") if isinstance(explanation.get("primary"), dict) else None,
         },
     })

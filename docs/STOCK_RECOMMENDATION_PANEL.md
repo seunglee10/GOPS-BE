@@ -515,11 +515,11 @@ direct recommendation v1 item은 `buy`, `conditional_buy`, `watch`, `not_suitabl
 결정론적 `decision`, `sizing`, 가용 V3 block 기반 4~6개의 `keyEvidence`, 최대 하나의
 `counterEvidence`, 구조화된 `cautions`를 가진다. `keyEvidence.metrics[]`는 실제 관측값,
 비교 기준, 백엔드가 확정한 그래프 위치를 제공하고 `interpretation`은 그 비교가 판단에 유효한
-이유를 설명한다. `cautions.sentence`는 실제
-실패 조건과 판단 범위를 설명한다. 해설 패널은 작은 action label, 큰 headline과
+이유를 설명한다. `cautions.sentence`는 실제 실패 조건과 진입 경로에서 계산한 추격 위험을
+설명한다. 해설 패널은 작은 action label, 큰 headline과
 우측 점수의 2열 구조를 유지하고, 조건·제외 상태에서만 필요한 보조 body를 표시한다. 왼쪽에는 수치·기준선 그래프·설명과 유의점, 오른쪽에는 진입가·무효화·1.5R·15:50
 종료·위험예산·수량만 표시한다.
-설명은 각 근거의 `?` 도움말로 제공하고 기본 화면에는 수치·기준선만 남긴다. 넓은 패널에서는
+설명과 비교 기준 문구는 각 근거의 `?` 도움말로 제공하고 기본 화면에는 지표명·수치·기준선만 남긴다. 넓은 패널에서는
 근거 카드를 두 열로 배치해 전체 정보가 내부 스크롤 없이 보이는 것을 기본으로 한다.
 item action과 같은 V1 decision이 없으면 `매수 관찰`로 fail safe하고 진입 계획을 숨긴다.
 이 계약은 주문 제안이며 자동 주문 경로가 아니다.
