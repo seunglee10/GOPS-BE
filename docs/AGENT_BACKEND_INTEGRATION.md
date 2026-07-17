@@ -806,14 +806,18 @@ drawing ID를 아는 프런트가 계산한다.
 Geometry v6 payload는 기존 패턴 필드와 함께 optional `trends`, `primaryTrend`,
 `drawingGroups`, `analysisTrace`를 `geometry` 아래에 가진다. root optional `commentary`는
 동일 완료 봉의 geometry/indicator와 cutoff-safe 저장 뉴스·실적에서 사전 생성한
-`chart-commentary.v1`이며 사용자·계좌·포트폴리오 필드는 없다. 저장 drawing은 levels 4,
+`chart-commentary.v2`이며 사용자·계좌·포트폴리오 필드는 없다. v2는 세 문단의 연속형
+본문과 검증된 inline reference segment를 저장하고 v1 payload도 읽기 호환한다. 저장 drawing은 levels 4,
 pattern 3, trend/channel 1의 합계 최대 8개이고 canonical UTF-8 JSON은 256 KiB 이하다.
 trace v2는 detector의 ranked 후보와 접촉 episode를 생략하지 않고 detected/stored
 completeness를 검증한다. 전체 payload가 초과하면 후보를 제거하지 않고 저장을
 실패시켜 이전 row를 유지한다. v6는 기존 JSONB와 drawing-count check 안에서 동작하므로
 chart-asset table/data migration을 다시 실행하지 않는다.
 AWS required mode의 commentary 호출이나 strict fact/reference 검증이 실패하면 저장 전에
-`commentary_generation_failed`로 끝나므로 기존 payload/digest를 유지한다.
+`commentary_generation_failed`로 끝나므로 기존 payload/digest를 유지한다. item 오류와
+bounded log에는 provider 설정·인증·rate limit·timeout·server/schema·refusal/incomplete·
+parse·후검증을 구분하는 안전한 failure code를 남긴다. OpenAI request ID와 정규화된
+error type/code/param은 보존하지만 key, prompt, 뉴스 원문은 기록하지 않는다.
 
 `CHART_ASSET_STORAGE_MAINTENANCE=true` 동안 GET은 계속 열어 두고 build와 DELETE만
 503으로 막는다. 기존 숫자형 자산은 변환하거나 fallback으로 읽지 않는다.

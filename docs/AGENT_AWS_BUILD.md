@@ -51,7 +51,7 @@ Changes under `shared/chart-contract/` select both `frontend` and
 `agent-orchestrator`, because the typed chart explanation contract is consumed on
 both sides.
 
-The chart commentary integration deploy is a read-only consumer rollout. Use
+The chart commentary reader compatibility deploy is a read-only consumer rollout. Use
 `CHART_INTERPRETATION_ONLY=true` together with
 `FORCE_SERVICES=frontend,agent-orchestrator`. This path updates only
 `gops-frontend`, `agent-analysis-worker`, and the compatibility
@@ -62,7 +62,8 @@ existing specs and image tags. The profile fails closed when migration, cache
 rebuild, or platform-apply options are enabled. Do not enqueue chart build FORCE
 jobs or universe regeneration. Validate against the existing `geometry_assets`
 rows through the API and browser; this rollout does not require Alpaca credentials
-or a chart-asset builder run.
+or a chart-asset builder run. This mode does not install a new commentary writer;
+never use it to validate a writer or prompt change.
 
 GitHub Actions dev/test deploy entrypoint `.github/workflows/deploy-dev.yml`
 remains a backup path. It deploys to the shared dev EKS environment only when an
@@ -1146,8 +1147,12 @@ Redis recent-closed와 ClickHouse history를 합친 canonical 완료 봉 감사�
 Compose 기본값은 `CHART_COMMENTARY_PROVIDER=disabled`와
 `CHART_COMMENTARY_REQUIRED=false`다. AWS overlay는 `provider=openai`, `required=true`로
 고정하고 `chart-asset-builder`의 `alfaka-openai-secret`을 필수로 만든다. writer는
-`CHART_COMMENTARY_MODEL`이 없으면 `OPENAI_MODEL`을 사용한다. commentary 생성·검증 실패는
-app rollout 성공 여부와 무관한 item 실패이며, 해당 `(symbol, interval)`의 기존
+`CHART_COMMENTARY_MODEL`이 없으면 `OPENAI_MODEL`을 사용하고
+`chart-commentary.ko.v2`의 연속형 세 문단과 inline reference 계약을 검증한다.
+required mode는 provider/key/model 누락 시 builder 시작을 실패시킨다. timeout, 429,
+5xx만 0.5초 뒤 한 번 재시도하며, strict output이 서버 후검증에서 탈락한 경우에도
+동일 fact pack으로 한 번만 교정한다. 영구 HTTP·인증·refusal은 재시도하지 않는다.
+commentary 생성·검증 실패는 app rollout 성공 여부와 무관한 item 실패이며, 해당 `(symbol, interval)`의 기존
 PostgreSQL row를 교체하지 않는다.
 미국 주식 `5m/10m` 보충은 Alpaca `1Min`, `1h/4h` 보충은 Alpaca `10Min`을
 사용한다. 실제 정규장 원본과 `bucket_policy=us_equity_regular_session` 파생 봉을
@@ -1171,6 +1176,9 @@ LLM enrichment 장애는 deterministic chart answer를 막지 않아야 한다.
 Geometry writer 변경은 `CHART_INTERPRETATION_ONLY=true` reader-only 프로필로 배포하지
 않는다. 일반 dev 배포에서 frontend, backend, agent-orchestrator를 함께 선택해 동일한
 immutable Git-SHA image tag의 `chart-asset-builder`까지 rollout한 뒤 force 재생성을 수행한다.
+재생성 전에는 `scripts/aws/preflight-chart-commentary-aws.sh`로 builder image, deploy mode,
+provider/required/model, key의 non-empty 여부와 prompt version을 확인한다. 스크립트는 Secret
+값이나 prompt/news 원문을 출력하지 않는다.
 
 AWS overlay는 Alpaca repair 동시성 2와 최대 range 8을 사용한다. 기존 평일 CronJob이
 queue item을 등록해도 builder는 scheduled item을 분석·복구·저장하지 않는다. API 패널과

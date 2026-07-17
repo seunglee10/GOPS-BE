@@ -100,7 +100,7 @@ AWS_PROFILE=gops-dev \
 
 실제 배포는 위 명령에서 `DRY_RUN=true`만 제거한다.
 
-`CHART_INTERPRETATION_ONLY=true`는 기존 Geometry 자산을 읽는 통합 해설 전용
+`CHART_INTERPRETATION_ONLY=true`는 기존 Geometry 자산을 읽는 reader 호환 확인 전용
 배포 경계다. 전체 Kustomize overlay를 apply하지 않고 다음 Deployment의 image만
 교체한다.
 
@@ -109,6 +109,11 @@ gops-frontend
 agent-analysis-worker
 agent-orchestrator
 ```
+
+이 경로는 `chart-asset-builder`를 갱신하지 않으므로 commentary writer/prompt 변경을
+검증하거나 개발 패널에서 자산을 재생성하는 용도로 사용하지 않는다. writer 변경은 일반
+`agent-orchestrator` 배포로 builder까지 rollout한 뒤
+`scripts/aws/preflight-chart-commentary-aws.sh`를 통과시킨다.
 
 따라서 같은 agent image를 공유하는 `chart-asset-builder`, `chart-geometry-build`
 CronJob, migration/maintenance Job과 다른 agent workload는 변경하지 않는다. 이 모드는

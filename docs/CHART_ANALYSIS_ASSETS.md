@@ -140,7 +140,7 @@ Alpaca가 성공했지만 실제 봉이 없는 slot은 `provider_confirmed_empty
 
 ## 사전 생성 종합 해설
 
-`commentary.version="chart-commentary.v1"`은 Geometry root의 optional 계약이다. builder는
+`commentary.version="chart-commentary.v2"`는 Geometry root의 optional 계약이다. builder는
 동일 canonical candle에서 SMA20/60/120, EMA20, RSI, MACD, Bollinger, 거래량과 최근
 120봉 Volume Profile을 계산하고, 최종 geometry와 최대 6개의 주요 완료 봉, asset
 `asOf`와 build cutoff를 넘지 않는 최근 뉴스 요약·실적을 bounded fact pack으로 만든다.
@@ -149,9 +149,14 @@ identity에 따라 달라지지 않는다.
 
 OpenAI writer는 Responses API의 strict JSON Schema와 `store=false`를 사용한다. 서버는
 응답의 reference/drawing/indicator, 숫자·날짜, 길이, 금지 투자 지시와 개인화 표현을 다시
-검증한다. 뉴스·실적 결측은 `limitations`가 있는 정상 결과지만 AWS required mode에서
+검증한다. 출력은 제목이나 목록이 아닌 세 문단의 연속형 한국어 해설이며, 자연스러운
+본문 segment만 drawing·indicator·candle·news·earnings reference에 연결한다. 뉴스·실적
+결측은 본문에서 자료 한계를 자연스럽게 밝히고 `limitations`에도 남기는 정상 결과지만 AWS required mode에서
 timeout, refusal, incomplete, malformed 또는 fact 검증 실패가 발생하면 item을
 `commentary_generation_failed`로 끝내고 단일 UPSERT 전에 중단하여 기존 row를 보존한다.
+개발 패널은 commentary가 없는 구자산을 `저장 해설 없음 · Rule-based fallback`으로 명시한다.
+provider 실패는 안전한 failure code로 분류하며 transient provider 오류와 서버 후검증
+교정은 각각 최대 한 번만 재시도한다.
 로컬 기본 provider는 disabled이며 구자산과 동일한 규칙 기반 종합 해설을 사용한다.
 
 ## 화면 레이어와 해설
@@ -163,11 +168,13 @@ SMA60/120은 차트 추가 도구가 소유하는 독립 보조지표이며 추�
 않는다. 최근 골든·데드크로스 마커만 분석 이벤트로 추세 레이어가 소유한다. 제안 OFF는
 메모리 trade plan을 삭제하지 않고 표시와 제안 가격의 Y축 반영만 중단한다.
 
-해설은 유효한 저장 `commentary`가 있으면 block 기반 종합 해설을 먼저 표시하고, 없는
+해설은 유효한 저장 `commentary`가 있으면 연속형 종합 해설을 먼저 표시하고, 없는
 구자산은 기존 규칙 기반 종합 해설로 fallback한다. 이 패널은 account/holdings API를
-호출하거나 보유 상태·평균가·수량을 표시하지 않는다. drawing 참조는 기존 focus를,
-지표 태그는 해당 차트 문서의 layer user command를, 뉴스·실적 태그는 이벤트 viewport와
-popover를, 주요 봉 태그는 semantic candle 선택과 하단 질문 reference를 사용한다.
+호출하거나 보유 상태·평균가·수량을 표시하지 않는다. 별도 참조 태그는 만들지 않고
+본문의 연결된 표현이 상호작용을 소유한다. drawing 문구는 기존 focus를, 지표 문구는 해당
+차트 문서의 layer user command를, 뉴스·실적 문구는 이벤트 viewport와 popover를, 주요 봉
+문구는 semantic candle 선택과 하단 질문 reference를 사용한다. v1 block은 세 문단 평문으로
+합쳐 읽되 임의 키워드 링크를 추정하지 않는다.
 그 아래 주요 가격·시나리오와 지지·저항, 추세, 패턴 판단 근거를 유지하고 원시 metric은
 `수치 근거 자세히`에 접어 둔다. hover는 해당 작도만 강조하고 같은
 trace에서 최종 선택된 후보의 피벗·접촉·반응만 임시 overlay로 표시한다. 글로벌 해석은
