@@ -169,8 +169,9 @@ SMA60/120은 차트 추가 도구가 소유하는 독립 보조지표이며 추�
 메모리 trade plan을 삭제하지 않고 표시와 제안 가격의 Y축 반영만 중단한다.
 
 해설은 유효한 저장 `commentary`가 있으면 연속형 종합 해설을 먼저 표시하고, 없는
-구자산은 기존 규칙 기반 종합 해설로 fallback한다. 이 패널은 account/holdings API를
-호출하거나 보유 상태·평균가·수량을 표시하지 않는다. 별도 참조 태그는 만들지 않고
+구자산은 기존 규칙 기반 종합 해설로 fallback한다. 패널 상단의 별도 표는 KIS holdings API로
+현재 종목의 보유 상태·평균 매입가·수량만 보여준다. 이 계좌 팩트는 저장 commentary,
+LLM fact pack, context digest와 규칙 기반 종합 문장에는 전달하지 않는다. 별도 참조 태그는 만들지 않고
 본문의 연결된 표현이 상호작용을 소유한다. drawing 문구는 기존 focus를, 지표 문구는 해당
 차트 문서의 layer user command를, 뉴스·실적 문구는 이벤트 viewport와 popover를, 주요 봉
 문구는 semantic candle 선택과 하단 질문 reference를 사용한다. v1 block은 세 문단 평문으로

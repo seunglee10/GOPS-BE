@@ -600,8 +600,10 @@ API, DB, thread ID를 만들지 않고 과거 답변을 다음 Agent 요청 `mes
 
 해설 본문은 저장 `commentary.status=ready`를 우선하는 `종합 해설`, `주요 가격`, 조건부
 `시나리오`, `판단 근거`, 접힌 `수치 근거 자세히` 순서다. 구자산처럼 commentary가 없으면
-분석 자산·현재가·작도·로컬 setup의 기존 규칙 기반 문장을 사용한다. 이 패널은
-`/api/account/holdings`를 호출하지 않고 보유 상태·평균 매입가·수량을 표시하지 않는다.
+분석 자산·현재가·작도·로컬 setup의 기존 규칙 기반 문장을 사용한다. 패널 최상단에는
+`/api/account/holdings?source=kis`의 현재 종목 보유 상태·평균 매입가·수량을 별도 표로
+표시한다. 이 조회 결과는 저장 해설, LLM 입력, context digest나 규칙 기반 종합 문장에
+합치지 않으며 종합 해설 자체는 모든 사용자에게 동일한 비개인화 콘텐츠로 유지한다.
 
 `chart-commentary.v2` 저장 해설은 세 문단의 연속 본문으로 표시하고 별도 tag/pill 행을
 만들지 않는다. 서버가 검증한 본문 segment만 링크처럼 보인다. drawing 문구는 기존 focus와
