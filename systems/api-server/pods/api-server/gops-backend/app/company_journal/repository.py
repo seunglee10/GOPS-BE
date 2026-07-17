@@ -70,21 +70,25 @@ class CompanyJournalRepository:
         )
         prices = self._rows(
             f"""
-            SELECT toDate(event_time) AS date, close
+            SELECT toDate(event_time) AS date,
+                   argMax(close, tuple(inserted_at, ifNull(source_event_id, ''))) AS close
             FROM {self.database}.chart_candles
             WHERE symbol = {{symbol:String}} AND is_closed = 1
               AND lower(interval) IN ('1d', '1day', 'day')
-            ORDER BY event_time DESC LIMIT 520 FORMAT JSONEachRow
+            GROUP BY date
+            ORDER BY date DESC LIMIT 520 FORMAT JSONEachRow
             """,
             {"symbol": symbol},
         )
         benchmark = self._rows(
             f"""
-            SELECT toDate(event_time) AS date, close
+            SELECT toDate(event_time) AS date,
+                   argMax(close, tuple(inserted_at, ifNull(source_event_id, ''))) AS close
             FROM {self.database}.chart_candles
             WHERE symbol = 'SPY' AND is_closed = 1
               AND lower(interval) IN ('1d', '1day', 'day')
-            ORDER BY event_time DESC LIMIT 520 FORMAT JSONEachRow
+            GROUP BY date
+            ORDER BY date DESC LIMIT 520 FORMAT JSONEachRow
             """
         )
         news = self._rows(
@@ -147,7 +151,7 @@ class CompanyJournalRepository:
             """,
             {"symbol": symbol},
         )
-        graph = self._one(
+        graph = self._safe_one(
             f"""
             SELECT relation_version, generated_at, payload
             FROM {self.database}.agent_graph_expansions
@@ -181,11 +185,18 @@ class CompanyJournalRepository:
             SELECT symbol, event_time, open, high, low, close, volume
             FROM
             (
-              SELECT symbol, event_time, open, high, low, close, volume
+              SELECT symbol,
+                     event_time,
+                     argMax(open, tuple(inserted_at, ifNull(source_event_id, ''))) AS open,
+                     argMax(high, tuple(inserted_at, ifNull(source_event_id, ''))) AS high,
+                     argMax(low, tuple(inserted_at, ifNull(source_event_id, ''))) AS low,
+                     argMax(close, tuple(inserted_at, ifNull(source_event_id, ''))) AS close,
+                     argMax(volume, tuple(inserted_at, ifNull(source_event_id, ''))) AS volume
               FROM {self.database}.chart_candles
               WHERE symbol IN {{symbols:Array(String)}}
                 AND is_closed = 1
                 AND lower(interval) IN ('1d', '1day', 'day')
+              GROUP BY symbol, event_time
               ORDER BY event_time DESC
               LIMIT 520 BY symbol
             )
@@ -344,6 +355,10 @@ class CompanyJournalRepository:
             return self._rows(query, parameters)
         except Exception:
             return []
+
+    def _safe_one(self, query: str, parameters: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        rows = self._safe_rows(query, parameters)
+        return rows[0] if rows else None
 
 
 def compact_graph_expansion(row: dict[str, Any]) -> dict[str, Any]:
