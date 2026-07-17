@@ -23,6 +23,31 @@ MATERIAL_PENALTIES = {
     "weakConfirmation",
     "concentrationProximity",
 }
+EVIDENCE_BLOCK_ORDER = (
+    "trendStrength",
+    "participationConfirmation",
+    "priceStructure",
+    "catalystQuality",
+    "executionQuality",
+    "qualityStability",
+)
+SOFT_PENALTY_CAUTIONS = {
+    "overextension": ("가격 과열", "현재 가격이 VWAP에서 과도하게 이격돼 추격 진입 위험이 큽니다."),
+    "volatilityMismatch": ("변동성", "최근 변동성이 현재 위험성향의 안정성 기준보다 높습니다."),
+    "weakConfirmation": ("근거 일치도", "가격 흐름과 거래 참여가 같은 방향을 가리키지 않아 추가 확인이 필요합니다."),
+    "limitedPortfolioEvidence": ("포트폴리오 근거", "최신 포트폴리오 근거가 부족해 계좌 적합도를 충분히 반영하지 못했습니다."),
+    "concentrationProximity": ("집중도", "진입 후 섹터 집중도가 현재 위험성향의 허용 한도에 가까워질 수 있습니다."),
+}
+RISK_WARNING_CAUTIONS = {
+    "호가 스프레드가 현재 위험성향의 실행 한도에 근접합니다.": (
+        "spread_proximity",
+        "체결 여건",
+    ),
+    "중앙값 거래대금이 현재 위험성향의 유동성 하한에 근접합니다.": (
+        "liquidity_proximity",
+        "유동성",
+    ),
+}
 ACTION_LABELS = {
     "buy": "매수 추천",
     "conditional_buy": "조건부 매수",
@@ -91,6 +116,7 @@ def enrich_direct_recommendations(
         item["keyEvidence"] = build_key_evidence(item)
         item["counterEvidence"] = build_counter_evidence(item, decision)
         item["riskWarnings"] = clean_risk_warnings(item.get("riskWarnings") or [])
+        item["cautions"] = build_cautions(item, decision)
         item["explanation"] = decision_explanation(item, target_session_date=target_session_date)
         enriched.append(item)
     return enriched
@@ -331,34 +357,89 @@ def build_key_evidence(item: dict[str, Any]) -> list[dict[str, Any]]:
     spread = _number(raw.get("quotedSpreadBps"))
     atr = _number(raw.get("atr"))
     action = str(item.get("action") or "watch")
+    risk_level = str(_record(item.get("decision")).get("riskLevel") or "balanced")
+    risk_label = {"conservative": "보수형", "balanced": "균형형", "aggressive": "적극형"}.get(
+        risk_level, "균형형"
+    )
+    spread_cap = DIRECT_SPREAD_CAP_BPS.get(risk_level, DIRECT_SPREAD_CAP_BPS["balanced"])
+    liquidity_floor = float(
+        RISK_PRESETS.get(risk_level, RISK_PRESETS["balanced"])["minimumMedianDollarVolume"]
+    )
+    close_vwap_gap_pct = (close / vwap - 1.0) * 100.0 if close > 0 and vwap > 0 else 0.0
     if current_rs > 0 and last60_rs >= 0:
         strength_assessment = "strong"
-        strength_interpretation = "시장보다 강했고 마감까지 상대강도가 유지됐습니다."
+        strength_interpretation = (
+            "시장 전체 상승에 편승한 움직임인지 구분하기 위해 SPY를 기준으로 비교했습니다. "
+            "장중과 마감 구간이 같은 방향이라 일시적인 초반 급등보다 지속된 종목 수요로 해석했습니다."
+        )
     elif current_rs > 0:
         strength_assessment = "mixed"
-        strength_interpretation = "당일에는 시장보다 강했지만 마감 구간 상대강도 확인이 더 필요합니다."
+        strength_interpretation = (
+            "시장 전체 움직임과 분리해 보기 위해 SPY를 기준으로 비교했습니다. "
+            "장중 강세와 달리 마감 구간이 약해 종목 수요가 하루 끝까지 이어졌다고 보기는 어렵습니다."
+        )
     elif last60_rs >= 0:
         strength_assessment = "mixed"
-        strength_interpretation = "당일에는 시장보다 약했지만 마감 구간에서 일부 회복했습니다."
+        strength_interpretation = (
+            "시장 전체 움직임과 분리해 보기 위해 SPY를 기준으로 비교했습니다. "
+            "마감 구간의 회복은 확인됐지만 전체 세션의 약세를 뒤집지는 못해 보조 근거로만 사용했습니다."
+        )
     else:
         strength_assessment = "weak"
-        strength_interpretation = "당일과 마감 구간 모두 시장 대비 강도가 부족했습니다."
+        strength_interpretation = (
+            "시장 전체 움직임과 분리해 보기 위해 SPY를 기준으로 비교했습니다. "
+            "장중과 마감 구간 모두 종목 고유의 수요 우위를 확인하지 못해 매수 근거로 사용하지 않았습니다."
+        )
     if close < vwap:
-        execution_interpretation = "종가가 VWAP 아래에 있어 가격 구조를 추가로 확인해야 합니다."
+        execution_interpretation = (
+            "VWAP는 당일 거래량을 반영한 평균 체결가입니다. 종가가 그 아래에 있으면 "
+            "장중 평균 매수자의 손익이 불리해 가격 지지와 진입 기준을 세우기 어렵습니다."
+        )
     elif action in {"buy", "conditional_buy"}:
-        execution_interpretation = "VWAP 위에서 마감해 눌림·돌파 가격을 고정할 수 있습니다."
+        execution_interpretation = (
+            "VWAP는 당일 거래량을 반영한 평균 체결가입니다. 종가가 그 위에 있으면 "
+            "장중 평균 매수자의 손익이 상대적으로 안정적이어서 눌림 진입과 무효화 기준을 세우기 쉽습니다."
+        )
     elif action == "not_suitable":
-        execution_interpretation = "종가는 VWAP 위에서 마감했지만 현재 계좌 한도로는 진입 계획을 제공하지 않습니다."
+        execution_interpretation = (
+            "VWAP 위 마감은 가격 구조를 판단하는 데 유효하지만 계좌 위험 한도를 대신할 수는 없습니다. "
+            "가격 구조와 별도로 현재 계좌에서 감당할 수 있는 수량을 우선 적용했습니다."
+        )
     else:
-        execution_interpretation = "종가는 VWAP 위에서 마감했지만 다른 직접 매수 조건이 충족되지 않았습니다."
-    return [
+        execution_interpretation = (
+            "VWAP 위 마감은 장중 평균 체결가보다 가격이 유지됐다는 뜻이지만, "
+            "상대강도와 거래 참여가 함께 확인되지 않으면 단독 매수 근거로 사용하지 않습니다."
+        )
+    evidence = [
         {
             "code": "market_strength",
-            "label": "시장 대비 강도",
+            "label": "시장 흐름",
             "primaryValue": f"SPY 대비 {current_rs:+.2f}%p",
             "secondaryValue": f"마감 전 60분 {last60_rs:+.2f}%p",
             "assessment": strength_assessment,
             "interpretation": strength_interpretation,
+            "metrics": [
+                _evidence_metric(
+                    label="당일 상대강도",
+                    value_text=f"{current_rs:+.2f}%p",
+                    comparison="SPY 대비 · 중립 0%p",
+                    value=current_rs,
+                    reference=0.0,
+                    scale_min=-3.0,
+                    scale_max=3.0,
+                    tone="positive" if current_rs > 0 else "negative",
+                ),
+                _evidence_metric(
+                    label="마감 전 60분",
+                    value_text=f"{last60_rs:+.2f}%p",
+                    comparison="SPY 대비 · 중립 0%p",
+                    value=last60_rs,
+                    reference=0.0,
+                    scale_min=-3.0,
+                    scale_max=3.0,
+                    tone="positive" if last60_rs >= 0 else "negative",
+                ),
+            ],
         },
         {
             "code": "participation",
@@ -366,17 +447,287 @@ def build_key_evidence(item: dict[str, Any]) -> list[dict[str, Any]]:
             "primaryValue": f"직전 정규장 동시간 대비 {volume:.2f}배",
             "secondaryValue": "확대 기준 1.00배",
             "assessment": "strong" if volume >= 1.0 else "weak",
-            "interpretation": "가격 움직임에 거래량이 동반됐습니다." if volume >= 1.0 else "가격 움직임을 뒷받침하는 거래량이 부족합니다.",
+            "interpretation": (
+                "장중 거래량은 개장과 마감에 몰리는 특성이 있어 직전 정규장의 같은 시각과 비교했습니다. "
+                + (
+                    "평소보다 넓은 시장 참여가 가격 움직임에 동반됐는지 확인하는 근거로 사용했습니다."
+                    if volume >= 1.0 else
+                    "평소보다 넓은 시장 참여를 확인하지 못해 가격 움직임을 단독 매수 근거로 사용하지 않았습니다."
+                )
+            ),
+            "metrics": [
+                _evidence_metric(
+                    label="동시간 거래량",
+                    value_text=f"{volume:.2f}배",
+                    comparison="직전 정규장 동시간 · 기준 1.00배",
+                    value=volume,
+                    reference=1.0,
+                    scale_min=0.0,
+                    scale_max=max(2.0, volume * 1.15),
+                    tone="positive" if volume >= 1.0 else "negative",
+                ),
+            ],
         },
         {
             "code": "execution_structure",
-            "label": "진입 구조",
+            "label": "가격 구조",
             "primaryValue": f"종가 ${close:.2f} · VWAP ${vwap:.2f}",
             "secondaryValue": f"스프레드 {spread:.2f}bp · ATR ${atr:.2f}",
             "assessment": "strong" if close >= vwap else "mixed",
             "interpretation": execution_interpretation,
+            "metrics": [
+                _evidence_metric(
+                    label="종가-VWAP 이격",
+                    value_text=f"{close_vwap_gap_pct:+.2f}%",
+                    comparison=f"종가 ${close:.2f} · VWAP ${vwap:.2f}",
+                    value=close_vwap_gap_pct,
+                    reference=0.0,
+                    scale_min=-3.0,
+                    scale_max=3.0,
+                    tone="positive" if close_vwap_gap_pct >= 0 else "negative",
+                ),
+            ],
         },
     ]
+    available = {
+        str(value)
+        for value in metrics.get("availableBlocks") or ()
+        if str(value) in EVIDENCE_BLOCK_ORDER
+    }
+    scores = _record(metrics.get("blockScores"))
+    if "catalystQuality" in available:
+        catalyst_score = _number(scores.get("catalystQuality"), 50.0)
+        evidence.append(_block_evidence(
+            code="catalyst_quality",
+            label="뉴스·촉매",
+            score=catalyst_score,
+            interpretation=(
+                "판단 시점 전에 공개된 뉴스만 사용하고 관련성·방향·신선도를 함께 평가했습니다. "
+                "가격과 거래량에서 독립된 사건 근거라 시장 움직임의 배경을 교차 확인하는 데 사용했습니다."
+            ),
+        ))
+    if "executionQuality" in available:
+        execution_score = _number(scores.get("executionQuality"), 50.0)
+        median_dollar_volume = _number(raw.get("medianDollarVolume"))
+        execution_metrics = [
+            _evidence_metric(
+                label="호가 스프레드",
+                value_text=f"{spread:.2f}bp",
+                comparison=f"{risk_label} 허용 상한 {spread_cap:.1f}bp",
+                value=spread,
+                reference=spread_cap,
+                scale_min=0.0,
+                scale_max=max(spread_cap * 1.25, spread * 1.1, 1.0),
+                tone="positive" if spread <= spread_cap else "negative",
+            ),
+        ]
+        if median_dollar_volume > 0:
+            execution_metrics.append(_evidence_metric(
+                label="20일 중앙 거래대금",
+                value_text=_format_usd_compact(median_dollar_volume),
+                comparison=f"최소 기준 {_format_usd_compact(liquidity_floor)}",
+                value=median_dollar_volume,
+                reference=liquidity_floor,
+                scale_min=0.0,
+                scale_max=max(liquidity_floor * 2.0, median_dollar_volume * 1.1),
+                tone="positive" if median_dollar_volume >= liquidity_floor else "negative",
+            ))
+        evidence.append(_block_evidence(
+            code="execution_quality",
+            label="체결 여건",
+            score=execution_score,
+            interpretation=(
+                "가격 신호가 좋아도 호가가 넓거나 거래대금이 부족하면 실제 체결 비용이 예상 위험을 키울 수 있습니다. "
+                "그래서 호가 상한과 최근 중앙 거래대금을 함께 통과한 경우에만 실행 가능한 근거로 사용했습니다."
+                if median_dollar_volume > 0 else
+                "호가 간격을 위험성향별 상한과 비교해 실제 체결 비용이 예상 위험을 과도하게 키우지 않는지 확인했습니다."
+            ),
+            metrics=execution_metrics,
+        ))
+    if "qualityStability" in available:
+        evidence.append(_quality_stability_evidence(raw, scores, risk_level=risk_level))
+    return evidence
+
+
+def _block_evidence(
+    *,
+    code: str,
+    label: str,
+    score: float,
+    interpretation: str,
+    metrics: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    if score >= 70.0:
+        assessment = "strong"
+    elif score >= 45.0:
+        assessment = "mixed"
+    else:
+        assessment = "weak"
+    return {
+        "code": code,
+        "label": label,
+        "primaryValue": f"{score:.1f}/100",
+        "secondaryValue": "",
+        "assessment": assessment,
+        "interpretation": interpretation,
+        "metrics": metrics or [
+            _evidence_metric(
+                label="V3 관측 점수",
+                value_text=f"{score:.1f}/100",
+                comparison="강한 근거 기준 70점",
+                value=score,
+                reference=70.0,
+                scale_min=0.0,
+                scale_max=100.0,
+                tone="positive" if score >= 70.0 else "neutral" if score >= 45.0 else "negative",
+            )
+        ],
+    }
+
+
+def _quality_stability_evidence(
+    raw: dict[str, Any], scores: dict[str, Any], *, risk_level: str
+) -> dict[str, Any]:
+    has_fundamentals = bool(raw.get("fundamentalAvailable"))
+    has_volatility = any(raw.get(key) is not None for key in ("realizedVolatility", "downsideVolatility"))
+    score = _number(scores.get("qualityStability"), 50.0)
+    realized = _number(raw.get("realizedVolatility"))
+    realized_pct = realized * 100.0
+    volatility_limit = {"conservative": 3.5, "balanced": 5.5, "aggressive": 8.0}.get(risk_level, 5.5)
+    risk_label = {"conservative": "보수형", "balanced": "균형형", "aggressive": "적극형"}.get(
+        risk_level, "균형형"
+    )
+    metrics: list[dict[str, Any]] = []
+    details: list[str] = [
+        "최근 변동성과 기업 품질은 짧은 가격 신호가 계좌의 위험성향과 맞는지 확인하는 보완 근거입니다."
+    ]
+    if has_volatility and realized >= 0:
+        metrics.append(_evidence_metric(
+            label="60일 일간 변동성",
+            value_text=f"{realized_pct:.2f}%",
+            comparison=f"{risk_label} 기준 {volatility_limit:.1f}%",
+            value=realized_pct,
+            reference=volatility_limit,
+            scale_min=0.0,
+            scale_max=max(volatility_limit * 1.25, realized_pct * 1.1, 1.0),
+            tone="positive" if realized_pct <= volatility_limit else "negative",
+        ))
+    company_quality = raw.get("companyQuality")
+    if has_fundamentals and company_quality is not None:
+        company_score = _number(company_quality)
+        metrics.append(_evidence_metric(
+            label="기업 품질",
+            value_text=f"{company_score:.1f}/100",
+            comparison="관측 펀더멘털 품질 점수",
+            value=company_score,
+            reference=50.0,
+            scale_min=0.0,
+            scale_max=100.0,
+            tone="positive" if company_score >= 50.0 else "negative",
+        ))
+        details.append("가격 흐름과 별개인 펀더멘털 품질을 함께 확인해 단기 신호에만 의존하지 않도록 했습니다.")
+    return _block_evidence(
+        code="quality_stability",
+        label="안정성·품질",
+        score=score,
+        interpretation=" ".join(details),
+        metrics=metrics or None,
+    )
+
+
+def _evidence_metric(
+    *,
+    label: str,
+    value_text: str,
+    comparison: str,
+    value: float,
+    reference: float,
+    scale_min: float,
+    scale_max: float,
+    tone: str,
+) -> dict[str, Any]:
+    span = max(scale_max - scale_min, 1e-9)
+    value_position = min(100.0, max(0.0, (value - scale_min) / span * 100.0))
+    reference_position = min(100.0, max(0.0, (reference - scale_min) / span * 100.0))
+    return {
+        "label": label,
+        "value": value_text,
+        "comparison": comparison,
+        "valuePositionPct": round(value_position, 2),
+        "referencePositionPct": round(reference_position, 2),
+        "tone": tone,
+    }
+
+
+def _format_usd_compact(value: float) -> str:
+    if value >= 1_000_000_000:
+        return f"${value / 1_000_000_000:.2f}B"
+    if value >= 1_000_000:
+        return f"${value / 1_000_000:.1f}M"
+    if value >= 1_000:
+        return f"${value / 1_000:.1f}K"
+    return f"${value:.0f}"
+
+
+def build_cautions(item: dict[str, Any], decision: dict[str, Any]) -> list[dict[str, str]]:
+    cautions: list[dict[str, str]] = []
+    seen_codes: set[str] = set()
+    seen_sentences: set[str] = set()
+    metrics = _record(item.get("metricsSnapshot"))
+    soft_penalties = _record(metrics.get("softPenalties"))
+
+    def add(code: str, label: str, severity: str, sentence: str) -> None:
+        normalized = sentence.strip()
+        if not normalized or code in seen_codes or normalized in seen_sentences:
+            return
+        seen_codes.add(code)
+        seen_sentences.add(normalized)
+        cautions.append({
+            "code": code,
+            "label": label,
+            "severity": severity,
+            "sentence": normalized,
+        })
+
+    for condition in decision.get("failedConditions") or []:
+        code = str(condition.get("code") or "").strip()
+        if code == "material_penalty" and any(
+            _number(value) > 0 and penalty_code in SOFT_PENALTY_CAUTIONS
+            for penalty_code, value in soft_penalties.items()
+        ):
+            continue
+        if code:
+            add(code, str(condition.get("label") or "추가 확인"), "warning", counter_evidence_sentence(code))
+
+    for code, value in soft_penalties.items():
+        if _number(value) <= 0 or code not in SOFT_PENALTY_CAUTIONS:
+            continue
+        label, sentence = SOFT_PENALTY_CAUTIONS[code]
+        add(str(code), label, "warning", sentence)
+
+    for warning in item.get("riskWarnings") or []:
+        sentence = str(warning).strip()
+        mapped = RISK_WARNING_CAUTIONS.get(sentence)
+        if mapped:
+            code, label = mapped
+            add(code, label, "warning", sentence)
+
+    invalidation = decision.get("invalidationPrice")
+    if isinstance(invalidation, (int, float)) and math.isfinite(float(invalidation)):
+        scope_sentence = (
+            f"가격이 ${float(invalidation):.2f} 아래로 내려가거나 당일 15:50 ET가 지나면 "
+            "이 장중 판단은 더 이상 유효하지 않습니다."
+        )
+    else:
+        scope_sentence = "이 판단은 당일 15:50 ET까지만 유효하며 이후에는 시장 근거를 다시 확인해야 합니다."
+    add("decision_scope", "판단 유효 범위", "notice", scope_sentence)
+    add(
+        "confidence_scope",
+        "신뢰도 해석",
+        "notice",
+        "근거 신뢰도는 수익 성공확률이 아니라 사용된 데이터의 완전성과 신선도를 뜻합니다.",
+    )
+    return cautions
 
 
 def build_counter_evidence(item: dict[str, Any], decision: dict[str, Any]) -> dict[str, Any] | None:
@@ -415,7 +766,7 @@ def counter_evidence_sentence(code: str) -> str:
         "evidence_reliability": "사용된 가격·거래 근거의 신뢰도가 직접 매수 기준에 미치지 못했습니다.",
         "current_relative_strength": "당일에는 SPY보다 약해 시장 대비 강도가 부족했습니다.",
         "last60_relative_strength": "마감 전에는 시장 대비 강도가 약해 추가 확인이 필요합니다.",
-        "volume_confirmation": "가격 움직임을 뒷받침하는 거래량이 충분하지 않았습니다.",
+        "volume_confirmation": "동시간 거래량 배수가 직접 매수 기준 1.00배에 미치지 못했습니다.",
         "vwap_hold": "종가가 VWAP 아래에 있어 가격 구조를 추가로 확인해야 합니다.",
         "overextension": "종가가 VWAP에서 과도하게 이격돼 추격 진입 위험이 큽니다.",
         "quoted_spread": "호가 스프레드가 위험 성향의 허용 범위를 넘어 체결 조건 확인이 필요합니다.",
@@ -438,18 +789,19 @@ def decision_explanation(item: dict[str, Any], *, target_session_date: str) -> d
     counter = _record(item.get("counterEvidence"))
     counter_sentence = str(counter.get("sentence") or "").strip()
     if action == "buy":
-        headline = "시장 대비 강세가 마감까지 이어졌고 거래량도 가격 움직임을 뒷받침했습니다."
-        body_sentences = interpretations[:3]
+        headline = "시장보다 강한 흐름과 활발한 거래가 이어져, 계획된\u00a0가격대에서 매수를 검토할 수 있습니다."
+        body_sentences = []
     elif action == "conditional_buy":
-        reason = counter_sentence or "직접 매수 전에 추가 확인이 필요한 조건이 남아 있습니다."
-        headline = f"시장 대비 강세와 거래 참여는 확인됐지만, {reason}"
-        body_sentences = interpretations[:3]
+        headline = "시장보다 강한 흐름과 거래 참여는 확인됐지만, 지금 바로 매수하기보다 남은 조건을 확인해야 합니다."
+        body_sentences = [
+            "가격 구조와 체결 여건은 진입 계획에 사용할 수 있지만, 유의할 점의 남은 조건이 해소되기 전에는 주문하지 않습니다."
+        ]
     elif action == "not_suitable":
         headline = "시장 근거와 별개로 현재 계좌 한도에서는 신규 진입에 적합하지 않습니다."
-        body_sentences = [*interpretations[:2], counter_sentence or "현재 계좌의 위험예산·현금·집중도 한도에서 한 주 이상 배정할 수 없습니다."]
+        body_sentences = [interpretations[0] if interpretations else "", counter_sentence or "현재 계좌의 위험예산·현금·집중도 한도에서 한 주 이상 배정할 수 없습니다."]
     else:
-        headline = counter_sentence or "직접 매수 기준을 충족하지 못해 관찰 대상으로 유지합니다."
-        body_sentences = interpretations[:3]
+        headline = "현재는 직접 매수 조건이 충분하지 않아 관찰 대상으로 유지합니다."
+        body_sentences = interpretations[1:3]
     body = " ".join(dict.fromkeys(sentence for sentence in body_sentences if sentence))
     explanation.update({
         "version": "recommendation-explanation.v1",
@@ -461,7 +813,7 @@ def decision_explanation(item: dict[str, Any], *, target_session_date: str) -> d
             "headline": headline,
             "body": body,
             "model": None,
-            "promptVersion": "recommendation-decision-renderer.ko.v2",
+            "promptVersion": "recommendation-decision-renderer.ko.v6",
             "generatedAt": explanation.get("primary", {}).get("generatedAt") if isinstance(explanation.get("primary"), dict) else None,
         },
     })

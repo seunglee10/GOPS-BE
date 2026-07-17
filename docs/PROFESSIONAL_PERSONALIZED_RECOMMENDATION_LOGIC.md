@@ -146,9 +146,13 @@ optional catalyst/fundamental 근거가 없을 때도 중립 50점을 넣지 않
 
 직접 매수 판단은 `recommendation-decision.v1`이 action, 눌림·돌파 경로, 무효화, 1.5R,
 15:50 ET 종료와 위험예산 수량을 계산한다. 자연어 설명은
-`recommendation-decision-renderer.ko.v2`가 시장 대비 흐름·거래 참여·가격 구조와 실제
-실패 조건을 정성 문장으로 투영한다. 수치형 원시 근거는 계산·감사 계약에 남지만 사용자
-근거 문장에는 점수·기여도·bp·배수로 반복하지 않는다. renderer는 판단값을
+`recommendation-decision-renderer.ko.v6`가 시장 흐름·거래 참여·가격 구조와
+`availableBlocks`에 실제로 존재하는 뉴스·촉매, 체결 여건, 안정성·품질을 관측 수치와
+비교 기준으로 투영한다. 수치는 `metrics[]`에 두고 `interpretation`은 같은 값을 반복하지 않고
+각 비교가 시장 효과·장중 시간대·평균 체결가·체결 비용 왜곡을 어떻게 통제하는지 설명한다.
+실패 조건, 알려진 soft penalty·실행 경고, 판단 유효 범위, 신뢰도 의미는
+구조화된 `cautions[]`로 함께 제공한다. 수치형 원시 근거는 계산·감사 계약에 남지만 사용자
+근거에는 읽기 쉬운 표시값과 `metrics[]` 기준선 그래프로 함께 제공한다. renderer는 판단값을
 다시 계산하지 않으며 출처를
 `deterministic`으로 보존한다.
 

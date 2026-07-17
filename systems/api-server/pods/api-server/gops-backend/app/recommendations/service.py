@@ -1312,6 +1312,7 @@ def normalize_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "sizing": item.get("sizing") or decision_json.get("sizing"),
             "keyEvidence": item.get("keyEvidence") or decision_json.get("keyEvidence") or [],
             "counterEvidence": item.get("counterEvidence") or decision_json.get("counterEvidence"),
+            "cautions": item.get("cautions") or decision_json.get("cautions") or [],
             "metricsSnapshot": metrics_snapshot,
         })
     return normalized

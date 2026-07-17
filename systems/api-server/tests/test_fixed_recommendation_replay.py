@@ -72,6 +72,7 @@ def test_latest_and_refresh_return_identical_common_artifact_without_db_writes(m
     assert all("sizing" not in item for item in payload["items"])
     assert all("keyEvidence" not in item for item in payload["items"])
     assert all("counterEvidence" not in item for item in payload["items"])
+    assert all("cautions" not in item for item in payload["items"])
     assert all(
         "limitedPortfolioEvidence" not in item["metricsSnapshot"]["softPenalties"]
         for item in payload["items"]
@@ -106,20 +107,40 @@ def test_decision_v1_returns_fixed_direct_actions_and_no_dummy_missing_evidence(
     assert {symbol for symbol, action in actions.items() if action == "conditional_buy"} == {
         "NVDA", "GOOGL", "PANW", "PLTR"
     }
-    assert all(len(item["keyEvidence"]) == 3 for item in payload["items"])
-    assert all(item["explanation"]["primary"]["promptVersion"] == "recommendation-decision-renderer.ko.v2" for item in payload["items"])
+    assert all(4 <= len(item["keyEvidence"]) <= 6 for item in payload["items"])
+    assert all(item["explanation"]["primary"]["promptVersion"] == "recommendation-decision-renderer.ko.v6" for item in payload["items"])
     assert all(
-        not any(token in evidence["interpretation"] for token in ("%p", "bp", "점", "배"))
+        not any(character.isdigit() for character in evidence["interpretation"])
+        and not any(token in evidence["interpretation"] for token in ("%p", "bp", "/100"))
+        and evidence["metrics"]
         for item in payload["items"]
         for evidence in item["keyEvidence"]
     )
     assert all(
+        metric["value"]
+        and metric["comparison"]
+        and 0 <= metric["valuePositionPct"] <= 100
+        and 0 <= metric["referencePositionPct"] <= 100
+        for item in payload["items"]
+        for evidence in item["keyEvidence"]
+        for metric in evidence["metrics"]
+    )
+    assert all(item["explanation"]["primary"]["headline"] for item in payload["items"])
+    assert all(
         not any(character.isdigit() for character in item["explanation"]["primary"]["headline"])
-        and "%p" not in item["explanation"]["primary"]["headline"]
-        and "bp" not in item["explanation"]["primary"]["headline"]
         for item in payload["items"]
     )
     assert all(item["counterEvidence"]["sentence"] for item in payload["items"] if item["counterEvidence"])
+    assert all(item["cautions"] for item in payload["items"])
+    assert all(
+        len({row["code"] for row in item["cautions"]}) == len(item["cautions"])
+        and len({row["sentence"] for row in item["cautions"]}) == len(item["cautions"])
+        for item in payload["items"]
+    )
+    assert all(
+        {"decision_scope", "confidence_scope"}.issubset({row["code"] for row in item["cautions"]})
+        for item in payload["items"]
+    )
     nvda = next(item for item in payload["items"] if item["symbol"] == "NVDA")
     assert "마감 전" in nvda["counterEvidence"]["sentence"]
     assert all("중립값" not in " ".join(item["riskWarnings"]) for item in payload["items"])
