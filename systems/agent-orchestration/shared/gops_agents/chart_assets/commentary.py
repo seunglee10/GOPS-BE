@@ -605,6 +605,7 @@ def validate_chart_commentary_output(
     seen_paragraph_ids: set[str] = set()
     seen_segment_ids: set[str] = set()
     linked_reference_ids: set[str] = set()
+    direct_linked_reference_ids: set[str] = set()
     indicator_link_layers: set[str] = set()
     used_reference_ids: list[str] = []
     link_count = 0
@@ -638,21 +639,33 @@ def validate_chart_commentary_output(
             clean_segment: dict[str, Any] = {"id": segment_id, "text": text}
             raw_link = segment.get("link")
             if raw_link is not None:
-                link_count += 1
                 clean_link, reference_ids = _validate_commentary_link(
                     raw_link,
                     allowed_references=allowed_references,
                     allowed_layers=allowed_layers,
                 )
-                if any(reference_id in linked_reference_ids for reference_id in reference_ids):
-                    raise ChartCommentaryGenerationError("commentary repeated an inline reference")
-                linked_reference_ids.update(reference_ids)
-                used_reference_ids.extend(reference_ids)
                 if clean_link["kind"] == "indicator":
                     layer = clean_link["layer"]
                     if layer in indicator_link_layers:
-                        raise ChartCommentaryGenerationError("commentary repeated an indicator link")
+                        clean_segments.append(clean_segment)
+                        continue
                     indicator_link_layers.add(layer)
+                else:
+                    direct_reference_ids = [
+                        reference_id
+                        for reference_id in reference_ids
+                        if reference_id not in direct_linked_reference_ids
+                    ]
+                    if not direct_reference_ids:
+                        clean_segments.append(clean_segment)
+                        continue
+                    if clean_link["kind"] == "drawing" and direct_reference_ids != reference_ids:
+                        clean_link = {**clean_link, "referenceIds": direct_reference_ids}
+                    reference_ids = direct_reference_ids
+                    direct_linked_reference_ids.update(reference_ids)
+                link_count += 1
+                linked_reference_ids.update(reference_ids)
+                used_reference_ids.extend(reference_ids)
                 clean_segment["link"] = clean_link
             clean_segments.append(clean_segment)
         clean_paragraphs.append({"id": paragraph_id, "segments": clean_segments})

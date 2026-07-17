@@ -218,6 +218,42 @@ class ChartAssetCommentaryTest(unittest.TestCase):
         self.assertEqual(ready["indicatorRecommendations"][0]["layer"], "rsi:14")
         self.assertEqual(len({reference["id"] for reference in ready["references"]}), len(ready["references"]))
 
+    def test_v2_allows_indicator_evidence_to_share_a_candle_reference(self):
+        fact_pack = _fact_pack()
+
+        ready, _latency = generate_chart_commentary(
+            fact_pack=fact_pack,
+            writer=FixtureWriter(mutation="shared_reference"),
+            generated_at="2025-06-11T00:00:00.000Z",
+        )
+
+        links = [
+            segment["link"]
+            for paragraph in ready["paragraphs"]
+            for segment in paragraph["segments"]
+            if segment.get("link")
+        ]
+        candle_link = next(link for link in links if link["kind"] == "candle")
+        indicator_link = next(link for link in links if link["kind"] == "indicator")
+        self.assertEqual(indicator_link["referenceIds"], [candle_link["referenceId"]])
+
+    def test_v2_downgrades_a_repeated_inline_action_to_plain_text(self):
+        fact_pack = _fact_pack()
+
+        ready, _latency = generate_chart_commentary(
+            fact_pack=fact_pack,
+            writer=FixtureWriter(mutation="duplicate_candle_link"),
+            generated_at="2025-06-11T00:00:00.000Z",
+        )
+
+        repeated_segment = next(
+            segment
+            for paragraph in ready["paragraphs"]
+            for segment in paragraph["segments"]
+            if segment["id"] == "context-open"
+        )
+        self.assertNotIn("link", repeated_segment)
+
     def test_openai_writer_uses_store_false_and_deterministic_strict_request(self):
         fact_pack = _fact_pack()
         fixture_output = FixtureWriter().generate(fact_pack)
@@ -462,6 +498,11 @@ class FixtureWriter:
             paragraphs[1]["segments"][1]["link"]["kind"] = "news"
         if self.mutation == "markup":
             paragraphs[0]["segments"][0]["text"] = "<strong>" + paragraphs[0]["segments"][0]["text"]
+        if self.mutation == "shared_reference":
+            paragraphs[1]["segments"][3]["link"]["referenceIds"] = [candle_reference]
+            indicator_reference = candle_reference
+        if self.mutation == "duplicate_candle_link":
+            paragraphs[2]["segments"][0]["link"] = copy.deepcopy(paragraphs[1]["segments"][1]["link"])
         return {
             "paragraphs": paragraphs,
             "indicatorRecommendations": [{
