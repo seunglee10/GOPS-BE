@@ -80,7 +80,7 @@ SAFE_UPPER_TOKENS = {
     "MACD", "ATR", "POC", "VAH", "VAL", "OHLCV", "EPS", "D",
 }
 PROHIBITED_PERSONAL_TERMS = (
-    "사용자", "로그인", "계좌", "포트폴리오", "보유 수량", "평균 매입가", "평균매입가",
+    "로그인", "계좌", "포트폴리오", "보유 수량", "평균 매입가", "평균매입가",
     "내 종목", "당신의 보유", "고객님의 보유",
 )
 PROHIBITED_DIRECTIVE_PATTERNS = (
@@ -124,6 +124,25 @@ class ChartCommentaryGenerationError(RuntimeError):
         self.retryable = retryable
         self.details = dict(details or {})
         self.attempts = max(1, int(attempts))
+
+
+def _commentary_repair_guidance(error: ChartCommentaryGenerationError) -> str:
+    message = str(error)
+    unsupported_number = re.search(r"unsupported numeric value:\s*([^\s]+)", message)
+    if unsupported_number:
+        token = json.dumps(unsupported_number.group(1)[:32], ensure_ascii=False)
+        return (
+            f"허용되지 않은 숫자 {token}를 본문·추천 이유·제한사항에서 완전히 제거하고, "
+            "다른 새 숫자로 대체하지 말고 fact pack에 있는 정성 표현으로 문장을 다시 쓰세요."
+        )
+    personal_term = re.search(r"personal account language:\s*(.+)$", message)
+    if personal_term:
+        token = json.dumps(personal_term.group(1).strip()[:32], ensure_ascii=False)
+        return (
+            f"개인화 표현 {token}를 본문·추천 이유·제한사항에서 완전히 제거하고, "
+            "계좌나 보유 상태를 암시하지 않는 무주어 문장으로 다시 쓰세요."
+        )
+    return "검증 메시지에서 지적한 항목만 고치되 새로운 사실·숫자·reference를 추가하지 마세요."
 
 
 class ChartCommentaryWriter(Protocol):
@@ -273,11 +292,13 @@ class OpenAIChartCommentaryWriter:
         previous_output: dict[str, Any],
         validation_error: ChartCommentaryGenerationError,
     ) -> dict[str, Any]:
+        repair_guidance = _commentary_repair_guidance(validation_error)
         request = self._build_request(
             fact_pack,
             instructions=(
                 f"{_system_prompt()} 이전 출력은 서버 검증을 통과하지 못했습니다. "
-                "fact pack의 사실과 허용된 reference만 유지하면서 검증 오류를 고친 전체 결과를 다시 작성하세요."
+                "fact pack의 사실과 허용된 reference만 유지하면서 검증 오류를 고친 전체 결과를 다시 작성하세요. "
+                f"{repair_guidance}"
             ),
             input_payload={
                 "factPack": fact_pack,
@@ -285,6 +306,7 @@ class OpenAIChartCommentaryWriter:
                 "validation": {
                     "code": "output_validation",
                     "message": str(validation_error)[:240],
+                    "guidance": repair_guidance,
                 },
             },
         )

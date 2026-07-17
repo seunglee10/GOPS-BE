@@ -832,8 +832,9 @@ candle timestamp에 presentation anchor를 투영해 즉시 표시한다. Postgr
 추세선·평행 채널, 삼각형·깃발형·페넌트·직사각형·쐐기·채널 이탈 패턴, coverage,
 SMA60·SMA120과 최근 교차 상태를 표시한다. 신규 build/refresh는 `1m/1D`뿐이다.
 자동 분석은 `해석`, `저항(지지·저항)`, `추세`, `패턴`, `제안` 다섯 토글로 나눈다.
-초기값은 저항·추세·패턴 ON, 해석·제안 OFF이며 사용자 수동 drawing은 어느 토글도
-변경하지 않는다. `drawingGroups`가 levels/trend/pattern 분류 원본이고 구자산은 ID와
+초기값은 다섯 토글 모두 OFF이며 사용자 수동 drawing은 어느 토글도 변경하지 않는다.
+새 차트는 독립 보조지표인 거래량 막대 차트를 기본 ON으로 시작하고, 기존 차트 문서의
+명시적 레이어 상태는 보존한다. `drawingGroups`가 levels/trend/pattern 분류 원본이고 구자산은 ID와
 geometry metadata로 fallback 분류한다. SMA60/120 가시성은 차트 추가 도구가 독립적으로
 소유하고 추세 토글은 바꾸지 않는다. SMA cross 마커만 추세 레이어에 남는다.
 
@@ -856,8 +857,8 @@ hard-pass를 우선하고 category에 hard-pass가 없을 때만 활성 evidence
 document, undo/history, export, PostgreSQL drawing 예산에 넣지 않는다. 데스크톱 둘째 줄은
 `유력 후보 viewport/선별 · 전체 저장`을 표시한다. mobile-specific 축약 메뉴, touch gesture,
 mobile visual regression은 추가하지 않는다.
-해석 hard-pass 미선택 후보는 category 색 1.25px/0.42 `[6,4]`, 근접 후보는 axis 색
-1px/0.30 `[3,4]`로 표시한다. 해설 hover/focus는 Geometry 작도의 원래 category 색을
+해석 레이어의 유력 후보와 확정 작도 바탕선은 category별 넓은 실선으로 표시하고 기본
+opacity는 모두 0.30으로 통일한다. 해설 hover/focus는 Geometry 작도의 원래 category 색을
 유지한 채 opacity 1, 기본보다 0.75px 굵게(최대 4.5px) 강조하고 다른 분석 작도는 원래
 opacity의 65%로 낮춘다. 캔들과 사용자 drawing은 분석 작도보다 약하게만 dim한다.
 기존 7개 interval 자산은 계속 표시할 수 있지만 새 빌드 선택지는 `1m/1D` 두 개뿐이며

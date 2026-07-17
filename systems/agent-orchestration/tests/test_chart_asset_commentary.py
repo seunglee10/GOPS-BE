@@ -175,6 +175,18 @@ class ChartAssetCommentaryTest(unittest.TestCase):
                 fact_pack=fact_pack, writer=invented_number, generated_at="2025-06-11T00:00:00.000Z",
             )
 
+        generic_user = FixtureWriter().generate(fact_pack)
+        generic_user["paragraphs"][0]["segments"][0]["text"] = generic_user["paragraphs"][0]["segments"][0]["text"].replace(
+            "저장된 완료 봉", "사용자가 확인하는 완료 봉",
+        )
+        generic_ready = commentary_module.validate_chart_commentary_output(
+            generic_user,
+            fact_pack=fact_pack,
+            generated_at="2025-06-11T00:00:00.000Z",
+            model="fixture-model",
+        )
+        self.assertEqual(generic_ready["status"], "ready")
+
         wrong_type = FixtureWriter(mutation="type")
         with self.assertRaisesRegex(ChartCommentaryGenerationError, "type does not match"):
             generate_chart_commentary(
@@ -345,6 +357,28 @@ class ChartAssetCommentaryTest(unittest.TestCase):
         self.assertEqual(requests[0]["text"]["format"]["name"], "chart_commentary_ko_v2")
         self.assertNotIn("uniqueItems", json.dumps(requests[0]["text"]["format"]["schema"], sort_keys=True))
         self.assertEqual(json.loads(requests[0]["input"]), fact_pack)
+
+    def test_openai_repair_request_targets_the_rejected_value_without_relaxing_validation(self):
+        fact_pack = _fact_pack()
+        fixture_output = FixtureWriter().generate(fact_pack)
+        requests = []
+        writer = OpenAIChartCommentaryWriter(
+            read_config=lambda key: {"CHART_COMMENTARY_MODEL": "fixture-openai-model"}.get(key),
+            response_requester=lambda request: requests.append(copy.deepcopy(request)) or fixture_output,
+        )
+
+        writer.repair(
+            fact_pack,
+            FixtureWriter(mutation="number").generate(fact_pack),
+            ChartCommentaryGenerationError("commentary contains unsupported numeric value: 50"),
+        )
+
+        self.assertEqual(len(requests), 1)
+        self.assertIn('허용되지 않은 숫자 "50"', requests[0]["instructions"])
+        self.assertIn("다른 새 숫자로 대체하지 말고", requests[0]["instructions"])
+        repair_input = json.loads(requests[0]["input"])
+        self.assertEqual(repair_input["validation"]["message"], "commentary contains unsupported numeric value: 50")
+        self.assertIn('허용되지 않은 숫자 "50"', repair_input["validation"]["guidance"])
 
     def test_openai_writer_preflight_rejects_unsupported_strict_schema_keywords(self):
         with self.assertRaises(ChartCommentaryGenerationError) as raised:
