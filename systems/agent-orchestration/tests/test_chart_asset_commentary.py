@@ -16,6 +16,7 @@ for path in (ROOT / "systems" / "market-data" / "shared", ROOT / "systems" / "ag
         sys.path.insert(0, str(path))
 
 from alfaka.analytics.analysis_candles import AnalysisCandleBundle  # noqa: E402
+from gops_agents.chart_assets import commentary as commentary_module  # noqa: E402
 from gops_agents.chart_assets.builder import ChartAssetBuilder  # noqa: E402
 from gops_agents.chart_assets.commentary import (  # noqa: E402
     ChartCommentaryGenerationError,
@@ -254,6 +255,70 @@ class ChartAssetCommentaryTest(unittest.TestCase):
         )
         self.assertNotIn("link", repeated_segment)
 
+    def test_v2_style_targets_do_not_trigger_a_second_llm_attempt(self):
+        fact_pack = _fact_pack()
+        for mutation in ("three_sentences", "expanded_style"):
+            with self.subTest(mutation=mutation):
+                ready, _latency = generate_chart_commentary(
+                    fact_pack=fact_pack,
+                    writer=FixtureWriter(mutation=mutation),
+                    generated_at="2025-06-11T00:00:00.000Z",
+                )
+                article = "\n\n".join(
+                    "".join(segment["text"] for segment in paragraph["segments"])
+                    for paragraph in ready["paragraphs"]
+                )
+                self.assertEqual(ready["status"], "ready")
+                if mutation == "three_sentences":
+                    self.assertEqual(len(commentary_module.SENTENCE_PATTERN.findall(article)), 3)
+                else:
+                    self.assertGreater(len(article), 900)
+
+    def test_v2_macd_period_tuple_is_valid_fact_pack_numeric_content(self):
+        ready, _latency = generate_chart_commentary(
+            fact_pack=_fact_pack(),
+            writer=FixtureWriter(mutation="macd_periods"),
+            generated_at="2025-06-11T00:00:00.000Z",
+        )
+
+        article = " ".join(
+            segment["text"]
+            for paragraph in ready["paragraphs"]
+            for segment in paragraph["segments"]
+        )
+        self.assertIn("MACD(12,26,9)", article)
+
+    def test_v2_link_budget_preserves_required_categories(self):
+        paragraphs = [{
+            "id": "one",
+            "segments": [
+                {
+                    "id": f"segment-{index}",
+                    "text": f"근거 {index}",
+                    "link": {"kind": "candle", "referenceId": f"candle:{index}"},
+                }
+                for index in range(8)
+            ] + [
+                {
+                    "id": "drawing",
+                    "text": "최종 작도",
+                    "link": {"kind": "drawing", "referenceIds": ["drawing:one"]},
+                },
+                {
+                    "id": "event",
+                    "text": "최근 뉴스",
+                    "link": {"kind": "news", "referenceId": "news:one"},
+                },
+            ],
+        }]
+
+        commentary_module._limit_commentary_inline_links(paragraphs, max_links=8)
+
+        links = [segment["link"] for segment in paragraphs[0]["segments"] if segment.get("link")]
+        self.assertEqual(len(links), 8)
+        self.assertIn("drawing", {link["kind"] for link in links})
+        self.assertIn("news", {link["kind"] for link in links})
+
     def test_openai_writer_uses_store_false_and_deterministic_strict_request(self):
         fact_pack = _fact_pack()
         fixture_output = FixtureWriter().generate(fact_pack)
@@ -276,8 +341,6 @@ class ChartAssetCommentaryTest(unittest.TestCase):
         self.assertEqual(json.loads(requests[0]["input"]), fact_pack)
 
     def test_openai_writer_preflight_rejects_unsupported_strict_schema_keywords(self):
-        from gops_agents.chart_assets import commentary as commentary_module
-
         with self.assertRaises(ChartCommentaryGenerationError) as raised:
             commentary_module._validate_openai_strict_schema({
                 "type": "array",
@@ -441,6 +504,13 @@ class ChartAssetCommentaryTest(unittest.TestCase):
         ))
 
         self.assertEqual(state["recentItems"][-1]["status"], "saved")
+        self.assertTrue(all(len(line) <= 500 for line in state["logs"]))
+        parsed_logs = [json.loads(line) for line in state["logs"]]
+        commentary_log = next(item for item in parsed_logs if item["event"] == "chart_commentary_saved")
+        self.assertEqual(commentary_log["commentary"]["status"], "ready")
+        self.assertEqual(commentary_log["commentary"]["promptVersion"], "chart-commentary.ko.v2")
+        self.assertEqual(parsed_logs[-1]["event"], "chart_asset_saved")
+        self.assertTrue(parsed_logs[-1]["writeVerified"])
         asset = storage.assets[("NVDA", "1D")]
         self.assertEqual(asset["commentary"]["version"], "chart-commentary.v2")
         self.assertNotIn("first-user", str(asset))
@@ -503,6 +573,21 @@ class FixtureWriter:
             indicator_reference = candle_reference
         if self.mutation == "duplicate_candle_link":
             paragraphs[2]["segments"][0]["link"] = copy.deepcopy(paragraphs[1]["segments"][1]["link"])
+        if self.mutation == "three_sentences":
+            for paragraph in paragraphs:
+                for segment in paragraph["segments"]:
+                    segment["text"] = segment["text"].replace(".", "")
+                paragraph["segments"][-1]["text"] = paragraph["segments"][-1]["text"].rstrip() + "."
+        if self.mutation == "expanded_style":
+            paragraphs[2]["segments"][-1]["text"] += (
+                " 또한 경계 부근의 반응이 다음 완료 봉에서도 이어지는지 살피면 구조의 지속성과 일시적 흔들림을 구분하는 데 도움이 됩니다."
+                " 외부 맥락보다 가격과 거래량의 확인 순서를 우선하면 해석이 한쪽 서사에 치우치는 위험도 줄일 수 있습니다."
+                " 이 과정은 결론을 늘리는 것이 아니라 같은 기준을 새 데이터에 반복 적용하는 관찰 절차입니다."
+                " 서로 다른 근거가 같은 방향을 가리키는지 확인하되 하나의 지표가 전체 판단을 대신하지 않도록 구조와 반응의 순서를 유지합니다."
+                " 이후 변화 역시 새 서사를 덧붙이기보다 기존 경계가 유지되는지부터 차례로 대조합니다."
+            )
+        if self.mutation == "macd_periods":
+            paragraphs[1]["segments"][-1]["text"] += " MACD(12,26,9)는 같은 가격 반응의 강도를 보조적으로 확인하는 기준입니다."
         return {
             "paragraphs": paragraphs,
             "indicatorRecommendations": [{

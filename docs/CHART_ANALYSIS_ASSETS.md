@@ -148,7 +148,7 @@ Alpaca가 성공했지만 실제 봉이 없는 slot은 `provider_confirmed_empty
 identity에 따라 달라지지 않는다.
 
 OpenAI writer는 Responses API의 strict JSON Schema와 `store=false`를 사용한다. 서버는
-응답의 reference/drawing/indicator, 숫자·날짜, 길이, 금지 투자 지시와 개인화 표현을 다시
+응답의 reference/drawing/indicator, 숫자·날짜, 안전 길이, 금지 투자 지시와 개인화 표현을 다시
 검증한다. 출력은 제목이나 목록이 아닌 세 문단의 연속형 한국어 해설이며, 자연스러운
 본문 segment만 drawing·indicator·candle·news·earnings reference에 연결한다. 뉴스·실적
 결측은 본문에서 자료 한계를 자연스럽게 밝히고 `limitations`에도 남기는 정상 결과지만 AWS required mode에서
@@ -162,6 +162,12 @@ writer의 strict schema는 OpenAI가 지원하지 않는 JSON Schema 키워드�
 제약은 저장 전 서버 후검증이 담당한다. indicator가 주요 봉과 같은 evidence reference를
 공유하는 것은 정상으로 허용하며, 본문에서 동일한 작도·봉·이벤트·지표 동작이 반복되면
 첫 링크만 유지하고 뒤의 표현은 평문으로 결정론적으로 정규화한다.
+600~900자·6~9문장·링크 최대 8개는 writer의 문체 목표다. 글자·문장 목표 이탈은 재호출이나
+자산 폐기 사유로 삼지 않으며, 본문은 300~1600자의 안전 범위만 강제한다. 링크가 8개를
+넘으면 작도·주요 봉·이벤트와 추천 indicator 링크를 우선 보존하고 나머지를 평문으로 낮춘다.
+사실에 없는 숫자·날짜·reference, 개인화 표현과 직접 투자 지시는 계속 저장을 차단한다.
+작업 로그의 500자 상한에서 JSON이 잘리지 않도록 asset write verification, trace telemetry,
+commentary telemetry는 독립된 로그 항목으로 기록한다.
 로컬 기본 provider는 disabled이며 구자산과 동일한 규칙 기반 종합 해설을 사용한다.
 
 ## 화면 레이어와 해설

@@ -290,13 +290,12 @@ class ChartAssetBuilder:
         trace_payload = trace if isinstance(trace, dict) else {}
         omitted = trace_payload.get("omittedCounts")
         omitted_payload = omitted if isinstance(omitted, dict) else {}
-        log = {
+        asset_log = {
             "event": "chart_asset_saved" if saved else "chart_asset_unchanged",
             "symbol": symbol,
             "interval": interval,
             "algorithmVersion": algorithm_version,
             "asOf": as_of,
-            "generatedAt": generated_at,
             "payloadBytes": payload_bytes,
             "traceMode": str(trace_payload.get("version") or "none"),
             "writeVerified": write_verified,
@@ -304,27 +303,41 @@ class ChartAssetBuilder:
                 name: len(trace_payload.get(name) or [])
                 for name in ("levelCandidates", "trendCandidates", "patternCandidates")
             },
+        }
+        trace_log = {
+            "event": "chart_trace_summary",
+            "symbol": symbol,
+            "interval": interval,
+            "generatedAt": generated_at,
             "traceOmitted": {
                 str(name): int(count or 0)
                 for name, count in sorted(omitted_payload.items(), key=lambda item: str(item[0]))
             },
         }
+        commentary_log = None
         if isinstance(commentary, dict):
             source_identity = commentary.get("sourceIdentity") if isinstance(commentary.get("sourceIdentity"), dict) else {}
-            log["commentary"] = {
-                "status": commentary.get("status"),
-                "model": commentary.get("model"),
-                "promptVersion": commentary.get("promptVersion"),
-                "contextDigest": source_identity.get("contextDigest"),
-                "newsAsOf": source_identity.get("newsAsOf"),
-                "earningsAsOf": source_identity.get("earningsAsOf"),
-                "latencyMs": commentary_latency_ms,
+            commentary_log = {
+                "event": "chart_commentary_saved",
+                "symbol": symbol,
+                "interval": interval,
+                "commentary": {
+                    "status": commentary.get("status"),
+                    "model": commentary.get("model"),
+                    "promptVersion": commentary.get("promptVersion"),
+                    "contextDigest": source_identity.get("contextDigest"),
+                    "newsAsOf": source_identity.get("newsAsOf"),
+                    "earningsAsOf": source_identity.get("earningsAsOf"),
+                    "latencyMs": commentary_latency_ms,
+                },
             }
         try:
-            self.progress.add_log(
-                job_id,
-                json.dumps(log, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
-            )
+            for log in (trace_log, commentary_log, asset_log):
+                if log is not None:
+                    self.progress.add_log(
+                        job_id,
+                        json.dumps(log, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+                    )
         except Exception:
             # Asset persistence is authoritative. A bounded operational log must
             # never turn a successful conditional UPSERT into a failed build.

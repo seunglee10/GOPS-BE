@@ -64,7 +64,7 @@ BEARISH_PATTERN_KINDS = {
 }
 POLE_TARGET_PATTERN_KINDS = {"bullish_flag", "bearish_flag", "bullish_pennant", "bearish_pennant"}
 MARKET_TIMEZONE = ZoneInfo("America/New_York")
-NUMBER_PATTERN = re.compile(r"(?<![A-Za-z0-9])[-+]?\d[\d,]*(?:\.\d+)?%?")
+NUMBER_PATTERN = re.compile(r"(?<![A-Za-z0-9])[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?%?")
 SENTENCE_PATTERN = re.compile(r"[^.!?。]+[.!?。]")
 RAW_HTML_PATTERN = re.compile(r"</?[A-Za-z][^>]*>")
 MARKDOWN_LINK_PATTERN = re.compile(r"\[[^\]\n]+\]\([^\)\n]+\)")
@@ -604,11 +604,8 @@ def validate_chart_commentary_output(
     clean_paragraphs: list[dict[str, Any]] = []
     seen_paragraph_ids: set[str] = set()
     seen_segment_ids: set[str] = set()
-    linked_reference_ids: set[str] = set()
     direct_linked_reference_ids: set[str] = set()
-    indicator_link_layers: set[str] = set()
-    used_reference_ids: list[str] = []
-    link_count = 0
+    seen_indicator_link_layers: set[str] = set()
     for paragraph in paragraphs:
         if not isinstance(paragraph, dict):
             raise ChartCommentaryGenerationError("commentary paragraph is invalid")
@@ -646,10 +643,10 @@ def validate_chart_commentary_output(
                 )
                 if clean_link["kind"] == "indicator":
                     layer = clean_link["layer"]
-                    if layer in indicator_link_layers:
+                    if layer in seen_indicator_link_layers:
                         clean_segments.append(clean_segment)
                         continue
-                    indicator_link_layers.add(layer)
+                    seen_indicator_link_layers.add(layer)
                 else:
                     direct_reference_ids = [
                         reference_id
@@ -663,14 +660,28 @@ def validate_chart_commentary_output(
                         clean_link = {**clean_link, "referenceIds": direct_reference_ids}
                     reference_ids = direct_reference_ids
                     direct_linked_reference_ids.update(reference_ids)
-                link_count += 1
-                linked_reference_ids.update(reference_ids)
-                used_reference_ids.extend(reference_ids)
                 clean_segment["link"] = clean_link
             clean_segments.append(clean_segment)
         clean_paragraphs.append({"id": paragraph_id, "segments": clean_segments})
-    if link_count > 8:
-        raise ChartCommentaryGenerationError("commentary contains more than eight inline links")
+
+    _limit_commentary_inline_links(clean_paragraphs, max_links=8)
+    linked_reference_ids: set[str] = set()
+    indicator_link_layers: set[str] = set()
+    used_reference_ids: list[str] = []
+    for paragraph in clean_paragraphs:
+        for segment in paragraph["segments"]:
+            link = segment.get("link")
+            if not isinstance(link, dict):
+                continue
+            reference_ids = (
+                list(link.get("referenceIds") or [])
+                if link.get("kind") in {"drawing", "indicator"}
+                else [str(link.get("referenceId"))]
+            )
+            linked_reference_ids.update(reference_ids)
+            used_reference_ids.extend(reference_ids)
+            if link.get("kind") == "indicator":
+                indicator_link_layers.add(str(link.get("layer")))
 
     used_inline_references = set(linked_reference_ids)
     if any(reference.get("type") == "candle" for reference in allowed_references.values()) and not any(
@@ -726,11 +737,8 @@ def validate_chart_commentary_output(
     article_text = "\n\n".join(paragraph_texts)
     all_text = " ".join([article_text, *(item["reason"] for item in recommendations), *limitations])
     character_count = len(article_text)
-    sentence_count = len(SENTENCE_PATTERN.findall(article_text))
-    if not 600 <= character_count <= 900:
-        raise ChartCommentaryGenerationError("commentary length must be between 600 and 900 characters")
-    if not 6 <= sentence_count <= 9:
-        raise ChartCommentaryGenerationError("commentary must contain 6 to 9 sentences")
+    if not 300 <= character_count <= 1_600:
+        raise ChartCommentaryGenerationError("commentary length is outside the safe storage range")
     if (
         RAW_HTML_PATTERN.search(article_text)
         or MARKDOWN_LINK_PATTERN.search(article_text)
@@ -782,6 +790,38 @@ def validate_chart_commentary_output(
         "references": selected_references,
         "limitations": limitations,
     }
+
+
+def _limit_commentary_inline_links(paragraphs: list[dict[str, Any]], *, max_links: int) -> None:
+    links: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    for paragraph in paragraphs:
+        for segment in paragraph.get("segments") or []:
+            link = segment.get("link")
+            if isinstance(link, dict):
+                links.append((segment, link))
+    if len(links) <= max_links:
+        return
+
+    protected: set[int] = set()
+    protected_categories: set[str] = set()
+    for index, (_segment, link) in enumerate(links):
+        kind = str(link.get("kind") or "")
+        if kind == "indicator":
+            protected.add(index)
+            continue
+        category = "event" if kind in {"news", "earnings"} else kind
+        if category in {"drawing", "candle", "event"} and category not in protected_categories:
+            protected.add(index)
+            protected_categories.add(category)
+
+    selected = set(protected)
+    for index in range(len(links)):
+        if len(selected) >= max_links:
+            break
+        selected.add(index)
+    for index, (segment, _link) in enumerate(links):
+        if index not in selected:
+            segment.pop("link", None)
 
 
 def _validate_commentary_link(
