@@ -444,6 +444,96 @@ class SimulatorRoutesTest(unittest.TestCase):
             now=datetime(2026, 7, 14, 15, 0, tzinfo=timezone.utc),
         )
 
+    def test_simulation_analysis_assets_are_built_from_replay_safe_candles(self):
+        self.gateway.mode = "simulation"
+        replay_rows = [
+            {
+                "timestamp": f"2026-07-14T{15 + index // 60:02d}:{index % 60:02d}:00Z",
+                "open": 100.0 + index / 100,
+                "high": 101.0 + index / 100,
+                "low": 99.0 + index / 100,
+                "close": 100.5 + index / 100,
+                "volume": 1_000 + index,
+                "isClosed": True,
+            }
+            for index in range(120)
+        ]
+        self.gateway.candles = lambda symbol, interval, limit: {
+            "symbol": symbol,
+            "interval": interval,
+            "simulation": True,
+            "asOf": replay_rows[-1]["timestamp"],
+            "candles": replay_rows,
+        }
+        stored_assets = {
+            "1m": {
+                "assetVersion": "geometry",
+                "symbol": "NVDA",
+                "interval": "1m",
+                "sourceInterval": "1m",
+                "asOf": "2026-07-14T20:00:00Z",
+            },
+            "5m": None,
+            "10m": None,
+            "1h": None,
+            "4h": None,
+            "1D": {
+                "assetVersion": "geometry",
+                "symbol": "NVDA",
+                "interval": "1D",
+                "sourceInterval": "1D",
+                "asOf": "2026-07-14T04:00:00Z",
+            },
+            "1W": None,
+        }
+        analysis_result = {
+            "drawings": [],
+            "supports": [],
+            "resistances": [],
+            "patterns": [],
+            "primaryPattern": None,
+            "tradePlan": None,
+            "primaryTriangle": None,
+            "historicalTriangle": None,
+            "evidence": [],
+            "trends": [],
+            "primaryTrend": None,
+            "drawingGroups": {"levels": [], "trend": [], "pattern": []},
+            "analysisTrace": {
+                "version": "geometry-analysis-trace-v2",
+                "completeness": {"complete": True, "detected": 0, "stored": 0},
+            },
+            "indicators": {
+                "sma60": 100.5,
+                "sma120": 100.25,
+                "cross": {"status": "none", "direction": None, "timestamp": None, "barsAgo": None},
+            },
+        }
+        storage = SimpleNamespace(get_symbol_assets=lambda _symbol: stored_assets)
+        historical = {"symbol": "NVDA", "interval": "1m", "candles": []}
+
+        with (
+            patch("app.routes.chart_assets.chart_asset_storage", return_value=storage),
+            patch(
+                "app.routes.charts.get_query_service",
+                return_value=SimpleNamespace(candle_snapshot=lambda *_args, **_kwargs: historical),
+            ),
+            patch("alfaka.analytics.geometry.analyze_geometry", return_value=analysis_result),
+        ):
+            response = self.client.get("/api/charts/analysis-assets?symbol=NVDA&interval=1m")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["assets"]["1m"]["asOf"], replay_rows[-1]["timestamp"])
+        self.assertEqual(payload["assets"]["1m"]["coverage"]["actualBars"], 120)
+        self.assertEqual(payload["assets"]["1D"]["asOf"], "2026-07-14T04:00:00Z")
+        self.assertTrue(payload["meta"]["simulation"])
+        self.assertEqual(payload["meta"]["cutoff"], "2026-07-15T00:00:00+09:00")
+        self.assertEqual(payload["meta"]["dynamicInterval"], "1m")
+
+        delete_response = self.client.delete("/api/charts/analysis-assets?symbols=NVDA&intervals=1m")
+        self.assertEqual(delete_response.status_code, 409)
+
     def test_other_point_in_time_unsafe_market_data_stays_blocked(self):
         self.gateway.mode = "simulation"
 
