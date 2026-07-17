@@ -59,6 +59,10 @@ recommendation API를 다시 조회한다. 차트 자동 작도는 현재 symbol
 차트의 실적·뉴스 DOM 마커는 Canvas scene 좌표를 chart container의 local 좌표로
 환산하고 대응 봉의 x 중심을 그대로 사용한다. 같은 봉의 여러 이벤트는 좌우로 벌리지
 않고 세로로 쌓아 UI scale·pan·zoom 중에도 봉과 시간축에서 분리되지 않게 한다.
+마커 상세는 chart 밖 body portal에 표시하되 viewport 안에서 위·아래 공간을 비교해
+배치한다. 실적 카드는 EPS 서프라이즈와 실제·예상치를, 뉴스 카드는 영향·일별 요약·
+핵심 포인트·원문 링크를 우선 표시한다. API에 없는 매출이나 재무 수치는 보간하거나
+생성하지 않으며 작은 화면에서는 하단 sheet로 전환한다.
 
 `빠른 주문` 패널도 자동 주문 경로가 아니다. 최우선 매수·매도호가, 1틱 오프셋,
 estimated order-flow imbalance는 `side + price` 주문 의도를 선택해 편집 가능한 가격 입력란을
