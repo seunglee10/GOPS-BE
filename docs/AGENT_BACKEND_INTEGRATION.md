@@ -106,6 +106,9 @@ market correlation/relative-strength context로만 계산한다. context가 없�
 `GET /api/charts/candles`는 replay 시작 전 정상 과거 봉과 현재 가상시각까지의 replay
 봉만 합친다. `/ws/charts`도 simulator candle snapshot을 묶어서 보내며 실시간 Redis
 WebSocket 경로를 사용하지 않는다. SIM 심볼 검색은 manifest의 21개 티커로 제한한다.
+빠른 주문은 `GET /api/simulator/quote`로 현재 replay bid/ask를 읽고 기존
+`POST /api/orders`를 통해 `userId + runId` 주문 원장에 기록한다. SIM에 존재하지 않는
+종목이나 아직 호가가 도착하지 않은 종목에는 주문 후보를 만들지 않는다.
 뉴스·추천·기업정보·chart derived asset·agent snapshot처럼 신뢰할 수 있는
 point-in-time 조회가 없는 경로는 `409 simulation_data_unavailable`을 반환한다.
 예외적으로 `GET /api/market/news/latest`는 live Redis를 건너뛰고 ClickHouse의
