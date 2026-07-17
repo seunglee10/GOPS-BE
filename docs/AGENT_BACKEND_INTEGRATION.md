@@ -807,7 +807,9 @@ Geometry v6 payload는 기존 패턴 필드와 함께 optional `trends`, `primar
 `drawingGroups`, `analysisTrace`를 `geometry` 아래에 가진다. root optional `commentary`는
 동일 완료 봉의 geometry/indicator와 cutoff-safe 저장 뉴스·실적에서 사전 생성한
 `chart-commentary.v2`이며 사용자·계좌·포트폴리오 필드는 없다. v2는 세 문단의 연속형
-본문과 검증된 inline reference segment를 저장하고 v1 payload도 읽기 호환한다. 저장 drawing은 levels 4,
+본문과 검증된 inline reference segment를 저장하고 v1 payload도 읽기 호환한다.
+`chart-commentary.ko.v3` prompt는 linked segment를 36자 이하의 명사구로 제한하며 문장 전체
+링크를 후검증에서 거절한다. 저장 drawing은 levels 4,
 pattern 3, trend/channel 1의 합계 최대 8개이고 canonical UTF-8 JSON은 256 KiB 이하다.
 trace v2는 detector의 ranked 후보와 접촉 episode를 생략하지 않고 detected/stored
 completeness를 검증한다. 전체 payload가 초과하면 후보를 제거하지 않고 저장을

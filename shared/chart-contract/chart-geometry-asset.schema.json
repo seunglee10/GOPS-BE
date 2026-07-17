@@ -166,7 +166,7 @@
         "status": {"const": "ready"},
         "generatedAt": {"type": "string", "format": "date-time"},
         "model": {"type": "string", "minLength": 1},
-        "promptVersion": {"const": "chart-commentary.ko.v2"},
+        "promptVersion": {"enum": ["chart-commentary.ko.v2", "chart-commentary.ko.v3"]},
         "sourceIdentity": {"$ref": "#/$defs/commentaryV1/properties/sourceIdentity"},
         "paragraphs": {
           "type": "array",

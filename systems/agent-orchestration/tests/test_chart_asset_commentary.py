@@ -187,6 +187,12 @@ class ChartAssetCommentaryTest(unittest.TestCase):
                 fact_pack=fact_pack, writer=markup, generated_at="2025-06-11T00:00:00.000Z",
             )
 
+        sentence_link = FixtureWriter(mutation="sentence_link")
+        with self.assertRaisesRegex(ChartCommentaryGenerationError, "concise noun phrase"):
+            generate_chart_commentary(
+                fact_pack=fact_pack, writer=sentence_link, generated_at="2025-06-11T00:00:00.000Z",
+            )
+
     def test_v2_inline_links_trace_final_drawing_candle_indicator_and_event(self):
         rows = _rows(160)
         geometry = _geometry()
@@ -479,7 +485,7 @@ class ChartAssetCommentaryTest(unittest.TestCase):
         self.assertEqual(failure_log["event"], "chart_commentary_failed")
         self.assertEqual(failure_log["commentary"]["status"], "failed")
         self.assertEqual(failure_log["commentary"]["model"], "fixture-model")
-        self.assertEqual(failure_log["commentary"]["promptVersion"], "chart-commentary.ko.v2")
+        self.assertEqual(failure_log["commentary"]["promptVersion"], "chart-commentary.ko.v3")
         self.assertTrue(str(failure_log["commentary"]["contextDigest"]).startswith("sha256:"))
         self.assertEqual(set(failure_log["commentary"]), {
             "status", "failureCode", "retryable", "attempts", "model", "promptVersion",
@@ -508,7 +514,7 @@ class ChartAssetCommentaryTest(unittest.TestCase):
         parsed_logs = [json.loads(line) for line in state["logs"]]
         commentary_log = next(item for item in parsed_logs if item["event"] == "chart_commentary_saved")
         self.assertEqual(commentary_log["commentary"]["status"], "ready")
-        self.assertEqual(commentary_log["commentary"]["promptVersion"], "chart-commentary.ko.v2")
+        self.assertEqual(commentary_log["commentary"]["promptVersion"], "chart-commentary.ko.v3")
         self.assertEqual(parsed_logs[-1]["event"], "chart_asset_saved")
         self.assertTrue(parsed_logs[-1]["writeVerified"])
         asset = storage.assets[("NVDA", "1D")]
@@ -568,10 +574,13 @@ class FixtureWriter:
             paragraphs[1]["segments"][1]["link"]["kind"] = "news"
         if self.mutation == "markup":
             paragraphs[0]["segments"][0]["text"] = "<strong>" + paragraphs[0]["segments"][0]["text"]
+        if self.mutation == "sentence_link":
+            paragraphs[1]["segments"][1]["text"] = "주요 완료 봉은 이 구조를 확인하는 핵심 근거입니다."
         if self.mutation == "shared_reference":
             paragraphs[1]["segments"][3]["link"]["referenceIds"] = [candle_reference]
             indicator_reference = candle_reference
         if self.mutation == "duplicate_candle_link":
+            paragraphs[2]["segments"][0]["text"] = "같은 주요 완료 봉"
             paragraphs[2]["segments"][0]["link"] = copy.deepcopy(paragraphs[1]["segments"][1]["link"])
         if self.mutation == "three_sentences":
             for paragraph in paragraphs:

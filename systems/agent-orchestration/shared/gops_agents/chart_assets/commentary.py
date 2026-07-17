@@ -22,7 +22,7 @@ from gops_agents.orchestration.routing import parse_openai_text_json
 
 
 COMMENTARY_VERSION = "chart-commentary.v2"
-COMMENTARY_PROMPT_VERSION = "chart-commentary.ko.v2"
+COMMENTARY_PROMPT_VERSION = "chart-commentary.ko.v3"
 COMMENTARY_INDICATOR_LAYERS = (
     "volume-profile",
     "volume",
@@ -66,6 +66,7 @@ POLE_TARGET_PATTERN_KINDS = {"bullish_flag", "bearish_flag", "bullish_pennant", 
 MARKET_TIMEZONE = ZoneInfo("America/New_York")
 NUMBER_PATTERN = re.compile(r"(?<![A-Za-z0-9])[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?%?")
 SENTENCE_PATTERN = re.compile(r"[^.!?。]+[.!?。]")
+LINKED_SEGMENT_SENTENCE_PATTERN = re.compile(r"[\r\n.!?。！？]")
 RAW_HTML_PATTERN = re.compile(r"</?[A-Za-z][^>]*>")
 MARKDOWN_LINK_PATTERN = re.compile(r"\[[^\]\n]+\]\([^\)\n]+\)")
 BARE_URL_PATTERN = re.compile(r"(?:https?://|www\.)", re.IGNORECASE)
@@ -636,6 +637,10 @@ def validate_chart_commentary_output(
             clean_segment: dict[str, Any] = {"id": segment_id, "text": text}
             raw_link = segment.get("link")
             if raw_link is not None:
+                if len(text.strip()) > 36 or LINKED_SEGMENT_SENTENCE_PATTERN.search(text):
+                    raise ChartCommentaryGenerationError(
+                        "commentary inline link must be a concise noun phrase"
+                    )
                 clean_link, reference_ids = _validate_commentary_link(
                     raw_link,
                     allowed_references=allowed_references,
@@ -1445,7 +1450,7 @@ def _system_prompt() -> str:
         "첫 문단은 현재 가격 구조와 가장 중요한 최종 작도를 하나의 중심 판단으로 설명하고, 둘째 문단은 주요 완료 봉과 추천 지표가 그 판단을 어떻게 확인하거나 경계하게 하는지 연결하세요. "
         "셋째 문단은 저장된 뉴스·실적을 인과가 아닌 동시점 맥락으로 통합한 뒤 다음 확인·무효화 조건으로 마무리하세요. 첫 문장에서 핵심 해석을 제시하고 문장 사이에 연결어를 사용하세요. "
         "전체 본문은 6~9개의 완결된 문장과 600~900자여야 하며, '전체 구조:', '작도 읽기:', '보조지표:' 같은 항목 제목이나 글머리표를 쓰지 마세요. "
-        "본문에서 차트와 연결할 자연스러운 명사구 또는 필요한 경우 한 문장을 별도 segment로 만들고 link를 붙이세요. link가 없는 segment의 link는 null로 반환하세요. "
+        "본문에서 차트와 연결할 가장 짧고 자연스러운 명사구만 별도 segment로 만들고 link를 붙이세요. linked segment는 36자 이하여야 하고 문장 전체, 개행, 마침표·물음표·느낌표를 포함하면 안 됩니다. link가 없는 segment의 link는 null로 반환하세요. "
         "inline link는 최대 8개이며 같은 reference를 두 링크에서 반복하지 마세요. 주요 완료 봉은 최대 3개, 실제 값이 있는 추천 지표는 1~3개만 사용하고 각 indicatorRecommendations layer를 본문의 indicator link와 정확히 한 번 연결하세요. "
         "모든 referenceId와 referenceIds는 입력 references의 id만 사용하세요. 주요 완료 봉을 적어도 하나 링크하고, 최종 작도가 있으면 drawing link를, 저장 뉴스·실적이 있으면 해당 event link를 포함하세요. "
         "Volume Profile은 최근 120개 완료 봉 구간 기준이며 현재 화면 범위와 다를 수 있음을 필요한 경우 본문에 자연스럽게 밝히세요. "

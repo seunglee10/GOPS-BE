@@ -150,7 +150,9 @@ identity에 따라 달라지지 않는다.
 OpenAI writer는 Responses API의 strict JSON Schema와 `store=false`를 사용한다. 서버는
 응답의 reference/drawing/indicator, 숫자·날짜, 안전 길이, 금지 투자 지시와 개인화 표현을 다시
 검증한다. 출력은 제목이나 목록이 아닌 세 문단의 연속형 한국어 해설이며, 자연스러운
-본문 segment만 drawing·indicator·candle·news·earnings reference에 연결한다. 뉴스·실적
+본문 segment만 drawing·indicator·candle·news·earnings reference에 연결한다.
+`chart-commentary.ko.v3` writer는 링크 segment를 36자 이하의 짧은 명사구로 제한하고
+문장 종결 부호나 개행이 포함된 문장 전체 링크를 저장 전에 거절한다. 뉴스·실적
 결측은 본문에서 자료 한계를 자연스럽게 밝히고 `limitations`에도 남기는 정상 결과지만 AWS required mode에서
 timeout, refusal, incomplete, malformed 또는 fact 검증 실패가 발생하면 item을
 `commentary_generation_failed`로 끝내고 단일 UPSERT 전에 중단하여 기존 row를 보존한다.
@@ -185,7 +187,11 @@ SMA60/120은 차트 추가 도구가 소유하는 독립 보조지표이며 추�
 LLM fact pack, context digest와 규칙 기반 종합 문장에는 전달하지 않는다. 별도 참조 태그는 만들지 않고
 본문의 연결된 표현이 상호작용을 소유한다. drawing 문구는 기존 focus를, 지표 문구는 해당
 차트 문서의 layer user command를, 뉴스·실적 문구는 이벤트 viewport와 popover를, 주요 봉
-문구는 semantic candle 선택과 하단 질문 reference를 사용한다. v1 block은 세 문단 평문으로
+문구는 semantic candle 선택과 하단 질문 reference를 사용한다. 실행 가능한 본문 링크는
+종류와 관계없이 signal 색과 실선 밑줄로 표시하며 재클릭으로 고정 작도·지표·봉·이벤트
+상세를 해제한다. 뉴스·실적 상세를 닫아도 event marker layer는 유지한다. Volume Profile은
+off/loading/ready/empty/error/unavailable 상태를 해설 링크에 동기화해 데이터 결측과 로드
+실패를 숨기지 않는다. v1 block은 세 문단 평문으로
 합쳐 읽되 임의 키워드 링크를 추정하지 않는다.
 그 아래 주요 가격·시나리오와 지지·저항, 추세, 패턴 판단 근거를 유지하고 원시 metric은
 `수치 근거 자세히`에 접어 둔다. hover는 해당 작도만 강조하고 같은

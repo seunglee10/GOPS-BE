@@ -42,7 +42,9 @@ class ChartAssetStorageTest(unittest.TestCase):
         _validate_asset_schema(_trace_asset_v2())
 
     def test_schema_and_postgres_round_trip_preserve_optional_commentary(self):
-        for commentary in (_commentary(), _commentary_v2()):
+        commentary_v3 = _commentary_v2()
+        commentary_v3["promptVersion"] = "chart-commentary.ko.v3"
+        for commentary in (_commentary(), _commentary_v2(), commentary_v3):
             asset = _asset()
             asset["commentary"] = commentary
             _validate_asset_schema(asset)
