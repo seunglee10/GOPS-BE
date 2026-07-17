@@ -103,6 +103,12 @@ source, capture timestamp를 보내지 않으며 서버가 검증·보강한 fil
 평균 매입가와 보유 수량을 상세 tooltip으로 표시한다. 평균 매입가는 캔들 범위와 합리적으로 가까울 때 가격축 자동 범위에도
 포함한다. 종목 변경, 전량 매도, 계정 변경 또는 WebSocket 갱신은 별도 새 연결 없이
 표시를 즉시 교체하거나 제거하며, 다른 사용자 계정의 이전 스냅샷을 재사용하지 않는다.
+가격 라벨은 점선과 같은 Canvas pass에서 공통 가격축 pill renderer로 그려 `$` 없이
+다른 가격축 숫자와 같은 typography·크기·오른쪽 기준선을 사용한다. DOM overlay는 Canvas
+scene 좌표를 chart container의 local 좌표로 환산한 투명 hover/focus 영역과 tooltip만
+담당해 UI scale·resize 중에도 점선과 분리되지 않게 한다. 평균 매입가 가격 pill은 공통
+renderer의 크기·정렬을 유지하면서 점선과 같은 노란색 채움과 어두운 글자를 사용한다.
+tooltip은 차트 체결 마커의 surface, border, typography 토큰을 재사용한다.
 
 차트의 매매 체결 DOM 마커도 사용자별 원장을 사용한다. LIVE에서는 영구 가상계좌의
 `filled` 주문만, SIM에서는 현재 `runId`의 `filled` 주문만 표시하며 서로 섞지 않는다.
