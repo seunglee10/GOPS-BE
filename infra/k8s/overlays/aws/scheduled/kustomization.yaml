@@ -9,3 +9,5 @@ resources:
   - cronjob-10k-profile-sync.yaml
   - cronjob-yahoo-estimates-sync.yaml
   - cronjob-notification-schedules.yaml
+  - cronjob-company-journal-worker.yaml
+  - cronjob-company-journal-post-market.yaml

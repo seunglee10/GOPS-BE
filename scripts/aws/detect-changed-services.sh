@@ -80,9 +80,9 @@ add_service() {
     add_deployment "${deployment}"
   done < <(gops_deployments_for_service "${key}")
 
-  # The trusted AI coach worker reads the order-owned schema. Always build the
-  # migration image together with agent analytics so schema migrations can run
-  # before the new worker is rolled out, including manual service selection.
+  # Page-4 AI coach alerts persist their nullable proposal source in the
+  # order-owned schema. Keep the migration image with agent analytics so the
+  # compatible alert migration runs before the new worker is rolled out.
   if [[ "${key}" == "agent-orchestrator" ]]; then
     add_service order-worker
   fi
@@ -260,11 +260,14 @@ select_services_for_path() {
     infra/k8s/overlays/aws/scheduled/cronjob-order-flow-daily-rollup.yaml)
       add_service market-processor
       ;;
-    infra/k8s/overlays/aws/scheduled/cronjob-notification-schedules.yaml)
+    infra/k8s/overlays/aws/scheduled/cronjob-notification-schedules.yaml | infra/k8s/overlays/aws/scheduled/cronjob-company-journal-worker.yaml | infra/k8s/overlays/aws/scheduled/cronjob-company-journal-post-market.yaml | infra/clickhouse/initdb/03-company-journal.sql)
       add_service backend
       ;;
     infra/k8s/overlays/aws/scheduled/cronjob-sec-fundamentals-sync.yaml | infra/k8s/overlays/aws/scheduled/cronjob-10k-profile-sync.yaml | infra/k8s/overlays/aws/scheduled/cronjob-yahoo-estimates-sync.yaml | infra/k8s/overlays/aws/scheduled/externalsecret-sec-fundamentals.yaml)
       add_service market-storage
+      ;;
+    infra/k8s/base/job-company-journal-benchmark-bootstrap.yaml)
+      add_service market-processor
       ;;
     infra/k8s/overlays/aws/scheduled/*)
       add_service agent-orchestrator

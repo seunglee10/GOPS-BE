@@ -20,8 +20,8 @@
 - optional chart/layout proposal preview and apply flow
 
 `stockRecommendationExplain` 레이아웃 패널은 프런트 전용 추천 해설 surface다.
-`recommendationExplain` kind로 5×4 기본 span을 사용하고 기존 추천 latest 응답의
-점수, 신뢰도, 지표 스냅샷, 근거, 위험만 읽는다. 새 report/API 계약을 만들거나
+`recommendationExplain` kind로 5×4 기본 span을 사용하고 추천 latest 응답의
+action, decision, sizing, key evidence, 점수와 설명을 읽는다. 별도 report를 만들거나
 주문을 실행하지 않는다.
 
 상단 LIVE/SIM 컨트롤은 `2026-07-15 KST` 실제 틱 replay를 제어한다. SIM 진입 직후
@@ -42,11 +42,19 @@ SIM 검색·주문 후보는 manifest의 21개 티커만 사용한다. 주문 ti
 limit-only 계약을 유지한다. 주문 상태는 `/ws/orders/{order_id}`의 SIM 원장을 읽고,
 가격조건 UI는 기존 `/api/trade-conditions`를 그대로 사용한다.
 
-뉴스·추천·기업정보·AI 코치는 point-in-time 데이터가 없을 때 기존 최신값이나 fixture를
-남기지 않고 `simulation_data_unavailable` 상태를 표시한다. 프런트는 합성 추천·뉴스·
-AI 보고서를 만들지 않는다. 단, 차트의 `GET /api/charts/events`는 저장된 ClickHouse
-일별 뉴스 중 `generated_at <= virtualTime`인 스냅샷만 반환하므로 SIM에서도 `N` 마커를
-표시할 수 있다. 차트는 서버가 반환한 과거+replay candle과 replay WebSocket만 사용한다.
+뉴스 패널은 LIVE에서 `/api/market/news/daily`, SIM에서
+`/api/market/news/latest`를 호출한다. SIM 응답은 서버가 ClickHouse에서
+`published_at`과 `localized_at`이 모두 `virtualTime` 이하인 기사만 고른 결과이며,
+프런트가 가상시각을 query로 보내거나 live Redis 결과와 합치지 않는다. 일별 뉴스 API와
+차트의 `GET /api/charts/events`도 `generated_at <= virtualTime`인 저장 스냅샷만
+반환한다. 추천·기업정보·AI 코치 등 point-in-time 데이터가 없는 나머지 기능은 기존
+최신값이나 fixture를 남기지 않고 `simulation_data_unavailable` 상태를 표시한다.
+프런트는 합성 추천·뉴스·AI 보고서를 만들지 않는다. 차트는 서버가 반환한
+과거+replay candle과 replay WebSocket만 사용한다.
+
+차트의 실적·뉴스 DOM 마커는 Canvas scene 좌표를 chart container의 local 좌표로
+환산하고 대응 봉의 x 중심을 그대로 사용한다. 같은 봉의 여러 이벤트는 좌우로 벌리지
+않고 세로로 쌓아 UI scale·pan·zoom 중에도 봉과 시간축에서 분리되지 않게 한다.
 
 `빠른 주문` 패널도 자동 주문 경로가 아니다. 최우선 매수·매도호가, 1틱 오프셋,
 estimated order-flow imbalance는 `side + price` 주문 의도를 선택해 편집 가능한 가격 입력란을
@@ -86,6 +94,15 @@ source, capture timestamp를 보내지 않으며 서버가 검증·보강한 fil
 동일한 y 좌표에 `평균 매입가 · 가격 · 수량` 라벨을 표시한다. 평균 매입가는 캔들 범위와 합리적으로 가까울 때 가격축 자동 범위에도
 포함한다. 종목 변경, 전량 매도, 계정 변경 또는 WebSocket 갱신은 별도 새 연결 없이
 표시를 즉시 교체하거나 제거하며, 다른 사용자 계정의 이전 스냅샷을 재사용하지 않는다.
+
+차트의 매매 체결 DOM 마커도 사용자별 원장을 사용한다. LIVE에서는 영구 가상계좌의
+`filled` 주문만, SIM에서는 현재 `runId`의 `filled` 주문만 표시하며 서로 섞지 않는다.
+매수 `B`는 체결 시각이 속한 봉의 고가 위, 매도 `S`는 저가 아래에 표시하고 같은 봉의
+동일 방향 체결은 x 좌표를 벌리지 않고 세로로 쌓는다. 일봉은 New York 시장일, 분·시간봉과
+주·월봉은 체결 시각이 실제로 포함된 반개구간 봉에만 연결한다. Canvas scene 좌표는 chart
+container의 local 좌표로 환산해 UI scale·pan·zoom 중에도 봉에서 분리되지 않아야 한다.
+대기·취소·거절 주문은 마커를 만들지 않으며, SIM 지정가의 후속 체결은 주문 WebSocket
+terminal event에서 실행 원장을 다시 읽어 즉시 반영한다.
 
 Agent 인증 진입은 상단 global navigation의 `Login` 버튼을 사용한다. 별도 `Agents`
 버튼은 표시하지 않으며, 인증 후 하단 Agent 입력을 직접 사용한다. 로컬 Vite DEV에서는
@@ -378,6 +395,9 @@ drawing command로 저장하고, 해당 봉은 canvas에서 만료 시간이 있
 
 Drawing anchor는 pixel이 아니라 canonical `timestamp`/`price`를 사용하고
 `logicalIndex`는 현재 candle 배열에서 계산 가능한 보조 cache로만 취급한다.
+차트의 자동 가격축 범위는 현재 viewport에 보이는 candle의 `high`/`low`만 사용한다.
+이동평균선, 볼린저밴드, 보유 평균가, 실시간 체결가, 주문·분석·proposal drawing,
+비교 종목처럼 candle 위에 겹쳐 그리는 overlay는 표시되더라도 가격축 범위를 넓히지 않는다.
 `horizontalLine`은 수동 작도의 단일 anchor와 Geometry 자산의 동일 가격 2-anchor
 접촉 구간을 모두 허용한다. 2-anchor 형식의 각 timestamp도 실제 candle key여야 한다.
 지원하는 평행선 계약은 2-anchor `horizontalParallelLines`/`verticalParallelLines`, 3-anchor
@@ -681,11 +701,27 @@ dialog에서 `GET /api/recommendations/profile`로 현재 값을 읽어
 `sectorLabelKo` 한글 라벨을 사용한다.
 LIVE mode에서는 선택한 `pre` 또는 `regular`의 API item만 표시한다. `items=[]`이면
 빈 상태를 유지하고 다른 세션이나 S&P 500 seed 기반 고정 종목으로 대체하지 않는다.
-API가 비어 있거나 point-in-time 조회를 보장하지 못하면 고정 추천 fixture로 채우지 않고
-빈 상태 또는 `simulation_data_unavailable`을 표시한다.
-SIM mode도 frontend fixture를 import하거나 scenario ID를 special-case하지 않는다.
+고정 replay override 응답은 예외다. `sourceMode=historical_reconstruction` provenance는
+API 계약과 artifact 검증에 유지하되 목록과 해설 UI에 별도 배너나 내부 진단 메타데이터를
+반복 노출하지 않는다. 프런트는 `simulatorStatus.recommendations`를 읽지 않고
+LIVE/SIM 모두 기존 recommendation API만 호출한다. SIM mode도 frontend fixture를
+import하거나 scenario ID를 special-case하지 않는다.
 시뮬레이션 item 클릭 역시 `recommendation.stock` reference만 선택하며 차트나 레이아웃을
 자동 변경하지 않는다.
+
+fixed V3 decision v1 화면은 기존의 큰 action 판정과 우측 V3 점수·근거 신뢰도 배치를
+유지한다. 본문 왼쪽에는 시장 대비 강도·거래 참여·진입 구조의 세 `keyEvidence.interpretation`
+문장과 action-aware 반대 근거 문장을 표시하고, 오른쪽 단순 행에는 눌림·돌파 진입가,
+무효화 가격, 경로별 1.5R 목표, 15:50 ET 종료, 위험예산과 추천 수량을 표시한다. 근거 영역은
+`primaryValue`·기여도·bp·배수 같은 내부 수치를 렌더링하지 않는다. optional 근거 누락,
+digest, 내부 가중치와 provenance도 사용자 화면에 표시하지 않는다. 프런트는 이 결과로
+주문을 자동 생성하거나 전송하지 않는다.
+
+직접 action은 item action과 같은 `recommendation-decision.v1`이 함께 있을 때만 유효하다.
+decision이 없거나 action이 불일치하면 프런트는 해당 item을 `매수 관찰`로 표시하고
+진입 계획을 숨긴다. 따라서 direct v1이 꺼진 fixed replay나 구형 응답이 모든 종목을
+`매수 추천`으로 보이게 할 수 없다. 추천 목록의 한 줄 근거는 수치형 `primaryValue`가 아니라
+backend가 확정한 `explanation.primary.headline` 문장을 사용한다.
 
 public company journal panel은 `panelType="companyJournal"`/`kind="companyJournal"`로
 표현한다. 이 패널은 기존 기업 수익성·안정성·가치평가 차트와 뉴스 목록을
@@ -700,10 +736,10 @@ public company journal panel은 `panelType="companyJournal"`/`kind="companyJourn
 없어도 패널은 기존 응답으로 렌더링해야 한다. 이 패널에는 slider, 피드백 제어,
 tracking API, 자동 주문 동작을 추가하지 않는다.
 
-V3 item은 LLM headline/body를 먼저 표시하되 그 아래 결정론적 6개 evidence block을 항상
-표시한다. UI label은 `V3 종합 점수`, `근거 신뢰도`이며 신뢰도가 성공확률이 아님을 적는다.
-기여도 부호, penalty, 누락 factor, stale 여부, cutoff, algorithm/rule-set/snapshot/digest를
-그대로 보여 주고 누락 metric을 `0`으로 만들지 않는다. legacy `reasons`는 비-V3에만 쓴다.
+V3 direct item은 backend의 결정론적 headline/body와 세 문장형 key evidence를 표시한다.
+UI label은 `V3 종합 점수`, `근거 신뢰도`를 유지하지만 기여도 부호, penalty, 누락 factor,
+stale 여부, cutoff, algorithm/rule-set/snapshot/digest는 사용자 화면에 표시하지 않는다.
+legacy `reasons`는 비-V3에만 쓴다.
 
 company compare panel은 `panelType="companyCompare"`/`kind="companyCompare"`로
 표현하고 패널 추가 팔레트에 노출한다. 비교 대상이 없으면 GraphDB same-theme 후보 칩과
@@ -903,6 +939,26 @@ Agent 입력은 일반 분석 전에 `/api/alerts/commands` fast path를 호출�
 ready 서술은 섹션별
 `evidenceRefs`를 응답의 source label로 바꾸어 표시하고 정보성 분석 고지를 함께 노출한다.
 패널은 버튼 없이 기업 선택 즉시 실행되며 1~3개 비교 기업을 허용한다.
+
+## AI Company Journal Panel
+
+기업저널 panel은 `GET /api/company-journal/{symbol}`의 최신 verified report를 읽는다.
+headline, keywords, 탭별 자연어, 최근 움직임과 안정성 문장은 서버 report만 source of truth로
+사용한다. 화면 탭은 `매출·수익 / 실적 / 안정성 / 가치`다. 재무·가치·실적 차트는 기존 API를
+계속 사용하며 ClickHouse를 직접 조회하지
+않는다. report가 pending/unavailable이면 숫자나 문장을 추정하지 않고 생성/연결 상태를
+표시하면서 기존 실제 차트는 유지한다.
+
+실적 탭은 SEC 실제치/Yahoo 예상치 차트와 `/api/company-journal/{symbol}/evidence`의 최대 2년
+저장 일봉으로 만든
+종목·S&P 500·섹터 ETF 상대수익률/거래량 차트를 함께 제공한다. 기업저널 내부 뉴스 탭은 두지
+않지만 뉴스는 저장형 문장을 만드는 입력 근거로 계속 사용할 수 있다. 오른쪽 설명의 hover/focus는
+관련 차트 계열을 강조하며 선택된 재무 용어는 공통 사전 tooltip으로 설명한다.
+전용 evidence route는 replay simulation 중 일반 `/api/market/*`가 409를 반환할 때도 기업저널
+근거만 제공하며 다른 패널은 계속 기존 simulation guard를 따른다.
+
+어려운 재무 용어는 공통 `GlossaryText`를 사용하므로 hover, focus, Enter/Space에서 같은
+설명을 제공한다. `companyJournalPreview=1` fixture는 `import.meta.env.DEV`일 때만 활성화된다.
 
 ## Frontend Reference Files
 

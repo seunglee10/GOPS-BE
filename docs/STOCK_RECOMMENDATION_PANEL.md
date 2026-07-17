@@ -508,7 +508,16 @@ Agent UI panel type은 `stockRecommendations`다. 프런트 layout kind `recomme
 - reasons, riskWarnings
 - metricsSnapshot
 
-틱 replay SIM에서는 추천 item을 만들지 않으므로 이 참조 계약도 생성하지 않는다.
+검증된 fixed recommendation override가 활성화된 틱 replay SIM에서는 LIVE와 같은 API item으로
+이 참조 계약을 생성한다. 프런트가 simulator status에 추천 item을 별도로 주입하지 않는다.
+
+direct recommendation v1 item은 `buy`, `conditional_buy`, `watch`, `not_suitable` action과
+결정론적 `decision`, `sizing`, 세 개의 `keyEvidence`, 최대 하나의 `counterEvidence`를 가진다.
+`counterEvidence.sentence`와 `explanation.primary.headline/body`는 실제 통과·실패 조건을
+정성 문장으로 투영한다. 해설 패널은 기존 상단 판정·점수와 2열 구조를 유지하고, 왼쪽에는
+문장형 근거, 오른쪽에는 진입가·무효화·1.5R·15:50 종료·위험예산·수량만 표시한다.
+item action과 같은 V1 decision이 없으면 `매수 관찰`로 fail safe하고 진입 계획을 숨긴다.
+이 계약은 주문 제안이며 자동 주문 경로가 아니다.
 
 ## 전문 개인화
 
@@ -527,6 +536,9 @@ fill에서 장기·세션 선호를 연속적으로 학습하고, 계좌 위험�
 | `RECOMMENDATION_ALPACA_NEWS_FALLBACK_LIMIT` | batch 기준 최대 `50` | Alpaca fallback article 수 |
 | `RECOMMENDATION_ALPACA_NEWS_INCLUDE_CONTENT` | `false` | Alpaca 원문 content 포함 여부 |
 | `RECOMMENDATION_ALGORITHM_VERSION` | 없음 | `legacy`, `professional-v1`, `continuous-v2` 명시 선택. 지정하면 아래 기존 flag보다 우선하며 V2는 shadow를 무시 |
+| `RECOMMENDATION_FIXED_REPLAY_ENABLED` | `false` | 검증된 고정 역사 추천 provider 활성화. 활성 중 latest/refresh와 worker 계산을 override |
+| `RECOMMENDATION_DECISION_V1_ENABLED` | `false` | fixed candidate pool에 cutoff 사용자 context를 적용해 직접 매수 action·진입계획·수량을 반환 |
+| `RECOMMENDATION_FIXED_REPLAY_PATH` | image 기본 artifact 경로 | `recommendation.json`과 `manifest.json`이 있는 scenario 경로 |
 | `RECOMMENDATION_PERSONALIZATION_ENABLED` | `false` | professional personalization 계산 활성화 |
 | `RECOMMENDATION_PERSONALIZATION_SHADOW` | `true` | 기존 순서를 유지하고 개인화 점수만 저장 |
 | `RECOMMENDATION_PROFESSIONAL_WEIGHTS_JSON` | 없음 | 승인된 스타일 가중치와 검증 metadata |

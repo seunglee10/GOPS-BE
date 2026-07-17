@@ -265,6 +265,27 @@ fallback을 사용한다.
 | canonical 가격 정책 | `price_adjustment=split`, `canonical_version=v2` |
 | 완료 판단 | 이 문서의 완료 기준과 최종 승인 체크리스트를 모두 충족 |
 
+## 2026-07-16 고정 artifact 실측 결과
+
+- scenario: `recommendation-v3-2026-07-15`
+- evidence cutoff: `2026-07-14 16:00 ET`
+- target: `2026-07-15 regular`
+- complete candle/daily/quote candidates: 30개
+- artifact candidate pool: 30개, baseline Balanced items: 15개
+- baseline action: `buy=JPM,AMZN`, `conditional_buy=NVDA,GOOGL,PANW,PLTR`, 나머지 `watch`
+- evidence pool digest: `2250add96b1b08b4d1cbb3696b78063a8493fccbde405149c3f824127bad8593`
+- baseline recommendation digest: `aa050170f4d55c5c3f95396c53a7fe1eef25513a4952620c925f6229e8672bcc`
+- source mode: `historical_reconstruction`
+- narrative mode: `deterministic_grounded`
+
+SPY 7월 14일 완료 일봉은 252번째 일봉으로 포함한다. 같은 market date의 일봉은
+16:00 ET 이후이며 명시적으로 closed인 경우에만 적격이다. 7월 16일에 삽입된 candle/quote는
+event time이 cutoff 이하이면 reconstruction 입력으로 인정하고 삽입 시각 범위와 source digest를
+manifest에 남긴다. 뉴스는 `published_at`과 `received_at`이 모두 cutoff 이하인 행만 사용한다.
+active symbol과 세션 토글은 순위에 영향을 주지 않는다. 요청 시 cutoff 이하 사용자 profile,
+preference, portfolio snapshot만 candidate pool에 적용하며, snapshot이 없으면 해당 가중치를
+제외하고 포트폴리오 수량은 산정하지 않는다.
+
 완료 여부는 `미착수`, `진행 중`, `완료`, `차단` 중 하나로 기록한다. 실제 API 키,
 DB 비밀번호, AWS Access Key, Secret 값은 이 문서나 완료 증빙에 기록하지 않는다.
 

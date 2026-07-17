@@ -19,8 +19,15 @@ UNSAFE_SIMULATION_PREFIXES = (
     "/api/recommendations/stocks",
 )
 
+SAFE_SIMULATION_PATHS = frozenset({
+    "/api/market/news/latest",
+    "/api/market/news/daily",
+})
+
 
 def requires_point_in_time_data(path: str) -> bool:
     """Return whether a route can expose information after the replay cursor."""
 
+    if path in SAFE_SIMULATION_PATHS:
+        return False
     return any(path.startswith(prefix) for prefix in UNSAFE_SIMULATION_PREFIXES)

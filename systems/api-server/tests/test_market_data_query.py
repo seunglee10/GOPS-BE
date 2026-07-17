@@ -331,15 +331,34 @@ class FakeNewsClickHouseProvider:
         self.candle_rows = candles or []
         self.ranking_rows_by_kind = ranking_rows_by_kind or {}
         self.localized_calls = []
+        self.localized_as_of_calls = []
         self.daily_calls = []
+        self.daily_between_calls = []
         self.ranking_calls = []
 
     def localized_news_articles_for_symbols(self, symbols, limit=10, days=7, locale="ko-KR"):
         self.localized_calls.append({"symbols": list(symbols), "limit": limit, "days": days, "locale": locale})
         return self.rows[:limit]
 
+    def localized_news_articles_for_symbols_as_of(self, symbols, as_of, limit=10, days=7, locale="ko-KR"):
+        self.localized_as_of_calls.append({
+            "symbols": list(symbols), "as_of": as_of, "limit": limit, "days": days, "locale": locale,
+        })
+        return self.rows[:limit]
+
     def company_daily_news_summaries(self, symbol, limit=5, days=30, locale="ko-KR"):
         self.daily_calls.append({"symbol": symbol, "limit": limit, "days": days, "locale": locale})
+        return self.daily_rows[:limit]
+
+    def company_daily_news_summaries_between(self, symbol, from_date, to_date, limit=370, locale="ko-KR", as_of=None):
+        self.daily_between_calls.append({
+            "symbol": symbol,
+            "from_date": from_date,
+            "to_date": to_date,
+            "limit": limit,
+            "locale": locale,
+            "as_of": as_of,
+        })
         return self.daily_rows[:limit]
 
     def candles(self, symbol, interval, limit):
@@ -940,8 +959,8 @@ class FakeQueryService:
     def agent_chart_context(self, symbol, interval, from_time, to_time, include):
         return self.service.agent_chart_context(symbol, interval, from_time, to_time, include)
 
-    def latest_news(self, symbol, limit=10, locale="ko-KR"):
-        return self.service.latest_news(symbol, limit=limit, locale=locale)
+    def latest_news(self, symbol, limit=10, locale="ko-KR", now=None):
+        return self.service.latest_news(symbol, limit=limit, locale=locale, now=now)
 
     def watchlist_news(self, user_sub, limit=30, locale="ko-KR", mode="watchlist", recommendation_repository=None):
         return self.service.watchlist_news(
@@ -1449,6 +1468,37 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(service.provider.redis_provider.localized_calls[0]["limit"], 5)
         self.assertEqual(service.provider.clickhouse_provider.localized_calls[0]["days"], 30)
 
+    def test_simulation_latest_news_uses_clickhouse_as_of_without_redis(self):
+        provider = FakeNewsProvider(redis_rows=[{
+            "targetSymbol": "NVDA",
+            "localizedHeadline": "현재 Redis 뉴스",
+            "publishedAt": "2026-07-16T12:00:00.000Z",
+        }], clickhouse_rows=[{
+            "targetSymbol": "NVDA",
+            "symbols": ["NVDA"],
+            "localizedHeadline": "가상시각 이전 뉴스",
+            "localizedSummary": "저장된 과거 뉴스입니다.",
+            "publishedAt": "2026-07-14T14:32:44.000Z",
+        }])
+        service = MarketDataQueryService(provider, backfill_service=FakeBackfillService())
+        cursor = datetime(2026, 7, 14, 15, 0, tzinfo=timezone.utc)
+
+        payload = service.latest_news("nvda", limit=30, now=cursor)
+
+        self.assertEqual(payload["source"], "clickhouse-simulation")
+        self.assertEqual(payload["asOf"], "2026-07-14T15:00:00.000Z")
+        self.assertEqual(payload["items"][0]["title"], "가상시각 이전 뉴스")
+        self.assertEqual(provider.redis_provider.localized_calls, [])
+        self.assertEqual(provider.redis_provider.localized_warm_calls, [])
+        self.assertEqual(provider.clickhouse_provider.localized_calls, [])
+        self.assertEqual(provider.clickhouse_provider.localized_as_of_calls, [{
+            "symbols": ["NVDA"],
+            "as_of": "2026-07-14T15:00:00.000Z",
+            "limit": 30,
+            "days": 30,
+            "locale": "ko-KR",
+        }])
+
     def test_latest_news_route_delegates_to_query_service(self):
         previous = query_routes.get_query_service
         query_routes.get_query_service = lambda: FakeQueryService(FakeNewsProvider(redis_rows=[{
@@ -1456,8 +1506,11 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             "headline": "NVIDIA",
             "summary": "News summary",
         }]))
+        request = types.SimpleNamespace(app=types.SimpleNamespace(state=types.SimpleNamespace(
+            simulator_gateway=types.SimpleNamespace(status=lambda: {"mode": "live"}),
+        )))
         try:
-            payload = query_routes.market_latest_news("nvda", limit=3)
+            payload = query_routes.market_latest_news(request, "nvda", limit=3)
         finally:
             query_routes.get_query_service = previous
 
@@ -1732,6 +1785,34 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(payload["dailySummaries"][0]["summary"], "Redis 일일 뉴스 요약입니다.")
         self.assertEqual(service.provider.clickhouse_provider.daily_calls[0]["days"], 30)
         self.assertEqual(service.provider.redis_provider.daily_calls[0]["limit"], 30)
+
+    def test_simulation_daily_news_uses_clickhouse_snapshots_generated_by_cursor(self):
+        provider = FakeNewsProvider(redis_daily_rows=[{
+            "date": "2026-07-15",
+            "symbol": "NVDA",
+            "summary": "미래 Redis 요약",
+        }], clickhouse_daily_rows=[
+            {"date": "2026-07-13", "symbol": "NVDA", "summary": "13일 저장 뉴스"},
+            {"date": "2026-07-12", "symbol": "NVDA", "summary": "12일 저장 뉴스"},
+        ])
+        service = MarketDataQueryService(provider, backfill_service=FakeBackfillService())
+        cursor = datetime(2026, 7, 14, 15, 0, tzinfo=timezone.utc)
+
+        payload = service.daily_news("nvda", limit=5, now=cursor)
+
+        self.assertEqual([row["date"] for row in payload["dailySummaries"]], ["2026-07-13", "2026-07-12"])
+        self.assertEqual(payload["asOf"], "2026-07-14T15:00:00.000Z")
+        self.assertEqual(provider.redis_provider.daily_calls, [])
+        self.assertEqual(provider.redis_provider.daily_warm_calls, [])
+        self.assertEqual(provider.clickhouse_provider.daily_calls, [])
+        self.assertEqual(provider.clickhouse_provider.daily_between_calls, [{
+            "symbol": "NVDA",
+            "from_date": "2026-06-14",
+            "to_date": "2026-07-14",
+            "limit": 30,
+            "locale": "ko-KR",
+            "as_of": "2026-07-14T15:00:00.000Z",
+        }])
 
     def test_agent_chat_without_openai_key_returns_503(self):
         request = AgentChatRequest(
@@ -3313,6 +3394,33 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(sp500["changePercent"], 1)
         self.assertEqual(sp500["sparkline"], [100, 101])
         self.assertEqual(provider.redis_provider.redis.expirations[indices_service.indices_cache_key()], 30)
+
+    def test_market_indices_performance_history_normalizes_sp500_and_reuses_cache(self):
+        provider = FakeHeatmapProvider()
+        calls = []
+
+        def fetcher(**kwargs):
+            calls.append(kwargs)
+            return {
+                "^GSPC": [
+                    {"timestamp": "2026-07-13T20:00:00Z", "Close": 100},
+                    {"timestamp": "2026-07-14T20:00:00Z", "Close": 104},
+                    {"timestamp": "2026-07-15T20:00:00Z", "Close": 102},
+                ],
+            }
+
+        with mock.patch.object(indices_service, "utc_now", return_value=datetime(2026, 7, 16, tzinfo=timezone.utc)):
+            service = indices_service.MarketIndicesService(provider=provider, fetcher=fetcher)
+            payload = service.performance_history("1W", datetime(2026, 7, 13, tzinfo=timezone.utc))
+            cached_payload = service.performance_history("1W", datetime(2026, 7, 13, tzinfo=timezone.utc))
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["symbols"], ["^GSPC"])
+        self.assertEqual(calls[0]["period"], "1mo")
+        self.assertEqual(calls[0]["interval"], "1d")
+        self.assertEqual([point["returnPercent"] for point in payload["points"]], [0.0, 4.0, 2.0])
+        self.assertEqual(cached_payload["points"], payload["points"])
+        self.assertEqual(payload["method"], "price_return")
 
     def test_market_indices_returns_stale_immediately_and_refreshes_in_background(self):
         provider = FakeHeatmapProvider()

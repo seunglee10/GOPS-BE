@@ -1367,7 +1367,42 @@ class ClickHouseMarketDataProvider:
             relevance_levels=["mention"],
         )
 
-    def localized_news_articles_for_symbols_by_relevance(self, symbols, limit=10, days=7, locale="ko-KR", relevance_levels=None):
+    def localized_news_articles_for_symbols_as_of(self, symbols, as_of, limit=10, days=7, locale="ko-KR"):
+        normalized_symbols = []
+        for value in symbols or []:
+            symbol = str(value or "").strip().upper()
+            if symbol and symbol not in normalized_symbols:
+                normalized_symbols.append(symbol)
+        if not normalized_symbols:
+            return []
+        direct_rows = self.localized_news_articles_for_symbols_by_relevance(
+            normalized_symbols,
+            limit=limit,
+            days=days,
+            locale=locale,
+            relevance_levels=["primary", "secondary"],
+            as_of=as_of,
+        )
+        if direct_rows:
+            return direct_rows
+        return self.localized_news_articles_for_symbols_by_relevance(
+            normalized_symbols,
+            limit=min(int(limit), 3),
+            days=days,
+            locale=locale,
+            relevance_levels=["mention"],
+            as_of=as_of,
+        )
+
+    def localized_news_articles_for_symbols_by_relevance(
+        self,
+        symbols,
+        limit=10,
+        days=7,
+        locale="ko-KR",
+        relevance_levels=None,
+        as_of=None,
+    ):
         normalized_symbols = []
         for value in symbols or []:
             symbol = str(value or "").strip().upper()
@@ -1376,6 +1411,22 @@ class ClickHouseMarketDataProvider:
         if not normalized_symbols:
             return []
         levels = [str(level or "").strip().lower() for level in (relevance_levels or ["primary", "secondary"]) if str(level or "").strip()]
+        parameters = {
+            "symbols": normalized_symbols,
+            "relevanceLevels": levels,
+            "locale": locale,
+            "limit": int(limit),
+            "days": int(days),
+        }
+        if as_of:
+            time_filter = """
+          AND published_at >= parseDateTime64BestEffort({asOf:String}) - INTERVAL {days:UInt32} DAY
+          AND published_at <= parseDateTime64BestEffort({asOf:String})
+          AND localized_at <= parseDateTime64BestEffort({asOf:String})
+            """
+            parameters["asOf"] = str(as_of)
+        else:
+            time_filter = "\n          AND published_at >= now64(3) - INTERVAL {days:UInt32} DAY"
         query = f"""
         SELECT
           formatDateTime(published_at, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS publishedAt,
@@ -1407,21 +1458,12 @@ class ClickHouseMarketDataProvider:
         WHERE target_symbol IN {{symbols:Array(String)}}
           AND locale = {{locale:String}}
           AND subject_relevance IN {{relevanceLevels:Array(String)}}
-          AND published_at >= now64(3) - INTERVAL {{days:UInt32}} DAY
+          {time_filter}
         ORDER BY relevance_score_v2 DESC, published_at DESC, localized_at DESC
         LIMIT {{limit:UInt32}}
         FORMAT JSONEachRow
         """
-        return self.query_json_each_row(
-            query,
-            {
-                "symbols": normalized_symbols,
-                "relevanceLevels": levels,
-                "locale": locale,
-                "limit": int(limit),
-                "days": int(days),
-            },
-        )
+        return self.query_json_each_row(query, parameters)
 
     def company_daily_news_summaries(self, symbol, limit=5, days=30, locale="ko-KR"):
         query = f"""
@@ -1481,36 +1523,36 @@ class ClickHouseMarketDataProvider:
             "limit": int(limit),
         }
         if as_of:
-            as_of_filter = "\n          AND generated_at <= parseDateTime64BestEffort({asOf:String})"
+            as_of_filter = "\n          AND summaries.generated_at <= parseDateTime64BestEffort({asOf:String})"
             parameters["asOf"] = str(as_of)
         query = f"""
         SELECT
-          toString(date) AS date,
-          symbol,
-          locale,
-          argMax(summary, generated_at) AS summary,
-          argMax(key_points, generated_at) AS keyPoints,
-          argMax(positive_points, generated_at) AS positivePoints,
-          argMax(concerns, generated_at) AS concerns,
-          argMax(impact_direction, generated_at) AS impactDirection,
-          argMax(sentiment, generated_at) AS sentiment,
-          argMax(article_ids, generated_at) AS articleIds,
-          argMax(article_ids_hash, generated_at) AS articleIdsHash,
-          argMax(article_count, generated_at) AS articleCount,
-          argMax(mention_count, generated_at) AS mentionCount,
-          argMax(status, generated_at) AS status,
-          argMax(model, generated_at) AS model,
-          formatDateTime(max(generated_at), '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS generatedAt,
-          argMax(version, generated_at) AS version,
-          argMax(raw, generated_at) AS raw
-        FROM {self.table('news_company_daily_summaries')}
-        WHERE symbol = {{symbol:String}}
-          AND locale = {{locale:String}}
-          AND date >= toDate({{fromDate:String}})
-          AND date <= toDate({{toDate:String}})
+          toString(summaries.date) AS date,
+          summaries.symbol AS symbol,
+          summaries.locale AS locale,
+          argMax(summaries.summary, summaries.generated_at) AS summary,
+          argMax(summaries.key_points, summaries.generated_at) AS keyPoints,
+          argMax(summaries.positive_points, summaries.generated_at) AS positivePoints,
+          argMax(summaries.concerns, summaries.generated_at) AS concerns,
+          argMax(summaries.impact_direction, summaries.generated_at) AS impactDirection,
+          argMax(summaries.sentiment, summaries.generated_at) AS sentiment,
+          argMax(summaries.article_ids, summaries.generated_at) AS articleIds,
+          argMax(summaries.article_ids_hash, summaries.generated_at) AS articleIdsHash,
+          argMax(summaries.article_count, summaries.generated_at) AS articleCount,
+          argMax(summaries.mention_count, summaries.generated_at) AS mentionCount,
+          argMax(summaries.status, summaries.generated_at) AS status,
+          argMax(summaries.model, summaries.generated_at) AS model,
+          formatDateTime(max(summaries.generated_at), '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS generatedAt,
+          argMax(summaries.version, summaries.generated_at) AS version,
+          argMax(summaries.raw, summaries.generated_at) AS raw
+        FROM {self.table('news_company_daily_summaries')} AS summaries
+        WHERE summaries.symbol = {{symbol:String}}
+          AND summaries.locale = {{locale:String}}
+          AND summaries.date >= toDate({{fromDate:String}})
+          AND summaries.date <= toDate({{toDate:String}})
           {as_of_filter}
-        GROUP BY date, symbol, locale
-        ORDER BY date ASC
+        GROUP BY summaries.date, summaries.symbol, summaries.locale
+        ORDER BY summaries.date ASC
         LIMIT {{limit:UInt32}}
         FORMAT JSONEachRow
         """

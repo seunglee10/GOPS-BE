@@ -81,6 +81,9 @@ class RecommendationRepository:
     def get_profile(self, user_sub: str) -> dict[str, Any] | None:
         raise NotImplementedError
 
+    def get_profile_at(self, user_sub: str, cutoff: datetime) -> dict[str, Any] | None:
+        raise NotImplementedError
+
     def list_profile_user_subs(self) -> list[str]:
         raise NotImplementedError
 
@@ -93,10 +96,16 @@ class RecommendationRepository:
     def get_portfolio_snapshot_at(self, user_sub: str, cutoff: datetime) -> dict[str, Any] | None:
         raise NotImplementedError
 
+    def get_preference_state_at(self, user_sub: str, cutoff: datetime) -> dict[str, Any] | None:
+        raise NotImplementedError
+
     def get_active_weight_set(self) -> dict[str, Any] | None:
         raise NotImplementedError
 
     def upsert_portfolio_snapshot(self, user_sub: str, payload: dict[str, Any]) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def list_daily_portfolio_snapshots(self, user_sub: str, start_at: str | None = None) -> list[dict[str, Any]]:
         raise NotImplementedError
 
     def latest_run(self, user_sub: str) -> dict[str, Any] | None:
@@ -164,6 +173,47 @@ class PostgresRecommendationRepository(RecommendationRepository):
         except UndefinedTable as exc:
             raise RecommendationSchemaUnavailable("recommendation database migration required") from exc
 
+    def get_preference_state_at(self, user_sub: str, cutoff: datetime) -> dict[str, Any] | None:
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT *
+                    FROM user_recommendation_preference_states
+                    WHERE user_sub = %s AND as_of <= %s AND event_cutoff <= %s
+                    ORDER BY as_of DESC, state_version DESC
+                    LIMIT 1
+                    """,
+                    (user_sub, cutoff, cutoff),
+                ).fetchone()
+                return _preference_state_payload(dict(row)) if row else None
+        except UndefinedTable as exc:
+            raise RecommendationSchemaUnavailable("recommendation database migration required") from exc
+
+    def get_profile_at(self, user_sub: str, cutoff: datetime) -> dict[str, Any] | None:
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT id, user_sub, payload, source_as_of, created_at
+                    FROM user_investment_profile_history
+                    WHERE user_sub = %s AND source_as_of <= %s
+                    ORDER BY source_as_of DESC, id DESC
+                    LIMIT 1
+                    """,
+                    (user_sub, cutoff),
+                ).fetchone()
+                if not row:
+                    return None
+                payload = _json_ready(row.get("payload") or {})
+                return {
+                    **payload,
+                    "history_id": int(row["id"]),
+                    "source_as_of": _json_ready(row["source_as_of"]),
+                }
+        except UndefinedTable as exc:
+            raise RecommendationSchemaUnavailable("recommendation database migration required") from exc
+
     def list_profile_user_subs(self) -> list[str]:
         try:
             with self._connect() as conn:
@@ -206,6 +256,35 @@ class PostgresRecommendationRepository(RecommendationRepository):
                         Jsonb(profile.excluded_symbols),
                     ),
                 ).fetchone()
+                profile_payload = {
+                    "risk_level": row["risk_level"],
+                    "recommendation_style": row.get("recommendation_style") or "balanced",
+                    "horizon": row["horizon"],
+                    "max_drawdown_pct": float(row["max_drawdown_pct"]),
+                    "preferred_sectors": _json_ready(row["preferred_sectors"]),
+                    "excluded_sectors": _json_ready(row["excluded_sectors"]),
+                    "excluded_symbols": _json_ready(row["excluded_symbols"]),
+                }
+                conn.execute(
+                    """
+                    INSERT INTO user_investment_profile_history (user_sub, payload, source_as_of)
+                    SELECT %s, %s, %s
+                    WHERE %s IS DISTINCT FROM (
+                        SELECT payload
+                        FROM user_investment_profile_history
+                        WHERE user_sub = %s
+                        ORDER BY source_as_of DESC, id DESC
+                        LIMIT 1
+                    )
+                    """,
+                    (
+                        profile.user_sub,
+                        Jsonb(profile_payload),
+                        row["updated_at"],
+                        Jsonb(profile_payload),
+                        profile.user_sub,
+                    ),
+                )
                 conn.commit()
                 return _json_ready(dict(row))
         except UndefinedTable as exc:
@@ -272,20 +351,20 @@ class PostgresRecommendationRepository(RecommendationRepository):
                 preference = conn.execute(
                     """
                     SELECT * FROM user_recommendation_preference_states
-                    WHERE user_sub = %s
-                    ORDER BY state_version DESC
+                    WHERE user_sub = %s AND as_of <= %s AND event_cutoff <= %s
+                    ORDER BY as_of DESC, state_version DESC
                     LIMIT 1
                     """,
-                    (user_sub,),
+                    (user_sub, cutoff, cutoff),
                 ).fetchone()
                 risk = conn.execute(
                     """
                     SELECT * FROM user_recommendation_risk_states
-                    WHERE user_sub = %s
-                    ORDER BY state_version DESC
+                    WHERE user_sub = %s AND as_of <= %s
+                    ORDER BY as_of DESC, state_version DESC
                     LIMIT 1
                     """,
-                    (user_sub,),
+                    (user_sub, cutoff),
                 ).fetchone()
                 snapshots = conn.execute(
                     """
@@ -544,6 +623,29 @@ class PostgresRecommendationRepository(RecommendationRepository):
         except UndefinedTable as exc:
             raise RecommendationSchemaUnavailable("recommendation database migration required") from exc
 
+    def list_daily_portfolio_snapshots(self, user_sub: str, start_at: str | None = None) -> list[dict[str, Any]]:
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT payload, source_as_of
+                    FROM (
+                        SELECT DISTINCT ON ((source_as_of AT TIME ZONE 'UTC')::date)
+                            payload,
+                            source_as_of
+                        FROM user_portfolio_snapshot_history
+                        WHERE user_sub = %s
+                          AND (%s::timestamptz IS NULL OR source_as_of >= %s::timestamptz)
+                        ORDER BY (source_as_of AT TIME ZONE 'UTC')::date, source_as_of DESC
+                    ) AS daily
+                    ORDER BY source_as_of ASC
+                    """,
+                    (user_sub, start_at, start_at),
+                ).fetchall()
+                return [_json_ready(dict(row)) for row in rows]
+        except UndefinedTable as exc:
+            raise RecommendationSchemaUnavailable("recommendation database migration required") from exc
+
     def latest_run(self, user_sub: str) -> dict[str, Any] | None:
         try:
             with self._connect() as conn:
@@ -648,9 +750,9 @@ class PostgresRecommendationRepository(RecommendationRepository):
                         """
                         INSERT INTO stock_recommendation_items (
                             run_id, symbol, action, rank, score, confidence, sector,
-                            reasons, risk_warnings, metrics_snapshot, explanation_json
+                            reasons, risk_warnings, metrics_snapshot, explanation_json, decision_json
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         """,
                         (
                             run_id,
@@ -664,6 +766,7 @@ class PostgresRecommendationRepository(RecommendationRepository):
                             Jsonb(item.get("riskWarnings") or item.get("risk_warnings") or []),
                             Jsonb(item.get("metricsSnapshot") or item.get("metrics_snapshot") or {}),
                             Jsonb(item.get("explanation")) if isinstance(item.get("explanation"), dict) else None,
+                            Jsonb(_decision_json(item)),
                         ),
                     )
                 conn.commit()
@@ -821,8 +924,8 @@ class PostgresRecommendationRepository(RecommendationRepository):
                 """
                 INSERT INTO stock_recommendation_items (
                     run_id, symbol, action, rank, score, confidence, sector,
-                    reasons, risk_warnings, metrics_snapshot, explanation_json
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    reasons, risk_warnings, metrics_snapshot, explanation_json, decision_json
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     run_id, item["symbol"], item.get("action", "buy"), item["rank"], item["score"],
@@ -830,6 +933,7 @@ class PostgresRecommendationRepository(RecommendationRepository):
                     Jsonb(item.get("riskWarnings") or item.get("risk_warnings") or []),
                     Jsonb(item.get("metricsSnapshot") or item.get("metrics_snapshot") or {}),
                     Jsonb(item.get("explanation")) if isinstance(item.get("explanation"), dict) else None,
+                    Jsonb(_decision_json(item)),
                 ),
             )
 
@@ -893,6 +997,7 @@ class PostgresRecommendationRepository(RecommendationRepository):
 class InMemoryRecommendationRepository(RecommendationRepository):
     def __init__(self) -> None:
         self.profiles: dict[str, dict[str, Any]] = {}
+        self.profile_history: list[dict[str, Any]] = []
         self.runs: dict[int, dict[str, Any]] = {}
         self.items: dict[int, list[dict[str, Any]]] = {}
         self._run_id = 0
@@ -914,6 +1019,25 @@ class InMemoryRecommendationRepository(RecommendationRepository):
         rows = sorted(self.profiles.values(), key=lambda item: (item["updated_at"], item["user_sub"]), reverse=True)
         return [str(row["user_sub"]) for row in rows]
 
+    def get_profile_at(self, user_sub: str, cutoff: datetime) -> dict[str, Any] | None:
+        rows = [
+            row
+            for row in self.profile_history
+            if row.get("user_sub") == user_sub
+            and (observed := _coerce_datetime(row.get("source_as_of"))) is not None
+            and observed <= cutoff
+        ]
+        rows.sort(
+            key=lambda row: _coerce_datetime(row.get("source_as_of"))
+            or datetime.min.replace(tzinfo=timezone.utc),
+            reverse=True,
+        )
+        if not rows:
+            return None
+        payload = deepcopy(rows[0]["payload"])
+        payload.update(history_id=rows[0]["id"], source_as_of=rows[0]["source_as_of"])
+        return _json_ready(payload)
+
     def upsert_profile(self, profile: InvestmentProfileUpsert) -> dict[str, Any]:
         row = {
             "user_sub": profile.user_sub,
@@ -927,6 +1051,15 @@ class InMemoryRecommendationRepository(RecommendationRepository):
             "updated_at": datetime.now(timezone.utc),
         }
         self.profiles[profile.user_sub] = deepcopy(row)
+        payload = {key: deepcopy(value) for key, value in row.items() if key not in {"user_sub", "updated_at"}}
+        previous = next((item for item in reversed(self.profile_history) if item["user_sub"] == profile.user_sub), None)
+        if previous is None or previous["payload"] != payload:
+            self.profile_history.append({
+                "id": len(self.profile_history) + 1,
+                "user_sub": profile.user_sub,
+                "payload": payload,
+                "source_as_of": row["updated_at"],
+            })
         return _json_ready(row)
 
     def get_portfolio_snapshot(self, user_sub: str) -> dict[str, Any] | None:
@@ -952,18 +1085,47 @@ class InMemoryRecommendationRepository(RecommendationRepository):
         rows.sort(key=lambda item: (str(item.get("source_as_of")), int(item["id"])), reverse=True)
         return _json_ready(rows[0]) if rows else None
 
+    def get_preference_state_at(self, user_sub: str, cutoff: datetime) -> dict[str, Any] | None:
+        rows = [
+            row
+            for row in self.preference_states
+            if row.get("user_sub") == user_sub
+            and (
+                observed := _coerce_datetime(
+                    (row.get("payload") or {}).get("asOf") or row.get("as_of")
+                )
+            ) is not None
+            and observed <= cutoff
+        ]
+        rows.sort(key=lambda row: int(row.get("state_version") or 0), reverse=True)
+        return _json_ready(deepcopy(rows[0].get("payload"))) if rows else None
+
     def get_active_weight_set(self) -> dict[str, Any] | None:
         payload = getattr(self, "active_weight_set", None)
         return _json_ready(deepcopy(payload)) if payload else None
 
     def get_v2_context(self, user_sub: str, cutoff: datetime) -> dict[str, Any]:
         preference_rows = sorted(
-            [row for row in self.preference_states if row["user_sub"] == user_sub],
+            [
+                row for row in self.preference_states
+                if row["user_sub"] == user_sub
+                and (
+                    observed := _coerce_datetime((row.get("payload") or {}).get("asOf") or row.get("as_of"))
+                ) is not None
+                and observed <= cutoff
+            ],
             key=lambda row: row["state_version"],
             reverse=True,
         )
         risk_rows = sorted(
-            [row for row in self.risk_states if row["user_sub"] == user_sub],
+            [
+                row for row in self.risk_states
+                if row["user_sub"] == user_sub
+                and (
+                    observed := _coerce_datetime((row.get("payload") or {}).get("asOf") or row.get("as_of"))
+                ) is not None
+                and observed <= cutoff
+            ],
             key=lambda row: row["state_version"],
             reverse=True,
         )
@@ -1119,6 +1281,21 @@ class InMemoryRecommendationRepository(RecommendationRepository):
                 "source_as_of": payload.get("asOf") or payload.get("sourceAsOf") or row["updated_at"],
             })
         return _json_ready(row)
+
+    def list_daily_portfolio_snapshots(self, user_sub: str, start_at: str | None = None) -> list[dict[str, Any]]:
+        start = _history_datetime(start_at)
+        daily: dict[str, tuple[datetime, dict[str, Any]]] = {}
+        for row in self.portfolio_snapshot_history:
+            if row.get("user_sub") != user_sub:
+                continue
+            source_as_of = _history_datetime(row.get("source_as_of"))
+            if source_as_of is None or (start is not None and source_as_of < start):
+                continue
+            key = source_as_of.date().isoformat()
+            current = daily.get(key)
+            if current is None or source_as_of > current[0]:
+                daily[key] = (source_as_of, deepcopy(row))
+        return [_json_ready(row) for _, row in sorted(daily.values(), key=lambda item: item[0])]
 
     def latest_run(self, user_sub: str) -> dict[str, Any] | None:
         rows = [row for row in self.runs.values() if row["user_sub"] == user_sub]
@@ -1366,6 +1543,30 @@ def _coerce_datetime(value: Any) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
+def _decision_json(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "decision": deepcopy(item.get("decision") or {}),
+        "sizing": deepcopy(item.get("sizing") or {}),
+        "keyEvidence": deepcopy(item.get("keyEvidence") or []),
+        "counterEvidence": deepcopy(item.get("counterEvidence")),
+    }
+
+
 def _digest(value: Any) -> str:
     encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode()
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _history_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)

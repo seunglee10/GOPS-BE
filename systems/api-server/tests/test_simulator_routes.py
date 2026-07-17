@@ -178,6 +178,26 @@ class SimulatorRoutesTest(unittest.TestCase):
         invalid = self.client.put("/api/simulator/speed", json={"speed": 2})
         self.assertEqual(invalid.status_code, 422)
 
+    def test_simulation_quote_is_available_to_quick_order(self):
+        self.gateway.mode = "simulation"
+
+        response = self.client.get("/api/simulator/quote?symbol=nvda")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {
+            "symbol": "NVDA",
+            "bid": 99.0,
+            "ask": 100.0,
+            "runId": "run-1",
+        })
+        self.assertIn(("quote", "NVDA"), self.gateway.calls)
+
+    def test_simulation_quote_rejects_live_mode(self):
+        response = self.client.get("/api/simulator/quote?symbol=NVDA")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertNotIn(("quote", "NVDA"), self.gateway.calls)
+
     def test_simulation_holdings_replace_kis_with_semiconductor_dummy_account(self):
         self.gateway.mode = "simulation"
 
@@ -270,6 +290,84 @@ class SimulatorRoutesTest(unittest.TestCase):
         self.assertIn(("candles", "NVDA", "1m", 20), self.gateway.calls)
         self.assertIn(("symbols", "NV", 20), self.gateway.calls)
 
+    def test_simulation_daily_chart_replaces_closed_history_with_one_live_market_day(self):
+        self.gateway.mode = "simulation"
+        self.gateway.candles = lambda symbol, interval, limit: {
+            "symbol": symbol,
+            "interval": interval,
+            "simulation": True,
+            "asOf": "2026-07-14T15:01:00Z",
+            "candles": [{
+                "timestamp": "2026-07-14T00:00:00Z",
+                "open": 170.0,
+                "high": 171.0,
+                "low": 169.5,
+                "close": 170.5,
+                "volume": 1000,
+                "isClosed": False,
+            }],
+        }
+        historical = {
+            "symbol": "NVDA",
+            "interval": "1D",
+            "candles": [
+                {
+                    "timestamp": "2026-07-13T04:00:00Z",
+                    "close": 168.0,
+                    "isClosed": True,
+                },
+                {
+                    "timestamp": "2026-07-14T04:00:00Z",
+                    "close": 169.0,
+                    "isClosed": True,
+                },
+            ],
+        }
+
+        with patch(
+            "app.routes.charts.get_query_service",
+            return_value=SimpleNamespace(candle_snapshot=lambda *_args, **_kwargs: historical),
+        ):
+            response = self.client.get("/api/charts/candles?symbol=NVDA&interval=1D&limit=20")
+
+        self.assertEqual(response.status_code, 200)
+        candles = response.json()["candles"]
+        self.assertEqual([item["timestamp"] for item in candles], [
+            "2026-07-13T04:00:00.000Z",
+            "2026-07-14T04:00:00.000Z",
+        ])
+        self.assertEqual(candles[-1]["close"], 170.5)
+        self.assertFalse(candles[-1]["isClosed"])
+
+    def test_simulation_ready_daily_chart_hides_the_overlapping_completed_market_day(self):
+        self.gateway.mode = "simulation"
+        self.gateway.candles = lambda symbol, interval, limit: {
+            "symbol": symbol,
+            "interval": interval,
+            "simulation": True,
+            "asOf": "2026-07-14T15:00:00Z",
+            "candles": [],
+        }
+        historical = {
+            "symbol": "NVDA",
+            "interval": "1D",
+            "candles": [
+                {"timestamp": "2026-07-13T04:00:00Z", "close": 168.0, "isClosed": True},
+                {"timestamp": "2026-07-14T04:00:00Z", "close": 169.0, "isClosed": True},
+            ],
+        }
+
+        with patch(
+            "app.routes.charts.get_query_service",
+            return_value=SimpleNamespace(candle_snapshot=lambda *_args, **_kwargs: historical),
+        ):
+            response = self.client.get("/api/charts/candles?symbol=NVDA&interval=1D&limit=20")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([item["timestamp"] for item in response.json()["candles"]], [
+            "2026-07-13T04:00:00.000Z",
+        ])
+
     def test_simulation_order_history_and_trade_conditions_stay_in_run_ledger(self):
         self.gateway.mode = "simulation"
 
@@ -297,10 +395,59 @@ class SimulatorRoutesTest(unittest.TestCase):
         self.assertEqual(updated.json()["condition"]["status"], "paused")
         self.assertTrue(deleted.json()["deleted"])
 
-    def test_point_in_time_unsafe_latest_data_is_blocked(self):
+    def test_simulation_latest_news_uses_the_replay_cursor(self):
+        self.gateway.mode = "simulation"
+        service = SimpleNamespace(latest_news=unittest.mock.Mock(return_value={
+            "symbol": "NVDA",
+            "source": "clickhouse-simulation",
+            "items": [{
+                "symbol": "NVDA",
+                "title": "가상시각 이전 뉴스",
+                "summary": "미래 뉴스는 포함하지 않습니다.",
+                "publishedAt": "2026-07-14T14:32:44.000Z",
+            }],
+        }))
+
+        with patch("app.market_data.query.routes.get_query_service", return_value=service):
+            response = self.client.get("/api/market/news/latest?symbol=NVDA")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["items"][0]["title"], "가상시각 이전 뉴스")
+        service.latest_news.assert_called_once_with(
+            "NVDA",
+            limit=10,
+            locale="ko-KR",
+            now=datetime(2026, 7, 14, 15, 0, tzinfo=timezone.utc),
+        )
+
+    def test_simulation_daily_news_uses_the_replay_cursor(self):
+        self.gateway.mode = "simulation"
+        service = SimpleNamespace(daily_news=unittest.mock.Mock(return_value={
+            "symbol": "NVDA",
+            "displayMode": "dailySummary",
+            "dailySummaries": [{
+                "date": "2026-07-13",
+                "symbol": "NVDA",
+                "summary": "가상시각 이전 일별 뉴스",
+            }],
+        }))
+
+        with patch("app.market_data.query.routes.get_query_service", return_value=service):
+            response = self.client.get("/api/market/news/daily?symbol=NVDA")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["dailySummaries"][0]["date"], "2026-07-13")
+        service.daily_news.assert_called_once_with(
+            "NVDA",
+            limit=5,
+            locale="ko-KR",
+            now=datetime(2026, 7, 14, 15, 0, tzinfo=timezone.utc),
+        )
+
+    def test_other_point_in_time_unsafe_market_data_stays_blocked(self):
         self.gateway.mode = "simulation"
 
-        response = self.client.get("/api/market/news/latest?symbol=NVDA")
+        response = self.client.get("/api/market/fundamentals/NVDA/series")
 
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["detail"], "simulation_data_unavailable")

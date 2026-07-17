@@ -7,14 +7,16 @@ import time
 import uuid
 from collections import deque
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, time as datetime_time, timedelta, timezone
 from typing import Callable, Iterable, Protocol
+from zoneinfo import ZoneInfo
 
 from gops_simul.dataset import ALLOWED_SPEEDS, DATASET_END, DATASET_ID, DATASET_START, REPLAY_SYMBOLS, in_half_open_window, parse_timestamp
 from gops_simul.state_store import ReplayStateStore
 
 
 KST = timezone(timedelta(hours=9))
+MARKET_TIMEZONE = ZoneInfo("America/New_York")
 INITIAL_CASH = 100_000.0
 
 
@@ -106,6 +108,7 @@ class ReplayController:
         self._emitted: deque[ReplayEvent] = deque(maxlen=100_000)
         self._latest_quotes: dict[str, dict[str, float]] = {}
         self._latest_trades: dict[str, float] = {}
+        self._daily_candles: dict[str, dict[str, dict[str, object]]] = {}
         self._accounts: dict[str, dict[str, object]] = {}
         self._restore_state()
         self._status_snapshot = self._status()
@@ -188,6 +191,8 @@ class ReplayController:
         with self._lock:
             self._pump()
             self._capture_status()
+            if interval in {"1D", "1d"}:
+                return self._daily_candle_snapshot(symbol, interval, limit)
             return self.source.candle_snapshot(symbol, interval, self.cursor, limit)
 
     def account(self, user_id: str) -> dict[str, object]:
@@ -294,7 +299,7 @@ class ReplayController:
             self.state_store.delete(self.run_id)
         self.mode, self.state, self.run_id = "simulation", "ready", str(uuid.uuid4())
         self.requested_speed, self.cursor, self.last_sequence = self.default_speed, DATASET_START, 0
-        self._emitted.clear(); self._latest_quotes.clear(); self._latest_trades.clear(); self._accounts.clear()
+        self._emitted.clear(); self._latest_quotes.clear(); self._latest_trades.clear(); self._daily_candles.clear(); self._accounts.clear()
         self._run_started_wall = None
         self._reset_anchor(); self._persist()
 
@@ -332,8 +337,55 @@ class ReplayController:
         elif payload.get("T") == "t":
             price, previous = _positive_float(payload.get("p"), "price"), self._latest_trades.get(symbol)
             self._latest_trades[symbol] = price
+            self._update_daily_candle(symbol, event, price)
             if previous is not None and previous != price:
                 self._trigger_conditions(symbol, previous, price)
+
+    def _update_daily_candle(self, symbol: str, event: ReplayEvent, price: float) -> None:
+        market_date = event.timestamp.astimezone(MARKET_TIMEZONE).date().isoformat()
+        symbol_candles = self._daily_candles.setdefault(symbol, {})
+        current = symbol_candles.get(market_date)
+        size = _nonnegative_float(event.payload.get("s") or 0, "size")
+        if current is None:
+            timestamp = market_midnight_utc(market_date).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+            symbol_candles[market_date] = {
+                "symbol": symbol,
+                "interval": "1D",
+                "timestamp": timestamp,
+                "open": price,
+                "high": price,
+                "low": price,
+                "close": price,
+                "volume": size,
+                "tradeCount": 1,
+                "source": "simulation_replay",
+                "feed": "mixed",
+                "sourceInterval": "trades",
+            }
+            return
+        current.update({
+            "high": max(float(current["high"]), price),
+            "low": min(float(current["low"]), price),
+            "close": price,
+            "volume": float(current.get("volume") or 0) + size,
+            "tradeCount": int(current.get("tradeCount") or 0) + 1,
+        })
+
+    def _daily_candle_snapshot(self, symbol: str, interval: str, limit: int) -> dict[str, object]:
+        from gops_simul.clickhouse import replay_candle_payload
+
+        normalized = self._symbol(symbol)
+        candles = []
+        for market_date, candle in sorted(self._daily_candles.get(normalized, {}).items())[-max(1, int(limit)):]:
+            bucket_end = market_midnight_utc(
+                (datetime.fromisoformat(market_date).date() + timedelta(days=1)).isoformat()
+            )
+            candles.append({
+                **candle,
+                "interval": interval,
+                "isClosed": bucket_end <= self.cursor,
+            })
+        return replay_candle_payload(normalized, interval, candles, self.cursor)
 
     def _submit_order(self, *, user_id: str, symbol: object, side: object, quantity: object,
                       order_type: object, idempotency_key: str, limit_price: object = None) -> dict[str, object]:
@@ -478,6 +530,7 @@ class ReplayController:
         self._accounts = dict(snapshot.get("accounts") or {})
         self._latest_quotes = dict(snapshot.get("latestQuotes") or {})
         self._latest_trades = dict(snapshot.get("latestTrades") or {})
+        self._daily_candles = normalize_restored_daily_candles(snapshot.get("dailyCandles"))
         self._normalize_restored_accounts()
         self._reset_anchor(); self._persist()
 
@@ -509,7 +562,8 @@ class ReplayController:
             self.state_store.save(self.run_id, {"datasetId": self.source.dataset_id, "mode": self.mode, "state": self.state,
                 "virtualTime": self._format(self.cursor), "requestedSpeed": self.requested_speed,
                 "processedEventCount": self.last_sequence, "latestQuotes": self._latest_quotes,
-                "latestTrades": self._latest_trades, "accounts": self._accounts})
+                "latestTrades": self._latest_trades, "dailyCandles": self._daily_candles,
+                "accounts": self._accounts})
 
     def _reset_anchor(self, *, now: float | None = None) -> None:
         self._anchor_wall = self.clock() if now is None else now; self._anchor_virtual = self.cursor
@@ -532,6 +586,27 @@ class ReplayController:
     @staticmethod
     def _format(value: datetime) -> str:
         return value.astimezone(KST).isoformat(timespec="seconds")
+
+
+def market_midnight_utc(market_date: str) -> datetime:
+    parsed = datetime.fromisoformat(market_date).date()
+    return datetime.combine(parsed, datetime_time.min, tzinfo=MARKET_TIMEZONE).astimezone(UTC)
+
+
+def normalize_restored_daily_candles(value: object) -> dict[str, dict[str, dict[str, object]]]:
+    if not isinstance(value, dict):
+        return {}
+    restored: dict[str, dict[str, dict[str, object]]] = {}
+    for symbol, rows in value.items():
+        normalized_symbol = str(symbol).strip().upper()
+        if normalized_symbol not in REPLAY_SYMBOLS or not isinstance(rows, dict):
+            continue
+        restored[normalized_symbol] = {
+            str(market_date): dict(candle)
+            for market_date, candle in rows.items()
+            if isinstance(candle, dict)
+        }
+    return restored
 
 
 def _positive_float(value: object, field: str) -> float:

@@ -1,0 +1,48 @@
+# 역할: 패널 요청과 장 마감 배치가 만든 기업저널 요청을 API 요청 밖에서 처리합니다.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: gops-company-journal-worker
+  namespace: alfaka-market-data
+spec:
+  schedule: "*/10 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 86400
+      backoffLimit: 2
+      activeDeadlineSeconds: 1800
+      template:
+        metadata:
+          labels:
+            app: gops-company-journal-worker
+        spec:
+          restartPolicy: Never
+          nodeSelector:
+            karpenter.sh/nodepool: batch
+          tolerations:
+            - key: gops.io/dedicated
+              operator: Equal
+              value: batch
+              effect: NoSchedule
+          serviceAccountName: alfaka-market-data-sa
+          containers:
+            - name: company-journal-worker
+              image: YOUR_ECR_REPOSITORY/gops-api-server:latest
+              imagePullPolicy: IfNotPresent
+              command: ["python", "-u", "-m", "app.company_journal.worker", "--process-pending"]
+              env:
+                - name: COMPANY_JOURNAL_WORKER_LIMIT
+                  value: "25"
+              envFrom:
+                - configMapRef:
+                    name: alfaka-market-data-config
+                - secretRef:
+                    name: alfaka-clickhouse-secret
+                    optional: true
+                - secretRef:
+                    name: alfaka-openai-secret
+                    optional: true

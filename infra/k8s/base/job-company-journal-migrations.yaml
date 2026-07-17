@@ -1,0 +1,34 @@
+# 역할: API/기업저널 worker 배포 전에 append-only ClickHouse 테이블을 멱등 생성합니다.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: company-journal-migrations
+  namespace: alfaka-market-data
+spec:
+  ttlSecondsAfterFinished: 86400
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: company-journal-migrations
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        karpenter.sh/nodepool: batch
+      tolerations:
+        - key: gops.io/dedicated
+          operator: Equal
+          value: batch
+          effect: NoSchedule
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: company-journal-migrations
+          image: YOUR_ECR_REPOSITORY/gops-api-server:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "-m", "app.company_journal.migrate"]
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-clickhouse-secret
+                optional: true

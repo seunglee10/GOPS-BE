@@ -36,3 +36,4 @@ configMapGenerator:
     files:
       - 01-market-data.sql=clickhouse-initdb/01-market-data.sql
       - 02-sec-fundamentals.sql=clickhouse-initdb/02-sec-fundamentals.sql
+      - 03-company-journal.sql=clickhouse-initdb/03-company-journal.sql

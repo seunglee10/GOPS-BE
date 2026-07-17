@@ -1,0 +1,51 @@
+# 역할: 미국장 마감 뒤 최근 데이터가 있는 기업을 결정론적으로 선별해 기업저널 갱신을 예약합니다.
+# schedule은 UTC이며 23:30 UTC는 한국 시간 08:30입니다. DST와 무관하게 장 마감 이후입니다.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: gops-company-journal-post-market
+  namespace: alfaka-market-data
+spec:
+  schedule: "30 23 * * 1-5"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 7200
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 86400
+      backoffLimit: 2
+      activeDeadlineSeconds: 7200
+      template:
+        metadata:
+          labels:
+            app: gops-company-journal-post-market
+        spec:
+          restartPolicy: Never
+          nodeSelector:
+            karpenter.sh/nodepool: batch
+          tolerations:
+            - key: gops.io/dedicated
+              operator: Equal
+              value: batch
+              effect: NoSchedule
+          serviceAccountName: alfaka-market-data-sa
+          containers:
+            - name: company-journal-post-market
+              image: YOUR_ECR_REPOSITORY/gops-api-server:latest
+              imagePullPolicy: IfNotPresent
+              command: ["python", "-u", "-m", "app.company_journal.worker", "--enqueue-daily", "--process-pending"]
+              env:
+                - name: COMPANY_JOURNAL_DAILY_LIMIT
+                  value: "100"
+                - name: COMPANY_JOURNAL_WORKER_LIMIT
+                  value: "100"
+              envFrom:
+                - configMapRef:
+                    name: alfaka-market-data-config
+                - secretRef:
+                    name: alfaka-clickhouse-secret
+                    optional: true
+                - secretRef:
+                    name: alfaka-openai-secret
+                    optional: true

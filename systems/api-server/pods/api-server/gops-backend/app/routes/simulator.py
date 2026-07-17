@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
 
 from app.auth.dependencies import require_current_user
@@ -63,6 +63,17 @@ def simulator_action(payload: SimulatorActionRequest, request: Request) -> dict[
 @router.put("/speed")
 def simulator_speed(payload: SimulatorSpeedRequest, request: Request) -> dict[str, Any]:
     return _call_simulator(lambda gateway: gateway.set_speed(payload.speed), request)
+
+
+@router.get("/quote")
+def simulator_quote(
+    request: Request,
+    symbol: str = Query(min_length=1, max_length=12),
+) -> dict[str, Any]:
+    if not simulator_mode_active(request.app):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="simulation mode is not active")
+    normalized_symbol = symbol.strip().upper()
+    return _call_simulator(lambda gateway: gateway.quote(normalized_symbol), request)
 
 
 def simulator_gateway_from_app(app: Any) -> SimulatorGateway:

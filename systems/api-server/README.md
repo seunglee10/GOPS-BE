@@ -57,11 +57,24 @@ from `yahoo_earnings_estimates`, and news comes from
 earnings state instead of an error. Yahoo and Alpaca are never called by this
 request.
 
-During tick replay the handler receives the simulator `virtualTime` and limits
-daily-news snapshots to `generated_at <= virtualTime` before ClickHouse chooses
-the latest row for each date. Earnings collected after the replay cursor are
-also excluded. This route is therefore available in SIM while other latest-only
-news routes continue to return `simulation_data_unavailable`.
+During tick replay the handlers receive the simulator `virtualTime`. Chart-event
+and daily-news snapshots are limited to `generated_at <= virtualTime` before
+ClickHouse chooses the latest row for each date. `GET /api/market/news/latest`
+uses only ClickHouse localized articles with both `published_at` and
+`localized_at` at or before the cursor; it never reads or warms the live Redis
+cache in SIM. `GET /api/market/news/daily` is also ClickHouse-only in SIM and
+does not attach a latest daily price change. Earnings collected after the replay
+cursor are excluded. Other latest-only market and news-watchlist routes continue
+to return `simulation_data_unavailable`.
+
+## Simulator Quick Orders
+
+`GET /api/simulator/quote?symbol=NVDA` exposes the current replay bid and ask
+only while SIM mode is active. The quick-order UI uses that quote instead of the
+blocked live order-flow routes, then submits through the existing
+`POST /api/orders` contract so fills, balances, and order history stay in the
+current simulator `userId + runId` ledger. Symbols outside the replay manifest
+remain unavailable rather than receiving synthetic quotes.
 
 ## Market Heatmap
 

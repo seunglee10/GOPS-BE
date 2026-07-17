@@ -161,14 +161,25 @@ applies `generated_at <= virtualTime` before `argMax`, so it selects the latest
 snapshot that existed at the replay cursor and never falls forward to today's
 latest row. Earnings rows whose `sourceAsOf` is after that cursor are excluded.
 The accessible DOM marker layer is positioned synchronously from each canvas
-scene before React reconciliation, keeping `E`/`N` buttons aligned while the
-viewport pans or zooms.
+scene before React reconciliation. Scene coordinates are converted into the
+chart container's untransformed local coordinate space, so global UI scaling,
+pan, and zoom cannot separate `E`/`N` buttons from their candle. Events sharing
+one candle keep the exact same x coordinate and stack vertically instead of
+being spread sideways away from the timeline.
 
 The paper holding average-price guide is a transient frontend overlay, not candle
 data or a persisted chart drawing. The authenticated paper-account snapshot supplies
 the current symbol's positive quantity and average price through one shared account
 WebSocket. A nearby average price may participate in the visible price domain, while
 the overlay never changes candle facts, chart documents, or market-data APIs.
+
+Buy/sell fill markers are also transient authenticated frontend overlays. They read
+only completed paper orders in LIVE and only the current replay `runId` ledger in SIM.
+`B` is anchored below the matched candle low and `S` above its high; fills sharing one
+candle keep the candle's exact x center and stack vertically. Daily matching uses the
+New York market date, while intraday/weekly/monthly matching requires the fill instant
+to fall inside the candle's half-open semantic range. These markers never mutate candle
+facts, chart documents, drawings, or market-data storage.
 
 `POST /api/charts/active-symbol` refreshes a bounded cohort with the declared
 `candles,trades,quotes` layers before the frontend requests the candle snapshot.

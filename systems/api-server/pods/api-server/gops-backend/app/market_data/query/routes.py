@@ -199,20 +199,32 @@ def market_symbol_status(symbol: str) -> dict[str, Any]:
 
 @router.get("/api/market/news/latest")
 def market_latest_news(
+    request: Request,
     symbol: str = Query(min_length=1, max_length=12),
     limit: int = Query(default=10, ge=1, le=30),
     locale: str = Query(default="ko-KR", max_length=16),
 ) -> dict[str, Any]:
-    return get_query_service().latest_news(symbol, limit=limit, locale=locale)
+    return get_query_service().latest_news(
+        symbol,
+        limit=limit,
+        locale=locale,
+        now=chart_event_reference_time(request),
+    )
 
 
 @router.get("/api/market/news/daily")
 def market_daily_news(
+    request: Request,
     symbol: str = Query(min_length=1, max_length=12),
     limit: int = Query(default=5, ge=1, le=30),
     locale: str = Query(default="ko-KR", max_length=16),
 ) -> dict[str, Any]:
-    return get_query_service().daily_news(symbol, limit=limit, locale=locale)
+    return get_query_service().daily_news(
+        symbol,
+        limit=limit,
+        locale=locale,
+        now=chart_event_reference_time(request),
+    )
 
 
 @router.get("/api/market/news/watchlist")

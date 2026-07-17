@@ -278,7 +278,16 @@ def test_deterministic_evidence_v3_shares_full_universe_snapshot_and_returns_rel
 ) -> None:
     monkeypatch.setenv("RECOMMENDATION_ALGORITHM_VERSION", "deterministic-evidence-v3")
     recommendation_app.state.recommendation_daily_candles_provider = professional_daily_candles
-    recommendation_app.state.recommendation_previous_session_candles_provider = fake_candles
+    recommendation_app.state.recommendation_previous_session_candles_provider = professional_previous_session_candles
+    recommendation_app.state.recommendation_benchmark_health_provider = lambda _now, _session: {
+        "symbol": "SPY",
+        "ready": True,
+        "reasons": [],
+    }
+    market_symbols = (
+        "AAPL", "MSFT", "AVGO", "NVDA", "AMZN", "META", "GOOGL", "GOOG",
+        "TSLA", "LLY", "JPM", "WMT", "V", "ORCL", "MA", "NFLX",
+    )
     recommendation_app.state.recommendation_market_provider = lambda: [
         {
             "symbol": symbol,
@@ -291,7 +300,8 @@ def test_deterministic_evidence_v3_shares_full_universe_snapshot_and_returns_rel
             "tradable": True,
             "priceSource": "canonical",
         }
-        for symbol, change in (("AAPL", 4.1), ("MSFT", 3.2), ("AVGO", 2.8))
+        for index, symbol in enumerate(market_symbols)
+        for change in (round(4.1 - index * 0.1, 1),)
     ]
 
     class FundamentalProvider:
@@ -331,12 +341,18 @@ def test_deterministic_evidence_v3_shares_full_universe_snapshot_and_returns_rel
     first = client.post("/api/recommendations/stocks/refresh", json={}).json()
     second = client.post("/api/recommendations/stocks/refresh", json={}).json()
 
+    assert first["status"] == "completed", first["summary"]
     assert first["summary"]["personalization"]["algorithmVersion"] == "deterministic-evidence-v3"
     assert first["summary"]["ruleSetVersion"] == "deterministic-evidence-v3.1"
-    assert first["summary"]["universeCount"] == 3
-    assert first["summary"]["candidateCount"] == 3
+    assert first["summary"]["universeCount"] == 16
+    assert first["summary"]["candidateCount"] == 16
+    assert len(first["items"]) == 15
     assert all(item["confidence"] >= 0.70 for item in first["items"])
-    assert all(item["metricsSnapshot"]["confidenceMeaning"] == "evidence_reliability" for item in first["items"])
+    assert all(
+        item["metricsSnapshot"]["confidenceMeaning"]
+        == "evidence_reliability_not_success_probability"
+        for item in first["items"]
+    )
     assert second["idempotentReplay"] is True
     repository = recommendation_app.state.recommendation_repository
     assert len(repository.evidence_snapshots) == 1
@@ -712,6 +728,22 @@ def fake_candles(symbol: str, _now: datetime) -> list[dict]:
             }
         )
     return candles
+
+
+def professional_previous_session_candles(symbol: str, now: datetime) -> list[dict]:
+    base = 500.0 if symbol == "SPY" else 100.0
+    start = now - timedelta(days=1, minutes=389)
+    return [
+        {
+            "timestamp": (start + timedelta(minutes=index)).isoformat(),
+            "open": base + index * 0.01 - 0.05,
+            "high": base + index * 0.01 + 0.1,
+            "low": base + index * 0.01 - 0.1,
+            "close": base + index * 0.01,
+            "volume": 10_000 + index * 100,
+        }
+        for index in range(390)
+    ]
 
 
 def flat_candles(symbol: str, _now: datetime) -> list[dict]:
