@@ -66,7 +66,7 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def reject_future_data_in_simulation(request: Request, call_next):
-        if requires_point_in_time_data(request.url.path):
+        if requires_point_in_time_data(request.url.path, request.method):
             from app.routes.simulator import simulator_mode_active
 
             if await asyncio.to_thread(simulator_mode_active, request.app):

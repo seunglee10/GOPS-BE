@@ -3,15 +3,21 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+from datetime import UTC, datetime
 from functools import lru_cache
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
 from pydantic import BaseModel, Field, field_validator
 
 from app.auth.dependencies import require_current_user
 from app.auth.models import AuthenticatedUser
+from app.routes import charts as charts_routes
+from app.routes.simulator import simulator_gateway_from_app
 from app.services.alfaka_market_data import configured_universe_symbols, normalize_market_symbol, sp500_universe_symbols
+from app.services.simulator_gateway import SimulatorUnavailable
+from alfaka.analytics.analysis_candles import analysis_input_digest, compute_analysis_coverage, merge_canonical_candles
+from alfaka.analytics import geometry as geometry_analysis
 from gops_agents.chart_assets.envelope import ALLOWED_INTERVALS, BUILD_INTERVALS, ChartAssetBuildEnvelope, utc_now_iso
 from gops_agents.chart_assets.progress import build_progress_store_from_env
 from gops_agents.chart_assets.queue import build_chart_asset_queue_from_env
@@ -37,13 +43,43 @@ class ChartAssetBuildRequest(BaseModel):
 
 
 @router.get("/api/charts/analysis-assets")
-def chart_analysis_assets(symbol: str = Query(min_length=1, max_length=12)) -> dict[str, Any]:
+def chart_analysis_assets(
+    request: Request,
+    symbol: str = Query(min_length=1, max_length=12),
+    interval: str | None = Query(default=None, pattern="^(1m|5m|10m|1h|4h|1D|1W)$"),
+) -> dict[str, Any]:
     normalized = normalize_market_symbol(symbol)
     try:
         assets = chart_asset_storage().get_symbol_assets(normalized)
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Chart analysis asset storage is unavailable.") from exc
-    return {"symbol": normalized, "assets": assets, "meta": {"servedAt": utc_now_iso()}}
+    meta: dict[str, Any] = {"servedAt": utc_now_iso()}
+    try:
+        simulator_status = simulator_gateway_from_app(request.app).status()
+    except SimulatorUnavailable:
+        simulator_status = {"mode": "live"}
+    if simulator_status.get("mode") == "simulation":
+        cutoff_value = str(simulator_status.get("virtualTime") or "")
+        cutoff = _parse_timestamp(cutoff_value)
+        assets = _assets_at_or_before(assets, cutoff)
+        dynamic_status = "not_requested"
+        if interval is not None:
+            try:
+                dynamic_asset = _build_simulation_analysis_asset(request, normalized, interval, cutoff)
+                dynamic_status = "ready" if dynamic_asset is not None else "data_insufficient"
+            except Exception:
+                dynamic_asset = None
+                dynamic_status = "unavailable"
+            if dynamic_asset is not None:
+                assets[interval] = dynamic_asset
+        meta.update({
+            "simulation": True,
+            "cutoff": cutoff_value,
+            "runId": simulator_status.get("runId"),
+            "dynamicInterval": interval,
+            "dynamicStatus": dynamic_status,
+        })
+    return {"symbol": normalized, "assets": assets, "meta": meta}
 
 
 @router.get("/api/charts/analysis-assets/coverage")
@@ -162,6 +198,110 @@ def _parse_intervals_csv(value: str) -> list[str]:
     if not intervals or set(intervals).difference(ALLOWED_INTERVALS):
         raise HTTPException(status_code=400, detail="intervals must contain only supported chart intervals")
     return intervals
+
+
+def _assets_at_or_before(
+    assets: dict[str, dict[str, Any] | None],
+    cutoff: datetime | None,
+) -> dict[str, dict[str, Any] | None]:
+    filtered = {interval: None for interval in ALLOWED_INTERVALS}
+    if cutoff is None:
+        return filtered
+    for interval in ALLOWED_INTERVALS:
+        asset = assets.get(interval)
+        as_of = _parse_timestamp(asset.get("asOf")) if isinstance(asset, dict) else None
+        if as_of is not None and as_of <= cutoff:
+            filtered[interval] = asset
+    return filtered
+
+
+def _build_simulation_analysis_asset(
+    request: Request,
+    symbol: str,
+    interval: str,
+    cutoff: datetime | None,
+) -> dict[str, Any] | None:
+    if cutoff is None:
+        return None
+    limit = charts_routes.PUBLIC_CHART_CANDLE_LIMIT
+    replay = simulator_gateway_from_app(request.app).candles(symbol, interval, limit)
+    historical = charts_routes.get_query_service().candle_snapshot(
+        symbol,
+        interval,
+        "",
+        limit,
+        to_time=charts_routes.SIMULATION_REPLAY_START.isoformat().replace("+00:00", "Z"),
+    )
+    merged = charts_routes._merge_simulation_candles(historical, replay, limit)
+    rows = merge_canonical_candles(
+        (
+            dict(row)
+            for row in merged.get("candles") or []
+            if isinstance(row, dict)
+            and row.get("isClosed", row.get("is_closed", True)) is not False
+            and (_parse_timestamp(row.get("timestamp")) or datetime.max.replace(tzinfo=UTC)) <= cutoff
+        ),
+        interval=interval,
+        view="chart_completed",
+    )
+    target_bars = geometry_analysis.TARGET_BARS[interval]
+    rows = rows[-target_bars:]
+    coverage = compute_analysis_coverage(rows, interval, display_bars=target_bars, now=cutoff)
+    if len(rows) < geometry_analysis.MINIMUM_BARS or coverage.get("coverageState") == "data_insufficient":
+        return None
+    result = geometry_analysis.analyze_geometry(symbol, interval, rows)
+    geometry = {
+        "drawings": result["drawings"],
+        "supports": result["supports"],
+        "resistances": result["resistances"],
+        "patterns": result["patterns"],
+        "primaryPattern": result["primaryPattern"],
+        "tradePlan": result["tradePlan"],
+        "primaryTriangle": result["primaryTriangle"],
+        "historicalTriangle": result["historicalTriangle"],
+        "evidence": result["evidence"],
+    }
+    for optional_field in ("trends", "primaryTrend", "drawingGroups", "analysisTrace"):
+        if optional_field in result:
+            geometry[optional_field] = result[optional_field]
+    as_of = str(rows[-1]["timestamp"])
+    actual_bars = len(rows)
+    return {
+        "assetVersion": "geometry",
+        "algorithmVersion": geometry_analysis.ALGORITHM_VERSION,
+        "symbol": symbol,
+        "interval": interval,
+        "sourceInterval": interval,
+        "asOf": as_of,
+        "generatedAt": utc_now_iso(),
+        "status": "ready",
+        "inputDigest": analysis_input_digest(symbol, interval, rows),
+        "coverage": {
+            "state": "full" if actual_bars >= target_bars and coverage.get("missingBars") == 0 else "partial",
+            "targetBars": target_bars,
+            "actualBars": actual_bars,
+            "contiguousBars": int(coverage.get("recentContiguousBars") or 0),
+            "missingBars": int(coverage.get("missingBars") or 0),
+            "lastExpectedClosedAt": coverage.get("lastExpectedClosedAt"),
+            "lastActualClosedAt": coverage.get("lastActualClosedAt") or as_of,
+            "qualityFlags": [*list(coverage.get("qualityFlags") or []), "simulation_replay"],
+        },
+        "geometry": geometry,
+        "indicators": result["indicators"],
+    }
+
+
+def _parse_timestamp(value: Any) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw[:-1] + "+00:00" if raw.endswith("Z") else raw)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 @lru_cache(maxsize=1)

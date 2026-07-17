@@ -28,6 +28,7 @@ class FakeSimulatorGateway:
         self.mode = "live"
         self.calls = []
         self.trace = trace
+        self.virtual_time = "2026-07-15T00:00:00+09:00"
 
     def status(self):
         return {
@@ -36,7 +37,7 @@ class FakeSimulatorGateway:
             "state": "ready" if self.mode == "simulation" else "idle",
             "datasetId": "sp500-top20-20260715-kst-v1",
             "runId": "run-1" if self.mode == "simulation" else None,
-            "virtualTime": "2026-07-15T00:00:00+09:00",
+            "virtualTime": self.virtual_time,
             "startTime": "2026-07-15T00:00:00+09:00",
             "endTime": "2026-07-16T00:00:00+09:00",
             "requestedSpeed": 1,
@@ -446,6 +447,7 @@ class SimulatorRoutesTest(unittest.TestCase):
 
     def test_simulation_analysis_assets_are_built_from_replay_safe_candles(self):
         self.gateway.mode = "simulation"
+        self.gateway.virtual_time = "2026-07-15T02:00:00+09:00"
         replay_rows = [
             {
                 "timestamp": f"2026-07-14T{15 + index // 60:02d}:{index % 60:02d}:00Z",
@@ -520,15 +522,18 @@ class SimulatorRoutesTest(unittest.TestCase):
             ),
             patch("alfaka.analytics.geometry.analyze_geometry", return_value=analysis_result),
         ):
+            stored_response = self.client.get("/api/charts/analysis-assets?symbol=NVDA")
             response = self.client.get("/api/charts/analysis-assets?symbol=NVDA&interval=1m")
 
+        self.assertEqual(stored_response.status_code, 200)
+        self.assertIsNone(stored_response.json()["assets"]["1m"])
         self.assertEqual(response.status_code, 200)
         payload = response.json()
-        self.assertEqual(payload["assets"]["1m"]["asOf"], replay_rows[-1]["timestamp"])
+        self.assertEqual(payload["assets"]["1m"]["asOf"], "2026-07-14T16:59:00.000Z")
         self.assertEqual(payload["assets"]["1m"]["coverage"]["actualBars"], 120)
         self.assertEqual(payload["assets"]["1D"]["asOf"], "2026-07-14T04:00:00Z")
         self.assertTrue(payload["meta"]["simulation"])
-        self.assertEqual(payload["meta"]["cutoff"], "2026-07-15T00:00:00+09:00")
+        self.assertEqual(payload["meta"]["cutoff"], "2026-07-15T02:00:00+09:00")
         self.assertEqual(payload["meta"]["dynamicInterval"], "1m")
 
         delete_response = self.client.delete("/api/charts/analysis-assets?symbols=NVDA&intervals=1m")

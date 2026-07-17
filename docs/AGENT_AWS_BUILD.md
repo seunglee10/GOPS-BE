@@ -1251,6 +1251,13 @@ ingestor, market processor, order-flow pin, 실시간 Redis/Kafka, trade-conditi
 deployment는 변경하지 않는다. simulator는 ClickHouse를 chunk 조회하고 실행별 계좌·
 주문·가격조건을 Redis `simulator:replay:run:{runId}`에 저장한다.
 
+SIM 차트 자동 작도는 별도 Deployment, Job, migration을 추가하지 않는다. backend의
+`GET /api/charts/analysis-assets`가 프런트가 요청한 현재 interval 하나에 대해서만 기존
+ClickHouse 과거 봉과 simulator replay 완료 봉을 합쳐 비영속 Geometry 자산을 만든다.
+응답은 `virtualTime`을 넘는 저장 자산을 제거하고 PostgreSQL이나 build queue에 쓰지
+않는다. 추천은 같은 simulator 배포에서 위 fixed replay 환경변수를 그대로 사용하며,
+뉴스는 기존 cutoff-safe ClickHouse 읽기 경로를 유지한다.
+
 `scripts/aws/stop-dev-simulator.sh`는 LIVE mode로 전환하고 해당 Redis run namespace를
 정리한 뒤 backend URL을 제거하고 simulator를 0개로 내린다. 시작 중 실패해도 같은
 범위만 복구하며 실시간 시장 상태의 backup/restore는 수행하지 않는다.

@@ -47,7 +47,11 @@ limit-only 계약을 유지한다. 주문 상태는 `/ws/orders/{order_id}`의 S
 `published_at`과 `localized_at`이 모두 `virtualTime` 이하인 기사만 고른 결과이며,
 프런트가 가상시각을 query로 보내거나 live Redis 결과와 합치지 않는다. 일별 뉴스 API와
 차트의 `GET /api/charts/events`도 `generated_at <= virtualTime`인 저장 스냅샷만
-반환한다. 추천·기업정보·AI 코치 등 point-in-time 데이터가 없는 나머지 기능은 기존
+반환한다. 추천 패널은 검증된 fixed replay provider가 켜진 배포에서 LIVE와 같은
+recommendation API를 다시 조회한다. 차트 자동 작도는 현재 symbol과 interval을
+`GET /api/charts/analysis-assets`에 보내며, 서버가 replay cursor까지의 실제 완료 봉으로
+만든 비영속 Geometry 자산만 표시한다. 저장된 자산의 `asOf`가 cursor보다 미래이면
+표시하지 않는다. 기업정보·AI 코치 등 point-in-time 데이터가 없는 나머지 기능은 기존
 최신값이나 fixture를 남기지 않고 `simulation_data_unavailable` 상태를 표시한다.
 프런트는 합성 추천·뉴스·AI 보고서를 만들지 않는다. 차트는 서버가 반환한
 과거+replay candle과 replay WebSocket만 사용한다.
@@ -776,6 +780,10 @@ symbol과 timeframe을 해당 자산 값으로 함께 바꾸며 주문 route는 
 
 Geometry asset은 GET/build/poll route를 사용한다. timed anchor는 현재 interval의
 canonical candle timestamp로만 snap하며 대응 봉이 없으면 해당 drawing을 제외한다.
+SIM에서는 차트가 현재 interval을 GET query에 포함하고 symbol+interval별로 cache한다.
+mode/run 또는 interval이 바뀌면 다시 조회하며, 응답의 `meta.simulation=true` 자산도
+동일한 layer/controller 계약으로 적용한다. 이 자산은 서버 메모리 응답일 뿐 build job,
+PostgreSQL 저장, 운영 패널의 coverage 목록에는 추가되지 않는다.
 단, Geometry 지지·저항 `horizontalLine`은 가격 자체가 핵심인 무한 수평선이므로
 저장된 과거 접촉 봉이 아직 차트에 로드되지 않았으면 현재 로드된 첫·마지막 canonical
 candle timestamp에 presentation anchor를 투영해 즉시 표시한다. PostgreSQL 원본
