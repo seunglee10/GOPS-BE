@@ -162,9 +162,11 @@ def test_key_evidence_uses_only_available_v3_blocks() -> None:
     ]
 
 
-def test_cautions_are_structured_deduplicated_and_always_explain_scope() -> None:
+def test_cautions_are_structured_deduplicated_and_ground_chase_risk_in_prices() -> None:
     decision = {
+        "action": "buy",
         "invalidationPrice": 99.5,
+        "entryRoutes": [{"type": "breakout", "trigger": 105.0, "chaseLimit": 107.5}],
         "failedConditions": [
             {"code": "material_penalty", "label": "중대 위험 경고"},
             {"code": "last60_relative_strength", "label": "마감 전 상대강도"},
@@ -178,18 +180,21 @@ def test_cautions_are_structured_deduplicated_and_always_explain_scope() -> None
     cautions = build_cautions(item, decision)
 
     assert [row["code"] for row in cautions] == [
+        "chase_limit",
         "last60_relative_strength",
         "weakConfirmation",
-        "decision_scope",
-        "confidence_scope",
     ]
     assert all(row["severity"] in {"notice", "warning"} for row in cautions)
     assert len({row["code"] for row in cautions}) == len(cautions)
     assert len({row["sentence"] for row in cautions}) == len(cautions)
-    assert "성공확률이 아니라" in cautions[-1]["sentence"]
+    assert cautions[0]["sentence"] == (
+        "돌파 매수는 $107.50까지만 검토합니다. "
+        "상한에서 무효화 기준 $99.50까지의 하락 폭은 주당 $8.00입니다."
+    )
+    assert not {"decision_scope", "confidence_scope"}.intersection(row["code"] for row in cautions)
 
 
-def test_action_aware_renderer_v5_keeps_headline_and_body_natural() -> None:
+def test_action_aware_renderer_v7_keeps_headline_and_body_natural() -> None:
     evidence = [
         {"interpretation": "SPY 대비 상대강도가 양수였습니다.", "metrics": [{"value": "+1.20%p"}]},
         {"interpretation": "동시간 거래량이 기준을 넘었습니다.", "metrics": [{"value": "1.40배"}]},
@@ -212,8 +217,10 @@ def test_action_aware_renderer_v5_keeps_headline_and_body_natural() -> None:
             "metricsSnapshot": {"evidenceReliability": 80},
         }
         primary = decision_explanation(item, target_session_date="2026-07-15")["primary"]
-        assert primary["promptVersion"] == "recommendation-decision-renderer.ko.v6"
+        assert primary["promptVersion"] == "recommendation-decision-renderer.ko.v7"
         assert headline_part in primary["headline"]
+        if action == "conditional_buy":
+            assert "거래\u00a0참여는\u00a0확인됐지만" in primary["headline"]
         if action == "buy":
             assert primary["body"] == ""
         else:

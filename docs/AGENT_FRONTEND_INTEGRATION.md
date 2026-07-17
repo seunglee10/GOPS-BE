@@ -729,8 +729,9 @@ fixed V3 decision v1 화면은 작은 action label 아래 큰 `explanation.prima
 raw risk warning, digest, 내부 가중치와 provenance도 사용자 화면에 표시하지 않는다. 프런트는 이 결과로
 주문을 자동 생성하거나 전송하지 않는다.
 headline은 숫자 요약이 아니라 행동 결론을 가장 크게 표시하며, 수치는 근거 그래프의 보조 정보로 둔다.
-근거 유효성 설명은 기본 레이아웃 높이를 차지하지 않고 각 근거의 `?` 도움말에서 hover·focus로
-표시한다. 넓은 패널은 근거를 두 열로 배치해 일반 데스크톱 높이에서 내부 스크롤이 생기지 않게 한다.
+근거 유효성 설명과 `metrics[].comparison` 비교 문구는 기본 레이아웃 높이를 차지하지 않고 각
+근거의 `?` 도움말에서 hover·focus로 표시한다. 그래프에는 지표명·관측값·기준선만 남긴다.
+넓은 패널은 근거를 두 열로 배치해 일반 데스크톱 높이에서 내부 스크롤이 생기지 않게 한다.
 
 직접 action은 item action과 같은 `recommendation-decision.v1`이 함께 있을 때만 유효하다.
 decision이 없거나 action이 불일치하면 프런트는 해당 item을 `매수 관찰`로 표시하고
