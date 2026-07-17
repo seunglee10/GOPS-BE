@@ -17,7 +17,7 @@ COMPARE_RANGE_VALUES = {"1D", "1M", "6M", "1Y", "5Y"}
 COMPARE_BASE_MODES = {"first_close"}
 COMPARE_SESSIONS = {"regular"}
 COMPARE_ADJUSTMENTS = {"split"}
-DEFAULT_COMPARE_MAX_SYMBOLS = 6
+DEFAULT_COMPARE_MAX_SYMBOLS = 10
 DEFAULT_COMPARE_CACHE_TTLS = {
     "1D": 60,
     "1M": 900,
@@ -25,7 +25,18 @@ DEFAULT_COMPARE_CACHE_TTLS = {
     "1Y": 21_600,
     "5Y": 86_400,
 }
-COMPARE_COLORS = ["#2a8c99", "#b2553d", "#b99b2e", "#ca8a4a", "#8f6bb5", "#c85363"]
+COMPARE_COLORS = [
+    "#33adff",
+    "#ff7a3d",
+    "#7bd88f",
+    "#b890ff",
+    "#ff5f6d",
+    "#42d7d0",
+    "#f2c94c",
+    "#ff8bd1",
+    "#9aa5b1",
+    "#c99a6b",
+]
 
 
 @dataclass(frozen=True)
