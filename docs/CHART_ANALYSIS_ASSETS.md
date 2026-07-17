@@ -145,7 +145,9 @@ trace에서 최종 선택된 후보의 피벗·접촉·반응만 임시 overlay�
 활성 evidence-pass 근접 후보 하나를 허용한다. 최종 선택 후보 수의 2배를 기본 예산으로
 최소 3개, 최대 9개만 H-line, ray, 채널, 패턴 segment로 표시하며 level/trend/pattern
 상한은 각각 4/3/2다. stale, breached, invalidated, role-conflict, break-pending 후보는
-근접 후보로 표시하지 않는다. 클릭은 한 항목의 서버 metrics 카드를
+근접 후보로 표시하지 않는다. 해석 ON은 이 유력 후보와 확정 level/trend/pattern drawing
+전체를 넓은 실선 바탕으로 함께 표시한다. 바탕선은 그리드 위, 캔들·이평선·확정 작도 아래에
+그리며 확정 작도가 꺼져도 남는다. 클릭은 한 항목의 서버 metrics 카드를
 확장·고정하며 다른 항목 hover가 끝나면 고정 항목으로 복귀한다. 해석 글로벌 토글이
 꺼져 있어도 해설 hover의 관련 subset은 표시할 수 있다. 이 overlay와 제안 projection은
 PostgreSQL drawing 8개, undo/history/export에 포함되지 않으며 주문 API를 호출하지 않는다.
@@ -160,8 +162,10 @@ forming 3px/0.88, 그 밖에는 3px/0.78이고 fill은 0.04다. 추세와 채널
 
 해설 hover/focus는 대상의 원래 category 색을 유지한 채 opacity를 1로 올리고 선을
 0.75px(최대 4.5px) 굵게 한다. 다른 분석 작도는 각 원래 opacity의 65%로 낮추되
-캔들과 사용자 drawing은 더 약하게만 dim한다. 해석 레이어의 hard-pass 미선택 후보는
-category 색 1.25px/0.42 `[6,4]`, 근접 후보는 axis 색 1px/0.30 `[3,4]`로 표시한다.
+캔들과 사용자 drawing은 더 약하게만 dim한다. 해석 레이어의 확정 바탕선과 hard-pass
+미선택 후보는 category 색의 solid 5.5px(pattern), 4.5px(level), 4px(trend), opacity 0.48로
+표시한다. 근접 후보는 같은 굵기와 category 색을 쓰되 opacity 0.38로 낮춘다. 근거 marker는
+캔들 위에 유지하며 해석 바탕선은 history, export, hit-test에 포함하지 않는다.
 제안 `riskRewardBox`도 가격축 pill이나 내부 설명 chip을 만들지 않으며, 오른쪽의
 클릭 가능한 DOM 라벨로 진입/목표/손절 또는 매도/예상 하단/재검토 가격을 표시한다.
 각 라벨에는 `패턴 상단`, `패턴 폭`, `다음 저항선`처럼 가격 원천을 함께 표시한다.

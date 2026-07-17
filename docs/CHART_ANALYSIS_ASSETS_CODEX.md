@@ -102,8 +102,10 @@ proposal=false        제안
 `drawingGroups`가 levels/trend/pattern 분류 원본이다. 구자산은 ID와 geometry metadata로
 fallback 분류한다. SMA60/120과 cross는 trend가 소유한다. proposal hide는
 `ActiveTradePlan`을 clear하지 않는다. interpretation은 persistent drawing이 아닌 Canvas
-overlay이며 history/undo/export/8-drawing 예산에 들어가지 않는다. 글로벌 해석은
-전체 v2 후보선을 표시하고 해설 hover는 selections에 속한 후보의 marker만 표시한다.
+overlay이며 history/undo/export/8-drawing 예산에 들어가지 않는다. 글로벌 해석은 선별된
+유력 미선택 후보와 확정 level/trend/pattern drawing 전체를 넓은 바탕선으로 표시하고,
+해설 hover는 selections에 속한 후보의 marker만 표시한다. 바탕선은 그리드 위이면서
+캔들·이평선·확정 drawing 아래에 둔다.
 구자산은 후보를 합성하지 않고 v1은 일부 후보, legacy evidence는 근거만으로 명시한다.
 토글의 진단 문구는 complete trace에서 현재 viewport 후보 수/전체 후보 수를 함께 표시한다.
 

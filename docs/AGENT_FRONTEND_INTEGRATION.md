@@ -594,7 +594,8 @@ API, DB, thread ID를 만들지 않고 과거 답변을 다음 Agent 요청 `mes
 hover/focus는 해당 drawing만 강조하고 같은 `analysisTrace`의 근거 pivot, touch, reaction
 marker를 비영속 overlay로 표시한다. click은 한 섹션만 고정하며 다른 섹션을 hover한 뒤
 leave하면 고정 섹션으로 복귀한다. ATR·점수·접촉 수 수치 카드는 자산에 저장된 metrics만
-사용하고 브라우저에서 다시 계산하지 않는다.
+사용하고 브라우저에서 다시 계산하지 않는다. 글로벌 해석 ON은 선별된 미선택 후보와 확정
+Geometry drawing을 그리드 위·캔들 아래의 넓은 비영속 바탕선으로 함께 표시한다.
 
 요청에는 `chartDocumentId`, `sourcePanelId`, 당시 asset identity를 넣는다. 서버 응답의
 source document와 현재 문서가 같고 `symbol/interval/assetVersion/algorithmVersion/
