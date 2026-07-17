@@ -39,7 +39,9 @@ runtime="$(
 import json
 import os
 
-from gops_agents.chart_assets.commentary import COMMENTARY_PROMPT_VERSION
+from gops_agents.chart_assets.commentary import COMMENTARY_PROMPT_VERSION, OpenAIChartCommentaryWriter
+
+OpenAIChartCommentaryWriter().validate_configuration()
 
 payload = {
     "provider": os.getenv("CHART_COMMENTARY_PROVIDER", "disabled").strip().lower(),

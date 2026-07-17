@@ -157,6 +157,9 @@ timeout, refusal, incomplete, malformed 또는 fact 검증 실패가 발생하�
 개발 패널은 commentary가 없는 구자산을 `저장 해설 없음 · Rule-based fallback`으로 명시한다.
 provider 실패는 안전한 failure code로 분류하며 transient provider 오류와 서버 후검증
 교정은 각각 최대 한 번만 재시도한다.
+writer의 strict schema는 OpenAI가 지원하지 않는 JSON Schema 키워드를 배포 전 preflight와
+요청 생성 시점에 거절한다. 배열 reference의 중복 여부처럼 API schema가 표현하지 않는
+제약은 저장 전 서버 후검증이 담당한다.
 로컬 기본 provider는 disabled이며 구자산과 동일한 규칙 기반 종합 해설을 사용한다.
 
 ## 화면 레이어와 해설

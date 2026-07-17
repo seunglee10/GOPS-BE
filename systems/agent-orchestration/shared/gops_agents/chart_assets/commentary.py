@@ -91,6 +91,21 @@ PROHIBITED_DIRECTIVE_PATTERNS = (
         r"수익(?:을|이) 보장", r"성공 확률", r"확실(?:한|히) 상승", r"반드시 상승",
     )
 )
+OPENAI_STRICT_UNSUPPORTED_SCHEMA_KEYWORDS = frozenset({
+    "allOf",
+    "contains",
+    "dependentRequired",
+    "dependentSchemas",
+    "else",
+    "if",
+    "maxContains",
+    "minContains",
+    "not",
+    "patternProperties",
+    "then",
+    "unevaluatedItems",
+    "uniqueItems",
+})
 
 
 class ChartCommentaryGenerationError(RuntimeError):
@@ -292,6 +307,15 @@ class OpenAIChartCommentaryWriter:
                 "OpenAI commentary model is not configured",
                 code="provider_config",
             )
+        _validate_openai_strict_schema(_writer_schema(
+            [
+                {"id": "drawing:preflight", "type": "drawing"},
+                {"id": "candle:preflight", "type": "candle"},
+                {"id": "news:preflight", "type": "news"},
+                {"id": "earnings:preflight", "type": "earnings"},
+            ],
+            list(COMMENTARY_INDICATOR_LAYERS),
+        ))
 
     def _build_request(
         self,
@@ -307,6 +331,8 @@ class OpenAIChartCommentaryWriter:
                 "commentary fact pack has no reference candidates",
                 code="output_validation",
             )
+        schema = _writer_schema(fact_pack.get("references") or [], layers)
+        _validate_openai_strict_schema(schema)
         return {
             "model": self.model,
             "store": False,
@@ -323,7 +349,7 @@ class OpenAIChartCommentaryWriter:
                     "type": "json_schema",
                     "name": "chart_commentary_ko_v2",
                     "strict": True,
-                    "schema": _writer_schema(fact_pack.get("references") or [], layers),
+                    "schema": schema,
                 }
             },
         }
@@ -1260,7 +1286,7 @@ def _writer_schema(references: list[dict[str, Any]], layers: list[str]) -> dict[
             "properties": {
                 "kind": {"type": "string", "enum": ["drawing"]},
                 "referenceIds": {
-                    "type": "array", "minItems": 1, "maxItems": 3, "uniqueItems": True,
+                    "type": "array", "minItems": 1, "maxItems": 3,
                     "items": {"type": "string", "enum": typed_ids["drawing"]},
                 },
             },
@@ -1273,7 +1299,7 @@ def _writer_schema(references: list[dict[str, Any]], layers: list[str]) -> dict[
                 "kind": {"type": "string", "enum": ["indicator"]},
                 "layer": layer_schema,
                 "referenceIds": {
-                    "type": "array", "minItems": 1, "maxItems": 3, "uniqueItems": True,
+                    "type": "array", "minItems": 1, "maxItems": 3,
                     "items": reference_schema,
                 },
             },
@@ -1331,6 +1357,29 @@ def _writer_schema(references: list[dict[str, Any]], layers: list[str]) -> dict[
             "limitations": {"type": "array", "maxItems": 5, "items": {"type": "string"}},
         },
     }
+
+
+def _validate_openai_strict_schema(schema: dict[str, Any]) -> None:
+    unsupported: list[str] = []
+
+    def visit(value: Any, path: str) -> None:
+        if isinstance(value, dict):
+            for key, nested in value.items():
+                nested_path = f"{path}.{key}" if path else key
+                if key in OPENAI_STRICT_UNSUPPORTED_SCHEMA_KEYWORDS:
+                    unsupported.append(nested_path)
+                visit(nested, nested_path)
+        elif isinstance(value, list):
+            for index, nested in enumerate(value):
+                visit(nested, f"{path}[{index}]")
+
+    visit(schema, "schema")
+    if unsupported:
+        raise ChartCommentaryGenerationError(
+            f"OpenAI commentary strict schema uses an unsupported keyword: {unsupported[0]}",
+            code="provider_schema",
+            details={"providerParam": unsupported[0]},
+        )
 
 
 def _system_prompt() -> str:

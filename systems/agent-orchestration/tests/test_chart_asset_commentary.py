@@ -236,7 +236,31 @@ class ChartAssetCommentaryTest(unittest.TestCase):
         self.assertEqual(requests[0]["text"]["format"]["type"], "json_schema")
         self.assertIs(requests[0]["text"]["format"]["strict"], True)
         self.assertEqual(requests[0]["text"]["format"]["name"], "chart_commentary_ko_v2")
+        self.assertNotIn("uniqueItems", json.dumps(requests[0]["text"]["format"]["schema"], sort_keys=True))
         self.assertEqual(json.loads(requests[0]["input"]), fact_pack)
+
+    def test_openai_writer_preflight_rejects_unsupported_strict_schema_keywords(self):
+        from gops_agents.chart_assets import commentary as commentary_module
+
+        with self.assertRaises(ChartCommentaryGenerationError) as raised:
+            commentary_module._validate_openai_strict_schema({
+                "type": "array",
+                "uniqueItems": True,
+                "items": {"type": "string"},
+            })
+
+        self.assertEqual(raised.exception.code, "provider_schema")
+        self.assertEqual(raised.exception.details["providerParam"], "schema.uniqueItems")
+
+    def test_openai_writer_configuration_preflight_accepts_v2_schema(self):
+        writer = OpenAIChartCommentaryWriter(
+            read_config=lambda key: {
+                "OPENAI_API_KEY": "preflight-secret",
+                "CHART_COMMENTARY_MODEL": "gpt-5.2",
+            }.get(key),
+        )
+
+        writer.validate_configuration()
 
     def test_openai_transport_retries_rate_limit_once(self):
         fact_pack = _fact_pack()
