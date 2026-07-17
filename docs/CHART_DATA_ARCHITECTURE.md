@@ -203,9 +203,10 @@ range without requiring a separate horizontal pan to the left edge.
 bucket count from 4 through 48. The active chart requests 10 equal-width buckets
 across the main price pane's actual `scene.scales.minPrice/maxPrice` domain. That
 domain includes active overlay indicators, a visible chart-plan proposal, live
-price, and pixel headroom, but excludes ordinary drawings. Nice axis ticks do not
+price, and pixel headroom, but excludes ordinary drawings. Axis ticks do not
 redefine or expand the display domain; their exact count is derived only from
-price-pane height. Bid/Ask keeps its discrete order-flow rows while using the same
+price-pane height, and they divide the full display domain into equal vertical
+intervals. Bid/Ask keeps its discrete order-flow rows while using the same
 independent axis-tick density contract. The request also sends
 the visible closed-candle `candleCount`; the API uses it as the canonical query
 limit and includes it in request/cache identity. Zero-volume buckets remain in the

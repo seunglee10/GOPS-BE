@@ -204,10 +204,12 @@ resize가 끝난 뒤 120ms debounce를 거쳐 새 범위를 한 번 조회하고
 main price pane의 display domain과 가격 tick 격자는 별도 계약이다. display domain은
 visible candle, time-gap carry price, live trade, 활성 SMA·EMA·WMA·Bollinger, 보이는 chart-plan
 proposal의 유효한 양수 가격과 pixel headroom으로 계산하며 일반 drawing은 포함하지
-않는다. tick 개수는 price pane 높이만 사용해 4~10개로 결정하고, nice tick의 첫 값과
-마지막 값으로 display domain을 다시 확장하지 않는다. pan/zoom과 layer 변경은 새 범위를
+않는다. tick 개수는 price pane 높이만 사용해 4~10개로 결정하고, 첫 tick과 마지막 tick을
+각각 display domain의 하단과 상단에 둔 뒤 나머지를 가격 pane 세로 전체에 균등 배치한다.
+가격 라벨 반올림은 domain이나 좌표를 바꾸지 않는다. pan/zoom과 layer 변경은 새 범위를
 즉시 적용하며 animation, 이전 scale hysteresis, 조작 종료 후 지연 적용은 사용하지 않는다.
-Bid/Ask도 order-flow row 가격과 axis tick을 분리해 같은 높이 기반 tick 개수 계약을 따른다.
+Bid/Ask도 order-flow row 가격과 axis tick을 분리해 같은 높이 기반 tick 개수와 균등 배치
+계약을 따른다.
 
 응답은 10개 bucket, 요청 가격 경계, 요청/source candle count가 모두 일치할 때만
 표시한다. `dataStatus=partial`은 클라이언트 derived cache에 넣지 않고 숨긴 상태로
@@ -794,27 +796,41 @@ SMA60·SMA120과 최근 교차 상태를 표시한다. 신규 build/refresh는 `
 자동 분석은 `해석`, `저항(지지·저항)`, `추세`, `패턴`, `제안` 다섯 토글로 나눈다.
 초기값은 저항·추세·패턴 ON, 해석·제안 OFF이며 사용자 수동 drawing은 어느 토글도
 변경하지 않는다. `drawingGroups`가 levels/trend/pattern 분류 원본이고 구자산은 ID와
-geometry metadata로 fallback 분류한다. SMA60/120과 cross는 추세가 소유한다.
+geometry metadata로 fallback 분류한다. SMA60/120 가시성은 차트 추가 도구가 독립적으로
+소유하고 추세 토글은 바꾸지 않는다. SMA cross 마커만 추세 레이어에 남는다.
 
-지지·저항은 저장된 zone을 재계산하지 않고 importance에 따라 major 3px solid,
-standard 2.25px dashed, minor 1.5px dotted H-Line으로 표시한다. importance가 없는
-구자산은 기존 2.5px 표현을 사용한다. 일반 추세는 `trendLine`, 채널은 3-anchor
-`trendParallelLines` 하나로 렌더링한다. 패턴 경계는 기존 3.5px 표현과 golden을
-유지한다. 새 자산은 `primaryPattern`을 우선 표시하고 기존 geometry 자산은
-`primaryTriangle`로 호환한다.
+지지·저항은 저장된 zone을 재계산하지 않고 importance에 따라 major 2.5px/0.88 solid,
+standard 1.75px/0.78 `[7,4]`, minor 1.25px/0.68 `[2,4]` H-Line으로 표시한다.
+importance가 없는 구자산은 기존 2.5px 표현을 사용한다. 작도 색은 고정 hex를 저장하지
+않고 전역 semantic token만 사용한다. 패턴은 drawing 70%와 axis의 혼합색, 지지·저항은
+up/down 18%와 axis의 혼합색, 추세는 axis 색이다. 일반 추세와 채널은 방향별 색상 분기
+없이 1.5px/0.76 solid, fill 0.02로 렌더링하며 내부 이름을 표시하지 않는다. 패턴은
+confirmed 3.25px/0.94, forming 3px/0.88, fallback 3px/0.78, fill 0.04로 가장 강한
+위계를 갖는다. 패턴명은 선 위가 아니라 현재 plot에 패턴 segment가 보일 때만 우측
+상단 badge로 표시한다. 새 자산은 `primaryPattern`을 우선 표시하고 기존 geometry
+자산은 `primaryTriangle`로 호환한다.
 
-해석 ON은 retained 선택·탈락 후보를 모두 Canvas overlay로 표시한다. OFF에서도 해설
-hover 중에는 관련 trace subset만 임시 표시한다. overlay는 chart document, undo/history,
-export, PostgreSQL drawing 예산에 넣지 않는다. 데스크톱에서는 첫 줄에 다섯 토글,
-둘째 줄에 as-of와 현재 viewport 후보 수/전체 후보 수를 배치한다. 이번 변경에는 mobile-specific 축약 메뉴, touch gesture,
-mobile visual regression을 추가하지 않는다.
+해석 ON은 전체 trace를 변경하지 않은 채 유력한 미선택 후보만 Canvas overlay로 표시한다.
+hard-pass를 우선하고 category에 hard-pass가 없을 때만 활성 evidence-pass 근접 후보 하나를
+허용하며 stale/breached/invalidated/role-conflict/break-pending은 제외한다. 표시 예산은
+선택 후보 수의 2배, 최소 3·최대 9이고 level/trend/pattern 상한은 4/3/2다. OFF에서도
+해설 hover 중에는 필터를 우회해 관련 trace subset만 임시 표시한다. overlay는 chart
+document, undo/history, export, PostgreSQL drawing 예산에 넣지 않는다. 데스크톱 둘째 줄은
+`유력 후보 viewport/선별 · 전체 저장`을 표시한다. mobile-specific 축약 메뉴, touch gesture,
+mobile visual regression은 추가하지 않는다.
+해석 hard-pass 미선택 후보는 category 색 1.25px/0.42 `[6,4]`, 근접 후보는 axis 색
+1px/0.30 `[3,4]`로 표시한다. 해설 hover/focus는 Geometry 작도의 원래 category 색을
+유지한 채 opacity 1, 기본보다 0.75px 굵게(최대 4.5px) 강조하고 다른 분석 작도는 원래
+opacity의 65%로 낮춘다. 캔들과 사용자 drawing은 분석 작도보다 약하게만 dim한다.
 기존 7개 interval 자산은 계속 표시할 수 있지만 새 빌드 선택지는 `1m/1D` 두 개뿐이며
 둘 다 기본 선택한다. 동일 실행 중 요청에 합쳐진 경우 이를 안내하고 polling은 기존
 job URL을 사용한다. 상태 화면은 수동 우선 작업과 정기 작업을 구분해 표시한다.
 완전한 서버 `tradePlan`이 있으면 우선해 `buy_candidate/long`은 조건부 매수 검토,
 `sell_candidate/exit_long`은 보유분의 조건부 매도 검토로 표시한다. 숏 신규 포지션
 계약은 없다. `[entry, stop, target]` 순서의 `riskRewardBox`는 가격축 pill과 내부 설명
-chip 없이 렌더링하고 세 가격은 오른쪽 DOM 버튼으로 표시한다. 서버 플랜이 없으면 현재 또는 가까운 저장 주기의 패턴·지지·저항만으로
+chip 없이 렌더링하고 세 가격은 오른쪽 DOM 버튼으로 표시한다. DOM 위치는 Canvas scene과
+같은 프레임에 동기화하고 박스 오른쪽 lane에만 둔다. 가격 간격이 좁으면 24px 간격으로
+분산하되 원래 가격선과 elbow connector로 연결한다. 서버 플랜이 없으면 현재 또는 가까운 저장 주기의 패턴·지지·저항만으로
 조건부 매수/매도 setup을 만든다. 종목별 분기, ATR 재계산, 레벨 재병합, 가짜 candle은
 허용하지 않는다. 손익비가 기준 미만인 `no_trade`와 미확정 `watch`는 서버 확정 플랜을
 만들지 않는다.
