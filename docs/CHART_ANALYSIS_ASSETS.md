@@ -159,7 +159,9 @@ provider 실패는 안전한 failure code로 분류하며 transient provider 오
 교정은 각각 최대 한 번만 재시도한다.
 writer의 strict schema는 OpenAI가 지원하지 않는 JSON Schema 키워드를 배포 전 preflight와
 요청 생성 시점에 거절한다. 배열 reference의 중복 여부처럼 API schema가 표현하지 않는
-제약은 저장 전 서버 후검증이 담당한다.
+제약은 저장 전 서버 후검증이 담당한다. indicator가 주요 봉과 같은 evidence reference를
+공유하는 것은 정상으로 허용하며, 본문에서 동일한 작도·봉·이벤트·지표 동작이 반복되면
+첫 링크만 유지하고 뒤의 표현은 평문으로 결정론적으로 정규화한다.
 로컬 기본 provider는 disabled이며 구자산과 동일한 규칙 기반 종합 해설을 사용한다.
 
 ## 화면 레이어와 해설
