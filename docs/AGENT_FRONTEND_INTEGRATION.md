@@ -106,8 +106,9 @@ source, capture timestamp를 보내지 않으며 서버가 검증·보강한 fil
 가격 라벨은 점선과 같은 Canvas pass에서 공통 가격축 pill renderer로 그려 `$` 없이
 다른 가격축 숫자와 같은 typography·크기·오른쪽 기준선을 사용한다. DOM overlay는 Canvas
 scene 좌표를 chart container의 local 좌표로 환산한 투명 hover/focus 영역과 tooltip만
-담당해 UI scale·resize 중에도 점선과 분리되지 않게 한다. tooltip은 차트 체결 마커의
-surface, border, typography 토큰을 재사용한다.
+담당해 UI scale·resize 중에도 점선과 분리되지 않게 한다. 평균 매입가 구분색은 점선에만
+사용하고 가격 pill에는 별도 색상 변형을 만들지 않는다. tooltip은 차트 체결 마커의 surface,
+border, typography 토큰을 재사용한다.
 
 차트의 매매 체결 DOM 마커도 사용자별 원장을 사용한다. LIVE에서는 영구 가상계좌의
 `filled` 주문만, SIM에서는 현재 `runId`의 `filled` 주문만 표시하며 서로 섞지 않는다.
