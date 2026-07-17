@@ -600,11 +600,13 @@ API, DB, thread ID를 만들지 않고 과거 답변을 다음 Agent 요청 `mes
 분석 자산·현재가·작도·로컬 setup의 기존 규칙 기반 문장을 사용한다. 이 패널은
 `/api/account/holdings`를 호출하지 않고 보유 상태·평균 매입가·수량을 표시하지 않는다.
 
-저장 해설은 block별 본문과 inline reference tag를 표시한다. drawing tag는 기존 focus,
-indicator tag는 hover/focus 이유와 해당 `chartDocumentId`의
-`chart.layer.visibility.set` user command, news/earnings tag는 필요 layer를 켠 뒤 해당
-viewport와 기존 event popover, candle tag는 현재 로드된 실제 봉의 semantic selection을
-사용한다. 로드되지 않은 candle은 disabled로 남고 가짜 선택을 만들지 않는다. 이벤트는
+`chart-commentary.v2` 저장 해설은 세 문단의 연속 본문으로 표시하고 별도 tag/pill 행을
+만들지 않는다. 서버가 검증한 본문 segment만 링크처럼 보인다. drawing 문구는 기존 focus와
+click 고정을, indicator 문구는 hover/focus 이유와 해당 `chartDocumentId`의
+`chart.layer.visibility.set` user command, news/earnings 문구는 필요 layer를 켠 뒤 해당
+viewport와 기존 event popover, candle 문구는 현재 로드된 실제 봉의 semantic selection을
+사용한다. 로드되지 않은 참조 문구는 본문에 남되 disabled 상태이며 가짜 선택을 만들지 않는다.
+v1 block은 `구조+작도 / 지표+이벤트 / 다음 조건` 세 평문으로 합치고 기존 tag는 표시하지 않는다. 이벤트는
 typed `gops:chart-commentary-reference-open`, 지표는
 `gops:chart-commentary-indicator-toggle` 요청으로 연결하며 DOM을 검색해 click하지 않는다.
 

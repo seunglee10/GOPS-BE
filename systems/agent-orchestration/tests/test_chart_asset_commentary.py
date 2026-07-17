@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import copy
+import io
 import json
 import sys
 import unittest
+import urllib.error
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -149,6 +151,8 @@ class ChartAssetCommentaryTest(unittest.TestCase):
             fact_pack=fact_pack, writer=writer, generated_at="2025-06-11T00:00:00.000Z",
         )
         self.assertEqual(ready["status"], "ready")
+        self.assertEqual(ready["version"], "chart-commentary.v2")
+        self.assertEqual(len(ready["paragraphs"]), 3)
         self.assertEqual(ready["sourceIdentity"]["contextDigest"], fact_pack["contextDigest"])
         self.assertLessEqual(sum(ref["type"] == "candle" for ref in ready["references"]), 3)
 
@@ -170,6 +174,50 @@ class ChartAssetCommentaryTest(unittest.TestCase):
                 fact_pack=fact_pack, writer=invented_number, generated_at="2025-06-11T00:00:00.000Z",
             )
 
+        wrong_type = FixtureWriter(mutation="type")
+        with self.assertRaisesRegex(ChartCommentaryGenerationError, "type does not match"):
+            generate_chart_commentary(
+                fact_pack=fact_pack, writer=wrong_type, generated_at="2025-06-11T00:00:00.000Z",
+            )
+
+        markup = FixtureWriter(mutation="markup")
+        with self.assertRaisesRegex(ChartCommentaryGenerationError, "continuous prose"):
+            generate_chart_commentary(
+                fact_pack=fact_pack, writer=markup, generated_at="2025-06-11T00:00:00.000Z",
+            )
+
+    def test_v2_inline_links_trace_final_drawing_candle_indicator_and_event(self):
+        rows = _rows(160)
+        geometry = _geometry()
+        geometry.update(_level_geometry(rows, support_prices=[110.0], resistance_prices=[118.0, 125.0]))
+        fact_pack = build_chart_commentary_fact_pack(
+            symbol="NVDA", interval="1D", candles=rows, geometry=geometry,
+            geometry_input_digest="sha256:geometry",
+            context={
+                "news": [{
+                    "id": "news:NVDA:2025-06-10", "type": "news", "marketDate": "2025-06-10",
+                    "summary": "저장 뉴스", "keyPoints": [], "impactDirection": "neutral",
+                    "sentiment": "neutral", "articleCount": 1, "generatedAt": "2025-06-10T20:00:00.000Z",
+                }],
+                "earnings": [],
+                "missingData": ["earnings"],
+            },
+        )
+
+        ready, _latency = generate_chart_commentary(
+            fact_pack=fact_pack, writer=FixtureWriter(), generated_at="2025-06-11T00:00:00.000Z",
+        )
+
+        links = [
+            segment["link"]
+            for paragraph in ready["paragraphs"]
+            for segment in paragraph["segments"]
+            if segment.get("link")
+        ]
+        self.assertEqual({link["kind"] for link in links}, {"drawing", "candle", "indicator", "news"})
+        self.assertEqual(ready["indicatorRecommendations"][0]["layer"], "rsi:14")
+        self.assertEqual(len({reference["id"] for reference in ready["references"]}), len(ready["references"]))
+
     def test_openai_writer_uses_store_false_and_deterministic_strict_request(self):
         fact_pack = _fact_pack()
         fixture_output = FixtureWriter().generate(fact_pack)
@@ -187,7 +235,103 @@ class ChartAssetCommentaryTest(unittest.TestCase):
         self.assertIs(requests[0]["store"], False)
         self.assertEqual(requests[0]["text"]["format"]["type"], "json_schema")
         self.assertIs(requests[0]["text"]["format"]["strict"], True)
+        self.assertEqual(requests[0]["text"]["format"]["name"], "chart_commentary_ko_v2")
         self.assertEqual(json.loads(requests[0]["input"]), fact_pack)
+
+    def test_openai_transport_retries_rate_limit_once(self):
+        fact_pack = _fact_pack()
+        fixture_output = FixtureWriter().generate(fact_pack)
+        attempts = []
+        responses = [
+            urllib.error.HTTPError(
+                "https://api.openai.com/v1/responses",
+                429,
+                "rate limited",
+                {"x-request-id": "req-safe-1"},
+                io.BytesIO(json.dumps({
+                    "error": {"type": "rate_limit_error", "code": "rate_limit_exceeded", "param": None},
+                }).encode("utf-8")),
+            ),
+            FakeOpenAIResponse({"status": "completed", "output_text": json.dumps(fixture_output)}),
+        ]
+
+        def urlopen(_request, *, timeout):
+            attempts.append(timeout)
+            response = responses.pop(0)
+            if isinstance(response, Exception):
+                raise response
+            return response
+
+        sleeps = []
+        writer = OpenAIChartCommentaryWriter(
+            read_config=lambda key: {
+                "OPENAI_API_KEY": "secret-not-logged",
+                "CHART_COMMENTARY_MODEL": "fixture-openai-model",
+                "CHART_COMMENTARY_TIMEOUT_SECONDS": "12",
+            }.get(key),
+            urlopen=urlopen,
+            sleep=sleeps.append,
+        )
+
+        self.assertEqual(writer.generate(fact_pack), fixture_output)
+        self.assertEqual(attempts, [12.0, 12.0])
+        self.assertEqual(sleeps, [0.5])
+
+    def test_openai_transport_does_not_retry_auth_failure(self):
+        attempts = []
+
+        def urlopen(_request, *, timeout):
+            attempts.append(timeout)
+            raise urllib.error.HTTPError(
+                "https://api.openai.com/v1/responses",
+                401,
+                "unauthorized",
+                {"x-request-id": "req-auth-1"},
+                io.BytesIO(json.dumps({
+                    "error": {"type": "invalid_request_error", "code": "invalid_api_key", "param": None},
+                }).encode("utf-8")),
+            )
+
+        writer = OpenAIChartCommentaryWriter(
+            read_config=lambda key: {"OPENAI_API_KEY": "invalid", "CHART_COMMENTARY_MODEL": "fixture"}.get(key),
+            urlopen=urlopen,
+            sleep=lambda _seconds: self.fail("auth failure must not retry"),
+        )
+        with self.assertRaises(ChartCommentaryGenerationError) as caught:
+            writer.generate(_fact_pack())
+        self.assertEqual(caught.exception.code, "provider_auth")
+        self.assertEqual(caught.exception.attempts, 1)
+        self.assertEqual(caught.exception.details["requestId"], "req-auth-1")
+        self.assertEqual(len(attempts), 1)
+
+    def test_post_validation_failure_gets_one_repair_attempt(self):
+        writer = RepairingFixtureWriter()
+
+        ready, _latency = generate_chart_commentary(
+            fact_pack=_fact_pack(),
+            writer=writer,
+            generated_at="2025-06-11T00:00:00.000Z",
+        )
+
+        self.assertEqual(ready["version"], "chart-commentary.v2")
+        self.assertEqual(writer.repair_calls, 1)
+
+    def test_required_builder_fails_fast_when_openai_key_is_missing(self):
+        writer = OpenAIChartCommentaryWriter(
+            read_config=lambda key: {"CHART_COMMENTARY_MODEL": "fixture-openai-model"}.get(key),
+            response_requester=lambda _request: {},
+        )
+        with self.assertRaises(ChartCommentaryGenerationError) as caught:
+            ChartAssetBuilder(
+                candle_loader=Loader(_rows(160)),
+                storage=MemoryStorage(),
+                progress=InMemoryChartAssetProgressStore(),
+                commentary_writer=writer,
+                commentary_context_loader=StaticContext(),
+                commentary_required=True,
+                concurrency=1,
+            )
+        self.assertEqual(caught.exception.code, "provider_config")
 
     def test_builder_required_commentary_failure_preserves_previous_asset(self):
         rows = _rows(160)
@@ -212,12 +356,16 @@ class ChartAssetCommentaryTest(unittest.TestCase):
         self.assertEqual(failure_log["event"], "chart_commentary_failed")
         self.assertEqual(failure_log["commentary"]["status"], "failed")
         self.assertEqual(failure_log["commentary"]["model"], "fixture-model")
-        self.assertEqual(failure_log["commentary"]["promptVersion"], "chart-commentary.ko.v1")
+        self.assertEqual(failure_log["commentary"]["promptVersion"], "chart-commentary.ko.v2")
         self.assertTrue(str(failure_log["commentary"]["contextDigest"]).startswith("sha256:"))
         self.assertEqual(set(failure_log["commentary"]), {
-            "status", "model", "promptVersion", "contextDigest",
-            "newsAsOf", "earningsAsOf", "latencyMs",
+            "status", "failureCode", "retryable", "attempts", "model", "promptVersion",
+            "contextDigest", "newsAsOf", "earningsAsOf", "latencyMs", "requestId",
         })
+        self.assertEqual(failure_log["commentary"]["failureCode"], "provider_timeout")
+        self.assertEqual(failure_log["commentary"]["requestId"], "req-fixture-safe")
+        self.assertNotIn("unsafe", str(failure_log))
+        self.assertIn("[provider_timeout]", state["recentItems"][-1]["error"])
 
     def test_builder_stores_injected_commentary_and_schema_accepts_it(self):
         rows = _rows(160)
@@ -234,7 +382,7 @@ class ChartAssetCommentaryTest(unittest.TestCase):
 
         self.assertEqual(state["recentItems"][-1]["status"], "saved")
         asset = storage.assets[("NVDA", "1D")]
-        self.assertEqual(asset["commentary"]["version"], "chart-commentary.v1")
+        self.assertEqual(asset["commentary"]["version"], "chart-commentary.v2")
         self.assertNotIn("first-user", str(asset))
         _validate_asset_schema(asset)
 
@@ -247,40 +395,98 @@ class FixtureWriter:
 
     def generate(self, fact_pack):
         references = fact_pack["references"]
-        candle_reference = next(item["id"] for item in references if item["type"] == "candle")
-        drawing_reference = next((item["id"] for item in references if item["type"] == "drawing"), candle_reference)
-        event_reference = next((item["id"] for item in references if item["type"] in {"news", "earnings"}), candle_reference)
-        sentence = (
-            "저장된 사실과 최종 작도를 함께 읽으면 현재 구조의 위치와 변화 조건을 한 화면에서 차분하게 구분할 수 있으며 "
-            "각 근거는 분석 시점에 확정된 완료 봉과 연결되어 이후 정보가 섞이지 않은 관찰 맥락을 제공합니다."
-        )
-        texts = [sentence + " " + sentence, sentence, sentence + " " + sentence, sentence, sentence]
-        kinds = ("overview", "drawing_guide", "indicator_context", "event_context", "watch_next")
-        reference_by_kind = {
-            "overview": candle_reference,
-            "drawing_guide": drawing_reference,
-            "indicator_context": candle_reference,
-            "event_context": event_reference,
-            "watch_next": candle_reference,
-        }
-        blocks = [{
-            "id": f"block-{index}", "kind": kind, "text": texts[index],
-            "referenceIds": [reference_by_kind[kind]],
-        } for index, kind in enumerate(kinds)]
+        candle_references = [item["id"] for item in references if item["type"] == "candle"]
+        candle_reference = candle_references[0]
+        indicator_reference = candle_references[1]
+        drawing_reference = next((item["id"] for item in references if item["type"] == "drawing"), None)
+        event = next((item for item in references if item["type"] in {"news", "earnings"}), None)
+        paragraphs = [
+            {
+                "id": "structure",
+                "segments": [
+                    {"id": "structure-open", "text": "저장된 완료 봉과 구조 지표를 함께 놓고 보면 현재 가격은 단기 변동 하나보다 분석 시점까지 축적된 방향과 경계의 관계로 읽는 편이 타당합니다. ", "link": None},
+                    *([{"id": "structure-drawing", "text": "최종 작도", "link": {"kind": "drawing", "referenceIds": [drawing_reference]}}] if drawing_reference else []),
+                    {"id": "structure-close", "text": "는 가격이 어느 구간에서 반응을 반복했는지 보여 주며, 한 선의 돌파만 단독 신호로 보지 않고 반대 경계와 최근 접촉 이력을 함께 확인하게 합니다. 이 구조는 결론을 서두르기보다 완료 봉이 경계 안팎에서 자리를 잡는지 관찰하는 기준으로 기능합니다.", "link": None},
+                ],
+            },
+            {
+                "id": "confirmation",
+                "segments": [
+                    {"id": "confirmation-open", "text": "그 판단을 점검할 때에는 ", "link": None},
+                    {"id": "confirmation-candle", "text": "주요 완료 봉", "link": {"kind": "candle", "referenceId": candle_reference}},
+                    {"id": "confirmation-middle", "text": "의 몸통과 꼬리, 거래량이 경계 부근에서 남긴 반응을 먼저 살피는 것이 좋으며, 같은 위치에서 되돌림이 반복되는지도 중요합니다. 여기에 ", "link": None},
+                    {"id": "confirmation-indicator", "text": "상대강도지수", "link": {"kind": "indicator", "layer": "rsi:14", "referenceIds": [indicator_reference]}},
+                    {"id": "confirmation-close", "text": "를 겹쳐 보면 가격이 경계를 시험하는 과정에서 움직임의 힘이 확장되는지 둔화되는지를 분리해 볼 수 있습니다. 지표는 작도를 대신하는 결론이 아니라 가격 반응의 질을 확인하는 보조 근거로만 사용합니다.", "link": None},
+                ],
+            },
+            {
+                "id": "context",
+                "segments": [
+                    {"id": "context-open", "text": "외부 맥락은 가격 움직임의 원인으로 단정하지 않고 분석 시점에 시장이 함께 소화하던 정보의 범위로만 읽습니다. ", "link": None},
+                    *([{"id": "context-event", "text": "저장된 이벤트 맥락", "link": {"kind": event["type"], "referenceId": event["id"]}}] if event else []),
+                    {"id": "context-close", "text": "이 제한적이라면 차트 구조와 완료 봉이 제공하는 사실을 우선하고 확인되지 않은 서사를 빈칸에 채우지 않습니다. 다음 관찰에서는 가격이 최종 경계를 지킨 채 반응을 이어 가는지, 또는 반대편 경계를 넘어 기존 해석을 재검토해야 하는지를 새 완료 봉과 같은 기준으로 비교합니다.", "link": None},
+                ],
+            },
+        ]
         if self.mutation == "reference":
-            blocks[0]["referenceIds"] = ["missing-reference"]
+            paragraphs[1]["segments"][1]["link"]["referenceId"] = "missing-reference"
         if self.mutation == "personal":
-            blocks[0]["text"] = blocks[0]["text"].replace("저장된 사실", "사용자 계좌")
+            paragraphs[0]["segments"][0]["text"] = paragraphs[0]["segments"][0]["text"].replace("저장된 완료 봉", "사용자 계좌")
         if self.mutation == "number":
-            blocks[0]["text"] = blocks[0]["text"].replace("저장된 사실", "저장된 사실과 9999")
-        return {"blocks": blocks, "indicatorRecommendations": [], "limitations": []}
+            paragraphs[0]["segments"][0]["text"] = paragraphs[0]["segments"][0]["text"].replace("저장된 완료 봉", "저장된 완료 봉과 9999")
+        if self.mutation == "type":
+            paragraphs[1]["segments"][1]["link"]["kind"] = "news"
+        if self.mutation == "markup":
+            paragraphs[0]["segments"][0]["text"] = "<strong>" + paragraphs[0]["segments"][0]["text"]
+        return {
+            "paragraphs": paragraphs,
+            "indicatorRecommendations": [{
+                "layer": "rsi:14", "label": "상대강도지수",
+                "reason": "가격 움직임의 힘이 확장되는지 둔화되는지 함께 확인합니다.",
+                "referenceIds": [indicator_reference],
+            }],
+            "limitations": [],
+        }
 
 
 class FailingWriter:
     model = "fixture-model"
 
     def generate(self, _fact_pack):
-        raise ChartCommentaryGenerationError("injected failure")
+        raise ChartCommentaryGenerationError(
+            "injected failure",
+            code="provider_timeout",
+            retryable=True,
+            details={"requestId": "req-fixture-safe", "providerMessage": "unsafe raw response"},
+        )
+
+
+class RepairingFixtureWriter(FixtureWriter):
+    def __init__(self):
+        super().__init__(mutation="number")
+        self.repair_calls = 0
+
+    def repair(self, fact_pack, previous_output, validation_error):
+        self.repair_calls += 1
+        if "9999" not in str(previous_output):
+            raise AssertionError("repair must receive the rejected structured output")
+        if "unsupported numeric" not in str(validation_error):
+            raise AssertionError("repair must receive the validation failure")
+        return FixtureWriter().generate(fact_pack)
+
+
+class FakeOpenAIResponse:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+    def read(self):
+        return json.dumps(self.payload).encode("utf-8")
 
 
 class StaticContext:

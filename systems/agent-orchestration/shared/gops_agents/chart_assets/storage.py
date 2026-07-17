@@ -273,10 +273,12 @@ def _validate_commentary_identity(asset: dict[str, Any], drawings: list[Any]) ->
         if _required_timestamp(source_identity.get(field), f"commentary {field}") != asset_as_of:
             raise ValueError(f"Chart commentary {field} does not match its asset")
     references = commentary.get("references") or []
-    reference_ids = {
-        str(reference.get("id")) for reference in references
+    references_by_id = {
+        str(reference.get("id")): reference
+        for reference in references
         if isinstance(reference, dict) and reference.get("id")
     }
+    reference_ids = set(references_by_id)
     if len(reference_ids) != len(references):
         raise ValueError("Chart commentary reference IDs are invalid")
     drawing_ids = {
@@ -292,6 +294,25 @@ def _validate_commentary_identity(asset: dict[str, Any], drawings: list[Any]) ->
         if isinstance(item, dict)
         for reference_id in item.get("referenceIds") or []
     ]
+    for paragraph in commentary.get("paragraphs") or []:
+        if not isinstance(paragraph, dict):
+            continue
+        for segment in paragraph.get("segments") or []:
+            if not isinstance(segment, dict) or not isinstance(segment.get("link"), dict):
+                continue
+            link = segment["link"]
+            link_reference_ids = [str(reference_id) for reference_id in link.get("referenceIds") or []]
+            if link.get("kind") == "drawing" and any(
+                references_by_id.get(reference_id, {}).get("type") != "drawing"
+                for reference_id in link_reference_ids
+            ):
+                raise ValueError("Chart commentary drawing link type is invalid")
+            referenced_ids.extend(link_reference_ids)
+            if link.get("referenceId"):
+                reference_id = str(link["referenceId"])
+                if link.get("kind") in {"candle", "news", "earnings"} and references_by_id.get(reference_id, {}).get("type") != link.get("kind"):
+                    raise ValueError("Chart commentary event link type is invalid")
+                referenced_ids.append(reference_id)
     if not set(referenced_ids).issubset(reference_ids):
         raise ValueError("Chart commentary contains a dangling reference")
 

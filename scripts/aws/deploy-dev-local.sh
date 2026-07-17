@@ -494,6 +494,7 @@ apply_chart_interpretation_scope() {
   SELECTED_DEPLOYMENTS="gops-frontend agent-analysis-worker agent-orchestrator"
   export LOCAL_DEPLOY_SMOKE_FRONTEND="true"
   export LOCAL_DEPLOY_SMOKE_BACKEND="false"
+  printf 'Reader-only chart deploy selected: chart-asset-builder is not updated; do not regenerate assets until a normal agent-orchestrator rollout completes.\n'
 }
 
 validate_optional_tasks() {

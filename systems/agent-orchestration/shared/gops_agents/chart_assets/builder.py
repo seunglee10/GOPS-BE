@@ -54,6 +54,14 @@ class ChartAssetBuilder:
         self.commentary_writer = commentary_writer if commentary_writer is not None else build_chart_commentary_writer_from_env()
         self.commentary_required = commentary_required_from_env() if commentary_required is None else bool(commentary_required)
         self.commentary_context_loader = commentary_context_loader
+        if self.commentary_required and self.commentary_writer is None:
+            raise ChartCommentaryGenerationError(
+                "commentary provider is disabled in required mode",
+                code="provider_config",
+            )
+        validate_commentary_configuration = getattr(self.commentary_writer, "validate_configuration", None)
+        if self.commentary_required and callable(validate_commentary_configuration):
+            validate_commentary_configuration()
         if self.commentary_writer is not None and self.commentary_context_loader is None:
             self.commentary_context_loader = ClickHouseChartCommentaryContextLoader()
 
@@ -247,6 +255,7 @@ class ChartAssetBuilder:
                 symbol=symbol,
                 interval=interval,
                 diagnostics=commentary_diagnostics,
+                error=exc,
             )
             item = _item(
                 symbol,
@@ -255,7 +264,7 @@ class ChartAssetBuilder:
                 "commentary",
                 started,
                 reason="commentary_generation_failed",
-                error=f"{exc.__class__.__name__}: {exc}",
+                error=f"[{exc.code}] {exc}",
             )
         except Exception as exc:
             item = _item(symbol, interval, "failed", "build", started, error=f"{exc.__class__.__name__}: {exc}")
@@ -328,6 +337,7 @@ class ChartAssetBuilder:
         symbol: str,
         interval: str,
         diagnostics: dict[str, Any] | None,
+        error: ChartCommentaryGenerationError,
     ) -> None:
         payload = diagnostics or {}
         started = payload.get("started")
@@ -338,12 +348,20 @@ class ChartAssetBuilder:
             "interval": interval,
             "commentary": {
                 "status": "failed",
+                "failureCode": error.code,
+                "retryable": error.retryable,
+                "attempts": error.attempts,
                 "model": payload.get("model"),
                 "promptVersion": payload.get("promptVersion") or COMMENTARY_PROMPT_VERSION,
                 "contextDigest": payload.get("contextDigest"),
                 "newsAsOf": payload.get("newsAsOf"),
                 "earningsAsOf": payload.get("earningsAsOf"),
                 "latencyMs": latency_ms,
+                **{
+                    key: value
+                    for key, value in error.details.items()
+                    if key in {"httpStatus", "requestId", "providerType", "providerCode", "providerParam"}
+                },
             },
         }
         try:

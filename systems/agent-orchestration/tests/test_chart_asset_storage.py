@@ -42,16 +42,17 @@ class ChartAssetStorageTest(unittest.TestCase):
         _validate_asset_schema(_trace_asset_v2())
 
     def test_schema_and_postgres_round_trip_preserve_optional_commentary(self):
-        asset = _asset()
-        asset["commentary"] = _commentary()
-        _validate_asset_schema(asset)
-        connection = Connection(rows=[{"payload": asset}])
-        storage = PostgresChartAssetStorage("postgresql://test", connect=lambda *_args, **_kwargs: connection)
+        for commentary in (_commentary(), _commentary_v2()):
+            asset = _asset()
+            asset["commentary"] = commentary
+            _validate_asset_schema(asset)
+            connection = Connection(rows=[{"payload": asset}])
+            storage = PostgresChartAssetStorage("postgresql://test", connect=lambda *_args, **_kwargs: connection)
 
-        loaded = storage.get("NVDA", "1D")
+            loaded = storage.get("NVDA", "1D")
 
-        self.assertEqual(loaded["commentary"], asset["commentary"])
-        self.assertEqual(loaded["commentary"]["sourceIdentity"]["geometryInputDigest"], asset["inputDigest"])
+            self.assertEqual(loaded["commentary"], asset["commentary"])
+            self.assertEqual(loaded["commentary"]["sourceIdentity"]["geometryInputDigest"], asset["inputDigest"])
 
     def test_trade_plan_schema_accepts_buy_and_exit_long_but_rejects_short(self):
         for action, direction in (("buy_candidate", "long"), ("sell_candidate", "exit_long")):
@@ -425,6 +426,48 @@ def _commentary():
         }],
         "references": [{"id": "drawing:levels", "type": "drawing", "drawingIds": ["one", "two"]}],
         "limitations": ["저장된 최신 뉴스 요약이 없습니다."],
+    }
+
+
+def _commentary_v2():
+    return {
+        "version": "chart-commentary.v2",
+        "status": "ready",
+        "generatedAt": "2026-07-11T00:01:00.000Z",
+        "model": "fixture-model",
+        "promptVersion": "chart-commentary.ko.v2",
+        "sourceIdentity": {
+            "geometryInputDigest": "sha256:input",
+            "candlesAsOf": "2026-07-10T04:00:00.000Z",
+            "indicatorsAsOf": "2026-07-10T04:00:00.000Z",
+            "contextDigest": "sha256:context-v2",
+        },
+        "paragraphs": [
+            {"id": "structure", "segments": [
+                {"id": "structure-text", "text": "현재 구조는 "},
+                {"id": "structure-link", "text": "최종 작도", "link": {"kind": "drawing", "referenceIds": ["drawing:levels"]}},
+                {"id": "structure-close", "text": "를 중심으로 읽습니다."},
+            ]},
+            {"id": "confirmation", "segments": [
+                {"id": "candle-link", "text": "최근 완료 봉", "link": {"kind": "candle", "referenceId": "candle:latest"}},
+                {"id": "confirmation-text", "text": "과 "},
+                {"id": "indicator-link", "text": "상대강도지수", "link": {"kind": "indicator", "layer": "rsi:14", "referenceIds": ["candle:indicator"]}},
+                {"id": "confirmation-close", "text": "를 함께 확인합니다."},
+            ]},
+            {"id": "context", "segments": [
+                {"id": "context-text", "text": "다음 완료 봉에서 같은 기준을 다시 확인합니다."},
+            ]},
+        ],
+        "indicatorRecommendations": [{
+            "layer": "rsi:14", "label": "상대강도지수", "reason": "가격 움직임의 강도를 함께 확인합니다.",
+            "referenceIds": ["candle:indicator"],
+        }],
+        "references": [
+            {"id": "drawing:levels", "type": "drawing", "drawingIds": ["one", "two"]},
+            {"id": "candle:latest", "type": "candle", "timestamp": "2026-07-10T04:00:00.000Z"},
+            {"id": "candle:indicator", "type": "candle", "timestamp": "2026-07-09T04:00:00.000Z"},
+        ],
+        "limitations": [],
     }
 
 
