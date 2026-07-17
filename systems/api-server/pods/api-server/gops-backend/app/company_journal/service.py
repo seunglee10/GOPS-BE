@@ -4,10 +4,19 @@ import json
 import math
 import os
 import urllib.request
+from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from .models import NarrativeDraft, report_payload, validate_narrative
 from .repository import CompanyJournalRepository
+
+
+COMPANY_JOURNAL_HISTORY_START_YEAR = 2021
+
+
+def company_journal_history_years(current_year: int | None = None) -> int:
+    year = current_year if current_year is not None else datetime.now(timezone.utc).year
+    return max(1, year - COMPANY_JOURNAL_HISTORY_START_YEAR + 1)
 
 
 class JournalWriter(Protocol):
@@ -111,8 +120,9 @@ class CompanyJournalService:
         from app.market_data.fundamentals.service import build_fundamentals_adapter
 
         adapter = build_fundamentals_adapter()
-        financial = adapter.financial_series(symbol, years=3, period="quarterly")
-        earnings = adapter.earnings_series(symbol, years=3)
+        history_years = company_journal_history_years()
+        financial = adapter.financial_series(symbol, years=history_years, period="quarterly")
+        earnings = adapter.earnings_series(symbol, years=history_years)
         performance = self.repository.load_performance_series([symbol, *benchmark_symbols])
         missing: list[str] = []
         if not financial:
