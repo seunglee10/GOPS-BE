@@ -12,8 +12,11 @@ if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
 from app.recommendations.decision_v1 import (  # noqa: E402
+    build_cautions,
     build_decision,
+    build_key_evidence,
     build_sizing,
+    decision_explanation,
 )
 from app.recommendations.fixed_replay import FixedReplayRecommendationProvider  # noqa: E402
 from app.recommendations.repository import InMemoryRecommendationRepository  # noqa: E402
@@ -86,3 +89,133 @@ def test_profile_and_preference_context_exclude_rows_after_cutoff() -> None:
 
     assert repository.get_profile_at("user-1", CUTOFF)["risk_level"] == "balanced"
     assert repository.get_preference_state_at("user-1", CUTOFF)["marker"] == "eligible"
+
+
+def test_key_evidence_uses_only_available_v3_blocks() -> None:
+    item = {
+        "action": "buy",
+        "metricsSnapshot": {
+            "availableBlocks": [
+                "trendStrength",
+                "participationConfirmation",
+                "priceStructure",
+                "catalystQuality",
+                "executionQuality",
+                "qualityStability",
+            ],
+            "blockScores": {
+                "catalystQuality": 75,
+                "executionQuality": 65,
+                "qualityStability": 80,
+            },
+            "rawFactors": {
+                "currentSessionRelativeStrength": 1.2,
+                "last60MinuteRelativeStrength": 0.3,
+                "clockAdjustedVolumeRatio": 1.4,
+                "latestClose": 105,
+                "vwap": 103,
+                "quotedSpreadBps": 8,
+                "atr": 2,
+                "fundamentalAvailable": True,
+                "realizedVolatility": 0.02,
+            },
+        },
+    }
+
+    complete = build_key_evidence(item)
+    assert [row["code"] for row in complete] == [
+        "market_strength",
+        "participation",
+        "execution_structure",
+        "catalyst_quality",
+        "execution_quality",
+        "quality_stability",
+    ]
+    assert all(row["interpretation"] for row in complete)
+    assert all(not any(character.isdigit() for character in row["interpretation"]) for row in complete)
+    assert all(not any(token in row["interpretation"] for token in ("%p", "bp", "/100")) for row in complete)
+    assert all(row["metrics"] for row in complete)
+    assert all(
+        0 <= metric["valuePositionPct"] <= 100
+        and 0 <= metric["referencePositionPct"] <= 100
+        and metric["value"]
+        and metric["comparison"]
+        for row in complete
+        for metric in row["metrics"]
+    )
+    assert complete[0]["metrics"][0]["value"] == "+1.20%p"
+    assert complete[1]["metrics"][0]["value"] == "1.40배"
+    assert "종가 $105.00" in complete[2]["metrics"][0]["comparison"]
+
+    item["metricsSnapshot"]["availableBlocks"] = [
+        "trendStrength",
+        "participationConfirmation",
+        "priceStructure",
+        "executionQuality",
+    ]
+    observed_only = build_key_evidence(item)
+    assert [row["code"] for row in observed_only] == [
+        "market_strength",
+        "participation",
+        "execution_structure",
+        "execution_quality",
+    ]
+
+
+def test_cautions_are_structured_deduplicated_and_always_explain_scope() -> None:
+    decision = {
+        "invalidationPrice": 99.5,
+        "failedConditions": [
+            {"code": "material_penalty", "label": "중대 위험 경고"},
+            {"code": "last60_relative_strength", "label": "마감 전 상대강도"},
+        ],
+    }
+    item = {
+        "riskWarnings": ["가격 강도와 거래 참여 확인이 서로 일치하지 않습니다."],
+        "metricsSnapshot": {"softPenalties": {"weakConfirmation": 6.0}},
+    }
+
+    cautions = build_cautions(item, decision)
+
+    assert [row["code"] for row in cautions] == [
+        "last60_relative_strength",
+        "weakConfirmation",
+        "decision_scope",
+        "confidence_scope",
+    ]
+    assert all(row["severity"] in {"notice", "warning"} for row in cautions)
+    assert len({row["code"] for row in cautions}) == len(cautions)
+    assert len({row["sentence"] for row in cautions}) == len(cautions)
+    assert "성공확률이 아니라" in cautions[-1]["sentence"]
+
+
+def test_action_aware_renderer_v5_keeps_headline_and_body_natural() -> None:
+    evidence = [
+        {"interpretation": "SPY 대비 상대강도가 양수였습니다.", "metrics": [{"value": "+1.20%p"}]},
+        {"interpretation": "동시간 거래량이 기준을 넘었습니다.", "metrics": [{"value": "1.40배"}]},
+        {"interpretation": "종가는 $105.00로 VWAP $103.00보다 1.94% 높았습니다."},
+        {"interpretation": "호가 스프레드는 8.00bp로 균형형 한도 10.0bp와 비교했습니다."},
+    ]
+    expected = {
+        "buy": "계획된\u00a0가격대에서 매수를 검토",
+        "conditional_buy": "남은 조건을 확인",
+        "watch": "관찰 대상으로 유지",
+        "not_suitable": "현재 계좌 한도",
+    }
+    for action, headline_part in expected.items():
+        item = {
+            "action": action,
+            "keyEvidence": evidence,
+            "counterEvidence": {
+                "sentence": "마감 전에는 시장 대비 강도가 약해 추가 확인이 필요합니다."
+            },
+            "metricsSnapshot": {"evidenceReliability": 80},
+        }
+        primary = decision_explanation(item, target_session_date="2026-07-15")["primary"]
+        assert primary["promptVersion"] == "recommendation-decision-renderer.ko.v6"
+        assert headline_part in primary["headline"]
+        if action == "buy":
+            assert primary["body"] == ""
+        else:
+            assert primary["body"]
+            assert 1 <= primary["body"].count("습니다.") <= 2

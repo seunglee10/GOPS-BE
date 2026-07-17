@@ -1549,6 +1549,7 @@ def _decision_json(item: dict[str, Any]) -> dict[str, Any]:
         "sizing": deepcopy(item.get("sizing") or {}),
         "keyEvidence": deepcopy(item.get("keyEvidence") or []),
         "counterEvidence": deepcopy(item.get("counterEvidence")),
+        "cautions": deepcopy(item.get("cautions") or []),
     }
 
 
