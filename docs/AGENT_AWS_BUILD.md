@@ -1131,6 +1131,10 @@ CHART_ASSET_REPAIR_ENABLED
 CHART_ASSET_REPAIR_ALPACA_ENABLED
 CHART_ASSET_REPAIR_CONCURRENCY
 CHART_ASSET_REPAIR_MAX_RANGES
+CHART_COMMENTARY_PROVIDER
+CHART_COMMENTARY_MODEL
+CHART_COMMENTARY_REQUIRED
+CHART_COMMENTARY_TIMEOUT_SECONDS
 ```
 
 `chart-asset-builder`는 `gops-agent-orchestrator` image를 공유하지만 interactive
@@ -1139,6 +1143,12 @@ AgentOrchestrator workflow에 참여하지 않는다. PostgreSQL queue item을 s
 `manual_refresh_only`로 종료하고, 기존 자산은 선택한 symbol/interval의 `manual + force`에서만
 Redis recent-closed와 ClickHouse history를 합친 canonical 완료 봉 감사·Alpaca 보충·분석·저장을
 수행한다. live candle은 제외하며 일반 manual 요청은 없는 자산만 만든다.
+Compose 기본값은 `CHART_COMMENTARY_PROVIDER=disabled`와
+`CHART_COMMENTARY_REQUIRED=false`다. AWS overlay는 `provider=openai`, `required=true`로
+고정하고 `chart-asset-builder`의 `alfaka-openai-secret`을 필수로 만든다. writer는
+`CHART_COMMENTARY_MODEL`이 없으면 `OPENAI_MODEL`을 사용한다. commentary 생성·검증 실패는
+app rollout 성공 여부와 무관한 item 실패이며, 해당 `(symbol, interval)`의 기존
+PostgreSQL row를 교체하지 않는다.
 미국 주식 `5m/10m` 보충은 Alpaca `1Min`, `1h/4h` 보충은 Alpaca `10Min`을
 사용한다. 실제 정규장 원본과 `bucket_policy=us_equity_regular_session` 파생 봉을
 함께 ClickHouse에 저장하며, 실시간 파생 봉은 계속 `1m`을 원본으로 사용한다.

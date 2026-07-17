@@ -341,7 +341,7 @@ catalog를 image/runtime filesystem에 포함해야 한다.
 | --- | --- | --- |
 | `agent-orchestrator` | yes | HTTP compatibility endpoint and direct report lookup. |
 | `agent-analysis-worker` | yes | hot analysis request를 소비하고 report를 저장한다. |
-| `chart-asset-builder` | no | PostgreSQL queue의 `1m/1D` symbol/interval item을 처리한다. 보존 정책상 scheduled item은 분석 전에 종료하고, 기존 자산은 선택 pair의 `manual + force`에서만 ClickHouse 완료 봉 감사·선택적 누락 range Alpaca 보충·Geometry v6 PostgreSQL JSONB 저장을 수행한다. 다른 interval의 기존 자산은 reader가 그대로 사용한다. S3, Redis, Kafka, LLM을 사용하지 않으며 interactive orchestrator와 독립이다. |
+| `chart-asset-builder` | no | PostgreSQL queue의 `1m/1D` symbol/interval item을 처리한다. 보존 정책상 scheduled item은 분석 전에 종료하고, 기존 자산은 선택 pair의 `manual + force`에서만 ClickHouse 완료 봉 감사·선택적 누락 range Alpaca 보충·Geometry v6를 계산한다. AWS에서는 동일 봉·최종 작도·결정론적 지표·cutoff-safe 저장 뉴스/실적의 비개인화 fact pack을 OpenAI strict output으로 편집하고 검증한 뒤 하나의 PostgreSQL JSONB UPSERT로 저장한다. 사용자/계좌/포트폴리오는 입력하지 않으며 interactive orchestrator와 독립이다. |
 | `agent-delivery-gateway` | yes for async/SSE | result event를 Redis report update로 mirror한다. |
 | `agent-intent-classifier` | no | ambiguous query를 위한 optional cheap classifier. |
 | `deep-analysis-worker` | no | opt-in deep analysis request를 처리한다. |

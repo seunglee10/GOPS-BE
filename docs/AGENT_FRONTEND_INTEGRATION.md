@@ -586,13 +586,18 @@ API, DB, thread ID를 만들지 않고 과거 답변을 다음 Agent 요청 `mes
 기록이나 pending이 있을 때만 `대화`를 표시하며 대화 모드에서는 같은 위치의 `해설`로
 복귀한다. 패널 안에는 별도 입력창을 두지 않는다.
 
-해설 본문은 `실계좌 보유 현황`, 규칙 기반 `종합 해설`, `주요 가격`, 조건부 `시나리오`,
-`판단 근거`, 접힌 `수치 근거 자세히` 순서다. 보유 현황은 `/api/account/holdings?source=kis`
-결과만 사용하므로 SIM 보유분과 섞지 않으며, active/kis 응답은 요청 key별 프런트 저장소에
-분리한다. 표는 보유 상태·평균 매입가·수량만 표시하고 미보유, 계좌 미연결, 확인 불가를
-추정 없이 구분한다. 종합 해설은 LLM이 아니라 분석 자산, 현재가, 패턴·추세, 가까운
-지지·저항, 로컬 setup, 선택 종목 보유정보로 2~4문장을 결정론적으로 만든다. 값이 없으면
-문장을 만들지 않는다.
+해설 본문은 저장 `commentary.status=ready`를 우선하는 `종합 해설`, `주요 가격`, 조건부
+`시나리오`, `판단 근거`, 접힌 `수치 근거 자세히` 순서다. 구자산처럼 commentary가 없으면
+분석 자산·현재가·작도·로컬 setup의 기존 규칙 기반 문장을 사용한다. 이 패널은
+`/api/account/holdings`를 호출하지 않고 보유 상태·평균 매입가·수량을 표시하지 않는다.
+
+저장 해설은 block별 본문과 inline reference tag를 표시한다. drawing tag는 기존 focus,
+indicator tag는 hover/focus 이유와 해당 `chartDocumentId`의
+`chart.layer.visibility.set` user command, news/earnings tag는 필요 layer를 켠 뒤 해당
+viewport와 기존 event popover, candle tag는 현재 로드된 실제 봉의 semantic selection을
+사용한다. 로드되지 않은 candle은 disabled로 남고 가짜 선택을 만들지 않는다. 이벤트는
+typed `gops:chart-commentary-reference-open`, 지표는
+`gops:chart-commentary-indicator-toggle` 요청으로 연결하며 DOM을 검색해 click하지 않는다.
 
 판단 근거의 지지·저항, 추세, 패턴은 적격 결과가 없으면 그 상태를 명시한다. 섹션
 hover/focus는 해당 drawing만 강조하고 같은 `analysisTrace`의 근거 pivot, touch, reaction

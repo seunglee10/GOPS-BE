@@ -45,9 +45,109 @@
         "evidence": {"type": "array"}
       }
     },
-    "indicators": {"type": "object"}
+    "indicators": {"type": "object"},
+    "commentary": {"$ref": "#/$defs/commentary"}
   },
   "$defs": {
+    "commentary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version", "status", "generatedAt", "model", "promptVersion",
+        "sourceIdentity", "blocks", "indicatorRecommendations", "references", "limitations"
+      ],
+      "properties": {
+        "version": {"const": "chart-commentary.v1"},
+        "status": {"const": "ready"},
+        "generatedAt": {"type": "string", "format": "date-time"},
+        "model": {"type": "string", "minLength": 1},
+        "promptVersion": {"const": "chart-commentary.ko.v1"},
+        "sourceIdentity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["geometryInputDigest", "candlesAsOf", "indicatorsAsOf", "contextDigest"],
+          "properties": {
+            "geometryInputDigest": {"type": "string", "pattern": "^sha256:"},
+            "candlesAsOf": {"type": "string", "format": "date-time"},
+            "indicatorsAsOf": {"type": "string", "format": "date-time"},
+            "newsAsOf": {"type": "string", "format": "date-time"},
+            "earningsAsOf": {"type": "string", "format": "date-time"},
+            "contextDigest": {"type": "string", "pattern": "^sha256:"}
+          }
+        },
+        "blocks": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "kind", "text", "referenceIds"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "kind": {"enum": ["overview", "drawing_guide", "indicator_context", "event_context", "watch_next"]},
+              "text": {"type": "string", "minLength": 1},
+              "referenceIds": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+            }
+          }
+        },
+        "indicatorRecommendations": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["layer", "label", "reason", "referenceIds"],
+            "properties": {
+              "layer": {"enum": ["volume-profile", "volume", "rsi:14", "macd:12:26:9", "bollinger:20:2", "sma:20", "sma:60", "sma:120", "ema:20"]},
+              "label": {"type": "string", "minLength": 1},
+              "reason": {"type": "string", "minLength": 1},
+              "referenceIds": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+            }
+          }
+        },
+        "references": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object", "additionalProperties": false,
+                "required": ["id", "type", "drawingIds"],
+                "properties": {
+                  "id": {"type": "string"}, "type": {"const": "drawing"},
+                  "drawingIds": {"type": "array", "minItems": 1, "items": {"type": "string"}, "uniqueItems": true}
+                }
+              },
+              {
+                "type": "object", "additionalProperties": false,
+                "required": ["id", "type", "timestamp"],
+                "properties": {
+                  "id": {"type": "string"}, "type": {"const": "candle"},
+                  "timestamp": {"type": "string", "format": "date-time"}, "candleKey": {"type": "string"}
+                }
+              },
+              {
+                "type": "object", "additionalProperties": false,
+                "required": ["id", "type", "eventId", "marketDate"],
+                "properties": {
+                  "id": {"type": "string"}, "type": {"const": "news"},
+                  "eventId": {"type": "string"}, "marketDate": {"type": "string", "format": "date"}
+                }
+              },
+              {
+                "type": "object", "additionalProperties": false,
+                "required": ["id", "type", "eventId", "eventAt"],
+                "properties": {
+                  "id": {"type": "string"}, "type": {"const": "earnings"},
+                  "eventId": {"type": "string"}, "eventAt": {"type": "string", "format": "date-time"}
+                }
+              }
+            ]
+          }
+        },
+        "limitations": {"type": "array", "maxItems": 5, "items": {"type": "string"}}
+      }
+    },
     "interval": {"enum": ["1m", "5m", "10m", "1h", "4h", "1D", "1W"]},
     "anchor": {
       "type": "object",

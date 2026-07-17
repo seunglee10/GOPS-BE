@@ -254,6 +254,46 @@ def _validate_asset_identity(asset: dict[str, Any]) -> None:
     ):
         raise ValueError("Geometry drawing identity does not match its asset")
     _validate_optional_v6_geometry(asset, geometry, drawings)
+    _validate_commentary_identity(asset, drawings)
+
+
+def _validate_commentary_identity(asset: dict[str, Any], drawings: list[Any]) -> None:
+    commentary = asset.get("commentary")
+    if commentary is None:
+        return
+    if not isinstance(commentary, dict):
+        raise ValueError("Chart commentary contract is invalid")
+    source_identity = commentary.get("sourceIdentity")
+    if not isinstance(source_identity, dict):
+        raise ValueError("Chart commentary source identity is invalid")
+    if source_identity.get("geometryInputDigest") != asset.get("inputDigest"):
+        raise ValueError("Chart commentary geometry digest does not match its asset")
+    asset_as_of = _required_timestamp(asset.get("asOf"), "asset asOf")
+    for field in ("candlesAsOf", "indicatorsAsOf"):
+        if _required_timestamp(source_identity.get(field), f"commentary {field}") != asset_as_of:
+            raise ValueError(f"Chart commentary {field} does not match its asset")
+    references = commentary.get("references") or []
+    reference_ids = {
+        str(reference.get("id")) for reference in references
+        if isinstance(reference, dict) and reference.get("id")
+    }
+    if len(reference_ids) != len(references):
+        raise ValueError("Chart commentary reference IDs are invalid")
+    drawing_ids = {
+        str(drawing.get("id")) for drawing in drawings
+        if isinstance(drawing, dict) and drawing.get("id")
+    }
+    for reference in references:
+        if reference.get("type") == "drawing" and not set(reference.get("drawingIds") or []).issubset(drawing_ids):
+            raise ValueError("Chart commentary drawing reference is not present in its asset")
+    referenced_ids = [
+        str(reference_id)
+        for item in [*(commentary.get("blocks") or []), *(commentary.get("indicatorRecommendations") or [])]
+        if isinstance(item, dict)
+        for reference_id in item.get("referenceIds") or []
+    ]
+    if not set(referenced_ids).issubset(reference_ids):
+        raise ValueError("Chart commentary contains a dangling reference")
 
 
 def _validate_optional_v6_geometry(

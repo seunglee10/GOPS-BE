@@ -5,6 +5,11 @@ Chart Geometry Asset은 완료된 실제 OHLCV 봉에서 현재 지지·저항, 
 선택된 geometry의 `drawings[]` 생성은 작도, `tradePlan`의 화면 투영은 제안 단계다.
 어느 단계도 패턴 좌표나 수치를 LLM으로 계산하지 않는다.
 
+선택적으로 root `commentary`에는 Geometry 생성 직후의 동일 완료 봉, 최종 작도,
+결정론적 보조지표, 저장된 뉴스·실적만을 편집한 비개인화 LLM 종합 해설을 넣는다.
+LLM은 geometry 계산이나 가격 생성에 참여하지 않으며 사용자·계좌·포트폴리오 정보도
+입력받지 않는다.
+
 ## 지원 범위와 호환성
 
 - 새 생성·재생성 interval은 `1m`, `1D`뿐이다.
@@ -95,7 +100,9 @@ flowchart LR
   Alpaca --> CH["ClickHouse repair materialization"]
   CH --> Closed
   Gap -- "예" --> Kernel["deterministic geometry v6"]
-  Kernel --> Guard["schema / 8 drawings / 256 KiB"]
+  Kernel --> Facts["commentary fact pack<br/>indicators + stored events"]
+  Facts --> LLM["strict structured commentary<br/>store false"]
+  LLM --> Guard["references / facts / schema<br/>8 drawings / 256 KiB"]
   Guard --> PG["PostgreSQL geometry_assets JSONB UPSERT"]
   PG --> API["Chart asset API"]
   API --> UI["5 layers + commentary"]
@@ -105,8 +112,10 @@ flowchart LR
 하나다. 기존 row보다 과거 `asOf`는 저장하지 않으며, 같은 `asOf`에서는 더 최신
 `generatedAt` 또는 같은 시각의 다른 canonical payload digest만 조건부 UPSERT한다.
 빌드·검증·저장 중 실패하면 기존 성공 row를 보존한다. 캔들 원본과
-repair materialization은 계속 ClickHouse에 있고 Geometry asset을 ClickHouse에
-저장하거나 dual-write하지 않는다. S3, Redis, Kafka, LLM도 자산 저장 경로에 없다.
+repair materialization과 해설용 뉴스·실적 조회는 계속 ClickHouse에 있고 Geometry
+asset을 ClickHouse에 저장하거나 dual-write하지 않는다. LLM은 검증된 `commentary`
+optional field만 PostgreSQL JSONB에 합치며 prompt와 전체 fact pack은 저장하지 않는다.
+S3, Redis, Kafka는 자산 저장 경로에 없다.
 
 운영에서 repair가 활성화되고 Alpaca credential이 있을 때만 실제 누락 range를 보충한다.
 Alpaca가 성공했지만 실제 봉이 없는 slot은 `provider_confirmed_empty`로 기록하며 가짜
@@ -129,6 +138,22 @@ Alpaca가 성공했지만 실제 봉이 없는 slot은 `provider_confirmed_empty
 - 수동 priority는 100이고 최대 2회 처리 뒤 만료된 lease는 실패로 종결한다.
 - 배포 시 기존 row를 일괄 재생성하거나 DB schema/data migration을 실행하지 않는다.
 
+## 사전 생성 종합 해설
+
+`commentary.version="chart-commentary.v1"`은 Geometry root의 optional 계약이다. builder는
+동일 canonical candle에서 SMA20/60/120, EMA20, RSI, MACD, Bollinger, 거래량과 최근
+120봉 Volume Profile을 계산하고, 최종 geometry와 최대 6개의 주요 완료 봉, asset
+`asOf`와 build cutoff를 넘지 않는 최근 뉴스 요약·실적을 bounded fact pack으로 만든다.
+`contextDigest`는 geometry/candle/indicator/news/earnings만 포함하며 요청자나 로그인
+identity에 따라 달라지지 않는다.
+
+OpenAI writer는 Responses API의 strict JSON Schema와 `store=false`를 사용한다. 서버는
+응답의 reference/drawing/indicator, 숫자·날짜, 길이, 금지 투자 지시와 개인화 표현을 다시
+검증한다. 뉴스·실적 결측은 `limitations`가 있는 정상 결과지만 AWS required mode에서
+timeout, refusal, incomplete, malformed 또는 fact 검증 실패가 발생하면 item을
+`commentary_generation_failed`로 끝내고 단일 UPSERT 전에 중단하여 기존 row를 보존한다.
+로컬 기본 provider는 disabled이며 구자산과 동일한 규칙 기반 종합 해설을 사용한다.
+
 ## 화면 레이어와 해설
 
 자동 분석은 `해석`, `저항(지지·저항)`, `추세`, `패턴`, `제안`의 다섯 레이어로
@@ -138,8 +163,13 @@ SMA60/120은 차트 추가 도구가 소유하는 독립 보조지표이며 추�
 않는다. 최근 골든·데드크로스 마커만 분석 이벤트로 추세 레이어가 소유한다. 제안 OFF는
 메모리 trade plan을 삭제하지 않고 표시와 제안 가격의 Y축 반영만 중단한다.
 
-해설은 규칙 기반 종합 해설과 주요 가격·시나리오를 먼저 보여주고, 판단 근거를 지지·저항,
-추세, 패턴 세 항목으로 분리한다. 원시 metric은 `수치 근거 자세히`에 접어 둔다. hover는 해당 작도만 강조하고 같은
+해설은 유효한 저장 `commentary`가 있으면 block 기반 종합 해설을 먼저 표시하고, 없는
+구자산은 기존 규칙 기반 종합 해설로 fallback한다. 이 패널은 account/holdings API를
+호출하거나 보유 상태·평균가·수량을 표시하지 않는다. drawing 참조는 기존 focus를,
+지표 태그는 해당 차트 문서의 layer user command를, 뉴스·실적 태그는 이벤트 viewport와
+popover를, 주요 봉 태그는 semantic candle 선택과 하단 질문 reference를 사용한다.
+그 아래 주요 가격·시나리오와 지지·저항, 추세, 패턴 판단 근거를 유지하고 원시 metric은
+`수치 근거 자세히`에 접어 둔다. hover는 해당 작도만 강조하고 같은
 trace에서 최종 선택된 후보의 피벗·접촉·반응만 임시 overlay로 표시한다. 글로벌 해석은
 전체 trace를 보존한 채 미선택 hard-pass 후보를 우선하고, category에 적격 후보가 없을 때만
 활성 evidence-pass 근접 후보 하나를 허용한다. 최종 선택 후보 수의 2배를 기본 예산으로

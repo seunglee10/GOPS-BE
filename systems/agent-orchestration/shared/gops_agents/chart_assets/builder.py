@@ -11,6 +11,15 @@ from alfaka.analytics.analysis_repair import AnalysisCandleRepairService
 from alfaka.analytics.geometry import ALGORITHM_VERSION, MINIMUM_BARS, TARGET_BARS, analyze_geometry
 
 from .candles import ChartAssetCandleLoader
+from .commentary import (
+    COMMENTARY_PROMPT_VERSION,
+    ChartCommentaryGenerationError,
+    ClickHouseChartCommentaryContextLoader,
+    build_chart_commentary_fact_pack,
+    build_chart_commentary_writer_from_env,
+    commentary_required_from_env,
+    generate_chart_commentary,
+)
 from .envelope import ChartAssetBuildEnvelope, utc_now_iso
 from .progress import build_progress_store_from_env
 from .storage import MAX_ASSET_BYTES, build_chart_asset_storage_from_env
@@ -20,7 +29,18 @@ ASSET_VERSION = "geometry"
 
 
 class ChartAssetBuilder:
-    def __init__(self, *, candle_loader=None, storage=None, progress=None, repair_service=None, concurrency=None):
+    def __init__(
+        self,
+        *,
+        candle_loader=None,
+        storage=None,
+        progress=None,
+        repair_service=None,
+        concurrency=None,
+        commentary_writer=None,
+        commentary_context_loader=None,
+        commentary_required=None,
+    ):
         supplied_loader = candle_loader is not None
         self.candle_loader = candle_loader or ChartAssetCandleLoader()
         self.storage = storage or build_chart_asset_storage_from_env()
@@ -31,6 +51,11 @@ class ChartAssetBuilder:
             )
         )
         self.concurrency = max(1, int(concurrency or os.getenv("CHART_ASSET_BUILD_CONCURRENCY", "4")))
+        self.commentary_writer = commentary_writer if commentary_writer is not None else build_chart_commentary_writer_from_env()
+        self.commentary_required = commentary_required_from_env() if commentary_required is None else bool(commentary_required)
+        self.commentary_context_loader = commentary_context_loader
+        if self.commentary_writer is not None and self.commentary_context_loader is None:
+            self.commentary_context_loader = ClickHouseChartCommentaryContextLoader()
 
     def run(self, envelope: ChartAssetBuildEnvelope) -> dict[str, Any]:
         if self.progress.get(envelope.job_id) is None:
@@ -50,6 +75,7 @@ class ChartAssetBuilder:
 
     def run_item(self, envelope: ChartAssetBuildEnvelope, symbol: str, interval: str) -> dict[str, Any]:
         started = time.monotonic()
+        commentary_diagnostics: dict[str, Any] | None = None
         symbol = symbol.upper()
         if self.progress.is_cancel_requested(envelope.job_id):
             item = _item(symbol, interval, "skipped", "cancel", started, reason="cancel_requested")
@@ -138,6 +164,53 @@ class ChartAssetBuilder:
                 "geometry": geometry,
                 "indicators": result["indicators"],
             }
+            commentary_latency_ms = None
+            if self.commentary_writer is not None:
+                commentary_started = time.monotonic()
+                commentary_diagnostics = {
+                    "model": str(getattr(self.commentary_writer, "model", "injected")),
+                    "promptVersion": COMMENTARY_PROMPT_VERSION,
+                    "contextDigest": None,
+                    "newsAsOf": None,
+                    "earningsAsOf": None,
+                    "started": commentary_started,
+                }
+                if self.commentary_context_loader is None:
+                    raise ChartCommentaryGenerationError("commentary context loader is not configured")
+                context = self.commentary_context_loader.load(
+                    symbol=symbol,
+                    interval=interval,
+                    candles=rows,
+                    as_of=str(asset["asOf"]),
+                    build_cutoff=generated_at,
+                )
+                fact_pack = build_chart_commentary_fact_pack(
+                    symbol=symbol,
+                    interval=interval,
+                    candles=rows,
+                    geometry=geometry,
+                    geometry_input_digest=input_digest,
+                    context=context,
+                )
+                commentary_diagnostics.update({
+                    "contextDigest": fact_pack.get("contextDigest"),
+                    "newsAsOf": max((
+                        str(item.get("generatedAt")) for item in fact_pack.get("news") or []
+                        if isinstance(item, dict) and item.get("generatedAt")
+                    ), default=None),
+                    "earningsAsOf": max((
+                        str(item.get("sourceAsOf")) for item in fact_pack.get("earnings") or []
+                        if isinstance(item, dict) and item.get("sourceAsOf")
+                    ), default=None),
+                })
+                asset["commentary"], commentary_latency_ms = generate_chart_commentary(
+                    fact_pack=fact_pack,
+                    writer=self.commentary_writer,
+                    generated_at=generated_at,
+                )
+            elif self.commentary_required:
+                raise ChartCommentaryGenerationError("commentary provider is disabled in required mode")
+
             _validate_writer_asset(asset, existing=existing)
             asset, encoded = _fit_asset_payload(asset)
             geometry = asset["geometry"]
@@ -158,6 +231,8 @@ class ChartAssetBuilder:
                 as_of=str(asset["asOf"]),
                 generated_at=str(asset["generatedAt"]),
                 write_verified=write_verified,
+                commentary=asset.get("commentary"),
+                commentary_latency_ms=commentary_latency_ms,
             )
             status = "saved" if saved is not False else "unchanged"
             item = _item(
@@ -165,6 +240,22 @@ class ChartAssetBuilder:
                 reason=None if saved is not False else "monotonic_noop",
                 created_entities=len(result["drawings"]) if saved is not False else 0,
                 warning="partial_coverage" if coverage_state == "partial" else None,
+            )
+        except ChartCommentaryGenerationError as exc:
+            self._record_commentary_failure_log(
+                envelope.job_id,
+                symbol=symbol,
+                interval=interval,
+                diagnostics=commentary_diagnostics,
+            )
+            item = _item(
+                symbol,
+                interval,
+                "failed",
+                "commentary",
+                started,
+                reason="commentary_generation_failed",
+                error=f"{exc.__class__.__name__}: {exc}",
             )
         except Exception as exc:
             item = _item(symbol, interval, "failed", "build", started, error=f"{exc.__class__.__name__}: {exc}")
@@ -184,6 +275,8 @@ class ChartAssetBuilder:
         as_of: str,
         generated_at: str,
         write_verified: bool,
+        commentary: Any = None,
+        commentary_latency_ms: int | None = None,
     ) -> None:
         trace_payload = trace if isinstance(trace, dict) else {}
         omitted = trace_payload.get("omittedCounts")
@@ -207,6 +300,17 @@ class ChartAssetBuilder:
                 for name, count in sorted(omitted_payload.items(), key=lambda item: str(item[0]))
             },
         }
+        if isinstance(commentary, dict):
+            source_identity = commentary.get("sourceIdentity") if isinstance(commentary.get("sourceIdentity"), dict) else {}
+            log["commentary"] = {
+                "status": commentary.get("status"),
+                "model": commentary.get("model"),
+                "promptVersion": commentary.get("promptVersion"),
+                "contextDigest": source_identity.get("contextDigest"),
+                "newsAsOf": source_identity.get("newsAsOf"),
+                "earningsAsOf": source_identity.get("earningsAsOf"),
+                "latencyMs": commentary_latency_ms,
+            }
         try:
             self.progress.add_log(
                 job_id,
@@ -215,6 +319,39 @@ class ChartAssetBuilder:
         except Exception:
             # Asset persistence is authoritative. A bounded operational log must
             # never turn a successful conditional UPSERT into a failed build.
+            return None
+
+    def _record_commentary_failure_log(
+        self,
+        job_id: str,
+        *,
+        symbol: str,
+        interval: str,
+        diagnostics: dict[str, Any] | None,
+    ) -> None:
+        payload = diagnostics or {}
+        started = payload.get("started")
+        latency_ms = int(round((time.monotonic() - started) * 1000)) if isinstance(started, (int, float)) else None
+        log = {
+            "event": "chart_commentary_failed",
+            "symbol": symbol,
+            "interval": interval,
+            "commentary": {
+                "status": "failed",
+                "model": payload.get("model"),
+                "promptVersion": payload.get("promptVersion") or COMMENTARY_PROMPT_VERSION,
+                "contextDigest": payload.get("contextDigest"),
+                "newsAsOf": payload.get("newsAsOf"),
+                "earningsAsOf": payload.get("earningsAsOf"),
+                "latencyMs": latency_ms,
+            },
+        }
+        try:
+            self.progress.add_log(
+                job_id,
+                json.dumps(log, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+            )
+        except Exception:
             return None
 
     def _repair(self, envelope: ChartAssetBuildEnvelope, symbol: str, interval: str) -> dict[str, Any]:
@@ -268,9 +405,20 @@ def _validate_writer_asset(asset: dict[str, Any], *, existing: dict[str, Any] | 
 def _saved_asset_matches(expected: dict[str, Any], actual: dict[str, Any] | None) -> bool:
     if not isinstance(actual, dict):
         return False
-    return all(actual.get(key) == expected.get(key) for key in (
+    base_matches = all(actual.get(key) == expected.get(key) for key in (
         "algorithmVersion", "symbol", "interval", "asOf", "generatedAt", "inputDigest",
     )) and actual.get("geometry", {}).get("analysisTrace", {}).get("version") == "geometry-analysis-trace-v2"
+    if not base_matches:
+        return False
+    expected_commentary = expected.get("commentary")
+    if not isinstance(expected_commentary, dict):
+        return True
+    actual_commentary = actual.get("commentary") if isinstance(actual.get("commentary"), dict) else {}
+    return (
+        actual_commentary.get("version") == expected_commentary.get("version")
+        and actual_commentary.get("sourceIdentity", {}).get("contextDigest")
+        == expected_commentary.get("sourceIdentity", {}).get("contextDigest")
+    )
 
 
 def _canonical_asset_payload(asset: dict[str, Any]) -> str:

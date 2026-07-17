@@ -30,9 +30,9 @@ not create per-page jobs or call `AgentOrchestrator.analyze()` in the request ha
 
 `GET /api/account/holdings`는 선택적 `source=active|kis`를 받으며 기본값은 `active`다.
 `active`는 기존 동작을 보존해 SIM 모드에서는 시뮬레이터 원장을, 그 외에는 연결된 KIS
-보유정보를 반환한다. `source=kis`는 SIM 모드와 무관하게 KIS 보유정보 경로를 사용하며
-차트 해설의 실계좌 보유 표가 이 값을 읽는다. 응답 형식은 기존 account/positions 계약을
-그대로 사용한다.
+보유정보를 반환한다. `source=kis`는 SIM 모드와 무관하게 KIS 보유정보 경로를 사용한다.
+응답 형식은 기존 account/positions 계약을 그대로 사용한다. 차트 종합 해설은
+비개인화 저장 자산이므로 이 endpoint를 호출하지 않는다.
 
 이 query는 조회 source만 고르며 주문 환경이나 broker 권한을 바꾸지 않는다.
 `KIS_ENV=real` 비활성 정책, 주문 멱등성, 주문/outbox 경계는 그대로 유지한다. 차트 대화
@@ -803,12 +803,16 @@ Worker는 높은 priority부터 claim하고, 최대 2회 처리 뒤 lease가 만
 drawing ID를 아는 프런트가 계산한다.
 
 Geometry v6 payload는 기존 패턴 필드와 함께 optional `trends`, `primaryTrend`,
-`drawingGroups`, `analysisTrace`를 `geometry` 아래에 가진다. 저장 drawing은 levels 4,
+`drawingGroups`, `analysisTrace`를 `geometry` 아래에 가진다. root optional `commentary`는
+동일 완료 봉의 geometry/indicator와 cutoff-safe 저장 뉴스·실적에서 사전 생성한
+`chart-commentary.v1`이며 사용자·계좌·포트폴리오 필드는 없다. 저장 drawing은 levels 4,
 pattern 3, trend/channel 1의 합계 최대 8개이고 canonical UTF-8 JSON은 256 KiB 이하다.
 trace v2는 detector의 ranked 후보와 접촉 episode를 생략하지 않고 detected/stored
 completeness를 검증한다. 전체 payload가 초과하면 후보를 제거하지 않고 저장을
 실패시켜 이전 row를 유지한다. v6는 기존 JSONB와 drawing-count check 안에서 동작하므로
 chart-asset table/data migration을 다시 실행하지 않는다.
+AWS required mode의 commentary 호출이나 strict fact/reference 검증이 실패하면 저장 전에
+`commentary_generation_failed`로 끝나므로 기존 payload/digest를 유지한다.
 
 `CHART_ASSET_STORAGE_MAINTENANCE=true` 동안 GET은 계속 열어 두고 build와 DELETE만
 503으로 막는다. 기존 숫자형 자산은 변환하거나 fallback으로 읽지 않는다.

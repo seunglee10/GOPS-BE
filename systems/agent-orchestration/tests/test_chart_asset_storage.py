@@ -41,6 +41,18 @@ class ChartAssetStorageTest(unittest.TestCase):
         _validate_asset_schema(_channel_asset())
         _validate_asset_schema(_trace_asset_v2())
 
+    def test_schema_and_postgres_round_trip_preserve_optional_commentary(self):
+        asset = _asset()
+        asset["commentary"] = _commentary()
+        _validate_asset_schema(asset)
+        connection = Connection(rows=[{"payload": asset}])
+        storage = PostgresChartAssetStorage("postgresql://test", connect=lambda *_args, **_kwargs: connection)
+
+        loaded = storage.get("NVDA", "1D")
+
+        self.assertEqual(loaded["commentary"], asset["commentary"])
+        self.assertEqual(loaded["commentary"]["sourceIdentity"]["geometryInputDigest"], asset["inputDigest"])
+
     def test_trade_plan_schema_accepts_buy_and_exit_long_but_rejects_short(self):
         for action, direction in (("buy_candidate", "long"), ("sell_candidate", "exit_long")):
             asset = _asset()
@@ -386,6 +398,33 @@ def _trade_plan(action: str, direction: str):
         "minimumRewardRisk": 2.0,
         "projectionBars": 10,
         "reasons": ["reward_risk_passed"],
+    }
+
+
+def _commentary():
+    kinds = ["overview", "drawing_guide", "indicator_context", "event_context", "watch_next"]
+    return {
+        "version": "chart-commentary.v1",
+        "status": "ready",
+        "generatedAt": "2026-07-11T00:01:00.000Z",
+        "model": "fixture-model",
+        "promptVersion": "chart-commentary.ko.v1",
+        "sourceIdentity": {
+            "geometryInputDigest": "sha256:input",
+            "candlesAsOf": "2026-07-10T04:00:00.000Z",
+            "indicatorsAsOf": "2026-07-10T04:00:00.000Z",
+            "contextDigest": "sha256:context",
+        },
+        "blocks": [
+            {"id": f"block-{index}", "kind": kind, "text": "저장된 팩트 기반 해설입니다.", "referenceIds": ["drawing:levels"]}
+            for index, kind in enumerate(kinds)
+        ],
+        "indicatorRecommendations": [{
+            "layer": "rsi:14", "label": "상대강도지수", "reason": "가격 움직임의 강도를 함께 확인합니다.",
+            "referenceIds": ["drawing:levels"],
+        }],
+        "references": [{"id": "drawing:levels", "type": "drawing", "drawingIds": ["one", "two"]}],
+        "limitations": ["저장된 최신 뉴스 요약이 없습니다."],
     }
 
 
