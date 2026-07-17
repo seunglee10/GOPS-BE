@@ -178,6 +178,26 @@ class SimulatorRoutesTest(unittest.TestCase):
         invalid = self.client.put("/api/simulator/speed", json={"speed": 2})
         self.assertEqual(invalid.status_code, 422)
 
+    def test_simulation_quote_is_available_to_quick_order(self):
+        self.gateway.mode = "simulation"
+
+        response = self.client.get("/api/simulator/quote?symbol=nvda")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {
+            "symbol": "NVDA",
+            "bid": 99.0,
+            "ask": 100.0,
+            "runId": "run-1",
+        })
+        self.assertIn(("quote", "NVDA"), self.gateway.calls)
+
+    def test_simulation_quote_rejects_live_mode(self):
+        response = self.client.get("/api/simulator/quote?symbol=NVDA")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertNotIn(("quote", "NVDA"), self.gateway.calls)
+
     def test_simulation_holdings_replace_kis_with_semiconductor_dummy_account(self):
         self.gateway.mode = "simulation"
 
