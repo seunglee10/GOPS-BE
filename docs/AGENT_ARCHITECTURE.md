@@ -472,6 +472,8 @@ finding role = financial-analysis
 evidence provider = financial
 ```
 
+## Company Compare Agent Boundary
+
 Company Compare Agent는 `systems/agent-orchestration/shared/gops_agents/company_compare`
 경계에서 동작한다. M1의 `company-compare.v1` 정량 빌더는 OpenAI를 호출하지 않고 저장된
 `ClickHouseFinancialProvider` summary/SEC frames와 Yahoo earnings series를 조립해
@@ -506,6 +508,24 @@ M4 narrative cache는 `company_compare/cache.py` 경계에만 있다. 정량·�
 M5는 agent 경계를 바꾸지 않는다. 프런트가 저장 근거를 `01—08` 분석축으로 구조화하고
 AI 서술을 별도 하단 레이어로 렌더링하며, 골든셋은 서로 다른 산업의 세 비교쌍에 대해
 섹션 완전성, 근거 참조, 빈 텍스트, 금칙어를 결정론적으로 검증한다.
+
+## AI Company Journal Boundary
+
+`AI 기업저널`은 interactive `AnalysisReport`/AI 코치와 별도인 post-market projection이다.
+기존 ClickHouse 뉴스·최대 520개 일봉·SEC 재무·Yahoo EPS/매출 예상·graph expansion을
+bounded source bundle로 읽고 서버가
+수익률과 재무 지표를 계산한 뒤 OpenAI는 한국어 문장만 작성한다. 검증을 통과한 결과만
+`company_journal_reports_v1`에 append한다. 원문이나 거대한 입력 snapshot은 복제하지 않고
+사용한 news/accession/relation id와 기준일만 영수증으로 남긴다.
+
+이 경로는 Redis, PostgreSQL, Kafka, `AgentOrchestrator`, `AnalysisReport`를 사용하지 않는다.
+API 요청은 저장된 최신 검증본을 읽고 stale 생성 event만 남기며 OpenAI를 직접 호출하지 않는다.
+`gops-company-journal-worker`가 event를 비동기로 처리한다.
+`company-journal.v2`의 화면/문장 축은 매출·수익, 실적, 안정성, 가치이며 뉴스는 입력 근거로만
+사용하고 독립 화면 탭으로 노출하지 않는다.
+replay simulation에서 일반 시장/agent의 point-in-time 차단은 유지한다. 기업저널 panel만
+`/api/company-journal/{symbol}/evidence`로 저장된 SEC/Yahoo/일봉 근거를 읽으며, 이 자료는
+주문·추천·agent snapshot 입력으로 전달하지 않는다.
 
 Snapshot bundle additions:
 

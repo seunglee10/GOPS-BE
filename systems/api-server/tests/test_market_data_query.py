@@ -3395,6 +3395,33 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(sp500["sparkline"], [100, 101])
         self.assertEqual(provider.redis_provider.redis.expirations[indices_service.indices_cache_key()], 30)
 
+    def test_market_indices_performance_history_normalizes_sp500_and_reuses_cache(self):
+        provider = FakeHeatmapProvider()
+        calls = []
+
+        def fetcher(**kwargs):
+            calls.append(kwargs)
+            return {
+                "^GSPC": [
+                    {"timestamp": "2026-07-13T20:00:00Z", "Close": 100},
+                    {"timestamp": "2026-07-14T20:00:00Z", "Close": 104},
+                    {"timestamp": "2026-07-15T20:00:00Z", "Close": 102},
+                ],
+            }
+
+        with mock.patch.object(indices_service, "utc_now", return_value=datetime(2026, 7, 16, tzinfo=timezone.utc)):
+            service = indices_service.MarketIndicesService(provider=provider, fetcher=fetcher)
+            payload = service.performance_history("1W", datetime(2026, 7, 13, tzinfo=timezone.utc))
+            cached_payload = service.performance_history("1W", datetime(2026, 7, 13, tzinfo=timezone.utc))
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["symbols"], ["^GSPC"])
+        self.assertEqual(calls[0]["period"], "1mo")
+        self.assertEqual(calls[0]["interval"], "1d")
+        self.assertEqual([point["returnPercent"] for point in payload["points"]], [0.0, 4.0, 2.0])
+        self.assertEqual(cached_payload["points"], payload["points"])
+        self.assertEqual(payload["method"], "price_return")
+
     def test_market_indices_returns_stale_immediately_and_refreshes_in_background(self):
         provider = FakeHeatmapProvider()
         calls = []

@@ -5,6 +5,8 @@ kind: Kustomization
 resources:
   - app
   - job-order-migrations.yaml
+  - job-company-journal-migrations.yaml
+  - job-company-journal-benchmark-bootstrap.yaml
   - job-order-reconciler.yaml
   - job-symbol-registry-sync.yaml
   - job-coverage-repair.yaml

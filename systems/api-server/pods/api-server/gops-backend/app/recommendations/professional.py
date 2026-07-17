@@ -342,12 +342,18 @@ def factor_reason(factor: str, score: float) -> str:
 
 
 def completed_daily(rows: list[dict[str, Any]], now: datetime) -> list[dict[str, Any]]:
-    current_market_date = now.astimezone(ZoneInfo("America/New_York")).date()
+    market_now = now.astimezone(ZoneInfo("America/New_York"))
+    current_market_date = market_now.date()
+    regular_session_closed = (market_now.hour, market_now.minute) >= (16, 0)
     ordered = sorted(rows, key=lambda row: str(row.get("timestamp") or row.get("eventTime") or ""))
     result = []
     for row in ordered:
         observed = parse_datetime(row.get("timestamp") or row.get("eventTime"))
-        if observed and observed.date() >= current_market_date:
+        observed_date = observed.date() if observed else None
+        explicitly_closed = row.get("isClosed") is True or row.get("is_closed") is True
+        if observed_date and observed_date > current_market_date:
+            continue
+        if observed_date == current_market_date and not (regular_session_closed and explicitly_closed):
             continue
         if row.get("isClosed") is False or row.get("is_closed") is False:
             continue

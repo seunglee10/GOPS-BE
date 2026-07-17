@@ -20,9 +20,11 @@ from app.recommendations.professional_v3 import (  # noqa: E402
     base_rejection_reasons,
     block_scores,
     catalyst_quality,
+    evidence_reliability_components,
     process_evidence_preference_events,
     rank_evidence_candidates,
 )
+from app.recommendations.professional import completed_daily  # noqa: E402
 from app.recommendations.explanations import compose_explanations, deterministic_explanation  # noqa: E402
 from app.recommendations.repository import (  # noqa: E402
     InMemoryRecommendationRepository,
@@ -32,6 +34,40 @@ from app.recommendations.service import RecommendationService  # noqa: E402
 
 
 NOW = datetime(2026, 7, 16, 16, 0, tzinfo=timezone.utc)
+
+
+def test_evidence_reliability_confirmation_measures_present_corroboration_not_bullishness() -> None:
+    raw = {
+        "currentSessionRelativeStrength": -2,
+        "last60MinuteRelativeStrength": -1,
+        "clockAdjustedVolumeRatio": 0.8,
+        "abnormalDollarVolume": -0.2,
+        "confirmedBreakoutSupport": 0,
+        "vwapHoldQuality": -0.5,
+        "medianDollarVolume": 100_000_000,
+        "quotedSpreadBps": 5,
+        "freshnessScore": 100,
+        "sourceQuality": 90,
+    }
+    weak_blocks = {key: 20.0 for key in BLOCK_KEYS}
+
+    components = evidence_reliability_components(raw, {}, weak_blocks)
+
+    assert components["confirmation"] == 100
+
+
+def test_completed_daily_includes_explicitly_closed_same_day_only_after_market_close() -> None:
+    row = {
+        "timestamp": "2026-07-14T04:00:00Z",
+        "close": 100,
+        "isClosed": True,
+    }
+    before_close = datetime.fromisoformat("2026-07-14T15:59:00-04:00")
+    at_close = datetime.fromisoformat("2026-07-14T16:00:00-04:00")
+
+    assert completed_daily([row], before_close) == []
+    assert completed_daily([row], at_close) == [row]
+    assert completed_daily([{**row, "isClosed": False}], at_close) == []
 
 
 def test_average_rank_percentiles_use_average_ties_and_inverse_ordering() -> None:

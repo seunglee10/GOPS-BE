@@ -202,22 +202,13 @@ version becomes eligible for permanent deletion after
 default content-retention eligibility window is about 91 days; S3 lifecycle execution
 itself is asynchronous.
 
-Before AWS rollout, the deploy entrypoints automatically apply pending order migrations
-whenever `order-worker` or `agent-orchestrator` is selected. `0006_ai_coach.sql` adds
-`orders.user_sub`, `user_portfolio_snapshot_history`, and
-`trade_decision_check_events`; `0007_ai_coach_execution_index.sql` adds the execution
-join/time index used by point-in-time history. `0008_alert_proposal_source.sql` adds the
-nullable, constrained `alerts.proposal_source` used to preserve coach proposal origin
-through create/list, the next trusted snapshot, and page-4 watched-alert rendering. The
-`0009_trade_decision_capture.sql` migration adds nullable normalized checklists to KIS and
-paper order rows, canonical KIS `coach_filled_at`/`coach_fill_payload`, a stable `check_key`,
-and fill/key plus user/fill-time indexes. All four migrations must complete before the
-updated API, order writers, paper matcher, and analysis worker roll out. Selecting
-`order-worker` or `agent-orchestrator` runs all pending order migrations through the existing
-automatic pre-rollout Job. Existing and manually created alerts remain null and render as
-`출처 기록 없음`. Existing fills without reliable ownership, decision input, canonical KIS
-fill state, or an exact fill-scoped portfolio pair are intentionally not backfilled by
-inference.
+The current archive-first coach does not query the order schema at panel-open time or while
+building its post-market input. `0008_alert_proposal_source.sql` is nevertheless required
+before rolling out page-4 alert creation because the API persists the selected page origin in
+`alerts.proposal_source`. The older `0006`/`0007`/`0009` coach migrations remain compatible
+order-domain history support, not a runtime dependency of the S3 input/report path. Existing
+alerts without the nullable field render as `출처 기록 없음`; no historic fill or decision
+record is inferred or backfilled by the coach.
 
 The agent image includes `sp500-heatmap-seed.json`; it is only a timestamped metadata
 fallback and its `sourceRetrievedAt` must pass each fill cutoff. AWS overlays make
@@ -322,6 +313,16 @@ production panel shows a clear waiting state rather than fixture data or invente
 The deployed API service account needs `s3:GetObject` only for the report prefix; the
 analysis-worker role needs input reads and snapshot/report writes. Apply the Terraform
 policy change before rolling out the images.
+
+### AWS read-only readiness gate (2026-07-14)
+
+`bash scripts/aws/preflight-ai-coach-aws.sh` verifies the deployed archive flags, service
+accounts, ClickHouse serving tables, alert-source migration, Yahoo CronJob, and the exact
+worker/API `GetObject` permissions without writing an object or changing a table. It must
+pass after Terraform/IAM and image rollout. The separate
+`scripts/aws/verify-ai-coach-snapshot-s3.sh` intentionally writes a non-sensitive canary and
+is the only post-rollout check that proves worker `PutObject`; run it only as an explicit
+deployment operation.
 
 - The worktree was rebased without local commits onto `origin/dev`
   `8e2bfc8e2b519a979ceb19c827364252b1d5c6e3`. The only textual conflict was in

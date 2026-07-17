@@ -1,0 +1,41 @@
+{
+  "algorithmVersion": "deterministic-evidence-v3",
+  "evidenceAsOf": "2026-07-14T16:00:00-04:00",
+  "evidencePoolDigest": "2250add96b1b08b4d1cbb3696b78063a8493fccbde405149c3f824127bad8593",
+  "files": {
+    "recommendation.json": {
+      "bytes": 344952,
+      "sha256": "46adf29e8f9b840ae2d884a958b9a4766fd87bbc3a41d596ad6af5267fc4a2ad"
+    }
+  },
+  "insertedAtRange": {
+    "maximum": "2026-07-16T15:42:05.460000Z",
+    "minimum": "2026-07-06T09:21:57.216000Z",
+    "usedForEligibility": false
+  },
+  "narrativeMode": "deterministic_grounded",
+  "personalizationMode": "cutoff_user_context",
+  "recommendationDigest": "246c0e0e853e1c9846a7697226e8dcf3fd03f9d1819c5bae120d5accbf7deee7",
+  "reconstructedAt": "2026-07-16T16:16:49.801020Z",
+  "ruleSetVersion": "deterministic-evidence-v3.1",
+  "scenarioId": "recommendation-v3-2026-07-15",
+  "schemaVersion": "fixed-recommendation-manifest.v1",
+  "sourceDigests": {
+    "candles": "4c5fa671bbf50e39fabe951d678f7fee359aba566533e150e7db92dc1b3ff127",
+    "daily": "1e145274aaa8d867a0946349581bc18c919fea0312743b4b789296c5fc584bbd",
+    "fundamentals": "805dde25a63826cf47fb3835d662e59dbdf6537b5f80644433964521bc475120",
+    "market": "6c2f1a4ce5c908451c9814230e4a0e676732babbb5c6533706c74f0fb345eeb1",
+    "news": "e716b6e56f2440220022225e914af00be7cf3b7088be2bca5999e19628c9d97f",
+    "previousSession": "1e94b478203ef8d1d0b6f846d05c5d8cda4eabab574420e4d69ba660858a5050"
+  },
+  "sourceInputDigest": "78ebd8f7a3d50c623a9ef8d5cf1a85db00e6a370bed401f124dc9555ef1ba0a8",
+  "sourceMode": "historical_reconstruction",
+  "sourceRowCounts": {
+    "candidates": 30,
+    "dailyCandles": 55169,
+    "minuteCandles": 23940,
+    "news": 1168,
+    "quotes": 30
+  },
+  "targetSessionDate": "2026-07-15"
+}

@@ -610,6 +610,38 @@ build_and_push_images() {
 }
 
 run_migrations_if_requested() {
+  if service_selected "market-processor"; then
+    if is_true "${DRY_RUN}"; then
+      printf 'DRY_RUN=true: company journal benchmark candle bootstrap selected; skipping live Job.\n'
+    else
+      (
+        cd "${WORKTREE_DIR}"
+        # shellcheck source=scripts/aws/lib-gops-images.sh
+        source scripts/aws/lib-gops-images.sh
+        ECR_MARKET_PROCESSOR_REPO="${ECR_MARKET_PROCESSOR_REPO:-$(gops_image_url_for_key market-processor)}" \
+          IMAGE_TAG="${IMAGE_TAG}" \
+          K8S_NAMESPACE="${K8S_NAMESPACE}" \
+          scripts/aws/run-company-journal-benchmark-bootstrap-job.sh
+      )
+    fi
+  fi
+
+  if service_selected "backend"; then
+    if is_true "${DRY_RUN}"; then
+      printf 'DRY_RUN=true: automatic company journal ClickHouse migration gate selected; skipping live Job.\n'
+    else
+      (
+        cd "${WORKTREE_DIR}"
+        # shellcheck source=scripts/aws/lib-gops-images.sh
+        source scripts/aws/lib-gops-images.sh
+        ECR_API_SERVER_REPO="${ECR_API_SERVER_REPO:-$(gops_image_url_for_key backend)}" \
+          IMAGE_TAG="${IMAGE_TAG}" \
+          K8S_NAMESPACE="${K8S_NAMESPACE}" \
+          scripts/aws/run-company-journal-migrations-job.sh
+      )
+    fi
+  fi
+
   if service_selected "order-worker"; then
     if is_true "${DRY_RUN}"; then
       printf 'DRY_RUN=true: automatic order migration gate selected; skipping live Job.\n'

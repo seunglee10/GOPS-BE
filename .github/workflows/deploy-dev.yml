@@ -242,6 +242,14 @@ jobs:
         if: steps.changes.outputs.has_services == 'true' && (steps.changes.outputs.order_migrations_required == 'true' || github.event.inputs.run_order_migrations == 'true')
         run: ./scripts/aws/run-order-migrations-job.sh
 
+      - name: Run company journal ClickHouse migrations
+        if: steps.changes.outputs.has_services == 'true' && steps.changes.outputs.smoke_backend == 'true'
+        run: ./scripts/aws/run-company-journal-migrations-job.sh
+
+      - name: Bootstrap company journal benchmark candles
+        if: steps.changes.outputs.has_services == 'true' && contains(steps.changes.outputs.services, 'market-processor')
+        run: ./scripts/aws/run-company-journal-benchmark-bootstrap-job.sh
+
       - name: Run chart asset database migrations
         if: steps.changes.outputs.has_services == 'true' && contains(steps.changes.outputs.services, 'agent-orchestrator')
         env:

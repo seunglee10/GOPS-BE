@@ -22,6 +22,7 @@ from .repository import (
     PostgresRecommendationRepository,
     RecommendationSchemaUnavailable,
 )
+from .fixed_replay import FixedReplayProviderError, decision_v1_enabled, fixed_replay_provider
 from .service import RecommendationDataSource, RecommendationService
 
 
@@ -87,6 +88,9 @@ def latest_stock_recommendations(
     sessionMode: str = Query(default="regular", pattern="^(pre|regular)$"),
     user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
+    provider = _fixed_replay_from_app(request.app)
+    if provider is not None:
+        return jsonable_encoder(_fixed_replay_response(request.app, provider, user.sub))
     return jsonable_encoder(_call_recommendation_storage(lambda: _service_from_app(request.app).latest(user.sub, session_mode=sessionMode)))
 
 
@@ -96,6 +100,9 @@ def refresh_stock_recommendations(
     request: Request,
     user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
+    provider = _fixed_replay_from_app(request.app)
+    if provider is not None:
+        return jsonable_encoder(_fixed_replay_response(request.app, provider, user.sub))
     now_provider = getattr(request.app.state, "recommendation_now_provider", None)
     now = now_provider() if callable(now_provider) else datetime.now(timezone.utc)
     return jsonable_encoder(
@@ -115,6 +122,27 @@ def _call_recommendation_storage(callback):
         return callback()
     except RecommendationSchemaUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+def _fixed_replay_from_app(app: Any):
+    try:
+        return fixed_replay_provider(app)
+    except FixedReplayProviderError as exc:
+        raise HTTPException(status_code=503, detail="fixed_replay_recommendation_unavailable") from exc
+
+
+def _fixed_replay_response(app: Any, provider: Any, user_sub: str) -> dict[str, Any]:
+    if not decision_v1_enabled():
+        return provider.response()
+    cutoff = datetime.fromisoformat(str(provider.payload["evidenceAsOf"]))
+    repository = _repository_from_app(app)
+    return _call_recommendation_storage(
+        lambda: provider.response(
+            profile=repository.get_profile_at(user_sub, cutoff),
+            portfolio_snapshot=repository.get_portfolio_snapshot_at(user_sub, cutoff),
+            preference_state=repository.get_preference_state_at(user_sub, cutoff),
+        )
+    )
 
 
 def _service_from_app(app: Any) -> RecommendationService:

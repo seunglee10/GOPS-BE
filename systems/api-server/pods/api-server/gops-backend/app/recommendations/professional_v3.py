@@ -225,6 +225,7 @@ def build_evidence_snapshot(context: EvidenceContext) -> EvidenceSnapshotResult:
             **row,
             "normalizedFactors": factors,
             "blockScores": blocks,
+            "availableBlocks": available_blocks(raw),
             "baseSetupScore": round(balanced_score, 4),
             "evidenceReliability": round(reliability, 4),
             "reliabilityComponents": reliability_components,
@@ -251,6 +252,7 @@ def build_evidence_snapshot(context: EvidenceContext) -> EvidenceSnapshotResult:
             "marketItem": _bounded_market_item(item),
             "normalizedFactors": {},
             "blockScores": {},
+            "availableBlocks": [],
             "baseSetupScore": 0.0,
             "evidenceReliability": 0.0,
             "reliabilityComponents": {},
@@ -403,6 +405,9 @@ def raw_factors(
     spread = _first_finite(item, "quotedSpreadBps", "spreadBps", "bidAskSpreadBps")
     source_quality = market_source_quality(item, session, daily, context.fundamental_provenance)
     structure = price_structure_metrics(session, daily, vwap, atr)
+    last60 = session[-60:]
+    quote_bid = _first_finite(item, "bid", "bidPrice", "bestBid")
+    quote_ask = _first_finite(item, "ask", "askPrice", "bestAsk")
     return {
         "currentSessionRelativeStrength": current_strength,
         "last60MinuteRelativeStrength": last60_strength,
@@ -434,8 +439,15 @@ def raw_factors(
         "fundamentalAvailable": bool(fundamentals),
         "sourceQuality": source_quality,
         "latestClose": close,
+        "sessionOpen": opening,
+        "sessionHigh": high,
+        "sessionLow": low,
+        "last60MinuteLow": min((_positive(row.get("low")) for row in last60), default=0.0),
         "vwap": vwap,
         "atr": atr,
+        "quoteBid": quote_bid,
+        "quoteAsk": quote_ask,
+        "tickSize": 0.01,
         "overextensionAtr": abs(close - vwap) / atr if vwap and atr else None,
         "_dailyReturns60": daily_returns,
     }
@@ -523,12 +535,22 @@ def block_scores(factors: dict[str, float], raw: dict[str, Any]) -> dict[str, fl
         "freshnessScore": 0.20,
     })
     inverse_volatility = statistics.mean([factors["realizedVolatility"], factors["downsideVolatility"]])
+    quality_components: list[tuple[float, float]] = []
+    if not raw or _finite(raw.get("realizedVolatility")) is not None or _finite(raw.get("downsideVolatility")) is not None:
+        quality_components.append((inverse_volatility, 0.30))
+    for key, weight in (
+        ("valueQuality", 0.25),
+        ("companyQuality", 0.25),
+        ("growthQuality", 0.10),
+        ("earningsRevisionQuality", 0.10),
+    ):
+        if not raw or _optional_available(raw, key):
+            quality_components.append((factors[key], weight))
+    quality_weight = sum(weight for _value, weight in quality_components)
     quality = (
-        0.30 * inverse_volatility
-        + 0.25 * factors["valueQuality"]
-        + 0.25 * factors["companyQuality"]
-        + 0.10 * factors["growthQuality"]
-        + 0.10 * factors["earningsRevisionQuality"]
+        sum(value * weight for value, weight in quality_components) / quality_weight
+        if quality_weight > 0
+        else 50.0
     )
     return {
         "trendStrength": round(_clamp(trend), 4),
@@ -538,6 +560,25 @@ def block_scores(factors: dict[str, float], raw: dict[str, Any]) -> dict[str, fl
         "executionQuality": round(_clamp(execution), 4),
         "qualityStability": round(_clamp(quality), 4),
     }
+
+
+def available_blocks(raw: dict[str, Any]) -> list[str]:
+    """Return only evidence blocks backed by observed inputs.
+
+    Missing optional catalyst/fundamental inputs are omitted from scoring rather
+    than represented as a neutral 50-point opinion. Quality remains available
+    when observed volatility data exists.
+    """
+    blocks = ["trendStrength", "participationConfirmation", "priceStructure", "executionQuality"]
+    if raw.get("catalystAvailable") is True:
+        blocks.append("catalystQuality")
+    if (
+        _finite(raw.get("realizedVolatility")) is not None
+        or _finite(raw.get("downsideVolatility")) is not None
+        or any(_optional_available(raw, key) for key in OPTIONAL_FACTORS if key != "catalystQuality")
+    ):
+        blocks.append("qualityStability")
+    return [key for key in BLOCK_KEYS if key in blocks]
 
 
 def evidence_reliability_components(
@@ -557,7 +598,22 @@ def evidence_reliability_components(
     if raw.get("catalystAvailable"):
         comparisons.append(trend_direction == catalyst_direction)
     agreement = sum(comparisons) / len(comparisons) * 100.0
-    confirmation = sum(value >= 60.0 for value in blocks.values()) / len(blocks) * 100.0
+    # Reliability describes whether the setup is supported by independent
+    # measurements, not whether those measurements are bullish. A weak setup
+    # with complete candles/volume/quote evidence can be scored low with high
+    # confidence; counting only blocks above 60 conflates signal strength with
+    # data reliability and makes confidence look like a success probability.
+    confirmation_groups = (
+        ("currentSessionRelativeStrength", "last60MinuteRelativeStrength"),
+        ("clockAdjustedVolumeRatio", "abnormalDollarVolume"),
+        ("confirmedBreakoutSupport", "vwapHoldQuality"),
+        ("medianDollarVolume", "quotedSpreadBps"),
+    )
+    confirmation = (
+        sum(all(_finite(raw.get(key)) is not None for key in group) for group in confirmation_groups)
+        / len(confirmation_groups)
+        * 100.0
+    )
     return {
         "coverage": round(_clamp(coverage), 4),
         "freshness": round(_clamp(float(raw.get("freshnessScore") or 0.0)), 4),
@@ -580,6 +636,8 @@ def rank_evidence_candidates(
     active_symbol: str | None,
     now: datetime,
     snapshot_id: int | None,
+    penalize_missing_portfolio: bool = True,
+    exclude_portfolio_hard_caps: bool = True,
 ) -> EvidenceRankingResult:
     excluded = {normalize_symbol(value) for value in watchlist_symbols}
     excluded.update(normalize_symbol(row.get("symbol")) for row in portfolio_positions)
@@ -612,7 +670,7 @@ def rank_evidence_candidates(
         if float(row.get("evidenceReliability") or 0.0) < RELIABILITY_MINIMUM:
             reasons.append("evidence_reliability")
         trial = standardized_test_weight(row, portfolio_snapshot, profile.risk_level, now)
-        if trial is not None and trial <= 0:
+        if exclude_portfolio_hard_caps and trial is not None and trial <= 0:
             reasons.append("portfolio_hard_cap")
         if reasons:
             for reason in reasons:
@@ -632,7 +690,15 @@ def rank_evidence_candidates(
     features: list[dict[str, Any]] = []
     for row in eligible:
         blocks = row["blockScores"]
-        style_weights = STYLE_BLOCK_WEIGHTS.get(profile.recommendation_style, STYLE_BLOCK_WEIGHTS["balanced"])
+        available = [key for key in row.get("availableBlocks") or BLOCK_KEYS if key in blocks]
+        configured_style_weights = STYLE_BLOCK_WEIGHTS.get(
+            profile.recommendation_style, STYLE_BLOCK_WEIGHTS["balanced"]
+        )
+        available_weight = sum(float(configured_style_weights[key]) for key in available) or 1.0
+        style_weights = {
+            key: (float(configured_style_weights[key]) / available_weight * 100.0 if key in available else 0.0)
+            for key in BLOCK_KEYS
+        }
         contributions = {
             key: round(float(blocks[key]) * float(style_weights[key]) / 100.0, 4)
             for key in BLOCK_KEYS
@@ -650,13 +716,9 @@ def rank_evidence_candidates(
             portfolio=portfolio,
             portfolio_reliable=portfolio_reliable,
             risk_level=profile.risk_level,
+            penalize_missing_portfolio=penalize_missing_portfolio,
         )
         missing_optional = [key for key in OPTIONAL_FACTORS if not _optional_available(row.get("rawFactors") or {}, key)]
-        if missing_optional:
-            warnings.append(
-                "일부 선택 근거가 없어 중립값을 사용했고 evidence reliability를 낮췄습니다: "
-                + ", ".join(missing_optional)
-            )
         spread = _finite((row.get("rawFactors") or {}).get("quotedSpreadBps"))
         if spread is not None and spread >= 0.80 * spread_cap:
             warnings.append("호가 스프레드가 현재 위험성향의 실행 한도에 근접합니다.")
@@ -664,7 +726,10 @@ def rank_evidence_candidates(
         if median_dollar_volume < 1.25 * preset["minimumMedianDollarVolume"]:
             warnings.append("중앙값 거래대금이 현재 위험성향의 유동성 하한에 근접합니다.")
         adjusted = round(_clamp(base - sum(penalties.values())), 4)
-        active_preference = {key: preference_weights.get(key, 0.0) for key in BLOCK_KEYS}
+        active_preference = {
+            key: preference_weights.get(key, 0.0) if key in available else 0.0
+            for key in BLOCK_KEYS
+        }
         preference_total = sum(active_preference.values()) or 1.0
         preference_fit = sum(float(blocks[key]) * active_preference[key] / preference_total for key in BLOCK_KEYS)
         adjusted_contribution = round(
@@ -689,6 +754,8 @@ def rank_evidence_candidates(
             "normalizedFactors": row.get("normalizedFactors") or {},
             "blockScores": blocks,
             "blockContributions": contributions,
+            "availableBlocks": available,
+            "effectiveStyleWeights": {key: round(value, 4) for key, value in style_weights.items() if value > 0},
             "baseSetupScore": round(base, 4),
             "softPenalties": penalties,
             "adjustedSetupScore": round(adjusted, 4),
@@ -932,6 +999,7 @@ def soft_penalties(
     portfolio: dict[str, Any],
     portfolio_reliable: bool,
     risk_level: str,
+    penalize_missing_portfolio: bool = True,
 ) -> tuple[dict[str, float], list[str]]:
     raw = item.get("rawFactors") or {}
     blocks = item.get("blockScores") or {}
@@ -949,10 +1017,10 @@ def soft_penalties(
     if abs(float(blocks.get("trendStrength") or 50.0) - float(blocks.get("participationConfirmation") or 50.0)) >= 35:
         penalties["weakConfirmation"] = 6.0
         warnings.append("가격 강도와 거래 참여 확인이 서로 일치하지 않습니다.")
-    if not portfolio_reliable:
+    if not portfolio_reliable and penalize_missing_portfolio:
         penalties["limitedPortfolioEvidence"] = 5.0
         warnings.append("신뢰 가능한 최신 포트폴리오 근거가 없어 포트폴리오 적합도를 반영하지 않았습니다.")
-    elif float(portfolio.get("sectorAfterPct") or 0.0) >= 0.9 * RISK_PRESETS.get(risk_level, RISK_PRESETS["balanced"])["maxSectorPct"]:
+    elif portfolio_reliable and float(portfolio.get("sectorAfterPct") or 0.0) >= 0.9 * RISK_PRESETS.get(risk_level, RISK_PRESETS["balanced"])["maxSectorPct"]:
         penalties["concentrationProximity"] = 5.0
         warnings.append("표준 시험 비중을 추가하면 섹터 집중 한도에 근접합니다.")
     total = sum(penalties.values())
@@ -1226,7 +1294,8 @@ def _portfolio_equity(payload: dict[str, Any]) -> float:
 def _bounded_market_item(item: dict[str, Any]) -> dict[str, Any]:
     allowed = (
         "symbol", "sector", "industry", "changePercent", "lastPrice", "sessionDollarVolume",
-        "quotedSpreadBps", "spreadBps", "bidAskSpreadBps", "priceSource", "priceUpdatedAt",
+        "quotedSpreadBps", "spreadBps", "bidAskSpreadBps", "bid", "ask", "bidPrice", "askPrice",
+        "priceSource", "priceUpdatedAt",
         "tradable", "active", "halted", "tradingStatus",
     )
     return {key: item.get(key) for key in allowed if key in item}

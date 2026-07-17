@@ -11,7 +11,8 @@ from typing import Any
 
 
 EXPLANATION_VERSION = "recommendation-explanation.v1"
-PROMPT_VERSION = "recommendation-narrative.ko.v1"
+PROMPT_VERSION = "recommendation-narrative.ko.v2"
+DETERMINISTIC_RENDERER_VERSION = "recommendation-grounded-renderer.ko.v1"
 CONFIDENCE_MEANING = "evidence_reliability_not_success_probability"
 LOGGER = logging.getLogger(__name__)
 
@@ -40,14 +41,26 @@ OPTIONAL_LABELS = {
 }
 
 
-def compose_explanations(items: list[dict[str, Any]], *, provider: Any = None) -> list[dict[str, Any]]:
+def compose_explanations(
+    items: list[dict[str, Any]],
+    *,
+    provider: Any = None,
+    context: dict[str, Any] | None = None,
+    required: bool = False,
+) -> list[dict[str, Any]]:
     """Attach authoritative deterministic explanations and optional audited prose."""
     composed = [dict(item, explanation=deterministic_explanation(item)) for item in items]
-    if not composed or os.getenv("RECOMMENDATION_NARRATIVE_PROVIDER", "deterministic").strip().lower() != "openai":
+    if not composed:
+        return composed
+    if os.getenv("RECOMMENDATION_NARRATIVE_PROVIDER", "deterministic").strip().lower() != "openai":
+        if required:
+            raise RuntimeError("OpenAI recommendation narrative is required")
         return composed
     try:
-        narratives = _generate_narratives(composed, provider=provider)
+        narratives = _generate_narratives(composed, provider=provider, context=context)
     except Exception as exc:
+        if required:
+            raise
         LOGGER.warning("recommendation narrative fallback: %s", exc.__class__.__name__)
         return composed
     generated_at = datetime.now(timezone.utc).isoformat()
@@ -139,19 +152,25 @@ def deterministic_explanation(item: dict[str, Any]) -> dict[str, Any]:
     if risks:
         summary += " " + risks[0]["sentence"]
 
-    headline = f"{item.get('symbol') or '종목'} 매수 관찰 근거"
-    body = f"{summary} {data_sentence}"
+    headline, body = grounded_primary_narrative(
+        item,
+        metrics=metrics,
+        strongest=strongest,
+        weakest=weakest,
+        reliability=reliability,
+        risks=risks,
+    )
     return {
         "version": EXPLANATION_VERSION,
         "locale": "ko-KR",
         "decisionLabel": "매수 관찰",
         "primary": {
             "source": "deterministic",
-            "status": "fallback",
+            "status": "ready",
             "headline": headline,
             "body": body,
             "model": None,
-            "promptVersion": PROMPT_VERSION,
+            "promptVersion": DETERMINISTIC_RENDERER_VERSION,
             "generatedAt": datetime.now(timezone.utc).isoformat(),
         },
         "deterministic": {
@@ -176,7 +195,63 @@ def deterministic_explanation(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _generate_narratives(items: list[dict[str, Any]], *, provider: Any = None) -> dict[str, dict[str, str]]:
+def grounded_primary_narrative(
+    item: dict[str, Any],
+    *,
+    metrics: dict[str, Any],
+    strongest: dict[str, Any] | None,
+    weakest: dict[str, Any] | None,
+    reliability: float,
+    risks: list[dict[str, Any]],
+) -> tuple[str, str]:
+    symbol = str(item.get("symbol") or "종목")
+    raw = metrics.get("rawFactors") or {}
+    current_relative = _number(raw.get("currentSessionRelativeStrength"))
+    last_hour_relative = _number(raw.get("last60MinuteRelativeStrength"))
+    volume_ratio = _number(raw.get("clockAdjustedVolumeRatio"))
+    spread = _number(raw.get("quotedSpreadBps"))
+    score = _number(item.get("score")) or 0.0
+
+    relative_parts = []
+    if current_relative is not None:
+        direction = "높았고" if current_relative >= 0 else "낮았고"
+        relative_parts.append(f"정규장 수익률은 SPY보다 {abs(current_relative):.2f}%p {direction}")
+    if last_hour_relative is not None:
+        direction = "강했습니다" if last_hour_relative >= 0 else "약했습니다"
+        relative_parts.append(f"마지막 60분 상대강도는 {last_hour_relative:+.2f}%p로 {direction}")
+    first = "7월 14일 마감 기준, " + (
+        " ".join(relative_parts) + "."
+        if relative_parts
+        else "SPY 비교를 포함한 가격 근거를 평가했습니다."
+    )
+
+    evidence_parts = []
+    if volume_ratio is not None:
+        evidence_parts.append(f"동시간대 거래량은 직전 정규장의 {volume_ratio:.2f}배였습니다.")
+    if strongest:
+        evidence_parts.append(f"가장 강한 근거는 {strongest['label']}({strongest['score']:.1f}점)이었습니다.")
+    if weakest and (not strongest or weakest["code"] != strongest["code"]):
+        evidence_parts.append(
+            f"반면 상대적으로 약한 근거는 {weakest['label']}({weakest['score']:.1f}점)이었습니다."
+        )
+    second = " ".join(evidence_parts) if evidence_parts else "근거 블록의 강약을 함께 비교했습니다."
+
+    execution = f"호가 스프레드는 {spread:.2f}bp였습니다. " if spread is not None else ""
+    risk_text = f" {risks[0]['sentence']}" if risks else ""
+    third = (
+        f"{execution}V3 종합 점수는 {score:.1f}점, 근거 신뢰도는 {reliability:.1f}점입니다."
+        f"{risk_text} 이는 성공확률이 아니라 7월 15일 매수 관찰 우선순위입니다."
+    )
+    headline_basis = strongest["label"] if strongest else "구조화 근거"
+    return f"{symbol}, {headline_basis} 중심의 7월 15일 관찰 후보", " ".join((first, second, third))
+
+
+def _generate_narratives(
+    items: list[dict[str, Any]],
+    *,
+    provider: Any = None,
+    context: dict[str, Any] | None = None,
+) -> dict[str, dict[str, str]]:
     inputs = [
         {
             "symbol": item["symbol"],
@@ -192,12 +267,21 @@ def _generate_narratives(items: list[dict[str, Any]], *, provider: Any = None) -
             {
                 "role": "system",
                 "content": (
-                    "결정론적 주식 추천 근거를 자연스러운 한국어로만 다듬는다. 순위, 점수, 벌점, "
-                    "신뢰도를 바꾸거나 새 숫자·새 주장·성공확률·직접 주문 지시를 만들지 않는다. "
+                    "결정론적 주식 추천 근거를 자연스러운 한국어로만 설명한다. 추천 판단과 수치는 "
+                    "입력의 결정론적 V3가 전적으로 소유한다. 순위, 점수, 벌점, 신뢰도를 바꾸거나 "
+                    "새 숫자·새 주장·성공확률·직접 주문 지시를 만들지 않는다. 이 결과는 예측 확정이 "
+                    "아닌 매수 관찰 목록이다. 역사 재구성 문맥이 있으면 실시간 추천처럼 표현하지 않는다. "
                     "각 종목은 짧은 제목과 2~3문장 본문으로 작성한다."
                 ),
             },
-            {"role": "user", "content": json.dumps(inputs, ensure_ascii=False, separators=(",", ":"))},
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {"context": context or {}, "items": inputs},
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ),
+            },
         ],
         "text": {
             "format": {

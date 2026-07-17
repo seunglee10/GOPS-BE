@@ -1,0 +1,56 @@
+# 역할: AI 기업저널의 2년 시장·섹터 비교 차트에 필요한 ETF 일봉만 멱등 보강합니다.
+# 기존 canonical v2/split 일봉은 건너뛰고 누락 timestamp만 추가하며 삭제·갱신하지 않습니다.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: company-journal-benchmark-bootstrap
+  namespace: alfaka-market-data
+spec:
+  ttlSecondsAfterFinished: 604800
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app: company-journal-benchmark-bootstrap
+    spec:
+      restartPolicy: Never
+      serviceAccountName: alfaka-market-data-sa
+      nodeSelector:
+        karpenter.sh/nodepool: batch
+      tolerations:
+        - key: gops.io/dedicated
+          operator: Equal
+          value: batch
+          effect: NoSchedule
+      containers:
+        - name: benchmark-bootstrap
+          image: YOUR_ECR_REPOSITORY/gops-market-processor:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "systems/market-data/jobs/candle-bootstrap/main.py"]
+          args:
+            - --symbols
+            - SPY,SOXX,XLK,XLF,XLV,XLE,XLP,XLY,XLI
+            - --intervals
+            - 1D
+            - --lookback-days
+            - "730"
+            - --insert-batch-size
+            - "5000"
+            - --continue-on-error
+            - --apply
+          env:
+            - name: CLICKHOUSE_ENSURE_SCHEMA_ON_START
+              value: "true"
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-clickhouse-secret
+                optional: false
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi

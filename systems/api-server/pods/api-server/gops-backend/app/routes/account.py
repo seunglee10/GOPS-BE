@@ -9,7 +9,9 @@ from fastapi.encoders import jsonable_encoder
 from app.auth.dependencies import require_current_user
 from app.auth.models import AuthenticatedUser
 from app.core.sectors import sector_payload_fields
+from app.market_data.indices.service import get_indices_service
 from app.services.alpaca_corporate_actions import enrich_holdings_with_alpaca_dividends
+from app.services.portfolio_performance import build_portfolio_performance, parse_datetime, performance_start_at
 from app.services.portfolio_market_enrichment import enrich_holdings_with_market_stats
 from app.routes.simulator import simulator_gateway_from_app, simulator_mode_active
 from kis_trader.kis.config import KisConfigError
@@ -55,6 +57,56 @@ def account_holdings(
         payload = enrich_holdings_with_market_stats(request.app, payload)
     _remember_portfolio_holdings_snapshot(request.app, user.sub, payload)
     return jsonable_encoder(payload)
+
+
+@router.get("/api/account/performance")
+def account_performance(
+    request: Request,
+    range_value: str = Query(default="1M", alias="range", pattern="^(1W|1M|3M|1Y|ALL)$"),
+    user: AuthenticatedUser = Depends(require_current_user),
+) -> dict[str, Any]:
+    now_provider = getattr(request.app.state, "portfolio_performance_now_provider", None)
+    now = now_provider() if callable(now_provider) else datetime.now(timezone.utc)
+    start_at = performance_start_at(range_value, now)
+    try:
+        from app.recommendations.repository import RecommendationSchemaUnavailable
+        from app.recommendations.routes import _repository_from_app
+
+        repository = _repository_from_app(request.app)
+        snapshots = repository.list_daily_portfolio_snapshots(
+            user.sub,
+            start_at.isoformat() if start_at is not None else None,
+        )
+    except RecommendationSchemaUnavailable as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+
+    benchmark = None
+    if snapshots:
+        first_snapshot = snapshots[0]
+        first_payload = first_snapshot.get("payload") if isinstance(first_snapshot, dict) else None
+        benchmark_start = parse_datetime(
+            first_snapshot.get("source_as_of")
+            if isinstance(first_snapshot, dict)
+            else None
+        )
+        if benchmark_start is None and isinstance(first_payload, dict):
+            benchmark_start = parse_datetime(first_payload.get("asOf") or first_payload.get("sourceAsOf"))
+        benchmark_provider = getattr(request.app.state, "portfolio_benchmark_provider", None)
+        try:
+            benchmark = (
+                benchmark_provider(range_value, benchmark_start)
+                if callable(benchmark_provider)
+                else get_indices_service().performance_history(range_value, benchmark_start)
+            )
+        except Exception:
+            benchmark = None
+    return jsonable_encoder(
+        build_portfolio_performance(
+            snapshots,
+            benchmark,
+            range_value=range_value,
+        )
+    )
 
 
 def _normalize_simulator_holdings(payload: dict[str, Any]) -> dict[str, Any]:

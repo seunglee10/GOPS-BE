@@ -354,6 +354,28 @@ Redis/ClickHouse 최신 candle 일치, 신뢰도 70 이상 후보 15개를 activ
 `0014_recommendation_explanations.sql`의 `explanation_json`에
 `recommendation-explanation.v1`을 저장한다. 결정론적 한국어 설명이 권위 있는 근거이고,
 선택적 OpenAI Responses batched narrative는 문장만 다듬으며 실패 즉시 결정론적 문장을 쓴다.
+직접 추천 v1은 migration `0015_direct_recommendation_v1.sql`의 profile history,
+확장 action check와 `decision_json`을 사용한다.
+
+AWS의 `recommendation-v3-2026-07-15` fixed replay override는 일반 장중 run과 분리된다.
+`RECOMMENDATION_FIXED_REPLAY_ENABLED=true`이면 7월 14일 16:00 ET 근거로 만든 30개
+candidate pool을 검증하고, `RECOMMENDATION_DECISION_V1_ENABLED=true`일 때 cutoff 이하의
+프로필·포트폴리오·선호 snapshot만 읽어 사용자별 Top 15와 직접 매수 판단을 만든다.
+active symbol과 세션 선택은 순위에 영향을 주지 않는다. 응답은 공통
+`evidencePoolDigest`, 사용자별 `personalizationDigest`·`recommendationDigest`,
+`personalizationMode=cutoff_user_context`와 action/decision/sizing/keyEvidence를 포함한다.
+직접 추천 문장은 `recommendation-decision-renderer.ko.v2`가 세 key evidence의 정성 해석과
+우선순위가 지정된 실제 실패 조건으로 만든다. `counterEvidence.sentence`와
+`explanation.primary.headline/body`가 사용자 표현 계약이며 가격·점수 계산을 변경하지 않는다.
+decision v1 flag가 꺼진 응답은 decision/sizing/keyEvidence/counterEvidence를 제거해 구형
+action 값이 직접 매수 권한으로 오인되지 않게 한다.
+이 경로는 DB run/item 저장, 알림 발행, 개인화 학습을 수행하지 않고 worker도
+`fixed_replay_override` 상태만 반환한다. manifest/file/recommendation digest가 하나라도
+맞지 않으면 legacy나 LIVE 결과로 fallback하지 않고 503을 반환한다.
+
+SIM middleware는 이 검증된 provider가 준비된 추천 경로만 예외적으로 허용한다. 따라서
+같은 사용자의 LIVE와 SIM은 같은 recommendation API와 byte-equivalent item·digest를
+사용한다. override가 꺼져 있으면 기존처럼 point-in-time 추천 경로를 409로 차단한다.
 
 V2 commit은 사용자 advisory lock 아래에서 slot idempotency와 예상 preference state를
 재확인하고, processed/skipped events, immutable preference/risk states, 모든 적격 후보의
@@ -781,6 +803,30 @@ chart-asset table/data migration을 다시 실행하지 않는다.
 
 `CHART_ASSET_STORAGE_MAINTENANCE=true` 동안 GET은 계속 열어 두고 build와 DELETE만
 503으로 막는다. 기존 숫자형 자산은 변환하거나 fallback으로 읽지 않는다.
+
+## AI Company Journal Routes
+
+```text
+GET /api/company-journal/{symbol}
+GET /api/company-journal/{symbol}/evidence?benchmarks=SPY,SOXX
+```
+
+응답은 `status=ready`와 최신 verified report 또는 `status=pending`과 null report다.
+GET은 먼저 ClickHouse의 저장 결과를 반환하고 FastAPI background task에서는 원천 digest와
+생성 event만 기록한다. OpenAI 생성은 CronJob worker에서 수행한다. 결과가 없다는 이유로
+브라우저 계산 문장이나 fixture를 production 응답에 넣지 않는다. 이 route는
+`POST /api/agents/analyze`, polling/SSE, Redis report store 계약을 변경하지 않는다.
+
+저장 테이블은 `company_journal_reports_v1`과 `company_journal_generation_events_v1`이며,
+기존 원천 테이블의 행을 수정하거나 복제하지 않는다.
+`company-journal.v2` report의 `tabs`는 `current/growth/profitability/earnings/stability/valuation`을
+가진다. 입력 bundle은 ClickHouse의 최대 520개 종목/SPY 일봉과 최근 42개월 SEC 실제 실적,
+Yahoo 예상 실적을 bounded 조회한다. Yahoo table이 아직 비어 있거나 선택적 원천 조회가 실패하면
+route 자체를 실패시키지 않고 missing data로 남기며, 검증된 문장은 없는 숫자를 만들지 않는다.
+
+`/evidence`는 기업저널 panel 전용 읽기 계약으로 분기 재무, SEC/Yahoo 실적, 최대 520개 일봉을
+한 번에 반환한다. replay simulation 중 일반 시장/agent route의 point-in-time guard는 유지하고,
+이 경로만 현재 기업저널의 저장 근거를 읽는다. 이 응답은 주문·추천·agent 입력으로 재사용하지 않는다.
 
 ## Failure Policy
 
