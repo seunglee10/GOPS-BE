@@ -1,61 +1,316 @@
 [
   {
     "id": "NVDA_AMD",
-    "sectionIds": ["business_model", "growth_style", "profit_structure", "financial_health", "earnings_stability", "risk_profile", "relationship", "recent_flow"],
-    "evidenceRefs": ["tenk:NVDA", "tenk:AMD", "financial:NVDA", "financial:AMD", "earnings:NVDA", "earnings:AMD", "ontology:pair", "news:NVDA", "news:AMD"],
+    "sectionIds": [
+      "business_model",
+      "growth_style",
+      "profit_structure",
+      "financial_health",
+      "earnings_stability",
+      "risk_profile",
+      "relationship",
+      "recent_flow"
+    ],
+    "evidenceRefs": [
+      "tenk:NVDA",
+      "tenk:AMD",
+      "financial:NVDA",
+      "financial:AMD",
+      "earnings:NVDA",
+      "earnings:AMD",
+      "ontology:pair",
+      "news:NVDA",
+      "news:AMD"
+    ],
     "narrative": {
       "summary": "NVDA와 AMD의 사업 구조와 재무 흐름을 서로 다른 성향으로 정리한 정보성 분석이며 투자 판단을 대신하지 않습니다.",
       "sections": [
-        {"id": "business_model", "heading": "사업 모델", "analysis": "두 회사는 반도체 시장에 참여하지만 공시에서 설명하는 제품 구성과 매출 동력이 서로 다르게 나타납니다.", "evidenceRefs": ["tenk:NVDA", "tenk:AMD"]},
-        {"id": "growth_style", "heading": "성장 스타일", "analysis": "최근 매출과 영업이익의 변화 폭은 각 회사가 확장되는 속도의 차이를 보여줍니다.", "evidenceRefs": ["financial:NVDA", "financial:AMD"]},
-        {"id": "profit_structure", "heading": "수익 구조", "analysis": "마진과 현금흐름 구성에서 서로 다른 비용 구조와 수익화 방식이 관찰됩니다.", "evidenceRefs": ["financial:NVDA", "financial:AMD"]},
-        {"id": "financial_health", "heading": "재무 건전성", "analysis": "부채와 유동성 지표는 두 회사가 재무 여력을 운용하는 방식의 차이를 보여줍니다.", "evidenceRefs": ["financial:NVDA", "financial:AMD"]},
-        {"id": "earnings_stability", "heading": "실적 안정성", "analysis": "저장된 실적 추정치의 범위는 향후 실적에 대한 관측 분산을 비교할 수 있게 합니다.", "evidenceRefs": ["earnings:NVDA", "earnings:AMD"]},
-        {"id": "risk_profile", "heading": "위험 프로파일", "analysis": "각 회사의 공시가 강조하는 공급망, 경쟁, 고객 집중 위험의 조합이 서로 다릅니다.", "evidenceRefs": ["tenk:NVDA", "tenk:AMD"]},
-        {"id": "relationship", "heading": "기업 관계", "analysis": "온톨로지는 두 회사를 인공지능과 데이터센터 테마 안에서 연결하고 있습니다.", "evidenceRefs": ["ontology:pair"]},
-        {"id": "recent_flow", "heading": "최근 흐름", "analysis": "저장된 최근 뉴스는 제품 발표와 사업 활동이 전개되는 맥락을 보여줍니다.", "evidenceRefs": ["news:NVDA", "news:AMD"]}
+        {
+          "id": "business_model",
+          "heading": "주요 사업",
+          "analysis": "두 회사는 반도체 시장에 참여하지만 공시에서 설명하는 제품 구성과 매출 동력이 서로 다르게 나타납니다.",
+          "evidenceRefs": [
+            "tenk:NVDA",
+            "tenk:AMD"
+          ]
+        },
+        {
+          "id": "growth_style",
+          "heading": "성장성",
+          "analysis": "최근 매출과 영업이익의 변화 폭은 각 회사가 확장되는 속도의 차이를 보여줍니다.",
+          "evidenceRefs": [
+            "financial:NVDA",
+            "financial:AMD"
+          ]
+        },
+        {
+          "id": "profit_structure",
+          "heading": "수익성",
+          "analysis": "마진과 현금흐름 구성에서 서로 다른 비용 구조와 수익화 방식이 관찰됩니다.",
+          "evidenceRefs": [
+            "financial:NVDA",
+            "financial:AMD"
+          ]
+        },
+        {
+          "id": "financial_health",
+          "heading": "재무 안정성",
+          "analysis": "부채와 유동성 지표는 두 회사가 재무 여력을 운용하는 방식의 차이를 보여줍니다.",
+          "evidenceRefs": [
+            "financial:NVDA",
+            "financial:AMD"
+          ]
+        },
+        {
+          "id": "earnings_stability",
+          "heading": "실적 안정성",
+          "analysis": "저장된 실적 추정치의 범위는 향후 실적에 대한 관측 분산을 비교할 수 있게 합니다.",
+          "evidenceRefs": [
+            "earnings:NVDA",
+            "earnings:AMD"
+          ]
+        },
+        {
+          "id": "risk_profile",
+          "heading": "위험 요인",
+          "analysis": "각 회사의 공시가 강조하는 공급망, 경쟁, 고객 집중 위험의 조합이 서로 다릅니다.",
+          "evidenceRefs": [
+            "tenk:NVDA",
+            "tenk:AMD"
+          ]
+        },
+        {
+          "id": "relationship",
+          "heading": "연관성",
+          "analysis": "온톨로지는 두 회사를 인공지능과 데이터센터 테마 안에서 연결하고 있습니다.",
+          "evidenceRefs": [
+            "ontology:pair"
+          ]
+        },
+        {
+          "id": "recent_flow",
+          "heading": "최근 이슈",
+          "analysis": "저장된 최근 뉴스는 제품 발표와 사업 활동이 전개되는 맥락을 보여줍니다.",
+          "evidenceRefs": [
+            "news:NVDA",
+            "news:AMD"
+          ]
+        }
       ],
-      "insights": ["정량 지표와 공시 서술을 함께 볼 때 기업별 확장 방식의 차이가 더 선명해집니다."],
+      "insights": [
+        "다음 분기 실적 발표에서 NVDA 매출 성장률이 55% 아래로 내려오는지가 집중 구도의 첫 확인 지점입니다.",
+        "마진 방어력을 중시한다면 NVDA 영업이익률 61%의 유지 여부를, 물량 성장 흐름을 본다면 AMD 매출 성장률 14%의 가속 여부를 확인할 지점입니다."
+      ],
       "dataGaps": []
     }
   },
   {
     "id": "AAPL_MSFT",
-    "sectionIds": ["business_model", "growth_style", "profit_structure", "financial_health", "earnings_stability", "risk_profile", "relationship", "recent_flow"],
-    "evidenceRefs": ["tenk:AAPL", "tenk:MSFT", "financial:AAPL", "financial:MSFT", "earnings:AAPL", "earnings:MSFT", "ontology:pair", "news:AAPL", "news:MSFT"],
+    "sectionIds": [
+      "business_model",
+      "growth_style",
+      "profit_structure",
+      "financial_health",
+      "earnings_stability",
+      "risk_profile",
+      "relationship",
+      "recent_flow"
+    ],
+    "evidenceRefs": [
+      "tenk:AAPL",
+      "tenk:MSFT",
+      "financial:AAPL",
+      "financial:MSFT",
+      "earnings:AAPL",
+      "earnings:MSFT",
+      "ontology:pair",
+      "news:AAPL",
+      "news:MSFT"
+    ],
     "narrative": {
       "summary": "AAPL과 MSFT의 제품 및 서비스 구성과 재무 흐름을 근거별로 대비한 정보성 분석이며 투자 판단을 대신하지 않습니다.",
       "sections": [
-        {"id": "business_model", "heading": "사업 모델", "analysis": "공시 기준으로 한 회사는 기기와 서비스 생태계를, 다른 회사는 소프트웨어와 클라우드 계약을 중심으로 설명합니다.", "evidenceRefs": ["tenk:AAPL", "tenk:MSFT"]},
-        {"id": "growth_style", "heading": "성장 스타일", "analysis": "매출과 영업이익 변화는 각 사업 포트폴리오가 확장되는 경로의 차이를 드러냅니다.", "evidenceRefs": ["financial:AAPL", "financial:MSFT"]},
-        {"id": "profit_structure", "heading": "수익 구조", "analysis": "마진과 현금흐름에는 하드웨어 판매와 반복 계약 매출이 섞이는 방식의 차이가 반영됩니다.", "evidenceRefs": ["financial:AAPL", "financial:MSFT"]},
-        {"id": "financial_health", "heading": "재무 건전성", "analysis": "유동성 및 부채 지표는 자본을 배치하고 운영 자금을 관리하는 서로 다른 모습을 보여줍니다.", "evidenceRefs": ["financial:AAPL", "financial:MSFT"]},
-        {"id": "earnings_stability", "heading": "실적 안정성", "analysis": "실적 추정치 분포는 두 회사의 단기 실적 경로를 시장이 관찰하는 범위를 보여줍니다.", "evidenceRefs": ["earnings:AAPL", "earnings:MSFT"]},
-        {"id": "risk_profile", "heading": "위험 프로파일", "analysis": "공시에는 공급망, 규제, 보안, 경쟁과 관련한 강조점이 서로 다른 조합으로 나타납니다.", "evidenceRefs": ["tenk:AAPL", "tenk:MSFT"]},
-        {"id": "relationship", "heading": "기업 관계", "analysis": "온톨로지는 두 회사를 대형 기술 기업과 클라우드 생태계의 공통 맥락으로 연결합니다.", "evidenceRefs": ["ontology:pair"]},
-        {"id": "recent_flow", "heading": "최근 흐름", "analysis": "최근 저장 뉴스는 제품 업데이트와 기업 고객 활동의 시점을 나란히 확인하게 합니다.", "evidenceRefs": ["news:AAPL", "news:MSFT"]}
+        {
+          "id": "business_model",
+          "heading": "주요 사업",
+          "analysis": "공시 기준으로 한 회사는 기기와 서비스 생태계를, 다른 회사는 소프트웨어와 클라우드 계약을 중심으로 설명합니다.",
+          "evidenceRefs": [
+            "tenk:AAPL",
+            "tenk:MSFT"
+          ]
+        },
+        {
+          "id": "growth_style",
+          "heading": "성장성",
+          "analysis": "매출과 영업이익 변화는 각 사업 포트폴리오가 확장되는 경로의 차이를 드러냅니다.",
+          "evidenceRefs": [
+            "financial:AAPL",
+            "financial:MSFT"
+          ]
+        },
+        {
+          "id": "profit_structure",
+          "heading": "수익성",
+          "analysis": "마진과 현금흐름에는 하드웨어 판매와 반복 계약 매출이 섞이는 방식의 차이가 반영됩니다.",
+          "evidenceRefs": [
+            "financial:AAPL",
+            "financial:MSFT"
+          ]
+        },
+        {
+          "id": "financial_health",
+          "heading": "재무 안정성",
+          "analysis": "유동성 및 부채 지표는 자본을 배치하고 운영 자금을 관리하는 서로 다른 모습을 보여줍니다.",
+          "evidenceRefs": [
+            "financial:AAPL",
+            "financial:MSFT"
+          ]
+        },
+        {
+          "id": "earnings_stability",
+          "heading": "실적 안정성",
+          "analysis": "실적 추정치 분포는 두 회사의 단기 실적 경로를 시장이 관찰하는 범위를 보여줍니다.",
+          "evidenceRefs": [
+            "earnings:AAPL",
+            "earnings:MSFT"
+          ]
+        },
+        {
+          "id": "risk_profile",
+          "heading": "위험 요인",
+          "analysis": "공시에는 공급망, 규제, 보안, 경쟁과 관련한 강조점이 서로 다른 조합으로 나타납니다.",
+          "evidenceRefs": [
+            "tenk:AAPL",
+            "tenk:MSFT"
+          ]
+        },
+        {
+          "id": "relationship",
+          "heading": "연관성",
+          "analysis": "온톨로지는 두 회사를 대형 기술 기업과 클라우드 생태계의 공통 맥락으로 연결합니다.",
+          "evidenceRefs": [
+            "ontology:pair"
+          ]
+        },
+        {
+          "id": "recent_flow",
+          "heading": "최근 이슈",
+          "analysis": "최근 저장 뉴스는 제품 업데이트와 기업 고객 활동의 시점을 나란히 확인하게 합니다.",
+          "evidenceRefs": [
+            "news:AAPL",
+            "news:MSFT"
+          ]
+        }
       ],
-      "insights": ["제품 구성과 반복 매출 비중의 차이가 재무 지표를 읽는 배경이 됩니다."],
+      "insights": [
+        "다음 분기 실적 발표에서 반복 매출 비중의 방향이 유지되는지가 두 수익 구조 차이를 확인할 지점입니다.",
+        "실적 예측 가능성을 중시한다면 컨센서스 대비 실제 실적 이력의 흐름이 핵심 확인 변수입니다."
+      ],
       "dataGaps": []
     }
   },
   {
     "id": "JPM_BAC",
-    "sectionIds": ["business_model", "growth_style", "profit_structure", "financial_health", "earnings_stability", "risk_profile", "relationship", "recent_flow"],
-    "evidenceRefs": ["tenk:JPM", "tenk:BAC", "financial:JPM", "financial:BAC", "earnings:JPM", "earnings:BAC", "ontology:pair", "news:JPM", "news:BAC"],
+    "sectionIds": [
+      "business_model",
+      "growth_style",
+      "profit_structure",
+      "financial_health",
+      "earnings_stability",
+      "risk_profile",
+      "relationship",
+      "recent_flow"
+    ],
+    "evidenceRefs": [
+      "tenk:JPM",
+      "tenk:BAC",
+      "financial:JPM",
+      "financial:BAC",
+      "earnings:JPM",
+      "earnings:BAC",
+      "ontology:pair",
+      "news:JPM",
+      "news:BAC"
+    ],
     "narrative": {
       "summary": "JPM과 BAC의 금융 사업 구성과 재무 흐름을 공시 및 저장 근거로 대비한 정보성 분석이며 투자 판단을 대신하지 않습니다.",
       "sections": [
-        {"id": "business_model", "heading": "사업 모델", "analysis": "두 회사의 공시는 소비자 금융, 기업 금융, 자산 관리가 결합되는 방식을 서로 다르게 설명합니다.", "evidenceRefs": ["tenk:JPM", "tenk:BAC"]},
-        {"id": "growth_style", "heading": "성장 스타일", "analysis": "수익과 이익의 변화는 금리 및 대출 환경에 반응하는 사업 구성의 차이를 보여줍니다.", "evidenceRefs": ["financial:JPM", "financial:BAC"]},
-        {"id": "profit_structure", "heading": "수익 구조", "analysis": "이자 및 비이자 활동이 결합되는 방식에서 서로 다른 수익 구조가 관찰됩니다.", "evidenceRefs": ["financial:JPM", "financial:BAC"]},
-        {"id": "financial_health", "heading": "재무 건전성", "analysis": "저장된 재무 지표는 자본과 유동성을 관리하는 각 회사의 현재 상태를 비교하게 합니다.", "evidenceRefs": ["financial:JPM", "financial:BAC"]},
-        {"id": "earnings_stability", "heading": "실적 안정성", "analysis": "실적 추정치 범위는 신용 비용과 시장 환경에 대한 관측의 분산을 보여줍니다.", "evidenceRefs": ["earnings:JPM", "earnings:BAC"]},
-        {"id": "risk_profile", "heading": "위험 프로파일", "analysis": "공시가 설명하는 신용, 시장, 운영, 규제 위험의 강조점이 서로 다르게 배치됩니다.", "evidenceRefs": ["tenk:JPM", "tenk:BAC"]},
-        {"id": "relationship", "heading": "기업 관계", "analysis": "온톨로지는 두 회사를 미국 대형 은행과 금융 서비스 테마 안에서 연결합니다.", "evidenceRefs": ["ontology:pair"]},
-        {"id": "recent_flow", "heading": "최근 흐름", "analysis": "최근 저장 뉴스는 실적 발표와 금융 환경 변화가 언급된 시점을 보여줍니다.", "evidenceRefs": ["news:JPM", "news:BAC"]}
+        {
+          "id": "business_model",
+          "heading": "주요 사업",
+          "analysis": "두 회사의 공시는 소비자 금융, 기업 금융, 자산 관리가 결합되는 방식을 서로 다르게 설명합니다.",
+          "evidenceRefs": [
+            "tenk:JPM",
+            "tenk:BAC"
+          ]
+        },
+        {
+          "id": "growth_style",
+          "heading": "성장성",
+          "analysis": "수익과 이익의 변화는 금리 및 대출 환경에 반응하는 사업 구성의 차이를 보여줍니다.",
+          "evidenceRefs": [
+            "financial:JPM",
+            "financial:BAC"
+          ]
+        },
+        {
+          "id": "profit_structure",
+          "heading": "수익성",
+          "analysis": "이자 및 비이자 활동이 결합되는 방식에서 서로 다른 수익 구조가 관찰됩니다.",
+          "evidenceRefs": [
+            "financial:JPM",
+            "financial:BAC"
+          ]
+        },
+        {
+          "id": "financial_health",
+          "heading": "재무 안정성",
+          "analysis": "저장된 재무 지표는 자본과 유동성을 관리하는 각 회사의 현재 상태를 비교하게 합니다.",
+          "evidenceRefs": [
+            "financial:JPM",
+            "financial:BAC"
+          ]
+        },
+        {
+          "id": "earnings_stability",
+          "heading": "실적 안정성",
+          "analysis": "실적 추정치 범위는 신용 비용과 시장 환경에 대한 관측의 분산을 보여줍니다.",
+          "evidenceRefs": [
+            "earnings:JPM",
+            "earnings:BAC"
+          ]
+        },
+        {
+          "id": "risk_profile",
+          "heading": "위험 요인",
+          "analysis": "공시가 설명하는 신용, 시장, 운영, 규제 위험의 강조점이 서로 다르게 배치됩니다.",
+          "evidenceRefs": [
+            "tenk:JPM",
+            "tenk:BAC"
+          ]
+        },
+        {
+          "id": "relationship",
+          "heading": "연관성",
+          "analysis": "온톨로지는 두 회사를 미국 대형 은행과 금융 서비스 테마 안에서 연결합니다.",
+          "evidenceRefs": [
+            "ontology:pair"
+          ]
+        },
+        {
+          "id": "recent_flow",
+          "heading": "최근 이슈",
+          "analysis": "최근 저장 뉴스는 실적 발표와 금융 환경 변화가 언급된 시점을 보여줍니다.",
+          "evidenceRefs": [
+            "news:JPM",
+            "news:BAC"
+          ]
+        }
       ],
-      "insights": ["사업 부문 구성과 위험 공시를 함께 보면 재무 변화가 발생한 맥락을 구분할 수 있습니다."],
+      "insights": [
+        "다음 분기 공시에서 대손 관련 지표의 증감이 두 은행의 위험 성향 차이를 확인할 지점입니다.",
+        "사업 부문 구성이 다른 만큼, 실적 발표에서 부문별 이익 기여의 변화를 나눠 확인할 필요가 있습니다."
+      ],
       "dataGaps": []
     }
   }

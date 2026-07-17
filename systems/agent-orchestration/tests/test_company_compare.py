@@ -22,6 +22,8 @@ from gops_agents.company_compare import (  # noqa: E402
     company_compare_schema,
     company_compare_cache_key,
     find_unsupported_numbers,
+    find_vague_insights,
+    find_vague_sentences,
     suggest_peers,
     validate_narrative,
 )
@@ -372,7 +374,7 @@ class CompanyCompareAgentTests(unittest.TestCase):
 
     def test_rejects_too_many_peers(self):
         with self.assertRaises(CompanyCompareError) as ctx:
-            make_agent(symbols=()).compare(FakeRequest(peers=["A", "B", "C", "D"]))
+            make_agent(symbols=()).compare(FakeRequest(peers=["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"]))
         self.assertEqual(ctx.exception.status_code, 422)
 
     def test_duplicate_and_base_symbols_are_removed(self):
@@ -446,9 +448,9 @@ class CompanyCompareNarrativeTests(unittest.TestCase):
                         "evidenceRefs": ["financial:NVDA", "financial:AMD"],
                     }
                     for section_id, heading in (
-                        ("growth_style", "성장 스타일"),
-                        ("profit_structure", "수익 구조"),
-                        ("financial_health", "재무 체질"),
+                        ("growth_style", "성장성"),
+                        ("profit_structure", "수익성"),
+                        ("financial_health", "재무 안정성"),
                         ("earnings_stability", "실적 안정성"),
                     )
                 ],
@@ -582,7 +584,7 @@ class CompanyCompareNarrativeTests(unittest.TestCase):
                         "summary": f"정보성 분석이지만 {phrase} 표현을 포함합니다.",
                         "sections": [{
                             "id": "growth_style",
-                            "heading": "성장 스타일",
+                            "heading": "성장성",
                             "analysis": "확장 속도의 차이가 관찰됩니다.",
                             "evidenceRefs": ["financial:NVDA"],
                         }],
@@ -592,6 +594,163 @@ class CompanyCompareNarrativeTests(unittest.TestCase):
                     section_ids=("growth_style",),
                     evidence_refs=("financial:NVDA",),
                 )
+
+    def test_structured_business_model_maps_to_item_fields(self):
+        from gops_agents.company_compare import build_qualitative_context
+        profile = EvidenceItem(
+            provider="ten-k-profile",
+            status="available",
+            title="NVDA 10-K 2026",
+            summary="NVDA 사업 모델",
+            observedAt="2026-02-20T00:00:00Z",
+            raw={
+                "symbol": "NVDA",
+                "sourceFiling": "10-K 2026 accession NVDA-10K",
+                "sourceAccession": "NVDA-10K",
+                "reportDate": "2026-01-25",
+                "businessModel": {
+                    "structure": "팹리스 — 설계 전담, 생산 외주",
+                    "segments": [
+                        {"name": "데이터센터", "detail": "GPU · 네트워킹 · AI 솔루션"},
+                        {"name": "게이밍", "detail": "GeForce GPU"},
+                    ],
+                    "revenueModel": ["하드웨어 판매", "소프트웨어 유상 라이선스"],
+                    "platform": "CUDA 중심 소프트웨어 스택",
+                },
+                "revenueDrivers": ["제품 수요"],
+                "competitivePosition": "경쟁 심화",
+                "riskFactors": [{"category": "공급망", "summary": "공급자 의존", "severityHint": "high"}],
+            },
+        )
+        qualitative = build_qualitative_context(["NVDA"], [profile], [], [], provider_gaps=[])
+        business = next(
+            item
+            for section in qualitative["sections"] if section["id"] == "business_model"
+            for item in section["items"]
+        )
+        self.assertEqual(business["structure"], "팹리스 — 설계 전담, 생산 외주")
+        self.assertEqual(len(business["segments"]), 2)
+        self.assertEqual(business["revenueModel"], ["하드웨어 판매", "소프트웨어 유상 라이선스"])
+        self.assertEqual(business["platform"], "CUDA 중심 소프트웨어 스택")
+        self.assertIn("데이터센터 — GPU · 네트워킹 · AI 솔루션", business["details"])
+
+    def test_legacy_prose_business_model_still_builds_item(self):
+        from gops_agents.company_compare import build_qualitative_context
+        profile = EvidenceItem(
+            provider="ten-k-profile",
+            status="available",
+            title="AMD 10-K 2025",
+            summary="AMD 사업 모델",
+            observedAt="2026-02-20T00:00:00Z",
+            raw={
+                "symbol": "AMD",
+                "businessModel": "AMD는 반도체를 설계·개발합니다.",
+                "revenueDrivers": ["서버 CPU"],
+                "competitivePosition": "경쟁 환경",
+                "riskFactors": [{"category": "경쟁", "summary": "경쟁 압력", "severityHint": "medium"}],
+            },
+        )
+        qualitative = build_qualitative_context(["AMD"], [profile], [], [], provider_gaps=[])
+        business = next(
+            item
+            for section in qualitative["sections"] if section["id"] == "business_model"
+            for item in section["items"]
+        )
+        self.assertEqual(business["summary"], "AMD는 반도체를 설계·개발합니다.")
+        self.assertNotIn("segments", business)
+
+    def test_vague_sentence_without_numbers_is_flagged(self):
+        narrative = {
+            "summary": "NVDA는 높은 수익성을 바탕으로 유리한 흐름을 보이고 있습니다.",
+            "sections": [{
+                "id": "profit_structure",
+                "heading": "수익성",
+                "analysis": "영업이익률 61%는 최근 3년 추이에서 가장 높은 수준입니다.",
+                "evidenceRefs": ["financial:NVDA"],
+            }],
+            "insights": [],
+            "dataGaps": [],
+        }
+        flagged = find_vague_sentences(narrative)
+        self.assertEqual(len(flagged), 1)
+        self.assertIn("높은 수익성", flagged[0])
+
+    def test_sentence_with_number_reference_is_not_flagged(self):
+        narrative = {
+            "summary": "영업이익률 61%는 강력한 데이터센터 수요가 반영된 결과입니다.",
+            "sections": [],
+            "insights": [],
+            "dataGaps": [],
+        }
+        self.assertEqual(find_vague_sentences(narrative), [])
+
+    def test_currency_conversion_phrases_are_rejected(self):
+        for phrase in ("100원어치를 팔면 61원이 남습니다.", "팔수록 남는 장사 구조입니다."):
+            with self.subTest(phrase=phrase), self.assertRaises(CompanyCompareNarrativeError):
+                validate_narrative(
+                    {
+                        "summary": phrase,
+                        "sections": [{
+                            "id": "growth_style",
+                            "heading": "성장성",
+                            "analysis": "매출 성장 55%는 최근 3년 중 가장 높은 수준입니다.",
+                            "evidenceRefs": ["financial:NVDA"],
+                        }],
+                        "insights": [],
+                        "dataGaps": [],
+                    },
+                    section_ids=("growth_style",),
+                    evidence_refs=("financial:NVDA",),
+                )
+
+    def test_vague_insight_without_number_or_event_is_flagged(self):
+        narrative = {
+            "summary": "정보성 분석입니다.",
+            "sections": [],
+            "insights": [
+                "두 기업의 차이를 함께 보면 이해에 도움이 됩니다.",
+                "다음 분기 실적 발표에서 매출 성장률 방향을 확인할 지점입니다.",
+                "영업이익률이 61% 수준을 유지하는지가 확인 변수입니다.",
+            ],
+            "dataGaps": [],
+        }
+        flagged = find_vague_insights(narrative)
+        self.assertEqual(len(flagged), 1)
+        self.assertIn("이해에 도움이", flagged[0])
+
+    def test_action_inducing_language_is_rejected(self):
+        for phrase in ("포지션을 정리할 시점입니다.", "비중 확대를 검토할 만합니다.", "손절 기준을 지키세요."):
+            with self.subTest(phrase=phrase), self.assertRaises(CompanyCompareNarrativeError):
+                validate_narrative(
+                    {
+                        "summary": phrase,
+                        "sections": [{
+                            "id": "growth_style",
+                            "heading": "성장성",
+                            "analysis": "매출 성장 55%는 최근 3년 중 가장 높은 수준입니다.",
+                            "evidenceRefs": ["financial:NVDA"],
+                        }],
+                        "insights": [],
+                        "dataGaps": [],
+                    },
+                    section_ids=("growth_style",),
+                    evidence_refs=("financial:NVDA",),
+                )
+
+    def test_golden_set_has_no_vague_insights(self):
+        fixture_path = Path(__file__).parent / "fixtures" / "company_compare_golden.json"
+        cases = json.loads(fixture_path.read_text(encoding="utf-8"))
+        for case in cases:
+            with self.subTest(pair=case["id"]):
+                self.assertEqual(find_vague_insights(case["narrative"]), [])
+                self.assertGreaterEqual(len(case["narrative"]["insights"]), 2)
+
+    def test_golden_set_has_no_vague_sentences(self):
+        fixture_path = Path(__file__).parent / "fixtures" / "company_compare_golden.json"
+        cases = json.loads(fixture_path.read_text(encoding="utf-8"))
+        for case in cases:
+            with self.subTest(pair=case["id"]):
+                self.assertEqual(find_vague_sentences(case["narrative"]), [])
 
     def test_three_pair_golden_set_passes_strict_quality_contract(self):
         fixture_path = Path(__file__).parent / "fixtures" / "company_compare_golden.json"
@@ -621,7 +780,7 @@ class CompanyCompareNarrativeTests(unittest.TestCase):
                         "summary": "정보성 분석이며 투자 판단을 대신하지 않습니다.",
                         "sections": [{
                             "id": "growth_style",
-                            "heading": "성장 스타일",
+                            "heading": "성장성",
                             "analysis": analysis,
                             "evidenceRefs": refs,
                         }],
@@ -639,7 +798,7 @@ class CompanyCompareNarrativeTests(unittest.TestCase):
                     "summary": "중립적인 정보성 분석입니다.",
                     "sections": [{
                         "id": "growth_style",
-                        "heading": "성장 스타일",
+                        "heading": "성장성",
                         "analysis": "확장 속도의 차이가 관찰됩니다.",
                         "evidenceRefs": ["web:unknown"],
                     }],

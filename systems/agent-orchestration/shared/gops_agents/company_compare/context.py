@@ -195,15 +195,42 @@ def build_qualitative_context(
             "accession": read_text(raw.get("sourceAccession")) or None,
             "url": profile.url,
         })
-        business_model = read_text(raw.get("businessModel"))
+        business_model_raw = raw.get("businessModel")
         revenue_drivers = unique_strings(raw.get("revenueDrivers") or [])
         competitive_position = read_text(raw.get("competitivePosition"))
-        if business_model:
+        if isinstance(business_model_raw, dict):
+            structure = read_text(business_model_raw.get("structure"))
+            segments = [
+                {"name": read_text(segment.get("name")), "detail": read_text(segment.get("detail"))}
+                for segment in business_model_raw.get("segments") or []
+                if isinstance(segment, dict) and read_text(segment.get("name")) and read_text(segment.get("detail"))
+            ]
+            revenue_model = unique_strings(business_model_raw.get("revenueModel") or [])
+            platform = read_text(business_model_raw.get("platform"))
+            if structure or segments:
+                segment_lines = [f"{segment['name']} — {segment['detail']}" for segment in segments]
+                business_items.append({
+                    "kind": "10k-business",
+                    "symbol": symbol,
+                    "title": f"{symbol} 사업 모델",
+                    "summary": structure or (segment_lines[0] if segment_lines else ""),
+                    "structure": structure or None,
+                    "segments": segments,
+                    "revenueModel": revenue_model,
+                    "platform": platform or None,
+                    "details": [*segment_lines, *revenue_model, *([platform] if platform else [])],
+                    "sourceRef": source_ref,
+                    "observedAt": profile.observedAt,
+                    "url": profile.url,
+                })
+            else:
+                data_gaps.append(f"{symbol}: 10-K 사업 모델 요약 없음")
+        elif read_text(business_model_raw):
             business_items.append({
                 "kind": "10k-business",
                 "symbol": symbol,
                 "title": f"{symbol} 사업 모델",
-                "summary": business_model,
+                "summary": read_text(business_model_raw),
                 "details": [*revenue_drivers, *([competitive_position] if competitive_position else [])],
                 "sourceRef": source_ref,
                 "observedAt": profile.observedAt,

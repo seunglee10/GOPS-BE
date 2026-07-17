@@ -83,6 +83,18 @@ class FakeSecClient:
         return sample_document()
 
 
+def sample_business_model() -> dict:
+    return {
+        "structure": "팹리스 — 설계 전담, 생산 외주",
+        "segments": [
+            {"name": "데이터센터", "detail": "GPU · 네트워킹 · AI 솔루션"},
+            {"name": "게이밍", "detail": "GeForce GPU"},
+        ],
+        "revenueModel": ["하드웨어 판매", "소프트웨어 유상 라이선스"],
+        "platform": "CUDA 중심 소프트웨어 스택",
+    }
+
+
 class FakeSummarizer:
     def __init__(self):
         self.calls = []
@@ -98,7 +110,7 @@ class FakeSummarizer:
             "filingDate": filing.filing_date,
             "reportDate": filing.report_date,
             "generatedAt": "2026-07-16T00:00:00Z",
-            "businessModel": "제품 판매와 서비스로 수익을 창출합니다.",
+            "businessModel": sample_business_model(),
             "revenueDrivers": ["제품 판매"],
             "competitivePosition": "문서에 기재된 경쟁 환경을 요약합니다.",
             "riskFactors": [{"category": "공급망", "summary": "공급자 의존이 있습니다.", "severityHint": "high"}],
@@ -123,7 +135,7 @@ class TenKProfileTests(unittest.TestCase):
 
     def test_structured_profile_enforces_fixed_risk_enum_and_deduplicates(self):
         payload = validate_generated_profile({
-            "businessModel": "제품을 판매합니다.",
+            "businessModel": sample_business_model(),
             "revenueDrivers": ["제품", "제품"],
             "competitivePosition": "경쟁 환경 설명",
             "riskFactors": [
@@ -134,6 +146,32 @@ class TenKProfileTests(unittest.TestCase):
 
         self.assertEqual(payload["revenueDrivers"], ["제품"])
         self.assertEqual(len(payload["riskFactors"]), 1)
+        self.assertEqual(payload["businessModel"]["structure"], "팹리스 — 설계 전담, 생산 외주")
+        self.assertEqual(len(payload["businessModel"]["segments"]), 2)
+
+    def test_business_model_requires_structured_fields(self):
+        with self.assertRaises(ValueError):
+            validate_generated_profile({
+                "businessModel": "제품을 판매합니다.",
+                "revenueDrivers": ["제품"],
+                "competitivePosition": "경쟁 환경 설명",
+                "riskFactors": [
+                    {"category": RISK_CATEGORIES[0], "summary": "공급 의존", "severityHint": "high"},
+                ],
+            })
+
+    def test_business_model_platform_is_optional(self):
+        business = sample_business_model()
+        business["platform"] = None
+        payload = validate_generated_profile({
+            "businessModel": business,
+            "revenueDrivers": ["제품"],
+            "competitivePosition": "경쟁 환경 설명",
+            "riskFactors": [
+                {"category": RISK_CATEGORIES[0], "summary": "공급 의존", "severityHint": "high"},
+            ],
+        })
+        self.assertIsNone(payload["businessModel"]["platform"])
 
     def test_summarizer_builds_document_only_strict_schema_request(self):
         captured = {}
@@ -141,7 +179,7 @@ class TenKProfileTests(unittest.TestCase):
         def requester(payload):
             captured.update(payload)
             return {
-                "businessModel": "제품 판매 중심입니다.",
+                "businessModel": sample_business_model(),
                 "revenueDrivers": ["제품 수요"],
                 "competitivePosition": "경쟁이 빠르게 변합니다.",
                 "riskFactors": [{"category": "경쟁", "summary": "경쟁 압력이 있습니다.", "severityHint": "medium"}],

@@ -9,6 +9,7 @@ NEWS_REFERENCE_TYPES = {"news.article", "news.dailySummary"}
 RECOMMENDATION_REFERENCE_TYPES = {"recommendation.stock"}
 ONTOLOGY_REFERENCE_TYPES = {"ontology.entity"}
 FINANCIAL_REFERENCE_TYPES = {"financial.metric"}
+COMPARE_REFERENCE_TYPES = {"financial.metric", "compare.axis", "compare.context"}
 
 
 def normalize_operation_references(
@@ -98,6 +99,14 @@ def build_agent_operation_ir(
             references=refs,
             required_sources=["news", "market", "ontology"],
             confidence=0.82,
+        ))
+    elif ref_types & COMPARE_REFERENCE_TYPES:
+        operations.append(analysis_operation(
+            "explain_company_compare",
+            symbol=symbol,
+            references=refs,
+            required_sources=["financial"],
+            confidence=0.92,
         ))
     elif has_news_terms(text):
         operations.append(analysis_operation(
@@ -361,7 +370,8 @@ def reference_summary(reference: dict[str, Any]) -> dict[str, Any]:
         "type": reference.get("type"),
         "sourcePanelId": reference.get("sourcePanelId"),
         "displayLabel": reference.get("displayLabel"),
-        "symbol": data.get("symbol"),
+        "symbol": data.get("symbol") or data.get("baseSymbol"),
+        "symbols": data.get("symbols"),
         "timestamp": data.get("timestamp") or data.get("publishedAt") or data.get("date") or data.get("from"),
     }
 

@@ -9,7 +9,7 @@ from .context import build_qualitative_context, build_quantitative_context
 
 
 AGENT_ID = "company-compare-agent"
-MAX_COMPARE_SYMBOLS = 3
+MAX_COMPARE_SYMBOLS = 9
 SYMBOL_PATTERN = re.compile(r"^[A-Z0-9][A-Z0-9.-]{0,9}$")
 
 
