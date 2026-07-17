@@ -117,7 +117,7 @@ def deterministic_explanation(item: dict[str, Any]) -> dict[str, Any]:
         label = PENALTY_LABELS.get(str(key), str(key))
         risks.append({
             "code": _snake_case(str(key)) + "_penalty",
-            "sentence": f"{label} 요인으로 V3 종합 점수가 {penalty:.1f}점 낮아졌습니다.",
+            "sentence": f"{label} 요인으로 종합 점수가 {penalty:.1f}점 낮아졌습니다.",
             "penalty": penalty,
         })
 
@@ -239,7 +239,7 @@ def grounded_primary_narrative(
     execution = f"호가 스프레드는 {spread:.2f}bp였습니다. " if spread is not None else ""
     risk_text = f" {risks[0]['sentence']}" if risks else ""
     third = (
-        f"{execution}V3 종합 점수는 {score:.1f}점, 근거 신뢰도는 {reliability:.1f}점입니다."
+        f"{execution}종합 점수는 {score:.1f}점, 근거 신뢰도는 {reliability:.1f}점입니다."
         f"{risk_text} 이는 성공확률이 아니라 7월 15일 매수 관찰 우선순위입니다."
     )
     headline_basis = strongest["label"] if strongest else "구조화 근거"

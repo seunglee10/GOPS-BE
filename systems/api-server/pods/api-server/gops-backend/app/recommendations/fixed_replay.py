@@ -69,6 +69,7 @@ class FixedReplayRecommendationProvider:
                 item.pop("sizing", None)
                 item.pop("keyEvidence", None)
                 item.pop("counterEvidence", None)
+                item.pop("cautions", None)
             return result
         return self.personalized_response(
             profile=profile,

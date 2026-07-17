@@ -714,13 +714,19 @@ import하거나 scenario ID를 special-case하지 않는다.
 시뮬레이션 item 클릭 역시 `recommendation.stock` reference만 선택하며 차트나 레이아웃을
 자동 변경하지 않는다.
 
-fixed V3 decision v1 화면은 기존의 큰 action 판정과 우측 V3 점수·근거 신뢰도 배치를
-유지한다. 본문 왼쪽에는 시장 대비 강도·거래 참여·진입 구조의 세 `keyEvidence.interpretation`
-문장과 action-aware 반대 근거 문장을 표시하고, 오른쪽 단순 행에는 눌림·돌파 진입가,
+fixed V3 decision v1 화면은 작은 action label 아래 큰 `explanation.primary.headline`을 두고
+우측 종합 점수·근거 신뢰도 배치를 유지한다. `body`는 조건·제외 상태에서 추가 설명이 필요할 때만
+표시하며 직접 매수 상태에서는 생략한다. 본문 왼쪽에는
+`availableBlocks`로 검증된 4~6개의 `keyEvidence.interpretation` 유효성 설명과 구조화된
+`cautions[].sentence`를 모두 표시하고, 오른쪽 단순 행에는 눌림·돌파 진입가,
 무효화 가격, 경로별 1.5R 목표, 15:50 ET 종료, 위험예산과 추천 수량을 표시한다. 근거 영역은
-`primaryValue`·기여도·bp·배수 같은 내부 수치를 렌더링하지 않는다. optional 근거 누락,
-digest, 내부 가중치와 provenance도 사용자 화면에 표시하지 않는다. 프런트는 이 결과로
+`metrics[]`의 관측값·비교 기준·백엔드가 정한 그래프 위치를 렌더링한다. 원시 기여도와 내부
+정규화 점수는 표시하지 않는다. optional 근거 누락,
+raw risk warning, digest, 내부 가중치와 provenance도 사용자 화면에 표시하지 않는다. 프런트는 이 결과로
 주문을 자동 생성하거나 전송하지 않는다.
+headline은 숫자 요약이 아니라 행동 결론을 가장 크게 표시하며, 수치는 근거 그래프의 보조 정보로 둔다.
+근거 유효성 설명은 기본 레이아웃 높이를 차지하지 않고 각 근거의 `?` 도움말에서 hover·focus로
+표시한다. 넓은 패널은 근거를 두 열로 배치해 일반 데스크톱 높이에서 내부 스크롤이 생기지 않게 한다.
 
 직접 action은 item action과 같은 `recommendation-decision.v1`이 함께 있을 때만 유효하다.
 decision이 없거나 action이 불일치하면 프런트는 해당 item을 `매수 관찰`로 표시하고
@@ -741,8 +747,9 @@ public company journal panel은 `panelType="companyJournal"`/`kind="companyJourn
 없어도 패널은 기존 응답으로 렌더링해야 한다. 이 패널에는 slider, 피드백 제어,
 tracking API, 자동 주문 동작을 추가하지 않는다.
 
-V3 direct item은 backend의 결정론적 headline/body와 세 문장형 key evidence를 표시한다.
-UI label은 `V3 종합 점수`, `근거 신뢰도`를 유지하지만 기여도 부호, penalty, 누락 factor,
+V3 direct item은 backend의 결정론적 headline/body, 가용 문장형 key evidence 전체와
+구조화된 cautions를 표시한다. 구형 응답에 cautions가 없으면 유의점 영역만 생략한다.
+UI label은 `종합 점수`, `근거 신뢰도`를 유지하지만 기여도 부호, penalty, 누락 factor,
 stale 여부, cutoff, algorithm/rule-set/snapshot/digest는 사용자 화면에 표시하지 않는다.
 legacy `reasons`는 비-V3에만 쓴다.
 

@@ -366,11 +366,17 @@ candidate pool을 검증하고, `RECOMMENDATION_DECISION_V1_ENABLED=true`일 때
 프로필·포트폴리오·선호 snapshot만 읽어 사용자별 Top 15와 직접 매수 판단을 만든다.
 active symbol과 세션 선택은 순위에 영향을 주지 않는다. 응답은 공통
 `evidencePoolDigest`, 사용자별 `personalizationDigest`·`recommendationDigest`,
-`personalizationMode=cutoff_user_context`와 action/decision/sizing/keyEvidence를 포함한다.
-직접 추천 문장은 `recommendation-decision-renderer.ko.v2`가 세 key evidence의 정성 해석과
-우선순위가 지정된 실제 실패 조건으로 만든다. `counterEvidence.sentence`와
-`explanation.primary.headline/body`가 사용자 표현 계약이며 가격·점수 계산을 변경하지 않는다.
-decision v1 flag가 꺼진 응답은 decision/sizing/keyEvidence/counterEvidence를 제거해 구형
+`personalizationMode=cutoff_user_context`와 action/decision/sizing/keyEvidence/cautions를 포함한다.
+직접 추천 문장은 `recommendation-decision-renderer.ko.v6`가 실제 관측된 V3 값과
+우선순위가 지정된 실패 조건으로 만든다. `keyEvidence`는 시장 흐름·거래 참여·가격 구조를
+기본으로 하고 `availableBlocks`에 있는 뉴스·촉매, 체결 여건, 안정성·품질만 추가한다.
+각 근거는 수치 문장과 함께 `metrics[]`의 표시값, 비교 기준, 0~100 그래프 위치, 방향을 제공한다.
+`interpretation`은 수치를 반복하지 않고 해당 비교가 왜 판단에 유효한지 설명한다. 큰 headline은
+사용자 결론을 우선하고 숫자는 근거 그래프에 보조 정보로 남긴다. 그래프 위치는 백엔드가 확정하고
+프런트는 투자 판단을 재계산하지 않는다.
+`cautions[]`는 실패 조건, 알려진 soft penalty·실행 경고, 판단 유효 범위와 신뢰도 의미를
+`code`, `label`, `severity`, `sentence`로 제공한다. 이 문장 계약은 가격·점수 계산을 변경하지 않는다.
+decision v1 flag가 꺼진 응답은 decision/sizing/keyEvidence/counterEvidence/cautions를 제거해 구형
 action 값이 직접 매수 권한으로 오인되지 않게 한다.
 이 경로는 DB run/item 저장, 알림 발행, 개인화 학습을 수행하지 않고 worker도
 `fixed_replay_override` 상태만 반환한다. manifest/file/recommendation digest가 하나라도
