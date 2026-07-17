@@ -162,9 +162,9 @@ forming 3px/0.88, 그 밖에는 3px/0.78이고 fill은 0.04다. 추세와 채널
 
 해설 hover/focus는 대상의 원래 category 색을 유지한 채 opacity를 1로 올리고 선을
 0.75px(최대 4.5px) 굵게 한다. 다른 분석 작도는 각 원래 opacity의 65%로 낮추되
-캔들과 사용자 drawing은 더 약하게만 dim한다. 해석 레이어의 확정 바탕선과 hard-pass
-미선택 후보는 category 색의 solid 5.5px(pattern), 4.5px(level), 4px(trend), opacity 0.48로
-표시한다. 근접 후보는 같은 굵기와 category 색을 쓰되 opacity 0.38로 낮춘다. 근거 marker는
+캔들과 사용자 drawing은 더 약하게만 dim한다. 해석 레이어의 확정 바탕선과 모든 미선택
+후보는 category 색의 solid 5.5px(pattern), 4.5px(level), 4px(trend), opacity 0.40으로
+동일하게 표시한다. 후보의 판정 상태에 따라 opacity를 달리하지 않는다. 근거 marker는
 캔들 위에 유지하며 해석 바탕선은 history, export, hit-test에 포함하지 않는다.
 제안 `riskRewardBox`도 가격축 pill이나 내부 설명 chip을 만들지 않으며, 오른쪽의
 클릭 가능한 DOM 라벨로 진입/목표/손절 또는 매도/예상 하단/재검토 가격을 표시한다.
