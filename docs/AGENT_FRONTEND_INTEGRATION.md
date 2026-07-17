@@ -896,6 +896,26 @@ ready 서술은 섹션별
 `evidenceRefs`를 응답의 source label로 바꾸어 표시하고 정보성 분석 고지를 함께 노출한다.
 패널은 버튼 없이 기업 선택 즉시 실행되며 1~3개 비교 기업을 허용한다.
 
+## AI Company Journal Panel
+
+기업저널 panel은 `GET /api/company-journal/{symbol}`의 최신 verified report를 읽는다.
+headline, keywords, 탭별 자연어, 최근 움직임과 안정성 문장은 서버 report만 source of truth로
+사용한다. 화면 탭은 `매출·수익 / 실적 / 안정성 / 가치`다. 재무·가치·실적 차트는 기존 API를
+계속 사용하며 ClickHouse를 직접 조회하지
+않는다. report가 pending/unavailable이면 숫자나 문장을 추정하지 않고 생성/연결 상태를
+표시하면서 기존 실제 차트는 유지한다.
+
+실적 탭은 SEC 실제치/Yahoo 예상치 차트와 `/api/company-journal/{symbol}/evidence`의 최대 2년
+저장 일봉으로 만든
+종목·S&P 500·섹터 ETF 상대수익률/거래량 차트를 함께 제공한다. 기업저널 내부 뉴스 탭은 두지
+않지만 뉴스는 저장형 문장을 만드는 입력 근거로 계속 사용할 수 있다. 오른쪽 설명의 hover/focus는
+관련 차트 계열을 강조하며 선택된 재무 용어는 공통 사전 tooltip으로 설명한다.
+전용 evidence route는 replay simulation 중 일반 `/api/market/*`가 409를 반환할 때도 기업저널
+근거만 제공하며 다른 패널은 계속 기존 simulation guard를 따른다.
+
+어려운 재무 용어는 공통 `GlossaryText`를 사용하므로 hover, focus, Enter/Space에서 같은
+설명을 제공한다. `companyJournalPreview=1` fixture는 `import.meta.env.DEV`일 때만 활성화된다.
+
 ## Frontend Reference Files
 
 기존 구현을 참고할 때 볼 파일:

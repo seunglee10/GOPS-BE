@@ -39,6 +39,17 @@ Vite build 시점에 값이 정적 asset 안으로 들어가며, free/commercial
 
 chart view는 패널 workspace로 구성된다. 기본 패널은 `뉴스`, `온톨로지`, `차트`이며, `인기종목`, `지수`, `포트폴리오`, `거래`, `오더플로우`, 추가 `차트` 패널도 panel add 메뉴에서 생성될 수 있다.
 
+포트폴리오 `성과` 패널은 `GET /api/account/performance?range=1W|1M|3M|1Y|ALL`의
+사용자별 일간 snapshot 이력을 사용한다. 선택 기간의 첫 관측값을 0%로 맞춘 내
+포트폴리오 평가손익률 변화와 Yahoo `^GSPC`의 S&P 500 가격수익률만 비교하며,
+이력이 두 시점 미만이면 임의 시계열을 만들지 않고 빈 상태를 표시한다.
+같은 성과 차트에서 snapshot의 `totalValueForeign`, 종목별 `purchaseAmountForeign`,
+S&P 500을 선택 기간 첫 시점 대비 변화율로 함께 비교한다. 상단에는 최신 평가금과
+현재 보유 종목 매입원가(`보유 원금`)를 실제 금액으로 표시한다. 입출금 원장이 없으므로
+이를 예수금 입출금을 반영한 `순투입 원금`으로 표기하거나 추정하지 않는다.
+단, Vite DEV에서는 화면 검증을 위해 실제 이력이 부족하거나 API가 연결되지 않았을 때
+고정된 `DEV DEMO` 성과 fixture를 표시한다. production build에는 이 fallback이 포함되지 않는다.
+
 차트 패널은 좌우 page edge에 붙을 때 gutter 없이 flush된다. 내부 경계에서는 일반 패널과 같은 gutter 규칙을 따른다. 패널 위치, 크기, 추가, 삭제, content swap 로직은 `apps/gops-frontend/src/layout/panelLayout.ts`와 `apps/gops-frontend/src/components/PanelWorkspace.tsx`가 담당한다.
 
 ## 주요 코드 위치

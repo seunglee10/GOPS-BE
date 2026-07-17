@@ -99,6 +99,9 @@ class RecommendationRepository:
     def upsert_portfolio_snapshot(self, user_sub: str, payload: dict[str, Any]) -> dict[str, Any]:
         raise NotImplementedError
 
+    def list_daily_portfolio_snapshots(self, user_sub: str, start_at: str | None = None) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
     def latest_run(self, user_sub: str) -> dict[str, Any] | None:
         raise NotImplementedError
 
@@ -541,6 +544,29 @@ class PostgresRecommendationRepository(RecommendationRepository):
                 ).fetchone()
                 conn.commit()
                 return _json_ready(dict(row))
+        except UndefinedTable as exc:
+            raise RecommendationSchemaUnavailable("recommendation database migration required") from exc
+
+    def list_daily_portfolio_snapshots(self, user_sub: str, start_at: str | None = None) -> list[dict[str, Any]]:
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT payload, source_as_of
+                    FROM (
+                        SELECT DISTINCT ON ((source_as_of AT TIME ZONE 'UTC')::date)
+                            payload,
+                            source_as_of
+                        FROM user_portfolio_snapshot_history
+                        WHERE user_sub = %s
+                          AND (%s::timestamptz IS NULL OR source_as_of >= %s::timestamptz)
+                        ORDER BY (source_as_of AT TIME ZONE 'UTC')::date, source_as_of DESC
+                    ) AS daily
+                    ORDER BY source_as_of ASC
+                    """,
+                    (user_sub, start_at, start_at),
+                ).fetchall()
+                return [_json_ready(dict(row)) for row in rows]
         except UndefinedTable as exc:
             raise RecommendationSchemaUnavailable("recommendation database migration required") from exc
 
@@ -1120,6 +1146,21 @@ class InMemoryRecommendationRepository(RecommendationRepository):
             })
         return _json_ready(row)
 
+    def list_daily_portfolio_snapshots(self, user_sub: str, start_at: str | None = None) -> list[dict[str, Any]]:
+        start = _history_datetime(start_at)
+        daily: dict[str, tuple[datetime, dict[str, Any]]] = {}
+        for row in self.portfolio_snapshot_history:
+            if row.get("user_sub") != user_sub:
+                continue
+            source_as_of = _history_datetime(row.get("source_as_of"))
+            if source_as_of is None or (start is not None and source_as_of < start):
+                continue
+            key = source_as_of.date().isoformat()
+            current = daily.get(key)
+            if current is None or source_as_of > current[0]:
+                daily[key] = (source_as_of, deepcopy(row))
+        return [_json_ready(row) for _, row in sorted(daily.values(), key=lambda item: item[0])]
+
     def latest_run(self, user_sub: str) -> dict[str, Any] | None:
         rows = [row for row in self.runs.values() if row["user_sub"] == user_sub]
         rows.sort(key=lambda item: (item["generated_at"], item["id"]), reverse=True)
@@ -1369,3 +1410,18 @@ def _coerce_datetime(value: Any) -> datetime | None:
 def _digest(value: Any) -> str:
     encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode()
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _history_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)

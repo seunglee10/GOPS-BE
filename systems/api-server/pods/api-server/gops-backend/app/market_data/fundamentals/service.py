@@ -220,13 +220,14 @@ class StoreFundamentalsAdapter(FundamentalsAdapter):
                 records[record.symbol] = record
         return records
 
-    def _series_from_clickhouse(self, symbols: list[str]) -> dict[str, list[EarningsSeriesPoint]]:
+    def _series_from_clickhouse(self, symbols: list[str], *, years: int = 3) -> dict[str, list[EarningsSeriesPoint]]:
         provider = self._clickhouse()
         query_json_each_row = getattr(provider, "query_json_each_row", None)
         if not callable(query_json_each_row):
             return {}
         facts_table = provider.table("sec_financial_facts") if hasattr(provider, "table") else "market_data.sec_financial_facts"
         estimates_table = provider.table("yahoo_earnings_estimates") if hasattr(provider, "table") else "market_data.yahoo_earnings_estimates"
+        months = max(18, min(120, int(years) * 12 + 6))
         try:
             actual_rows = query_json_each_row(
                 f"""
@@ -244,12 +245,12 @@ class StoreFundamentalsAdapter(FundamentalsAdapter):
                   AND metric IN {{metrics:Array(String)}}
                   AND value IS NOT NULL
                   AND fiscal_period IN ('Q1', 'Q2', 'Q3', 'Q4')
-                  AND period_end >= addMonths(today(), -30)
+                  AND period_end >= addMonths(today(), -{{months:UInt16}})
                 ORDER BY symbol ASC, metric ASC, period_end DESC, version_filed_at DESC
                 LIMIT 1 BY symbol, metric, fiscal_year, fiscal_period
                 FORMAT JSONEachRow
                 """,
-                {"symbols": symbols, "metrics": list(EARNINGS_SERIES_METRICS)},
+                {"symbols": symbols, "metrics": list(EARNINGS_SERIES_METRICS), "months": months},
             )
         except Exception:
             actual_rows = []
@@ -273,12 +274,12 @@ class StoreFundamentalsAdapter(FundamentalsAdapter):
                   AND metric IN {{metrics:Array(String)}}
                   AND average IS NOT NULL
                   AND fiscal_period IN ('Q1', 'Q2', 'Q3', 'Q4')
-                  AND period_end >= addMonths(today(), -30)
+                  AND period_end >= addMonths(today(), -{{months:UInt16}})
                 ORDER BY symbol ASC, metric ASC, period_end DESC, collected_at DESC
                 LIMIT 1 BY symbol, metric, fiscal_year, fiscal_period
                 FORMAT JSONEachRow
                 """,
-                {"symbols": symbols, "metrics": list(EARNINGS_SERIES_METRICS)},
+                {"symbols": symbols, "metrics": list(EARNINGS_SERIES_METRICS), "months": months},
             )
         except Exception:
             estimate_rows = []
@@ -286,7 +287,7 @@ class StoreFundamentalsAdapter(FundamentalsAdapter):
 
     def earnings_series(self, symbol: str, *, years: int = 3) -> list[EarningsSeriesPoint]:
         normalized = normalize_market_symbol(symbol)
-        return self._series_from_clickhouse([normalized]).get(normalized, [])
+        return self._series_from_clickhouse([normalized], years=years).get(normalized, [])
 
     def financial_series(self, symbol: str, *, years: int = 3, period: str = "quarterly") -> list[FinancialSeriesPoint]:
         normalized = normalize_market_symbol(symbol)

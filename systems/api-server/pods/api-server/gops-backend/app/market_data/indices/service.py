@@ -6,7 +6,7 @@ import math
 import os
 import uuid
 from collections.abc import Callable, Mapping, Sequence
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 DEFAULT_CACHE_TTL_SECONDS = 60
@@ -17,6 +17,15 @@ DEFAULT_STALE_REFRESH_SECONDS = 300
 DEFAULT_UPSTREAM_TIMEOUT_SECONDS = 5
 DEFAULT_PERIOD = "5d"
 DEFAULT_INTERVAL = "5m"
+PERFORMANCE_HISTORY_RANGES: dict[str, tuple[str, timedelta | None]] = {
+    "1W": ("1mo", timedelta(days=7)),
+    "1M": ("1mo", timedelta(days=31)),
+    "3M": ("3mo", timedelta(days=93)),
+    "1Y": ("1y", timedelta(days=366)),
+    "ALL": ("max", None),
+}
+PERFORMANCE_BENCHMARK_SYMBOL = "^GSPC"
+PERFORMANCE_HISTORY_CACHE_SECONDS = 21_600
 
 
 INDEX_DEFINITIONS: tuple[dict[str, str], ...] = (
@@ -198,6 +207,62 @@ class MarketIndicesService:
             if stale is not None:
                 return with_cache_status(stale, "stale", str(exc))
             raise
+
+    def performance_history(self, range_value: str, start_at: datetime | None = None) -> dict[str, Any]:
+        normalized_range = str(range_value or "1M").strip().upper()
+        if normalized_range not in PERFORMANCE_HISTORY_RANGES:
+            raise ValueError(f"Unsupported performance range: {range_value}")
+        period, lookback = PERFORMANCE_HISTORY_RANGES[normalized_range]
+        now = utc_now()
+        cutoff = now - lookback if lookback is not None else None
+        if start_at is not None:
+            normalized_start = start_at if start_at.tzinfo is not None else start_at.replace(tzinfo=timezone.utc)
+            normalized_start = normalized_start.astimezone(timezone.utc)
+            cutoff = max(cutoff, normalized_start) if cutoff is not None else normalized_start
+        cutoff_key = cutoff.date().isoformat() if cutoff is not None else "all"
+        cache_key = redis_key(f"indices:performance:{PERFORMANCE_BENCHMARK_SYMBOL}:{normalized_range}:{cutoff_key}")
+        cached = self._cache_get(cache_key)
+        if cached is not None:
+            return {**cached, "cacheStatus": "fresh"}
+
+        timeout = read_positive_int("MARKET_INDICES_UPSTREAM_TIMEOUT_SECONDS", DEFAULT_UPSTREAM_TIMEOUT_SECONDS)
+        raw = self.fetcher(
+            symbols=[PERFORMANCE_BENCHMARK_SYMBOL],
+            period=period,
+            interval="1d",
+            timeout=timeout,
+        )
+        rows = normalize_index_rows(raw, [PERFORMANCE_BENCHMARK_SYMBOL]).get(PERFORMANCE_BENCHMARK_SYMBOL, [])
+        valid_rows = [
+            row
+            for row in rows
+            if isinstance(row.get("timestamp"), datetime)
+            and finite_float(row.get("close")) not in (None, 0)
+            and (cutoff is None or row["timestamp"].astimezone(timezone.utc) >= cutoff)
+        ]
+        valid_rows.sort(key=lambda row: row["timestamp"])
+        base_price = finite_float(valid_rows[0].get("close")) if valid_rows else None
+        points = []
+        if base_price not in (None, 0):
+            for row in valid_rows:
+                close = finite_float(row.get("close"))
+                if close is None:
+                    continue
+                points.append({
+                    "time": isoformat_z(row["timestamp"]),
+                    "returnPercent": round_float(((close - base_price) / base_price) * 100),
+                })
+        payload = {
+            "symbol": PERFORMANCE_BENCHMARK_SYMBOL,
+            "name": "S&P 500",
+            "method": "price_return",
+            "source": "yahoo-finance",
+            "asOf": points[-1]["time"] if points else None,
+            "points": points,
+            "cacheStatus": "fresh",
+        }
+        self._cache_set(cache_key, payload, PERFORMANCE_HISTORY_CACHE_SECONDS)
+        return payload
 
     def refresh(self) -> dict[str, Any] | None:
         fresh_key = indices_cache_key()

@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.alerts.routes import router as alerts_router
+from app.company_journal.routes import router as company_journal_router
 from app.contracts.chart import AgentChatMessage, AgentChatRequest, ChartProposalRequest
 from app.core.config import CORS_ORIGINS, read_dotenv_value
 from app.market_data.indices.service import start_market_indices_warmer
@@ -13,7 +14,7 @@ from app.market_data.monitor.routes import router as market_monitor_router
 from app.market_data.query.routes import router as market_query_router
 from app.recommendations.routes import router as recommendations_router
 from app.trade_conditions.routes import router as trade_conditions_router
-from app.routes.account import account_holdings, router as account_router
+from app.routes.account import account_holdings, account_performance, router as account_router
 from app.routes.auth import router as auth_router
 from app.routes.agents import agent_alerts, agent_report, agent_report_stream, analyze_agents, router as agents_router
 from app.routes.charts import chart_candles, chart_symbols, router as charts_router
@@ -82,6 +83,7 @@ def create_app() -> FastAPI:
     app.include_router(paper_trading_router)
     app.include_router(simulator_router)
     app.include_router(alerts_router)
+    app.include_router(company_journal_router)
     app.include_router(trade_conditions_router)
     app.include_router(recommendations_router)
     app.include_router(streams_router)
@@ -101,6 +103,7 @@ __all__ = [
     "agent_report",
     "agent_report_stream",
     "account_holdings",
+    "account_performance",
     "analyze_agents",
     "app",
     "chart_candles",

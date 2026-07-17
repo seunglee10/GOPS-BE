@@ -1236,6 +1236,38 @@ deployment는 변경하지 않는다. simulator는 ClickHouse를 chunk 조회하
 
 ## Smoke Checks
 
+## AI Company Journal Deployment
+
+기업저널은 Redis/PostgreSQL/S3에 결과를 저장하지 않는다. 영구 결과와 생성 상태는 각각
+ClickHouse `company_journal_reports_v1`, `company_journal_generation_events_v1`에 저장한다.
+기존 뉴스·캔들·SEC·graph row는 id로 참조하며 복사하거나 mutation하지 않는다.
+
+backend 이미지가 선택된 배포는 app rollout 전에
+`scripts/aws/run-company-journal-migrations-job.sh`를 자동 실행한다. migration은
+`CREATE TABLE IF NOT EXISTS`만 수행하고 실패하면 rollout을 중단한다. 이후 AWS scheduled
+overlay의 `gops-company-journal-worker`가 10분마다 pending event를 처리하고,
+`gops-company-journal-post-market`이 평일 23:30 UTC에 최근 데이터 기업을 갱신 예약한다.
+두 CronJob은 API 이미지와 ClickHouse/OpenAI secret을 사용하고 batch node pool에서 실행된다.
+SEC companyfacts CronJob은 매일 20:30 UTC, Yahoo estimates CronJob은 21:15 UTC에 실행되어
+안정성/실적 차트 원천을 먼저 갱신한다. 기업저널 v2 worker는 최대 520개 일봉과 최근 42개월의
+SEC 실제치/Yahoo 예상치를 읽으며 원천 row를 복제하지 않고 receipt에 기간과 기준시각만 남긴다.
+`company-journal-benchmark-bootstrap` Job은 SPY와 8개 섹터 ETF의 2년 `1D` 누락 timestamp만
+기존 candle-bootstrap 계약으로 추가한다. canonical v2/split 기존 행을 삭제하거나 덮어쓰지 않는다.
+CI/local deploy는 market-processor 이미지가 선택됐을 때 이 Job을 명시적으로 실행하고 완료를
+기다린다. 일회성 Job을 일반 app kustomize에 암묵적으로 의존하지 않는다.
+
+배포 후 확인:
+
+```text
+company-journal-migrations Job complete
+company-journal-benchmark-bootstrap Job complete, SPY·섹터 ETF 1D coverage 약 2년
+두 company-journal CronJob 존재 및 image tag가 backend와 동일
+GET /api/company-journal/NVDA가 ready 또는 pending 계약 반환
+GET /api/company-journal/NVDA/evidence가 SEC/Yahoo/일봉 근거 또는 명시적 missingData 반환
+worker 완료 후 verified report가 ClickHouse에 append
+기존 report row와 원천 테이블 row count가 감소하지 않음
+```
+
 Local static checks:
 
 ```sh
@@ -1280,6 +1312,21 @@ the S3 object SHA-256 metadata matches coachReport.snapshotDigest
 another authenticated user cannot read the report or contribute account rows
 the post-rollout IRSA canary gate reports archiveStatus=stored
 ```
+
+### Archive-first AI coach preflight
+
+Before the AI coach archive-first UI is enabled, run the non-mutating readiness gate:
+
+```sh
+bash scripts/aws/preflight-ai-coach-aws.sh
+```
+
+It requires the worker to read `ai-coach/input/v1/*` and `ai-coach/reports/v1/*`, and the
+API pod to read `ai-coach/reports/v1/*`. It also checks the existing ClickHouse serving
+tables and the `0008_alert_proposal_source.sql` PostgreSQL migration. It does not create,
+alter, migrate, delete, or write data. After a deliberate deployment, run the existing
+`scripts/aws/verify-ai-coach-snapshot-s3.sh` separately to verify the worker's S3 write
+permission through its non-sensitive canary.
 
 Static render/build success proves source and image compatibility only. The automatic
 post-rollout canary proves that the deployed worker can assume IRSA and perform an
