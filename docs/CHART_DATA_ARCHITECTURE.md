@@ -173,6 +173,14 @@ the current symbol's positive quantity and average price through one shared acco
 WebSocket. A nearby average price may participate in the visible price domain, while
 the overlay never changes candle facts, chart documents, or market-data APIs.
 
+Buy/sell fill markers are also transient authenticated frontend overlays. They read
+only completed paper orders in LIVE and only the current replay `runId` ledger in SIM.
+`B` is anchored below the matched candle low and `S` above its high; fills sharing one
+candle keep the candle's exact x center and stack vertically. Daily matching uses the
+New York market date, while intraday/weekly/monthly matching requires the fill instant
+to fall inside the candle's half-open semantic range. These markers never mutate candle
+facts, chart documents, drawings, or market-data storage.
+
 `POST /api/charts/active-symbol` refreshes a bounded cohort with the declared
 `candles,trades,quotes` layers before the frontend requests the candle snapshot.
 This ordering lets a newly opened symbol start BOATS/SIP candle collection while

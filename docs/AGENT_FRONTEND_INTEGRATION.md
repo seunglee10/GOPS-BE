@@ -95,6 +95,15 @@ source, capture timestamp를 보내지 않으며 서버가 검증·보강한 fil
 포함한다. 종목 변경, 전량 매도, 계정 변경 또는 WebSocket 갱신은 별도 새 연결 없이
 표시를 즉시 교체하거나 제거하며, 다른 사용자 계정의 이전 스냅샷을 재사용하지 않는다.
 
+차트의 매매 체결 DOM 마커도 사용자별 원장을 사용한다. LIVE에서는 영구 가상계좌의
+`filled` 주문만, SIM에서는 현재 `runId`의 `filled` 주문만 표시하며 서로 섞지 않는다.
+매수 `B`는 체결 시각이 속한 봉의 저가 아래, 매도 `S`는 고가 위에 표시하고 같은 봉의
+동일 방향 체결은 x 좌표를 벌리지 않고 세로로 쌓는다. 일봉은 New York 시장일, 분·시간봉과
+주·월봉은 체결 시각이 실제로 포함된 반개구간 봉에만 연결한다. Canvas scene 좌표는 chart
+container의 local 좌표로 환산해 UI scale·pan·zoom 중에도 봉에서 분리되지 않아야 한다.
+대기·취소·거절 주문은 마커를 만들지 않으며, SIM 지정가의 후속 체결은 주문 WebSocket
+terminal event에서 실행 원장을 다시 읽어 즉시 반영한다.
+
 Agent 인증 진입은 상단 global navigation의 `Login` 버튼을 사용한다. 별도 `Agents`
 버튼은 표시하지 않으며, 인증 후 하단 Agent 입력을 직접 사용한다. 로컬 Vite DEV에서는
 Agent debug가 기본으로 켜지고 분석 prompt를 보내면 request snapshot을 browser
