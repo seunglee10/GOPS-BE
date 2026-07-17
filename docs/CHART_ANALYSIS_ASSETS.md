@@ -34,9 +34,9 @@ role 충돌, break-pending 후보는 reference가 될 수 없다. role별 최대
 
 | importance | 대상 | 선 표현 | 라벨 |
 | --- | --- | --- | --- |
-| `major` | role별 첫 confirmed | 3px, 0.95, solid | 지지/저항 |
-| `standard` | 두 번째 confirmed 또는 contextual | 2.25px, 0.82, `[6,4]` | 보조 지지/저항 |
-| `minor` | reference | 1.5px, 0.62, `[2,4]` | 참고 지지/저항 |
+| `major` | role별 첫 confirmed | 2.5px, 0.88, solid | 지지/저항 |
+| `standard` | 두 번째 confirmed 또는 contextual | 1.75px, 0.78, `[7,4]` | 보조 지지/저항 |
+| `minor` | reference | 1.25px, 0.68, `[2,4]` | 참고 지지/저항 |
 
 구자산처럼 importance metadata가 없으면 기존 2.5px 표현을 사용한다. 프런트는 레벨을
 재계산하거나 재병합하지 않는다.
@@ -61,10 +61,13 @@ v6는 기존 패턴 detector, ranking, hardPass, confirmation, `tradePlan`, prim
 `patterns[]`에는 활성 hard-pass 후보를 저장하고 `primaryPattern`만 작도한다.
 `primaryTriangle`/`historicalTriangle`은 구독자 호환 필드다.
 
-`tradePlan`은 주문이 아니라 차트 표시용 시나리오다. `forming`은 관찰만 하고
-`confirmed`만 신호를 낸다. 상승은 `buy_candidate/long`, 하락은 보유분 매도 검토인
-`sell_candidate/exit_long`만 생성하며 공매도 진입 시나리오는 없다. 진입·매도,
-손절·재검토, 목표·예상 하단과 손익비는 서버가 ATR 정규화 값으로 계산한다.
+저장된 `tradePlan`은 주문이 아니며 confirmed 패턴의 자격과 신호 시점을 제공한다.
+상승은 `buy_candidate/long`, 하락은 보유분 매도 검토인 `sell_candidate/exit_long`만
+생성하며 공매도 진입 시나리오는 없다. 화면의 제안 가격은 이를 그대로 복사하지 않고
+현재 interval의 최종 작도를 가격으로 번역한다. 패턴 제안은 상·하단 경계와 패턴 폭 또는
+깃대 길이만 사용하고, 패턴이 없을 때의 H-line 제안은 기준선·다음 진행 방향 선·반대
+위험선이 모두 실제 최종 drawing으로 존재할 때만 생성한다. 최근 종가, 2R 투영, 다른
+interval 자산 또는 서로 다른 근거의 조합으로 부족한 가격을 채우지 않는다.
 
 ## 해석 trace
 
@@ -115,11 +118,12 @@ Alpaca가 성공했지만 실제 봉이 없는 slot은 `provider_confirmed_empty
 
 - API와 내부 build envelope 모두 `1m/1D`만 받으며 기본값도 두 interval이다.
 - worker는 `scheduled` item을 candle 조회 전에 `manual_refresh_only`로 종료한다.
-- 일반 manual build는 없는 자산만 만든다. 기존 row 교체는 선택한 symbol/interval의
-  `manual + force`에서만 가능하다.
-- 개발 패널은 이를 `없는 자산 생성`과 `기존 자산 강제 재생성`으로 구분한다. 완료
-  결과에는 algorithm version, 저장 as-of, trace mode, category별 후보 수와 write 검증을
-  표시하며 실패·unchanged는 이전 row가 유지됐음을 명시한다.
+- 개발 패널은 개별 symbol의 `작도 자산 생성·갱신` 동작만 제공한다. 이 동작은 선택한
+  `1m/1D`를 항상 `manual + force`로 실행해 없는 row는 만들고 기존 row는 현재 완료 봉과
+  최신 커널로 교체한다. 완료 결과에는 algorithm version, 저장 as-of, trace mode,
+  category별 후보 수와 write 검증을 표시하며 실패 시에는 기존 row 유지 여부를 명시한다.
+- 실패분은 별도 실행 종류로 분리하지 않고 같은 선택과 버튼으로 다시 실행한다. 수동
+  S&P500 force 갱신은 개발 패널에 노출하지 않는다.
 - `symbols="sp500"`과 `force=true` 조합은 API에서 400으로 거절한다.
 - 같은 source/force/symbol/interval의 active 요청은 하나의 PostgreSQL job으로 합친다.
 - 수동 priority는 100이고 최대 2회 처리 뒤 만료된 lease는 실패로 종결한다.
@@ -130,21 +134,42 @@ Alpaca가 성공했지만 실제 봉이 없는 slot은 `provider_confirmed_empty
 자동 분석은 `해석`, `저항(지지·저항)`, `추세`, `패턴`, `제안`의 다섯 레이어로
 나뉜다. 초기값은 해석·제안 OFF, 나머지 ON이다. `drawingGroups`가 levels/trend/pattern
 drawing ID의 원본이며 구자산은 stable ID와 geometry metadata로 호환 분류한다.
-SMA60/120과 최근 교차는 추세 레이어가 소유한다. 제안 OFF는 메모리 trade plan을
-삭제하지 않고 표시와 제안 가격의 Y축 반영만 중단한다.
+SMA60/120은 차트 추가 도구가 소유하는 독립 보조지표이며 추세 토글이 가시성을 바꾸지
+않는다. 최근 골든·데드크로스 마커만 분석 이벤트로 추세 레이어가 소유한다. 제안 OFF는
+메모리 trade plan을 삭제하지 않고 표시와 제안 가격의 Y축 반영만 중단한다.
 
 해설은 규칙 기반 종합 해설과 주요 가격·시나리오를 먼저 보여주고, 판단 근거를 지지·저항,
 추세, 패턴 세 항목으로 분리한다. 원시 metric은 `수치 근거 자세히`에 접어 둔다. hover는 해당 작도만 강조하고 같은
 trace에서 최종 선택된 후보의 피벗·접촉·반응만 임시 overlay로 표시한다. 글로벌 해석은
-v2 전체 후보를 H-line, ray, 채널, 패턴 segment로 표시하고 v1/legacy는 일부 후보 또는
-근거만 제공한다. 클릭은 한 항목의 서버 metrics 카드를
+전체 trace를 보존한 채 미선택 hard-pass 후보를 우선하고, category에 적격 후보가 없을 때만
+활성 evidence-pass 근접 후보 하나를 허용한다. 최종 선택 후보 수의 2배를 기본 예산으로
+최소 3개, 최대 9개만 H-line, ray, 채널, 패턴 segment로 표시하며 level/trend/pattern
+상한은 각각 4/3/2다. stale, breached, invalidated, role-conflict, break-pending 후보는
+근접 후보로 표시하지 않는다. 클릭은 한 항목의 서버 metrics 카드를
 확장·고정하며 다른 항목 hover가 끝나면 고정 항목으로 복귀한다. 해석 글로벌 토글이
 꺼져 있어도 해설 hover의 관련 subset은 표시할 수 있다. 이 overlay와 제안 projection은
 PostgreSQL drawing 8개, undo/history/export에 포함되지 않으며 주문 API를 호출하지 않는다.
 
-패턴 작도는 상단 선의 inline 패턴명만 표시하고 우측 가격축 라벨은 만들지 않는다.
+작도 위계는 패턴, 지지·저항, 추세 순이다. 색은 신규 고정값을 저장하지 않고 전역
+semantic token만 사용한다. 패턴은 drawing 70%와 axis를 섞은 중립색, 지지·저항은
+up/down 18%와 axis를 섞은 색, 추세는 axis 색이다. 패턴은 confirmed 3.25px/0.94,
+forming 3px/0.88, 그 밖에는 3px/0.78이고 fill은 0.04다. 추세와 채널은 방향별 색상
+분기 없이 1.5px/0.76 solid, fill 0.02로 표시한다. 작도 내부 이름은 표시하지 않으며
+패턴명은 실제 segment가 현재 plot과 교차할 때만 plot 우측 상단 배지로 표시한다.
+패턴 우측 가격축 라벨은 만들지 않는다.
+
+해설 hover/focus는 대상의 원래 category 색을 유지한 채 opacity를 1로 올리고 선을
+0.75px(최대 4.5px) 굵게 한다. 다른 분석 작도는 각 원래 opacity의 65%로 낮추되
+캔들과 사용자 drawing은 더 약하게만 dim한다. 해석 레이어의 hard-pass 미선택 후보는
+category 색 1.25px/0.42 `[6,4]`, 근접 후보는 axis 색 1px/0.30 `[3,4]`로 표시한다.
 제안 `riskRewardBox`도 가격축 pill이나 내부 설명 chip을 만들지 않으며, 오른쪽의
 클릭 가능한 DOM 라벨로 진입/목표/손절 또는 매도/예상 하단/재검토 가격을 표시한다.
+각 라벨에는 `패턴 상단`, `패턴 폭`, `다음 저항선`처럼 가격 원천을 함께 표시한다.
+라벨과 주요 가격 행을 hover/focus하면 해당 원천 drawing을 강조하며, 패턴 폭·깃대
+길이처럼 여러 segment에서 파생된 가격은 해당 primary pattern 전체를 강조한다.
+DOM 라벨은 매 scene에서 Canvas와 같은 geometry를 동기적으로 사용하며 박스 오른쪽 lane에
+놓는다. 가격이 가까우면 최소 24px 간격으로 분산하고 원래 가격선에는 elbow connector를
+연결한다.
 시나리오 hover/focus는 제안이 꺼져 있어도 이를 임시 표시하고, 시나리오 클릭은 연결된
 `chartDocumentId`의 제안 레이어만 토글한다. 최초 표시에는 projection 폭과 176px 라벨
 공간을 포함한 외부 auto-frame을 한 번 적용한다.
