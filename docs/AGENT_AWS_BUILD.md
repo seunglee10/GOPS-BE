@@ -474,9 +474,8 @@ candidates. Failure is `data_not_ready`, never a legacy recommendation. Narrativ
 `RECOMMENDATION_NARRATIVE_MODEL`; it falls back to deterministic Korean text without changing rank.
 
 The fixed historical recommendation override is separate from live narrative generation. Both AWS
-app overlays set `RECOMMENDATION_FIXED_REPLAY_ENABLED=true`, keep
-`RECOMMENDATION_DECISION_V1_ENABLED=false` until the direct-recommendation compliance review is
-complete, and point
+app overlays set `RECOMMENDATION_FIXED_REPLAY_ENABLED=true` and
+`RECOMMENDATION_DECISION_V1_ENABLED=true`, and point
 `RECOMMENDATION_FIXED_REPLAY_PATH` at the image-bundled
 `recommendation-v3-2026-07-15` artifact. Backend startup validates the manifest, file SHA-256, and
 the common evidence-pool digest. Request handling reads only profile, preference, and portfolio
@@ -485,9 +484,9 @@ The recommendation worker performs no profile scan, DB write, or notification
 while the override is enabled. Rollback removes/disables only the fixed override keys; the ordinary
 algorithm selector remains `deterministic-evidence-v3`.
 
-After migration `0015`, artifact verification, API/UI smoke tests, and compliance approval, set only
-`RECOMMENDATION_DECISION_V1_ENABLED=true` in both app overlays. Setting it back to `false` restores
-the existing fixed recommendation contract without disabling the historical replay provider.
+Migration `0015`, artifact verification, and API/UI smoke tests remain activation prerequisites.
+Setting `RECOMMENDATION_DECISION_V1_ENABLED=false` restores the observation-only fixed
+recommendation contract without disabling the historical replay provider.
 
 The artifact uses `sourceMode=historical_reconstruction`: candle and quote eligibility is based on
 `event_time <= 2026-07-14 16:00 ET`, while later insertion timestamps are preserved in manifest
