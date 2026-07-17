@@ -851,6 +851,9 @@ class FinancialSnapshotProvider:
 
     def fetch(self, context: Any, run_id: str, max_items: int) -> DataSnapshot:
         started_at = time.perf_counter()
+        reference_evidence = company_compare_reference_evidence(context)
+        if reference_evidence:
+            return self._snapshot(context, run_id, max_items, reference_evidence, started_at)
         try:
             evidence = self.provider.fetch(ProviderRequest(str(context.symbol), str(context.intent), symbols=tuple(financial_peer_symbols_for_context(context))))
         except Exception as exc:
@@ -885,6 +888,9 @@ class FinancialPeerSnapshotProvider(FinancialSnapshotProvider):
 
     def fetch(self, context: Any, run_id: str, max_items: int) -> DataSnapshot:
         started_at = time.perf_counter()
+        reference_evidence = company_compare_reference_evidence(context)
+        if reference_evidence:
+            return self._snapshot(context, run_id, max_items, reference_evidence, started_at)
         try:
             evidence = self.provider.fetch_peer(ProviderRequest(str(context.symbol), str(context.intent), symbols=tuple(financial_peer_symbols_for_context(context))))
         except Exception as exc:
@@ -1508,6 +1514,59 @@ def recommendation_reference_evidence(context: Any) -> list[EvidenceItem]:
             title=f"Selected stock recommendation: {symbol}",
             summary=" ".join(summary_parts),
             raw={"referenceIndex": index, "reference": reference},
+        ))
+    return evidence
+
+
+def company_compare_reference_evidence(context: Any) -> list[EvidenceItem]:
+    evidence = []
+    for index, reference in enumerate(context_references(context)):
+        ref_type = str(reference.get("type") or "")
+        if ref_type not in {"financial.metric", "compare.axis", "compare.context"}:
+            continue
+        data = reference.get("data") if isinstance(reference.get("data"), dict) else {}
+        symbols = [
+            str(value).strip().upper()
+            for value in data.get("symbols", [])
+            if isinstance(value, str) and value.strip()
+        ] if isinstance(data.get("symbols"), list) else []
+        symbol_label = " × ".join(symbols) or str(data.get("baseSymbol") or context.symbol)
+        if ref_type == "financial.metric":
+            metric = str(data.get("metric") or "비교 지표")
+            values = data.get("values") if isinstance(data.get("values"), list) else []
+            displayed = []
+            for value in values:
+                if not isinstance(value, dict):
+                    continue
+                symbol = str(value.get("symbol") or "").strip().upper()
+                display = str(value.get("display") or "데이터 없음").strip()
+                if symbol:
+                    displayed.append(f"{symbol} {display}")
+            summary = f"{symbol_label}의 {metric} 비교: {' / '.join(displayed) or '표시 값 없음'}."
+            title = f"Selected comparison metric: {metric}"
+            observed_at = str(data.get("asOf") or utc_now_iso())
+        elif ref_type == "compare.axis":
+            heading = str(data.get("heading") or "기업 비교")
+            summary = str(data.get("analysis") or f"{symbol_label} {heading} 비교 근거")
+            title = f"Selected comparison axis: {heading}"
+            observed_at = utc_now_iso()
+        else:
+            summary = str(data.get("summary") or f"{symbol_label} 기업 비교 문맥")
+            title = f"Selected company comparison: {symbol_label}"
+            observed_at = utc_now_iso()
+        evidence.append(EvidenceItem(
+            provider="financial",
+            status="available",
+            title=title,
+            summary=summary,
+            observedAt=observed_at,
+            raw={
+                "referenceIndex": index,
+                "reference": reference,
+                "symbols": symbols,
+                "referencePayloadPriority": True,
+                "version": data.get("version") or "company-compare.v1",
+            },
         ))
     return evidence
 

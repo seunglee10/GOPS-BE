@@ -430,6 +430,7 @@ class FinalAnswerSynthesizer:
                             "You write beginner-friendly Korean SEC financial statement analysis. "
                             "Use only the supplied formatted facts and rule-based signals. "
                             "Do not calculate new numbers, infer missing metrics, mention raw JSON fields, or add prices, PER, PBR, PSR, forecasts, news, or buy/sell recommendations. "
+                            "For referenced company-comparison data, do not recalculate supplied values; explain their meaning without judgments or investment recommendations. "
                             "Explain what each important metric means, then state cautious interpretation and data limitations. "
                             "The summary must start with the integrated judgment or conclusion, not with a statement that evidence was retrieved. "
                             "Return strict JSON only."
@@ -1206,6 +1207,9 @@ FINANCIAL_QUALITY_MESSAGES = {
 def build_financial_final_answer(symbol: str, findings: list[AgentFinding], provider_evidence: list[EvidenceItem]) -> FinalAnswer:
     financial_items = [item for item in provider_evidence if item.provider == "financial" and item.status == "available"]
     no_data = [item for item in provider_evidence if item.provider == "financial" and item.status == "no-data"]
+    comparison_items = [item for item in financial_items if is_company_compare_reference_evidence(item)]
+    if comparison_items:
+        return build_company_compare_reference_final_answer(symbol, comparison_items)
     title = f"{symbol} SEC 재무 분석"
     if not financial_items:
         return FinalAnswer(
@@ -1248,6 +1252,85 @@ def build_financial_final_answer(symbol: str, findings: list[AgentFinding], prov
         citations=citations_from_evidence(financial_items),
         limitations=limitations,
     )
+
+
+def build_company_compare_reference_final_answer(
+    symbol: str,
+    items: list[EvidenceItem],
+) -> FinalAnswer:
+    item = items[0]
+    raw = item.raw if isinstance(item.raw, dict) else {}
+    reference = raw.get("reference") if isinstance(raw.get("reference"), dict) else {}
+    data = reference.get("data") if isinstance(reference.get("data"), dict) else {}
+    ref_type = str(reference.get("type") or "")
+    symbols = [
+        str(value).strip().upper()
+        for value in data.get("symbols", [])
+        if isinstance(value, str) and value.strip()
+    ] if isinstance(data.get("symbols"), list) else []
+    symbol_label = " × ".join(symbols) or symbol
+    if ref_type == "financial.metric":
+        metric = str(data.get("metric") or "비교 지표")
+        values = data.get("values") if isinstance(data.get("values"), list) else []
+        bullets = []
+        for value in values:
+            if not isinstance(value, dict):
+                continue
+            value_symbol = str(value.get("symbol") or "").strip().upper()
+            display = str(value.get("display") or "데이터 없음").strip()
+            if value_symbol:
+                bullets.append(f"{value_symbol}: {display}")
+        meaning = comparison_metric_meaning(metric)
+        return FinalAnswer(
+            title=f"{symbol_label} {metric} 비교",
+            summary=f"참조된 {metric} 값은 기업별 {meaning} 차이를 보여주지만, 이 값만으로 차이의 원인을 단정할 수는 없습니다.",
+            sections=[
+                FinalAnswerSection(title="참조된 비교 값", bullets=bullets or [item.summary]),
+                FinalAnswerSection(
+                    title="의미",
+                    bullets=[f"{metric}은 {meaning}을 읽는 지표입니다. 제공된 값을 그대로 비교했으며 새로 계산하지 않았습니다."],
+                ),
+            ],
+            citations=[],
+            limitations=["참조된 비교 패널 조각만 사용했으며 외부 데이터를 다시 조회하지 않았습니다."],
+        )
+    heading = str(data.get("heading") or "기업 비교")
+    analysis = str(data.get("analysis") or data.get("summary") or item.summary)
+    return FinalAnswer(
+        title=f"{symbol_label} {heading}",
+        summary=analysis,
+        sections=[
+            FinalAnswerSection(
+                title="참조 근거 해설",
+                bullets=[analysis],
+            )
+        ],
+        citations=[],
+        limitations=["참조된 비교 패널 근거를 그대로 사용했으며 별도 판정이나 투자 권유를 추가하지 않았습니다."],
+    )
+
+
+def is_company_compare_reference_evidence(item: EvidenceItem) -> bool:
+    raw = item.raw if isinstance(item.raw, dict) else {}
+    reference = raw.get("reference") if isinstance(raw.get("reference"), dict) else {}
+    return str(reference.get("type") or "") in {"financial.metric", "compare.axis", "compare.context"}
+
+
+def comparison_metric_meaning(metric: str) -> str:
+    normalized = metric.replace(" ", "").lower()
+    if "마진" in normalized or "margin" in normalized:
+        return "매출에서 비용을 제외하고 이익으로 남기는 구조"
+    if "성장" in normalized or "growth" in normalized:
+        return "같은 기준 기간 대비 사업 규모가 변한 속도"
+    if "부채" in normalized or "debt" in normalized:
+        return "자산이나 자본 대비 부채 부담"
+    if "유동" in normalized or "currentratio" in normalized:
+        return "단기 지급 의무를 감당할 수 있는 여력"
+    if "현금" in normalized or "cashflow" in normalized or "fcf" in normalized:
+        return "영업과 투자 이후 남는 현금 창출력"
+    if "roe" in normalized or "자기자본" in normalized:
+        return "주주 자본을 이익으로 전환한 효율"
+    return "같은 기준으로 측정한 재무 상태와 성과"
 
 
 def analysis_query_type_from_synthesis_input(synthesis_input: SynthesisInput | None) -> str:
@@ -1964,6 +2047,12 @@ def selected_reference_label(provider_evidence: list[EvidenceItem]) -> str:
             return "선택한 일일 뉴스 요약"
         if ref_type == "recommendation.stock":
             return "선택한 추천 종목"
+        if ref_type == "financial.metric":
+            return "선택한 기업 비교 지표"
+        if ref_type == "compare.axis":
+            return "선택한 기업 비교 분석축"
+        if ref_type == "compare.context":
+            return "선택한 기업 비교 문맥"
     return "선택한 reference"
 
 
@@ -2344,6 +2433,11 @@ def financial_synthesis_payload(
     synthesis_input: SynthesisInput | None,
 ) -> dict[str, Any]:
     financial_items = [item for item in provider_evidence if item.provider == "financial" and item.status == "available"]
+    comparison_references = [
+        (item.raw or {}).get("reference")
+        for item in financial_items
+        if is_company_compare_reference_evidence(item) and isinstance(item.raw, dict)
+    ]
     summary_item = next((item for item in financial_items if "peer" not in str(item.title).lower()), None)
     peer_item = next((item for item in financial_items if "peer" in str(item.title).lower()), None)
     facts = financial_display_metrics(summary_item) if summary_item else []
@@ -2361,10 +2455,12 @@ def financial_synthesis_payload(
         "facts": facts[:16],
         "signals": signals[:8],
         "peerComparisons": financial_peer_payload(peer_item) if peer_item else [],
+        "referenceComparisons": comparison_references,
         "limitations": unique_strings(limitations)[:8],
         "answerPolicy": [
             "제공된 facts와 signals만 사용합니다.",
             "숫자를 새로 계산하지 않습니다.",
+            "참조된 비교 데이터의 수치를 재계산하지 말고 의미를 설명합니다.",
             "매수/매도/목표가 같은 투자 행동 조언을 하지 않습니다.",
             "초보 투자자가 이해할 수 있게 지표 의미와 해석 한계를 설명합니다.",
         ],

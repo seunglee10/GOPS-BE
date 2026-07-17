@@ -377,12 +377,21 @@ def resolve_subject_symbol(
 
 def read_symbol_from_references(references: list[dict[str, Any]]) -> str | None:
     for reference in references:
-        if not str(reference.get("type") or "").startswith("chart."):
+        reference_type = str(reference.get("type") or "")
+        if not (
+            reference_type.startswith("chart.")
+            or reference_type in {"financial.metric", "compare.axis", "compare.context"}
+        ):
             continue
         data = reference.get("data") if isinstance(reference.get("data"), dict) else {}
-        symbol = data.get("symbol")
+        symbol = data.get("symbol") or data.get("baseSymbol")
         if isinstance(symbol, str) and symbol.strip():
             return symbol
+        symbols = data.get("symbols")
+        if isinstance(symbols, list):
+            first_symbol = next((item for item in symbols if isinstance(item, str) and item.strip()), None)
+            if first_symbol:
+                return first_symbol
     return None
 
 
