@@ -384,6 +384,9 @@ drawing command로 저장하고, 해당 봉은 canvas에서 만료 시간이 있
 
 Drawing anchor는 pixel이 아니라 canonical `timestamp`/`price`를 사용하고
 `logicalIndex`는 현재 candle 배열에서 계산 가능한 보조 cache로만 취급한다.
+차트의 자동 가격축 범위는 현재 viewport에 보이는 candle의 `high`/`low`만 사용한다.
+이동평균선, 볼린저밴드, 보유 평균가, 실시간 체결가, 주문·분석·proposal drawing,
+비교 종목처럼 candle 위에 겹쳐 그리는 overlay는 표시되더라도 가격축 범위를 넓히지 않는다.
 `horizontalLine`은 수동 작도의 단일 anchor와 Geometry 자산의 동일 가격 2-anchor
 접촉 구간을 모두 허용한다. 2-anchor 형식의 각 timestamp도 실제 candle key여야 한다.
 지원하는 평행선 계약은 2-anchor `horizontalParallelLines`/`verticalParallelLines`, 3-anchor
