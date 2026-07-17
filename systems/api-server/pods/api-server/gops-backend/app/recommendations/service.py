@@ -1279,6 +1279,7 @@ def normalize_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     normalized = []
     for item in items:
         metrics_snapshot = item.get("metricsSnapshot") or item.get("metrics_snapshot") or {}
+        decision_json = item.get("decision_json") if isinstance(item.get("decision_json"), dict) else {}
         change_percent = item.get("changePercent")
         normalized.append({
             "symbol": item.get("symbol"),
@@ -1307,6 +1308,10 @@ def normalize_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "reasons": item.get("reasons") or [],
             "riskWarnings": item.get("riskWarnings") or item.get("risk_warnings") or [],
             "explanation": item.get("explanation") or item.get("explanation_json"),
+            "decision": item.get("decision") or decision_json.get("decision"),
+            "sizing": item.get("sizing") or decision_json.get("sizing"),
+            "keyEvidence": item.get("keyEvidence") or decision_json.get("keyEvidence") or [],
+            "counterEvidence": item.get("counterEvidence") or decision_json.get("counterEvidence"),
             "metricsSnapshot": metrics_snapshot,
         })
     return normalized

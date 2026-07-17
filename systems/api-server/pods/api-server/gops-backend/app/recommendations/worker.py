@@ -11,6 +11,7 @@ from app.alerts.notifications import RedisNotificationBroker
 from app.alerts.repository import PostgresAlertRepository
 
 from .repository import PostgresRecommendationRepository, RecommendationRepository
+from .fixed_replay import FixedReplayProviderError, FixedReplayRecommendationProvider, fixed_replay_enabled
 from .service import RecommendationDataSource, RecommendationService
 from .scoring import market_session
 
@@ -25,6 +26,8 @@ class RecommendationWorker:
     @classmethod
     def from_env(cls) -> "RecommendationWorker":
         app = SimpleNamespace(state=SimpleNamespace())
+        if fixed_replay_enabled():
+            return cls(app)
         app.state.recommendation_repository = PostgresRecommendationRepository.from_env()
         app.state.alert_repository = PostgresAlertRepository.from_env()
         try:
@@ -38,6 +41,23 @@ class RecommendationWorker:
         return self.app.state.recommendation_repository
 
     def run_once(self, *, now: datetime | None = None) -> dict[str, Any]:
+        if fixed_replay_enabled():
+            try:
+                provider = FixedReplayRecommendationProvider.load()
+            except FixedReplayProviderError:
+                return {
+                    "status": "fixed_replay_override",
+                    "ready": False,
+                    "processed": 0,
+                    "generated": 0,
+                }
+            return {
+                "status": "fixed_replay_override",
+                "ready": True,
+                "recommendationDigest": provider.payload["recommendationDigest"],
+                "processed": 0,
+                "generated": 0,
+            }
         now = now or datetime.now(timezone.utc)
         session_mode = _worker_session_mode(now)
         if not session_mode:

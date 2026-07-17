@@ -458,7 +458,7 @@ ignores the shadow flag and publishes `algorithmVersion="continuous-personalizat
 API and recommendation-worker must receive the same selector.
 
 `deterministic-evidence-v3` is non-predictive and ignores the shadow flag. Before activating
-it, apply migrations `0013` and `0014` after `0012`; verify canonical cutoff-safe candles, quotes/spreads,
+direct recommendation v1, apply migrations `0013`, `0014`, and `0015` after `0012`; verify canonical cutoff-safe candles, quotes/spreads,
 tradability, news metadata, fundamentals, benchmark data, universe membership, and exchange
 calendar inputs for the complete prepared S&P 500 universe. The API and worker must be able to
 read and write the shared evidence snapshot tables. Rollback only changes the selector; the
@@ -472,6 +472,28 @@ minutes, fresh current data matching in Redis and ClickHouse, and 15 reliability
 candidates. Failure is `data_not_ready`, never a legacy recommendation. Narrative rollout uses
 `RECOMMENDATION_NARRATIVE_PROVIDER=openai` and optional
 `RECOMMENDATION_NARRATIVE_MODEL`; it falls back to deterministic Korean text without changing rank.
+
+The fixed historical recommendation override is separate from live narrative generation. Both AWS
+app overlays set `RECOMMENDATION_FIXED_REPLAY_ENABLED=true`, keep
+`RECOMMENDATION_DECISION_V1_ENABLED=false` until the direct-recommendation compliance review is
+complete, and point
+`RECOMMENDATION_FIXED_REPLAY_PATH` at the image-bundled
+`recommendation-v3-2026-07-15` artifact. Backend startup validates the manifest, file SHA-256, and
+the common evidence-pool digest. Request handling reads only profile, preference, and portfolio
+history rows at or before the evidence cutoff, then produces a user-specific recommendation digest.
+The recommendation worker performs no profile scan, DB write, or notification
+while the override is enabled. Rollback removes/disables only the fixed override keys; the ordinary
+algorithm selector remains `deterministic-evidence-v3`.
+
+After migration `0015`, artifact verification, API/UI smoke tests, and compliance approval, set only
+`RECOMMENDATION_DECISION_V1_ENABLED=true` in both app overlays. Setting it back to `false` restores
+the existing fixed recommendation contract without disabling the historical replay provider.
+
+The artifact uses `sourceMode=historical_reconstruction`: candle and quote eligibility is based on
+`event_time <= 2026-07-14 16:00 ET`, while later insertion timestamps are preserved in manifest
+provenance. The pool stores the full 30-candidate V3 evidence set and fixed entry-plan inputs; raw
+ClickHouse rows remain outside git. Its natural-language layer is `deterministic_grounded`; it renders
+the frozen V3 decision values without an external request and is not labeled as OpenAI output.
 
 For the staged deploy, keep an explicit container env override at `legacy` while applying the
 image and migrations, replace it with `deterministic-evidence-v3` only after the gates and offline

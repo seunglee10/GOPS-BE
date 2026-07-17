@@ -135,6 +135,23 @@ RECOMMENDATION_PROFESSIONAL_WEIGHTS_JSON=
 | `continuous-v2` | V2 `personalScore`로 실제 추천 순위를 결정하며 shadow를 사용하지 않음 |
 | `deterministic-evidence-v3` | 예측 없이 현재 evidence block과 적합성으로 `FinalRankScore`를 계산하며 shadow를 사용하지 않음 |
 
+AWS fixed replay는 별도 provider override다. 7월 14일 마감 evidence로 만든 30개 공통
+candidate pool에 cutoff 이하 사용자 프로필·선호·포트폴리오만 적용해 사용자별 Top 15를 만든다.
+포트폴리오가 없으면 해당 가중치를 0으로 두고 남은 가중치를 재정규화하며 수량은 산정하지 않는다.
+optional catalyst/fundamental 근거가 없을 때도 중립 50점을 넣지 않고 관측 근거만 재정규화한다.
+`confidence`의 confirmation 성분은
+블록이 60점 이상인지가 아니라 가격강도·참여·구조·체결의 독립 측정값이 실제로 함께
+존재하는지를 평가한다. 따라서 낮은 setup score와 높은 데이터 신뢰도가 동시에 가능하며,
+신뢰도는 성공확률을 의미하지 않는다.
+
+직접 매수 판단은 `recommendation-decision.v1`이 action, 눌림·돌파 경로, 무효화, 1.5R,
+15:50 ET 종료와 위험예산 수량을 계산한다. 자연어 설명은
+`recommendation-decision-renderer.ko.v2`가 시장 대비 흐름·거래 참여·가격 구조와 실제
+실패 조건을 정성 문장으로 투영한다. 수치형 원시 근거는 계산·감사 계약에 남지만 사용자
+근거 문장에는 점수·기여도·bp·배수로 반복하지 않는다. renderer는 판단값을
+다시 계산하지 않으며 출처를
+`deterministic`으로 보존한다.
+
 Shadow mode에서 기존 scorer가 후보를 만들지 못하면 전문 후보 skeleton을 사용한다.
 이 경우 기존 점수가 모두 0일 수 있으므로 shadow 결과는 전문 순위 검증용 데이터와
 실제 노출 순위가 다를 수 있다. 실제 개인화 순위를 적용하려면 `SHADOW=false`가 필요하다.

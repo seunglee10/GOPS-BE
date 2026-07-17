@@ -13,6 +13,12 @@ from app.market_data.indices.service import start_market_indices_warmer
 from app.market_data.monitor.routes import router as market_monitor_router
 from app.market_data.query.routes import router as market_query_router
 from app.recommendations.routes import router as recommendations_router
+from app.recommendations.fixed_replay import (
+    FixedReplayProviderError,
+    fixed_replay_enabled,
+    fixed_replay_provider,
+    prepare_fixed_replay_provider,
+)
 from app.trade_conditions.routes import router as trade_conditions_router
 from app.routes.account import account_holdings, account_performance, router as account_router
 from app.routes.auth import router as auth_router
@@ -36,6 +42,7 @@ from gops_agents.query_understanding import warm_entity_catalog_cache
 @asynccontextmanager
 async def app_lifespan(app: FastAPI):
     warm_entity_catalog_cache()
+    prepare_fixed_replay_provider(app)
     indices_warmer_task = start_market_indices_warmer()
     try:
         yield
@@ -63,6 +70,15 @@ def create_app() -> FastAPI:
             from app.routes.simulator import simulator_mode_active
 
             if await asyncio.to_thread(simulator_mode_active, request.app):
+                if request.url.path.startswith("/api/recommendations/stocks") and fixed_replay_enabled():
+                    try:
+                        fixed_replay_provider(request.app)
+                    except FixedReplayProviderError:
+                        return JSONResponse(
+                            status_code=503,
+                            content={"detail": "fixed_replay_recommendation_unavailable"},
+                        )
+                    return await call_next(request)
                 return JSONResponse(
                     status_code=409,
                     content={"detail": "simulation_data_unavailable"},

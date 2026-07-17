@@ -20,8 +20,8 @@
 - optional chart/layout proposal preview and apply flow
 
 `stockRecommendationExplain` 레이아웃 패널은 프런트 전용 추천 해설 surface다.
-`recommendationExplain` kind로 5×4 기본 span을 사용하고 기존 추천 latest 응답의
-점수, 신뢰도, 지표 스냅샷, 근거, 위험만 읽는다. 새 report/API 계약을 만들거나
+`recommendationExplain` kind로 5×4 기본 span을 사용하고 추천 latest 응답의
+action, decision, sizing, key evidence, 점수와 설명을 읽는다. 별도 report를 만들거나
 주문을 실행하지 않는다.
 
 상단 LIVE/SIM 컨트롤은 `2026-07-15 KST` 실제 틱 replay를 제어한다. SIM 진입 직후
@@ -687,11 +687,27 @@ dialog에서 `GET /api/recommendations/profile`로 현재 값을 읽어
 `sectorLabelKo` 한글 라벨을 사용한다.
 LIVE mode에서는 선택한 `pre` 또는 `regular`의 API item만 표시한다. `items=[]`이면
 빈 상태를 유지하고 다른 세션이나 S&P 500 seed 기반 고정 종목으로 대체하지 않는다.
-API가 비어 있거나 point-in-time 조회를 보장하지 못하면 고정 추천 fixture로 채우지 않고
-빈 상태 또는 `simulation_data_unavailable`을 표시한다.
-SIM mode도 frontend fixture를 import하거나 scenario ID를 special-case하지 않는다.
+고정 replay override 응답은 예외다. `sourceMode=historical_reconstruction` provenance는
+API 계약과 artifact 검증에 유지하되 목록과 해설 UI에 별도 배너나 내부 진단 메타데이터를
+반복 노출하지 않는다. 프런트는 `simulatorStatus.recommendations`를 읽지 않고
+LIVE/SIM 모두 기존 recommendation API만 호출한다. SIM mode도 frontend fixture를
+import하거나 scenario ID를 special-case하지 않는다.
 시뮬레이션 item 클릭 역시 `recommendation.stock` reference만 선택하며 차트나 레이아웃을
 자동 변경하지 않는다.
+
+fixed V3 decision v1 화면은 기존의 큰 action 판정과 우측 V3 점수·근거 신뢰도 배치를
+유지한다. 본문 왼쪽에는 시장 대비 강도·거래 참여·진입 구조의 세 `keyEvidence.interpretation`
+문장과 action-aware 반대 근거 문장을 표시하고, 오른쪽 단순 행에는 눌림·돌파 진입가,
+무효화 가격, 경로별 1.5R 목표, 15:50 ET 종료, 위험예산과 추천 수량을 표시한다. 근거 영역은
+`primaryValue`·기여도·bp·배수 같은 내부 수치를 렌더링하지 않는다. optional 근거 누락,
+digest, 내부 가중치와 provenance도 사용자 화면에 표시하지 않는다. 프런트는 이 결과로
+주문을 자동 생성하거나 전송하지 않는다.
+
+직접 action은 item action과 같은 `recommendation-decision.v1`이 함께 있을 때만 유효하다.
+decision이 없거나 action이 불일치하면 프런트는 해당 item을 `매수 관찰`로 표시하고
+진입 계획을 숨긴다. 따라서 direct v1이 꺼진 fixed replay나 구형 응답이 모든 종목을
+`매수 추천`으로 보이게 할 수 없다. 추천 목록의 한 줄 근거는 수치형 `primaryValue`가 아니라
+backend가 확정한 `explanation.primary.headline` 문장을 사용한다.
 
 public company journal panel은 `panelType="companyJournal"`/`kind="companyJournal"`로
 표현한다. 이 패널은 기존 기업 수익성·안정성·가치평가 차트와 뉴스 목록을
@@ -706,10 +722,10 @@ public company journal panel은 `panelType="companyJournal"`/`kind="companyJourn
 없어도 패널은 기존 응답으로 렌더링해야 한다. 이 패널에는 slider, 피드백 제어,
 tracking API, 자동 주문 동작을 추가하지 않는다.
 
-V3 item은 LLM headline/body를 먼저 표시하되 그 아래 결정론적 6개 evidence block을 항상
-표시한다. UI label은 `V3 종합 점수`, `근거 신뢰도`이며 신뢰도가 성공확률이 아님을 적는다.
-기여도 부호, penalty, 누락 factor, stale 여부, cutoff, algorithm/rule-set/snapshot/digest를
-그대로 보여 주고 누락 metric을 `0`으로 만들지 않는다. legacy `reasons`는 비-V3에만 쓴다.
+V3 direct item은 backend의 결정론적 headline/body와 세 문장형 key evidence를 표시한다.
+UI label은 `V3 종합 점수`, `근거 신뢰도`를 유지하지만 기여도 부호, penalty, 누락 factor,
+stale 여부, cutoff, algorithm/rule-set/snapshot/digest는 사용자 화면에 표시하지 않는다.
+legacy `reasons`는 비-V3에만 쓴다.
 
 company compare panel은 `panelType="companyCompare"`/`kind="companyCompare"`로
 표현하고 패널 추가 팔레트에 노출한다. 비교 대상이 없으면 GraphDB same-theme 후보 칩과
