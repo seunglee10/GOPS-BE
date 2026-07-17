@@ -108,7 +108,7 @@ def test_decision_v1_returns_fixed_direct_actions_and_no_dummy_missing_evidence(
         "NVDA", "GOOGL", "PANW", "PLTR"
     }
     assert all(4 <= len(item["keyEvidence"]) <= 6 for item in payload["items"])
-    assert all(item["explanation"]["primary"]["promptVersion"] == "recommendation-decision-renderer.ko.v6" for item in payload["items"])
+    assert all(item["explanation"]["primary"]["promptVersion"] == "recommendation-decision-renderer.ko.v7" for item in payload["items"])
     assert all(
         not any(character.isdigit() for character in evidence["interpretation"])
         and not any(token in evidence["interpretation"] for token in ("%p", "bp", "/100"))
@@ -138,9 +138,17 @@ def test_decision_v1_returns_fixed_direct_actions_and_no_dummy_missing_evidence(
         for item in payload["items"]
     )
     assert all(
-        {"decision_scope", "confidence_scope"}.issubset({row["code"] for row in item["cautions"]})
+        not {"decision_scope", "confidence_scope"}.intersection({row["code"] for row in item["cautions"]})
         for item in payload["items"]
     )
+    assert all(
+        "chase_limit" in {row["code"] for row in item["cautions"]}
+        for item in payload["items"]
+        if item["action"] in {"buy", "conditional_buy"}
+    )
+    jpm = next(item for item in payload["items"] if item["symbol"] == "JPM")
+    chase_sentence = next(row["sentence"] for row in jpm["cautions"] if row["code"] == "chase_limit")
+    assert "돌파 매수는" in chase_sentence and "무효화 기준" in chase_sentence and "하락 폭은 주당" in chase_sentence
     nvda = next(item for item in payload["items"] if item["symbol"] == "NVDA")
     assert "마감 전" in nvda["counterEvidence"]["sentence"]
     assert all("중립값" not in " ".join(item["riskWarnings"]) for item in payload["items"])
