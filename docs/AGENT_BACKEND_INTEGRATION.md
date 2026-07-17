@@ -109,8 +109,11 @@ WebSocket 경로를 사용하지 않는다. SIM 심볼 검색은 manifest의 21�
 빠른 주문은 `GET /api/simulator/quote`로 현재 replay bid/ask를 읽고 기존
 `POST /api/orders`를 통해 `userId + runId` 주문 원장에 기록한다. SIM에 존재하지 않는
 종목이나 아직 호가가 도착하지 않은 종목에는 주문 후보를 만들지 않는다.
-뉴스·추천·기업정보·chart derived asset·agent snapshot처럼 신뢰할 수 있는
-point-in-time 조회가 없는 경로는 `409 simulation_data_unavailable`을 반환한다.
+기업정보·agent snapshot처럼 신뢰할 수 있는 point-in-time 조회가 없는 경로는
+`409 simulation_data_unavailable`을 반환한다. 추천은 검증된 fixed replay provider가
+준비된 경우에만 기존 recommendation route를 허용한다. 자동 작도 조회는
+`GET /api/charts/analysis-assets` 정확한 경로만 허용하고, DELETE·coverage·build·status는
+계속 차단한다.
 예외적으로 `GET /api/market/news/latest`는 live Redis를 건너뛰고 ClickHouse의
 `published_at <= virtualTime AND localized_at <= virtualTime`인 저장 기사만 읽는다.
 `GET /api/market/news/daily`와 `GET /api/charts/events`는 SIM `virtualTime`을 cutoff로
@@ -803,6 +806,16 @@ chart-asset table/data migration을 다시 실행하지 않는다.
 
 `CHART_ASSET_STORAGE_MAINTENANCE=true` 동안 GET은 계속 열어 두고 build와 DELETE만
 503으로 막는다. 기존 숫자형 자산은 변환하거나 fallback으로 읽지 않는다.
+
+SIM의 `GET /api/charts/analysis-assets?symbol=NVDA&interval=1m`은 저장 자산 중
+`asOf <= virtualTime`인 것만 먼저 남긴다. 요청 interval은 replay 시작 전 ClickHouse
+과거 봉과 simulator가 cursor까지 반환한 replay 봉을 기존 chart merge 규칙으로 합친 뒤,
+완료 봉 120개 이상일 때 Geometry v6 분석을 동기 worker thread에서 한 번 실행해 응답의
+해당 interval만 교체한다. 이 동적 자산은 PostgreSQL에 저장하거나 build queue에 넣지
+않으며 `meta.simulation`, `cutoff`, `runId`, `dynamicInterval`, `dynamicStatus`를 함께
+반환한다. 봉이 부족하거나 분석 입력을 읽지 못하면 미래 저장 자산으로 fallback하지
+않고 각각 `data_insufficient` 또는 `unavailable` 상태와 안전한 과거 자산만 반환한다.
+요청 interval이 없으면 동적 분석 없이 cursor-safe 저장 자산만 반환한다.
 
 ## AI Company Journal Routes
 

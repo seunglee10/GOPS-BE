@@ -168,4 +168,7 @@ def test_company_journal_evidence_route_is_read_only_and_simulation_safe():
 def test_company_journal_evidence_does_not_remove_other_simulation_guards():
     assert requires_point_in_time_data("/api/market/fundamentals/NVDA/series") is True
     assert requires_point_in_time_data("/api/agents/analyze") is True
+    assert requires_point_in_time_data("/api/charts/analysis-assets", "GET") is False
+    assert requires_point_in_time_data("/api/charts/analysis-assets", "DELETE") is True
+    assert requires_point_in_time_data("/api/charts/analysis-assets/build", "GET") is True
     assert requires_point_in_time_data("/api/company-journal/NVDA/evidence") is False
