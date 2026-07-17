@@ -8,7 +8,12 @@ from fastapi.testclient import TestClient
 from app.company_journal.models import GenerationRequest, NarrativeDraft
 from app.company_journal.repository import CompanyJournalRepository, compact_graph_expansion
 from app.company_journal.routes import get_company_journal_service, router
-from app.company_journal.service import CompanyJournalService, calculate_server_metrics, source_receipt
+from app.company_journal.service import (
+    CompanyJournalService,
+    calculate_server_metrics,
+    company_journal_history_years,
+    source_receipt,
+)
 from app.services.simulation_guard import requires_point_in_time_data
 
 
@@ -203,6 +208,40 @@ def test_company_journal_evidence_route_is_read_only_and_simulation_safe():
     assert response.status_code == 200
     assert response.json()["contractVersion"] == "company-journal-evidence.v1"
     assert service.calls == [("GOOGL", ["SPY", "XLK"])]
+
+
+def test_company_journal_evidence_requests_history_from_2021(monkeypatch):
+    calls = []
+
+    class Adapter:
+        def financial_series(self, symbol, years, period):
+            calls.append(("financial", symbol, years, period))
+            return []
+
+        def earnings_series(self, symbol, years):
+            calls.append(("earnings", symbol, years))
+            return []
+
+    class EvidenceRepository:
+        def load_performance_series(self, symbols):
+            assert symbols == ["NVDA", "SPY"]
+            return []
+
+    adapter = Adapter()
+    monkeypatch.setattr(
+        "app.market_data.fundamentals.service.build_fundamentals_adapter",
+        lambda: adapter,
+    )
+
+    assert company_journal_history_years(2026) == 6
+    result = CompanyJournalService(repository=EvidenceRepository(), writer=FakeWriter()).panel_evidence("NVDA", ["SPY"])
+
+    assert calls == [
+        ("financial", "NVDA", 6, "quarterly"),
+        ("earnings", "NVDA", 6),
+    ]
+    assert result["financialSeries"] == []
+    assert result["earningsSeries"] == []
 
 
 def test_company_journal_evidence_does_not_remove_other_simulation_guards():
