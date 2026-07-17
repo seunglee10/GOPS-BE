@@ -16,6 +16,7 @@ PANEL_TYPES = (
     "compareChart",
     "companyCompare",
     "marketIndices",
+    "indexCommentary",
     "companyProfile",
     "companyMulti",
     "companyValuation",

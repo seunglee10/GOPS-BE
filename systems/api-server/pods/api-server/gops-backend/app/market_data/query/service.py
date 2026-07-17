@@ -13,6 +13,7 @@ from app.market_data.fill.service import get_on_demand_fill_service
 from app.market_data.derived.service import DerivedCalculationService
 from app.market_data.fundamentals.service import build_fundamentals_adapter
 from app.market_data.heatmap.service import get_heatmap_service
+from app.market_data.indices.related import build_related_indices_payload
 from app.market_data.indices.service import get_indices_service
 from app.market_data.query.canonical import CanonicalCandleQuery
 from app.market_data.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
@@ -321,11 +322,30 @@ class MarketDataQueryService:
 
     def indices(self, background_tasks=None) -> dict[str, Any]:
         try:
-            return get_indices_service(self.provider).snapshot(background_tasks=background_tasks)
+            return self.indices_snapshot(background_tasks=background_tasks)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=503, detail=f"Market indices provider failed: {exc}") from exc
+
+    def indices_snapshot(self, background_tasks=None) -> dict[str, Any]:
+        """Return the shared market-index cache payload without reshaping it."""
+        return get_indices_service(self.provider).snapshot(background_tasks=background_tasks)
+
+    def related_indices(self, symbol: str, background_tasks=None) -> dict[str, Any]:
+        try:
+            indices_payload = self.indices_snapshot(background_tasks=background_tasks)
+            return build_related_indices_payload(
+                symbol,
+                indices_payload=indices_payload,
+                provider=self.provider,
+            )
+        except HTTPException:
+            raise
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=f"Related market indices failed: {exc}") from exc
 
     def symbol_detail(self, symbol: str) -> dict[str, Any]:
         try:
