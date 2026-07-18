@@ -297,13 +297,76 @@ def _fixed_replay_response(app: Any, provider: Any, user_sub: str) -> dict[str, 
             str((profile or {}).get("risk_level") or "balanced"),
         )
     )
+    portfolio_snapshot, portfolio_evaluated_at = _fixed_replay_portfolio_context(
+        app,
+        repository,
+        user_sub,
+        cutoff,
+    )
     return _call_recommendation_storage(
         lambda: provider.response(
             profile=profile,
-            portfolio_snapshot=repository.get_portfolio_snapshot_at(user_sub, cutoff),
+            portfolio_snapshot=portfolio_snapshot,
             score_profile=score_profile,
+            portfolio_evaluated_at=portfolio_evaluated_at,
         )
     )
+
+
+def _fixed_replay_portfolio_context(
+    app: Any,
+    repository: Any,
+    user_sub: str,
+    cutoff: datetime,
+) -> tuple[dict[str, Any] | None, datetime]:
+    cutoff_snapshot = repository.get_portfolio_snapshot_at(user_sub, cutoff)
+    try:
+        from app.routes.simulator import simulator_gateway_from_app
+
+        status = simulator_gateway_from_app(app).status()
+    except Exception:
+        return cutoff_snapshot, cutoff
+    run_id = str(status.get("runId") or "").strip()
+    virtual_time = _fixed_replay_datetime(status.get("virtualTime"))
+    if status.get("mode") != "simulation" or not run_id or virtual_time is None:
+        return cutoff_snapshot, cutoff
+    get_current_snapshot = getattr(repository, "get_portfolio_snapshot", None)
+    if not callable(get_current_snapshot):
+        return cutoff_snapshot, cutoff
+    current_snapshot = get_current_snapshot(user_sub)
+    payload = (
+        current_snapshot.get("payload")
+        if isinstance(current_snapshot, dict) and isinstance(current_snapshot.get("payload"), dict)
+        else current_snapshot
+    )
+    if not isinstance(payload, dict):
+        return cutoff_snapshot, cutoff
+    observed_at = _fixed_replay_datetime(
+        (current_snapshot.get("source_as_of") if isinstance(current_snapshot, dict) else None)
+        or payload.get("sourceAsOf")
+        or payload.get("asOf")
+    )
+    if (
+        payload.get("simulation") is not True
+        or str(payload.get("runId") or "").strip() != run_id
+        or observed_at is None
+        or observed_at > virtual_time
+    ):
+        return cutoff_snapshot, cutoff
+    return current_snapshot, virtual_time
+
+
+def _fixed_replay_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text[:-1] + "+00:00" if text.endswith("Z") else text)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
 def _service_from_app(app: Any) -> RecommendationService:

@@ -168,11 +168,13 @@ LIVE KIS는 기존 limit-only 계약을 유지한다. 주문 조회·event·WebS
 영구 가상투자는 보유종목·가상계좌·듀얼 포트폴리오·성과·SIM 체결의 단일 진실 원천이며
 사용자 `sub`로 격리한다. `source=active`는 LIVE/SIM 모두 이 원장을 조회하고
 `source=kis`만 기존 KIS 보유종목을 조회한다. `PAPER_ACCOUNT_SEED_PROFILE` 기본값
-`diversified-us-v3`는 untouched 신규/기존 빈 계좌에 17개 체결, 3개 미체결 주문,
+`diversified-us-v3`는 untouched 신규/기존 빈 계좌에 23개 체결, 3개 미체결 주문,
 최근 일별 평가곡선과 10종목·7섹터 포트폴리오를 한 번 시드한다. 기존 비억제 계좌가 다른 profile이거나
 거래·포지션을 가진 legacy 계좌이면 첫 조회에서 이전 generation과 거래내역을 보존하고,
 미체결만 취소한 새 generation에 `diversified-us-v3`를 자동 적용한다. 명시적 reset은 빈
 새 generation을 만들고 자동 재시드를 억제한다.
+같은 profile의 기존 계좌는 `seedHistoryVersion`을 확인해 최근 소규모 리밸런싱 체결과
+보유 원금 snapshot 곡선만 멱등 보강하며, 현재 현금·포지션·실현손익은 다시 쓰지 않는다.
 `POST /api/paper/orders`는 `Idempotency-Key`를 필수로 받고 Postgres의 가상 현금과
 보유수량만 예약한다. KIS 주문 테이블, Outbox, broker adapter는 호출하지 않는다.
 
@@ -428,9 +430,13 @@ action 값이 직접 매수 권한으로 오인되지 않게 한다.
 `fixed_replay_override` 상태만 반환한다. manifest/file/recommendation digest가 하나라도
 맞지 않으면 legacy나 LIVE 결과로 fallback하지 않고 503을 반환한다.
 
-SIM middleware는 이 검증된 provider가 준비된 추천 경로만 예외적으로 허용한다. 따라서
-같은 사용자의 LIVE와 SIM은 같은 recommendation API와 byte-equivalent item·digest를
-사용한다. override가 꺼져 있으면 기존처럼 point-in-time 추천 경로를 409로 차단한다.
+SIM middleware는 이 검증된 provider가 준비된 추천 경로만 예외적으로 허용한다. 시장
+evidence와 진입 판단은 fixed replay cutoff를 유지한다. 다만 현재 저장 portfolio가
+`simulation=true`, 활성 `runId` 일치, `asOf <= virtualTime`을 모두 만족하면 그 SIM paper
+snapshot으로 보유종목 제외·포트폴리오 적합도·수량을 다시 계산한다. 다른 run, LIVE/KIS,
+미래 시각 snapshot은 사용하지 않고 fixed replay cutoff snapshot으로 돌아간다. 따라서
+SIM에서 계좌 상태가 바뀐 뒤의 item·digest는 LIVE 결과와 달라질 수 있다. override가 꺼져
+있으면 기존처럼 point-in-time 추천 경로를 409로 차단한다.
 
 V2 commit은 사용자 advisory lock 아래에서 slot idempotency와 예상 preference state를
 재확인하고, processed/skipped events, immutable preference/risk states, 모든 적격 후보의

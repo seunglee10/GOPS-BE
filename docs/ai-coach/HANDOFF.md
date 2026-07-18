@@ -223,10 +223,13 @@ engine never fabricates market values.
 
 The fixed UI report activates in development when both `import.meta.env.DEV` and
 `VITE_AI_COACH_DEV_FIXTURE=true`. The same dynamically imported report is also used for an
-untouched `diversified-us-v3` paper account so its 10 holdings, 17 fills, 3 pending orders,
+untouched `diversified-us-v3` paper account so its 10 holdings, 23 fills, 3 pending orders,
 sector weights, and guardrails remain coherent instead of showing an older archived report.
 Any current-generation order without `seed_profile` disables this seeded-account path. The
 fixed report is never written to Redis, ClickHouse, Kafka, PostgreSQL, or S3.
+Switching between LIVE and SIM does not clear or replace the resolved coach report. The panel keeps
+the same report and internal page in both modes; simulator status is not an AI-coach availability
+condition.
 
 The AI coach production component is lazy-loaded as its own frontend chunk so the AWS
 quality workflow's 512,000-byte JavaScript chunk budget remains enforced. The panel

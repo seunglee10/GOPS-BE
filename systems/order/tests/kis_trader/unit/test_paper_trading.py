@@ -196,6 +196,18 @@ class PaperTradingRepositoryTest(unittest.TestCase):
         self.assertGreaterEqual(len(repository.portfolio_history), len(DEMO_FILLS) * 2 + 20)
         self.assertEqual(repository.portfolio_history[-1]["payload"]["snapshotPhase"], "daily-close")
         self.assertEqual(repository.portfolio_history[-1]["payload"]["account"]["totalValueForeign"], DEMO_EQUITY)
+        daily_costs = [
+            sum(
+                (position["purchaseAmountForeign"] for position in row["payload"]["positions"]),
+                Decimal("0"),
+            )
+            for row in repository.portfolio_history
+            if row["payload"].get("snapshotPhase") == "daily-close"
+        ]
+        self.assertEqual(len(DEMO_FILLS), 23)
+        self.assertGreater(len(set(daily_costs)), 3)
+        self.assertEqual(daily_costs[-1], DEMO_HOLDINGS_COST)
+        self.assertLess(max(daily_costs) - min(daily_costs), Decimal("1000"))
         self.assertEqual(
             sum((position["qty"] * position["average_price"] for position in positions.values()), Decimal("0")),
             DEMO_HOLDINGS_COST,

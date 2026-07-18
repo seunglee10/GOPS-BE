@@ -19,6 +19,7 @@ from .fixture import (
     DEMO_HOLDINGS,
     DEMO_PENDING_ORDERS,
     HOLDING_BY_SYMBOL,
+    SEED_HISTORY_VERSION,
     SEED_PROFILE,
     configured_seed_profile,
     fallback_price,
@@ -664,7 +665,10 @@ class PostgresPaperTradingRepository:
         account = dict(conn.execute(
             "SELECT * FROM paper_accounts WHERE user_id = %s FOR UPDATE", (account["user_id"],)
         ).fetchone())
-        if account.get("seed_suppressed_at") or account.get("seed_profile") == SEED_PROFILE:
+        if account.get("seed_suppressed_at"):
+            return
+        if account.get("seed_profile") == SEED_PROFILE:
+            self._upgrade_seed_history(conn, account)
             return
         user_id = account["user_id"]
         generation = account["current_generation"]
@@ -840,6 +844,89 @@ class PostgresPaperTradingRepository:
             conn, user_id, generation, seeded_run, "account.seeded",
             cash_delta=Decimal("0"),
         )
+        if seed_cash != DEMO_FINAL_CASH:
+            raise AssertionError("demo fixture cash invariant failed")
+
+    def _upgrade_seed_history(
+        self,
+        conn: psycopg.Connection,
+        account: dict[str, Any],
+    ) -> None:
+        user_id = account["user_id"]
+        already_upgraded = conn.execute(
+            """
+            SELECT 1
+            FROM user_portfolio_snapshot_history
+            WHERE user_sub = %s
+              AND payload->>'seedProfile' = %s
+              AND payload->>'seedHistoryVersion' = %s
+            LIMIT 1
+            """,
+            (user_id, SEED_PROFILE, str(SEED_HISTORY_VERSION)),
+        ).fetchone()
+        if already_upgraded:
+            return
+
+        generation = account["current_generation"]
+        seed_cash = self.default_starting_cash
+        for index, fill in enumerate(DEMO_FILLS, start=1):
+            seed_key = f"{SEED_PROFILE}:{user_id}:{generation}:{index}"
+            order_id = f"paper_seed_{uuid5(NAMESPACE_URL, seed_key).hex}"
+            cash_delta = fill.quantity * fill.price * (Decimal("-1") if fill.side == "buy" else Decimal("1"))
+            seed_cash += cash_delta
+            inserted = conn.execute(
+                """
+                INSERT INTO paper_orders (
+                    order_id, user_id, generation, market, symbol, side, qty, limit_price,
+                    exchange, order_division, order_type, execution_mode, seed_profile,
+                    status, filled_qty, fill_price, quote_event_id, quote_timestamp,
+                    idempotency_key_hash, body_hash, created_at, updated_at, filled_at
+                ) VALUES (
+                    %s, %s, %s, 'overseas', %s, %s, %s, %s,
+                    %s, '00', 'limit', 'paper', %s,
+                    'filled', %s, %s, %s, %s, %s, %s, %s, %s, %s
+                ) ON CONFLICT (order_id) DO NOTHING
+                RETURNING *
+                """,
+                (
+                    order_id, user_id, generation, fill.symbol, fill.side, fill.quantity, fill.price,
+                    HOLDING_BY_SYMBOL[fill.symbol].exchange, SEED_PROFILE,
+                    fill.quantity, fill.price, f"seed:{SEED_PROFILE}:{generation}:{index}", fill.filled_at,
+                    f"seed:{SEED_PROFILE}:{generation}:{index}", SEED_PROFILE,
+                    fill.filled_at, fill.filled_at, fill.filled_at,
+                ),
+            ).fetchone()
+            if not inserted:
+                continue
+            order = dict(inserted)
+            self._append_event(
+                conn, order, "order.filled", FILLED_STATUS,
+                payload={"seed_profile": SEED_PROFILE, "fill_price": str(fill.price)},
+            )
+            conn.execute(
+                """
+                INSERT INTO paper_cash_ledger (
+                    entry_id, user_id, generation, order_id, event_type,
+                    cash_delta, reserved_cash_delta, cash_balance_after,
+                    reserved_cash_after, payload, created_at
+                ) VALUES (%s, %s, %s, %s, 'order.filled', %s, 0, %s, 0, %s, %s)
+                ON CONFLICT (entry_id) DO NOTHING
+                """,
+                (
+                    f"paper_seed_led_{uuid5(NAMESPACE_URL, f'{seed_key}:ledger').hex}",
+                    user_id, generation, order_id, cash_delta, seed_cash,
+                    Jsonb({"seed_profile": SEED_PROFILE}), fill.filled_at,
+                ),
+            )
+
+        for source_as_of, snapshot in seed_snapshot_history():
+            conn.execute(
+                """
+                INSERT INTO user_portfolio_snapshot_history (user_sub, payload, source_as_of)
+                VALUES (%s, %s, %s)
+                """,
+                (user_id, Jsonb(json.loads(json.dumps(snapshot, default=str))), source_as_of),
+            )
         if seed_cash != DEMO_FINAL_CASH:
             raise AssertionError("demo fixture cash invariant failed")
 

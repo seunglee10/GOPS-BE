@@ -654,13 +654,14 @@ class PostgresRecommendationRepository(RecommendationRepository):
                     SELECT payload, source_as_of
                     FROM (
                         SELECT DISTINCT ON ((source_as_of AT TIME ZONE 'UTC')::date)
+                            id,
                             payload,
                             source_as_of
                         FROM user_portfolio_snapshot_history
                         WHERE user_sub = %s
                           AND (%s::timestamptz IS NULL OR source_as_of >= %s::timestamptz)
                           AND (%s::text[] = '{}'::text[] OR payload->>'source' = ANY(%s::text[]))
-                        ORDER BY (source_as_of AT TIME ZONE 'UTC')::date, source_as_of DESC
+                        ORDER BY (source_as_of AT TIME ZONE 'UTC')::date, source_as_of DESC, id DESC
                     ) AS daily
                     ORDER BY source_as_of ASC
                     """,

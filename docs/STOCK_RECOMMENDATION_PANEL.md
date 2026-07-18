@@ -551,8 +551,11 @@ Agent UI panel type은 `stockRecommendations`다. 프런트 layout kind `recomme
 - reasons, riskWarnings
 - metricsSnapshot
 
-검증된 fixed recommendation override가 활성화된 틱 replay SIM에서는 LIVE와 같은 API item으로
-이 참조 계약을 생성한다. 프런트가 simulator status에 추천 item을 별도로 주입하지 않는다.
+검증된 fixed recommendation override가 활성화된 틱 replay SIM에서는 같은 API로 이 참조
+계약을 생성한다. 시장 evidence는 고정하지만 현재 저장된 portfolio가 활성 SIM `runId`와
+일치하고 `asOf <= virtualTime`이면 보유종목 제외·포트폴리오 적합도·수량을 다시 계산하므로,
+SIM 계좌 변경 뒤 item과 digest는 LIVE와 달라질 수 있다. 프런트가 simulator status에 추천
+item을 별도로 주입하지 않는다.
 
 direct recommendation v1 item은 `buy`, `conditional_buy`, `watch`, `not_suitable` action과
 결정론적 `decision`, `sizing`, 가용 V3 block 기반 4~6개의 `keyEvidence`, 최대 하나의

@@ -61,6 +61,7 @@ class FixedReplayRecommendationProvider:
         profile: dict[str, Any] | None = None,
         portfolio_snapshot: dict[str, Any] | None = None,
         score_profile: dict[str, Any] | None = None,
+        portfolio_evaluated_at: datetime | None = None,
     ) -> dict[str, Any]:
         if not decision_v1_enabled():
             result = copy.deepcopy(self.payload)
@@ -77,6 +78,7 @@ class FixedReplayRecommendationProvider:
             profile=profile,
             portfolio_snapshot=portfolio_snapshot,
             score_profile=score_profile,
+            portfolio_evaluated_at=portfolio_evaluated_at,
         )
 
     def personalized_response(
@@ -85,8 +87,10 @@ class FixedReplayRecommendationProvider:
         profile: dict[str, Any] | None,
         portfolio_snapshot: dict[str, Any] | None,
         score_profile: dict[str, Any] | None,
+        portfolio_evaluated_at: datetime | None = None,
     ) -> dict[str, Any]:
         cutoff = datetime.fromisoformat(str(self.payload["evidenceAsOf"]))
+        portfolio_now = portfolio_evaluated_at or cutoff
         normalized_profile = _profile_snapshot(profile)
         profile_object = SimpleNamespace(
             risk_level=normalized_profile["riskLevel"],
@@ -120,7 +124,7 @@ class FixedReplayRecommendationProvider:
             portfolio_snapshot=portfolio_snapshot,
             position_daily_candles={},
             active_symbol=None,
-            now=cutoff,
+            now=portfolio_now,
             snapshot_id=None,
             penalize_missing_portfolio=False,
             exclude_portfolio_hard_caps=False,
@@ -130,7 +134,7 @@ class FixedReplayRecommendationProvider:
             risk_level=normalized_profile["riskLevel"],
             portfolio_snapshot=portfolio_snapshot,
             target_session_date=str(self.payload["targetSessionDate"]),
-            cutoff=cutoff,
+            cutoff=portfolio_now,
         )
         context = {
             "profile": normalized_profile,

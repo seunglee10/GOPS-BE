@@ -236,6 +236,14 @@ class PaperTradingRoutesTest(unittest.TestCase):
         self.assertEqual(performance["dataOrigin"], "seeded-demo")
         self.assertEqual(performance["portfolio"]["points"][-1]["portfolioValue"], 105023.52)
         self.assertEqual(performance["portfolio"]["points"][-1]["holdingsCostBasis"], 91903.38)
+        principal_values = {
+            point["holdingsCostBasis"]
+            for point in performance["portfolio"]["points"]
+            if point.get("holdingsCostBasis") is not None
+            and point["time"] >= "2026-06-17T00:00:00Z"
+        }
+        self.assertGreater(len(principal_values), 3)
+        self.assertLess(max(principal_values) - min(principal_values), 1000)
         weekly = self.client.get("/api/account/performance?range=1W").json()
         self.assertEqual(weekly["status"], "ready")
         self.assertGreaterEqual(len(weekly["portfolio"]["points"]), 2)

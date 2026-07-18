@@ -5,6 +5,7 @@ import re
 import shutil
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -189,6 +190,100 @@ def test_personalized_replay_excludes_existing_holdings_and_has_user_digest(monk
     assert balanced["evidencePoolDigest"] == aggressive["evidencePoolDigest"]
     assert balanced["scoringDigest"] != aggressive["scoringDigest"]
     assert balanced["recommendationDigest"] != aggressive["recommendationDigest"]
+
+
+def test_simulation_recommendations_use_current_matching_run_portfolio(monkeypatch) -> None:
+    class SimulationPortfolioRepository:
+        def get_profile(self, _user_sub):
+            return None
+
+        def get_profile_at(self, _user_sub, _cutoff):
+            return None
+
+        def get_portfolio_snapshot_at(self, _user_sub, _cutoff):
+            return {
+                "id": 1,
+                "source_as_of": "2026-07-14T15:59:00-04:00",
+                "payload": {"positions": [{"symbol": "NVDA", "sector": "Information Technology"}]},
+            }
+
+        def get_portfolio_snapshot(self, _user_sub):
+            return {
+                "user_sub": "dev-auth-disabled",
+                "payload": {
+                    "simulation": True,
+                    "runId": "sim-run-current",
+                    "asOf": "2026-07-15T10:00:00+09:00",
+                    "source": "paper-shared",
+                    "account": {"cashForeign": 100_000, "totalValueForeign": 100_000},
+                    "positions": [],
+                },
+            }
+
+    app = configured_app(monkeypatch)
+    monkeypatch.setenv("RECOMMENDATION_DECISION_V1_ENABLED", "true")
+    app.state.recommendation_repository = SimulationPortfolioRepository()
+    app.state.simulator_gateway = SimpleNamespace(status=lambda: {
+        "mode": "simulation",
+        "runId": "sim-run-current",
+        "virtualTime": "2026-07-15T10:00:00+09:00",
+    })
+
+    payload = TestClient(app).post("/api/recommendations/stocks/refresh", json={}).json()
+
+    assert payload["scoringMode"] == "cutoff_user_profile"
+    assert payload["items"][0]["symbol"] == "JPM"
+    assert payload["items"][1]["symbol"] == "NVDA"
+
+
+@pytest.mark.parametrize(
+    ("snapshot_run_id", "snapshot_as_of"),
+    (
+        ("stale-sim-run", "2026-07-15T10:00:00+09:00"),
+        ("sim-run-current", "2026-07-15T10:01:00+09:00"),
+    ),
+)
+def test_simulation_recommendations_reject_invalid_current_portfolio(
+    monkeypatch,
+    snapshot_run_id: str,
+    snapshot_as_of: str,
+) -> None:
+    class SimulationPortfolioRepository:
+        def get_profile(self, _user_sub):
+            return None
+
+        def get_profile_at(self, _user_sub, _cutoff):
+            return None
+
+        def get_portfolio_snapshot_at(self, _user_sub, _cutoff):
+            return {
+                "id": 1,
+                "source_as_of": "2026-07-14T15:59:00-04:00",
+                "payload": {"positions": [{"symbol": "NVDA", "sector": "Information Technology"}]},
+            }
+
+        def get_portfolio_snapshot(self, _user_sub):
+            return {
+                "payload": {
+                    "simulation": True,
+                    "runId": snapshot_run_id,
+                    "asOf": snapshot_as_of,
+                    "positions": [],
+                },
+            }
+
+    app = configured_app(monkeypatch)
+    monkeypatch.setenv("RECOMMENDATION_DECISION_V1_ENABLED", "true")
+    app.state.recommendation_repository = SimulationPortfolioRepository()
+    app.state.simulator_gateway = SimpleNamespace(status=lambda: {
+        "mode": "simulation",
+        "runId": "sim-run-current",
+        "virtualTime": "2026-07-15T10:00:00+09:00",
+    })
+
+    payload = TestClient(app).get("/api/recommendations/stocks/latest").json()
+
+    assert "NVDA" not in [item["symbol"] for item in payload["items"]]
 
 
 def test_tampered_artifact_fails_closed_without_legacy_fallback(monkeypatch, tmp_path: Path) -> None:

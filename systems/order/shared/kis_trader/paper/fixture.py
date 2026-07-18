@@ -9,6 +9,7 @@ from typing import Any, Final
 
 
 SEED_PROFILE: Final = "diversified-us-v3"
+SEED_HISTORY_VERSION: Final = 2
 DISABLED_SEED_PROFILES: Final = frozenset({"", "none", "off", "disabled"})
 
 
@@ -143,6 +144,12 @@ DEMO_FILLS: Final = (
     _fill("2026-06-15T14:30:00Z", "AMZN", "buy", "20", "228.00", "104380.00"),
     _fill("2026-06-15T19:30:00Z", "AMZN", "sell", "5", "238.00", "104610.00"),
     _fill("2026-06-16T19:30:00Z", "WMT", "buy", "50", "102.00", "104720.00"),
+    _fill("2026-06-22T19:30:00Z", "AAPL", "buy", "2", "210.00", "104920.00"),
+    _fill("2026-06-25T19:30:00Z", "JPM", "sell", "4", "199.20", "104940.00"),
+    _fill("2026-06-30T19:30:00Z", "WMT", "buy", "5", "102.00", "105120.00"),
+    _fill("2026-07-06T19:30:00Z", "AAPL", "sell", "2", "210.00", "105040.00"),
+    _fill("2026-07-09T19:30:00Z", "JPM", "buy", "4", "199.20", "105240.00"),
+    _fill("2026-07-14T19:30:00Z", "WMT", "sell", "5", "102.00", "105190.00"),
 )
 
 DEMO_PENDING_ORDERS: Final = (
@@ -241,6 +248,7 @@ def seed_snapshots() -> list[dict[str, Any]]:
             "asOf": fill.filled_at.isoformat(),
             "source": "seeded-demo",
             "seedProfile": SEED_PROFILE,
+            "seedHistoryVersion": SEED_HISTORY_VERSION,
             "valuationBasis": "fixture_mark_to_market",
             "account": {
                 "cashForeign": cash,
@@ -257,12 +265,42 @@ def seed_snapshots() -> list[dict[str, Any]]:
     return snapshots
 
 
+def _ledger_state_at(
+    source_as_of: datetime,
+) -> tuple[Decimal, dict[str, dict[str, Decimal]]]:
+    cash = DEMO_STARTING_CASH
+    positions: dict[str, dict[str, Decimal]] = {}
+    for fill in DEMO_FILLS:
+        if fill.filled_at > source_as_of:
+            break
+        position = positions.setdefault(
+            fill.symbol,
+            {"qty": Decimal("0"), "average_price": Decimal("0"), "realized_pnl": Decimal("0")},
+        )
+        if fill.side == "buy":
+            old_qty = position["qty"]
+            next_qty = old_qty + fill.quantity
+            position["average_price"] = (
+                old_qty * position["average_price"] + fill.quantity * fill.price
+            ) / next_qty
+            position["qty"] = next_qty
+            cash -= fill.quantity * fill.price
+        else:
+            position["qty"] -= fill.quantity
+            position["realized_pnl"] += (
+                fill.price - position["average_price"]
+            ) * fill.quantity
+            cash += fill.quantity * fill.price
+    return cash, positions
+
+
 def seed_snapshot_history() -> list[tuple[datetime, dict[str, Any]]]:
     after_snapshots = seed_snapshots()
     previous: dict[str, Any] = {
         "asOf": (DEMO_FILLS[0].filled_at - timedelta(microseconds=1)).isoformat(),
         "source": "seeded-demo",
         "seedProfile": SEED_PROFILE,
+        "seedHistoryVersion": SEED_HISTORY_VERSION,
         "valuationBasis": "fixture_mark_to_market",
         "snapshotPhase": "before",
         "account": {
@@ -285,33 +323,50 @@ def seed_snapshot_history() -> list[tuple[datetime, dict[str, Any]]]:
         history.extend(((before_at, before), (fill.filled_at, rendered_after)))
         previous = rendered_after
     for source_as_of, equity in DEMO_DAILY_EQUITY:
-        market_value = equity - DEMO_FINAL_CASH
-        price_scale = market_value / DEMO_MARKET_VALUE
-        positions = [
-            {
-                "symbol": holding.symbol,
-                "quantity": holding.quantity,
-                "averagePrice": holding.average_price,
-                "currentPrice": holding.fallback_price * price_scale,
-                "marketValueForeign": holding.quantity * holding.fallback_price * price_scale,
-                "purchaseAmountForeign": holding.quantity * holding.average_price,
-                "realizedPnlForeign": Decimal("0"),
-            }
-            for holding in DEMO_HOLDINGS
-        ]
-        unrealized = market_value - DEMO_HOLDINGS_COST
+        cash, ledger_positions = _ledger_state_at(source_as_of)
+        market_value = equity - cash
+        reference_market_value = sum(
+            (
+                values["qty"] * HOLDING_BY_SYMBOL[symbol].fallback_price
+                for symbol, values in ledger_positions.items()
+                if values["qty"] > 0
+            ),
+            Decimal("0"),
+        )
+        price_scale = market_value / reference_market_value
+        positions = []
+        for symbol, values in sorted(ledger_positions.items()):
+            if values["qty"] <= 0:
+                continue
+            holding = HOLDING_BY_SYMBOL[symbol]
+            current_price = holding.fallback_price * price_scale
+            positions.append({
+                "symbol": symbol,
+                "quantity": values["qty"],
+                "averagePrice": values["average_price"],
+                "currentPrice": current_price,
+                "marketValueForeign": values["qty"] * current_price,
+                "purchaseAmountForeign": values["qty"] * values["average_price"],
+                "realizedPnlForeign": values["realized_pnl"],
+            })
+        holdings_cost = sum(
+            (item["purchaseAmountForeign"] for item in positions),
+            Decimal("0"),
+        )
+        unrealized = market_value - holdings_cost
         history.append((source_as_of, {
             "asOf": source_as_of.isoformat(),
             "source": "seeded-demo",
             "seedProfile": SEED_PROFILE,
+            "seedHistoryVersion": SEED_HISTORY_VERSION,
             "valuationBasis": "fixture_mark_to_market",
             "snapshotPhase": "daily-close",
             "account": {
-                "cashForeign": DEMO_FINAL_CASH,
+                "cashForeign": cash,
                 "stockValueForeign": market_value,
                 "totalValueForeign": equity,
                 "unrealizedPnlForeign": unrealized,
-                "unrealizedPnlRate": unrealized / DEMO_HOLDINGS_COST * Decimal("100"),
+                "unrealizedPnlRate": unrealized / holdings_cost * Decimal("100"),
             },
             "positions": positions,
         }))

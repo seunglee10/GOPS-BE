@@ -106,13 +106,17 @@ limit-only 계약을 유지한다. 주문 상태는 `/ws/orders/{order_id}`의 S
 `published_at`과 `localized_at`이 모두 `virtualTime` 이하인 기사만 고른 결과이며,
 프런트가 가상시각을 query로 보내거나 live Redis 결과와 합치지 않는다. 일별 뉴스 API와
 차트의 `GET /api/charts/events`도 `generated_at <= virtualTime`인 저장 스냅샷만
-반환한다. 추천 패널은 검증된 fixed replay provider가 켜진 배포에서 LIVE와 같은
-recommendation API를 다시 조회한다. 차트 자동 작도는 현재 symbol과 interval을
+반환한다. 추천 패널은 검증된 fixed replay provider가 켜진 배포에서 기존
+recommendation API를 다시 조회한다. 서버는 활성 SIM `runId`와 시각이 검증된 최신 paper
+portfolio로 추천을 다시 계산할 수 있으며, 프런트는 계좌와 추천 item을 직접 합치지 않는다.
+차트 자동 작도는 현재 symbol과 interval을
 `GET /api/charts/analysis-assets`에 보내며, 서버가 replay cursor까지의 실제 완료 봉으로
 만든 비영속 Geometry 자산만 표시한다. 저장된 자산의 `asOf`가 cursor보다 미래이면
-표시하지 않는다. 기업정보·AI 코치 등 point-in-time 데이터가 없는 나머지 기능은 기존
-최신값이나 fixture를 남기지 않고 `simulation_data_unavailable` 상태를 표시한다.
-프런트는 합성 추천·뉴스·AI 보고서를 만들지 않는다. 차트는 서버가 반환한
+표시하지 않는다. 기업정보 등 point-in-time 데이터가 없는 나머지 기능은 기존 최신값이나
+fixture를 남기지 않고 `simulation_data_unavailable` 상태를 표시한다. AI 투자 코치는
+예외로, LIVE에서 선택된 동일한 계좌 리포트를 SIM 전환 뒤에도 유지하며 시뮬레이션
+모드만을 이유로 숨기거나 다른 리포트로 교체하지 않는다. 프런트는 합성
+추천·뉴스·AI 보고서를 만들지 않는다. 차트는 서버가 반환한
 과거+replay candle과 replay WebSocket만 사용한다.
 
 차트의 실적·뉴스 DOM 마커는 Canvas scene 좌표를 chart container의 local 좌표로
@@ -159,8 +163,9 @@ source, capture timestamp를 보내지 않으며 서버가 검증·보강한 fil
 소유한다. 보유종목 표, 듀얼 포트폴리오, 개인 히트맵, 차트 commentary와 가상계좌 패널은
 이 동일한 스냅샷을 변환해 읽으며 프런트 고정 portfolio/performance fixture를 만들지 않는다.
 백엔드는 비억제 legacy 계좌를 첫 조회에서 `diversified-us-v3`로 자동 전환하므로 프런트는
-별도 적용 버튼을 표시하지 않는다. 기본 구성은 NVDA를 제외한 10종목·7섹터, 17개 체결,
-3개 미체결 주문과 최근 일별 평가곡선을 포함한다. 시드 계좌의 성과 화면에는 별도 데모
+별도 적용 버튼을 표시하지 않는다. 기본 구성은 NVDA를 제외한 10종목·7섹터, 23개 체결,
+3개 미체결 주문과 최근 일별 평가곡선을 포함한다. 보유 원금은 최근 AAPL·JPM·WMT의
+소규모 리밸런싱 체결일에만 계단식으로 변하며 최종 현금·수량·손익은 유지한다. 시드 계좌의 성과 화면에는 별도 데모
 배지를 표시하지 않으며 실제 사용자 주문 전에는 실시간 평가와 섞이지 않은 고정 곡선을 사용한다.
 성과 API의 `dataOrigin=seeded-demo|account-history`는 내부 출처 판별에만 사용하고 화면 배지로 노출하지 않는다.
 현재 차트 종목의 양수
@@ -576,6 +581,9 @@ The fixed report module is loaded by a dynamic import when
 untouched seeded paper account: while every current-generation order has `seed_profile`, the
 panel uses the matching `diversified-us-v3` portfolio report instead of a stale archived report.
 The first real user order disables that exception and restores the authenticated archive path.
+Simulator mode does not clear, refetch, or replace the resolved coach report. The same report and
+current internal page remain visible when switching between LIVE and SIM; account and order panels
+may continue refreshing independently from the common paper ledger.
 
 When the workspace does not already supply a `coachReport`, the panel makes one top-level
 authenticated request to `GET /api/ai-coach/reports/latest`. Child pages never fetch their

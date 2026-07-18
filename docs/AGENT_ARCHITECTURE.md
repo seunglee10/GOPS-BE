@@ -14,6 +14,11 @@ hard gate, Evidence Reliability, soft risk penalty와 직접 매수 확인 조�
 밖의 고정 정책이다. run identity에는 투자 프로필 revision과 활성 점수 프로필
 ID/revision/schema/digest가 포함된다.
 
+fixed replay의 시장 evidence와 진입 판단 cutoff는 immutable하다. SIM에서는 예외적으로
+현재 저장 paper portfolio가 활성 `runId`와 일치하고 `asOf <= virtualTime`일 때만 그
+사용자 context로 보유종목 제외, 포트폴리오 적합도, 수량을 다시 계산한다. 다른 run이나
+LIVE/KIS snapshot은 fixed replay 사용자 context에 섞지 않는다.
+
 자연어 점수 프로필 제안은 `gops_agents.recommendation_profiles`가 소유한다. 기존 한국어
 query normalizer가 입력을 형태소 유사 fragment로 정규화하고, 고정된 추천 신호 문서를
 검색한 뒤 최신 immutable evidence snapshot 집계와 관련 뉴스 snapshot을 bounded context로
