@@ -1051,6 +1051,9 @@ headline, keywords, 탭별 자연어, 최근 움직임과 안정성 문장은 �
 계속 사용하며 ClickHouse를 직접 조회하지
 않는다. report가 pending/unavailable이면 숫자나 문장을 추정하지 않고 생성/연결 상태를
 표시하면서 기존 실제 차트는 유지한다.
+최근 Yahoo 기관 의견이 저장된 report는 실적의 AI 설명에 기관명, 확인된 등급/목표주가와
+시장 컨센서스를 짧게 포함할 수 있다. 프런트는 기관 의견이나 목표가 변화를 계산하지 않으며,
+서버 report에 없는 기관·숫자·변화 방향을 fallback 문장으로 만들지 않는다.
 
 실적 탭은 SEC 실제치/Yahoo 예상치 차트와 `/api/company-journal/{symbol}/evidence`의 최대 2년
 저장 일봉으로 만든

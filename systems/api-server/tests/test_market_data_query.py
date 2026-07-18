@@ -85,7 +85,14 @@ from app.market_data.calendar.service import next_market_open_payload, us_equity
 from app.market_data.backfill.service import BackfillService  # noqa: E402
 from app.market_data.compare.service import ChartCompareService  # noqa: E402
 from app.market_data.fill.service import OnDemandFillService, opportunistic_intraday_gap_ranges  # noqa: E402
-from app.market_data.fundamentals.service import FundamentalsAdapter, FundamentalsRecord, StoreFundamentalsAdapter, records_from_payload  # noqa: E402
+from app.market_data.fundamentals.service import (  # noqa: E402
+    FundamentalsAdapter,
+    FundamentalsRecord,
+    StoreFundamentalsAdapter,
+    earnings_series_from_rows,
+    financial_series_point_from_row,
+    records_from_payload,
+)
 from app.market_data.heatmap import service as heatmap_service  # noqa: E402
 from app.market_data.indices import service as indices_service  # noqa: E402
 from app.market_data.monitor import routes as monitor_routes  # noqa: E402
@@ -3767,14 +3774,69 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(series[0].netDebt, 10000)
         self.assertEqual(series[0].source, "sec")
 
+    def test_financial_series_derives_missing_total_liabilities_from_accounting_identity(self):
+        point = financial_series_point_from_row({
+            "period": "2025FY",
+            "totalAssets": 211429,
+            "totalEquity": 114281,
+            "currentLiabilities": 31575,
+        })
+
+        self.assertIsNotNone(point)
+        self.assertEqual(point.totalLiabilities, 97148)
+        self.assertAlmostEqual(point.debtRatio, 97148 / 114281)
+        self.assertAlmostEqual(point.currentLiabilityRatio, 31575 / 114281)
+        self.assertAlmostEqual(point.noncurrentLiabilityRatio, (97148 - 31575) / 114281)
+
     def test_store_fundamentals_adapter_returns_earnings_series_with_yahoo_estimates(self):
-        series = StoreFundamentalsAdapter(provider=FakeHeatmapProvider()).earnings_series("MSFT")
+        provider = FakeHeatmapProvider()
+        series = StoreFundamentalsAdapter(provider=provider).earnings_series("MSFT")
 
         self.assertEqual(series[0].period, "2026Q1")
         self.assertEqual(series[0].actualEps, 4)
         self.assertEqual(series[0].estimatedEps, 4.5)
         self.assertEqual(series[0].actualRevenue, 100000)
         self.assertEqual(series[0].estimatedRevenue, 95000)
+        self.assertEqual(series[0].estimateSource, "yahoo")
+        estimate_query = next(
+            call["query"]
+            for call in provider.clickhouse_provider.calls
+            if "query" in call and "yahoo_earnings_estimates" in call["query"]
+        )
+        self.assertIn("fiscal_period = 'EVENT'", estimate_query)
+        self.assertIn("event_status = 'reported'", estimate_query)
+        self.assertNotIn("actual_value AS actualValue", estimate_query)
+
+    def test_yahoo_event_estimate_is_matched_to_preceding_sec_quarter(self):
+        series = earnings_series_from_rows(
+            [{
+                "symbol": "INTC",
+                "metric": "eps",
+                "value": 0.12,
+                "fiscalYear": 2025,
+                "fiscalPeriod": "Q3",
+                "periodEndDate": "2025-09-27",
+                "filedAt": "2025-10-23",
+            }],
+            [{
+                "symbol": "INTC",
+                "metric": "eps",
+                "value": 0.10,
+                "fiscalYear": 2025,
+                "fiscalPeriod": "EVENT",
+                "periodEndDate": "2025-10-23",
+                "eventAt": "2025-10-23T20:00:00Z",
+                "eventStatus": "reported",
+                "collectedAt": "2026-07-18T00:00:00Z",
+            }],
+        )["INTC"]
+
+        self.assertEqual(len(series), 1)
+        self.assertEqual(series[0].period, "2025Q3")
+        self.assertEqual(series[0].periodEndDate, "2025-09-27")
+        self.assertEqual(series[0].actualEps, 0.12)
+        self.assertEqual(series[0].estimatedEps, 0.10)
+        self.assertEqual(series[0].source, "sec")
         self.assertEqual(series[0].estimateSource, "yahoo")
 
     def test_query_service_returns_sec_financial_series_payload(self):
