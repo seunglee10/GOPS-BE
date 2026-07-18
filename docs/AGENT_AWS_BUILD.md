@@ -89,11 +89,15 @@ empty, the workflow compares the current commit with the latest successful run
 of the same workflow on the same branch and builds only the app services touched
 by that diff. Use a comma-separated service list such as `frontend,backend` to
 override detection, or `all` to force every app image to rebuild.
-When `market-storage` is selected, the local script or workflow also runs
-`scripts/aws/run-news-cache-rebuild-jobs.sh` after a healthy rollout. That
-one-shot run uses the newly pushed `gops-market-storage` image to warm the
-30-day Redis news article cache and daily summary cache from ClickHouse without
-running ClickHouse rewrite mutations.
+When `rebuild_news_cache=true` is explicitly selected with `market-storage`,
+the local script or workflow runs `scripts/aws/run-news-cache-rebuild-jobs.sh`
+after a healthy rollout. The normal AWS daily-keyword path is narrower:
+`alfaka-news-daily-summary-nvda` uses the market-storage image at 10:00 and
+22:00 Asia/Seoul, scans at most five recent NVDA date groups, and relies on the
+article hash/version guard to skip unchanged v2 summaries. The immediate
+per-article daily-summary producer is disabled in AWS and its former consumer
+Deployment stays at zero replicas; article collection and article-level news
+intelligence continue normally.
 
 The frontend Logo.dev ticker logo key is a Vite build-time value. When
 `frontend` is selected, the local deploy script or manual workflow reads AWS

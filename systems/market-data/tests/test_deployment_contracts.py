@@ -125,6 +125,45 @@ class DeploymentContractsTest(unittest.TestCase):
         manual = (REPO_ROOT / "scripts/aws/run-chart-geometry-build-job.sh").read_text(encoding="utf-8")
         self.assertIn('INTERVALS="${INTERVALS:-1m,1D}"', manual)
 
+    def test_nvda_news_keywords_run_twice_daily_without_event_worker(self):
+        cron = load_yaml("infra/k8s/overlays/aws/scheduled/cronjob-news-daily-summary-nvda.yaml")
+        self.assertEqual(cron["spec"]["schedule"], "0 10,22 * * *")
+        self.assertEqual(cron["spec"]["timeZone"], "Asia/Seoul")
+        self.assertEqual(cron["spec"]["concurrencyPolicy"], "Forbid")
+        self.assertFalse(cron["spec"]["suspend"])
+        job_spec = cron["spec"]["jobTemplate"]["spec"]
+        pod_spec = job_spec["template"]["spec"]
+        container = pod_spec["containers"][0]
+        env = {item["name"]: item["value"] for item in container["env"]}
+        self.assertEqual(env["NEWS_DAILY_SUMMARY_REBUILD_SYMBOLS"], "NVDA")
+        self.assertEqual(env["NEWS_DAILY_SUMMARY_REBUILD_DAYS"], "5")
+        self.assertEqual(env["NEWS_DAILY_SUMMARY_REBUILD_MAX_GROUPS"], "5")
+        self.assertEqual(env["NEWS_DAILY_SUMMARY_REBUILD_DRY_RUN"], "false")
+        self.assertEqual(pod_spec["nodeSelector"]["karpenter.sh/nodepool"], "batch")
+
+        completed = subprocess.run(
+            ["kubectl", "kustomize", "infra/k8s/overlays/aws-incluster-app-ci"],
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        resources = [item for item in yaml.safe_load_all(completed.stdout) if item]
+        config = next(
+            item
+            for item in resources
+            if item.get("kind") == "ConfigMap"
+            and item.get("metadata", {}).get("name") == "alfaka-market-data-config"
+        )
+        self.assertEqual(config["data"]["NEWS_DAILY_SUMMARY_EVENT_DRIVEN_ENABLED"], "false")
+        deployment = next(
+            item
+            for item in resources
+            if item.get("kind") == "Deployment"
+            and item.get("metadata", {}).get("name") == "alfaka-news-daily-summary-worker"
+        )
+        self.assertEqual(deployment["spec"]["replicas"], 0)
+
     def test_aws_overlay_preserves_chart_builder_memory_contract(self):
         completed = subprocess.run(
             ["kubectl", "kustomize", "infra/k8s/overlays/aws-incluster-app-ci"],

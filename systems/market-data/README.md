@@ -286,6 +286,12 @@ Alpaca News API
 -> ClickHouse news_article_localizations
 -> Redis news:v2:latest:ko:{symbol}
 -> API/agent response
+
+NVDA daily keywords
+-> recent 5 days in ClickHouse
+-> alfaka-news-daily-summary-nvda at 10:00 and 22:00 Asia/Seoul
+-> ClickHouse/Redis news daily v2
+-> NewsKeywordPanel background refresh every 5 minutes
 ```
 
 Storage boundaries:
@@ -295,8 +301,16 @@ Storage boundaries:
 - ClickHouse keeps recent app-serving rows, currently 30 days, with localized summaries, key points, relevance v2, sentiment, and links.
 - Redis keeps the 30-day article hot cache (`news:v2:latest:*`, `news:v2:topic:*`) and 30 daily summaries per symbol. It stores localized summaries, links, relevance metadata, and daily coverage metadata, but not article body/raw payload.
 
+AWS does not regenerate a company/day summary after every article. The
+`alfaka-news-daily-summary-worker` Deployment is scaled to zero and
+`NEWS_DAILY_SUMMARY_EVENT_DRIVEN_ENABLED=false`. The scheduled
+`alfaka-news-daily-summary-nvda` CronJob runs at 10:00 and 22:00 Asia/Seoul,
+filters to `NVDA`, and considers at most the five most recent daily groups.
+The existing article hash/version guard prevents an OpenAI call when the stored
+v2 summary already matches the collected article set.
+
 The Kubernetes `alfaka-news-backfill`, `alfaka-news-intelligence-rebuild`, and
-`alfaka-news-daily-summary-rebuild` Jobs are safe by default: they render with
+manual `alfaka-news-daily-summary-rebuild` Jobs are safe by default: they render with
 dry-run env values. Set `NEWS_BACKFILL_DRY_RUN=false`,
 `NEWS_INTELLIGENCE_REBUILD_DRY_RUN=false`, or
 `NEWS_DAILY_SUMMARY_REBUILD_DRY_RUN=false` only for an intentional one-shot run
@@ -304,9 +318,9 @@ after reviewing scope and API/OpenAI cost. `news-intelligence-rebuild` also
 warms Redis by default from the recent ClickHouse localization rows without
 rewriting ClickHouse. Set `NEWS_INTELLIGENCE_REBUILD_REWRITE_CLICKHOUSE=true`
 only for an intentional relevance-row rewrite maintenance run.
-GitHub Actions dev/test deploys run the two news rebuild Jobs automatically
-after a successful `market-storage` rollout so pushed Redis cache changes also
-warm the existing 30-day ClickHouse news window.
+The GitHub Actions deploy runs the manual news rebuild Jobs only when
+`rebuild_news_cache=true`; the twice-daily NVDA CronJob is applied with the
+normal app overlay.
 
 Local small smoke:
 
