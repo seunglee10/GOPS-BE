@@ -105,6 +105,9 @@ jobs:
           kubectl kustomize infra/k8s/base/platform >/tmp/gops-k8s-platform.yaml
           kubectl kustomize infra/k8s/overlays/aws-incluster-app-ci >/tmp/gops-k8s-app-ci.yaml
 
+      - name: Verify simulator deploy contract
+        run: bash scripts/aws/tests/test-simulator-deploy-contract.sh
+
   deploy:
     name: Build images and deploy app workloads
     needs: quality
@@ -285,6 +288,16 @@ jobs:
               exit 1
             fi
           done
+
+      - name: Verify simulator rollout
+        if: steps.changes.outputs.has_services == 'true'
+        run: |
+          if ! kubectl rollout status deployment/gops-simulator \
+            -n "$K8S_NAMESPACE" \
+            --timeout=600s; then
+            ./scripts/aws/print-rollout-diagnostics.sh gops-simulator
+            exit 1
+          fi
 
       - name: Verify AI coach snapshot archive through worker IRSA
         if: steps.changes.outputs.has_services == 'true' && contains(steps.changes.outputs.services, 'agent-orchestrator')

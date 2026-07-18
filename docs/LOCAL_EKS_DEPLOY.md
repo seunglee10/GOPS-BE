@@ -56,7 +56,7 @@ AWS_PROFILE=gops-dev ./scripts/aws/deploy-dev-local.sh
 3. 서비스별 baseline과 `origin/dev` 사이의 diff를 기존 service mapping으로 분석한다.
 4. 변경된 서비스 image만 로컬 Docker로 빌드해 ECR에 push한다.
 5. 임시 worktree의 kustomize overlay만 수정해 EKS에 server-side dry-run/apply한다.
-6. 선택된 Deployment rollout과 frontend/backend smoke test를 확인한다.
+6. 선택된 Deployment와 상시 simulator rollout, frontend/backend smoke test를 확인한다.
 7. 성공하면 선택된 서비스의 `service.<name>.lastSuccessfulSha`를 최신 SHA로 갱신한다.
 
 서비스별 deploy state가 없으면 먼저 legacy `lastSuccessfulSha`를 확인한다. 단,
@@ -135,25 +135,23 @@ FORCE_SERVICES=all AWS_PROFILE=gops-dev ./scripts/aws/deploy-dev-local.sh
 FORCE_SERVICES=frontend,backend AWS_PROFILE=gops-dev ./scripts/aws/deploy-dev-local.sh
 ```
 
-시뮬레이터 image와 기본 0-replica Deployment만 배포할 수도 있다.
+시뮬레이터 image만 강제로 다시 빌드하고, 상시 1-replica Deployment를 갱신할 수도 있다.
 
 ```bash
 FORCE_SERVICES=simulator AWS_PROFILE=gops-dev ./scripts/aws/deploy-dev-local.sh
 ```
 
-배포 후 실제 시연 경로를 켜고 끄는 명령은 별도다.
-
-```bash
-AWS_PROFILE=gops-dev ./scripts/aws/start-dev-simulator.sh
-AWS_PROFILE=gops-dev ./scripts/aws/stop-dev-simulator.sh
-```
-
-최초 한 번은 실제 틱 데이터셋을 적재한 뒤 SIM을 시작한다.
+일반 app 배포가 simulator Pod와 backend 연결을 같이 올리므로 별도 시작 명령은 없다.
+최초 한 번만 실제 틱 데이터셋을 적재한다.
 
 ```bash
 AWS_PROFILE=gops-dev ./scripts/aws/run-simulator-replay-import.sh
-AWS_PROFILE=gops-dev ./scripts/aws/start-dev-simulator.sh
 ```
+
+기존 `READY` 데이터셋이 있으면 이 명령도 다시 실행하지 않는다. 완전히 새 클러스터에서
+데이터셋이 없으면 import 후 일반 배포를 다시 실행한다. 필요할 때
+`start-dev-simulator.sh`는 readiness 점검, `stop-dev-simulator.sh`는 LIVE 전환에만 쓰며
+둘 다 replica나 backend 연결을 변경하지 않는다.
 
 Order migration은 `order-worker` 선택 시, Chart migration은 `agent-orchestrator`
 선택 시 app rollout 전에 자동 실행된다. `agent-orchestrator`를 선택하면 두 migration

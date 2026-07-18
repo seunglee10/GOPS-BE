@@ -421,6 +421,9 @@ def _paper_symbol_search_score(metadata: dict[str, Any], query: str) -> int:
 
 
 def _enriched_account_snapshot(app: Any, repository: PaperTradingRepository, user_id: str) -> dict[str, Any]:
+    from app.routes.simulator import simulator_mode_active
+
+    simulation_active = simulator_mode_active(app)
     snapshot = repository.account_snapshot(user_id)
     positions = []
     market_value = Decimal("0")
@@ -430,7 +433,12 @@ def _enriched_account_snapshot(app: Any, repository: PaperTradingRepository, use
         position = dict(raw)
         qty = Decimal(position.get("qty") or 0)
         average_price = Decimal(position.get("average_price") or 0)
-        current_price, price_source, price_timestamp = _position_price(app, position["symbol"], average_price)
+        current_price, price_source, price_timestamp = _position_price(
+            app,
+            position["symbol"],
+            average_price,
+            simulation_active=simulation_active,
+        )
         value = qty * current_price
         cost = qty * average_price
         unrealized = value - cost
@@ -438,7 +446,7 @@ def _enriched_account_snapshot(app: Any, repository: PaperTradingRepository, use
         unrealized_total += unrealized
         positions.append({
             **position,
-            **_fixture_position_fields(position["symbol"], qty),
+            **_fixture_position_fields(position["symbol"], qty, include_market_facts=not simulation_active),
             "available_qty": qty - Decimal(position.get("reserved_qty") or 0),
             "current_price": current_price,
             "price_source": price_source,
@@ -448,7 +456,8 @@ def _enriched_account_snapshot(app: Any, repository: PaperTradingRepository, use
             "unrealized_pnl": unrealized,
             "unrealized_pnl_rate": (unrealized / cost * 100) if cost > 0 else Decimal("0"),
         })
-    positions = _enrich_position_market_facts(app, positions)
+    if not simulation_active:
+        positions = _enrich_position_market_facts(app, positions)
     account = dict(snapshot["account"])
     cash_balance = Decimal(account["cash_balance"])
     equity = cash_balance + market_value
@@ -468,7 +477,25 @@ def _enriched_account_snapshot(app: Any, repository: PaperTradingRepository, use
     }
 
 
-def _position_price(app: Any, symbol: str, fallback: Decimal) -> tuple[Decimal, str, str | None]:
+def _position_price(
+    app: Any,
+    symbol: str,
+    fallback: Decimal,
+    *,
+    simulation_active: bool,
+) -> tuple[Decimal, str, str | None]:
+    if simulation_active:
+        try:
+            from app.routes.simulator import simulator_gateway_from_app
+
+            quote = simulator_gateway_from_app(app).quote(symbol)
+        except Exception as exc:
+            raise HTTPException(status_code=409, detail="simulation_data_unavailable") from exc
+        replay_price = _optional_positive_decimal(quote.get("bid") or quote.get("ask"))
+        if replay_price is None:
+            raise HTTPException(status_code=409, detail="simulation_data_unavailable")
+        return replay_price, "simulation_replay", quote.get("virtualTime")
+
     resolver = getattr(app.state, "paper_price_resolver", None)
     if callable(resolver):
         resolved = resolver(symbol)
@@ -480,16 +507,6 @@ def _position_price(app: Any, symbol: str, fallback: Decimal) -> tuple[Decimal, 
             value = _optional_positive_decimal(resolved)
             if value is not None:
                 return value, "injected", None
-    try:
-        from app.routes.simulator import simulator_gateway_from_app, simulator_mode_active
-
-        if simulator_mode_active(app):
-            quote = simulator_gateway_from_app(app).quote(symbol)
-            replay_price = _optional_positive_decimal(quote.get("bid") or quote.get("ask"))
-            if replay_price is not None:
-                return replay_price, "simulation_replay", quote.get("virtualTime")
-    except Exception:
-        pass
     try:
         provider = getattr(app.state, "portfolio_market_data_provider", None) or get_market_data_provider()
         trade = provider.redis_provider.live_trade(symbol) or {}
@@ -509,22 +526,33 @@ def _position_price(app: Any, symbol: str, fallback: Decimal) -> tuple[Decimal, 
     return fallback, "average_price", None
 
 
-def _fixture_position_fields(symbol: str, quantity: Decimal) -> dict[str, Any]:
+def _fixture_position_fields(
+    symbol: str,
+    quantity: Decimal,
+    *,
+    include_market_facts: bool = True,
+) -> dict[str, Any]:
     holding = HOLDING_BY_SYMBOL.get(str(symbol).strip().upper())
     if holding is None:
         return {}
-    day_pnl_rate = holding.day_pnl_rate
-    day_pnl = (
-        quantity * holding.fallback_price * day_pnl_rate / Decimal("100")
-        if day_pnl_rate is not None else None
-    )
-    return {
+    identity = {
         "name": holding.name,
         "market": "overseas",
         "exchange": holding.exchange,
         "currency": "USD",
         "sector": holding.sector,
         "industry": holding.industry,
+        "metadata_source": SEED_PROFILE,
+    }
+    if not include_market_facts:
+        return identity
+    day_pnl_rate = holding.day_pnl_rate
+    day_pnl = (
+        quantity * holding.fallback_price * day_pnl_rate / Decimal("100")
+        if day_pnl_rate is not None else None
+    )
+    return {
+        **identity,
         "pe_ratio": holding.pe_ratio,
         "eps_ttm": holding.eps_ttm,
         "low_52": holding.low_52,
@@ -534,7 +562,6 @@ def _fixture_position_fields(symbol: str, quantity: Decimal) -> dict[str, Any]:
         "annual_dividend": holding.dividend_per_share * quantity if holding.dividend_per_share is not None else None,
         "day_pnl_rate": day_pnl_rate,
         "day_pnl": day_pnl,
-        "metadata_source": SEED_PROFILE,
     }
 
 

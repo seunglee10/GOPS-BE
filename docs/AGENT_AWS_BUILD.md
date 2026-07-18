@@ -1282,7 +1282,8 @@ AGENT_SNAPSHOT_TOTAL_DEADLINE_MS
 
 ## On-demand Tick Replay Simulator
 
-`gops-simulator`는 평소 `replicas: 0`이다. 실제 원본은 S3의
+`gops-simulator`는 AWS app overlay에서 `replicas: 1`로 일반 app 배포와 함께 유지한다.
+실제 원본은 S3의
 `simulator/replay/v1/dataset=sp500-top20-20260715-kst/` gzip JSONL과 ClickHouse의
 TTL 없는 `simulation_replay_events`, `simulation_replay_candles_1m`에 저장한다.
 manifest hash·크기·종목별 trade/quote 수와 ClickHouse 건수가 모두 일치한 데이터셋만
@@ -1293,10 +1294,12 @@ manifest hash·크기·종목별 trade/quote 수와 ClickHouse 건수가 모두 
 Secret을 사용하며 파일별 S3 검증이 끝나면 로컬 gzip을 지워 임시 디스크 사용량을
 제한한다. `READY` 데이터셋이 이미 있으면 다시 수집하지 않는다.
 
-`scripts/aws/start-dev-simulator.sh`는 ClickHouse schema를 idempotent하게 적용하고
-고정 dataset의 `READY`와 0보다 큰 event 수를 확인한 뒤 simulator를 1개로 올린다.
-그 후 backend의 `GOPS_SIMULATOR_URL`을 연결하고 simulator는 `LIVE/idle`로 둔다.
-화면의 플레이 버튼이 `start` action을 호출하기 전에는 새 run을 만들거나 재생하지 않는다. SIP/BOATS
+일반 배포는 ConfigMap의 `GOPS_SIMULATOR_URL`을 backend에 주입하고 simulator rollout도
+필수 gate로 기다린다. 별도 시작 스크립트는 필요 없다. 새 Pod는 `LIVE/idle`로 시작하고,
+화면의 플레이 버튼이 `start` action을 호출하기 전에는 새 run을 만들거나 재생하지 않는다.
+기존 `scripts/aws/start-dev-simulator.sh`는 ClickHouse schema와 고정 dataset의 `READY`,
+0보다 큰 event 수, health를 수동 점검하고 LIVE로 정리하는 호환 도구다. replica와 backend
+환경변수는 변경하지 않는다. SIP/BOATS
 ingestor, market processor, order-flow pin, 실시간 Redis/Kafka, trade-condition
 deployment는 변경하지 않는다. simulator는 ClickHouse를 chunk 조회하고 시계·캔들·quote와
 순서형 `/api/control/execution-events`만 제공한다. 실행별 계좌·주문·가격조건은 Postgres
@@ -1311,9 +1314,9 @@ ClickHouse 과거 봉과 simulator replay 완료 봉을 합쳐 비영속 Geometr
 사용자별 재추천 입력으로 허용한다. 뉴스는 기존 cutoff-safe ClickHouse 읽기 경로를 유지한다.
 
 `scripts/aws/stop-dev-simulator.sh`는 LIVE mode로 전환하고 이전 run의 미체결 예약과
-미발동 조건만 멱등 취소한 뒤 backend URL을 제거하고 simulator를 0개로 내린다. 체결된
-포지션·현금·성과 이력은 유지한다. 시작 중 실패해도 같은
-범위만 복구하며 실시간 시장 상태의 backup/restore는 수행하지 않는다.
+미발동 조건만 멱등 취소한다. backend URL과 simulator replica는 선언형 배포 상태를
+유지하므로 Pod는 다음 실행을 위해 READY로 남는다. 체결된 포지션·현금·성과 이력은
+유지하며 실시간 시장 상태의 backup/restore는 수행하지 않는다.
 
 ## Smoke Checks
 

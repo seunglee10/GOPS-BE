@@ -143,7 +143,8 @@ WebSocket 경로를 사용하지 않는다. SIM 심볼 검색은 manifest의 21�
 종목이나 아직 호가가 도착하지 않은 종목에는 주문 후보를 만들지 않는다.
 기업정보·agent snapshot처럼 신뢰할 수 있는 point-in-time 조회가 없는 경로는
 `409 simulation_data_unavailable`을 반환한다. 추천은 검증된 fixed replay provider가
-준비된 경우에만 기존 recommendation route를 허용한다. 자동 작도 조회는
+준비되고 replay `virtualTime`이 artifact의 `evidenceAsOf`에 도달한 경우에만 기존
+recommendation route를 허용한다. 그 전에는 미래 추천으로 취급해 409를 반환한다. 자동 작도 조회는
 `GET /api/charts/analysis-assets` 정확한 경로만 허용하고, DELETE·coverage·build·status는
 계속 차단한다.
 예외적으로 `GET /api/market/news/latest`는 live Redis를 건너뛰고 ClickHouse의
@@ -431,7 +432,8 @@ action 값이 직접 매수 권한으로 오인되지 않게 한다.
 맞지 않으면 legacy나 LIVE 결과로 fallback하지 않고 503을 반환한다.
 
 SIM middleware는 이 검증된 provider가 준비된 추천 경로만 예외적으로 허용한다. 시장
-evidence와 진입 판단은 fixed replay cutoff를 유지한다. 다만 현재 저장 portfolio가
+evidence와 진입 판단은 fixed replay cutoff를 유지하며, replay cursor가 artifact의
+7월 14일 16:00 ET 근거시각보다 이르면 409로 차단한다. 다만 현재 저장 portfolio가
 `simulation=true`, 활성 `runId` 일치, `asOf <= virtualTime`을 모두 만족하면 그 SIM paper
 snapshot으로 보유종목 제외·포트폴리오 적합도·수량을 다시 계산한다. 다른 run, LIVE/KIS,
 미래 시각 snapshot은 사용하지 않고 fixed replay cutoff snapshot으로 돌아간다. 따라서
@@ -921,8 +923,9 @@ bounded 조회한다. 기관명·등급·목표주가가 실제 row에 있을 �
 시장 컨센서스 상승·하락도 표현하지 않는다. 유료 리서치의 사유나 원문을 추정하지 않는다.
 
 `/evidence`는 기업저널 panel 전용 읽기 계약으로 분기 재무, SEC/Yahoo 실적, 최대 520개 일봉을
-한 번에 반환한다. replay simulation 중 일반 시장/agent route의 point-in-time guard는 유지하고,
-이 경로만 현재 기업저널의 저장 근거를 읽는다. 이 응답은 주문·추천·agent 입력으로 재사용하지 않는다.
+한 번에 반환한다. 현재 repository가 cutoff 인자를 받지 않으므로 replay simulation 중에는
+`/api/company-journal/{symbol}`과 `/evidence`를 모두 409로 차단한다. 향후 저장 보고서와 각 원천을
+`virtualTime` 이하로 고르는 point-in-time provider가 연결된 뒤에만 SIM 읽기를 다시 허용한다.
 
 ## Failure Policy
 

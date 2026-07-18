@@ -746,6 +746,21 @@ deploy_app_workloads() {
   done
 }
 
+verify_simulator_rollout() {
+  if is_true "${CHART_INTERPRETATION_ONLY}"; then
+    return 0
+  fi
+  if is_true "${DRY_RUN}"; then
+    printf 'DRY_RUN=true: skipping simulator rollout status.\n'
+    return 0
+  fi
+
+  if ! kubectl rollout status deployment/gops-simulator -n "${K8S_NAMESPACE}" --timeout=600s; then
+    "${WORKTREE_DIR}/scripts/aws/print-rollout-diagnostics.sh" gops-simulator
+    exit 1
+  fi
+}
+
 run_smoke_tests() {
   if is_true "${DRY_RUN}"; then
     printf 'DRY_RUN=true: skipping public smoke tests.\n'
@@ -846,6 +861,7 @@ main() {
 
   run_migrations_if_requested
   deploy_app_workloads
+  verify_simulator_rollout
   if ! is_true "${CHART_INTERPRETATION_ONLY}"; then
     verify_ai_coach_snapshot_archive
   fi

@@ -35,13 +35,15 @@ def account_holdings(
     user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
     if source == "active":
+        simulation_active = simulator_mode_active(request.app)
         try:
             from app.routes.paper_trading import _enriched_account_snapshot, paper_repository_from_app
 
             repository = paper_repository_from_app(request.app)
             snapshot = _enriched_account_snapshot(request.app, repository, user.sub)
             payload = _paper_portfolio_payload(request.app, repository, user.sub, snapshot)
-            payload = enrich_holdings_with_alpaca_dividends(payload)
+            if not simulation_active:
+                payload = enrich_holdings_with_alpaca_dividends(payload)
         except HTTPException:
             raise
         except Exception as exc:
@@ -76,8 +78,9 @@ def account_performance(
     range_value: str = Query(default="1M", alias="range", pattern="^(1W|1M|3M|1Y|ALL)$"),
     user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
+    simulation_time = _simulation_reference_time(request.app)
     now_provider = getattr(request.app.state, "portfolio_performance_now_provider", None)
-    now = now_provider() if callable(now_provider) else datetime.now(timezone.utc)
+    now = simulation_time or (now_provider() if callable(now_provider) else datetime.now(timezone.utc))
     start_at = performance_start_at(range_value, now)
     try:
         from app.recommendations.repository import RecommendationSchemaUnavailable
@@ -101,6 +104,8 @@ def account_performance(
             )
     except RecommendationSchemaUnavailable as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    if simulation_time is not None:
+        snapshots = _snapshots_available_at(snapshots, simulation_time)
     if not snapshots:
         try:
             from app.routes.paper_trading import paper_repository_from_app
@@ -119,9 +124,11 @@ def account_performance(
                 ]
         except Exception:
             snapshots = snapshots or []
+    if simulation_time is not None:
+        snapshots = _snapshots_available_at(snapshots, simulation_time)
 
     benchmark = None
-    if snapshots:
+    if snapshots and simulation_time is None:
         first_snapshot = snapshots[0]
         first_payload = first_snapshot.get("payload") if isinstance(first_snapshot, dict) else None
         benchmark_start = parse_datetime(
@@ -148,6 +155,39 @@ def account_performance(
     result["dataOrigin"] = _performance_data_origin(snapshots)
     result["isDevFixture"] = result["dataOrigin"] == "seeded-demo"
     return jsonable_encoder(result)
+
+
+def _simulation_reference_time(app: Any) -> datetime | None:
+    if not simulator_mode_active(app):
+        return None
+    try:
+        status_payload = simulator_gateway_from_app(app).status()
+        parsed = datetime.fromisoformat(str(status_payload.get("virtualTime") or "").replace("Z", "+00:00"))
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="simulation_virtual_time_unavailable",
+        ) from exc
+    if parsed.tzinfo is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="simulation_virtual_time_unavailable",
+        )
+    return parsed.astimezone(timezone.utc)
+
+
+def _snapshots_available_at(snapshots: list[dict[str, Any]], cutoff: datetime) -> list[dict[str, Any]]:
+    available = []
+    for row in snapshots:
+        if not isinstance(row, dict):
+            continue
+        payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+        source_as_of = parse_datetime(
+            row.get("source_as_of") or payload.get("asOf") or payload.get("sourceAsOf")
+        )
+        if source_as_of is not None and source_as_of <= cutoff:
+            available.append(row)
+    return available
 
 
 def _paper_portfolio_payload(app: Any, repository: Any, user_sub: str, snapshot: dict[str, Any]) -> dict[str, Any]:

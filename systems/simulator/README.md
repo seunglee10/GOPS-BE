@@ -30,7 +30,8 @@ manifest와 ClickHouse 상태를 `FAILED`로 남기며 시뮬레이터는 실행
 
 ## 재생과 공통 paper 원장
 
-시작 스크립트는 simulator와 backend 연결만 준비하고 전역 상태를 `LIVE/idle`에 둔다.
+일반 AWS app 배포가 simulator Pod와 backend 연결을 함께 준비한다. 새 Pod의 기본 상태는
+`LIVE/idle`이다.
 화면 상단의 플레이 버튼을 누르면 `start` action이 가상시각 `2026-07-15 00:00 KST`의
 새 `runId`를 만들고 같은 응답에서 `running`으로 전환한다. 사용자 계좌는
 Postgres의 영구 paper 원장을 계속 사용한다. 기본 배속은 `1×`이며 `1·5·20·60×`를
@@ -75,24 +76,35 @@ SIM 뉴스 패널은 live Redis 캐시 대신 ClickHouse만 읽는다. 최신 �
 point-in-time 조회를 보장하지 못하는 뉴스 watchlist·추천·기업정보·AI 분석은
 `simulation_data_unavailable`을 반환한다.
 
+SIM 가상계좌 평가는 replay bid/ask만 사용한다. replay 호가가 없으면 LIVE Redis,
+최신 캔들, demo 가격으로 대체하지 않고 `simulation_data_unavailable`을 반환한다.
+배당·52주 통계 같은 LIVE 보강은 실행하지 않으며 계좌 성과 이력은 `virtualTime` 이하의
+스냅샷만 포함한다. 기업저널 report/evidence도 cutoff 조회가 구현되기 전까지 차단한다.
+
 ## 오프라인 V3 추천 fixture
 
 `tools/recommendation_v3_fixture.py`는 AWS ClickHouse의 2026-07-14 실제 데이터를
 read-only로 추출하고 cutoff-safe 추천 결과를 검증하는 별도 오프라인 도구다.
 생성 파일은 저장소에 자동 포함되지 않으며 현재 tick replay runtime API에는 연결되지
 않는다. fixture가 없을 때 synthetic 추천으로 대체하지 않는다.
+검증된 fixed recommendation artifact가 배포된 경우에도 replay cursor가 artifact의
+`evidenceAsOf`에 도달하기 전에는 추천 API가 409를 반환한다.
 
 ## dev EKS
 
-`Deployment/gops-simulator`는 평소 `replicas: 0`이다. 시작 스크립트는 ClickHouse
-스키마와 `READY` 데이터셋을 확인한 뒤 simulator Pod와 backend 연결만 준비한다.
-스크립트 완료 시에는 `LIVE/idle`이며 화면의 플레이 버튼을 누르기 전에는 run이나 replay가 시작되지 않는다.
-Alpaca ingestor, market processor, 실시간 Redis/Kafka는 변경하지 않는다.
+AWS app overlay는 `Deployment/gops-simulator`를 `replicas: 1`로 유지한다. 일반 배포가
+backend의 `GOPS_SIMULATOR_URL`과 simulator rollout을 함께 적용·검증하므로 별도 시작
+스크립트가 필요 없다. Pod가 떠 있어도 기본 상태는 `LIVE/idle`이며 화면의 플레이 버튼을
+누르기 전에는 run이나 replay가 시작되지 않는다. Alpaca ingestor, market processor,
+실시간 Redis/Kafka는 변경하지 않는다.
 
 ```sh
-LOCAL_REF=dev FORCE_SERVICES=frontend,backend,simulator \
-  AWS_PROFILE=gops-dev scripts/aws/deploy-dev-local.sh
+AWS_PROFILE=gops-dev scripts/aws/deploy-dev-local.sh
 AWS_PROFILE=gops-dev scripts/aws/run-simulator-replay-import.sh  # 최초 1회
-AWS_PROFILE=gops-dev scripts/aws/start-dev-simulator.sh
-AWS_PROFILE=gops-dev scripts/aws/stop-dev-simulator.sh
 ```
+
+기존 `READY` 데이터셋이 있으면 import도 다시 실행하지 않는다. 완전히 새 클러스터에서
+데이터셋이 아직 없으면 simulator readiness gate가 배포를 실패 처리한다. 이 경우 위 import를
+한 번 실행하고 일반 배포를 다시 실행한다. `start-dev-simulator.sh`는 데이터셋·health를
+수동 점검하고 `LIVE/idle`로 돌리는 호환 도구일 뿐 replica나 backend 설정을 바꾸지 않는다.
+`stop-dev-simulator.sh`도 재생 상태만 LIVE로 정리하며 Pod는 READY 상태로 유지한다.

@@ -121,24 +121,14 @@ The values in this profile are local test credentials. Do not replace them
 with broker credentials: SIM orders must stay inside the simulator ledger and
 must never create a KIS order outbox entry.
 
-dev EKS에서는 시뮬레이터를 내부 `ClusterIP` Service로만 배포한다. 기본
-`replicas`는 0이라서 평소에는 Pod CPU/메모리를 사용하지 않는다. 시연 직전에
-다음 명령으로 시뮬레이터 Pod 하나를 켜고, GOPS backend와 주식 SIP 수집기만
-시뮬레이터로 전환한다. BOATS와 crypto 수집기는 건드리지 않는다.
+dev EKS에서는 시뮬레이터를 내부 `ClusterIP` Service로만 배포한다. AWS app overlay가
+`replicas: 1`과 backend의 `GOPS_SIMULATOR_URL`을 선언하므로 일반 app 배포와 함께
+자동으로 올라온다. Pod는 평소 `LIVE/idle`로 대기하며 화면에서 SIM 재생을 시작하기
+전에는 저장 틱을 재생하지 않는다. BOATS, SIP 수집기와 실시간 Redis/Kafka는 그대로다.
 
-```bash
-AWS_PROFILE=gops-dev ./scripts/aws/start-dev-simulator.sh
-```
-
-시연 종료 직후 실제 Alpaca SIP 경로를 복구하고 Pod를 다시 0개로 내린다.
-
-```bash
-AWS_PROFILE=gops-dev ./scripts/aws/stop-dev-simulator.sh
-```
-
-실행 중 resource request는 CPU `50m`(코어의 5%)와 메모리 `64Mi`, limit은
-CPU `250m`와 메모리 `128Mi`다. 이미지나 manifest를 다시 배포해도 기본값인
-0개로 돌아가므로 다음 시연 전에는 start 명령을 다시 실행해야 한다.
+resource request는 CPU `250m`와 메모리 `256Mi`, limit은 CPU `1`과 메모리
+`512Mi`다. `stop-dev-simulator.sh`는 필요할 때 재생 상태만 LIVE로 정리하고 Pod는
+READY 상태로 유지한다.
 
 ## Kafka
 

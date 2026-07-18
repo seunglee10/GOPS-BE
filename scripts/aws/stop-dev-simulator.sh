@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 역할: dev EKS를 LIVE로 전환하고 SIM 실행 네임스페이스만 정리합니다.
+# 역할: simulator Pod는 유지한 채 dev EKS를 LIVE로 전환하고 SIM 실행 상태만 정리합니다.
 set -euo pipefail
 
 AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-<aws-account-id>}"
@@ -52,8 +52,6 @@ require_command kubectl
 configure_cluster
 set_live_mode || printf 'Simulator LIVE 전환 호출에 실패해 Redis 네임스페이스를 직접 정리합니다.\n' >&2
 cleanup_replay_namespace
-kubectl set env deployment/gops-backend -n "${K8S_NAMESPACE}" GOPS_SIMULATOR_URL-
-kubectl rollout status deployment/gops-backend -n "${K8S_NAMESPACE}" --timeout=300s
-kubectl scale deployment/gops-simulator --replicas=0 -n "${K8S_NAMESPACE}"
 
-printf 'dev EKS is LIVE; realtime Redis/Kafka/Alpaca deployments were not changed.\n'
+printf 'dev EKS is LIVE; simulator Pod는 다음 실행을 위해 READY 상태로 유지됩니다.\n'
+printf 'realtime Redis/Kafka/Alpaca deployments were not changed.\n'
