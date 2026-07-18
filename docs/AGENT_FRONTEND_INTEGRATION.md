@@ -185,6 +185,11 @@ WebSocket을 새로 열지 않는다. 최상위 `PaperAccountProvider`의 `open_
 가상계좌 스냅샷과 `/ws/paper/account` 연결은 앱 최상위 `PaperAccountProvider`가 한 번만
 소유한다. 보유종목 표, 듀얼 포트폴리오, 개인 히트맵, 차트 commentary와 가상계좌 패널은
 이 동일한 스냅샷을 변환해 읽으며 프런트 고정 portfolio/performance fixture를 만들지 않는다.
+동시에 들어온 HTTP 계좌/주문 refresh는 각각 진행 중인 Promise를 공유한다. account
+WebSocket이 닫히면 0.5초부터 최대 10초까지 backoff 재연결하고 정상 snapshot을 받은 뒤
+backoff를 초기화한다. `simulation_quote_not_ready`, `simulation_quote_timeout`,
+`simulation_service_unavailable`은 기존 snapshot을 유지하는 transient 상태이며 화면의
+영구 오류로 남기지 않는다.
 백엔드는 비억제 legacy 계좌를 첫 조회에서 `diversified-us-v3`로 자동 전환하므로 프런트는
 별도 적용 버튼을 표시하지 않는다. 기본 구성은 NVDA를 제외한 10종목·7섹터, 23개 체결,
 3개 미체결 주문과 최근 일별 평가곡선을 포함한다. 보유 원금은 최근 AAPL·JPM·WMT의
@@ -211,6 +216,8 @@ tooltip은 차트 체결 마커의 surface, border, typography 토큰을 재사�
 
 차트의 매매 체결 DOM 마커도 사용자별 원장을 사용한다. LIVE에서는 영구 가상계좌의
 `filled` 주문만, SIM에서는 현재 `runId`의 `filled` 주문만 표시하며 서로 섞지 않는다.
+마커 provider는 최상위 `PaperAccountProvider`가 이미 갱신하는 주문 원장을 사용하며
+`/api/account/holdings`를 별도 1초 polling하지 않는다.
 매수 `B`는 체결 시각이 속한 봉의 저가 아래, 매도 `S`는 고가 위에 표시하고 같은 봉의
 동일 방향 체결은 하나의 마커로 합친다. 집계 마커는 hover에서 체결 건수·총수량·수량가중
 평균 체결가를 표시하고 손익도 해당 집계 기준으로 계산한다. 일봉은 New York 시장일, 분·시간봉과

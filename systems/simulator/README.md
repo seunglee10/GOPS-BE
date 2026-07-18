@@ -39,6 +39,10 @@ Postgres의 영구 paper 원장을 계속 사용한다. 기본 배속은 `1×`�
 ClickHouse 청크 조회와 이벤트 처리는 HTTP 이벤트 루프 밖의 작업 스레드에서 수행하고,
 status와 health는 마지막 완료 스냅샷을 즉시 반환한다. 따라서 큰 청크를 처리하는 동안에도
 Kubernetes probe와 웹의 SIM 상태 폴링이 차단되지 않는다.
+재생 pump는 ClickHouse 정렬키 `(dataset_id, sequence)`로 다음 청크를 미리 읽고 가상시각을
+넘는 첫 이벤트부터 메모리에 보류한다. 같은 가상시각을 기다리는 동안 `event_time` 조건으로
+전체 파티션을 반복 스캔하지 않는다. 현재 호가는 처리 완료 뒤 불변 snapshot으로 발행하므로
+계좌 평가가 replay pump의 controller lock을 기다리지 않는다.
 
 시장가는 실행 중 현재 ask(매수) 또는 bid(매도), 지정가는 조건 충족 시 실제 ask/bid로
 정수 수량 전량 체결된다. 공매도·부분체결·수수료·추가 슬리피지는 없다. 미체결 매수
@@ -58,12 +62,16 @@ PUT  /api/control/speed      {"speed":1|5|20|60}
 GET  /api/control/candles
 GET  /api/control/symbols
 GET  /api/control/indices
+GET  /api/control/quotes?symbols=AAPL,MSFT
 GET  /api/control/order-flow?symbol=...
 GET  /api/control/execution-events?runId=...&afterSequence=...&limit=...
 ```
 
 Simulator는 계좌·주문·조건 control API를 제공하지 않는다. `simulation-paper-matcher`가
-execution event를 순서대로 페이지 조회하고 공통 Postgres 원장을 갱신한다.
+execution event를 순서대로 페이지 조회하고 공통 Postgres 원장을 갱신한다. Matcher는 현재
+run의 미체결 주문·활성 가격조건 종목만 처리한다. 활성 종목이 없으면 quote를 순회하지 않고
+simulator의 처리 완료 sequence까지 checkpoint를 전진시킨다. 활성 종목이 있으면 최대
+1,000 raw event씩 읽고 25개 선택 quote마다 checkpoint와 heartbeat를 갱신한다.
 
 지수 패널은 SIM에서 LIVE Yahoo 캐시를 사용하지 않는다. `GET /api/control/indices`가
 재생 시작 시각 `2026-07-15 00:00 KST` 직전까지 관측된 15개 지수·시장지표의 불변
@@ -90,8 +98,11 @@ SIM 뉴스 패널은 live Redis 캐시 대신 ClickHouse만 읽는다. 최신 �
 point-in-time 조회를 보장하지 못하는 뉴스 watchlist·추천·기업정보·AI 분석은
 `simulation_data_unavailable`을 반환한다.
 
-SIM 가상계좌 평가는 replay bid/ask만 사용한다. replay 호가가 없으면 LIVE Redis,
-최신 캔들, demo 가격으로 대체하지 않고 `simulation_data_unavailable`을 반환한다.
+SIM 가상계좌 평가는 모든 보유종목을 한 번의 batch 요청으로 읽은 replay bid/ask만 사용한다.
+replay 호가가 없으면 LIVE Redis, 최신 캔들, demo 가격으로 대체하지 않는다. 최초 호가
+미도착은 `409 simulation_quote_not_ready`, simulator timeout은
+`504 simulation_quote_timeout`, 연결 장애는 `503 simulation_service_unavailable`로
+구분하며 모두 재시도 가능한 transient 상태다.
 배당·52주 통계 같은 LIVE 보강은 실행하지 않으며 계좌 성과 이력은 `virtualTime` 이하의
 스냅샷만 포함한다. 기업저널 report/evidence도 cutoff 조회가 구현되기 전까지 차단한다.
 

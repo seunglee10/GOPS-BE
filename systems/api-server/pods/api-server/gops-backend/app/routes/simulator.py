@@ -89,10 +89,11 @@ def simulator_gateway_from_app(app: Any) -> SimulatorGateway:
 
 
 def simulator_mode_active(app: Any) -> bool:
+    gateway = simulator_gateway_from_app(app)
     try:
-        return simulator_gateway_from_app(app).status().get("mode") == "simulation"
+        return gateway.status().get("mode") == "simulation"
     except SimulatorUnavailable:
-        return False
+        return (getattr(gateway, "last_status", None) or {}).get("mode") == "simulation"
 
 
 def _call_simulator(callback, request: Request) -> dict[str, Any]:

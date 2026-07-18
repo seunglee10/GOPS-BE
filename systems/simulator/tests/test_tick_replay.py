@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import unittest
 import urllib.parse
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
@@ -97,6 +98,41 @@ class DatasetContractTests(unittest.TestCase):
         request = ClickHouseHttpClient("http://clickhouse:8123")._request(b"SELECT now64()")
         query = urllib.parse.parse_qs(urllib.parse.urlparse(request.full_url).query)
         self.assertEqual(query["date_time_output_format"], ["iso"])
+
+    def test_replay_sequence_query_does_not_scan_by_virtual_time(self):
+        class FakeClickHouseClient:
+            def __init__(self):
+                self.queries = []
+
+            def query_rows(self, sql):
+                self.queries.append(sql)
+                if "simulation_replay_datasets" in sql:
+                    return [{"status": "READY", "total_events": 2}]
+                return [
+                    {
+                        "sequence": 1,
+                        "event_time": (DATASET_START + timedelta(seconds=1)).isoformat(),
+                        "feed": "sip",
+                        "payload": json.dumps({"T": "q", "S": "NVDA", "bp": 99, "ap": 100}),
+                    },
+                    {
+                        "sequence": 2,
+                        "event_time": (DATASET_START + timedelta(seconds=3)).isoformat(),
+                        "feed": "sip",
+                        "payload": json.dumps({"T": "t", "S": "NVDA", "p": 100, "s": 1}),
+                    },
+                ]
+
+        client = FakeClickHouseClient()
+        source = ClickHouseReplayEventSource(client, DATASET_ID)
+
+        events = source.events_after(0, DATASET_START + timedelta(seconds=2), 50_000)
+
+        self.assertEqual([event.sequence for event in events], [1])
+        replay_query = client.queries[-1]
+        self.assertIn("sequence > 0", replay_query)
+        self.assertIn("ORDER BY sequence LIMIT 50000", replay_query)
+        self.assertNotIn("event_time <=", replay_query)
 
     def test_daily_replay_candles_use_new_york_market_midnight_and_stay_live(self):
         class FakeClickHouseClient:
@@ -468,6 +504,40 @@ class ReplayControllerTests(unittest.TestCase):
         self.assertTrue(second["caughtUp"])
         self.assertEqual(duplicate["quotes"], [])
         self.assertEqual(duplicate["nextSequence"], 4)
+
+    def test_execution_events_reads_the_processed_sequence_window_without_repumping(self):
+        class TrackingSource(InMemoryReplayEventSource):
+            def __init__(self, events):
+                super().__init__(events)
+                self.pump_reads = 0
+                self.window_reads = 0
+
+            def events_after(self, sequence, through, limit):
+                self.pump_reads += 1
+                return super().events_after(sequence, through, limit)
+
+            def events_between(self, after_sequence, through_sequence, limit):
+                self.window_reads += 1
+                return [
+                    event for event in self._events
+                    if after_sequence < event.sequence <= through_sequence
+                ][:limit]
+
+        source = TrackingSource([
+            quote(1, 1, "NVDA", 99.0, 100.0),
+            trade(2, 1, "NVDA", 99.5),
+        ])
+        controller = ReplayController(source, clock=self.clock)
+        controller.start()
+        self.clock.value += 2
+        controller.status()
+        source.pump_reads = 0
+
+        page = controller.execution_events(after_sequence=0, limit=50_000)
+
+        self.assertEqual(page["nextSequence"], 2)
+        self.assertEqual(source.pump_reads, 0)
+        self.assertEqual(source.window_reads, 1)
 
     def test_raw_crossed_quote_is_replayed_without_modification(self):
         controller = ReplayController(

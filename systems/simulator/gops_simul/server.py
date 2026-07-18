@@ -135,6 +135,25 @@ def create_app(
             raise HTTPException(status_code=404, detail="current replay quote is unavailable")
         return {"symbol": symbol.strip().upper(), **quote, "runId": controller.run_id}
 
+    @app.get("/api/control/quotes")
+    def replay_quotes(symbols: str = Query(min_length=1, max_length=500)) -> dict[str, object]:
+        requested = list(dict.fromkeys(
+            symbol.strip().upper()
+            for symbol in symbols.split(",")
+            if symbol.strip()
+        ))
+        if len(requested) > 100:
+            raise HTTPException(status_code=400, detail="at most 100 symbols can be requested")
+        quotes = controller.latest_quotes_details(requested)
+        return {
+            "runId": controller.run_id,
+            "quotes": {
+                symbol: {"symbol": symbol, **quote}
+                for symbol, quote in quotes.items()
+            },
+            "missingSymbols": [symbol for symbol in requested if symbol not in quotes],
+        }
+
     @app.get("/api/control/execution-events")
     def replay_execution_events(
         runId: str = Query(min_length=1, max_length=100),

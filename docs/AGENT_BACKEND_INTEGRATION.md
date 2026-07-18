@@ -175,6 +175,10 @@ LIVE KIS는 기존 limit-only 계약을 유지한다. 주문 조회·event·WebS
 `simulation-paper-matcher`가 `/api/control/execution-events`를 checkpoint 순서로 읽어
 현재 run의 SIM 주문·조건만 평가한다. 재시작이나 LIVE 전환은 이전 run의 미체결 주문,
 예약 현금·수량, 미발동 조건만 취소하며 이미 체결된 현금·포지션·성과는 보존한다.
+Matcher는 현재 run의 pending order와 `watching|executing` 가격조건에서 활성 symbol을 먼저
+조회한다. 활성 symbol이 없으면 simulator `processedEventCount`로 즉시 checkpoint하고,
+있을 때만 1,000 raw event 페이지에서 해당 symbol quote를 평가한다. 선택 quote 25건마다
+checkpoint와 heartbeat를 갱신해 probe가 긴 페이지 전체 완료를 기다리지 않게 한다.
 
 ## Persistent Paper Trading Boundary
 
@@ -210,6 +214,11 @@ POST /api/paper/orders/{order_id}/cancel
 WS   /ws/paper/orders/{order_id}
 WS   /ws/paper/account
 ```
+
+SIM 계좌 평가는 `GET /api/control/quotes` 한 번으로 보유종목 전체 bid/ask를 가져온다.
+최초 replay quote 미도착은 `409 simulation_quote_not_ready`, simulator 응답 timeout은
+`504 simulation_quote_timeout`, 연결/서비스 장애는 `503 simulation_service_unavailable`이다.
+세 경우를 같은 데이터 부재 오류로 합치지 않으며 LIVE 가격으로 대체하지 않는다.
 
 `paper-order-matcher`는 `market.layer.quotes.v1`의 모든 market session quote를
 사용한다. 매수는 ask, 매도는 bid 최우선호가로 전량 체결하며 부분체결, 수수료,

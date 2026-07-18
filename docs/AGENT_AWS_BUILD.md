@@ -584,7 +584,11 @@ temporary API-to-Redis synchronization failure heals without a new order.
 `gops-order-worker` image and no new Kafka topic. It pages simulator execution events,
 persists a per-run sequence checkpoint in Postgres, and matches only
 `execution_mode=simulation` rows for the active `runId`; the live paper matcher continues
-to match only `execution_mode=paper` rows.
+to match only `execution_mode=paper` rows. Its default raw page is 1,000 events and it
+checkpoints every 25 selected active-symbol quotes. When the active run has no pending SIM
+order or watching/executing condition, it advances directly to `processedEventCount` without
+requesting or matching the replay page. Startup/readiness/liveness heartbeat exec probes use
+an explicit five-second command timeout.
 `kis-overseas ops-metrics` reports seeded/suppressed/unseeded paper account counts,
 SIM pending/filled/cancelled totals, and matcher checkpoint/age. Per-position
 `price_source` identifies replay/live/fixture fallback valuation.
@@ -1328,6 +1332,10 @@ ingestor, market processor, order-flow pin, 실시간 Redis/Kafka, trade-conditi
 deployment는 변경하지 않는다. simulator는 ClickHouse를 chunk 조회하고 시계·캔들·quote와
 순서형 `/api/control/execution-events`만 제공한다. 실행별 계좌·주문·가격조건은 Postgres
 paper 원장이 보유한다.
+replay pump는 ClickHouse의 `(dataset_id, sequence)` 정렬키로 청크를 read-ahead하고 미래
+이벤트는 메모리에 보류한다. 계좌용 `/api/control/quotes`는 lock-free 완료 snapshot을
+반환하고 execution event 조회는 현재 처리 완료 sequence 상한만 읽으므로 pump와 같은
+controller lock에서 ClickHouse 조회를 반복하지 않는다.
 
 SIM Order Flow는 같은 simulator image가 `systems/market-data/shared`의 분류 계약을
 읽어 `simulation_replay_events`에서 요청 종목만 cursor-safe하게 투영한다. 최대 8종목

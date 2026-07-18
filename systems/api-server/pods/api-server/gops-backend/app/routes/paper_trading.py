@@ -425,12 +425,17 @@ def _enriched_account_snapshot(app: Any, repository: PaperTradingRepository, use
 
     simulation_active = simulator_mode_active(app)
     snapshot = repository.account_snapshot(user_id)
+    raw_positions = [dict(raw) for raw in snapshot.get("positions") or []]
+    simulation_quotes = (
+        _simulation_position_quotes(app, [str(position.get("symbol") or "") for position in raw_positions])
+        if simulation_active and raw_positions
+        else {}
+    )
     positions = []
     market_value = Decimal("0")
     unrealized_total = Decimal("0")
     realized_total = Decimal(snapshot["account"].get("realized_pnl") or 0)
-    for raw in snapshot.get("positions") or []:
-        position = dict(raw)
+    for position in raw_positions:
         qty = Decimal(position.get("qty") or 0)
         average_price = Decimal(position.get("average_price") or 0)
         current_price, price_source, price_timestamp = _position_price(
@@ -438,6 +443,7 @@ def _enriched_account_snapshot(app: Any, repository: PaperTradingRepository, use
             position["symbol"],
             average_price,
             simulation_active=simulation_active,
+            simulation_quotes=simulation_quotes,
         )
         value = qty * current_price
         cost = qty * average_price
@@ -483,17 +489,16 @@ def _position_price(
     fallback: Decimal,
     *,
     simulation_active: bool,
+    simulation_quotes: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[Decimal, str, str | None]:
     if simulation_active:
-        try:
-            from app.routes.simulator import simulator_gateway_from_app
-
-            quote = simulator_gateway_from_app(app).quote(symbol)
-        except Exception as exc:
-            raise HTTPException(status_code=409, detail="simulation_data_unavailable") from exc
+        quote = (simulation_quotes or {}).get(symbol.strip().upper()) or {}
         replay_price = _optional_positive_decimal(quote.get("bid") or quote.get("ask"))
         if replay_price is None:
-            raise HTTPException(status_code=409, detail="simulation_data_unavailable")
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "simulation_quote_not_ready", "symbols": [symbol.strip().upper()], "retryable": True},
+            )
         return replay_price, "simulation_replay", quote.get("virtualTime")
 
     resolver = getattr(app.state, "paper_price_resolver", None)
@@ -524,6 +529,48 @@ def _position_price(
     if fixture_value is not None:
         return fixture_value, "seeded-demo", None
     return fallback, "average_price", None
+
+
+def _simulation_position_quotes(app: Any, symbols: list[str]) -> dict[str, dict[str, Any]]:
+    from app.routes.simulator import simulator_gateway_from_app
+    from app.services.simulator_gateway import SimulatorTimeout, SimulatorUnavailable
+
+    normalized = list(dict.fromkeys(
+        symbol.strip().upper()
+        for symbol in symbols
+        if symbol.strip()
+    ))
+    try:
+        payload = simulator_gateway_from_app(app).quotes(normalized)
+    except SimulatorTimeout as exc:
+        raise HTTPException(
+            status_code=504,
+            detail={"code": "simulation_quote_timeout", "symbols": normalized, "retryable": True},
+        ) from exc
+    except SimulatorUnavailable as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "simulation_service_unavailable", "symbols": normalized, "retryable": True},
+        ) from exc
+
+    raw_quotes = payload.get("quotes") if isinstance(payload, dict) else None
+    quotes = {
+        str(symbol).strip().upper(): quote
+        for symbol, quote in (raw_quotes.items() if isinstance(raw_quotes, dict) else [])
+        if isinstance(quote, dict)
+    }
+    missing = [
+        symbol
+        for symbol in normalized
+        if symbol not in quotes
+        or _optional_positive_decimal(quotes[symbol].get("bid") or quotes[symbol].get("ask")) is None
+    ]
+    if missing:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "simulation_quote_not_ready", "symbols": missing, "retryable": True},
+        )
+    return quotes
 
 
 def _fixture_position_fields(
@@ -674,7 +721,8 @@ async def _accept_paper_socket(websocket: WebSocket) -> AuthenticatedUser | None
 async def _close_socket_with_error(websocket: WebSocket, exc: Exception) -> None:
     try:
         if websocket.client_state != WebSocketState.DISCONNECTED:
-            await websocket.send_json({"type": "error", "detail": str(exc)})
+            detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+            await websocket.send_json({"type": "error", "detail": detail})
             await websocket.close(code=1011)
     except Exception:
         return

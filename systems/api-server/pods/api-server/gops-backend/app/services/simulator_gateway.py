@@ -12,6 +12,14 @@ class SimulatorUnavailable(RuntimeError):
     pass
 
 
+class SimulatorTimeout(SimulatorUnavailable):
+    pass
+
+
+class SimulatorDataUnavailable(SimulatorUnavailable):
+    pass
+
+
 class SimulatorGateway:
     def __init__(self, base_url: str | None = None, timeout_seconds: float = 2.0) -> None:
         self.base_url = (base_url or os.getenv("GOPS_SIMULATOR_URL", "http://127.0.0.1:8765")).rstrip("/")
@@ -24,16 +32,33 @@ class SimulatorGateway:
         return status
 
     def set_mode(self, mode: str) -> dict[str, Any]:
-        return self._request("PUT", "/api/control/mode", {"mode": mode})
+        status = self._request("PUT", "/api/control/mode", {"mode": mode})
+        self.last_status = status
+        return status
 
     def action(self, action: str) -> dict[str, Any]:
-        return self._request("POST", "/api/control/action", {"action": action})
+        status = self._request("POST", "/api/control/action", {"action": action})
+        self.last_status = status
+        return status
 
     def set_speed(self, speed: int) -> dict[str, Any]:
-        return self._request("PUT", "/api/control/speed", {"speed": speed})
+        status = self._request("PUT", "/api/control/speed", {"speed": speed})
+        self.last_status = status
+        return status
 
     def quote(self, symbol: str) -> dict[str, Any]:
         return self._request("GET", f"/api/control/quote?symbol={urllib.parse.quote(symbol)}")
+
+    def quotes(self, symbols: list[str] | tuple[str, ...]) -> dict[str, Any]:
+        normalized = list(dict.fromkeys(
+            str(symbol).strip().upper()
+            for symbol in symbols
+            if str(symbol).strip()
+        ))
+        if not normalized:
+            return {"runId": None, "quotes": {}, "missingSymbols": []}
+        query = urllib.parse.urlencode({"symbols": ",".join(normalized)})
+        return self._request("GET", f"/api/control/quotes?{query}")
 
     def execution_events(self, run_id: str, after_sequence: int, limit: int = 50_000) -> dict[str, Any]:
         query = urllib.parse.urlencode({
@@ -94,8 +119,15 @@ class SimulatorGateway:
                 detail = error_payload.get("detail") or error_payload.get("message") or detail
             except Exception:
                 pass
-            raise SimulatorUnavailable(str(detail)) from exc
-        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+            error_type = SimulatorDataUnavailable if exc.code == 404 else SimulatorUnavailable
+            raise error_type(str(detail)) from exc
+        except TimeoutError as exc:
+            raise SimulatorTimeout(f"GOPS simulator timed out at {self.base_url}") from exc
+        except urllib.error.URLError as exc:
+            if isinstance(exc.reason, TimeoutError):
+                raise SimulatorTimeout(f"GOPS simulator timed out at {self.base_url}") from exc
+            raise SimulatorUnavailable(f"GOPS simulator unavailable at {self.base_url}") from exc
+        except (OSError, ValueError) as exc:
             raise SimulatorUnavailable(f"GOPS simulator unavailable at {self.base_url}") from exc
         if not isinstance(parsed, dict):
             raise SimulatorUnavailable("GOPS simulator returned an invalid response")

@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 
 from app.company_journal.routes import get_company_journal_service
 from app.main import create_app
+from app.services.simulator_gateway import SimulatorTimeout, SimulatorUnavailable
 from app.alerts.repository import InMemoryAlertRepository
 from app.trade_conditions.repository import InMemoryTradeConditionRepository
 from kis_trader.persistence.memory import InMemoryOrderRepository
@@ -77,6 +78,23 @@ class FakeSimulatorGateway:
     def quote(self, symbol):
         self.calls.append(("quote", symbol))
         return {"symbol": symbol, "bid": 99.0, "ask": 100.0, "runId": "run-1"}
+
+    def quotes(self, symbols):
+        normalized = tuple(sorted(str(symbol).upper() for symbol in symbols))
+        self.calls.append(("quotes", normalized))
+        return {
+            "runId": "run-1",
+            "quotes": {
+                symbol: {
+                    "symbol": symbol,
+                    "bid": 99.0,
+                    "ask": 100.0,
+                    "virtualTime": self.virtual_time,
+                }
+                for symbol in normalized
+            },
+            "missingSymbols": [],
+        }
 
     def candles(self, symbol, interval, limit):
         self.calls.append(("candles", symbol, interval, limit))
@@ -333,10 +351,17 @@ class SimulatorRoutesTest(unittest.TestCase):
         )
         self.assertIn("7섹터", payload["account"]["alias"])
         self.assertEqual(payload["asOf"], "2026-07-15T00:00:00+09:00")
+        quote_calls = [call for call in self.gateway.calls if call[0] in {"quote", "quotes"}]
+        self.assertEqual(len(quote_calls), 1)
+        self.assertEqual(quote_calls[0][0], "quotes")
 
     def test_simulation_holdings_do_not_fall_back_to_non_replay_prices(self):
         self.gateway.mode = "simulation"
-        self.gateway.quote = Mock(return_value={"symbol": "GOOGL", "bid": None, "ask": None})
+        self.gateway.quotes = Mock(return_value={
+            "runId": "run-1",
+            "quotes": {},
+            "missingSymbols": ["GOOGL"],
+        })
         live_price_resolver = Mock(return_value={
             "price": "999.00",
             "source": "redis.live_trade",
@@ -347,7 +372,40 @@ class SimulatorRoutesTest(unittest.TestCase):
         response = self.client.get("/api/account/holdings?market=overseas&currency=USD")
 
         self.assertEqual(response.status_code, 409)
-        self.assertEqual(response.json()["detail"], "simulation_data_unavailable")
+        self.assertEqual(response.json()["detail"]["code"], "simulation_quote_not_ready")
+        self.assertIn("GOOGL", response.json()["detail"]["symbols"])
+        live_price_resolver.assert_not_called()
+
+    def test_simulation_holdings_report_quote_timeout_as_retryable_gateway_failure(self):
+        self.gateway.mode = "simulation"
+        self.gateway.quotes = Mock(side_effect=SimulatorTimeout("timed out"))
+
+        response = self.client.get("/api/account/holdings?market=overseas&currency=USD")
+
+        self.assertEqual(response.status_code, 504)
+        self.assertEqual(response.json()["detail"]["code"], "simulation_quote_timeout")
+        self.assertTrue(response.json()["detail"]["retryable"])
+
+    def test_simulation_holdings_report_simulator_failure_separately_from_missing_quotes(self):
+        self.gateway.mode = "simulation"
+        self.gateway.quotes = Mock(side_effect=SimulatorUnavailable("connection refused"))
+
+        response = self.client.get("/api/account/holdings?market=overseas&currency=USD")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["detail"]["code"], "simulation_service_unavailable")
+
+    def test_last_known_simulation_mode_never_falls_back_to_live_prices_on_status_failure(self):
+        self.gateway.last_status = {"mode": "simulation", "runId": "run-1"}
+        self.gateway.status = Mock(side_effect=SimulatorUnavailable("connection refused"))
+        self.gateway.quotes = Mock(side_effect=SimulatorUnavailable("connection refused"))
+        live_price_resolver = Mock(return_value={"price": "999.00", "source": "redis.live_trade"})
+        self.app.state.paper_price_resolver = live_price_resolver
+
+        response = self.client.get("/api/account/holdings?market=overseas&currency=USD")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["detail"]["code"], "simulation_service_unavailable")
         live_price_resolver.assert_not_called()
 
     def test_simulation_holdings_skip_live_market_enrichment(self):

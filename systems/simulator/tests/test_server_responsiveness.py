@@ -34,6 +34,7 @@ class _BlockingReplayController:
         self._controller_lock = threading.Lock()
         self.pump_blocked = threading.Event()
         self.release_pump = threading.Event()
+        self.run_id = "run-1"
 
     def status(self) -> dict[str, object]:
         with self._controller_lock:
@@ -51,6 +52,16 @@ class _BlockingReplayController:
             "runId": "run-1",
             "virtualTime": "2026-07-15T00:00:00+09:00",
             "totalEventCount": self.source.total_events,
+        }
+
+    def latest_quotes_details(self, symbols: list[str]) -> dict[str, dict[str, object]]:
+        return {
+            "NVDA": {
+                "bid": 99.0,
+                "ask": 100.0,
+                "sequence": 10,
+                "virtualTime": "2026-07-15T00:00:01+09:00",
+            }
         }
 
 
@@ -81,6 +92,17 @@ class SimulatorServerResponsivenessTests(unittest.TestCase):
 
     def test_status_uses_non_blocking_snapshot_while_replay_pump_is_blocked(self) -> None:
         self._assert_endpoint_stays_responsive("/api/control/status")
+
+    def test_batch_quotes_use_the_non_blocking_quote_snapshot(self) -> None:
+        controller = _BlockingReplayController()
+        app = create_app(replay_controller=controller)
+
+        with TestClient(app) as client:
+            response = client.get("/api/control/quotes?symbols=NVDA,MSFT")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["quotes"]["NVDA"]["bid"], 99.0)
+        self.assertEqual(response.json()["missingSymbols"], ["MSFT"])
 
     def test_simulator_does_not_expose_account_order_or_condition_ledgers(self) -> None:
         app = create_app(replay_controller=_BlockingReplayController())

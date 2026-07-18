@@ -13,6 +13,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from kis_trader.paper.postgres import PostgresPaperTradingRepository
+from kis_trader.paper.simulation_matcher import process_execution_page
 from kis_trader.domain.commands import validate_order_request_payload
 from kis_trader.runtime_heartbeat import touch_heartbeat
 
@@ -21,12 +22,16 @@ MATCHER_ID = "simulation-paper-matcher-v1"
 
 
 def main() -> int:
+    touch_heartbeat()
     repository = PostgresPaperTradingRepository.from_env()
     base_url = os.getenv("GOPS_SIMULATOR_URL", "http://gops-simulator:8765").rstrip("/")
     idle_seconds = max(0.05, float(os.getenv("SIMULATION_MATCHER_IDLE_SECONDS", "0.25")))
-    batch_size = max(1, min(int(os.getenv("SIMULATION_MATCHER_BATCH_SIZE", "50000")), 50000))
+    batch_size = max(1, min(int(os.getenv("SIMULATION_MATCHER_BATCH_SIZE", "1000")), 5000))
+    checkpoint_interval = max(1, int(os.getenv("SIMULATION_MATCHER_CHECKPOINT_INTERVAL", "25")))
+    observed_run_id = ""
     while True:
         try:
+            touch_heartbeat()
             status = _request(base_url, "/api/control/status")
             run_id = str(status.get("runId") or "") if status.get("mode") == "simulation" else ""
             if not run_id:
@@ -34,6 +39,15 @@ def main() -> int:
                 time.sleep(idle_seconds)
                 continue
             sequence = _load_checkpoint(repository, run_id)
+            active_symbols = _active_simulation_symbols(repository, run_id)
+            if not active_symbols:
+                processed_sequence = int(status.get("processedEventCount") or sequence)
+                if run_id != observed_run_id or processed_sequence > sequence:
+                    _save_checkpoint(repository, run_id, processed_sequence)
+                observed_run_id = run_id
+                touch_heartbeat()
+                time.sleep(idle_seconds)
+                continue
             page = _request(
                 base_url,
                 "/api/control/execution-events?" + urllib.parse.urlencode({
@@ -42,23 +56,15 @@ def main() -> int:
                     "limit": batch_size,
                 }),
             )
-            for quote in page.get("quotes") or []:
-                quote_sequence = int(quote.get("sequence") or 0)
-                _trigger_conditions(repository, run_id, quote, quote_sequence)
-                repository.match_quote(
-                    symbol=str(quote.get("symbol") or ""),
-                    bid_price=_positive_decimal(quote.get("bid")),
-                    ask_price=_positive_decimal(quote.get("ask")),
-                    quote_timestamp=str(quote.get("timestamp") or "") or None,
-                    quote_event_id=f"simulation:{run_id}:{quote_sequence}",
-                    execution_mode="simulation",
-                    simulation_run_id=run_id,
-                    quote_sequence=quote_sequence,
-                    virtual_timestamp=str(quote.get("timestamp") or "") or None,
-                )
-            next_sequence = int(page.get("nextSequence") or sequence)
-            _save_checkpoint(repository, run_id, next_sequence)
-            touch_heartbeat()
+            process_execution_page(
+                page,
+                active_symbols=active_symbols,
+                on_quote=lambda quote: _match_quote(repository, run_id, quote),
+                save_checkpoint=lambda value: _save_checkpoint(repository, run_id, value),
+                heartbeat=touch_heartbeat,
+                checkpoint_interval=checkpoint_interval,
+            )
+            observed_run_id = run_id
             if page.get("caughtUp") is True:
                 time.sleep(idle_seconds)
         except Exception as exc:
@@ -106,6 +112,52 @@ def _save_checkpoint(repository: PostgresPaperTradingRepository, run_id: str, se
             (MATCHER_ID, run_id, max(0, int(sequence))),
         )
         conn.commit()
+
+
+def _active_simulation_symbols(repository: PostgresPaperTradingRepository, run_id: str) -> set[str]:
+    with repository._connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT symbol
+            FROM paper_orders
+            WHERE execution_mode = 'simulation'
+              AND simulation_run_id = %s
+              AND status = 'pending'
+            UNION
+            SELECT a.symbol
+            FROM trade_conditions tc
+            JOIN alerts a ON a.id = tc.alert_id
+            WHERE tc.execution_mode = 'simulation'
+              AND tc.simulation_run_id = %s
+              AND tc.status IN ('watching', 'executing')
+            """,
+            (run_id, run_id),
+        ).fetchall()
+    return {
+        str(row["symbol"]).strip().upper()
+        for row in rows
+        if row.get("symbol")
+    }
+
+
+def _match_quote(
+    repository: PostgresPaperTradingRepository,
+    run_id: str,
+    quote: dict[str, Any],
+) -> None:
+    quote_sequence = int(quote.get("sequence") or 0)
+    _trigger_conditions(repository, run_id, quote, quote_sequence)
+    repository.match_quote(
+        symbol=str(quote.get("symbol") or ""),
+        bid_price=_positive_decimal(quote.get("bid")),
+        ask_price=_positive_decimal(quote.get("ask")),
+        quote_timestamp=str(quote.get("timestamp") or "") or None,
+        quote_event_id=f"simulation:{run_id}:{quote_sequence}",
+        execution_mode="simulation",
+        simulation_run_id=run_id,
+        quote_sequence=quote_sequence,
+        virtual_timestamp=str(quote.get("timestamp") or "") or None,
+    )
 
 
 def _positive_decimal(value: Any) -> Decimal | None:

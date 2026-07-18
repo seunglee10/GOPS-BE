@@ -130,6 +130,11 @@ resource request는 CPU `250m`와 메모리 `256Mi`, limit은 CPU `1`과 메모�
 `512Mi`다. `stop-dev-simulator.sh`는 필요할 때 재생 상태만 LIVE로 정리하고 Pod는
 READY 상태로 유지한다.
 
+`SIMULATION_MATCHER_BATCH_SIZE`는 simulator execution raw page 크기이며 AWS 기본값은
+`1000`이다. `SIMULATION_MATCHER_CHECKPOINT_INTERVAL`은 활성 symbol quote 처리 중
+checkpoint/heartbeat를 남기는 간격이며 기본값은 `25`다. 활성 SIM 주문·조건이 없으면
+matcher는 이 페이지를 읽지 않고 현재 `processedEventCount`로 바로 전진한다.
+
 ## Kafka
 
 Current local stage:

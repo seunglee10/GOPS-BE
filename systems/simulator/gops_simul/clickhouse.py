@@ -63,12 +63,27 @@ class ClickHouseReplayEventSource:
         self.total_events = int(rows[0].get("total_events") or 0)
         if self.total_events <= 0: raise RuntimeError(f"replay dataset {dataset_id} has no events")
 
-    def events_after(self, sequence: int, through: datetime, limit: int) -> list[ReplayEvent]:
+    def events_after_sequence(self, sequence: int, limit: int) -> list[ReplayEvent]:
         rows = self.client.query_rows("SELECT sequence, event_time, feed, payload FROM market_data.simulation_replay_events "
             f"WHERE dataset_id = {sql_string(self.dataset_id)} AND sequence > {max(0, int(sequence))} "
-            f"AND event_time <= parseDateTime64BestEffort({sql_string(isoformat_z(through))}, 9) ORDER BY sequence LIMIT {max(1, int(limit))}")
-        return [ReplayEvent(sequence=int(row["sequence"]), timestamp=parse_timestamp(row["event_time"]),
-            feed=str(row.get("feed") or "sip"), payload=json.loads(str(row.get("payload") or "{}"))) for row in rows]
+            f"ORDER BY sequence LIMIT {max(1, int(limit))}")
+        return self._replay_events(rows)
+
+    def events_after(self, sequence: int, through: datetime, limit: int) -> list[ReplayEvent]:
+        return [
+            event
+            for event in self.events_after_sequence(sequence, limit)
+            if event.timestamp <= through
+        ]
+
+    def events_between(self, after_sequence: int, through_sequence: int, limit: int) -> list[ReplayEvent]:
+        rows = self.client.query_rows(
+            "SELECT sequence, event_time, feed, payload FROM market_data.simulation_replay_events "
+            f"WHERE dataset_id = {sql_string(self.dataset_id)} AND sequence > {max(0, int(after_sequence))} "
+            f"AND sequence <= {max(0, int(through_sequence))} "
+            f"ORDER BY sequence LIMIT {max(1, int(limit))}"
+        )
+        return self._replay_events(rows)
 
     def events_for_symbol_after(self, symbol: str, sequence: int, through: datetime, limit: int) -> list[ReplayEvent]:
         normalized = symbol.strip().upper()
@@ -82,6 +97,10 @@ class ClickHouseReplayEventSource:
             f"AND event_time <= parseDateTime64BestEffort({sql_string(isoformat_z(through))}, 9) "
             f"ORDER BY sequence LIMIT {max(1, int(limit))}"
         )
+        return self._replay_events(rows)
+
+    @staticmethod
+    def _replay_events(rows: Iterable[dict[str, object]]) -> list[ReplayEvent]:
         return [ReplayEvent(sequence=int(row["sequence"]), timestamp=parse_timestamp(row["event_time"]),
             feed=str(row.get("feed") or "sip"), payload=json.loads(str(row.get("payload") or "{}"))) for row in rows]
 

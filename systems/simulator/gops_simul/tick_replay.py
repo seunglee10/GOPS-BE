@@ -39,7 +39,9 @@ class ReplayEvent:
 class ReplayEventSource(Protocol):
     dataset_id: str
     total_events: int
+    def events_after_sequence(self, sequence: int, limit: int) -> list[ReplayEvent]: ...
     def events_after(self, sequence: int, through: datetime, limit: int) -> list[ReplayEvent]: ...
+    def events_between(self, after_sequence: int, through_sequence: int, limit: int) -> list[ReplayEvent]: ...
     def events_for_symbol_after(self, symbol: str, sequence: int, through: datetime, limit: int) -> list[ReplayEvent]: ...
     def candle_snapshot(self, symbol: str, interval: str, through: datetime, limit: int) -> dict[str, object]: ...
 
@@ -48,14 +50,28 @@ class InMemoryReplayEventSource:
     dataset_id = DATASET_ID
 
     def __init__(self, events: Iterable[ReplayEvent]) -> None:
-        self._events = sorted(events, key=lambda event: (event.timestamp, event.sequence))
+        self._events = sorted(events, key=lambda event: event.sequence)
         sequences = [event.sequence for event in self._events]
         if len(sequences) != len(set(sequences)):
             raise ValueError("replay event sequences must be unique")
         self.total_events = len(self._events)
 
+    def events_after_sequence(self, sequence: int, limit: int) -> list[ReplayEvent]:
+        return [event for event in self._events if event.sequence > sequence][:limit]
+
     def events_after(self, sequence: int, through: datetime, limit: int) -> list[ReplayEvent]:
-        return [event for event in self._events if event.sequence > sequence and event.timestamp <= through][:limit]
+        return [
+            event
+            for event in self.events_after_sequence(sequence, limit)
+            if event.timestamp <= through
+        ]
+
+    def events_between(self, after_sequence: int, through_sequence: int, limit: int) -> list[ReplayEvent]:
+        return [
+            event
+            for event in self._events
+            if after_sequence < event.sequence <= through_sequence
+        ][:limit]
 
     def events_for_symbol_after(self, symbol: str, sequence: int, through: datetime, limit: int) -> list[ReplayEvent]:
         normalized = symbol.strip().upper()
@@ -117,7 +133,9 @@ class ReplayController:
         self._anchor_virtual = DATASET_START
         self._run_started_wall: float | None = None
         self._emitted: deque[ReplayEvent] = deque(maxlen=100_000)
+        self._event_buffer: deque[ReplayEvent] = deque()
         self._latest_quotes: dict[str, dict[str, object]] = {}
+        self._quote_snapshot: dict[str, dict[str, object]] = {}
         self._latest_trades: dict[str, float] = {}
         self._opening_trades: dict[str, float] = {}
         self._daily_candles: dict[str, dict[str, dict[str, object]]] = {}
@@ -201,43 +219,52 @@ class ReplayController:
         }
 
     def latest_quote(self, symbol: str) -> dict[str, object] | None:
-        with self._lock:
-            quote = self._latest_quotes.get(symbol.strip().upper())
-            return {"bid": quote["bid"], "ask": quote["ask"]} if quote else None
+        quote = self._quote_snapshot.get(symbol.strip().upper())
+        return {"bid": quote["bid"], "ask": quote["ask"]} if quote else None
 
     def latest_quote_details(self, symbol: str) -> dict[str, object] | None:
-        with self._lock:
-            quote = self._latest_quotes.get(symbol.strip().upper())
-            return dict(quote) if quote else None
+        quote = self._quote_snapshot.get(symbol.strip().upper())
+        return dict(quote) if quote else None
+
+    def latest_quotes_details(self, symbols: Iterable[str]) -> dict[str, dict[str, object]]:
+        snapshot = self._quote_snapshot
+        return {
+            symbol: dict(snapshot[symbol])
+            for symbol in dict.fromkeys(str(value).strip().upper() for value in symbols)
+            if symbol in snapshot
+        }
 
     def execution_events(self, *, after_sequence: int, limit: int = 50_000) -> dict[str, object]:
+        normalized_after = max(0, int(after_sequence))
         with self._lock:
-            self._pump()
             self._require_simulation()
-            events = self.source.events_after(max(0, int(after_sequence)), self.cursor, max(1, int(limit)))
-            quotes = []
-            for event in events:
-                payload = event.payload
-                if payload.get("T") != "q":
-                    continue
-                bid = _nonnegative_float(payload.get("bp"), "bid")
-                ask = _nonnegative_float(payload.get("ap"), "ask")
-                quotes.append({
-                    "sequence": event.sequence,
-                    "symbol": str(payload.get("S") or "").upper(),
-                    "bid": bid,
-                    "ask": ask,
-                    "timestamp": self._format(event.timestamp),
-                })
-            next_sequence = events[-1].sequence if events else max(0, int(after_sequence))
-            return {
-                "runId": self.run_id,
-                "virtualTime": self._format(self.cursor),
-                "afterSequence": max(0, int(after_sequence)),
-                "nextSequence": next_sequence,
-                "caughtUp": next_sequence >= self.last_sequence,
-                "quotes": quotes,
-            }
+            run_id = self.run_id
+            virtual_time = self.cursor
+            through_sequence = self.last_sequence
+        events = self.source.events_between(normalized_after, through_sequence, max(1, int(limit)))
+        quotes = []
+        for event in events:
+            payload = event.payload
+            if payload.get("T") != "q":
+                continue
+            bid = _nonnegative_float(payload.get("bp"), "bid")
+            ask = _nonnegative_float(payload.get("ap"), "ask")
+            quotes.append({
+                "sequence": event.sequence,
+                "symbol": str(payload.get("S") or "").upper(),
+                "bid": bid,
+                "ask": ask,
+                "timestamp": self._format(event.timestamp),
+            })
+        next_sequence = events[-1].sequence if events else normalized_after
+        return {
+            "runId": run_id,
+            "virtualTime": self._format(virtual_time),
+            "afterSequence": normalized_after,
+            "nextSequence": next_sequence,
+            "caughtUp": next_sequence >= through_sequence,
+            "quotes": quotes,
+        }
 
     def emitted_events(self) -> list[ReplayEvent]:
         with self._lock:
@@ -274,7 +301,8 @@ class ReplayController:
             self.state_store.delete(self.run_id)
         self.mode, self.state, self.run_id = "simulation", "ready", str(uuid.uuid4())
         self.requested_speed, self.cursor, self.last_sequence = self.default_speed, DATASET_START, 0
-        self._emitted.clear(); self._latest_quotes.clear(); self._latest_trades.clear(); self._opening_trades.clear(); self._daily_candles.clear()
+        self._emitted.clear(); self._event_buffer.clear(); self._latest_quotes.clear(); self._latest_trades.clear(); self._opening_trades.clear(); self._daily_candles.clear()
+        self._publish_quote_snapshot()
         self._order_flow.reset(self.run_id)
         self._run_started_wall = None
         self._reset_anchor(); self._persist()
@@ -284,12 +312,22 @@ class ReplayController:
             return
         now = self.clock()
         target = min(DATASET_END, self._anchor_virtual + timedelta(seconds=max(0.0, now - self._anchor_wall) * self.requested_speed))
-        events = self.source.events_after(self.last_sequence, target, self.max_events_per_pump)
+        if not self._event_buffer:
+            self._event_buffer.extend(
+                self.source.events_after_sequence(self.last_sequence, self.max_events_per_pump)
+            )
+        events: list[ReplayEvent] = []
+        while self._event_buffer and len(events) < self.max_events_per_pump:
+            event = self._event_buffer[0]
+            if event.timestamp > target:
+                break
+            events.append(self._event_buffer.popleft())
         for event in events:
             self._apply_event(event)
         if events:
             self.last_sequence = events[-1].sequence
-        if len(events) >= self.max_events_per_pump:
+            self._publish_quote_snapshot()
+        if len(events) >= self.max_events_per_pump and not self._event_buffer:
             self.cursor = max(self.cursor, events[-1].timestamp)
             self._reset_anchor(now=now)
         else:
@@ -384,6 +422,7 @@ class ReplayController:
         self.cursor = parse_timestamp(snapshot.get("virtualTime") or DATASET_START.isoformat())
         self.last_sequence = int(snapshot.get("processedEventCount") or 0)
         self._latest_quotes = dict(snapshot.get("latestQuotes") or {})
+        self._publish_quote_snapshot()
         self._latest_trades = dict(snapshot.get("latestTrades") or {})
         self._daily_candles = normalize_restored_daily_candles(snapshot.get("dailyCandles"))
         self._opening_trades = normalize_restored_opening_trades(
@@ -402,6 +441,12 @@ class ReplayController:
 
     def _reset_anchor(self, *, now: float | None = None) -> None:
         self._anchor_wall = self.clock() if now is None else now; self._anchor_virtual = self.cursor
+
+    def _publish_quote_snapshot(self) -> None:
+        self._quote_snapshot = {
+            symbol: dict(quote)
+            for symbol, quote in self._latest_quotes.items()
+        }
 
     def _status(self) -> dict[str, object]:
         elapsed, duration = max(0.0, (self.cursor - DATASET_START).total_seconds()), (DATASET_END - DATASET_START).total_seconds()
