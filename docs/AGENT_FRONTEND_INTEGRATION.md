@@ -104,10 +104,12 @@ SIM 검색·주문 후보는 manifest의 23개 티커만 사용한다. 주문 ti
 limit-only 계약을 유지한다. 주문 상태는 `/ws/orders/{order_id}`의 SIM 원장을 읽고,
 가격조건 UI는 기존 `/api/trade-conditions`를 그대로 사용한다.
 
-뉴스 패널은 LIVE에서 `/api/market/news/daily`, SIM에서
-`/api/market/news/latest`를 호출한다. SIM 응답은 서버가 ClickHouse에서
-`published_at`과 `localized_at`이 모두 `virtualTime` 이하인 기사만 고른 결과이며,
-프런트가 가상시각을 query로 보내거나 live Redis 결과와 합치지 않는다. 일별 뉴스 API와
+기사 뉴스 패널은 LIVE에서 `/api/market/news/daily`, SIM에서
+`/api/market/news/latest`를 호출한다. 데일리 뉴스 키워드 패널은 LIVE/SIM 모두
+`/api/market/news/daily`를 호출한다. SIM 응답은 서버가 ClickHouse에서
+기사의 `published_at`과 `localized_at`, 일별 요약의 `generated_at`을 각각
+`virtualTime` 이하로 제한한 결과이며, 프런트가 가상시각을 query로 보내거나 live Redis
+결과와 합치지 않는다. 일별 뉴스 API와
 차트의 `GET /api/charts/events`도 `generated_at <= virtualTime`인 저장 스냅샷만
 반환한다. 추천 패널은 SIM 전 구간에서 기존 recommendation API를 다시 조회하고 서버가
 번들된 검증 fixed replay provider를 사용하므로 `simulation_data_unavailable`을 표시하지 않는다.
