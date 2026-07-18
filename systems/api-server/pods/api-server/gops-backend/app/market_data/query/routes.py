@@ -6,6 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 from app.auth.dependencies import require_current_user
 from app.auth.models import AuthenticatedUser
 from app.market_data.calendar.service import next_market_open_payload
+from app.market_data.indices.related import build_related_indices_payload
 from app.market_data.query.service import get_query_service
 from app.routes.simulator import simulator_gateway_from_app
 from app.services.simulator_gateway import SimulatorUnavailable
@@ -74,9 +75,49 @@ def market_indices(request: Request, background_tasks: BackgroundTasks) -> dict[
 
 @router.get("/api/market/indices/related")
 def market_related_indices(
+    request: Request,
     background_tasks: BackgroundTasks,
     symbol: str = Query(min_length=1, max_length=12),
 ) -> dict[str, Any]:
+    gateway = simulator_gateway_from_app(request.app)
+    simulation_active = False
+    try:
+        status = gateway.status()
+        simulation_active = status.get("mode") == "simulation"
+        if simulation_active:
+            virtual_time = str(status.get("virtualTime") or "").strip()
+            try:
+                reference_time = datetime.fromisoformat(virtual_time.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise HTTPException(status_code=503, detail="simulation_virtual_time_unavailable") from exc
+            if reference_time.tzinfo is None:
+                reference_time = reference_time.replace(tzinfo=timezone.utc)
+            normalized_symbol = symbol.strip().upper()
+            replay_symbol = next((
+                item
+                for item in status.get("symbols") or []
+                if isinstance(item, dict) and str(item.get("symbol") or "").strip().upper() == normalized_symbol
+            ), {})
+            payload = build_related_indices_payload(
+                normalized_symbol,
+                indices_payload=gateway.indices(),
+                provider=None,
+                now=reference_time,
+                company_change_percent=replay_symbol.get("changePercent"),
+                use_stored_market_data=False,
+            )
+            return {
+                **payload,
+                "source": "simulation_replay_related",
+                "simulation": True,
+                "datasetId": status.get("datasetId"),
+                "runId": status.get("runId"),
+                "virtualTime": virtual_time,
+            }
+    except SimulatorUnavailable as exc:
+        last_status = getattr(gateway, "last_status", None) or {}
+        if simulation_active or last_status.get("mode") == "simulation":
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
     return get_query_service().related_indices(symbol, background_tasks=background_tasks)
 
 

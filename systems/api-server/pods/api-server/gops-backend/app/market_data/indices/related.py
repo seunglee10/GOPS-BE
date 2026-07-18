@@ -45,6 +45,8 @@ def build_related_indices_payload(
     provider: Any,
     now: datetime | None = None,
     seed_items: list[dict[str, Any]] | None = None,
+    company_change_percent: float | None = None,
+    use_stored_market_data: bool = True,
 ) -> dict[str, Any]:
     normalized_symbol = normalize_market_symbol(symbol)
     generated_at = isoformat_z(now or datetime.now(timezone.utc))
@@ -53,10 +55,15 @@ def build_related_indices_payload(
     if company is None:
         return empty_related_payload(normalized_symbol, indices_payload, generated_at)
 
-    metadata = safe_symbol_detail(provider, normalized_symbol)
+    metadata = safe_symbol_detail(provider, normalized_symbol) if use_stored_market_data else {}
     selections = select_related_index_rules(
         company,
-        exchange=read_string(metadata.get("exchange") or metadata.get("market")),
+        exchange=read_string(
+            metadata.get("exchange")
+            or metadata.get("market")
+            or company.get("exchange")
+            or company.get("market")
+        ),
         total_market_cap=sum_market_caps(universe),
     )
     index_items = {
@@ -64,10 +71,12 @@ def build_related_indices_payload(
         for item in indices_payload.get("items") or []
         if isinstance(item, dict) and read_string(item.get("symbol"))
     }
-    company_closes = stored_daily_closes(provider, normalized_symbol)
-    company_change = daily_change_percent(company_closes)
-    if company_change is None:
-        company_change = finite_float(company.get("changePercent"))
+    company_closes = stored_daily_closes(provider, normalized_symbol) if use_stored_market_data else {}
+    company_change = finite_float(company_change_percent)
+    if company_change is None and use_stored_market_data:
+        company_change = daily_change_percent(company_closes)
+        if company_change is None:
+            company_change = finite_float(company.get("changePercent"))
 
     items: list[dict[str, Any]] = []
     missing: list[str] = []
@@ -76,11 +85,15 @@ def build_related_indices_payload(
         if not isinstance(index_item, dict) or finite_float(index_item.get("price")) is None:
             missing.append(selection.symbol)
             continue
-        correlation = cached_correlation(
-            provider,
-            normalized_symbol,
-            selection.symbol,
-            company_closes=company_closes,
+        correlation = (
+            cached_correlation(
+                provider,
+                normalized_symbol,
+                selection.symbol,
+                company_closes=company_closes,
+            )
+            if use_stored_market_data
+            else None
         )
         commentary = build_template_commentary(
             company_symbol=normalized_symbol,

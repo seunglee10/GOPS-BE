@@ -886,6 +886,11 @@ SIM `runId`가 바뀌면 지수를 즉시 다시 조회하고, 같은 run의 1�
 않는다. 전환 중 이전 요청은 취소하며 일시적인 재조회 실패에는 마지막 정상 snapshot을
 유지하고 한 번 짧게 재시도한다.
 
+`indexCommentary` 지수 해설 패널은 `GET /api/market/indices/related`를 사용한다. SIM에서는
+고정 replay 지수 snapshot으로 만든 결정론적 템플릿 해설을 표시하고 차단되는 LLM 해설
+요청은 보내지 않는다. simulator `mode` 또는 SIM `runId`가 바뀌면 즉시 다시 조회하며,
+API 오류를 정상적인 빈 결과로 바꾸지 않고 별도 오류 상태로 표시한다.
+
 독립 `popularStocks`/`popular` 패널은 없다. 저장 레이아웃과 Agent 명령의
 `popularStocks`는 호환 입력으로만 받아 `recommendationsList`와 인기 Top 15 초기
 필터로 변환한다. 통합 패널은 App이 이미 폴링 중인

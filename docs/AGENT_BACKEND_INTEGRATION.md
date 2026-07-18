@@ -393,7 +393,9 @@ Finance snapshot을 Redis에 fresh/stale 캐시한다. 백엔드는 fresh 캐시
 마지막 성공 snapshot을 `cacheStatus="stale"`로 반환할 수 있다.
 SIM에서는 같은 공개 route가 simulator의 `GET /api/control/indices`를 사용한다.
 이 응답은 `2026-07-15 00:00 KST` 직전까지 관측된 고정 snapshot이며 LIVE Yahoo
-캐시로 fallback하지 않는다.
+캐시로 fallback하지 않는다. `GET /api/market/indices/related`도 SIM에서는 같은 고정
+snapshot과 현재 replay symbol의 등락률만 사용한다. LIVE 일봉·상관계수·Yahoo cache를
+조회하지 않으며 상관계수는 `null`로 남긴다.
 
 통합 추천 패널은 recommendation API를 사용한다. `PUT /api/recommendations/profile`은
 필수 투자 설정을 저장하고, score-profile CRUD/active API는 사용자 가중치를 저장한다.
