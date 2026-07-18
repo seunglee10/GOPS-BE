@@ -426,7 +426,20 @@ class PostgresOrderRepository:
                   (SELECT count(*) FROM dlq_events) AS dlq_count,
                   (SELECT count(*) FROM orders WHERE status = 'SUBMIT_FAILED_UNKNOWN') AS submit_failed_unknown_count,
                   (SELECT count(*) FROM orders WHERE status = 'RECONCILIATION_REQUIRED') AS reconciliation_required_count,
-                  (SELECT count(*) FROM audit_logs) AS audit_log_count
+                  (SELECT count(*) FROM audit_logs) AS audit_log_count,
+                  (SELECT count(*) FROM paper_accounts WHERE seeded_at IS NOT NULL) AS paper_seed_success_count,
+                  (SELECT count(*) FROM paper_accounts WHERE seed_suppressed_at IS NOT NULL) AS paper_seed_suppressed_count,
+                  (SELECT count(*) FROM paper_accounts
+                     WHERE seed_profile IS NULL AND seed_suppressed_at IS NULL) AS paper_seed_unseeded_count,
+                  (SELECT count(*) FROM paper_orders
+                     WHERE execution_mode = 'simulation' AND status = 'pending') AS simulation_pending_order_count,
+                  (SELECT count(*) FROM paper_orders
+                     WHERE execution_mode = 'simulation' AND status = 'filled') AS simulation_filled_order_count,
+                  (SELECT count(*) FROM paper_orders
+                     WHERE execution_mode = 'simulation' AND status = 'cancelled') AS simulation_cancelled_order_count,
+                  (SELECT COALESCE(max(sequence), 0) FROM simulation_matcher_checkpoints) AS simulation_matcher_checkpoint,
+                  (SELECT EXTRACT(EPOCH FROM (now() - max(updated_at)))
+                     FROM simulation_matcher_checkpoints) AS simulation_matcher_checkpoint_age_seconds
                 """
             ).fetchone()
             return dict(row)

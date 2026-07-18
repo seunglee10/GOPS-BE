@@ -33,6 +33,9 @@ class TradeConditionCreate:
     proposal_id: str | None = None
     analysis_id: str | None = None
     expires_at: datetime | None = None
+    execution_mode: str = "paper"
+    simulation_run_id: str | None = None
+    simulation_submitted_sequence: int | None = None
 
 
 class DuplicateProposalError(RuntimeError):
@@ -109,6 +112,9 @@ class InMemoryTradeConditionRepository(TradeConditionRepository):
             "created_at": now,
             "updated_at": now,
             "expires_at": condition.expires_at,
+            "execution_mode": condition.execution_mode,
+            "simulation_run_id": condition.simulation_run_id,
+            "simulation_submitted_sequence": condition.simulation_submitted_sequence,
         }
         self.conditions[self._condition_id] = row
         return _combined(row, alert)
@@ -244,8 +250,9 @@ class PostgresTradeConditionRepository(TradeConditionRepository):
                     INSERT INTO trade_conditions (
                         user_sub, source, proposal_id, analysis_id, alert_id, side,
                         limit_price, quantity, exchange, execution_enabled, status,
-                        validity, market_hours, expires_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'watching', %s, %s, %s)
+                        validity, market_hours, expires_at, execution_mode,
+                        simulation_run_id, simulation_submitted_sequence
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'watching', %s, %s, %s, %s, %s, %s)
                     RETURNING *
                     """,
                     (
@@ -262,6 +269,9 @@ class PostgresTradeConditionRepository(TradeConditionRepository):
                         condition.validity,
                         condition.market_hours,
                         condition.expires_at,
+                        condition.execution_mode,
+                        condition.simulation_run_id,
+                        condition.simulation_submitted_sequence,
                     ),
                 ).fetchone()
                 conn.commit()

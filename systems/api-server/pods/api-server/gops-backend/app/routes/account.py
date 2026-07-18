@@ -30,9 +30,16 @@ def account_holdings(
     source: str = Query(default="active", pattern="^(active|kis)$"),
     user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
-    if source == "active" and simulator_mode_active(request.app):
+    if source == "active":
         try:
-            payload = _normalize_simulator_holdings(simulator_gateway_from_app(request.app).account(user.sub))
+            from app.routes.paper_trading import _enriched_account_snapshot, paper_repository_from_app
+
+            repository = paper_repository_from_app(request.app)
+            snapshot = _enriched_account_snapshot(request.app, repository, user.sub)
+            payload = _paper_portfolio_payload(request.app, repository, user.sub, snapshot)
+            payload = enrich_holdings_with_alpaca_dividends(payload)
+        except HTTPException:
+            raise
         except Exception as exc:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
         _remember_portfolio_holdings_snapshot(request.app, user.sub, payload)
@@ -79,6 +86,24 @@ def account_performance(
         )
     except RecommendationSchemaUnavailable as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    if not snapshots:
+        try:
+            from app.routes.paper_trading import paper_repository_from_app
+
+            paper_repository = paper_repository_from_app(request.app)
+            history = getattr(paper_repository, "portfolio_history", None)
+            if isinstance(history, list):
+                snapshots = [
+                    {"payload": row.get("payload"), "source_as_of": row.get("source_as_of")}
+                    for row in history
+                    if row.get("user_sub") == user.sub
+                    and (
+                        start_at is None
+                        or (parse_datetime(row.get("source_as_of")) or datetime.min.replace(tzinfo=timezone.utc)) >= start_at
+                    )
+                ]
+        except Exception:
+            snapshots = snapshots or []
 
     benchmark = None
     if snapshots:
@@ -100,28 +125,109 @@ def account_performance(
             )
         except Exception:
             benchmark = None
-    return jsonable_encoder(
-        build_portfolio_performance(
+    result = build_portfolio_performance(
             snapshots,
             benchmark,
             range_value=range_value,
         )
-    )
+    result["dataOrigin"] = _performance_data_origin(snapshots)
+    result["isDevFixture"] = result["dataOrigin"] == "seeded-demo"
+    return jsonable_encoder(result)
 
 
-def _normalize_simulator_holdings(payload: dict[str, Any]) -> dict[str, Any]:
-    positions = payload.get("positions")
-    if isinstance(positions, dict):
-        rendered_positions = [value for value in positions.values() if isinstance(value, dict)]
-    elif isinstance(positions, list):
-        rendered_positions = [value for value in positions if isinstance(value, dict)]
-    else:
-        rendered_positions = []
+def _paper_portfolio_payload(app: Any, repository: Any, user_sub: str, snapshot: dict[str, Any]) -> dict[str, Any]:
+    account = snapshot.get("account") or {}
+    account_orders = repository.list_orders(user_sub, include_previous=False, limit=500)
+    has_account_activity = any(not order.get("seed_profile") for order in account_orders)
+    data_origin = "account-history" if has_account_activity or not account.get("seed_profile") else "seeded-demo"
+    positions = []
+    for raw in snapshot.get("positions") or []:
+        quantity = float(raw.get("qty") or 0)
+        current_price = float(raw.get("current_price") or 0)
+        average_price = float(raw.get("average_price") or 0)
+        market_value = float(raw.get("market_value") or current_price * quantity)
+        unrealized = float(raw.get("unrealized_pnl") or market_value - average_price * quantity)
+        positions.append({
+            "symbol": raw.get("symbol"),
+            "name": raw.get("name"),
+            "market": raw.get("market") or "overseas",
+            "exchange": raw.get("exchange"),
+            "currency": raw.get("currency") or "USD",
+            "sector": raw.get("sector"),
+            "industry": raw.get("industry"),
+            "quantity": quantity,
+            "availableQuantity": float(raw.get("available_qty") or quantity),
+            "averagePrice": average_price,
+            "currentPrice": current_price,
+            "purchaseAmountForeign": average_price * quantity,
+            "marketValueForeign": market_value,
+            "unrealizedPnlForeign": unrealized,
+            "unrealizedPnlRate": float(raw.get("unrealized_pnl_rate") or 0),
+            "dayPnlForeign": raw.get("day_pnl"),
+            "dayPnlRate": raw.get("day_pnl_rate"),
+            "peRatio": raw.get("pe_ratio"),
+            "epsTtm": raw.get("eps_ttm"),
+            "low52": raw.get("low_52"),
+            "high52": raw.get("high_52"),
+            "dividendYield": raw.get("dividend_yield"),
+            "dividendPerShare": raw.get("dividend_per_share"),
+            "annualDividend": raw.get("annual_dividend"),
+        })
+    as_of = datetime.now(timezone.utc).isoformat()
+    run_id = None
+    orders = []
+    if simulator_mode_active(app):
+        try:
+            sim_status = simulator_gateway_from_app(app).status()
+            as_of = sim_status.get("virtualTime") or as_of
+            run_id = sim_status.get("runId")
+            orders = [
+                order for order in account_orders
+                if order.get("execution_mode") == "simulation" and order.get("runId") == run_id
+            ]
+        except Exception:
+            orders = []
     return {
-        **payload,
-        "asOf": payload.get("virtualTime") or datetime.now(timezone.utc).isoformat(),
-        "positions": rendered_positions,
+        "status": "ok" if positions else "empty",
+        "source": "paper-shared",
+        "asOf": as_of,
+        "seedProfile": account.get("seed_profile"),
+        "dataOrigin": data_origin,
+        "simulation": bool(run_id),
+        "runId": run_id,
+        "account": {
+            "alias": "7섹터 균형형 가상계좌",
+            "market": "overseas",
+            "currency": "USD",
+            "cashForeign": account.get("cash_balance"),
+            "stockValueForeign": account.get("market_value"),
+            "totalValueForeign": account.get("equity"),
+            "unrealizedPnlForeign": account.get("unrealized_pnl"),
+            "unrealizedPnlRate": (
+                float(account.get("unrealized_pnl") or 0)
+                / max(float(account.get("market_value") or 0) - float(account.get("unrealized_pnl") or 0), 1e-9)
+                * 100
+            ),
+            "realizedPnlForeign": account.get("realized_pnl"),
+        },
+        "positions": positions,
+        "orders": orders,
+        "limitations": ["seeded demo account"] if data_origin == "seeded-demo" else [],
     }
+
+
+def _performance_data_origin(snapshots: list[dict[str, Any]]) -> str:
+    for row in reversed(snapshots):
+        payload = row.get("payload") if isinstance(row, dict) else None
+        if isinstance(payload, dict):
+            if payload.get("dataOrigin") in {"seeded-demo", "account-history"}:
+                return str(payload["dataOrigin"])
+            return (
+                "seeded-demo"
+                if payload.get("seedProfile") or payload.get("seed_profile") or payload.get("source") == "seeded-demo"
+                else "account-history"
+            )
+    return "account-history"
 
 
 def _kis_client_from_app(app: Any) -> Any:

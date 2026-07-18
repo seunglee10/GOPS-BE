@@ -221,7 +221,7 @@ select_services_for_path() {
       add_service order-worker
       add_service kis-adapter
       ;;
-    systems/order/pods/order-outbox/* | systems/order/pods/paper-order-matcher/* | systems/order/jobs/*)
+    systems/order/pods/order-outbox/* | systems/order/pods/paper-order-matcher/* | systems/order/pods/simulation-paper-matcher/* | systems/order/jobs/*)
       add_service order-worker
       ;;
     systems/order/pods/kis-adapter/*)

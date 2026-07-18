@@ -19,9 +19,11 @@ from app.auth.dependencies import (
 from app.auth.models import AuthenticatedUser
 from app.market_data.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
 from app.services.alfaka_market_data import get_market_data_provider
+from app.services.portfolio_market_enrichment import enrich_holdings_with_market_stats
 from kis_trader.domain.commands import validate_order_request_payload
 from kis_trader.domain.status import OrderContractError
 from kis_trader.paper import InMemoryPaperTradingRepository, PostgresPaperTradingRepository
+from kis_trader.paper.fixture import HOLDING_BY_SYMBOL, configured_seed_profile, fallback_price
 from kis_trader.paper.models import (
     PaperCapacityError,
     PaperIdempotencyConflictError,
@@ -262,7 +264,9 @@ def paper_repository_from_app(app: Any) -> PaperTradingRepository:
         return existing
     mode = os.getenv("PAPER_REPOSITORY", "postgres").strip().lower()
     if mode == "memory":
-        repository: PaperTradingRepository = InMemoryPaperTradingRepository()
+        repository: PaperTradingRepository = InMemoryPaperTradingRepository(
+            seed_profile=configured_seed_profile(),
+        )
     else:
         if not os.getenv("DATABASE_URL") and not all(
             os.getenv(name) for name in ("DATABASE_HOST", "DATABASE_NAME", "DATABASE_USER", "DATABASE_PASSWORD")
@@ -384,6 +388,7 @@ def _enriched_account_snapshot(app: Any, repository: PaperTradingRepository, use
         unrealized_total += unrealized
         positions.append({
             **position,
+            **_fixture_position_fields(position["symbol"], qty),
             "available_qty": qty - Decimal(position.get("reserved_qty") or 0),
             "current_price": current_price,
             "price_source": price_source,
@@ -393,6 +398,7 @@ def _enriched_account_snapshot(app: Any, repository: PaperTradingRepository, use
             "unrealized_pnl": unrealized,
             "unrealized_pnl_rate": (unrealized / cost * 100) if cost > 0 else Decimal("0"),
         })
+    positions = _enrich_position_market_facts(app, positions)
     account = dict(snapshot["account"])
     cash_balance = Decimal(account["cash_balance"])
     equity = cash_balance + market_value
@@ -425,7 +431,17 @@ def _position_price(app: Any, symbol: str, fallback: Decimal) -> tuple[Decimal, 
             if value is not None:
                 return value, "injected", None
     try:
-        provider = get_market_data_provider()
+        from app.routes.simulator import simulator_gateway_from_app, simulator_mode_active
+
+        if simulator_mode_active(app):
+            quote = simulator_gateway_from_app(app).quote(symbol)
+            replay_price = _optional_positive_decimal(quote.get("bid") or quote.get("ask"))
+            if replay_price is not None:
+                return replay_price, "simulation_replay", quote.get("virtualTime")
+    except Exception:
+        pass
+    try:
+        provider = getattr(app.state, "portfolio_market_data_provider", None) or get_market_data_provider()
         trade = provider.redis_provider.live_trade(symbol) or {}
         live_price = _optional_positive_decimal(trade.get("price"))
         if live_price is not None:
@@ -437,7 +453,76 @@ def _position_price(app: Any, symbol: str, fallback: Decimal) -> tuple[Decimal, 
                 return close, "market.latest_candle", candles[-1].get("timestamp")
     except Exception:
         pass
+    fixture_value = fallback_price(symbol)
+    if fixture_value is not None:
+        return fixture_value, "seeded-demo", None
     return fallback, "average_price", None
+
+
+def _fixture_position_fields(symbol: str, quantity: Decimal) -> dict[str, Any]:
+    holding = HOLDING_BY_SYMBOL.get(str(symbol).strip().upper())
+    if holding is None:
+        return {}
+    day_pnl_rate = holding.day_pnl_rate
+    day_pnl = (
+        quantity * holding.fallback_price * day_pnl_rate / Decimal("100")
+        if day_pnl_rate is not None else None
+    )
+    return {
+        "name": holding.name,
+        "market": "overseas",
+        "exchange": holding.exchange,
+        "currency": "USD",
+        "sector": holding.sector,
+        "industry": holding.industry,
+        "pe_ratio": holding.pe_ratio,
+        "eps_ttm": holding.eps_ttm,
+        "low_52": holding.low_52,
+        "high_52": holding.high_52,
+        "dividend_yield": holding.dividend_yield,
+        "dividend_per_share": holding.dividend_per_share,
+        "annual_dividend": holding.dividend_per_share * quantity if holding.dividend_per_share is not None else None,
+        "day_pnl_rate": day_pnl_rate,
+        "day_pnl": day_pnl,
+        "metadata_source": "diversified-us-v1",
+    }
+
+
+def _enrich_position_market_facts(app: Any, positions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    payload = {
+        "positions": [{
+            "symbol": row.get("symbol"),
+            "currentPrice": row.get("current_price"),
+            "peRatio": row.get("pe_ratio"),
+            "epsTtm": row.get("eps_ttm"),
+            "low52": row.get("low_52"),
+            "high52": row.get("high_52"),
+        } for row in positions],
+    }
+    try:
+        enriched = enrich_holdings_with_market_stats(app, payload).get("positions") or []
+    except Exception:
+        return positions
+    by_symbol = {str(row.get("symbol") or "").upper(): row for row in enriched if isinstance(row, dict)}
+    field_map = {
+        "peRatio": "pe_ratio",
+        "epsTtm": "eps_ttm",
+        "low52": "low_52",
+        "high52": "high_52",
+        "marketStatsAsOf": "market_stats_as_of",
+        "stats52wSource": "stats_52w_source",
+        "fundamentalsSource": "fundamentals_source",
+        "fundamentalsAsOf": "fundamentals_as_of",
+    }
+    result = []
+    for position in positions:
+        override = by_symbol.get(str(position.get("symbol") or "").upper(), {})
+        rendered = dict(position)
+        for source_field, target_field in field_map.items():
+            if override.get(source_field) is not None:
+                rendered[target_field] = override[source_field]
+        result.append(rendered)
+    return result
 
 
 def _sync_paper_subscriptions(app: Any, repository: PaperTradingRepository) -> None:

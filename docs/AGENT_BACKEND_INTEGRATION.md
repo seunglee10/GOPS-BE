@@ -126,14 +126,16 @@ market correlation/relative-strength context로만 계산한다. context가 없�
 `GOPS_SIMULATOR_URL`은 고정 데이터셋 `sp500-top20-20260715-kst-v1`을 읽는 별도
 서비스를 가리킨다. 백엔드는 `/api/simulator/status|mode|action|speed`만 공개하며
 기존 phase, 합성 news, basket 경로는 제공하지 않는다. 가상시각은 KST
-`2026-07-15 00:00`에서 시작하고 모든 사용자에게 동일하지만, 계좌·주문·가격조건은
-`userId + runId`로 격리된다.
+`2026-07-15 00:00`에서 시작하고 모든 사용자에게 동일하다. Simulator는 시계·캔들·
+quote replay만 소유하고, 계좌·주문·가격조건은 Postgres paper 원장에서 `userId`와
+`runId`로 격리한다.
 
 `GET /api/charts/candles`는 replay 시작 전 정상 과거 봉과 현재 가상시각까지의 replay
 봉만 합친다. `/ws/charts`도 simulator candle snapshot을 묶어서 보내며 실시간 Redis
 WebSocket 경로를 사용하지 않는다. SIM 심볼 검색은 manifest의 21개 티커로 제한한다.
 빠른 주문은 `GET /api/simulator/quote`로 현재 replay bid/ask를 읽고 기존
-`POST /api/orders`를 통해 `userId + runId` 주문 원장에 기록한다. SIM에 존재하지 않는
+`POST /api/orders`를 통해 공통 paper 주문 원장에 `execution_mode=simulation`과
+`runId`를 붙여 기록한다. SIM에 존재하지 않는
 종목이나 아직 호가가 도착하지 않은 종목에는 주문 후보를 만들지 않는다.
 기업정보·agent snapshot처럼 신뢰할 수 있는 point-in-time 조회가 없는 경로는
 `409 simulation_data_unavailable`을 반환한다. 추천은 검증된 fixed replay provider가
@@ -151,13 +153,19 @@ SIM의 `POST /api/orders`는 기존 `Idempotency-Key`와 리스크 검사를 유
 `order_type=market`은 price를 생략할 수 있고 현재 ask/bid로 즉시 전량 체결한다.
 `order_type=limit`은 price가 필수이며 조건 충족 시 실제 ask/bid로 가격 개선을 적용한다.
 LIVE KIS는 기존 limit-only 계약을 유지한다. 주문 조회·event·WebSocket과
-`/api/trade-conditions`는 실행별 Redis 원장으로 라우팅되며, 기존 LIVE/paper 조건은
-숨기고 executor도 replay 활성 Redis 키가 있는 동안 평가하지 않는다. LIVE 전환은 해당
-run namespace만 제거하며 실시간 Redis/Kafka/Alpaca 상태는 변경하지 않는다.
+`/api/trade-conditions`도 Postgres 공통 원장을 사용한다. 시장가는 제출 sequence의
+호가로 즉시 체결하고 지정가는 반드시 다음 sequence 이후 quote만 사용한다.
+`simulation-paper-matcher`가 `/api/control/execution-events`를 checkpoint 순서로 읽어
+현재 run의 SIM 주문·조건만 평가한다. 재시작이나 LIVE 전환은 이전 run의 미체결 주문,
+예약 현금·수량, 미발동 조건만 취소하며 이미 체결된 현금·포지션·성과는 보존한다.
 
 ## Persistent Paper Trading Boundary
 
-영구 가상투자는 전역 LIVE/SIM 상태와 무관하며 사용자 `sub`로 격리한다.
+영구 가상투자는 보유종목·가상계좌·듀얼 포트폴리오·성과·SIM 체결의 단일 진실 원천이며
+사용자 `sub`로 격리한다. `source=active`는 LIVE/SIM 모두 이 원장을 조회하고
+`source=kis`만 기존 KIS 보유종목을 조회한다. `PAPER_ACCOUNT_SEED_PROFILE` 기본값
+`diversified-us-v1`은 untouched 신규/기존 빈 계좌에만 13개 체결과 7섹터 종목을 한 번
+시드한다. reset은 빈 새 generation을 만들고 자동 재시드를 억제한다.
 `POST /api/paper/orders`는 `Idempotency-Key`를 필수로 받고 Postgres의 가상 현금과
 보유수량만 예약한다. KIS 주문 테이블, Outbox, broker adapter는 호출하지 않는다.
 

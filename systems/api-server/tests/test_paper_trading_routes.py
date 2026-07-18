@@ -3,6 +3,7 @@ import sys
 import unittest
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -21,6 +22,7 @@ try:
     from app.auth.models import AuthenticatedUser
     from app.main import create_app
     from kis_trader.paper.memory import InMemoryPaperTradingRepository
+    from kis_trader.paper.fixture import SEED_PROFILE, fallback_price
 
     TESTCLIENT_AVAILABLE = True
 except Exception:
@@ -184,6 +186,42 @@ class PaperTradingRoutesTest(unittest.TestCase):
         history = self.client.get("/api/paper/orders?include_previous=true").json()["orders"]
         self.assertEqual(current, [])
         self.assertEqual(history[0]["status"], "cancelled")
+
+    def test_seeded_account_holdings_and_performance_share_the_same_fixture(self):
+        self.repository = InMemoryPaperTradingRepository(seed_profile=SEED_PROFILE)
+        self.app.state.paper_trading_repository = self.repository
+        self.app.state.paper_price_resolver = lambda symbol: {
+            "price": fallback_price(symbol), "source": "seeded-demo",
+        }
+        self.app.state.recommendation_repository = SimpleNamespace(
+            list_daily_portfolio_snapshots=lambda _user, _start: [],
+            upsert_portfolio_snapshot=lambda *_args: None,
+        )
+        self.app.state.portfolio_benchmark_provider = lambda *_args: None
+
+        account = self.client.get("/api/paper/account").json()
+        holdings = self.client.get("/api/account/holdings").json()
+        performance = self.client.get("/api/account/performance?range=ALL").json()
+
+        account_positions = {row["symbol"]: row for row in account["positions"]}
+        holding_positions = {row["symbol"]: row for row in holdings["positions"]}
+        self.assertEqual(set(account_positions), {"GOOGL", "MSFT", "JPM", "XOM", "JNJ", "COST", "HD"})
+        for symbol in account_positions:
+            self.assertEqual(account_positions[symbol]["qty"], holding_positions[symbol]["quantity"])
+            self.assertEqual(account_positions[symbol]["average_price"], holding_positions[symbol]["averagePrice"])
+            self.assertEqual(account_positions[symbol]["market_value"], holding_positions[symbol]["marketValueForeign"])
+        self.assertEqual(account["account"]["equity"], 104793.52)
+        self.assertEqual(performance["dataOrigin"], "seeded-demo")
+        self.assertEqual(performance["portfolio"]["points"][-1]["portfolioValue"], 104793.52)
+        self.assertEqual(performance["portfolio"]["points"][-1]["holdingsCostBasis"], 79183.38)
+
+        submitted = self.submit(payload(symbol="GOOGL", qty="1", price="200"), key="after-seed").json()
+        self.repository.match_quote(
+            symbol="GOOGL", bid_price=Decimal("184"), ask_price=Decimal("185"),
+            quote_timestamp="2026-07-18T15:00:00Z", quote_event_id="after-seed-fill",
+        )
+        self.assertEqual(self.client.get(f"/api/paper/orders/{submitted['order_id']}").json()["status"], "filled")
+        self.assertEqual(self.client.get("/api/account/performance?range=ALL").json()["dataOrigin"], "account-history")
 
 
 if __name__ == "__main__":

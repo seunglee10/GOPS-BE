@@ -23,7 +23,12 @@ def utc_now() -> datetime:
 def public_order(row: dict[str, Any]) -> dict[str, Any]:
     payload = dict(row)
     payload["price"] = payload.get("limit_price", payload.get("price"))
-    payload["execution_mode"] = "paper"
+    payload["execution_mode"] = payload.get("execution_mode") or "paper"
+    if payload["execution_mode"] == "simulation":
+        payload["simulation"] = True
+        payload["runId"] = payload.get("simulation_run_id")
+        payload["virtualSubmittedAt"] = payload.get("virtual_submitted_at")
+        payload["virtualFilledAt"] = payload.get("virtual_filled_at")
     return payload
 
 
@@ -61,6 +66,11 @@ class PaperTradingRepository(Protocol):
         idempotency_key_hash: str,
         body_hash: str,
         request: OrderRequest,
+        execution_mode: str = "paper",
+        simulation_run_id: str | None = None,
+        simulation_submitted_sequence: int | None = None,
+        virtual_submitted_at: str | None = None,
+        order_type: str = "limit",
     ) -> PaperOrderCreationResult: ...
 
     def pretrade(self, user_id: str, request: OrderRequest) -> dict[str, Any]: ...
@@ -90,7 +100,13 @@ class PaperTradingRepository(Protocol):
         ask_price: Decimal | None,
         quote_timestamp: str | None,
         quote_event_id: str | None,
+        execution_mode: str = "paper",
+        simulation_run_id: str | None = None,
+        quote_sequence: int | None = None,
+        virtual_timestamp: str | None = None,
     ) -> list[dict[str, Any]]: ...
+
+    def cancel_simulation_run(self, run_id: str, *, reason: str = "simulation_run_ended") -> list[dict[str, Any]]: ...
 
     def active_order_symbols(self) -> list[str]: ...
 

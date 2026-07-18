@@ -206,7 +206,7 @@ def build_score_profile_suggestion(
         "schemaVersion": PROFILE_SUGGESTION_SCHEMA_VERSION,
         "query": query.strip(),
         "name": _clean_name(proposal.get("name"), query),
-        "rationale": str(proposal.get("rationale") or "현재 근거와 입력 의도를 함께 반영한 가중치 초안입니다.").strip(),
+        "rationale": _concise_rationale(intents, evidence_context),
         "confidence": round(_clamp_number(proposal.get("confidence"), 0, 1, default=0.5), 4),
         "intent": {
             "matchedKeywords": list(dict.fromkeys(keyword for row in intents for keyword in row["matchedKeywords"])),
@@ -300,7 +300,8 @@ def _provider_payload(query: str, intents: list[dict[str, Any]], evidence: dict[
             "가중치 초안을 제안하세요. hard gate, 데이터 신뢰도 계산, soft penalty, 직접 매수 조건은 절대 변경하지 마세요. "
             "각 blockWeights, 각 factorWeights 그룹, portfolioFactorWeights 합계는 정확히 100이어야 하고 값은 0~100, 소수 둘째 자리까지입니다. "
             "portfolioWeight만 독립적인 0~100 반영률입니다. 현재 데이터가 강하다는 이유만으로 해당 신호를 무조건 추종하지 말고 사용자 의도를 우선하되, "
-            "근거의 커버리지와 신선도를 이용해 과도한 비중을 피하세요. evidenceRefs는 allowedEvidenceRefs에서만 고르세요. 한국어로 간결하게 작성하세요."
+            "근거의 커버리지와 신선도를 이용해 과도한 비중을 피하세요. evidenceRefs는 allowedEvidenceRefs에서만 고르세요. "
+            "rationale은 기술 key와 영어를 쓰지 말고 180자 이내의 한국어 두 문장으로 작성하세요."
         ),
         "input": json.dumps(context, ensure_ascii=False, separators=(",", ":")),
         "text": {"format": {"type": "json_schema", "name": "score_profile_suggestion", "strict": True, "schema": _response_schema(allowed_refs)}},
@@ -319,7 +320,7 @@ def _response_schema(allowed_refs: list[str]) -> dict[str, Any]:
         "type": "object", "additionalProperties": False,
         "properties": {
             "name": {"type": "string", "minLength": 1, "maxLength": 40},
-            "rationale": {"type": "string", "minLength": 1, "maxLength": 600},
+            "rationale": {"type": "string", "minLength": 1, "maxLength": 180},
             "confidence": {"type": "number", "minimum": 0, "maximum": 1},
             "evidenceRefs": {"type": "array", "items": {"type": "string", "enum": allowed_refs or ["none"]}, "maxItems": 8},
             "profile": {
@@ -430,6 +431,16 @@ def _deterministic_rationale(intents: list[dict[str, Any]], evidence: dict[str, 
     intent_text = " ".join(row["reason"] for row in intents[:3]) if intents else "입력 문장에서 특정 신호가 뚜렷하지 않아 현재 활성 로직을 기준으로 구성했습니다."
     summary = list(evidence.get("summaryLines") or [])
     return f"{intent_text}{' ' + summary[0] if summary else ''}".strip()
+
+
+def _concise_rationale(intents: list[dict[str, Any]], _evidence: dict[str, Any]) -> str:
+    titles = [
+        str(row.get("title") or "").removesuffix(" 확인")
+        for row in intents[:2]
+        if row.get("title")
+    ]
+    focus = "·".join(titles) or "현재 활성 추천 신호"
+    return f"{focus}에 비중을 둔 로직입니다. 체결 여건과 기업 품질까지 함께 반영해 신호의 안정성을 높였습니다."
 
 
 def _allowed_evidence_refs(value: Any, evidence: dict[str, Any]) -> list[str]:

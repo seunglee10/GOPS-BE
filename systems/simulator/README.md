@@ -28,10 +28,10 @@ importer는 모든 페이지를 끝까지 수집하고 반개구간 필터, 파�
 종목별 trade/quote 수, S3 metadata, ClickHouse 건수를 검증한다. 하나라도 맞지 않으면
 manifest와 ClickHouse 상태를 `FAILED`로 남기며 시뮬레이터는 실행되지 않는다.
 
-## 재생과 주문
+## 재생과 공통 paper 원장
 
-SIM 진입 시 가상시각 `2026-07-15 00:00 KST`의 새 `runId`와 사용자별 `$100,000`
-계좌를 만든다. 시작 상태는 `ready`, 기본 배속은 `1×`이며 `1·5·20·60·300×`를
+SIM 진입 시 가상시각 `2026-07-15 00:00 KST`의 새 `runId`를 만든다. 사용자 계좌는
+Postgres의 영구 paper 원장을 계속 사용한다. 시작 상태는 `ready`, 기본 배속은 `1×`이며 `1·5·20·60·300×`를
 실행 중 바꿀 수 있다. 처리량이 부족하면 가상시계가 늦어질 뿐 틱은 버리지 않는다.
 ClickHouse 청크 조회와 이벤트 처리는 HTTP 이벤트 루프 밖의 작업 스레드에서 수행하고,
 status와 health는 마지막 완료 스냅샷을 즉시 반환한다. 따라서 큰 청크를 처리하는 동안에도
@@ -39,8 +39,9 @@ Kubernetes probe와 웹의 SIM 상태 폴링이 차단되지 않는다.
 
 시장가는 실행 중 현재 ask(매수) 또는 bid(매도), 지정가는 조건 충족 시 실제 ask/bid로
 정수 수량 전량 체결된다. 공매도·부분체결·수수료·추가 슬리피지는 없다. 미체결 매수
-현금과 매도 수량은 예약한다. 계좌·주문·체결·멱등키·가격조건은 Redis의
-`simulator:replay:run:{runId}`에 저장되고 재시작 또는 LIVE 전환 때 해당 실행만 정리한다.
+현금과 매도 수량은 paper 원장에서 예약한다. 주문·체결·멱등키·가격조건은
+`execution_mode=simulation`과 `runId`로 Postgres에 저장된다. 재시작 또는 LIVE 전환은
+해당 run의 미체결 예약과 미발동 조건만 취소하고 체결된 현금·포지션·성과는 유지한다.
 
 ## API
 
@@ -53,11 +54,11 @@ POST /api/control/action     {"action":"pause"|"resume"|"restart"}
 PUT  /api/control/speed      {"speed":1|5|20|60|300}
 GET  /api/control/candles
 GET  /api/control/symbols
-POST /api/control/orders
-GET  /api/control/orders/{orderId}
-GET  /api/control/orders/{orderId}/events
-GET|POST|PATCH|DELETE /api/control/conditions
+GET  /api/control/execution-events?runId=...&afterSequence=...&limit=...
 ```
+
+Simulator는 계좌·주문·조건 control API를 제공하지 않는다. `simulation-paper-matcher`가
+execution event를 순서대로 페이지 조회하고 공통 Postgres 원장을 갱신한다.
 
 SIM 차트는 재생 시작 전 정상 과거 캔들과 현재 가상시각까지의 replay 캔들만 합친다.
 일봉은 UTC 자정이 아니라 `America/New_York` 시장 날짜의 자정을 canonical timestamp로

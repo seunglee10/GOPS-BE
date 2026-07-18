@@ -389,9 +389,10 @@ top-level `asOf`/`sourceAsOf` timestamps are removed. A per-user advisory transa
 lock serializes the compare/upsert operation: poll-only timestamp changes do not grow RDS
 history, while changed positions, cash, valuations, or transaction states remain durable.
 
-Persistent paper trading requires `0006_paper_trading.sql`. Changes to
-`paper-order-matcher` select `order-worker`, so the same automatic migration gate
-applies the paper account schema before the matcher and backend workloads roll out.
+Persistent paper trading requires `0006_paper_trading.sql`; shared SIM ownership and the
+`diversified-us-v1` seed require `0018_shared_paper_simulation_account.sql`. Apply migrations
+before backend, order-worker/simulation matcher, simulator, and frontend in that order.
+`PAPER_ACCOUNT_SEED_PROFILE=none` is reserved for tests and emergency rollback.
 
 가격 조건 기능은 order migration `0008_trade_conditions.sql`이 필요하다. 이
 migration은 alert notification delivery flag와 사용자 소유 조건·proposal·trigger
@@ -564,6 +565,14 @@ subscription contracts, market-data shared changes also rebuild `order-worker`.
 The matcher reconciles pending-order and current-position subscription cohorts
 from Postgres every `PAPER_SUBSCRIPTION_SYNC_SECONDS` (default 5 seconds), so a
 temporary API-to-Redis synchronization failure heals without a new order.
+`simulation-paper-matcher` is a separate single-replica deployment using the same
+`gops-order-worker` image and no new Kafka topic. It pages simulator execution events,
+persists a per-run sequence checkpoint in Postgres, and matches only
+`execution_mode=simulation` rows for the active `runId`; the live paper matcher continues
+to match only `execution_mode=paper` rows.
+`kis-overseas ops-metrics` reports seeded/suppressed/unseeded paper account counts,
+SIM pending/filled/cancelled totals, and matcher checkpoint/age. Per-position
+`price_source` identifies replay/live/fixture fallback valuation.
 
 Scheduled batch Jobs declare resource requests/limits. Failed Job and Pod
 evidence is retained for seven days. Heavy scheduled Jobs use the dynamic
@@ -1286,8 +1295,9 @@ Secret을 사용하며 파일별 S3 검증이 끝나면 로컬 gzip을 지워 �
 고정 dataset의 `READY`와 0보다 큰 event 수를 확인한 뒤 simulator를 1개로 올린다.
 그 후 backend의 `GOPS_SIMULATOR_URL`과 simulator 전역 mode만 바꾼다. SIP/BOATS
 ingestor, market processor, order-flow pin, 실시간 Redis/Kafka, trade-condition
-deployment는 변경하지 않는다. simulator는 ClickHouse를 chunk 조회하고 실행별 계좌·
-주문·가격조건을 Redis `simulator:replay:run:{runId}`에 저장한다.
+deployment는 변경하지 않는다. simulator는 ClickHouse를 chunk 조회하고 시계·캔들·quote와
+순서형 `/api/control/execution-events`만 제공한다. 실행별 계좌·주문·가격조건은 Postgres
+paper 원장이 보유한다.
 
 SIM 차트 자동 작도는 별도 Deployment, Job, migration을 추가하지 않는다. backend의
 `GET /api/charts/analysis-assets`가 프런트가 요청한 현재 interval 하나에 대해서만 기존
@@ -1296,8 +1306,9 @@ ClickHouse 과거 봉과 simulator replay 완료 봉을 합쳐 비영속 Geometr
 않는다. 추천은 같은 simulator 배포에서 위 fixed replay 환경변수를 그대로 사용하며,
 뉴스는 기존 cutoff-safe ClickHouse 읽기 경로를 유지한다.
 
-`scripts/aws/stop-dev-simulator.sh`는 LIVE mode로 전환하고 해당 Redis run namespace를
-정리한 뒤 backend URL을 제거하고 simulator를 0개로 내린다. 시작 중 실패해도 같은
+`scripts/aws/stop-dev-simulator.sh`는 LIVE mode로 전환하고 이전 run의 미체결 예약과
+미발동 조건만 멱등 취소한 뒤 backend URL을 제거하고 simulator를 0개로 내린다. 체결된
+포지션·현금·성과 이력은 유지한다. 시작 중 실패해도 같은
 범위만 복구하며 실시간 시장 상태의 backup/restore는 수행하지 않는다.
 
 ## Smoke Checks
