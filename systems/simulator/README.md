@@ -33,7 +33,7 @@ manifest와 ClickHouse 상태를 `FAILED`로 남기며 시뮬레이터는 실행
 시작 스크립트는 simulator와 backend 연결만 준비하고 전역 상태를 `LIVE/idle`에 둔다.
 화면 상단의 플레이 버튼을 누르면 `start` action이 가상시각 `2026-07-15 00:00 KST`의
 새 `runId`를 만들고 같은 응답에서 `running`으로 전환한다. 사용자 계좌는
-Postgres의 영구 paper 원장을 계속 사용한다. 기본 배속은 `1×`이며 `1·5·20·60·300×`를
+Postgres의 영구 paper 원장을 계속 사용한다. 기본 배속은 `1×`이며 `1·5·20·60×`를
 실행 중 바꿀 수 있다. 처리량이 부족하면 가상시계가 늦어질 뿐 틱은 버리지 않는다.
 ClickHouse 청크 조회와 이벤트 처리는 HTTP 이벤트 루프 밖의 작업 스레드에서 수행하고,
 status와 health는 마지막 완료 스냅샷을 즉시 반환한다. 따라서 큰 청크를 처리하는 동안에도
@@ -53,7 +53,7 @@ Kubernetes probe와 웹의 SIM 상태 폴링이 차단되지 않는다.
 GET  /api/control/status
 PUT  /api/control/mode       {"mode":"live"|"simulation"}
 POST /api/control/action     {"action":"start"|"pause"|"resume"|"restart"}
-PUT  /api/control/speed      {"speed":1|5|20|60|300}
+PUT  /api/control/speed      {"speed":1|5|20|60}
 GET  /api/control/candles
 GET  /api/control/symbols
 GET  /api/control/execution-events?runId=...&afterSequence=...&limit=...

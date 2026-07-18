@@ -195,15 +195,18 @@ class SimulatorRoutesTest(unittest.TestCase):
 
         response = self.client.put(
             "/api/simulator/speed",
-            json={"speed": 300},
+            json={"speed": 60},
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["requestedSpeed"], 300)
-        self.assertIn(("speed", 300), self.gateway.calls)
+        self.assertEqual(response.json()["requestedSpeed"], 60)
+        self.assertIn(("speed", 60), self.gateway.calls)
 
         invalid = self.client.put("/api/simulator/speed", json={"speed": 2})
         self.assertEqual(invalid.status_code, 422)
+
+        removed = self.client.put("/api/simulator/speed", json={"speed": 300})
+        self.assertEqual(removed.status_code, 422)
 
     def test_simulation_quote_is_available_to_quick_order(self):
         self.gateway.mode = "simulation"
